@@ -59,7 +59,6 @@ var businessMetricLabels = map[string][]string{
 	"multica_onboarding_started_total":                 {labelPlatform},
 	"multica_onboarding_questionnaire_submitted_total": {},
 	"multica_onboarding_completed_total":               {labelPath},
-	"multica_cloud_waitlist_joined_total":              {},
 	"multica_issue_created_total":                      {labelSource, labelPlatform},
 	"multica_chat_message_sent_total":                  {labelPlatform},
 	"multica_agent_created_total":                      {labelRuntimeMode, labelSource},
@@ -78,10 +77,7 @@ var businessMetricLabels = map[string][]string{
 	"multica_webhook_delivery_total":                   {labelProvider, labelStatus},
 	"multica_github_event_received_total":              {labelEventKind, labelAction},
 	"multica_github_pr_review_total":                   {labelResult},
-	"multica_cloudruntime_request_total":               {labelOp, labelStatus},
-	"multica_cloudruntime_request_duration_seconds":    {labelOp},
 	"multica_feedback_submitted_total":                 {labelKind, labelPlatform},
-	"multica_contact_sales_submitted_total":            {labelSource},
 }
 
 var forbiddenMetricLabels = map[string]struct{}{

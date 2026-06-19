@@ -188,46 +188,6 @@
     "view_runtime": "런타임 보기",
     "create_agent": "에이전트 만들기"
   },
-  "cloud_runtime": {
-    "action": "클라우드 런타임",
-    "title": "클라우드 런타임",
-    "description": "관리형 클라우드 노드를 시작하고 Fleet 상태를 확인합니다.",
-    "create_title": "새 노드",
-    "create_hint": "이름, 인스턴스 유형, 디스크 크기를 선택하세요. 나머지는 Fleet이 적용합니다.",
-    "nodes_title": "Fleet 노드",
-    "refresh": "새로고침",
-    "nodes_empty": "클라우드 노드 없음",
-    "nodes_failed": "클라우드 런타임을 사용할 수 없습니다",
-    "nodes_failed_hint": "Fleet이 노드 목록을 반환하지 않았습니다.",
-    "node_fallback_name": "클라우드 노드",
-    "create": "노드 만들기",
-    "creating": "만드는 중...",
-    "cancel": "취소",
-    "toast_created": "클라우드 런타임 노드를 만들었습니다",
-    "toast_create_failed": "클라우드 런타임 노드를 만들지 못했습니다",
-    "delete": "노드 삭제",
-    "delete_confirm": "이 클라우드 노드를 삭제할까요? 이 작업은 되돌릴 수 없습니다.",
-    "toast_deleted": "클라우드 노드를 삭제했습니다",
-    "toast_delete_failed": "클라우드 노드를 삭제하지 못했습니다",
-    "fields": {
-      "name": "이름",
-      "instance_type": "인스턴스 유형",
-      "region": "리전",
-      "disk_size": "디스크 크기 GiB",
-      "image_id": "AMI ID",
-      "subnet_id": "Subnet ID",
-      "key_name": "키 페어",
-      "bootstrap_pat": "Bootstrap PAT"
-    },
-    "placeholders": {
-      "name": "cloud-dev-01",
-      "key_name": "dev-key"
-    },
-    "validation": {
-      "instance_type_required": "인스턴스 유형은 필수입니다",
-      "disk_size_invalid": "디스크 크기는 양의 정수여야 합니다"
-    }
-  },
   "update": {
     "cli_version_label": "CLI 버전:",
     "version_unknown": "알 수 없음",

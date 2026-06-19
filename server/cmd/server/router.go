@@ -18,7 +18,6 @@ import (
 
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/auth"
-	"github.com/multica-ai/multica/server/internal/cloudruntime"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/handler"
@@ -142,6 +141,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 	cfSigner := auth.NewCloudFrontSignerFromEnv()
 
+	cloudFleetURL := cloudFleetURLFromEnv()
 	signupConfig := handler.Config{
 		AllowSignup:              os.Getenv("ALLOW_SIGNUP") != "false",
 		AllowedEmails:            splitAndTrim(os.Getenv("ALLOWED_EMAILS")),
@@ -149,8 +149,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		DisableWorkspaceCreation: os.Getenv("DISABLE_WORKSPACE_CREATION") == "true",
 		PublicURL:                strings.TrimRight(strings.TrimSpace(os.Getenv("MULTICA_PUBLIC_URL")), "/"),
 		TrustedProxies:           parseTrustedProxies(os.Getenv("MULTICA_TRUSTED_PROXIES")),
-		CloudRuntimeFleetURL:     cloudRuntimeFleetURLFromEnv(),
-		CloudRuntimeFleetTimeout: envDuration("MULTICA_CLOUD_FLEET_TIMEOUT", 35*time.Second),
 		AttachmentDownloadMode:   os.Getenv("ATTACHMENT_DOWNLOAD_MODE"),
 		AttachmentDownloadURLTTL: envDuration("ATTACHMENT_DOWNLOAD_URL_TTL", 30*time.Minute),
 	}
@@ -158,14 +156,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.Metrics = opts.BusinessMetrics
 	h.TaskService.Metrics = opts.BusinessMetrics
 	h.IssueService.Metrics = opts.BusinessMetrics
-	if opts.BusinessMetrics != nil {
-		// Wire the BusinessMetrics receiver into the cloud runtime client
-		// so every outbound Fleet/Gateway request feeds the
-		// multica_cloudruntime_request_* histograms.
-		if client, ok := h.CloudRuntime.(*cloudruntime.Client); ok {
-			client.SetRecorder(opts.BusinessMetrics)
-		}
-	}
 	if opts.DaemonWakeup != nil {
 		h.TaskService.Wakeup = opts.DaemonWakeup
 		if notifier, ok := opts.DaemonWakeup.(handler.RuntimeProfileRefreshNotifier); ok {
@@ -371,14 +361,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.DaemonTokenCache = daemonTokenCache
 	h.MembershipCache = auth.NewMembershipCache(rdb)
 
-	// Cloud PAT verifier: validates mcn_ tokens against Multica Cloud
-	// Fleet. Returns nil when no Fleet URL is configured — the Auth /
-	// DaemonAuth middlewares treat nil as "mcn_ not supported" and
-	// reject with 401, instead of falling through to mul_/JWT paths.
-	// Reuses MULTICA_CLOUD_FLEET_URL (the same URL the cloud-runtime
-	// proxy uses) so a deployment doesn't need a second config knob.
+	// Cloud PAT verifier: validates mcn_ tokens against Multica Fleet.
+	// Returns nil when no Fleet URL is configured; internal deployments
+	// can leave it unset and rely on local users/PATs.
 	cloudPATVerifier := auth.NewCloudPATVerifier(auth.CloudPATVerifierConfig{
-		FleetBaseURL: signupConfig.CloudRuntimeFleetURL,
+		FleetBaseURL: cloudFleetURL,
 		Redis:        rdb,
 	})
 
@@ -467,7 +454,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	trustedProxies := middleware.ParseTrustedProxies(os.Getenv("RATE_LIMIT_TRUSTED_PROXIES"))
 	authRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH", 5), time.Minute, trustedProxies)
 	authVerifyRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_AUTH_VERIFY", 20), time.Minute, trustedProxies)
-	contactSalesRL := middleware.RateLimit(rdb, envPositiveInt("RATE_LIMIT_CONTACT_SALES", 5), time.Hour, trustedProxies)
 	r.With(authRL).Post("/auth/send-code", h.SendCode)
 	r.With(authVerifyRL).Post("/auth/verify-code", h.VerifyCode)
 	r.With(authRL).Post("/auth/google", h.GoogleLogin)
@@ -475,7 +461,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 	// Public API
 	r.Get("/api/config", h.GetConfig)
-	r.With(contactSalesRL).Post("/api/contact-sales", h.CreateContactSales)
 
 	// Webhook ingress for autopilots. Outside the authenticated group on
 	// purpose: the bearer token in the URL path IS the credential. Workspace
@@ -485,11 +470,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// HMAC-SHA256 signature in the handler) and post-install setup callback.
 	r.Post("/api/webhooks/github", h.HandleGitHubWebhook)
 	r.Get("/api/github/setup", h.GitHubSetupCallback)
-	// Stripe webhook (no Multica auth — Stripe signs the raw body
-	// with a shared secret, the multica-cloud upstream verifies. We
-	// only forward the bytes + the Stripe-Signature header; see
-	// HandleCloudBillingStripeWebhook for the rationale).
-	r.Post("/api/webhooks/stripe", h.HandleCloudBillingStripeWebhook)
 
 	// Daemon API routes (require daemon token or valid user token)
 	r.Route("/api/daemon", func(r chi.Router) {
@@ -538,7 +518,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Patch("/api/me", h.UpdateMe)
 		r.Patch("/api/me/onboarding", h.PatchOnboarding)
 		r.Post("/api/me/onboarding/complete", h.CompleteOnboarding)
-		r.Post("/api/me/onboarding/cloud-waitlist", h.JoinCloudWaitlist)
 		// DEPRECATED — shim routes for desktop < v3 during the rollout
 		// window. v3 frontend creates the Helper agent + starter issue
 		// via generic CreateAgent / CreateIssue and only calls /complete
@@ -657,43 +636,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Post("/", h.CreatePersonalAccessToken)
 			r.Post("/current/renew", h.RenewCurrentPersonalAccessToken)
 			r.Delete("/{id}", h.RevokePersonalAccessToken)
-		})
-
-		// Cloud Billing proxy. Same upstream service / port as
-		// cloud-runtime — multica-cloud's Fleet and Billing share
-		// :8080 and the same chi router. All routes here forward
-		// to /api/v1/billing/* with X-User-ID stamped from the
-		// authenticated context.
-		//
-		// User-scoped (account-level), NOT workspace-scoped — sits
-		// outside the RequireWorkspaceMember group so a user can
-		// inspect their balance, top up, and open the Billing Portal
-		// without an active workspace selected. The upstream owner
-		// model is single-user; X-Workspace-ID would be ignored even
-		// if we sent it. The Stripe webhook is the public outlier
-		// and lives outside the entire Auth group (see above).
-		//
-		// IMPORTANT — task-token actors are blocked here. The Auth
-		// middleware happily turns an mat_ task token into a normal
-		// X-User-ID stamp (so agents can comment, claim issues, etc.
-		// as their owner), but billing is account-level and a running
-		// agent reading its owner's balance / opening a checkout
-		// session is the kind of lateral-movement we're explicitly
-		// trying to prevent. handler.RequireHumanActor checks the
-		// authoritative server-set X-Actor-Source header and 403s
-		// any task-token request. See actor_guards.go for the full
-		// rationale.
-		r.Route("/api/cloud-billing", func(r chi.Router) {
-			r.Use(handler.RequireHumanActor)
-
-			r.Get("/balance", h.GetCloudBillingBalance)
-			r.Get("/transactions", h.ListCloudBillingTransactions)
-			r.Get("/batches", h.ListCloudBillingBatches)
-			r.Get("/topups", h.ListCloudBillingTopups)
-			r.Get("/price-tiers", h.ListCloudBillingPriceTiers)
-			r.Post("/checkout-sessions", h.CreateCloudBillingCheckoutSession)
-			r.Get("/checkout-sessions/{sessionId}", h.GetCloudBillingCheckoutSession)
-			r.Post("/portal-sessions", h.CreateCloudBillingPortalSession)
 		})
 
 		// --- Workspace-scoped routes (all require workspace membership) ---
@@ -935,22 +877,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
-			// Cloud Runtime fleet proxy. The remote service URL is configured
-			// on SaaS API nodes only; self-hosted deployments return 503.
-			r.Route("/api/cloud-runtime", func(r chi.Router) {
-				r.Get("/", h.GetCloudRuntimeService)
-				r.Get("/healthz", h.GetCloudRuntimeHealth)
-				r.Get("/readyz", h.GetCloudRuntimeReady)
-				r.Get("/nodes", h.ListCloudRuntimeNodes)
-				r.Post("/nodes", h.CreateCloudRuntimeNode)
-				r.Delete("/nodes", h.DeleteCloudRuntimeNode)
-				r.Post("/nodes/start", h.StartCloudRuntimeNode)
-				r.Post("/nodes/stop", h.StopCloudRuntimeNode)
-				r.Post("/nodes/reboot", h.RebootCloudRuntimeNode)
-				r.Post("/nodes/status", h.GetCloudRuntimeNodeStatus)
-				r.Post("/nodes/exec", h.ExecCloudRuntimeNode)
-			})
-
 			// Tasks (user-facing, with ownership check)
 			r.Post("/api/tasks/{taskId}/cancel", h.CancelTaskByUser)
 
@@ -1155,7 +1081,7 @@ func splitAndTrim(s string) []string {
 	return res
 }
 
-func cloudRuntimeFleetURLFromEnv() string {
+func cloudFleetURLFromEnv() string {
 	if url := strings.TrimSpace(os.Getenv("MULTICA_CLOUD_FLEET_URL")); url != "" {
 		return url
 	}

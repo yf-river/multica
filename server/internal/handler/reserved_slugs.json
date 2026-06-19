@@ -45,7 +45,6 @@
         "terms",
         "security",
         "contact",
-        "contact-sales",
         "blog",
         "careers",
         "press",
@@ -54,11 +53,10 @@
       ]
     },
     {
-      "label": "Account / billing (likely-future global routes in the avatar menu)",
+      "label": "Account routes",
       "slugs": [
         "profile",
         "account",
-        "billing",
         "notifications",
         "search",
         "members"

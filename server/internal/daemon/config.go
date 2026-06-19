@@ -300,6 +300,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	if e, ok := probe("MULTICA_ANTIGRAVITY_PATH", "agy", "MULTICA_ANTIGRAVITY_MODEL"); ok {
 		agents["antigravity"] = e
 	}
+	agents = filterAgentsByProviderEnv(agents)
 	if len(agents) == 0 {
 		return Config{}, fmt.Errorf("no agent CLI found: install claude, codebuddy, codex, copilot, opencode, openclaw, hermes, gemini, pi, cursor-agent, kimi, kiro-cli, or agy and ensure it is on PATH")
 	}
@@ -629,6 +630,31 @@ func patternsFromEnv(name string, defaults []string) []string {
 		out = append(out, p)
 	}
 	return out
+}
+
+func filterAgentsByProviderEnv(agents map[string]AgentEntry) map[string]AgentEntry {
+	raw := strings.TrimSpace(os.Getenv("MULTICA_AGENT_PROVIDERS"))
+	if raw == "" {
+		return agents
+	}
+	allowed := make(map[string]struct{})
+	for _, part := range strings.Split(raw, ",") {
+		provider := strings.ToLower(strings.TrimSpace(part))
+		if provider == "" || strings.ContainsAny(provider, "/\\") {
+			continue
+		}
+		allowed[provider] = struct{}{}
+	}
+	if len(allowed) == 0 {
+		return map[string]AgentEntry{}
+	}
+	filtered := make(map[string]AgentEntry, len(allowed))
+	for provider, entry := range agents {
+		if _, ok := allowed[provider]; ok {
+			filtered[provider] = entry
+		}
+	}
+	return filtered
 }
 
 func shellArgsFromEnv(name string) ([]string, error) {

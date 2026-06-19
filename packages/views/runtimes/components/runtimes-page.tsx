@@ -3,7 +3,6 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useDefaultLayout } from "react-resizable-panels";
 import {
-  Cloud,
   Monitor,
   Plus,
   Search,
@@ -30,7 +29,6 @@ import { useIsMobile } from "@multica/ui/hooks/use-mobile";
 import { cn } from "@multica/ui/lib/utils";
 import { PageHeader } from "../../layout/page-header";
 import { ConnectRemoteDialog } from "./connect-remote-dialog";
-import { CloudRuntimeDialog } from "./cloud-runtime-dialog";
 import { RuntimeProfilesDialog } from "./runtime-profiles-dialog";
 import { ProviderLogo } from "./provider-logo";
 import { RuntimeList, buildWorkloadIndex } from "./runtime-list";
@@ -72,8 +70,6 @@ interface RuntimesPageProps {
    * during the boot window. Web omits this.
    */
   bootstrapping?: boolean;
-  /** Web SaaS-only Cloud Runtime entrypoint. Defaults off for self-hosted builds. */
-  cloudRuntimeEnabled?: boolean;
 }
 
 // Re-render every 30s so derived health (recently_lost → offline transitions)
@@ -93,7 +89,6 @@ export function RuntimesPage({
   localMachineActions,
   hasLocalMachine,
   bootstrapping,
-  cloudRuntimeEnabled = false,
 }: RuntimesPageProps = {}) {
   const isLoading = useAuthStore((s) => s.isLoading);
   const { t } = useT("runtimes");
@@ -116,7 +111,6 @@ export function RuntimesPage({
     setSelectedMachineId(id);
   }, []);
   const [showConnectDialog, setShowConnectDialog] = useState(false);
-  const [showCloudRuntimeDialog, setShowCloudRuntimeDialog] = useState(false);
   const [pendingProfiles, setPendingProfiles] = useState<PendingRuntimeProfile[]>(
     [],
   );
@@ -252,8 +246,6 @@ export function RuntimesPage({
       <PageHeaderBar
         totalCount={totalCount}
         onConnectRemote={() => setShowConnectDialog(true)}
-        cloudRuntimeEnabled={cloudRuntimeEnabled}
-        onOpenCloudRuntime={() => setShowCloudRuntimeDialog(true)}
         canManageProfiles={canManageProfiles}
         onAddRuntime={() => setShowProfilesDialog(true)}
       />
@@ -332,9 +324,6 @@ export function RuntimesPage({
       {showConnectDialog && (
         <ConnectRemoteDialog onClose={() => setShowConnectDialog(false)} />
       )}
-      {cloudRuntimeEnabled && showCloudRuntimeDialog && (
-        <CloudRuntimeDialog onClose={() => setShowCloudRuntimeDialog(false)} />
-      )}
       {canManageProfiles && showProfilesDialog && (
         <RuntimeProfilesDialog
           wsId={wsId}
@@ -359,15 +348,11 @@ export function RuntimesPage({
 function PageHeaderBar({
   totalCount,
   onConnectRemote,
-  cloudRuntimeEnabled,
-  onOpenCloudRuntime,
   canManageProfiles,
   onAddRuntime,
 }: {
   totalCount: number;
   onConnectRemote: () => void;
-  cloudRuntimeEnabled: boolean;
-  onOpenCloudRuntime: () => void;
   canManageProfiles: boolean;
   onAddRuntime: () => void;
 }) {
@@ -400,21 +385,6 @@ function PageHeaderBar({
             <Plus className="h-3.5 w-3.5" />
             <span className="hidden md:inline">
               {t(($) => $.profiles.cta)}
-            </span>
-          </Button>
-        )}
-        {cloudRuntimeEnabled && (
-          <Button
-            type="button"
-            size="sm"
-            variant="outline"
-            className="h-8 w-8 gap-1 px-0 md:w-auto md:px-2.5"
-            aria-label={t(($) => $.cloud_runtime.action)}
-            onClick={onOpenCloudRuntime}
-          >
-            <Cloud className="h-3.5 w-3.5" />
-            <span className="hidden md:inline">
-              {t(($) => $.cloud_runtime.action)}
             </span>
           </Button>
         )}
@@ -597,7 +567,7 @@ function MachineRow({
   onClick: () => void;
 }) {
   const { t } = useT("runtimes");
-  const Icon = machine.section === "cloud" ? Cloud : Monitor;
+  const Icon = Monitor;
   const busyCount = machine.runningCount + machine.queuedCount;
   const runtimeCount = t(($) => $.machine.runtime_count, {
     count: machine.runtimes.length,

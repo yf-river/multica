@@ -112,22 +112,8 @@ import type {
   Squad,
   SquadMember,
   SquadMemberStatusListResponse,
-  BillingBalance,
-  BillingTransactionsPage,
-  BillingBatchesPage,
-  BillingTopupsPage,
-  BillingPriceTier,
-  CreateBillingCheckoutSessionRequest,
-  CreateBillingCheckoutSessionResponse,
-  BillingCheckoutSessionStatus,
-  CreateBillingPortalSessionResponse,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
-import type {
-  CloudRuntimeNode,
-  CreateCloudRuntimeNodeRequest,
-  ListCloudRuntimeNodesParams,
-} from "../runtimes/cloud-runtime";
 import { type Logger, noopLogger } from "../logger";
 import { createRequestId } from "../utils";
 import { getCurrentSlug } from "../platform/workspace-storage";
@@ -140,8 +126,6 @@ import {
   ChildIssuesResponseSchema,
   CommentsListSchema,
   CommentTriggerPreviewSchema,
-  CloudRuntimeNodeListSchema,
-  CloudRuntimeNodeSchema,
   CreateAgentFromTemplateResponseSchema,
   DashboardAgentRunTimeListSchema,
   DashboardRunTimeDailyListSchema,
@@ -151,8 +135,6 @@ import {
   EMPTY_AGENT_TEMPLATE_SUMMARY_LIST,
   EMPTY_APP_CONFIG,
   EMPTY_ATTACHMENT,
-  EMPTY_CLOUD_RUNTIME_NODE,
-  EMPTY_CLOUD_RUNTIME_NODE_LIST,
   EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
   EMPTY_GROUPED_ISSUES_RESPONSE,
   EMPTY_LIST_ISSUES_RESPONSE,
@@ -181,22 +163,6 @@ import {
   TimelineEntriesSchema,
   UserSchema,
   WebhookDeliveryResponseSchema,
-  BillingBalanceSchema,
-  BillingTransactionsPageSchema,
-  BillingBatchesPageSchema,
-  BillingTopupsPageSchema,
-  BillingPriceTierListSchema,
-  CreateBillingCheckoutSessionResponseSchema,
-  BillingCheckoutSessionStatusSchema,
-  CreateBillingPortalSessionResponseSchema,
-  EMPTY_BILLING_BALANCE,
-  EMPTY_BILLING_TRANSACTIONS_PAGE,
-  EMPTY_BILLING_BATCHES_PAGE,
-  EMPTY_BILLING_TOPUPS_PAGE,
-  EMPTY_BILLING_PRICE_TIER_LIST,
-  EMPTY_CREATE_BILLING_CHECKOUT_SESSION_RESPONSE,
-  EMPTY_BILLING_CHECKOUT_SESSION_STATUS,
-  EMPTY_CREATE_BILLING_PORTAL_SESSION_RESPONSE,
   EMPTY_CANCEL_TASK_RESPONSE,
 } from "./schemas";
 
@@ -436,19 +402,6 @@ export class ApiClient {
     });
     return parseWithFallback(raw, UserSchema, EMPTY_USER, {
       endpoint: "POST /api/me/onboarding/complete",
-    });
-  }
-
-  async joinCloudWaitlist(payload: {
-    email: string;
-    reason?: string;
-  }): Promise<User> {
-    const raw = await this.fetch<unknown>("/api/me/onboarding/cloud-waitlist", {
-      method: "POST",
-      body: JSON.stringify(payload),
-    });
-    return parseWithFallback(raw, UserSchema, EMPTY_USER, {
-      endpoint: "POST /api/me/onboarding/cloud-waitlist",
     });
   }
 
@@ -895,178 +848,6 @@ export class ApiClient {
     if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
     if (params?.owner) search.set("owner", params.owner);
     return this.fetch(`/api/runtimes?${search}`);
-  }
-
-  async listCloudRuntimeNodes(
-    params?: ListCloudRuntimeNodesParams,
-  ): Promise<CloudRuntimeNode[]> {
-    const search = new URLSearchParams();
-    if (params?.limit !== undefined) search.set("limit", String(params.limit));
-    if (params?.offset !== undefined) search.set("offset", String(params.offset));
-    const query = search.toString();
-    const raw = await this.fetch<unknown>(
-      `/api/cloud-runtime/nodes${query ? `?${query}` : ""}`,
-    );
-    return parseWithFallback(
-      raw,
-      CloudRuntimeNodeListSchema,
-      EMPTY_CLOUD_RUNTIME_NODE_LIST,
-      { endpoint: "GET /api/cloud-runtime/nodes" },
-    );
-  }
-
-  async createCloudRuntimeNode(
-    data: CreateCloudRuntimeNodeRequest,
-  ): Promise<CloudRuntimeNode> {
-    const res = await this.fetchRaw("/api/cloud-runtime/nodes", {
-      method: "POST",
-      body: JSON.stringify(data),
-      extraHeaders: { "Content-Type": "application/json" },
-    });
-    const raw = await res.json() as unknown;
-    return parseWithFallback(
-      raw,
-      CloudRuntimeNodeSchema,
-      EMPTY_CLOUD_RUNTIME_NODE,
-      { endpoint: "POST /api/cloud-runtime/nodes" },
-    );
-  }
-
-  async deleteCloudRuntimeNode(instanceId: string): Promise<void> {
-    await this.fetchRaw("/api/cloud-runtime/nodes", {
-      method: "DELETE",
-      body: JSON.stringify({ instance_id: instanceId }),
-      extraHeaders: { "Content-Type": "application/json" },
-    });
-  }
-
-  // ---------------------------------------------------------------------
-  // Cloud Billing — proxies to multica-cloud /api/v1/billing/*. The
-  // multica-api server stamps X-User-ID and forwards bytes; everything
-  // here is upstream-shaped. See packages/core/types/billing.ts for the
-  // response field documentation.
-  // ---------------------------------------------------------------------
-
-  async getCloudBillingBalance(): Promise<BillingBalance> {
-    const raw = await this.fetch<unknown>("/api/cloud-billing/balance");
-    return parseWithFallback(raw, BillingBalanceSchema, EMPTY_BILLING_BALANCE, {
-      endpoint: "GET /api/cloud-billing/balance",
-    });
-  }
-
-  async listCloudBillingTransactions(
-    params?: { page?: number; page_size?: number },
-  ): Promise<BillingTransactionsPage> {
-    const search = new URLSearchParams();
-    if (params?.page !== undefined) search.set("page", String(params.page));
-    if (params?.page_size !== undefined) search.set("page_size", String(params.page_size));
-    const query = search.toString();
-    const raw = await this.fetch<unknown>(
-      `/api/cloud-billing/transactions${query ? `?${query}` : ""}`,
-    );
-    return parseWithFallback(
-      raw,
-      BillingTransactionsPageSchema,
-      EMPTY_BILLING_TRANSACTIONS_PAGE,
-      { endpoint: "GET /api/cloud-billing/transactions" },
-    );
-  }
-
-  async listCloudBillingBatches(
-    params?: { page?: number; page_size?: number },
-  ): Promise<BillingBatchesPage> {
-    const search = new URLSearchParams();
-    if (params?.page !== undefined) search.set("page", String(params.page));
-    if (params?.page_size !== undefined) search.set("page_size", String(params.page_size));
-    const query = search.toString();
-    const raw = await this.fetch<unknown>(
-      `/api/cloud-billing/batches${query ? `?${query}` : ""}`,
-    );
-    return parseWithFallback(
-      raw,
-      BillingBatchesPageSchema,
-      EMPTY_BILLING_BATCHES_PAGE,
-      { endpoint: "GET /api/cloud-billing/batches" },
-    );
-  }
-
-  async listCloudBillingTopups(
-    params?: { page?: number; page_size?: number },
-  ): Promise<BillingTopupsPage> {
-    const search = new URLSearchParams();
-    if (params?.page !== undefined) search.set("page", String(params.page));
-    if (params?.page_size !== undefined) search.set("page_size", String(params.page_size));
-    const query = search.toString();
-    const raw = await this.fetch<unknown>(
-      `/api/cloud-billing/topups${query ? `?${query}` : ""}`,
-    );
-    return parseWithFallback(
-      raw,
-      BillingTopupsPageSchema,
-      EMPTY_BILLING_TOPUPS_PAGE,
-      { endpoint: "GET /api/cloud-billing/topups" },
-    );
-  }
-
-  async listCloudBillingPriceTiers(): Promise<BillingPriceTier[]> {
-    const raw = await this.fetch<unknown>("/api/cloud-billing/price-tiers");
-    return parseWithFallback(
-      raw,
-      BillingPriceTierListSchema,
-      EMPTY_BILLING_PRICE_TIER_LIST,
-      { endpoint: "GET /api/cloud-billing/price-tiers" },
-    );
-  }
-
-  async createCloudBillingCheckoutSession(
-    data: CreateBillingCheckoutSessionRequest,
-  ): Promise<CreateBillingCheckoutSessionResponse> {
-    const res = await this.fetchRaw("/api/cloud-billing/checkout-sessions", {
-      method: "POST",
-      body: JSON.stringify(data),
-      extraHeaders: { "Content-Type": "application/json" },
-    });
-    const raw = (await res.json()) as unknown;
-    return parseWithFallback(
-      raw,
-      CreateBillingCheckoutSessionResponseSchema,
-      EMPTY_CREATE_BILLING_CHECKOUT_SESSION_RESPONSE,
-      { endpoint: "POST /api/cloud-billing/checkout-sessions" },
-    );
-  }
-
-  async getCloudBillingCheckoutSession(
-    sessionId: string,
-  ): Promise<BillingCheckoutSessionStatus> {
-    // Stripe session ids are `cs_<base62>` so they're URL-safe by
-    // construction; encodeURIComponent is paranoia for the case where a
-    // future Stripe format change adds a non-alphanumeric character. The
-    // server has its own allow-list rejection for unsafe ids.
-    const raw = await this.fetch<unknown>(
-      `/api/cloud-billing/checkout-sessions/${encodeURIComponent(sessionId)}`,
-    );
-    return parseWithFallback(
-      raw,
-      BillingCheckoutSessionStatusSchema,
-      EMPTY_BILLING_CHECKOUT_SESSION_STATUS,
-      { endpoint: "GET /api/cloud-billing/checkout-sessions/{sessionId}" },
-    );
-  }
-
-  async createCloudBillingPortalSession(): Promise<CreateBillingPortalSessionResponse> {
-    const res = await this.fetchRaw("/api/cloud-billing/portal-sessions", {
-      method: "POST",
-      // Body is intentionally absent — the upstream endpoint requires no
-      // payload today. fetchRaw with no body skips the Content-Type
-      // default; that's fine because there's nothing to declare.
-    });
-    const raw = (await res.json()) as unknown;
-    return parseWithFallback(
-      raw,
-      CreateBillingPortalSessionResponseSchema,
-      EMPTY_CREATE_BILLING_PORTAL_SESSION_RESPONSE,
-      { endpoint: "POST /api/cloud-billing/portal-sessions" },
-    );
   }
 
   async deleteRuntime(runtimeId: string): Promise<void> {

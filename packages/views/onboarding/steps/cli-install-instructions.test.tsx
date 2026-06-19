@@ -20,6 +20,10 @@ describe("CliInstallInstructions", () => {
       </I18nProvider>,
     );
 
-    expect(screen.getByText("multica setup")).toHaveClass(...ligatureClasses);
+    expect(
+      screen.getByText(
+        "multica setup self-host --server-url http://localhost:3000 --app-url http://localhost:3000",
+      ),
+    ).toHaveClass(...ligatureClasses);
   });
 });

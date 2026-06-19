@@ -15,10 +15,6 @@ import (
 // Most provider boots land in 5–60s; the long tail catches stuck pulls.
 var runtimeReadyBuckets = []float64{1, 2.5, 5, 10, 30, 60, 120, 300, 600}
 
-// cloudRuntimeRequestBuckets covers outbound Fleet/Gateway calls from sub-100ms
-// (status pings) to ~30s (provision). Aligns with cloudruntime.defaultTimeout.
-var cloudRuntimeRequestBuckets = []float64{0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 20, 30}
-
 // prMergeSecondsBuckets covers PR-open → PR-merged latency from minutes to weeks.
 var prMergeSecondsBuckets = []float64{
 	300, 900, 1800,
@@ -30,37 +26,33 @@ var prMergeSecondsBuckets = []float64{
 // so business.go (PR2 task lifecycle / LLM) stays focused; both are exposed
 // through the same BusinessMetrics receiver and the same Collectors() slice.
 type businessEventMetrics struct {
-	signup                          *prometheus.CounterVec
-	workspaceCreated                *prometheus.CounterVec
-	teamInviteSent                  *prometheus.CounterVec
-	teamInviteAccepted              *prometheus.CounterVec
-	onboardingStarted               *prometheus.CounterVec
-	onboardingQuestionnaireSubmit   *prometheus.CounterVec
-	onboardingCompleted             *prometheus.CounterVec
-	cloudWaitlistJoined             *prometheus.CounterVec
-	issueCreated                    *prometheus.CounterVec
-	chatMessageSent                 *prometheus.CounterVec
-	agentCreated                    *prometheus.CounterVec
-	squadCreated                    *prometheus.CounterVec
-	autopilotCreated                *prometheus.CounterVec
-	issueExecuted                   *prometheus.CounterVec
-	runtimeRegistered               *prometheus.CounterVec
-	runtimeReady                    *prometheus.CounterVec
-	runtimeReadySeconds             *prometheus.HistogramVec
-	runtimeFailed                   *prometheus.CounterVec
-	runtimeOffline                  *prometheus.CounterVec
-	daemonWSMessageReceived         *prometheus.CounterVec
-	autopilotRunStarted             *prometheus.CounterVec
-	autopilotRunTerminal            *prometheus.CounterVec
-	autopilotRunSkipped             *prometheus.CounterVec
-	webhookDelivery                 *prometheus.CounterVec
-	githubEventReceived             *prometheus.CounterVec
-	githubPRReview                  *prometheus.CounterVec
-	githubPRMergeSeconds            prometheus.Histogram
-	cloudRuntimeRequest             *prometheus.CounterVec
-	cloudRuntimeRequestDurationSecs *prometheus.HistogramVec
-	feedbackSubmitted               *prometheus.CounterVec
-	contactSalesSubmitted           *prometheus.CounterVec
+	signup                        *prometheus.CounterVec
+	workspaceCreated              *prometheus.CounterVec
+	teamInviteSent                *prometheus.CounterVec
+	teamInviteAccepted            *prometheus.CounterVec
+	onboardingStarted             *prometheus.CounterVec
+	onboardingQuestionnaireSubmit *prometheus.CounterVec
+	onboardingCompleted           *prometheus.CounterVec
+	issueCreated                  *prometheus.CounterVec
+	chatMessageSent               *prometheus.CounterVec
+	agentCreated                  *prometheus.CounterVec
+	squadCreated                  *prometheus.CounterVec
+	autopilotCreated              *prometheus.CounterVec
+	issueExecuted                 *prometheus.CounterVec
+	runtimeRegistered             *prometheus.CounterVec
+	runtimeReady                  *prometheus.CounterVec
+	runtimeReadySeconds           *prometheus.HistogramVec
+	runtimeFailed                 *prometheus.CounterVec
+	runtimeOffline                *prometheus.CounterVec
+	daemonWSMessageReceived       *prometheus.CounterVec
+	autopilotRunStarted           *prometheus.CounterVec
+	autopilotRunTerminal          *prometheus.CounterVec
+	autopilotRunSkipped           *prometheus.CounterVec
+	webhookDelivery               *prometheus.CounterVec
+	githubEventReceived           *prometheus.CounterVec
+	githubPRReview                *prometheus.CounterVec
+	githubPRMergeSeconds          prometheus.Histogram
+	feedbackSubmitted             *prometheus.CounterVec
 }
 
 func newBusinessEventMetrics() *businessEventMetrics {
@@ -93,10 +85,6 @@ func newBusinessEventMetrics() *businessEventMetrics {
 			Name: "multica_onboarding_completed_total",
 			Help: "Total onboarding flows completed.",
 		}, metricLabels("multica_onboarding_completed_total")),
-		cloudWaitlistJoined: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "multica_cloud_waitlist_joined_total",
-			Help: "Total users that joined the cloud waitlist.",
-		}, metricLabels("multica_cloud_waitlist_joined_total")),
 		issueCreated: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "multica_issue_created_total",
 			Help: "Total issues created (any source).",
@@ -175,23 +163,10 @@ func newBusinessEventMetrics() *businessEventMetrics {
 			Help:    "Time from PR opened to merged (seconds).",
 			Buckets: prMergeSecondsBuckets,
 		}),
-		cloudRuntimeRequest: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "multica_cloudruntime_request_total",
-			Help: "Total outbound cloud runtime requests by op and status bucket.",
-		}, metricLabels("multica_cloudruntime_request_total")),
-		cloudRuntimeRequestDurationSecs: prometheus.NewHistogramVec(prometheus.HistogramOpts{
-			Name:    "multica_cloudruntime_request_duration_seconds",
-			Help:    "Outbound cloud runtime request duration (seconds).",
-			Buckets: cloudRuntimeRequestBuckets,
-		}, metricLabels("multica_cloudruntime_request_duration_seconds")),
 		feedbackSubmitted: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "multica_feedback_submitted_total",
 			Help: "Total in-app feedback submissions.",
 		}, metricLabels("multica_feedback_submitted_total")),
-		contactSalesSubmitted: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "multica_contact_sales_submitted_total",
-			Help: "Total contact-sales inquiries submitted.",
-		}, metricLabels("multica_contact_sales_submitted_total")),
 	}
 }
 
@@ -207,7 +182,6 @@ func (e *businessEventMetrics) collectors() []prometheus.Collector {
 		e.onboardingStarted,
 		e.onboardingQuestionnaireSubmit,
 		e.onboardingCompleted,
-		e.cloudWaitlistJoined,
 		e.issueCreated,
 		e.chatMessageSent,
 		e.agentCreated,
@@ -227,10 +201,7 @@ func (e *businessEventMetrics) collectors() []prometheus.Collector {
 		e.githubEventReceived,
 		e.githubPRReview,
 		e.githubPRMergeSeconds,
-		e.cloudRuntimeRequest,
-		e.cloudRuntimeRequestDurationSecs,
 		e.feedbackSubmitted,
-		e.contactSalesSubmitted,
 	}
 }
 
@@ -280,8 +251,6 @@ func (m *BusinessMetrics) IncForEvent(ev analytics.Event) {
 		m.events.onboardingQuestionnaireSubmit.WithLabelValues().Inc()
 	case analytics.EventOnboardingCompleted:
 		m.events.onboardingCompleted.WithLabelValues(NormalizeOnboardingPath(stringProp(ev.Properties, "completion_path"))).Inc()
-	case analytics.EventCloudWaitlistJoined:
-		m.events.cloudWaitlistJoined.WithLabelValues().Inc()
 	case analytics.EventIssueCreated:
 		m.events.issueCreated.WithLabelValues(
 			NormalizeTaskSource(stringProp(ev.Properties, "source")),
@@ -346,8 +315,6 @@ func (m *BusinessMetrics) IncForEvent(ev analytics.Event) {
 			NormalizeFeedbackKind(stringProp(ev.Properties, "kind")),
 			NormalizePlatform(stringProp(ev.Properties, "platform")),
 		).Inc()
-	case analytics.EventContactSalesSubmitted:
-		m.events.contactSalesSubmitted.WithLabelValues(NormalizeContactSalesSource(stringProp(ev.Properties, "form_source"))).Inc()
 	default:
 		// agent_task_* lifecycle telemetry is recorded straight to Prometheus
 		// via the typed BusinessMetrics.RecordTask* methods (they take
@@ -407,20 +374,6 @@ func (m *BusinessMetrics) ObserveGithubPRMergeSeconds(seconds float64) {
 		return
 	}
 	m.events.githubPRMergeSeconds.Observe(seconds)
-}
-
-// RecordCloudRuntimeRequest counts an outbound Fleet/Gateway call by op +
-// status bucket and observes its duration.
-func (m *BusinessMetrics) RecordCloudRuntimeRequest(op, status string, durationSeconds float64) {
-	if m == nil || m.events == nil {
-		return
-	}
-	op = NormalizeCloudRuntimeOp(op)
-	status = NormalizeCloudRuntimeStatus(status)
-	m.events.cloudRuntimeRequest.WithLabelValues(op, status).Inc()
-	if durationSeconds >= 0 {
-		m.events.cloudRuntimeRequestDurationSecs.WithLabelValues(op).Observe(durationSeconds)
-	}
 }
 
 // RecordDaemonWSMessageReceived counts an inbound daemon WS message by handler kind.

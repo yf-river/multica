@@ -22,7 +22,7 @@ The legacy `packages/views/locales/glossary.md` is now a stub redirecting to the
 Multica is an AI-native task management platform — like Linear, but with AI agents as first-class citizens.
 
 - Agents can be assigned issues, create issues, comment, and change status
-- Supports local (daemon) and cloud agent runtimes
+- Supports local daemon and fixed-machine agent runtimes
 - Built for 2-10 person AI-native teams
 
 ## Architecture
@@ -32,7 +32,6 @@ Multica is an AI-native task management platform — like Linear, but with AI ag
 - `server/` — Go backend (Chi router, sqlc for DB, gorilla/websocket for real-time)
 - `apps/web/` — Next.js frontend (App Router)
 - `apps/desktop/` — Electron desktop app (electron-vite)
-- `apps/mobile/` — Expo / React Native iOS app. See `apps/mobile/CLAUDE.md`.
 - `packages/core/` — Headless business logic (zero react-dom)
 - `packages/ui/` — Atomic UI components (zero business logic)
 - `packages/views/` — Shared business pages/components (zero next/* imports, zero react-router imports)
@@ -77,11 +76,6 @@ The architecture relies on a strict split between server state and client state.
 The monorepo splits into two share zones:
 
 - **Web and desktop** share business logic, components, hooks, stores, and views through `packages/core/`, `packages/ui/`, and `packages/views/`. Existing model — keep using it.
-- **Mobile (`apps/mobile/`) is independent.** It shares only **types and pure functions** from `@multica/core/`, with `import type` for types (zero runtime coupling). UI, state, hooks, providers, i18n, React version, build pipeline, release cadence — all mobile-owned.
-
-Mobile is locked to the React version that Expo SDK / React Native ships (which lags React main by 6-12 months). Coupling mobile to the root `catalog:` React would block mobile from upgrading on its own schedule.
-
-See `apps/mobile/CLAUDE.md` for the mobile rules and tech-stack baseline.
 
 ## Commands
 
@@ -124,16 +118,6 @@ cd server && go test ./internal/handler/ -run TestName
 
 # Run a single E2E test (requires backend + frontend running)
 pnpm exec playwright test e2e/tests/specific-test.spec.ts
-
-# Mobile (Expo) — two environments only: dev and staging
-pnpm dev:mobile                  # Metro, dev env       (reads apps/mobile/.env.development.local)
-pnpm dev:mobile:staging          # Metro, staging env   (reads apps/mobile/.env.staging)
-pnpm ios:mobile                  # Native build + install dev-client to iOS Simulator, dev env
-pnpm ios:mobile:staging          # Native build + install dev-client to iOS Simulator, staging env
-pnpm ios:mobile:device           # Native build + install dev-client to USB iPhone, dev env
-pnpm ios:mobile:device:staging   # Native build + install dev-client to USB iPhone, staging env
-# Daily flow: run `pnpm dev:mobile:staging` (or :dev). Only re-run `ios:mobile*` when
-# native code or any expo-*/react-native-* dependency changes (lockfile drift counts).
 
 # Desktop build & package
 pnpm --filter @multica/desktop build      # Compile TS → JS (reads .env.production)
@@ -210,8 +194,6 @@ Every workspace (`apps/` and `packages/` directories) must explicitly declare al
 
 - Use `"pkg": "catalog:"` to reference the shared version from `pnpm-workspace.yaml`.
 - CI enforces this via `eslint-plugin-import-x/no-extraneous-dependencies`.
-- Exception: `apps/mobile/` uses pinned versions (not `catalog:`) for packages tied to its own React/Expo version.
-
 ### Package Boundary Rules
 
 These are hard constraints. Violating them breaks the cross-platform architecture:
@@ -252,10 +234,6 @@ Web and desktop share the same CSS foundation from `packages/ui/styles/`.
 - **Design tokens** → use semantic tokens (`bg-background`, `text-muted-foreground`). Never use hardcoded Tailwind colors (`text-red-500`, `bg-gray-100`).
 - **Shared styles** → `packages/ui/styles/`. Never duplicate scrollbar styling, keyframes, or base layer rules in app CSS.
 - **`@source` directives** → both apps scan shared packages so Tailwind sees all class names.
-
-## Mobile-specific Rules
-
-Rules for `apps/mobile/` live in `apps/mobile/CLAUDE.md`. Read it before touching anything in `apps/mobile/` — it covers what may be imported from `@multica/core/`, the React version policy, the build/release pipeline, and the locked tech-stack baseline.
 
 ## Desktop-specific Rules
 

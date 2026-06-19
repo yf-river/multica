@@ -121,19 +121,6 @@
     "step1_label": "Multica CLI をインストール",
     "step2_label": "デーモンを起動"
   },
-  "cloud_waitlist": {
-    "intro_main": "クラウドランタイムはまだ提供されていません。メールアドレスを残していただければ、準備ができ次第ご連絡します。",
-    "intro_warning": "注意: ランタイムがないとエージェントはタスクを実行できません。今スキップすると、戻ってきてインストールするまでワークスペースは読み取り専用になります。",
-    "email_label": "メールアドレス",
-    "email_placeholder": "you@work.com",
-    "reason_label": "クラウドを使いたい理由",
-    "optional": "任意",
-    "reason_placeholder": "例: エージェントを 24 時間稼働させたい、チームが複数のデバイスで作業している など。",
-    "join": "ウェイトリストに登録",
-    "on_list": "登録済みです",
-    "success_toast": "ウェイトリストに登録しました。クラウドランタイムが利用可能になったらメールでお知らせします。",
-    "failed_toast": "ウェイトリストに登録できませんでした"
-  },
   "first_issue": {
     "error_title": "問題が発生しました",
     "retry": "再試行",
@@ -331,9 +318,6 @@
     "empty_skip_title": "今はスキップ",
     "empty_skip_subtitle": "読み取り専用モードでワークスペースに入ります。このコンピュータにエージェントランタイムが接続されるまでエージェントはタスクを実行できませんが、閲覧、計画、チームメイトの招待は可能です。",
     "empty_skip_action": "スキップ",
-    "empty_waitlist_title": "クラウドコンピュータを使う",
-    "empty_waitlist_subtitle": "クラウドでコンピュータを動かします。まだ提供されていません。",
-    "empty_waitlist_action": "近日公開",
     "skip": "今はスキップ",
     "refresh": "更新",
     "refreshing": "更新中…",

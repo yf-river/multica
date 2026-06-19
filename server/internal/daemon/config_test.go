@@ -37,6 +37,32 @@ func TestPatternsFromEnv_DropsSeparatorBearingEntries(t *testing.T) {
 	}
 }
 
+func TestFilterAgentsByProviderEnv_DefaultKeepsAll(t *testing.T) {
+	t.Setenv("MULTICA_AGENT_PROVIDERS", "")
+	agents := map[string]AgentEntry{
+		"claude":    {Path: "claude"},
+		"codebuddy": {Path: "codebuddy"},
+	}
+	got := filterAgentsByProviderEnv(agents)
+	if !reflect.DeepEqual(got, agents) {
+		t.Fatalf("expected all agents, got %v", agentKeys(got))
+	}
+}
+
+func TestFilterAgentsByProviderEnv_AllowsSelectedProviders(t *testing.T) {
+	t.Setenv("MULTICA_AGENT_PROVIDERS", " codebuddy,CLAUDE ")
+	agents := map[string]AgentEntry{
+		"claude":    {Path: "claude"},
+		"codebuddy": {Path: "codebuddy"},
+		"codex":     {Path: "codex"},
+	}
+	got := filterAgentsByProviderEnv(agents)
+	want := []string{"claude", "codebuddy"}
+	if keys := agentKeys(got); !reflect.DeepEqual(keys, want) {
+		t.Fatalf("expected %v, got %v", want, keys)
+	}
+}
+
 func TestIsSafeAgentName(t *testing.T) {
 	for _, tc := range []struct {
 		in   string

@@ -68,19 +68,6 @@ describe("isSelfHealingRuntime", () => {
     ).toBe(false);
   });
 
-  it("treats cloud runtimes as safe to delete regardless of status", () => {
-    // Cloud workers are managed by Fleet, not a self-restarting local daemon.
-    expect(
-      isSelfHealingRuntime(
-        makeRuntime({ runtime_mode: "cloud", status: "online" }),
-      ),
-    ).toBe(false);
-    expect(
-      isSelfHealingRuntime(
-        makeRuntime({ runtime_mode: "cloud", status: "offline" }),
-      ),
-    ).toBe(false);
-  });
 });
 
 describe("estimateCost", () => {

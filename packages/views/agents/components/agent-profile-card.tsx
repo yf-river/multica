@@ -154,7 +154,7 @@ function AgentAvailabilityLine({
 
 // Compact runtime row — wifi-style health icon + runtime name. The icon
 // shape (Wifi / WifiOff) plus colour reflects the live runtime health
-// derived from runtime + clock; cloud runtimes always read as online.
+// derived from runtime + clock.
 // This is duplicate signal with the availability dot above by design —
 // the dot is the agent's effective availability (which mostly tracks
 // runtime health), and seeing the same wifi icon next to the runtime

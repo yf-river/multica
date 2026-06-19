@@ -40,13 +40,8 @@ func TestNormalizePR3LabelsCollapseUnknownValues(t *testing.T) {
 		{"github_action_empty", metrics.NormalizeGithubAction, "", "none", "none"},
 		{"github_action_unknown", metrics.NormalizeGithubAction, "rerequested_by_user", "other", "other"},
 		{"github_pr_review_unknown", metrics.NormalizeGithubPRReviewResult, "skipped", "other", "other"},
-		{"cloudruntime_op_unknown", metrics.NormalizeCloudRuntimeOp, "lifecycle_audit", "other", "other"},
-		{"cloudruntime_status_2xx_string", metrics.NormalizeCloudRuntimeStatus, "200", "ok", "error"},
-		{"cloudruntime_status_5xx_string", metrics.NormalizeCloudRuntimeStatus, "503", "5xx", "error"},
-		{"cloudruntime_status_garbage", metrics.NormalizeCloudRuntimeStatus, "lol", "error", "error"},
 		{"daemon_ws_kind_unknown", metrics.NormalizeDaemonWSKind, "future_event", "other", "other"},
 		{"feedback_kind_unknown", metrics.NormalizeFeedbackKind, "rant", "other", "other"},
-		{"contact_sales_source_unknown", metrics.NormalizeContactSalesSource, "homepage_modal", "other", "other"},
 	}
 
 	for _, tt := range tests {

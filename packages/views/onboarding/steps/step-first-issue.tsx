@@ -35,9 +35,7 @@ export function StepFirstIssue({
   /** Called after `onboarded_at` is set server-side. Parent handles
    *  navigation to the workspace landing page. */
   onFinished: () => void;
-  /** Which exit label the server should record on `onboarding_completed`.
-   *  Computed in the parent shell where runtime + waitlist state are
-   *  both in scope. */
+  /** Which exit label the server should record on `onboarding_completed`. */
   completionPath: OnboardingCompletionPath;
   workspaceId?: string;
 }) {
