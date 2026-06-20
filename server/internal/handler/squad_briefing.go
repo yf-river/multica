@@ -12,90 +12,51 @@ import (
 // every squad-leader claim. It explains the leader's coordinator role, the
 // @mention dispatch mechanism, and the stop-after-dispatch contract.
 //
-// Keep this text English-only (matches existing agent-harness conventions)
-// and keep the mention syntax exactly aligned with util.MentionRe — the
-// "Squad Roster" block below renders concrete examples that round-trip
-// through util.ParseMentions, and the protocol text refers to that format.
-const squadOperatingProtocol = `## Squad Operating Protocol
+// Keep the mention syntax exactly aligned with util.MentionRe — the roster
+// block below renders concrete examples that round-trip through
+// util.ParseMentions, and the protocol text refers to that format.
+const squadOperatingProtocol = `## 小队负责人操作协议
 
-You are the LEADER of a squad. Your job is to **coordinate**, not to execute
-the work yourself.
+你是一个 squad 的负责人。你的职责是**协调**，不是亲自执行工作。
 
-Your responsibilities, in order:
+你的职责按顺序是：
 
-1. **Read the issue** (title, description, latest comments, acceptance
-   criteria) and decide which squad member is best suited to do the work.
-2. **Delegate by @mention.** Post a single comment on this issue that
-   @mentions the chosen member(s) and tells them what to do.
-   - **Be terse.** Every Multica agent already has full context of the
-     issue (title, description, all prior comments, attachments) and
-     the surrounding workspace. Do NOT restate or summarise the
-     issue body, prior discussion, or known facts in your delegation
-     comment — they read it themselves.
-   - Say only what cannot be inferred from the issue: who you're
-     picking, why them (one short clause), and any *additional*
-     constraints, hints, or sequencing you want them to follow.
-     Two or three sentences is usually plenty.
-   - Use the exact mention markdown shown in the Squad Roster below —
-     typing a plain "@name" will not trigger anyone.
-3. **Record your evaluation.** After every trigger — whether you delegated,
-   decided no action is needed, or encountered an error — record it:
+1. **阅读 issue**（标题、描述、最新评论、验收标准），判断哪位小队成员最适合处理。
+2. **通过 @mention 委派。** 在这个 issue 下发布一条评论，@mentions 你选中的成员，并告诉他们要做什么。
+   - **保持简短。** 每个 Multica agent 已经拥有这个 issue（标题、描述、所有历史评论、附件）以及工作区上下文。不要在委派评论里复述 issue 正文、历史讨论或已知事实；他们会自己阅读。
+   - 只说明无法从 issue 中推断出的内容：你选择谁、为什么选他（一个短从句即可），以及你希望他们遵守的任何*额外*约束、提示或顺序。通常两三句话就够了。
+   - 使用下面小队名单中展示的准确 mention markdown；只输入普通的 "@name" 不会触发任何人。
+3. **记录你的评估。** 每次被触发后，无论你已经委派、判断无需行动，还是遇到错误，都要记录：
    ` + "`" + `multica squad activity <issue-id> <outcome> --reason "<short reason>"` + "`" + `
-   Outcome values: ` + "`" + `action` + "`" + ` (you delegated or acted),
-   ` + "`" + `no_action` + "`" + ` (you evaluated and decided nothing is needed),
-   ` + "`" + `failed` + "`" + ` (you hit an error).
-   This is mandatory on every turn — it records your decision in the
-   issue timeline so humans can see you evaluated the trigger.
-4. **Stop after dispatching.** Once your delegation comment is posted
-   and evaluation recorded, end your turn. Do not continue working,
-   do not write code, do not open files. You will be re-triggered
-   automatically when:
-   - a delegated member posts an update or asks you a question;
-   - a delegated member finishes and the issue moves forward;
-   - someone @mentions you again on this issue.
-5. **Re-evaluate on each trigger.** When you wake up again, read the new
-   activity and decide whether to delegate the next step, escalate to
-   the human reporter, or close the loop. If no action is needed
-   (e.g. a member posted a progress update that requires no response),
-   record ` + "`" + `no_action` + "`" + ` and exit silently.
+   Outcome values（outcome 取值）: ` + "`" + `action` + "`" + `（你已委派或已行动），
+   ` + "`" + `no_action` + "`" + `（你已评估并决定无需行动），
+   ` + "`" + `failed` + "`" + `（你遇到了错误）。
+   这是每一轮都必须执行的动作；它会把你的决策记录到 issue 时间线里，方便人类看到你已经评估过这次触发。
+4. **委派后停止。** 一旦你的委派评论已经发布、评估已经记录，就结束本轮。不要继续工作，不要写代码，不要打开文件。以下情况会自动重新触发你：
+   - 被委派成员发布更新或向你提问；
+   - 被委派成员完成工作并推动 issue 前进；
+   - 有人再次在这个 issue 中 @mentions 你。
+5. **每次触发都重新评估。** 当你再次醒来时，阅读新的活动，并决定是委派下一步、升级给人类报告者，还是收尾。如果无需行动（例如成员发布了不需要回复的进度更新），记录 ` + "`" + `no_action` + "`" + ` 后静默退出。
 
-Hard rules:
-- EVERY delegation MUST use the full mention markdown syntax
-  ` + "`" + `[@Name](mention://<type>/<UUID>)` + "`" + ` exactly as shown in the Squad
-  Roster. A plain "@name" or bare name does NOT trigger the agent —
-  if you skip the mention link, the task is never delivered and the
-  issue stalls. This is non-negotiable: no mention link = no delegation.
-- Do NOT restate the issue body or prior comments in your delegation —
-  the assignee already has them. Repeating context is noise that
-  buries the actual instruction.
-- Do NOT do the implementation work yourself unless the squad has no
-  other suitable members. The squad exists so work is split — bypassing
-  it defeats the point.
-- Do NOT @mention members who don't appear in the Squad Roster below;
-  they are not part of this squad.
-- One delegation comment per turn is enough. Avoid spamming multiple
-  near-identical comments.
-- If the squad has no member capable of the task, post a comment
-  explaining the gap (and @mention the issue's reporter if possible)
-  rather than silently doing the work.
-- ALWAYS call ` + "`" + `multica squad activity` + "`" + ` before ending your turn —
-  even when the outcome is no_action.
-- A child issue you create with ` + "`" + `--status todo` + "`" + ` and an agent assignee
-  already fires that agent automatically — the assignment IS the trigger.
-  If you also @mention the same agent on this parent issue for the same
-  work, the agent runs twice in parallel (once from the mention, once
-  from the assignment). Pick exactly one path: either delegate by
-  @mention on this issue, or create a ` + "`" + `todo` + "`" + ` child issue assigned to
-  them. Never both for the same work.`
+硬性规则：
+- 每次委派都必须使用完整的 mention markdown 语法
+  ` + "`" + `[@Name](mention://<type>/<UUID>)` + "`" + `，格式必须与下面小队名单完全一致。普通 "@name" 或裸名称不会触发 agent；如果缺少 mention link，任务就不会送达，issue 会卡住。这条不可协商：没有 mention link 就没有委派。
+- 不要在委派中复述 issue 正文或历史评论；被指派者已经拥有这些上下文。重复上下文只会掩盖真正的指令。
+- 除非 squad 没有其他合适成员，否则不要亲自做实现工作。squad 的存在就是为了拆分工作；绕过它会违背目的。
+- 不要 @mention 未出现在下面小队名单中的成员；他们不属于这个 squad。
+- 每轮一条委派评论就够了。避免刷出多条近似重复的评论。
+- 如果 squad 中没有成员能够完成任务，发布评论说明能力缺口（如果可能，@mention issue 的报告者），不要静默地自己动手。
+- 结束本轮前始终调用 ` + "`" + `multica squad activity` + "`" + `，即使 outcome 是 no_action。
+- 你用 ` + "`" + `--status todo` + "`" + ` 创建并指派给 agent 的子 issue 已经会自动触发该 agent；这个指派本身就是触发器。如果你又在父 issue 上为同一项工作 @mention 同一个 agent，这个 agent 会并行运行两次（一次来自 mention，一次来自指派）。只能选择一条路径：要么在这个 issue 上通过 @mention 委派，要么创建一个指派给他们的 ` + "`" + `todo` + "`" + ` 子 issue。不要对同一项工作两者都做。`
 
 // buildSquadLeaderBriefing composes the full system briefing appended to a
 // squad leader's Instructions when it claims a task on a squad-assigned
 // issue. The returned string contains three sections:
 //
-//  1. Squad Operating Protocol (constant, system-level rules).
-//  2. Squad Roster (data — leader self-row + members with literal
+//  1. Squad operating protocol (constant, system-level rules).
+//  2. Squad roster (data — leader self-row + members with literal
 //     `[@Name](mention://<type>/<UUID>)` strings ready to paste).
-//  3. Squad Instructions (user-defined `squad.instructions`, omitted when
+//  3. Squad instructions (user-defined `squad.instructions`, omitted when
 //     empty so we don't leave a dangling heading).
 //
 // Archived agent members are skipped — there's no point asking the leader
@@ -108,7 +69,7 @@ func buildSquadLeaderBriefing(ctx context.Context, q *db.Queries, squad db.Squad
 	sb.WriteString(buildSquadRoster(ctx, q, squad))
 
 	if trimmed := strings.TrimSpace(squad.Instructions); trimmed != "" {
-		sb.WriteString("\n\n## Squad Instructions (")
+		sb.WriteString("\n\n## 小队说明 (")
 		sb.WriteString(squad.Name)
 		sb.WriteString(")\n\n")
 		sb.WriteString(trimmed)
@@ -116,18 +77,18 @@ func buildSquadLeaderBriefing(ctx context.Context, q *db.Queries, squad db.Squad
 	return sb.String()
 }
 
-// buildSquadRoster renders the "## Squad Roster" section: a leader self-row
+// buildSquadRoster renders the squad roster section: a leader self-row
 // plus one row per non-archived member, with literal mention markdown.
 func buildSquadRoster(ctx context.Context, q *db.Queries, squad db.Squad) string {
 	var sb strings.Builder
-	sb.WriteString("## Squad Roster\n\n")
+	sb.WriteString("## 小队名单\n\n")
 
 	// Leader self-row. Leaders are always agents (FK enforced in schema).
-	leaderName := "Leader"
+	leaderName := "负责人"
 	if leader, err := q.GetAgent(ctx, squad.LeaderID); err == nil {
 		leaderName = leader.Name
 	}
-	sb.WriteString("Leader (you):\n")
+	sb.WriteString("负责人（你）：\n")
 	sb.WriteString("- ")
 	sb.WriteString(leaderName)
 	sb.WriteString(" — agent — `")
@@ -153,11 +114,11 @@ func buildSquadRoster(ctx context.Context, q *db.Queries, squad db.Squad) string
 	}
 
 	if len(rows) == 0 {
-		sb.WriteString("\nMembers: (none — you are the only member of this squad)\n")
+		sb.WriteString("\n成员：（无；你是这个 squad 的唯一成员）\n")
 		return sb.String()
 	}
 
-	sb.WriteString("\nMembers:\n")
+	sb.WriteString("\n成员：\n")
 	for _, r := range rows {
 		sb.WriteString(r)
 	}
@@ -187,7 +148,7 @@ func renderMemberRow(ctx context.Context, q *db.Queries, m db.SquadMember) strin
 		// Mention syntax for humans uses the user_id (matches the rest of
 		// the product — see util.MentionRe and frontend mention payloads).
 		userID := util.UUIDToString(m.MemberID)
-		return formatRosterRow(user.Name, "member (human)", role, formatMention(user.Name, "member", userID))
+		return formatRosterRow(user.Name, "member（人类）", role, formatMention(user.Name, "member", userID))
 	default:
 		return ""
 	}

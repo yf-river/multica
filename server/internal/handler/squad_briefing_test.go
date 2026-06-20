@@ -22,8 +22,8 @@ import (
 func TestSquadOperatingProtocolWarnsAgainstDualTrigger(t *testing.T) {
 	compact := strings.Join(strings.Fields(squadOperatingProtocol), " ")
 	for _, want := range []string{
-		"--status todo` and an agent assignee already fires that agent automatically",
-		"Never both for the same work.",
+		"--status todo` 创建并指派给 agent 的子 issue 已经会自动触发该 agent",
+		"不要对同一项工作两者都做。",
 	} {
 		if !strings.Contains(compact, want) {
 			t.Errorf("expected squad operating protocol to contain %q\n--- protocol ---\n%s", want, squadOperatingProtocol)
@@ -127,11 +127,11 @@ func TestBuildSquadLeaderBriefing_FullSquad(t *testing.T) {
 	out := buildSquadLeaderBriefing(ctx, testHandler.Queries, squad)
 
 	for _, want := range []string{
-		"## Squad Operating Protocol",
-		"## Squad Roster",
-		"Leader (you):",
+		"## 小队负责人操作协议",
+		"## 小队名单",
+		"负责人（你）：",
 		leaderName,
-		"## Squad Instructions (Full Squad)",
+		"## 小队说明 (Full Squad)",
 		"Always write tests.",
 		"`[@Helper One](mention://agent/" + helper1 + ")`",
 		"`[@Helper Two](mention://agent/" + helper2 + ")`",
@@ -156,12 +156,12 @@ func TestBuildSquadLeaderBriefing_OnlyLeader(t *testing.T) {
 	squad := seedSquadForBriefing(t, leaderID, "Solo Squad", "")
 
 	out := buildSquadLeaderBriefing(ctx, testHandler.Queries, squad)
-	if !strings.Contains(out, "Members: (none — you are the only member of this squad)") {
+	if !strings.Contains(out, "成员：（无；你是这个 squad 的唯一成员）") {
 		t.Errorf("expected lone-leader fallback line, got:\n%s", out)
 	}
-	// No user instructions → no Squad Instructions section.
-	if strings.Contains(out, "## Squad Instructions") {
-		t.Errorf("expected no Squad Instructions section when empty, got:\n%s", out)
+	// No user instructions → no squad instructions section.
+	if strings.Contains(out, "## 小队说明") {
+		t.Errorf("expected no squad instructions section when empty, got:\n%s", out)
 	}
 }
 
@@ -226,34 +226,34 @@ func TestBuildSquadLeaderBriefing_MentionsRoundTrip(t *testing.T) {
 // claimAndDecodeAgent runs ClaimTaskByRuntime for the given runtime and
 // returns the agent block of the response. Fails the test on non-200.
 func claimAndDecodeAgent(t *testing.T, runtimeID string) *TaskAgentData {
-t.Helper()
-w := httptest.NewRecorder()
-req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, "test-claim-squad-briefing")
-req = withURLParam(req, "runtimeId", runtimeID)
-testHandler.ClaimTaskByRuntime(w, req)
-if w.Code != http.StatusOK {
-t.Fatalf("ClaimTaskByRuntime: %d %s", w.Code, w.Body.String())
-}
-var resp struct {
-Task *struct {
-Agent *TaskAgentData `json:"agent"`
-} `json:"task"`
-}
-if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-t.Fatalf("decode: %v", err)
-}
-if resp.Task == nil || resp.Task.Agent == nil {
-t.Fatalf("expected task.agent in response, got: %s", w.Body.String())
-}
-return resp.Task.Agent
+	t.Helper()
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, "test-claim-squad-briefing")
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: %d %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Task *struct {
+			Agent *TaskAgentData `json:"agent"`
+		} `json:"task"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Task == nil || resp.Task.Agent == nil {
+		t.Fatalf("expected task.agent in response, got: %s", w.Body.String())
+	}
+	return resp.Task.Agent
 }
 
 // queueSquadIssueTaskFor creates an issue assigned to the squad and a queued
 // task for the given (agentID, runtimeID). Returns the issue + task IDs.
 func queueSquadIssueTaskFor(t *testing.T, squadID, agentID, runtimeID string, issueNumber int) (issueID, taskID string) {
-t.Helper()
-ctx := context.Background()
-if err := testPool.QueryRow(ctx, `
+	t.Helper()
+	ctx := context.Background()
+	if err := testPool.QueryRow(ctx, `
 INSERT INTO issue (
 workspace_id, title, status, priority, creator_id, creator_type,
 assignee_type, assignee_id, number, position
@@ -261,101 +261,101 @@ assignee_type, assignee_id, number, position
 'squad', $3, $4, 0)
 RETURNING id
 `, testWorkspaceID, testUserID, squadID, issueNumber).Scan(&issueID); err != nil {
-t.Fatalf("create squad-assigned issue: %v", err)
-}
-t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+		t.Fatalf("create squad-assigned issue: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
 
-if err := testPool.QueryRow(ctx, `
+	if err := testPool.QueryRow(ctx, `
 INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority)
 VALUES ($1, $2, $3, 'queued', 0)
 RETURNING id
 `, agentID, runtimeID, issueID).Scan(&taskID); err != nil {
-t.Fatalf("queue task: %v", err)
-}
-t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
-return
+		t.Fatalf("queue task: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	return
 }
 
 // TestClaimTask_LeaderGetsBriefing — when the squad leader claims a task on
 // a squad-assigned issue, the response's agent.instructions must include
 // the Operating Protocol + Roster + user instructions.
 func TestClaimTask_LeaderGetsBriefing(t *testing.T) {
-if testHandler == nil {
-t.Skip("database not available")
-}
-ctx := context.Background()
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
 
-var leaderID, runtimeID string
-if err := testPool.QueryRow(ctx,
-`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1`,
-testWorkspaceID,
-).Scan(&leaderID, &runtimeID); err != nil {
-t.Fatalf("get leader agent: %v", err)
-}
+	var leaderID, runtimeID string
+	if err := testPool.QueryRow(ctx,
+		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1`,
+		testWorkspaceID,
+	).Scan(&leaderID, &runtimeID); err != nil {
+		t.Fatalf("get leader agent: %v", err)
+	}
 
-squad := seedSquadForBriefing(t, leaderID, "Briefing Claim Squad", "Be terse.")
+	squad := seedSquadForBriefing(t, leaderID, "Briefing Claim Squad", "Be terse.")
 
-helper := createHandlerTestAgent(t, "Briefing Helper", []byte("[]"))
-addAgentMember(t, squad.ID, helper, "implementer")
+	helper := createHandlerTestAgent(t, "Briefing Helper", []byte("[]"))
+	addAgentMember(t, squad.ID, helper, "implementer")
 
-queueSquadIssueTaskFor(t, util.UUIDToString(squad.ID), leaderID, runtimeID, 95001)
+	queueSquadIssueTaskFor(t, util.UUIDToString(squad.ID), leaderID, runtimeID, 95001)
 
-agent := claimAndDecodeAgent(t, runtimeID)
-for _, want := range []string{
-"## Squad Operating Protocol",
-"## Squad Roster",
-"Leader (you):",
-"## Squad Instructions (Briefing Claim Squad)",
-"Be terse.",
-"`[@Briefing Helper](mention://agent/" + helper + ")`",
-} {
-if !strings.Contains(agent.Instructions, want) {
-t.Errorf("expected agent.instructions to contain %q\n--- instructions ---\n%s", want, agent.Instructions)
-}
-}
+	agent := claimAndDecodeAgent(t, runtimeID)
+	for _, want := range []string{
+		"## 小队负责人操作协议",
+		"## 小队名单",
+		"负责人（你）：",
+		"## 小队说明 (Briefing Claim Squad)",
+		"Be terse.",
+		"`[@Briefing Helper](mention://agent/" + helper + ")`",
+	} {
+		if !strings.Contains(agent.Instructions, want) {
+			t.Errorf("expected agent.instructions to contain %q\n--- instructions ---\n%s", want, agent.Instructions)
+		}
+	}
 }
 
 // TestClaimTask_NonLeaderGetsNoBriefing — when a non-leader squad member
 // claims a task on a squad-assigned issue, NO briefing is injected.
 func TestClaimTask_NonLeaderGetsNoBriefing(t *testing.T) {
-if testHandler == nil {
-t.Skip("database not available")
-}
-ctx := context.Background()
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
 
-var leaderID string
-if err := testPool.QueryRow(ctx,
-`SELECT id FROM agent WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1`,
-testWorkspaceID,
-).Scan(&leaderID); err != nil {
-t.Fatalf("get leader agent: %v", err)
-}
+	var leaderID string
+	if err := testPool.QueryRow(ctx,
+		`SELECT id FROM agent WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1`,
+		testWorkspaceID,
+	).Scan(&leaderID); err != nil {
+		t.Fatalf("get leader agent: %v", err)
+	}
 
-squad := seedSquadForBriefing(t, leaderID, "Non-Leader Squad", "Squad guidance.")
+	squad := seedSquadForBriefing(t, leaderID, "Non-Leader Squad", "Squad guidance.")
 
-// Create a second agent (NOT the leader) with its own runtime so the
-// claim path picks its task without ambiguity.
-helperID := createHandlerTestAgent(t, "Non Leader Helper", []byte("[]"))
-addAgentMember(t, squad.ID, helperID, "")
-var helperRuntime string
-if err := testPool.QueryRow(ctx,
-`SELECT runtime_id FROM agent WHERE id = $1`, helperID,
-).Scan(&helperRuntime); err != nil {
-t.Fatalf("get helper runtime: %v", err)
-}
+	// Create a second agent (NOT the leader) with its own runtime so the
+	// claim path picks its task without ambiguity.
+	helperID := createHandlerTestAgent(t, "Non Leader Helper", []byte("[]"))
+	addAgentMember(t, squad.ID, helperID, "")
+	var helperRuntime string
+	if err := testPool.QueryRow(ctx,
+		`SELECT runtime_id FROM agent WHERE id = $1`, helperID,
+	).Scan(&helperRuntime); err != nil {
+		t.Fatalf("get helper runtime: %v", err)
+	}
 
-queueSquadIssueTaskFor(t, util.UUIDToString(squad.ID), helperID, helperRuntime, 95002)
+	queueSquadIssueTaskFor(t, util.UUIDToString(squad.ID), helperID, helperRuntime, 95002)
 
-agent := claimAndDecodeAgent(t, helperRuntime)
-for _, mustNot := range []string{
-"Squad Operating Protocol",
-"Squad Roster",
-"Squad Instructions (Non-Leader Squad)",
-} {
-if strings.Contains(agent.Instructions, mustNot) {
-t.Errorf("non-leader claim should NOT contain %q\n--- instructions ---\n%s", mustNot, agent.Instructions)
-}
-}
+	agent := claimAndDecodeAgent(t, helperRuntime)
+	for _, mustNot := range []string{
+		"小队负责人操作协议",
+		"小队名单",
+		"小队说明 (Non-Leader Squad)",
+	} {
+		if strings.Contains(agent.Instructions, mustNot) {
+			t.Errorf("non-leader claim should NOT contain %q\n--- instructions ---\n%s", mustNot, agent.Instructions)
+		}
+	}
 }
 
 // Avoid "imported and not used: pgtype" if helpers above are the only users.

@@ -47,6 +47,7 @@ import type {
   CreatePersonalAccessTokenResponse,
   RuntimeUsage,
   IssueUsageSummary,
+  IssueTaskTraceResponse,
   RuntimeHourlyActivity,
   RuntimeUsageByAgent,
   RuntimeUsageByHour,
@@ -1170,6 +1171,10 @@ export class ApiClient {
 
   async getIssueUsage(issueId: string): Promise<IssueUsageSummary> {
     return this.fetch(`/api/issues/${issueId}/usage`);
+  }
+
+  async listIssueTaskTraceEvents(issueId: string): Promise<IssueTaskTraceResponse> {
+    return this.fetch(`/api/issues/${issueId}/trace`);
   }
 
   async cancelTask(issueId: string, taskId: string): Promise<AgentTask> {

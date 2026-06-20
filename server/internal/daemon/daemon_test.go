@@ -570,13 +570,13 @@ func TestBuildPromptSquadLeaderNoActionProhibition(t *testing.T) {
 		TriggerAuthorName:     "Worker",
 		Agent: &AgentData{
 			Name:         "Leader",
-			Instructions: "You lead the team.\n\n## Squad Operating Protocol\n\nYou are the LEADER.",
+			Instructions: "你负责协调小队。\n\n## 小队负责人操作协议\n\n你是负责人。",
 		},
 	}, "claude")
 
 	for _, want := range []string{
-		"Squad leader no_action rule",
-		"DO NOT post any comment",
+		"小队负责人 no_action 规则",
+		"不要发布任何评论",
 		"multica squad activity",
 	} {
 		if !strings.Contains(prompt, want) {
@@ -597,7 +597,7 @@ func TestBuildPromptSquadLeaderNoActionProhibition(t *testing.T) {
 		},
 	}, "claude")
 
-	if strings.Contains(nonLeaderPrompt, "Squad leader no_action rule") {
+	if strings.Contains(nonLeaderPrompt, "小队负责人 no_action 规则") {
 		t.Fatalf("non-squad-leader prompt should NOT contain squad leader rule\n---\n%s", nonLeaderPrompt)
 	}
 }

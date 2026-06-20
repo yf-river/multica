@@ -5,8 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Ban, CheckCircle2, ChevronRight, Loader2, RotateCcw, Square, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
-import { issueKeys } from "@multica/core/issues/queries";
-import type { AgentTask, TaskFailureReason } from "@multica/core/types";
+import { issueKeys, issueTaskTraceOptions } from "@multica/core/issues/queries";
+import type { AgentTask, TaskFailureReason, TaskTraceEvent } from "@multica/core/types";
 import { useTimeAgo } from "../../i18n";
 import {
   Tooltip,
@@ -73,6 +73,8 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
     staleTime: 30_000,
     refetchOnWindowFocus: true,
   });
+  const { data: traceData } = useQuery(issueTaskTraceOptions(issueId));
+  const traceEvents = traceData?.events ?? [];
 
   const activeTasks = useMemo(
     () =>
@@ -166,10 +168,75 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
               )}
             </>
           )}
+          {traceEvents.length > 0 && (
+            <>
+              {(activeTasks.length > 0 || pastTasks.length > 0) && (
+                <div className="my-1.5 border-t border-border/60" />
+              )}
+              <TraceEventSummary events={traceEvents} />
+            </>
+          )}
         </div>
       )}
     </div>
   );
+}
+
+function TraceEventSummary({ events }: { events: TaskTraceEvent[] }) {
+  const recent = events.slice(-5).toReversed();
+  const tokenTotal = events.reduce(
+    (sum, ev) =>
+      sum +
+      ev.input_tokens +
+      ev.output_tokens +
+      ev.cache_read_tokens +
+      ev.cache_write_tokens,
+    0,
+  );
+
+  return (
+    <div className="rounded-md border border-border/70 bg-muted/25 px-2 py-1.5">
+      <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+        <span>观测事件</span>
+        <span className="font-mono tabular-nums">
+          {events.length} 条{tokenTotal > 0 ? ` / ${tokenTotal.toLocaleString()} tokens` : ""}
+        </span>
+      </div>
+      <div className="space-y-1">
+        {recent.map((event) => (
+          <div key={event.id} className="flex min-w-0 items-center gap-2 text-xs">
+            <span className="min-w-0 flex-1 truncate text-foreground">
+              {event.event_name || event.event_type}
+            </span>
+            <span className="shrink-0 text-muted-foreground">
+              {formatTraceMetric(event)}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function formatTraceMetric(event: TaskTraceEvent): string {
+  const tokenTotal =
+    event.input_tokens +
+    event.output_tokens +
+    event.cache_read_tokens +
+    event.cache_write_tokens;
+  if (tokenTotal > 0) return `${tokenTotal.toLocaleString()} tokens`;
+  const ms = event.run_ms ?? event.duration_ms ?? event.total_ms ?? event.queue_wait_ms;
+  if (typeof ms === "number") return formatMilliseconds(ms);
+  return event.status;
+}
+
+function formatMilliseconds(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest === 0 ? `${minutes}m` : `${minutes}m ${rest}s`;
 }
 
 // ─── Trigger description ────────────────────────────────────────────────────

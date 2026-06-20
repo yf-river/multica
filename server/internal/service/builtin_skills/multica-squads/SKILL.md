@@ -1,6 +1,6 @@
 ---
 name: multica-squads
-description: "Use when creating, inspecting, updating, assigning, mentioning, or debugging Multica squads. Explains what squads are, squad/member fields, CLI commands, leader routing, issue assignment, comments, mentions, autopilot behavior, leader briefing, side effects, and product-gap handling."
+description: "用于创建、查看、更新、指派、mention 或调试 Multica squads。说明 squad 是什么、squad/member 字段、CLI commands、leader routing、issue assignment、comments、mentions、autopilot behavior、leader briefing、副作用和产品缺口处理。"
 user-invocable: false
 allowed-tools: Bash(multica *)
 ---
@@ -43,7 +43,7 @@ Important consequences:
 - mentioning a squad routes to the leader;
 - squad-assigned autopilot resolves to the leader;
 - squad members are not automatically fanned out;
-- squad `instructions` are leader briefing content, not member prompts.
+- squad `instructions` 是 leader briefing 内容，不是成员 prompt。
 
 ## CLI
 
@@ -93,8 +93,8 @@ Prefer `--output json` for reads. Use `--help` before writes.
 - `name` — display name; unique per workspace.
 - `description` — human-facing metadata/display text. Do not assume runtime
   prompt impact unless source proves a consumer.
-- `instructions` — squad-level instructions added to the squad leader briefing.
-  They are not directly injected into every squad member.
+- `instructions` — 添加到 squad leader briefing 的 squad-level instructions。
+  它们不会直接注入到每个 squad member。
 - `avatar_url` — optional squad avatar URL.
 - `leader_id` — agent ID of the squad leader; the runtime target for
   squad-routed work.
@@ -104,17 +104,13 @@ Prefer `--output json` for reads. Use `--help` before writes.
 - `member_count` — list response count of squad members.
 - `member_preview` — list response preview of squad members.
 
-Use `instructions` for leader-facing coordination policy: squad responsibility,
-delegation expectations, when to ask humans, and review/handoff rules. Do not
-write it as if every member automatically receives it.
+把 `instructions` 用作面向 leader 的协作策略：squad 的职责、委派预期、何时询问人类，以及 review/handoff 规则。不要把它写成每个成员都会自动收到的内容。
 
 ## Squad member fields
 
 - `member_type` — `agent` or `member`.
 - `member_id` — ID of the agent or workspace member.
-- `role` — roster role label. Current behavior: non-empty `role` appears in the
-  leader briefing roster. Do not assume it creates scheduling, permissions, or
-  routing behavior.
+- `role` — roster role label。当前行为：非空 `role` 会出现在 leader briefing 的名单里。不要假设它会创建调度、权限或 routing behavior。
 
 ## Creation and leader membership
 
@@ -130,15 +126,13 @@ the backend adds the new leader as a squad member with role `leader`.
 
 ## Leader briefing
 
-For squad leader tasks, Multica appends a squad leader briefing to the leader
-agent instructions. The briefing includes:
+对于 squad leader tasks，Multica 会把 squad leader briefing 追加到 leader agent instructions。这个 briefing 包含：
 
-- Squad Operating Protocol;
-- Squad Roster;
-- Squad Instructions, only when `instructions` is non-empty.
+- 小队负责人操作协议；
+- 小队名单；
+- 小队说明，仅当 `instructions` 非空时出现。
 
-Roster entries include member name, member type, mention markdown, and non-empty
-role. Archived agent members are skipped from the briefing roster.
+名单条目包含成员名称、成员类型、mention markdown，以及非空 role。已归档的 agent members 会从 briefing 名单中跳过。
 
 ## Issue assignment behavior
 
@@ -236,7 +230,7 @@ authorizes them.
 - Squad mention routes to the leader, not every member.
 - Squad assignment routes to the leader, not every member.
 - Squad autopilot resolves to the leader as executable agent.
-- `instructions` are leader briefing content, not automatic member prompts.
+- `instructions` 是 leader briefing 内容，不是自动下发给成员的 prompt。
 - `description` is not proven runtime prompt content.
 - `role` is roster context, not automatic scheduling.
 - Backlog assignment does not immediately start work.

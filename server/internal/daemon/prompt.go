@@ -7,6 +7,16 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 )
 
+const (
+	squadOperatingProtocolHeadingZH = "## 小队负责人操作协议"
+	squadOperatingProtocolHeadingEN = "## Squad Operating Protocol"
+)
+
+func hasSquadLeaderBriefing(instructions string) bool {
+	return strings.Contains(instructions, squadOperatingProtocolHeadingZH) ||
+		strings.Contains(instructions, squadOperatingProtocolHeadingEN)
+}
+
 // BuildPrompt constructs the task prompt for an agent CLI.
 // Keep this minimal — detailed instructions live in CLAUDE.md / AGENTS.md
 // injected by execenv.InjectRuntimeConfig. The provider string is threaded
@@ -154,8 +164,8 @@ func buildCommentPrompt(task Task, provider string) string {
 		if task.TriggerAuthorType == "agent" {
 			b.WriteString("⚠️ The triggering comment was posted by another agent. Decide whether a reply is warranted. If you produced actual work this turn (investigated, fixed something, answered a real question), post the result as a normal reply — that is NOT a noise comment, and the standard rule that final results must be delivered via comment still applies. If the triggering comment was a pure acknowledgment, thanks, or sign-off AND you produced no work this turn, do NOT reply — and do NOT post a comment saying 'No reply needed' or similar. Simply exit with no output. Silence is the preferred way to end agent-to-agent threads. If you do reply, do not @mention the other agent as a sign-off (that re-triggers them and starts a loop).\n\n")
 		}
-		if task.Agent != nil && strings.Contains(task.Agent.Instructions, "## Squad Operating Protocol") {
-			fmt.Fprintf(&b, "⚠️ **Squad leader no_action rule:** If you decide no action is needed, call `multica squad activity %s no_action --reason \"...\"` and EXIT. DO NOT post any comment — not even one that says \"no action needed\" or \"exiting silently\". The squad activity call records your decision; a comment is redundant noise.\n\n", task.IssueID)
+		if task.Agent != nil && hasSquadLeaderBriefing(task.Agent.Instructions) {
+			fmt.Fprintf(&b, "⚠️ **小队负责人 no_action 规则：** 如果你判断无需行动，调用 `multica squad activity %s no_action --reason \"...\"` 后直接退出。不要发布任何评论，包括“无需行动”或“静默退出”这类评论。squad activity 已经记录了你的决策，额外评论只会制造噪声。\n\n", task.IssueID)
 		}
 	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then decide how to proceed.\n\n", task.IssueID)

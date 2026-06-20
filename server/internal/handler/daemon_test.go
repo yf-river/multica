@@ -15,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/middleware"
@@ -1200,6 +1201,91 @@ func TestGetIssueUsage_CrossWorkspace_Returns404(t *testing.T) {
 	testHandler.GetIssueUsage(w, req)
 	if w.Code != http.StatusNotFound {
 		t.Fatalf("GetIssueUsage with cross-workspace issueId: expected 404, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestListIssueTaskTraceEvents_ReturnsDurableEvents(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	runtimeID := createClaimReclaimRuntime(t, ctx, "Trace event runtime")
+	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Trace event agent")
+	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "1 second", true)
+
+	if _, err := testHandler.Queries.CreateTaskTraceEvent(ctx, db.CreateTaskTraceEventParams{
+		WorkspaceID:      parseUUID(testWorkspaceID),
+		TaskID:           parseUUID(taskID),
+		IssueID:          parseUUID(issueID),
+		AgentID:          parseUUID(agentID),
+		RuntimeID:        parseUUID(runtimeID),
+		Source:           "issue",
+		EventType:        "llm.usage_reported",
+		EventName:        "模型用量已上报",
+		Status:           "running",
+		Attempt:          1,
+		DurationMs:       pgtype.Int8{Int64: 1234, Valid: true},
+		Provider:         "codex",
+		Model:            "gpt-5",
+		InputTokens:      100,
+		OutputTokens:     40,
+		CacheReadTokens:  10,
+		CacheWriteTokens: 0,
+		Metadata:         []byte(`{"阶段":"实现"}`),
+	}); err != nil {
+		t.Fatalf("create task trace event: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("GET", "/api/issues/"+issueID+"/trace", nil)
+	req = withURLParam(req, "id", issueID)
+
+	testHandler.ListIssueTaskTraceEvents(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListIssueTaskTraceEvents: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Events []TaskTraceEventResponse `json:"events"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode trace response: %v", err)
+	}
+	if len(resp.Events) != 1 {
+		t.Fatalf("expected 1 trace event, got %d: %s", len(resp.Events), w.Body.String())
+	}
+	ev := resp.Events[0]
+	if ev.EventName != "模型用量已上报" {
+		t.Fatalf("event_name = %q, want Chinese label", ev.EventName)
+	}
+	if ev.DurationMs == nil || *ev.DurationMs != 1234 {
+		t.Fatalf("duration_ms = %v, want 1234", ev.DurationMs)
+	}
+	if got := ev.InputTokens + ev.OutputTokens + ev.CacheReadTokens + ev.CacheWriteTokens; got != 150 {
+		t.Fatalf("token total = %d, want 150", got)
+	}
+	if ev.Metadata["阶段"] != "实现" {
+		t.Fatalf("metadata 阶段 = %#v, want 实现", ev.Metadata["阶段"])
+	}
+}
+
+// TestListIssueTaskTraceEvents_CrossWorkspace_Returns404 verifies that durable
+// task trace events are not readable across workspaces via a bare issue UUID.
+func TestListIssueTaskTraceEvents_CrossWorkspace_Returns404(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	foreignIssueID, _ := setupForeignWorkspaceFixture(t)
+
+	w := httptest.NewRecorder()
+	req := newRequest("GET", "/api/issues/"+foreignIssueID+"/trace", nil)
+	req = withURLParam(req, "id", foreignIssueID)
+
+	testHandler.ListIssueTaskTraceEvents(w, req)
+	if w.Code != http.StatusNotFound {
+		t.Fatalf("ListIssueTaskTraceEvents with cross-workspace issueId: expected 404, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

@@ -3416,8 +3416,8 @@ func TestInjectRuntimeConfigSquadLeaderCommentTriggeredNoAction(t *testing.T) {
 
 	// The comment-triggered workflow must contain the squad leader no_action rule.
 	for _, want := range []string{
-		"Squad leader rule",
-		"DO NOT post any comment",
+		"小队负责人规则",
+		"不要发布任何只用于声明",
 		"multica squad activity",
 	} {
 		if !strings.Contains(s, want) {
@@ -3445,7 +3445,7 @@ func TestInjectRuntimeConfigSquadLeaderCommentTriggeredNoAction(t *testing.T) {
 		t.Fatalf("read CLAUDE.md: %v", err)
 	}
 	s2 := string(data2)
-	if strings.Contains(s2, "Squad leader rule") {
+	if strings.Contains(s2, "小队负责人规则") {
 		t.Errorf("non-squad-leader CLAUDE.md should NOT contain squad leader rule")
 	}
 }

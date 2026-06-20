@@ -91,6 +91,8 @@ export const issueKeys = {
     [...issueKeys.subscribersAll(), issueId] as const,
   usageAll: () => ["issues", "usage"] as const,
   usage: (issueId: string) => [...issueKeys.usageAll(), issueId] as const,
+  traceAll: () => ["issues", "trace"] as const,
+  trace: (issueId: string) => [...issueKeys.traceAll(), issueId] as const,
   attachmentsAll: () => ["issues", "attachments"] as const,
   /** Issue-level attachments — used by the description editor so its
    *  inline file-card / image NodeViews can re-sign download URLs at
@@ -515,6 +517,13 @@ export function issueUsageOptions(issueId: string) {
   return queryOptions({
     queryKey: issueKeys.usage(issueId),
     queryFn: () => api.getIssueUsage(issueId),
+  });
+}
+
+export function issueTaskTraceOptions(issueId: string) {
+  return queryOptions({
+    queryKey: issueKeys.trace(issueId),
+    queryFn: () => api.listIssueTaskTraceEvents(issueId),
   });
 }
 

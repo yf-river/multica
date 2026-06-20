@@ -506,6 +506,10 @@ export function useRealtimeSync(
         // shape as the tasks invalidation above — any task lifecycle
         // event shifts the aggregated usage numbers.
         qc.invalidateQueries({ queryKey: ["issues", "usage"] });
+        // Durable per-issue trace events use the same task lifecycle
+        // source. Keep the evidence panel fresh alongside the execution
+        // log and usage card.
+        qc.invalidateQueries({ queryKey: ["issues", "trace"] });
         // Squad members-status reads the same task lifecycle to flip
         // working ↔ idle for each agent member.
         invalidateSquadMemberStatusQueries(qc, wsId);

@@ -526,6 +526,43 @@ export interface IssueUsageSummary {
   task_count: number;
 }
 
+export interface TaskTraceEvent {
+  id: string;
+  workspace_id: string;
+  task_id: string;
+  issue_id: string | null;
+  agent_id: string;
+  runtime_id: string | null;
+  squad_id: string | null;
+  project_id: string | null;
+  source: string;
+  event_type: string;
+  event_name: string;
+  status: string;
+  attempt: number;
+  duration_ms?: number | null;
+  queue_wait_ms?: number | null;
+  run_ms?: number | null;
+  total_ms?: number | null;
+  provider: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  failure_reason: string;
+  error_type: string;
+  trigger_comment_id: string | null;
+  autopilot_run_id: string | null;
+  chat_session_id: string | null;
+  metadata: Record<string, unknown>;
+  created_at: string;
+}
+
+export interface IssueTaskTraceResponse {
+  events: TaskTraceEvent[];
+}
+
 export interface RuntimeUsage {
   runtime_id: string;
   date: string;

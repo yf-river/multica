@@ -218,14 +218,14 @@ func TestBuildPromptSquadLeaderNoActionForMemberTrigger(t *testing.T) {
 		TriggerAuthorType:     "member",
 		TriggerAuthorName:     "Bohan",
 		Agent: &AgentData{
-			Instructions: "Some instructions\n\n## Squad Operating Protocol\n\nYou are the LEADER...",
+			Instructions: "一些说明\n\n## 小队负责人操作协议\n\n你是负责人...",
 		},
 	}
 	out := BuildPrompt(task, "claude")
-	if !strings.Contains(out, "Squad leader no_action rule") {
+	if !strings.Contains(out, "小队负责人 no_action 规则") {
 		t.Errorf("buildCommentPrompt must inject squad leader no_action rule for member-triggered comments, got:\n%s", out)
 	}
-	if !strings.Contains(out, "DO NOT post any comment") {
+	if !strings.Contains(out, "不要发布任何评论") {
 		t.Errorf("buildCommentPrompt must contain DO NOT post prohibition for member-triggered squad leader, got:\n%s", out)
 	}
 }
@@ -240,12 +240,29 @@ func TestBuildPromptSquadLeaderNoActionForAgentTrigger(t *testing.T) {
 		TriggerAuthorType:     "agent",
 		TriggerAuthorName:     "deploy-boy",
 		Agent: &AgentData{
-			Instructions: "Some instructions\n\n## Squad Operating Protocol\n\nYou are the LEADER...",
+			Instructions: "一些说明\n\n## 小队负责人操作协议\n\n你是负责人...",
 		},
 	}
 	out := BuildPrompt(task, "claude")
-	if !strings.Contains(out, "Squad leader no_action rule") {
+	if !strings.Contains(out, "小队负责人 no_action 规则") {
 		t.Errorf("buildCommentPrompt must inject squad leader no_action rule for agent-triggered comments, got:\n%s", out)
+	}
+}
+
+func TestBuildPromptSquadLeaderNoActionLegacyEnglishHeading(t *testing.T) {
+	task := Task{
+		IssueID:               "issue-123",
+		TriggerCommentID:      "comment-456",
+		TriggerCommentContent: "Deploy complete.",
+		TriggerAuthorType:     "agent",
+		TriggerAuthorName:     "deploy-boy",
+		Agent: &AgentData{
+			Instructions: "Some instructions\n\n## Squad Operating Protocol\n\nlegacy briefing",
+		},
+	}
+	out := BuildPrompt(task, "claude")
+	if !strings.Contains(out, "小队负责人 no_action 规则") {
+		t.Errorf("legacy English squad heading must still inject no_action rule, got:\n%s", out)
 	}
 }
 
@@ -418,7 +435,7 @@ func TestBuildPromptNonSquadLeaderNoRule(t *testing.T) {
 		},
 	}
 	out := BuildPrompt(task, "claude")
-	if strings.Contains(out, "Squad leader no_action rule") {
+	if strings.Contains(out, "小队负责人 no_action 规则") {
 		t.Errorf("buildCommentPrompt must NOT inject squad leader no_action rule for non-squad-leader agents, got:\n%s", out)
 	}
 }
