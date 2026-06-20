@@ -644,7 +644,7 @@ export const PromptEvaluationAssetSchema = z.object({
   prompt_id: z.string().nullable().optional().transform((v) => v ?? null),
   name: z.string(),
   description: z.string().default(""),
-  asset_type: z.enum(["数据集", "测试套件", "实验"]),
+  asset_type: z.enum(["数据集", "测试套件", "实验", "优化运行"]),
   payload: z.record(z.string(), z.unknown()).default({}),
   status: z.enum(["启用", "归档"]).default("启用"),
   created_by: z.string().nullable().optional().transform((v) => v ?? null),

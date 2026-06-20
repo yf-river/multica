@@ -16,6 +16,7 @@ const (
 	promptEvaluationAssetDataset    = "数据集"
 	promptEvaluationAssetTestSuite  = "测试套件"
 	promptEvaluationAssetExperiment = "实验"
+	promptEvaluationAssetOptimize   = "优化运行"
 )
 
 type PromptEvaluationAssetResponse struct {
@@ -69,7 +70,8 @@ func promptEvaluationAssetToResponse(asset db.PromptEvaluationAsset) PromptEvalu
 func validPromptEvaluationAssetType(assetType string) bool {
 	return assetType == promptEvaluationAssetDataset ||
 		assetType == promptEvaluationAssetTestSuite ||
-		assetType == promptEvaluationAssetExperiment
+		assetType == promptEvaluationAssetExperiment ||
+		assetType == promptEvaluationAssetOptimize
 }
 
 func jsonObjectField(w http.ResponseWriter, raw json.RawMessage, field string) ([]byte, bool) {
@@ -123,7 +125,7 @@ func (h *Handler) ListPromptEvaluationAssets(w http.ResponseWriter, r *http.Requ
 	var assetType pgtype.Text
 	if value := r.URL.Query().Get("asset_type"); value != "" {
 		if !validPromptEvaluationAssetType(value) {
-			writeError(w, http.StatusBadRequest, "asset_type must be 数据集, 测试套件 or 实验")
+			writeError(w, http.StatusBadRequest, "asset_type must be 数据集, 测试套件, 实验 or 优化运行")
 			return
 		}
 		assetType = pgtype.Text{String: value, Valid: true}
@@ -189,7 +191,7 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if !validPromptEvaluationAssetType(req.AssetType) {
-		writeError(w, http.StatusBadRequest, "asset_type must be 数据集, 测试套件 or 实验")
+		writeError(w, http.StatusBadRequest, "asset_type must be 数据集, 测试套件, 实验 or 优化运行")
 		return
 	}
 	status := normalizePromptLibraryStatus(req.Status)
@@ -245,7 +247,7 @@ func (h *Handler) UpdatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if req.AssetType != nil && !validPromptEvaluationAssetType(*req.AssetType) {
-		writeError(w, http.StatusBadRequest, "asset_type must be 数据集, 测试套件 or 实验")
+		writeError(w, http.StatusBadRequest, "asset_type must be 数据集, 测试套件, 实验 or 优化运行")
 		return
 	}
 	if req.Status != nil && !validPromptLibraryStatus(*req.Status) {

@@ -1,4 +1,4 @@
-export type PromptEvaluationAssetType = "数据集" | "测试套件" | "实验";
+export type PromptEvaluationAssetType = "数据集" | "测试套件" | "实验" | "优化运行";
 export type PromptEvaluationAssetStatus = "启用" | "归档";
 
 export interface PromptEvaluationAsset {
