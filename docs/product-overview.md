@@ -322,7 +322,6 @@ Agent 是 Multica 的灵魂。几乎所有功能都围绕"如何让一个 agent 
 | 命令 | 说明 |
 |------|------|
 | `multica setup` | 一键配置：填 URL + 登录 + 启动 daemon |
-| `multica login` | 浏览器打开 OAuth 登录，保存 90 天 PAT 到 `~/.multica/config.json` |
 | `multica login --token <pat>` | 无头登录（SSH/CI） |
 | `multica daemon start` | 后台启动 daemon（写 PID 到 `~/.multica/daemon.pid`，日志到 `~/.multica/daemon.log`） |
 | `multica daemon stop` | 发 SIGTERM，优雅关闭（等待进行中的任务完成，超时 30s） |
@@ -563,15 +562,11 @@ Inbox 是"主动注意力系统"，让用户不必一直盯着看板也知道哪
 
 #### 邀请流程
 
-- Admin 在 **Settings → Members** 输入邮箱邀请
 - Server 生成 `workspace_invitation` 记录（7 天过期）
-- 发送邮件（Resend 集成，未配置时打到 stderr）
-- 被邀请人收到邀请：如果已有账号，会出现在个人 Inbox；如果没账号，邮件里有注册链接
 - 接受 / 拒绝 / 过期
 
 #### UI
 
-- 成员列表：头像、邮箱、角色徽章、操作菜单（改角色、移除）
 - 待处理邀请列表：可 resend、revoke
 - Invite 接受页面（`/invite/[id]`）：展示工作区信息、接受/拒绝按钮
 
@@ -622,8 +617,6 @@ Cmd+K 是 keyboard-first 用户（Linear-style）的主要导航方式，比点�
 
 #### 登录方式
 
-- **邮箱验证码（Magic Link 风格）**：输入邮箱 → 收 6 位验证码 → 输入验证码登录
-- **Google OAuth**：一键 Google 登录
 - **PAT（CLI）**：用户在 Settings → API Tokens 里生成的 token，CLI/脚本场景
 
 #### Onboarding 流程（正在重设计中）
@@ -652,7 +645,6 @@ Cmd+K 是 keyboard-first 用户（Linear-style）的主要导航方式，比点�
 
 Server 支持：
 - `ALLOW_SIGNUP=false` 关闭注册
-- `ALLOWED_EMAILS` / `ALLOWED_EMAIL_DOMAINS` 白名单
 
 #### 产品里的位置
 
@@ -660,7 +652,7 @@ Onboarding 是新用户能不能成功把 agent 跑起来的关键漏斗。任�
 
 #### 对应表
 
-`user`, `verification_code`, `personal_access_token`
+`user`, `personal_access_token`
 
 ---
 
@@ -668,7 +660,6 @@ Onboarding 是新用户能不能成功把 agent 跑起来的关键漏斗。任�
 
 #### My Account 标签
 
-- **Profile**：名字、头像（不可上传，系统生成）、邮箱（只读）
 - **Appearance**：主题（light / dark / system）
 - **API Tokens**：创建/查看/撤销 PAT；创建时一次性展示完整 token
 - **Daemon**（桌面独有）：本机 daemon 状态、重启、开机自启开关
@@ -840,7 +831,6 @@ Server 启动三个 goroutine：
 
 - `/` — 首页
 - `/login` — 登录
-- `/auth/callback` — OAuth 回调
 - `/workspaces/new` — 创建工作区
 - `/invite/[id]` — 接受邀请
 - `/onboarding` — 首次引导
@@ -878,7 +868,6 @@ Server 启动三个 goroutine：
 
 - 地址栏 + 浏览器前进后退
 - 服务端渲染（SSR）
-- `/login` 的 OAuth 回调处理 localhost 端口（方便 CLI 登录）
 
 ### 桌面特有
 
@@ -888,7 +877,6 @@ Server 启动三个 goroutine：
 - **本地 daemon runtime 卡片**：在 Runtimes 页面自动显示本机 daemon
 - **自动更新**：`Settings → Updates` 检查/下载/安装新版本
 - **Immersive mode**：全屏模式，隐藏侧边栏
-- **深链接**：`multica://auth/callback?token=...` 和 `multica://invite/{id}`
 - **拖动区**：macOS 的红绿灯 + 顶部 48px 拖拽条（`h-12`）用来移动窗口
 - **Workspace 单例守护**：`setCurrentWorkspace()` 管理当前活跃工作区的全局身份
 
@@ -908,15 +896,12 @@ Web 有 URL 栏——错误状态（比如"你没有访问这个 workspace 的�
 
 ### 身份 / 认证
 
-- `user` — 基础账号（id, email, name, avatar_url）
-- `verification_code` — 邮箱验证码（code, expires_at, attempts）
 - `personal_access_token` — 用户 API token（token_hash, token_prefix, revoked）
 
 ### 工作区 / 成员
 
 - `workspace` — 容器（name, slug, description, context, settings, repos, issue_prefix, issue_counter）
 - `member` — 成员身份（role: owner/admin/member）
-- `workspace_invitation` — 邀请（invitee_email, status: pending/accepted/declined/expired）
 
 ### Agent / Runtime / Skill
 

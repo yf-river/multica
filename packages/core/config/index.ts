@@ -8,7 +8,6 @@ interface ConfigState {
   // storage URL on that domain as a loadable media source (MUL-3254).
   cdnSigned: boolean;
   allowSignup: boolean;
-  googleClientId: string;
   daemonServerUrl: string;
   daemonAppUrl: string;
   // Self-host gate (#3433): when true, every "Create workspace" affordance
@@ -18,7 +17,6 @@ interface ConfigState {
   setCdnConfig: (config: { cdnDomain: string; cdnSigned?: boolean }) => void;
   setAuthConfig: (config: {
     allowSignup: boolean;
-    googleClientId?: string;
     workspaceCreationDisabled?: boolean;
   }) => void;
   setDaemonConfig: (config: {
@@ -31,13 +29,12 @@ export const configStore = createStore<ConfigState>((set) => ({
   cdnDomain: "",
   cdnSigned: false,
   allowSignup: true,
-  googleClientId: "",
   daemonServerUrl: "",
   daemonAppUrl: "",
   workspaceCreationDisabled: false,
   setCdnConfig: ({ cdnDomain, cdnSigned = false }) => set({ cdnDomain, cdnSigned }),
-  setAuthConfig: ({ allowSignup, googleClientId = "", workspaceCreationDisabled = false }) =>
-    set({ allowSignup, googleClientId, workspaceCreationDisabled }),
+  setAuthConfig: ({ allowSignup, workspaceCreationDisabled = false }) =>
+    set({ allowSignup, workspaceCreationDisabled }),
   setDaemonConfig: ({ daemonServerUrl = "", daemonAppUrl = "" }) =>
     set({ daemonServerUrl, daemonAppUrl }),
 }));

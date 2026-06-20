@@ -1,48 +1,28 @@
 // Standalone screenshot capture for the 6 PR-card demo issues. Logs in as
-// dev@localhost via the local /auth send-code → verify-code flow, then opens
+// dev via account/password auth, then opens
 // each /dev/issues/DEV-N and saves a clipped PNG focused on the right sidebar.
 //
 // Run: pnpm exec node scripts/screenshot-pr-cards.mjs
 // Output: ./.screenshots/pr-card-DEV-{2..7}.png
 
 import { chromium } from "@playwright/test";
-import pg from "pg";
 import { mkdirSync } from "node:fs";
 
 const FRONTEND = process.env.FRONTEND_ORIGIN || "http://localhost:13101";
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:18181";
-const DB = process.env.DATABASE_URL || "postgres://multica:multica@localhost:5432/multica_multica_101?sslmode=disable";
-const EMAIL = "dev@localhost";
+const ACCOUNT = "dev";
 const SLUG = "dev";
 const ISSUES = [2, 3, 4, 5, 6, 7];
 
 async function loginAndGetToken() {
-  const client = new pg.Client(DB);
-  await client.connect();
-  try {
-    await client.query("DELETE FROM verification_code WHERE email = $1", [EMAIL]);
-    const sendRes = await fetch(`${API}/auth/send-code`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: EMAIL }),
-    });
-    if (!sendRes.ok) throw new Error(`send-code: ${sendRes.status}`);
-    const row = await client.query(
-      "SELECT code FROM verification_code WHERE email=$1 AND used=FALSE AND expires_at>now() ORDER BY created_at DESC LIMIT 1",
-      [EMAIL],
-    );
-    if (row.rows.length === 0) throw new Error("no verification code");
-    const verifyRes = await fetch(`${API}/auth/verify-code`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: EMAIL, code: row.rows[0].code }),
-    });
-    if (!verifyRes.ok) throw new Error(`verify-code: ${verifyRes.status}`);
-    const data = await verifyRes.json();
-    return data.token;
-  } finally {
-    await client.end();
-  }
+  const res = await fetch(`${API}/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ account: ACCOUNT, password: "dev-password" }),
+  });
+  if (!res.ok) throw new Error(`login: ${res.status}`);
+  const data = await res.json();
+  return data.token;
 }
 
 async function main() {

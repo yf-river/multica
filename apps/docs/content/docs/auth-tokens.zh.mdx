@@ -32,18 +32,12 @@ Multica 有三种令牌，对应三种使用场景：浏览器 Web UI、命令�
 
 ## 登录
 
-### Email + 验证码
+### 账号密码
 
-1. 填邮箱，server 发一封带 6 位验证码的邮件
-2. 输入验证码，server 签发 JWT cookie（浏览器）或交换出 PAT（CLI）
+1. 输入账号和密码
+2. server 签发 JWT cookie（浏览器）或把已认证浏览器会话交换成 PAT（CLI）
 
-<Callout type="warning">
-**自部署运维注意**：公网部署时保持 `MULTICA_DEV_VERIFICATION_CODE` 为空。如果启用固定本地测试验证码，在 `APP_ENV` 非 production 时，任何能请求验证码的人都能用该固定值登录。详见 [自部署的认证配置](/auth-setup)。
-</Callout>
 
-### Google OAuth
-
-点 **Sign in with Google**，走标准 OAuth 回调。自部署时需要配好 `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET` / redirect URI——详见 [自部署的认证配置](/auth-setup)。
 
 ## 创建、查看、撤销 PAT
 
@@ -76,5 +70,5 @@ Multica 在数据库里只保存 PAT 的哈希值——服务端也查不回来�
 ## 下一步
 
 - [CLI 命令速查](/cli) —— 每条 CLI 命令的认证是自动的
-- [自部署的认证配置](/auth-setup) —— 自部署时怎么配邮件 / OAuth / signup 白名单
+- [自部署的认证配置](/auth-setup) —— 自部署时怎么配置账号注册控制
 - [守护进程与运行时](/daemon-runtimes) —— 守护进程令牌是从哪来的

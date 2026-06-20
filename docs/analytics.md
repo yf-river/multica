@@ -85,8 +85,6 @@ handler → analytics.Client.Capture(Event)   ← non-blocking, returns immediat
 - **`workspace_id`** — added to every event as a property when present. v1
   uses event property filtering (free tier) rather than PostHog Groups
   Analytics (paid) to compute workspace-level metrics.
-- **PII** — events carry `email_domain` (e.g. `gmail.com`), not the full
-  email. Full email is stored once in person properties via `$set_once` so
   it's available for individual debugging but not broadcast with every
   event.
 - **Person properties (`$set`)** — use for mutable cohort signals
@@ -94,7 +92,6 @@ handler → analytics.Client.Capture(Event)   ← non-blocking, returns immediat
   legitimately change during onboarding. `Event.Set` on the backend
   maps to `$set`; the frontend helper is
   `setPersonProperties()` in `@multica/core/analytics`. Use
-  `$set_once` only for values that must never be overwritten (email,
   initial attribution, first-completion timestamp).
 
 ## Taxonomy
@@ -149,19 +146,15 @@ registration path had a measured duration.
 ### `signup`
 
 Fires when a new user is created. Covers both verification-code and Google
-OAuth entry points (`findOrCreateUser` is the single emission site).
 
 | Property | Type | Description |
 |---|---|---|
-| `email_domain` | string | Lower-cased domain portion of the user's email. |
 | `signup_source` | string | Opaque attribution bundle from the frontend cookie `multica_signup_source` (UTM + referrer). Empty when the cookie is absent. |
-| `auth_method` | string | Optional. `"google"` for Google OAuth signups. Absent for verification-code signups. |
 
 Person properties set with `$set_once`:
 
 | Property | Type | Description |
 |---|---|---|
-| `email` | string | Full email. Never broadcast per-event. |
 | `signup_source` | string | Same as above; kept on the person for later segmentation. |
 
 ### `workspace_created`
@@ -383,8 +376,6 @@ Fires from `CreateInvitation` after the DB row is written.
 
 | Property | Type | Description |
 |---|---|---|
-| `invited_email_domain` | string | Lower-cased domain; full email lives in the invitation row, not the event. |
-| `invite_method` | string | Currently always `"email"`. Future non-email invite flows (share link, SCIM) should pass their own value. |
 
 `distinct_id` is the inviter's user id.
 
@@ -395,7 +386,6 @@ accepted and the member row is inserted in the same transaction.
 
 | Property | Type | Description |
 |---|---|---|
-| `days_since_invite` | int64 | Whole days from invitation creation to acceptance. Lets us segment "accepted same day" (warm) from "dug out of email weeks later" (cold). |
 
 `distinct_id` is the invitee's user id — this is the event that closes the
 expansion funnel.

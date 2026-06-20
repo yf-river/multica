@@ -32,18 +32,11 @@ In day-to-day use you'll only touch the first two directly. The **[daemon](/daem
 
 ## Logging in
 
-### Email + verification code
 
-1. Enter your email; the server sends a 6-digit code.
-2. Enter the code; the server issues a JWT cookie (browser) or exchanges it for a PAT (CLI).
+1. Enter your account and password.
+2. The server issues a JWT cookie (browser) or exchanges the authenticated browser session for a PAT (CLI).
 
-<Callout type="warning">
-**Self-hosting operators, take note**: keep `MULTICA_DEV_VERIFICATION_CODE` empty on public deployments. If you enable a fixed local test code, anyone who can request a code can sign in with that value while `APP_ENV` is non-production. See [Self-host auth configuration](/auth-setup).
-</Callout>
 
-### Google OAuth
-
-Click **Sign in with Google** and go through the standard OAuth callback. Self-hosting requires `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and the redirect URI to be configured — see [Self-host auth configuration](/auth-setup).
 
 ## Creating, viewing, and revoking a PAT
 
@@ -76,5 +69,5 @@ When you run `multica auth logout` or click log out in the Web UI:
 ## Next steps
 
 - [CLI command reference](/cli) — authentication is automatic for every CLI command
-- [Self-host auth configuration](/auth-setup) — how to configure email, OAuth, and signup allowlists when self-hosting
+- [Self-host auth configuration](/auth-setup) — how to configure account signup controls when self-hosting
 - [Daemon and runtimes](/daemon-runtimes) — where the daemon token comes from

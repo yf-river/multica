@@ -65,7 +65,7 @@ multica daemon start
 multica login
 ```
 
-Opens your browser for OAuth authentication, creates a 90-day personal access token, and auto-configures your workspaces.
+Opens your browser for Multica account/password authentication, creates a 90-day personal access token, and auto-configures your workspaces.
 
 ### Token Login
 

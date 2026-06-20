@@ -274,14 +274,14 @@ func TestConfigRouteIsPublic(t *testing.T) {
 
 // ---- Auth ----
 
-func TestSendCodeAndVerify(t *testing.T) {
-	const email = "integration-sendcode@multica.ai"
+func TestAccountPasswordLogin(t *testing.T) {
+	const account = "integration-login"
+	const password = "correct-password"
 	ctx := context.Background()
 
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM verification_code WHERE email = $1`, email)
 		var userID string
-		err := testPool.QueryRow(ctx, `SELECT id FROM "user" WHERE email = $1`, email).Scan(&userID)
+		err := testPool.QueryRow(ctx, `SELECT id FROM "user" WHERE email = $1`, account).Scan(&userID)
 		if err == nil {
 			rows, queryErr := testPool.Query(ctx, `
 				SELECT w.id FROM workspace w JOIN member m ON m.workspace_id = w.id WHERE m.user_id = $1
@@ -296,37 +296,18 @@ func TestSendCodeAndVerify(t *testing.T) {
 				}
 			}
 		}
-		testPool.Exec(ctx, `DELETE FROM "user" WHERE email = $1`, email)
+		testPool.Exec(ctx, `DELETE FROM "user" WHERE email = $1`, account)
 	})
 
-	// Step 1: Send code
-	body, _ := json.Marshal(map[string]string{"email": email})
-	resp, err := http.Post(testServer.URL+"/auth/send-code", "application/json", bytes.NewReader(body))
+	body, _ := json.Marshal(map[string]string{"account": account, "password": password})
+	resp, err := http.Post(testServer.URL+"/auth/login", "application/json", bytes.NewReader(body))
 	if err != nil {
-		t.Fatalf("send-code failed: %v", err)
-	}
-	if resp.StatusCode != 200 {
-		t.Fatalf("send-code: expected 200, got %d", resp.StatusCode)
-	}
-	resp.Body.Close()
-
-	// Read code from DB
-	var code string
-	err = testPool.QueryRow(ctx, `SELECT code FROM verification_code WHERE email = $1 ORDER BY created_at DESC LIMIT 1`, email).Scan(&code)
-	if err != nil {
-		t.Fatalf("failed to read code from DB: %v", err)
-	}
-
-	// Step 2: Verify code
-	body, _ = json.Marshal(map[string]string{"email": email, "code": code})
-	resp, err = http.Post(testServer.URL+"/auth/verify-code", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("verify-code failed: %v", err)
+		t.Fatalf("login failed: %v", err)
 	}
 	if resp.StatusCode != 200 {
 		respBody, _ := io.ReadAll(resp.Body)
 		resp.Body.Close()
-		t.Fatalf("verify-code: expected 200, got %d: %s", resp.StatusCode, respBody)
+		t.Fatalf("login: expected 200, got %d: %s", resp.StatusCode, respBody)
 	}
 
 	var loginResp struct {
@@ -340,8 +321,8 @@ func TestSendCodeAndVerify(t *testing.T) {
 	if loginResp.Token == "" {
 		t.Fatal("expected non-empty token")
 	}
-	if loginResp.User.Email != email {
-		t.Fatalf("expected email '%s', got '%s'", email, loginResp.User.Email)
+	if loginResp.User.Email != account {
+		t.Fatalf("expected account %q, got %q", account, loginResp.User.Email)
 	}
 
 	// Verify the token works with /api/me
@@ -357,40 +338,23 @@ func TestSendCodeAndVerify(t *testing.T) {
 	meResp.Body.Close()
 }
 
-func TestVerifyCodeNewUserHasNoWorkspace(t *testing.T) {
-	const email = "new-integration-verify@multica.ai"
+func TestAccountPasswordLoginNewUserHasNoWorkspace(t *testing.T) {
+	const account = "new-integration-login"
 	ctx := context.Background()
 
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM verification_code WHERE email = $1`, email)
-		testPool.Exec(ctx, `DELETE FROM "user" WHERE email = $1`, email)
+		testPool.Exec(ctx, `DELETE FROM "user" WHERE email = $1`, account)
 	})
 
-	testPool.Exec(ctx, `DELETE FROM "user" WHERE email = $1`, email)
+	testPool.Exec(ctx, `DELETE FROM "user" WHERE email = $1`, account)
 
-	// Send code
-	body, _ := json.Marshal(map[string]string{"email": email})
-	resp, err := http.Post(testServer.URL+"/auth/send-code", "application/json", bytes.NewReader(body))
+	body, _ := json.Marshal(map[string]string{"account": account, "password": "correct-password"})
+	resp, err := http.Post(testServer.URL+"/auth/login", "application/json", bytes.NewReader(body))
 	if err != nil {
-		t.Fatalf("send-code failed: %v", err)
-	}
-	resp.Body.Close()
-
-	// Read code from DB
-	var code string
-	err = testPool.QueryRow(ctx, `SELECT code FROM verification_code WHERE email = $1 ORDER BY created_at DESC LIMIT 1`, email).Scan(&code)
-	if err != nil {
-		t.Fatalf("failed to read code from DB: %v", err)
-	}
-
-	// Verify code
-	body, _ = json.Marshal(map[string]string{"email": email, "code": code})
-	resp, err = http.Post(testServer.URL+"/auth/verify-code", "application/json", bytes.NewReader(body))
-	if err != nil {
-		t.Fatalf("verify-code failed: %v", err)
+		t.Fatalf("login failed: %v", err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("verify-code: expected 200, got %d", resp.StatusCode)
+		t.Fatalf("login: expected 200, got %d", resp.StatusCode)
 	}
 
 	var loginResp struct {

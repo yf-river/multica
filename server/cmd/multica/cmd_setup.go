@@ -50,7 +50,7 @@ Use --server-url and --app-url to specify a custom server (e.g. an on-premise de
 
 If you run this command from a different machine than the server, also pass
 --callback-host <FQDN-or-IP-the-browser-can-reach-back-to-this-machine-on> so
-the OAuth login flow can return the token to the CLI.
+the browser login flow can return the token to the CLI.
 
 Examples:
   multica setup self-host
@@ -64,7 +64,7 @@ func init() {
 	setupSelfHostCmd.Flags().String("app-url", "", "Frontend app URL (e.g. https://app.internal.co) (env: MULTICA_APP_URL)")
 	setupSelfHostCmd.Flags().Int("port", 8080, "Backend server port (used when --server-url is not set)")
 	setupSelfHostCmd.Flags().Int("frontend-port", 3000, "Frontend port (used when --app-url is not set)")
-	setupSelfHostCmd.Flags().String(callbackHostFlag, "", "Host the OAuth callback URL points at (auto-detected when empty). Use this for reverse-proxy / FQDN setups.")
+	setupSelfHostCmd.Flags().String(callbackHostFlag, "", "Host the browser login callback URL points at (auto-detected when empty). Use this for reverse-proxy / FQDN setups.")
 
 	setupCmd.AddCommand(setupCloudCmd)
 	setupCmd.AddCommand(setupSelfHostCmd)

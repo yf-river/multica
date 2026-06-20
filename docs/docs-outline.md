@@ -147,7 +147,6 @@ multica issue assign <issue-id> --agent <agent-slug>
 
 **关键约定**：
 
-- **Callout**：`<Callout type="info|warning|tip">...</Callout>`。warning 用于陷阱（如固定测试验证码），info 用于补充说明，tip 用于最佳实践
 - **代码块**：shell 命令用 \`\`\`bash；配置用 \`\`\`yaml / \`\`\`env；JSON 用 \`\`\`json
 - **Cross-link**：用 markdown 链接 `[显示文字](/docs/page-slug)`，不要写成 "详见 Tasks 章节"
 - **表格**：有 3 行以上对照才用表格，不要 1-2 行也用
@@ -175,7 +174,6 @@ multica issue assign <issue-id> --agent <agent-slug>
 | 4. How Agents Run | 3 | 0 |
 | 5. Working with Agents | 4 | 0 |
 | 6. Staying Informed | 1 | 2（Subscriptions 合并 / Realtime）|
-| 7. Administration | 3 | 5（Self-Host Overview / Docker Compose / Storage / Email / Upgrading / Signup Controls）|
 | 8. Reference | 3 | 13（CLI 各子命令详细页）|
 | **合计** | **25** | **24** |
 
@@ -273,7 +271,6 @@ multica issue assign <issue-id> --agent <agent-slug>
   - 第一次启动后 `multica setup self-host`
   - 最小可行配置（必填 env）
   - **⚠️ 提醒 `APP_ENV=production` 的陷阱**（详细讲在 §7.2）
-- **不写**: 完整 env 表（§7.1）、Storage/Email 进阶配置（v2）
 - **写前要验证**: `selfhost` vs `selfhost-build` 实际差异
 - **⚠️ 动笔前必读**:
   - 目标 10 分钟跑起来。超时就砍步骤
@@ -315,12 +312,9 @@ multica issue assign <issue-id> --agent <agent-slug>
 - **写什么**（1000-1500 字）:
   - 三级权限矩阵（owner / admin / member）—— 用表格
   - **邀请双路径**：`CreateInvitation` vs `CreateMember`
-  - 邮箱自动创建（邀请不存在邮箱时）
   - **至少保留 1 owner 约束**
   - 角色提升约束（非 owner 不能邀请为 owner）
   - 7 天邀请有效期
-- **不写**: 邮件模板内容、OAuth（§7.2）
-- **写前要验证**: 权限矩阵每行对应 handler；邀请有效期；邮件失败行为
 - **⚠️ 动笔前必读**: 权限矩阵表 + 邀请流程图是必需的
 - **Owner**: –
 
@@ -695,7 +689,6 @@ multica issue assign <issue-id> --agent <agent-slug>
 
 > **板块叙事**：给 self-host 运维 + 开发者。语气 reference 向，不讲故事。
 >
-> **V1 砍掉**：Self-Host Overview（合并进 §1.4）/ Docker Compose 深入（简化到 §1.4）/ Storage / Email / Upgrading / Signup Controls（合并进 §7.2）/ Authentication & Tokens（拆到 §8.2）
 
 ### 7.1 Environment Variables — ⬜ Not started [v1]
 
@@ -705,12 +698,8 @@ multica issue assign <issue-id> --agent <agent-slug>
 - **写什么**（1500-2500 字）:
   - 按类别分组：
     - **必填**：DATABASE_URL / PORT / JWT_SECRET / APP_ENV / FRONTEND_ORIGIN
-    - **Email**：RESEND_API_KEY（未配置→code 落 stderr）
-    - **OAuth**：GOOGLE_CLIENT_ID / _SECRET / _REDIRECT_URI
     - **Storage**：S3_BUCKET / CloudFront 等（默认本地 `./data/uploads`）
-    - **Signup 控制**：ALLOW_SIGNUP / ALLOWED_EMAIL_DOMAINS / ALLOWED_EMAILS（**三级优先级**）
   - 每个变量：默认值 / 来源 / 何时必填
-- **不写**: Storage / Email 深入配置（v2）
 - **写前要验证**: `.env.example` 里的变量穷尽吗（可能有 code-level 但没进 example 的）
 - **⚠️ 动笔前必读**:
   - reference 页，完整性第一
@@ -721,24 +710,14 @@ multica issue assign <issue-id> --agent <agent-slug>
 
 > **合并说明**：原 7.3 Auth Setup + 7.10 Signup Controls 合并。
 
-- **Source files**: `server/internal/handler/auth.go`（固定测试验证码 + checkSignupAllowed）, `.env.example`（auth 相关注释）
 - **目标读者**: self-host 运维
 - **叙事位置**: self-host 的 auth 配置。
 - **写什么**（1500-2000 字）:
-  - **🚨 超醒目 warning block**：生产环境必须保持 `MULTICA_DEV_VERIFICATION_CODE` 为空；固定测试验证码只用于非 production 私有测试
-  - Email + verification code 登录流程（依赖 Resend）
-  - Google OAuth 配置步骤（创建 OAuth client → redirect URI → 填 env）
   - **Signup 白名单三层优先级决策树**:
-    1. ALLOWED_EMAILS 命中 → allow
-    2. ALLOWED_EMAIL_DOMAINS 命中 → allow
     3. ALLOW_SIGNUP=true → allow；false → deny
-  - 典型场景：开放给公司域 / 限定几个邮箱 / 完全关闭 signup
   - 和邀请的关系（signup 关了也能通过邀请加人）
 - **不写**: JWT 实现、token 类型（§8.2 讲）
-- **写前要验证**: 固定测试验证码的 env 条件；OAuth 流程最新；Signup 优先级
 - **⚠️ 动笔前必读**:
-  - ⚠️⚠️ **固定测试验证码风险必须最醒目**（红色 warning block），这是 self-host 最大坑
-  - OAuth 给外部步骤截图，别假设读者懂 GCP Console
   - 决策树建议用 Mermaid 图
 - **Owner**: –
 
@@ -751,8 +730,6 @@ multica issue assign <issue-id> --agent <agent-slug>
   - Daemon 连不上 server（token 过期 / network / server 挂）
   - 任务一直 queued（runtime offline / max_concurrent 满 / agent 配错）
   - WebSocket 连不上（cookie / CORS / proxy）
-  - Email 没收到（Resend 未配置 → 看 stderr）
-  - 固定测试验证码不工作（APP_ENV / MULTICA_DEV_VERIFICATION_CODE 检查）
   - Port 冲突
   - 日志位置：daemon / server / browser console
 - **不写**: 深度 bug report（去 GitHub issue）
@@ -817,7 +794,6 @@ multica issue assign <issue-id> --agent <agent-slug>
     | `/api/workspaces/:id/*` | ✓ | ✓ | ✗ |
     | `/api/daemon/*` | ✗ | ✓ | ✓ |
     | `WS /ws` | ✓（cookie）| ✓（首条消息）| - |
-  - 登录 flow（email + code / OAuth）
   - PAT 创建 / 撤销 / 管理（UI 在 Settings，CLI 通过 `multica login`）
   - Daemon token 生成时机（`multica daemon login`）
   - Logout（删本地 token，不撤销 server session）
@@ -863,7 +839,6 @@ multica issue assign <issue-id> --agent <agent-slug>
   - 7.4 Self-Hosting Overview（决策树：Cloud / Self-Host / Hybrid）
   - 7.5 Docker Compose 深入部署（镜像 / 端口 / 数据卷 / 生产参数）
   - 7.6 Storage（S3 / CloudFront / 本地 disk 三模式对比）
-  - 7.7 Email（Resend 配置 / 邮件场景 / 未配置 fallback）
   - 7.8 Upgrading（版本 tag / migration 自动执行 / 回滚策略）
 - **板块 8**（CLI 详细 reference，从 8.1 cheatsheet 拆开）:
   - 8.4 multica auth / login 详细
@@ -907,6 +882,5 @@ multica issue assign <issue-id> --agent <agent-slug>
   - MCP 推 v2（目前仅 Claude Code 真用，v1 在 §3.3 末尾提一句）
 - **2026-04-23** v1 scope 收敛到 25 篇：
   - 合并：Projects → Issues / Runtime → Daemon / Rerun → Tasks / Subscriptions → Inbox / Signup → Auth Setup / CLI 14 页 → Cheatsheet
-  - 推 v2：MCP / Realtime / Storage / Email / Upgrading / Self-Host Overview / Docker Compose 深入 / CLI 详细 reference
   - 保留独立成页：所有用户高频感知的功能（Chat / Routines / Inbox / Skills / Providers Matrix / Desktop App / Self-Host Quickstart）
 - （后续更新 append 到此处）

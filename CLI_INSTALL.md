@@ -125,7 +125,7 @@ Run:
 multica login
 ```
 
-**Important:** This command opens a browser window for OAuth authentication. Tell the user:
+**Important:** This command opens a browser window for Multica account/password authentication. Tell the user:
 
 > "A browser window will open for Multica login. Please complete the authentication in your browser, then come back here."
 

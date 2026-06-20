@@ -77,7 +77,6 @@ Multica = **人 + AI agent 在同一个看板上协作的任务管理平台**。
 | # | 篇目 | 它回答的问题 | 代码事实高光 |
 |---|---|---|---|
 | 1 | **Workspaces** | 多租户边界；slug / issue prefix / issue_counter 管什么 | slug 正则 `^[a-z0-9]+(?:-[a-z0-9]+)*$`；issue number **per-workspace 自增**；硬删除级联 |
-| 2 | **Members & Access** | owner/admin/member 3 级权限；邀请流程；角色约束 | **邀请不存在的邮箱会自动创建 user**（用 email 当名字）；每个 workspace 至少保留 1 个 owner |
 | 3 | **Issues** | 最核心工作对象；polymorphic assignee（member 或 agent） | **分配给 agent 会自动入队 task**；private agent 只能被 owner/admin 分配；`acceptance_criteria`/`position`/`first_executed_at` 等字段在代码里**未实装**，不写进文档 |
 | 4 | **Projects** | issue 容器；lead 可以是 agent | 非常薄（9 个字段）；删除 project 只是把 issue.project_id 设 NULL |
 | 5 | **Agents** | AI 工作者身份；provider/instructions/custom_env/custom_args/model 分别影响什么 | **`custom_env` 在 DB 里明文存储，无加密**——醒目警告；archive 用 `archived_at` 软删除；API 响应对非 owner 做 redact |
@@ -91,7 +90,6 @@ Multica = **人 + AI agent 在同一个看板上协作的任务管理平台**。
 | 13 | **Chat** | 和 issue comment 的区别；session 复用 | **完全沙盒**——chat 里的 agent 不能发 comment 到 issue；session_id 用 COALESCE 持久化，agent crash 不会抹掉 |
 | 14 | **Inbox** | 个人通知中心；10 种通知类型 | **Agents 可以被加入 subscriber 表但永远收不到 inbox 通知**——`notifyIssueSubscribers` 显式过滤；mention dedup 只在单 event 内生效（一 comment 里 @alice 5 次 = 1 inbox） |
 | 15 | **Subscriptions** | 谁会自动订阅；如何手动订阅 | **取消分配后旧 assignee 不会被取消订阅**；parent issue 冒泡只对 `status_changed` 生效 |
-| 16 | **Authentication & Tokens** | 3 种凭证 + signup flow + OAuth | JWT cookie（30 天）/ PAT（`mul_` 前缀）/ Daemon Token（`mdt_` 前缀）；Daemon Token **不能命中 user-scoped 路由**；PAT 几乎什么都能命中；signup 白名单优先级：`ALLOWED_EMAILS` > `ALLOWED_EMAIL_DOMAINS` > `ALLOW_SIGNUP` |
 | 17 | **Realtime & Events** | WebSocket hub + room model + 事件目录 | **40+ event types**（按命名空间分：issue:* / task:* / inbox:* / chat:* 等）；WS 是 **push-only**（client→server 走 HTTP）；room 按 workspace；inbox:* 用 SendToUser 定向推送 |
 
 ### 板块 4. Guides（12 篇，任务导向）
@@ -118,9 +116,7 @@ Multica = **人 + AI agent 在同一个看板上协作的任务管理平台**。
 | Overview | 决策树（哪种部署模式适合你） |
 | Docker Compose deployment | `make selfhost` vs `make selfhost-build` |
 | Environment variables reference | 完整 env 表 |
-| Authentication setup | **🚨 固定测试验证码必须显式设置 `MULTICA_DEV_VERIFICATION_CODE`，生产保持为空**；Google OAuth 配置；signup 白名单 |
 | Storage | S3 / CloudFront / 本地磁盘 |
-| Email | Resend 配置；**没配会落到 stderr** |
 | Upgrading | 版本升级 + migration 策略 |
 | Troubleshooting | 常见问题（日志在哪、端口冲突、daemon 连不上、等） |
 
@@ -145,8 +141,6 @@ Installation / Authentication / Setup / Daemon / Workspace / Issue / Comment / A
 | 5 | Webhook autopilot trigger 字段建了但没接路由——第一版不文档化 | Autopilots |
 | 6 | custom_env merge 是覆盖而非合并——不能用 custom_env"取消设置"系统 env | Agents |
 | 7 | 旧 assignee 取消分配后不会被取消订阅 | Subscriptions |
-| 8 | 固定本地测试验证码默认关闭；`MULTICA_DEV_VERIFICATION_CODE` 仅用于非 production 私有测试 | Self-Hosting → Auth |
-| 9 | Signup 白名单优先级：ALLOWED_EMAILS > ALLOWED_EMAIL_DOMAINS > ALLOW_SIGNUP | Self-Hosting → Auth |
 | 10 | One daemon ↔ many runtimes；one runtime ↔ ONE provider；同 daemon_id 重启复用旧 runtime 行 | Runtimes / Daemon |
 | 11 | Inbox 10 种类型，mention dedup 只在单 event 内生效 | Inbox |
 | 12 | WebSocket 是 push-only；client 写操作走 HTTP；room 按 workspace，inbox:* 用 SendToUser | Realtime & Events |
@@ -159,7 +153,6 @@ Installation / Authentication / Setup / Daemon / Workspace / Issue / Comment / A
 |---|---|
 | Mermaid diagram | 架构图 / task 生命周期 / trigger 流向 / autopilot 调度链 |
 | Tabs | Cloud / Self-Host / Desktop 并列；CLI / UI 并列 |
-| Callouts（内置）| Tip / Warning / Note — **警告类密集用在 Agents 的 custom_env 和 Self-Host 的固定测试验证码** |
 | Code Tabs | API 调用多语言（Shell / Node / Go） |
 | Video / GIF | "Create your first agent"、"Follow an agent working" |
 | DeploymentPicker（定制）| 交互式决策树：回答 3 个问题 → 推荐部署路径 |
