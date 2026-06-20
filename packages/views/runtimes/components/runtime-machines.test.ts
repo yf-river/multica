@@ -283,28 +283,6 @@ describe("runtime machine grouping", () => {
     expect(local).toMatchObject({ section: "local", runtimes: [] });
   });
 
-  it("keeps cloud runtimes as cloud workers when they have no daemon", () => {
-    const machines = buildRuntimeMachines(
-      [
-        makeRuntime({
-          id: "cloud-1",
-          daemon_id: null,
-          runtime_mode: "cloud",
-          provider: "codex",
-          name: "Codex cloud",
-          device_info: "",
-        }),
-      ],
-      { now: NOW },
-    );
-
-    expect(machines[0]).toMatchObject({
-      id: "cloud:runtime:cloud-1",
-      title: "Codex cloud",
-      subtitle: "Cloud worker",
-      section: "cloud",
-    });
-  });
 });
 
 describe("splitRuntimeName", () => {
@@ -316,8 +294,8 @@ describe("splitRuntimeName", () => {
   });
 
   it("falls back to the full name when no host suffix exists", () => {
-    expect(splitRuntimeName("Codex cloud")).toEqual({
-      base: "Codex cloud",
+    expect(splitRuntimeName("Codex")).toEqual({
+      base: "Codex",
       hostname: null,
     });
   });

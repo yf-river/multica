@@ -452,9 +452,7 @@ function formatElapsed(seconds: number) {
  *   2. Progressively reveal troubleshooting hints as elapsed time
  *      crosses thresholds — so a user who stalls mid-setup gets
  *      useful guidance without being dogpiled at t=0.
- *   3. At the 90s+ "stalled" tier, point the user at alternate paths
- *      (Skip / Cloud waitlist) — parallels desktop's EmptyView, which
- *      already exposes the same two exits when no runtime registers.
+ *   3. At the 90s+ "stalled" tier, point the user at the Skip path.
  *
  * Elapsed-time counter only ticks while the dialog is open so reopen
  * after closing resets the staging.
@@ -479,9 +477,8 @@ function CliWaitingStatus({ dialogOpen }: { dialogOpen: boolean }) {
   //   ~2s daemon boot → immediate WS register. So under 15s means
   //   "still normal", 15–45s means "probably stuck on browser auth",
   //   45–90s means "probably an error in the terminal", 90s+ means
-  //   "nothing's coming through, suggest alt paths" (the stalled tier
-  //   parallels desktop StepRuntimeConnect's EmptyView — by that point
-  //   it's worth pointing the user at Skip or Cloud waitlist).
+  //   "nothing's coming through, suggest Skip" (the stalled tier
+  //   parallels desktop StepRuntimeConnect's EmptyView).
   const stage: "normal" | "midway" | "slow" | "stalled" =
     elapsed < 15
       ? "normal"

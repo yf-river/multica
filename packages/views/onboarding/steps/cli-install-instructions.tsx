@@ -10,7 +10,15 @@ import { useT } from "../../i18n";
 
 const INSTALL_CMD =
   "curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash";
-const SETUP_CMD = "multica setup";
+const DEFAULT_SELF_HOST_ORIGIN = "http://9.134.129.162";
+
+function selfHostSetupCmd() {
+  const origin =
+    typeof window === "undefined"
+      ? DEFAULT_SELF_HOST_ORIGIN
+      : window.location.origin;
+  return `multica setup self-host --server-url ${origin} --app-url ${origin}`;
+}
 
 function CopyButton({ text }: { text: string }) {
   const { t } = useT("onboarding");
@@ -63,15 +71,13 @@ function Step({ n, label, cmd }: { n: number; label: string; cmd: string }) {
 }
 
 /**
- * CLI install instructions — two copy-and-run commands. Hardcoded because
- * there's nothing environmental to infer: step 1 is the public install
- * script, step 2 is the cloud `multica setup` which the CLI itself knows
- * the endpoints for. Local development tests a self-host variant by
- * typing the extended command directly in the terminal; no need to
- * thread env vars through React.
+ * CLI install instructions — two copy-and-run commands. Step 1 installs the
+ * public CLI binary; step 2 must explicitly target this self-hosted instance
+ * so users do not accidentally connect their daemon to Multica Cloud.
  */
 export function CliInstallInstructions() {
   const { t } = useT("onboarding");
+  const setupCmd = selfHostSetupCmd();
   return (
     <Card className="w-full">
       <CardContent className="space-y-4 pt-4">
@@ -79,7 +85,7 @@ export function CliInstallInstructions() {
           {t(($) => $.cli_install.intro)}
         </p>
         <Step n={1} label={t(($) => $.cli_install.step1_label)} cmd={INSTALL_CMD} />
-        <Step n={2} label={t(($) => $.cli_install.step2_label)} cmd={SETUP_CMD} />
+        <Step n={2} label={t(($) => $.cli_install.step2_label)} cmd={setupCmd} />
       </CardContent>
     </Card>
   );

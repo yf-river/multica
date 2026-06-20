@@ -67,7 +67,6 @@ var (
 	knownOnboardingPaths = map[string]string{
 		"full":            "full",
 		"runtime_skipped": "runtime_skipped",
-		"cloud_waitlist":  "cloud_waitlist",
 		"skip_existing":   "skip_existing",
 		"invite_accept":   "invite_accept",
 		"unknown":         "unknown",
@@ -162,24 +161,6 @@ var (
 		"other":             "other",
 	}
 
-	knownCloudRuntimeOps = map[string]string{
-		"provision": "provision",
-		"terminate": "terminate",
-		"status":    "status",
-		"gateway":   "gateway",
-		"billing":   "billing",
-		"fleet":     "fleet",
-		"other":     "other",
-	}
-
-	knownCloudRuntimeStatuses = map[string]string{
-		"ok":      "ok",
-		"4xx":     "4xx",
-		"5xx":     "5xx",
-		"timeout": "timeout",
-		"error":   "error",
-	}
-
 	knownDaemonWSKinds = map[string]string{
 		"heartbeat":     "heartbeat",
 		"task_claim":    "task_claim",
@@ -197,14 +178,6 @@ var (
 		"general": "general",
 		"praise":  "praise",
 		"other":   "other",
-	}
-
-	knownContactSalesSources = map[string]string{
-		"page":        "page",
-		"onboarding":  "onboarding",
-		"agents_page": "agents_page",
-		"unknown":     "unknown",
-		"other":       "other",
 	}
 )
 
@@ -343,54 +316,10 @@ func NormalizeGithubPRReviewResult(value string) string {
 	return normalizeFromAllowList(value, knownGithubPRReviewResults, "other")
 }
 
-func NormalizeCloudRuntimeOp(value string) string {
-	return normalizeFromAllowList(value, knownCloudRuntimeOps, "other")
-}
-
-// NormalizeCloudRuntimeStatus collapses an HTTP status code or symbolic
-// outcome string into the fixed bucket set {ok, 4xx, 5xx, timeout, error}.
-// Empty / unknown collapses to "error".
-func NormalizeCloudRuntimeStatus(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	if normalized, ok := knownCloudRuntimeStatuses[value]; ok {
-		return normalized
-	}
-	if len(value) == 3 {
-		switch value[0] {
-		case '2':
-			return "ok"
-		case '4':
-			return "4xx"
-		case '5':
-			return "5xx"
-		}
-	}
-	return "error"
-}
-
-// CloudRuntimeStatusForCode maps an HTTP status code to its bucket label.
-// Used by cloudruntime client instrumentation.
-func CloudRuntimeStatusForCode(code int) string {
-	switch {
-	case code >= 200 && code < 400:
-		return "ok"
-	case code >= 400 && code < 500:
-		return "4xx"
-	case code >= 500 && code < 600:
-		return "5xx"
-	default:
-		return "error"
-	}
-}
-
 func NormalizeDaemonWSKind(value string) string {
 	return normalizeFromAllowList(value, knownDaemonWSKinds, "other")
 }
 
 func NormalizeFeedbackKind(value string) string {
 	return normalizeFromAllowList(value, knownFeedbackKinds, "other")
-}
-
-func NormalizeContactSalesSource(value string) string {
-	return normalizeFromAllowList(value, knownContactSalesSources, "other")
 }

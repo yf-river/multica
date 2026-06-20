@@ -299,7 +299,6 @@ func TestAuth_PATCacheHit(t *testing.T) {
 	}
 }
 
-
 // TestAuth_MCN_NoVerifierConfigured pins the same fail-closed branch
 // as the daemon side: with no MULTICA_CLOUD_FLEET_URL configured, an
 // mcn_ bearer token must be rejected with 401 at the prefix branch.
@@ -353,11 +352,8 @@ func TestAuth_MCN_ValidTokenSetsUserID(t *testing.T) {
 	if gotUser != "01972f7e-7e8d-77ef-a13d-1b0ce3e9c001" {
 		t.Errorf("expected owner_id propagated as X-User-ID, got %q", gotUser)
 	}
-	// Pinned per the cloud-billing review: a successful mcn_ verify
-	// MUST stamp X-Actor-Source so account-level guards (e.g.
-	// handler.RequireHumanActor on /api/cloud-billing/*) can tell a
-	// machine credential apart from a human PAT/JWT. Dropping this
-	// stamp would silently let an mcn_ holder reach billing.
+	// A successful mcn_ verify must stamp X-Actor-Source so downstream
+	// handlers can tell a machine credential apart from a human PAT/JWT.
 	if gotActorSource != "cloud_pat" {
 		t.Errorf("expected X-Actor-Source=cloud_pat, got %q", gotActorSource)
 	}

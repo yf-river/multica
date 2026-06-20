@@ -172,8 +172,6 @@ make start
 
 完整的开发流程、worktree 支持、测试和问题排查请参阅 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-iOS 移动端代码位于 [`apps/mobile/`](apps/mobile/)，自己编译装到手机的方法见 [README](apps/mobile/README.md)。
-
 ## 开源协议
 
 [Modified Apache 2.0 (with commercial restrictions)](LICENSE)

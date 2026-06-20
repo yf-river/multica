@@ -1,5 +1,7 @@
 # --- Build stage ---
-FROM golang:1.26-alpine AS builder
+ARG GO_BASE_IMAGE=golang:1.26-alpine
+ARG ALPINE_BASE_IMAGE=alpine:3.21
+FROM ${GO_BASE_IMAGE} AS builder
 
 RUN apk add --no-cache git
 
@@ -23,7 +25,7 @@ RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/backfill_task_us
 RUN cd server && CGO_ENABLED=0 go build -ldflags "-s -w" -o bin/backfill_codex_usage_cache ./cmd/backfill_codex_usage_cache
 
 # --- Runtime stage ---
-FROM alpine:3.21
+FROM ${ALPINE_BASE_IMAGE}
 
 RUN apk add --no-cache ca-certificates tzdata
 

@@ -116,8 +116,8 @@ function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
     id: "rt-1",
     workspace_id: "ws-1",
     daemon_id: null,
-    name: "Cloud Runtime",
-    runtime_mode: "cloud",
+    name: "Local Runtime",
+    runtime_mode: "local",
     provider: "claude",
     launch_header: "",
     status: "online",
@@ -350,20 +350,10 @@ describe("DeleteRuntimeDialog", () => {
     ).toBeInTheDocument();
   });
 
-  it("does NOT render the self-heal banner for offline local or cloud runtimes", () => {
+  it("does NOT render the self-heal banner for offline local runtimes", () => {
     // Offline local: no live daemon, so the warning would be misleading.
-    const { unmount } = renderDialog({
-      runtime: makeRuntime({ runtime_mode: "local", status: "offline" }),
-      cachedAgents: [],
-    });
-    expect(
-      screen.queryByText(/managed by a running local daemon/i),
-    ).not.toBeInTheDocument();
-    unmount();
-
-    // Cloud: managed by Fleet, not a self-restarting local daemon.
     renderDialog({
-      runtime: makeRuntime({ runtime_mode: "cloud", status: "online" }),
+      runtime: makeRuntime({ runtime_mode: "local", status: "offline" }),
       cachedAgents: [],
     });
     expect(

@@ -119,20 +119,7 @@
     "copy_aria": "复制",
     "intro": "这台电脑上需要装一个 agent 运行时（Claude Code、Codex、Cursor 等）才能运行你的智能体。也支持服务器和远程开发机。",
     "step1_label": "安装 Multica CLI",
-    "step2_label": "启动守护进程"
-  },
-  "cloud_waitlist": {
-    "intro_main": "云运行时尚未上线。留下邮箱，上线时通过邮件通知你。",
-    "intro_warning": "提示：没有运行时，智能体无法执行 task —— 如果现在跳过，工作区会是只读状态，直到你回来安装一个。",
-    "email_label": "邮箱",
-    "email_placeholder": "you@work.com",
-    "reason_label": "为什么选择云？",
-    "optional": "选填",
-    "reason_placeholder": "例如：希望智能体 24/7 运行，或团队在不同设备协作。",
-    "join": "加入候补",
-    "on_list": "已在候补名单",
-    "success_toast": "已加入候补名单。云运行时上线时会通过邮件通知你。",
-    "failed_toast": "加入候补名单失败"
+    "step2_label": "连接本平台并启动守护进程"
   },
   "first_issue": {
     "error_title": "出错了",
@@ -331,9 +318,6 @@
     "empty_skip_title": "暂时跳过",
     "empty_skip_subtitle": "进入工作区（只读模式）。在这台电脑上连接 agent 运行时之前，智能体无法执行 task —— 但你仍可以浏览、规划、邀请同事。",
     "empty_skip_action": "跳过",
-    "empty_waitlist_title": "改用云电脑",
-    "empty_waitlist_subtitle": "我们会在云上为你运行一台电脑。尚未上线。",
-    "empty_waitlist_action": "即将推出",
     "skip": "暂时跳过",
     "refresh": "刷新",
     "refreshing": "正在刷新…",

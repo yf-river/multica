@@ -213,15 +213,4 @@ describe("runtime list CLI column", () => {
     expect(screen.getByText("—")).toBeInTheDocument();
   });
 
-  it("renders an em dash for cloud runtimes", () => {
-    renderCliCell(
-      makeRow(
-        makeRuntime({
-          runtime_mode: "cloud",
-          metadata: { version: "2.1.5 (Claude Code)" },
-        }),
-      ),
-    );
-    expect(screen.getByText("—")).toBeInTheDocument();
-  });
 });

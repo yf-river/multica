@@ -105,7 +105,7 @@ Every event is assigned to one dashboard category:
 |---|---|
 | `core_loop` | `workspace_created`, `agent_created`, `issue_created`, `chat_message_sent`, `issue_executed`, `autopilot_created`, `squad_created` |
 | `onboarding_support` | `onboarding_started`, `onboarding_questionnaire_submitted`, `onboarding_completed`, `onboarding_runtime_path_selected`, `onboarding_runtime_detected` |
-| `acquisition` | `signup`, `download_intent_expressed`, `download_page_viewed`, `download_initiated`, `cloud_waitlist_joined`, `contact_sales_submitted` |
+| `acquisition` | `signup` |
 | `ops_feedback` | `feedback_opened`, `feedback_submitted` |
 | `system/noise` | `$pageview`, `$set`, `$identify`, `$autocapture`, `$rageclick` |
 | `operational (Prometheus-only — NOT in PostHog)` | `runtime_registered`, `runtime_ready`, `runtime_failed`, `runtime_offline`, `agent_task_queued`, `agent_task_dispatched`, `agent_task_started`, `agent_task_completed`, `agent_task_failed`, `agent_task_cancelled`, `autopilot_run_started`, `autopilot_run_completed`, `autopilot_run_failed` |
@@ -198,7 +198,7 @@ extra query, no race.
 |---|---|---|
 | `runtime_id` | string (UUID) | The newly created agent_runtime row id. |
 | `daemon_id` | string | Local daemon identity when available. |
-| `runtime_mode` | string | Currently `local`; reserved for cloud runtimes. |
+| `runtime_mode` | string | Runtime category; first internal release expects local/fixed-machine runtimes. |
 | `provider` | string | e.g. `"codex"`, `"claude"`. |
 | `runtime_version` | string | Version of the agent runtime binary. |
 | `cli_version` | string | Version of the `multica` CLI that registered it. |
@@ -466,8 +466,7 @@ which exit the user took.
 | Property | Type | Description |
 |---|---|---|
 | `workspace_id` | string (UUID) | Present for workspace-linked onboarding completions. |
-| `completion_path` | string | One of `full` / `runtime_skipped` / `cloud_waitlist` / `skip_existing` / `invite_accept` / `unknown`. See below. |
-| `joined_cloud_waitlist` | bool | Derived from `user.cloud_waitlist_email`. Orthogonal to `completion_path` — a user may submit the waitlist form and still pick CLI. |
+| `completion_path` | string | One of `full` / `runtime_skipped` / `skip_existing` / `invite_accept` / `unknown`. See below. |
 
 Person properties set with `$set_once`:
 
@@ -479,29 +478,9 @@ Person properties set with `$set_once`:
 
 - `full` — Reached Step 5 (first_issue) with a runtime connected.
 - `runtime_skipped` — Completed without connecting a runtime (user hit Skip in Step 3).
-- `cloud_waitlist` — Submitted the cloud waitlist form and skipped Step 3.
 - `skip_existing` — "I've done this before" from Welcome. The user already had a workspace.
 - `invite_accept` — Accepted at least one workspace invitation.
 - `unknown` — Legacy fallback when the client didn't send a path. Should stay near zero after rollout.
-
-### `cloud_waitlist_joined`
-
-Fires from JoinCloudWaitlist whenever a user submits the Step 3 cloud
-waitlist form. Not a completion signal — it's orthogonal to the main
-funnel and used to size hosted-runtime interest.
-
-| Property | Type | Description |
-|---|---|---|
-| `has_reason` | bool | Presence flag for the free-text reason field. The free text stays in the DB; we don't broadcast it. |
-
-`distinct_id` is the user's id.
-
-### `contact_sales_submitted`
-
-Fires from `CreateContactSales` after the `contact_sales_inquiry` row is
-inserted. The endpoint is public and unauthenticated, so the
-`distinct_id` is the inquiry id (no user identity to attach to). The
-free-text `goals` field stays in the DB and is never broadcast.
 
 | Property | Type | Description |
 |---|---|---|
@@ -547,9 +526,9 @@ sent from a pre-workspace surface.
   tracker is deliberately NOT keyed on the query string.
 - `onboarding_runtime_path_selected` — fired from
   `packages/views/onboarding/steps/step-platform-fork.tsx` when the web
-  user clicks one of the three Step 3 fork cards (before any server
+  user clicks one of the Step 3 fork cards (before any server
   call happens, so it's frontend-only). Properties: `path`
-  (`download_desktop` / `cli` / `cloud_waitlist`), `source`
+  (`download_desktop` / `cli`), `source`
   (`onboarding`), `surface` (`step3`), `workspace_id`, and `is_mac`.
   Also writes `platform_preference` (`web` / `desktop`) to person
   properties so every subsequent event on the user can be broken down
@@ -598,44 +577,6 @@ sent from a pre-workspace surface.
   daemons from other machines and would corrupt the
   "CLI installed locally" signal.
 
-- `download_intent_expressed` — fired whenever a user clicks a CTA
-  that points at the `/download` page. Surfaces five sources across
-  the funnel, letting the top-of-funnel entry be split cleanly.
-  Wrapper lives in `packages/core/analytics/download.ts`
-  (`captureDownloadIntent`). Properties:
-  - `source`: `landing_hero` / `landing_footer` / `login` / `welcome`
-    / `step3`
-  Also writes `platform_preference: "desktop"` to person properties.
-
-- `download_page_viewed` — fired once per `/download` mount after OS
-  detect resolves (`apps/web/app/(landing)/download/download-client.tsx`).
-  Properties:
-  - `detected_os`: `mac` / `windows` / `linux` / `unknown`
-  - `detected_arch`: `arm64` / `x64` / `unknown`
-  - `detect_confident`: `true` when detect used
-    `userAgentData.getHighEntropyValues` (Chromium); `false` when it
-    fell back to the UA string (Safari on Mac always lands here —
-    lets us isolate the arm64-default-for-Intel risk cohort).
-  - `version_available`: `false` when the GitHub API fetch failed
-    and the page is in the "Version unavailable" degraded state.
-  Also writes `first_detected_os` / `first_detected_arch` via
-  `$set_once` so every downstream event gains a platform dimension
-  without re-emitting.
-
-- `download_initiated` — fired when the user clicks a specific
-  installer link on `/download`. Both the hero CTA and the All
-  Platforms matrix rows emit this; split by `primary_cta`.
-  Properties:
-  - `platform`: `mac` / `windows` / `linux`
-  - `arch`: `arm64` / `x64`
-  - `format`: `dmg` / `zip` / `exe` / `appimage` / `deb` / `rpm`
-  - `version`: release tag (e.g. `v0.2.13`) — correlates adoption
-    with release cadence.
-  - `primary_cta`: `true` for the hero-recommended installer, `false`
-    for a manual pick from the All Platforms matrix.
-  - `matched_detect`: `true` when the chosen platform+arch matches
-    what the page detected. `false` lets us quantify detect misses
-    from the single event (no cross-join needed).
 - `feedback_opened` — fired when the in-app Feedback modal mounts
   (user clicked "Feedback" in the Help launcher). Paired with the
   backend's `feedback_submitted` to give a completion rate for the

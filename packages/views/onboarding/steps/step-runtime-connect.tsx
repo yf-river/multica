@@ -467,49 +467,7 @@ function EmptyView({
           actionLabel={t(($) => $.step_runtime.empty_skip_action)}
           onAction={onSkip}
         />
-
-        <ComingSoonCard
-          title={t(($) => $.step_runtime.empty_waitlist_title)}
-          subtitle={t(($) => $.step_runtime.empty_waitlist_subtitle)}
-          badgeLabel={t(($) => $.step_runtime.empty_waitlist_action)}
-        />
       </div>
-    </div>
-  );
-}
-
-/**
- * Static, non-interactive variant of EmptyCard used for the cloud-computer
- * row. The card is dimmed and the pill is rendered as a badge so the user
- * understands the option exists but isn't actionable yet. Mirrors the
- * "Coming soon" treatment on the web platform fork.
- */
-function ComingSoonCard({
-  title,
-  subtitle,
-  badgeLabel,
-}: {
-  title: string;
-  subtitle: string;
-  badgeLabel: string;
-}) {
-  return (
-    <div
-      aria-disabled
-      className="flex items-center justify-between gap-4 rounded-lg border border-dashed bg-muted/20 px-5 py-4 opacity-70"
-    >
-      <div className="min-w-0">
-        <div className="text-[14.5px] font-medium text-foreground">{title}</div>
-        <p className="mt-1 text-[12.5px] leading-[1.55] text-muted-foreground">
-          {subtitle}
-        </p>
-      </div>
-      <span
-        aria-hidden
-        className="inline-flex shrink-0 items-center rounded-full border bg-background px-3 py-1.5 text-[12px] font-medium uppercase tracking-wide text-muted-foreground"
-      >
-        {badgeLabel}
-      </span>
     </div>
   );
 }
