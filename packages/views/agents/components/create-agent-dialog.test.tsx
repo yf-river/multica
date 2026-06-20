@@ -66,7 +66,7 @@ const members: MemberWithUser[] = [
     user_id: OTHER,
     workspace_id: "ws-1",
     role: "member",
-    name: "Other",
+    name: "其他",
     account: "other",
     avatar_url: null,
     created_at: "2026-01-01T00:00:00Z",
@@ -152,7 +152,7 @@ describe("CreateAgentDialog runtime visibility gate", () => {
   // focus-guard / inert wrapper divs around after the React tree unmounts.
   // The auto-cleanup from @testing-library/react drops the container but
   // not the portal residue, so two-tests-in-a-row queries see double
-  // matches ("All", "My Runtime"). Force cleanup + wipe body between tests.
+  // matches ("全部", "My Runtime"). Force cleanup + wipe body between tests.
   afterEach(() => {
     cleanup();
     document.body.innerHTML = "";
@@ -168,8 +168,8 @@ describe("CreateAgentDialog runtime visibility gate", () => {
     });
     renderDialog([mine, othersPrivate]);
 
-    // Flip to "All" so other-owned runtimes show.
-    fireEvent.click(screen.getByText("All"));
+    // Flip to "全部" so other-owned runtimes show.
+    fireEvent.click(screen.getByText("全部"));
     // Open the picker.
     fireEvent.click(
       screen.getByText("My Runtime", { selector: "span.truncate" }),
@@ -180,7 +180,7 @@ describe("CreateAgentDialog runtime visibility gate", () => {
       .closest("button") as HTMLButtonElement;
     expect(disabledRow).not.toBeNull();
     expect(disabledRow.disabled).toBe(true);
-    expect(disabledRow.title).toMatch(/Private runtime/i);
+    expect(disabledRow.title).toMatch(/私有运行时/i);
   });
 
   it("lets a plain member pick another member's public runtime", () => {
@@ -193,7 +193,7 @@ describe("CreateAgentDialog runtime visibility gate", () => {
     });
     renderDialog([mine, othersPublic]);
 
-    fireEvent.click(screen.getByText("All"));
+    fireEvent.click(screen.getByText("全部"));
     fireEvent.click(
       screen.getByText("My Runtime", { selector: "span.truncate" }),
     );
@@ -230,7 +230,7 @@ describe("CreateAgentDialog runtime visibility gate", () => {
   it("in duplicate mode, does not pre-fill the template's runtime when it's now locked", async () => {
     // Template runtime is owned by someone else and now private — the
     // duplicate flow used to seed with it anyway, leaving the user with
-    // a Create button that 403s server-side. Now we fall back to the
+    // a 创建 button that 403s server-side. Now we fall back to the
     // first usable runtime instead.
     const othersPrivate = makeRuntime({
       id: "rt-others-private",
@@ -254,33 +254,33 @@ describe("CreateAgentDialog runtime visibility gate", () => {
       screen.queryByText("Others Private", { selector: "span.truncate" }),
     ).toBeNull();
 
-    // Sanity check: with a usable selection seeded, Create should submit.
-    fireEvent.click(screen.getByText("Create"));
+    // Sanity check: with a usable selection seeded, 创建 should submit.
+    fireEvent.click(screen.getByText("创建"));
     await new Promise((r) => setTimeout(r, 0));
     expect(onCreate).toHaveBeenCalledTimes(1);
     expect(onCreate.mock.calls[0]?.[0].runtime_id).toBe("rt-mine");
   });
 
-  it("disables Create when the selected runtime is locked (template + no usable fallback)", () => {
+  it("disables 创建 when the selected runtime is locked (template + no usable fallback)", () => {
     // Edge case: template points at a locked runtime AND the workspace
     // has no usable alternatives in scope. The defense-in-depth gate on
-    // the Create button must keep the user from submitting a 403.
+    // the 创建 button must keep the user from submitting a 403.
     const onlyOthersPrivate = makeRuntime({
       id: "rt-only-others-private",
       name: "Only Others Private",
       owner_id: OTHER,
       visibility: "private",
     });
-    // Flip the picker to "All" so the locked runtime is at least
+    // Flip the picker to "全部" so the locked runtime is at least
     // visible — that's the scope where the selected-but-locked state
     // can persist after the initial seed search returns nothing.
     const template = makeTemplate("rt-only-others-private");
     renderDialog([onlyOthersPrivate], template);
 
-    // The Create button is rendered by lucide-free CTA text "Create".
+    // The 创建 button is rendered by lucide-free CTA text "创建".
     const createBtn = screen
       .getAllByRole("button")
-      .find((b) => b.textContent === "Create");
+      .find((b) => b.textContent === "创建");
     expect(createBtn).toBeDefined();
     expect((createBtn as HTMLButtonElement).disabled).toBe(true);
   });

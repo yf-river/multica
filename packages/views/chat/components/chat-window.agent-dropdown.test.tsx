@@ -64,17 +64,17 @@ function renderDropdown(onSelect = vi.fn()) {
 }
 
 describe("AgentDropdown", () => {
-  it("opens the shared picker upward from the chat input", async () => {
+  it("从聊天输入区向上打开共享选择器", async () => {
     renderDropdown();
 
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toHaveAttribute("data-side", "top");
   });
 
-  it("filters both My agents and Others by agent name", async () => {
+  it("按智能体名称同时过滤我的智能体和其他分组", async () => {
     renderDropdown();
 
-    const input = await screen.findByRole("textbox", { name: "Filter options" });
+    const input = await screen.findByRole("textbox", { name: "筛选选项" });
     fireEvent.change(input, { target: { value: "ta" } });
     const dialog = screen.getByRole("dialog");
 
@@ -82,34 +82,34 @@ describe("AgentDropdown", () => {
     expect(within(dialog).queryByText("张三")).not.toBeInTheDocument();
     expect(within(dialog).getByText("Beta")).toBeInTheDocument();
     expect(within(dialog).queryByText("Gamma")).not.toBeInTheDocument();
-    expect(within(dialog).getByText("Others")).toBeInTheDocument();
+    expect(within(dialog).getByText("其他")).toBeInTheDocument();
   });
 
-  it("matches My agents by pinyin", async () => {
+  it("通过拼音匹配我的智能体", async () => {
     renderDropdown();
 
-    const input = await screen.findByRole("textbox", { name: "Filter options" });
+    const input = await screen.findByRole("textbox", { name: "筛选选项" });
     fireEvent.change(input, { target: { value: "zhang" } });
     const dialog = screen.getByRole("dialog");
 
     expect(within(dialog).getByText("张三")).toBeInTheDocument();
-    expect(within(dialog).getByText("My agents")).toBeInTheDocument();
+    expect(within(dialog).getByText("我的智能体")).toBeInTheDocument();
     expect(within(dialog).queryByText("Alpha")).not.toBeInTheDocument();
     expect(within(dialog).queryByText("Beta")).not.toBeInTheDocument();
   });
 
-  it("shows the shared empty state when no agents match", async () => {
+  it("没有智能体匹配时显示共享空态", async () => {
     renderDropdown();
 
-    const input = await screen.findByRole("textbox", { name: "Filter options" });
+    const input = await screen.findByRole("textbox", { name: "筛选选项" });
     fireEvent.change(input, { target: { value: "missing" } });
 
-    expect(screen.getByText("No results")).toBeInTheDocument();
-    expect(screen.queryByText("My agents")).not.toBeInTheDocument();
-    expect(screen.queryByText("Others")).not.toBeInTheDocument();
+    expect(screen.getByText("无结果")).toBeInTheDocument();
+    expect(screen.queryByText("我的智能体")).not.toBeInTheDocument();
+    expect(screen.queryByText("其他")).not.toBeInTheDocument();
   });
 
-  it("left-aligns agent picker rows", async () => {
+  it("智能体选择器行左对齐", async () => {
     renderDropdown();
 
     const dialog = await screen.findByRole("dialog");
@@ -121,7 +121,7 @@ describe("AgentDropdown", () => {
     expect(alphaRow).toHaveClass("text-left");
   });
 
-  it("keeps the current agent marked and selects another agent", async () => {
+  it("保留当前智能体标记，并可选择另一个智能体", async () => {
     const { onSelect } = renderDropdown();
 
     const dialog = screen.getByRole("dialog");
@@ -133,7 +133,7 @@ describe("AgentDropdown", () => {
 
     expect(onSelect).toHaveBeenCalledWith(agents[2]);
     await waitFor(() => {
-      expect(screen.queryByRole("textbox", { name: "Filter options" })).not.toBeInTheDocument();
+      expect(screen.queryByRole("textbox", { name: "筛选选项" })).not.toBeInTheDocument();
     });
   });
 });

@@ -175,7 +175,7 @@ describe("CreateProjectModal", () => {
 
     renderWithI18n(<CreateProjectModal onClose={vi.fn()} />);
 
-    const repoSearchInput = screen.getByRole("textbox", { name: "Search repositories..." });
+    const repoSearchInput = screen.getByRole("textbox", { name: "搜索仓库..." });
 
     await user.type(repoSearchInput, "api");
 
@@ -192,6 +192,6 @@ describe("CreateProjectModal", () => {
     await user.clear(repoSearchInput);
     await user.type(repoSearchInput, "no-match");
 
-    expect(screen.getByText("No repositories match your search.")).toBeInTheDocument();
+    expect(screen.getByText("没有匹配的仓库。")).toBeInTheDocument();
   });
 });

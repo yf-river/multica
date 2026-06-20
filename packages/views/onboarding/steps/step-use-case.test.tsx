@@ -39,14 +39,14 @@ function renderStep(answers: QuestionnaireAnswers = EMPTY) {
   return { onChange, onAdvance, onSkip };
 }
 
-describe("StepUseCase (multi-select)", () => {
+describe("StepUseCase（多选）", () => {
   beforeEach(() => vi.restoreAllMocks());
 
-  it("clicking a use case appends it to the array", async () => {
+  it("点击使用场景会追加到数组", async () => {
     const user = userEvent.setup();
     const { onChange, onAdvance } = renderStep();
 
-    await user.click(screen.getByRole("checkbox", { name: /ship code/i }));
+    await user.click(screen.getByRole("checkbox", { name: /写代码/ }));
 
     expect(onChange).toHaveBeenCalledWith({
       use_case: ["ship_code"],
@@ -55,11 +55,11 @@ describe("StepUseCase (multi-select)", () => {
     expect(onAdvance).not.toHaveBeenCalled();
   });
 
-  it("clicking an already-selected use case removes it (toggle)", async () => {
+  it("点击已选使用场景会移除它", async () => {
     const user = userEvent.setup();
     const { onChange } = renderStep({ ...EMPTY, use_case: ["ship_code"] });
 
-    await user.click(screen.getByRole("checkbox", { name: /ship code/i }));
+    await user.click(screen.getByRole("checkbox", { name: /写代码/ }));
 
     expect(onChange).toHaveBeenCalledWith({
       use_case: [],
@@ -67,11 +67,11 @@ describe("StepUseCase (multi-select)", () => {
     });
   });
 
-  it("Skip clears slot and marks use_case_skipped", async () => {
+  it("跳过会清空字段并标记 use_case_skipped", async () => {
     const user = userEvent.setup();
     const { onChange, onSkip } = renderStep();
 
-    await user.click(screen.getByRole("button", { name: /skip/i }));
+    await user.click(screen.getByRole("button", { name: /跳过/ }));
 
     expect(onChange).toHaveBeenCalledWith({
       use_case: [],
@@ -81,17 +81,17 @@ describe("StepUseCase (multi-select)", () => {
     expect(onSkip).toHaveBeenCalledTimes(1);
   });
 
-  it("Other: selecting + typing writes use_case_other through onChange", async () => {
+  it("选择其他并输入时通过 onChange 写入 use_case_other", async () => {
     const user = userEvent.setup();
     const { onChange } = renderStep();
 
-    await user.click(screen.getByRole("checkbox", { name: /^other$/i }));
+    await user.click(screen.getByRole("checkbox", { name: /^其他$/ }));
     expect(onChange).toHaveBeenCalledWith({
       use_case: ["other"],
       use_case_skipped: false,
     });
 
-    const input = await screen.findByPlaceholderText(/study group/i);
+    const input = await screen.findByPlaceholderText(/学习小组/);
     await user.type(input, "z");
     expect(onChange).toHaveBeenLastCalledWith({ use_case_other: "z" });
   });

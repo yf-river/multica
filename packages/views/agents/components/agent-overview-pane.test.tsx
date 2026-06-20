@@ -38,7 +38,7 @@ vi.mock("../../common/actor-issues-panel", () => ({
   ActorIssuesPanel: () => <div>actor-issues-panel</div>,
 }));
 
-// The pane now reads workspace context to decide whether the Integrations
+// The pane now reads workspace context to decide whether the 集成
 // tab is worth showing (it queries Lark installations to learn whether the
 // deployment has the feature configured). Provide a stable workspace id and
 // a listing query backed by a ref so each test can flip `configured`.
@@ -154,21 +154,21 @@ describe("AgentOverviewPane MCP tab visibility", () => {
   });
 });
 
-describe("AgentOverviewPane Integrations tab visibility", () => {
-  it("shows the Integrations tab once the deployment has Lark configured", async () => {
+describe("AgentOverviewPane 集成 tab visibility", () => {
+  it("shows the 集成 tab once the deployment has Lark configured", async () => {
     larkListingRef.current = { installations: [], configured: true };
     renderPane([makeRuntime("claude")]);
     expect(
-      await screen.findByRole("button", { name: /^Integrations$/i }),
+      await screen.findByRole("button", { name: /^集成$/i }),
     ).toBeInTheDocument();
   });
 
-  it("hides the Integrations tab when Lark is not configured", () => {
+  it("hides the 集成 tab when Lark is not configured", () => {
     // Default ref is configured:false; the tab must not appear on
     // deployments without the integration, which are the common case.
     renderPane([makeRuntime("claude")]);
     expect(
-      screen.queryByRole("button", { name: /^Integrations$/i }),
+      screen.queryByRole("button", { name: /^集成$/i }),
     ).not.toBeInTheDocument();
   });
 });

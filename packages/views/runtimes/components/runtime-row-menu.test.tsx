@@ -136,21 +136,21 @@ describe("runtime list row menu", () => {
     renderActionsCell(
       makeRow(makeRuntime({ runtime_mode: "local", status: "online" })),
     );
-    expect(screen.getByLabelText("Row actions")).toBeInTheDocument();
+    expect(screen.getByLabelText("行操作")).toBeInTheDocument();
   });
 
   it("renders the kebab menu for an offline local runtime", () => {
     renderActionsCell(
       makeRow(makeRuntime({ runtime_mode: "local", status: "offline" })),
     );
-    expect(screen.getByLabelText("Row actions")).toBeInTheDocument();
+    expect(screen.getByLabelText("行操作")).toBeInTheDocument();
   });
 
   it("renders the kebab menu for a cloud runtime regardless of status", () => {
     renderActionsCell(
       makeRow(makeRuntime({ runtime_mode: "cloud", status: "online" })),
     );
-    expect(screen.getByLabelText("Row actions")).toBeInTheDocument();
+    expect(screen.getByLabelText("行操作")).toBeInTheDocument();
   });
 
   it("hides the kebab menu when the caller lacks delete permission", () => {
@@ -163,7 +163,7 @@ describe("runtime list row menu", () => {
         /* canDelete */ false,
       ),
     );
-    expect(screen.queryByLabelText("Row actions")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("行操作")).not.toBeInTheDocument();
   });
 });
 

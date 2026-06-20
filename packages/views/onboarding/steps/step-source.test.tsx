@@ -41,10 +41,10 @@ function renderStep(answers: QuestionnaireAnswers = EMPTY) {
   return { onChange, onAdvance, onSkip, onBack };
 }
 
-describe("StepSource (single-select primary source)", () => {
+describe("StepSource（单选主要来源）", () => {
   beforeEach(() => vi.restoreAllMocks());
 
-  it("clicking a non-Other option writes a one-element source array", async () => {
+  it("点击非其他选项会写入单元素 source 数组", async () => {
     const user = userEvent.setup();
     const { onChange, onAdvance } = renderStep();
 
@@ -59,7 +59,7 @@ describe("StepSource (single-select primary source)", () => {
     expect(onAdvance).not.toHaveBeenCalled();
   });
 
-  it("picking a second option replaces the first (no stacking)", async () => {
+  it("选择第二个选项会替换第一个，不会叠加", async () => {
     const user = userEvent.setup();
     const { onChange } = renderStep({
       ...EMPTY,
@@ -75,11 +75,11 @@ describe("StepSource (single-select primary source)", () => {
     });
   });
 
-  it("Skip clears source + source_other and marks the step skipped, then calls onSkip", async () => {
+  it("跳过会清空 source 和 source_other，标记跳过并调用 onSkip", async () => {
     const user = userEvent.setup();
     const { onChange, onSkip } = renderStep();
 
-    await user.click(screen.getByRole("button", { name: /skip/i }));
+    await user.click(screen.getByRole("button", { name: /跳过/ }));
 
     expect(onChange).toHaveBeenCalledWith({
       source: [],
@@ -89,11 +89,11 @@ describe("StepSource (single-select primary source)", () => {
     expect(onSkip).toHaveBeenCalledTimes(1);
   });
 
-  it("Other: clicking writes `source: ['other']` and lets the user type into source_other", async () => {
+  it("点击其他会写入 source: ['other'] 并允许输入 source_other", async () => {
     const user = userEvent.setup();
     const { onChange } = renderStep();
 
-    await user.click(screen.getByRole("radio", { name: /^other$/i }));
+    await user.click(screen.getByRole("radio", { name: /^其他$/ }));
 
     expect(onChange).toHaveBeenCalledWith({
       source: ["other"],
@@ -101,12 +101,12 @@ describe("StepSource (single-select primary source)", () => {
       source_skipped: false,
     });
 
-    const input = await screen.findByPlaceholderText(/podcast/i);
+    const input = await screen.findByPlaceholderText(/播客/);
     await user.type(input, "x");
     expect(onChange).toHaveBeenLastCalledWith({ source_other: "x" });
   });
 
-  it("switching away from Other clears source_other so a stale value can't leak", async () => {
+  it("从其他切走会清空 source_other，避免旧值泄漏", async () => {
     const user = userEvent.setup();
     const { onChange } = renderStep({
       ...EMPTY,

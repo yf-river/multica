@@ -12,12 +12,12 @@ const EN_LABELS: UserContextLabels = {
   role: {
     engineer: "Engineer / developer",
     product: "Product manager",
-    other: "Other",
+    other: "其他",
   },
   useCase: {
     ship_code: "Ship code",
     manage_team: "Manage team",
-    other: "Other",
+    other: "其他",
   },
 };
 

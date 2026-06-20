@@ -120,7 +120,7 @@ describe("IntegrationsTab", () => {
 
   it("renders the shared bind entry for an owner when Lark is configured and supported", () => {
     renderTab(<IntegrationsTab agent={agent} />);
-    expect(screen.getByText("Lark")).toBeTruthy();
+    expect(screen.getByText("飞书")).toBeTruthy();
     const button = screen.getByTestId("lark-bind-button");
     expect(button.getAttribute("data-agent-id")).toBe("agent-1");
   });
@@ -132,7 +132,7 @@ describe("IntegrationsTab", () => {
       install_supported: false,
     };
     renderTab(<IntegrationsTab agent={agent} />);
-    expect(screen.getByText(/installation coming soon/i)).toBeTruthy();
+    expect(screen.getByText(/飞书 Bot 安装即将上线/i)).toBeTruthy();
     expect(screen.queryByTestId("lark-bind-button")).toBeNull();
   });
 
@@ -143,7 +143,7 @@ describe("IntegrationsTab", () => {
       install_supported: false,
     };
     renderTab(<IntegrationsTab agent={agent} />);
-    expect(screen.getByText(/Lark integration not enabled/i)).toBeTruthy();
+    expect(screen.getByText(/未启用飞书集成/i)).toBeTruthy();
     expect(screen.queryByTestId("lark-bind-button")).toBeNull();
   });
 
@@ -151,7 +151,7 @@ describe("IntegrationsTab", () => {
     membersRef.current = [{ user_id: "user-1", role: "member" }];
     renderTab(<IntegrationsTab agent={agent} />);
     expect(
-      screen.getByText(/Only workspace owners and admins can bind a Lark Bot/i),
+      screen.getByText(/只有工作区的所有者和管理员才能为智能体绑定飞书 Bot/i),
     ).toBeTruthy();
     expect(screen.queryByTestId("lark-bind-button")).toBeNull();
   });
@@ -167,6 +167,6 @@ describe("IntegrationsTab", () => {
     };
     renderTab(<IntegrationsTab agent={agent} />);
     expect(screen.getByTestId("lark-bind-button")).toBeTruthy();
-    expect(screen.queryByText(/installation coming soon/i)).toBeNull();
+    expect(screen.queryByText(/飞书 Bot 安装即将上线/i)).toBeNull();
   });
 });

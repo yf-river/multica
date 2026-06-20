@@ -247,7 +247,7 @@ describe("before_send $exception pipeline", () => {
         $exception_list: [
           {
             type: "TypeError",
-            value: "Bad email bob@corp.com",
+            value: "Request failed https://api.multica.ai/issues?token=abc123secret",
             stacktrace: {
               frames: [{ filename: "a.tsx", function: "f", lineno: 1, colno: 2 }],
             },
@@ -268,7 +268,9 @@ describe("before_send $exception pipeline", () => {
 
     const first = beforeSend(excEvent()) as { properties: { $exception_list: Array<{ value: string }> } };
     // Redaction still runs before the fuse.
-    expect(first.properties.$exception_list[0]!.value).toBe("Bad email [redacted]");
+    expect(first.properties.$exception_list[0]!.value).toBe(
+      "Request failed https://api.multica.ai/issues?[redacted]",
+    );
 
     expect(beforeSend(excEvent())).not.toBeNull();
     expect(beforeSend(excEvent())).not.toBeNull();

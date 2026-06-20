@@ -5,8 +5,6 @@
 package db
 
 import (
-	"net/netip"
-
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
@@ -228,23 +226,6 @@ type CommentReaction struct {
 	ActorID     pgtype.UUID        `json:"actor_id"`
 	Emoji       string             `json:"emoji"`
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-}
-
-type ContactSalesInquiry struct {
-	ID              pgtype.UUID        `json:"id"`
-	FirstName       string             `json:"first_name"`
-	LastName        string             `json:"last_name"`
-	BusinessEmail   string             `json:"business_email"`
-	CompanyName     string             `json:"company_name"`
-	CompanySize     string             `json:"company_size"`
-	CountryRegion   string             `json:"country_region"`
-	UseCase         string             `json:"use_case"`
-	Goals           string             `json:"goals"`
-	ConsentOutreach bool               `json:"consent_outreach"`
-	ConsentUpdates  bool               `json:"consent_updates"`
-	SubmitterIp     *netip.Addr        `json:"submitter_ip"`
-	UserAgent       string             `json:"user_agent"`
-	CreatedAt       pgtype.Timestamptz `json:"created_at"`
 }
 
 type DaemonConnection struct {
@@ -750,12 +731,11 @@ type User struct {
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
 	OnboardedAt             pgtype.Timestamptz `json:"onboarded_at"`
 	OnboardingQuestionnaire []byte             `json:"onboarding_questionnaire"`
-	CloudWaitlistEmail      pgtype.Text        `json:"cloud_waitlist_email"`
-	CloudWaitlistReason     pgtype.Text        `json:"cloud_waitlist_reason"`
 	StarterContentState     pgtype.Text        `json:"starter_content_state"`
 	ProfileDescription      string             `json:"profile_description"`
 	// User-preferred IANA timezone for report rendering (Viewing tz). NULL means "use the browser-detected tz at render time". Affects dashboards, charts, and any "today" label shown to this user. Does not affect data materialisation — all rollups remain in UTC.
-	Timezone pgtype.Text `json:"timezone"`
+	Timezone     pgtype.Text `json:"timezone"`
+	PasswordHash pgtype.Text `json:"password_hash"`
 }
 
 type WebhookDelivery struct {

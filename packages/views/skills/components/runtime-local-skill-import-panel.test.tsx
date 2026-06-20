@@ -177,7 +177,7 @@ describe("RuntimeLocalSkillImportPanel", () => {
     fireEvent.click(skillButton);
 
     const importButton = screen.getByRole("button", {
-      name: /Import to Workspace/i,
+      name: /导入到工作区/i,
     });
     await waitFor(
       () => {
@@ -225,13 +225,13 @@ describe("RuntimeLocalSkillImportPanel", () => {
     expect(screen.getByText("Code Gen")).toBeInTheDocument();
 
     // Click select all checkbox (the native one in the label)
-    const selectAllLabel = screen.getByText(/Select all/i);
+    const selectAllLabel = screen.getByText(/全选/i);
     const selectAllCheckbox = selectAllLabel.closest("label")!.querySelector("input[type='checkbox']")!;
     fireEvent.click(selectAllCheckbox);
 
-    // Button should now say "Import 2 Skills"
+    // Button should now say "导入 2 个 skill"
     const importButton = screen.getByRole("button", {
-      name: /Import 2 Skills/i,
+      name: /导入 2 个 skill/i,
     });
     await waitFor(
       () => {
@@ -245,7 +245,7 @@ describe("RuntimeLocalSkillImportPanel", () => {
     await waitFor(
       () => {
         expect(
-          screen.getByRole("button", { name: /Done/i }),
+          screen.getByRole("button", { name: /完成/i }),
         ).toBeInTheDocument();
       },
       { timeout: 10000 },
@@ -254,7 +254,7 @@ describe("RuntimeLocalSkillImportPanel", () => {
     expect(mockResolveRuntimeLocalSkillImport).toHaveBeenCalledTimes(2);
 
     // Verify summary shows both as created
-    expect(screen.getByText("Created")).toBeInTheDocument();
+    expect(screen.getByText("已创建")).toBeInTheDocument();
   });
 
   it("handles partial failures gracefully", async () => {
@@ -277,14 +277,14 @@ describe("RuntimeLocalSkillImportPanel", () => {
       await screen.findByText("Review Helper", {}, { timeout: 5000 }),
     ).toBeInTheDocument();
 
-    // Select all
-    const selectAllLabel2 = screen.getByText(/Select all/i);
+    // 全选
+    const selectAllLabel2 = screen.getByText(/全选/i);
     const selectAllCheckbox2 = selectAllLabel2.closest("label")!.querySelector("input[type='checkbox']")!;
     fireEvent.click(selectAllCheckbox2);
 
     // Import
     const importButton = screen.getByRole("button", {
-      name: /Import 2 Skills/i,
+      name: /导入 2 个 skill/i,
     });
     await waitFor(
       () => {
@@ -298,15 +298,15 @@ describe("RuntimeLocalSkillImportPanel", () => {
     await waitFor(
       () => {
         expect(
-          screen.getByRole("button", { name: /Done/i }),
+          screen.getByRole("button", { name: /完成/i }),
         ).toBeInTheDocument();
       },
       { timeout: 10000 },
     );
 
     // Summary should show created and skipped
-    expect(screen.getByText("Created")).toBeInTheDocument();
-    expect(screen.getByText("Skipped")).toBeInTheDocument();
+    expect(screen.getByText("已创建")).toBeInTheDocument();
+    expect(screen.getByText("已跳过")).toBeInTheDocument();
   });
 
   it("calls onImported when exactly one skill succeeds", async () => {
@@ -322,7 +322,7 @@ describe("RuntimeLocalSkillImportPanel", () => {
     fireEvent.click(skillButton);
 
     const importButton = screen.getByRole("button", {
-      name: /Import to Workspace/i,
+      name: /导入到工作区/i,
     });
     await waitFor(
       () => {
@@ -336,14 +336,14 @@ describe("RuntimeLocalSkillImportPanel", () => {
     await waitFor(
       () => {
         expect(
-          screen.getByRole("button", { name: /Done/i }),
+          screen.getByRole("button", { name: /完成/i }),
         ).toBeInTheDocument();
       },
       { timeout: 10000 },
     );
 
     // Click Done — should call onImported with the single skill
-    fireEvent.click(screen.getByRole("button", { name: /Done/i }));
+    fireEvent.click(screen.getByRole("button", { name: /完成/i }));
     expect(onImported).toHaveBeenCalledWith(MOCK_IMPORTED_SKILL_A);
   });
 
@@ -368,13 +368,13 @@ describe("RuntimeLocalSkillImportPanel", () => {
       await screen.findByText("Review Helper", {}, { timeout: 5000 }),
     ).toBeInTheDocument();
 
-    // Select all
-    const selectAllLabel3 = screen.getByText(/Select all/i);
+    // 全选
+    const selectAllLabel3 = screen.getByText(/全选/i);
     const selectAllCheckbox3 = selectAllLabel3.closest("label")!.querySelector("input[type='checkbox']")!;
     fireEvent.click(selectAllCheckbox3);
 
     const importButton = screen.getByRole("button", {
-      name: /Import 2 Skills/i,
+      name: /导入 2 个 skill/i,
     });
     await waitFor(
       () => {
@@ -387,14 +387,14 @@ describe("RuntimeLocalSkillImportPanel", () => {
     await waitFor(
       () => {
         expect(
-          screen.getByRole("button", { name: /Done/i }),
+          screen.getByRole("button", { name: /完成/i }),
         ).toBeInTheDocument();
       },
       { timeout: 10000 },
     );
 
     // Click Done — should call onBulkDone, NOT onImported
-    fireEvent.click(screen.getByRole("button", { name: /Done/i }));
+    fireEvent.click(screen.getByRole("button", { name: /完成/i }));
     expect(onBulkDone).toHaveBeenCalledTimes(1);
     expect(onImported).not.toHaveBeenCalled();
   });
@@ -426,7 +426,7 @@ describe("RuntimeLocalSkillImportPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: /Review Helper/i }));
 
     const importButton = screen.getByRole("button", {
-      name: /Import to Workspace/i,
+      name: /导入到工作区/i,
     });
     await waitFor(() => expect(importButton).not.toBeDisabled(), {
       timeout: 5000,
@@ -434,11 +434,11 @@ describe("RuntimeLocalSkillImportPanel", () => {
     fireEvent.click(importButton);
 
     expect(
-      await screen.findByText(/A skill with this name already exists/i),
+      await screen.findByText(/工作区里已存在同名 skill/i),
     ).toBeInTheDocument();
 
     const applyButton = screen.getByRole("button", {
-      name: /Apply decisions/i,
+      name: /应用决策/i,
     });
     await waitFor(() => expect(applyButton).not.toBeDisabled(), {
       timeout: 5000,
@@ -462,7 +462,7 @@ describe("RuntimeLocalSkillImportPanel", () => {
       { timeout: 5000 },
     );
 
-    expect(await screen.findByText("Updated")).toBeInTheDocument();
+    expect(await screen.findByText("已更新")).toBeInTheDocument();
   });
 
   it("applies a single creator conflict when clicking overwrite", async () => {
@@ -492,7 +492,7 @@ describe("RuntimeLocalSkillImportPanel", () => {
     fireEvent.click(screen.getByRole("button", { name: /Review Helper/i }));
 
     const importButton = screen.getByRole("button", {
-      name: /Import to Workspace/i,
+      name: /导入到工作区/i,
     });
     await waitFor(() => expect(importButton).not.toBeDisabled(), {
       timeout: 5000,
@@ -500,10 +500,10 @@ describe("RuntimeLocalSkillImportPanel", () => {
     fireEvent.click(importButton);
 
     expect(
-      await screen.findByText(/A skill with this name already exists/i),
+      await screen.findByText(/工作区里已存在同名 skill/i),
     ).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: /^Overwrite$/i }));
+    fireEvent.click(screen.getByRole("button", { name: /^覆盖$/i }));
 
     await waitFor(
       () => {
@@ -522,7 +522,7 @@ describe("RuntimeLocalSkillImportPanel", () => {
       { timeout: 5000 },
     );
 
-    expect(await screen.findByText("Updated")).toBeInTheDocument();
+    expect(await screen.findByText("已更新")).toBeInTheDocument();
   });
 
   it("keeps bulk completion behavior when conflict resolution leaves one success", async () => {
@@ -560,14 +560,14 @@ describe("RuntimeLocalSkillImportPanel", () => {
       await screen.findByText("Review Helper", {}, { timeout: 5000 }),
     ).toBeInTheDocument();
 
-    const selectAllLabel = screen.getByText(/Select all/i);
+    const selectAllLabel = screen.getByText(/全选/i);
     const selectAllCheckbox = selectAllLabel
       .closest("label")!
       .querySelector("input[type='checkbox']")!;
     fireEvent.click(selectAllCheckbox);
 
     const importButton = screen.getByRole("button", {
-      name: /Import 2 Skills/i,
+      name: /导入 2 个 skill/i,
     });
     await waitFor(() => expect(importButton).not.toBeDisabled(), {
       timeout: 5000,
@@ -575,11 +575,11 @@ describe("RuntimeLocalSkillImportPanel", () => {
     fireEvent.click(importButton);
 
     expect(
-      await screen.findByText(/A skill with this name already exists/i),
+      await screen.findByText(/工作区里已存在同名 skill/i),
     ).toBeInTheDocument();
 
     const applyButton = screen.getByRole("button", {
-      name: /Apply decisions/i,
+      name: /应用决策/i,
     });
     await waitFor(() => expect(applyButton).not.toBeDisabled(), {
       timeout: 5000,
@@ -589,13 +589,13 @@ describe("RuntimeLocalSkillImportPanel", () => {
     await waitFor(
       () => {
         expect(
-          screen.getByRole("button", { name: /Done/i }),
+          screen.getByRole("button", { name: /完成/i }),
         ).toBeInTheDocument();
       },
       { timeout: 10000 },
     );
 
-    fireEvent.click(screen.getByRole("button", { name: /Done/i }));
+    fireEvent.click(screen.getByRole("button", { name: /完成/i }));
     expect(onBulkDone).toHaveBeenCalledTimes(1);
     expect(onImported).not.toHaveBeenCalled();
   });
@@ -618,7 +618,7 @@ describe("RuntimeLocalSkillImportPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Review Helper/i }));
     const importButton = screen.getByRole("button", {
-      name: /Import to Workspace/i,
+      name: /导入到工作区/i,
     });
     await waitFor(() => expect(importButton).not.toBeDisabled(), {
       timeout: 5000,
@@ -628,7 +628,7 @@ describe("RuntimeLocalSkillImportPanel", () => {
     // Bob is user-2 in the mocked member list. The locked message must show
     // the resolved name, never the raw UUID.
     expect(
-      await screen.findByText(/created by Bob/i, {}, { timeout: 5000 }),
+      await screen.findByText(/该 skill 由 Bob 创建/i, {}, { timeout: 5000 }),
     ).toBeInTheDocument();
     expect(screen.queryByText(/user-2/)).not.toBeInTheDocument();
   });
@@ -651,7 +651,7 @@ describe("RuntimeLocalSkillImportPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /Review Helper/i }));
     const importButton = screen.getByRole("button", {
-      name: /Import to Workspace/i,
+      name: /导入到工作区/i,
     });
     await waitFor(() => expect(importButton).not.toBeDisabled(), {
       timeout: 5000,
@@ -662,7 +662,7 @@ describe("RuntimeLocalSkillImportPanel", () => {
     // should render the no-creator variant of the message.
     expect(
       await screen.findByText(
-        /Only the creator can overwrite this skill/i,
+        /该 skill 只能由创建者通过本地导入覆盖/i,
         {},
         { timeout: 5000 },
       ),

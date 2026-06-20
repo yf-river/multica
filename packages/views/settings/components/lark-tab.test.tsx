@@ -187,24 +187,24 @@ function resetFixtures() {
 describe("LarkAgentBindButton (CTA gate)", () => {
   beforeEach(resetFixtures);
 
-  it("shows the Feishu bind CTA but hides the Lark CTA for an owner (MUL-3083)", () => {
-    // Mainland Feishu binding stays available; the Lark (international)
+  it("shows the 飞书 bind CTA but hides the Lark CTA for an owner (MUL-3083)", () => {
+    // Mainland 飞书 binding stays available; the Lark (international)
     // entry is temporarily hidden via LARK_INTL_CONNECT_ENABLED while its
     // install→inbound pipeline is stabilized (MUL-3083).
     render(<LarkAgentBindButton agentId="agent-1" agentName="Bot" />, {
       wrapper: I18nWrapper,
     });
-    expect(screen.getByRole("button", { name: /Bind to Feishu/i })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Bind to Lark/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /绑定飞书/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /绑定 Lark/i })).toBeNull();
   });
 
-  it("shows the Feishu bind CTA but hides the Lark CTA for an admin (MUL-3083)", () => {
+  it("shows the 飞书 bind CTA but hides the Lark CTA for an admin (MUL-3083)", () => {
     membersRef.current = [{ user_id: "user-1", role: "admin" }];
     render(<LarkAgentBindButton agentId="agent-1" agentName="Bot" />, {
       wrapper: I18nWrapper,
     });
-    expect(screen.getByRole("button", { name: /Bind to Feishu/i })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Bind to Lark/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /绑定飞书/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /绑定 Lark/i })).toBeNull();
   });
 
   it("hides both bind CTAs for a non-admin agent owner (matches backend admin gate)", () => {
@@ -225,12 +225,12 @@ describe("LarkAgentBindButton (CTA gate)", () => {
     expect(container.querySelector("button")).toBeNull();
   });
 
-  it("clicking Bind to Feishu begins an install with region='feishu'", async () => {
+  it("clicking 绑定飞书 begins an install with region='feishu'", async () => {
     // Pin the routing wire-up: each split CTA must pass its own region
     // string to the API client (which threads it onto the
     // /lark/install/begin?region=… query param), so the device-flow
     // begins on the matching accounts host. A regression here would
-    // silently send Lark users to a Feishu QR — the exact bug this
+    // silently send Lark users to a 飞书 QR — the exact bug this
     // refactor addresses.
     const user = userEvent.setup();
     mockBeginInstall.mockResolvedValue({
@@ -243,7 +243,7 @@ describe("LarkAgentBindButton (CTA gate)", () => {
     render(<LarkAgentBindButton agentId="agent-1" agentName="Bot" />, {
       wrapper: I18nWrapper,
     });
-    await user.click(screen.getByRole("button", { name: /Bind to Feishu/i }));
+    await user.click(screen.getByRole("button", { name: /绑定飞书/i }));
     await waitFor(() => {
       expect(mockBeginInstall).toHaveBeenCalledTimes(1);
     });
@@ -254,14 +254,14 @@ describe("LarkAgentBindButton (CTA gate)", () => {
     );
   });
 
-  // NOTE (MUL-3083): the "clicking Bind to Lark begins an install with
+  // NOTE (MUL-3083): the "clicking 绑定 Lark begins an install with
   // region='lark'" test was removed alongside the temporarily-hidden Lark
   // (international) CTA — there is no Lark button to click while
-  // LARK_INTL_CONNECT_ENABLED is false. The Feishu region routing is still
-  // pinned by the "clicking Bind to Feishu …" test above; restore the Lark
+  // LARK_INTL_CONNECT_ENABLED is false. The 飞书 region routing is still
+  // pinned by the "clicking 绑定飞书 …" test above; restore the Lark
   // case when the entry is re-enabled.
 
-  it("swaps the bind CTAs for a 'Connected + Manage in Lark' badge when this agent already has an active installation", () => {
+  it("swaps the bind CTAs for a 'Connected + 在 Lark 中管理' badge when this agent already has an active installation", () => {
     // Anti-zombie guard: re-scanning the same agent upserts the row
     // and orphans the previously-created Lark PersonalAgent. The badge
     // closes the install entry point and links the user to the Bot's
@@ -287,16 +287,16 @@ describe("LarkAgentBindButton (CTA gate)", () => {
     );
     // Both Bind CTAs must be gone — re-scanning would orphan the
     // PersonalAgent (see badge comment in lark-tab.tsx).
-    expect(screen.queryByRole("button", { name: /Bind to Feishu/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Bind to Lark/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /绑定飞书/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /绑定 Lark/i })).toBeNull();
     // The fixture omits `region`, which the listings DTO defaults to
-    // Feishu (mainland). After the #3830 badge restructure the cloud is
-    // shown as a "Feishu" chip (not baked into the connected label) and a
-    // Disconnect action appears; the region-aware Manage link still points
+    // 飞书 (mainland). After the #3830 badge restructure the cloud is
+    // shown as a "飞书" chip (not baked into the connected label) and a
+    // 断开连接 action appears; the region-aware Manage link still points
     // at the mainland host.
-    expect(screen.getByText("Feishu")).toBeTruthy();
+    expect(screen.getByText("飞书")).toBeTruthy();
     expect(screen.getByTestId("lark-agent-bot-disconnect")).toBeTruthy();
-    const link = screen.getByRole("link", { name: /Manage in Feishu/i }) as HTMLAnchorElement;
+    const link = screen.getByRole("link", { name: /在飞书中管理/i }) as HTMLAnchorElement;
     expect(link.href).toBe("https://open.feishu.cn/app/cli_existing_app");
     expect(link.target).toBe("_blank");
     expect(link.rel).toContain("noopener");
@@ -304,10 +304,10 @@ describe("LarkAgentBindButton (CTA gate)", () => {
 
   it("renders region-aware badge text and Manage link for a Lark-international (region=lark) installation", () => {
     // Dual-region: a bot installed against the Lark international cloud
-    // must show "Connected to Lark" + "Manage in Lark" copy, with the
-    // Manage link pointing at open.larksuite.com (not the Feishu
+    // must show "Lark" + "在 Lark 中管理" copy, with the
+    // Manage link pointing at open.larksuite.com (not the 飞书
     // default). Without region-aware copy a user who clicked
-    // "Bind to Feishu" and saw "Connected to Lark" would (rightly) be
+    // "绑定飞书" and saw "Lark" would (rightly) be
     // confused — the labels must match the cloud the bot lives on.
     installationsRef.current.installations = [
       {
@@ -327,12 +327,12 @@ describe("LarkAgentBindButton (CTA gate)", () => {
     render(<LarkAgentBindButton agentId="agent-1" agentName="Bot" />, {
       wrapper: I18nWrapper,
     });
-    expect(screen.getByText(/Connected to Lark/i)).toBeTruthy();
-    const link = screen.getByRole("link", { name: /Manage in Lark/i }) as HTMLAnchorElement;
+    expect(screen.getAllByText(/Lark/i).length).toBeGreaterThan(0);
+    const link = screen.getByRole("link", { name: /在 Lark 中管理/i }) as HTMLAnchorElement;
     expect(link.href).toBe("https://open.larksuite.com/app/cli_lark_app");
   });
 
-  it("shows the Feishu CTA (Lark hidden) for an agent without its own installation, per-agent scoping (MUL-3083)", () => {
+  it("shows the 飞书 CTA (Lark hidden) for an agent without its own installation, per-agent scoping (MUL-3083)", () => {
     installationsRef.current.installations = [
       {
         id: "inst-other",
@@ -350,8 +350,8 @@ describe("LarkAgentBindButton (CTA gate)", () => {
     render(<LarkAgentBindButton agentId="agent-1" agentName="Bot" />, {
       wrapper: I18nWrapper,
     });
-    expect(screen.getByRole("button", { name: /Bind to Feishu/i })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Bind to Lark/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /绑定飞书/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /绑定 Lark/i })).toBeNull();
   });
 
   it("keeps the Connected + Manage badge for an already-installed agent even when new installs are unavailable (install_supported=false)", () => {
@@ -381,19 +381,19 @@ describe("LarkAgentBindButton (CTA gate)", () => {
     );
     // Both Bind CTAs must be gone even when install_supported=false,
     // since the existing-installation check runs first.
-    expect(screen.queryByRole("button", { name: /Bind to Feishu/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /Bind to Lark/i })).toBeNull();
-    // Fixture omits region → defaults to Feishu: the cloud shows as a
-    // "Feishu" chip (post-#3830 badge restructure), the Disconnect action
-    // is present, and the Manage link stays Feishu-aware.
-    expect(screen.getByText("Feishu")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /绑定飞书/i })).toBeNull();
+    expect(screen.queryByRole("button", { name: /绑定 Lark/i })).toBeNull();
+    // Fixture omits region → defaults to 飞书: the cloud shows as a
+    // "飞书" chip (post-#3830 badge restructure), the 断开连接 action
+    // is present, and the Manage link stays 飞书-aware.
+    expect(screen.getByText("飞书")).toBeTruthy();
     expect(screen.getByTestId("lark-agent-bot-disconnect")).toBeTruthy();
     expect(
-      screen.getByRole("link", { name: /Manage in Feishu/i }),
+      screen.getByRole("link", { name: /在飞书中管理/i }),
     ).toBeTruthy();
   });
 
-  it("shows the Feishu CTA (Lark hidden) when this agent's only installation is revoked (MUL-3083)", () => {
+  it("shows the 飞书 CTA (Lark hidden) when this agent's only installation is revoked (MUL-3083)", () => {
     installationsRef.current.installations = [
       {
         id: "inst-revoked",
@@ -411,8 +411,8 @@ describe("LarkAgentBindButton (CTA gate)", () => {
     render(<LarkAgentBindButton agentId="agent-1" agentName="Bot" />, {
       wrapper: I18nWrapper,
     });
-    expect(screen.getByRole("button", { name: /Bind to Feishu/i })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Bind to Lark/i })).toBeNull();
+    expect(screen.getByRole("button", { name: /绑定飞书/i })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /绑定 Lark/i })).toBeNull();
   });
 });
 
@@ -422,7 +422,7 @@ describe("LarkAgentBindButton (CTA gate)", () => {
 // re-scan zombie-bot trap and the dual-bot conflict — these tests pin
 // the contract: confirm gating, deleteLarkInstallation wiring, cache
 // invalidation, and toast feedback on success / failure.
-describe("LarkAgentBotConnectedBadge (Unbind / Disconnect)", () => {
+describe("LarkAgentBotConnectedBadge (Unbind / 断开连接)", () => {
   beforeEach(() => {
     resetFixtures();
     installationsRef.current.installations = [
@@ -441,17 +441,17 @@ describe("LarkAgentBotConnectedBadge (Unbind / Disconnect)", () => {
     ];
   });
 
-  it("renders a Disconnect affordance alongside the Manage link when the agent is bound", () => {
+  it("renders a 断开连接 affordance alongside the Manage link when the agent is bound", () => {
     render(<LarkAgentBindButton agentId="agent-1" agentName="Bot" />, {
       wrapper: I18nWrapper,
     });
     // The badge surfaces three siblings: the green-dot status pill,
     // the Manage link, and the Unbind action. We assert by test-id so
-    // we don't trip over /Disconnect/i copy that also appears in the
+    // we don't trip over /断开连接/i copy that also appears in the
     // (closed) AlertDialog.
     expect(screen.getByTestId("lark-agent-bot-disconnect")).toBeTruthy();
-    // Fixture omits region → Feishu copy.
-    expect(screen.getByRole("link", { name: /Manage in Feishu/i })).toBeTruthy();
+    // Fixture omits region → 飞书 copy.
+    expect(screen.getByRole("link", { name: /在飞书中管理/i })).toBeTruthy();
   });
 
   it("opens the confirm dialog and does NOT call the API until the user confirms", async () => {
@@ -463,7 +463,7 @@ describe("LarkAgentBotConnectedBadge (Unbind / Disconnect)", () => {
     // Confirm dialog must mount with the correct copy.
     await waitFor(() => {
       expect(
-        screen.getByText(/Disconnect this Lark bot\?/i),
+        screen.getByText(/断开这个飞书 Bot？/i),
       ).toBeTruthy();
     });
     // Critically: clicking the trigger alone must NOT have deleted the
@@ -479,11 +479,11 @@ describe("LarkAgentBotConnectedBadge (Unbind / Disconnect)", () => {
     });
     await user.click(screen.getByTestId("lark-agent-bot-disconnect"));
     // Wait for the dialog to mount, then click the destructive action
-    // (the AlertDialogAction's accessible name is the same "Disconnect"
+    // (the AlertDialogAction's accessible name is the same "断开连接"
     // label as the trigger button — but we're now inside the dialog
     // role, so role+name is unambiguous).
     const confirmButton = await screen.findByRole("button", {
-      name: /^Disconnect$/i,
+      name: /^断开连接$/i,
     });
     await user.click(confirmButton);
 
@@ -509,7 +509,7 @@ describe("LarkAgentBotConnectedBadge (Unbind / Disconnect)", () => {
     });
     await user.click(screen.getByTestId("lark-agent-bot-disconnect"));
     const confirmButton = await screen.findByRole("button", {
-      name: /^Disconnect$/i,
+      name: /^断开连接$/i,
     });
     await user.click(confirmButton);
 
@@ -538,13 +538,13 @@ describe("LarkAgentBotConnectedBadge (Unbind / Disconnect)", () => {
     });
     await user.click(screen.getByTestId("lark-agent-bot-disconnect"));
     const confirmButton = await screen.findByRole("button", {
-      name: /^Disconnect$/i,
+      name: /^断开连接$/i,
     });
     await user.click(confirmButton);
 
     // Cancel is disabled while disconnecting — closing mid-flight
     // would orphan the in-flight invalidate + toast.
-    const cancel = screen.getByRole("button", { name: /Cancel/i });
+    const cancel = screen.getByRole("button", { name: /取消/i });
     await waitFor(() => {
       expect((cancel as HTMLButtonElement).disabled).toBe(true);
     });
@@ -579,9 +579,9 @@ describe("LarkInstallDialog (polling terminal errors)", () => {
     render(<LarkAgentBindButton agentId="agent-1" agentName="Bot" />, {
       wrapper: I18nWrapper,
     });
-    // The Lark CTA is hidden (MUL-3083); open the dialog via the Feishu CTA
+    // The Lark CTA is hidden (MUL-3083); open the dialog via the 飞书 CTA
     // — the polling-error behavior under test is region-agnostic.
-    await user.click(screen.getByRole("button", { name: /Bind to Feishu/i }));
+    await user.click(screen.getByRole("button", { name: /绑定飞书/i }));
     // Let the begin-session promise resolve and the QR render.
     await waitFor(() => {
       expect(screen.getByTestId("qr-code")).toBeTruthy();
@@ -603,15 +603,15 @@ describe("LarkInstallDialog (polling terminal errors)", () => {
     await waitFor(() => {
       expect(
         screen.getByText(
-          /Install session expired or was lost\. Scan again to start over\./i,
+          /安装会话已失效或丢失/i,
         ),
       ).toBeTruthy();
     });
-    expect(screen.getByRole("button", { name: /Scan again/i })).toBeTruthy();
-    // The dialog renders multiple Close affordances (footer button + the
+    expect(screen.getByRole("button", { name: /重新扫码/i })).toBeTruthy();
+    // The dialog renders multiple 关闭 affordances (footer button + the
     // built-in dialog dismiss); we only need to confirm at least one is
     // mounted alongside the retry button.
-    expect(screen.getAllByRole("button", { name: /Close/i }).length).toBeGreaterThan(0);
+    expect(screen.getAllByRole("button", { name: /关闭/i }).length).toBeGreaterThan(0);
   });
 
   it("treats 403 as a terminal forbidden error state (no infinite retry on revoked permission)", async () => {
@@ -627,7 +627,7 @@ describe("LarkInstallDialog (polling terminal errors)", () => {
     await waitFor(() => {
       expect(
         screen.getByText(
-          /You no longer have permission to install Lark Bots in this workspace/i,
+          /你已没有在此工作区安装飞书 Bot 的权限/i,
         ),
       ).toBeTruthy();
     });
@@ -656,8 +656,8 @@ describe("LarkInstallDialog (polling terminal errors)", () => {
       wrapper: StrictModeWrapper,
     });
     // The Lark CTA is hidden (MUL-3083); the StrictMode regression is about
-    // the dialog mount cycle, so open it via the Feishu CTA.
-    await user.click(screen.getByRole("button", { name: /Bind to Feishu/i }));
+    // the dialog mount cycle, so open it via the 飞书 CTA.
+    await user.click(screen.getByRole("button", { name: /绑定飞书/i }));
 
     // The QR must appear even though the dialog mounted, unmounted, and
     // mounted again under StrictMode. The previous bug left the body
@@ -723,7 +723,7 @@ describe("LarkTab connected bots list (agent identity rendering)", () => {
 
   it("falls back to a stable placeholder when the agent has been deleted (so the row is still actionable for cleanup)", () => {
     // Empty map → useActorName.getAgentName returns "Unknown Agent".
-    // The row must still render so admins can hit Disconnect.
+    // The row must still render so admins can hit 断开连接.
     installationsRef.current.installations = [
       {
         id: "inst-orphan",
@@ -742,7 +742,7 @@ describe("LarkTab connected bots list (agent identity rendering)", () => {
     render(<LarkTab />, { wrapper: I18nWrapper });
 
     expect(screen.getByText(/Unknown Agent/)).toBeTruthy();
-    // Disconnect stays reachable so the orphan row can be cleaned up.
-    expect(screen.getByRole("button", { name: /Disconnect/i })).toBeTruthy();
+    // 断开连接 stays reachable so the orphan row can be cleaned up.
+    expect(screen.getByRole("button", { name: /断开连接/i })).toBeTruthy();
   });
 });

@@ -103,7 +103,7 @@ describe("SourceBackfillModal", () => {
   it("does not render when there is no user", () => {
     renderModal();
     expect(
-      screen.queryByText(/How did you hear about Multica/i),
+      screen.queryByText(/你是从哪里了解到 Multica 的/i),
     ).not.toBeInTheDocument();
   });
 
@@ -115,7 +115,7 @@ describe("SourceBackfillModal", () => {
     });
     renderModal();
     expect(
-      screen.queryByText(/How did you hear about Multica/i),
+      screen.queryByText(/你是从哪里了解到 Multica 的/i),
     ).not.toBeInTheDocument();
   });
 
@@ -128,7 +128,7 @@ describe("SourceBackfillModal", () => {
     renderModal();
     await waitFor(() => {
       expect(
-        screen.getByText(/How did you hear about Multica/i),
+        screen.getByText(/你是从哪里了解到 Multica 的/i),
       ).toBeInTheDocument();
     });
     expect(mockCaptureEvent).toHaveBeenCalledWith("source_backfill_shown");
@@ -149,8 +149,8 @@ describe("SourceBackfillModal", () => {
     });
     const user = userEvent.setup();
     renderModal();
-    await user.click(await screen.findByText("Friends or colleagues"));
-    await user.click(screen.getByRole("button", { name: "Submit" }));
+    await user.click(await screen.findByText("朋友或同事"));
+    await user.click(screen.getByRole("button", { name: "提交" }));
 
     await waitFor(() => {
       expect(mockSaveQuestionnaire).toHaveBeenCalledTimes(1);
@@ -181,7 +181,7 @@ describe("SourceBackfillModal", () => {
     const user = userEvent.setup();
     renderModal();
     await user.click(
-      await screen.findByRole("button", { name: "Skip" }),
+      await screen.findByRole("button", { name: "跳过" }),
     );
     await waitFor(() => {
       expect(mockSaveQuestionnaire).toHaveBeenCalledTimes(1);
@@ -202,7 +202,7 @@ describe("SourceBackfillModal", () => {
     });
     renderModal();
     expect(
-      screen.queryByText(/How did you hear about Multica/i),
+      screen.queryByText(/你是从哪里了解到 Multica 的/i),
     ).not.toBeInTheDocument();
   });
 
@@ -227,7 +227,7 @@ describe("SourceBackfillModal", () => {
     });
     const user = userEvent.setup();
     renderModal();
-    await screen.findByText("Friends or colleagues");
+    await screen.findByText("朋友或同事");
     const radios = screen.getAllByRole("radio");
     const friends = radios[0]!;
     const search = radios[1]!;
@@ -242,7 +242,7 @@ describe("SourceBackfillModal", () => {
     expect(friends).toHaveAttribute("aria-checked", "false");
     expect(search).toHaveAttribute("aria-checked", "true");
 
-    await user.click(screen.getByRole("button", { name: "Submit" }));
+    await user.click(screen.getByRole("button", { name: "提交" }));
     await waitFor(() => {
       expect(mockSaveQuestionnaire).toHaveBeenCalledTimes(1);
     });
@@ -266,19 +266,19 @@ describe("SourceBackfillModal", () => {
       // Immediately after mount: still hidden — the workspace gets a
       // beat to render before the modal floats in.
       expect(
-        screen.queryByText(/How did you hear about Multica/i),
+        screen.queryByText(/你是从哪里了解到 Multica 的/i),
       ).not.toBeInTheDocument();
       await act(async () => {
         await vi.advanceTimersByTimeAsync(699);
       });
       expect(
-        screen.queryByText(/How did you hear about Multica/i),
+        screen.queryByText(/你是从哪里了解到 Multica 的/i),
       ).not.toBeInTheDocument();
       await act(async () => {
         await vi.advanceTimersByTimeAsync(50);
       });
       expect(
-        screen.queryByText(/How did you hear about Multica/i),
+        screen.queryByText(/你是从哪里了解到 Multica 的/i),
       ).toBeInTheDocument();
     } finally {
       vi.useRealTimers();
@@ -294,7 +294,7 @@ describe("SourceBackfillModal", () => {
     });
     renderModal();
     expect(
-      screen.queryByText(/How did you hear about Multica/i),
+      screen.queryByText(/你是从哪里了解到 Multica 的/i),
     ).not.toBeInTheDocument();
   });
 });

@@ -80,28 +80,28 @@ describe("RepositoriesTab — view/edit toggle", () => {
     membersRef.current = [{ user_id: "user-1", role: "owner" }];
   });
 
-  it("renders persisted repos in display mode (no input)", () => {
+  it("展示模式渲染已保存仓库且没有输入框", () => {
     render(<RepositoriesTab />, { wrapper: I18nWrapper });
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.getByText("https://github.com/multica-ai/multica")).toBeTruthy();
   });
 
-  it("Save button is disabled when clean", () => {
+  it("无改动时保存按钮禁用", () => {
     render(<RepositoriesTab />, { wrapper: I18nWrapper });
-    expect(screen.getByRole("button", { name: /^Save$/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^保存$/ })).toBeDisabled();
   });
 
-  it("clicking Edit reveals an input pre-filled with the URL", async () => {
+  it("点击编辑后显示预填 URL 的输入框", async () => {
     const user = userEvent.setup();
     render(<RepositoriesTab />, { wrapper: I18nWrapper });
 
-    await user.click(screen.getByRole("button", { name: "Edit repository" }));
+    await user.click(screen.getByRole("button", { name: "编辑仓库" }));
 
     const inputs = screen.getAllByRole("textbox") as HTMLInputElement[];
     expect(inputs[0]!.value).toBe("https://github.com/multica-ai/multica");
   });
 
-  it("Save re-enables after editing, then returns to display mode + disabled on success", async () => {
+  it("编辑后重新启用保存，成功后回到展示模式并禁用", async () => {
     const user = userEvent.setup();
     mockUpdateWorkspace.mockImplementation(async (_id: string, payload: { repos: { url: string; description?: string }[] }) => ({
       ...workspaceRef.current,
@@ -110,12 +110,12 @@ describe("RepositoriesTab — view/edit toggle", () => {
 
     render(<RepositoriesTab />, { wrapper: I18nWrapper });
 
-    await user.click(screen.getByRole("button", { name: "Edit repository" }));
+    await user.click(screen.getByRole("button", { name: "编辑仓库" }));
     const input = screen.getAllByRole("textbox")[0]!;
     await user.clear(input);
     await user.type(input, "https://github.com/multica-ai/edited");
 
-    const saveBtn = screen.getByRole("button", { name: /^Save$/ });
+    const saveBtn = screen.getByRole("button", { name: /^保存$/ });
     expect(saveBtn).not.toBeDisabled();
 
     // Simulate the workspace cache resync that the parent provider does
@@ -136,68 +136,68 @@ describe("RepositoriesTab — view/edit toggle", () => {
     await waitFor(() => {
       expect(screen.queryByRole("textbox")).toBeNull();
     });
-    expect(screen.getByRole("button", { name: /^Save$/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^保存$/ })).toBeDisabled();
   });
 
-  it("newly added rows start in edit mode", async () => {
+  it("新增行默认进入编辑模式", async () => {
     const user = userEvent.setup();
     render(<RepositoriesTab />, { wrapper: I18nWrapper });
 
     expect(screen.queryByRole("textbox")).toBeNull();
-    await user.click(screen.getByRole("button", { name: /Add repository/ }));
+    await user.click(screen.getByRole("button", { name: /添加仓库/ }));
 
     expect(screen.getAllByRole("textbox").length).toBe(2); // url + description
-    expect(screen.getByRole("button", { name: /^Save$/ })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: /^保存$/ })).not.toBeDisabled();
   });
 
-  it("Edit clean row → Cancel returns to display mode without changing URL or dirtying Save", async () => {
+  it("编辑未改动行后取消，会回到展示模式且不改变 URL 或置脏保存", async () => {
     const user = userEvent.setup();
     render(<RepositoriesTab />, { wrapper: I18nWrapper });
 
-    await user.click(screen.getByRole("button", { name: "Edit repository" }));
+    await user.click(screen.getByRole("button", { name: "编辑仓库" }));
     expect(screen.getAllByRole("textbox").length).toBe(2);
 
-    await user.click(screen.getByRole("button", { name: "Cancel edit" }));
+    await user.click(screen.getByRole("button", { name: "取消编辑" }));
 
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.getByText("https://github.com/multica-ai/multica")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /^Save$/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^保存$/ })).toBeDisabled();
     expect(mockUpdateWorkspace).not.toHaveBeenCalled();
   });
 
-  it("Cancel on a dirty edited row reverts the URL and exits edit mode", async () => {
+  it("取消已修改编辑行会还原 URL 并退出编辑模式", async () => {
     const user = userEvent.setup();
     render(<RepositoriesTab />, { wrapper: I18nWrapper });
 
-    await user.click(screen.getByRole("button", { name: "Edit repository" }));
+    await user.click(screen.getByRole("button", { name: "编辑仓库" }));
     const input = screen.getAllByRole("textbox")[0] as HTMLInputElement;
     await user.clear(input);
     await user.type(input, "https://github.com/multica-ai/changed");
-    expect(screen.getByRole("button", { name: /^Save$/ })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: /^保存$/ })).not.toBeDisabled();
 
-    await user.click(screen.getByRole("button", { name: "Cancel edit" }));
+    await user.click(screen.getByRole("button", { name: "取消编辑" }));
 
     expect(screen.queryByRole("textbox")).toBeNull();
     expect(screen.getByText("https://github.com/multica-ai/multica")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /^Save$/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^保存$/ })).toBeDisabled();
   });
 
-  it("Cancel on a newly added (never saved) row removes the row entirely", async () => {
+  it("取消新增且未保存的行会直接移除该行", async () => {
     const user = userEvent.setup();
     render(<RepositoriesTab />, { wrapper: I18nWrapper });
 
-    await user.click(screen.getByRole("button", { name: /Add repository/ }));
+    await user.click(screen.getByRole("button", { name: /添加仓库/ }));
     expect(screen.getAllByRole("textbox").length).toBe(2);
 
-    await user.click(screen.getByRole("button", { name: "Cancel edit" }));
+    await user.click(screen.getByRole("button", { name: "取消编辑" }));
 
     expect(screen.queryByRole("textbox")).toBeNull();
     // Original persisted row is still there; the new empty row is gone.
     expect(screen.getByText("https://github.com/multica-ai/multica")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /^Save$/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^保存$/ })).toBeDisabled();
   });
 
-  it("accepts scp-like shorthand without browser URL validation blocking submit", async () => {
+  it("接受 scp 风格简写，且不被浏览器 URL 校验阻止提交", async () => {
     const user = userEvent.setup();
     mockUpdateWorkspace.mockImplementation(
       async (_id: string, payload: { repos: { url: string; description?: string }[] }) => {
@@ -208,7 +208,7 @@ describe("RepositoriesTab — view/edit toggle", () => {
 
     render(<RepositoriesTab />, { wrapper: I18nWrapper });
 
-    await user.click(screen.getByRole("button", { name: "Edit repository" }));
+    await user.click(screen.getByRole("button", { name: "编辑仓库" }));
     const input = screen.getAllByRole("textbox")[0] as HTMLInputElement;
     await user.clear(input);
     await user.type(input, "git@github.com:multica-ai/multica.git");
@@ -218,7 +218,7 @@ describe("RepositoriesTab — view/edit toggle", () => {
     expect(input.type).toBe("text");
     expect(input.validity.valid).toBe(true);
 
-    await user.click(screen.getByRole("button", { name: /^Save$/ }));
+    await user.click(screen.getByRole("button", { name: /^保存$/ }));
 
     await waitFor(() => {
       expect(mockUpdateWorkspace).toHaveBeenCalledWith("workspace-1", {
@@ -227,7 +227,7 @@ describe("RepositoriesTab — view/edit toggle", () => {
     });
   });
 
-  it("deleting a row shifts tracked edit indices so the wrong row doesn't open", async () => {
+  it("删除行后平移跟踪中的编辑索引，避免打开错误行", async () => {
     workspaceRef.current = {
       ...workspaceRef.current,
       repos: [{ url: "https://a.example/repo.git" }, { url: "https://b.example/repo.git" }],
@@ -236,7 +236,7 @@ describe("RepositoriesTab — view/edit toggle", () => {
     render(<RepositoriesTab />, { wrapper: I18nWrapper });
 
     // Edit the second row.
-    const editButtons = screen.getAllByRole("button", { name: "Edit repository" });
+    const editButtons = screen.getAllByRole("button", { name: "编辑仓库" });
     await user.click(editButtons[1]!);
     expect((screen.getAllByRole("textbox")[0] as HTMLInputElement).value).toBe(
       "https://b.example/repo.git",
@@ -244,14 +244,14 @@ describe("RepositoriesTab — view/edit toggle", () => {
 
     // Delete the first row. The remaining row should remain in edit mode
     // (its index dropped from 1 → 0).
-    const deleteButtons = screen.getAllByRole("button", { name: "Delete repository" });
+    const deleteButtons = screen.getAllByRole("button", { name: "删除仓库" });
     await user.click(deleteButtons[0]!);
 
     const input = screen.getAllByRole("textbox")[0] as HTMLInputElement;
     expect(input.value).toBe("https://b.example/repo.git");
   });
 
-  it("description field is editable and included in save payload", async () => {
+  it("描述字段可编辑并包含在保存 payload 中", async () => {
     workspaceRef.current = {
       ...workspaceRef.current,
       repos: [{ url: "https://github.com/multica-ai/multica", description: "Main app" }],
@@ -269,14 +269,14 @@ describe("RepositoriesTab — view/edit toggle", () => {
     // Description is shown in display mode.
     expect(screen.getByText("Main app")).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "Edit repository" }));
+    await user.click(screen.getByRole("button", { name: "编辑仓库" }));
     const inputs = screen.getAllByRole("textbox") as HTMLInputElement[];
     expect(inputs[1]!.value).toBe("Main app");
 
     await user.clear(inputs[1]!);
     await user.type(inputs[1]!, "Updated description");
 
-    await user.click(screen.getByRole("button", { name: /^Save$/ }));
+    await user.click(screen.getByRole("button", { name: /^保存$/ }));
 
     await waitFor(() => {
       expect(mockUpdateWorkspace).toHaveBeenCalledWith("workspace-1", {

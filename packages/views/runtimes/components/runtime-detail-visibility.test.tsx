@@ -146,14 +146,14 @@ describe("RuntimeDetail visibility section", () => {
 
   it("shows owner-editable visibility choices when the caller owns the runtime", () => {
     renderDetail(makeRuntime({ owner_id: "user-me" }));
-    expect(screen.getByText("Visibility")).toBeInTheDocument();
-    expect(screen.getByText("Private")).toBeInTheDocument();
-    expect(screen.getByText("Public")).toBeInTheDocument();
+    expect(screen.getByText("可见性")).toBeInTheDocument();
+    expect(screen.getByText("私有")).toBeInTheDocument();
+    expect(screen.getByText("公开")).toBeInTheDocument();
   });
 
   it("flips visibility to public when the owner clicks the Public choice", async () => {
     renderDetail(makeRuntime({ owner_id: "user-me", visibility: "private" }));
-    fireEvent.click(screen.getByText("Public"));
+    fireEvent.click(screen.getByText("公开"));
     await waitFor(() =>
       expect(mockUpdateRuntime).toHaveBeenCalledWith("rt-1", { visibility: "public" }),
     );
@@ -161,9 +161,9 @@ describe("RuntimeDetail visibility section", () => {
 
   it("renders a read-only visibility chip when the caller cannot edit", () => {
     renderDetail(makeRuntime({ owner_id: "someone-else", visibility: "public" }));
-    expect(screen.getByText("Public")).toBeInTheDocument();
-    // The editor's "Private" choice button must not render in read-only mode.
-    expect(screen.queryByText("Private")).not.toBeInTheDocument();
+    expect(screen.getByText("公开")).toBeInTheDocument();
+    // The editor's "私有" choice button must not render in read-only mode.
+    expect(screen.queryByText("私有")).not.toBeInTheDocument();
   });
 
   // MUL-3352: an owner viewing an online local (self-healing) runtime
@@ -179,7 +179,7 @@ describe("RuntimeDetail visibility section", () => {
       }),
     );
     const btn = screen.getByRole("button", {
-      name: /Delete runtime/i,
+      name: /删除运行时/i,
     }) as HTMLButtonElement;
     expect(btn.disabled).toBe(false);
   });
@@ -193,7 +193,7 @@ describe("RuntimeDetail visibility section", () => {
       }),
     );
     expect(
-      screen.queryByRole("button", { name: /Delete runtime/i }),
+      screen.queryByRole("button", { name: /删除运行时/i }),
     ).not.toBeInTheDocument();
   });
 });

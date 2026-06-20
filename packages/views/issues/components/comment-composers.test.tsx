@@ -128,8 +128,8 @@ describe("comment composers", () => {
   it("renders the main comment composer without a manual expand control", () => {
     const { container } = renderCommentInput();
 
-    expect(screen.getByPlaceholderText("Leave a comment...")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Attach file" })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("留下评论...")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "添加附件" })).toBeInTheDocument();
     expect(container.querySelectorAll("button")).toHaveLength(2);
 
     const shell = screen.getByTestId("drop-zone");
@@ -140,8 +140,8 @@ describe("comment composers", () => {
   it("renders reply composer without a manual expand control", () => {
     const { container } = renderReplyInput();
 
-    expect(screen.getByPlaceholderText("Leave a reply...")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Attach file" })).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("回复...")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "添加附件" })).toBeInTheDocument();
     expect(container.querySelectorAll("button")).toHaveLength(2);
 
     const shell = screen.getByTestId("drop-zone");
@@ -152,7 +152,7 @@ describe("comment composers", () => {
   it("lets default-size replies grow without a height cap", () => {
     const { container } = renderReplyInput({ size: "default" });
 
-    expect(screen.getByPlaceholderText("Leave a reply...")).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("回复...")).toBeInTheDocument();
     expect(container.querySelectorAll("button")).toHaveLength(2);
 
     const shell = screen.getByTestId("drop-zone");

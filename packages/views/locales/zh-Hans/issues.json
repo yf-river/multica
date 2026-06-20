@@ -1,6 +1,6 @@
 {
   "page": {
-    "breadcrumb_title": "Issues",
+    "breadcrumb_title": "问题",
     "breadcrumb_workspace_fallback": "工作区",
     "empty_title": "还没有 issue",
     "empty_hint": "创建一个 issue 开始使用。",
@@ -468,12 +468,12 @@
   "backlog_hint": {
     "title": "智能体在 backlog 状态下暂停",
     "description": "这个 issue 处于待规划状态，被分配的智能体会等待。准备启动时把它移到 todo。",
-    "row_backlog_label": "Backlog",
+    "row_backlog_label": "待规划",
     "row_backlog_hint": "智能体保持暂停",
-    "row_todo_label": "Todo",
+    "row_todo_label": "待办",
     "row_todo_hint": "启动智能体",
     "dont_show_again": "不再提示",
-    "keep_in_backlog": "保持在 Backlog",
-    "move_to_todo": "移到 Todo"
+    "keep_in_backlog": "保持在待规划",
+    "move_to_todo": "移到待办"
   }
 }

@@ -84,38 +84,38 @@ describe("PullRequestList sidebar rows", () => {
     mockPRs = [makePR({ checks_passed: 3 })];
     renderList();
     await waitForRender();
-    expect(screen.getByText("All checks passed")).toBeInTheDocument();
+    expect(screen.getByText("全部检查通过")).toBeInTheDocument();
   });
 
   it("renders Some-checks-failed when any failed count is non-zero", async () => {
     mockPRs = [makePR({ checks_failed: 1, checks_passed: 5 })];
     renderList();
     await waitForRender();
-    expect(screen.getByText("Some checks failed")).toBeInTheDocument();
+    expect(screen.getByText("部分检查失败")).toBeInTheDocument();
   });
 
   it("renders pending status when only pending suites remain", async () => {
     mockPRs = [makePR({ checks_pending: 2, checks_passed: 1 })];
     renderList();
     await waitForRender();
-    expect(screen.getByText("Some checks haven't completed yet")).toBeInTheDocument();
+    expect(screen.getByText("部分检查仍在运行")).toBeInTheDocument();
   });
 
   it("renders conflicts status when mergeable_state=dirty", async () => {
     mockPRs = [makePR({ mergeable_state: "dirty" })];
     renderList();
     await waitForRender();
-    expect(screen.getByText("Has merge conflicts")).toBeInTheDocument();
+    expect(screen.getByText("存在合并冲突")).toBeInTheDocument();
   });
 
   it("renders Ready-to-merge when mergeable=clean and no suites observed", async () => {
     mockPRs = [makePR({ mergeable_state: "clean" })];
     renderList();
     await waitForRender();
-    expect(screen.getByText("Ready to merge")).toBeInTheDocument();
+    expect(screen.getByText("可以合入")).toBeInTheDocument();
   });
 
-  it("renders Merged status for merged PRs, suppressing conflict/check text", async () => {
+  it("renders 已合入 status for merged PRs, suppressing conflict/check text", async () => {
     mockPRs = [
       makePR({
         state: "merged",
@@ -126,8 +126,8 @@ describe("PullRequestList sidebar rows", () => {
     ];
     renderList();
     await waitForRender();
-    expect(screen.getByText("Merged")).toBeInTheDocument();
-    expect(screen.queryByText("Has merge conflicts")).not.toBeInTheDocument();
+    expect(screen.getByText("已合入")).toBeInTheDocument();
+    expect(screen.queryByText("存在合并冲突")).not.toBeInTheDocument();
     expect(screen.queryByText("Some checks failed")).not.toBeInTheDocument();
     expect(screen.queryByText("Conflicts")).not.toBeInTheDocument();
     expect(screen.queryByText("Checks failed")).not.toBeInTheDocument();
@@ -144,8 +144,8 @@ describe("PullRequestList sidebar rows", () => {
     ];
     renderList();
     await waitForRender();
-    expect(screen.getByText("Closed without merging")).toBeInTheDocument();
-    expect(screen.queryByText("Ready to merge")).not.toBeInTheDocument();
+    expect(screen.getByText("已关闭，未合入")).toBeInTheDocument();
+    expect(screen.queryByText("可以合入")).not.toBeInTheDocument();
     expect(screen.queryByText("All checks passed")).not.toBeInTheDocument();
     expect(screen.queryByText("No conflicts")).not.toBeInTheDocument();
     expect(screen.queryByText("Checks passed")).not.toBeInTheDocument();
@@ -165,14 +165,14 @@ describe("PullRequestList sidebar rows", () => {
     await waitForRender();
     expect(screen.getByText("+437")).toBeInTheDocument();
     expect(screen.getByText("−6")).toBeInTheDocument();
-    expect(screen.getByText("6 files")).toBeInTheDocument();
+    expect(screen.getByText("6 个文件")).toBeInTheDocument();
   });
 
   it("uses singular file copy when changed_files=1", async () => {
     mockPRs = [makePR({ additions: 1, changed_files: 1 })];
     renderList();
     await waitForRender();
-    expect(screen.getByText("1 file")).toBeInTheDocument();
+    expect(screen.getByText("1 个文件")).toBeInTheDocument();
   });
 
   it("collapses extra PR rows past the visible limit behind Show more toggle", async () => {
@@ -190,7 +190,7 @@ describe("PullRequestList sidebar rows", () => {
     expect(screen.getByText("PR-C")).toBeInTheDocument();
     expect(screen.queryByText("PR-D")).not.toBeInTheDocument();
     expect(screen.queryByText("PR-E")).not.toBeInTheDocument();
-    expect(screen.getByText("Show 2 more")).toBeInTheDocument();
+    expect(screen.getByText("展开剩余 2 个")).toBeInTheDocument();
   });
 
   it("collapses to 3 rows + hidden tail when count == threshold", async () => {
@@ -206,6 +206,6 @@ describe("PullRequestList sidebar rows", () => {
     expect(screen.getByText("PR-B")).toBeInTheDocument();
     expect(screen.getByText("PR-C")).toBeInTheDocument();
     expect(screen.queryByText("PR-D")).not.toBeInTheDocument();
-    expect(screen.getByText("Show 1 more")).toBeInTheDocument();
+    expect(screen.getByText("展开剩余 1 个")).toBeInTheDocument();
   });
 });

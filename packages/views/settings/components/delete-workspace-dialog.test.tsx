@@ -42,7 +42,7 @@ describe("DeleteWorkspaceDialog", () => {
     vi.clearAllMocks();
   });
 
-  it("disables Delete when input is empty", () => {
+  it("输入为空时禁用删除", () => {
     render(
       <DeleteWorkspaceDialog
         workspaceName="acme"
@@ -51,10 +51,10 @@ describe("DeleteWorkspaceDialog", () => {
         onConfirm={vi.fn()}
       />,
     );
-    expect(screen.getByRole("button", { name: "Delete workspace" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "删除工作区" })).toBeDisabled();
   });
 
-  it("keeps Delete disabled when input doesn't match (case-sensitive)", async () => {
+  it("输入不匹配时保持删除禁用，并区分大小写", async () => {
     const user = userEvent.setup();
     render(
       <DeleteWorkspaceDialog
@@ -66,14 +66,14 @@ describe("DeleteWorkspaceDialog", () => {
     );
 
     await user.type(screen.getByRole("textbox"), "ACME"); // wrong case
-    expect(screen.getByRole("button", { name: "Delete workspace" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "删除工作区" })).toBeDisabled();
 
     await user.clear(screen.getByRole("textbox"));
     await user.type(screen.getByRole("textbox"), "acme "); // trailing space
-    expect(screen.getByRole("button", { name: "Delete workspace" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "删除工作区" })).toBeDisabled();
   });
 
-  it("enables Delete on exact match and calls onConfirm when clicked", async () => {
+  it("完全匹配时启用删除，并在点击时调用 onConfirm", async () => {
     const user = userEvent.setup();
     const onConfirm = vi.fn();
     render(
@@ -86,14 +86,14 @@ describe("DeleteWorkspaceDialog", () => {
     );
 
     await user.type(screen.getByRole("textbox"), "acme");
-    const deleteBtn = screen.getByRole("button", { name: "Delete workspace" });
+    const deleteBtn = screen.getByRole("button", { name: "删除工作区" });
     expect(deleteBtn).toBeEnabled();
 
     await user.click(deleteBtn);
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
-  it("submits on Enter when matched; ignores Enter when not matched", async () => {
+  it("匹配时回车提交，不匹配时忽略回车", async () => {
     const user = userEvent.setup();
     const onConfirm = vi.fn();
     render(
@@ -113,7 +113,7 @@ describe("DeleteWorkspaceDialog", () => {
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
-  it("Cancel closes the dialog and does not call onConfirm", async () => {
+  it("取消会关闭对话框且不调用 onConfirm", async () => {
     const user = userEvent.setup();
     const onOpenChange = vi.fn();
     const onConfirm = vi.fn();
@@ -126,12 +126,12 @@ describe("DeleteWorkspaceDialog", () => {
       />,
     );
 
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await user.click(screen.getByRole("button", { name: "取消" }));
     expect(onOpenChange).toHaveBeenCalledWith(false);
     expect(onConfirm).not.toHaveBeenCalled();
   });
 
-  it("shows loading state and disables both buttons while pending", () => {
+  it("pending 时显示加载态并禁用两个按钮", () => {
     render(
       <DeleteWorkspaceDialog
         workspaceName="acme"
@@ -141,11 +141,11 @@ describe("DeleteWorkspaceDialog", () => {
         onConfirm={vi.fn()}
       />,
     );
-    expect(screen.getByRole("button", { name: "Deleting..." })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Cancel" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "删除中..." })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "取消" })).toBeDisabled();
   });
 
-  it("matches names with spaces, unicode, and other non-ASCII characters literally", async () => {
+  it("对带空格、Unicode 和其他非 ASCII 字符的名称做字面匹配", async () => {
     const user = userEvent.setup();
     const onConfirm = vi.fn();
     render(
@@ -158,12 +158,12 @@ describe("DeleteWorkspaceDialog", () => {
     );
     const input = screen.getByRole("textbox");
     await user.type(input, "My 团队 🚀");
-    expect(screen.getByRole("button", { name: "Delete workspace" })).toBeEnabled();
-    await user.click(screen.getByRole("button", { name: "Delete workspace" }));
+    expect(screen.getByRole("button", { name: "删除工作区" })).toBeEnabled();
+    await user.click(screen.getByRole("button", { name: "删除工作区" }));
     expect(onConfirm).toHaveBeenCalledTimes(1);
   });
 
-  it("resets the input when the workspace being deleted changes (e.g. rename mid-dialog)", () => {
+  it("待删除工作区变化时重置输入框", () => {
     const { rerender } = render(
       <DeleteWorkspaceDialog
         workspaceName="old-name"

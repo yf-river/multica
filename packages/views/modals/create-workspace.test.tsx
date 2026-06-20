@@ -63,7 +63,7 @@ describe("CreateWorkspaceModal", () => {
     const user = userEvent.setup();
     renderModal({ onClose: vi.fn() });
 
-    const nameInput = screen.getByPlaceholderText("My Workspace");
+    const nameInput = screen.getByPlaceholderText("我的工作区");
     const slugInput = screen.getByPlaceholderText("my-workspace");
 
     await user.type(nameInput, "My Team");
@@ -90,17 +90,17 @@ describe("CreateWorkspaceModal", () => {
 
     renderModal({ onClose: vi.fn() });
 
-    await user.type(screen.getByPlaceholderText("My Workspace"), "My Team");
-    await user.click(screen.getByRole("button", { name: "Create workspace" }));
+    await user.type(screen.getByPlaceholderText("我的工作区"), "My Team");
+    await user.click(screen.getByRole("button", { name: "创建工作区" }));
 
     await waitFor(() => {
       expect(
-        screen.getByText("That workspace URL is already taken."),
+        screen.getByText("该工作区 URL 已被占用。"),
       ).toBeInTheDocument();
     });
 
     expect(mockToastError).toHaveBeenCalledWith(
-      "Choose a different workspace URL",
+      "请换一个工作区 URL",
     );
     expect(mockCreateWorkspaceMutate).toHaveBeenCalledWith(
       { name: "My Team", slug: "my-team" },
@@ -122,8 +122,8 @@ describe("CreateWorkspaceModal", () => {
 
     renderModal({ onClose });
 
-    await user.type(screen.getByPlaceholderText("My Workspace"), "My Team");
-    await user.click(screen.getByRole("button", { name: "Create workspace" }));
+    await user.type(screen.getByPlaceholderText("我的工作区"), "My Team");
+    await user.click(screen.getByRole("button", { name: "创建工作区" }));
 
     expect(onClose).toHaveBeenCalled();
     expect(mockPush).toHaveBeenCalledWith("/my-team/issues");

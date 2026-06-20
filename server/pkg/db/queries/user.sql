@@ -55,17 +55,6 @@ UPDATE "user" SET
 WHERE id = sqlc.arg('id')
 RETURNING *;
 
--- name: JoinCloudWaitlist :one
--- Records interest in cloud runtimes. Does NOT mark onboarding
--- complete — the user still has to pick a real path (CLI / Skip)
--- in Step 3. Repeating the call overwrites contact account + reason.
-UPDATE "user" SET
-    cloud_waitlist_email = $2,
-    cloud_waitlist_reason = $3,
-    updated_at = now()
-WHERE id = $1
-RETURNING *;
-
 -- name: SetStarterContentState :one
 -- Atomically transition starter_content_state. The handler is
 -- responsible for checking the current value first (to decide between

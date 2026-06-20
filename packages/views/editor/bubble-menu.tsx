@@ -148,10 +148,9 @@ function MarkButton({
 /** Protocols that can execute code in the browser — the only ones we block. */
 const DANGEROUS_PROTOCOL_RE = /^(javascript|data|vbscript):/i;
 const HAS_PROTOCOL_RE = /^[a-z][a-z0-9+.-]*:\/?\/?/i;
-const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 
 /**
- * Normalise a user-entered URL: add protocol, detect mailto, block XSS.
+ * Normalise a user-entered URL: add protocol and block XSS.
  *
  * Uses a blocklist (not allowlist) for protocols — only `javascript:`,
  * `data:`, and `vbscript:` are blocked. All other protocols pass through
@@ -166,7 +165,6 @@ function normalizeUrl(input: string): string {
   if (trimmed.startsWith("/")) return trimmed;
   if (DANGEROUS_PROTOCOL_RE.test(trimmed)) return "";
   if (HAS_PROTOCOL_RE.test(trimmed)) return trimmed;
-  if (EMAIL_RE.test(trimmed)) return `mailto:${trimmed}`;
   if (trimmed.startsWith("//")) return `https:${trimmed}`;
   return `https://${trimmed}`;
 }

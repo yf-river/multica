@@ -75,35 +75,35 @@ describe("RuntimeProfilesDialog", () => {
     vi.clearAllMocks();
   });
 
-  it("shows the custom empty state and keeps built-in protocols collapsed", () => {
+  it("显示自定义空态，并保持内置协议折叠", () => {
     renderDialog();
 
     expect(
-      screen.getByText("Create your first custom runtime"),
+      screen.getByText("创建第一个自定义运行时"),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Pick a base protocol family/),
+      screen.getByText(/选择一个基础协议族/),
     ).toBeInTheDocument();
 
     const builtinsToggle = screen.getByRole("button", {
-      name: /Supported base protocols/,
+      name: /支持的基础协议/,
     });
     expect(builtinsToggle).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("claude")).not.toBeInTheDocument();
     expect(
-      screen.getAllByRole("button", { name: "New custom runtime" }),
+      screen.getAllByRole("button", { name: "新建自定义运行时" }),
     ).toHaveLength(2);
   });
 
-  it("renders custom profiles before the collapsed built-in reference section", () => {
+  it("在折叠的内置参考区之前渲染自定义 profile", () => {
     queryState.profiles = [profile()];
 
     renderDialog();
 
-    const customTitle = screen.getByText("Custom runtimes (1)");
+    const customTitle = screen.getByText("自定义运行时（1）");
     const customRow = screen.getByText("Team Codex");
     const builtinsToggle = screen.getByRole("button", {
-      name: /Supported base protocols/,
+      name: /支持的基础协议/,
     });
 
     expect(customRow).toBeInTheDocument();
@@ -120,26 +120,26 @@ describe("RuntimeProfilesDialog", () => {
     expect(screen.getByText("claude")).toBeInTheDocument();
   });
 
-  it("clears built-in detail when the built-in reference section collapses", () => {
+  it("内置参考区折叠时清空内置详情", () => {
     queryState.profiles = [profile()];
 
     renderDialog();
 
     const builtinsToggle = screen.getByRole("button", {
-      name: /Supported base protocols/,
+      name: /支持的基础协议/,
     });
     fireEvent.click(builtinsToggle);
     fireEvent.click(screen.getByRole("option", { name: /claude/i }));
 
     expect(
-      screen.getByText(/claude is a built-in protocol family/),
+      screen.getByText(/claude 是内置协议类型/),
     ).toBeInTheDocument();
 
     fireEvent.click(builtinsToggle);
 
-    expect(screen.getByText("Select a runtime")).toBeInTheDocument();
+    expect(screen.getByText("选择一个运行时")).toBeInTheDocument();
     expect(
-      screen.queryByText(/claude is a built-in protocol family/),
+      screen.queryByText(/claude 是内置协议类型/),
     ).not.toBeInTheDocument();
   });
 });

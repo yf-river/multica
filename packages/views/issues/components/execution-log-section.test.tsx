@@ -43,7 +43,7 @@ function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
     result: null,
     error: null,
     created_at: "2026-06-08T08:00:00Z",
-    trigger_summary: "Started from comment",
+    trigger_summary: "从评论启动",
     ...overrides,
   };
 }
@@ -65,15 +65,15 @@ describe("ActiveTaskRow", () => {
 
     expect(screen.getByText("5m 04s")).toBeInTheDocument();
     expect(screen.queryByText(/events?/i)).not.toBeInTheDocument();
-    expect(screen.getByText("Started from comment")).toBeInTheDocument();
-    expect(screen.getByText("View transcript")).toBeInTheDocument();
+    expect(screen.getByText("从评论启动")).toBeInTheDocument();
+    expect(screen.getByText("查看记录")).toBeInTheDocument();
     expect(mockState.taskMessagesOptions).not.toHaveBeenCalled();
   });
 
   it("does not make transcript actions depend on hover-only rendering", () => {
     renderWithI18n(<ActiveTaskRow task={makeTask()} issueId="issue-1" />);
 
-    const transcriptButton = screen.getByRole("button", { name: "View transcript" });
+    const transcriptButton = screen.getByRole("button", { name: "查看记录" });
     const status = screen.getByText("5m 04s");
 
     expect(status.parentElement?.className).toContain("flex h-7");

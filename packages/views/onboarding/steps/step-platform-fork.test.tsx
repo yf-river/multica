@@ -76,49 +76,49 @@ describe("StepPlatformFork", () => {
     vi.restoreAllMocks();
   });
 
-  it("renders the three fork options at rest", () => {
+  it("静止态渲染三种连接方式", () => {
     renderFork();
-    expect(screen.getByText(/^use this computer$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^connect from the terminal$/i)).toBeInTheDocument();
-    expect(screen.getByText(/^use a cloud computer$/i)).toBeInTheDocument();
+    expect(screen.getByText(/^使用这台电脑$/)).toBeInTheDocument();
+    expect(screen.getByText(/^通过终端连接$/)).toBeInTheDocument();
+    expect(screen.getByText(/^使用云电脑$/)).toBeInTheDocument();
     // Cloud option is a "Coming soon" preview — not yet wired up.
-    expect(screen.getByText(/^coming soon$/i)).toBeInTheDocument();
+    expect(screen.getByText(/^即将推出$/)).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /^coming soon$/i }),
+      screen.queryByRole("button", { name: /^即将推出$/ }),
     ).not.toBeInTheDocument();
     // CLI dialog closed at rest → no CLI instructions.
     expect(screen.queryByTestId("cli-instructions")).not.toBeInTheDocument();
   });
 
-  it("footer: Skip only + explanatory hint (no Continue)", () => {
+  it("页脚只有暂时跳过和说明提示，没有继续按钮", () => {
     renderFork();
     expect(
-      screen.getByRole("button", { name: /skip for now/i }),
+      screen.getByRole("button", { name: /暂时跳过/ }),
     ).toBeEnabled();
     // Continue is gone — it lived in the footer before; now advancement
     // for the CLI path is owned by the CLI dialog's own button.
     expect(
-      screen.queryByRole("button", { name: /^continue$/i }),
+      screen.queryByRole("button", { name: /^继续$/ }),
     ).not.toBeInTheDocument();
     expect(
-      screen.getByText(/pick a way to connect — or skip and connect a computer later/i),
+      screen.getByText(/在上方选一种方式/),
     ).toBeInTheDocument();
   });
 
-  it("Skip is always enabled and calls onNext(null)", async () => {
+  it("暂时跳过始终启用并调用 onNext(null)", async () => {
     const user = userEvent.setup();
     const { onNext } = renderFork();
-    await user.click(screen.getByRole("button", { name: /skip for now/i }));
+    await user.click(screen.getByRole("button", { name: /暂时跳过/ }));
     expect(onNext).toHaveBeenCalledTimes(1);
     expect(onNext).toHaveBeenCalledWith(null);
   });
 
-  it("opens the download page and flips the card to a post-click state", async () => {
+  it("打开下载页并把卡片切到点击后状态", async () => {
     const openSpy = vi.spyOn(window, "open").mockReturnValue(null);
     const user = userEvent.setup();
     renderFork();
 
-    await user.click(screen.getByText(/^use this computer$/i));
+    await user.click(screen.getByText(/^使用这台电脑$/));
 
     // Routes to the new /download page (not GitHub releases) so the
     // user lands on the OS auto-detect surface.
@@ -128,28 +128,28 @@ describe("StepPlatformFork", () => {
       "noopener,noreferrer",
     );
     expect(
-      screen.getByText(/opening the download page/i),
+      screen.getByText(/正在打开下载页/),
     ).toBeInTheDocument();
   });
 
-  it("CLI dialog: opens with instructions + 'waiting' and a disabled Connect button", async () => {
+  it("CLI 对话框打开后显示说明、等待状态和禁用的连接按钮", async () => {
     const user = userEvent.setup();
     renderFork();
 
-    await user.click(screen.getByRole("button", { name: /show steps/i }));
+    await user.click(screen.getByRole("button", { name: /查看步骤/ }));
 
     const dialog = await screen.findByRole("dialog");
     expect(within(dialog).getByTestId("cli-instructions")).toBeInTheDocument();
     expect(
-      within(dialog).getByText(/waiting for your computer/i),
+      within(dialog).getByText(/正在等待你的电脑/),
     ).toBeInTheDocument();
-    // Start exploring stays disabled while no runtime is selected.
+    // 未选择运行时时，开始探索保持禁用。
     expect(
-      within(dialog).getByRole("button", { name: /start exploring/i }),
+      within(dialog).getByRole("button", { name: /开始探索/ }),
     ).toBeDisabled();
   });
 
-  it("CLI dialog with a selected runtime: Connect enables and fires onNext(runtime)", async () => {
+  it("CLI 对话框已选择运行时时启用连接并触发 onNext(runtime)", async () => {
     const rt = makeRuntime({ id: "rt_claude", name: "Claude Code" });
     resetPicker({
       runtimes: [rt],
@@ -160,16 +160,16 @@ describe("StepPlatformFork", () => {
     const user = userEvent.setup();
     const { onNext } = renderFork();
 
-    await user.click(screen.getByRole("button", { name: /show steps/i }));
+    await user.click(screen.getByRole("button", { name: /查看步骤/ }));
 
     const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText(/1 computer connected/i)).toBeInTheDocument();
+    expect(within(dialog).getByText(/已连接 1 台电脑/)).toBeInTheDocument();
     expect(
-      within(dialog).getByText(/selected: claude code/i),
+      within(dialog).getByText(/已选择：Claude Code/),
     ).toBeInTheDocument();
 
     const connect = within(dialog).getByRole("button", {
-      name: /start exploring/i,
+      name: /开始探索/,
     });
     expect(connect).toBeEnabled();
     await user.click(connect);

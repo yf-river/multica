@@ -49,7 +49,7 @@ vi.mock("../i18n", () => ({
         image: {
           view: "View",
           download: "Download",
-          copy_link: "Copy link",
+          copy_link: "复制链接",
           copy_link_failed: "Copy failed",
           link_copied: "Link copied",
           delete: "Delete",
@@ -183,7 +183,7 @@ describe("Attachment — image dispatch", () => {
     expect(img?.getAttribute("alt")).toBe("shot.png");
     expect(screen.getByTitle("View")).toBeTruthy();
     expect(screen.getByTitle("Download")).toBeTruthy();
-    expect(screen.getByTitle("Copy link")).toBeTruthy();
+    expect(screen.getByTitle("复制链接")).toBeTruthy();
     // Trash only shows in editable mode.
     expect(screen.queryByTitle("Delete")).toBeNull();
   });

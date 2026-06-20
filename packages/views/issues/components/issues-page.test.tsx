@@ -140,13 +140,13 @@ vi.mock("@multica/core/issues/config", () => ({
   BOARD_STATUSES: ["backlog", "todo", "in_progress", "in_review", "done", "blocked"],
   STATUS_ORDER: ["backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"],
   STATUS_CONFIG: {
-    backlog: { label: "Backlog", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
-    todo: { label: "Todo", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
-    in_progress: { label: "In Progress", iconColor: "text-warning", hoverBg: "hover:bg-warning/10" },
-    in_review: { label: "In Review", iconColor: "text-success", hoverBg: "hover:bg-success/10" },
-    done: { label: "Done", iconColor: "text-info", hoverBg: "hover:bg-info/10" },
-    blocked: { label: "Blocked", iconColor: "text-destructive", hoverBg: "hover:bg-destructive/10" },
-    cancelled: { label: "Cancelled", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
+    backlog: { label: "待办池", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
+    todo: { label: "待处理", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
+    in_progress: { label: "进行中", iconColor: "text-warning", hoverBg: "hover:bg-warning/10" },
+    in_review: { label: "评审中", iconColor: "text-success", hoverBg: "hover:bg-success/10" },
+    done: { label: "已完成", iconColor: "text-info", hoverBg: "hover:bg-info/10" },
+    blocked: { label: "已阻塞", iconColor: "text-destructive", hoverBg: "hover:bg-destructive/10" },
+    cancelled: { label: "已取消", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
   },
   PRIORITY_ORDER: ["urgent", "high", "medium", "low", "none"],
   PRIORITY_CONFIG: {
@@ -209,22 +209,22 @@ vi.mock("@multica/core/issues/stores/view-store", () => ({
   }),
   SORT_OPTIONS: [
     { value: "position", label: "Manual" },
-    { value: "priority", label: "Priority" },
-    { value: "due_date", label: "Due date" },
+    { value: "priority", label: "优先级" },
+    { value: "due_date", label: "截止日期" },
     { value: "created_at", label: "Created date" },
     { value: "title", label: "Title" },
   ],
   GROUPING_OPTIONS: [
-    { value: "status", label: "Status" },
-    { value: "assignee", label: "Assignee" },
+    { value: "status", label: "状态" },
+    { value: "assignee", label: "负责人" },
   ],
   CARD_PROPERTY_OPTIONS: [
-    { key: "priority", label: "Priority" },
+    { key: "priority", label: "优先级" },
     { key: "description", label: "Description" },
-    { key: "assignee", label: "Assignee" },
-    { key: "dueDate", label: "Due date" },
+    { key: "assignee", label: "负责人" },
+    { key: "dueDate", label: "截止日期" },
     { key: "project", label: "Project" },
-    { key: "labels", label: "Labels" },
+    { key: "labels", label: "标签" },
     { key: "childProgress", label: "Sub-issue progress" },
   ],
 }));
@@ -521,9 +521,9 @@ describe("IssuesPage (shared)", () => {
 
     renderWithQuery(<IssuesPage />);
 
-    await screen.findByText("Backlog");
-    expect(screen.getAllByText("Todo").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getAllByText("In Progress").length).toBeGreaterThanOrEqual(1);
+    await screen.findByText("待规划");
+    expect(screen.getAllByText("待办").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("进行中").length).toBeGreaterThanOrEqual(1);
   });
 
   it("groups board columns by assignee", async () => {
@@ -538,7 +538,7 @@ describe("IssuesPage (shared)", () => {
     await screen.findAllByText("Test User");
     expect(screen.getAllByText("Agent One").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Squad One").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("No assignee")).toBeInTheDocument();
+    expect(screen.getByText("未分配")).toBeInTheDocument();
   });
 
   it("uses grouped assignee endpoint instead of status page sweep", async () => {
@@ -559,7 +559,7 @@ describe("IssuesPage (shared)", () => {
     expect(mockListIssues).not.toHaveBeenCalled();
   });
 
-  it("shows the 'Issues' section header without a workspace prefix", async () => {
+  it("shows the issue section header without a workspace prefix", async () => {
     mockListIssues.mockImplementation((params: any) =>
       Promise.resolve({
         issues: mockIssues.filter((i) => i.status === params?.status),
@@ -569,7 +569,7 @@ describe("IssuesPage (shared)", () => {
 
     renderWithQuery(<IssuesPage />);
 
-    await screen.findByText("Issues");
+    await screen.findByText("问题");
     // The list header is now `icon + title`, matching the other list pages.
     // The workspace/org name is no longer rendered as a breadcrumb prefix.
     expect(screen.queryByText("Test WS")).not.toBeInTheDocument();
@@ -580,16 +580,16 @@ describe("IssuesPage (shared)", () => {
 
     renderWithQuery(<IssuesPage />);
 
-    await screen.findByText("No issues yet");
-    expect(screen.getByText("Create an issue to get started.")).toBeInTheDocument();
+    await screen.findByText("还没有 issue");
+    expect(screen.getByText("创建一个 issue 开始使用。")).toBeInTheDocument();
   });
 
   it("shows scope tab buttons", async () => {
     renderWithQuery(<IssuesPage />);
 
-    expect(await screen.findAllByText("All")).not.toHaveLength(0);
-    expect(screen.getByText("Members")).toBeInTheDocument();
-    expect(screen.getByText("Agents")).toBeInTheDocument();
+    expect(await screen.findAllByText("全部")).not.toHaveLength(0);
+    expect(screen.getByText("成员")).toBeInTheDocument();
+    expect(screen.getByText("智能体")).toBeInTheDocument();
   });
 
   it("agents scope includes squad-assigned issues", async () => {

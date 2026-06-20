@@ -42,11 +42,11 @@ function renderStep(answers: QuestionnaireAnswers = EMPTY) {
 describe("StepRole", () => {
   beforeEach(() => vi.restoreAllMocks());
 
-  it("selecting a role patches the slug and clears Other/skip", async () => {
+  it("选择角色会写入 slug 并清空其他/跳过状态", async () => {
     const user = userEvent.setup();
     const { onChange, onAdvance } = renderStep();
 
-    await user.click(screen.getByRole("radio", { name: /engineer/i }));
+    await user.click(screen.getByRole("radio", { name: /工程师/ }));
 
     expect(onChange).toHaveBeenCalledWith({
       role: "engineer",
@@ -56,11 +56,11 @@ describe("StepRole", () => {
     expect(onAdvance).not.toHaveBeenCalled();
   });
 
-  it("Skip clears slot and marks role_skipped", async () => {
+  it("跳过会清空字段并标记 role_skipped", async () => {
     const user = userEvent.setup();
     const { onChange, onSkip } = renderStep();
 
-    await user.click(screen.getByRole("button", { name: /skip/i }));
+    await user.click(screen.getByRole("button", { name: /跳过/ }));
 
     expect(onChange).toHaveBeenCalledWith({
       role: null,
@@ -70,17 +70,17 @@ describe("StepRole", () => {
     expect(onSkip).toHaveBeenCalledTimes(1);
   });
 
-  it("Other: selecting + typing writes role_other through onChange", async () => {
+  it("选择其他并输入时通过 onChange 写入 role_other", async () => {
     const user = userEvent.setup();
     const { onChange } = renderStep();
 
-    await user.click(screen.getByRole("radio", { name: /^other$/i }));
+    await user.click(screen.getByRole("radio", { name: /^其他$/ }));
     expect(onChange).toHaveBeenCalledWith({
       role: "other",
       role_skipped: false,
     });
 
-    const input = await screen.findByPlaceholderText(/teacher/i);
+    const input = await screen.findByPlaceholderText(/教师/);
     await user.type(input, "y");
     expect(onChange).toHaveBeenLastCalledWith({ role_other: "y" });
   });

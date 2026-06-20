@@ -34,7 +34,7 @@ describe("StepHeader", () => {
     // workspace is index 3 (after source/role/use_case) → Step 4.
     render(<StepHeader currentStep="workspace" />);
     expect(
-      screen.getByText(`Step 4 of ${ONBOARDING_STEP_ORDER.length}`),
+      screen.getByText(`第 4 步 / 共 ${ONBOARDING_STEP_ORDER.length} 步`),
     ).toBeInTheDocument();
   });
 
@@ -51,7 +51,7 @@ describe("StepHeader", () => {
     // must not crash. Assert the defensive fallback lands on step 1.
     render(<StepHeader currentStep={"bogus" as never} />);
     expect(
-      screen.getByText(`Step 1 of ${ONBOARDING_STEP_ORDER.length}`),
+      screen.getByText(`第 1 步 / 共 ${ONBOARDING_STEP_ORDER.length} 步`),
     ).toBeInTheDocument();
   });
 });

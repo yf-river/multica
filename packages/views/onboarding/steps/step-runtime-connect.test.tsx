@@ -90,7 +90,7 @@ describe("StepRuntimeConnect — onboarding_runtime_detected", () => {
     vi.useRealTimers();
   });
 
-  it("fires `outcome: found` when runtimes arrive synchronously on mount", () => {
+  it("运行时在挂载时同步到达时发送 outcome: found", () => {
     const rt = makeRuntime({
       id: "rt_claude",
       provider: "claude",
@@ -123,7 +123,7 @@ describe("StepRuntimeConnect — onboarding_runtime_detected", () => {
     });
   });
 
-  it("derives has_claude / has_codex / has_cursor from distinct providers", () => {
+  it("从不同 provider 推导 has_claude / has_codex / has_cursor", () => {
     setPicker({
       runtimes: [
         makeRuntime({ id: "rt1", provider: "claude" }),
@@ -145,7 +145,7 @@ describe("StepRuntimeConnect — onboarding_runtime_detected", () => {
     expect(props.has_cursor).toBe(true);
   });
 
-  it("fires `outcome: empty` after the 5s scanning timeout when no runtimes arrive", () => {
+  it("没有运行时到达时在 5 秒扫描超时后发送 outcome: empty", () => {
     setPicker({ runtimes: [] });
 
     renderStep();
@@ -180,7 +180,7 @@ describe("StepRuntimeConnect — onboarding_runtime_detected", () => {
     });
   });
 
-  it("does not re-emit if the component re-renders after resolution", () => {
+  it("解析完成后组件重渲染不会重复发送事件", () => {
     const rt = makeRuntime({ id: "rt_claude", provider: "claude" });
     setPicker({ runtimes: [rt], selected: rt, selectedId: rt.id, hasRuntimes: true });
 
@@ -205,7 +205,7 @@ describe("StepRuntimeConnect — onboarding_runtime_detected", () => {
     expect(onNext).not.toHaveBeenCalled();
   });
 
-  it("only counts distinct providers (multiple runtimes of the same provider)", () => {
+  it("只统计不同 provider，同一 provider 的多个运行时不重复计数", () => {
     setPicker({
       runtimes: [
         makeRuntime({ id: "rt1", provider: "claude" }),
@@ -222,14 +222,14 @@ describe("StepRuntimeConnect — onboarding_runtime_detected", () => {
     expect(props.providers).toEqual(["claude"]);
   });
 
-  it("mounts without touching framework-level globals", () => {
+  it("不触碰框架级全局变量也能挂载", () => {
     // Sanity: the StepHeader renders and the DragStrip doesn't explode
     // under jsdom. Keeps the test file honest if someone refactors the
     // shell around the effect.
     setPicker({ runtimes: [] });
     renderStep();
     expect(
-      screen.getByText(/connecting this computer/i),
+      screen.getByText(/正在连接这台电脑/),
     ).toBeInTheDocument();
   });
 });

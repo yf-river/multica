@@ -61,7 +61,7 @@ vi.mock("@multica/core/projects/queries", () => ({
 }));
 const { mockActorNameResult } = vi.hoisted(() => ({
   mockActorNameResult: {
-    getActorName: (_type: string, _id: string) => "Mock Actor",
+    getActorName: (_type: string, _id: string) => "模拟负责人",
     getActorInitials: () => "MA",
     getActorAvatarUrl: () => null,
     getMemberName: () => "Mock Member",
@@ -104,21 +104,21 @@ vi.mock("@multica/core/issues/config", () => ({
   BOARD_STATUSES: ["backlog", "todo", "in_progress", "in_review", "done", "blocked"],
   STATUS_ORDER: ["backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"],
   STATUS_CONFIG: {
-    backlog: { label: "Backlog", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
-    todo: { label: "Todo", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
-    in_progress: { label: "In Progress", iconColor: "text-warning", hoverBg: "hover:bg-warning/10" },
-    in_review: { label: "In Review", iconColor: "text-success", hoverBg: "hover:bg-success/10" },
-    done: { label: "Done", iconColor: "text-info", hoverBg: "hover:bg-info/10" },
-    blocked: { label: "Blocked", iconColor: "text-destructive", hoverBg: "hover:bg-destructive/10" },
-    cancelled: { label: "Cancelled", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
+    backlog: { label: "待规划", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
+    todo: { label: "待办", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
+    in_progress: { label: "进行中", iconColor: "text-warning", hoverBg: "hover:bg-warning/10" },
+    in_review: { label: "评审中", iconColor: "text-success", hoverBg: "hover:bg-success/10" },
+    done: { label: "已完成", iconColor: "text-info", hoverBg: "hover:bg-info/10" },
+    blocked: { label: "已阻塞", iconColor: "text-destructive", hoverBg: "hover:bg-destructive/10" },
+    cancelled: { label: "已取消", iconColor: "text-muted-foreground", hoverBg: "hover:bg-accent" },
   },
   PRIORITY_ORDER: ["urgent", "high", "medium", "low", "none"],
   PRIORITY_CONFIG: {
-    urgent: { label: "Urgent", bars: 4, color: "text-destructive" },
-    high: { label: "High", bars: 3, color: "text-warning" },
-    medium: { label: "Medium", bars: 2, color: "text-warning" },
-    low: { label: "Low", bars: 1, color: "text-info" },
-    none: { label: "No priority", bars: 0, color: "text-muted-foreground" },
+    urgent: { label: "紧急", bars: 4, color: "text-destructive" },
+    high: { label: "高", bars: 3, color: "text-warning" },
+    medium: { label: "中", bars: 2, color: "text-warning" },
+    low: { label: "低", bars: 1, color: "text-info" },
+    none: { label: "无优先级", bars: 0, color: "text-muted-foreground" },
   },
 }));
 
@@ -306,7 +306,7 @@ const mockIssues: Issue[] = [
     number: 3,
     identifier: "PROJ-3",
     title: "Orphan Issue 1",
-    description: "No parent",
+    description: "无父 issue",
     status: "backlog",
     priority: "low",
     assignee_type: null,
@@ -370,9 +370,9 @@ describe("SwimLaneView", () => {
       />,
     );
 
-    expect(screen.getByText("Backlog")).toBeInTheDocument();
-    expect(screen.getByText("Todo")).toBeInTheDocument();
-    expect(screen.getByText("In Progress")).toBeInTheDocument();
+    expect(screen.getByText("待规划")).toBeInTheDocument();
+    expect(screen.getByText("待办")).toBeInTheDocument();
+    expect(screen.getByText("进行中")).toBeInTheDocument();
   });
 
   it("renders parent swimlanes and orphans section", () => {
@@ -383,7 +383,7 @@ describe("SwimLaneView", () => {
       />,
     );
 
-    expect(screen.getAllByText("No parent").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("无父 issue").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("Parent Issue 1").length).toBeGreaterThanOrEqual(1);
     expect(screen.getAllByText("PROJ-1").length).toBeGreaterThanOrEqual(1);
   });
@@ -414,7 +414,7 @@ describe("SwimLaneView", () => {
       />,
     );
 
-    const addButtons = screen.getAllByRole("button", { name: /add issue/i });
+    const addButtons = screen.getAllByRole("button", { name: /新建 issue/ });
     expect(addButtons.length).toBeGreaterThan(0);
 
     fireEvent.click(addButtons[0]!);
@@ -430,7 +430,7 @@ describe("SwimLaneView", () => {
       />,
     );
 
-    const addButtons = screen.getAllByRole("button", { name: /add issue/i });
+    const addButtons = screen.getAllByRole("button", { name: /新建 issue/ });
     fireEvent.click(addButtons[0]!);
 
     expect(mockOpenModal).toHaveBeenCalledWith(
@@ -439,7 +439,7 @@ describe("SwimLaneView", () => {
     );
   });
 
-  // A child whose parent isn't in the loaded set — lands in "Other parents".
+  // A child whose parent isn't in the loaded set — lands in "其他父 issue".
   const orphanChild: Issue = {
     id: "lonely-child",
     workspace_id: "ws-1",
@@ -463,16 +463,16 @@ describe("SwimLaneView", () => {
     updated_at: "2026-01-01T00:00:00Z",
   };
 
-  it("renders children whose parent is not in the loaded set under an 'Other parents' fallback lane", () => {
+  it("父 issue 不在已加载集合时在其他父 issue 兜底泳道渲染子 issue", () => {
     renderWithI18n(
       <SwimLaneView issues={[orphanChild]} onMoveIssue={vi.fn()} />,
     );
 
-    expect(screen.getByText("Other parents")).toBeInTheDocument();
+    expect(screen.getByText("其他父级")).toBeInTheDocument();
     expect(screen.getByText("Lonely Child")).toBeInTheDocument();
   });
 
-  it("does not render the add-issue button inside 'Other parents' cells", () => {
+  it("其他父 issue 单元格内不渲染添加 issue 按钮", () => {
     renderWithI18n(
       <SwimLaneView
         issues={[...mockIssues, orphanChild]}
@@ -480,16 +480,16 @@ describe("SwimLaneView", () => {
       />,
     );
 
-    // No parent + Parent Issue 1 each have one + per visible status column.
-    // The Other parents lane must add zero.
+    // 无父级 + Parent Issue 1 每个可见状态列各有一个新增按钮。
+    // 其他父级兜底泳道不提供新增按钮。
     const realLaneCount = 2;
     const visibleStatusCount = 6; // BOARD_STATUSES default
     expect(
-      screen.getAllByRole("button", { name: /add issue/i }).length,
+      screen.getAllByRole("button", { name: /新建 issue/ }).length,
     ).toBe(realLaneCount * visibleStatusCount);
   });
 
-  it("does not call onMoveIssue when a card is dropped onto the empty whitespace of an 'Other parents' cell", () => {
+  it("卡片拖到其他父 issue 单元格空白处时不调用 onMoveIssue", () => {
     // `over.id` is the orphan cell id — what dnd-kit emits when the
     // pointer lands on the cell's empty area.
     const mockOnMoveIssue = vi.fn();
@@ -533,7 +533,7 @@ describe("SwimLaneView", () => {
     expect(screen.getAllByText("Parent Issue 1")).toHaveLength(1);
   });
 
-  it("does not call onMoveIssue when a card is dragged out of 'Other parents'", () => {
+  it("卡片从其他父 issue 拖出时不调用 onMoveIssue", () => {
     const mockOnMoveIssue = vi.fn();
     renderWithI18n(
       <SwimLaneView
@@ -552,7 +552,7 @@ describe("SwimLaneView", () => {
     expect(mockOnMoveIssue).not.toHaveBeenCalled();
   });
 
-  it("renders an open-parent link for lanes with a real parent", () => {
+  it("真实父级泳道渲染打开父级链接", () => {
     renderWithI18n(
       <SwimLaneView
         issues={mockIssues}
@@ -560,19 +560,19 @@ describe("SwimLaneView", () => {
       />,
     );
 
-    const links = screen.getAllByRole("link", { name: "Open parent issue" });
+    const links = screen.getAllByRole("link", { name: "打开父级 issue" });
     expect(links).toHaveLength(1);
     expect(links[0]).toHaveAttribute("href", expect.stringContaining("parent-1"));
   });
 
-  it("renders HiddenColumnsPanel only when hiddenStatuses is non-empty", () => {
+  it("仅当 hiddenStatuses 非空时渲染隐藏列面板", () => {
     const { unmount } = renderWithI18n(
       <SwimLaneView
         issues={mockIssues}
         onMoveIssue={vi.fn()}
       />,
     );
-    expect(screen.queryByText("Hidden columns")).not.toBeInTheDocument();
+    expect(screen.queryByText("隐藏的列")).not.toBeInTheDocument();
     unmount();
 
     renderWithI18n(
@@ -583,11 +583,11 @@ describe("SwimLaneView", () => {
         onMoveIssue={vi.fn()}
       />,
     );
-    expect(screen.getByText("Hidden columns")).toBeInTheDocument();
-    expect(screen.getByText("Blocked")).toBeInTheDocument();
+    expect(screen.getByText("隐藏的列")).toBeInTheDocument();
+    expect(screen.getByText("已阻塞")).toBeInTheDocument();
   });
 
-  it("calls onMoveIssue on drag-and-drop end", () => {
+  it("拖拽结束时调用 onMoveIssue", () => {
     const mockOnMoveIssue = vi.fn();
     renderWithI18n(
       <SwimLaneView
@@ -619,7 +619,7 @@ describe("SwimLaneView", () => {
     });
   });
 
-  it("does not call onMoveIssue when drop target equals source cell (no-op)", () => {
+  it("落点等于源单元格时不调用 onMoveIssue", () => {
     const mockOnMoveIssue = vi.fn();
     renderWithI18n(
       <SwimLaneView issues={mockIssues} onMoveIssue={mockOnMoveIssue} />,
@@ -635,7 +635,7 @@ describe("SwimLaneView", () => {
     expect(mockOnMoveIssue).not.toHaveBeenCalled();
   });
 
-  it("emits parent_issue_id when dragging from orphan into a parent lane", () => {
+  it("从无父级拖入父级泳道时发出 parent_issue_id", () => {
     const mockOnMoveIssue = vi.fn();
     renderWithI18n(
       <SwimLaneView issues={mockIssues} onMoveIssue={mockOnMoveIssue} />,
@@ -664,7 +664,7 @@ describe("SwimLaneView", () => {
     );
   });
 
-  it("renders count for hidden statuses from in-memory statusTotals", () => {
+  it("用内存 statusTotals 渲染隐藏状态计数", () => {
     renderWithI18n(
       <SwimLaneView
         issues={mockIssues}
@@ -674,14 +674,14 @@ describe("SwimLaneView", () => {
       />,
     );
 
-    const panel = screen.getByText("Hidden columns").parentElement!.parentElement!;
-    expect(panel).toHaveTextContent("Backlog");
-    expect(panel).toHaveTextContent("Blocked");
+    const panel = screen.getByText("隐藏的列").parentElement!.parentElement!;
+    expect(panel).toHaveTextContent("待规划");
+    expect(panel).toHaveTextContent("已阻塞");
     expect(panel).toHaveTextContent("1");
     expect(panel).toHaveTextContent("0");
   });
 
-  it("hidden-column totals come from unfilteredIssues when provided", () => {
+  it("提供 unfilteredIssues 时隐藏列总数来自它", () => {
     const unfiltered: Issue[] = [
       ...mockIssues,
       {
@@ -704,9 +704,9 @@ describe("SwimLaneView", () => {
       />,
     );
 
-    const panel = screen.getByText("Hidden columns").parentElement!.parentElement!;
-    expect(panel).toHaveTextContent("Backlog");
-    expect(panel).toHaveTextContent("Blocked");
+    const panel = screen.getByText("隐藏的列").parentElement!.parentElement!;
+    expect(panel).toHaveTextContent("待规划");
+    expect(panel).toHaveTextContent("已阻塞");
     const counts = [...panel.querySelectorAll("span")].map((el) => el.textContent);
     expect(counts.filter((c) => c === "1").length).toBeGreaterThanOrEqual(2);
   });
@@ -910,7 +910,7 @@ describe("SwimLaneView", () => {
     expect(parentB.compareDocumentPosition(parentA) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
-  it("keeps 'No parent' lane pinned at top regardless of stored order", () => {
+  it("无论存储顺序如何都把无父级泳道固定在顶部", () => {
     mockViewState.swimlaneOrders = {
       ...mockViewState.swimlaneOrders,
       parent: ["parent-2", "parent-1"],
@@ -920,7 +920,7 @@ describe("SwimLaneView", () => {
       <SwimLaneView issues={multiParentIssues} onMoveIssue={vi.fn()} />,
     );
 
-    const noParent = screen.getByText("No parent");
+    const noParent = screen.getByText("无父级");
     const parentB = screen.getByText("Parent B");
     expect(noParent.compareDocumentPosition(parentB) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
@@ -947,7 +947,7 @@ describe("SwimLaneView", () => {
     expect(screen.getByText("Child of B")).toBeInTheDocument();
   });
 
-  it("collapses the 'No parent' lane when 'none' is in stored collapsedSwimlanes", () => {
+  it("存储 collapsedSwimlanes 包含 none 时折叠无父级泳道", () => {
     mockViewState.collapsedSwimlanes = {
       ...mockViewState.collapsedSwimlanes,
       parent: ["none"],
@@ -957,7 +957,7 @@ describe("SwimLaneView", () => {
       <SwimLaneView issues={mockIssues} onMoveIssue={vi.fn()} />,
     );
 
-    expect(screen.getByText("No parent")).toBeInTheDocument();
+    expect(screen.getByText("无父级")).toBeInTheDocument();
     expect(screen.queryByText("Orphan Issue 1")).not.toBeInTheDocument();
   });
 
@@ -978,9 +978,8 @@ describe("SwimLaneView", () => {
       <SwimLaneView issues={mockIssues} onMoveIssue={vi.fn()} />,
     );
 
-    // "No parent" appears twice (lane title + orphan-1's card description);
-    // find the one inside a button.
-    const matches = screen.getAllByText("No parent");
+    // “无父级”会出现多次；这里找泳道标题按钮内的那个。
+    const matches = screen.getAllByText("无父级");
     const noParentHeader = matches.map((m) => m.closest("button")).find(Boolean);
     expect(noParentHeader).toBeDefined();
     fireEvent.click(noParentHeader!);
@@ -1030,7 +1029,7 @@ describe("SwimLaneView", () => {
     );
 
     // No-project pinned lane is always present.
-    expect(screen.getAllByText("No project").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("无项目").length).toBeGreaterThanOrEqual(1);
     // Both issue cards from real projects render — production fetches
     // project titles from the API; in tests the mocked listProjects
     // returns [] so the lane headers fall back to an empty title and
@@ -1063,7 +1062,7 @@ describe("SwimLaneView", () => {
     );
   });
 
-  it("emits null project_id when a card is dropped into the 'No project' lane", () => {
+  it("卡片拖入无项目泳道时发出 null project_id", () => {
     mockViewState.swimlaneGrouping = "project";
     const mockOnMoveIssue = vi.fn();
 
@@ -1125,7 +1124,7 @@ describe("SwimLaneView", () => {
     },
   ];
 
-  it("groups by assignee when swimlaneGrouping is 'assignee'", () => {
+  it("swimlaneGrouping 为 assignee 时按负责人分组", () => {
     mockViewState.swimlaneGrouping = "assignee";
 
     renderWithI18n(
@@ -1133,15 +1132,15 @@ describe("SwimLaneView", () => {
     );
 
     // Unassigned pinned lane is always rendered.
-    expect(screen.getAllByText("Unassigned").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("未指派").length).toBeGreaterThanOrEqual(1);
     // Mock actor name fallback for both member and agent.
-    expect(screen.getAllByText("Mock Actor").length).toBeGreaterThanOrEqual(2);
+    expect(screen.getAllByText("模拟负责人").length).toBeGreaterThanOrEqual(2);
     expect(screen.getByText("Issue X")).toBeInTheDocument();
     expect(screen.getByText("Issue Y")).toBeInTheDocument();
     expect(screen.getByText("Issue Z")).toBeInTheDocument();
   });
 
-  it("emits assignee_type + assignee_id when a card is dropped into an actor lane", () => {
+  it("卡片拖入人员泳道时发出 assignee_type 和 assignee_id", () => {
     mockViewState.swimlaneGrouping = "assignee";
     const mockOnMoveIssue = vi.fn();
 
@@ -1167,7 +1166,7 @@ describe("SwimLaneView", () => {
     );
   });
 
-  it("emits null assignee when a card is dropped into the 'Unassigned' lane", () => {
+  it("卡片拖入未指派泳道时发出 null 负责人", () => {
     mockViewState.swimlaneGrouping = "assignee";
     const mockOnMoveIssue = vi.fn();
 

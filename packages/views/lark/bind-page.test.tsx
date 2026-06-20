@@ -60,8 +60,8 @@ describe("LarkBindPage", () => {
     mockAuthState.isLoading = true;
     mockAuthState.user = null;
     renderPage("tok123");
-    expect(screen.getByText(/redeeming binding token/i)).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /sign in/i })).toBeNull();
+    expect(screen.getByText(/正在兑换绑定 token/i)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /登录/i })).toBeNull();
   });
 
   it("shows needs-auth UI when auth finishes loading and user is null", () => {
@@ -69,7 +69,7 @@ describe("LarkBindPage", () => {
     mockAuthState.user = null;
     renderPage("tok123");
     expect(
-      screen.getByRole("button", { name: /sign in/i }),
+      screen.getByRole("button", { name: /登录/i }),
     ).toBeInTheDocument();
   });
 
@@ -95,7 +95,7 @@ describe("LarkBindPage", () => {
     });
     renderPage("tok123");
     await waitFor(() => {
-      expect(screen.getByText(/you're bound/i)).toBeInTheDocument();
+      expect(screen.getByText(/已绑定/)).toBeInTheDocument();
     });
   });
 
@@ -103,7 +103,7 @@ describe("LarkBindPage", () => {
     mockAuthState.isLoading = false;
     mockAuthState.user = null;
     renderPage("mytoken");
-    fireEvent.click(screen.getByRole("button", { name: /sign in/i }));
+    fireEvent.click(screen.getByRole("button", { name: /登录/i }));
     expect(mockNavigatePush).toHaveBeenCalledTimes(1);
     const url: string = mockNavigatePush.mock.calls[0]?.[0] as string;
     expect(url).toContain("?next=");
@@ -114,7 +114,7 @@ describe("LarkBindPage", () => {
   it("shows missing token error when token is null", () => {
     renderPage(null);
     expect(
-      screen.getByText(/missing its binding token/i),
+      screen.getByText(/链接缺少绑定 token/i),
     ).toBeInTheDocument();
   });
 });

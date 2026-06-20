@@ -316,7 +316,7 @@ describe("SlashCommandList empty states", () => {
       </I18nWrapper>,
     );
 
-    expect(getByText("No skills configured")).toBeInTheDocument();
+    expect(getByText("暂无配置的技能")).toBeInTheDocument();
   });
 
   it("shows a no-results empty state when search text has no matches", () => {
@@ -326,7 +326,7 @@ describe("SlashCommandList empty states", () => {
       </I18nWrapper>,
     );
 
-    expect(getByText("No matching skills")).toBeInTheDocument();
+    expect(getByText("没有匹配的技能")).toBeInTheDocument();
   });
 
   it("renders nothing on empty items when hideOnEmpty is set (command menu)", () => {
@@ -378,7 +378,7 @@ describe("SlashCommandList built-in command rendering", () => {
 
     expect(getByText("/note")).toBeInTheDocument();
     expect(
-      getByText("Add a note — won't trigger any agents"),
+      getByText("添加备注 — 不触发任何 Agent"),
     ).toBeInTheDocument();
   });
 });

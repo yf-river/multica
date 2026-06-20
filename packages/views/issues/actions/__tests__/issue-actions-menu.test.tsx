@@ -158,14 +158,14 @@ describe("IssueActionsDropdown", () => {
     fireEvent.click(screen.getByTestId("trigger"));
 
     // Base UI portals the popup; role=menu lands on the popup wrapper.
-    expect(await screen.findByText("Status")).toBeInTheDocument();
-    expect(screen.getByText("Priority")).toBeInTheDocument();
-    expect(screen.getByText("Assignee")).toBeInTheDocument();
-    expect(screen.getByText("Due date")).toBeInTheDocument();
-    expect(screen.getByText("Copy link")).toBeInTheDocument();
-    expect(screen.getByText("More")).toBeInTheDocument();
-    expect(screen.getByText("Delete issue")).toBeInTheDocument();
-    // Relationship actions are hidden inside the "More" submenu by default.
+    expect(await screen.findByText("状态")).toBeInTheDocument();
+    expect(screen.getByText("优先级")).toBeInTheDocument();
+    expect(screen.getByText("负责人")).toBeInTheDocument();
+    expect(screen.getByText("截止日期")).toBeInTheDocument();
+    expect(screen.getByText("复制链接")).toBeInTheDocument();
+    expect(screen.getByText("更多")).toBeInTheDocument();
+    expect(screen.getByText("删除 issue")).toBeInTheDocument();
+    // Relationship actions are hidden inside the "更多" submenu by default.
     expect(screen.queryByText("Create sub-issue")).not.toBeInTheDocument();
     expect(screen.queryByText("Set parent issue...")).not.toBeInTheDocument();
     expect(screen.queryByText("Add sub-issue...")).not.toBeInTheDocument();
@@ -182,15 +182,15 @@ describe("IssueActionsDropdown", () => {
     );
 
     fireEvent.click(screen.getByTestId("trigger"));
-    fireEvent.click(await screen.findByText("Assignee"));
+    fireEvent.click(await screen.findByText("负责人"));
 
     // The shared picker exposes a search input and renders the workspace
-    // member under a "Members" group — both come from `AssigneePicker`, not
+    // member under a "成员" group — both come from `AssigneePicker`, not
     // the legacy submenu (which had neither).
     expect(
-      await screen.findByPlaceholderText("Assign to..."),
+      await screen.findByPlaceholderText("分配给..."),
     ).toBeInTheDocument();
-    expect(await screen.findByText("Members")).toBeInTheDocument();
+    expect(await screen.findByText("成员")).toBeInTheDocument();
     expect(await screen.findByText("Test User")).toBeInTheDocument();
   });
 
@@ -206,7 +206,7 @@ describe("IssueActionsDropdown", () => {
     );
 
     fireEvent.click(screen.getByTestId("trigger"));
-    const del = await screen.findByText("Delete issue");
+    const del = await screen.findByText("删除 issue");
     fireEvent.click(del);
 
     expect(mockOpenModal).toHaveBeenCalledWith("issue-delete-confirm", {
@@ -229,7 +229,7 @@ describe("IssueActionsContextMenu", () => {
 
     fireEvent.contextMenu(screen.getByTestId("row"));
 
-    expect(await screen.findByText("Status")).toBeInTheDocument();
-    expect(screen.getByText("Delete issue")).toBeInTheDocument();
+    expect(await screen.findByText("状态")).toBeInTheDocument();
+    expect(screen.getByText("删除 issue")).toBeInTheDocument();
   });
 });

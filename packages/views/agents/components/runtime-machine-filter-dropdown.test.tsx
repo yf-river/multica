@@ -56,7 +56,7 @@ function renderDropdown(
           agentCountByMachine={agentCountByMachine}
           // Default to the sum of per-machine counts so existing tests
           // keep their original assertion semantics; new tests can
-          // override to verify the "All runtimes" badge matches an
+          // override to verify the "全部运行时" badge matches an
           // external in-scope total even when agents are missing from
           // the machine map.
           totalAgentCount={
@@ -76,7 +76,7 @@ describe("RuntimeMachineFilterDropdown", () => {
   beforeEach(() => vi.clearAllMocks());
   // Base UI DropdownMenu renders the menu content into a portal on
   // document.body, so leftover portals from a prior test would surface
-  // duplicate "All runtimes" / "LOCAL" labels. Wipe body between tests.
+  // duplicate "全部运行时" / "LOCAL" labels. Wipe body between tests.
   afterEach(() => {
     cleanup();
     document.body.innerHTML = "";
@@ -99,9 +99,9 @@ describe("RuntimeMachineFilterDropdown", () => {
 
     renderDropdown(machines, null, vi.fn(), counts);
 
-    // Trigger button uses the "All runtimes" label.
+    // Trigger button uses the "全部运行时" label.
     const trigger = screen.getByTestId("agents-runtime-filter");
-    expect(trigger.textContent).toContain("All runtimes");
+    expect(trigger.textContent).toContain("全部运行时");
     // Sum across machines surfaces as the trigger count.
     expect(trigger.textContent).toContain("7");
   });
@@ -145,9 +145,9 @@ describe("RuntimeMachineFilterDropdown", () => {
     fireEvent.click(screen.getByTestId("agents-runtime-filter"));
 
     // Section labels render as plain text (uppercase is CSS-only).
-    expect(screen.getByText("Local")).toBeTruthy();
-    expect(screen.getByText("Remote")).toBeTruthy();
-    expect(screen.getByText("Cloud")).toBeTruthy();
+    expect(screen.getByText("本机")).toBeTruthy();
+    expect(screen.getByText("远程")).toBeTruthy();
+    expect(screen.getByText("云端")).toBeTruthy();
     // The menu items themselves also render.
     expect(screen.getByText("dev.local")).toBeTruthy();
     expect(screen.getByText("build-server")).toBeTruthy();
@@ -159,7 +159,7 @@ describe("RuntimeMachineFilterDropdown", () => {
     const counts = new Map([["m-local", 1]]);
     const onChange = vi.fn();
 
-    // Pre-select a machine so the "All runtimes" row is the one that
+    // Pre-select a machine so the "全部运行时" row is the one that
     // gets the data-testid="agents-runtime-filter-active" marker.
     renderDropdown(machines, "m-local", onChange, counts);
     fireEvent.click(screen.getByTestId("agents-runtime-filter"));
@@ -168,8 +168,8 @@ describe("RuntimeMachineFilterDropdown", () => {
     // raw <button>.
     const activeRow = screen.getByTestId("agents-runtime-filter-active");
     expect(activeRow.getAttribute("role")).toBe("menuitem");
-    // Click the explicit "All runtimes" menu item by its accessible name.
-    fireEvent.click(screen.getByRole("menuitem", { name: /All runtimes/ }));
+    // Click the explicit "全部运行时" menu item by its accessible name.
+    fireEvent.click(screen.getByRole("menuitem", { name: /全部运行时/ }));
     expect(onChange).toHaveBeenCalledWith(null);
   });
 
@@ -208,7 +208,7 @@ describe("RuntimeMachineFilterDropdown", () => {
 
     const menu = screen.getByRole("menu");
     expect(menu).toBeTruthy();
-    // Both the "All runtimes" row and the per-machine row are items.
+    // Both the "全部运行时" row and the per-machine row are items.
     const items = screen.getAllByRole("menuitem");
     expect(items.length).toBeGreaterThanOrEqual(2);
     expect(items.every((item) => item.getAttribute("role") === "menuitem")).toBe(true);
@@ -231,7 +231,7 @@ describe("RuntimeMachineFilterDropdown", () => {
 
     fireEvent.click(screen.getByTestId("agents-runtime-filter"));
 
-    expect(screen.getByText("No machines yet")).toBeTruthy();
+    expect(screen.getByText("还没有机器")).toBeTruthy();
   });
 
   it("uses the explicit totalAgentCount for the All-runtimes badge even when it diverges from the per-machine sum", () => {

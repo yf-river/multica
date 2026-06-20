@@ -62,13 +62,13 @@ describe("NoAccessPage", () => {
   it("renders generic message that doesn't leak existence", () => {
     renderPage();
     expect(
-      screen.getByText(/doesn't exist or you don't have access/i),
+      screen.getByText(/该工作区不存在，或你没有访问权限/),
     ).toBeInTheDocument();
   });
 
   it("navigates to the first accessible workspace on 'Go to my workspaces'", () => {
     renderPage();
-    fireEvent.click(screen.getByRole("button", { name: /go to my workspaces/i }));
+    fireEvent.click(screen.getByRole("button", { name: /前往我的工作区/ }));
     expect(navigate).toHaveBeenCalledWith("/valid-team/issues");
   });
 
@@ -85,7 +85,7 @@ describe("NoAccessPage", () => {
   it("fully logs out on 'Sign in as a different user' instead of just navigating", () => {
     renderPage();
     fireEvent.click(
-      screen.getByRole("button", { name: /sign in as a different user/i }),
+      screen.getByRole("button", { name: /使用其他账号登录/ }),
     );
     expect(logout).toHaveBeenCalledTimes(1);
     // Should NOT just navigate to /login — that would leave the session

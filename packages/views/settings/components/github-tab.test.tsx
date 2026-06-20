@@ -142,7 +142,7 @@ describe("GitHubTab", () => {
 
   it("folds the non-dev hint into the master switch description (no separate callout)", () => {
     render(<GitHubTab />, { wrapper: I18nWrapper });
-    expect(screen.getByText(/Not a development team\? Just turn it off here\./)).toBeTruthy();
+    expect(screen.getByText(/团队不使用 GitHub？在这里直接关掉即可/)).toBeTruthy();
     // The old standalone callout (title + dedicated "Turn GitHub off" button) is gone.
     expect(screen.queryByRole("button", { name: /^Turn GitHub off$/ })).toBeNull();
   });
@@ -150,14 +150,14 @@ describe("GitHubTab", () => {
   it("does not show the hint once the master switch is off", () => {
     workspaceRef.current.settings = { github_enabled: false };
     render(<GitHubTab />, { wrapper: I18nWrapper });
-    expect(screen.queryByText(/Not a development team\?/)).toBeNull();
+    expect(screen.queryByText(/团队不使用 GitHub？/)).toBeNull();
   });
 
   it("disables every feature switch when the master switch is off", () => {
     workspaceRef.current.settings = { github_enabled: false };
     render(<GitHubTab />, { wrapper: I18nWrapper });
 
-    const master = screen.getByRole("switch", { name: /enable github features/i });
+    const master = screen.getByRole("switch", { name: /启用 GitHub 功能/i });
     expect(master.getAttribute("aria-checked")).toBe("false");
 
     const switches = screen.getAllByRole("switch");
@@ -181,7 +181,7 @@ describe("GitHubTab", () => {
 
     render(<GitHubTab />, { wrapper: I18nWrapper });
 
-    await user.click(screen.getByRole("switch", { name: /enable github features/i }));
+    await user.click(screen.getByRole("switch", { name: /启用 GitHub 功能/i }));
 
     await waitFor(() => {
       expect(mockUpdateWorkspace).toHaveBeenCalledWith("workspace-1", {
@@ -190,7 +190,7 @@ describe("GitHubTab", () => {
     });
   });
 
-  it("clicking Disconnect opens the confirmation and only fires on confirm", async () => {
+  it("clicking 断开 opens the confirmation and only fires on confirm", async () => {
     const user = userEvent.setup();
     installationsRef.current = {
       configured: true,
@@ -201,21 +201,21 @@ describe("GitHubTab", () => {
 
     render(<GitHubTab />, { wrapper: I18nWrapper });
 
-    await user.click(screen.getByRole("button", { name: /^Disconnect$/ }));
-    expect(screen.getByText(/Multica will stop receiving webhooks/i)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: /^断开$/ }));
+    expect(screen.getByText(/Multica 将不再接收该安装的 webhook/i)).toBeTruthy();
     expect(mockDeleteInstallation).not.toHaveBeenCalled();
 
     const dialogConfirm = screen
-      .getAllByRole("button", { name: /^Disconnect$/ })
+      .getAllByRole("button", { name: /^断开$/ })
       .find((b) => b.getAttribute("data-slot")?.includes("alert-dialog"));
-    await user.click(dialogConfirm ?? screen.getAllByRole("button", { name: /^Disconnect$/ })[1]!);
+    await user.click(dialogConfirm ?? screen.getAllByRole("button", { name: /^断开$/ })[1]!);
 
     await waitFor(() => {
       expect(mockDeleteInstallation).toHaveBeenCalledWith("workspace-1", "inst-42");
     });
   });
 
-  it("Disconnect button is still visible when the master switch is off", () => {
+  it("断开 button is still visible when the master switch is off", () => {
     workspaceRef.current.settings = { github_enabled: false };
     installationsRef.current = {
       configured: true,
@@ -223,10 +223,10 @@ describe("GitHubTab", () => {
       installations: [{ id: "inst-1", account_login: "acme", installation_id: 1 }],
     };
     render(<GitHubTab />, { wrapper: I18nWrapper });
-    expect(screen.getByRole("button", { name: /^Disconnect$/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /^断开$/ })).toBeTruthy();
   });
 
-  it("non-admin sees the existing connection but no Connect/Disconnect controls", () => {
+  it("non-admin sees the existing connection but no Connect/断开 controls", () => {
     membersRef.current = [{ user_id: "user-1", role: "member" }];
     installationsRef.current = {
       configured: true,
@@ -235,10 +235,10 @@ describe("GitHubTab", () => {
     };
     render(<GitHubTab />, { wrapper: I18nWrapper });
 
-    expect(screen.getByText(/Connected to acme/i)).toBeTruthy();
-    expect(screen.getByText(/Read-only view\./i)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /^Connect GitHub$/ })).toBeNull();
-    expect(screen.queryByRole("button", { name: /^Disconnect$/ })).toBeNull();
+    expect(screen.getByText(/已连接到 acme/i)).toBeTruthy();
+    expect(screen.getByText(/只读视图。/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^连接 GitHub$/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^断开$/ })).toBeNull();
   });
 
   it("non-admin with no connection sees the contact-admin hint", () => {
@@ -250,8 +250,8 @@ describe("GitHubTab", () => {
     };
     render(<GitHubTab />, { wrapper: I18nWrapper });
 
-    expect(screen.getByText(/Ask an admin or owner/i)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /^Connect GitHub$/ })).toBeNull();
+    expect(screen.getByText(/请让管理员或所有者/i)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /^连接 GitHub$/ })).toBeNull();
   });
 
   it("renders the connected_by line when the backend provides it", () => {
@@ -268,13 +268,13 @@ describe("GitHubTab", () => {
       ],
     };
     render(<GitHubTab />, { wrapper: I18nWrapper });
-    expect(screen.getByText(/Connected by Jiayuan/)).toBeTruthy();
+    expect(screen.getByText(/由 Jiayuan 连接/)).toBeTruthy();
   });
 
   it("repositories shortcut navigates to the repositories tab", async () => {
     const user = userEvent.setup();
     render(<GitHubTab />, { wrapper: I18nWrapper });
-    await user.click(screen.getByRole("button", { name: /Manage repositories/ }));
+    await user.click(screen.getByRole("button", { name: /前往管理/ }));
     expect(mockNavPush).toHaveBeenCalledWith("/acme/settings?tab=repositories");
   });
 });

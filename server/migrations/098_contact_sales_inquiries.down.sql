@@ -1,1 +1,1 @@
-DROP TABLE IF EXISTS contact_sales_inquiry;
+-- Deprecated no-op. The removed public lead table is permanent.

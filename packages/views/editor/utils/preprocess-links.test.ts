@@ -136,3 +136,17 @@ describe("preprocessLinks — bare filenames are not auto-linked as URLs", () =>
     );
   });
 });
+
+describe("preprocessLinks — emails are not auto-linked", () => {
+  it("leaves bare email addresses as plain text", () => {
+    expect(preprocessLinks("contact alice@example.com for access")).toBe(
+      "contact alice@example.com for access",
+    );
+  });
+
+  it("leaves explicit mailto links as plain text", () => {
+    expect(preprocessLinks("contact mailto:alice@example.com for access")).toBe(
+      "contact mailto:alice@example.com for access",
+    );
+  });
+});

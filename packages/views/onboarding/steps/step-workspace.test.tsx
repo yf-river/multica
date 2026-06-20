@@ -91,17 +91,17 @@ const EXISTING_WORKSPACE: Workspace = {
 // workspace or a logout escape — never toward the create form, even
 // indirectly (stale CTA copy, "or start another" prose, etc.).
 describe("StepWorkspace — DISABLE_WORKSPACE_CREATION gate", () => {
-  it("renders the create form when the flag is off and the user has no workspace", () => {
+  it("开关关闭且用户没有工作区时渲染创建表单", () => {
     renderStep({ existing: null, disabled: false });
 
     expect(
-      screen.getByText("Name your workspace.", { exact: false }),
+      screen.getByText("给工作区起个名字。", { exact: false }),
     ).toBeInTheDocument();
-    expect(screen.getByLabelText("Workspace name")).toBeInTheDocument();
+    expect(screen.getByLabelText("工作区名称")).toBeInTheDocument();
     expect(screen.getByLabelText("URL")).toBeInTheDocument();
   });
 
-  it("hides the create form and shows the disabled notice when the flag is on and there is no workspace", () => {
+  it("开关开启且没有工作区时隐藏创建表单并显示禁用提示", () => {
     renderStep({ existing: null, disabled: true });
 
     expect(
@@ -109,23 +109,23 @@ describe("StepWorkspace — DISABLE_WORKSPACE_CREATION gate", () => {
         exact: false,
       }),
     ).toBeInTheDocument();
-    expect(screen.queryByLabelText("Workspace name")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("工作区名称")).not.toBeInTheDocument();
     expect(screen.queryByLabelText("URL")).not.toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /log out/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /退出登录/i })).toBeInTheDocument();
   });
 
-  it("forces the existing-workspace-only state when the flag is on and the user already has a workspace", () => {
+  it("开关开启且用户已有工作区时强制只显示现有工作区状态", () => {
     renderStep({ existing: EXISTING_WORKSPACE, disabled: true });
 
     // Disabled-specific copy is used in place of the "or start another" prose.
     expect(
-      screen.getByText("Continue with Acme.", { exact: false }),
+      screen.getByText("继续使用 Acme。", { exact: false }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByText(/start another/i),
+      screen.queryByText(/重新开始/),
     ).not.toBeInTheDocument();
     expect(
-      screen.queryByText(/create a new one alongside it/i),
+      screen.queryByText(/新建一个/),
     ).not.toBeInTheDocument();
 
     // Resume picker still shows the existing workspace card (its name
@@ -134,12 +134,12 @@ describe("StepWorkspace — DISABLE_WORKSPACE_CREATION gate", () => {
     // workspace" radio card is gone entirely.
     expect(screen.getAllByText("Acme").length).toBeGreaterThan(0);
     expect(
-      screen.queryByText("Create a new workspace", { exact: false }),
+      screen.queryByText("创建一个新工作区", { exact: false }),
     ).not.toBeInTheDocument();
 
     // CTA is pre-selected to the existing-only action and immediately
     // enabled, so the user can press it without further interaction.
-    const cta = screen.getByRole("button", { name: "Open Acme" });
+    const cta = screen.getByRole("button", { name: "打开 Acme" });
     expect(cta).toBeEnabled();
   });
 });

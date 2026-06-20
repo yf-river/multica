@@ -45,7 +45,7 @@ const CLAUDE_MODEL: RuntimeModel = {
       { value: "none", label: "None" },
       { value: "low", label: "Low" },
       { value: "medium", label: "Medium" },
-      { value: "high", label: "High" },
+      { value: "high", label: "高" },
     ],
     default_level: "medium",
   },
@@ -129,7 +129,7 @@ describe("ThinkingPropRow", () => {
       expect(mockInitiateListModels).toHaveBeenCalled();
     });
     await waitFor(() => {
-      expect(screen.queryByText("Thinking")).toBeNull();
+      expect(screen.queryByText("思考")).toBeNull();
     });
   });
 
@@ -138,7 +138,7 @@ describe("ThinkingPropRow", () => {
 
     // Query disabled when runtimeOnline=false, so no models, levels stay
     // empty, value is empty → row stays hidden.
-    expect(screen.queryByText("Thinking")).toBeNull();
+    expect(screen.queryByText("思考")).toBeNull();
     expect(mockInitiateListModels).not.toHaveBeenCalled();
   });
 
@@ -151,7 +151,7 @@ describe("ThinkingPropRow", () => {
     mockInitiateListModels.mockResolvedValue(listResult([NO_THINKING_MODEL]));
     renderRow({ model: "gemini-2.5-pro", value: "xhigh" });
 
-    await screen.findByText("Thinking");
+    await screen.findByText("思考");
     // The picker chip carries the raw value when it's not in the catalog.
     expect(await screen.findByText("xhigh")).toBeInTheDocument();
   });
@@ -168,7 +168,7 @@ describe("ThinkingPropRow", () => {
     // matching the i18n `thinking_clear_title` copy.
     await screen.findByText("xhigh");
     fireEvent.click(screen.getByRole("button"));
-    const clearButton = await screen.findByTitle(/Clear the override/i);
+    const clearButton = await screen.findByTitle(/清除覆盖/i);
     fireEvent.click(clearButton);
 
     expect(onChange).toHaveBeenCalledWith("");
@@ -177,17 +177,17 @@ describe("ThinkingPropRow", () => {
   it("renders the row with the matched label when the model still advertises the value", async () => {
     renderRow({ value: "high" });
 
-    await screen.findByText("Thinking");
-    // Both the chip and the tooltip carry "High".
-    expect((await screen.findAllByText("High")).length).toBeGreaterThan(0);
+    await screen.findByText("思考");
+    // Both the chip and the tooltip carry "高".
+    expect((await screen.findAllByText("高")).length).toBeGreaterThan(0);
   });
 
-  it("renders the row with \"Follow CLI config\" when value is empty and the model exposes levels", async () => {
+  it("renders the row with \"跟随 CLI 配置\" when value is empty and the model exposes levels", async () => {
     renderRow({ value: "" });
 
-    await screen.findByText("Thinking");
+    await screen.findByText("思考");
     // Empty value means Multica omits --effort, so the local CLI's
-    // config decides — chip + tooltip both read "Follow CLI config".
-    expect((await screen.findAllByText("Follow CLI config")).length).toBeGreaterThan(0);
+    // config decides — chip + tooltip both read "跟随 CLI 配置".
+    expect((await screen.findAllByText("跟随 CLI 配置")).length).toBeGreaterThan(0);
   });
 });

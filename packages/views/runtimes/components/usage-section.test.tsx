@@ -142,7 +142,7 @@ describe("UsageSection — Viewing timezone wiring", () => {
     render(<UsageSection runtime={RUNTIME} />, { wrapper: Wrapper });
 
     // The heatmap is an opt-in toggle inside the "When" card.
-    fireEvent.click(screen.getByRole("button", { name: "Heatmap" }));
+    fireEvent.click(screen.getByRole("button", { name: "热力图" }));
 
     expect(screen.getByTestId("heatmap-tz").textContent).toBe(VIEWER_TZ);
   });

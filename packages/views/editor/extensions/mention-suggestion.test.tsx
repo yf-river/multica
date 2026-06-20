@@ -149,7 +149,7 @@ describe("createMentionSuggestion", () => {
 
     render(<I18nWrapper><MentionList items={[]} query="协作" command={vi.fn()} /></I18nWrapper>);
 
-    expect(screen.getByText("Searching...")).toBeInTheDocument();
+    expect(screen.getByText("搜索中...")).toBeInTheDocument();
 
     await waitFor(() => {
       expect(screen.getByText("MUL-1007")).toBeInTheDocument();
@@ -285,7 +285,7 @@ describe("createMentionSuggestion", () => {
     const qc = fakeQc({
       issues: [
         { id: "i1", identifier: "MUL-1", title: "Login bug", status: "todo" },
-        { id: "i2", identifier: "MUL-2", title: "Other", status: "done" },
+        { id: "i2", identifier: "MUL-2", title: "其他", status: "done" },
       ],
     });
     searchIssuesMock.mockReturnValue(new Promise(() => {}));
@@ -370,8 +370,8 @@ describe("createMentionSuggestion", () => {
       </I18nWrapper>,
     );
 
-    expect(screen.getByText("Current page")).toBeInTheDocument();
-    expect(screen.getByText("Recently viewed")).toBeInTheDocument();
+    expect(screen.getByText("当前页面")).toBeInTheDocument();
+    expect(screen.getByText("最近浏览")).toBeInTheDocument();
     expect(screen.getByText("MUL-1")).toBeInTheDocument();
     expect(screen.getByText("Roadmap")).toBeInTheDocument();
   });

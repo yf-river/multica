@@ -146,7 +146,7 @@ describe("WorkspaceTab — issue prefix editing", () => {
     const user = userEvent.setup();
     render(<WorkspaceTab />, { wrapper: I18nWrapper });
 
-    await user.click(screen.getByRole("button", { name: /^Save$/ }));
+    await user.click(screen.getByRole("button", { name: /^保存$/ }));
 
     await waitFor(() => {
       expect(mockUpdateWorkspace).toHaveBeenCalledTimes(1);
@@ -157,7 +157,7 @@ describe("WorkspaceTab — issue prefix editing", () => {
       "workspace-1",
       expect.not.objectContaining({ issue_prefix: expect.anything() }),
     );
-    expect(screen.queryByText(/Change issue prefix/i)).toBeNull();
+    expect(screen.queryByText(/确认修改 issue 前缀/)).toBeNull();
     // Non-prefix saves must NOT invalidate the issue cache — would
     // trigger an unnecessary workspace-wide refetch on every name edit.
     expect(mockInvalidateQueries).not.toHaveBeenCalledWith(
@@ -173,17 +173,17 @@ describe("WorkspaceTab — issue prefix editing", () => {
     await user.clear(input);
     await user.type(input, "NEW");
 
-    await user.click(screen.getByRole("button", { name: /^Save$/ }));
+    await user.click(screen.getByRole("button", { name: /^保存$/ }));
 
-    // Save is gated behind the dialog — no API call yet.
+    // 保存被确认弹窗拦截，此时还不会调用 API。
     expect(mockUpdateWorkspace).not.toHaveBeenCalled();
 
     // Dialog body mentions both the old and new prefix in the warning.
-    await screen.findByText(/Change issue prefix/i);
+    await screen.findByText(/确认修改 issue 前缀/);
     expect(screen.getByText(/TES-N/)).toBeTruthy();
     expect(screen.getByText(/NEW-N/)).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "Confirm" }));
+    await user.click(screen.getByRole("button", { name: "确认" }));
 
     await waitFor(() => {
       expect(mockUpdateWorkspace).toHaveBeenCalledTimes(1);
@@ -209,24 +209,24 @@ describe("WorkspaceTab — issue prefix editing", () => {
     await user.clear(input);
     await user.type(input, "NEW");
 
-    await user.click(screen.getByRole("button", { name: /^Save$/ }));
+    await user.click(screen.getByRole("button", { name: /^保存$/ }));
 
-    await screen.findByText(/Change issue prefix/i);
-    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    await screen.findByText(/确认修改 issue 前缀/);
+    await user.click(screen.getByRole("button", { name: "取消" }));
 
     expect(mockUpdateWorkspace).not.toHaveBeenCalled();
     // The user's edited value is preserved so they can resume.
     expect(input.value).toBe("NEW");
   });
 
-  it("disables Save when the prefix is empty", async () => {
+  it("前缀为空时禁用保存", async () => {
     const user = userEvent.setup();
     render(<WorkspaceTab />, { wrapper: I18nWrapper });
 
     const input = screen.getByPlaceholderText("TES") as HTMLInputElement;
     await user.clear(input);
 
-    expect(screen.getByRole("button", { name: /^Save$/ })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /^保存$/ })).toBeDisabled();
   });
 
   it("disables the prefix input for non-admins", () => {

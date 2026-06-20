@@ -60,33 +60,33 @@ describe("McpConfigTab", () => {
     vi.clearAllMocks();
   });
 
-  it("renders a read-only redacted state when the server omitted the value", () => {
+  it("服务端省略值时渲染只读脱敏态", () => {
     // mcp_config_redacted means the server knows there IS a config but
     // hid it from this caller. The tab must NOT expose the editor or
     // any input — even an empty textarea would let a non-privileged
     // member silently overwrite an admin-owned config on save.
     renderTab({ mcp_config: null, mcp_config_redacted: true });
 
-    expect(screen.getByText(/hidden from your view/i)).toBeInTheDocument();
+    expect(screen.getByText(/当前账号无权查看/)).toBeInTheDocument();
     expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: /save/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /保存/ })).not.toBeInTheDocument();
   });
 
-  it("shows the editor empty when no config is set, and Save stays disabled", () => {
+  it("未设置配置时编辑器为空，保存保持禁用", () => {
     renderTab({ mcp_config: null });
 
-    const editor = screen.getByLabelText(/MCP config JSON editor/i) as HTMLTextAreaElement;
+    const editor = screen.getByLabelText(/MCP 配置 JSON 编辑器/) as HTMLTextAreaElement;
     expect(editor.value).toBe("");
 
-    expect(screen.getByRole("button", { name: /save/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /保存/ })).toBeDisabled();
   });
 
-  it("pretty-prints the existing config and saves a parsed object", async () => {
+  it("格式化现有配置并保存解析后的对象", async () => {
     const user = userEvent.setup();
     const stored = { mcpServers: { fetch: { command: "uvx" } } };
     const { onSave } = renderTab({ mcp_config: stored });
 
-    const editor = screen.getByLabelText(/MCP config JSON editor/i) as HTMLTextAreaElement;
+    const editor = screen.getByLabelText(/MCP 配置 JSON 编辑器/) as HTMLTextAreaElement;
     expect(editor.value).toBe(JSON.stringify(stored, null, 2));
 
     // userEvent.type interprets `{` / `[` as keyboard modifiers, so a
@@ -97,7 +97,7 @@ describe("McpConfigTab", () => {
     });
     fireEvent.change(editor, { target: { value: replacement } });
 
-    const save = screen.getByRole("button", { name: /save/i });
+    const save = screen.getByRole("button", { name: /保存/ });
     expect(save).toBeEnabled();
     await user.click(save);
 
@@ -109,14 +109,14 @@ describe("McpConfigTab", () => {
     });
   });
 
-  it("clearing the editor saves null to wipe the column", async () => {
+  it("清空编辑器时保存 null 以清除该列", async () => {
     const user = userEvent.setup();
     const { onSave } = renderTab({ mcp_config: { mcpServers: {} } });
 
-    const editor = screen.getByLabelText(/MCP config JSON editor/i) as HTMLTextAreaElement;
+    const editor = screen.getByLabelText(/MCP 配置 JSON 编辑器/) as HTMLTextAreaElement;
     await user.clear(editor);
 
-    const save = screen.getByRole("button", { name: /save/i });
+    const save = screen.getByRole("button", { name: /保存/ });
     await user.click(save);
 
     // null is what the backend reads as "clear this column" — sending
@@ -125,30 +125,30 @@ describe("McpConfigTab", () => {
     expect(onSave).toHaveBeenCalledWith({ mcp_config: null });
   });
 
-  it("disables Save and surfaces an inline error on invalid JSON", () => {
+  it("JSON 无效时禁用保存并显示行内错误", () => {
     const { onSave } = renderTab({ mcp_config: null });
 
-    const editor = screen.getByLabelText(/MCP config JSON editor/i);
+    const editor = screen.getByLabelText(/MCP 配置 JSON 编辑器/);
     fireEvent.change(editor, { target: { value: "{ not json" } });
 
-    expect(screen.getByText(/Invalid JSON/i)).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /save/i })).toBeDisabled();
+    expect(screen.getByText(/JSON 无效/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /保存/ })).toBeDisabled();
     expect(onSave).not.toHaveBeenCalled();
   });
 
-  it("rejects top-level arrays and primitives", () => {
+  it("拒绝顶层数组和基础类型", () => {
     renderTab({ mcp_config: null });
 
-    const editor = screen.getByLabelText(/MCP config JSON editor/i);
+    const editor = screen.getByLabelText(/MCP 配置 JSON 编辑器/);
     fireEvent.change(editor, { target: { value: "[1,2,3]" } });
 
     expect(
-      screen.getByText(/MCP config must be a JSON object/i),
+      screen.getByText(/MCP 配置必须是 JSON 对象/),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: /save/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: /保存/ })).toBeDisabled();
   });
 
-  it("syncs the editor to a refreshed agent prop when the user hasn't edited", () => {
+  it("用户未编辑时将编辑器同步到刷新的 agent prop", () => {
     // Reproduces the stale-editor bug: a background refetch / WS event swaps
     // in a newer `agent.mcp_config`, and the editor must follow it (so the
     // next Save writes the new value, not the old one). Comparing the draft
@@ -168,7 +168,7 @@ describe("McpConfigTab", () => {
     );
 
     const editor = screen.getByLabelText(
-      /MCP config JSON editor/i,
+      /MCP 配置 JSON 编辑器/,
     ) as HTMLTextAreaElement;
     expect(editor.value).toBe(JSON.stringify(initial, null, 2));
 
@@ -184,10 +184,10 @@ describe("McpConfigTab", () => {
     // Editor follows the new prop and the dirty hint is NOT shown — if it
     // were, the next Save would write the *old* JSON back over the new one.
     expect(editor.value).toBe(JSON.stringify(updated, null, 2));
-    expect(screen.queryByText(/unsaved changes/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/未保存的修改/)).not.toBeInTheDocument();
   });
 
-  it("preserves an in-flight edit when the agent prop is refreshed underneath", () => {
+  it("agent prop 在下方刷新时保留进行中的编辑", () => {
     // The mirror of the test above: if the user IS editing, a background
     // refresh must not clobber their draft.
     const initial = { mcpServers: { fetch: { command: "uvx" } } };
@@ -201,7 +201,7 @@ describe("McpConfigTab", () => {
     );
 
     const editor = screen.getByLabelText(
-      /MCP config JSON editor/i,
+      /MCP 配置 JSON 编辑器/,
     ) as HTMLTextAreaElement;
     const draft = JSON.stringify({ mcpServers: { fetch: { command: "wip" } } });
     fireEvent.change(editor, { target: { value: draft } });

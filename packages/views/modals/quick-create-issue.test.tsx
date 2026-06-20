@@ -260,7 +260,7 @@ vi.mock("@multica/ui/components/ui/switch", () => ({
 }));
 
 vi.mock("@multica/ui/components/common/file-upload-button", () => ({
-  FileUploadButton: () => <button type="button">Upload file</button>,
+  FileUploadButton: () => <button type="button">上传文件</button>,
 }));
 
 vi.mock("sonner", () => ({
@@ -323,7 +323,7 @@ describe("AgentCreatePanel", () => {
 
     expect(
       screen.getByPlaceholderText(
-        'Tell the agent what to do, e.g. "let Bohan fix the inbox loading slowness in the Web project"',
+        '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
       ),
     ).toHaveValue("Persisted draft prompt");
   });
@@ -335,14 +335,14 @@ describe("AgentCreatePanel", () => {
     renderPanel({ onClose, isExpanded: false, setIsExpanded: vi.fn() });
 
     const editor = screen.getByPlaceholderText(
-      'Tell the agent what to do, e.g. "let Bohan fix the inbox loading slowness in the Web project"',
+      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
     );
 
     await user.clear(editor);
     await user.type(editor, "New agent prompt");
     expect(mockSetPrompt).toHaveBeenLastCalledWith("New agent prompt");
 
-    await user.click(screen.getByRole("button", { name: /^Create \(/i }));
+    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
 
     await waitFor(() => {
       expect(mockQuickCreateIssue).toHaveBeenCalledWith({
@@ -371,7 +371,7 @@ describe("AgentCreatePanel", () => {
     await waitFor(() => expect(mockUploadWithToast).toHaveBeenCalled());
 
     const editor = screen.getByPlaceholderText(
-      'Tell the agent what to do, e.g. "let Bohan fix the inbox loading slowness in the Web project"',
+      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
     );
     await user.clear(editor);
     fireEvent.change(editor, {
@@ -380,7 +380,7 @@ describe("AgentCreatePanel", () => {
       },
     });
 
-    await user.click(screen.getByRole("button", { name: /^Create \(/i }));
+    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
 
     await waitFor(() => {
       expect(mockQuickCreateIssue).toHaveBeenCalledWith({
@@ -411,12 +411,12 @@ describe("AgentCreatePanel", () => {
     await user.click(screen.getByRole("button", { name: /Frontend Squad/ }));
 
     const editor = screen.getByPlaceholderText(
-      'Tell the agent what to do, e.g. "let Bohan fix the inbox loading slowness in the Web project"',
+      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
     );
     await user.clear(editor);
     await user.type(editor, "Investigate the regression");
 
-    await user.click(screen.getByRole("button", { name: /^Create \(/i }));
+    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
 
     await waitFor(() => {
       expect(mockQuickCreateIssue).toHaveBeenCalledWith({
@@ -496,12 +496,12 @@ describe("AgentCreatePanel", () => {
     expect(screen.getByTestId("agent-sub-issue-chip")).toBeInTheDocument();
 
     const editor = screen.getByPlaceholderText(
-      'Tell the agent what to do, e.g. "let Bohan fix the inbox loading slowness in the Web project"',
+      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
     );
     await user.clear(editor);
     await user.type(editor, "Investigate the regression");
 
-    await user.click(screen.getByRole("button", { name: /^Create \(/i }));
+    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
 
     await waitFor(() => {
       expect(mockQuickCreateIssue).toHaveBeenCalledWith({
