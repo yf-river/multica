@@ -213,6 +213,27 @@ describe("SquadListSchema member preview drift", () => {
     const parsed = SquadSchema.parse(baseSquad);
     expect(parsed.member_count).toBe(0);
     expect(parsed.member_preview).toEqual([]);
+    expect(parsed.sop_profile).toEqual({});
+  });
+
+  it("preserves project SOP profile fields", () => {
+    const parsed = SquadSchema.parse({
+      ...baseSquad,
+      sop_profile: {
+        project: "user-center",
+        repo: "/data/ida/user-center",
+        mode: "stage_chain",
+        stage_skills: ["user-center/01-clarify", "user-center/02-design"],
+        operation_skills: ["user-center/add-api"],
+        acceptance: ["阶段产物完整", "测试证据完整"],
+      },
+    });
+
+    expect(parsed.sop_profile).toMatchObject({
+      project: "user-center",
+      repo: "/data/ida/user-center",
+      mode: "stage_chain",
+    });
   });
 
   it("preserves lightweight member preview rows", () => {

@@ -64,6 +64,31 @@ import type { Squad, SquadMember, SquadMemberStatus, SquadMemberStatusValue, Age
 import { useT } from "../../i18n";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 
+type SquadSOPProfile = {
+  project: string;
+  repo: string;
+  mode: string;
+  stage_skills: string[];
+  operation_skills: string[];
+  acceptance: string[];
+};
+
+const USER_CENTER_SOP_PROFILE: SquadSOPProfile = {
+  project: "user-center",
+  repo: "/data/ida/user-center",
+  mode: "stage_chain",
+  stage_skills: [
+    "user-center/01-clarify",
+    "user-center/02-design",
+    "user-center/03-task-split",
+    "user-center/04-implement",
+    "user-center/05-verify",
+    "user-center/06-archive",
+  ],
+  operation_skills: ["user-center/add-api"],
+  acceptance: ["阶段产物完整", "测试证据完整", "handoff 明确"],
+};
+
 export function SquadDetailPage() {
   const { t } = useT("squads");
   const workspace = useCurrentWorkspace();
@@ -123,7 +148,7 @@ export function SquadDetailPage() {
   const [confirmArchive, setConfirmArchive] = useState(false);
 
   const updateSquadMut = useMutation({
-    mutationFn: (data: { name?: string; description?: string; instructions?: string; avatar_url?: string; leader_id?: string }) => api.updateSquad(squadId, data),
+    mutationFn: (data: { name?: string; description?: string; instructions?: string; avatar_url?: string; leader_id?: string; sop_profile?: Record<string, unknown> }) => api.updateSquad(squadId, data),
     onSuccess: () => {
       refetchSquad();
       refetchMembers();
@@ -267,7 +292,8 @@ export function SquadDetailPage() {
           onSetLeader={(id) => setLeaderMut.mutate(id)}
           onRemoveMember={(m) => removeMemberMut.mutate(m)}
           onUpdateRole={async (m, role) => { await updateRoleMut.mutateAsync({ member: m, role }); }}
-          onSaveInstructions={async (next) => { await updateSquadMut.mutateAsync({ instructions: next }); toast.success("Instructions saved"); }}
+          onSaveInstructions={async (next) => { await updateSquadMut.mutateAsync({ instructions: next }); toast.success("小队指令已保存"); }}
+          onApplyUserCenterSOP={async () => { await updateSquadMut.mutateAsync({ sop_profile: USER_CENTER_SOP_PROFILE }); toast.success("user-center SOP 已应用"); }}
           setLeaderPending={setLeaderMut.isPending}
         />
       </div>
@@ -1012,6 +1038,7 @@ function SquadOverviewPane({
   onRemoveMember,
   onUpdateRole,
   onSaveInstructions,
+  onApplyUserCenterSOP,
   setLeaderPending,
 }: {
   squad: Squad;
@@ -1029,6 +1056,7 @@ function SquadOverviewPane({
   onRemoveMember: (m: SquadMember) => void;
   onUpdateRole: (m: SquadMember, role: string) => Promise<void>;
   onSaveInstructions: (next: string) => Promise<void>;
+  onApplyUserCenterSOP: () => Promise<void>;
   setLeaderPending: boolean;
 }) {
   const { t } = useT("squads");
@@ -1093,6 +1121,7 @@ function SquadOverviewPane({
             <SquadInstructionsTab
               squad={squad}
               onSave={onSaveInstructions}
+              onApplyUserCenterSOP={onApplyUserCenterSOP}
               onDirtyChange={setActiveDirty}
             />
           </div>
@@ -1346,16 +1375,21 @@ function SquadMembersTab({
 function SquadInstructionsTab({
   squad,
   onSave,
+  onApplyUserCenterSOP,
   onDirtyChange,
 }: {
   squad: Squad;
   onSave: (instructions: string) => Promise<void>;
+  onApplyUserCenterSOP: () => Promise<void>;
   onDirtyChange?: (dirty: boolean) => void;
 }) {
   const { t } = useT("squads");
   const [value, setValue] = useState(squad.instructions ?? "");
   const [saving, setSaving] = useState(false);
+  const [applyingSOP, setApplyingSOP] = useState(false);
   const isDirty = value !== (squad.instructions ?? "");
+  const sopProfile = normalizeSOPProfile(squad.sop_profile);
+  const hasUserCenterProfile = sopProfile?.project === USER_CENTER_SOP_PROFILE.project;
 
   useEffect(() => {
     setValue(squad.instructions ?? "");
@@ -1376,18 +1410,70 @@ function SquadInstructionsTab({
     }
   };
 
+  const handleApplyUserCenterSOP = async () => {
+    setApplyingSOP(true);
+    try {
+      await onApplyUserCenterSOP();
+    } catch {
+      // toast handled by parent
+    } finally {
+      setApplyingSOP(false);
+    }
+  };
+
   return (
     <div className="flex h-full flex-col gap-4">
       <p className="text-xs text-muted-foreground">
         {t(($) => $.instructions_tab.description)}
       </p>
 
+      <div className="rounded-md border bg-muted/20 px-4 py-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
+            <div className="text-sm font-medium text-foreground">项目 SOP 配置</div>
+            <div className="mt-1 text-xs text-muted-foreground">
+              issue 指派给小队后，队长会先按阶段链推进，再把实现工作委派给对应 skill 或成员。
+            </div>
+          </div>
+          <Button
+            type="button"
+            size="sm"
+            variant={hasUserCenterProfile ? "secondary" : "default"}
+            onClick={handleApplyUserCenterSOP}
+            disabled={applyingSOP}
+            className="shrink-0"
+          >
+            {applyingSOP ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <FileText className="h-3.5 w-3.5" />
+            )}
+            {hasUserCenterProfile ? "重新应用 user-center SOP" : "应用 user-center SOP"}
+          </Button>
+        </div>
+
+        {sopProfile ? (
+          <div className="mt-3 grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
+            <SOPProfileRow label="项目" value={sopProfile.project} />
+            <SOPProfileRow label="仓库" value={sopProfile.repo} />
+            <SOPProfileRow label="执行方式" value={sopProfile.mode === "stage_chain" ? "阶段链" : sopProfile.mode} />
+            <SOPProfileRow label="阶段链" value={sopProfile.stage_skills.join(" → ")} wide />
+            <SOPProfileRow label="operation skill" value={sopProfile.operation_skills.join("、")} />
+            <SOPProfileRow label="验收要求" value={sopProfile.acceptance.join("、")} />
+          </div>
+        ) : (
+          <div className="mt-3 text-xs text-muted-foreground">
+            尚未配置项目 SOP。可先应用 user-center 模板，再按项目语义调整。
+          </div>
+        )}
+      </div>
+
       <div className="flex-1 min-h-0 overflow-y-auto rounded-md border bg-background px-4 py-3 transition-colors focus-within:border-input">
         <ContentEditor
           key={squad.id}
           defaultValue={value}
           onUpdate={setValue}
-          placeholder="e.g. Always start by writing a failing test. Prefer small, atomic commits."
+          placeholder="例如：先澄清需求和验收口径，再拆分任务；实现后必须补齐测试证据和交接记录。"
           debounceMs={150}
           disableMentions
           className="min-h-full"
@@ -1409,4 +1495,50 @@ function SquadInstructionsTab({
       </div>
     </div>
   );
+}
+
+function SOPProfileRow({
+  label,
+  value,
+  wide,
+}: {
+  label: string;
+  value: string;
+  wide?: boolean;
+}) {
+  return (
+    <div className={wide ? "md:col-span-2" : undefined}>
+      <span className="text-muted-foreground/80">{label}：</span>
+      <span className="break-words text-foreground">{value || "未配置"}</span>
+    </div>
+  );
+}
+
+function normalizeSOPProfile(raw: Record<string, unknown> | null | undefined): SquadSOPProfile | null {
+  if (!raw || typeof raw !== "object") return null;
+
+  const project = typeof raw.project === "string" ? raw.project.trim() : "";
+  const repo = typeof raw.repo === "string" ? raw.repo.trim() : "";
+  const mode = typeof raw.mode === "string" ? raw.mode.trim() : "";
+  const stageSkills = toStringList(raw.stage_skills);
+  const operationSkills = toStringList(raw.operation_skills);
+  const acceptance = toStringList(raw.acceptance);
+
+  if (!project && !repo && !mode && stageSkills.length === 0 && operationSkills.length === 0 && acceptance.length === 0) {
+    return null;
+  }
+
+  return {
+    project,
+    repo,
+    mode,
+    stage_skills: stageSkills,
+    operation_skills: operationSkills,
+    acceptance,
+  };
+}
+
+function toStringList(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
 }

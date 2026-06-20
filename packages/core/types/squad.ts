@@ -14,6 +14,7 @@ export interface Squad {
   name: string;
   description: string;
   instructions: string;
+  sop_profile: Record<string, unknown>;
   avatar_url: string | null;
   leader_id: string;
   creator_id: string;
@@ -50,12 +51,14 @@ export interface CreateSquadRequest {
   description?: string;
   leader_id: string;
   avatar_url?: string;
+  sop_profile?: Record<string, unknown>;
 }
 
 export interface UpdateSquadRequest {
   name?: string;
   description?: string;
   instructions?: string;
+  sop_profile?: Record<string, unknown>;
   leader_id?: string;
   avatar_url?: string;
 }

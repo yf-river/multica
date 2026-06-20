@@ -26,6 +26,7 @@ type SquadResponse struct {
 	Name          string                       `json:"name"`
 	Description   string                       `json:"description"`
 	Instructions  string                       `json:"instructions"`
+	SOPProfile    any                          `json:"sop_profile"`
 	AvatarURL     *string                      `json:"avatar_url"`
 	LeaderID      string                       `json:"leader_id"`
 	CreatorID     string                       `json:"creator_id"`
@@ -66,6 +67,7 @@ func squadToResponse(s db.Squad) SquadResponse {
 		Name:          s.Name,
 		Description:   s.Description,
 		Instructions:  s.Instructions,
+		SOPProfile:    decodeSquadSOPProfile(s.SopProfile),
 		AvatarURL:     textToPtr(s.AvatarUrl),
 		LeaderID:      uuidToString(s.LeaderID),
 		CreatorID:     uuidToString(s.CreatorID),
@@ -75,6 +77,17 @@ func squadToResponse(s db.Squad) SquadResponse {
 		ArchivedBy:    uuidToPtr(s.ArchivedBy),
 		MemberPreview: []SquadMemberPreviewResponse{},
 	}
+}
+
+func decodeSquadSOPProfile(raw []byte) any {
+	var profile any
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &profile)
+	}
+	if profile == nil {
+		return map[string]any{}
+	}
+	return profile
 }
 
 func squadMemberToResponse(m db.SquadMember) SquadMemberResponse {
@@ -201,10 +214,11 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name        string  `json:"name"`
-		Description string  `json:"description"`
-		LeaderID    string  `json:"leader_id"`
-		AvatarURL   *string `json:"avatar_url"`
+		Name        string          `json:"name"`
+		Description string          `json:"description"`
+		LeaderID    string          `json:"leader_id"`
+		AvatarURL   *string         `json:"avatar_url"`
+		SOPProfile  json.RawMessage `json:"sop_profile"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -242,6 +256,14 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 	if req.AvatarURL != nil {
 		avatarURL = pgtype.Text{String: *req.AvatarURL, Valid: true}
 	}
+	var sopProfile []byte
+	if len(req.SOPProfile) > 0 {
+		if !json.Valid(req.SOPProfile) {
+			writeError(w, http.StatusBadRequest, "sop_profile must be valid JSON")
+			return
+		}
+		sopProfile = req.SOPProfile
+	}
 
 	squad, err := h.Queries.CreateSquad(r.Context(), db.CreateSquadParams{
 		WorkspaceID: wsUUID,
@@ -250,6 +272,7 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		LeaderID:    leaderUUID,
 		CreatorID:   member.UserID,
 		AvatarUrl:   avatarURL,
+		SopProfile:  sopProfile,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create squad")
@@ -308,11 +331,12 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req struct {
-		Name         *string `json:"name"`
-		Description  *string `json:"description"`
-		Instructions *string `json:"instructions"`
-		LeaderID     *string `json:"leader_id"`
-		AvatarURL    *string `json:"avatar_url"`
+		Name         *string         `json:"name"`
+		Description  *string         `json:"description"`
+		Instructions *string         `json:"instructions"`
+		LeaderID     *string         `json:"leader_id"`
+		AvatarURL    *string         `json:"avatar_url"`
+		SOPProfile   json.RawMessage `json:"sop_profile"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -331,6 +355,13 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AvatarURL != nil {
 		params.AvatarUrl = pgtype.Text{String: *req.AvatarURL, Valid: true}
+	}
+	if len(req.SOPProfile) > 0 {
+		if !json.Valid(req.SOPProfile) {
+			writeError(w, http.StatusBadRequest, "sop_profile must be valid JSON")
+			return
+		}
+		params.SopProfile = req.SOPProfile
 	}
 	if req.LeaderID != nil {
 		lid, ok := parseUUIDOrBadRequest(w, *req.LeaderID, "leader_id")

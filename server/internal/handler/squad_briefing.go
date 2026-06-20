@@ -2,6 +2,7 @@ package handler
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/util"
@@ -67,6 +68,10 @@ func buildSquadLeaderBriefing(ctx context.Context, q *db.Queries, squad db.Squad
 	sb.WriteString(squadOperatingProtocol)
 	sb.WriteString("\n\n")
 	sb.WriteString(buildSquadRoster(ctx, q, squad))
+	if profile := buildSquadSOPProfile(squad.SopProfile); profile != "" {
+		sb.WriteString("\n\n")
+		sb.WriteString(profile)
+	}
 
 	if trimmed := strings.TrimSpace(squad.Instructions); trimmed != "" {
 		sb.WriteString("\n\n## 小队说明 (")
@@ -74,6 +79,63 @@ func buildSquadLeaderBriefing(ctx context.Context, q *db.Queries, squad db.Squad
 		sb.WriteString(")\n\n")
 		sb.WriteString(trimmed)
 	}
+	return sb.String()
+}
+
+type squadSOPProfile struct {
+	Project         string   `json:"project"`
+	Repo            string   `json:"repo"`
+	Mode            string   `json:"mode"`
+	StageSkills     []string `json:"stage_skills"`
+	OperationSkills []string `json:"operation_skills"`
+	Acceptance      []string `json:"acceptance"`
+}
+
+func buildSquadSOPProfile(raw []byte) string {
+	if len(raw) == 0 || string(raw) == "{}" {
+		return ""
+	}
+	var profile squadSOPProfile
+	if err := json.Unmarshal(raw, &profile); err != nil {
+		return ""
+	}
+	if profile.Project == "" && len(profile.StageSkills) == 0 && len(profile.OperationSkills) == 0 {
+		return ""
+	}
+
+	var sb strings.Builder
+	sb.WriteString("## 项目 SOP 配置\n\n")
+	if profile.Project != "" {
+		sb.WriteString("- 项目：")
+		sb.WriteString(profile.Project)
+		sb.WriteString("\n")
+	}
+	if profile.Repo != "" {
+		sb.WriteString("- 仓库：`")
+		sb.WriteString(profile.Repo)
+		sb.WriteString("`\n")
+	}
+	if profile.Mode != "" {
+		sb.WriteString("- 执行方式：")
+		sb.WriteString(profile.Mode)
+		sb.WriteString("\n")
+	}
+	if len(profile.StageSkills) > 0 {
+		sb.WriteString("- SOP 阶段链：")
+		sb.WriteString(strings.Join(profile.StageSkills, " → "))
+		sb.WriteString("\n")
+	}
+	if len(profile.OperationSkills) > 0 {
+		sb.WriteString("- 可调用 operation skill：")
+		sb.WriteString(strings.Join(profile.OperationSkills, "、"))
+		sb.WriteString("\n")
+	}
+	if len(profile.Acceptance) > 0 {
+		sb.WriteString("- 验收要求：")
+		sb.WriteString(strings.Join(profile.Acceptance, "；"))
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\n当 issue 指派给这个小队时，先按 SOP 阶段链推进；只有进入实现阶段后，才把具体工作委派给对应 operation skill 或小队成员。")
 	return sb.String()
 }
 

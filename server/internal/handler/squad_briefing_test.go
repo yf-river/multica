@@ -114,6 +114,14 @@ func TestBuildSquadLeaderBriefing_FullSquad(t *testing.T) {
 	leaderID, leaderName := seededLeaderAgent(t)
 
 	squad := seedSquadForBriefing(t, leaderID, "Full Squad", "Always write tests.")
+	squad.SopProfile = []byte(`{
+		"project":"user-center",
+		"repo":"/data/ida/user-center",
+		"mode":"stage_chain",
+		"stage_skills":["user-center/01-clarify","user-center/02-design","user-center/03-task-split","user-center/04-implement","user-center/05-verify","user-center/06-archive"],
+		"operation_skills":["user-center/add-api"],
+		"acceptance":["阶段产物完整","测试证据完整","handoff 明确"]
+	}`)
 
 	helper1 := createHandlerTestAgent(t, "Helper One", []byte("[]"))
 	helper2 := createHandlerTestAgent(t, "Helper Two", []byte("[]"))
@@ -131,6 +139,13 @@ func TestBuildSquadLeaderBriefing_FullSquad(t *testing.T) {
 		"## 小队名单",
 		"负责人（你）：",
 		leaderName,
+		"## 项目 SOP 配置",
+		"- 项目：user-center",
+		"- 仓库：`/data/ida/user-center`",
+		"user-center/01-clarify → user-center/02-design → user-center/03-task-split",
+		"- 可调用 operation skill：user-center/add-api",
+		"阶段产物完整；测试证据完整；handoff 明确",
+		"先按 SOP 阶段链推进",
 		"## 小队说明 (Full Squad)",
 		"Always write tests.",
 		"`[@Helper One](mention://agent/" + helper1 + ")`",
