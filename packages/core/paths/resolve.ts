@@ -22,10 +22,8 @@ import { paths } from "./paths";
  * already recognizes existing workspaces and offers "Continue with
  * {name}", so the recovery is seamless.
  *
- * Callers that need invitation-aware routing (callback / login) handle
- * the "un-onboarded with pending invites" branch themselves before calling
- * this resolver — this resolver only deals with the post-invite-check
- * destination.
+ * Account/password login callers can use this resolver directly after loading
+ * the workspace list.
  */
 export function resolvePostAuthDestination(
   workspaces: Workspace[],

@@ -145,7 +145,7 @@ registration path had a measured duration.
 
 ### `signup`
 
-Fires when a new user is created. Covers both verification-code and Google
+Fires when a new user is created through the account/password model.
 
 | Property | Type | Description |
 |---|---|---|
@@ -370,26 +370,6 @@ now Prometheus-only). Per-task completion counts live in Grafana via
 `BusinessMetrics.RecordTaskTerminal`; use `issue_executed` for the
 PostHog-side activation funnel and filter by `source` as needed.
 
-### `team_invite_sent`
-
-Fires from `CreateInvitation` after the DB row is written.
-
-| Property | Type | Description |
-|---|---|---|
-
-`distinct_id` is the inviter's user id.
-
-### `team_invite_accepted`
-
-Fires from `AcceptInvitation` after both the invitation row is marked
-accepted and the member row is inserted in the same transaction.
-
-| Property | Type | Description |
-|---|---|---|
-
-`distinct_id` is the invitee's user id — this is the event that closes the
-expansion funnel.
-
 ### `onboarding_started`
 
 Fires once when the onboarding shell mounts and the initial workspace list has
@@ -456,7 +436,7 @@ which exit the user took.
 | Property | Type | Description |
 |---|---|---|
 | `workspace_id` | string (UUID) | Present for workspace-linked onboarding completions. |
-| `completion_path` | string | One of `full` / `runtime_skipped` / `skip_existing` / `invite_accept` / `unknown`. See below. |
+| `completion_path` | string | One of `full` / `runtime_skipped` / `skip_existing` / `unknown`. See below. |
 
 Person properties set with `$set_once`:
 
@@ -469,7 +449,6 @@ Person properties set with `$set_once`:
 - `full` — Reached Step 5 (first_issue) with a runtime connected.
 - `runtime_skipped` — Completed without connecting a runtime (user hit Skip in Step 3).
 - `skip_existing` — "I've done this before" from Welcome. The user already had a workspace.
-- `invite_accept` — Accepted at least one workspace invitation.
 - `unknown` — Legacy fallback when the client didn't send a path. Should stay near zero after rollout.
 
 | Property | Type | Description |

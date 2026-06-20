@@ -130,8 +130,8 @@ function SortableTabItem({
       {...attributes}
       {...listeners}
       onClick={handleClick}
-      aria-label={tab.pinned ? `${tab.title} (pinned)` : tab.title}
-      title={tab.pinned ? `${tab.title} (pinned)` : undefined}
+      aria-label={tab.pinned ? `${tab.title}（已固定）` : tab.title}
+      title={tab.pinned ? `${tab.title}（已固定）` : undefined}
       className={cn(
         "group flex h-7 w-40 items-center gap-1.5 rounded-md px-2 text-xs transition-colors",
         "select-none cursor-default",
@@ -155,8 +155,8 @@ function SortableTabItem({
         onClick={handleTogglePin}
         onPointerDown={stopDragOnAction}
         role="button"
-        aria-label={tab.pinned ? "Unpin tab" : "Pin tab"}
-        title={tab.pinned ? "Unpin tab" : "Pin tab"}
+        aria-label={tab.pinned ? "取消固定标签页" : "固定标签页"}
+        title={tab.pinned ? "取消固定标签页" : "固定标签页"}
         className="hidden size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors group-hover:flex hover:bg-muted-foreground/20 hover:text-foreground"
       >
         {tab.pinned ? <PinOff className="size-2.5" /> : <Pin className="size-2.5" />}
@@ -166,7 +166,7 @@ function SortableTabItem({
           onClick={handleClose}
           onPointerDown={stopDragOnAction}
           role="button"
-          aria-label="Close tab"
+          aria-label="关闭标签页"
           className="hidden size-3.5 shrink-0 items-center justify-center rounded-sm text-muted-foreground transition-colors group-hover:flex hover:bg-muted-foreground/20 hover:text-foreground"
         >
           <X className="size-2.5" />
@@ -183,12 +183,12 @@ function SortableTabItem({
           {tab.pinned ? (
             <>
               <PinOff />
-              Unpin tab
+              取消固定标签页
             </>
           ) : (
             <>
               <Pin />
-              Pin tab
+              固定标签页
             </>
           )}
         </ContextMenuItem>
@@ -199,7 +199,7 @@ function SortableTabItem({
           onClick={() => closeTab(tab.id)}
         >
           <X />
-          Close tab
+          关闭标签页
         </ContextMenuItem>
       </ContextMenuContent>
     </ContextMenu>

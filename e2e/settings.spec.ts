@@ -12,7 +12,7 @@ test.describe("Settings", () => {
     const originalName = (await sidebarName.innerText()).split("\n").pop()?.trim() ?? "E2E Workspace";
 
     await page.goto(`/${workspaceSlug}/settings?tab=workspace`, { waitUntil: "domcontentloaded" });
-    await waitForPageText(page, "General");
+    await waitForPageText(page, "通用");
 
     // Change workspace name
     const nameInput = page
@@ -23,9 +23,9 @@ test.describe("Settings", () => {
     await nameInput.fill(newName);
 
     // Save
-    await page.locator("button", { hasText: "Save" }).click();
+    await page.locator("button", { hasText: "保存" }).click();
 
-    await expect(page.getByText("Workspace settings saved").first()).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText("已保存工作区设置").first()).toBeVisible({ timeout: 5000 });
 
     // Sidebar should reflect the new name WITHOUT page refresh
     await expect(page.getByRole("button", { name: new RegExp(newName) }).first()).toBeVisible();
@@ -33,8 +33,27 @@ test.describe("Settings", () => {
     // Restore original name so other tests aren't affected
     await nameInput.clear();
     await nameInput.fill(originalName.trim());
-    await page.locator("button", { hasText: "Save" }).click();
-    await expect(page.getByText("Workspace settings saved").first()).toBeVisible({ timeout: 5000 });
+    await page.locator("button", { hasText: "保存" }).click();
+    await expect(page.getByText("已保存工作区设置").first()).toBeVisible({ timeout: 5000 });
     await expect(page.getByRole("button", { name: new RegExp(originalName) }).first()).toBeVisible();
+  });
+
+  test("members tab adds a user with account/password and shows it in the list", async ({
+    page,
+  }) => {
+    const workspaceSlug = await loginAsDefault(page);
+    const account = `member_${Date.now()}`;
+
+    await page.goto(`/${workspaceSlug}/settings?tab=members`, { waitUntil: "domcontentloaded" });
+    await waitForPageText(page, "添加用户");
+
+    await page.getByPlaceholder("账号").fill(account);
+    await page.getByPlaceholder("姓名（可选）").fill("新增成员");
+    await page.getByPlaceholder("初始密码（新用户必填）").fill("member-password");
+    await page.getByRole("button", { name: "添加" }).click();
+
+    await expect(page.getByText(account)).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("新增成员")).toBeVisible();
+    await expect(page.getByText("成员").last()).toBeVisible();
   });
 });

@@ -37,7 +37,7 @@ type Event struct {
 
 	// Properties is the free-form bag of event attributes. Only serialisable
 	// values (string, number, bool, nested maps/slices of the same) should
-	// go here. Never put raw PII like full emails here — use email_domain.
+	// go here. Avoid raw PII.
 	Properties map[string]any
 
 	// SetOnce properties attach to the person record and are only written the

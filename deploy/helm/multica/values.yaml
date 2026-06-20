@@ -97,7 +97,7 @@ backend:
     allowedAccounts: ""
     # Self-host gate (#3433): set true to make POST /api/workspaces 403 for
     # every caller. Bootstrap the workspace with this false, then flip to
-    # true so users can only join via invitation.
+    # true so admins add users from workspace settings.
     disableWorkspaceCreation: false
     s3Bucket: ""
     s3Region: us-west-2

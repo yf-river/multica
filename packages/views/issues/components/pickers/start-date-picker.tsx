@@ -55,7 +55,7 @@ export function StartDatePicker({
             <CalendarClock className="h-3.5 w-3.5 text-muted-foreground" />
             {date ? (
               <span>
-                {formatDateOnly(startDate, { month: "short", day: "numeric" }, "en-US")}
+                {formatDateOnly(startDate, { month: "short", day: "numeric" }, "zh-CN")}
               </span>
             ) : (
               <span className="text-muted-foreground">{t(($) => $.pickers.start_date.trigger_label)}</span>

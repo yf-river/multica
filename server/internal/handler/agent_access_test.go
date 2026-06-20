@@ -60,7 +60,7 @@ func privateAgentTestFixture(t *testing.T) (agentID, ownerID, memberID string) {
 
 	ctx := context.Background()
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO "user" (name, email)
+		INSERT INTO "user" (name, account)
 		VALUES ('Private Agent Owner', 'private-agent-owner@multica.test')
 		RETURNING id
 	`).Scan(&ownerID); err != nil {
@@ -68,7 +68,7 @@ func privateAgentTestFixture(t *testing.T) (agentID, ownerID, memberID string) {
 	}
 	t.Cleanup(func() {
 		testPool.Exec(context.Background(),
-			`DELETE FROM "user" WHERE email = 'private-agent-owner@multica.test'`)
+			`DELETE FROM "user" WHERE account = 'private-agent-owner@multica.test'`)
 	})
 
 	if _, err := testPool.Exec(ctx, `
@@ -79,7 +79,7 @@ func privateAgentTestFixture(t *testing.T) (agentID, ownerID, memberID string) {
 	}
 
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO "user" (name, email)
+		INSERT INTO "user" (name, account)
 		VALUES ('Plain Member', 'plain-member@multica.test')
 		RETURNING id
 	`).Scan(&memberID); err != nil {
@@ -87,7 +87,7 @@ func privateAgentTestFixture(t *testing.T) (agentID, ownerID, memberID string) {
 	}
 	t.Cleanup(func() {
 		testPool.Exec(context.Background(),
-			`DELETE FROM "user" WHERE email = 'plain-member@multica.test'`)
+			`DELETE FROM "user" WHERE account = 'plain-member@multica.test'`)
 	})
 
 	if _, err := testPool.Exec(ctx, `
@@ -394,7 +394,7 @@ func TestMentionAgent_RejectsCrossWorkspaceAgentUUID(t *testing.T) {
 	// Create a separate workspace + agent runtime + private agent.
 	var foreignWorkspaceID, foreignUserID, foreignRuntimeID, foreignAgentID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO "user" (name, email)
+		INSERT INTO "user" (name, account)
 		VALUES ('Foreign Owner', 'cross-ws-foreign@multica.test')
 		RETURNING id
 	`).Scan(&foreignUserID); err != nil {
@@ -402,7 +402,7 @@ func TestMentionAgent_RejectsCrossWorkspaceAgentUUID(t *testing.T) {
 	}
 	t.Cleanup(func() {
 		testPool.Exec(context.Background(),
-			`DELETE FROM "user" WHERE email = 'cross-ws-foreign@multica.test'`)
+			`DELETE FROM "user" WHERE account = 'cross-ws-foreign@multica.test'`)
 	})
 
 	if err := testPool.QueryRow(ctx, `

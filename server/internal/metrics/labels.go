@@ -54,8 +54,6 @@ var businessMetricLabels = map[string][]string{
 	// PR3 funnel / community / commercial.
 	"multica_signup_total":                             {labelSignupSource},
 	"multica_workspace_created_total":                  {labelSource},
-	"multica_team_invite_sent_total":                   {},
-	"multica_team_invite_accepted_total":               {},
 	"multica_onboarding_started_total":                 {labelPlatform},
 	"multica_onboarding_questionnaire_submitted_total": {},
 	"multica_onboarding_completed_total":               {labelPath},

@@ -154,7 +154,7 @@ describe("UserSchema timezone drift", () => {
   const base = {
     id: "11111111-1111-1111-1111-111111111111",
     name: "Ada",
-    email: "ada@example.com",
+    account: "ada",
   };
 
   it("defaults timezone to null when the field is absent", () => {

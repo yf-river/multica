@@ -128,9 +128,9 @@ func TestActivityIssueUpdated_AssigneeChanged(t *testing.T) {
 	bus := events.New()
 	registerActivityListeners(bus, queries)
 
-	assigneeEmail := "activity-assignee-test@multica.ai"
-	assigneeID := createTestUser(t, assigneeEmail)
-	t.Cleanup(func() { cleanupTestUser(t, assigneeEmail) })
+	assigneeAccount := "activity-assignee-test@multica"
+	assigneeID := createTestUser(t, assigneeAccount)
+	t.Cleanup(func() { cleanupTestUser(t, assigneeAccount) })
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() {

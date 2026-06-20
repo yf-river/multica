@@ -100,14 +100,14 @@ type TaskContextForEnv struct {
 	RequestingUserProfileDescription string
 	// Initiator* identify the actor who triggered THIS task (the real
 	// requester) as distinct from the runtime owner. Rendered into the brief
-	// as `## Task Initiator` when a name is present; InitiatorEmail is shown
+	// as `## Task Initiator` when a name is present; InitiatorAccount is shown
 	// only for member initiators. Empty for on-assign / autopilot /
 	// quick-create tasks, which have no attributable human initiator. See
 	// MUL-2645.
-	InitiatorType  string
-	InitiatorID    string
-	InitiatorName  string
-	InitiatorEmail string
+	InitiatorType    string
+	InitiatorID      string
+	InitiatorName    string
+	InitiatorAccount string
 }
 
 // SkillContextForEnv represents a skill to be written into the execution environment.

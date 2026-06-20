@@ -68,7 +68,6 @@ var (
 		"full":            "full",
 		"runtime_skipped": "runtime_skipped",
 		"skip_existing":   "skip_existing",
-		"invite_accept":   "invite_accept",
 		"unknown":         "unknown",
 	}
 

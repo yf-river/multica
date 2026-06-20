@@ -166,7 +166,6 @@ export interface SearchProjectsResponse {
 export interface UpdateMeRequest {
   name?: string;
   avatar_url?: string;
-  language?: string;
   /** Free-form self-description (max 2000 chars). Pass "" to clear. */
   profile_description?: string;
   /** IANA tz to pin; "" clears back to browser-tz; undefined leaves untouched. */
@@ -174,7 +173,9 @@ export interface UpdateMeRequest {
 }
 
 export interface CreateMemberRequest {
-  email: string;
+  account: string;
+  name?: string;
+  password?: string;
   role?: MemberRole;
 }
 

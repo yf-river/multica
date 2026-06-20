@@ -13,7 +13,7 @@ import (
 )
 
 // registerListeners wires up event bus listeners for WS broadcasting.
-// Personal events (inbox, invites) are sent only to the target user via
+// Personal events are sent only to the target user via
 // SendToUser. All other events are broadcast to the workspace room.
 //
 // The broadcaster parameter is intentionally typed as the realtime.Broadcaster
@@ -29,8 +29,6 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 		protocol.EventInboxArchived:      true,
 		protocol.EventInboxBatchRead:     true,
 		protocol.EventInboxBatchArchived: true,
-		protocol.EventInvitationCreated:  true,
-		protocol.EventInvitationRevoked:  true,
 	}
 
 	// Helper: marshal event and send to a specific user.
@@ -76,50 +74,7 @@ func registerListeners(bus *events.Bus, b realtime.Broadcaster) {
 		})
 	}
 
-	// invitation:created — send to the invitee so they see the invitation in real time.
-	bus.Subscribe(protocol.EventInvitationCreated, func(e events.Event) {
-		payload, ok := e.Payload.(map[string]any)
-		if !ok {
-			return
-		}
-		inv, ok := payload["invitation"].(handler.InvitationResponse)
-		if !ok {
-			// Fallback for map encoding.
-			if invMap, ok := payload["invitation"].(map[string]any); ok {
-				if uid, _ := invMap["invitee_user_id"].(*string); uid != nil && *uid != "" {
-					data, err := json.Marshal(map[string]any{"type": e.Type, "payload": e.Payload, "actor_id": e.ActorID, "actor_type": e.ActorType})
-					if err != nil {
-						return
-					}
-					realtime.M.RecordEvent(e.Type)
-					b.SendToUser(*uid, data)
-				}
-			}
-			return
-		}
-		if inv.InviteeUserID != nil && *inv.InviteeUserID != "" {
-			data, err := json.Marshal(map[string]any{"type": e.Type, "payload": e.Payload, "actor_id": e.ActorID, "actor_type": e.ActorType})
-			if err != nil {
-				return
-			}
-			realtime.M.RecordEvent(e.Type)
-			b.SendToUser(*inv.InviteeUserID, data)
-		}
-	})
-
-	// invitation:revoked — send to the invitee so their pending list updates.
-	bus.Subscribe(protocol.EventInvitationRevoked, func(e events.Event) {
-		payload, ok := e.Payload.(map[string]any)
-		if !ok {
-			return
-		}
-		uid, _ := payload["invitee_user_id"].(*string)
-		if uid != nil && *uid != "" {
-			sendToRecipient(b, e, *uid)
-		}
-	})
-
-	// member:added — also send to the invited user so they discover the new workspace.
+	// member:added — also send to the added user so they discover the new workspace.
 	// Pass excludeWorkspace so clients already in the target room (reached via
 	// BroadcastToWorkspace in SubscribeAll) don't receive the event twice.
 	bus.Subscribe(protocol.EventMemberAdded, func(e events.Event) {

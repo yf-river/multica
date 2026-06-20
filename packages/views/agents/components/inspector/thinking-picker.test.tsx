@@ -4,14 +4,14 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import type { RuntimeModelThinkingLevel } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../../locales/en/common.json";
-import enAgents from "../../../locales/en/agents.json";
-import enIssues from "../../../locales/en/issues.json";
+import enCommon from "../../../locales/zh-Hans/common.json";
+import enAgents from "../../../locales/zh-Hans/agents.json";
+import enIssues from "../../../locales/zh-Hans/issues.json";
 
 import { ThinkingPicker } from "./thinking-picker";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, agents: enAgents, issues: enIssues },
+  "zh-Hans": { common: enCommon, agents: enAgents, issues: enIssues },
 };
 
 const CODEX_LEVELS: RuntimeModelThinkingLevel[] = [
@@ -24,7 +24,7 @@ const CODEX_LEVELS: RuntimeModelThinkingLevel[] = [
 function renderPicker(props: Partial<React.ComponentProps<typeof ThinkingPicker>> = {}) {
   const onChange = vi.fn();
   const utils = render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <ThinkingPicker
         value=""
         levels={CODEX_LEVELS}

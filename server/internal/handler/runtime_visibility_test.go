@@ -75,7 +75,7 @@ func runtimeVisibilityFixture(t *testing.T) (runtimeID, runtimeOwnerID, plainMem
 	ctx := context.Background()
 
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO "user" (name, email)
+		INSERT INTO "user" (name, account)
 		VALUES ('Runtime Owner', 'runtime-owner@multica.test')
 		RETURNING id
 	`).Scan(&runtimeOwnerID); err != nil {
@@ -83,7 +83,7 @@ func runtimeVisibilityFixture(t *testing.T) (runtimeID, runtimeOwnerID, plainMem
 	}
 	t.Cleanup(func() {
 		testPool.Exec(context.Background(),
-			`DELETE FROM "user" WHERE email = 'runtime-owner@multica.test'`)
+			`DELETE FROM "user" WHERE account = 'runtime-owner@multica.test'`)
 	})
 
 	if _, err := testPool.Exec(ctx, `
@@ -94,7 +94,7 @@ func runtimeVisibilityFixture(t *testing.T) (runtimeID, runtimeOwnerID, plainMem
 	}
 
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO "user" (name, email)
+		INSERT INTO "user" (name, account)
 		VALUES ('Plain Runtime Member', 'plain-runtime-member@multica.test')
 		RETURNING id
 	`).Scan(&plainMemberID); err != nil {
@@ -102,7 +102,7 @@ func runtimeVisibilityFixture(t *testing.T) (runtimeID, runtimeOwnerID, plainMem
 	}
 	t.Cleanup(func() {
 		testPool.Exec(context.Background(),
-			`DELETE FROM "user" WHERE email = 'plain-runtime-member@multica.test'`)
+			`DELETE FROM "user" WHERE account = 'plain-runtime-member@multica.test'`)
 	})
 
 	if _, err := testPool.Exec(ctx, `

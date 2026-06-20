@@ -5,11 +5,11 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enSkills from "../../locales/en/skills.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enSkills from "../../locales/zh-Hans/skills.json";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, skills: enSkills },
+  "zh-Hans": { common: enCommon, skills: enSkills },
 };
 
 const mockResolveRuntimeLocalSkillImport = vi.hoisted(() => vi.fn());
@@ -28,7 +28,7 @@ vi.mock("@multica/core/hooks", () => ({
 }));
 
 vi.mock("@multica/core/auth", () => {
-  const stateUser = { id: "user-1", email: "u@example.com", name: "User" };
+  const stateUser = { id: "user-1", account: "u", name: "User" };
   const useAuthStore = (selector?: (s: { user: typeof stateUser }) => unknown) => {
     const state = { user: stateUser };
     return selector ? selector(state) : state;
@@ -58,7 +58,7 @@ import { RuntimeLocalSkillImportPanel } from "./runtime-local-skill-import-panel
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>
   );
@@ -159,8 +159,8 @@ describe("RuntimeLocalSkillImportPanel", () => {
       skill: MOCK_IMPORTED_SKILL_A,
     });
     mockListMembers.mockResolvedValue([
-      { user_id: "user-1", name: "Alice", email: "alice@example.com" },
-      { user_id: "user-2", name: "Bob", email: "bob@example.com" },
+      { user_id: "user-1", name: "Alice", account: "alice" },
+      { user_id: "user-2", name: "Bob", account: "bob" },
     ]);
   });
 

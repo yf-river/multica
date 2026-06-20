@@ -94,12 +94,6 @@ const (
 	EventPinDeleted   = "pin:deleted"
 	EventPinReordered = "pin:reordered"
 
-	// Invitation events
-	EventInvitationCreated  = "invitation:created"
-	EventInvitationAccepted = "invitation:accepted"
-	EventInvitationDeclined = "invitation:declined"
-	EventInvitationRevoked  = "invitation:revoked"
-
 	// Autopilot events
 	EventAutopilotCreated  = "autopilot:created"
 	EventAutopilotUpdated  = "autopilot:updated"

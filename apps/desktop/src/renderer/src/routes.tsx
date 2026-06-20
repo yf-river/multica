@@ -44,7 +44,7 @@ function DesktopSettingsRoute() {
       extraAccountTabs={[
         {
           value: "daemon",
-          label: "Daemon",
+          label: "守护进程",
           icon: Server,
           content: <DaemonSettingsTab />,
         },
@@ -93,7 +93,7 @@ function PageShell() {
  * Route definitions shared by all tabs.
  *
  * Every tab path is workspace-scoped: `/{slug}/{route}/...`. Pre-workspace
- * flows (create workspace, accept invite) are NOT routes — they render as a
+ * flows (create workspace, onboarding) are NOT routes — they render as a
  * window-level overlay via `WindowOverlay`, dispatched by the navigation
  * adapter's transition-path interception. The `activeWorkspaceSlug` in the
  * tab store decides which workspace's tabs are visible in the TabBar;
@@ -155,37 +155,37 @@ export const appRoutes: RouteObject[] = [
           {
             path: "runtimes",
             element: <DesktopRuntimesPage />,
-            handle: { title: "Runtimes" },
+            handle: { title: "运行时" },
           },
           {
             path: "runtimes/:id",
             element: <RuntimeDetailPage />,
-            handle: { title: "Runtime" },
+            handle: { title: "运行时" },
           },
-          { path: "skills", element: <SkillsPage />, handle: { title: "Skills" } },
+          { path: "skills", element: <SkillsPage />, handle: { title: "技能" } },
           {
             path: "skills/:id",
             element: <SkillDetailPage />,
-            handle: { title: "Skill" },
+            handle: { title: "技能" },
           },
-          { path: "agents", element: <DesktopAgentsPage />, handle: { title: "Agents" } },
+          { path: "agents", element: <DesktopAgentsPage />, handle: { title: "智能体" } },
           {
             path: "agents/:id",
             element: <AgentDetailPage />,
-            handle: { title: "Agent" },
+            handle: { title: "智能体" },
           },
           {
             path: "members/:id",
             element: <MemberDetailPage />,
-            handle: { title: "Member" },
+            handle: { title: "成员" },
           },
-          { path: "squads", element: <SquadsPage />, handle: { title: "Squads" } },
+          { path: "squads", element: <SquadsPage />, handle: { title: "小队" } },
           {
             path: "squads/:id",
             element: <SquadDetailPageView />,
-            handle: { title: "Squad" },
+            handle: { title: "小队" },
           },
-          { path: "inbox", element: <InboxPage />, handle: { title: "Inbox" } },
+          { path: "inbox", element: <InboxPage />, handle: { title: "收件箱" } },
           {
             path: "attachments/:id/preview",
             element: <AttachmentPreviewRoute />,

@@ -11,7 +11,7 @@
 --
 -- Plain UUID, no FK to "user": adding a foreign key here also takes a lock on
 -- the (hot) "user" table at migration time, which made this ALTER time out on a
--- busy production deploy. The column only feeds a best-effort name/email lookup
+-- busy production deploy. The column only feeds a best-effort name/account lookup
 -- at claim time (a stale id just yields no initiator section), so referential
 -- integrity is not load-bearing. Migration 118 drops the FK on environments
 -- that already applied the original constraint-bearing version of this file.

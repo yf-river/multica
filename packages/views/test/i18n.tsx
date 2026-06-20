@@ -16,8 +16,8 @@ import type { SupportedLocale } from "@multica/core/i18n";
 // `TEST_RESOURCES` slice meant every test author had to remember to
 // extend the slice when their component started using a new namespace.
 //
-// Use `renderWithI18n` like the standard `render`. Pass `locale: "zh-Hans"`,
-// `locale: "ko"`, or `locale: "ja"` to verify localized strings; default is "en".
+// Use `renderWithI18n` like the standard `render`. The UI language is fixed
+// to Simplified Chinese.
 type RenderArgs = Omit<RenderOptions, "wrapper"> & {
   locale?: SupportedLocale;
 };
@@ -26,7 +26,7 @@ export function renderWithI18n(
   ui: ReactElement,
   options: RenderArgs = {},
 ): RenderResult {
-  const { locale = "en", ...rest } = options;
+  const { locale = "zh-Hans", ...rest } = options;
   function Wrapper({ children }: { children: ReactNode }) {
     return (
       <I18nProvider locale={locale} resources={RESOURCES}>

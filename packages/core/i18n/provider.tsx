@@ -17,8 +17,7 @@ export function I18nProvider({
   children,
 }: I18nProviderProps) {
   // Lazy init via useState so the instance survives re-renders.
-  // Locale + resources are determined at boot and never change at runtime —
-  // language switching goes through window.location.reload().
+  // Locale + resources are determined at boot and never change at runtime.
   const [instance] = useState(() => createI18n(locale, resources));
   return <I18nextProvider i18n={instance}>{children}</I18nextProvider>;
 }

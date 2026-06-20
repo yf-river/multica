@@ -3,11 +3,11 @@ import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { QuestionnaireAnswers } from "@multica/core/onboarding";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enOnboarding from "../../locales/en/onboarding.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enOnboarding from "../../locales/zh-Hans/onboarding.json";
 import { StepUseCase } from "./step-use-case";
 
-const TEST_RESOURCES = { en: { common: enCommon, onboarding: enOnboarding } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, onboarding: enOnboarding } };
 
 const EMPTY: QuestionnaireAnswers = {
   source: [],
@@ -27,7 +27,7 @@ function renderStep(answers: QuestionnaireAnswers = EMPTY) {
   const onAdvance = vi.fn();
   const onSkip = vi.fn();
   render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <StepUseCase
         answers={answers}
         onChange={onChange}

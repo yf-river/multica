@@ -44,7 +44,7 @@ func setupInvolvesFixture(t *testing.T) *involvesFixture {
 	// --- second user inside the primary workspace ---
 	var otherUserID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO "user" (name, email) VALUES ($1, $2) RETURNING id
+		INSERT INTO "user" (name, account) VALUES ($1, $2) RETURNING id
 	`, "Involves Other User", fmt.Sprintf("involves-other-%d@multica.ai", suffix)).Scan(&otherUserID); err != nil {
 		t.Fatalf("create other user: %v", err)
 	}

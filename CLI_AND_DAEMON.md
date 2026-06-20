@@ -719,20 +719,17 @@ layer.) The underlying detail is still available on demand (see `--debug`).
   `MULTICA_HTTP_TIMEOUT`, and a 401 tells you to run `multica login`.
 - **Server-provided validation messages are preserved.** For a 400/422 that
   carries a message from the server, that message is shown verbatim
-  (`Invalid request: <server message>`); only when there is none do you get the
+  (`请求无效：<server message>`); only when there is none do you get the
   generic "check your values / run with --help" hint.
 - **No leaked internals by default.** Raw URLs, status lines, JSON bodies, and
   the internal verb chain are hidden unless you ask for them.
 
 ### Language
 
-Messages default to **English**, matching the rest of the CLI's help output.
-If a Chinese locale is detected in `LC_ALL`, `LC_MESSAGES`, or `LANG` (in that
-precedence order), messages switch to **Chinese**. No flag is needed; set the
-locale as usual:
+CLI user-facing error messages are fixed to **Chinese**.
 
 ```bash
-LANG=zh_CN.UTF-8 multica issue get MUL-9999   # 错误信息显示为中文
+multica issue get MUL-9999
 ```
 
 ### Exit codes

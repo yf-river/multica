@@ -3,8 +3,8 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enSettings from "../../locales/en/settings.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enSettings from "../../locales/zh-Hans/settings.json";
 
 // ApiError is re-exported from @multica/core/api; we mock the api module
 // itself but still need a real ApiError class so `e instanceof ApiError`
@@ -149,12 +149,12 @@ import { LarkAgentBindButton, LarkTab } from "./lark-tab";
 import { toast } from "sonner";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, settings: enSettings },
+  "zh-Hans": { common: enCommon, settings: enSettings },
 };
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>
   );
@@ -166,7 +166,7 @@ function I18nWrapper({ children }: { children: ReactNode }) {
 function StrictModeWrapper({ children }: { children: ReactNode }) {
   return (
     <StrictMode>
-      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+      <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
         {children}
       </I18nProvider>
     </StrictMode>

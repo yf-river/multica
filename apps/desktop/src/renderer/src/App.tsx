@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { CoreProvider } from "@multica/core/platform";
-import { pickLocale, type SupportedLocale } from "@multica/core/i18n";
+import { DEFAULT_LOCALE } from "@multica/core/i18n";
 import { useAuthStore } from "@multica/core/auth";
 import { useWelcomeStore } from "@multica/core/onboarding";
 import { workspaceKeys, workspaceListOptions } from "@multica/core/workspace/queries";
@@ -18,21 +18,8 @@ import { UpdateNotification } from "./components/update-notification";
 import { useTabStore } from "./stores/tab-store";
 import { useWindowOverlayStore } from "./stores/window-overlay-store";
 import { useDaemonIPCBridge } from "./platform/daemon-ipc-bridge";
-import { createDesktopLocaleAdapter } from "./platform/i18n-adapter";
 import { captureEvent } from "@multica/core/analytics";
 import { RESOURCES } from "@multica/views/locales";
-
-// BCP-47 region tags for the <html lang> attribute, mirroring
-// apps/web/app/layout.tsx HTML_LANG. index.html ships a static lang="en";
-// we sync it to the resolved locale at boot so screen readers announce the
-// right language AND the Japanese-scoped CJK font override in globals.css
-// (`html[lang|="ja"]`) can take effect.
-const HTML_LANG: Record<SupportedLocale, string> = {
-  en: "en",
-  "zh-Hans": "zh-CN",
-  ko: "ko-KR",
-  ja: "ja-JP",
-};
 
 
 /**
@@ -90,17 +77,6 @@ function AppContent() {
     if (!runtimeConfig) return;
     window.daemonAPI.setTargetApiUrl(runtimeConfig.apiUrl);
   }, [runtimeConfig]);
-
-  // Listen for invite IDs delivered via deep link (multica://invite/<id>).
-  // We open the overlay regardless of login state — if the user isn't logged
-  // in, InvitePage's queries will fail and render the "not found" state,
-  // which is acceptable; the expected pre-flight happens in the web app
-  // (login + next=/invite/... dance) before the deep link is ever dispatched.
-  useEffect(() => {
-    return window.desktopAPI.onInviteOpen((invitationId) => {
-      useWindowOverlayStore.getState().open({ type: "invite", invitationId });
-    });
-  }, []);
 
   // Listen for auth token delivered via deep link (multica://auth/callback?token=...).
   // daemonAPI.syncToken is handled separately by the [user] effect below, which
@@ -169,14 +145,12 @@ function AppContent() {
   // hard gate via overlays (desktop has no URL bar, so we open the
   // onboarding overlay instead of router.replace):
   //   onboarded + has workspace      → no overlay, dashboard
-  //   un-onboarded (any wsCount):
-  //     pending invites on email     → /invitations overlay
-  //     no invites                   → /onboarding overlay
+  //   un-onboarded (any wsCount)    → /onboarding overlay
   //   onboarded + no workspace       → /workspaces/new overlay
   //
   // V3 invariant: `onboarded_at != null` is the only path into the
   // dashboard. CreateWorkspace does not mark onboarded; only Step 3's
-  // CompleteOnboarding (and AcceptInvitation) flip the flag. A user who
+  // CompleteOnboarding flips the flag. A user who
   // somehow has a workspace but no onboarded mark must be sent back to
   // /onboarding — we also clear the active workspace so the dashboard
   // doesn't render under the overlay with stale workspace context.
@@ -190,35 +164,8 @@ function AppContent() {
       // headers into onboarding-time API calls. Clear it before opening
       // the overlay.
       setCurrentWorkspace(null, null);
-      // Look up pending invitations by email. Network blip is non-fatal —
-      // fall through to onboarding so the user isn't stuck on a blank
-      // window. The sidebar's pending-invitations dropdown will surface
-      // missed invites later once they're onboarded.
-      let cancelled = false;
-      void api
-        .listMyInvitations()
-        .then((invites) => {
-          if (cancelled) return;
-          const { overlay: latestOverlay, open: latestOpen } =
-            useWindowOverlayStore.getState();
-          if (latestOverlay) return;
-          if (invites.length > 0) {
-            qc.setQueryData(workspaceKeys.myInvitations(), invites);
-            latestOpen({ type: "invitations" });
-          } else {
-            latestOpen({ type: "onboarding" });
-          }
-        })
-        .catch(() => {
-          if (cancelled) return;
-          const { overlay: latestOverlay, open: latestOpen } =
-            useWindowOverlayStore.getState();
-          if (latestOverlay) return;
-          latestOpen({ type: "onboarding" });
-        });
-      return () => {
-        cancelled = true;
-      };
+      open({ type: "onboarding" });
+      return undefined;
     }
     open({ type: "new-workspace" });
     return undefined;
@@ -292,9 +239,9 @@ function BlockingRuntimeConfigError({ message }: { message: string }) {
   return (
     <div className="flex h-screen items-center justify-center bg-background p-8 text-foreground">
       <div className="max-w-xl rounded-lg border bg-card p-6 shadow-sm">
-        <h1 className="text-lg font-semibold">Desktop configuration error</h1>
+        <h1 className="text-lg font-semibold">桌面端配置错误</h1>
         <p className="mt-3 text-sm text-muted-foreground">
-          Multica Desktop could not load <code>~/.multica/desktop.json</code>. Fix or remove the file and restart the app.
+          Multica 桌面端无法加载 <code>~/.multica/desktop.json</code>。请修复或删除该文件，然后重启应用。
         </p>
         <pre className="mt-4 whitespace-pre-wrap rounded-md bg-muted p-3 text-xs text-muted-foreground">
           {message}
@@ -329,7 +276,6 @@ async function handleDaemonLogout() {
 
 export default function App() {
   const { version, os } = window.desktopAPI.appInfo;
-  const systemLocale = window.desktopAPI.systemLocale;
   const runtimeConfigResult = window.desktopAPI.runtimeConfig;
   useCmdWCloseTab();
 
@@ -359,44 +305,16 @@ export default function App() {
     () => ({ platform: "desktop", version, os }),
     [version, os],
   );
-  // Locale resolution happens once at app boot. Switching language goes
-  // through window.location.reload() to avoid hydration mismatch.
-  const localeAdapter = useMemo(
-    () => createDesktopLocaleAdapter(systemLocale),
-    [systemLocale],
-  );
-  const locale = useMemo(() => pickLocale(localeAdapter), [localeAdapter]);
+  const locale = DEFAULT_LOCALE;
   const resources = useMemo(
     () => ({ [locale]: RESOURCES[locale] }),
     [locale],
   );
 
-  // Keep <html lang> in sync with the resolved locale (index.html hardcodes
-  // "en"). Drives the lang-scoped Japanese CJK font override and a11y.
-  // useLayoutEffect (not useEffect) so lang is committed before the first
-  // paint — otherwise Japanese users would see one frame of Kanji rendered
-  // with the Chinese-first fallback stack before the override kicks in.
+  // Keep <html lang> in sync with the Chinese-only UI.
   useLayoutEffect(() => {
-    document.documentElement.lang = HTML_LANG[locale];
-  }, [locale]);
-
-  // React to OS-level language changes detected by main on focus regain.
-  // Only act when the user is following the system signal (no explicit
-  // Settings choice) — otherwise their preference wins. Cross-device sync
-  // for the explicit-choice case is handled inside CoreProvider.
-  useEffect(() => {
-    return window.desktopAPI.onSystemLocaleChanged((nextSystemLocale) => {
-      if (localeAdapter.getUserChoice()) return;
-      const next = pickLocale({
-        ...localeAdapter,
-        getSystemPreferences: () =>
-          nextSystemLocale ? [nextSystemLocale] : [],
-      });
-      if (next === locale) return;
-      localeAdapter.persist(next);
-      window.location.reload();
-    });
-  }, [localeAdapter, locale]);
+    document.documentElement.lang = "zh-CN";
+  }, []);
 
   return (
     <ThemeProvider>
@@ -408,7 +326,6 @@ export default function App() {
           identity={identity}
           locale={locale}
           resources={resources}
-          localeAdapter={localeAdapter}
         >
           <AppContent />
         </CoreProvider>

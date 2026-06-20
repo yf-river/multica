@@ -4,10 +4,10 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { SwimLaneView } from "./swimlane-view";
 import type { Issue } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enIssues from "../../locales/en/issues.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enIssues from "../../locales/zh-Hans/issues.json";
 
-const TEST_RESOURCES = { en: { common: enCommon, issues: enIssues } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, issues: enIssues } };
 
 // Mock hooks
 vi.mock("@multica/core/hooks", () => ({
@@ -74,7 +74,7 @@ vi.mock("@multica/core/workspace/hooks", () => ({
 }));
 
 // Mock @multica/core/auth
-const mockAuthUser = { id: "user-1", email: "test@test.com", name: "Test User" };
+const mockAuthUser = { id: "user-1", account: "test", name: "Test User" };
 vi.mock("@multica/core/auth", () => ({
   useAuthStore: Object.assign(
     (selector?: any) => {
@@ -330,7 +330,7 @@ function renderWithI18n(ui: React.ReactNode) {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <I18nProvider resources={TEST_RESOURCES} locale="en">
+      <I18nProvider resources={TEST_RESOURCES} locale="zh-Hans">
         {ui}
       </I18nProvider>
     </QueryClientProvider>,

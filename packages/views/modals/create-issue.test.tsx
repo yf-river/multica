@@ -4,16 +4,16 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../locales/en/common.json";
-import enModals from "../locales/en/modals.json";
+import enCommon from "../locales/zh-Hans/common.json";
+import enModals from "../locales/zh-Hans/modals.json";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, modals: enModals },
+  "zh-Hans": { common: enCommon, modals: enModals },
 };
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>
   );

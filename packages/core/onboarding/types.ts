@@ -17,8 +17,7 @@ export type OnboardingStep =
 export type OnboardingCompletionPath =
   | "full"
   | "runtime_skipped"
-  | "skip_existing"
-  | "invite_accept";
+  | "skip_existing";
 
 export type Source =
   | "friends_colleagues"

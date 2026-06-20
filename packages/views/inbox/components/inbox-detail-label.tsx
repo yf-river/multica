@@ -38,7 +38,7 @@ export function useTypeLabels(): Record<InboxItemType, string> {
 // start_date / due_date are calendar days — format timezone-safely so the day
 // never shifts with the viewer's offset (see @multica/core/issues/date).
 function shortDate(dateStr: string): string {
-  return formatDateOnly(dateStr, { month: "short", day: "numeric" }, "en-US");
+  return formatDateOnly(dateStr, { month: "short", day: "numeric" }, "zh-CN");
 }
 
 export function InboxDetailLabel({ item }: { item: InboxItem }) {

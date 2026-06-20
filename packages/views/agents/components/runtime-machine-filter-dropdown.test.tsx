@@ -4,12 +4,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, fireEvent, cleanup } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enAgents from "../../locales/en/agents.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enAgents from "../../locales/zh-Hans/agents.json";
 import type { RuntimeMachine } from "../../runtimes/components/runtime-machines";
 import { RuntimeMachineFilterDropdown } from "./runtime-machine-filter-dropdown";
 
-const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, agents: enAgents } };
 
 function makeMachine(
   overrides: Partial<RuntimeMachine> = {},
@@ -47,7 +47,7 @@ function renderDropdown(
     defaultOptions: { queries: { retry: false } },
   });
   return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <QueryClientProvider client={queryClient}>
         <RuntimeMachineFilterDropdown
           machines={machines}

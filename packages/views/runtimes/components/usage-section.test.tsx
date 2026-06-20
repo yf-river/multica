@@ -5,10 +5,10 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import type { AgentRuntime } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enRuntimes from "../../locales/en/runtimes.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enRuntimes from "../../locales/zh-Hans/runtimes.json";
 
-const TEST_RESOURCES = { en: { common: enCommon, runtimes: enRuntimes } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, runtimes: enRuntimes } };
 
 // The viewer's tz (Viewing layer) drives both the trend and the heatmap.
 const VIEWER_TZ = "Asia/Tokyo";
@@ -117,7 +117,7 @@ const RUNTIME: AgentRuntime = {
 
 function Wrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>
   );

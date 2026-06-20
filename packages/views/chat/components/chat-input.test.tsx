@@ -3,8 +3,8 @@ import { beforeEach, describe, it, expect, vi } from "vitest";
 import { act, render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { UploadResult } from "@multica/core/hooks/use-file-upload";
-import enCommon from "../../locales/en/common.json";
-import enChat from "../../locales/en/chat.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enChat from "../../locales/zh-Hans/chat.json";
 
 function makeUpload(overrides: Partial<UploadResult> & { id: string; link: string; filename: string }): UploadResult {
   return {
@@ -30,7 +30,7 @@ function makeUpload(overrides: Partial<UploadResult> & { id: string; link: strin
   };
 }
 
-const TEST_RESOURCES = { en: { common: enCommon, chat: enChat } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, chat: enChat } };
 
 // Track drop-zone callbacks so the test can simulate a real drop.
 const dropHandlers = vi.hoisted(() => ({
@@ -195,7 +195,7 @@ function renderInput(props: Partial<React.ComponentProps<typeof ChatInput>> = {}
       makeUpload({ id: "att-1", link: "https://cdn.example/att-1.png", filename: "img.png" }),
     );
   render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <ChatInput onSend={onSend} onUploadFile={onUploadFile} agentName="Multica" {...props} />
     </I18nProvider>,
   );
@@ -528,7 +528,7 @@ describe("ChatInput async send", () => {
 describe("ChatInput session-aware restore", () => {
   function element(props: Partial<React.ComponentProps<typeof ChatInput>>) {
     return (
-      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+      <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
         <ChatInput onSend={vi.fn()} onUploadFile={vi.fn()} agentName="Multica" {...props} />
       </I18nProvider>
     );

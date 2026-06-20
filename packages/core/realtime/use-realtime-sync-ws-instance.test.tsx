@@ -102,9 +102,9 @@ describe("useRealtimeSync — ws instance change", () => {
     rerender({ ws: ws2 });
 
     // Should have called invalidateQueries for all workspace-scoped keys
-    // (15 workspace-scoped + 6 per-issue prefixes + 1 workspaceKeys.list()
-    // = 22 calls)
-    expect(invalidateSpy).toHaveBeenCalledTimes(22);
+    // (14 workspace-scoped + 6 per-issue prefixes + 1 workspaceKeys.list()
+    // = 21 calls)
+    expect(invalidateSpy).toHaveBeenCalledTimes(21);
   });
 
   it("does not re-invalidate when rerendered with the same ws instance", () => {
@@ -121,7 +121,7 @@ describe("useRealtimeSync — ws instance change", () => {
     expect(invalidateSpy).not.toHaveBeenCalled();
   });
 
-  it("invalidates chat, pins, labels, and invitations queries on ws instance change", () => {
+  it("invalidates chat, pins, and labels queries on ws instance change", () => {
     const ws1 = createMockWs();
     const { rerender } = renderHook(
       ({ ws }) => useRealtimeSync(ws, stores),
@@ -137,7 +137,6 @@ describe("useRealtimeSync — ws instance change", () => {
     const calls = invalidateSpy.mock.calls.map((call: [{ queryKey?: unknown }, ...unknown[]]) => call[0].queryKey);
     expect(calls).toContainEqual(["chat", "ws-1"]);
     expect(calls).toContainEqual(["labels", "ws-1"]);
-    expect(calls).toContainEqual(["workspaces", "ws-1", "invitations"]);
   });
 
   it("invalidates per-issue caches (no wsId in key) on ws instance change", () => {

@@ -547,7 +547,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/", h.GetWorkspace)
 					r.Get("/members", h.ListMembersWithUser)
 					r.Post("/leave", h.LeaveWorkspace)
-					r.Get("/invitations", h.ListWorkspaceInvitations)
 					// Listing GitHub installations is member-visible so the
 					// integrations tab no longer renders blank for non-admins;
 					// the handler strips the management handle and adds a
@@ -564,12 +563,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
 					r.Put("/", h.UpdateWorkspace)
 					r.Patch("/", h.UpdateWorkspace)
-					r.Post("/members", h.CreateInvitation)
+					r.Post("/members", h.CreateMember)
 					r.Route("/members/{memberId}", func(r chi.Router) {
 						r.Patch("/", h.UpdateMember)
 						r.Delete("/", h.DeleteMember)
 					})
-					r.Delete("/invitations/{invitationId}", h.RevokeInvitation)
 					// Custom runtime profile mutations (admin-only).
 					r.Post("/runtime-profiles", h.CreateRuntimeProfile)
 					r.Patch("/runtime-profiles/{profileId}", h.UpdateRuntimeProfile)
@@ -619,12 +617,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		// the token only proves "this open_id requested binding," and
 		// is combined with the logged-in user to create the mapping.
 		r.Post("/api/lark/binding/redeem", h.RedeemLarkBindingToken)
-
-		// User-scoped invitation routes (no workspace context required)
-		r.Get("/api/invitations", h.ListMyInvitations)
-		r.Get("/api/invitations/{id}", h.GetMyInvitation)
-		r.Post("/api/invitations/{id}/accept", h.AcceptInvitation)
-		r.Post("/api/invitations/{id}/decline", h.DeclineInvitation)
 
 		r.Route("/api/tokens", func(r chi.Router) {
 			r.Get("/", h.ListPersonalAccessTokens)

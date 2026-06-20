@@ -37,7 +37,7 @@ export function WorkspaceRouteLayout() {
   const navigate = useNavigate();
   const user = useAuthStore((s) => s.user);
   const isAuthLoading = useAuthStore((s) => s.isLoading);
-  // While a WindowOverlay is open (onboarding, accept-invite, new-workspace),
+  // While a WindowOverlay is open (onboarding, new-workspace),
   // the underlying tab is still mounted in the React tree — so this layout
   // and its WelcomeAfterOnboarding Modal would render UNDER the overlay.
   // Because the modal uses a Portal that targets document.body, it ends up
@@ -99,7 +99,7 @@ export function WorkspaceRouteLayout() {
       <Outlet />
       {/* Reads the welcome-store transient signal parked by
        *  OnboardingFlow.handleRuntimeNext. Suppressed while a WindowOverlay
-       *  (onboarding / accept-invite / new-workspace) is open so the modal
+       *  (onboarding / new-workspace) is open so the modal
        *  doesn't portal-jump in front of an active pre-workspace flow.
        *  Once the overlay closes the hook re-evaluates and pops the
        *  Modal — unless the store signal has already been consumed, in

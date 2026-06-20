@@ -23,7 +23,7 @@ export class TestApiClient {
   private token: string | null = null;
   private workspaceSlug: string | null = null;
   private workspaceId: string | null = null;
-  private email: string | null = null;
+  private account: string | null = null;
   private createdIssueIds: string[] = [];
 
   async login(account: string, name: string) {
@@ -38,7 +38,7 @@ export class TestApiClient {
     const data = await res.json();
 
     this.token = data.token;
-    this.email = account;
+    this.account = account;
 
     if (name && data.user?.name !== name) {
       await this.authedFetch("/api/me", {
@@ -95,7 +95,7 @@ export class TestApiClient {
   }
 
   async markUserOnboarded() {
-    if (!this.email) {
+    if (!this.account) {
       throw new Error("Cannot mark E2E user onboarded before login");
     }
 
@@ -109,12 +109,12 @@ export class TestApiClient {
             onboarded_at = COALESCE(onboarded_at, now()),
             onboarding_questionnaire = COALESCE(onboarding_questionnaire, '{}'::jsonb)
               || '{"source":["friends_colleagues"],"source_other":null,"source_skipped":false}'::jsonb
-          WHERE email = $1
+          WHERE account = $1
         `,
-        [this.email],
+        [this.account],
       );
       if (result.rowCount !== 1) {
-        throw new Error(`Failed to mark E2E user onboarded: ${this.email}`);
+        throw new Error(`Failed to mark E2E user onboarded: ${this.account}`);
       }
     } finally {
       await client.end();
@@ -151,11 +151,11 @@ export class TestApiClient {
     return this.token;
   }
 
-  getEmail() {
-    if (!this.email) {
+  getAccount() {
+    if (!this.account) {
       throw new Error("Test API client is not logged in");
     }
-    return this.email;
+    return this.account;
   }
 
   private async authedFetch(path: string, init?: RequestInit) {

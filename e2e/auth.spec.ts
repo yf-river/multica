@@ -4,19 +4,19 @@ import { createTestApi, loginAsDefault, openWorkspaceMenu, waitForPageText } fro
 test.describe("Authentication", () => {
   test("login page renders correctly", async ({ page }) => {
     await page.goto("/login", { waitUntil: "domcontentloaded" });
-    await waitForPageText(page, "Sign in to Multica");
+    await waitForPageText(page, "登录 Multica");
 
-    await expect(page.getByText("Sign in to Multica")).toBeVisible();
-    await expect(page.getByRole("textbox", { name: "Email" })).toBeVisible();
-    await expect(page.getByPlaceholder("you@example.com")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Continue" })).toBeDisabled();
+    await expect(page.getByText("登录 Multica")).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "账号" })).toBeVisible();
+    await expect(page.getByPlaceholder("alice")).toBeVisible();
+    await expect(page.getByRole("button", { name: "继续" })).toBeDisabled();
   });
 
   test("login and redirect to /issues", async ({ page }) => {
     const workspaceSlug = await loginAsDefault(page);
 
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/issues$`));
-    await expect(page.getByRole("button", { name: "New Issue" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "新建 issue" })).toBeVisible();
   });
 
   test("unauthenticated user is redirected to /login", async ({ page }) => {
@@ -28,7 +28,7 @@ test.describe("Authentication", () => {
 
     await page.goto(`/${workspace.slug}/issues`, { waitUntil: "domcontentloaded" });
     await page.waitForURL("**/login", { timeout: 10000, waitUntil: "domcontentloaded" });
-    await waitForPageText(page, "Sign in to Multica");
+    await waitForPageText(page, "登录 Multica");
   });
 
   test("logout redirects to /login", async ({ page }) => {
@@ -37,10 +37,10 @@ test.describe("Authentication", () => {
     // Open the workspace dropdown menu
     await openWorkspaceMenu(page);
 
-    await page.getByRole("menuitem", { name: "Log out" }).click();
+    await page.getByRole("menuitem", { name: "退出登录" }).click();
 
     await page.waitForURL("**/login", { timeout: 10000, waitUntil: "domcontentloaded" });
-    await waitForPageText(page, "Sign in to Multica");
+    await waitForPageText(page, "登录 Multica");
     await expect(page).toHaveURL(/\/login/);
   });
 });

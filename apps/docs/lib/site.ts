@@ -11,7 +11,7 @@ export const DOCS_BASE_PATH = "/docs";
 
 /**
  * Build an absolute URL for a docs page from its Fumadocs-relative url
- * (e.g. "/agents" or "/zh/agents"). The home page comes through as "/",
+ * (e.g. "/agents"). The home page comes through as "/",
  * which would naively serialize to ".../docs/" with a trailing slash —
  * Next serves the home at ".../docs" (no trailing), so we strip the lone
  * slash to keep the sitemap entry and the page's own canonical link byte-
@@ -35,10 +35,7 @@ function pageSourceStem(slugs: string[]): string {
 
 function hasLocalizedMdx(slugs: string[], lang: string): boolean {
   const stem = pageSourceStem(slugs);
-  const candidates =
-    lang === i18n.defaultLanguage
-      ? [`${stem}.mdx`, `${stem}/index.mdx`]
-      : [`${stem}.${lang}.mdx`, `${stem}/index.${lang}.mdx`];
+  const candidates = [`${stem}.${lang}.mdx`, `${stem}/index.${lang}.mdx`];
 
   return docsContentRoots().some((root) =>
     candidates.some((candidate) => existsSync(join(root, candidate))),
@@ -47,13 +44,8 @@ function hasLocalizedMdx(slugs: string[], lang: string): boolean {
 
 /**
  * Build Next.js `metadata.alternates` for a docs page:
- *  - `canonical` points at the default-language version (Google consolidates
- *    ranking signals onto it)
- *  - `languages` lists every available locale under its hreflang code,
- *    plus an `x-default` fallback pointing at the canonical URL
- *
- * Slugs that only exist in one language still get a valid alternates block;
- * Google will only serve what's declared.
+ *  - `canonical` points at the Chinese page
+ *  - `languages` contains `zh` and `x-default`
  */
 export function docsAlternates(slugs: string[]): {
   canonical: string;

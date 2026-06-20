@@ -5,15 +5,15 @@ import { I18nProvider } from "@multica/core/i18n/react";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import type { Agent, MemberWithUser } from "@multica/core/types";
 import type { QueryClient } from "@tanstack/react-query";
-import enEditor from "../../locales/en/editor.json";
+import enEditor from "../../locales/zh-Hans/editor.json";
 
 const TEST_RESOURCES = {
-  en: { editor: enEditor },
+  "zh-Hans": { editor: enEditor },
 };
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>
   );

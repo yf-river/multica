@@ -12,8 +12,7 @@ import { uiTranslations, localeLabels } from "@/lib/translations";
 import { DocsSettings } from "@/components/docs-settings";
 
 // Inter (Latin UI face) is exposed under `--font-inter`. The full `--font-sans`
-// stack — Inter + the per-locale CJK fallback chain, including the Japanese-first
-// override scoped to `<html lang="ja">` — is composed in static CSS in
+// stack is composed in static CSS in
 // ./global.css (CSP-safe, no inline <style>). Mirrors apps/web/app/layout.tsx.
 const inter = Inter({
   subsets: ["latin"],
@@ -47,10 +46,9 @@ const sourceSerif = Source_Serif_4({
 export const metadata: Metadata = {
   title: {
     template: "%s | Multica Docs",
-    default: "Multica Docs",
+    default: "Multica 文档",
   },
-  description:
-    "Documentation for Multica — the open-source managed agents platform.",
+  description: "Multica 文档：开源托管智能体平台的使用说明。",
 };
 
 export function generateStaticParams() {
@@ -68,10 +66,7 @@ export default async function Layout({
   const lang = (i18n.languages as readonly string[]).includes(rawLang)
     ? (rawLang as Lang)
     : (i18n.defaultLanguage as Lang);
-  const locales = i18n.languages.map((l) => ({
-    locale: l,
-    name: localeLabels[l],
-  }));
+  const locales = i18n.languages.map((l) => ({ locale: l, name: localeLabels[l] }));
 
   return (
     <html
@@ -101,7 +96,7 @@ export default async function Layout({
             // icons.
             themeSwitch={{ enabled: false }}
             searchToggle={{ enabled: false }}
-            sidebar={{ footer: <DocsSettings locale={lang} /> }}
+            sidebar={{ footer: <DocsSettings /> }}
             {...baseOptions}
           >
             {children}

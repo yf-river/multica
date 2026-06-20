@@ -7,14 +7,13 @@ import type { User, Workspace, MemberWithUser, Agent } from "@multica/core/types
 export const mockUser: User = {
   id: "user-1",
   name: "Test User",
-  email: "test@multica.ai",
+  account: "test",
   avatar_url: null,
   onboarded_at: "2026-01-01T00:00:00Z",
   onboarding_questionnaire: {},
   // Matches real server behavior for anyone who onboarded before this
   // field shipped — migration 054 backfills 'skipped_legacy'.
   starter_content_state: "skipped_legacy",
-  language: null,
   timezone: null,
   profile_description: "",
   created_at: "2026-01-01T00:00:00Z",
@@ -45,7 +44,7 @@ export const mockMembers: MemberWithUser[] = [
     role: "owner",
     created_at: "2026-01-01T00:00:00Z",
     name: "Test User",
-    email: "test@multica.ai",
+    account: "test",
     avatar_url: null,
   },
 ];

@@ -3,7 +3,7 @@ import type { Agent } from "./agent";
 import type { InboxItem } from "./inbox";
 import type { Comment, Reaction } from "./comment";
 import type { TimelineEntry } from "./activity";
-import type { Workspace, MemberWithUser, Invitation } from "./workspace";
+import type { Workspace, MemberWithUser } from "./workspace";
 import type { Project } from "./project";
 import type { Label } from "./label";
 
@@ -71,10 +71,6 @@ export type WSEventType =
   | "pin:created"
   | "pin:deleted"
   | "pin:reordered"
-  | "invitation:created"
-  | "invitation:accepted"
-  | "invitation:declined"
-  | "invitation:revoked"
   | "github_installation:created"
   | "github_installation:deleted"
   | "pull_request:linked"
@@ -357,26 +353,6 @@ export interface ProjectDeletedPayload {
   project_id: string;
 }
 
-export interface InvitationCreatedPayload {
-  invitation: Invitation;
-  workspace_name?: string;
-}
-
-export interface InvitationAcceptedPayload {
-  invitation_id: string;
-  member: MemberWithUser;
-}
-
-export interface InvitationDeclinedPayload {
-  invitation_id: string;
-  invitee_email: string;
-}
-
-export interface InvitationRevokedPayload {
-  invitation_id: string;
-  invitee_email: string;
-}
-
 /**
  * Maps every WSEventType to its payload interface. Events whose payload
  * shape isn't formally typed (server emits an object the client doesn't
@@ -438,10 +414,6 @@ export interface WSEventPayloadMap {
   "project:created": ProjectCreatedPayload;
   "project:updated": ProjectUpdatedPayload;
   "project:deleted": ProjectDeletedPayload;
-  "invitation:created": InvitationCreatedPayload;
-  "invitation:accepted": InvitationAcceptedPayload;
-  "invitation:declined": InvitationDeclinedPayload;
-  "invitation:revoked": InvitationRevokedPayload;
   // No formal payload interfaces yet — server emits domain objects clients
   // currently consume as opaque triggers (refetch on receipt).
   "daemon:heartbeat": unknown;

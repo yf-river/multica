@@ -39,7 +39,7 @@ Multica is a Go backend + monorepo frontend (pnpm workspaces + Turborepo) with s
 - **Entry points** (`cmd/`): `server` (HTTP API), `multica` (CLI + daemon), `migrate`
 - **Handlers** (`internal/handler/`): One file per domain (issue, comment, agent, auth, daemon)
 - **Real-time** (`internal/realtime/`): Hub manages WebSocket clients, server broadcasts events
-- **Auth** (`internal/auth/` + `internal/middleware/`): JWT (HS256), middleware sets `X-User-ID` and `X-User-Email` headers
+- **Auth** (`internal/auth/` + `internal/middleware/`): JWT (HS256), middleware sets `X-User-ID` and `X-User-Account` headers
 - **Task lifecycle** (`internal/service/task.go`): enqueue → claim → start → complete/fail
 - **Agent SDK** (`pkg/agent/`): Unified `Backend` interface for executing prompts via Claude Code or Codex
 - **Daemon** (`internal/daemon/`): Auto-detects CLIs, registers runtimes, polls for tasks

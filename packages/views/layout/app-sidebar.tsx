@@ -66,9 +66,9 @@ import {
 } from "@multica/ui/components/ui/dropdown-menu";
 import { useAuthStore } from "@multica/core/auth";
 import { useCurrentWorkspace, useWorkspacePaths, paths } from "@multica/core/paths";
-import { workspaceListOptions, myInvitationListOptions, workspaceKeys } from "@multica/core/workspace/queries";
+import { workspaceListOptions } from "@multica/core/workspace/queries";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
-import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { inboxKeys, deduplicateInboxItems } from "@multica/core/inbox/queries";
 import { api, ApiError } from "@multica/core/api";
 import { useModalStore } from "@multica/core/modals";
@@ -98,7 +98,6 @@ function isNavActive(pathname: string, href: string): boolean {
 // re-render loops when the effect itself calls `setState`.
 const EMPTY_PINS: PinnedItem[] = [];
 const EMPTY_WORKSPACES: Awaited<ReturnType<typeof api.listWorkspaces>> = [];
-const EMPTY_INVITATIONS: Awaited<ReturnType<typeof api.listMyInvitations>> = [];
 const EMPTY_INBOX: Awaited<ReturnType<typeof api.listInbox>> = [];
 
 // Nav items reference WorkspacePaths method names so they can be resolved
@@ -343,14 +342,13 @@ interface AppSidebarProps {
 
 export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }: AppSidebarProps = {}) {
   const { t } = useT("layout");
-  const { pathname, push } = useNavigation();
+  const { pathname } = useNavigation();
   const user = useAuthStore((s) => s.user);
   const userId = useAuthStore((s) => s.user?.id);
   const logout = useLogout();
   const workspace = useCurrentWorkspace();
   const p = useWorkspacePaths();
   const { data: workspaces = EMPTY_WORKSPACES } = useQuery(workspaceListOptions());
-  const { data: myInvitations = EMPTY_INVITATIONS } = useQuery(myInvitationListOptions());
   const workspaceCreationDisabled = useConfigStore((s) => s.workspaceCreationDisabled);
 
   const wsId = workspace?.id;
@@ -414,36 +412,6 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
     [localPinned, reorderPins],
   );
 
-  const queryClient = useQueryClient();
-  const acceptInvitationMut = useMutation({
-    mutationFn: (id: string) => api.acceptInvitation(id),
-    // After accepting an invitation, navigate INTO the newly-joined workspace.
-    // Otherwise the user stays on their current workspace and just sees the
-    // new one appear in the dropdown — silent and confusing (this is MUL-820).
-    onSuccess: async (_, invitationId) => {
-      const invitation = myInvitations.find((i) => i.id === invitationId);
-      queryClient.invalidateQueries({ queryKey: workspaceKeys.myInvitations() });
-      // staleTime: 0 forces a real network fetch — we need the joined workspace
-      // in the list before we can resolve its slug for navigation.
-      const list = await queryClient.fetchQuery({
-        ...workspaceListOptions(),
-        staleTime: 0,
-      });
-      const joined = invitation
-        ? list.find((w) => w.id === invitation.workspace_id)
-        : null;
-      if (joined) {
-        push(paths.workspace(joined.slug).issues());
-      }
-    },
-  });
-  const declineInvitationMut = useMutation({
-    mutationFn: (id: string) => api.declineInvitation(id),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: workspaceKeys.myInvitations() });
-    },
-  });
-
   // Global "C" shortcut: opens whichever create mode the user landed on last
   // (agent vs manual), persisted in useCreateModeStore. The mode switch lives
   // inside both modal footers so users can flip without remembering which
@@ -485,9 +453,6 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                     <SidebarMenuButton>
                       <span className="relative">
                         <WorkspaceAvatar name={workspace?.name ?? "M"} avatarUrl={workspace?.avatar_url} size="sm" />
-                        {myInvitations.length > 0 && (
-                          <span className="absolute -top-0.5 -right-0.5 size-2 rounded-full bg-brand ring-1 ring-sidebar" />
-                        )}
                       </span>
                       <span className="flex-1 truncate font-medium">
                         {workspace?.name ?? "Multica"}
@@ -514,7 +479,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                         {user?.name}
                       </p>
                       <p className="truncate text-xs text-muted-foreground leading-tight">
-                        {user?.email}
+                        {user?.account}
                       </p>
                     </div>
                   </div>
@@ -548,44 +513,6 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                       </DropdownMenuItem>
                     )}
                   </DropdownMenuGroup>
-                  {myInvitations.length > 0 && (
-                    <>
-                      <DropdownMenuSeparator />
-                      <DropdownMenuGroup>
-                        <DropdownMenuLabel className="text-xs text-muted-foreground">
-                          {t(($) => $.sidebar.pending_invitations_label)}
-                        </DropdownMenuLabel>
-                        {myInvitations.map((inv) => (
-                          <div key={inv.id} className="flex items-center gap-2 px-2 py-1.5">
-                            <WorkspaceAvatar name={inv.workspace_name ?? "W"} size="sm" />
-                            <span className="flex-1 truncate text-sm">{inv.workspace_name ?? t(($) => $.sidebar.invitation_workspace_fallback)}</span>
-                            <button
-                              type="button"
-                              className="text-xs px-2 py-0.5 rounded bg-primary text-primary-foreground hover:bg-primary/90 disabled:opacity-50"
-                              disabled={acceptInvitationMut.isPending}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                acceptInvitationMut.mutate(inv.id);
-                              }}
-                            >
-                              {t(($) => $.sidebar.invitation_join)}
-                            </button>
-                            <button
-                              type="button"
-                              className="text-xs px-2 py-0.5 rounded bg-muted text-muted-foreground hover:bg-muted/80 disabled:opacity-50"
-                              disabled={declineInvitationMut.isPending}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                declineInvitationMut.mutate(inv.id);
-                              }}
-                            >
-                              {t(($) => $.sidebar.invitation_decline)}
-                            </button>
-                          </div>
-                        ))}
-                      </DropdownMenuGroup>
-                    </>
-                  )}
                   <DropdownMenuSeparator />
                   <DropdownMenuGroup>
                     <DropdownMenuItem variant="destructive" onClick={logout}>

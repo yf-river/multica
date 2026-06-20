@@ -3,10 +3,10 @@ import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { ProjectResource } from "@multica/core/types";
-import enCommon from "../../locales/en/common.json";
-import enProjects from "../../locales/en/projects.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enProjects from "../../locales/zh-Hans/projects.json";
 
-const TEST_RESOURCES = { en: { common: enCommon, projects: enProjects } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, projects: enProjects } };
 
 const mockDaemonStatus = vi.hoisted(() => ({
   daemonId: null as string | null,
@@ -38,7 +38,7 @@ function renderHint(projectId: string | null | undefined) {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+      <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
         <LocalDirectoryHint projectId={projectId} />
       </I18nProvider>
     </QueryClientProvider>,

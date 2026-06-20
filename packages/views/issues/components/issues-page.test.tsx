@@ -3,10 +3,10 @@ import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Issue } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enIssues from "../../locales/en/issues.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enIssues from "../../locales/zh-Hans/issues.json";
 
-const TEST_RESOURCES = { en: { common: enCommon, issues: enIssues } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, issues: enIssues } };
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
 }));
@@ -16,7 +16,7 @@ vi.mock("@multica/core/hooks", () => ({
 // ---------------------------------------------------------------------------
 
 // Mock @multica/core/auth
-const mockAuthUser = { id: "user-1", email: "test@test.com", name: "Test User" };
+const mockAuthUser = { id: "user-1", account: "test", name: "Test User" };
 vi.mock("@multica/core/auth", () => ({
   useAuthStore: Object.assign(
     (selector?: any) => {
@@ -71,7 +71,7 @@ const mockListMembers = vi.hoisted(() =>
       role: "member",
       created_at: "2026-01-01T00:00:00Z",
       name: "Test User",
-      email: "test@test.com",
+      account: "test",
       avatar_url: null,
     },
   ]),
@@ -465,7 +465,7 @@ function renderWithQuery(ui: React.ReactElement) {
     },
   });
   return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <QueryClientProvider client={qc}>
         {ui}
       </QueryClientProvider>

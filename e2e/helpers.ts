@@ -8,8 +8,8 @@ const DEFAULT_E2E_ACCOUNT = `e2e-${E2E_WORKER}-${E2E_RUN_ID}`;
 const DEFAULT_E2E_WORKSPACE = `e2e-workspace-${E2E_WORKER}-${E2E_RUN_ID}`;
 
 async function waitForIssuesPage(page: Page) {
-  await waitForPageText(page, "New Issue");
-  await expect(page.getByRole("button", { name: "New Issue" })).toBeVisible({
+  await waitForPageText(page, "新建 issue");
+  await expect(page.getByRole("button", { name: "新建 issue" })).toBeVisible({
     timeout: 15000,
   });
 }
@@ -63,7 +63,7 @@ export async function loginAsDefault(page: Page): Promise<string> {
  */
 export async function createTestApi(): Promise<TestApiClient> {
   const api = new TestApiClient();
-  await api.login(DEFAULT_E2E_EMAIL, DEFAULT_E2E_NAME);
+  await api.login(DEFAULT_E2E_ACCOUNT, DEFAULT_E2E_NAME);
   await api.ensureWorkspace(`E2E Workspace ${E2E_WORKER}`, DEFAULT_E2E_WORKSPACE);
   await api.markUserOnboarded();
   return api;

@@ -3,10 +3,10 @@ import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { GitHubPullRequest } from "@multica/core/types";
-import enCommon from "../../locales/en/common.json";
-import enIssues from "../../locales/en/issues.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enIssues from "../../locales/zh-Hans/issues.json";
 
-const TEST_RESOURCES = { en: { common: enCommon, issues: enIssues } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, issues: enIssues } };
 
 vi.mock("@multica/core/github/queries", async () => {
   const actual = await vi.importActual<typeof import("@multica/core/github/queries")>(
@@ -59,7 +59,7 @@ function renderList() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <I18nProvider resources={TEST_RESOURCES} locale="en">
+      <I18nProvider resources={TEST_RESOURCES} locale="zh-Hans">
         <PullRequestList issueId="issue-1" />
       </I18nProvider>
     </QueryClientProvider>,

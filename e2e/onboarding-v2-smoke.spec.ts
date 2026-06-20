@@ -2,19 +2,18 @@ import { test, expect } from "@playwright/test";
 import { TestApiClient } from "./fixtures";
 import { waitForPageText } from "./helpers";
 
-// Smoke test for Onboarding V2: verifies the new per-question flow
-// renders and captures screenshots for review. Uses a unique email
-// per run so the user is always a fresh, un-onboarded user landing
-// on /onboarding.
+// Smoke test for Onboarding V2: verifies the per-question flow and captures
+// screenshots for review. Uses a unique account per run so the user is always
+// fresh and lands on /onboarding.
 
-const EMAIL = `onboarding-v2-${Date.now()}@localhost`;
+const ACCOUNT = `onboarding_v2_${Date.now()}`;
 const SHOTS_DIR = "/tmp/onboarding-v2-shots";
 
 test.use({ viewport: { width: 1440, height: 900 } });
 
 test("onboarding v2 — welcome → source → role → use_case (skip path)", async ({ page }) => {
   const api = new TestApiClient();
-  await api.login(EMAIL, "OBv2 Tester");
+  await api.login(ACCOUNT, "OBv2 Tester");
   const token = api.getToken();
 
   await page.addInitScript((t) => {
@@ -66,7 +65,7 @@ test("onboarding v2 — welcome → source → role → use_case (skip path)", a
 
 test("onboarding v2 — rage-skip all 3 questions", async ({ page }) => {
   const api = new TestApiClient();
-  await api.login(`rage-skip-${Date.now()}@localhost`, "Rage Skipper");
+  await api.login(`rage_skip_${Date.now()}`, "Rage Skipper");
   const token = api.getToken();
 
   await page.addInitScript((t) => localStorage.setItem("multica_token", t), token);
@@ -93,7 +92,7 @@ test("onboarding v2 — zh-Hans renders Chinese labels", async ({ page, context 
     { name: "multica-locale", value: "zh-Hans", url: "http://localhost:13442" },
   ]);
   const api = new TestApiClient();
-  await api.login(`zh-${Date.now()}@localhost`, "中文用户");
+  await api.login(`zh_${Date.now()}`, "中文用户");
   const token = api.getToken();
 
   await page.addInitScript((t) => localStorage.setItem("multica_token", t), token);

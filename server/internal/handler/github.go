@@ -578,7 +578,7 @@ func (h *Handler) ListPullRequestsForIssue(w http.ResponseWriter, r *http.Reques
 
 // identifierRe extracts identifiers like "MUL-1510" from text. Case-insensitive
 // because branch names are conventionally lowercase but issue prefixes are
-// uppercase. Word boundary on the left prevents matching inside email-style
+// uppercase. Word boundary on the left prevents matching inside account-style
 // strings (e.g. "abc@MUL-1") and the digit anchor on the right rules out
 // version numbers like "v1.2-3".
 var identifierRe = regexp.MustCompile(`(?i)\b([a-z][a-z0-9]{1,9})-(\d+)\b`)

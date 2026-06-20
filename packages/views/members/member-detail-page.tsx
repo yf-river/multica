@@ -67,7 +67,7 @@ export function MemberDetailPage({ userId }: { userId: string }) {
             <RoleBadge role={member.role} />
           </div>
           <p className="mt-0.5 truncate text-sm text-muted-foreground">
-            {member.email}
+            {member.account}
           </p>
         </div>
       </div>

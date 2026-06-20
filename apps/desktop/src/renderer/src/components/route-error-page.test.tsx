@@ -46,9 +46,9 @@ describe("DesktopRouteErrorPage", () => {
     render(<RouterProvider router={router} />);
 
     expect(await screen.findByRole("alert")).toHaveTextContent(
-      "Something went wrong in this tab",
+      "此标签页出错了",
     );
-    fireEvent.click(screen.getByRole("button", { name: /reload tab/i }));
+    fireEvent.click(screen.getByRole("button", { name: /重新加载标签页/ }));
     expect(reloadActiveTab).toHaveBeenCalledTimes(1);
   });
 
@@ -60,7 +60,7 @@ describe("DesktopRouteErrorPage", () => {
 
     render(<RouterProvider router={router} />);
 
-    fireEvent.click(await screen.findByRole("button", { name: /close tab/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /关闭标签页/ }));
     expect(closeActiveTab).toHaveBeenCalledTimes(1);
   });
 
@@ -73,7 +73,7 @@ describe("DesktopRouteErrorPage", () => {
     render(<RouterProvider router={router} />);
 
     expect(openModal).not.toHaveBeenCalled();
-    fireEvent.click(await screen.findByRole("button", { name: /report error/i }));
+    fireEvent.click(await screen.findByRole("button", { name: /报告错误/ }));
 
     expect(openModal).toHaveBeenCalledWith(
       "feedback",

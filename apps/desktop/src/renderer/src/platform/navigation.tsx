@@ -65,25 +65,6 @@ function tryRouteToOverlay(path: string, router?: DataRouter): boolean {
     }
     return true;
   }
-  if (path === "/invitations") {
-    overlay.open({ type: "invitations" });
-    if (router && router.state.location.pathname !== "/") {
-      router.navigate("/", { replace: true });
-    }
-    return true;
-  }
-  if (path.startsWith("/invite/")) {
-    let id = "";
-    try {
-      id = decodeURIComponent(path.slice("/invite/".length));
-    } catch {
-      return true;
-    }
-    if (id) {
-      overlay.open({ type: "invite", invitationId: id });
-      return true;
-    }
-  }
   // Any other navigation cancels a live overlay.
   if (overlay.overlay) overlay.close();
   return false;
@@ -99,8 +80,8 @@ function routerLocationPath(router: DataRouter): string {
  * was delegated to the tab store (caller should NOT proceed).
  *
  * This is the entry point that makes shared code platform-agnostic:
- * sidebar dropdown, cmd+k "switch workspace", post-delete redirects,
- * invite-accept flow — they all call `useNavigation().push(path)` with a
+ * sidebar dropdown, cmd+k "switch workspace", and post-delete redirects all
+ * call `useNavigation().push(path)` with a
  * full workspace URL, and on desktop we translate "target slug differs
  * from active" into "switch the tab-group that's visible in the TabBar".
  */

@@ -17,7 +17,7 @@ const ctx = vi.hoisted(() => ({
   popupSpy: vi.fn(),
   clipboardWriteText: vi.fn(),
   openExternalSpy: vi.fn().mockResolvedValue(undefined),
-  preferredLanguagesRef: { current: ["en-US"] as string[] },
+  preferredLanguagesRef: { current: ["zh-CN"] as string[] },
 }));
 
 vi.mock("electron", () => {
@@ -100,10 +100,10 @@ describe("installContextMenu — link items", () => {
     ctx.clipboardWriteText.mockClear();
     ctx.openExternalSpy.mockClear();
     ctx.browserWindowFromWebContents.mockReset();
-    ctx.preferredLanguagesRef.current = ["en-US"];
+    ctx.preferredLanguagesRef.current = ["zh-CN"];
   });
 
-  it("adds 'Open Link in Browser' and 'Copy Link Address' when right-clicking an http(s) link", () => {
+  it("adds Chinese link actions when right-clicking an http(s) link", () => {
     // The link case is the one this test file is here to cover —
     // before MUL-3083 follow-up, right-clicking an <a> in the
     // renderer only surfaced 'copy' (when the user happened to have
@@ -115,15 +115,15 @@ describe("installContextMenu — link items", () => {
     });
 
     const labels = lastMenuLabels();
-    expect(labels).toContain("Open Link in Browser");
-    expect(labels).toContain("Copy Link Address");
+    expect(labels).toContain("在浏览器中打开链接");
+    expect(labels).toContain("复制链接地址");
 
     // The two click handlers must route to the existing
     // openExternalSafely allowlist + clipboard.writeText.
-    invokeByLabel("Open Link in Browser");
+    invokeByLabel("在浏览器中打开链接");
     expect(ctx.openExternalSpy).toHaveBeenCalledWith("https://multica.ai/welcome");
 
-    invokeByLabel("Copy Link Address");
+    invokeByLabel("复制链接地址");
     expect(ctx.clipboardWriteText).toHaveBeenCalledWith(
       "https://multica.ai/welcome",
     );
@@ -140,8 +140,8 @@ describe("installContextMenu — link items", () => {
     installContextMenu(wc as never);
     wc.fire(baseSelection({ linkURL: "javascript:alert(1)" }));
     const labels = lastMenuLabelsOrEmpty();
-    expect(labels).not.toContain("Open Link in Browser");
-    expect(labels).not.toContain("Copy Link Address");
+    expect(labels).not.toContain("在浏览器中打开链接");
+    expect(labels).not.toContain("复制链接地址");
   });
 
   it("does NOT add link items when there is no link under the cursor", () => {
@@ -154,18 +154,14 @@ describe("installContextMenu — link items", () => {
       editFlags: { ...baseEditFlags, canCopy: true },
     });
     const labels = lastMenuLabelsOrEmpty();
-    expect(labels).not.toContain("Open Link in Browser");
+    expect(labels).not.toContain("在浏览器中打开链接");
     // Selection-only context still surfaces copy as before — guards
     // against a regression where adding the link branch broke the
     // base path.
     expect(menuItemRoles()).toContain("copy");
   });
 
-  it("uses zh-Hans labels when the OS preferred language is Chinese", () => {
-    // Locale fallback is intentionally permissive: every zh-* variant
-    // routes to zh-Hans so users on zh-CN / zh-TW / zh-HK still see
-    // Chinese rather than dropping to English. The renderer ships only
-    // zh-Hans translations, so this matches the rest of the app.
+  it("uses fixed Chinese labels", () => {
     ctx.preferredLanguagesRef.current = ["zh-CN"];
     const wc = makeWebContents();
     installContextMenu(wc as never);
@@ -174,12 +170,12 @@ describe("installContextMenu — link items", () => {
     expect(lastMenuLabels()).toContain("复制链接地址");
   });
 
-  it("falls back to English when the OS preferred language is something we don't ship", () => {
+  it("keeps Chinese labels for non-Chinese OS languages", () => {
     ctx.preferredLanguagesRef.current = ["fr-FR"];
     const wc = makeWebContents();
     installContextMenu(wc as never);
     wc.fire(baseSelection({ linkURL: "https://multica.ai" }));
-    expect(lastMenuLabels()).toContain("Open Link in Browser");
+    expect(lastMenuLabels()).toContain("在浏览器中打开链接");
   });
 });
 

@@ -4,9 +4,8 @@ import { ThemeProvider } from "@/components/theme-provider";
 import { Toaster } from "@multica/ui/components/ui/sonner";
 import { cn } from "@multica/ui/lib/utils";
 import { WebProviders } from "@/components/web-providers";
-import type { SupportedLocale } from "@multica/core/i18n";
+import { DEFAULT_LOCALE } from "@multica/core/i18n";
 import { RESOURCES } from "@multica/views/locales";
-import { getRequestLocale } from "@/lib/request-locale";
 import "./globals.css";
 
 // Inter is the Latin UI face. next/font produces a hashed family (`__Inter_xxx`)
@@ -90,28 +89,17 @@ export const metadata: Metadata = {
   },
 };
 
-// HTML lang attribute uses BCP-47 region tags that screen readers and font
-// stacks recognize widely. i18next keeps `zh-Hans` as its internal locale
-// (script subtag is what we actually translate against), but the html element
-// expects a region-flavoured tag for accessibility tooling and CJK fallback.
-const HTML_LANG: Record<SupportedLocale, string> = {
-  en: "en",
-  "zh-Hans": "zh-CN",
-  ko: "ko-KR",
-  ja: "ja-JP",
-};
-
 export default async function RootLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  const locale = await getRequestLocale();
+  const locale = DEFAULT_LOCALE;
   const resources = { [locale]: RESOURCES[locale] };
 
   return (
     <html
-      lang={HTML_LANG[locale]}
+      lang="zh-CN"
       suppressHydrationWarning
       className={cn("antialiased font-sans h-full", inter.variable, geistMono.variable, sourceSerif.variable)}
     >

@@ -5,7 +5,7 @@ import { render } from "@testing-library/react";
 // test can mutate it then re-render to drive the tracker.
 const state = vi.hoisted(() => ({
   user: null as { id: string } | null,
-  overlay: null as { type: string; invitationId?: string } | null,
+  overlay: null as { type: string } | null,
   activeWorkspaceSlug: null as string | null,
   byWorkspace: {} as Record<
     string,
@@ -244,4 +244,3 @@ describe("PageviewTracker", () => {
     expect(state.capturePageview).not.toHaveBeenCalled();
   });
 });
-

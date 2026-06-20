@@ -457,13 +457,13 @@ func runWorkspaceMembers(cmd *cobra.Command, args []string) error {
 		return cli.PrintJSON(os.Stdout, members)
 	}
 
-	headers := []string{"USER ID", "NAME", "EMAIL", "ROLE"}
+	headers := []string{"USER ID", "NAME", "ACCOUNT", "ROLE"}
 	rows := make([][]string, 0, len(members))
 	for _, m := range members {
 		rows = append(rows, []string{
 			strVal(m, "user_id"),
 			strVal(m, "name"),
-			strVal(m, "email"),
+			strVal(m, "account"),
 			strVal(m, "role"),
 		})
 	}

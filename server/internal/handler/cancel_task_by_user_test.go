@@ -113,22 +113,22 @@ func createForeignWorkspaceAgent(t *testing.T) string {
 // createWorkspaceMemberUser adds a plain (non-owner/admin) member to the test
 // workspace and returns the user ID. The member row cascades when the user is
 // deleted (member.user_id ON DELETE CASCADE).
-func createWorkspaceMemberUser(t *testing.T, name, email string) string {
+func createWorkspaceMemberUser(t *testing.T, name, account string) string {
 	t.Helper()
 	ctx := context.Background()
 
 	var userID string
 	if err := testPool.QueryRow(ctx,
-		`INSERT INTO "user" (name, email) VALUES ($1, $2) RETURNING id`, name, email,
+		`INSERT INTO "user" (name, account) VALUES ($1, $2) RETURNING id`, name, account,
 	).Scan(&userID); err != nil {
-		t.Fatalf("create user %s: %v", email, err)
+		t.Fatalf("create user %s: %v", account, err)
 	}
 	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id = $1`, userID) })
 
 	if _, err := testPool.Exec(ctx,
 		`INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'member')`, testWorkspaceID, userID,
 	); err != nil {
-		t.Fatalf("add member %s: %v", email, err)
+		t.Fatalf("add member %s: %v", account, err)
 	}
 	return userID
 }

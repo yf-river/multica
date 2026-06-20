@@ -6,18 +6,18 @@ import { issueKeys, PAGINATED_STATUSES } from "@multica/core/issues/queries";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { IssueStatus, ListIssuesCache } from "@multica/core/types";
 import type { QueryClient } from "@tanstack/react-query";
-import enCommon from "../../locales/en/common.json";
-import enAuth from "../../locales/en/auth.json";
-import enSettings from "../../locales/en/settings.json";
-import enEditor from "../../locales/en/editor.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enAuth from "../../locales/zh-Hans/auth.json";
+import enSettings from "../../locales/zh-Hans/settings.json";
+import enEditor from "../../locales/zh-Hans/editor.json";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, auth: enAuth, settings: enSettings, editor: enEditor },
+  "zh-Hans": { common: enCommon, auth: enAuth, settings: enSettings, editor: enEditor },
 };
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>
   );

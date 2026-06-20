@@ -8,7 +8,7 @@
  * 1. EDITING ONLY. Read-only display is handled by `ReadonlyContent` (a
  *    react-markdown renderer), not this component. There used to be an
  *    `editable` prop here that toggled between modes, but every readonly
- *    callsite migrated to ReadonlyContent and the prop only invited
+ *    callsite migrated to ReadonlyContent and the prop only created
  *    misuse — Tiptap's `useEditor` reads `editable` at mount, so toggling
  *    the prop later silently failed (mounted-as-readonly editors stayed
  *    unfocusable forever). To express "currently disabled", wrap this

@@ -217,8 +217,7 @@ func (h *Handler) CreateWorkspace(w http.ResponseWriter, r *http.Request) {
 
 	// NOTE: CreateWorkspace deliberately does NOT mark the user as
 	// onboarded. The `onboarded_at` flag is owned by CompleteOnboarding
-	// (Step 3 of the flow) and by AcceptInvitation (invitee joining an
-	// existing workspace). This decouples "the user has a workspace"
+	// (Step 3 of the flow). This decouples "the user has a workspace"
 	// from "the user has finished setup"; the workspace-layer route
 	// gate (web layout / desktop App.tsx overlay) redirects un-onboarded
 	// users back to /onboarding instead.
@@ -385,7 +384,7 @@ type MemberWithUserResponse struct {
 	Role        string  `json:"role"`
 	CreatedAt   string  `json:"created_at"`
 	Name        string  `json:"name"`
-	Email       string  `json:"email"`
+	Account     string  `json:"account"`
 	AvatarURL   *string `json:"avatar_url"`
 }
 
@@ -411,7 +410,7 @@ func (h *Handler) ListMembersWithUser(w http.ResponseWriter, r *http.Request) {
 			Role:        m.Role,
 			CreatedAt:   timestampToString(m.CreatedAt),
 			Name:        m.UserName,
-			Email:       m.UserEmail,
+			Account:     m.UserAccount,
 			AvatarURL:   textToPtr(m.UserAvatarUrl),
 		}
 	}
@@ -420,8 +419,10 @@ func (h *Handler) ListMembersWithUser(w http.ResponseWriter, r *http.Request) {
 }
 
 type CreateMemberRequest struct {
-	Email string `json:"email"`
-	Role  string `json:"role"`
+	Account  string `json:"account"`
+	Name     string `json:"name"`
+	Password string `json:"password"`
+	Role     string `json:"role"`
 }
 
 func memberWithUserResponse(member db.Member, user db.User) MemberWithUserResponse {
@@ -432,7 +433,7 @@ func memberWithUserResponse(member db.Member, user db.User) MemberWithUserRespon
 		Role:        member.Role,
 		CreatedAt:   timestampToString(member.CreatedAt),
 		Name:        user.Name,
-		Email:       user.Email,
+		Account:     user.Account,
 		AvatarURL:   textToPtr(user.AvatarUrl),
 	}
 }
@@ -464,12 +465,15 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	email := strings.ToLower(strings.TrimSpace(req.Email))
-	if email == "" {
-		writeError(w, http.StatusBadRequest, "email is required")
+	account, ok := normalizeAccount(req.Account)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "account must be 3-64 characters using letters, numbers, dot, dash, or underscore")
 		return
 	}
-
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = account
+	}
 	role, valid := normalizeMemberRole(req.Role)
 	if !valid {
 		writeError(w, http.StatusBadRequest, "invalid member role")
@@ -480,16 +484,28 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.Queries.GetUserByEmail(r.Context(), email)
+	user, err := h.Queries.GetUserByAccount(r.Context(), account)
 	if err != nil {
 		if isNotFound(err) {
-			// Auto-create user with email so they can be invited before signing up
+			if len(req.Password) < minPasswordLen {
+				writeError(w, http.StatusBadRequest, "password must be at least 8 characters")
+				return
+			}
+			passwordHash, err := hashPassword(req.Password)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to hash password")
+				return
+			}
 			user, err = h.Queries.CreateUser(r.Context(), db.CreateUserParams{
-				Name:  email,
-				Email: email,
+				Name:    name,
+				Account: account,
 			})
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "failed to create user")
+				return
+			}
+			if _, err := h.DB.Exec(r.Context(), `UPDATE "user" SET password_hash = $2, onboarded_at = COALESCE(onboarded_at, now()), updated_at = now() WHERE id = $1`, user.ID, passwordHash); err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to save password")
 				return
 			}
 		} else {
@@ -508,12 +524,12 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusConflict, "user is already a member")
 			return
 		}
-		slog.Warn("create member failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", workspaceID, "email", email)...)
+		slog.Warn("create member failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", workspaceID, "account", account)...)
 		writeError(w, http.StatusInternalServerError, "failed to create member")
 		return
 	}
 
-	slog.Info("member added", append(logger.RequestAttrs(r), "member_id", uuidToString(member.ID), "workspace_id", workspaceID, "email", email, "role", role)...)
+	slog.Info("member added", append(logger.RequestAttrs(r), "member_id", uuidToString(member.ID), "workspace_id", workspaceID, "account", account, "role", role)...)
 	userID := requestUserID(r)
 	eventPayload := map[string]any{"member": memberWithUserResponse(member, user)}
 	if ws, err := h.Queries.GetWorkspace(r.Context(), requester.WorkspaceID); err == nil {

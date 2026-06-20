@@ -4,10 +4,10 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Issue, TimelineEntry } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enIssues from "../../locales/en/issues.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enIssues from "../../locales/zh-Hans/issues.json";
 
-const TEST_RESOURCES = { en: { common: enCommon, issues: enIssues } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, issues: enIssues } };
 
 const mockViewport = vi.hoisted(() => ({ isMobile: false }));
 
@@ -28,7 +28,7 @@ vi.mock("@multica/core/hooks", () => ({
 // ---------------------------------------------------------------------------
 
 // Mock @multica/core/auth
-const mockAuthUser = { id: "user-1", email: "test@test.com", name: "Test User" };
+const mockAuthUser = { id: "user-1", account: "test", name: "Test User" };
 vi.mock("@multica/core/auth", () => ({
   useAuthStore: Object.assign(
     (selector?: any) => {
@@ -60,7 +60,7 @@ vi.mock("@multica/core/workspace/hooks", () => ({
 vi.mock("@multica/core/workspace/queries", () => ({
   memberListOptions: () => ({
     queryKey: ["workspaces", "ws-1", "members"],
-    queryFn: () => Promise.resolve([{ user_id: "user-1", name: "Test User", email: "test@test.com", role: "admin" }]),
+    queryFn: () => Promise.resolve([{ user_id: "user-1", name: "Test User", account: "test", role: "admin" }]),
   }),
   agentListOptions: () => ({
     queryKey: ["workspaces", "ws-1", "agents"],
@@ -219,7 +219,7 @@ const mockApiObj = vi.hoisted(() => ({
   listAttachments: vi.fn().mockResolvedValue([]),
   addCommentReaction: vi.fn(),
   removeCommentReaction: vi.fn(),
-  listMembers: vi.fn().mockResolvedValue([{ user_id: "user-1", name: "Test User", email: "test@test.com", role: "admin" }]),
+  listMembers: vi.fn().mockResolvedValue([{ user_id: "user-1", name: "Test User", account: "test", role: "admin" }]),
   listAgents: vi.fn().mockResolvedValue([]),
   getProject: vi.fn(),
   listProjects: vi.fn().mockResolvedValue({ projects: [] }),
@@ -458,7 +458,7 @@ function createTestQueryClient() {
 function renderIssueDetail(issueId = "issue-1") {
   const queryClient = createTestQueryClient();
   return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <QueryClientProvider client={queryClient}>
         <IssueDetail issueId={issueId} />
       </QueryClientProvider>
@@ -481,7 +481,7 @@ function renderIssueDetailWithHighlight(
     queryClient.setQueryData(["issues", "timeline", issueId], mockTimeline);
   }
   const result = render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <QueryClientProvider client={queryClient}>
         <IssueDetail issueId={issueId} highlightCommentId={highlightCommentId} />
       </QueryClientProvider>
@@ -510,7 +510,7 @@ describe("IssueDetail (shared)", () => {
     mockApiObj.listTasksByIssue.mockResolvedValue([]);
     mockApiObj.rerunIssue.mockResolvedValue({ id: "task-rerun" });
     mockApiObj.listMembers.mockResolvedValue([
-      { user_id: "user-1", name: "Test User", email: "test@test.com", role: "admin" },
+      { user_id: "user-1", name: "Test User", account: "test", role: "admin" },
     ]);
     mockApiObj.listAgents.mockResolvedValue([]);
     // Reset project mock — individual tests override per case. Default fixture
@@ -1189,7 +1189,7 @@ describe("IssueDetail (shared)", () => {
 
       const queryClient = createTestQueryClient();
       render(
-        <I18nProvider locale="en" resources={TEST_RESOURCES}>
+        <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
           <QueryClientProvider client={queryClient}>
             <IssueDetail issueId="issue-1" highlightCommentId="reply-1" />
           </QueryClientProvider>

@@ -102,18 +102,3 @@ func TestPostHogClient_DropsWhenFull(t *testing.T) {
 		t.Fatalf("expected some drops when queue saturated")
 	}
 }
-
-func TestEmailDomain(t *testing.T) {
-	cases := map[string]string{
-		"a@example.com":       "example.com",
-		"user@Company.co.uk":  "company.co.uk",
-		"":                    "",
-		"no-at":               "",
-		"trailing@":           "",
-	}
-	for in, want := range cases {
-		if got := emailDomain(in); got != want {
-			t.Errorf("emailDomain(%q) = %q, want %q", in, got, want)
-		}
-	}
-}

@@ -7,8 +7,8 @@ import type { Agent, MemberWithUser, RuntimeDevice } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { WorkspaceSlugProvider } from "@multica/core/paths";
 import { NavigationProvider, type NavigationAdapter } from "../../navigation";
-import enCommon from "../../locales/en/common.json";
-import enAgents from "../../locales/en/agents.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enAgents from "../../locales/zh-Hans/agents.json";
 
 const navigationStub: NavigationAdapter = {
   push: vi.fn(),
@@ -19,7 +19,7 @@ const navigationStub: NavigationAdapter = {
   getShareableUrl: (path: string) => path,
 };
 
-const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, agents: enAgents } };
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
@@ -57,7 +57,7 @@ const members: MemberWithUser[] = [
     workspace_id: "ws-1",
     role: "member",
     name: "Me",
-    email: "me@example.com",
+    account: "me",
     avatar_url: null,
     created_at: "2026-01-01T00:00:00Z",
   },
@@ -67,7 +67,7 @@ const members: MemberWithUser[] = [
     workspace_id: "ws-1",
     role: "member",
     name: "Other",
-    email: "other@example.com",
+    account: "other",
     avatar_url: null,
     created_at: "2026-01-01T00:00:00Z",
   },
@@ -126,7 +126,7 @@ function renderDialog(runtimes: RuntimeDevice[], template?: Agent) {
   const onCreate = vi.fn().mockResolvedValue(undefined);
   const onClose = vi.fn();
   render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <QueryClientProvider client={queryClient}>
         <WorkspaceSlugProvider slug="test-ws">
         <NavigationProvider value={navigationStub}>

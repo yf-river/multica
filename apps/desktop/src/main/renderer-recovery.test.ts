@@ -163,16 +163,16 @@ describe("installRendererRecoveryHandlers", () => {
 
     expect(showMessageBox).toHaveBeenCalledWith(
       expect.objectContaining({
-        title: "Multica needs to reload",
-        message: "The desktop window has been stuck for a few seconds.",
+        title: "Multica 需要重新加载",
+        message: "桌面窗口已经卡住数秒。",
         detail: expect.stringContaining(
-          "Click Reload to refresh this window and keep using Multica.",
+          "点击重新加载以刷新此窗口并继续使用 Multica。",
         ),
       }),
     );
-    expect(detail).toContain("what you were doing right before this message appeared");
-    expect(detail).toContain("Activity Monitor sample");
-    expect(detail).toContain("Diagnostic details:\nkind: unresponsive\ncontext: {}");
+    expect(detail).toContain("此消息出现前你正在做什么");
+    expect(detail).toContain("活动监视器采样");
+    expect(detail).toContain("诊断详情:\nkind: unresponsive\ncontext: {}");
   });
 });
 

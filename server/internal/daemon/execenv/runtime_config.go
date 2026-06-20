@@ -90,25 +90,22 @@ func sanitizeNameForBriefMarkdown(name string) string {
 	return strings.TrimSpace(b.String())
 }
 
-// sanitizeEmailForBrief returns the email verbatim when it is safe to embed
-// inline in the brief, or "" when it carries a character a real address never
-// has (whitespace, control chars, or a markdown-break risk). Unlike
-// sanitizeNameForBriefMarkdown it does NOT backslash-escape markdown specials:
-// an agent may want to match the initiator's address exactly, and escaping
-// `_`/`+` would corrupt it, while a valid email can't contain a newline to
-// inject a heading anyway. Emails are validated at signup, so this is
+// sanitizeAccountForBrief returns the account verbatim when it is safe to embed
+// inline in the brief, or "" when it carries whitespace, control chars, or a
+// markdown-break risk. Accounts are validated at signup, so this is
 // defense-in-depth, not the primary guard. See MUL-2645.
-func sanitizeEmailForBrief(email string) string {
-	email = strings.TrimSpace(email)
-	if email == "" || !strings.Contains(email, "@") {
+func sanitizeAccountForBrief(account string) string {
+	raw := account
+	account = strings.TrimSpace(raw)
+	if account == "" || account != raw {
 		return ""
 	}
-	for _, r := range email {
+	for _, r := range account {
 		if r < 0x20 || r == 0x7f || r == ' ' || r == '\\' || r == '`' || r == '*' || r == '<' || r == '>' || r == '[' || r == ']' {
 			return ""
 		}
 	}
-	return email
+	return account
 }
 
 // formatProjectResource renders a single resource as a human-readable bullet.
@@ -439,14 +436,14 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	// like the owner. Emitted only when an initiator name resolved — on-assign
 	// / autopilot / quick-create tasks have no attributable human initiator and
 	// skip the heading. The name is sanitized like Requesting User (it is
-	// user-supplied and could otherwise inject a heading); the email goes
-	// through sanitizeEmailForBrief so it stays literal. See MUL-2645.
+	// user-supplied and could otherwise inject a heading); the account goes
+	// through sanitizeAccountForBrief so it stays literal. See MUL-2645.
 	if safeInitiator := sanitizeNameForBriefMarkdown(ctx.InitiatorName); safeInitiator != "" {
 		b.WriteString("## Task Initiator\n\n")
 		if ctx.InitiatorType == "agent" {
 			fmt.Fprintf(&b, "This task was initiated by **%s**, another agent in this workspace.\n\n", safeInitiator)
-		} else if email := sanitizeEmailForBrief(ctx.InitiatorEmail); email != "" {
-			fmt.Fprintf(&b, "This task was initiated by **%s** (%s), a member of this workspace.\n\n", safeInitiator, email)
+		} else if account := sanitizeAccountForBrief(ctx.InitiatorAccount); account != "" {
+			fmt.Fprintf(&b, "This task was initiated by **%s** (%s), a member of this workspace.\n\n", safeInitiator, account)
 		} else {
 			fmt.Fprintf(&b, "This task was initiated by **%s**, a member of this workspace.\n\n", safeInitiator)
 		}

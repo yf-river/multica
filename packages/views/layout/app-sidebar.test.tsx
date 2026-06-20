@@ -135,8 +135,6 @@ vi.mock("@multica/core/pins/queries", () => ({ pinListOptions: () => ({ queryKey
 vi.mock("@multica/core/projects/queries", () => ({ projectDetailOptions: () => ({ queryKey: ["project"] }) }));
 vi.mock("@multica/core/runtimes/hooks", () => ({ useMyRuntimesNeedUpdate: () => false }));
 vi.mock("@multica/core/workspace/queries", () => ({
-  myInvitationListOptions: () => ({ queryKey: ["invitations"] }),
-  workspaceKeys: { myInvitations: () => ["invitations"] },
   workspaceListOptions: () => ({ queryKey: ["workspaces"] }),
 }));
 vi.mock("@tanstack/react-query", async (importOriginal) => ({

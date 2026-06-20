@@ -34,9 +34,9 @@ export default function GlobalError({
         }}
       >
         <div style={{ maxWidth: 420, textAlign: "center" }}>
-          <h1 style={{ fontSize: 18, fontWeight: 600 }}>Something went wrong</h1>
+          <h1 style={{ fontSize: 18, fontWeight: 600 }}>页面出错了</h1>
           <p style={{ marginTop: 8, color: "#666" }}>
-            The page hit an unexpected error. Try reloading.
+            页面遇到异常错误。请重新加载后再试。
           </p>
           <button
             type="button"
@@ -49,7 +49,7 @@ export default function GlobalError({
               cursor: "pointer",
             }}
           >
-            Reload
+            重新加载
           </button>
         </div>
       </body>

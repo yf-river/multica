@@ -38,9 +38,9 @@ export function UpdateNotification() {
           <RefreshCw className="size-4 text-success" />
         </div>
         <div className="flex-1 min-w-0">
-          <p className="text-sm font-medium">Update ready</p>
+          <p className="text-sm font-medium">更新已就绪</p>
           <p className="text-xs text-muted-foreground mt-0.5">
-            v{state.version} will be applied on next launch.
+            v{state.version} 将在下次启动时应用。
           </p>
           <div className="mt-2 flex items-center gap-1.5">
             <button
@@ -48,14 +48,14 @@ export function UpdateNotification() {
               onClick={() => setDismissed(true)}
               className="inline-flex items-center rounded-md border border-border bg-background px-3 py-1.5 text-xs font-medium text-foreground hover:bg-accent transition-colors"
             >
-              Later
+              稍后
             </button>
             <button
               type="button"
               onClick={() => window.updater.installUpdate()}
               className="inline-flex items-center rounded-md bg-primary px-3 py-1.5 text-xs font-medium text-primary-foreground hover:bg-primary/90 transition-colors"
             >
-              Restart now
+              立即重启
             </button>
           </div>
         </div>

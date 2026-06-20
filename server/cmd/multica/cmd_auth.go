@@ -327,8 +327,8 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 	// Verify the PAT works.
 	patClient := cli.NewAPIClient(serverURL, "", patResp.Token)
 	var me struct {
-		Name  string `json:"name"`
-		Email string `json:"email"`
+		Name    string `json:"name"`
+		Account string `json:"account"`
 	}
 	if err := patClient.GetJSON(ctx, "/api/me", &me); err != nil {
 		return cli.WithUserMessage("Sign-in did not complete: the server did not accept the new credential. Run `multica login` again.", err)
@@ -346,7 +346,7 @@ func runAuthLoginBrowser(cmd *cobra.Command) error {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Authenticated as %s (%s)\nToken saved to config.\n", me.Name, me.Email)
+	fmt.Fprintf(os.Stderr, "Authenticated as %s (%s)\nToken saved to config.\n", me.Name, me.Account)
 	return nil
 }
 
@@ -380,8 +380,8 @@ func runAuthLoginToken(cmd *cobra.Command, providedToken string) error {
 	defer cancel()
 
 	var me struct {
-		Name  string `json:"name"`
-		Email string `json:"email"`
+		Name    string `json:"name"`
+		Account string `json:"account"`
 	}
 	if err := client.GetJSON(ctx, "/api/me", &me); err != nil {
 		return cli.WithUserMessage("Could not sign in with that token — make sure it is valid and not expired, then run `multica login --token <token>` again.", err)
@@ -396,7 +396,7 @@ func runAuthLoginToken(cmd *cobra.Command, providedToken string) error {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	fmt.Fprintf(os.Stderr, "Authenticated as %s (%s)\nToken saved to config.\n", me.Name, me.Email)
+	fmt.Fprintf(os.Stderr, "Authenticated as %s (%s)\nToken saved to config.\n", me.Name, me.Account)
 	return nil
 }
 
@@ -415,11 +415,11 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 	defer cancel()
 
 	var me struct {
-		Name  string `json:"name"`
-		Email string `json:"email"`
+		Name    string `json:"name"`
+		Account string `json:"account"`
 	}
 	if err := client.GetJSON(ctx, "/api/me", &me); err != nil {
-		fmt.Fprintf(os.Stderr, "Token is invalid or expired: %v\nRun 'multica login' to re-authenticate.\n", err)
+		fmt.Fprintf(os.Stderr, "Token 无效或已过期：%v\n请运行 'multica login' 重新登录。\n", err)
 		return nil
 	}
 
@@ -428,16 +428,16 @@ func runAuthStatus(cmd *cobra.Command, _ []string) error {
 		prefix = prefix[:12] + "..."
 	}
 
-	fmt.Fprintf(os.Stderr, "Server:  %s\nUser:    %s (%s)\nToken:   %s\n", serverURL, me.Name, me.Email, prefix)
+	fmt.Fprintf(os.Stderr, "服务器：%s\n用户：  %s (%s)\nToken： %s\n", serverURL, me.Name, me.Account, prefix)
 	return nil
 }
 
 const callbackSuccessHTML = `<!DOCTYPE html>
-<html lang="en">
+<html lang="zh-CN">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Multica — Authenticated</title>
+<title>Multica — 已完成认证</title>
 <style>
   *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
   @media (prefers-color-scheme: dark) {
@@ -463,9 +463,9 @@ const callbackSuccessHTML = `<!DOCTYPE html>
       <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="2" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M4.5 12.75l6 6 9-13.5"/></svg>
     </div>
     <div class="brand"><span class="asterisk"></span></div>
-    <h1>Authentication successful</h1>
-    <p>You can close this tab and return to the terminal.</p>
-    <p class="hint">Your CLI session is now authenticated.</p>
+    <h1>认证成功</h1>
+    <p>可以关闭此标签页并返回终端。</p>
+    <p class="hint">CLI 会话已完成认证。</p>
   </div>
   <script>setTimeout(function(){window.close()},3000)</script>
 </body>
@@ -475,15 +475,15 @@ func runAuthLogout(cmd *cobra.Command, _ []string) error {
 	profile := resolveProfile(cmd)
 	cfg, _ := cli.LoadCLIConfigForProfile(profile)
 	if cfg.Token == "" {
-		fmt.Fprintln(os.Stderr, "Not authenticated.")
+		fmt.Fprintln(os.Stderr, "当前未登录。")
 		return nil
 	}
 
 	cfg.Token = ""
 	if err := cli.SaveCLIConfigForProfile(cfg, profile); err != nil {
-		return fmt.Errorf("failed to save config: %w", err)
+		return fmt.Errorf("保存配置失败：%w", err)
 	}
 
-	fmt.Fprintln(os.Stderr, "Token removed. You are now logged out.")
+	fmt.Fprintln(os.Stderr, "Token 已移除，当前已退出登录。")
 	return nil
 }

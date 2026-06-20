@@ -3,11 +3,11 @@ import { describe, expect, it, beforeEach, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../locales/en/common.json";
-import enWorkspace from "../locales/en/workspace.json";
+import enCommon from "../locales/zh-Hans/common.json";
+import enWorkspace from "../locales/zh-Hans/workspace.json";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, workspace: enWorkspace },
+  "zh-Hans": { common: enCommon, workspace: enWorkspace },
 };
 
 const mockPush = vi.hoisted(() => vi.fn());
@@ -44,7 +44,7 @@ import { CreateWorkspaceModal } from "./create-workspace";
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>
   );

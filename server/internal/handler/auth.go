@@ -39,23 +39,11 @@ func (e SignupError) Error() string {
 var ErrSignupProhibited = SignupError{Message: "user registration is disabled on this self-hosted instance"}
 var ErrAccountNotAllowed = SignupError{Message: "account not allowed on this instance"}
 
-// supportedLanguages mirrors `SUPPORTED_LOCALES` in packages/core/i18n/types.ts.
-// Keep both lists in sync when adding a locale — the user-controlled `language`
-// field round-trips through GetMe back into i18n.changeLanguage(), so without
-// validation an arbitrary string would persist and echo to every device.
-var supportedLanguages = map[string]struct{}{
-	"en":      {},
-	"zh-Hans": {},
-	"ko":      {},
-	"ja":      {},
-}
-
 type UserResponse struct {
 	ID        string  `json:"id"`
 	Name      string  `json:"name"`
-	Email     string  `json:"email"`
+	Account   string  `json:"account"`
 	AvatarURL *string `json:"avatar_url"`
-	Language  *string `json:"language"`
 	// Pinned IANA tz; nil = no preference (use browser-detected tz).
 	Timezone                *string         `json:"timezone"`
 	OnboardedAt             *string         `json:"onboarded_at"`
@@ -83,9 +71,8 @@ func userToResponse(u db.User) UserResponse {
 	return UserResponse{
 		ID:                      uuidToString(u.ID),
 		Name:                    u.Name,
-		Email:                   u.Email,
+		Account:                 u.Account,
 		AvatarURL:               textToPtr(u.AvatarUrl),
-		Language:                textToPtr(u.Language),
 		Timezone:                textToPtr(u.Timezone),
 		OnboardedAt:             timestampToPtr(u.OnboardedAt),
 		OnboardingQuestionnaire: json.RawMessage(q),
@@ -191,11 +178,11 @@ func verifyPassword(password, encoded string) bool {
 
 func (h *Handler) issueJWT(user db.User) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub":   uuidToString(user.ID),
-		"email": user.Email,
-		"name":  user.Name,
-		"exp":   time.Now().Add(auth.AuthTokenTTL()).Unix(),
-		"iat":   time.Now().Unix(),
+		"sub":     uuidToString(user.ID),
+		"account": user.Account,
+		"name":    user.Name,
+		"exp":     time.Now().Add(auth.AuthTokenTTL()).Unix(),
+		"iat":     time.Now().Unix(),
 	})
 	return token.SignedString(auth.JWTSecret())
 }
@@ -276,7 +263,7 @@ func (h *Handler) AccountPasswordLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	user, err := h.Queries.GetUserByEmail(r.Context(), account)
+	user, err := h.Queries.GetUserByAccount(r.Context(), account)
 	isNew := isNotFound(err)
 	if err != nil && !isNew {
 		writeError(w, http.StatusInternalServerError, "failed to lookup user")
@@ -299,8 +286,8 @@ func (h *Handler) AccountPasswordLogin(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		user, err = h.Queries.CreateUser(r.Context(), db.CreateUserParams{
-			Name:  account,
-			Email: account,
+			Name:    account,
+			Account: account,
 		})
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create user")
@@ -310,7 +297,7 @@ func (h *Handler) AccountPasswordLogin(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to save password")
 			return
 		}
-		obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.Signup(uuidToString(user.ID), user.Email, signupSourceFromRequest(r)))
+		obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.Signup(uuidToString(user.ID), user.Account, signupSourceFromRequest(r)))
 	} else {
 		var passwordHash string
 		if err := h.DB.QueryRow(r.Context(), `SELECT COALESCE(password_hash, '') FROM "user" WHERE id = $1`, user.ID).Scan(&passwordHash); err != nil {
@@ -364,7 +351,6 @@ func (h *Handler) GetMe(w http.ResponseWriter, r *http.Request) {
 type UpdateMeRequest struct {
 	Name               *string `json:"name"`
 	AvatarURL          *string `json:"avatar_url"`
-	Language           *string `json:"language"`
 	ProfileDescription *string `json:"profile_description"`
 	// IANA tz to pin; "" clears back to NULL; nil leaves untouched.
 	Timezone *string `json:"timezone"`
@@ -433,14 +419,6 @@ func (h *Handler) UpdateMe(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.AvatarURL != nil {
 		params.AvatarUrl = pgtype.Text{String: strings.TrimSpace(*req.AvatarURL), Valid: true}
-	}
-	if req.Language != nil {
-		lang := strings.TrimSpace(*req.Language)
-		if _, ok := supportedLanguages[lang]; !ok {
-			writeError(w, http.StatusBadRequest, "unsupported language")
-			return
-		}
-		params.Language = pgtype.Text{String: lang, Valid: true}
 	}
 	if req.ProfileDescription != nil {
 		// Count runes, not bytes: 2000 chars of Chinese must not be rejected

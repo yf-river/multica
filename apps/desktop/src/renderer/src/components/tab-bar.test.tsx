@@ -91,13 +91,13 @@ describe("TabBar hover action buttons", () => {
       { id: "tB", path: "/acme/projects", title: "Projects", icon: "ListTodo", pinned: false },
     ];
     const { getAllByLabelText } = render(<TabBar />);
-    expect(getAllByLabelText("Unpin tab")).toHaveLength(1);
-    expect(getAllByLabelText("Pin tab")).toHaveLength(1);
+    expect(getAllByLabelText("取消固定标签页")).toHaveLength(1);
+    expect(getAllByLabelText("固定标签页")).toHaveLength(1);
   });
 
   it("clicking the Pin button calls togglePin for the tab", () => {
     const { getAllByLabelText } = render(<TabBar />);
-    const pinButtons = getAllByLabelText("Pin tab");
+    const pinButtons = getAllByLabelText("固定标签页");
     fireEvent.click(pinButtons[1]); // click Pin on tB (Projects)
     expect(state.togglePin).toHaveBeenCalledWith("tB");
   });
@@ -108,7 +108,7 @@ describe("TabBar hover action buttons", () => {
       { id: "tB", path: "/acme/projects", title: "Projects", icon: "ListTodo", pinned: false },
     ];
     const { getByLabelText } = render(<TabBar />);
-    fireEvent.click(getByLabelText("Unpin tab"));
+    fireEvent.click(getByLabelText("取消固定标签页"));
     expect(state.togglePin).toHaveBeenCalledWith("tA");
   });
 
@@ -120,7 +120,7 @@ describe("TabBar hover action buttons", () => {
     const { queryAllByLabelText } = render(<TabBar />);
     // Only the unpinned tab exposes a Close affordance — pinned tab requires
     // explicit Unpin first (RFC §3 D3c FINAL).
-    expect(queryAllByLabelText("Close tab")).toHaveLength(1);
+    expect(queryAllByLabelText("关闭标签页")).toHaveLength(1);
   });
 
   it("keeps the full title visible on a pinned tab (no icon-only collapse)", () => {
@@ -128,7 +128,7 @@ describe("TabBar hover action buttons", () => {
       { id: "tA", path: "/acme/issues", title: "Issues", icon: "ListTodo", pinned: true },
     ];
     const { getByLabelText } = render(<TabBar />);
-    const pinnedTab = getByLabelText("Issues (pinned)");
+    const pinnedTab = getByLabelText("Issues（已固定）");
     expect(within(pinnedTab).getByText("Issues")).toBeTruthy();
   });
 
@@ -138,7 +138,7 @@ describe("TabBar hover action buttons", () => {
       { id: "tB", path: "/acme/projects", title: "Projects", icon: "ListTodo", pinned: false },
     ];
     const { getByLabelText } = render(<TabBar />);
-    const pinnedTab = getByLabelText("Issues (pinned)");
+    const pinnedTab = getByLabelText("Issues（已固定）");
     const unpinnedTab = getByLabelText("Projects");
     // lucide-react renders the icon name into the class list. The leading
     // slot icon is size-3.5; the hover Pin/Unpin action button is size-2.5,

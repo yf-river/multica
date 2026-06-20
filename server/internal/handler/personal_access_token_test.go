@@ -326,7 +326,7 @@ func TestRenewPAT_RejectsTokenBelongingToDifferentUser(t *testing.T) {
 	ctx := context.Background()
 	var otherUserID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO "user" (name, email)
+		INSERT INTO "user" (name, account)
 		VALUES ($1, $2)
 		RETURNING id
 	`, "Other User", "other-renew@multica.ai").Scan(&otherUserID); err != nil {

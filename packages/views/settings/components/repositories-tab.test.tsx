@@ -3,8 +3,8 @@ import { describe, it, expect, beforeEach, vi } from "vitest";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enSettings from "../../locales/en/settings.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enSettings from "../../locales/zh-Hans/settings.json";
 
 const mockUpdateWorkspace = vi.hoisted(() => vi.fn());
 const workspaceRef = vi.hoisted(() => ({
@@ -57,12 +57,12 @@ vi.mock("sonner", () => ({
 import { RepositoriesTab } from "./repositories-tab";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, settings: enSettings },
+  "zh-Hans": { common: enCommon, settings: enSettings },
 };
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>
   );

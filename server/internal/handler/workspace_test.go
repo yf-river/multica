@@ -45,8 +45,7 @@ func TestCreateWorkspace_RejectsReservedSlug(t *testing.T) {
 // set onboarded_at inside CreateWorkspace; this test makes the new
 // invariant explicit and regression-protected.
 //
-// CompleteOnboarding (Step 3 exit) and AcceptInvitation are the only
-// remaining handlers that flip onboarded_at.
+// CompleteOnboarding (Step 3 exit) is the handler that flips onboarded_at.
 func TestCreateWorkspace_DoesNotMarkOnboarded(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -450,11 +449,11 @@ INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'owner')
 		t.Fatalf("create requester member: %v", err)
 	}
 
-	targetEmail := fmt.Sprintf("revocation-%s@multica.ai", slug)
+	targetAccount := fmt.Sprintf("revocation-%s@multica", slug)
 	var targetUserID string
 	if err := testPool.QueryRow(ctx, `
-INSERT INTO "user" (name, email) VALUES ($1, $2) RETURNING id
-`, "Revocation Target "+slug, targetEmail).Scan(&targetUserID); err != nil {
+INSERT INTO "user" (name, account) VALUES ($1, $2) RETURNING id
+`, "Revocation Target "+slug, targetAccount).Scan(&targetUserID); err != nil {
 		t.Fatalf("create target user: %v", err)
 	}
 
@@ -717,8 +716,8 @@ INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, 'owner')
 
 	var targetUserID string
 	if err := testPool.QueryRow(ctx, `
-INSERT INTO "user" (name, email) VALUES ($1, $2) RETURNING id
-`, "Revocation No Runtimes Target", "revocation-no-runtimes@multica.ai").Scan(&targetUserID); err != nil {
+INSERT INTO "user" (name, account) VALUES ($1, $2) RETURNING id
+`, "Revocation No Runtimes Target", "revocation-no-runtimes@multica").Scan(&targetUserID); err != nil {
 		t.Fatalf("create target user: %v", err)
 	}
 	t.Cleanup(func() {

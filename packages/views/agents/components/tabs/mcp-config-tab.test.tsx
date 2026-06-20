@@ -5,10 +5,10 @@ import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { Agent } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../../locales/en/common.json";
-import enAgents from "../../../locales/en/agents.json";
+import enCommon from "../../../locales/zh-Hans/common.json";
+import enAgents from "../../../locales/zh-Hans/agents.json";
 
-const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, agents: enAgents } };
 
 vi.mock("sonner", () => ({
   toast: {
@@ -48,7 +48,7 @@ function renderTab(
 ) {
   const agent = { ...baseAgent, ...overrides };
   const result = render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <McpConfigTab agent={agent} onSave={onSave} />
     </I18nProvider>,
   );
@@ -162,7 +162,7 @@ describe("McpConfigTab", () => {
     const agent = { ...baseAgent, mcp_config: initial };
 
     const { rerender } = render(
-      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+      <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
         <McpConfigTab agent={agent} onSave={vi.fn()} />
       </I18nProvider>,
     );
@@ -173,7 +173,7 @@ describe("McpConfigTab", () => {
     expect(editor.value).toBe(JSON.stringify(initial, null, 2));
 
     rerender(
-      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+      <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
         <McpConfigTab
           agent={{ ...agent, mcp_config: updated }}
           onSave={vi.fn()}
@@ -195,7 +195,7 @@ describe("McpConfigTab", () => {
     const agent = { ...baseAgent, mcp_config: initial };
 
     const { rerender } = render(
-      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+      <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
         <McpConfigTab agent={agent} onSave={vi.fn()} />
       </I18nProvider>,
     );
@@ -208,7 +208,7 @@ describe("McpConfigTab", () => {
     expect(editor.value).toBe(draft);
 
     rerender(
-      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+      <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
         <McpConfigTab
           agent={{ ...agent, mcp_config: updated }}
           onSave={vi.fn()}

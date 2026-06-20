@@ -50,7 +50,7 @@ func generateToken(claims jwt.MapClaims, secret []byte) string {
 func validClaims() jwt.MapClaims {
 	return jwt.MapClaims{
 		"sub":   "test-user-id",
-		"email": "test@multica.ai",
+		"account": "testuser",
 		"exp":   time.Now().Add(time.Hour).Unix(),
 	}
 }
@@ -167,10 +167,10 @@ func TestAuth_WrongSigningMethod(t *testing.T) {
 }
 
 func TestAuth_ValidToken(t *testing.T) {
-	var gotUserID, gotEmail string
+	var gotUserID, gotAccount string
 	handler := authMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotUserID = r.Header.Get("X-User-ID")
-		gotEmail = r.Header.Get("X-User-Email")
+		gotAccount = r.Header.Get("X-User-Account")
 		w.WriteHeader(http.StatusOK)
 	}))
 
@@ -187,8 +187,8 @@ func TestAuth_ValidToken(t *testing.T) {
 	if gotUserID != "test-user-id" {
 		t.Fatalf("expected X-User-ID 'test-user-id', got '%s'", gotUserID)
 	}
-	if gotEmail != "test@multica.ai" {
-		t.Fatalf("expected X-User-Email 'test@multica.ai', got '%s'", gotEmail)
+	if gotAccount != "testuser" {
+		t.Fatalf("expected X-User-Account 'testuser', got '%s'", gotAccount)
 	}
 }
 
@@ -197,7 +197,7 @@ func TestAuth_MissingClaims(t *testing.T) {
 		t.Fatal("next handler should not be called")
 	}))
 
-	// Token with no sub or email claims, only exp
+	// Token with no sub or account claims, only exp
 	claims := jwt.MapClaims{
 		"exp": time.Now().Add(time.Hour).Unix(),
 	}

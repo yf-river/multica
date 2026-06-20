@@ -2,10 +2,10 @@ import { act, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../locales/en/common.json";
-import enOnboarding from "../locales/en/onboarding.json";
+import enCommon from "../locales/zh-Hans/common.json";
+import enOnboarding from "../locales/zh-Hans/onboarding.json";
 
-const TEST_RESOURCES = { en: { common: enCommon, onboarding: enOnboarding } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, onboarding: enOnboarding } };
 
 const { mockUser, mockSaveQuestionnaire, mockCaptureEvent } = vi.hoisted(() => ({
   mockUser: { value: null as null | Record<string, unknown> },
@@ -93,7 +93,7 @@ afterEach(() => {
 
 function renderModal() {
   return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <SourceBackfillModal />
     </I18nProvider>,
   );

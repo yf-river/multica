@@ -5,9 +5,9 @@ import type { ReactNode } from "react";
 import { render, screen } from "@testing-library/react";
 import type { Agent } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../../locales/en/common.json";
-import enAgents from "../../../locales/en/agents.json";
-import enSettings from "../../../locales/en/settings.json";
+import enCommon from "../../../locales/zh-Hans/common.json";
+import enAgents from "../../../locales/zh-Hans/agents.json";
+import enSettings from "../../../locales/zh-Hans/settings.json";
 
 // IntegrationsTab's job is to pick which copy sits beside the bind entry
 // based on (configured / install_supported / role). The bind entry itself
@@ -71,7 +71,7 @@ vi.mock("../../../settings/components/lark-tab", () => ({
 import { IntegrationsTab } from "./integrations-tab";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, agents: enAgents, settings: enSettings },
+  "zh-Hans": { common: enCommon, agents: enAgents, settings: enSettings },
 };
 
 const agent: Agent = {
@@ -99,7 +99,7 @@ const agent: Agent = {
 
 function renderTab(children: ReactNode) {
   return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>,
   );

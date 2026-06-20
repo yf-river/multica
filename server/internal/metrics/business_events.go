@@ -28,8 +28,6 @@ var prMergeSecondsBuckets = []float64{
 type businessEventMetrics struct {
 	signup                        *prometheus.CounterVec
 	workspaceCreated              *prometheus.CounterVec
-	teamInviteSent                *prometheus.CounterVec
-	teamInviteAccepted            *prometheus.CounterVec
 	onboardingStarted             *prometheus.CounterVec
 	onboardingQuestionnaireSubmit *prometheus.CounterVec
 	onboardingCompleted           *prometheus.CounterVec
@@ -65,14 +63,6 @@ func newBusinessEventMetrics() *businessEventMetrics {
 			Name: "multica_workspace_created_total",
 			Help: "Total workspaces created.",
 		}, metricLabels("multica_workspace_created_total")),
-		teamInviteSent: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "multica_team_invite_sent_total",
-			Help: "Total workspace invitations sent.",
-		}, metricLabels("multica_team_invite_sent_total")),
-		teamInviteAccepted: prometheus.NewCounterVec(prometheus.CounterOpts{
-			Name: "multica_team_invite_accepted_total",
-			Help: "Total workspace invitations accepted.",
-		}, metricLabels("multica_team_invite_accepted_total")),
 		onboardingStarted: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "multica_onboarding_started_total",
 			Help: "Total onboarding flows started.",
@@ -177,8 +167,6 @@ func (e *businessEventMetrics) collectors() []prometheus.Collector {
 	return []prometheus.Collector{
 		e.signup,
 		e.workspaceCreated,
-		e.teamInviteSent,
-		e.teamInviteAccepted,
 		e.onboardingStarted,
 		e.onboardingQuestionnaireSubmit,
 		e.onboardingCompleted,
@@ -241,10 +229,6 @@ func (m *BusinessMetrics) IncForEvent(ev analytics.Event) {
 		m.events.signup.WithLabelValues(NormalizeSignupSource(stringProp(ev.Properties, "signup_source"))).Inc()
 	case analytics.EventWorkspaceCreated:
 		m.events.workspaceCreated.WithLabelValues(NormalizeTaskSource(stringProp(ev.Properties, "source"))).Inc()
-	case analytics.EventTeamInviteSent:
-		m.events.teamInviteSent.WithLabelValues().Inc()
-	case analytics.EventTeamInviteAccepted:
-		m.events.teamInviteAccepted.WithLabelValues().Inc()
 	case analytics.EventOnboardingStarted:
 		m.events.onboardingStarted.WithLabelValues(NormalizePlatform(stringProp(ev.Properties, "platform"))).Inc()
 	case analytics.EventOnboardingQuestionnaireSubmit:

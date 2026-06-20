@@ -5,13 +5,13 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { Agent, MemberWithUser, Squad } from "@multica/core/types";
-import enCommon from "../locales/en/common.json";
-import enModals from "../locales/en/modals.json";
-import enAgents from "../locales/en/agents.json";
-import enIssues from "../locales/en/issues.json";
+import enCommon from "../locales/zh-Hans/common.json";
+import enModals from "../locales/zh-Hans/modals.json";
+import enAgents from "../locales/zh-Hans/agents.json";
+import enIssues from "../locales/zh-Hans/issues.json";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, modals: enModals, agents: enAgents, issues: enIssues },
+  "zh-Hans": { common: enCommon, modals: enModals, agents: enAgents, issues: enIssues },
 };
 
 const ME = "user-me";
@@ -223,7 +223,7 @@ function makeMember(user_id: string, name: string): MemberWithUser {
     workspace_id: "ws-1",
     role: "member",
     name,
-    email: `${user_id}@example.com`,
+    account: user_id,
     avatar_url: null,
     created_at: "2026-01-01T00:00:00Z",
   };
@@ -274,7 +274,7 @@ function lastMatch(label: string): HTMLElement {
 function renderModal() {
   const onClose = vi.fn();
   render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <CreateSquadModal onClose={onClose} />
     </I18nProvider>,
   );

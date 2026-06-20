@@ -270,15 +270,15 @@ vi.mock("sonner", () => ({
 }));
 
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../locales/en/common.json";
-import enModals from "../locales/en/modals.json";
+import enCommon from "../locales/zh-Hans/common.json";
+import enModals from "../locales/zh-Hans/modals.json";
 import { AgentCreatePanel } from "./quick-create-issue";
 
-const TEST_RESOURCES = { en: { common: enCommon, modals: enModals } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, modals: enModals } };
 
 function renderPanel(props: React.ComponentProps<typeof AgentCreatePanel>) {
   return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <AgentCreatePanel {...props} />
     </I18nProvider>,
   );
@@ -430,7 +430,7 @@ describe("AgentCreatePanel", () => {
 
   // Squads whose leader agent isn't visible (archived, private, etc.) must
   // not appear in the picker — the backend would reject the pick on
-  // validateAssigneePair, and showing them invites a confusing dead path.
+  // validateAssigneePair, and showing them creates a confusing dead path.
   it("hides squads whose leader agent is not in the visible-agents list", () => {
     mockSquadsData.list = [
       { id: "squad-orphan", name: "Orphan Squad", leader_id: "agent-missing", archived_at: null },

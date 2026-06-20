@@ -29,7 +29,7 @@ import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
 import { useT } from "../../i18n";
 
 function formatDate(date: string): string {
-  return formatDateOnly(date, { month: "short", day: "numeric" }, "en-US");
+  return formatDateOnly(date, { month: "short", day: "numeric" }, "zh-CN");
 }
 
 function descriptionPreview(markdown: string): string {

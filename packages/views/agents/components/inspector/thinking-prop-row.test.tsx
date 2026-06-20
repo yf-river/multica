@@ -14,12 +14,12 @@ import type {
   RuntimeModelListRequest,
 } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../../locales/en/common.json";
-import enAgents from "../../../locales/en/agents.json";
-import enIssues from "../../../locales/en/issues.json";
+import enCommon from "../../../locales/zh-Hans/common.json";
+import enAgents from "../../../locales/zh-Hans/agents.json";
+import enIssues from "../../../locales/zh-Hans/issues.json";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, agents: enAgents, issues: enIssues },
+  "zh-Hans": { common: enCommon, agents: enAgents, issues: enIssues },
 };
 
 const mockInitiateListModels = vi.hoisted(() => vi.fn());
@@ -84,7 +84,7 @@ function renderRow(
     // inspector parent declares — otherwise the row mounts without a
     // grid context and the column layout warns. Behaviour we care about
     // (visibility + clear flow) is independent of layout.
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <QueryClientProvider client={queryClient}>
         <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
           <ThinkingPropRow

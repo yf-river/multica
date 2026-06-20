@@ -27,7 +27,7 @@ export interface ChildProgress {
 }
 
 function formatDate(date: string): string {
-  return formatDateOnly(date, { month: "short", day: "numeric" }, "en-US");
+  return formatDateOnly(date, { month: "short", day: "numeric" }, "zh-CN");
 }
 
 function ListRowContent({

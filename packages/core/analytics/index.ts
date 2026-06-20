@@ -3,8 +3,8 @@
 // The source-of-truth event catalog is `docs/analytics.md`. This module only
 // handles the two things the backend can't do itself: attribution capture on
 // first anonymous pageview, and person-identity merge on login. Every funnel
-// event (signup, workspace_created, runtime_registered, issue_executed,
-// invite_sent, invite_accepted) is emitted server-side — see
+// event (signup, workspace_created, runtime_registered, issue_executed) is
+// emitted server-side — see
 // `server/internal/analytics`.
 //
 // Configuration comes from the backend's `/api/config` response (populated

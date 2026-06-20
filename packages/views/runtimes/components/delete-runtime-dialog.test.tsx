@@ -5,12 +5,12 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import type { Agent, AgentRuntime } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enRuntimes from "../../locales/en/runtimes.json";
-import enAgents from "../../locales/en/agents.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enRuntimes from "../../locales/zh-Hans/runtimes.json";
+import enAgents from "../../locales/zh-Hans/agents.json";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, runtimes: enRuntimes, agents: enAgents },
+  "zh-Hans": { common: enCommon, runtimes: enRuntimes, agents: enAgents },
 };
 
 // ApiError mirrors the production export. The dialog's parseActiveAgentsConflict
@@ -180,7 +180,7 @@ function renderDialog(opts: {
   }) as unknown as typeof useQuery);
 
   const utils = render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <QueryClientProvider client={qc}>
         <DeleteRuntimeDialog
           open

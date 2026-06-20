@@ -16,7 +16,7 @@ description: 代码命名规范、i18n 翻译术语表、中文风格指南的�
 工作区前置路由（用户进入工作区之前能访问的路由）必须用单个单词，或者 `/{noun}/{verb}` 格式。
 
 - ✅ `/login`、`/inbox`、`/workspaces/new`
-- ❌ `/new-workspace`、`/create-team`、`/accept-invite`
+- ❌ `/new-workspace`、`/create-team`、`/legacy-join`
 
 根目录的连字符词组会跟用户自选 workspace slug 冲突，逼着团队不停审保留字列表。把名词（`workspaces`）保留下来，整个 `/workspaces/*` 子树自动受保护。
 
@@ -149,9 +149,8 @@ Multica 的产品名词分两类：
 
 | 英 | 中 |
 | --- | --- |
-| Invite / Invitation | 邀请 |
+| Add user / Add member | 新增用户 / 添加成员 |
 | Search | 搜索 |
-| Email | 邮箱（label）/ 邮件（action） |
 | Password | 密码 |
 | Sign in / Log in | 登录 |
 | Sign up | 注册 |

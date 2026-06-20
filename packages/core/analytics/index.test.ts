@@ -113,9 +113,6 @@ describe("normalizePageviewPath", () => {
       analytics.normalizePageviewPath("/acme/issues/8d5c1a2b-0035-4c62-9f14-1ad4215736a5"),
     ).toBe("/acme/issues");
     expect(analytics.normalizePageviewPath("/acme/issues/MUL-123")).toBe("/acme/issues");
-    expect(
-      analytics.normalizePageviewPath("/invite/8d5c1a2b-0035-4c62-9f14-1ad4215736a5"),
-    ).toBe("/invite");
   });
 
   it("strips query string and hash", async () => {

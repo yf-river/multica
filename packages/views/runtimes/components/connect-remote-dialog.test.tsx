@@ -3,11 +3,11 @@ import { render } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { configStore } from "@multica/core/config";
-import enCommon from "../../locales/en/common.json";
-import enRuntimes from "../../locales/en/runtimes.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enRuntimes from "../../locales/zh-Hans/runtimes.json";
 import { ConnectRemoteDialog } from "./connect-remote-dialog";
 
-const TEST_RESOURCES = { en: { common: enCommon, runtimes: enRuntimes } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, runtimes: enRuntimes } };
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-test",
@@ -52,7 +52,7 @@ function renderDialog(config?: {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={qc}>
-      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+      <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
         <ConnectRemoteDialog onClose={vi.fn()} />
       </I18nProvider>
     </QueryClientProvider>,

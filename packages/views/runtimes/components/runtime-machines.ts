@@ -366,7 +366,7 @@ function shortDaemonId(daemonId: string): string {
 }
 
 function capitalize(value: string): string {
-  if (!value) return "Runtime";
+  if (!value) return "运行时";
   return `${value.slice(0, 1).toUpperCase()}${value.slice(1)}`;
 }
 

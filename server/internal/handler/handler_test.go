@@ -29,7 +29,7 @@ var testWorkspaceID string
 var testRuntimeID string
 
 const (
-	handlerTestEmail         = "handler-test@multica.ai"
+	handlerTestAccount       = "handler-test@multica"
 	handlerTestName          = "Handler Test User"
 	handlerTestWorkspaceSlug = "handler-tests"
 )
@@ -93,10 +93,10 @@ func setupHandlerTestFixture(ctx context.Context, pool *pgxpool.Pool) (string, s
 
 	var userID string
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO "user" (name, email)
+		INSERT INTO "user" (name, account)
 		VALUES ($1, $2)
 		RETURNING id
-	`, handlerTestName, handlerTestEmail).Scan(&userID); err != nil {
+	`, handlerTestName, handlerTestAccount).Scan(&userID); err != nil {
 		return "", "", err
 	}
 
@@ -145,7 +145,7 @@ func cleanupHandlerTestFixture(ctx context.Context, pool *pgxpool.Pool) error {
 	if _, err := pool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, handlerTestWorkspaceSlug); err != nil {
 		return err
 	}
-	if _, err := pool.Exec(ctx, `DELETE FROM "user" WHERE email = $1`, handlerTestEmail); err != nil {
+	if _, err := pool.Exec(ctx, `DELETE FROM "user" WHERE account = $1`, handlerTestAccount); err != nil {
 		return err
 	}
 	return nil
@@ -1910,26 +1910,6 @@ func TestUpdateMemberRejectsMalformedMemberID(t *testing.T) {
 	}
 }
 
-func TestRevokeInvitationRejectsMalformedInvitationID(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("DELETE", "/api/workspaces/"+testWorkspaceID+"/invitations/not-a-uuid", nil)
-	req = withURLParams(req, "id", testWorkspaceID, "invitationId", "not-a-uuid")
-	testHandler.RevokeInvitation(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("RevokeInvitation: expected 400 for malformed invitationId, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
-func TestGetMyInvitationRejectsMalformedID(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("GET", "/api/invitations/not-a-uuid", nil)
-	req = withURLParam(req, "id", "not-a-uuid")
-	testHandler.GetMyInvitation(w, req)
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("GetMyInvitation: expected 400 for malformed id, got %d: %s", w.Code, w.Body.String())
-	}
-}
-
 func TestAddReactionRejectsMalformedCommentID(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/comments/not-a-uuid/reactions", map[string]any{
@@ -2406,7 +2386,7 @@ func TestAccountPasswordLogin(t *testing.T) {
 	ctx := context.Background()
 
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM "user" WHERE email = $1`, account)
+		testPool.Exec(ctx, `DELETE FROM "user" WHERE account = $1`, account)
 	})
 
 	w := httptest.NewRecorder()
@@ -2425,13 +2405,13 @@ func TestAccountPasswordLogin(t *testing.T) {
 	if resp.Token == "" {
 		t.Fatal("AccountPasswordLogin: expected non-empty token")
 	}
-	if resp.User.Email != account {
-		t.Fatalf("AccountPasswordLogin: expected account %q, got %q", account, resp.User.Email)
+	if resp.User.Account != account {
+		t.Fatalf("AccountPasswordLogin: expected account %q, got %q", account, resp.User.Account)
 	}
 
-	user, err := testHandler.Queries.GetUserByEmail(ctx, account)
+	user, err := testHandler.Queries.GetUserByAccount(ctx, account)
 	if err != nil {
-		t.Fatalf("GetUserByEmail: %v", err)
+		t.Fatalf("GetUserByAccount: %v", err)
 	}
 	var passwordHash string
 	if err := testPool.QueryRow(ctx, `SELECT COALESCE(password_hash, '') FROM "user" WHERE id = $1`, user.ID).Scan(&passwordHash); err != nil {

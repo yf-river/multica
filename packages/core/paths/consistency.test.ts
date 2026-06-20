@@ -73,7 +73,6 @@ describe("global path / reserved slug consistency", () => {
     "/logout",
     "/signup",
     "/workspaces/",
-    "/invite/",
   ];
 
   it("isGlobalPath agrees with the canonical global prefix list", () => {

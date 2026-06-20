@@ -53,8 +53,8 @@ type Config struct {
 	// DisableWorkspaceCreation, when true, makes POST /api/workspaces return
 	// 403 for every caller. There is no role/owner exception because the repo
 	// has no platform-admin concept; operators bootstrap the workspace with
-	// the flag off, then flip it on and restart so subsequent users join via
-	// invitation only. The public /api/config endpoint mirrors this flag so
+	// the flag off, then flip it on and restart so subsequent users are added
+	// from workspace settings. The public /api/config endpoint mirrors this flag so
 	// the UI can hide every "Create workspace" affordance — see #3433.
 	DisableWorkspaceCreation bool
 	// PublicURL is the absolute base URL the API is reachable at from the

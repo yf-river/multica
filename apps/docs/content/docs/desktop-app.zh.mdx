@@ -64,7 +64,7 @@ macOS 版本已经签名 + 公证，第一次打开不会有"未知开发者"的
 | Windows ARM64 | `.exe`（带 `arm64` 后缀）|
 | Linux | `.AppImage` |
 
-安装后第一次打开需要登录——和 Web 版一样的 email + 验证码流程。登录成功后 Desktop 自动把工作区列表同步下来。
+安装后第一次打开需要使用账号和密码登录。登录成功后 Desktop 自动把工作区列表同步下来。
 
 <Callout type="info">
 **Desktop 默认连接 Multica Cloud，但可以通过本地配置文件指向自部署实例。** 应用内仍然没有“连接自部署”的切换入口。Desktop 会在 renderer 启动前读取 `~/.multica/desktop.json`；如果这个文件不存在，就使用 Cloud 默认值。

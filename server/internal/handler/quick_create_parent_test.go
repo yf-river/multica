@@ -78,7 +78,7 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 	// Foreign-workspace parent — must be rejected.
 	var foreignWorkspaceID, foreignUserID, foreignParentID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO "user" (name, email) VALUES ($1, $2) RETURNING id
+		INSERT INTO "user" (name, account) VALUES ($1, $2) RETURNING id
 	`, "QuickCreate Foreign", "quickcreate-foreign@multica.ai").Scan(&foreignUserID); err != nil {
 		t.Fatalf("create foreign user: %v", err)
 	}

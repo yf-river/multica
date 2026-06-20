@@ -71,7 +71,7 @@ export function getLocalTimezone(): string {
 function getTimezoneOffset(tz: string): string {
   if (tz === "UTC") return "UTC";
   try {
-    const parts = new Intl.DateTimeFormat("en-US", {
+    const parts = new Intl.DateTimeFormat("zh-CN", {
       timeZone: tz,
       timeZoneName: "shortOffset",
     }).formatToParts(new Date());

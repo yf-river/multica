@@ -253,11 +253,11 @@ function HeroCard({
         </div>
       </div>
 
-      {/* User-visible facts — Owner / Device / Runtime, each labelled.
+      {/* User-visible facts — owner / device / runtime, each labelled.
           Replaces the older dense `·`-separated meta strip that mixed
           everything (including dev-only IDs) at the same visual weight. */}
       <dl className="grid grid-cols-1 divide-y sm:grid-cols-3 sm:divide-x sm:divide-y-0">
-        <Fact label="Owner">
+        <Fact label="拥有者">
           {ownerMember ? (
             <span className="inline-flex min-w-0 items-center gap-1.5">
               <ActorAvatar
@@ -272,7 +272,7 @@ function HeroCard({
             <span className="text-sm text-muted-foreground">—</span>
           )}
         </Fact>
-        <Fact label="Device">
+        <Fact label="设备">
           {device?.hostname ? (
             <Tooltip>
               <TooltipTrigger
@@ -288,7 +288,7 @@ function HeroCard({
             <span className="text-sm text-muted-foreground">—</span>
           )}
         </Fact>
-        <Fact label="Runtime">
+        <Fact label="运行时">
           <span className="block truncate text-sm">
             {device?.runtime ?? (
               <span className="capitalize">{runtime.provider}</span>
@@ -317,12 +317,12 @@ function HeroCard({
           {showDetails && (
             <dl className="grid grid-cols-1 gap-y-2 border-t bg-muted/30 px-4 py-3 sm:grid-cols-2">
               {cliVersion && (
-                <Fact label="Daemon CLI" mono compact>
+                <Fact label="守护进程 CLI" mono compact>
                   {cliVersion}
                 </Fact>
               )}
               {daemonShort && (
-                <Fact label="Daemon ID" mono compact>
+                <Fact label="守护进程 ID" mono compact>
                   {daemonShort}
                 </Fact>
               )}

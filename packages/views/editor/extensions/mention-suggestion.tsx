@@ -449,14 +449,10 @@ function MentionRow({
         {item.type === "all" ? t(($) => $.mention.all_members) : item.label}
       </span>
       {item.type === "agent" && (
-        // "Agent" is a glossary-protected product term — kept un-translated.
-        // eslint-disable-next-line i18next/no-literal-string
-        <Badge variant="outline" className="ml-auto text-[10px] h-4 px-1.5">Agent</Badge>
+        <Badge variant="outline" className="ml-auto text-[10px] h-4 px-1.5">智能体</Badge>
       )}
       {item.type === "squad" && (
-        // "Squad" is a glossary-protected product term — kept un-translated.
-        // eslint-disable-next-line i18next/no-literal-string
-        <Badge variant="outline" className="ml-auto text-[10px] h-4 px-1.5">Squad</Badge>
+        <Badge variant="outline" className="ml-auto text-[10px] h-4 px-1.5">小队</Badge>
       )}
     </button>
   );

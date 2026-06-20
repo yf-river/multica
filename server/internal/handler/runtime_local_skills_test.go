@@ -50,15 +50,15 @@ func createRuntimeLocalSkillTestRuntime(t *testing.T, ownerID string) string {
 func createRuntimeLocalSkillTestMember(t *testing.T, role string) string {
 	t.Helper()
 
-	email := fmt.Sprintf("runtime-local-skills-%d@multica.ai", time.Now().UnixNano())
+	account := fmt.Sprintf("runtime-local-skills-%d@multica.ai", time.Now().UnixNano())
 	name := fmt.Sprintf("Runtime Local Skills %s", role)
 
 	var userID string
 	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO "user" (name, email)
+		INSERT INTO "user" (name, account)
 		VALUES ($1, $2)
 		RETURNING id
-	`, name, email).Scan(&userID); err != nil {
+	`, name, account).Scan(&userID); err != nil {
 		t.Fatalf("create user: %v", err)
 	}
 

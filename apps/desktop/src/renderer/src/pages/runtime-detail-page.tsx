@@ -11,7 +11,7 @@ export function RuntimeDetailPage() {
   const { data: runtimes } = useQuery(runtimeListOptions(wsId));
   const runtime = runtimes?.find((r) => r.id === id);
 
-  useDocumentTitle(runtime?.name ?? "Runtime");
+  useDocumentTitle(runtime?.name ?? "运行时");
 
   if (!id) return null;
   return <SharedRuntimeDetailPage runtimeId={id} />;

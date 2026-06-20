@@ -860,7 +860,7 @@ func TestListComments_FlagCombinationRules(t *testing.T) {
 // `since` filter empties this page, every comment in this page is <= since
 // ⇒ head.last_activity_at <= since ⇒ every older thread (strictly less
 // recent than head) also has last_activity_at < since ⇒ guaranteed empty.
-// Emitting a cursor in that case would invite the caller into a wasted
+// Emitting a cursor in that case would send the caller into a wasted
 // walk of pages that can never produce a row.
 func TestListComments_RecentWithSinceFilteredEmptySuppressesCursor(t *testing.T) {
 	if testHandler == nil || testPool == nil {
@@ -1045,7 +1045,7 @@ func TestListComments_ThreadTailEmitsReplyCursorWhenPageFull(t *testing.T) {
 
 	t.Run("tail=0 emits no cursor (no replies were requested)", func(t *testing.T) {
 		// tail=0 is the "I just want the root context" mode. There is no
-		// reply page to scroll, so the server must not invite the caller
+		// reply page to scroll, so the server must not send the caller
 		// to walk one.
 		v := url.Values{}
 		v.Set("thread", fx.Root1)

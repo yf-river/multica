@@ -2,11 +2,11 @@ import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enOnboarding from "../../locales/en/onboarding.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enOnboarding from "../../locales/zh-Hans/onboarding.json";
 import { StepQuestion, type QuestionOption } from "./step-question";
 
-const TEST_RESOURCES = { en: { common: enCommon, onboarding: enOnboarding } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, onboarding: enOnboarding } };
 
 const OPTIONS: readonly QuestionOption[] = [
   { slug: "a", icon: <span>A</span>, label: "Alpha" },
@@ -21,7 +21,7 @@ function renderShell(overrides: Partial<React.ComponentProps<typeof StepQuestion
   const onBack = vi.fn();
   const onOtherChange = vi.fn();
   render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <StepQuestion
         step="source"
         number={1}
@@ -103,7 +103,7 @@ describe("StepQuestion", () => {
 
   it("Back button is rendered only when onBack is provided", () => {
     const { unmount } = render(
-      <I18nProvider locale="en" resources={TEST_RESOURCES}>
+      <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
         <StepQuestion
           step="source"
           number={1}

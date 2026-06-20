@@ -8,12 +8,11 @@ import {
 const BASE_USER: User = {
   id: "u1",
   name: "User",
-  email: "u@example.com",
+  account: "user",
   avatar_url: null,
   onboarded_at: "2025-01-01T00:00:00Z",
   onboarding_questionnaire: {},
   starter_content_state: "imported",
-  language: null,
   profile_description: "",
   timezone: null,
   created_at: "2025-01-01T00:00:00Z",

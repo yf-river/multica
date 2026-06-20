@@ -87,7 +87,6 @@ import type {
   CreatePinRequest,
   PinnedItemType,
   ReorderPinsRequest,
-  Invitation,
   Autopilot,
   AutopilotTrigger,
   AutopilotRun,
@@ -1275,7 +1274,7 @@ export class ApiClient {
     return this.fetch(`/api/workspaces/${workspaceId}/members`);
   }
 
-  async createMember(workspaceId: string, data: CreateMemberRequest): Promise<Invitation> {
+  async createMember(workspaceId: string, data: CreateMemberRequest): Promise<MemberWithUser> {
     return this.fetch(`/api/workspaces/${workspaceId}/members`, {
       method: "POST",
       body: JSON.stringify(data),
@@ -1297,37 +1296,6 @@ export class ApiClient {
 
   async leaveWorkspace(workspaceId: string): Promise<void> {
     await this.fetch(`/api/workspaces/${workspaceId}/leave`, {
-      method: "POST",
-    });
-  }
-
-  // Invitations
-  async listWorkspaceInvitations(workspaceId: string): Promise<Invitation[]> {
-    return this.fetch(`/api/workspaces/${workspaceId}/invitations`);
-  }
-
-  async revokeInvitation(workspaceId: string, invitationId: string): Promise<void> {
-    await this.fetch(`/api/workspaces/${workspaceId}/invitations/${invitationId}`, {
-      method: "DELETE",
-    });
-  }
-
-  async listMyInvitations(): Promise<Invitation[]> {
-    return this.fetch("/api/invitations");
-  }
-
-  async getInvitation(invitationId: string): Promise<Invitation> {
-    return this.fetch(`/api/invitations/${invitationId}`);
-  }
-
-  async acceptInvitation(invitationId: string): Promise<MemberWithUser> {
-    return this.fetch(`/api/invitations/${invitationId}/accept`, {
-      method: "POST",
-    });
-  }
-
-  async declineInvitation(invitationId: string): Promise<void> {
-    await this.fetch(`/api/invitations/${invitationId}/decline`, {
       method: "POST",
     });
   }

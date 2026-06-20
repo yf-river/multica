@@ -6,16 +6,14 @@ import { create } from "zustand";
  * auto-redirect, or deep link; rendered above the tab system as a full-window
  * takeover.
  *
- * These flows used to be routes (`/workspaces/new`, `/invite/:id`) but on
+ * These flows used to be routes (`/workspaces/new`) but on
  * desktop the URL is invisible to users — routes are an implementation detail
  * of the tab system. Representing transitions as routes meant tabs tried to
- * persist them, TabBar rendered on top, and invite deep-linking had no clean
- * dispatch target. Modeling them as application state removes all three.
+ * persist them and TabBar rendered on top. Modeling them as application state
+ * removes both.
  */
 export type WindowOverlay =
   | { type: "new-workspace" }
-  | { type: "invite"; invitationId: string }
-  | { type: "invitations" }
   | { type: "onboarding" };
 
 interface WindowOverlayStore {

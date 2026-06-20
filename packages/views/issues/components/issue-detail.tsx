@@ -177,7 +177,7 @@ function SubscriberPopoverContent({
 
 function shortDate(date: string | null): string {
   if (!date) return "—";
-  return formatDateOnly(date, { month: "short", day: "numeric" }, "en-US");
+  return formatDateOnly(date, { month: "short", day: "numeric" }, "zh-CN");
 }
 
 type ActivityT = ReturnType<typeof useT<"issues">>["t"];
@@ -227,12 +227,12 @@ function formatActivity(
     }
     case "start_date_changed": {
       if (!details.to) return t(($) => $.activity.start_date_removed);
-      const formatted = formatDateOnly(details.to, { month: "short", day: "numeric" }, "en-US");
+      const formatted = formatDateOnly(details.to, { month: "short", day: "numeric" }, "zh-CN");
       return t(($) => $.activity.start_date_set, { date: formatted });
     }
     case "due_date_changed": {
       if (!details.to) return t(($) => $.activity.due_date_removed);
-      const formatted = formatDateOnly(details.to, { month: "short", day: "numeric" }, "en-US");
+      const formatted = formatDateOnly(details.to, { month: "short", day: "numeric" }, "zh-CN");
       return t(($) => $.activity.due_date_set, { date: formatted });
     }
     case "title_changed":
@@ -1969,7 +1969,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                       if (el) el.indeterminate = someChildrenSelected && !allChildrenSelected;
                     }}
                     onChange={handleToggleSelectAllChildren}
-                    aria-label="Select all sub-issues"
+                    aria-label="全选子 issue"
                     className={cn(
                       "ml-1 cursor-pointer accent-primary transition-opacity",
                       someChildrenSelected

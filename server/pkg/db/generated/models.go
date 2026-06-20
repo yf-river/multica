@@ -744,7 +744,7 @@ type TaskUsageHourlyRollupState struct {
 type User struct {
 	ID                      pgtype.UUID        `json:"id"`
 	Name                    string             `json:"name"`
-	Email                   string             `json:"email"`
+	Account                 string             `json:"account"`
 	AvatarUrl               pgtype.Text        `json:"avatar_url"`
 	CreatedAt               pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt               pgtype.Timestamptz `json:"updated_at"`
@@ -753,7 +753,6 @@ type User struct {
 	CloudWaitlistEmail      pgtype.Text        `json:"cloud_waitlist_email"`
 	CloudWaitlistReason     pgtype.Text        `json:"cloud_waitlist_reason"`
 	StarterContentState     pgtype.Text        `json:"starter_content_state"`
-	Language                pgtype.Text        `json:"language"`
 	ProfileDescription      string             `json:"profile_description"`
 	// User-preferred IANA timezone for report rendering (Viewing tz). NULL means "use the browser-detected tz at render time". Affects dashboards, charts, and any "today" label shown to this user. Does not affect data materialisation — all rollups remain in UTC.
 	Timezone pgtype.Text `json:"timezone"`
@@ -797,17 +796,4 @@ type Workspace struct {
 	IssuePrefix  string             `json:"issue_prefix"`
 	IssueCounter int32              `json:"issue_counter"`
 	AvatarUrl    pgtype.Text        `json:"avatar_url"`
-}
-
-type WorkspaceInvitation struct {
-	ID            pgtype.UUID        `json:"id"`
-	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
-	InviterID     pgtype.UUID        `json:"inviter_id"`
-	InviteeEmail  string             `json:"invitee_email"`
-	InviteeUserID pgtype.UUID        `json:"invitee_user_id"`
-	Role          string             `json:"role"`
-	Status        string             `json:"status"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
-	ExpiresAt     pgtype.Timestamptz `json:"expires_at"`
 }

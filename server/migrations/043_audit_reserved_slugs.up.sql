@@ -22,7 +22,7 @@ BEGIN
   FROM workspace
   WHERE slug IN (
     -- Auth + onboarding
-    'login', 'logout', 'signup', 'onboarding', 'invite', 'auth',
+    'login', 'logout', 'signup', 'onboarding', 'auth',
     -- Reserved for future platform routes
     'api', 'admin', 'settings', 'help', 'about', 'pricing', 'changelog',
     -- Next.js / hosting internals

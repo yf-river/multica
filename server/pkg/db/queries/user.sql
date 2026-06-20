@@ -2,12 +2,12 @@
 SELECT * FROM "user"
 WHERE id = $1;
 
--- name: GetUserByEmail :one
+-- name: GetUserByAccount :one
 SELECT * FROM "user"
-WHERE email = $1;
+WHERE account = $1;
 
 -- name: CreateUser :one
-INSERT INTO "user" (name, email, avatar_url)
+INSERT INTO "user" (name, account, avatar_url)
 VALUES ($1, $2, $3)
 RETURNING *;
 
@@ -27,7 +27,6 @@ RETURNING *;
 UPDATE "user" SET
     name = COALESCE($2, name),
     avatar_url = COALESCE($3, avatar_url),
-    language = COALESCE($4, language),
     profile_description = COALESCE(sqlc.narg('profile_description'), profile_description),
     timezone = CASE
         WHEN sqlc.narg('timezone')::text IS NULL THEN timezone
@@ -59,7 +58,7 @@ RETURNING *;
 -- name: JoinCloudWaitlist :one
 -- Records interest in cloud runtimes. Does NOT mark onboarding
 -- complete — the user still has to pick a real path (CLI / Skip)
--- in Step 3. Repeating the call overwrites email + reason.
+-- in Step 3. Repeating the call overwrites contact account + reason.
 UPDATE "user" SET
     cloud_waitlist_email = $2,
     cloud_waitlist_reason = $3,

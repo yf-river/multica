@@ -1,8 +1,4 @@
-import type {
-  LocaleAdapter,
-  LocaleResources,
-  SupportedLocale,
-} from "../i18n";
+import type { LocaleResources, SupportedLocale } from "../i18n";
 import type { StorageAdapter } from "../types/storage";
 
 /** Identifies the calling client to the server. Threaded through to
@@ -33,11 +29,8 @@ export interface CoreProviderProps {
   onLogout?: () => void;
   /** Identifies the calling client (web/desktop + version + os) to the server. */
   identity?: ClientIdentity;
-  /** Active locale, determined server-side (web) or at app boot (desktop). */
+  /** Active locale. Multica is Chinese-only. */
   locale: SupportedLocale;
-  /** i18next resources, server-preloaded for the active locale. */
+  /** i18next resources, preloaded for the active locale. */
   resources: Record<string, LocaleResources>;
-  /** Locale adapter for persisting user choice (used by Settings switcher).
-   *  Optional because some shells (e.g. CLI auth pages) don't need switching. */
-  localeAdapter?: LocaleAdapter;
 }

@@ -1909,10 +1909,10 @@ RETURNING id
 	mkUser := func(t *testing.T, label string) string {
 		t.Helper()
 		var id string
-		email := fmt.Sprintf("github-routes-%s-%s@multica.ai", slug, label)
+		account := fmt.Sprintf("github-routes-%s-%s@multica.ai", slug, label)
 		if err := testPool.QueryRow(ctx, `
-INSERT INTO "user" (name, email) VALUES ($1, $2) RETURNING id
-`, "GHR "+label, email).Scan(&id); err != nil {
+INSERT INTO "user" (name, account) VALUES ($1, $2) RETURNING id
+`, "GHR "+label, account).Scan(&id); err != nil {
 			t.Fatalf("create user %s: %v", label, err)
 		}
 		return id

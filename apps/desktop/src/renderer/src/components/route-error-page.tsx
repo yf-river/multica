@@ -72,10 +72,9 @@ export function DesktopRouteErrorPage() {
         <AlertTriangle className="h-6 w-6" aria-hidden="true" />
       </div>
       <div className="space-y-2">
-        <h2 className="text-lg font-semibold">Something went wrong in this tab</h2>
+        <h2 className="text-lg font-semibold">此标签页出错了</h2>
         <p className="max-w-lg text-sm text-muted-foreground">
-          A route-level renderer error was contained before it could take down the
-          desktop shell. Reload this tab, or send the report if it keeps happening.
+          渲染错误已被隔离，未影响桌面端外壳。请重新加载此标签页；如果持续出现，请发送报告。
         </p>
         <p className="max-w-lg truncate text-xs text-muted-foreground">{message}</p>
       </div>
@@ -86,11 +85,11 @@ export function DesktopRouteErrorPage() {
           onClick={() => useTabStore.getState().reloadActiveTab()}
         >
           <RotateCw className="mr-2 h-4 w-4" aria-hidden="true" />
-          Reload tab
+          重新加载标签页
         </Button>
         {safeRoute ? (
           <Button type="button" variant="outline" onClick={() => navigate(safeRoute, { replace: true })}>
-            Go to issues
+            前往 issue
           </Button>
         ) : null}
         <Button
@@ -99,7 +98,7 @@ export function DesktopRouteErrorPage() {
           onClick={() => useTabStore.getState().closeActiveTab()}
         >
           <X className="mr-2 h-4 w-4" aria-hidden="true" />
-          Close tab
+          关闭标签页
         </Button>
         <Button
           type="button"
@@ -110,7 +109,7 @@ export function DesktopRouteErrorPage() {
           }
         >
           <Send className="mr-2 h-4 w-4" aria-hidden="true" />
-          Report error
+          报告错误
         </Button>
       </div>
     </div>

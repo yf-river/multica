@@ -814,7 +814,7 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 
 	// Upload attachments and link them to the newly created issue.
 	// Failures here are partial-success: the issue exists already, so
-	// turning a non-zero exit on the caller would invite a retry that
+	// turning a non-zero exit on the caller would encourage a retry that
 	// duplicates the issue. Warn on stderr and continue.
 	issueID := strVal(result, "id")
 	for _, att := range pending {

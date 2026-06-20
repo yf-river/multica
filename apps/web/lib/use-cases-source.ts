@@ -2,25 +2,19 @@ import { loader } from "fumadocs-core/source";
 import { defineI18n } from "fumadocs-core/i18n";
 import type { SupportedLocale } from "@multica/core/i18n";
 import { useCases } from "@/.source";
-import { mergeUseCasePagesWithEnglishFallback } from "./use-case-locale-fallback";
 
-// Use-case content uses dot-suffixed MDX files (`<slug>.en.mdx`,
-// `<slug>.zh.mdx`, `<slug>.ko.mdx`, and `<slug>.ja.mdx`). The public route remains prefix-free; request locale is
-// resolved through the same cookie/header path as the rest of the web app.
+// Use-case content is Chinese-only after the locale-system cleanup.
 export const i18n = defineI18n({
-  languages: ["en", "zh", "ko", "ja"],
-  defaultLanguage: "en",
+  languages: ["zh"],
+  defaultLanguage: "zh",
   hideLocale: "default-locale",
   parser: "dot",
 });
 
 export type UseCaseLang = (typeof i18n.languages)[number];
 
-export function getUseCaseLangForLocale(locale: SupportedLocale): UseCaseLang {
-  if (locale === "zh-Hans") return "zh";
-  if (locale === "ko") return "ko";
-  if (locale === "ja") return "ja";
-  return "en";
+export function getUseCaseLangForLocale(_locale: SupportedLocale): UseCaseLang {
+  return "zh";
 }
 
 export const useCasesSource = loader({
@@ -31,14 +25,7 @@ export const useCasesSource = loader({
 
 export function getUseCasePagesForLocale(locale: SupportedLocale) {
   const lang = getUseCaseLangForLocale(locale);
-  const pages = useCasesSource.getPages(lang);
-
-  if (lang === i18n.defaultLanguage) return pages;
-
-  return mergeUseCasePagesWithEnglishFallback(
-    pages,
-    useCasesSource.getPages(i18n.defaultLanguage),
-  );
+  return useCasesSource.getPages(lang);
 }
 
 export function getUseCasePageForLocale(
@@ -46,9 +33,5 @@ export function getUseCasePageForLocale(
   locale: SupportedLocale,
 ) {
   const lang = getUseCaseLangForLocale(locale);
-  const page = useCasesSource.getPage(slugs, lang);
-
-  if (page || lang === i18n.defaultLanguage) return page;
-
-  return useCasesSource.getPage(slugs, i18n.defaultLanguage);
+  return useCasesSource.getPage(slugs, lang);
 }

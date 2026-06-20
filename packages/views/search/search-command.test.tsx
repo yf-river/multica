@@ -5,18 +5,18 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { SearchCommand } from "./search-command";
 import { useSearchStore } from "./search-store";
-import enCommon from "../locales/en/common.json";
-import enAuth from "../locales/en/auth.json";
-import enSettings from "../locales/en/settings.json";
-import enSearch from "../locales/en/search.json";
+import enCommon from "../locales/zh-Hans/common.json";
+import enAuth from "../locales/zh-Hans/auth.json";
+import enSettings from "../locales/zh-Hans/settings.json";
+import enSearch from "../locales/zh-Hans/search.json";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, auth: enAuth, settings: enSettings, search: enSearch },
+  "zh-Hans": { common: enCommon, auth: enAuth, settings: enSettings, search: enSearch },
 };
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>
   );
@@ -58,7 +58,7 @@ const {
       role: "owner" | "admin" | "member";
       created_at: string;
       name: string;
-      email: string;
+      account: string;
       avatar_url: string | null;
     }>,
   },
@@ -316,7 +316,7 @@ describe("SearchCommand", () => {
         role: "member",
         created_at: "2026-01-01T00:00:00Z",
         name: "Alice Zhang",
-        email: "alice@example.com",
+        account: "alice",
         avatar_url: null,
       },
       {
@@ -326,7 +326,7 @@ describe("SearchCommand", () => {
         role: "admin",
         created_at: "2026-01-01T00:00:00Z",
         name: "Bob Liu",
-        email: "bob@example.com",
+        account: "bob",
         avatar_url: null,
       },
     ];
@@ -536,7 +536,7 @@ describe("SearchCommand", () => {
         role: "member",
         created_at: "2026-01-01T00:00:00Z",
         name: "Alice Zhang",
-        email: "alice@example.com",
+        account: "alice",
         avatar_url: null,
       },
     ];

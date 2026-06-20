@@ -79,9 +79,6 @@ export function NewWorkspacePage({
                 </p>
               </div>
               <CreateWorkspaceForm onSuccess={onSuccess} />
-              <p className="text-center text-xs text-muted-foreground">
-                {t(($) => $.new_page.invite_hint)}
-              </p>
             </>
           )}
         </div>

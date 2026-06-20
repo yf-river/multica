@@ -114,8 +114,6 @@ func TestBusinessMetricsRegistryExposesAllFamilies(t *testing.T) {
 	// with one synthetic value so the gather loop below sees the family.
 	exerciseEvent(m, analytics.EventSignup, map[string]any{"signup_source": "test"})
 	exerciseEvent(m, analytics.EventWorkspaceCreated, map[string]any{"source": "manual"})
-	exerciseEvent(m, analytics.EventTeamInviteSent, nil)
-	exerciseEvent(m, analytics.EventTeamInviteAccepted, nil)
 	exerciseEvent(m, analytics.EventOnboardingStarted, map[string]any{"platform": "web"})
 	exerciseEvent(m, analytics.EventOnboardingQuestionnaireSubmit, nil)
 	exerciseEvent(m, analytics.EventOnboardingCompleted, map[string]any{"completion_path": "full"})

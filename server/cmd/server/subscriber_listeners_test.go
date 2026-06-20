@@ -34,16 +34,16 @@ func createTestIssue(t *testing.T, workspaceID, creatorID string) string {
 	return issueID
 }
 
-// createTestUser inserts a user with the given email and returns the UUID string.
-func createTestUser(t *testing.T, email string) string {
+// createTestUser inserts a user with the given account and returns the UUID string.
+func createTestUser(t *testing.T, account string) string {
 	t.Helper()
 	ctx := context.Background()
 	var userID string
 	err := testPool.QueryRow(ctx, `
-		INSERT INTO "user" (name, email)
+		INSERT INTO "user" (name, account)
 		VALUES ($1, $2)
 		RETURNING id
-	`, "Subscriber Test User", email).Scan(&userID)
+	`, "Subscriber Test User", account).Scan(&userID)
 	if err != nil {
 		t.Fatalf("createTestUser: %v", err)
 	}
@@ -55,9 +55,9 @@ func cleanupTestIssue(t *testing.T, issueID string) {
 	testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 }
 
-func cleanupTestUser(t *testing.T, email string) {
+func cleanupTestUser(t *testing.T, account string) {
 	t.Helper()
-	testPool.Exec(context.Background(), `DELETE FROM "user" WHERE email = $1`, email)
+	testPool.Exec(context.Background(), `DELETE FROM "user" WHERE account = $1`, account)
 }
 
 func isSubscribed(t *testing.T, queries *db.Queries, issueID, userType, userID string) bool {
@@ -122,9 +122,9 @@ func TestSubscriberIssueCreated_CreatorAndAssignee(t *testing.T) {
 	bus := events.New()
 	registerSubscriberListeners(bus, queries)
 
-	assigneeEmail := "subscriber-assignee-test@multica.ai"
-	assigneeID := createTestUser(t, assigneeEmail)
-	t.Cleanup(func() { cleanupTestUser(t, assigneeEmail) })
+	assigneeAccount := "subscriber-assignee-test@multica"
+	assigneeID := createTestUser(t, assigneeAccount)
+	t.Cleanup(func() { cleanupTestUser(t, assigneeAccount) })
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
@@ -206,9 +206,9 @@ func TestSubscriberIssueUpdated_AssigneeChanged(t *testing.T) {
 	bus := events.New()
 	registerSubscriberListeners(bus, queries)
 
-	assigneeEmail := "subscriber-new-assignee-test@multica.ai"
-	assigneeID := createTestUser(t, assigneeEmail)
-	t.Cleanup(func() { cleanupTestUser(t, assigneeEmail) })
+	assigneeAccount := "subscriber-new-assignee-test@multica"
+	assigneeID := createTestUser(t, assigneeAccount)
+	t.Cleanup(func() { cleanupTestUser(t, assigneeAccount) })
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
@@ -280,9 +280,9 @@ func TestSubscriberCommentCreated_CommenterSubscribed(t *testing.T) {
 	bus := events.New()
 	registerSubscriberListeners(bus, queries)
 
-	commenterEmail := "subscriber-commenter-test@multica.ai"
-	commenterID := createTestUser(t, commenterEmail)
-	t.Cleanup(func() { cleanupTestUser(t, commenterEmail) })
+	commenterAccount := "subscriber-commenter-test@multica"
+	commenterID := createTestUser(t, commenterAccount)
+	t.Cleanup(func() { cleanupTestUser(t, commenterAccount) })
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })

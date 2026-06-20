@@ -368,7 +368,7 @@ func TestResolveViewingTZ(t *testing.T) {
 
 	var userID string
 	if err := testPool.QueryRow(ctx,
-		`INSERT INTO "user" (name, email, timezone)
+		`INSERT INTO "user" (name, account, timezone)
 		 VALUES ('TZ Resolve', 'tz-resolve@multica.ai', 'Asia/Tokyo') RETURNING id`,
 	).Scan(&userID); err != nil {
 		t.Fatalf("insert user: %v", err)
@@ -399,7 +399,7 @@ func TestResolveViewingTZ(t *testing.T) {
 	// No ?tz= and no stored value → UTC.
 	var bareUserID string
 	if err := testPool.QueryRow(ctx,
-		`INSERT INTO "user" (name, email)
+		`INSERT INTO "user" (name, account)
 		 VALUES ('TZ Bare', 'tz-bare@multica.ai') RETURNING id`,
 	).Scan(&bareUserID); err != nil {
 		t.Fatalf("insert bare user: %v", err)
@@ -417,7 +417,7 @@ func TestResolveViewingTZ(t *testing.T) {
 	// string would reach SQL `AT TIME ZONE` and 500 every dashboard read.
 	var badTZUserID string
 	if err := testPool.QueryRow(ctx,
-		`INSERT INTO "user" (name, email, timezone)
+		`INSERT INTO "user" (name, account, timezone)
 		 VALUES ('TZ Bad', 'tz-bad@multica.ai', 'Bad/Zone') RETURNING id`,
 	).Scan(&badTZUserID); err != nil {
 		t.Fatalf("insert bad-tz user: %v", err)

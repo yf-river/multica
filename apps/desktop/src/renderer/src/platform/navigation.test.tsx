@@ -101,7 +101,7 @@ vi.mock("@multica/core/auth", () => ({
 
 vi.mock("@multica/core/paths", () => ({
   isReservedSlug: (s: string) =>
-    ["login", "workspaces", "invite", "onboarding", "invitations"].includes(s),
+    ["login", "workspaces", "onboarding"].includes(s),
 }));
 
 // DesktopNavigationProvider reads window.desktopAPI.runtimeConfig synchronously.

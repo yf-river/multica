@@ -2,13 +2,13 @@ import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enOnboarding from "../../locales/en/onboarding.json";
-import enWorkspace from "../../locales/en/workspace.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enOnboarding from "../../locales/zh-Hans/onboarding.json";
+import enWorkspace from "../../locales/zh-Hans/workspace.json";
 import type { Workspace } from "@multica/core/types";
 
 const TEST_RESOURCES = {
-  en: {
+  "zh-Hans": {
     common: enCommon,
     onboarding: enOnboarding,
     workspace: enWorkspace,
@@ -48,7 +48,7 @@ import { StepWorkspace } from "./step-workspace";
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>
   );
@@ -105,7 +105,7 @@ describe("StepWorkspace — DISABLE_WORKSPACE_CREATION gate", () => {
     renderStep({ existing: null, disabled: true });
 
     expect(
-      screen.getByText("Ask your administrator for an invitation.", {
+      screen.getByText("请联系管理员为你开通账号并加入工作区。", {
         exact: false,
       }),
     ).toBeInTheDocument();

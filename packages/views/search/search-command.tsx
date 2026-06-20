@@ -99,7 +99,7 @@ function memberInitials(name: string) {
 function matchesMember(member: MemberWithUser, query: string) {
   return (
     member.name.toLowerCase().includes(query) ||
-    member.email.toLowerCase().includes(query) ||
+    member.account.toLowerCase().includes(query) ||
     (query.length >= 3 && member.role.startsWith(query)) ||
     matchesPinyin(member.name, query)
   );
@@ -558,7 +558,7 @@ export function SearchCommand() {
                         <HighlightText text={member.name} query={query} />
                       </div>
                       <div className="truncate text-xs text-muted-foreground">
-                        <HighlightText text={member.email} query={query} />
+                        <HighlightText text={member.account} query={query} />
                       </div>
                     </div>
                   </CommandPrimitive.Item>

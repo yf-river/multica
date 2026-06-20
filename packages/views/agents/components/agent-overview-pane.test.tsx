@@ -5,10 +5,10 @@ import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Agent, AgentRuntime } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enAgents from "../../locales/en/agents.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enAgents from "../../locales/zh-Hans/agents.json";
 
-const TEST_RESOURCES = { en: { common: enCommon, agents: enAgents } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, agents: enAgents } };
 
 // AgentOverviewPane pulls in ActorIssuesPanel which in turn touches the api
 // layer. The test only cares about which top-of-pane tab buttons render,
@@ -105,7 +105,7 @@ function renderPane(runtimes: AgentRuntime[]) {
     defaultOptions: { queries: { retry: false } },
   });
   return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <QueryClientProvider client={queryClient}>
         <AgentOverviewPane
           agent={baseAgent}

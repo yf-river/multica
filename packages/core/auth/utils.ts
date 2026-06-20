@@ -1,7 +1,7 @@
 /**
  * Validate a post-login redirect URL and return it only if safe to follow.
  *
- * Only single-slash relative paths (e.g. `/invite/abc`) are accepted. Returns
+ * Only single-slash relative paths (e.g. `/issues/abc`) are accepted. Returns
  * `null` for unsafe or empty input — call sites decide the fallback so this
  * helper never overloads a specific path with "user did not pass next".
  *

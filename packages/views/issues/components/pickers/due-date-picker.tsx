@@ -51,7 +51,7 @@ export function DueDatePicker({
             <CalendarDays className="h-3.5 w-3.5 text-muted-foreground" />
             {date ? (
               <span className={isOverdue ? "text-destructive" : ""}>
-                {formatDateOnly(dueDate, { month: "short", day: "numeric" }, "en-US")}
+                {formatDateOnly(dueDate, { month: "short", day: "numeric" }, "zh-CN")}
               </span>
             ) : (
               <span className="text-muted-foreground">{t(($) => $.pickers.due_date.trigger_label)}</span>

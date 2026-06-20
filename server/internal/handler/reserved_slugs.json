@@ -13,8 +13,6 @@
         "auth",
         "oauth",
         "callback",
-        "invite",
-        "invitations",
         "verify",
         "reset",
         "password",

@@ -215,7 +215,7 @@ export function LoginPage({
               {t(($) => $.cli.title)}
             </CardTitle>
             <CardDescription>
-              {t(($) => $.cli.description, { email: existingUser.email })}
+              {t(($) => $.cli.description, { account: existingUser.account })}
             </CardDescription>
           </CardHeader>
           <CardContent className="flex flex-col gap-3">

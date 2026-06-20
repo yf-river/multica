@@ -3,17 +3,17 @@ import { describe, expect, it } from "vitest";
 import { render as rtlRender, screen, type RenderOptions } from "@testing-library/react";
 import { ONBOARDING_STEP_ORDER } from "@multica/core/onboarding";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/en/common.json";
-import enOnboarding from "../../locales/en/onboarding.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enOnboarding from "../../locales/zh-Hans/onboarding.json";
 import { StepHeader } from "./step-header";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, onboarding: enOnboarding },
+  "zh-Hans": { common: enCommon, onboarding: enOnboarding },
 };
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>
   );

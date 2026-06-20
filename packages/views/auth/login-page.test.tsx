@@ -3,17 +3,17 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { ReactElement, ReactNode } from "react";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../locales/en/common.json";
-import enAuth from "../locales/en/auth.json";
-import enSettings from "../locales/en/settings.json";
+import zhCommon from "../locales/zh-Hans/common.json";
+import zhAuth from "../locales/zh-Hans/auth.json";
+import zhSettings from "../locales/zh-Hans/settings.json";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, auth: enAuth, settings: enSettings },
+  "zh-Hans": { common: zhCommon, auth: zhAuth, settings: zhSettings },
 };
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>
   );
@@ -83,20 +83,20 @@ describe("LoginPage", () => {
   it("renders account and password fields", () => {
     renderWithI18n(<LoginPage onSuccess={onSuccess} />);
 
-    expect(screen.getByText(/sign in to multica/i)).toBeInTheDocument();
-    expect(screen.getByLabelText("Account")).toBeInTheDocument();
-    expect(screen.getByLabelText("Password")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Continue" })).toBeInTheDocument();
+    expect(screen.getByText("登录 Multica")).toBeInTheDocument();
+    expect(screen.getByLabelText("账号")).toBeInTheDocument();
+    expect(screen.getByLabelText("密码")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "继续" })).toBeInTheDocument();
   });
 
   it("logs in with account and password", async () => {
-    mockLogin.mockResolvedValueOnce({ id: "u1", email: "alice", name: "Alice" });
+    mockLogin.mockResolvedValueOnce({ id: "u1", account: "alice", name: "Alice" });
     const user = userEvent.setup();
     renderWithI18n(<LoginPage onSuccess={onSuccess} />);
 
-    await user.type(screen.getByLabelText("Account"), "alice");
-    await user.type(screen.getByLabelText("Password"), "correct-password");
-    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.type(screen.getByLabelText("账号"), "alice");
+    await user.type(screen.getByLabelText("密码"), "correct-password");
+    await user.click(screen.getByRole("button", { name: "继续" }));
 
     await waitFor(() => {
       expect(mockLogin).toHaveBeenCalledWith("alice", "correct-password");
@@ -106,15 +106,15 @@ describe("LoginPage", () => {
   });
 
   it("shows login errors", async () => {
-    mockLogin.mockRejectedValueOnce(new Error("invalid account or password"));
+    mockLogin.mockRejectedValueOnce(new Error("账号或密码错误"));
     const user = userEvent.setup();
     renderWithI18n(<LoginPage onSuccess={onSuccess} />);
 
-    await user.type(screen.getByLabelText("Account"), "alice");
-    await user.type(screen.getByLabelText("Password"), "wrong-password");
-    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.type(screen.getByLabelText("账号"), "alice");
+    await user.type(screen.getByLabelText("密码"), "wrong-password");
+    await user.click(screen.getByRole("button", { name: "继续" }));
 
-    expect(await screen.findByText("invalid account or password")).toBeInTheDocument();
+    expect(await screen.findByText("账号或密码错误")).toBeInTheDocument();
   });
 
   it("uses direct API login for CLI callback", async () => {
@@ -127,9 +127,9 @@ describe("LoginPage", () => {
       />,
     );
 
-    await user.type(screen.getByLabelText("Account"), "alice");
-    await user.type(screen.getByLabelText("Password"), "correct-password");
-    await user.click(screen.getByRole("button", { name: "Continue" }));
+    await user.type(screen.getByLabelText("账号"), "alice");
+    await user.type(screen.getByLabelText("密码"), "correct-password");
+    await user.click(screen.getByRole("button", { name: "继续" }));
 
     await waitFor(() => {
       expect(mockApiLogin).toHaveBeenCalledWith("alice", "correct-password");

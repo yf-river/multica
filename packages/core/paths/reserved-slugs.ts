@@ -25,8 +25,6 @@ export const RESERVED_SLUGS: ReadonlySet<string> = new Set([
   "auth",
   "oauth",
   "callback",
-  "invite",
-  "invitations",
   "verify",
   "reset",
   "password",

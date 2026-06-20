@@ -1,9 +1,4 @@
 import { NextResponse, type NextRequest } from "next/server";
-import { LOCALE_COOKIE } from "@multica/core/i18n";
-import {
-  MULTICA_LOCALE_HEADER,
-  resolveLocaleFromSignals,
-} from "./lib/locale-routing";
 
 // Old workspace-scoped route segments that existed before the URL refactor
 // (pre-#1131). Any URL with these as the FIRST segment is a legacy URL that
@@ -20,23 +15,6 @@ const LEGACY_ROUTE_SEGMENTS = new Set([
   "skills",
   "settings",
 ]);
-
-function resolveLocale(req: NextRequest): string {
-  return resolveLocaleFromSignals({
-    cookieLocale: req.cookies.get(LOCALE_COOKIE)?.value,
-    acceptLanguage: req.headers.get("accept-language"),
-  });
-}
-
-// Forward the resolved locale to RSC layouts via the `x-multica-locale`
-// request header. layout.tsx reads it through `await headers()`. The
-// `request: { headers }` form is what makes the header land on the upstream
-// request — without it the value would only sit on the response.
-function nextWithLocale(req: NextRequest): NextResponse {
-  const headers = new Headers(req.headers);
-  headers.set(MULTICA_LOCALE_HEADER, resolveLocale(req));
-  return NextResponse.next({ request: { headers } });
-}
 
 // Next.js 16 renamed `middleware` → `proxy`. API surface (NextRequest /
 // NextResponse / cookies / matcher) is identical; the only behavioral
@@ -81,7 +59,7 @@ export function proxy(req: NextRequest) {
 
   // --- Default: forward locale header to RSC, no redirect/rewrite ---
   // Covers logged-out root path, /login, /:slug/*, and everything else.
-  return nextWithLocale(req);
+  return NextResponse.next();
 }
 
 export const config = {

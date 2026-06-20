@@ -4,12 +4,12 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { configStore } from "@multica/core/config";
-import enCommon from "../locales/en/common.json";
-import enWorkspace from "../locales/en/workspace.json";
+import enCommon from "../locales/zh-Hans/common.json";
+import enWorkspace from "../locales/zh-Hans/workspace.json";
 import { CreateWorkspaceForm } from "./create-workspace-form";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, workspace: enWorkspace },
+  "zh-Hans": { common: enCommon, workspace: enWorkspace },
 };
 
 const mockMutate = vi.fn();
@@ -19,7 +19,7 @@ vi.mock("@multica/core/workspace/mutations", () => ({
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>
   );

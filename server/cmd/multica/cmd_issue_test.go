@@ -468,7 +468,7 @@ func TestTruncateID(t *testing.T) {
 		{"exact 8", "abcdefgh", "abcdefgh"},
 		{"longer than 8", "abcdefgh-1234-5678", "abcdefgh"},
 		{"empty", "", ""},
-		{"unicode", "日本語テスト文字列追加", "日本語テスト文字"},
+		{"unicode", "中文测试字符串追加", "中文测试字符串追"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

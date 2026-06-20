@@ -471,9 +471,9 @@ function SquadNameEditor({
     <InlineEditPopover
       value={value}
       onSave={onSave}
-      title="Rename squad"
-      placeholder="Squad name"
-      validate={(v) => (v.trim().length > 0 ? null : "Name is required")}
+      title="重命名小队"
+      placeholder="小队名称"
+      validate={(v) => (v.trim().length > 0 ? null : "请输入名称")}
     >
       {(triggerProps) => (
         <button
@@ -659,13 +659,13 @@ function AddMemberDialog({
                     type="text"
                     value={pickerFilter}
                     onChange={(e) => setPickerFilter(e.target.value)}
-                    placeholder="Search members or agents..."
+                    placeholder="搜索成员或智能体..."
                     className="w-full bg-transparent text-sm placeholder:text-muted-foreground outline-none"
                   />
                 </div>
                 <div className="p-1 max-h-72 overflow-y-auto">
                   {filteredMembers.length > 0 && (
-                    <PickerSection label="Members">
+                    <PickerSection label="成员">
                       {filteredMembers.map((m) => (
                         <PickerItem
                           key={m.user_id}
@@ -683,7 +683,7 @@ function AddMemberDialog({
                     </PickerSection>
                   )}
                   {filteredAgents.length > 0 && (
-                    <PickerSection label="Agents">
+                    <PickerSection label="智能体">
                       {filteredAgents.map((a) => (
                         <PickerItem
                           key={a.id}
@@ -850,25 +850,25 @@ function SquadDetailInspector({
           {t(($) => $.inspector.details_section)}
         </div>
         <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5">
-          <InspectorRow label="Leader">
+          <InspectorRow label="队长">
             <span className="flex min-w-0 items-center gap-1.5">
               <ActorAvatar actorType="agent" actorId={squad.leader_id} size={14} />
               <span className="truncate">{leaderName}</span>
             </span>
           </InspectorRow>
-          <InspectorRow label="Members">
+          <InspectorRow label="成员">
             <span className="text-muted-foreground tabular-nums">{memberCount}</span>
           </InspectorRow>
-          <InspectorRow label="Created by">
+          <InspectorRow label="创建者">
             <span className="flex min-w-0 items-center gap-1.5">
               <ActorAvatar actorType="member" actorId={squad.creator_id} size={14} />
               <span className="truncate">{creatorName}</span>
             </span>
           </InspectorRow>
-          <InspectorRow label="Created">
+          <InspectorRow label="创建时间">
             <span className="text-muted-foreground">{timeAgo(squad.created_at)}</span>
           </InspectorRow>
-          <InspectorRow label="Updated">
+          <InspectorRow label="更新时间">
             <span className="text-muted-foreground">{timeAgo(squad.updated_at)}</span>
           </InspectorRow>
         </div>
@@ -995,8 +995,8 @@ function SquadDescriptionEditorBody({
 type SquadDetailTab = "members" | "instructions";
 
 const squadDetailTabs: { id: SquadDetailTab; label: string; icon: typeof FileText }[] = [
-  { id: "members", label: "Members", icon: Users },
-  { id: "instructions", label: "Instructions", icon: FileText },
+  { id: "members", label: "成员", icon: Users },
+  { id: "instructions", label: "指令", icon: FileText },
 ];
 
 function SquadOverviewPane({

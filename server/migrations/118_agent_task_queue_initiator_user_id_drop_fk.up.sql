@@ -5,7 +5,7 @@
 -- `initiator_user_id` column and no FK.
 --
 -- The FK to the hot "user" table is what made 117 time out on a busy deploy, and
--- the column only feeds a best-effort name/email lookup at claim time, so the
+-- the column only feeds a best-effort name/account lookup at claim time, so the
 -- constraint is not needed. DROP CONSTRAINT only touches catalog metadata (a
 -- brief lock on agent_task_queue, no table scan, no lock on "user"). IF EXISTS
 -- makes this a no-op where 117 already ran in its FK-free form. See MUL-2645.

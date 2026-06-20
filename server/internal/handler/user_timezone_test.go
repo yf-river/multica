@@ -3,18 +3,20 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
-func newTimezoneTestUser(t *testing.T, email string) string {
+func newTimezoneTestUser(t *testing.T, account string) string {
 	t.Helper()
 	ctx := context.Background()
 
 	var userID string
 	if err := testPool.QueryRow(ctx,
-		`INSERT INTO "user" (name, email) VALUES ($1, $2) RETURNING id`,
-		"Timezone Test", email,
+		`INSERT INTO "user" (name, account) VALUES ($1, $2) RETURNING id`,
+		"Timezone Test", account,
 	).Scan(&userID); err != nil {
 		t.Fatalf("insert test user: %v", err)
 	}
@@ -22,6 +24,13 @@ func newTimezoneTestUser(t *testing.T, email string) string {
 		testPool.Exec(ctx, `DELETE FROM "user" WHERE id = $1`, userID)
 	})
 	return userID
+}
+
+func newPatchMeRequest(userID, body string) *http.Request {
+	req := httptest.NewRequest("PATCH", "/api/me", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-User-ID", userID)
+	return req
 }
 
 func TestUpdateMeAcceptsTimezone(t *testing.T) {

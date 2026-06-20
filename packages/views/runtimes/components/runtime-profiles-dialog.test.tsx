@@ -4,8 +4,8 @@ import { describe, expect, it, beforeEach, vi } from "vitest";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
 import type { RuntimeProfile } from "@multica/core/types";
-import enCommon from "../../locales/en/common.json";
-import enRuntimes from "../../locales/en/runtimes.json";
+import enCommon from "../../locales/zh-Hans/common.json";
+import enRuntimes from "../../locales/zh-Hans/runtimes.json";
 
 const queryState = vi.hoisted(() => ({
   profiles: [] as RuntimeProfile[],
@@ -40,7 +40,7 @@ vi.mock("./provider-logo", () => ({
 
 import { RuntimeProfilesDialog } from "./runtime-profiles-dialog";
 
-const TEST_RESOURCES = { en: { common: enCommon, runtimes: enRuntimes } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, runtimes: enRuntimes } };
 
 function profile(overrides: Partial<RuntimeProfile> = {}): RuntimeProfile {
   return {
@@ -62,7 +62,7 @@ function profile(overrides: Partial<RuntimeProfile> = {}): RuntimeProfile {
 
 function renderDialog() {
   return render(
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <RuntimeProfilesDialog wsId="ws-1" onClose={vi.fn()} />
     </I18nProvider>,
   );

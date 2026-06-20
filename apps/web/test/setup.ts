@@ -1,8 +1,8 @@
 import "@testing-library/jest-dom/vitest";
 import { vi } from "vitest";
 
-// jsdom doesn't provide ResizeObserver; stub it so components that rely on it
-// (e.g. input-otp) can render in tests.
+// jsdom doesn't provide ResizeObserver; stub it so layout-aware components can
+// render in tests.
 if (typeof globalThis.ResizeObserver === "undefined") {
   globalThis.ResizeObserver = class ResizeObserver {
     observe() {}

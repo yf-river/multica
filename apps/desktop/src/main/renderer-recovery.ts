@@ -131,10 +131,10 @@ export function createElectronReloadPrompt(
   return async (payload: ReloadPromptPayload): Promise<ReloadPromptResult> => {
     const result = await showMessageBox({
       type: "warning",
-      buttons: ["Reload", "Dismiss"],
+      buttons: ["重新加载", "忽略"],
       defaultId: 0,
       cancelId: 1,
-      title: "Multica needs to reload",
+      title: "Multica 需要重新加载",
       message: rendererRecoveryMessage(payload.kind),
       detail: rendererRecoveryDetail(payload),
     });
@@ -157,30 +157,30 @@ function isRecoverableRendererExit(details: unknown) {
 function rendererRecoveryMessage(kind: ReloadPromptPayload["kind"]) {
   switch (kind) {
     case "render-process-gone":
-      return "The desktop window stopped unexpectedly.";
+      return "桌面窗口意外停止。";
     case "preload-error":
-      return "The desktop window could not finish starting.";
+      return "桌面窗口未能完成启动。";
     case "unresponsive":
-      return "The desktop window has been stuck for a few seconds.";
+      return "桌面窗口已经卡住数秒。";
   }
 }
 
 function rendererRecoveryDetail(payload: ReloadPromptPayload) {
   const guidance = [
-    "Click Reload to refresh this window and keep using Multica.",
-    "If this keeps happening, please tell us what you were doing right before this message appeared and whether Reload recovered the window.",
+    "点击重新加载以刷新此窗口并继续使用 Multica。",
+    "如果问题持续出现，请告诉我们此消息出现前你正在做什么，以及重新加载是否恢复了窗口。",
   ];
 
   if (payload.kind === "unresponsive") {
     guidance.push(
-      "For macOS reports, an Activity Monitor sample of the Multica Helper (Renderer) process helps us find what blocked the app.",
+      "在 macOS 上反馈时，附上 Multica Helper (Renderer) 进程的活动监视器采样，有助于定位卡顿原因。",
     );
   }
 
   return [
     ...guidance,
     "",
-    "Diagnostic details:",
+    "诊断详情:",
     `kind: ${payload.kind}`,
     `context: ${JSON.stringify(payload.context)}`,
   ].join("\n");

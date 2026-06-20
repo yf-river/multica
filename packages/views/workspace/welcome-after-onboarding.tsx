@@ -318,20 +318,18 @@ function RuntimeWelcome({
   // Got it on the success view is what finally dismisses + navigates.
   const [successIssueId, setSuccessIssueId] = useState<string | null>(null);
 
-  // Resolve the role / use_case enum slugs to human-readable labels in
-  // the user's current locale, then build the markdown block that gets
-  // appended to every starter issue description. Memoized on t +
-  // i18n.language so a language switch refreshes everything in one
-  // re-render; bundle is rebuilt whenever the questionnaire row changes.
+  // Resolve the role / use_case enum slugs to Chinese labels, then build the
+  // markdown block that gets appended to every starter issue description.
+  // Memoized on t + i18n.language so the block rebuilds whenever i18n state or
+  // the questionnaire row changes.
   const userContextLabels: UserContextLabels = useMemo(() => {
-    const lang = pickContentLang(i18n.language);
     return {
       heading: t(($) => $.welcome_after_onboarding.user_context_heading),
       roleLabel: t(($) => $.welcome_after_onboarding.user_context_role_label),
       useCaseLabel: t(
         ($) => $.welcome_after_onboarding.user_context_use_case_label,
       ),
-      listSeparator: lang === "zh" || lang === "ja" ? "、" : ", ",
+      listSeparator: "、",
       role: {
         engineer: t(($) => $.questions.role.engineer),
         product: t(($) => $.questions.role.product),
@@ -423,7 +421,6 @@ function RuntimeWelcome({
   }
 
   // Phase 2: blocking modal with starter cards.
-  const lang = pickContentLang(i18n.language);
 
   const handleAssign = async () => {
     if (submitInFlightRef.current || selected.size === 0) return;
@@ -449,8 +446,8 @@ function RuntimeWelcome({
         orderedIds.map((id) => {
           const card = HELPER_STARTER_PROMPTS[id];
           return api.createIssue({
-            title: card.title[lang],
-            description: card.prompt[lang] + userContext,
+            title: card.title,
+            description: card.prompt + userContext,
             status: "todo",
             priority: "high",
             assignee_type: "agent",
@@ -604,7 +601,7 @@ function RuntimeWelcome({
                 >
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium leading-tight">
-                      {HELPER_STARTER_PROMPTS[id].title[lang]}
+                      {HELPER_STARTER_PROMPTS[id].title}
                     </p>
                     <p className="mt-0.5 text-xs text-muted-foreground leading-snug">
                       {t(

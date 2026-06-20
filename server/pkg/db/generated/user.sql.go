@@ -12,24 +12,24 @@ import (
 )
 
 const createUser = `-- name: CreateUser :one
-INSERT INTO "user" (name, email, avatar_url)
+INSERT INTO "user" (name, account, avatar_url)
 VALUES ($1, $2, $3)
-RETURNING id, name, email, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, cloud_waitlist_email, cloud_waitlist_reason, starter_content_state, language, profile_description, timezone
+RETURNING id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, cloud_waitlist_email, cloud_waitlist_reason, starter_content_state, profile_description, timezone
 `
 
 type CreateUserParams struct {
 	Name      string      `json:"name"`
-	Email     string      `json:"email"`
+	Account   string      `json:"account"`
 	AvatarUrl pgtype.Text `json:"avatar_url"`
 }
 
 func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, error) {
-	row := q.db.QueryRow(ctx, createUser, arg.Name, arg.Email, arg.AvatarUrl)
+	row := q.db.QueryRow(ctx, createUser, arg.Name, arg.Account, arg.AvatarUrl)
 	var i User
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
-		&i.Email,
+		&i.Account,
 		&i.AvatarUrl,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -38,7 +38,6 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 		&i.CloudWaitlistEmail,
 		&i.CloudWaitlistReason,
 		&i.StarterContentState,
-		&i.Language,
 		&i.ProfileDescription,
 		&i.Timezone,
 	)
@@ -46,7 +45,7 @@ func (q *Queries) CreateUser(ctx context.Context, arg CreateUserParams) (User, e
 }
 
 const getUser = `-- name: GetUser :one
-SELECT id, name, email, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, cloud_waitlist_email, cloud_waitlist_reason, starter_content_state, language, profile_description, timezone FROM "user"
+SELECT id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, cloud_waitlist_email, cloud_waitlist_reason, starter_content_state, profile_description, timezone FROM "user"
 WHERE id = $1
 `
 
@@ -56,7 +55,7 @@ func (q *Queries) GetUser(ctx context.Context, id pgtype.UUID) (User, error) {
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
-		&i.Email,
+		&i.Account,
 		&i.AvatarUrl,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -65,25 +64,24 @@ func (q *Queries) GetUser(ctx context.Context, id pgtype.UUID) (User, error) {
 		&i.CloudWaitlistEmail,
 		&i.CloudWaitlistReason,
 		&i.StarterContentState,
-		&i.Language,
 		&i.ProfileDescription,
 		&i.Timezone,
 	)
 	return i, err
 }
 
-const getUserByEmail = `-- name: GetUserByEmail :one
-SELECT id, name, email, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, cloud_waitlist_email, cloud_waitlist_reason, starter_content_state, language, profile_description, timezone FROM "user"
-WHERE email = $1
+const getUserByAccount = `-- name: GetUserByAccount :one
+SELECT id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, cloud_waitlist_email, cloud_waitlist_reason, starter_content_state, profile_description, timezone FROM "user"
+WHERE account = $1
 `
 
-func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error) {
-	row := q.db.QueryRow(ctx, getUserByEmail, email)
+func (q *Queries) GetUserByAccount(ctx context.Context, account string) (User, error) {
+	row := q.db.QueryRow(ctx, getUserByAccount, account)
 	var i User
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
-		&i.Email,
+		&i.Account,
 		&i.AvatarUrl,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -92,7 +90,6 @@ func (q *Queries) GetUserByEmail(ctx context.Context, email string) (User, error
 		&i.CloudWaitlistEmail,
 		&i.CloudWaitlistReason,
 		&i.StarterContentState,
-		&i.Language,
 		&i.ProfileDescription,
 		&i.Timezone,
 	)
@@ -105,7 +102,7 @@ UPDATE "user" SET
     cloud_waitlist_reason = $3,
     updated_at = now()
 WHERE id = $1
-RETURNING id, name, email, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, cloud_waitlist_email, cloud_waitlist_reason, starter_content_state, language, profile_description, timezone
+RETURNING id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, cloud_waitlist_email, cloud_waitlist_reason, starter_content_state, profile_description, timezone
 `
 
 type JoinCloudWaitlistParams struct {
@@ -116,14 +113,14 @@ type JoinCloudWaitlistParams struct {
 
 // Records interest in cloud runtimes. Does NOT mark onboarding
 // complete — the user still has to pick a real path (CLI / Skip)
-// in Step 3. Repeating the call overwrites email + reason.
+// in Step 3. Repeating the call overwrites contact email + reason.
 func (q *Queries) JoinCloudWaitlist(ctx context.Context, arg JoinCloudWaitlistParams) (User, error) {
 	row := q.db.QueryRow(ctx, joinCloudWaitlist, arg.ID, arg.CloudWaitlistEmail, arg.CloudWaitlistReason)
 	var i User
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
-		&i.Email,
+		&i.Account,
 		&i.AvatarUrl,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -132,7 +129,6 @@ func (q *Queries) JoinCloudWaitlist(ctx context.Context, arg JoinCloudWaitlistPa
 		&i.CloudWaitlistEmail,
 		&i.CloudWaitlistReason,
 		&i.StarterContentState,
-		&i.Language,
 		&i.ProfileDescription,
 		&i.Timezone,
 	)
@@ -144,7 +140,7 @@ UPDATE "user" SET
     onboarded_at = COALESCE(onboarded_at, now()),
     updated_at = now()
 WHERE id = $1
-RETURNING id, name, email, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, cloud_waitlist_email, cloud_waitlist_reason, starter_content_state, language, profile_description, timezone
+RETURNING id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, cloud_waitlist_email, cloud_waitlist_reason, starter_content_state, profile_description, timezone
 `
 
 func (q *Queries) MarkUserOnboarded(ctx context.Context, id pgtype.UUID) (User, error) {
@@ -153,7 +149,7 @@ func (q *Queries) MarkUserOnboarded(ctx context.Context, id pgtype.UUID) (User, 
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
-		&i.Email,
+		&i.Account,
 		&i.AvatarUrl,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -162,7 +158,6 @@ func (q *Queries) MarkUserOnboarded(ctx context.Context, id pgtype.UUID) (User, 
 		&i.CloudWaitlistEmail,
 		&i.CloudWaitlistReason,
 		&i.StarterContentState,
-		&i.Language,
 		&i.ProfileDescription,
 		&i.Timezone,
 	)
@@ -174,7 +169,7 @@ UPDATE "user" SET
     onboarding_questionnaire = COALESCE($1, onboarding_questionnaire),
     updated_at = now()
 WHERE id = $2
-RETURNING id, name, email, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, cloud_waitlist_email, cloud_waitlist_reason, starter_content_state, language, profile_description, timezone
+RETURNING id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, cloud_waitlist_email, cloud_waitlist_reason, starter_content_state, profile_description, timezone
 `
 
 type PatchUserOnboardingParams struct {
@@ -192,7 +187,7 @@ func (q *Queries) PatchUserOnboarding(ctx context.Context, arg PatchUserOnboardi
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
-		&i.Email,
+		&i.Account,
 		&i.AvatarUrl,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -201,7 +196,6 @@ func (q *Queries) PatchUserOnboarding(ctx context.Context, arg PatchUserOnboardi
 		&i.CloudWaitlistEmail,
 		&i.CloudWaitlistReason,
 		&i.StarterContentState,
-		&i.Language,
 		&i.ProfileDescription,
 		&i.Timezone,
 	)
@@ -213,7 +207,7 @@ UPDATE "user" SET
     starter_content_state = $2,
     updated_at = now()
 WHERE id = $1
-RETURNING id, name, email, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, cloud_waitlist_email, cloud_waitlist_reason, starter_content_state, language, profile_description, timezone
+RETURNING id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, cloud_waitlist_email, cloud_waitlist_reason, starter_content_state, profile_description, timezone
 `
 
 type SetStarterContentStateParams struct {
@@ -232,7 +226,7 @@ func (q *Queries) SetStarterContentState(ctx context.Context, arg SetStarterCont
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
-		&i.Email,
+		&i.Account,
 		&i.AvatarUrl,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -241,7 +235,6 @@ func (q *Queries) SetStarterContentState(ctx context.Context, arg SetStarterCont
 		&i.CloudWaitlistEmail,
 		&i.CloudWaitlistReason,
 		&i.StarterContentState,
-		&i.Language,
 		&i.ProfileDescription,
 		&i.Timezone,
 	)
@@ -252,23 +245,21 @@ const updateUser = `-- name: UpdateUser :one
 UPDATE "user" SET
     name = COALESCE($2, name),
     avatar_url = COALESCE($3, avatar_url),
-    language = COALESCE($4, language),
-    profile_description = COALESCE($5, profile_description),
+    profile_description = COALESCE($4, profile_description),
     timezone = CASE
-        WHEN $6::text IS NULL THEN timezone
-        WHEN $6::text = ''    THEN NULL
-        ELSE $6::text
+        WHEN $5::text IS NULL THEN timezone
+        WHEN $5::text = ''    THEN NULL
+        ELSE $5::text
     END,
     updated_at = now()
 WHERE id = $1
-RETURNING id, name, email, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, cloud_waitlist_email, cloud_waitlist_reason, starter_content_state, language, profile_description, timezone
+RETURNING id, name, account, avatar_url, created_at, updated_at, onboarded_at, onboarding_questionnaire, cloud_waitlist_email, cloud_waitlist_reason, starter_content_state, profile_description, timezone
 `
 
 type UpdateUserParams struct {
 	ID                 pgtype.UUID `json:"id"`
 	Name               string      `json:"name"`
 	AvatarUrl          pgtype.Text `json:"avatar_url"`
-	Language           pgtype.Text `json:"language"`
 	ProfileDescription pgtype.Text `json:"profile_description"`
 	Timezone           pgtype.Text `json:"timezone"`
 }
@@ -290,7 +281,6 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 		arg.ID,
 		arg.Name,
 		arg.AvatarUrl,
-		arg.Language,
 		arg.ProfileDescription,
 		arg.Timezone,
 	)
@@ -298,7 +288,7 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 	err := row.Scan(
 		&i.ID,
 		&i.Name,
-		&i.Email,
+		&i.Account,
 		&i.AvatarUrl,
 		&i.CreatedAt,
 		&i.UpdatedAt,
@@ -307,7 +297,6 @@ func (q *Queries) UpdateUser(ctx context.Context, arg UpdateUserParams) (User, e
 		&i.CloudWaitlistEmail,
 		&i.CloudWaitlistReason,
 		&i.StarterContentState,
-		&i.Language,
 		&i.ProfileDescription,
 		&i.Timezone,
 	)

@@ -2,15 +2,15 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../locales/en/common.json";
+import enCommon from "../locales/zh-Hans/common.json";
 
-const TEST_RESOURCES = { en: { common: enCommon } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon } };
 
 // ---------------------------------------------------------------------------
 // Hoisted mutable auth state — lets individual tests set different scenarios
 // ---------------------------------------------------------------------------
 const mockAuthState = vi.hoisted(() => ({
-  user: null as { id: string; email: string } | null,
+  user: null as { id: string; account: string } | null,
   isLoading: false,
 }));
 
@@ -38,7 +38,7 @@ import { LarkBindPage } from "./bind-page";
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>
   );
@@ -75,7 +75,7 @@ describe("LarkBindPage", () => {
 
   it("starts redemption immediately when user is already logged in", async () => {
     mockAuthState.isLoading = false;
-    mockAuthState.user = { id: "u1", email: "u@example.com" };
+    mockAuthState.user = { id: "u1", account: "u" };
     mockRedeemToken.mockResolvedValue({
       workspace_id: "ws1",
       installation_id: "inst1",
@@ -88,7 +88,7 @@ describe("LarkBindPage", () => {
 
   it("shows success state after successful redemption", async () => {
     mockAuthState.isLoading = false;
-    mockAuthState.user = { id: "u1", email: "u@example.com" };
+    mockAuthState.user = { id: "u1", account: "u" };
     mockRedeemToken.mockResolvedValue({
       workspace_id: "ws1",
       installation_id: "inst1",

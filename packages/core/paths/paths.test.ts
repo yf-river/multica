@@ -34,7 +34,6 @@ describe("paths (global)", () => {
   it("builds global paths without slug", () => {
     expect(paths.login()).toBe("/login");
     expect(paths.newWorkspace()).toBe("/workspaces/new");
-    expect(paths.invite("inv-1")).toBe("/invite/inv-1");
   });
 });
 
@@ -42,7 +41,6 @@ describe("isGlobalPath", () => {
   it("returns true for pre-workspace routes", () => {
     expect(isGlobalPath("/login")).toBe(true);
     expect(isGlobalPath("/workspaces/new")).toBe(true);
-    expect(isGlobalPath("/invite/abc")).toBe(true);
   });
 
   it("returns false for workspace-scoped paths", () => {

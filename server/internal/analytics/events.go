@@ -16,8 +16,6 @@ const (
 	EventAutopilotRunStarted           = "autopilot_run_started"
 	EventAutopilotRunCompleted         = "autopilot_run_completed"
 	EventAutopilotRunFailed            = "autopilot_run_failed"
-	EventTeamInviteSent                = "team_invite_sent"
-	EventTeamInviteAccepted            = "team_invite_accepted"
 	EventOnboardingStarted             = "onboarding_started"
 	EventOnboardingQuestionnaireSubmit = "onboarding_questionnaire_submitted"
 	EventAgentCreated                  = "agent_created"
@@ -91,7 +89,6 @@ const (
 	OnboardingPathFull           = "full"            // reached first_issue end of flow
 	OnboardingPathRuntimeSkipped = "runtime_skipped" // completed without connecting a runtime
 	OnboardingPathSkipExisting   = "skip_existing"   // "I've done this before" from welcome
-	OnboardingPathInviteAccept   = "invite_accept"   // accepted at least one invitation from /invitations
 	OnboardingPathUnknown        = "unknown"         // fallback when the server can't derive the path
 )
 
@@ -109,16 +106,15 @@ const (
 
 // Signup builds the signup event. signupSource is populated from the
 // frontend's stored UTM/referrer cookie if present; leave empty otherwise.
-func Signup(userID, email, signupSource string) Event {
+func Signup(userID, account, signupSource string) Event {
 	return Event{
 		Name:       EventSignup,
 		DistinctID: userID,
 		Properties: map[string]any{
-			"email_domain":  emailDomain(email),
 			"signup_source": signupSource,
 		},
 		SetOnce: map[string]any{
-			"email":         email,
+			"account":       account,
 			"signup_source": signupSource,
 		},
 	}
@@ -354,35 +350,6 @@ func AutopilotRunFailed(actorID, workspaceID, autopilotID, runID, cadence string
 		"error_type":     errorType,
 		"will_retry":     willRetry,
 	})
-}
-
-// TeamInviteSent fires when a workspace admin creates an invitation.
-// inviteMethod is "email" for now; future non-email invite flows can pass
-// their own value to keep this stable.
-func TeamInviteSent(inviterID, workspaceID, invitedEmail, inviteMethod string) Event {
-	return Event{
-		Name:        EventTeamInviteSent,
-		DistinctID:  inviterID,
-		WorkspaceID: workspaceID,
-		Properties: map[string]any{
-			"invited_email_domain": emailDomain(invitedEmail),
-			"invite_method":        inviteMethod,
-		},
-	}
-}
-
-// TeamInviteAccepted fires when the invitee accepts and joins the workspace.
-// daysSinceInvite lets us segment fast-acceptance (warm) from long-tail
-// acceptance (someone dug through old email).
-func TeamInviteAccepted(inviteeID, workspaceID string, daysSinceInvite int64) Event {
-	return Event{
-		Name:        EventTeamInviteAccepted,
-		DistinctID:  inviteeID,
-		WorkspaceID: workspaceID,
-		Properties: map[string]any{
-			"days_since_invite": daysSinceInvite,
-		},
-	}
 }
 
 // OnboardingQuestionnaireSubmitted fires the first time a user's
@@ -676,12 +643,4 @@ func feedbackLengthBucket(n int) string {
 	default:
 		return "2000+"
 	}
-}
-
-func emailDomain(email string) string {
-	at := strings.LastIndex(email, "@")
-	if at < 0 || at == len(email)-1 {
-		return ""
-	}
-	return strings.ToLower(email[at+1:])
 }

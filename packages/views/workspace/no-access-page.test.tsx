@@ -2,12 +2,12 @@ import type { ReactNode } from "react";
 import { describe, expect, it, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../locales/en/common.json";
-import enWorkspace from "../locales/en/workspace.json";
+import enCommon from "../locales/zh-Hans/common.json";
+import enWorkspace from "../locales/zh-Hans/workspace.json";
 import { NoAccessPage } from "./no-access-page";
 
 const TEST_RESOURCES = {
-  en: { common: enCommon, workspace: enWorkspace },
+  "zh-Hans": { common: enCommon, workspace: enWorkspace },
 };
 
 const navigate = vi.fn();
@@ -43,7 +43,7 @@ vi.mock("@multica/core/workspace/queries", () => ({
 
 function I18nWrapper({ children }: { children: ReactNode }) {
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       {children}
     </I18nProvider>
   );

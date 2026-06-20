@@ -19,7 +19,7 @@ import (
 // default). On such a deployment every install is really Lark, so once
 // region drives the host those rows would route to open.feishu.cn and
 // break the moment the operator clears the override (which the new docs
-// invite them to do). When either override host is the Lark international
+// encourage them to do). When either override host is the Lark international
 // host, we flip the still-default rows to 'lark'.
 //
 // Gating on the override is what makes this safe: the override was

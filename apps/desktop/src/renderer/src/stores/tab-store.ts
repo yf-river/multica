@@ -145,7 +145,7 @@ const ROUTE_ICONS: Record<string, string> = {
  * Resolve a route icon from a pathname.
  *
  * Tab paths are always workspace-scoped: `/{slug}/{route}/...`, so the route
- * segment lives at index 1. Pre-workspace flows (create, invite) are rendered
+ * segment lives at index 1. Pre-workspace flows are rendered
  * by the window overlay, never as tabs.
  *
  * Title is NOT determined here — it comes from document.title.
@@ -172,7 +172,7 @@ function extractWorkspaceSlug(path: string): string | null {
  * Defensive: catch paths that don't belong in the tab store.
  *
  * Two kinds of rejects:
- *  1. **Transition paths** (`/workspaces/new`, `/invite/...`). These are
+ *  1. **Transition paths** (`/workspaces/new`). These are
  *     pre-workspace flows rendered by the window overlay on desktop, not
  *     tab routes. The navigation adapter normally intercepts these before
  *     they reach the store; this guard catches older persisted state.
@@ -190,7 +190,7 @@ export function sanitizeTabPath(path: string): string | null {
   if (isReservedSlug(firstSegment)) {
     // Don't log for known transition paths — these are legitimate inputs
     // at the interception boundary (older persisted state or stale callers).
-    const isTransition = path === "/workspaces/new" || path.startsWith("/invite/");
+    const isTransition = path === "/workspaces/new";
     if (!isTransition) {
       // eslint-disable-next-line no-console
       console.warn(

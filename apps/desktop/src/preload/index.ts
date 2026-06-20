@@ -50,33 +50,10 @@ function fetchRuntimeConfig(): RuntimeConfigResult {
 const appInfo = fetchAppInfo();
 const runtimeConfig = fetchRuntimeConfig();
 
-// Read the OS-preferred locale that main injected via additionalArguments.
-// Zero IPC, zero blocking — process.argv is populated before preload runs.
-function fetchSystemLocale(): string {
-  const arg = process.argv.find((a) => a.startsWith("--multica-locale="));
-  return arg?.split("=")[1] ?? "en";
-}
-
-const systemLocale = fetchSystemLocale();
-
 const desktopAPI = {
   /** App version + normalized OS. Read once at preload time so the renderer
    *  can use it synchronously when initializing the API client. */
   appInfo,
-  /** OS-preferred locale (BCP 47), passed from main via additionalArguments.
-   *  Used by the renderer's LocaleAdapter as the system-preference signal. */
-  systemLocale,
-  /** Subscribe to OS language changes detected after boot. The renderer
-   *  decides whether to act (no-op when the user has an explicit Settings
-   *  choice). Returns an unsubscribe function. */
-  onSystemLocaleChanged: (callback: (locale: string) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, locale: string) =>
-      callback(locale);
-    ipcRenderer.on("locale:system-changed", handler);
-    return () => {
-      ipcRenderer.removeListener("locale:system-changed", handler);
-    };
-  },
   /** Validated runtime endpoint config, or a blocking config error. */
   runtimeConfig,
   /** Read + clear any freeze/crash breadcrumb left by a previous session, so
@@ -96,15 +73,6 @@ const desktopAPI = {
     ipcRenderer.on("auth:token", handler);
     return () => {
       ipcRenderer.removeListener("auth:token", handler);
-    };
-  },
-  /** Listen for invitation IDs delivered via deep link */
-  onInviteOpen: (callback: (invitationId: string) => void) => {
-    const handler = (_event: Electron.IpcRendererEvent, invitationId: string) =>
-      callback(invitationId);
-    ipcRenderer.on("invite:open", handler);
-    return () => {
-      ipcRenderer.removeListener("invite:open", handler);
     };
   },
   /** Open a URL in the default browser */

@@ -35,7 +35,7 @@ var (
 // the JWT_SECRET env var (set in .env) and stays in sync with the server.
 
 const (
-	integrationTestEmail         = "integration-test@multica.ai"
+	integrationTestAccount       = "integration-test"
 	integrationTestName          = "Integration Tester"
 	integrationTestWorkspaceSlug = "integration-tests"
 )
@@ -75,7 +75,7 @@ func TestMain(m *testing.M) {
 	testServer = httptest.NewServer(router)
 
 	// Generate a JWT token directly for the test user
-	testToken, err = generateTestJWT(testUserID, integrationTestEmail, integrationTestName)
+	testToken, err = generateTestJWT(testUserID, integrationTestAccount, integrationTestName)
 	if err != nil {
 		fmt.Printf("Failed to generate test JWT: %v\n", err)
 		testServer.Close()
@@ -103,10 +103,10 @@ func setupIntegrationTestFixture(ctx context.Context, pool *pgxpool.Pool) (strin
 
 	var userID string
 	if err := pool.QueryRow(ctx, `
-		INSERT INTO "user" (name, email)
+		INSERT INTO "user" (name, account)
 		VALUES ($1, $2)
 		RETURNING id
-	`, integrationTestName, integrationTestEmail).Scan(&userID); err != nil {
+	`, integrationTestName, integrationTestAccount).Scan(&userID); err != nil {
 		return "", "", err
 	}
 
@@ -154,7 +154,7 @@ func cleanupIntegrationTestFixture(ctx context.Context, pool *pgxpool.Pool) erro
 	if _, err := pool.Exec(ctx, `DELETE FROM workspace WHERE slug = $1`, integrationTestWorkspaceSlug); err != nil {
 		return err
 	}
-	if _, err := pool.Exec(ctx, `DELETE FROM "user" WHERE email = $1`, integrationTestEmail); err != nil {
+	if _, err := pool.Exec(ctx, `DELETE FROM "user" WHERE account = $1`, integrationTestAccount); err != nil {
 		return err
 	}
 	return nil
@@ -191,13 +191,13 @@ func readJSON(t *testing.T, resp *http.Response, v any) {
 	}
 }
 
-func generateTestJWT(userID, email, name string) (string, error) {
+func generateTestJWT(userID, account, name string) (string, error) {
 	token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-		"sub":   userID,
-		"email": email,
-		"name":  name,
-		"exp":   time.Now().Add(72 * time.Hour).Unix(),
-		"iat":   time.Now().Unix(),
+		"sub":     userID,
+		"account": account,
+		"name":    name,
+		"exp":     time.Now().Add(72 * time.Hour).Unix(),
+		"iat":     time.Now().Unix(),
 	})
 	return token.SignedString(auth.JWTSecret())
 }
@@ -281,7 +281,7 @@ func TestAccountPasswordLogin(t *testing.T) {
 
 	t.Cleanup(func() {
 		var userID string
-		err := testPool.QueryRow(ctx, `SELECT id FROM "user" WHERE email = $1`, account).Scan(&userID)
+		err := testPool.QueryRow(ctx, `SELECT id FROM "user" WHERE account = $1`, account).Scan(&userID)
 		if err == nil {
 			rows, queryErr := testPool.Query(ctx, `
 				SELECT w.id FROM workspace w JOIN member m ON m.workspace_id = w.id WHERE m.user_id = $1
@@ -296,7 +296,7 @@ func TestAccountPasswordLogin(t *testing.T) {
 				}
 			}
 		}
-		testPool.Exec(ctx, `DELETE FROM "user" WHERE email = $1`, account)
+		testPool.Exec(ctx, `DELETE FROM "user" WHERE account = $1`, account)
 	})
 
 	body, _ := json.Marshal(map[string]string{"account": account, "password": password})
@@ -313,7 +313,7 @@ func TestAccountPasswordLogin(t *testing.T) {
 	var loginResp struct {
 		Token string `json:"token"`
 		User  struct {
-			Email string `json:"email"`
+			Account string `json:"account"`
 		} `json:"user"`
 	}
 	readJSON(t, resp, &loginResp)
@@ -321,8 +321,8 @@ func TestAccountPasswordLogin(t *testing.T) {
 	if loginResp.Token == "" {
 		t.Fatal("expected non-empty token")
 	}
-	if loginResp.User.Email != account {
-		t.Fatalf("expected account %q, got %q", account, loginResp.User.Email)
+	if loginResp.User.Account != account {
+		t.Fatalf("expected account %q, got %q", account, loginResp.User.Account)
 	}
 
 	// Verify the token works with /api/me
@@ -343,10 +343,10 @@ func TestAccountPasswordLoginNewUserHasNoWorkspace(t *testing.T) {
 	ctx := context.Background()
 
 	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM "user" WHERE email = $1`, account)
+		testPool.Exec(ctx, `DELETE FROM "user" WHERE account = $1`, account)
 	})
 
-	testPool.Exec(ctx, `DELETE FROM "user" WHERE email = $1`, account)
+	testPool.Exec(ctx, `DELETE FROM "user" WHERE account = $1`, account)
 
 	body, _ := json.Marshal(map[string]string{"account": account, "password": "correct-password"})
 	resp, err := http.Post(testServer.URL+"/auth/login", "application/json", bytes.NewReader(body))
@@ -678,8 +678,8 @@ func TestWorkspacesThroughRouter(t *testing.T) {
 		t.Fatal("expected at least 1 member")
 	}
 	// Verify member has user info
-	if members[0]["email"] == nil || members[0]["email"] == "" {
-		t.Fatal("member should have email field")
+	if members[0]["account"] == nil || members[0]["account"] == "" {
+		t.Fatal("member should have account field")
 	}
 	if members[0]["role"] == nil || members[0]["role"] == "" {
 		t.Fatal("member should have role field")

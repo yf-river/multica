@@ -79,7 +79,7 @@ export function createAuthStore(options: AuthStoreOptions) {
         api.setToken(token);
       }
       onLogin?.();
-      identifyAnalytics(user.id, { email: user.email, name: user.name });
+      identifyAnalytics(user.id, { account: user.account, name: user.name });
       set({ user });
       return user;
     },
@@ -89,7 +89,7 @@ export function createAuthStore(options: AuthStoreOptions) {
       api.setToken(token);
       const user = await api.getMe();
       onLogin?.();
-      identifyAnalytics(user.id, { email: user.email, name: user.name });
+      identifyAnalytics(user.id, { account: user.account, name: user.name });
       set({ user, isLoading: false });
       return user;
     },

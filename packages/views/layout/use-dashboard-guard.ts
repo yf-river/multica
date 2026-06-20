@@ -34,10 +34,8 @@ import { useNavigation } from "../navigation";
  * regardless of onboarded. The blocking modal inside the workspace shell
  * handles completion.
  *
- * (Older comment claimed this state was physically impossible because
- * CreateWorkspace and AcceptInvitation atomically marked onboarded.
- * CreateWorkspace no longer marks; AcceptInvitation still does — invitees
- * skip the modal entirely.)
+ * (Older versions marked onboarding completion from workspace creation, but
+ * the current flow completes only after the onboarding runtime step.)
  *
  * We read the workspace list query state directly (rather than relying on
  * useCurrentWorkspace's null return) so we can distinguish "list loading"

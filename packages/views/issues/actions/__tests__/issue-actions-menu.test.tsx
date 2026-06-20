@@ -3,10 +3,10 @@ import { render, screen, fireEvent } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Issue } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../../locales/en/common.json";
-import enIssues from "../../../locales/en/issues.json";
+import enCommon from "../../../locales/zh-Hans/common.json";
+import enIssues from "../../../locales/zh-Hans/issues.json";
 
-const TEST_RESOURCES = { en: { common: enCommon, issues: enIssues } };
+const TEST_RESOURCES = { "zh-Hans": { common: enCommon, issues: enIssues } };
 
 // ---------------------------------------------------------------------------
 // Mocks — same pattern as the issue-detail test suite.
@@ -41,7 +41,7 @@ vi.mock("@multica/core/workspace/queries", () => ({
     queryKey: ["workspaces", "ws-1", "members"],
     queryFn: () =>
       Promise.resolve([
-        { user_id: "user-1", name: "Test User", email: "t@t.com", role: "admin" },
+        { user_id: "user-1", name: "Test User", account: "test", role: "admin" },
       ]),
   }),
   agentListOptions: () => ({
@@ -134,7 +134,7 @@ function wrap(ui: React.ReactNode) {
     defaultOptions: { queries: { retry: false } },
   });
   return (
-    <I18nProvider locale="en" resources={TEST_RESOURCES}>
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <QueryClientProvider client={qc}>{ui}</QueryClientProvider>
     </I18nProvider>
   );

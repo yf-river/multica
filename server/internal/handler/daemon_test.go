@@ -3065,7 +3065,7 @@ func TestClaimTask_ChatPopulatesInitiator(t *testing.T) {
 	// A separate user stands in for the Lark group session creator (installer).
 	var installerID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO "user" (name, email) VALUES ('Installer User', 'installer-test@multica.ai')
+		INSERT INTO "user" (name, account) VALUES ('Installer User', 'installer_test')
 		RETURNING id
 	`).Scan(&installerID); err != nil {
 		t.Fatalf("setup: create installer user: %v", err)
@@ -3104,10 +3104,10 @@ func TestClaimTask_ChatPopulatesInitiator(t *testing.T) {
 	}
 	var resp struct {
 		Task *struct {
-			InitiatorType  string `json:"initiator_type"`
-			InitiatorID    string `json:"initiator_id"`
-			InitiatorName  string `json:"initiator_name"`
-			InitiatorEmail string `json:"initiator_email"`
+			InitiatorType    string `json:"initiator_type"`
+			InitiatorID      string `json:"initiator_id"`
+			InitiatorName    string `json:"initiator_name"`
+			InitiatorAccount string `json:"initiator_account"`
 		} `json:"task"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
@@ -3117,10 +3117,10 @@ func TestClaimTask_ChatPopulatesInitiator(t *testing.T) {
 		t.Fatalf("expected a claimed task, got %s", w.Body.String())
 	}
 	if resp.Task.InitiatorType != "member" || resp.Task.InitiatorID != testUserID ||
-		resp.Task.InitiatorName != handlerTestName || resp.Task.InitiatorEmail != handlerTestEmail {
-		t.Errorf("chat initiator = {type:%q id:%q name:%q email:%q}, want {member %q %q %q}",
-			resp.Task.InitiatorType, resp.Task.InitiatorID, resp.Task.InitiatorName, resp.Task.InitiatorEmail,
-			testUserID, handlerTestName, handlerTestEmail)
+		resp.Task.InitiatorName != handlerTestName || resp.Task.InitiatorAccount != handlerTestAccount {
+		t.Errorf("chat initiator = {type:%q id:%q name:%q account:%q}, want {member %q %q %q}",
+			resp.Task.InitiatorType, resp.Task.InitiatorID, resp.Task.InitiatorName, resp.Task.InitiatorAccount,
+			testUserID, handlerTestName, handlerTestAccount)
 	}
 }
 
@@ -3503,15 +3503,15 @@ func installFreshMembershipCache(t *testing.T) {
 	t.Cleanup(func() { testHandler.MembershipCache = origCache })
 }
 
-// createEphemeralUser inserts a throwaway user with a unique email and
+// createEphemeralUser inserts a throwaway user with a unique account and
 // deletes it on test cleanup. Returns the user id as a string.
 func createEphemeralUser(t *testing.T, label string) string {
 	t.Helper()
-	email := fmt.Sprintf("membership-cache-%s-%s@multica.ai", label, uuid.NewString())
+	account := fmt.Sprintf("membership-cache-%s-%s@multica.ai", label, uuid.NewString())
 	var userID string
 	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO "user" (name, email) VALUES ($1, $2) RETURNING id
-	`, "Membership Cache Test "+label, email).Scan(&userID); err != nil {
+		INSERT INTO "user" (name, account) VALUES ($1, $2) RETURNING id
+	`, "Membership Cache Test "+label, account).Scan(&userID); err != nil {
 		t.Fatalf("create ephemeral user: %v", err)
 	}
 	t.Cleanup(func() {
@@ -3868,7 +3868,7 @@ func TestClaimTaskByRuntime_CommentTaskPopulatesNewCommentCount(t *testing.T) {
 
 // TestClaimTaskByRuntime_CommentTaskPopulatesInitiator verifies MUL-2645: the
 // claim response surfaces the triggering comment's member author as the task
-// initiator (type + id + name + email), so a workspace-visible agent learns who
+// initiator (type + id + name + account), so a workspace-visible agent learns who
 // actually asked rather than seeing the runtime owner. createCommentTriggeredClaimTask
 // authors the trigger comment as the fixture member (testUserID).
 func TestClaimTaskByRuntime_CommentTaskPopulatesInitiator(t *testing.T) {
@@ -3889,11 +3889,11 @@ func TestClaimTaskByRuntime_CommentTaskPopulatesInitiator(t *testing.T) {
 	}
 	var resp struct {
 		Task *struct {
-			ID             string `json:"id"`
-			InitiatorType  string `json:"initiator_type"`
-			InitiatorID    string `json:"initiator_id"`
-			InitiatorName  string `json:"initiator_name"`
-			InitiatorEmail string `json:"initiator_email"`
+			ID               string `json:"id"`
+			InitiatorType    string `json:"initiator_type"`
+			InitiatorID      string `json:"initiator_id"`
+			InitiatorName    string `json:"initiator_name"`
+			InitiatorAccount string `json:"initiator_account"`
 		} `json:"task"`
 	}
 	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
@@ -3911,8 +3911,8 @@ func TestClaimTaskByRuntime_CommentTaskPopulatesInitiator(t *testing.T) {
 	if resp.Task.InitiatorName != handlerTestName {
 		t.Errorf("initiator_name = %q, want %q", resp.Task.InitiatorName, handlerTestName)
 	}
-	if resp.Task.InitiatorEmail != handlerTestEmail {
-		t.Errorf("initiator_email = %q, want %q", resp.Task.InitiatorEmail, handlerTestEmail)
+	if resp.Task.InitiatorAccount != handlerTestAccount {
+		t.Errorf("initiator_account = %q, want %q", resp.Task.InitiatorAccount, handlerTestAccount)
 	}
 }
 

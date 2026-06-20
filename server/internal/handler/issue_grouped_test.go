@@ -16,7 +16,7 @@ func TestListGroupedIssuesAssigneePaginatesPerGroup(t *testing.T) {
 	suffix := time.Now().UnixNano()
 	var assigneeID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO "user" (name, email)
+		INSERT INTO "user" (name, account)
 		VALUES ($1, $2)
 		RETURNING id
 	`, "Grouped Issues Test User", fmt.Sprintf("grouped-%d@multica.ai", suffix)).Scan(&assigneeID); err != nil {

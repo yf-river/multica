@@ -582,7 +582,7 @@ export function AgentCreatePanel({
 // ActorPicker — the "Created by" trigger + searchable popover listing
 // agents and squads. Lives in this file (not under issues/components/pickers)
 // because it composes the generic PropertyPicker with a quick-create-shaped
-// trigger styled to match the modal header row — promoting it would invite
+// trigger styled to match the modal header row — promoting it would create
 // reuse pressure on a UI that's deliberately tuned for this one surface.
 function ActorPicker({
   actor,

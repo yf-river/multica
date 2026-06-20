@@ -2,14 +2,10 @@
 
 import { Suspense, useEffect, useState } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
-import { useQueryClient, type QueryClient } from "@tanstack/react-query";
+import { useQueryClient } from "@tanstack/react-query";
 import { sanitizeNextUrl, useAuthStore } from "@multica/core/auth";
 import { workspaceKeys } from "@multica/core/workspace/queries";
-import {
-  paths,
-  resolvePostAuthDestination,
-  useHasOnboarded,
-} from "@multica/core/paths";
+import { resolvePostAuthDestination, useHasOnboarded } from "@multica/core/paths";
 import { api } from "@multica/core/api";
 import type { Workspace } from "@multica/core/types";
 import {
@@ -25,32 +21,6 @@ import { setLoggedInCookie } from "@/features/auth/auth-cookie";
 import { LoginPage, validateCliCallback } from "@multica/views/auth";
 import { useT } from "@multica/views/i18n";
 
-/**
- * Pick where a logged-in user with no explicit `?next=` should land.
- * Un-onboarded users with pending invitations on their email get routed to
- * the batch /invitations page; everyone else falls through to the standard
- * resolver. A network blip on listMyInvitations is non-fatal — we fall
- * through rather than trap the user on an error screen.
- */
-async function resolveLoggedInDestination(
-  qc: QueryClient,
-  hasOnboarded: boolean,
-  workspaces: Workspace[],
-): Promise<string> {
-  if (!hasOnboarded) {
-    try {
-      const invites = await api.listMyInvitations();
-      if (invites.length > 0) {
-        qc.setQueryData(workspaceKeys.myInvitations(), invites);
-        return paths.invitations();
-      }
-    } catch {
-      // fall through
-    }
-  }
-  return resolvePostAuthDestination(workspaces, hasOnboarded);
-}
-
 function LoginPageContent() {
   const router = useRouter();
   const qc = useQueryClient();
@@ -63,8 +33,8 @@ function LoginPageContent() {
   const cliState = searchParams.get("cli_state") || "";
   const platform = searchParams.get("platform");
   const isDesktopHandoff = platform === "desktop" && !cliCallbackRaw;
-  // `next` carries a protected URL the user was originally headed to
-  // (e.g. /invite/{id}). With URL-driven workspaces there is no legacy
+  // `next` carries a protected URL the user was originally headed to.
+  // With URL-driven workspaces there is no legacy
   // "/issues" default — if `next` is absent we decide after login based on
   // the user's workspace list. Sanitize first so a crafted `?next=https://evil`
   // cannot bounce the user off-origin after a successful login.
@@ -103,9 +73,7 @@ function LoginPageContent() {
       return;
     }
     const list = qc.getQueryData<Workspace[]>(workspaceKeys.list()) ?? [];
-    void resolveLoggedInDestination(qc, hasOnboarded, list).then((dest) =>
-      router.replace(dest),
-    );
+    router.replace(resolvePostAuthDestination(list, hasOnboarded));
   }, [isLoading, user, router, nextUrl, cliCallbackRaw, isDesktopHandoff, hasOnboarded, qc]);
 
   const handleSuccess = async () => {
@@ -118,7 +86,7 @@ function LoginPageContent() {
       return;
     }
     const list = qc.getQueryData<Workspace[]>(workspaceKeys.list()) ?? [];
-    router.push(await resolveLoggedInDestination(qc, onboarded, list));
+    router.push(resolvePostAuthDestination(list, onboarded));
   };
 
   // While the desktop handoff is in progress (or has produced a token/error),

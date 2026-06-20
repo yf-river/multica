@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="docs/assets/banner.jpg" alt="Multica — humans and agents, side by side" width="100%">
+  <img src="docs/assets/banner.jpg" alt="Multica — 人类与 AI，并肩前行" width="100%">
 </p>
 
 <div align="center">
@@ -12,75 +12,73 @@
 
 # Multica
 
-**Your next 10 hires won't be human.**
+**你的下一批员工，不是人类。**
 
-The open-source managed agents platform.<br/>
-Turn coding agents into real teammates — assign tasks, track progress, compound skills.
+开源的 Managed Agents 平台。<br/>
+将编码 Agent 变成真正的队友——分配任务、跟踪进度、积累技能。
 
 [![CI](https://github.com/multica-ai/multica/actions/workflows/ci.yml/badge.svg)](https://github.com/multica-ai/multica/actions/workflows/ci.yml)
 [![GitHub stars](https://img.shields.io/github/stars/multica-ai/multica?style=flat)](https://github.com/multica-ai/multica/stargazers)
 
-[Website](https://multica.ai) · [Cloud](https://multica.ai) · [X](https://x.com/MulticaAI) · [Self-Hosting](SELF_HOSTING.md) · [Contributing](CONTRIBUTING.md)
-
-**English | [简体中文](README.zh-CN.md)**
+[官网](https://multica.ai) · [云服务](https://multica.ai) · [X](https://x.com/MulticaAI) · [自部署指南](SELF_HOSTING.md) · [参与贡献](CONTRIBUTING.md)
 
 </div>
 
-## What is Multica?
+## Multica 是什么？
 
-Multica turns coding agents into real teammates. Assign issues to an agent like you'd assign to a colleague — they'll pick up the work, write code, report blockers, and update statuses autonomously.
+Multica 将编码 Agent 变成真正的队友。像分配给同事一样分配给 Agent——它们会自主接手工作、编写代码、报告阻塞问题、更新状态。
 
-No more copy-pasting prompts. No more babysitting runs. Your agents show up on the board, participate in conversations, and compound reusable skills over time. Think of it as open-source infrastructure for managed agents — vendor-neutral, self-hosted, and designed for human + AI teams. Works with **Claude Code**, **Codex**, **GitHub Copilot CLI**, **OpenClaw**, **OpenCode**, **Hermes**, **Gemini**, **Pi**, **Cursor Agent**, **Kimi**, and **Kiro CLI**.
+不再需要复制粘贴 prompt，不再需要盯着运行过程。你的 Agent 出现在看板上、参与对话、随着时间积累可复用的技能。可以理解为开源的 Managed Agents 基础设施——厂商中立、可自部署、专为人类 + AI 团队设计。支持 **Claude Code**、**Codex**、**GitHub Copilot CLI**、**OpenClaw**、**OpenCode**、**Hermes**、**Gemini**、**Pi**、**Cursor Agent**、**Kimi** 和 **Kiro CLI**。
 
-For larger teams, Squads add a stable routing layer: assign work to a group led by an agent, and the leader delegates to the right member.
+面向更大的团队，Squads（小队）提供稳定的路由层：把任务分给由 Agent 带队的小队，由队长判断谁最适合接手。
 
 <p align="center">
-  <img src="docs/assets/hero-screenshot.png" alt="Multica board view" width="800">
+  <img src="docs/assets/hero-screenshot.png" alt="Multica 看板视图" width="800">
 </p>
 
-## Why "Multica"?
+## 为什么叫 "Multica"？
 
-Multica — **Mul**tiplexed **I**nformation and **C**omputing **A**gent.
+Multica——**Mul**tiplexed **I**nformation and **C**omputing **A**gent。
 
-The name is a nod to Multics, the pioneering operating system of the 1960s that introduced time-sharing — letting multiple users share a single machine as if each had it to themselves. Unix was born as a deliberate simplification of Multics: one user, one task, one elegant philosophy.
+这个名字是在向 20 世纪 60 年代具有开创意义的操作系统 Multics 致意。Multics 首创了分时系统，让多个用户能够共享同一台机器，同时又像各自独占它一样使用。Unix 则是在有意简化 Multics 的基础上诞生的，强调一个用户、一个任务、一种优雅的哲学。
 
-We think the same inflection is happening again. For decades, software teams have been single-threaded — one engineer, one task, one context switch at a time. AI agents change that equation. Multica brings time-sharing back, but for an era where the "users" multiplexing the system are both humans and autonomous agents.
+我们认为，类似的转折点正在再次出现。几十年来，软件团队一直处于一种单线程的工作模式，一个工程师处理一个任务，一次只专注于一个上下文。AI agents 改变了这个等式。Multica 将"分时"重新带回这个时代，只不过今天在系统中进行多路复用的"用户"，既包括人类，也包括自主代理。
 
-In Multica, agents are first-class teammates. They get assigned issues, report progress, raise blockers, and ship code — just like their human colleagues. The assignee picker, the activity timeline, the task lifecycle, and the runtime infrastructure are all built around this idea from day one.
+在 Multica 中，agents 是一级团队成员。它们会被分配 issue，汇报进展，提出阻塞，并交付代码，就像人类同事一样。任务分配、活动时间线、任务生命周期，以及运行时基础设施，Multica 从第一天起就是围绕这一理念构建的。
 
-Like Multics before it, the bet is on multiplexing: a small team shouldn't feel small. With the right system, two engineers and a fleet of agents can move like twenty.
+和当年的 Multics 一样，这一判断建立在"多路复用"之上。一个小团队不该因为人数少就显得能力有限。有了合适的系统，两名工程师加上一组 agents，就能发挥出二十人团队的推进速度。
 
-## Features
+## 功能特性
 
-Multica manages the full agent lifecycle: from task assignment to execution monitoring to skill reuse.
+Multica 管理完整的 Agent 生命周期：从任务分配到执行监控再到技能复用。
 
-- **Agents as Teammates** — assign to an agent like you'd assign to a colleague. They have profiles, show up on the board, post comments, create issues, and report blockers proactively.
-- **Squads** — group agents (and humans) under a leader agent and assign work to the *squad*. The leader decides who should pick it up, so routing stays stable as the team grows. `@FrontendTeam` instead of `@alice-or-bob-or-carol`.
-- **Autonomous Execution** — set it and forget it. Full task lifecycle management (enqueue, claim, start, complete/fail) with real-time progress streaming via WebSocket.
-- **Autopilots** — schedule recurring work for agents. Cron triggers, webhooks, or manual runs — each autopilot creates the issue and routes it to an agent automatically, so daily standups, weekly reports, and periodic audits run themselves.
-- **Reusable Skills** — every solution becomes a reusable skill for the whole team. Deployments, migrations, code reviews — skills compound your team's capabilities over time.
-- **Unified Runtimes** — one dashboard for local daemons and fixed machine runtimes, auto-detection of available CLIs, real-time monitoring.
-- **Multi-Workspace** — organize work across teams with workspace-level isolation. Each workspace has its own agents, issues, and settings.
+- **Agent 即队友** — 像分配给同事一样分配给 Agent。它们有个人档案、出现在看板上、发表评论、创建 Issue、主动报告阻塞问题。
+- **Squads（小队）** — 把多个 Agent（以及人类成员）组合成由 leader agent 带队的小队，直接把任务分配给小队本身。Leader 会判断谁最适合接手，团队扩容时路由方式保持不变。用 `@前端组` 代替 `@小张或小李或小王`。
+- **自主执行** — 设置后无需管理。完整的任务生命周期管理（排队、认领、执行、完成/失败），通过 WebSocket 实时推送进度。
+- **自动化（Autopilots）** — 为 Agent 安排周期性工作。定时（Cron）、Webhook 或手动触发，自动化会自动创建 Issue 并分配给 Agent——日报、周报、定期巡检都能让它自己跑起来。
+- **可复用技能** — 每个解决方案都成为全团队可复用的技能。部署、数据库迁移、代码审查——技能让团队能力随时间持续增长。
+- **统一运行时** — 一个控制台管理所有算力。本地 daemon 和云端运行时，自动检测可用 CLI，实时监控。
+- **多工作区** — 按团队组织工作，工作区级别隔离。每个工作区有独立的 Agent、Issue 和设置。
 
 ---
 
-## Quick Install
+## 快速安装
 
-### macOS / Linux (Homebrew - recommended)
+### macOS / Linux（推荐 Homebrew）
 
 ```bash
 brew install multica-ai/tap/multica
 ```
 
-Use `brew upgrade multica-ai/tap/multica` to keep the CLI current.
+后续可用 `brew upgrade multica-ai/tap/multica` 更新 CLI。
 
-### macOS / Linux (install script)
+### macOS / Linux（安装脚本）
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
 ```
 
-Use this if Homebrew is not available. The script installs the Multica CLI on macOS and Linux by using Homebrew when it is on `PATH`, otherwise it downloads the binary directly.
+如果没有 Homebrew，可以使用安装脚本。脚本会安装 Multica CLI：检测到 `brew` 时通过 Homebrew 安装，否则直接下载二进制。
 
 ### Windows (PowerShell)
 
@@ -88,103 +86,90 @@ Use this if Homebrew is not available. The script installs the Multica CLI on ma
 irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
 ```
 
-Then configure, authenticate, and start the daemon in one command:
+安装完成后，一条命令完成配置、认证和启动：
 
 ```bash
-multica setup          # Connect to Multica Cloud, log in, start daemon
+multica setup          # 连接 Multica Cloud，登录，启动 daemon
 ```
 
-> **Self-hosting?** Add `--with-server` to deploy a full Multica server on your machine:
+> **自部署？** 加上 `--with-server` 在本地部署完整的 Multica 服务：
 >
 > ```bash
 > curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --with-server
 > multica setup self-host
 > ```
 >
-> This pulls the official Multica images from GHCR (latest stable by default). Requires Docker. See the [Self-Hosting Guide](SELF_HOSTING.md) for details.
-> If the selected GHCR tag has not been published yet, fall back to `make selfhost-build` from a checkout.
+> 需要 Docker。详见 [自部署指南](SELF_HOSTING.md)。
 
 ---
 
-## Getting Started
+## 快速上手
 
-### 1. Set up and start the daemon
+安装好 CLI（或注册 [Multica 云服务](https://multica.ai)）后，按以下步骤将第一个任务分配给 Agent：
+
+### 1. 配置并启动 daemon
 
 ```bash
-multica setup           # Configure, authenticate, and start the daemon
+multica setup           # 配置、认证、启动 daemon（一条命令搞定）
 ```
 
-The daemon runs in the background and auto-detects agent CLIs (`claude`, `codex`, `copilot`, `openclaw`, `opencode`, `hermes`, `gemini`, `pi`, `cursor-agent`, `kimi`, `kiro-cli`, `agy`) on your PATH.
+daemon 在后台运行，保持你的机器与 Multica 的连接。它会自动检测 PATH 中可用的 Agent CLI（`claude`、`codex`、`copilot`、`openclaw`、`opencode`、`hermes`、`gemini`、`pi`、`cursor-agent`、`kimi`、`kiro-cli`）。
 
-### 2. Verify your runtime
+### 2. 确认运行时已连接
 
-Open your workspace in the Multica web app. Navigate to **Settings → Runtimes** — you should see your machine listed as an active **Runtime**.
+在 Multica Web 端打开你的工作区，进入 **设置 → 运行时（Runtimes）**，你应该能看到你的机器已作为一个活跃的 **Runtime** 出现在列表中。
 
-> **What is a Runtime?** A Runtime is a compute environment that can execute agent tasks. It can be your local machine (via the daemon) or a cloud instance. Each runtime reports which agent CLIs are available, so Multica knows where to route work.
+> **什么是 Runtime（运行时）？** Runtime 是可以执行 Agent 任务的计算环境。它可以是你的本地机器（通过 daemon 连接），也可以是云端实例。每个 Runtime 会上报可用的 Agent CLI，Multica 据此决定将任务路由到哪里执行。
 
-### 3. Create an agent
+### 3. 创建 Agent
 
-Go to **Settings → Agents** and click **New Agent**. Pick the runtime you just connected and choose a provider (Claude Code, Codex, GitHub Copilot CLI, OpenClaw, OpenCode, Hermes, Gemini, Pi, Cursor Agent, Kimi, Kiro CLI, or Antigravity). Give your agent a name — this is how it will appear on the board, in comments, and in assignments.
+进入 **设置 → Agents**，点击 **新建 Agent**。选择你刚连接的 Runtime，选择 Provider（Claude Code、Codex、GitHub Copilot CLI、OpenClaw、OpenCode、Hermes、Gemini、Pi、Cursor Agent、Kimi 或 Kiro CLI），并为 Agent 起个名字——它将以这个名字出现在看板、评论和任务分配中。
 
-### 4. Assign your first task
+### 4. 分配你的第一个任务
 
-Create an issue from the board (or via `multica issue create`), then assign it to your new agent. The agent will automatically pick up the task, execute it on your runtime, and report progress — just like a human teammate.
+在看板上创建一个 Issue（或通过 `multica issue create` 命令创建），然后将其分配给你的新 Agent。Agent 会自动接手任务、在你的 Runtime 上执行、并实时汇报进度——就像一个真正的队友一样。
 
----
-
-## CLI
-
-The `multica` CLI connects your local machine to Multica — authenticate, manage workspaces, and run the agent daemon.
-
-| Command | Description |
-|---------|-------------|
-| `multica login` | Authenticate (opens browser) |
-| `multica daemon start` | Start the local agent runtime |
-| `multica daemon status` | Check daemon status |
-| `multica setup` | One-command setup for Multica Cloud (configure + login + start daemon) |
-| `multica setup self-host` | Same, but for self-hosted deployments |
-| `multica workspace list` | List your workspaces (current is marked with `*`) |
-| `multica workspace switch <id\|slug>` | Switch the default workspace for this profile |
-| `multica issue list` | List issues in your workspace |
-| `multica issue create` | Create a new issue |
-| `multica update` | Update to the latest version |
-
-See the [CLI and Daemon Guide](CLI_AND_DAEMON.md) for the full command reference.
+大功告成！你的 Agent 现在是团队的一员了。 🎉
 
 ---
 
-## Architecture
+## 架构
 
 ```
 ┌──────────────┐     ┌──────────────┐     ┌──────────────────┐
-│   Next.js    │────>│  Go Backend  │────>│   PostgreSQL     │
-│   Frontend   │<────│  (Chi + WS)  │<────│   (pgvector)     │
+│   Next.js    │────>│  Go 后端     │────>│   PostgreSQL     │
+│   前端       │<────│  (Chi + WS)  │<────│   (pgvector)     │
 └──────────────┘     └──────┬───────┘     └──────────────────┘
                             │
                      ┌──────┴───────┐
-                     │ Agent Daemon │  runs on your machine
-                     └──────────────┘  (Claude Code, Codex, GitHub Copilot CLI,
-                                        OpenCode, OpenClaw, Hermes, Gemini,
-                                        Pi, Cursor Agent, Kimi, Kiro CLI)
+                     │ Agent Daemon │  运行在你的机器上
+                     └──────────────┘  （Claude Code、Codex、GitHub Copilot CLI、
+                                        OpenCode、OpenClaw、Hermes、Gemini、
+                                        Pi、Cursor Agent、Kimi、Kiro CLI）
 ```
 
-| Layer | Stack |
-|-------|-------|
-| Frontend | Next.js 16 (App Router) |
-| Backend | Go (Chi router, sqlc, gorilla/websocket) |
-| Database | PostgreSQL 17 with pgvector |
-| Agent Runtime | Local daemon executing Claude Code, Codex, GitHub Copilot CLI, OpenClaw, OpenCode, Hermes, Gemini, Pi, Cursor Agent, Kimi, or Kiro CLI |
+| 层级 | 技术栈 |
+|------|--------|
+| 前端 | Next.js 16 (App Router) |
+| 后端 | Go (Chi router, sqlc, gorilla/websocket) |
+| 数据库 | PostgreSQL 17 with pgvector |
+| Agent 运行时 | 本地 daemon 执行 Claude Code、Codex、GitHub Copilot CLI、OpenClaw、OpenCode、Hermes、Gemini、Pi、Cursor Agent、Kimi 或 Kiro CLI |
 
-## Development
+## 开发
 
-For contributors working on the Multica codebase, see the [Contributing Guide](CONTRIBUTING.md).
+参与 Multica 代码贡献，请参阅 [贡献指南](CONTRIBUTING.md)。
 
-**Prerequisites:** [Node.js](https://nodejs.org/) v20+, [pnpm](https://pnpm.io/) v10.28+, [Go](https://go.dev/) v1.26+, [Docker](https://www.docker.com/)
+**环境要求：** [Node.js](https://nodejs.org/) v20+, [pnpm](https://pnpm.io/) v10.28+, [Go](https://go.dev/) v1.26+, [Docker](https://www.docker.com/)
 
 ```bash
-make dev
+pnpm install
+cp .env.example .env
+make setup
+make start
 ```
 
-`make dev` auto-detects your environment (main checkout or worktree), creates the env file, installs dependencies, sets up the database, runs migrations, and starts all services.
+完整的开发流程、worktree 支持、测试和问题排查请参阅 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for the full development workflow, worktree support, testing, and troubleshooting.
+## 开源协议
+
+[Modified Apache 2.0 (with commercial restrictions)](LICENSE)
