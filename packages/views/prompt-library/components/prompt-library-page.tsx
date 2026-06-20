@@ -6,6 +6,7 @@ import { Archive, BookOpenText, Loader2, Plus, Save, Search, Trash2 } from "luci
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { renderPromptTemplate } from "@multica/core/prompt-library";
 import type {
   CreatePromptLibraryItemRequest,
   PromptLibraryItem,
@@ -67,6 +68,7 @@ export function PromptLibraryPage() {
   const [statusFilter, setStatusFilter] = useState<"全部" | PromptLibraryStatus>("全部");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<PromptDraft>(emptyDraft);
+  const [debugValuesText, setDebugValuesText] = useState("");
 
   const listQuery = useQuery({
     queryKey: promptLibraryKeys.list(workspaceId ?? ""),
@@ -86,6 +88,7 @@ export function PromptLibraryPage() {
   useEffect(() => {
     if (!selected) return;
     setDraft(itemToDraft(selected));
+    setDebugValuesText(valuesToDebugText(selected.variables));
   }, [selected]);
 
   const filteredItems = useMemo(() => {
@@ -131,15 +134,25 @@ export function PromptLibraryPage() {
 
   const saving = createMut.isPending || updateMut.isPending;
   const deleting = deleteMut.isPending;
+  const debugResult = useMemo(
+    () => renderPromptTemplate({
+      content: draft.content,
+      variables: parseVariables(draft.variablesText),
+      values: parseDebugValues(debugValuesText),
+    }),
+    [debugValuesText, draft.content, draft.variablesText],
+  );
 
   const startNew = () => {
     setSelectedId(null);
     setDraft(emptyDraft());
+    setDebugValuesText("");
   };
 
   const applyUserCenterTemplate = () => {
     setSelectedId(null);
     setDraft(requestToDraft(USER_CENTER_TEMPLATE));
+    setDebugValuesText(valuesToDebugText(USER_CENTER_TEMPLATE.variables ?? []));
   };
 
   const saveDraft = () => {
@@ -338,6 +351,30 @@ export function PromptLibraryPage() {
                 className="min-h-[360px] resize-y font-mono text-sm leading-6"
               />
             </Field>
+
+            <section className="grid gap-4 md:grid-cols-[320px_minmax(0,1fr)]">
+              <Field label="调试变量">
+                <Textarea
+                  value={debugValuesText}
+                  onChange={(event) => setDebugValuesText(event.target.value)}
+                  className="min-h-[180px] resize-y font-mono text-sm leading-6"
+                  placeholder="issue_title=登录失败&#10;project_context=user-center"
+                />
+              </Field>
+              <div className="grid gap-1.5 text-sm">
+                <div className="flex min-h-5 items-center gap-2">
+                  <span className="text-xs font-medium text-muted-foreground">调试输出</span>
+                  {debugResult.missingVariables.length > 0 && (
+                    <Badge variant="outline" className="text-[11px]">
+                      缺失 {debugResult.missingVariables.join("、")}
+                    </Badge>
+                  )}
+                </div>
+                <pre className="min-h-[180px] overflow-auto whitespace-pre-wrap rounded-md border bg-muted/20 p-3 font-mono text-sm leading-6">
+                  {debugResult.rendered || "暂无输出"}
+                </pre>
+              </div>
+            </section>
           </div>
         </main>
       </div>
@@ -416,6 +453,10 @@ function variablesToText(variables: PromptLibraryVariable[]): string {
   return variables.map((variable) => `${variable.name}${variable.label ? `=${variable.label}` : ""}`).join(", ");
 }
 
+function valuesToDebugText(variables: PromptLibraryVariable[]): string {
+  return variables.map((variable) => `${variable.name}=${variable.default_value ?? ""}`).join("\n");
+}
+
 function parseVariables(value: string): PromptLibraryVariable[] {
   return splitList(value).map((part) => {
     const [name, ...labelParts] = part.split("=");
@@ -430,4 +471,17 @@ function parseVariables(value: string): PromptLibraryVariable[] {
 
 function splitList(value: string): string[] {
   return value.split(/[,，]/).map((part) => part.trim()).filter(Boolean);
+}
+
+function parseDebugValues(value: string): Record<string, string> {
+  const result: Record<string, string> = {};
+  for (const line of value.split(/\r?\n/)) {
+    const trimmed = line.trim();
+    if (!trimmed) continue;
+    const [name, ...valueParts] = trimmed.split("=");
+    const key = (name ?? "").trim();
+    if (!key) continue;
+    result[key] = valueParts.join("=").trim();
+  }
+  return result;
 }

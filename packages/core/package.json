@@ -77,6 +77,7 @@
     "./pins": "./pins/index.ts",
     "./pins/queries": "./pins/queries.ts",
     "./pins/mutations": "./pins/mutations.ts",
+    "./prompt-library": "./prompt-library/index.ts",
     "./github": "./github/index.ts",
     "./github/queries": "./github/queries.ts",
     "./lark": "./lark/index.ts",
