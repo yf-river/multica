@@ -113,6 +113,7 @@ type NavKey =
   | "squads"
   | "usage"
   | "runtimes"
+  | "promptLibrary"
   | "skills"
   | "settings";
 
@@ -127,6 +128,7 @@ type NavLabelKey =
   | "squads"
   | "usage"
   | "runtimes"
+  | "prompt_library"
   | "skills"
   | "settings";
 
@@ -146,6 +148,7 @@ const workspaceNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[]
 
 const configureNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[] = [
   { key: "runtimes", labelKey: "runtimes", icon: Monitor },
+  { key: "promptLibrary", labelKey: "prompt_library", icon: BookOpenText },
   { key: "skills", labelKey: "skills", icon: BookOpenText },
   { key: "settings", labelKey: "settings", icon: Settings },
 ];

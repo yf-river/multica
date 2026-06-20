@@ -146,6 +146,7 @@ vi.mock("@multica/core/paths", () => ({
     projects: () => "/ws-test/projects",
     agents: () => "/ws-test/agents",
     runtimes: () => "/ws-test/runtimes",
+    promptLibrary: () => "/ws-test/prompt-library",
     skills: () => "/ws-test/skills",
     settings: () => "/ws-test/settings",
     issueDetail: (id: string) => `/ws-test/issues/${id}`,
