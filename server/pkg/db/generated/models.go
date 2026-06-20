@@ -564,6 +564,23 @@ type ProjectResource struct {
 	CreatedBy    pgtype.UUID        `json:"created_by"`
 }
 
+type PromptLibraryItem struct {
+	ID          pgtype.UUID        `json:"id"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+	Name        string             `json:"name"`
+	Description string             `json:"description"`
+	PromptType  string             `json:"prompt_type"`
+	Content     string             `json:"content"`
+	Variables   []byte             `json:"variables"`
+	Tags        []byte             `json:"tags"`
+	Status      string             `json:"status"`
+	Version     int32              `json:"version"`
+	CreatedBy   pgtype.UUID        `json:"created_by"`
+	CreatedAt   pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+}
+
 type RuntimeProfile struct {
 	ID             pgtype.UUID        `json:"id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`

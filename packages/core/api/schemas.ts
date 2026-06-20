@@ -8,7 +8,9 @@ import type {
   CreateAgentFromTemplateResponse,
   GroupedIssuesResponse,
   ListIssuesResponse,
+  ListPromptLibraryItemsResponse,
   ListWebhookDeliveriesResponse,
+  PromptLibraryItem,
   Squad,
   TimelineEntry,
   User,
@@ -580,6 +582,58 @@ export const EMPTY_SQUAD: Squad = {
   archived_by: null,
   member_count: 0,
   member_preview: [],
+};
+
+const PromptLibraryVariableSchema = z.object({
+  name: z.string(),
+  label: z.string().optional(),
+  required: z.boolean().optional(),
+  description: z.string().optional(),
+  default_value: z.string().optional(),
+}).loose();
+
+export const PromptLibraryItemSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  project_id: z.string().nullable().optional().transform((v) => v ?? null),
+  name: z.string(),
+  description: z.string().default(""),
+  prompt_type: z.string().default("通用"),
+  content: z.string(),
+  variables: z.array(PromptLibraryVariableSchema).default([]),
+  tags: z.array(z.string()).default([]),
+  status: z.enum(["启用", "归档"]).default("启用"),
+  version: z.number().default(1),
+  created_by: z.string().nullable().optional().transform((v) => v ?? null),
+  created_at: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+export const PromptLibraryItemListResponseSchema = z.object({
+  items: z.array(PromptLibraryItemSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const EMPTY_PROMPT_LIBRARY_ITEM: PromptLibraryItem = {
+  id: "",
+  workspace_id: "",
+  project_id: null,
+  name: "",
+  description: "",
+  prompt_type: "通用",
+  content: "",
+  variables: [],
+  tags: [],
+  status: "启用",
+  version: 1,
+  created_by: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const EMPTY_PROMPT_LIBRARY_LIST_RESPONSE: ListPromptLibraryItemsResponse = {
+  items: [],
+  total: 0,
 };
 
 // Squad member status — backs the Squad detail page's Members tab. status

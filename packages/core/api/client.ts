@@ -112,6 +112,13 @@ import type {
   Squad,
   SquadMember,
   SquadMemberStatusListResponse,
+  CreateSquadRequest,
+  UpdateSquadRequest,
+  PromptLibraryItem,
+  ListPromptLibraryItemsParams,
+  ListPromptLibraryItemsResponse,
+  CreatePromptLibraryItemRequest,
+  UpdatePromptLibraryItemRequest,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import { type Logger, noopLogger } from "../logger";
@@ -144,6 +151,8 @@ import {
   EMPTY_TIMELINE_ENTRIES,
   EMPTY_USER,
   EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
+  EMPTY_PROMPT_LIBRARY_ITEM,
+  EMPTY_PROMPT_LIBRARY_LIST_RESPONSE,
   EMPTY_WEBHOOK_DELIVERY,
   AppConfigSchema,
   type AppConfigResponse,
@@ -156,6 +165,8 @@ import {
   RuntimeUsageByAgentListSchema,
   RuntimeUsageByHourListSchema,
   RuntimeUsageListSchema,
+  PromptLibraryItemSchema,
+  PromptLibraryItemListResponseSchema,
   SquadSchema,
   SquadListSchema,
   SquadMemberStatusListResponseSchema,
@@ -1595,6 +1606,50 @@ export class ApiClient {
     await this.fetch(`/api/projects/${id}`, { method: "DELETE" });
   }
 
+  // Prompt library
+  async listPromptLibraryItems(params?: ListPromptLibraryItemsParams): Promise<ListPromptLibraryItemsResponse> {
+    const search = new URLSearchParams();
+    if (params?.project_id) search.set("project_id", params.project_id);
+    if (params?.prompt_type) search.set("prompt_type", params.prompt_type);
+    if (params?.status) search.set("status", params.status);
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-library${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptLibraryItemListResponseSchema, EMPTY_PROMPT_LIBRARY_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-library",
+    }) as ListPromptLibraryItemsResponse;
+  }
+
+  async getPromptLibraryItem(id: string): Promise<PromptLibraryItem> {
+    const raw = await this.fetch<unknown>(`/api/prompt-library/${id}`);
+    return parseWithFallback(raw, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
+      endpoint: "GET /api/prompt-library/:id",
+    }) as PromptLibraryItem;
+  }
+
+  async createPromptLibraryItem(data: CreatePromptLibraryItemRequest): Promise<PromptLibraryItem> {
+    const raw = await this.fetch<unknown>("/api/prompt-library", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
+      endpoint: "POST /api/prompt-library",
+    }) as PromptLibraryItem;
+  }
+
+  async updatePromptLibraryItem(id: string, data: UpdatePromptLibraryItemRequest): Promise<PromptLibraryItem> {
+    const raw = await this.fetch<unknown>(`/api/prompt-library/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
+      endpoint: "PUT /api/prompt-library/:id",
+    }) as PromptLibraryItem;
+  }
+
+  async deletePromptLibraryItem(id: string): Promise<void> {
+    await this.fetch(`/api/prompt-library/${id}`, { method: "DELETE" });
+  }
+
   // Project resources
   async listProjectResources(
     projectId: string,
@@ -1714,14 +1769,14 @@ export class ApiClient {
     }) as Squad;
   }
 
-  async createSquad(data: { name: string; description?: string; leader_id: string; avatar_url?: string }): Promise<Squad> {
+  async createSquad(data: CreateSquadRequest): Promise<Squad> {
     const raw = await this.fetch<unknown>("/api/squads", { method: "POST", body: JSON.stringify(data) });
     return parseWithFallback(raw, SquadSchema, EMPTY_SQUAD, {
       endpoint: "POST /api/squads",
     }) as Squad;
   }
 
-  async updateSquad(id: string, data: { name?: string; description?: string; instructions?: string; leader_id?: string; avatar_url?: string }): Promise<Squad> {
+  async updateSquad(id: string, data: UpdateSquadRequest): Promise<Squad> {
     const raw = await this.fetch<unknown>(`/api/squads/${id}`, { method: "PUT", body: JSON.stringify(data) });
     return parseWithFallback(raw, SquadSchema, EMPTY_SQUAD, {
       endpoint: "PUT /api/squads/:id",

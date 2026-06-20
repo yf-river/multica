@@ -720,6 +720,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
+			// Prompt library
+			r.Route("/api/prompt-library", func(r chi.Router) {
+				r.Get("/", h.ListPromptLibraryItems)
+				r.Post("/", h.CreatePromptLibraryItem)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetPromptLibraryItem)
+					r.Put("/", h.UpdatePromptLibraryItem)
+					r.Delete("/", h.DeletePromptLibraryItem)
+				})
+			})
+
 			// Squad leader evaluation (writes to activity_log)
 			r.Post("/api/issues/{id}/squad-evaluated", h.RecordSquadLeaderEvaluation)
 

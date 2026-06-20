@@ -106,6 +106,15 @@ export type {
 } from "./project";
 export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest } from "./pin";
 export type {
+  PromptLibraryItem,
+  PromptLibraryVariable,
+  PromptLibraryStatus,
+  ListPromptLibraryItemsResponse,
+  ListPromptLibraryItemsParams,
+  CreatePromptLibraryItemRequest,
+  UpdatePromptLibraryItemRequest,
+} from "./prompt-library";
+export type {
   GitHubInstallation,
   GitHubMergeableState,
   GitHubPullRequest,

@@ -11,6 +11,8 @@ import {
   RuntimeUsageByAgentListSchema,
   RuntimeUsageByHourListSchema,
   RuntimeUsageListSchema,
+  PromptLibraryItemListResponseSchema,
+  PromptLibraryItemSchema,
   SquadListSchema,
   SquadSchema,
   TimelineEntriesSchema,
@@ -250,6 +252,40 @@ describe("SquadListSchema member preview drift", () => {
     expect(parsed[0]?.member_count).toBe(2);
     expect(parsed[0]?.member_preview).toHaveLength(2);
     expect(parsed[0]?.member_preview?.[0]?.role).toBe("leader");
+  });
+});
+
+describe("PromptLibraryItemSchema", () => {
+  const basePrompt = {
+    id: "prompt-1",
+    workspace_id: "ws-1",
+    project_id: null,
+    name: "user-center 需求澄清提示词",
+    description: "小队队长使用",
+    prompt_type: "需求澄清",
+    content: "请澄清目标、边界、验收条件和风险。",
+    variables: [{ name: "issue_title", label: "issue 标题", required: true }],
+    tags: ["user-center", "小队"],
+    status: "启用",
+    version: 1,
+    created_by: "user-1",
+    created_at: "2026-06-21T00:00:00Z",
+    updated_at: "2026-06-21T00:00:00Z",
+  };
+
+  it("preserves Chinese prompt library fields", () => {
+    const parsed = PromptLibraryItemSchema.parse(basePrompt);
+    expect(parsed.name).toBe("user-center 需求澄清提示词");
+    expect(parsed.prompt_type).toBe("需求澄清");
+    expect(parsed.status).toBe("启用");
+    expect(parsed.variables[0]?.label).toBe("issue 标题");
+    expect(parsed.tags).toEqual(["user-center", "小队"]);
+  });
+
+  it("defaults list response shape", () => {
+    const parsed = PromptLibraryItemListResponseSchema.parse({});
+    expect(parsed.items).toEqual([]);
+    expect(parsed.total).toBe(0);
   });
 });
 
