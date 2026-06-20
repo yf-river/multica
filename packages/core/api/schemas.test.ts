@@ -11,6 +11,8 @@ import {
   RuntimeUsageByAgentListSchema,
   RuntimeUsageByHourListSchema,
   RuntimeUsageListSchema,
+  PromptEvaluationAssetListResponseSchema,
+  PromptEvaluationAssetSchema,
   PromptLibraryItemListResponseSchema,
   PromptLibraryItemSchema,
   SquadListSchema,
@@ -284,6 +286,33 @@ describe("PromptLibraryItemSchema", () => {
 
   it("defaults list response shape", () => {
     const parsed = PromptLibraryItemListResponseSchema.parse({});
+    expect(parsed.items).toEqual([]);
+    expect(parsed.total).toBe(0);
+  });
+});
+
+describe("PromptEvaluationAssetSchema", () => {
+  it("preserves Chinese evaluation asset semantics", () => {
+    const parsed = PromptEvaluationAssetSchema.parse({
+      id: "asset-1",
+      workspace_id: "ws-1",
+      prompt_id: "prompt-1",
+      name: "user-center 澄清数据集",
+      description: "用于验证澄清提示词",
+      asset_type: "数据集",
+      payload: { cases: [{ 输入: "登录失败", 期望: "询问边界和验收" }] },
+      status: "启用",
+      created_by: "user-1",
+      created_at: "2026-06-21T00:00:00Z",
+      updated_at: "2026-06-21T00:00:00Z",
+    });
+
+    expect(parsed.asset_type).toBe("数据集");
+    expect(parsed.payload).toMatchObject({ cases: [{ 输入: "登录失败" }] });
+  });
+
+  it("defaults evaluation asset list response shape", () => {
+    const parsed = PromptEvaluationAssetListResponseSchema.parse({});
     expect(parsed.items).toEqual([]);
     expect(parsed.total).toBe(0);
   });

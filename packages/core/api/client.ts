@@ -115,6 +115,11 @@ import type {
   CreateSquadRequest,
   UpdateSquadRequest,
   PromptLibraryItem,
+  PromptEvaluationAsset,
+  ListPromptEvaluationAssetsParams,
+  ListPromptEvaluationAssetsResponse,
+  CreatePromptEvaluationAssetRequest,
+  UpdatePromptEvaluationAssetRequest,
   ListPromptLibraryItemsParams,
   ListPromptLibraryItemsResponse,
   CreatePromptLibraryItemRequest,
@@ -153,6 +158,8 @@ import {
   EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
   EMPTY_PROMPT_LIBRARY_ITEM,
   EMPTY_PROMPT_LIBRARY_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_ASSET,
+  EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE,
   EMPTY_WEBHOOK_DELIVERY,
   AppConfigSchema,
   type AppConfigResponse,
@@ -165,6 +172,8 @@ import {
   RuntimeUsageByAgentListSchema,
   RuntimeUsageByHourListSchema,
   RuntimeUsageListSchema,
+  PromptEvaluationAssetSchema,
+  PromptEvaluationAssetListResponseSchema,
   PromptLibraryItemSchema,
   PromptLibraryItemListResponseSchema,
   SquadSchema,
@@ -1648,6 +1657,50 @@ export class ApiClient {
 
   async deletePromptLibraryItem(id: string): Promise<void> {
     await this.fetch(`/api/prompt-library/${id}`, { method: "DELETE" });
+  }
+
+  // Prompt evaluation assets
+  async listPromptEvaluationAssets(params?: ListPromptEvaluationAssetsParams): Promise<ListPromptEvaluationAssetsResponse> {
+    const search = new URLSearchParams();
+    if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
+    if (params?.asset_type) search.set("asset_type", params.asset_type);
+    if (params?.status) search.set("status", params.status);
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationAssetListResponseSchema, EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-assets",
+    }) as ListPromptEvaluationAssetsResponse;
+  }
+
+  async getPromptEvaluationAsset(id: string): Promise<PromptEvaluationAsset> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}`);
+    return parseWithFallback(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
+      endpoint: "GET /api/prompt-evaluation-assets/:id",
+    }) as PromptEvaluationAsset;
+  }
+
+  async createPromptEvaluationAsset(data: CreatePromptEvaluationAssetRequest): Promise<PromptEvaluationAsset> {
+    const raw = await this.fetch<unknown>("/api/prompt-evaluation-assets", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
+      endpoint: "POST /api/prompt-evaluation-assets",
+    }) as PromptEvaluationAsset;
+  }
+
+  async updatePromptEvaluationAsset(id: string, data: UpdatePromptEvaluationAssetRequest): Promise<PromptEvaluationAsset> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
+      endpoint: "PUT /api/prompt-evaluation-assets/:id",
+    }) as PromptEvaluationAsset;
+  }
+
+  async deletePromptEvaluationAsset(id: string): Promise<void> {
+    await this.fetch(`/api/prompt-evaluation-assets/${id}`, { method: "DELETE" });
   }
 
   // Project resources

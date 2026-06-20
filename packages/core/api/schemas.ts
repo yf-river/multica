@@ -8,8 +8,10 @@ import type {
   CreateAgentFromTemplateResponse,
   GroupedIssuesResponse,
   ListIssuesResponse,
+  ListPromptEvaluationAssetsResponse,
   ListPromptLibraryItemsResponse,
   ListWebhookDeliveriesResponse,
+  PromptEvaluationAsset,
   PromptLibraryItem,
   Squad,
   TimelineEntry,
@@ -632,6 +634,44 @@ export const EMPTY_PROMPT_LIBRARY_ITEM: PromptLibraryItem = {
 };
 
 export const EMPTY_PROMPT_LIBRARY_LIST_RESPONSE: ListPromptLibraryItemsResponse = {
+  items: [],
+  total: 0,
+};
+
+export const PromptEvaluationAssetSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  prompt_id: z.string().nullable().optional().transform((v) => v ?? null),
+  name: z.string(),
+  description: z.string().default(""),
+  asset_type: z.enum(["数据集", "测试套件", "实验"]),
+  payload: z.record(z.string(), z.unknown()).default({}),
+  status: z.enum(["启用", "归档"]).default("启用"),
+  created_by: z.string().nullable().optional().transform((v) => v ?? null),
+  created_at: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+export const PromptEvaluationAssetListResponseSchema = z.object({
+  items: z.array(PromptEvaluationAssetSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const EMPTY_PROMPT_EVALUATION_ASSET: PromptEvaluationAsset = {
+  id: "",
+  workspace_id: "",
+  prompt_id: null,
+  name: "",
+  description: "",
+  asset_type: "数据集",
+  payload: {},
+  status: "启用",
+  created_by: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE: ListPromptEvaluationAssetsResponse = {
   items: [],
   total: 0,
 };

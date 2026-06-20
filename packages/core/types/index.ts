@@ -115,6 +115,15 @@ export type {
   UpdatePromptLibraryItemRequest,
 } from "./prompt-library";
 export type {
+  PromptEvaluationAsset,
+  PromptEvaluationAssetType,
+  PromptEvaluationAssetStatus,
+  ListPromptEvaluationAssetsResponse,
+  ListPromptEvaluationAssetsParams,
+  CreatePromptEvaluationAssetRequest,
+  UpdatePromptEvaluationAssetRequest,
+} from "./prompt-evaluation";
+export type {
   GitHubInstallation,
   GitHubMergeableState,
   GitHubPullRequest,
