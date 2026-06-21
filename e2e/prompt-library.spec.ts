@@ -87,6 +87,29 @@ test.describe("提示词工作台", () => {
       }, { timeout: 15000 })
       .toEqual(["优化运行", "实验", "实验", "数据集", "测试套件"].sort());
 
+    const prompt = (await api.listPromptLibraryItems()).find((item) => item.name === `${artifactPrefix} user-center 澄清`);
+    expect(prompt).toBeTruthy();
+    const promptAssets = await api.listPromptEvaluationAssets({ prompt_id: prompt!.id });
+    const dataset = promptAssets.find((asset) => asset.asset_type === "数据集");
+    const testSuite = promptAssets.find((asset) => asset.asset_type === "测试套件");
+    expect(dataset).toBeTruthy();
+    expect(testSuite).toBeTruthy();
+
+    await expect(api.updatePromptEvaluationAsset(dataset!.id, { status: "归档" })).resolves.toMatchObject({
+      id: dataset!.id,
+      status: "归档",
+    });
+    await api.deletePromptEvaluationAsset(testSuite!.id);
+    await expect
+      .poll(async () => {
+        const assets = await api.listPromptEvaluationAssets({ prompt_id: prompt!.id });
+        return {
+          datasetStatus: assets.find((asset) => asset.id === dataset!.id)?.status ?? null,
+          hasDeletedTestSuite: assets.some((asset) => asset.id === testSuite!.id),
+        };
+      }, { timeout: 15000 })
+      .toEqual({ datasetStatus: "归档", hasDeletedTestSuite: false });
+
     await expect
       .poll(async () => {
         const assets = await api.listPromptEvaluationAssets({ asset_type: "实验" });

@@ -30,6 +30,7 @@ interface PromptEvaluationAsset {
   prompt_id: string | null;
   name: string;
   asset_type: string;
+  status: string;
   payload: Record<string, unknown>;
 }
 
@@ -176,6 +177,17 @@ export class TestApiClient {
 
   async deletePromptEvaluationAsset(id: string) {
     await this.authedFetch(`/api/prompt-evaluation-assets/${id}`, { method: "DELETE" });
+  }
+
+  async updatePromptEvaluationAsset(id: string, data: Record<string, unknown>): Promise<PromptEvaluationAsset> {
+    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      throw new Error(`update prompt evaluation asset failed: ${res.status}`);
+    }
+    return res.json();
   }
 
   async cleanupPromptArtifactsByPrefix(prefix: string) {
