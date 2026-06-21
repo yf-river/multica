@@ -287,7 +287,7 @@ func (h *Handler) RecordSOPStepEvent(w http.ResponseWriter, r *http.Request) {
 	if req.DurationMs != nil {
 		duration = pgtype.Int8{Int64: *req.DurationMs, Valid: true}
 	}
-	createdByType, createdByID := h.sopEventActor(r, req)
+	createdByType, createdByID := h.sopEventActor(r)
 	taskID, ok := optionalUUIDParam(w, req.TaskID, "task_id")
 	if !ok {
 		return
@@ -407,11 +407,7 @@ func (h *Handler) loadSOPIssue(w http.ResponseWriter, r *http.Request) (db.Issue
 	return issue, true
 }
 
-func (h *Handler) sopEventActor(r *http.Request, req CreateSOPStepEventRequest) (string, pgtype.UUID) {
-	if req.CreatedByType != "" || req.CreatedByID != "" {
-		id, _ := util.ParseUUID(req.CreatedByID)
-		return strings.TrimSpace(req.CreatedByType), id
-	}
+func (h *Handler) sopEventActor(r *http.Request) (string, pgtype.UUID) {
 	actorType, actorID := h.resolveActor(r, requestUserID(r), h.resolveWorkspaceID(r))
 	return actorType, pgUUIDFromString(actorID)
 }

@@ -95,19 +95,28 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 	}
 
 	eventReq := newRequest("POST", "/api/sop-runs/"+runID+"/steps/acceptance/events?workspace_id="+testWorkspaceID, map[string]any{
-		"event_type":  "测试结果",
-		"status":      "进行中",
-		"step_name":   "验收",
-		"role_key":    "acceptor",
-		"evidence":    map[string]any{"测试命令": "go test ./internal/handler", "结果": "通过"},
-		"reason":      "补充测试证据",
-		"duration_ms": 123,
+		"event_type":      "测试结果",
+		"status":          "进行中",
+		"step_name":       "验收",
+		"role_key":        "acceptor",
+		"evidence":        map[string]any{"测试命令": "go test ./internal/handler", "结果": "通过"},
+		"reason":          "补充测试证据",
+		"duration_ms":     123,
+		"created_by_type": "agent",
+		"created_by_id":   leaderID,
 	})
 	eventReq = withURLParams(eventReq, "runId", runID, "stepId", "acceptance")
 	eventW := httptest.NewRecorder()
 	testHandler.RecordSOPStepEvent(eventW, eventReq)
 	if eventW.Code != http.StatusCreated {
 		t.Fatalf("RecordSOPStepEvent: expected 201, got %d: %s", eventW.Code, eventW.Body.String())
+	}
+	var recordedEvent SquadSOPEventResponse
+	if err := json.NewDecoder(eventW.Body).Decode(&recordedEvent); err != nil {
+		t.Fatalf("decode SOP event: %v", err)
+	}
+	if recordedEvent.CreatedByType == "agent" {
+		t.Fatalf("SOP event actor trusted spoofed request payload: %#v", recordedEvent)
 	}
 
 	summaryReq := newRequest("GET", "/api/workspaces/"+testWorkspaceID+"/observability/summary", nil)

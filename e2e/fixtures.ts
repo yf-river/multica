@@ -103,6 +103,51 @@ interface PromptEvaluationSummary {
   优化候选: Record<string, number>;
 }
 
+interface CodingSquadFixture {
+  runtimeId: string;
+  squadId: string;
+  squadName: string;
+  leaderAgentId: string;
+  agents: Array<{ id: string; name: string; role: string; roleKey: string }>;
+}
+
+interface SquadLeaderTask {
+  id: string;
+  status: string;
+  agent_id: string;
+  runtime_id: string;
+  issue_id: string;
+  is_leader_task: boolean;
+}
+
+interface SquadSOPRun {
+  id: string;
+  profile_key: string;
+  status: string;
+  current_step_key: string;
+  leader_task_id: string | null;
+  total_duration_ms: number | null;
+  profile: Record<string, unknown>;
+  metrics: Record<string, unknown>;
+  events: Array<{
+    id: string;
+    step_key: string;
+    step_name: string;
+    role_key: string;
+    event_type: string;
+    status: string;
+    reason: string;
+    evidence: Record<string, unknown>;
+    created_by_type: string;
+    task_id: string | null;
+  }>;
+}
+
+interface ObservabilitySummary {
+  指标: Record<string, unknown>;
+  task_trace_total: number;
+}
+
 export class TestApiClient {
   private token: string | null = null;
   private workspaceSlug: string | null = null;
@@ -110,6 +155,7 @@ export class TestApiClient {
   private account: string | null = null;
   private createdIssueIds: string[] = [];
   private createdRuntimeIds: string[] = [];
+  private createdSquadIds: string[] = [];
 
   async login(account: string, name: string) {
     const res = await fetch(`${API_BASE}/auth/login`, {
@@ -252,6 +298,172 @@ export class TestApiClient {
     }
   }
 
+  async createCodingSquadFixture(name = `E2E Multica 编码小队 ${Date.now()}`): Promise<CodingSquadFixture> {
+    if (!this.workspaceId) {
+      throw new Error("Cannot seed coding squad before workspace is selected");
+    }
+    if (!this.account) {
+      throw new Error("Cannot seed coding squad before login");
+    }
+
+    const runtime = await this.ensureOnlineCodeBuddyRuntime(`${name} Runtime`);
+    const profile = {
+      profile_key: "multica-coding-squad-v1",
+      project: "Multica",
+      repo: "/data/ida/goal-test",
+      mode: "coding_squad",
+      operation_skills: ["需求拆解", "代码实现", "独立验收", "规约同步", "部署验证"],
+      acceptance: ["方案可审阅", "开发范围清晰", "验收者独立检查", "日志和测试证据齐全"],
+      forbidden_actions: ["开发者自证通过", "越权修改非负责范围", "泄露密钥"],
+      model_policy: {
+        "大量文本任务": "minimax-m2.7-ioa",
+        "代码测试任务": "gpt/code",
+      },
+      roles: [
+        {
+          key: "captain",
+          name: "队长",
+          responsibility: "接需求、判断流程、拆任务、分派给不同 AI、跟踪进度。",
+          output: "小队执行计划和任务分派记录",
+        },
+        {
+          key: "designer",
+          name: "方案设计者",
+          responsibility: "输出技术方案、影响面和测试方案，开发前给人确认。",
+          output: "技术方案和测试计划",
+        },
+        {
+          key: "developer",
+          name: "开发者",
+          responsibility: "只处理被分配的代码范围。",
+          boundary: "不得随手修改别人负责的范围。",
+          output: "代码变更和自测记录",
+        },
+        {
+          key: "acceptor",
+          name: "验收者",
+          responsibility: "独立检查开发者代码、测试结果和漏改风险。",
+          forbidden: "开发者不能自己说通过。",
+          output: "独立验收结论",
+        },
+        {
+          key: "spec-maintainer",
+          name: "规约维护者",
+          responsibility: "同步流程文档、测试数据说明、接口索引和技能说明。",
+          output: "规约同步清单",
+        },
+        {
+          key: "operator",
+          name: "部署运行者",
+          responsibility: "负责端口、环境变量、数据库、启动服务、健康检查和部署验证。",
+          forbidden: "不得泄露密钥，不随意改业务代码。",
+          output: "部署与健康检查证据",
+        },
+      ],
+      steps: [
+        { key: "receive", name: "需求接收与流程判断", role_key: "captain" },
+        { key: "design", name: "技术方案与测试方案", role_key: "designer" },
+        { key: "develop", name: "范围内实现", role_key: "developer" },
+        { key: "acceptance", name: "独立验收", role_key: "acceptor" },
+        { key: "spec", name: "规约同步", role_key: "spec-maintainer" },
+        { key: "deploy", name: "部署与健康检查", role_key: "operator" },
+      ],
+    };
+    const roleSeeds = [
+      ["captain", "队长", "负责接需求、拆任务、分派和跟踪进度。"],
+      ["designer", "方案设计者", "负责技术方案、影响面和测试方案。"],
+      ["developer", "开发者", "负责限定范围内的代码实现。"],
+      ["acceptor", "验收者", "负责独立验收和漏改检查。"],
+      ["spec-maintainer", "规约维护者", "负责同步文档、接口索引和技能说明。"],
+      ["operator", "部署运行者", "负责环境、启动、日志和健康检查。"],
+    ] as const;
+
+    const client = new pg.Client(DATABASE_URL);
+    await client.connect();
+    try {
+      const userRow = await client.query<{ id: string }>(
+        `SELECT id FROM "user" WHERE account = $1 LIMIT 1`,
+        [this.account],
+      );
+      if (userRow.rows.length === 0) {
+        throw new Error(`E2E user missing: ${this.account}`);
+      }
+      const userId = userRow.rows[0]!.id;
+      await client.query("BEGIN");
+      const agents: CodingSquadFixture["agents"] = [];
+      for (const [roleKey, role, instruction] of roleSeeds) {
+        const agent = await client.query<{ id: string }>(
+          `
+            INSERT INTO agent (
+              workspace_id, name, runtime_mode, runtime_config, runtime_id,
+              visibility, status, max_concurrent_tasks, owner_id,
+              instructions, custom_env, custom_args, model
+            )
+            VALUES (
+              $1, $2, 'cloud', '{"provider":"codebuddy","用途":"Multica 编码小队 E2E"}'::jsonb, $3,
+              'workspace', 'idle', 2, $4,
+              $5, '{}'::jsonb, '[]'::jsonb, 'minimax-m2.7-ioa'
+            )
+            RETURNING id
+          `,
+          [
+            this.workspaceId,
+            `${name} · ${role}`,
+            runtime.id,
+            userId,
+            `你是 Multica 编码小队的${role}。${instruction}所有输出使用中文，并保留可验收证据。`,
+          ],
+        );
+        agents.push({ id: agent.rows[0]!.id, name: `${name} · ${role}`, role, roleKey });
+      }
+
+      const squad = await client.query<{ id: string }>(
+        `
+          INSERT INTO squad (
+            workspace_id, name, description, leader_id, creator_id, instructions, sop_profile
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
+          RETURNING id
+        `,
+        [
+          this.workspaceId,
+          name,
+          "用于开发 Multica 自身的生产级编码小队，包含队长、方案设计者、开发者、验收者、规约维护者和部署运行者。",
+          agents[0]!.id,
+          userId,
+          "队长先澄清需求和验收口径，再按角色分派；开发者不得越界；验收者必须独立给出证据；所有指标和输出使用中文。",
+          JSON.stringify(profile),
+        ],
+      );
+      const squadId = squad.rows[0]!.id;
+      for (const agent of agents) {
+        await client.query(
+          `
+            INSERT INTO squad_member (squad_id, member_type, member_id, role)
+            VALUES ($1, 'agent', $2, $3)
+            ON CONFLICT (squad_id, member_type, member_id)
+            DO UPDATE SET role = EXCLUDED.role
+          `,
+          [squadId, agent.id, agent.role],
+        );
+      }
+      await client.query("COMMIT");
+      this.createdSquadIds.push(squadId);
+      return {
+        runtimeId: runtime.id,
+        squadId,
+        squadName: name,
+        leaderAgentId: agents[0]!.id,
+        agents,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      await client.end();
+    }
+  }
+
   async createIssue(title: string, opts?: Record<string, unknown>) {
     const res = await this.authedFetch("/api/issues", {
       method: "POST",
@@ -264,6 +476,151 @@ export class TestApiClient {
 
   async deleteIssue(id: string) {
     await this.authedFetch(`/api/issues/${id}`, { method: "DELETE" });
+  }
+
+  async listIssueSOPRuns(issueId: string): Promise<{ items: SquadSOPRun[]; total: number }> {
+    const res = await this.authedFetch(`/api/issues/${issueId}/sop-runs`);
+    if (!res.ok) {
+      throw new Error(`list issue SOP runs failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async recordSOPStepEvent(
+    runId: string,
+    stepId: string,
+    data: Record<string, unknown>,
+  ): Promise<SquadSOPRun["events"][number]> {
+    const res = await this.authedFetch(`/api/sop-runs/${runId}/steps/${encodeURIComponent(stepId)}/events`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      throw new Error(`record SOP step event failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async getWorkspaceObservabilitySummary(params?: { squad_id?: string; project_id?: string }): Promise<ObservabilitySummary> {
+    if (!this.workspaceId) {
+      throw new Error("Cannot get observability summary before workspace is selected");
+    }
+    const search = new URLSearchParams();
+    if (params?.squad_id) search.set("squad_id", params.squad_id);
+    if (params?.project_id) search.set("project_id", params.project_id);
+    const res = await this.authedFetch(
+      `/api/workspaces/${this.workspaceId}/observability/summary${search.toString() ? `?${search}` : ""}`,
+    );
+    if (!res.ok) {
+      throw new Error(`get workspace observability summary failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async findLeaderTask(issueId: string, leaderAgentId: string): Promise<SquadLeaderTask | null> {
+    const client = new pg.Client(DATABASE_URL);
+    await client.connect();
+    try {
+      const result = await client.query<SquadLeaderTask>(
+        `
+          SELECT
+            id::text,
+            status,
+            agent_id::text,
+            runtime_id::text,
+            issue_id::text,
+            COALESCE(is_leader_task, false) AS is_leader_task
+          FROM agent_task_queue
+          WHERE issue_id = $1 AND agent_id = $2
+          ORDER BY created_at DESC
+          LIMIT 1
+        `,
+        [issueId, leaderAgentId],
+      );
+      return result.rows[0] ?? null;
+    } finally {
+      await client.end();
+    }
+  }
+
+  async completeSquadLeaderTaskWithEvidence(task: SquadLeaderTask, opts?: { squadId?: string }) {
+    if (!this.workspaceId) {
+      throw new Error("Cannot complete squad leader task before workspace is selected");
+    }
+    const client = new pg.Client(DATABASE_URL);
+    await client.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `
+          UPDATE agent_task_queue
+          SET
+            status = 'completed',
+            started_at = COALESCE(started_at, now() - interval '5 seconds'),
+            completed_at = now(),
+            result = '{"状态":"完成","结论":"队长已完成分派并收集编码小队验收证据"}'::jsonb,
+            error = NULL,
+            session_id = COALESCE(session_id, 'e2e-coding-squad-session'),
+            work_dir = COALESCE(work_dir, '/data/ida/goal-test')
+          WHERE id = $1
+        `,
+        [task.id],
+      );
+      await client.query(
+        `
+          INSERT INTO task_usage (
+            task_id, provider, model, input_tokens, output_tokens,
+            cache_read_tokens, cache_write_tokens, updated_at
+          )
+          VALUES ($1, 'codebuddy', 'minimax-m2.7-ioa', 31, 19, 5, 7, now())
+          ON CONFLICT (task_id, provider, model)
+          DO UPDATE SET
+            input_tokens = EXCLUDED.input_tokens,
+            output_tokens = EXCLUDED.output_tokens,
+            cache_read_tokens = EXCLUDED.cache_read_tokens,
+            cache_write_tokens = EXCLUDED.cache_write_tokens,
+            updated_at = now()
+        `,
+        [task.id],
+      );
+      await client.query(`DELETE FROM task_message WHERE task_id = $1`, [task.id]);
+      await client.query(
+        `
+          INSERT INTO task_message (task_id, seq, type, tool, content, input, output)
+          VALUES
+            ($1, 1, 'text', NULL, '队长输出：已完成需求接收、方案分派和验收证据登记', '{}'::jsonb, NULL),
+            ($1, 2, 'tool_result', 'multica squad activity', '已记录编码小队 SOP 事件', '{}'::jsonb, '通过')
+        `,
+        [task.id],
+      );
+      await client.query(`DELETE FROM task_trace_event WHERE task_id = $1`, [task.id]);
+      await client.query(
+        `
+          INSERT INTO task_trace_event (
+            workspace_id, task_id, issue_id, squad_id, agent_id, runtime_id,
+            source, event_type, event_name, status, attempt,
+            queue_wait_ms, duration_ms, run_ms, total_ms,
+            provider, model, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, failure_reason, error_type, chat_session_id, metadata
+          )
+          VALUES (
+            $1, $2, $3, $4, $5, $6,
+            'squad_sop', 'squad.leader.completed', '编码小队队长任务完成', 'completed', 1,
+            400, 2800, 2300, 3200,
+            'codebuddy', 'minimax-m2.7-ioa', 36, 19, 5,
+            7, '无', '', NULL,
+            '{"阶段":"编码小队","证据":"E2E","模型策略":"minimax"}'::jsonb
+          )
+        `,
+        [this.workspaceId, task.id, task.issue_id, opts?.squadId ?? null, task.agent_id, task.runtime_id],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      await client.end();
+    }
   }
 
   async listPromptLibraryItems(): Promise<PromptLibraryItem[]> {
@@ -516,9 +873,24 @@ export class TestApiClient {
     }
   }
 
+  async cleanupSeededSquads() {
+    if (!this.createdSquadIds.length) {
+      return;
+    }
+    const client = new pg.Client(DATABASE_URL);
+    await client.connect();
+    try {
+      for (const squadId of this.createdSquadIds) {
+        await client.query(`DELETE FROM squad WHERE id = $1`, [squadId]);
+      }
+    } finally {
+      await client.end();
+      this.createdSquadIds = [];
+    }
+  }
+
   /** Clean up all issues created during this test. */
   async cleanup() {
-    await this.cleanupSeededRuntimes();
     for (const id of this.createdIssueIds) {
       try {
         await this.deleteIssue(id);
@@ -527,6 +899,8 @@ export class TestApiClient {
       }
     }
     this.createdIssueIds = [];
+    await this.cleanupSeededSquads();
+    await this.cleanupSeededRuntimes();
   }
 
   getToken() {
