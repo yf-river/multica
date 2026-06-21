@@ -1987,9 +1987,6 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	if err := h.Queries.DeleteTaskTokensByTask(r.Context(), task.ID); err != nil {
 		slog.Warn("complete task: failed to revoke task tokens", "task_id", uuidToString(task.ID), "error", err)
 	}
-	if err := h.syncPromptEvaluationRunForTask(r.Context(), *task); err != nil {
-		slog.Warn("complete task: prompt evaluation auto-sync failed", "task_id", uuidToString(task.ID), "error", err)
-	}
 
 	slog.Info("task completed", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
@@ -2153,9 +2150,6 @@ func (h *Handler) FailTask(w http.ResponseWriter, r *http.Request) {
 	// terminal window. The 24h expiry / cascade are the durable guards.
 	if err := h.Queries.DeleteTaskTokensByTask(r.Context(), task.ID); err != nil {
 		slog.Warn("fail task: failed to revoke task tokens", "task_id", uuidToString(task.ID), "error", err)
-	}
-	if err := h.syncPromptEvaluationRunForTask(r.Context(), *task); err != nil {
-		slog.Warn("fail task: prompt evaluation auto-sync failed", "task_id", uuidToString(task.ID), "error", err)
 	}
 
 	slog.Info("task failed", "task_id", taskID, "agent_id", uuidToString(task.AgentID), "task_error", req.Error, "failure_reason", req.FailureReason)

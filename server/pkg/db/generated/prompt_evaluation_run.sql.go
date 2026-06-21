@@ -649,6 +649,63 @@ func (q *Queries) ListPromptEvaluationTrialsByRun(ctx context.Context, arg ListP
 	return items, nil
 }
 
+const reassignPromptEvaluationRunTask = `-- name: ReassignPromptEvaluationRunTask :one
+UPDATE prompt_evaluation_run SET
+    task_id = $2,
+    chat_session_id = $3,
+    status = '已入队',
+    failure_reason = '无',
+    conclusion = 'Agent 自动重试已入队，等待新任务执行完成',
+    updated_at = now()
+WHERE task_id = $1
+RETURNING id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at
+`
+
+type ReassignPromptEvaluationRunTaskParams struct {
+	TaskID        pgtype.UUID `json:"task_id"`
+	TaskID_2      pgtype.UUID `json:"task_id_2"`
+	ChatSessionID pgtype.UUID `json:"chat_session_id"`
+}
+
+func (q *Queries) ReassignPromptEvaluationRunTask(ctx context.Context, arg ReassignPromptEvaluationRunTaskParams) (PromptEvaluationRun, error) {
+	row := q.db.QueryRow(ctx, reassignPromptEvaluationRunTask, arg.TaskID, arg.TaskID_2, arg.ChatSessionID)
+	var i PromptEvaluationRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AssetID,
+		&i.PromptID,
+		&i.RunKind,
+		&i.Status,
+		&i.TriggerSource,
+		&i.AgentID,
+		&i.RuntimeID,
+		&i.TaskID,
+		&i.ChatSessionID,
+		&i.Model,
+		&i.RuntimeProvider,
+		&i.TotalCases,
+		&i.PassedCases,
+		&i.FailedCases,
+		&i.PassRate,
+		&i.TotalDurationMs,
+		&i.AverageDurationMs,
+		&i.InputTokens,
+		&i.OutputTokens,
+		&i.EstimatedCost,
+		&i.FailureReason,
+		&i.Conclusion,
+		&i.Metrics,
+		&i.Evidence,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const updatePromptEvaluationRunFromTask = `-- name: UpdatePromptEvaluationRunFromTask :one
 UPDATE prompt_evaluation_run SET
     status = $3,

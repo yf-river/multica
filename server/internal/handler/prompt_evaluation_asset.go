@@ -2,7 +2,6 @@ package handler
 
 import (
 	"bytes"
-	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -15,6 +14,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -984,194 +984,12 @@ func (h *Handler) SyncPromptEvaluationRunFromTask(w http.ResponseWriter, r *http
 		writeError(w, http.StatusBadRequest, "prompt evaluation run is not linked to an agent task")
 		return
 	}
-	updated, err := h.syncPromptEvaluationRunFromTask(r.Context(), run)
+	updated, err := service.SyncPromptEvaluationRunFromTask(r.Context(), h.Queries, run)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation run from task")
 		return
 	}
 	writeJSON(w, http.StatusOK, promptEvaluationRunToResponse(updated))
-}
-
-func (h *Handler) syncPromptEvaluationRunForTask(ctx context.Context, task db.AgentTaskQueue) error {
-	run, err := h.Queries.GetPromptEvaluationRunByTask(ctx, task.ID)
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			return nil
-		}
-		return err
-	}
-	_, err = h.syncPromptEvaluationRunWithTask(ctx, run, task)
-	return err
-}
-
-func (h *Handler) syncPromptEvaluationRunFromTask(ctx context.Context, run db.PromptEvaluationRun) (db.PromptEvaluationRun, error) {
-	if !run.TaskID.Valid {
-		return db.PromptEvaluationRun{}, errors.New("prompt evaluation run is not linked to an agent task")
-	}
-	task, err := h.Queries.GetAgentTaskInWorkspace(ctx, db.GetAgentTaskInWorkspaceParams{
-		ID:          run.TaskID,
-		WorkspaceID: run.WorkspaceID,
-	})
-	if err != nil {
-		return db.PromptEvaluationRun{}, err
-	}
-	return h.syncPromptEvaluationRunWithTask(ctx, run, task)
-}
-
-func (h *Handler) syncPromptEvaluationRunWithTask(ctx context.Context, run db.PromptEvaluationRun, task db.AgentTaskQueue) (db.PromptEvaluationRun, error) {
-	usages, err := h.Queries.GetTaskUsage(ctx, task.ID)
-	if err != nil {
-		return db.PromptEvaluationRun{}, err
-	}
-	taskMessages, err := h.Queries.ListTaskMessages(ctx, task.ID)
-	if err != nil {
-		return db.PromptEvaluationRun{}, err
-	}
-	status, passed, failed, passRate, conclusion, failureReason := promptEvaluationRunStatusFromTask(run, task)
-	inputTokens, outputTokens := promptEvaluationUsageTotals(run, usages)
-	durationMs := promptEvaluationTaskDurationMs(task, run)
-	averageMs := int64(0)
-	if run.TotalCases > 0 && durationMs > 0 {
-		averageMs = durationMs / int64(run.TotalCases)
-	}
-	evidence := promptEvaluationTaskEvidence(run, task, usages, taskMessages)
-	agentName := uuidToString(task.AgentID)
-	if agent, err := h.Queries.GetAgent(ctx, task.AgentID); err == nil && strings.TrimSpace(agent.Name) != "" {
-		agentName = agent.Name
-	}
-	metrics := map[string]any{
-		"总用例数":          run.TotalCases,
-		"通过数":           passed,
-		"失败数":           failed,
-		"通过率":           passRate,
-		"总耗时":           durationMs,
-		"平均耗时":          averageMs,
-		"输入token":       inputTokens,
-		"输出token":       outputTokens,
-		"预估成本":          run.EstimatedCost,
-		"执行Agent":       agentName,
-		"模型":            run.Model,
-		"runtime":       run.RuntimeProvider,
-		"trace/task id": uuidToString(task.ID),
-		"失败原因":          failureReason,
-		"评估结论":          conclusion,
-	}
-	updated, err := h.Queries.UpdatePromptEvaluationRunFromTask(ctx, db.UpdatePromptEvaluationRunFromTaskParams{
-		ID:                run.ID,
-		WorkspaceID:       run.WorkspaceID,
-		Status:            status,
-		PassedCases:       passed,
-		FailedCases:       failed,
-		PassRate:          passRate,
-		TotalDurationMs:   durationMs,
-		AverageDurationMs: averageMs,
-		InputTokens:       inputTokens,
-		OutputTokens:      outputTokens,
-		EstimatedCost:     run.EstimatedCost,
-		FailureReason:     pgtype.Text{String: failureReason, Valid: true},
-		Conclusion:        pgtype.Text{String: conclusion, Valid: true},
-		Metrics:           mustJSONBytes(metrics),
-		Evidence:          mustJSONBytes(evidence),
-		StartedAt:         task.StartedAt,
-		CompletedAt:       task.CompletedAt,
-	})
-	if err != nil {
-		return db.PromptEvaluationRun{}, err
-	}
-	trialStatus := promptEvaluationTrialStatusFromRunStatus(status)
-	trialFailureReason := failureReason
-	if trialStatus == "通过" {
-		trialFailureReason = "无"
-	}
-	perCaseInput, perCaseOutput := promptEvaluationPerCaseUsage(run.TotalCases, inputTokens, outputTokens)
-	if err := h.Queries.UpdatePromptEvaluationTrialsFromTask(ctx, db.UpdatePromptEvaluationTrialsFromTaskParams{
-		RunID:         run.ID,
-		WorkspaceID:   run.WorkspaceID,
-		Status:        trialStatus,
-		InputTokens:   perCaseInput,
-		OutputTokens:  perCaseOutput,
-		DurationMs:    averageMs,
-		FailureReason: trialFailureReason,
-		Evidence: mustJSONBytes(map[string]any{
-			"run_id":        uuidToString(run.ID),
-			"task_id":       uuidToString(task.ID),
-			"同步来源":          "Agent task 自动回写",
-			"Agent任务状态":     task.Status,
-			"评估结论":          conclusion,
-			"失败原因":          failureReason,
-			"trace/task id": uuidToString(task.ID),
-		}),
-	}); err != nil {
-		return db.PromptEvaluationRun{}, err
-	}
-	if err := h.syncPromptEvaluationAssetAgentRunSnapshot(ctx, updated, task, agentName, status, conclusion, failureReason); err != nil {
-		return db.PromptEvaluationRun{}, err
-	}
-	return updated, nil
-}
-
-func (h *Handler) syncPromptEvaluationAssetAgentRunSnapshot(ctx context.Context, run db.PromptEvaluationRun, task db.AgentTaskQueue, agentName string, status string, conclusion string, failureReason string) error {
-	asset, err := h.Queries.GetPromptEvaluationAssetInWorkspace(ctx, db.GetPromptEvaluationAssetInWorkspaceParams{
-		ID:          run.AssetID,
-		WorkspaceID: run.WorkspaceID,
-	})
-	if err != nil {
-		return err
-	}
-	payload := decodePayloadObject(asset.Payload)
-	record := map[string]any{
-		"运行时间":            time.Now().UTC().Format(time.RFC3339),
-		"run_id":          uuidToString(run.ID),
-		"状态":              status,
-		"执行Agent":         agentName,
-		"agent_id":        uuidToString(task.AgentID),
-		"模型":              run.Model,
-		"runtime":         run.RuntimeProvider,
-		"runtime_id":      uuidToString(task.RuntimeID),
-		"trace/task id":   uuidToString(task.ID),
-		"chat_session_id": uuidToString(task.ChatSessionID),
-		"总用例数":            run.TotalCases,
-		"通过数":             run.PassedCases,
-		"失败数":             run.FailedCases,
-		"通过率":             run.PassRate,
-		"总耗时毫秒":           run.TotalDurationMs,
-		"平均耗时毫秒":          run.AverageDurationMs,
-		"输入token":         run.InputTokens,
-		"输出token":         run.OutputTokens,
-		"失败原因":            failureReason,
-		"评估结论":            conclusion,
-	}
-	payload["最近Agent运行"] = record
-	payload["Agent运行记录"] = appendPromptEvaluationAgentRunHistory(payload["Agent运行记录"], record)
-	_, err = h.Queries.UpdatePromptEvaluationAsset(ctx, db.UpdatePromptEvaluationAssetParams{
-		ID:          asset.ID,
-		WorkspaceID: asset.WorkspaceID,
-		PromptID:    asset.PromptID,
-		Payload:     mustJSONBytes(payload),
-	})
-	return err
-}
-
-func promptEvaluationTrialStatusFromRunStatus(status string) string {
-	switch status {
-	case "通过":
-		return "通过"
-	case "失败":
-		return "失败"
-	case "未通过":
-		return "未通过"
-	case "已取消":
-		return "已跳过"
-	default:
-		return "待执行"
-	}
-}
-
-func promptEvaluationPerCaseUsage(totalCases int32, inputTokens int32, outputTokens int32) (int32, int32) {
-	if totalCases <= 0 {
-		return 0, 0
-	}
-	return inputTokens / totalCases, outputTokens / totalCases
 }
 
 func (h *Handler) syncPromptEvaluationCasesFromPayload(w http.ResponseWriter, r *http.Request, qtx *db.Queries, asset db.PromptEvaluationAsset, createdBy pgtype.UUID) bool {
@@ -1709,65 +1527,12 @@ func (h *Handler) promptEvaluationCasesForAsset(w http.ResponseWriter, r *http.R
 	return cases, true
 }
 
-func promptEvaluationRunStatusFromTask(run db.PromptEvaluationRun, task db.AgentTaskQueue) (string, int32, int32, float64, string, string) {
-	switch task.Status {
-	case "completed":
-		total := run.TotalCases
-		return "通过", total, 0, promptEvaluationPassRate(total, 0), "Agent 执行完成，等待验收者复核输出质量", "无"
-	case "failed":
-		total := run.TotalCases
-		reason := "Agent 执行失败"
-		if task.Error.Valid && strings.TrimSpace(task.Error.String) != "" {
-			reason = task.Error.String
-		}
-		return "失败", 0, total, 0, "Agent 执行失败，需要查看 task 日志和失败原因", reason
-	case "cancelled":
-		return "已取消", run.PassedCases, run.FailedCases, run.PassRate, "Agent 执行已取消", "任务被取消"
-	case "running":
-		return "运行中", run.PassedCases, run.FailedCases, run.PassRate, "Agent 正在执行", "无"
-	default:
-		return "已入队", run.PassedCases, run.FailedCases, run.PassRate, "等待 Agent 执行完成", "无"
-	}
-}
-
 func promptEvaluationPassRate(passed int32, failed int32) float64 {
 	total := passed + failed
 	if total == 0 {
 		return 0
 	}
 	return float64(passed) / float64(total)
-}
-
-func promptEvaluationUsageTotals(run db.PromptEvaluationRun, usages []db.TaskUsage) (int32, int32) {
-	input := int64(0)
-	output := int64(0)
-	for _, usage := range usages {
-		input += usage.InputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
-		output += usage.OutputTokens
-	}
-	if input == 0 {
-		input = int64(run.InputTokens)
-	}
-	if output == 0 {
-		output = int64(run.OutputTokens)
-	}
-	return clampInt32(input), clampInt32(output)
-}
-
-func promptEvaluationTaskDurationMs(task db.AgentTaskQueue, run db.PromptEvaluationRun) int64 {
-	if task.StartedAt.Valid && task.CompletedAt.Valid {
-		duration := task.CompletedAt.Time.Sub(task.StartedAt.Time).Milliseconds()
-		if duration > 0 {
-			return duration
-		}
-	}
-	if task.StartedAt.Valid && task.Status == "running" {
-		duration := time.Since(task.StartedAt.Time).Milliseconds()
-		if duration > 0 {
-			return duration
-		}
-	}
-	return run.TotalDurationMs
 }
 
 func validPromptEvaluationOptimizationCandidateStatus(status string) bool {
@@ -1939,67 +1704,12 @@ func buildPromptEvaluationPublishedPromptTags(raw []byte) []byte {
 	return mustJSONBytes(next)
 }
 
-func promptEvaluationTaskEvidence(run db.PromptEvaluationRun, task db.AgentTaskQueue, usages []db.TaskUsage, messages []db.TaskMessage) map[string]any {
-	usageRows := make([]map[string]any, 0, len(usages))
-	for _, usage := range usages {
-		usageRows = append(usageRows, map[string]any{
-			"provider":           usage.Provider,
-			"model":              usage.Model,
-			"input_tokens":       usage.InputTokens,
-			"output_tokens":      usage.OutputTokens,
-			"cache_read_tokens":  usage.CacheReadTokens,
-			"cache_write_tokens": usage.CacheWriteTokens,
-		})
-	}
-	messageSummary := make([]map[string]any, 0, len(messages))
-	for _, message := range messages {
-		messageSummary = append(messageSummary, map[string]any{
-			"seq":     message.Seq,
-			"type":    message.Type,
-			"tool":    message.Tool,
-			"content": truncatePromptEvaluationEvidence(promptEvaluationTextValue(message.Content), 800),
-		})
-	}
-	return map[string]any{
-		"run_id":        uuidToString(run.ID),
-		"task_id":       uuidToString(task.ID),
-		"task_status":   task.Status,
-		"task_result":   decodeJSONDefault(task.Result, map[string]any{}),
-		"task_error":    promptEvaluationTextValue(task.Error),
-		"session_id":    promptEvaluationTextValue(task.SessionID),
-		"work_dir":      promptEvaluationTextValue(task.WorkDir),
-		"started_at":    timestampToString(task.StartedAt),
-		"completed_at":  timestampToString(task.CompletedAt),
-		"usage":         usageRows,
-		"task_messages": messageSummary,
-		"同步时间":          time.Now().UTC().Format(time.RFC3339),
-		"同步说明":          "从 agent_task_queue、task_usage 和 task_message 回写结构化训练评估运行记录",
-	}
-}
-
 func truncatePromptEvaluationEvidence(value string, maxRunes int) string {
 	runes := []rune(value)
 	if len(runes) <= maxRunes {
 		return value
 	}
 	return string(runes[:maxRunes]) + "..."
-}
-
-func promptEvaluationTextValue(value pgtype.Text) string {
-	if !value.Valid {
-		return ""
-	}
-	return value.String
-}
-
-func clampInt32(value int64) int32 {
-	if value > int64(^uint32(0)>>1) {
-		return int32(^uint32(0) >> 1)
-	}
-	if value < 0 {
-		return 0
-	}
-	return int32(value)
 }
 
 func (h *Handler) loadPromptEvaluationAsset(w http.ResponseWriter, r *http.Request) (db.PromptEvaluationAsset, bool) {

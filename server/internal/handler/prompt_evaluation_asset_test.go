@@ -449,6 +449,111 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsFailedTask(t *testing.T) {
 	}
 }
 
+func TestRunPromptEvaluationAssetAgentAutoSyncsCancelledTask(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	cleanupPromptEvaluationAgentRunTest(t)
+	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实 Agent 取消实验", "取消任务")
+
+	if _, err := testHandler.TaskService.CancelTask(context.Background(), parseUUID(resp.TaskID)); err != nil {
+		t.Fatalf("cancel task: %v", err)
+	}
+
+	evidenceW := httptest.NewRecorder()
+	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
+	if evidenceW.Code != http.StatusOK {
+		t.Fatalf("evidence status = %d, body = %s", evidenceW.Code, evidenceW.Body.String())
+	}
+	var evidence PromptEvaluationRunEvidenceResponse
+	if err := json.Unmarshal(evidenceW.Body.Bytes(), &evidence); err != nil {
+		t.Fatalf("decode evidence response: %v", err)
+	}
+	if evidence.Run.Status != "已取消" || evidence.Run.Conclusion != "Agent 执行已取消" || evidence.Run.FailureReason != "任务被取消" {
+		t.Fatalf("auto-synced cancelled run = %+v", evidence.Run)
+	}
+	if len(evidence.Trials) != 1 || evidence.Trials[0].Status != "已跳过" || evidence.Trials[0].FailureReason != "任务被取消" {
+		t.Fatalf("auto-synced cancelled trial = %+v", evidence.Trials)
+	}
+}
+
+func TestRunPromptEvaluationAssetAgentBatchFailureAutoSyncsTask(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	cleanupPromptEvaluationAgentRunTest(t)
+	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实 Agent 批处理失败实验", "批处理失败")
+	markPromptEvaluationTaskRunning(t, resp.TaskID)
+
+	failed, err := testHandler.Queries.FailAgentTask(context.Background(), db.FailAgentTaskParams{
+		ID:            parseUUID(resp.TaskID),
+		Error:         pgtype.Text{String: "后台扫描判定任务失败", Valid: true},
+		FailureReason: pgtype.Text{String: "agent_error", Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("fail task row: %v", err)
+	}
+	testHandler.TaskService.HandleFailedTasks(context.Background(), []db.AgentTaskQueue{failed})
+
+	evidenceW := httptest.NewRecorder()
+	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
+	if evidenceW.Code != http.StatusOK {
+		t.Fatalf("evidence status = %d, body = %s", evidenceW.Code, evidenceW.Body.String())
+	}
+	var evidence PromptEvaluationRunEvidenceResponse
+	if err := json.Unmarshal(evidenceW.Body.Bytes(), &evidence); err != nil {
+		t.Fatalf("decode evidence response: %v", err)
+	}
+	if evidence.Run.Status != "失败" || evidence.Run.FailureReason != "后台扫描判定任务失败" || evidence.Run.TaskID == nil || *evidence.Run.TaskID != resp.TaskID {
+		t.Fatalf("auto-synced batch failed run = %+v", evidence.Run)
+	}
+	if len(evidence.TraceEvents) == 0 {
+		t.Fatalf("expected failure trace events, got none")
+	}
+}
+
+func TestRunPromptEvaluationAssetAgentRetryReassignsRunTask(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	cleanupPromptEvaluationAgentRunTest(t)
+	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实 Agent 重试实验", "运行时离线")
+	markPromptEvaluationTaskRunning(t, resp.TaskID)
+
+	failed, err := testHandler.Queries.FailAgentTask(context.Background(), db.FailAgentTaskParams{
+		ID:            parseUUID(resp.TaskID),
+		Error:         pgtype.Text{String: "运行时离线，自动重试", Valid: true},
+		FailureReason: pgtype.Text{String: "runtime_offline", Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("fail task row: %v", err)
+	}
+	retried := testHandler.TaskService.HandleFailedTasks(context.Background(), []db.AgentTaskQueue{failed})
+	if retried != 1 {
+		t.Fatalf("expected one retry, got %d", retried)
+	}
+
+	var childTaskID string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT id::text FROM agent_task_queue
+		WHERE parent_task_id = $1
+	`, resp.TaskID).Scan(&childTaskID); err != nil {
+		t.Fatalf("load retry child: %v", err)
+	}
+	evidenceW := httptest.NewRecorder()
+	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
+	if evidenceW.Code != http.StatusOK {
+		t.Fatalf("evidence status = %d, body = %s", evidenceW.Code, evidenceW.Body.String())
+	}
+	var evidence PromptEvaluationRunEvidenceResponse
+	if err := json.Unmarshal(evidenceW.Body.Bytes(), &evidence); err != nil {
+		t.Fatalf("decode evidence response: %v", err)
+	}
+	if evidence.Run.Status != "已入队" || evidence.Run.TaskID == nil || *evidence.Run.TaskID != childTaskID {
+		t.Fatalf("retry did not reassign prompt evaluation run: child=%s run=%+v", childTaskID, evidence.Run)
+	}
+}
+
 func cleanupPromptEvaluationAgentRunTest(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
@@ -485,6 +590,18 @@ func cleanupPromptEvaluationAgentRunTest(t *testing.T) {
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
 	})
+}
+
+func markPromptEvaluationTaskRunning(t *testing.T, taskID string) {
+	t.Helper()
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE agent_task_queue
+		SET status = 'running',
+		    started_at = now() - interval '1 second'
+		WHERE id = $1
+	`, taskID); err != nil {
+		t.Fatalf("start agent task: %v", err)
+	}
 }
 
 func createPromptEvaluationAgentRunFixture(t *testing.T, assetName string, caseName string) (PromptEvaluationAssetResponse, PromptEvaluationAgentRunResponse, string) {

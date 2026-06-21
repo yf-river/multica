@@ -167,6 +167,17 @@ WHERE id = $1 AND workspace_id = $2;
 SELECT * FROM prompt_evaluation_run
 WHERE task_id = $1;
 
+-- name: ReassignPromptEvaluationRunTask :one
+UPDATE prompt_evaluation_run SET
+    task_id = $2,
+    chat_session_id = $3,
+    status = '已入队',
+    failure_reason = '无',
+    conclusion = 'Agent 自动重试已入队，等待新任务执行完成',
+    updated_at = now()
+WHERE task_id = $1
+RETURNING *;
+
 -- name: UpdatePromptEvaluationRunFromTask :one
 UPDATE prompt_evaluation_run SET
     status = $3,
