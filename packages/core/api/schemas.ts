@@ -15,6 +15,7 @@ import type {
   ObservabilitySummary,
   ListWebhookDeliveriesResponse,
   PromptEvaluationAsset,
+  PromptEvaluationRunEvidence,
   PromptEvaluationOptimizationCandidate,
   PromptLibraryItem,
   PublishPromptEvaluationOptimizationCandidateResponse,
@@ -804,6 +805,74 @@ export const PromptEvaluationTrialSchema = z.object({
   created_at: z.string().default(""),
 }).loose();
 
+const PromptEvaluationTaskUsageSchema = z.object({
+  id: z.string(),
+  task_id: z.string(),
+  provider: z.string().default(""),
+  model: z.string().default(""),
+  input_tokens: z.number().default(0),
+  output_tokens: z.number().default(0),
+  cache_read_tokens: z.number().default(0),
+  cache_write_tokens: z.number().default(0),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+const PromptEvaluationTaskMessageSchema = z.object({
+  task_id: z.string(),
+  issue_id: z.string().default(""),
+  chat_session_id: z.string().optional(),
+  seq: z.number().default(0),
+  type: z.enum(["text", "thinking", "tool_use", "tool_result", "error"]),
+  tool: z.string().optional(),
+  content: z.string().optional(),
+  input: z.record(z.string(), z.unknown()).optional(),
+  output: z.string().optional(),
+  created_at: z.string().optional(),
+}).loose();
+
+const PromptEvaluationTaskTraceEventSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  task_id: z.string(),
+  issue_id: z.string().nullable().optional().transform((v) => v ?? null),
+  agent_id: z.string(),
+  runtime_id: z.string().nullable().optional().transform((v) => v ?? null),
+  squad_id: z.string().nullable().optional().transform((v) => v ?? null),
+  project_id: z.string().nullable().optional().transform((v) => v ?? null),
+  source: z.string().default(""),
+  event_type: z.string().default(""),
+  event_name: z.string().default(""),
+  status: z.string().default(""),
+  attempt: z.number().default(0),
+  duration_ms: z.number().nullable().optional(),
+  queue_wait_ms: z.number().nullable().optional(),
+  run_ms: z.number().nullable().optional(),
+  total_ms: z.number().nullable().optional(),
+  provider: z.string().default(""),
+  model: z.string().default(""),
+  input_tokens: z.number().default(0),
+  output_tokens: z.number().default(0),
+  cache_read_tokens: z.number().default(0),
+  cache_write_tokens: z.number().default(0),
+  failure_reason: z.string().default(""),
+  error_type: z.string().default(""),
+  trigger_comment_id: z.string().nullable().optional().transform((v) => v ?? null),
+  autopilot_run_id: z.string().nullable().optional().transform((v) => v ?? null),
+  chat_session_id: z.string().nullable().optional().transform((v) => v ?? null),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+  created_at: z.string().default(""),
+}).loose();
+
+export const PromptEvaluationRunEvidenceSchema = z.object({
+  run: PromptEvaluationRunSchema,
+  trials: z.array(PromptEvaluationTrialSchema).default([]),
+  task_usage: z.array(PromptEvaluationTaskUsageSchema).default([]),
+  task_messages: z.array(PromptEvaluationTaskMessageSchema).default([]),
+  trace_events: z.array(PromptEvaluationTaskTraceEventSchema).default([]),
+  evidence: z.record(z.string(), z.unknown()).default({}),
+}).loose();
+
 export const PromptEvaluationRunListResponseSchema = z.object({
   items: z.array(PromptEvaluationRunSchema).default([]),
   total: z.number().default(0),
@@ -904,6 +973,15 @@ export const EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE = {
 export const EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE = {
   items: [],
   total: 0,
+};
+
+export const EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE: PromptEvaluationRunEvidence = {
+  run: EMPTY_PROMPT_EVALUATION_RUN,
+  trials: [],
+  task_usage: [],
+  task_messages: [],
+  trace_events: [],
+  evidence: {},
 };
 
 export const EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE = {

@@ -7,6 +7,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgtype"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func TestPromptEvaluationAssetCRUD(t *testing.T) {
@@ -367,6 +370,35 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	`, resp.TaskID); err != nil {
 		t.Fatalf("insert task usage: %v", err)
 	}
+	if _, err := testHandler.Queries.CreateTaskMessage(context.Background(), db.CreateTaskMessageParams{
+		TaskID:  parseUUID(resp.TaskID),
+		Seq:     1,
+		Type:    "text",
+		Content: pgtype.Text{String: "Agent 输出：完成训练评估", Valid: true},
+	}); err != nil {
+		t.Fatalf("insert task message: %v", err)
+	}
+	if _, err := testHandler.Queries.CreateTaskTraceEvent(context.Background(), db.CreateTaskTraceEventParams{
+		WorkspaceID:   parseUUID(testWorkspaceID),
+		TaskID:        parseUUID(resp.TaskID),
+		AgentID:       parseUUID(resp.AgentID),
+		RuntimeID:     parseUUID(resp.RuntimeID),
+		ChatSessionID: parseUUID(resp.ChatSessionID),
+		Source:        "prompt_evaluation",
+		EventType:     "llm.usage_reported",
+		EventName:     "训练评估用量已上报",
+		Status:        "completed",
+		Attempt:       1,
+		Provider:      "codebuddy",
+		Model:         "minimax-m2.7-ioa",
+		InputTokens:   16,
+		OutputTokens:  7,
+		FailureReason: "无",
+		ErrorType:     "",
+		Metadata:      []byte(`{"阶段":"训练评估"}`),
+	}); err != nil {
+		t.Fatalf("insert task trace event: %v", err)
+	}
 	syncW := httptest.NewRecorder()
 	testHandler.SyncPromptEvaluationRunFromTask(syncW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/sync", nil), "id", resp.Run.ID))
 	if syncW.Code != http.StatusOK {
@@ -378,6 +410,28 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	}
 	if synced.Status != "通过" || synced.PassedCases != 1 || synced.FailedCases != 0 || synced.InputTokens != 16 || synced.OutputTokens != 7 {
 		t.Fatalf("synced run = %+v", synced)
+	}
+
+	evidenceW := httptest.NewRecorder()
+	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
+	if evidenceW.Code != http.StatusOK {
+		t.Fatalf("evidence status = %d, body = %s", evidenceW.Code, evidenceW.Body.String())
+	}
+	var evidence PromptEvaluationRunEvidenceResponse
+	if err := json.Unmarshal(evidenceW.Body.Bytes(), &evidence); err != nil {
+		t.Fatalf("decode evidence response: %v", err)
+	}
+	if evidence.Run.ID != resp.Run.ID || len(evidence.Trials) != 1 || evidence.Trials[0].CaseName != "登录失败" {
+		t.Fatalf("evidence trials = %+v", evidence)
+	}
+	if len(evidence.TaskUsage) != 1 || evidence.TaskUsage[0].InputTokens != 11 || evidence.TaskUsage[0].OutputTokens != 7 {
+		t.Fatalf("evidence usage = %+v", evidence.TaskUsage)
+	}
+	if len(evidence.TaskMessages) != 1 || evidence.TaskMessages[0].Content != "Agent 输出：完成训练评估" {
+		t.Fatalf("evidence messages = %+v", evidence.TaskMessages)
+	}
+	if len(evidence.TraceEvents) != 1 || evidence.TraceEvents[0].EventName != "训练评估用量已上报" || evidence.TraceEvents[0].Metadata["阶段"] != "训练评估" {
+		t.Fatalf("evidence traces = %+v", evidence.TraceEvents)
 	}
 }
 

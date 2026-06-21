@@ -30,7 +30,7 @@ test.describe("训练与评估工作台", () => {
     await page.getByLabel("提示词内容").fill("请澄清 {{issue_title}}，项目背景：{{project_context}}。");
     await page.getByLabel("调试变量").fill("issue_title=登录失败\nproject_context=user-center");
 
-    await expect(page.getByText("请澄清 登录失败，项目背景：user-center。")).toBeVisible();
+    await expect(page.getByText("请澄清 登录失败，项目背景：user-center。").last()).toBeVisible();
 
     await page.getByRole("button", { name: "保存" }).click();
     await expect(page.getByText("提示词已创建")).toBeVisible({ timeout: 10000 });
@@ -106,7 +106,8 @@ test.describe("训练与评估工作台", () => {
     ]);
     await page.getByRole("button", { name: "数据集", exact: true }).click();
     await expect(page.getByText("结构化用例 1 个")).toBeVisible({ timeout: 10000 });
-    await expect(api.listPromptEvaluationRuns({ asset_id: optimizationRun!.id })).resolves.toEqual([
+    const optimizationRuns = await api.listPromptEvaluationRuns({ asset_id: optimizationRun!.id });
+    await expect(Promise.resolve(optimizationRuns)).resolves.toEqual([
       expect.objectContaining({
         asset_id: optimizationRun!.id,
         run_kind: "本地渲染",
@@ -116,9 +117,22 @@ test.describe("训练与评估工作台", () => {
         failed_cases: 0,
       }),
     ]);
+    const runEvidence = await api.getPromptEvaluationRunEvidence(optimizationRuns[0]!.id);
+    expect(runEvidence.trials).toEqual([
+      expect.objectContaining({
+        case_name: "调试场用例",
+        status: "通过",
+        rendered_prompt: "请澄清 登录失败，项目背景：user-center。",
+      }),
+    ]);
     await page.getByRole("button", { name: "运行历史", exact: true }).click();
     await expect(page.getByText("本地渲染 · 通过")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(/通过 1\/1/)).toBeVisible();
+    await page.getByRole("button", { name: "查看证据" }).first().click();
+    await expect(page.getByText("用例明细")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("调试场用例")).toBeVisible();
+    await expect(page.getByText("请澄清 登录失败，项目背景：user-center。").last()).toBeVisible();
+    await expect(page.getByText("原始 evidence JSON")).toBeVisible();
 
     await expect(api.updatePromptEvaluationAsset(dataset!.id, { status: "归档" })).resolves.toMatchObject({
       id: dataset!.id,

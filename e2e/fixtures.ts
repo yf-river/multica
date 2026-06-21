@@ -48,6 +48,20 @@ interface PromptEvaluationRun {
   task_id: string | null;
 }
 
+interface PromptEvaluationRunEvidence {
+  run: PromptEvaluationRun;
+  trials: Array<{
+    id: string;
+    case_name: string;
+    status: string;
+    rendered_prompt: string;
+  }>;
+  task_usage: unknown[];
+  task_messages: unknown[];
+  trace_events: unknown[];
+  evidence: Record<string, unknown>;
+}
+
 interface PromptEvaluationCase {
   id: string;
   asset_id: string;
@@ -255,6 +269,14 @@ export class TestApiClient {
     }
     const data = await res.json();
     return data.items ?? [];
+  }
+
+  async getPromptEvaluationRunEvidence(runId: string): Promise<PromptEvaluationRunEvidence> {
+    const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/evidence`);
+    if (!res.ok) {
+      throw new Error(`get prompt evaluation run evidence failed: ${res.status}`);
+    }
+    return res.json();
   }
 
   async listPromptEvaluationOptimizationCandidates(params?: { run_id?: string; prompt_id?: string; status?: string }): Promise<PromptEvaluationOptimizationCandidate[]> {

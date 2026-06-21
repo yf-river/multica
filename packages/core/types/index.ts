@@ -118,6 +118,8 @@ export type {
   PromptEvaluationAsset,
   PromptEvaluationRun,
   PromptEvaluationTrial,
+  PromptEvaluationTaskUsage,
+  PromptEvaluationRunEvidence,
   PromptEvaluationStructuredCase,
   PromptEvaluationAgentRunResponse,
   PromptEvaluationOptimizationCandidate,

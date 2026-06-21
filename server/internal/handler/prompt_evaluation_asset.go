@@ -15,6 +15,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 const (
@@ -169,6 +170,28 @@ type PromptEvaluationTrialResponse struct {
 	CreatedAt      string `json:"created_at"`
 }
 
+type PromptEvaluationTaskUsageResponse struct {
+	ID               string `json:"id"`
+	TaskID           string `json:"task_id"`
+	Provider         string `json:"provider"`
+	Model            string `json:"model"`
+	InputTokens      int64  `json:"input_tokens"`
+	OutputTokens     int64  `json:"output_tokens"`
+	CacheReadTokens  int64  `json:"cache_read_tokens"`
+	CacheWriteTokens int64  `json:"cache_write_tokens"`
+	CreatedAt        string `json:"created_at"`
+	UpdatedAt        string `json:"updated_at"`
+}
+
+type PromptEvaluationRunEvidenceResponse struct {
+	Run          PromptEvaluationRunResponse         `json:"run"`
+	Trials       []PromptEvaluationTrialResponse     `json:"trials"`
+	TaskUsage    []PromptEvaluationTaskUsageResponse `json:"task_usage"`
+	TaskMessages []protocol.TaskMessagePayload       `json:"task_messages"`
+	TraceEvents  []TaskTraceEventResponse            `json:"trace_events"`
+	Evidence     any                                 `json:"evidence"`
+}
+
 type PromptEvaluationCaseResponse struct {
 	ID               string  `json:"id"`
 	WorkspaceID      string  `json:"workspace_id"`
@@ -285,6 +308,21 @@ func promptEvaluationTrialToResponse(trial db.PromptEvaluationTrial) PromptEvalu
 		FailureReason:  trial.FailureReason,
 		Evidence:       decodeJSONDefault(trial.Evidence, map[string]any{}),
 		CreatedAt:      timestampToString(trial.CreatedAt),
+	}
+}
+
+func promptEvaluationTaskUsageToResponse(usage db.TaskUsage) PromptEvaluationTaskUsageResponse {
+	return PromptEvaluationTaskUsageResponse{
+		ID:               uuidToString(usage.ID),
+		TaskID:           uuidToString(usage.TaskID),
+		Provider:         usage.Provider,
+		Model:            usage.Model,
+		InputTokens:      usage.InputTokens,
+		OutputTokens:     usage.OutputTokens,
+		CacheReadTokens:  usage.CacheReadTokens,
+		CacheWriteTokens: usage.CacheWriteTokens,
+		CreatedAt:        timestampToString(usage.CreatedAt),
+		UpdatedAt:        timestampToString(usage.UpdatedAt),
 	}
 }
 
@@ -549,6 +587,87 @@ func (h *Handler) ListPromptEvaluationRunTrials(w http.ResponseWriter, r *http.R
 		resp[i] = promptEvaluationTrialToResponse(trial)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
+}
+
+func (h *Handler) GetPromptEvaluationRunEvidence(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	runID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation run id")
+	if !ok {
+		return
+	}
+	run, err := h.Queries.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{ID: runID, WorkspaceID: workspaceUUID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "prompt evaluation run not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation run")
+		return
+	}
+	trials, err := h.Queries.ListPromptEvaluationTrialsByRun(r.Context(), db.ListPromptEvaluationTrialsByRunParams{
+		RunID:       run.ID,
+		WorkspaceID: workspaceUUID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation trials")
+		return
+	}
+	trialResp := make([]PromptEvaluationTrialResponse, len(trials))
+	for i, trial := range trials {
+		trialResp[i] = promptEvaluationTrialToResponse(trial)
+	}
+
+	usageResp := []PromptEvaluationTaskUsageResponse{}
+	messageResp := []protocol.TaskMessagePayload{}
+	traceResp := []TaskTraceEventResponse{}
+	if run.TaskID.Valid {
+		usages, err := h.Queries.GetTaskUsage(r.Context(), run.TaskID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load task usage")
+			return
+		}
+		usageResp = make([]PromptEvaluationTaskUsageResponse, len(usages))
+		for i, usage := range usages {
+			usageResp[i] = promptEvaluationTaskUsageToResponse(usage)
+		}
+
+		messages, err := h.Queries.ListTaskMessages(r.Context(), run.TaskID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load task messages")
+			return
+		}
+		issueID := ""
+		if task, err := h.Queries.GetAgentTask(r.Context(), run.TaskID); err == nil {
+			issueID = uuidToString(task.IssueID)
+		}
+		messageResp = make([]protocol.TaskMessagePayload, len(messages))
+		for i, message := range messages {
+			messageResp[i] = taskMessageToPayload(message, uuidToString(run.TaskID), issueID)
+		}
+
+		traceEvents, err := h.Queries.ListTaskTraceEventsByTask(r.Context(), run.TaskID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load task trace events")
+			return
+		}
+		traceResp = make([]TaskTraceEventResponse, len(traceEvents))
+		for i, event := range traceEvents {
+			traceResp[i] = taskTraceEventToResponse(event)
+		}
+	}
+
+	writeJSON(w, http.StatusOK, PromptEvaluationRunEvidenceResponse{
+		Run:          promptEvaluationRunToResponse(run),
+		Trials:       trialResp,
+		TaskUsage:    usageResp,
+		TaskMessages: messageResp,
+		TraceEvents:  traceResp,
+		Evidence:     decodeJSONDefault(run.Evidence, map[string]any{}),
+	})
 }
 
 func (h *Handler) ListPromptEvaluationOptimizationCandidates(w http.ResponseWriter, r *http.Request) {

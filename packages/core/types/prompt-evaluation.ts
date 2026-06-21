@@ -1,4 +1,6 @@
 import type { PromptLibraryItem } from "./prompt-library";
+import type { TaskMessagePayload } from "./events";
+import type { TaskTraceEvent } from "./agent";
 
 export type PromptEvaluationAssetType = "数据集" | "测试套件" | "实验" | "优化运行";
 export type PromptEvaluationAssetStatus = "启用" | "归档";
@@ -103,6 +105,28 @@ export interface PromptEvaluationTrial {
   failure_reason: string;
   evidence: Record<string, unknown>;
   created_at: string;
+}
+
+export interface PromptEvaluationTaskUsage {
+  id: string;
+  task_id: string;
+  provider: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PromptEvaluationRunEvidence {
+  run: PromptEvaluationRun;
+  trials: PromptEvaluationTrial[];
+  task_usage: PromptEvaluationTaskUsage[];
+  task_messages: TaskMessagePayload[];
+  trace_events: TaskTraceEvent[];
+  evidence: Record<string, unknown>;
 }
 
 export interface PromptEvaluationStructuredCase {

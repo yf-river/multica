@@ -123,6 +123,7 @@ import type {
 	  PromptLibraryItem,
 	  PromptEvaluationAsset,
 	  PromptEvaluationRun,
+	  PromptEvaluationRunEvidence,
 	  PromptEvaluationAgentRunResponse,
 	  PromptEvaluationOptimizationCandidate,
 	  PublishPromptEvaluationOptimizationCandidateResponse,
@@ -183,6 +184,7 @@ import {
   EMPTY_PROMPT_EVALUATION_RUN,
   EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE,
   EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
   EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE,
@@ -204,6 +206,7 @@ import {
   PromptEvaluationRunListResponseSchema,
   PromptEvaluationRunSchema,
   PromptEvaluationTrialListResponseSchema,
+  PromptEvaluationRunEvidenceSchema,
   PromptEvaluationCaseListResponseSchema,
   PromptEvaluationOptimizationCandidateSchema,
   PromptEvaluationOptimizationCandidateListResponseSchema,
@@ -1830,6 +1833,13 @@ export class ApiClient {
     return parseWithFallback(raw, PromptEvaluationTrialListResponseSchema, EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE, {
       endpoint: "GET /api/prompt-evaluation-runs/:id/trials",
     }) as ListPromptEvaluationTrialsResponse;
+  }
+
+  async getPromptEvaluationRunEvidence(runId: string): Promise<PromptEvaluationRunEvidence> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/evidence`);
+    return parseWithFallback(raw, PromptEvaluationRunEvidenceSchema, EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE, {
+      endpoint: "GET /api/prompt-evaluation-runs/:id/evidence",
+    }) as PromptEvaluationRunEvidence;
   }
 
   async syncPromptEvaluationRun(runId: string): Promise<PromptEvaluationRun> {
