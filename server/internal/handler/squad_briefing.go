@@ -153,7 +153,7 @@ func buildSquadSOPProfile(raw []byte) string {
 		}
 	}
 	if len(profile.OperationSkills) > 0 {
-		sb.WriteString("- 可调用 operation skill：")
+		sb.WriteString("- 可调用操作技能：")
 		sb.WriteString(strings.Join(profile.OperationSkills, "、"))
 		sb.WriteString("\n")
 	}
@@ -194,7 +194,7 @@ func buildSquadSOPProfile(raw []byte) string {
 		sb.WriteString(strings.Join(profile.ForbiddenActions, "；"))
 		sb.WriteString("\n")
 	}
-	sb.WriteString("\n当 issue 指派给这个小队时，先按 SOP 阶段链推进；记录当前阶段、验收要求和证据后，再把具体工作委派给对应 operation skill 或小队成员。")
+	sb.WriteString("\n当 issue 指派给这个小队时，先按 SOP 阶段链推进；记录当前阶段、验收要求和证据后，再把具体工作委派给对应操作技能或小队成员。")
 	return sb.String()
 }
 
