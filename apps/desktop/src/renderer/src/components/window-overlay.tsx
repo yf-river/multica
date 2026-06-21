@@ -1,6 +1,5 @@
 import { useQuery } from "@tanstack/react-query";
 import { NewWorkspacePage } from "@multica/views/workspace/new-workspace-page";
-import { OnboardingFlow } from "@multica/views/onboarding";
 import { useNavigation } from "@multica/views/navigation";
 import { paths } from "@multica/core/paths";
 import { workspaceListOptions } from "@multica/core/workspace/queries";
@@ -8,20 +7,18 @@ import { useWindowOverlayStore } from "@/stores/window-overlay-store";
 
 /**
  * Window-level transition overlay: renders above the tab system when the
- * user is in a pre-workspace flow (onboarding, create workspace).
+ * user is in a pre-workspace flow (create workspace).
  *
  * This component is intentionally thin — just a fixed positioning shell
  * that covers the tab system. It does NOT hide traffic lights or provide
- * a drag strip: each contained view (OnboardingFlow, NewWorkspacePage,
- * OnboardingFlow) renders its own `<DragStrip />` as a flex-child at top so
+ * a drag strip: the contained view renders its own `<DragStrip />` as a flex-child at top so
  * native macOS traffic lights stay visible and the page content can fill
  * the window edge-to-edge. This matches the Linear/Notion/Arc pattern for
  * pre-dashboard flows and keeps platform chrome consistent across every
  * "not-in-dashboard" surface.
  *
- * All UX affordances (Back button, Log out button, welcome copy
- * card) live inside the shared view components under `packages/views/`,
- * so web and desktop render identical content.
+ * All UX affordances live inside the shared view components under
+ * `packages/views/`, so web and desktop render identical content.
  */
 export function WindowOverlay() {
   const overlay = useWindowOverlayStore((s) => s.overlay);
@@ -44,33 +41,10 @@ function WindowOverlayInner() {
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col overflow-auto bg-background">
-      {overlay.type === "new-workspace" && (
+      {(overlay.type === "new-workspace" || overlay.type === "onboarding") && (
         <NewWorkspacePage
           onSuccess={(ws) => push(paths.workspace(ws.slug).issues())}
           onBack={onBack}
-        />
-      )}
-      {overlay.type === "onboarding" && (
-        <OnboardingFlow
-          onComplete={(ws, issueId) => {
-            close();
-            // Runtime-connected onboarding lands on its single guide
-            // issue. Runtime-less exits still land on the issues list.
-            if (ws && issueId) {
-              push(paths.workspace(ws.slug).issueDetail(issueId));
-            } else if (ws) {
-              push(paths.workspace(ws.slug).issues());
-            } else {
-              push(paths.root());
-            }
-          }}
-          // Restart the bundled daemon when the user hits Refresh on
-          // Step 3. The daemon's PATH probe runs once at boot, so a
-          // newly-installed CLI (Claude / Codex / Cursor) doesn't show
-          // up until the daemon is bounced.
-          onRuntimeRefresh={async () => {
-            await window.daemonAPI?.restart?.();
-          }}
         />
       )}
     </div>
