@@ -38,6 +38,7 @@ interface PromptEvaluationAsset {
 
 interface PromptEvaluationRun {
   id: string;
+  workspace_id: string;
   asset_id: string;
   run_kind: string;
   status: string;
@@ -314,6 +315,87 @@ export class TestApiClient {
       throw new Error(`update prompt evaluation asset failed: ${res.status}`);
     }
     return res.json();
+  }
+
+  async completePromptEvaluationAgentTask(run: PromptEvaluationRun) {
+    if (!this.workspaceId) {
+      throw new Error("Cannot complete E2E agent task before workspace is selected");
+    }
+    if (!run.task_id || !run.agent_id || !run.runtime_id || !run.chat_session_id) {
+      throw new Error(`Prompt evaluation run is not linked to a complete agent task graph: ${run.id}`);
+    }
+
+    const client = new pg.Client(DATABASE_URL);
+    await client.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `
+          UPDATE agent_task_queue
+          SET
+            status = 'completed',
+            started_at = COALESCE(started_at, now() - interval '2 seconds'),
+            completed_at = now(),
+            result = '{"status":"completed","output":"Agent 输出：完成训练评估并给出验收证据"}'::jsonb,
+            error = NULL,
+            session_id = COALESCE(session_id, 'e2e-prompt-eval-session'),
+            work_dir = COALESCE(work_dir, '/tmp/e2e-prompt-eval')
+          WHERE id = $1
+        `,
+        [run.task_id],
+      );
+      await client.query(
+        `
+          INSERT INTO task_usage (
+            task_id, provider, model, input_tokens, output_tokens,
+            cache_read_tokens, cache_write_tokens, updated_at
+          )
+          VALUES ($1, 'codebuddy', 'minimax-m2.7-ioa', 11, 7, 2, 3, now())
+          ON CONFLICT (task_id, provider, model)
+          DO UPDATE SET
+            input_tokens = EXCLUDED.input_tokens,
+            output_tokens = EXCLUDED.output_tokens,
+            cache_read_tokens = EXCLUDED.cache_read_tokens,
+            cache_write_tokens = EXCLUDED.cache_write_tokens,
+            updated_at = now()
+        `,
+        [run.task_id],
+      );
+      await client.query(`DELETE FROM task_message WHERE task_id = $1`, [run.task_id]);
+      await client.query(
+        `
+          INSERT INTO task_message (task_id, seq, type, tool, content, input, output)
+          VALUES
+            ($1, 1, 'text', NULL, 'Agent 输出：完成训练评估', '{}'::jsonb, NULL),
+            ($1, 2, 'tool_result', '训练评估同步', '已收集 trace、token 和运行结论', '{}'::jsonb, '通过')
+        `,
+        [run.task_id],
+      );
+      await client.query(`DELETE FROM task_trace_event WHERE task_id = $1`, [run.task_id]);
+      await client.query(
+        `
+          INSERT INTO task_trace_event (
+            workspace_id, task_id, agent_id, runtime_id, source, event_type,
+            event_name, status, attempt, duration_ms, run_ms, total_ms,
+            provider, model, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, failure_reason, error_type, chat_session_id, metadata
+          )
+          VALUES (
+            $1, $2, $3, $4, 'prompt_evaluation', 'llm.usage_reported',
+            '训练评估用量已上报', 'completed', 1, 2000, 1800, 2100,
+            'codebuddy', 'minimax-m2.7-ioa', 16, 7, 2,
+            3, '无', '', $5, '{"阶段":"训练评估","验收":"E2E"}'::jsonb
+          )
+        `,
+        [this.workspaceId, run.task_id, run.agent_id, run.runtime_id, run.chat_session_id],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      await client.end();
+    }
   }
 
   async runPromptEvaluationAsset(id: string): Promise<PromptEvaluationAsset> {

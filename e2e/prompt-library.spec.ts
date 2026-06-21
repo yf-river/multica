@@ -179,6 +179,7 @@ test.describe("训练与评估工作台", () => {
         failure_reason: "等待 Agent 执行完成",
       }),
     ]);
+    await api.completePromptEvaluationAgentTask(queuedAgentRun!);
     await expect
       .poll(async () => {
         const summary = await api.getPromptEvaluationSummary();
@@ -202,8 +203,18 @@ test.describe("训练与评估工作台", () => {
     await page.getByRole("button", { name: "运行历史", exact: true }).click();
     await expect(page.getByText("Agent执行 · 已入队")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(`task ${queuedAgentRun!.task_id}`)).toBeVisible();
+    let agentRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "Agent执行 · 已入队" }).first();
+    const syncResponse = page.waitForResponse(
+      (response) => response.request().method() === "POST" && response.url().includes(`/prompt-evaluation-runs/${queuedAgentRun!.id}/sync`),
+      { timeout: 10000 },
+    );
+    await agentRunCard.getByRole("button", { name: "同步任务" }).click();
+    expect((await syncResponse).status()).toBe(200);
+    await expect(page.getByText("运行记录已同步")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("Agent执行 · 通过")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/模型 minimax-m2\.7-ioa · runtime codebuddy · 通过 1\/1 · 输入 16 token · 输出 7 token/)).toBeVisible();
     await expect(page.getByText("本地渲染 · 通过")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText(/通过 1\/1/)).toBeVisible();
+    await expect(page.getByText(/模型 本地模板渲染 · runtime server · 通过 1\/1/)).toBeVisible();
     const localRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "本地渲染 · 通过" }).first();
     await localRunCard.getByRole("button", { name: "查看证据" }).click();
     await expect(page.getByText("用例明细")).toBeVisible({ timeout: 10000 });
@@ -211,11 +222,50 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByText("请澄清 登录失败，项目背景：user-center。").last()).toBeVisible();
     await expect(page.getByText("原始 evidence JSON")).toBeVisible();
     await localRunCard.getByRole("button", { name: "收起证据" }).click();
-    const agentRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "Agent执行 · 已入队" }).first();
+    agentRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "Agent执行 · 通过" }).first();
     await agentRunCard.getByRole("button", { name: "查看证据" }).click();
     await expect(page.getByText("Agent 调试场用例")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText("失败原因：等待 Agent 执行完成")).toBeVisible();
+    await expect(page.getByText("codebuddy/minimax-m2.7-ioa · 输入 11 · 输出 7")).toBeVisible();
+    await expect(page.getByText("#1 text：Agent 输出：完成训练评估")).toBeVisible();
+    await expect(page.getByText(/训练评估用量已上报 · completed · 输入 16 · 输出 7/)).toBeVisible();
+    await expect(page.getByText("失败原因：等待 Agent 执行完成")).toHaveCount(0);
     await expect(page.getByText("task 用量")).toBeVisible();
+    const syncedAgentEvidence = await api.getPromptEvaluationRunEvidence(queuedAgentRun!.id);
+    expect(syncedAgentEvidence.run).toMatchObject({
+      status: "通过",
+      passed_cases: 1,
+      failed_cases: 0,
+      input_tokens: 16,
+      output_tokens: 7,
+      conclusion: "Agent 执行完成，等待验收者复核输出质量",
+    });
+    expect(syncedAgentEvidence.trials).toEqual([
+      expect.objectContaining({
+        case_name: "Agent 调试场用例",
+        status: "通过",
+        input_tokens: 16,
+        output_tokens: 7,
+        failure_reason: "无",
+      }),
+    ]);
+    expect(syncedAgentEvidence.task_usage).toEqual([
+      expect.objectContaining({
+        provider: "codebuddy",
+        model: "minimax-m2.7-ioa",
+        input_tokens: 11,
+        output_tokens: 7,
+        cache_read_tokens: 2,
+        cache_write_tokens: 3,
+      }),
+    ]);
+    expect(syncedAgentEvidence.trace_events).toEqual([
+      expect.objectContaining({
+        event_name: "训练评估用量已上报",
+        status: "completed",
+        input_tokens: 16,
+        output_tokens: 7,
+      }),
+    ]);
 
     await expect(api.updatePromptEvaluationAsset(dataset!.id, { status: "归档" })).resolves.toMatchObject({
       id: dataset!.id,
@@ -258,12 +308,17 @@ test.describe("训练与评估工作台", () => {
               期望输出: "输出需求澄清结论、风险、测试证据和下一步建议。",
             },
             最近Agent运行: {
-              状态: "已入队",
+              状态: "通过",
               模型: "minimax-m2.7-ioa",
               runtime: "codebuddy",
               runtime_id: runtime.id,
               "trace/task id": queuedAgentRun!.task_id,
-              评估结论: "等待 Agent 执行完成",
+              总用例数: 1,
+              通过数: 1,
+              失败数: 0,
+              输入token: 16,
+              输出token: 7,
+              评估结论: "Agent 执行完成，等待验收者复核输出质量",
             },
           },
         },
