@@ -188,6 +188,32 @@ type PromptEvaluationCaseResponse struct {
 	UpdatedAt        string  `json:"updated_at"`
 }
 
+type PromptEvaluationOptimizationCandidateResponse struct {
+	ID                   string  `json:"id"`
+	WorkspaceID          string  `json:"workspace_id"`
+	AssetID              string  `json:"asset_id"`
+	RunID                string  `json:"run_id"`
+	PromptID             string  `json:"prompt_id"`
+	CandidateName        string  `json:"candidate_name"`
+	CandidateContent     string  `json:"candidate_content"`
+	Rationale            string  `json:"rationale"`
+	FailedCaseCount      int32   `json:"failed_case_count"`
+	SourceFailureSummary any     `json:"source_failure_summary"`
+	SourcePromptSnapshot any     `json:"source_prompt_snapshot"`
+	Metrics              any     `json:"metrics"`
+	Status               string  `json:"status"`
+	PublishedPromptID    *string `json:"published_prompt_id"`
+	PublishedAt          string  `json:"published_at"`
+	CreatedBy            *string `json:"created_by"`
+	CreatedAt            string  `json:"created_at"`
+	UpdatedAt            string  `json:"updated_at"`
+}
+
+type PublishPromptEvaluationOptimizationCandidateResponse struct {
+	Candidate PromptEvaluationOptimizationCandidateResponse `json:"candidate"`
+	Prompt    PromptLibraryItemResponse                     `json:"prompt"`
+}
+
 func promptEvaluationAssetToResponse(asset db.PromptEvaluationAsset) PromptEvaluationAssetResponse {
 	return PromptEvaluationAssetResponse{
 		ID:          uuidToString(asset.ID),
@@ -280,6 +306,29 @@ func promptEvaluationCaseToResponse(item db.PromptEvaluationCase) PromptEvaluati
 		CreatedBy:        uuidToPtr(item.CreatedBy),
 		CreatedAt:        timestampToString(item.CreatedAt),
 		UpdatedAt:        timestampToString(item.UpdatedAt),
+	}
+}
+
+func promptEvaluationOptimizationCandidateToResponse(item db.PromptEvaluationOptimizationCandidate) PromptEvaluationOptimizationCandidateResponse {
+	return PromptEvaluationOptimizationCandidateResponse{
+		ID:                   uuidToString(item.ID),
+		WorkspaceID:          uuidToString(item.WorkspaceID),
+		AssetID:              uuidToString(item.AssetID),
+		RunID:                uuidToString(item.RunID),
+		PromptID:             uuidToString(item.PromptID),
+		CandidateName:        item.CandidateName,
+		CandidateContent:     item.CandidateContent,
+		Rationale:            item.Rationale,
+		FailedCaseCount:      item.FailedCaseCount,
+		SourceFailureSummary: decodeJSONDefault(item.SourceFailureSummary, map[string]any{}),
+		SourcePromptSnapshot: decodeJSONDefault(item.SourcePromptSnapshot, map[string]any{}),
+		Metrics:              decodeJSONDefault(item.Metrics, map[string]any{}),
+		Status:               item.Status,
+		PublishedPromptID:    uuidToPtr(item.PublishedPromptID),
+		PublishedAt:          timestampToString(item.PublishedAt),
+		CreatedBy:            uuidToPtr(item.CreatedBy),
+		CreatedAt:            timestampToString(item.CreatedAt),
+		UpdatedAt:            timestampToString(item.UpdatedAt),
 	}
 }
 
@@ -500,6 +549,217 @@ func (h *Handler) ListPromptEvaluationRunTrials(w http.ResponseWriter, r *http.R
 		resp[i] = promptEvaluationTrialToResponse(trial)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
+}
+
+func (h *Handler) ListPromptEvaluationOptimizationCandidates(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	var runID pgtype.UUID
+	if value := r.URL.Query().Get("run_id"); value != "" {
+		parsed, ok := parseUUIDOrBadRequest(w, value, "run_id")
+		if !ok {
+			return
+		}
+		runID = parsed
+	}
+	var promptID pgtype.UUID
+	if value := r.URL.Query().Get("prompt_id"); value != "" {
+		parsed, ok := parseUUIDOrBadRequest(w, value, "prompt_id")
+		if !ok {
+			return
+		}
+		promptID = parsed
+	}
+	var status pgtype.Text
+	if value := r.URL.Query().Get("status"); value != "" {
+		if !validPromptEvaluationOptimizationCandidateStatus(value) {
+			writeError(w, http.StatusBadRequest, "status must be 待确认, 已发布 or 已拒绝")
+			return
+		}
+		status = pgtype.Text{String: value, Valid: true}
+	}
+	limit := int32(50)
+	if value := r.URL.Query().Get("limit"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 200 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 200")
+			return
+		}
+		limit = int32(parsed)
+	}
+	items, err := h.Queries.ListPromptEvaluationOptimizationCandidates(r.Context(), db.ListPromptEvaluationOptimizationCandidatesParams{
+		WorkspaceID: workspaceUUID,
+		Limit:       limit,
+		RunID:       runID,
+		PromptID:    promptID,
+		Status:      status,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation optimization candidates")
+		return
+	}
+	resp := make([]PromptEvaluationOptimizationCandidateResponse, len(items))
+	for i, item := range items {
+		resp[i] = promptEvaluationOptimizationCandidateToResponse(item)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
+}
+
+func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	runID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation run id")
+	if !ok {
+		return
+	}
+	run, err := h.Queries.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{ID: runID, WorkspaceID: workspaceUUID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "prompt evaluation run not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation run")
+		return
+	}
+	if !run.PromptID.Valid {
+		writeError(w, http.StatusBadRequest, "prompt_id is required to create an optimization candidate")
+		return
+	}
+	if !promptEvaluationRunHasFailure(run) {
+		writeError(w, http.StatusBadRequest, "only failed or not-passed runs can create optimization candidates")
+		return
+	}
+	prompt, err := h.Queries.GetPromptLibraryItemInWorkspace(r.Context(), db.GetPromptLibraryItemInWorkspaceParams{ID: run.PromptID, WorkspaceID: workspaceUUID})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "prompt_id does not belong to this workspace")
+		return
+	}
+	trials, err := h.Queries.ListPromptEvaluationTrialsByRun(r.Context(), db.ListPromptEvaluationTrialsByRunParams{RunID: run.ID, WorkspaceID: workspaceUUID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load failed prompt evaluation trials")
+		return
+	}
+	sourceSummary := buildPromptEvaluationCandidateFailureSummary(run, trials)
+	candidateContent, rationale := buildPromptEvaluationCandidateContent(prompt, run, sourceSummary)
+	item, err := h.Queries.CreatePromptEvaluationOptimizationCandidate(r.Context(), db.CreatePromptEvaluationOptimizationCandidateParams{
+		WorkspaceID:          workspaceUUID,
+		AssetID:              run.AssetID,
+		RunID:                run.ID,
+		PromptID:             run.PromptID,
+		CandidateName:        buildPromptEvaluationCandidateName(prompt, run),
+		CandidateContent:     candidateContent,
+		FailedCaseCount:      promptEvaluationRunFailedCaseCount(run, trials),
+		Rationale:            rationale,
+		SourceFailureSummary: mustJSONBytes(sourceSummary),
+		SourcePromptSnapshot: mustJSONBytes(buildPromptEvaluationSourcePromptSnapshot(prompt)),
+		Metrics:              run.Metrics,
+		Status:               "待确认",
+		CreatedBy:            parseUUID(userID),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation optimization candidate")
+		return
+	}
+	writeJSON(w, http.StatusCreated, promptEvaluationOptimizationCandidateToResponse(item))
+}
+
+func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	candidateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation optimization candidate id")
+	if !ok {
+		return
+	}
+	candidate, err := h.Queries.GetPromptEvaluationOptimizationCandidateInWorkspace(r.Context(), db.GetPromptEvaluationOptimizationCandidateInWorkspaceParams{
+		ID:          candidateID,
+		WorkspaceID: workspaceUUID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "prompt evaluation optimization candidate not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation optimization candidate")
+		return
+	}
+	if candidate.Status != "待确认" {
+		writeError(w, http.StatusConflict, "only 待确认 optimization candidates can be published")
+		return
+	}
+	sourcePrompt, err := h.Queries.GetPromptLibraryItemInWorkspace(r.Context(), db.GetPromptLibraryItemInWorkspaceParams{
+		ID:          candidate.PromptID,
+		WorkspaceID: workspaceUUID,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "source prompt not found in this workspace")
+		return
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start optimization candidate publish transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	publishedPrompt, err := qtx.CreatePromptLibraryItemVersion(r.Context(), db.CreatePromptLibraryItemVersionParams{
+		WorkspaceID: workspaceUUID,
+		Name:        buildPromptEvaluationPublishedPromptName(sourcePrompt),
+		Description: buildPromptEvaluationPublishedPromptDescription(candidate, sourcePrompt),
+		PromptType:  sourcePrompt.PromptType,
+		Content:     candidate.CandidateContent,
+		Version:     sourcePrompt.Version + 1,
+		CreatedBy:   parseUUID(userID),
+		ProjectID:   sourcePrompt.ProjectID,
+		Variables:   sourcePrompt.Variables,
+		Tags:        buildPromptEvaluationPublishedPromptTags(sourcePrompt.Tags),
+		Status:      promptLibraryStatusActive,
+	})
+	if err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusConflict, "published prompt name already exists; create a new optimization candidate and retry")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to publish optimization candidate as prompt")
+		return
+	}
+	updatedCandidate, err := qtx.PublishPromptEvaluationOptimizationCandidate(r.Context(), db.PublishPromptEvaluationOptimizationCandidateParams{
+		ID:                candidate.ID,
+		WorkspaceID:       workspaceUUID,
+		PublishedPromptID: publishedPrompt.ID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusConflict, "optimization candidate was already handled")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to mark optimization candidate as published")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit optimization candidate publish")
+		return
+	}
+	writeJSON(w, http.StatusOK, PublishPromptEvaluationOptimizationCandidateResponse{
+		Candidate: promptEvaluationOptimizationCandidateToResponse(updatedCandidate),
+		Prompt:    promptLibraryItemToResponse(publishedPrompt),
+	})
 }
 
 func (h *Handler) SyncPromptEvaluationRunFromTask(w http.ResponseWriter, r *http.Request) {
@@ -1195,6 +1455,175 @@ func promptEvaluationTaskDurationMs(task db.AgentTaskQueue, run db.PromptEvaluat
 		}
 	}
 	return run.TotalDurationMs
+}
+
+func validPromptEvaluationOptimizationCandidateStatus(status string) bool {
+	return status == "待确认" || status == "已发布" || status == "已拒绝"
+}
+
+func promptEvaluationRunHasFailure(run db.PromptEvaluationRun) bool {
+	if run.FailedCases > 0 {
+		return true
+	}
+	if run.Status == "未通过" || run.Status == "失败" {
+		return true
+	}
+	reason := strings.TrimSpace(run.FailureReason)
+	return reason != "" && reason != "无"
+}
+
+func promptEvaluationRunFailedCaseCount(run db.PromptEvaluationRun, trials []db.PromptEvaluationTrial) int32 {
+	if run.FailedCases > 0 {
+		return run.FailedCases
+	}
+	failed := int32(0)
+	for _, trial := range trials {
+		if trial.Status == "未通过" || trial.Status == "失败" {
+			failed++
+		}
+	}
+	if failed > 0 {
+		return failed
+	}
+	if run.TotalCases > 0 && (run.Status == "未通过" || run.Status == "失败") {
+		return run.TotalCases
+	}
+	return 1
+}
+
+func buildPromptEvaluationCandidateFailureSummary(run db.PromptEvaluationRun, trials []db.PromptEvaluationTrial) map[string]any {
+	trialSummaries := make([]map[string]any, 0, len(trials))
+	for _, trial := range trials {
+		if trial.Status == "通过" {
+			continue
+		}
+		trialSummaries = append(trialSummaries, map[string]any{
+			"用例序号":  trial.CaseIndex,
+			"用例名称":  trial.CaseName,
+			"状态":    trial.Status,
+			"失败原因":  trial.FailureReason,
+			"输入":    decodeJSONDefault(trial.Input, map[string]any{}),
+			"期望":    decodeJSONDefault(trial.Expected, map[string]any{}),
+			"输出":    decodeJSONDefault(trial.Output, map[string]any{}),
+			"渲染提示词": trial.RenderedPrompt,
+		})
+	}
+	if len(trialSummaries) == 0 && len(trials) > 0 {
+		for _, trial := range trials {
+			trialSummaries = append(trialSummaries, map[string]any{
+				"用例序号": trial.CaseIndex,
+				"用例名称": trial.CaseName,
+				"状态":   trial.Status,
+				"输入":   decodeJSONDefault(trial.Input, map[string]any{}),
+				"期望":   decodeJSONDefault(trial.Expected, map[string]any{}),
+			})
+		}
+	}
+	return map[string]any{
+		"run_id":        uuidToString(run.ID),
+		"asset_id":      uuidToString(run.AssetID),
+		"run_kind":      run.RunKind,
+		"状态":            run.Status,
+		"总用例数":          run.TotalCases,
+		"通过数":           run.PassedCases,
+		"失败数":           promptEvaluationRunFailedCaseCount(run, trials),
+		"通过率":           run.PassRate,
+		"模型":            run.Model,
+		"runtime":       run.RuntimeProvider,
+		"trace/task id": uuidToPtr(run.TaskID),
+		"失败原因":          run.FailureReason,
+		"评估结论":          run.Conclusion,
+		"失败用例":          trialSummaries,
+		"evidence":      decodeJSONDefault(run.Evidence, map[string]any{}),
+		"生成说明":          "基于结构化运行记录和失败用例生成优化候选；候选不会自动替换生产提示词。",
+	}
+}
+
+func buildPromptEvaluationCandidateContent(prompt db.PromptLibraryItem, run db.PromptEvaluationRun, sourceSummary map[string]any) (string, string) {
+	failureReason := strings.TrimSpace(run.FailureReason)
+	if failureReason == "" {
+		failureReason = "结构化运行记录显示存在失败用例，需要补充边界、输出格式和验收约束。"
+	}
+	failedCases, _ := sourceSummary["失败用例"].([]map[string]any)
+	rationale := "基于失败用例补充中文输出约束、失败处理要求、证据字段和验收口径；原提示词不被自动替换，必须人工确认后发布。"
+	lines := []string{
+		strings.TrimSpace(prompt.Content),
+		"",
+		"【优化候选：失败用例修复建议】",
+		"来源运行：" + uuidToString(run.ID),
+		"失败原因：" + failureReason,
+		"失败用例数：" + strconv.Itoa(int(promptEvaluationRunFailedCaseCount(run, nil))),
+		"",
+		"请在后续执行中严格遵守：",
+		"1. 全部输出使用中文，避免英文状态词和未解释的内部缩写。",
+		"2. 对每个输入先复述目标、边界、影响范围和验收条件。",
+		"3. 当信息不足时，先提出需要团队确认的问题，不要直接假设结论。",
+		"4. 输出必须包含可观测证据：耗时、执行 Agent、模型、trace/task id、失败原因和评估结论。",
+		"5. 如果触发失败场景，明确指出失败用例、缺失变量、未命中期望和下一步修复建议。",
+	}
+	if len(failedCases) > 0 {
+		lines = append(lines, "", "失败用例摘要：")
+		for _, item := range failedCases {
+			name := stringFromAny(item["用例名称"])
+			reason := stringFromAny(item["失败原因"])
+			if name == "" {
+				name = "未命名用例"
+			}
+			if reason == "" {
+				reason = failureReason
+			}
+			lines = append(lines, "- "+name+"："+reason)
+		}
+	}
+	lines = append(lines, "", "人工发布要求：发布前必须由验收者确认该候选不会降低原有通过用例质量。")
+	return strings.Join(lines, "\n"), rationale
+}
+
+func buildPromptEvaluationCandidateName(prompt db.PromptLibraryItem, run db.PromptEvaluationRun) string {
+	return prompt.Name + " 优化候选 " + run.CreatedAt.Time.Format("20060102") + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+}
+
+func buildPromptEvaluationSourcePromptSnapshot(prompt db.PromptLibraryItem) map[string]any {
+	return map[string]any{
+		"prompt_id": uuidToString(prompt.ID),
+		"名称":        prompt.Name,
+		"类型":        prompt.PromptType,
+		"版本":        prompt.Version,
+		"状态":        prompt.Status,
+		"变量":        decodeJSONDefault(prompt.Variables, []any{}),
+		"标签":        decodeJSONDefault(prompt.Tags, []any{}),
+		"内容摘要":      truncatePromptEvaluationEvidence(prompt.Content, 1200),
+	}
+}
+
+func buildPromptEvaluationPublishedPromptName(prompt db.PromptLibraryItem) string {
+	return prompt.Name + " 优化发布 " + strconv.FormatInt(time.Now().UnixNano(), 10)
+}
+
+func buildPromptEvaluationPublishedPromptDescription(candidate db.PromptEvaluationOptimizationCandidate, prompt db.PromptLibraryItem) string {
+	parts := []string{
+		"由训练与评估优化候选人工确认发布。",
+		"来源提示词：" + prompt.Name + " v" + strconv.Itoa(int(prompt.Version)) + "。",
+		"来源运行：" + uuidToString(candidate.RunID) + "。",
+	}
+	if candidate.Rationale != "" {
+		parts = append(parts, "优化依据："+candidate.Rationale)
+	}
+	return strings.Join(parts, " ")
+}
+
+func buildPromptEvaluationPublishedPromptTags(raw []byte) []byte {
+	tags := stringListFromAny(decodeJSONDefault(raw, []any{}))
+	seen := map[string]bool{}
+	next := make([]string, 0, len(tags)+3)
+	for _, tag := range append(tags, "优化发布", "人工确认", "训练与评估") {
+		if tag == "" || seen[tag] {
+			continue
+		}
+		seen[tag] = true
+		next = append(next, tag)
+	}
+	return mustJSONBytes(next)
 }
 
 func promptEvaluationTaskEvidence(run db.PromptEvaluationRun, task db.AgentTaskQueue, usages []db.TaskUsage, messages []db.TaskMessage) map[string]any {

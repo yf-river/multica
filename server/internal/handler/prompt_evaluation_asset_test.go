@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
 
@@ -380,6 +381,110 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	}
 }
 
+func TestPromptEvaluationOptimizationCandidatePublishKeepsSourcePrompt(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
+	})
+	sourceContent := "请澄清 {{issue_title}}，输出必须使用中文。"
+	promptID := createPromptEvaluationTestPromptWithContent(
+		t,
+		testWorkspaceID,
+		"失败用例优化提示词",
+		sourceContent,
+		`[]`,
+	)
+	createW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+		"prompt_id":  promptID,
+		"name":       "失败用例优化运行",
+		"asset_type": "优化运行",
+		"payload": map[string]any{
+			"cases": []map[string]any{
+				{
+					"名称":   "缺少验收口径",
+					"变量":   map[string]any{"issue_title": "登录失败"},
+					"期望包含": []string{"验收条件", "trace/task id"},
+				},
+			},
+		},
+	}))
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
+	}
+	var asset PromptEvaluationAssetResponse
+	if err := json.Unmarshal(createW.Body.Bytes(), &asset); err != nil {
+		t.Fatalf("decode asset: %v", err)
+	}
+
+	runW := httptest.NewRecorder()
+	testHandler.RunPromptEvaluationAsset(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/run", nil), "id", asset.ID))
+	if runW.Code != http.StatusOK {
+		t.Fatalf("run status = %d, body = %s", runW.Code, runW.Body.String())
+	}
+	var runID, runStatus string
+	var failedCases int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT id::text, status, failed_cases
+		FROM prompt_evaluation_run
+		WHERE workspace_id = $1 AND asset_id = $2
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, testWorkspaceID, asset.ID).Scan(&runID, &runStatus, &failedCases); err != nil {
+		t.Fatalf("load failed run: %v", err)
+	}
+	if runStatus != "未通过" || failedCases != 1 {
+		t.Fatalf("run status=%s failed=%d", runStatus, failedCases)
+	}
+
+	candidateW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationOptimizationCandidate(candidateW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+runID+"/optimization-candidates", nil), "id", runID))
+	if candidateW.Code != http.StatusCreated {
+		t.Fatalf("candidate status = %d, body = %s", candidateW.Code, candidateW.Body.String())
+	}
+	var candidate PromptEvaluationOptimizationCandidateResponse
+	if err := json.Unmarshal(candidateW.Body.Bytes(), &candidate); err != nil {
+		t.Fatalf("decode candidate: %v", err)
+	}
+	if candidate.Status != "待确认" || candidate.FailedCaseCount != 1 || candidate.PromptID != promptID {
+		t.Fatalf("candidate = %+v", candidate)
+	}
+	if candidate.CandidateContent == sourceContent || !containsAll(candidate.CandidateContent, []string{"优化候选", "失败用例", "人工发布要求"}) {
+		t.Fatalf("candidate content did not include optimization guardrails: %s", candidate.CandidateContent)
+	}
+
+	publishW := httptest.NewRecorder()
+	testHandler.PublishPromptEvaluationOptimizationCandidate(publishW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-optimization-candidates/"+candidate.ID+"/publish", nil), "id", candidate.ID))
+	if publishW.Code != http.StatusOK {
+		t.Fatalf("publish status = %d, body = %s", publishW.Code, publishW.Body.String())
+	}
+	var published PublishPromptEvaluationOptimizationCandidateResponse
+	if err := json.Unmarshal(publishW.Body.Bytes(), &published); err != nil {
+		t.Fatalf("decode publish: %v", err)
+	}
+	if published.Candidate.Status != "已发布" || published.Candidate.PublishedPromptID == nil || *published.Candidate.PublishedPromptID != published.Prompt.ID {
+		t.Fatalf("published candidate = %+v prompt=%+v", published.Candidate, published.Prompt)
+	}
+	if published.Prompt.ID == promptID || published.Prompt.Version != 2 || published.Prompt.Content != candidate.CandidateContent {
+		t.Fatalf("published prompt = %+v", published.Prompt)
+	}
+	var originalContent string
+	var originalVersion int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT content, version
+		FROM prompt_library_item
+		WHERE id = $1
+	`, promptID).Scan(&originalContent, &originalVersion); err != nil {
+		t.Fatalf("load original prompt: %v", err)
+	}
+	if originalContent != sourceContent || originalVersion != 1 {
+		t.Fatalf("original prompt was changed: version=%d content=%s", originalVersion, originalContent)
+	}
+}
+
 func TestPromptEvaluationAssetRejectsForeignPrompt(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")
@@ -418,4 +523,13 @@ func createPromptEvaluationTestPromptWithContent(t *testing.T, workspaceID, name
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE id = $1`, promptID)
 	})
 	return promptID
+}
+
+func containsAll(value string, needles []string) bool {
+	for _, needle := range needles {
+		if !strings.Contains(value, needle) {
+			return false
+		}
+	}
+	return true
 }

@@ -13,6 +13,7 @@ import type {
   CreatePromptLibraryItemRequest,
   CreatePromptEvaluationAssetRequest,
   PromptEvaluationAsset,
+  PromptEvaluationOptimizationCandidate,
   PromptEvaluationStructuredCase,
   PromptEvaluationRun,
   PromptEvaluationAssetType,
@@ -35,6 +36,7 @@ const promptLibraryKeys = {
   assets: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-assets"] as const,
   cases: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-cases"] as const,
   runs: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-runs"] as const,
+  candidates: (workspaceId: string) => ["prompt-library", workspaceId, "optimization-candidates"] as const,
 };
 
 const PROMPT_TYPES = ["全部", "需求澄清", "系统提示词", "评测提示词", "小队 SOP", "通用"];
@@ -142,6 +144,11 @@ export function PromptLibraryPage() {
     queryFn: () => api.listPromptEvaluationRuns({ limit: 100 }),
     enabled: !!workspaceId,
   });
+  const candidateQuery = useQuery({
+    queryKey: promptLibraryKeys.candidates(workspaceId ?? ""),
+    queryFn: () => api.listPromptEvaluationOptimizationCandidates({ limit: 100 }),
+    enabled: !!workspaceId,
+  });
 
   const runtimeQuery = useQuery({
     queryKey: ["training-evaluation", workspaceId ?? "", "runtimes"],
@@ -153,6 +160,7 @@ export function PromptLibraryPage() {
   const assets = assetQuery.data?.items ?? [];
   const cases = caseQuery.data?.items ?? [];
   const runs = runQuery.data?.items ?? [];
+  const candidates = candidateQuery.data?.items ?? [];
   const selected = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
   const agentRuntimeReadiness = useMemo(
     () => evaluateCodeBuddyReadiness(runtimeQuery.data ?? []),
@@ -186,6 +194,7 @@ export function PromptLibraryPage() {
   const invalidateAssets = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId ?? "") });
   const invalidateCases = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId ?? "") });
   const invalidateRuns = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId ?? "") });
+  const invalidateCandidates = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.candidates(workspaceId ?? "") });
 
   const createMut = useMutation({
     mutationFn: (data: CreatePromptLibraryItemRequest) => api.createPromptLibraryItem(data),
@@ -275,6 +284,24 @@ export function PromptLibraryPage() {
     onSuccess: () => {
       invalidateRuns();
       toast.success("运行记录已同步");
+    },
+  });
+
+  const createCandidateMut = useMutation({
+    mutationFn: (runId: string) => api.createPromptEvaluationOptimizationCandidate(runId),
+    onSuccess: () => {
+      invalidateCandidates();
+      toast.success("优化候选已生成，等待人工确认");
+    },
+  });
+
+  const publishCandidateMut = useMutation({
+    mutationFn: (candidateId: string) => api.publishPromptEvaluationOptimizationCandidate(candidateId),
+    onSuccess: (result) => {
+      invalidate();
+      invalidateCandidates();
+      setSelectedId(result.prompt.id);
+      toast.success(`已发布新提示词版本：${result.prompt.name}`);
     },
   });
 
@@ -626,7 +653,8 @@ export function PromptLibraryPage() {
               assets={assets}
               cases={cases}
               runs={runs}
-              loading={assetQuery.isLoading || caseQuery.isLoading || runQuery.isLoading}
+              candidates={candidates}
+              loading={assetQuery.isLoading || caseQuery.isLoading || runQuery.isLoading || candidateQuery.isLoading}
                 saving={savingAsset}
                 runningAgent={runningAgent}
                 runtimeReadiness={agentRuntimeReadiness}
@@ -640,6 +668,10 @@ export function PromptLibraryPage() {
               onDeleteAsset={deleteAsset}
               onSyncRun={(runId) => syncRunMut.mutate(runId)}
               syncingRunId={syncRunMut.isPending ? syncRunMut.variables ?? null : null}
+              onGenerateCandidate={(runId) => createCandidateMut.mutate(runId)}
+              generatingCandidateRunId={createCandidateMut.isPending ? createCandidateMut.variables ?? null : null}
+              onPublishCandidate={(candidateId) => publishCandidateMut.mutate(candidateId)}
+              publishingCandidateId={publishCandidateMut.isPending ? publishCandidateMut.variables ?? null : null}
             />
           </div>
         </main>
@@ -654,6 +686,7 @@ function WorkbenchPanel({
   assets,
   cases,
   runs,
+  candidates,
   loading,
     saving,
     runningAgent,
@@ -668,13 +701,18 @@ function WorkbenchPanel({
   onDeleteAsset,
   onSyncRun,
   syncingRunId,
+  onGenerateCandidate,
+  generatingCandidateRunId,
+  onPublishCandidate,
+  publishingCandidateId,
 }: {
   activeTab: WorkbenchTab;
   selected: PromptLibraryItem | null;
   assets: PromptEvaluationAsset[];
   cases: PromptEvaluationStructuredCase[];
   runs: PromptEvaluationRun[];
-    loading: boolean;
+  candidates: PromptEvaluationOptimizationCandidate[];
+  loading: boolean;
     saving: boolean;
     runningAgent: boolean;
     runtimeReadiness: AgentRuntimeReadiness;
@@ -688,11 +726,16 @@ function WorkbenchPanel({
   onDeleteAsset: (asset: PromptEvaluationAsset) => void;
   onSyncRun: (runId: string) => void;
   syncingRunId: string | null;
+  onGenerateCandidate: (runId: string) => void;
+  generatingCandidateRunId: string | null;
+  onPublishCandidate: (candidateId: string) => void;
+  publishingCandidateId: string | null;
 }) {
   const tabAssetType = tabToAssetType(activeTab);
   const visibleAssets = tabAssetType ? assets.filter((asset) => asset.asset_type === tabAssetType) : assets;
   const experiments = assets.filter((asset) => asset.asset_type === "实验");
   const caseCounts = useMemo(() => buildCaseCounts(cases), [cases]);
+  const candidatesByRun = useMemo(() => buildCandidatesByRun(candidates), [candidates]);
 
   if (activeTab === "提示词库" || activeTab === "提示词调试场") {
     return null;
@@ -797,6 +840,17 @@ function WorkbenchPanel({
                       同步任务
                     </Button>
                   )}
+                  {canGenerateOptimizationCandidate(run) && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      onClick={() => onGenerateCandidate(run.id)}
+                      disabled={generatingCandidateRunId === run.id || (candidatesByRun.get(run.id)?.some((candidate) => candidate.status === "待确认") ?? false)}
+                    >
+                      {generatingCandidateRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+                      {candidatesByRun.get(run.id)?.some((candidate) => candidate.status === "待确认") ? "已有候选" : "生成优化候选"}
+                    </Button>
+                  )}
                 </div>
               </div>
             ))}
@@ -805,7 +859,15 @@ function WorkbenchPanel({
       )}
 
       {activeTab !== "运行历史" && (
-        loading ? (
+        <>
+          {activeTab === "优化运行" && (
+            <OptimizationCandidateList
+              candidates={candidates}
+              onPublishCandidate={onPublishCandidate}
+              publishingCandidateId={publishingCandidateId}
+            />
+          )}
+          {loading ? (
           <div className="h-20 rounded-md bg-muted/60" />
         ) : visibleAssets.length === 0 ? (
           <div className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">暂无资产</div>
@@ -842,9 +904,58 @@ function WorkbenchPanel({
               </div>
             ))}
           </div>
-        )
+        )}
+        </>
       )}
     </section>
+  );
+}
+
+function OptimizationCandidateList({
+  candidates,
+  onPublishCandidate,
+  publishingCandidateId,
+}: {
+  candidates: PromptEvaluationOptimizationCandidate[];
+  onPublishCandidate: (candidateId: string) => void;
+  publishingCandidateId: string | null;
+}) {
+  if (candidates.length === 0) {
+    return (
+      <div className="rounded-md border border-dashed px-3 py-5 text-center text-sm text-muted-foreground">
+        暂无优化候选。先在运行历史里对失败运行生成候选。
+      </div>
+    );
+  }
+  return (
+    <div className="divide-y rounded-md border">
+      {candidates.map((candidate) => (
+        <div key={candidate.id} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
+              <span className="truncate text-sm font-medium">{candidate.candidate_name}</span>
+              <Badge variant={candidate.status === "待确认" ? "secondary" : "outline"} className="shrink-0">
+                {candidate.status} · 失败 {candidate.failed_case_count}
+              </Badge>
+            </div>
+            <div className="mt-1 text-xs text-muted-foreground">{candidate.rationale || "基于失败用例生成，等待人工确认。"}</div>
+            <div className="mt-1 break-all text-[11px] text-muted-foreground">
+              run {candidate.run_id}{candidate.published_prompt_id ? ` · 已发布 ${candidate.published_prompt_id}` : ""}
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              onClick={() => onPublishCandidate(candidate.id)}
+              disabled={candidate.status !== "待确认" || publishingCandidateId === candidate.id}
+            >
+              {publishingCandidateId === candidate.id ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+              发布新版本
+            </Button>
+          </div>
+        </div>
+      ))}
+    </div>
   );
 }
 
@@ -1065,6 +1176,23 @@ function buildCaseCounts(cases: PromptEvaluationStructuredCase[]): Map<string, n
     counts.set(item.asset_id, (counts.get(item.asset_id) ?? 0) + 1);
   }
   return counts;
+}
+
+function buildCandidatesByRun(candidates: PromptEvaluationOptimizationCandidate[]): Map<string, PromptEvaluationOptimizationCandidate[]> {
+  const result = new Map<string, PromptEvaluationOptimizationCandidate[]>();
+  for (const candidate of candidates) {
+    const bucket = result.get(candidate.run_id) ?? [];
+    bucket.push(candidate);
+    result.set(candidate.run_id, bucket);
+  }
+  return result;
+}
+
+function canGenerateOptimizationCandidate(run: PromptEvaluationRun): boolean {
+  if (!run.prompt_id) return false;
+  if (run.failed_cases > 0) return true;
+  if (run.status === "未通过" || run.status === "失败") return true;
+  return Boolean(run.failure_reason && run.failure_reason !== "无");
 }
 
 function summarizeAssetPayload(asset: PromptEvaluationAsset, structuredCaseCount = 0): string {

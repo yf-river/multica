@@ -124,13 +124,17 @@ import type {
 	  PromptEvaluationAsset,
 	  PromptEvaluationRun,
 	  PromptEvaluationAgentRunResponse,
+	  PromptEvaluationOptimizationCandidate,
+	  PublishPromptEvaluationOptimizationCandidateResponse,
 	  ListPromptEvaluationAssetsParams,
 	  ListPromptEvaluationRunsParams,
   ListPromptEvaluationCasesParams,
+  ListPromptEvaluationOptimizationCandidatesParams,
   ListPromptEvaluationAssetsResponse,
   ListPromptEvaluationRunsResponse,
   ListPromptEvaluationTrialsResponse,
   ListPromptEvaluationCasesResponse,
+  ListPromptEvaluationOptimizationCandidatesResponse,
   CreatePromptEvaluationAssetRequest,
   UpdatePromptEvaluationAssetRequest,
   ListPromptLibraryItemsParams,
@@ -180,6 +184,9 @@ import {
   EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
+  EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE,
+  EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE,
   EMPTY_WEBHOOK_DELIVERY,
   AppConfigSchema,
   type AppConfigResponse,
@@ -198,6 +205,9 @@ import {
   PromptEvaluationRunSchema,
   PromptEvaluationTrialListResponseSchema,
   PromptEvaluationCaseListResponseSchema,
+  PromptEvaluationOptimizationCandidateSchema,
+  PromptEvaluationOptimizationCandidateListResponseSchema,
+  PublishPromptEvaluationOptimizationCandidateResponseSchema,
   PromptLibraryItemSchema,
   PromptLibraryItemListResponseSchema,
   IssueSOPRunsResponseSchema,
@@ -1827,6 +1837,33 @@ export class ApiClient {
     return parseWithFallback(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
       endpoint: "POST /api/prompt-evaluation-runs/:id/sync",
     }) as PromptEvaluationRun;
+  }
+
+  async listPromptEvaluationOptimizationCandidates(params?: ListPromptEvaluationOptimizationCandidatesParams): Promise<ListPromptEvaluationOptimizationCandidatesResponse> {
+    const search = new URLSearchParams();
+    if (params?.run_id) search.set("run_id", params.run_id);
+    if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
+    if (params?.status) search.set("status", params.status);
+    if (params?.limit) search.set("limit", String(params.limit));
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationOptimizationCandidateListResponseSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-optimization-candidates",
+    }) as ListPromptEvaluationOptimizationCandidatesResponse;
+  }
+
+  async createPromptEvaluationOptimizationCandidate(runId: string): Promise<PromptEvaluationOptimizationCandidate> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/optimization-candidates`, { method: "POST" });
+    return parseWithFallback(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
+      endpoint: "POST /api/prompt-evaluation-runs/:id/optimization-candidates",
+    }) as PromptEvaluationOptimizationCandidate;
+  }
+
+  async publishPromptEvaluationOptimizationCandidate(candidateId: string): Promise<PublishPromptEvaluationOptimizationCandidateResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/publish`, { method: "POST" });
+    return parseWithFallback(raw, PublishPromptEvaluationOptimizationCandidateResponseSchema, EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE, {
+      endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/publish",
+    }) as PublishPromptEvaluationOptimizationCandidateResponse;
   }
 
   // Project resources

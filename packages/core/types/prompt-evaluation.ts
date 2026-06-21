@@ -1,5 +1,8 @@
+import type { PromptLibraryItem } from "./prompt-library";
+
 export type PromptEvaluationAssetType = "数据集" | "测试套件" | "实验" | "优化运行";
 export type PromptEvaluationAssetStatus = "启用" | "归档";
+export type PromptEvaluationOptimizationCandidateStatus = "待确认" | "已发布" | "已拒绝";
 
 export interface PromptEvaluationCase {
   名称: string;
@@ -133,6 +136,32 @@ export interface PromptEvaluationAgentRunResponse {
   message: string;
 }
 
+export interface PromptEvaluationOptimizationCandidate {
+  id: string;
+  workspace_id: string;
+  asset_id: string;
+  run_id: string;
+  prompt_id: string;
+  candidate_name: string;
+  candidate_content: string;
+  rationale: string;
+  failed_case_count: number;
+  source_failure_summary: Record<string, unknown>;
+  source_prompt_snapshot: Record<string, unknown>;
+  metrics: Record<string, unknown>;
+  status: PromptEvaluationOptimizationCandidateStatus;
+  published_prompt_id: string | null;
+  published_at: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PublishPromptEvaluationOptimizationCandidateResponse {
+  candidate: PromptEvaluationOptimizationCandidate;
+  prompt: PromptLibraryItem;
+}
+
 export interface ListPromptEvaluationAssetsResponse {
   items: PromptEvaluationAsset[];
   total: number;
@@ -153,6 +182,11 @@ export interface ListPromptEvaluationCasesResponse {
   total: number;
 }
 
+export interface ListPromptEvaluationOptimizationCandidatesResponse {
+  items: PromptEvaluationOptimizationCandidate[];
+  total: number;
+}
+
 export interface ListPromptEvaluationAssetsParams {
   prompt_id?: string;
   asset_type?: PromptEvaluationAssetType;
@@ -168,6 +202,13 @@ export interface ListPromptEvaluationRunsParams {
 export interface ListPromptEvaluationCasesParams {
   asset_id?: string;
   status?: PromptEvaluationAssetStatus;
+}
+
+export interface ListPromptEvaluationOptimizationCandidatesParams {
+  run_id?: string;
+  prompt_id?: string;
+  status?: PromptEvaluationOptimizationCandidateStatus;
+  limit?: number;
 }
 
 export interface CreatePromptEvaluationAssetRequest {

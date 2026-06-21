@@ -9,12 +9,15 @@ import type {
   GroupedIssuesResponse,
   ListIssuesResponse,
   ListPromptEvaluationAssetsResponse,
+  ListPromptEvaluationOptimizationCandidatesResponse,
   ListPromptLibraryItemsResponse,
   ListIssueSOPRunsResponse,
   ObservabilitySummary,
   ListWebhookDeliveriesResponse,
   PromptEvaluationAsset,
+  PromptEvaluationOptimizationCandidate,
   PromptLibraryItem,
+  PublishPromptEvaluationOptimizationCandidateResponse,
   Squad,
   SquadSOPRun,
   TimelineEntry,
@@ -835,6 +838,37 @@ export const PromptEvaluationCaseListResponseSchema = z.object({
   total: z.number().default(0),
 }).loose();
 
+export const PromptEvaluationOptimizationCandidateSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  asset_id: z.string(),
+  run_id: z.string(),
+  prompt_id: z.string(),
+  candidate_name: z.string(),
+  candidate_content: z.string(),
+  rationale: z.string().default(""),
+  failed_case_count: z.number().default(0),
+  source_failure_summary: z.record(z.string(), z.unknown()).default({}),
+  source_prompt_snapshot: z.record(z.string(), z.unknown()).default({}),
+  metrics: z.record(z.string(), z.unknown()).default({}),
+  status: z.enum(["待确认", "已发布", "已拒绝"]).default("待确认"),
+  published_prompt_id: z.string().nullable().optional().transform((v) => v ?? null),
+  published_at: z.string().default(""),
+  created_by: z.string().nullable().optional().transform((v) => v ?? null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const PromptEvaluationOptimizationCandidateListResponseSchema = z.object({
+  items: z.array(PromptEvaluationOptimizationCandidateSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const PublishPromptEvaluationOptimizationCandidateResponseSchema = z.object({
+  candidate: PromptEvaluationOptimizationCandidateSchema,
+  prompt: PromptLibraryItemSchema,
+}).loose();
+
 export const EMPTY_PROMPT_EVALUATION_ASSET: PromptEvaluationAsset = {
   id: "",
   workspace_id: "",
@@ -875,6 +909,37 @@ export const EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE = {
 export const EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE = {
   items: [],
   total: 0,
+};
+
+export const EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE: PromptEvaluationOptimizationCandidate = {
+  id: "",
+  workspace_id: "",
+  asset_id: "",
+  run_id: "",
+  prompt_id: "",
+  candidate_name: "",
+  candidate_content: "",
+  rationale: "",
+  failed_case_count: 0,
+  source_failure_summary: {},
+  source_prompt_snapshot: {},
+  metrics: {},
+  status: "待确认",
+  published_prompt_id: null,
+  published_at: "",
+  created_by: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE: ListPromptEvaluationOptimizationCandidatesResponse = {
+  items: [],
+  total: 0,
+};
+
+export const EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE: PublishPromptEvaluationOptimizationCandidateResponse = {
+  candidate: EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
+  prompt: EMPTY_PROMPT_LIBRARY_ITEM,
 };
 
 // Squad member status — backs the Squad detail page's Members tab. status

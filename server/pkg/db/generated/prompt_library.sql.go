@@ -76,6 +76,74 @@ func (q *Queries) CreatePromptLibraryItem(ctx context.Context, arg CreatePromptL
 	return i, err
 }
 
+const createPromptLibraryItemVersion = `-- name: CreatePromptLibraryItemVersion :one
+INSERT INTO prompt_library_item (
+    workspace_id, project_id, name, description, prompt_type,
+    content, variables, tags, status, version, created_by
+) VALUES (
+    $1,
+    $8,
+    $2,
+    $3,
+    $4,
+    $5,
+    COALESCE($9::jsonb, '[]'::jsonb),
+    COALESCE($10::jsonb, '[]'::jsonb),
+    COALESCE($11, '启用'),
+    $6,
+    $7
+)
+RETURNING id, workspace_id, project_id, name, description, prompt_type, content, variables, tags, status, version, created_by, created_at, updated_at
+`
+
+type CreatePromptLibraryItemVersionParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Name        string      `json:"name"`
+	Description string      `json:"description"`
+	PromptType  string      `json:"prompt_type"`
+	Content     string      `json:"content"`
+	Version     int32       `json:"version"`
+	CreatedBy   pgtype.UUID `json:"created_by"`
+	ProjectID   pgtype.UUID `json:"project_id"`
+	Variables   []byte      `json:"variables"`
+	Tags        []byte      `json:"tags"`
+	Status      interface{} `json:"status"`
+}
+
+func (q *Queries) CreatePromptLibraryItemVersion(ctx context.Context, arg CreatePromptLibraryItemVersionParams) (PromptLibraryItem, error) {
+	row := q.db.QueryRow(ctx, createPromptLibraryItemVersion,
+		arg.WorkspaceID,
+		arg.Name,
+		arg.Description,
+		arg.PromptType,
+		arg.Content,
+		arg.Version,
+		arg.CreatedBy,
+		arg.ProjectID,
+		arg.Variables,
+		arg.Tags,
+		arg.Status,
+	)
+	var i PromptLibraryItem
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Description,
+		&i.PromptType,
+		&i.Content,
+		&i.Variables,
+		&i.Tags,
+		&i.Status,
+		&i.Version,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const deletePromptLibraryItem = `-- name: DeletePromptLibraryItem :exec
 DELETE FROM prompt_library_item
 WHERE id = $1 AND workspace_id = $2

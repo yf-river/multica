@@ -23,6 +23,8 @@ interface PromptLibraryItem {
   id: string;
   name: string;
   prompt_type: string;
+  content?: string;
+  version?: number;
 }
 
 interface PromptEvaluationAsset {
@@ -54,6 +56,17 @@ interface PromptEvaluationCase {
   variables: Record<string, unknown>;
   expected_contains: unknown[];
   status: string;
+}
+
+interface PromptEvaluationOptimizationCandidate {
+  id: string;
+  run_id: string;
+  prompt_id: string;
+  candidate_name: string;
+  candidate_content: string;
+  failed_case_count: number;
+  status: string;
+  published_prompt_id: string | null;
 }
 
 export class TestApiClient {
@@ -201,6 +214,17 @@ export class TestApiClient {
     await this.authedFetch(`/api/prompt-evaluation-assets/${id}`, { method: "DELETE" });
   }
 
+  async createPromptEvaluationAsset(data: Record<string, unknown>): Promise<PromptEvaluationAsset> {
+    const res = await this.authedFetch("/api/prompt-evaluation-assets", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      throw new Error(`create prompt evaluation asset failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
   async updatePromptEvaluationAsset(id: string, data: Record<string, unknown>): Promise<PromptEvaluationAsset> {
     const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}`, {
       method: "PUT",
@@ -208,6 +232,14 @@ export class TestApiClient {
     });
     if (!res.ok) {
       throw new Error(`update prompt evaluation asset failed: ${res.status}`);
+    }
+    return res.json();
+  }
+
+  async runPromptEvaluationAsset(id: string): Promise<PromptEvaluationAsset> {
+    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/run`, { method: "POST" });
+    if (!res.ok) {
+      throw new Error(`run prompt evaluation asset failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
   }
@@ -220,6 +252,19 @@ export class TestApiClient {
     const res = await this.authedFetch(`/api/prompt-evaluation-runs${search.toString() ? `?${search}` : ""}`);
     if (!res.ok) {
       throw new Error(`list prompt evaluation runs failed: ${res.status}`);
+    }
+    const data = await res.json();
+    return data.items ?? [];
+  }
+
+  async listPromptEvaluationOptimizationCandidates(params?: { run_id?: string; prompt_id?: string; status?: string }): Promise<PromptEvaluationOptimizationCandidate[]> {
+    const search = new URLSearchParams();
+    if (params?.run_id) search.set("run_id", params.run_id);
+    if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
+    if (params?.status) search.set("status", params.status);
+    const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates${search.toString() ? `?${search}` : ""}`);
+    if (!res.ok) {
+      throw new Error(`list prompt evaluation optimization candidates failed: ${res.status}`);
     }
     const data = await res.json();
     return data.items ?? [];

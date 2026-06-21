@@ -151,6 +151,82 @@ test.describe("训练与评估工作台", () => {
       });
   });
 
+  test("失败运行可以生成优化候选并人工发布新版本", async ({ page }) => {
+    const promptName = `${artifactPrefix} 失败优化闭环`;
+    const sourceContent = "请澄清 {{issue_title}}，输出必须使用中文。";
+
+    await page.getByRole("link", { name: "训练与评估" }).click();
+    await expect(page).toHaveURL(/\/training(?:\?|$)/, { timeout: 30000 });
+    await page.getByRole("button", { name: /user-center 模板/ }).click();
+    await page.getByLabel("名称").fill(promptName);
+    await page.getByLabel("提示词内容").fill(sourceContent);
+    await page.getByLabel("调试变量").fill("issue_title=登录失败");
+    await page.getByRole("button", { name: "保存" }).click();
+    await expect(page.getByText("提示词已创建")).toBeVisible({ timeout: 10000 });
+
+    const prompt = await expect
+      .poll(async () => (await api.listPromptLibraryItems()).find((item) => item.name === promptName) ?? null, { timeout: 15000 })
+      .not.toBeNull()
+      .then(async () => (await api.listPromptLibraryItems()).find((item) => item.name === promptName)!);
+
+    const asset = await api.createPromptEvaluationAsset({
+      prompt_id: prompt.id,
+      name: `${promptName} 失败优化运行`,
+      asset_type: "优化运行",
+      payload: {
+        cases: [
+          {
+            名称: "缺少验收与 trace",
+            变量: { issue_title: "登录失败" },
+            期望包含: ["验收条件", "trace/task id"],
+          },
+        ],
+      },
+      status: "启用",
+    });
+    await api.runPromptEvaluationAsset(asset.id);
+
+    const failedRun = await expect
+      .poll(async () => {
+        const runs = await api.listPromptEvaluationRuns({ asset_id: asset.id });
+        return runs.find((run) => run.status === "未通过") ?? null;
+      }, { timeout: 15000 })
+      .not.toBeNull()
+      .then(async () => (await api.listPromptEvaluationRuns({ asset_id: asset.id })).find((run) => run.status === "未通过")!);
+
+    await page.goto(`/${workspaceSlug}/training?view=run-history`, { waitUntil: "domcontentloaded" });
+    await expect(page.getByText("本地渲染 · 未通过")).toBeVisible({ timeout: 10000 });
+    await page.getByRole("button", { name: "生成优化候选" }).click();
+    await expect(page.getByText("优化候选已生成，等待人工确认")).toBeVisible({ timeout: 10000 });
+
+    await page.getByRole("button", { name: "优化运行", exact: true }).click();
+    await expect(page.getByText(/待确认 · 失败 1/)).toBeVisible({ timeout: 10000 });
+    await page.getByRole("button", { name: "发布新版本" }).click();
+    await expect(page.getByText(/已发布新提示词版本/)).toBeVisible({ timeout: 10000 });
+
+    await expect
+      .poll(async () => {
+        const candidates = await api.listPromptEvaluationOptimizationCandidates({ run_id: failedRun.id });
+        return candidates[0] ?? null;
+      }, { timeout: 15000 })
+      .toMatchObject({
+        status: "已发布",
+        failed_case_count: 1,
+        prompt_id: prompt.id,
+      });
+
+    const prompts = await api.listPromptLibraryItems();
+    const original = prompts.find((item) => item.id === prompt.id);
+    const published = prompts.find((item) => item.name.startsWith(`${promptName} 优化发布`));
+    expect(original).toMatchObject({ id: prompt.id, content: sourceContent, version: 1 });
+    expect(published).toMatchObject({
+      prompt_type: "需求澄清",
+      version: 2,
+    });
+    expect(published?.content).toContain("优化候选");
+    expect(published?.content).toContain("人工发布要求");
+  });
+
   test("旧提示词库路由会跳转到训练与评估提示词视图", async ({ page }) => {
     await page.goto(`/${workspaceSlug}/prompt-library`, { waitUntil: "domcontentloaded" });
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training\\?view=prompts`), { timeout: 30000 });

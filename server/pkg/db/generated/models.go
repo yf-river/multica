@@ -597,6 +597,27 @@ type PromptEvaluationCase struct {
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
+type PromptEvaluationOptimizationCandidate struct {
+	ID                   pgtype.UUID        `json:"id"`
+	WorkspaceID          pgtype.UUID        `json:"workspace_id"`
+	AssetID              pgtype.UUID        `json:"asset_id"`
+	RunID                pgtype.UUID        `json:"run_id"`
+	PromptID             pgtype.UUID        `json:"prompt_id"`
+	CandidateName        string             `json:"candidate_name"`
+	CandidateContent     string             `json:"candidate_content"`
+	Rationale            string             `json:"rationale"`
+	FailedCaseCount      int32              `json:"failed_case_count"`
+	SourceFailureSummary []byte             `json:"source_failure_summary"`
+	SourcePromptSnapshot []byte             `json:"source_prompt_snapshot"`
+	Metrics              []byte             `json:"metrics"`
+	Status               string             `json:"status"`
+	PublishedPromptID    pgtype.UUID        `json:"published_prompt_id"`
+	PublishedAt          pgtype.Timestamptz `json:"published_at"`
+	CreatedBy            pgtype.UUID        `json:"created_by"`
+	CreatedAt            pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt            pgtype.Timestamptz `json:"updated_at"`
+}
+
 type PromptEvaluationRun struct {
 	ID                pgtype.UUID        `json:"id"`
 	WorkspaceID       pgtype.UUID        `json:"workspace_id"`

@@ -752,6 +752,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/trials", h.ListPromptEvaluationRunTrials)
 					r.Post("/sync", h.SyncPromptEvaluationRunFromTask)
+					r.Post("/optimization-candidates", h.CreatePromptEvaluationOptimizationCandidate)
+				})
+			})
+			r.Route("/api/prompt-evaluation-optimization-candidates", func(r chi.Router) {
+				r.Get("/", h.ListPromptEvaluationOptimizationCandidates)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Post("/publish", h.PublishPromptEvaluationOptimizationCandidate)
 				})
 			})
 
