@@ -163,6 +163,10 @@ CROSS JOIN candidate_summary oc;
 SELECT * FROM prompt_evaluation_run
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: GetPromptEvaluationRunByTask :one
+SELECT * FROM prompt_evaluation_run
+WHERE task_id = $1;
+
 -- name: UpdatePromptEvaluationRunFromTask :one
 UPDATE prompt_evaluation_run SET
     status = $3,
@@ -183,6 +187,16 @@ UPDATE prompt_evaluation_run SET
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
 RETURNING *;
+
+-- name: UpdatePromptEvaluationTrialsFromTask :exec
+UPDATE prompt_evaluation_trial SET
+    status = $3,
+    input_tokens = $4,
+    output_tokens = $5,
+    duration_ms = $6,
+    failure_reason = $7,
+    evidence = COALESCE(sqlc.narg('evidence')::jsonb, evidence)
+WHERE run_id = $1 AND workspace_id = $2;
 
 -- name: CreatePromptEvaluationTrial :one
 INSERT INTO prompt_evaluation_trial (

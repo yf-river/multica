@@ -269,6 +269,50 @@ func (q *Queries) CreatePromptEvaluationTrial(ctx context.Context, arg CreatePro
 	return i, err
 }
 
+const getPromptEvaluationRunByTask = `-- name: GetPromptEvaluationRunByTask :one
+SELECT id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at FROM prompt_evaluation_run
+WHERE task_id = $1
+`
+
+func (q *Queries) GetPromptEvaluationRunByTask(ctx context.Context, taskID pgtype.UUID) (PromptEvaluationRun, error) {
+	row := q.db.QueryRow(ctx, getPromptEvaluationRunByTask, taskID)
+	var i PromptEvaluationRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AssetID,
+		&i.PromptID,
+		&i.RunKind,
+		&i.Status,
+		&i.TriggerSource,
+		&i.AgentID,
+		&i.RuntimeID,
+		&i.TaskID,
+		&i.ChatSessionID,
+		&i.Model,
+		&i.RuntimeProvider,
+		&i.TotalCases,
+		&i.PassedCases,
+		&i.FailedCases,
+		&i.PassRate,
+		&i.TotalDurationMs,
+		&i.AverageDurationMs,
+		&i.InputTokens,
+		&i.OutputTokens,
+		&i.EstimatedCost,
+		&i.FailureReason,
+		&i.Conclusion,
+		&i.Metrics,
+		&i.Evidence,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const getPromptEvaluationRunInWorkspace = `-- name: GetPromptEvaluationRunInWorkspace :one
 SELECT id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at FROM prompt_evaluation_run
 WHERE id = $1 AND workspace_id = $2
@@ -702,4 +746,40 @@ func (q *Queries) UpdatePromptEvaluationRunFromTask(ctx context.Context, arg Upd
 		&i.UpdatedAt,
 	)
 	return i, err
+}
+
+const updatePromptEvaluationTrialsFromTask = `-- name: UpdatePromptEvaluationTrialsFromTask :exec
+UPDATE prompt_evaluation_trial SET
+    status = $3,
+    input_tokens = $4,
+    output_tokens = $5,
+    duration_ms = $6,
+    failure_reason = $7,
+    evidence = COALESCE($8::jsonb, evidence)
+WHERE run_id = $1 AND workspace_id = $2
+`
+
+type UpdatePromptEvaluationTrialsFromTaskParams struct {
+	RunID         pgtype.UUID `json:"run_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	Status        string      `json:"status"`
+	InputTokens   int32       `json:"input_tokens"`
+	OutputTokens  int32       `json:"output_tokens"`
+	DurationMs    int64       `json:"duration_ms"`
+	FailureReason string      `json:"failure_reason"`
+	Evidence      []byte      `json:"evidence"`
+}
+
+func (q *Queries) UpdatePromptEvaluationTrialsFromTask(ctx context.Context, arg UpdatePromptEvaluationTrialsFromTaskParams) error {
+	_, err := q.db.Exec(ctx, updatePromptEvaluationTrialsFromTask,
+		arg.RunID,
+		arg.WorkspaceID,
+		arg.Status,
+		arg.InputTokens,
+		arg.OutputTokens,
+		arg.DurationMs,
+		arg.FailureReason,
+		arg.Evidence,
+	)
+	return err
 }
