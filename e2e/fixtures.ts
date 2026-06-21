@@ -41,11 +41,20 @@ interface PromptEvaluationRun {
   asset_id: string;
   run_kind: string;
   status: string;
+  agent_id: string | null;
+  runtime_id: string | null;
+  task_id: string | null;
+  chat_session_id: string | null;
+  model: string;
+  runtime_provider: string;
   total_cases: number;
   passed_cases: number;
   failed_cases: number;
   pass_rate: number;
-  task_id: string | null;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost: number;
+  conclusion: string;
 }
 
 interface PromptEvaluationRunEvidence {
@@ -99,6 +108,7 @@ export class TestApiClient {
   private workspaceId: string | null = null;
   private account: string | null = null;
   private createdIssueIds: string[] = [];
+  private createdRuntimeIds: string[] = [];
 
   async login(account: string, name: string) {
     const res = await fetch(`${API_BASE}/auth/login`, {
@@ -190,6 +200,52 @@ export class TestApiClient {
       if (result.rowCount !== 1) {
         throw new Error(`Failed to mark E2E user onboarded: ${this.account}`);
       }
+    } finally {
+      await client.end();
+    }
+  }
+
+  async ensureOnlineCodeBuddyRuntime(name = `E2E CodeBuddy Runtime ${Date.now()}`) {
+    if (!this.workspaceId) {
+      throw new Error("Cannot seed CodeBuddy runtime before workspace is selected");
+    }
+    if (!this.account) {
+      throw new Error("Cannot seed CodeBuddy runtime before login");
+    }
+
+    const client = new pg.Client(DATABASE_URL);
+    await client.connect();
+    try {
+      const userRow = await client.query<{ id: string }>(
+        `SELECT id FROM "user" WHERE account = $1 LIMIT 1`,
+        [this.account],
+      );
+      if (userRow.rows.length === 0) {
+        throw new Error(`E2E user missing: ${this.account}`);
+      }
+      const userId = userRow.rows[0]!.id;
+      const result = await client.query<{ id: string }>(
+        `
+          INSERT INTO agent_runtime (
+            workspace_id, daemon_id, name, runtime_mode, provider, status,
+            device_info, metadata, owner_id, visibility, last_seen_at
+          )
+          VALUES (
+            $1, $2, $3, 'cloud', 'codebuddy', 'online',
+            'E2E CodeBuddy runtime', '{"用途":"训练与评估 E2E 真实任务入队"}'::jsonb, $4, 'public', now()
+          )
+          RETURNING id
+        `,
+        [
+          this.workspaceId,
+          `e2e-codebuddy-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          name,
+          userId,
+        ],
+      );
+      const runtimeId = result.rows[0]!.id;
+      this.createdRuntimeIds.push(runtimeId);
+      return { id: runtimeId, name };
     } finally {
       await client.end();
     }
@@ -345,8 +401,42 @@ export class TestApiClient {
     }
   }
 
+  async cleanupSeededRuntimes() {
+    if (!this.workspaceId || this.createdRuntimeIds.length === 0) {
+      this.createdRuntimeIds = [];
+      return;
+    }
+
+    const client = new pg.Client(DATABASE_URL);
+    await client.connect();
+    try {
+      for (const runtimeId of this.createdRuntimeIds) {
+        await client.query("BEGIN");
+        try {
+          await client.query(
+            `
+              DELETE FROM agent
+              WHERE runtime_id = $1
+                 OR (workspace_id = $2 AND name = 'Multica 训练评估 Agent')
+            `,
+            [runtimeId, this.workspaceId],
+          );
+          await client.query(`DELETE FROM agent_runtime WHERE id = $1`, [runtimeId]);
+          await client.query("COMMIT");
+        } catch (error) {
+          await client.query("ROLLBACK");
+          throw error;
+        }
+      }
+    } finally {
+      await client.end();
+      this.createdRuntimeIds = [];
+    }
+  }
+
   /** Clean up all issues created during this test. */
   async cleanup() {
+    await this.cleanupSeededRuntimes();
     for (const id of this.createdIssueIds) {
       try {
         await this.deleteIssue(id);

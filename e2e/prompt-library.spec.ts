@@ -17,10 +17,13 @@ test.describe("训练与评估工作台", () => {
   test.afterEach(async () => {
     if (api && artifactPrefix) {
       await api.cleanupPromptArtifactsByPrefix(artifactPrefix);
+      await api.cleanup();
     }
   });
 
 	  test("可以创建提示词、调试渲染并记录评测资产", async ({ page }) => {
+    const runtime = await api.ensureOnlineCodeBuddyRuntime(`${artifactPrefix} CodeBuddy Runtime`);
+
     await page.getByRole("link", { name: "训练与评估" }).click();
     await expect(page).toHaveURL(/\/training(?:\?|$)/, { timeout: 30000 });
     await waitForPageText(page, "训练与评估");
@@ -46,9 +49,19 @@ test.describe("训练与评估工作台", () => {
     }
 
     await page.getByRole("button", { name: "Agent 调试场", exact: true }).click();
+    await expect(page.getByText("CodeBuddy 在线")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(runtime.name)).toBeVisible();
     await page.getByLabel("期望输出").fill("输出需求澄清结论、风险、测试证据和下一步建议。");
     await page.getByRole("button", { name: "保存为实验" }).click();
     await expect(page.getByText("资产已创建").last()).toBeVisible({ timeout: 10000 });
+    const createAgentTaskButton = page.getByRole("button", { name: "创建真实 Agent 任务" });
+    await expect(createAgentTaskButton).toBeEnabled({ timeout: 10000 });
+    const agentRunResponse = page.waitForResponse(
+      (response) => response.request().method() === "POST" && response.url().includes("/agent-run"),
+      { timeout: 10000 },
+    );
+    await createAgentTaskButton.click();
+    expect((await agentRunResponse).status()).toBe(202);
 
     await expect
       .poll(async () => {
@@ -86,7 +99,7 @@ test.describe("训练与评估工作台", () => {
         const assets = await api.listPromptEvaluationAssets({ prompt_id: prompt.id });
         return assets.map((asset) => asset.asset_type).sort();
       }, { timeout: 15000 })
-      .toEqual(["优化运行", "实验", "实验", "数据集", "测试套件"].sort());
+      .toEqual(["优化运行", "实验", "实验", "实验", "数据集", "测试套件"].sort());
 
     const prompt = (await api.listPromptLibraryItems()).find((item) => item.name === `${artifactPrefix} user-center 澄清`);
     expect(prompt).toBeTruthy();
@@ -125,6 +138,47 @@ test.describe("训练与评估工作台", () => {
         rendered_prompt: "请澄清 登录失败，项目背景：user-center。",
       }),
     ]);
+    const findQueuedAgentRun = async () => {
+        const assets = await api.listPromptEvaluationAssets({ prompt_id: prompt!.id });
+        const agentAssetIds = assets
+          .filter((asset) => asset.name.startsWith(`${artifactPrefix} user-center 澄清 Agent 调试包`))
+          .map((asset) => asset.id);
+        const runs = await api.listPromptEvaluationRuns({ limit: 20 });
+        return runs.find((run) => agentAssetIds.includes(run.asset_id) && run.run_kind === "Agent执行") ?? null;
+      };
+    await expect
+      .poll(findQueuedAgentRun, { timeout: 15000 })
+      .toMatchObject({
+        run_kind: "Agent执行",
+        status: "已入队",
+        model: "minimax-m2.7-ioa",
+        runtime_provider: "codebuddy",
+        runtime_id: runtime.id,
+        total_cases: 1,
+        passed_cases: 0,
+        failed_cases: 0,
+        task_id: expect.any(String),
+        chat_session_id: expect.any(String),
+        conclusion: "等待 Agent 执行完成",
+      });
+    const queuedAgentRun = await findQueuedAgentRun();
+    expect(queuedAgentRun).toBeTruthy();
+    const agentEvidence = await api.getPromptEvaluationRunEvidence(queuedAgentRun!.id);
+    expect(agentEvidence.run).toMatchObject({
+      run_kind: "Agent执行",
+      status: "已入队",
+      model: "minimax-m2.7-ioa",
+      runtime_provider: "codebuddy",
+      runtime_id: runtime.id,
+      task_id: queuedAgentRun!.task_id,
+    });
+    expect(agentEvidence.trials).toEqual([
+      expect.objectContaining({
+        case_name: "Agent 调试场用例",
+        status: "待执行",
+        failure_reason: "等待 Agent 执行完成",
+      }),
+    ]);
     await expect
       .poll(async () => {
         const summary = await api.getPromptEvaluationSummary();
@@ -146,13 +200,22 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByText("通过率")).toBeVisible();
     await expect(page.getByText("待确认优化候选")).toBeVisible();
     await page.getByRole("button", { name: "运行历史", exact: true }).click();
+    await expect(page.getByText("Agent执行 · 已入队")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(`task ${queuedAgentRun!.task_id}`)).toBeVisible();
     await expect(page.getByText("本地渲染 · 通过")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(/通过 1\/1/)).toBeVisible();
-    await page.getByRole("button", { name: "查看证据" }).first().click();
+    const localRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "本地渲染 · 通过" }).first();
+    await localRunCard.getByRole("button", { name: "查看证据" }).click();
     await expect(page.getByText("用例明细")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText("调试场用例")).toBeVisible();
     await expect(page.getByText("请澄清 登录失败，项目背景：user-center。").last()).toBeVisible();
     await expect(page.getByText("原始 evidence JSON")).toBeVisible();
+    await localRunCard.getByRole("button", { name: "收起证据" }).click();
+    const agentRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "Agent执行 · 已入队" }).first();
+    await agentRunCard.getByRole("button", { name: "查看证据" }).click();
+    await expect(page.getByText("Agent 调试场用例")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("失败原因：等待 Agent 执行完成")).toBeVisible();
+    await expect(page.getByText("task 用量")).toBeVisible();
 
     await expect(api.updatePromptEvaluationAsset(dataset!.id, { status: "归档" })).resolves.toMatchObject({
       id: dataset!.id,
@@ -172,14 +235,36 @@ test.describe("训练与评估工作台", () => {
     await expect
       .poll(async () => {
         const assets = await api.listPromptEvaluationAssets({ asset_type: "实验" });
-        return assets.find((asset) => asset.name.startsWith(`${artifactPrefix} user-center 澄清 Agent 调试包`)) ?? null;
+        const agentAssets = assets.filter((asset) => asset.name.startsWith(`${artifactPrefix} user-center 澄清 Agent 调试包`));
+        return {
+          count: agentAssets.length,
+          hasSnapshot: agentAssets.some((asset) => {
+            const payload = asset.payload as Record<string, any>;
+            return String(payload.调试包?.执行方式 ?? "").includes("CodeBuddy runtime 已在线");
+          }),
+          queuedRun: agentAssets.find((asset) => {
+            const payload = asset.payload as Record<string, any>;
+            return payload.最近Agent运行?.["trace/task id"] === queuedAgentRun!.task_id;
+          }) ?? null,
+        };
       }, { timeout: 15000 })
       .toMatchObject({
-        asset_type: "实验",
-        payload: {
-          调试包: {
-            执行方式: expect.stringContaining("未创建真实 Agent 任务"),
-            期望输出: "输出需求澄清结论、风险、测试证据和下一步建议。",
+        count: 2,
+        hasSnapshot: true,
+        queuedRun: {
+          asset_type: "实验",
+          payload: {
+            调试包: {
+              期望输出: "输出需求澄清结论、风险、测试证据和下一步建议。",
+            },
+            最近Agent运行: {
+              状态: "已入队",
+              模型: "minimax-m2.7-ioa",
+              runtime: "codebuddy",
+              runtime_id: runtime.id,
+              "trace/task id": queuedAgentRun!.task_id,
+              评估结论: "等待 Agent 执行完成",
+            },
           },
         },
       });

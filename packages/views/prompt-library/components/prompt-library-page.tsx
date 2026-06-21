@@ -1321,12 +1321,19 @@ function buildAgentDebugPackageRequest(
 ): CreatePromptEvaluationAssetRequest {
   return {
     prompt_id: prompt.id,
-    name: `${prompt.name} Agent 调试包 ${new Date().toLocaleString("zh-CN")}`,
+    name: `${prompt.name} Agent 调试包 ${new Date().toLocaleString("zh-CN")} #${Date.now()}`,
     description: `Agent 调试场记录：${buildAgentExecutionStatus(readiness)}`,
     asset_type: "实验",
     payload: {
       schema_version: 1,
       语义版本: "multica.training_evaluation.v1",
+      cases: [
+        {
+          名称: "Agent 调试场用例",
+          变量: values,
+          期望包含: splitList(expectedOutput),
+        },
+      ],
       调试包: {
         提示词: prompt.name,
         变量: values,
