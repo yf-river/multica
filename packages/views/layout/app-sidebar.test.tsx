@@ -108,7 +108,6 @@ vi.mock("@multica/core/paths", () => ({
 	    training: () => "/acme/training",
 	    trainingView: (view: string) => `/acme/training?view=${encodeURIComponent(view)}`,
 	    runtimes: () => "/acme/runtimes",
-	    promptLibrary: () => "/acme/prompt-library",
     skills: () => "/acme/skills",
     settings: () => "/acme/settings",
     issueDetail: (id: string) => `/acme/issues/${id}`,

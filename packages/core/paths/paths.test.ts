@@ -19,7 +19,6 @@ describe("paths.workspace(slug)", () => {
     expect(ws.runtimes()).toBe("/acme/runtimes");
     expect(ws.training()).toBe("/acme/training");
     expect(ws.trainingView("datasets")).toBe("/acme/training?view=datasets");
-    expect(ws.promptLibrary()).toBe("/acme/prompt-library");
     expect(ws.skills()).toBe("/acme/skills");
     expect(ws.skillDetail("skl_123")).toBe("/acme/skills/skl_123");
     expect(ws.squads()).toBe("/acme/squads");

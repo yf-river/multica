@@ -77,7 +77,6 @@ type NavKey =
   | "agents"
   | "training"
   | "runtimes"
-  | "promptLibrary"
   | "skills"
   | "settings";
 
@@ -155,7 +154,6 @@ export function SearchCommand() {
       { key: "agents", label: t(($) => $.pages.agents), icon: Bot, keywords: ["agents", "bots", "ai"] },
       { key: "training", label: t(($) => $.pages.training), icon: ChartNoAxesCombined, keywords: ["training", "evaluation", "eval", "dataset", "experiment", "训练", "评估", "数据集", "实验"] },
       { key: "runtimes", label: t(($) => $.pages.runtimes), icon: Monitor, keywords: ["runtimes", "environments"] },
-      { key: "promptLibrary", label: t(($) => $.pages.prompt_library), icon: BookOpenText, keywords: ["prompts", "提示词", "library"], href: p.trainingView("prompts") },
       { key: "skills", label: t(($) => $.pages.skills), icon: BookOpenText, keywords: ["skills", "技能"] },
       { key: "settings", label: t(($) => $.pages.settings), icon: Settings, keywords: ["settings", "config", "preferences", "设置"] },
     ],

@@ -810,13 +810,13 @@ function WorkbenchPanel({
     return null;
   }
 
-	  if (activeTab === "Agent 调试场") {
+	if (activeTab === "Agent 调试场") {
 	    return (
 	      <section className="grid gap-3 border-t pt-4">
 	        <div className="flex items-center justify-between gap-2">
 	          <div>
 	            <h3 className="text-sm font-semibold">Agent 调试场</h3>
-	            <p className="mt-1 text-xs text-muted-foreground">当前仅保存调试包；未创建真实任务时会明确写入环境状态和修复路径。</p>
+	            <p className="mt-1 text-xs text-muted-foreground">可先保存实验包，也可在 CodeBuddy 就绪后创建真实 Agent 任务并写入运行历史。</p>
 	          </div>
 	          <div className="flex shrink-0 items-center gap-2">
 	            <Button size="sm" variant="secondary" onClick={onSaveAgentDebugPackage} disabled={!selected || saving}>
@@ -1170,7 +1170,7 @@ function evaluateCodeBuddyReadiness(runtimes: AgentRuntime[]): AgentRuntimeReadi
 
 function buildAgentExecutionStatus(readiness: AgentRuntimeReadiness): string {
   if (readiness.status === "就绪") {
-    return `CodeBuddy runtime 已在线，目标模型 ${DEFAULT_AGENT_MODEL}；当前记录仅保存调试包，尚未创建真实 Agent 任务`;
+    return `CodeBuddy runtime 已在线，目标模型 ${DEFAULT_AGENT_MODEL}；此记录是实验包快照，点击“创建真实 Agent 任务”后会入队并采集 trace、token、成本和输出`;
   }
   return `${readiness.label}，目标模型 ${DEFAULT_AGENT_MODEL}；未创建真实 Agent 任务`;
 }

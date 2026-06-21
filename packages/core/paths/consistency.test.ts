@@ -27,7 +27,6 @@ describe("paths.workspace() shape", () => {
         "myIssues",
         "runtimes",
         "training",
-        "promptLibrary",
         "skills",
         "settings",
       ]),
@@ -49,7 +48,6 @@ describe("paths.workspace() shape", () => {
       ["myIssues", "my-issues"],
       ["runtimes", "runtimes"],
       ["training", "training"],
-      ["promptLibrary", "prompt-library"],
       ["skills", "skills"],
       ["settings", "settings"],
     ];
@@ -94,6 +92,12 @@ describe("global path / reserved slug consistency", () => {
         `'${firstSegment}' is a global path prefix but not a reserved slug — ` +
           `a workspace could be created with this slug and shadow the global route`,
       ).toBe(true);
+    }
+  });
+
+  it("reserves legacy workspace route segments handled by the web proxy", () => {
+    for (const slug of ["training", "prompt-library"]) {
+      expect(RESERVED_SLUGS.has(slug), `${slug} must be reserved because the web proxy treats /${slug} as a legacy route`).toBe(true);
     }
   });
 });

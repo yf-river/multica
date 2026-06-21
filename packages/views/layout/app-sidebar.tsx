@@ -115,7 +115,6 @@ type NavKey =
   | "usage"
   | "training"
   | "runtimes"
-  | "promptLibrary"
   | "skills"
   | "settings";
 
@@ -131,7 +130,6 @@ type NavLabelKey =
   | "usage"
   | "training"
   | "runtimes"
-  | "prompt_library"
   | "skills"
   | "settings";
 

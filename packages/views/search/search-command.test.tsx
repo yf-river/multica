@@ -148,7 +148,6 @@ vi.mock("@multica/core/paths", () => ({
 	    training: () => "/ws-test/training",
 	    trainingView: (view: string) => `/ws-test/training?view=${encodeURIComponent(view)}`,
 	    runtimes: () => "/ws-test/runtimes",
-	    promptLibrary: () => "/ws-test/prompt-library",
     skills: () => "/ws-test/skills",
     settings: () => "/ws-test/settings",
     issueDetail: (id: string) => `/ws-test/issues/${id}`,
@@ -401,6 +400,36 @@ describe("SearchCommand", () => {
 
     expect(mockOpenModal).toHaveBeenCalledWith("quick-create-issue", null);
     expect(useSearchStore.getState().open).toBe(false);
+  });
+
+  it("训练与评估子模块命令会跳转到对应视图", async () => {
+    const user = userEvent.setup();
+    renderSearch();
+
+    const commands = [
+      ["提示词调试", "打开提示词调试场", "/ws-test/training?view=prompt-playground"],
+      ["Agent 调试", "打开 Agent 调试场", "/ws-test/training?view=agent-playground"],
+      ["数据集", "打开数据集", "/ws-test/training?view=datasets"],
+      ["测试套件", "打开测试套件", "/ws-test/training?view=test-suites"],
+      ["实验", "打开实验", "/ws-test/training?view=experiments"],
+      ["优化运行", "打开优化运行", "/ws-test/training?view=optimization-runs"],
+      ["运行历史", "打开运行历史", "/ws-test/training?view=run-history"],
+    ] as const;
+
+    for (const [query, label, href] of commands) {
+      act(() => {
+        useSearchStore.setState({ open: true });
+      });
+      const input = screen.getByPlaceholderText("输入命令或关键词搜索...");
+      await user.clear(input);
+      await user.type(input, query);
+
+      const item = await screen.findByText((_, el) => el?.textContent === label && el?.tagName === "SPAN");
+      await user.click(item);
+
+      expect(mockPush).toHaveBeenLastCalledWith(href);
+      expect(useSearchStore.getState().open).toBe(false);
+    }
   });
 
   it("不在 issue 详情路由时隐藏复制链接命令", async () => {

@@ -15,12 +15,13 @@ export function useTabRouterSync(tabId: string, router: DataRouter) {
 
   useEffect(() => {
     // Sync initial state
-    const initialPath = router.state.location.pathname;
+    const initialPath = tabPathFromLocation(router.state.location);
     const store = useTabStore.getState();
-    store.updateTab(tabId, { path: initialPath, icon: resolveRouteIcon(initialPath) });
+    store.updateTab(tabId, { path: initialPath, icon: resolveRouteIcon(router.state.location.pathname) });
 
     const unsubscribe = router.subscribe((state) => {
       const { pathname } = state.location;
+      const path = tabPathFromLocation(state.location);
       const action = state.historyAction;
 
       if (action === "PUSH") {
@@ -40,10 +41,14 @@ export function useTabRouterSync(tabId: string, router: DataRouter) {
       // REPLACE: index and length stay the same
 
       const store = useTabStore.getState();
-      store.updateTab(tabId, { path: pathname, icon: resolveRouteIcon(pathname) });
+      store.updateTab(tabId, { path, icon: resolveRouteIcon(pathname) });
       store.updateTabHistory(tabId, indexRef.current, lengthRef.current);
     });
 
     return unsubscribe;
   }, [tabId, router]);
+}
+
+function tabPathFromLocation(location: { pathname: string; search?: string; hash?: string }) {
+  return `${location.pathname}${location.search ?? ""}${location.hash ?? ""}`;
 }
