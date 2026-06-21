@@ -105,7 +105,7 @@ const USER_CENTER_SOP_PROFILE: SquadSOPProfile = {
     "user-center/06-archive",
   ],
   operation_skills: ["user-center/add-api"],
-  acceptance: ["阶段产物完整", "测试证据完整", "handoff 明确"],
+  acceptance: ["阶段产物完整", "测试证据完整", "交接说明明确"],
   forbidden_actions: ["跳过验收直接完成", "缺少测试证据时宣称完成", "越过 user-center skill 边界修改无关仓库"],
 };
 
@@ -1593,9 +1593,9 @@ function SquadInstructionsTab({
               <SOPProfileRow label="模板" value={sopProfile.profile_key ?? ""} />
               <SOPProfileRow label="项目" value={sopProfile.project} />
               <SOPProfileRow label="仓库" value={sopProfile.repo} />
-              <SOPProfileRow label="执行方式" value={sopProfile.mode === "stage_chain" ? "阶段链" : sopProfile.mode} />
+              <SOPProfileRow label="执行方式" value={formatSOPMode(sopProfile.mode)} />
               <SOPProfileRow label="阶段链" value={formatSOPSteps(sopProfile)} wide />
-              <SOPProfileRow label="operation skill" value={sopProfile.operation_skills.join("、")} />
+              <SOPProfileRow label="操作技能" value={sopProfile.operation_skills.join("、")} />
               <SOPProfileRow label="验收要求" value={sopProfile.acceptance.join("、")} />
               <SOPProfileRow label="禁止事项" value={(sopProfile.forbidden_actions ?? []).join("、")} />
             </div>
@@ -1617,6 +1617,15 @@ function SquadInstructionsTab({
                     <div key={String(role.key ?? role.name ?? index)} className="rounded-md border border-border/70 bg-background px-3 py-2">
                       <div className="font-medium text-foreground">{String(role.name ?? role.key ?? "未命名角色")}</div>
                       <div className="mt-1 line-clamp-2">{String(role.responsibility ?? role.boundary ?? "")}</div>
+                      {role.input ? (
+                        <div className="mt-1 line-clamp-2">输入：{String(role.input)}</div>
+                      ) : null}
+                      {role.output ? (
+                        <div className="mt-1 line-clamp-2">交付物：{String(role.output)}</div>
+                      ) : null}
+                      {role.boundary ? (
+                        <div className="mt-1 line-clamp-2">边界：{String(role.boundary)}</div>
+                      ) : null}
                       {role.forbidden ? (
                         <div className="mt-1 text-destructive/80">禁止：{String(role.forbidden)}</div>
                       ) : null}
@@ -1683,6 +1692,12 @@ function SOPProfileRow({
       <span className="break-words text-foreground">{value || "未配置"}</span>
     </div>
   );
+}
+
+function formatSOPMode(mode: string): string {
+  if (mode === "stage_chain") return "阶段链";
+  if (mode === "coding_squad") return "编码小队";
+  return mode;
 }
 
 function normalizeSOPProfile(raw: Record<string, unknown> | null | undefined): SquadSOPProfile | null {
