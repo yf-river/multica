@@ -407,6 +407,7 @@ describe("SearchCommand", () => {
     renderSearch();
 
     const commands = [
+      ["提示词库", "打开提示词库", "/ws-test/training?view=prompts"],
       ["提示词调试", "打开提示词调试场", "/ws-test/training?view=prompt-playground"],
       ["Agent 调试", "打开 Agent 调试场", "/ws-test/training?view=agent-playground"],
       ["数据集", "打开数据集", "/ws-test/training?view=datasets"],

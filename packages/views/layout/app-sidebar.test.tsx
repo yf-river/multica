@@ -193,3 +193,17 @@ describe("PinRow", () => {
     expect(container.querySelector('button[data-href="/acme/issues"]')).not.toHaveAttribute("data-active");
   });
 });
+
+describe("AppSidebar workspace nav", () => {
+  beforeEach(() => {
+    navigation.current.pathname = "/acme/issues";
+    detail.current = { isPending: false, isError: false, data: null, error: null };
+  });
+
+  it("renders the 训练与评估 nav item and links to the canonical training route", () => {
+    render(<AppSidebar />);
+
+    const item = document.querySelector('[data-href="/acme/training"]');
+    expect(item).toHaveAttribute("data-href", "/acme/training");
+  });
+});

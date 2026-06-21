@@ -248,6 +248,7 @@ export function SearchCommand() {
           setOpen(false);
         },
       },
+      trainingCommand("prompts", t(($) => $.commands.open_prompt_library), "提示词库 prompt library prompts"),
       trainingCommand("prompt-playground", t(($) => $.commands.open_prompt_playground), "提示词调试 prompt playground debug"),
       trainingCommand("agent-playground", t(($) => $.commands.open_agent_playground), "Agent 调试 agent playground debug"),
       trainingCommand("datasets", t(($) => $.commands.open_datasets), "dataset 数据集 training data"),
