@@ -48,8 +48,63 @@ export interface PromptEvaluationAsset {
   updated_at: string;
 }
 
+export interface PromptEvaluationRun {
+  id: string;
+  workspace_id: string;
+  asset_id: string;
+  prompt_id: string | null;
+  run_kind: "本地渲染" | "Agent执行";
+  status: "已入队" | "运行中" | "通过" | "未通过" | "失败" | "已取消";
+  trigger_source: string;
+  agent_id: string | null;
+  runtime_id: string | null;
+  task_id: string | null;
+  chat_session_id: string | null;
+  model: string;
+  runtime_provider: string;
+  total_cases: number;
+  passed_cases: number;
+  failed_cases: number;
+  pass_rate: number;
+  total_duration_ms: number;
+  average_duration_ms: number;
+  input_tokens: number;
+  output_tokens: number;
+  estimated_cost: number;
+  failure_reason: string;
+  conclusion: string;
+  metrics: Record<string, unknown>;
+  evidence: Record<string, unknown>;
+  started_at: string;
+  completed_at: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface PromptEvaluationTrial {
+  id: string;
+  run_id: string;
+  workspace_id: string;
+  asset_id: string;
+  case_index: number;
+  case_name: string;
+  status: "待执行" | "通过" | "未通过" | "失败" | "已跳过";
+  input: Record<string, unknown>;
+  expected: Record<string, unknown>;
+  output: Record<string, unknown>;
+  rendered_prompt: string;
+  input_tokens: number;
+  output_tokens: number;
+  duration_ms: number;
+  failure_reason: string;
+  evidence: Record<string, unknown>;
+  created_at: string;
+}
+
 export interface PromptEvaluationAgentRunResponse {
   asset: PromptEvaluationAsset;
+  run: PromptEvaluationRun;
   task_id: string;
   chat_session_id: string;
   agent_id: string;
@@ -64,10 +119,26 @@ export interface ListPromptEvaluationAssetsResponse {
   total: number;
 }
 
+export interface ListPromptEvaluationRunsResponse {
+  items: PromptEvaluationRun[];
+  total: number;
+}
+
+export interface ListPromptEvaluationTrialsResponse {
+  items: PromptEvaluationTrial[];
+  total: number;
+}
+
 export interface ListPromptEvaluationAssetsParams {
   prompt_id?: string;
   asset_type?: PromptEvaluationAssetType;
   status?: PromptEvaluationAssetStatus;
+}
+
+export interface ListPromptEvaluationRunsParams {
+  asset_id?: string;
+  status?: PromptEvaluationRun["status"];
+  limit?: number;
 }
 
 export interface CreatePromptEvaluationAssetRequest {

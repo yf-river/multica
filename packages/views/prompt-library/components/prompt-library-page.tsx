@@ -13,6 +13,7 @@ import type {
   CreatePromptLibraryItemRequest,
   CreatePromptEvaluationAssetRequest,
   PromptEvaluationAsset,
+  PromptEvaluationRun,
   PromptEvaluationAssetType,
   PromptLibraryItem,
   PromptLibraryStatus,
@@ -31,6 +32,7 @@ import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 const promptLibraryKeys = {
   list: (workspaceId: string) => ["prompt-library", workspaceId, "list"] as const,
   assets: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-assets"] as const,
+  runs: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-runs"] as const,
 };
 
 const PROMPT_TYPES = ["全部", "需求澄清", "系统提示词", "评测提示词", "小队 SOP", "通用"];
@@ -128,6 +130,11 @@ export function PromptLibraryPage() {
     queryFn: () => api.listPromptEvaluationAssets(),
     enabled: !!workspaceId,
   });
+  const runQuery = useQuery({
+    queryKey: promptLibraryKeys.runs(workspaceId ?? ""),
+    queryFn: () => api.listPromptEvaluationRuns({ limit: 100 }),
+    enabled: !!workspaceId,
+  });
 
   const runtimeQuery = useQuery({
     queryKey: ["training-evaluation", workspaceId ?? "", "runtimes"],
@@ -137,6 +144,7 @@ export function PromptLibraryPage() {
 
   const items = listQuery.data?.items ?? [];
   const assets = assetQuery.data?.items ?? [];
+  const runs = runQuery.data?.items ?? [];
   const selected = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
   const agentRuntimeReadiness = useMemo(
     () => evaluateCodeBuddyReadiness(runtimeQuery.data ?? []),
@@ -168,6 +176,7 @@ export function PromptLibraryPage() {
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.list(workspaceId ?? "") });
   const invalidateAssets = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId ?? "") });
+  const invalidateRuns = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId ?? "") });
 
   const createMut = useMutation({
     mutationFn: (data: CreatePromptLibraryItemRequest) => api.createPromptLibraryItem(data),
@@ -204,6 +213,7 @@ export function PromptLibraryPage() {
     },
     onSuccess: () => {
       invalidateAssets();
+      invalidateRuns();
       toast.success("优化运行已记录");
     },
   });
@@ -223,6 +233,7 @@ export function PromptLibraryPage() {
       },
       onSuccess: (result) => {
         invalidateAssets();
+        invalidateRuns();
         toast.success(`真实 Agent 任务已入队：${result.task_id}`);
       },
     });
@@ -231,6 +242,7 @@ export function PromptLibraryPage() {
     mutationFn: ({ id, data }: { id: string; data: UpdatePromptEvaluationAssetRequest }) => api.updatePromptEvaluationAsset(id, data),
     onSuccess: () => {
       invalidateAssets();
+      invalidateRuns();
       toast.success("资产已更新");
     },
   });
@@ -239,6 +251,7 @@ export function PromptLibraryPage() {
     mutationFn: (id: string) => api.deletePromptEvaluationAsset(id),
     onSuccess: () => {
       invalidateAssets();
+      invalidateRuns();
       toast.success("资产已删除");
     },
   });
@@ -589,7 +602,8 @@ export function PromptLibraryPage() {
               activeTab={activeTab}
               selected={selected}
               assets={assets}
-              loading={assetQuery.isLoading}
+              runs={runs}
+              loading={assetQuery.isLoading || runQuery.isLoading}
                 saving={savingAsset}
                 runningAgent={runningAgent}
                 runtimeReadiness={agentRuntimeReadiness}
@@ -613,6 +627,7 @@ function WorkbenchPanel({
   activeTab,
   selected,
   assets,
+  runs,
   loading,
     saving,
     runningAgent,
@@ -629,6 +644,7 @@ function WorkbenchPanel({
   activeTab: WorkbenchTab;
   selected: PromptLibraryItem | null;
   assets: PromptEvaluationAsset[];
+  runs: PromptEvaluationRun[];
     loading: boolean;
     saving: boolean;
     runningAgent: boolean;
@@ -643,11 +659,7 @@ function WorkbenchPanel({
   onDeleteAsset: (asset: PromptEvaluationAsset) => void;
 }) {
   const tabAssetType = tabToAssetType(activeTab);
-  const visibleAssets = tabAssetType
-    ? assets.filter((asset) => asset.asset_type === tabAssetType)
-    : activeTab === "运行历史"
-      ? assets.filter((asset) => Boolean(asset.payload?.["运行结果"] ?? asset.payload?.["调试输出"] ?? asset.payload?.["调试包"]))
-      : assets;
+  const visibleAssets = tabAssetType ? assets.filter((asset) => asset.asset_type === tabAssetType) : assets;
   const experiments = assets.filter((asset) => asset.asset_type === "实验");
 
   if (activeTab === "提示词库" || activeTab === "提示词调试场") {
@@ -704,7 +716,7 @@ function WorkbenchPanel({
         <div>
           <h3 className="text-sm font-semibold">{activeTab}</h3>
           <p className="mt-1 text-xs text-muted-foreground">
-            {activeTab === "运行历史" ? "按运行结果、调试输出和调试包汇总历史记录。" : "复用提示词评测资产，全部语义按中文记录。"}
+            {activeTab === "运行历史" ? "按结构化运行记录展示 run、task、模型、耗时和评估结论。" : "复用提示词评测资产，全部语义按中文记录。"}
           </p>
         </div>
         {tabAssetType && (
@@ -721,43 +733,76 @@ function WorkbenchPanel({
         </div>
       )}
 
-      {loading ? (
-        <div className="h-20 rounded-md bg-muted/60" />
-      ) : visibleAssets.length === 0 ? (
-        <div className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">暂无资产</div>
-      ) : (
-        <div className="divide-y rounded-md border">
-          {visibleAssets.map((asset) => (
-            <div key={asset.id} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
-              <div className="min-w-0">
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="truncate text-sm font-medium">{asset.name}</span>
-                  <Badge variant={asset.status === "启用" ? "secondary" : "outline"} className="shrink-0">
-                    {asset.asset_type} · {asset.status}
-                  </Badge>
+      {activeTab === "运行历史" && (
+        loading ? (
+          <div className="h-20 rounded-md bg-muted/60" />
+        ) : runs.length === 0 ? (
+          <div className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">暂无结构化运行记录</div>
+        ) : (
+          <div className="divide-y rounded-md border">
+            {runs.map((run) => (
+              <div key={run.id} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
+                <div className="min-w-0">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate text-sm font-medium">{run.run_kind} · {run.status}</span>
+                    <Badge variant={run.status === "通过" ? "secondary" : run.status === "已入队" || run.status === "运行中" ? "outline" : "destructive"} className="shrink-0">
+                      {run.total_cases} 用例 · 通过率 {Math.round(run.pass_rate * 100)}%
+                    </Badge>
+                  </div>
+                  <div className="mt-1 text-xs text-muted-foreground">{summarizeStructuredRun(run)}</div>
+                  <div className="mt-1 break-all text-[11px] text-muted-foreground">
+                    run {run.id}{run.task_id ? ` · task ${run.task_id}` : ""}
+                  </div>
                 </div>
-                <div className="mt-1 truncate text-xs text-muted-foreground">{asset.description || "无描述"}</div>
-	                <div className="mt-1 text-[11px] text-muted-foreground">
-	                  更新于 {asset.updated_at} · {summarizeAssetPayload(asset)}
-	                </div>
-	                {summarizeAgentRun(asset) && (
-	                  <div className="mt-1 text-[11px] text-muted-foreground">
-	                    {summarizeAgentRun(asset)}
-	                  </div>
-	                )}
-	              </div>
-              <div className="flex items-center gap-2">
-                <Button size="sm" variant="secondary" onClick={() => onToggleAssetStatus(asset)} disabled={saving}>
-                  {asset.status === "启用" ? "归档" : "启用"}
-                </Button>
-                <Button size="sm" variant="destructive" onClick={() => onDeleteAsset(asset)} disabled={saving}>
-                  <Trash2 className="size-3.5" />
-                  删除
-                </Button>
+                <div className="text-right text-[11px] text-muted-foreground">
+                  <div>{run.created_at}</div>
+                  <div>{run.total_duration_ms} ms</div>
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )
+      )}
+
+      {activeTab !== "运行历史" && (
+        loading ? (
+          <div className="h-20 rounded-md bg-muted/60" />
+        ) : visibleAssets.length === 0 ? (
+          <div className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">暂无资产</div>
+        ) : (
+          <div className="divide-y rounded-md border">
+            {visibleAssets.map((asset) => (
+              <div key={asset.id} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
+                <div className="min-w-0">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate text-sm font-medium">{asset.name}</span>
+                    <Badge variant={asset.status === "启用" ? "secondary" : "outline"} className="shrink-0">
+                      {asset.asset_type} · {asset.status}
+                    </Badge>
+                  </div>
+                  <div className="mt-1 truncate text-xs text-muted-foreground">{asset.description || "无描述"}</div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">
+                    更新于 {asset.updated_at} · {summarizeAssetPayload(asset)}
+                  </div>
+                  {summarizeAgentRun(asset) && (
+                    <div className="mt-1 text-[11px] text-muted-foreground">
+                      {summarizeAgentRun(asset)}
+                    </div>
+                  )}
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button size="sm" variant="secondary" onClick={() => onToggleAssetStatus(asset)} disabled={saving}>
+                    {asset.status === "启用" ? "归档" : "启用"}
+                  </Button>
+                  <Button size="sm" variant="destructive" onClick={() => onDeleteAsset(asset)} disabled={saving}>
+                    <Trash2 className="size-3.5" />
+                    删除
+                  </Button>
+                </div>
+              </div>
+            ))}
+          </div>
+        )
       )}
     </section>
   );
@@ -994,6 +1039,19 @@ function summarizeAgentRun(asset: PromptEvaluationAsset): string | null {
   const agent = stringFromRecord(record, "执行Agent");
   const model = stringFromRecord(record, "模型");
   return `Agent 任务：${status}${taskId ? ` · task ${taskId}` : ""}${agent ? ` · ${agent}` : ""}${model ? ` · ${model}` : ""}`;
+}
+
+function summarizeStructuredRun(run: PromptEvaluationRun): string {
+  const pieces = [
+    `模型 ${run.model || "未记录"}`,
+    `runtime ${run.runtime_provider || "未记录"}`,
+    `通过 ${run.passed_cases}/${run.total_cases}`,
+    `输入 ${run.input_tokens} token`,
+    `输出 ${run.output_tokens} token`,
+  ];
+  if (run.failure_reason) pieces.push(`失败原因：${run.failure_reason}`);
+  if (run.conclusion) pieces.push(`结论：${run.conclusion}`);
+  return pieces.join(" · ");
 }
 
 function stringFromRecord(record: Record<string, unknown>, key: string): string {

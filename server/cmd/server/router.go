@@ -746,6 +746,12 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/agent-run", h.RunPromptEvaluationAssetAgent)
 				})
 			})
+			r.Route("/api/prompt-evaluation-runs", func(r chi.Router) {
+				r.Get("/", h.ListPromptEvaluationRuns)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/trials", h.ListPromptEvaluationRunTrials)
+				})
+			})
 
 			// Squad leader evaluation (writes to activity_log)
 			r.Post("/api/issues/{id}/squad-evaluated", h.RecordSquadLeaderEvaluation)

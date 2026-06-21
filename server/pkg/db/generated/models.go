@@ -578,6 +578,60 @@ type PromptEvaluationAsset struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type PromptEvaluationRun struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	AssetID           pgtype.UUID        `json:"asset_id"`
+	PromptID          pgtype.UUID        `json:"prompt_id"`
+	RunKind           string             `json:"run_kind"`
+	Status            string             `json:"status"`
+	TriggerSource     string             `json:"trigger_source"`
+	AgentID           pgtype.UUID        `json:"agent_id"`
+	RuntimeID         pgtype.UUID        `json:"runtime_id"`
+	TaskID            pgtype.UUID        `json:"task_id"`
+	ChatSessionID     pgtype.UUID        `json:"chat_session_id"`
+	Model             string             `json:"model"`
+	RuntimeProvider   string             `json:"runtime_provider"`
+	TotalCases        int32              `json:"total_cases"`
+	PassedCases       int32              `json:"passed_cases"`
+	FailedCases       int32              `json:"failed_cases"`
+	PassRate          float64            `json:"pass_rate"`
+	TotalDurationMs   int64              `json:"total_duration_ms"`
+	AverageDurationMs int64              `json:"average_duration_ms"`
+	InputTokens       int32              `json:"input_tokens"`
+	OutputTokens      int32              `json:"output_tokens"`
+	EstimatedCost     float64            `json:"estimated_cost"`
+	FailureReason     string             `json:"failure_reason"`
+	Conclusion        string             `json:"conclusion"`
+	Metrics           []byte             `json:"metrics"`
+	Evidence          []byte             `json:"evidence"`
+	StartedAt         pgtype.Timestamptz `json:"started_at"`
+	CompletedAt       pgtype.Timestamptz `json:"completed_at"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PromptEvaluationTrial struct {
+	ID             pgtype.UUID        `json:"id"`
+	RunID          pgtype.UUID        `json:"run_id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	AssetID        pgtype.UUID        `json:"asset_id"`
+	CaseIndex      int32              `json:"case_index"`
+	CaseName       string             `json:"case_name"`
+	Status         string             `json:"status"`
+	Input          []byte             `json:"input"`
+	Expected       []byte             `json:"expected"`
+	Output         []byte             `json:"output"`
+	RenderedPrompt string             `json:"rendered_prompt"`
+	InputTokens    int32              `json:"input_tokens"`
+	OutputTokens   int32              `json:"output_tokens"`
+	DurationMs     int64              `json:"duration_ms"`
+	FailureReason  string             `json:"failure_reason"`
+	Evidence       []byte             `json:"evidence"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type PromptLibraryItem struct {
 	ID          pgtype.UUID        `json:"id"`
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`

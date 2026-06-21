@@ -116,11 +116,16 @@ export type {
 } from "./prompt-library";
 export type {
   PromptEvaluationAsset,
+  PromptEvaluationRun,
+  PromptEvaluationTrial,
   PromptEvaluationAgentRunResponse,
   PromptEvaluationAssetType,
   PromptEvaluationAssetStatus,
   ListPromptEvaluationAssetsResponse,
+  ListPromptEvaluationRunsResponse,
+  ListPromptEvaluationTrialsResponse,
   ListPromptEvaluationAssetsParams,
+  ListPromptEvaluationRunsParams,
   CreatePromptEvaluationAssetRequest,
   UpdatePromptEvaluationAssetRequest,
 } from "./prompt-evaluation";

@@ -122,9 +122,13 @@ import type {
 	  UpdateSquadRequest,
 	  PromptLibraryItem,
 	  PromptEvaluationAsset,
+	  PromptEvaluationRun,
 	  PromptEvaluationAgentRunResponse,
 	  ListPromptEvaluationAssetsParams,
+	  ListPromptEvaluationRunsParams,
   ListPromptEvaluationAssetsResponse,
+  ListPromptEvaluationRunsResponse,
+  ListPromptEvaluationTrialsResponse,
   CreatePromptEvaluationAssetRequest,
   UpdatePromptEvaluationAssetRequest,
   ListPromptLibraryItemsParams,
@@ -170,6 +174,9 @@ import {
   EMPTY_PROMPT_LIBRARY_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_ASSET,
   EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_RUN,
+  EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE,
   EMPTY_WEBHOOK_DELIVERY,
   AppConfigSchema,
   type AppConfigResponse,
@@ -184,6 +191,9 @@ import {
   RuntimeUsageListSchema,
   PromptEvaluationAssetSchema,
   PromptEvaluationAssetListResponseSchema,
+  PromptEvaluationRunListResponseSchema,
+  PromptEvaluationRunSchema,
+  PromptEvaluationTrialListResponseSchema,
   PromptLibraryItemSchema,
   PromptLibraryItemListResponseSchema,
   IssueSOPRunsResponseSchema,
@@ -1765,6 +1775,9 @@ export class ApiClient {
       asset: parseWithFallback(data.asset, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
         endpoint: "POST /api/prompt-evaluation-assets/:id/agent-run.asset",
       }) as PromptEvaluationAsset,
+      run: parseWithFallback(data.run, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
+        endpoint: "POST /api/prompt-evaluation-assets/:id/agent-run.run",
+      }) as PromptEvaluationRun,
       task_id: data.task_id ?? "",
       chat_session_id: data.chat_session_id ?? "",
       agent_id: data.agent_id ?? "",
@@ -1773,6 +1786,25 @@ export class ApiClient {
       status: data.status ?? "",
       message: data.message ?? "",
     };
+  }
+
+  async listPromptEvaluationRuns(params?: ListPromptEvaluationRunsParams): Promise<ListPromptEvaluationRunsResponse> {
+    const search = new URLSearchParams();
+    if (params?.asset_id) search.set("asset_id", params.asset_id);
+    if (params?.status) search.set("status", params.status);
+    if (params?.limit) search.set("limit", String(params.limit));
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationRunListResponseSchema, EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-runs",
+    }) as ListPromptEvaluationRunsResponse;
+  }
+
+  async listPromptEvaluationRunTrials(runId: string): Promise<ListPromptEvaluationTrialsResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/trials`);
+    return parseWithFallback(raw, PromptEvaluationTrialListResponseSchema, EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-runs/:id/trials",
+    }) as ListPromptEvaluationTrialsResponse;
   }
 
   // Project resources

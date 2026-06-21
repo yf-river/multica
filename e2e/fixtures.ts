@@ -34,6 +34,18 @@ interface PromptEvaluationAsset {
   payload: Record<string, unknown>;
 }
 
+interface PromptEvaluationRun {
+  id: string;
+  asset_id: string;
+  run_kind: string;
+  status: string;
+  total_cases: number;
+  passed_cases: number;
+  failed_cases: number;
+  pass_rate: number;
+  task_id: string | null;
+}
+
 export class TestApiClient {
   private token: string | null = null;
   private workspaceSlug: string | null = null;
@@ -188,6 +200,19 @@ export class TestApiClient {
       throw new Error(`update prompt evaluation asset failed: ${res.status}`);
     }
     return res.json();
+  }
+
+  async listPromptEvaluationRuns(params?: { asset_id?: string; status?: string; limit?: number }): Promise<PromptEvaluationRun[]> {
+    const search = new URLSearchParams();
+    if (params?.asset_id) search.set("asset_id", params.asset_id);
+    if (params?.status) search.set("status", params.status);
+    if (params?.limit) search.set("limit", String(params.limit));
+    const res = await this.authedFetch(`/api/prompt-evaluation-runs${search.toString() ? `?${search}` : ""}`);
+    if (!res.ok) {
+      throw new Error(`list prompt evaluation runs failed: ${res.status}`);
+    }
+    const data = await res.json();
+    return data.items ?? [];
   }
 
   async cleanupPromptArtifactsByPrefix(prefix: string) {

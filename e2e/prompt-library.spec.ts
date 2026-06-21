@@ -91,10 +91,25 @@ test.describe("训练与评估工作台", () => {
     const prompt = (await api.listPromptLibraryItems()).find((item) => item.name === `${artifactPrefix} user-center 澄清`);
     expect(prompt).toBeTruthy();
     const promptAssets = await api.listPromptEvaluationAssets({ prompt_id: prompt!.id });
+    const optimizationRun = promptAssets.find((asset) => asset.asset_type === "优化运行");
     const dataset = promptAssets.find((asset) => asset.asset_type === "数据集");
     const testSuite = promptAssets.find((asset) => asset.asset_type === "测试套件");
+    expect(optimizationRun).toBeTruthy();
     expect(dataset).toBeTruthy();
     expect(testSuite).toBeTruthy();
+    await expect(api.listPromptEvaluationRuns({ asset_id: optimizationRun!.id })).resolves.toEqual([
+      expect.objectContaining({
+        asset_id: optimizationRun!.id,
+        run_kind: "本地渲染",
+        status: "通过",
+        total_cases: 1,
+        passed_cases: 1,
+        failed_cases: 0,
+      }),
+    ]);
+    await page.getByRole("button", { name: "运行历史", exact: true }).click();
+    await expect(page.getByText("本地渲染 · 通过")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/通过 1\/1/)).toBeVisible();
 
     await expect(api.updatePromptEvaluationAsset(dataset!.id, { status: "归档" })).resolves.toMatchObject({
       id: dataset!.id,

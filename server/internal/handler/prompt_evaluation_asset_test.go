@@ -133,13 +133,30 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 	if recent["通过率"] != float64(1) || recent["执行Agent"] != "本地提示词渲染器" || recent["模型"] != "本地模板渲染" || recent["runtime"] != "server" {
 		t.Fatalf("missing production metrics: %#v", recent)
 	}
-	if recent["trace/task id"] != "未创建 Agent 任务" || recent["评估结论"] != "通过" {
+	if recent["trace/task id"] == "" || recent["评估结论"] != "通过" {
 		t.Fatalf("unexpected trace/conclusion: %#v", recent)
 	}
 	results := recent["用例结果"].([]any)
 	first := results[0].(map[string]any)
 	if first["渲染提示词"] != "请澄清 登录失败，仓库是 user-center。" {
 		t.Fatalf("rendered prompt = %q", first["渲染提示词"])
+	}
+	var runID, runStatus, runKind, trialStatus, renderedPrompt string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT r.id::text, r.status, r.run_kind, t.status, t.rendered_prompt
+		FROM prompt_evaluation_run r
+		JOIN prompt_evaluation_trial t ON t.run_id = r.id
+		WHERE r.workspace_id = $1 AND r.asset_id = $2
+		ORDER BY r.created_at DESC, t.case_index ASC
+		LIMIT 1
+	`, testWorkspaceID, created.ID).Scan(&runID, &runStatus, &runKind, &trialStatus, &renderedPrompt); err != nil {
+		t.Fatalf("load structured prompt evaluation run: %v", err)
+	}
+	if recent["trace/task id"] != runID || runStatus != "通过" || runKind != "本地渲染" || trialStatus != "通过" {
+		t.Fatalf("structured run mismatch: runID=%s status=%s kind=%s trial=%s recent=%#v", runID, runStatus, runKind, trialStatus, recent)
+	}
+	if renderedPrompt != "请澄清 登录失败，仓库是 user-center。" {
+		t.Fatalf("structured trial rendered prompt = %q", renderedPrompt)
 	}
 }
 
@@ -288,6 +305,22 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	recent := payload["最近Agent运行"].(map[string]any)
 	if recent["trace/task id"] != resp.TaskID || recent["状态"] != "已入队" || recent["评估结论"] != "等待 Agent 执行完成" {
 		t.Fatalf("recent agent run = %#v", recent)
+	}
+	if resp.Run.ID == "" || resp.Run.Status != "已入队" || resp.Run.RunKind != "Agent执行" || resp.Run.TaskID == nil || *resp.Run.TaskID != resp.TaskID {
+		t.Fatalf("agent structured run response = %+v", resp.Run)
+	}
+	var runStatus, runKind, taskID, chatSessionID, trialStatus string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT r.status, r.run_kind, r.task_id::text, r.chat_session_id::text, t.status
+		FROM prompt_evaluation_run r
+		JOIN prompt_evaluation_trial t ON t.run_id = r.id
+		WHERE r.id = $1
+		LIMIT 1
+	`, resp.Run.ID).Scan(&runStatus, &runKind, &taskID, &chatSessionID, &trialStatus); err != nil {
+		t.Fatalf("load queued structured prompt evaluation run: %v", err)
+	}
+	if runStatus != "已入队" || runKind != "Agent执行" || taskID != resp.TaskID || chatSessionID != resp.ChatSessionID || trialStatus != "待执行" {
+		t.Fatalf("queued structured run mismatch: status=%s kind=%s task=%s session=%s trial=%s", runStatus, runKind, taskID, chatSessionID, trialStatus)
 	}
 }
 

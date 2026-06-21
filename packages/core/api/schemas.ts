@@ -747,6 +747,70 @@ export const PromptEvaluationAssetListResponseSchema = z.object({
   total: z.number().default(0),
 }).loose();
 
+export const PromptEvaluationRunSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  asset_id: z.string(),
+  prompt_id: z.string().nullable().optional().transform((v) => v ?? null),
+  run_kind: z.enum(["本地渲染", "Agent执行"]),
+  status: z.enum(["已入队", "运行中", "通过", "未通过", "失败", "已取消"]),
+  trigger_source: z.string().default("手动"),
+  agent_id: z.string().nullable().optional().transform((v) => v ?? null),
+  runtime_id: z.string().nullable().optional().transform((v) => v ?? null),
+  task_id: z.string().nullable().optional().transform((v) => v ?? null),
+  chat_session_id: z.string().nullable().optional().transform((v) => v ?? null),
+  model: z.string().default(""),
+  runtime_provider: z.string().default(""),
+  total_cases: z.number().default(0),
+  passed_cases: z.number().default(0),
+  failed_cases: z.number().default(0),
+  pass_rate: z.number().default(0),
+  total_duration_ms: z.number().default(0),
+  average_duration_ms: z.number().default(0),
+  input_tokens: z.number().default(0),
+  output_tokens: z.number().default(0),
+  estimated_cost: z.number().default(0),
+  failure_reason: z.string().default(""),
+  conclusion: z.string().default(""),
+  metrics: z.record(z.string(), z.unknown()).default({}),
+  evidence: z.record(z.string(), z.unknown()).default({}),
+  started_at: z.string().default(""),
+  completed_at: z.string().default(""),
+  created_by: z.string().nullable().optional().transform((v) => v ?? null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const PromptEvaluationTrialSchema = z.object({
+  id: z.string(),
+  run_id: z.string(),
+  workspace_id: z.string(),
+  asset_id: z.string(),
+  case_index: z.number().default(0),
+  case_name: z.string().default(""),
+  status: z.enum(["待执行", "通过", "未通过", "失败", "已跳过"]),
+  input: z.record(z.string(), z.unknown()).default({}),
+  expected: z.record(z.string(), z.unknown()).default({}),
+  output: z.record(z.string(), z.unknown()).default({}),
+  rendered_prompt: z.string().default(""),
+  input_tokens: z.number().default(0),
+  output_tokens: z.number().default(0),
+  duration_ms: z.number().default(0),
+  failure_reason: z.string().default(""),
+  evidence: z.record(z.string(), z.unknown()).default({}),
+  created_at: z.string().default(""),
+}).loose();
+
+export const PromptEvaluationRunListResponseSchema = z.object({
+  items: z.array(PromptEvaluationRunSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const PromptEvaluationTrialListResponseSchema = z.object({
+  items: z.array(PromptEvaluationTrialSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
 export const EMPTY_PROMPT_EVALUATION_ASSET: PromptEvaluationAsset = {
   id: "",
   workspace_id: "",
@@ -762,6 +826,24 @@ export const EMPTY_PROMPT_EVALUATION_ASSET: PromptEvaluationAsset = {
 };
 
 export const EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE: ListPromptEvaluationAssetsResponse = {
+  items: [],
+  total: 0,
+};
+
+export const EMPTY_PROMPT_EVALUATION_RUN = PromptEvaluationRunSchema.parse({
+  id: "",
+  workspace_id: "",
+  asset_id: "",
+  run_kind: "本地渲染",
+  status: "已入队",
+});
+
+export const EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE = {
+  items: [],
+  total: 0,
+};
+
+export const EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE = {
   items: [],
   total: 0,
 };
