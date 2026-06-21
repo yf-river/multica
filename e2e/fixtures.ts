@@ -146,6 +146,8 @@ interface SquadSOPRun {
 interface ObservabilitySummary {
   指标: Record<string, unknown>;
   task_trace_total: number;
+  model_breakdown: Array<Record<string, unknown>>;
+  runtime_breakdown: Array<Record<string, unknown>>;
 }
 
 export class TestApiClient {

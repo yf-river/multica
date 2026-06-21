@@ -1,6 +1,7 @@
 package metrics
 
 import (
+	"math"
 	"regexp"
 	"strings"
 )
@@ -74,6 +75,30 @@ func PriceForModelAlias(model string) (ModelPrice, bool) {
 		}
 	}
 	return ModelPrice{}, false
+}
+
+func EstimateUsageCostUSD(modelAlias string, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int64) (float64, bool) {
+	price, ok := PriceForModelAlias(modelAlias)
+	if !ok {
+		return 0, false
+	}
+	cost := tokenCostUSD(inputTokens, price.InputPerM) +
+		tokenCostUSD(outputTokens, price.OutputPerM) +
+		tokenCostUSD(cacheReadTokens, price.CacheReadPerM) +
+		tokenCostUSD(cacheWriteTokens, price.CacheWritePerM)
+	return RoundCostUSD(cost), true
+}
+
+func CanonicalModelPriceKey(modelAlias string) (provider, model string, ok bool) {
+	price, ok := PriceForModelAlias(modelAlias)
+	if !ok {
+		return "", "", false
+	}
+	return price.Provider, price.Model, true
+}
+
+func RoundCostUSD(cost float64) float64 {
+	return math.Round(cost*1_000_000) / 1_000_000
 }
 
 func tokenCostUSD(tokens int64, pricePerM float64) float64 {

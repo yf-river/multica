@@ -84,7 +84,11 @@ export interface ObservabilitySummary {
     "总耗时"?: number;
     "输入 token"?: number;
     "输出 token"?: number;
+    "缓存读 token"?: number;
+    "缓存写 token"?: number;
+    "预估成本"?: number;
     "失败原因"?: Array<Record<string, unknown>>;
+    "缺少模型价格"?: Array<Record<string, unknown>>;
     "重试次数"?: number;
     "证据数"?: number;
     [key: string]: unknown;
@@ -94,4 +98,20 @@ export interface ObservabilitySummary {
   project_counts: Record<string, number>;
   issue_counts: Record<string, number>;
   task_trace_total: number;
+  model_breakdown: ObservabilityUsageBreakdown[];
+  runtime_breakdown: ObservabilityUsageBreakdown[];
+}
+
+export interface ObservabilityUsageBreakdown {
+  "名称": string;
+  provider: string;
+  model: string;
+  runtime: string;
+  "输入 token": number;
+  "输出 token": number;
+  "缓存读 token": number;
+  "缓存写 token": number;
+  "任务数": number;
+  "预估成本": number;
+  "价格已知": boolean;
 }

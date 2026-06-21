@@ -1087,7 +1087,7 @@ function RunEvidencePanel({
         <EvidenceList
           title="task 用量"
           empty="暂无 token 用量"
-          items={evidence.task_usage.map((usage) => `${usage.provider}/${usage.model} · 输入 ${usage.input_tokens} · 输出 ${usage.output_tokens}`)}
+          items={evidence.task_usage.map((usage) => `${usage.provider}/${usage.model} · 输入 ${usage.input_tokens} · 输出 ${usage.output_tokens} · 预估成本 ${formatMoney(usage.estimated_cost ?? 0)}${usage.priced === false ? " · 缺少价格" : ""}`)}
         />
         <EvidenceList
           title="task 消息"
@@ -1427,6 +1427,13 @@ function truncateText(value: string, maxLength: number): string {
 
 function formatNumber(value: unknown): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toLocaleString("zh-CN") : "0";
+}
+
+function formatMoney(value: unknown): string {
+  const n = typeof value === "number" ? value : Number(value ?? 0);
+  if (!Number.isFinite(n) || n <= 0) return "$0.00";
+  if (n < 0.01) return `$${n.toFixed(6)}`;
+  return `$${n.toFixed(2)}`;
 }
 
 function formatPercent(value: unknown): string {

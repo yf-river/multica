@@ -5,12 +5,14 @@ import (
 	"encoding/json"
 	"errors"
 	"log/slog"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -100,6 +102,7 @@ func syncPromptEvaluationRunWithTask(ctx context.Context, q *db.Queries, run db.
 	}
 	status, passed, failed, passRate, conclusion, failureReason := promptEvaluationRunStatusFromTask(run, task)
 	inputTokens, outputTokens := promptEvaluationUsageTotals(run, usages)
+	estimatedCost, unpricedModels := promptEvaluationEstimatedCost(run, usages)
 	durationMs := promptEvaluationTaskDurationMs(task, run)
 	averageMs := int64(0)
 	if run.TotalCases > 0 && durationMs > 0 {
@@ -117,9 +120,12 @@ func syncPromptEvaluationRunWithTask(ctx context.Context, q *db.Queries, run db.
 		"通过率":           passRate,
 		"总耗时":           durationMs,
 		"平均耗时":          averageMs,
+		"输入 token":      inputTokens,
+		"输出 token":      outputTokens,
 		"输入token":       inputTokens,
 		"输出token":       outputTokens,
-		"预估成本":          run.EstimatedCost,
+		"预估成本":          estimatedCost,
+		"缺少模型价格":        unpricedModels,
 		"执行Agent":       agentName,
 		"模型":            run.Model,
 		"runtime":       run.RuntimeProvider,
@@ -138,7 +144,7 @@ func syncPromptEvaluationRunWithTask(ctx context.Context, q *db.Queries, run db.
 		AverageDurationMs: averageMs,
 		InputTokens:       inputTokens,
 		OutputTokens:      outputTokens,
-		EstimatedCost:     run.EstimatedCost,
+		EstimatedCost:     estimatedCost,
 		FailureReason:     pgtype.Text{String: failureReason, Valid: true},
 		Conclusion:        pgtype.Text{String: conclusion, Valid: true},
 		Metrics:           mustJSONBytes(metrics),
@@ -268,6 +274,38 @@ func promptEvaluationUsageTotals(run db.PromptEvaluationRun, usages []db.TaskUsa
 	return clampInt32(input), clampInt32(output)
 }
 
+func promptEvaluationEstimatedCost(run db.PromptEvaluationRun, usages []db.TaskUsage) (float64, []string) {
+	if len(usages) == 0 {
+		return run.EstimatedCost, nil
+	}
+	total := float64(0)
+	unpriced := map[string]bool{}
+	for _, usage := range usages {
+		cost, ok := metrics.EstimateUsageCostUSD(
+			usage.Model,
+			usage.InputTokens,
+			usage.OutputTokens,
+			usage.CacheReadTokens,
+			usage.CacheWriteTokens,
+		)
+		if !ok {
+			key := strings.TrimSpace(usage.Provider + "/" + usage.Model)
+			if key == "/" {
+				key = "未记录"
+			}
+			unpriced[key] = true
+			continue
+		}
+		total += cost
+	}
+	keys := make([]string, 0, len(unpriced))
+	for key := range unpriced {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return metrics.RoundCostUSD(total), keys
+}
+
 func promptEvaluationTaskDurationMs(task db.AgentTaskQueue, run db.PromptEvaluationRun) int64 {
 	if task.StartedAt.Valid && task.CompletedAt.Valid {
 		duration := task.CompletedAt.Time.Sub(task.StartedAt.Time).Milliseconds()
@@ -287,6 +325,13 @@ func promptEvaluationTaskDurationMs(task db.AgentTaskQueue, run db.PromptEvaluat
 func promptEvaluationTaskEvidence(run db.PromptEvaluationRun, task db.AgentTaskQueue, usages []db.TaskUsage, messages []db.TaskMessage) map[string]any {
 	usageRows := make([]map[string]any, 0, len(usages))
 	for _, usage := range usages {
+		estimatedCost, priced := metrics.EstimateUsageCostUSD(
+			usage.Model,
+			usage.InputTokens,
+			usage.OutputTokens,
+			usage.CacheReadTokens,
+			usage.CacheWriteTokens,
+		)
 		usageRows = append(usageRows, map[string]any{
 			"provider":           usage.Provider,
 			"model":              usage.Model,
@@ -294,6 +339,8 @@ func promptEvaluationTaskEvidence(run db.PromptEvaluationRun, task db.AgentTaskQ
 			"output_tokens":      usage.OutputTokens,
 			"cache_read_tokens":  usage.CacheReadTokens,
 			"cache_write_tokens": usage.CacheWriteTokens,
+			"estimated_cost":     estimatedCost,
+			"priced":             priced,
 		})
 	}
 	messageSummary := make([]map[string]any, 0, len(messages))

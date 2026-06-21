@@ -663,6 +663,20 @@ export const EMPTY_ISSUE_SOP_RUNS_RESPONSE: ListIssueSOPRunsResponse = {
   total: 0,
 };
 
+const ObservabilityUsageBreakdownSchema = z.object({
+  "名称": z.string().default(""),
+  provider: z.string().default(""),
+  model: z.string().default(""),
+  runtime: z.string().default(""),
+  "输入 token": z.number().default(0),
+  "输出 token": z.number().default(0),
+  "缓存读 token": z.number().default(0),
+  "缓存写 token": z.number().default(0),
+  "任务数": z.number().default(0),
+  "预估成本": z.number().default(0),
+  "价格已知": z.boolean().default(false),
+}).loose();
+
 export const ObservabilitySummarySchema = z.object({
   指标: z.record(z.string(), z.unknown()).default({}),
   sop_status_counts: z.record(z.string(), z.number()).default({}),
@@ -670,6 +684,8 @@ export const ObservabilitySummarySchema = z.object({
   project_counts: z.record(z.string(), z.number()).default({}),
   issue_counts: z.record(z.string(), z.number()).default({}),
   task_trace_total: z.number().default(0),
+  model_breakdown: z.array(ObservabilityUsageBreakdownSchema).default([]),
+  runtime_breakdown: z.array(ObservabilityUsageBreakdownSchema).default([]),
 }).loose();
 
 export const EMPTY_OBSERVABILITY_SUMMARY: ObservabilitySummary = {
@@ -679,6 +695,8 @@ export const EMPTY_OBSERVABILITY_SUMMARY: ObservabilitySummary = {
   project_counts: {},
   issue_counts: {},
   task_trace_total: 0,
+  model_breakdown: [],
+  runtime_breakdown: [],
 };
 
 const PromptLibraryVariableSchema = z.object({
@@ -815,6 +833,8 @@ const PromptEvaluationTaskUsageSchema = z.object({
   output_tokens: z.number().default(0),
   cache_read_tokens: z.number().default(0),
   cache_write_tokens: z.number().default(0),
+  estimated_cost: z.number().optional(),
+  priced: z.boolean().optional(),
   created_at: z.string().default(""),
   updated_at: z.string().default(""),
 }).loose();

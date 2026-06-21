@@ -116,6 +116,8 @@ export interface PromptEvaluationTaskUsage {
   output_tokens: number;
   cache_read_tokens: number;
   cache_write_tokens: number;
+  estimated_cost?: number;
+  priced?: boolean;
   created_at: string;
   updated_at: string;
 }

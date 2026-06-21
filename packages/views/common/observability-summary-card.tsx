@@ -33,6 +33,7 @@ export function ObservabilitySummaryCard({ title, scopeLabel, projectId, squadId
     ["总耗时", durationValue(metrics["总耗时"])],
     ["输入 token", metricValue(metrics["输入 token"])],
     ["输出 token", metricValue(metrics["输出 token"])],
+    ["预估成本", moneyValue(metrics["预估成本"])],
     ["重试次数", metricValue(metrics["重试次数"])],
     ["证据数", metricValue(metrics["证据数"])],
   ];
@@ -57,6 +58,8 @@ export function ObservabilitySummaryCard({ title, scopeLabel, projectId, squadId
         ))}
       </div>
       <FailureReasons summary={data} />
+      <UsageBreakdown title="模型明细" rows={data?.model_breakdown ?? []} />
+      <UsageBreakdown title="runtime 明细" rows={data?.runtime_breakdown ?? []} />
     </section>
   );
 }
@@ -71,10 +74,52 @@ function FailureReasons({ summary }: { summary?: ObservabilitySummary }) {
   );
 }
 
+function UsageBreakdown({
+  title,
+  rows,
+}: {
+  title: string;
+  rows: ObservabilitySummary["model_breakdown"];
+}) {
+  const topRows = rows.slice(0, 3);
+  if (topRows.length === 0) return null;
+  return (
+    <div className="mt-2 border-t border-border/60 pt-2">
+      <div className="mb-1 text-[11px] font-medium text-muted-foreground">{title}</div>
+      <div className="space-y-1">
+        {topRows.map((row) => {
+          const name = String(row["名称"] || row.model || row.runtime || "未记录");
+          const tokenTotal =
+            Number(row["输入 token"] ?? 0) +
+            Number(row["输出 token"] ?? 0) +
+            Number(row["缓存读 token"] ?? 0) +
+            Number(row["缓存写 token"] ?? 0);
+          return (
+            <div key={`${title}-${name}`} className="flex min-w-0 items-center gap-2 text-[11px]">
+              <span className="min-w-0 flex-1 truncate text-foreground">{name}</span>
+              <span className="shrink-0 text-muted-foreground">
+                {tokenTotal.toLocaleString("zh-CN")} token · {moneyValue(row["预估成本"])}
+                {row["价格已知"] ? "" : " · 缺少价格"}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function metricValue(value: unknown): string {
   if (typeof value === "number") return value.toLocaleString("zh-CN");
   if (value === null || value === undefined || value === "") return "0";
   return String(value);
+}
+
+function moneyValue(value: unknown): string {
+  const n = typeof value === "number" ? value : Number(value ?? 0);
+  if (!Number.isFinite(n) || n <= 0) return "$0.00";
+  if (n < 0.01) return `$${n.toFixed(6)}`;
+  return `$${n.toFixed(2)}`;
 }
 
 function durationValue(value: unknown): string {

@@ -225,7 +225,7 @@ test.describe("训练与评估工作台", () => {
     agentRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "Agent执行 · 通过" }).first();
     await agentRunCard.getByRole("button", { name: "查看证据" }).click();
     await expect(page.getByText("Agent 调试场用例")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText("codebuddy/minimax-m2.7-ioa · 输入 11 · 输出 7")).toBeVisible();
+    await expect(page.getByText(/codebuddy\/minimax-m2\.7-ioa · 输入 11 · 输出 7 · 预估成本/)).toBeVisible();
     await expect(page.getByText("#1 text：Agent 输出：完成训练评估")).toBeVisible();
     await expect(page.getByText(/训练评估用量已上报 · completed · 输入 16 · 输出 7/)).toBeVisible();
     await expect(page.getByText("失败原因：等待 Agent 执行完成")).toHaveCount(0);

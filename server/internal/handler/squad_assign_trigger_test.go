@@ -6,6 +6,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 // TestCreateIssueAssignedToSquadEnqueuesLeader verifies that creating an
@@ -223,5 +225,43 @@ func TestWorkspaceObservabilitySummaryFiltersSOPByProject(t *testing.T) {
 	}
 	if got := metrics["SOP 事件数"]; got != float64(1) {
 		t.Fatalf("SOP 事件数 = %v, want 1", got)
+	}
+}
+
+func TestBuildObservabilitySummaryIncludesCostBreakdown(t *testing.T) {
+	runtimeID := parseUUID("00000000-0000-0000-0000-000000000001")
+	traces := []db.TaskTraceEvent{
+		{
+			RuntimeID:        runtimeID,
+			Provider:         "codebuddy",
+			Model:            "minimax-m2.7-ioa",
+			InputTokens:      36,
+			OutputTokens:     19,
+			CacheReadTokens:  5,
+			CacheWriteTokens: 7,
+		},
+		{
+			Provider:     "unknown",
+			Model:        "unpriced-model",
+			InputTokens:  10,
+			OutputTokens: 5,
+		},
+	}
+	summary := buildObservabilitySummary(nil, traces, 0)
+	metricsMap := summary["指标"].(map[string]any)
+	if cost, ok := metricsMap["预估成本"].(float64); !ok || cost <= 0 {
+		t.Fatalf("预估成本 = %v, want > 0", metricsMap["预估成本"])
+	}
+	modelRows := summary["model_breakdown"].([]map[string]any)
+	if len(modelRows) < 2 || modelRows[0]["名称"] != "minimax/m2.7" || modelRows[0]["价格已知"] != true {
+		t.Fatalf("model_breakdown = %#v", modelRows)
+	}
+	runtimeRows := summary["runtime_breakdown"].([]map[string]any)
+	if len(runtimeRows) == 0 || runtimeRows[0]["runtime"] != "00000000-0000-0000-0000-000000000001" {
+		t.Fatalf("runtime_breakdown = %#v", runtimeRows)
+	}
+	unpriced := metricsMap["缺少模型价格"].([]map[string]any)
+	if len(unpriced) != 1 || unpriced[0]["原因"] != "unknown/unpriced-model" {
+		t.Fatalf("缺少模型价格 = %#v", unpriced)
 	}
 }

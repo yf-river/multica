@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -545,6 +546,20 @@ func evidenceCount(raw []byte) int {
 	}
 }
 
+type observabilityUsageBreakdown struct {
+	Label            string
+	Provider         string
+	Model            string
+	RuntimeID        string
+	InputTokens      int64
+	OutputTokens     int64
+	CacheReadTokens  int64
+	CacheWriteTokens int64
+	TaskCount        int
+	EstimatedCost    float64
+	HasPrice         bool
+}
+
 func buildObservabilitySummary(runs []db.SquadSopRun, traces []db.TaskTraceEvent, sopEventCount int64) map[string]any {
 	statusCounts := map[string]int{}
 	squadCounts := map[string]int{}
@@ -560,10 +575,14 @@ func buildObservabilitySummary(runs []db.SquadSopRun, traces []db.TaskTraceEvent
 			durationCount++
 		}
 	}
-	var queueWait, runMs, totalMs, inputTokens, outputTokens int64
+	var queueWait, runMs, totalMs, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int64
 	var retryCount int64
+	var estimatedCost float64
 	failureReasons := map[string]int{}
 	projectCounts := map[string]int{}
+	modelBreakdown := map[string]*observabilityUsageBreakdown{}
+	runtimeBreakdown := map[string]*observabilityUsageBreakdown{}
+	unpricedModels := map[string]int{}
 	for _, trace := range traces {
 		if trace.QueueWaitMs.Valid {
 			queueWait += trace.QueueWaitMs.Int64
@@ -576,6 +595,51 @@ func buildObservabilitySummary(runs []db.SquadSopRun, traces []db.TaskTraceEvent
 		}
 		inputTokens += trace.InputTokens
 		outputTokens += trace.OutputTokens
+		cacheReadTokens += trace.CacheReadTokens
+		cacheWriteTokens += trace.CacheWriteTokens
+		traceCost, hasPrice := metrics.EstimateUsageCostUSD(
+			trace.Model,
+			trace.InputTokens,
+			trace.OutputTokens,
+			trace.CacheReadTokens,
+			trace.CacheWriteTokens,
+		)
+		estimatedCost += traceCost
+		modelProvider, modelName, priced := metrics.CanonicalModelPriceKey(trace.Model)
+		if !priced {
+			modelProvider = trace.Provider
+			modelName = trace.Model
+			unpricedModels[observabilityModelLabel(trace.Provider, trace.Model)]++
+		}
+		addObservabilityBreakdown(modelBreakdown, observabilityModelLabel(modelProvider, modelName), observabilityUsageBreakdown{
+			Label:            observabilityModelLabel(modelProvider, modelName),
+			Provider:         modelProvider,
+			Model:            modelName,
+			InputTokens:      trace.InputTokens,
+			OutputTokens:     trace.OutputTokens,
+			CacheReadTokens:  trace.CacheReadTokens,
+			CacheWriteTokens: trace.CacheWriteTokens,
+			TaskCount:        1,
+			EstimatedCost:    traceCost,
+			HasPrice:         hasPrice,
+		})
+		runtimeID := ""
+		if trace.RuntimeID.Valid {
+			runtimeID = uuidToString(trace.RuntimeID)
+		}
+		addObservabilityBreakdown(runtimeBreakdown, runtimeID, observabilityUsageBreakdown{
+			Label:            runtimeID,
+			RuntimeID:        runtimeID,
+			Provider:         trace.Provider,
+			Model:            trace.Model,
+			InputTokens:      trace.InputTokens,
+			OutputTokens:     trace.OutputTokens,
+			CacheReadTokens:  trace.CacheReadTokens,
+			CacheWriteTokens: trace.CacheWriteTokens,
+			TaskCount:        1,
+			EstimatedCost:    traceCost,
+			HasPrice:         hasPrice,
+		})
 		if trace.Attempt > 1 {
 			retryCount += int64(trace.Attempt - 1)
 		}
@@ -591,24 +655,105 @@ func buildObservabilitySummary(runs []db.SquadSopRun, traces []db.TaskTraceEvent
 	}
 	return map[string]any{
 		"指标": map[string]any{
-			"SOP 执行数":  durationCountOrTotal(durationCount, len(runs)),
-			"SOP 事件数":  sopEventCount,
-			"阶段耗时":     avgInt64(totalDuration, durationCount),
-			"队列等待":     queueWait,
-			"执行耗时":     runMs,
-			"总耗时":      totalMs,
-			"输入 token": inputTokens,
-			"输出 token": outputTokens,
-			"失败原因":     sortedReasonCounts(failureReasons),
-			"重试次数":     retryCount,
-			"证据数":      sopEventCount,
+			"SOP 执行数":   durationCountOrTotal(durationCount, len(runs)),
+			"SOP 事件数":   sopEventCount,
+			"阶段耗时":      avgInt64(totalDuration, durationCount),
+			"队列等待":      queueWait,
+			"执行耗时":      runMs,
+			"总耗时":       totalMs,
+			"输入 token":  inputTokens,
+			"输出 token":  outputTokens,
+			"缓存读 token": cacheReadTokens,
+			"缓存写 token": cacheWriteTokens,
+			"预估成本":      metrics.RoundCostUSD(estimatedCost),
+			"失败原因":      sortedReasonCounts(failureReasons),
+			"重试次数":      retryCount,
+			"证据数":       sopEventCount,
+			"缺少模型价格":    sortedReasonCounts(unpricedModels),
 		},
 		"sop_status_counts": statusCounts,
 		"squad_counts":      squadCounts,
 		"project_counts":    projectCounts,
 		"issue_counts":      issueCounts,
 		"task_trace_total":  len(traces),
+		"model_breakdown":   observabilityBreakdownRows(modelBreakdown),
+		"runtime_breakdown": observabilityBreakdownRows(runtimeBreakdown),
 	}
+}
+
+func addObservabilityBreakdown(items map[string]*observabilityUsageBreakdown, key string, next observabilityUsageBreakdown) {
+	if key == "" {
+		key = "未记录"
+	}
+	current, ok := items[key]
+	if !ok {
+		next.Label = key
+		items[key] = &next
+		return
+	}
+	current.InputTokens += next.InputTokens
+	current.OutputTokens += next.OutputTokens
+	current.CacheReadTokens += next.CacheReadTokens
+	current.CacheWriteTokens += next.CacheWriteTokens
+	current.TaskCount += next.TaskCount
+	current.EstimatedCost = metrics.RoundCostUSD(current.EstimatedCost + next.EstimatedCost)
+	current.HasPrice = current.HasPrice || next.HasPrice
+	if current.Provider == "" {
+		current.Provider = next.Provider
+	}
+	if current.Model == "" {
+		current.Model = next.Model
+	}
+}
+
+func observabilityBreakdownRows(items map[string]*observabilityUsageBreakdown) []map[string]any {
+	rows := make([]*observabilityUsageBreakdown, 0, len(items))
+	for _, item := range items {
+		rows = append(rows, item)
+	}
+	sort.Slice(rows, func(i, j int) bool {
+		leftTokens := rows[i].InputTokens + rows[i].OutputTokens + rows[i].CacheReadTokens + rows[i].CacheWriteTokens
+		rightTokens := rows[j].InputTokens + rows[j].OutputTokens + rows[j].CacheReadTokens + rows[j].CacheWriteTokens
+		if rows[i].EstimatedCost != rows[j].EstimatedCost {
+			return rows[i].EstimatedCost > rows[j].EstimatedCost
+		}
+		if leftTokens != rightTokens {
+			return leftTokens > rightTokens
+		}
+		return rows[i].Label < rows[j].Label
+	})
+	result := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		result = append(result, map[string]any{
+			"名称":        row.Label,
+			"provider":  row.Provider,
+			"model":     row.Model,
+			"runtime":   row.RuntimeID,
+			"输入 token":  row.InputTokens,
+			"输出 token":  row.OutputTokens,
+			"缓存读 token": row.CacheReadTokens,
+			"缓存写 token": row.CacheWriteTokens,
+			"任务数":       row.TaskCount,
+			"预估成本":      metrics.RoundCostUSD(row.EstimatedCost),
+			"价格已知":      row.HasPrice,
+		})
+	}
+	return result
+}
+
+func observabilityModelLabel(provider, model string) string {
+	provider = strings.TrimSpace(provider)
+	model = strings.TrimSpace(model)
+	if provider == "" {
+		if model == "" {
+			return "未记录"
+		}
+		return model
+	}
+	if model == "" {
+		return provider
+	}
+	return provider + "/" + model
 }
 
 func durationCountOrTotal(_ int64, total int) int {

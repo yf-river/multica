@@ -98,8 +98,17 @@ test.describe("小队 SOP 端到端", () => {
     expect(Number(summary.指标["SOP 事件数"])).toBeGreaterThanOrEqual(2);
     expect(Number(summary.指标["输入 token"])).toBeGreaterThanOrEqual(36);
     expect(Number(summary.指标["输出 token"])).toBeGreaterThanOrEqual(19);
+    expect(Number(summary.指标["预估成本"])).toBeGreaterThan(0);
     expect(Number(summary.指标["证据数"])).toBeGreaterThanOrEqual(1);
     expect(summary.task_trace_total).toBeGreaterThanOrEqual(1);
+    expect(summary.model_breakdown[0]).toMatchObject({
+      "名称": "minimax/m2.7",
+      "价格已知": true,
+    });
+    expect(summary.runtime_breakdown[0]).toMatchObject({
+      runtime: squad.runtimeId,
+      "价格已知": true,
+    });
 
     await page.goto(`/${workspaceSlug}/issues/${issue.id}`, { waitUntil: "domcontentloaded" });
     await expect(page.getByText(issue.title, { exact: true }).first()).toBeVisible();
@@ -125,6 +134,9 @@ test.describe("小队 SOP 端到端", () => {
     await expect(page.getByText("小队观测摘要", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("SOP 执行数", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("输入 token", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("预估成本", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("模型明细", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("runtime 明细", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("证据数", { exact: true }).first()).toBeVisible();
   });
 });

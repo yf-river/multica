@@ -369,6 +369,9 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	if evidence.Run.Status != "通过" || evidence.Run.PassedCases != 1 || evidence.Run.FailedCases != 0 || evidence.Run.InputTokens != 16 || evidence.Run.OutputTokens != 7 {
 		t.Fatalf("auto-synced run = %+v", evidence.Run)
 	}
+	if evidence.Run.EstimatedCost <= 0 {
+		t.Fatalf("auto-synced run estimated cost = %v, want > 0", evidence.Run.EstimatedCost)
+	}
 	if evidence.Trials[0].Status != "通过" || evidence.Trials[0].FailureReason != "无" || evidence.Trials[0].InputTokens != 16 || evidence.Trials[0].OutputTokens != 7 {
 		t.Fatalf("auto-synced trial = %+v", evidence.Trials[0])
 	}
