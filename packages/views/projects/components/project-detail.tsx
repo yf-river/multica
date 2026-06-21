@@ -764,7 +764,7 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
 
       <ObservabilitySummaryCard
         title="项目观测摘要"
-        scopeLabel="按当前项目聚合 task trace、SOP 事件和证据"
+        scopeLabel="按当前项目聚合任务观测、SOP 事件和证据"
         projectId={projectId}
       />
     </div>

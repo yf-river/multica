@@ -45,7 +45,7 @@ export function ObservabilitySummaryCard({ title, scopeLabel, projectId, squadId
           <div className="mt-0.5 text-[11px] text-muted-foreground">{scopeLabel}</div>
         </div>
         <div className="text-[11px] text-muted-foreground">
-          task trace {data?.task_trace_total ?? 0}
+          任务观测 {data?.task_trace_total ?? 0}
         </div>
       </div>
       <div className="grid gap-1.5 sm:grid-cols-3">
