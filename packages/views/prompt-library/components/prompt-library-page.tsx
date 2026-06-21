@@ -256,6 +256,14 @@ export function PromptLibraryPage() {
     },
   });
 
+  const syncRunMut = useMutation({
+    mutationFn: (runId: string) => api.syncPromptEvaluationRun(runId),
+    onSuccess: () => {
+      invalidateRuns();
+      toast.success("运行记录已同步");
+    },
+  });
+
   const saving = createMut.isPending || updateMut.isPending;
   const deleting = deleteMut.isPending;
   const runningDebug = runDebugMut.isPending;
@@ -612,9 +620,11 @@ export function PromptLibraryPage() {
               onAgentExpectedTextChange={setAgentExpectedText}
               onCreateAsset={createWorkbenchAsset}
                 onSaveAgentDebugPackage={saveAgentDebugPackage}
-                onRunAgentDebugPackage={runAgentDebugPackage}
+              onRunAgentDebugPackage={runAgentDebugPackage}
               onToggleAssetStatus={toggleAssetStatus}
               onDeleteAsset={deleteAsset}
+              onSyncRun={(runId) => syncRunMut.mutate(runId)}
+              syncingRunId={syncRunMut.isPending ? syncRunMut.variables ?? null : null}
             />
           </div>
         </main>
@@ -637,9 +647,11 @@ function WorkbenchPanel({
   onAgentExpectedTextChange,
   onCreateAsset,
     onSaveAgentDebugPackage,
-    onRunAgentDebugPackage,
+  onRunAgentDebugPackage,
     onToggleAssetStatus,
   onDeleteAsset,
+  onSyncRun,
+  syncingRunId,
 }: {
   activeTab: WorkbenchTab;
   selected: PromptLibraryItem | null;
@@ -657,6 +669,8 @@ function WorkbenchPanel({
     onRunAgentDebugPackage: () => void;
     onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
   onDeleteAsset: (asset: PromptEvaluationAsset) => void;
+  onSyncRun: (runId: string) => void;
+  syncingRunId: string | null;
 }) {
   const tabAssetType = tabToAssetType(activeTab);
   const visibleAssets = tabAssetType ? assets.filter((asset) => asset.asset_type === tabAssetType) : assets;
@@ -754,9 +768,17 @@ function WorkbenchPanel({
                     run {run.id}{run.task_id ? ` · task ${run.task_id}` : ""}
                   </div>
                 </div>
-                <div className="text-right text-[11px] text-muted-foreground">
-                  <div>{run.created_at}</div>
-                  <div>{run.total_duration_ms} ms</div>
+                <div className="flex items-center justify-end gap-2 text-right text-[11px] text-muted-foreground">
+                  <div>
+                    <div>{run.created_at}</div>
+                    <div>{run.total_duration_ms} ms</div>
+                  </div>
+                  {run.task_id && (
+                    <Button size="sm" variant="secondary" onClick={() => onSyncRun(run.id)} disabled={syncingRunId === run.id}>
+                      {syncingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+                      同步任务
+                    </Button>
+                  )}
                 </div>
               </div>
             ))}

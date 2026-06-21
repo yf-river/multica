@@ -1807,6 +1807,13 @@ export class ApiClient {
     }) as ListPromptEvaluationTrialsResponse;
   }
 
+  async syncPromptEvaluationRun(runId: string): Promise<PromptEvaluationRun> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/sync`, { method: "POST" });
+    return parseWithFallback(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
+      endpoint: "POST /api/prompt-evaluation-runs/:id/sync",
+    }) as PromptEvaluationRun;
+  }
+
   // Project resources
   async listProjectResources(
     projectId: string,

@@ -72,6 +72,27 @@ LIMIT $2;
 SELECT * FROM prompt_evaluation_run
 WHERE id = $1 AND workspace_id = $2;
 
+-- name: UpdatePromptEvaluationRunFromTask :one
+UPDATE prompt_evaluation_run SET
+    status = $3,
+    passed_cases = $4,
+    failed_cases = $5,
+    pass_rate = $6,
+    total_duration_ms = $7,
+    average_duration_ms = $8,
+    input_tokens = $9,
+    output_tokens = $10,
+    estimated_cost = $11,
+    failure_reason = COALESCE(sqlc.narg('failure_reason'), failure_reason),
+    conclusion = COALESCE(sqlc.narg('conclusion'), conclusion),
+    metrics = COALESCE(sqlc.narg('metrics')::jsonb, metrics),
+    evidence = COALESCE(sqlc.narg('evidence')::jsonb, evidence),
+    started_at = COALESCE(sqlc.narg('started_at'), started_at),
+    completed_at = sqlc.narg('completed_at'),
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2
+RETURNING *;
+
 -- name: CreatePromptEvaluationTrial :one
 INSERT INTO prompt_evaluation_trial (
     run_id,

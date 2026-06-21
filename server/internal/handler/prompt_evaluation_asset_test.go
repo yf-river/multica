@@ -322,6 +322,35 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	if runStatus != "已入队" || runKind != "Agent执行" || taskID != resp.TaskID || chatSessionID != resp.ChatSessionID || trialStatus != "待执行" {
 		t.Fatalf("queued structured run mismatch: status=%s kind=%s task=%s session=%s trial=%s", runStatus, runKind, taskID, chatSessionID, trialStatus)
 	}
+
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE agent_task_queue
+		SET status = 'completed',
+		    started_at = now() - interval '2 seconds',
+		    completed_at = now(),
+		    result = '{"结论":"完成"}'::jsonb
+		WHERE id = $1
+	`, resp.TaskID); err != nil {
+		t.Fatalf("complete agent task: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, updated_at)
+		VALUES ($1, 'codebuddy', 'minimax-m2.7-ioa', 11, 7, 2, 3, now())
+	`, resp.TaskID); err != nil {
+		t.Fatalf("insert task usage: %v", err)
+	}
+	syncW := httptest.NewRecorder()
+	testHandler.SyncPromptEvaluationRunFromTask(syncW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/sync", nil), "id", resp.Run.ID))
+	if syncW.Code != http.StatusOK {
+		t.Fatalf("sync status = %d, body = %s", syncW.Code, syncW.Body.String())
+	}
+	var synced PromptEvaluationRunResponse
+	if err := json.Unmarshal(syncW.Body.Bytes(), &synced); err != nil {
+		t.Fatalf("decode synced run: %v", err)
+	}
+	if synced.Status != "通过" || synced.PassedCases != 1 || synced.FailedCases != 0 || synced.InputTokens != 16 || synced.OutputTokens != 7 {
+		t.Fatalf("synced run = %+v", synced)
+	}
 }
 
 func TestPromptEvaluationAssetRejectsForeignPrompt(t *testing.T) {

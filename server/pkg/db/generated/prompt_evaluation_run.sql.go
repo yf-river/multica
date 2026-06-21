@@ -439,3 +439,102 @@ func (q *Queries) ListPromptEvaluationTrialsByRun(ctx context.Context, arg ListP
 	}
 	return items, nil
 }
+
+const updatePromptEvaluationRunFromTask = `-- name: UpdatePromptEvaluationRunFromTask :one
+UPDATE prompt_evaluation_run SET
+    status = $3,
+    passed_cases = $4,
+    failed_cases = $5,
+    pass_rate = $6,
+    total_duration_ms = $7,
+    average_duration_ms = $8,
+    input_tokens = $9,
+    output_tokens = $10,
+    estimated_cost = $11,
+    failure_reason = COALESCE($12, failure_reason),
+    conclusion = COALESCE($13, conclusion),
+    metrics = COALESCE($14::jsonb, metrics),
+    evidence = COALESCE($15::jsonb, evidence),
+    started_at = COALESCE($16, started_at),
+    completed_at = $17,
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2
+RETURNING id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at
+`
+
+type UpdatePromptEvaluationRunFromTaskParams struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	Status            string             `json:"status"`
+	PassedCases       int32              `json:"passed_cases"`
+	FailedCases       int32              `json:"failed_cases"`
+	PassRate          float64            `json:"pass_rate"`
+	TotalDurationMs   int64              `json:"total_duration_ms"`
+	AverageDurationMs int64              `json:"average_duration_ms"`
+	InputTokens       int32              `json:"input_tokens"`
+	OutputTokens      int32              `json:"output_tokens"`
+	EstimatedCost     float64            `json:"estimated_cost"`
+	FailureReason     pgtype.Text        `json:"failure_reason"`
+	Conclusion        pgtype.Text        `json:"conclusion"`
+	Metrics           []byte             `json:"metrics"`
+	Evidence          []byte             `json:"evidence"`
+	StartedAt         pgtype.Timestamptz `json:"started_at"`
+	CompletedAt       pgtype.Timestamptz `json:"completed_at"`
+}
+
+func (q *Queries) UpdatePromptEvaluationRunFromTask(ctx context.Context, arg UpdatePromptEvaluationRunFromTaskParams) (PromptEvaluationRun, error) {
+	row := q.db.QueryRow(ctx, updatePromptEvaluationRunFromTask,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.Status,
+		arg.PassedCases,
+		arg.FailedCases,
+		arg.PassRate,
+		arg.TotalDurationMs,
+		arg.AverageDurationMs,
+		arg.InputTokens,
+		arg.OutputTokens,
+		arg.EstimatedCost,
+		arg.FailureReason,
+		arg.Conclusion,
+		arg.Metrics,
+		arg.Evidence,
+		arg.StartedAt,
+		arg.CompletedAt,
+	)
+	var i PromptEvaluationRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AssetID,
+		&i.PromptID,
+		&i.RunKind,
+		&i.Status,
+		&i.TriggerSource,
+		&i.AgentID,
+		&i.RuntimeID,
+		&i.TaskID,
+		&i.ChatSessionID,
+		&i.Model,
+		&i.RuntimeProvider,
+		&i.TotalCases,
+		&i.PassedCases,
+		&i.FailedCases,
+		&i.PassRate,
+		&i.TotalDurationMs,
+		&i.AverageDurationMs,
+		&i.InputTokens,
+		&i.OutputTokens,
+		&i.EstimatedCost,
+		&i.FailureReason,
+		&i.Conclusion,
+		&i.Metrics,
+		&i.Evidence,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

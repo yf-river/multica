@@ -415,6 +415,105 @@ func (h *Handler) ListPromptEvaluationRunTrials(w http.ResponseWriter, r *http.R
 	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
 }
 
+func (h *Handler) SyncPromptEvaluationRunFromTask(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	runID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation run id")
+	if !ok {
+		return
+	}
+	run, err := h.Queries.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{
+		ID:          runID,
+		WorkspaceID: workspaceUUID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "prompt evaluation run not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation run")
+		return
+	}
+	if !run.TaskID.Valid {
+		writeError(w, http.StatusBadRequest, "prompt evaluation run is not linked to an agent task")
+		return
+	}
+	task, err := h.Queries.GetAgentTaskInWorkspace(r.Context(), db.GetAgentTaskInWorkspaceParams{
+		ID:          run.TaskID,
+		WorkspaceID: workspaceUUID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "linked agent task not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load linked agent task")
+		return
+	}
+	usages, err := h.Queries.GetTaskUsage(r.Context(), task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load task usage")
+		return
+	}
+	taskMessages, err := h.Queries.ListTaskMessages(r.Context(), task.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load task messages")
+		return
+	}
+	status, passed, failed, passRate, conclusion, failureReason := promptEvaluationRunStatusFromTask(run, task)
+	inputTokens, outputTokens := promptEvaluationUsageTotals(run, usages)
+	durationMs := promptEvaluationTaskDurationMs(task, run)
+	averageMs := int64(0)
+	if run.TotalCases > 0 && durationMs > 0 {
+		averageMs = durationMs / int64(run.TotalCases)
+	}
+	evidence := promptEvaluationTaskEvidence(run, task, usages, taskMessages)
+	metrics := map[string]any{
+		"总用例数":          run.TotalCases,
+		"通过数":           passed,
+		"失败数":           failed,
+		"通过率":           passRate,
+		"总耗时":           durationMs,
+		"平均耗时":          averageMs,
+		"输入token":       inputTokens,
+		"输出token":       outputTokens,
+		"预估成本":          run.EstimatedCost,
+		"执行Agent":       uuidToString(task.AgentID),
+		"模型":            run.Model,
+		"runtime":       run.RuntimeProvider,
+		"trace/task id": uuidToString(task.ID),
+		"失败原因":          failureReason,
+		"评估结论":          conclusion,
+	}
+	updated, err := h.Queries.UpdatePromptEvaluationRunFromTask(r.Context(), db.UpdatePromptEvaluationRunFromTaskParams{
+		ID:                run.ID,
+		WorkspaceID:       run.WorkspaceID,
+		Status:            status,
+		PassedCases:       passed,
+		FailedCases:       failed,
+		PassRate:          passRate,
+		TotalDurationMs:   durationMs,
+		AverageDurationMs: averageMs,
+		InputTokens:       inputTokens,
+		OutputTokens:      outputTokens,
+		EstimatedCost:     run.EstimatedCost,
+		FailureReason:     pgtype.Text{String: failureReason, Valid: true},
+		Conclusion:        pgtype.Text{String: conclusion, Valid: true},
+		Metrics:           mustJSONBytes(metrics),
+		Evidence:          mustJSONBytes(evidence),
+		StartedAt:         task.StartedAt,
+		CompletedAt:       task.CompletedAt,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation run from task")
+		return
+	}
+	writeJSON(w, http.StatusOK, promptEvaluationRunToResponse(updated))
+}
+
 func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -854,6 +953,130 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 		}
 	}
 	return run, true
+}
+
+func promptEvaluationRunStatusFromTask(run db.PromptEvaluationRun, task db.AgentTaskQueue) (string, int32, int32, float64, string, string) {
+	switch task.Status {
+	case "completed":
+		total := run.TotalCases
+		return "通过", total, 0, promptEvaluationPassRate(total, 0), "Agent 执行完成，等待验收者复核输出质量", "无"
+	case "failed":
+		total := run.TotalCases
+		reason := "Agent 执行失败"
+		if task.Error.Valid && strings.TrimSpace(task.Error.String) != "" {
+			reason = task.Error.String
+		}
+		return "失败", 0, total, 0, "Agent 执行失败，需要查看 task 日志和失败原因", reason
+	case "cancelled":
+		return "已取消", run.PassedCases, run.FailedCases, run.PassRate, "Agent 执行已取消", "任务被取消"
+	case "running":
+		return "运行中", run.PassedCases, run.FailedCases, run.PassRate, "Agent 正在执行", "无"
+	default:
+		return "已入队", run.PassedCases, run.FailedCases, run.PassRate, "等待 Agent 执行完成", "无"
+	}
+}
+
+func promptEvaluationPassRate(passed int32, failed int32) float64 {
+	total := passed + failed
+	if total == 0 {
+		return 0
+	}
+	return float64(passed) / float64(total)
+}
+
+func promptEvaluationUsageTotals(run db.PromptEvaluationRun, usages []db.TaskUsage) (int32, int32) {
+	input := int64(0)
+	output := int64(0)
+	for _, usage := range usages {
+		input += usage.InputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
+		output += usage.OutputTokens
+	}
+	if input == 0 {
+		input = int64(run.InputTokens)
+	}
+	if output == 0 {
+		output = int64(run.OutputTokens)
+	}
+	return clampInt32(input), clampInt32(output)
+}
+
+func promptEvaluationTaskDurationMs(task db.AgentTaskQueue, run db.PromptEvaluationRun) int64 {
+	if task.StartedAt.Valid && task.CompletedAt.Valid {
+		duration := task.CompletedAt.Time.Sub(task.StartedAt.Time).Milliseconds()
+		if duration > 0 {
+			return duration
+		}
+	}
+	if task.StartedAt.Valid && task.Status == "running" {
+		duration := time.Since(task.StartedAt.Time).Milliseconds()
+		if duration > 0 {
+			return duration
+		}
+	}
+	return run.TotalDurationMs
+}
+
+func promptEvaluationTaskEvidence(run db.PromptEvaluationRun, task db.AgentTaskQueue, usages []db.TaskUsage, messages []db.TaskMessage) map[string]any {
+	usageRows := make([]map[string]any, 0, len(usages))
+	for _, usage := range usages {
+		usageRows = append(usageRows, map[string]any{
+			"provider":           usage.Provider,
+			"model":              usage.Model,
+			"input_tokens":       usage.InputTokens,
+			"output_tokens":      usage.OutputTokens,
+			"cache_read_tokens":  usage.CacheReadTokens,
+			"cache_write_tokens": usage.CacheWriteTokens,
+		})
+	}
+	messageSummary := make([]map[string]any, 0, len(messages))
+	for _, message := range messages {
+		messageSummary = append(messageSummary, map[string]any{
+			"seq":     message.Seq,
+			"type":    message.Type,
+			"tool":    message.Tool,
+			"content": truncatePromptEvaluationEvidence(promptEvaluationTextValue(message.Content), 800),
+		})
+	}
+	return map[string]any{
+		"run_id":        uuidToString(run.ID),
+		"task_id":       uuidToString(task.ID),
+		"task_status":   task.Status,
+		"task_result":   decodeJSONDefault(task.Result, map[string]any{}),
+		"task_error":    promptEvaluationTextValue(task.Error),
+		"session_id":    promptEvaluationTextValue(task.SessionID),
+		"work_dir":      promptEvaluationTextValue(task.WorkDir),
+		"started_at":    timestampToString(task.StartedAt),
+		"completed_at":  timestampToString(task.CompletedAt),
+		"usage":         usageRows,
+		"task_messages": messageSummary,
+		"同步时间":          time.Now().UTC().Format(time.RFC3339),
+		"同步说明":          "从 agent_task_queue、task_usage 和 task_message 回写结构化训练评估运行记录",
+	}
+}
+
+func truncatePromptEvaluationEvidence(value string, maxRunes int) string {
+	runes := []rune(value)
+	if len(runes) <= maxRunes {
+		return value
+	}
+	return string(runes[:maxRunes]) + "..."
+}
+
+func promptEvaluationTextValue(value pgtype.Text) string {
+	if !value.Valid {
+		return ""
+	}
+	return value.String
+}
+
+func clampInt32(value int64) int32 {
+	if value > int64(^uint32(0)>>1) {
+		return int32(^uint32(0) >> 1)
+	}
+	if value < 0 {
+		return 0
+	}
+	return int32(value)
 }
 
 func (h *Handler) loadPromptEvaluationAsset(w http.ResponseWriter, r *http.Request) (db.PromptEvaluationAsset, bool) {
