@@ -656,6 +656,43 @@ type SquadMember struct {
 	CreatedAt  pgtype.Timestamptz `json:"created_at"`
 }
 
+type SquadSopRun struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	IssueID         pgtype.UUID        `json:"issue_id"`
+	SquadID         pgtype.UUID        `json:"squad_id"`
+	LeaderTaskID    pgtype.UUID        `json:"leader_task_id"`
+	ProfileKey      string             `json:"profile_key"`
+	Profile         []byte             `json:"profile"`
+	Status          string             `json:"status"`
+	CurrentStepKey  string             `json:"current_step_key"`
+	StartedAt       pgtype.Timestamptz `json:"started_at"`
+	CompletedAt     pgtype.Timestamptz `json:"completed_at"`
+	TotalDurationMs pgtype.Int8        `json:"total_duration_ms"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
+type SquadSopStepEvent struct {
+	ID            pgtype.UUID        `json:"id"`
+	RunID         pgtype.UUID        `json:"run_id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	IssueID       pgtype.UUID        `json:"issue_id"`
+	SquadID       pgtype.UUID        `json:"squad_id"`
+	StepKey       string             `json:"step_key"`
+	StepName      string             `json:"step_name"`
+	RoleKey       string             `json:"role_key"`
+	EventType     string             `json:"event_type"`
+	Status        string             `json:"status"`
+	Evidence      []byte             `json:"evidence"`
+	Reason        string             `json:"reason"`
+	DurationMs    pgtype.Int8        `json:"duration_ms"`
+	CreatedByType string             `json:"created_by_type"`
+	CreatedByID   pgtype.UUID        `json:"created_by_id"`
+	TaskID        pgtype.UUID        `json:"task_id"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type SysCronExecution struct {
 	ID           pgtype.UUID        `json:"id"`
 	JobName      string             `json:"job_name"`

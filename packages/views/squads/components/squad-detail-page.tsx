@@ -65,18 +65,36 @@ import { useT } from "../../i18n";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 
 type SquadSOPProfile = {
+  profile_key?: string;
   project: string;
   repo: string;
   mode: string;
+  roles?: Array<Record<string, unknown>>;
+  steps?: Array<Record<string, unknown>>;
+  model_policy?: Record<string, unknown>;
   stage_skills: string[];
   operation_skills: string[];
   acceptance: string[];
+  forbidden_actions?: string[];
 };
 
 const USER_CENTER_SOP_PROFILE: SquadSOPProfile = {
+  profile_key: "user-center-sop-flow",
   project: "user-center",
   repo: "/data/ida/user-center",
   mode: "stage_chain",
+  roles: [
+    { key: "captain", name: "队长", responsibility: "接收 issue、按阶段链推进、汇总证据并决定是否进入下一阶段。" },
+    { key: "skill-member", name: "skill 队员", responsibility: "按 user-center skill 边界执行具体处理，不越权修改无关模块。" },
+    { key: "acceptor", name: "验收者", responsibility: "独立检查实现、测试结果和回写记录。" },
+  ],
+  steps: [
+    { key: "clarify", name: "需求澄清", role_key: "captain" },
+    { key: "design", name: "方案拆解", role_key: "captain" },
+    { key: "skill_execution", name: "skill 执行", role_key: "skill-member" },
+    { key: "acceptance", name: "验收", role_key: "acceptor" },
+    { key: "summary", name: "回写总结", role_key: "captain" },
+  ],
   stage_skills: [
     "user-center/01-clarify",
     "user-center/02-design",
@@ -87,6 +105,88 @@ const USER_CENTER_SOP_PROFILE: SquadSOPProfile = {
   ],
   operation_skills: ["user-center/add-api"],
   acceptance: ["阶段产物完整", "测试证据完整", "handoff 明确"],
+  forbidden_actions: ["跳过验收直接完成", "缺少测试证据时宣称完成", "越过 user-center skill 边界修改无关仓库"],
+};
+
+const MULTICA_CODING_SOP_PROFILE: SquadSOPProfile = {
+  profile_key: "multica-coding",
+  project: "multica",
+  repo: "/data/ida/goal-test",
+  mode: "coding_squad",
+  roles: [
+    {
+      key: "captain",
+      name: "队长",
+      responsibility: "接需求、判断流程、拆任务、分派给不同 AI、跟踪进度。",
+      boundary: "只做调度和最终汇总，不代替验收者宣布通过。",
+      input: "宏观目标、上下文、约束、验收要求。",
+      output: "任务拆分、角色分派、进度和风险记录。",
+      forbidden: "不泄露密钥，不跳过方案确认。",
+    },
+    {
+      key: "designer",
+      name: "方案设计者",
+      responsibility: "编写技术方案、影响面、任务拆解、测试方案。",
+      boundary: "方案先给人看，确认后再开发。",
+      input: "需求、代码现状、历史文档。",
+      output: "中文技术方案、验收清单、风险点。",
+      forbidden: "不直接落大范围代码改动。",
+    },
+    {
+      key: "developer",
+      name: "开发者",
+      responsibility: "按分配范围改代码，包括前端、后端、测试或部署中的一块。",
+      boundary: "只改自己负责的文件和模块。",
+      input: "已确认方案、任务边界、相关测试。",
+      output: "代码改动、局部验证结果。",
+      forbidden: "不能随手改别人负责的范围。",
+    },
+    {
+      key: "acceptor",
+      name: "验收者",
+      responsibility: "独立检查代码、测试结果、漏改和回归风险。",
+      boundary: "不参与原实现的自证，独立给结论。",
+      input: "diff、测试日志、验收条件。",
+      output: "验收记录、缺陷清单、放行或退回结论。",
+      forbidden: "开发者不能自己说通过。",
+    },
+    {
+      key: "spec-maintainer",
+      name: "规约维护者",
+      responsibility: "判断是否同步流程文档、测试数据说明、接口索引、技能说明。",
+      boundary: "只维护与本次改动相关的规约材料。",
+      input: "代码 diff、接口变化、流程变化。",
+      output: "文档同步记录、未同步原因。",
+      forbidden: "不让文档停留在旧版本。",
+    },
+    {
+      key: "operator",
+      name: "部署运行者",
+      responsibility: "负责端口、环境变量、数据库、启动服务、健康检查、部署验证。",
+      boundary: "只做运行环境和验证，不改业务代码。",
+      input: "部署目标、环境变量说明、健康检查命令。",
+      output: "启动记录、健康检查、端口和服务状态。",
+      forbidden: "不能泄露密钥，不能随便改业务代码。",
+    },
+  ],
+  steps: [
+    { key: "receive", name: "接收需求", role_key: "captain" },
+    { key: "design_review", name: "方案设计与确认", role_key: "designer" },
+    { key: "implementation", name: "分工开发", role_key: "developer" },
+    { key: "independent_acceptance", name: "独立验收", role_key: "acceptor" },
+    { key: "spec_sync", name: "规约同步", role_key: "spec-maintainer" },
+    { key: "deploy_verify", name: "部署运行验证", role_key: "operator" },
+    { key: "final_report", name: "证据汇总", role_key: "captain" },
+  ],
+  model_policy: {
+    默认模型: "minimax",
+    代码测试复杂审查: "gpt",
+    策略说明: "minimax 用于大批量普通执行；涉及代码、测试、复杂审查时使用 gpt。",
+  },
+  stage_skills: [],
+  operation_skills: [],
+  acceptance: ["方案经确认", "代码范围清晰", "验收者独立给结论", "测试证据完整", "规约同步或说明无需同步", "运行验证完成"],
+  forbidden_actions: ["泄露密钥", "开发者越权改范围外代码", "未独立验收就完成", "跳过测试证据", "文档接口语义停留在旧版本"],
 };
 
 export function SquadDetailPage() {
@@ -294,6 +394,7 @@ export function SquadDetailPage() {
           onUpdateRole={async (m, role) => { await updateRoleMut.mutateAsync({ member: m, role }); }}
           onSaveInstructions={async (next) => { await updateSquadMut.mutateAsync({ instructions: next }); toast.success("小队指令已保存"); }}
           onApplyUserCenterSOP={async () => { await updateSquadMut.mutateAsync({ sop_profile: USER_CENTER_SOP_PROFILE }); toast.success("user-center SOP 已应用"); }}
+          onApplyMulticaCodingSOP={async () => { await updateSquadMut.mutateAsync({ sop_profile: MULTICA_CODING_SOP_PROFILE }); toast.success("Multica 编码小队模板已应用"); }}
           setLeaderPending={setLeaderMut.isPending}
         />
       </div>
@@ -1039,6 +1140,7 @@ function SquadOverviewPane({
   onUpdateRole,
   onSaveInstructions,
   onApplyUserCenterSOP,
+  onApplyMulticaCodingSOP,
   setLeaderPending,
 }: {
   squad: Squad;
@@ -1057,6 +1159,7 @@ function SquadOverviewPane({
   onUpdateRole: (m: SquadMember, role: string) => Promise<void>;
   onSaveInstructions: (next: string) => Promise<void>;
   onApplyUserCenterSOP: () => Promise<void>;
+  onApplyMulticaCodingSOP: () => Promise<void>;
   setLeaderPending: boolean;
 }) {
   const { t } = useT("squads");
@@ -1122,6 +1225,7 @@ function SquadOverviewPane({
               squad={squad}
               onSave={onSaveInstructions}
               onApplyUserCenterSOP={onApplyUserCenterSOP}
+              onApplyMulticaCodingSOP={onApplyMulticaCodingSOP}
               onDirtyChange={setActiveDirty}
             />
           </div>
@@ -1376,20 +1480,24 @@ function SquadInstructionsTab({
   squad,
   onSave,
   onApplyUserCenterSOP,
+  onApplyMulticaCodingSOP,
   onDirtyChange,
 }: {
   squad: Squad;
   onSave: (instructions: string) => Promise<void>;
   onApplyUserCenterSOP: () => Promise<void>;
+  onApplyMulticaCodingSOP: () => Promise<void>;
   onDirtyChange?: (dirty: boolean) => void;
 }) {
   const { t } = useT("squads");
   const [value, setValue] = useState(squad.instructions ?? "");
   const [saving, setSaving] = useState(false);
   const [applyingSOP, setApplyingSOP] = useState(false);
+  const [applyingMulticaSOP, setApplyingMulticaSOP] = useState(false);
   const isDirty = value !== (squad.instructions ?? "");
   const sopProfile = normalizeSOPProfile(squad.sop_profile);
-  const hasUserCenterProfile = sopProfile?.project === USER_CENTER_SOP_PROFILE.project;
+  const hasUserCenterProfile = sopProfile?.profile_key === USER_CENTER_SOP_PROFILE.profile_key || sopProfile?.project === USER_CENTER_SOP_PROFILE.project;
+  const hasMulticaCodingProfile = sopProfile?.profile_key === MULTICA_CODING_SOP_PROFILE.profile_key;
 
   useEffect(() => {
     setValue(squad.instructions ?? "");
@@ -1421,6 +1529,17 @@ function SquadInstructionsTab({
     }
   };
 
+  const handleApplyMulticaCodingSOP = async () => {
+    setApplyingMulticaSOP(true);
+    try {
+      await onApplyMulticaCodingSOP();
+    } catch {
+      // toast handled by parent
+    } finally {
+      setApplyingMulticaSOP(false);
+    }
+  };
+
   return (
     <div className="flex h-full flex-col gap-4">
       <p className="text-xs text-muted-foreground">
@@ -1435,31 +1554,76 @@ function SquadInstructionsTab({
               issue 指派给小队后，队长会先按阶段链推进，再把实现工作委派给对应 skill 或成员。
             </div>
           </div>
-          <Button
-            type="button"
-            size="sm"
-            variant={hasUserCenterProfile ? "secondary" : "default"}
-            onClick={handleApplyUserCenterSOP}
-            disabled={applyingSOP}
-            className="shrink-0"
-          >
-            {applyingSOP ? (
-              <Loader2 className="h-3.5 w-3.5 animate-spin" />
-            ) : (
-              <FileText className="h-3.5 w-3.5" />
-            )}
-            {hasUserCenterProfile ? "重新应用 user-center SOP" : "应用 user-center SOP"}
-          </Button>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <Button
+              type="button"
+              size="sm"
+              variant={hasUserCenterProfile ? "secondary" : "default"}
+              onClick={handleApplyUserCenterSOP}
+              disabled={applyingSOP}
+            >
+              {applyingSOP ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <FileText className="h-3.5 w-3.5" />
+              )}
+              {hasUserCenterProfile ? "重新应用 user-center SOP" : "应用 user-center SOP"}
+            </Button>
+            <Button
+              type="button"
+              size="sm"
+              variant={hasMulticaCodingProfile ? "secondary" : "outline"}
+              onClick={handleApplyMulticaCodingSOP}
+              disabled={applyingMulticaSOP}
+            >
+              {applyingMulticaSOP ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              ) : (
+                <Users className="h-3.5 w-3.5" />
+              )}
+              {hasMulticaCodingProfile ? "重新应用 Multica 编码小队" : "应用 Multica 编码小队"}
+            </Button>
+          </div>
         </div>
 
         {sopProfile ? (
-          <div className="mt-3 grid gap-2 text-xs text-muted-foreground md:grid-cols-2">
-            <SOPProfileRow label="项目" value={sopProfile.project} />
-            <SOPProfileRow label="仓库" value={sopProfile.repo} />
-            <SOPProfileRow label="执行方式" value={sopProfile.mode === "stage_chain" ? "阶段链" : sopProfile.mode} />
-            <SOPProfileRow label="阶段链" value={sopProfile.stage_skills.join(" → ")} wide />
-            <SOPProfileRow label="operation skill" value={sopProfile.operation_skills.join("、")} />
-            <SOPProfileRow label="验收要求" value={sopProfile.acceptance.join("、")} />
+          <div className="mt-3 space-y-3 text-xs text-muted-foreground">
+            <div className="grid gap-2 md:grid-cols-2">
+              <SOPProfileRow label="模板" value={sopProfile.profile_key ?? ""} />
+              <SOPProfileRow label="项目" value={sopProfile.project} />
+              <SOPProfileRow label="仓库" value={sopProfile.repo} />
+              <SOPProfileRow label="执行方式" value={sopProfile.mode === "stage_chain" ? "阶段链" : sopProfile.mode} />
+              <SOPProfileRow label="阶段链" value={formatSOPSteps(sopProfile)} wide />
+              <SOPProfileRow label="operation skill" value={sopProfile.operation_skills.join("、")} />
+              <SOPProfileRow label="验收要求" value={sopProfile.acceptance.join("、")} />
+              <SOPProfileRow label="禁止事项" value={(sopProfile.forbidden_actions ?? []).join("、")} />
+            </div>
+            {sopProfile.model_policy && (
+              <div>
+                <div className="mb-1 text-[11px] font-medium text-muted-foreground">模型策略</div>
+                <div className="grid gap-1 md:grid-cols-2">
+                  {Object.entries(sopProfile.model_policy).map(([key, value]) => (
+                    <SOPProfileRow key={key} label={key} value={String(value ?? "")} />
+                  ))}
+                </div>
+              </div>
+            )}
+            {sopProfile.roles && sopProfile.roles.length > 0 && (
+              <div>
+                <div className="mb-1 text-[11px] font-medium text-muted-foreground">角色矩阵</div>
+                <div className="grid gap-2 md:grid-cols-2">
+                  {sopProfile.roles.map((role, index) => (
+                    <div key={String(role.key ?? role.name ?? index)} className="rounded-md border border-border/70 bg-background px-3 py-2">
+                      <div className="font-medium text-foreground">{String(role.name ?? role.key ?? "未命名角色")}</div>
+                      <div className="mt-1 line-clamp-2">{String(role.responsibility ?? role.boundary ?? "")}</div>
+                      {role.forbidden ? (
+                        <div className="mt-1 text-destructive/80">禁止：{String(role.forbidden)}</div>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         ) : (
           <div className="mt-3 text-xs text-muted-foreground">
@@ -1520,25 +1684,51 @@ function normalizeSOPProfile(raw: Record<string, unknown> | null | undefined): S
   const project = typeof raw.project === "string" ? raw.project.trim() : "";
   const repo = typeof raw.repo === "string" ? raw.repo.trim() : "";
   const mode = typeof raw.mode === "string" ? raw.mode.trim() : "";
+  const profileKey = typeof raw.profile_key === "string" ? raw.profile_key.trim() : "";
+  const roles = toRecordList(raw.roles);
+  const steps = toRecordList(raw.steps);
+  const modelPolicy = raw.model_policy && typeof raw.model_policy === "object" && !Array.isArray(raw.model_policy)
+    ? raw.model_policy as Record<string, unknown>
+    : undefined;
   const stageSkills = toStringList(raw.stage_skills);
   const operationSkills = toStringList(raw.operation_skills);
   const acceptance = toStringList(raw.acceptance);
+  const forbiddenActions = toStringList(raw.forbidden_actions);
 
-  if (!project && !repo && !mode && stageSkills.length === 0 && operationSkills.length === 0 && acceptance.length === 0) {
+  if (!profileKey && !project && !repo && !mode && roles.length === 0 && steps.length === 0 && stageSkills.length === 0 && operationSkills.length === 0 && acceptance.length === 0) {
     return null;
   }
 
   return {
+    profile_key: profileKey,
     project,
     repo,
     mode,
+    roles,
+    steps,
+    model_policy: modelPolicy,
     stage_skills: stageSkills,
     operation_skills: operationSkills,
     acceptance,
+    forbidden_actions: forbiddenActions,
   };
 }
 
 function toStringList(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
+}
+
+function toRecordList(value: unknown): Array<Record<string, unknown>> {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is Record<string, unknown> => !!item && typeof item === "object" && !Array.isArray(item));
+}
+
+function formatSOPSteps(profile: SquadSOPProfile): string {
+  if (profile.steps && profile.steps.length > 0) {
+    return profile.steps
+      .map((step) => String(step.name ?? step.key ?? step.step_key ?? "未命名阶段"))
+      .join(" → ");
+  }
+  return profile.stage_skills.join(" → ");
 }

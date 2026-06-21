@@ -728,10 +728,126 @@ func (s *TaskService) enqueueMentionTask(ctx context.Context, issue db.Issue, ag
 	}
 
 	slog.Info("mention task enqueued", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(issue.ID), "agent_id", util.UUIDToString(agentID), "is_leader_task", isLeader)
+	if isLeader {
+		s.ensureSquadSOPRunForLeaderTask(ctx, issue, task)
+	}
 	// See EnqueueTaskForIssue for ordering rationale.
 	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
 	s.NotifyTaskEnqueued(ctx, task)
 	return task, nil
+}
+
+func (s *TaskService) ensureSquadSOPRunForLeaderTask(ctx context.Context, issue db.Issue, task db.AgentTaskQueue) {
+	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
+		return
+	}
+	squad, err := s.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
+		ID:          issue.AssigneeID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("create squad SOP run skipped: squad not found",
+			"issue_id", util.UUIDToString(issue.ID),
+			"squad_id", util.UUIDToString(issue.AssigneeID),
+			"error", err)
+		return
+	}
+
+	profile := normalizeSquadSOPProfile(squad.SopProfile)
+	profileKey, currentStepKey, currentStepName, roleKey := squadSOPProfileSummary(profile)
+	run, err := s.Queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
+		WorkspaceID:    issue.WorkspaceID,
+		IssueID:        issue.ID,
+		SquadID:        squad.ID,
+		LeaderTaskID:   task.ID,
+		ProfileKey:     profileKey,
+		Profile:        profile,
+		Status:         "进行中",
+		CurrentStepKey: currentStepKey,
+	})
+	if err != nil {
+		slog.Warn("create squad SOP run failed",
+			"issue_id", util.UUIDToString(issue.ID),
+			"squad_id", util.UUIDToString(squad.ID),
+			"task_id", util.UUIDToString(task.ID),
+			"error", err)
+		return
+	}
+	if currentStepKey == "" {
+		return
+	}
+	if _, err := s.Queries.CreateSquadSOPStepEvent(ctx, db.CreateSquadSOPStepEventParams{
+		RunID:         run.ID,
+		WorkspaceID:   issue.WorkspaceID,
+		IssueID:       issue.ID,
+		SquadID:       squad.ID,
+		StepKey:       currentStepKey,
+		StepName:      currentStepName,
+		RoleKey:       roleKey,
+		EventType:     "步骤开始",
+		Status:        "进行中",
+		Reason:        "队长任务已入队，自动进入小队 SOP 执行。",
+		CreatedByType: "system",
+		TaskID:        task.ID,
+	}); err != nil {
+		slog.Warn("create squad SOP initial step event failed",
+			"run_id", util.UUIDToString(run.ID),
+			"task_id", util.UUIDToString(task.ID),
+			"error", err)
+	}
+}
+
+func normalizeSquadSOPProfile(raw []byte) []byte {
+	if len(raw) == 0 || string(raw) == "null" {
+		return []byte(`{}`)
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil || obj == nil {
+		return []byte(`{}`)
+	}
+	normalized, err := json.Marshal(obj)
+	if err != nil {
+		return []byte(`{}`)
+	}
+	return normalized
+}
+
+func squadSOPProfileSummary(profile []byte) (profileKey, currentStepKey, currentStepName, roleKey string) {
+	profileKey = "custom"
+	var obj map[string]any
+	if err := json.Unmarshal(profile, &obj); err != nil || obj == nil {
+		return profileKey, "", "", ""
+	}
+	if v, ok := obj["profile_key"].(string); ok && strings.TrimSpace(v) != "" {
+		profileKey = strings.TrimSpace(v)
+	}
+	steps, _ := obj["steps"].([]any)
+	if len(steps) == 0 {
+		return profileKey, "", "", ""
+	}
+	step, _ := steps[0].(map[string]any)
+	if step == nil {
+		return profileKey, "", "", ""
+	}
+	for _, key := range []string{"key", "step_key", "id"} {
+		if v, ok := step[key].(string); ok && strings.TrimSpace(v) != "" {
+			currentStepKey = strings.TrimSpace(v)
+			break
+		}
+	}
+	for _, key := range []string{"name", "title", "label"} {
+		if v, ok := step[key].(string); ok && strings.TrimSpace(v) != "" {
+			currentStepName = strings.TrimSpace(v)
+			break
+		}
+	}
+	for _, key := range []string{"role_key", "role"} {
+		if v, ok := step[key].(string); ok && strings.TrimSpace(v) != "" {
+			roleKey = strings.TrimSpace(v)
+			break
+		}
+	}
+	return profileKey, currentStepKey, currentStepName, roleKey
 }
 
 // QuickCreateContext is the JSON payload stored on a quick-create task's

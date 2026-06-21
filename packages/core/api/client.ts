@@ -48,6 +48,12 @@ import type {
   RuntimeUsage,
   IssueUsageSummary,
   IssueTaskTraceResponse,
+  ListIssueSOPRunsResponse,
+  CreateSOPRunRequest,
+  CreateSOPStepEventRequest,
+  SquadSOPRun,
+  SquadSOPStepEvent,
+  ObservabilitySummary,
   RuntimeHourlyActivity,
   RuntimeUsageByAgent,
   RuntimeUsageByHour,
@@ -153,6 +159,9 @@ import {
   EMPTY_SQUAD,
   EMPTY_SQUAD_LIST,
   EMPTY_SQUAD_MEMBER_STATUS_LIST,
+  EMPTY_SQUAD_SOP_RUN,
+  EMPTY_ISSUE_SOP_RUNS_RESPONSE,
+  EMPTY_OBSERVABILITY_SUMMARY,
   EMPTY_TIMELINE_ENTRIES,
   EMPTY_USER,
   EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
@@ -176,7 +185,10 @@ import {
   PromptEvaluationAssetListResponseSchema,
   PromptLibraryItemSchema,
   PromptLibraryItemListResponseSchema,
+  IssueSOPRunsResponseSchema,
+  ObservabilitySummarySchema,
   SquadSchema,
+  SquadSOPRunSchema,
   SquadListSchema,
   SquadMemberStatusListResponseSchema,
   SubscribersListSchema,
@@ -1197,6 +1209,30 @@ export class ApiClient {
     return this.fetch(`/api/issues/${issueId}/trace`);
   }
 
+  async listIssueSOPRuns(issueId: string): Promise<ListIssueSOPRunsResponse> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/sop-runs`);
+    return parseWithFallback(raw, IssueSOPRunsResponseSchema, EMPTY_ISSUE_SOP_RUNS_RESPONSE, {
+      endpoint: "GET /api/issues/:id/sop-runs",
+    }) as ListIssueSOPRunsResponse;
+  }
+
+  async createIssueSOPRun(issueId: string, data: CreateSOPRunRequest = {}): Promise<SquadSOPRun> {
+    const raw = await this.fetch<unknown>(`/api/issues/${issueId}/sop-runs`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, SquadSOPRunSchema, EMPTY_SQUAD_SOP_RUN, {
+      endpoint: "POST /api/issues/:id/sop-runs",
+    }) as SquadSOPRun;
+  }
+
+  async recordSOPStepEvent(runId: string, stepId: string, data: CreateSOPStepEventRequest): Promise<SquadSOPStepEvent> {
+    return this.fetch(`/api/sop-runs/${runId}/steps/${encodeURIComponent(stepId)}/events`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
   async cancelTask(issueId: string, taskId: string): Promise<AgentTask> {
     return this.fetch(`/api/issues/${issueId}/tasks/${taskId}/cancel`, {
       method: "POST",
@@ -1278,6 +1314,15 @@ export class ApiClient {
 
   async getWorkspace(id: string): Promise<Workspace> {
     return this.fetch(`/api/workspaces/${id}`);
+  }
+
+  async getWorkspaceObservabilitySummary(id: string, since?: string): Promise<ObservabilitySummary> {
+    const params = new URLSearchParams();
+    if (since) params.set("since", since);
+    const raw = await this.fetch<unknown>(`/api/workspaces/${id}/observability/summary${params.toString() ? `?${params}` : ""}`);
+    return parseWithFallback(raw, ObservabilitySummarySchema, EMPTY_OBSERVABILITY_SUMMARY, {
+      endpoint: "GET /api/workspaces/:id/observability/summary",
+    }) as ObservabilitySummary;
   }
 
   async createWorkspace(data: { name: string; slug: string; description?: string; context?: string }): Promise<Workspace> {

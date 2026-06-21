@@ -83,12 +83,17 @@ func buildSquadLeaderBriefing(ctx context.Context, q *db.Queries, squad db.Squad
 }
 
 type squadSOPProfile struct {
-	Project         string   `json:"project"`
-	Repo            string   `json:"repo"`
-	Mode            string   `json:"mode"`
-	StageSkills     []string `json:"stage_skills"`
-	OperationSkills []string `json:"operation_skills"`
-	Acceptance      []string `json:"acceptance"`
+	ProfileKey       string           `json:"profile_key"`
+	Project          string           `json:"project"`
+	Repo             string           `json:"repo"`
+	Mode             string           `json:"mode"`
+	Roles            []map[string]any `json:"roles"`
+	Steps            []map[string]any `json:"steps"`
+	ModelPolicy      map[string]any   `json:"model_policy"`
+	StageSkills      []string         `json:"stage_skills"`
+	OperationSkills  []string         `json:"operation_skills"`
+	Acceptance       []string         `json:"acceptance"`
+	ForbiddenActions []string         `json:"forbidden_actions"`
 }
 
 func buildSquadSOPProfile(raw []byte) string {
@@ -99,12 +104,17 @@ func buildSquadSOPProfile(raw []byte) string {
 	if err := json.Unmarshal(raw, &profile); err != nil {
 		return ""
 	}
-	if profile.Project == "" && len(profile.StageSkills) == 0 && len(profile.OperationSkills) == 0 {
+	if profile.Project == "" && profile.ProfileKey == "" && len(profile.Steps) == 0 && len(profile.StageSkills) == 0 && len(profile.OperationSkills) == 0 {
 		return ""
 	}
 
 	var sb strings.Builder
 	sb.WriteString("## 项目 SOP 配置\n\n")
+	if profile.ProfileKey != "" {
+		sb.WriteString("- 模板：")
+		sb.WriteString(profile.ProfileKey)
+		sb.WriteString("\n")
+	}
 	if profile.Project != "" {
 		sb.WriteString("- 项目：")
 		sb.WriteString(profile.Project)
@@ -125,6 +135,23 @@ func buildSquadSOPProfile(raw []byte) string {
 		sb.WriteString(strings.Join(profile.StageSkills, " → "))
 		sb.WriteString("\n")
 	}
+	if len(profile.Steps) > 0 {
+		stepNames := make([]string, 0, len(profile.Steps))
+		for _, step := range profile.Steps {
+			name := sopStringField(step, "name", "key", "step_key")
+			if name != "" {
+				stepNames = append(stepNames, name)
+			}
+		}
+		if len(stepNames) > 0 {
+			sb.WriteString("- SOP 步骤链：")
+			sb.WriteString(strings.Join(stepNames, " → "))
+			sb.WriteString("\n")
+			sb.WriteString("- 当前默认阶段：")
+			sb.WriteString(stepNames[0])
+			sb.WriteString("\n")
+		}
+	}
 	if len(profile.OperationSkills) > 0 {
 		sb.WriteString("- 可调用 operation skill：")
 		sb.WriteString(strings.Join(profile.OperationSkills, "、"))
@@ -135,8 +162,62 @@ func buildSquadSOPProfile(raw []byte) string {
 		sb.WriteString(strings.Join(profile.Acceptance, "；"))
 		sb.WriteString("\n")
 	}
-	sb.WriteString("\n当 issue 指派给这个小队时，先按 SOP 阶段链推进；只有进入实现阶段后，才把具体工作委派给对应 operation skill 或小队成员。")
+	if len(profile.Roles) > 0 {
+		sb.WriteString("- 角色分工：")
+		roleParts := make([]string, 0, len(profile.Roles))
+		for _, role := range profile.Roles {
+			name := sopStringField(role, "name", "key")
+			responsibility := sopStringField(role, "responsibility", "boundary")
+			if name == "" {
+				continue
+			}
+			if responsibility != "" {
+				roleParts = append(roleParts, name+"："+responsibility)
+			} else {
+				roleParts = append(roleParts, name)
+			}
+		}
+		sb.WriteString(strings.Join(roleParts, "；"))
+		sb.WriteString("\n")
+	}
+	if len(profile.ModelPolicy) > 0 {
+		sb.WriteString("- 模型策略：")
+		parts := make([]string, 0, len(profile.ModelPolicy))
+		for key, value := range profile.ModelPolicy {
+			parts = append(parts, key+"="+sopAnyString(value))
+		}
+		sb.WriteString(strings.Join(parts, "；"))
+		sb.WriteString("\n")
+	}
+	if len(profile.ForbiddenActions) > 0 {
+		sb.WriteString("- 禁止事项：")
+		sb.WriteString(strings.Join(profile.ForbiddenActions, "；"))
+		sb.WriteString("\n")
+	}
+	sb.WriteString("\n当 issue 指派给这个小队时，先按 SOP 阶段链推进；记录当前阶段、验收要求和证据后，再把具体工作委派给对应 operation skill 或小队成员。")
 	return sb.String()
+}
+
+func sopStringField(obj map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := obj[key].(string); ok && strings.TrimSpace(value) != "" {
+			return strings.TrimSpace(value)
+		}
+	}
+	return ""
+}
+
+func sopAnyString(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	default:
+		raw, err := json.Marshal(v)
+		if err != nil {
+			return ""
+		}
+		return string(raw)
+	}
 }
 
 // buildSquadRoster renders the squad roster section: a leader self-row

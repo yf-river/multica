@@ -93,6 +93,8 @@ export const issueKeys = {
   usage: (issueId: string) => [...issueKeys.usageAll(), issueId] as const,
   traceAll: () => ["issues", "trace"] as const,
   trace: (issueId: string) => [...issueKeys.traceAll(), issueId] as const,
+  sopRunsAll: () => ["issues", "sop-runs"] as const,
+  sopRuns: (issueId: string) => [...issueKeys.sopRunsAll(), issueId] as const,
   attachmentsAll: () => ["issues", "attachments"] as const,
   /** Issue-level attachments — used by the description editor so its
    *  inline file-card / image NodeViews can re-sign download URLs at
@@ -524,6 +526,13 @@ export function issueTaskTraceOptions(issueId: string) {
   return queryOptions({
     queryKey: issueKeys.trace(issueId),
     queryFn: () => api.listIssueTaskTraceEvents(issueId),
+  });
+}
+
+export function issueSOPRunsOptions(issueId: string) {
+  return queryOptions({
+    queryKey: issueKeys.sopRuns(issueId),
+    queryFn: () => api.listIssueSOPRuns(issueId),
   });
 }
 

@@ -10,9 +10,12 @@ import { renderPromptTemplate } from "@multica/core/prompt-library";
 import type {
   CreatePromptLibraryItemRequest,
   CreatePromptEvaluationAssetRequest,
+  PromptEvaluationAsset,
+  PromptEvaluationAssetType,
   PromptLibraryItem,
   PromptLibraryStatus,
   PromptLibraryVariable,
+  UpdatePromptEvaluationAssetRequest,
   UpdatePromptLibraryItemRequest,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
@@ -24,9 +27,12 @@ import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 
 const promptLibraryKeys = {
   list: (workspaceId: string) => ["prompt-library", workspaceId, "list"] as const,
+  assets: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-assets"] as const,
 };
 
 const PROMPT_TYPES = ["全部", "需求澄清", "系统提示词", "评测提示词", "小队 SOP", "通用"];
+const WORKBENCH_TABS = ["提示词库", "提示词调试场", "Agent 调试场", "数据集", "测试套件", "实验", "优化运行", "运行历史"] as const;
+type WorkbenchTab = typeof WORKBENCH_TABS[number];
 
 const USER_CENTER_TEMPLATE: CreatePromptLibraryItemRequest = {
   name: "user-center 需求澄清提示词",
@@ -70,6 +76,8 @@ export function PromptLibraryPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<PromptDraft>(emptyDraft);
   const [debugValuesText, setDebugValuesText] = useState("");
+  const [activeTab, setActiveTab] = useState<WorkbenchTab>("提示词库");
+  const [agentExpectedText, setAgentExpectedText] = useState("");
 
   const listQuery = useQuery({
     queryKey: promptLibraryKeys.list(workspaceId ?? ""),
@@ -77,7 +85,14 @@ export function PromptLibraryPage() {
     enabled: !!workspaceId,
   });
 
+  const assetQuery = useQuery({
+    queryKey: promptLibraryKeys.assets(workspaceId ?? ""),
+    queryFn: () => api.listPromptEvaluationAssets(),
+    enabled: !!workspaceId,
+  });
+
   const items = listQuery.data?.items ?? [];
+  const assets = assetQuery.data?.items ?? [];
   const selected = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
 
   useEffect(() => {
@@ -104,6 +119,7 @@ export function PromptLibraryPage() {
   }, [items, query, statusFilter, typeFilter]);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.list(workspaceId ?? "") });
+  const invalidateAssets = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId ?? "") });
 
   const createMut = useMutation({
     mutationFn: (data: CreatePromptLibraryItemRequest) => api.createPromptLibraryItem(data),
@@ -139,13 +155,39 @@ export function PromptLibraryPage() {
       return api.runPromptEvaluationAsset(asset.id);
     },
     onSuccess: () => {
+      invalidateAssets();
       toast.success("优化运行已记录");
+    },
+  });
+
+  const createAssetMut = useMutation({
+    mutationFn: (data: CreatePromptEvaluationAssetRequest) => api.createPromptEvaluationAsset(data),
+    onSuccess: () => {
+      invalidateAssets();
+      toast.success("资产已创建");
+    },
+  });
+
+  const updateAssetMut = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: UpdatePromptEvaluationAssetRequest }) => api.updatePromptEvaluationAsset(id, data),
+    onSuccess: () => {
+      invalidateAssets();
+      toast.success("资产已更新");
+    },
+  });
+
+  const deleteAssetMut = useMutation({
+    mutationFn: (id: string) => api.deletePromptEvaluationAsset(id),
+    onSuccess: () => {
+      invalidateAssets();
+      toast.success("资产已删除");
     },
   });
 
   const saving = createMut.isPending || updateMut.isPending;
   const deleting = deleteMut.isPending;
   const runningDebug = runDebugMut.isPending;
+  const savingAsset = createAssetMut.isPending || updateAssetMut.isPending || deleteAssetMut.isPending;
   const debugResult = useMemo(
     () => renderPromptTemplate({
       content: draft.content,
@@ -223,12 +265,68 @@ export function PromptLibraryPage() {
     });
   };
 
+  const createWorkbenchAsset = (assetType: PromptEvaluationAssetType) => {
+    const prompt = selected;
+    if (!prompt) {
+      toast.error("请先保存提示词");
+      return;
+    }
+    const values = parseDebugValues(debugValuesText);
+    const now = new Date().toLocaleString("zh-CN");
+    createAssetMut.mutate({
+      prompt_id: prompt.id,
+      name: `${prompt.name} ${assetType} ${now}`,
+      description: `从中文工作台创建的${assetType}`,
+      asset_type: assetType,
+      payload: buildAssetPayload(assetType, prompt, values, debugResult.rendered),
+      status: "启用",
+    });
+  };
+
+  const saveAgentDebugPackage = () => {
+    const prompt = selected;
+    if (!prompt) {
+      toast.error("请先保存提示词");
+      return;
+    }
+    const values = parseDebugValues(debugValuesText);
+    createAssetMut.mutate({
+      prompt_id: prompt.id,
+      name: `${prompt.name} Agent 调试包 ${new Date().toLocaleString("zh-CN")}`,
+      description: "Agent 调试场 v1 记录：不真实执行 agent，只保存调试包和期望输出。",
+      asset_type: "实验",
+      payload: {
+        调试包: {
+          提示词: prompt.name,
+          变量: values,
+          上下文: debugResult.rendered,
+          期望输出: agentExpectedText,
+          执行方式: "不真实执行 agent",
+        },
+        对比维度: ["上下文完整性", "期望输出覆盖", "中文语义一致性"],
+      },
+      status: "启用",
+    });
+  };
+
+  const toggleAssetStatus = (asset: PromptEvaluationAsset) => {
+    updateAssetMut.mutate({
+      id: asset.id,
+      data: { status: asset.status === "启用" ? "归档" : "启用" },
+    });
+  };
+
+  const deleteAsset = (asset: PromptEvaluationAsset) => {
+    if (!window.confirm(`删除资产「${asset.name}」？`)) return;
+    deleteAssetMut.mutate(asset.id);
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <PageHeader>
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <BookOpenText className="size-4 shrink-0 text-muted-foreground" />
-          <h1 className="truncate text-sm font-semibold">提示词库</h1>
+          <h1 className="truncate text-sm font-semibold">提示词工作台</h1>
           <span className="text-xs text-muted-foreground">{items.length}</span>
         </div>
         <div className="flex items-center gap-2">
@@ -242,6 +340,14 @@ export function PromptLibraryPage() {
           </Button>
         </div>
       </PageHeader>
+
+      <div className="flex shrink-0 gap-1 overflow-x-auto border-b px-3 py-2">
+        {WORKBENCH_TABS.map((tab) => (
+          <FilterButton key={tab} active={activeTab === tab} onClick={() => setActiveTab(tab)}>
+            {tab}
+          </FilterButton>
+        ))}
+      </div>
 
       <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[360px_minmax(0,1fr)]">
         <aside className="flex min-h-0 flex-col border-b md:border-b-0 md:border-r">
@@ -416,10 +522,146 @@ export function PromptLibraryPage() {
                 </pre>
               </div>
             </section>
+
+            <WorkbenchPanel
+              activeTab={activeTab}
+              selected={selected}
+              assets={assets}
+              loading={assetQuery.isLoading}
+              saving={savingAsset}
+              agentExpectedText={agentExpectedText}
+              onAgentExpectedTextChange={setAgentExpectedText}
+              onCreateAsset={createWorkbenchAsset}
+              onSaveAgentDebugPackage={saveAgentDebugPackage}
+              onToggleAssetStatus={toggleAssetStatus}
+              onDeleteAsset={deleteAsset}
+            />
           </div>
         </main>
       </div>
     </div>
+  );
+}
+
+function WorkbenchPanel({
+  activeTab,
+  selected,
+  assets,
+  loading,
+  saving,
+  agentExpectedText,
+  onAgentExpectedTextChange,
+  onCreateAsset,
+  onSaveAgentDebugPackage,
+  onToggleAssetStatus,
+  onDeleteAsset,
+}: {
+  activeTab: WorkbenchTab;
+  selected: PromptLibraryItem | null;
+  assets: PromptEvaluationAsset[];
+  loading: boolean;
+  saving: boolean;
+  agentExpectedText: string;
+  onAgentExpectedTextChange: (value: string) => void;
+  onCreateAsset: (assetType: PromptEvaluationAssetType) => void;
+  onSaveAgentDebugPackage: () => void;
+  onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
+  onDeleteAsset: (asset: PromptEvaluationAsset) => void;
+}) {
+  const tabAssetType = tabToAssetType(activeTab);
+  const visibleAssets = tabAssetType
+    ? assets.filter((asset) => asset.asset_type === tabAssetType)
+    : activeTab === "运行历史"
+      ? assets.filter((asset) => Boolean(asset.payload?.["运行结果"] ?? asset.payload?.["调试输出"] ?? asset.payload?.["调试包"]))
+      : assets;
+  const experiments = assets.filter((asset) => asset.asset_type === "实验");
+
+  if (activeTab === "提示词库" || activeTab === "提示词调试场") {
+    return null;
+  }
+
+  if (activeTab === "Agent 调试场") {
+    return (
+      <section className="grid gap-3 border-t pt-4">
+        <div className="flex items-center justify-between gap-2">
+          <div>
+            <h3 className="text-sm font-semibold">Agent 调试场</h3>
+            <p className="mt-1 text-xs text-muted-foreground">v1 不真实执行 agent，只生成调试包、保存变量、上下文和期望输出。</p>
+          </div>
+          <Button size="sm" onClick={onSaveAgentDebugPackage} disabled={!selected || saving}>
+            {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+            保存为实验
+          </Button>
+        </div>
+        <Field label="期望输出">
+          <Textarea
+            value={agentExpectedText}
+            onChange={(event) => onAgentExpectedTextChange(event.target.value)}
+            className="min-h-[140px] resize-y text-sm leading-6"
+            placeholder="写下希望 Agent 最终交付的结构、证据和中文口径。"
+          />
+        </Field>
+      </section>
+    );
+  }
+
+  return (
+    <section className="grid gap-3 border-t pt-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <h3 className="text-sm font-semibold">{activeTab}</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {activeTab === "运行历史" ? "按运行结果、调试输出和调试包汇总历史记录。" : "复用提示词评测资产，全部语义按中文记录。"}
+          </p>
+        </div>
+        {tabAssetType && (
+          <Button size="sm" onClick={() => onCreateAsset(tabAssetType)} disabled={!selected || saving}>
+            {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+            新建{tabAssetType}
+          </Button>
+        )}
+      </div>
+
+      {activeTab === "实验" && (
+        <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+          实验对比摘要：{experiments.length} 个实验，启用 {experiments.filter((asset) => asset.status === "启用").length} 个，归档 {experiments.filter((asset) => asset.status === "归档").length} 个。
+        </div>
+      )}
+
+      {loading ? (
+        <div className="h-20 rounded-md bg-muted/60" />
+      ) : visibleAssets.length === 0 ? (
+        <div className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">暂无资产</div>
+      ) : (
+        <div className="divide-y rounded-md border">
+          {visibleAssets.map((asset) => (
+            <div key={asset.id} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
+              <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="truncate text-sm font-medium">{asset.name}</span>
+                  <Badge variant={asset.status === "启用" ? "secondary" : "outline"} className="shrink-0">
+                    {asset.asset_type} · {asset.status}
+                  </Badge>
+                </div>
+                <div className="mt-1 truncate text-xs text-muted-foreground">{asset.description || "无描述"}</div>
+                <div className="mt-1 text-[11px] text-muted-foreground">
+                  更新于 {asset.updated_at} · {summarizeAssetPayload(asset)}
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button size="sm" variant="secondary" onClick={() => onToggleAssetStatus(asset)} disabled={saving}>
+                  {asset.status === "启用" ? "归档" : "启用"}
+                </Button>
+                <Button size="sm" variant="destructive" onClick={() => onDeleteAsset(asset)} disabled={saving}>
+                  <Trash2 className="size-3.5" />
+                  删除
+                </Button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -488,6 +730,62 @@ function draftToRequest(draft: PromptDraft): CreatePromptLibraryItemRequest {
     tags: splitList(draft.tagsText),
     status: draft.status,
   };
+}
+
+function tabToAssetType(tab: WorkbenchTab): PromptEvaluationAssetType | null {
+  if (tab === "数据集" || tab === "测试套件" || tab === "实验" || tab === "优化运行") return tab;
+  return null;
+}
+
+function buildAssetPayload(
+  assetType: PromptEvaluationAssetType,
+  prompt: PromptLibraryItem,
+  values: Record<string, string>,
+  rendered: string,
+): Record<string, unknown> {
+  const casePayload = {
+    名称: `${prompt.name} 基准用例`,
+    变量: values,
+    期望包含: Object.values(values).filter(Boolean),
+  };
+  if (assetType === "数据集") {
+    return {
+      数据集: [casePayload],
+      字段说明: ["名称", "变量", "期望包含"],
+      中文语义: "用于提示词调试和实验复现的基准样本。",
+    };
+  }
+  if (assetType === "测试套件") {
+    return {
+      cases: [casePayload],
+      通过标准: ["变量完整", "渲染内容包含期望关键词", "输出保持中文"],
+    };
+  }
+  if (assetType === "实验") {
+    return {
+      实验对象: prompt.name,
+      对比维度: ["命中率", "缺失变量", "中文一致性"],
+      基线输出: rendered,
+      cases: [casePayload],
+    };
+  }
+  return {
+    cases: [casePayload],
+    调试输出: rendered,
+    运行结果: {
+      状态: "已记录",
+      运行时间: new Date().toISOString(),
+    },
+  };
+}
+
+function summarizeAssetPayload(asset: PromptEvaluationAsset): string {
+  const payload = asset.payload ?? {};
+  const cases = Array.isArray(payload.cases) ? payload.cases.length : Array.isArray(payload["数据集"]) ? payload["数据集"].length : 0;
+  if (payload["调试包"]) return "包含 Agent 调试包";
+  if (payload["运行结果"]) return "包含运行结果";
+  if (asset.asset_type === "实验") return `实验维度 ${Array.isArray(payload["对比维度"]) ? payload["对比维度"].length : 0} 个`;
+  return cases > 0 ? `${cases} 个用例` : "未记录用例";
 }
 
 function variablesToText(variables: PromptLibraryVariable[]): string {

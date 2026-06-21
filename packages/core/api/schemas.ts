@@ -10,10 +10,13 @@ import type {
   ListIssuesResponse,
   ListPromptEvaluationAssetsResponse,
   ListPromptLibraryItemsResponse,
+  ListIssueSOPRunsResponse,
+  ObservabilitySummary,
   ListWebhookDeliveriesResponse,
   PromptEvaluationAsset,
   PromptLibraryItem,
   Squad,
+  SquadSOPRun,
   TimelineEntry,
   User,
   WebhookDelivery,
@@ -584,6 +587,93 @@ export const EMPTY_SQUAD: Squad = {
   archived_by: null,
   member_count: 0,
   member_preview: [],
+};
+
+const SOPStepEventSchema = z.object({
+  id: z.string(),
+  run_id: z.string(),
+  workspace_id: z.string(),
+  issue_id: z.string(),
+  squad_id: z.string(),
+  step_key: z.string().default(""),
+  step_name: z.string().default(""),
+  role_key: z.string().default(""),
+  event_type: z.string().default("追加证据"),
+  status: z.string().default(""),
+  evidence: z.record(z.string(), z.unknown()).default({}),
+  reason: z.string().default(""),
+  duration_ms: z.number().nullable().optional().transform((v) => v ?? null),
+  created_by_type: z.string().default(""),
+  created_by_id: z.string().nullable().optional().transform((v) => v ?? null),
+  task_id: z.string().nullable().optional().transform((v) => v ?? null),
+  created_at: z.string(),
+  metrics: z.record(z.string(), z.unknown()).default({}),
+}).loose();
+
+export const SquadSOPRunSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  issue_id: z.string(),
+  squad_id: z.string(),
+  leader_task_id: z.string().nullable().optional().transform((v) => v ?? null),
+  profile_key: z.string().default(""),
+  profile: z.record(z.string(), z.unknown()).default({}),
+  status: z.string().default("进行中"),
+  current_step_key: z.string().default(""),
+  started_at: z.string(),
+  completed_at: z.string().nullable().optional().transform((v) => v ?? null),
+  total_duration_ms: z.number().nullable().optional().transform((v) => v ?? null),
+  metrics: z.record(z.string(), z.unknown()).default({}),
+  events: z.array(SOPStepEventSchema).default([]),
+  created_at: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+export const IssueSOPRunsResponseSchema = z.object({
+  items: z.array(SquadSOPRunSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const EMPTY_SQUAD_SOP_RUN: SquadSOPRun = {
+  id: "",
+  workspace_id: "",
+  issue_id: "",
+  squad_id: "",
+  leader_task_id: null,
+  profile_key: "",
+  profile: {},
+  status: "进行中",
+  current_step_key: "",
+  started_at: "",
+  completed_at: null,
+  total_duration_ms: null,
+  metrics: {},
+  events: [],
+  created_at: "",
+  updated_at: "",
+};
+
+export const EMPTY_ISSUE_SOP_RUNS_RESPONSE: ListIssueSOPRunsResponse = {
+  items: [],
+  total: 0,
+};
+
+export const ObservabilitySummarySchema = z.object({
+  指标: z.record(z.string(), z.unknown()).default({}),
+  sop_status_counts: z.record(z.string(), z.number()).default({}),
+  squad_counts: z.record(z.string(), z.number()).default({}),
+  project_counts: z.record(z.string(), z.number()).default({}),
+  issue_counts: z.record(z.string(), z.number()).default({}),
+  task_trace_total: z.number().default(0),
+}).loose();
+
+export const EMPTY_OBSERVABILITY_SUMMARY: ObservabilitySummary = {
+  指标: {},
+  sop_status_counts: {},
+  squad_counts: {},
+  project_counts: {},
+  issue_counts: {},
+  task_trace_total: 0,
 };
 
 const PromptLibraryVariableSchema = z.object({

@@ -557,6 +557,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					// are admin-gated below).
 					r.Get("/runtime-profiles", h.ListRuntimeProfiles)
 					r.Get("/runtime-profiles/{profileId}", h.GetRuntimeProfile)
+					r.Get("/observability/summary", h.GetWorkspaceObservabilitySummary)
 				})
 				// Admin-level access
 				r.Group(func(r chi.Router) {
@@ -660,6 +661,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/task-runs", h.ListTasksByIssue)
 					r.Get("/usage", h.GetIssueUsage)
 					r.Get("/trace", h.ListIssueTaskTraceEvents)
+					r.Get("/sop-runs", h.ListIssueSOPRuns)
+					r.Post("/sop-runs", h.CreateIssueSOPRun)
 					r.Post("/reactions", h.AddIssueReaction)
 					r.Delete("/reactions", h.RemoveIssueReaction)
 					r.Get("/attachments", h.ListAttachments)
@@ -745,6 +748,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 			// Squad leader evaluation (writes to activity_log)
 			r.Post("/api/issues/{id}/squad-evaluated", h.RecordSquadLeaderEvaluation)
+			r.Post("/api/sop-runs/{runId}/steps/{stepId}/events", h.RecordSOPStepEvent)
 
 			// Autopilots
 			r.Route("/api/autopilots", func(r chi.Router) {

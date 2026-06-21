@@ -143,6 +143,7 @@ func TestBuildSquadLeaderBriefing_FullSquad(t *testing.T) {
 		"- 项目：user-center",
 		"- 仓库：`/data/ida/user-center`",
 		"user-center/01-clarify → user-center/02-design → user-center/03-task-split",
+		"记录当前阶段、验收要求和证据",
 		"- 可调用 operation skill：user-center/add-api",
 		"阶段产物完整；测试证据完整；handoff 明确",
 		"先按 SOP 阶段链推进",
@@ -162,6 +163,35 @@ func TestBuildSquadLeaderBriefing_FullSquad(t *testing.T) {
 	// Helper Two has no role — must NOT render an empty role: "" segment.
 	if strings.Contains(out, `Helper Two — agent, role: ""`) {
 		t.Errorf("expected empty role to be omitted, got: %s", out)
+	}
+}
+
+func TestBuildSquadSOPProfile_MulticaCodingFields(t *testing.T) {
+	out := buildSquadSOPProfile([]byte(`{
+		"profile_key":"multica-coding",
+		"project":"multica",
+		"repo":"/data/ida/goal-test",
+		"mode":"coding_squad",
+		"roles":[{"key":"captain","name":"队长","responsibility":"接需求、判断流程、拆任务。"}],
+		"steps":[{"key":"receive","name":"接收需求","role_key":"captain"},{"key":"design_review","name":"方案设计与确认","role_key":"designer"}],
+		"model_policy":{"默认模型":"minimax","代码测试复杂审查":"gpt"},
+		"acceptance":["验收者独立给结论"],
+		"forbidden_actions":["泄露密钥","未独立验收就完成"]
+	}`))
+	for _, want := range []string{
+		"模板：multica-coding",
+		"项目：multica",
+		"仓库：`/data/ida/goal-test`",
+		"SOP 步骤链：接收需求 → 方案设计与确认",
+		"当前默认阶段：接收需求",
+		"角色分工：队长：接需求、判断流程、拆任务。",
+		"默认模型=minimax",
+		"代码测试复杂审查=gpt",
+		"禁止事项：泄露密钥；未独立验收就完成",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected SOP briefing to contain %q\n--- output ---\n%s", want, out)
+		}
 	}
 }
 

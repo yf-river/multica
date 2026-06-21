@@ -5,8 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Ban, CheckCircle2, ChevronRight, Loader2, RotateCcw, Square, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
-import { issueKeys, issueTaskTraceOptions } from "@multica/core/issues/queries";
-import type { AgentTask, TaskFailureReason, TaskTraceEvent } from "@multica/core/types";
+import { issueKeys, issueTaskTraceOptions, issueSOPRunsOptions } from "@multica/core/issues/queries";
+import type { AgentTask, SquadSOPRun, TaskFailureReason, TaskTraceEvent } from "@multica/core/types";
 import { useTimeAgo } from "../../i18n";
 import {
   Tooltip,
@@ -75,6 +75,8 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
   });
   const { data: traceData } = useQuery(issueTaskTraceOptions(issueId));
   const traceEvents = traceData?.events ?? [];
+  const { data: sopData } = useQuery(issueSOPRunsOptions(issueId));
+  const sopRuns = sopData?.items ?? [];
 
   const activeTasks = useMemo(
     () =>
@@ -110,7 +112,7 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
     });
   }, [tasks]);
 
-  if (activeTasks.length === 0 && pastTasks.length === 0) return null;
+  if (activeTasks.length === 0 && pastTasks.length === 0 && traceEvents.length === 0 && sopRuns.length === 0) return null;
 
   return (
     <div>
@@ -140,9 +142,18 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
             <ActiveTaskRow key={task.id} task={task} issueId={issueId} />
           ))}
 
-          {pastTasks.length > 0 && (
+          {sopRuns.length > 0 && (
             <>
               {activeTasks.length > 0 && (
+                <div className="my-1.5 border-t border-border/60" />
+              )}
+              <SOPRunSummary runs={sopRuns} />
+            </>
+          )}
+
+          {pastTasks.length > 0 && (
+            <>
+              {(activeTasks.length > 0 || sopRuns.length > 0) && (
                 <div className="my-1.5 border-t border-border/60" />
               )}
               <button
@@ -170,7 +181,7 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
           )}
           {traceEvents.length > 0 && (
             <>
-              {(activeTasks.length > 0 || pastTasks.length > 0) && (
+              {(activeTasks.length > 0 || pastTasks.length > 0 || sopRuns.length > 0) && (
                 <div className="my-1.5 border-t border-border/60" />
               )}
               <TraceEventSummary events={traceEvents} />
@@ -178,6 +189,51 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function SOPRunSummary({ runs }: { runs: SquadSOPRun[] }) {
+  const recent = runs.slice(0, 3);
+  return (
+    <div className="rounded-md border border-border/70 bg-muted/25 px-2 py-1.5">
+      <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+        <span>小队 SOP 执行</span>
+        <span className="font-mono tabular-nums">{runs.length} 次</span>
+      </div>
+      <div className="space-y-1">
+        {recent.map((run) => {
+          const evidenceCount = Number(run.metrics?.["证据数"] ?? run.events.length);
+          return (
+            <div key={run.id} className="space-y-0.5">
+              <div className="flex min-w-0 items-center gap-2 text-xs">
+                <span className="min-w-0 flex-1 truncate text-foreground">
+                  {run.profile_key || "小队流程"} · {run.status}
+                </span>
+                <span className="shrink-0 text-muted-foreground">
+                  {formatNullableMilliseconds(run.total_duration_ms)}
+                </span>
+              </div>
+              <div className="flex min-w-0 items-center gap-2 text-[11px] text-muted-foreground">
+                <span className="min-w-0 flex-1 truncate">
+                  当前阶段：{run.current_step_key || "未记录"}
+                </span>
+                <span className="shrink-0">{evidenceCount} 条证据</span>
+              </div>
+              {run.events.slice(-2).toReversed().map((event) => (
+                <div key={event.id} className="flex min-w-0 items-center gap-2 pl-2 text-[11px]">
+                  <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                    {event.step_name || event.step_key || "未命名阶段"} · {event.event_type}
+                  </span>
+                  <span className="shrink-0 text-muted-foreground">
+                    {event.reason || event.status}
+                  </span>
+                </div>
+              ))}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
@@ -228,6 +284,11 @@ function formatTraceMetric(event: TaskTraceEvent): string {
   const ms = event.run_ms ?? event.duration_ms ?? event.total_ms ?? event.queue_wait_ms;
   if (typeof ms === "number") return formatMilliseconds(ms);
   return event.status;
+}
+
+function formatNullableMilliseconds(ms: number | null | undefined): string {
+  if (typeof ms !== "number") return "进行中";
+  return formatMilliseconds(ms);
 }
 
 function formatMilliseconds(ms: number): string {

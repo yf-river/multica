@@ -124,6 +124,16 @@ export type {
   UpdatePromptEvaluationAssetRequest,
 } from "./prompt-evaluation";
 export type {
+  SOPRunStatus,
+  SOPStepEventType,
+  SquadSOPRun,
+  SquadSOPStepEvent,
+  ListIssueSOPRunsResponse,
+  CreateSOPRunRequest,
+  CreateSOPStepEventRequest,
+  ObservabilitySummary,
+} from "./sop";
+export type {
   GitHubInstallation,
   GitHubMergeableState,
   GitHubPullRequest,
