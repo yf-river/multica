@@ -34,8 +34,11 @@ import (
 
 var defaultOrigins = []string{
 	"http://localhost:3000", // Next.js dev
+	"http://127.0.0.1:3000", // Next.js dev via loopback IP
 	"http://localhost:5173", // electron-vite dev
+	"http://127.0.0.1:5173", // electron-vite dev via loopback IP
 	"http://localhost:5174", // electron-vite dev (fallback port)
+	"http://127.0.0.1:5174", // electron-vite dev (fallback port) via loopback IP
 }
 
 func allowedOrigins() []string {
@@ -44,7 +47,7 @@ func allowedOrigins() []string {
 		raw = strings.TrimSpace(os.Getenv("FRONTEND_ORIGIN"))
 	}
 	if raw == "" {
-		return defaultOrigins
+		return defaultAllowedOrigins()
 	}
 
 	parts := strings.Split(raw, ",")
@@ -55,8 +58,31 @@ func allowedOrigins() []string {
 			origins = append(origins, origin)
 		}
 	}
+	origins = appendLoopbackFrontendOrigins(origins)
 	if len(origins) == 0 {
-		return defaultOrigins
+		return defaultAllowedOrigins()
+	}
+	return origins
+}
+
+func defaultAllowedOrigins() []string {
+	return appendLoopbackFrontendOrigins(append([]string{}, defaultOrigins...))
+}
+
+func appendLoopbackFrontendOrigins(origins []string) []string {
+	port := strings.TrimSpace(os.Getenv("FRONTEND_PORT"))
+	if port == "" {
+		return origins
+	}
+	seen := make(map[string]bool, len(origins)+2)
+	for _, origin := range origins {
+		seen[origin] = true
+	}
+	for _, origin := range []string{"http://localhost:" + port, "http://127.0.0.1:" + port} {
+		if !seen[origin] {
+			origins = append(origins, origin)
+			seen[origin] = true
+		}
 	}
 	return origins
 }
