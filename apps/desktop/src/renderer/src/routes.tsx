@@ -19,6 +19,7 @@ import { ProjectsPage } from "@multica/views/projects/components";
 import { DashboardPage } from "@multica/views/dashboard";
 import { AutopilotsPage } from "@multica/views/autopilots/components";
 import { MyIssuesPage } from "@multica/views/my-issues";
+import { PromptLibraryPage } from "@multica/views/prompt-library";
 import { SkillsPage } from "@multica/views/skills";
 import { DesktopRuntimesPage } from "./components/desktop-runtimes-page";
 import { DesktopAgentsPage } from "./components/desktop-agents-page";
@@ -161,6 +162,16 @@ export const appRoutes: RouteObject[] = [
             path: "runtimes/:id",
             element: <RuntimeDetailPage />,
             handle: { title: "运行时" },
+          },
+          {
+            path: "training",
+            element: <PromptLibraryPage />,
+            handle: { title: "训练与评估" },
+          },
+          {
+            path: "prompt-library",
+            element: <Navigate to="../training?view=prompts" replace />,
+            handle: { title: "训练与评估" },
           },
           { path: "skills", element: <SkillsPage />, handle: { title: "技能" } },
           {

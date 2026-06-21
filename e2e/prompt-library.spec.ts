@@ -2,7 +2,7 @@ import { test, expect } from "@playwright/test";
 import { createTestApi, loginAsDefault, waitForPageText } from "./helpers";
 import type { TestApiClient } from "./fixtures";
 
-test.describe("提示词工作台", () => {
+test.describe("训练与评估工作台", () => {
   let api: TestApiClient;
   let artifactPrefix: string;
 
@@ -20,9 +20,9 @@ test.describe("提示词工作台", () => {
   });
 
   test("可以创建提示词、调试渲染并记录评测资产", async ({ page }) => {
-    await page.getByRole("link", { name: "提示词库" }).click();
-    await expect(page).toHaveURL(/\/prompt-library/, { timeout: 30000 });
-    await waitForPageText(page, "提示词工作台");
+    await page.getByRole("link", { name: "训练与评估" }).click();
+    await expect(page).toHaveURL(/\/training(?:\?|$)/, { timeout: 30000 });
+    await waitForPageText(page, "训练与评估");
 
     await page.getByRole("button", { name: /user-center 模板/ }).click();
     await page.getByLabel("名称").fill(`${artifactPrefix} user-center 澄清`);
@@ -119,7 +119,7 @@ test.describe("提示词工作台", () => {
         asset_type: "实验",
         payload: {
           调试包: {
-            执行方式: "不真实执行 agent",
+            执行方式: expect.stringContaining("未创建真实 Agent 任务"),
             期望输出: "输出需求澄清结论、风险、测试证据和下一步建议。",
           },
         },

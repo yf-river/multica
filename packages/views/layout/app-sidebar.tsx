@@ -31,6 +31,7 @@ import {
   CircleUser,
   FolderKanban,
   BarChart3,
+  ChartNoAxesCombined,
   X,
   Zap,
   Users,
@@ -112,6 +113,7 @@ type NavKey =
   | "agents"
   | "squads"
   | "usage"
+  | "training"
   | "runtimes"
   | "promptLibrary"
   | "skills"
@@ -127,6 +129,7 @@ type NavLabelKey =
   | "agents"
   | "squads"
   | "usage"
+  | "training"
   | "runtimes"
   | "prompt_library"
   | "skills"
@@ -144,11 +147,11 @@ const workspaceNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[]
   { key: "agents", labelKey: "agents", icon: Bot },
   { key: "squads", labelKey: "squads", icon: Users },
   { key: "usage", labelKey: "usage", icon: BarChart3 },
+  { key: "training", labelKey: "training", icon: ChartNoAxesCombined },
 ];
 
 const configureNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[] = [
   { key: "runtimes", labelKey: "runtimes", icon: Monitor },
-  { key: "promptLibrary", labelKey: "prompt_library", icon: BookOpenText },
   { key: "skills", labelKey: "skills", icon: BookOpenText },
   { key: "settings", labelKey: "settings", icon: Settings },
 ];

@@ -59,14 +59,26 @@ type UpdatePromptEvaluationAssetRequest struct {
 }
 
 type promptEvaluationRunResult struct {
-	RunAt           string                          `json:"运行时间"`
-	AssetType       string                          `json:"资产类型"`
-	PromptName      string                          `json:"提示词"`
-	TotalCases      int                             `json:"总用例数"`
-	PassedCases     int                             `json:"通过用例数"`
-	FailedCases     int                             `json:"失败用例数"`
-	MissingVarCount int                             `json:"缺失变量数"`
-	CaseResults     []promptEvaluationCaseRunResult `json:"用例结果"`
+	RunAt             string                          `json:"运行时间"`
+	AssetType         string                          `json:"资产类型"`
+	PromptName        string                          `json:"提示词"`
+	TotalCases        int                             `json:"总用例数"`
+	PassedCases       int                             `json:"通过用例数"`
+	FailedCases       int                             `json:"失败用例数"`
+	PassRate          float64                         `json:"通过率"`
+	TotalDurationMs   int64                           `json:"总耗时毫秒"`
+	AverageDurationMs int64                           `json:"平均耗时毫秒"`
+	InputTokens       int                             `json:"输入token"`
+	OutputTokens      int                             `json:"输出token"`
+	EstimatedCost     float64                         `json:"预估成本"`
+	AgentName         string                          `json:"执行Agent"`
+	Model             string                          `json:"模型"`
+	Runtime           string                          `json:"runtime"`
+	TraceTaskID       string                          `json:"trace/task id"`
+	FailureReason     string                          `json:"失败原因"`
+	Conclusion        string                          `json:"评估结论"`
+	MissingVarCount   int                             `json:"缺失变量数"`
+	CaseResults       []promptEvaluationCaseRunResult `json:"用例结果"`
 }
 
 type promptEvaluationCaseRunResult struct {
@@ -404,10 +416,13 @@ func decodePayloadObject(raw []byte) map[string]any {
 }
 
 func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.PromptLibraryItem, payload map[string]any) promptEvaluationRunResult {
+	started := time.Now()
 	cases := promptEvaluationCases(payload)
 	results := make([]promptEvaluationCaseRunResult, 0, len(cases))
 	passed := 0
 	missingCount := 0
+	inputTokens := 0
+	outputTokens := 0
 	for idx, c := range cases {
 		name := stringFromAny(firstValue(c, "name", "名称"))
 		if name == "" {
@@ -416,6 +431,8 @@ func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.Pr
 		variables := stringMapFromAny(firstValue(c, "variables", "变量", "输入变量"))
 		expected := stringListFromAny(firstValue(c, "expected_contains", "期望包含", "期望"))
 		rendered, used, missing := renderPromptContent(prompt.Content, prompt.Variables, variables)
+		inputTokens += estimatePromptEvaluationTokens(prompt.Content)
+		outputTokens += estimatePromptEvaluationTokens(rendered)
 		matched := make([]string, 0, len(expected))
 		for _, expectedText := range expected {
 			if expectedText != "" && strings.Contains(rendered, expectedText) {
@@ -440,20 +457,50 @@ func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.Pr
 			MatchedContains:  matched,
 		})
 	}
+	durationMs := time.Since(started).Milliseconds()
+	if durationMs < 1 {
+		durationMs = 1
+	}
+	totalCases := len(results)
+	failed := totalCases - passed
+	passRate := 0.0
+	averageMs := int64(0)
+	if totalCases > 0 {
+		passRate = float64(passed) / float64(totalCases)
+		averageMs = durationMs / int64(totalCases)
+	}
+	failureReason := "无"
+	conclusion := "通过"
+	if failed > 0 {
+		failureReason = "存在缺失变量或期望内容未命中"
+		conclusion = "未通过"
+	}
 	return promptEvaluationRunResult{
-		RunAt:           time.Now().UTC().Format(time.RFC3339),
-		AssetType:       asset.AssetType,
-		PromptName:      prompt.Name,
-		TotalCases:      len(results),
-		PassedCases:     passed,
-		FailedCases:     len(results) - passed,
-		MissingVarCount: missingCount,
-		CaseResults:     results,
+		RunAt:             time.Now().UTC().Format(time.RFC3339),
+		AssetType:         asset.AssetType,
+		PromptName:        prompt.Name,
+		TotalCases:        totalCases,
+		PassedCases:       passed,
+		FailedCases:       failed,
+		PassRate:          passRate,
+		TotalDurationMs:   durationMs,
+		AverageDurationMs: averageMs,
+		InputTokens:       inputTokens,
+		OutputTokens:      outputTokens,
+		EstimatedCost:     0,
+		AgentName:         "本地提示词渲染器",
+		Model:             "本地模板渲染",
+		Runtime:           "server",
+		TraceTaskID:       "未创建 Agent 任务",
+		FailureReason:     failureReason,
+		Conclusion:        conclusion,
+		MissingVarCount:   missingCount,
+		CaseResults:       results,
 	}
 }
 
 func promptEvaluationCases(payload map[string]any) []map[string]any {
-	raw := firstValue(payload, "cases", "用例", "测试用例")
+	raw := firstValue(payload, "cases", "用例", "测试用例", "数据集", "training_cases", "evaluation_cases", "用例集")
 	if arr, ok := raw.([]any); ok {
 		cases := make([]map[string]any, 0, len(arr))
 		for _, item := range arr {
@@ -466,6 +513,18 @@ func promptEvaluationCases(payload map[string]any) []map[string]any {
 		}
 	}
 	return []map[string]any{{"名称": "默认用例", "变量": firstValue(payload, "variables", "变量", "输入变量")}}
+}
+
+func estimatePromptEvaluationTokens(value string) int {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return 0
+	}
+	tokens := len([]rune(value)) / 4
+	if tokens < 1 {
+		return 1
+	}
+	return tokens
 }
 
 func renderPromptContent(content string, variablesRaw []byte, values map[string]string) (string, []string, []string) {

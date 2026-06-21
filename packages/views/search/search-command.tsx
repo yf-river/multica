@@ -16,6 +16,7 @@ import {
   ListTodo,
   FolderKanban,
   Bot,
+  ChartNoAxesCombined,
   Monitor,
   Moon,
   Sun,
@@ -74,6 +75,7 @@ type NavKey =
   | "issues"
   | "projects"
   | "agents"
+  | "training"
   | "runtimes"
   | "promptLibrary"
   | "skills"
@@ -84,6 +86,7 @@ interface NavPage {
   label: string;
   icon: LucideIcon;
   keywords: string[];
+  href?: string;
 }
 
 type ThemeValue = "light" | "dark" | "system";
@@ -141,23 +144,27 @@ interface SearchResults {
 
 export function SearchCommand() {
   const { t } = useT("search");
-  const navPages: NavPage[] = [
-    { key: "inbox", label: t(($) => $.pages.inbox), icon: Inbox, keywords: ["inbox", "notifications", "收件箱"] },
-    { key: "myIssues", label: t(($) => $.pages.my_issues), icon: CircleUser, keywords: ["my", "issues", "assigned", "我的"] },
-    { key: "issues", label: t(($) => $.pages.issues), icon: ListTodo, keywords: ["issues", "tasks", "bugs"] },
-    { key: "projects", label: t(($) => $.pages.projects), icon: FolderKanban, keywords: ["projects", "kanban", "项目"] },
-    { key: "agents", label: t(($) => $.pages.agents), icon: Bot, keywords: ["agents", "bots", "ai"] },
-    { key: "runtimes", label: t(($) => $.pages.runtimes), icon: Monitor, keywords: ["runtimes", "environments"] },
-    { key: "promptLibrary", label: t(($) => $.pages.prompt_library), icon: BookOpenText, keywords: ["prompts", "提示词", "library"] },
-    { key: "skills", label: t(($) => $.pages.skills), icon: BookOpenText, keywords: ["skills", "技能"] },
-    { key: "settings", label: t(($) => $.pages.settings), icon: Settings, keywords: ["settings", "config", "preferences", "设置"] },
-  ];
   const { push, pathname, getShareableUrl } = useNavigation();
+  const p: WorkspacePaths = useWorkspacePaths();
+  const navPages: NavPage[] = useMemo(
+    () => [
+      { key: "inbox", label: t(($) => $.pages.inbox), icon: Inbox, keywords: ["inbox", "notifications", "收件箱"] },
+      { key: "myIssues", label: t(($) => $.pages.my_issues), icon: CircleUser, keywords: ["my", "issues", "assigned", "我的"] },
+      { key: "issues", label: t(($) => $.pages.issues), icon: ListTodo, keywords: ["issues", "tasks", "bugs"] },
+      { key: "projects", label: t(($) => $.pages.projects), icon: FolderKanban, keywords: ["projects", "kanban", "项目"] },
+      { key: "agents", label: t(($) => $.pages.agents), icon: Bot, keywords: ["agents", "bots", "ai"] },
+      { key: "training", label: t(($) => $.pages.training), icon: ChartNoAxesCombined, keywords: ["training", "evaluation", "eval", "dataset", "experiment", "训练", "评估", "数据集", "实验"] },
+      { key: "runtimes", label: t(($) => $.pages.runtimes), icon: Monitor, keywords: ["runtimes", "environments"] },
+      { key: "promptLibrary", label: t(($) => $.pages.prompt_library), icon: BookOpenText, keywords: ["prompts", "提示词", "library"], href: p.trainingView("prompts") },
+      { key: "skills", label: t(($) => $.pages.skills), icon: BookOpenText, keywords: ["skills", "技能"] },
+      { key: "settings", label: t(($) => $.pages.settings), icon: Settings, keywords: ["settings", "config", "preferences", "设置"] },
+    ],
+    [p, t],
+  );
   const open = useSearchStore((s) => s.open);
   const setOpen = useSearchStore((s) => s.setOpen);
   const wsId = useWorkspaceId();
   const recentItems = useRecentIssuesStore(selectRecentIssues(wsId));
-  const p: WorkspacePaths = useWorkspacePaths();
   const { theme, setTheme } = useTheme();
   const { data: members = [] } = useQuery(memberListOptions(wsId));
 
@@ -188,7 +195,7 @@ export function SearchCommand() {
         page.label.toLowerCase().includes(q) ||
         page.keywords.some((kw) => kw.includes(q)),
     );
-  }, [query]);
+  }, [navPages, query]);
 
   // Detect if current route is an issue detail page — /{slug}/issues/{id}.
   // Falls back to null on any other route; used to gate issue-specific commands.
@@ -211,6 +218,17 @@ export function SearchCommand() {
         />
       ) : undefined;
 
+    const trainingCommand = (view: string, label: string, keywords: string): CommandItem => ({
+      key: `training-${view}`,
+      label,
+      icon: ChartNoAxesCombined,
+      keywords: keywords.split(" "),
+      onSelect: () => {
+        push(p.trainingView(view));
+        setOpen(false);
+      },
+    });
+
     const items: CommandItem[] = [
       {
         key: "new-issue",
@@ -232,6 +250,13 @@ export function SearchCommand() {
           setOpen(false);
         },
       },
+      trainingCommand("prompt-playground", t(($) => $.commands.open_prompt_playground), "提示词调试 prompt playground debug"),
+      trainingCommand("agent-playground", t(($) => $.commands.open_agent_playground), "Agent 调试 agent playground debug"),
+      trainingCommand("datasets", t(($) => $.commands.open_datasets), "dataset 数据集 training data"),
+      trainingCommand("test-suites", t(($) => $.commands.open_test_suites), "test suite 测试套件 eval"),
+      trainingCommand("experiments", t(($) => $.commands.open_experiments), "experiment 实验 对比"),
+      trainingCommand("optimization-runs", t(($) => $.commands.open_optimization_runs), "optimization 优化运行"),
+      trainingCommand("run-history", t(($) => $.commands.open_run_history), "history 运行历史 trace"),
     ];
 
     if (currentIssue) {
@@ -301,7 +326,7 @@ export function SearchCommand() {
     );
 
     return items;
-  }, [currentIssue, getShareableUrl, pathname, setOpen, setTheme, theme, t]);
+  }, [currentIssue, getShareableUrl, p, pathname, push, setOpen, setTheme, theme, t]);
 
   const filteredCommands = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -444,9 +469,9 @@ export function SearchCommand() {
   );
 
   const handlePageSelect = useCallback(
-    (key: NavKey) => {
+    (page: NavPage) => {
       setOpen(false);
-      push(p[key]());
+      push(page.href ?? p[page.key]());
     },
     [push, setOpen, p],
   );
@@ -502,7 +527,7 @@ export function SearchCommand() {
                   <CommandPrimitive.Item
                     key={page.key}
                     value={`page:${page.key}`}
-                    onSelect={() => handlePageSelect(page.key)}
+                    onSelect={() => handlePageSelect(page)}
                     className="flex cursor-default select-none items-center gap-2.5 rounded-lg px-3 py-2.5 text-sm outline-none data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-selected:bg-accent"
                   >
                     <page.icon className="size-4 shrink-0 text-muted-foreground" />

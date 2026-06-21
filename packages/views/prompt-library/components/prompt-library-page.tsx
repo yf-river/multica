@@ -6,8 +6,10 @@ import { Archive, BookOpenText, Loader2, Play, Plus, Save, Search, Trash2 } from
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspacePaths } from "@multica/core/paths";
 import { renderPromptTemplate } from "@multica/core/prompt-library";
 import type {
+  AgentRuntime,
   CreatePromptLibraryItemRequest,
   CreatePromptEvaluationAssetRequest,
   PromptEvaluationAsset,
@@ -23,6 +25,7 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { PageHeader } from "../../layout/page-header";
+import { useNavigation } from "../../navigation";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 
 const promptLibraryKeys = {
@@ -33,6 +36,26 @@ const promptLibraryKeys = {
 const PROMPT_TYPES = ["全部", "需求澄清", "系统提示词", "评测提示词", "小队 SOP", "通用"];
 const WORKBENCH_TABS = ["提示词库", "提示词调试场", "Agent 调试场", "数据集", "测试套件", "实验", "优化运行", "运行历史"] as const;
 type WorkbenchTab = typeof WORKBENCH_TABS[number];
+const DEFAULT_AGENT_MODEL = "minimax-m2.7-ioa";
+
+const TAB_TO_VIEW: Record<WorkbenchTab, string> = {
+  提示词库: "prompts",
+  提示词调试场: "prompt-playground",
+  "Agent 调试场": "agent-playground",
+  数据集: "datasets",
+  测试套件: "test-suites",
+  实验: "experiments",
+  优化运行: "optimization-runs",
+  运行历史: "run-history",
+};
+
+const VIEW_TO_TAB = Object.fromEntries(
+  Object.entries(TAB_TO_VIEW).map(([tab, view]) => [view, tab]),
+) as Record<string, WorkbenchTab>;
+
+function tabFromView(view: string | null): WorkbenchTab {
+  return view ? (VIEW_TO_TAB[view] ?? "提示词库") : "提示词库";
+}
 
 const USER_CENTER_TEMPLATE: CreatePromptLibraryItemRequest = {
   name: "user-center 需求澄清提示词",
@@ -57,6 +80,14 @@ type PromptDraft = {
   status: PromptLibraryStatus;
 };
 
+type AgentRuntimeReadiness = {
+  status: "就绪" | "离线" | "缺失";
+  label: string;
+  detail: string;
+  fix: string;
+  runtime: AgentRuntime | null;
+};
+
 const emptyDraft = (): PromptDraft => ({
   name: "",
   description: "",
@@ -69,6 +100,8 @@ const emptyDraft = (): PromptDraft => ({
 
 export function PromptLibraryPage() {
   const workspaceId = useWorkspaceId();
+  const workspacePaths = useWorkspacePaths();
+  const navigation = useNavigation();
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [typeFilter, setTypeFilter] = useState("全部");
@@ -76,8 +109,13 @@ export function PromptLibraryPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<PromptDraft>(emptyDraft);
   const [debugValuesText, setDebugValuesText] = useState("");
-  const [activeTab, setActiveTab] = useState<WorkbenchTab>("提示词库");
+  const viewParam = navigation.searchParams.get("view");
+  const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => tabFromView(viewParam));
   const [agentExpectedText, setAgentExpectedText] = useState("");
+
+  useEffect(() => {
+    setActiveTab(tabFromView(viewParam));
+  }, [viewParam]);
 
   const listQuery = useQuery({
     queryKey: promptLibraryKeys.list(workspaceId ?? ""),
@@ -91,9 +129,19 @@ export function PromptLibraryPage() {
     enabled: !!workspaceId,
   });
 
+  const runtimeQuery = useQuery({
+    queryKey: ["training-evaluation", workspaceId ?? "", "runtimes"],
+    queryFn: () => api.listRuntimes({ workspace_id: workspaceId ?? undefined }),
+    enabled: !!workspaceId,
+  });
+
   const items = listQuery.data?.items ?? [];
   const assets = assetQuery.data?.items ?? [];
   const selected = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
+  const agentRuntimeReadiness = useMemo(
+    () => evaluateCodeBuddyReadiness(runtimeQuery.data ?? []),
+    [runtimeQuery.data],
+  );
 
   useEffect(() => {
     if (!selected && selectedId && items.length > 0) {
@@ -209,6 +257,11 @@ export function PromptLibraryPage() {
     setDebugValuesText(valuesToDebugText(USER_CENTER_TEMPLATE.variables ?? []));
   };
 
+  const selectWorkbenchTab = (tab: WorkbenchTab) => {
+    setActiveTab(tab);
+    navigation.push(workspacePaths.trainingView(TAB_TO_VIEW[tab]));
+  };
+
   const saveDraft = () => {
     const payload = draftToRequest(draft);
     if (!payload.name.trim()) {
@@ -293,7 +346,7 @@ export function PromptLibraryPage() {
     createAssetMut.mutate({
       prompt_id: prompt.id,
       name: `${prompt.name} Agent 调试包 ${new Date().toLocaleString("zh-CN")}`,
-      description: "Agent 调试场 v1 记录：不真实执行 agent，只保存调试包和期望输出。",
+      description: `Agent 调试场记录：${buildAgentExecutionStatus(agentRuntimeReadiness)}`,
       asset_type: "实验",
       payload: {
         调试包: {
@@ -301,7 +354,15 @@ export function PromptLibraryPage() {
           变量: values,
           上下文: debugResult.rendered,
           期望输出: agentExpectedText,
-          执行方式: "不真实执行 agent",
+          执行方式: buildAgentExecutionStatus(agentRuntimeReadiness),
+        },
+        运行环境: {
+          目标Runtime: "CodeBuddy",
+          目标模型: DEFAULT_AGENT_MODEL,
+          状态: agentRuntimeReadiness.status,
+          说明: agentRuntimeReadiness.detail,
+          修复路径: agentRuntimeReadiness.fix,
+          runtime_id: agentRuntimeReadiness.runtime?.id ?? null,
         },
         对比维度: ["上下文完整性", "期望输出覆盖", "中文语义一致性"],
       },
@@ -326,7 +387,7 @@ export function PromptLibraryPage() {
       <PageHeader>
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <BookOpenText className="size-4 shrink-0 text-muted-foreground" />
-          <h1 className="truncate text-sm font-semibold">提示词工作台</h1>
+          <h1 className="truncate text-sm font-semibold">训练与评估</h1>
           <span className="text-xs text-muted-foreground">{items.length}</span>
         </div>
         <div className="flex items-center gap-2">
@@ -343,7 +404,7 @@ export function PromptLibraryPage() {
 
       <div className="flex shrink-0 gap-1 overflow-x-auto border-b px-3 py-2">
         {WORKBENCH_TABS.map((tab) => (
-          <FilterButton key={tab} active={activeTab === tab} onClick={() => setActiveTab(tab)}>
+          <FilterButton key={tab} active={activeTab === tab} onClick={() => selectWorkbenchTab(tab)}>
             {tab}
           </FilterButton>
         ))}
@@ -529,6 +590,8 @@ export function PromptLibraryPage() {
               assets={assets}
               loading={assetQuery.isLoading}
               saving={savingAsset}
+              runtimeReadiness={agentRuntimeReadiness}
+              runtimeLoading={runtimeQuery.isLoading}
               agentExpectedText={agentExpectedText}
               onAgentExpectedTextChange={setAgentExpectedText}
               onCreateAsset={createWorkbenchAsset}
@@ -550,6 +613,8 @@ function WorkbenchPanel({
   loading,
   saving,
   agentExpectedText,
+  runtimeReadiness,
+  runtimeLoading,
   onAgentExpectedTextChange,
   onCreateAsset,
   onSaveAgentDebugPackage,
@@ -561,6 +626,8 @@ function WorkbenchPanel({
   assets: PromptEvaluationAsset[];
   loading: boolean;
   saving: boolean;
+  runtimeReadiness: AgentRuntimeReadiness;
+  runtimeLoading: boolean;
   agentExpectedText: string;
   onAgentExpectedTextChange: (value: string) => void;
   onCreateAsset: (assetType: PromptEvaluationAssetType) => void;
@@ -586,12 +653,25 @@ function WorkbenchPanel({
         <div className="flex items-center justify-between gap-2">
           <div>
             <h3 className="text-sm font-semibold">Agent 调试场</h3>
-            <p className="mt-1 text-xs text-muted-foreground">v1 不真实执行 agent，只生成调试包、保存变量、上下文和期望输出。</p>
+            <p className="mt-1 text-xs text-muted-foreground">当前仅保存调试包；未创建真实任务时会明确写入环境状态和修复路径。</p>
           </div>
           <Button size="sm" onClick={onSaveAgentDebugPackage} disabled={!selected || saving}>
             {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
             保存为实验
           </Button>
+        </div>
+        <div className="grid gap-2 rounded-md border bg-muted/20 p-3 text-xs">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium text-foreground">真实执行准备度</span>
+            <Badge variant={runtimeReadiness.status === "就绪" ? "secondary" : "outline"}>
+              {runtimeLoading ? "检查中" : runtimeReadiness.label}
+            </Badge>
+            <span className="text-muted-foreground">目标模型 {DEFAULT_AGENT_MODEL}</span>
+          </div>
+          <div className="text-muted-foreground">{runtimeLoading ? "正在检查当前 workspace 的运行时列表。" : runtimeReadiness.detail}</div>
+          {runtimeReadiness.status !== "就绪" && !runtimeLoading && (
+            <div className="text-muted-foreground">修复路径：{runtimeReadiness.fix}</div>
+          )}
         </div>
         <Field label="期望输出">
           <Textarea
@@ -663,6 +743,44 @@ function WorkbenchPanel({
       )}
     </section>
   );
+}
+
+function evaluateCodeBuddyReadiness(runtimes: AgentRuntime[]): AgentRuntimeReadiness {
+  const codeBuddyRuntimes = runtimes.filter((runtime) => runtime.provider.toLowerCase() === "codebuddy");
+  const onlineRuntime = codeBuddyRuntimes.find((runtime) => runtime.status === "online") ?? null;
+  if (onlineRuntime) {
+    return {
+      status: "就绪",
+      label: "CodeBuddy 在线",
+      detail: `已发现在线 CodeBuddy runtime「${onlineRuntime.name}」，可以作为 ${DEFAULT_AGENT_MODEL} 的真实执行目标。`,
+      fix: "无需修复；下一步应创建真实 Agent 任务并采集 trace、token、成本和输出。",
+      runtime: onlineRuntime,
+    };
+  }
+  const offlineRuntime = codeBuddyRuntimes[0] ?? null;
+  if (offlineRuntime) {
+    return {
+      status: "离线",
+      label: "CodeBuddy 离线",
+      detail: `已注册 CodeBuddy runtime「${offlineRuntime.name}」，但当前状态是离线，不能创建真实 Agent 任务。`,
+      fix: "启动 multica daemon，并确认 codebuddy 可执行文件在 PATH 中，或设置 MULTICA_CODEBUDDY_PATH 后重启 daemon。",
+      runtime: offlineRuntime,
+    };
+  }
+  return {
+    status: "缺失",
+    label: "CodeBuddy 缺失",
+    detail: "当前 workspace 未发现 CodeBuddy runtime，Agent 调试场不能执行 minimax-m2.7-ioa。",
+    fix: "安装并配置 codebuddy，启动 multica daemon，等待 /api/runtimes 出现 provider=codebuddy 且 status=online 的 runtime。",
+    runtime: null,
+  };
+}
+
+function buildAgentExecutionStatus(readiness: AgentRuntimeReadiness): string {
+  if (readiness.status === "就绪") {
+    return `CodeBuddy runtime 已在线，目标模型 ${DEFAULT_AGENT_MODEL}；当前记录仅保存调试包，尚未创建真实 Agent 任务`;
+  }
+  return `${readiness.label}，目标模型 ${DEFAULT_AGENT_MODEL}；未创建真实 Agent 任务`;
 }
 
 function FilterButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
@@ -743,37 +861,60 @@ function buildAssetPayload(
   values: Record<string, string>,
   rendered: string,
 ): Record<string, unknown> {
-  const casePayload = {
-    名称: `${prompt.name} 基准用例`,
-    变量: values,
-    期望包含: Object.values(values).filter(Boolean),
-  };
-  if (assetType === "数据集") {
-    return {
-      数据集: [casePayload],
-      字段说明: ["名称", "变量", "期望包含"],
-      中文语义: "用于提示词调试和实验复现的基准样本。",
-    };
-  }
-  if (assetType === "测试套件") {
-    return {
-      cases: [casePayload],
-      通过标准: ["变量完整", "渲染内容包含期望关键词", "输出保持中文"],
-    };
-  }
-  if (assetType === "实验") {
-    return {
-      实验对象: prompt.name,
-      对比维度: ["命中率", "缺失变量", "中文一致性"],
-      基线输出: rendered,
-      cases: [casePayload],
-    };
-  }
-  return {
-    cases: [casePayload],
-    调试输出: rendered,
-    运行结果: {
-      状态: "已记录",
+	  const casePayload = {
+	    名称: `${prompt.name} 基准用例`,
+	    变量: values,
+	    期望包含: Object.values(values).filter(Boolean),
+	  };
+	  const basePayload = {
+	    schema_version: 1,
+	    语义版本: "multica.training_evaluation.v1",
+	    cases: [casePayload],
+	    指标口径: [
+	      "总用例数",
+	      "通过数",
+	      "失败数",
+	      "通过率",
+	      "总耗时",
+	      "平均耗时",
+	      "输入token",
+	      "输出token",
+	      "预估成本",
+	      "执行Agent",
+	      "模型",
+	      "runtime",
+	      "trace/task id",
+	      "失败原因",
+	      "评估结论",
+	    ],
+	  };
+	  if (assetType === "数据集") {
+	    return {
+	      ...basePayload,
+	      数据集: [casePayload],
+	      字段说明: ["名称", "变量", "期望包含"],
+	      中文语义: "用于提示词调试和实验复现的基准样本。",
+	    };
+	  }
+	  if (assetType === "测试套件") {
+	    return {
+	      ...basePayload,
+	      通过标准: ["变量完整", "渲染内容包含期望关键词", "输出保持中文"],
+	    };
+	  }
+	  if (assetType === "实验") {
+	    return {
+	      ...basePayload,
+	      实验对象: prompt.name,
+	      对比维度: ["命中率", "缺失变量", "中文一致性"],
+	      基线输出: rendered,
+	    };
+	  }
+	  return {
+	    ...basePayload,
+	    调试输出: rendered,
+	    运行结果: {
+	      状态: "已记录",
       运行时间: new Date().toISOString(),
     },
   };

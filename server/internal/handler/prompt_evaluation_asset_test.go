@@ -130,10 +130,73 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 	if recent["总用例数"] != float64(1) || recent["通过用例数"] != float64(1) || recent["缺失变量数"] != float64(0) {
 		t.Fatalf("unexpected run metrics: %#v", recent)
 	}
+	if recent["通过率"] != float64(1) || recent["执行Agent"] != "本地提示词渲染器" || recent["模型"] != "本地模板渲染" || recent["runtime"] != "server" {
+		t.Fatalf("missing production metrics: %#v", recent)
+	}
+	if recent["trace/task id"] != "未创建 Agent 任务" || recent["评估结论"] != "通过" {
+		t.Fatalf("unexpected trace/conclusion: %#v", recent)
+	}
 	results := recent["用例结果"].([]any)
 	first := results[0].(map[string]any)
 	if first["渲染提示词"] != "请澄清 登录失败，仓库是 user-center。" {
 		t.Fatalf("rendered prompt = %q", first["渲染提示词"])
+	}
+}
+
+func TestRunPromptEvaluationAssetReadsDatasetPayload(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
+	})
+	promptID := createPromptEvaluationTestPromptWithContent(
+		t,
+		testWorkspaceID,
+		"数据集渲染提示词",
+		"项目 {{project}} 需要澄清 {{issue_title}}。",
+		`[]`,
+	)
+
+	createW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+		"prompt_id":  promptID,
+		"name":       "中文数据集可运行",
+		"asset_type": "数据集",
+		"payload": map[string]any{
+			"schema_version": 1,
+			"语义版本":           "multica.training_evaluation.v1",
+			"数据集": []map[string]any{
+				{
+					"名称":   "中文键数据集用例",
+					"变量":   map[string]any{"project": "user-center", "issue_title": "登录失败"},
+					"期望包含": []string{"user-center", "登录失败"},
+				},
+			},
+		},
+	}))
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
+	}
+	var created PromptEvaluationAssetResponse
+	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	runW := httptest.NewRecorder()
+	testHandler.RunPromptEvaluationAsset(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/run", nil), "id", created.ID))
+	if runW.Code != http.StatusOK {
+		t.Fatalf("run status = %d, body = %s", runW.Code, runW.Body.String())
+	}
+	var ran PromptEvaluationAssetResponse
+	if err := json.Unmarshal(runW.Body.Bytes(), &ran); err != nil {
+		t.Fatalf("decode run response: %v", err)
+	}
+	payload := ran.Payload.(map[string]any)
+	recent := payload["最近运行"].(map[string]any)
+	if recent["总用例数"] != float64(1) || recent["通过用例数"] != float64(1) || recent["通过率"] != float64(1) {
+		t.Fatalf("dataset metrics = %#v", recent)
 	}
 }
 
