@@ -44,10 +44,12 @@ ORDER BY created_at DESC, id DESC;
 SELECT r.*
 FROM squad_sop_run r
 JOIN issue i ON i.id = r.issue_id
+LEFT JOIN agent_task_queue atq ON atq.id = r.leader_task_id
 WHERE r.workspace_id = $1
   AND (sqlc.narg('since')::timestamptz IS NULL OR r.created_at >= sqlc.narg('since'))
   AND (sqlc.narg('squad_id')::uuid IS NULL OR r.squad_id = sqlc.narg('squad_id'))
   AND (sqlc.narg('project_id')::uuid IS NULL OR i.project_id = sqlc.narg('project_id'))
+  AND (sqlc.narg('agent_id')::uuid IS NULL OR atq.agent_id = sqlc.narg('agent_id'))
 ORDER BY r.created_at DESC, r.id DESC
 LIMIT $2 OFFSET $3;
 
@@ -91,7 +93,9 @@ ORDER BY created_at ASC, id ASC;
 SELECT count(*)
 FROM squad_sop_step_event e
 JOIN issue i ON i.id = e.issue_id
+LEFT JOIN agent_task_queue atq ON atq.id = e.task_id
 WHERE e.workspace_id = $1
   AND (sqlc.narg('since')::timestamptz IS NULL OR e.created_at >= sqlc.narg('since'))
   AND (sqlc.narg('squad_id')::uuid IS NULL OR e.squad_id = sqlc.narg('squad_id'))
-  AND (sqlc.narg('project_id')::uuid IS NULL OR i.project_id = sqlc.narg('project_id'));
+  AND (sqlc.narg('project_id')::uuid IS NULL OR i.project_id = sqlc.narg('project_id'))
+  AND (sqlc.narg('agent_id')::uuid IS NULL OR atq.agent_id = sqlc.narg('agent_id'));

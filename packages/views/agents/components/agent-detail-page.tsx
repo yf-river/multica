@@ -43,6 +43,7 @@ import {
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
+import { ObservabilitySummaryCard } from "../../common/observability-summary-card";
 import { AppLink, useNavigation } from "../../navigation";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
 import { PageHeader } from "../../layout/page-header";
@@ -284,18 +285,25 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
       )}
 
       <div className="flex flex-1 min-h-0 flex-col gap-3 overflow-y-auto p-3 md:grid md:grid-cols-[320px_minmax(0,1fr)] md:gap-4 md:overflow-hidden md:p-6">
-        <AgentDetailInspector
-          agent={agent}
-          runtime={runtime}
-          owner={owner}
-          presence={presence}
-          runtimes={runtimes}
-          members={members}
-          currentUserId={currentUser?.id ?? null}
-          canEdit={canEdit.allowed}
-          onUpdate={handleUpdate}
-          onShowIntegrations={() => setTabNavIntent("integrations")}
-        />
+        <div className="flex min-h-0 flex-col gap-3 md:h-full md:overflow-y-auto">
+          <AgentDetailInspector
+            agent={agent}
+            runtime={runtime}
+            owner={owner}
+            presence={presence}
+            runtimes={runtimes}
+            members={members}
+            currentUserId={currentUser?.id ?? null}
+            canEdit={canEdit.allowed}
+            onUpdate={handleUpdate}
+            onShowIntegrations={() => setTabNavIntent("integrations")}
+          />
+          <ObservabilitySummaryCard
+            title="Agent 观测摘要"
+            scopeLabel="按当前 Agent 聚合 trace、token、成本、耗时和证据"
+            agentId={agent.id}
+          />
+        </div>
 
         <AgentOverviewPane
           agent={agent}

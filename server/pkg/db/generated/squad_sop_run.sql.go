@@ -50,10 +50,12 @@ const countWorkspaceSquadSOPStepEvents = `-- name: CountWorkspaceSquadSOPStepEve
 SELECT count(*)
 FROM squad_sop_step_event e
 JOIN issue i ON i.id = e.issue_id
+LEFT JOIN agent_task_queue atq ON atq.id = e.task_id
 WHERE e.workspace_id = $1
   AND ($2::timestamptz IS NULL OR e.created_at >= $2)
   AND ($3::uuid IS NULL OR e.squad_id = $3)
   AND ($4::uuid IS NULL OR i.project_id = $4)
+  AND ($5::uuid IS NULL OR atq.agent_id = $5)
 `
 
 type CountWorkspaceSquadSOPStepEventsParams struct {
@@ -61,6 +63,7 @@ type CountWorkspaceSquadSOPStepEventsParams struct {
 	Since       pgtype.Timestamptz `json:"since"`
 	SquadID     pgtype.UUID        `json:"squad_id"`
 	ProjectID   pgtype.UUID        `json:"project_id"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
 }
 
 func (q *Queries) CountWorkspaceSquadSOPStepEvents(ctx context.Context, arg CountWorkspaceSquadSOPStepEventsParams) (int64, error) {
@@ -69,6 +72,7 @@ func (q *Queries) CountWorkspaceSquadSOPStepEvents(ctx context.Context, arg Coun
 		arg.Since,
 		arg.SquadID,
 		arg.ProjectID,
+		arg.AgentID,
 	)
 	var count int64
 	err := row.Scan(&count)
@@ -415,10 +419,12 @@ const listWorkspaceSquadSOPRuns = `-- name: ListWorkspaceSquadSOPRuns :many
 SELECT r.id, r.workspace_id, r.issue_id, r.squad_id, r.leader_task_id, r.profile_key, r.profile, r.status, r.current_step_key, r.started_at, r.completed_at, r.total_duration_ms, r.created_at, r.updated_at
 FROM squad_sop_run r
 JOIN issue i ON i.id = r.issue_id
+LEFT JOIN agent_task_queue atq ON atq.id = r.leader_task_id
 WHERE r.workspace_id = $1
   AND ($4::timestamptz IS NULL OR r.created_at >= $4)
   AND ($5::uuid IS NULL OR r.squad_id = $5)
   AND ($6::uuid IS NULL OR i.project_id = $6)
+  AND ($7::uuid IS NULL OR atq.agent_id = $7)
 ORDER BY r.created_at DESC, r.id DESC
 LIMIT $2 OFFSET $3
 `
@@ -430,6 +436,7 @@ type ListWorkspaceSquadSOPRunsParams struct {
 	Since       pgtype.Timestamptz `json:"since"`
 	SquadID     pgtype.UUID        `json:"squad_id"`
 	ProjectID   pgtype.UUID        `json:"project_id"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
 }
 
 func (q *Queries) ListWorkspaceSquadSOPRuns(ctx context.Context, arg ListWorkspaceSquadSOPRunsParams) ([]SquadSopRun, error) {
@@ -440,6 +447,7 @@ func (q *Queries) ListWorkspaceSquadSOPRuns(ctx context.Context, arg ListWorkspa
 		arg.Since,
 		arg.SquadID,
 		arg.ProjectID,
+		arg.AgentID,
 	)
 	if err != nil {
 		return nil, err

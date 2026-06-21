@@ -1347,11 +1347,12 @@ export class ApiClient {
     return this.fetch(`/api/workspaces/${id}`);
   }
 
-  async getWorkspaceObservabilitySummary(id: string, paramsInput?: { since?: string; squad_id?: string; project_id?: string }): Promise<ObservabilitySummary> {
+  async getWorkspaceObservabilitySummary(id: string, paramsInput?: { since?: string; squad_id?: string; project_id?: string; agent_id?: string }): Promise<ObservabilitySummary> {
     const params = new URLSearchParams();
     if (paramsInput?.since) params.set("since", paramsInput.since);
     if (paramsInput?.squad_id) params.set("squad_id", paramsInput.squad_id);
     if (paramsInput?.project_id) params.set("project_id", paramsInput.project_id);
+    if (paramsInput?.agent_id) params.set("agent_id", paramsInput.agent_id);
     const raw = await this.fetch<unknown>(`/api/workspaces/${id}/observability/summary${params.toString() ? `?${params}` : ""}`);
     return parseWithFallback(raw, ObservabilitySummarySchema, EMPTY_OBSERVABILITY_SUMMARY, {
       endpoint: "GET /api/workspaces/:id/observability/summary",

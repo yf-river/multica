@@ -33,5 +33,6 @@ WHERE workspace_id = $1
   AND (sqlc.narg('event_type')::text IS NULL OR event_type = sqlc.narg('event_type'))
   AND (sqlc.narg('squad_id')::uuid IS NULL OR squad_id = sqlc.narg('squad_id'))
   AND (sqlc.narg('project_id')::uuid IS NULL OR project_id = sqlc.narg('project_id'))
+  AND (sqlc.narg('agent_id')::uuid IS NULL OR agent_id = sqlc.narg('agent_id'))
 ORDER BY created_at DESC, id DESC
 LIMIT $2 OFFSET $3;

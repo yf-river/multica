@@ -348,12 +348,17 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
+	agentID, ok := optionalUUIDParam(w, r.URL.Query().Get("agent_id"), "agent_id")
+	if !ok {
+		return
+	}
 	runs, err := h.Queries.ListWorkspaceSquadSOPRuns(r.Context(), db.ListWorkspaceSquadSOPRunsParams{
 		WorkspaceID: workspaceID,
 		Limit:       500,
 		Since:       since,
 		SquadID:     squadID,
 		ProjectID:   projectID,
+		AgentID:     agentID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list SOP runs")
@@ -365,6 +370,7 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 		Since:       since,
 		SquadID:     squadID,
 		ProjectID:   projectID,
+		AgentID:     agentID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list task trace events")
@@ -375,6 +381,7 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 		Since:       since,
 		SquadID:     squadID,
 		ProjectID:   projectID,
+		AgentID:     agentID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to count SOP events")

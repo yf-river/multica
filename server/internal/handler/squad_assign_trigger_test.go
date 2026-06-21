@@ -68,6 +68,15 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 	if taskCount == 0 {
 		t.Fatalf("expected squad-leader task to be enqueued after squad-assigned create, got 0")
 	}
+	var taskID, runtimeID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT id::text, runtime_id::text FROM agent_task_queue
+		WHERE issue_id = $1 AND agent_id = $2
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, created.ID, leaderID).Scan(&taskID, &runtimeID); err != nil {
+		t.Fatalf("load leader task: %v", err)
+	}
 
 	var runID string
 	if err := testPool.QueryRow(ctx, `
@@ -120,6 +129,22 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 	if recordedEvent.CreatedByType == "agent" {
 		t.Fatalf("SOP event actor trusted spoofed request payload: %#v", recordedEvent)
 	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO task_trace_event (
+			workspace_id, task_id, issue_id, squad_id, agent_id, runtime_id,
+			source, event_type, event_name, status, provider, model,
+			input_tokens, output_tokens, cache_read_tokens, cache_write_tokens,
+			failure_reason, error_type, metadata
+		)
+		VALUES (
+			$1, $2, $3, $4, $5, $6,
+			'squad_sop', 'squad.leader.completed', '编码小队队长任务完成',
+			'completed', 'codebuddy', 'minimax-m2.7-ioa',
+			36, 19, 5, 7, '无', '', '{}'::jsonb
+		)
+	`, testWorkspaceID, taskID, created.ID, squadID, leaderID, runtimeID); err != nil {
+		t.Fatalf("insert leader trace: %v", err)
+	}
 
 	summaryReq := newRequest("GET", "/api/workspaces/"+testWorkspaceID+"/observability/summary", nil)
 	summaryReq = withURLParam(summaryReq, "id", testWorkspaceID)
@@ -127,6 +152,25 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 	testHandler.GetWorkspaceObservabilitySummary(summaryW, summaryReq)
 	if summaryW.Code != http.StatusOK {
 		t.Fatalf("GetWorkspaceObservabilitySummary: expected 200, got %d: %s", summaryW.Code, summaryW.Body.String())
+	}
+
+	agentSummaryReq := newRequest("GET", "/api/workspaces/"+testWorkspaceID+"/observability/summary?agent_id="+leaderID, nil)
+	agentSummaryReq = withURLParam(agentSummaryReq, "id", testWorkspaceID)
+	agentSummaryW := httptest.NewRecorder()
+	testHandler.GetWorkspaceObservabilitySummary(agentSummaryW, agentSummaryReq)
+	if agentSummaryW.Code != http.StatusOK {
+		t.Fatalf("GetWorkspaceObservabilitySummary(agent): expected 200, got %d: %s", agentSummaryW.Code, agentSummaryW.Body.String())
+	}
+	var agentSummary map[string]any
+	if err := json.NewDecoder(agentSummaryW.Body).Decode(&agentSummary); err != nil {
+		t.Fatalf("decode agent summary: %v", err)
+	}
+	agentMetrics := agentSummary["指标"].(map[string]any)
+	if got := agentMetrics["输入 token"]; got != float64(36) {
+		t.Fatalf("agent 输入 token = %v, want 36", got)
+	}
+	if got := agentMetrics["预估成本"]; got == nil || got == float64(0) {
+		t.Fatalf("agent 预估成本 = %v, want > 0", got)
 	}
 }
 

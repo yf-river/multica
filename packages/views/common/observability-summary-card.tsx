@@ -10,15 +10,17 @@ type ObservabilitySummaryCardProps = {
   scopeLabel: string;
   projectId?: string | null;
   squadId?: string | null;
+  agentId?: string | null;
 };
 
-export function ObservabilitySummaryCard({ title, scopeLabel, projectId, squadId }: ObservabilitySummaryCardProps) {
+export function ObservabilitySummaryCard({ title, scopeLabel, projectId, squadId, agentId }: ObservabilitySummaryCardProps) {
   const workspaceId = useWorkspaceId();
   const { data } = useQuery({
-    queryKey: ["observability-summary", workspaceId, projectId ?? "", squadId ?? ""],
+    queryKey: ["observability-summary", workspaceId, projectId ?? "", squadId ?? "", agentId ?? ""],
     queryFn: () => api.getWorkspaceObservabilitySummary(workspaceId, {
       ...(projectId ? { project_id: projectId } : {}),
       ...(squadId ? { squad_id: squadId } : {}),
+      ...(agentId ? { agent_id: agentId } : {}),
     }),
     enabled: !!workspaceId,
     staleTime: 30_000,

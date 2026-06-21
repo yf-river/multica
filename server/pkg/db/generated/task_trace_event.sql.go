@@ -249,6 +249,7 @@ WHERE workspace_id = $1
   AND ($5::text IS NULL OR event_type = $5)
   AND ($6::uuid IS NULL OR squad_id = $6)
   AND ($7::uuid IS NULL OR project_id = $7)
+  AND ($8::uuid IS NULL OR agent_id = $8)
 ORDER BY created_at DESC, id DESC
 LIMIT $2 OFFSET $3
 `
@@ -261,6 +262,7 @@ type ListWorkspaceTaskTraceEventsParams struct {
 	EventType   pgtype.Text        `json:"event_type"`
 	SquadID     pgtype.UUID        `json:"squad_id"`
 	ProjectID   pgtype.UUID        `json:"project_id"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
 }
 
 func (q *Queries) ListWorkspaceTaskTraceEvents(ctx context.Context, arg ListWorkspaceTaskTraceEventsParams) ([]TaskTraceEvent, error) {
@@ -272,6 +274,7 @@ func (q *Queries) ListWorkspaceTaskTraceEvents(ctx context.Context, arg ListWork
 		arg.EventType,
 		arg.SquadID,
 		arg.ProjectID,
+		arg.AgentID,
 	)
 	if err != nil {
 		return nil, err

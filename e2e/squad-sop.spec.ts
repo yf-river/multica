@@ -138,5 +138,11 @@ test.describe("小队 SOP 端到端", () => {
     await expect(page.getByText("模型明细", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("runtime 明细", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("证据数", { exact: true }).first()).toBeVisible();
+
+    await page.goto(`/${workspaceSlug}/agents/${squad.leaderAgentId}`, { waitUntil: "domcontentloaded" });
+    await expect(page.getByText("Agent 观测摘要", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
+    await expect(page.getByText("按当前 Agent 聚合 trace、token、成本、耗时和证据", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("预估成本", { exact: true }).first()).toBeVisible();
+    await expect(page.getByText("minimax/m2.7").first()).toBeVisible();
   });
 });
