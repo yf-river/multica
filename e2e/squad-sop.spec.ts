@@ -58,6 +58,25 @@ test.describe("小队 SOP 端到端", () => {
     expect(initialRun!.events.some((event) => event.event_type === "步骤开始")).toBe(true);
     expect((initialRun!.profile.steps as unknown[]).length).toBe(6);
 
+    for (const [stepId, stepName, nextStep] of [
+      ["receive", "需求接收与流程判断", "design"],
+      ["design", "技术方案与测试方案", "develop"],
+      ["develop", "范围内实现", "acceptance"],
+    ] as const) {
+      await api.recordSOPStepEvent(initialRun!.id, stepId, {
+        event_type: "步骤完成",
+        evidence: {
+          "阶段": stepName,
+          "结果": `已进入 ${nextStep}`,
+        },
+        reason: `${stepName}完成`,
+      });
+      const progressed = await api.listIssueSOPRuns(issue.id);
+      const progressedRun = progressed.items.find((item) => item.id === initialRun!.id);
+      expect(progressedRun?.current_step_key).toBe(nextStep);
+      expect(progressedRun?.status).toBe("进行中");
+    }
+
     await api.completeSquadLeaderTaskWithEvidence(leaderTask!, { squadId: squad.squadId });
     const recordedEvent = await api.recordSOPStepEvent(initialRun!.id, "acceptance", {
       event_type: "测试结果",

@@ -101,6 +101,12 @@ type CreateSOPStepEventRequest struct {
 	UpdateRun     *bool           `json:"update_run"`
 }
 
+type sopProfileStep struct {
+	Key     string
+	Name    string
+	RoleKey string
+}
+
 func squadSOPRunToResponse(run db.SquadSopRun, events []SquadSOPEventResponse) SquadSOPRunResponse {
 	metrics := map[string]any{
 		"总耗时":    int64Value(run.TotalDurationMs),
@@ -280,6 +286,47 @@ func (h *Handler) RecordSOPStepEvent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "status must be 待开始, 进行中, 已完成, 已失败 or 已阻塞")
 		return
 	}
+	profileSteps := sopProfileStepsForHandler(run.Profile)
+	step, stepIndex, stepKnown := findSOPProfileStep(profileSteps, stepKey)
+	if len(profileSteps) > 0 && !stepKnown {
+		writeError(w, http.StatusBadRequest, "step_id 必须存在于 SOP profile 的 steps 中")
+		return
+	}
+	if stepKnown {
+		if strings.TrimSpace(req.RoleKey) != "" && step.RoleKey != "" && strings.TrimSpace(req.RoleKey) != step.RoleKey {
+			writeError(w, http.StatusBadRequest, "role_key 必须匹配 SOP profile 中该阶段的角色")
+			return
+		}
+		if strings.TrimSpace(req.StepName) == "" {
+			req.StepName = step.Name
+		}
+		if strings.TrimSpace(req.RoleKey) == "" {
+			req.RoleKey = step.RoleKey
+		}
+	}
+	if strings.TrimSpace(req.Status) == "" {
+		req.Status = defaultSOPEventStatus(req.EventType, stepIndex, len(profileSteps))
+	}
+	updateRun := shouldUpdateSOPRun(req.EventType, req.UpdateRun)
+	if updateRun && stepKnown && strings.TrimSpace(run.CurrentStepKey) != "" {
+		_, currentIndex, currentKnown := findSOPProfileStep(profileSteps, run.CurrentStepKey)
+		if currentKnown && stepIndex > currentIndex {
+			writeError(w, http.StatusBadRequest, "不能跳过当前 SOP 阶段")
+			return
+		}
+		if currentKnown && stepIndex < currentIndex {
+			writeError(w, http.StatusBadRequest, "不能回退到已完成的 SOP 阶段")
+			return
+		}
+	}
+	nextStatus, nextStepKey, shouldUpdate := "", "", false
+	if updateRun {
+		nextStatus, nextStepKey, shouldUpdate = nextSOPRunState(run, profileSteps, stepIndex, stepKey, req)
+		if shouldUpdate && isTerminalSOPStatus(run.Status) && !isTerminalSOPStatus(nextStatus) {
+			writeError(w, http.StatusBadRequest, "已结束的 SOP run 不能回退为非终态")
+			return
+		}
+	}
 	evidence, ok := jsonObjectField(w, req.Evidence, "evidence")
 	if !ok {
 		return
@@ -314,16 +361,109 @@ func (h *Handler) RecordSOPStepEvent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to record SOP event")
 		return
 	}
-	updateRun := req.UpdateRun == nil || *req.UpdateRun
-	if updateRun && req.Status != "" {
-		_, _ = h.Queries.UpdateSquadSOPRunStatus(r.Context(), db.UpdateSquadSOPRunStatusParams{
+	if shouldUpdate {
+		if _, err := h.Queries.UpdateSquadSOPRunStatus(r.Context(), db.UpdateSquadSOPRunStatusParams{
 			ID:             run.ID,
 			WorkspaceID:    run.WorkspaceID,
-			Status:         req.Status,
-			CurrentStepKey: pgtype.Text{String: stepKey, Valid: true},
-		})
+			Status:         nextStatus,
+			CurrentStepKey: pgtype.Text{String: nextStepKey, Valid: true},
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update SOP run state")
+			return
+		}
 	}
 	writeJSON(w, http.StatusCreated, squadSOPEventToResponse(event))
+}
+
+func sopProfileStepsForHandler(profile []byte) []sopProfileStep {
+	var obj map[string]any
+	if json.Unmarshal(profile, &obj) != nil || obj == nil {
+		return nil
+	}
+	rawSteps, _ := obj["steps"].([]any)
+	steps := make([]sopProfileStep, 0, len(rawSteps))
+	for _, raw := range rawSteps {
+		step, _ := raw.(map[string]any)
+		if step == nil {
+			continue
+		}
+		key := firstStringField(step, "key", "step_key", "id")
+		if key == "" {
+			continue
+		}
+		steps = append(steps, sopProfileStep{
+			Key:     key,
+			Name:    firstStringField(step, "name", "title", "label"),
+			RoleKey: firstStringField(step, "role_key", "role"),
+		})
+	}
+	return steps
+}
+
+func findSOPProfileStep(steps []sopProfileStep, key string) (sopProfileStep, int, bool) {
+	for index, step := range steps {
+		if step.Key == key {
+			return step, index, true
+		}
+	}
+	return sopProfileStep{}, -1, false
+}
+
+func defaultSOPEventStatus(eventType string, stepIndex int, stepCount int) string {
+	switch eventType {
+	case "步骤失败":
+		return sopStatusFailed
+	case "步骤完成":
+		if stepCount > 0 && stepIndex == stepCount-1 {
+			return sopStatusCompleted
+		}
+		return sopStatusCompleted
+	case "步骤开始":
+		return sopStatusRunning
+	default:
+		return sopStatusRunning
+	}
+}
+
+func shouldUpdateSOPRun(eventType string, updateRun *bool) bool {
+	if updateRun != nil {
+		return *updateRun
+	}
+	return eventType == "步骤开始" || eventType == "步骤完成" || eventType == "步骤失败"
+}
+
+func isTerminalSOPStatus(status string) bool {
+	return status == sopStatusCompleted || status == sopStatusFailed
+}
+
+func nextSOPRunState(run db.SquadSopRun, steps []sopProfileStep, stepIndex int, stepKey string, req CreateSOPStepEventRequest) (status, currentStepKey string, ok bool) {
+	switch req.EventType {
+	case "步骤完成":
+		if len(steps) > 0 && stepIndex >= 0 && stepIndex < len(steps)-1 {
+			return sopStatusRunning, steps[stepIndex+1].Key, true
+		}
+		return sopStatusCompleted, stepKey, true
+	case "步骤失败":
+		return sopStatusFailed, stepKey, true
+	case "步骤开始":
+		return sopStatusRunning, stepKey, true
+	default:
+		if req.Status == "" {
+			return "", "", false
+		}
+		nextStep := stepKey
+		if req.Status == sopStatusCompleted && len(steps) > 0 && stepIndex >= 0 && stepIndex < len(steps)-1 {
+			nextStep = steps[stepIndex+1].Key
+			return sopStatusRunning, nextStep, true
+		}
+		if req.Status == sopStatusCompleted && len(steps) > 0 && stepIndex >= 0 && stepIndex == len(steps)-1 {
+			return sopStatusCompleted, stepKey, true
+		}
+		if nextStep == "" {
+			nextStep = run.CurrentStepKey
+		}
+		return req.Status, nextStep, true
+	}
 }
 
 func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *http.Request) {

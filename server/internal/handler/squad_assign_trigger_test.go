@@ -28,7 +28,7 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 	var squadID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, sop_profile)
-		VALUES ($1, $2, '', $3, $4, '{"profile_key":"user-center-test","steps":[{"key":"clarify","name":"需求澄清","role_key":"captain"}]}'::jsonb)
+		VALUES ($1, $2, '', $3, $4, '{"profile_key":"user-center-test","steps":[{"key":"clarify","name":"需求澄清","role_key":"captain"},{"key":"acceptance","name":"验收","role_key":"acceptor"}]}'::jsonb)
 		RETURNING id
 	`, testWorkspaceID, "Trigger Test Squad", leaderID, testUserID).Scan(&squadID); err != nil {
 		t.Fatalf("create squad: %v", err)
@@ -105,6 +105,38 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 		t.Fatalf("ListIssueSOPRuns: expected 200, got %d: %s", listW.Code, listW.Body.String())
 	}
 
+	completeStepReq := newRequest("POST", "/api/sop-runs/"+runID+"/steps/clarify/events?workspace_id="+testWorkspaceID, map[string]any{
+		"event_type": "步骤完成",
+		"evidence":   map[string]any{"阶段产物": "需求已澄清"},
+		"reason":     "进入验收阶段",
+	})
+	completeStepReq = withURLParams(completeStepReq, "runId", runID, "stepId", "clarify")
+	completeStepW := httptest.NewRecorder()
+	testHandler.RecordSOPStepEvent(completeStepW, completeStepReq)
+	if completeStepW.Code != http.StatusCreated {
+		t.Fatalf("RecordSOPStepEvent(clarify complete): expected 201, got %d: %s", completeStepW.Code, completeStepW.Body.String())
+	}
+	var currentStep, runStatus string
+	if err := testPool.QueryRow(ctx, `
+		SELECT current_step_key, status FROM squad_sop_run WHERE id = $1
+	`, runID).Scan(&currentStep, &runStatus); err != nil {
+		t.Fatalf("load progressed SOP run: %v", err)
+	}
+	if currentStep != "acceptance" || runStatus != "进行中" {
+		t.Fatalf("SOP run after clarify completion: step=%s status=%s, want acceptance/进行中", currentStep, runStatus)
+	}
+
+	unknownStepReq := newRequest("POST", "/api/sop-runs/"+runID+"/steps/deploy/events?workspace_id="+testWorkspaceID, map[string]any{
+		"event_type": "追加证据",
+		"evidence":   map[string]any{"结果": "不应接受"},
+	})
+	unknownStepReq = withURLParams(unknownStepReq, "runId", runID, "stepId", "deploy")
+	unknownStepW := httptest.NewRecorder()
+	testHandler.RecordSOPStepEvent(unknownStepW, unknownStepReq)
+	if unknownStepW.Code != http.StatusBadRequest {
+		t.Fatalf("RecordSOPStepEvent(unknown step): expected 400, got %d: %s", unknownStepW.Code, unknownStepW.Body.String())
+	}
+
 	eventReq := newRequest("POST", "/api/sop-runs/"+runID+"/steps/acceptance/events?workspace_id="+testWorkspaceID, map[string]any{
 		"event_type":      "测试结果",
 		"status":          "进行中",
@@ -128,6 +160,14 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 	}
 	if recordedEvent.CreatedByType == "agent" {
 		t.Fatalf("SOP event actor trusted spoofed request payload: %#v", recordedEvent)
+	}
+	if err := testPool.QueryRow(ctx, `
+		SELECT current_step_key, status FROM squad_sop_run WHERE id = $1
+	`, runID).Scan(&currentStep, &runStatus); err != nil {
+		t.Fatalf("load SOP run after evidence event: %v", err)
+	}
+	if currentStep != "acceptance" || runStatus != "进行中" {
+		t.Fatalf("SOP run changed after 测试结果 evidence: step=%s status=%s, want acceptance/进行中", currentStep, runStatus)
 	}
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO task_trace_event (
