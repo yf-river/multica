@@ -26,6 +26,55 @@ FRONTEND_PID=""
 STARTED_BACKEND=false
 STARTED_FRONTEND=false
 EXIT_CODE=0
+NEXT_ENV_FILE="apps/web/next-env.d.ts"
+NEXT_ENV_BACKUP=""
+
+if [ -f "$NEXT_ENV_FILE" ]; then
+  NEXT_ENV_BACKUP="$(mktemp)"
+  cp "$NEXT_ENV_FILE" "$NEXT_ENV_BACKUP"
+fi
+
+start_service() {
+  local name=$1 log_file=$2
+  shift 2
+  if command -v setsid > /dev/null 2>&1; then
+    setsid bash -lc "$*" > "$log_file" 2>&1 &
+  else
+    bash -lc "$*" > "$log_file" 2>&1 &
+  fi
+  local pid=$!
+  echo "    ${name} PID $pid"
+  printf '%s\n' "$pid"
+}
+
+stop_service_tree() {
+  local pid=$1 name=$2
+  if [ -z "$pid" ]; then
+    return
+  fi
+  if kill -0 "$pid" 2>/dev/null; then
+    kill -- "-$pid" 2>/dev/null || kill "$pid" 2>/dev/null || true
+    for _ in $(seq 1 20); do
+      if ! kill -0 "$pid" 2>/dev/null; then
+        break
+      fi
+      sleep 0.2
+    done
+    kill -KILL -- "-$pid" 2>/dev/null || kill -KILL "$pid" 2>/dev/null || true
+    wait "$pid" 2>/dev/null || true
+  fi
+  echo "    Stopped $name (PID $pid)"
+}
+
+restore_next_env() {
+  if [ -n "$NEXT_ENV_BACKUP" ] && [ -f "$NEXT_ENV_BACKUP" ]; then
+    if [ -f "$NEXT_ENV_FILE" ] && ! cmp -s "$NEXT_ENV_FILE" "$NEXT_ENV_BACKUP"; then
+      cp "$NEXT_ENV_BACKUP" "$NEXT_ENV_FILE"
+      echo "    Restored $NEXT_ENV_FILE"
+    fi
+    rm -f "$NEXT_ENV_BACKUP"
+  fi
+}
 
 # --------------------------------------------------------------------------
 # Cleanup: kill only services this script started
@@ -33,13 +82,12 @@ EXIT_CODE=0
 cleanup() {
   echo ""
   if [ "$STARTED_BACKEND" = true ] && [ -n "$BACKEND_PID" ]; then
-    kill "$BACKEND_PID" 2>/dev/null && wait "$BACKEND_PID" 2>/dev/null || true
-    echo "    Stopped backend (PID $BACKEND_PID)"
+    stop_service_tree "$BACKEND_PID" "backend"
   fi
   if [ "$STARTED_FRONTEND" = true ] && [ -n "$FRONTEND_PID" ]; then
-    kill "$FRONTEND_PID" 2>/dev/null && wait "$FRONTEND_PID" 2>/dev/null || true
-    echo "    Stopped frontend (PID $FRONTEND_PID)"
+    stop_service_tree "$FRONTEND_PID" "frontend"
   fi
+  restore_next_env
   echo ""
   if [ "$EXIT_CODE" -eq 0 ]; then
     echo "✓ All checks passed."
@@ -109,8 +157,7 @@ if curl -sf "http://localhost:${PORT}/health" > /dev/null 2>&1; then
   echo "    Backend already running on :$PORT"
 else
   echo "    Starting backend..."
-  (cd server && go run ./cmd/server) > /tmp/multica-check-backend.log 2>&1 &
-  BACKEND_PID=$!
+  BACKEND_PID="$(start_service "backend" "/tmp/multica-check-backend.log" "cd server && go run ./cmd/server" | tail -n 1)"
   STARTED_BACKEND=true
   wait_for_port "$PORT" "Backend" 90 "/health"
 fi
@@ -119,8 +166,7 @@ if curl -sf "http://localhost:${FRONTEND_PORT}" > /dev/null 2>&1; then
   echo "    Frontend already running on :$FRONTEND_PORT"
 else
   echo "    Starting frontend..."
-  pnpm dev:web > /tmp/multica-check-frontend.log 2>&1 &
-  FRONTEND_PID=$!
+  FRONTEND_PID="$(start_service "frontend" "/tmp/multica-check-frontend.log" "pnpm dev:web" | tail -n 1)"
   STARTED_FRONTEND=true
   wait_for_port "$FRONTEND_PORT" "Frontend" 120 "/"
 fi

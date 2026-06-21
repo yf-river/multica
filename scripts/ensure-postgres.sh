@@ -17,12 +17,15 @@ set +a
 POSTGRES_DB="${POSTGRES_DB:-multica}"
 POSTGRES_USER="${POSTGRES_USER:-multica}"
 POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-multica}"
+POSTGRES_PORT="${POSTGRES_PORT:-5432}"
+COMPOSE_PROJECT_NAME="${COMPOSE_PROJECT_NAME:-multica}"
 DATABASE_URL="${DATABASE_URL:-}"
 
 export PGPASSWORD="$POSTGRES_PASSWORD"
+export POSTGRES_PORT COMPOSE_PROJECT_NAME
 
 db_host=""
-db_port="${POSTGRES_PORT:-5432}"
+db_port="$POSTGRES_PORT"
 db_name="$POSTGRES_DB"
 
 parse_database_url() {
@@ -68,7 +71,7 @@ is_local() {
 
 if is_local; then
   # ---------- Local: use Docker ----------
-  echo "==> Ensuring shared PostgreSQL container is running on localhost:5432..."
+  echo "==> Ensuring PostgreSQL container '$COMPOSE_PROJECT_NAME-postgres-1' is running on localhost:$db_port..."
   docker compose up -d postgres
 
   echo "==> Waiting for PostgreSQL to be ready..."
@@ -87,7 +90,7 @@ if is_local; then
       > /dev/null
   fi
 
-  echo "✓ PostgreSQL ready (local Docker). Database: $POSTGRES_DB"
+  echo "✓ PostgreSQL ready (local Docker: localhost:$db_port). Database: $POSTGRES_DB"
 else
   # ---------- Remote: skip Docker, verify connectivity ----------
   echo "==> Remote database detected (host: $db_host). Skipping Docker."
