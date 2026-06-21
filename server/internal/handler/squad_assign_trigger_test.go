@@ -69,7 +69,7 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 
 	var runID string
 	if err := testPool.QueryRow(ctx, `
-		SELECT id FROM squad_sop_run
+		SELECT id::text FROM squad_sop_run
 		WHERE issue_id = $1 AND squad_id = $2 AND profile_key = 'user-center-test'
 	`, created.ID, squadID).Scan(&runID); err != nil {
 		t.Fatalf("expected squad SOP run to be created: %v", err)
@@ -103,8 +103,7 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 		"reason":      "补充测试证据",
 		"duration_ms": 123,
 	})
-	eventReq = withURLParam(eventReq, "runId", runID)
-	eventReq = withURLParam(eventReq, "stepId", "acceptance")
+	eventReq = withURLParams(eventReq, "runId", runID, "stepId", "acceptance")
 	eventW := httptest.NewRecorder()
 	testHandler.RecordSOPStepEvent(eventW, eventReq)
 	if eventW.Code != http.StatusCreated {
