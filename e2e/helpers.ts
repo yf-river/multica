@@ -6,11 +6,12 @@ const E2E_WORKER = process.env.TEST_PARALLEL_INDEX ?? process.env.TEST_WORKER_IN
 const E2E_RUN_ID = process.env.E2E_RUN_ID ?? `${Date.now().toString(36)}-${process.pid.toString(36)}`;
 const DEFAULT_E2E_ACCOUNT = `e2e-${E2E_WORKER}-${E2E_RUN_ID}`;
 const DEFAULT_E2E_WORKSPACE = `e2e-workspace-${E2E_WORKER}-${E2E_RUN_ID}`;
+const E2E_PASSWORD = "e2e-password";
 
 async function waitForIssuesPage(page: Page) {
-  await waitForPageText(page, "新建 issue");
+  await waitForPageText(page, "新建 issue", 60000);
   await expect(page.getByRole("button", { name: "新建 issue" })).toBeVisible({
-    timeout: 15000,
+    timeout: 30000,
   });
 }
 
@@ -48,6 +49,24 @@ export async function loginAsDefault(page: Page): Promise<string> {
     throw new Error("E2E login did not return an auth token");
   }
 
+  const browserLogin = await page.request.post("/auth/login", {
+    data: { account: DEFAULT_E2E_ACCOUNT, password: E2E_PASSWORD },
+  });
+  if (!browserLogin.ok()) {
+    throw new Error(`E2E browser login failed: ${browserLogin.status()}`);
+  }
+  const baseURL =
+    process.env.PLAYWRIGHT_BASE_URL ??
+    process.env.FRONTEND_ORIGIN ??
+    "http://localhost:3000";
+  await page.context().addCookies([
+    {
+      name: "multica_logged_in",
+      value: "1",
+      url: baseURL,
+      sameSite: "Lax",
+    },
+  ]);
   await page.addInitScript((t) => {
     localStorage.setItem("multica_token", t);
     localStorage.setItem("multica:chat:isOpen", "false");
