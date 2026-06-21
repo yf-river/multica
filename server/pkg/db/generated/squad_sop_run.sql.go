@@ -47,18 +47,29 @@ func (q *Queries) AttachLeaderTaskToSquadSOPRun(ctx context.Context, arg AttachL
 }
 
 const countWorkspaceSquadSOPStepEvents = `-- name: CountWorkspaceSquadSOPStepEvents :one
-SELECT count(*) FROM squad_sop_step_event
-WHERE workspace_id = $1
-  AND ($2::timestamptz IS NULL OR created_at >= $2)
+SELECT count(*)
+FROM squad_sop_step_event e
+JOIN issue i ON i.id = e.issue_id
+WHERE e.workspace_id = $1
+  AND ($2::timestamptz IS NULL OR e.created_at >= $2)
+  AND ($3::uuid IS NULL OR e.squad_id = $3)
+  AND ($4::uuid IS NULL OR i.project_id = $4)
 `
 
 type CountWorkspaceSquadSOPStepEventsParams struct {
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
 	Since       pgtype.Timestamptz `json:"since"`
+	SquadID     pgtype.UUID        `json:"squad_id"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
 }
 
 func (q *Queries) CountWorkspaceSquadSOPStepEvents(ctx context.Context, arg CountWorkspaceSquadSOPStepEventsParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countWorkspaceSquadSOPStepEvents, arg.WorkspaceID, arg.Since)
+	row := q.db.QueryRow(ctx, countWorkspaceSquadSOPStepEvents,
+		arg.WorkspaceID,
+		arg.Since,
+		arg.SquadID,
+		arg.ProjectID,
+	)
 	var count int64
 	err := row.Scan(&count)
 	return count, err
@@ -401,11 +412,14 @@ func (q *Queries) ListSquadSOPStepEventsByRun(ctx context.Context, runID pgtype.
 }
 
 const listWorkspaceSquadSOPRuns = `-- name: ListWorkspaceSquadSOPRuns :many
-SELECT id, workspace_id, issue_id, squad_id, leader_task_id, profile_key, profile, status, current_step_key, started_at, completed_at, total_duration_ms, created_at, updated_at FROM squad_sop_run
-WHERE workspace_id = $1
-  AND ($4::timestamptz IS NULL OR created_at >= $4)
-  AND ($5::uuid IS NULL OR squad_id = $5)
-ORDER BY created_at DESC, id DESC
+SELECT r.id, r.workspace_id, r.issue_id, r.squad_id, r.leader_task_id, r.profile_key, r.profile, r.status, r.current_step_key, r.started_at, r.completed_at, r.total_duration_ms, r.created_at, r.updated_at
+FROM squad_sop_run r
+JOIN issue i ON i.id = r.issue_id
+WHERE r.workspace_id = $1
+  AND ($4::timestamptz IS NULL OR r.created_at >= $4)
+  AND ($5::uuid IS NULL OR r.squad_id = $5)
+  AND ($6::uuid IS NULL OR i.project_id = $6)
+ORDER BY r.created_at DESC, r.id DESC
 LIMIT $2 OFFSET $3
 `
 
@@ -415,6 +429,7 @@ type ListWorkspaceSquadSOPRunsParams struct {
 	Offset      int32              `json:"offset"`
 	Since       pgtype.Timestamptz `json:"since"`
 	SquadID     pgtype.UUID        `json:"squad_id"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
 }
 
 func (q *Queries) ListWorkspaceSquadSOPRuns(ctx context.Context, arg ListWorkspaceSquadSOPRunsParams) ([]SquadSopRun, error) {
@@ -424,6 +439,7 @@ func (q *Queries) ListWorkspaceSquadSOPRuns(ctx context.Context, arg ListWorkspa
 		arg.Offset,
 		arg.Since,
 		arg.SquadID,
+		arg.ProjectID,
 	)
 	if err != nil {
 		return nil, err

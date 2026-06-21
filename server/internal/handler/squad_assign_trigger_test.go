@@ -118,3 +118,101 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 		t.Fatalf("GetWorkspaceObservabilitySummary: expected 200, got %d: %s", summaryW.Code, summaryW.Body.String())
 	}
 }
+
+func TestWorkspaceObservabilitySummaryFiltersSOPByProject(t *testing.T) {
+	ctx := context.Background()
+
+	var leaderID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT id FROM agent WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1
+	`, testWorkspaceID).Scan(&leaderID); err != nil {
+		t.Fatalf("load test agent: %v", err)
+	}
+
+	var squadID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, sop_profile)
+		VALUES ($1, $2, '', $3, $4, '{"profile_key":"project-filter-test","steps":[{"key":"clarify","name":"需求澄清","role_key":"captain"}]}'::jsonb)
+		RETURNING id
+	`, testWorkspaceID, "Project Filter Squad", leaderID, testUserID).Scan(&squadID); err != nil {
+		t.Fatalf("create squad: %v", err)
+	}
+	defer testPool.Exec(ctx, `DELETE FROM squad WHERE id = $1`, squadID)
+
+	var projectA string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
+	`, testWorkspaceID, "观测项目 A").Scan(&projectA); err != nil {
+		t.Fatalf("create project A: %v", err)
+	}
+	defer testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectA)
+
+	var projectB string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
+	`, testWorkspaceID, "观测项目 B").Scan(&projectB); err != nil {
+		t.Fatalf("create project B: %v", err)
+	}
+	defer testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectB)
+
+	createProjectIssue := func(title, projectID string) string {
+		t.Helper()
+		w := httptest.NewRecorder()
+		req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+			"title":         title,
+			"project_id":    projectID,
+			"assignee_type": "squad",
+			"assignee_id":   squadID,
+		})
+		testHandler.CreateIssue(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("CreateIssue(%s): expected 201, got %d: %s", title, w.Code, w.Body.String())
+		}
+		var created IssueResponse
+		if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+			t.Fatalf("decode issue: %v", err)
+		}
+		t.Cleanup(func() {
+			cleanupReq := newRequest("DELETE", "/api/issues/"+created.ID, nil)
+			cleanupReq = withURLParam(cleanupReq, "id", created.ID)
+			testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
+		})
+		return created.ID
+	}
+
+	issueA := createProjectIssue("项目 A 小队观测", projectA)
+	_ = createProjectIssue("项目 B 小队观测", projectB)
+
+	var runCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM squad_sop_run WHERE issue_id = $1 AND squad_id = $2
+	`, issueA, squadID).Scan(&runCount); err != nil {
+		t.Fatalf("count project A runs: %v", err)
+	}
+	if runCount != 1 {
+		t.Fatalf("project A run count = %d, want 1", runCount)
+	}
+
+	summaryReq := newRequest("GET", "/api/workspaces/"+testWorkspaceID+"/observability/summary?project_id="+projectA, nil)
+	summaryReq = withURLParam(summaryReq, "id", testWorkspaceID)
+	summaryW := httptest.NewRecorder()
+	testHandler.GetWorkspaceObservabilitySummary(summaryW, summaryReq)
+	if summaryW.Code != http.StatusOK {
+		t.Fatalf("GetWorkspaceObservabilitySummary: expected 200, got %d: %s", summaryW.Code, summaryW.Body.String())
+	}
+
+	var summary map[string]any
+	if err := json.NewDecoder(summaryW.Body).Decode(&summary); err != nil {
+		t.Fatalf("decode summary: %v", err)
+	}
+	metrics, ok := summary["指标"].(map[string]any)
+	if !ok {
+		t.Fatalf("summary missing 指标: %#v", summary)
+	}
+	if got := metrics["SOP 执行数"]; got != float64(1) {
+		t.Fatalf("SOP 执行数 = %v, want 1", got)
+	}
+	if got := metrics["SOP 事件数"]; got != float64(1) {
+		t.Fatalf("SOP 事件数 = %v, want 1", got)
+	}
+}

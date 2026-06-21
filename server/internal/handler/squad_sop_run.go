@@ -352,6 +352,7 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 		Limit:       500,
 		Since:       since,
 		SquadID:     squadID,
+		ProjectID:   projectID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list SOP runs")
@@ -371,6 +372,8 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 	eventCount, err := h.Queries.CountWorkspaceSquadSOPStepEvents(r.Context(), db.CountWorkspaceSquadSOPStepEventsParams{
 		WorkspaceID: workspaceID,
 		Since:       since,
+		SquadID:     squadID,
+		ProjectID:   projectID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to count SOP events")

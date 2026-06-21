@@ -41,11 +41,14 @@ WHERE issue_id = $1 AND workspace_id = $2
 ORDER BY created_at DESC, id DESC;
 
 -- name: ListWorkspaceSquadSOPRuns :many
-SELECT * FROM squad_sop_run
-WHERE workspace_id = $1
-  AND (sqlc.narg('since')::timestamptz IS NULL OR created_at >= sqlc.narg('since'))
-  AND (sqlc.narg('squad_id')::uuid IS NULL OR squad_id = sqlc.narg('squad_id'))
-ORDER BY created_at DESC, id DESC
+SELECT r.*
+FROM squad_sop_run r
+JOIN issue i ON i.id = r.issue_id
+WHERE r.workspace_id = $1
+  AND (sqlc.narg('since')::timestamptz IS NULL OR r.created_at >= sqlc.narg('since'))
+  AND (sqlc.narg('squad_id')::uuid IS NULL OR r.squad_id = sqlc.narg('squad_id'))
+  AND (sqlc.narg('project_id')::uuid IS NULL OR i.project_id = sqlc.narg('project_id'))
+ORDER BY r.created_at DESC, r.id DESC
 LIMIT $2 OFFSET $3;
 
 -- name: UpdateSquadSOPRunStatus :one
@@ -85,6 +88,10 @@ WHERE issue_id = $1 AND workspace_id = $2
 ORDER BY created_at ASC, id ASC;
 
 -- name: CountWorkspaceSquadSOPStepEvents :one
-SELECT count(*) FROM squad_sop_step_event
-WHERE workspace_id = $1
-  AND (sqlc.narg('since')::timestamptz IS NULL OR created_at >= sqlc.narg('since'));
+SELECT count(*)
+FROM squad_sop_step_event e
+JOIN issue i ON i.id = e.issue_id
+WHERE e.workspace_id = $1
+  AND (sqlc.narg('since')::timestamptz IS NULL OR e.created_at >= sqlc.narg('since'))
+  AND (sqlc.narg('squad_id')::uuid IS NULL OR e.squad_id = sqlc.narg('squad_id'))
+  AND (sqlc.narg('project_id')::uuid IS NULL OR i.project_id = sqlc.narg('project_id'));
