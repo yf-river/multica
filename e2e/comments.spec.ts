@@ -26,13 +26,13 @@ test.describe("Comments", () => {
     await page.goto(`/${workspaceSlug}/issues/${issueId}`, { waitUntil: "domcontentloaded" });
     await waitForPageText(page, issueTitle);
 
-    // Wait for issue detail to load
-    await expect(page.locator("text=Properties")).toBeVisible();
+    // Wait for issue detail to load.
+    await expect(page.getByText("属性")).toBeVisible();
 
     // Type a comment
     const commentText = "E2E comment " + Date.now();
     const editor = page
-      .locator('.ProseMirror[data-placeholder="Leave a comment..."], .ProseMirror:has([data-placeholder="Leave a comment..."])')
+      .locator('.ProseMirror[data-placeholder="留下评论..."], .ProseMirror:has([data-placeholder="留下评论..."])')
       .first();
     await expect(editor).toBeVisible();
     await editor.click({ force: true });
@@ -50,11 +50,11 @@ test.describe("Comments", () => {
     await page.goto(`/${workspaceSlug}/issues/${issueId}`, { waitUntil: "domcontentloaded" });
     await waitForPageText(page, issueTitle);
 
-    await expect(page.locator("text=Properties")).toBeVisible();
+    await expect(page.getByText("属性")).toBeVisible();
 
     // Submit button should be disabled when input is empty
     const editor = page
-      .locator('.ProseMirror[data-placeholder="Leave a comment..."], .ProseMirror:has([data-placeholder="Leave a comment..."])')
+      .locator('.ProseMirror[data-placeholder="留下评论..."], .ProseMirror:has([data-placeholder="留下评论..."])')
       .first();
     await expect(editor).toBeVisible();
     const composer = editor.locator("xpath=ancestor::div[contains(@class, 'rounded-lg')][1]");

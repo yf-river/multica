@@ -19,6 +19,20 @@ interface TestWorkspace {
   slug: string;
 }
 
+interface PromptLibraryItem {
+  id: string;
+  name: string;
+  prompt_type: string;
+}
+
+interface PromptEvaluationAsset {
+  id: string;
+  prompt_id: string | null;
+  name: string;
+  asset_type: string;
+  payload: Record<string, unknown>;
+}
+
 export class TestApiClient {
   private token: string | null = null;
   private workspaceSlug: string | null = null;
@@ -65,7 +79,7 @@ export class TestApiClient {
 
   async ensureWorkspace(name = "E2E Workspace", slug = "e2e-workspace") {
     const workspaces = await this.getWorkspaces();
-    const workspace = workspaces.find((item) => item.slug === slug) ?? workspaces[0];
+    const workspace = workspaces.find((item) => item.slug === slug);
     if (workspace) {
       this.workspaceId = workspace.id;
       this.workspaceSlug = workspace.slug;
@@ -84,7 +98,7 @@ export class TestApiClient {
     }
 
     const refreshed = await this.getWorkspaces();
-    const created = refreshed.find((item) => item.slug === slug) ?? refreshed[0];
+    const created = refreshed.find((item) => item.slug === slug);
     if (created) {
       this.workspaceId = created.id;
       this.workspaceSlug = created.slug;
@@ -133,6 +147,58 @@ export class TestApiClient {
 
   async deleteIssue(id: string) {
     await this.authedFetch(`/api/issues/${id}`, { method: "DELETE" });
+  }
+
+  async listPromptLibraryItems(): Promise<PromptLibraryItem[]> {
+    const res = await this.authedFetch("/api/prompt-library");
+    if (!res.ok) {
+      throw new Error(`list prompt library items failed: ${res.status}`);
+    }
+    const data = await res.json();
+    return data.items ?? [];
+  }
+
+  async deletePromptLibraryItem(id: string) {
+    await this.authedFetch(`/api/prompt-library/${id}`, { method: "DELETE" });
+  }
+
+  async listPromptEvaluationAssets(params?: { asset_type?: string; prompt_id?: string }): Promise<PromptEvaluationAsset[]> {
+    const search = new URLSearchParams();
+    if (params?.asset_type) search.set("asset_type", params.asset_type);
+    if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
+    const res = await this.authedFetch(`/api/prompt-evaluation-assets${search.toString() ? `?${search}` : ""}`);
+    if (!res.ok) {
+      throw new Error(`list prompt evaluation assets failed: ${res.status}`);
+    }
+    const data = await res.json();
+    return data.items ?? [];
+  }
+
+  async deletePromptEvaluationAsset(id: string) {
+    await this.authedFetch(`/api/prompt-evaluation-assets/${id}`, { method: "DELETE" });
+  }
+
+  async cleanupPromptArtifactsByPrefix(prefix: string) {
+    const assets = await this.listPromptEvaluationAssets();
+    for (const asset of assets) {
+      if (asset.name.startsWith(prefix)) {
+        try {
+          await this.deletePromptEvaluationAsset(asset.id);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
+    const prompts = await this.listPromptLibraryItems();
+    for (const prompt of prompts) {
+      if (prompt.name.startsWith(prefix)) {
+        try {
+          await this.deletePromptLibraryItem(prompt.id);
+        } catch {
+          /* ignore */
+        }
+      }
+    }
   }
 
   /** Clean up all issues created during this test. */

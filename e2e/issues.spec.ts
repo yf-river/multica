@@ -48,20 +48,21 @@ test.describe("Issues", () => {
     await api.createIssue("E2E Board View " + Date.now());
     await reloadAppPage(page);
 
-    // Board columns should be visible
-    await expect(page.locator("text=Backlog")).toBeVisible();
-    await expect(page.locator("text=Todo")).toBeVisible();
-    await expect(page.locator("text=In Progress")).toBeVisible();
+    // Board columns should be visible.
+    await expect(page.getByText("待规划").first()).toBeVisible();
+    await expect(page.getByText("待办").first()).toBeVisible();
+    await expect(page.getByText("进行中").first()).toBeVisible();
   });
 
   test("can switch from board to list view", async ({ page }) => {
     const title = "E2E List Switch " + Date.now();
     await api.createIssue(title);
     await reloadAppPage(page);
-    await expect(page.locator("text=Backlog")).toBeVisible();
+    await expect(page.getByText("待规划").first()).toBeVisible();
 
     // Switch to list view
-    await page.click("text=List");
+    await page.getByRole("button", { name: "看板" }).click();
+    await page.getByRole("menuitemradio", { name: "列表" }).click();
     await expect(page.getByText(title)).toBeVisible();
   });
 
@@ -86,20 +87,20 @@ test.describe("Issues", () => {
     await expect(page.getByText(oldTitle)).toBeVisible();
     await expect(page.getByText(updatedTodayTitle)).toBeVisible();
 
-    await page.getByRole("button", { name: /filter/i }).click();
-    await page.getByRole("menuitem", { name: /^Date\b/ }).hover();
-    await page.getByRole("menuitem", { name: "Today" }).click();
+    await page.getByRole("button", { name: "筛选" }).click();
+    await page.getByRole("menuitem", { name: "日期" }).hover();
+    await page.getByRole("menuitem", { name: "今天" }).click();
 
-    await expect(page.getByRole("button", { name: /1 filter/i })).toBeVisible();
+    await expect(page.getByRole("button", { name: /1 个筛选/ })).toBeVisible();
     await expect(page.getByText(todayTitle)).toBeVisible();
     await expect(page.getByText(oldTitle)).toBeHidden({ timeout: 10000 });
     await expect(page.getByText(updatedTodayTitle)).toBeHidden({ timeout: 10000 });
 
-    await page.getByRole("button", { name: /1 filter/i }).click();
-    const dateFilterItem = page.getByRole("menuitem", { name: /^Date\b/ });
+    await page.getByRole("button", { name: /1 个筛选/ }).click();
+    const dateFilterItem = page.getByRole("menuitem", { name: "日期" });
     await dateFilterItem.focus();
     await page.keyboard.press("ArrowRight");
-    const updatedDateField = page.getByRole("menuitemradio", { name: "Updated" });
+    const updatedDateField = page.getByRole("menuitemradio", { name: "更新时间" });
     await expect(updatedDateField).toBeVisible();
     await updatedDateField.press("Enter");
     await expect(page.getByText(todayTitle)).toBeVisible();
@@ -121,14 +122,14 @@ test.describe("Issues", () => {
     await expect(page.getByText(todayTitle)).toBeVisible();
     await expect(page.getByText(oldTitle)).toBeVisible();
 
-    await page.getByRole("button", { name: /filter/i }).click();
-    await page.getByRole("menuitem", { name: /^Date\b/ }).hover();
-    const customDateButton = page.getByRole("button", { name: "Custom date or range" });
+    await page.getByRole("button", { name: "筛选" }).click();
+    await page.getByRole("menuitem", { name: "日期" }).hover();
+    const customDateButton = page.getByRole("button", { name: "自定义日期或范围" });
     await expect(customDateButton).toBeVisible();
     await customDateButton.click();
     const todayDataDay = await page.evaluate(() => new Date().toLocaleDateString());
     await page.locator(`[data-day="${todayDataDay}"]`).click();
-    await page.getByRole("button", { name: "Apply" }).click();
+    await page.getByRole("button", { name: "应用" }).click();
     await expect(page.getByText(todayTitle)).toBeVisible();
     await expect(page.getByText(oldTitle)).toBeHidden({ timeout: 10000 });
   });
@@ -136,24 +137,24 @@ test.describe("Issues", () => {
   test("can create a new issue", async ({ page }) => {
     await preferManualCreateMode(page);
 
-    const newIssueButton = page.getByRole("button", { name: "New Issue" });
+    const newIssueButton = page.getByRole("button", { name: "新建 issue" });
     await expect(newIssueButton).toBeVisible();
     await newIssueButton.click();
 
     const title = "E2E Created " + Date.now();
-    const titleInput = page.getByRole("textbox", { name: "Issue title" });
+    const titleInput = page.getByRole("textbox", { name: "issue 标题" });
     await expect(titleInput).toBeVisible();
     await titleInput.fill(title);
-    await page.getByRole("button", { name: "Create Issue" }).click();
+    await page.getByRole("button", { name: "创建 issue" }).click();
 
-    await expect(page.getByText("Issue created")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("已创建 issue")).toBeVisible({ timeout: 10000 });
     await expect(
       page.getByRole("region", { name: /Notifications/ }).getByText(title),
     ).toBeVisible();
 
-    await page.getByRole("button", { name: "View issue" }).click();
+    await page.getByRole("button", { name: "查看 issue" }).click();
     await page.waitForURL(/\/issues\/[\w-]+/);
-    await expect(page.locator("text=Properties")).toBeVisible();
+    await expect(page.getByText("属性")).toBeVisible();
   });
 
   test("can navigate to issue detail page", async ({ page }) => {
@@ -172,8 +173,8 @@ test.describe("Issues", () => {
 
     await page.waitForURL(/\/issues\/[\w-]+/);
 
-    // Should show Properties panel
-    await expect(page.locator("text=Properties")).toBeVisible();
+    // Should show properties panel.
+    await expect(page.getByText("属性")).toBeVisible();
     // Should show breadcrumb link back to Issues
     await expect(
       page.locator("a", { hasText: "Issues" }).first(),
@@ -183,14 +184,14 @@ test.describe("Issues", () => {
   test("can dismiss issue creation", async ({ page }) => {
     await preferManualCreateMode(page);
 
-    await page.getByRole("button", { name: "New Issue" }).click();
+    await page.getByRole("button", { name: "新建 issue" }).click();
 
-    const titleInput = page.getByRole("textbox", { name: "Issue title" });
+    const titleInput = page.getByRole("textbox", { name: "issue 标题" });
     await expect(titleInput).toBeVisible();
 
     await page.keyboard.press("Escape");
 
     await expect(titleInput).not.toBeVisible();
-    await expect(page.getByRole("button", { name: "New Issue" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "新建 issue" })).toBeVisible();
   });
 });
