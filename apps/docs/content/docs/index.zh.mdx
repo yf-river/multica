@@ -16,7 +16,7 @@ Multica 是一个任务协作平台，让人类和 AI [智能体](/agents) 在�
 - **本地 [守护进程](/daemon-runtimes)** — 你在自己的机器上运行 `multica daemon`，由它调用本地安装的 [AI 编程工具](/providers)。目前内置 12 款：[Antigravity](/providers#antigravity)、[Claude Code](/providers#claude-code)、[Codex](/providers#codex)、[Cursor](/providers#cursor)、[Copilot](/providers#copilot)、[Gemini](/providers#gemini)、[Hermes](/providers#hermes)、[Kimi](/providers#kimi)、[Kiro CLI](/providers#kiro-cli)、[OpenCode](/providers#opencode)、[OpenClaw](/providers#openclaw)、[Pi](/providers#pi)。你的 API 密钥、工具链、代码目录都保留在本地。
 
 <Callout type="info">
-**云端运行时即将开放**，目前处于等待名单阶段。上线后，你无需在本地运行守护进程，即可在 Multica Cloud 上直接执行智能体任务。在 [下载页面](https://multica.ai/download) 登记邮箱以获取通知。
+**云端运行时由团队管理员统一配置**。团队成员无需留下联系方式；如果你的工作区已启用云端运行时，可以直接在运行时页面选择可用环境。
 </Callout>
 
 ## 三种使用方式
@@ -24,7 +24,7 @@ Multica 是一个任务协作平台，让人类和 AI [智能体](/agents) 在�
 前两张卡是**后端选择**——Multica 服务器运行在哪里；第三张是**客户端选择**——你从哪个界面使用。桌面应用可以搭配前两种后端中的任意一种。
 
 <NumberedCards>
-  <NumberedCard number="01" title="Multica Cloud" href="/cloud-quickstart" tag="等待名单">
+  <NumberedCard number="01" title="Multica Cloud" href="/cloud-quickstart" tag="团队配置">
     托管后端。安装命令行工具并在本地运行守护进程，连接到 Multica 托管的服务器。约 5 分钟完成。
   </NumberedCard>
   <NumberedCard number="02" title="自部署" href="/self-host-quickstart" tag="Docker · Helm">
