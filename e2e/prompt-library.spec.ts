@@ -3,15 +3,16 @@ import { createTestApi, loginAsDefault, waitForPageText } from "./helpers";
 import type { TestApiClient } from "./fixtures";
 
 test.describe("训练与评估工作台", () => {
-  let api: TestApiClient;
-  let artifactPrefix: string;
+	  let api: TestApiClient;
+	  let artifactPrefix: string;
+	  let workspaceSlug: string;
 
   test.beforeEach(async ({ page }) => {
     api = await createTestApi();
     artifactPrefix = `E2E 提示词 ${Date.now()}`;
     await api.cleanupPromptArtifactsByPrefix("E2E 提示词");
-    await loginAsDefault(page);
-  });
+	    workspaceSlug = await loginAsDefault(page);
+	  });
 
   test.afterEach(async () => {
     if (api && artifactPrefix) {
@@ -19,7 +20,7 @@ test.describe("训练与评估工作台", () => {
     }
   });
 
-  test("可以创建提示词、调试渲染并记录评测资产", async ({ page }) => {
+	  test("可以创建提示词、调试渲染并记录评测资产", async ({ page }) => {
     await page.getByRole("link", { name: "训练与评估" }).click();
     await expect(page).toHaveURL(/\/training(?:\?|$)/, { timeout: 30000 });
     await waitForPageText(page, "训练与评估");
@@ -124,5 +125,12 @@ test.describe("训练与评估工作台", () => {
           },
         },
       });
+  });
+
+  test("旧提示词库路由会跳转到训练与评估提示词视图", async ({ page }) => {
+    await page.goto(`/${workspaceSlug}/prompt-library`, { waitUntil: "domcontentloaded" });
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training\\?view=prompts`), { timeout: 30000 });
+    await waitForPageText(page, "训练与评估");
+    await expect(page.getByRole("button", { name: "提示词库", exact: true })).toBeVisible();
   });
 });

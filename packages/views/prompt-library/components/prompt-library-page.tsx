@@ -208,24 +208,24 @@ export function PromptLibraryPage() {
     },
   });
 
-	  const createAssetMut = useMutation({
-	    mutationFn: (data: CreatePromptEvaluationAssetRequest) => api.createPromptEvaluationAsset(data),
-	    onSuccess: () => {
-	      invalidateAssets();
-	      toast.success("资产已创建");
-	    },
-	  });
+    const createAssetMut = useMutation({
+      mutationFn: (data: CreatePromptEvaluationAssetRequest) => api.createPromptEvaluationAsset(data),
+      onSuccess: () => {
+        invalidateAssets();
+        toast.success("资产已创建");
+      },
+    });
 
-	  const runAgentMut = useMutation({
-	    mutationFn: async (data: CreatePromptEvaluationAssetRequest) => {
-	      const asset = await api.createPromptEvaluationAsset(data);
-	      return api.runPromptEvaluationAssetAgent(asset.id);
-	    },
-	    onSuccess: (result) => {
-	      invalidateAssets();
-	      toast.success(`真实 Agent 任务已入队：${result.task_id}`);
-	    },
-	  });
+    const runAgentMut = useMutation({
+      mutationFn: async (data: CreatePromptEvaluationAssetRequest) => {
+        const asset = await api.createPromptEvaluationAsset(data);
+        return api.runPromptEvaluationAssetAgent(asset.id);
+      },
+      onSuccess: (result) => {
+        invalidateAssets();
+        toast.success(`真实 Agent 任务已入队：${result.task_id}`);
+      },
+    });
 
   const updateAssetMut = useMutation({
     mutationFn: ({ id, data }: { id: string; data: UpdatePromptEvaluationAssetRequest }) => api.updatePromptEvaluationAsset(id, data),
@@ -246,8 +246,8 @@ export function PromptLibraryPage() {
   const saving = createMut.isPending || updateMut.isPending;
   const deleting = deleteMut.isPending;
   const runningDebug = runDebugMut.isPending;
-	  const savingAsset = createAssetMut.isPending || updateAssetMut.isPending || deleteAssetMut.isPending;
-	  const runningAgent = runAgentMut.isPending;
+    const savingAsset = createAssetMut.isPending || updateAssetMut.isPending || deleteAssetMut.isPending;
+    const runningAgent = runAgentMut.isPending;
   const debugResult = useMemo(
     () => renderPromptTemplate({
       content: draft.content,
@@ -348,28 +348,28 @@ export function PromptLibraryPage() {
     });
   };
 
-	  const saveAgentDebugPackage = () => {
-	    const prompt = selected;
-	    if (!prompt) {
-	      toast.error("请先保存提示词");
-	      return;
-	    }
-	    createAssetMut.mutate(buildAgentDebugPackageRequest(prompt, parseDebugValues(debugValuesText), debugResult.rendered, agentExpectedText, agentRuntimeReadiness));
-	  };
+    const saveAgentDebugPackage = () => {
+      const prompt = selected;
+      if (!prompt) {
+        toast.error("请先保存提示词");
+        return;
+      }
+      createAssetMut.mutate(buildAgentDebugPackageRequest(prompt, parseDebugValues(debugValuesText), debugResult.rendered, agentExpectedText, agentRuntimeReadiness));
+    };
 
-	  const runAgentDebugPackage = () => {
-	    const prompt = selected;
-	    if (!prompt) {
-	      toast.error("请先保存提示词");
-	      return;
-	    }
-	    if (agentRuntimeReadiness.status !== "就绪") {
-	      toast.error(agentRuntimeReadiness.fix);
-	      return;
-	    }
-	    const values = parseDebugValues(debugValuesText);
-	    runAgentMut.mutate(buildAgentDebugPackageRequest(prompt, values, debugResult.rendered, agentExpectedText, agentRuntimeReadiness));
-	  };
+    const runAgentDebugPackage = () => {
+      const prompt = selected;
+      if (!prompt) {
+        toast.error("请先保存提示词");
+        return;
+      }
+      if (agentRuntimeReadiness.status !== "就绪") {
+        toast.error(agentRuntimeReadiness.fix);
+        return;
+      }
+      const values = parseDebugValues(debugValuesText);
+      runAgentMut.mutate(buildAgentDebugPackageRequest(prompt, values, debugResult.rendered, agentExpectedText, agentRuntimeReadiness));
+    };
 
   const toggleAssetStatus = (asset: PromptEvaluationAsset) => {
     updateAssetMut.mutate({
@@ -590,15 +590,15 @@ export function PromptLibraryPage() {
               selected={selected}
               assets={assets}
               loading={assetQuery.isLoading}
-	              saving={savingAsset}
-	              runningAgent={runningAgent}
-	              runtimeReadiness={agentRuntimeReadiness}
-	              runtimeLoading={runtimeQuery.isLoading}
+                saving={savingAsset}
+                runningAgent={runningAgent}
+                runtimeReadiness={agentRuntimeReadiness}
+                runtimeLoading={runtimeQuery.isLoading}
               agentExpectedText={agentExpectedText}
               onAgentExpectedTextChange={setAgentExpectedText}
               onCreateAsset={createWorkbenchAsset}
-	              onSaveAgentDebugPackage={saveAgentDebugPackage}
-	              onRunAgentDebugPackage={runAgentDebugPackage}
+                onSaveAgentDebugPackage={saveAgentDebugPackage}
+                onRunAgentDebugPackage={runAgentDebugPackage}
               onToggleAssetStatus={toggleAssetStatus}
               onDeleteAsset={deleteAsset}
             />
@@ -614,32 +614,32 @@ function WorkbenchPanel({
   selected,
   assets,
   loading,
-	  saving,
-	  runningAgent,
-	  agentExpectedText,
-	  runtimeReadiness,
-	  runtimeLoading,
+    saving,
+    runningAgent,
+    agentExpectedText,
+    runtimeReadiness,
+    runtimeLoading,
   onAgentExpectedTextChange,
   onCreateAsset,
-	  onSaveAgentDebugPackage,
-	  onRunAgentDebugPackage,
-	  onToggleAssetStatus,
+    onSaveAgentDebugPackage,
+    onRunAgentDebugPackage,
+    onToggleAssetStatus,
   onDeleteAsset,
 }: {
   activeTab: WorkbenchTab;
   selected: PromptLibraryItem | null;
   assets: PromptEvaluationAsset[];
-	  loading: boolean;
-	  saving: boolean;
-	  runningAgent: boolean;
-	  runtimeReadiness: AgentRuntimeReadiness;
-	  runtimeLoading: boolean;
-	  agentExpectedText: string;
-	  onAgentExpectedTextChange: (value: string) => void;
-	  onCreateAsset: (assetType: PromptEvaluationAssetType) => void;
-	  onSaveAgentDebugPackage: () => void;
-	  onRunAgentDebugPackage: () => void;
-	  onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
+    loading: boolean;
+    saving: boolean;
+    runningAgent: boolean;
+    runtimeReadiness: AgentRuntimeReadiness;
+    runtimeLoading: boolean;
+    agentExpectedText: string;
+    onAgentExpectedTextChange: (value: string) => void;
+    onCreateAsset: (assetType: PromptEvaluationAssetType) => void;
+    onSaveAgentDebugPackage: () => void;
+    onRunAgentDebugPackage: () => void;
+    onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
   onDeleteAsset: (asset: PromptEvaluationAsset) => void;
 }) {
   const tabAssetType = tabToAssetType(activeTab);
@@ -654,24 +654,26 @@ function WorkbenchPanel({
     return null;
   }
 
-  if (activeTab === "Agent 调试场") {
-    return (
-      <section className="grid gap-3 border-t pt-4">
-        <div className="flex items-center justify-between gap-2">
-          <div>
-            <h3 className="text-sm font-semibold">Agent 调试场</h3>
-            <p className="mt-1 text-xs text-muted-foreground">当前仅保存调试包；未创建真实任务时会明确写入环境状态和修复路径。</p>
-          </div>
-	          <Button size="sm" variant="secondary" onClick={onSaveAgentDebugPackage} disabled={!selected || saving}>
-	            {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-	            保存为实验
-	          </Button>
-	          <Button size="sm" onClick={onRunAgentDebugPackage} disabled={!selected || saving || runningAgent || runtimeReadiness.status !== "就绪"}>
-	            {runningAgent ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-	            创建真实 Agent 任务
-	          </Button>
+	  if (activeTab === "Agent 调试场") {
+	    return (
+	      <section className="grid gap-3 border-t pt-4">
+	        <div className="flex items-center justify-between gap-2">
+	          <div>
+	            <h3 className="text-sm font-semibold">Agent 调试场</h3>
+	            <p className="mt-1 text-xs text-muted-foreground">当前仅保存调试包；未创建真实任务时会明确写入环境状态和修复路径。</p>
+	          </div>
+	          <div className="flex shrink-0 items-center gap-2">
+	            <Button size="sm" variant="secondary" onClick={onSaveAgentDebugPackage} disabled={!selected || saving}>
+	              {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+	              保存为实验
+	            </Button>
+	            <Button size="sm" onClick={onRunAgentDebugPackage} disabled={!selected || saving || runningAgent || runtimeReadiness.status !== "就绪"}>
+	              {runningAgent ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+	              创建真实 Agent 任务
+	            </Button>
+	          </div>
 	        </div>
-        <div className="grid gap-2 rounded-md border bg-muted/20 p-3 text-xs">
+	        <div className="grid gap-2 rounded-md border bg-muted/20 p-3 text-xs">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium text-foreground">真实执行准备度</span>
             <Badge variant={runtimeReadiness.status === "就绪" ? "secondary" : "outline"}>
@@ -735,10 +737,15 @@ function WorkbenchPanel({
                   </Badge>
                 </div>
                 <div className="mt-1 truncate text-xs text-muted-foreground">{asset.description || "无描述"}</div>
-                <div className="mt-1 text-[11px] text-muted-foreground">
-                  更新于 {asset.updated_at} · {summarizeAssetPayload(asset)}
-                </div>
-              </div>
+	                <div className="mt-1 text-[11px] text-muted-foreground">
+	                  更新于 {asset.updated_at} · {summarizeAssetPayload(asset)}
+	                </div>
+	                {summarizeAgentRun(asset) && (
+	                  <div className="mt-1 text-[11px] text-muted-foreground">
+	                    {summarizeAgentRun(asset)}
+	                  </div>
+	                )}
+	              </div>
               <div className="flex items-center gap-2">
                 <Button size="sm" variant="secondary" onClick={() => onToggleAssetStatus(asset)} disabled={saving}>
                   {asset.status === "启用" ? "归档" : "启用"}
@@ -872,62 +879,62 @@ function buildAssetPayload(
   values: Record<string, string>,
   rendered: string,
 ): Record<string, unknown> {
-	  const casePayload = {
-	    名称: `${prompt.name} 基准用例`,
-	    变量: values,
-	    期望包含: Object.values(values).filter(Boolean),
-	  };
-	  const basePayload = {
-	    schema_version: 1,
-	    语义版本: "multica.training_evaluation.v1",
-	    cases: [casePayload],
-	    指标口径: [
-	      "总用例数",
-	      "通过数",
-	      "失败数",
-	      "通过率",
-	      "总耗时",
-	      "平均耗时",
-	      "输入token",
-	      "输出token",
-	      "预估成本",
-	      "执行Agent",
-	      "模型",
-	      "runtime",
-	      "trace/task id",
-	      "失败原因",
-	      "评估结论",
-	    ],
-	  };
-	  if (assetType === "数据集") {
-	    return {
-	      ...basePayload,
-	      数据集: [casePayload],
-	      字段说明: ["名称", "变量", "期望包含"],
-	      中文语义: "用于提示词调试和实验复现的基准样本。",
-	    };
-	  }
-	  if (assetType === "测试套件") {
-	    return {
-	      ...basePayload,
-	      通过标准: ["变量完整", "渲染内容包含期望关键词", "输出保持中文"],
-	    };
-	  }
-	  if (assetType === "实验") {
-	    return {
-	      ...basePayload,
-	      实验对象: prompt.name,
-	      对比维度: ["命中率", "缺失变量", "中文一致性"],
-	      基线输出: rendered,
-	    };
-	  }
+  const casePayload = {
+    名称: `${prompt.name} 基准用例`,
+    变量: values,
+    期望包含: Object.values(values).filter(Boolean),
+  };
+  const basePayload = {
+    schema_version: 1,
+    语义版本: "multica.training_evaluation.v1",
+    cases: [casePayload],
+    指标口径: [
+      "总用例数",
+      "通过数",
+      "失败数",
+      "通过率",
+      "总耗时",
+      "平均耗时",
+      "输入token",
+      "输出token",
+      "预估成本",
+      "执行Agent",
+      "模型",
+      "runtime",
+      "trace/task id",
+      "失败原因",
+      "评估结论",
+    ],
+  };
+  if (assetType === "数据集") {
+    return {
+      ...basePayload,
+      数据集: [casePayload],
+      字段说明: ["名称", "变量", "期望包含"],
+      中文语义: "用于提示词调试和实验复现的基准样本。",
+    };
+  }
+  if (assetType === "测试套件") {
+    return {
+      ...basePayload,
+      通过标准: ["变量完整", "渲染内容包含期望关键词", "输出保持中文"],
+    };
+  }
+  if (assetType === "实验") {
+    return {
+      ...basePayload,
+      实验对象: prompt.name,
+      对比维度: ["命中率", "缺失变量", "中文一致性"],
+      基线输出: rendered,
+    };
+  }
 	  return {
 	    ...basePayload,
 	    调试输出: rendered,
 	    运行结果: {
 	      状态: "已记录",
-      运行时间: new Date().toISOString(),
-    },
+	      运行时间: new Date().toISOString(),
+	    },
 	  };
 }
 
@@ -970,10 +977,28 @@ function buildAgentDebugPackageRequest(
 function summarizeAssetPayload(asset: PromptEvaluationAsset): string {
   const payload = asset.payload ?? {};
   const cases = Array.isArray(payload.cases) ? payload.cases.length : Array.isArray(payload["数据集"]) ? payload["数据集"].length : 0;
+  if (payload["最近Agent运行"]) return "包含真实 Agent 运行";
   if (payload["调试包"]) return "包含 Agent 调试包";
   if (payload["运行结果"]) return "包含运行结果";
   if (asset.asset_type === "实验") return `实验维度 ${Array.isArray(payload["对比维度"]) ? payload["对比维度"].length : 0} 个`;
   return cases > 0 ? `${cases} 个用例` : "未记录用例";
+}
+
+function summarizeAgentRun(asset: PromptEvaluationAsset): string | null {
+  const payload = asset.payload ?? {};
+  const run = payload["最近Agent运行"];
+  if (!run || typeof run !== "object" || Array.isArray(run)) return null;
+  const record = run as Record<string, unknown>;
+  const status = stringFromRecord(record, "状态") || "未知状态";
+  const taskId = stringFromRecord(record, "trace/task id");
+  const agent = stringFromRecord(record, "执行Agent");
+  const model = stringFromRecord(record, "模型");
+  return `Agent 任务：${status}${taskId ? ` · task ${taskId}` : ""}${agent ? ` · ${agent}` : ""}${model ? ` · ${model}` : ""}`;
+}
+
+function stringFromRecord(record: Record<string, unknown>, key: string): string {
+  const value = record[key];
+  return typeof value === "string" ? value : "";
 }
 
 function variablesToText(variables: PromptLibraryVariable[]): string {
