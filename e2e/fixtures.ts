@@ -181,7 +181,7 @@ export class TestApiClient {
 
   async updatePromptEvaluationAsset(id: string, data: Record<string, unknown>): Promise<PromptEvaluationAsset> {
     const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}`, {
-      method: "PATCH",
+      method: "PUT",
       body: JSON.stringify(data),
     });
     if (!res.ok) {
