@@ -52,6 +52,7 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { ObservabilitySummaryCard } from "../../common/observability-summary-card";
 import { ContentEditor } from "../../editor/content-editor";
 import {
   PickerItem,
@@ -1631,6 +1632,12 @@ function SquadInstructionsTab({
           </div>
         )}
       </div>
+
+      <ObservabilitySummaryCard
+        title="小队观测摘要"
+        scopeLabel="按当前小队聚合 SOP 执行、阶段事件、耗时和证据"
+        squadId={squad.id}
+      />
 
       <div className="flex-1 min-h-0 overflow-y-auto rounded-md border bg-background px-4 py-3 transition-colors focus-within:border-input">
         <ContentEditor

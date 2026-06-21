@@ -339,10 +339,19 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 		}
 		since = pgtype.Timestamptz{Time: parsed, Valid: true}
 	}
+	squadID, ok := optionalUUIDParam(w, r.URL.Query().Get("squad_id"), "squad_id")
+	if !ok {
+		return
+	}
+	projectID, ok := optionalUUIDParam(w, r.URL.Query().Get("project_id"), "project_id")
+	if !ok {
+		return
+	}
 	runs, err := h.Queries.ListWorkspaceSquadSOPRuns(r.Context(), db.ListWorkspaceSquadSOPRunsParams{
 		WorkspaceID: workspaceID,
 		Limit:       500,
 		Since:       since,
+		SquadID:     squadID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list SOP runs")
@@ -352,6 +361,8 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 		WorkspaceID: workspaceID,
 		Limit:       500,
 		Since:       since,
+		SquadID:     squadID,
+		ProjectID:   projectID,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list task trace events")
