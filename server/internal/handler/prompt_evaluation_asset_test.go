@@ -71,6 +71,72 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	}
 }
 
+func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
+	})
+	promptID := createPromptEvaluationTestPromptWithContent(
+		t,
+		testWorkspaceID,
+		"澄清渲染提示词",
+		"请澄清 {{issue_title}}，仓库是 {{repo}}。",
+		`[{"name":"repo","default_value":"user-center"}]`,
+	)
+
+	createW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+		"prompt_id":  promptID,
+		"name":       "澄清渲染测试套件",
+		"asset_type": "测试套件",
+		"payload": map[string]any{
+			"cases": []map[string]any{
+				{
+					"名称":   "登录失败澄清",
+					"变量":   map[string]any{"issue_title": "登录失败"},
+					"期望包含": []string{"登录失败", "user-center"},
+				},
+			},
+		},
+	}))
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
+	}
+	var created PromptEvaluationAssetResponse
+	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	runW := httptest.NewRecorder()
+	testHandler.RunPromptEvaluationAsset(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/run", nil), "id", created.ID))
+	if runW.Code != http.StatusOK {
+		t.Fatalf("run status = %d, body = %s", runW.Code, runW.Body.String())
+	}
+	var ran PromptEvaluationAssetResponse
+	if err := json.Unmarshal(runW.Body.Bytes(), &ran); err != nil {
+		t.Fatalf("decode run response: %v", err)
+	}
+	payload, ok := ran.Payload.(map[string]any)
+	if !ok {
+		t.Fatalf("payload type = %T", ran.Payload)
+	}
+	recent, ok := payload["最近运行"].(map[string]any)
+	if !ok {
+		t.Fatalf("missing 最近运行 in payload: %#v", payload)
+	}
+	if recent["总用例数"] != float64(1) || recent["通过用例数"] != float64(1) || recent["缺失变量数"] != float64(0) {
+		t.Fatalf("unexpected run metrics: %#v", recent)
+	}
+	results := recent["用例结果"].([]any)
+	first := results[0].(map[string]any)
+	if first["渲染提示词"] != "请澄清 登录失败，仓库是 user-center。" {
+		t.Fatalf("rendered prompt = %q", first["渲染提示词"])
+	}
+}
+
 func TestPromptEvaluationAssetRejectsForeignPrompt(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")
@@ -92,12 +158,17 @@ func TestPromptEvaluationAssetRejectsForeignPrompt(t *testing.T) {
 
 func createPromptEvaluationTestPrompt(t *testing.T, workspaceID, name string) string {
 	t.Helper()
+	return createPromptEvaluationTestPromptWithContent(t, workspaceID, name, "请澄清问题。", `[]`)
+}
+
+func createPromptEvaluationTestPromptWithContent(t *testing.T, workspaceID, name, content, variables string) string {
+	t.Helper()
 	var promptID string
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO prompt_library_item (workspace_id, name, description, prompt_type, content, variables, tags, status, created_by)
-		VALUES ($1, $2, '', '需求澄清', '请澄清问题。', '[]'::jsonb, '[]'::jsonb, '启用', $3)
+		VALUES ($1, $2, '', '需求澄清', $3, $4::jsonb, '[]'::jsonb, '启用', $5)
 		RETURNING id
-	`, workspaceID, name, testUserID).Scan(&promptID); err != nil {
+	`, workspaceID, name, content, variables, testUserID).Scan(&promptID); err != nil {
 		t.Fatalf("create prompt: %v", err)
 	}
 	t.Cleanup(func() {

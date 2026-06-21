@@ -5,6 +5,11 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
+	"sort"
+	"strconv"
+	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -18,6 +23,8 @@ const (
 	promptEvaluationAssetExperiment = "实验"
 	promptEvaluationAssetOptimize   = "优化运行"
 )
+
+var promptTemplateVariablePattern = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}`)
 
 type PromptEvaluationAssetResponse struct {
 	ID          string  `json:"id"`
@@ -49,6 +56,28 @@ type UpdatePromptEvaluationAssetRequest struct {
 	AssetType   *string         `json:"asset_type"`
 	Payload     json.RawMessage `json:"payload"`
 	Status      *string         `json:"status"`
+}
+
+type promptEvaluationRunResult struct {
+	RunAt           string                          `json:"运行时间"`
+	AssetType       string                          `json:"资产类型"`
+	PromptName      string                          `json:"提示词"`
+	TotalCases      int                             `json:"总用例数"`
+	PassedCases     int                             `json:"通过用例数"`
+	FailedCases     int                             `json:"失败用例数"`
+	MissingVarCount int                             `json:"缺失变量数"`
+	CaseResults     []promptEvaluationCaseRunResult `json:"用例结果"`
+}
+
+type promptEvaluationCaseRunResult struct {
+	Name             string            `json:"名称"`
+	Status           string            `json:"状态"`
+	Variables        map[string]string `json:"变量"`
+	RenderedPrompt   string            `json:"渲染提示词"`
+	UsedVariables    []string          `json:"使用变量"`
+	MissingVariables []string          `json:"缺失变量"`
+	ExpectedContains []string          `json:"期望包含"`
+	MatchedContains  []string          `json:"已匹配"`
 }
 
 func promptEvaluationAssetToResponse(asset db.PromptEvaluationAsset) PromptEvaluationAssetResponse {
@@ -299,6 +328,45 @@ func (h *Handler) DeletePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	w.WriteHeader(http.StatusNoContent)
 }
 
+func (h *Handler) RunPromptEvaluationAsset(w http.ResponseWriter, r *http.Request) {
+	asset, ok := h.loadPromptEvaluationAsset(w, r)
+	if !ok {
+		return
+	}
+	if !asset.PromptID.Valid {
+		writeError(w, http.StatusBadRequest, "prompt_id is required to run an evaluation asset")
+		return
+	}
+	prompt, err := h.Queries.GetPromptLibraryItemInWorkspace(r.Context(), db.GetPromptLibraryItemInWorkspaceParams{
+		ID:          asset.PromptID,
+		WorkspaceID: asset.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "prompt_id does not belong to this workspace")
+		return
+	}
+	payload := decodePayloadObject(asset.Payload)
+	result := buildPromptEvaluationRunResult(asset, prompt, payload)
+	payload["最近运行"] = result
+	payload["运行记录"] = appendPromptEvaluationRunHistory(payload["运行记录"], result)
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encode prompt evaluation result")
+		return
+	}
+	updated, err := h.Queries.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
+		ID:          asset.ID,
+		WorkspaceID: asset.WorkspaceID,
+		PromptID:    asset.PromptID,
+		Payload:     payloadBytes,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save prompt evaluation result")
+		return
+	}
+	writeJSON(w, http.StatusOK, promptEvaluationAssetToResponse(updated))
+}
+
 func (h *Handler) loadPromptEvaluationAsset(w http.ResponseWriter, r *http.Request) (db.PromptEvaluationAsset, bool) {
 	workspaceID := h.resolveWorkspaceID(r)
 	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -322,4 +390,192 @@ func (h *Handler) loadPromptEvaluationAsset(w http.ResponseWriter, r *http.Reque
 		return db.PromptEvaluationAsset{}, false
 	}
 	return asset, true
+}
+
+func decodePayloadObject(raw []byte) map[string]any {
+	var payload map[string]any
+	if len(raw) > 0 {
+		_ = json.Unmarshal(raw, &payload)
+	}
+	if payload == nil {
+		return map[string]any{}
+	}
+	return payload
+}
+
+func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.PromptLibraryItem, payload map[string]any) promptEvaluationRunResult {
+	cases := promptEvaluationCases(payload)
+	results := make([]promptEvaluationCaseRunResult, 0, len(cases))
+	passed := 0
+	missingCount := 0
+	for idx, c := range cases {
+		name := stringFromAny(firstValue(c, "name", "名称"))
+		if name == "" {
+			name = "用例 " + strconv.Itoa(idx+1)
+		}
+		variables := stringMapFromAny(firstValue(c, "variables", "变量", "输入变量"))
+		expected := stringListFromAny(firstValue(c, "expected_contains", "期望包含", "期望"))
+		rendered, used, missing := renderPromptContent(prompt.Content, prompt.Variables, variables)
+		matched := make([]string, 0, len(expected))
+		for _, expectedText := range expected {
+			if expectedText != "" && strings.Contains(rendered, expectedText) {
+				matched = append(matched, expectedText)
+			}
+		}
+		status := "通过"
+		if len(missing) > 0 || len(matched) != len(expected) {
+			status = "失败"
+		} else {
+			passed++
+		}
+		missingCount += len(missing)
+		results = append(results, promptEvaluationCaseRunResult{
+			Name:             name,
+			Status:           status,
+			Variables:        variables,
+			RenderedPrompt:   rendered,
+			UsedVariables:    used,
+			MissingVariables: missing,
+			ExpectedContains: expected,
+			MatchedContains:  matched,
+		})
+	}
+	return promptEvaluationRunResult{
+		RunAt:           time.Now().UTC().Format(time.RFC3339),
+		AssetType:       asset.AssetType,
+		PromptName:      prompt.Name,
+		TotalCases:      len(results),
+		PassedCases:     passed,
+		FailedCases:     len(results) - passed,
+		MissingVarCount: missingCount,
+		CaseResults:     results,
+	}
+}
+
+func promptEvaluationCases(payload map[string]any) []map[string]any {
+	raw := firstValue(payload, "cases", "用例", "测试用例")
+	if arr, ok := raw.([]any); ok {
+		cases := make([]map[string]any, 0, len(arr))
+		for _, item := range arr {
+			if m, ok := item.(map[string]any); ok {
+				cases = append(cases, m)
+			}
+		}
+		if len(cases) > 0 {
+			return cases
+		}
+	}
+	return []map[string]any{{"名称": "默认用例", "变量": firstValue(payload, "variables", "变量", "输入变量")}}
+}
+
+func renderPromptContent(content string, variablesRaw []byte, values map[string]string) (string, []string, []string) {
+	defaults := promptVariableDefaults(variablesRaw)
+	usedSet := map[string]bool{}
+	missingSet := map[string]bool{}
+	rendered := promptTemplateVariablePattern.ReplaceAllStringFunc(content, func(match string) string {
+		parts := promptTemplateVariablePattern.FindStringSubmatch(match)
+		if len(parts) < 2 {
+			return match
+		}
+		name := strings.TrimSpace(parts[1])
+		usedSet[name] = true
+		if value, ok := values[name]; ok {
+			return value
+		}
+		if value, ok := defaults[name]; ok {
+			return value
+		}
+		missingSet[name] = true
+		return match
+	})
+	return rendered, sortedBoolKeys(usedSet), sortedBoolKeys(missingSet)
+}
+
+func promptVariableDefaults(raw []byte) map[string]string {
+	var variables []map[string]any
+	_ = json.Unmarshal(raw, &variables)
+	defaults := map[string]string{}
+	for _, variable := range variables {
+		name := stringFromAny(variable["name"])
+		if name == "" {
+			continue
+		}
+		if value, ok := variable["default_value"]; ok {
+			defaults[name] = stringFromAny(value)
+		}
+	}
+	return defaults
+}
+
+func appendPromptEvaluationRunHistory(raw any, result promptEvaluationRunResult) []any {
+	history, _ := raw.([]any)
+	next := append([]any{result}, history...)
+	if len(next) > 20 {
+		next = next[:20]
+	}
+	return next
+}
+
+func firstValue(m map[string]any, keys ...string) any {
+	for _, key := range keys {
+		if value, ok := m[key]; ok {
+			return value
+		}
+	}
+	return nil
+}
+
+func stringFromAny(value any) string {
+	switch v := value.(type) {
+	case string:
+		return v
+	case float64:
+		return strconv.FormatFloat(v, 'f', -1, 64)
+	case bool:
+		if v {
+			return "true"
+		}
+		return "false"
+	default:
+		return ""
+	}
+}
+
+func stringMapFromAny(value any) map[string]string {
+	result := map[string]string{}
+	if m, ok := value.(map[string]any); ok {
+		for key, raw := range m {
+			result[key] = stringFromAny(raw)
+		}
+	}
+	return result
+}
+
+func stringListFromAny(value any) []string {
+	switch v := value.(type) {
+	case string:
+		if strings.TrimSpace(v) == "" {
+			return nil
+		}
+		return []string{v}
+	case []any:
+		out := make([]string, 0, len(v))
+		for _, item := range v {
+			if s := strings.TrimSpace(stringFromAny(item)); s != "" {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+func sortedBoolKeys(m map[string]bool) []string {
+	keys := make([]string, 0, len(m))
+	for key := range m {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }

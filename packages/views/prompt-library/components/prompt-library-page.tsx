@@ -2,13 +2,14 @@
 
 import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, BookOpenText, Loader2, Plus, Save, Search, Trash2 } from "lucide-react";
+import { Archive, BookOpenText, Loader2, Play, Plus, Save, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { renderPromptTemplate } from "@multica/core/prompt-library";
 import type {
   CreatePromptLibraryItemRequest,
+  CreatePromptEvaluationAssetRequest,
   PromptLibraryItem,
   PromptLibraryStatus,
   PromptLibraryVariable,
@@ -132,8 +133,19 @@ export function PromptLibraryPage() {
     },
   });
 
+  const runDebugMut = useMutation({
+    mutationFn: async (data: CreatePromptEvaluationAssetRequest) => {
+      const asset = await api.createPromptEvaluationAsset(data);
+      return api.runPromptEvaluationAsset(asset.id);
+    },
+    onSuccess: () => {
+      toast.success("优化运行已记录");
+    },
+  });
+
   const saving = createMut.isPending || updateMut.isPending;
   const deleting = deleteMut.isPending;
+  const runningDebug = runDebugMut.isPending;
   const debugResult = useMemo(
     () => renderPromptTemplate({
       content: draft.content,
@@ -184,6 +196,31 @@ export function PromptLibraryPage() {
     if (!selected) return;
     if (!window.confirm(`删除提示词「${selected.name}」？`)) return;
     deleteMut.mutate(selected.id);
+  };
+
+  const runDebug = () => {
+    if (!selected) {
+      toast.error("请先保存提示词");
+      return;
+    }
+    const values = parseDebugValues(debugValuesText);
+    runDebugMut.mutate({
+      prompt_id: selected.id,
+      name: `${selected.name} 优化运行 ${new Date().toLocaleString("zh-CN")}`,
+      description: "从提示词调试场记录",
+      asset_type: "优化运行",
+      payload: {
+        cases: [
+          {
+            名称: "调试场用例",
+            变量: values,
+            期望包含: debugResult.missingVariables.length === 0 ? debugResult.usedVariables.map((key) => values[key]).filter(Boolean) : [],
+          },
+        ],
+        调试输出: debugResult.rendered,
+      },
+      status: "启用",
+    });
   };
 
   return (
@@ -369,6 +406,10 @@ export function PromptLibraryPage() {
                       缺失 {debugResult.missingVariables.join("、")}
                     </Badge>
                   )}
+                  <Button size="sm" variant="secondary" className="ml-auto h-7" onClick={runDebug} disabled={runningDebug}>
+                    {runningDebug ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+                    运行并记录
+                  </Button>
                 </div>
                 <pre className="min-h-[180px] overflow-auto whitespace-pre-wrap rounded-md border bg-muted/20 p-3 font-mono text-sm leading-6">
                   {debugResult.rendered || "暂无输出"}

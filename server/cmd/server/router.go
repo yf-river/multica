@@ -739,6 +739,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/", h.GetPromptEvaluationAsset)
 					r.Put("/", h.UpdatePromptEvaluationAsset)
 					r.Delete("/", h.DeletePromptEvaluationAsset)
+					r.Post("/run", h.RunPromptEvaluationAsset)
 				})
 			})
 

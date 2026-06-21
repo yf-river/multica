@@ -1703,6 +1703,13 @@ export class ApiClient {
     await this.fetch(`/api/prompt-evaluation-assets/${id}`, { method: "DELETE" });
   }
 
+  async runPromptEvaluationAsset(id: string): Promise<PromptEvaluationAsset> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/run`, { method: "POST" });
+    return parseWithFallback(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
+      endpoint: "POST /api/prompt-evaluation-assets/:id/run",
+    }) as PromptEvaluationAsset;
+  }
+
   // Project resources
   async listProjectResources(
     projectId: string,
