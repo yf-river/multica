@@ -318,6 +318,171 @@ func (q *Queries) GetPromptEvaluationRunInWorkspace(ctx context.Context, arg Get
 	return i, err
 }
 
+const getPromptEvaluationSummary = `-- name: GetPromptEvaluationSummary :one
+WITH asset_summary AS (
+    SELECT
+        COUNT(*)::bigint AS total_assets,
+        COUNT(*) FILTER (WHERE status = '启用')::bigint AS active_assets,
+        COUNT(*) FILTER (WHERE asset_type = '数据集')::bigint AS dataset_assets,
+        COUNT(*) FILTER (WHERE asset_type = '测试套件')::bigint AS test_suite_assets,
+        COUNT(*) FILTER (WHERE asset_type = '实验')::bigint AS experiment_assets,
+        COUNT(*) FILTER (WHERE asset_type = '优化运行')::bigint AS optimization_assets
+    FROM prompt_evaluation_asset pea
+    WHERE pea.workspace_id = $1
+),
+case_summary AS (
+    SELECT
+        COUNT(*)::bigint AS total_cases,
+        COUNT(*) FILTER (WHERE status = '启用')::bigint AS active_cases
+    FROM prompt_evaluation_case pec
+    WHERE pec.workspace_id = $1
+),
+run_summary AS (
+    SELECT
+        COUNT(*)::bigint AS total_runs,
+        COUNT(*) FILTER (WHERE run_kind = '本地渲染')::bigint AS local_runs,
+        COUNT(*) FILTER (WHERE run_kind = 'Agent执行')::bigint AS agent_runs,
+        COUNT(*) FILTER (WHERE status = '已入队')::bigint AS queued_runs,
+        COUNT(*) FILTER (WHERE status = '运行中')::bigint AS running_runs,
+        COUNT(*) FILTER (WHERE status = '通过')::bigint AS passed_runs,
+        COUNT(*) FILTER (WHERE status = '未通过')::bigint AS not_passed_runs,
+        COUNT(*) FILTER (WHERE status = '失败')::bigint AS failed_runs,
+        COUNT(*) FILTER (WHERE status = '已取消')::bigint AS cancelled_runs,
+        COALESCE(SUM(total_cases), 0)::bigint AS evaluated_cases,
+        COALESCE(SUM(passed_cases), 0)::bigint AS passed_cases,
+        COALESCE(SUM(failed_cases), 0)::bigint AS failed_cases,
+        COALESCE(SUM(total_duration_ms), 0)::bigint AS total_duration_ms,
+        COALESCE(AVG(NULLIF(average_duration_ms, 0)), 0)::double precision AS average_duration_ms,
+        COALESCE(SUM(input_tokens), 0)::bigint AS input_tokens,
+        COALESCE(SUM(output_tokens), 0)::bigint AS output_tokens,
+        COALESCE(SUM(estimated_cost), 0)::double precision AS estimated_cost,
+        MAX(created_at)::timestamptz AS last_run_at
+    FROM prompt_evaluation_run per
+    WHERE per.workspace_id = $1
+),
+candidate_summary AS (
+    SELECT
+        COUNT(*)::bigint AS total_candidates,
+        COUNT(*) FILTER (WHERE status = '待确认')::bigint AS pending_candidates,
+        COUNT(*) FILTER (WHERE status = '已发布')::bigint AS published_candidates,
+        COUNT(*) FILTER (WHERE status = '已拒绝')::bigint AS rejected_candidates
+    FROM prompt_evaluation_optimization_candidate peoc
+    WHERE peoc.workspace_id = $1
+)
+SELECT
+    a.total_assets,
+    a.active_assets,
+    a.dataset_assets,
+    a.test_suite_assets,
+    a.experiment_assets,
+    a.optimization_assets,
+    c.total_cases,
+    c.active_cases,
+    r.total_runs,
+    r.local_runs,
+    r.agent_runs,
+    r.queued_runs,
+    r.running_runs,
+    r.passed_runs,
+    r.not_passed_runs,
+    r.failed_runs,
+    r.cancelled_runs,
+    r.evaluated_cases,
+    r.passed_cases,
+    r.failed_cases,
+    CASE
+        WHEN r.evaluated_cases > 0 THEN r.passed_cases::double precision / r.evaluated_cases::double precision
+        ELSE 0::double precision
+    END AS pass_rate,
+    r.total_duration_ms,
+    r.average_duration_ms,
+    r.input_tokens,
+    r.output_tokens,
+    r.estimated_cost,
+    oc.total_candidates,
+    oc.pending_candidates,
+    oc.published_candidates,
+    oc.rejected_candidates,
+    r.last_run_at
+FROM asset_summary a
+CROSS JOIN case_summary c
+CROSS JOIN run_summary r
+CROSS JOIN candidate_summary oc
+`
+
+type GetPromptEvaluationSummaryRow struct {
+	TotalAssets         int64              `json:"total_assets"`
+	ActiveAssets        int64              `json:"active_assets"`
+	DatasetAssets       int64              `json:"dataset_assets"`
+	TestSuiteAssets     int64              `json:"test_suite_assets"`
+	ExperimentAssets    int64              `json:"experiment_assets"`
+	OptimizationAssets  int64              `json:"optimization_assets"`
+	TotalCases          int64              `json:"total_cases"`
+	ActiveCases         int64              `json:"active_cases"`
+	TotalRuns           int64              `json:"total_runs"`
+	LocalRuns           int64              `json:"local_runs"`
+	AgentRuns           int64              `json:"agent_runs"`
+	QueuedRuns          int64              `json:"queued_runs"`
+	RunningRuns         int64              `json:"running_runs"`
+	PassedRuns          int64              `json:"passed_runs"`
+	NotPassedRuns       int64              `json:"not_passed_runs"`
+	FailedRuns          int64              `json:"failed_runs"`
+	CancelledRuns       int64              `json:"cancelled_runs"`
+	EvaluatedCases      int64              `json:"evaluated_cases"`
+	PassedCases         int64              `json:"passed_cases"`
+	FailedCases         int64              `json:"failed_cases"`
+	PassRate            float64            `json:"pass_rate"`
+	TotalDurationMs     int64              `json:"total_duration_ms"`
+	AverageDurationMs   float64            `json:"average_duration_ms"`
+	InputTokens         int64              `json:"input_tokens"`
+	OutputTokens        int64              `json:"output_tokens"`
+	EstimatedCost       float64            `json:"estimated_cost"`
+	TotalCandidates     int64              `json:"total_candidates"`
+	PendingCandidates   int64              `json:"pending_candidates"`
+	PublishedCandidates int64              `json:"published_candidates"`
+	RejectedCandidates  int64              `json:"rejected_candidates"`
+	LastRunAt           pgtype.Timestamptz `json:"last_run_at"`
+}
+
+func (q *Queries) GetPromptEvaluationSummary(ctx context.Context, workspaceID pgtype.UUID) (GetPromptEvaluationSummaryRow, error) {
+	row := q.db.QueryRow(ctx, getPromptEvaluationSummary, workspaceID)
+	var i GetPromptEvaluationSummaryRow
+	err := row.Scan(
+		&i.TotalAssets,
+		&i.ActiveAssets,
+		&i.DatasetAssets,
+		&i.TestSuiteAssets,
+		&i.ExperimentAssets,
+		&i.OptimizationAssets,
+		&i.TotalCases,
+		&i.ActiveCases,
+		&i.TotalRuns,
+		&i.LocalRuns,
+		&i.AgentRuns,
+		&i.QueuedRuns,
+		&i.RunningRuns,
+		&i.PassedRuns,
+		&i.NotPassedRuns,
+		&i.FailedRuns,
+		&i.CancelledRuns,
+		&i.EvaluatedCases,
+		&i.PassedCases,
+		&i.FailedCases,
+		&i.PassRate,
+		&i.TotalDurationMs,
+		&i.AverageDurationMs,
+		&i.InputTokens,
+		&i.OutputTokens,
+		&i.EstimatedCost,
+		&i.TotalCandidates,
+		&i.PendingCandidates,
+		&i.PublishedCandidates,
+		&i.RejectedCandidates,
+		&i.LastRunAt,
+	)
+	return i, err
+}
+
 const listPromptEvaluationRuns = `-- name: ListPromptEvaluationRuns :many
 SELECT id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at FROM prompt_evaluation_run
 WHERE workspace_id = $1

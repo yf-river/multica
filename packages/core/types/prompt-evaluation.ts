@@ -129,6 +129,16 @@ export interface PromptEvaluationRunEvidence {
   evidence: Record<string, unknown>;
 }
 
+export interface PromptEvaluationSummary {
+  workspace_id: string;
+  generated_at: string;
+  last_run_at: string;
+  指标: Record<string, number>;
+  资产统计: Record<string, number>;
+  运行状态: Record<string, number>;
+  优化候选: Record<string, number>;
+}
+
 export interface PromptEvaluationStructuredCase {
   id: string;
   workspace_id: string;

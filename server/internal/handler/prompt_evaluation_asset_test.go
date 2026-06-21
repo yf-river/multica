@@ -189,6 +189,26 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 	if renderedPrompt != "请澄清 登录失败，仓库是 user-center。" {
 		t.Fatalf("structured trial rendered prompt = %q", renderedPrompt)
 	}
+
+	summaryW := httptest.NewRecorder()
+	testHandler.GetPromptEvaluationSummary(summaryW, newRequest(http.MethodGet, "/api/prompt-evaluation-summary", nil))
+	if summaryW.Code != http.StatusOK {
+		t.Fatalf("summary status = %d, body = %s", summaryW.Code, summaryW.Body.String())
+	}
+	var summary PromptEvaluationSummaryResponse
+	if err := json.Unmarshal(summaryW.Body.Bytes(), &summary); err != nil {
+		t.Fatalf("decode summary response: %v", err)
+	}
+	if summary.RunStatus["运行总数"] < 1 || summary.RunStatus["通过"] < 1 {
+		t.Fatalf("summary run status = %#v", summary.RunStatus)
+	}
+	if summary.Assets["测试套件"] < 1 || summary.Assets["结构化用例"] < 1 {
+		t.Fatalf("summary assets = %#v", summary.Assets)
+	}
+	passRate, _ := summary.Metrics["通过率"].(float64)
+	if summary.Metrics["通过数"].(float64) < 1 || passRate < 0 || passRate > 1 || summary.Metrics["本地运行数"].(float64) < 1 {
+		t.Fatalf("summary metrics = %#v", summary.Metrics)
+	}
 }
 
 func TestRunPromptEvaluationAssetReadsDatasetPayload(t *testing.T) {

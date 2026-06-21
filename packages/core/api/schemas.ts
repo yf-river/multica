@@ -16,6 +16,7 @@ import type {
   ListWebhookDeliveriesResponse,
   PromptEvaluationAsset,
   PromptEvaluationRunEvidence,
+  PromptEvaluationSummary,
   PromptEvaluationOptimizationCandidate,
   PromptLibraryItem,
   PublishPromptEvaluationOptimizationCandidateResponse,
@@ -873,6 +874,16 @@ export const PromptEvaluationRunEvidenceSchema = z.object({
   evidence: z.record(z.string(), z.unknown()).default({}),
 }).loose();
 
+export const PromptEvaluationSummarySchema = z.object({
+  workspace_id: z.string().default(""),
+  generated_at: z.string().default(""),
+  last_run_at: z.string().default(""),
+  指标: z.record(z.string(), z.number()).default({}),
+  资产统计: z.record(z.string(), z.number()).default({}),
+  运行状态: z.record(z.string(), z.number()).default({}),
+  优化候选: z.record(z.string(), z.number()).default({}),
+}).loose();
+
 export const PromptEvaluationRunListResponseSchema = z.object({
   items: z.array(PromptEvaluationRunSchema).default([]),
   total: z.number().default(0),
@@ -982,6 +993,16 @@ export const EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE: PromptEvaluationRunEvidence =
   task_messages: [],
   trace_events: [],
   evidence: {},
+};
+
+export const EMPTY_PROMPT_EVALUATION_SUMMARY: PromptEvaluationSummary = {
+  workspace_id: "",
+  generated_at: "",
+  last_run_at: "",
+  指标: {},
+  资产统计: {},
+  运行状态: {},
+  优化候选: {},
 };
 
 export const EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE = {

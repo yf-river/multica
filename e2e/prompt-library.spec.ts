@@ -125,6 +125,26 @@ test.describe("训练与评估工作台", () => {
         rendered_prompt: "请澄清 登录失败，项目背景：user-center。",
       }),
     ]);
+    await expect
+      .poll(async () => {
+        const summary = await api.getPromptEvaluationSummary();
+        return {
+          hasRuns: summary.运行状态["运行总数"] >= 1,
+          hasPassedCase: summary.指标["通过数"] >= 1,
+          passRate: summary.指标["通过率"],
+          hasAssets: summary.资产统计["资产总数"] >= 1,
+        };
+      }, { timeout: 15000 })
+      .toEqual({
+        hasRuns: true,
+        hasPassedCase: true,
+        passRate: expect.any(Number),
+        hasAssets: true,
+      });
+    await expect(page.getByText("领导视角摘要")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("运行总数")).toBeVisible();
+    await expect(page.getByText("通过率")).toBeVisible();
+    await expect(page.getByText("待确认优化候选")).toBeVisible();
     await page.getByRole("button", { name: "运行历史", exact: true }).click();
     await expect(page.getByText("本地渲染 · 通过")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(/通过 1\/1/)).toBeVisible();

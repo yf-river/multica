@@ -68,6 +68,97 @@ WHERE workspace_id = $1
 ORDER BY created_at DESC
 LIMIT $2;
 
+-- name: GetPromptEvaluationSummary :one
+WITH asset_summary AS (
+    SELECT
+        COUNT(*)::bigint AS total_assets,
+        COUNT(*) FILTER (WHERE status = '启用')::bigint AS active_assets,
+        COUNT(*) FILTER (WHERE asset_type = '数据集')::bigint AS dataset_assets,
+        COUNT(*) FILTER (WHERE asset_type = '测试套件')::bigint AS test_suite_assets,
+        COUNT(*) FILTER (WHERE asset_type = '实验')::bigint AS experiment_assets,
+        COUNT(*) FILTER (WHERE asset_type = '优化运行')::bigint AS optimization_assets
+    FROM prompt_evaluation_asset pea
+    WHERE pea.workspace_id = $1
+),
+case_summary AS (
+    SELECT
+        COUNT(*)::bigint AS total_cases,
+        COUNT(*) FILTER (WHERE status = '启用')::bigint AS active_cases
+    FROM prompt_evaluation_case pec
+    WHERE pec.workspace_id = $1
+),
+run_summary AS (
+    SELECT
+        COUNT(*)::bigint AS total_runs,
+        COUNT(*) FILTER (WHERE run_kind = '本地渲染')::bigint AS local_runs,
+        COUNT(*) FILTER (WHERE run_kind = 'Agent执行')::bigint AS agent_runs,
+        COUNT(*) FILTER (WHERE status = '已入队')::bigint AS queued_runs,
+        COUNT(*) FILTER (WHERE status = '运行中')::bigint AS running_runs,
+        COUNT(*) FILTER (WHERE status = '通过')::bigint AS passed_runs,
+        COUNT(*) FILTER (WHERE status = '未通过')::bigint AS not_passed_runs,
+        COUNT(*) FILTER (WHERE status = '失败')::bigint AS failed_runs,
+        COUNT(*) FILTER (WHERE status = '已取消')::bigint AS cancelled_runs,
+        COALESCE(SUM(total_cases), 0)::bigint AS evaluated_cases,
+        COALESCE(SUM(passed_cases), 0)::bigint AS passed_cases,
+        COALESCE(SUM(failed_cases), 0)::bigint AS failed_cases,
+        COALESCE(SUM(total_duration_ms), 0)::bigint AS total_duration_ms,
+        COALESCE(AVG(NULLIF(average_duration_ms, 0)), 0)::double precision AS average_duration_ms,
+        COALESCE(SUM(input_tokens), 0)::bigint AS input_tokens,
+        COALESCE(SUM(output_tokens), 0)::bigint AS output_tokens,
+        COALESCE(SUM(estimated_cost), 0)::double precision AS estimated_cost,
+        MAX(created_at)::timestamptz AS last_run_at
+    FROM prompt_evaluation_run per
+    WHERE per.workspace_id = $1
+),
+candidate_summary AS (
+    SELECT
+        COUNT(*)::bigint AS total_candidates,
+        COUNT(*) FILTER (WHERE status = '待确认')::bigint AS pending_candidates,
+        COUNT(*) FILTER (WHERE status = '已发布')::bigint AS published_candidates,
+        COUNT(*) FILTER (WHERE status = '已拒绝')::bigint AS rejected_candidates
+    FROM prompt_evaluation_optimization_candidate peoc
+    WHERE peoc.workspace_id = $1
+)
+SELECT
+    a.total_assets,
+    a.active_assets,
+    a.dataset_assets,
+    a.test_suite_assets,
+    a.experiment_assets,
+    a.optimization_assets,
+    c.total_cases,
+    c.active_cases,
+    r.total_runs,
+    r.local_runs,
+    r.agent_runs,
+    r.queued_runs,
+    r.running_runs,
+    r.passed_runs,
+    r.not_passed_runs,
+    r.failed_runs,
+    r.cancelled_runs,
+    r.evaluated_cases,
+    r.passed_cases,
+    r.failed_cases,
+    CASE
+        WHEN r.evaluated_cases > 0 THEN r.passed_cases::double precision / r.evaluated_cases::double precision
+        ELSE 0::double precision
+    END AS pass_rate,
+    r.total_duration_ms,
+    r.average_duration_ms,
+    r.input_tokens,
+    r.output_tokens,
+    r.estimated_cost,
+    oc.total_candidates,
+    oc.pending_candidates,
+    oc.published_candidates,
+    oc.rejected_candidates,
+    r.last_run_at
+FROM asset_summary a
+CROSS JOIN case_summary c
+CROSS JOIN run_summary r
+CROSS JOIN candidate_summary oc;
+
 -- name: GetPromptEvaluationRunInWorkspace :one
 SELECT * FROM prompt_evaluation_run
 WHERE id = $1 AND workspace_id = $2;

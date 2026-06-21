@@ -192,6 +192,16 @@ type PromptEvaluationRunEvidenceResponse struct {
 	Evidence     any                                 `json:"evidence"`
 }
 
+type PromptEvaluationSummaryResponse struct {
+	WorkspaceID string           `json:"workspace_id"`
+	GeneratedAt string           `json:"generated_at"`
+	LastRunAt   string           `json:"last_run_at"`
+	Metrics     map[string]any   `json:"指标"`
+	Assets      map[string]int64 `json:"资产统计"`
+	RunStatus   map[string]int64 `json:"运行状态"`
+	Candidates  map[string]int64 `json:"优化候选"`
+}
+
 type PromptEvaluationCaseResponse struct {
 	ID               string  `json:"id"`
 	WorkspaceID      string  `json:"workspace_id"`
@@ -367,6 +377,58 @@ func promptEvaluationOptimizationCandidateToResponse(item db.PromptEvaluationOpt
 		CreatedBy:            uuidToPtr(item.CreatedBy),
 		CreatedAt:            timestampToString(item.CreatedAt),
 		UpdatedAt:            timestampToString(item.UpdatedAt),
+	}
+}
+
+func promptEvaluationSummaryToResponse(workspaceID pgtype.UUID, row db.GetPromptEvaluationSummaryRow) PromptEvaluationSummaryResponse {
+	return PromptEvaluationSummaryResponse{
+		WorkspaceID: uuidToString(workspaceID),
+		GeneratedAt: time.Now().UTC().Format(time.RFC3339),
+		LastRunAt:   timestampToString(row.LastRunAt),
+		Metrics: map[string]any{
+			"总用例数":     row.TotalCases,
+			"启用用例数":    row.ActiveCases,
+			"已评估用例数":   row.EvaluatedCases,
+			"通过数":      row.PassedCases,
+			"失败数":      row.FailedCases,
+			"通过率":      row.PassRate,
+			"总耗时毫秒":    row.TotalDurationMs,
+			"平均耗时毫秒":   row.AverageDurationMs,
+			"输入token":  row.InputTokens,
+			"输出token":  row.OutputTokens,
+			"预估成本":     row.EstimatedCost,
+			"Agent运行数": row.AgentRuns,
+			"本地运行数":    row.LocalRuns,
+			"待确认优化候选":  row.PendingCandidates,
+			"已发布优化候选":  row.PublishedCandidates,
+		},
+		Assets: map[string]int64{
+			"资产总数":  row.TotalAssets,
+			"启用资产数": row.ActiveAssets,
+			"数据集":   row.DatasetAssets,
+			"测试套件":  row.TestSuiteAssets,
+			"实验":    row.ExperimentAssets,
+			"优化运行":  row.OptimizationAssets,
+			"结构化用例": row.TotalCases,
+			"启用用例":  row.ActiveCases,
+		},
+		RunStatus: map[string]int64{
+			"运行总数":    row.TotalRuns,
+			"本地渲染":    row.LocalRuns,
+			"Agent执行": row.AgentRuns,
+			"已入队":     row.QueuedRuns,
+			"运行中":     row.RunningRuns,
+			"通过":      row.PassedRuns,
+			"未通过":     row.NotPassedRuns,
+			"失败":      row.FailedRuns,
+			"已取消":     row.CancelledRuns,
+		},
+		Candidates: map[string]int64{
+			"候选总数": row.TotalCandidates,
+			"待确认":  row.PendingCandidates,
+			"已发布":  row.PublishedCandidates,
+			"已拒绝":  row.RejectedCandidates,
+		},
 	}
 }
 
@@ -554,6 +616,20 @@ func (h *Handler) ListPromptEvaluationRuns(w http.ResponseWriter, r *http.Reques
 		resp[i] = promptEvaluationRunToResponse(run)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
+}
+
+func (h *Handler) GetPromptEvaluationSummary(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	row, err := h.Queries.GetPromptEvaluationSummary(r.Context(), workspaceUUID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation summary")
+		return
+	}
+	writeJSON(w, http.StatusOK, promptEvaluationSummaryToResponse(workspaceUUID, row))
 }
 
 func (h *Handler) ListPromptEvaluationRunTrials(w http.ResponseWriter, r *http.Request) {

@@ -83,6 +83,16 @@ interface PromptEvaluationOptimizationCandidate {
   published_prompt_id: string | null;
 }
 
+interface PromptEvaluationSummary {
+  workspace_id: string;
+  generated_at: string;
+  last_run_at: string;
+  指标: Record<string, number>;
+  资产统计: Record<string, number>;
+  运行状态: Record<string, number>;
+  优化候选: Record<string, number>;
+}
+
 export class TestApiClient {
   private token: string | null = null;
   private workspaceSlug: string | null = null;
@@ -275,6 +285,14 @@ export class TestApiClient {
     const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/evidence`);
     if (!res.ok) {
       throw new Error(`get prompt evaluation run evidence failed: ${res.status}`);
+    }
+    return res.json();
+  }
+
+  async getPromptEvaluationSummary(): Promise<PromptEvaluationSummary> {
+    const res = await this.authedFetch("/api/prompt-evaluation-summary");
+    if (!res.ok) {
+      throw new Error(`get prompt evaluation summary failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
   }

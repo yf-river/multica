@@ -17,6 +17,7 @@ import type {
   PromptEvaluationStructuredCase,
   PromptEvaluationRun,
   PromptEvaluationRunEvidence,
+  PromptEvaluationSummary,
   PromptEvaluationAssetType,
   PromptLibraryItem,
   PromptLibraryStatus,
@@ -38,6 +39,7 @@ const promptLibraryKeys = {
   cases: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-cases"] as const,
   runs: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-runs"] as const,
   candidates: (workspaceId: string) => ["prompt-library", workspaceId, "optimization-candidates"] as const,
+  summary: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-summary"] as const,
 };
 
 const PROMPT_TYPES = ["全部", "需求澄清", "系统提示词", "评测提示词", "小队 SOP", "通用"];
@@ -150,6 +152,11 @@ export function PromptLibraryPage() {
     queryFn: () => api.listPromptEvaluationOptimizationCandidates({ limit: 100 }),
     enabled: !!workspaceId,
   });
+  const summaryQuery = useQuery({
+    queryKey: promptLibraryKeys.summary(workspaceId ?? ""),
+    queryFn: () => api.getPromptEvaluationSummary(),
+    enabled: !!workspaceId,
+  });
 
   const runtimeQuery = useQuery({
     queryKey: ["training-evaluation", workspaceId ?? "", "runtimes"],
@@ -162,6 +169,7 @@ export function PromptLibraryPage() {
   const cases = caseQuery.data?.items ?? [];
   const runs = runQuery.data?.items ?? [];
   const candidates = candidateQuery.data?.items ?? [];
+  const summary = summaryQuery.data ?? null;
   const selected = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
   const agentRuntimeReadiness = useMemo(
     () => evaluateCodeBuddyReadiness(runtimeQuery.data ?? []),
@@ -196,6 +204,7 @@ export function PromptLibraryPage() {
   const invalidateCases = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId ?? "") });
   const invalidateRuns = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId ?? "") });
   const invalidateCandidates = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.candidates(workspaceId ?? "") });
+  const invalidateSummary = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId ?? "") });
 
   const createMut = useMutation({
     mutationFn: (data: CreatePromptLibraryItemRequest) => api.createPromptLibraryItem(data),
@@ -234,6 +243,7 @@ export function PromptLibraryPage() {
       invalidateAssets();
       invalidateCases();
       invalidateRuns();
+      invalidateSummary();
       toast.success("优化运行已记录");
     },
   });
@@ -243,6 +253,7 @@ export function PromptLibraryPage() {
       onSuccess: () => {
         invalidateAssets();
         invalidateCases();
+        invalidateSummary();
         toast.success("资产已创建");
       },
     });
@@ -256,6 +267,7 @@ export function PromptLibraryPage() {
         invalidateAssets();
         invalidateCases();
         invalidateRuns();
+        invalidateSummary();
         toast.success(`真实 Agent 任务已入队：${result.task_id}`);
       },
     });
@@ -266,6 +278,7 @@ export function PromptLibraryPage() {
       invalidateAssets();
       invalidateCases();
       invalidateRuns();
+      invalidateSummary();
       toast.success("资产已更新");
     },
   });
@@ -276,6 +289,7 @@ export function PromptLibraryPage() {
       invalidateAssets();
       invalidateCases();
       invalidateRuns();
+      invalidateSummary();
       toast.success("资产已删除");
     },
   });
@@ -284,6 +298,7 @@ export function PromptLibraryPage() {
     mutationFn: (runId: string) => api.syncPromptEvaluationRun(runId),
     onSuccess: () => {
       invalidateRuns();
+      invalidateSummary();
       toast.success("运行记录已同步");
     },
   });
@@ -292,6 +307,7 @@ export function PromptLibraryPage() {
     mutationFn: (runId: string) => api.createPromptEvaluationOptimizationCandidate(runId),
     onSuccess: () => {
       invalidateCandidates();
+      invalidateSummary();
       toast.success("优化候选已生成，等待人工确认");
     },
   });
@@ -301,6 +317,7 @@ export function PromptLibraryPage() {
     onSuccess: (result) => {
       invalidate();
       invalidateCandidates();
+      invalidateSummary();
       setSelectedId(result.prompt.id);
       toast.success(`已发布新提示词版本：${result.prompt.name}`);
     },
@@ -473,6 +490,8 @@ export function PromptLibraryPage() {
           </FilterButton>
         ))}
       </div>
+
+      <TrainingSummaryStrip summary={summary} loading={summaryQuery.isLoading} />
 
       <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[360px_minmax(0,1fr)]">
         <aside className="flex min-h-0 flex-col border-b md:border-b-0 md:border-r">
@@ -678,6 +697,49 @@ export function PromptLibraryPage() {
         </main>
       </div>
     </div>
+  );
+}
+
+function TrainingSummaryStrip({ summary, loading }: { summary: PromptEvaluationSummary | null; loading: boolean }) {
+  const metrics = summary?.指标 ?? {};
+  const assets = summary?.资产统计 ?? {};
+  const runStatus = summary?.运行状态 ?? {};
+  const candidates = summary?.优化候选 ?? {};
+  const items = [
+    { label: "运行总数", value: formatNumber(runStatus["运行总数"]) },
+    { label: "通过率", value: formatPercent(metrics["通过率"]) },
+    { label: "失败数", value: formatNumber(metrics["失败数"]) },
+    { label: "Agent运行数", value: formatNumber(metrics["Agent运行数"]) },
+    { label: "输入token", value: formatNumber(metrics["输入token"]) },
+    { label: "输出token", value: formatNumber(metrics["输出token"]) },
+    { label: "待确认优化候选", value: formatNumber(candidates["待确认"]) },
+    { label: "已发布优化候选", value: formatNumber(candidates["已发布"]) },
+    { label: "资产总数", value: formatNumber(assets["资产总数"]) },
+    { label: "结构化用例", value: formatNumber(assets["结构化用例"]) },
+  ];
+
+  return (
+    <section className="shrink-0 border-b bg-muted/20 px-3 py-3">
+      <div className="mb-2 flex min-w-0 items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="truncate text-sm font-semibold">领导视角摘要</h2>
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            {summary?.last_run_at ? `最近运行 ${summary.last_run_at}` : "暂无运行记录"}
+          </p>
+        </div>
+        <Badge variant="outline" className="shrink-0">
+          {loading ? "刷新中" : "训练评估"}
+        </Badge>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+        {items.map((item) => (
+          <div key={item.label} className="min-w-0 rounded-md border bg-background px-3 py-2">
+            <div className="truncate text-[11px] text-muted-foreground">{item.label}</div>
+            <div className="mt-1 truncate text-sm font-semibold">{item.value}</div>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -1354,6 +1416,15 @@ function stringFromRecord(record: Record<string, unknown>, key: string): string 
 
 function truncateText(value: string, maxLength: number): string {
   return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
+}
+
+function formatNumber(value: unknown): string {
+  return typeof value === "number" && Number.isFinite(value) ? value.toLocaleString("zh-CN") : "0";
+}
+
+function formatPercent(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "0%";
+  return `${Math.round(value * 1000) / 10}%`;
 }
 
 function variablesToText(variables: PromptLibraryVariable[]): string {

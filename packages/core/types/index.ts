@@ -120,6 +120,7 @@ export type {
   PromptEvaluationTrial,
   PromptEvaluationTaskUsage,
   PromptEvaluationRunEvidence,
+  PromptEvaluationSummary,
   PromptEvaluationStructuredCase,
   PromptEvaluationAgentRunResponse,
   PromptEvaluationOptimizationCandidate,
