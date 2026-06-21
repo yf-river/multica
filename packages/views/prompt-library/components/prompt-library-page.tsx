@@ -208,13 +208,24 @@ export function PromptLibraryPage() {
     },
   });
 
-  const createAssetMut = useMutation({
-    mutationFn: (data: CreatePromptEvaluationAssetRequest) => api.createPromptEvaluationAsset(data),
-    onSuccess: () => {
-      invalidateAssets();
-      toast.success("资产已创建");
-    },
-  });
+	  const createAssetMut = useMutation({
+	    mutationFn: (data: CreatePromptEvaluationAssetRequest) => api.createPromptEvaluationAsset(data),
+	    onSuccess: () => {
+	      invalidateAssets();
+	      toast.success("资产已创建");
+	    },
+	  });
+
+	  const runAgentMut = useMutation({
+	    mutationFn: async (data: CreatePromptEvaluationAssetRequest) => {
+	      const asset = await api.createPromptEvaluationAsset(data);
+	      return api.runPromptEvaluationAssetAgent(asset.id);
+	    },
+	    onSuccess: (result) => {
+	      invalidateAssets();
+	      toast.success(`真实 Agent 任务已入队：${result.task_id}`);
+	    },
+	  });
 
   const updateAssetMut = useMutation({
     mutationFn: ({ id, data }: { id: string; data: UpdatePromptEvaluationAssetRequest }) => api.updatePromptEvaluationAsset(id, data),
@@ -235,7 +246,8 @@ export function PromptLibraryPage() {
   const saving = createMut.isPending || updateMut.isPending;
   const deleting = deleteMut.isPending;
   const runningDebug = runDebugMut.isPending;
-  const savingAsset = createAssetMut.isPending || updateAssetMut.isPending || deleteAssetMut.isPending;
+	  const savingAsset = createAssetMut.isPending || updateAssetMut.isPending || deleteAssetMut.isPending;
+	  const runningAgent = runAgentMut.isPending;
   const debugResult = useMemo(
     () => renderPromptTemplate({
       content: draft.content,
@@ -336,39 +348,28 @@ export function PromptLibraryPage() {
     });
   };
 
-  const saveAgentDebugPackage = () => {
-    const prompt = selected;
-    if (!prompt) {
-      toast.error("请先保存提示词");
-      return;
-    }
-    const values = parseDebugValues(debugValuesText);
-    createAssetMut.mutate({
-      prompt_id: prompt.id,
-      name: `${prompt.name} Agent 调试包 ${new Date().toLocaleString("zh-CN")}`,
-      description: `Agent 调试场记录：${buildAgentExecutionStatus(agentRuntimeReadiness)}`,
-      asset_type: "实验",
-      payload: {
-        调试包: {
-          提示词: prompt.name,
-          变量: values,
-          上下文: debugResult.rendered,
-          期望输出: agentExpectedText,
-          执行方式: buildAgentExecutionStatus(agentRuntimeReadiness),
-        },
-        运行环境: {
-          目标Runtime: "CodeBuddy",
-          目标模型: DEFAULT_AGENT_MODEL,
-          状态: agentRuntimeReadiness.status,
-          说明: agentRuntimeReadiness.detail,
-          修复路径: agentRuntimeReadiness.fix,
-          runtime_id: agentRuntimeReadiness.runtime?.id ?? null,
-        },
-        对比维度: ["上下文完整性", "期望输出覆盖", "中文语义一致性"],
-      },
-      status: "启用",
-    });
-  };
+	  const saveAgentDebugPackage = () => {
+	    const prompt = selected;
+	    if (!prompt) {
+	      toast.error("请先保存提示词");
+	      return;
+	    }
+	    createAssetMut.mutate(buildAgentDebugPackageRequest(prompt, parseDebugValues(debugValuesText), debugResult.rendered, agentExpectedText, agentRuntimeReadiness));
+	  };
+
+	  const runAgentDebugPackage = () => {
+	    const prompt = selected;
+	    if (!prompt) {
+	      toast.error("请先保存提示词");
+	      return;
+	    }
+	    if (agentRuntimeReadiness.status !== "就绪") {
+	      toast.error(agentRuntimeReadiness.fix);
+	      return;
+	    }
+	    const values = parseDebugValues(debugValuesText);
+	    runAgentMut.mutate(buildAgentDebugPackageRequest(prompt, values, debugResult.rendered, agentExpectedText, agentRuntimeReadiness));
+	  };
 
   const toggleAssetStatus = (asset: PromptEvaluationAsset) => {
     updateAssetMut.mutate({
@@ -589,13 +590,15 @@ export function PromptLibraryPage() {
               selected={selected}
               assets={assets}
               loading={assetQuery.isLoading}
-              saving={savingAsset}
-              runtimeReadiness={agentRuntimeReadiness}
-              runtimeLoading={runtimeQuery.isLoading}
+	              saving={savingAsset}
+	              runningAgent={runningAgent}
+	              runtimeReadiness={agentRuntimeReadiness}
+	              runtimeLoading={runtimeQuery.isLoading}
               agentExpectedText={agentExpectedText}
               onAgentExpectedTextChange={setAgentExpectedText}
               onCreateAsset={createWorkbenchAsset}
-              onSaveAgentDebugPackage={saveAgentDebugPackage}
+	              onSaveAgentDebugPackage={saveAgentDebugPackage}
+	              onRunAgentDebugPackage={runAgentDebugPackage}
               onToggleAssetStatus={toggleAssetStatus}
               onDeleteAsset={deleteAsset}
             />
@@ -611,28 +614,32 @@ function WorkbenchPanel({
   selected,
   assets,
   loading,
-  saving,
-  agentExpectedText,
-  runtimeReadiness,
-  runtimeLoading,
+	  saving,
+	  runningAgent,
+	  agentExpectedText,
+	  runtimeReadiness,
+	  runtimeLoading,
   onAgentExpectedTextChange,
   onCreateAsset,
-  onSaveAgentDebugPackage,
-  onToggleAssetStatus,
+	  onSaveAgentDebugPackage,
+	  onRunAgentDebugPackage,
+	  onToggleAssetStatus,
   onDeleteAsset,
 }: {
   activeTab: WorkbenchTab;
   selected: PromptLibraryItem | null;
   assets: PromptEvaluationAsset[];
-  loading: boolean;
-  saving: boolean;
-  runtimeReadiness: AgentRuntimeReadiness;
-  runtimeLoading: boolean;
-  agentExpectedText: string;
-  onAgentExpectedTextChange: (value: string) => void;
-  onCreateAsset: (assetType: PromptEvaluationAssetType) => void;
-  onSaveAgentDebugPackage: () => void;
-  onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
+	  loading: boolean;
+	  saving: boolean;
+	  runningAgent: boolean;
+	  runtimeReadiness: AgentRuntimeReadiness;
+	  runtimeLoading: boolean;
+	  agentExpectedText: string;
+	  onAgentExpectedTextChange: (value: string) => void;
+	  onCreateAsset: (assetType: PromptEvaluationAssetType) => void;
+	  onSaveAgentDebugPackage: () => void;
+	  onRunAgentDebugPackage: () => void;
+	  onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
   onDeleteAsset: (asset: PromptEvaluationAsset) => void;
 }) {
   const tabAssetType = tabToAssetType(activeTab);
@@ -655,11 +662,15 @@ function WorkbenchPanel({
             <h3 className="text-sm font-semibold">Agent 调试场</h3>
             <p className="mt-1 text-xs text-muted-foreground">当前仅保存调试包；未创建真实任务时会明确写入环境状态和修复路径。</p>
           </div>
-          <Button size="sm" onClick={onSaveAgentDebugPackage} disabled={!selected || saving}>
-            {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-            保存为实验
-          </Button>
-        </div>
+	          <Button size="sm" variant="secondary" onClick={onSaveAgentDebugPackage} disabled={!selected || saving}>
+	            {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+	            保存为实验
+	          </Button>
+	          <Button size="sm" onClick={onRunAgentDebugPackage} disabled={!selected || saving || runningAgent || runtimeReadiness.status !== "就绪"}>
+	            {runningAgent ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+	            创建真实 Agent 任务
+	          </Button>
+	        </div>
         <div className="grid gap-2 rounded-md border bg-muted/20 p-3 text-xs">
           <div className="flex flex-wrap items-center gap-2">
             <span className="font-medium text-foreground">真实执行准备度</span>
@@ -917,6 +928,42 @@ function buildAssetPayload(
 	      状态: "已记录",
       运行时间: new Date().toISOString(),
     },
+	  };
+}
+
+function buildAgentDebugPackageRequest(
+  prompt: PromptLibraryItem,
+  values: Record<string, string>,
+  rendered: string,
+  expectedOutput: string,
+  readiness: AgentRuntimeReadiness,
+): CreatePromptEvaluationAssetRequest {
+  return {
+    prompt_id: prompt.id,
+    name: `${prompt.name} Agent 调试包 ${new Date().toLocaleString("zh-CN")}`,
+    description: `Agent 调试场记录：${buildAgentExecutionStatus(readiness)}`,
+    asset_type: "实验",
+    payload: {
+      schema_version: 1,
+      语义版本: "multica.training_evaluation.v1",
+      调试包: {
+        提示词: prompt.name,
+        变量: values,
+        上下文: rendered,
+        期望输出: expectedOutput,
+        执行方式: buildAgentExecutionStatus(readiness),
+      },
+      运行环境: {
+        目标Runtime: "CodeBuddy",
+        目标模型: DEFAULT_AGENT_MODEL,
+        状态: readiness.status,
+        说明: readiness.detail,
+        修复路径: readiness.fix,
+        runtime_id: readiness.runtime?.id ?? null,
+      },
+      对比维度: ["上下文完整性", "期望输出覆盖", "中文语义一致性"],
+    },
+    status: "启用",
   };
 }
 

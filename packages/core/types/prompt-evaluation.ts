@@ -48,6 +48,17 @@ export interface PromptEvaluationAsset {
   updated_at: string;
 }
 
+export interface PromptEvaluationAgentRunResponse {
+  asset: PromptEvaluationAsset;
+  task_id: string;
+  chat_session_id: string;
+  agent_id: string;
+  runtime_id: string;
+  model: string;
+  status: string;
+  message: string;
+}
+
 export interface ListPromptEvaluationAssetsResponse {
   items: PromptEvaluationAsset[];
   total: number;

@@ -116,6 +116,7 @@ export type {
 } from "./prompt-library";
 export type {
   PromptEvaluationAsset,
+  PromptEvaluationAgentRunResponse,
   PromptEvaluationAssetType,
   PromptEvaluationAssetStatus,
   ListPromptEvaluationAssetsResponse,

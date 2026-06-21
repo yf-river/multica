@@ -118,11 +118,12 @@ import type {
   Squad,
   SquadMember,
   SquadMemberStatusListResponse,
-  CreateSquadRequest,
-  UpdateSquadRequest,
-  PromptLibraryItem,
-  PromptEvaluationAsset,
-  ListPromptEvaluationAssetsParams,
+	  CreateSquadRequest,
+	  UpdateSquadRequest,
+	  PromptLibraryItem,
+	  PromptEvaluationAsset,
+	  PromptEvaluationAgentRunResponse,
+	  ListPromptEvaluationAssetsParams,
   ListPromptEvaluationAssetsResponse,
   CreatePromptEvaluationAssetRequest,
   UpdatePromptEvaluationAssetRequest,
@@ -1755,6 +1756,23 @@ export class ApiClient {
     return parseWithFallback(raw, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
       endpoint: "POST /api/prompt-evaluation-assets/:id/run",
     }) as PromptEvaluationAsset;
+  }
+
+  async runPromptEvaluationAssetAgent(id: string): Promise<PromptEvaluationAgentRunResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/agent-run`, { method: "POST" });
+    const data = raw as Partial<PromptEvaluationAgentRunResponse>;
+    return {
+      asset: parseWithFallback(data.asset, PromptEvaluationAssetSchema, EMPTY_PROMPT_EVALUATION_ASSET, {
+        endpoint: "POST /api/prompt-evaluation-assets/:id/agent-run.asset",
+      }) as PromptEvaluationAsset,
+      task_id: data.task_id ?? "",
+      chat_session_id: data.chat_session_id ?? "",
+      agent_id: data.agent_id ?? "",
+      runtime_id: data.runtime_id ?? "",
+      model: data.model ?? "",
+      status: data.status ?? "",
+      message: data.message ?? "",
+    };
   }
 
   // Project resources

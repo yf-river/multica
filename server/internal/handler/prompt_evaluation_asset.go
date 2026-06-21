@@ -22,6 +22,8 @@ const (
 	promptEvaluationAssetTestSuite  = "测试套件"
 	promptEvaluationAssetExperiment = "实验"
 	promptEvaluationAssetOptimize   = "优化运行"
+	promptEvaluationAgentName       = "Multica 训练评估 Agent"
+	promptEvaluationAgentModel      = "minimax-m2.7-ioa"
 )
 
 var promptTemplateVariablePattern = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}`)
@@ -90,6 +92,17 @@ type promptEvaluationCaseRunResult struct {
 	MissingVariables []string          `json:"缺失变量"`
 	ExpectedContains []string          `json:"期望包含"`
 	MatchedContains  []string          `json:"已匹配"`
+}
+
+type PromptEvaluationAgentRunResponse struct {
+	Asset         PromptEvaluationAssetResponse `json:"asset"`
+	TaskID        string                        `json:"task_id"`
+	ChatSessionID string                        `json:"chat_session_id"`
+	AgentID       string                        `json:"agent_id"`
+	RuntimeID     string                        `json:"runtime_id"`
+	Model         string                        `json:"model"`
+	Status        string                        `json:"status"`
+	Message       string                        `json:"message"`
 }
 
 func promptEvaluationAssetToResponse(asset db.PromptEvaluationAsset) PromptEvaluationAssetResponse {
@@ -379,6 +392,109 @@ func (h *Handler) RunPromptEvaluationAsset(w http.ResponseWriter, r *http.Reques
 	writeJSON(w, http.StatusOK, promptEvaluationAssetToResponse(updated))
 }
 
+func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.Request) {
+	asset, ok := h.loadPromptEvaluationAsset(w, r)
+	if !ok {
+		return
+	}
+	if !asset.PromptID.Valid {
+		writeError(w, http.StatusBadRequest, "prompt_id is required to run an evaluation asset with an agent")
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	prompt, err := h.Queries.GetPromptLibraryItemInWorkspace(r.Context(), db.GetPromptLibraryItemInWorkspaceParams{
+		ID:          asset.PromptID,
+		WorkspaceID: asset.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "prompt_id does not belong to this workspace")
+		return
+	}
+	member, ok := h.workspaceMember(w, r, uuidToString(asset.WorkspaceID))
+	if !ok {
+		return
+	}
+	agentRow, runtimeRow, ok := h.ensurePromptEvaluationAgent(w, r, asset.WorkspaceID, parseUUID(userID), member)
+	if !ok {
+		return
+	}
+
+	session, err := h.Queries.CreateChatSession(r.Context(), db.CreateChatSessionParams{
+		WorkspaceID: asset.WorkspaceID,
+		AgentID:     agentRow.ID,
+		CreatorID:   parseUUID(userID),
+		Title:       "训练评估：" + asset.Name,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create training evaluation chat session")
+		return
+	}
+	messageText := buildPromptEvaluationAgentMessage(asset, prompt, decodePayloadObject(asset.Payload))
+	msg, err := h.Queries.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
+		ChatSessionID: session.ID,
+		Role:          "user",
+		Content:       messageText,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create training evaluation chat message")
+		return
+	}
+	task, err := h.TaskService.EnqueueChatTask(r.Context(), session, parseUUID(userID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to enqueue training evaluation agent task: "+err.Error())
+		return
+	}
+	if err := h.Queries.LinkChatMessageToTask(r.Context(), db.LinkChatMessageToTaskParams{ID: msg.ID, TaskID: task.ID}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to link training evaluation message to task")
+		return
+	}
+
+	payload := decodePayloadObject(asset.Payload)
+	runIndex := map[string]any{
+		"运行时间":            time.Now().UTC().Format(time.RFC3339),
+		"状态":              "已入队",
+		"执行Agent":         agentRow.Name,
+		"agent_id":        uuidToString(agentRow.ID),
+		"模型":              promptEvaluationAgentModel,
+		"runtime":         runtimeRow.Provider,
+		"runtime_id":      uuidToString(runtimeRow.ID),
+		"trace/task id":   uuidToString(task.ID),
+		"chat_session_id": uuidToString(session.ID),
+		"失败原因":            "无",
+		"评估结论":            "等待 Agent 执行完成",
+	}
+	payload["最近Agent运行"] = runIndex
+	payload["Agent运行记录"] = appendPromptEvaluationAgentRunHistory(payload["Agent运行记录"], runIndex)
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encode training evaluation agent run")
+		return
+	}
+	updated, err := h.Queries.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
+		ID:          asset.ID,
+		WorkspaceID: asset.WorkspaceID,
+		PromptID:    asset.PromptID,
+		Payload:     payloadBytes,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save training evaluation agent run")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, PromptEvaluationAgentRunResponse{
+		Asset:         promptEvaluationAssetToResponse(updated),
+		TaskID:        uuidToString(task.ID),
+		ChatSessionID: uuidToString(session.ID),
+		AgentID:       uuidToString(agentRow.ID),
+		RuntimeID:     uuidToString(runtimeRow.ID),
+		Model:         promptEvaluationAgentModel,
+		Status:        "已入队",
+		Message:       "真实 Agent 任务已入队；请通过 task messages、usage 和运行历史追踪结果。",
+	})
+}
+
 func (h *Handler) loadPromptEvaluationAsset(w http.ResponseWriter, r *http.Request) (db.PromptEvaluationAsset, bool) {
 	workspaceID := h.resolveWorkspaceID(r)
 	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -402,6 +518,107 @@ func (h *Handler) loadPromptEvaluationAsset(w http.ResponseWriter, r *http.Reque
 		return db.PromptEvaluationAsset{}, false
 	}
 	return asset, true
+}
+
+func (h *Handler) ensurePromptEvaluationAgent(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, ownerID pgtype.UUID, member db.Member) (db.Agent, db.AgentRuntime, bool) {
+	runtime, ok := h.selectPromptEvaluationRuntime(w, r, workspaceID, member)
+	if !ok {
+		return db.Agent{}, db.AgentRuntime{}, false
+	}
+	agents, err := h.Queries.ListAgents(r.Context(), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list agents for training evaluation")
+		return db.Agent{}, db.AgentRuntime{}, false
+	}
+	instructions := promptEvaluationAgentInstructions()
+	for _, existing := range agents {
+		if existing.Name != promptEvaluationAgentName {
+			continue
+		}
+		if uuidToString(existing.RuntimeID) == uuidToString(runtime.ID) &&
+			existing.Model.String == promptEvaluationAgentModel &&
+			existing.Instructions == instructions {
+			return existing, runtime, true
+		}
+		updated, err := h.Queries.UpdateAgent(r.Context(), db.UpdateAgentParams{
+			ID:           existing.ID,
+			RuntimeMode:  pgtype.Text{String: runtime.RuntimeMode, Valid: true},
+			RuntimeID:    runtime.ID,
+			Instructions: pgtype.Text{String: instructions, Valid: true},
+			Model:        pgtype.Text{String: promptEvaluationAgentModel, Valid: true},
+			Status:       pgtype.Text{String: "idle", Valid: true},
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update training evaluation agent")
+			return db.Agent{}, db.AgentRuntime{}, false
+		}
+		return updated, runtime, true
+	}
+
+	created, err := h.Queries.CreateAgent(r.Context(), db.CreateAgentParams{
+		WorkspaceID:        workspaceID,
+		Name:               promptEvaluationAgentName,
+		Description:        "训练与评估模块自动创建，用于真实执行提示词、数据集和测试套件。",
+		RuntimeMode:        runtime.RuntimeMode,
+		RuntimeConfig:      []byte("{}"),
+		RuntimeID:          runtime.ID,
+		Visibility:         "workspace",
+		MaxConcurrentTasks: 1,
+		OwnerID:            ownerID,
+		Instructions:       instructions,
+		CustomEnv:          []byte("{}"),
+		CustomArgs:         []byte("[]"),
+		Model:              pgtype.Text{String: promptEvaluationAgentModel, Valid: true},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create training evaluation agent")
+		return db.Agent{}, db.AgentRuntime{}, false
+	}
+	return created, runtime, true
+}
+
+func (h *Handler) selectPromptEvaluationRuntime(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, member db.Member) (db.AgentRuntime, bool) {
+	runtimes, err := h.Queries.ListAgentRuntimes(r.Context(), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list runtimes for training evaluation")
+		return db.AgentRuntime{}, false
+	}
+	for _, runtime := range runtimes {
+		if strings.EqualFold(runtime.Provider, "codebuddy") && runtime.Status == "online" && canUseRuntimeForAgent(member, runtime) {
+			return runtime, true
+		}
+	}
+	writeError(w, http.StatusServiceUnavailable, "CodeBuddy runtime is not ready; start multica daemon with codebuddy and wait for provider=codebuddy status=online")
+	return db.AgentRuntime{}, false
+}
+
+func promptEvaluationAgentInstructions() string {
+	return "你是 Multica 训练与评估 Agent。你只负责执行当前提示词评估任务，必须使用中文输出。输出必须包含：执行结论、逐用例结果、失败原因、改进建议、可复盘证据。不要修改业务代码，不要创建 issue，不要泄露密钥。"
+}
+
+func buildPromptEvaluationAgentMessage(asset db.PromptEvaluationAsset, prompt db.PromptLibraryItem, payload map[string]any) string {
+	payloadBytes, _ := json.MarshalIndent(payload, "", "  ")
+	return strings.Join([]string{
+		"请执行一次 Multica 训练与评估运行。",
+		"",
+		"【资产】",
+		"名称：" + asset.Name,
+		"类型：" + asset.AssetType,
+		"",
+		"【提示词】",
+		"名称：" + prompt.Name,
+		"内容：",
+		prompt.Content,
+		"",
+		"【评估数据】",
+		string(payloadBytes),
+		"",
+		"【输出要求】",
+		"1. 全部使用中文。",
+		"2. 逐条说明用例是否通过、失败原因和证据。",
+		"3. 给出中文指标：总用例数、通过数、失败数、通过率、总耗时、平均耗时、输入token、输出token、预估成本、执行Agent、模型、runtime、trace/task id、失败原因、评估结论。",
+		"4. 如果需要优化提示词，只输出候选建议，不要自动替换生产版本。",
+	}, "\n")
 }
 
 func decodePayloadObject(raw []byte) map[string]any {
@@ -567,6 +784,15 @@ func promptVariableDefaults(raw []byte) map[string]string {
 }
 
 func appendPromptEvaluationRunHistory(raw any, result promptEvaluationRunResult) []any {
+	history, _ := raw.([]any)
+	next := append([]any{result}, history...)
+	if len(next) > 20 {
+		next = next[:20]
+	}
+	return next
+}
+
+func appendPromptEvaluationAgentRunHistory(raw any, result map[string]any) []any {
 	history, _ := raw.([]any)
 	next := append([]any{result}, history...)
 	if len(next) > 20 {

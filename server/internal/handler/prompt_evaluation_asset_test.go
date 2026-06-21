@@ -200,6 +200,97 @@ func TestRunPromptEvaluationAssetReadsDatasetPayload(t *testing.T) {
 	}
 }
 
+func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `
+			DELETE FROM task_usage WHERE task_id IN (
+				SELECT atq.id FROM agent_task_queue atq JOIN agent a ON a.id = atq.agent_id
+				WHERE a.workspace_id = $1 AND a.name = 'Multica 训练评估 Agent'
+			)
+		`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `
+			DELETE FROM task_message WHERE task_id IN (
+				SELECT atq.id FROM agent_task_queue atq JOIN agent a ON a.id = atq.agent_id
+				WHERE a.workspace_id = $1 AND a.name = 'Multica 训练评估 Agent'
+			)
+		`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `
+			DELETE FROM chat_message WHERE chat_session_id IN (
+				SELECT cs.id FROM chat_session cs JOIN agent a ON a.id = cs.agent_id
+				WHERE a.workspace_id = $1 AND a.name = 'Multica 训练评估 Agent'
+			)
+		`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `
+			DELETE FROM agent_task_queue WHERE agent_id IN (
+				SELECT id FROM agent WHERE workspace_id = $1 AND name = 'Multica 训练评估 Agent'
+			)
+		`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `
+			DELETE FROM chat_session WHERE agent_id IN (
+				SELECT id FROM agent WHERE workspace_id = $1 AND name = 'Multica 训练评估 Agent'
+			)
+		`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE workspace_id = $1 AND name = 'Multica 训练评估 Agent'`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE workspace_id = $1 AND provider = 'codebuddy' AND name LIKE 'prompt-eval-codebuddy-%'`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
+	})
+
+	var runtimeID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codebuddy', 'online', 'CodeBuddy 测试运行时', '{}'::jsonb, $4, 'private', now())
+		RETURNING id
+	`, testWorkspaceID, "prompt-eval-codebuddy-daemon-"+randomID()[:8], "prompt-eval-codebuddy-"+randomID()[:8], testUserID).Scan(&runtimeID); err != nil {
+		t.Fatalf("create codebuddy runtime: %v", err)
+	}
+
+	promptID := createPromptEvaluationTestPromptWithContent(
+		t,
+		testWorkspaceID,
+		"Agent 真实运行提示词",
+		"请评估 {{issue_title}}。",
+		`[]`,
+	)
+	createW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+		"prompt_id":  promptID,
+		"name":       "真实 Agent 运行实验",
+		"asset_type": "实验",
+		"payload": map[string]any{
+			"cases": []map[string]any{{"名称": "登录失败", "变量": map[string]any{"issue_title": "登录失败"}, "期望包含": []string{"登录失败"}}},
+		},
+	}))
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
+	}
+	var created PromptEvaluationAssetResponse
+	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	runW := httptest.NewRecorder()
+	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
+	if runW.Code != http.StatusAccepted {
+		t.Fatalf("agent run status = %d, body = %s", runW.Code, runW.Body.String())
+	}
+	var resp PromptEvaluationAgentRunResponse
+	if err := json.Unmarshal(runW.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode agent run response: %v", err)
+	}
+	if resp.TaskID == "" || resp.ChatSessionID == "" || resp.AgentID == "" || resp.RuntimeID != runtimeID || resp.Model != "minimax-m2.7-ioa" {
+		t.Fatalf("agent run response = %+v, runtimeID=%s", resp, runtimeID)
+	}
+	payload := resp.Asset.Payload.(map[string]any)
+	recent := payload["最近Agent运行"].(map[string]any)
+	if recent["trace/task id"] != resp.TaskID || recent["状态"] != "已入队" || recent["评估结论"] != "等待 Agent 执行完成" {
+		t.Fatalf("recent agent run = %#v", recent)
+	}
+}
+
 func TestPromptEvaluationAssetRejectsForeignPrompt(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")
