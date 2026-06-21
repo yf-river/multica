@@ -452,6 +452,87 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsFailedTask(t *testing.T) {
 	}
 }
 
+func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	cleanupPromptEvaluationAgentRunTest(t)
+	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实 Agent 证据优化实验", "缺少验收条件")
+	markPromptEvaluationTaskRunning(t, resp.TaskID)
+
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, updated_at)
+		VALUES ($1, 'codebuddy', 'minimax-m2.7-ioa', 13, 8, 1, 2, now())
+	`, resp.TaskID); err != nil {
+		t.Fatalf("insert task usage: %v", err)
+	}
+	if _, err := testHandler.Queries.CreateTaskMessage(context.Background(), db.CreateTaskMessageParams{
+		TaskID:  parseUUID(resp.TaskID),
+		Seq:     1,
+		Type:    "text",
+		Content: pgtype.Text{String: "Agent 输出：缺少验收条件和 trace/task id，需要补充可观测字段。", Valid: true},
+	}); err != nil {
+		t.Fatalf("insert task message: %v", err)
+	}
+	if _, err := testHandler.Queries.CreateTaskTraceEvent(context.Background(), db.CreateTaskTraceEventParams{
+		WorkspaceID:   parseUUID(testWorkspaceID),
+		TaskID:        parseUUID(resp.TaskID),
+		AgentID:       parseUUID(resp.AgentID),
+		RuntimeID:     parseUUID(resp.RuntimeID),
+		ChatSessionID: parseUUID(resp.ChatSessionID),
+		Source:        "prompt_evaluation",
+		EventType:     "evaluation.failed",
+		EventName:     "训练评估失败证据",
+		Status:        "failed",
+		Attempt:       1,
+		Provider:      "codebuddy",
+		Model:         "minimax-m2.7-ioa",
+		InputTokens:   16,
+		OutputTokens:  8,
+		FailureReason: "缺少验收条件",
+		ErrorType:     "assertion_mismatch",
+		Metadata:      []byte(`{"缺失字段":"trace/task id"}`),
+	}); err != nil {
+		t.Fatalf("insert task trace event: %v", err)
+	}
+
+	failW := httptest.NewRecorder()
+	failReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/fail", map[string]any{
+		"error":          "缺少验收条件",
+		"failure_reason": "assertion_mismatch",
+		"session_id":     "prompt-eval-evidence-session",
+		"work_dir":       "/tmp/prompt-eval",
+	}, testWorkspaceID, "prompt-eval-codebuddy-daemon")
+	testHandler.FailTask(failW, withURLParam(failReq, "taskId", resp.TaskID))
+	if failW.Code != http.StatusOK {
+		t.Fatalf("fail status = %d, body = %s", failW.Code, failW.Body.String())
+	}
+
+	candidateW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationOptimizationCandidate(candidateW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/optimization-candidates", nil), "id", resp.Run.ID))
+	if candidateW.Code != http.StatusCreated {
+		t.Fatalf("candidate status = %d, body = %s", candidateW.Code, candidateW.Body.String())
+	}
+	var candidate PromptEvaluationOptimizationCandidateResponse
+	if err := json.Unmarshal(candidateW.Body.Bytes(), &candidate); err != nil {
+		t.Fatalf("decode candidate: %v", err)
+	}
+	if !containsAll(candidate.CandidateContent, []string{"真实Agent输出摘要", "Agent 输出：缺少验收条件", "训练评估失败证据", "预估成本"}) {
+		t.Fatalf("candidate content missing agent evidence: %s", candidate.CandidateContent)
+	}
+	if !strings.Contains(candidate.Rationale, "真实 Agent task 证据") {
+		t.Fatalf("candidate rationale missing agent evidence: %s", candidate.Rationale)
+	}
+	source := candidate.SourceFailureSummary.(map[string]any)
+	runtimeEvidence, ok := source["真实Agent运行证据"].(map[string]any)
+	if !ok {
+		t.Fatalf("source summary missing runtime evidence: %#v", source)
+	}
+	if len(runtimeEvidence["task消息"].([]any)) != 1 || len(runtimeEvidence["trace事件"].([]any)) != 1 || len(runtimeEvidence["task用量"].([]any)) != 1 {
+		t.Fatalf("runtime evidence incomplete: %#v", runtimeEvidence)
+	}
+}
+
 func TestRunPromptEvaluationAssetAgentAutoSyncsCancelledTask(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")

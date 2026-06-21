@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -14,6 +15,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -846,6 +848,15 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 		return
 	}
 	sourceSummary := buildPromptEvaluationCandidateFailureSummary(run, trials)
+	runtimeEvidence, err := h.promptEvaluationCandidateRuntimeEvidence(r.Context(), run)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation runtime evidence")
+		return
+	}
+	if runtimeEvidence != nil {
+		sourceSummary["真实Agent运行证据"] = runtimeEvidence
+		sourceSummary["生成说明"] = "基于结构化运行记录、失败用例和真实 Agent task 证据生成优化候选；候选不会自动替换生产提示词。"
+	}
 	candidateContent, rationale := buildPromptEvaluationCandidateContent(prompt, run, sourceSummary)
 	item, err := h.Queries.CreatePromptEvaluationOptimizationCandidate(r.Context(), db.CreatePromptEvaluationOptimizationCandidateParams{
 		WorkspaceID:          workspaceUUID,
@@ -867,6 +878,83 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 		return
 	}
 	writeJSON(w, http.StatusCreated, promptEvaluationOptimizationCandidateToResponse(item))
+}
+
+func (h *Handler) promptEvaluationCandidateRuntimeEvidence(ctx context.Context, run db.PromptEvaluationRun) (map[string]any, error) {
+	if !run.TaskID.Valid {
+		return nil, nil
+	}
+	usages, err := h.Queries.GetTaskUsage(ctx, run.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	messages, err := h.Queries.ListTaskMessages(ctx, run.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	traceEvents, err := h.Queries.ListTaskTraceEventsByTask(ctx, run.TaskID)
+	if err != nil {
+		return nil, err
+	}
+	usageRows := make([]map[string]any, 0, len(usages))
+	for _, usage := range usages {
+		estimatedCost, priced := metrics.EstimateUsageCostUSD(
+			usage.Model,
+			usage.InputTokens,
+			usage.OutputTokens,
+			usage.CacheReadTokens,
+			usage.CacheWriteTokens,
+		)
+		usageRows = append(usageRows, map[string]any{
+			"provider":           usage.Provider,
+			"model":              usage.Model,
+			"input_tokens":       usage.InputTokens,
+			"output_tokens":      usage.OutputTokens,
+			"cache_read_tokens":  usage.CacheReadTokens,
+			"cache_write_tokens": usage.CacheWriteTokens,
+			"estimated_cost":     metrics.RoundCostUSD(estimatedCost),
+			"priced":             priced,
+		})
+	}
+	messageRows := make([]map[string]any, 0, len(messages))
+	for _, message := range messages {
+		messageRows = append(messageRows, map[string]any{
+			"seq":     message.Seq,
+			"type":    message.Type,
+			"tool":    message.Tool.String,
+			"content": truncatePromptEvaluationEvidence(message.Content.String, 800),
+			"output":  truncatePromptEvaluationEvidence(message.Output.String, 800),
+		})
+	}
+	traceRows := make([]map[string]any, 0, len(traceEvents))
+	for _, event := range traceEvents {
+		traceRows = append(traceRows, map[string]any{
+			"event_type":     event.EventType,
+			"event_name":     event.EventName,
+			"status":         event.Status,
+			"provider":       event.Provider,
+			"model":          event.Model,
+			"input_tokens":   event.InputTokens,
+			"output_tokens":  event.OutputTokens,
+			"failure_reason": event.FailureReason,
+			"error_type":     event.ErrorType,
+			"duration_ms":    int64Value(event.DurationMs),
+			"queue_wait_ms":  int64Value(event.QueueWaitMs),
+			"run_ms":         int64Value(event.RunMs),
+			"total_ms":       int64Value(event.TotalMs),
+			"metadata":       decodeJSONDefault(event.Metadata, map[string]any{}),
+			"created_at":     timestampToString(event.CreatedAt),
+		})
+	}
+	return map[string]any{
+		"task_id":      uuidToString(run.TaskID),
+		"chat_session": uuidToPtr(run.ChatSessionID),
+		"agent_id":     uuidToPtr(run.AgentID),
+		"runtime_id":   uuidToPtr(run.RuntimeID),
+		"task用量":       usageRows,
+		"task消息":       messageRows,
+		"trace事件":      traceRows,
+	}, nil
 }
 
 func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWriter, r *http.Request) {
@@ -1624,6 +1712,9 @@ func buildPromptEvaluationCandidateContent(prompt db.PromptLibraryItem, run db.P
 	}
 	failedCases, _ := sourceSummary["失败用例"].([]map[string]any)
 	rationale := "基于失败用例补充中文输出约束、失败处理要求、证据字段和验收口径；原提示词不被自动替换，必须人工确认后发布。"
+	if _, ok := sourceSummary["真实Agent运行证据"].(map[string]any); ok {
+		rationale = "基于失败用例和真实 Agent task 证据补充中文输出约束、失败处理要求、证据字段和验收口径；原提示词不被自动替换，必须人工确认后发布。"
+	}
 	lines := []string{
 		strings.TrimSpace(prompt.Content),
 		"",
@@ -1651,6 +1742,40 @@ func buildPromptEvaluationCandidateContent(prompt db.PromptLibraryItem, run db.P
 				reason = failureReason
 			}
 			lines = append(lines, "- "+name+"："+reason)
+		}
+	}
+	if runtimeEvidence, ok := sourceSummary["真实Agent运行证据"].(map[string]any); ok {
+		lines = append(lines, "", "真实Agent输出摘要：")
+		if messages, ok := runtimeEvidence["task消息"].([]map[string]any); ok && len(messages) > 0 {
+			for _, message := range messages {
+				content := strings.TrimSpace(stringFromAny(message["content"]))
+				if content == "" {
+					content = strings.TrimSpace(stringFromAny(message["output"]))
+				}
+				if content == "" {
+					continue
+				}
+				lines = append(lines, "- task消息 #"+stringFromAny(message["seq"])+"："+truncatePromptEvaluationEvidence(content, 240))
+			}
+		}
+		if traces, ok := runtimeEvidence["trace事件"].([]map[string]any); ok && len(traces) > 0 {
+			for _, trace := range traces {
+				name := stringFromAny(firstValue(trace, "event_name", "event_type"))
+				status := stringFromAny(trace["status"])
+				reason := stringFromAny(trace["failure_reason"])
+				if name == "" {
+					name = "未命名 trace"
+				}
+				if reason == "" {
+					reason = "无"
+				}
+				lines = append(lines, "- trace "+name+"："+status+"，失败原因："+reason)
+			}
+		}
+		if usages, ok := runtimeEvidence["task用量"].([]map[string]any); ok && len(usages) > 0 {
+			for _, usage := range usages {
+				lines = append(lines, "- 用量 "+stringFromAny(usage["provider"])+"/"+stringFromAny(usage["model"])+"：输入 "+stringFromAny(usage["input_tokens"])+"，输出 "+stringFromAny(usage["output_tokens"])+"，预估成本 "+stringFromAny(usage["estimated_cost"]))
+			}
 		}
 	}
 	lines = append(lines, "", "人工发布要求：发布前必须由验收者确认该候选不会降低原有通过用例质量。")
@@ -2075,6 +2200,12 @@ func stringFromAny(value any) string {
 	switch v := value.(type) {
 	case string:
 		return v
+	case int:
+		return strconv.Itoa(v)
+	case int32:
+		return strconv.Itoa(int(v))
+	case int64:
+		return strconv.FormatInt(v, 10)
 	case float64:
 		return strconv.FormatFloat(v, 'f', -1, 64)
 	case bool:
