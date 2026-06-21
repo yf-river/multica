@@ -94,6 +94,15 @@ type promptEvaluationCaseRunResult struct {
 	MatchedContains  []string          `json:"已匹配"`
 }
 
+type normalizedPromptEvaluationCase struct {
+	Name             string
+	Variables        map[string]string
+	ExpectedContains []string
+	Input            map[string]any
+	Expected         map[string]any
+	Tags             []string
+}
+
 type PromptEvaluationAgentRunResponse struct {
 	Asset         PromptEvaluationAssetResponse `json:"asset"`
 	Run           PromptEvaluationRunResponse   `json:"run"`
@@ -158,6 +167,25 @@ type PromptEvaluationTrialResponse struct {
 	FailureReason  string `json:"failure_reason"`
 	Evidence       any    `json:"evidence"`
 	CreatedAt      string `json:"created_at"`
+}
+
+type PromptEvaluationCaseResponse struct {
+	ID               string  `json:"id"`
+	WorkspaceID      string  `json:"workspace_id"`
+	AssetID          string  `json:"asset_id"`
+	PromptID         *string `json:"prompt_id"`
+	CaseIndex        int32   `json:"case_index"`
+	CaseName         string  `json:"case_name"`
+	Variables        any     `json:"variables"`
+	ExpectedContains any     `json:"expected_contains"`
+	Input            any     `json:"input"`
+	Expected         any     `json:"expected"`
+	Tags             any     `json:"tags"`
+	Status           string  `json:"status"`
+	Source           string  `json:"source"`
+	CreatedBy        *string `json:"created_by"`
+	CreatedAt        string  `json:"created_at"`
+	UpdatedAt        string  `json:"updated_at"`
 }
 
 func promptEvaluationAssetToResponse(asset db.PromptEvaluationAsset) PromptEvaluationAssetResponse {
@@ -231,6 +259,27 @@ func promptEvaluationTrialToResponse(trial db.PromptEvaluationTrial) PromptEvalu
 		FailureReason:  trial.FailureReason,
 		Evidence:       decodeJSONDefault(trial.Evidence, map[string]any{}),
 		CreatedAt:      timestampToString(trial.CreatedAt),
+	}
+}
+
+func promptEvaluationCaseToResponse(item db.PromptEvaluationCase) PromptEvaluationCaseResponse {
+	return PromptEvaluationCaseResponse{
+		ID:               uuidToString(item.ID),
+		WorkspaceID:      uuidToString(item.WorkspaceID),
+		AssetID:          uuidToString(item.AssetID),
+		PromptID:         uuidToPtr(item.PromptID),
+		CaseIndex:        item.CaseIndex,
+		CaseName:         item.CaseName,
+		Variables:        decodeJSONDefault(item.Variables, map[string]any{}),
+		ExpectedContains: decodeJSONDefault(item.ExpectedContains, []any{}),
+		Input:            decodeJSONDefault(item.Input, map[string]any{}),
+		Expected:         decodeJSONDefault(item.Expected, map[string]any{}),
+		Tags:             decodeJSONDefault(item.Tags, []any{}),
+		Status:           item.Status,
+		Source:           item.Source,
+		CreatedBy:        uuidToPtr(item.CreatedBy),
+		CreatedAt:        timestampToString(item.CreatedAt),
+		UpdatedAt:        timestampToString(item.UpdatedAt),
 	}
 }
 
@@ -336,6 +385,44 @@ func (h *Handler) GetPromptEvaluationAsset(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	writeJSON(w, http.StatusOK, promptEvaluationAssetToResponse(asset))
+}
+
+func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	var assetID pgtype.UUID
+	if value := r.URL.Query().Get("asset_id"); value != "" {
+		parsed, ok := parseUUIDOrBadRequest(w, value, "asset_id")
+		if !ok {
+			return
+		}
+		assetID = parsed
+	}
+	var status pgtype.Text
+	if value := r.URL.Query().Get("status"); value != "" {
+		if !validPromptLibraryStatus(value) {
+			writeError(w, http.StatusBadRequest, "status must be 启用 or 归档")
+			return
+		}
+		status = pgtype.Text{String: value, Valid: true}
+	}
+	cases, err := h.Queries.ListPromptEvaluationCases(r.Context(), db.ListPromptEvaluationCasesParams{
+		WorkspaceID: workspaceUUID,
+		AssetID:     assetID,
+		Status:      status,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation cases")
+		return
+	}
+	resp := make([]PromptEvaluationCaseResponse, len(cases))
+	for i, item := range cases {
+		resp[i] = promptEvaluationCaseToResponse(item)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
 }
 
 func (h *Handler) ListPromptEvaluationRuns(w http.ResponseWriter, r *http.Request) {
@@ -514,6 +601,39 @@ func (h *Handler) SyncPromptEvaluationRunFromTask(w http.ResponseWriter, r *http
 	writeJSON(w, http.StatusOK, promptEvaluationRunToResponse(updated))
 }
 
+func (h *Handler) syncPromptEvaluationCasesFromPayload(w http.ResponseWriter, r *http.Request, qtx *db.Queries, asset db.PromptEvaluationAsset, createdBy pgtype.UUID) bool {
+	if err := qtx.DeletePromptEvaluationCasesByAsset(r.Context(), db.DeletePromptEvaluationCasesByAssetParams{
+		WorkspaceID: asset.WorkspaceID,
+		AssetID:     asset.ID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to refresh prompt evaluation cases")
+		return false
+	}
+	cases := promptEvaluationCases(decodePayloadObject(asset.Payload))
+	for idx, item := range cases {
+		normalized := normalizePromptEvaluationCase(idx, item)
+		if _, err := qtx.CreatePromptEvaluationCase(r.Context(), db.CreatePromptEvaluationCaseParams{
+			WorkspaceID:      asset.WorkspaceID,
+			AssetID:          asset.ID,
+			PromptID:         asset.PromptID,
+			CaseIndex:        int32(idx),
+			CaseName:         normalized.Name,
+			Variables:        mustJSONBytes(normalized.Variables),
+			ExpectedContains: mustJSONBytes(normalized.ExpectedContains),
+			Input:            mustJSONBytes(normalized.Input),
+			Expected:         mustJSONBytes(normalized.Expected),
+			Tags:             mustJSONBytes(normalized.Tags),
+			Status:           asset.Status,
+			Source:           "payload",
+			CreatedBy:        createdBy,
+		}); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation case")
+			return false
+		}
+	}
+	return true
+}
+
 func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -550,7 +670,14 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	asset, err := h.Queries.CreatePromptEvaluationAsset(r.Context(), db.CreatePromptEvaluationAssetParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	asset, err := qtx.CreatePromptEvaluationAsset(r.Context(), db.CreatePromptEvaluationAssetParams{
 		WorkspaceID: workspaceUUID,
 		Name:        req.Name,
 		Description: req.Description,
@@ -570,6 +697,13 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation asset")
+		return
+	}
+	if ok := h.syncPromptEvaluationCasesFromPayload(w, r, qtx, asset, parseUUID(userID)); !ok {
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation asset")
 		return
 	}
 	writeJSON(w, http.StatusCreated, promptEvaluationAssetToResponse(asset))
@@ -605,7 +739,14 @@ func (h *Handler) UpdatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	asset, err := h.Queries.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	asset, err := qtx.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
 		ID:          existing.ID,
 		WorkspaceID: existing.WorkspaceID,
 		PromptID:    promptID,
@@ -625,6 +766,13 @@ func (h *Handler) UpdatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to update prompt evaluation asset")
+		return
+	}
+	if ok := h.syncPromptEvaluationCasesFromPayload(w, r, qtx, asset, existing.CreatedBy); !ok {
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation asset")
 		return
 	}
 	writeJSON(w, http.StatusOK, promptEvaluationAssetToResponse(asset))
@@ -664,7 +812,11 @@ func (h *Handler) RunPromptEvaluationAsset(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	payload := decodePayloadObject(asset.Payload)
-	result := buildPromptEvaluationRunResult(asset, prompt, payload)
+	cases, ok := h.promptEvaluationCasesForAsset(w, r, asset)
+	if !ok {
+		return
+	}
+	result := buildPromptEvaluationRunResult(asset, prompt, payload, cases)
 	run, ok := h.persistPromptEvaluationLocalRun(w, r, asset, result, parseUUID(userID))
 	if !ok {
 		return
@@ -751,7 +903,11 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 	}
 
 	payload := decodePayloadObject(asset.Payload)
-	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, asset, agentRow, runtimeRow, task.ID, session.ID, parseUUID(userID), payload)
+	cases, ok := h.promptEvaluationCasesForAsset(w, r, asset)
+	if !ok {
+		return
+	}
+	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, asset, agentRow, runtimeRow, task.ID, session.ID, parseUUID(userID), payload, cases)
 	if !ok {
 		return
 	}
@@ -880,8 +1036,7 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 	return run, true
 }
 
-func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r *http.Request, asset db.PromptEvaluationAsset, agent db.Agent, runtime db.AgentRuntime, taskID pgtype.UUID, chatSessionID pgtype.UUID, createdBy pgtype.UUID, payload map[string]any) (db.PromptEvaluationRun, bool) {
-	cases := promptEvaluationCases(payload)
+func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r *http.Request, asset db.PromptEvaluationAsset, agent db.Agent, runtime db.AgentRuntime, taskID pgtype.UUID, chatSessionID pgtype.UUID, createdBy pgtype.UUID, payload map[string]any, cases []map[string]any) (db.PromptEvaluationRun, bool) {
 	run, err := h.Queries.CreatePromptEvaluationRun(r.Context(), db.CreatePromptEvaluationRunParams{
 		WorkspaceID:       asset.WorkspaceID,
 		AssetID:           asset.ID,
@@ -953,6 +1108,32 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 		}
 	}
 	return run, true
+}
+
+func (h *Handler) promptEvaluationCasesForAsset(w http.ResponseWriter, r *http.Request, asset db.PromptEvaluationAsset) ([]map[string]any, bool) {
+	rows, err := h.Queries.ListPromptEvaluationCases(r.Context(), db.ListPromptEvaluationCasesParams{
+		WorkspaceID: asset.WorkspaceID,
+		AssetID:     asset.ID,
+		Status:      pgtype.Text{String: "启用", Valid: true},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation cases")
+		return nil, false
+	}
+	if len(rows) == 0 {
+		return promptEvaluationCases(decodePayloadObject(asset.Payload)), true
+	}
+	cases := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		cases = append(cases, map[string]any{
+			"名称":   row.CaseName,
+			"变量":   decodeJSONDefault(row.Variables, map[string]any{}),
+			"期望包含": decodeJSONDefault(row.ExpectedContains, []any{}),
+			"输入":   decodeJSONDefault(row.Input, map[string]any{}),
+			"期望":   decodeJSONDefault(row.Expected, map[string]any{}),
+		})
+	}
+	return cases, true
 }
 
 func promptEvaluationRunStatusFromTask(run db.PromptEvaluationRun, task db.AgentTaskQueue) (string, int32, int32, float64, string, string) {
@@ -1224,9 +1405,11 @@ func mustJSONBytes(value any) []byte {
 	return raw
 }
 
-func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.PromptLibraryItem, payload map[string]any) promptEvaluationRunResult {
+func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.PromptLibraryItem, payload map[string]any, cases []map[string]any) promptEvaluationRunResult {
 	started := time.Now()
-	cases := promptEvaluationCases(payload)
+	if len(cases) == 0 {
+		cases = promptEvaluationCases(payload)
+	}
 	results := make([]promptEvaluationCaseRunResult, 0, len(cases))
 	passed := 0
 	missingCount := 0
@@ -1309,7 +1492,7 @@ func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.Pr
 }
 
 func promptEvaluationCases(payload map[string]any) []map[string]any {
-	raw := firstValue(payload, "cases", "用例", "测试用例", "数据集", "training_cases", "evaluation_cases", "用例集")
+	raw := firstValue(payload, "cases", "test_cases", "用例", "测试用例", "数据集", "training_cases", "evaluation_cases", "用例集")
 	if arr, ok := raw.([]any); ok {
 		cases := make([]map[string]any, 0, len(arr))
 		for _, item := range arr {
@@ -1322,6 +1505,31 @@ func promptEvaluationCases(payload map[string]any) []map[string]any {
 		}
 	}
 	return []map[string]any{{"名称": "默认用例", "变量": firstValue(payload, "variables", "变量", "输入变量")}}
+}
+
+func normalizePromptEvaluationCase(index int, item map[string]any) normalizedPromptEvaluationCase {
+	name := stringFromAny(firstValue(item, "name", "名称", "case_name", "用例名称"))
+	if name == "" {
+		name = "用例 " + strconv.Itoa(index+1)
+	}
+	variables := stringMapFromAny(firstValue(item, "variables", "变量", "输入变量"))
+	expectedContains := stringListFromAny(firstValue(item, "expected_contains", "期望包含", "期望"))
+	input := map[string]any{
+		"变量":   variables,
+		"原始输入": firstValue(item, "input", "输入"),
+	}
+	expected := map[string]any{
+		"期望包含": expectedContains,
+		"原始期望": firstValue(item, "expected", "期望"),
+	}
+	return normalizedPromptEvaluationCase{
+		Name:             name,
+		Variables:        variables,
+		ExpectedContains: expectedContains,
+		Input:            input,
+		Expected:         expected,
+		Tags:             stringListFromAny(firstValue(item, "tags", "标签")),
+	}
 }
 
 func estimatePromptEvaluationTokens(value string) int {

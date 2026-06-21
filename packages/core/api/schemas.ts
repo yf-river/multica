@@ -811,6 +811,30 @@ export const PromptEvaluationTrialListResponseSchema = z.object({
   total: z.number().default(0),
 }).loose();
 
+export const PromptEvaluationCaseSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  asset_id: z.string(),
+  prompt_id: z.string().nullable().optional().transform((v) => v ?? null),
+  case_index: z.number().default(0),
+  case_name: z.string().default(""),
+  variables: z.record(z.string(), z.unknown()).default({}),
+  expected_contains: z.array(z.unknown()).default([]),
+  input: z.record(z.string(), z.unknown()).default({}),
+  expected: z.record(z.string(), z.unknown()).default({}),
+  tags: z.array(z.unknown()).default([]),
+  status: z.enum(["启用", "归档"]).default("启用"),
+  source: z.string().default("payload"),
+  created_by: z.string().nullable().optional().transform((v) => v ?? null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const PromptEvaluationCaseListResponseSchema = z.object({
+  items: z.array(PromptEvaluationCaseSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
 export const EMPTY_PROMPT_EVALUATION_ASSET: PromptEvaluationAsset = {
   id: "",
   workspace_id: "",
@@ -844,6 +868,11 @@ export const EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE = {
 };
 
 export const EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE = {
+  items: [],
+  total: 0,
+};
+
+export const EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE = {
   items: [],
   total: 0,
 };

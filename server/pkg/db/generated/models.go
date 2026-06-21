@@ -578,6 +578,25 @@ type PromptEvaluationAsset struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type PromptEvaluationCase struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	AssetID          pgtype.UUID        `json:"asset_id"`
+	PromptID         pgtype.UUID        `json:"prompt_id"`
+	CaseIndex        int32              `json:"case_index"`
+	CaseName         string             `json:"case_name"`
+	Variables        []byte             `json:"variables"`
+	ExpectedContains []byte             `json:"expected_contains"`
+	Input            []byte             `json:"input"`
+	Expected         []byte             `json:"expected"`
+	Tags             []byte             `json:"tags"`
+	Status           string             `json:"status"`
+	Source           string             `json:"source"`
+	CreatedBy        pgtype.UUID        `json:"created_by"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
 type PromptEvaluationRun struct {
 	ID                pgtype.UUID        `json:"id"`
 	WorkspaceID       pgtype.UUID        `json:"workspace_id"`

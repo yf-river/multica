@@ -46,6 +46,16 @@ interface PromptEvaluationRun {
   task_id: string | null;
 }
 
+interface PromptEvaluationCase {
+  id: string;
+  asset_id: string;
+  case_name: string;
+  case_index: number;
+  variables: Record<string, unknown>;
+  expected_contains: unknown[];
+  status: string;
+}
+
 export class TestApiClient {
   private token: string | null = null;
   private workspaceSlug: string | null = null;
@@ -210,6 +220,18 @@ export class TestApiClient {
     const res = await this.authedFetch(`/api/prompt-evaluation-runs${search.toString() ? `?${search}` : ""}`);
     if (!res.ok) {
       throw new Error(`list prompt evaluation runs failed: ${res.status}`);
+    }
+    const data = await res.json();
+    return data.items ?? [];
+  }
+
+  async listPromptEvaluationCases(params?: { asset_id?: string; status?: string }): Promise<PromptEvaluationCase[]> {
+    const search = new URLSearchParams();
+    if (params?.asset_id) search.set("asset_id", params.asset_id);
+    if (params?.status) search.set("status", params.status);
+    const res = await this.authedFetch(`/api/prompt-evaluation-cases${search.toString() ? `?${search}` : ""}`);
+    if (!res.ok) {
+      throw new Error(`list prompt evaluation cases failed: ${res.status}`);
     }
     const data = await res.json();
     return data.items ?? [];

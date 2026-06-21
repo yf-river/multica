@@ -126,9 +126,11 @@ import type {
 	  PromptEvaluationAgentRunResponse,
 	  ListPromptEvaluationAssetsParams,
 	  ListPromptEvaluationRunsParams,
+  ListPromptEvaluationCasesParams,
   ListPromptEvaluationAssetsResponse,
   ListPromptEvaluationRunsResponse,
   ListPromptEvaluationTrialsResponse,
+  ListPromptEvaluationCasesResponse,
   CreatePromptEvaluationAssetRequest,
   UpdatePromptEvaluationAssetRequest,
   ListPromptLibraryItemsParams,
@@ -177,6 +179,7 @@ import {
   EMPTY_PROMPT_EVALUATION_RUN,
   EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE,
   EMPTY_WEBHOOK_DELIVERY,
   AppConfigSchema,
   type AppConfigResponse,
@@ -194,6 +197,7 @@ import {
   PromptEvaluationRunListResponseSchema,
   PromptEvaluationRunSchema,
   PromptEvaluationTrialListResponseSchema,
+  PromptEvaluationCaseListResponseSchema,
   PromptLibraryItemSchema,
   PromptLibraryItemListResponseSchema,
   IssueSOPRunsResponseSchema,
@@ -1759,6 +1763,17 @@ export class ApiClient {
 
   async deletePromptEvaluationAsset(id: string): Promise<void> {
     await this.fetch(`/api/prompt-evaluation-assets/${id}`, { method: "DELETE" });
+  }
+
+  async listPromptEvaluationCases(params?: ListPromptEvaluationCasesParams): Promise<ListPromptEvaluationCasesResponse> {
+    const search = new URLSearchParams();
+    if (params?.asset_id) search.set("asset_id", params.asset_id);
+    if (params?.status) search.set("status", params.status);
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-cases${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationCaseListResponseSchema, EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-cases",
+    }) as ListPromptEvaluationCasesResponse;
   }
 
   async runPromptEvaluationAsset(id: string): Promise<PromptEvaluationAsset> {

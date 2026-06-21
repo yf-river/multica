@@ -13,6 +13,7 @@ import type {
   CreatePromptLibraryItemRequest,
   CreatePromptEvaluationAssetRequest,
   PromptEvaluationAsset,
+  PromptEvaluationStructuredCase,
   PromptEvaluationRun,
   PromptEvaluationAssetType,
   PromptLibraryItem,
@@ -32,6 +33,7 @@ import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 const promptLibraryKeys = {
   list: (workspaceId: string) => ["prompt-library", workspaceId, "list"] as const,
   assets: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-assets"] as const,
+  cases: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-cases"] as const,
   runs: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-runs"] as const,
 };
 
@@ -130,6 +132,11 @@ export function PromptLibraryPage() {
     queryFn: () => api.listPromptEvaluationAssets(),
     enabled: !!workspaceId,
   });
+  const caseQuery = useQuery({
+    queryKey: promptLibraryKeys.cases(workspaceId ?? ""),
+    queryFn: () => api.listPromptEvaluationCases(),
+    enabled: !!workspaceId,
+  });
   const runQuery = useQuery({
     queryKey: promptLibraryKeys.runs(workspaceId ?? ""),
     queryFn: () => api.listPromptEvaluationRuns({ limit: 100 }),
@@ -144,6 +151,7 @@ export function PromptLibraryPage() {
 
   const items = listQuery.data?.items ?? [];
   const assets = assetQuery.data?.items ?? [];
+  const cases = caseQuery.data?.items ?? [];
   const runs = runQuery.data?.items ?? [];
   const selected = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
   const agentRuntimeReadiness = useMemo(
@@ -176,6 +184,7 @@ export function PromptLibraryPage() {
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.list(workspaceId ?? "") });
   const invalidateAssets = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId ?? "") });
+  const invalidateCases = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId ?? "") });
   const invalidateRuns = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId ?? "") });
 
   const createMut = useMutation({
@@ -213,6 +222,7 @@ export function PromptLibraryPage() {
     },
     onSuccess: () => {
       invalidateAssets();
+      invalidateCases();
       invalidateRuns();
       toast.success("优化运行已记录");
     },
@@ -222,6 +232,7 @@ export function PromptLibraryPage() {
       mutationFn: (data: CreatePromptEvaluationAssetRequest) => api.createPromptEvaluationAsset(data),
       onSuccess: () => {
         invalidateAssets();
+        invalidateCases();
         toast.success("资产已创建");
       },
     });
@@ -233,6 +244,7 @@ export function PromptLibraryPage() {
       },
       onSuccess: (result) => {
         invalidateAssets();
+        invalidateCases();
         invalidateRuns();
         toast.success(`真实 Agent 任务已入队：${result.task_id}`);
       },
@@ -242,6 +254,7 @@ export function PromptLibraryPage() {
     mutationFn: ({ id, data }: { id: string; data: UpdatePromptEvaluationAssetRequest }) => api.updatePromptEvaluationAsset(id, data),
     onSuccess: () => {
       invalidateAssets();
+      invalidateCases();
       invalidateRuns();
       toast.success("资产已更新");
     },
@@ -251,6 +264,7 @@ export function PromptLibraryPage() {
     mutationFn: (id: string) => api.deletePromptEvaluationAsset(id),
     onSuccess: () => {
       invalidateAssets();
+      invalidateCases();
       invalidateRuns();
       toast.success("资产已删除");
     },
@@ -610,8 +624,9 @@ export function PromptLibraryPage() {
               activeTab={activeTab}
               selected={selected}
               assets={assets}
+              cases={cases}
               runs={runs}
-              loading={assetQuery.isLoading || runQuery.isLoading}
+              loading={assetQuery.isLoading || caseQuery.isLoading || runQuery.isLoading}
                 saving={savingAsset}
                 runningAgent={runningAgent}
                 runtimeReadiness={agentRuntimeReadiness}
@@ -637,6 +652,7 @@ function WorkbenchPanel({
   activeTab,
   selected,
   assets,
+  cases,
   runs,
   loading,
     saving,
@@ -656,6 +672,7 @@ function WorkbenchPanel({
   activeTab: WorkbenchTab;
   selected: PromptLibraryItem | null;
   assets: PromptEvaluationAsset[];
+  cases: PromptEvaluationStructuredCase[];
   runs: PromptEvaluationRun[];
     loading: boolean;
     saving: boolean;
@@ -675,6 +692,7 @@ function WorkbenchPanel({
   const tabAssetType = tabToAssetType(activeTab);
   const visibleAssets = tabAssetType ? assets.filter((asset) => asset.asset_type === tabAssetType) : assets;
   const experiments = assets.filter((asset) => asset.asset_type === "实验");
+  const caseCounts = useMemo(() => buildCaseCounts(cases), [cases]);
 
   if (activeTab === "提示词库" || activeTab === "提示词调试场") {
     return null;
@@ -804,7 +822,7 @@ function WorkbenchPanel({
                   </div>
                   <div className="mt-1 truncate text-xs text-muted-foreground">{asset.description || "无描述"}</div>
                   <div className="mt-1 text-[11px] text-muted-foreground">
-                    更新于 {asset.updated_at} · {summarizeAssetPayload(asset)}
+                    更新于 {asset.updated_at} · {summarizeAssetPayload(asset, caseCounts.get(asset.id) ?? 0)}
                   </div>
                   {summarizeAgentRun(asset) && (
                     <div className="mt-1 text-[11px] text-muted-foreground">
@@ -1041,9 +1059,18 @@ function buildAgentDebugPackageRequest(
   };
 }
 
-function summarizeAssetPayload(asset: PromptEvaluationAsset): string {
+function buildCaseCounts(cases: PromptEvaluationStructuredCase[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const item of cases) {
+    counts.set(item.asset_id, (counts.get(item.asset_id) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function summarizeAssetPayload(asset: PromptEvaluationAsset, structuredCaseCount = 0): string {
   const payload = asset.payload ?? {};
   const cases = Array.isArray(payload.cases) ? payload.cases.length : Array.isArray(payload["数据集"]) ? payload["数据集"].length : 0;
+  if (structuredCaseCount > 0) return `结构化用例 ${structuredCaseCount} 个`;
   if (payload["最近Agent运行"]) return "包含真实 Agent 运行";
   if (payload["调试包"]) return "包含 Agent 调试包";
   if (payload["运行结果"]) return "包含运行结果";

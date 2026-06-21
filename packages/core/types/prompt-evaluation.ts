@@ -102,6 +102,25 @@ export interface PromptEvaluationTrial {
   created_at: string;
 }
 
+export interface PromptEvaluationStructuredCase {
+  id: string;
+  workspace_id: string;
+  asset_id: string;
+  prompt_id: string | null;
+  case_index: number;
+  case_name: string;
+  variables: Record<string, unknown>;
+  expected_contains: unknown[];
+  input: Record<string, unknown>;
+  expected: Record<string, unknown>;
+  tags: unknown[];
+  status: PromptEvaluationAssetStatus;
+  source: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface PromptEvaluationAgentRunResponse {
   asset: PromptEvaluationAsset;
   run: PromptEvaluationRun;
@@ -129,6 +148,11 @@ export interface ListPromptEvaluationTrialsResponse {
   total: number;
 }
 
+export interface ListPromptEvaluationCasesResponse {
+  items: PromptEvaluationStructuredCase[];
+  total: number;
+}
+
 export interface ListPromptEvaluationAssetsParams {
   prompt_id?: string;
   asset_type?: PromptEvaluationAssetType;
@@ -139,6 +163,11 @@ export interface ListPromptEvaluationRunsParams {
   asset_id?: string;
   status?: PromptEvaluationRun["status"];
   limit?: number;
+}
+
+export interface ListPromptEvaluationCasesParams {
+  asset_id?: string;
+  status?: PromptEvaluationAssetStatus;
 }
 
 export interface CreatePromptEvaluationAssetRequest {

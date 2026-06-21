@@ -97,6 +97,15 @@ test.describe("训练与评估工作台", () => {
     expect(optimizationRun).toBeTruthy();
     expect(dataset).toBeTruthy();
     expect(testSuite).toBeTruthy();
+    await expect(api.listPromptEvaluationCases({ asset_id: dataset!.id })).resolves.toEqual([
+      expect.objectContaining({
+        asset_id: dataset!.id,
+        case_name: expect.stringContaining("基准用例"),
+        status: "启用",
+      }),
+    ]);
+    await page.getByRole("button", { name: "数据集", exact: true }).click();
+    await expect(page.getByText("结构化用例 1 个")).toBeVisible({ timeout: 10000 });
     await expect(api.listPromptEvaluationRuns({ asset_id: optimizationRun!.id })).resolves.toEqual([
       expect.objectContaining({
         asset_id: optimizationRun!.id,

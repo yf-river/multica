@@ -37,6 +37,18 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	if created.AssetType != "数据集" || created.PromptID == nil || *created.PromptID != promptID {
 		t.Fatalf("created = %+v", created)
 	}
+	var caseName string
+	var caseCount int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)::int, max(case_name)
+		FROM prompt_evaluation_case
+		WHERE workspace_id = $1 AND asset_id = $2
+	`, testWorkspaceID, created.ID).Scan(&caseCount, &caseName); err != nil {
+		t.Fatalf("load structured cases: %v", err)
+	}
+	if caseCount != 1 {
+		t.Fatalf("structured case count = %d, name=%q", caseCount, caseName)
+	}
 
 	listW := httptest.NewRecorder()
 	testHandler.ListPromptEvaluationAssets(listW, newRequest(http.MethodGet, "/api/prompt-evaluation-assets?asset_type=数据集&status=启用", nil))
@@ -68,6 +80,21 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	}
 	if updated.AssetType != "实验" || updated.PromptID == nil || *updated.PromptID != promptID {
 		t.Fatalf("updated = %+v", updated)
+	}
+	casesW := httptest.NewRecorder()
+	testHandler.ListPromptEvaluationCases(casesW, newRequest(http.MethodGet, "/api/prompt-evaluation-cases?asset_id="+created.ID, nil))
+	if casesW.Code != http.StatusOK {
+		t.Fatalf("list cases status = %d, body = %s", casesW.Code, casesW.Body.String())
+	}
+	var casesResp struct {
+		Items []PromptEvaluationCaseResponse `json:"items"`
+		Total int                            `json:"total"`
+	}
+	if err := json.Unmarshal(casesW.Body.Bytes(), &casesResp); err != nil {
+		t.Fatalf("decode cases response: %v", err)
+	}
+	if casesResp.Total != 1 || casesResp.Items[0].AssetID != created.ID || casesResp.Items[0].Status != "启用" {
+		t.Fatalf("cases response = %+v", casesResp)
 	}
 }
 
