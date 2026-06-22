@@ -191,6 +191,13 @@ interface SquadLeaderTask {
   runtime_id: string;
   issue_id: string;
   is_leader_task: boolean;
+  error?: string | null;
+}
+
+interface TaskExecutionEvidence {
+  usage: Array<Record<string, unknown>>;
+  messages: Array<Record<string, unknown>>;
+  trace_events: Array<Record<string, unknown>>;
 }
 
 interface SquadSOPRun {
@@ -751,7 +758,8 @@ export class TestApiClient {
             agent_id::text,
             runtime_id::text,
             issue_id::text,
-            COALESCE(is_leader_task, false) AS is_leader_task
+            COALESCE(is_leader_task, false) AS is_leader_task,
+            error
           FROM agent_task_queue
           WHERE issue_id = $1 AND agent_id = $2
           ORDER BY created_at DESC
@@ -760,6 +768,47 @@ export class TestApiClient {
         [issueId, leaderAgentId],
       );
       return result.rows[0] ?? null;
+    } finally {
+      await client.end();
+    }
+  }
+
+  async getTaskExecutionEvidence(taskId: string): Promise<TaskExecutionEvidence> {
+    const client = new pg.Client(DATABASE_URL);
+    await client.connect();
+    try {
+      const usage = await client.query<Record<string, unknown>>(
+        `
+          SELECT provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, created_at, updated_at
+          FROM task_usage
+          WHERE task_id = $1
+          ORDER BY created_at ASC
+        `,
+        [taskId],
+      );
+      const messages = await client.query<Record<string, unknown>>(
+        `
+          SELECT seq, type, tool, content, input, output, created_at
+          FROM task_message
+          WHERE task_id = $1
+          ORDER BY seq ASC
+        `,
+        [taskId],
+      );
+      const traceEvents = await client.query<Record<string, unknown>>(
+        `
+          SELECT source, event_type, event_name, status, provider, model, input_tokens, output_tokens, failure_reason, created_at
+          FROM task_trace_event
+          WHERE task_id = $1
+          ORDER BY created_at ASC
+        `,
+        [taskId],
+      );
+      return {
+        usage: usage.rows,
+        messages: messages.rows,
+        trace_events: traceEvents.rows,
+      };
     } finally {
       await client.end();
     }
