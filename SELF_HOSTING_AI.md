@@ -49,6 +49,44 @@ multica daemon status
 
 Should show `running` with detected agents.
 
+## Production Demo / Observability Verification
+
+Before marking a self-host deployment ready for internal team use or a leadership demo, collect evidence from the product, API, logs, and database. The full Chinese runbook lives in:
+
+```text
+apps/docs/content/docs/production-observability.zh.mdx
+```
+
+Minimum checks:
+
+```bash
+curl -fsS http://localhost:8080/health
+curl -fsS http://localhost:8080/readyz
+curl -fsS -o /tmp/multica-login.html -w '%{http_code} %{time_total}\n' http://localhost:3000/login
+```
+
+Then open `/{workspaceSlug}/training?view=demo-dashboard` and verify:
+
+- CodeBuddy runtime readiness is visible.
+- Training/evaluation run metrics are not empty.
+- SOP/task observability metrics are not empty or are explicitly marked as empty.
+- At least one real Agent run can be opened from run history with task id, model, runtime, token, trace events, task messages, and trial results.
+- Optimization candidates require manual publish/reject.
+
+For real CodeBuddy execution evidence, run the opt-in E2E:
+
+```bash
+RUN_REAL_AGENT_E2E=1 \
+REAL_AGENT_E2E_ACCOUNT=<daemon-account> \
+REAL_AGENT_E2E_WORKSPACE=<workspace-slug> \
+MULTICA_PROMPT_EVALUATION_AGENT_MODEL=minimax-m2.7-ioa \
+PLAYWRIGHT_BASE_URL=http://localhost:3000 \
+FRONTEND_ORIGIN=http://localhost:3000 \
+NEXT_PUBLIC_API_URL=http://localhost:8080 \
+NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws \
+pnpm exec playwright test e2e/prompt-library-real-agent.spec.ts --timeout=300000
+```
+
 ## Stopping
 
 ```bash

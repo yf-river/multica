@@ -179,6 +179,18 @@ multica setup self-host \
 
 完整参考——三种登录方式、为了绕过 web 镜像 build-time 写死的 `REMOTE_API_URL` 而加的 `backend` ExternalName 别名、资源限制、TLS——都在仓库的 [`SELF_HOSTING.md`](https://github.com/multica-ai/multica/blob/main/SELF_HOSTING.md#kubernetes-deployment-alternative)。
 
+## 生产演示与观测验收
+
+服务跑起来只是第一步。给团队日常使用或领导演示前，还要证明真实 Agent、训练评估、SOP trace、token/成本和 evidence 都已经接通。
+
+最短路径：
+
+1. 打开 **训练与评估 → 演示看板**，确认训练评估、SOP/任务观测、真实 Agent readiness 和验收证据不是空数据。
+2. 打开 **运行历史**，展开最近一条 Agent 执行，确认能看到 `task id`、模型、runtime、token、trace 和用例结果。
+3. 跑 `/health`、`/readyz`、真实 Agent E2E、日志检查和数据库抽查，把结果写进验收记录。
+
+完整命令和证据口径见 [生产演示与观测验收](/production-observability)。
+
 ## 常见问题
 
 - **后端起不来**：看容器日志 `docker compose -f docker-compose.selfhost.yml logs backend`；常见是 `.env` 里 `DATABASE_URL` 或 `JWT_SECRET` 有问题
@@ -190,6 +202,7 @@ multica setup self-host \
 
 - [环境变量](/environment-variables) —— 完整 env 清单
 - [登录与注册配置](/auth-setup) —— 注册控制详细配置
+- [生产演示与观测验收](/production-observability) —— 用页面、API、E2E、日志和数据库证明确实可用
 - [GitHub 集成](/github-integration) —— 连一个 GitHub App，让 PR 自动关联 issue、merge 时自动转 Done
 - [故障排查](/troubleshooting) —— 遇到问题先来这里
 - [桌面应用](/desktop-app) —— 可以通过 `~/.multica/desktop.json` 连接 Desktop；Web 前端 + CLI 仍然是最快的自部署路径

@@ -1,0 +1,198 @@
+---
+title: 生产演示与观测验收
+description: 用训练与评估、真实 Agent、SOP trace 和健康检查证明 Multica 已经能给团队内部生产使用。
+---
+
+import { Callout } from "fumadocs-ui/components/callout";
+
+这页不是功能介绍，而是上线前和领导演示前的验收 runbook。目标是拿到可复查的证据：页面能看、API 能查、真实 Agent 能跑、日志和数据库能互相印证。
+
+## 演示入口
+
+进入工作区后打开：
+
+```text
+/{workspaceSlug}/training?view=demo-dashboard
+```
+
+页面名称是 **训练与评估 → 演示看板**。它把四类证据放在同一屏：
+
+| 区域 | 证明什么 |
+|---|---|
+| 训练评估闭环 | 提示词、数据集、测试套件、实验运行、通过率、token、成本已经结构化记录 |
+| SOP 与任务观测 | SOP run、SOP event、任务 trace、耗时、token、成本、失败原因已经聚合 |
+| 验收证据 | 结构化用例、真实 Agent task/trace、优化候选、最近运行是否存在 |
+| 演示状态 | CodeBuddy runtime、真实运行证据、结构化用例、优化闭环、摘要完整性是否达标 |
+
+演示时不要只打开一个静态页面。至少要能从演示看板跳到 **运行历史**，展开一条 Agent 执行记录，看到 `task id`、模型、runtime、token、trace、用例明细和 evidence。
+
+## 最小验收标准
+
+上线或演示前，至少满足这些条件：
+
+| 项 | 通过标准 |
+|---|---|
+| 后端健康 | `/health` 返回 `{"status":"ok"}` |
+| 后端就绪 | `/readyz` 返回 DB 和 migration 都是 `ok` |
+| 前端可访问 | 登录页返回 HTTP 200 |
+| 真实 Agent runtime | 演示看板显示 CodeBuddy runtime 已就绪 |
+| 训练评估运行 | 运行历史里至少有一条 `Agent执行` 且状态为 `通过` 或明确失败原因 |
+| 证据链 | 运行证据能看到 trials、task messages、trace events、token、耗时 |
+| 优化闭环 | 失败用例能生成优化候选，候选必须人工确认后发布，不能自动替换生产版本 |
+| 观测完整性 | 演示看板显示观测摘要 `完整`；如果是 `可能截断`，演示前要缩小范围或说明采样限制 |
+
+## 健康检查命令
+
+本机或服务器上执行：
+
+```bash
+curl -fsS http://127.0.0.1:8080/health
+curl -fsS http://127.0.0.1:8080/readyz
+curl -fsS -o /tmp/multica-login.html -w '%{http_code} %{time_total}\n' http://127.0.0.1:3000/login
+```
+
+如果用服务器外网 IP 验证，并且 shell 配了 HTTP 代理，先绕过代理：
+
+```bash
+curl --noproxy '*' -fsS http://<server-ip>:8080/health
+curl --noproxy '*' -fsS -o /tmp/multica-login.html -w '%{http_code} %{time_total}\n' http://<server-ip>:3000/login
+```
+
+`/health` 只证明进程活着；`/readyz` 才证明数据库和 migration 状态能支撑生产请求。
+
+## 观测摘要 API
+
+演示看板使用同一个后端接口：
+
+```bash
+curl -fsS \
+  -H "Authorization: Bearer <PAT>" \
+  "http://<server-host>:8080/api/workspaces/<workspace_id>/observability/summary"
+```
+
+可选过滤：
+
+```text
+since=<RFC3339 时间>
+squad_id=<小队 id>
+project_id=<项目 id>
+agent_id=<Agent id>
+```
+
+关键字段：
+
+| 字段 | 含义 |
+|---|---|
+| `指标.SOP 执行数` | 当前范围内的 SOP run 数 |
+| `指标.SOP 事件数` | SOP step event 数 |
+| `指标.队列等待` / `指标.执行耗时` / `指标.总耗时` | 可用于解释任务慢在哪里 |
+| `指标.输入 token` / `指标.输出 token` / `指标.预估成本` | 用量与成本口径 |
+| `指标.失败原因` | 失败归因列表 |
+| `summary_completeness.状态` | `完整` 或 `可能截断` |
+| `model_breakdown` / `runtime_breakdown` | 模型和 runtime 维度的任务数、token、成本 |
+
+<Callout type="warning">
+观测摘要有采样上限。看到 `可能截断` 时，不要把这个数字当成全量汇报。缩小时间、小队、项目或 Agent 范围后再导出证据。
+</Callout>
+
+## 训练评估摘要 API
+
+训练与评估模块使用：
+
+```bash
+curl -fsS \
+  -H "Authorization: Bearer <PAT>" \
+  "http://<server-host>:8080/api/prompt-evaluation-summary"
+```
+
+它证明提示词、资产、结构化用例、运行历史和优化候选不是前端假展示。重点看：
+
+| 字段 | 含义 |
+|---|---|
+| `指标.运行总数` | 本工作区训练评估运行数 |
+| `指标.Agent运行数` | 真实 Agent 执行类运行数 |
+| `指标.通过率` | 通过用例占比 |
+| `资产统计.结构化用例` | 数据集/测试套件中可复用的评测用例数 |
+| `优化候选.待确认` / `优化候选.已发布` / `优化候选.已拒绝` | 人工确认闭环状态 |
+
+## 真实 Agent E2E
+
+常规 E2E 会用受控 fixture 快速覆盖 UI 和数据库路径。要证明 CodeBuddy daemon 真的执行，需要跑 opt-in 真实 E2E：
+
+```bash
+RUN_REAL_AGENT_E2E=1 \
+REAL_AGENT_E2E_ACCOUNT=<daemon-account> \
+REAL_AGENT_E2E_WORKSPACE=<workspace-slug> \
+MULTICA_PROMPT_EVALUATION_AGENT_MODEL=minimax-m2.7-ioa \
+PLAYWRIGHT_BASE_URL=http://localhost:3000 \
+FRONTEND_ORIGIN=http://localhost:3000 \
+NEXT_PUBLIC_API_URL=http://localhost:8080 \
+NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws \
+pnpm exec playwright test e2e/prompt-library-real-agent.spec.ts --timeout=300000
+```
+
+如果 MiniMax 额度不足，可以临时换成当前可用的 CodeBuddy 模型，但验收报告里必须写清楚模型：
+
+```bash
+MULTICA_PROMPT_EVALUATION_AGENT_MODEL=<可用模型>
+```
+
+通过后应记录：
+
+| 证据 | 来源 |
+|---|---|
+| run id | Playwright 输出或 `/api/prompt-evaluation-runs` |
+| task id | 运行历史或 evidence API |
+| 模型/runtime | 运行历史、演示看板、evidence API |
+| task messages | evidence API |
+| trace events | evidence API |
+| token/耗时/成本 | evidence API 与观测摘要 |
+
+## 部署后浏览器验收
+
+1. 打开登录页，确认没有外部营销弹窗或 waitlist 引导。
+2. 用演示账号登录，进入目标工作区。
+3. 打开 **训练与评估 → 演示看板**，确认看板不是空数据。
+4. 打开 **运行历史**，展开最近一条 Agent 执行，确认 evidence 里有 task、trace、token、模型、runtime。
+5. 打开 **优化运行**，确认待确认候选必须人工发布或拒绝。
+6. 打开项目/小队/Agent 详情页，确认对应观测摘要能按范围聚合。
+
+## 日志与数据库抽查
+
+日志至少看三类：
+
+```bash
+# self-host compose
+docker compose -f docker-compose.selfhost.yml logs --tail=200 backend
+docker compose -f docker-compose.selfhost.yml logs --tail=200 frontend
+multica daemon logs --lines 200
+```
+
+数据库抽查建议看这些表：
+
+| 表 | 证明什么 |
+|---|---|
+| `prompt_evaluation_run` | 训练评估运行、Agent task 绑定、模型/runtime、token、成本 |
+| `prompt_evaluation_trial` | 每个用例的执行结果 |
+| `prompt_evaluation_case` | 数据集/测试套件的结构化用例 |
+| `prompt_evaluation_optimization_candidate` | 优化候选的人工确认状态 |
+| `agent_task_queue` | 真实 Agent task 状态 |
+| `task_usage` | token、成本、模型、runtime 上报 |
+| `task_message` | Agent 输出消息证据 |
+| `task_trace_event` | 任务生命周期和用量 trace |
+| `squad_sop_run` / `squad_sop_step_event` | 小队 SOP 执行和阶段证据 |
+
+## 演示结论模板
+
+演示结束时，用这几句话收束：
+
+```text
+本次演示的工作区是 <workspace>。
+训练评估共有 <运行总数> 次运行，Agent 执行 <Agent运行数> 次，通过率 <通过率>。
+最近一条真实 Agent 运行的 task id 是 <task_id>，模型是 <model>，runtime 是 <runtime>。
+该运行已采集 token、耗时、task messages、trace events 和结构化用例结果。
+SOP/任务观测摘要当前状态是 <完整/可能截断>，如果截断，汇报口径只代表采样范围。
+失败用例不会自动替换生产提示词，只会生成候选，由人工确认发布或拒绝。
+```
+
+这段话里的每个变量都必须能在演示看板、运行历史、evidence API 或观测摘要 API 中找到。

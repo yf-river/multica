@@ -34,6 +34,7 @@
     "---自部署运维---",
     "environment-variables",
     "auth-setup",
+    "production-observability",
     "troubleshooting",
     "---参考---",
     "cli",
