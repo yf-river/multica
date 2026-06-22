@@ -1368,7 +1368,7 @@ func (h *Handler) RunPromptEvaluationOptimizationAgent(w http.ResponseWriter, r 
 	if !ok {
 		return
 	}
-	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, asset, agentRow, runtimeRow, task.ID, session.ID, parseUUID(userID), payload, cases)
+	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, asset, agentRow, runtimeRow, task.ID, session.ID, parseUUID(userID), "优化运行", payload, cases)
 	if !ok {
 		return
 	}
@@ -2163,7 +2163,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, asset, agentRow, runtimeRow, task.ID, session.ID, parseUUID(userID), payload, cases)
+	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, asset, agentRow, runtimeRow, task.ID, session.ID, parseUUID(userID), "Agent 调试场", payload, cases)
 	if !ok {
 		return
 	}
@@ -2292,14 +2292,14 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 	return run, true
 }
 
-func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r *http.Request, asset db.PromptEvaluationAsset, agent db.Agent, runtime db.AgentRuntime, taskID pgtype.UUID, chatSessionID pgtype.UUID, createdBy pgtype.UUID, payload map[string]any, cases []map[string]any) (db.PromptEvaluationRun, bool) {
+func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r *http.Request, asset db.PromptEvaluationAsset, agent db.Agent, runtime db.AgentRuntime, taskID pgtype.UUID, chatSessionID pgtype.UUID, createdBy pgtype.UUID, triggerSource string, payload map[string]any, cases []map[string]any) (db.PromptEvaluationRun, bool) {
 	run, err := h.Queries.CreatePromptEvaluationRun(r.Context(), db.CreatePromptEvaluationRunParams{
 		WorkspaceID:       asset.WorkspaceID,
 		AssetID:           asset.ID,
 		PromptID:          asset.PromptID,
 		RunKind:           "Agent执行",
 		Status:            "已入队",
-		TriggerSource:     "手动",
+		TriggerSource:     triggerSource,
 		AgentID:           agent.ID,
 		RuntimeID:         runtime.ID,
 		TaskID:            taskID,

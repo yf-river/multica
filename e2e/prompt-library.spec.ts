@@ -346,11 +346,15 @@ test.describe("训练与评估工作台", () => {
     const agentEvidencePanel = agentRunCard.getByTestId(`run-evidence-${queuedAgentRun!.id}`);
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-模型")).toContainText(expectedAgentModel, { timeout: 10000 });
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-runtime")).toContainText("codebuddy");
+    await expect(agentEvidencePanel.getByTestId("run-evidence-metric-触发来源")).toContainText("Agent 调试场");
+    await expect(agentEvidencePanel.getByTestId("run-evidence-metric-创建者")).toContainText(/[0-9a-f-]{36}/);
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-agent id")).toContainText(queuedAgentRun!.agent_id!);
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-runtime id")).toContainText(runtime.id);
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-chat session id")).toContainText(queuedAgentRun!.chat_session_id!);
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-输入token")).toContainText("16");
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-输出token")).toContainText("7");
+    await expect(agentEvidencePanel.getByTestId("run-evidence-metric-开始时间")).not.toContainText("未记录");
+    await expect(agentEvidencePanel.getByTestId("run-evidence-metric-结束时间")).not.toContainText("未完成");
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-评估结论")).toContainText("Agent 返回结构化逐用例评估");
     await expect(page.getByText("本地渲染 · 通过")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(/模型 本地模板渲染 · runtime server · 通过 1\/1/)).toBeVisible();

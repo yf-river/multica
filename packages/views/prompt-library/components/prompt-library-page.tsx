@@ -1690,6 +1690,8 @@ function RunEvidencePanel({
         <MetricChip label="运行状态" value={evidence.run.status} />
         <MetricChip label="模型" value={evidence.run.model || "未记录"} />
         <MetricChip label="runtime" value={evidence.run.runtime_provider || "未记录"} />
+        <MetricChip label="触发来源" value={evidence.run.trigger_source || "未记录"} />
+        <MetricChip label="创建者" value={evidence.run.created_by ?? "未记录"} />
         <MetricChip label="agent id" value={evidence.run.agent_id ?? "未记录"} />
         <MetricChip label="runtime id" value={evidence.run.runtime_id ?? "未记录"} />
         <MetricChip label="chat session id" value={evidence.run.chat_session_id ?? "未记录"} />
@@ -1702,6 +1704,10 @@ function RunEvidencePanel({
         <MetricChip label="输出token" value={String(evidence.run.output_tokens)} />
         <MetricChip label="预估成本" value={formatMoney(evidence.run.estimated_cost)} />
         <MetricChip label="trace/task id" value={evidence.run.task_id ?? evidence.run.id} />
+        <MetricChip label="开始时间" value={evidence.run.started_at || "未记录"} />
+        <MetricChip label="结束时间" value={evidence.run.completed_at || "未完成"} />
+        <MetricChip label="创建时间" value={evidence.run.created_at || "未记录"} />
+        <MetricChip label="更新时间" value={evidence.run.updated_at || "未记录"} />
         <MetricChip label="失败原因" value={evidence.run.failure_reason || "无"} />
         <MetricChip label="评估结论" value={evidence.run.conclusion || "未记录"} />
       </div>
