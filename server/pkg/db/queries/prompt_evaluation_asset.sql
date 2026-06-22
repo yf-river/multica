@@ -12,7 +12,21 @@ WHERE id = $1 AND workspace_id = $2;
 
 -- name: CreatePromptEvaluationAsset :one
 INSERT INTO prompt_evaluation_asset (
-    workspace_id, prompt_id, name, description, asset_type, payload, status, created_by
+    workspace_id,
+    prompt_id,
+    name,
+    description,
+    asset_type,
+    payload,
+    status,
+    created_by,
+    structure_schema,
+    structured_case_count,
+    structured_variable_count,
+    structured_assertion_count,
+    linked_dataset_count,
+    linked_prompt_count,
+    evaluation_dimension_count
 ) VALUES (
     $1,
     sqlc.narg('prompt_id'),
@@ -21,7 +35,14 @@ INSERT INTO prompt_evaluation_asset (
     $4,
     COALESCE(sqlc.narg('payload')::jsonb, '{}'::jsonb),
     COALESCE(sqlc.narg('status'), '启用'),
-    $5
+    $5,
+    COALESCE(sqlc.narg('structure_schema'), 'multica.training_evaluation.asset_profile.v1'),
+    COALESCE(sqlc.narg('structured_case_count'), 0),
+    COALESCE(sqlc.narg('structured_variable_count'), 0),
+    COALESCE(sqlc.narg('structured_assertion_count'), 0),
+    COALESCE(sqlc.narg('linked_dataset_count'), 0),
+    COALESCE(sqlc.narg('linked_prompt_count'), 0),
+    COALESCE(sqlc.narg('evaluation_dimension_count'), 0)
 )
 RETURNING *;
 
@@ -33,6 +54,13 @@ UPDATE prompt_evaluation_asset SET
     asset_type = COALESCE(sqlc.narg('asset_type'), asset_type),
     payload = COALESCE(sqlc.narg('payload')::jsonb, payload),
     status = COALESCE(sqlc.narg('status'), status),
+    structure_schema = COALESCE(sqlc.narg('structure_schema'), structure_schema),
+    structured_case_count = COALESCE(sqlc.narg('structured_case_count'), structured_case_count),
+    structured_variable_count = COALESCE(sqlc.narg('structured_variable_count'), structured_variable_count),
+    structured_assertion_count = COALESCE(sqlc.narg('structured_assertion_count'), structured_assertion_count),
+    linked_dataset_count = COALESCE(sqlc.narg('linked_dataset_count'), linked_dataset_count),
+    linked_prompt_count = COALESCE(sqlc.narg('linked_prompt_count'), linked_prompt_count),
+    evaluation_dimension_count = COALESCE(sqlc.narg('evaluation_dimension_count'), evaluation_dimension_count),
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
 RETURNING *;

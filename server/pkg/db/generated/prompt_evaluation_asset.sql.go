@@ -13,7 +13,21 @@ import (
 
 const createPromptEvaluationAsset = `-- name: CreatePromptEvaluationAsset :one
 INSERT INTO prompt_evaluation_asset (
-    workspace_id, prompt_id, name, description, asset_type, payload, status, created_by
+    workspace_id,
+    prompt_id,
+    name,
+    description,
+    asset_type,
+    payload,
+    status,
+    created_by,
+    structure_schema,
+    structured_case_count,
+    structured_variable_count,
+    structured_assertion_count,
+    linked_dataset_count,
+    linked_prompt_count,
+    evaluation_dimension_count
 ) VALUES (
     $1,
     $6,
@@ -22,20 +36,34 @@ INSERT INTO prompt_evaluation_asset (
     $4,
     COALESCE($7::jsonb, '{}'::jsonb),
     COALESCE($8, '启用'),
-    $5
+    $5,
+    COALESCE($9, 'multica.training_evaluation.asset_profile.v1'),
+    COALESCE($10, 0),
+    COALESCE($11, 0),
+    COALESCE($12, 0),
+    COALESCE($13, 0),
+    COALESCE($14, 0),
+    COALESCE($15, 0)
 )
-RETURNING id, workspace_id, prompt_id, name, description, asset_type, payload, status, created_by, created_at, updated_at
+RETURNING id, workspace_id, prompt_id, name, description, asset_type, payload, status, created_by, created_at, updated_at, structure_schema, structured_case_count, structured_variable_count, structured_assertion_count, linked_dataset_count, linked_prompt_count, evaluation_dimension_count
 `
 
 type CreatePromptEvaluationAssetParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	AssetType   string      `json:"asset_type"`
-	CreatedBy   pgtype.UUID `json:"created_by"`
-	PromptID    pgtype.UUID `json:"prompt_id"`
-	Payload     []byte      `json:"payload"`
-	Status      interface{} `json:"status"`
+	WorkspaceID              pgtype.UUID `json:"workspace_id"`
+	Name                     string      `json:"name"`
+	Description              string      `json:"description"`
+	AssetType                string      `json:"asset_type"`
+	CreatedBy                pgtype.UUID `json:"created_by"`
+	PromptID                 pgtype.UUID `json:"prompt_id"`
+	Payload                  []byte      `json:"payload"`
+	Status                   interface{} `json:"status"`
+	StructureSchema          interface{} `json:"structure_schema"`
+	StructuredCaseCount      interface{} `json:"structured_case_count"`
+	StructuredVariableCount  interface{} `json:"structured_variable_count"`
+	StructuredAssertionCount interface{} `json:"structured_assertion_count"`
+	LinkedDatasetCount       interface{} `json:"linked_dataset_count"`
+	LinkedPromptCount        interface{} `json:"linked_prompt_count"`
+	EvaluationDimensionCount interface{} `json:"evaluation_dimension_count"`
 }
 
 func (q *Queries) CreatePromptEvaluationAsset(ctx context.Context, arg CreatePromptEvaluationAssetParams) (PromptEvaluationAsset, error) {
@@ -48,6 +76,13 @@ func (q *Queries) CreatePromptEvaluationAsset(ctx context.Context, arg CreatePro
 		arg.PromptID,
 		arg.Payload,
 		arg.Status,
+		arg.StructureSchema,
+		arg.StructuredCaseCount,
+		arg.StructuredVariableCount,
+		arg.StructuredAssertionCount,
+		arg.LinkedDatasetCount,
+		arg.LinkedPromptCount,
+		arg.EvaluationDimensionCount,
 	)
 	var i PromptEvaluationAsset
 	err := row.Scan(
@@ -62,6 +97,13 @@ func (q *Queries) CreatePromptEvaluationAsset(ctx context.Context, arg CreatePro
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.StructureSchema,
+		&i.StructuredCaseCount,
+		&i.StructuredVariableCount,
+		&i.StructuredAssertionCount,
+		&i.LinkedDatasetCount,
+		&i.LinkedPromptCount,
+		&i.EvaluationDimensionCount,
 	)
 	return i, err
 }
@@ -82,7 +124,7 @@ func (q *Queries) DeletePromptEvaluationAsset(ctx context.Context, arg DeletePro
 }
 
 const getPromptEvaluationAssetInWorkspace = `-- name: GetPromptEvaluationAssetInWorkspace :one
-SELECT id, workspace_id, prompt_id, name, description, asset_type, payload, status, created_by, created_at, updated_at FROM prompt_evaluation_asset
+SELECT id, workspace_id, prompt_id, name, description, asset_type, payload, status, created_by, created_at, updated_at, structure_schema, structured_case_count, structured_variable_count, structured_assertion_count, linked_dataset_count, linked_prompt_count, evaluation_dimension_count FROM prompt_evaluation_asset
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -106,12 +148,19 @@ func (q *Queries) GetPromptEvaluationAssetInWorkspace(ctx context.Context, arg G
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.StructureSchema,
+		&i.StructuredCaseCount,
+		&i.StructuredVariableCount,
+		&i.StructuredAssertionCount,
+		&i.LinkedDatasetCount,
+		&i.LinkedPromptCount,
+		&i.EvaluationDimensionCount,
 	)
 	return i, err
 }
 
 const listPromptEvaluationAssets = `-- name: ListPromptEvaluationAssets :many
-SELECT id, workspace_id, prompt_id, name, description, asset_type, payload, status, created_by, created_at, updated_at FROM prompt_evaluation_asset
+SELECT id, workspace_id, prompt_id, name, description, asset_type, payload, status, created_by, created_at, updated_at, structure_schema, structured_case_count, structured_variable_count, structured_assertion_count, linked_dataset_count, linked_prompt_count, evaluation_dimension_count FROM prompt_evaluation_asset
 WHERE workspace_id = $1
   AND ($2::text IS NULL OR asset_type = $2)
   AND ($3::text IS NULL OR status = $3)
@@ -152,6 +201,13 @@ func (q *Queries) ListPromptEvaluationAssets(ctx context.Context, arg ListPrompt
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.StructureSchema,
+			&i.StructuredCaseCount,
+			&i.StructuredVariableCount,
+			&i.StructuredAssertionCount,
+			&i.LinkedDatasetCount,
+			&i.LinkedPromptCount,
+			&i.EvaluationDimensionCount,
 		); err != nil {
 			return nil, err
 		}
@@ -171,20 +227,34 @@ UPDATE prompt_evaluation_asset SET
     asset_type = COALESCE($6, asset_type),
     payload = COALESCE($7::jsonb, payload),
     status = COALESCE($8, status),
+    structure_schema = COALESCE($9, structure_schema),
+    structured_case_count = COALESCE($10, structured_case_count),
+    structured_variable_count = COALESCE($11, structured_variable_count),
+    structured_assertion_count = COALESCE($12, structured_assertion_count),
+    linked_dataset_count = COALESCE($13, linked_dataset_count),
+    linked_prompt_count = COALESCE($14, linked_prompt_count),
+    evaluation_dimension_count = COALESCE($15, evaluation_dimension_count),
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, prompt_id, name, description, asset_type, payload, status, created_by, created_at, updated_at
+RETURNING id, workspace_id, prompt_id, name, description, asset_type, payload, status, created_by, created_at, updated_at, structure_schema, structured_case_count, structured_variable_count, structured_assertion_count, linked_dataset_count, linked_prompt_count, evaluation_dimension_count
 `
 
 type UpdatePromptEvaluationAssetParams struct {
-	ID          pgtype.UUID `json:"id"`
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	PromptID    pgtype.UUID `json:"prompt_id"`
-	Name        pgtype.Text `json:"name"`
-	Description pgtype.Text `json:"description"`
-	AssetType   pgtype.Text `json:"asset_type"`
-	Payload     []byte      `json:"payload"`
-	Status      pgtype.Text `json:"status"`
+	ID                       pgtype.UUID `json:"id"`
+	WorkspaceID              pgtype.UUID `json:"workspace_id"`
+	PromptID                 pgtype.UUID `json:"prompt_id"`
+	Name                     pgtype.Text `json:"name"`
+	Description              pgtype.Text `json:"description"`
+	AssetType                pgtype.Text `json:"asset_type"`
+	Payload                  []byte      `json:"payload"`
+	Status                   pgtype.Text `json:"status"`
+	StructureSchema          pgtype.Text `json:"structure_schema"`
+	StructuredCaseCount      pgtype.Int4 `json:"structured_case_count"`
+	StructuredVariableCount  pgtype.Int4 `json:"structured_variable_count"`
+	StructuredAssertionCount pgtype.Int4 `json:"structured_assertion_count"`
+	LinkedDatasetCount       pgtype.Int4 `json:"linked_dataset_count"`
+	LinkedPromptCount        pgtype.Int4 `json:"linked_prompt_count"`
+	EvaluationDimensionCount pgtype.Int4 `json:"evaluation_dimension_count"`
 }
 
 func (q *Queries) UpdatePromptEvaluationAsset(ctx context.Context, arg UpdatePromptEvaluationAssetParams) (PromptEvaluationAsset, error) {
@@ -197,6 +267,13 @@ func (q *Queries) UpdatePromptEvaluationAsset(ctx context.Context, arg UpdatePro
 		arg.AssetType,
 		arg.Payload,
 		arg.Status,
+		arg.StructureSchema,
+		arg.StructuredCaseCount,
+		arg.StructuredVariableCount,
+		arg.StructuredAssertionCount,
+		arg.LinkedDatasetCount,
+		arg.LinkedPromptCount,
+		arg.EvaluationDimensionCount,
 	)
 	var i PromptEvaluationAsset
 	err := row.Scan(
@@ -211,6 +288,13 @@ func (q *Queries) UpdatePromptEvaluationAsset(ctx context.Context, arg UpdatePro
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.StructureSchema,
+		&i.StructuredCaseCount,
+		&i.StructuredVariableCount,
+		&i.StructuredAssertionCount,
+		&i.LinkedDatasetCount,
+		&i.LinkedPromptCount,
+		&i.EvaluationDimensionCount,
 	)
 	return i, err
 }

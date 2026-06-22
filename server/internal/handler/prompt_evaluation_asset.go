@@ -28,6 +28,7 @@ const (
 	promptEvaluationAssetTestSuite    = "测试套件"
 	promptEvaluationAssetExperiment   = "实验"
 	promptEvaluationAssetOptimize     = "优化运行"
+	promptEvaluationAssetProfileV1    = "multica.training_evaluation.asset_profile.v1"
 	promptEvaluationAgentName         = "Multica 训练评估 Agent"
 	defaultPromptEvaluationAgentModel = "minimax-m2.7-ioa"
 	promptEvaluationRuntimeFreshTTL   = 2 * time.Minute
@@ -44,17 +45,24 @@ func promptEvaluationAgentModel() string {
 }
 
 type PromptEvaluationAssetResponse struct {
-	ID          string  `json:"id"`
-	WorkspaceID string  `json:"workspace_id"`
-	PromptID    *string `json:"prompt_id"`
-	Name        string  `json:"name"`
-	Description string  `json:"description"`
-	AssetType   string  `json:"asset_type"`
-	Payload     any     `json:"payload"`
-	Status      string  `json:"status"`
-	CreatedBy   *string `json:"created_by"`
-	CreatedAt   string  `json:"created_at"`
-	UpdatedAt   string  `json:"updated_at"`
+	ID                       string  `json:"id"`
+	WorkspaceID              string  `json:"workspace_id"`
+	PromptID                 *string `json:"prompt_id"`
+	Name                     string  `json:"name"`
+	Description              string  `json:"description"`
+	AssetType                string  `json:"asset_type"`
+	Payload                  any     `json:"payload"`
+	Status                   string  `json:"status"`
+	CreatedBy                *string `json:"created_by"`
+	CreatedAt                string  `json:"created_at"`
+	UpdatedAt                string  `json:"updated_at"`
+	StructureSchema          string  `json:"structure_schema"`
+	StructuredCaseCount      int32   `json:"structured_case_count"`
+	StructuredVariableCount  int32   `json:"structured_variable_count"`
+	StructuredAssertionCount int32   `json:"structured_assertion_count"`
+	LinkedDatasetCount       int32   `json:"linked_dataset_count"`
+	LinkedPromptCount        int32   `json:"linked_prompt_count"`
+	EvaluationDimensionCount int32   `json:"evaluation_dimension_count"`
 }
 
 type CreatePromptEvaluationAssetRequest struct {
@@ -142,6 +150,16 @@ type normalizedPromptEvaluationCase struct {
 	Input            map[string]any
 	Expected         map[string]any
 	Tags             []string
+}
+
+type promptEvaluationAssetProfile struct {
+	StructureSchema          string
+	StructuredCaseCount      int32
+	StructuredVariableCount  int32
+	StructuredAssertionCount int32
+	LinkedDatasetCount       int32
+	LinkedPromptCount        int32
+	EvaluationDimensionCount int32
 }
 
 type PromptEvaluationAgentRunResponse struct {
@@ -336,17 +354,24 @@ type RejectPromptEvaluationOptimizationCandidateRequest struct {
 
 func promptEvaluationAssetToResponse(asset db.PromptEvaluationAsset) PromptEvaluationAssetResponse {
 	return PromptEvaluationAssetResponse{
-		ID:          uuidToString(asset.ID),
-		WorkspaceID: uuidToString(asset.WorkspaceID),
-		PromptID:    uuidToPtr(asset.PromptID),
-		Name:        asset.Name,
-		Description: asset.Description,
-		AssetType:   asset.AssetType,
-		Payload:     decodeJSONDefault(asset.Payload, map[string]any{}),
-		Status:      asset.Status,
-		CreatedBy:   uuidToPtr(asset.CreatedBy),
-		CreatedAt:   timestampToString(asset.CreatedAt),
-		UpdatedAt:   timestampToString(asset.UpdatedAt),
+		ID:                       uuidToString(asset.ID),
+		WorkspaceID:              uuidToString(asset.WorkspaceID),
+		PromptID:                 uuidToPtr(asset.PromptID),
+		Name:                     asset.Name,
+		Description:              asset.Description,
+		AssetType:                asset.AssetType,
+		Payload:                  decodeJSONDefault(asset.Payload, map[string]any{}),
+		Status:                   asset.Status,
+		CreatedBy:                uuidToPtr(asset.CreatedBy),
+		CreatedAt:                timestampToString(asset.CreatedAt),
+		UpdatedAt:                timestampToString(asset.UpdatedAt),
+		StructureSchema:          asset.StructureSchema,
+		StructuredCaseCount:      asset.StructuredCaseCount,
+		StructuredVariableCount:  asset.StructuredVariableCount,
+		StructuredAssertionCount: asset.StructuredAssertionCount,
+		LinkedDatasetCount:       asset.LinkedDatasetCount,
+		LinkedPromptCount:        asset.LinkedPromptCount,
+		EvaluationDimensionCount: asset.EvaluationDimensionCount,
 	}
 }
 
@@ -541,6 +566,12 @@ func promptEvaluationSummaryToResponse(workspaceID pgtype.UUID, row db.GetPrompt
 			"优化运行":    row.OptimizationAssets,
 			"结构化用例":   row.TotalCases,
 			"启用用例":    row.ActiveCases,
+			"画像用例数":   row.AssetProfileCases,
+			"画像变量数":   row.AssetProfileVariables,
+			"画像断言数":   row.AssetProfileAssertions,
+			"关联数据集数":  row.AssetProfileLinkedDatasets,
+			"关联提示词数":  row.AssetProfileLinkedPrompts,
+			"评估维度数":   row.AssetProfileDimensions,
 			"服务端证据快照": row.EvidenceSnapshots,
 			"验收归档快照":  row.AcceptanceSnapshots,
 		},
@@ -600,6 +631,65 @@ func promptEvaluationPayloadField(w http.ResponseWriter, raw json.RawMessage, fi
 		return nil, false
 	}
 	return mustJSONBytes(normalizePromptEvaluationPayloadObject(obj)), true
+}
+
+func promptEvaluationAssetProfileFromPayload(raw []byte, promptID pgtype.UUID) promptEvaluationAssetProfile {
+	payload := decodePayloadObject(raw)
+	cases := promptEvaluationCases(payload)
+	variableCount := 0
+	assertionCount := 0
+	for index, item := range cases {
+		normalized := normalizePromptEvaluationCase(index, item)
+		variableCount += len(normalized.Variables)
+		assertionCount += len(normalized.ExpectedContains)
+	}
+	linkedPromptCount := countPromptEvaluationProfileValues(payload, "prompt_ids", "提示词版本", "关联提示词", "候选提示词", "对比提示词", "baseline_prompt_id", "基线提示词")
+	if promptID.Valid {
+		linkedPromptCount++
+	}
+	return promptEvaluationAssetProfile{
+		StructureSchema:          promptEvaluationAssetProfileV1,
+		StructuredCaseCount:      int32(len(cases)),
+		StructuredVariableCount:  int32(variableCount),
+		StructuredAssertionCount: int32(assertionCount),
+		LinkedDatasetCount:       int32(countPromptEvaluationProfileValues(payload, "dataset_ids", "数据集ID", "关联数据集", "包含数据集", "linked_dataset_ids")),
+		LinkedPromptCount:        int32(linkedPromptCount),
+		EvaluationDimensionCount: int32(countPromptEvaluationProfileValues(payload, "evaluation_dimensions", "评估维度", "指标", "指标口径", "metric_contract")),
+	}
+}
+
+func countPromptEvaluationProfileValues(payload map[string]any, keys ...string) int {
+	seen := map[string]bool{}
+	for _, key := range keys {
+		collectPromptEvaluationProfileValues(seen, firstValue(payload, key))
+	}
+	return len(seen)
+}
+
+func collectPromptEvaluationProfileValues(seen map[string]bool, value any) {
+	switch v := value.(type) {
+	case nil:
+		return
+	case string:
+		if item := strings.TrimSpace(v); item != "" {
+			seen[item] = true
+		}
+	case []any:
+		for _, item := range v {
+			collectPromptEvaluationProfileValues(seen, item)
+		}
+	case map[string]any:
+		for key, item := range v {
+			if strings.TrimSpace(key) != "" {
+				seen[key] = true
+			}
+			collectPromptEvaluationProfileValues(seen, item)
+		}
+	default:
+		if item := strings.TrimSpace(stringFromAny(v)); item != "" {
+			seen[item] = true
+		}
+	}
 }
 
 func jsonObjectBytesOrDefault(w http.ResponseWriter, raw json.RawMessage, field string, fallback []byte) ([]byte, bool) {
@@ -2398,6 +2488,7 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
+	profile := promptEvaluationAssetProfileFromPayload(payload, promptID)
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation transaction")
@@ -2406,14 +2497,21 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
 	asset, err := qtx.CreatePromptEvaluationAsset(r.Context(), db.CreatePromptEvaluationAssetParams{
-		WorkspaceID: workspaceUUID,
-		Name:        req.Name,
-		Description: req.Description,
-		AssetType:   req.AssetType,
-		CreatedBy:   parseUUID(userID),
-		PromptID:    promptID,
-		Payload:     payload,
-		Status:      status,
+		WorkspaceID:              workspaceUUID,
+		Name:                     req.Name,
+		Description:              req.Description,
+		AssetType:                req.AssetType,
+		CreatedBy:                parseUUID(userID),
+		PromptID:                 promptID,
+		Payload:                  payload,
+		Status:                   status,
+		StructureSchema:          profile.StructureSchema,
+		StructuredCaseCount:      profile.StructuredCaseCount,
+		StructuredVariableCount:  profile.StructuredVariableCount,
+		StructuredAssertionCount: profile.StructuredAssertionCount,
+		LinkedDatasetCount:       profile.LinkedDatasetCount,
+		LinkedPromptCount:        profile.LinkedPromptCount,
+		EvaluationDimensionCount: profile.EvaluationDimensionCount,
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -2467,6 +2565,11 @@ func (h *Handler) UpdatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
+	var profile *promptEvaluationAssetProfile
+	if payload != nil {
+		next := promptEvaluationAssetProfileFromPayload(payload, promptID)
+		profile = &next
+	}
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation transaction")
@@ -2474,7 +2577,7 @@ func (h *Handler) UpdatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
-	asset, err := qtx.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
+	assetParams := db.UpdatePromptEvaluationAssetParams{
 		ID:          existing.ID,
 		WorkspaceID: existing.WorkspaceID,
 		PromptID:    promptID,
@@ -2483,7 +2586,17 @@ func (h *Handler) UpdatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 		AssetType:   textParam(req.AssetType),
 		Payload:     payload,
 		Status:      textParam(req.Status),
-	})
+	}
+	if profile != nil {
+		assetParams.StructureSchema = pgtype.Text{String: profile.StructureSchema, Valid: true}
+		assetParams.StructuredCaseCount = pgtype.Int4{Int32: profile.StructuredCaseCount, Valid: true}
+		assetParams.StructuredVariableCount = pgtype.Int4{Int32: profile.StructuredVariableCount, Valid: true}
+		assetParams.StructuredAssertionCount = pgtype.Int4{Int32: profile.StructuredAssertionCount, Valid: true}
+		assetParams.LinkedDatasetCount = pgtype.Int4{Int32: profile.LinkedDatasetCount, Valid: true}
+		assetParams.LinkedPromptCount = pgtype.Int4{Int32: profile.LinkedPromptCount, Valid: true}
+		assetParams.EvaluationDimensionCount = pgtype.Int4{Int32: profile.EvaluationDimensionCount, Valid: true}
+	}
+	asset, err := qtx.UpdatePromptEvaluationAsset(r.Context(), assetParams)
 	if err != nil {
 		if isUniqueViolation(err) {
 			writeError(w, http.StatusConflict, "an evaluation asset with this type and name already exists")

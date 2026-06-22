@@ -370,7 +370,13 @@ WITH asset_summary AS (
         COUNT(*) FILTER (WHERE asset_type = '数据集')::bigint AS dataset_assets,
         COUNT(*) FILTER (WHERE asset_type = '测试套件')::bigint AS test_suite_assets,
         COUNT(*) FILTER (WHERE asset_type = '实验')::bigint AS experiment_assets,
-        COUNT(*) FILTER (WHERE asset_type = '优化运行')::bigint AS optimization_assets
+        COUNT(*) FILTER (WHERE asset_type = '优化运行')::bigint AS optimization_assets,
+        COALESCE(SUM(structured_case_count), 0)::bigint AS asset_profile_cases,
+        COALESCE(SUM(structured_variable_count), 0)::bigint AS asset_profile_variables,
+        COALESCE(SUM(structured_assertion_count), 0)::bigint AS asset_profile_assertions,
+        COALESCE(SUM(linked_dataset_count), 0)::bigint AS asset_profile_linked_datasets,
+        COALESCE(SUM(linked_prompt_count), 0)::bigint AS asset_profile_linked_prompts,
+        COALESCE(SUM(evaluation_dimension_count), 0)::bigint AS asset_profile_dimensions
     FROM prompt_evaluation_asset pea
     WHERE pea.workspace_id = $1
 ),
@@ -431,6 +437,12 @@ SELECT
     a.test_suite_assets,
     a.experiment_assets,
     a.optimization_assets,
+    a.asset_profile_cases,
+    a.asset_profile_variables,
+    a.asset_profile_assertions,
+    a.asset_profile_linked_datasets,
+    a.asset_profile_linked_prompts,
+    a.asset_profile_dimensions,
     c.total_cases,
     c.active_cases,
     r.total_runs,
@@ -475,40 +487,46 @@ type GetPromptEvaluationSummaryParams struct {
 }
 
 type GetPromptEvaluationSummaryRow struct {
-	TotalAssets         int64              `json:"total_assets"`
-	ActiveAssets        int64              `json:"active_assets"`
-	DatasetAssets       int64              `json:"dataset_assets"`
-	TestSuiteAssets     int64              `json:"test_suite_assets"`
-	ExperimentAssets    int64              `json:"experiment_assets"`
-	OptimizationAssets  int64              `json:"optimization_assets"`
-	TotalCases          int64              `json:"total_cases"`
-	ActiveCases         int64              `json:"active_cases"`
-	TotalRuns           int64              `json:"total_runs"`
-	LocalRuns           int64              `json:"local_runs"`
-	AgentRuns           int64              `json:"agent_runs"`
-	QueuedRuns          int64              `json:"queued_runs"`
-	RunningRuns         int64              `json:"running_runs"`
-	PassedRuns          int64              `json:"passed_runs"`
-	NotPassedRuns       int64              `json:"not_passed_runs"`
-	FailedRuns          int64              `json:"failed_runs"`
-	CancelledRuns       int64              `json:"cancelled_runs"`
-	ReviewRuns          int64              `json:"review_runs"`
-	EvaluatedCases      int64              `json:"evaluated_cases"`
-	PassedCases         int64              `json:"passed_cases"`
-	FailedCases         int64              `json:"failed_cases"`
-	PassRate            float64            `json:"pass_rate"`
-	TotalDurationMs     int64              `json:"total_duration_ms"`
-	AverageDurationMs   float64            `json:"average_duration_ms"`
-	InputTokens         int64              `json:"input_tokens"`
-	OutputTokens        int64              `json:"output_tokens"`
-	EstimatedCost       float64            `json:"estimated_cost"`
-	TotalCandidates     int64              `json:"total_candidates"`
-	PendingCandidates   int64              `json:"pending_candidates"`
-	PublishedCandidates int64              `json:"published_candidates"`
-	RejectedCandidates  int64              `json:"rejected_candidates"`
-	EvidenceSnapshots   int64              `json:"evidence_snapshots"`
-	AcceptanceSnapshots int64              `json:"acceptance_snapshots"`
-	LastRunAt           pgtype.Timestamptz `json:"last_run_at"`
+	TotalAssets                int64              `json:"total_assets"`
+	ActiveAssets               int64              `json:"active_assets"`
+	DatasetAssets              int64              `json:"dataset_assets"`
+	TestSuiteAssets            int64              `json:"test_suite_assets"`
+	ExperimentAssets           int64              `json:"experiment_assets"`
+	OptimizationAssets         int64              `json:"optimization_assets"`
+	AssetProfileCases          int64              `json:"asset_profile_cases"`
+	AssetProfileVariables      int64              `json:"asset_profile_variables"`
+	AssetProfileAssertions     int64              `json:"asset_profile_assertions"`
+	AssetProfileLinkedDatasets int64              `json:"asset_profile_linked_datasets"`
+	AssetProfileLinkedPrompts  int64              `json:"asset_profile_linked_prompts"`
+	AssetProfileDimensions     int64              `json:"asset_profile_dimensions"`
+	TotalCases                 int64              `json:"total_cases"`
+	ActiveCases                int64              `json:"active_cases"`
+	TotalRuns                  int64              `json:"total_runs"`
+	LocalRuns                  int64              `json:"local_runs"`
+	AgentRuns                  int64              `json:"agent_runs"`
+	QueuedRuns                 int64              `json:"queued_runs"`
+	RunningRuns                int64              `json:"running_runs"`
+	PassedRuns                 int64              `json:"passed_runs"`
+	NotPassedRuns              int64              `json:"not_passed_runs"`
+	FailedRuns                 int64              `json:"failed_runs"`
+	CancelledRuns              int64              `json:"cancelled_runs"`
+	ReviewRuns                 int64              `json:"review_runs"`
+	EvaluatedCases             int64              `json:"evaluated_cases"`
+	PassedCases                int64              `json:"passed_cases"`
+	FailedCases                int64              `json:"failed_cases"`
+	PassRate                   float64            `json:"pass_rate"`
+	TotalDurationMs            int64              `json:"total_duration_ms"`
+	AverageDurationMs          float64            `json:"average_duration_ms"`
+	InputTokens                int64              `json:"input_tokens"`
+	OutputTokens               int64              `json:"output_tokens"`
+	EstimatedCost              float64            `json:"estimated_cost"`
+	TotalCandidates            int64              `json:"total_candidates"`
+	PendingCandidates          int64              `json:"pending_candidates"`
+	PublishedCandidates        int64              `json:"published_candidates"`
+	RejectedCandidates         int64              `json:"rejected_candidates"`
+	EvidenceSnapshots          int64              `json:"evidence_snapshots"`
+	AcceptanceSnapshots        int64              `json:"acceptance_snapshots"`
+	LastRunAt                  pgtype.Timestamptz `json:"last_run_at"`
 }
 
 func (q *Queries) GetPromptEvaluationSummary(ctx context.Context, arg GetPromptEvaluationSummaryParams) (GetPromptEvaluationSummaryRow, error) {
@@ -521,6 +539,12 @@ func (q *Queries) GetPromptEvaluationSummary(ctx context.Context, arg GetPromptE
 		&i.TestSuiteAssets,
 		&i.ExperimentAssets,
 		&i.OptimizationAssets,
+		&i.AssetProfileCases,
+		&i.AssetProfileVariables,
+		&i.AssetProfileAssertions,
+		&i.AssetProfileLinkedDatasets,
+		&i.AssetProfileLinkedPrompts,
+		&i.AssetProfileDimensions,
 		&i.TotalCases,
 		&i.ActiveCases,
 		&i.TotalRuns,

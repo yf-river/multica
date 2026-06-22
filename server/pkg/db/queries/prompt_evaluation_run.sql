@@ -77,7 +77,13 @@ WITH asset_summary AS (
         COUNT(*) FILTER (WHERE asset_type = '数据集')::bigint AS dataset_assets,
         COUNT(*) FILTER (WHERE asset_type = '测试套件')::bigint AS test_suite_assets,
         COUNT(*) FILTER (WHERE asset_type = '实验')::bigint AS experiment_assets,
-        COUNT(*) FILTER (WHERE asset_type = '优化运行')::bigint AS optimization_assets
+        COUNT(*) FILTER (WHERE asset_type = '优化运行')::bigint AS optimization_assets,
+        COALESCE(SUM(structured_case_count), 0)::bigint AS asset_profile_cases,
+        COALESCE(SUM(structured_variable_count), 0)::bigint AS asset_profile_variables,
+        COALESCE(SUM(structured_assertion_count), 0)::bigint AS asset_profile_assertions,
+        COALESCE(SUM(linked_dataset_count), 0)::bigint AS asset_profile_linked_datasets,
+        COALESCE(SUM(linked_prompt_count), 0)::bigint AS asset_profile_linked_prompts,
+        COALESCE(SUM(evaluation_dimension_count), 0)::bigint AS asset_profile_dimensions
     FROM prompt_evaluation_asset pea
     WHERE pea.workspace_id = $1
 ),
@@ -138,6 +144,12 @@ SELECT
     a.test_suite_assets,
     a.experiment_assets,
     a.optimization_assets,
+    a.asset_profile_cases,
+    a.asset_profile_variables,
+    a.asset_profile_assertions,
+    a.asset_profile_linked_datasets,
+    a.asset_profile_linked_prompts,
+    a.asset_profile_dimensions,
     c.total_cases,
     c.active_cases,
     r.total_runs,

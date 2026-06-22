@@ -43,6 +43,13 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	if created.AssetType != "数据集" || created.PromptID == nil || *created.PromptID != promptID {
 		t.Fatalf("created = %+v", created)
 	}
+	if created.StructureSchema != promptEvaluationAssetProfileV1 ||
+		created.StructuredCaseCount != 1 ||
+		created.StructuredVariableCount != 0 ||
+		created.StructuredAssertionCount != 1 ||
+		created.LinkedPromptCount != 1 {
+		t.Fatalf("created asset profile = %+v", created)
+	}
 	createdPayload, ok := created.Payload.(map[string]any)
 	if !ok {
 		t.Fatalf("created payload is not object: %#v", created.Payload)
@@ -103,6 +110,11 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	}
 	if updated.AssetType != "实验" || updated.PromptID == nil || *updated.PromptID != promptID {
 		t.Fatalf("updated = %+v", updated)
+	}
+	if updated.StructuredCaseCount != 1 ||
+		updated.EvaluationDimensionCount != 2 ||
+		updated.LinkedPromptCount != 1 {
+		t.Fatalf("updated asset profile = %+v", updated)
 	}
 	updatedPayload, ok := updated.Payload.(map[string]any)
 	if !ok || updatedPayload["schema_version"] != float64(1) || updatedPayload["payload_contract"] == nil {

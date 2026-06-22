@@ -276,7 +276,25 @@ async function loadDatabaseEvidence(workspaceID) {
             (SELECT count(*)::int FROM squad WHERE workspace_id = $1 AND archived_at IS NULL) AS squad_count,
             (SELECT count(*)::int FROM squad_sop_run WHERE workspace_id = $1) AS sop_run_count,
             (SELECT count(*)::int FROM squad_sop_step_event WHERE workspace_id = $1) AS sop_event_count,
-            (SELECT count(*)::int FROM task_trace_event WHERE workspace_id = $1 AND squad_id IS NOT NULL) AS squad_trace_event_count
+            (SELECT count(*)::int FROM task_trace_event WHERE workspace_id = $1 AND squad_id IS NOT NULL) AS squad_trace_event_count,
+            (
+              SELECT count(*)::int
+              FROM agent_task_queue atq
+              JOIN agent a ON a.id = atq.agent_id
+              WHERE a.workspace_id = $1
+                AND atq.is_leader_task = true
+                AND atq.status = 'completed'
+                AND EXISTS (SELECT 1 FROM task_usage tu WHERE tu.task_id = atq.id)
+                AND EXISTS (SELECT 1 FROM task_trace_event tte WHERE tte.task_id = atq.id)
+            ) AS completed_leader_task_count,
+            (
+              SELECT count(*)::int
+              FROM agent_task_queue atq
+              JOIN agent a ON a.id = atq.agent_id
+              WHERE a.workspace_id = $1
+                AND atq.is_leader_task = true
+                AND atq.status = 'failed'
+            ) AS failed_leader_task_count
         `, [workspaceID]);
       const latestRuns = await queryRows(client, `
           SELECT
@@ -516,6 +534,7 @@ function buildRisks({ health, ready, login, account, commandResults, git, databa
     if (Number(training.evidence_snapshot_count || 0) === 0) risks.push("数据库中未发现服务端运行证据快照，领导演示缺少可复核归档。");
     if (Number(tasks.trace_event_rows || 0) === 0) risks.push("数据库中未发现任务 trace 事件，观测闭环证据不足。");
     if (Number(squads.sop_run_count || 0) === 0) risks.push("数据库中未发现小队 SOP run，小队闭环证据不足。");
+    if (Number(squads.completed_leader_task_count || 0) === 0) risks.push("数据库中未发现已完成且带 usage/trace 的小队队长任务；小队闭环仍受模型额度或 runtime 成功率影响。");
   }
   if (logEvidence.status !== "已抽查") {
     risks.push(`服务日志抽查未完成：${logEvidence.reason || logEvidence.status}`);
@@ -582,7 +601,7 @@ ${commitRows}
 - 优化候选：${training.optimization_candidate_count ?? "未记录"}
 - 服务端证据快照：${training.evidence_snapshot_count ?? "未记录"}
 - 任务：${tasks.task_count ?? "未记录"}，usage 行 ${tasks.usage_rows ?? "未记录"}，trace 事件 ${tasks.trace_event_rows ?? "未记录"}
-- 小队：${squads.squad_count ?? "未记录"}，SOP run ${squads.sop_run_count ?? "未记录"}，SOP 事件 ${squads.sop_event_count ?? "未记录"}
+- 小队：${squads.squad_count ?? "未记录"}，SOP run ${squads.sop_run_count ?? "未记录"}，SOP 事件 ${squads.sop_event_count ?? "未记录"}，已完成队长任务 ${squads.completed_leader_task_count ?? "未记录"}，失败队长任务 ${squads.failed_leader_task_count ?? "未记录"}
 
 ## 日志抽查
 

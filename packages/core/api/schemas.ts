@@ -830,6 +830,13 @@ export const PromptEvaluationAssetSchema = z.object({
   created_by: z.string().nullable().optional().transform((v) => v ?? null),
   created_at: z.string(),
   updated_at: z.string(),
+  structure_schema: z.string().default("multica.training_evaluation.asset_profile.v1"),
+  structured_case_count: z.number().default(0),
+  structured_variable_count: z.number().default(0),
+  structured_assertion_count: z.number().default(0),
+  linked_dataset_count: z.number().default(0),
+  linked_prompt_count: z.number().default(0),
+  evaluation_dimension_count: z.number().default(0),
 }).loose();
 
 export const PromptEvaluationAssetListResponseSchema = z.object({
@@ -1096,6 +1103,13 @@ export const EMPTY_PROMPT_EVALUATION_ASSET: PromptEvaluationAsset = {
   created_by: null,
   created_at: "",
   updated_at: "",
+  structure_schema: "multica.training_evaluation.asset_profile.v1",
+  structured_case_count: 0,
+  structured_variable_count: 0,
+  structured_assertion_count: 0,
+  linked_dataset_count: 0,
+  linked_prompt_count: 0,
+  evaluation_dimension_count: 0,
 };
 
 export const EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE: ListPromptEvaluationAssetsResponse = {

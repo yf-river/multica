@@ -565,17 +565,24 @@ type ProjectResource struct {
 }
 
 type PromptEvaluationAsset struct {
-	ID          pgtype.UUID        `json:"id"`
-	WorkspaceID pgtype.UUID        `json:"workspace_id"`
-	PromptID    pgtype.UUID        `json:"prompt_id"`
-	Name        string             `json:"name"`
-	Description string             `json:"description"`
-	AssetType   string             `json:"asset_type"`
-	Payload     []byte             `json:"payload"`
-	Status      string             `json:"status"`
-	CreatedBy   pgtype.UUID        `json:"created_by"`
-	CreatedAt   pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
+	ID                       pgtype.UUID        `json:"id"`
+	WorkspaceID              pgtype.UUID        `json:"workspace_id"`
+	PromptID                 pgtype.UUID        `json:"prompt_id"`
+	Name                     string             `json:"name"`
+	Description              string             `json:"description"`
+	AssetType                string             `json:"asset_type"`
+	Payload                  []byte             `json:"payload"`
+	Status                   string             `json:"status"`
+	CreatedBy                pgtype.UUID        `json:"created_by"`
+	CreatedAt                pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt                pgtype.Timestamptz `json:"updated_at"`
+	StructureSchema          string             `json:"structure_schema"`
+	StructuredCaseCount      int32              `json:"structured_case_count"`
+	StructuredVariableCount  int32              `json:"structured_variable_count"`
+	StructuredAssertionCount int32              `json:"structured_assertion_count"`
+	LinkedDatasetCount       int32              `json:"linked_dataset_count"`
+	LinkedPromptCount        int32              `json:"linked_prompt_count"`
+	EvaluationDimensionCount int32              `json:"evaluation_dimension_count"`
 }
 
 type PromptEvaluationCase struct {

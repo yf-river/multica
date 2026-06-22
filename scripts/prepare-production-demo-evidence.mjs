@@ -77,6 +77,7 @@ async function prepareSquadEvidence(token, workspace, templateSpec) {
       leader_task_id: existing.leader_task_id,
       leader_task_status: existing.leader_task_status || "未知",
       trace_event_count: Number(existing.trace_event_count || 0),
+      usage_row_count: Number(existing.usage_row_count || 0),
       reused: true,
     };
   }
@@ -98,6 +99,7 @@ async function prepareSquadEvidence(token, workspace, templateSpec) {
     ? await waitForTerminalTask(leaderTask.id, waitMs)
     : null;
   const traceCount = leaderTask ? await countTraceEvents(leaderTask.id) : 0;
+  const usageCount = leaderTask ? await countTaskUsage(leaderTask.id) : 0;
 
   return {
     template_key: templateSpec.key,
@@ -111,6 +113,8 @@ async function prepareSquadEvidence(token, workspace, templateSpec) {
     leader_task_id: leaderTask?.id ?? null,
     leader_task_status: terminalTask?.status ?? leaderTask?.status ?? "未入队",
     trace_event_count: traceCount,
+    usage_row_count: usageCount,
+    leader_task_usable: (terminalTask?.status ?? leaderTask?.status) === "completed" && traceCount > 0 && usageCount > 0,
   };
 }
 
@@ -132,6 +136,11 @@ async function findExistingSquadEvidence(workspaceID, titlePrefix, squadID, lead
           atq.status AS leader_task_status,
           (
             SELECT count(*)::int
+            FROM task_usage tu
+            WHERE tu.task_id = atq.id
+          ) AS usage_row_count,
+          (
+            SELECT count(*)::int
             FROM task_trace_event tte
             WHERE tte.task_id = atq.id
           ) AS trace_event_count
@@ -141,11 +150,15 @@ async function findExistingSquadEvidence(workspaceID, titlePrefix, squadID, lead
           SELECT id, status
           FROM agent_task_queue
           WHERE issue_id = i.id AND agent_id = $4
+            AND status = 'completed'
+            AND EXISTS (SELECT 1 FROM task_usage tu WHERE tu.task_id = agent_task_queue.id)
+            AND EXISTS (SELECT 1 FROM task_trace_event tte WHERE tte.task_id = agent_task_queue.id)
           ORDER BY created_at DESC
           LIMIT 1
         ) atq ON true
         WHERE i.workspace_id = $1
           AND i.title LIKE ($2 || '%')
+          AND atq.id IS NOT NULL
         ORDER BY i.created_at DESC
         LIMIT 1
       `,
@@ -306,6 +319,22 @@ async function countTraceEvents(taskID) {
   try {
     const res = await client.query(
       `SELECT count(*)::int AS count FROM task_trace_event WHERE task_id = $1`,
+      [taskID],
+    );
+    return Number(res.rows[0]?.count ?? 0);
+  } finally {
+    await client.end();
+  }
+}
+
+async function countTaskUsage(taskID) {
+  const databaseURL = trimEnv("DATABASE_URL");
+  const pg = await import("pg");
+  const client = new pg.default.Client(databaseURL);
+  await client.connect();
+  try {
+    const res = await client.query(
+      `SELECT count(*)::int AS count FROM task_usage WHERE task_id = $1`,
       [taskID],
     );
     return Number(res.rows[0]?.count ?? 0);

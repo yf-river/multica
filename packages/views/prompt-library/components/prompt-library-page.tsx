@@ -990,6 +990,7 @@ function DemoDashboardPanel({
     ["提示词库", formatNumber(assets.length)],
     ["资产总数", formatNumber(trainingAssets["资产总数"] ?? assets.length)],
     ["结构化用例", formatNumber(trainingAssets["结构化用例"] ?? cases.length)],
+    ["结构化画像", `${formatNumber(trainingAssets["画像用例数"] ?? cases.length)} 用例 · ${formatNumber(trainingAssets["画像变量数"])} 变量 · ${formatNumber(trainingAssets["画像断言数"])} 断言 · ${formatNumber(trainingAssets["评估维度数"])} 维度`],
     ["优化候选", `${pendingCandidates} 待确认 · ${publishedCandidates} 已发布 · ${rejectedCandidates} 已拒绝`],
     ["服务端证据快照", `${formatNumber(trainingAssets["服务端证据快照"] ?? trainingMetrics["服务端证据快照"])} 条 · 验收归档 ${formatNumber(trainingAssets["验收归档快照"] ?? trainingMetrics["验收归档快照"])}`],
     ["真实 Agent 证据", hasAgentEvidence ? "已有任务/trace 运行记录" : "暂无真实 Agent 运行记录"],

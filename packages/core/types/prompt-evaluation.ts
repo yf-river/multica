@@ -55,6 +55,13 @@ export interface PromptEvaluationAsset {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  structure_schema: string;
+  structured_case_count: number;
+  structured_variable_count: number;
+  structured_assertion_count: number;
+  linked_dataset_count: number;
+  linked_prompt_count: number;
+  evaluation_dimension_count: number;
 }
 
 export interface PromptEvaluationRun {
