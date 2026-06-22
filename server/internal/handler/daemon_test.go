@@ -1270,6 +1270,71 @@ func TestListIssueTaskTraceEvents_ReturnsDurableEvents(t *testing.T) {
 	}
 }
 
+func TestReportTaskUsageStoresUsageAndTrace(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	runtimeID := createClaimReclaimRuntime(t, ctx, "Usage report runtime")
+	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Usage report agent")
+	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "1 second", true)
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM task_trace_event WHERE task_id = $1`, taskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM task_usage WHERE task_id = $1`, taskID)
+	})
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/usage", map[string]any{
+		"usage": []map[string]any{
+			{
+				"model":              "auto",
+				"input_tokens":       120,
+				"output_tokens":      45,
+				"cache_read_tokens":  9,
+				"cache_write_tokens": 3,
+			},
+		},
+	}, testWorkspaceID, "usage-report-daemon")
+	req = withURLParam(req, "taskId", taskID)
+
+	testHandler.ReportTaskUsage(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ReportTaskUsage status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	var provider, model string
+	var inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int64
+	if err := testPool.QueryRow(ctx, `
+		SELECT provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
+		FROM task_usage
+		WHERE task_id = $1
+	`, taskID).Scan(&provider, &model, &inputTokens, &outputTokens, &cacheReadTokens, &cacheWriteTokens); err != nil {
+		t.Fatalf("load task usage: %v", err)
+	}
+	if provider != "handler_test_runtime" || model != "auto" || inputTokens != 120 || outputTokens != 45 || cacheReadTokens != 9 || cacheWriteTokens != 3 {
+		t.Fatalf("task usage = provider=%s model=%s input=%d output=%d cache_read=%d cache_write=%d", provider, model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens)
+	}
+
+	events, err := testHandler.Queries.ListTaskTraceEventsByTask(ctx, parseUUID(taskID))
+	if err != nil {
+		t.Fatalf("list task trace events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("trace events = %+v", events)
+	}
+	event := events[0]
+	if event.EventType != "llm.usage_reported" || event.EventName != "模型用量已上报" || event.Provider != "handler_test_runtime" || event.Model != "auto" {
+		t.Fatalf("usage trace event = %+v", event)
+	}
+	if event.InputTokens != 120 || event.OutputTokens != 45 || event.CacheReadTokens != 9 || event.CacheWriteTokens != 3 {
+		t.Fatalf("usage trace tokens = %+v", event)
+	}
+	if uuidToString(event.WorkspaceID) != testWorkspaceID || uuidToString(event.IssueID) != issueID || uuidToString(event.AgentID) != agentID || uuidToString(event.RuntimeID) != runtimeID {
+		t.Fatalf("usage trace dimensions = %+v", event)
+	}
+}
+
 // TestListIssueTaskTraceEvents_CrossWorkspace_Returns404 verifies that durable
 // task trace events are not readable across workspaces via a bare issue UUID.
 func TestListIssueTaskTraceEvents_CrossWorkspace_Returns404(t *testing.T) {
