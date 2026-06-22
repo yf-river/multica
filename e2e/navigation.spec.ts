@@ -32,6 +32,18 @@ test.describe("Navigation", () => {
     await expect(page.getByRole("tab", { name: "成员" })).toBeVisible();
   });
 
+  test("command palette opens training submodules", async ({ page }) => {
+    await page.getByRole("button", { name: /搜索/ }).click();
+    const input = page.getByPlaceholder("输入命令或关键词搜索...");
+    await expect(input).toBeVisible({ timeout: 10000 });
+    await input.fill("运行历史");
+    await page.getByText("打开运行历史", { exact: true }).click();
+
+    await expect(page).toHaveURL(/\/training\?view=run-history/, { timeout: ROUTE_CHANGE_TIMEOUT });
+    await expect(page.getByTestId("training-summary-strip")).toContainText("领导视角摘要", { timeout: 30000 });
+    await waitForPageText(page, "运行历史");
+  });
+
   test("agents page shows agent list", async ({ page }) => {
     await page.getByRole("link", { name: "智能体" }).click();
     await expect(page).toHaveURL(/\/agents/, { timeout: ROUTE_CHANGE_TIMEOUT });
