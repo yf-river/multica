@@ -15,11 +15,13 @@ import type {
   ObservabilitySummary,
   ListWebhookDeliveriesResponse,
   PromptEvaluationAsset,
+  PromptEvaluationEvidenceSnapshot,
   PromptEvaluationRunEvidence,
   PromptEvaluationRuntimeReadiness,
   PromptEvaluationSummary,
   PromptEvaluationStructuredCase,
   PromptEvaluationOptimizationCandidate,
+  ListPromptEvaluationEvidenceSnapshotsResponse,
   PromptLibraryItem,
   PublishPromptEvaluationOptimizationCandidateResponse,
   Squad,
@@ -960,6 +962,23 @@ export const PromptEvaluationRunEvidenceSchema = z.object({
   上下文: z.record(z.string(), z.unknown()).default({}),
 }).loose();
 
+export const PromptEvaluationEvidenceSnapshotSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  run_id: z.string(),
+  snapshot_type: z.enum(["手动归档", "验收归档", "自动归档"]).default("手动归档"),
+  schema_version: z.string().default("multica.prompt_evaluation.evidence_snapshot.v1"),
+  summary: z.record(z.string(), z.unknown()).default({}),
+  evidence: z.record(z.string(), z.unknown()).optional(),
+  created_by: z.string().nullable().optional().transform((v) => v ?? null),
+  created_at: z.string().default(""),
+}).loose();
+
+export const PromptEvaluationEvidenceSnapshotListResponseSchema = z.object({
+  items: z.array(PromptEvaluationEvidenceSnapshotSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
 export const PromptEvaluationSummarySchema = z.object({
   workspace_id: z.string().default(""),
   generated_at: z.string().default(""),
@@ -990,7 +1009,7 @@ const PromptEvaluationRuntimeSchema = z.object({
 }).loose();
 
 export const PromptEvaluationRuntimeReadinessSchema = z.object({
-  status: z.enum(["就绪", "离线", "过期", "缺失", "无权限"]).default("缺失"),
+  status: z.enum(["就绪", "离线", "过期", "缺失", "无权限", "容量受限"]).default("缺失"),
   label: z.string().default("CodeBuddy 缺失"),
   detail: z.string().default("当前 workspace 未发现 CodeBuddy runtime。"),
   fix: z.string().default("安装并配置 codebuddy，启动 multica daemon。"),
@@ -1110,6 +1129,23 @@ export const EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE: PromptEvaluationRunEvidence =
   trace_events: [],
   evidence: {},
   上下文: {},
+};
+
+export const EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT: PromptEvaluationEvidenceSnapshot = {
+  id: "",
+  workspace_id: "",
+  run_id: "",
+  snapshot_type: "手动归档",
+  schema_version: "multica.prompt_evaluation.evidence_snapshot.v1",
+  summary: {},
+  evidence: {},
+  created_by: null,
+  created_at: "",
+};
+
+export const EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT_LIST_RESPONSE: ListPromptEvaluationEvidenceSnapshotsResponse = {
+  items: [],
+  total: 0,
 };
 
 export const EMPTY_PROMPT_EVALUATION_SUMMARY: PromptEvaluationSummary = {

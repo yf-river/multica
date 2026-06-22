@@ -125,6 +125,18 @@ interface PromptEvaluationRunEvidence {
   evidence: Record<string, unknown>;
 }
 
+interface PromptEvaluationEvidenceSnapshot {
+  id: string;
+  workspace_id: string;
+  run_id: string;
+  snapshot_type: "手动归档" | "验收归档" | "自动归档";
+  schema_version: string;
+  summary: Record<string, unknown>;
+  evidence?: Record<string, unknown>;
+  created_by: string | null;
+  created_at: string;
+}
+
 interface PromptEvaluationCase {
   id: string;
   asset_id: string;
@@ -1249,6 +1261,25 @@ export class TestApiClient {
     const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/evidence`);
     if (!res.ok) {
       throw new Error(`get prompt evaluation run evidence failed: ${res.status}`);
+    }
+    return res.json();
+  }
+
+  async listPromptEvaluationEvidenceSnapshots(runId: string): Promise<PromptEvaluationEvidenceSnapshot[]> {
+    const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots`);
+    if (!res.ok) {
+      throw new Error(`list prompt evaluation evidence snapshots failed: ${res.status}`);
+    }
+    const data = await res.json();
+    return data.items ?? [];
+  }
+
+  async createPromptEvaluationEvidenceSnapshot(runId: string): Promise<PromptEvaluationEvidenceSnapshot> {
+    const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots?snapshot_type=${encodeURIComponent("验收归档")}`, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      throw new Error(`create prompt evaluation evidence snapshot failed: ${res.status}`);
     }
     return res.json();
   }

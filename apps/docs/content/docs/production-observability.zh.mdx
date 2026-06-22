@@ -69,7 +69,7 @@ pnpm acceptance:prepare-demo
 pnpm acceptance:evidence
 ```
 
-`acceptance:prepare-demo` 会在演示工作区幂等准备 `user-center` 和 `Multica 编码小队` 的小队、issue、SOP run 和首条验收事件，并等待真实 daemon 写回任务状态。`acceptance:evidence` 默认只读检查健康接口、登录页、演示账号权限、数据库运行证据、git commit 和 worktree 状态，并在 `artifacts/acceptance/` 下生成：
+`acceptance:prepare-demo` 会在演示工作区幂等准备 `user-center` 和 `Multica 编码小队` 的小队、issue、SOP run 和首条验收事件，并等待真实 daemon 写回任务状态；如果已经存在训练评估运行，还会创建一条 `验收归档` 类型的服务端运行证据快照。`acceptance:evidence` 默认只读检查健康接口、登录页、演示账号权限、数据库运行证据、git commit 和 worktree 状态，并在 `artifacts/acceptance/` 下生成：
 
 ```text
 production-acceptance-<timestamp>.json
@@ -102,7 +102,7 @@ ACCEPTANCE_INCLUDE_E2E=1 pnpm acceptance:verify
 | `ACCEPTANCE_DEMO_FORCE_NEW` | 设为 `1` 后不复用已有小队 SOP 证据，强制创建新 issue 和新队长任务 |
 | `DATABASE_URL` | 用于只读抽查演示工作区的训练、评估、任务、trace 和小队 SOP 数据；未配置时报告会明确标记跳过 |
 
-验收包会抽查 `prompt_evaluation_run`、`prompt_evaluation_trial`、`prompt_evaluation_case`、`prompt_evaluation_optimization_candidate`、`agent_task_queue`、`task_usage`、`task_trace_event`、`squad_sop_run` 和 `squad_sop_step_event` 等核心表。验收包必须和生产看板导出的 `multica.production_demo_evidence.v1` JSON 一起留存：前者证明部署、账号、commit、数据库证据和测试命令，后者证明业务闭环、运行证据、trace、token 和观测指标。
+验收包会抽查 `prompt_evaluation_run`、`prompt_evaluation_trial`、`prompt_evaluation_case`、`prompt_evaluation_optimization_candidate`、`prompt_evaluation_evidence_snapshot`、`agent_task_queue`、`task_usage`、`task_trace_event`、`squad_sop_run` 和 `squad_sop_step_event` 等核心表。验收包必须和生产看板导出的 `multica.production_demo_evidence.v1` JSON 一起留存：前者证明部署、账号、commit、数据库证据和测试命令，后者证明业务闭环、运行证据、trace、token 和观测指标。
 
 ## 观测摘要 API
 
@@ -195,6 +195,20 @@ curl -fsS \
 | `trace_events` | 任务入队、领取、开始、失败/完成等生命周期事件 |
 
 页面上的 **完整运行证据 JSON** 展示的就是这组对象。导出的演示证据 JSON 也会把最近运行、运行证据、任务用量、任务消息和 trace 事件一起带出，方便归档给领导或复盘。
+
+需要把某次运行固化成服务端证据时，使用运行证据快照接口：
+
+```bash
+curl -fsS -X POST \
+  -H "Authorization: Bearer <PAT>" \
+  "http://<server-host>:8080/api/prompt-evaluation-runs/<run_id>/evidence-snapshots?snapshot_type=验收归档"
+
+curl -fsS \
+  -H "Authorization: Bearer <PAT>" \
+  "http://<server-host>:8080/api/prompt-evaluation-runs/<run_id>/evidence-snapshots"
+```
+
+快照会保存完整 `运行证据` 和中文 `summary`，验收包会抽查最近快照。这样领导演示后的证据不依赖浏览器下载文件，数据库里也能复核运行状态、失败原因、trace/task id、token 和上下文完整性。
 
 ## 真实 Agent E2E
 

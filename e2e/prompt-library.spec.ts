@@ -418,6 +418,27 @@ test.describe("训练与评估工作台", () => {
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText(`运行时 ${runtime.name}`);
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText(`任务 ${queuedAgentRun!.task_id}`);
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText("用量证据 1");
+    const snapshotBar = agentEvidencePanel.getByTestId("run-evidence-snapshots");
+    await expect(snapshotBar).toContainText("暂无服务端归档", { timeout: 10000 });
+    const snapshotResponse = page.waitForResponse(
+      (response) => response.request().method() === "POST" && response.url().includes(`/prompt-evaluation-runs/${queuedAgentRun!.id}/evidence-snapshots`),
+      { timeout: 10000 },
+    );
+    await snapshotBar.getByRole("button", { name: "归档快照" }).click();
+    expect((await snapshotResponse).status()).toBe(201);
+    await expect(page.getByText("服务端证据快照已归档")).toBeVisible({ timeout: 10000 });
+    await expect(snapshotBar).toContainText("验收归档", { timeout: 10000 });
+    await expect(snapshotBar).toContainText("1 条快照");
+    await expect
+      .poll(async () => (await api.listPromptEvaluationEvidenceSnapshots(queuedAgentRun!.id))[0] ?? null, { timeout: 10000 })
+      .toMatchObject({
+        run_id: queuedAgentRun!.id,
+        snapshot_type: "验收归档",
+        summary: expect.objectContaining({
+          运行状态: "通过",
+          "trace/task id": queuedAgentRun!.task_id,
+        }),
+      });
     await expect(page.getByText("模板渲染检查 · 通过")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(/模型 本地模板渲染检查 · 运行时 server · 通过 1\/1/)).toBeVisible();
     const localRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "模板渲染检查 · 通过" }).first();

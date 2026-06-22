@@ -788,6 +788,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/trials", h.ListPromptEvaluationRunTrials)
 					r.Get("/evidence", h.GetPromptEvaluationRunEvidence)
+					r.Route("/evidence-snapshots", func(r chi.Router) {
+						r.Get("/", h.ListPromptEvaluationEvidenceSnapshots)
+						r.Post("/", h.CreatePromptEvaluationEvidenceSnapshot)
+						r.Get("/{snapshotId}", h.GetPromptEvaluationEvidenceSnapshot)
+					})
 					r.Post("/sync", h.SyncPromptEvaluationRunFromTask)
 					r.Post("/optimization-candidates", h.CreatePromptEvaluationOptimizationCandidate)
 					r.Post("/optimization-agent-run", h.RunPromptEvaluationOptimizationAgent)

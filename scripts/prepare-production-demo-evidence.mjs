@@ -39,6 +39,7 @@ for (const template of templates) {
   prepared.push(await prepareSquadEvidence(token, workspace, template));
 }
 const optimizationCandidate = await ensureOptimizationCandidate(token, workspace.id);
+const evidenceSnapshot = await ensureEvidenceSnapshot(token, workspace.id);
 
 console.log(JSON.stringify({
   status: "已准备",
@@ -47,6 +48,7 @@ console.log(JSON.stringify({
   runtime_readiness: readiness,
   squads: prepared,
   optimization_candidate: optimizationCandidate,
+  evidence_snapshot: evidenceSnapshot,
 }, null, 2));
 
 async function prepareSquadEvidence(token, workspace, templateSpec) {
@@ -325,6 +327,25 @@ async function ensureOptimizationCandidate(token, workspaceID) {
   return { status: "已生成", candidate_id: candidate.id, run_id: failedRun.id, candidate_status: candidate.status };
 }
 
+async function ensureEvidenceSnapshot(token, workspaceID) {
+  const run = await findLatestPromptEvaluationRun(workspaceID);
+  if (!run) {
+    return { status: "跳过", reason: "未找到训练评估运行，无法归档运行证据" };
+  }
+  const existing = forceNewDemoEvidence ? null : await findEvidenceSnapshot(workspaceID, run.id);
+  if (existing) {
+    return { status: "已存在", snapshot_id: existing.id, run_id: existing.run_id, snapshot_type: existing.snapshot_type };
+  }
+  const snapshot = await postJSON(token, { id: workspaceID }, `/api/prompt-evaluation-runs/${run.id}/evidence-snapshots?snapshot_type=${encodeURIComponent("验收归档")}`, {});
+  return {
+    status: "已归档",
+    snapshot_id: snapshot.id,
+    run_id: snapshot.run_id,
+    snapshot_type: snapshot.snapshot_type,
+    summary: snapshot.summary,
+  };
+}
+
 async function findOptimizationCandidate(workspaceID) {
   const databaseURL = trimEnv("DATABASE_URL");
   if (!databaseURL) return null;
@@ -336,6 +357,53 @@ async function findOptimizationCandidate(workspaceID) {
       `
         SELECT id::text, run_id::text, status
         FROM prompt_evaluation_optimization_candidate
+        WHERE workspace_id = $1
+        ORDER BY created_at DESC
+        LIMIT 1
+      `,
+      [workspaceID],
+    );
+    return res.rows[0] ?? null;
+  } finally {
+    await client.end();
+  }
+}
+
+async function findEvidenceSnapshot(workspaceID, runID) {
+  const databaseURL = trimEnv("DATABASE_URL");
+  if (!databaseURL) return null;
+  const pg = await import("pg");
+  const client = new pg.default.Client(databaseURL);
+  await client.connect();
+  try {
+    const res = await client.query(
+      `
+        SELECT id::text, run_id::text, snapshot_type
+        FROM prompt_evaluation_evidence_snapshot
+        WHERE workspace_id = $1
+          AND run_id = $2
+        ORDER BY created_at DESC
+        LIMIT 1
+      `,
+      [workspaceID, runID],
+    );
+    return res.rows[0] ?? null;
+  } finally {
+    await client.end();
+  }
+}
+
+async function findLatestPromptEvaluationRun(workspaceID) {
+  const databaseURL = trimEnv("DATABASE_URL");
+  if (!databaseURL) return null;
+  const pg = await import("pg");
+  const client = new pg.default.Client(databaseURL);
+  await client.connect();
+  try {
+    const res = await client.query(
+      `
+        SELECT id::text, status, created_at::text
+        FROM prompt_evaluation_run
         WHERE workspace_id = $1
         ORDER BY created_at DESC
         LIMIT 1

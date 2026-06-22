@@ -738,6 +738,64 @@ func TestPromptEvaluationRuntimeReadinessRejectsStaleRuntime(t *testing.T) {
 	}
 }
 
+func TestPromptEvaluationRuntimeReadinessReportsRecentCapacityFailure(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	cleanupPromptEvaluationAgentRunTest(t)
+	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "容量受限 readiness 实验", "额度不足")
+	markPromptEvaluationTaskRunning(t, resp.TaskID)
+
+	failW := httptest.NewRecorder()
+	failReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/fail", map[string]any{
+		"error":          "429 当前无可用Token额度",
+		"failure_reason": "agent_error.provider_capacity_or_rate_limit",
+		"session_id":     "prompt-eval-capacity-session",
+		"work_dir":       "/tmp/prompt-eval-capacity",
+	}, testWorkspaceID, "prompt-eval-codebuddy-daemon")
+	testHandler.FailTask(failW, withURLParam(failReq, "taskId", resp.TaskID))
+	if failW.Code != http.StatusOK {
+		t.Fatalf("fail status = %d, body = %s", failW.Code, failW.Body.String())
+	}
+
+	readinessW := httptest.NewRecorder()
+	testHandler.GetPromptEvaluationRuntimeReadiness(readinessW, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
+	if readinessW.Code != http.StatusOK {
+		t.Fatalf("readiness status = %d, body = %s", readinessW.Code, readinessW.Body.String())
+	}
+	var readiness PromptEvaluationRuntimeReadinessResponse
+	if err := json.Unmarshal(readinessW.Body.Bytes(), &readiness); err != nil {
+		t.Fatalf("decode readiness response: %v", err)
+	}
+	if readiness.Status != "容量受限" || readiness.Runtime == nil || !strings.Contains(readiness.Detail, "429 当前无可用Token额度") {
+		t.Fatalf("capacity readiness = %+v", readiness)
+	}
+
+	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, "容量受限提示词", "请评估 {{issue_title}}。", `[]`)
+	createW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+		"prompt_id":  promptID,
+		"name":       "容量受限 Agent 实验",
+		"asset_type": "实验",
+		"payload": map[string]any{
+			"cases": []map[string]any{{"名称": "容量受限", "变量": map[string]any{"issue_title": "容量受限"}, "期望包含": []string{"容量"}}},
+		},
+	}))
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
+	}
+	var created PromptEvaluationAssetResponse
+	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	runW := httptest.NewRecorder()
+	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
+	if runW.Code != http.StatusServiceUnavailable || !strings.Contains(runW.Body.String(), "429") {
+		t.Fatalf("agent run with capacity-limited runtime status = %d, body = %s", runW.Code, runW.Body.String())
+	}
+}
+
 func TestPromptEvaluationRuntimeReadinessReportsUnavailableStates(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")
@@ -957,6 +1015,78 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsFailedTask(t *testing.T) {
 	}
 	if len(evidence.Trials) != 1 || evidence.Trials[0].Status != "失败" || evidence.Trials[0].FailureReason != "Agent 执行超时" {
 		t.Fatalf("auto-synced failed trial = %+v", evidence.Trials)
+	}
+}
+
+func TestPromptEvaluationEvidenceSnapshotArchivesRunEvidence(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	cleanupPromptEvaluationAgentRunTest(t)
+	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "服务端证据快照实验", "需要归档")
+	markPromptEvaluationTaskRunning(t, resp.TaskID)
+
+	failW := httptest.NewRecorder()
+	failReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/fail", map[string]any{
+		"error":          "429 当前无可用Token额度",
+		"failure_reason": "agent_error.provider_capacity_or_rate_limit",
+		"session_id":     "prompt-eval-snapshot-session",
+		"work_dir":       "/tmp/prompt-eval-snapshot",
+	}, testWorkspaceID, "prompt-eval-codebuddy-daemon")
+	testHandler.FailTask(failW, withURLParam(failReq, "taskId", resp.TaskID))
+	if failW.Code != http.StatusOK {
+		t.Fatalf("fail status = %d, body = %s", failW.Code, failW.Body.String())
+	}
+
+	createSnapshotW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationEvidenceSnapshot(createSnapshotW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", resp.Run.ID))
+	if createSnapshotW.Code != http.StatusCreated {
+		t.Fatalf("create snapshot status = %d, body = %s", createSnapshotW.Code, createSnapshotW.Body.String())
+	}
+	var snapshot PromptEvaluationEvidenceSnapshotResponse
+	if err := json.Unmarshal(createSnapshotW.Body.Bytes(), &snapshot); err != nil {
+		t.Fatalf("decode snapshot: %v", err)
+	}
+	if snapshot.SnapshotType != "验收归档" || snapshot.SchemaVersion != "multica.prompt_evaluation.evidence_snapshot.v1" || snapshot.Evidence == nil {
+		t.Fatalf("snapshot = %+v", snapshot)
+	}
+	summary, ok := snapshot.Summary.(map[string]any)
+	if !ok || summary["运行状态"] != "失败" || summary["失败原因"] != "429 当前无可用Token额度" || summary["trace/task id"] != resp.TaskID {
+		t.Fatalf("snapshot summary = %#v", snapshot.Summary)
+	}
+	payload, ok := snapshot.Evidence.(map[string]any)
+	if !ok || payload["语义版本"] != "multica.prompt_evaluation.evidence_snapshot.v1" || payload["运行证据"] == nil {
+		t.Fatalf("snapshot evidence payload = %#v", snapshot.Evidence)
+	}
+
+	listW := httptest.NewRecorder()
+	testHandler.ListPromptEvaluationEvidenceSnapshots(listW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence-snapshots", nil), "id", resp.Run.ID))
+	if listW.Code != http.StatusOK {
+		t.Fatalf("list snapshot status = %d, body = %s", listW.Code, listW.Body.String())
+	}
+	var listResp struct {
+		Items []PromptEvaluationEvidenceSnapshotResponse `json:"items"`
+		Total int                                        `json:"total"`
+	}
+	if err := json.Unmarshal(listW.Body.Bytes(), &listResp); err != nil {
+		t.Fatalf("decode snapshot list: %v", err)
+	}
+	if listResp.Total != 1 || len(listResp.Items) != 1 || listResp.Items[0].Evidence != nil {
+		t.Fatalf("snapshot list = %+v", listResp)
+	}
+
+	getW := httptest.NewRecorder()
+	req := withURLParam(withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence-snapshots/"+snapshot.ID, nil), "id", resp.Run.ID), "snapshotId", snapshot.ID)
+	testHandler.GetPromptEvaluationEvidenceSnapshot(getW, req)
+	if getW.Code != http.StatusOK {
+		t.Fatalf("get snapshot status = %d, body = %s", getW.Code, getW.Body.String())
+	}
+
+	mismatchW := httptest.NewRecorder()
+	mismatchReq := withURLParam(withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/00000000-0000-0000-0000-000000000001/evidence-snapshots/"+snapshot.ID, nil), "id", "00000000-0000-0000-0000-000000000001"), "snapshotId", snapshot.ID)
+	testHandler.GetPromptEvaluationEvidenceSnapshot(mismatchW, mismatchReq)
+	if mismatchW.Code != http.StatusNotFound {
+		t.Fatalf("mismatched run snapshot status = %d, body = %s", mismatchW.Code, mismatchW.Body.String())
 	}
 }
 

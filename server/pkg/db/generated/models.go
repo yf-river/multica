@@ -597,6 +597,18 @@ type PromptEvaluationCase struct {
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
+type PromptEvaluationEvidenceSnapshot struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	RunID         pgtype.UUID        `json:"run_id"`
+	SnapshotType  string             `json:"snapshot_type"`
+	SchemaVersion string             `json:"schema_version"`
+	Summary       []byte             `json:"summary"`
+	Evidence      []byte             `json:"evidence"`
+	CreatedBy     pgtype.UUID        `json:"created_by"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type PromptEvaluationOptimizationCandidate struct {
 	ID                   pgtype.UUID        `json:"id"`
 	WorkspaceID          pgtype.UUID        `json:"workspace_id"`

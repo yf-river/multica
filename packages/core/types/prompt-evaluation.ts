@@ -136,6 +136,25 @@ export interface PromptEvaluationRunEvidence {
   上下文: Record<string, unknown>;
 }
 
+export type PromptEvaluationEvidenceSnapshotType = "手动归档" | "验收归档" | "自动归档";
+
+export interface PromptEvaluationEvidenceSnapshot {
+  id: string;
+  workspace_id: string;
+  run_id: string;
+  snapshot_type: PromptEvaluationEvidenceSnapshotType;
+  schema_version: string;
+  summary: Record<string, unknown>;
+  evidence?: Record<string, unknown>;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface ListPromptEvaluationEvidenceSnapshotsResponse {
+  items: PromptEvaluationEvidenceSnapshot[];
+  total: number;
+}
+
 export interface PromptEvaluationSummary {
   workspace_id: string;
   generated_at: string;
@@ -146,7 +165,7 @@ export interface PromptEvaluationSummary {
   优化候选: Record<string, number>;
 }
 
-export type PromptEvaluationRuntimeReadinessStatus = "就绪" | "离线" | "过期" | "缺失" | "无权限";
+export type PromptEvaluationRuntimeReadinessStatus = "就绪" | "离线" | "过期" | "缺失" | "无权限" | "容量受限";
 
 export interface PromptEvaluationRuntimeReadiness {
   status: PromptEvaluationRuntimeReadinessStatus;

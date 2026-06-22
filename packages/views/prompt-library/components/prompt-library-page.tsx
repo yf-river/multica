@@ -21,6 +21,7 @@ import type {
   CreatePromptEvaluationCaseRequest,
   UpdatePromptEvaluationCaseRequest,
   PromptEvaluationAsset,
+  PromptEvaluationEvidenceSnapshot,
   PromptEvaluationOptimizationCandidate,
   PromptEvaluationStructuredCase,
   PromptEvaluationRun,
@@ -50,6 +51,7 @@ const promptLibraryKeys = {
   cases: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-cases"] as const,
   runs: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-runs"] as const,
   runEvidence: (workspaceId: string, runId: string | null) => ["prompt-library", workspaceId, "run-evidence", runId ?? ""] as const,
+  runEvidenceSnapshots: (workspaceId: string, runId: string | null) => ["prompt-library", workspaceId, "run-evidence-snapshots", runId ?? ""] as const,
   candidates: (workspaceId: string) => ["prompt-library", workspaceId, "optimization-candidates"] as const,
   summary: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-summary"] as const,
 };
@@ -223,6 +225,7 @@ export function PromptLibraryPage() {
   const invalidateRuns = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId ?? "") });
   const invalidateCandidates = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.candidates(workspaceId ?? "") });
   const invalidateSummary = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId ?? "") });
+  const invalidateRunEvidenceSnapshots = (runId: string) => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidenceSnapshots(workspaceId ?? "", runId) });
 
   const createMut = useMutation({
     mutationFn: (data: CreatePromptLibraryItemRequest) => api.createPromptLibraryItem(data),
@@ -345,8 +348,18 @@ export function PromptLibraryPage() {
       invalidateRuns();
       invalidateCandidates();
       queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", runId) });
+      invalidateRunEvidenceSnapshots(runId);
       invalidateSummary();
       toast.success("运行记录已同步");
+    },
+  });
+
+  const createEvidenceSnapshotMut = useMutation({
+    mutationFn: (runId: string) => api.createPromptEvaluationEvidenceSnapshot(runId, "验收归档"),
+    onSuccess: (snapshot) => {
+      invalidateRunEvidenceSnapshots(snapshot.run_id);
+      invalidateSummary();
+      toast.success("服务端证据快照已归档");
     },
   });
 
@@ -881,6 +894,8 @@ export function PromptLibraryPage() {
               deletingCaseId={deleteCaseMut.isPending ? deleteCaseMut.variables ?? null : null}
               onSyncRun={(runId) => syncRunMut.mutate(runId)}
               syncingRunId={syncRunMut.isPending ? syncRunMut.variables ?? null : null}
+              onCreateEvidenceSnapshot={(runId) => createEvidenceSnapshotMut.mutate(runId)}
+              creatingEvidenceSnapshotRunId={createEvidenceSnapshotMut.isPending ? createEvidenceSnapshotMut.variables ?? null : null}
               onGenerateCandidate={(runId) => createCandidateMut.mutate(runId)}
               generatingCandidateRunId={createCandidateMut.isPending ? createCandidateMut.variables ?? null : null}
               onRunOptimizationAgent={(runId) => runOptimizationAgentMut.mutate(runId)}
@@ -1209,6 +1224,8 @@ function WorkbenchPanel({
   deletingCaseId,
   onSyncRun,
   syncingRunId,
+  onCreateEvidenceSnapshot,
+  creatingEvidenceSnapshotRunId,
   onGenerateCandidate,
   generatingCandidateRunId,
   onRunOptimizationAgent,
@@ -1247,6 +1264,8 @@ function WorkbenchPanel({
   deletingCaseId: string | null;
   onSyncRun: (runId: string) => void;
   syncingRunId: string | null;
+  onCreateEvidenceSnapshot: (runId: string) => void;
+  creatingEvidenceSnapshotRunId: string | null;
   onGenerateCandidate: (runId: string) => void;
   generatingCandidateRunId: string | null;
   onRunOptimizationAgent: (runId: string) => void;
@@ -1269,6 +1288,11 @@ function WorkbenchPanel({
   const evidenceQuery = useQuery({
     queryKey: promptLibraryKeys.runEvidence(workspaceId, expandedRunId),
     queryFn: () => api.getPromptEvaluationRunEvidence(expandedRunId ?? ""),
+    enabled: !!expandedRunId,
+  });
+  const evidenceSnapshotQuery = useQuery({
+    queryKey: promptLibraryKeys.runEvidenceSnapshots(workspaceId, expandedRunId),
+    queryFn: () => api.listPromptEvaluationEvidenceSnapshots(expandedRunId ?? "", 5),
     enabled: !!expandedRunId,
   });
 
@@ -1404,8 +1428,12 @@ function WorkbenchPanel({
                 {expandedRunId === run.id && (
                   <RunEvidencePanel
                     evidence={evidenceQuery.data ?? null}
+                    snapshots={evidenceSnapshotQuery.data?.items ?? []}
+                    snapshotsLoading={evidenceSnapshotQuery.isLoading || evidenceSnapshotQuery.isFetching}
                     loading={evidenceQuery.isLoading || evidenceQuery.isFetching}
                     error={evidenceQuery.isError}
+                    creatingSnapshot={creatingEvidenceSnapshotRunId === run.id}
+                    onCreateSnapshot={() => onCreateEvidenceSnapshot(run.id)}
                   />
                 )}
               </div>
@@ -1663,12 +1691,20 @@ function candidateToDraft(candidate: PromptEvaluationOptimizationCandidate): Upd
 
 function RunEvidencePanel({
   evidence,
+  snapshots,
+  snapshotsLoading,
   loading,
   error,
+  creatingSnapshot,
+  onCreateSnapshot,
 }: {
   evidence: PromptEvaluationRunEvidence | null;
+  snapshots: PromptEvaluationEvidenceSnapshot[];
+  snapshotsLoading: boolean;
   loading: boolean;
   error: boolean;
+  creatingSnapshot: boolean;
+  onCreateSnapshot: () => void;
 }) {
   if (loading) {
     return <div className="md:col-span-2 rounded-md border bg-muted/30 px-3 py-4 text-sm text-muted-foreground">正在加载运行证据...</div>;
@@ -1685,6 +1721,12 @@ function RunEvidencePanel({
           <div className="mt-1 text-muted-foreground">{externalFailure.detail}</div>
         </div>
       )}
+      <EvidenceSnapshotBar
+        snapshots={snapshots}
+        loading={snapshotsLoading}
+        creating={creatingSnapshot}
+        onCreate={onCreateSnapshot}
+      />
       <div className="grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
         <MetricChip label="运行类型" value={evidence.run.run_kind} />
         <MetricChip label="运行状态" value={evidence.run.status} />
@@ -1757,6 +1799,46 @@ function RunEvidencePanel({
         <summary className="cursor-pointer font-medium text-muted-foreground">完整运行证据 JSON</summary>
         <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap text-[11px] leading-5">{truncateText(JSON.stringify(evidence, null, 2), 5000)}</pre>
       </details>
+    </div>
+  );
+}
+
+function EvidenceSnapshotBar({
+  snapshots,
+  loading,
+  creating,
+  onCreate,
+}: {
+  snapshots: PromptEvaluationEvidenceSnapshot[];
+  loading: boolean;
+  creating: boolean;
+  onCreate: () => void;
+}) {
+  const latest = snapshots[0] ?? null;
+  const latestSummary = latest?.summary ?? {};
+  const status = latest ? stringFromUnknown(latestSummary["运行状态"]) || "未记录" : "暂无服务端归档";
+  const taskId = latest ? stringFromUnknown(latestSummary["trace/task id"]) || "无任务标识" : "无任务标识";
+  return (
+    <div className="flex flex-col gap-2 rounded-md border bg-background px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between" data-testid="run-evidence-snapshots">
+      <div className="min-w-0">
+        <div className="font-medium text-muted-foreground">服务端证据快照</div>
+        <div className="mt-1 truncate text-[11px] text-muted-foreground">
+          {loading
+            ? "正在读取归档状态..."
+            : latest
+              ? `${latest.snapshot_type} · ${latest.created_at || "未记录时间"} · ${status} · task ${taskId}`
+              : "暂无服务端归档；建议在演示前归档一份可复核证据。"}
+        </div>
+      </div>
+      <div className="flex shrink-0 items-center gap-2">
+        <Badge variant={latest ? "secondary" : "outline"} className="text-[11px]">
+          {latest ? `${snapshots.length} 条快照` : "未归档"}
+        </Badge>
+        <Button size="sm" variant="secondary" onClick={onCreate} disabled={creating}>
+          {creating ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
+          归档快照
+        </Button>
+      </div>
     </div>
   );
 }

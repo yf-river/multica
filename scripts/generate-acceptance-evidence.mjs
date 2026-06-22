@@ -195,6 +195,7 @@ async function loadDatabaseEvidence(workspaceID) {
             (SELECT count(*)::int FROM prompt_evaluation_run WHERE workspace_id = $1 AND run_kind = 'Agent执行') AS agent_run_count,
             (SELECT count(*)::int FROM prompt_evaluation_trial WHERE workspace_id = $1) AS trial_count,
             (SELECT count(*)::int FROM prompt_evaluation_optimization_candidate WHERE workspace_id = $1) AS optimization_candidate_count,
+            (SELECT count(*)::int FROM prompt_evaluation_evidence_snapshot WHERE workspace_id = $1) AS evidence_snapshot_count,
             COALESCE((SELECT sum(input_tokens)::bigint FROM prompt_evaluation_run WHERE workspace_id = $1), 0)::text AS input_tokens,
             COALESCE((SELECT sum(output_tokens)::bigint FROM prompt_evaluation_run WHERE workspace_id = $1), 0)::text AS output_tokens
         `, [workspaceID]);
@@ -294,6 +295,21 @@ async function loadDatabaseEvidence(workspaceID) {
           ORDER BY created_at DESC
           LIMIT 5
         `, [workspaceID]);
+      const latestEvidenceSnapshots = await queryRows(client, `
+          SELECT
+            id::text,
+            run_id::text,
+            snapshot_type,
+            schema_version,
+            summary->>'运行状态' AS run_status,
+            summary->>'失败原因' AS failure_reason,
+            summary->>'trace/task id' AS task_id,
+            created_at::text
+          FROM prompt_evaluation_evidence_snapshot
+          WHERE workspace_id = $1
+          ORDER BY created_at DESC
+          LIMIT 5
+        `, [workspaceID]);
       const latestTrace = await queryRows(client, `
           SELECT
             task_id::text,
@@ -323,6 +339,7 @@ async function loadDatabaseEvidence(workspaceID) {
         runtimes: runtimeRows,
         squads: squadSummary,
         latest_runs: latestRuns,
+        latest_evidence_snapshots: latestEvidenceSnapshots,
         latest_trace_events: latestTrace,
       };
     } finally {
@@ -448,6 +465,7 @@ function buildRisks({ health, ready, login, account, commandResults, git, databa
     if (Number(training.run_count || 0) === 0) risks.push("数据库中未发现训练评估运行记录，生产看板会缺少运行证据。");
     if (Number(training.structured_case_count || 0) === 0) risks.push("数据库中未发现结构化评测用例，数据集/测试套件证据不足。");
     if (Number(training.optimization_candidate_count || 0) === 0) risks.push("数据库中未发现优化候选，失败用例到人工确认的闭环证据不足。");
+    if (Number(training.evidence_snapshot_count || 0) === 0) risks.push("数据库中未发现服务端运行证据快照，领导演示缺少可复核归档。");
     if (Number(tasks.trace_event_rows || 0) === 0) risks.push("数据库中未发现任务 trace 事件，观测闭环证据不足。");
     if (Number(squads.sop_run_count || 0) === 0) risks.push("数据库中未发现小队 SOP run，小队闭环证据不足。");
   }
@@ -468,6 +486,7 @@ function renderMarkdown(data, jsonPath) {
   const squads = db.squads || {};
   const tasks = db.tasks || {};
   const latestRunRows = (db.latest_runs || []).map((run) => `- ${run.created_at} · ${run.run_kind} · ${run.status} · task ${run.task_id || "无"} · ${run.model || "无模型"}`).join("\n") || "- 无";
+  const latestSnapshotRows = (db.latest_evidence_snapshots || []).map((snapshot) => `- ${snapshot.created_at} · ${snapshot.snapshot_type} · run ${snapshot.run_id} · ${snapshot.run_status || "未知"} · task ${snapshot.task_id || "无"}`).join("\n") || "- 无";
   const latestTraceRows = (db.latest_trace_events || []).map((event) => `- ${event.created_at} · ${event.event_name || event.event_type} · ${event.status} · task ${event.task_id || "无"}`).join("\n") || "- 无";
   return `# Multica 生产验收证据
 
@@ -506,12 +525,17 @@ ${commitRows}
 - 训练评估运行：${training.run_count ?? "未记录"}，其中 Agent 执行 ${training.agent_run_count ?? "未记录"}
 - trial：${training.trial_count ?? "未记录"}
 - 优化候选：${training.optimization_candidate_count ?? "未记录"}
+- 服务端证据快照：${training.evidence_snapshot_count ?? "未记录"}
 - 任务：${tasks.task_count ?? "未记录"}，usage 行 ${tasks.usage_rows ?? "未记录"}，trace 事件 ${tasks.trace_event_rows ?? "未记录"}
 - 小队：${squads.squad_count ?? "未记录"}，SOP run ${squads.sop_run_count ?? "未记录"}，SOP 事件 ${squads.sop_event_count ?? "未记录"}
 
 ### 最近训练评估运行
 
 ${latestRunRows}
+
+### 最近服务端证据快照
+
+${latestSnapshotRows}
 
 ### 最近 trace 事件
 

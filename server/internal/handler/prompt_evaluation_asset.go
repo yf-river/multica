@@ -31,6 +31,7 @@ const (
 	promptEvaluationAgentName         = "Multica 训练评估 Agent"
 	defaultPromptEvaluationAgentModel = "minimax-m2.7-ioa"
 	promptEvaluationRuntimeFreshTTL   = 2 * time.Minute
+	promptEvaluationRuntimeLimitTTL   = 10 * time.Minute
 )
 
 var promptTemplateVariablePattern = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}`)
@@ -232,6 +233,18 @@ type PromptEvaluationRunEvidenceResponse struct {
 	TraceEvents  []TaskTraceEventResponse            `json:"trace_events"`
 	Evidence     any                                 `json:"evidence"`
 	Context      map[string]any                      `json:"上下文"`
+}
+
+type PromptEvaluationEvidenceSnapshotResponse struct {
+	ID            string  `json:"id"`
+	WorkspaceID   string  `json:"workspace_id"`
+	RunID         string  `json:"run_id"`
+	SnapshotType  string  `json:"snapshot_type"`
+	SchemaVersion string  `json:"schema_version"`
+	Summary       any     `json:"summary"`
+	Evidence      any     `json:"evidence,omitempty"`
+	CreatedBy     *string `json:"created_by"`
+	CreatedAt     string  `json:"created_at"`
 }
 
 type promptEvaluationEvidenceRefs struct {
@@ -461,6 +474,36 @@ func promptEvaluationOptimizationCandidateToResponse(item db.PromptEvaluationOpt
 		CreatedBy:            uuidToPtr(item.CreatedBy),
 		CreatedAt:            timestampToString(item.CreatedAt),
 		UpdatedAt:            timestampToString(item.UpdatedAt),
+	}
+}
+
+func promptEvaluationEvidenceSnapshotToResponse(item db.PromptEvaluationEvidenceSnapshot, includeEvidence bool) PromptEvaluationEvidenceSnapshotResponse {
+	resp := PromptEvaluationEvidenceSnapshotResponse{
+		ID:            uuidToString(item.ID),
+		WorkspaceID:   uuidToString(item.WorkspaceID),
+		RunID:         uuidToString(item.RunID),
+		SnapshotType:  item.SnapshotType,
+		SchemaVersion: item.SchemaVersion,
+		Summary:       decodeJSONDefault(item.Summary, map[string]any{}),
+		CreatedBy:     uuidToPtr(item.CreatedBy),
+		CreatedAt:     timestampToString(item.CreatedAt),
+	}
+	if includeEvidence {
+		resp.Evidence = decodeJSONDefault(item.Evidence, map[string]any{})
+	}
+	return resp
+}
+
+func promptEvaluationEvidenceSnapshotListRowToResponse(item db.ListPromptEvaluationEvidenceSnapshotsByRunRow) PromptEvaluationEvidenceSnapshotResponse {
+	return PromptEvaluationEvidenceSnapshotResponse{
+		ID:            uuidToString(item.ID),
+		WorkspaceID:   uuidToString(item.WorkspaceID),
+		RunID:         uuidToString(item.RunID),
+		SnapshotType:  item.SnapshotType,
+		SchemaVersion: item.SchemaVersion,
+		Summary:       decodeJSONDefault(item.Summary, map[string]any{}),
+		CreatedBy:     uuidToPtr(item.CreatedBy),
+		CreatedAt:     timestampToString(item.CreatedAt),
 	}
 }
 
@@ -1072,22 +1115,29 @@ func (h *Handler) GetPromptEvaluationRunEvidence(w http.ResponseWriter, r *http.
 	if !ok {
 		return
 	}
-	run, err := h.Queries.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{ID: runID, WorkspaceID: workspaceUUID})
+	resp, err := h.buildPromptEvaluationRunEvidenceResponse(r.Context(), workspaceUUID, runID)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "prompt evaluation run not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation run")
+		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation run evidence")
 		return
 	}
-	trials, err := h.Queries.ListPromptEvaluationTrialsByRun(r.Context(), db.ListPromptEvaluationTrialsByRunParams{
+	writeJSON(w, http.StatusOK, resp)
+}
+
+func (h *Handler) buildPromptEvaluationRunEvidenceResponse(ctx context.Context, workspaceUUID pgtype.UUID, runID pgtype.UUID) (PromptEvaluationRunEvidenceResponse, error) {
+	run, err := h.Queries.GetPromptEvaluationRunInWorkspace(ctx, db.GetPromptEvaluationRunInWorkspaceParams{ID: runID, WorkspaceID: workspaceUUID})
+	if err != nil {
+		return PromptEvaluationRunEvidenceResponse{}, err
+	}
+	trials, err := h.Queries.ListPromptEvaluationTrialsByRun(ctx, db.ListPromptEvaluationTrialsByRunParams{
 		RunID:       run.ID,
 		WorkspaceID: workspaceUUID,
 	})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation trials")
-		return
+		return PromptEvaluationRunEvidenceResponse{}, err
 	}
 	trialResp := make([]PromptEvaluationTrialResponse, len(trials))
 	for i, trial := range trials {
@@ -1099,23 +1149,21 @@ func (h *Handler) GetPromptEvaluationRunEvidence(w http.ResponseWriter, r *http.
 	traceResp := []TaskTraceEventResponse{}
 	var task *db.AgentTaskQueue
 	if run.TaskID.Valid {
-		usages, err := h.Queries.GetTaskUsage(r.Context(), run.TaskID)
+		usages, err := h.Queries.GetTaskUsage(ctx, run.TaskID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to load task usage")
-			return
+			return PromptEvaluationRunEvidenceResponse{}, err
 		}
 		usageResp = make([]PromptEvaluationTaskUsageResponse, len(usages))
 		for i, usage := range usages {
 			usageResp[i] = promptEvaluationTaskUsageToResponse(usage)
 		}
 
-		messages, err := h.Queries.ListTaskMessages(r.Context(), run.TaskID)
+		messages, err := h.Queries.ListTaskMessages(ctx, run.TaskID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to load task messages")
-			return
+			return PromptEvaluationRunEvidenceResponse{}, err
 		}
 		issueID := ""
-		if loadedTask, err := h.Queries.GetAgentTaskInWorkspace(r.Context(), db.GetAgentTaskInWorkspaceParams{ID: run.TaskID, WorkspaceID: workspaceUUID}); err == nil {
+		if loadedTask, err := h.Queries.GetAgentTaskInWorkspace(ctx, db.GetAgentTaskInWorkspaceParams{ID: run.TaskID, WorkspaceID: workspaceUUID}); err == nil {
 			task = &loadedTask
 			issueID = uuidToString(loadedTask.IssueID)
 		}
@@ -1124,19 +1172,18 @@ func (h *Handler) GetPromptEvaluationRunEvidence(w http.ResponseWriter, r *http.
 			messageResp[i] = taskMessageToPayload(message, uuidToString(run.TaskID), issueID)
 		}
 
-		traceEvents, err := h.Queries.ListTaskTraceEventsByTask(r.Context(), run.TaskID)
+		traceEvents, err := h.Queries.ListTaskTraceEventsByTask(ctx, run.TaskID)
 		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to load task trace events")
-			return
+			return PromptEvaluationRunEvidenceResponse{}, err
 		}
 		traceResp = make([]TaskTraceEventResponse, len(traceEvents))
 		for i, event := range traceEvents {
 			traceResp[i] = taskTraceEventToResponse(event)
 		}
 	}
-	refs := h.loadPromptEvaluationEvidenceRefs(r.Context(), workspaceUUID, run, task, traceResp)
+	refs := h.loadPromptEvaluationEvidenceRefs(ctx, workspaceUUID, run, task, traceResp)
 
-	writeJSON(w, http.StatusOK, PromptEvaluationRunEvidenceResponse{
+	return PromptEvaluationRunEvidenceResponse{
 		Run:          promptEvaluationRunToResponse(run),
 		Trials:       trialResp,
 		TaskUsage:    usageResp,
@@ -1144,7 +1191,137 @@ func (h *Handler) GetPromptEvaluationRunEvidence(w http.ResponseWriter, r *http.
 		TraceEvents:  traceResp,
 		Evidence:     decodeJSONDefault(run.Evidence, map[string]any{}),
 		Context:      buildPromptEvaluationEvidenceContext(run, task, refs, trialResp, usageResp, messageResp, traceResp),
+	}, nil
+}
+
+func (h *Handler) ListPromptEvaluationEvidenceSnapshots(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	runID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation run id")
+	if !ok {
+		return
+	}
+	if _, err := h.Queries.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{ID: runID, WorkspaceID: workspaceUUID}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "prompt evaluation run not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation run")
+		return
+	}
+	limit := int32(20)
+	if value := r.URL.Query().Get("limit"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 100 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 100")
+			return
+		}
+		limit = int32(parsed)
+	}
+	items, err := h.Queries.ListPromptEvaluationEvidenceSnapshotsByRun(r.Context(), db.ListPromptEvaluationEvidenceSnapshotsByRunParams{
+		WorkspaceID: workspaceUUID,
+		RunID:       runID,
+		Limit:       limit,
 	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation evidence snapshots")
+		return
+	}
+	resp := make([]PromptEvaluationEvidenceSnapshotResponse, len(items))
+	for i, item := range items {
+		resp[i] = promptEvaluationEvidenceSnapshotListRowToResponse(item)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
+}
+
+func (h *Handler) CreatePromptEvaluationEvidenceSnapshot(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	runID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation run id")
+	if !ok {
+		return
+	}
+	snapshotType := strings.TrimSpace(r.URL.Query().Get("snapshot_type"))
+	if snapshotType == "" {
+		snapshotType = "手动归档"
+	}
+	if !validPromptEvaluationEvidenceSnapshotType(snapshotType) {
+		writeError(w, http.StatusBadRequest, "snapshot_type must be 手动归档, 验收归档 or 自动归档")
+		return
+	}
+	evidence, err := h.buildPromptEvaluationRunEvidenceResponse(r.Context(), workspaceUUID, runID)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "prompt evaluation run not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to build prompt evaluation evidence snapshot")
+		return
+	}
+	now := time.Now().UTC()
+	payload := map[string]any{
+		"语义版本": "multica.prompt_evaluation.evidence_snapshot.v1",
+		"生成时间": now.Format(time.RFC3339),
+		"快照类型": snapshotType,
+		"运行证据": evidence,
+	}
+	item, err := h.Queries.CreatePromptEvaluationEvidenceSnapshot(r.Context(), db.CreatePromptEvaluationEvidenceSnapshotParams{
+		WorkspaceID:   workspaceUUID,
+		RunID:         runID,
+		SnapshotType:  snapshotType,
+		SchemaVersion: "multica.prompt_evaluation.evidence_snapshot.v1",
+		Summary:       mustJSONBytes(buildPromptEvaluationEvidenceSnapshotSummary(evidence, now)),
+		Evidence:      mustJSONBytes(payload),
+		CreatedBy:     parseUUID(userID),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation evidence snapshot")
+		return
+	}
+	writeJSON(w, http.StatusCreated, promptEvaluationEvidenceSnapshotToResponse(item, true))
+}
+
+func (h *Handler) GetPromptEvaluationEvidenceSnapshot(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	runID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation run id")
+	if !ok {
+		return
+	}
+	snapshotID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "snapshotId"), "prompt evaluation evidence snapshot id")
+	if !ok {
+		return
+	}
+	item, err := h.Queries.GetPromptEvaluationEvidenceSnapshotInWorkspace(r.Context(), db.GetPromptEvaluationEvidenceSnapshotInWorkspaceParams{
+		ID:          snapshotID,
+		WorkspaceID: workspaceUUID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "prompt evaluation evidence snapshot not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation evidence snapshot")
+		return
+	}
+	if uuidToString(item.RunID) != uuidToString(runID) {
+		writeError(w, http.StatusNotFound, "prompt evaluation evidence snapshot not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, promptEvaluationEvidenceSnapshotToResponse(item, true))
 }
 
 func (h *Handler) loadPromptEvaluationEvidenceRefs(
@@ -1332,6 +1509,59 @@ func buildPromptEvaluationIOContext(trials []PromptEvaluationTrialResponse, mess
 		context["消息摘要"] = truncatePromptEvaluationEvidence(firstNonEmptyPromptEvaluationString(message.Content, message.Output, message.Type), 300)
 	}
 	return context
+}
+
+func validPromptEvaluationEvidenceSnapshotType(value string) bool {
+	switch value {
+	case "手动归档", "验收归档", "自动归档":
+		return true
+	default:
+		return false
+	}
+}
+
+func buildPromptEvaluationEvidenceSnapshotSummary(evidence PromptEvaluationRunEvidenceResponse, generatedAt time.Time) map[string]any {
+	run := evidence.Run
+	return map[string]any{
+		"语义版本":          "multica.prompt_evaluation.evidence_snapshot.summary.v1",
+		"生成时间":          generatedAt.Format(time.RFC3339),
+		"运行ID":          run.ID,
+		"运行类型":          run.RunKind,
+		"运行状态":          run.Status,
+		"触发来源":          run.TriggerSource,
+		"总用例数":          run.TotalCases,
+		"通过数":           run.PassedCases,
+		"失败数":           run.FailedCases,
+		"通过率":           run.PassRate,
+		"总耗时毫秒":         run.TotalDurationMs,
+		"输入token":       run.InputTokens,
+		"输出token":       run.OutputTokens,
+		"预估成本":          run.EstimatedCost,
+		"执行Agent":       run.AgentID,
+		"模型":            run.Model,
+		"runtime":       run.RuntimeID,
+		"runtime供应商":    run.RuntimeProvider,
+		"trace/task id": run.TaskID,
+		"失败原因":          promptEvaluationEvidenceFailureReason(evidence),
+		"评估结论":          run.Conclusion,
+		"trial数":        len(evidence.Trials),
+		"usage行数":       len(evidence.TaskUsage),
+		"任务消息数":         len(evidence.TaskMessages),
+		"trace事件数":      len(evidence.TraceEvents),
+		"上下文字段数":        len(evidence.Context),
+	}
+}
+
+func promptEvaluationEvidenceFailureReason(evidence PromptEvaluationRunEvidenceResponse) string {
+	if strings.TrimSpace(evidence.Run.FailureReason) != "" {
+		return evidence.Run.FailureReason
+	}
+	for i := len(evidence.TraceEvents) - 1; i >= 0; i-- {
+		if strings.TrimSpace(evidence.TraceEvents[i].FailureReason) != "" {
+			return evidence.TraceEvents[i].FailureReason
+		}
+	}
+	return "无"
 }
 
 func promptEvaluationEvidenceSummaryString(value any) string {
@@ -3190,6 +3420,23 @@ func (h *Handler) promptEvaluationRuntimeReadiness(ctx context.Context, workspac
 	}
 	if !best.LastSeenAt.Valid || checkedAt.Sub(best.LastSeenAt.Time) > promptEvaluationRuntimeFreshTTL {
 		return promptEvaluationRuntimeReadinessResponse("过期", "CodeBuddy 心跳过期", "CodeBuddy runtime「"+best.Name+"」状态仍是 online，但最近心跳已经超过 2 分钟，不能证明当前可执行。", "检查 multica daemon 是否仍在运行，确认网络和心跳正常后等待 last_seen_at 刷新，再创建真实 Agent 任务。", &respRuntime, checkedAt), nil
+	}
+	recentCapacityFailure, err := h.Queries.GetRecentRuntimeCapacityFailure(ctx, db.GetRecentRuntimeCapacityFailureParams{
+		WorkspaceID: workspaceID,
+		RuntimeID:   best.ID,
+		CompletedAt: pgtype.Timestamptz{Time: checkedAt.Add(-promptEvaluationRuntimeLimitTTL), Valid: true},
+	})
+	if err == nil {
+		detail := "CodeBuddy runtime「" + best.Name + "」在线且心跳新鲜，但最近任务 " + uuidToString(recentCapacityFailure.ID) + " 返回模型容量或额度限制，当前不能证明 " + promptEvaluationAgentModel() + " 可执行。"
+		if recentCapacityFailure.Error.Valid && strings.TrimSpace(recentCapacityFailure.Error.String) != "" {
+			detail += " 最近错误：" + truncatePromptEvaluationEvidence(recentCapacityFailure.Error.String, 180)
+		}
+		resp := promptEvaluationRuntimeReadinessResponse("容量受限", "模型额度受限", detail, "稍后重试，或切换到当前可用模型/runtime；如果持续出现 429/529，请申请模型额度或让管理员调整 Agent 模型配置。", &respRuntime, checkedAt)
+		resp.LastSeenAgeSeconds = ageSeconds
+		return resp, nil
+	}
+	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+		return PromptEvaluationRuntimeReadinessResponse{}, err
 	}
 	resp := promptEvaluationRuntimeReadinessResponse("就绪", "CodeBuddy 在线", "已发现在线且心跳新鲜的 CodeBuddy runtime「"+best.Name+"」，可以作为 "+promptEvaluationAgentModel()+" 的真实执行目标。", "无需修复；下一步应创建真实 Agent 任务并采集 trace、token、成本和输出。", &respRuntime, checkedAt)
 	resp.LastSeenAgeSeconds = ageSeconds

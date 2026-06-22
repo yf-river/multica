@@ -1521,6 +1521,48 @@ func (q *Queries) GetLatestTaskIsLeaderForIssueAndAgent(ctx context.Context, arg
 	return is_leader_task, err
 }
 
+const getRecentRuntimeCapacityFailure = `-- name: GetRecentRuntimeCapacityFailure :one
+SELECT
+  atq.id,
+  atq.completed_at,
+  atq.failure_reason,
+  atq.error
+FROM agent_task_queue atq
+JOIN agent a ON a.id = atq.agent_id
+WHERE a.workspace_id = $1
+  AND atq.runtime_id = $2
+  AND atq.status = 'failed'
+  AND atq.failure_reason = 'agent_error.provider_capacity_or_rate_limit'
+  AND atq.completed_at >= $3
+ORDER BY atq.completed_at DESC NULLS LAST
+LIMIT 1
+`
+
+type GetRecentRuntimeCapacityFailureParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	RuntimeID   pgtype.UUID        `json:"runtime_id"`
+	CompletedAt pgtype.Timestamptz `json:"completed_at"`
+}
+
+type GetRecentRuntimeCapacityFailureRow struct {
+	ID            pgtype.UUID        `json:"id"`
+	CompletedAt   pgtype.Timestamptz `json:"completed_at"`
+	FailureReason pgtype.Text        `json:"failure_reason"`
+	Error         pgtype.Text        `json:"error"`
+}
+
+func (q *Queries) GetRecentRuntimeCapacityFailure(ctx context.Context, arg GetRecentRuntimeCapacityFailureParams) (GetRecentRuntimeCapacityFailureRow, error) {
+	row := q.db.QueryRow(ctx, getRecentRuntimeCapacityFailure, arg.WorkspaceID, arg.RuntimeID, arg.CompletedAt)
+	var i GetRecentRuntimeCapacityFailureRow
+	err := row.Scan(
+		&i.ID,
+		&i.CompletedAt,
+		&i.FailureReason,
+		&i.Error,
+	)
+	return i, err
+}
+
 const getWorkspaceAgentActivity30d = `-- name: GetWorkspaceAgentActivity30d :many
 SELECT
     atq.agent_id,

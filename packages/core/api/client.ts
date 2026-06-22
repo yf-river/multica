@@ -126,6 +126,8 @@ import type {
   PromptEvaluationAsset,
   PromptEvaluationRun,
   PromptEvaluationRunEvidence,
+  PromptEvaluationEvidenceSnapshot,
+  PromptEvaluationEvidenceSnapshotType,
   PromptEvaluationSummary,
   PromptEvaluationRuntimeReadiness,
   PromptEvaluationStructuredCase,
@@ -141,6 +143,7 @@ import type {
   ListPromptEvaluationAssetsResponse,
   ListPromptEvaluationRunsResponse,
   ListPromptEvaluationTrialsResponse,
+  ListPromptEvaluationEvidenceSnapshotsResponse,
   ListPromptEvaluationCasesResponse,
   ListPromptEvaluationOptimizationCandidatesResponse,
   CreatePromptEvaluationAssetRequest,
@@ -194,6 +197,8 @@ import {
   EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE,
+  EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT,
+  EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_SUMMARY,
   EMPTY_PROMPT_EVALUATION_RUNTIME_READINESS,
   EMPTY_PROMPT_EVALUATION_CASE,
@@ -219,6 +224,8 @@ import {
   PromptEvaluationRunSchema,
   PromptEvaluationTrialListResponseSchema,
   PromptEvaluationRunEvidenceSchema,
+  PromptEvaluationEvidenceSnapshotSchema,
+  PromptEvaluationEvidenceSnapshotListResponseSchema,
   PromptEvaluationSummarySchema,
   PromptEvaluationRuntimeReadinessSchema,
   PromptEvaluationCaseSchema,
@@ -1918,6 +1925,31 @@ export class ApiClient {
     return parseWithFallback(raw, PromptEvaluationRunEvidenceSchema, EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE, {
       endpoint: "GET /api/prompt-evaluation-runs/:id/evidence",
     }) as PromptEvaluationRunEvidence;
+  }
+
+  async listPromptEvaluationEvidenceSnapshots(runId: string, limit?: number): Promise<ListPromptEvaluationEvidenceSnapshotsResponse> {
+    const search = new URLSearchParams();
+    if (limit) search.set("limit", String(limit));
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationEvidenceSnapshotListResponseSchema, EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-runs/:id/evidence-snapshots",
+    }) as ListPromptEvaluationEvidenceSnapshotsResponse;
+  }
+
+  async createPromptEvaluationEvidenceSnapshot(runId: string, snapshotType: PromptEvaluationEvidenceSnapshotType = "手动归档"): Promise<PromptEvaluationEvidenceSnapshot> {
+    const search = new URLSearchParams({ snapshot_type: snapshotType });
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots?${search.toString()}`, { method: "POST" });
+    return parseWithFallback(raw, PromptEvaluationEvidenceSnapshotSchema, EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT, {
+      endpoint: "POST /api/prompt-evaluation-runs/:id/evidence-snapshots",
+    }) as PromptEvaluationEvidenceSnapshot;
+  }
+
+  async getPromptEvaluationEvidenceSnapshot(runId: string, snapshotId: string): Promise<PromptEvaluationEvidenceSnapshot> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots/${snapshotId}`);
+    return parseWithFallback(raw, PromptEvaluationEvidenceSnapshotSchema, EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT, {
+      endpoint: "GET /api/prompt-evaluation-runs/:id/evidence-snapshots/:snapshotId",
+    }) as PromptEvaluationEvidenceSnapshot;
   }
 
   async syncPromptEvaluationRun(runId: string): Promise<PromptEvaluationRun> {
