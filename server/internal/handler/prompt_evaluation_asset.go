@@ -28,6 +28,7 @@ const (
 	promptEvaluationAssetOptimize   = "优化运行"
 	promptEvaluationAgentName       = "Multica 训练评估 Agent"
 	promptEvaluationAgentModel      = "minimax-m2.7-ioa"
+	promptEvaluationRuntimeFreshTTL = 2 * time.Minute
 )
 
 var promptTemplateVariablePattern = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}`)
@@ -231,6 +232,17 @@ type PromptEvaluationSummaryResponse struct {
 	Assets      map[string]int64 `json:"资产统计"`
 	RunStatus   map[string]int64 `json:"运行状态"`
 	Candidates  map[string]int64 `json:"优化候选"`
+}
+
+type PromptEvaluationRuntimeReadinessResponse struct {
+	Status             string                `json:"status"`
+	Label              string                `json:"label"`
+	Detail             string                `json:"detail"`
+	Fix                string                `json:"fix"`
+	Model              string                `json:"model"`
+	Runtime            *AgentRuntimeResponse `json:"runtime"`
+	LastSeenAgeSeconds int64                 `json:"last_seen_age_seconds"`
+	CheckedAt          string                `json:"checked_at"`
 }
 
 type PromptEvaluationCaseResponse struct {
@@ -922,6 +934,24 @@ func (h *Handler) GetPromptEvaluationSummary(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusOK, promptEvaluationSummaryToResponse(workspaceUUID, row))
+}
+
+func (h *Handler) GetPromptEvaluationRuntimeReadiness(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	member, ok := h.requireWorkspaceMember(w, r, workspaceID, "workspace not found")
+	if !ok {
+		return
+	}
+	readiness, err := h.promptEvaluationRuntimeReadiness(r.Context(), workspaceUUID, member)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check training evaluation runtime readiness")
+		return
+	}
+	writeJSON(w, http.StatusOK, readiness)
 }
 
 func (h *Handler) ListPromptEvaluationRunTrials(w http.ResponseWriter, r *http.Request) {
@@ -2434,18 +2464,99 @@ func (h *Handler) ensurePromptEvaluationAgent(w http.ResponseWriter, r *http.Req
 }
 
 func (h *Handler) selectPromptEvaluationRuntime(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, member db.Member) (db.AgentRuntime, bool) {
-	runtimes, err := h.Queries.ListAgentRuntimes(r.Context(), workspaceID)
+	readiness, err := h.promptEvaluationRuntimeReadiness(r.Context(), workspaceID, member)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list runtimes for training evaluation")
 		return db.AgentRuntime{}, false
 	}
-	for _, runtime := range runtimes {
-		if strings.EqualFold(runtime.Provider, "codebuddy") && runtime.Status == "online" && canUseRuntimeForAgent(member, runtime) {
+	if readiness.Status == "就绪" && readiness.Runtime != nil {
+		runtimeID := parseUUID(readiness.Runtime.ID)
+		runtime, err := h.Queries.GetAgentRuntimeForWorkspace(r.Context(), db.GetAgentRuntimeForWorkspaceParams{
+			ID:          runtimeID,
+			WorkspaceID: workspaceID,
+		})
+		if err == nil {
 			return runtime, true
 		}
 	}
-	writeError(w, http.StatusServiceUnavailable, "CodeBuddy runtime is not ready; start multica daemon with codebuddy and wait for provider=codebuddy status=online")
+	writeError(w, http.StatusServiceUnavailable, readiness.Fix)
 	return db.AgentRuntime{}, false
+}
+
+func (h *Handler) promptEvaluationRuntimeReadiness(ctx context.Context, workspaceID pgtype.UUID, member db.Member) (PromptEvaluationRuntimeReadinessResponse, error) {
+	checkedAt := time.Now().UTC()
+	runtimes, err := h.Queries.ListAgentRuntimes(ctx, workspaceID)
+	if err != nil {
+		return PromptEvaluationRuntimeReadinessResponse{}, err
+	}
+	inaccessibleCodeBuddy := 0
+	var best *db.AgentRuntime
+	for i := range runtimes {
+		runtime := runtimes[i]
+		if !strings.EqualFold(runtime.Provider, "codebuddy") {
+			continue
+		}
+		if !canUseRuntimeForAgent(member, runtime) {
+			inaccessibleCodeBuddy++
+			continue
+		}
+		if best == nil || runtimeReadinessRank(runtime, checkedAt) > runtimeReadinessRank(*best, checkedAt) {
+			best = &runtime
+		}
+	}
+	if best == nil {
+		if inaccessibleCodeBuddy > 0 {
+			return promptEvaluationRuntimeReadinessResponse("无权限", "CodeBuddy 无权限", "当前 workspace 存在 CodeBuddy runtime，但你没有绑定或使用权限。", "请让 runtime 所有者将 CodeBuddy runtime 设为 public，或由 workspace 管理员为训练评估 Agent 绑定可用 runtime。", nil, checkedAt), nil
+		}
+		return promptEvaluationRuntimeReadinessResponse("缺失", "CodeBuddy 缺失", "当前 workspace 未发现 CodeBuddy runtime，Agent 调试场不能执行 minimax-m2.7-ioa。", "安装并配置 codebuddy，启动 multica daemon，等待 /api/runtimes 出现 provider=codebuddy 且 status=online 的 runtime。", nil, checkedAt), nil
+	}
+	ageSeconds := promptEvaluationRuntimeAgeSeconds(*best, checkedAt)
+	respRuntime := runtimeToResponse(*best)
+	if best.Status != "online" {
+		return promptEvaluationRuntimeReadinessResponse("离线", "CodeBuddy 离线", "已注册 CodeBuddy runtime「"+best.Name+"」，但当前状态是离线，不能创建真实 Agent 任务。", "启动 multica daemon，并确认 codebuddy 可执行文件在 PATH 中，或设置 MULTICA_CODEBUDDY_PATH 后重启 daemon。", &respRuntime, checkedAt), nil
+	}
+	if !best.LastSeenAt.Valid || checkedAt.Sub(best.LastSeenAt.Time) > promptEvaluationRuntimeFreshTTL {
+		return promptEvaluationRuntimeReadinessResponse("过期", "CodeBuddy 心跳过期", "CodeBuddy runtime「"+best.Name+"」状态仍是 online，但最近心跳已经超过 2 分钟，不能证明当前可执行。", "检查 multica daemon 是否仍在运行，确认网络和心跳正常后等待 last_seen_at 刷新，再创建真实 Agent 任务。", &respRuntime, checkedAt), nil
+	}
+	resp := promptEvaluationRuntimeReadinessResponse("就绪", "CodeBuddy 在线", "已发现在线且心跳新鲜的 CodeBuddy runtime「"+best.Name+"」，可以作为 "+promptEvaluationAgentModel+" 的真实执行目标。", "无需修复；下一步应创建真实 Agent 任务并采集 trace、token、成本和输出。", &respRuntime, checkedAt)
+	resp.LastSeenAgeSeconds = ageSeconds
+	return resp, nil
+}
+
+func promptEvaluationRuntimeReadinessResponse(status, label, detail, fix string, runtime *AgentRuntimeResponse, checkedAt time.Time) PromptEvaluationRuntimeReadinessResponse {
+	ageSeconds := int64(-1)
+	if runtime != nil && runtime.LastSeenAt != nil {
+		if lastSeen, err := time.Parse(time.RFC3339, *runtime.LastSeenAt); err == nil {
+			ageSeconds = int64(checkedAt.Sub(lastSeen).Seconds())
+		}
+	}
+	return PromptEvaluationRuntimeReadinessResponse{
+		Status:             status,
+		Label:              label,
+		Detail:             detail,
+		Fix:                fix,
+		Model:              promptEvaluationAgentModel,
+		Runtime:            runtime,
+		LastSeenAgeSeconds: ageSeconds,
+		CheckedAt:          checkedAt.Format(time.RFC3339),
+	}
+}
+
+func runtimeReadinessRank(runtime db.AgentRuntime, now time.Time) int {
+	if runtime.Status == "online" && runtime.LastSeenAt.Valid && now.Sub(runtime.LastSeenAt.Time) <= promptEvaluationRuntimeFreshTTL {
+		return 3
+	}
+	if runtime.Status == "online" {
+		return 2
+	}
+	return 1
+}
+
+func promptEvaluationRuntimeAgeSeconds(runtime db.AgentRuntime, now time.Time) int64 {
+	if !runtime.LastSeenAt.Valid {
+		return -1
+	}
+	return int64(now.Sub(runtime.LastSeenAt.Time).Seconds())
 }
 
 func promptEvaluationAgentInstructions() string {

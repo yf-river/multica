@@ -540,6 +540,59 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	}
 }
 
+func TestPromptEvaluationRuntimeReadinessRejectsStaleRuntime(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	cleanupPromptEvaluationAgentRunTest(t)
+	if _, err := testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE workspace_id = $1 AND provider = 'codebuddy' AND name LIKE 'prompt-eval-codebuddy-%'`, testWorkspaceID); err != nil {
+		t.Fatalf("cleanup codebuddy runtime: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codebuddy', 'online', 'CodeBuddy 过期测试运行时', '{}'::jsonb, $4, 'private', now() - interval '5 minutes')
+	`, testWorkspaceID, "prompt-eval-codebuddy-stale-"+randomID()[:8], "prompt-eval-codebuddy-stale-"+randomID()[:8], testUserID); err != nil {
+		t.Fatalf("create stale codebuddy runtime: %v", err)
+	}
+
+	readinessW := httptest.NewRecorder()
+	testHandler.GetPromptEvaluationRuntimeReadiness(readinessW, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
+	if readinessW.Code != http.StatusOK {
+		t.Fatalf("readiness status = %d, body = %s", readinessW.Code, readinessW.Body.String())
+	}
+	var readiness PromptEvaluationRuntimeReadinessResponse
+	if err := json.Unmarshal(readinessW.Body.Bytes(), &readiness); err != nil {
+		t.Fatalf("decode readiness response: %v", err)
+	}
+	if readiness.Status != "过期" || readiness.LastSeenAgeSeconds < 120 || readiness.Runtime == nil {
+		t.Fatalf("readiness = %+v", readiness)
+	}
+
+	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, "过期 runtime 提示词", "请评估 {{issue_title}}。", `[]`)
+	createW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+		"prompt_id":  promptID,
+		"name":       "过期 runtime Agent 实验",
+		"asset_type": "实验",
+		"payload": map[string]any{
+			"cases": []map[string]any{{"名称": "过期 runtime", "变量": map[string]any{"issue_title": "过期 runtime"}, "期望包含": []string{"过期"}}},
+		},
+	}))
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
+	}
+	var created PromptEvaluationAssetResponse
+	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	runW := httptest.NewRecorder()
+	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
+	if runW.Code != http.StatusServiceUnavailable || !strings.Contains(runW.Body.String(), "last_seen_at") {
+		t.Fatalf("agent run with stale runtime status = %d, body = %s", runW.Code, runW.Body.String())
+	}
+}
+
 func TestRunPromptEvaluationAssetAgentCompletedWithoutStructuredVerdictNeedsReview(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")

@@ -781,6 +781,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 			r.Get("/api/prompt-evaluation-summary", h.GetPromptEvaluationSummary)
+			r.Get("/api/prompt-evaluation-runtime-readiness", h.GetPromptEvaluationRuntimeReadiness)
 			r.Route("/api/prompt-evaluation-runs", func(r chi.Router) {
 				r.Get("/", h.ListPromptEvaluationRuns)
 				r.Route("/{id}", func(r chi.Router) {

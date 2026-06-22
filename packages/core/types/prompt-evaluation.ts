@@ -1,6 +1,6 @@
 import type { PromptLibraryItem } from "./prompt-library";
 import type { TaskMessagePayload } from "./events";
-import type { TaskTraceEvent } from "./agent";
+import type { AgentRuntime, TaskTraceEvent } from "./agent";
 
 export type PromptEvaluationAssetType = "数据集" | "测试套件" | "实验" | "优化运行";
 export type PromptEvaluationAssetStatus = "启用" | "归档";
@@ -139,6 +139,19 @@ export interface PromptEvaluationSummary {
   资产统计: Record<string, number>;
   运行状态: Record<string, number>;
   优化候选: Record<string, number>;
+}
+
+export type PromptEvaluationRuntimeReadinessStatus = "就绪" | "离线" | "过期" | "缺失" | "无权限";
+
+export interface PromptEvaluationRuntimeReadiness {
+  status: PromptEvaluationRuntimeReadinessStatus;
+  label: string;
+  detail: string;
+  fix: string;
+  model: string;
+  runtime: AgentRuntime | null;
+  last_seen_age_seconds: number;
+  checked_at: string;
 }
 
 export interface PromptEvaluationStructuredCase {

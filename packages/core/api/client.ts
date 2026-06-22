@@ -125,6 +125,7 @@ import type {
 	  PromptEvaluationRun,
 	  PromptEvaluationRunEvidence,
 	  PromptEvaluationSummary,
+	  PromptEvaluationRuntimeReadiness,
 	  PromptEvaluationStructuredCase,
 	  PromptEvaluationAgentRunResponse,
 	  PromptEvaluationOptimizationCandidate,
@@ -190,6 +191,7 @@ import {
   EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE,
   EMPTY_PROMPT_EVALUATION_SUMMARY,
+  EMPTY_PROMPT_EVALUATION_RUNTIME_READINESS,
   EMPTY_PROMPT_EVALUATION_CASE,
   EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
@@ -214,6 +216,7 @@ import {
   PromptEvaluationTrialListResponseSchema,
   PromptEvaluationRunEvidenceSchema,
   PromptEvaluationSummarySchema,
+  PromptEvaluationRuntimeReadinessSchema,
   PromptEvaluationCaseSchema,
   PromptEvaluationCaseListResponseSchema,
   PromptEvaluationOptimizationCandidateSchema,
@@ -1827,6 +1830,13 @@ export class ApiClient {
     return parseWithFallback(raw, PromptEvaluationSummarySchema, EMPTY_PROMPT_EVALUATION_SUMMARY, {
       endpoint: "GET /api/prompt-evaluation-summary",
     }) as PromptEvaluationSummary;
+  }
+
+  async getPromptEvaluationRuntimeReadiness(): Promise<PromptEvaluationRuntimeReadiness> {
+    const raw = await this.fetch<unknown>("/api/prompt-evaluation-runtime-readiness");
+    return parseWithFallback(raw, PromptEvaluationRuntimeReadinessSchema, EMPTY_PROMPT_EVALUATION_RUNTIME_READINESS, {
+      endpoint: "GET /api/prompt-evaluation-runtime-readiness",
+    }) as PromptEvaluationRuntimeReadiness;
   }
 
   async runPromptEvaluationAsset(id: string): Promise<PromptEvaluationAsset> {

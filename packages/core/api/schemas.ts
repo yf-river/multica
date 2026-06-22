@@ -16,6 +16,7 @@ import type {
   ListWebhookDeliveriesResponse,
   PromptEvaluationAsset,
   PromptEvaluationRunEvidence,
+  PromptEvaluationRuntimeReadiness,
   PromptEvaluationSummary,
   PromptEvaluationStructuredCase,
   PromptEvaluationOptimizationCandidate,
@@ -905,6 +906,36 @@ export const PromptEvaluationSummarySchema = z.object({
   优化候选: z.record(z.string(), z.number()).default({}),
 }).loose();
 
+const PromptEvaluationRuntimeSchema = z.object({
+  id: z.string().default(""),
+  workspace_id: z.string().default(""),
+  daemon_id: z.string().nullable().optional().transform((v) => v ?? null),
+  name: z.string().default(""),
+  runtime_mode: z.enum(["local", "cloud"]).default("local"),
+  provider: z.string().default(""),
+  launch_header: z.string().default(""),
+  status: z.enum(["online", "offline"]).default("offline"),
+  device_info: z.string().default(""),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+  owner_id: z.string().nullable().optional().transform((v) => v ?? null),
+  visibility: z.enum(["private", "public"]).default("private"),
+  profile_id: z.string().nullable().optional().transform((v) => v ?? null),
+  last_seen_at: z.string().nullable().optional().transform((v) => v ?? null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const PromptEvaluationRuntimeReadinessSchema = z.object({
+  status: z.enum(["就绪", "离线", "过期", "缺失", "无权限"]).default("缺失"),
+  label: z.string().default("CodeBuddy 缺失"),
+  detail: z.string().default("当前 workspace 未发现 CodeBuddy runtime。"),
+  fix: z.string().default("安装并配置 codebuddy，启动 multica daemon。"),
+  model: z.string().default("minimax-m2.7-ioa"),
+  runtime: PromptEvaluationRuntimeSchema.nullable().default(null),
+  last_seen_age_seconds: z.number().default(-1),
+  checked_at: z.string().default(""),
+}).loose();
+
 export const PromptEvaluationRunListResponseSchema = z.object({
   items: z.array(PromptEvaluationRunSchema).default([]),
   total: z.number().default(0),
@@ -1024,6 +1055,17 @@ export const EMPTY_PROMPT_EVALUATION_SUMMARY: PromptEvaluationSummary = {
   资产统计: {},
   运行状态: {},
   优化候选: {},
+};
+
+export const EMPTY_PROMPT_EVALUATION_RUNTIME_READINESS: PromptEvaluationRuntimeReadiness = {
+  status: "缺失",
+  label: "CodeBuddy 缺失",
+  detail: "当前 workspace 未发现 CodeBuddy runtime。",
+  fix: "安装并配置 codebuddy，启动 multica daemon。",
+  model: "minimax-m2.7-ioa",
+  runtime: null,
+  last_seen_age_seconds: -1,
+  checked_at: "",
 };
 
 export const EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE = {

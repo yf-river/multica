@@ -9,7 +9,6 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { renderPromptTemplate } from "@multica/core/prompt-library";
 import type {
-  AgentRuntime,
   CreatePromptLibraryItemRequest,
   CreatePromptEvaluationAssetRequest,
   CreatePromptEvaluationCaseRequest,
@@ -18,6 +17,7 @@ import type {
   PromptEvaluationStructuredCase,
   PromptEvaluationRun,
   PromptEvaluationRunEvidence,
+  PromptEvaluationRuntimeReadiness,
   PromptEvaluationSummary,
   PromptEvaluationAssetType,
   PromptLibraryItem,
@@ -48,6 +48,16 @@ const PROMPT_TYPES = ["全部", "需求澄清", "系统提示词", "评测提示
 const WORKBENCH_TABS = ["提示词库", "提示词调试场", "Agent 调试场", "数据集", "测试套件", "实验", "优化运行", "运行历史"] as const;
 type WorkbenchTab = typeof WORKBENCH_TABS[number];
 const DEFAULT_AGENT_MODEL = "minimax-m2.7-ioa";
+const DEFAULT_AGENT_RUNTIME_READINESS: PromptEvaluationRuntimeReadiness = {
+  status: "缺失",
+  label: "CodeBuddy 检查中",
+  detail: "正在检查当前 workspace 的 CodeBuddy runtime readiness。",
+  fix: "等待检查完成；如果持续缺失，请安装并配置 codebuddy，启动 multica daemon。",
+  model: DEFAULT_AGENT_MODEL,
+  runtime: null,
+  last_seen_age_seconds: -1,
+  checked_at: "",
+};
 
 const TAB_TO_VIEW: Record<WorkbenchTab, string> = {
   提示词库: "prompts",
@@ -89,14 +99,6 @@ type PromptDraft = {
   variablesText: string;
   tagsText: string;
   status: PromptLibraryStatus;
-};
-
-type AgentRuntimeReadiness = {
-  status: "就绪" | "离线" | "缺失";
-  label: string;
-  detail: string;
-  fix: string;
-  runtime: AgentRuntime | null;
 };
 
 const emptyDraft = (): PromptDraft => ({
@@ -160,9 +162,9 @@ export function PromptLibraryPage() {
     enabled: !!workspaceId,
   });
 
-  const runtimeQuery = useQuery({
-    queryKey: ["training-evaluation", workspaceId ?? "", "runtimes"],
-    queryFn: () => api.listRuntimes({ workspace_id: workspaceId ?? undefined }),
+  const runtimeReadinessQuery = useQuery({
+    queryKey: ["training-evaluation", workspaceId ?? "", "runtime-readiness"],
+    queryFn: () => api.getPromptEvaluationRuntimeReadiness(),
     enabled: !!workspaceId,
   });
 
@@ -173,10 +175,7 @@ export function PromptLibraryPage() {
   const candidates = candidateQuery.data?.items ?? [];
   const summary = summaryQuery.data ?? null;
   const selected = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
-  const agentRuntimeReadiness = useMemo(
-    () => evaluateCodeBuddyReadiness(runtimeQuery.data ?? []),
-    [runtimeQuery.data],
-  );
+  const agentRuntimeReadiness = runtimeReadinessQuery.data ?? DEFAULT_AGENT_RUNTIME_READINESS;
 
   useEffect(() => {
     if (!selected && selectedId && items.length > 0) {
@@ -713,7 +712,7 @@ export function PromptLibraryPage() {
                 saving={savingAsset}
                 runningAgent={runningAgent}
                 runtimeReadiness={agentRuntimeReadiness}
-                runtimeLoading={runtimeQuery.isLoading}
+                runtimeLoading={runtimeReadinessQuery.isLoading}
               agentExpectedText={agentExpectedText}
               onAgentExpectedTextChange={setAgentExpectedText}
               onCreateAsset={createWorkbenchAsset}
@@ -829,7 +828,7 @@ function WorkbenchPanel({
   loading: boolean;
     saving: boolean;
     runningAgent: boolean;
-    runtimeReadiness: AgentRuntimeReadiness;
+    runtimeReadiness: PromptEvaluationRuntimeReadiness;
     runtimeLoading: boolean;
     agentExpectedText: string;
     onAgentExpectedTextChange: (value: string) => void;
@@ -1236,38 +1235,7 @@ function EvidenceList({ title, empty, items }: { title: string; empty: string; i
   );
 }
 
-function evaluateCodeBuddyReadiness(runtimes: AgentRuntime[]): AgentRuntimeReadiness {
-  const codeBuddyRuntimes = runtimes.filter((runtime) => runtime.provider.toLowerCase() === "codebuddy");
-  const onlineRuntime = codeBuddyRuntimes.find((runtime) => runtime.status === "online") ?? null;
-  if (onlineRuntime) {
-    return {
-      status: "就绪",
-      label: "CodeBuddy 在线",
-      detail: `已发现在线 CodeBuddy runtime「${onlineRuntime.name}」，可以作为 ${DEFAULT_AGENT_MODEL} 的真实执行目标。`,
-      fix: "无需修复；下一步应创建真实 Agent 任务并采集 trace、token、成本和输出。",
-      runtime: onlineRuntime,
-    };
-  }
-  const offlineRuntime = codeBuddyRuntimes[0] ?? null;
-  if (offlineRuntime) {
-    return {
-      status: "离线",
-      label: "CodeBuddy 离线",
-      detail: `已注册 CodeBuddy runtime「${offlineRuntime.name}」，但当前状态是离线，不能创建真实 Agent 任务。`,
-      fix: "启动 multica daemon，并确认 codebuddy 可执行文件在 PATH 中，或设置 MULTICA_CODEBUDDY_PATH 后重启 daemon。",
-      runtime: offlineRuntime,
-    };
-  }
-  return {
-    status: "缺失",
-    label: "CodeBuddy 缺失",
-    detail: "当前 workspace 未发现 CodeBuddy runtime，Agent 调试场不能执行 minimax-m2.7-ioa。",
-    fix: "安装并配置 codebuddy，启动 multica daemon，等待 /api/runtimes 出现 provider=codebuddy 且 status=online 的 runtime。",
-    runtime: null,
-  };
-}
-
-function buildAgentExecutionStatus(readiness: AgentRuntimeReadiness): string {
+function buildAgentExecutionStatus(readiness: PromptEvaluationRuntimeReadiness): string {
   if (readiness.status === "就绪") {
     return `CodeBuddy runtime 已在线，目标模型 ${DEFAULT_AGENT_MODEL}；此记录是实验包快照，点击“创建真实 Agent 任务”后会入队并采集 trace、token、成本和输出`;
   }
@@ -1535,7 +1503,7 @@ function buildAgentDebugPackageRequest(
   values: Record<string, string>,
   rendered: string,
   expectedOutput: string,
-  readiness: AgentRuntimeReadiness,
+  readiness: PromptEvaluationRuntimeReadiness,
 ): CreatePromptEvaluationAssetRequest {
   return {
     prompt_id: prompt.id,
