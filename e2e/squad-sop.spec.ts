@@ -17,6 +17,49 @@ test.describe("小队 SOP 端到端", () => {
     }
   });
 
+  test("管理员可从产品入口幂等准备 Multica 编码小队", async ({ page }) => {
+    test.setTimeout(120_000);
+
+    await api.cleanupInternalSquadTemplates();
+    await api.ensureOnlineCodeBuddyRuntime("E2E 内置小队 CodeBuddy Runtime");
+
+    await page.goto(`/${workspaceSlug}/squads`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "Multica 编码小队" }).first().click();
+
+    await expect(page.getByRole("heading", { name: "Multica 编码小队" }).first()).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect(page.getByText("队长").first()).toBeVisible();
+    await expect(page.getByText("方案设计者").first()).toBeVisible();
+    await expect(page.getByText("开发者").first()).toBeVisible();
+    await expect(page.getByText("验收者").first()).toBeVisible();
+    await expect(page.getByText("规约维护者").first()).toBeVisible();
+    await expect(page.getByText("部署运行者").first()).toBeVisible();
+
+    await expect.poll(() => api.getInternalSquadTemplateStats(), {
+      timeout: 15_000,
+      message: "等待内置编码小队角色写入数据库",
+    }).toEqual({
+      squad_count: 1,
+      agent_count: 6,
+      member_count: 6,
+    });
+
+    await page.goto(`/${workspaceSlug}/squads`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "Multica 编码小队" }).first().click();
+    await expect(page.getByRole("heading", { name: "Multica 编码小队" }).first()).toBeVisible({
+      timeout: 30_000,
+    });
+    await expect.poll(() => api.getInternalSquadTemplateStats(), {
+      timeout: 15_000,
+      message: "重复准备内置编码小队不应制造重复数据",
+    }).toEqual({
+      squad_count: 1,
+      agent_count: 6,
+      member_count: 6,
+    });
+  });
+
   test("Multica 编码小队接收 issue 后生成队长任务、SOP 证据和观测指标", async ({ page }) => {
     test.setTimeout(120_000);
 

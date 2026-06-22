@@ -31,6 +31,71 @@ func TestSquadOperatingProtocolWarnsAgainstDualTrigger(t *testing.T) {
 	}
 }
 
+func TestEnsureInternalSquadTemplateCreatesCodingSquadIdempotently(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	ctx := context.Background()
+	cleanup := func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name = 'Multica 编码小队'`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND name LIKE 'Multica 编码小队 · %'`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE workspace_id = $1 AND name LIKE 'internal-squad-codebuddy-test-%'`, testWorkspaceID)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codebuddy', 'online', 'CodeBuddy 内部小队测试运行时', '{}'::jsonb, $4, 'private', now())
+	`, testWorkspaceID, "internal-squad-codebuddy-daemon-"+randomID()[:8], "internal-squad-codebuddy-test-"+randomID()[:8], testUserID); err != nil {
+		t.Fatalf("create codebuddy runtime: %v", err)
+	}
+
+	create := func() InternalSquadTemplateResponse {
+		t.Helper()
+		w := httptest.NewRecorder()
+		testHandler.EnsureInternalSquadTemplate(w, newRequest(http.MethodPost, "/api/squads/internal-template", map[string]any{
+			"template_key": "multica-coding",
+		}))
+		if w.Code != http.StatusOK {
+			t.Fatalf("ensure internal squad status = %d, body = %s", w.Code, w.Body.String())
+		}
+		var resp InternalSquadTemplateResponse
+		if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+			t.Fatalf("decode internal squad response: %v", err)
+		}
+		return resp
+	}
+	first := create()
+	if first.Squad.Name != "Multica 编码小队" || first.Squad.MemberCount != 6 || len(first.Agents) != 6 {
+		t.Fatalf("first internal squad response = %+v", first)
+	}
+	if stringFromAny(first.Squad.SOPProfile.(map[string]any)["profile_key"]) != "multica-coding" {
+		t.Fatalf("sop profile = %#v", first.Squad.SOPProfile)
+	}
+	second := create()
+	if second.Squad.ID != first.Squad.ID || len(second.Agents) != 6 {
+		t.Fatalf("second internal squad response = %+v first=%+v", second, first)
+	}
+	var agentCount, squadCount, memberCount int
+	if err := testPool.QueryRow(ctx, `SELECT count(*)::int FROM agent WHERE workspace_id = $1 AND name LIKE 'Multica 编码小队 · %'`, testWorkspaceID).Scan(&agentCount); err != nil {
+		t.Fatalf("count coding squad agents: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT count(*)::int FROM squad WHERE workspace_id = $1 AND name = 'Multica 编码小队'`, testWorkspaceID).Scan(&squadCount); err != nil {
+		t.Fatalf("count coding squads: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)::int
+		FROM squad_member sm
+		JOIN squad s ON s.id = sm.squad_id
+		WHERE s.workspace_id = $1 AND s.name = 'Multica 编码小队'
+	`, testWorkspaceID).Scan(&memberCount); err != nil {
+		t.Fatalf("count coding squad members: %v", err)
+	}
+	if agentCount != 6 || squadCount != 1 || memberCount != 6 {
+		t.Fatalf("idempotent counts: agents=%d squads=%d members=%d", agentCount, squadCount, memberCount)
+	}
+}
+
 // seedSquadForBriefing creates a squad with the seeded test agent as
 // leader. Returns the loaded db.Squad and a cleanup-registered ID.
 func seedSquadForBriefing(t *testing.T, leaderID string, name, instructions string) db.Squad {

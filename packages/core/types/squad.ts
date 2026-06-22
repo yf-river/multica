@@ -54,6 +54,20 @@ export interface CreateSquadRequest {
   sop_profile?: Record<string, unknown>;
 }
 
+export type InternalSquadTemplateKey = "user-center" | "multica-coding";
+
+export interface InternalSquadTemplateAgent {
+  id: string;
+  name: string;
+  role_key: string;
+  role: string;
+}
+
+export interface InternalSquadTemplateResponse {
+  squad: Squad;
+  agents: InternalSquadTemplateAgent[];
+}
+
 export interface UpdateSquadRequest {
   name?: string;
   description?: string;

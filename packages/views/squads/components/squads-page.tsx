@@ -35,7 +35,7 @@ import {
   type SquadsScope,
   type SquadSortField,
 } from "@multica/core/squads/stores";
-import type { Agent, MemberWithUser, Squad } from "@multica/core/types";
+import type { Agent, InternalSquadTemplateKey, MemberWithUser, Squad } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import {
   Dialog,
@@ -81,7 +81,7 @@ import {
 import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
-import { useRowLink } from "../../navigation";
+import { useNavigation, useRowLink } from "../../navigation";
 import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
 
@@ -752,6 +752,8 @@ export function SquadsPage() {
   const wsId = workspace?.id ?? "";
   const p = useWorkspacePaths();
   const rowLink = useRowLink();
+  const navigation = useNavigation();
+  const queryClient = useQueryClient();
   const currentUser = useAuthStore((s) => s.user);
 
   const { data: squads = [], isLoading } = useQuery({
@@ -778,6 +780,24 @@ export function SquadsPage() {
     const me = members.find((mem: MemberWithUser) => mem.user_id === currentUser.id);
     return me?.role === "owner" || me?.role === "admin";
   }, [members, currentUser]);
+  const ensureInternalSquad = useMutation({
+    mutationFn: (templateKey: InternalSquadTemplateKey) => api.ensureInternalSquadTemplate(templateKey),
+    onSuccess: (result) => {
+      toast.success(`${result.squad.name} 已就绪`);
+      const detailPath = p.squadDetail(result.squad.id);
+      navigation.push(detailPath);
+      queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
+      queryClient.invalidateQueries({ queryKey: workspaceKeys.agents(wsId) });
+      if (typeof window !== "undefined") {
+        window.setTimeout(() => {
+          if (window.location.pathname !== detailPath) {
+            window.location.assign(detailPath);
+          }
+        }, 750);
+      }
+    },
+    onError: (err) => toast.error(err instanceof Error ? err.message : String(err)),
+  });
 
   const scope = useSquadsViewStore((s) => s.scope);
   const setScope = useSquadsViewStore((s) => s.setScope);
@@ -888,16 +908,42 @@ export function SquadsPage() {
         </div>
         {/* Quiet chrome button (outline, icon-only below md) — primary is
             reserved for the empty state. */}
-        <Button
-          size="sm"
-          variant="outline"
-          className="h-8 w-8 gap-1 px-0 md:w-auto md:px-2.5"
-          aria-label={t(($) => $.page.new_button)}
-          onClick={() => useModalStore.getState().open("create-squad")}
-        >
-          <Plus className="h-3.5 w-3.5" />
-          <span className="hidden md:inline">{t(($) => $.page.new_button)}</span>
-        </Button>
+        <div className="flex items-center gap-2">
+          {isWorkspaceAdmin && (
+            <>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 gap-1 px-2.5"
+                disabled={ensureInternalSquad.isPending}
+                onClick={() => ensureInternalSquad.mutate("user-center")}
+              >
+                {ensureInternalSquad.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Users className="h-3.5 w-3.5" />}
+                <span className="hidden lg:inline">user-center 小队</span>
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-8 gap-1 px-2.5"
+                disabled={ensureInternalSquad.isPending}
+                onClick={() => ensureInternalSquad.mutate("multica-coding")}
+              >
+                {ensureInternalSquad.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Users className="h-3.5 w-3.5" />}
+                <span className="hidden lg:inline">Multica 编码小队</span>
+              </Button>
+            </>
+          )}
+          <Button
+            size="sm"
+            variant="outline"
+            className="h-8 w-8 gap-1 px-0 md:w-auto md:px-2.5"
+            aria-label={t(($) => $.page.new_button)}
+            onClick={() => useModalStore.getState().open("create-squad")}
+          >
+            <Plus className="h-3.5 w-3.5" />
+            <span className="hidden md:inline">{t(($) => $.page.new_button)}</span>
+          </Button>
+        </div>
       </PageHeader>
 
       {isLoading ? (
@@ -915,6 +961,26 @@ export function SquadsPage() {
             <Plus className="size-3.5" />
             {t(($) => $.page.new_button)}
           </Button>
+          {isWorkspaceAdmin && (
+            <div className="flex flex-wrap justify-center gap-2">
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={ensureInternalSquad.isPending}
+                onClick={() => ensureInternalSquad.mutate("user-center")}
+              >
+                user-center 小队
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                disabled={ensureInternalSquad.isPending}
+                onClick={() => ensureInternalSquad.mutate("multica-coding")}
+              >
+                Multica 编码小队
+              </Button>
+            </div>
+          )}
         </div>
       ) : (
         <>

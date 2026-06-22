@@ -163,6 +163,12 @@ interface ObservabilitySummary {
   runtime_breakdown: Array<Record<string, unknown>>;
 }
 
+interface InternalSquadTemplateStats {
+  squad_count: number;
+  agent_count: number;
+  member_count: number;
+}
+
 export class TestApiClient {
   private token: string | null = null;
   private workspaceSlug: string | null = null;
@@ -487,6 +493,53 @@ export class TestApiClient {
     const issue = await res.json();
     this.createdIssueIds.push(issue.id);
     return issue;
+  }
+
+  async ensureInternalSquadTemplate(templateKey: "user-center" | "multica-coding") {
+    const res = await this.authedFetch("/api/squads/internal-template", {
+      method: "POST",
+      body: JSON.stringify({ template_key: templateKey }),
+    });
+    if (!res.ok) {
+      throw new Error(`ensure internal squad template failed: ${res.status} ${await res.text()}`);
+    }
+    const data = await res.json();
+    if (data?.squad?.id) {
+      this.createdSquadIds.push(data.squad.id);
+    }
+    return data;
+  }
+
+  async getInternalSquadTemplateStats(templateName = "Multica 编码小队"): Promise<InternalSquadTemplateStats> {
+    if (!this.workspaceId) {
+      throw new Error("Cannot inspect internal squad template before workspace is selected");
+    }
+    const client = new pg.Client(DATABASE_URL);
+    await client.connect();
+    try {
+      const result = await client.query<InternalSquadTemplateStats>(
+        `
+          WITH target_squads AS (
+            SELECT id FROM squad WHERE workspace_id = $1 AND name = $2
+          ),
+          target_agents AS (
+            SELECT id FROM agent WHERE workspace_id = $1 AND name LIKE ($2 || ' · %')
+          )
+          SELECT
+            (SELECT count(*)::int FROM target_squads) AS squad_count,
+            (SELECT count(*)::int FROM target_agents) AS agent_count,
+            (
+              SELECT count(*)::int
+              FROM squad_member sm
+              JOIN target_squads s ON s.id = sm.squad_id
+            ) AS member_count
+        `,
+        [this.workspaceId, templateName],
+      );
+      return result.rows[0] ?? { squad_count: 0, agent_count: 0, member_count: 0 };
+    } finally {
+      await client.end();
+    }
   }
 
   async deleteIssue(id: string) {
@@ -1046,6 +1099,44 @@ export class TestApiClient {
     }
   }
 
+  async cleanupInternalSquadTemplates() {
+    if (!this.workspaceId) {
+      return;
+    }
+    const client = new pg.Client(DATABASE_URL);
+    await client.connect();
+    try {
+      await client.query("BEGIN");
+      try {
+        await client.query(
+          `
+            DELETE FROM squad
+            WHERE workspace_id = $1
+              AND name IN ('user-center 小队', 'Multica 编码小队')
+          `,
+          [this.workspaceId],
+        );
+        await client.query(
+          `
+            DELETE FROM agent
+            WHERE workspace_id = $1
+              AND (
+                name LIKE 'user-center 小队 · %'
+                OR name LIKE 'Multica 编码小队 · %'
+              )
+          `,
+          [this.workspaceId],
+        );
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      }
+    } finally {
+      await client.end();
+    }
+  }
+
   /** Clean up all issues created during this test. */
   async cleanup() {
     for (const id of this.createdIssueIds) {
@@ -1057,6 +1148,7 @@ export class TestApiClient {
     }
     this.createdIssueIds = [];
     await this.cleanupSeededSquads();
+    await this.cleanupInternalSquadTemplates();
     await this.cleanupSeededRuntimes();
   }
 

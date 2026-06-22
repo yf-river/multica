@@ -1,16 +1,20 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -56,6 +60,122 @@ type SquadMemberResponse struct {
 	MemberID   string `json:"member_id"`
 	Role       string `json:"role"`
 	CreatedAt  string `json:"created_at"`
+}
+
+type InternalSquadTemplateResponse struct {
+	Squad  SquadResponse        `json:"squad"`
+	Agents []InternalSquadAgent `json:"agents"`
+}
+
+type InternalSquadAgent struct {
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	RoleKey string `json:"role_key"`
+	Role    string `json:"role"`
+}
+
+type internalSquadTemplate struct {
+	Key          string
+	Name         string
+	Description  string
+	Instructions string
+	Model        string
+	Roles        []internalSquadRole
+	Profile      map[string]any
+}
+
+type internalSquadRole struct {
+	Key         string
+	Name        string
+	Instruction string
+	MemberRole  string
+}
+
+func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
+	switch strings.TrimSpace(key) {
+	case "user-center":
+		return internalSquadTemplate{
+			Key:          "user-center-sop-flow",
+			Name:         "user-center 小队",
+			Description:  "面向 user-center 项目的内部 SOP 小队，由队长按阶段链分派 user-center skill 队员执行。",
+			Instructions: "队长按 user-center SOP 分阶段推进；每个阶段都要记录输入、输出、失败原因、耗时和验收证据；不得跳过验收。",
+			Model:        "minimax-m2.7-ioa",
+			Roles: []internalSquadRole{
+				{Key: "captain", Name: "队长", Instruction: "负责接收 issue、判断阶段、拆解任务、汇总证据并推进下一阶段。", MemberRole: "队长"},
+				{Key: "skill-member", Name: "skill 队员", Instruction: "按 user-center skill 边界执行具体处理，不越权修改无关模块。", MemberRole: "skill 队员"},
+				{Key: "acceptor", Name: "验收者", Instruction: "独立检查实现、测试结果和回写记录。", MemberRole: "验收者"},
+			},
+			Profile: map[string]any{
+				"profile_key": "user-center-sop-flow",
+				"project":     "user-center",
+				"repo":        "/data/ida/user-center",
+				"mode":        "stage_chain",
+				"roles": []map[string]any{
+					{"key": "captain", "name": "队长", "responsibility": "接收 issue、按阶段链推进、汇总证据并决定是否进入下一阶段。"},
+					{"key": "skill-member", "name": "skill 队员", "responsibility": "按 user-center skill 边界执行具体处理，不越权修改无关模块。"},
+					{"key": "acceptor", "name": "验收者", "responsibility": "独立检查实现、测试结果和回写记录。"},
+				},
+				"steps": []map[string]any{
+					{"key": "clarify", "name": "需求澄清", "role_key": "captain"},
+					{"key": "design", "name": "方案拆解", "role_key": "captain"},
+					{"key": "skill_execution", "name": "skill 执行", "role_key": "skill-member"},
+					{"key": "acceptance", "name": "验收", "role_key": "acceptor"},
+					{"key": "summary", "name": "回写总结", "role_key": "captain"},
+				},
+				"stage_skills":      []string{"user-center/01-clarify", "user-center/02-design", "user-center/03-task-split", "user-center/04-implement", "user-center/05-verify", "user-center/06-archive"},
+				"operation_skills":  []string{"user-center/add-api"},
+				"acceptance":        []string{"阶段产物完整", "测试证据完整", "交接说明明确"},
+				"forbidden_actions": []string{"跳过验收直接完成", "缺少测试证据时宣称完成", "越过 user-center skill 边界修改无关仓库"},
+			},
+		}, true
+	case "multica-coding":
+		roles := []internalSquadRole{
+			{Key: "captain", Name: "队长", Instruction: "接需求、判断流程、拆任务、分派给不同 AI、跟踪进度。", MemberRole: "队长"},
+			{Key: "designer", Name: "方案设计者", Instruction: "编写技术方案、影响面、任务拆解、测试方案；重大开发前先给人确认。", MemberRole: "方案设计者"},
+			{Key: "developer", Name: "开发者", Instruction: "只按分配范围改代码，包括前端、后端、测试或部署中的一块。", MemberRole: "开发者"},
+			{Key: "acceptor", Name: "验收者", Instruction: "独立检查代码、测试结果、漏改和回归风险。", MemberRole: "验收者"},
+			{Key: "spec-maintainer", Name: "规约维护者", Instruction: "判断是否同步流程文档、测试数据说明、接口索引、技能说明。", MemberRole: "规约维护者"},
+			{Key: "operator", Name: "部署运行者", Instruction: "负责端口、环境变量、数据库、启动服务、健康检查、部署验证；不能泄露密钥。", MemberRole: "部署运行者"},
+		}
+		return internalSquadTemplate{
+			Key:          "multica-coding",
+			Name:         "Multica 编码小队",
+			Description:  "用于开发 Multica 自身的生产级编码小队，包含队长、方案设计者、开发者、验收者、规约维护者和部署运行者。",
+			Instructions: "队长先澄清需求和验收口径，再按角色分派；开发者不得越界；验收者必须独立给出证据；所有指标和输出使用中文。",
+			Model:        "minimax-m2.7-ioa",
+			Roles:        roles,
+			Profile: map[string]any{
+				"profile_key": "multica-coding",
+				"project":     "multica",
+				"repo":        "/data/ida/goal-test",
+				"mode":        "coding_squad",
+				"roles": []map[string]any{
+					{"key": "captain", "name": "队长", "responsibility": "接需求、判断流程、拆任务、分派给不同 AI、跟踪进度。"},
+					{"key": "designer", "name": "方案设计者", "responsibility": "编写技术方案、影响面、任务拆解、测试方案。"},
+					{"key": "developer", "name": "开发者", "responsibility": "按分配范围改代码，不能越界。"},
+					{"key": "acceptor", "name": "验收者", "responsibility": "独立检查代码、测试结果和漏改。"},
+					{"key": "spec-maintainer", "name": "规约维护者", "responsibility": "同步流程文档、测试数据说明、接口索引、技能说明。"},
+					{"key": "operator", "name": "部署运行者", "responsibility": "负责环境、启动、日志和健康检查。"},
+				},
+				"steps": []map[string]any{
+					{"key": "receive", "name": "接收需求", "role_key": "captain"},
+					{"key": "design_review", "name": "方案设计与确认", "role_key": "designer"},
+					{"key": "implementation", "name": "分工开发", "role_key": "developer"},
+					{"key": "independent_acceptance", "name": "独立验收", "role_key": "acceptor"},
+					{"key": "spec_sync", "name": "规约同步", "role_key": "spec-maintainer"},
+					{"key": "deploy_verify", "name": "部署运行验证", "role_key": "operator"},
+					{"key": "final_report", "name": "证据汇总", "role_key": "captain"},
+				},
+				"model_policy":      map[string]any{"默认模型": "minimax", "代码测试复杂审查": "gpt", "策略说明": "minimax 用于大批量普通执行；涉及代码、测试、复杂审查时使用 gpt。"},
+				"stage_skills":      []string{},
+				"operation_skills":  []string{},
+				"acceptance":        []string{"方案经确认", "代码范围清晰", "验收者独立给结论", "测试证据完整", "规约同步或说明无需同步", "运行验证完成"},
+				"forbidden_actions": []string{"泄露密钥", "开发者越权改范围外代码", "未独立验收就完成", "跳过测试证据", "文档接口语义停留在旧版本"},
+			},
+		}, true
+	default:
+		return internalSquadTemplate{}, false
+	}
 }
 
 // ── Converters ──────────────────────────────────────────────────────────────
@@ -300,6 +420,219 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		1,
 	))
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+func (h *Handler) EnsureInternalSquadTemplate(w http.ResponseWriter, r *http.Request) {
+	workspaceID := workspaceIDFromURL(r, "workspaceId")
+	member, ok := h.requireWorkspaceRole(w, r, workspaceID, "workspace not found", "owner", "admin")
+	if !ok {
+		return
+	}
+	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+
+	var req struct {
+		TemplateKey string `json:"template_key"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	template, ok := internalSquadTemplateByKey(req.TemplateKey)
+	if !ok {
+		writeError(w, http.StatusBadRequest, "template_key must be user-center or multica-coding")
+		return
+	}
+
+	runtime, ok := h.selectInternalSquadRuntime(w, r, wsUUID, member)
+	if !ok {
+		return
+	}
+	agents, err := h.ensureInternalSquadAgents(r.Context(), wsUUID, member.UserID, runtime, template)
+	if err != nil {
+		slog.Warn("ensure internal squad agents failed", append(logger.RequestAttrs(r), "error", err, "template", template.Key)...)
+		writeError(w, http.StatusInternalServerError, "failed to create internal squad agents")
+		return
+	}
+	squad, err := h.ensureInternalSquad(r.Context(), wsUUID, member.UserID, template, agents)
+	if err != nil {
+		slog.Warn("ensure internal squad failed", append(logger.RequestAttrs(r), "error", err, "template", template.Key)...)
+		writeError(w, http.StatusInternalServerError, "failed to create internal squad")
+		return
+	}
+	resp, err := h.squadToResponseWithPreview(r.Context(), squad)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load internal squad")
+		return
+	}
+	writeJSON(w, http.StatusOK, InternalSquadTemplateResponse{Squad: resp, Agents: agents})
+}
+
+func (h *Handler) selectInternalSquadRuntime(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, member db.Member) (db.AgentRuntime, bool) {
+	runtimes, err := h.Queries.ListAgentRuntimes(r.Context(), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list runtimes")
+		return db.AgentRuntime{}, false
+	}
+	checkedAt := time.Now().UTC()
+	var best *db.AgentRuntime
+	for i := range runtimes {
+		runtime := runtimes[i]
+		if !strings.EqualFold(runtime.Provider, "codebuddy") || !canUseRuntimeForAgent(member, runtime) {
+			continue
+		}
+		if best == nil || runtimeReadinessRank(runtime, checkedAt) > runtimeReadinessRank(*best, checkedAt) {
+			best = &runtime
+		}
+	}
+	if best == nil {
+		writeError(w, http.StatusServiceUnavailable, "当前 workspace 没有可用的 CodeBuddy runtime，无法创建真实可执行的内部小队。请先启动 multica daemon 并确认 /api/runtimes 出现 provider=codebuddy 的在线 runtime。")
+		return db.AgentRuntime{}, false
+	}
+	if best.Status != "online" || !best.LastSeenAt.Valid || checkedAt.Sub(best.LastSeenAt.Time) > promptEvaluationRuntimeFreshTTL {
+		writeError(w, http.StatusServiceUnavailable, "CodeBuddy runtime 当前未就绪，无法创建真实可执行的内部小队。请启动 daemon 并等待 runtime 心跳刷新。")
+		return db.AgentRuntime{}, false
+	}
+	return *best, true
+}
+
+func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgtype.UUID, ownerID pgtype.UUID, runtime db.AgentRuntime, template internalSquadTemplate) ([]InternalSquadAgent, error) {
+	existing, err := h.Queries.ListAgents(ctx, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	byName := map[string]db.Agent{}
+	for _, agent := range existing {
+		byName[agent.Name] = agent
+	}
+	result := make([]InternalSquadAgent, 0, len(template.Roles))
+	for _, role := range template.Roles {
+		name := template.Name + " · " + role.Name
+		agentRow, ok := byName[name]
+		if !ok {
+			runtimeConfig := mustJSONBytes(map[string]any{
+				"provider": runtime.Provider,
+				"用途":       template.Name,
+				"角色":       role.Name,
+				"模板":       template.Key,
+			})
+			agentRow, err = h.Queries.CreateAgent(ctx, db.CreateAgentParams{
+				WorkspaceID:        workspaceID,
+				Name:               name,
+				Description:        template.Description,
+				Instructions:       "你是" + template.Name + "的" + role.Name + "。" + role.Instruction + "所有输出必须使用中文，并保留可验收证据。",
+				RuntimeMode:        runtime.RuntimeMode,
+				RuntimeConfig:      runtimeConfig,
+				RuntimeID:          runtime.ID,
+				Visibility:         "workspace",
+				MaxConcurrentTasks: 2,
+				OwnerID:            ownerID,
+				CustomEnv:          []byte("{}"),
+				CustomArgs:         []byte("[]"),
+				Model:              pgtype.Text{String: template.Model, Valid: template.Model != ""},
+			})
+			if err != nil {
+				return nil, err
+			}
+		}
+		result = append(result, InternalSquadAgent{
+			ID:      uuidToString(agentRow.ID),
+			Name:    agentRow.Name,
+			RoleKey: role.Key,
+			Role:    role.Name,
+		})
+	}
+	return result, nil
+}
+
+func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UUID, creatorID pgtype.UUID, template internalSquadTemplate, agents []InternalSquadAgent) (db.Squad, error) {
+	squads, err := h.Queries.ListSquads(ctx, workspaceID)
+	if err != nil {
+		return db.Squad{}, err
+	}
+	var squad db.Squad
+	for _, item := range squads {
+		profile := decodeJSONDefault(item.SopProfile, map[string]any{})
+		profileMap, _ := profile.(map[string]any)
+		if item.Name == template.Name || stringFromAny(profileMap["profile_key"]) == template.Key {
+			squad = item
+			break
+		}
+	}
+	if uuidToString(squad.ID) == "" {
+		if len(agents) == 0 {
+			return db.Squad{}, pgx.ErrNoRows
+		}
+		sopProfile := mustJSONBytes(template.Profile)
+		squad, err = h.Queries.CreateSquad(ctx, db.CreateSquadParams{
+			WorkspaceID: workspaceID,
+			Name:        template.Name,
+			Description: template.Description,
+			LeaderID:    parseUUID(agents[0].ID),
+			CreatorID:   creatorID,
+			SopProfile:  sopProfile,
+		})
+		if err != nil {
+			return db.Squad{}, err
+		}
+	} else {
+		profileBytes := mustJSONBytes(template.Profile)
+		if !bytes.Equal(bytes.TrimSpace(squad.SopProfile), bytes.TrimSpace(profileBytes)) || squad.Instructions != template.Instructions {
+			squad, err = h.Queries.UpdateSquad(ctx, db.UpdateSquadParams{
+				ID:           squad.ID,
+				Description:  pgtype.Text{String: template.Description, Valid: true},
+				Instructions: pgtype.Text{String: template.Instructions, Valid: true},
+				SopProfile:   profileBytes,
+			})
+			if err != nil {
+				return db.Squad{}, err
+			}
+		}
+	}
+	existingMembers, err := h.Queries.ListSquadMembers(ctx, squad.ID)
+	if err != nil {
+		return db.Squad{}, err
+	}
+	existingMemberRoles := map[string]string{}
+	for _, member := range existingMembers {
+		existingMemberRoles[member.MemberType+":"+uuidToString(member.MemberID)] = member.Role
+	}
+	for _, agent := range agents {
+		role := "member"
+		for _, templateRole := range template.Roles {
+			if templateRole.Key == agent.RoleKey {
+				role = templateRole.MemberRole
+				break
+			}
+		}
+		memberID := parseUUID(agent.ID)
+		memberKey := "agent:" + agent.ID
+		if existingRole, exists := existingMemberRoles[memberKey]; exists {
+			if existingRole != role {
+				if _, err := h.Queries.UpdateSquadMemberRole(ctx, db.UpdateSquadMemberRoleParams{
+					SquadID:    squad.ID,
+					MemberType: "agent",
+					MemberID:   memberID,
+					Role:       role,
+				}); err != nil {
+					return db.Squad{}, err
+				}
+			}
+			continue
+		}
+		if _, err := h.Queries.AddSquadMember(ctx, db.AddSquadMemberParams{
+			SquadID:    squad.ID,
+			MemberType: "agent",
+			MemberID:   memberID,
+			Role:       role,
+		}); err != nil {
+			return db.Squad{}, err
+		}
+		existingMemberRoles[memberKey] = role
+	}
+	return squad, nil
 }
 
 func (h *Handler) GetSquad(w http.ResponseWriter, r *http.Request) {
