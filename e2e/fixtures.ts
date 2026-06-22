@@ -166,6 +166,24 @@ interface CodingSquadFixture {
   agents: Array<{ id: string; name: string; role: string; roleKey: string }>;
 }
 
+interface InternalSquadTemplateAgent {
+  id: string;
+  name: string;
+  role_key: string;
+  role: string;
+}
+
+interface InternalSquadTemplateResponse {
+  squad: {
+    id: string;
+    name: string;
+    leader_id: string;
+    sop_profile: Record<string, unknown>;
+    member_count: number;
+  };
+  agents: InternalSquadTemplateAgent[];
+}
+
 interface SquadLeaderTask {
   id: string;
   status: string;
@@ -631,7 +649,7 @@ export class TestApiClient {
     return issue;
   }
 
-  async ensureInternalSquadTemplate(templateKey: "user-center" | "multica-coding") {
+  async ensureInternalSquadTemplate(templateKey: "user-center" | "multica-coding"): Promise<InternalSquadTemplateResponse> {
     const res = await this.authedFetch("/api/squads/internal-template", {
       method: "POST",
       body: JSON.stringify({ template_key: templateKey }),
@@ -639,7 +657,7 @@ export class TestApiClient {
     if (!res.ok) {
       throw new Error(`ensure internal squad template failed: ${res.status} ${await res.text()}`);
     }
-    const data = await res.json();
+    const data = (await res.json()) as InternalSquadTemplateResponse;
     if (data?.squad?.id) {
       this.createdSquadIds.push(data.squad.id);
     }
@@ -825,6 +843,26 @@ export class TestApiClient {
     } finally {
       await client.end();
     }
+  }
+
+  async completeSquadLeaderTaskViaDaemon(task: SquadLeaderTask, output: string) {
+    if (task.status === "queued") {
+      const claimed = await this.claimDaemonTask(task.runtime_id);
+      if (claimed.task?.id && claimed.task.id !== task.id) {
+        throw new Error(`claimed unexpected task ${claimed.task.id}; expected ${task.id}`);
+      }
+    }
+    await this.startDaemonTask(task.id);
+    await this.reportDaemonTaskUsage(task.id, {
+      provider: "codebuddy",
+      model: "minimax-m2.7-ioa",
+      input_tokens: 36,
+      output_tokens: 19,
+      cache_read_tokens: 5,
+      cache_write_tokens: 7,
+    });
+    await this.reportDaemonTaskMessages(task.id, output);
+    await this.completeDaemonTask(task.id, output);
   }
 
   async listPromptLibraryItems(): Promise<PromptLibraryItem[]> {
