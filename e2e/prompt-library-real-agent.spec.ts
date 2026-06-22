@@ -5,12 +5,13 @@ import { waitForPageText } from "./helpers";
 const RUN_REAL_AGENT_E2E = process.env.RUN_REAL_AGENT_E2E === "1";
 const REAL_AGENT_ACCOUNT = process.env.REAL_AGENT_E2E_ACCOUNT || "goal-test-daemon";
 const REAL_AGENT_WORKSPACE = process.env.REAL_AGENT_E2E_WORKSPACE || "goal-test-daemon";
-const EXPECTED_AGENT_MODEL = process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL || "minimax-m2.7-ioa";
+const EXPECTED_AGENT_PROVIDER = process.env.MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER || "codex";
+const EXPECTED_AGENT_MODEL = process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL || "gpt-5.3-codex-spark";
 
 test.describe("训练与评估真实 Agent 闭环", () => {
-  test.skip(!RUN_REAL_AGENT_E2E, "设置 RUN_REAL_AGENT_E2E=1 后才运行真实 daemon/CodeBuddy 验收");
+  test.skip(!RUN_REAL_AGENT_E2E, "设置 RUN_REAL_AGENT_E2E=1 后才运行真实 daemon/Codex 验收");
 
-  test("CodeBuddy daemon 可以真实执行测试套件并写回运行证据", async ({ page }) => {
+  test("Codex daemon 可以真实执行测试套件并写回运行证据", async ({ page }) => {
     test.setTimeout(240_000);
 
     const api = new TestApiClient();
@@ -27,13 +28,13 @@ test.describe("训练与评估真实 Agent 闭环", () => {
         model: EXPECTED_AGENT_MODEL,
       });
       expect(readiness.runtime).toMatchObject({
-        provider: "codebuddy",
+        provider: EXPECTED_AGENT_PROVIDER,
         status: "online",
       });
 
       const prompt = await api.createPromptLibraryItem({
         name: `${prefix} 提示词`,
-        description: "真实 daemon E2E：创建提示词后由 CodeBuddy 执行评估。",
+        description: "真实 daemon E2E：创建提示词后由 Codex 执行评估。",
         prompt_type: "需求澄清",
         content: "请用中文澄清 {{issue_title}}，必须输出验收条件、风险、trace/任务标识和下一步建议。",
         variables: [{ name: "issue_title", label: "Issue 标题", required: true }],
@@ -76,7 +77,7 @@ test.describe("训练与评估真实 Agent 闭环", () => {
         .toMatchObject({
           run_kind: "Agent执行",
           model: EXPECTED_AGENT_MODEL,
-          runtime_provider: "codebuddy",
+          runtime_provider: EXPECTED_AGENT_PROVIDER,
           total_cases: 1,
         })
         .then(async () => {
@@ -93,7 +94,7 @@ test.describe("训练与评估真实 Agent 闭环", () => {
         id: queued.run.id,
         run_kind: "Agent执行",
         model: EXPECTED_AGENT_MODEL,
-        runtime_provider: "codebuddy",
+        runtime_provider: EXPECTED_AGENT_PROVIDER,
         task_id: queued.task_id,
       });
       expect(evidence.trials.length).toBeGreaterThan(0);
@@ -127,7 +128,7 @@ test.describe("训练与评估真实 Agent 闭环", () => {
           expect.arrayContaining([
             expect.objectContaining({
               task_id: queued.task_id,
-              provider: "codebuddy",
+              provider: EXPECTED_AGENT_PROVIDER,
               model: EXPECTED_AGENT_MODEL,
               priced: true,
             }),

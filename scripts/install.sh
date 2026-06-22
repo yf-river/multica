@@ -249,7 +249,7 @@ pull_official_selfhost_images() {
 }
 
 upgrade_cli_brew() {
-  info "Upgrading Multica CLI via Homebrew..."
+  info "正在通过 Homebrew 升级 Multica CLI..."
   brew update 2>/dev/null || true
   if brew upgrade "$BREW_PACKAGE" 2>/dev/null; then
     ok "Multica CLI upgraded via Homebrew"
@@ -418,15 +418,15 @@ run_default() {
 
   printf "\n"
   printf "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n"
-  printf "${BOLD}${GREEN}  ✓ Multica CLI is ready!${RESET}\n"
+  printf "${BOLD}${GREEN}  ✓ Multica CLI 已就绪！${RESET}\n"
   printf "${BOLD}${GREEN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}\n"
   printf "\n"
-  printf "  ${BOLD}Next: configure your environment${RESET}\n"
+  printf "  ${BOLD}下一步：连接团队内部环境${RESET}\n"
   printf "\n"
-  printf "     ${CYAN}multica setup${RESET}                # Connect to Multica Cloud (multica.ai)\n"
-  printf "     ${CYAN}multica setup self-host${RESET}       # Connect to a self-hosted server\n"
+  printf "     ${CYAN}multica setup self-host${RESET}       # 连接团队内部或自部署服务\n"
+  printf "     ${CYAN}multica setup self-host --server-url https://api.example.internal --app-url https://multica.example.internal${RESET}\n"
   printf "\n"
-  printf "  ${BOLD}Self-hosting?${RESET} Install the server first:\n"
+  printf "  ${BOLD}需要先部署服务端？${RESET} 执行：\n"
   printf "     curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --with-server\n"
   printf "\n"
 }

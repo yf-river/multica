@@ -24,15 +24,17 @@ import (
 )
 
 const (
-	promptEvaluationAssetDataset      = "数据集"
-	promptEvaluationAssetTestSuite    = "测试套件"
-	promptEvaluationAssetExperiment   = "实验"
-	promptEvaluationAssetOptimize     = "优化运行"
-	promptEvaluationAssetProfileV1    = "multica.training_evaluation.asset_profile.v1"
-	promptEvaluationAgentName         = "Multica 训练评估 Agent"
-	defaultPromptEvaluationAgentModel = "minimax-m2.7-ioa"
-	promptEvaluationRuntimeFreshTTL   = 2 * time.Minute
-	promptEvaluationRuntimeLimitTTL   = 10 * time.Minute
+	promptEvaluationAssetDataset         = "数据集"
+	promptEvaluationAssetTestSuite       = "测试套件"
+	promptEvaluationAssetExperiment      = "实验"
+	promptEvaluationAssetOptimize        = "优化运行"
+	promptEvaluationAssetProfileV1       = "multica.training_evaluation.asset_profile.v1"
+	promptEvaluationAgentName            = "Multica 训练评估 Agent"
+	defaultPromptEvaluationAgentProvider = "codex"
+	defaultPromptEvaluationAgentModel    = "gpt-5.3-codex-spark"
+	fallbackPromptEvaluationAgentModel   = "gpt-5.4-mini"
+	promptEvaluationRuntimeFreshTTL      = 2 * time.Minute
+	promptEvaluationRuntimeLimitTTL      = 10 * time.Minute
 )
 
 var promptTemplateVariablePattern = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}`)
@@ -42,6 +44,13 @@ func promptEvaluationAgentModel() string {
 		return value
 	}
 	return defaultPromptEvaluationAgentModel
+}
+
+func promptEvaluationAgentProvider() string {
+	if value := strings.TrimSpace(os.Getenv("MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER")); value != "" {
+		return strings.ToLower(value)
+	}
+	return defaultPromptEvaluationAgentProvider
 }
 
 type PromptEvaluationAssetResponse struct {
@@ -3509,15 +3518,17 @@ func (h *Handler) promptEvaluationRuntimeReadiness(ctx context.Context, workspac
 	if err != nil {
 		return PromptEvaluationRuntimeReadinessResponse{}, err
 	}
-	inaccessibleCodeBuddy := 0
+	provider := promptEvaluationAgentProvider()
+	providerName := strings.ToUpper(provider[:1]) + provider[1:]
+	inaccessibleRuntime := 0
 	var best *db.AgentRuntime
 	for i := range runtimes {
 		runtime := runtimes[i]
-		if !strings.EqualFold(runtime.Provider, "codebuddy") {
+		if !strings.EqualFold(runtime.Provider, provider) {
 			continue
 		}
 		if !canUseRuntimeForAgent(member, runtime) {
-			inaccessibleCodeBuddy++
+			inaccessibleRuntime++
 			continue
 		}
 		if best == nil || runtimeReadinessRank(runtime, checkedAt) > runtimeReadinessRank(*best, checkedAt) {
@@ -3525,37 +3536,38 @@ func (h *Handler) promptEvaluationRuntimeReadiness(ctx context.Context, workspac
 		}
 	}
 	if best == nil {
-		if inaccessibleCodeBuddy > 0 {
-			return promptEvaluationRuntimeReadinessResponse("无权限", "CodeBuddy 无权限", "当前 workspace 存在 CodeBuddy runtime，但你没有绑定或使用权限。", "请让 runtime 所有者将 CodeBuddy runtime 设为 public，或由 workspace 管理员为训练评估 Agent 绑定可用 runtime。", nil, checkedAt), nil
+		if inaccessibleRuntime > 0 {
+			return promptEvaluationRuntimeReadinessResponse("无权限", providerName+" 无权限", "当前 workspace 存在 "+providerName+" runtime，但你没有绑定或使用权限。", "请让 runtime 所有者将 "+providerName+" runtime 设为 public，或由 workspace 管理员为训练评估 Agent 绑定可用 runtime。", nil, checkedAt), nil
 		}
-		return promptEvaluationRuntimeReadinessResponse("缺失", "CodeBuddy 缺失", "当前 workspace 未发现 CodeBuddy runtime，Agent 调试场不能执行 "+promptEvaluationAgentModel()+"。", "安装并配置 codebuddy，启动 multica daemon，等待 /api/runtimes 出现 provider=codebuddy 且 status=online 的 runtime。", nil, checkedAt), nil
+		return promptEvaluationRuntimeReadinessResponse("缺失", providerName+" 缺失", "当前 workspace 未发现 "+providerName+" runtime，Agent 调试场不能执行 "+promptEvaluationAgentModel()+"。", "安装并配置 "+provider+"，启动 multica daemon，等待 /api/runtimes 出现 provider="+provider+" 且 status=online 的 runtime。", nil, checkedAt), nil
 	}
 	ageSeconds := promptEvaluationRuntimeAgeSeconds(*best, checkedAt)
 	respRuntime := runtimeToResponse(*best)
 	if best.Status != "online" {
-		return promptEvaluationRuntimeReadinessResponse("离线", "CodeBuddy 离线", "已注册 CodeBuddy runtime「"+best.Name+"」，但当前状态是离线，不能创建真实 Agent 任务。", "启动 multica daemon，并确认 codebuddy 可执行文件在 PATH 中，或设置 MULTICA_CODEBUDDY_PATH 后重启 daemon。", &respRuntime, checkedAt), nil
+		return promptEvaluationRuntimeReadinessResponse("离线", providerName+" 离线", "已注册 "+providerName+" runtime「"+best.Name+"」，但当前状态是离线，不能创建真实 Agent 任务。", "启动 multica daemon，并确认 "+provider+" 可执行文件在 PATH 中，或设置对应 MULTICA_<PROVIDER>_PATH 后重启 daemon。", &respRuntime, checkedAt), nil
 	}
 	if !best.LastSeenAt.Valid || checkedAt.Sub(best.LastSeenAt.Time) > promptEvaluationRuntimeFreshTTL {
-		return promptEvaluationRuntimeReadinessResponse("过期", "CodeBuddy 心跳过期", "CodeBuddy runtime「"+best.Name+"」状态仍是 online，但最近心跳已经超过 2 分钟，不能证明当前可执行。", "检查 multica daemon 是否仍在运行，确认网络和心跳正常后等待 last_seen_at 刷新，再创建真实 Agent 任务。", &respRuntime, checkedAt), nil
+		return promptEvaluationRuntimeReadinessResponse("过期", providerName+" 心跳过期", providerName+" runtime「"+best.Name+"」状态仍是 online，但最近心跳已经超过 2 分钟，不能证明当前可执行。", "检查 multica daemon 是否仍在运行，确认网络和心跳正常后等待 last_seen_at 刷新，再创建真实 Agent 任务。", &respRuntime, checkedAt), nil
 	}
 	recentCapacityFailure, err := h.Queries.GetRecentRuntimeCapacityFailure(ctx, db.GetRecentRuntimeCapacityFailureParams{
 		WorkspaceID: workspaceID,
 		RuntimeID:   best.ID,
 		CompletedAt: pgtype.Timestamptz{Time: checkedAt.Add(-promptEvaluationRuntimeLimitTTL), Valid: true},
+		Model:       pgtype.Text{String: promptEvaluationAgentModel(), Valid: true},
 	})
 	if err == nil {
-		detail := "CodeBuddy runtime「" + best.Name + "」在线且心跳新鲜，但最近任务 " + uuidToString(recentCapacityFailure.ID) + " 返回模型容量或额度限制，当前不能证明 " + promptEvaluationAgentModel() + " 可执行。"
+		detail := providerName + " runtime「" + best.Name + "」在线且心跳新鲜，但最近任务 " + uuidToString(recentCapacityFailure.ID) + " 返回模型容量或额度限制，当前不能证明 " + promptEvaluationAgentModel() + " 可执行。"
 		if recentCapacityFailure.Error.Valid && strings.TrimSpace(recentCapacityFailure.Error.String) != "" {
 			detail += " 最近错误：" + truncatePromptEvaluationEvidence(recentCapacityFailure.Error.String, 180)
 		}
-		resp := promptEvaluationRuntimeReadinessResponse("容量受限", "模型额度受限", detail, "稍后重试，或切换到当前可用模型/runtime；如果持续出现 429/529，请申请模型额度或让管理员调整 Agent 模型配置。", &respRuntime, checkedAt)
+		resp := promptEvaluationRuntimeReadinessResponse("容量受限", "模型额度受限", detail, "优先切换到 "+fallbackPromptEvaluationAgentModel+"；如果持续出现 429/529，请申请模型额度或让管理员调整 Agent 模型配置。", &respRuntime, checkedAt)
 		resp.LastSeenAgeSeconds = ageSeconds
 		return resp, nil
 	}
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return PromptEvaluationRuntimeReadinessResponse{}, err
 	}
-	resp := promptEvaluationRuntimeReadinessResponse("就绪", "CodeBuddy 在线", "已发现在线且心跳新鲜的 CodeBuddy runtime「"+best.Name+"」，可以作为 "+promptEvaluationAgentModel()+" 的真实执行目标。", "无需修复；下一步应创建真实 Agent 任务并采集 trace、token、成本和输出。", &respRuntime, checkedAt)
+	resp := promptEvaluationRuntimeReadinessResponse("就绪", providerName+" 在线", "已发现在线且心跳新鲜的 "+providerName+" runtime「"+best.Name+"」，可以作为 "+promptEvaluationAgentModel()+" 的真实执行目标。", "无需修复；下一步应创建真实 Agent 任务并采集 trace、token、成本和输出。", &respRuntime, checkedAt)
 	resp.LastSeenAgeSeconds = ageSeconds
 	return resp, nil
 }

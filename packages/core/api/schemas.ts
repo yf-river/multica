@@ -1017,10 +1017,10 @@ const PromptEvaluationRuntimeSchema = z.object({
 
 export const PromptEvaluationRuntimeReadinessSchema = z.object({
   status: z.enum(["就绪", "离线", "过期", "缺失", "无权限", "容量受限"]).default("缺失"),
-  label: z.string().default("CodeBuddy 缺失"),
-  detail: z.string().default("当前 workspace 未发现 CodeBuddy runtime。"),
-  fix: z.string().default("安装并配置 codebuddy，启动 multica daemon。"),
-  model: z.string().default("minimax-m2.7-ioa"),
+  label: z.string().default("Codex 缺失"),
+  detail: z.string().default("当前 workspace 未发现 Codex runtime。"),
+  fix: z.string().default("安装并配置 codex，启动 multica daemon。"),
+  model: z.string().default("gpt-5.3-codex-spark"),
   runtime: PromptEvaluationRuntimeSchema.nullable().default(null),
   last_seen_age_seconds: z.number().default(-1),
   checked_at: z.string().default(""),
@@ -1174,10 +1174,10 @@ export const EMPTY_PROMPT_EVALUATION_SUMMARY: PromptEvaluationSummary = {
 
 export const EMPTY_PROMPT_EVALUATION_RUNTIME_READINESS: PromptEvaluationRuntimeReadiness = {
   status: "缺失",
-  label: "CodeBuddy 缺失",
-  detail: "当前 workspace 未发现 CodeBuddy runtime。",
-  fix: "安装并配置 codebuddy，启动 multica daemon。",
-  model: "minimax-m2.7-ioa",
+  label: "Codex 缺失",
+  detail: "当前 workspace 未发现 Codex runtime。",
+  fix: "安装并配置 codex，启动 multica daemon。",
+  model: "gpt-5.3-codex-spark",
   runtime: null,
   last_seen_age_seconds: -1,
   checked_at: "",

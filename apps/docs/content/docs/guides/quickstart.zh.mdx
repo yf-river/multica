@@ -1,30 +1,41 @@
 ---
-title: Quickstart
-description: Assign your first task to an agent in under 5 minutes.
+title: 快速开始
+description: 在团队内部 Multica 中连接运行时并分派第一个 Agent 任务。
 ---
 
-Once you have the CLI installed (or signed up for [Multica Cloud](https://multica.ai)), follow these steps to assign your first task to an agent.
+## 1. 连接你的运行时
 
-## 1. Set up and start the daemon
+团队内部部署或本机开发环境使用：
 
 ```bash
-multica setup           # Configure, authenticate, and start the daemon
+multica setup self-host
 ```
 
-This configures the CLI, opens your browser for login, discovers your workspaces, and starts the agent daemon in the background. It auto-detects agent CLIs (`claude`, `codex`, `gemini`, `openclaw`, `opencode`, `hermes`, `pi`) available on your PATH.
+如果前后端部署在自定义域名：
 
-## 2. Verify your runtime
+```bash
+multica setup self-host --server-url https://api.example.internal --app-url https://multica.example.internal
+```
 
-Open your workspace in the Multica web app. Navigate to **Settings → Runtimes** — you should see your machine listed as an active **Runtime**.
+该命令会写入 CLI 配置、打开浏览器登录、发现可访问工作区，并启动本机 daemon。
 
-> **What is a Runtime?** A Runtime is a compute environment that can execute agent tasks. It can be your local machine (via the daemon) or a cloud instance. Each runtime reports which agent CLIs are available, so Multica knows where to route work.
+## 2. 检查运行时在线
 
-## 3. Create an agent
+进入 **设置 → 运行时**，确认你的电脑在线，并且识别到了可用 Agent CLI。没有可用 Agent 时，先安装 `codex`、`claude`、`opencode`、`openclaw`、`kimi` 或团队指定的 CodeBuddy/runtime。
 
-Go to **Settings → Agents** and click **New Agent**. Pick the runtime you just connected and choose a provider (Claude Code, Codex, Gemini CLI, OpenClaw, OpenCode, or Hermes). Give your agent a name — this is how it will appear on the board, in comments, and in assignments.
+## 3. 创建 Agent
 
-## 4. Assign your first task
+进入 **设置 → Agent**，选择运行时、provider 和模型。Agent 的名称会出现在 issue 分派、小队执行、评论和运行历史中。
 
-Create an issue from the board (or via `multica issue create`), then assign it to your new agent. The agent will automatically pick up the task, execute it on your runtime, and report progress — just like a human teammate.
+## 4. 分派第一个 issue
 
-That's it! Your agent is now part of the team.
+在看板创建 issue，并把 assignee 设为 Agent 或小队。daemon 会领取任务、创建隔离工作目录、启动 Agent CLI，并把状态、输出、失败原因、usage 和 trace 写回 Multica。
+
+## 5. 验证证据
+
+任务结束后检查：
+
+- issue 时间线和评论。
+- **训练与评估 → 运行历史**。
+- task usage、trace 事件、耗时、模型和失败原因。
+- 小队 SOP run 及每一步事件。

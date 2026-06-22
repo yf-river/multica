@@ -28,14 +28,14 @@ Multica 的 [自部署](/self-host-quickstart) 服务器启动时从环境变量
 
 **不设时**使用上表默认值，**不是** pgx 内置的 4/NumCPU——后者在生产曾引发连接池耗尽。
 
-## Account login and signup
+## 账号登录与注册控制
 
-Multica uses account and password login. Configure new account creation with these variables:
+Multica 使用账号和密码登录。是否允许新账号创建由以下变量控制：
 
-| Variable | Default | Description |
+| 环境变量 | 默认值 | 说明 |
 |---|---|---|
-| `ALLOW_SIGNUP` | `true` | Set `false` to disable new account creation |
-| `ALLOWED_ACCOUNTS` | empty | Optional comma-separated allowlist of exact account names |
+| `ALLOW_SIGNUP` | `true` | 设为 `false` 时禁止新账号创建。内部实例建议关闭。 |
+| `ALLOWED_ACCOUNTS` | 空 | 可选的账号名白名单，多个账号用英文逗号分隔。 |
 
 ## 怎么配文件存储
 

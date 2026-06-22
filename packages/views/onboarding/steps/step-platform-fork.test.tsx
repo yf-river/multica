@@ -80,11 +80,11 @@ describe("StepPlatformFork", () => {
     renderFork();
     expect(screen.getByText(/^使用这台电脑$/)).toBeInTheDocument();
     expect(screen.getByText(/^通过终端连接$/)).toBeInTheDocument();
-    expect(screen.getByText(/^使用云电脑$/)).toBeInTheDocument();
-    // Cloud option is a "Coming soon" preview — not yet wired up.
-    expect(screen.getByText(/^即将推出$/)).toBeInTheDocument();
+    expect(screen.getByText(/^托管运行时$/)).toBeInTheDocument();
+    // 托管运行时由管理员开通，不在新手流程里直接创建。
+    expect(screen.getByText(/^联系管理员$/)).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: /^即将推出$/ }),
+      screen.queryByRole("button", { name: /^联系管理员$/ }),
     ).not.toBeInTheDocument();
     // CLI dialog closed at rest → no CLI instructions.
     expect(screen.queryByTestId("cli-instructions")).not.toBeInTheDocument();

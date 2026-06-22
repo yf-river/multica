@@ -352,12 +352,12 @@ export class TestApiClient {
     }
   }
 
-  async ensureOnlineCodeBuddyRuntime(name = `E2E CodeBuddy Runtime ${Date.now()}`) {
+  async ensureOnlineRuntime(provider = "codex", name = `E2E ${provider} Runtime ${Date.now()}`) {
     if (!this.workspaceId) {
-      throw new Error("Cannot seed CodeBuddy runtime before workspace is selected");
+      throw new Error(`Cannot seed ${provider} runtime before workspace is selected`);
     }
     if (!this.account) {
-      throw new Error("Cannot seed CodeBuddy runtime before login");
+      throw new Error(`Cannot seed ${provider} runtime before login`);
     }
 
     const client = new pg.Client(DATABASE_URL);
@@ -378,15 +378,17 @@ export class TestApiClient {
             device_info, metadata, owner_id, visibility, last_seen_at
           )
           VALUES (
-            $1, $2, $3, 'cloud', 'codebuddy', 'online',
-            'E2E CodeBuddy runtime', '{"用途":"训练与评估 E2E 真实任务入队"}'::jsonb, $4, 'public', now()
+            $1, $2, $3, 'cloud', $4, 'online',
+            $5, '{"用途":"训练与评估 E2E 任务入队夹具"}'::jsonb, $6, 'public', now()
           )
           RETURNING id
         `,
         [
           this.workspaceId,
-          `e2e-codebuddy-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+          `e2e-${provider}-${Date.now()}-${Math.random().toString(36).slice(2)}`,
           name,
+          provider,
+          `E2E ${provider} runtime`,
           userId,
         ],
       );
@@ -396,6 +398,14 @@ export class TestApiClient {
     } finally {
       await client.end();
     }
+  }
+
+  async ensureOnlineCodexRuntime(name = `E2E Codex Runtime ${Date.now()}`) {
+    return this.ensureOnlineRuntime("codex", name);
+  }
+
+  async ensureOnlineCodeBuddyRuntime(name = `E2E CodeBuddy Runtime ${Date.now()}`) {
+    return this.ensureOnlineRuntime("codebuddy", name);
   }
 
   async registerDaemonCodeBuddyRuntime(name = `E2E Daemon CodeBuddy Runtime ${Date.now()}`) {
@@ -453,7 +463,7 @@ export class TestApiClient {
       body: JSON.stringify({
         usage: [
           {
-            provider: usage.provider ?? "codebuddy",
+            provider: usage.provider ?? "codex",
             model: usage.model,
             input_tokens: usage.input_tokens,
             output_tokens: usage.output_tokens,
@@ -500,7 +510,7 @@ export class TestApiClient {
       throw new Error("Cannot seed coding squad before login");
     }
 
-    const runtime = await this.ensureOnlineCodeBuddyRuntime(`${name} Runtime`);
+    const runtime = await this.ensureOnlineCodexRuntime(`${name} Runtime`);
     const profile = {
       profile_key: "multica-coding-squad-v1",
       project: "Multica",
@@ -510,7 +520,7 @@ export class TestApiClient {
       acceptance: ["方案可审阅", "开发范围清晰", "验收者独立检查", "日志和测试证据齐全"],
       forbidden_actions: ["开发者自证通过", "越权修改非负责范围", "泄露密钥"],
       model_policy: {
-        "大量文本任务": "minimax-m2.7-ioa",
+        "轻量验收任务": "gpt-5.3-codex-spark",
         "代码测试任务": "gpt/code",
       },
       roles: [
@@ -594,9 +604,9 @@ export class TestApiClient {
               instructions, custom_env, custom_args, model
             )
             VALUES (
-              $1, $2, 'cloud', '{"provider":"codebuddy","用途":"Multica 编码小队 E2E"}'::jsonb, $3,
+              $1, $2, 'cloud', '{"provider":"codex","用途":"Multica 编码小队 E2E"}'::jsonb, $3,
               'workspace', 'idle', 2, $4,
-              $5, '{}'::jsonb, '[]'::jsonb, 'minimax-m2.7-ioa'
+              $5, '{}'::jsonb, '[]'::jsonb, 'gpt-5.3-codex-spark'
             )
             RETURNING id
           `,
@@ -855,7 +865,7 @@ export class TestApiClient {
             task_id, provider, model, input_tokens, output_tokens,
             cache_read_tokens, cache_write_tokens, updated_at
           )
-          VALUES ($1, 'codebuddy', 'minimax-m2.7-ioa', 31, 19, 5, 7, now())
+          VALUES ($1, 'codex', 'gpt-5.3-codex-spark', 31, 19, 5, 7, now())
           ON CONFLICT (task_id, provider, model)
           DO UPDATE SET
             input_tokens = EXCLUDED.input_tokens,
@@ -890,9 +900,9 @@ export class TestApiClient {
             $1, $2, $3, $4, $5, $6,
             'squad_sop', 'squad.leader.completed', '编码小队队长任务完成', 'completed', 1,
             400, 2800, 2300, 3200,
-            'codebuddy', 'minimax-m2.7-ioa', 36, 19, 5,
+            'codex', 'gpt-5.3-codex-spark', 36, 19, 5,
             7, '无', '', NULL,
-            '{"阶段":"编码小队","证据":"E2E","模型策略":"minimax"}'::jsonb
+            '{"阶段":"编码小队","证据":"E2E","模型策略":"codex"}'::jsonb
           )
         `,
         [this.workspaceId, task.id, task.issue_id, opts?.squadId ?? null, task.agent_id, task.runtime_id],
@@ -915,8 +925,8 @@ export class TestApiClient {
     }
     await this.startDaemonTask(task.id);
     await this.reportDaemonTaskUsage(task.id, {
-      provider: "codebuddy",
-      model: "minimax-m2.7-ioa",
+      provider: "codex",
+      model: "gpt-5.3-codex-spark",
       input_tokens: 36,
       output_tokens: 19,
       cache_read_tokens: 5,
@@ -999,6 +1009,8 @@ export class TestApiClient {
     const client = new pg.Client(DATABASE_URL);
     await client.connect();
     try {
+      const provider = run.runtime_provider || "codex";
+      const model = run.model || process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL || "gpt-5.3-codex-spark";
       const structuredOutput = [
         "Agent 输出：完成训练评估并给出验收证据。",
         "```json",
@@ -1048,7 +1060,7 @@ export class TestApiClient {
             task_id, provider, model, input_tokens, output_tokens,
             cache_read_tokens, cache_write_tokens, updated_at
           )
-          VALUES ($1, 'codebuddy', 'minimax-m2.7-ioa', 11, 7, 2, 3, now())
+          VALUES ($1, $2, $3, 11, 7, 2, 3, now())
           ON CONFLICT (task_id, provider, model)
           DO UPDATE SET
             input_tokens = EXCLUDED.input_tokens,
@@ -1057,7 +1069,7 @@ export class TestApiClient {
             cache_write_tokens = EXCLUDED.cache_write_tokens,
             updated_at = now()
         `,
-        [run.task_id],
+        [run.task_id, provider, model],
       );
       await client.query(`DELETE FROM task_message WHERE task_id = $1`, [run.task_id]);
       await client.query(
@@ -1081,11 +1093,11 @@ export class TestApiClient {
           VALUES (
             $1, $2, $3, $4, 'prompt_evaluation', 'llm.usage_reported',
             '训练评估用量已上报', 'completed', 1, 2000, 1800, 2100,
-            'codebuddy', 'minimax-m2.7-ioa', 16, 7, 2,
+            $6, $7, 16, 7, 2,
             3, '无', '', $5, '{"阶段":"训练评估","验收":"E2E"}'::jsonb
           )
         `,
-        [this.workspaceId, run.task_id, run.agent_id, run.runtime_id, run.chat_session_id],
+        [this.workspaceId, run.task_id, run.agent_id, run.runtime_id, run.chat_session_id, provider, model],
       );
       await client.query("COMMIT");
     } catch (error) {
@@ -1107,6 +1119,8 @@ export class TestApiClient {
     const client = new pg.Client(DATABASE_URL);
     await client.connect();
     try {
+      const provider = run.runtime_provider || "codex";
+      const model = run.model || process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL || "gpt-5.3-codex-spark";
       const structuredOutput = [
         "Agent 优化输出：已基于失败用例生成待人工确认的优化候选。",
         "```json",
@@ -1155,7 +1169,7 @@ export class TestApiClient {
             task_id, provider, model, input_tokens, output_tokens,
             cache_read_tokens, cache_write_tokens, updated_at
           )
-          VALUES ($1, 'codebuddy', 'minimax-m2.7-ioa', 21, 13, 1, 2, now())
+          VALUES ($1, $2, $3, 21, 13, 1, 2, now())
           ON CONFLICT (task_id, provider, model)
           DO UPDATE SET
             input_tokens = EXCLUDED.input_tokens,
@@ -1164,7 +1178,7 @@ export class TestApiClient {
             cache_write_tokens = EXCLUDED.cache_write_tokens,
             updated_at = now()
         `,
-        [run.task_id],
+        [run.task_id, provider, model],
       );
       await client.query(`DELETE FROM task_message WHERE task_id = $1`, [run.task_id]);
       await client.query(
@@ -1188,11 +1202,11 @@ export class TestApiClient {
           VALUES (
             $1, $2, $3, $4, 'prompt_evaluation', 'llm.usage_reported',
             'Agent 优化候选已生成', 'completed', 1, 2400, 2100, 2500,
-            'codebuddy', 'minimax-m2.7-ioa', 21, 13, 1,
+            $6, $7, 21, 13, 1,
             2, '无', '', $5, '{"阶段":"Agent 优化运行","验收":"E2E"}'::jsonb
           )
         `,
-        [this.workspaceId, run.task_id, run.agent_id, run.runtime_id, run.chat_session_id],
+        [this.workspaceId, run.task_id, run.agent_id, run.runtime_id, run.chat_session_id, provider, model],
       );
       await client.query("COMMIT");
     } catch (error) {

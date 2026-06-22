@@ -1,48 +1,48 @@
 ---
-title: Self-Hosting Guide
-description: Deploy Multica on your own infrastructure.
+title: 自部署指南
+description: 在团队自己的服务器或内网环境部署 Multica。
 ---
 
-## Architecture Overview
+## 架构概览
 
-Multica has three components:
+Multica 由三部分组成：
 
-| Component | Description | Technology |
-|-----------|-------------|------------|
-| **Backend** | REST API + WebSocket server | Go (single binary) |
-| **Frontend** | Web application | Next.js 16 |
-| **Database** | Primary data store | PostgreSQL 17 with pgvector |
+| 组件 | 作用 | 技术 |
+| --- | --- | --- |
+| **后端** | REST API、WebSocket、任务队列、运行证据 | Go |
+| **前端** | Web 应用 | Next.js 16 |
+| **数据库** | 主数据、trace、usage、训练评估 | PostgreSQL 17 + pgvector |
 
-Each user who wants to run AI agents locally also installs the **`multica` CLI** and runs the **agent daemon** on their own machine.
+需要执行 Agent 的成员还要在自己的电脑或服务器上安装 **`multica` CLI**，并启动 daemon。
 
-## Prerequisites
+## 前置条件
 
-- Docker and Docker Compose
+- Docker 和 Docker Compose
 
-## Quick Install
+## 快速安装
 
-Two commands to set up everything:
+两条命令完成服务部署和本机运行时连接：
 
 ```bash
-# Install CLI + provision self-host server
+# 安装 CLI，并部署自托管服务
 curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash -s -- --with-server
 
-# Configure CLI, authenticate, and start the daemon
+# 配置 CLI、登录并启动 daemon
 multica setup self-host
 ```
 
 
 <Callout>
-If the self-host server is already running and you only need the CLI on a macOS/Linux machine, install it with Homebrew: `brew install multica-ai/tap/multica`.
+如果服务端已经部署好，只需要在 macOS/Linux 上安装 CLI，可以使用 Homebrew：`brew install multica-ai/tap/multica`。
 </Callout>
 
 <Callout>
-For a step-by-step setup, see below.
+需要逐步操作时，按下面步骤执行。
 </Callout>
 
-## Step-by-Step Setup
+## 分步部署
 
-### Step 1 — Start the Server
+### 第 1 步：启动服务端
 
 ```bash
 git clone https://github.com/multica-ai/multica.git
@@ -50,22 +50,20 @@ cd multica
 make selfhost
 ```
 
-`make selfhost` automatically creates `.env`, generates a random `JWT_SECRET` and Postgres password, and starts all services via Docker Compose.
+`make selfhost` 会自动创建 `.env`，生成随机 `JWT_SECRET` 和 Postgres 密码，并通过 Docker Compose 启动服务。
 
-By default it pulls the latest stable release images from GHCR. To build the backend/web from your current checkout instead, run `make selfhost-build`.
-If the selected GHCR tag has not been published yet, `make selfhost` now tells you to fall back to `make selfhost-build`.
-`make selfhost-build` uses local `multica-backend:dev` / `multica-web:dev` tags, so it does not overwrite the pulled `:latest` images.
+默认会从 GHCR 拉取稳定镜像。如果要从当前 checkout 构建后端和前端，使用 `make selfhost-build`。如果选择的 GHCR tag 尚未发布，命令会提示你改用本地构建。
 
-Once ready:
+启动后访问：
 
 - **Frontend:** http://localhost:3000
 - **Backend API:** http://localhost:8080
 
 <Callout>
-If you prefer running the Docker Compose steps manually: `cp .env.example .env`, edit `JWT_SECRET`, `POSTGRES_PASSWORD`, and the password segment in `DATABASE_URL`, then `docker compose -f docker-compose.selfhost.yml pull && docker compose -f docker-compose.selfhost.yml up -d`.
+如果要手动执行 Docker Compose：`cp .env.example .env`，修改 `JWT_SECRET`、`POSTGRES_PASSWORD` 和 `DATABASE_URL` 中的密码，然后运行 `docker compose -f docker-compose.selfhost.yml pull && docker compose -f docker-compose.selfhost.yml up -d`。
 </Callout>
 
-### Step 2 — Log In
+### 第 2 步：登录
 
 
 
@@ -73,17 +71,17 @@ If you prefer running the Docker Compose steps manually: `cp .env.example .env`,
 <Callout>
 </Callout>
 
-### Step 3 — Install CLI & Start Daemon
+### 第 3 步：安装 CLI 并启动 daemon
 
-The daemon runs on your local machine (not inside Docker). It detects installed AI agent CLIs, registers them with the server, and executes tasks.
+daemon 运行在你的电脑或服务器上，不在 Docker 服务端容器里。它会检测已安装的 AI Agent CLI，向服务端注册运行时，并执行分派给 Agent 的任务。
 
-### a) Install the CLI and an AI agent
+### a) 安装 CLI 和 Agent CLI
 
 ```bash
 brew install multica-ai/tap/multica
 ```
 
-You also need at least one AI agent CLI:
+还需要至少一个 AI Agent CLI：
 - [Claude Code](https://docs.anthropic.com/en/docs/claude-code) (`claude` on PATH)
 - [Codex](https://github.com/openai/codex) (`codex` on PATH)
 - [Gemini CLI](https://github.com/google-gemini/gemini-cli) (`gemini` on PATH)
@@ -91,46 +89,47 @@ You also need at least one AI agent CLI:
 - OpenClaw (`openclaw` on PATH)
 - Hermes (`hermes` on PATH)
 
-### b) One-command setup
+### b) 一条命令完成配置
 
 ```bash
 multica setup self-host
 ```
 
-This automatically:
-1. Configures the CLI to connect to `localhost`
-2. Opens your browser for authentication
-3. Discovers your workspaces
-4. Starts the daemon in the background
+该命令会自动：
 
-For on-premise deployments with custom domains:
+1. 把 CLI 指向本机自部署服务。
+2. 打开浏览器完成登录。
+3. 发现你的工作区。
+4. 在后台启动 daemon。
+
+内网域名或反向代理部署：
 
 ```bash
 multica setup self-host --server-url https://api.example.com --app-url https://app.example.com
 ```
 
-Verify the daemon is running:
+确认 daemon 已运行：
 
 ```bash
 multica daemon status
 ```
 
 <Callout>
-Alternatively, configure step by step: `multica config set server_url http://localhost:8080 && multica config set app_url http://localhost:3000 && multica login && multica daemon start`
+也可以逐步配置：`multica config set server_url http://localhost:8080 && multica config set app_url http://localhost:3000 && multica login && multica daemon start`
 </Callout>
 
-### Step 4 — Verify & Start Using
+### 第 4 步：验证并开始使用
 
-1. Open your workspace at http://localhost:3000
-2. Navigate to **Settings → Runtimes** — you should see your machine listed
-3. Go to **Settings → Agents** and create a new agent
-4. Create an issue and assign it to your agent
+1. 打开 http://localhost:3000。
+2. 进入 **设置 → 运行时**，确认你的电脑在线。
+3. 进入 **设置 → Agent** 创建 Agent。
+4. 创建 issue 并分派给 Agent 或小队。
 
-## Usage Dashboard Rollup
+## 用量看板汇总
 
-The Usage / Runtime dashboards read from a derived `task_usage_hourly` table populated by `rollup_task_usage_hourly()`. As of MUL-2957 the backend runs this rollup **in-process** on every replica via a DB-backed scheduler (`sys_cron_executions`). A fresh self-host install needs no operator action — the bundled `pgvector/pgvector:pg17` image works as-is, and you do **not** need to swap it for an image that ships `pg_cron`, register an external cron job, run a systemd timer, or schedule a Kubernetes `CronJob`.
+用量和运行时看板读取派生表 `task_usage_hourly`。后端会通过数据库调度表 `sys_cron_executions` 在进程内定期运行 `rollup_task_usage_hourly()`。新部署不需要额外 cron、systemd timer 或 Kubernetes `CronJob`。
 
-Multiple backend replicas are safe: every replica ticks every 30 seconds and tries to claim the current 5-minute UTC plan, but the unique key `(job_name, scope_kind, scope_id, plan_time)` means only one wins each plan. Inspect the audit table to confirm steady-state operation:
+多副本安全：每个后端副本都会尝试认领当前 5 分钟计划，但唯一键 `(job_name, scope_kind, scope_id, plan_time)` 保证只有一个副本执行成功。可以查看审计表：
 
 ```sql
 SELECT plan_time, status, attempt, runner_id,
@@ -142,16 +141,16 @@ SELECT plan_time, status, attempt, runner_id,
 ```
 
 <Callout>
-**Upgrading from `v0.3.4` to `v0.3.5+`?** As of MUL-2957 the `migrate up` command runs an idempotent monthly-slice backfill automatically right before applying migration `103`, so the upgrade completes in a single invocation — no operator step required. If you are on a pre-MUL-2957 binary or the auto-hook fails for an environmental reason, run `backfill_task_usage_hourly` against the same database and re-run the upgrade. Full recovery flow lives in [`SELF_HOSTING_ADVANCED.md → Usage Dashboard Rollup`](https://github.com/multica-ai/multica/blob/main/SELF_HOSTING_ADVANCED.md#usage-dashboard-rollup).
+**从 `v0.3.4` 升级到 `v0.3.5+`？** `migrate up` 会在 migration `103` 前自动运行幂等回填。若使用更旧二进制或自动 hook 因环境问题失败，请对同一数据库运行 `backfill_task_usage_hourly` 后重试升级。
 </Callout>
 
-### Compatibility paths (existing deployments only)
+### 兼容路径（仅已有部署）
 
-External schedulers — **`pg_cron` registered on the database, an external cron job, a systemd timer, or a Kubernetes `CronJob`** — that call `SELECT rollup_task_usage_hourly()` directly were the only option before MUL-2957 and remain a supported compatibility path. They are no longer the recommended setup; new deployments should rely on the in-process scheduler. The SQL function holds advisory lock 4246 internally, so the in-process scheduler and any pre-existing external schedule can coexist without ever double-writing the rollup.
+旧部署可能通过数据库 `pg_cron`、外部 cron、systemd timer 或 Kubernetes `CronJob` 调用 `SELECT rollup_task_usage_hourly()`。这仍可兼容，但新部署应使用后端进程内调度。SQL 函数内部持有 advisory lock 4246，因此两种方式短期共存不会重复写入。
 
-If you already have a `pg_cron` job in production and want to retire it, the safe sequence is:
+如果已有 `pg_cron` 任务，建议按以下顺序下线：
 
-1. Confirm the in-process scheduler is healthy on at least one backend replica — recent SUCCESS rows should be landing in `sys_cron_executions` for `rollup_task_usage_hourly`:
+1. 确认至少一个后端副本的进程内调度健康，`sys_cron_executions` 中持续出现 `SUCCESS`：
 
    ```sql
    SELECT plan_time, status, runner_id, finished_at
@@ -162,213 +161,213 @@ If you already have a `pg_cron` job in production and want to retire it, the saf
     LIMIT 5;
    ```
 
-2. Once SUCCESS rows are arriving on schedule, unschedule the redundant `pg_cron` entry:
+2. 确认稳定后，移除冗余 `pg_cron` 任务：
 
    ```sql
    SELECT cron.unschedule('rollup_task_usage_hourly')
      FROM cron.job WHERE jobname = 'rollup_task_usage_hourly';
    ```
 
-3. Leave the `pg_cron` extension itself installed unless you are sure no other workload depends on it. The bundled `pgvector/pgvector:pg17` image does **not** ship `pg_cron`, so nothing in Multica's default install needs it; uninstalling `pg_cron` from a custom image that other workloads still use is a separate decision.
+3. 除非确认没有其他业务依赖，否则不要贸然卸载 `pg_cron` 扩展。Multica 默认镜像不需要它。
 
-External cron / systemd timer / Kubernetes `CronJob` setups that call `SELECT rollup_task_usage_hourly()` directly can be retired the same way — once `sys_cron_executions` shows steady SUCCESS rows from the in-process scheduler, the external job is redundant and can be removed.
+外部 cron、systemd timer 或 Kubernetes `CronJob` 也按同样方式下线：先确认进程内调度稳定，再删除外部任务。
 
-Full reference (audit table semantics, advisory lock 4246, the standalone backfill command, flag descriptions, the migration auto-hook) lives in [`SELF_HOSTING_ADVANCED.md → Usage Dashboard Rollup`](https://github.com/multica-ai/multica/blob/main/SELF_HOSTING_ADVANCED.md#usage-dashboard-rollup).
+更完整的审计表语义、advisory lock、回填命令和迁移 hook 说明见 `SELF_HOSTING_ADVANCED.md`。
 
-## Stopping Services
+## 停止服务
 
 ```bash
-# Stop Docker Compose services
+# 停止 Docker Compose 服务
 make selfhost-stop
 
-# Stop the local daemon
+# 停止本机 daemon
 multica daemon stop
 ```
 
-## Switching to Multica Cloud
+## 切换 CLI 到其他内部环境
 
-If you've been self-hosting and want to switch your CLI to [Multica Cloud](https://multica.ai):
+如果要把 CLI 从当前环境切到另一套内部部署：
 
 ```bash
-multica setup
+multica setup self-host --server-url https://api.other.internal --app-url https://multica.other.internal
 ```
 
-This reconfigures the CLI for multica.ai, re-authenticates, and restarts the daemon. You will be prompted before overwriting the existing configuration.
+命令会提示是否覆盖当前配置，并重新登录、重启 daemon。
 
 <Callout>
-Your local Docker services are unaffected. Stop them separately if you no longer need them.
+本机 Docker 服务不会被自动停止。如果不再需要当前自部署环境，请单独停止。
 </Callout>
 
-## Upgrading
+## 升级
 
 ```bash
 docker compose -f docker-compose.selfhost.yml pull
 docker compose -f docker-compose.selfhost.yml up -d
 ```
 
-Pin `MULTICA_IMAGE_TAG` in `.env` to an exact version like `v0.2.4` if you want to stay on a specific release. Migrations run automatically on backend startup.
-If the selected GHCR tag has not been published yet, fall back to `make selfhost-build` or `docker compose -f docker-compose.selfhost.yml -f docker-compose.selfhost.build.yml up -d --build`.
+如果需要固定版本，在 `.env` 中把 `MULTICA_IMAGE_TAG` 设置成明确版本，例如 `v0.2.4`。后端启动时会自动执行迁移。
+如果指定的 GHCR tag 尚未发布，改用 `make selfhost-build` 或 `docker compose -f docker-compose.selfhost.yml -f docker-compose.selfhost.build.yml up -d --build` 从当前代码构建。
 
 ---
 
-## Configuration
+## 配置
 
-All configuration is done via environment variables. Copy `.env.example` as a starting point.
+所有服务端配置都通过环境变量完成。建议先复制 `.env.example`，再按团队环境修改。
 
-### Required Variables
+### 必填变量
 
-| Variable | Description | Example |
+| 变量 | 说明 | 示例 |
 |----------|-------------|---------|
-| `DATABASE_URL` | PostgreSQL connection string. Keep the password segment in sync with `POSTGRES_PASSWORD`. | `postgres://multica:<postgres-password>@localhost:5432/multica?sslmode=disable` |
-| `POSTGRES_PASSWORD` | **Must change from default.** Password used by the bundled Postgres container. Keep it in sync with `DATABASE_URL`. | `openssl rand -hex 24` |
-| `JWT_SECRET` | **Must change from default.** Secret key for signing JWT tokens. Use a long random string. | `openssl rand -hex 32` |
-| `FRONTEND_ORIGIN` | URL where the frontend is served (used for CORS) | `https://app.example.com` |
+| `DATABASE_URL` | PostgreSQL 连接串。密码部分要和 `POSTGRES_PASSWORD` 保持一致。 | `postgres://multica:<postgres-password>@localhost:5432/multica?sslmode=disable` |
+| `POSTGRES_PASSWORD` | **必须改掉默认值。** 内置 Postgres 容器使用的密码，同时同步到 `DATABASE_URL`。 | `openssl rand -hex 24` |
+| `JWT_SECRET` | **必须改掉默认值。** JWT 签名密钥，使用足够长的随机字符串。 | `openssl rand -hex 32` |
+| `FRONTEND_ORIGIN` | 前端访问地址，用于 CORS 和登录跳转。 | `https://multica.example.internal` |
 
 
-| Variable | Description |
+| 变量 | 说明 |
 |----------|-------------|
 
 
-### Signup Controls (Optional)
+### 注册控制（可选）
 
-| Variable | Description |
+| 变量 | 说明 |
 |----------|-------------|
-| `ALLOW_SIGNUP` | Set to `false` to disable new user signups on a private instance |
+| `ALLOW_SIGNUP` | 私有部署建议设置为 `false`，禁止新用户自行注册。 |
 
-Changes take effect after restarting the backend / compose stack. The web UI reads `ALLOW_SIGNUP` from `/api/config` at runtime, so no web rebuild is needed.
+修改后重启后端或 Compose 服务即可生效。Web UI 会在运行时从 `/api/config` 读取 `ALLOW_SIGNUP`，不需要重新构建前端。
 
-### File Storage (Optional)
+### 文件存储（可选）
 
-For file uploads and attachments, configure S3 and (optionally) CloudFront:
+上传文件和附件可以接入 S3 兼容存储；内网部署也可以使用 MinIO、R2、B2 等兼容实现。需要公网或跨网访问时，再按团队基础设施配置 CDN 或签名下载域名。
 
-| Variable | Description |
+| 变量 | 说明 |
 |----------|-------------|
-| `S3_BUCKET` | Bucket name only (e.g. `my-bucket`). Do **not** include the `.s3.<region>.amazonaws.com` suffix — the server constructs the public URL from `S3_BUCKET` + `S3_REGION` |
-| `S3_REGION` | AWS region (default: `us-west-2`). Must match the bucket's actual region — used for both SDK signing and public URLs |
-| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | Static credentials. When both are unset, the AWS SDK default credential chain is used |
-| `AWS_ENDPOINT_URL` | Custom S3-compatible endpoint (e.g. MinIO, R2, B2). Setting this switches to path-style URLs |
-| `CLOUDFRONT_DOMAIN` | CloudFront distribution domain — when set, public URLs use this host instead of the S3 host |
-| `CLOUDFRONT_KEY_PAIR_ID` | CloudFront key pair ID for signed URLs |
-| `CLOUDFRONT_PRIVATE_KEY` | CloudFront private key (PEM format) |
+| `S3_BUCKET` | Bucket 名称，不要带 `.s3.<region>.amazonaws.com` 后缀。服务端会根据 `S3_BUCKET` 和 `S3_REGION` 生成默认访问地址。 |
+| `S3_REGION` | 存储区域，必须和 Bucket 实际区域一致，用于 SDK 签名和默认公开地址。 |
+| `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` | 静态凭证。两者都不设置时，使用 AWS SDK 默认凭证链。 |
+| `AWS_ENDPOINT_URL` | S3 兼容端点，例如 MinIO、R2、B2。设置后会使用 path-style URL。 |
+| `CLOUDFRONT_DOMAIN` | 可选的 CDN 或签名下载域名；设置后，公开地址会使用该域名。 |
+| `CLOUDFRONT_KEY_PAIR_ID` | 签名下载使用的 key pair id。 |
+| `CLOUDFRONT_PRIVATE_KEY` | 签名下载私钥，PEM 格式。 |
 
-### Cookies
+### Cookie
 
-| Variable | Description |
+| 变量 | 说明 |
 |----------|-------------|
-| `COOKIE_DOMAIN` | Optional `Domain` attribute for session + CloudFront cookies. **Leave empty** for single-host deployments (localhost, LAN IP, or a single hostname). Only set it when the frontend and backend sit on different subdomains of one registered domain (e.g. `.example.com`). **Do not use an IP literal** — RFC 6265 forbids IP addresses in the cookie `Domain` attribute and browsers will drop such `Set-Cookie` headers. |
+| `COOKIE_DOMAIN` | session 和签名下载 cookie 的可选 `Domain` 属性。单机、本地、内网 IP 或单域名部署请保持为空。只有当前端和后端位于同一注册域名的不同子域时才设置，例如 `.example.com`。**不要填写 IP**，浏览器会丢弃这类 `Set-Cookie`。 |
 
-The `Secure` flag on session cookies is derived automatically from the scheme of `FRONTEND_ORIGIN`: HTTPS origins get `Secure` cookies; plain-HTTP origins (LAN / private-network self-host) get non-secure cookies so the browser can actually store them.
+session cookie 的 `Secure` 标记会根据 `FRONTEND_ORIGIN` 自动判断：HTTPS 地址使用 `Secure` cookie；内网或本地 HTTP 地址使用非 `Secure` cookie，保证浏览器可以正常保存。
 
-### Server
+### 服务端
 
-| Variable | Default | Description |
+| 变量 | 默认值 | 说明 |
 |----------|---------|-------------|
-| `PORT` | `8080` | Backend server port |
-| `FRONTEND_PORT` | `3000` | Frontend port |
-| `CORS_ALLOWED_ORIGINS` | Value of `FRONTEND_ORIGIN` | Comma-separated list of allowed origins |
-| `LOG_LEVEL` | `info` | Log level: `debug`, `info`, `warn`, `error` |
+| `PORT` | `8080` | 后端服务端口 |
+| `FRONTEND_PORT` | `3000` | 前端服务端口 |
+| `CORS_ALLOWED_ORIGINS` | `FRONTEND_ORIGIN` 的值 | 允许跨域访问的来源，多个值用英文逗号分隔。 |
+| `LOG_LEVEL` | `info` | 日志级别：`debug`、`info`、`warn`、`error`。 |
 
 ### CLI / Daemon
 
-These are configured on each user's machine, not on the server:
+这些变量配置在每个成员自己的电脑或服务器上，不配置在服务端容器里：
 
-| Variable | Default | Description |
+| 变量 | 默认值 | 说明 |
 |----------|---------|-------------|
-| `MULTICA_SERVER_URL` | `ws://localhost:8080/ws` | WebSocket URL for daemon → server connection |
-| `MULTICA_APP_URL` | `http://localhost:3000` | Frontend URL for CLI login flow |
-| `MULTICA_DAEMON_POLL_INTERVAL` | `3s` | How often the daemon polls for tasks |
-| `MULTICA_DAEMON_HEARTBEAT_INTERVAL` | `15s` | Heartbeat frequency |
+| `MULTICA_SERVER_URL` | `ws://localhost:8080/ws` | daemon 连接服务端的 WebSocket 地址。 |
+| `MULTICA_APP_URL` | `http://localhost:3000` | CLI 登录流程打开的前端地址。 |
+| `MULTICA_DAEMON_POLL_INTERVAL` | `3s` | daemon 拉取任务的间隔。 |
+| `MULTICA_DAEMON_HEARTBEAT_INTERVAL` | `15s` | daemon 心跳间隔。 |
 
-Agent-specific overrides:
+Agent 专用覆盖项：
 
-| Variable | Description |
+| 变量 | 说明 |
 |----------|-------------|
-| `MULTICA_CLAUDE_PATH` | Custom path to the `claude` binary |
-| `MULTICA_CLAUDE_MODEL` | Override the Claude model used |
-| `MULTICA_CODEX_PATH` | Custom path to the `codex` binary |
-| `MULTICA_CODEX_MODEL` | Override the Codex model used |
-| `MULTICA_OPENCODE_PATH` | Custom path to the `opencode` binary |
-| `MULTICA_OPENCODE_MODEL` | Override the OpenCode model used |
-| `MULTICA_OPENCLAW_PATH` | Custom path to the `openclaw` binary |
-| `MULTICA_OPENCLAW_MODEL` | Override the OpenClaw model used |
-| `MULTICA_HERMES_PATH` | Custom path to the `hermes` binary |
-| `MULTICA_HERMES_MODEL` | Override the Hermes model used |
-| `MULTICA_GEMINI_PATH` | Custom path to the `gemini` binary |
-| `MULTICA_GEMINI_MODEL` | Override the Gemini model used |
+| `MULTICA_CLAUDE_PATH` | 自定义 `claude` 可执行文件路径 |
+| `MULTICA_CLAUDE_MODEL` | 覆盖 Claude 使用的模型 |
+| `MULTICA_CODEX_PATH` | 自定义 `codex` 可执行文件路径 |
+| `MULTICA_CODEX_MODEL` | 覆盖 Codex 使用的模型 |
+| `MULTICA_OPENCODE_PATH` | 自定义 `opencode` 可执行文件路径 |
+| `MULTICA_OPENCODE_MODEL` | 覆盖 OpenCode 使用的模型 |
+| `MULTICA_OPENCLAW_PATH` | 自定义 `openclaw` 可执行文件路径 |
+| `MULTICA_OPENCLAW_MODEL` | 覆盖 OpenClaw 使用的模型 |
+| `MULTICA_HERMES_PATH` | 自定义 `hermes` 可执行文件路径 |
+| `MULTICA_HERMES_MODEL` | 覆盖 Hermes 使用的模型 |
+| `MULTICA_GEMINI_PATH` | 自定义 `gemini` 可执行文件路径 |
+| `MULTICA_GEMINI_MODEL` | 覆盖 Gemini 使用的模型 |
 
-## Database Setup
+## 数据库配置
 
-Multica requires PostgreSQL 17 with the pgvector extension.
+Multica 需要 PostgreSQL 17，并启用 pgvector 扩展。
 
-### Using the Included Docker Compose
+### 使用内置 Docker Compose
 
 ```bash
 docker compose up -d postgres
 ```
 
-This starts a `pgvector/pgvector:pg17` container on port 5432 with default credentials (`multica`/`multica`).
+该命令会在 5432 端口启动 `pgvector/pgvector:pg17` 容器，默认账号密码为 `multica` / `multica`。
 
-### Using Your Own PostgreSQL
+### 使用自己的 PostgreSQL
 
-Ensure the pgvector extension is available:
+确保数据库中可以创建 pgvector 扩展：
 
 ```sql
 CREATE EXTENSION IF NOT EXISTS vector;
 ```
 
-### Running Migrations
+### 执行迁移
 
-Migrations must be run before starting the server:
+启动后端前必须先执行数据库迁移：
 
 ```bash
-# Using the built binary
+# 使用已构建的二进制
 ./server/bin/migrate up
 
-# Or from source
+# 或从源码执行
 cd server && go run ./cmd/migrate up
 ```
 
-## Manual Setup (Without Docker Compose)
+## 手工部署（不使用 Docker Compose）
 
-If you prefer to build and run services manually:
+如果要手工构建并运行服务：
 
-**Prerequisites:** Go 1.26+, Node.js 20+, pnpm 10.28+, PostgreSQL 17 with pgvector.
+**前置条件：** Go 1.26+、Node.js 20+、pnpm 10.28+、带 pgvector 的 PostgreSQL 17。
 
 ```bash
-# Start your PostgreSQL (or use: docker compose up -d postgres)
+# 启动 PostgreSQL（或使用：docker compose up -d postgres）
 
-# Build the backend
+# 构建后端
 make build
 
-# Run database migrations
+# 执行数据库迁移
 DATABASE_URL="your-database-url" ./server/bin/migrate up
 
-# Start the backend server
+# 启动后端服务
 DATABASE_URL="your-database-url" PORT=8080 JWT_SECRET="your-secret" ./server/bin/server
 ```
 
-For the frontend:
+前端：
 
 ```bash
 pnpm install
 pnpm build
 
-# Start the frontend (production mode)
+# 启动前端（生产模式）
 cd apps/web
 REMOTE_API_URL=http://localhost:8080 pnpm start
 ```
 
-## Reverse Proxy
+## 反向代理
 
-In production, put a reverse proxy in front of both the backend and frontend to handle TLS and routing.
+生产环境建议在后端和前端前面放一层反向代理，由它处理 TLS、域名和路由。
 
-### Caddy (Recommended)
+### Caddy（推荐）
 
-**Single-domain layout** — frontend and backend served on the same hostname (this is what `docker-compose.selfhost.yml` defaults to):
+**单域名部署**：前端和后端共用同一个 hostname（`docker-compose.selfhost.yml` 默认就是这种方式）：
 
 ```
 multica.example.com {
-    # WebSocket route — must come before the catch-all
+    # WebSocket 路由，必须放在 catch-all 之前
     @multica_ws path /ws /ws/*
     handle @multica_ws {
         reverse_proxy localhost:8080 {
@@ -376,12 +375,12 @@ multica.example.com {
         }
     }
 
-    # Everything else → frontend
+    # 其他请求转发到前端
     reverse_proxy localhost:3000
 }
 ```
 
-**Separate-domain layout** — frontend and backend on different hostnames:
+**双域名部署**：前端和后端使用不同 hostname：
 
 ```
 app.example.com {
@@ -400,10 +399,10 @@ api.example.com {
 }
 ```
 
-Two non-obvious bits inside the `/ws` block are worth calling out — both are common reasons real-time updates "stop working" on a Caddy-fronted self-host:
+`/ws` 配置里有两个容易忽略的点，也是 Caddy 代理后实时更新失效的常见原因：
 
-- **`path /ws /ws/*` (not `/ws*`)** — bare `handle /ws` is an exact match, so future path variants under `/ws/` fall through to the frontend block. The obvious shortcut `handle /ws*` overcorrects in the other direction: Caddy's `*` is a glob without a path-segment boundary, so it would also catch unrelated paths like `/ws-foo`, which is a legitimate workspace URL (only the exact slug `ws` is reserved). Listing `/ws` and `/ws/*` explicitly covers both real cases without overreach.
-- **`flush_interval -1`** — disables response buffering so WebSocket frames are forwarded as soon as they arrive. Without it, frames can sit behind Caddy's default flush window, which looks like delayed comments, missing typing indicators, or "comments only appear after a page refresh."
+- **`path /ws /ws/*`（不是 `/ws*`）**：单独写 `handle /ws` 只匹配精确路径，未来 `/ws/` 下的路径会落到前端 block。写成 `handle /ws*` 又会过度匹配，例如 `/ws-foo` 这种合法工作区路径也会被拦截。显式列出 `/ws` 和 `/ws/*` 可以覆盖真实 WebSocket 路径且不过度匹配。
+- **`flush_interval -1`**：关闭响应缓冲，WebSocket frame 到达后立即转发。不设置时，frame 可能被 Caddy 默认 flush 窗口延迟，看起来像评论延迟、输入状态丢失，或者评论刷新页面后才出现。
 
 ### Nginx
 
@@ -441,7 +440,7 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # WebSocket support
+    # WebSocket 支持
     location /ws {
         proxy_pass http://localhost:8080;
         proxy_http_version 1.1;
@@ -453,22 +452,22 @@ server {
 }
 ```
 
-When using separate domains for frontend and backend, set these environment variables accordingly:
+前后端使用不同域名时，按实际地址设置这些环境变量：
 
 ```bash
-# Backend
+# 后端
 FRONTEND_ORIGIN=https://app.example.com
 CORS_ALLOWED_ORIGINS=https://app.example.com
 
-# Frontend
+# 前端
 REMOTE_API_URL=https://api.example.com
 NEXT_PUBLIC_API_URL=https://api.example.com
 NEXT_PUBLIC_WS_URL=wss://api.example.com/ws
 ```
 
-## Health Check
+## 健康检查
 
-The backend exposes public health endpoints:
+后端提供以下公开健康检查端点：
 
 ```text
 GET /health
@@ -478,18 +477,15 @@ GET /readyz
 → {"status":"ok","checks":{"db":"ok","migrations":"ok"}}
 
 GET /healthz
-→ same response as /readyz
+→ 和 /readyz 相同
 ```
 
-Use `/health` for basic liveness / reachability checks. Use `/readyz` for
-dependency-aware readiness probes and external monitoring that should fail when
-the database is unavailable or migrations are not fully applied. `/healthz` is
-kept as an alias for operator familiarity.
+`/health` 适合基础存活和可达性检查。`/readyz` 会检查依赖，适合 readiness probe 和外部监控；当数据库不可用或迁移未完成时应失败。`/healthz` 作为运维习惯兼容别名保留。
 
-## Upgrading
+## 升级
 
-1. Pull the latest code or image
-2. Run migrations: `./server/bin/migrate up`
-3. Restart the backend and frontend
+1. 拉取最新代码或镜像。
+2. 执行迁移：`./server/bin/migrate up`。
+3. 重启后端和前端。
 
-Migrations are forward-only and safe to run on a live database. They are idempotent — running them multiple times has no effect.
+迁移只向前执行，可以在在线数据库上运行。迁移是幂等的，重复执行不会产生额外影响。

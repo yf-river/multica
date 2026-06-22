@@ -1,64 +1,64 @@
 ---
-title: Cloud Quickstart
-description: Get started with Multica Cloud — no setup required.
+title: 内部部署快速开始
+description: 面向团队内部 Multica 环境的最短接入路径。
 ---
 
-The fastest way to get started with Multica — no setup required.
+Multica 当前按团队内部系统使用。推荐先接入已经部署好的团队环境，再让个人电脑或服务器作为运行时加入工作区。
 
-## 1. Sign up
+## 1. 登录团队环境
 
-Go to [multica.ai](https://multica.ai) and create an account.
+向管理员确认前端地址、账号和初始密码。登录后进入你的工作区，优先检查：
 
-## 2. Install the CLI and start the daemon
+- **训练与评估**：查看提示词、数据集、测试套件、实验和运行历史。
+- **小队**：查看 user-center 小队、Multica 编码小队等内部协作模板。
+- **运行时**：确认可执行 Agent 任务的电脑是否在线。
 
-Give this instruction to your AI agent (Claude Code, Codex, Gemini CLI, OpenClaw, OpenCode, etc.):
+## 2. 安装 CLI 并连接运行时
 
+把下面这段交给你正在使用的 AI 编码工具，或手动执行等价步骤：
+
+```text
+阅读仓库 CLI_INSTALL.md，安装 Multica CLI，连接团队内部 Multica 服务，登录并启动 daemon。
 ```
-Fetch https://github.com/multica-ai/multica/blob/main/CLI_INSTALL.md and follow the instructions to install Multica CLI, log in, and start the daemon on this machine.
-```
 
-Or install manually:
-
-### macOS / Linux (Homebrew - recommended)
+手动安装：
 
 ```bash
 brew install multica-ai/tap/multica
 ```
 
-### macOS / Linux (install script)
+没有 Homebrew 时：
 
 ```bash
-# Install the CLI
 curl -fsSL https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.sh | bash
 ```
 
-### Windows (PowerShell)
+Windows：
 
 ```powershell
 irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps1 | iex
 ```
 
-Then configure, authenticate, and start the daemon:
+连接内部服务：
 
 ```bash
-# Configure, authenticate, and start the daemon
-multica setup
+multica setup self-host --server-url https://api.example.internal --app-url https://multica.example.internal
 ```
 
-The daemon auto-detects available agent CLIs (`claude`, `codex`, `gemini`, `openclaw`, `opencode`, `hermes`, `pi`) on your PATH. When an agent is assigned a task, the daemon creates an isolated environment, runs the agent, and reports results back.
+本机开发环境可以直接使用：
 
-## 3. Verify your runtime
+```bash
+multica setup self-host
+```
 
-Open your workspace in the Multica web app. Navigate to **Settings → Runtimes** — you should see your machine listed as an active **Runtime**.
+## 3. 验证运行时
 
-> **What is a Runtime?** A Runtime is a compute environment that can execute agent tasks. It can be your local machine (via the daemon) or a cloud instance. Each runtime reports which agent CLIs are available, so Multica knows where to route work.
+打开 **设置 → 运行时**，确认你的电脑显示为在线。运行时会报告可用的 Agent CLI，例如 `codex`、`claude`、`opencode`、`openclaw`、`kimi`、`kiro-cli`。
 
-## 4. Create an agent
+## 4. 创建或选择 Agent
 
-Go to **Settings → Agents** and click **New Agent**. Pick the runtime you just connected and choose a provider (Claude Code, Codex, Gemini CLI, OpenClaw, OpenCode, or Hermes). Give your agent a name — this is how it will appear on the board, in comments, and in assignments.
+打开 **设置 → Agent**，选择刚连接的运行时和可用模型。团队演示环境默认关注本机 Codex runtime，轻量验收优先使用 `gpt-5.3-codex-spark`，额度不足时切到 `gpt-5.4-mini`。
 
-## 5. Assign your first task
+## 5. 分派第一个任务
 
-Create an issue from the board (or via `multica issue create`), then assign it to your new agent. The agent will automatically pick up the task, execute it on your runtime, and report progress — just like a human teammate.
-
-That's it! Your agent is now part of the team.
+在 issue 看板创建任务，分派给 Agent 或小队。完成后在 issue、运行历史、trace、usage 和训练评估报告中核对结果。

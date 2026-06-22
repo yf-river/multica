@@ -11,7 +11,7 @@ test.describe("训练与评估工作台", () => {
 	  let api: TestApiClient;
 	  let artifactPrefix: string;
 	  let workspaceSlug: string;
-  let expectedAgentModel = process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL || "minimax-m2.7-ioa";
+  let expectedAgentModel = process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL || "gpt-5.3-codex-spark";
 
   async function refreshExpectedAgentModel() {
     if (process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL) return;
@@ -34,7 +34,7 @@ test.describe("训练与评估工作台", () => {
   });
 
 	  test("可以创建提示词、调试渲染并记录评测资产", async ({ page }) => {
-    const runtime = await api.ensureOnlineCodeBuddyRuntime(`${artifactPrefix} CodeBuddy Runtime`);
+    const runtime = await api.ensureOnlineCodexRuntime(`${artifactPrefix} Codex Runtime`);
     await refreshExpectedAgentModel();
 
     await page.getByRole("link", { name: "训练与评估" }).click();
@@ -68,7 +68,7 @@ test.describe("训练与评估工作台", () => {
     }
 
     await page.getByRole("button", { name: "Agent 调试场", exact: true }).click();
-    await expect(page.getByText("CodeBuddy 在线")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("Codex 在线")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(runtime.name)).toBeVisible();
     await page.getByLabel("期望输出").fill("输出需求澄清结论、风险、测试证据和下一步建议。");
     await page.getByRole("button", { name: "保存为实验" }).click();
@@ -261,7 +261,7 @@ test.describe("训练与评估工作台", () => {
         run_kind: "Agent执行",
         status: "已入队",
         model: expectedAgentModel,
-        runtime_provider: "codebuddy",
+        runtime_provider: "codex",
         runtime_id: runtime.id,
         total_cases: 1,
         passed_cases: 0,
@@ -279,7 +279,7 @@ test.describe("训练与评估工作台", () => {
       run_kind: "Agent执行",
       status: "已入队",
       model: expectedAgentModel,
-      runtime_provider: "codebuddy",
+      runtime_provider: "codex",
       runtime_id: runtime.id,
       task_id: queuedAgentRun!.task_id,
     });
@@ -295,7 +295,7 @@ test.describe("训练与评估工作台", () => {
       评测资产名称: queuedAgentAsset!.name,
       执行Agent名称: "Multica 训练评估 Agent",
       运行时名称: runtime.name,
-      运行时提供方: "codebuddy",
+      运行时提供方: "codex",
     });
     await api.completePromptEvaluationAgentTask(queuedAgentRun!);
     await expect
@@ -359,7 +359,7 @@ test.describe("训练与评估工作台", () => {
     await expect(demoDashboard).toContainText("SOP 与任务观测");
     await expect(demoDashboard.getByTestId("training-demo-metric-Agent运行数")).toContainText(/[1-9]/);
     await expect(demoDashboard.getByTestId("training-demo-proof-真实 Agent 证据")).toContainText("已有任务/trace 运行记录");
-    await expect(demoDashboard.getByText("CodeBuddy 运行时可创建真实 Agent 任务")).toBeVisible();
+    await expect(demoDashboard.getByText("Codex 运行时可创建真实 Agent 任务")).toBeVisible();
     await expect(demoDashboard).toContainText("最近7天");
     await demoDashboard.getByRole("button", { name: "最近24小时" }).click();
     await expect(demoDashboard).toContainText("最近24小时");
@@ -383,7 +383,7 @@ test.describe("训练与评估工作台", () => {
       expect.arrayContaining([
         expect.objectContaining({
           task_id: queuedAgentRun!.task_id,
-          provider: "codebuddy",
+          provider: "codex",
           output_tokens: 7,
         }),
       ]),
@@ -396,11 +396,11 @@ test.describe("训练与评估工作台", () => {
     await page.getByRole("button", { name: "运行历史", exact: true }).click();
     agentRunCard = page.getByTestId(`prompt-evaluation-run-${queuedAgentRun!.id}`);
     await expect(agentRunCard).toContainText("Agent执行 · 通过", { timeout: 10000 });
-    await expect(agentRunCard).toContainText(new RegExp(`模型 ${escapeRegExp(expectedAgentModel)} · 运行时 codebuddy · 通过 1\\/1 · 输入 16 token · 输出 7 token`));
+    await expect(agentRunCard).toContainText(new RegExp(`模型 ${escapeRegExp(expectedAgentModel)} · 运行时 codex · 通过 1\\/1 · 输入 16 token · 输出 7 token`));
     await agentRunCard.getByRole("button", { name: "查看证据" }).click();
     const agentEvidencePanel = agentRunCard.getByTestId(`run-evidence-${queuedAgentRun!.id}`);
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-模型")).toContainText(expectedAgentModel, { timeout: 10000 });
-    await expect(agentEvidencePanel.getByTestId("run-evidence-metric-运行时")).toContainText("codebuddy");
+    await expect(agentEvidencePanel.getByTestId("run-evidence-metric-运行时")).toContainText("codex");
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-触发来源")).toContainText("Agent 调试场");
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-创建者")).toContainText(/[0-9a-f-]{36}/);
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-智能体标识")).toContainText(queuedAgentRun!.agent_id!);
@@ -453,10 +453,10 @@ test.describe("训练与评估工作台", () => {
     agentRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "Agent执行 · 通过" }).first();
     await agentRunCard.getByRole("button", { name: "查看证据" }).click();
     await expect(agentRunCard.getByText("Agent 调试场用例", { exact: true })).toBeVisible({ timeout: 10000 });
-    await expect(agentRunCard.getByText(/codebuddy\/[^ ]+ · 输入 11 · 输出 7 · 预估成本 \$/)).toBeVisible();
+    await expect(agentRunCard.getByText(/codex\/[^ ]+ · 输入 11 · 输出 7 · 预估成本 \$/)).toBeVisible();
     await expect(agentRunCard.getByText("缓存读 2 · 缓存写 3")).toBeVisible();
     await expect(agentRunCard.getByText("#1 text：Agent 输出：完成训练评估")).toBeVisible();
-    await expect(agentRunCard.getByText(/训练评估用量已上报 · completed · codebuddy\/[^ ]+ · 尝试次数 1 · .*输入 16 · 输出 7/)).toBeVisible();
+    await expect(agentRunCard.getByText(/训练评估用量已上报 · completed · codex\/[^ ]+ · 尝试次数 1 · .*输入 16 · 输出 7/)).toBeVisible();
     await expect(page.getByText("失败原因：等待 Agent 执行完成")).toHaveCount(0);
     await expect(agentRunCard.getByText("任务用量")).toBeVisible();
     const syncedAgentEvidence = await api.getPromptEvaluationRunEvidence(queuedAgentRun!.id);
@@ -479,7 +479,7 @@ test.describe("训练与评估工作台", () => {
     ]);
     expect(syncedAgentEvidence.task_usage).toEqual([
       expect.objectContaining({
-        provider: "codebuddy",
+        provider: "codex",
         model: expect.any(String),
         input_tokens: 11,
         output_tokens: 7,
@@ -519,7 +519,7 @@ test.describe("训练与评估工作台", () => {
           count: agentAssets.length,
           hasSnapshot: agentAssets.some((asset) => {
             const payload = asset.payload as Record<string, any>;
-            return String(payload.调试包?.执行方式 ?? "").includes("CodeBuddy 运行时已在线");
+            return String(payload.调试包?.执行方式 ?? "").includes("Codex 运行时已在线");
           }),
           queuedRun: agentAssets.find((asset) => {
             const payload = asset.payload as Record<string, any>;
@@ -539,7 +539,7 @@ test.describe("训练与评估工作台", () => {
             最近Agent运行: {
               状态: "通过",
               模型: expectedAgentModel,
-              runtime: "codebuddy",
+              runtime: "codex",
               runtime_id: runtime.id,
               "trace/task id": queuedAgentRun!.task_id,
               总用例数: 1,
@@ -557,7 +557,7 @@ test.describe("训练与评估工作台", () => {
   test("失败运行可以生成优化候选并人工发布新版本", async ({ page }) => {
     const promptName = `${artifactPrefix} 失败优化闭环`;
     const sourceContent = "请澄清 {{issue_title}}，输出必须使用中文。";
-    const runtime = await api.ensureOnlineCodeBuddyRuntime(`${artifactPrefix} 优化 CodeBuddy Runtime`);
+    const runtime = await api.ensureOnlineCodexRuntime(`${artifactPrefix} 优化 Codex Runtime`);
     await refreshExpectedAgentModel();
 
     await page.getByRole("link", { name: "训练与评估" }).click();
@@ -645,7 +645,7 @@ test.describe("训练与评估工作台", () => {
         run_kind: "Agent执行",
         status: "已入队",
         model: expectedAgentModel,
-        runtime_provider: "codebuddy",
+        runtime_provider: "codex",
         runtime_id: runtime.id,
         hasTask: true,
       });

@@ -65,7 +65,7 @@ func TestQuickCreateSquadTaskTraceCarriesSquadAndProject(t *testing.T) {
 		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, uuidToString(task.ID))
 	})
 
-	testHandler.TaskService.CaptureTaskUsage(ctx, task, "codebuddy", "minimax-m2.7-ioa", 11, 7, 0, 0)
+	testHandler.TaskService.CaptureTaskUsage(ctx, task, "codex", "gpt-5.3-codex-spark", 11, 7, 0, 0)
 
 	var gotSquadID, gotProjectID string
 	if err := testPool.QueryRow(ctx, `

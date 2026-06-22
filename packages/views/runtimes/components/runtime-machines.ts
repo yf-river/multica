@@ -277,15 +277,15 @@ function machineTitle(
   }
 
   const first = runtimes[0];
-  if (!first) return "Unknown machine";
+  if (!first) return "未知电脑";
 
   const deviceName = runtimeDeviceName(first);
   if (deviceName) return deviceName;
 
   if (first.runtime_mode === "cloud") {
-    return `${capitalize(first.provider)} cloud`;
+    return `${capitalize(first.provider)} 托管运行时`;
   }
-  return first.daemon_id ? shortDaemonId(first.daemon_id) : "Unknown machine";
+  return first.daemon_id ? shortDaemonId(first.daemon_id) : "未知电脑";
 }
 
 function machineSubtitle({
@@ -302,7 +302,7 @@ function machineSubtitle({
   const compact = compactDeviceInfo(deviceInfo, title);
   if (compact) return compact;
   if (daemonId) return `daemon ${shortDaemonId(daemonId)}`;
-  return mode === "cloud" ? "Cloud worker" : null;
+  return mode === "cloud" ? "托管运行时" : null;
 }
 
 function compactDeviceInfo(

@@ -1,65 +1,32 @@
 ---
-title: Contributing
-description: Local development workflow for contributors working on the Multica codebase.
+title: 贡献和本地开发
+description: Multica 本地开发、worktree、测试和迁移流程。
 ---
 
-## Development Model
+## 开发模型
 
-Local development uses one shared PostgreSQL container and one database per checkout.
+本地开发使用一个共享 PostgreSQL 容器，每个 checkout 或 worktree 使用独立数据库。
 
-- The main checkout usually uses `.env` and `POSTGRES_DB=multica`
-- Each Git worktree uses its own `.env.worktree`
-- Every checkout connects to the same PostgreSQL host: `localhost:5432`
-- Isolation happens at the database level, not by starting a separate Docker Compose project
-- Backend and frontend ports are still unique per worktree
+- 主仓库通常使用 `.env` 和 `POSTGRES_DB=multica`。
+- 每个 worktree 使用自己的 `.env.worktree`。
+- 后端和前端端口按 worktree 分配，避免互相冲突。
 
-## Prerequisites
+## 依赖
 
 - Node.js `v20+`
 - `pnpm` `v10.28+`
 - Go `v1.26+`
 - Docker
 
-## First-Time Setup
-
-### Main Checkout
+## 主仓库
 
 ```bash
 cp .env.example .env
 make setup-main
-```
-
-What `make setup-main` does:
-
-- Installs JavaScript dependencies with `pnpm install`
-- Ensures the shared PostgreSQL container is running
-- Creates the application database if it does not exist
-- Runs all migrations against that database
-
-Start the app:
-
-```bash
 make start-main
 ```
 
-### Worktree
-
-From the worktree directory:
-
-```bash
-make worktree-env
-make setup-worktree
-```
-
-Start the worktree app:
-
-```bash
-make start-worktree
-```
-
-## Daily Workflow
-
-### Main Checkout
+日常命令：
 
 ```bash
 make start-main
@@ -67,7 +34,7 @@ make stop-main
 make check-main
 ```
 
-### Feature Worktree
+## Worktree
 
 ```bash
 git worktree add ../multica-feature -b feat/my-change main
@@ -77,7 +44,7 @@ make setup-worktree
 make start-worktree
 ```
 
-Day-to-day:
+日常命令：
 
 ```bash
 make start-worktree
@@ -85,91 +52,44 @@ make stop-worktree
 make check-worktree
 ```
 
-## Running Main and Worktree Simultaneously
-
-This is a first-class workflow. Both checkouts use the same PostgreSQL container but different databases and ports:
-
-| | Main | Worktree |
-|---|---|---|
-| Database | `multica` | `multica_my_feature_702` |
-| Backend port | `8080` | generated (e.g. `18782`) |
-| Frontend port | `3000` | generated (e.g. `13702`) |
-
-## Commands
+## 常用检查
 
 ```bash
-# Frontend (all commands go through Turborepo)
-pnpm install
-pnpm dev:web          # Next.js dev server (port 3000)
-pnpm dev:desktop      # Electron dev (electron-vite, HMR)
-pnpm build            # Build all frontend apps
-pnpm typecheck        # TypeScript check
-pnpm lint             # ESLint
-pnpm test             # TS tests (Vitest)
+pnpm --filter @multica/web typecheck
+pnpm --filter @multica/web build
+pnpm --filter @multica/core test
+pnpm exec playwright test
 
-# Backend (Go)
-make dev              # Run Go server (port 8080)
-make daemon           # Run local daemon
-make build            # Build server + CLI binaries
-make test             # Go tests
-make sqlc             # Regenerate sqlc code
-make migrate-up       # Run database migrations
-make migrate-down     # Rollback migrations
+cd server
+go test ./...
+go run ./cmd/migrate up
 ```
 
-## Testing
-
-Run all local checks:
+修改 SQL 查询后运行：
 
 ```bash
-make check
+cd server
+sqlc generate
 ```
 
-This runs:
+## 测试要求
 
-1. TypeScript typecheck
-2. TypeScript unit tests
-3. Go tests
-4. Playwright E2E tests
-
-## Troubleshooting
-
-### Missing Env File
-
-Create the expected env file:
+涉及 shared API、handler、migration、训练评估、小队、运行时或可观测能力时，至少补对应层级的聚焦测试。生产验收相关改动还应跑：
 
 ```bash
-# Main checkout
-cp .env.example .env
-
-# Worktree
-make worktree-env
+pnpm acceptance:verify
 ```
 
-### Check Which Database a Checkout Uses
+## 数据库
+
+查看当前 checkout 使用的数据库：
 
 ```bash
-cat .env           # or .env.worktree
+cat .env
+cat .env.worktree
 ```
 
-Look for `POSTGRES_DB`, `DATABASE_URL`, `PORT`, `FRONTEND_PORT`.
-
-### List All Local Databases
-
-```bash
-docker compose exec -T postgres psql -U multica -d postgres \
-  -At -c "select datname from pg_database order by datname;"
-```
-
-### Destructive Reset
-
-Stop PostgreSQL and keep local databases:
-
-```bash
-make db-down
-```
-
-Reset only the current checkout's database (drops `POSTGRES_DB`, recreates it, re-runs all migrations). Other worktree databases are untouched.
+重置当前 checkout 数据库：
 
 ```bash
 make stop
@@ -177,12 +97,4 @@ make db-reset
 make start
 ```
 
-> `make db-reset` refuses to run if `DATABASE_URL` points at a remote host.
-
-Wipe all local PostgreSQL data:
-
-```bash
-docker compose down -v
-```
-
-> **Warning:** This deletes the shared Docker volume and all databases. After that you must run `make setup-main` or `make setup-worktree` again.
+`make db-reset` 会拒绝远程数据库，避免误删共享环境。

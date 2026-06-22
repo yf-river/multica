@@ -18,41 +18,41 @@ import (
 
 var setupCmd = &cobra.Command{
 	Use:   "setup",
-	Short: "Configure the CLI, authenticate, and start the daemon",
-	Long: `Configures the CLI to connect to Multica Cloud (multica.ai), then
-authenticates via browser and starts the agent daemon.
+	Short: "配置 CLI、登录并启动 daemon",
+	Long: `配置 CLI、通过浏览器登录，并启动本机 Agent daemon。
 
-If a configuration already exists, you will be prompted before overwriting.
+如果已有配置，命令会在覆盖前确认。
 
-Use 'multica setup self-host' to connect to a self-hosted server instead.
+团队内部或自部署环境请使用 'multica setup self-host'。
+不带子命令的 'multica setup' 保留为托管服务兼容入口。
 
-Use --profile to create an isolated configuration for a separate environment:
+使用 --profile 可以为不同环境创建隔离配置：
   multica setup self-host --profile staging --server-url https://api-staging.co`,
 	RunE: runSetupCloud,
 }
 
 var setupCloudCmd = &cobra.Command{
 	Use:   "cloud",
-	Short: "Configure the CLI for Multica Cloud (multica.ai)",
-	Long: `Explicitly configures the CLI to connect to Multica Cloud (multica.ai).
+	Short: "配置 CLI 连接托管 Multica 服务",
+	Long: `显式配置 CLI 连接托管 Multica 服务。
 
-This is equivalent to running 'multica setup' without a subcommand.`,
+这等同于运行不带子命令的 'multica setup'。团队内部或自部署环境请使用 'multica setup self-host'。`,
 	RunE: runSetupCloud,
 }
 
 var setupSelfHostCmd = &cobra.Command{
 	Use:   "self-host",
-	Short: "Configure the CLI for a self-hosted Multica server",
-	Long: `Configures the CLI to connect to a self-hosted Multica server.
+	Short: "配置 CLI 连接团队内部或自部署 Multica 服务",
+	Long: `配置 CLI 连接团队内部或自部署 Multica 服务。
 
-By default, connects to http://localhost:8080 (backend) and http://localhost:3000 (frontend).
-Use --server-url and --app-url to specify a custom server (e.g. an on-premise deployment).
+默认连接 http://localhost:8080（后端）和 http://localhost:3000（前端）。
+使用 --server-url 和 --app-url 指定内网域名、反向代理或其他部署地址。
 
-If you run this command from a different machine than the server, also pass
---callback-host <FQDN-or-IP-the-browser-can-reach-back-to-this-machine-on> so
-the browser login flow can return the token to the CLI.
+如果 CLI 不在服务端同一台机器上运行，同时传入
+--callback-host <浏览器可以回连到本机的域名或 IP>，
+让浏览器登录流程可以把 token 返回给 CLI。
 
-Examples:
+示例：
   multica setup self-host
   multica setup self-host --server-url https://api.internal.co --app-url https://app.internal.co
   multica setup self-host --port 9090 --frontend-port 4000`,
@@ -131,7 +131,7 @@ func runSetupCloud(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("save config: %w", err)
 	}
 
-	fmt.Fprintln(os.Stderr, "Configured for Multica Cloud (https://multica.ai).")
+	fmt.Fprintln(os.Stderr, "已配置为连接托管 Multica 服务（https://multica.ai）。")
 	fmt.Fprintf(os.Stderr, "  server_url: %s\n", cfg.ServerURL)
 	fmt.Fprintf(os.Stderr, "  app_url:    %s\n", cfg.AppURL)
 	printConfigLocation(profile)
@@ -142,11 +142,11 @@ func runSetupCloud(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Fprintln(os.Stderr, "\nStarting daemon...")
+	fmt.Fprintln(os.Stderr, "\n正在启动 daemon...")
 	if err := runDaemonBackground(cmd); err != nil {
 		return fmt.Errorf("start daemon: %w", err)
 	}
-	fmt.Fprintln(os.Stderr, "\n✓ Setup complete! Your machine is now connected to Multica.")
+	fmt.Fprintln(os.Stderr, "\n✓ 配置完成！这台电脑已连接到 Multica。")
 
 	return nil
 }

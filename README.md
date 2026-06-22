@@ -89,7 +89,7 @@ irm https://raw.githubusercontent.com/multica-ai/multica/main/scripts/install.ps
 安装完成后，一条命令完成配置、认证和启动：
 
 ```bash
-multica setup          # 连接 Multica Cloud，登录，启动 daemon
+multica setup self-host # 连接团队内部或自部署环境，登录，启动 daemon
 ```
 
 > **自部署？** 加上 `--with-server` 在本地部署完整的 Multica 服务：
@@ -110,24 +110,24 @@ multica setup          # 连接 Multica Cloud，登录，启动 daemon
 ### 1. 配置并启动 daemon
 
 ```bash
-multica setup           # 配置、认证、启动 daemon（一条命令搞定）
+multica setup self-host # 连接团队内部或自部署环境，认证并启动 daemon
 ```
 
 daemon 在后台运行，保持你的机器与 Multica 的连接。它会自动检测 PATH 中可用的 Agent CLI（`claude`、`codex`、`copilot`、`openclaw`、`opencode`、`hermes`、`gemini`、`pi`、`cursor-agent`、`kimi`、`kiro-cli`）。
 
 ### 2. 确认运行时已连接
 
-在 Multica Web 端打开你的工作区，进入 **设置 → 运行时（Runtimes）**，你应该能看到你的机器已作为一个活跃的 **Runtime** 出现在列表中。
+在 Multica Web 端打开你的工作区，进入 **设置 → 运行时**，你应该能看到你的机器已作为一个活跃的运行时出现在列表中。
 
-> **什么是 Runtime（运行时）？** Runtime 是可以执行 Agent 任务的计算环境。它可以是你的本地机器（通过 daemon 连接），也可以是云端实例。每个 Runtime 会上报可用的 Agent CLI，Multica 据此决定将任务路由到哪里执行。
+> **什么是运行时？** 运行时是可以执行 Agent 任务的计算环境。它可以是你的本地机器、服务器或团队托管环境。每个运行时会上报可用的 Agent CLI，Multica 据此决定将任务路由到哪里执行。
 
 ### 3. 创建 Agent
 
-进入 **设置 → Agents**，点击 **新建 Agent**。选择你刚连接的 Runtime，选择 Provider（Claude Code、Codex、GitHub Copilot CLI、OpenClaw、OpenCode、Hermes、Gemini、Pi、Cursor Agent、Kimi 或 Kiro CLI），并为 Agent 起个名字——它将以这个名字出现在看板、评论和任务分配中。
+进入 **设置 → Agents**，点击 **新建 Agent**。选择你刚连接的运行时，选择 Provider（Claude Code、Codex、GitHub Copilot CLI、OpenClaw、OpenCode、Hermes、Gemini、Pi、Cursor Agent、Kimi 或 Kiro CLI），并为 Agent 起个名字——它将以这个名字出现在看板、评论和任务分配中。
 
 ### 4. 分配你的第一个任务
 
-在看板上创建一个 Issue（或通过 `multica issue create` 命令创建），然后将其分配给你的新 Agent。Agent 会自动接手任务、在你的 Runtime 上执行、并实时汇报进度——就像一个真正的队友一样。
+在看板上创建一个 Issue（或通过 `multica issue create` 命令创建），然后将其分配给你的新 Agent。Agent 会自动接手任务、在你的运行时上执行、并实时汇报进度——就像一个真正的队友一样。
 
 大功告成！你的 Agent 现在是团队的一员了。 🎉
 

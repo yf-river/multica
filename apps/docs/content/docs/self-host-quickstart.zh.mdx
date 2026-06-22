@@ -1,5 +1,5 @@
 ---
-title: Self-Host 快速上手
+title: 自部署快速上手
 description: 在自己的服务器或本机用 Docker 把 Multica 跑起来（也可以在 Kubernetes 上用 Helm）。约 10 分钟。
 ---
 
@@ -7,7 +7,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 
 这一页带你用 Docker 把 Multica 的**服务器**（后端 + 前端 + PostgreSQL）跑在自己的机器或服务器上。走完这一篇你的数据就完全在自己手里——包括 [工作区](/workspaces)、[issue](/issues)、[评论](/comments)、[智能体](/agents) 配置。
 
-智能体**执行**还是靠你本地跑的 [守护进程](/daemon-runtimes) + 本地装好的 [AI 编程工具](/providers)——这点和 Cloud 完全一样。Self-host 换掉的是服务器那一层，不是执行那一层。
+智能体**执行**还是靠你本地跑的 [守护进程](/daemon-runtimes) + 本地装好的 [AI 编程工具](/providers)。自部署换掉的是服务器那一层，不是执行那一层。
 
 ## 前置要求
 
@@ -49,16 +49,16 @@ make selfhost
 - **后端**：[http://localhost:8080](http://localhost:8080)
 
 <Callout type="info">
-**所有端口只监听 `127.0.0.1`。** `docker-compose.selfhost.yml` 把每个 publish 出来的端口都绑到 loopback —— `ss -tlnp` 不会看到 `0.0.0.0:8080`，外网/其它机器默认根本连不上。这是为了避免服务密钥和 Postgres 凭据被直接暴露到公网。要做跨机访问，请用反向代理在前面终结 TLS，详见下方 [Step 5b —— 跨机访问：用反向代理把服务挡在前面](#5b-跨机访问用反向代理把服务挡在前面)。
+**所有端口只监听 `127.0.0.1`。** `docker-compose.selfhost.yml` 把每个 publish 出来的端口都绑到 loopback —— `ss -tlnp` 不会看到 `0.0.0.0:8080`，外网/其它机器默认根本连不上。这是为了避免服务密钥和 Postgres 凭据被直接暴露到公网。要做跨机访问，请用反向代理在前面终结 TLS，详见下方 [第 5b 步 —— 跨机访问：用反向代理把服务挡在前面](#5b-跨机访问用反向代理把服务挡在前面)。
 </Callout>
 
-## 2. First login + create a workspace
+## 2. 首次登录并创建工作区
 
-Open the frontend URL and sign in with an account name and password. When signup is enabled, the first successful login creates the account. After login, create your first workspace.
+打开前端地址，使用账号和密码登录。如果实例允许注册，首次成功登录会创建账号；内部实例通常由管理员预置账号或邀请成员。登录后创建第一个工作区，或进入管理员已经创建好的共享工作区。
 
 ## 5. 连接命令行工具到你自己的 server
 
-命令行装法和 [Cloud 快速上手 → 2. 装命令行工具](/cloud-quickstart#2-装-multica-命令行工具) 一样——Homebrew / 脚本 / PowerShell 任选。
+命令行装法见 [团队快速上手 → 2. 装命令行工具](/cloud-quickstart#2-装-multica-命令行工具)——Homebrew / 脚本 / PowerShell 任选。
 
 ### 5a. 同一台机器
 
@@ -112,7 +112,7 @@ multica.example.com {
 
 ## 6. 创建智能体 + 分配第一个任务
 
-流程和 Cloud 一样——见 [Cloud 快速上手 → 5-6 步](/cloud-quickstart#5-创建智能体)。
+流程见 [团队快速上手 → 5-6 步](/cloud-quickstart#5-创建智能体)。
 
 <span id="7-usage-rollup-no-operator-action-required" />
 

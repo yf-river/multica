@@ -23,6 +23,9 @@ const apiURL = trimEnv("ACCEPTANCE_API_URL")
 const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || trimEnv("REAL_AGENT_E2E_WORKSPACE") || "goal-test-daemon";
 const demoAccount = trimEnv("ACCEPTANCE_DEMO_ACCOUNT") || trimEnv("REAL_AGENT_E2E_ACCOUNT") || "goal-test-daemon";
 const demoPassword = trimEnv("ACCEPTANCE_DEMO_PASSWORD") || trimEnv("REAL_AGENT_E2E_PASSWORD") || "e2e-password";
+const realAgentProvider = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER") || "codex";
+const realAgentModel = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "gpt-5.3-codex-spark";
+const realAgentFallbackModel = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_FALLBACK_MODEL") || "gpt-5.4-mini";
 
 const health = await probeHTTP(`${apiURL}/health`);
 const ready = await probeHTTP(`${apiURL}/readyz`);
@@ -466,14 +469,52 @@ function buildCommandPlan() {
       skippedByDefault: true,
     },
     {
+      name: "Codex curl 端到端 Agent/小队验收",
+      command: [
+        `ACCEPTANCE_API_URL=${shellQuote(apiURL)}`,
+        `REAL_AGENT_E2E_WORKSPACE=${shellQuote(workspaceSlug)}`,
+        `MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER=${shellQuote(realAgentProvider)}`,
+        `MULTICA_PROMPT_EVALUATION_AGENT_MODEL=${shellQuote(realAgentModel)}`,
+        "node scripts/codex-squad-curl-e2e.mjs",
+        "||",
+        `ACCEPTANCE_API_URL=${shellQuote(apiURL)}`,
+        `REAL_AGENT_E2E_WORKSPACE=${shellQuote(workspaceSlug)}`,
+        `MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER=${shellQuote(realAgentProvider)}`,
+        `MULTICA_PROMPT_EVALUATION_AGENT_MODEL=${shellQuote(realAgentFallbackModel)}`,
+        "node scripts/codex-squad-curl-e2e.mjs",
+      ].join(" "),
+      required: includeE2E,
+      skippedByDefault: true,
+    },
+    {
       name: "真实 Agent E2E",
-      command: "RUN_REAL_AGENT_E2E=1 pnpm exec playwright test e2e/prompt-library-real-agent.spec.ts --project=chromium",
+      command: [
+        "RUN_REAL_AGENT_E2E=1",
+        `MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER=${shellQuote(realAgentProvider)}`,
+        `MULTICA_PROMPT_EVALUATION_AGENT_MODEL=${shellQuote(realAgentModel)}`,
+        "pnpm exec playwright test e2e/prompt-library-real-agent.spec.ts --project=chromium",
+        "||",
+        "RUN_REAL_AGENT_E2E=1",
+        `MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER=${shellQuote(realAgentProvider)}`,
+        `MULTICA_PROMPT_EVALUATION_AGENT_MODEL=${shellQuote(realAgentFallbackModel)}`,
+        "pnpm exec playwright test e2e/prompt-library-real-agent.spec.ts --project=chromium",
+      ].join(" "),
       required: includeE2E,
       skippedByDefault: true,
     },
     {
       name: "真实小队 Agent E2E",
-      command: "RUN_REAL_AGENT_E2E=1 pnpm exec playwright test e2e/squad-real-agent.spec.ts --project=chromium",
+      command: [
+        "RUN_REAL_AGENT_E2E=1",
+        `MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER=${shellQuote(realAgentProvider)}`,
+        `MULTICA_PROMPT_EVALUATION_AGENT_MODEL=${shellQuote(realAgentModel)}`,
+        "pnpm exec playwright test e2e/squad-real-agent.spec.ts --project=chromium",
+        "||",
+        "RUN_REAL_AGENT_E2E=1",
+        `MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER=${shellQuote(realAgentProvider)}`,
+        `MULTICA_PROMPT_EVALUATION_AGENT_MODEL=${shellQuote(realAgentFallbackModel)}`,
+        "pnpm exec playwright test e2e/squad-real-agent.spec.ts --project=chromium",
+      ].join(" "),
       required: includeE2E,
       skippedByDefault: true,
     },

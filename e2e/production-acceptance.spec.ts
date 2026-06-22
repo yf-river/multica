@@ -14,7 +14,7 @@ const password = process.env.ACCEPTANCE_DEMO_PASSWORD
   || "e2e-password";
 
 test.describe("生产部署验收", () => {
-  test("领导演示账号可以看到训练评估生产看板和服务端证据快照", async ({ page, baseURL }) => {
+  test("领导演示账号可以看到训练评估生产看板和服务端证据快照", async ({ page }) => {
     const login = await page.request.post(`${apiURL}/auth/login`, {
       data: { account, password },
     });
@@ -22,26 +22,15 @@ test.describe("生产部署验收", () => {
     const loginData = await login.json();
     expect(loginData.token).toEqual(expect.any(String));
 
-    const cookieURL = baseURL || process.env.PLAYWRIGHT_BASE_URL || process.env.FRONTEND_ORIGIN || "http://127.0.0.1:3000";
-    await page.context().addCookies([
-      {
-        name: "multica_logged_in",
-        value: "1",
-        url: cookieURL,
-        sameSite: "Lax",
-      },
-      {
-        name: "last_workspace_slug",
-        value: workspaceSlug,
-        url: cookieURL,
-        sameSite: "Lax",
-      },
-    ]);
-
-    await page.addInitScript((token) => {
-      localStorage.setItem("multica_token", token);
+    await page.goto("/login", { waitUntil: "domcontentloaded" });
+    await page.getByLabel("账号").fill(account);
+    await page.getByLabel("密码").fill(password);
+    await page.getByRole("button", { name: "继续" }).click();
+    await expect(page).not.toHaveURL(/\/login(?:\?|$)/, { timeout: 30000 });
+    await page.evaluate((slug) => {
       localStorage.setItem("multica:chat:isOpen", "false");
-    }, loginData.token);
+      document.cookie = `last_workspace_slug=${encodeURIComponent(slug)}; path=/; max-age=31536000; SameSite=Lax`;
+    }, workspaceSlug);
 
     await page.goto(`/${workspaceSlug}/training?view=demo-dashboard`, { waitUntil: "domcontentloaded" });
     await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队生产看板", { timeout: 30000 });

@@ -22,7 +22,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 | 训练评估闭环 | 提示词、数据集、测试套件、实验运行、通过率、token、成本已经结构化记录 |
 | SOP 与任务观测 | SOP run、SOP event、任务 trace、耗时、token、成本、失败原因已经聚合 |
 | 验收证据 | 结构化用例、真实 Agent 任务/trace、优化候选、最近运行是否存在 |
-| 演示状态 | CodeBuddy 运行时、真实运行证据、结构化用例、优化闭环、摘要完整性是否达标 |
+| 演示状态 | Codex 运行时、真实运行证据、结构化用例、优化闭环、摘要完整性是否达标 |
 
 演示时不要只打开一个静态页面。至少要能从生产看板跳到 **运行历史**，展开一条 Agent 执行记录，看到触发来源、创建者、开始/结束时间、任务标识、模型、运行时、token、trace、用例明细和完整运行证据 JSON。
 
@@ -35,7 +35,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 | 后端健康 | `/health` 返回 `{"status":"ok"}` |
 | 后端就绪 | `/readyz` 返回 DB 和 migration 都是 `ok` |
 | 前端可访问 | 登录页返回 HTTP 200 |
-| 真实 Agent 运行时 | 生产看板显示 CodeBuddy 运行时已就绪 |
+| 真实 Agent 运行时 | 生产看板显示 Codex 运行时已就绪 |
 | 训练评估运行 | 运行历史里至少有一条 `Agent执行` 且状态为 `通过` 或明确失败原因 |
 | 证据链 | 运行证据能看到触发来源、创建者、开始/结束时间、trial、任务消息、trace 事件、token、耗时 |
 | 优化闭环 | 失败用例能生成优化候选，候选必须人工确认后发布，不能自动替换生产版本 |
@@ -215,13 +215,14 @@ curl -fsS \
 
 ## 真实 Agent E2E
 
-常规 E2E 会用受控 fixture 快速覆盖 UI 和数据库路径。要证明 CodeBuddy daemon 真的执行，需要跑 opt-in 真实 E2E：
+常规 E2E 会用受控 fixture 快速覆盖 UI 和数据库路径。要证明本机 Codex daemon 真的执行，需要跑 opt-in 真实 E2E：
 
 ```bash
 RUN_REAL_AGENT_E2E=1 \
 REAL_AGENT_E2E_ACCOUNT=<daemon-account> \
 REAL_AGENT_E2E_WORKSPACE=<workspace-slug> \
-MULTICA_PROMPT_EVALUATION_AGENT_MODEL=minimax-m2.7-ioa \
+MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER=codex \
+MULTICA_PROMPT_EVALUATION_AGENT_MODEL=gpt-5.3-codex-spark \
 PLAYWRIGHT_BASE_URL=http://localhost:3000 \
 FRONTEND_ORIGIN=http://localhost:3000 \
 NEXT_PUBLIC_API_URL=http://localhost:8080 \
@@ -229,12 +230,14 @@ NEXT_PUBLIC_WS_URL=ws://localhost:8080/ws \
 pnpm exec playwright test e2e/prompt-library-real-agent.spec.ts --timeout=300000
 ```
 
-如果 MiniMax 额度不足，真实 E2E 不允许假成功。页面应该在运行历史证据里显示 **外部依赖失败：模型额度不足**，`task_messages` 里能看到 `无可用Token额度`，`trace_events` 里能看到失败事件，且这次运行不会产生 `task_usage`。验收报告里要写清楚这是外部额度依赖，不是 Multica 运行链路缺失。
+如果 `gpt-5.3-codex-spark` 额度不足，真实 E2E 不允许假成功。应先降级到 `gpt-5.4-mini` 重试；两者都不可用时，页面应该在运行历史证据里显示 **外部依赖失败：模型额度不足**，`task_messages` 里能看到容量或额度错误，`trace_events` 里能看到失败事件，且这次运行不会产生 `task_usage`。验收报告里要写清楚这是外部额度依赖，不是 Multica 运行链路缺失。
 
-也可以临时换成当前可用的 CodeBuddy 模型，但验收报告里必须写清楚模型：
+降级命令：
 
 ```bash
-MULTICA_PROMPT_EVALUATION_AGENT_MODEL=<可用模型>
+MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER=codex \
+MULTICA_PROMPT_EVALUATION_AGENT_MODEL=gpt-5.4-mini \
+pnpm exec playwright test e2e/prompt-library-real-agent.spec.ts --timeout=300000
 ```
 
 通过后应记录：

@@ -99,7 +99,7 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 			Name:         "user-center 小队",
 			Description:  "面向 user-center 项目的内部 SOP 小队，由队长按阶段链分派 user-center skill 队员执行。",
 			Instructions: "队长按 user-center SOP 分阶段推进；每个阶段都要记录输入、输出、失败原因、耗时和验收证据；不得跳过验收。",
-			Model:        "minimax-m2.7-ioa",
+			Model:        promptEvaluationAgentModel(),
 			Roles: []internalSquadRole{
 				{Key: "captain", Name: "队长", Instruction: "负责接收 issue、判断阶段、拆解任务、汇总证据并推进下一阶段。", MemberRole: "队长"},
 				{Key: "skill-member", Name: "skill 队员", Instruction: "按 user-center skill 边界执行具体处理，不越权修改无关模块。", MemberRole: "skill 队员"},
@@ -142,7 +142,7 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 			Name:         "Multica 编码小队",
 			Description:  "用于开发 Multica 自身的生产级编码小队，包含队长、方案设计者、开发者、验收者、规约维护者和部署运行者。",
 			Instructions: "队长先澄清需求和验收口径，再按角色分派；开发者不得越界；验收者必须独立给出证据；所有指标和输出使用中文。",
-			Model:        "minimax-m2.7-ioa",
+			Model:        promptEvaluationAgentModel(),
 			Roles:        roles,
 			Profile: map[string]any{
 				"profile_key": "multica-coding",
@@ -166,7 +166,13 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 					{"key": "deploy_verify", "name": "部署运行验证", "role_key": "operator"},
 					{"key": "final_report", "name": "证据汇总", "role_key": "captain"},
 				},
-				"model_policy":      map[string]any{"默认模型": "minimax", "代码测试复杂审查": "gpt", "策略说明": "minimax 用于大批量普通执行；涉及代码、测试、复杂审查时使用 gpt。"},
+				"model_policy": map[string]any{
+					"默认提供方":    promptEvaluationAgentProvider(),
+					"默认模型":     promptEvaluationAgentModel(),
+					"降级模型":     fallbackPromptEvaluationAgentModel,
+					"代码测试复杂审查": "Codex/gpt 类模型",
+					"策略说明":     "本机 Codex runtime 优先，轻量验收使用 gpt-5.3-codex-spark；额度或容量不足时降级 gpt-5.4-mini。MiniMax 不再作为验收前提。",
+				},
 				"stage_skills":      []string{},
 				"operation_skills":  []string{},
 				"acceptance":        []string{"方案经确认", "代码范围清晰", "验收者独立给结论", "测试证据完整", "规约同步或说明无需同步", "运行验证完成"},
@@ -477,10 +483,12 @@ func (h *Handler) selectInternalSquadRuntime(w http.ResponseWriter, r *http.Requ
 		return db.AgentRuntime{}, false
 	}
 	checkedAt := time.Now().UTC()
+	provider := promptEvaluationAgentProvider()
+	providerName := strings.ToUpper(provider[:1]) + provider[1:]
 	var best *db.AgentRuntime
 	for i := range runtimes {
 		runtime := runtimes[i]
-		if !strings.EqualFold(runtime.Provider, "codebuddy") || !canUseRuntimeForAgent(member, runtime) {
+		if !strings.EqualFold(runtime.Provider, provider) || !canUseRuntimeForAgent(member, runtime) {
 			continue
 		}
 		if best == nil || runtimeReadinessRank(runtime, checkedAt) > runtimeReadinessRank(*best, checkedAt) {
@@ -488,11 +496,11 @@ func (h *Handler) selectInternalSquadRuntime(w http.ResponseWriter, r *http.Requ
 		}
 	}
 	if best == nil {
-		writeError(w, http.StatusServiceUnavailable, "当前 workspace 没有可用的 CodeBuddy runtime，无法创建真实可执行的内部小队。请先启动 multica daemon 并确认 /api/runtimes 出现 provider=codebuddy 的在线 runtime。")
+		writeError(w, http.StatusServiceUnavailable, "当前 workspace 没有可用的 "+providerName+" runtime，无法创建真实可执行的内部小队。请先启动 multica daemon 并确认 /api/runtimes 出现 provider="+provider+" 的在线 runtime。")
 		return db.AgentRuntime{}, false
 	}
 	if best.Status != "online" || !best.LastSeenAt.Valid || checkedAt.Sub(best.LastSeenAt.Time) > promptEvaluationRuntimeFreshTTL {
-		writeError(w, http.StatusServiceUnavailable, "CodeBuddy runtime 当前未就绪，无法创建真实可执行的内部小队。请启动 daemon 并等待 runtime 心跳刷新。")
+		writeError(w, http.StatusServiceUnavailable, providerName+" runtime 当前未就绪，无法创建真实可执行的内部小队。请启动 daemon 并等待 runtime 心跳刷新。")
 		return db.AgentRuntime{}, false
 	}
 	return *best, true

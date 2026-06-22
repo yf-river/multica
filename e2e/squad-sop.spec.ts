@@ -21,7 +21,7 @@ test.describe("小队 SOP 端到端", () => {
     test.setTimeout(120_000);
 
     await api.cleanupInternalSquadTemplates();
-    await api.ensureOnlineCodeBuddyRuntime("E2E 内置小队 CodeBuddy Runtime");
+    await api.ensureOnlineCodexRuntime("E2E 内置小队 Codex Runtime");
 
     await page.goto(`/${workspaceSlug}/squads`, { waitUntil: "domcontentloaded" });
     await page.getByTestId("ensure-multica-coding-squad").click();
@@ -65,7 +65,7 @@ test.describe("小队 SOP 端到端", () => {
 
     const suffix = Date.now();
     await api.cleanupInternalSquadTemplates();
-    await api.ensureOnlineCodeBuddyRuntime(`E2E Multica 编码小队 Runtime ${suffix}`);
+    await api.ensureOnlineCodexRuntime(`E2E Multica 编码小队 Runtime ${suffix}`);
     const template = await api.ensureInternalSquadTemplate("multica-coding");
     const squad = template.squad;
     const leader = template.agents.find((agent) => agent.role_key === "captain");
@@ -174,7 +174,7 @@ test.describe("小队 SOP 端到端", () => {
     expect(Number(summary.指标["证据数"])).toBeGreaterThanOrEqual(1);
     expect(summary.task_trace_total).toBeGreaterThanOrEqual(1);
     expect(summary.model_breakdown[0]).toMatchObject({
-      "名称": "minimax/m2.7",
+      "名称": "gpt-5.3-codex-spark",
       "价格已知": true,
     });
     expect(summary.runtime_breakdown[0]).toMatchObject({
@@ -215,7 +215,7 @@ test.describe("小队 SOP 端到端", () => {
     await expect(page.getByText("Agent 观测摘要", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
     await expect(page.getByText("按当前 Agent 聚合 trace、token、成本、耗时和证据", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("预估成本", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("minimax/m2.7").first()).toBeVisible();
+    await expect(page.getByText("gpt-5.3-codex-spark").first()).toBeVisible();
   });
 
   test("user-center 小队接收 issue 后按 SOP 阶段推进并形成观测证据", async ({ page }) => {
@@ -223,7 +223,7 @@ test.describe("小队 SOP 端到端", () => {
 
     const suffix = Date.now();
     await api.cleanupInternalSquadTemplates();
-    await api.ensureOnlineCodeBuddyRuntime(`E2E user-center 小队 Runtime ${suffix}`);
+    await api.ensureOnlineCodexRuntime(`E2E user-center 小队 Runtime ${suffix}`);
     const template = await api.ensureInternalSquadTemplate("user-center");
     const squad = template.squad;
     const leader = template.agents.find((agent) => agent.role_key === "captain");
@@ -330,6 +330,6 @@ test.describe("小队 SOP 端到端", () => {
     await page.getByRole("button", { name: "指令" }).click();
     await expect(page.getByText("user-center-sop-flow").first()).toBeVisible();
     await expect(page.getByText("小队观测摘要", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("minimax/m2.7").first()).toBeVisible();
+    await expect(page.getByText("gpt-5.3-codex-spark").first()).toBeVisible();
   });
 });

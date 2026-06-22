@@ -1,75 +1,61 @@
 ---
-title: Architecture
-description: Technical architecture of the Multica platform.
+title: 架构
+description: Multica 的后端、前端、daemon、运行时和数据库结构。
 ---
 
-## Overview
+## 总览
 
-Multica is a Go backend + monorepo frontend (pnpm workspaces + Turborepo) with shared packages.
+Multica 是 Go 后端 + Next.js Web + Electron 桌面端 + PostgreSQL 的 monorepo。团队内部使用时，后端负责 API、WebSocket、任务队列、trace、usage 和训练评估数据；daemon 负责在具体电脑上执行 Agent CLI。
 
-```
-┌──────────────┐     ┌──────────────┐     ┌──────────────────┐
-│   Next.js    │────>│  Go Backend  │────>│   PostgreSQL     │
-│   Frontend   │<────│  (Chi + WS)  │<────│   (pgvector)     │
-└──────────────┘     └──────┬───────┘     └──────────────────┘
-                            │
-                     ┌──────┴───────┐
-                     │ Agent Daemon │  (runs on your machine)
-                     │Claude/Codex/ │
-                     │OpenClaw/Code │
-                     └──────────────┘
+```text
+浏览器 / 桌面端
+      ↓ REST / WebSocket
+Go 后端（Chi、任务队列、实时事件）
+      ↓ sqlc
+PostgreSQL（业务数据、trace、usage、训练评估）
+      ↑
+daemon（Codex / Claude / OpenCode / CodeBuddy 等运行时）
 ```
 
-## Project Structure
+## 目录
 
-| Directory | Purpose | Technology |
-|-----------|---------|------------|
-| `server/` | Go backend | Chi router, sqlc for DB, gorilla/websocket |
-| `apps/web/` | Next.js frontend | App Router |
-| `apps/desktop/` | Electron desktop app | electron-vite |
-| `apps/docs/` | Documentation site | Fumadocs |
-| `packages/core/` | Headless business logic | Zero react-dom, all-platform reuse |
-| `packages/ui/` | Atomic UI components | Zero business logic, shadcn-based |
-| `packages/views/` | Shared business pages | Zero next/\*, zero react-router imports |
-| `packages/tsconfig/` | Shared TypeScript config | — |
-| `packages/eslint-config/` | Shared ESLint config | — |
+| 目录 | 作用 |
+| --- | --- |
+| `server/` | Go 后端、CLI、daemon、migration |
+| `apps/web/` | Next.js Web 应用 |
+| `apps/desktop/` | Electron 桌面端 |
+| `apps/docs/` | 文档站 |
+| `packages/core/` | 跨端业务逻辑、API client、类型和 store |
+| `packages/ui/` | 基础 UI 组件 |
+| `packages/views/` | Web/桌面复用业务页面 |
 
-## Backend Structure
+## 后端
 
-- **Entry points** (`cmd/`): `server` (HTTP API), `multica` (CLI + daemon), `migrate`
-- **Handlers** (`internal/handler/`): One file per domain (issue, comment, agent, auth, daemon)
-- **Real-time** (`internal/realtime/`): Hub manages WebSocket clients, server broadcasts events
-- **Auth** (`internal/auth/` + `internal/middleware/`): JWT (HS256), middleware sets `X-User-ID` and `X-User-Account` headers
-- **Task lifecycle** (`internal/service/task.go`): enqueue → claim → start → complete/fail
-- **Agent SDK** (`pkg/agent/`): Unified `Backend` interface for executing prompts via Claude Code or Codex
-- **Daemon** (`internal/daemon/`): Auto-detects CLIs, registers runtimes, polls for tasks
-- **Database**: PostgreSQL 17 with pgvector, sqlc generates code from SQL in `pkg/db/queries/`
+- `cmd/server`：HTTP API、WebSocket、健康检查。
+- `cmd/multica`：CLI 和 daemon 入口。
+- `cmd/migrate`：数据库 migration。
+- `internal/handler`：领域 handler，例如 issue、agent、squad、prompt evaluation。
+- `internal/service/task.go`：任务入队、领取、运行、完成和失败。
+- `internal/realtime`：WebSocket hub。
+- `pkg/db/queries`：sqlc 查询。
 
-## Frontend Architecture
+## 前端
 
-### Internal Packages Pattern
+- `apps/web` 使用 Next.js App Router。
+- `packages/views` 不直接依赖 Next 或 React Router，通过导航适配器复用到桌面端。
+- `packages/core` 放 API client、类型、Zustand store 和跨端业务逻辑。
+- TanStack Query 管理服务端状态，Zustand 管理客户端状态。
 
-All shared packages export raw `.ts`/`.tsx` files (no pre-compilation). The consuming app's bundler compiles them directly. This gives zero-config HMR and instant go-to-definition.
+## 任务和观测
 
-### Package Boundaries
+Agent 任务的主链路是：**入队 → 领取 → 运行 → 完成/失败**。后端会记录：
 
-- `packages/core/` — zero react-dom, zero localStorage, zero UI libs. All Zustand stores live here.
-- `packages/ui/` — pure UI components, zero business logic.
-- `packages/views/` — zero `next/*`, zero `react-router-dom`. Uses `NavigationAdapter` for routing.
+- task 状态和失败原因。
+- task message。
+- task usage。
+- task trace event。
+- issue、小队、SOP run、训练评估 run/trial/evidence snapshot 的关联证据。
 
-### State Management
+## 多租户
 
-- **TanStack Query** owns all server state (issues, users, workspaces)
-- **Zustand** owns all client state (UI selections, filters, drafts)
-- **React Context** reserved for cross-cutting plumbing (`WorkspaceIdProvider`, `NavigationProvider`)
-
-### Data Flow
-
-```
-Browser → ApiClient (shared/api) → REST API (Chi handlers) → sqlc queries → PostgreSQL
-Browser ← WSClient (shared/api) ← WebSocket ← Hub.Broadcast() ← Handlers/TaskService
-```
-
-## Multi-tenancy
-
-All queries filter by `workspace_id`. Membership checks gate access. `X-Workspace-ID` header routes requests to the correct workspace.
+所有核心表都按 `workspace_id` 隔离。请求通过 workspace slug、workspace id 或当前路由上下文解析工作区，并在 handler 中做成员权限校验。

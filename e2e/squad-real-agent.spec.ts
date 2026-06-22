@@ -6,11 +6,13 @@ import { waitForPageText } from "./helpers";
 const RUN_REAL_AGENT_E2E = process.env.RUN_REAL_AGENT_E2E === "1";
 const REAL_AGENT_ACCOUNT = process.env.REAL_AGENT_E2E_ACCOUNT || "goal-test-daemon";
 const REAL_AGENT_WORKSPACE = process.env.REAL_AGENT_E2E_WORKSPACE || "goal-test-daemon";
+const EXPECTED_AGENT_PROVIDER = process.env.MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER || "codex";
+const EXPECTED_AGENT_MODEL = process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL || "gpt-5.3-codex-spark";
 
 test.describe("小队真实 Agent 闭环", () => {
-  test.skip(!RUN_REAL_AGENT_E2E, "设置 RUN_REAL_AGENT_E2E=1 后才运行真实 daemon/CodeBuddy 小队验收");
+  test.skip(!RUN_REAL_AGENT_E2E, "设置 RUN_REAL_AGENT_E2E=1 后才运行真实 daemon/Codex 小队验收");
 
-  test("CodeBuddy daemon 可以真实执行 user-center 小队队长任务并写回观测证据", async ({ page }) => {
+  test("Codex daemon 可以真实执行 user-center 小队队长任务并写回观测证据", async ({ page }) => {
     test.setTimeout(240_000);
 
     const api = new TestApiClient();
@@ -24,8 +26,9 @@ test.describe("小队真实 Agent 闭环", () => {
       expect(readiness).toMatchObject({
         status: "就绪",
       });
+      expect(readiness.model).toBe(EXPECTED_AGENT_MODEL);
       expect(readiness.runtime).toMatchObject({
-        provider: "codebuddy",
+        provider: EXPECTED_AGENT_PROVIDER,
         status: "online",
       });
 
@@ -90,7 +93,8 @@ test.describe("小队真实 Agent 闭环", () => {
       expect(evidence.messages.length).toBeGreaterThan(0);
       if (terminalTask.status === "completed") {
         expect(evidence.usage.length).toBeGreaterThan(0);
-        expect(JSON.stringify(evidence.usage)).toContain("minimax");
+        expect(JSON.stringify(evidence.usage)).toContain(EXPECTED_AGENT_PROVIDER);
+        expect(JSON.stringify(evidence.usage)).toContain(EXPECTED_AGENT_MODEL);
       } else {
         expect(JSON.stringify(evidence.trace_events) + terminalTask.error).toMatch(/失败|取消|额度|error|failed/i);
       }

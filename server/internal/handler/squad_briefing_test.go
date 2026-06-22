@@ -39,15 +39,15 @@ func TestEnsureInternalSquadTemplateCreatesCodingSquadIdempotently(t *testing.T)
 	cleanup := func() {
 		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name = 'Multica 编码小队'`, testWorkspaceID)
 		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND name LIKE 'Multica 编码小队 · %'`, testWorkspaceID)
-		_, _ = testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE workspace_id = $1 AND name LIKE 'internal-squad-codebuddy-test-%'`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE workspace_id = $1 AND name LIKE 'internal-squad-codex-test-%'`, testWorkspaceID)
 	}
 	cleanup()
 	t.Cleanup(cleanup)
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
-		VALUES ($1, $2, $3, 'local', 'codebuddy', 'online', 'CodeBuddy 内部小队测试运行时', '{}'::jsonb, $4, 'private', now())
-	`, testWorkspaceID, "internal-squad-codebuddy-daemon-"+randomID()[:8], "internal-squad-codebuddy-test-"+randomID()[:8], testUserID); err != nil {
-		t.Fatalf("create codebuddy runtime: %v", err)
+		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 内部小队测试运行时', '{}'::jsonb, $4, 'private', now())
+	`, testWorkspaceID, "internal-squad-codex-daemon-"+randomID()[:8], "internal-squad-codex-test-"+randomID()[:8], testUserID); err != nil {
+		t.Fatalf("create codex runtime: %v", err)
 	}
 
 	create := func() InternalSquadTemplateResponse {
@@ -239,7 +239,7 @@ func TestBuildSquadSOPProfile_MulticaCodingFields(t *testing.T) {
 		"mode":"coding_squad",
 		"roles":[{"key":"captain","name":"队长","responsibility":"接需求、判断流程、拆任务。"}],
 		"steps":[{"key":"receive","name":"接收需求","role_key":"captain"},{"key":"design_review","name":"方案设计与确认","role_key":"designer"}],
-		"model_policy":{"默认模型":"minimax","代码测试复杂审查":"gpt"},
+		"model_policy":{"默认提供方":"codex","默认模型":"gpt-5.3-codex-spark","降级模型":"gpt-5.4-mini","代码测试复杂审查":"Codex/gpt 类模型"},
 		"acceptance":["验收者独立给结论"],
 		"forbidden_actions":["泄露密钥","未独立验收就完成"]
 	}`))
@@ -250,8 +250,10 @@ func TestBuildSquadSOPProfile_MulticaCodingFields(t *testing.T) {
 		"SOP 步骤链：接收需求 → 方案设计与确认",
 		"当前默认阶段：接收需求",
 		"角色分工：队长：接需求、判断流程、拆任务。",
-		"默认模型=minimax",
-		"代码测试复杂审查=gpt",
+		"默认提供方=codex",
+		"默认模型=gpt-5.3-codex-spark",
+		"降级模型=gpt-5.4-mini",
+		"代码测试复杂审查=Codex/gpt 类模型",
 		"禁止事项：泄露密钥；未独立验收就完成",
 	} {
 		if !strings.Contains(out, want) {

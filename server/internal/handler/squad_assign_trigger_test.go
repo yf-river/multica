@@ -182,7 +182,7 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 		VALUES (
 			$1, $2, $3, $4, $5, $6,
 			'squad_sop', 'squad.leader.completed', '编码小队队长任务完成',
-			'completed', 'codebuddy', 'minimax-m2.7-ioa',
+			'completed', 'codex', 'gpt-5.3-codex-spark',
 			36, 19, 5, 7, '无', '', '{}'::jsonb
 		)
 	`, testWorkspaceID, taskID, created.ID, squadID, leaderID, runtimeID); err != nil {
@@ -320,8 +320,8 @@ func TestBuildObservabilitySummaryIncludesCostBreakdown(t *testing.T) {
 	traces := []db.TaskTraceEvent{
 		{
 			RuntimeID:        runtimeID,
-			Provider:         "codebuddy",
-			Model:            "minimax-m2.7-ioa",
+			Provider:         "codex",
+			Model:            "gpt-5.3-codex-spark",
 			InputTokens:      36,
 			OutputTokens:     19,
 			CacheReadTokens:  5,
@@ -340,7 +340,7 @@ func TestBuildObservabilitySummaryIncludesCostBreakdown(t *testing.T) {
 		t.Fatalf("预估成本 = %v, want > 0", metricsMap["预估成本"])
 	}
 	modelRows := summary["model_breakdown"].([]map[string]any)
-	if len(modelRows) < 2 || modelRows[0]["名称"] != "minimax/m2.7" || modelRows[0]["价格已知"] != true {
+	if len(modelRows) < 2 || modelRows[0]["名称"] != "gpt-5.3-codex-spark" || modelRows[0]["价格已知"] != true {
 		t.Fatalf("model_breakdown = %#v", modelRows)
 	}
 	runtimeRows := summary["runtime_breakdown"].([]map[string]any)
@@ -362,8 +362,8 @@ func TestBuildObservabilitySummaryDedupesRepeatedUsageReports(t *testing.T) {
 			TaskID:           taskID,
 			RuntimeID:        runtimeID,
 			EventType:        "llm.usage_reported",
-			Provider:         "codebuddy",
-			Model:            "minimax-m2.7-ioa",
+			Provider:         "codex",
+			Model:            "gpt-5.3-codex-spark",
 			InputTokens:      10,
 			OutputTokens:     5,
 			CacheReadTokens:  1,
@@ -374,8 +374,8 @@ func TestBuildObservabilitySummaryDedupesRepeatedUsageReports(t *testing.T) {
 			TaskID:           taskID,
 			RuntimeID:        runtimeID,
 			EventType:        "llm.usage_reported",
-			Provider:         "codebuddy",
-			Model:            "minimax-m2.7-ioa",
+			Provider:         "codex",
+			Model:            "gpt-5.3-codex-spark",
 			InputTokens:      30,
 			OutputTokens:     15,
 			CacheReadTokens:  3,

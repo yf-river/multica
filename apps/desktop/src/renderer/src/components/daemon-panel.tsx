@@ -250,29 +250,29 @@ export function DaemonPanel({
           <div className="flex min-w-0 items-center gap-2">
             <Server className="size-4 shrink-0 text-muted-foreground" />
             <DialogTitle className="text-sm font-medium">
-              Local daemon logs
+              本机 daemon 日志
             </DialogTitle>
             <ContextBadge status={status} runtimeCount={runtimeCount} />
           </div>
           <button
             type="button"
             onClick={() => onOpenChange(false)}
-            aria-label="Close"
+            aria-label="关闭"
             className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           >
             <X className="size-4" />
           </button>
         </div>
 
-        {/* Toolbar */}
+        {/* 工具栏 */}
         <div className="flex shrink-0 flex-wrap items-center gap-2 border-b px-4 py-2">
-          {/* Search */}
+          {/* 搜索 */}
           <div className="relative w-56">
             <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
             <input
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder="Search…"
+              placeholder="搜索..."
               className="h-7 w-full rounded-md border bg-background pl-7 pr-2 text-xs placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
             />
           </div>
@@ -611,7 +611,7 @@ function GroupRows({
         className="my-0.5 ml-2 inline-flex w-fit items-center gap-2 rounded border border-dashed border-muted-foreground/25 px-2 py-0.5 text-[11px] italic text-muted-foreground/60 hover:text-foreground"
       >
         <span>···</span>
-        <span>collapse {rest.length + 1} repeated</span>
+        <span>折叠 {rest.length + 1} 条重复日志</span>
       </button>
     </>
   );
@@ -629,14 +629,14 @@ function EmptyState({
   let title: string;
   let subtitle: string;
   if (hasFilter) {
-    title = "No matching log lines";
-    subtitle = "Try a different search or level toggle.";
+    title = "没有匹配的日志";
+    subtitle = "换一个关键词或日志级别。";
   } else if (!isRunning) {
-    title = "Daemon isn't running";
-    subtitle = "Start the daemon to see logs here.";
+    title = "daemon 未运行";
+    subtitle = "启动 daemon 后这里会显示日志。";
   } else if (!hasLogs) {
-    title = "Waiting for logs…";
-    subtitle = "New entries will appear in real time.";
+    title = "正在等待日志...";
+    subtitle = "新日志会实时显示。";
   } else {
     title = "";
     subtitle = "";
