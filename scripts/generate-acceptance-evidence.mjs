@@ -486,6 +486,19 @@ function buildCommandPlan() {
       timeoutMs: 180_000,
     },
     {
+      name: "导航与命令面板 E2E",
+      command: [
+        `PLAYWRIGHT_BASE_URL=${shellQuote(frontendURL)}`,
+        `FRONTEND_ORIGIN=${shellQuote(frontendURL)}`,
+        `NEXT_PUBLIC_API_URL=${shellQuote(browserApiURL)}`,
+        `NEXT_PUBLIC_WS_URL=${shellQuote(browserApiURL.replace(/^http/, "ws"))}/ws`,
+        "pnpm exec playwright test e2e/navigation.spec.ts --project=chromium",
+      ].join(" "),
+      required: includeE2E,
+      skippedByDefault: true,
+      timeoutMs: 180_000,
+    },
+    {
       name: "训练与评估主 E2E",
       command: "pnpm exec playwright test e2e/prompt-library.spec.ts --project=chromium",
       required: includeFullE2E,
