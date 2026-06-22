@@ -148,4 +148,14 @@ describe("TabBar hover action buttons", () => {
     expect(unpinnedTab.querySelector(".lucide-list-todo.size-3\\.5")).toBeTruthy();
     expect(unpinnedTab.querySelector(".lucide-pin.size-3\\.5")).toBeNull();
   });
+
+  it("renders the training route icon when a tab uses ChartNoAxesCombined", () => {
+    state.byWorkspace.acme.tabs = [
+      { id: "tA", path: "/acme/training?view=demo-dashboard", title: "训练与评估 · 演示看板", icon: "ChartNoAxesCombined", pinned: false },
+    ];
+
+    const { getByLabelText } = render(<TabBar />);
+
+    expect(getByLabelText("训练与评估 · 演示看板").querySelector(".lucide-chart-no-axes-combined.size-3\\.5")).toBeTruthy();
+  });
 });

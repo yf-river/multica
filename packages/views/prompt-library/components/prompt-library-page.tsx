@@ -12,6 +12,7 @@ import {
   TRAINING_WORKBENCH_TABS,
   TRAINING_WORKBENCH_VIEW_BY_TAB,
   trainingWorkbenchTabFromView,
+  trainingWorkbenchTitleFromView,
   type TrainingWorkbenchTab,
 } from "@multica/core/training";
 import type {
@@ -133,6 +134,10 @@ export function PromptLibraryPage() {
 
   useEffect(() => {
     setActiveTab(trainingWorkbenchTabFromView(viewParam));
+  }, [viewParam]);
+
+  useEffect(() => {
+    document.title = trainingWorkbenchTitleFromView(viewParam);
   }, [viewParam]);
 
   const listQuery = useQuery({

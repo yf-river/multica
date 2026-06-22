@@ -6,7 +6,7 @@ import { AppSidebar } from "./app-sidebar";
 const { detail, deletePin, navigation, pins } = vi.hoisted(() => ({
   detail: { current: { isPending: false, isError: false, data: null as unknown, error: null as unknown } },
   deletePin: vi.fn(),
-  navigation: { current: { pathname: "/acme/issues" } },
+  navigation: { current: { pathname: "/acme/issues", searchParams: new URLSearchParams() } },
   pins: {
     current: [
       {
@@ -84,7 +84,7 @@ vi.mock("../auth", () => ({ useLogout: () => vi.fn() }));
 vi.mock("../issues/components/status-icon", () => ({ StatusIcon: () => <span /> }));
 vi.mock("../navigation", () => ({
   AppLink: ({ children, href }: { children: React.ReactNode; href: string }) => <a href={href}>{children}</a>,
-  useNavigation: () => ({ pathname: navigation.current.pathname, push: vi.fn() }),
+  useNavigation: () => ({ pathname: navigation.current.pathname, searchParams: navigation.current.searchParams, push: vi.fn() }),
 }));
 vi.mock("../projects/components/project-icon", () => ({ ProjectIcon: () => <span /> }));
 vi.mock("../workspace/workspace-avatar", () => ({ WorkspaceAvatar: () => <span /> }));
@@ -197,6 +197,7 @@ describe("PinRow", () => {
 describe("AppSidebar workspace nav", () => {
   beforeEach(() => {
     navigation.current.pathname = "/acme/issues";
+    navigation.current.searchParams = new URLSearchParams();
     detail.current = { isPending: false, isError: false, data: null, error: null };
   });
 
@@ -205,5 +206,16 @@ describe("AppSidebar workspace nav", () => {
 
     const item = document.querySelector('[data-href="/acme/training"]');
     expect(item).toHaveAttribute("data-href", "/acme/training");
+  });
+
+  it("renders training submodule links and highlights the current training view", () => {
+    navigation.current.pathname = "/acme/training";
+    navigation.current.searchParams = new URLSearchParams("view=datasets");
+
+    render(<AppSidebar />);
+
+    expect(document.querySelector('[data-href="/acme/training?view=demo-dashboard"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-href="/acme/training?view=run-history"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-href="/acme/training?view=datasets"]')).toHaveAttribute("data-active", "true");
   });
 });

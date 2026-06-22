@@ -83,6 +83,10 @@ import type { PinnedItem } from "@multica/core/types";
 import { useLogout } from "../auth";
 import { ProjectIcon } from "../projects/components/project-icon";
 import { useT } from "../i18n";
+import {
+  DEFAULT_TRAINING_WORKBENCH_VIEW,
+  TRAINING_WORKBENCH_VIEWS,
+} from "@multica/core/training";
 
 // Top-level nav items stay active when the user is on a child route
 // (e.g. "Projects" stays lit on /:slug/projects/:id). Pinned items keep
@@ -346,7 +350,7 @@ interface AppSidebarProps {
 
 export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }: AppSidebarProps = {}) {
   const { t } = useT("layout");
-  const { pathname } = useNavigation();
+  const { pathname, searchParams } = useNavigation();
   const user = useAuthStore((s) => s.user);
   const userId = useAuthStore((s) => s.user?.id);
   const logout = useLogout();
@@ -622,6 +626,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                 {workspaceNav.map((item) => {
                   const href = p[item.key]();
                   const isActive = !isActivePinnedRoute && isNavActive(pathname, href);
+                  const activeTrainingView = pathname === p.training() ? searchParams.get("view") ?? DEFAULT_TRAINING_WORKBENCH_VIEW : "";
                   return (
                     <SidebarMenuItem key={item.key}>
                       <SidebarMenuButton
@@ -632,6 +637,25 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                         <item.icon />
                         <span>{t(($) => $.nav[item.labelKey])}</span>
                       </SidebarMenuButton>
+                      {item.key === "training" && isActive && (
+                        <SidebarMenu className="ml-6 mt-1 gap-0.5 border-l border-sidebar-border pl-2">
+                          {TRAINING_WORKBENCH_VIEWS.map((view) => {
+                            const viewHref = p.trainingView(view.view);
+                            return (
+                              <SidebarMenuItem key={view.view}>
+                                <SidebarMenuButton
+                                  size="sm"
+                                  isActive={activeTrainingView === view.view}
+                                  render={<AppLink href={viewHref} />}
+                                  className="h-7 text-xs text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
+                                >
+                                  <span>{view.tab}</span>
+                                </SidebarMenuButton>
+                              </SidebarMenuItem>
+                            );
+                          })}
+                        </SidebarMenu>
+                      )}
                     </SidebarMenuItem>
                   );
                 })}

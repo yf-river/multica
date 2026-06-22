@@ -308,6 +308,20 @@ describe("SearchCommand", () => {
     expect(useSearchStore.getState().open).toBe(false);
   });
 
+  it("训练与评估页面入口默认跳转到演示看板", async () => {
+    const user = userEvent.setup();
+    renderSearch();
+
+    const input = screen.getByPlaceholderText("输入命令或关键词搜索...");
+    await user.type(input, "训练与评估");
+
+    const trainingItem = await screen.findByText("训练与评估");
+    await user.click(trainingItem);
+
+    expect(mockPush).toHaveBeenCalledWith("/ws-test/training?view=demo-dashboard");
+    expect(useSearchStore.getState().open).toBe(false);
+  });
+
   it("列出工作区成员，并在选择后跳转到成员页", async () => {
     const user = userEvent.setup();
     mockMembers.current = [

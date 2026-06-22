@@ -4,6 +4,7 @@ import {
   CircleUser,
   ListTodo,
   Bot,
+  ChartNoAxesCombined,
   Monitor,
   BookOpenText,
   Settings,
@@ -52,6 +53,7 @@ const TAB_ICONS: Record<string, LucideIcon> = {
   CircleUser,
   ListTodo,
   Bot,
+  ChartNoAxesCombined,
   Monitor,
   BookOpenText,
   Settings,
@@ -88,7 +90,7 @@ function SortableTabItem({
   // pinned" indicator (RFC §3 D1v-iv FINAL). The route information is still
   // present in the title, and this avoids a hard left accent border that read
   // as visually heavy in light mode.
-  const LeadingIcon = tab.pinned ? Pin : TAB_ICONS[tab.icon];
+  const LeadingIcon = tab.pinned ? Pin : TAB_ICONS[tab.icon] ?? ListTodo;
 
   const style = {
     transform: CSS.Transform.toString(transform),

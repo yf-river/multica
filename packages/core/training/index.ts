@@ -66,3 +66,7 @@ export function trainingWorkbenchTabFromView(view: string | null): TrainingWorkb
   if (!view) return DEFAULT_TRAINING_WORKBENCH_TAB;
   return TRAINING_WORKBENCH_TAB_BY_VIEW[view as TrainingWorkbenchViewId] ?? DEFAULT_TRAINING_WORKBENCH_TAB;
 }
+
+export function trainingWorkbenchTitleFromView(view: string | null): string {
+  return `训练与评估 · ${trainingWorkbenchTabFromView(view)}`;
+}

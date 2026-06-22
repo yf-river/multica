@@ -42,7 +42,11 @@ import { issueDetailOptions } from "@multica/core/issues/queries";
 import { useWorkspaceId } from "@multica/core";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type { WorkspacePaths } from "@multica/core/paths";
-import { TRAINING_WORKBENCH_VIEWS, type TrainingWorkbenchViewId } from "@multica/core/training";
+import {
+  DEFAULT_TRAINING_WORKBENCH_VIEW,
+  TRAINING_WORKBENCH_VIEWS,
+  type TrainingWorkbenchViewId,
+} from "@multica/core/training";
 import { useModalStore } from "@multica/core/modals";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
@@ -176,7 +180,13 @@ export function SearchCommand() {
       { key: "issues", label: t(($) => $.pages.issues), icon: ListTodo, keywords: ["issues", "tasks", "bugs"] },
       { key: "projects", label: t(($) => $.pages.projects), icon: FolderKanban, keywords: ["projects", "kanban", "项目"] },
       { key: "agents", label: t(($) => $.pages.agents), icon: Bot, keywords: ["agents", "bots", "ai"] },
-      { key: "training", label: t(($) => $.pages.training), icon: ChartNoAxesCombined, keywords: ["training", "evaluation", "eval", "dataset", "experiment", "训练", "评估", "数据集", "实验"] },
+      {
+        key: "training",
+        label: t(($) => $.pages.training),
+        icon: ChartNoAxesCombined,
+        keywords: ["training", "evaluation", "eval", "dataset", "experiment", "训练", "评估", "数据集", "实验"],
+        href: p.trainingView(DEFAULT_TRAINING_WORKBENCH_VIEW),
+      },
       { key: "runtimes", label: t(($) => $.pages.runtimes), icon: Monitor, keywords: ["runtimes", "environments"] },
       { key: "skills", label: t(($) => $.pages.skills), icon: BookOpenText, keywords: ["skills", "技能"] },
       { key: "settings", label: t(($) => $.pages.settings), icon: Settings, keywords: ["settings", "config", "preferences", "设置"] },
