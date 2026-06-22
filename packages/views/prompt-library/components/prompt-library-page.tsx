@@ -894,7 +894,7 @@ function WorkbenchPanel({
             <Badge variant={runtimeReadiness.status === "就绪" ? "secondary" : "outline"}>
               {runtimeLoading ? "检查中" : runtimeReadiness.label}
             </Badge>
-            <span className="text-muted-foreground">目标模型 {DEFAULT_AGENT_MODEL}</span>
+            <span className="text-muted-foreground">目标模型 {runtimeReadiness.model || DEFAULT_AGENT_MODEL}</span>
           </div>
           <div className="text-muted-foreground">{runtimeLoading ? "正在检查当前 workspace 的运行时列表。" : runtimeReadiness.detail}</div>
           {runtimeReadiness.status !== "就绪" && !runtimeLoading && (
@@ -1255,10 +1255,11 @@ function formatTraceEventEvidence(event: PromptEvaluationRunEvidence["trace_even
 }
 
 function buildAgentExecutionStatus(readiness: PromptEvaluationRuntimeReadiness): string {
+  const model = readiness.model || DEFAULT_AGENT_MODEL;
   if (readiness.status === "就绪") {
-    return `CodeBuddy runtime 已在线，目标模型 ${DEFAULT_AGENT_MODEL}；此记录是实验包快照，点击“创建真实 Agent 任务”后会入队并采集 trace、token、成本和输出`;
+    return `CodeBuddy runtime 已在线，目标模型 ${model}；此记录是实验包快照，点击“创建真实 Agent 任务”后会入队并采集 trace、token、成本和输出`;
   }
-  return `${readiness.label}，目标模型 ${DEFAULT_AGENT_MODEL}；未创建真实 Agent 任务`;
+  return `${readiness.label}，目标模型 ${model}；未创建真实 Agent 任务`;
 }
 
 function FilterButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
@@ -1548,7 +1549,7 @@ function buildAgentDebugPackageRequest(
       },
       运行环境: {
         目标Runtime: "CodeBuddy",
-        目标模型: DEFAULT_AGENT_MODEL,
+        目标模型: readiness.model || DEFAULT_AGENT_MODEL,
         状态: readiness.status,
         说明: readiness.detail,
         修复路径: readiness.fix,

@@ -631,6 +631,17 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	}
 }
 
+func TestPromptEvaluationAgentModelCanBeConfigured(t *testing.T) {
+	t.Setenv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL", "")
+	if got := promptEvaluationAgentModel(); got != "minimax-m2.7-ioa" {
+		t.Fatalf("default prompt evaluation agent model = %q", got)
+	}
+	t.Setenv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL", "hy3-preview-ioa")
+	if got := promptEvaluationAgentModel(); got != "hy3-preview-ioa" {
+		t.Fatalf("configured prompt evaluation agent model = %q", got)
+	}
+}
+
 func TestPromptEvaluationRuntimeReadinessRejectsStaleRuntime(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")

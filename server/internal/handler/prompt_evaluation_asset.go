@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"regexp"
 	"sort"
 	"strconv"
@@ -23,16 +24,23 @@ import (
 )
 
 const (
-	promptEvaluationAssetDataset    = "数据集"
-	promptEvaluationAssetTestSuite  = "测试套件"
-	promptEvaluationAssetExperiment = "实验"
-	promptEvaluationAssetOptimize   = "优化运行"
-	promptEvaluationAgentName       = "Multica 训练评估 Agent"
-	promptEvaluationAgentModel      = "minimax-m2.7-ioa"
-	promptEvaluationRuntimeFreshTTL = 2 * time.Minute
+	promptEvaluationAssetDataset      = "数据集"
+	promptEvaluationAssetTestSuite    = "测试套件"
+	promptEvaluationAssetExperiment   = "实验"
+	promptEvaluationAssetOptimize     = "优化运行"
+	promptEvaluationAgentName         = "Multica 训练评估 Agent"
+	defaultPromptEvaluationAgentModel = "minimax-m2.7-ioa"
+	promptEvaluationRuntimeFreshTTL   = 2 * time.Minute
 )
 
 var promptTemplateVariablePattern = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}`)
+
+func promptEvaluationAgentModel() string {
+	if value := strings.TrimSpace(os.Getenv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL")); value != "" {
+		return value
+	}
+	return defaultPromptEvaluationAgentModel
+}
 
 type PromptEvaluationAssetResponse struct {
 	ID          string  `json:"id"`
@@ -1338,7 +1346,7 @@ func (h *Handler) RunPromptEvaluationOptimizationAgent(w http.ResponseWriter, r 
 		"状态":              "已入队",
 		"执行Agent":         agentRow.Name,
 		"agent_id":        uuidToString(agentRow.ID),
-		"模型":              promptEvaluationAgentModel,
+		"模型":              promptEvaluationAgentModel(),
 		"runtime":         runtimeRow.Provider,
 		"runtime_id":      uuidToString(runtimeRow.ID),
 		"trace/task id":   uuidToString(task.ID),
@@ -1365,7 +1373,7 @@ func (h *Handler) RunPromptEvaluationOptimizationAgent(w http.ResponseWriter, r 
 		ChatSessionID: uuidToString(session.ID),
 		AgentID:       uuidToString(agentRow.ID),
 		RuntimeID:     uuidToString(runtimeRow.ID),
-		Model:         promptEvaluationAgentModel,
+		Model:         promptEvaluationAgentModel(),
 		Status:        "已入队",
 		Message:       "真实 Agent 优化任务已入队；完成后可在运行历史查看证据，再生成人工确认候选。",
 	})
@@ -2009,7 +2017,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		"状态":              "已入队",
 		"执行Agent":         agentRow.Name,
 		"agent_id":        uuidToString(agentRow.ID),
-		"模型":              promptEvaluationAgentModel,
+		"模型":              promptEvaluationAgentModel(),
 		"runtime":         runtimeRow.Provider,
 		"runtime_id":      uuidToString(runtimeRow.ID),
 		"trace/task id":   uuidToString(task.ID),
@@ -2041,7 +2049,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		ChatSessionID: uuidToString(session.ID),
 		AgentID:       uuidToString(agentRow.ID),
 		RuntimeID:     uuidToString(runtimeRow.ID),
-		Model:         promptEvaluationAgentModel,
+		Model:         promptEvaluationAgentModel(),
 		Status:        "已入队",
 		Message:       "真实 Agent 任务已入队；请通过 task messages、usage 和运行历史追踪结果。",
 	})
@@ -2140,7 +2148,7 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 		RuntimeID:         runtime.ID,
 		TaskID:            taskID,
 		ChatSessionID:     chatSessionID,
-		Model:             promptEvaluationAgentModel,
+		Model:             promptEvaluationAgentModel(),
 		RuntimeProvider:   runtime.Provider,
 		TotalCases:        int32(len(cases)),
 		PassedCases:       0,
@@ -2159,7 +2167,7 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 			"失败数":           0,
 			"通过率":           0,
 			"执行Agent":       agent.Name,
-			"模型":            promptEvaluationAgentModel,
+			"模型":            promptEvaluationAgentModel(),
 			"runtime":       runtime.Provider,
 			"trace/task id": uuidToString(taskID),
 			"评估结论":          "等待 Agent 执行完成",
@@ -2693,7 +2701,7 @@ func (h *Handler) ensurePromptEvaluationAgent(w http.ResponseWriter, r *http.Req
 			continue
 		}
 		if uuidToString(existing.RuntimeID) == uuidToString(runtime.ID) &&
-			existing.Model.String == promptEvaluationAgentModel &&
+			existing.Model.String == promptEvaluationAgentModel() &&
 			existing.Instructions == instructions {
 			return existing, runtime, true
 		}
@@ -2702,7 +2710,7 @@ func (h *Handler) ensurePromptEvaluationAgent(w http.ResponseWriter, r *http.Req
 			RuntimeMode:  pgtype.Text{String: runtime.RuntimeMode, Valid: true},
 			RuntimeID:    runtime.ID,
 			Instructions: pgtype.Text{String: instructions, Valid: true},
-			Model:        pgtype.Text{String: promptEvaluationAgentModel, Valid: true},
+			Model:        pgtype.Text{String: promptEvaluationAgentModel(), Valid: true},
 			Status:       pgtype.Text{String: "idle", Valid: true},
 		})
 		if err != nil {
@@ -2725,7 +2733,7 @@ func (h *Handler) ensurePromptEvaluationAgent(w http.ResponseWriter, r *http.Req
 		Instructions:       instructions,
 		CustomEnv:          []byte("{}"),
 		CustomArgs:         []byte("[]"),
-		Model:              pgtype.Text{String: promptEvaluationAgentModel, Valid: true},
+		Model:              pgtype.Text{String: promptEvaluationAgentModel(), Valid: true},
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create training evaluation agent")
@@ -2779,7 +2787,7 @@ func (h *Handler) promptEvaluationRuntimeReadiness(ctx context.Context, workspac
 		if inaccessibleCodeBuddy > 0 {
 			return promptEvaluationRuntimeReadinessResponse("无权限", "CodeBuddy 无权限", "当前 workspace 存在 CodeBuddy runtime，但你没有绑定或使用权限。", "请让 runtime 所有者将 CodeBuddy runtime 设为 public，或由 workspace 管理员为训练评估 Agent 绑定可用 runtime。", nil, checkedAt), nil
 		}
-		return promptEvaluationRuntimeReadinessResponse("缺失", "CodeBuddy 缺失", "当前 workspace 未发现 CodeBuddy runtime，Agent 调试场不能执行 minimax-m2.7-ioa。", "安装并配置 codebuddy，启动 multica daemon，等待 /api/runtimes 出现 provider=codebuddy 且 status=online 的 runtime。", nil, checkedAt), nil
+		return promptEvaluationRuntimeReadinessResponse("缺失", "CodeBuddy 缺失", "当前 workspace 未发现 CodeBuddy runtime，Agent 调试场不能执行 "+promptEvaluationAgentModel()+"。", "安装并配置 codebuddy，启动 multica daemon，等待 /api/runtimes 出现 provider=codebuddy 且 status=online 的 runtime。", nil, checkedAt), nil
 	}
 	ageSeconds := promptEvaluationRuntimeAgeSeconds(*best, checkedAt)
 	respRuntime := runtimeToResponse(*best)
@@ -2789,7 +2797,7 @@ func (h *Handler) promptEvaluationRuntimeReadiness(ctx context.Context, workspac
 	if !best.LastSeenAt.Valid || checkedAt.Sub(best.LastSeenAt.Time) > promptEvaluationRuntimeFreshTTL {
 		return promptEvaluationRuntimeReadinessResponse("过期", "CodeBuddy 心跳过期", "CodeBuddy runtime「"+best.Name+"」状态仍是 online，但最近心跳已经超过 2 分钟，不能证明当前可执行。", "检查 multica daemon 是否仍在运行，确认网络和心跳正常后等待 last_seen_at 刷新，再创建真实 Agent 任务。", &respRuntime, checkedAt), nil
 	}
-	resp := promptEvaluationRuntimeReadinessResponse("就绪", "CodeBuddy 在线", "已发现在线且心跳新鲜的 CodeBuddy runtime「"+best.Name+"」，可以作为 "+promptEvaluationAgentModel+" 的真实执行目标。", "无需修复；下一步应创建真实 Agent 任务并采集 trace、token、成本和输出。", &respRuntime, checkedAt)
+	resp := promptEvaluationRuntimeReadinessResponse("就绪", "CodeBuddy 在线", "已发现在线且心跳新鲜的 CodeBuddy runtime「"+best.Name+"」，可以作为 "+promptEvaluationAgentModel()+" 的真实执行目标。", "无需修复；下一步应创建真实 Agent 任务并采集 trace、token、成本和输出。", &respRuntime, checkedAt)
 	resp.LastSeenAgeSeconds = ageSeconds
 	return resp, nil
 }
@@ -2806,7 +2814,7 @@ func promptEvaluationRuntimeReadinessResponse(status, label, detail, fix string,
 		Label:              label,
 		Detail:             detail,
 		Fix:                fix,
-		Model:              promptEvaluationAgentModel,
+		Model:              promptEvaluationAgentModel(),
 		Runtime:            runtime,
 		LastSeenAgeSeconds: ageSeconds,
 		CheckedAt:          checkedAt.Format(time.RFC3339),
