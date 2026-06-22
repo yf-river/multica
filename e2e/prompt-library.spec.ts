@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 import { createTestApi, loginAsDefault, waitForPageText } from "./helpers";
 import type { TestApiClient } from "./fixtures";
 
@@ -302,7 +303,34 @@ test.describe("训练与评估工作台", () => {
     await expect(demoDashboard).toContainText("最近24小时");
     const evidenceDownload = page.waitForEvent("download");
     await demoDashboard.getByRole("button", { name: "导出证据 JSON" }).click();
-    expect((await evidenceDownload).suggestedFilename()).toMatch(/^multica-production-evidence-.*\.json$/);
+    const downloadedEvidence = await evidenceDownload;
+    expect(downloadedEvidence.suggestedFilename()).toMatch(/^multica-production-evidence-.*\.json$/);
+    const downloadedEvidencePath = await downloadedEvidence.path();
+    expect(downloadedEvidencePath).toBeTruthy();
+    const exportedEvidence = JSON.parse(await readFile(downloadedEvidencePath!, "utf8")) as Record<string, any>;
+    expect(exportedEvidence["语义版本"]).toBe("multica.production_demo_evidence.v1");
+    const exportedRunEvidence = (exportedEvidence["最近运行证据"] as any[]).find((item) => item.run?.id === queuedAgentRun!.id);
+    expect(exportedRunEvidence).toMatchObject({
+      采集状态: "已采集",
+      run: {
+        id: queuedAgentRun!.id,
+        task_id: queuedAgentRun!.task_id,
+      },
+    });
+    expect(exportedRunEvidence.task_usage).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          task_id: queuedAgentRun!.task_id,
+          provider: "codebuddy",
+          output_tokens: 7,
+        }),
+      ]),
+    );
+    expect(exportedRunEvidence.task_usage[0].input_tokens).toBeGreaterThan(0);
+    expect(exportedRunEvidence.task_usage[0].model).toEqual(expect.any(String));
+    expect(exportedRunEvidence.trace_events.length).toBeGreaterThan(0);
+    expect(exportedEvidence["证据统计"]["task_usage条数"]).toBeGreaterThan(0);
+    expect(exportedEvidence["证据统计"]["trace_event条数"]).toBeGreaterThan(0);
     await page.getByRole("button", { name: "运行历史", exact: true }).click();
     agentRunCard = page.getByTestId(`prompt-evaluation-run-${queuedAgentRun!.id}`);
     await expect(agentRunCard).toContainText("Agent执行 · 通过", { timeout: 10000 });

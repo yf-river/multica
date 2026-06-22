@@ -126,6 +126,7 @@ export function PromptLibraryPage() {
   const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => trainingWorkbenchTabFromView(viewParam));
   const [agentExpectedText, setAgentExpectedText] = useState("");
   const [demoTimeRange, setDemoTimeRange] = useState<DemoTimeRange>("7d");
+  const [exportingDemoEvidence, setExportingDemoEvidence] = useState(false);
   const demoSince = useMemo(() => {
     const option = DEMO_TIME_RANGES.find((item) => item.value === demoTimeRange);
     if (!option?.sinceMs) return null;
@@ -542,37 +543,88 @@ export function PromptLibraryPage() {
     deleteAssetMut.mutate(asset.id);
   };
 
-  const exportDemoEvidence = () => {
+  const exportDemoEvidence = async () => {
     const range = DEMO_TIME_RANGES.find((item) => item.value === demoTimeRange);
-    const payload = {
-      语义版本: "multica.production_demo_evidence.v1",
-      导出时间: new Date().toISOString(),
-      观测范围: {
-        标签: range?.label ?? demoTimeRange,
-        since: demoSince,
-      },
-      workspace_id: workspaceId,
-      训练评估摘要: summary,
-      观测摘要: observabilitySummaryQuery.data ?? null,
-      真实执行准备度: agentRuntimeReadiness,
-      最近运行: runs.slice(0, 10),
-      资产统计: {
-        提示词数: items.length,
-        评测资产数: assets.length,
-        结构化用例数: cases.length,
-        优化候选数: candidates.length,
-      },
-    };
-    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `multica-production-evidence-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
-    document.body.append(anchor);
-    anchor.click();
-    anchor.remove();
-    URL.revokeObjectURL(url);
-    toast.success("演示证据 JSON 已导出");
+    const recentRuns = runs.slice(0, 10);
+    setExportingDemoEvidence(true);
+    try {
+      const recentRunEvidence = await Promise.all(
+        recentRuns.map(async (run) => {
+          try {
+            const evidence = await api.getPromptEvaluationRunEvidence(run.id);
+            return {
+              采集状态: "已采集",
+              ...evidence,
+            };
+          } catch (error) {
+            return {
+              采集状态: "采集失败",
+              run,
+              trials: [],
+              task_usage: [],
+              task_messages: [],
+              trace_events: [],
+              evidence: {},
+              错误: error instanceof Error ? error.message : "未知错误",
+            };
+          }
+        }),
+      );
+      const evidenceStats = recentRunEvidence.reduce(
+        (acc, evidence) => {
+          acc.运行数 += 1;
+          if (evidence.采集状态 === "已采集") acc.已采集 += 1;
+          if (evidence.采集状态 !== "已采集") acc.采集失败 += 1;
+          acc.trial条数 += evidence.trials.length;
+          acc.task_usage条数 += evidence.task_usage.length;
+          acc.task_message条数 += evidence.task_messages.length;
+          acc.trace_event条数 += evidence.trace_events.length;
+          return acc;
+        },
+        {
+          运行数: 0,
+          已采集: 0,
+          采集失败: 0,
+          trial条数: 0,
+          task_usage条数: 0,
+          task_message条数: 0,
+          trace_event条数: 0,
+        },
+      );
+      const payload = {
+        语义版本: "multica.production_demo_evidence.v1",
+        导出时间: new Date().toISOString(),
+        观测范围: {
+          标签: range?.label ?? demoTimeRange,
+          since: demoSince,
+        },
+        workspace_id: workspaceId,
+        训练评估摘要: summary,
+        观测摘要: observabilitySummaryQuery.data ?? null,
+        真实执行准备度: agentRuntimeReadiness,
+        最近运行: recentRuns,
+        最近运行证据: recentRunEvidence,
+        证据统计: evidenceStats,
+        资产统计: {
+          提示词数: items.length,
+          评测资产数: assets.length,
+          结构化用例数: cases.length,
+          优化候选数: candidates.length,
+        },
+      };
+      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = `multica-production-evidence-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+      document.body.append(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      toast.success("演示证据 JSON 已导出");
+    } finally {
+      setExportingDemoEvidence(false);
+    }
   };
 
   return (
@@ -615,6 +667,7 @@ export function PromptLibraryPage() {
             timeRange={demoTimeRange}
             onTimeRangeChange={setDemoTimeRange}
             onExportEvidence={exportDemoEvidence}
+            exportingEvidence={exportingDemoEvidence}
             runtimeReadiness={agentRuntimeReadiness}
             runtimeLoading={runtimeReadinessQuery.isLoading}
             runs={runs}
@@ -853,6 +906,7 @@ function DemoDashboardPanel({
   timeRange,
   onTimeRangeChange,
   onExportEvidence,
+  exportingEvidence,
   runtimeReadiness,
   runtimeLoading,
   runs,
@@ -866,7 +920,8 @@ function DemoDashboardPanel({
   observabilityLoading: boolean;
   timeRange: DemoTimeRange;
   onTimeRangeChange: (value: DemoTimeRange) => void;
-  onExportEvidence: () => void;
+  onExportEvidence: () => void | Promise<void>;
+  exportingEvidence: boolean;
   runtimeReadiness: PromptEvaluationRuntimeReadiness;
   runtimeLoading: boolean;
   runs: PromptEvaluationRun[];
@@ -944,9 +999,9 @@ function DemoDashboardPanel({
             <Badge variant={runtimeReadiness.status === "就绪" ? "secondary" : "outline"}>真实 Agent：{readinessLabel}</Badge>
             <Badge variant={maybeTruncated ? "outline" : "secondary"}>观测完整性：{completenessStatus}</Badge>
             <Badge variant={hasOptimizationLoop ? "secondary" : "outline"}>优化闭环：{hasOptimizationLoop ? "已有证据" : "待补齐"}</Badge>
-            <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={onExportEvidence}>
-              <Download className="size-3.5" />
-              导出证据 JSON
+            <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={onExportEvidence} disabled={exportingEvidence}>
+              {exportingEvidence ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+              {exportingEvidence ? "导出中" : "导出证据 JSON"}
             </Button>
           </div>
         </div>
