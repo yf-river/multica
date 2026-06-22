@@ -12,6 +12,7 @@ import type {
   CreatePromptLibraryItemRequest,
   CreatePromptEvaluationAssetRequest,
   CreatePromptEvaluationCaseRequest,
+  UpdatePromptEvaluationCaseRequest,
   PromptEvaluationAsset,
   PromptEvaluationOptimizationCandidate,
   PromptEvaluationStructuredCase,
@@ -302,6 +303,15 @@ export function PromptLibraryPage() {
       invalidateCases();
       invalidateSummary();
       toast.success("手工评测用例已创建");
+    },
+  });
+
+  const updateCaseMut = useMutation({
+    mutationFn: ({ caseId, data }: { caseId: string; data: UpdatePromptEvaluationCaseRequest }) => api.updatePromptEvaluationCase(caseId, data),
+    onSuccess: () => {
+      invalidateCases();
+      invalidateSummary();
+      toast.success("手工评测用例已保存");
     },
   });
 
@@ -744,6 +754,8 @@ export function PromptLibraryPage() {
               onDeleteAsset={deleteAsset}
               onCreateCase={(data) => createCaseMut.mutate(data)}
               creatingCaseAssetId={createCaseMut.isPending ? createCaseMut.variables?.asset_id ?? null : null}
+              onUpdateCase={(caseId, data) => updateCaseMut.mutate({ caseId, data })}
+              updatingCaseId={updateCaseMut.isPending ? updateCaseMut.variables?.caseId ?? null : null}
               onDeleteCase={(caseId) => deleteCaseMut.mutate(caseId)}
               deletingCaseId={deleteCaseMut.isPending ? deleteCaseMut.variables ?? null : null}
               onSyncRun={(runId) => syncRunMut.mutate(runId)}
@@ -833,6 +845,8 @@ function WorkbenchPanel({
   onDeleteAsset,
   onCreateCase,
   creatingCaseAssetId,
+  onUpdateCase,
+  updatingCaseId,
   onDeleteCase,
   deletingCaseId,
   onSyncRun,
@@ -869,6 +883,8 @@ function WorkbenchPanel({
   onDeleteAsset: (asset: PromptEvaluationAsset) => void;
   onCreateCase: (data: CreatePromptEvaluationCaseRequest) => void;
   creatingCaseAssetId: string | null;
+  onUpdateCase: (caseId: string, data: UpdatePromptEvaluationCaseRequest) => void;
+  updatingCaseId: string | null;
   onDeleteCase: (caseId: string) => void;
   deletingCaseId: string | null;
   onSyncRun: (runId: string) => void;
@@ -1099,6 +1115,8 @@ function WorkbenchPanel({
                       setCaseDrafts((prev) => ({ ...prev, [asset.id]: emptyManualCaseDraft() }));
                     }}
                     creating={creatingCaseAssetId === asset.id}
+                    onUpdateCase={onUpdateCase}
+                    updatingCaseId={updatingCaseId}
                     onDeleteCase={onDeleteCase}
                     deletingCaseId={deletingCaseId}
                   />
@@ -1451,6 +1469,8 @@ function ManualCasePanel({
   onDraftChange,
   onCreateCase,
   creating,
+  onUpdateCase,
+  updatingCaseId,
   onDeleteCase,
   deletingCaseId,
 }: {
@@ -1460,10 +1480,14 @@ function ManualCasePanel({
   onDraftChange: (draft: ManualCaseDraft) => void;
   onCreateCase: () => void;
   creating: boolean;
+  onUpdateCase: (caseId: string, data: UpdatePromptEvaluationCaseRequest) => void;
+  updatingCaseId: string | null;
   onDeleteCase: (caseId: string) => void;
   deletingCaseId: string | null;
 }) {
   const manualCases = cases.filter((item) => item.source === "manual");
+  const [editingCaseId, setEditingCaseId] = useState<string | null>(null);
+  const [editDrafts, setEditDrafts] = useState<Record<string, ManualCaseDraft>>({});
   return (
     <div data-testid={`prompt-evaluation-cases-${asset.id}`} className="md:col-span-2 grid gap-2 rounded-md border border-border/70 bg-muted/10 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -1474,19 +1498,80 @@ function ManualCasePanel({
       </div>
       {cases.length > 0 ? (
         <div className="grid gap-1.5">
-          {cases.map((item) => (
-            <div key={item.id} className="flex flex-wrap items-center gap-2 rounded border bg-background px-2 py-1.5 text-xs">
-              <span className="font-medium text-foreground">{item.case_name || `用例 ${item.case_index + 1}`}</span>
-              <span className="text-muted-foreground">{item.source === "manual" ? "手工" : "payload"} · {item.status}</span>
-              <span className="min-w-0 flex-1 truncate text-muted-foreground">{summarizeStructuredCase(item)}</span>
-              {item.source === "manual" && (
-                <Button size="sm" variant="destructive" className="h-7" onClick={() => onDeleteCase(item.id)} disabled={deletingCaseId === item.id}>
-                  {deletingCaseId === item.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-                  删除用例
-                </Button>
-              )}
-            </div>
-          ))}
+          {cases.map((item) => {
+            const editing = editingCaseId === item.id;
+            const editDraft = editDrafts[item.id] ?? manualCaseToDraft(item);
+            return (
+              <div key={item.id} className="grid gap-2 rounded border bg-background px-2 py-1.5 text-xs">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium text-foreground">{item.case_name || `用例 ${item.case_index + 1}`}</span>
+                  <span className="text-muted-foreground">{item.source === "manual" ? "手工" : "payload"} · {item.status}</span>
+                  <span className="min-w-0 flex-1 truncate text-muted-foreground">{summarizeStructuredCase(item)}</span>
+                  {item.source === "manual" && (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        className="h-7"
+                        onClick={() => {
+                          setEditingCaseId(item.id);
+                          setEditDrafts((prev) => ({ ...prev, [item.id]: manualCaseToDraft(item) }));
+                        }}
+                      >
+                        编辑用例
+                      </Button>
+                      <Button size="sm" variant="destructive" className="h-7" onClick={() => onDeleteCase(item.id)} disabled={deletingCaseId === item.id}>
+                        {deletingCaseId === item.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                        删除用例
+                      </Button>
+                    </>
+                  )}
+                </div>
+                {editing && (
+                  <div className="grid gap-2 rounded-sm border border-border/70 bg-muted/20 p-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                    <Input
+                      value={editDraft.caseName}
+                      onChange={(event) => setEditDrafts((prev) => ({ ...prev, [item.id]: { ...editDraft, caseName: event.target.value } }))}
+                      placeholder="编辑用例名称"
+                    />
+                    <Textarea
+                      value={editDraft.variablesText}
+                      onChange={(event) => setEditDrafts((prev) => ({ ...prev, [item.id]: { ...editDraft, variablesText: event.target.value } }))}
+                      className="min-h-20 text-xs"
+                      placeholder="编辑变量：issue_title=登录失败"
+                    />
+                    <Input
+                      value={editDraft.expectedText}
+                      onChange={(event) => setEditDrafts((prev) => ({ ...prev, [item.id]: { ...editDraft, expectedText: event.target.value } }))}
+                      placeholder="编辑期望包含"
+                    />
+                    <div className="flex gap-2">
+                      <Input
+                        value={editDraft.tagsText}
+                        onChange={(event) => setEditDrafts((prev) => ({ ...prev, [item.id]: { ...editDraft, tagsText: event.target.value } }))}
+                        placeholder="编辑标签"
+                      />
+                      <Button
+                        size="sm"
+                        className="h-10 shrink-0"
+                        onClick={() => {
+                          onUpdateCase(item.id, buildManualCaseUpdateRequest(asset, item, editDraft));
+                          setEditingCaseId(null);
+                        }}
+                        disabled={updatingCaseId === item.id || !editDraft.caseName.trim()}
+                      >
+                        {updatingCaseId === item.id ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+                        保存用例
+                      </Button>
+                      <Button size="sm" variant="ghost" className="h-10 shrink-0" onClick={() => setEditingCaseId(null)}>
+                        取消
+                      </Button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
         </div>
       ) : (
         <div className="rounded border border-dashed px-2 py-2 text-xs text-muted-foreground">暂无结构化用例，运行时会回退到资产 payload。</div>
@@ -1497,9 +1582,10 @@ function ManualCasePanel({
           onChange={(event) => onDraftChange({ ...draft, caseName: event.target.value })}
           placeholder="手工用例名称"
         />
-        <Input
+        <Textarea
           value={draft.variablesText}
           onChange={(event) => onDraftChange({ ...draft, variablesText: event.target.value })}
+          className="min-h-20 text-sm"
           placeholder="变量：issue_title=登录失败"
         />
         <Input
@@ -1611,6 +1697,38 @@ function buildManualCaseRequest(asset: PromptEvaluationAsset, draft: ManualCaseD
     },
     tags: splitList(draft.tagsText),
     status: "启用",
+  };
+}
+
+function buildManualCaseUpdateRequest(asset: PromptEvaluationAsset, item: PromptEvaluationStructuredCase, draft: ManualCaseDraft): UpdatePromptEvaluationCaseRequest {
+  const variables = parseDebugValues(draft.variablesText);
+  const expectedContains = splitList(draft.expectedText);
+  return {
+    asset_id: asset.id,
+    prompt_id: asset.prompt_id,
+    case_index: item.case_index,
+    case_name: draft.caseName.trim(),
+    variables,
+    expected_contains: expectedContains,
+    input: {
+      变量: variables,
+      来源: "训练与评估手工用例",
+      最近人工维护: new Date().toISOString(),
+    },
+    expected: {
+      期望包含: expectedContains,
+    },
+    tags: splitList(draft.tagsText),
+    status: item.status,
+  };
+}
+
+function manualCaseToDraft(item: PromptEvaluationStructuredCase): ManualCaseDraft {
+  return {
+    caseName: item.case_name,
+    variablesText: Object.entries(item.variables ?? {}).map(([key, value]) => `${key}=${String(value)}`).join("\n"),
+    expectedText: item.expected_contains.map((value) => String(value)).join(", "),
+    tagsText: item.tags.map((value) => String(value)).join(", "),
   };
 }
 

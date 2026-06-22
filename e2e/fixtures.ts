@@ -104,6 +104,7 @@ interface PromptEvaluationCase {
   case_index: number;
   variables: Record<string, unknown>;
   expected_contains: unknown[];
+  tags: unknown[];
   status: string;
   source: string;
 }
@@ -1073,6 +1074,17 @@ export class TestApiClient {
     }
     const data = await res.json();
     return data.items ?? [];
+  }
+
+  async updatePromptEvaluationCase(id: string, data: Record<string, unknown>): Promise<PromptEvaluationCase> {
+    const res = await this.authedFetch(`/api/prompt-evaluation-cases/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      throw new Error(`update prompt evaluation case failed: ${res.status}`);
+    }
+    return res.json();
   }
 
   async cleanupPromptArtifactsByPrefix(prefix: string) {

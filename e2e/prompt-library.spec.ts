@@ -143,6 +143,27 @@ test.describe("训练与评估工作台", () => {
         status: "启用",
       });
     await expect(datasetRow).toContainText("手工 1", { timeout: 10000 });
+    await datasetRow.getByRole("button", { name: "编辑用例" }).click();
+    await datasetRow.getByPlaceholder("编辑用例名称").fill("手工补充登录失败验收 v2");
+    await datasetRow.getByPlaceholder("编辑变量：issue_title=登录失败").fill("issue_title=登录失败\nproject_context=user-center\npriority=P0");
+    await datasetRow.getByPlaceholder("编辑期望包含").fill("验收条件, trace/task id, 领导演示证据");
+    await datasetRow.getByPlaceholder("编辑标签").fill("手工用例, user-center, 领导演示");
+    await datasetRow.getByRole("button", { name: "保存用例" }).click();
+    await expect(page.getByText("手工评测用例已保存")).toBeVisible({ timeout: 10000 });
+    await expect
+      .poll(async () => {
+        const items = await api.listPromptEvaluationCases({ asset_id: dataset!.id });
+        return items.find((item) => item.source === "manual" && item.case_name === "手工补充登录失败验收 v2") ?? null;
+      }, { timeout: 15000 })
+      .toMatchObject({
+        variables: expect.objectContaining({
+          issue_title: "登录失败",
+          project_context: "user-center",
+          priority: "P0",
+        }),
+        expected_contains: expect.arrayContaining(["领导演示证据"]),
+        tags: expect.arrayContaining(["领导演示"]),
+      });
     await datasetRow.getByRole("button", { name: "删除用例" }).click();
     await expect(page.getByText("手工评测用例已删除")).toBeVisible({ timeout: 10000 });
     await expect
@@ -249,6 +270,7 @@ test.describe("训练与评估工作台", () => {
         failed_cases: 0,
       });
     await page.goto(`/${workspaceSlug}/training?view=run-history`, { waitUntil: "domcontentloaded" });
+    await waitForPageText(page, "运行历史", 10000);
     const summaryStrip = page.getByTestId("training-summary-strip");
     await expect(summaryStrip).toContainText("领导视角摘要", { timeout: 10000 });
     await expect(page.getByTestId("training-summary-运行总数")).toContainText(/[1-9]/);
