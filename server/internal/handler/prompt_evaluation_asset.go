@@ -74,6 +74,7 @@ type PromptEvaluationAssetResponse struct {
 	EvaluationDimensionCount int32   `json:"evaluation_dimension_count"`
 	DatasetRowCount          int32   `json:"dataset_row_count"`
 	TestSuiteCaseCount       int32   `json:"test_suite_case_count"`
+	ExperimentDimensionCount int32   `json:"experiment_dimension_count"`
 }
 
 type CreatePromptEvaluationAssetRequest struct {
@@ -171,6 +172,14 @@ type promptEvaluationAssetProfile struct {
 	LinkedDatasetCount       int32
 	LinkedPromptCount        int32
 	EvaluationDimensionCount int32
+	ExperimentDimensionCount int32
+}
+
+type normalizedPromptEvaluationExperimentDimension struct {
+	Name              string
+	ExperimentTarget  string
+	BaselineOutput    string
+	ComparisonPayload map[string]any
 }
 
 type PromptEvaluationAgentRunResponse struct {
@@ -340,6 +349,22 @@ type PromptEvaluationCaseAssertionResponse struct {
 	CreatedAt      string `json:"created_at"`
 }
 
+type PromptEvaluationExperimentDimensionResponse struct {
+	ID                string  `json:"id"`
+	WorkspaceID       string  `json:"workspace_id"`
+	ExperimentAssetID string  `json:"experiment_asset_id"`
+	DimensionIndex    int32   `json:"dimension_index"`
+	DimensionName     string  `json:"dimension_name"`
+	ExperimentTarget  string  `json:"experiment_target"`
+	BaselineOutput    string  `json:"baseline_output"`
+	ComparisonPayload any     `json:"comparison_payload"`
+	Status            string  `json:"status"`
+	Source            string  `json:"source"`
+	CreatedBy         *string `json:"created_by"`
+	CreatedAt         string  `json:"created_at"`
+	UpdatedAt         string  `json:"updated_at"`
+}
+
 type PromptEvaluationOptimizationCandidateResponse struct {
 	ID                   string  `json:"id"`
 	WorkspaceID          string  `json:"workspace_id"`
@@ -399,6 +424,7 @@ func promptEvaluationAssetToResponse(asset db.PromptEvaluationAsset) PromptEvalu
 		EvaluationDimensionCount: asset.EvaluationDimensionCount,
 		DatasetRowCount:          asset.DatasetRowCount,
 		TestSuiteCaseCount:       asset.TestSuiteCaseCount,
+		ExperimentDimensionCount: asset.ExperimentDimensionCount,
 	}
 }
 
@@ -549,6 +575,24 @@ func promptEvaluationAssertionTexts(raw []byte) []string {
 	return result
 }
 
+func promptEvaluationExperimentDimensionToResponse(item db.PromptEvaluationExperimentDimension) PromptEvaluationExperimentDimensionResponse {
+	return PromptEvaluationExperimentDimensionResponse{
+		ID:                uuidToString(item.ID),
+		WorkspaceID:       uuidToString(item.WorkspaceID),
+		ExperimentAssetID: uuidToString(item.ExperimentAssetID),
+		DimensionIndex:    item.DimensionIndex,
+		DimensionName:     item.DimensionName,
+		ExperimentTarget:  item.ExperimentTarget,
+		BaselineOutput:    item.BaselineOutput,
+		ComparisonPayload: decodeJSONDefault(item.ComparisonPayload, map[string]any{}),
+		Status:            item.Status,
+		Source:            item.Source,
+		CreatedBy:         uuidToPtr(item.CreatedBy),
+		CreatedAt:         timestampToString(item.CreatedAt),
+		UpdatedAt:         timestampToString(item.UpdatedAt),
+	}
+}
+
 func promptEvaluationExpectedContainsFromAssertions(fallback []byte, assertions []db.PromptEvaluationCaseAssertion) []any {
 	if len(assertions) == 0 {
 		if values, ok := decodeJSONDefault(fallback, []any{}).([]any); ok {
@@ -663,6 +707,36 @@ func syncPromptEvaluationTestSuiteCase(ctx context.Context, qtx *db.Queries, ass
 	return refreshPromptEvaluationTestSuiteCaseCount(ctx, qtx, item.WorkspaceID, item.AssetID)
 }
 
+func syncPromptEvaluationExperimentDimensions(ctx context.Context, qtx *db.Queries, asset db.PromptEvaluationAsset, createdBy pgtype.UUID) error {
+	if err := qtx.DeletePromptEvaluationExperimentDimensionsByAsset(ctx, db.DeletePromptEvaluationExperimentDimensionsByAssetParams{
+		WorkspaceID:       asset.WorkspaceID,
+		ExperimentAssetID: asset.ID,
+	}); err != nil {
+		return err
+	}
+	if asset.AssetType != promptEvaluationAssetExperiment {
+		return refreshPromptEvaluationExperimentDimensionCount(ctx, qtx, asset.WorkspaceID, asset.ID)
+	}
+	dimensions := promptEvaluationExperimentDimensions(decodePayloadObject(asset.Payload))
+	for idx, item := range dimensions {
+		if _, err := qtx.CreatePromptEvaluationExperimentDimension(ctx, db.CreatePromptEvaluationExperimentDimensionParams{
+			WorkspaceID:       asset.WorkspaceID,
+			ExperimentAssetID: asset.ID,
+			DimensionIndex:    int32(idx),
+			DimensionName:     pgtype.Text{String: item.Name, Valid: true},
+			ExperimentTarget:  pgtype.Text{String: item.ExperimentTarget, Valid: true},
+			BaselineOutput:    pgtype.Text{String: item.BaselineOutput, Valid: true},
+			ComparisonPayload: mustJSONBytes(item.ComparisonPayload),
+			Status:            pgtype.Text{String: asset.Status, Valid: true},
+			Source:            pgtype.Text{String: "payload", Valid: true},
+			CreatedBy:         createdBy,
+		}); err != nil {
+			return err
+		}
+	}
+	return refreshPromptEvaluationExperimentDimensionCount(ctx, qtx, asset.WorkspaceID, asset.ID)
+}
+
 func deletePromptEvaluationDatasetRowsForCase(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID, caseID pgtype.UUID) error {
 	deletedAssets, err := qtx.DeletePromptEvaluationDatasetRowsByCase(ctx, db.DeletePromptEvaluationDatasetRowsByCaseParams{
 		WorkspaceID: workspaceID,
@@ -706,6 +780,13 @@ func refreshPromptEvaluationTestSuiteCaseCount(ctx context.Context, qtx *db.Quer
 	return qtx.RefreshPromptEvaluationTestSuiteCaseCount(ctx, db.RefreshPromptEvaluationTestSuiteCaseCountParams{
 		WorkspaceID:      workspaceID,
 		TestSuiteAssetID: assetID,
+	})
+}
+
+func refreshPromptEvaluationExperimentDimensionCount(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID, assetID pgtype.UUID) error {
+	return qtx.RefreshPromptEvaluationExperimentDimensionCount(ctx, db.RefreshPromptEvaluationExperimentDimensionCountParams{
+		WorkspaceID:       workspaceID,
+		ExperimentAssetID: assetID,
 	})
 }
 
@@ -804,6 +885,7 @@ func promptEvaluationSummaryToResponse(workspaceID pgtype.UUID, row db.GetPrompt
 			"评估维度数":   row.AssetProfileDimensions,
 			"数据集行":    row.DatasetRows,
 			"测试套件用例":  row.TestSuiteCases,
+			"实验维度事实":  row.ExperimentDimensions,
 			"服务端证据快照": row.EvidenceSnapshots,
 			"验收归档快照":  row.AcceptanceSnapshots,
 		},
@@ -887,6 +969,7 @@ func promptEvaluationAssetProfileFromPayload(raw []byte, promptID pgtype.UUID) p
 		LinkedDatasetCount:       int32(countPromptEvaluationProfileValues(payload, "dataset_ids", "数据集ID", "关联数据集", "包含数据集", "linked_dataset_ids")),
 		LinkedPromptCount:        int32(linkedPromptCount),
 		EvaluationDimensionCount: int32(countPromptEvaluationProfileValues(payload, "evaluation_dimensions", "评估维度", "指标", "指标口径", "metric_contract")),
+		ExperimentDimensionCount: int32(len(promptEvaluationExperimentDimensions(payload))),
 	}
 }
 
@@ -922,6 +1005,80 @@ func collectPromptEvaluationProfileValues(seen map[string]bool, value any) {
 			seen[item] = true
 		}
 	}
+}
+
+func promptEvaluationExperimentDimensions(payload map[string]any) []normalizedPromptEvaluationExperimentDimension {
+	target := stringFromAny(firstValue(payload, "实验对象", "experiment_target", "target", "对象"))
+	baseline := stringFromAny(firstValue(payload, "基线输出", "baseline_output", "baseline", "baseline_result"))
+	raw := firstValue(payload, "对比维度", "实验维度", "evaluation_dimensions", "评估维度", "指标", "metric_contract")
+	values := promptEvaluationDimensionValues(raw)
+	result := make([]normalizedPromptEvaluationExperimentDimension, 0, len(values))
+	for _, value := range values {
+		name := strings.TrimSpace(value.Name)
+		if name == "" {
+			continue
+		}
+		result = append(result, normalizedPromptEvaluationExperimentDimension{
+			Name:              name,
+			ExperimentTarget:  target,
+			BaselineOutput:    baseline,
+			ComparisonPayload: value.Payload,
+		})
+	}
+	return result
+}
+
+type promptEvaluationDimensionValue struct {
+	Name    string
+	Payload map[string]any
+}
+
+func promptEvaluationDimensionValues(value any) []promptEvaluationDimensionValue {
+	switch v := value.(type) {
+	case nil:
+		return nil
+	case string:
+		if item := strings.TrimSpace(v); item != "" {
+			return []promptEvaluationDimensionValue{{Name: item, Payload: map[string]any{}}}
+		}
+	case []any:
+		result := make([]promptEvaluationDimensionValue, 0, len(v))
+		for _, item := range v {
+			result = append(result, promptEvaluationDimensionValues(item)...)
+		}
+		return result
+	case map[string]any:
+		if name := strings.TrimSpace(stringFromAny(firstValue(v, "name", "名称", "dimension", "维度"))); name != "" {
+			payload := make(map[string]any, len(v))
+			for key, item := range v {
+				payload[key] = item
+			}
+			return []promptEvaluationDimensionValue{{Name: name, Payload: payload}}
+		}
+		keys := make([]string, 0, len(v))
+		for key := range v {
+			if strings.TrimSpace(key) != "" {
+				keys = append(keys, key)
+			}
+		}
+		sort.Strings(keys)
+		result := make([]promptEvaluationDimensionValue, 0, len(keys))
+		for _, key := range keys {
+			payload := map[string]any{}
+			if nested, ok := v[key].(map[string]any); ok {
+				payload = nested
+			} else if v[key] != nil {
+				payload = map[string]any{"值": v[key]}
+			}
+			result = append(result, promptEvaluationDimensionValue{Name: key, Payload: payload})
+		}
+		return result
+	default:
+		if item := strings.TrimSpace(stringFromAny(v)); item != "" {
+			return []promptEvaluationDimensionValue{{Name: item, Payload: map[string]any{}}}
+		}
+	}
+	return nil
 }
 
 func jsonObjectBytesOrDefault(w http.ResponseWriter, raw json.RawMessage, field string, fallback []byte) ([]byte, bool) {
@@ -1082,6 +1239,44 @@ func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Reque
 	resp := make([]PromptEvaluationCaseResponse, len(cases))
 	for i, item := range cases {
 		resp[i] = promptEvaluationCaseToResponse(item, assertionsByCase[uuidToString(item.ID)])
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
+}
+
+func (h *Handler) ListPromptEvaluationExperimentDimensions(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	var assetID pgtype.UUID
+	if value := r.URL.Query().Get("asset_id"); value != "" {
+		parsed, ok := parseUUIDOrBadRequest(w, value, "asset_id")
+		if !ok {
+			return
+		}
+		assetID = parsed
+	}
+	var status pgtype.Text
+	if value := r.URL.Query().Get("status"); value != "" {
+		if !validPromptLibraryStatus(value) {
+			writeError(w, http.StatusBadRequest, "status must be 启用 or 归档")
+			return
+		}
+		status = pgtype.Text{String: value, Valid: true}
+	}
+	items, err := h.Queries.ListPromptEvaluationExperimentDimensions(r.Context(), db.ListPromptEvaluationExperimentDimensionsParams{
+		WorkspaceID:       workspaceUUID,
+		ExperimentAssetID: assetID,
+		Status:            status,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation experiment dimensions")
+		return
+	}
+	resp := make([]PromptEvaluationExperimentDimensionResponse, len(items))
+	for i, item := range items {
+		resp[i] = promptEvaluationExperimentDimensionToResponse(item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
 }
@@ -2748,6 +2943,10 @@ func (h *Handler) syncPromptEvaluationCasesFromPayload(w http.ResponseWriter, r 
 		writeError(w, http.StatusInternalServerError, "failed to refresh prompt evaluation test suite cases")
 		return false
 	}
+	if err := refreshPromptEvaluationExperimentDimensionCount(r.Context(), qtx, asset.WorkspaceID, asset.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to refresh prompt evaluation experiment dimensions")
+		return false
+	}
 	cases := promptEvaluationCases(decodePayloadObject(asset.Payload))
 	for idx, item := range cases {
 		normalized := normalizePromptEvaluationCase(idx, item)
@@ -2847,6 +3046,7 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 		LinkedDatasetCount:       profile.LinkedDatasetCount,
 		LinkedPromptCount:        profile.LinkedPromptCount,
 		EvaluationDimensionCount: profile.EvaluationDimensionCount,
+		ExperimentDimensionCount: profile.ExperimentDimensionCount,
 	})
 	if err != nil {
 		if isUniqueViolation(err) {
@@ -2861,6 +3061,10 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if ok := h.syncPromptEvaluationCasesFromPayload(w, r, qtx, asset, parseUUID(userID)); !ok {
+		return
+	}
+	if err := syncPromptEvaluationExperimentDimensions(r.Context(), qtx, asset, parseUUID(userID)); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation experiment dimensions")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
@@ -2935,6 +3139,7 @@ func (h *Handler) UpdatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 		assetParams.LinkedDatasetCount = pgtype.Int4{Int32: profile.LinkedDatasetCount, Valid: true}
 		assetParams.LinkedPromptCount = pgtype.Int4{Int32: profile.LinkedPromptCount, Valid: true}
 		assetParams.EvaluationDimensionCount = pgtype.Int4{Int32: profile.EvaluationDimensionCount, Valid: true}
+		assetParams.ExperimentDimensionCount = pgtype.Int4{Int32: profile.ExperimentDimensionCount, Valid: true}
 	}
 	asset, err := qtx.UpdatePromptEvaluationAsset(r.Context(), assetParams)
 	if err != nil {
@@ -2950,6 +3155,10 @@ func (h *Handler) UpdatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if ok := h.syncPromptEvaluationCasesFromPayload(w, r, qtx, asset, existing.CreatedBy); !ok {
+		return
+	}
+	if err := syncPromptEvaluationExperimentDimensions(r.Context(), qtx, asset, existing.CreatedBy); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation experiment dimensions")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {

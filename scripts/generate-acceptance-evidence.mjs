@@ -21,9 +21,12 @@ const frontendURL = trimEnv("ACCEPTANCE_FRONTEND_URL")
 const apiURL = trimEnv("ACCEPTANCE_API_URL")
   || trimEnv("NEXT_PUBLIC_API_URL")
   || `http://127.0.0.1:${trimEnv("PORT") || "8080"}`;
-const browserApiURL = trimEnv("ACCEPTANCE_BROWSER_API_URL")
-  || trimEnv("NEXT_PUBLIC_API_URL")
-  || apiURL;
+const browserApiURL = optionalEnv("ACCEPTANCE_BROWSER_API_URL")
+  ?? optionalEnv("NEXT_PUBLIC_API_URL")
+  ?? apiURL;
+const browserWsURL = browserApiURL
+  ? `${browserApiURL.replace(/^http/, "ws")}/ws`
+  : "/ws";
 const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || trimEnv("REAL_AGENT_E2E_WORKSPACE") || "goal-test-daemon";
 const demoAccount = trimEnv("ACCEPTANCE_DEMO_ACCOUNT") || trimEnv("REAL_AGENT_E2E_ACCOUNT") || "goal-test-daemon";
 const demoPassword = trimEnv("ACCEPTANCE_DEMO_PASSWORD") || trimEnv("REAL_AGENT_E2E_PASSWORD") || "e2e-password";
@@ -106,6 +109,11 @@ if (commandResults.some((item) => item.status === "失败")) {
 }
 
 function trimEnv(name) {
+  return (process.env[name] || "").trim();
+}
+
+function optionalEnv(name) {
+  if (!Object.prototype.hasOwnProperty.call(process.env, name)) return undefined;
   return (process.env[name] || "").trim();
 }
 
@@ -202,6 +210,7 @@ async function loadDatabaseEvidence(workspaceID) {
             (SELECT count(*)::int FROM prompt_evaluation_asset WHERE workspace_id = $1) AS asset_count,
             (SELECT count(*)::int FROM prompt_evaluation_dataset_row WHERE workspace_id = $1) AS dataset_row_count,
             (SELECT count(*)::int FROM prompt_evaluation_test_suite_case WHERE workspace_id = $1) AS test_suite_case_count,
+            (SELECT count(*)::int FROM prompt_evaluation_experiment_dimension WHERE workspace_id = $1) AS experiment_dimension_count,
             (SELECT count(*)::int FROM prompt_evaluation_case WHERE workspace_id = $1) AS structured_case_count,
             (SELECT count(*)::int FROM prompt_evaluation_case_assertion WHERE workspace_id = $1) AS structured_assertion_count,
             (SELECT count(*)::int FROM prompt_evaluation_run WHERE workspace_id = $1) AS run_count,
@@ -480,7 +489,7 @@ function buildCommandPlan() {
         `PLAYWRIGHT_BASE_URL=${shellQuote(frontendURL)}`,
         `FRONTEND_ORIGIN=${shellQuote(frontendURL)}`,
         `NEXT_PUBLIC_API_URL=${shellQuote(browserApiURL)}`,
-        `NEXT_PUBLIC_WS_URL=${shellQuote(browserApiURL.replace(/^http/, "ws") + "/ws")}`,
+        `NEXT_PUBLIC_WS_URL=${shellQuote(browserWsURL)}`,
         `ACCEPTANCE_API_URL=${shellQuote(apiURL)}`,
         `ACCEPTANCE_FRONTEND_URL=${shellQuote(frontendURL)}`,
         "pnpm exec playwright test e2e/production-acceptance.spec.ts --project=chromium",
@@ -494,7 +503,7 @@ function buildCommandPlan() {
         `PLAYWRIGHT_BASE_URL=${shellQuote(frontendURL)}`,
         `FRONTEND_ORIGIN=${shellQuote(frontendURL)}`,
         `NEXT_PUBLIC_API_URL=${shellQuote(browserApiURL)}`,
-        `NEXT_PUBLIC_WS_URL=${shellQuote(browserApiURL.replace(/^http/, "ws"))}/ws`,
+        `NEXT_PUBLIC_WS_URL=${shellQuote(browserWsURL)}`,
         "pnpm exec playwright test e2e/navigation.spec.ts --project=chromium",
       ].join(" "),
       required: includeE2E,
@@ -651,6 +660,8 @@ function summarizeCommandOutput(name, stdout) {
       dataset_row_count: parsed.dataset?.dataset_row_count ?? 0,
       test_suite_id: parsed.test_suite?.id || "",
       test_suite_case_count: parsed.test_suite?.test_suite_case_count ?? 0,
+      experiment_id: parsed.experiment?.id || "",
+      experiment_dimension_count: parsed.experiment?.experiment_dimension_count ?? 0,
       dataset_assertion_count: parsed.dataset?.assertion_count ?? 0,
       test_suite_assertion_count: parsed.test_suite?.assertion_count ?? 0,
       run_id: parsed.run?.id || "",
@@ -703,6 +714,7 @@ function buildRisks({ health, ready, login, account, commandResults, git, databa
     if (Number(training.run_count || 0) === 0) risks.push("数据库中未发现训练评估运行记录，生产看板会缺少运行证据。");
     if (Number(training.dataset_row_count || 0) === 0) risks.push("数据库中未发现数据集行事实表记录，数据集仍缺少可度量行级证据。");
     if (Number(training.test_suite_case_count || 0) === 0) risks.push("数据库中未发现测试套件用例事实表记录，测试套件仍缺少可度量用例证据。");
+    if (Number(training.experiment_dimension_count || 0) === 0) risks.push("数据库中未发现实验维度事实表记录，实验模块仍缺少可度量对比证据。");
     if (Number(training.structured_case_count || 0) === 0) risks.push("数据库中未发现结构化评测用例，数据集/测试套件证据不足。");
     if (Number(training.structured_assertion_count || 0) === 0) risks.push("数据库中未发现结构化评测断言，训练评估可度量证据不足。");
     if (Number(training.optimization_candidate_count || 0) === 0) risks.push("数据库中未发现优化候选，失败用例到人工确认的闭环证据不足。");
@@ -772,6 +784,7 @@ ${commitRows}
 - 评测资产：${training.asset_count ?? "未记录"}
 - 数据集行：${training.dataset_row_count ?? "未记录"}
 - 测试套件用例：${training.test_suite_case_count ?? "未记录"}
+- 实验维度事实：${training.experiment_dimension_count ?? "未记录"}
 - 结构化用例：${training.structured_case_count ?? "未记录"}
 - 结构化断言：${training.structured_assertion_count ?? "未记录"}
 - 训练评估运行：${training.run_count ?? "未记录"}，其中 Agent 执行 ${training.agent_run_count ?? "未记录"}

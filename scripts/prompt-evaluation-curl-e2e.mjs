@@ -94,6 +94,37 @@ if (Number(suite.test_suite_case_count ?? 0) < 1) fail(`测试套件用例计数
 const suiteCases = get(`/api/prompt-evaluation-cases?asset_id=${encodeURIComponent(suite.id)}`, token);
 const suiteAssertionCount = assertCaseAssertions(suiteCases, suite.id, 2, "测试套件");
 
+const experiment = post("/api/prompt-evaluation-assets", {
+  prompt_id: prompt.id,
+  name: `curl 训练闭环实验 ${suffix}`,
+  description: "通过公开 API 创建的实验资产，用于验证实验维度事实表。",
+  asset_type: "实验",
+  payload: {
+    schema: "multica.training_evaluation.payload.v1",
+    schema_version: 1,
+    语义版本: "multica.training_evaluation.v1",
+    实验对象: prompt.name,
+    对比维度: ["命中率", "缺失变量", "中文一致性"],
+    基线输出: "基线输出需包含目标、边界、验收条件和风险。",
+    cases: [
+      {
+        case_name: "实验对比样本",
+        variables: { issue_title: "user-center 登录失败" },
+        expected_contains: ["目标", "验收条件"],
+        tags: ["curl-e2e", "实验"],
+      },
+    ],
+  },
+  status: "启用",
+}, token);
+if (!experiment?.id) fail("创建实验响应缺少 id");
+if (Number(experiment.experiment_dimension_count ?? 0) < 3) fail(`实验维度事实计数不足：${experiment.experiment_dimension_count ?? 0}`);
+const experimentDimensions = get(`/api/prompt-evaluation-experiment-dimensions?asset_id=${encodeURIComponent(experiment.id)}`, token);
+const experimentDimensionNames = (experimentDimensions.items ?? []).map((item) => item.dimension_name).sort();
+if (Number(experimentDimensions.total ?? 0) !== 3 || !experimentDimensionNames.includes("命中率") || !experimentDimensionNames.includes("缺失变量") || !experimentDimensionNames.includes("中文一致性")) {
+  fail(`实验维度事实查询结果不符合预期：${JSON.stringify(experimentDimensions)}`);
+}
+
 post(`/api/prompt-evaluation-assets/${suite.id}/run`, null, token);
 const failedRun = await poll(() => {
   const runs = get(`/api/prompt-evaluation-runs?asset_id=${encodeURIComponent(suite.id)}&limit=10`, token);
@@ -124,6 +155,7 @@ const summary = get("/api/prompt-evaluation-summary", token);
 evidence.prompt = { id: prompt.id, version: prompt.version, version_count: itemCount(initialVersions) };
 evidence.dataset = { id: dataset.id, asset_type: dataset.asset_type, structured_case_count: dataset.structured_case_count, dataset_row_count: dataset.dataset_row_count, assertion_count: datasetAssertionCount };
 evidence.test_suite = { id: suite.id, asset_type: suite.asset_type, structured_case_count: suite.structured_case_count, test_suite_case_count: suite.test_suite_case_count, assertion_count: suiteAssertionCount };
+evidence.experiment = { id: experiment.id, asset_type: experiment.asset_type, structured_case_count: experiment.structured_case_count, experiment_dimension_count: experiment.experiment_dimension_count, dimension_names: experimentDimensionNames };
 evidence.run = {
   id: failedRun.id,
   status: failedRun.status,

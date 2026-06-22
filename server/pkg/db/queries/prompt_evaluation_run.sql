@@ -85,7 +85,8 @@ WITH asset_summary AS (
         COALESCE(SUM(linked_prompt_count), 0)::bigint AS asset_profile_linked_prompts,
         COALESCE(SUM(evaluation_dimension_count), 0)::bigint AS asset_profile_dimensions,
         COALESCE(SUM(dataset_row_count), 0)::bigint AS dataset_rows,
-        COALESCE(SUM(test_suite_case_count), 0)::bigint AS test_suite_cases
+        COALESCE(SUM(test_suite_case_count), 0)::bigint AS test_suite_cases,
+        COALESCE(SUM(experiment_dimension_count), 0)::bigint AS experiment_dimensions
     FROM prompt_evaluation_asset pea
     WHERE pea.workspace_id = $1
 ),
@@ -154,6 +155,7 @@ SELECT
     a.asset_profile_dimensions,
     a.dataset_rows,
     a.test_suite_cases,
+    a.experiment_dimensions,
     c.total_cases,
     c.active_cases,
     r.total_runs,

@@ -26,7 +26,8 @@ INSERT INTO prompt_evaluation_asset (
     structured_assertion_count,
     linked_dataset_count,
     linked_prompt_count,
-    evaluation_dimension_count
+    evaluation_dimension_count,
+    experiment_dimension_count
 ) VALUES (
     $1,
     sqlc.narg('prompt_id'),
@@ -42,7 +43,8 @@ INSERT INTO prompt_evaluation_asset (
     COALESCE(sqlc.narg('structured_assertion_count'), 0),
     COALESCE(sqlc.narg('linked_dataset_count'), 0),
     COALESCE(sqlc.narg('linked_prompt_count'), 0),
-    COALESCE(sqlc.narg('evaluation_dimension_count'), 0)
+    COALESCE(sqlc.narg('evaluation_dimension_count'), 0),
+    COALESCE(sqlc.narg('experiment_dimension_count'), 0)
 )
 RETURNING *;
 
@@ -61,6 +63,7 @@ UPDATE prompt_evaluation_asset SET
     linked_dataset_count = COALESCE(sqlc.narg('linked_dataset_count'), linked_dataset_count),
     linked_prompt_count = COALESCE(sqlc.narg('linked_prompt_count'), linked_prompt_count),
     evaluation_dimension_count = COALESCE(sqlc.narg('evaluation_dimension_count'), evaluation_dimension_count),
+    experiment_dimension_count = COALESCE(sqlc.narg('experiment_dimension_count'), experiment_dimension_count),
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
 RETURNING *;

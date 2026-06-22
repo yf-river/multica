@@ -138,6 +138,7 @@ import type {
   ListPromptEvaluationAssetsParams,
   ListPromptEvaluationRunsParams,
   ListPromptEvaluationCasesParams,
+  ListPromptEvaluationExperimentDimensionsParams,
   PromptEvaluationSummaryParams,
   ListPromptEvaluationOptimizationCandidatesParams,
   ListPromptEvaluationAssetsResponse,
@@ -145,6 +146,7 @@ import type {
   ListPromptEvaluationTrialsResponse,
   ListPromptEvaluationEvidenceSnapshotsResponse,
   ListPromptEvaluationCasesResponse,
+  ListPromptEvaluationExperimentDimensionsResponse,
   ListPromptEvaluationOptimizationCandidatesResponse,
   CreatePromptEvaluationAssetRequest,
   UpdatePromptEvaluationAssetRequest,
@@ -205,6 +207,7 @@ import {
   EMPTY_PROMPT_EVALUATION_RUNTIME_READINESS,
   EMPTY_PROMPT_EVALUATION_CASE,
   EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_EXPERIMENT_DIMENSION_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
   EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE,
   EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE,
@@ -232,6 +235,7 @@ import {
   PromptEvaluationRuntimeReadinessSchema,
   PromptEvaluationCaseSchema,
   PromptEvaluationCaseListResponseSchema,
+  PromptEvaluationExperimentDimensionListResponseSchema,
   PromptEvaluationOptimizationCandidateSchema,
   PromptEvaluationOptimizationCandidateListResponseSchema,
   PublishPromptEvaluationOptimizationCandidateResponseSchema,
@@ -1844,6 +1848,17 @@ export class ApiClient {
 
   async deletePromptEvaluationCase(id: string): Promise<void> {
     await this.fetch(`/api/prompt-evaluation-cases/${id}`, { method: "DELETE" });
+  }
+
+  async listPromptEvaluationExperimentDimensions(params?: ListPromptEvaluationExperimentDimensionsParams): Promise<ListPromptEvaluationExperimentDimensionsResponse> {
+    const search = new URLSearchParams();
+    if (params?.asset_id) search.set("asset_id", params.asset_id);
+    if (params?.status) search.set("status", params.status);
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-experiment-dimensions${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationExperimentDimensionListResponseSchema, EMPTY_PROMPT_EVALUATION_EXPERIMENT_DIMENSION_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-experiment-dimensions",
+    }) as ListPromptEvaluationExperimentDimensionsResponse;
   }
 
   async getPromptEvaluationSummary(params?: PromptEvaluationSummaryParams): Promise<PromptEvaluationSummary> {

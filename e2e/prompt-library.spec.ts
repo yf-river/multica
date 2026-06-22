@@ -34,6 +34,7 @@ test.describe("训练与评估工作台", () => {
   });
 
 	  test("可以创建提示词、调试渲染并记录评测资产", async ({ page }) => {
+    test.setTimeout(120_000);
     const runtime = await api.ensureOnlineCodexRuntime(`${artifactPrefix} Codex Runtime`);
     await refreshExpectedAgentModel();
 
@@ -128,7 +129,7 @@ test.describe("训练与评估工作台", () => {
     const optimizationRun = promptAssets.find((asset) => asset.asset_type === "优化运行");
     const dataset = promptAssets.find((asset) => asset.asset_type === "数据集");
     const testSuite = promptAssets.find((asset) => asset.asset_type === "测试套件");
-    const experiment = promptAssets.find((asset) => asset.asset_type === "实验");
+    const experiment = promptAssets.find((asset) => asset.asset_type === "实验" && asset.name.includes(" 实验 "));
     expect(optimizationRun).toBeTruthy();
     expect(dataset).toBeTruthy();
     expect(testSuite).toBeTruthy();
@@ -243,6 +244,20 @@ test.describe("训练与评估工作台", () => {
     await page.getByRole("button", { name: "实验", exact: true }).click();
     const experimentRow = page.getByTestId(`prompt-evaluation-asset-${experiment!.id}`);
     await expect(experimentRow.getByText("结构化评测用例", { exact: true })).toBeVisible({ timeout: 10000 });
+    await expect(experimentRow.getByText("实验维度事实", { exact: true })).toBeVisible({ timeout: 10000 });
+    await expect(experimentRow.getByTestId(`prompt-evaluation-experiment-dimensions-${experiment!.id}`)).toContainText("命中率");
+    await expect
+      .poll(async () => {
+        const dimensions = await api.listPromptEvaluationExperimentDimensions({ asset_id: experiment!.id });
+        return {
+          total: dimensions.total,
+          names: dimensions.items.map((item) => item.dimension_name).sort(),
+        };
+      }, { timeout: 15000 })
+      .toEqual({
+        total: 3,
+        names: ["中文一致性", "命中率", "缺失变量"].sort(),
+      });
     await experimentRow.getByPlaceholder("手工用例名称").fill("手工实验对比用例");
     await experimentRow.getByPlaceholder("变量：issue_title=登录失败").fill("issue_title=登录失败\nproject_context=user-center");
     await experimentRow.getByPlaceholder("期望包含：验收条件, trace/任务标识").fill("实验结论, 中文指标, trace/任务标识");

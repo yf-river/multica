@@ -782,6 +782,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/", h.DeletePromptEvaluationCase)
 				})
 			})
+			r.Get("/api/prompt-evaluation-experiment-dimensions", h.ListPromptEvaluationExperimentDimensions)
 			r.Get("/api/prompt-evaluation-summary", h.GetPromptEvaluationSummary)
 			r.Get("/api/prompt-evaluation-runtime-readiness", h.GetPromptEvaluationRuntimeReadiness)
 			r.Route("/api/prompt-evaluation-runs", func(r chi.Router) {

@@ -9,6 +9,7 @@ import type {
   GroupedIssuesResponse,
   ListIssuesResponse,
   ListPromptEvaluationAssetsResponse,
+  ListPromptEvaluationExperimentDimensionsResponse,
   ListPromptEvaluationOptimizationCandidatesResponse,
   ListPromptLibraryItemsResponse,
   ListPromptLibraryVersionsResponse,
@@ -21,6 +22,7 @@ import type {
   PromptEvaluationRuntimeReadiness,
   PromptEvaluationSummary,
   PromptEvaluationStructuredCase,
+  PromptEvaluationExperimentDimension,
   PromptEvaluationOptimizationCandidate,
   ListPromptEvaluationEvidenceSnapshotsResponse,
   PromptLibraryItem,
@@ -887,6 +889,7 @@ export const PromptEvaluationAssetSchema = z.object({
   evaluation_dimension_count: z.number().default(0),
   dataset_row_count: z.number().default(0),
   test_suite_case_count: z.number().default(0),
+  experiment_dimension_count: z.number().default(0),
 }).loose();
 
 export const PromptEvaluationAssetListResponseSchema = z.object({
@@ -1124,6 +1127,27 @@ export const PromptEvaluationCaseListResponseSchema = z.object({
   total: z.number().default(0),
 }).loose();
 
+export const PromptEvaluationExperimentDimensionSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  experiment_asset_id: z.string(),
+  dimension_index: z.number().default(0),
+  dimension_name: z.string().default(""),
+  experiment_target: z.string().default(""),
+  baseline_output: z.string().default(""),
+  comparison_payload: z.record(z.string(), z.unknown()).default({}),
+  status: z.enum(["启用", "归档"]).default("启用"),
+  source: z.string().default("payload"),
+  created_by: z.string().nullable().optional().transform((v) => v ?? null),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const PromptEvaluationExperimentDimensionListResponseSchema = z.object({
+  items: z.array(PromptEvaluationExperimentDimensionSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
 export const PromptEvaluationOptimizationCandidateSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
@@ -1176,6 +1200,7 @@ export const EMPTY_PROMPT_EVALUATION_ASSET: PromptEvaluationAsset = {
   evaluation_dimension_count: 0,
   dataset_row_count: 0,
   test_suite_case_count: 0,
+  experiment_dimension_count: 0,
 };
 
 export const EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE: ListPromptEvaluationAssetsResponse = {
@@ -1252,6 +1277,27 @@ export const EMPTY_PROMPT_EVALUATION_RUNTIME_READINESS: PromptEvaluationRuntimeR
 export const EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE = {
   items: [],
   total: 0,
+};
+
+export const EMPTY_PROMPT_EVALUATION_EXPERIMENT_DIMENSION_LIST_RESPONSE: ListPromptEvaluationExperimentDimensionsResponse = {
+  items: [],
+  total: 0,
+};
+
+export const EMPTY_PROMPT_EVALUATION_EXPERIMENT_DIMENSION: PromptEvaluationExperimentDimension = {
+  id: "",
+  workspace_id: "",
+  experiment_asset_id: "",
+  dimension_index: 0,
+  dimension_name: "",
+  experiment_target: "",
+  baseline_output: "",
+  comparison_payload: {},
+  status: "启用",
+  source: "payload",
+  created_by: null,
+  created_at: "",
+  updated_at: "",
 };
 
 export const EMPTY_PROMPT_EVALUATION_CASE: PromptEvaluationStructuredCase = {

@@ -585,6 +585,7 @@ type PromptEvaluationAsset struct {
 	EvaluationDimensionCount int32              `json:"evaluation_dimension_count"`
 	DatasetRowCount          int32              `json:"dataset_row_count"`
 	TestSuiteCaseCount       int32              `json:"test_suite_case_count"`
+	ExperimentDimensionCount int32              `json:"experiment_dimension_count"`
 }
 
 type PromptEvaluationCase struct {
@@ -647,6 +648,22 @@ type PromptEvaluationEvidenceSnapshot struct {
 	Evidence      []byte             `json:"evidence"`
 	CreatedBy     pgtype.UUID        `json:"created_by"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
+type PromptEvaluationExperimentDimension struct {
+	ID                pgtype.UUID        `json:"id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ExperimentAssetID pgtype.UUID        `json:"experiment_asset_id"`
+	DimensionIndex    int32              `json:"dimension_index"`
+	DimensionName     string             `json:"dimension_name"`
+	ExperimentTarget  string             `json:"experiment_target"`
+	BaselineOutput    string             `json:"baseline_output"`
+	ComparisonPayload []byte             `json:"comparison_payload"`
+	Status            string             `json:"status"`
+	Source            string             `json:"source"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
 type PromptEvaluationOptimizationCandidate struct {

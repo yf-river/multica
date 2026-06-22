@@ -101,7 +101,12 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	updateW := httptest.NewRecorder()
 	testHandler.UpdatePromptEvaluationAsset(updateW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-assets/"+created.ID, map[string]any{
 		"asset_type": "实验",
-		"payload":    map[string]any{"指标": []string{"完整性", "可执行性"}, "结果": "待运行"},
+		"payload": map[string]any{
+			"指标":   []string{"完整性", "可执行性"},
+			"实验对象": "评测提示词",
+			"对比维度": []string{"命中率", "缺失变量", "中文一致性"},
+			"基线输出": "待运行",
+		},
 	}), "id", created.ID))
 	if updateW.Code != http.StatusOK {
 		t.Fatalf("update status = %d, body = %s", updateW.Code, updateW.Body.String())
@@ -115,11 +120,13 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	}
 	if updated.StructuredCaseCount != 1 ||
 		updated.EvaluationDimensionCount != 2 ||
+		updated.ExperimentDimensionCount != 3 ||
 		updated.LinkedPromptCount != 1 ||
 		updated.DatasetRowCount != 0 {
 		t.Fatalf("updated asset profile = %+v", updated)
 	}
 	assertPromptEvaluationDatasetRows(t, created.ID, nil)
+	assertPromptEvaluationExperimentDimensions(t, created.ID, []string{"命中率", "缺失变量", "中文一致性"})
 	updatedPayload, ok := updated.Payload.(map[string]any)
 	if !ok || updatedPayload["schema_version"] != float64(1) || updatedPayload["payload_contract"] == nil {
 		t.Fatalf("updated payload missing contract: %#v", updated.Payload)
@@ -141,6 +148,21 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	}
 	if casesResp.Total != 1 || casesResp.Items[0].AssetID != created.ID || casesResp.Items[0].Status != "启用" {
 		t.Fatalf("cases response = %+v", casesResp)
+	}
+	dimensionsW := httptest.NewRecorder()
+	testHandler.ListPromptEvaluationExperimentDimensions(dimensionsW, newRequest(http.MethodGet, "/api/prompt-evaluation-experiment-dimensions?asset_id="+created.ID, nil))
+	if dimensionsW.Code != http.StatusOK {
+		t.Fatalf("list experiment dimensions status = %d, body = %s", dimensionsW.Code, dimensionsW.Body.String())
+	}
+	var dimensionsResp struct {
+		Items []PromptEvaluationExperimentDimensionResponse `json:"items"`
+		Total int                                           `json:"total"`
+	}
+	if err := json.Unmarshal(dimensionsW.Body.Bytes(), &dimensionsResp); err != nil {
+		t.Fatalf("decode experiment dimensions response: %v", err)
+	}
+	if dimensionsResp.Total != 3 || dimensionsResp.Items[0].ExperimentAssetID != created.ID || dimensionsResp.Items[0].ExperimentTarget != "评测提示词" {
+		t.Fatalf("experiment dimensions response = %+v", dimensionsResp)
 	}
 }
 
@@ -268,6 +290,9 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 	}
 	if summary.Assets["服务端证据快照"] < 1 || summary.Assets["验收归档快照"] < 1 {
 		t.Fatalf("summary assets missing evidence snapshots: %#v", summary.Assets)
+	}
+	if _, ok := summary.Assets["实验维度事实"]; !ok {
+		t.Fatalf("summary missing experiment dimension fact metric: %#v", summary.Assets)
 	}
 
 	futureSince := url.QueryEscape(time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339))
@@ -2000,6 +2025,39 @@ func assertPromptEvaluationTestSuiteCases(t *testing.T, assetID string, expected
 	for idx := range expected {
 		if actual[idx] != expected[idx] {
 			t.Fatalf("test suite cases = %#v, want %#v", actual, expected)
+		}
+	}
+}
+
+func assertPromptEvaluationExperimentDimensions(t *testing.T, assetID string, expected []string) {
+	t.Helper()
+	rows, err := testPool.Query(context.Background(), `
+		SELECT dimension_name
+		FROM prompt_evaluation_experiment_dimension
+		WHERE experiment_asset_id = $1
+		ORDER BY dimension_index ASC
+	`, assetID)
+	if err != nil {
+		t.Fatalf("query experiment dimensions: %v", err)
+	}
+	defer rows.Close()
+	actual := []string{}
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			t.Fatalf("scan experiment dimension: %v", err)
+		}
+		actual = append(actual, value)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate experiment dimensions: %v", err)
+	}
+	if len(actual) != len(expected) {
+		t.Fatalf("experiment dimensions = %#v, want %#v", actual, expected)
+	}
+	for idx := range expected {
+		if actual[idx] != expected[idx] {
+			t.Fatalf("experiment dimensions = %#v, want %#v", actual, expected)
 		}
 	}
 }

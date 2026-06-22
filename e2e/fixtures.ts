@@ -158,6 +158,18 @@ interface PromptEvaluationCase {
   source: string;
 }
 
+interface PromptEvaluationExperimentDimension {
+  id: string;
+  experiment_asset_id: string;
+  dimension_index: number;
+  dimension_name: string;
+  experiment_target: string;
+  baseline_output: string;
+  comparison_payload: Record<string, unknown>;
+  status: string;
+  source: string;
+}
+
 interface PromptEvaluationOptimizationCandidate {
   id: string;
   run_id: string;
@@ -1349,6 +1361,18 @@ export class TestApiClient {
     }
     const data = await res.json();
     return data.items ?? [];
+  }
+
+  async listPromptEvaluationExperimentDimensions(params?: { asset_id?: string; status?: string }): Promise<{ items: PromptEvaluationExperimentDimension[]; total: number }> {
+    const search = new URLSearchParams();
+    if (params?.asset_id) search.set("asset_id", params.asset_id);
+    if (params?.status) search.set("status", params.status);
+    const res = await this.authedFetch(`/api/prompt-evaluation-experiment-dimensions${search.toString() ? `?${search}` : ""}`);
+    if (!res.ok) {
+      throw new Error(`list prompt evaluation experiment dimensions failed: ${res.status}`);
+    }
+    const data = await res.json();
+    return { items: data.items ?? [], total: data.total ?? 0 };
   }
 
   async updatePromptEvaluationCase(id: string, data: Record<string, unknown>): Promise<PromptEvaluationCase> {

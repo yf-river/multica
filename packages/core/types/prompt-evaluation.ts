@@ -64,6 +64,7 @@ export interface PromptEvaluationAsset {
   evaluation_dimension_count: number;
   dataset_row_count: number;
   test_suite_case_count: number;
+  experiment_dimension_count: number;
 }
 
 export interface PromptEvaluationRun {
@@ -220,6 +221,22 @@ export interface PromptEvaluationCaseAssertion {
   created_at: string;
 }
 
+export interface PromptEvaluationExperimentDimension {
+  id: string;
+  workspace_id: string;
+  experiment_asset_id: string;
+  dimension_index: number;
+  dimension_name: string;
+  experiment_target: string;
+  baseline_output: string;
+  comparison_payload: Record<string, unknown>;
+  status: PromptEvaluationAssetStatus;
+  source: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface PromptEvaluationAgentRunResponse {
   asset: PromptEvaluationAsset;
   run: PromptEvaluationRun;
@@ -285,6 +302,11 @@ export interface ListPromptEvaluationCasesResponse {
   total: number;
 }
 
+export interface ListPromptEvaluationExperimentDimensionsResponse {
+  items: PromptEvaluationExperimentDimension[];
+  total: number;
+}
+
 export interface ListPromptEvaluationOptimizationCandidatesResponse {
   items: PromptEvaluationOptimizationCandidate[];
   total: number;
@@ -304,6 +326,11 @@ export interface ListPromptEvaluationRunsParams {
 }
 
 export interface ListPromptEvaluationCasesParams {
+  asset_id?: string;
+  status?: PromptEvaluationAssetStatus;
+}
+
+export interface ListPromptEvaluationExperimentDimensionsParams {
   asset_id?: string;
   status?: PromptEvaluationAssetStatus;
 }

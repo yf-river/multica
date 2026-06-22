@@ -22,6 +22,7 @@ import type {
   UpdatePromptEvaluationCaseRequest,
   PromptEvaluationAsset,
   PromptEvaluationEvidenceSnapshot,
+  PromptEvaluationExperimentDimension,
   PromptEvaluationOptimizationCandidate,
   PromptEvaluationStructuredCase,
   PromptEvaluationRun,
@@ -51,6 +52,7 @@ const promptLibraryKeys = {
   versions: (workspaceId: string, promptId: string | null) => ["prompt-library", workspaceId, "versions", promptId ?? ""] as const,
   assets: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-assets"] as const,
   cases: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-cases"] as const,
+  experimentDimensions: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-experiment-dimensions"] as const,
   runs: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-runs"] as const,
   runEvidence: (workspaceId: string, runId: string | null) => ["prompt-library", workspaceId, "run-evidence", runId ?? ""] as const,
   runEvidenceSnapshots: (workspaceId: string, runId: string | null) => ["prompt-library", workspaceId, "run-evidence-snapshots", runId ?? ""] as const,
@@ -161,6 +163,11 @@ export function PromptLibraryPage() {
     queryFn: () => api.listPromptEvaluationCases(),
     enabled: !!workspaceId,
   });
+  const experimentDimensionQuery = useQuery({
+    queryKey: promptLibraryKeys.experimentDimensions(workspaceId ?? ""),
+    queryFn: () => api.listPromptEvaluationExperimentDimensions(),
+    enabled: !!workspaceId,
+  });
   const runQuery = useQuery({
     queryKey: [...promptLibraryKeys.runs(workspaceId ?? ""), demoSince ?? "all"] as const,
     queryFn: () => api.listPromptEvaluationRuns({ limit: 100, since: demoSince }),
@@ -197,6 +204,7 @@ export function PromptLibraryPage() {
   const items = listQuery.data?.items ?? [];
   const assets = assetQuery.data?.items ?? [];
   const cases = caseQuery.data?.items ?? [];
+  const experimentDimensions = experimentDimensionQuery.data?.items ?? [];
   const runs = runQuery.data?.items ?? [];
   const candidates = candidateQuery.data?.items ?? [];
   const summary = summaryQuery.data ?? null;
@@ -234,6 +242,7 @@ export function PromptLibraryPage() {
   const invalidateVersions = (promptId: string | null) => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.versions(workspaceId ?? "", promptId) });
   const invalidateAssets = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId ?? "") });
   const invalidateCases = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId ?? "") });
+  const invalidateExperimentDimensions = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.experimentDimensions(workspaceId ?? "") });
   const invalidateRuns = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId ?? "") });
   const invalidateCandidates = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.candidates(workspaceId ?? "") });
   const invalidateSummary = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId ?? "") });
@@ -288,6 +297,7 @@ export function PromptLibraryPage() {
       onSuccess: () => {
         invalidateAssets();
         invalidateCases();
+        invalidateExperimentDimensions();
         invalidateSummary();
         toast.success("资产已创建");
       },
@@ -301,6 +311,7 @@ export function PromptLibraryPage() {
       onSuccess: (result) => {
         invalidateAssets();
         invalidateCases();
+        invalidateExperimentDimensions();
         invalidateRuns();
         invalidateSummary();
         toast.success(`真实 Agent 任务已入队：${result.task_id}`);
@@ -312,6 +323,7 @@ export function PromptLibraryPage() {
     onSuccess: () => {
       invalidateAssets();
       invalidateCases();
+      invalidateExperimentDimensions();
       invalidateRuns();
       invalidateSummary();
       toast.success("资产已更新");
@@ -323,6 +335,7 @@ export function PromptLibraryPage() {
     onSuccess: () => {
       invalidateAssets();
       invalidateCases();
+      invalidateExperimentDimensions();
       invalidateRuns();
       invalidateSummary();
       toast.success("资产已删除");
@@ -893,9 +906,10 @@ export function PromptLibraryPage() {
               selected={selected}
               assets={assets}
               cases={cases}
+              experimentDimensions={experimentDimensions}
               runs={runs}
               candidates={candidates}
-              loading={assetQuery.isLoading || caseQuery.isLoading || runQuery.isLoading || candidateQuery.isLoading}
+              loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || runQuery.isLoading || candidateQuery.isLoading}
                 saving={savingAsset}
                 runningAgent={runningAgent}
                 runtimeReadiness={agentRuntimeReadiness}
@@ -1012,6 +1026,7 @@ function DemoDashboardPanel({
     ["资产总数", formatNumber(trainingAssets["资产总数"] ?? assets.length)],
     ["数据集行", formatNumber(trainingAssets["数据集行"] ?? assets.reduce((sum, asset) => sum + (asset.asset_type === "数据集" ? asset.dataset_row_count : 0), 0))],
     ["测试套件用例", formatNumber(trainingAssets["测试套件用例"] ?? assets.reduce((sum, asset) => sum + (asset.asset_type === "测试套件" ? asset.test_suite_case_count : 0), 0))],
+    ["实验维度事实", formatNumber(trainingAssets["实验维度事实"] ?? assets.reduce((sum, asset) => sum + (asset.asset_type === "实验" ? asset.experiment_dimension_count : 0), 0))],
     ["结构化用例", formatNumber(trainingAssets["结构化用例"] ?? cases.length)],
     ["结构化画像", `${formatNumber(trainingAssets["画像用例数"] ?? cases.length)} 用例 · ${formatNumber(trainingAssets["画像变量数"])} 变量 · ${formatNumber(trainingAssets["画像断言数"])} 断言 · ${formatNumber(trainingAssets["评估维度数"])} 维度`],
     ["优化候选", `${pendingCandidates} 待确认 · ${publishedCandidates} 已发布 · ${rejectedCandidates} 已拒绝`],
@@ -1251,6 +1266,7 @@ function TrainingSummaryStrip({ summary, loading }: { summary: PromptEvaluationS
     { label: "资产总数", value: formatNumber(assets["资产总数"]) },
     { label: "数据集行", value: formatNumber(assets["数据集行"]) },
     { label: "测试套件用例", value: formatNumber(assets["测试套件用例"]) },
+    { label: "实验维度事实", value: formatNumber(assets["实验维度事实"]) },
     { label: "结构化用例", value: formatNumber(assets["结构化用例"]) },
   ];
 
@@ -1285,6 +1301,7 @@ function WorkbenchPanel({
   selected,
   assets,
   cases,
+  experimentDimensions,
   runs,
   candidates,
   loading,
@@ -1325,6 +1342,7 @@ function WorkbenchPanel({
   selected: PromptLibraryItem | null;
   assets: PromptEvaluationAsset[];
   cases: PromptEvaluationStructuredCase[];
+  experimentDimensions: PromptEvaluationExperimentDimension[];
   runs: PromptEvaluationRun[];
   candidates: PromptEvaluationOptimizationCandidate[];
   loading: boolean;
@@ -1365,6 +1383,7 @@ function WorkbenchPanel({
   const experiments = assets.filter((asset) => asset.asset_type === "实验");
   const caseSummaries = useMemo(() => buildCaseSummaries(cases), [cases]);
   const casesByAsset = useMemo(() => buildCasesByAsset(cases), [cases]);
+  const experimentDimensionsByAsset = useMemo(() => buildExperimentDimensionsByAsset(experimentDimensions), [experimentDimensions]);
   const [caseDrafts, setCaseDrafts] = useState<Record<string, ManualCaseDraft>>({});
   const candidatesByRun = useMemo(() => buildCandidatesByRun(candidates), [candidates]);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
@@ -1589,6 +1608,9 @@ function WorkbenchPanel({
                     onDeleteCase={onDeleteCase}
                     deletingCaseId={deletingCaseId}
                   />
+                )}
+                {asset.asset_type === "实验" && (
+                  <ExperimentDimensionPanel asset={asset} dimensions={experimentDimensionsByAsset.get(asset.id) ?? []} />
                 )}
               </div>
             ))}
@@ -2228,6 +2250,44 @@ function ManualCasePanel({
   );
 }
 
+function ExperimentDimensionPanel({ asset, dimensions }: { asset: PromptEvaluationAsset; dimensions: PromptEvaluationExperimentDimension[] }) {
+  return (
+    <div data-testid={`prompt-evaluation-experiment-dimensions-${asset.id}`} className="md:col-span-2 grid gap-2 rounded-md border border-border/70 bg-muted/10 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs font-medium text-muted-foreground">实验维度事实</div>
+        <Badge variant="outline" className="text-[11px]">
+          {dimensions.length} 个维度 · {asset.experiment_dimension_count} 条事实
+        </Badge>
+      </div>
+      {dimensions.length > 0 ? (
+        <div className="grid gap-1.5">
+          {dimensions.map((item) => (
+            <div key={item.id} className="grid gap-1 rounded border bg-background px-2 py-1.5 text-xs md:grid-cols-[180px_minmax(0,1fr)_minmax(0,1fr)]">
+              <div className="min-w-0">
+                <div className="truncate font-medium text-foreground">{item.dimension_name || `维度 ${item.dimension_index + 1}`}</div>
+                <div className="truncate text-muted-foreground">{item.source === "manual" ? "手工" : "资产载荷"} · {item.status}</div>
+              </div>
+              <div className="min-w-0 text-muted-foreground">
+                <span className="text-foreground">对象：</span>
+                <span className="truncate">{item.experiment_target || asset.name}</span>
+              </div>
+              <div className="min-w-0 text-muted-foreground">
+                <span className="text-foreground">基线：</span>
+                <span className="truncate">{item.baseline_output || "未记录"}</span>
+              </div>
+              <div className="min-w-0 text-muted-foreground md:col-span-3">
+                对比配置：{summarizeJSONValue(item.comparison_payload)}
+              </div>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded border border-dashed px-2 py-2 text-xs text-muted-foreground">暂无实验维度事实，请在资产载荷中补充对比维度。</div>
+      )}
+    </div>
+  );
+}
+
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="grid gap-1.5 text-sm">
@@ -2493,6 +2553,19 @@ function buildCasesByAsset(cases: PromptEvaluationStructuredCase[]): Map<string,
   return result;
 }
 
+function buildExperimentDimensionsByAsset(dimensions: PromptEvaluationExperimentDimension[]): Map<string, PromptEvaluationExperimentDimension[]> {
+  const result = new Map<string, PromptEvaluationExperimentDimension[]>();
+  for (const item of dimensions) {
+    const bucket = result.get(item.experiment_asset_id) ?? [];
+    bucket.push(item);
+    result.set(item.experiment_asset_id, bucket);
+  }
+  for (const bucket of result.values()) {
+    bucket.sort((a, b) => a.dimension_index - b.dimension_index || a.dimension_name.localeCompare(b.dimension_name, "zh-CN"));
+  }
+  return result;
+}
+
 function buildCandidatesByRun(candidates: PromptEvaluationOptimizationCandidate[]): Map<string, PromptEvaluationOptimizationCandidate[]> {
   const result = new Map<string, PromptEvaluationOptimizationCandidate[]>();
   for (const candidate of candidates) {
@@ -2501,6 +2574,15 @@ function buildCandidatesByRun(candidates: PromptEvaluationOptimizationCandidate[
     result.set(candidate.run_id, bucket);
   }
   return result;
+}
+
+function summarizeJSONValue(value: unknown): string {
+  if (!value || (typeof value === "object" && !Array.isArray(value) && Object.keys(value as Record<string, unknown>).length === 0)) {
+    return "无额外配置";
+  }
+  const text = JSON.stringify(value);
+  if (!text) return "无额外配置";
+  return text.length > 120 ? `${text.slice(0, 117)}...` : text;
 }
 
 function canGenerateOptimizationCandidate(run: PromptEvaluationRun): boolean {
@@ -2522,7 +2604,7 @@ function summarizeAssetPayload(asset: PromptEvaluationAsset, caseSummary?: CaseS
   if (payload["最近Agent运行"]) return "包含真实 Agent 运行";
   if (payload["调试包"]) return "包含 Agent 调试包";
   if (payload["运行结果"]) return "包含运行结果";
-  if (asset.asset_type === "实验") return `实验维度 ${Array.isArray(payload["对比维度"]) ? payload["对比维度"].length : 0} 个`;
+  if (asset.asset_type === "实验") return `实验维度事实 ${asset.experiment_dimension_count || (Array.isArray(payload["对比维度"]) ? payload["对比维度"].length : 0)} 个`;
   return cases > 0 ? `${cases} 个用例` : "未记录用例";
 }
 
