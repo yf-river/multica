@@ -59,8 +59,9 @@ const commandResults = runTests ? runCommands(commands) : commands.map((item) =>
   durationMs: 0,
   note: "默认只生成验收包；使用 pnpm acceptance:verify 或 --run-tests 后会执行。",
 }));
+const e2eEvidence = buildE2EEvidence(commandResults);
 
-const risks = buildRisks({ health, ready, login, account, commandResults, git, databaseEvidence, logEvidence });
+const risks = buildRisks({ health, ready, login, account, commandResults, git, databaseEvidence, logEvidence, e2eEvidence });
 const evidence = {
   "语义版本": "multica.production_acceptance_evidence.v1",
   "生成时间": timestamp,
@@ -86,6 +87,7 @@ const evidence = {
   "提交": git,
   "数据库抽查": databaseEvidence,
   "日志抽查": logEvidence,
+  "端到端验收证据": e2eEvidence,
   "测试命令": commandResults,
   "剩余风险": risks,
   "人工复核清单": [
@@ -484,6 +486,29 @@ function buildCommandPlan() {
       timeoutMs: 120_000,
     },
     {
+      name: "Codex curl 端到端 Agent/小队验收",
+      command: [
+        `ACCEPTANCE_API_URL=${shellQuote(apiURL)}`,
+        `REAL_AGENT_E2E_WORKSPACE=${shellQuote(workspaceSlug)}`,
+        `MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER=${shellQuote(realAgentProvider)}`,
+        `MULTICA_PROMPT_EVALUATION_AGENT_MODEL=${shellQuote(realAgentModel)}`,
+        `MULTICA_PROMPT_EVALUATION_AGENT_FALLBACK_MODEL=${shellQuote(realAgentFallbackModel)}`,
+        "node scripts/run-model-fallback-e2e.mjs scripts/codex-squad-curl-e2e.mjs",
+      ].join(" "),
+      required: true,
+      timeoutMs: 360_000,
+    },
+    {
+      name: "训练与评估 curl 端到端验收",
+      command: [
+        `ACCEPTANCE_API_URL=${shellQuote(apiURL)}`,
+        `REAL_AGENT_E2E_WORKSPACE=${shellQuote(workspaceSlug)}`,
+        "node scripts/prompt-evaluation-curl-e2e.mjs",
+      ].join(" "),
+      required: true,
+      timeoutMs: 300_000,
+    },
+    {
       name: "部署浏览器验收 E2E",
       command: [
         `PLAYWRIGHT_BASE_URL=${shellQuote(frontendURL)}`,
@@ -525,36 +550,6 @@ function buildCommandPlan() {
       skippedByDefault: true,
       fullE2EOnly: true,
       timeoutMs: 900_000,
-    },
-    {
-      name: "Codex curl 端到端 Agent/小队验收",
-      command: [
-        `ACCEPTANCE_API_URL=${shellQuote(apiURL)}`,
-        `REAL_AGENT_E2E_WORKSPACE=${shellQuote(workspaceSlug)}`,
-        `MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER=${shellQuote(realAgentProvider)}`,
-        `MULTICA_PROMPT_EVALUATION_AGENT_MODEL=${shellQuote(realAgentModel)}`,
-        "node scripts/codex-squad-curl-e2e.mjs",
-        "||",
-        `ACCEPTANCE_API_URL=${shellQuote(apiURL)}`,
-        `REAL_AGENT_E2E_WORKSPACE=${shellQuote(workspaceSlug)}`,
-        `MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER=${shellQuote(realAgentProvider)}`,
-        `MULTICA_PROMPT_EVALUATION_AGENT_MODEL=${shellQuote(realAgentFallbackModel)}`,
-        "node scripts/codex-squad-curl-e2e.mjs",
-      ].join(" "),
-      required: includeE2E,
-      skippedByDefault: true,
-      timeoutMs: 360_000,
-    },
-    {
-      name: "训练与评估 curl 端到端验收",
-      command: [
-        `ACCEPTANCE_API_URL=${shellQuote(apiURL)}`,
-        `REAL_AGENT_E2E_WORKSPACE=${shellQuote(workspaceSlug)}`,
-        "node scripts/prompt-evaluation-curl-e2e.mjs",
-      ].join(" "),
-      required: includeE2E,
-      skippedByDefault: true,
-      timeoutMs: 120_000,
     },
     {
       name: "真实 Agent E2E",
@@ -616,18 +611,89 @@ function runCommands(commands) {
       killSignal: "SIGTERM",
     });
     const timedOut = res.error?.code === "ETIMEDOUT" || res.signal === "SIGTERM";
+    const summary = summarizeCommandOutput(item.name, res.stdout);
+    const status = commandStatus(res, timedOut, summary);
     return {
       ...item,
-      status: timedOut ? "超时" : res.status === 0 ? "通过" : "失败",
+      status,
       exitCode: res.status,
       signal: res.signal || null,
       durationMs: Date.now() - started,
       timeoutMs: item.timeoutMs || 300_000,
-      summary: summarizeCommandOutput(item.name, res.stdout),
+      summary,
       stdout_tail: tail(res.stdout),
       stderr_tail: tail(res.stderr),
     };
   });
+}
+
+function commandStatus(res, timedOut, summary) {
+  if (timedOut) return "超时";
+  if (res.status !== 0) return "失败";
+  if (summary?.external_dependency_failure === true) return "外部依赖失败";
+  return "通过";
+}
+
+function buildE2EEvidence(commandResults) {
+  const codex = commandResults.find((item) => item.name === "Codex curl 端到端 Agent/小队验收");
+  const training = commandResults.find((item) => item.name === "训练与评估 curl 端到端验收");
+  const browser = commandResults.find((item) => item.name === "部署浏览器验收 E2E");
+  return {
+    "公开API创建Agent小队Issue": codex ? {
+      "状态": codex.status,
+      "结果": codex.summary?.result || "",
+      "Agent ID": codex.summary?.agent_id || "",
+      "Issue ID": codex.summary?.issue_id || "",
+      "Task ID": codex.summary?.task_id || "",
+      "Runtime ID": codex.summary?.runtime_id || "",
+      "Runtime Provider": codex.summary?.runtime_provider || "",
+      "模型": codex.summary?.agent_model || "",
+      "trace事件数": codex.summary?.trace_event_count ?? 0,
+      "消息数": codex.summary?.message_count ?? 0,
+      "输入token": codex.summary?.total_input_tokens ?? 0,
+      "输出token": codex.summary?.total_output_tokens ?? 0,
+      "外部依赖失败": codex.summary?.external_dependency_failure === true,
+      "使用fallback模型": codex.summary?.fallback_used === true,
+      "实际模型": codex.summary?.selected_model || "",
+      "模型尝试": codex.summary?.model_attempts || [],
+      "命令": codex.command,
+    } : null,
+    "公开API训练评估闭环": training ? {
+      "状态": training.status,
+      "结果": training.summary?.result || "",
+      "Prompt ID": training.summary?.prompt_id || "",
+      "Prompt版本数": training.summary?.prompt_version_count ?? 0,
+      "Dataset ID": training.summary?.dataset_id || "",
+      "数据集行": training.summary?.dataset_row_count ?? 0,
+      "Test Suite ID": training.summary?.test_suite_id || "",
+      "测试套件用例": training.summary?.test_suite_case_count ?? 0,
+      "Experiment ID": training.summary?.experiment_id || "",
+      "实验维度事实": training.summary?.experiment_dimension_count ?? 0,
+      "Run ID": training.summary?.run_id || "",
+      "Run状态": training.summary?.run_status || "",
+      "失败用例": training.summary?.failed_cases ?? 0,
+      "Agent Run ID": training.summary?.agent_run_id || "",
+      "Agent Task ID": training.summary?.agent_task_id || "",
+      "Agent Runtime ID": training.summary?.agent_runtime_id || "",
+      "Agent模型": training.summary?.agent_model || "",
+      "Agent trace事件数": training.summary?.agent_trace_event_count ?? 0,
+      "Agent trial数": training.summary?.agent_trial_count ?? 0,
+      "Agent消息数": training.summary?.agent_message_count ?? 0,
+      "Agent输入token": training.summary?.agent_input_tokens ?? 0,
+      "Agent输出token": training.summary?.agent_output_tokens ?? 0,
+      "Agent外部依赖失败": training.summary?.agent_external_dependency_failure === true,
+      "Optimization Candidate ID": training.summary?.optimization_candidate_id || "",
+      "Optimization Candidate状态": training.summary?.optimization_candidate_status || "",
+      "Published Prompt ID": training.summary?.published_prompt_id || "",
+      "Published Prompt版本": training.summary?.published_prompt_version ?? 0,
+      "外部依赖失败": training.summary?.external_dependency_failure === true,
+      "命令": training.command,
+    } : null,
+    "部署浏览器验收": browser ? {
+      "状态": browser.status,
+      "命令": browser.command,
+    } : null,
+  };
 }
 
 function summarizeCommandOutput(name, stdout) {
@@ -648,6 +714,9 @@ function summarizeCommandOutput(name, stdout) {
       total_input_tokens: parsed.usage?.total_input_tokens ?? 0,
       total_output_tokens: parsed.usage?.total_output_tokens ?? 0,
       external_dependency_failure: parsed.external_dependency_failure === true,
+      fallback_used: parsed.fallback_used === true,
+      selected_model: parsed.selected_model || parsed.agent?.model || "",
+      model_attempts: parsed.model_attempts || [],
     };
   }
   if (name === "训练与评估 curl 端到端验收") {
@@ -667,11 +736,22 @@ function summarizeCommandOutput(name, stdout) {
       run_id: parsed.run?.id || "",
       run_status: parsed.run?.status || "",
       failed_cases: parsed.run?.failed_cases ?? 0,
+      agent_run_id: parsed.agent_run?.run_id || "",
+      agent_task_id: parsed.agent_run?.task_id || "",
+      agent_runtime_id: parsed.agent_run?.runtime_id || "",
+      agent_model: parsed.agent_run?.model || parsed.runtime_readiness?.model || "",
+      agent_trace_event_count: parsed.agent_run?.trace_event_count ?? 0,
+      agent_trial_count: parsed.agent_run?.trial_count ?? 0,
+      agent_message_count: parsed.agent_run?.message_count ?? 0,
+      agent_input_tokens: parsed.agent_run?.input_tokens ?? 0,
+      agent_output_tokens: parsed.agent_run?.output_tokens ?? 0,
+      agent_external_dependency_failure: parsed.agent_run?.external_dependency_failure === true,
       optimization_candidate_id: parsed.optimization_candidate?.id || "",
       optimization_candidate_status: parsed.optimization_candidate?.status || "",
       published_prompt_id: parsed.published_prompt?.id || "",
       published_prompt_version: parsed.published_prompt?.version ?? 0,
       published_prompt_version_count: parsed.published_prompt?.version_count ?? 0,
+      external_dependency_failure: parsed.external_dependency_failure === true,
     };
   }
   return null;
@@ -694,7 +774,7 @@ function tail(value) {
   return lines.slice(-30);
 }
 
-function buildRisks({ health, ready, login, account, commandResults, git, databaseEvidence, logEvidence }) {
+function buildRisks({ health, ready, login, account, commandResults, git, databaseEvidence, logEvidence, e2eEvidence }) {
   const risks = [];
   if (!health.ok) risks.push("后端 /health 未通过，不能作为可演示服务交付。");
   if (!ready.ok) risks.push("后端 /readyz 未通过，依赖或数据库连接可能未就绪。");
@@ -702,8 +782,18 @@ function buildRisks({ health, ready, login, account, commandResults, git, databa
   if (!["owner", "admin"].includes(String(account.role || ""))) {
     risks.push("演示账号权限未确认达到 owner/admin；领导演示前需要确认最高权限。");
   }
-  if (commandResults.some((item) => item.status !== "通过")) {
+  const blockingCommandStatuses = new Set(["失败", "超时", "未执行"]);
+  if (commandResults.some((item) => blockingCommandStatuses.has(item.status))) {
     risks.push("仍存在未执行或失败的测试命令；正式交付前需跑 acceptance:verify 并保留报告。");
+  }
+  if (e2eEvidence?.["公开API创建Agent小队Issue"]?.["外部依赖失败"]) {
+    risks.push("公开 API 已创建真实 Agent/小队/Issue 并进入 daemon 执行，但 Codex 外部模型认证、额度或容量失败；该场景未标记为通过，需修复外部 runtime 后重跑。");
+  }
+  if (e2eEvidence?.["公开API训练评估闭环"] && e2eEvidence["公开API训练评估闭环"]["状态"] !== "通过") {
+    risks.push("公开 API 训练评估闭环未通过，提示词版本、数据集、测试套件、实验、优化候选发布证据不足。");
+  }
+  if (e2eEvidence?.["公开API训练评估闭环"]?.["Agent外部依赖失败"]) {
+    risks.push("公开 API 训练评估已完成提示词/数据集/测试套件/实验/优化候选闭环，但真实 Agent 测试套件执行失败于外部模型认证、额度或容量边界；需修复 runtime 后重跑。");
   }
   if (databaseEvidence.status !== "已抽查") {
     risks.push(`数据库结果抽查未完成：${databaseEvidence.reason || databaseEvidence.status}`);
@@ -749,6 +839,9 @@ function renderMarkdown(data, jsonPath) {
   const latestRunRows = (db.latest_runs || []).map((run) => `- ${run.created_at} · ${run.run_kind} · ${run.status} · task ${run.task_id || "无"} · ${run.model || "无模型"}`).join("\n") || "- 无";
   const latestSnapshotRows = (db.latest_evidence_snapshots || []).map((snapshot) => `- ${snapshot.created_at} · ${snapshot.snapshot_type} · run ${snapshot.run_id} · ${snapshot.run_status || "未知"} · task ${snapshot.task_id || "无"}`).join("\n") || "- 无";
   const latestTraceRows = (db.latest_trace_events || []).map((event) => `- ${event.created_at} · ${event.event_name || event.event_type} · ${event.status} · task ${event.task_id || "无"}`).join("\n") || "- 无";
+  const apiAgent = data["端到端验收证据"]?.["公开API创建Agent小队Issue"] || {};
+  const apiTraining = data["端到端验收证据"]?.["公开API训练评估闭环"] || {};
+  const browserE2E = data["端到端验收证据"]?.["部署浏览器验收"] || {};
   return `# Multica 生产验收证据
 
 - 生成时间：${data["生成时间"]}
@@ -813,6 +906,37 @@ ${latestSnapshotRows}
 ### 最近 trace 事件
 
 ${latestTraceRows}
+
+## 公开 API 端到端证据
+
+### Agent / 小队 / Issue
+
+- 状态：${apiAgent["状态"] || "未记录"}，结果：${apiAgent["结果"] || "未记录"}
+- Agent：${apiAgent["Agent ID"] || "未记录"}，模型：${apiAgent["实际模型"] || apiAgent["模型"] || "未记录"}，使用 fallback：${apiAgent["使用fallback模型"] ? "是" : "否"}
+- Runtime：${apiAgent["Runtime ID"] || "未记录"} (${apiAgent["Runtime Provider"] || "未记录"})
+- Issue：${apiAgent["Issue ID"] || "未记录"}，Task：${apiAgent["Task ID"] || "未记录"}
+- trace 事件：${apiAgent["trace事件数"] ?? "未记录"}，消息：${apiAgent["消息数"] ?? "未记录"}
+- token：输入 ${apiAgent["输入token"] ?? "未记录"}，输出 ${apiAgent["输出token"] ?? "未记录"}
+- 外部依赖失败：${apiAgent["外部依赖失败"] ? "是" : "否"}
+
+### 训练与评估
+
+- 状态：${apiTraining["状态"] || "未记录"}，结果：${apiTraining["结果"] || "未记录"}
+- Prompt：${apiTraining["Prompt ID"] || "未记录"}，版本数：${apiTraining["Prompt版本数"] ?? "未记录"}
+- 数据集：${apiTraining["Dataset ID"] || "未记录"}，行数：${apiTraining["数据集行"] ?? "未记录"}
+- 测试套件：${apiTraining["Test Suite ID"] || "未记录"}，用例：${apiTraining["测试套件用例"] ?? "未记录"}
+- 实验：${apiTraining["Experiment ID"] || "未记录"}，维度事实：${apiTraining["实验维度事实"] ?? "未记录"}
+- 运行：${apiTraining["Run ID"] || "未记录"}，状态：${apiTraining["Run状态"] || "未记录"}，失败用例：${apiTraining["失败用例"] ?? "未记录"}
+- 真实 Agent 运行：${apiTraining["Agent Run ID"] || "未记录"}，Task：${apiTraining["Agent Task ID"] || "未记录"}
+- 真实 Agent Runtime：${apiTraining["Agent Runtime ID"] || "未记录"}，模型：${apiTraining["Agent模型"] || "未记录"}
+- 真实 Agent 证据：trace ${apiTraining["Agent trace事件数"] ?? "未记录"}，trial ${apiTraining["Agent trial数"] ?? "未记录"}，消息 ${apiTraining["Agent消息数"] ?? "未记录"}
+- 真实 Agent token：输入 ${apiTraining["Agent输入token"] ?? "未记录"}，输出 ${apiTraining["Agent输出token"] ?? "未记录"}，外部依赖失败：${apiTraining["Agent外部依赖失败"] ? "是" : "否"}
+- 优化候选：${apiTraining["Optimization Candidate ID"] || "未记录"}，状态：${apiTraining["Optimization Candidate状态"] || "未记录"}
+- 发布版本：${apiTraining["Published Prompt ID"] || "未记录"}，版本：${apiTraining["Published Prompt版本"] ?? "未记录"}
+
+### 浏览器部署验收
+
+- 状态：${browserE2E["状态"] || "未记录"}
 
 ## 测试命令
 

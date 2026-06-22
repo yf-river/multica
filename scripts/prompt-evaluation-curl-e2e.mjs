@@ -125,6 +125,17 @@ if (Number(experimentDimensions.total ?? 0) !== 3 || !experimentDimensionNames.i
   fail(`实验维度事实查询结果不符合预期：${JSON.stringify(experimentDimensions)}`);
 }
 
+const readiness = get("/api/prompt-evaluation-runtime-readiness", token);
+evidence.runtime_readiness = {
+  status: readiness.status,
+  model: readiness.model,
+  runtime_id: readiness.runtime?.id || "",
+  runtime_provider: readiness.runtime?.provider || "",
+  detail: readiness.detail || "",
+  fix: readiness.fix || "",
+};
+const agentRunEvidence = await runSuiteWithRealAgent(suite.id, token, readiness);
+
 post(`/api/prompt-evaluation-assets/${suite.id}/run`, null, token);
 const failedRun = await poll(() => {
   const runs = get(`/api/prompt-evaluation-runs?asset_id=${encodeURIComponent(suite.id)}&limit=10`, token);
@@ -134,6 +145,8 @@ const failedRun = await poll(() => {
 if (!failedRun?.id) fail("未找到失败评估运行");
 
 const runEvidence = get(`/api/prompt-evaluation-runs/${failedRun.id}/evidence`, token);
+const localTrialCount = Array.isArray(runEvidence?.trials) ? runEvidence.trials.length : 0;
+if (localTrialCount <= 0) fail(`本地评估运行缺少 trial：${JSON.stringify(runEvidence)}`);
 const candidate = post(`/api/prompt-evaluation-runs/${failedRun.id}/optimization-candidates`, null, token);
 if (!candidate?.id) fail("创建优化候选响应缺少 id");
 
@@ -162,8 +175,9 @@ evidence.run = {
   total_cases: failedRun.total_cases,
   failed_cases: failedRun.failed_cases,
   trace_task_id: failedRun.task_id || failedRun.id,
-  evidence_trial_count: Array.isArray(runEvidence?.trials) ? runEvidence.trials.length : 0,
+  evidence_trial_count: localTrialCount,
 };
+evidence.agent_run = agentRunEvidence;
 evidence.optimization_candidate = {
   id: candidate.id,
   edited_id: edited.id,
@@ -177,7 +191,12 @@ evidence.published_prompt = {
   version_count: itemCount(publishedVersions),
 };
 evidence.summary = summary;
-evidence.result = "completed";
+evidence.result = agentRunEvidence.external_dependency_failure ? "external_dependency_failure" : "completed";
+evidence.external_dependency_failure = agentRunEvidence.external_dependency_failure === true;
+if (agentRunEvidence.external_dependency_failure) {
+  evidence.external_dependency_boundary = "训练评估本地闭环已完成；真实 Agent 执行已通过公开 API 入队并采集 task/run/evidence，但失败发生在外部模型认证、额度或容量边界。";
+  evidence.repair_hint = "修复 Codex runtime 模型认证、额度或容量后重跑 scripts/prompt-evaluation-curl-e2e.mjs。";
+}
 
 console.log(JSON.stringify(evidence, null, 2));
 
@@ -195,6 +214,72 @@ function post(path, body, token) {
 
 function put(path, body, token) {
   return request("PUT", path, body, token);
+}
+
+async function runSuiteWithRealAgent(assetId, token, readiness) {
+  if (readiness.status !== "就绪") {
+    return {
+      status: "外部依赖失败",
+      external_dependency_failure: true,
+      reason: readiness.detail || "runtime readiness 未就绪",
+      fix: readiness.fix || "",
+      model: readiness.model || "",
+      runtime_id: readiness.runtime?.id || "",
+      runtime_provider: readiness.runtime?.provider || "",
+    };
+  }
+
+  const queued = post(`/api/prompt-evaluation-assets/${assetId}/agent-run`, null, token);
+  if (!queued?.run?.id || !queued?.task_id) fail(`Agent 执行入队响应不完整：${JSON.stringify(queued)}`);
+  const terminalRun = await poll(() => {
+    post(`/api/prompt-evaluation-runs/${queued.run.id}/sync`, null, token);
+    const runs = get(`/api/prompt-evaluation-runs?asset_id=${encodeURIComponent(assetId)}&limit=20`, token);
+    const items = Array.isArray(runs) ? runs : runs.items ?? [];
+    const found = items.find((run) => run.id === queued.run.id);
+    if (!found || found.status === "已入队" || found.status === "运行中") return null;
+    return found;
+  }, 240_000, "等待真实 Agent 训练评估运行完成或失败");
+
+  const evidenceData = get(`/api/prompt-evaluation-runs/${queued.run.id}/evidence`, token);
+  const traceCount = Array.isArray(evidenceData?.trace_events) ? evidenceData.trace_events.length : 0;
+  const messageCount = Array.isArray(evidenceData?.task_messages) ? evidenceData.task_messages.length : 0;
+  const trialCount = Array.isArray(evidenceData?.trials) ? evidenceData.trials.length : 0;
+  const usage = Array.isArray(evidenceData?.task_usage)
+    ? evidenceData.task_usage.find((item) => item.task_id === queued.task_id) || evidenceData.task_usage[0] || null
+    : null;
+  const output = JSON.stringify(evidenceData);
+  const externalFailure = terminalRun.status === "失败" && /401|Unauthorized|Missing bearer|auth|authentication|无可用Token额度|额度|容量|quota|capacity|rate.?limit|模型额度不足|agent_error\.provider_auth_or_access|agent_error\.provider_capacity_or_rate_limit/i.test(output + JSON.stringify(terminalRun));
+
+  if (traceCount <= 0) fail(`真实 Agent 运行缺少 trace 事件：${JSON.stringify(evidenceData)}`);
+  if (trialCount <= 0) fail(`真实 Agent 运行缺少 trial：${JSON.stringify(evidenceData)}`);
+  if (messageCount <= 0) fail(`真实 Agent 运行缺少 task messages：${JSON.stringify(evidenceData)}`);
+  if (terminalRun.status !== "失败" && (!usage || Number(usage.input_tokens || 0) + Number(usage.output_tokens || 0) <= 0)) {
+    fail(`真实 Agent 运行非失败状态但缺少 token usage：${JSON.stringify(evidenceData)}`);
+  }
+  if (terminalRun.status === "失败" && !externalFailure) {
+    fail(`真实 Agent 运行失败但不是可解释外部依赖失败：${JSON.stringify({ terminalRun, evidenceData })}`);
+  }
+
+  return {
+    status: terminalRun.status,
+    run_id: queued.run.id,
+    task_id: queued.task_id,
+    chat_session_id: queued.chat_session_id,
+    agent_id: queued.agent_id,
+    runtime_id: queued.runtime_id,
+    model: queued.model,
+    runtime_provider: terminalRun.runtime_provider || readiness.runtime?.provider || "",
+    total_cases: terminalRun.total_cases,
+    failed_cases: terminalRun.failed_cases,
+    trace_event_count: traceCount,
+    message_count: messageCount,
+    trial_count: trialCount,
+    input_tokens: Number(usage?.input_tokens || 0),
+    output_tokens: Number(usage?.output_tokens || 0),
+    estimated_cost: Number(usage?.estimated_cost || 0),
+    failure_reason: terminalRun.failure_reason || "",
+    external_dependency_failure: externalFailure,
+  };
 }
 
 function request(method, path, body, token) {

@@ -65,11 +65,10 @@ curl --noproxy '*' -fsS -o /tmp/multica-login.html -w '%{http_code} %{time_total
 上线前生成一次验收包，避免最后交付只靠口头描述：
 
 ```bash
-pnpm acceptance:prepare-demo
 pnpm acceptance:evidence
 ```
 
-`acceptance:prepare-demo` 会在演示工作区幂等准备 `user-center` 和 `Multica 编码小队` 的小队、issue、SOP run 和首条验收事件，并等待真实 daemon 写回任务状态；如果已经存在训练评估运行，还会创建一条 `验收归档` 类型的服务端运行证据快照。`acceptance:evidence` 默认只读检查健康接口、登录页、演示账号权限、数据库运行证据、git commit 和 worktree 状态，并在 `artifacts/acceptance/` 下生成：
+`acceptance:evidence` 默认只读检查健康接口、登录页、演示账号权限、数据库运行证据、git commit 和 worktree 状态，并在 `artifacts/acceptance/` 下生成：
 
 ```text
 production-acceptance-<timestamp>.json
@@ -82,9 +81,9 @@ production-acceptance-<timestamp>.md
 pnpm acceptance:verify
 ```
 
-`acceptance:verify` 会先执行 `acceptance:prepare-demo`，再执行 typecheck、build、核心单测、代理测试和只读的部署浏览器 E2E。部署浏览器 E2E 使用演示账号打开 **训练与评估 → 生产看板**，确认真实 Agent 证据、服务端证据快照和运行历史证据可以在已部署页面中看到。
+`acceptance:verify` 会执行 typecheck、build、核心单测、代理测试、公开 API curl E2E 和部署浏览器 E2E。公开 API E2E 会从登录开始，创建真实 Codex Agent、小队、issue、提示词、数据集、测试套件、实验、Agent 运行、trial 和优化候选，并把 runtime id、task id、trace 事件、token 和发布版本写入验收包。部署浏览器 E2E 使用演示账号打开 **训练与评估 → 生产看板**，确认真实 Agent 证据、服务端证据快照和运行历史证据可以在已部署页面中看到。
 
-如果要把 Playwright 主链路、真实 Agent 和真实小队验收一起纳入报告：
+如果要额外把导航、命令面板等较慢 Playwright 主链路纳入报告：
 
 ```bash
 ACCEPTANCE_INCLUDE_E2E=1 pnpm acceptance:verify
@@ -99,7 +98,7 @@ ACCEPTANCE_INCLUDE_E2E=1 pnpm acceptance:verify
 | `ACCEPTANCE_DEMO_ACCOUNT` | 演示账号 |
 | `ACCEPTANCE_DEMO_PASSWORD` | 演示账号密码；报告只记录“已配置”，不打印明文 |
 | `ACCEPTANCE_WORKSPACE_SLUG` | 领导演示工作区 slug |
-| `ACCEPTANCE_INCLUDE_E2E` | 设为 `1` 后把 Playwright 和真实 Agent 验收命令纳入执行 |
+| `ACCEPTANCE_INCLUDE_E2E` | 设为 `1` 后额外执行导航和命令面板 E2E |
 | `ACCEPTANCE_DEMO_WAIT_MS` | `acceptance:prepare-demo` 等待真实 daemon 处理小队队长任务的最长时间，默认 180000 |
 | `ACCEPTANCE_DEMO_FORCE_NEW` | 设为 `1` 后不复用已有小队 SOP 证据，强制创建新 issue 和新队长任务 |
 | `DATABASE_URL` | 用于只读抽查演示工作区的训练、评估、任务、trace 和小队 SOP 数据；未配置时报告会明确标记跳过 |
