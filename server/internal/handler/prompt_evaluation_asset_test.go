@@ -313,11 +313,15 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	`, resp.TaskID); err != nil {
 		t.Fatalf("insert task usage: %v", err)
 	}
+	structuredOutput := `Agent 输出：
+` + "```json" + `
+{"用例结果":[{"case_index":0,"status":"通过","output":"已覆盖验收条件和 trace/task id","failure_reason":"无","evidence":{"命中":["验收条件","trace/task id"]}}],"评估结论":"Agent 已返回结构化逐用例评估"}
+` + "```"
 	if _, err := testHandler.Queries.CreateTaskMessage(context.Background(), db.CreateTaskMessageParams{
 		TaskID:  parseUUID(resp.TaskID),
 		Seq:     1,
 		Type:    "text",
-		Content: pgtype.Text{String: "Agent 输出：完成训练评估", Valid: true},
+		Content: pgtype.Text{String: structuredOutput, Valid: true},
 	}); err != nil {
 		t.Fatalf("insert task message: %v", err)
 	}
@@ -345,7 +349,7 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 
 	completeW := httptest.NewRecorder()
 	completeReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/complete", map[string]any{
-		"output":     "Agent 输出：完成训练评估",
+		"output":     structuredOutput,
 		"session_id": "prompt-eval-session",
 		"work_dir":   "/tmp/prompt-eval",
 	}, testWorkspaceID, "prompt-eval-codebuddy-daemon")
@@ -378,7 +382,7 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	if len(evidence.TaskUsage) != 1 || evidence.TaskUsage[0].InputTokens != 11 || evidence.TaskUsage[0].OutputTokens != 7 {
 		t.Fatalf("evidence usage = %+v", evidence.TaskUsage)
 	}
-	if len(evidence.TaskMessages) != 1 || evidence.TaskMessages[0].Content != "Agent 输出：完成训练评估" {
+	if len(evidence.TaskMessages) != 1 || !strings.Contains(evidence.TaskMessages[0].Content, "结构化逐用例评估") {
 		t.Fatalf("evidence messages = %+v", evidence.TaskMessages)
 	}
 	if len(evidence.TraceEvents) != 1 || evidence.TraceEvents[0].EventName != "训练评估用量已上报" || evidence.TraceEvents[0].Metadata["阶段"] != "训练评估" {
@@ -396,8 +400,60 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	}
 	syncedPayload := syncedAsset.Payload.(map[string]any)
 	agentRun := syncedPayload["最近Agent运行"].(map[string]any)
-	if agentRun["状态"] != "通过" || agentRun["run_id"] != resp.Run.ID || !strings.Contains(stringFromAny(agentRun["评估结论"]), "Agent 执行完成") {
+	if agentRun["状态"] != "通过" || agentRun["run_id"] != resp.Run.ID || !strings.Contains(stringFromAny(agentRun["评估结论"]), "结构化逐用例评估") {
 		t.Fatalf("auto-synced asset agent run = %#v", agentRun)
+	}
+}
+
+func TestRunPromptEvaluationAssetAgentCompletedWithoutStructuredVerdictNeedsReview(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	cleanupPromptEvaluationAgentRunTest(t)
+	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实 Agent 人工复核实验", "缺少结构化评估")
+
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE agent_task_queue
+		SET status = 'running',
+		    started_at = now() - interval '1 second'
+		WHERE id = $1
+	`, resp.TaskID); err != nil {
+		t.Fatalf("start agent task: %v", err)
+	}
+	if _, err := testHandler.Queries.CreateTaskMessage(context.Background(), db.CreateTaskMessageParams{
+		TaskID:  parseUUID(resp.TaskID),
+		Seq:     1,
+		Type:    "text",
+		Content: pgtype.Text{String: "Agent 输出：我已经完成训练评估。", Valid: true},
+	}); err != nil {
+		t.Fatalf("insert task message: %v", err)
+	}
+
+	completeW := httptest.NewRecorder()
+	completeReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/complete", map[string]any{
+		"output":     "Agent 输出：我已经完成训练评估。",
+		"session_id": "prompt-eval-review-session",
+		"work_dir":   "/tmp/prompt-eval",
+	}, testWorkspaceID, "prompt-eval-codebuddy-daemon")
+	testHandler.CompleteTask(completeW, withURLParam(completeReq, "taskId", resp.TaskID))
+	if completeW.Code != http.StatusOK {
+		t.Fatalf("complete status = %d, body = %s", completeW.Code, completeW.Body.String())
+	}
+
+	evidenceW := httptest.NewRecorder()
+	testHandler.GetPromptEvaluationRunEvidence(evidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
+	if evidenceW.Code != http.StatusOK {
+		t.Fatalf("evidence status = %d, body = %s", evidenceW.Code, evidenceW.Body.String())
+	}
+	var evidence PromptEvaluationRunEvidenceResponse
+	if err := json.Unmarshal(evidenceW.Body.Bytes(), &evidence); err != nil {
+		t.Fatalf("decode evidence response: %v", err)
+	}
+	if evidence.Run.Status != "需人工复核" || evidence.Run.PassedCases != 0 || evidence.Run.FailedCases != 1 || evidence.Run.FailureReason != "缺少结构化逐用例评估结果" {
+		t.Fatalf("completed run without structured verdict = %+v", evidence.Run)
+	}
+	if len(evidence.Trials) != 1 || evidence.Trials[0].Status != "需人工复核" || evidence.Trials[0].FailureReason != "缺少结构化逐用例评估结果" {
+		t.Fatalf("completed trial without structured verdict = %+v", evidence.Trials)
 	}
 }
 

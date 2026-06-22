@@ -805,6 +805,47 @@ func (q *Queries) UpdatePromptEvaluationRunFromTask(ctx context.Context, arg Upd
 	return i, err
 }
 
+const updatePromptEvaluationTrialFromAgentVerdict = `-- name: UpdatePromptEvaluationTrialFromAgentVerdict :exec
+UPDATE prompt_evaluation_trial SET
+    status = $4,
+    output = COALESCE($9::jsonb, output),
+    input_tokens = $5,
+    output_tokens = $6,
+    duration_ms = $7,
+    failure_reason = $8,
+    evidence = COALESCE($10::jsonb, evidence)
+WHERE run_id = $1 AND workspace_id = $2 AND case_index = $3
+`
+
+type UpdatePromptEvaluationTrialFromAgentVerdictParams struct {
+	RunID         pgtype.UUID `json:"run_id"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	CaseIndex     int32       `json:"case_index"`
+	Status        string      `json:"status"`
+	InputTokens   int32       `json:"input_tokens"`
+	OutputTokens  int32       `json:"output_tokens"`
+	DurationMs    int64       `json:"duration_ms"`
+	FailureReason string      `json:"failure_reason"`
+	Output        []byte      `json:"output"`
+	Evidence      []byte      `json:"evidence"`
+}
+
+func (q *Queries) UpdatePromptEvaluationTrialFromAgentVerdict(ctx context.Context, arg UpdatePromptEvaluationTrialFromAgentVerdictParams) error {
+	_, err := q.db.Exec(ctx, updatePromptEvaluationTrialFromAgentVerdict,
+		arg.RunID,
+		arg.WorkspaceID,
+		arg.CaseIndex,
+		arg.Status,
+		arg.InputTokens,
+		arg.OutputTokens,
+		arg.DurationMs,
+		arg.FailureReason,
+		arg.Output,
+		arg.Evidence,
+	)
+	return err
+}
+
 const updatePromptEvaluationTrialsFromTask = `-- name: UpdatePromptEvaluationTrialsFromTask :exec
 UPDATE prompt_evaluation_trial SET
     status = $3,

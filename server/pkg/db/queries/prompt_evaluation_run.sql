@@ -209,6 +209,17 @@ UPDATE prompt_evaluation_trial SET
     evidence = COALESCE(sqlc.narg('evidence')::jsonb, evidence)
 WHERE run_id = $1 AND workspace_id = $2;
 
+-- name: UpdatePromptEvaluationTrialFromAgentVerdict :exec
+UPDATE prompt_evaluation_trial SET
+    status = $4,
+    output = COALESCE(sqlc.narg('output')::jsonb, output),
+    input_tokens = $5,
+    output_tokens = $6,
+    duration_ms = $7,
+    failure_reason = $8,
+    evidence = COALESCE(sqlc.narg('evidence')::jsonb, evidence)
+WHERE run_id = $1 AND workspace_id = $2 AND case_index = $3;
+
 -- name: CreatePromptEvaluationTrial :one
 INSERT INTO prompt_evaluation_trial (
     run_id,
