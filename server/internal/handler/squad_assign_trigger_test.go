@@ -6,7 +6,9 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -347,5 +349,55 @@ func TestBuildObservabilitySummaryIncludesCostBreakdown(t *testing.T) {
 	unpriced := metricsMap["缺少模型价格"].([]map[string]any)
 	if len(unpriced) != 1 || unpriced[0]["原因"] != "unknown/unpriced-model" {
 		t.Fatalf("缺少模型价格 = %#v", unpriced)
+	}
+}
+
+func TestBuildObservabilitySummaryDedupesRepeatedUsageReports(t *testing.T) {
+	taskID := parseUUID("00000000-0000-0000-0000-000000000101")
+	runtimeID := parseUUID("00000000-0000-0000-0000-000000000102")
+	base := time.Date(2026, 6, 22, 13, 0, 0, 0, time.UTC)
+	traces := []db.TaskTraceEvent{
+		{
+			TaskID:           taskID,
+			RuntimeID:        runtimeID,
+			EventType:        "llm.usage_reported",
+			Provider:         "codebuddy",
+			Model:            "minimax-m2.7-ioa",
+			InputTokens:      10,
+			OutputTokens:     5,
+			CacheReadTokens:  1,
+			CacheWriteTokens: 1,
+			CreatedAt:        pgtype.Timestamptz{Time: base, Valid: true},
+		},
+		{
+			TaskID:           taskID,
+			RuntimeID:        runtimeID,
+			EventType:        "llm.usage_reported",
+			Provider:         "codebuddy",
+			Model:            "minimax-m2.7-ioa",
+			InputTokens:      30,
+			OutputTokens:     15,
+			CacheReadTokens:  3,
+			CacheWriteTokens: 2,
+			CreatedAt:        pgtype.Timestamptz{Time: base.Add(time.Minute), Valid: true},
+		},
+	}
+	summary := buildObservabilitySummary(nil, traces, 0)
+	metricsMap := summary["指标"].(map[string]any)
+	if got := metricsMap["输入 token"]; got != int64(30) {
+		t.Fatalf("输入 token = %v, want latest usage report 30", got)
+	}
+	if got := metricsMap["输出 token"]; got != int64(15) {
+		t.Fatalf("输出 token = %v, want latest usage report 15", got)
+	}
+	if got := metricsMap["缓存读 token"]; got != int64(3) {
+		t.Fatalf("缓存读 token = %v, want latest usage report 3", got)
+	}
+	if got := summary["task_trace_total"]; got != 2 {
+		t.Fatalf("task_trace_total = %v, want raw trace count 2", got)
+	}
+	modelRows := summary["model_breakdown"].([]map[string]any)
+	if len(modelRows) != 1 || modelRows[0]["输入 token"] != int64(30) || modelRows[0]["任务数"] != 1 {
+		t.Fatalf("model_breakdown = %#v, want deduped latest usage only", modelRows)
 	}
 }

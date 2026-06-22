@@ -740,6 +740,20 @@ func buildObservabilitySummary(runs []db.SquadSopRun, traces []db.TaskTraceEvent
 		if trace.TotalMs.Valid {
 			totalMs += trace.TotalMs.Int64
 		}
+		if trace.Attempt > 1 {
+			retryCount += int64(trace.Attempt - 1)
+		}
+		if trace.FailureReason != "" {
+			failureReasons[trace.FailureReason]++
+		}
+		if trace.ProjectID.Valid {
+			projectCounts[uuidToString(trace.ProjectID)]++
+		}
+		if trace.IssueID.Valid {
+			issueCounts[uuidToString(trace.IssueID)]++
+		}
+	}
+	for _, trace := range dedupeObservabilityUsageTraces(traces) {
 		inputTokens += trace.InputTokens
 		outputTokens += trace.OutputTokens
 		cacheReadTokens += trace.CacheReadTokens
@@ -787,18 +801,6 @@ func buildObservabilitySummary(runs []db.SquadSopRun, traces []db.TaskTraceEvent
 			EstimatedCost:    traceCost,
 			HasPrice:         hasPrice,
 		})
-		if trace.Attempt > 1 {
-			retryCount += int64(trace.Attempt - 1)
-		}
-		if trace.FailureReason != "" {
-			failureReasons[trace.FailureReason]++
-		}
-		if trace.ProjectID.Valid {
-			projectCounts[uuidToString(trace.ProjectID)]++
-		}
-		if trace.IssueID.Valid {
-			issueCounts[uuidToString(trace.IssueID)]++
-		}
 	}
 	return map[string]any{
 		"指标": map[string]any{
@@ -826,6 +828,45 @@ func buildObservabilitySummary(runs []db.SquadSopRun, traces []db.TaskTraceEvent
 		"model_breakdown":   observabilityBreakdownRows(modelBreakdown),
 		"runtime_breakdown": observabilityBreakdownRows(runtimeBreakdown),
 	}
+}
+
+func dedupeObservabilityUsageTraces(traces []db.TaskTraceEvent) []db.TaskTraceEvent {
+	usageByKey := map[string]db.TaskTraceEvent{}
+	usageKeys := []string{}
+	result := make([]db.TaskTraceEvent, 0, len(traces))
+	for _, trace := range traces {
+		if trace.EventType != "llm.usage_reported" {
+			result = append(result, trace)
+			continue
+		}
+		key := observabilityUsageTraceKey(trace)
+		current, ok := usageByKey[key]
+		if !ok {
+			usageByKey[key] = trace
+			usageKeys = append(usageKeys, key)
+			continue
+		}
+		if trace.CreatedAt.Valid && (!current.CreatedAt.Valid || trace.CreatedAt.Time.After(current.CreatedAt.Time)) {
+			usageByKey[key] = trace
+		}
+	}
+	for _, key := range usageKeys {
+		result = append(result, usageByKey[key])
+	}
+	return result
+}
+
+func observabilityUsageTraceKey(trace db.TaskTraceEvent) string {
+	taskID := uuidToString(trace.TaskID)
+	if taskID == "" {
+		taskID = uuidToString(trace.ID)
+	}
+	return strings.Join([]string{
+		taskID,
+		uuidToString(trace.RuntimeID),
+		strings.ToLower(strings.TrimSpace(trace.Provider)),
+		strings.TrimSpace(trace.Model),
+	}, "|")
 }
 
 func addObservabilityBreakdown(items map[string]*observabilityUsageBreakdown, key string, next observabilityUsageBreakdown) {
