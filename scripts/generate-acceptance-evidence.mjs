@@ -59,7 +59,7 @@ const commandResults = runTests ? runCommands(commands) : commands.map((item) =>
   durationMs: 0,
   note: "默认只生成验收包；使用 pnpm acceptance:verify 或 --run-tests 后会执行。",
 }));
-const e2eEvidence = buildE2EEvidence(commandResults);
+const e2eEvidence = buildE2EEvidence(commandResults, logEvidence);
 
 const risks = buildRisks({ health, ready, login, account, commandResults, git, databaseEvidence, logEvidence, e2eEvidence });
 const evidence = {
@@ -634,13 +634,18 @@ function commandStatus(res, timedOut, summary) {
   return "通过";
 }
 
-function buildE2EEvidence(commandResults) {
+function buildE2EEvidence(commandResults, logEvidence) {
   const codex = commandResults.find((item) => item.name === "Codex curl 端到端 Agent/小队验收");
   const training = commandResults.find((item) => item.name === "训练与评估 curl 端到端验收");
   const browser = commandResults.find((item) => item.name === "部署浏览器验收 E2E");
+  const logPath = logEvidence?.path || "";
   return {
     "公开API创建Agent小队Issue": codex ? {
       "状态": codex.status,
+      "URL": apiURL,
+      "请求入口": "/auth/login -> /api/workspaces -> /api/runtimes -> /api/agents -> /api/squads -> /api/issues -> /api/issues/:id/task-runs -> /api/issues/:id/trace -> /api/issues/:id/usage -> /api/tasks/:id/messages",
+      "耗时ms": codex.durationMs,
+      "日志位置": logPath,
       "结果": codex.summary?.result || "",
       "Agent ID": codex.summary?.agent_id || "",
       "Issue ID": codex.summary?.issue_id || "",
@@ -660,6 +665,10 @@ function buildE2EEvidence(commandResults) {
     } : null,
     "公开API训练评估闭环": training ? {
       "状态": training.status,
+      "URL": apiURL,
+      "请求入口": "/auth/login -> /api/prompt-library -> /api/prompt-evaluation-assets -> /api/prompt-evaluation-cases -> /api/prompt-evaluation-experiment-dimensions -> /api/prompt-evaluation-assets/:id/agent-run -> /api/prompt-evaluation-runs/:id/sync -> /api/prompt-evaluation-runs/:id/evidence -> /api/prompt-evaluation-runs/:id/optimization-candidates -> /api/prompt-evaluation-optimization-candidates/:id/publish",
+      "耗时ms": training.durationMs,
+      "日志位置": logPath,
       "结果": training.summary?.result || "",
       "Prompt ID": training.summary?.prompt_id || "",
       "Prompt版本数": training.summary?.prompt_version_count ?? 0,
@@ -691,6 +700,10 @@ function buildE2EEvidence(commandResults) {
     } : null,
     "部署浏览器验收": browser ? {
       "状态": browser.status,
+      "URL": `${frontendURL}/${encodeURIComponent(workspaceSlug)}/training?view=demo-dashboard`,
+      "请求入口": "/login?next=... -> /:workspace/training?view=demo-dashboard -> view=prompts/prompt-playground/agent-playground/datasets/test-suites/experiments/optimization-runs/run-history",
+      "耗时ms": browser.durationMs,
+      "日志位置": logPath,
       "命令": browser.command,
     } : null,
   };
@@ -912,6 +925,9 @@ ${latestTraceRows}
 ### Agent / 小队 / Issue
 
 - 状态：${apiAgent["状态"] || "未记录"}，结果：${apiAgent["结果"] || "未记录"}
+- URL：${apiAgent["URL"] || "未记录"}
+- 请求入口：${apiAgent["请求入口"] || "未记录"}
+- 耗时：${apiAgent["耗时ms"] ?? "未记录"} ms，日志：\`${apiAgent["日志位置"] || "未记录"}\`
 - Agent：${apiAgent["Agent ID"] || "未记录"}，模型：${apiAgent["实际模型"] || apiAgent["模型"] || "未记录"}，使用 fallback：${apiAgent["使用fallback模型"] ? "是" : "否"}
 - Runtime：${apiAgent["Runtime ID"] || "未记录"} (${apiAgent["Runtime Provider"] || "未记录"})
 - Issue：${apiAgent["Issue ID"] || "未记录"}，Task：${apiAgent["Task ID"] || "未记录"}
@@ -922,6 +938,9 @@ ${latestTraceRows}
 ### 训练与评估
 
 - 状态：${apiTraining["状态"] || "未记录"}，结果：${apiTraining["结果"] || "未记录"}
+- URL：${apiTraining["URL"] || "未记录"}
+- 请求入口：${apiTraining["请求入口"] || "未记录"}
+- 耗时：${apiTraining["耗时ms"] ?? "未记录"} ms，日志：\`${apiTraining["日志位置"] || "未记录"}\`
 - Prompt：${apiTraining["Prompt ID"] || "未记录"}，版本数：${apiTraining["Prompt版本数"] ?? "未记录"}
 - 数据集：${apiTraining["Dataset ID"] || "未记录"}，行数：${apiTraining["数据集行"] ?? "未记录"}
 - 测试套件：${apiTraining["Test Suite ID"] || "未记录"}，用例：${apiTraining["测试套件用例"] ?? "未记录"}
@@ -937,6 +956,9 @@ ${latestTraceRows}
 ### 浏览器部署验收
 
 - 状态：${browserE2E["状态"] || "未记录"}
+- URL：${browserE2E["URL"] || "未记录"}
+- 请求入口：${browserE2E["请求入口"] || "未记录"}
+- 耗时：${browserE2E["耗时ms"] ?? "未记录"} ms，日志：\`${browserE2E["日志位置"] || "未记录"}\`
 
 ## 测试命令
 

@@ -49,7 +49,42 @@ test.describe("生产部署验收", () => {
     await expect(page.getByText("运行证据已服务端归档")).toBeVisible();
     await expect(page.getByText("你是从哪里了解到 Multica 的？")).toHaveCount(0);
 
+    await page.getByRole("button", { name: "提示词库", exact: true }).click();
+    await expect(page).toHaveURL(/view=prompts/);
+    await expect(page.getByTestId("prompt-version-history")).toContainText("版本历史", { timeout: 15000 });
+    await expect(page.getByRole("button", { name: "需求澄清", exact: true })).toBeVisible({ timeout: 15000 });
+
+    await page.getByRole("button", { name: "提示词调试场", exact: true }).click();
+    await expect(page).toHaveURL(/view=prompt-playground/);
+    await expect(page.getByText("调试变量")).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText("调试输出")).toBeVisible();
+    await expect(page.getByRole("button", { name: "运行并记录" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Agent 调试场", exact: true }).click();
+    await expect(page).toHaveURL(/view=agent-playground/);
+    await expect(page.getByText("真实执行准备度")).toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole("button", { name: "创建真实 Agent 任务" })).toBeVisible();
+
+    await page.getByRole("button", { name: "数据集", exact: true }).click();
+    await expect(page).toHaveURL(/view=datasets/);
+    await expect(page.locator("[data-testid^='prompt-evaluation-asset-']").filter({ hasText: "数据集" }).first()).toContainText("数据集", { timeout: 15000 });
+    await expect(page.locator("[data-testid^='prompt-evaluation-cases-']").first()).toContainText("结构化评测用例", { timeout: 15000 });
+
+    await page.getByRole("button", { name: "测试套件", exact: true }).click();
+    await expect(page).toHaveURL(/view=test-suites/);
+    await expect(page.locator("[data-testid^='prompt-evaluation-asset-']").filter({ hasText: "测试套件" }).first()).toContainText("测试套件", { timeout: 15000 });
+
+    await page.getByRole("button", { name: "实验", exact: true }).click();
+    await expect(page).toHaveURL(/view=experiments/);
+    await expect(page.getByText(/实验对比摘要：[1-9]/)).toBeVisible({ timeout: 15000 });
+    await expect(page.locator("[data-testid^='prompt-evaluation-experiment-dimensions-']").first()).toContainText("实验维度事实", { timeout: 15000 });
+
+    await page.getByRole("button", { name: "优化运行", exact: true }).click();
+    await expect(page).toHaveURL(/view=optimization-runs/);
+    await expect(page.locator("[data-testid^='prompt-evaluation-candidate-']").first()).toContainText(/待确认|已发布|已拒绝/, { timeout: 15000 });
+
     await page.getByRole("button", { name: "运行历史", exact: true }).click();
+    await expect(page).toHaveURL(/view=run-history/);
     const firstRun = page.locator("[data-testid^='prompt-evaluation-run-']").first();
     await expect(firstRun).toContainText(/Agent执行|模板渲染检查/, { timeout: 30000 });
     await firstRun.getByRole("button", { name: "查看证据" }).click();
