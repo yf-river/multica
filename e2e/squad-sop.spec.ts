@@ -24,7 +24,7 @@ test.describe("小队 SOP 端到端", () => {
     await api.ensureOnlineCodeBuddyRuntime("E2E 内置小队 CodeBuddy Runtime");
 
     await page.goto(`/${workspaceSlug}/squads`, { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "Multica 编码小队" }).first().click();
+    await page.getByTestId("ensure-multica-coding-squad").click();
 
     await expect(page.getByRole("heading", { name: "Multica 编码小队" }).first()).toBeVisible({
       timeout: 30_000,
@@ -46,7 +46,7 @@ test.describe("小队 SOP 端到端", () => {
     });
 
     await page.goto(`/${workspaceSlug}/squads`, { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "Multica 编码小队" }).first().click();
+    await page.getByTestId("ensure-multica-coding-squad").click();
     await expect(page.getByRole("heading", { name: "Multica 编码小队" }).first()).toBeVisible({
       timeout: 30_000,
     });

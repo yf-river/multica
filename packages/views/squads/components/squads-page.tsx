@@ -915,6 +915,7 @@ export function SquadsPage() {
                 size="sm"
                 variant="outline"
                 className="h-8 gap-1 px-2.5"
+                data-testid="ensure-user-center-squad"
                 disabled={ensureInternalSquad.isPending}
                 onClick={() => ensureInternalSquad.mutate("user-center")}
               >
@@ -925,6 +926,7 @@ export function SquadsPage() {
                 size="sm"
                 variant="outline"
                 className="h-8 gap-1 px-2.5"
+                data-testid="ensure-multica-coding-squad"
                 disabled={ensureInternalSquad.isPending}
                 onClick={() => ensureInternalSquad.mutate("multica-coding")}
               >
