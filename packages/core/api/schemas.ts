@@ -17,6 +17,7 @@ import type {
   PromptEvaluationAsset,
   PromptEvaluationRunEvidence,
   PromptEvaluationSummary,
+  PromptEvaluationStructuredCase,
   PromptEvaluationOptimizationCandidate,
   PromptLibraryItem,
   PublishPromptEvaluationOptimizationCandidateResponse,
@@ -1028,6 +1029,25 @@ export const EMPTY_PROMPT_EVALUATION_SUMMARY: PromptEvaluationSummary = {
 export const EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE = {
   items: [],
   total: 0,
+};
+
+export const EMPTY_PROMPT_EVALUATION_CASE: PromptEvaluationStructuredCase = {
+  id: "",
+  workspace_id: "",
+  asset_id: "",
+  prompt_id: null,
+  case_index: 0,
+  case_name: "",
+  variables: {},
+  expected_contains: [],
+  input: {},
+  expected: {},
+  tags: [],
+  status: "启用",
+  source: "",
+  created_by: null,
+  created_at: "",
+  updated_at: "",
 };
 
 export const EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE: PromptEvaluationOptimizationCandidate = {

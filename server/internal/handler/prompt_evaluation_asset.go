@@ -64,6 +64,32 @@ type UpdatePromptEvaluationAssetRequest struct {
 	Status      *string         `json:"status"`
 }
 
+type CreatePromptEvaluationCaseRequest struct {
+	AssetID          string          `json:"asset_id"`
+	PromptID         json.RawMessage `json:"prompt_id"`
+	CaseIndex        *int32          `json:"case_index"`
+	CaseName         string          `json:"case_name"`
+	Variables        json.RawMessage `json:"variables"`
+	ExpectedContains json.RawMessage `json:"expected_contains"`
+	Input            json.RawMessage `json:"input"`
+	Expected         json.RawMessage `json:"expected"`
+	Tags             json.RawMessage `json:"tags"`
+	Status           string          `json:"status"`
+}
+
+type UpdatePromptEvaluationCaseRequest struct {
+	AssetID          *string         `json:"asset_id"`
+	PromptID         json.RawMessage `json:"prompt_id"`
+	CaseIndex        *int32          `json:"case_index"`
+	CaseName         *string         `json:"case_name"`
+	Variables        json.RawMessage `json:"variables"`
+	ExpectedContains json.RawMessage `json:"expected_contains"`
+	Input            json.RawMessage `json:"input"`
+	Expected         json.RawMessage `json:"expected"`
+	Tags             json.RawMessage `json:"tags"`
+	Status           *string         `json:"status"`
+}
+
 type promptEvaluationRunResult struct {
 	RunAt             string                          `json:"运行时间"`
 	AssetType         string                          `json:"资产类型"`
@@ -457,6 +483,38 @@ func jsonObjectField(w http.ResponseWriter, raw json.RawMessage, field string) (
 	return raw, true
 }
 
+func jsonObjectBytesOrDefault(w http.ResponseWriter, raw json.RawMessage, field string, fallback []byte) ([]byte, bool) {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return fallback, true
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		writeError(w, http.StatusBadRequest, field+" must be a JSON object")
+		return nil, false
+	}
+	return raw, true
+}
+
+func jsonArrayBytesOrDefault(w http.ResponseWriter, raw json.RawMessage, field string, fallback []byte) ([]byte, bool) {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		return fallback, true
+	}
+	var list []any
+	if err := json.Unmarshal(raw, &list); err != nil {
+		writeError(w, http.StatusBadRequest, field+" must be a JSON array")
+		return nil, false
+	}
+	return raw, true
+}
+
+func jsonObjectBytesForUpdate(w http.ResponseWriter, raw json.RawMessage, field string, existing []byte) ([]byte, bool) {
+	return jsonObjectBytesOrDefault(w, raw, field, existing)
+}
+
+func jsonArrayBytesForUpdate(w http.ResponseWriter, raw json.RawMessage, field string, existing []byte) ([]byte, bool) {
+	return jsonArrayBytesOrDefault(w, raw, field, existing)
+}
+
 func (h *Handler) promptEvaluationPromptID(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, raw json.RawMessage, fallback pgtype.UUID) (pgtype.UUID, bool) {
 	if len(raw) == 0 {
 		return fallback, true
@@ -575,6 +633,230 @@ func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Reque
 		resp[i] = promptEvaluationCaseToResponse(item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
+}
+
+func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	var req CreatePromptEvaluationCaseRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid prompt evaluation case payload")
+		return
+	}
+	assetID, ok := parseUUIDOrBadRequest(w, req.AssetID, "asset_id")
+	if !ok {
+		return
+	}
+	asset, err := h.Queries.GetPromptEvaluationAssetInWorkspace(r.Context(), db.GetPromptEvaluationAssetInWorkspaceParams{ID: assetID, WorkspaceID: workspaceUUID})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "asset_id does not belong to this workspace")
+		return
+	}
+	promptID, ok := h.promptEvaluationPromptID(w, r, workspaceUUID, req.PromptID, asset.PromptID)
+	if !ok {
+		return
+	}
+	caseIndex := int32(0)
+	if req.CaseIndex != nil {
+		caseIndex = *req.CaseIndex
+	} else {
+		existing, err := h.Queries.ListPromptEvaluationCases(r.Context(), db.ListPromptEvaluationCasesParams{WorkspaceID: workspaceUUID, AssetID: asset.ID})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to allocate prompt evaluation case index")
+			return
+		}
+		caseIndex = int32(len(existing))
+	}
+	if caseIndex < 0 {
+		writeError(w, http.StatusBadRequest, "case_index must be greater than or equal to 0")
+		return
+	}
+	status := strings.TrimSpace(req.Status)
+	if status == "" {
+		status = "启用"
+	}
+	if !validPromptLibraryStatus(status) {
+		writeError(w, http.StatusBadRequest, "status must be 启用 or 归档")
+		return
+	}
+	variables, ok := jsonObjectBytesOrDefault(w, req.Variables, "variables", []byte("{}"))
+	if !ok {
+		return
+	}
+	expectedContains, ok := jsonArrayBytesOrDefault(w, req.ExpectedContains, "expected_contains", []byte("[]"))
+	if !ok {
+		return
+	}
+	input, ok := jsonObjectBytesOrDefault(w, req.Input, "input", []byte("{}"))
+	if !ok {
+		return
+	}
+	expected, ok := jsonObjectBytesOrDefault(w, req.Expected, "expected", []byte("{}"))
+	if !ok {
+		return
+	}
+	tags, ok := jsonArrayBytesOrDefault(w, req.Tags, "tags", []byte("[]"))
+	if !ok {
+		return
+	}
+	created, err := h.Queries.CreatePromptEvaluationCase(r.Context(), db.CreatePromptEvaluationCaseParams{
+		WorkspaceID:      workspaceUUID,
+		AssetID:          asset.ID,
+		PromptID:         promptID,
+		CaseIndex:        caseIndex,
+		CaseName:         strings.TrimSpace(req.CaseName),
+		Variables:        variables,
+		ExpectedContains: expectedContains,
+		Input:            input,
+		Expected:         expected,
+		Tags:             tags,
+		Status:           status,
+		Source:           "manual",
+		CreatedBy:        parseUUID(userID),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation case")
+		return
+	}
+	writeJSON(w, http.StatusCreated, promptEvaluationCaseToResponse(created))
+}
+
+func (h *Handler) UpdatePromptEvaluationCase(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	caseID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation case id")
+	if !ok {
+		return
+	}
+	current, err := h.Queries.GetPromptEvaluationCaseInWorkspace(r.Context(), db.GetPromptEvaluationCaseInWorkspaceParams{ID: caseID, WorkspaceID: workspaceUUID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "prompt evaluation case not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation case")
+		return
+	}
+	var req UpdatePromptEvaluationCaseRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid prompt evaluation case payload")
+		return
+	}
+	assetID := current.AssetID
+	if req.AssetID != nil {
+		parsed, ok := parseUUIDOrBadRequest(w, *req.AssetID, "asset_id")
+		if !ok {
+			return
+		}
+		assetID = parsed
+	}
+	asset, err := h.Queries.GetPromptEvaluationAssetInWorkspace(r.Context(), db.GetPromptEvaluationAssetInWorkspaceParams{ID: assetID, WorkspaceID: workspaceUUID})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "asset_id does not belong to this workspace")
+		return
+	}
+	promptID, ok := h.promptEvaluationPromptID(w, r, workspaceUUID, req.PromptID, current.PromptID)
+	if !ok {
+		return
+	}
+	if len(req.PromptID) == 0 && !promptID.Valid {
+		promptID = asset.PromptID
+	}
+	caseIndex := current.CaseIndex
+	if req.CaseIndex != nil {
+		caseIndex = *req.CaseIndex
+	}
+	if caseIndex < 0 {
+		writeError(w, http.StatusBadRequest, "case_index must be greater than or equal to 0")
+		return
+	}
+	caseName := current.CaseName
+	if req.CaseName != nil {
+		caseName = strings.TrimSpace(*req.CaseName)
+	}
+	status := current.Status
+	if req.Status != nil {
+		status = strings.TrimSpace(*req.Status)
+	}
+	if !validPromptLibraryStatus(status) {
+		writeError(w, http.StatusBadRequest, "status must be 启用 or 归档")
+		return
+	}
+	variables, ok := jsonObjectBytesForUpdate(w, req.Variables, "variables", current.Variables)
+	if !ok {
+		return
+	}
+	expectedContains, ok := jsonArrayBytesForUpdate(w, req.ExpectedContains, "expected_contains", current.ExpectedContains)
+	if !ok {
+		return
+	}
+	input, ok := jsonObjectBytesForUpdate(w, req.Input, "input", current.Input)
+	if !ok {
+		return
+	}
+	expected, ok := jsonObjectBytesForUpdate(w, req.Expected, "expected", current.Expected)
+	if !ok {
+		return
+	}
+	tags, ok := jsonArrayBytesForUpdate(w, req.Tags, "tags", current.Tags)
+	if !ok {
+		return
+	}
+	updated, err := h.Queries.UpdatePromptEvaluationCase(r.Context(), db.UpdatePromptEvaluationCaseParams{
+		ID:               current.ID,
+		WorkspaceID:      workspaceUUID,
+		AssetID:          asset.ID,
+		PromptID:         promptID,
+		CaseIndex:        caseIndex,
+		CaseName:         caseName,
+		Variables:        variables,
+		ExpectedContains: expectedContains,
+		Input:            input,
+		Expected:         expected,
+		Tags:             tags,
+		Status:           status,
+		Source:           "manual",
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update prompt evaluation case")
+		return
+	}
+	writeJSON(w, http.StatusOK, promptEvaluationCaseToResponse(updated))
+}
+
+func (h *Handler) DeletePromptEvaluationCase(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	caseID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation case id")
+	if !ok {
+		return
+	}
+	if _, err := h.Queries.GetPromptEvaluationCaseInWorkspace(r.Context(), db.GetPromptEvaluationCaseInWorkspaceParams{ID: caseID, WorkspaceID: workspaceUUID}); err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "prompt evaluation case not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation case")
+		return
+	}
+	if err := h.Queries.DeletePromptEvaluationCase(r.Context(), db.DeletePromptEvaluationCaseParams{ID: caseID, WorkspaceID: workspaceUUID}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete prompt evaluation case")
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 func (h *Handler) ListPromptEvaluationRuns(w http.ResponseWriter, r *http.Request) {

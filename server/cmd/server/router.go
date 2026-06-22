@@ -772,7 +772,14 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/agent-run", h.RunPromptEvaluationAssetAgent)
 				})
 			})
-			r.Get("/api/prompt-evaluation-cases", h.ListPromptEvaluationCases)
+			r.Route("/api/prompt-evaluation-cases", func(r chi.Router) {
+				r.Get("/", h.ListPromptEvaluationCases)
+				r.Post("/", h.CreatePromptEvaluationCase)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Put("/", h.UpdatePromptEvaluationCase)
+					r.Delete("/", h.DeletePromptEvaluationCase)
+				})
+			})
 			r.Get("/api/prompt-evaluation-summary", h.GetPromptEvaluationSummary)
 			r.Route("/api/prompt-evaluation-runs", func(r chi.Router) {
 				r.Get("/", h.ListPromptEvaluationRuns)

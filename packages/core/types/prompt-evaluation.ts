@@ -240,6 +240,32 @@ export interface ListPromptEvaluationCasesParams {
   status?: PromptEvaluationAssetStatus;
 }
 
+export interface CreatePromptEvaluationCaseRequest {
+  asset_id: string;
+  prompt_id?: string | null;
+  case_index?: number;
+  case_name?: string;
+  variables?: Record<string, unknown>;
+  expected_contains?: unknown[];
+  input?: Record<string, unknown>;
+  expected?: Record<string, unknown>;
+  tags?: unknown[];
+  status?: PromptEvaluationAssetStatus;
+}
+
+export interface UpdatePromptEvaluationCaseRequest {
+  asset_id?: string;
+  prompt_id?: string | null;
+  case_index?: number;
+  case_name?: string;
+  variables?: Record<string, unknown>;
+  expected_contains?: unknown[];
+  input?: Record<string, unknown>;
+  expected?: Record<string, unknown>;
+  tags?: unknown[];
+  status?: PromptEvaluationAssetStatus;
+}
+
 export interface ListPromptEvaluationOptimizationCandidatesParams {
   run_id?: string;
   prompt_id?: string;

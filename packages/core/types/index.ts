@@ -139,6 +139,8 @@ export type {
   ListPromptEvaluationOptimizationCandidatesParams,
   CreatePromptEvaluationAssetRequest,
   UpdatePromptEvaluationAssetRequest,
+  CreatePromptEvaluationCaseRequest,
+  UpdatePromptEvaluationCaseRequest,
 } from "./prompt-evaluation";
 export type {
   SOPRunStatus,

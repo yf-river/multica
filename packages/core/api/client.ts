@@ -125,21 +125,24 @@ import type {
 	  PromptEvaluationRun,
 	  PromptEvaluationRunEvidence,
 	  PromptEvaluationSummary,
+	  PromptEvaluationStructuredCase,
 	  PromptEvaluationAgentRunResponse,
 	  PromptEvaluationOptimizationCandidate,
 	  PublishPromptEvaluationOptimizationCandidateResponse,
 	  ListPromptEvaluationAssetsParams,
 	  ListPromptEvaluationRunsParams,
-  ListPromptEvaluationCasesParams,
-  ListPromptEvaluationOptimizationCandidatesParams,
-  ListPromptEvaluationAssetsResponse,
-  ListPromptEvaluationRunsResponse,
-  ListPromptEvaluationTrialsResponse,
-  ListPromptEvaluationCasesResponse,
-  ListPromptEvaluationOptimizationCandidatesResponse,
-  CreatePromptEvaluationAssetRequest,
-  UpdatePromptEvaluationAssetRequest,
-  ListPromptLibraryItemsParams,
+	  ListPromptEvaluationCasesParams,
+	  ListPromptEvaluationOptimizationCandidatesParams,
+	  ListPromptEvaluationAssetsResponse,
+	  ListPromptEvaluationRunsResponse,
+	  ListPromptEvaluationTrialsResponse,
+	  ListPromptEvaluationCasesResponse,
+	  ListPromptEvaluationOptimizationCandidatesResponse,
+	  CreatePromptEvaluationAssetRequest,
+	  UpdatePromptEvaluationAssetRequest,
+	  CreatePromptEvaluationCaseRequest,
+	  UpdatePromptEvaluationCaseRequest,
+	  ListPromptLibraryItemsParams,
   ListPromptLibraryItemsResponse,
   CreatePromptLibraryItemRequest,
   UpdatePromptLibraryItemRequest,
@@ -187,6 +190,7 @@ import {
   EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE,
   EMPTY_PROMPT_EVALUATION_SUMMARY,
+  EMPTY_PROMPT_EVALUATION_CASE,
   EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
   EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE,
@@ -210,6 +214,7 @@ import {
   PromptEvaluationTrialListResponseSchema,
   PromptEvaluationRunEvidenceSchema,
   PromptEvaluationSummarySchema,
+  PromptEvaluationCaseSchema,
   PromptEvaluationCaseListResponseSchema,
   PromptEvaluationOptimizationCandidateSchema,
   PromptEvaluationOptimizationCandidateListResponseSchema,
@@ -1791,6 +1796,30 @@ export class ApiClient {
     return parseWithFallback(raw, PromptEvaluationCaseListResponseSchema, EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE, {
       endpoint: "GET /api/prompt-evaluation-cases",
     }) as ListPromptEvaluationCasesResponse;
+  }
+
+  async createPromptEvaluationCase(data: CreatePromptEvaluationCaseRequest): Promise<PromptEvaluationStructuredCase> {
+    const raw = await this.fetch<unknown>("/api/prompt-evaluation-cases", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationCaseSchema, EMPTY_PROMPT_EVALUATION_CASE, {
+      endpoint: "POST /api/prompt-evaluation-cases",
+    }) as PromptEvaluationStructuredCase;
+  }
+
+  async updatePromptEvaluationCase(id: string, data: UpdatePromptEvaluationCaseRequest): Promise<PromptEvaluationStructuredCase> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-cases/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationCaseSchema, EMPTY_PROMPT_EVALUATION_CASE, {
+      endpoint: "PUT /api/prompt-evaluation-cases/:id",
+    }) as PromptEvaluationStructuredCase;
+  }
+
+  async deletePromptEvaluationCase(id: string): Promise<void> {
+    await this.fetch(`/api/prompt-evaluation-cases/${id}`, { method: "DELETE" });
   }
 
   async getPromptEvaluationSummary(): Promise<PromptEvaluationSummary> {

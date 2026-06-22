@@ -98,6 +98,21 @@ func (q *Queries) CreatePromptEvaluationCase(ctx context.Context, arg CreateProm
 	return i, err
 }
 
+const deletePromptEvaluationCase = `-- name: DeletePromptEvaluationCase :exec
+DELETE FROM prompt_evaluation_case
+WHERE id = $1 AND workspace_id = $2
+`
+
+type DeletePromptEvaluationCaseParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) DeletePromptEvaluationCase(ctx context.Context, arg DeletePromptEvaluationCaseParams) error {
+	_, err := q.db.Exec(ctx, deletePromptEvaluationCase, arg.ID, arg.WorkspaceID)
+	return err
+}
+
 const deletePromptEvaluationCasesByAsset = `-- name: DeletePromptEvaluationCasesByAsset :exec
 DELETE FROM prompt_evaluation_case
 WHERE workspace_id = $1 AND asset_id = $2
@@ -111,6 +126,40 @@ type DeletePromptEvaluationCasesByAssetParams struct {
 func (q *Queries) DeletePromptEvaluationCasesByAsset(ctx context.Context, arg DeletePromptEvaluationCasesByAssetParams) error {
 	_, err := q.db.Exec(ctx, deletePromptEvaluationCasesByAsset, arg.WorkspaceID, arg.AssetID)
 	return err
+}
+
+const getPromptEvaluationCaseInWorkspace = `-- name: GetPromptEvaluationCaseInWorkspace :one
+SELECT id, workspace_id, asset_id, prompt_id, case_index, case_name, variables, expected_contains, input, expected, tags, status, source, created_by, created_at, updated_at FROM prompt_evaluation_case
+WHERE id = $1 AND workspace_id = $2
+`
+
+type GetPromptEvaluationCaseInWorkspaceParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetPromptEvaluationCaseInWorkspace(ctx context.Context, arg GetPromptEvaluationCaseInWorkspaceParams) (PromptEvaluationCase, error) {
+	row := q.db.QueryRow(ctx, getPromptEvaluationCaseInWorkspace, arg.ID, arg.WorkspaceID)
+	var i PromptEvaluationCase
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AssetID,
+		&i.PromptID,
+		&i.CaseIndex,
+		&i.CaseName,
+		&i.Variables,
+		&i.ExpectedContains,
+		&i.Input,
+		&i.Expected,
+		&i.Tags,
+		&i.Status,
+		&i.Source,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
 
 const listPromptEvaluationCases = `-- name: ListPromptEvaluationCases :many
@@ -162,4 +211,76 @@ func (q *Queries) ListPromptEvaluationCases(ctx context.Context, arg ListPromptE
 		return nil, err
 	}
 	return items, nil
+}
+
+const updatePromptEvaluationCase = `-- name: UpdatePromptEvaluationCase :one
+UPDATE prompt_evaluation_case SET
+    asset_id = $3,
+    prompt_id = $8,
+    case_index = $4,
+    case_name = $5,
+    variables = COALESCE($9::jsonb, variables),
+    expected_contains = COALESCE($10::jsonb, expected_contains),
+    input = COALESCE($11::jsonb, input),
+    expected = COALESCE($12::jsonb, expected),
+    tags = COALESCE($13::jsonb, tags),
+    status = $6,
+    source = $7,
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2
+RETURNING id, workspace_id, asset_id, prompt_id, case_index, case_name, variables, expected_contains, input, expected, tags, status, source, created_by, created_at, updated_at
+`
+
+type UpdatePromptEvaluationCaseParams struct {
+	ID               pgtype.UUID `json:"id"`
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	AssetID          pgtype.UUID `json:"asset_id"`
+	CaseIndex        int32       `json:"case_index"`
+	CaseName         string      `json:"case_name"`
+	Status           string      `json:"status"`
+	Source           string      `json:"source"`
+	PromptID         pgtype.UUID `json:"prompt_id"`
+	Variables        []byte      `json:"variables"`
+	ExpectedContains []byte      `json:"expected_contains"`
+	Input            []byte      `json:"input"`
+	Expected         []byte      `json:"expected"`
+	Tags             []byte      `json:"tags"`
+}
+
+func (q *Queries) UpdatePromptEvaluationCase(ctx context.Context, arg UpdatePromptEvaluationCaseParams) (PromptEvaluationCase, error) {
+	row := q.db.QueryRow(ctx, updatePromptEvaluationCase,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.AssetID,
+		arg.CaseIndex,
+		arg.CaseName,
+		arg.Status,
+		arg.Source,
+		arg.PromptID,
+		arg.Variables,
+		arg.ExpectedContains,
+		arg.Input,
+		arg.Expected,
+		arg.Tags,
+	)
+	var i PromptEvaluationCase
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AssetID,
+		&i.PromptID,
+		&i.CaseIndex,
+		&i.CaseName,
+		&i.Variables,
+		&i.ExpectedContains,
+		&i.Input,
+		&i.Expected,
+		&i.Tags,
+		&i.Status,
+		&i.Source,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }
