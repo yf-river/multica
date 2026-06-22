@@ -27,6 +27,7 @@ import type {
   PromptEvaluationRuntimeReadiness,
   PromptEvaluationSummary,
   PromptEvaluationAssetType,
+  ObservabilitySummary,
   PromptLibraryItem,
   PromptLibraryStatus,
   PromptLibraryVariable,
@@ -154,6 +155,12 @@ export function PromptLibraryPage() {
     queryKey: ["training-evaluation", workspaceId ?? "", "runtime-readiness"],
     queryFn: () => api.getPromptEvaluationRuntimeReadiness(),
     enabled: !!workspaceId,
+  });
+  const observabilitySummaryQuery = useQuery({
+    queryKey: ["training-evaluation", workspaceId ?? "", "workspace-observability-summary"],
+    queryFn: () => api.getWorkspaceObservabilitySummary(workspaceId ?? ""),
+    enabled: !!workspaceId,
+    staleTime: 30_000,
   });
 
   const items = listQuery.data?.items ?? [];
@@ -544,6 +551,22 @@ export function PromptLibraryPage() {
 
       <TrainingSummaryStrip summary={summary} loading={summaryQuery.isLoading} />
 
+      {activeTab === "演示看板" ? (
+        <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
+          <DemoDashboardPanel
+            trainingSummary={summary}
+            trainingLoading={summaryQuery.isLoading}
+            observabilitySummary={observabilitySummaryQuery.data ?? null}
+            observabilityLoading={observabilitySummaryQuery.isLoading}
+            runtimeReadiness={agentRuntimeReadiness}
+            runtimeLoading={runtimeReadinessQuery.isLoading}
+            runs={runs}
+            assets={assets}
+            cases={cases}
+            candidates={candidates}
+          />
+        </main>
+      ) : (
       <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[360px_minmax(0,1fr)]">
         <aside className="flex min-h-0 flex-col border-b md:border-b-0 md:border-r">
           <div className="space-y-3 border-b p-3">
@@ -760,7 +783,218 @@ export function PromptLibraryPage() {
           </div>
         </main>
       </div>
+      )}
     </div>
+  );
+}
+
+function DemoDashboardPanel({
+  trainingSummary,
+  trainingLoading,
+  observabilitySummary,
+  observabilityLoading,
+  runtimeReadiness,
+  runtimeLoading,
+  runs,
+  assets,
+  cases,
+  candidates,
+}: {
+  trainingSummary: PromptEvaluationSummary | null;
+  trainingLoading: boolean;
+  observabilitySummary: ObservabilitySummary | null;
+  observabilityLoading: boolean;
+  runtimeReadiness: PromptEvaluationRuntimeReadiness;
+  runtimeLoading: boolean;
+  runs: PromptEvaluationRun[];
+  assets: PromptEvaluationAsset[];
+  cases: PromptEvaluationStructuredCase[];
+  candidates: PromptEvaluationOptimizationCandidate[];
+}) {
+  const trainingMetrics = trainingSummary?.指标 ?? {};
+  const trainingAssets = trainingSummary?.资产统计 ?? {};
+  const runStatus = trainingSummary?.运行状态 ?? {};
+  const observabilityMetrics = observabilitySummary?.指标 ?? {};
+  const completeness = observabilitySummary?.summary_completeness;
+  const completenessStatus = String(completeness?.["状态"] ?? observabilityMetrics["汇总完整性"] ?? "完整");
+  const maybeTruncated = Boolean(
+    observabilitySummary?.sop_run_maybe_truncated ||
+      observabilitySummary?.task_trace_maybe_truncated ||
+      completenessStatus === "可能截断",
+  );
+  const latestRun = runs[0] ?? null;
+  const pendingCandidates = candidates.filter((candidate) => candidate.status === "待确认").length;
+  const publishedCandidates = candidates.filter((candidate) => candidate.status === "已发布").length;
+  const rejectedCandidates = candidates.filter((candidate) => candidate.status === "已拒绝").length;
+  const hasAgentEvidence = runs.some((run) => run.run_kind === "Agent执行" && Boolean(run.task_id));
+  const hasOptimizationLoop = publishedCandidates > 0 || pendingCandidates > 0 || rejectedCandidates > 0;
+  const readinessLabel = runtimeLoading ? "检查中" : runtimeReadiness.label;
+
+  const trainingItems: Array<[string, string]> = [
+    ["运行总数", formatNumber(runStatus["运行总数"])],
+    ["通过率", formatPercent(trainingMetrics["通过率"])],
+    ["失败数", formatNumber(trainingMetrics["失败数"])],
+    ["Agent运行数", formatNumber(trainingMetrics["Agent运行数"])],
+    ["需人工复核", formatNumber(trainingMetrics["需人工复核"])],
+    ["输入token", formatNumber(trainingMetrics["输入token"])],
+    ["输出token", formatNumber(trainingMetrics["输出token"])],
+    ["预估成本", formatMoney(trainingMetrics["预估成本"])],
+  ];
+  const observabilityItems: Array<[string, string]> = [
+    ["SOP 执行数", formatNumber(observabilityMetrics["SOP 执行数"])],
+    ["SOP 事件数", formatNumber(observabilityMetrics["SOP 事件数"])],
+    ["任务观测", formatNumber(observabilitySummary?.task_trace_sample_total ?? observabilitySummary?.task_trace_total)],
+    ["队列等待", formatDuration(observabilityMetrics["队列等待"])],
+    ["执行耗时", formatDuration(observabilityMetrics["执行耗时"])],
+    ["总耗时", formatDuration(observabilityMetrics["总耗时"])],
+    ["观测输入token", formatNumber(observabilityMetrics["输入 token"])],
+    ["观测预估成本", formatMoney(observabilityMetrics["预估成本"])],
+  ];
+  const proofItems: Array<[string, string]> = [
+    ["提示词资产", formatNumber(assets.length)],
+    ["资产总数", formatNumber(trainingAssets["资产总数"] ?? assets.length)],
+    ["结构化用例", formatNumber(trainingAssets["结构化用例"] ?? cases.length)],
+    ["优化候选", `${pendingCandidates} 待确认 · ${publishedCandidates} 已发布 · ${rejectedCandidates} 已拒绝`],
+    ["真实 Agent 证据", hasAgentEvidence ? "已有 task/trace 运行记录" : "暂无真实 Agent 运行记录"],
+    ["最近运行", latestRun ? `${latestRun.run_kind} · ${latestRun.status}` : "暂无运行"],
+  ];
+
+  return (
+    <section className="mx-auto flex max-w-7xl flex-col gap-4" data-testid="training-demo-dashboard">
+      <div className="flex flex-col gap-2 border-b pb-3 md:flex-row md:items-end md:justify-between">
+        <div>
+          <h2 className="text-base font-semibold">团队生产演示看板</h2>
+          <p className="mt-1 text-xs text-muted-foreground">
+            汇总训练评估、真实 Agent、SOP 观测和验收证据，供团队复盘和领导演示使用。
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2 text-xs">
+          <Badge variant={runtimeReadiness.status === "就绪" ? "secondary" : "outline"}>真实 Agent：{readinessLabel}</Badge>
+          <Badge variant={maybeTruncated ? "outline" : "secondary"}>观测完整性：{completenessStatus}</Badge>
+          <Badge variant={hasOptimizationLoop ? "secondary" : "outline"}>优化闭环：{hasOptimizationLoop ? "已有证据" : "待补齐"}</Badge>
+        </div>
+      </div>
+
+      {maybeTruncated && (
+        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
+          {String(completeness?.["说明"] ?? "当前观测摘要可能达到采样上限；用于汇报前请缩小时间、项目、小队或 Agent 范围。")}
+        </div>
+      )}
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        <DemoMetricSection
+          title="训练评估闭环"
+          subtitle={trainingLoading ? "正在刷新训练评估摘要" : trainingSummary?.last_run_at ? `最近运行 ${trainingSummary.last_run_at}` : "暂无运行记录"}
+          items={trainingItems}
+        />
+        <DemoMetricSection
+          title="SOP 与任务观测"
+          subtitle={observabilityLoading ? "正在刷新观测摘要" : String(completeness?.["说明"] ?? "当前筛选条件下的 SOP 执行和任务观测未达到采样上限。")}
+          items={observabilityItems}
+        />
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_360px]">
+        <section className="rounded-md border border-border/70 bg-muted/10 p-3">
+          <div className="mb-3 flex items-center justify-between gap-2">
+            <div>
+              <h3 className="text-sm font-semibold">验收证据</h3>
+              <p className="mt-1 text-xs text-muted-foreground">这些数据来自后端摘要、运行记录、任务 trace 和结构化评测用例。</p>
+            </div>
+            <Badge variant="outline">证据链</Badge>
+          </div>
+          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
+            {proofItems.map(([label, value]) => (
+              <div key={label} className="min-w-0 rounded-md border bg-background px-3 py-2" data-testid={`training-demo-proof-${label}`}>
+                <div className="truncate text-[11px] text-muted-foreground">{label}</div>
+                <div className="mt-1 truncate text-sm font-semibold">{value}</div>
+              </div>
+            ))}
+          </div>
+        </section>
+
+        <section className="rounded-md border border-border/70 bg-muted/10 p-3">
+          <h3 className="text-sm font-semibold">演示状态</h3>
+          <div className="mt-3 grid gap-2 text-xs">
+            <DemoChecklistItem ok={runtimeReadiness.status === "就绪"} label="CodeBuddy runtime 可创建真实 Agent 任务" detail={runtimeReadiness.detail} />
+            <DemoChecklistItem ok={hasAgentEvidence} label="运行历史已有 task/trace 证据" detail={latestRun?.task_id ? `最近 task ${latestRun.task_id}` : "需要执行一次真实 Agent 评估"} />
+            <DemoChecklistItem ok={cases.length > 0} label="数据集/测试套件已有结构化用例" detail={`${cases.length} 条结构化用例`} />
+            <DemoChecklistItem ok={hasOptimizationLoop} label="失败用例可进入优化候选人工确认" detail={`${pendingCandidates} 待确认，${publishedCandidates} 已发布`} />
+            <DemoChecklistItem ok={!maybeTruncated} label="观测摘要可直接用于汇报" detail={String(completeness?.["说明"] ?? "当前摘要完整")} />
+          </div>
+        </section>
+      </div>
+
+      <div className="grid gap-3 lg:grid-cols-2">
+        <UsageList title="模型用量明细" rows={observabilitySummary?.model_breakdown ?? []} />
+        <UsageList title="runtime 用量明细" rows={observabilitySummary?.runtime_breakdown ?? []} />
+      </div>
+    </section>
+  );
+}
+
+function DemoMetricSection({ title, subtitle, items }: { title: string; subtitle: string; items: Array<[string, string]> }) {
+  return (
+    <section className="rounded-md border border-border/70 bg-muted/10 p-3">
+      <div className="mb-3">
+        <h3 className="text-sm font-semibold">{title}</h3>
+        <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+        {items.map(([label, value]) => (
+          <div key={label} className="min-w-0 rounded-md border bg-background px-3 py-2" data-testid={`training-demo-metric-${label}`}>
+            <div className="truncate text-[11px] text-muted-foreground">{label}</div>
+            <div className="mt-1 truncate text-sm font-semibold">{value}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function DemoChecklistItem({ ok, label, detail }: { ok: boolean; label: string; detail: string }) {
+  return (
+    <div className="rounded-md border bg-background px-3 py-2">
+      <div className="flex items-center justify-between gap-2">
+        <span className="font-medium text-foreground">{label}</span>
+        <Badge variant={ok ? "secondary" : "outline"}>{ok ? "已具备" : "待补齐"}</Badge>
+      </div>
+      <div className="mt-1 text-[11px] text-muted-foreground">{detail}</div>
+    </div>
+  );
+}
+
+function UsageList({ title, rows }: { title: string; rows: ObservabilitySummary["model_breakdown"] }) {
+  return (
+    <section className="rounded-md border border-border/70 bg-muted/10 p-3">
+      <h3 className="text-sm font-semibold">{title}</h3>
+      {rows.length === 0 ? (
+        <div className="mt-3 rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">暂无用量数据</div>
+      ) : (
+        <div className="mt-3 divide-y rounded-md border bg-background">
+          {rows.slice(0, 5).map((row) => {
+            const name = String(row["名称"] || row.model || row.runtime || "未记录");
+            const tokenTotal =
+              Number(row["输入 token"] ?? 0) +
+              Number(row["输出 token"] ?? 0) +
+              Number(row["缓存读 token"] ?? 0) +
+              Number(row["缓存写 token"] ?? 0);
+            return (
+              <div key={`${title}-${name}`} className="grid gap-1 px-3 py-2 text-xs md:grid-cols-[minmax(0,1fr)_auto]">
+                <div className="min-w-0">
+                  <div className="truncate font-medium text-foreground">{name}</div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">{row.provider || "未记录 provider"} · {row.runtime || row.model || "未记录 runtime/model"}</div>
+                </div>
+                <div className="text-muted-foreground md:text-right">
+                  <div>{tokenTotal.toLocaleString("zh-CN")} token</div>
+                  <div>{formatMoney(row["预估成本"])}{row["价格已知"] ? "" : " · 缺少价格"}</div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1950,6 +2184,16 @@ function formatMoney(value: unknown): string {
 function formatPercent(value: unknown): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "0%";
   return `${Math.round(value * 1000) / 10}%`;
+}
+
+function formatDuration(value: unknown): string {
+  const ms = typeof value === "number" ? value : Number(value ?? 0);
+  if (!Number.isFinite(ms) || ms <= 0) return "0 ms";
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${Math.round(seconds * 10) / 10} 秒`;
+  const minutes = seconds / 60;
+  return `${Math.round(minutes * 10) / 10} 分钟`;
 }
 
 function variablesToText(variables: PromptLibraryVariable[]): string {

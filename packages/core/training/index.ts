@@ -1,5 +1,10 @@
 export const TRAINING_WORKBENCH_VIEWS = [
   {
+    tab: "演示看板",
+    view: "demo-dashboard",
+    keywords: ["演示看板", "领导视角", "验收", "demo", "dashboard", "observability"],
+  },
+  {
     tab: "提示词库",
     view: "prompts",
     keywords: ["提示词库", "prompt", "library", "prompts"],

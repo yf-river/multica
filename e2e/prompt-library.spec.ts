@@ -280,6 +280,15 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("training-summary-输入token")).toContainText(/[1-9]/);
     await expect(page.getByTestId("training-summary-预估成本")).toContainText("$");
     await expect(page.getByTestId("training-summary-待确认优化候选")).toContainText(/\d/);
+    await page.getByRole("button", { name: "演示看板", exact: true }).click();
+    const demoDashboard = page.getByTestId("training-demo-dashboard");
+    await expect(demoDashboard).toContainText("团队生产演示看板", { timeout: 10000 });
+    await expect(demoDashboard).toContainText("训练评估闭环");
+    await expect(demoDashboard).toContainText("SOP 与任务观测");
+    await expect(demoDashboard.getByTestId("training-demo-metric-Agent运行数")).toContainText(/[1-9]/);
+    await expect(demoDashboard.getByTestId("training-demo-proof-真实 Agent 证据")).toContainText("已有 task/trace 运行记录");
+    await expect(demoDashboard.getByText("CodeBuddy runtime 可创建真实 Agent 任务")).toBeVisible();
+    await page.getByRole("button", { name: "运行历史", exact: true }).click();
     agentRunCard = page.getByTestId(`prompt-evaluation-run-${queuedAgentRun!.id}`);
     await expect(agentRunCard).toContainText("Agent执行 · 通过", { timeout: 10000 });
     await expect(agentRunCard).toContainText(new RegExp(`模型 ${escapeRegExp(expectedAgentModel)} · runtime codebuddy · 通过 1\\/1 · 输入 16 token · 输出 7 token`));
