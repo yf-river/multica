@@ -1432,6 +1432,28 @@ func TestPromptEvaluationOptimizationCandidatePublishKeepsSourcePrompt(t *testin
 		t.Fatalf("candidate content did not include optimization guardrails: %s", candidate.CandidateContent)
 	}
 
+	editedContent := candidate.CandidateContent + "\n\n【人工复核补充】发布前确认保留 trace/task id 和验收条件。"
+	updateW := httptest.NewRecorder()
+	testHandler.UpdatePromptEvaluationOptimizationCandidate(updateW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-optimization-candidates/"+candidate.ID, map[string]any{
+		"candidate_name":    candidate.CandidateName + " 人工复核版",
+		"candidate_content": editedContent,
+		"rationale":         candidate.Rationale + " 已由验收者补充生产发布要求。",
+		"edit_note":         "补充 trace 和验收条件发布门禁。",
+	}), "id", candidate.ID))
+	if updateW.Code != http.StatusOK {
+		t.Fatalf("update candidate status = %d, body = %s", updateW.Code, updateW.Body.String())
+	}
+	if err := json.Unmarshal(updateW.Body.Bytes(), &candidate); err != nil {
+		t.Fatalf("decode updated candidate: %v", err)
+	}
+	if candidate.CandidateContent != editedContent || !strings.Contains(candidate.CandidateName, "人工复核版") {
+		t.Fatalf("updated candidate = %+v", candidate)
+	}
+	manualEdit, ok := candidate.Metrics.(map[string]any)["人工编辑"].(map[string]any)
+	if !ok || manualEdit["编辑说明"] != "补充 trace 和验收条件发布门禁。" {
+		t.Fatalf("manual edit metrics = %#v", candidate.Metrics)
+	}
+
 	publishW := httptest.NewRecorder()
 	testHandler.PublishPromptEvaluationOptimizationCandidate(publishW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-optimization-candidates/"+candidate.ID+"/publish", nil), "id", candidate.ID))
 	if publishW.Code != http.StatusOK {
@@ -1446,6 +1468,17 @@ func TestPromptEvaluationOptimizationCandidatePublishKeepsSourcePrompt(t *testin
 	}
 	if published.Prompt.ID == promptID || published.Prompt.Version != 2 || published.Prompt.Content != candidate.CandidateContent {
 		t.Fatalf("published prompt = %+v", published.Prompt)
+	}
+	if !strings.Contains(published.Prompt.Content, "人工复核补充") {
+		t.Fatalf("published prompt did not use edited candidate content: %s", published.Prompt.Content)
+	}
+	updateAfterPublishW := httptest.NewRecorder()
+	testHandler.UpdatePromptEvaluationOptimizationCandidate(updateAfterPublishW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-optimization-candidates/"+candidate.ID, map[string]any{
+		"candidate_name":    "不应允许编辑",
+		"candidate_content": "发布后不能修改。",
+	}), "id", candidate.ID))
+	if updateAfterPublishW.Code != http.StatusConflict {
+		t.Fatalf("update after publish status = %d, body = %s", updateAfterPublishW.Code, updateAfterPublishW.Body.String())
 	}
 	var originalContent string
 	var originalVersion int

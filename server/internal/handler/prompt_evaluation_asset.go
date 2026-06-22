@@ -299,6 +299,13 @@ type PublishPromptEvaluationOptimizationCandidateResponse struct {
 	Prompt    PromptLibraryItemResponse                     `json:"prompt"`
 }
 
+type UpdatePromptEvaluationOptimizationCandidateRequest struct {
+	CandidateName    string `json:"candidate_name"`
+	CandidateContent string `json:"candidate_content"`
+	Rationale        string `json:"rationale"`
+	EditNote         string `json:"edit_note"`
+}
+
 type RejectPromptEvaluationOptimizationCandidateRequest struct {
 	Reason string `json:"reason"`
 }
@@ -1645,6 +1652,73 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 		Candidate: promptEvaluationOptimizationCandidateToResponse(updatedCandidate),
 		Prompt:    promptLibraryItemToResponse(publishedPrompt),
 	})
+}
+
+func (h *Handler) UpdatePromptEvaluationOptimizationCandidate(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	candidateID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation optimization candidate id")
+	if !ok {
+		return
+	}
+	var req UpdatePromptEvaluationOptimizationCandidateRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	name := strings.TrimSpace(req.CandidateName)
+	content := strings.TrimSpace(req.CandidateContent)
+	rationale := strings.TrimSpace(req.Rationale)
+	editNote := strings.TrimSpace(req.EditNote)
+	if name == "" {
+		writeError(w, http.StatusBadRequest, "candidate_name is required")
+		return
+	}
+	if content == "" {
+		writeError(w, http.StatusBadRequest, "candidate_content is required")
+		return
+	}
+	candidate, err := h.Queries.GetPromptEvaluationOptimizationCandidateInWorkspace(r.Context(), db.GetPromptEvaluationOptimizationCandidateInWorkspaceParams{
+		ID:          candidateID,
+		WorkspaceID: workspaceUUID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "prompt evaluation optimization candidate not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation optimization candidate")
+		return
+	}
+	if candidate.Status != "待确认" {
+		writeError(w, http.StatusConflict, "only 待确认 optimization candidates can be edited")
+		return
+	}
+	updatedCandidate, err := h.Queries.UpdatePromptEvaluationOptimizationCandidateDraft(r.Context(), db.UpdatePromptEvaluationOptimizationCandidateDraftParams{
+		ID:               candidateID,
+		WorkspaceID:      workspaceUUID,
+		CandidateName:    name,
+		CandidateContent: content,
+		Rationale:        pgtype.Text{String: rationale, Valid: true},
+		EditedBy:         parseUUID(userID),
+		EditNote:         editNote,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusConflict, "optimization candidate was already handled")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to update optimization candidate")
+		return
+	}
+	writeJSON(w, http.StatusOK, promptEvaluationOptimizationCandidateToResponse(updatedCandidate))
 }
 
 func (h *Handler) RejectPromptEvaluationOptimizationCandidate(w http.ResponseWriter, r *http.Request) {

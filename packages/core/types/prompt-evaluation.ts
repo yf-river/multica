@@ -206,6 +206,13 @@ export interface PromptEvaluationOptimizationCandidate {
   updated_at: string;
 }
 
+export interface UpdatePromptEvaluationOptimizationCandidateRequest {
+  candidate_name: string;
+  candidate_content: string;
+  rationale?: string;
+  edit_note?: string;
+}
+
 export interface PublishPromptEvaluationOptimizationCandidateResponse {
   candidate: PromptEvaluationOptimizationCandidate;
   prompt: PromptLibraryItem;

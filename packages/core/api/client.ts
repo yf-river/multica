@@ -131,6 +131,7 @@ import type {
   PromptEvaluationStructuredCase,
   PromptEvaluationAgentRunResponse,
   PromptEvaluationOptimizationCandidate,
+  UpdatePromptEvaluationOptimizationCandidateRequest,
   PublishPromptEvaluationOptimizationCandidateResponse,
   ListPromptEvaluationAssetsParams,
   ListPromptEvaluationRunsParams,
@@ -1938,6 +1939,16 @@ export class ApiClient {
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/optimization-candidates`, { method: "POST" });
     return parseWithFallback(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
       endpoint: "POST /api/prompt-evaluation-runs/:id/optimization-candidates",
+    }) as PromptEvaluationOptimizationCandidate;
+  }
+
+  async updatePromptEvaluationOptimizationCandidate(candidateId: string, data: UpdatePromptEvaluationOptimizationCandidateRequest): Promise<PromptEvaluationOptimizationCandidate> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
+      endpoint: "PUT /api/prompt-evaluation-optimization-candidates/:id",
     }) as PromptEvaluationOptimizationCandidate;
   }
 

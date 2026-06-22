@@ -24,6 +24,7 @@ import type {
   PromptLibraryStatus,
   PromptLibraryVariable,
   UpdatePromptEvaluationAssetRequest,
+  UpdatePromptEvaluationOptimizationCandidateRequest,
   UpdatePromptLibraryItemRequest,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
@@ -354,6 +355,16 @@ export function PromptLibraryPage() {
       invalidateSummary();
       setSelectedId(result.prompt.id);
       toast.success(`已发布新提示词版本：${result.prompt.name}`);
+    },
+  });
+
+  const updateCandidateMut = useMutation({
+    mutationFn: ({ candidateId, data }: { candidateId: string; data: UpdatePromptEvaluationOptimizationCandidateRequest }) =>
+      api.updatePromptEvaluationOptimizationCandidate(candidateId, data),
+    onSuccess: (candidate) => {
+      invalidateCandidates();
+      invalidateSummary();
+      toast.success(`优化候选已保存：${candidate.candidate_name}`);
     },
   });
 
@@ -740,6 +751,8 @@ export function PromptLibraryPage() {
               generatingCandidateRunId={createCandidateMut.isPending ? createCandidateMut.variables ?? null : null}
               onRunOptimizationAgent={(runId) => runOptimizationAgentMut.mutate(runId)}
               runningOptimizationAgentRunId={runOptimizationAgentMut.isPending ? runOptimizationAgentMut.variables ?? null : null}
+              onUpdateCandidate={(candidateId, data) => updateCandidateMut.mutate({ candidateId, data })}
+              updatingCandidateId={updateCandidateMut.isPending ? updateCandidateMut.variables?.candidateId ?? null : null}
               onPublishCandidate={(candidateId) => publishCandidateMut.mutate(candidateId)}
               publishingCandidateId={publishCandidateMut.isPending ? publishCandidateMut.variables ?? null : null}
               onRejectCandidate={(candidateId) => rejectCandidateMut.mutate(candidateId)}
@@ -827,6 +840,8 @@ function WorkbenchPanel({
   generatingCandidateRunId,
   onRunOptimizationAgent,
   runningOptimizationAgentRunId,
+  onUpdateCandidate,
+  updatingCandidateId,
   onPublishCandidate,
   publishingCandidateId,
   onRejectCandidate,
@@ -861,6 +876,8 @@ function WorkbenchPanel({
   generatingCandidateRunId: string | null;
   onRunOptimizationAgent: (runId: string) => void;
   runningOptimizationAgentRunId: string | null;
+  onUpdateCandidate: (candidateId: string, data: UpdatePromptEvaluationOptimizationCandidateRequest) => void;
+  updatingCandidateId: string | null;
   onPublishCandidate: (candidateId: string) => void;
   publishingCandidateId: string | null;
   onRejectCandidate: (candidateId: string) => void;
@@ -1027,6 +1044,8 @@ function WorkbenchPanel({
           {activeTab === "优化运行" && (
             <OptimizationCandidateList
               candidates={candidates}
+              onUpdateCandidate={onUpdateCandidate}
+              updatingCandidateId={updatingCandidateId}
               onPublishCandidate={onPublishCandidate}
               publishingCandidateId={publishingCandidateId}
               onRejectCandidate={onRejectCandidate}
@@ -1095,17 +1114,23 @@ function WorkbenchPanel({
 
 function OptimizationCandidateList({
   candidates,
+  onUpdateCandidate,
+  updatingCandidateId,
   onPublishCandidate,
   publishingCandidateId,
   onRejectCandidate,
   rejectingCandidateId,
 }: {
   candidates: PromptEvaluationOptimizationCandidate[];
+  onUpdateCandidate: (candidateId: string, data: UpdatePromptEvaluationOptimizationCandidateRequest) => void;
+  updatingCandidateId: string | null;
   onPublishCandidate: (candidateId: string) => void;
   publishingCandidateId: string | null;
   onRejectCandidate: (candidateId: string) => void;
   rejectingCandidateId: string | null;
 }) {
+  const [editingCandidateId, setEditingCandidateId] = useState<string | null>(null);
+  const [drafts, setDrafts] = useState<Record<string, UpdatePromptEvaluationOptimizationCandidateRequest>>({});
   if (candidates.length === 0) {
     return (
       <div className="rounded-md border border-dashed px-3 py-5 text-center text-sm text-muted-foreground">
@@ -1115,43 +1140,118 @@ function OptimizationCandidateList({
   }
   return (
     <div className="divide-y rounded-md border">
-      {candidates.map((candidate) => (
-        <div key={candidate.id} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2">
-              <span className="truncate text-sm font-medium">{candidate.candidate_name}</span>
-              <Badge variant={candidate.status === "待确认" ? "secondary" : "outline"} className="shrink-0">
-                {candidate.status} · 失败 {candidate.failed_case_count}
-              </Badge>
+      {candidates.map((candidate) => {
+        const editing = editingCandidateId === candidate.id;
+        const draft = drafts[candidate.id] ?? candidateToDraft(candidate);
+        const canHandle = candidate.status === "待确认";
+        const hasManualEdit = Boolean((candidate.metrics as Record<string, unknown>)["人工编辑"]);
+        return (
+          <div key={candidate.id} data-testid={`prompt-evaluation-candidate-${candidate.id}`} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
+            <div className="min-w-0">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="truncate text-sm font-medium">{candidate.candidate_name}</span>
+                <Badge variant={canHandle ? "secondary" : "outline"} className="shrink-0">
+                  {candidate.status} · 失败 {candidate.failed_case_count}
+                </Badge>
+                {hasManualEdit && <Badge variant="outline" className="shrink-0">已人工编辑</Badge>}
+              </div>
+              <div className="mt-1 text-xs text-muted-foreground">{candidate.rationale || "基于失败用例生成，等待人工确认。"}</div>
+              <div className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap rounded-sm border bg-muted/30 px-2 py-1.5 text-[11px] text-foreground">
+                {candidate.candidate_content}
+              </div>
+              <div className="mt-1 break-all text-[11px] text-muted-foreground">
+                run {candidate.run_id}{candidate.published_prompt_id ? ` · 已发布 ${candidate.published_prompt_id}` : ""}
+              </div>
+              {editing && (
+                <div className="mt-3 grid gap-2 rounded-sm border border-border/70 bg-background px-2 py-2">
+                  <label className="grid gap-1 text-xs">
+                    <span className="text-muted-foreground">候选名称</span>
+                    <Input
+                      value={draft.candidate_name}
+                      onChange={(event) => setDrafts((prev) => ({ ...prev, [candidate.id]: { ...draft, candidate_name: event.target.value } }))}
+                    />
+                  </label>
+                  <label className="grid gap-1 text-xs">
+                    <span className="text-muted-foreground">候选提示词正文</span>
+                    <Textarea
+                      value={draft.candidate_content}
+                      onChange={(event) => setDrafts((prev) => ({ ...prev, [candidate.id]: { ...draft, candidate_content: event.target.value } }))}
+                      className="min-h-36 font-mono text-xs"
+                    />
+                  </label>
+                  <label className="grid gap-1 text-xs">
+                    <span className="text-muted-foreground">优化依据</span>
+                    <Textarea
+                      value={draft.rationale ?? ""}
+                      onChange={(event) => setDrafts((prev) => ({ ...prev, [candidate.id]: { ...draft, rationale: event.target.value } }))}
+                      className="min-h-16 text-xs"
+                    />
+                  </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      size="sm"
+                      onClick={() => {
+                        onUpdateCandidate(candidate.id, {
+                          ...draft,
+                          edit_note: "人工复核后调整候选名称、正文或优化依据。",
+                        });
+                      }}
+                      disabled={updatingCandidateId === candidate.id}
+                    >
+                      {updatingCandidateId === candidate.id ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+                      保存候选
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setEditingCandidateId(null)}>
+                      取消编辑
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
-            <div className="mt-1 text-xs text-muted-foreground">{candidate.rationale || "基于失败用例生成，等待人工确认。"}</div>
-            <div className="mt-1 break-all text-[11px] text-muted-foreground">
-              run {candidate.run_id}{candidate.published_prompt_id ? ` · 已发布 ${candidate.published_prompt_id}` : ""}
+            <div className="flex flex-wrap items-center gap-2 md:justify-end">
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => {
+                  setDrafts((prev) => ({ ...prev, [candidate.id]: candidateToDraft(candidate) }));
+                  setEditingCandidateId(editing ? null : candidate.id);
+                }}
+                disabled={!canHandle}
+              >
+                <BookOpenText className="size-3.5" />
+                {editing ? "收起编辑" : "编辑候选"}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                onClick={() => onRejectCandidate(candidate.id)}
+                disabled={!canHandle || rejectingCandidateId === candidate.id}
+              >
+                {rejectingCandidateId === candidate.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                暂不采纳
+              </Button>
+              <Button
+                size="sm"
+                onClick={() => onPublishCandidate(candidate.id)}
+                disabled={!canHandle || publishingCandidateId === candidate.id}
+              >
+                {publishingCandidateId === candidate.id ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+                发布新版本
+              </Button>
             </div>
           </div>
-          <div className="flex items-center gap-2">
-            <Button
-              size="sm"
-              variant="outline"
-              onClick={() => onRejectCandidate(candidate.id)}
-              disabled={candidate.status !== "待确认" || rejectingCandidateId === candidate.id}
-            >
-              {rejectingCandidateId === candidate.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-              暂不采纳
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => onPublishCandidate(candidate.id)}
-              disabled={candidate.status !== "待确认" || publishingCandidateId === candidate.id}
-            >
-              {publishingCandidateId === candidate.id ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-              发布新版本
-            </Button>
-          </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
+}
+
+function candidateToDraft(candidate: PromptEvaluationOptimizationCandidate): UpdatePromptEvaluationOptimizationCandidateRequest {
+  return {
+    candidate_name: candidate.candidate_name,
+    candidate_content: candidate.candidate_content,
+    rationale: candidate.rationale,
+  };
 }
 
 function RunEvidencePanel({

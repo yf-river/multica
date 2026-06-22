@@ -295,3 +295,65 @@ func (q *Queries) RejectPromptEvaluationOptimizationCandidate(ctx context.Contex
 	)
 	return i, err
 }
+
+const updatePromptEvaluationOptimizationCandidateDraft = `-- name: UpdatePromptEvaluationOptimizationCandidateDraft :one
+UPDATE prompt_evaluation_optimization_candidate SET
+    candidate_name = $3,
+    candidate_content = $4,
+    rationale = COALESCE($5, ''),
+    metrics = COALESCE(metrics, '{}'::jsonb) || jsonb_build_object(
+      '人工编辑',
+      jsonb_build_object(
+        '编辑人', COALESCE($6::uuid::text, ''),
+        '编辑时间', now(),
+        '编辑说明', COALESCE($7, '')
+      )
+    ),
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2 AND status = '待确认'
+RETURNING id, workspace_id, asset_id, run_id, prompt_id, candidate_name, candidate_content, rationale, failed_case_count, source_failure_summary, source_prompt_snapshot, metrics, status, published_prompt_id, published_at, created_by, created_at, updated_at
+`
+
+type UpdatePromptEvaluationOptimizationCandidateDraftParams struct {
+	ID               pgtype.UUID `json:"id"`
+	WorkspaceID      pgtype.UUID `json:"workspace_id"`
+	CandidateName    string      `json:"candidate_name"`
+	CandidateContent string      `json:"candidate_content"`
+	Rationale        pgtype.Text `json:"rationale"`
+	EditedBy         pgtype.UUID `json:"edited_by"`
+	EditNote         interface{} `json:"edit_note"`
+}
+
+func (q *Queries) UpdatePromptEvaluationOptimizationCandidateDraft(ctx context.Context, arg UpdatePromptEvaluationOptimizationCandidateDraftParams) (PromptEvaluationOptimizationCandidate, error) {
+	row := q.db.QueryRow(ctx, updatePromptEvaluationOptimizationCandidateDraft,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.CandidateName,
+		arg.CandidateContent,
+		arg.Rationale,
+		arg.EditedBy,
+		arg.EditNote,
+	)
+	var i PromptEvaluationOptimizationCandidate
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AssetID,
+		&i.RunID,
+		&i.PromptID,
+		&i.CandidateName,
+		&i.CandidateContent,
+		&i.Rationale,
+		&i.FailedCaseCount,
+		&i.SourceFailureSummary,
+		&i.SourcePromptSnapshot,
+		&i.Metrics,
+		&i.Status,
+		&i.PublishedPromptID,
+		&i.PublishedAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

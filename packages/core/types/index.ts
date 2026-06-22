@@ -127,6 +127,7 @@ export type {
   PromptEvaluationAgentRunResponse,
   PromptEvaluationOptimizationCandidate,
   PromptEvaluationOptimizationCandidateStatus,
+  UpdatePromptEvaluationOptimizationCandidateRequest,
   PublishPromptEvaluationOptimizationCandidateResponse,
   PromptEvaluationAssetType,
   PromptEvaluationAssetStatus,

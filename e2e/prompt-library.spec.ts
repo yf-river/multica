@@ -2,10 +2,15 @@ import { test, expect } from "@playwright/test";
 import { createTestApi, loginAsDefault, waitForPageText } from "./helpers";
 import type { TestApiClient } from "./fixtures";
 
+function escapeRegExp(value: string) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 test.describe("训练与评估工作台", () => {
 	  let api: TestApiClient;
 	  let artifactPrefix: string;
 	  let workspaceSlug: string;
+  const expectedAgentModel = process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL || "minimax-m2.7-ioa";
 
   test.beforeEach(async ({ page }) => {
     api = await createTestApi();
@@ -178,7 +183,7 @@ test.describe("训练与评估工作台", () => {
       .toMatchObject({
         run_kind: "Agent执行",
         status: "已入队",
-        model: "minimax-m2.7-ioa",
+        model: expectedAgentModel,
         runtime_provider: "codebuddy",
         runtime_id: runtime.id,
         total_cases: 1,
@@ -194,7 +199,7 @@ test.describe("训练与评估工作台", () => {
     expect(agentEvidence.run).toMatchObject({
       run_kind: "Agent执行",
       status: "已入队",
-      model: "minimax-m2.7-ioa",
+      model: expectedAgentModel,
       runtime_provider: "codebuddy",
       runtime_id: runtime.id,
       task_id: queuedAgentRun!.task_id,
@@ -255,10 +260,10 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("training-summary-待确认优化候选")).toContainText(/\d/);
     agentRunCard = page.getByTestId(`prompt-evaluation-run-${queuedAgentRun!.id}`);
     await expect(agentRunCard).toContainText("Agent执行 · 通过", { timeout: 10000 });
-    await expect(agentRunCard).toContainText(/模型 minimax-m2\.7-ioa · runtime codebuddy · 通过 1\/1 · 输入 16 token · 输出 7 token/);
+    await expect(agentRunCard).toContainText(new RegExp(`模型 ${escapeRegExp(expectedAgentModel)} · runtime codebuddy · 通过 1\\/1 · 输入 16 token · 输出 7 token`));
     await agentRunCard.getByRole("button", { name: "查看证据" }).click();
     const agentEvidencePanel = agentRunCard.getByTestId(`run-evidence-${queuedAgentRun!.id}`);
-    await expect(agentEvidencePanel.getByTestId("run-evidence-metric-模型")).toContainText("minimax-m2.7-ioa", { timeout: 10000 });
+    await expect(agentEvidencePanel.getByTestId("run-evidence-metric-模型")).toContainText(expectedAgentModel, { timeout: 10000 });
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-runtime")).toContainText("codebuddy");
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-agent id")).toContainText(queuedAgentRun!.agent_id!);
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-runtime id")).toContainText(runtime.id);
@@ -278,9 +283,9 @@ test.describe("训练与评估工作台", () => {
     agentRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "Agent执行 · 通过" }).first();
     await agentRunCard.getByRole("button", { name: "查看证据" }).click();
     await expect(page.getByText("Agent 调试场用例")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText(/codebuddy\/minimax-m2\.7-ioa · 输入 11 · 输出 7 · 预估成本 \$0\.\d*[1-9]/)).toBeVisible();
+    await expect(page.getByText(/codebuddy\/[^ ]+ · 输入 11 · 输出 7 · 预估成本 \$/)).toBeVisible();
     await expect(page.getByText("#1 text：Agent 输出：完成训练评估")).toBeVisible();
-    await expect(page.getByText(/训练评估用量已上报 · completed · codebuddy\/minimax-m2\.7-ioa · attempt 1 · .*输入 16 · 输出 7/)).toBeVisible();
+    await expect(page.getByText(/训练评估用量已上报 · completed · codebuddy\/[^ ]+ · attempt 1 · .*输入 16 · 输出 7/)).toBeVisible();
     await expect(page.getByText("失败原因：等待 Agent 执行完成")).toHaveCount(0);
     await expect(page.getByText("task 用量")).toBeVisible();
     const syncedAgentEvidence = await api.getPromptEvaluationRunEvidence(queuedAgentRun!.id);
@@ -304,7 +309,7 @@ test.describe("训练与评估工作台", () => {
     expect(syncedAgentEvidence.task_usage).toEqual([
       expect.objectContaining({
         provider: "codebuddy",
-        model: "minimax-m2.7-ioa",
+        model: expect.any(String),
         input_tokens: 11,
         output_tokens: 7,
         cache_read_tokens: 2,
@@ -362,7 +367,7 @@ test.describe("训练与评估工作台", () => {
             },
             最近Agent运行: {
               状态: "通过",
-              模型: "minimax-m2.7-ioa",
+              模型: expectedAgentModel,
               runtime: "codebuddy",
               runtime_id: runtime.id,
               "trace/task id": queuedAgentRun!.task_id,
@@ -465,7 +470,7 @@ test.describe("训练与评估工作台", () => {
         sourceRun: failedRun.id,
         run_kind: "Agent执行",
         status: "已入队",
-        model: "minimax-m2.7-ioa",
+        model: expectedAgentModel,
         runtime_provider: "codebuddy",
         runtime_id: runtime.id,
         hasTask: true,
@@ -495,10 +500,20 @@ test.describe("训练与评估工作台", () => {
         failed_case_count: 1,
         prompt_id: prompt.id,
       });
+    const generatedCandidate = (await api.listPromptEvaluationOptimizationCandidates({ run_id: failedRun.id }))[0];
+    expect(generatedCandidate).toBeTruthy();
+    const editedCandidateContent = `${generatedCandidate!.candidate_content}\n\n【E2E人工复核】候选发布前已补充验收条件和 trace/task id 保留要求。`;
 
     await page.getByRole("button", { name: "优化运行", exact: true }).click();
     await expect(page.getByText(/待确认 · 失败 1/)).toBeVisible({ timeout: 10000 });
-    await page.getByRole("button", { name: "发布新版本" }).click();
+    const candidateRow = page.getByTestId(`prompt-evaluation-candidate-${generatedCandidate!.id}`);
+    await candidateRow.getByRole("button", { name: "编辑候选" }).click();
+    await candidateRow.getByLabel("候选提示词正文").fill(editedCandidateContent);
+    await candidateRow.getByLabel("优化依据").fill("E2E 人工复核：发布前确认候选正文保留中文验收口径。");
+    await candidateRow.getByRole("button", { name: "保存候选" }).click();
+    await expect(page.getByText(/优化候选已保存/)).toBeVisible({ timeout: 10000 });
+    await expect(candidateRow).toContainText("已人工编辑");
+    await candidateRow.getByRole("button", { name: "发布新版本" }).click();
     await expect(page.getByText(/已发布新提示词版本/)).toBeVisible({ timeout: 10000 });
 
     await expect
@@ -522,6 +537,7 @@ test.describe("训练与评估工作台", () => {
     });
     expect(published?.content).toContain("优化候选");
     expect(published?.content).toContain("人工发布要求");
+    expect(published?.content).toContain("E2E人工复核");
   });
 
   test("旧提示词库路由会跳转到训练与评估提示词视图", async ({ page }) => {

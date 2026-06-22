@@ -796,6 +796,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Route("/api/prompt-evaluation-optimization-candidates", func(r chi.Router) {
 				r.Get("/", h.ListPromptEvaluationOptimizationCandidates)
 				r.Route("/{id}", func(r chi.Router) {
+					r.Put("/", h.UpdatePromptEvaluationOptimizationCandidate)
 					r.Post("/publish", h.PublishPromptEvaluationOptimizationCandidate)
 					r.Post("/reject", h.RejectPromptEvaluationOptimizationCandidate)
 				})
