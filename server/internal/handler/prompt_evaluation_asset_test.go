@@ -829,6 +829,109 @@ func TestRunPromptEvaluationOptimizationAgentQueuesRealTask(t *testing.T) {
 	if caseCount == 0 {
 		t.Fatalf("expected optimization asset to sync structured cases")
 	}
+
+	markPromptEvaluationTaskRunning(t, optResp.TaskID)
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, updated_at)
+		VALUES ($1, 'codebuddy', 'minimax-m2.7-ioa', 21, 13, 1, 2, now())
+	`, optResp.TaskID); err != nil {
+		t.Fatalf("insert optimization task usage: %v", err)
+	}
+	optimizationOutput := `Agent 优化输出：
+` + "```json" + `
+{
+  "用例结果":[{"case_index":0,"status":"通过","output":"已生成候选提示词正文","failure_reason":"无","evidence":{"命中":["优化候选","验收条件","trace/task id"]}}],
+  "评估结论":"Agent 已生成可人工确认的优化候选",
+  "优化候选名称":"Agent 自动优化候选",
+  "候选提示词正文":"请澄清 {{issue_title}}，输出必须使用中文，并明确验收条件、trace/task id、失败原因和下一步人工确认点。",
+  "逐条修改依据":"补充验收条件、trace/task id 和失败原因，保证领导演示可复盘。",
+  "可能影响的通过用例":"需要回归原有中文澄清用例。",
+  "人工验收清单":["确认中文输出","确认包含 trace/task id","确认原提示词未被自动替换"]
+}
+` + "```"
+	if _, err := testHandler.Queries.CreateTaskMessage(context.Background(), db.CreateTaskMessageParams{
+		TaskID:  parseUUID(optResp.TaskID),
+		Seq:     1,
+		Type:    "text",
+		Content: pgtype.Text{String: optimizationOutput, Valid: true},
+	}); err != nil {
+		t.Fatalf("insert optimization task message: %v", err)
+	}
+	if _, err := testHandler.Queries.CreateTaskTraceEvent(context.Background(), db.CreateTaskTraceEventParams{
+		WorkspaceID:   parseUUID(testWorkspaceID),
+		TaskID:        parseUUID(optResp.TaskID),
+		AgentID:       parseUUID(optResp.AgentID),
+		RuntimeID:     parseUUID(optResp.RuntimeID),
+		ChatSessionID: parseUUID(optResp.ChatSessionID),
+		Source:        "prompt_evaluation",
+		EventType:     "llm.usage_reported",
+		EventName:     "Agent 优化候选已生成",
+		Status:        "completed",
+		Attempt:       1,
+		Provider:      "codebuddy",
+		Model:         "minimax-m2.7-ioa",
+		InputTokens:   21,
+		OutputTokens:  13,
+		FailureReason: "无",
+		ErrorType:     "",
+		Metadata:      []byte(`{"阶段":"Agent 优化运行"}`),
+	}); err != nil {
+		t.Fatalf("insert optimization task trace event: %v", err)
+	}
+
+	completeW := httptest.NewRecorder()
+	completeReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+optResp.TaskID+"/complete", map[string]any{
+		"output":     optimizationOutput,
+		"session_id": "prompt-eval-optimization-session",
+		"work_dir":   "/tmp/prompt-eval",
+	}, testWorkspaceID, "prompt-eval-codebuddy-daemon")
+	testHandler.CompleteTask(completeW, withURLParam(completeReq, "taskId", optResp.TaskID))
+	if completeW.Code != http.StatusOK {
+		t.Fatalf("complete optimization status = %d, body = %s", completeW.Code, completeW.Body.String())
+	}
+
+	syncW := httptest.NewRecorder()
+	testHandler.SyncPromptEvaluationRunFromTask(syncW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+optResp.Run.ID+"/sync", nil), "id", optResp.Run.ID))
+	if syncW.Code != http.StatusOK {
+		t.Fatalf("sync optimization status = %d, body = %s", syncW.Code, syncW.Body.String())
+	}
+	candidates, err := testHandler.Queries.ListPromptEvaluationOptimizationCandidates(context.Background(), db.ListPromptEvaluationOptimizationCandidatesParams{
+		WorkspaceID: parseUUID(testWorkspaceID),
+		RunID:       parseUUID(sourceResp.Run.ID),
+		PromptID:    parseUUID(*sourceResp.Run.PromptID),
+		Limit:       10,
+	})
+	if err != nil {
+		t.Fatalf("list optimization candidates: %v", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("expected one auto candidate, got %d", len(candidates))
+	}
+	candidate := promptEvaluationOptimizationCandidateToResponse(candidates[0])
+	if candidate.Status != "待确认" || candidate.FailedCaseCount != 1 || !strings.Contains(candidate.CandidateContent, "请澄清 {{issue_title}}") {
+		t.Fatalf("auto optimization candidate = %+v", candidate)
+	}
+	sourceSummary := candidate.SourceFailureSummary.(map[string]any)
+	if sourceSummary["来源Agent优化运行"] != optResp.Run.ID || sourceSummary["来源Agent优化资产"] != optResp.Asset.ID {
+		t.Fatalf("auto optimization source summary = %#v", sourceSummary)
+	}
+	syncAgainW := httptest.NewRecorder()
+	testHandler.SyncPromptEvaluationRunFromTask(syncAgainW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+optResp.Run.ID+"/sync", nil), "id", optResp.Run.ID))
+	if syncAgainW.Code != http.StatusOK {
+		t.Fatalf("sync optimization again status = %d, body = %s", syncAgainW.Code, syncAgainW.Body.String())
+	}
+	candidates, err = testHandler.Queries.ListPromptEvaluationOptimizationCandidates(context.Background(), db.ListPromptEvaluationOptimizationCandidatesParams{
+		WorkspaceID: parseUUID(testWorkspaceID),
+		RunID:       parseUUID(sourceResp.Run.ID),
+		PromptID:    parseUUID(*sourceResp.Run.PromptID),
+		Limit:       10,
+	})
+	if err != nil {
+		t.Fatalf("list optimization candidates after duplicate sync: %v", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("expected duplicate sync to keep one candidate, got %d", len(candidates))
+	}
 }
 
 func TestRunPromptEvaluationAssetAgentAutoSyncsCancelledTask(t *testing.T) {

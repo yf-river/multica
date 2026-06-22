@@ -436,6 +436,7 @@ test.describe("训练与评估工作台", () => {
     expect((await optimizationAgentResponse).status()).toBe(202);
     await expect(page.getByText(/真实 Agent 优化任务已入队/)).toBeVisible({ timeout: 10000 });
 
+    let optimizationAgentRun = null as Awaited<ReturnType<typeof api.listPromptEvaluationRuns>>[number] | null;
     await expect
       .poll(async () => {
         const assets = await api.listPromptEvaluationAssets({ prompt_id: prompt.id, asset_type: "优化运行" });
@@ -443,6 +444,7 @@ test.describe("训练与评估工作台", () => {
         if (!agentAsset) return null;
         const runs = await api.listPromptEvaluationRuns({ asset_id: agentAsset.id });
         const agentRun = runs.find((run) => run.run_kind === "Agent执行") ?? null;
+        optimizationAgentRun = agentRun;
         return agentRun
           ? {
               asset_type: agentAsset.asset_type,
@@ -469,8 +471,30 @@ test.describe("训练与评估工作台", () => {
         hasTask: true,
       });
 
-    await failedRunRow.getByRole("button", { name: "生成优化候选" }).click();
-    await expect(page.getByText("优化候选已生成，等待人工确认")).toBeVisible({ timeout: 10000 });
+    if (!optimizationAgentRun) {
+      throw new Error("E2E 未找到 Agent 优化运行记录");
+    }
+    await api.completePromptEvaluationOptimizationAgentTask(optimizationAgentRun);
+    await page.goto(`/${workspaceSlug}/training?view=run-history`, { waitUntil: "domcontentloaded" });
+    const optimizationRunRow = page.getByTestId(`prompt-evaluation-run-${optimizationAgentRun.id}`);
+    await optimizationRunRow.scrollIntoViewIfNeeded();
+    const optimizationSyncResponse = page.waitForResponse(
+      (response) => response.request().method() === "POST" && response.url().includes(`/prompt-evaluation-runs/${optimizationAgentRun!.id}/sync`),
+      { timeout: 10000 },
+    );
+    await optimizationRunRow.getByRole("button", { name: "同步任务" }).click();
+    expect((await optimizationSyncResponse).status()).toBe(200);
+    await expect(page.getByText("运行记录已同步")).toBeVisible({ timeout: 10000 });
+    await expect
+      .poll(async () => {
+        const candidates = await api.listPromptEvaluationOptimizationCandidates({ run_id: failedRun.id });
+        return candidates[0] ?? null;
+      }, { timeout: 15000 })
+      .toMatchObject({
+        status: "待确认",
+        failed_case_count: 1,
+        prompt_id: prompt.id,
+      });
 
     await page.getByRole("button", { name: "优化运行", exact: true }).click();
     await expect(page.getByText(/待确认 · 失败 1/)).toBeVisible({ timeout: 10000 });

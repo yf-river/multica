@@ -797,6 +797,113 @@ export class TestApiClient {
     }
   }
 
+  async completePromptEvaluationOptimizationAgentTask(run: PromptEvaluationRun) {
+    if (!this.workspaceId) {
+      throw new Error("Cannot complete E2E optimization agent task before workspace is selected");
+    }
+    if (!run.task_id || !run.agent_id || !run.runtime_id || !run.chat_session_id) {
+      throw new Error(`Prompt evaluation optimization run is not linked to a complete agent task graph: ${run.id}`);
+    }
+
+    const client = new pg.Client(DATABASE_URL);
+    await client.connect();
+    try {
+      const structuredOutput = [
+        "Agent 优化输出：已基于失败用例生成待人工确认的优化候选。",
+        "```json",
+        JSON.stringify({
+          用例结果: [
+            {
+              case_index: 0,
+              status: "通过",
+              output: "已生成优化候选提示词正文。",
+              failure_reason: "无",
+              evidence: {
+                命中: ["优化候选", "验收条件", "trace/task id"],
+                trace_task_id: run.task_id,
+              },
+            },
+          ],
+          评估结论: "Agent 已生成可人工确认的优化候选",
+          优化候选名称: "Agent 自动优化候选",
+          候选提示词正文:
+            "请澄清 {{issue_title}}，输出必须使用中文；必须给出优化候选、验收条件、trace/task id、失败原因和下一步人工确认点。",
+          逐条修改依据: "补充验收条件、trace/task id、失败原因和人工确认点，保证领导演示可以复盘。",
+          可能影响的通过用例: "需要回归原有中文澄清用例，确认没有降低通过质量。",
+          人工验收清单: ["确认中文输出", "确认包含 trace/task id", "确认原提示词未被自动替换"],
+        }),
+        "```",
+      ].join("\n");
+      await client.query("BEGIN");
+      await client.query(
+        `
+          UPDATE agent_task_queue
+          SET
+            status = 'completed',
+            started_at = COALESCE(started_at, now() - interval '2 seconds'),
+            completed_at = now(),
+            result = $2::jsonb,
+            error = NULL,
+            session_id = COALESCE(session_id, 'e2e-prompt-eval-optimization-session'),
+            work_dir = COALESCE(work_dir, '/tmp/e2e-prompt-eval')
+          WHERE id = $1
+        `,
+        [run.task_id, JSON.stringify({ status: "completed", output: structuredOutput })],
+      );
+      await client.query(
+        `
+          INSERT INTO task_usage (
+            task_id, provider, model, input_tokens, output_tokens,
+            cache_read_tokens, cache_write_tokens, updated_at
+          )
+          VALUES ($1, 'codebuddy', 'minimax-m2.7-ioa', 21, 13, 1, 2, now())
+          ON CONFLICT (task_id, provider, model)
+          DO UPDATE SET
+            input_tokens = EXCLUDED.input_tokens,
+            output_tokens = EXCLUDED.output_tokens,
+            cache_read_tokens = EXCLUDED.cache_read_tokens,
+            cache_write_tokens = EXCLUDED.cache_write_tokens,
+            updated_at = now()
+        `,
+        [run.task_id],
+      );
+      await client.query(`DELETE FROM task_message WHERE task_id = $1`, [run.task_id]);
+      await client.query(
+        `
+          INSERT INTO task_message (task_id, seq, type, tool, content, input, output)
+          VALUES
+            ($1, 1, 'text', NULL, $2, '{}'::jsonb, NULL),
+            ($1, 2, 'tool_result', 'Agent 优化同步', '已生成候选正文、依据和人工验收清单', '{}'::jsonb, '通过')
+        `,
+        [run.task_id, structuredOutput],
+      );
+      await client.query(`DELETE FROM task_trace_event WHERE task_id = $1`, [run.task_id]);
+      await client.query(
+        `
+          INSERT INTO task_trace_event (
+            workspace_id, task_id, agent_id, runtime_id, source, event_type,
+            event_name, status, attempt, duration_ms, run_ms, total_ms,
+            provider, model, input_tokens, output_tokens, cache_read_tokens,
+            cache_write_tokens, failure_reason, error_type, chat_session_id, metadata
+          )
+          VALUES (
+            $1, $2, $3, $4, 'prompt_evaluation', 'llm.usage_reported',
+            'Agent 优化候选已生成', 'completed', 1, 2400, 2100, 2500,
+            'codebuddy', 'minimax-m2.7-ioa', 21, 13, 1,
+            2, '无', '', $5, '{"阶段":"Agent 优化运行","验收":"E2E"}'::jsonb
+          )
+        `,
+        [this.workspaceId, run.task_id, run.agent_id, run.runtime_id, run.chat_session_id],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      await client.end();
+    }
+  }
+
   async runPromptEvaluationAsset(id: string): Promise<PromptEvaluationAsset> {
     const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/run`, { method: "POST" });
     if (!res.ok) {

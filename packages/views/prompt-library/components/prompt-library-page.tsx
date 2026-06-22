@@ -317,6 +317,7 @@ export function PromptLibraryPage() {
     mutationFn: (runId: string) => api.syncPromptEvaluationRun(runId),
     onSuccess: (_run, runId) => {
       invalidateRuns();
+      invalidateCandidates();
       queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", runId) });
       invalidateSummary();
       toast.success("运行记录已同步");

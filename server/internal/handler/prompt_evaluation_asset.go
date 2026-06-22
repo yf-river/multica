@@ -17,6 +17,7 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/service"
+	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -1447,6 +1448,104 @@ func (h *Handler) promptEvaluationCandidateRuntimeEvidence(ctx context.Context, 
 	}, nil
 }
 
+func (h *Handler) maybeCreatePromptEvaluationCandidateFromOptimizationAgentRun(ctx context.Context, agentRun db.PromptEvaluationRun, createdBy pgtype.UUID) (*db.PromptEvaluationOptimizationCandidate, error) {
+	if agentRun.RunKind != "Agent执行" || agentRun.Status == "已入队" || agentRun.Status == "运行中" {
+		return nil, nil
+	}
+	asset, err := h.Queries.GetPromptEvaluationAssetInWorkspace(ctx, db.GetPromptEvaluationAssetInWorkspaceParams{
+		ID:          agentRun.AssetID,
+		WorkspaceID: agentRun.WorkspaceID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	payload := decodePayloadObject(asset.Payload)
+	if stringFromAny(payload["任务类型"]) != "Agent 优化运行" {
+		return nil, nil
+	}
+	sourceRunID := strings.TrimSpace(stringFromAny(payload["来源运行"]))
+	if sourceRunID == "" {
+		return nil, nil
+	}
+	sourceRunUUID, err := util.ParseUUID(sourceRunID)
+	if err != nil {
+		return nil, nil
+	}
+	sourceRun, err := h.Queries.GetPromptEvaluationRunInWorkspace(ctx, db.GetPromptEvaluationRunInWorkspaceParams{
+		ID:          sourceRunUUID,
+		WorkspaceID: agentRun.WorkspaceID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	if !sourceRun.PromptID.Valid {
+		return nil, nil
+	}
+	existing, err := h.Queries.ListPromptEvaluationOptimizationCandidates(ctx, db.ListPromptEvaluationOptimizationCandidatesParams{
+		WorkspaceID: agentRun.WorkspaceID,
+		RunID:       sourceRun.ID,
+		PromptID:    sourceRun.PromptID,
+		Limit:       100,
+	})
+	if err != nil {
+		return nil, err
+	}
+	for _, item := range existing {
+		summary := decodeJSONDefault(item.SourceFailureSummary, map[string]any{})
+		if summaryMap, ok := summary.(map[string]any); ok && stringFromAny(summaryMap["来源Agent优化运行"]) == uuidToString(agentRun.ID) {
+			return &item, nil
+		}
+	}
+	prompt, err := h.Queries.GetPromptLibraryItemInWorkspace(ctx, db.GetPromptLibraryItemInWorkspaceParams{
+		ID:          sourceRun.PromptID,
+		WorkspaceID: agentRun.WorkspaceID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	trials, err := h.Queries.ListPromptEvaluationTrialsByRun(ctx, db.ListPromptEvaluationTrialsByRunParams{
+		RunID:       sourceRun.ID,
+		WorkspaceID: agentRun.WorkspaceID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	sourceSummary := buildPromptEvaluationCandidateFailureSummary(sourceRun, trials)
+	runtimeEvidence, err := h.promptEvaluationCandidateRuntimeEvidence(ctx, agentRun)
+	if err != nil {
+		return nil, err
+	}
+	if runtimeEvidence != nil {
+		sourceSummary["真实Agent优化运行证据"] = runtimeEvidence
+	}
+	sourceSummary["来源Agent优化运行"] = uuidToString(agentRun.ID)
+	sourceSummary["来源Agent优化资产"] = uuidToString(agentRun.AssetID)
+	sourceSummary["生成说明"] = "由 Agent 优化运行输出自动生成优化候选；候选不会自动替换生产提示词，必须人工确认后发布。"
+	candidateContent, rationale := buildPromptEvaluationAgentOptimizationCandidateContent(prompt, sourceRun, agentRun, sourceSummary)
+	item, err := h.Queries.CreatePromptEvaluationOptimizationCandidate(ctx, db.CreatePromptEvaluationOptimizationCandidateParams{
+		WorkspaceID:          agentRun.WorkspaceID,
+		AssetID:              sourceRun.AssetID,
+		RunID:                sourceRun.ID,
+		PromptID:             sourceRun.PromptID,
+		CandidateName:        buildPromptEvaluationCandidateName(prompt, sourceRun),
+		CandidateContent:     candidateContent,
+		FailedCaseCount:      promptEvaluationRunFailedCaseCount(sourceRun, trials),
+		Rationale:            rationale,
+		SourceFailureSummary: mustJSONBytes(sourceSummary),
+		SourcePromptSnapshot: mustJSONBytes(buildPromptEvaluationSourcePromptSnapshot(prompt)),
+		Metrics:              agentRun.Metrics,
+		Status:               "待确认",
+		CreatedBy:            createdBy,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &item, nil
+}
+
 func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -1565,6 +1664,16 @@ func (h *Handler) SyncPromptEvaluationRunFromTask(w http.ResponseWriter, r *http
 	updated, err := service.SyncPromptEvaluationRunFromTask(r.Context(), h.Queries, run)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation run from task")
+		return
+	}
+	createdBy := updated.CreatedBy
+	if !createdBy.Valid {
+		if userID := requestUserID(r); userID != "" {
+			createdBy = parseUUID(userID)
+		}
+	}
+	if _, err := h.maybeCreatePromptEvaluationCandidateFromOptimizationAgentRun(r.Context(), updated, createdBy); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create optimization candidate from agent output")
 		return
 	}
 	writeJSON(w, http.StatusOK, promptEvaluationRunToResponse(updated))
@@ -2272,6 +2381,154 @@ func buildPromptEvaluationCandidateContent(prompt db.PromptLibraryItem, run db.P
 	return strings.Join(lines, "\n"), rationale
 }
 
+type promptEvaluationAgentOptimizationOutput struct {
+	Name      string
+	Content   string
+	Rationale string
+	Impact    string
+	Checklist []string
+	Raw       string
+}
+
+func buildPromptEvaluationAgentOptimizationCandidateContent(prompt db.PromptLibraryItem, sourceRun db.PromptEvaluationRun, agentRun db.PromptEvaluationRun, sourceSummary map[string]any) (string, string) {
+	output := parsePromptEvaluationAgentOptimizationOutput(sourceSummary)
+	failureReason := strings.TrimSpace(sourceRun.FailureReason)
+	if failureReason == "" {
+		failureReason = "来源失败运行需要优化提示词约束。"
+	}
+	candidateContent := strings.TrimSpace(output.Content)
+	if candidateContent == "" {
+		candidateContent = strings.Join([]string{
+			strings.TrimSpace(prompt.Content),
+			"",
+			"【Agent 优化候选】",
+			"来源失败运行：" + uuidToString(sourceRun.ID),
+			"来源 Agent 优化运行：" + uuidToString(agentRun.ID),
+			"失败原因：" + failureReason,
+			"",
+			"Agent 优化输出摘要：",
+			truncatePromptEvaluationEvidence(firstNonEmptyPromptEvaluationString(output.Raw, output.Rationale, "Agent 未返回结构化候选正文，已基于运行证据生成待确认候选。"), 1200),
+			"",
+			"请在后续执行中严格遵守：",
+			"1. 全部输出使用中文，明确需求边界、影响范围和验收条件。",
+			"2. 输出必须包含可观测证据：耗时、执行 Agent、模型、runtime、trace/task id、失败原因和评估结论。",
+			"3. 对失败场景给出缺失字段、失败用例、修复建议和下一步人工确认点。",
+			"4. 不要自动替换生产提示词；发布前必须由验收者确认。",
+		}, "\n")
+	}
+	lines := []string{
+		candidateContent,
+		"",
+		"【Agent 优化运行证据】",
+		"来源失败运行：" + uuidToString(sourceRun.ID),
+		"来源 Agent 优化运行：" + uuidToString(agentRun.ID),
+		"失败原因：" + failureReason,
+	}
+	if output.Rationale != "" {
+		lines = append(lines, "逐条修改依据："+output.Rationale)
+	}
+	if output.Impact != "" {
+		lines = append(lines, "可能影响的通过用例："+output.Impact)
+	}
+	if len(output.Checklist) > 0 {
+		lines = append(lines, "人工验收清单：")
+		for _, item := range output.Checklist {
+			lines = append(lines, "- "+item)
+		}
+	}
+	lines = append(lines, "人工发布要求：发布前必须由验收者确认该候选不会降低原有通过用例质量。")
+	rationale := "由真实 Agent 优化运行输出自动生成候选；原提示词不被自动替换，必须人工确认后发布。"
+	if output.Rationale != "" {
+		rationale = "由真实 Agent 优化运行输出自动生成候选：" + truncatePromptEvaluationEvidence(output.Rationale, 240)
+	}
+	return strings.Join(lines, "\n"), rationale
+}
+
+func parsePromptEvaluationAgentOptimizationOutput(sourceSummary map[string]any) promptEvaluationAgentOptimizationOutput {
+	runtimeEvidence, _ := sourceSummary["真实Agent优化运行证据"].(map[string]any)
+	var rawParts []string
+	parseMessage := func(message map[string]any) (promptEvaluationAgentOptimizationOutput, bool) {
+		for _, key := range []string{"content", "output"} {
+			raw := strings.TrimSpace(stringFromAny(message[key]))
+			if raw == "" {
+				continue
+			}
+			rawParts = append(rawParts, raw)
+			for _, parsed := range promptEvaluationJSONValues(raw) {
+				if output := promptEvaluationAgentOptimizationOutputFromJSON(parsed); output.Content != "" || output.Rationale != "" {
+					output.Raw = raw
+					return output, true
+				}
+			}
+		}
+		return promptEvaluationAgentOptimizationOutput{}, false
+	}
+	if messages, ok := runtimeEvidence["task消息"].([]map[string]any); ok {
+		for _, message := range messages {
+			if output, ok := parseMessage(message); ok {
+				return output
+			}
+		}
+	}
+	if messages, ok := runtimeEvidence["task消息"].([]any); ok {
+		for _, value := range messages {
+			message, ok := value.(map[string]any)
+			if !ok {
+				continue
+			}
+			if output, ok := parseMessage(message); ok {
+				return output
+			}
+		}
+	}
+	return promptEvaluationAgentOptimizationOutput{Raw: truncatePromptEvaluationEvidence(strings.Join(rawParts, "\n\n"), 2000)}
+}
+
+func promptEvaluationAgentOptimizationOutputFromJSON(value any) promptEvaluationAgentOptimizationOutput {
+	row, ok := value.(map[string]any)
+	if !ok {
+		return promptEvaluationAgentOptimizationOutput{}
+	}
+	checklist := stringListFromAny(firstValue(row, "人工验收清单", "验收清单", "checklist", "acceptance_checklist"))
+	return promptEvaluationAgentOptimizationOutput{
+		Name:      firstNonEmptyPromptEvaluationField(row, "优化候选名称", "候选名称", "candidate_name", "name"),
+		Content:   firstNonEmptyPromptEvaluationField(row, "候选提示词正文", "候选提示词", "候选内容", "candidate_content", "content", "prompt"),
+		Rationale: firstNonEmptyPromptEvaluationField(row, "逐条修改依据", "修改依据", "rationale", "reasoning"),
+		Impact:    firstNonEmptyPromptEvaluationField(row, "可能影响的通过用例", "影响面", "impact"),
+		Checklist: checklist,
+	}
+}
+
+func promptEvaluationJSONValues(source string) []any {
+	source = strings.TrimSpace(source)
+	if source == "" {
+		return nil
+	}
+	candidates := []string{source}
+	parts := strings.Split(source, "```")
+	for index := 1; index < len(parts); index += 2 {
+		block := strings.TrimSpace(parts[index])
+		if newline := strings.IndexByte(block, '\n'); newline >= 0 {
+			header := strings.TrimSpace(strings.ToLower(block[:newline]))
+			if header == "json" || header == "javascript" || header == "js" {
+				block = strings.TrimSpace(block[newline+1:])
+			}
+		}
+		candidates = append(candidates, block)
+	}
+	if start, end := strings.Index(source, "{"), strings.LastIndex(source, "}"); start >= 0 && end > start {
+		candidates = append(candidates, source[start:end+1])
+	}
+	values := make([]any, 0, len(candidates))
+	for _, candidate := range candidates {
+		var value any
+		if err := json.Unmarshal([]byte(strings.TrimSpace(candidate)), &value); err == nil {
+			values = append(values, value)
+		}
+	}
+	return values
+}
+
 func buildPromptEvaluationOptimizationAgentPayload(prompt db.PromptLibraryItem, run db.PromptEvaluationRun, sourceSummary map[string]any) map[string]any {
 	failedCases, _ := sourceSummary["失败用例"].([]map[string]any)
 	cases := make([]map[string]any, 0, len(failedCases))
@@ -2873,6 +3130,24 @@ func stringFromAny(value any) string {
 	default:
 		return ""
 	}
+}
+
+func firstNonEmptyPromptEvaluationString(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
+}
+
+func firstNonEmptyPromptEvaluationField(row map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value := strings.TrimSpace(stringFromAny(row[key])); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func stringMapFromAny(value any) map[string]string {
