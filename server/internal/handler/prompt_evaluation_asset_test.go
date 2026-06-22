@@ -163,7 +163,7 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 	if recent["总用例数"] != float64(1) || recent["通过用例数"] != float64(1) || recent["缺失变量数"] != float64(0) {
 		t.Fatalf("unexpected run metrics: %#v", recent)
 	}
-	if recent["通过率"] != float64(1) || recent["执行Agent"] != "本地提示词渲染器" || recent["模型"] != "本地模板渲染" || recent["runtime"] != "server" {
+	if recent["通过率"] != float64(1) || recent["执行Agent"] != "本地提示词渲染器" || recent["模型"] != "本地模板渲染检查" || recent["runtime"] != "server" {
 		t.Fatalf("missing production metrics: %#v", recent)
 	}
 	if recent["trace/task id"] == "" || recent["评估结论"] != "通过" {
@@ -211,7 +211,7 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 		t.Fatalf("summary assets = %#v", summary.Assets)
 	}
 	passRate, _ := summary.Metrics["通过率"].(float64)
-	if summary.Metrics["通过数"].(float64) < 1 || passRate < 0 || passRate > 1 || summary.Metrics["本地运行数"].(float64) < 1 {
+	if summary.Metrics["通过数"].(float64) < 1 || passRate < 0 || passRate > 1 || summary.Metrics["模板渲染检查数"].(float64) < 1 {
 		t.Fatalf("summary metrics = %#v", summary.Metrics)
 	}
 	if _, ok := summary.Metrics["需人工复核"]; !ok {

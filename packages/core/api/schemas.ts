@@ -813,7 +813,7 @@ export const PromptEvaluationRunSchema = z.object({
   workspace_id: z.string(),
   asset_id: z.string(),
   prompt_id: z.string().nullable().optional().transform((v) => v ?? null),
-  run_kind: z.enum(["本地渲染", "Agent执行"]),
+  run_kind: z.enum(["本地渲染", "模板渲染检查", "Agent执行"]).transform((value) => (value === "本地渲染" ? "模板渲染检查" : value)),
   status: z.enum(["已入队", "运行中", "通过", "未通过", "失败", "已取消", "需人工复核"]),
   trigger_source: z.string().default("手动"),
   agent_id: z.string().nullable().optional().transform((v) => v ?? null),
@@ -1060,7 +1060,7 @@ export const EMPTY_PROMPT_EVALUATION_RUN = PromptEvaluationRunSchema.parse({
   id: "",
   workspace_id: "",
   asset_id: "",
-  run_kind: "本地渲染",
+  run_kind: "模板渲染检查",
   status: "已入队",
 });
 

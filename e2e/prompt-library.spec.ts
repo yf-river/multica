@@ -186,7 +186,7 @@ test.describe("训练与评估工作台", () => {
     await expect(Promise.resolve(optimizationRuns)).resolves.toEqual([
       expect.objectContaining({
         asset_id: optimizationRun!.id,
-        run_kind: "本地渲染",
+        run_kind: "模板渲染检查",
         status: "通过",
         total_cases: 1,
         passed_cases: 1,
@@ -356,9 +356,9 @@ test.describe("训练与评估工作台", () => {
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-开始时间")).not.toContainText("未记录");
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-结束时间")).not.toContainText("未完成");
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-评估结论")).toContainText("Agent 返回结构化逐用例评估");
-    await expect(page.getByText("本地渲染 · 通过")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText(/模型 本地模板渲染 · 运行时 server · 通过 1\/1/)).toBeVisible();
-    const localRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "本地渲染 · 通过" }).first();
+    await expect(page.getByText("模板渲染检查 · 通过")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/模型 本地模板渲染检查 · 运行时 server · 通过 1\/1/)).toBeVisible();
+    const localRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "模板渲染检查 · 通过" }).first();
     await localRunCard.getByRole("button", { name: "查看证据" }).click();
     await expect(page.getByText("用例明细")).toBeVisible({ timeout: 10000 });
     await expect(localRunCard.getByText("调试场用例", { exact: true })).toBeVisible();
@@ -521,7 +521,7 @@ test.describe("训练与评估工作台", () => {
     await page.goto(`/${workspaceSlug}/training?view=run-history`, { waitUntil: "domcontentloaded" });
     const failedRunRow = page.getByTestId(`prompt-evaluation-run-${failedRun.id}`);
     await failedRunRow.scrollIntoViewIfNeeded();
-    await expect(failedRunRow).toContainText("本地渲染 · 未通过", { timeout: 10000 });
+    await expect(failedRunRow).toContainText("模板渲染检查 · 未通过", { timeout: 10000 });
     const optimizationAgentResponse = page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&

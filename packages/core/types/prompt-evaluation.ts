@@ -58,7 +58,7 @@ export interface PromptEvaluationRun {
   workspace_id: string;
   asset_id: string;
   prompt_id: string | null;
-  run_kind: "本地渲染" | "Agent执行";
+  run_kind: "模板渲染检查" | "Agent执行";
   status: "已入队" | "运行中" | "通过" | "未通过" | "失败" | "已取消" | "需人工复核";
   trigger_source: string;
   agent_id: string | null;

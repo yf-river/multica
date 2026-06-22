@@ -332,7 +332,7 @@ func promptEvaluationRunToResponse(run db.PromptEvaluationRun) PromptEvaluationR
 		WorkspaceID:       uuidToString(run.WorkspaceID),
 		AssetID:           uuidToString(run.AssetID),
 		PromptID:          uuidToPtr(run.PromptID),
-		RunKind:           run.RunKind,
+			RunKind:           promptEvaluationRunKindLabel(run.RunKind),
 		Status:            run.Status,
 		TriggerSource:     run.TriggerSource,
 		AgentID:           uuidToPtr(run.AgentID),
@@ -360,6 +360,13 @@ func promptEvaluationRunToResponse(run db.PromptEvaluationRun) PromptEvaluationR
 		CreatedAt:         timestampToString(run.CreatedAt),
 		UpdatedAt:         timestampToString(run.UpdatedAt),
 	}
+}
+
+func promptEvaluationRunKindLabel(runKind string) string {
+	if runKind == "本地渲染" {
+		return "模板渲染检查"
+	}
+	return runKind
 }
 
 func promptEvaluationTrialToResponse(trial db.PromptEvaluationTrial) PromptEvaluationTrialResponse {
@@ -464,7 +471,7 @@ func promptEvaluationSummaryToResponse(workspaceID pgtype.UUID, row db.GetPrompt
 			"输出token":  row.OutputTokens,
 			"预估成本":     row.EstimatedCost,
 			"Agent运行数": row.AgentRuns,
-			"本地运行数":    row.LocalRuns,
+				"模板渲染检查数": row.LocalRuns,
 			"需人工复核":    row.ReviewRuns,
 			"待确认优化候选":  row.PendingCandidates,
 			"已发布优化候选":  row.PublishedCandidates,
@@ -481,7 +488,7 @@ func promptEvaluationSummaryToResponse(workspaceID pgtype.UUID, row db.GetPrompt
 		},
 		RunStatus: map[string]int64{
 			"运行总数":    row.TotalRuns,
-			"本地渲染":    row.LocalRuns,
+				"模板渲染检查": row.LocalRuns,
 			"Agent执行": row.AgentRuns,
 			"已入队":     row.QueuedRuns,
 			"运行中":     row.RunningRuns,
@@ -3150,7 +3157,7 @@ func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.Pr
 		OutputTokens:      outputTokens,
 		EstimatedCost:     0,
 		AgentName:         "本地提示词渲染器",
-		Model:             "本地模板渲染",
+			Model:             "本地模板渲染检查",
 		Runtime:           "server",
 		TraceTaskID:       "未创建 Agent 任务",
 		FailureReason:     failureReason,
