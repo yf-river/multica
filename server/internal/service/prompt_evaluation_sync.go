@@ -102,6 +102,12 @@ func syncPromptEvaluationRunWithTask(ctx context.Context, q *db.Queries, run db.
 	}
 	status, passed, failed, passRate, conclusion, failureReason := promptEvaluationRunStatusFromTask(run, task)
 	agentVerdicts, hasStructuredVerdicts := promptEvaluationAgentVerdictsFromTask(run, task, taskMessages)
+	if task.Status == "failed" {
+		if messageReason := promptEvaluationFailureReasonFromMessages(taskMessages); messageReason != "" {
+			failureReason = messageReason
+			conclusion = "Agent 执行失败，已从 task 日志提取可读失败原因"
+		}
+	}
 	if task.Status == "completed" {
 		if hasStructuredVerdicts {
 			status, passed, failed, passRate, conclusion, failureReason = promptEvaluationRunStatusFromAgentVerdicts(run, agentVerdicts)
@@ -226,6 +232,35 @@ func syncPromptEvaluationRunWithTask(ctx context.Context, q *db.Queries, run db.
 		return db.PromptEvaluationRun{}, err
 	}
 	return updated, nil
+}
+
+func promptEvaluationFailureReasonFromMessages(messages []db.TaskMessage) string {
+	for _, message := range messages {
+		if !message.Content.Valid {
+			continue
+		}
+		content := strings.TrimSpace(message.Content.String)
+		if content == "" {
+			continue
+		}
+		cleaned := strings.TrimSpace(strings.Split(content, " (")[0])
+		if cleaned == "" {
+			cleaned = content
+		}
+		if strings.Contains(cleaned, "无可用Token额度") || strings.Contains(cleaned, "Token额度") || strings.Contains(cleaned, "429") {
+			return "模型额度不足：" + truncatePromptEvaluationReason(cleaned, 180)
+		}
+		return truncatePromptEvaluationReason(cleaned, 180)
+	}
+	return ""
+}
+
+func truncatePromptEvaluationReason(value string, limit int) string {
+	runes := []rune(strings.TrimSpace(value))
+	if len(runes) <= limit {
+		return string(runes)
+	}
+	return string(runes[:limit]) + "..."
 }
 
 func syncPromptEvaluationAssetAgentRunSnapshot(ctx context.Context, q *db.Queries, run db.PromptEvaluationRun, task db.AgentTaskQueue, agentName string, status string, conclusion string, failureReason string) error {

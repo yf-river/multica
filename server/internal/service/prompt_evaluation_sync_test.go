@@ -32,3 +32,25 @@ func TestPromptEvaluationAgentVerdictsFromMarkdownJSON(t *testing.T) {
 		t.Fatalf("verdicts = %+v", verdicts)
 	}
 }
+
+func TestPromptEvaluationFailureReasonFromMessagesRecognizesQuota(t *testing.T) {
+	reason := promptEvaluationFailureReasonFromMessages([]db.TaskMessage{{
+		Seq:     1,
+		Type:    "text",
+		Content: pgtype.Text{String: "429 当前无可用Token额度，如需申请，请联系您所在团队的负责人或HRBP，也可以继续使用混元模型开展工作。额度查看：aitoken.woa.com  (trace/session)", Valid: true},
+	}})
+	if !strings.Contains(reason, "模型额度不足") || strings.Contains(reason, "trace/session") {
+		t.Fatalf("reason = %q", reason)
+	}
+}
+
+func TestPromptEvaluationFailureReasonFromMessagesTruncatesLongText(t *testing.T) {
+	reason := promptEvaluationFailureReasonFromMessages([]db.TaskMessage{{
+		Seq:     1,
+		Type:    "text",
+		Content: pgtype.Text{String: strings.Repeat("失败", 120), Valid: true},
+	}})
+	if len([]rune(reason)) > 183 || !strings.HasSuffix(reason, "...") {
+		t.Fatalf("reason = %q", reason)
+	}
+}
