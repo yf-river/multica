@@ -55,6 +55,7 @@ interface PromptEvaluationRun {
   input_tokens: number;
   output_tokens: number;
   estimated_cost: number;
+  failure_reason: string;
   conclusion: string;
 }
 
@@ -91,7 +92,17 @@ interface PromptEvaluationRunEvidence {
     status: string;
     rendered_prompt: string;
   }>;
-  task_usage: unknown[];
+  task_usage: Array<{
+    task_id: string;
+    provider: string;
+    model: string;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    cache_write_tokens: number;
+    estimated_cost: number;
+    priced: boolean;
+  }>;
   task_messages: unknown[];
   trace_events: unknown[];
   evidence: Record<string, unknown>;

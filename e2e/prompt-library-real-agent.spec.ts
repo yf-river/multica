@@ -83,9 +83,10 @@ test.describe("训练与评估真实 Agent 闭环", () => {
           return runs.find((run) => run.id === queued.run.id)!;
         });
 
-      expect(["通过", "未通过", "需人工复核"]).toContain(terminalRun.status);
+      expect(["通过", "未通过", "需人工复核", "失败"]).toContain(terminalRun.status);
       expect(terminalRun.task_id).toBe(queued.task_id);
 
+      const syncedRun = await api.syncPromptEvaluationRun(queued.run.id);
       const evidence = await api.getPromptEvaluationRunEvidence(queued.run.id);
       expect(evidence.run).toMatchObject({
         id: queued.run.id,
@@ -97,6 +98,27 @@ test.describe("训练与评估真实 Agent 闭环", () => {
       expect(evidence.trials.length).toBeGreaterThan(0);
       expect(evidence.task_messages.length).toBeGreaterThan(0);
       expect(evidence.trace_events.length).toBeGreaterThan(0);
+      if (syncedRun.status === "失败" && syncedRun.failure_reason.includes("模型额度不足")) {
+        expect(evidence.task_usage).toHaveLength(0);
+        expect(JSON.stringify(evidence.task_messages)).toContain("无可用Token额度");
+        expect(JSON.stringify(evidence.trace_events)).toContain("任务已失败");
+      } else {
+        expect(["通过", "未通过", "需人工复核"]).toContain(syncedRun.status);
+        expect(evidence.task_usage).toEqual(
+          expect.arrayContaining([
+            expect.objectContaining({
+              task_id: queued.task_id,
+              provider: "codebuddy",
+              model: EXPECTED_AGENT_MODEL,
+              priced: true,
+            }),
+          ]),
+        );
+        const usage = evidence.task_usage.find((item) => item.task_id === queued.task_id && item.model === EXPECTED_AGENT_MODEL);
+        expect(usage?.input_tokens).toBeGreaterThan(0);
+        expect(usage?.output_tokens).toBeGreaterThan(0);
+        expect(usage?.estimated_cost).toBeGreaterThan(0);
+      }
     } finally {
       await api.cleanupPromptArtifactsByPrefix(prefix);
       await api.cleanup();
