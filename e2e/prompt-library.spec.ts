@@ -280,7 +280,7 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByText("Agent 调试场用例")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(/codebuddy\/minimax-m2\.7-ioa · 输入 11 · 输出 7 · 预估成本 \$0\.\d*[1-9]/)).toBeVisible();
     await expect(page.getByText("#1 text：Agent 输出：完成训练评估")).toBeVisible();
-    await expect(page.getByText(/训练评估用量已上报 · completed · 输入 16 · 输出 7/)).toBeVisible();
+    await expect(page.getByText(/训练评估用量已上报 · completed · codebuddy\/minimax-m2\.7-ioa · attempt 1 · .*输入 16 · 输出 7/)).toBeVisible();
     await expect(page.getByText("失败原因：等待 Agent 执行完成")).toHaveCount(0);
     await expect(page.getByText("task 用量")).toBeVisible();
     const syncedAgentEvidence = await api.getPromptEvaluationRunEvidence(queuedAgentRun!.id);

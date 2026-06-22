@@ -1195,7 +1195,7 @@ function RunEvidencePanel({
         <EvidenceList
           title="trace 事件"
           empty="暂无 trace 事件"
-          items={evidence.trace_events.map((event) => `${event.event_name || event.event_type} · ${event.status} · 输入 ${event.input_tokens} · 输出 ${event.output_tokens}`)}
+          items={evidence.trace_events.map(formatTraceEventEvidence)}
         />
       </div>
 
@@ -1233,6 +1233,24 @@ function EvidenceList({ title, empty, items }: { title: string; empty: string; i
       )}
     </div>
   );
+}
+
+function formatTraceEventEvidence(event: PromptEvaluationRunEvidence["trace_events"][number]): string {
+  const pieces = [
+    event.event_name || event.event_type || "未命名事件",
+    event.status || "未知状态",
+    event.provider || event.model ? `${event.provider || "unknown"}/${event.model || "unknown"}` : "",
+    `attempt ${event.attempt}`,
+    event.duration_ms != null ? `耗时 ${event.duration_ms} ms` : "",
+    event.queue_wait_ms != null ? `排队 ${event.queue_wait_ms} ms` : "",
+    event.run_ms != null ? `执行 ${event.run_ms} ms` : "",
+    event.total_ms != null ? `总计 ${event.total_ms} ms` : "",
+    `输入 ${event.input_tokens}`,
+    `输出 ${event.output_tokens}`,
+    event.failure_reason && event.failure_reason !== "无" ? `失败原因：${event.failure_reason}` : "",
+    event.error_type ? `错误类型：${event.error_type}` : "",
+  ].filter(Boolean);
+  return pieces.join(" · ");
 }
 
 function buildAgentExecutionStatus(readiness: PromptEvaluationRuntimeReadiness): string {
