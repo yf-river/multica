@@ -51,9 +51,13 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByText("请澄清 登录失败，项目背景：user-center。").last()).toBeVisible();
 
     await page.getByRole("button", { name: "保存" }).click();
-    await expect(page.getByText("提示词已创建")).toBeVisible({ timeout: 10000 });
+    await expect
+      .poll(async () => (await api.listPromptLibraryItems()).some((item) => item.name === `${artifactPrefix} user-center 澄清`), { timeout: 10000 })
+      .toBe(true);
 
+    await expect(page.getByLabel("调试变量")).toHaveValue("issue_title=\nproject_context=", { timeout: 10000 });
     await page.getByLabel("调试变量").fill("issue_title=登录失败\nproject_context=user-center");
+    await expect(page.getByText("请澄清 登录失败，项目背景：user-center。").last()).toBeVisible({ timeout: 10000 });
     await page.getByRole("button", { name: "运行并记录" }).click();
     await expect(page.getByText("优化运行已记录")).toBeVisible({ timeout: 10000 });
 
@@ -122,9 +126,11 @@ test.describe("训练与评估工作台", () => {
     const optimizationRun = promptAssets.find((asset) => asset.asset_type === "优化运行");
     const dataset = promptAssets.find((asset) => asset.asset_type === "数据集");
     const testSuite = promptAssets.find((asset) => asset.asset_type === "测试套件");
+    const experiment = promptAssets.find((asset) => asset.asset_type === "实验");
     expect(optimizationRun).toBeTruthy();
     expect(dataset).toBeTruthy();
     expect(testSuite).toBeTruthy();
+    expect(experiment).toBeTruthy();
     await expect(api.listPromptEvaluationCases({ asset_id: dataset!.id })).resolves.toEqual([
       expect.objectContaining({
         asset_id: dataset!.id,
@@ -182,6 +188,46 @@ test.describe("训练与评估工作台", () => {
         return items.some((item) => item.source === "manual" && item.case_name === "手工补充登录失败验收");
       }, { timeout: 15000 })
       .toBe(false);
+
+    await page.getByRole("button", { name: "实验", exact: true }).click();
+    const experimentRow = page.getByTestId(`prompt-evaluation-asset-${experiment!.id}`);
+    await expect(experimentRow.getByText("结构化评测用例", { exact: true })).toBeVisible({ timeout: 10000 });
+    await experimentRow.getByPlaceholder("手工用例名称").fill("手工实验对比用例");
+    await experimentRow.getByPlaceholder("变量：issue_title=登录失败").fill("issue_title=登录失败\nproject_context=user-center");
+    await experimentRow.getByPlaceholder("期望包含：验收条件, trace/任务标识").fill("实验结论, 中文指标, trace/任务标识");
+    await experimentRow.getByPlaceholder("标签：user-center, 回归").fill("实验, 领导演示");
+    await experimentRow.getByRole("button", { name: "新增用例" }).click();
+    await expect(page.getByText("手工评测用例已创建").last()).toBeVisible({ timeout: 10000 });
+    await expect
+      .poll(async () => {
+        const items = await api.listPromptEvaluationCases({ asset_id: experiment!.id });
+        return items.find((item) => item.source === "manual" && item.case_name === "手工实验对比用例") ?? null;
+      }, { timeout: 15000 })
+      .toMatchObject({
+        asset_id: experiment!.id,
+        expected_contains: expect.arrayContaining(["中文指标"]),
+        tags: expect.arrayContaining(["领导演示"]),
+      });
+
+    await page.getByRole("button", { name: "优化运行", exact: true }).click();
+    const optimizationRow = page.getByTestId(`prompt-evaluation-asset-${optimizationRun!.id}`);
+    await expect(optimizationRow.getByText("结构化评测用例", { exact: true })).toBeVisible({ timeout: 10000 });
+    await optimizationRow.getByPlaceholder("手工用例名称").fill("手工优化回归用例");
+    await optimizationRow.getByPlaceholder("变量：issue_title=登录失败").fill("issue_title=登录失败\nproject_context=user-center");
+    await optimizationRow.getByPlaceholder("期望包含：验收条件, trace/任务标识").fill("优化候选, 失败原因, 人工确认");
+    await optimizationRow.getByPlaceholder("标签：user-center, 回归").fill("优化运行, 人工确认");
+    await optimizationRow.getByRole("button", { name: "新增用例" }).click();
+    await expect(page.getByText("手工评测用例已创建").last()).toBeVisible({ timeout: 10000 });
+    await expect
+      .poll(async () => {
+        const items = await api.listPromptEvaluationCases({ asset_id: optimizationRun!.id });
+        return items.find((item) => item.source === "manual" && item.case_name === "手工优化回归用例") ?? null;
+      }, { timeout: 15000 })
+      .toMatchObject({
+        asset_id: optimizationRun!.id,
+        expected_contains: expect.arrayContaining(["人工确认"]),
+        tags: expect.arrayContaining(["优化运行"]),
+      });
     const optimizationRuns = await api.listPromptEvaluationRuns({ asset_id: optimizationRun!.id });
     await expect(Promise.resolve(optimizationRuns)).resolves.toEqual([
       expect.objectContaining({

@@ -2122,7 +2122,7 @@ function tabToAssetType(tab: WorkbenchTab): PromptEvaluationAssetType | null {
 }
 
 function canManageStructuredCases(asset: PromptEvaluationAsset): boolean {
-  return asset.asset_type === "数据集" || asset.asset_type === "测试套件";
+  return asset.asset_type === "数据集" || asset.asset_type === "测试套件" || asset.asset_type === "实验" || asset.asset_type === "优化运行";
 }
 
 function emptyManualCaseDraft(): ManualCaseDraft {
