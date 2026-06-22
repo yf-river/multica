@@ -428,6 +428,7 @@ func promptEvaluationSummaryToResponse(workspaceID pgtype.UUID, row db.GetPrompt
 			"预估成本":     row.EstimatedCost,
 			"Agent运行数": row.AgentRuns,
 			"本地运行数":    row.LocalRuns,
+			"需人工复核":    row.ReviewRuns,
 			"待确认优化候选":  row.PendingCandidates,
 			"已发布优化候选":  row.PublishedCandidates,
 		},
@@ -451,6 +452,7 @@ func promptEvaluationSummaryToResponse(workspaceID pgtype.UUID, row db.GetPrompt
 			"未通过":     row.NotPassedRuns,
 			"失败":      row.FailedRuns,
 			"已取消":     row.CancelledRuns,
+			"需人工复核":   row.ReviewRuns,
 		},
 		Candidates: map[string]int64{
 			"候选总数": row.TotalCandidates,

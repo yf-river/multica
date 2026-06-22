@@ -202,12 +202,18 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 	if summary.RunStatus["运行总数"] < 1 || summary.RunStatus["通过"] < 1 {
 		t.Fatalf("summary run status = %#v", summary.RunStatus)
 	}
+	if _, ok := summary.RunStatus["需人工复核"]; !ok {
+		t.Fatalf("summary missing manual review status: %#v", summary.RunStatus)
+	}
 	if summary.Assets["测试套件"] < 1 || summary.Assets["结构化用例"] < 1 {
 		t.Fatalf("summary assets = %#v", summary.Assets)
 	}
 	passRate, _ := summary.Metrics["通过率"].(float64)
 	if summary.Metrics["通过数"].(float64) < 1 || passRate < 0 || passRate > 1 || summary.Metrics["本地运行数"].(float64) < 1 {
 		t.Fatalf("summary metrics = %#v", summary.Metrics)
+	}
+	if _, ok := summary.Metrics["需人工复核"]; !ok {
+		t.Fatalf("summary missing manual review metric: %#v", summary.Metrics)
 	}
 }
 

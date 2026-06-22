@@ -748,6 +748,7 @@ function TrainingSummaryStrip({ summary, loading }: { summary: PromptEvaluationS
     { label: "通过率", value: formatPercent(metrics["通过率"]) },
     { label: "失败数", value: formatNumber(metrics["失败数"]) },
     { label: "Agent运行数", value: formatNumber(metrics["Agent运行数"]) },
+    { label: "需人工复核", value: formatNumber(metrics["需人工复核"]) },
     { label: "输入token", value: formatNumber(metrics["输入token"]) },
     { label: "输出token", value: formatNumber(metrics["输出token"]) },
     { label: "待确认优化候选", value: formatNumber(candidates["待确认"]) },
@@ -757,7 +758,7 @@ function TrainingSummaryStrip({ summary, loading }: { summary: PromptEvaluationS
   ];
 
   return (
-    <section className="shrink-0 border-b bg-muted/20 px-3 py-3">
+    <section className="shrink-0 border-b bg-muted/20 px-3 py-3" data-testid="training-summary-strip">
       <div className="mb-2 flex min-w-0 items-center justify-between gap-3">
         <div className="min-w-0">
           <h2 className="truncate text-sm font-semibold">领导视角摘要</h2>
@@ -771,7 +772,7 @@ function TrainingSummaryStrip({ summary, loading }: { summary: PromptEvaluationS
       </div>
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
         {items.map((item) => (
-          <div key={item.label} className="min-w-0 rounded-md border bg-background px-3 py-2">
+          <div key={item.label} className="min-w-0 rounded-md border bg-background px-3 py-2" data-testid={`training-summary-${item.label}`}>
             <div className="truncate text-[11px] text-muted-foreground">{item.label}</div>
             <div className="mt-1 truncate text-sm font-semibold">{item.value}</div>
           </div>

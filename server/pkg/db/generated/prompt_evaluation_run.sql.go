@@ -392,6 +392,7 @@ run_summary AS (
         COUNT(*) FILTER (WHERE status = '未通过')::bigint AS not_passed_runs,
         COUNT(*) FILTER (WHERE status = '失败')::bigint AS failed_runs,
         COUNT(*) FILTER (WHERE status = '已取消')::bigint AS cancelled_runs,
+        COUNT(*) FILTER (WHERE status = '需人工复核')::bigint AS review_runs,
         COALESCE(SUM(total_cases), 0)::bigint AS evaluated_cases,
         COALESCE(SUM(passed_cases), 0)::bigint AS passed_cases,
         COALESCE(SUM(failed_cases), 0)::bigint AS failed_cases,
@@ -431,6 +432,7 @@ SELECT
     r.not_passed_runs,
     r.failed_runs,
     r.cancelled_runs,
+    r.review_runs,
     r.evaluated_cases,
     r.passed_cases,
     r.failed_cases,
@@ -472,6 +474,7 @@ type GetPromptEvaluationSummaryRow struct {
 	NotPassedRuns       int64              `json:"not_passed_runs"`
 	FailedRuns          int64              `json:"failed_runs"`
 	CancelledRuns       int64              `json:"cancelled_runs"`
+	ReviewRuns          int64              `json:"review_runs"`
 	EvaluatedCases      int64              `json:"evaluated_cases"`
 	PassedCases         int64              `json:"passed_cases"`
 	FailedCases         int64              `json:"failed_cases"`
@@ -509,6 +512,7 @@ func (q *Queries) GetPromptEvaluationSummary(ctx context.Context, workspaceID pg
 		&i.NotPassedRuns,
 		&i.FailedRuns,
 		&i.CancelledRuns,
+		&i.ReviewRuns,
 		&i.EvaluatedCases,
 		&i.PassedCases,
 		&i.FailedCases,

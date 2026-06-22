@@ -223,10 +223,6 @@ test.describe("训练与评估工作台", () => {
         passRate: expect.any(Number),
         hasAssets: true,
       });
-    await expect(page.getByText("领导视角摘要")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText("运行总数")).toBeVisible();
-    await expect(page.getByText("通过率")).toBeVisible();
-    await expect(page.getByText("待确认优化候选")).toBeVisible();
     await page.getByRole("button", { name: "运行历史", exact: true }).click();
     await expect(page.getByText("Agent执行 · 已入队")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(`task ${queuedAgentRun!.task_id}`)).toBeVisible();
@@ -248,6 +244,14 @@ test.describe("训练与评估工作台", () => {
         failed_cases: 0,
       });
     await page.goto(`/${workspaceSlug}/training?view=run-history`, { waitUntil: "domcontentloaded" });
+    const summaryStrip = page.getByTestId("training-summary-strip");
+    await expect(summaryStrip).toContainText("领导视角摘要", { timeout: 10000 });
+    await expect(page.getByTestId("training-summary-运行总数")).toContainText(/[1-9]/);
+    await expect(page.getByTestId("training-summary-通过率")).toContainText("%");
+    await expect(page.getByTestId("training-summary-Agent运行数")).toContainText(/[1-9]/);
+    await expect(page.getByTestId("training-summary-需人工复核")).toContainText(/\d/);
+    await expect(page.getByTestId("training-summary-输入token")).toContainText(/[1-9]/);
+    await expect(page.getByTestId("training-summary-待确认优化候选")).toContainText(/\d/);
     agentRunCard = page.getByTestId(`prompt-evaluation-run-${queuedAgentRun!.id}`);
     await expect(agentRunCard).toContainText("Agent执行 · 通过", { timeout: 10000 });
     await expect(agentRunCard).toContainText(/模型 minimax-m2\.7-ioa · runtime codebuddy · 通过 1\/1 · 输入 16 token · 输出 7 token/);
