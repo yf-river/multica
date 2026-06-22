@@ -880,6 +880,177 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 	writeJSON(w, http.StatusCreated, promptEvaluationOptimizationCandidateToResponse(item))
 }
 
+func (h *Handler) RunPromptEvaluationOptimizationAgent(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	runID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation run id")
+	if !ok {
+		return
+	}
+	sourceRun, err := h.Queries.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{ID: runID, WorkspaceID: workspaceUUID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "prompt evaluation run not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation run")
+		return
+	}
+	if !sourceRun.PromptID.Valid {
+		writeError(w, http.StatusBadRequest, "prompt_id is required to create an optimization agent run")
+		return
+	}
+	if !promptEvaluationRunHasFailure(sourceRun) {
+		writeError(w, http.StatusBadRequest, "only failed or not-passed runs can create an optimization agent run")
+		return
+	}
+	prompt, err := h.Queries.GetPromptLibraryItemInWorkspace(r.Context(), db.GetPromptLibraryItemInWorkspaceParams{ID: sourceRun.PromptID, WorkspaceID: workspaceUUID})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "prompt_id does not belong to this workspace")
+		return
+	}
+	trials, err := h.Queries.ListPromptEvaluationTrialsByRun(r.Context(), db.ListPromptEvaluationTrialsByRunParams{RunID: sourceRun.ID, WorkspaceID: workspaceUUID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load failed prompt evaluation trials")
+		return
+	}
+	sourceSummary := buildPromptEvaluationCandidateFailureSummary(sourceRun, trials)
+	runtimeEvidence, err := h.promptEvaluationCandidateRuntimeEvidence(r.Context(), sourceRun)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation runtime evidence")
+		return
+	}
+	if runtimeEvidence != nil {
+		sourceSummary["真实Agent运行证据"] = runtimeEvidence
+		sourceSummary["生成说明"] = "基于结构化运行记录、失败用例和真实 Agent task 证据创建优化 Agent 任务；输出不会自动替换生产提示词。"
+	}
+	member, ok := h.workspaceMember(w, r, uuidToString(workspaceUUID))
+	if !ok {
+		return
+	}
+	agentRow, runtimeRow, ok := h.ensurePromptEvaluationAgent(w, r, workspaceUUID, parseUUID(userID), member)
+	if !ok {
+		return
+	}
+	payload := buildPromptEvaluationOptimizationAgentPayload(prompt, sourceRun, sourceSummary)
+	payloadBytes, err := json.Marshal(payload)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to encode optimization agent payload")
+		return
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start optimization agent transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	asset, err := qtx.CreatePromptEvaluationAsset(r.Context(), db.CreatePromptEvaluationAssetParams{
+		WorkspaceID: workspaceUUID,
+		PromptID:    sourceRun.PromptID,
+		Name:        buildPromptEvaluationOptimizationAgentAssetName(prompt, sourceRun),
+		Description: "由失败运行创建的真实 Agent 优化任务，输出用于人工确认后的提示词候选。",
+		AssetType:   promptEvaluationAssetOptimize,
+		Payload:     payloadBytes,
+		Status:      "启用",
+		CreatedBy:   parseUUID(userID),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create optimization agent asset")
+		return
+	}
+	if ok := h.syncPromptEvaluationCasesFromPayload(w, r, qtx, asset, parseUUID(userID)); !ok {
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit optimization agent asset")
+		return
+	}
+
+	session, err := h.Queries.CreateChatSession(r.Context(), db.CreateChatSessionParams{
+		WorkspaceID: asset.WorkspaceID,
+		AgentID:     agentRow.ID,
+		CreatorID:   parseUUID(userID),
+		Title:       "训练评估优化：" + prompt.Name,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create optimization agent chat session")
+		return
+	}
+	messageText := buildPromptEvaluationAgentMessage(asset, prompt, payload)
+	msg, err := h.Queries.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
+		ChatSessionID: session.ID,
+		Role:          "user",
+		Content:       messageText,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create optimization agent chat message")
+		return
+	}
+	task, err := h.TaskService.EnqueueChatTask(r.Context(), session, parseUUID(userID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to enqueue optimization agent task: "+err.Error())
+		return
+	}
+	if err := h.Queries.LinkChatMessageToTask(r.Context(), db.LinkChatMessageToTaskParams{ID: msg.ID, TaskID: task.ID}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to link optimization agent message to task")
+		return
+	}
+	cases, ok := h.promptEvaluationCasesForAsset(w, r, asset)
+	if !ok {
+		return
+	}
+	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, asset, agentRow, runtimeRow, task.ID, session.ID, parseUUID(userID), payload, cases)
+	if !ok {
+		return
+	}
+	runIndex := map[string]any{
+		"运行时间":            time.Now().UTC().Format(time.RFC3339),
+		"run_id":          uuidToString(run.ID),
+		"source_run_id":   uuidToString(sourceRun.ID),
+		"状态":              "已入队",
+		"执行Agent":         agentRow.Name,
+		"agent_id":        uuidToString(agentRow.ID),
+		"模型":              promptEvaluationAgentModel,
+		"runtime":         runtimeRow.Provider,
+		"runtime_id":      uuidToString(runtimeRow.ID),
+		"trace/task id":   uuidToString(task.ID),
+		"chat_session_id": uuidToString(session.ID),
+		"失败原因":            "无",
+		"评估结论":            "等待 Agent 生成优化建议，人工确认后才能发布新提示词版本",
+	}
+	payload["最近Agent运行"] = runIndex
+	payload["Agent运行记录"] = appendPromptEvaluationAgentRunHistory(payload["Agent运行记录"], runIndex)
+	updated, err := h.Queries.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
+		ID:          asset.ID,
+		WorkspaceID: asset.WorkspaceID,
+		PromptID:    asset.PromptID,
+		Payload:     mustJSONBytes(payload),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save optimization agent run")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, PromptEvaluationAgentRunResponse{
+		Asset:         promptEvaluationAssetToResponse(updated),
+		Run:           promptEvaluationRunToResponse(run),
+		TaskID:        uuidToString(task.ID),
+		ChatSessionID: uuidToString(session.ID),
+		AgentID:       uuidToString(agentRow.ID),
+		RuntimeID:     uuidToString(runtimeRow.ID),
+		Model:         promptEvaluationAgentModel,
+		Status:        "已入队",
+		Message:       "真实 Agent 优化任务已入队；完成后可在运行历史查看证据，再生成人工确认候选。",
+	})
+}
+
 func (h *Handler) promptEvaluationCandidateRuntimeEvidence(ctx context.Context, run db.PromptEvaluationRun) (map[string]any, error) {
 	if !run.TaskID.Valid {
 		return nil, nil
@@ -1780,6 +1951,60 @@ func buildPromptEvaluationCandidateContent(prompt db.PromptLibraryItem, run db.P
 	}
 	lines = append(lines, "", "人工发布要求：发布前必须由验收者确认该候选不会降低原有通过用例质量。")
 	return strings.Join(lines, "\n"), rationale
+}
+
+func buildPromptEvaluationOptimizationAgentPayload(prompt db.PromptLibraryItem, run db.PromptEvaluationRun, sourceSummary map[string]any) map[string]any {
+	failedCases, _ := sourceSummary["失败用例"].([]map[string]any)
+	cases := make([]map[string]any, 0, len(failedCases))
+	for index, failedCase := range failedCases {
+		name := stringFromAny(failedCase["用例名称"])
+		if name == "" {
+			name = "失败用例 " + strconv.Itoa(index+1)
+		}
+		expected := firstValue(failedCase, "期望", "期望包含")
+		cases = append(cases, map[string]any{
+			"名称":   name,
+			"变量":   firstValue(failedCase, "输入", "变量"),
+			"期望包含": expected,
+			"失败原因": firstValue(failedCase, "失败原因", "状态"),
+		})
+	}
+	if len(cases) == 0 {
+		cases = append(cases, map[string]any{
+			"名称":   "失败运行整体优化",
+			"变量":   map[string]any{"source_run_id": uuidToString(run.ID)},
+			"期望包含": []string{"优化候选", "失败原因", "验收条件", "trace/task id"},
+			"失败原因": run.FailureReason,
+		})
+	}
+	return map[string]any{
+		"schema_version": 1,
+		"语义版本":           "multica.training_evaluation.optimization_agent.v1",
+		"任务类型":           "Agent 优化运行",
+		"来源运行":           uuidToString(run.ID),
+		"来源资产":           uuidToString(run.AssetID),
+		"来源提示词":          uuidToString(prompt.ID),
+		"提示词名称":          prompt.Name,
+		"原始提示词内容":        prompt.Content,
+		"失败摘要":           sourceSummary,
+		"cases":          cases,
+		"优化目标": []string{
+			"基于失败用例和真实 Agent task 证据生成候选提示词正文。",
+			"候选必须继续保持中文语义、可观测字段、验收条件和失败处理要求。",
+			"不要自动发布；输出必须便于验收者人工确认后再发布。",
+		},
+		"输出格式": []string{
+			"优化候选名称",
+			"候选提示词正文",
+			"逐条修改依据",
+			"可能影响的通过用例",
+			"人工验收清单",
+		},
+	}
+}
+
+func buildPromptEvaluationOptimizationAgentAssetName(prompt db.PromptLibraryItem, run db.PromptEvaluationRun) string {
+	return prompt.Name + " Agent 优化运行 " + run.CreatedAt.Time.Format("20060102") + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 }
 
 func buildPromptEvaluationCandidateName(prompt db.PromptLibraryItem, run db.PromptEvaluationRun) string {

@@ -328,6 +328,7 @@ test.describe("训练与评估工作台", () => {
   test("失败运行可以生成优化候选并人工发布新版本", async ({ page }) => {
     const promptName = `${artifactPrefix} 失败优化闭环`;
     const sourceContent = "请澄清 {{issue_title}}，输出必须使用中文。";
+    const runtime = await api.ensureOnlineCodeBuddyRuntime(`${artifactPrefix} 优化 CodeBuddy Runtime`);
 
     await page.getByRole("link", { name: "训练与评估" }).click();
     await expect(page).toHaveURL(/\/training(?:\?|$)/, { timeout: 30000 });
@@ -369,8 +370,53 @@ test.describe("训练与评估工作台", () => {
       .then(async () => (await api.listPromptEvaluationRuns({ asset_id: asset.id })).find((run) => run.status === "未通过")!);
 
     await page.goto(`/${workspaceSlug}/training?view=run-history`, { waitUntil: "domcontentloaded" });
-    await expect(page.getByText("本地渲染 · 未通过")).toBeVisible({ timeout: 10000 });
-    await page.getByRole("button", { name: "生成优化候选" }).click();
+    const failedRunRow = page.getByTestId(`prompt-evaluation-run-${failedRun.id}`);
+    await failedRunRow.scrollIntoViewIfNeeded();
+    await expect(failedRunRow).toContainText("本地渲染 · 未通过", { timeout: 10000 });
+    const optimizationAgentResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes(`/prompt-evaluation-runs/${failedRun.id}/optimization-agent-run`),
+      { timeout: 10000 },
+    );
+    await failedRunRow.getByRole("button", { name: "Agent 优化任务" }).click();
+    expect((await optimizationAgentResponse).status()).toBe(202);
+    await expect(page.getByText(/真实 Agent 优化任务已入队/)).toBeVisible({ timeout: 10000 });
+
+    await expect
+      .poll(async () => {
+        const assets = await api.listPromptEvaluationAssets({ prompt_id: prompt.id, asset_type: "优化运行" });
+        const agentAsset = assets.find((item) => item.name.startsWith(`${promptName} Agent 优化运行`));
+        if (!agentAsset) return null;
+        const runs = await api.listPromptEvaluationRuns({ asset_id: agentAsset.id });
+        const agentRun = runs.find((run) => run.run_kind === "Agent执行") ?? null;
+        return agentRun
+          ? {
+              asset_type: agentAsset.asset_type,
+              taskType: (agentAsset.payload as Record<string, any>).任务类型,
+              sourceRun: (agentAsset.payload as Record<string, any>).来源运行,
+              run_kind: agentRun.run_kind,
+              status: agentRun.status,
+              model: agentRun.model,
+              runtime_provider: agentRun.runtime_provider,
+              runtime_id: agentRun.runtime_id,
+              hasTask: Boolean(agentRun.task_id),
+            }
+          : null;
+      }, { timeout: 15000 })
+      .toMatchObject({
+        asset_type: "优化运行",
+        taskType: "Agent 优化运行",
+        sourceRun: failedRun.id,
+        run_kind: "Agent执行",
+        status: "已入队",
+        model: "minimax-m2.7-ioa",
+        runtime_provider: "codebuddy",
+        runtime_id: runtime.id,
+        hasTask: true,
+      });
+
+    await failedRunRow.getByRole("button", { name: "生成优化候选" }).click();
     await expect(page.getByText("优化候选已生成，等待人工确认")).toBeVisible({ timeout: 10000 });
 
     await page.getByRole("button", { name: "优化运行", exact: true }).click();

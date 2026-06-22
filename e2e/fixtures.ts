@@ -58,6 +58,18 @@ interface PromptEvaluationRun {
   conclusion: string;
 }
 
+interface PromptEvaluationAgentRunResponse {
+  asset: PromptEvaluationAsset;
+  run: PromptEvaluationRun;
+  task_id: string;
+  chat_session_id: string;
+  agent_id: string;
+  runtime_id: string;
+  model: string;
+  status: string;
+  message: string;
+}
+
 interface PromptEvaluationRunEvidence {
   run: PromptEvaluationRun;
   trials: Array<{
@@ -761,6 +773,14 @@ export class TestApiClient {
     const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/run`, { method: "POST" });
     if (!res.ok) {
       throw new Error(`run prompt evaluation asset failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async runPromptEvaluationOptimizationAgent(runId: string): Promise<PromptEvaluationAgentRunResponse> {
+    const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/optimization-agent-run`, { method: "POST" });
+    if (!res.ok) {
+      throw new Error(`run prompt evaluation optimization agent failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
   }

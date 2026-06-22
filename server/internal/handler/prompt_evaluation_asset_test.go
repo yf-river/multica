@@ -533,6 +533,60 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 	}
 }
 
+func TestRunPromptEvaluationOptimizationAgentQueuesRealTask(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	cleanupPromptEvaluationAgentRunTest(t)
+	_, sourceResp, _ := createPromptEvaluationAgentRunFixture(t, "真实 Agent 优化任务来源实验", "输出缺少验收条件")
+	markPromptEvaluationTaskRunning(t, sourceResp.TaskID)
+
+	failW := httptest.NewRecorder()
+	failReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+sourceResp.TaskID+"/fail", map[string]any{
+		"error":          "输出缺少验收条件",
+		"failure_reason": "assertion_mismatch",
+		"session_id":     "prompt-eval-source-failed",
+		"work_dir":       "/tmp/prompt-eval",
+	}, testWorkspaceID, "prompt-eval-codebuddy-daemon")
+	testHandler.FailTask(failW, withURLParam(failReq, "taskId", sourceResp.TaskID))
+	if failW.Code != http.StatusOK {
+		t.Fatalf("fail source status = %d, body = %s", failW.Code, failW.Body.String())
+	}
+
+	optW := httptest.NewRecorder()
+	testHandler.RunPromptEvaluationOptimizationAgent(optW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+sourceResp.Run.ID+"/optimization-agent-run", nil), "id", sourceResp.Run.ID))
+	if optW.Code != http.StatusAccepted {
+		t.Fatalf("optimization agent status = %d, body = %s", optW.Code, optW.Body.String())
+	}
+	var optResp PromptEvaluationAgentRunResponse
+	if err := json.Unmarshal(optW.Body.Bytes(), &optResp); err != nil {
+		t.Fatalf("decode optimization agent response: %v", err)
+	}
+	if optResp.TaskID == "" || optResp.TaskID == sourceResp.TaskID || optResp.Run.RunKind != "Agent执行" || optResp.Run.Status != "已入队" {
+		t.Fatalf("optimization agent response = %+v", optResp)
+	}
+	if optResp.Asset.AssetType != "优化运行" || optResp.Asset.PromptID == nil || *optResp.Asset.PromptID != *sourceResp.Run.PromptID {
+		t.Fatalf("optimization asset = %+v source=%+v", optResp.Asset, sourceResp.Run)
+	}
+	payload := optResp.Asset.Payload.(map[string]any)
+	if payload["任务类型"] != "Agent 优化运行" || payload["来源运行"] != sourceResp.Run.ID {
+		t.Fatalf("optimization payload = %#v", payload)
+	}
+	if !containsAll(stringFromAny(payload["语义版本"]), []string{"optimization_agent"}) {
+		t.Fatalf("optimization payload version = %#v", payload["语义版本"])
+	}
+	var caseCount int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*)::int FROM prompt_evaluation_case
+		WHERE workspace_id = $1 AND asset_id = $2
+	`, testWorkspaceID, optResp.Asset.ID).Scan(&caseCount); err != nil {
+		t.Fatalf("load optimization cases: %v", err)
+	}
+	if caseCount == 0 {
+		t.Fatalf("expected optimization asset to sync structured cases")
+	}
+}
+
 func TestRunPromptEvaluationAssetAgentAutoSyncsCancelledTask(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")

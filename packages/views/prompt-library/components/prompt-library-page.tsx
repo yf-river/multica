@@ -312,6 +312,19 @@ export function PromptLibraryPage() {
     },
   });
 
+  const runOptimizationAgentMut = useMutation({
+    mutationFn: (runId: string) => api.runPromptEvaluationOptimizationAgent(runId),
+    onSuccess: (result) => {
+      invalidateAssets();
+      invalidateCases();
+      invalidateRuns();
+      invalidateSummary();
+      toast.success(`真实 Agent 优化任务已入队：${result.task_id}`);
+      setActiveTab("运行历史");
+      navigation.push(workspacePaths.trainingView(TAB_TO_VIEW["运行历史"]));
+    },
+  });
+
   const publishCandidateMut = useMutation({
     mutationFn: (candidateId: string) => api.publishPromptEvaluationOptimizationCandidate(candidateId),
     onSuccess: (result) => {
@@ -690,6 +703,8 @@ export function PromptLibraryPage() {
               syncingRunId={syncRunMut.isPending ? syncRunMut.variables ?? null : null}
               onGenerateCandidate={(runId) => createCandidateMut.mutate(runId)}
               generatingCandidateRunId={createCandidateMut.isPending ? createCandidateMut.variables ?? null : null}
+              onRunOptimizationAgent={(runId) => runOptimizationAgentMut.mutate(runId)}
+              runningOptimizationAgentRunId={runOptimizationAgentMut.isPending ? runOptimizationAgentMut.variables ?? null : null}
               onPublishCandidate={(candidateId) => publishCandidateMut.mutate(candidateId)}
               publishingCandidateId={publishCandidateMut.isPending ? publishCandidateMut.variables ?? null : null}
             />
@@ -766,6 +781,8 @@ function WorkbenchPanel({
   syncingRunId,
   onGenerateCandidate,
   generatingCandidateRunId,
+  onRunOptimizationAgent,
+  runningOptimizationAgentRunId,
   onPublishCandidate,
   publishingCandidateId,
 }: {
@@ -791,6 +808,8 @@ function WorkbenchPanel({
   syncingRunId: string | null;
   onGenerateCandidate: (runId: string) => void;
   generatingCandidateRunId: string | null;
+  onRunOptimizationAgent: (runId: string) => void;
+  runningOptimizationAgentRunId: string | null;
   onPublishCandidate: (candidateId: string) => void;
   publishingCandidateId: string | null;
 }) {
@@ -885,7 +904,7 @@ function WorkbenchPanel({
         ) : (
           <div className="divide-y rounded-md border">
             {runs.map((run) => (
-              <div key={run.id} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
+              <div key={run.id} data-testid={`prompt-evaluation-run-${run.id}`} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
                 <div className="min-w-0">
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="truncate text-sm font-medium">{run.run_kind} · {run.status}</span>
@@ -913,15 +932,26 @@ function WorkbenchPanel({
                     </Button>
                   )}
                   {canGenerateOptimizationCandidate(run) && (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      onClick={() => onGenerateCandidate(run.id)}
-                      disabled={generatingCandidateRunId === run.id || (candidatesByRun.get(run.id)?.some((candidate) => candidate.status === "待确认") ?? false)}
-                    >
-                      {generatingCandidateRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-                      {candidatesByRun.get(run.id)?.some((candidate) => candidate.status === "待确认") ? "已有候选" : "生成优化候选"}
-                    </Button>
+                    <>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => onRunOptimizationAgent(run.id)}
+                        disabled={runningOptimizationAgentRunId === run.id || run.status === "已入队" || run.status === "运行中"}
+                      >
+                        {runningOptimizationAgentRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+                        Agent 优化任务
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => onGenerateCandidate(run.id)}
+                        disabled={generatingCandidateRunId === run.id || (candidatesByRun.get(run.id)?.some((candidate) => candidate.status === "待确认") ?? false)}
+                      >
+                        {generatingCandidateRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+                        {candidatesByRun.get(run.id)?.some((candidate) => candidate.status === "待确认") ? "已有候选" : "生成优化候选"}
+                      </Button>
+                    </>
                   )}
                 </div>
                 {expandedRunId === run.id && (
