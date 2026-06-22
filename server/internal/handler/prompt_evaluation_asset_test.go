@@ -298,6 +298,18 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	if runStatus != "已入队" || runKind != "Agent执行" || taskID != resp.TaskID || chatSessionID != resp.ChatSessionID || trialStatus != "待执行" {
 		t.Fatalf("queued structured run mismatch: status=%s kind=%s task=%s session=%s trial=%s", runStatus, runKind, taskID, chatSessionID, trialStatus)
 	}
+	var userMessage string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT content FROM chat_message
+		WHERE chat_session_id = $1 AND role = 'user'
+		ORDER BY created_at ASC
+		LIMIT 1
+	`, resp.ChatSessionID).Scan(&userMessage); err != nil {
+		t.Fatalf("load prompt evaluation agent user message: %v", err)
+	}
+	if !containsAll(userMessage, []string{"必须返回的 JSON schema", "用例结果", "需人工复核", "Multica 会用它自动回写运行历史"}) {
+		t.Fatalf("agent evaluation message missing structured output contract: %s", userMessage)
+	}
 
 	if _, err := testPool.Exec(context.Background(), `
 		UPDATE agent_task_queue

@@ -2160,7 +2160,12 @@ func (h *Handler) selectPromptEvaluationRuntime(w http.ResponseWriter, r *http.R
 }
 
 func promptEvaluationAgentInstructions() string {
-	return "你是 Multica 训练与评估 Agent。你只负责执行当前提示词评估任务，必须使用中文输出。输出必须包含：执行结论、逐用例结果、失败原因、改进建议、可复盘证据。不要修改业务代码，不要创建 issue，不要泄露密钥。"
+	return strings.Join([]string{
+		"你是 Multica 训练与评估 Agent。你只负责执行当前提示词评估任务，必须使用中文输出。",
+		"输出必须包含执行结论、逐用例结果、失败原因、改进建议、可复盘证据。",
+		"最终回复必须包含一个可机读 JSON 代码块，字段为：用例结果、评估结论、总用例数、通过数、失败数、失败原因、改进建议、可复盘证据。",
+		"不要修改业务代码，不要创建 issue，不要泄露密钥。",
+	}, "\n")
 }
 
 func buildPromptEvaluationAgentMessage(asset db.PromptEvaluationAsset, prompt db.PromptLibraryItem, payload map[string]any) string {
@@ -2185,6 +2190,33 @@ func buildPromptEvaluationAgentMessage(asset db.PromptEvaluationAsset, prompt db
 		"2. 逐条说明用例是否通过、失败原因和证据。",
 		"3. 给出中文指标：总用例数、通过数、失败数、通过率、总耗时、平均耗时、输入token、输出token、预估成本、执行Agent、模型、runtime、trace/task id、失败原因、评估结论。",
 		"4. 如果需要优化提示词，只输出候选建议，不要自动替换生产版本。",
+		"5. 最终必须附带一个 JSON 代码块，Multica 会用它自动回写运行历史；缺失该结构会被标记为“需人工复核”。",
+		"",
+		"【必须返回的 JSON schema】",
+		"```json",
+		`{
+  "用例结果": [
+    {
+      "case_index": 0,
+      "status": "通过 | 未通过 | 需人工复核",
+      "output": "该用例的实际输出或摘要",
+      "failure_reason": "无 | 失败原因 | 需复核原因",
+      "evidence": {
+        "命中": ["命中的期望字段"],
+        "缺失": ["缺失的期望字段"],
+        "trace_task_id": "如已知则填写"
+      }
+    }
+  ],
+  "评估结论": "中文结论",
+  "总用例数": 0,
+  "通过数": 0,
+  "失败数": 0,
+  "失败原因": "无 | 汇总失败原因",
+  "改进建议": ["中文建议"],
+  "可复盘证据": ["task id、日志、关键输出摘要"]
+}`,
+		"```",
 	}, "\n")
 }
 
