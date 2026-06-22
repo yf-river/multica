@@ -191,6 +191,55 @@ test.describe("训练与评估工作台", () => {
       }, { timeout: 15000 })
       .toBe(false);
 
+    await page.getByRole("button", { name: "测试套件", exact: true }).click();
+    const testSuiteRow = page.getByTestId(`prompt-evaluation-asset-${testSuite!.id}`);
+    await expect(testSuiteRow.getByText("结构化评测用例", { exact: true })).toBeVisible({ timeout: 10000 });
+    await expect(testSuiteRow).toContainText("结构化用例 1 个", { timeout: 10000 });
+    await testSuiteRow.getByPlaceholder("手工用例名称").fill("手工套件回归用例");
+    await testSuiteRow.getByPlaceholder("变量：issue_title=登录失败").fill("issue_title=登录失败\nproject_context=user-center");
+    await testSuiteRow.getByPlaceholder("期望包含：验收条件, trace/任务标识").fill("套件结论, 通过率, trace/任务标识");
+    await testSuiteRow.getByPlaceholder("标签：user-center, 回归").fill("测试套件, 回归");
+    await testSuiteRow.getByRole("button", { name: "新增用例" }).click();
+    await expect(page.getByText("手工评测用例已创建").last()).toBeVisible({ timeout: 10000 });
+    await expect
+      .poll(async () => {
+        const items = await api.listPromptEvaluationCases({ asset_id: testSuite!.id });
+        return items.find((item) => item.source === "manual" && item.case_name === "手工套件回归用例") ?? null;
+      }, { timeout: 15000 })
+      .toMatchObject({
+        asset_id: testSuite!.id,
+        expected_contains: expect.arrayContaining(["通过率"]),
+        tags: expect.arrayContaining(["测试套件"]),
+      });
+    await expect(testSuiteRow).toContainText("手工 1", { timeout: 10000 });
+    await testSuiteRow.getByRole("button", { name: "编辑用例" }).click();
+    await testSuiteRow.getByPlaceholder("编辑用例名称").fill("手工套件回归用例 v2");
+    await testSuiteRow.getByPlaceholder("编辑变量：issue_title=登录失败").fill("issue_title=登录失败\nproject_context=user-center\nowner=qa");
+    await testSuiteRow.getByPlaceholder("编辑期望包含").fill("套件结论, 通过率, 领导演示证据");
+    await testSuiteRow.getByPlaceholder("编辑标签").fill("测试套件, 回归, 领导演示");
+    await testSuiteRow.getByRole("button", { name: "保存用例" }).click();
+    await expect(page.getByText("手工评测用例已保存")).toBeVisible({ timeout: 10000 });
+    await expect
+      .poll(async () => {
+        const items = await api.listPromptEvaluationCases({ asset_id: testSuite!.id });
+        return items.find((item) => item.source === "manual" && item.case_name === "手工套件回归用例 v2") ?? null;
+      }, { timeout: 15000 })
+      .toMatchObject({
+        variables: expect.objectContaining({
+          owner: "qa",
+        }),
+        expected_contains: expect.arrayContaining(["领导演示证据"]),
+        tags: expect.arrayContaining(["领导演示"]),
+      });
+    await testSuiteRow.getByRole("button", { name: "删除用例" }).click();
+    await expect(page.getByText("手工评测用例已删除")).toBeVisible({ timeout: 10000 });
+    await expect
+      .poll(async () => {
+        const items = await api.listPromptEvaluationCases({ asset_id: testSuite!.id });
+        return items.some((item) => item.source === "manual" && item.case_name.includes("手工套件回归用例"));
+      }, { timeout: 15000 })
+      .toBe(false);
+
     await page.getByRole("button", { name: "实验", exact: true }).click();
     const experimentRow = page.getByTestId(`prompt-evaluation-asset-${experiment!.id}`);
     await expect(experimentRow.getByText("结构化评测用例", { exact: true })).toBeVisible({ timeout: 10000 });
