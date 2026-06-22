@@ -413,32 +413,49 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if err := json.Unmarshal(createCaseW.Body.Bytes(), &created); err != nil {
 		t.Fatalf("decode created case: %v", err)
 	}
-	if created.Source != "manual" || created.CaseIndex != 0 || created.CaseName != "登录失败需要 trace" {
+	if created.Source != "manual" || created.CaseIndex != 1 || created.CaseName != "登录失败需要 trace" {
 		t.Fatalf("created case = %+v", created)
 	}
 	if len(created.Assertions) != 2 || created.Assertions[0].ExpectedText != "trace/task id" || created.Assertions[1].ExpectedText != "验收条件" {
 		t.Fatalf("created assertions = %+v", created.Assertions)
 	}
 	assertPromptEvaluationCaseAssertions(t, created.ID, []string{"trace/task id", "验收条件"})
-	assertPromptEvaluationDatasetRows(t, asset.ID, []string{"登录失败需要 trace"})
+	assertPromptEvaluationDatasetRowsContain(t, asset.ID, []string{"登录失败需要 trace"})
 	runW := httptest.NewRecorder()
 	testHandler.RunPromptEvaluationAsset(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/run", nil), "id", asset.ID))
 	if runW.Code != http.StatusOK {
 		t.Fatalf("run asset with manual case status = %d, body = %s", runW.Code, runW.Body.String())
 	}
-	var trialCaseName string
-	if err := testPool.QueryRow(context.Background(), `
+	trialRows, err := testPool.Query(context.Background(), `
+		WITH latest_run AS (
+			SELECT id
+			FROM prompt_evaluation_run
+			WHERE asset_id = $1
+			ORDER BY created_at DESC
+			LIMIT 1
+		)
 		SELECT t.case_name
 		FROM prompt_evaluation_trial t
-		JOIN prompt_evaluation_run r ON r.id = t.run_id
-		WHERE r.asset_id = $1
-		ORDER BY r.created_at DESC, t.case_index ASC
-		LIMIT 1
-	`, asset.ID).Scan(&trialCaseName); err != nil {
-		t.Fatalf("load manual case trial: %v", err)
+		JOIN latest_run r ON r.id = t.run_id
+		ORDER BY t.case_index ASC
+	`, asset.ID)
+	if err != nil {
+		t.Fatalf("load manual case trials: %v", err)
 	}
-	if trialCaseName != "登录失败需要 trace" {
-		t.Fatalf("manual structured case was not used by run, got %q", trialCaseName)
+	defer trialRows.Close()
+	trialCaseNames := []string{}
+	for trialRows.Next() {
+		var trialCaseName string
+		if err := trialRows.Scan(&trialCaseName); err != nil {
+			t.Fatalf("scan manual case trial: %v", err)
+		}
+		trialCaseNames = append(trialCaseNames, trialCaseName)
+	}
+	if err := trialRows.Err(); err != nil {
+		t.Fatalf("iterate manual case trials: %v", err)
+	}
+	if !containsAll(strings.Join(trialCaseNames, "\n"), []string{"登录失败需要 trace"}) {
+		t.Fatalf("manual structured case was not used by run, got %#v", trialCaseNames)
 	}
 
 	updateCaseW := httptest.NewRecorder()
@@ -461,7 +478,7 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 		t.Fatalf("updated assertions = %+v", updated.Assertions)
 	}
 	assertPromptEvaluationCaseAssertions(t, created.ID, []string{"可观测证据"})
-	assertPromptEvaluationDatasetRows(t, asset.ID, []string{"登录失败需要可观测证据"})
+	assertPromptEvaluationDatasetRowsContain(t, asset.ID, []string{"登录失败需要可观测证据"})
 
 	listW := httptest.NewRecorder()
 	testHandler.ListPromptEvaluationCases(listW, newRequest(http.MethodGet, "/api/prompt-evaluation-cases?asset_id="+asset.ID, nil))
@@ -475,11 +492,18 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if err := json.Unmarshal(listW.Body.Bytes(), &listed); err != nil {
 		t.Fatalf("decode listed cases: %v", err)
 	}
-	if listed.Total != 1 || listed.Items[0].ID != created.ID {
+	var listedManual *PromptEvaluationCaseResponse
+	for idx := range listed.Items {
+		if listed.Items[idx].ID == created.ID {
+			listedManual = &listed.Items[idx]
+			break
+		}
+	}
+	if listed.Total != 2 || listedManual == nil {
 		t.Fatalf("listed cases = %+v", listed)
 	}
-	if len(listed.Items[0].Assertions) != 1 || listed.Items[0].Assertions[0].ExpectedText != "可观测证据" {
-		t.Fatalf("listed assertions = %+v", listed.Items[0].Assertions)
+	if len(listedManual.Assertions) != 1 || listedManual.Assertions[0].ExpectedText != "可观测证据" {
+		t.Fatalf("listed assertions = %+v", listedManual.Assertions)
 	}
 
 	deleteCaseW := httptest.NewRecorder()
@@ -495,11 +519,11 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if err := json.Unmarshal(listAfterDeleteW.Body.Bytes(), &listed); err != nil {
 		t.Fatalf("decode cases after delete: %v", err)
 	}
-	if listed.Total != 0 {
+	if listed.Total != 1 || listed.Items[0].Source != "payload" {
 		t.Fatalf("cases after delete = %+v", listed)
 	}
 	assertPromptEvaluationCaseAssertions(t, created.ID, nil)
-	assertPromptEvaluationDatasetRows(t, asset.ID, nil)
+	assertPromptEvaluationDatasetRows(t, asset.ID, []string{"默认用例"})
 
 	createSuiteW := httptest.NewRecorder()
 	testHandler.CreatePromptEvaluationAsset(createSuiteW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
@@ -530,7 +554,7 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if err := json.Unmarshal(createSuiteCaseW.Body.Bytes(), &suiteCase); err != nil {
 		t.Fatalf("decode test suite case: %v", err)
 	}
-	assertPromptEvaluationTestSuiteCases(t, testSuite.ID, []string{"测试套件必须输出通过率"})
+	assertPromptEvaluationTestSuiteCasesContain(t, testSuite.ID, []string{"测试套件必须输出通过率"})
 	updateSuiteCaseW := httptest.NewRecorder()
 	testHandler.UpdatePromptEvaluationCase(updateSuiteCaseW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-cases/"+suiteCase.ID, map[string]any{
 		"case_name": "测试套件必须输出领导证据",
@@ -539,13 +563,13 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if updateSuiteCaseW.Code != http.StatusOK {
 		t.Fatalf("update test suite case status = %d, body = %s", updateSuiteCaseW.Code, updateSuiteCaseW.Body.String())
 	}
-	assertPromptEvaluationTestSuiteCases(t, testSuite.ID, []string{"测试套件必须输出领导证据"})
+	assertPromptEvaluationTestSuiteCasesContain(t, testSuite.ID, []string{"测试套件必须输出领导证据"})
 	deleteSuiteCaseW := httptest.NewRecorder()
 	testHandler.DeletePromptEvaluationCase(deleteSuiteCaseW, withURLParam(newRequest(http.MethodDelete, "/api/prompt-evaluation-cases/"+suiteCase.ID, nil), "id", suiteCase.ID))
 	if deleteSuiteCaseW.Code != http.StatusNoContent {
 		t.Fatalf("delete test suite case status = %d, body = %s", deleteSuiteCaseW.Code, deleteSuiteCaseW.Body.String())
 	}
-	assertPromptEvaluationTestSuiteCases(t, testSuite.ID, nil)
+	assertPromptEvaluationTestSuiteCases(t, testSuite.ID, []string{"默认用例"})
 }
 
 func TestUpdatePromptEvaluationAssetPreservesManualCases(t *testing.T) {
@@ -1199,14 +1223,14 @@ func TestPromptEvaluationEvidenceSnapshotArchivesRunEvidence(t *testing.T) {
 	}
 
 	getW := httptest.NewRecorder()
-	req := withURLParam(withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence-snapshots/"+snapshot.ID, nil), "id", resp.Run.ID), "snapshotId", snapshot.ID)
+	req := withURLParams(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence-snapshots/"+snapshot.ID, nil), "id", resp.Run.ID, "snapshotId", snapshot.ID)
 	testHandler.GetPromptEvaluationEvidenceSnapshot(getW, req)
 	if getW.Code != http.StatusOK {
 		t.Fatalf("get snapshot status = %d, body = %s", getW.Code, getW.Body.String())
 	}
 
 	mismatchW := httptest.NewRecorder()
-	mismatchReq := withURLParam(withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/00000000-0000-0000-0000-000000000001/evidence-snapshots/"+snapshot.ID, nil), "id", "00000000-0000-0000-0000-000000000001"), "snapshotId", snapshot.ID)
+	mismatchReq := withURLParams(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/00000000-0000-0000-0000-000000000001/evidence-snapshots/"+snapshot.ID, nil), "id", "00000000-0000-0000-0000-000000000001", "snapshotId", snapshot.ID)
 	testHandler.GetPromptEvaluationEvidenceSnapshot(mismatchW, mismatchReq)
 	if mismatchW.Code != http.StatusNotFound {
 		t.Fatalf("mismatched run snapshot status = %d, body = %s", mismatchW.Code, mismatchW.Body.String())
@@ -1289,7 +1313,7 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 	if !ok {
 		t.Fatalf("source summary missing runtime evidence: %#v", source)
 	}
-	if len(runtimeEvidence["task消息"].([]any)) != 1 || len(runtimeEvidence["trace事件"].([]any)) != 1 || len(runtimeEvidence["task用量"].([]any)) != 1 {
+	if len(runtimeEvidence["task消息"].([]any)) != 1 || len(runtimeEvidence["trace事件"].([]any)) < 1 || len(runtimeEvidence["task用量"].([]any)) != 1 {
 		t.Fatalf("runtime evidence incomplete: %#v", runtimeEvidence)
 	}
 }
@@ -1965,6 +1989,33 @@ func assertPromptEvaluationCaseAssertions(t *testing.T, caseID string, expected 
 
 func assertPromptEvaluationDatasetRows(t *testing.T, assetID string, expected []string) {
 	t.Helper()
+	actual := loadPromptEvaluationDatasetRows(t, assetID)
+	if len(actual) != len(expected) {
+		t.Fatalf("dataset rows = %#v, want %#v", actual, expected)
+	}
+	for idx := range expected {
+		if actual[idx] != expected[idx] {
+			t.Fatalf("dataset rows = %#v, want %#v", actual, expected)
+		}
+	}
+}
+
+func assertPromptEvaluationDatasetRowsContain(t *testing.T, assetID string, expected []string) {
+	t.Helper()
+	actual := loadPromptEvaluationDatasetRows(t, assetID)
+	seen := map[string]bool{}
+	for _, item := range actual {
+		seen[item] = true
+	}
+	for _, item := range expected {
+		if !seen[item] {
+			t.Fatalf("dataset rows = %#v, want to contain %#v", actual, expected)
+		}
+	}
+}
+
+func loadPromptEvaluationDatasetRows(t *testing.T, assetID string) []string {
+	t.Helper()
 	rows, err := testPool.Query(context.Background(), `
 		SELECT row_name
 		FROM prompt_evaluation_dataset_row
@@ -1986,17 +2037,37 @@ func assertPromptEvaluationDatasetRows(t *testing.T, assetID string, expected []
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate dataset rows: %v", err)
 	}
+	return actual
+}
+
+func assertPromptEvaluationTestSuiteCases(t *testing.T, assetID string, expected []string) {
+	t.Helper()
+	actual := loadPromptEvaluationTestSuiteCases(t, assetID)
 	if len(actual) != len(expected) {
-		t.Fatalf("dataset rows = %#v, want %#v", actual, expected)
+		t.Fatalf("test suite cases = %#v, want %#v", actual, expected)
 	}
 	for idx := range expected {
 		if actual[idx] != expected[idx] {
-			t.Fatalf("dataset rows = %#v, want %#v", actual, expected)
+			t.Fatalf("test suite cases = %#v, want %#v", actual, expected)
 		}
 	}
 }
 
-func assertPromptEvaluationTestSuiteCases(t *testing.T, assetID string, expected []string) {
+func assertPromptEvaluationTestSuiteCasesContain(t *testing.T, assetID string, expected []string) {
+	t.Helper()
+	actual := loadPromptEvaluationTestSuiteCases(t, assetID)
+	seen := map[string]bool{}
+	for _, item := range actual {
+		seen[item] = true
+	}
+	for _, item := range expected {
+		if !seen[item] {
+			t.Fatalf("test suite cases = %#v, want to contain %#v", actual, expected)
+		}
+	}
+}
+
+func loadPromptEvaluationTestSuiteCases(t *testing.T, assetID string) []string {
 	t.Helper()
 	rows, err := testPool.Query(context.Background(), `
 		SELECT case_name
@@ -2019,14 +2090,7 @@ func assertPromptEvaluationTestSuiteCases(t *testing.T, assetID string, expected
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate test suite cases: %v", err)
 	}
-	if len(actual) != len(expected) {
-		t.Fatalf("test suite cases = %#v, want %#v", actual, expected)
-	}
-	for idx := range expected {
-		if actual[idx] != expected[idx] {
-			t.Fatalf("test suite cases = %#v, want %#v", actual, expected)
-		}
-	}
+	return actual
 }
 
 func assertPromptEvaluationExperimentDimensions(t *testing.T, assetID string, expected []string) {

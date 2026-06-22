@@ -486,6 +486,18 @@ function buildCommandPlan() {
       timeoutMs: 120_000,
     },
     {
+      name: "后端提示词训练 handler/db 测试",
+      command: "cd server && go test ./internal/handler -run 'TestPrompt(Evaluation|Library)'",
+      required: true,
+      timeoutMs: 180_000,
+    },
+    {
+      name: "Views 训练模块测试",
+      command: "pnpm --filter @multica/views test -- prompt-library",
+      required: true,
+      timeoutMs: 240_000,
+    },
+    {
       name: "Codex curl 端到端 Agent/小队验收",
       command: [
         `ACCEPTANCE_API_URL=${shellQuote(apiURL)}`,
