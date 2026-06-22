@@ -543,15 +543,17 @@ SELECT id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, 
 WHERE workspace_id = $1
   AND ($3::uuid IS NULL OR asset_id = $3)
   AND ($4::text IS NULL OR status = $4)
+  AND ($5::timestamptz IS NULL OR created_at >= $5)
 ORDER BY created_at DESC
 LIMIT $2
 `
 
 type ListPromptEvaluationRunsParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	Limit       int32       `json:"limit"`
-	AssetID     pgtype.UUID `json:"asset_id"`
-	Status      pgtype.Text `json:"status"`
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Limit       int32              `json:"limit"`
+	AssetID     pgtype.UUID        `json:"asset_id"`
+	Status      pgtype.Text        `json:"status"`
+	Since       pgtype.Timestamptz `json:"since"`
 }
 
 func (q *Queries) ListPromptEvaluationRuns(ctx context.Context, arg ListPromptEvaluationRunsParams) ([]PromptEvaluationRun, error) {
@@ -560,6 +562,7 @@ func (q *Queries) ListPromptEvaluationRuns(ctx context.Context, arg ListPromptEv
 		arg.Limit,
 		arg.AssetID,
 		arg.Status,
+		arg.Since,
 	)
 	if err != nil {
 		return nil, err

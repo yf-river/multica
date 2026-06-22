@@ -916,6 +916,15 @@ func (h *Handler) ListPromptEvaluationRuns(w http.ResponseWriter, r *http.Reques
 	if value := r.URL.Query().Get("status"); value != "" {
 		status = pgtype.Text{String: value, Valid: true}
 	}
+	var since pgtype.Timestamptz
+	if value := r.URL.Query().Get("since"); value != "" {
+		parsed, err := time.Parse(time.RFC3339, value)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "since must be RFC3339")
+			return
+		}
+		since = pgtype.Timestamptz{Time: parsed, Valid: true}
+	}
 	limit := int32(50)
 	if value := r.URL.Query().Get("limit"); value != "" {
 		parsed, err := strconv.Atoi(value)
@@ -929,6 +938,7 @@ func (h *Handler) ListPromptEvaluationRuns(w http.ResponseWriter, r *http.Reques
 		WorkspaceID: workspaceUUID,
 		AssetID:     assetID,
 		Status:      status,
+		Since:       since,
 		Limit:       limit,
 	})
 	if err != nil {

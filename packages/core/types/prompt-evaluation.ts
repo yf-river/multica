@@ -252,6 +252,7 @@ export interface ListPromptEvaluationAssetsParams {
 export interface ListPromptEvaluationRunsParams {
   asset_id?: string;
   status?: PromptEvaluationRun["status"];
+  since?: string | null;
   limit?: number;
 }
 

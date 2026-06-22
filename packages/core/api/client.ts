@@ -1897,6 +1897,7 @@ export class ApiClient {
     const search = new URLSearchParams();
     if (params?.asset_id) search.set("asset_id", params.asset_id);
     if (params?.status) search.set("status", params.status);
+    if (params?.since) search.set("since", params.since);
     if (params?.limit) search.set("limit", String(params.limit));
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs${query ? `?${query}` : ""}`);

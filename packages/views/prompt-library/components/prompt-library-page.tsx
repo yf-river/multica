@@ -158,8 +158,8 @@ export function PromptLibraryPage() {
     enabled: !!workspaceId,
   });
   const runQuery = useQuery({
-    queryKey: promptLibraryKeys.runs(workspaceId ?? ""),
-    queryFn: () => api.listPromptEvaluationRuns({ limit: 100 }),
+    queryKey: [...promptLibraryKeys.runs(workspaceId ?? ""), demoSince ?? "all"] as const,
+    queryFn: () => api.listPromptEvaluationRuns({ limit: 100, since: demoSince }),
     enabled: !!workspaceId,
   });
   const candidateQuery = useQuery({
@@ -545,9 +545,10 @@ export function PromptLibraryPage() {
 
   const exportDemoEvidence = async () => {
     const range = DEMO_TIME_RANGES.find((item) => item.value === demoTimeRange);
-    const recentRuns = runs.slice(0, 10);
     setExportingDemoEvidence(true);
     try {
+      const scopedRunResponse = await api.listPromptEvaluationRuns({ limit: 50, since: demoSince });
+      const recentRuns = scopedRunResponse.items;
       const recentRunEvidence = await Promise.all(
         recentRuns.map(async (run) => {
           try {
@@ -597,7 +598,7 @@ export function PromptLibraryPage() {
         观测范围: {
           标签: range?.label ?? demoTimeRange,
           since: demoSince,
-          说明: "训练评估摘要与 SOP/任务观测摘要使用同一 since 时间窗口；资产统计保留当前工作区库存。",
+          说明: "训练评估摘要、最近运行、运行证据与 SOP/任务观测摘要使用同一 since 时间窗口；资产统计保留当前工作区库存。",
         },
         workspace_id: workspaceId,
         训练评估摘要: summary,

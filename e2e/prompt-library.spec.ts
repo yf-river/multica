@@ -259,10 +259,13 @@ test.describe("训练与评估工作台", () => {
         passRate: expect.any(Number),
         hasAssets: true,
       });
-    const futureSummary = await api.getPromptEvaluationSummary({ since: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString() });
+    const futureSince = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+    const futureSummary = await api.getPromptEvaluationSummary({ since: futureSince });
     expect(futureSummary.运行状态["运行总数"]).toBe(0);
     expect(futureSummary.指标["输入token"]).toBe(0);
     expect(futureSummary.资产统计["资产总数"]).toBeGreaterThan(0);
+    const futureRuns = await api.listPromptEvaluationRuns({ since: futureSince, limit: 20 });
+    expect(futureRuns).toHaveLength(0);
     await page.getByRole("button", { name: "运行历史", exact: true }).click();
     await expect(page.getByText("Agent执行 · 已入队")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(`task ${queuedAgentRun!.task_id}`)).toBeVisible();

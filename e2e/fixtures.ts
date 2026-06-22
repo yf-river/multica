@@ -1022,10 +1022,11 @@ export class TestApiClient {
     return res.json();
   }
 
-  async listPromptEvaluationRuns(params?: { asset_id?: string; status?: string; limit?: number }): Promise<PromptEvaluationRun[]> {
+  async listPromptEvaluationRuns(params?: { asset_id?: string; status?: string; since?: string; limit?: number }): Promise<PromptEvaluationRun[]> {
     const search = new URLSearchParams();
     if (params?.asset_id) search.set("asset_id", params.asset_id);
     if (params?.status) search.set("status", params.status);
+    if (params?.since) search.set("since", params.since);
     if (params?.limit) search.set("limit", String(params.limit));
     const res = await this.authedFetch(`/api/prompt-evaluation-runs${search.toString() ? `?${search}` : ""}`);
     if (!res.ok) {

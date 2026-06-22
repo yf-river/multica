@@ -65,6 +65,7 @@ SELECT * FROM prompt_evaluation_run
 WHERE workspace_id = $1
   AND (sqlc.narg('asset_id')::uuid IS NULL OR asset_id = sqlc.narg('asset_id'))
   AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status'))
+  AND (sqlc.narg('since')::timestamptz IS NULL OR created_at >= sqlc.narg('since'))
 ORDER BY created_at DESC
 LIMIT $2;
 
