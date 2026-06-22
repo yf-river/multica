@@ -494,6 +494,23 @@ func (s *TaskService) buildTaskTraceEventParams(ctx context.Context, task db.Age
 			}
 		}
 	}
+	if qc, ok := s.parseQuickCreateContext(task); ok {
+		if !workspaceID.Valid && qc.WorkspaceID != "" {
+			if parsed, err := util.ParseUUID(qc.WorkspaceID); err == nil {
+				workspaceID = parsed
+			}
+		}
+		if qc.SquadID != "" {
+			if parsed, err := util.ParseUUID(qc.SquadID); err == nil {
+				squadID = parsed
+			}
+		}
+		if !projectID.Valid && qc.ProjectID != "" {
+			if parsed, err := util.ParseUUID(qc.ProjectID); err == nil {
+				projectID = parsed
+			}
+		}
+	}
 	if !workspaceID.Valid {
 		if agent, err := s.Queries.GetAgent(ctx, task.AgentID); err == nil {
 			workspaceID = agent.WorkspaceID
