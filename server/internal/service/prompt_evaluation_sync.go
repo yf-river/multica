@@ -525,7 +525,7 @@ func parsePromptEvaluationAgentVerdicts(raw any, totalCases int32) ([]promptEval
 			return parsePromptEvaluationAgentVerdictList(list, totalCases)
 		}
 	}
-	if totalCases == 1 && (value["状态"] != nil || value["status"] != nil || value["passed"] != nil || value["通过"] != nil) {
+	if totalCases == 1 && promptEvaluationMapHasRecognizedVerdict(value) {
 		verdict := promptEvaluationAgentVerdictFromMap(value, 0)
 		return []promptEvaluationAgentCaseVerdict{verdict}, true
 	}
@@ -605,6 +605,31 @@ func promptEvaluationAgentVerdictFromMap(row map[string]any, fallbackIndex int32
 		Output:        output,
 		Evidence:      row,
 	}
+}
+
+func promptEvaluationMapHasRecognizedVerdict(row map[string]any) bool {
+	if _, ok := row["状态"]; ok {
+		return normalizePromptEvaluationAgentStatus(stringFromAny(row["状态"])) != ""
+	}
+	if _, ok := row["status"]; ok {
+		return normalizePromptEvaluationAgentStatus(stringFromAny(row["status"])) != ""
+	}
+	if _, ok := row["结论"]; ok {
+		return normalizePromptEvaluationAgentStatus(stringFromAny(row["结论"])) != ""
+	}
+	if _, ok := row["result"]; ok {
+		return normalizePromptEvaluationAgentStatus(stringFromAny(row["result"])) != ""
+	}
+	if _, ok := row["passed"]; ok {
+		return statusFromPromptEvaluationPassedValue(row["passed"]) != ""
+	}
+	if _, ok := row["通过"]; ok {
+		return statusFromPromptEvaluationPassedValue(row["通过"]) != ""
+	}
+	if _, ok := row["pass"]; ok {
+		return statusFromPromptEvaluationPassedValue(row["pass"]) != ""
+	}
+	return false
 }
 
 func promptEvaluationCaseIndexFromMap(row map[string]any, fallback int32) int32 {

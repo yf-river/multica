@@ -92,6 +92,7 @@ interface PromptEvaluationCase {
   variables: Record<string, unknown>;
   expected_contains: unknown[];
   status: string;
+  source: string;
 }
 
 interface PromptEvaluationOptimizationCandidate {
@@ -699,6 +700,33 @@ export class TestApiClient {
     const client = new pg.Client(DATABASE_URL);
     await client.connect();
     try {
+      const structuredOutput = [
+        "Agent 输出：完成训练评估并给出验收证据。",
+        "```json",
+        JSON.stringify({
+          用例结果: [
+            {
+              case_index: 0,
+              status: "通过",
+              output: "输出需求澄清结论、风险、测试证据和下一步建议。",
+              failure_reason: "无",
+              evidence: {
+                命中: ["需求澄清结论", "风险", "测试证据", "下一步建议"],
+                缺失: [],
+                trace_task_id: run.task_id,
+              },
+            },
+          ],
+          评估结论: "Agent 已返回结构化逐用例评估，全部用例通过",
+          总用例数: 1,
+          通过数: 1,
+          失败数: 0,
+          失败原因: "无",
+          改进建议: ["保持中文输出和 trace/task id 证据"],
+          可复盘证据: [run.task_id],
+        }),
+        "```",
+      ].join("\n");
       await client.query("BEGIN");
       await client.query(
         `
@@ -707,13 +735,13 @@ export class TestApiClient {
             status = 'completed',
             started_at = COALESCE(started_at, now() - interval '2 seconds'),
             completed_at = now(),
-            result = '{"status":"completed","output":"Agent 输出：完成训练评估并给出验收证据"}'::jsonb,
+            result = $2::jsonb,
             error = NULL,
             session_id = COALESCE(session_id, 'e2e-prompt-eval-session'),
             work_dir = COALESCE(work_dir, '/tmp/e2e-prompt-eval')
           WHERE id = $1
         `,
-        [run.task_id],
+        [run.task_id, JSON.stringify({ status: "completed", output: structuredOutput })],
       );
       await client.query(
         `
@@ -737,10 +765,10 @@ export class TestApiClient {
         `
           INSERT INTO task_message (task_id, seq, type, tool, content, input, output)
           VALUES
-            ($1, 1, 'text', NULL, 'Agent 输出：完成训练评估', '{}'::jsonb, NULL),
-            ($1, 2, 'tool_result', '训练评估同步', '已收集 trace、token 和运行结论', '{}'::jsonb, '通过')
+            ($1, 1, 'text', NULL, $2, '{}'::jsonb, NULL),
+            ($1, 2, 'tool_result', '训练评估同步', '已收集 trace、token 和结构化逐用例结论', '{}'::jsonb, '通过')
         `,
-        [run.task_id],
+        [run.task_id, structuredOutput],
       );
       await client.query(`DELETE FROM task_trace_event WHERE task_id = $1`, [run.task_id]);
       await client.query(

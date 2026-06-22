@@ -59,7 +59,7 @@ export interface PromptEvaluationRun {
   asset_id: string;
   prompt_id: string | null;
   run_kind: "本地渲染" | "Agent执行";
-  status: "已入队" | "运行中" | "通过" | "未通过" | "失败" | "已取消";
+  status: "已入队" | "运行中" | "通过" | "未通过" | "失败" | "已取消" | "需人工复核";
   trigger_source: string;
   agent_id: string | null;
   runtime_id: string | null;
@@ -94,10 +94,10 @@ export interface PromptEvaluationTrial {
   asset_id: string;
   case_index: number;
   case_name: string;
-  status: "待执行" | "通过" | "未通过" | "失败" | "已跳过";
+  status: "待执行" | "通过" | "未通过" | "失败" | "已跳过" | "需人工复核";
   input: Record<string, unknown>;
   expected: Record<string, unknown>;
-  output: Record<string, unknown>;
+  output: unknown;
   rendered_prompt: string;
   input_tokens: number;
   output_tokens: number;

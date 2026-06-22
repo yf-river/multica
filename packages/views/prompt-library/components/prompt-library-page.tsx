@@ -12,6 +12,7 @@ import type {
   AgentRuntime,
   CreatePromptLibraryItemRequest,
   CreatePromptEvaluationAssetRequest,
+  CreatePromptEvaluationCaseRequest,
   PromptEvaluationAsset,
   PromptEvaluationOptimizationCandidate,
   PromptEvaluationStructuredCase,
@@ -291,6 +292,24 @@ export function PromptLibraryPage() {
       invalidateRuns();
       invalidateSummary();
       toast.success("资产已删除");
+    },
+  });
+
+  const createCaseMut = useMutation({
+    mutationFn: (data: CreatePromptEvaluationCaseRequest) => api.createPromptEvaluationCase(data),
+    onSuccess: () => {
+      invalidateCases();
+      invalidateSummary();
+      toast.success("手工评测用例已创建");
+    },
+  });
+
+  const deleteCaseMut = useMutation({
+    mutationFn: (id: string) => api.deletePromptEvaluationCase(id),
+    onSuccess: () => {
+      invalidateCases();
+      invalidateSummary();
+      toast.success("手工评测用例已删除");
     },
   });
 
@@ -699,6 +718,10 @@ export function PromptLibraryPage() {
               onRunAgentDebugPackage={runAgentDebugPackage}
               onToggleAssetStatus={toggleAssetStatus}
               onDeleteAsset={deleteAsset}
+              onCreateCase={(data) => createCaseMut.mutate(data)}
+              creatingCaseAssetId={createCaseMut.isPending ? createCaseMut.variables?.asset_id ?? null : null}
+              onDeleteCase={(caseId) => deleteCaseMut.mutate(caseId)}
+              deletingCaseId={deleteCaseMut.isPending ? deleteCaseMut.variables ?? null : null}
               onSyncRun={(runId) => syncRunMut.mutate(runId)}
               syncingRunId={syncRunMut.isPending ? syncRunMut.variables ?? null : null}
               onGenerateCandidate={(runId) => createCandidateMut.mutate(runId)}
@@ -773,10 +796,14 @@ function WorkbenchPanel({
     runtimeLoading,
   onAgentExpectedTextChange,
   onCreateAsset,
-    onSaveAgentDebugPackage,
+  onSaveAgentDebugPackage,
   onRunAgentDebugPackage,
-    onToggleAssetStatus,
+  onToggleAssetStatus,
   onDeleteAsset,
+  onCreateCase,
+  creatingCaseAssetId,
+  onDeleteCase,
+  deletingCaseId,
   onSyncRun,
   syncingRunId,
   onGenerateCandidate,
@@ -804,6 +831,10 @@ function WorkbenchPanel({
     onRunAgentDebugPackage: () => void;
     onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
   onDeleteAsset: (asset: PromptEvaluationAsset) => void;
+  onCreateCase: (data: CreatePromptEvaluationCaseRequest) => void;
+  creatingCaseAssetId: string | null;
+  onDeleteCase: (caseId: string) => void;
+  deletingCaseId: string | null;
   onSyncRun: (runId: string) => void;
   syncingRunId: string | null;
   onGenerateCandidate: (runId: string) => void;
@@ -817,6 +848,8 @@ function WorkbenchPanel({
   const visibleAssets = tabAssetType ? assets.filter((asset) => asset.asset_type === tabAssetType) : assets;
   const experiments = assets.filter((asset) => asset.asset_type === "实验");
   const caseSummaries = useMemo(() => buildCaseSummaries(cases), [cases]);
+  const casesByAsset = useMemo(() => buildCasesByAsset(cases), [cases]);
+  const [caseDrafts, setCaseDrafts] = useState<Record<string, ManualCaseDraft>>({});
   const candidatesByRun = useMemo(() => buildCandidatesByRun(candidates), [candidates]);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const evidenceQuery = useQuery({
@@ -983,7 +1016,7 @@ function WorkbenchPanel({
         ) : (
           <div className="divide-y rounded-md border">
             {visibleAssets.map((asset) => (
-              <div key={asset.id} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
+              <div key={asset.id} data-testid={`prompt-evaluation-asset-${asset.id}`} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
                 <div className="min-w-0">
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="truncate text-sm font-medium">{asset.name}</span>
@@ -1010,6 +1043,22 @@ function WorkbenchPanel({
                     删除
                   </Button>
                 </div>
+                {canManageStructuredCases(asset) && (
+                  <ManualCasePanel
+                    asset={asset}
+                    cases={casesByAsset.get(asset.id) ?? []}
+                    draft={caseDrafts[asset.id] ?? emptyManualCaseDraft()}
+                    onDraftChange={(draft) => setCaseDrafts((prev) => ({ ...prev, [asset.id]: draft }))}
+                    onCreateCase={() => {
+                      const draft = caseDrafts[asset.id] ?? emptyManualCaseDraft();
+                      onCreateCase(buildManualCaseRequest(asset, draft, casesByAsset.get(asset.id)?.length ?? 0));
+                      setCaseDrafts((prev) => ({ ...prev, [asset.id]: emptyManualCaseDraft() }));
+                    }}
+                    creating={creatingCaseAssetId === asset.id}
+                    onDeleteCase={onDeleteCase}
+                    deletingCaseId={deletingCaseId}
+                  />
+                )}
               </div>
             ))}
           </div>
@@ -1219,6 +1268,92 @@ function FilterButton({ active, onClick, children }: { active: boolean; onClick:
   );
 }
 
+type ManualCaseDraft = {
+  caseName: string;
+  variablesText: string;
+  expectedText: string;
+  tagsText: string;
+};
+
+function ManualCasePanel({
+  asset,
+  cases,
+  draft,
+  onDraftChange,
+  onCreateCase,
+  creating,
+  onDeleteCase,
+  deletingCaseId,
+}: {
+  asset: PromptEvaluationAsset;
+  cases: PromptEvaluationStructuredCase[];
+  draft: ManualCaseDraft;
+  onDraftChange: (draft: ManualCaseDraft) => void;
+  onCreateCase: () => void;
+  creating: boolean;
+  onDeleteCase: (caseId: string) => void;
+  deletingCaseId: string | null;
+}) {
+  const manualCases = cases.filter((item) => item.source === "manual");
+  return (
+    <div data-testid={`prompt-evaluation-cases-${asset.id}`} className="md:col-span-2 grid gap-2 rounded-md border border-border/70 bg-muted/10 p-3">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="text-xs font-medium text-muted-foreground">结构化评测用例</div>
+        <Badge variant="outline" className="text-[11px]">
+          手工 {manualCases.length} · 总计 {cases.length}
+        </Badge>
+      </div>
+      {cases.length > 0 ? (
+        <div className="grid gap-1.5">
+          {cases.map((item) => (
+            <div key={item.id} className="flex flex-wrap items-center gap-2 rounded border bg-background px-2 py-1.5 text-xs">
+              <span className="font-medium text-foreground">{item.case_name || `用例 ${item.case_index + 1}`}</span>
+              <span className="text-muted-foreground">{item.source === "manual" ? "手工" : "payload"} · {item.status}</span>
+              <span className="min-w-0 flex-1 truncate text-muted-foreground">{summarizeStructuredCase(item)}</span>
+              {item.source === "manual" && (
+                <Button size="sm" variant="destructive" className="h-7" onClick={() => onDeleteCase(item.id)} disabled={deletingCaseId === item.id}>
+                  {deletingCaseId === item.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                  删除用例
+                </Button>
+              )}
+            </div>
+          ))}
+        </div>
+      ) : (
+        <div className="rounded border border-dashed px-2 py-2 text-xs text-muted-foreground">暂无结构化用例，运行时会回退到资产 payload。</div>
+      )}
+      <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+        <Input
+          value={draft.caseName}
+          onChange={(event) => onDraftChange({ ...draft, caseName: event.target.value })}
+          placeholder="手工用例名称"
+        />
+        <Input
+          value={draft.variablesText}
+          onChange={(event) => onDraftChange({ ...draft, variablesText: event.target.value })}
+          placeholder="变量：issue_title=登录失败"
+        />
+        <Input
+          value={draft.expectedText}
+          onChange={(event) => onDraftChange({ ...draft, expectedText: event.target.value })}
+          placeholder="期望包含：验收条件, trace/task id"
+        />
+        <div className="flex gap-2">
+          <Input
+            value={draft.tagsText}
+            onChange={(event) => onDraftChange({ ...draft, tagsText: event.target.value })}
+            placeholder="标签：user-center, 回归"
+          />
+          <Button size="sm" className="h-10 shrink-0" onClick={onCreateCase} disabled={creating || !draft.caseName.trim()}>
+            {creating ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+            新增用例
+          </Button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="grid gap-1.5 text-sm">
@@ -1275,6 +1410,39 @@ function draftToRequest(draft: PromptDraft): CreatePromptLibraryItemRequest {
 function tabToAssetType(tab: WorkbenchTab): PromptEvaluationAssetType | null {
   if (tab === "数据集" || tab === "测试套件" || tab === "实验" || tab === "优化运行") return tab;
   return null;
+}
+
+function canManageStructuredCases(asset: PromptEvaluationAsset): boolean {
+  return asset.asset_type === "数据集" || asset.asset_type === "测试套件";
+}
+
+function emptyManualCaseDraft(): ManualCaseDraft {
+  return {
+    caseName: "",
+    variablesText: "",
+    expectedText: "",
+    tagsText: "",
+  };
+}
+
+function buildManualCaseRequest(asset: PromptEvaluationAsset, draft: ManualCaseDraft, existingCount: number): CreatePromptEvaluationCaseRequest {
+  return {
+    asset_id: asset.id,
+    prompt_id: asset.prompt_id,
+    case_index: existingCount,
+    case_name: draft.caseName.trim(),
+    variables: parseDebugValues(draft.variablesText),
+    expected_contains: splitList(draft.expectedText),
+    input: {
+      变量: parseDebugValues(draft.variablesText),
+      来源: "训练与评估手工用例",
+    },
+    expected: {
+      期望包含: splitList(draft.expectedText),
+    },
+    tags: splitList(draft.tagsText),
+    status: "启用",
+  };
 }
 
 function buildAssetPayload(
@@ -1406,6 +1574,19 @@ function buildCaseSummaries(cases: PromptEvaluationStructuredCase[]): Map<string
   return counts;
 }
 
+function buildCasesByAsset(cases: PromptEvaluationStructuredCase[]): Map<string, PromptEvaluationStructuredCase[]> {
+  const result = new Map<string, PromptEvaluationStructuredCase[]>();
+  for (const item of cases) {
+    const bucket = result.get(item.asset_id) ?? [];
+    bucket.push(item);
+    result.set(item.asset_id, bucket);
+  }
+  for (const bucket of result.values()) {
+    bucket.sort((a, b) => a.case_index - b.case_index || a.case_name.localeCompare(b.case_name, "zh-CN"));
+  }
+  return result;
+}
+
 function buildCandidatesByRun(candidates: PromptEvaluationOptimizationCandidate[]): Map<string, PromptEvaluationOptimizationCandidate[]> {
   const result = new Map<string, PromptEvaluationOptimizationCandidate[]>();
   for (const candidate of candidates) {
@@ -1437,6 +1618,15 @@ function summarizeAssetPayload(asset: PromptEvaluationAsset, caseSummary?: CaseS
   if (payload["运行结果"]) return "包含运行结果";
   if (asset.asset_type === "实验") return `实验维度 ${Array.isArray(payload["对比维度"]) ? payload["对比维度"].length : 0} 个`;
   return cases > 0 ? `${cases} 个用例` : "未记录用例";
+}
+
+function summarizeStructuredCase(item: PromptEvaluationStructuredCase): string {
+  const expected = item.expected_contains.map((value) => String(value)).filter(Boolean);
+  const variables = Object.keys(item.variables ?? {});
+  const parts = [];
+  if (variables.length > 0) parts.push(`变量 ${variables.join("、")}`);
+  if (expected.length > 0) parts.push(`期望 ${expected.join("、")}`);
+  return parts.length > 0 ? parts.join(" · ") : "未记录变量和期望";
 }
 
 function summarizeAgentRun(asset: PromptEvaluationAsset): string | null {

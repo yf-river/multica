@@ -118,7 +118,34 @@ test.describe("训练与评估工作台", () => {
       }),
     ]);
     await page.getByRole("button", { name: "数据集", exact: true }).click();
-    await expect(page.getByText("结构化用例 1 个")).toBeVisible({ timeout: 10000 });
+    const datasetRow = page.getByTestId(`prompt-evaluation-asset-${dataset!.id}`);
+    await expect(datasetRow).toContainText("结构化用例 1 个", { timeout: 10000 });
+    await datasetRow.getByPlaceholder("手工用例名称").fill("手工补充登录失败验收");
+    await datasetRow.getByPlaceholder("变量：issue_title=登录失败").fill("issue_title=登录失败\nproject_context=user-center");
+    await datasetRow.getByPlaceholder("期望包含：验收条件, trace/task id").fill("验收条件, trace/task id, 可观测证据");
+    await datasetRow.getByPlaceholder("标签：user-center, 回归").fill("手工用例, user-center");
+    await datasetRow.getByRole("button", { name: "新增用例" }).click();
+    await expect(page.getByText("手工评测用例已创建")).toBeVisible({ timeout: 10000 });
+    await expect
+      .poll(async () => {
+        const items = await api.listPromptEvaluationCases({ asset_id: dataset!.id });
+        return items.find((item) => item.source === "manual" && item.case_name === "手工补充登录失败验收") ?? null;
+      }, { timeout: 15000 })
+      .toMatchObject({
+        asset_id: dataset!.id,
+        case_name: "手工补充登录失败验收",
+        source: "manual",
+        status: "启用",
+      });
+    await expect(datasetRow).toContainText("手工 1", { timeout: 10000 });
+    await datasetRow.getByRole("button", { name: "删除用例" }).click();
+    await expect(page.getByText("手工评测用例已删除")).toBeVisible({ timeout: 10000 });
+    await expect
+      .poll(async () => {
+        const items = await api.listPromptEvaluationCases({ asset_id: dataset!.id });
+        return items.some((item) => item.source === "manual" && item.case_name === "手工补充登录失败验收");
+      }, { timeout: 15000 })
+      .toBe(false);
     const optimizationRuns = await api.listPromptEvaluationRuns({ asset_id: optimizationRun!.id });
     await expect(Promise.resolve(optimizationRuns)).resolves.toEqual([
       expect.objectContaining({
@@ -211,8 +238,19 @@ test.describe("训练与评估工作台", () => {
     await agentRunCard.getByRole("button", { name: "同步任务" }).click();
     expect((await syncResponse).status()).toBe(200);
     await expect(page.getByText("运行记录已同步")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText("Agent执行 · 通过")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText(/模型 minimax-m2\.7-ioa · runtime codebuddy · 通过 1\/1 · 输入 16 token · 输出 7 token/)).toBeVisible();
+    await expect
+      .poll(async () => (await api.listPromptEvaluationRuns({ asset_id: queuedAgentRun!.asset_id })).find((run) => run.id === queuedAgentRun!.id) ?? null, {
+        timeout: 15000,
+      })
+      .toMatchObject({
+        status: "通过",
+        passed_cases: 1,
+        failed_cases: 0,
+      });
+    await page.goto(`/${workspaceSlug}/training?view=run-history`, { waitUntil: "domcontentloaded" });
+    agentRunCard = page.getByTestId(`prompt-evaluation-run-${queuedAgentRun!.id}`);
+    await expect(agentRunCard).toContainText("Agent执行 · 通过", { timeout: 10000 });
+    await expect(agentRunCard).toContainText(/模型 minimax-m2\.7-ioa · runtime codebuddy · 通过 1\/1 · 输入 16 token · 输出 7 token/);
     await expect(page.getByText("本地渲染 · 通过")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(/模型 本地模板渲染 · runtime server · 通过 1\/1/)).toBeVisible();
     const localRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "本地渲染 · 通过" }).first();
@@ -237,7 +275,7 @@ test.describe("训练与评估工作台", () => {
       failed_cases: 0,
       input_tokens: 16,
       output_tokens: 7,
-      conclusion: "Agent 执行完成，等待验收者复核输出质量",
+      conclusion: "Agent 返回结构化逐用例评估，全部用例通过",
     });
     expect(syncedAgentEvidence.trials).toEqual([
       expect.objectContaining({
@@ -318,7 +356,7 @@ test.describe("训练与评估工作台", () => {
               失败数: 0,
               输入token: 16,
               输出token: 7,
-              评估结论: "Agent 执行完成，等待验收者复核输出质量",
+              评估结论: "Agent 返回结构化逐用例评估，全部用例通过",
             },
           },
         },
