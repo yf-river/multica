@@ -604,6 +604,19 @@ type PromptEvaluationCase struct {
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
+type PromptEvaluationCaseAssertion struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	AssetID        pgtype.UUID        `json:"asset_id"`
+	CaseID         pgtype.UUID        `json:"case_id"`
+	AssertionIndex int32              `json:"assertion_index"`
+	AssertionType  string             `json:"assertion_type"`
+	ExpectedText   string             `json:"expected_text"`
+	Status         string             `json:"status"`
+	Source         string             `json:"source"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
 type PromptEvaluationEvidenceSnapshot struct {
 	ID            pgtype.UUID        `json:"id"`
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`

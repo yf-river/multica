@@ -63,6 +63,8 @@ const dataset = post("/api/prompt-evaluation-assets", {
   status: "启用",
 }, token);
 if (!dataset?.id) fail("创建数据集响应缺少 id");
+const datasetCases = get(`/api/prompt-evaluation-cases?asset_id=${encodeURIComponent(dataset.id)}`, token);
+const datasetAssertionCount = assertCaseAssertions(datasetCases, dataset.id, 2, "数据集");
 
 const suite = post("/api/prompt-evaluation-assets", {
   prompt_id: prompt.id,
@@ -87,6 +89,8 @@ const suite = post("/api/prompt-evaluation-assets", {
   status: "启用",
 }, token);
 if (!suite?.id) fail("创建测试套件响应缺少 id");
+const suiteCases = get(`/api/prompt-evaluation-cases?asset_id=${encodeURIComponent(suite.id)}`, token);
+const suiteAssertionCount = assertCaseAssertions(suiteCases, suite.id, 2, "测试套件");
 
 post(`/api/prompt-evaluation-assets/${suite.id}/run`, null, token);
 const failedRun = await poll(() => {
@@ -116,8 +120,8 @@ assertVersion(publishedVersions, Number(published.prompt.version || 2), "优化�
 
 const summary = get("/api/prompt-evaluation-summary", token);
 evidence.prompt = { id: prompt.id, version: prompt.version, version_count: itemCount(initialVersions) };
-evidence.dataset = { id: dataset.id, asset_type: dataset.asset_type, structured_case_count: dataset.structured_case_count };
-evidence.test_suite = { id: suite.id, asset_type: suite.asset_type, structured_case_count: suite.structured_case_count };
+evidence.dataset = { id: dataset.id, asset_type: dataset.asset_type, structured_case_count: dataset.structured_case_count, assertion_count: datasetAssertionCount };
+evidence.test_suite = { id: suite.id, asset_type: suite.asset_type, structured_case_count: suite.structured_case_count, assertion_count: suiteAssertionCount };
 evidence.run = {
   id: failedRun.id,
   status: failedRun.status,
@@ -194,6 +198,15 @@ function assertVersion(response, version, source, sourceCandidateID, message) {
   if (sourceCandidateID !== null && found.source_candidate_id !== sourceCandidateID) {
     fail(`${message}: source_candidate_id=${found.source_candidate_id}, want ${sourceCandidateID}`);
   }
+}
+
+function assertCaseAssertions(response, assetId, minAssertions, label) {
+  const items = response?.items ?? [];
+  const matching = items.filter((item) => item.asset_id === assetId);
+  if (matching.length === 0) fail(`${label} 未回读到结构化用例`);
+  const count = matching.reduce((sum, item) => sum + (Array.isArray(item.assertions) ? item.assertions.length : 0), 0);
+  if (count < minAssertions) fail(`${label} 结构化断言不足：${count}/${minAssertions}`);
+  return count;
 }
 
 function itemCount(response) {

@@ -128,6 +128,7 @@ export type {
   PromptEvaluationRuntimeReadiness,
   PromptEvaluationRuntimeReadinessStatus,
   PromptEvaluationStructuredCase,
+  PromptEvaluationCaseAssertion,
   PromptEvaluationAgentRunResponse,
   PromptEvaluationOptimizationCandidate,
   PromptEvaluationOptimizationCandidateStatus,

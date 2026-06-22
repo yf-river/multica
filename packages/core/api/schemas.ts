@@ -1084,6 +1084,19 @@ export const PromptEvaluationTrialListResponseSchema = z.object({
   total: z.number().default(0),
 }).loose();
 
+export const PromptEvaluationCaseAssertionSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  asset_id: z.string(),
+  case_id: z.string(),
+  assertion_index: z.number().default(0),
+  assertion_type: z.literal("包含文本").default("包含文本"),
+  expected_text: z.string().default(""),
+  status: z.enum(["启用", "归档"]).default("启用"),
+  source: z.string().default("expected_contains"),
+  created_at: z.string().default(""),
+}).loose();
+
 export const PromptEvaluationCaseSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
@@ -1093,6 +1106,7 @@ export const PromptEvaluationCaseSchema = z.object({
   case_name: z.string().default(""),
   variables: z.record(z.string(), z.unknown()).default({}),
   expected_contains: z.array(z.unknown()).default([]),
+  assertions: z.array(PromptEvaluationCaseAssertionSchema).default([]),
   input: z.record(z.string(), z.unknown()).default({}),
   expected: z.record(z.string(), z.unknown()).default({}),
   tags: z.array(z.unknown()).default([]),
@@ -1245,6 +1259,7 @@ export const EMPTY_PROMPT_EVALUATION_CASE: PromptEvaluationStructuredCase = {
   case_name: "",
   variables: {},
   expected_contains: [],
+  assertions: [],
   input: {},
   expected: {},
   tags: [],

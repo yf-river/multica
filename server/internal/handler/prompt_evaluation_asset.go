@@ -306,22 +306,36 @@ type PromptEvaluationRuntimeReadinessResponse struct {
 }
 
 type PromptEvaluationCaseResponse struct {
-	ID               string  `json:"id"`
-	WorkspaceID      string  `json:"workspace_id"`
-	AssetID          string  `json:"asset_id"`
-	PromptID         *string `json:"prompt_id"`
-	CaseIndex        int32   `json:"case_index"`
-	CaseName         string  `json:"case_name"`
-	Variables        any     `json:"variables"`
-	ExpectedContains any     `json:"expected_contains"`
-	Input            any     `json:"input"`
-	Expected         any     `json:"expected"`
-	Tags             any     `json:"tags"`
-	Status           string  `json:"status"`
-	Source           string  `json:"source"`
-	CreatedBy        *string `json:"created_by"`
-	CreatedAt        string  `json:"created_at"`
-	UpdatedAt        string  `json:"updated_at"`
+	ID               string                                  `json:"id"`
+	WorkspaceID      string                                  `json:"workspace_id"`
+	AssetID          string                                  `json:"asset_id"`
+	PromptID         *string                                 `json:"prompt_id"`
+	CaseIndex        int32                                   `json:"case_index"`
+	CaseName         string                                  `json:"case_name"`
+	Variables        any                                     `json:"variables"`
+	ExpectedContains any                                     `json:"expected_contains"`
+	Assertions       []PromptEvaluationCaseAssertionResponse `json:"assertions"`
+	Input            any                                     `json:"input"`
+	Expected         any                                     `json:"expected"`
+	Tags             any                                     `json:"tags"`
+	Status           string                                  `json:"status"`
+	Source           string                                  `json:"source"`
+	CreatedBy        *string                                 `json:"created_by"`
+	CreatedAt        string                                  `json:"created_at"`
+	UpdatedAt        string                                  `json:"updated_at"`
+}
+
+type PromptEvaluationCaseAssertionResponse struct {
+	ID             string `json:"id"`
+	WorkspaceID    string `json:"workspace_id"`
+	AssetID        string `json:"asset_id"`
+	CaseID         string `json:"case_id"`
+	AssertionIndex int32  `json:"assertion_index"`
+	AssertionType  string `json:"assertion_type"`
+	ExpectedText   string `json:"expected_text"`
+	Status         string `json:"status"`
+	Source         string `json:"source"`
+	CreatedAt      string `json:"created_at"`
 }
 
 type PromptEvaluationOptimizationCandidateResponse struct {
@@ -467,7 +481,7 @@ func promptEvaluationTaskUsageToResponse(usage db.TaskUsage) PromptEvaluationTas
 	}
 }
 
-func promptEvaluationCaseToResponse(item db.PromptEvaluationCase) PromptEvaluationCaseResponse {
+func promptEvaluationCaseToResponse(item db.PromptEvaluationCase, assertions []db.PromptEvaluationCaseAssertion) PromptEvaluationCaseResponse {
 	return PromptEvaluationCaseResponse{
 		ID:               uuidToString(item.ID),
 		WorkspaceID:      uuidToString(item.WorkspaceID),
@@ -477,6 +491,7 @@ func promptEvaluationCaseToResponse(item db.PromptEvaluationCase) PromptEvaluati
 		CaseName:         item.CaseName,
 		Variables:        decodeJSONDefault(item.Variables, map[string]any{}),
 		ExpectedContains: decodeJSONDefault(item.ExpectedContains, []any{}),
+		Assertions:       promptEvaluationCaseAssertionsToResponse(assertions),
 		Input:            decodeJSONDefault(item.Input, map[string]any{}),
 		Expected:         decodeJSONDefault(item.Expected, map[string]any{}),
 		Tags:             decodeJSONDefault(item.Tags, []any{}),
@@ -486,6 +501,92 @@ func promptEvaluationCaseToResponse(item db.PromptEvaluationCase) PromptEvaluati
 		CreatedAt:        timestampToString(item.CreatedAt),
 		UpdatedAt:        timestampToString(item.UpdatedAt),
 	}
+}
+
+func promptEvaluationCaseAssertionsToResponse(assertions []db.PromptEvaluationCaseAssertion) []PromptEvaluationCaseAssertionResponse {
+	resp := make([]PromptEvaluationCaseAssertionResponse, 0, len(assertions))
+	for _, item := range assertions {
+		resp = append(resp, PromptEvaluationCaseAssertionResponse{
+			ID:             uuidToString(item.ID),
+			WorkspaceID:    uuidToString(item.WorkspaceID),
+			AssetID:        uuidToString(item.AssetID),
+			CaseID:         uuidToString(item.CaseID),
+			AssertionIndex: item.AssertionIndex,
+			AssertionType:  item.AssertionType,
+			ExpectedText:   item.ExpectedText,
+			Status:         item.Status,
+			Source:         item.Source,
+			CreatedAt:      timestampToString(item.CreatedAt),
+		})
+	}
+	return resp
+}
+
+func promptEvaluationAssertionsByCase(assertions []db.PromptEvaluationCaseAssertion) map[string][]db.PromptEvaluationCaseAssertion {
+	grouped := make(map[string][]db.PromptEvaluationCaseAssertion)
+	for _, item := range assertions {
+		caseID := uuidToString(item.CaseID)
+		grouped[caseID] = append(grouped[caseID], item)
+	}
+	return grouped
+}
+
+func promptEvaluationAssertionTexts(raw []byte) []string {
+	values := stringListFromAny(decodeJSONDefault(raw, []any{}))
+	if len(values) == 0 {
+		return nil
+	}
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			result = append(result, trimmed)
+		}
+	}
+	return result
+}
+
+func promptEvaluationExpectedContainsFromAssertions(fallback []byte, assertions []db.PromptEvaluationCaseAssertion) []any {
+	if len(assertions) == 0 {
+		if values, ok := decodeJSONDefault(fallback, []any{}).([]any); ok {
+			return values
+		}
+		return []any{}
+	}
+	result := make([]any, 0, len(assertions))
+	for _, item := range assertions {
+		if strings.TrimSpace(item.ExpectedText) != "" {
+			result = append(result, item.ExpectedText)
+		}
+	}
+	return result
+}
+
+func syncPromptEvaluationCaseAssertions(ctx context.Context, qtx *db.Queries, item db.PromptEvaluationCase, expectedContains []byte) ([]db.PromptEvaluationCaseAssertion, error) {
+	if err := qtx.DeletePromptEvaluationCaseAssertionsByCase(ctx, db.DeletePromptEvaluationCaseAssertionsByCaseParams{
+		WorkspaceID: item.WorkspaceID,
+		CaseID:      item.ID,
+	}); err != nil {
+		return nil, err
+	}
+	values := promptEvaluationAssertionTexts(expectedContains)
+	assertions := make([]db.PromptEvaluationCaseAssertion, 0, len(values))
+	for idx, value := range values {
+		assertion, err := qtx.CreatePromptEvaluationCaseAssertion(ctx, db.CreatePromptEvaluationCaseAssertionParams{
+			WorkspaceID:    item.WorkspaceID,
+			AssetID:        item.AssetID,
+			CaseID:         item.ID,
+			AssertionIndex: int32(idx),
+			ExpectedText:   value,
+			AssertionType:  "包含文本",
+			Status:         item.Status,
+			Source:         "expected_contains",
+		})
+		if err != nil {
+			return nil, err
+		}
+		assertions = append(assertions, assertion)
+	}
+	return assertions, nil
 }
 
 func promptEvaluationOptimizationCandidateToResponse(item db.PromptEvaluationOptimizationCandidate) PromptEvaluationOptimizationCandidateResponse {
@@ -846,9 +947,19 @@ func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Reque
 		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation cases")
 		return
 	}
+	assertions, err := h.Queries.ListPromptEvaluationCaseAssertions(r.Context(), db.ListPromptEvaluationCaseAssertionsParams{
+		WorkspaceID: workspaceUUID,
+		AssetID:     assetID,
+		Status:      status,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation case assertions")
+		return
+	}
+	assertionsByCase := promptEvaluationAssertionsByCase(assertions)
 	resp := make([]PromptEvaluationCaseResponse, len(cases))
 	for i, item := range cases {
-		resp[i] = promptEvaluationCaseToResponse(item)
+		resp[i] = promptEvaluationCaseToResponse(item, assertionsByCase[uuidToString(item.ID)])
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
 }
@@ -924,7 +1035,14 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	created, err := h.Queries.CreatePromptEvaluationCase(r.Context(), db.CreatePromptEvaluationCaseParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation case transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	created, err := qtx.CreatePromptEvaluationCase(r.Context(), db.CreatePromptEvaluationCaseParams{
 		WorkspaceID:      workspaceUUID,
 		AssetID:          asset.ID,
 		PromptID:         promptID,
@@ -943,7 +1061,16 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation case")
 		return
 	}
-	writeJSON(w, http.StatusCreated, promptEvaluationCaseToResponse(created))
+	assertions, err := syncPromptEvaluationCaseAssertions(r.Context(), qtx, created, expectedContains)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation case assertions")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation case")
+		return
+	}
+	writeJSON(w, http.StatusCreated, promptEvaluationCaseToResponse(created, assertions))
 }
 
 func (h *Handler) UpdatePromptEvaluationCase(w http.ResponseWriter, r *http.Request) {
@@ -1030,7 +1157,14 @@ func (h *Handler) UpdatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	updated, err := h.Queries.UpdatePromptEvaluationCase(r.Context(), db.UpdatePromptEvaluationCaseParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation case transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	updated, err := qtx.UpdatePromptEvaluationCase(r.Context(), db.UpdatePromptEvaluationCaseParams{
 		ID:               current.ID,
 		WorkspaceID:      workspaceUUID,
 		AssetID:          asset.ID,
@@ -1049,7 +1183,16 @@ func (h *Handler) UpdatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to update prompt evaluation case")
 		return
 	}
-	writeJSON(w, http.StatusOK, promptEvaluationCaseToResponse(updated))
+	assertions, err := syncPromptEvaluationCaseAssertions(r.Context(), qtx, updated, expectedContains)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update prompt evaluation case assertions")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation case")
+		return
+	}
+	writeJSON(w, http.StatusOK, promptEvaluationCaseToResponse(updated, assertions))
 }
 
 func (h *Handler) DeletePromptEvaluationCase(w http.ResponseWriter, r *http.Request) {
@@ -1916,7 +2059,11 @@ func (h *Handler) RunPromptEvaluationOptimizationAgent(w http.ResponseWriter, r 
 		writeError(w, http.StatusInternalServerError, "failed to create optimization agent chat session")
 		return
 	}
-	messageText := buildPromptEvaluationAgentMessage(asset, prompt, payload)
+	cases, ok := h.promptEvaluationCasesForAsset(w, r, asset)
+	if !ok {
+		return
+	}
+	messageText := buildPromptEvaluationAgentMessage(asset, prompt, promptEvaluationPayloadWithCases(payload, cases))
 	msg, err := h.Queries.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
 		ChatSessionID: session.ID,
 		Role:          "user",
@@ -1933,10 +2080,6 @@ func (h *Handler) RunPromptEvaluationOptimizationAgent(w http.ResponseWriter, r 
 	}
 	if err := h.Queries.LinkChatMessageToTask(r.Context(), db.LinkChatMessageToTaskParams{ID: msg.ID, TaskID: task.ID}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to link optimization agent message to task")
-		return
-	}
-	cases, ok := h.promptEvaluationCasesForAsset(w, r, asset)
-	if !ok {
 		return
 	}
 	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, asset, agentRow, runtimeRow, task.ID, session.ID, parseUUID(userID), "优化运行", payload, cases)
@@ -2443,22 +2586,28 @@ func (h *Handler) syncPromptEvaluationCasesFromPayload(w http.ResponseWriter, r 
 	cases := promptEvaluationCases(decodePayloadObject(asset.Payload))
 	for idx, item := range cases {
 		normalized := normalizePromptEvaluationCase(idx, item)
-		if _, err := qtx.CreatePromptEvaluationCase(r.Context(), db.CreatePromptEvaluationCaseParams{
+		expectedContains := mustJSONBytes(normalized.ExpectedContains)
+		created, err := qtx.CreatePromptEvaluationCase(r.Context(), db.CreatePromptEvaluationCaseParams{
 			WorkspaceID:      asset.WorkspaceID,
 			AssetID:          asset.ID,
 			PromptID:         asset.PromptID,
 			CaseIndex:        payloadStartIndex + int32(idx),
 			CaseName:         normalized.Name,
 			Variables:        mustJSONBytes(normalized.Variables),
-			ExpectedContains: mustJSONBytes(normalized.ExpectedContains),
+			ExpectedContains: expectedContains,
 			Input:            mustJSONBytes(normalized.Input),
 			Expected:         mustJSONBytes(normalized.Expected),
 			Tags:             mustJSONBytes(normalized.Tags),
 			Status:           asset.Status,
 			Source:           "payload",
 			CreatedBy:        createdBy,
-		}); err != nil {
+		})
+		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation case")
+			return false
+		}
+		if _, err := syncPromptEvaluationCaseAssertions(r.Context(), qtx, created, expectedContains); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation case assertions")
 			return false
 		}
 	}
@@ -2736,7 +2885,12 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to create training evaluation chat session")
 		return
 	}
-	messageText := buildPromptEvaluationAgentMessage(asset, prompt, decodePayloadObject(asset.Payload))
+	payload := decodePayloadObject(asset.Payload)
+	cases, ok := h.promptEvaluationCasesForAsset(w, r, asset)
+	if !ok {
+		return
+	}
+	messageText := buildPromptEvaluationAgentMessage(asset, prompt, promptEvaluationPayloadWithCases(payload, cases))
 	msg, err := h.Queries.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
 		ChatSessionID: session.ID,
 		Role:          "user",
@@ -2756,11 +2910,6 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	payload := decodePayloadObject(asset.Payload)
-	cases, ok := h.promptEvaluationCasesForAsset(w, r, asset)
-	if !ok {
-		return
-	}
 	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, asset, agentRow, runtimeRow, task.ID, session.ID, parseUUID(userID), "Agent 调试场", payload, cases)
 	if !ok {
 		return
@@ -2977,12 +3126,22 @@ func (h *Handler) promptEvaluationCasesForAsset(w http.ResponseWriter, r *http.R
 	if len(rows) == 0 {
 		return promptEvaluationCases(decodePayloadObject(asset.Payload)), true
 	}
+	assertions, err := h.Queries.ListPromptEvaluationCaseAssertions(r.Context(), db.ListPromptEvaluationCaseAssertionsParams{
+		WorkspaceID: asset.WorkspaceID,
+		AssetID:     asset.ID,
+		Status:      pgtype.Text{String: "启用", Valid: true},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation case assertions")
+		return nil, false
+	}
+	assertionsByCase := promptEvaluationAssertionsByCase(assertions)
 	cases := make([]map[string]any, 0, len(rows))
 	for _, row := range rows {
 		cases = append(cases, map[string]any{
 			"名称":   row.CaseName,
 			"变量":   decodeJSONDefault(row.Variables, map[string]any{}),
-			"期望包含": decodeJSONDefault(row.ExpectedContains, []any{}),
+			"期望包含": promptEvaluationExpectedContainsFromAssertions(row.ExpectedContains, assertionsByCase[uuidToString(row.ID)]),
 			"输入":   decodeJSONDefault(row.Input, map[string]any{}),
 			"期望":   decodeJSONDefault(row.Expected, map[string]any{}),
 		})
@@ -3675,6 +3834,16 @@ func buildPromptEvaluationAgentMessage(asset db.PromptEvaluationAsset, prompt db
 	}`,
 		"```",
 	}, "\n")
+}
+
+func promptEvaluationPayloadWithCases(payload map[string]any, cases []map[string]any) map[string]any {
+	result := make(map[string]any, len(payload)+2)
+	for key, value := range payload {
+		result[key] = value
+	}
+	result["cases"] = cases
+	result["用例"] = cases
+	return result
 }
 
 func decodePayloadObject(raw []byte) map[string]any {

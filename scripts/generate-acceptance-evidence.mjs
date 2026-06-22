@@ -201,6 +201,7 @@ async function loadDatabaseEvidence(workspaceID) {
             (SELECT count(*)::int FROM prompt_library_version WHERE workspace_id = $1) AS prompt_version_count,
             (SELECT count(*)::int FROM prompt_evaluation_asset WHERE workspace_id = $1) AS asset_count,
             (SELECT count(*)::int FROM prompt_evaluation_case WHERE workspace_id = $1) AS structured_case_count,
+            (SELECT count(*)::int FROM prompt_evaluation_case_assertion WHERE workspace_id = $1) AS structured_assertion_count,
             (SELECT count(*)::int FROM prompt_evaluation_run WHERE workspace_id = $1) AS run_count,
             (SELECT count(*)::int FROM prompt_evaluation_run WHERE workspace_id = $1 AND run_kind = 'Agent执行') AS agent_run_count,
             (SELECT count(*)::int FROM prompt_evaluation_trial WHERE workspace_id = $1) AS trial_count,
@@ -646,6 +647,8 @@ function summarizeCommandOutput(name, stdout) {
       prompt_version_count: parsed.prompt?.version_count ?? 0,
       dataset_id: parsed.dataset?.id || "",
       test_suite_id: parsed.test_suite?.id || "",
+      dataset_assertion_count: parsed.dataset?.assertion_count ?? 0,
+      test_suite_assertion_count: parsed.test_suite?.assertion_count ?? 0,
       run_id: parsed.run?.id || "",
       run_status: parsed.run?.status || "",
       failed_cases: parsed.run?.failed_cases ?? 0,
@@ -695,6 +698,7 @@ function buildRisks({ health, ready, login, account, commandResults, git, databa
     const tasks = databaseEvidence.tasks || {};
     if (Number(training.run_count || 0) === 0) risks.push("数据库中未发现训练评估运行记录，生产看板会缺少运行证据。");
     if (Number(training.structured_case_count || 0) === 0) risks.push("数据库中未发现结构化评测用例，数据集/测试套件证据不足。");
+    if (Number(training.structured_assertion_count || 0) === 0) risks.push("数据库中未发现结构化评测断言，训练评估可度量证据不足。");
     if (Number(training.optimization_candidate_count || 0) === 0) risks.push("数据库中未发现优化候选，失败用例到人工确认的闭环证据不足。");
     if (Number(training.evidence_snapshot_count || 0) === 0) risks.push("数据库中未发现服务端运行证据快照，领导演示缺少可复核归档。");
     if (Number(tasks.trace_event_rows || 0) === 0) risks.push("数据库中未发现任务 trace 事件，观测闭环证据不足。");
@@ -761,6 +765,7 @@ ${commitRows}
 - 提示词：${training.prompt_count ?? "未记录"}
 - 评测资产：${training.asset_count ?? "未记录"}
 - 结构化用例：${training.structured_case_count ?? "未记录"}
+- 结构化断言：${training.structured_assertion_count ?? "未记录"}
 - 训练评估运行：${training.run_count ?? "未记录"}，其中 Agent 执行 ${training.agent_run_count ?? "未记录"}
 - trial：${training.trial_count ?? "未记录"}
 - 优化候选：${training.optimization_candidate_count ?? "未记录"}

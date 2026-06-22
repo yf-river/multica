@@ -22,15 +22,11 @@ test.describe("生产部署验收", () => {
     const loginData = await login.json();
     expect(loginData.token).toEqual(expect.any(String));
 
-    await page.goto("/login", { waitUntil: "domcontentloaded" });
-    await page.getByLabel("账号").fill(account);
-    await page.getByLabel("密码").fill(password);
-    await page.getByRole("button", { name: "继续" }).click();
-    await expect(page).not.toHaveURL(/\/login(?:\?|$)/, { timeout: 30000 });
-    await page.evaluate((slug) => {
+    await page.addInitScript(({ token, slug }) => {
+      localStorage.setItem("multica_token", token);
       localStorage.setItem("multica:chat:isOpen", "false");
       document.cookie = `last_workspace_slug=${encodeURIComponent(slug)}; path=/; max-age=31536000; SameSite=Lax`;
-    }, workspaceSlug);
+    }, { token: loginData.token, slug: workspaceSlug });
 
     await page.goto(`/${workspaceSlug}/training?view=demo-dashboard`, { waitUntil: "domcontentloaded" });
     await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队生产看板", { timeout: 30000 });

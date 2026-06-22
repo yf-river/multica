@@ -194,6 +194,7 @@ export interface PromptEvaluationStructuredCase {
   case_name: string;
   variables: Record<string, unknown>;
   expected_contains: unknown[];
+  assertions: PromptEvaluationCaseAssertion[];
   input: Record<string, unknown>;
   expected: Record<string, unknown>;
   tags: unknown[];
@@ -202,6 +203,19 @@ export interface PromptEvaluationStructuredCase {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface PromptEvaluationCaseAssertion {
+  id: string;
+  workspace_id: string;
+  asset_id: string;
+  case_id: string;
+  assertion_index: number;
+  assertion_type: "包含文本";
+  expected_text: string;
+  status: PromptEvaluationAssetStatus;
+  source: string;
+  created_at: string;
 }
 
 export interface PromptEvaluationAgentRunResponse {

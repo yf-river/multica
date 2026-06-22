@@ -387,6 +387,10 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if created.Source != "manual" || created.CaseIndex != 0 || created.CaseName != "登录失败需要 trace" {
 		t.Fatalf("created case = %+v", created)
 	}
+	if len(created.Assertions) != 2 || created.Assertions[0].ExpectedText != "trace/task id" || created.Assertions[1].ExpectedText != "验收条件" {
+		t.Fatalf("created assertions = %+v", created.Assertions)
+	}
+	assertPromptEvaluationCaseAssertions(t, created.ID, []string{"trace/task id", "验收条件"})
 	runW := httptest.NewRecorder()
 	testHandler.RunPromptEvaluationAsset(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/run", nil), "id", asset.ID))
 	if runW.Code != http.StatusOK {
@@ -423,6 +427,10 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if updated.CaseName != "登录失败需要可观测证据" || updated.Status != "归档" || updated.Source != "manual" {
 		t.Fatalf("updated case = %+v", updated)
 	}
+	if len(updated.Assertions) != 1 || updated.Assertions[0].ExpectedText != "可观测证据" || updated.Assertions[0].Status != "归档" {
+		t.Fatalf("updated assertions = %+v", updated.Assertions)
+	}
+	assertPromptEvaluationCaseAssertions(t, created.ID, []string{"可观测证据"})
 
 	listW := httptest.NewRecorder()
 	testHandler.ListPromptEvaluationCases(listW, newRequest(http.MethodGet, "/api/prompt-evaluation-cases?asset_id="+asset.ID, nil))
@@ -438,6 +446,9 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	}
 	if listed.Total != 1 || listed.Items[0].ID != created.ID {
 		t.Fatalf("listed cases = %+v", listed)
+	}
+	if len(listed.Items[0].Assertions) != 1 || listed.Items[0].Assertions[0].ExpectedText != "可观测证据" {
+		t.Fatalf("listed assertions = %+v", listed.Items[0].Assertions)
 	}
 
 	deleteCaseW := httptest.NewRecorder()
@@ -456,6 +467,7 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if listed.Total != 0 {
 		t.Fatalf("cases after delete = %+v", listed)
 	}
+	assertPromptEvaluationCaseAssertions(t, created.ID, nil)
 }
 
 func TestUpdatePromptEvaluationAssetPreservesManualCases(t *testing.T) {
@@ -473,7 +485,7 @@ func TestUpdatePromptEvaluationAssetPreservesManualCases(t *testing.T) {
 		"name":       "保留人工用例数据集",
 		"asset_type": "数据集",
 		"payload": map[string]any{
-			"cases": []map[string]any{{"名称": "旧 payload 用例", "变量": map[string]any{"issue_title": "旧问题"}}},
+			"cases": []map[string]any{{"名称": "旧 payload 用例", "变量": map[string]any{"issue_title": "旧问题"}, "期望包含": []string{"旧 payload 断言"}}},
 		},
 	}))
 	if createAssetW.Code != http.StatusCreated {
@@ -503,7 +515,7 @@ func TestUpdatePromptEvaluationAssetPreservesManualCases(t *testing.T) {
 	updateAssetW := httptest.NewRecorder()
 	testHandler.UpdatePromptEvaluationAsset(updateAssetW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-assets/"+asset.ID, map[string]any{
 		"payload": map[string]any{
-			"cases": []map[string]any{{"名称": "新 payload 用例", "变量": map[string]any{"issue_title": "新问题"}}},
+			"cases": []map[string]any{{"名称": "新 payload 用例", "变量": map[string]any{"issue_title": "新问题"}, "期望包含": []string{"新 payload 断言"}}},
 		},
 	}), "id", asset.ID))
 	if updateAssetW.Code != http.StatusOK {
@@ -536,11 +548,17 @@ func TestUpdatePromptEvaluationAssetPreservesManualCases(t *testing.T) {
 			if item.Source != "manual" || item.CaseName != "人工沉淀用例" {
 				t.Fatalf("manual case changed = %+v", item)
 			}
+			if len(item.Assertions) != 1 || item.Assertions[0].ExpectedText != "验收条件" {
+				t.Fatalf("manual assertions changed = %+v", item.Assertions)
+			}
 		}
 		if item.CaseName == "新 payload 用例" {
 			seenNewPayload = true
 			if item.Source != "payload" || item.CaseIndex <= manual.CaseIndex {
 				t.Fatalf("payload case did not avoid manual index = payload %+v manual %+v", item, manual)
+			}
+			if len(item.Assertions) != 1 || item.Assertions[0].ExpectedText != "新 payload 断言" {
+				t.Fatalf("payload assertions not refreshed = %+v", item.Assertions)
 			}
 		}
 	}
@@ -1832,6 +1850,39 @@ func createPromptEvaluationTestPromptWithContent(t *testing.T, workspaceID, name
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE id = $1`, promptID)
 	})
 	return promptID
+}
+
+func assertPromptEvaluationCaseAssertions(t *testing.T, caseID string, expected []string) {
+	t.Helper()
+	rows, err := testPool.Query(context.Background(), `
+		SELECT expected_text
+		FROM prompt_evaluation_case_assertion
+		WHERE case_id = $1
+		ORDER BY assertion_index ASC
+	`, caseID)
+	if err != nil {
+		t.Fatalf("query case assertions: %v", err)
+	}
+	defer rows.Close()
+	actual := []string{}
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			t.Fatalf("scan case assertion: %v", err)
+		}
+		actual = append(actual, value)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate case assertions: %v", err)
+	}
+	if len(actual) != len(expected) {
+		t.Fatalf("case assertions = %#v, want %#v", actual, expected)
+	}
+	for idx := range expected {
+		if actual[idx] != expected[idx] {
+			t.Fatalf("case assertions = %#v, want %#v", actual, expected)
+		}
+	}
 }
 
 func containsAll(value string, needles []string) bool {
