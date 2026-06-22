@@ -816,7 +816,7 @@ function WorkbenchPanel({
   const tabAssetType = tabToAssetType(activeTab);
   const visibleAssets = tabAssetType ? assets.filter((asset) => asset.asset_type === tabAssetType) : assets;
   const experiments = assets.filter((asset) => asset.asset_type === "实验");
-  const caseCounts = useMemo(() => buildCaseCounts(cases), [cases]);
+  const caseSummaries = useMemo(() => buildCaseSummaries(cases), [cases]);
   const candidatesByRun = useMemo(() => buildCandidatesByRun(candidates), [candidates]);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const evidenceQuery = useQuery({
@@ -993,7 +993,7 @@ function WorkbenchPanel({
                   </div>
                   <div className="mt-1 truncate text-xs text-muted-foreground">{asset.description || "无描述"}</div>
                   <div className="mt-1 text-[11px] text-muted-foreground">
-                    更新于 {asset.updated_at} · {summarizeAssetPayload(asset, caseCounts.get(asset.id) ?? 0)}
+                    更新于 {asset.updated_at} · {summarizeAssetPayload(asset, caseSummaries.get(asset.id))}
                   </div>
                   {summarizeAgentRun(asset) && (
                     <div className="mt-1 text-[11px] text-muted-foreground">
@@ -1385,10 +1385,23 @@ function buildAgentDebugPackageRequest(
   };
 }
 
-function buildCaseCounts(cases: PromptEvaluationStructuredCase[]): Map<string, number> {
-  const counts = new Map<string, number>();
+type CaseSummary = {
+  total: number;
+  manual: number;
+  payload: number;
+};
+
+function buildCaseSummaries(cases: PromptEvaluationStructuredCase[]): Map<string, CaseSummary> {
+  const counts = new Map<string, CaseSummary>();
   for (const item of cases) {
-    counts.set(item.asset_id, (counts.get(item.asset_id) ?? 0) + 1);
+    const current = counts.get(item.asset_id) ?? { total: 0, manual: 0, payload: 0 };
+    current.total += 1;
+    if (item.source === "manual") {
+      current.manual += 1;
+    } else {
+      current.payload += 1;
+    }
+    counts.set(item.asset_id, current);
   }
   return counts;
 }
@@ -1410,10 +1423,15 @@ function canGenerateOptimizationCandidate(run: PromptEvaluationRun): boolean {
   return Boolean(run.failure_reason && run.failure_reason !== "无");
 }
 
-function summarizeAssetPayload(asset: PromptEvaluationAsset, structuredCaseCount = 0): string {
+function summarizeAssetPayload(asset: PromptEvaluationAsset, caseSummary?: CaseSummary): string {
   const payload = asset.payload ?? {};
   const cases = Array.isArray(payload.cases) ? payload.cases.length : Array.isArray(payload["数据集"]) ? payload["数据集"].length : 0;
-  if (structuredCaseCount > 0) return `结构化用例 ${structuredCaseCount} 个`;
+  if (caseSummary && caseSummary.total > 0) {
+    const sourceParts = [];
+    if (caseSummary.manual > 0) sourceParts.push(`手工 ${caseSummary.manual}`);
+    if (caseSummary.payload > 0) sourceParts.push(`payload ${caseSummary.payload}`);
+    return `结构化用例 ${caseSummary.total} 个${sourceParts.length > 0 ? `（${sourceParts.join("，")}；运行优先使用）` : ""}`;
+  }
   if (payload["最近Agent运行"]) return "包含真实 Agent 运行";
   if (payload["调试包"]) return "包含 Agent 调试包";
   if (payload["运行结果"]) return "包含运行结果";
