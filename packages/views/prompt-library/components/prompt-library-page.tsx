@@ -972,7 +972,7 @@ function DemoDashboardPanel({
     ["观测预估成本", formatMoney(observabilityMetrics["预估成本"])],
   ];
   const proofItems: Array<[string, string]> = [
-    ["提示词资产", formatNumber(assets.length)],
+    ["提示词库", formatNumber(assets.length)],
     ["资产总数", formatNumber(trainingAssets["资产总数"] ?? assets.length)],
     ["结构化用例", formatNumber(trainingAssets["结构化用例"] ?? cases.length)],
     ["优化候选", `${pendingCandidates} 待确认 · ${publishedCandidates} 已发布 · ${rejectedCandidates} 已拒绝`],
@@ -1272,7 +1272,7 @@ function WorkbenchPanel({
     enabled: !!expandedRunId,
   });
 
-  if (activeTab === "提示词资产" || activeTab === "提示词调试场") {
+  if (activeTab === "提示词库" || activeTab === "提示词调试场") {
     return null;
   }
 

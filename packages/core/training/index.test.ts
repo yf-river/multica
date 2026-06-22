@@ -15,12 +15,12 @@ describe("training workbench navigation", () => {
   });
 
   it("keeps legacy prompt-library deep links on the prompt library tab", () => {
-    expect(trainingWorkbenchTabFromView("prompts")).toBe("提示词资产");
+    expect(trainingWorkbenchTabFromView("prompts")).toBe("提示词库");
   });
 
   it("builds distinct Chinese titles for desktop training tabs", () => {
     expect(trainingWorkbenchTitleFromView(null)).toBe("训练与评估 · 生产看板");
-    expect(trainingWorkbenchTitleFromView("prompts")).toBe("训练与评估 · 提示词资产");
+    expect(trainingWorkbenchTitleFromView("prompts")).toBe("训练与评估 · 提示词库");
     expect(trainingWorkbenchTitleFromView("run-history")).toBe("训练与评估 · 运行历史");
     expect(trainingWorkbenchTitleFromView("missing-view")).toBe("训练与评估 · 生产看板");
   });

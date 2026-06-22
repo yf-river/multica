@@ -58,6 +58,24 @@ async function prepareSquadEvidence(token, workspace, templateSpec) {
     throw new Error(`内置小队模板返回不完整：${templateSpec.key}`);
   }
 
+  const existing = await findExistingSquadEvidence(workspace.id, templateSpec.title, squad.id, leader.id);
+  if (existing) {
+    return {
+      template_key: templateSpec.key,
+      squad_id: squad.id,
+      squad_name: squad.name,
+      issue_id: existing.issue_id,
+      issue_title: existing.issue_title,
+      sop_run_id: existing.sop_run_id,
+      current_step_key: existing.current_step_key,
+      leader_agent_id: leader.id,
+      leader_task_id: existing.leader_task_id,
+      leader_task_status: existing.leader_task_status || "未知",
+      trace_event_count: Number(existing.trace_event_count || 0),
+      reused: true,
+    };
+  }
+
   const issue = await postJSON(token, workspace, "/api/issues", {
     title: `${templateSpec.title} ${new Date().toISOString()}`,
     description: templateSpec.description,
@@ -89,6 +107,49 @@ async function prepareSquadEvidence(token, workspace, templateSpec) {
     leader_task_status: terminalTask?.status ?? leaderTask?.status ?? "未入队",
     trace_event_count: traceCount,
   };
+}
+
+async function findExistingSquadEvidence(workspaceID, titlePrefix, squadID, leaderAgentID) {
+  const databaseURL = trimEnv("DATABASE_URL");
+  if (!databaseURL) return null;
+  const pg = await import("pg");
+  const client = new pg.default.Client(databaseURL);
+  await client.connect();
+  try {
+    const res = await client.query(
+      `
+        SELECT
+          i.id::text AS issue_id,
+          i.title AS issue_title,
+          r.id::text AS sop_run_id,
+          r.current_step_key,
+          atq.id::text AS leader_task_id,
+          atq.status AS leader_task_status,
+          (
+            SELECT count(*)::int
+            FROM task_trace_event tte
+            WHERE tte.task_id = atq.id
+          ) AS trace_event_count
+        FROM issue i
+        JOIN squad_sop_run r ON r.issue_id = i.id AND r.squad_id = $3
+        LEFT JOIN LATERAL (
+          SELECT id, status
+          FROM agent_task_queue
+          WHERE issue_id = i.id AND agent_id = $4
+          ORDER BY created_at DESC
+          LIMIT 1
+        ) atq ON true
+        WHERE i.workspace_id = $1
+          AND i.title LIKE ($2 || '%')
+        ORDER BY i.created_at DESC
+        LIMIT 1
+      `,
+      [workspaceID, titlePrefix, squadID, leaderAgentID],
+    );
+    return res.rows[0] ?? null;
+  } finally {
+    await client.end();
+  }
 }
 
 async function waitForSOPRun(token, workspace, issueID, templateKey) {

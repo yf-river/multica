@@ -5,9 +5,9 @@ export const TRAINING_WORKBENCH_VIEWS = [
     keywords: ["生产看板", "领导视角", "验收", "demo", "dashboard", "observability"],
   },
   {
-    tab: "提示词资产",
+    tab: "提示词库",
     view: "prompts",
-    keywords: ["提示词资产", "提示词库", "prompt", "library", "prompts"],
+    keywords: ["提示词库", "提示词管理", "prompt", "library", "prompts"],
   },
   {
     tab: "提示词调试场",

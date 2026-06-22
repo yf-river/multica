@@ -21,6 +21,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/daemon/execenv"
 	"github.com/multica-ai/multica/server/internal/daemon/repocache"
 	"github.com/multica-ai/multica/server/pkg/agent"
+	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
 func createDaemonTestRepo(t *testing.T) string {
@@ -1984,6 +1985,32 @@ func TestReportTaskResult_NonCompletedHitsFailEndpoint(t *testing.T) {
 				t.Errorf("session_id should be forwarded on failure paths so chat resume keeps working, got %v", rec.payload["session_id"])
 			}
 		})
+	}
+}
+
+func TestAgentFailureMessageUsesOutputWhenErrorIsEmpty(t *testing.T) {
+	t.Parallel()
+
+	got := agentFailureMessage("codebuddy", agent.Result{
+		Status: "failed",
+		Output: "429 当前无可用Token额度，如需申请，请联系您所在团队的负责人或HRBP。",
+	})
+	if !strings.Contains(got, "429 当前无可用Token额度") {
+		t.Fatalf("expected provider output to be preserved, got %q", got)
+	}
+	if reason := taskfailure.Classify(got).String(); reason != "agent_error.provider_capacity_or_rate_limit" {
+		t.Fatalf("classification = %q", reason)
+	}
+}
+
+func TestAgentFailureMessageFallbacks(t *testing.T) {
+	t.Parallel()
+
+	if got := agentFailureMessage("codebuddy", agent.Result{Status: "failed", Error: "explicit error", Output: "429"}); got != "explicit error" {
+		t.Fatalf("Error should win over Output, got %q", got)
+	}
+	if got := agentFailureMessage("codebuddy", agent.Result{Status: "failed"}); got != "codebuddy execution failed" {
+		t.Fatalf("fallback = %q", got)
 	}
 }
 

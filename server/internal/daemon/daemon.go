@@ -3700,10 +3700,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			Usage:     usageEntries,
 		}, nil
 	default:
-		errMsg := result.Error
-		if errMsg == "" {
-			errMsg = fmt.Sprintf("%s execution %s", provider, result.Status)
-		}
+		errMsg := agentFailureMessage(provider, result)
 		// Forward SessionID/WorkDir on the blocked path: backends commonly
 		// emit a real session_id before failing (rate-limit, tool error,
 		// model reject, …). Without this the chat_session resume pointer
@@ -3744,6 +3741,16 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			FailureReason: failureReason,
 		}, nil
 	}
+}
+
+func agentFailureMessage(provider string, result agent.Result) string {
+	if result.Error != "" {
+		return result.Error
+	}
+	if result.Output != "" {
+		return result.Output
+	}
+	return fmt.Sprintf("%s execution %s", provider, result.Status)
 }
 
 // executeAndDrain runs a backend, drains its message stream (forwarding to the
