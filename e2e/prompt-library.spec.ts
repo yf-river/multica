@@ -741,5 +741,11 @@ test.describe("训练与评估工作台", () => {
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training\\?view=prompts`), { timeout: 30000 });
     await waitForPageText(page, "训练与评估");
     await expect(page.getByRole("button", { name: "提示词资产", exact: true })).toBeVisible();
+
+    for (const legacyPath of ["evaluation", "eval"]) {
+      await page.goto(`/${workspaceSlug}/${legacyPath}`, { waitUntil: "domcontentloaded" });
+      await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training\\?view=demo-dashboard`), { timeout: 30000 });
+      await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队生产看板", { timeout: 10000 });
+    }
   });
 });

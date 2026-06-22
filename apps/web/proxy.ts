@@ -14,6 +14,8 @@ const LEGACY_ROUTE_SEGMENTS = new Set([
   "runtimes",
   "training",
   "prompt-library",
+  "evaluation",
+  "eval",
   "skills",
   "settings",
 ]);
@@ -43,6 +45,11 @@ export function proxy(req: NextRequest) {
       if (firstSegment === "prompt-library") {
         url.pathname = `/${lastSlug}/training`;
         url.searchParams.set("view", "prompts");
+        return NextResponse.redirect(url);
+      }
+      if (firstSegment === "evaluation" || firstSegment === "eval") {
+        url.pathname = `/${lastSlug}/training`;
+        url.searchParams.set("view", "demo-dashboard");
         return NextResponse.redirect(url);
       }
 

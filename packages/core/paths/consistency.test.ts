@@ -96,7 +96,7 @@ describe("global path / reserved slug consistency", () => {
   });
 
   it("reserves legacy workspace route segments handled by the web proxy", () => {
-    for (const slug of ["training", "prompt-library"]) {
+    for (const slug of ["training", "prompt-library", "evaluation", "eval"]) {
       expect(RESERVED_SLUGS.has(slug), `${slug} must be reserved because the web proxy treats /${slug} as a legacy route`).toBe(true);
     }
   });

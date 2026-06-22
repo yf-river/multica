@@ -173,6 +173,16 @@ export const appRoutes: RouteObject[] = [
             element: <Navigate to="../training?view=prompts" replace />,
             handle: { title: "训练与评估" },
           },
+          {
+            path: "evaluation",
+            element: <Navigate to="../training?view=demo-dashboard" replace />,
+            handle: { title: "训练与评估" },
+          },
+          {
+            path: "eval",
+            element: <Navigate to="../training?view=demo-dashboard" replace />,
+            handle: { title: "训练与评估" },
+          },
           { path: "skills", element: <SkillsPage />, handle: { title: "技能" } },
           {
             path: "skills/:id",
