@@ -200,16 +200,18 @@ type PromptEvaluationTrialResponse struct {
 }
 
 type PromptEvaluationTaskUsageResponse struct {
-	ID               string `json:"id"`
-	TaskID           string `json:"task_id"`
-	Provider         string `json:"provider"`
-	Model            string `json:"model"`
-	InputTokens      int64  `json:"input_tokens"`
-	OutputTokens     int64  `json:"output_tokens"`
-	CacheReadTokens  int64  `json:"cache_read_tokens"`
-	CacheWriteTokens int64  `json:"cache_write_tokens"`
-	CreatedAt        string `json:"created_at"`
-	UpdatedAt        string `json:"updated_at"`
+	ID               string  `json:"id"`
+	TaskID           string  `json:"task_id"`
+	Provider         string  `json:"provider"`
+	Model            string  `json:"model"`
+	InputTokens      int64   `json:"input_tokens"`
+	OutputTokens     int64   `json:"output_tokens"`
+	CacheReadTokens  int64   `json:"cache_read_tokens"`
+	CacheWriteTokens int64   `json:"cache_write_tokens"`
+	EstimatedCost    float64 `json:"estimated_cost"`
+	Priced           bool    `json:"priced"`
+	CreatedAt        string  `json:"created_at"`
+	UpdatedAt        string  `json:"updated_at"`
 }
 
 type PromptEvaluationRunEvidenceResponse struct {
@@ -351,6 +353,7 @@ func promptEvaluationTrialToResponse(trial db.PromptEvaluationTrial) PromptEvalu
 }
 
 func promptEvaluationTaskUsageToResponse(usage db.TaskUsage) PromptEvaluationTaskUsageResponse {
+	estimatedCost, priced := metrics.EstimateUsageCostUSD(usage.Model, usage.InputTokens, usage.OutputTokens, usage.CacheReadTokens, usage.CacheWriteTokens)
 	return PromptEvaluationTaskUsageResponse{
 		ID:               uuidToString(usage.ID),
 		TaskID:           uuidToString(usage.TaskID),
@@ -360,6 +363,8 @@ func promptEvaluationTaskUsageToResponse(usage db.TaskUsage) PromptEvaluationTas
 		OutputTokens:     usage.OutputTokens,
 		CacheReadTokens:  usage.CacheReadTokens,
 		CacheWriteTokens: usage.CacheWriteTokens,
+		EstimatedCost:    estimatedCost,
+		Priced:           priced,
 		CreatedAt:        timestampToString(usage.CreatedAt),
 		UpdatedAt:        timestampToString(usage.UpdatedAt),
 	}

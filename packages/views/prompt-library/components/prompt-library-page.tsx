@@ -39,6 +39,7 @@ const promptLibraryKeys = {
   assets: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-assets"] as const,
   cases: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-cases"] as const,
   runs: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-runs"] as const,
+  runEvidence: (workspaceId: string, runId: string | null) => ["prompt-library", workspaceId, "run-evidence", runId ?? ""] as const,
   candidates: (workspaceId: string) => ["prompt-library", workspaceId, "optimization-candidates"] as const,
   summary: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-summary"] as const,
 };
@@ -315,8 +316,9 @@ export function PromptLibraryPage() {
 
   const syncRunMut = useMutation({
     mutationFn: (runId: string) => api.syncPromptEvaluationRun(runId),
-    onSuccess: () => {
+    onSuccess: (_run, runId) => {
       invalidateRuns();
+      queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", runId) });
       invalidateSummary();
       toast.success("运行记录已同步");
     },
@@ -701,6 +703,7 @@ export function PromptLibraryPage() {
 
             <WorkbenchPanel
               activeTab={activeTab}
+              workspaceId={workspaceId ?? ""}
               selected={selected}
               assets={assets}
               cases={cases}
@@ -751,6 +754,7 @@ function TrainingSummaryStrip({ summary, loading }: { summary: PromptEvaluationS
     { label: "需人工复核", value: formatNumber(metrics["需人工复核"]) },
     { label: "输入token", value: formatNumber(metrics["输入token"]) },
     { label: "输出token", value: formatNumber(metrics["输出token"]) },
+    { label: "预估成本", value: formatMoney(metrics["预估成本"]) },
     { label: "待确认优化候选", value: formatNumber(candidates["待确认"]) },
     { label: "已发布优化候选", value: formatNumber(candidates["已发布"]) },
     { label: "资产总数", value: formatNumber(assets["资产总数"]) },
@@ -784,6 +788,7 @@ function TrainingSummaryStrip({ summary, loading }: { summary: PromptEvaluationS
 
 function WorkbenchPanel({
   activeTab,
+  workspaceId,
   selected,
   assets,
   cases,
@@ -815,6 +820,7 @@ function WorkbenchPanel({
   publishingCandidateId,
 }: {
   activeTab: WorkbenchTab;
+  workspaceId: string;
   selected: PromptLibraryItem | null;
   assets: PromptEvaluationAsset[];
   cases: PromptEvaluationStructuredCase[];
@@ -854,7 +860,7 @@ function WorkbenchPanel({
   const candidatesByRun = useMemo(() => buildCandidatesByRun(candidates), [candidates]);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const evidenceQuery = useQuery({
-    queryKey: ["prompt-library", "run-evidence", expandedRunId],
+    queryKey: promptLibraryKeys.runEvidence(workspaceId, expandedRunId),
     queryFn: () => api.getPromptEvaluationRunEvidence(expandedRunId ?? ""),
     enabled: !!expandedRunId,
   });
@@ -1134,12 +1140,25 @@ function RunEvidencePanel({
     return <div className="md:col-span-2 rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">运行证据暂不可用</div>;
   }
   return (
-    <div className="md:col-span-2 grid gap-3 rounded-md border bg-muted/20 p-3">
-      <div className="grid gap-2 text-xs sm:grid-cols-4">
+    <div className="md:col-span-2 grid gap-3 rounded-md border bg-muted/20 p-3" data-testid={`run-evidence-${evidence.run.id}`}>
+      <div className="grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
+        <MetricChip label="运行类型" value={evidence.run.run_kind} />
+        <MetricChip label="运行状态" value={evidence.run.status} />
+        <MetricChip label="模型" value={evidence.run.model || "未记录"} />
+        <MetricChip label="runtime" value={evidence.run.runtime_provider || "未记录"} />
+        <MetricChip label="agent id" value={evidence.run.agent_id ?? "未记录"} />
+        <MetricChip label="runtime id" value={evidence.run.runtime_id ?? "未记录"} />
+        <MetricChip label="chat session id" value={evidence.run.chat_session_id ?? "未记录"} />
         <MetricChip label="总用例数" value={String(evidence.run.total_cases)} />
         <MetricChip label="通过数" value={String(evidence.run.passed_cases)} />
         <MetricChip label="失败数" value={String(evidence.run.failed_cases)} />
+        <MetricChip label="总耗时" value={`${evidence.run.total_duration_ms} ms`} />
+        <MetricChip label="平均耗时" value={`${evidence.run.average_duration_ms} ms`} />
+        <MetricChip label="输入token" value={String(evidence.run.input_tokens)} />
+        <MetricChip label="输出token" value={String(evidence.run.output_tokens)} />
+        <MetricChip label="预估成本" value={formatMoney(evidence.run.estimated_cost)} />
         <MetricChip label="trace/task id" value={evidence.run.task_id ?? evidence.run.id} />
+        <MetricChip label="评估结论" value={evidence.run.conclusion || "未记录"} />
       </div>
 
       <div className="grid gap-2">
@@ -1191,7 +1210,7 @@ function RunEvidencePanel({
 
 function MetricChip({ label, value }: { label: string; value: string }) {
   return (
-    <div className="min-w-0 rounded-md border bg-background px-2 py-1.5">
+    <div className="min-w-0 rounded-md border bg-background px-2 py-1.5" data-testid={`run-evidence-metric-${label}`}>
       <div className="text-[11px] text-muted-foreground">{label}</div>
       <div className="truncate font-medium">{value || "未记录"}</div>
     </div>

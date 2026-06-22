@@ -514,6 +514,9 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	if len(evidence.TaskUsage) != 1 || evidence.TaskUsage[0].InputTokens != 11 || evidence.TaskUsage[0].OutputTokens != 7 {
 		t.Fatalf("evidence usage = %+v", evidence.TaskUsage)
 	}
+	if !evidence.TaskUsage[0].Priced || evidence.TaskUsage[0].EstimatedCost <= 0 {
+		t.Fatalf("evidence usage cost = %+v", evidence.TaskUsage[0])
+	}
 	if len(evidence.TaskMessages) != 1 || !strings.Contains(evidence.TaskMessages[0].Content, "结构化逐用例评估") {
 		t.Fatalf("evidence messages = %+v", evidence.TaskMessages)
 	}
