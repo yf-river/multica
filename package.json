@@ -12,6 +12,7 @@
     "typecheck": "turbo typecheck",
     "test": "turbo test",
     "lint": "turbo lint",
+    "acceptance:prepare-demo": "node scripts/prepare-production-demo-evidence.mjs",
     "acceptance:evidence": "node scripts/generate-acceptance-evidence.mjs",
     "acceptance:verify": "node scripts/generate-acceptance-evidence.mjs --run-tests",
     "clean": "turbo clean && rm -rf node_modules",

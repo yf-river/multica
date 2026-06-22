@@ -39,6 +39,7 @@ const git = {
 };
 
 const account = await loadAccountRole();
+const databaseEvidence = await loadDatabaseEvidence(account.workspace_id);
 const commands = buildCommandPlan();
 const commandResults = runTests ? runCommands(commands) : commands.map((item) => ({
   ...item,
@@ -48,7 +49,7 @@ const commandResults = runTests ? runCommands(commands) : commands.map((item) =>
   note: "默认只生成验收包；使用 pnpm acceptance:verify 或 --run-tests 后会执行。",
 }));
 
-const risks = buildRisks({ health, ready, login, account, commandResults, git });
+const risks = buildRisks({ health, ready, login, account, commandResults, git, databaseEvidence });
 const evidence = {
   "语义版本": "multica.production_acceptance_evidence.v1",
   "生成时间": timestamp,
@@ -72,6 +73,7 @@ const evidence = {
     login,
   },
   "提交": git,
+  "数据库抽查": databaseEvidence,
   "测试命令": commandResults,
   "剩余风险": risks,
   "人工复核清单": [
@@ -175,6 +177,176 @@ async function loadAccountRole() {
   }
 }
 
+async function loadDatabaseEvidence(workspaceID) {
+  const databaseURL = trimEnv("DATABASE_URL");
+  if (!databaseURL) return { status: "跳过", reason: "DATABASE_URL 未配置" };
+  if (!workspaceID) return { status: "跳过", reason: "未确认演示工作区 ID" };
+  try {
+    const pg = await import("pg");
+    const client = new pg.default.Client(databaseURL);
+    await client.connect();
+    try {
+      const trainingSummary = await queryOne(client, `
+          SELECT
+            (SELECT count(*)::int FROM prompt_library_item WHERE workspace_id = $1) AS prompt_count,
+            (SELECT count(*)::int FROM prompt_evaluation_asset WHERE workspace_id = $1) AS asset_count,
+            (SELECT count(*)::int FROM prompt_evaluation_case WHERE workspace_id = $1) AS structured_case_count,
+            (SELECT count(*)::int FROM prompt_evaluation_run WHERE workspace_id = $1) AS run_count,
+            (SELECT count(*)::int FROM prompt_evaluation_run WHERE workspace_id = $1 AND run_kind = 'Agent执行') AS agent_run_count,
+            (SELECT count(*)::int FROM prompt_evaluation_trial WHERE workspace_id = $1) AS trial_count,
+            (SELECT count(*)::int FROM prompt_evaluation_optimization_candidate WHERE workspace_id = $1) AS optimization_candidate_count,
+            COALESCE((SELECT sum(input_tokens)::bigint FROM prompt_evaluation_run WHERE workspace_id = $1), 0)::text AS input_tokens,
+            COALESCE((SELECT sum(output_tokens)::bigint FROM prompt_evaluation_run WHERE workspace_id = $1), 0)::text AS output_tokens
+        `, [workspaceID]);
+      const assetRows = await queryRows(client, `
+          SELECT asset_type AS type, count(*)::int AS count
+          FROM prompt_evaluation_asset
+          WHERE workspace_id = $1
+          GROUP BY asset_type
+          ORDER BY asset_type ASC
+        `, [workspaceID]);
+      const runStatusRows = await queryRows(client, `
+          SELECT status, count(*)::int AS count
+          FROM prompt_evaluation_run
+          WHERE workspace_id = $1
+          GROUP BY status
+          ORDER BY status ASC
+        `, [workspaceID]);
+      const taskSummary = await queryOne(client, `
+          SELECT
+            (
+              SELECT count(*)::int
+              FROM agent_task_queue atq
+              JOIN agent a ON a.id = atq.agent_id
+              WHERE a.workspace_id = $1
+            ) AS task_count,
+            (
+              SELECT count(*)::int
+              FROM task_usage tu
+              JOIN agent_task_queue atq ON atq.id = tu.task_id
+              JOIN agent a ON a.id = atq.agent_id
+              WHERE a.workspace_id = $1
+            ) AS usage_rows,
+            (
+              SELECT count(*)::int
+              FROM task_trace_event
+              WHERE workspace_id = $1
+            ) AS trace_event_rows,
+            COALESCE((
+              SELECT sum(tu.input_tokens)::bigint
+              FROM task_usage tu
+              JOIN agent_task_queue atq ON atq.id = tu.task_id
+              JOIN agent a ON a.id = atq.agent_id
+              WHERE a.workspace_id = $1
+            ), 0)::text AS input_tokens,
+            COALESCE((
+              SELECT sum(tu.output_tokens)::bigint
+              FROM task_usage tu
+              JOIN agent_task_queue atq ON atq.id = tu.task_id
+              JOIN agent a ON a.id = atq.agent_id
+              WHERE a.workspace_id = $1
+            ), 0)::text AS output_tokens,
+            COALESCE((
+              SELECT sum(tu.cache_read_tokens)::bigint
+              FROM task_usage tu
+              JOIN agent_task_queue atq ON atq.id = tu.task_id
+              JOIN agent a ON a.id = atq.agent_id
+              WHERE a.workspace_id = $1
+            ), 0)::text AS cache_read_tokens,
+            COALESCE((
+              SELECT sum(tu.cache_write_tokens)::bigint
+              FROM task_usage tu
+              JOIN agent_task_queue atq ON atq.id = tu.task_id
+              JOIN agent a ON a.id = atq.agent_id
+              WHERE a.workspace_id = $1
+            ), 0)::text AS cache_write_tokens
+        `, [workspaceID]);
+      const runtimeRows = await queryRows(client, `
+          SELECT provider, status, count(*)::int AS count, max(last_seen_at)::text AS last_seen_at
+          FROM agent_runtime
+          WHERE workspace_id = $1
+          GROUP BY provider, status
+          ORDER BY provider ASC, status ASC
+        `, [workspaceID]);
+      const squadSummary = await queryOne(client, `
+          SELECT
+            (SELECT count(*)::int FROM squad WHERE workspace_id = $1 AND archived_at IS NULL) AS squad_count,
+            (SELECT count(*)::int FROM squad_sop_run WHERE workspace_id = $1) AS sop_run_count,
+            (SELECT count(*)::int FROM squad_sop_step_event WHERE workspace_id = $1) AS sop_event_count,
+            (SELECT count(*)::int FROM task_trace_event WHERE workspace_id = $1 AND squad_id IS NOT NULL) AS squad_trace_event_count
+        `, [workspaceID]);
+      const latestRuns = await queryRows(client, `
+          SELECT
+            id::text,
+            run_kind,
+            status,
+            model,
+            runtime_provider,
+            task_id::text,
+            total_cases,
+            passed_cases,
+            failed_cases,
+            input_tokens,
+            output_tokens,
+            created_at::text
+          FROM prompt_evaluation_run
+          WHERE workspace_id = $1
+          ORDER BY created_at DESC
+          LIMIT 5
+        `, [workspaceID]);
+      const latestTrace = await queryRows(client, `
+          SELECT
+            task_id::text,
+            source,
+            event_type,
+            event_name,
+            status,
+            provider,
+            model,
+            input_tokens,
+            output_tokens,
+            failure_reason,
+            created_at::text
+          FROM task_trace_event
+          WHERE workspace_id = $1
+          ORDER BY created_at DESC
+          LIMIT 8
+        `, [workspaceID]);
+
+      return {
+        status: "已抽查",
+        workspace_id: workspaceID,
+        training: trainingSummary,
+        assets_by_type: assetRows,
+        runs_by_status: runStatusRows,
+        tasks: taskSummary,
+        runtimes: runtimeRows,
+        squads: squadSummary,
+        latest_runs: latestRuns,
+        latest_trace_events: latestTrace,
+      };
+    } finally {
+      await client.end();
+    }
+  } catch (error) {
+    return { status: "失败", reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+async function queryOne(client, sql, params) {
+  const res = await client.query(sql, params);
+  return normalizePgRow(res.rows[0] || {});
+}
+
+async function queryRows(client, sql, params) {
+  const res = await client.query(sql, params);
+  return res.rows.map(normalizePgRow);
+}
+
+function normalizePgRow(row) {
+  return Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value instanceof Date ? value.toISOString() : value]));
+}
+
 function buildCommandPlan() {
   const commands = [
     {
@@ -256,7 +428,7 @@ function tail(value) {
   return lines.slice(-30);
 }
 
-function buildRisks({ health, ready, login, account, commandResults, git }) {
+function buildRisks({ health, ready, login, account, commandResults, git, databaseEvidence }) {
   const risks = [];
   if (!health.ok) risks.push("后端 /health 未通过，不能作为可演示服务交付。");
   if (!ready.ok) risks.push("后端 /readyz 未通过，依赖或数据库连接可能未就绪。");
@@ -266,6 +438,18 @@ function buildRisks({ health, ready, login, account, commandResults, git }) {
   }
   if (commandResults.some((item) => item.status !== "通过")) {
     risks.push("仍存在未执行或失败的测试命令；正式交付前需跑 acceptance:verify 并保留报告。");
+  }
+  if (databaseEvidence.status !== "已抽查") {
+    risks.push(`数据库结果抽查未完成：${databaseEvidence.reason || databaseEvidence.status}`);
+  } else {
+    const training = databaseEvidence.training || {};
+    const squads = databaseEvidence.squads || {};
+    const tasks = databaseEvidence.tasks || {};
+    if (Number(training.run_count || 0) === 0) risks.push("数据库中未发现训练评估运行记录，生产看板会缺少运行证据。");
+    if (Number(training.structured_case_count || 0) === 0) risks.push("数据库中未发现结构化评测用例，数据集/测试套件证据不足。");
+    if (Number(training.optimization_candidate_count || 0) === 0) risks.push("数据库中未发现优化候选，失败用例到人工确认的闭环证据不足。");
+    if (Number(tasks.trace_event_rows || 0) === 0) risks.push("数据库中未发现任务 trace 事件，观测闭环证据不足。");
+    if (Number(squads.sop_run_count || 0) === 0) risks.push("数据库中未发现小队 SOP run，小队闭环证据不足。");
   }
   if (git.status) risks.push("当前 worktree 非干净状态；提交前需要确认没有未纳入验收的改动。");
   if (risks.length === 0) {
@@ -278,6 +462,13 @@ function renderMarkdown(data, jsonPath) {
   const commandRows = data["测试命令"].map((item) => `| ${item.name} | \`${item.command}\` | ${item.status} | ${item.durationMs} |`).join("\n");
   const commitRows = data["提交"].commits.map((line) => `- ${line}`).join("\n");
   const riskRows = data["剩余风险"].map((line) => `- ${line}`).join("\n");
+  const db = data["数据库抽查"];
+  const dbStatus = db.status === "已抽查" ? "已抽查" : `${db.status}：${db.reason || "无原因"}`;
+  const training = db.training || {};
+  const squads = db.squads || {};
+  const tasks = db.tasks || {};
+  const latestRunRows = (db.latest_runs || []).map((run) => `- ${run.created_at} · ${run.run_kind} · ${run.status} · task ${run.task_id || "无"} · ${run.model || "无模型"}`).join("\n") || "- 无";
+  const latestTraceRows = (db.latest_trace_events || []).map((event) => `- ${event.created_at} · ${event.event_name || event.event_type} · ${event.status} · task ${event.task_id || "无"}`).join("\n") || "- 无";
   return `# Multica 生产验收证据
 
 - 生成时间：${data["生成时间"]}
@@ -305,6 +496,26 @@ function renderMarkdown(data, jsonPath) {
 - HEAD：${data["提交"].head}
 
 ${commitRows}
+
+## 数据库抽查
+
+- 状态：${dbStatus}
+- 提示词：${training.prompt_count ?? "未记录"}
+- 评测资产：${training.asset_count ?? "未记录"}
+- 结构化用例：${training.structured_case_count ?? "未记录"}
+- 训练评估运行：${training.run_count ?? "未记录"}，其中 Agent 执行 ${training.agent_run_count ?? "未记录"}
+- trial：${training.trial_count ?? "未记录"}
+- 优化候选：${training.optimization_candidate_count ?? "未记录"}
+- 任务：${tasks.task_count ?? "未记录"}，usage 行 ${tasks.usage_rows ?? "未记录"}，trace 事件 ${tasks.trace_event_rows ?? "未记录"}
+- 小队：${squads.squad_count ?? "未记录"}，SOP run ${squads.sop_run_count ?? "未记录"}，SOP 事件 ${squads.sop_event_count ?? "未记录"}
+
+### 最近训练评估运行
+
+${latestRunRows}
+
+### 最近 trace 事件
+
+${latestTraceRows}
 
 ## 测试命令
 
