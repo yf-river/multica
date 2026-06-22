@@ -128,6 +128,21 @@ func (q *Queries) DeletePromptEvaluationCasesByAsset(ctx context.Context, arg De
 	return err
 }
 
+const deletePromptEvaluationPayloadCasesByAsset = `-- name: DeletePromptEvaluationPayloadCasesByAsset :exec
+DELETE FROM prompt_evaluation_case
+WHERE workspace_id = $1 AND asset_id = $2 AND source = 'payload'
+`
+
+type DeletePromptEvaluationPayloadCasesByAssetParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AssetID     pgtype.UUID `json:"asset_id"`
+}
+
+func (q *Queries) DeletePromptEvaluationPayloadCasesByAsset(ctx context.Context, arg DeletePromptEvaluationPayloadCasesByAssetParams) error {
+	_, err := q.db.Exec(ctx, deletePromptEvaluationPayloadCasesByAsset, arg.WorkspaceID, arg.AssetID)
+	return err
+}
+
 const getPromptEvaluationCaseInWorkspace = `-- name: GetPromptEvaluationCaseInWorkspace :one
 SELECT id, workspace_id, asset_id, prompt_id, case_index, case_name, variables, expected_contains, input, expected, tags, status, source, created_by, created_at, updated_at FROM prompt_evaluation_case
 WHERE id = $1 AND workspace_id = $2

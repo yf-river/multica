@@ -1680,7 +1680,21 @@ func (h *Handler) SyncPromptEvaluationRunFromTask(w http.ResponseWriter, r *http
 }
 
 func (h *Handler) syncPromptEvaluationCasesFromPayload(w http.ResponseWriter, r *http.Request, qtx *db.Queries, asset db.PromptEvaluationAsset, createdBy pgtype.UUID) bool {
-	if err := qtx.DeletePromptEvaluationCasesByAsset(r.Context(), db.DeletePromptEvaluationCasesByAssetParams{
+	existing, err := qtx.ListPromptEvaluationCases(r.Context(), db.ListPromptEvaluationCasesParams{
+		WorkspaceID: asset.WorkspaceID,
+		AssetID:     asset.ID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation cases")
+		return false
+	}
+	payloadStartIndex := int32(0)
+	for _, item := range existing {
+		if item.Source != "payload" && item.CaseIndex >= payloadStartIndex {
+			payloadStartIndex = item.CaseIndex + 1
+		}
+	}
+	if err := qtx.DeletePromptEvaluationPayloadCasesByAsset(r.Context(), db.DeletePromptEvaluationPayloadCasesByAssetParams{
 		WorkspaceID: asset.WorkspaceID,
 		AssetID:     asset.ID,
 	}); err != nil {
@@ -1694,7 +1708,7 @@ func (h *Handler) syncPromptEvaluationCasesFromPayload(w http.ResponseWriter, r 
 			WorkspaceID:      asset.WorkspaceID,
 			AssetID:          asset.ID,
 			PromptID:         asset.PromptID,
-			CaseIndex:        int32(idx),
+			CaseIndex:        payloadStartIndex + int32(idx),
 			CaseName:         normalized.Name,
 			Variables:        mustJSONBytes(normalized.Variables),
 			ExpectedContains: mustJSONBytes(normalized.ExpectedContains),

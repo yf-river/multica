@@ -388,6 +388,97 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	}
 }
 
+func TestUpdatePromptEvaluationAssetPreservesManualCases(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
+	})
+	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, "保留人工用例提示词", "请处理 {{issue_title}}。", `[]`)
+	createAssetW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAsset(createAssetW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+		"prompt_id":  promptID,
+		"name":       "保留人工用例数据集",
+		"asset_type": "数据集",
+		"payload": map[string]any{
+			"cases": []map[string]any{{"名称": "旧 payload 用例", "变量": map[string]any{"issue_title": "旧问题"}}},
+		},
+	}))
+	if createAssetW.Code != http.StatusCreated {
+		t.Fatalf("create asset status = %d, body = %s", createAssetW.Code, createAssetW.Body.String())
+	}
+	var asset PromptEvaluationAssetResponse
+	if err := json.Unmarshal(createAssetW.Body.Bytes(), &asset); err != nil {
+		t.Fatalf("decode asset: %v", err)
+	}
+
+	createCaseW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationCase(createCaseW, newRequest(http.MethodPost, "/api/prompt-evaluation-cases", map[string]any{
+		"asset_id":          asset.ID,
+		"case_name":         "人工沉淀用例",
+		"variables":         map[string]any{"issue_title": "人工问题"},
+		"expected_contains": []string{"验收条件"},
+		"status":            "启用",
+	}))
+	if createCaseW.Code != http.StatusCreated {
+		t.Fatalf("create manual case status = %d, body = %s", createCaseW.Code, createCaseW.Body.String())
+	}
+	var manual PromptEvaluationCaseResponse
+	if err := json.Unmarshal(createCaseW.Body.Bytes(), &manual); err != nil {
+		t.Fatalf("decode manual case: %v", err)
+	}
+
+	updateAssetW := httptest.NewRecorder()
+	testHandler.UpdatePromptEvaluationAsset(updateAssetW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-assets/"+asset.ID, map[string]any{
+		"payload": map[string]any{
+			"cases": []map[string]any{{"名称": "新 payload 用例", "变量": map[string]any{"issue_title": "新问题"}}},
+		},
+	}), "id", asset.ID))
+	if updateAssetW.Code != http.StatusOK {
+		t.Fatalf("update asset status = %d, body = %s", updateAssetW.Code, updateAssetW.Body.String())
+	}
+
+	listW := httptest.NewRecorder()
+	testHandler.ListPromptEvaluationCases(listW, newRequest(http.MethodGet, "/api/prompt-evaluation-cases?asset_id="+asset.ID, nil))
+	if listW.Code != http.StatusOK {
+		t.Fatalf("list cases status = %d, body = %s", listW.Code, listW.Body.String())
+	}
+	var listed struct {
+		Items []PromptEvaluationCaseResponse `json:"items"`
+		Total int                            `json:"total"`
+	}
+	if err := json.Unmarshal(listW.Body.Bytes(), &listed); err != nil {
+		t.Fatalf("decode listed cases: %v", err)
+	}
+	if listed.Total != 2 {
+		t.Fatalf("listed cases = %+v", listed)
+	}
+	seenManual := false
+	seenNewPayload := false
+	for _, item := range listed.Items {
+		if item.CaseName == "旧 payload 用例" {
+			t.Fatalf("old payload case was not replaced: %+v", listed)
+		}
+		if item.ID == manual.ID {
+			seenManual = true
+			if item.Source != "manual" || item.CaseName != "人工沉淀用例" {
+				t.Fatalf("manual case changed = %+v", item)
+			}
+		}
+		if item.CaseName == "新 payload 用例" {
+			seenNewPayload = true
+			if item.Source != "payload" || item.CaseIndex <= manual.CaseIndex {
+				t.Fatalf("payload case did not avoid manual index = payload %+v manual %+v", item, manual)
+			}
+		}
+	}
+	if !seenManual || !seenNewPayload {
+		t.Fatalf("expected manual and new payload cases, got %+v", listed)
+	}
+}
+
 func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")

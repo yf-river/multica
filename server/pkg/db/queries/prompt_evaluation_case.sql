@@ -13,6 +13,10 @@ WHERE id = $1 AND workspace_id = $2;
 DELETE FROM prompt_evaluation_case
 WHERE workspace_id = $1 AND asset_id = $2;
 
+-- name: DeletePromptEvaluationPayloadCasesByAsset :exec
+DELETE FROM prompt_evaluation_case
+WHERE workspace_id = $1 AND asset_id = $2 AND source = 'payload';
+
 -- name: CreatePromptEvaluationCase :one
 INSERT INTO prompt_evaluation_case (
     workspace_id,
