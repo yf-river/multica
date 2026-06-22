@@ -300,7 +300,12 @@ describe("PromptEvaluationAssetSchema", () => {
       name: "user-center 澄清数据集",
       description: "用于验证澄清提示词",
       asset_type: "数据集",
-      payload: { cases: [{ 输入: "登录失败", 期望: "询问边界和验收" }] },
+      payload: {
+        schema_version: 1,
+        schema: "multica.training_evaluation.payload.v1",
+        语义版本: "multica.training_evaluation.v1",
+        cases: [{ case_name: "登录失败澄清", variables: { issue_title: "登录失败" }, expected_contains: ["验收条件"] }],
+      },
       status: "启用",
       created_by: "user-1",
       created_at: "2026-06-21T00:00:00Z",
@@ -308,7 +313,25 @@ describe("PromptEvaluationAssetSchema", () => {
     });
 
     expect(parsed.asset_type).toBe("数据集");
-    expect(parsed.payload).toMatchObject({ cases: [{ 输入: "登录失败" }] });
+    expect(parsed.payload).toMatchObject({ cases: [{ case_name: "登录失败澄清" }] });
+  });
+
+  it("rejects invalid strict training evaluation payloads", () => {
+    expect(
+      PromptEvaluationAssetSchema.safeParse({
+        id: "asset-invalid",
+        workspace_id: "ws-1",
+        name: "坏数据集",
+        asset_type: "数据集",
+        payload: {
+          schema_version: 1,
+          schema: "multica.training_evaluation.payload.v1",
+          cases: [{ variables: { issue_title: "登录失败" }, expected_contains: ["验收条件"] }],
+        },
+        created_at: "2026-06-21T00:00:00Z",
+        updated_at: "2026-06-21T00:00:00Z",
+      }).success,
+    ).toBe(false);
   });
 
   it("defaults evaluation asset list response shape", () => {

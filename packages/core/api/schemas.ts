@@ -789,6 +789,33 @@ export const EMPTY_PROMPT_LIBRARY_LIST_RESPONSE: ListPromptLibraryItemsResponse 
   total: 0,
 };
 
+export const PromptEvaluationPayloadCaseSchema = z.object({
+  case_name: z.string().min(1),
+  variables: z.record(z.string(), z.unknown()).default({}),
+  expected_contains: z.array(z.string()).default([]),
+  tags: z.array(z.string()).default([]),
+}).loose();
+
+export const PromptEvaluationStrictPayloadSchema = z.object({
+  schema_version: z.literal(1),
+  schema: z.literal("multica.training_evaluation.payload.v1"),
+  语义版本: z.literal("multica.training_evaluation.v1").optional(),
+  cases: z.array(PromptEvaluationPayloadCaseSchema).default([]),
+  payload_contract: z.record(z.string(), z.unknown()).optional(),
+  metric_contract: z.array(z.string()).optional(),
+}).loose();
+
+export const PromptEvaluationPayloadSchema = z.record(z.string(), z.unknown()).default({}).superRefine((payload, ctx) => {
+  if (payload.schema !== "multica.training_evaluation.payload.v1") return;
+  const parsed = PromptEvaluationStrictPayloadSchema.safeParse(payload);
+  if (!parsed.success) {
+    ctx.addIssue({
+      code: "custom",
+      message: `invalid training evaluation payload: ${parsed.error.issues.map((issue) => issue.message).join("; ")}`,
+    });
+  }
+});
+
 export const PromptEvaluationAssetSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
@@ -796,7 +823,7 @@ export const PromptEvaluationAssetSchema = z.object({
   name: z.string(),
   description: z.string().default(""),
   asset_type: z.enum(["数据集", "测试套件", "实验", "优化运行"]),
-  payload: z.record(z.string(), z.unknown()).default({}),
+  payload: PromptEvaluationPayloadSchema,
   status: z.enum(["启用", "归档"]).default("启用"),
   created_by: z.string().nullable().optional().transform((v) => v ?? null),
   created_at: z.string(),

@@ -9,6 +9,9 @@ export default defineConfig({
   use: {
     baseURL: process.env.PLAYWRIGHT_BASE_URL ?? process.env.FRONTEND_ORIGIN ?? "http://localhost:3000",
     headless: true,
+    launchOptions: {
+      args: ["--no-proxy-server"],
+    },
   },
   projects: [
     {

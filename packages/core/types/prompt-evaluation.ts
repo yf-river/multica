@@ -7,9 +7,10 @@ export type PromptEvaluationAssetStatus = "启用" | "归档";
 export type PromptEvaluationOptimizationCandidateStatus = "待确认" | "已发布" | "已拒绝";
 
 export interface PromptEvaluationCase {
-  名称: string;
-  变量: Record<string, string>;
-  期望包含: string[];
+  case_name: string;
+  variables: Record<string, unknown>;
+  expected_contains: string[];
+  tags?: string[];
 }
 
 export interface PromptEvaluationMetricSummary {
@@ -32,9 +33,12 @@ export interface PromptEvaluationMetricSummary {
 
 export interface PromptEvaluationStructuredPayload extends Record<string, unknown> {
   schema_version: 1;
+  schema: "multica.training_evaluation.payload.v1";
   语义版本: "multica.training_evaluation.v1";
   cases: PromptEvaluationCase[];
-  指标口径: string[];
+  payload_contract?: Record<string, unknown>;
+  metric_contract?: string[];
+  指标口径?: string[];
   最近运行?: PromptEvaluationMetricSummary;
   运行记录?: PromptEvaluationMetricSummary[];
 }

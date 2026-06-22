@@ -43,6 +43,23 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	if created.AssetType != "数据集" || created.PromptID == nil || *created.PromptID != promptID {
 		t.Fatalf("created = %+v", created)
 	}
+	createdPayload, ok := created.Payload.(map[string]any)
+	if !ok {
+		t.Fatalf("created payload is not object: %#v", created.Payload)
+	}
+	if createdPayload["schema_version"] != float64(1) ||
+		createdPayload["schema"] != "multica.training_evaluation.payload.v1" ||
+		createdPayload["语义版本"] != "multica.training_evaluation.v1" {
+		t.Fatalf("created payload missing contract fields: %#v", createdPayload)
+	}
+	canonicalCases, ok := createdPayload["cases"].([]any)
+	if !ok || len(canonicalCases) != 1 {
+		t.Fatalf("created payload cases not canonical: %#v", createdPayload["cases"])
+	}
+	firstCase, ok := canonicalCases[0].(map[string]any)
+	if !ok || firstCase["case_name"] == "" {
+		t.Fatalf("created payload case missing stable fields: %#v", canonicalCases[0])
+	}
 	var caseName string
 	var caseCount int
 	if err := testPool.QueryRow(context.Background(), `
@@ -86,6 +103,13 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	}
 	if updated.AssetType != "实验" || updated.PromptID == nil || *updated.PromptID != promptID {
 		t.Fatalf("updated = %+v", updated)
+	}
+	updatedPayload, ok := updated.Payload.(map[string]any)
+	if !ok || updatedPayload["schema_version"] != float64(1) || updatedPayload["payload_contract"] == nil {
+		t.Fatalf("updated payload missing contract: %#v", updated.Payload)
+	}
+	if _, ok := updatedPayload["cases"].([]any); !ok {
+		t.Fatalf("updated payload missing canonical cases: %#v", updatedPayload)
 	}
 	casesW := httptest.NewRecorder()
 	testHandler.ListPromptEvaluationCases(casesW, newRequest(http.MethodGet, "/api/prompt-evaluation-cases?asset_id="+created.ID, nil))
@@ -537,7 +561,7 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	`, resp.ChatSessionID).Scan(&userMessage); err != nil {
 		t.Fatalf("load prompt evaluation agent user message: %v", err)
 	}
-	if !containsAll(userMessage, []string{"必须返回的 JSON schema", "用例结果", "需人工复核", "Multica 会用它自动回写运行历史"}) {
+	if !containsAll(userMessage, []string{"必须返回的 JSON schema", "multica.training_evaluation.agent_verdict.v1", "case_results", "需人工复核", "Multica 会用它自动回写运行历史"}) {
 		t.Fatalf("agent evaluation message missing structured output contract: %s", userMessage)
 	}
 
@@ -557,7 +581,7 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	}
 	structuredOutput := `Agent 输出：
 ` + "```json" + `
-{"用例结果":[{"case_index":0,"status":"通过","output":"已覆盖验收条件和 trace/task id","failure_reason":"无","evidence":{"命中":["验收条件","trace/task id"]}}],"评估结论":"Agent 已返回结构化逐用例评估"}
+{"schema_version":1,"schema":"multica.training_evaluation.agent_verdict.v1","case_results":[{"case_index":0,"status":"通过","output":"已覆盖验收条件和 trace/任务标识","failure_reason":"无","conclusion":"通过","evidence":{"命中":["验收条件","trace/任务标识"]}}],"summary":{"total_cases":1,"passed_cases":1,"failed_cases":0,"failure_reason":"无","conclusion":"Agent 已返回结构化逐用例评估"}}
 ` + "```"
 	if _, err := testHandler.Queries.CreateTaskMessage(context.Background(), db.CreateTaskMessageParams{
 		TaskID:  parseUUID(resp.TaskID),

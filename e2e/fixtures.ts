@@ -84,6 +84,22 @@ interface PromptEvaluationRuntimeReadiness {
   } | null;
 }
 
+interface DaemonRuntimeResponse {
+  id: string;
+  workspace_id: string;
+  provider: string;
+  name: string;
+  status: string;
+}
+
+interface DaemonClaimResponse {
+  task: null | {
+    id: string;
+    runtime_id: string;
+    status: string;
+  };
+}
+
 interface PromptEvaluationRunEvidence {
   run: PromptEvaluationRun;
   trials: Array<{
@@ -341,6 +357,100 @@ export class TestApiClient {
       return { id: runtimeId, name };
     } finally {
       await client.end();
+    }
+  }
+
+  async registerDaemonCodeBuddyRuntime(name = `E2E Daemon CodeBuddy Runtime ${Date.now()}`) {
+    if (!this.workspaceId) {
+      throw new Error("Cannot register daemon runtime before workspace is selected");
+    }
+    const daemonId = `e2e-daemon-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    const res = await this.authedFetch("/api/daemon/register", {
+      method: "POST",
+      body: JSON.stringify({
+        workspace_id: this.workspaceId,
+        daemon_id: daemonId,
+        device_name: "E2E fake daemon",
+        cli_version: "e2e",
+        runtimes: [{ name, type: "codebuddy", version: "e2e", status: "online" }],
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to register daemon runtime: ${res.status} ${await res.text()}`);
+    }
+    const data = (await res.json()) as { runtimes?: DaemonRuntimeResponse[] } | DaemonRuntimeResponse[];
+    const runtimes = Array.isArray(data) ? data : (data.runtimes ?? []);
+    const runtime = runtimes[0];
+    if (!runtime?.id) {
+      throw new Error(`Daemon register returned no runtime: ${JSON.stringify(runtimes)}`);
+    }
+    this.createdRuntimeIds.push(runtime.id);
+    return { daemonId, runtime };
+  }
+
+  async claimDaemonTask(runtimeId: string) {
+    const res = await this.authedFetch(`/api/daemon/runtimes/${runtimeId}/tasks/claim`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to claim daemon task: ${res.status} ${await res.text()}`);
+    }
+    return (await res.json()) as DaemonClaimResponse;
+  }
+
+  async startDaemonTask(taskId: string) {
+    const res = await this.authedFetch(`/api/daemon/tasks/${taskId}/start`, {
+      method: "POST",
+      body: JSON.stringify({}),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to start daemon task: ${res.status} ${await res.text()}`);
+    }
+  }
+
+  async reportDaemonTaskUsage(taskId: string, usage: { provider?: string; model: string; input_tokens: number; output_tokens: number; cache_read_tokens?: number; cache_write_tokens?: number }) {
+    const res = await this.authedFetch(`/api/daemon/tasks/${taskId}/usage`, {
+      method: "POST",
+      body: JSON.stringify({
+        usage: [
+          {
+            provider: usage.provider ?? "codebuddy",
+            model: usage.model,
+            input_tokens: usage.input_tokens,
+            output_tokens: usage.output_tokens,
+            cache_read_tokens: usage.cache_read_tokens ?? 0,
+            cache_write_tokens: usage.cache_write_tokens ?? 0,
+          },
+        ],
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to report daemon task usage: ${res.status} ${await res.text()}`);
+    }
+  }
+
+  async reportDaemonTaskMessages(taskId: string, content: string) {
+    const res = await this.authedFetch(`/api/daemon/tasks/${taskId}/messages`, {
+      method: "POST",
+      body: JSON.stringify({ messages: [{ seq: 1, type: "text", content }] }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to report daemon task messages: ${res.status} ${await res.text()}`);
+    }
+  }
+
+  async completeDaemonTask(taskId: string, output: string) {
+    const res = await this.authedFetch(`/api/daemon/tasks/${taskId}/complete`, {
+      method: "POST",
+      body: JSON.stringify({
+        output,
+        session_id: `e2e-session-${taskId}`,
+        work_dir: `/tmp/multica-e2e/${taskId}`,
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to complete daemon task: ${res.status} ${await res.text()}`);
     }
   }
 

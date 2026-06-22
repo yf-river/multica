@@ -551,23 +551,30 @@ func parsePromptEvaluationAgentVerdicts(raw any, totalCases int32) ([]promptEval
 	value, ok := raw.(map[string]any)
 	if !ok {
 		if list, ok := raw.([]any); ok {
-			return parsePromptEvaluationAgentVerdictList(list, totalCases)
+			return parsePromptEvaluationAgentVerdictList(list, totalCases, "旧版列表兼容")
+		}
+		return nil, false
+	}
+	if stringFromAny(value["schema_version"]) == "1" {
+		if list, ok := value["case_results"].([]any); ok {
+			return parsePromptEvaluationAgentVerdictList(list, totalCases, "multica.training_evaluation.agent_verdict.v1")
 		}
 		return nil, false
 	}
 	for _, key := range []string{"用例结果", "逐用例结果", "cases", "case_results", "trials", "results", "用例"} {
 		if list, ok := value[key].([]any); ok {
-			return parsePromptEvaluationAgentVerdictList(list, totalCases)
+			return parsePromptEvaluationAgentVerdictList(list, totalCases, "旧版字段兼容")
 		}
 	}
 	if totalCases == 1 && promptEvaluationMapHasRecognizedVerdict(value) {
 		verdict := promptEvaluationAgentVerdictFromMap(value, 0)
+		verdict.Evidence["解析契约"] = "旧版单用例兼容"
 		return []promptEvaluationAgentCaseVerdict{verdict}, true
 	}
 	return nil, false
 }
 
-func parsePromptEvaluationAgentVerdictList(list []any, totalCases int32) ([]promptEvaluationAgentCaseVerdict, bool) {
+func parsePromptEvaluationAgentVerdictList(list []any, totalCases int32, contract string) ([]promptEvaluationAgentCaseVerdict, bool) {
 	if len(list) == 0 {
 		return nil, false
 	}
@@ -578,6 +585,7 @@ func parsePromptEvaluationAgentVerdictList(list []any, totalCases int32) ([]prom
 			continue
 		}
 		verdict := promptEvaluationAgentVerdictFromMap(row, int32(index))
+		verdict.Evidence["解析契约"] = contract
 		byIndex[verdict.CaseIndex] = verdict
 	}
 	if len(byIndex) == 0 {

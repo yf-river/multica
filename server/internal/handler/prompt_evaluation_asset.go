@@ -332,7 +332,7 @@ func promptEvaluationRunToResponse(run db.PromptEvaluationRun) PromptEvaluationR
 		WorkspaceID:       uuidToString(run.WorkspaceID),
 		AssetID:           uuidToString(run.AssetID),
 		PromptID:          uuidToPtr(run.PromptID),
-			RunKind:           promptEvaluationRunKindLabel(run.RunKind),
+		RunKind:           promptEvaluationRunKindLabel(run.RunKind),
 		Status:            run.Status,
 		TriggerSource:     run.TriggerSource,
 		AgentID:           uuidToPtr(run.AgentID),
@@ -471,7 +471,7 @@ func promptEvaluationSummaryToResponse(workspaceID pgtype.UUID, row db.GetPrompt
 			"输出token":  row.OutputTokens,
 			"预估成本":     row.EstimatedCost,
 			"Agent运行数": row.AgentRuns,
-				"模板渲染检查数": row.LocalRuns,
+			"模板渲染检查数":  row.LocalRuns,
 			"需人工复核":    row.ReviewRuns,
 			"待确认优化候选":  row.PendingCandidates,
 			"已发布优化候选":  row.PublishedCandidates,
@@ -488,7 +488,7 @@ func promptEvaluationSummaryToResponse(workspaceID pgtype.UUID, row db.GetPrompt
 		},
 		RunStatus: map[string]int64{
 			"运行总数":    row.TotalRuns,
-				"模板渲染检查": row.LocalRuns,
+			"模板渲染检查":  row.LocalRuns,
 			"Agent执行": row.AgentRuns,
 			"已入队":     row.QueuedRuns,
 			"运行中":     row.RunningRuns,
@@ -527,6 +527,21 @@ func jsonObjectField(w http.ResponseWriter, raw json.RawMessage, field string) (
 		return nil, false
 	}
 	return raw, true
+}
+
+func promptEvaluationPayloadField(w http.ResponseWriter, raw json.RawMessage, field string, preserveEmpty bool) ([]byte, bool) {
+	if len(raw) == 0 || bytes.Equal(bytes.TrimSpace(raw), []byte("null")) {
+		if preserveEmpty {
+			return nil, true
+		}
+		return mustJSONBytes(normalizePromptEvaluationPayloadObject(map[string]any{})), true
+	}
+	var obj map[string]any
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		writeError(w, http.StatusBadRequest, field+" must be a JSON object")
+		return nil, false
+	}
+	return mustJSONBytes(normalizePromptEvaluationPayloadObject(obj)), true
 }
 
 func jsonObjectBytesOrDefault(w http.ResponseWriter, raw json.RawMessage, field string, fallback []byte) ([]byte, bool) {
@@ -1929,7 +1944,7 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	payload, ok := jsonObjectField(w, req.Payload, "payload")
+	payload, ok := promptEvaluationPayloadField(w, req.Payload, "payload", false)
 	if !ok {
 		return
 	}
@@ -1998,7 +2013,7 @@ func (h *Handler) UpdatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	payload, ok := jsonObjectField(w, req.Payload, "payload")
+	payload, ok := promptEvaluationPayloadField(w, req.Payload, "payload", true)
 	if !ok {
 		return
 	}
@@ -3005,7 +3020,7 @@ func promptEvaluationAgentInstructions() string {
 	return strings.Join([]string{
 		"你是 Multica 训练与评估 Agent。你只负责执行当前提示词评估任务，必须使用中文输出。",
 		"输出必须包含执行结论、逐用例结果、失败原因、改进建议、可复盘证据。",
-		"最终回复必须包含一个可机读 JSON 代码块，字段为：用例结果、评估结论、总用例数、通过数、失败数、失败原因、改进建议、可复盘证据。",
+		"最终回复必须包含一个可机读 JSON 代码块，schema 必须是 multica.training_evaluation.agent_verdict.v1，字段为：schema_version、schema、case_results、summary。",
 		"不要修改业务代码，不要创建 issue，不要泄露密钥。",
 	}, "\n")
 }
@@ -3030,14 +3045,16 @@ func buildPromptEvaluationAgentMessage(asset db.PromptEvaluationAsset, prompt db
 		"【输出要求】",
 		"1. 全部使用中文。",
 		"2. 逐条说明用例是否通过、失败原因和证据。",
-		"3. 给出中文指标：总用例数、通过数、失败数、通过率、总耗时、平均耗时、输入token、输出token、预估成本、执行Agent、模型、runtime、trace/task id、失败原因、评估结论。",
+		"3. 给出中文指标：总用例数、通过数、失败数、通过率、总耗时、平均耗时、输入 token、输出 token、预估成本、执行 Agent、模型、运行时、trace/任务标识、失败原因、评估结论。",
 		"4. 如果需要优化提示词，只输出候选建议，不要自动替换生产版本。",
 		"5. 最终必须附带一个 JSON 代码块，Multica 会用它自动回写运行历史；缺失该结构会被标记为“需人工复核”。",
 		"",
 		"【必须返回的 JSON schema】",
 		"```json",
 		`{
-  "用例结果": [
+	  "schema_version": 1,
+	  "schema": "multica.training_evaluation.agent_verdict.v1",
+	  "case_results": [
     {
       "case_index": 0,
       "status": "通过 | 未通过 | 需人工复核",
@@ -3050,14 +3067,16 @@ func buildPromptEvaluationAgentMessage(asset db.PromptEvaluationAsset, prompt db
       }
     }
   ],
-  "评估结论": "中文结论",
-  "总用例数": 0,
-  "通过数": 0,
-  "失败数": 0,
-  "失败原因": "无 | 汇总失败原因",
-  "改进建议": ["中文建议"],
-  "可复盘证据": ["task id、日志、关键输出摘要"]
-}`,
+	  "summary": {
+	    "total_cases": 0,
+	    "passed_cases": 0,
+	    "failed_cases": 0,
+	    "failure_reason": "无 | 汇总失败原因",
+	    "conclusion": "中文结论",
+	    "improvement_suggestions": ["中文建议"],
+	    "reproducible_evidence": ["任务标识、日志、关键输出摘要"]
+	  }
+	}`,
 		"```",
 	}, "\n")
 }
@@ -3157,7 +3176,7 @@ func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.Pr
 		OutputTokens:      outputTokens,
 		EstimatedCost:     0,
 		AgentName:         "本地提示词渲染器",
-			Model:             "本地模板渲染检查",
+		Model:             "本地模板渲染检查",
 		Runtime:           "server",
 		TraceTaskID:       "未创建 Agent 任务",
 		FailureReason:     failureReason,
@@ -3181,6 +3200,44 @@ func promptEvaluationCases(payload map[string]any) []map[string]any {
 		}
 	}
 	return []map[string]any{{"名称": "默认用例", "变量": firstValue(payload, "variables", "变量", "输入变量")}}
+}
+
+func normalizePromptEvaluationPayloadObject(payload map[string]any) map[string]any {
+	normalized := make(map[string]any, len(payload)+4)
+	for key, value := range payload {
+		normalized[key] = value
+	}
+	normalized["schema_version"] = 1
+	normalized["schema"] = "multica.training_evaluation.payload.v1"
+	normalized["语义版本"] = "multica.training_evaluation.v1"
+	normalized["payload_contract"] = map[string]any{
+		"schema_version": 1,
+		"schema":         "multica.training_evaluation.payload.v1",
+		"cases":          "cases[].case_name / variables / expected_contains / tags",
+		"兼容读取":           []string{"数据集", "用例", "测试用例", "test_cases", "training_cases", "evaluation_cases", "用例集"},
+		"写入策略":           "新建和更新统一写入规范 cases；旧字段仅作为兼容迁移来源保留。",
+	}
+	cases := promptEvaluationCases(payload)
+	normalizedCases := make([]map[string]any, 0, len(cases))
+	for index, item := range cases {
+		c := normalizePromptEvaluationCase(index, item)
+		expectedContains := c.ExpectedContains
+		if expectedContains == nil {
+			expectedContains = []string{}
+		}
+		tags := c.Tags
+		if tags == nil {
+			tags = []string{}
+		}
+		normalizedCases = append(normalizedCases, map[string]any{
+			"case_name":         c.Name,
+			"variables":         c.Variables,
+			"expected_contains": expectedContains,
+			"tags":              tags,
+		})
+	}
+	normalized["cases"] = normalizedCases
+	return normalized
 }
 
 func normalizePromptEvaluationCase(index int, item map[string]any) normalizedPromptEvaluationCase {
