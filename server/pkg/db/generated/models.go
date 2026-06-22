@@ -708,6 +708,24 @@ type PromptLibraryItem struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type PromptLibraryVersion struct {
+	ID                pgtype.UUID        `json:"id"`
+	PromptID          pgtype.UUID        `json:"prompt_id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	ProjectID         pgtype.UUID        `json:"project_id"`
+	Version           int32              `json:"version"`
+	Name              string             `json:"name"`
+	Description       string             `json:"description"`
+	PromptType        string             `json:"prompt_type"`
+	Content           string             `json:"content"`
+	Variables         []byte             `json:"variables"`
+	Tags              []byte             `json:"tags"`
+	Source            string             `json:"source"`
+	SourceCandidateID pgtype.UUID        `json:"source_candidate_id"`
+	CreatedBy         pgtype.UUID        `json:"created_by"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+}
+
 type RuntimeProfile struct {
 	ID             pgtype.UUID        `json:"id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`

@@ -152,6 +152,7 @@ import type {
   UpdatePromptEvaluationCaseRequest,
   ListPromptLibraryItemsParams,
   ListPromptLibraryItemsResponse,
+  ListPromptLibraryVersionsResponse,
   CreatePromptLibraryItemRequest,
   UpdatePromptLibraryItemRequest,
 } from "../types";
@@ -191,6 +192,7 @@ import {
   EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
   EMPTY_PROMPT_LIBRARY_ITEM,
   EMPTY_PROMPT_LIBRARY_LIST_RESPONSE,
+  EMPTY_PROMPT_LIBRARY_VERSION_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_ASSET,
   EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_RUN,
@@ -235,6 +237,7 @@ import {
   PublishPromptEvaluationOptimizationCandidateResponseSchema,
   PromptLibraryItemSchema,
   PromptLibraryItemListResponseSchema,
+  PromptLibraryVersionListResponseSchema,
   IssueSOPRunsResponseSchema,
   ObservabilitySummarySchema,
   SquadSchema,
@@ -1731,6 +1734,13 @@ export class ApiClient {
     return parseWithFallback(raw, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
       endpoint: "GET /api/prompt-library/:id",
     }) as PromptLibraryItem;
+  }
+
+  async listPromptLibraryVersions(id: string): Promise<ListPromptLibraryVersionsResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/versions`);
+    return parseWithFallback(raw, PromptLibraryVersionListResponseSchema, EMPTY_PROMPT_LIBRARY_VERSION_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-library/:id/versions",
+    }) as ListPromptLibraryVersionsResponse;
   }
 
   async createPromptLibraryItem(data: CreatePromptLibraryItemRequest): Promise<PromptLibraryItem> {

@@ -80,6 +80,28 @@ func TestPromptLibraryCRUD(t *testing.T) {
 		t.Fatalf("project_id after update = %v, want preserved %s", updated.ProjectID, projectID)
 	}
 
+	versionsW := httptest.NewRecorder()
+	testHandler.ListPromptLibraryVersions(versionsW, withURLParam(newRequest(http.MethodGet, "/api/prompt-library/"+created.ID+"/versions", nil), "id", created.ID))
+	if versionsW.Code != http.StatusOK {
+		t.Fatalf("versions status = %d, body = %s", versionsW.Code, versionsW.Body.String())
+	}
+	var versionsResp struct {
+		Items []PromptLibraryVersionResponse `json:"items"`
+		Total int                            `json:"total"`
+	}
+	if err := json.Unmarshal(versionsW.Body.Bytes(), &versionsResp); err != nil {
+		t.Fatalf("decode versions response: %v", err)
+	}
+	if versionsResp.Total != 2 || len(versionsResp.Items) != 2 {
+		t.Fatalf("versions response = %+v, want two versions", versionsResp)
+	}
+	if versionsResp.Items[0].Version != 2 || versionsResp.Items[0].Source != "手动更新" || versionsResp.Items[0].Content != updated.Content {
+		t.Fatalf("latest version = %+v, want updated v2", versionsResp.Items[0])
+	}
+	if versionsResp.Items[1].Version != 1 || versionsResp.Items[1].Source != "手动创建" || versionsResp.Items[1].Content != created.Content {
+		t.Fatalf("initial version = %+v, want created v1", versionsResp.Items[1])
+	}
+
 	deleteW := httptest.NewRecorder()
 	testHandler.DeletePromptLibraryItem(deleteW, withURLParam(newRequest(http.MethodDelete, "/api/prompt-library/"+created.ID, nil), "id", created.ID))
 	if deleteW.Code != http.StatusNoContent {

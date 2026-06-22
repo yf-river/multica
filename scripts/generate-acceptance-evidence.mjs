@@ -198,6 +198,7 @@ async function loadDatabaseEvidence(workspaceID) {
       const trainingSummary = await queryOne(client, `
           SELECT
             (SELECT count(*)::int FROM prompt_library_item WHERE workspace_id = $1) AS prompt_count,
+            (SELECT count(*)::int FROM prompt_library_version WHERE workspace_id = $1) AS prompt_version_count,
             (SELECT count(*)::int FROM prompt_evaluation_asset WHERE workspace_id = $1) AS asset_count,
             (SELECT count(*)::int FROM prompt_evaluation_case WHERE workspace_id = $1) AS structured_case_count,
             (SELECT count(*)::int FROM prompt_evaluation_run WHERE workspace_id = $1) AS run_count,
@@ -520,6 +521,17 @@ function buildCommandPlan() {
       timeoutMs: 360_000,
     },
     {
+      name: "训练与评估 curl 端到端验收",
+      command: [
+        `ACCEPTANCE_API_URL=${shellQuote(apiURL)}`,
+        `REAL_AGENT_E2E_WORKSPACE=${shellQuote(workspaceSlug)}`,
+        "node scripts/prompt-evaluation-curl-e2e.mjs",
+      ].join(" "),
+      required: includeE2E,
+      skippedByDefault: true,
+      timeoutMs: 120_000,
+    },
+    {
       name: "真实 Agent E2E",
       command: [
         "RUN_REAL_AGENT_E2E=1",
@@ -594,24 +606,44 @@ function runCommands(commands) {
 }
 
 function summarizeCommandOutput(name, stdout) {
-  if (name !== "Codex curl 端到端 Agent/小队验收") return null;
   const parsed = parseLastJSONObject(stdout);
-  if (!parsed) return { status: "未解析", reason: "stdout 中未找到 JSON 对象" };
-  return {
-    result: parsed.result,
-    task_status: parsed.task?.status || "",
-    task_id: parsed.task?.id || "",
-    runtime_id: parsed.runtime?.id || "",
-    runtime_provider: parsed.runtime?.provider || "",
-    agent_id: parsed.agent?.id || "",
-    agent_model: parsed.agent?.model || "",
-    issue_id: parsed.issue?.id || "",
-    trace_event_count: parsed.trace_event_count ?? 0,
-    message_count: parsed.message_count ?? 0,
-    total_input_tokens: parsed.usage?.total_input_tokens ?? 0,
-    total_output_tokens: parsed.usage?.total_output_tokens ?? 0,
-    external_dependency_failure: parsed.external_dependency_failure === true,
-  };
+  if (name === "Codex curl 端到端 Agent/小队验收") {
+    if (!parsed) return { status: "未解析", reason: "stdout 中未找到 JSON 对象" };
+    return {
+      result: parsed.result,
+      task_status: parsed.task?.status || "",
+      task_id: parsed.task?.id || "",
+      runtime_id: parsed.runtime?.id || "",
+      runtime_provider: parsed.runtime?.provider || "",
+      agent_id: parsed.agent?.id || "",
+      agent_model: parsed.agent?.model || "",
+      issue_id: parsed.issue?.id || "",
+      trace_event_count: parsed.trace_event_count ?? 0,
+      message_count: parsed.message_count ?? 0,
+      total_input_tokens: parsed.usage?.total_input_tokens ?? 0,
+      total_output_tokens: parsed.usage?.total_output_tokens ?? 0,
+      external_dependency_failure: parsed.external_dependency_failure === true,
+    };
+  }
+  if (name === "训练与评估 curl 端到端验收") {
+    if (!parsed) return { status: "未解析", reason: "stdout 中未找到 JSON 对象" };
+    return {
+      result: parsed.result,
+      prompt_id: parsed.prompt?.id || "",
+      prompt_version_count: parsed.prompt?.version_count ?? 0,
+      dataset_id: parsed.dataset?.id || "",
+      test_suite_id: parsed.test_suite?.id || "",
+      run_id: parsed.run?.id || "",
+      run_status: parsed.run?.status || "",
+      failed_cases: parsed.run?.failed_cases ?? 0,
+      optimization_candidate_id: parsed.optimization_candidate?.id || "",
+      optimization_candidate_status: parsed.optimization_candidate?.status || "",
+      published_prompt_id: parsed.published_prompt?.id || "",
+      published_prompt_version: parsed.published_prompt?.version ?? 0,
+      published_prompt_version_count: parsed.published_prompt?.version_count ?? 0,
+    };
+  }
+  return null;
 }
 
 function parseLastJSONObject(stdout) {

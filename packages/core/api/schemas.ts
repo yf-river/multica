@@ -11,6 +11,7 @@ import type {
   ListPromptEvaluationAssetsResponse,
   ListPromptEvaluationOptimizationCandidatesResponse,
   ListPromptLibraryItemsResponse,
+  ListPromptLibraryVersionsResponse,
   ListIssueSOPRunsResponse,
   ObservabilitySummary,
   ListWebhookDeliveriesResponse,
@@ -23,6 +24,7 @@ import type {
   PromptEvaluationOptimizationCandidate,
   ListPromptEvaluationEvidenceSnapshotsResponse,
   PromptLibraryItem,
+  PromptLibraryVersion,
   PublishPromptEvaluationOptimizationCandidateResponse,
   Squad,
   SquadSOPRun,
@@ -769,6 +771,29 @@ export const PromptLibraryItemListResponseSchema = z.object({
   total: z.number().default(0),
 }).loose();
 
+export const PromptLibraryVersionSchema = z.object({
+  id: z.string(),
+  prompt_id: z.string(),
+  workspace_id: z.string(),
+  project_id: z.string().nullable().optional().transform((v) => v ?? null),
+  version: z.number().default(1),
+  name: z.string(),
+  description: z.string().default(""),
+  prompt_type: z.string().default("通用"),
+  content: z.string(),
+  variables: z.array(PromptLibraryVariableSchema).default([]),
+  tags: z.array(z.string()).default([]),
+  source: z.enum(["手动创建", "手动更新", "优化候选发布", "历史回填"]).default("历史回填"),
+  source_candidate_id: z.string().nullable().optional().transform((v) => v ?? null),
+  created_by: z.string().nullable().optional().transform((v) => v ?? null),
+  created_at: z.string(),
+}).loose();
+
+export const PromptLibraryVersionListResponseSchema = z.object({
+  items: z.array(PromptLibraryVersionSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
 export const EMPTY_PROMPT_LIBRARY_ITEM: PromptLibraryItem = {
   id: "",
   workspace_id: "",
@@ -787,6 +812,29 @@ export const EMPTY_PROMPT_LIBRARY_ITEM: PromptLibraryItem = {
 };
 
 export const EMPTY_PROMPT_LIBRARY_LIST_RESPONSE: ListPromptLibraryItemsResponse = {
+  items: [],
+  total: 0,
+};
+
+export const EMPTY_PROMPT_LIBRARY_VERSION: PromptLibraryVersion = {
+  id: "",
+  prompt_id: "",
+  workspace_id: "",
+  project_id: null,
+  version: 1,
+  name: "",
+  description: "",
+  prompt_type: "通用",
+  content: "",
+  variables: [],
+  tags: [],
+  source: "历史回填",
+  source_candidate_id: null,
+  created_by: null,
+  created_at: "",
+};
+
+export const EMPTY_PROMPT_LIBRARY_VERSION_LIST_RESPONSE: ListPromptLibraryVersionsResponse = {
   items: [],
   total: 0,
 };

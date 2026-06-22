@@ -1672,6 +1672,18 @@ func TestPromptEvaluationOptimizationCandidatePublishKeepsSourcePrompt(t *testin
 	if !strings.Contains(published.Prompt.Content, "人工复核补充") {
 		t.Fatalf("published prompt did not use edited candidate content: %s", published.Prompt.Content)
 	}
+	var publishedVersionSource string
+	var publishedVersionCandidateID string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT source, source_candidate_id::text
+		FROM prompt_library_version
+		WHERE prompt_id = $1 AND version = $2
+	`, published.Prompt.ID, published.Prompt.Version).Scan(&publishedVersionSource, &publishedVersionCandidateID); err != nil {
+		t.Fatalf("load published prompt version: %v", err)
+	}
+	if publishedVersionSource != "优化候选发布" || publishedVersionCandidateID != candidate.ID {
+		t.Fatalf("published version source=%s candidate=%s, want 优化候选发布 %s", publishedVersionSource, publishedVersionCandidateID, candidate.ID)
+	}
 	updateAfterPublishW := httptest.NewRecorder()
 	testHandler.UpdatePromptEvaluationOptimizationCandidate(updateAfterPublishW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-optimization-candidates/"+candidate.ID, map[string]any{
 		"candidate_name":    "不应允许编辑",

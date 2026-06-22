@@ -712,6 +712,18 @@ test.describe("训练与评估工作台", () => {
     expect(published?.content).toContain("优化候选");
     expect(published?.content).toContain("人工发布要求");
     expect(published?.content).toContain("E2E人工复核");
+    const originalVersions = await api.listPromptLibraryVersions(prompt.id);
+    expect(originalVersions).toEqual([
+      expect.objectContaining({ version: 1, source: "手动创建", content: sourceContent }),
+    ]);
+    const publishedVersions = await api.listPromptLibraryVersions(published!.id);
+    expect(publishedVersions).toEqual([
+      expect.objectContaining({
+        version: 2,
+        source: "优化候选发布",
+        source_candidate_id: generatedCandidate!.id,
+      }),
+    ]);
 
     await api.runPromptEvaluationAsset(asset.id);
     const rejectRun = await expect

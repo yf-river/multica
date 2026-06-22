@@ -107,9 +107,11 @@ export type {
 export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest } from "./pin";
 export type {
   PromptLibraryItem,
+  PromptLibraryVersion,
   PromptLibraryVariable,
   PromptLibraryStatus,
   ListPromptLibraryItemsResponse,
+  ListPromptLibraryVersionsResponse,
   ListPromptLibraryItemsParams,
   CreatePromptLibraryItemRequest,
   UpdatePromptLibraryItemRequest,

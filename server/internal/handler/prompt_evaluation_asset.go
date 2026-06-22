@@ -2224,6 +2224,10 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 		writeError(w, http.StatusInternalServerError, "failed to publish optimization candidate as prompt")
 		return
 	}
+	if _, err := createPromptLibraryVersion(r.Context(), qtx, publishedPrompt, promptLibraryVersionSourceOptimization, candidate.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record published prompt version")
+		return
+	}
 	updatedCandidate, err := qtx.PublishPromptEvaluationOptimizationCandidate(r.Context(), db.PublishPromptEvaluationOptimizationCandidateParams{
 		ID:                candidate.ID,
 		WorkspaceID:       workspaceUUID,

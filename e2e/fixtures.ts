@@ -27,6 +27,15 @@ interface PromptLibraryItem {
   version?: number;
 }
 
+interface PromptLibraryVersion {
+  id: string;
+  prompt_id: string;
+  version: number;
+  content: string;
+  source: string;
+  source_candidate_id: string | null;
+}
+
 interface PromptEvaluationAsset {
   id: string;
   prompt_id: string | null;
@@ -954,6 +963,15 @@ export class TestApiClient {
       throw new Error(`create prompt library item failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
+  }
+
+  async listPromptLibraryVersions(id: string): Promise<PromptLibraryVersion[]> {
+    const res = await this.authedFetch(`/api/prompt-library/${id}/versions`);
+    if (!res.ok) {
+      throw new Error(`list prompt library versions failed: ${res.status} ${await res.text()}`);
+    }
+    const data = await res.json();
+    return data.items ?? [];
   }
 
   async deletePromptLibraryItem(id: string) {

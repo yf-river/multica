@@ -758,6 +758,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/", h.GetPromptLibraryItem)
 					r.Put("/", h.UpdatePromptLibraryItem)
 					r.Delete("/", h.DeletePromptLibraryItem)
+					r.Get("/versions", h.ListPromptLibraryVersions)
 				})
 			})
 

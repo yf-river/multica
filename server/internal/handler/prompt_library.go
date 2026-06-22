@@ -2,6 +2,7 @@ package handler
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -16,6 +17,10 @@ const (
 	promptLibraryStatusActive   = "启用"
 	promptLibraryStatusArchived = "归档"
 	defaultPromptLibraryType    = "通用"
+
+	promptLibraryVersionSourceCreated      = "手动创建"
+	promptLibraryVersionSourceUpdated      = "手动更新"
+	promptLibraryVersionSourceOptimization = "优化候选发布"
 )
 
 type PromptLibraryItemResponse struct {
@@ -33,6 +38,24 @@ type PromptLibraryItemResponse struct {
 	CreatedBy   *string `json:"created_by"`
 	CreatedAt   string  `json:"created_at"`
 	UpdatedAt   string  `json:"updated_at"`
+}
+
+type PromptLibraryVersionResponse struct {
+	ID                string  `json:"id"`
+	PromptID          string  `json:"prompt_id"`
+	WorkspaceID       string  `json:"workspace_id"`
+	ProjectID         *string `json:"project_id"`
+	Version           int32   `json:"version"`
+	Name              string  `json:"name"`
+	Description       string  `json:"description"`
+	PromptType        string  `json:"prompt_type"`
+	Content           string  `json:"content"`
+	Variables         any     `json:"variables"`
+	Tags              any     `json:"tags"`
+	Source            string  `json:"source"`
+	SourceCandidateID *string `json:"source_candidate_id"`
+	CreatedBy         *string `json:"created_by"`
+	CreatedAt         string  `json:"created_at"`
 }
 
 type CreatePromptLibraryItemRequest struct {
@@ -74,6 +97,44 @@ func promptLibraryItemToResponse(item db.PromptLibraryItem) PromptLibraryItemRes
 		CreatedAt:   timestampToString(item.CreatedAt),
 		UpdatedAt:   timestampToString(item.UpdatedAt),
 	}
+}
+
+func promptLibraryVersionToResponse(version db.PromptLibraryVersion) PromptLibraryVersionResponse {
+	return PromptLibraryVersionResponse{
+		ID:                uuidToString(version.ID),
+		PromptID:          uuidToString(version.PromptID),
+		WorkspaceID:       uuidToString(version.WorkspaceID),
+		ProjectID:         uuidToPtr(version.ProjectID),
+		Version:           version.Version,
+		Name:              version.Name,
+		Description:       version.Description,
+		PromptType:        version.PromptType,
+		Content:           version.Content,
+		Variables:         decodeJSONDefault(version.Variables, []any{}),
+		Tags:              decodeJSONDefault(version.Tags, []any{}),
+		Source:            version.Source,
+		SourceCandidateID: uuidToPtr(version.SourceCandidateID),
+		CreatedBy:         uuidToPtr(version.CreatedBy),
+		CreatedAt:         timestampToString(version.CreatedAt),
+	}
+}
+
+func createPromptLibraryVersion(ctx context.Context, q *db.Queries, item db.PromptLibraryItem, source string, sourceCandidateID pgtype.UUID) (db.PromptLibraryVersion, error) {
+	return q.CreatePromptLibraryVersion(ctx, db.CreatePromptLibraryVersionParams{
+		PromptID:          item.ID,
+		WorkspaceID:       item.WorkspaceID,
+		Version:           item.Version,
+		Name:              item.Name,
+		Description:       item.Description,
+		PromptType:        item.PromptType,
+		Content:           item.Content,
+		Source:            source,
+		CreatedBy:         item.CreatedBy,
+		ProjectID:         item.ProjectID,
+		Variables:         item.Variables,
+		Tags:              item.Tags,
+		SourceCandidateID: sourceCandidateID,
+	})
 }
 
 func decodeJSONDefault(raw []byte, fallback any) any {
@@ -200,6 +261,26 @@ func (h *Handler) GetPromptLibraryItem(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, promptLibraryItemToResponse(item))
 }
 
+func (h *Handler) ListPromptLibraryVersions(w http.ResponseWriter, r *http.Request) {
+	item, ok := h.loadPromptLibraryItem(w, r)
+	if !ok {
+		return
+	}
+	versions, err := h.Queries.ListPromptLibraryVersions(r.Context(), db.ListPromptLibraryVersionsParams{
+		WorkspaceID: item.WorkspaceID,
+		PromptID:    item.ID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list prompt library versions")
+		return
+	}
+	resp := make([]PromptLibraryVersionResponse, len(versions))
+	for i, version := range versions {
+		resp[i] = promptLibraryVersionToResponse(version)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
+}
+
 func (h *Handler) CreatePromptLibraryItem(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -246,7 +327,15 @@ func (h *Handler) CreatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	item, err := h.Queries.CreatePromptLibraryItem(r.Context(), db.CreatePromptLibraryItemParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start prompt library transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+
+	item, err := qtx.CreatePromptLibraryItem(r.Context(), db.CreatePromptLibraryItemParams{
 		WorkspaceID: workspaceUUID,
 		Name:        req.Name,
 		Description: req.Description,
@@ -268,6 +357,14 @@ func (h *Handler) CreatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to create prompt library item")
+		return
+	}
+	if _, err := createPromptLibraryVersion(r.Context(), qtx, item, promptLibraryVersionSourceCreated, pgtype.UUID{}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create prompt library version")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit prompt library item")
 		return
 	}
 	writeJSON(w, http.StatusCreated, promptLibraryItemToResponse(item))
@@ -308,7 +405,15 @@ func (h *Handler) UpdatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 		return
 	}
 
-	item, err := h.Queries.UpdatePromptLibraryItem(r.Context(), db.UpdatePromptLibraryItemParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start prompt library transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+
+	item, err := qtx.UpdatePromptLibraryItem(r.Context(), db.UpdatePromptLibraryItemParams{
 		ID:          existing.ID,
 		WorkspaceID: existing.WorkspaceID,
 		ProjectID:   projectID,
@@ -330,6 +435,14 @@ func (h *Handler) UpdatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 			return
 		}
 		writeError(w, http.StatusInternalServerError, "failed to update prompt library item")
+		return
+	}
+	if _, err := createPromptLibraryVersion(r.Context(), qtx, item, promptLibraryVersionSourceUpdated, pgtype.UUID{}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create prompt library version")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit prompt library item update")
 		return
 	}
 	writeJSON(w, http.StatusOK, promptLibraryItemToResponse(item))
