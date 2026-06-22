@@ -1676,8 +1676,15 @@ function RunEvidencePanel({
   if (error || !evidence) {
     return <div className="md:col-span-2 rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">运行证据暂不可用</div>;
   }
+  const externalFailure = buildExternalDependencyFailureNotice(evidence);
   return (
     <div className="md:col-span-2 grid gap-3 rounded-md border bg-muted/20 p-3" data-testid={`run-evidence-${evidence.run.id}`}>
+      {externalFailure && (
+        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs" data-testid="run-evidence-external-failure">
+          <div className="font-medium text-destructive">{externalFailure.title}</div>
+          <div className="mt-1 text-muted-foreground">{externalFailure.detail}</div>
+        </div>
+      )}
       <div className="grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
         <MetricChip label="运行类型" value={evidence.run.run_kind} />
         <MetricChip label="运行状态" value={evidence.run.status} />
@@ -1695,6 +1702,7 @@ function RunEvidencePanel({
         <MetricChip label="输出token" value={String(evidence.run.output_tokens)} />
         <MetricChip label="预估成本" value={formatMoney(evidence.run.estimated_cost)} />
         <MetricChip label="trace/task id" value={evidence.run.task_id ?? evidence.run.id} />
+        <MetricChip label="失败原因" value={evidence.run.failure_reason || "无"} />
         <MetricChip label="评估结论" value={evidence.run.conclusion || "未记录"} />
       </div>
 
@@ -1723,7 +1731,7 @@ function RunEvidencePanel({
         <EvidenceList
           title="task 用量"
           empty="暂无 token 用量"
-          items={evidence.task_usage.map((usage) => `${usage.provider}/${usage.model} · 输入 ${usage.input_tokens} · 输出 ${usage.output_tokens} · 预估成本 ${formatMoney(usage.estimated_cost ?? 0)}${usage.priced === false ? " · 缺少价格" : ""}`)}
+          items={evidence.task_usage.map((usage) => `${usage.provider}/${usage.model} · 输入 ${usage.input_tokens} · 输出 ${usage.output_tokens} · 预估成本 ${formatMoney(usage.estimated_cost ?? 0)} · 缓存读 ${usage.cache_read_tokens} · 缓存写 ${usage.cache_write_tokens}${usage.priced === false ? " · 缺少价格" : ""}`)}
         />
         <EvidenceList
           title="task 消息"
@@ -1771,6 +1779,28 @@ function EvidenceList({ title, empty, items }: { title: string; empty: string; i
       )}
     </div>
   );
+}
+
+function buildExternalDependencyFailureNotice(evidence: PromptEvaluationRunEvidence): { title: string; detail: string } | null {
+  const failureText = [
+    evidence.run.failure_reason,
+    evidence.run.conclusion,
+    ...evidence.task_messages.map((message) => message.content || message.output || ""),
+    ...evidence.trace_events.map((event) => [event.failure_reason, event.error_type, event.event_name].filter(Boolean).join(" ")),
+  ].join("\n");
+  if (failureText.includes("模型额度不足") || failureText.includes("无可用Token额度") || failureText.includes("Token额度")) {
+    return {
+      title: "外部依赖失败：模型额度不足",
+      detail: "CodeBuddy 已领取并执行任务，但上游模型返回额度不足；本次不会产生 token 用量和成本，需补充 minimax/codebuddy 额度后重新运行。",
+    };
+  }
+  if (evidence.run.status === "失败" && evidence.run.task_id && evidence.task_usage.length === 0) {
+    return {
+      title: "外部依赖失败：未采集到模型用量",
+      detail: "Agent 任务失败且没有 task_usage 记录，请结合 task 消息和 trace 事件确认运行时、模型或网络依赖状态。",
+    };
+  }
+  return null;
 }
 
 function formatTraceEventEvidence(event: PromptEvaluationRunEvidence["trace_events"][number]): string {

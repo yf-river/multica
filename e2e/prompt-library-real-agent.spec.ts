@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { TestApiClient } from "./fixtures";
+import { waitForPageText } from "./helpers";
 
 const RUN_REAL_AGENT_E2E = process.env.RUN_REAL_AGENT_E2E === "1";
 const REAL_AGENT_ACCOUNT = process.env.REAL_AGENT_E2E_ACCOUNT || "goal-test-daemon";
@@ -9,13 +10,13 @@ const EXPECTED_AGENT_MODEL = process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL |
 test.describe("训练与评估真实 Agent 闭环", () => {
   test.skip(!RUN_REAL_AGENT_E2E, "设置 RUN_REAL_AGENT_E2E=1 后才运行真实 daemon/CodeBuddy 验收");
 
-  test("CodeBuddy daemon 可以真实执行测试套件并写回运行证据", async () => {
+  test("CodeBuddy daemon 可以真实执行测试套件并写回运行证据", async ({ page }) => {
     test.setTimeout(240_000);
 
     const api = new TestApiClient();
     const prefix = `真实Agent验收 ${Date.now()}`;
     await api.login(REAL_AGENT_ACCOUNT, "Goal Test Daemon");
-    await api.ensureWorkspace("Goal Test Daemon", REAL_AGENT_WORKSPACE);
+    const workspace = await api.ensureWorkspace("Goal Test Daemon", REAL_AGENT_WORKSPACE);
     await api.markUserOnboarded();
     await api.cleanupPromptArtifactsByPrefix(prefix);
 
@@ -102,6 +103,22 @@ test.describe("训练与评估真实 Agent 闭环", () => {
         expect(evidence.task_usage).toHaveLength(0);
         expect(JSON.stringify(evidence.task_messages)).toContain("无可用Token额度");
         expect(JSON.stringify(evidence.trace_events)).toContain("任务已失败");
+        const token = api.getToken();
+        expect(token).toBeTruthy();
+        await page.goto("/", { waitUntil: "domcontentloaded" });
+        await page.evaluate((value) => {
+          localStorage.setItem("multica_token", value);
+        }, token!);
+        await page.goto(`/${workspace.slug}/training?view=run-history`, { waitUntil: "domcontentloaded" });
+        await waitForPageText(page, "运行历史", 15000);
+        const runCard = page.getByTestId(`prompt-evaluation-run-${queued.run.id}`);
+        await expect(runCard).toContainText("Agent执行 · 失败", { timeout: 15000 });
+        await expect(runCard).toContainText("模型额度不足");
+        await runCard.getByRole("button", { name: "查看证据" }).click();
+        const evidencePanel = runCard.getByTestId(`run-evidence-${queued.run.id}`);
+        await expect(evidencePanel.getByTestId("run-evidence-external-failure")).toContainText("外部依赖失败：模型额度不足", { timeout: 15000 });
+        await expect(evidencePanel.getByTestId("run-evidence-metric-失败原因")).toContainText("模型额度不足");
+        await expect(evidencePanel.getByText("暂无 token 用量")).toBeVisible();
       } else {
         expect(["通过", "未通过", "需人工复核"]).toContain(syncedRun.status);
         expect(evidence.task_usage).toEqual(
