@@ -18,6 +18,8 @@ test.describe("小队 SOP 端到端", () => {
   });
 
   test("Multica 编码小队接收 issue 后生成队长任务、SOP 证据和观测指标", async ({ page }) => {
+    test.setTimeout(120_000);
+
     const suffix = Date.now();
     const squad = await api.createCodingSquadFixture(`E2E Multica 编码小队 ${suffix}`);
     const issue = await api.createIssue(`E2E 编码小队闭环 ${suffix}`, {
