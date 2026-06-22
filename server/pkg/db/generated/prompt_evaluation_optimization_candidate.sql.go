@@ -240,3 +240,58 @@ func (q *Queries) PublishPromptEvaluationOptimizationCandidate(ctx context.Conte
 	)
 	return i, err
 }
+
+const rejectPromptEvaluationOptimizationCandidate = `-- name: RejectPromptEvaluationOptimizationCandidate :one
+UPDATE prompt_evaluation_optimization_candidate SET
+    status = '已拒绝',
+    metrics = COALESCE(metrics, '{}'::jsonb) || jsonb_build_object(
+      '人工处理',
+      jsonb_build_object(
+        '处理结果', '已拒绝',
+        '拒绝原因', COALESCE($3, ''),
+        '处理人', COALESCE($4::uuid::text, ''),
+        '处理时间', now()
+      )
+    ),
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2 AND status = '待确认'
+RETURNING id, workspace_id, asset_id, run_id, prompt_id, candidate_name, candidate_content, rationale, failed_case_count, source_failure_summary, source_prompt_snapshot, metrics, status, published_prompt_id, published_at, created_by, created_at, updated_at
+`
+
+type RejectPromptEvaluationOptimizationCandidateParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Reason      interface{} `json:"reason"`
+	HandledBy   pgtype.UUID `json:"handled_by"`
+}
+
+func (q *Queries) RejectPromptEvaluationOptimizationCandidate(ctx context.Context, arg RejectPromptEvaluationOptimizationCandidateParams) (PromptEvaluationOptimizationCandidate, error) {
+	row := q.db.QueryRow(ctx, rejectPromptEvaluationOptimizationCandidate,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.Reason,
+		arg.HandledBy,
+	)
+	var i PromptEvaluationOptimizationCandidate
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AssetID,
+		&i.RunID,
+		&i.PromptID,
+		&i.CandidateName,
+		&i.CandidateContent,
+		&i.Rationale,
+		&i.FailedCaseCount,
+		&i.SourceFailureSummary,
+		&i.SourcePromptSnapshot,
+		&i.Metrics,
+		&i.Status,
+		&i.PublishedPromptID,
+		&i.PublishedAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

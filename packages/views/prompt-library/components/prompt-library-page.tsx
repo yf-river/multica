@@ -357,6 +357,15 @@ export function PromptLibraryPage() {
     },
   });
 
+  const rejectCandidateMut = useMutation({
+    mutationFn: (candidateId: string) => api.rejectPromptEvaluationOptimizationCandidate(candidateId),
+    onSuccess: (candidate) => {
+      invalidateCandidates();
+      invalidateSummary();
+      toast.success(`已暂不采纳优化候选：${candidate.candidate_name}`);
+    },
+  });
+
   const saving = createMut.isPending || updateMut.isPending;
   const deleting = deleteMut.isPending;
   const runningDebug = runDebugMut.isPending;
@@ -733,6 +742,8 @@ export function PromptLibraryPage() {
               runningOptimizationAgentRunId={runOptimizationAgentMut.isPending ? runOptimizationAgentMut.variables ?? null : null}
               onPublishCandidate={(candidateId) => publishCandidateMut.mutate(candidateId)}
               publishingCandidateId={publishCandidateMut.isPending ? publishCandidateMut.variables ?? null : null}
+              onRejectCandidate={(candidateId) => rejectCandidateMut.mutate(candidateId)}
+              rejectingCandidateId={rejectCandidateMut.isPending ? rejectCandidateMut.variables ?? null : null}
             />
           </div>
         </main>
@@ -818,6 +829,8 @@ function WorkbenchPanel({
   runningOptimizationAgentRunId,
   onPublishCandidate,
   publishingCandidateId,
+  onRejectCandidate,
+  rejectingCandidateId,
 }: {
   activeTab: WorkbenchTab;
   workspaceId: string;
@@ -850,6 +863,8 @@ function WorkbenchPanel({
   runningOptimizationAgentRunId: string | null;
   onPublishCandidate: (candidateId: string) => void;
   publishingCandidateId: string | null;
+  onRejectCandidate: (candidateId: string) => void;
+  rejectingCandidateId: string | null;
 }) {
   const tabAssetType = tabToAssetType(activeTab);
   const visibleAssets = tabAssetType ? assets.filter((asset) => asset.asset_type === tabAssetType) : assets;
@@ -1014,6 +1029,8 @@ function WorkbenchPanel({
               candidates={candidates}
               onPublishCandidate={onPublishCandidate}
               publishingCandidateId={publishingCandidateId}
+              onRejectCandidate={onRejectCandidate}
+              rejectingCandidateId={rejectingCandidateId}
             />
           )}
           {loading ? (
@@ -1080,10 +1097,14 @@ function OptimizationCandidateList({
   candidates,
   onPublishCandidate,
   publishingCandidateId,
+  onRejectCandidate,
+  rejectingCandidateId,
 }: {
   candidates: PromptEvaluationOptimizationCandidate[];
   onPublishCandidate: (candidateId: string) => void;
   publishingCandidateId: string | null;
+  onRejectCandidate: (candidateId: string) => void;
+  rejectingCandidateId: string | null;
 }) {
   if (candidates.length === 0) {
     return (
@@ -1109,6 +1130,15 @@ function OptimizationCandidateList({
             </div>
           </div>
           <div className="flex items-center gap-2">
+            <Button
+              size="sm"
+              variant="outline"
+              onClick={() => onRejectCandidate(candidate.id)}
+              disabled={candidate.status !== "待确认" || rejectingCandidateId === candidate.id}
+            >
+              {rejectingCandidateId === candidate.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+              暂不采纳
+            </Button>
             <Button
               size="sm"
               onClick={() => onPublishCandidate(candidate.id)}

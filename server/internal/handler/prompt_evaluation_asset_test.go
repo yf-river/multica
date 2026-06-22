@@ -1461,6 +1461,94 @@ func TestPromptEvaluationOptimizationCandidatePublishKeepsSourcePrompt(t *testin
 	}
 }
 
+func TestPromptEvaluationOptimizationCandidateCanBeRejected(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
+	})
+	promptID := createPromptEvaluationTestPromptWithContent(
+		t,
+		testWorkspaceID,
+		"拒绝优化候选提示词",
+		"请澄清 {{issue_title}}，输出必须使用中文。",
+		`[]`,
+	)
+	createW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+		"prompt_id":  promptID,
+		"name":       "拒绝优化候选运行",
+		"asset_type": "优化运行",
+		"payload": map[string]any{
+			"cases": []map[string]any{
+				{
+					"名称":   "仍缺少验收口径",
+					"变量":   map[string]any{"issue_title": "权限异常"},
+					"期望包含": []string{"验收条件", "trace/task id"},
+				},
+			},
+		},
+	}))
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
+	}
+	var asset PromptEvaluationAssetResponse
+	if err := json.Unmarshal(createW.Body.Bytes(), &asset); err != nil {
+		t.Fatalf("decode asset: %v", err)
+	}
+	runW := httptest.NewRecorder()
+	testHandler.RunPromptEvaluationAsset(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/run", nil), "id", asset.ID))
+	if runW.Code != http.StatusOK {
+		t.Fatalf("run status = %d, body = %s", runW.Code, runW.Body.String())
+	}
+	var runID string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT id::text
+		FROM prompt_evaluation_run
+		WHERE workspace_id = $1 AND asset_id = $2
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, testWorkspaceID, asset.ID).Scan(&runID); err != nil {
+		t.Fatalf("load failed run: %v", err)
+	}
+	candidateW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationOptimizationCandidate(candidateW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+runID+"/optimization-candidates", nil), "id", runID))
+	if candidateW.Code != http.StatusCreated {
+		t.Fatalf("candidate status = %d, body = %s", candidateW.Code, candidateW.Body.String())
+	}
+	var candidate PromptEvaluationOptimizationCandidateResponse
+	if err := json.Unmarshal(candidateW.Body.Bytes(), &candidate); err != nil {
+		t.Fatalf("decode candidate: %v", err)
+	}
+
+	rejectW := httptest.NewRecorder()
+	testHandler.RejectPromptEvaluationOptimizationCandidate(rejectW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-optimization-candidates/"+candidate.ID+"/reject", map[string]any{
+		"reason": "候选没有覆盖原有通过用例。",
+	}), "id", candidate.ID))
+	if rejectW.Code != http.StatusOK {
+		t.Fatalf("reject status = %d, body = %s", rejectW.Code, rejectW.Body.String())
+	}
+	var rejected PromptEvaluationOptimizationCandidateResponse
+	if err := json.Unmarshal(rejectW.Body.Bytes(), &rejected); err != nil {
+		t.Fatalf("decode rejected candidate: %v", err)
+	}
+	if rejected.Status != "已拒绝" {
+		t.Fatalf("rejected status = %s, want 已拒绝", rejected.Status)
+	}
+	manual, ok := rejected.Metrics.(map[string]any)["人工处理"].(map[string]any)
+	if !ok || manual["处理结果"] != "已拒绝" || manual["拒绝原因"] != "候选没有覆盖原有通过用例。" {
+		t.Fatalf("manual handling metrics = %#v", rejected.Metrics)
+	}
+
+	publishW := httptest.NewRecorder()
+	testHandler.PublishPromptEvaluationOptimizationCandidate(publishW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-optimization-candidates/"+candidate.ID+"/publish", nil), "id", candidate.ID))
+	if publishW.Code != http.StatusConflict {
+		t.Fatalf("publish after reject status = %d, body = %s", publishW.Code, publishW.Body.String())
+	}
+}
+
 func TestPromptEvaluationAssetRejectsForeignPrompt(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")

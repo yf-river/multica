@@ -51,3 +51,19 @@ UPDATE prompt_evaluation_optimization_candidate SET
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2 AND status = '待确认'
 RETURNING *;
+
+-- name: RejectPromptEvaluationOptimizationCandidate :one
+UPDATE prompt_evaluation_optimization_candidate SET
+    status = '已拒绝',
+    metrics = COALESCE(metrics, '{}'::jsonb) || jsonb_build_object(
+      '人工处理',
+      jsonb_build_object(
+        '处理结果', '已拒绝',
+        '拒绝原因', COALESCE(sqlc.narg('reason'), ''),
+        '处理人', COALESCE(sqlc.narg('handled_by')::uuid::text, ''),
+        '处理时间', now()
+      )
+    ),
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2 AND status = '待确认'
+RETURNING *;

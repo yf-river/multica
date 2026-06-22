@@ -1948,6 +1948,16 @@ export class ApiClient {
     }) as PublishPromptEvaluationOptimizationCandidateResponse;
   }
 
+  async rejectPromptEvaluationOptimizationCandidate(candidateId: string, reason?: string): Promise<PromptEvaluationOptimizationCandidate> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/reject`, {
+      method: "POST",
+      body: JSON.stringify({ reason: reason ?? "" }),
+    });
+    return parseWithFallback(raw, PromptEvaluationOptimizationCandidateSchema, EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE, {
+      endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/reject",
+    }) as PromptEvaluationOptimizationCandidate;
+  }
+
   // Project resources
   async listProjectResources(
     projectId: string,
