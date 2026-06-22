@@ -91,6 +91,10 @@ export interface ObservabilitySummary {
     "缺少模型价格"?: Array<Record<string, unknown>>;
     "重试次数"?: number;
     "证据数"?: number;
+    "采样上限"?: number;
+    "SOP 执行样本数"?: number;
+    "任务观测样本数"?: number;
+    "汇总完整性"?: string;
     [key: string]: unknown;
   };
   sop_status_counts: Record<string, number>;
@@ -98,6 +102,21 @@ export interface ObservabilitySummary {
   project_counts: Record<string, number>;
   issue_counts: Record<string, number>;
   task_trace_total: number;
+  sop_run_sample_total: number;
+  task_trace_sample_total: number;
+  sample_limit: number;
+  sop_run_maybe_truncated: boolean;
+  task_trace_maybe_truncated: boolean;
+  summary_completeness: {
+    "状态": string;
+    "说明": string;
+    "采样上限": number;
+    "SOP 执行样本数": number;
+    "任务观测样本数": number;
+    "SOP 执行可能截断": boolean;
+    "任务观测可能截断": boolean;
+    [key: string]: unknown;
+  };
   model_breakdown: ObservabilityUsageBreakdown[];
   runtime_breakdown: ObservabilityUsageBreakdown[];
 }

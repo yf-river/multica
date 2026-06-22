@@ -21,6 +21,8 @@ const (
 	sopStatusCompleted = "已完成"
 	sopStatusFailed    = "已失败"
 	sopStatusBlocked   = "已阻塞"
+
+	observabilitySummarySampleLimit = 500
 )
 
 var validSOPStatuses = map[string]bool{
@@ -494,7 +496,7 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 	}
 	runs, err := h.Queries.ListWorkspaceSquadSOPRuns(r.Context(), db.ListWorkspaceSquadSOPRunsParams{
 		WorkspaceID: workspaceID,
-		Limit:       500,
+		Limit:       observabilitySummarySampleLimit,
 		Since:       since,
 		SquadID:     squadID,
 		ProjectID:   projectID,
@@ -506,7 +508,7 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 	}
 	traces, err := h.Queries.ListWorkspaceTaskTraceEvents(r.Context(), db.ListWorkspaceTaskTraceEventsParams{
 		WorkspaceID: workspaceID,
-		Limit:       500,
+		Limit:       observabilitySummarySampleLimit,
 		Since:       since,
 		SquadID:     squadID,
 		ProjectID:   projectID,
@@ -527,7 +529,7 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 		writeError(w, http.StatusInternalServerError, "failed to count SOP events")
 		return
 	}
-	summary := buildObservabilitySummary(runs, traces, eventCount)
+	summary := buildObservabilitySummary(runs, traces, eventCount, observabilitySummarySampleLimit)
 	writeJSON(w, http.StatusOK, summary)
 }
 
@@ -707,7 +709,18 @@ type observabilityUsageBreakdown struct {
 	HasPrice         bool
 }
 
-func buildObservabilitySummary(runs []db.SquadSopRun, traces []db.TaskTraceEvent, sopEventCount int64) map[string]any {
+func buildObservabilitySummary(runs []db.SquadSopRun, traces []db.TaskTraceEvent, sopEventCount int64, sampleLimit int32) map[string]any {
+	if sampleLimit <= 0 {
+		sampleLimit = observabilitySummarySampleLimit
+	}
+	runMaybeTruncated := len(runs) >= int(sampleLimit)
+	traceMaybeTruncated := len(traces) >= int(sampleLimit)
+	completenessStatus := "完整"
+	completenessReason := "当前筛选条件下的 SOP 执行和任务观测未达到采样上限。"
+	if runMaybeTruncated || traceMaybeTruncated {
+		completenessStatus = "可能截断"
+		completenessReason = "当前筛选条件达到采样上限，页面指标只代表最近样本；请缩小时间、项目、小队或 Agent 范围后再用于汇报。"
+	}
 	statusCounts := map[string]int{}
 	squadCounts := map[string]int{}
 	issueCounts := map[string]int{}
@@ -819,12 +832,30 @@ func buildObservabilitySummary(runs []db.SquadSopRun, traces []db.TaskTraceEvent
 			"重试次数":      retryCount,
 			"证据数":       sopEventCount,
 			"缺少模型价格":    sortedReasonCounts(unpricedModels),
+			"采样上限":      sampleLimit,
+			"SOP 执行样本数": len(runs),
+			"任务观测样本数":   len(traces),
+			"汇总完整性":     completenessStatus,
 		},
-		"sop_status_counts": statusCounts,
-		"squad_counts":      squadCounts,
-		"project_counts":    projectCounts,
-		"issue_counts":      issueCounts,
-		"task_trace_total":  len(traces),
+		"sop_status_counts":          statusCounts,
+		"squad_counts":               squadCounts,
+		"project_counts":             projectCounts,
+		"issue_counts":               issueCounts,
+		"task_trace_total":           len(traces),
+		"sop_run_sample_total":       len(runs),
+		"task_trace_sample_total":    len(traces),
+		"sample_limit":               sampleLimit,
+		"sop_run_maybe_truncated":    runMaybeTruncated,
+		"task_trace_maybe_truncated": traceMaybeTruncated,
+		"summary_completeness": map[string]any{
+			"状态":         completenessStatus,
+			"说明":         completenessReason,
+			"采样上限":       sampleLimit,
+			"SOP 执行样本数":  len(runs),
+			"任务观测样本数":    len(traces),
+			"SOP 执行可能截断": runMaybeTruncated,
+			"任务观测可能截断":   traceMaybeTruncated,
+		},
 		"model_breakdown":   observabilityBreakdownRows(modelBreakdown),
 		"runtime_breakdown": observabilityBreakdownRows(runtimeBreakdown),
 	}

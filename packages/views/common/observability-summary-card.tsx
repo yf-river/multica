@@ -27,6 +27,9 @@ export function ObservabilitySummaryCard({ title, scopeLabel, projectId, squadId
   });
 
   const metrics = data?.指标 ?? {};
+  const completeness = data?.summary_completeness;
+  const completenessStatus = String(completeness?.["状态"] ?? metrics["汇总完整性"] ?? "完整");
+  const maybeTruncated = Boolean(data?.sop_run_maybe_truncated || data?.task_trace_maybe_truncated || completenessStatus === "可能截断");
   const rows = [
     ["SOP 执行数", metricValue(metrics["SOP 执行数"])],
     ["SOP 事件数", metricValue(metrics["SOP 事件数"])],
@@ -47,10 +50,16 @@ export function ObservabilitySummaryCard({ title, scopeLabel, projectId, squadId
           <div className="text-xs font-medium text-foreground">{title}</div>
           <div className="mt-0.5 text-[11px] text-muted-foreground">{scopeLabel}</div>
         </div>
-        <div className="text-[11px] text-muted-foreground">
-          任务观测 {data?.task_trace_total ?? 0}
+        <div className="text-right text-[11px] text-muted-foreground">
+          <div>任务观测 {data?.task_trace_sample_total ?? data?.task_trace_total ?? 0}</div>
+          <div className={maybeTruncated ? "text-amber-700 dark:text-amber-300" : ""}>{completenessStatus}</div>
         </div>
       </div>
+      {maybeTruncated && (
+        <div className="mb-2 rounded-sm border border-amber-500/30 bg-amber-500/10 px-2 py-1 text-[11px] text-amber-800 dark:text-amber-200">
+          {String(completeness?.["说明"] ?? "当前指标只代表最近样本；请缩小时间、项目、小队或 Agent 范围后再用于汇报。")}
+        </div>
+      )}
       <div className="grid gap-1.5 sm:grid-cols-3">
         {rows.map(([label, value]) => (
           <div key={label} className="min-w-0">
