@@ -260,6 +260,10 @@ export interface ListPromptEvaluationCasesParams {
   status?: PromptEvaluationAssetStatus;
 }
 
+export interface PromptEvaluationSummaryParams {
+  since?: string | null;
+}
+
 export interface CreatePromptEvaluationCaseRequest {
   asset_id: string;
   prompt_id?: string | null;

@@ -404,6 +404,7 @@ run_summary AS (
         MAX(created_at)::timestamptz AS last_run_at
     FROM prompt_evaluation_run per
     WHERE per.workspace_id = $1
+      AND ($2::timestamptz IS NULL OR per.created_at >= $2)
 ),
 candidate_summary AS (
     SELECT
@@ -413,6 +414,7 @@ candidate_summary AS (
         COUNT(*) FILTER (WHERE status = '已拒绝')::bigint AS rejected_candidates
     FROM prompt_evaluation_optimization_candidate peoc
     WHERE peoc.workspace_id = $1
+      AND ($2::timestamptz IS NULL OR peoc.created_at >= $2)
 )
 SELECT
     a.total_assets,
@@ -456,6 +458,11 @@ CROSS JOIN run_summary r
 CROSS JOIN candidate_summary oc
 `
 
+type GetPromptEvaluationSummaryParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Since       pgtype.Timestamptz `json:"since"`
+}
+
 type GetPromptEvaluationSummaryRow struct {
 	TotalAssets         int64              `json:"total_assets"`
 	ActiveAssets        int64              `json:"active_assets"`
@@ -491,8 +498,8 @@ type GetPromptEvaluationSummaryRow struct {
 	LastRunAt           pgtype.Timestamptz `json:"last_run_at"`
 }
 
-func (q *Queries) GetPromptEvaluationSummary(ctx context.Context, workspaceID pgtype.UUID) (GetPromptEvaluationSummaryRow, error) {
-	row := q.db.QueryRow(ctx, getPromptEvaluationSummary, workspaceID)
+func (q *Queries) GetPromptEvaluationSummary(ctx context.Context, arg GetPromptEvaluationSummaryParams) (GetPromptEvaluationSummaryRow, error) {
+	row := q.db.QueryRow(ctx, getPromptEvaluationSummary, arg.WorkspaceID, arg.Since)
 	var i GetPromptEvaluationSummaryRow
 	err := row.Scan(
 		&i.TotalAssets,

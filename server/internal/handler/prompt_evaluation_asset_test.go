@@ -5,8 +5,10 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -214,6 +216,23 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 	}
 	if _, ok := summary.Metrics["需人工复核"]; !ok {
 		t.Fatalf("summary missing manual review metric: %#v", summary.Metrics)
+	}
+
+	futureSince := url.QueryEscape(time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339))
+	windowW := httptest.NewRecorder()
+	testHandler.GetPromptEvaluationSummary(windowW, newRequest(http.MethodGet, "/api/prompt-evaluation-summary?since="+futureSince, nil))
+	if windowW.Code != http.StatusOK {
+		t.Fatalf("window summary status = %d, body = %s", windowW.Code, windowW.Body.String())
+	}
+	var windowSummary PromptEvaluationSummaryResponse
+	if err := json.Unmarshal(windowW.Body.Bytes(), &windowSummary); err != nil {
+		t.Fatalf("decode window summary response: %v", err)
+	}
+	if windowSummary.RunStatus["运行总数"] != 0 || windowSummary.Metrics["通过数"].(float64) != 0 || windowSummary.Metrics["输入token"].(float64) != 0 {
+		t.Fatalf("window summary should filter run metrics, got status=%#v metrics=%#v", windowSummary.RunStatus, windowSummary.Metrics)
+	}
+	if windowSummary.Assets["测试套件"] < 1 || windowSummary.Assets["结构化用例"] < 1 {
+		t.Fatalf("window summary should keep asset inventory, got assets=%#v", windowSummary.Assets)
 	}
 }
 

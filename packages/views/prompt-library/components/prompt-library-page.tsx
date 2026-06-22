@@ -168,8 +168,8 @@ export function PromptLibraryPage() {
     enabled: !!workspaceId,
   });
   const summaryQuery = useQuery({
-    queryKey: promptLibraryKeys.summary(workspaceId ?? ""),
-    queryFn: () => api.getPromptEvaluationSummary(),
+    queryKey: [...promptLibraryKeys.summary(workspaceId ?? ""), demoSince ?? "all"] as const,
+    queryFn: () => api.getPromptEvaluationSummary(demoSince ? { since: demoSince } : undefined),
     enabled: !!workspaceId,
   });
 
@@ -597,6 +597,7 @@ export function PromptLibraryPage() {
         观测范围: {
           标签: range?.label ?? demoTimeRange,
           since: demoSince,
+          说明: "训练评估摘要与 SOP/任务观测摘要使用同一 since 时间窗口；资产统计保留当前工作区库存。",
         },
         workspace_id: workspaceId,
         训练评估摘要: summary,

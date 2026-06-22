@@ -136,6 +136,7 @@ import type {
   ListPromptEvaluationAssetsParams,
   ListPromptEvaluationRunsParams,
   ListPromptEvaluationCasesParams,
+  PromptEvaluationSummaryParams,
   ListPromptEvaluationOptimizationCandidatesParams,
   ListPromptEvaluationAssetsResponse,
   ListPromptEvaluationRunsResponse,
@@ -1828,8 +1829,11 @@ export class ApiClient {
     await this.fetch(`/api/prompt-evaluation-cases/${id}`, { method: "DELETE" });
   }
 
-  async getPromptEvaluationSummary(): Promise<PromptEvaluationSummary> {
-    const raw = await this.fetch<unknown>("/api/prompt-evaluation-summary");
+  async getPromptEvaluationSummary(params?: PromptEvaluationSummaryParams): Promise<PromptEvaluationSummary> {
+    const search = new URLSearchParams();
+    if (params?.since) search.set("since", params.since);
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-summary${query ? `?${query}` : ""}`);
     return parseWithFallback(raw, PromptEvaluationSummarySchema, EMPTY_PROMPT_EVALUATION_SUMMARY, {
       endpoint: "GET /api/prompt-evaluation-summary",
     }) as PromptEvaluationSummary;

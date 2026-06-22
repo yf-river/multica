@@ -139,6 +139,7 @@ export type {
   ListPromptEvaluationAssetsParams,
   ListPromptEvaluationRunsParams,
   ListPromptEvaluationCasesParams,
+  PromptEvaluationSummaryParams,
   ListPromptEvaluationOptimizationCandidatesParams,
   CreatePromptEvaluationAssetRequest,
   UpdatePromptEvaluationAssetRequest,

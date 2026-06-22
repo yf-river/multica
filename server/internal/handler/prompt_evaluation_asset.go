@@ -948,7 +948,19 @@ func (h *Handler) GetPromptEvaluationSummary(w http.ResponseWriter, r *http.Requ
 	if !ok {
 		return
 	}
-	row, err := h.Queries.GetPromptEvaluationSummary(r.Context(), workspaceUUID)
+	var since pgtype.Timestamptz
+	if raw := r.URL.Query().Get("since"); raw != "" {
+		parsed, err := time.Parse(time.RFC3339, raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "since must be RFC3339")
+			return
+		}
+		since = pgtype.Timestamptz{Time: parsed, Valid: true}
+	}
+	row, err := h.Queries.GetPromptEvaluationSummary(r.Context(), db.GetPromptEvaluationSummaryParams{
+		WorkspaceID: workspaceUUID,
+		Since:       since,
+	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation summary")
 		return

@@ -1043,8 +1043,10 @@ export class TestApiClient {
     return res.json();
   }
 
-  async getPromptEvaluationSummary(): Promise<PromptEvaluationSummary> {
-    const res = await this.authedFetch("/api/prompt-evaluation-summary");
+  async getPromptEvaluationSummary(params?: { since?: string }): Promise<PromptEvaluationSummary> {
+    const search = new URLSearchParams();
+    if (params?.since) search.set("since", params.since);
+    const res = await this.authedFetch(`/api/prompt-evaluation-summary${search.toString() ? `?${search}` : ""}`);
     if (!res.ok) {
       throw new Error(`get prompt evaluation summary failed: ${res.status} ${await res.text()}`);
     }

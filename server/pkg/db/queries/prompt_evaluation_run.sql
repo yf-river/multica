@@ -110,6 +110,7 @@ run_summary AS (
         MAX(created_at)::timestamptz AS last_run_at
     FROM prompt_evaluation_run per
     WHERE per.workspace_id = $1
+      AND (sqlc.narg('since')::timestamptz IS NULL OR per.created_at >= sqlc.narg('since'))
 ),
 candidate_summary AS (
     SELECT
@@ -119,6 +120,7 @@ candidate_summary AS (
         COUNT(*) FILTER (WHERE status = '已拒绝')::bigint AS rejected_candidates
     FROM prompt_evaluation_optimization_candidate peoc
     WHERE peoc.workspace_id = $1
+      AND (sqlc.narg('since')::timestamptz IS NULL OR peoc.created_at >= sqlc.narg('since'))
 )
 SELECT
     a.total_assets,
