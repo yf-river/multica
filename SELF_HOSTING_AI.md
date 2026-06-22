@@ -57,7 +57,7 @@ Before marking a self-host deployment ready for internal team use or a leadershi
 apps/docs/content/docs/production-observability.zh.mdx
 ```
 
-Minimum checks:
+最小检查：
 
 ```bash
 curl -fsS http://localhost:8080/health
@@ -65,15 +65,15 @@ curl -fsS http://localhost:8080/readyz
 curl -fsS -o /tmp/multica-login.html -w '%{http_code} %{time_total}\n' http://localhost:3000/login
 ```
 
-Then open `/{workspaceSlug}/training?view=demo-dashboard` and verify:
+然后打开 `/{workspaceSlug}/training?view=demo-dashboard` 并确认：
 
-- CodeBuddy runtime readiness is visible.
-- Training/evaluation run metrics are not empty.
-- SOP/task observability metrics are not empty or are explicitly marked as empty.
-- At least one real Agent run can be opened from run history with task id, model, runtime, token, trace events, task messages, and trial results.
-- Optimization candidates require manual publish/reject.
+- 页面能看到 CodeBuddy 运行时就绪状态。
+- 训练评估运行指标不是空数据。
+- SOP/任务观测指标不是空数据，或明确标记为空。
+- 运行历史里至少能展开一条真实 Agent 运行，并看到任务标识、模型、运行时、token、trace 事件、任务消息和单次执行结果。
+- 优化候选必须经过人工发布或拒绝。
 
-For real CodeBuddy execution evidence, run the opt-in E2E:
+真实 CodeBuddy 执行证据需要运行显式开启的 E2E：
 
 ```bash
 RUN_REAL_AGENT_E2E=1 \

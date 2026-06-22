@@ -21,10 +21,10 @@ import { Callout } from "fumadocs-ui/components/callout";
 |---|---|
 | 训练评估闭环 | 提示词、数据集、测试套件、实验运行、通过率、token、成本已经结构化记录 |
 | SOP 与任务观测 | SOP run、SOP event、任务 trace、耗时、token、成本、失败原因已经聚合 |
-| 验收证据 | 结构化用例、真实 Agent task/trace、优化候选、最近运行是否存在 |
-| 演示状态 | CodeBuddy runtime、真实运行证据、结构化用例、优化闭环、摘要完整性是否达标 |
+| 验收证据 | 结构化用例、真实 Agent 任务/trace、优化候选、最近运行是否存在 |
+| 演示状态 | CodeBuddy 运行时、真实运行证据、结构化用例、优化闭环、摘要完整性是否达标 |
 
-演示时不要只打开一个静态页面。至少要能从演示看板跳到 **运行历史**，展开一条 Agent 执行记录，看到触发来源、创建者、开始/结束时间、`task id`、模型、runtime、token、trace、用例明细和完整运行证据 JSON。
+演示时不要只打开一个静态页面。至少要能从演示看板跳到 **运行历史**，展开一条 Agent 执行记录，看到触发来源、创建者、开始/结束时间、任务标识、模型、运行时、token、trace、用例明细和完整运行证据 JSON。
 
 ## 最小验收标准
 
@@ -35,9 +35,9 @@ import { Callout } from "fumadocs-ui/components/callout";
 | 后端健康 | `/health` 返回 `{"status":"ok"}` |
 | 后端就绪 | `/readyz` 返回 DB 和 migration 都是 `ok` |
 | 前端可访问 | 登录页返回 HTTP 200 |
-| 真实 Agent runtime | 演示看板显示 CodeBuddy runtime 已就绪 |
+| 真实 Agent 运行时 | 演示看板显示 CodeBuddy 运行时已就绪 |
 | 训练评估运行 | 运行历史里至少有一条 `Agent执行` 且状态为 `通过` 或明确失败原因 |
-| 证据链 | 运行证据能看到 trigger source、created_by、start/end time、trials、task messages、trace events、token、耗时 |
+| 证据链 | 运行证据能看到触发来源、创建者、开始/结束时间、trial、任务消息、trace 事件、token、耗时 |
 | 优化闭环 | 失败用例能生成优化候选，候选必须人工确认后发布，不能自动替换生产版本 |
 | 观测完整性 | 演示看板显示观测摘要 `完整`；如果是 `可能截断`，演示前要缩小范围或说明采样限制 |
 
@@ -89,7 +89,7 @@ agent_id=<Agent id>
 | `指标.输入 token` / `指标.输出 token` / `指标.预估成本` | 用量与成本口径 |
 | `指标.失败原因` | 失败归因列表 |
 | `summary_completeness.状态` | `完整` 或 `可能截断` |
-| `model_breakdown` / `runtime_breakdown` | 模型和 runtime 维度的任务数、token、成本 |
+| `model_breakdown` / `runtime_breakdown` | 模型和运行时维度的任务数、token、成本 |
 
 <Callout type="warning">
 观测摘要有采样上限。看到 `可能截断` 时，不要把这个数字当成全量汇报。缩小时间、小队、项目或 Agent 范围后再导出证据。
@@ -180,20 +180,20 @@ MULTICA_PROMPT_EVALUATION_AGENT_MODEL=<可用模型>
 
 | 证据 | 来源 |
 |---|---|
-| run id | Playwright 输出或 `/api/prompt-evaluation-runs` |
-| task id | 运行历史或 evidence API |
-| 模型/runtime | 运行历史、演示看板、evidence API |
+| 运行标识 | Playwright 输出或 `/api/prompt-evaluation-runs` |
+| 任务标识 | 运行历史或 evidence API |
+| 模型/运行时 | 运行历史、演示看板、evidence API |
 | 任务消息 | evidence API |
 | trace 事件 | evidence API |
 | token/耗时/成本 | evidence API 与观测摘要 |
-| 外部依赖失败 | 运行历史外部依赖提示、task messages、trace events |
+| 外部依赖失败 | 运行历史外部依赖提示、任务消息、trace 事件 |
 
 ## 部署后浏览器验收
 
 1. 打开登录页，确认没有外部营销弹窗或 waitlist 引导。
 2. 用演示账号登录，进入目标工作区。
 3. 打开 **训练与评估 → 演示看板**，确认看板不是空数据。
-4. 打开 **运行历史**，展开最近一条 Agent 执行，确认 evidence 里有触发来源、创建者、开始/结束时间、task、trace、token、模型、runtime。
+4. 打开 **运行历史**，展开最近一条 Agent 执行，确认运行证据里有触发来源、创建者、开始/结束时间、任务、trace、token、模型、运行时。
 5. 展开 **完整运行证据 JSON**，确认能看到 `run`、`trials`、`task_usage`、`task_messages`、`trace_events`。
 6. 打开 **优化运行**，确认待确认候选必须人工发布或拒绝。
 7. 打开项目/小队/Agent 详情页，确认对应观测摘要能按范围聚合。
@@ -213,12 +213,12 @@ multica daemon logs --lines 200
 
 | 表 | 证明什么 |
 |---|---|
-| `prompt_evaluation_run` | 训练评估运行、Agent task 绑定、模型/runtime、token、成本 |
+| `prompt_evaluation_run` | 训练评估运行、Agent 任务绑定、模型/运行时、token、成本 |
 | `prompt_evaluation_trial` | 每个用例的执行结果 |
 | `prompt_evaluation_case` | 数据集/测试套件的结构化用例 |
 | `prompt_evaluation_optimization_candidate` | 优化候选的人工确认状态 |
-| `agent_task_queue` | 真实 Agent task 状态 |
-| `task_usage` | token、成本、模型、runtime 上报 |
+| `agent_task_queue` | 真实 Agent 任务状态 |
+| `task_usage` | token、成本、模型、运行时上报 |
 | `task_message` | Agent 输出消息证据 |
 | `task_trace_event` | 任务生命周期和用量 trace |
 | `squad_sop_run` / `squad_sop_step_event` | 小队 SOP 执行和阶段证据 |
@@ -230,7 +230,7 @@ multica daemon logs --lines 200
 ```text
 本次演示的工作区是 <workspace>。
 训练评估共有 <运行总数> 次运行，Agent 执行 <Agent运行数> 次，通过率 <通过率>。
-最近一条真实 Agent 运行的 task id 是 <task_id>，模型是 <model>，runtime 是 <runtime>。
+最近一条真实 Agent 运行的任务标识是 <task_id>，模型是 <model>，运行时是 <runtime>。
 该运行的触发来源是 <trigger_source>，由 <created_by> 触发，开始时间 <started_at>，结束时间 <completed_at>。
 该运行已采集 token、耗时、任务消息、trace 事件、结构化用例结果和完整运行证据 JSON。
 如果模型额度不足，本次演示已明确显示外部依赖失败，没有把额度失败伪装成成功运行。

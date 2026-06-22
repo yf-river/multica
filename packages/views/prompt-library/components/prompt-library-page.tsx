@@ -70,8 +70,8 @@ const DEFAULT_AGENT_MODEL = "minimax-m2.7-ioa";
 const DEFAULT_AGENT_RUNTIME_READINESS: PromptEvaluationRuntimeReadiness = {
   status: "缺失",
   label: "CodeBuddy 检查中",
-  detail: "正在检查当前 workspace 的 CodeBuddy runtime readiness。",
-  fix: "等待检查完成；如果持续缺失，请安装并配置 codebuddy，启动 multica daemon。",
+  detail: "正在检查当前工作区的 CodeBuddy 运行时就绪状态。",
+  fix: "等待检查完成；如果持续缺失，请安装并配置 CodeBuddy，启动 Multica 守护进程。",
   model: DEFAULT_AGENT_MODEL,
   runtime: null,
   last_seen_age_seconds: -1,
@@ -957,8 +957,8 @@ function DemoDashboardPanel({
     ["失败数", formatNumber(trainingMetrics["失败数"])],
     ["Agent运行数", formatNumber(trainingMetrics["Agent运行数"])],
     ["需人工复核", formatNumber(trainingMetrics["需人工复核"])],
-    ["输入token", formatNumber(trainingMetrics["输入token"])],
-    ["输出token", formatNumber(trainingMetrics["输出token"])],
+    ["输入 token", formatNumber(trainingMetrics["输入token"])],
+    ["输出 token", formatNumber(trainingMetrics["输出token"])],
     ["预估成本", formatMoney(trainingMetrics["预估成本"])],
   ];
   const observabilityItems: Array<[string, string]> = [
@@ -968,7 +968,7 @@ function DemoDashboardPanel({
     ["队列等待", formatDuration(observabilityMetrics["队列等待"])],
     ["执行耗时", formatDuration(observabilityMetrics["执行耗时"])],
     ["总耗时", formatDuration(observabilityMetrics["总耗时"])],
-    ["观测输入token", formatNumber(observabilityMetrics["输入 token"])],
+    ["观测输入 token", formatNumber(observabilityMetrics["输入 token"])],
     ["观测预估成本", formatMoney(observabilityMetrics["预估成本"])],
   ];
   const proofItems: Array<[string, string]> = [
@@ -976,7 +976,7 @@ function DemoDashboardPanel({
     ["资产总数", formatNumber(trainingAssets["资产总数"] ?? assets.length)],
     ["结构化用例", formatNumber(trainingAssets["结构化用例"] ?? cases.length)],
     ["优化候选", `${pendingCandidates} 待确认 · ${publishedCandidates} 已发布 · ${rejectedCandidates} 已拒绝`],
-    ["真实 Agent 证据", hasAgentEvidence ? "已有 task/trace 运行记录" : "暂无真实 Agent 运行记录"],
+    ["真实 Agent 证据", hasAgentEvidence ? "已有任务/trace 运行记录" : "暂无真实 Agent 运行记录"],
     ["最近运行", latestRun ? summarizeLatestRunForDemo(latestRun) : "暂无运行"],
   ];
 
@@ -1054,8 +1054,8 @@ function DemoDashboardPanel({
         <section className="rounded-md border border-border/70 bg-muted/10 p-3">
           <h3 className="text-sm font-semibold">演示状态</h3>
           <div className="mt-3 grid gap-2 text-xs">
-            <DemoChecklistItem ok={runtimeReadiness.status === "就绪"} label="CodeBuddy runtime 可创建真实 Agent 任务" detail={runtimeReadiness.detail} />
-            <DemoChecklistItem ok={hasAgentEvidence} label="运行历史已有 task/trace 证据" detail={latestRun?.task_id ? `最近 task ${latestRun.task_id}` : "需要执行一次真实 Agent 评估"} />
+            <DemoChecklistItem ok={runtimeReadiness.status === "就绪"} label="CodeBuddy 运行时可创建真实 Agent 任务" detail={runtimeReadiness.detail} />
+            <DemoChecklistItem ok={hasAgentEvidence} label="运行历史已有任务/trace 证据" detail={latestRun?.task_id ? `最近任务 ${latestRun.task_id}` : "需要执行一次真实 Agent 评估"} />
             <DemoChecklistItem ok={cases.length > 0} label="数据集/测试套件已有结构化用例" detail={`${cases.length} 条结构化用例`} />
             <DemoChecklistItem ok={hasOptimizationLoop} label="失败用例可进入优化候选人工确认" detail={`${pendingCandidates} 待确认，${publishedCandidates} 已发布`} />
             <DemoChecklistItem ok={!maybeTruncated} label="观测摘要可直接用于汇报" detail={String(completeness?.["说明"] ?? "当前摘要完整")} />
@@ -1065,7 +1065,7 @@ function DemoDashboardPanel({
 
       <div className="grid gap-3 lg:grid-cols-2">
         <UsageList title="模型用量明细" rows={observabilitySummary?.model_breakdown ?? []} />
-        <UsageList title="runtime 用量明细" rows={observabilitySummary?.runtime_breakdown ?? []} />
+        <UsageList title="运行时用量明细" rows={observabilitySummary?.runtime_breakdown ?? []} />
       </div>
     </section>
   );
@@ -1121,7 +1121,7 @@ function UsageList({ title, rows }: { title: string; rows: ObservabilitySummary[
               <div key={`${title}-${name}`} className="grid gap-1 px-3 py-2 text-xs md:grid-cols-[minmax(0,1fr)_auto]">
                 <div className="min-w-0">
                   <div className="truncate font-medium text-foreground">{name}</div>
-                  <div className="mt-1 text-[11px] text-muted-foreground">{row.provider || "未记录 provider"} · {row.runtime || row.model || "未记录 runtime/model"}</div>
+                  <div className="mt-1 text-[11px] text-muted-foreground">{row.provider || "未记录提供方"} · {row.runtime || row.model || "未记录运行时/模型"}</div>
                 </div>
                 <div className="text-muted-foreground md:text-right">
                   <div>{tokenTotal.toLocaleString("zh-CN")} token</div>
@@ -1147,8 +1147,8 @@ function TrainingSummaryStrip({ summary, loading }: { summary: PromptEvaluationS
     { label: "失败数", value: formatNumber(metrics["失败数"]) },
     { label: "Agent运行数", value: formatNumber(metrics["Agent运行数"]) },
     { label: "需人工复核", value: formatNumber(metrics["需人工复核"]) },
-    { label: "输入token", value: formatNumber(metrics["输入token"]) },
-    { label: "输出token", value: formatNumber(metrics["输出token"]) },
+    { label: "输入 token", value: formatNumber(metrics["输入token"]) },
+    { label: "输出 token", value: formatNumber(metrics["输出token"]) },
     { label: "预估成本", value: formatMoney(metrics["预估成本"]) },
     { label: "待确认优化候选", value: formatNumber(candidates["待确认"]) },
     { label: "已发布优化候选", value: formatNumber(candidates["已发布"]) },
@@ -1303,7 +1303,7 @@ function WorkbenchPanel({
             </Badge>
             <span className="text-muted-foreground">目标模型 {runtimeReadiness.model || DEFAULT_AGENT_MODEL}</span>
           </div>
-          <div className="text-muted-foreground">{runtimeLoading ? "正在检查当前 workspace 的运行时列表。" : runtimeReadiness.detail}</div>
+          <div className="text-muted-foreground">{runtimeLoading ? "正在检查当前工作区的运行时列表。" : runtimeReadiness.detail}</div>
           {runtimeReadiness.status !== "就绪" && !runtimeLoading && (
             <div className="text-muted-foreground">修复路径：{runtimeReadiness.fix}</div>
           )}
@@ -1326,7 +1326,7 @@ function WorkbenchPanel({
         <div>
           <h3 className="text-sm font-semibold">{activeTab}</h3>
           <p className="mt-1 text-xs text-muted-foreground">
-            {activeTab === "运行历史" ? "按结构化运行记录展示 run、task、模型、耗时和评估结论。" : "复用提示词评测资产，全部语义按中文记录。"}
+            {activeTab === "运行历史" ? "按结构化运行记录展示运行、任务、模型、耗时和评估结论。" : "复用提示词评测资产，全部语义按中文记录。"}
           </p>
         </div>
         {tabAssetType && (
@@ -1361,7 +1361,7 @@ function WorkbenchPanel({
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground">{summarizeStructuredRun(run)}</div>
                   <div className="mt-1 break-all text-[11px] text-muted-foreground">
-                    run {run.id}{run.task_id ? ` · task ${run.task_id}` : ""}
+                    运行 {run.id}{run.task_id ? ` · 任务 ${run.task_id}` : ""}
                   </div>
                 </div>
                 <div className="flex items-center justify-end gap-2 text-right text-[11px] text-muted-foreground">
@@ -1541,7 +1541,7 @@ function OptimizationCandidateList({
                 {candidate.candidate_content}
               </div>
               <div className="mt-1 break-all text-[11px] text-muted-foreground">
-                run {candidate.run_id}{candidate.published_prompt_id ? ` · 已发布 ${candidate.published_prompt_id}` : ""}
+                来源运行 {candidate.run_id}{candidate.published_prompt_id ? ` · 已发布 ${candidate.published_prompt_id}` : ""}
               </div>
               {editing && (
                 <div className="mt-3 grid gap-2 rounded-sm border border-border/70 bg-background px-2 py-2">
@@ -1689,21 +1689,21 @@ function RunEvidencePanel({
         <MetricChip label="运行类型" value={evidence.run.run_kind} />
         <MetricChip label="运行状态" value={evidence.run.status} />
         <MetricChip label="模型" value={evidence.run.model || "未记录"} />
-        <MetricChip label="runtime" value={evidence.run.runtime_provider || "未记录"} />
+        <MetricChip label="运行时" value={evidence.run.runtime_provider || "未记录"} />
         <MetricChip label="触发来源" value={evidence.run.trigger_source || "未记录"} />
         <MetricChip label="创建者" value={evidence.run.created_by ?? "未记录"} />
-        <MetricChip label="Agent标识" value={evidence.run.agent_id ?? "未记录"} />
-        <MetricChip label="runtime标识" value={evidence.run.runtime_id ?? "未记录"} />
+        <MetricChip label="智能体标识" value={evidence.run.agent_id ?? "未记录"} />
+        <MetricChip label="运行时标识" value={evidence.run.runtime_id ?? "未记录"} />
         <MetricChip label="会话标识" value={evidence.run.chat_session_id ?? "未记录"} />
         <MetricChip label="总用例数" value={String(evidence.run.total_cases)} />
         <MetricChip label="通过数" value={String(evidence.run.passed_cases)} />
         <MetricChip label="失败数" value={String(evidence.run.failed_cases)} />
         <MetricChip label="总耗时" value={`${evidence.run.total_duration_ms} ms`} />
         <MetricChip label="平均耗时" value={`${evidence.run.average_duration_ms} ms`} />
-        <MetricChip label="输入token" value={String(evidence.run.input_tokens)} />
-        <MetricChip label="输出token" value={String(evidence.run.output_tokens)} />
+        <MetricChip label="输入 token" value={String(evidence.run.input_tokens)} />
+        <MetricChip label="输出 token" value={String(evidence.run.output_tokens)} />
         <MetricChip label="预估成本" value={formatMoney(evidence.run.estimated_cost)} />
-        <MetricChip label="trace/task id" value={evidence.run.task_id ?? evidence.run.id} />
+        <MetricChip label="trace/任务标识" value={evidence.run.task_id ?? evidence.run.id} />
         <MetricChip label="开始时间" value={evidence.run.started_at || "未记录"} />
         <MetricChip label="结束时间" value={evidence.run.completed_at || "未完成"} />
         <MetricChip label="创建时间" value={evidence.run.created_at || "未记录"} />
@@ -1715,7 +1715,7 @@ function RunEvidencePanel({
       <div className="grid gap-2">
         <div className="text-xs font-medium text-muted-foreground">用例明细</div>
         {evidence.trials.length === 0 ? (
-          <div className="rounded-md border border-dashed px-3 py-3 text-xs text-muted-foreground">暂无 trial 记录</div>
+          <div className="rounded-md border border-dashed px-3 py-3 text-xs text-muted-foreground">暂无单次执行记录</div>
         ) : (
           <div className="divide-y rounded-md border bg-background">
             {evidence.trials.map((trial) => (
@@ -1813,8 +1813,8 @@ function formatTraceEventEvidence(event: PromptEvaluationRunEvidence["trace_even
   const pieces = [
     event.event_name || event.event_type || "未命名事件",
     event.status || "未知状态",
-    event.provider || event.model ? `${event.provider || "unknown"}/${event.model || "unknown"}` : "",
-    `attempt ${event.attempt}`,
+    event.provider || event.model ? `${event.provider || "未知提供方"}/${event.model || "未知模型"}` : "",
+    `尝试次数 ${event.attempt}`,
     event.duration_ms != null ? `耗时 ${event.duration_ms} ms` : "",
     event.queue_wait_ms != null ? `排队 ${event.queue_wait_ms} ms` : "",
     event.run_ms != null ? `执行 ${event.run_ms} ms` : "",
@@ -1830,7 +1830,7 @@ function formatTraceEventEvidence(event: PromptEvaluationRunEvidence["trace_even
 function buildAgentExecutionStatus(readiness: PromptEvaluationRuntimeReadiness): string {
   const model = readiness.model || DEFAULT_AGENT_MODEL;
   if (readiness.status === "就绪") {
-    return `CodeBuddy runtime 已在线，目标模型 ${model}；此记录是实验包快照，点击“创建真实 Agent 任务”后会入队并采集 trace、token、成本和输出`;
+    return `CodeBuddy 运行时已在线，目标模型 ${model}；此记录是实验包快照，点击“创建真实 Agent 任务”后会入队并采集 trace、token、成本和输出`;
   }
   return `${readiness.label}，目标模型 ${model}；未创建真实 Agent 任务`;
 }
@@ -1899,7 +1899,7 @@ function ManualCasePanel({
               <div key={item.id} className="grid gap-2 rounded border bg-background px-2 py-1.5 text-xs">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium text-foreground">{item.case_name || `用例 ${item.case_index + 1}`}</span>
-                  <span className="text-muted-foreground">{item.source === "manual" ? "手工" : "payload"} · {item.status}</span>
+                  <span className="text-muted-foreground">{item.source === "manual" ? "手工" : "资产载荷"} · {item.status}</span>
                   <span className="min-w-0 flex-1 truncate text-muted-foreground">{summarizeStructuredCase(item)}</span>
                   {item.source === "manual" && (
                     <>
@@ -1968,7 +1968,7 @@ function ManualCasePanel({
           })}
         </div>
       ) : (
-        <div className="rounded border border-dashed px-2 py-2 text-xs text-muted-foreground">暂无结构化用例，运行时会回退到资产 payload。</div>
+        <div className="rounded border border-dashed px-2 py-2 text-xs text-muted-foreground">暂无结构化用例，运行时会回退到资产载荷。</div>
       )}
       <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
         <Input
@@ -1985,7 +1985,7 @@ function ManualCasePanel({
         <Input
           value={draft.expectedText}
           onChange={(event) => onDraftChange({ ...draft, expectedText: event.target.value })}
-          placeholder="期望包含：验收条件, trace/task id"
+          placeholder="期望包含：验收条件, trace/任务标识"
         />
         <div className="flex gap-2">
           <Input
@@ -2148,13 +2148,13 @@ function buildAssetPayload(
       "通过率",
       "总耗时",
       "平均耗时",
-      "输入token",
-      "输出token",
+      "输入 token",
+      "输出 token",
       "预估成本",
       "执行Agent",
       "模型",
-      "runtime",
-      "trace/task id",
+      "运行时",
+      "trace/任务标识",
       "失败原因",
       "评估结论",
     ],
@@ -2221,12 +2221,12 @@ function buildAgentDebugPackageRequest(
         执行方式: buildAgentExecutionStatus(readiness),
       },
       运行环境: {
-        目标Runtime: "CodeBuddy",
+        目标运行时: "CodeBuddy",
         目标模型: readiness.model || DEFAULT_AGENT_MODEL,
         状态: readiness.status,
         说明: readiness.detail,
         修复路径: readiness.fix,
-        runtime_id: readiness.runtime?.id ?? null,
+        运行时标识: readiness.runtime?.id ?? null,
       },
       对比维度: ["上下文完整性", "期望输出覆盖", "中文语义一致性"],
     },
@@ -2291,7 +2291,7 @@ function summarizeAssetPayload(asset: PromptEvaluationAsset, caseSummary?: CaseS
   if (caseSummary && caseSummary.total > 0) {
     const sourceParts = [];
     if (caseSummary.manual > 0) sourceParts.push(`手工 ${caseSummary.manual}`);
-    if (caseSummary.payload > 0) sourceParts.push(`payload ${caseSummary.payload}`);
+    if (caseSummary.payload > 0) sourceParts.push(`资产载荷 ${caseSummary.payload}`);
     return `结构化用例 ${caseSummary.total} 个${sourceParts.length > 0 ? `（${sourceParts.join("，")}；运行优先使用）` : ""}`;
   }
   if (payload["最近Agent运行"]) return "包含真实 Agent 运行";
@@ -2316,10 +2316,10 @@ function summarizeAgentRun(asset: PromptEvaluationAsset): string | null {
   if (!run || typeof run !== "object" || Array.isArray(run)) return null;
   const record = run as Record<string, unknown>;
   const status = stringFromRecord(record, "状态") || "未知状态";
-  const taskId = stringFromRecord(record, "trace/task id");
+  const taskId = stringFromRecord(record, "trace/任务标识") || stringFromRecord(record, "trace/task id");
   const agent = stringFromRecord(record, "执行Agent");
   const model = stringFromRecord(record, "模型");
-  return `Agent 任务：${status}${taskId ? ` · task ${taskId}` : ""}${agent ? ` · ${agent}` : ""}${model ? ` · ${model}` : ""}`;
+  return `Agent 任务：${status}${taskId ? ` · 任务标识 ${taskId}` : ""}${agent ? ` · ${agent}` : ""}${model ? ` · ${model}` : ""}`;
 }
 
 function summarizeLatestRunForDemo(run: PromptEvaluationRun): string {
@@ -2328,7 +2328,7 @@ function summarizeLatestRunForDemo(run: PromptEvaluationRun): string {
     parts.push(`失败原因：${truncateText(run.failure_reason, 42)}`);
   }
   if (run.task_id) {
-    parts.push(`task ${truncateText(run.task_id, 8)}`);
+    parts.push(`任务标识 ${truncateText(run.task_id, 8)}`);
   }
   return parts.join(" · ");
 }
@@ -2336,7 +2336,7 @@ function summarizeLatestRunForDemo(run: PromptEvaluationRun): string {
 function summarizeStructuredRun(run: PromptEvaluationRun): string {
   const pieces = [
     `模型 ${run.model || "未记录"}`,
-    `runtime ${run.runtime_provider || "未记录"}`,
+    `运行时 ${run.runtime_provider || "未记录"}`,
     `通过 ${run.passed_cases}/${run.total_cases}`,
     `输入 ${run.input_tokens} token`,
     `输出 ${run.output_tokens} token`,

@@ -35,7 +35,7 @@ test.describe("训练与评估真实 Agent 闭环", () => {
         name: `${prefix} 提示词`,
         description: "真实 daemon E2E：创建提示词后由 CodeBuddy 执行评估。",
         prompt_type: "需求澄清",
-        content: "请用中文澄清 {{issue_title}}，必须输出验收条件、风险、trace/task id 和下一步建议。",
+        content: "请用中文澄清 {{issue_title}}，必须输出验收条件、风险、trace/任务标识和下一步建议。",
         variables: [{ name: "issue_title", label: "Issue 标题", required: true }],
         tags: ["真实Agent", "E2E", "训练与评估"],
         status: "启用",
@@ -50,7 +50,7 @@ test.describe("训练与评估真实 Agent 闭环", () => {
             {
               名称: "真实 Agent 中文证据用例",
               变量: { issue_title: "登录失败" },
-              期望包含: ["验收条件", "trace/task id", "下一步"],
+              期望包含: ["验收条件", "trace/任务标识", "下一步"],
             },
           ],
         },

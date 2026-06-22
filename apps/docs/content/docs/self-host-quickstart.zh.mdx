@@ -181,12 +181,12 @@ multica setup self-host \
 
 ## 生产演示与观测验收
 
-服务跑起来只是第一步。给团队日常使用或领导演示前，还要证明真实 Agent、训练评估、SOP trace、token/成本和 evidence 都已经接通。
+服务跑起来只是第一步。给团队日常使用或领导演示前，还要证明真实 Agent、训练评估、SOP trace、token/成本和运行证据都已经接通。
 
 最短路径：
 
 1. 打开 **训练与评估 → 演示看板**，确认训练评估、SOP/任务观测、真实 Agent readiness 和验收证据不是空数据。
-2. 打开 **运行历史**，展开最近一条 Agent 执行，确认能看到 `task id`、模型、runtime、token、trace 和用例结果。
+2. 打开 **运行历史**，展开最近一条 Agent 执行，确认能看到任务标识、模型、运行时、token、trace 和用例结果。
 3. 跑 `/health`、`/readyz`、真实 Agent E2E、日志检查和数据库抽查，把结果写进验收记录。
 
 完整命令和证据口径见 [生产演示与观测验收](/production-observability)。

@@ -663,7 +663,7 @@ multica autopilot delete <id>
 multica autopilot trigger <id>            # Fires the autopilot once, returns the run
 ```
 
-### Run History
+### 运行历史
 
 ```bash
 multica autopilot runs <id>
