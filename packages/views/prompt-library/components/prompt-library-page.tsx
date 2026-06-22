@@ -1692,9 +1692,9 @@ function RunEvidencePanel({
         <MetricChip label="runtime" value={evidence.run.runtime_provider || "未记录"} />
         <MetricChip label="触发来源" value={evidence.run.trigger_source || "未记录"} />
         <MetricChip label="创建者" value={evidence.run.created_by ?? "未记录"} />
-        <MetricChip label="agent id" value={evidence.run.agent_id ?? "未记录"} />
-        <MetricChip label="runtime id" value={evidence.run.runtime_id ?? "未记录"} />
-        <MetricChip label="chat session id" value={evidence.run.chat_session_id ?? "未记录"} />
+        <MetricChip label="Agent标识" value={evidence.run.agent_id ?? "未记录"} />
+        <MetricChip label="runtime标识" value={evidence.run.runtime_id ?? "未记录"} />
+        <MetricChip label="会话标识" value={evidence.run.chat_session_id ?? "未记录"} />
         <MetricChip label="总用例数" value={String(evidence.run.total_cases)} />
         <MetricChip label="通过数" value={String(evidence.run.passed_cases)} />
         <MetricChip label="失败数" value={String(evidence.run.failed_cases)} />
@@ -1735,13 +1735,13 @@ function RunEvidencePanel({
 
       <div className="grid gap-2 md:grid-cols-3">
         <EvidenceList
-          title="task 用量"
+          title="任务用量"
           empty="暂无 token 用量"
           items={evidence.task_usage.map((usage) => `${usage.provider}/${usage.model} · 输入 ${usage.input_tokens} · 输出 ${usage.output_tokens} · 预估成本 ${formatMoney(usage.estimated_cost ?? 0)} · 缓存读 ${usage.cache_read_tokens} · 缓存写 ${usage.cache_write_tokens}${usage.priced === false ? " · 缺少价格" : ""}`)}
         />
         <EvidenceList
-          title="task 消息"
-          empty="暂无 task 消息"
+          title="任务消息"
+          empty="暂无任务消息"
           items={evidence.task_messages.map((message) => `#${message.seq} ${message.type}${message.tool ? ` · ${message.tool}` : ""}：${truncateText(message.content || message.output || "", 160)}`)}
         />
         <EvidenceList
@@ -1803,7 +1803,7 @@ function buildExternalDependencyFailureNotice(evidence: PromptEvaluationRunEvide
   if (evidence.run.status === "失败" && evidence.run.task_id && evidence.task_usage.length === 0) {
     return {
       title: "外部依赖失败：未采集到模型用量",
-      detail: "Agent 任务失败且没有 task_usage 记录，请结合 task 消息和 trace 事件确认运行时、模型或网络依赖状态。",
+      detail: "Agent 任务失败且没有任务用量记录，请结合任务消息和 trace 事件确认运行时、模型或网络依赖状态。",
     };
   }
   return null;

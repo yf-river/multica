@@ -144,13 +144,13 @@ curl -fsS \
 | `run.trigger_source` | 触发来源，例如 `Agent 调试场`、`优化运行`、`手动` |
 | `run.created_by` | 谁触发了这次运行 |
 | `run.started_at` / `run.completed_at` | 开始和结束时间，用于核对耗时 |
-| `run.task_id` / `run.chat_session_id` | 真实 Agent 任务和对话证据入口 |
+| `run.task_id` / `run.chat_session_id` | 真实 Agent 任务标识和会话证据入口 |
 | `trials` | 每个结构化用例的输入、输出、失败原因和证据 |
 | `task_usage` | provider、model、输入/输出 token、缓存读写 token、预估成本 |
 | `task_messages` | Agent 的原始消息证据 |
 | `trace_events` | 任务入队、领取、开始、失败/完成等生命周期事件 |
 
-页面上的 **完整运行证据 JSON** 展示的就是这组对象。导出的演示证据 JSON 也会把最近运行、运行证据、task usage、task messages 和 trace events 一起带出，方便归档给领导或复盘。
+页面上的 **完整运行证据 JSON** 展示的就是这组对象。导出的演示证据 JSON 也会把最近运行、运行证据、任务用量、任务消息和 trace 事件一起带出，方便归档给领导或复盘。
 
 ## 真实 Agent E2E
 
@@ -183,8 +183,8 @@ MULTICA_PROMPT_EVALUATION_AGENT_MODEL=<可用模型>
 | run id | Playwright 输出或 `/api/prompt-evaluation-runs` |
 | task id | 运行历史或 evidence API |
 | 模型/runtime | 运行历史、演示看板、evidence API |
-| task messages | evidence API |
-| trace events | evidence API |
+| 任务消息 | evidence API |
+| trace 事件 | evidence API |
 | token/耗时/成本 | evidence API 与观测摘要 |
 | 外部依赖失败 | 运行历史外部依赖提示、task messages、trace events |
 
@@ -232,7 +232,7 @@ multica daemon logs --lines 200
 训练评估共有 <运行总数> 次运行，Agent 执行 <Agent运行数> 次，通过率 <通过率>。
 最近一条真实 Agent 运行的 task id 是 <task_id>，模型是 <model>，runtime 是 <runtime>。
 该运行的触发来源是 <trigger_source>，由 <created_by> 触发，开始时间 <started_at>，结束时间 <completed_at>。
-该运行已采集 token、耗时、task messages、trace events、结构化用例结果和完整运行证据 JSON。
+该运行已采集 token、耗时、任务消息、trace 事件、结构化用例结果和完整运行证据 JSON。
 如果模型额度不足，本次演示已明确显示外部依赖失败，没有把额度失败伪装成成功运行。
 SOP/任务观测摘要当前状态是 <完整/可能截断>，如果截断，汇报口径只代表采样范围。
 失败用例不会自动替换生产提示词，只会生成候选，由人工确认发布或拒绝。

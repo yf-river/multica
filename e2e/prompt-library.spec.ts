@@ -348,9 +348,9 @@ test.describe("训练与评估工作台", () => {
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-runtime")).toContainText("codebuddy");
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-触发来源")).toContainText("Agent 调试场");
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-创建者")).toContainText(/[0-9a-f-]{36}/);
-    await expect(agentEvidencePanel.getByTestId("run-evidence-metric-agent id")).toContainText(queuedAgentRun!.agent_id!);
-    await expect(agentEvidencePanel.getByTestId("run-evidence-metric-runtime id")).toContainText(runtime.id);
-    await expect(agentEvidencePanel.getByTestId("run-evidence-metric-chat session id")).toContainText(queuedAgentRun!.chat_session_id!);
+    await expect(agentEvidencePanel.getByTestId("run-evidence-metric-Agent标识")).toContainText(queuedAgentRun!.agent_id!);
+    await expect(agentEvidencePanel.getByTestId("run-evidence-metric-runtime标识")).toContainText(runtime.id);
+    await expect(agentEvidencePanel.getByTestId("run-evidence-metric-会话标识")).toContainText(queuedAgentRun!.chat_session_id!);
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-输入token")).toContainText("16");
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-输出token")).toContainText("7");
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-开始时间")).not.toContainText("未记录");
@@ -375,7 +375,7 @@ test.describe("训练与评估工作台", () => {
     await expect(agentRunCard.getByText("#1 text：Agent 输出：完成训练评估")).toBeVisible();
     await expect(agentRunCard.getByText(/训练评估用量已上报 · completed · codebuddy\/[^ ]+ · attempt 1 · .*输入 16 · 输出 7/)).toBeVisible();
     await expect(page.getByText("失败原因：等待 Agent 执行完成")).toHaveCount(0);
-    await expect(agentRunCard.getByText("task 用量")).toBeVisible();
+    await expect(agentRunCard.getByText("任务用量")).toBeVisible();
     const syncedAgentEvidence = await api.getPromptEvaluationRunEvidence(queuedAgentRun!.id);
     expect(syncedAgentEvidence.run).toMatchObject({
       status: "通过",
