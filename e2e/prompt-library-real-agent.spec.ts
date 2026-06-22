@@ -119,6 +119,8 @@ test.describe("训练与评估真实 Agent 闭环", () => {
         await expect(evidencePanel.getByTestId("run-evidence-external-failure")).toContainText("外部依赖失败：模型额度不足", { timeout: 15000 });
         await expect(evidencePanel.getByTestId("run-evidence-metric-失败原因")).toContainText("模型额度不足");
         await expect(evidencePanel.getByText("暂无 token 用量")).toBeVisible();
+        await page.getByRole("button", { name: "演示看板", exact: true }).click();
+        await expect(page.getByTestId("training-demo-proof-最近运行")).toContainText("模型额度不足", { timeout: 15000 });
       } else {
         expect(["通过", "未通过", "需人工复核"]).toContain(syncedRun.status);
         expect(evidence.task_usage).toEqual(

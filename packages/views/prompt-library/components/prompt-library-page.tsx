@@ -977,7 +977,7 @@ function DemoDashboardPanel({
     ["结构化用例", formatNumber(trainingAssets["结构化用例"] ?? cases.length)],
     ["优化候选", `${pendingCandidates} 待确认 · ${publishedCandidates} 已发布 · ${rejectedCandidates} 已拒绝`],
     ["真实 Agent 证据", hasAgentEvidence ? "已有 task/trace 运行记录" : "暂无真实 Agent 运行记录"],
-    ["最近运行", latestRun ? `${latestRun.run_kind} · ${latestRun.status}` : "暂无运行"],
+    ["最近运行", latestRun ? summarizeLatestRunForDemo(latestRun) : "暂无运行"],
   ];
 
   return (
@@ -1746,8 +1746,8 @@ function RunEvidencePanel({
       </div>
 
       <details className="rounded-md border bg-background px-3 py-2 text-xs">
-        <summary className="cursor-pointer font-medium text-muted-foreground">原始 evidence JSON</summary>
-        <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap text-[11px] leading-5">{truncateText(JSON.stringify(evidence.evidence, null, 2), 3000)}</pre>
+        <summary className="cursor-pointer font-medium text-muted-foreground">完整运行证据 JSON</summary>
+        <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap text-[11px] leading-5">{truncateText(JSON.stringify(evidence, null, 2), 5000)}</pre>
       </details>
     </div>
   );
@@ -2314,6 +2314,17 @@ function summarizeAgentRun(asset: PromptEvaluationAsset): string | null {
   const agent = stringFromRecord(record, "执行Agent");
   const model = stringFromRecord(record, "模型");
   return `Agent 任务：${status}${taskId ? ` · task ${taskId}` : ""}${agent ? ` · ${agent}` : ""}${model ? ` · ${model}` : ""}`;
+}
+
+function summarizeLatestRunForDemo(run: PromptEvaluationRun): string {
+  const parts = [`${run.run_kind} · ${run.status}`];
+  if (run.failure_reason && run.failure_reason !== "无") {
+    parts.push(`失败原因：${truncateText(run.failure_reason, 42)}`);
+  }
+  if (run.task_id) {
+    parts.push(`task ${truncateText(run.task_id, 8)}`);
+  }
+  return parts.join(" · ");
 }
 
 function summarizeStructuredRun(run: PromptEvaluationRun): string {

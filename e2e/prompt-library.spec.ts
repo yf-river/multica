@@ -357,19 +357,21 @@ test.describe("训练与评估工作台", () => {
     const localRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "本地渲染 · 通过" }).first();
     await localRunCard.getByRole("button", { name: "查看证据" }).click();
     await expect(page.getByText("用例明细")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText("调试场用例")).toBeVisible();
-    await expect(page.getByText("请澄清 登录失败，项目背景：user-center。").last()).toBeVisible();
-    await expect(page.getByText("原始 evidence JSON")).toBeVisible();
+    await expect(localRunCard.getByText("调试场用例", { exact: true })).toBeVisible();
+    await expect(localRunCard.getByText("请澄清 登录失败，项目背景：user-center。", { exact: true })).toBeVisible();
+    await localRunCard.getByText("完整运行证据 JSON").click();
+    await expect(localRunCard.getByText("\"task_usage\"")).toBeVisible();
+    await expect(localRunCard.getByText("\"trace_events\"")).toBeVisible();
     await localRunCard.getByRole("button", { name: "收起证据" }).click();
     agentRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "Agent执行 · 通过" }).first();
     await agentRunCard.getByRole("button", { name: "查看证据" }).click();
-    await expect(page.getByText("Agent 调试场用例")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText(/codebuddy\/[^ ]+ · 输入 11 · 输出 7 · 预估成本 \$/)).toBeVisible();
-    await expect(page.getByText("缓存读 2 · 缓存写 3")).toBeVisible();
-    await expect(page.getByText("#1 text：Agent 输出：完成训练评估")).toBeVisible();
-    await expect(page.getByText(/训练评估用量已上报 · completed · codebuddy\/[^ ]+ · attempt 1 · .*输入 16 · 输出 7/)).toBeVisible();
+    await expect(agentRunCard.getByText("Agent 调试场用例", { exact: true })).toBeVisible({ timeout: 10000 });
+    await expect(agentRunCard.getByText(/codebuddy\/[^ ]+ · 输入 11 · 输出 7 · 预估成本 \$/)).toBeVisible();
+    await expect(agentRunCard.getByText("缓存读 2 · 缓存写 3")).toBeVisible();
+    await expect(agentRunCard.getByText("#1 text：Agent 输出：完成训练评估")).toBeVisible();
+    await expect(agentRunCard.getByText(/训练评估用量已上报 · completed · codebuddy\/[^ ]+ · attempt 1 · .*输入 16 · 输出 7/)).toBeVisible();
     await expect(page.getByText("失败原因：等待 Agent 执行完成")).toHaveCount(0);
-    await expect(page.getByText("task 用量")).toBeVisible();
+    await expect(agentRunCard.getByText("task 用量")).toBeVisible();
     const syncedAgentEvidence = await api.getPromptEvaluationRunEvidence(queuedAgentRun!.id);
     expect(syncedAgentEvidence.run).toMatchObject({
       status: "通过",
