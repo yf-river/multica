@@ -117,6 +117,18 @@ test.describe("训练与评估 daemon 协议闭环", () => {
         }),
       ]),
     );
+    expect(evidence.上下文).toMatchObject({
+      任务: queued.task_id,
+      执行Agent: queued.agent_id,
+      运行时标识: runtime.id,
+      模型: queued.model,
+      触发来源: "Agent 调试场",
+    });
+    expect(evidence.上下文["证据完整性"]).toMatchObject({
+      用例数: 1,
+      任务用量条数: 1,
+      任务消息条数: 1,
+    });
     expect(evidence.trials[0]).toMatchObject({
       case_name: "daemon 协议用例",
       status: "通过",

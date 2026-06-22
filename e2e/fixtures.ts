@@ -102,6 +102,7 @@ interface DaemonClaimResponse {
 
 interface PromptEvaluationRunEvidence {
   run: PromptEvaluationRun;
+  上下文: Record<string, unknown>;
   trials: Array<{
     id: string;
     case_name: string;

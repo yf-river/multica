@@ -231,6 +231,7 @@ type PromptEvaluationRunEvidenceResponse struct {
 	TaskMessages []protocol.TaskMessagePayload       `json:"task_messages"`
 	TraceEvents  []TaskTraceEventResponse            `json:"trace_events"`
 	Evidence     any                                 `json:"evidence"`
+	Context      map[string]any                      `json:"上下文"`
 }
 
 type PromptEvaluationSummaryResponse struct {
@@ -1086,6 +1087,7 @@ func (h *Handler) GetPromptEvaluationRunEvidence(w http.ResponseWriter, r *http.
 	usageResp := []PromptEvaluationTaskUsageResponse{}
 	messageResp := []protocol.TaskMessagePayload{}
 	traceResp := []TaskTraceEventResponse{}
+	var task *db.AgentTaskQueue
 	if run.TaskID.Valid {
 		usages, err := h.Queries.GetTaskUsage(r.Context(), run.TaskID)
 		if err != nil {
@@ -1103,8 +1105,9 @@ func (h *Handler) GetPromptEvaluationRunEvidence(w http.ResponseWriter, r *http.
 			return
 		}
 		issueID := ""
-		if task, err := h.Queries.GetAgentTask(r.Context(), run.TaskID); err == nil {
-			issueID = uuidToString(task.IssueID)
+		if loadedTask, err := h.Queries.GetAgentTask(r.Context(), run.TaskID); err == nil {
+			task = &loadedTask
+			issueID = uuidToString(loadedTask.IssueID)
 		}
 		messageResp = make([]protocol.TaskMessagePayload, len(messages))
 		for i, message := range messages {
@@ -1129,7 +1132,93 @@ func (h *Handler) GetPromptEvaluationRunEvidence(w http.ResponseWriter, r *http.
 		TaskMessages: messageResp,
 		TraceEvents:  traceResp,
 		Evidence:     decodeJSONDefault(run.Evidence, map[string]any{}),
+		Context:      buildPromptEvaluationEvidenceContext(run, task, trialResp, usageResp, messageResp, traceResp),
 	})
+}
+
+func buildPromptEvaluationEvidenceContext(
+	run db.PromptEvaluationRun,
+	task *db.AgentTaskQueue,
+	trials []PromptEvaluationTrialResponse,
+	usages []PromptEvaluationTaskUsageResponse,
+	messages []protocol.TaskMessagePayload,
+	traceEvents []TaskTraceEventResponse,
+) map[string]any {
+	context := map[string]any{
+		"工作区":     uuidToString(run.WorkspaceID),
+		"提示词":     uuidToString(run.PromptID),
+		"评测资产":    uuidToString(run.AssetID),
+		"运行":      uuidToString(run.ID),
+		"任务":      uuidToString(run.TaskID),
+		"触发来源":    run.TriggerSource,
+		"执行Agent": uuidToString(run.AgentID),
+		"模型":      run.Model,
+		"运行时":     run.RuntimeProvider,
+		"运行时标识":   uuidToString(run.RuntimeID),
+		"状态":      run.Status,
+		"创建者":     uuidToString(run.CreatedBy),
+		"开始时间":    timestampToString(run.StartedAt),
+		"结束时间":    timestampToString(run.CompletedAt),
+		"总耗时ms":   run.TotalDurationMs,
+		"输入token": run.InputTokens,
+		"输出token": run.OutputTokens,
+		"预估成本":    run.EstimatedCost,
+		"失败原因":    run.FailureReason,
+		"评估结论":    run.Conclusion,
+		"证据完整性": map[string]any{
+			"用例数":       len(trials),
+			"任务用量条数":    len(usages),
+			"任务消息条数":    len(messages),
+			"trace事件条数": len(traceEvents),
+		},
+		"输入输出摘要": buildPromptEvaluationIOContext(trials, messages),
+	}
+	if run.ChatSessionID.Valid {
+		context["会话"] = uuidToString(run.ChatSessionID)
+	}
+	if task != nil {
+		context["issue"] = uuidToString(task.IssueID)
+		context["任务状态"] = task.Status
+		context["触发评论"] = uuidToString(task.TriggerCommentID)
+		context["自动化运行"] = uuidToString(task.AutopilotRunID)
+		context["发起人"] = uuidToString(task.InitiatorUserID)
+		context["任务触发摘要"] = task.TriggerSummary.String
+		context["任务尝试次数"] = task.Attempt
+		context["任务最大尝试次数"] = task.MaxAttempts
+		context["是否队长任务"] = task.IsLeaderTask
+	}
+	return context
+}
+
+func buildPromptEvaluationIOContext(trials []PromptEvaluationTrialResponse, messages []protocol.TaskMessagePayload) map[string]any {
+	context := map[string]any{
+		"用例输入摘要": "未记录",
+		"用例输出摘要": "未记录",
+		"消息摘要":   "未记录",
+	}
+	if len(trials) > 0 {
+		context["用例输入摘要"] = truncatePromptEvaluationEvidence(promptEvaluationEvidenceSummaryString(trials[0].Input), 300)
+		context["用例输出摘要"] = truncatePromptEvaluationEvidence(promptEvaluationEvidenceSummaryString(trials[0].Output), 300)
+	}
+	if len(messages) > 0 {
+		message := messages[len(messages)-1]
+		context["消息摘要"] = truncatePromptEvaluationEvidence(firstNonEmptyPromptEvaluationString(message.Content, message.Output, message.Type), 300)
+	}
+	return context
+}
+
+func promptEvaluationEvidenceSummaryString(value any) string {
+	if value == nil {
+		return ""
+	}
+	if text, ok := value.(string); ok {
+		return text
+	}
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return ""
+	}
+	return string(raw)
 }
 
 func (h *Handler) ListPromptEvaluationOptimizationCandidates(w http.ResponseWriter, r *http.Request) {

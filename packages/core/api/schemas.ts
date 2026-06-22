@@ -957,6 +957,7 @@ export const PromptEvaluationRunEvidenceSchema = z.object({
   task_messages: z.array(PromptEvaluationTaskMessageSchema).default([]),
   trace_events: z.array(PromptEvaluationTaskTraceEventSchema).default([]),
   evidence: z.record(z.string(), z.unknown()).default({}),
+  上下文: z.record(z.string(), z.unknown()).default({}),
 }).loose();
 
 export const PromptEvaluationSummarySchema = z.object({
@@ -1108,6 +1109,7 @@ export const EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE: PromptEvaluationRunEvidence =
   task_messages: [],
   trace_events: [],
   evidence: {},
+  上下文: {},
 };
 
 export const EMPTY_PROMPT_EVALUATION_SUMMARY: PromptEvaluationSummary = {

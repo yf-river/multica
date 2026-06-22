@@ -133,6 +133,7 @@ export interface PromptEvaluationRunEvidence {
   task_messages: TaskMessagePayload[];
   trace_events: TaskTraceEvent[];
   evidence: Record<string, unknown>;
+  上下文: Record<string, unknown>;
 }
 
 export interface PromptEvaluationSummary {

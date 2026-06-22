@@ -1712,6 +1712,8 @@ function RunEvidencePanel({
         <MetricChip label="评估结论" value={evidence.run.conclusion || "未记录"} />
       </div>
 
+      <EvidenceContextPanel context={evidence.上下文} />
+
       <div className="grid gap-2">
         <div className="text-xs font-medium text-muted-foreground">用例明细</div>
         {evidence.trials.length === 0 ? (
@@ -1755,6 +1757,51 @@ function RunEvidencePanel({
         <summary className="cursor-pointer font-medium text-muted-foreground">完整运行证据 JSON</summary>
         <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap text-[11px] leading-5">{truncateText(JSON.stringify(evidence, null, 2), 5000)}</pre>
       </details>
+    </div>
+  );
+}
+
+function EvidenceContextPanel({ context }: { context: Record<string, unknown> }) {
+  const inputOutput = isRecord(context["输入输出摘要"]) ? context["输入输出摘要"] : {};
+  const completeness = isRecord(context["证据完整性"]) ? context["证据完整性"] : {};
+  const items = [
+    `工作区 ${stringFromUnknown(context["工作区"]) || "未记录"}`,
+    `提示词 ${stringFromUnknown(context["提示词"]) || "未绑定"}`,
+    `评测资产 ${stringFromUnknown(context["评测资产"]) || "未记录"}`,
+    `issue ${stringFromUnknown(context["issue"]) || "未绑定"}`,
+    `项目 ${stringFromUnknown(context["项目"]) || "未绑定"}`,
+    `任务 ${stringFromUnknown(context["任务"]) || "未创建"}`,
+    `任务状态 ${stringFromUnknown(context["任务状态"]) || stringFromUnknown(context["状态"]) || "未记录"}`,
+    `执行模式 ${stringFromUnknown(context["任务执行模式"]) || "未记录"}`,
+  ];
+  const evidenceItems = [
+    `用例 ${stringFromUnknown(completeness["用例数"]) || "0"}`,
+    `用量证据 ${stringFromUnknown(completeness["任务用量条数"]) || "0"}`,
+    `任务消息 ${stringFromUnknown(completeness["任务消息条数"]) || "0"}`,
+    `trace 事件 ${stringFromUnknown(completeness["trace事件条数"]) || "0"}`,
+  ];
+  return (
+    <div className="grid gap-2 rounded-md border bg-background p-2 text-xs" data-testid="run-evidence-context">
+      <div className="font-medium text-muted-foreground">上下文摘要</div>
+      <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-4">
+        {items.map((item) => (
+          <div key={item} className="truncate rounded bg-muted/30 px-2 py-1 text-[11px] leading-5">
+            {item}
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-4">
+        {evidenceItems.map((item) => (
+          <div key={item} className="truncate rounded bg-muted/30 px-2 py-1 text-[11px] leading-5">
+            {item}
+          </div>
+        ))}
+      </div>
+      <div className="grid gap-1 text-[11px] leading-5 text-muted-foreground">
+        <div>输入摘要：{truncateText(stringFromUnknown(inputOutput["用例输入摘要"]) || "未记录", 220)}</div>
+        <div>输出摘要：{truncateText(stringFromUnknown(inputOutput["用例输出摘要"]) || "未记录", 220)}</div>
+        <div>消息摘要：{truncateText(stringFromUnknown(inputOutput["消息摘要"]) || "未记录", 220)}</div>
+      </div>
     </div>
   );
 }
@@ -1825,6 +1872,16 @@ function formatTraceEventEvidence(event: PromptEvaluationRunEvidence["trace_even
     event.error_type ? `错误类型：${event.error_type}` : "",
   ].filter(Boolean);
   return pieces.join(" · ");
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function stringFromUnknown(value: unknown): string {
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  return "";
 }
 
 function buildAgentExecutionStatus(readiness: PromptEvaluationRuntimeReadiness): string {

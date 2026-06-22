@@ -356,6 +356,9 @@ test.describe("训练与评估工作台", () => {
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-开始时间")).not.toContainText("未记录");
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-结束时间")).not.toContainText("未完成");
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-评估结论")).toContainText("Agent 返回结构化逐用例评估");
+    await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText("上下文摘要");
+    await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText(`任务 ${queuedAgentRun!.task_id}`);
+    await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText("用量证据 1");
     await expect(page.getByText("模板渲染检查 · 通过")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(/模型 本地模板渲染检查 · 运行时 server · 通过 1\/1/)).toBeVisible();
     const localRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "模板渲染检查 · 通过" }).first();
