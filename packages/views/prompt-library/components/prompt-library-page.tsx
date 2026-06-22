@@ -369,7 +369,8 @@ export function PromptLibraryPage() {
   });
 
   const rejectCandidateMut = useMutation({
-    mutationFn: (candidateId: string) => api.rejectPromptEvaluationOptimizationCandidate(candidateId),
+    mutationFn: ({ candidateId, reason }: { candidateId: string; reason: string }) =>
+      api.rejectPromptEvaluationOptimizationCandidate(candidateId, reason),
     onSuccess: (candidate) => {
       invalidateCandidates();
       invalidateSummary();
@@ -755,8 +756,8 @@ export function PromptLibraryPage() {
               updatingCandidateId={updateCandidateMut.isPending ? updateCandidateMut.variables?.candidateId ?? null : null}
               onPublishCandidate={(candidateId) => publishCandidateMut.mutate(candidateId)}
               publishingCandidateId={publishCandidateMut.isPending ? publishCandidateMut.variables ?? null : null}
-              onRejectCandidate={(candidateId) => rejectCandidateMut.mutate(candidateId)}
-              rejectingCandidateId={rejectCandidateMut.isPending ? rejectCandidateMut.variables ?? null : null}
+              onRejectCandidate={(candidateId, reason) => rejectCandidateMut.mutate({ candidateId, reason })}
+              rejectingCandidateId={rejectCandidateMut.isPending ? rejectCandidateMut.variables?.candidateId ?? null : null}
             />
           </div>
         </main>
@@ -880,7 +881,7 @@ function WorkbenchPanel({
   updatingCandidateId: string | null;
   onPublishCandidate: (candidateId: string) => void;
   publishingCandidateId: string | null;
-  onRejectCandidate: (candidateId: string) => void;
+  onRejectCandidate: (candidateId: string, reason: string) => void;
   rejectingCandidateId: string | null;
 }) {
   const tabAssetType = tabToAssetType(activeTab);
@@ -1126,11 +1127,13 @@ function OptimizationCandidateList({
   updatingCandidateId: string | null;
   onPublishCandidate: (candidateId: string) => void;
   publishingCandidateId: string | null;
-  onRejectCandidate: (candidateId: string) => void;
+  onRejectCandidate: (candidateId: string, reason: string) => void;
   rejectingCandidateId: string | null;
 }) {
   const [editingCandidateId, setEditingCandidateId] = useState<string | null>(null);
+  const [rejectingDraftCandidateId, setRejectingDraftCandidateId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, UpdatePromptEvaluationOptimizationCandidateRequest>>({});
+  const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
   if (candidates.length === 0) {
     return (
       <div className="rounded-md border border-dashed px-3 py-5 text-center text-sm text-muted-foreground">
@@ -1142,7 +1145,9 @@ function OptimizationCandidateList({
     <div className="divide-y rounded-md border">
       {candidates.map((candidate) => {
         const editing = editingCandidateId === candidate.id;
+        const writingRejectReason = rejectingDraftCandidateId === candidate.id;
         const draft = drafts[candidate.id] ?? candidateToDraft(candidate);
+        const rejectReason = rejectReasons[candidate.id] ?? "候选未覆盖验收要求，暂不采纳。";
         const canHandle = candidate.status === "待确认";
         const hasManualEdit = Boolean((candidate.metrics as Record<string, unknown>)["人工编辑"]);
         return (
@@ -1207,6 +1212,32 @@ function OptimizationCandidateList({
                   </div>
                 </div>
               )}
+              {writingRejectReason && (
+                <div className="mt-3 grid gap-2 rounded-sm border border-destructive/30 bg-destructive/5 px-2 py-2">
+                  <label className="grid gap-1 text-xs">
+                    <span className="text-muted-foreground">暂不采纳原因</span>
+                    <Textarea
+                      value={rejectReason}
+                      onChange={(event) => setRejectReasons((prev) => ({ ...prev, [candidate.id]: event.target.value }))}
+                      className="min-h-20 text-xs"
+                    />
+                  </label>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => onRejectCandidate(candidate.id, rejectReason)}
+                      disabled={rejectingCandidateId === candidate.id || rejectReason.trim() === ""}
+                    >
+                      {rejectingCandidateId === candidate.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+                      确认暂不采纳
+                    </Button>
+                    <Button size="sm" variant="ghost" onClick={() => setRejectingDraftCandidateId(null)}>
+                      取消
+                    </Button>
+                  </div>
+                </div>
+              )}
             </div>
             <div className="flex flex-wrap items-center gap-2 md:justify-end">
               <Button
@@ -1224,11 +1255,11 @@ function OptimizationCandidateList({
               <Button
                 size="sm"
                 variant="outline"
-                onClick={() => onRejectCandidate(candidate.id)}
+                onClick={() => setRejectingDraftCandidateId(writingRejectReason ? null : candidate.id)}
                 disabled={!canHandle || rejectingCandidateId === candidate.id}
               >
                 {rejectingCandidateId === candidate.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-                暂不采纳
+                {writingRejectReason ? "收起原因" : "暂不采纳"}
               </Button>
               <Button
                 size="sm"

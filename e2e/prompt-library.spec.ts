@@ -538,6 +538,49 @@ test.describe("训练与评估工作台", () => {
     expect(published?.content).toContain("优化候选");
     expect(published?.content).toContain("人工发布要求");
     expect(published?.content).toContain("E2E人工复核");
+
+    await api.runPromptEvaluationAsset(asset.id);
+    const rejectRun = await expect
+      .poll(async () => {
+        const runs = await api.listPromptEvaluationRuns({ asset_id: asset.id });
+        return runs.find((run) => run.status === "未通过" && run.id !== failedRun.id) ?? null;
+      }, { timeout: 15000 })
+      .not.toBeNull()
+      .then(async () => (await api.listPromptEvaluationRuns({ asset_id: asset.id })).find((run) => run.status === "未通过" && run.id !== failedRun.id)!);
+
+    await page.goto(`/${workspaceSlug}/training?view=run-history`, { waitUntil: "domcontentloaded" });
+    const rejectRunRow = page.getByTestId(`prompt-evaluation-run-${rejectRun.id}`);
+    await rejectRunRow.scrollIntoViewIfNeeded();
+    await rejectRunRow.getByRole("button", { name: "生成优化候选" }).click();
+    await expect(page.getByText("优化候选已生成，等待人工确认")).toBeVisible({ timeout: 10000 });
+    const rejectCandidate = await expect
+      .poll(async () => {
+        const candidates = await api.listPromptEvaluationOptimizationCandidates({ run_id: rejectRun.id });
+        return candidates[0] ?? null;
+      }, { timeout: 15000 })
+      .not.toBeNull()
+      .then(async () => (await api.listPromptEvaluationOptimizationCandidates({ run_id: rejectRun.id }))[0]!);
+
+    await page.getByRole("button", { name: "优化运行", exact: true }).click();
+    const rejectCandidateRow = page.getByTestId(`prompt-evaluation-candidate-${rejectCandidate.id}`);
+    await rejectCandidateRow.getByRole("button", { name: "暂不采纳" }).click();
+    await rejectCandidateRow.getByLabel("暂不采纳原因").fill("E2E 拒绝原因：候选没有覆盖全部验收口径。");
+    await rejectCandidateRow.getByRole("button", { name: "确认暂不采纳" }).click();
+    await expect(page.getByText(/已暂不采纳优化候选/)).toBeVisible({ timeout: 10000 });
+    await expect
+      .poll(async () => {
+        const candidates = await api.listPromptEvaluationOptimizationCandidates({ run_id: rejectRun.id });
+        return candidates[0] ?? null;
+      }, { timeout: 15000 })
+      .toMatchObject({
+        status: "已拒绝",
+        metrics: {
+          人工处理: {
+            处理结果: "已拒绝",
+            拒绝原因: "E2E 拒绝原因：候选没有覆盖全部验收口径。",
+          },
+        },
+      });
   });
 
   test("旧提示词库路由会跳转到训练与评估提示词视图", async ({ page }) => {
