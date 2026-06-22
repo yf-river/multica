@@ -684,6 +684,125 @@ func TestPromptEvaluationRuntimeReadinessRejectsStaleRuntime(t *testing.T) {
 	}
 }
 
+func TestPromptEvaluationRuntimeReadinessReportsUnavailableStates(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	cleanupPromptEvaluationAgentRunTest(t)
+	if _, err := testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE workspace_id = $1 AND provider = 'codebuddy' AND name LIKE 'prompt-eval-codebuddy-%'`, testWorkspaceID); err != nil {
+		t.Fatalf("cleanup codebuddy runtime: %v", err)
+	}
+
+	readinessW := httptest.NewRecorder()
+	testHandler.GetPromptEvaluationRuntimeReadiness(readinessW, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
+	if readinessW.Code != http.StatusOK {
+		t.Fatalf("missing readiness status = %d, body = %s", readinessW.Code, readinessW.Body.String())
+	}
+	var missing PromptEvaluationRuntimeReadinessResponse
+	if err := json.Unmarshal(readinessW.Body.Bytes(), &missing); err != nil {
+		t.Fatalf("decode missing readiness response: %v", err)
+	}
+	if missing.Status != "缺失" || !strings.Contains(missing.Fix, "启动 multica daemon") || missing.Runtime != nil {
+		t.Fatalf("missing readiness = %+v", missing)
+	}
+
+	var offlineRuntimeID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codebuddy', 'offline', 'CodeBuddy 离线测试运行时', '{}'::jsonb, $4, 'private', now())
+		RETURNING id
+	`, testWorkspaceID, "prompt-eval-codebuddy-offline-"+randomID()[:8], "prompt-eval-codebuddy-offline-"+randomID()[:8], testUserID).Scan(&offlineRuntimeID); err != nil {
+		t.Fatalf("create offline codebuddy runtime: %v", err)
+	}
+
+	offlineW := httptest.NewRecorder()
+	testHandler.GetPromptEvaluationRuntimeReadiness(offlineW, newRequest(http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
+	if offlineW.Code != http.StatusOK {
+		t.Fatalf("offline readiness status = %d, body = %s", offlineW.Code, offlineW.Body.String())
+	}
+	var offline PromptEvaluationRuntimeReadinessResponse
+	if err := json.Unmarshal(offlineW.Body.Bytes(), &offline); err != nil {
+		t.Fatalf("decode offline readiness response: %v", err)
+	}
+	if offline.Status != "离线" || offline.Runtime == nil || offline.Runtime.ID != offlineRuntimeID || !strings.Contains(offline.Fix, "启动 multica daemon") {
+		t.Fatalf("offline readiness = %+v", offline)
+	}
+
+	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, "离线 runtime 提示词", "请评估 {{issue_title}}。", `[]`)
+	createW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+		"prompt_id":  promptID,
+		"name":       "离线 runtime Agent 实验",
+		"asset_type": "实验",
+		"payload": map[string]any{
+			"cases": []map[string]any{{"名称": "离线 runtime", "变量": map[string]any{"issue_title": "离线 runtime"}, "期望包含": []string{"离线"}}},
+		},
+	}))
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
+	}
+	var created PromptEvaluationAssetResponse
+	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	runW := httptest.NewRecorder()
+	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
+	if runW.Code != http.StatusServiceUnavailable || !strings.Contains(runW.Body.String(), "启动 multica daemon") {
+		t.Fatalf("agent run with offline runtime status = %d, body = %s", runW.Code, runW.Body.String())
+	}
+
+	if _, err := testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, offlineRuntimeID); err != nil {
+		t.Fatalf("delete offline runtime: %v", err)
+	}
+	var runtimeOwnerID string
+	runtimeOwnerAccount := "prompt-eval-runtime-owner-" + randomID()[:8] + "@multica.test"
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO "user" (name, account)
+		VALUES ('Prompt Eval Runtime Owner', $1)
+		RETURNING id
+	`, runtimeOwnerAccount).Scan(&runtimeOwnerID); err != nil {
+		t.Fatalf("create runtime owner: %v", err)
+	}
+	var plainMemberID string
+	plainMemberAccount := "prompt-eval-plain-member-" + randomID()[:8] + "@multica.test"
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO "user" (name, account)
+		VALUES ('Prompt Eval Plain Member', $1)
+		RETURNING id
+	`, plainMemberAccount).Scan(&plainMemberID); err != nil {
+		t.Fatalf("create plain member: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM member WHERE workspace_id = $1 AND user_id IN ($2, $3)`, testWorkspaceID, runtimeOwnerID, plainMemberID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM "user" WHERE id IN ($1, $2)`, runtimeOwnerID, plainMemberID)
+	})
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO member (workspace_id, user_id, role)
+		VALUES ($1, $2, 'member'), ($1, $3, 'member')
+	`, testWorkspaceID, runtimeOwnerID, plainMemberID); err != nil {
+		t.Fatalf("add runtime readiness members: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codebuddy', 'online', 'CodeBuddy 私有测试运行时', '{}'::jsonb, $4, 'private', now())
+	`, testWorkspaceID, "prompt-eval-codebuddy-private-"+randomID()[:8], "prompt-eval-codebuddy-private-"+randomID()[:8], runtimeOwnerID); err != nil {
+		t.Fatalf("create private codebuddy runtime: %v", err)
+	}
+
+	noPermissionW := httptest.NewRecorder()
+	testHandler.GetPromptEvaluationRuntimeReadiness(noPermissionW, newRequestAs(plainMemberID, http.MethodGet, "/api/prompt-evaluation-runtime-readiness", nil))
+	if noPermissionW.Code != http.StatusOK {
+		t.Fatalf("no permission readiness status = %d, body = %s", noPermissionW.Code, noPermissionW.Body.String())
+	}
+	var noPermission PromptEvaluationRuntimeReadinessResponse
+	if err := json.Unmarshal(noPermissionW.Body.Bytes(), &noPermission); err != nil {
+		t.Fatalf("decode no permission readiness response: %v", err)
+	}
+	if noPermission.Status != "无权限" || !strings.Contains(noPermission.Fix, "runtime 所有者") || noPermission.Runtime != nil {
+		t.Fatalf("no permission readiness = %+v", noPermission)
+	}
+}
+
 func TestRunPromptEvaluationAssetAgentCompletedWithoutStructuredVerdictNeedsReview(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")
