@@ -991,6 +991,7 @@ function DemoDashboardPanel({
     ["资产总数", formatNumber(trainingAssets["资产总数"] ?? assets.length)],
     ["结构化用例", formatNumber(trainingAssets["结构化用例"] ?? cases.length)],
     ["优化候选", `${pendingCandidates} 待确认 · ${publishedCandidates} 已发布 · ${rejectedCandidates} 已拒绝`],
+    ["服务端证据快照", `${formatNumber(trainingAssets["服务端证据快照"] ?? trainingMetrics["服务端证据快照"])} 条 · 验收归档 ${formatNumber(trainingAssets["验收归档快照"] ?? trainingMetrics["验收归档快照"])}`],
     ["真实 Agent 证据", hasAgentEvidence ? "已有任务/trace 运行记录" : "暂无真实 Agent 运行记录"],
     ["最近运行", latestRun ? summarizeLatestRunForDemo(latestRun) : "暂无运行"],
   ];
@@ -1072,6 +1073,7 @@ function DemoDashboardPanel({
             <DemoChecklistItem ok={runtimeReadiness.status === "就绪"} label="CodeBuddy 运行时可创建真实 Agent 任务" detail={runtimeReadiness.detail} />
             <DemoChecklistItem ok={hasAgentEvidence} label="运行历史已有任务/trace 证据" detail={latestRun?.task_id ? `最近任务 ${latestRun.task_id}` : "需要执行一次真实 Agent 评估"} />
             <DemoChecklistItem ok={cases.length > 0} label="数据集/测试套件已有结构化用例" detail={`${cases.length} 条结构化用例`} />
+            <DemoChecklistItem ok={Number(trainingAssets["服务端证据快照"] ?? trainingMetrics["服务端证据快照"] ?? 0) > 0} label="运行证据已服务端归档" detail={`${formatNumber(trainingAssets["服务端证据快照"] ?? trainingMetrics["服务端证据快照"])} 条快照，验收归档 ${formatNumber(trainingAssets["验收归档快照"] ?? trainingMetrics["验收归档快照"])}`} />
             <DemoChecklistItem ok={hasOptimizationLoop} label="失败用例可进入优化候选人工确认" detail={`${pendingCandidates} 待确认，${publishedCandidates} 已发布`} />
             <DemoChecklistItem ok={!maybeTruncated} label="观测摘要可直接用于汇报" detail={String(completeness?.["说明"] ?? "当前摘要完整")} />
           </div>

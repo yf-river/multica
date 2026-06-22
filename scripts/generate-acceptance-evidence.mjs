@@ -40,6 +40,7 @@ const git = {
 
 const account = await loadAccountRole();
 const databaseEvidence = await loadDatabaseEvidence(account.workspace_id);
+const logEvidence = loadLogEvidence();
 const commands = buildCommandPlan();
 const commandResults = runTests ? runCommands(commands) : commands.map((item) => ({
   ...item,
@@ -49,7 +50,7 @@ const commandResults = runTests ? runCommands(commands) : commands.map((item) =>
   note: "默认只生成验收包；使用 pnpm acceptance:verify 或 --run-tests 后会执行。",
 }));
 
-const risks = buildRisks({ health, ready, login, account, commandResults, git, databaseEvidence });
+const risks = buildRisks({ health, ready, login, account, commandResults, git, databaseEvidence, logEvidence });
 const evidence = {
   "语义版本": "multica.production_acceptance_evidence.v1",
   "生成时间": timestamp,
@@ -74,6 +75,7 @@ const evidence = {
   },
   "提交": git,
   "数据库抽查": databaseEvidence,
+  "日志抽查": logEvidence,
   "测试命令": commandResults,
   "剩余风险": risks,
   "人工复核清单": [
@@ -364,6 +366,35 @@ function normalizePgRow(row) {
   return Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value instanceof Date ? value.toISOString() : value]));
 }
 
+function loadLogEvidence() {
+  const logPath = trimEnv("ACCEPTANCE_SERVER_LOG") || path.join(repoRoot, "artifacts", "logs", "server-goal-test.log");
+  if (!existsSync(logPath)) {
+    return { status: "跳过", path: logPath, reason: "未找到服务日志文件" };
+  }
+  try {
+    const content = readFileSync(logPath, "utf8");
+    const lines = content.split(/\r?\n/).filter(Boolean);
+    const tailLines = lines.slice(-120);
+    const errorLines = tailLines.filter((line) => /\b(ERR|ERROR|panic|fatal|bind: address already in use)\b/i.test(line));
+    const healthLines = tailLines.filter((line) => line.includes("path=/readyz") || line.includes("path=/health"));
+    const daemonLines = tailLines.filter((line) => line.includes("daemon heartbeat") || line.includes("tasks/claim"));
+    return {
+      status: "已抽查",
+      path: logPath,
+      line_count: lines.length,
+      tail_line_count: tailLines.length,
+      error_count: errorLines.length,
+      health_line_count: healthLines.length,
+      daemon_line_count: daemonLines.length,
+      recent_errors: errorLines.slice(-8),
+      recent_health: healthLines.slice(-5),
+      recent_daemon: daemonLines.slice(-5),
+    };
+  } catch (error) {
+    return { status: "失败", path: logPath, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
 function buildCommandPlan() {
   const commands = [
     {
@@ -389,6 +420,19 @@ function buildCommandPlan() {
     {
       name: "Web proxy tests",
       command: "pnpm --filter @multica/web test -- proxy.test.ts",
+      required: true,
+    },
+    {
+      name: "部署浏览器验收 E2E",
+      command: [
+        `PLAYWRIGHT_BASE_URL=${shellQuote(frontendURL)}`,
+        `FRONTEND_ORIGIN=${shellQuote(frontendURL)}`,
+        `NEXT_PUBLIC_API_URL=${shellQuote(apiURL)}`,
+        `NEXT_PUBLIC_WS_URL=${shellQuote(apiURL.replace(/^http/, "ws") + "/ws")}`,
+        `ACCEPTANCE_API_URL=${shellQuote(apiURL)}`,
+        `ACCEPTANCE_FRONTEND_URL=${shellQuote(frontendURL)}`,
+        "pnpm exec playwright test e2e/production-acceptance.spec.ts --project=chromium",
+      ].join(" "),
       required: true,
     },
     {
@@ -419,6 +463,10 @@ function buildCommandPlan() {
   return commands.filter((item) => includeE2E || !item.skippedByDefault);
 }
 
+function shellQuote(value) {
+  return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
 function runCommands(commands) {
   return commands.map((item) => {
     const started = Date.now();
@@ -445,7 +493,7 @@ function tail(value) {
   return lines.slice(-30);
 }
 
-function buildRisks({ health, ready, login, account, commandResults, git, databaseEvidence }) {
+function buildRisks({ health, ready, login, account, commandResults, git, databaseEvidence, logEvidence }) {
   const risks = [];
   if (!health.ok) risks.push("后端 /health 未通过，不能作为可演示服务交付。");
   if (!ready.ok) risks.push("后端 /readyz 未通过，依赖或数据库连接可能未就绪。");
@@ -469,6 +517,11 @@ function buildRisks({ health, ready, login, account, commandResults, git, databa
     if (Number(tasks.trace_event_rows || 0) === 0) risks.push("数据库中未发现任务 trace 事件，观测闭环证据不足。");
     if (Number(squads.sop_run_count || 0) === 0) risks.push("数据库中未发现小队 SOP run，小队闭环证据不足。");
   }
+  if (logEvidence.status !== "已抽查") {
+    risks.push(`服务日志抽查未完成：${logEvidence.reason || logEvidence.status}`);
+  } else if (Number(logEvidence.error_count || 0) > 0) {
+    risks.push(`服务日志最近片段存在 ${logEvidence.error_count} 条错误，需要排查后再演示。`);
+  }
   if (git.status) risks.push("当前 worktree 非干净状态；提交前需要确认没有未纳入验收的改动。");
   if (risks.length === 0) {
     risks.push("无代码侧已知阻塞；外部风险仅剩模型额度、网络访问和演示账号密码轮换。");
@@ -481,7 +534,9 @@ function renderMarkdown(data, jsonPath) {
   const commitRows = data["提交"].commits.map((line) => `- ${line}`).join("\n");
   const riskRows = data["剩余风险"].map((line) => `- ${line}`).join("\n");
   const db = data["数据库抽查"];
+  const logs = data["日志抽查"] || {};
   const dbStatus = db.status === "已抽查" ? "已抽查" : `${db.status}：${db.reason || "无原因"}`;
+  const logStatus = logs.status === "已抽查" ? "已抽查" : `${logs.status || "未记录"}：${logs.reason || "无原因"}`;
   const training = db.training || {};
   const squads = db.squads || {};
   const tasks = db.tasks || {};
@@ -528,6 +583,14 @@ ${commitRows}
 - 服务端证据快照：${training.evidence_snapshot_count ?? "未记录"}
 - 任务：${tasks.task_count ?? "未记录"}，usage 行 ${tasks.usage_rows ?? "未记录"}，trace 事件 ${tasks.trace_event_rows ?? "未记录"}
 - 小队：${squads.squad_count ?? "未记录"}，SOP run ${squads.sop_run_count ?? "未记录"}，SOP 事件 ${squads.sop_event_count ?? "未记录"}
+
+## 日志抽查
+
+- 状态：${logStatus}
+- 文件：\`${logs.path || "未记录"}\`
+- 最近错误：${logs.error_count ?? "未记录"}
+- 最近健康检查日志：${logs.health_line_count ?? "未记录"}
+- 最近 daemon 日志：${logs.daemon_line_count ?? "未记录"}
 
 ### 最近训练评估运行
 

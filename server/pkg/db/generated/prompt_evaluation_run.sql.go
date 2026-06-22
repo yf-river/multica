@@ -415,6 +415,14 @@ candidate_summary AS (
     FROM prompt_evaluation_optimization_candidate peoc
     WHERE peoc.workspace_id = $1
       AND ($2::timestamptz IS NULL OR peoc.created_at >= $2)
+),
+snapshot_summary AS (
+    SELECT
+        COUNT(*)::bigint AS evidence_snapshots,
+        COUNT(*) FILTER (WHERE snapshot_type = '验收归档')::bigint AS acceptance_snapshots
+    FROM prompt_evaluation_evidence_snapshot pees
+    WHERE pees.workspace_id = $1
+      AND ($2::timestamptz IS NULL OR pees.created_at >= $2)
 )
 SELECT
     a.total_assets,
@@ -451,11 +459,14 @@ SELECT
     oc.pending_candidates,
     oc.published_candidates,
     oc.rejected_candidates,
+    es.evidence_snapshots,
+    es.acceptance_snapshots,
     r.last_run_at
 FROM asset_summary a
 CROSS JOIN case_summary c
 CROSS JOIN run_summary r
 CROSS JOIN candidate_summary oc
+CROSS JOIN snapshot_summary es
 `
 
 type GetPromptEvaluationSummaryParams struct {
@@ -495,6 +506,8 @@ type GetPromptEvaluationSummaryRow struct {
 	PendingCandidates   int64              `json:"pending_candidates"`
 	PublishedCandidates int64              `json:"published_candidates"`
 	RejectedCandidates  int64              `json:"rejected_candidates"`
+	EvidenceSnapshots   int64              `json:"evidence_snapshots"`
+	AcceptanceSnapshots int64              `json:"acceptance_snapshots"`
 	LastRunAt           pgtype.Timestamptz `json:"last_run_at"`
 }
 
@@ -533,6 +546,8 @@ func (q *Queries) GetPromptEvaluationSummary(ctx context.Context, arg GetPromptE
 		&i.PendingCandidates,
 		&i.PublishedCandidates,
 		&i.RejectedCandidates,
+		&i.EvidenceSnapshots,
+		&i.AcceptanceSnapshots,
 		&i.LastRunAt,
 	)
 	return i, err

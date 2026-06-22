@@ -122,6 +122,14 @@ candidate_summary AS (
     FROM prompt_evaluation_optimization_candidate peoc
     WHERE peoc.workspace_id = $1
       AND (sqlc.narg('since')::timestamptz IS NULL OR peoc.created_at >= sqlc.narg('since'))
+),
+snapshot_summary AS (
+    SELECT
+        COUNT(*)::bigint AS evidence_snapshots,
+        COUNT(*) FILTER (WHERE snapshot_type = '验收归档')::bigint AS acceptance_snapshots
+    FROM prompt_evaluation_evidence_snapshot pees
+    WHERE pees.workspace_id = $1
+      AND (sqlc.narg('since')::timestamptz IS NULL OR pees.created_at >= sqlc.narg('since'))
 )
 SELECT
     a.total_assets,
@@ -158,11 +166,14 @@ SELECT
     oc.pending_candidates,
     oc.published_candidates,
     oc.rejected_candidates,
+    es.evidence_snapshots,
+    es.acceptance_snapshots,
     r.last_run_at
 FROM asset_summary a
 CROSS JOIN case_summary c
 CROSS JOIN run_summary r
-CROSS JOIN candidate_summary oc;
+CROSS JOIN candidate_summary oc
+CROSS JOIN snapshot_summary es;
 
 -- name: GetPromptEvaluationRunInWorkspace :one
 SELECT * FROM prompt_evaluation_run

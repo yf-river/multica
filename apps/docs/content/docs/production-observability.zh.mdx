@@ -82,6 +82,8 @@ production-acceptance-<timestamp>.md
 pnpm acceptance:verify
 ```
 
+`acceptance:verify` 会先执行 `acceptance:prepare-demo`，再执行 typecheck、build、核心单测、代理测试和只读的部署浏览器 E2E。部署浏览器 E2E 使用演示账号打开 **训练与评估 → 生产看板**，确认真实 Agent 证据、服务端证据快照和运行历史证据可以在已部署页面中看到。
+
 如果要把 Playwright 主链路、真实 Agent 和真实小队验收一起纳入报告：
 
 ```bash
@@ -101,6 +103,7 @@ ACCEPTANCE_INCLUDE_E2E=1 pnpm acceptance:verify
 | `ACCEPTANCE_DEMO_WAIT_MS` | `acceptance:prepare-demo` 等待真实 daemon 处理小队队长任务的最长时间，默认 180000 |
 | `ACCEPTANCE_DEMO_FORCE_NEW` | 设为 `1` 后不复用已有小队 SOP 证据，强制创建新 issue 和新队长任务 |
 | `DATABASE_URL` | 用于只读抽查演示工作区的训练、评估、任务、trace 和小队 SOP 数据；未配置时报告会明确标记跳过 |
+| `ACCEPTANCE_SERVER_LOG` | 覆盖服务日志路径；默认读取 `artifacts/logs/server-goal-test.log` 并抽查最近错误、健康检查和 daemon 心跳 |
 
 验收包会抽查 `prompt_evaluation_run`、`prompt_evaluation_trial`、`prompt_evaluation_case`、`prompt_evaluation_optimization_candidate`、`prompt_evaluation_evidence_snapshot`、`agent_task_queue`、`task_usage`、`task_trace_event`、`squad_sop_run` 和 `squad_sop_step_event` 等核心表。验收包必须和生产看板导出的 `multica.production_demo_evidence.v1` JSON 一起留存：前者证明部署、账号、commit、数据库证据和测试命令，后者证明业务闭环、运行证据、trace、token 和观测指标。
 

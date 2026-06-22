@@ -216,6 +216,12 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 		t.Fatalf("structured trial rendered prompt = %q", renderedPrompt)
 	}
 
+	snapshotW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationEvidenceSnapshot(snapshotW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+runID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", runID))
+	if snapshotW.Code != http.StatusCreated {
+		t.Fatalf("create summary snapshot status = %d, body = %s", snapshotW.Code, snapshotW.Body.String())
+	}
+
 	summaryW := httptest.NewRecorder()
 	testHandler.GetPromptEvaluationSummary(summaryW, newRequest(http.MethodGet, "/api/prompt-evaluation-summary", nil))
 	if summaryW.Code != http.StatusOK {
@@ -241,6 +247,12 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 	if _, ok := summary.Metrics["需人工复核"]; !ok {
 		t.Fatalf("summary missing manual review metric: %#v", summary.Metrics)
 	}
+	if summary.Metrics["服务端证据快照"].(float64) < 1 || summary.Metrics["验收归档快照"].(float64) < 1 {
+		t.Fatalf("summary missing evidence snapshots: %#v", summary.Metrics)
+	}
+	if summary.Assets["服务端证据快照"] < 1 || summary.Assets["验收归档快照"] < 1 {
+		t.Fatalf("summary assets missing evidence snapshots: %#v", summary.Assets)
+	}
 
 	futureSince := url.QueryEscape(time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339))
 	windowW := httptest.NewRecorder()
@@ -254,6 +266,9 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 	}
 	if windowSummary.RunStatus["运行总数"] != 0 || windowSummary.Metrics["通过数"].(float64) != 0 || windowSummary.Metrics["输入token"].(float64) != 0 {
 		t.Fatalf("window summary should filter run metrics, got status=%#v metrics=%#v", windowSummary.RunStatus, windowSummary.Metrics)
+	}
+	if windowSummary.Metrics["服务端证据快照"].(float64) != 0 || windowSummary.Assets["服务端证据快照"] != 0 {
+		t.Fatalf("window summary should filter evidence snapshots, got metrics=%#v assets=%#v", windowSummary.Metrics, windowSummary.Assets)
 	}
 	if windowSummary.Assets["测试套件"] < 1 || windowSummary.Assets["结构化用例"] < 1 {
 		t.Fatalf("window summary should keep asset inventory, got assets=%#v", windowSummary.Assets)

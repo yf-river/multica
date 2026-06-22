@@ -10,11 +10,13 @@ config({ path: resolve(__dirname, "../../.env") });
 const remoteApiUrl = resolveRemoteApiUrl(process.env);
 const docsUrl = process.env.DOCS_URL || "http://localhost:4000";
 
-function parseDevOriginHost(origin: string): string {
+function parseDevOriginHosts(origin: string): string[] {
+  const trimmed = origin.trim();
   try {
-    return new URL(origin.trim()).host;
+    const url = new URL(trimmed);
+    return Array.from(new Set([url.host, url.hostname].filter(Boolean)));
   } catch {
-    return origin.trim();
+    return trimmed ? [trimmed] : [];
   }
 }
 
@@ -29,7 +31,7 @@ const allowedDevOrigins = Array.from(
     [
       ...(process.env.CORS_ALLOWED_ORIGINS ?? "")
         .split(",")
-        .map((origin) => parseDevOriginHost(origin))
+        .flatMap((origin) => parseDevOriginHosts(origin))
         .filter(Boolean),
       "localhost",
       "127.0.0.1",

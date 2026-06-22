@@ -14,7 +14,7 @@
     "lint": "turbo lint",
     "acceptance:prepare-demo": "node scripts/prepare-production-demo-evidence.mjs",
     "acceptance:evidence": "node scripts/generate-acceptance-evidence.mjs",
-    "acceptance:verify": "node scripts/generate-acceptance-evidence.mjs --run-tests",
+    "acceptance:verify": "pnpm acceptance:prepare-demo && node scripts/generate-acceptance-evidence.mjs --run-tests",
     "clean": "turbo clean && rm -rf node_modules",
     "ui:add": "cd packages/ui && npx shadcn@latest add",
     "generate:reserved-slugs": "node scripts/generate-reserved-slugs.mjs"
