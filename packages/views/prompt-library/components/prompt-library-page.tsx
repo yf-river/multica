@@ -1766,10 +1766,13 @@ function EvidenceContextPanel({ context }: { context: Record<string, unknown> })
   const completeness = isRecord(context["证据完整性"]) ? context["证据完整性"] : {};
   const items = [
     `工作区 ${stringFromUnknown(context["工作区"]) || "未记录"}`,
-    `提示词 ${stringFromUnknown(context["提示词"]) || "未绑定"}`,
-    `评测资产 ${stringFromUnknown(context["评测资产"]) || "未记录"}`,
-    `issue ${stringFromUnknown(context["issue"]) || "未绑定"}`,
-    `项目 ${stringFromUnknown(context["项目"]) || "未绑定"}`,
+    `提示词 ${stringFromUnknown(context["提示词名称"]) || stringFromUnknown(context["提示词"]) || "未绑定"}`,
+    `评测资产 ${stringFromUnknown(context["评测资产名称"]) || stringFromUnknown(context["评测资产"]) || "未记录"}`,
+    `Agent ${stringFromUnknown(context["执行Agent名称"]) || stringFromUnknown(context["执行Agent"]) || "未记录"}`,
+    `运行时 ${stringFromUnknown(context["运行时名称"]) || stringFromUnknown(context["运行时标识"]) || stringFromUnknown(context["运行时"]) || "未记录"}`,
+    `issue ${stringFromUnknown(context["issue标题"]) || stringFromUnknown(context["issue"]) || "未绑定"}`,
+    `项目 ${stringFromUnknown(context["项目名称"]) || stringFromUnknown(context["项目"]) || "未绑定"}`,
+    `小队 ${stringFromUnknown(context["小队名称"]) || stringFromUnknown(context["小队"]) || "未绑定"}`,
     `任务 ${stringFromUnknown(context["任务"]) || "未创建"}`,
     `任务状态 ${stringFromUnknown(context["任务状态"]) || stringFromUnknown(context["状态"]) || "未记录"}`,
     `执行模式 ${stringFromUnknown(context["任务执行模式"]) || "未记录"}`,

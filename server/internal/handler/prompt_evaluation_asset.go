@@ -234,6 +234,16 @@ type PromptEvaluationRunEvidenceResponse struct {
 	Context      map[string]any                      `json:"上下文"`
 }
 
+type promptEvaluationEvidenceRefs struct {
+	Asset   *db.PromptEvaluationAsset
+	Prompt  *db.PromptLibraryItem
+	Agent   *db.Agent
+	Runtime *db.AgentRuntime
+	Issue   *db.Issue
+	Project *db.Project
+	Squad   *db.Squad
+}
+
 type PromptEvaluationSummaryResponse struct {
 	WorkspaceID string           `json:"workspace_id"`
 	GeneratedAt string           `json:"generated_at"`
@@ -1105,7 +1115,7 @@ func (h *Handler) GetPromptEvaluationRunEvidence(w http.ResponseWriter, r *http.
 			return
 		}
 		issueID := ""
-		if loadedTask, err := h.Queries.GetAgentTask(r.Context(), run.TaskID); err == nil {
+		if loadedTask, err := h.Queries.GetAgentTaskInWorkspace(r.Context(), db.GetAgentTaskInWorkspaceParams{ID: run.TaskID, WorkspaceID: workspaceUUID}); err == nil {
 			task = &loadedTask
 			issueID = uuidToString(loadedTask.IssueID)
 		}
@@ -1124,6 +1134,7 @@ func (h *Handler) GetPromptEvaluationRunEvidence(w http.ResponseWriter, r *http.
 			traceResp[i] = taskTraceEventToResponse(event)
 		}
 	}
+	refs := h.loadPromptEvaluationEvidenceRefs(r.Context(), workspaceUUID, run, task, traceResp)
 
 	writeJSON(w, http.StatusOK, PromptEvaluationRunEvidenceResponse{
 		Run:          promptEvaluationRunToResponse(run),
@@ -1132,13 +1143,94 @@ func (h *Handler) GetPromptEvaluationRunEvidence(w http.ResponseWriter, r *http.
 		TaskMessages: messageResp,
 		TraceEvents:  traceResp,
 		Evidence:     decodeJSONDefault(run.Evidence, map[string]any{}),
-		Context:      buildPromptEvaluationEvidenceContext(run, task, trialResp, usageResp, messageResp, traceResp),
+		Context:      buildPromptEvaluationEvidenceContext(run, task, refs, trialResp, usageResp, messageResp, traceResp),
 	})
+}
+
+func (h *Handler) loadPromptEvaluationEvidenceRefs(
+	ctx context.Context,
+	workspaceID pgtype.UUID,
+	run db.PromptEvaluationRun,
+	task *db.AgentTaskQueue,
+	traceEvents []TaskTraceEventResponse,
+) promptEvaluationEvidenceRefs {
+	refs := promptEvaluationEvidenceRefs{}
+	if run.AssetID.Valid {
+		if asset, err := h.Queries.GetPromptEvaluationAssetInWorkspace(ctx, db.GetPromptEvaluationAssetInWorkspaceParams{ID: run.AssetID, WorkspaceID: workspaceID}); err == nil {
+			refs.Asset = &asset
+		}
+	}
+	if run.PromptID.Valid {
+		if prompt, err := h.Queries.GetPromptLibraryItemInWorkspace(ctx, db.GetPromptLibraryItemInWorkspaceParams{ID: run.PromptID, WorkspaceID: workspaceID}); err == nil {
+			refs.Prompt = &prompt
+		}
+	}
+	if run.AgentID.Valid {
+		if agent, err := h.Queries.GetAgent(ctx, run.AgentID); err == nil && uuidToString(agent.WorkspaceID) == uuidToString(workspaceID) {
+			refs.Agent = &agent
+		}
+	}
+	if run.RuntimeID.Valid {
+		if runtime, err := h.Queries.GetAgentRuntimeForWorkspace(ctx, db.GetAgentRuntimeForWorkspaceParams{ID: run.RuntimeID, WorkspaceID: workspaceID}); err == nil {
+			refs.Runtime = &runtime
+		}
+	}
+
+	issueID := pgtype.UUID{}
+	if task != nil && task.IssueID.Valid {
+		issueID = task.IssueID
+	} else if id := firstTraceUUID(traceEvents, func(event TaskTraceEventResponse) *string { return event.IssueID }); id.Valid {
+		issueID = id
+	}
+	if issueID.Valid {
+		if issue, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{ID: issueID, WorkspaceID: workspaceID}); err == nil {
+			refs.Issue = &issue
+		}
+	}
+
+	projectID := pgtype.UUID{}
+	if refs.Issue != nil && refs.Issue.ProjectID.Valid {
+		projectID = refs.Issue.ProjectID
+	} else if refs.Prompt != nil && refs.Prompt.ProjectID.Valid {
+		projectID = refs.Prompt.ProjectID
+	} else if id := firstTraceUUID(traceEvents, func(event TaskTraceEventResponse) *string { return event.ProjectID }); id.Valid {
+		projectID = id
+	}
+	if projectID.Valid {
+		if project, err := h.Queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{ID: projectID, WorkspaceID: workspaceID}); err == nil {
+			refs.Project = &project
+		}
+	}
+
+	squadID := pgtype.UUID{}
+	if refs.Issue != nil && refs.Issue.AssigneeType.Valid && refs.Issue.AssigneeType.String == "squad" && refs.Issue.AssigneeID.Valid {
+		squadID = refs.Issue.AssigneeID
+	} else if id := firstTraceUUID(traceEvents, func(event TaskTraceEventResponse) *string { return event.SquadID }); id.Valid {
+		squadID = id
+	}
+	if squadID.Valid {
+		if squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{ID: squadID, WorkspaceID: workspaceID}); err == nil {
+			refs.Squad = &squad
+		}
+	}
+	return refs
+}
+
+func firstTraceUUID(traceEvents []TaskTraceEventResponse, selectID func(TaskTraceEventResponse) *string) pgtype.UUID {
+	for _, event := range traceEvents {
+		if value := selectID(event); value != nil && strings.TrimSpace(*value) != "" {
+			if id, err := util.ParseUUID(*value); err == nil {
+				return id
+			}
+		}
+	}
+	return pgtype.UUID{}
 }
 
 func buildPromptEvaluationEvidenceContext(
 	run db.PromptEvaluationRun,
 	task *db.AgentTaskQueue,
+	refs promptEvaluationEvidenceRefs,
 	trials []PromptEvaluationTrialResponse,
 	usages []PromptEvaluationTaskUsageResponse,
 	messages []protocol.TaskMessagePayload,
@@ -1172,6 +1264,41 @@ func buildPromptEvaluationEvidenceContext(
 			"trace事件条数": len(traceEvents),
 		},
 		"输入输出摘要": buildPromptEvaluationIOContext(trials, messages),
+	}
+	if refs.Prompt != nil {
+		context["提示词名称"] = refs.Prompt.Name
+		context["提示词类型"] = refs.Prompt.PromptType
+		context["提示词版本"] = refs.Prompt.Version
+	}
+	if refs.Asset != nil {
+		context["评测资产名称"] = refs.Asset.Name
+		context["评测资产类型"] = refs.Asset.AssetType
+	}
+	if refs.Agent != nil {
+		context["执行Agent名称"] = refs.Agent.Name
+		context["执行Agent状态"] = refs.Agent.Status
+	}
+	if refs.Runtime != nil {
+		context["运行时名称"] = refs.Runtime.Name
+		context["运行时状态"] = refs.Runtime.Status
+		context["运行时提供方"] = refs.Runtime.Provider
+	}
+	if refs.Issue != nil {
+		context["issue标题"] = refs.Issue.Title
+		context["issue状态"] = refs.Issue.Status
+		context["issue编号"] = refs.Issue.Number
+		context["项目"] = uuidToString(refs.Issue.ProjectID)
+		context["承接方类型"] = refs.Issue.AssigneeType.String
+		context["承接方"] = uuidToString(refs.Issue.AssigneeID)
+	}
+	if refs.Project != nil {
+		context["项目"] = uuidToString(refs.Project.ID)
+		context["项目名称"] = refs.Project.Title
+		context["项目状态"] = refs.Project.Status
+	}
+	if refs.Squad != nil {
+		context["小队"] = uuidToString(refs.Squad.ID)
+		context["小队名称"] = refs.Squad.Name
 	}
 	if run.ChatSessionID.Valid {
 		context["会话"] = uuidToString(run.ChatSessionID)

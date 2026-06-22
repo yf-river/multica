@@ -226,6 +226,8 @@ test.describe("训练与评估工作台", () => {
       });
     const queuedAgentRun = await findQueuedAgentRun();
     expect(queuedAgentRun).toBeTruthy();
+    const queuedAgentAsset = (await api.listPromptEvaluationAssets({ prompt_id: prompt!.id })).find((asset) => asset.id === queuedAgentRun!.asset_id);
+    expect(queuedAgentAsset).toBeTruthy();
     const agentEvidence = await api.getPromptEvaluationRunEvidence(queuedAgentRun!.id);
     expect(agentEvidence.run).toMatchObject({
       run_kind: "Agent执行",
@@ -242,6 +244,13 @@ test.describe("训练与评估工作台", () => {
         failure_reason: "等待 Agent 执行完成",
       }),
     ]);
+    expect(agentEvidence.上下文).toMatchObject({
+      提示词名称: prompt!.name,
+      评测资产名称: queuedAgentAsset!.name,
+      执行Agent名称: "Multica 训练评估 Agent",
+      运行时名称: runtime.name,
+      运行时提供方: "codebuddy",
+    });
     await api.completePromptEvaluationAgentTask(queuedAgentRun!);
     await expect
       .poll(async () => {
@@ -357,6 +366,10 @@ test.describe("训练与评估工作台", () => {
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-结束时间")).not.toContainText("未完成");
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-评估结论")).toContainText("Agent 返回结构化逐用例评估");
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText("上下文摘要");
+    await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText(`提示词 ${prompt!.name}`);
+    await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText(`评测资产 ${queuedAgentAsset!.name}`);
+    await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText("Agent Multica 训练评估 Agent");
+    await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText(`运行时 ${runtime.name}`);
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText(`任务 ${queuedAgentRun!.task_id}`);
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText("用量证据 1");
     await expect(page.getByText("模板渲染检查 · 通过")).toBeVisible({ timeout: 10000 });

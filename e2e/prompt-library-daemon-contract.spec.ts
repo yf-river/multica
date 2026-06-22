@@ -120,9 +120,14 @@ test.describe("训练与评估 daemon 协议闭环", () => {
     expect(evidence.上下文).toMatchObject({
       任务: queued.task_id,
       执行Agent: queued.agent_id,
+      执行Agent名称: "Multica 训练评估 Agent",
       运行时标识: runtime.id,
+      运行时名称: runtime.name,
+      运行时提供方: "codebuddy",
       模型: queued.model,
       触发来源: "Agent 调试场",
+      提示词名称: prompt.name,
+      评测资产名称: asset.name,
     });
     expect(evidence.上下文["证据完整性"]).toMatchObject({
       用例数: 1,
