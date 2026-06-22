@@ -45,7 +45,7 @@ INSERT INTO prompt_evaluation_asset (
     COALESCE($14, 0),
     COALESCE($15, 0)
 )
-RETURNING id, workspace_id, prompt_id, name, description, asset_type, payload, status, created_by, created_at, updated_at, structure_schema, structured_case_count, structured_variable_count, structured_assertion_count, linked_dataset_count, linked_prompt_count, evaluation_dimension_count
+RETURNING id, workspace_id, prompt_id, name, description, asset_type, payload, status, created_by, created_at, updated_at, structure_schema, structured_case_count, structured_variable_count, structured_assertion_count, linked_dataset_count, linked_prompt_count, evaluation_dimension_count, dataset_row_count
 `
 
 type CreatePromptEvaluationAssetParams struct {
@@ -104,6 +104,7 @@ func (q *Queries) CreatePromptEvaluationAsset(ctx context.Context, arg CreatePro
 		&i.LinkedDatasetCount,
 		&i.LinkedPromptCount,
 		&i.EvaluationDimensionCount,
+		&i.DatasetRowCount,
 	)
 	return i, err
 }
@@ -124,7 +125,7 @@ func (q *Queries) DeletePromptEvaluationAsset(ctx context.Context, arg DeletePro
 }
 
 const getPromptEvaluationAssetInWorkspace = `-- name: GetPromptEvaluationAssetInWorkspace :one
-SELECT id, workspace_id, prompt_id, name, description, asset_type, payload, status, created_by, created_at, updated_at, structure_schema, structured_case_count, structured_variable_count, structured_assertion_count, linked_dataset_count, linked_prompt_count, evaluation_dimension_count FROM prompt_evaluation_asset
+SELECT id, workspace_id, prompt_id, name, description, asset_type, payload, status, created_by, created_at, updated_at, structure_schema, structured_case_count, structured_variable_count, structured_assertion_count, linked_dataset_count, linked_prompt_count, evaluation_dimension_count, dataset_row_count FROM prompt_evaluation_asset
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -155,12 +156,13 @@ func (q *Queries) GetPromptEvaluationAssetInWorkspace(ctx context.Context, arg G
 		&i.LinkedDatasetCount,
 		&i.LinkedPromptCount,
 		&i.EvaluationDimensionCount,
+		&i.DatasetRowCount,
 	)
 	return i, err
 }
 
 const listPromptEvaluationAssets = `-- name: ListPromptEvaluationAssets :many
-SELECT id, workspace_id, prompt_id, name, description, asset_type, payload, status, created_by, created_at, updated_at, structure_schema, structured_case_count, structured_variable_count, structured_assertion_count, linked_dataset_count, linked_prompt_count, evaluation_dimension_count FROM prompt_evaluation_asset
+SELECT id, workspace_id, prompt_id, name, description, asset_type, payload, status, created_by, created_at, updated_at, structure_schema, structured_case_count, structured_variable_count, structured_assertion_count, linked_dataset_count, linked_prompt_count, evaluation_dimension_count, dataset_row_count FROM prompt_evaluation_asset
 WHERE workspace_id = $1
   AND ($2::text IS NULL OR asset_type = $2)
   AND ($3::text IS NULL OR status = $3)
@@ -208,6 +210,7 @@ func (q *Queries) ListPromptEvaluationAssets(ctx context.Context, arg ListPrompt
 			&i.LinkedDatasetCount,
 			&i.LinkedPromptCount,
 			&i.EvaluationDimensionCount,
+			&i.DatasetRowCount,
 		); err != nil {
 			return nil, err
 		}
@@ -236,7 +239,7 @@ UPDATE prompt_evaluation_asset SET
     evaluation_dimension_count = COALESCE($15, evaluation_dimension_count),
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, prompt_id, name, description, asset_type, payload, status, created_by, created_at, updated_at, structure_schema, structured_case_count, structured_variable_count, structured_assertion_count, linked_dataset_count, linked_prompt_count, evaluation_dimension_count
+RETURNING id, workspace_id, prompt_id, name, description, asset_type, payload, status, created_by, created_at, updated_at, structure_schema, structured_case_count, structured_variable_count, structured_assertion_count, linked_dataset_count, linked_prompt_count, evaluation_dimension_count, dataset_row_count
 `
 
 type UpdatePromptEvaluationAssetParams struct {
@@ -295,6 +298,7 @@ func (q *Queries) UpdatePromptEvaluationAsset(ctx context.Context, arg UpdatePro
 		&i.LinkedDatasetCount,
 		&i.LinkedPromptCount,
 		&i.EvaluationDimensionCount,
+		&i.DatasetRowCount,
 	)
 	return i, err
 }

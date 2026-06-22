@@ -63,6 +63,7 @@ const dataset = post("/api/prompt-evaluation-assets", {
   status: "启用",
 }, token);
 if (!dataset?.id) fail("创建数据集响应缺少 id");
+if (Number(dataset.dataset_row_count ?? 0) < 1) fail(`数据集行计数不足：${dataset.dataset_row_count ?? 0}`);
 const datasetCases = get(`/api/prompt-evaluation-cases?asset_id=${encodeURIComponent(dataset.id)}`, token);
 const datasetAssertionCount = assertCaseAssertions(datasetCases, dataset.id, 2, "数据集");
 
@@ -120,7 +121,7 @@ assertVersion(publishedVersions, Number(published.prompt.version || 2), "优化�
 
 const summary = get("/api/prompt-evaluation-summary", token);
 evidence.prompt = { id: prompt.id, version: prompt.version, version_count: itemCount(initialVersions) };
-evidence.dataset = { id: dataset.id, asset_type: dataset.asset_type, structured_case_count: dataset.structured_case_count, assertion_count: datasetAssertionCount };
+evidence.dataset = { id: dataset.id, asset_type: dataset.asset_type, structured_case_count: dataset.structured_case_count, dataset_row_count: dataset.dataset_row_count, assertion_count: datasetAssertionCount };
 evidence.test_suite = { id: suite.id, asset_type: suite.asset_type, structured_case_count: suite.structured_case_count, assertion_count: suiteAssertionCount };
 evidence.run = {
   id: failedRun.id,

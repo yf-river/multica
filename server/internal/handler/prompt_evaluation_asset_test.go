@@ -47,9 +47,11 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 		created.StructuredCaseCount != 1 ||
 		created.StructuredVariableCount != 0 ||
 		created.StructuredAssertionCount != 1 ||
-		created.LinkedPromptCount != 1 {
+		created.LinkedPromptCount != 1 ||
+		created.DatasetRowCount != 1 {
 		t.Fatalf("created asset profile = %+v", created)
 	}
+	assertPromptEvaluationDatasetRows(t, created.ID, []string{"用例 1"})
 	createdPayload, ok := created.Payload.(map[string]any)
 	if !ok {
 		t.Fatalf("created payload is not object: %#v", created.Payload)
@@ -113,9 +115,11 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	}
 	if updated.StructuredCaseCount != 1 ||
 		updated.EvaluationDimensionCount != 2 ||
-		updated.LinkedPromptCount != 1 {
+		updated.LinkedPromptCount != 1 ||
+		updated.DatasetRowCount != 0 {
 		t.Fatalf("updated asset profile = %+v", updated)
 	}
+	assertPromptEvaluationDatasetRows(t, created.ID, nil)
 	updatedPayload, ok := updated.Payload.(map[string]any)
 	if !ok || updatedPayload["schema_version"] != float64(1) || updatedPayload["payload_contract"] == nil {
 		t.Fatalf("updated payload missing contract: %#v", updated.Payload)
@@ -391,6 +395,7 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 		t.Fatalf("created assertions = %+v", created.Assertions)
 	}
 	assertPromptEvaluationCaseAssertions(t, created.ID, []string{"trace/task id", "验收条件"})
+	assertPromptEvaluationDatasetRows(t, asset.ID, []string{"登录失败需要 trace"})
 	runW := httptest.NewRecorder()
 	testHandler.RunPromptEvaluationAsset(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/run", nil), "id", asset.ID))
 	if runW.Code != http.StatusOK {
@@ -431,6 +436,7 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 		t.Fatalf("updated assertions = %+v", updated.Assertions)
 	}
 	assertPromptEvaluationCaseAssertions(t, created.ID, []string{"可观测证据"})
+	assertPromptEvaluationDatasetRows(t, asset.ID, []string{"登录失败需要可观测证据"})
 
 	listW := httptest.NewRecorder()
 	testHandler.ListPromptEvaluationCases(listW, newRequest(http.MethodGet, "/api/prompt-evaluation-cases?asset_id="+asset.ID, nil))
@@ -468,6 +474,7 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 		t.Fatalf("cases after delete = %+v", listed)
 	}
 	assertPromptEvaluationCaseAssertions(t, created.ID, nil)
+	assertPromptEvaluationDatasetRows(t, asset.ID, nil)
 }
 
 func TestUpdatePromptEvaluationAssetPreservesManualCases(t *testing.T) {
@@ -1881,6 +1888,39 @@ func assertPromptEvaluationCaseAssertions(t *testing.T, caseID string, expected 
 	for idx := range expected {
 		if actual[idx] != expected[idx] {
 			t.Fatalf("case assertions = %#v, want %#v", actual, expected)
+		}
+	}
+}
+
+func assertPromptEvaluationDatasetRows(t *testing.T, assetID string, expected []string) {
+	t.Helper()
+	rows, err := testPool.Query(context.Background(), `
+		SELECT row_name
+		FROM prompt_evaluation_dataset_row
+		WHERE dataset_asset_id = $1
+		ORDER BY row_index ASC
+	`, assetID)
+	if err != nil {
+		t.Fatalf("query dataset rows: %v", err)
+	}
+	defer rows.Close()
+	actual := []string{}
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			t.Fatalf("scan dataset row: %v", err)
+		}
+		actual = append(actual, value)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate dataset rows: %v", err)
+	}
+	if len(actual) != len(expected) {
+		t.Fatalf("dataset rows = %#v, want %#v", actual, expected)
+	}
+	for idx := range expected {
+		if actual[idx] != expected[idx] {
+			t.Fatalf("dataset rows = %#v, want %#v", actual, expected)
 		}
 	}
 }

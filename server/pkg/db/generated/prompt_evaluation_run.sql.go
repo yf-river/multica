@@ -376,7 +376,8 @@ WITH asset_summary AS (
         COALESCE(SUM(structured_assertion_count), 0)::bigint AS asset_profile_assertions,
         COALESCE(SUM(linked_dataset_count), 0)::bigint AS asset_profile_linked_datasets,
         COALESCE(SUM(linked_prompt_count), 0)::bigint AS asset_profile_linked_prompts,
-        COALESCE(SUM(evaluation_dimension_count), 0)::bigint AS asset_profile_dimensions
+        COALESCE(SUM(evaluation_dimension_count), 0)::bigint AS asset_profile_dimensions,
+        COALESCE(SUM(dataset_row_count), 0)::bigint AS dataset_rows
     FROM prompt_evaluation_asset pea
     WHERE pea.workspace_id = $1
 ),
@@ -443,6 +444,7 @@ SELECT
     a.asset_profile_linked_datasets,
     a.asset_profile_linked_prompts,
     a.asset_profile_dimensions,
+    a.dataset_rows,
     c.total_cases,
     c.active_cases,
     r.total_runs,
@@ -499,6 +501,7 @@ type GetPromptEvaluationSummaryRow struct {
 	AssetProfileLinkedDatasets int64              `json:"asset_profile_linked_datasets"`
 	AssetProfileLinkedPrompts  int64              `json:"asset_profile_linked_prompts"`
 	AssetProfileDimensions     int64              `json:"asset_profile_dimensions"`
+	DatasetRows                int64              `json:"dataset_rows"`
 	TotalCases                 int64              `json:"total_cases"`
 	ActiveCases                int64              `json:"active_cases"`
 	TotalRuns                  int64              `json:"total_runs"`
@@ -545,6 +548,7 @@ func (q *Queries) GetPromptEvaluationSummary(ctx context.Context, arg GetPromptE
 		&i.AssetProfileLinkedDatasets,
 		&i.AssetProfileLinkedPrompts,
 		&i.AssetProfileDimensions,
+		&i.DatasetRows,
 		&i.TotalCases,
 		&i.ActiveCases,
 		&i.TotalRuns,

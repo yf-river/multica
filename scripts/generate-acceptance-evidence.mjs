@@ -200,6 +200,7 @@ async function loadDatabaseEvidence(workspaceID) {
             (SELECT count(*)::int FROM prompt_library_item WHERE workspace_id = $1) AS prompt_count,
             (SELECT count(*)::int FROM prompt_library_version WHERE workspace_id = $1) AS prompt_version_count,
             (SELECT count(*)::int FROM prompt_evaluation_asset WHERE workspace_id = $1) AS asset_count,
+            (SELECT count(*)::int FROM prompt_evaluation_dataset_row WHERE workspace_id = $1) AS dataset_row_count,
             (SELECT count(*)::int FROM prompt_evaluation_case WHERE workspace_id = $1) AS structured_case_count,
             (SELECT count(*)::int FROM prompt_evaluation_case_assertion WHERE workspace_id = $1) AS structured_assertion_count,
             (SELECT count(*)::int FROM prompt_evaluation_run WHERE workspace_id = $1) AS run_count,
@@ -646,6 +647,7 @@ function summarizeCommandOutput(name, stdout) {
       prompt_id: parsed.prompt?.id || "",
       prompt_version_count: parsed.prompt?.version_count ?? 0,
       dataset_id: parsed.dataset?.id || "",
+      dataset_row_count: parsed.dataset?.dataset_row_count ?? 0,
       test_suite_id: parsed.test_suite?.id || "",
       dataset_assertion_count: parsed.dataset?.assertion_count ?? 0,
       test_suite_assertion_count: parsed.test_suite?.assertion_count ?? 0,
@@ -697,6 +699,7 @@ function buildRisks({ health, ready, login, account, commandResults, git, databa
     const squads = databaseEvidence.squads || {};
     const tasks = databaseEvidence.tasks || {};
     if (Number(training.run_count || 0) === 0) risks.push("数据库中未发现训练评估运行记录，生产看板会缺少运行证据。");
+    if (Number(training.dataset_row_count || 0) === 0) risks.push("数据库中未发现数据集行事实表记录，数据集仍缺少可度量行级证据。");
     if (Number(training.structured_case_count || 0) === 0) risks.push("数据库中未发现结构化评测用例，数据集/测试套件证据不足。");
     if (Number(training.structured_assertion_count || 0) === 0) risks.push("数据库中未发现结构化评测断言，训练评估可度量证据不足。");
     if (Number(training.optimization_candidate_count || 0) === 0) risks.push("数据库中未发现优化候选，失败用例到人工确认的闭环证据不足。");
@@ -764,6 +767,7 @@ ${commitRows}
 - 状态：${dbStatus}
 - 提示词：${training.prompt_count ?? "未记录"}
 - 评测资产：${training.asset_count ?? "未记录"}
+- 数据集行：${training.dataset_row_count ?? "未记录"}
 - 结构化用例：${training.structured_case_count ?? "未记录"}
 - 结构化断言：${training.structured_assertion_count ?? "未记录"}
 - 训练评估运行：${training.run_count ?? "未记录"}，其中 Agent 执行 ${training.agent_run_count ?? "未记录"}

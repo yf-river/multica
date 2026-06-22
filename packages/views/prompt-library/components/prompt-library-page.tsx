@@ -1010,6 +1010,7 @@ function DemoDashboardPanel({
   const proofItems: Array<[string, string]> = [
     ["提示词库", formatNumber(assets.length)],
     ["资产总数", formatNumber(trainingAssets["资产总数"] ?? assets.length)],
+    ["数据集行", formatNumber(trainingAssets["数据集行"] ?? assets.reduce((sum, asset) => sum + (asset.asset_type === "数据集" ? asset.dataset_row_count : 0), 0))],
     ["结构化用例", formatNumber(trainingAssets["结构化用例"] ?? cases.length)],
     ["结构化画像", `${formatNumber(trainingAssets["画像用例数"] ?? cases.length)} 用例 · ${formatNumber(trainingAssets["画像变量数"])} 变量 · ${formatNumber(trainingAssets["画像断言数"])} 断言 · ${formatNumber(trainingAssets["评估维度数"])} 维度`],
     ["优化候选", `${pendingCandidates} 待确认 · ${publishedCandidates} 已发布 · ${rejectedCandidates} 已拒绝`],
@@ -1247,6 +1248,7 @@ function TrainingSummaryStrip({ summary, loading }: { summary: PromptEvaluationS
     { label: "待确认优化候选", value: formatNumber(candidates["待确认"]) },
     { label: "已发布优化候选", value: formatNumber(candidates["已发布"]) },
     { label: "资产总数", value: formatNumber(assets["资产总数"]) },
+    { label: "数据集行", value: formatNumber(assets["数据集行"]) },
     { label: "结构化用例", value: formatNumber(assets["结构化用例"]) },
   ];
 

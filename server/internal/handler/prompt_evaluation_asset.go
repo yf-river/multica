@@ -72,6 +72,7 @@ type PromptEvaluationAssetResponse struct {
 	LinkedDatasetCount       int32   `json:"linked_dataset_count"`
 	LinkedPromptCount        int32   `json:"linked_prompt_count"`
 	EvaluationDimensionCount int32   `json:"evaluation_dimension_count"`
+	DatasetRowCount          int32   `json:"dataset_row_count"`
 }
 
 type CreatePromptEvaluationAssetRequest struct {
@@ -395,6 +396,7 @@ func promptEvaluationAssetToResponse(asset db.PromptEvaluationAsset) PromptEvalu
 		LinkedDatasetCount:       asset.LinkedDatasetCount,
 		LinkedPromptCount:        asset.LinkedPromptCount,
 		EvaluationDimensionCount: asset.EvaluationDimensionCount,
+		DatasetRowCount:          asset.DatasetRowCount,
 	}
 }
 
@@ -589,6 +591,64 @@ func syncPromptEvaluationCaseAssertions(ctx context.Context, qtx *db.Queries, it
 	return assertions, nil
 }
 
+func syncPromptEvaluationDatasetRow(ctx context.Context, qtx *db.Queries, asset db.PromptEvaluationAsset, item db.PromptEvaluationCase) error {
+	deletedAssets, err := qtx.DeletePromptEvaluationDatasetRowsByCase(ctx, db.DeletePromptEvaluationDatasetRowsByCaseParams{
+		WorkspaceID: item.WorkspaceID,
+		CaseID:      item.ID,
+	})
+	if err != nil {
+		return err
+	}
+	for _, datasetAssetID := range deletedAssets {
+		if err := refreshPromptEvaluationDatasetRowCount(ctx, qtx, item.WorkspaceID, datasetAssetID); err != nil {
+			return err
+		}
+	}
+	if asset.AssetType != promptEvaluationAssetDataset {
+		return nil
+	}
+	if _, err := qtx.CreatePromptEvaluationDatasetRow(ctx, db.CreatePromptEvaluationDatasetRowParams{
+		WorkspaceID:      item.WorkspaceID,
+		DatasetAssetID:   item.AssetID,
+		CaseID:           item.ID,
+		RowIndex:         item.CaseIndex,
+		RowName:          item.CaseName,
+		Variables:        item.Variables,
+		ExpectedContains: item.ExpectedContains,
+		Expected:         item.Expected,
+		Tags:             item.Tags,
+		Status:           item.Status,
+		Source:           item.Source,
+		CreatedBy:        item.CreatedBy,
+	}); err != nil {
+		return err
+	}
+	return refreshPromptEvaluationDatasetRowCount(ctx, qtx, item.WorkspaceID, item.AssetID)
+}
+
+func deletePromptEvaluationDatasetRowsForCase(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID, caseID pgtype.UUID) error {
+	deletedAssets, err := qtx.DeletePromptEvaluationDatasetRowsByCase(ctx, db.DeletePromptEvaluationDatasetRowsByCaseParams{
+		WorkspaceID: workspaceID,
+		CaseID:      caseID,
+	})
+	if err != nil {
+		return err
+	}
+	for _, datasetAssetID := range deletedAssets {
+		if err := refreshPromptEvaluationDatasetRowCount(ctx, qtx, workspaceID, datasetAssetID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func refreshPromptEvaluationDatasetRowCount(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID, assetID pgtype.UUID) error {
+	return qtx.RefreshPromptEvaluationDatasetRowCount(ctx, db.RefreshPromptEvaluationDatasetRowCountParams{
+		WorkspaceID:    workspaceID,
+		DatasetAssetID: assetID,
+	})
+}
+
 func promptEvaluationOptimizationCandidateToResponse(item db.PromptEvaluationOptimizationCandidate) PromptEvaluationOptimizationCandidateResponse {
 	return PromptEvaluationOptimizationCandidateResponse{
 		ID:                   uuidToString(item.ID),
@@ -682,6 +742,7 @@ func promptEvaluationSummaryToResponse(workspaceID pgtype.UUID, row db.GetPrompt
 			"关联数据集数":  row.AssetProfileLinkedDatasets,
 			"关联提示词数":  row.AssetProfileLinkedPrompts,
 			"评估维度数":   row.AssetProfileDimensions,
+			"数据集行":    row.DatasetRows,
 			"服务端证据快照": row.EvidenceSnapshots,
 			"验收归档快照":  row.AcceptanceSnapshots,
 		},
@@ -1066,6 +1127,10 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation case assertions")
 		return
 	}
+	if err := syncPromptEvaluationDatasetRow(r.Context(), qtx, asset, created); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation dataset row")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation case")
 		return
@@ -1188,6 +1253,10 @@ func (h *Handler) UpdatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to update prompt evaluation case assertions")
 		return
 	}
+	if err := syncPromptEvaluationDatasetRow(r.Context(), qtx, asset, updated); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation dataset row")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation case")
 		return
@@ -1213,8 +1282,23 @@ func (h *Handler) DeletePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation case")
 		return
 	}
-	if err := h.Queries.DeletePromptEvaluationCase(r.Context(), db.DeletePromptEvaluationCaseParams{ID: caseID, WorkspaceID: workspaceUUID}); err != nil {
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation case transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if err := deletePromptEvaluationDatasetRowsForCase(r.Context(), qtx, workspaceUUID, caseID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete prompt evaluation dataset row")
+		return
+	}
+	if err := qtx.DeletePromptEvaluationCase(r.Context(), db.DeletePromptEvaluationCaseParams{ID: caseID, WorkspaceID: workspaceUUID}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete prompt evaluation case")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation case deletion")
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
@@ -2583,6 +2667,10 @@ func (h *Handler) syncPromptEvaluationCasesFromPayload(w http.ResponseWriter, r 
 		writeError(w, http.StatusInternalServerError, "failed to refresh prompt evaluation cases")
 		return false
 	}
+	if err := refreshPromptEvaluationDatasetRowCount(r.Context(), qtx, asset.WorkspaceID, asset.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to refresh prompt evaluation dataset rows")
+		return false
+	}
 	cases := promptEvaluationCases(decodePayloadObject(asset.Payload))
 	for idx, item := range cases {
 		normalized := normalizePromptEvaluationCase(idx, item)
@@ -2608,6 +2696,10 @@ func (h *Handler) syncPromptEvaluationCasesFromPayload(w http.ResponseWriter, r 
 		}
 		if _, err := syncPromptEvaluationCaseAssertions(r.Context(), qtx, created, expectedContains); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation case assertions")
+			return false
+		}
+		if err := syncPromptEvaluationDatasetRow(r.Context(), qtx, asset, created); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation dataset rows")
 			return false
 		}
 	}
@@ -2694,7 +2786,12 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation asset")
 		return
 	}
-	writeJSON(w, http.StatusCreated, promptEvaluationAssetToResponse(asset))
+	createdAsset, err := h.Queries.GetPromptEvaluationAssetInWorkspace(r.Context(), db.GetPromptEvaluationAssetInWorkspaceParams{ID: asset.ID, WorkspaceID: asset.WorkspaceID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reload prompt evaluation asset")
+		return
+	}
+	writeJSON(w, http.StatusCreated, promptEvaluationAssetToResponse(createdAsset))
 }
 
 func (h *Handler) UpdatePromptEvaluationAsset(w http.ResponseWriter, r *http.Request) {
@@ -2778,7 +2875,12 @@ func (h *Handler) UpdatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation asset")
 		return
 	}
-	writeJSON(w, http.StatusOK, promptEvaluationAssetToResponse(asset))
+	updatedAsset, err := h.Queries.GetPromptEvaluationAssetInWorkspace(r.Context(), db.GetPromptEvaluationAssetInWorkspaceParams{ID: asset.ID, WorkspaceID: asset.WorkspaceID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reload prompt evaluation asset")
+		return
+	}
+	writeJSON(w, http.StatusOK, promptEvaluationAssetToResponse(updatedAsset))
 }
 
 func (h *Handler) DeletePromptEvaluationAsset(w http.ResponseWriter, r *http.Request) {

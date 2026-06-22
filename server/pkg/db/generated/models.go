@@ -583,6 +583,7 @@ type PromptEvaluationAsset struct {
 	LinkedDatasetCount       int32              `json:"linked_dataset_count"`
 	LinkedPromptCount        int32              `json:"linked_prompt_count"`
 	EvaluationDimensionCount int32              `json:"evaluation_dimension_count"`
+	DatasetRowCount          int32              `json:"dataset_row_count"`
 }
 
 type PromptEvaluationCase struct {
@@ -615,6 +616,24 @@ type PromptEvaluationCaseAssertion struct {
 	Status         string             `json:"status"`
 	Source         string             `json:"source"`
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type PromptEvaluationDatasetRow struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	DatasetAssetID   pgtype.UUID        `json:"dataset_asset_id"`
+	CaseID           pgtype.UUID        `json:"case_id"`
+	RowIndex         int32              `json:"row_index"`
+	RowName          string             `json:"row_name"`
+	Variables        []byte             `json:"variables"`
+	ExpectedContains []byte             `json:"expected_contains"`
+	Expected         []byte             `json:"expected"`
+	Tags             []byte             `json:"tags"`
+	Status           string             `json:"status"`
+	Source           string             `json:"source"`
+	CreatedBy        pgtype.UUID        `json:"created_by"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 type PromptEvaluationEvidenceSnapshot struct {
