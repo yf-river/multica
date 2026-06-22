@@ -14,6 +14,7 @@ const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || trimEnv("REAL_AGEN
 const demoAccount = trimEnv("ACCEPTANCE_DEMO_ACCOUNT") || trimEnv("REAL_AGENT_E2E_ACCOUNT") || "goal-test-daemon";
 const demoPassword = trimEnv("ACCEPTANCE_DEMO_PASSWORD") || trimEnv("REAL_AGENT_E2E_PASSWORD") || "e2e-password";
 const waitMs = Number(trimEnv("ACCEPTANCE_DEMO_WAIT_MS") || 180_000);
+const forceNewDemoEvidence = trimEnv("ACCEPTANCE_DEMO_FORCE_NEW") === "1";
 
 const token = await login();
 const workspace = await ensureWorkspace(token, "Goal Test Daemon", workspaceSlug);
@@ -58,7 +59,9 @@ async function prepareSquadEvidence(token, workspace, templateSpec) {
     throw new Error(`内置小队模板返回不完整：${templateSpec.key}`);
   }
 
-  const existing = await findExistingSquadEvidence(workspace.id, templateSpec.title, squad.id, leader.id);
+  const existing = forceNewDemoEvidence
+    ? null
+    : await findExistingSquadEvidence(workspace.id, templateSpec.title, squad.id, leader.id);
   if (existing) {
     return {
       template_key: templateSpec.key,

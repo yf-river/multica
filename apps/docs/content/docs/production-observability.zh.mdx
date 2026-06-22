@@ -99,6 +99,7 @@ ACCEPTANCE_INCLUDE_E2E=1 pnpm acceptance:verify
 | `ACCEPTANCE_WORKSPACE_SLUG` | 领导演示工作区 slug |
 | `ACCEPTANCE_INCLUDE_E2E` | 设为 `1` 后把 Playwright 和真实 Agent 验收命令纳入执行 |
 | `ACCEPTANCE_DEMO_WAIT_MS` | `acceptance:prepare-demo` 等待真实 daemon 处理小队队长任务的最长时间，默认 180000 |
+| `ACCEPTANCE_DEMO_FORCE_NEW` | 设为 `1` 后不复用已有小队 SOP 证据，强制创建新 issue 和新队长任务 |
 | `DATABASE_URL` | 用于只读抽查演示工作区的训练、评估、任务、trace 和小队 SOP 数据；未配置时报告会明确标记跳过 |
 
 验收包会抽查 `prompt_evaluation_run`、`prompt_evaluation_trial`、`prompt_evaluation_case`、`prompt_evaluation_optimization_candidate`、`agent_task_queue`、`task_usage`、`task_trace_event`、`squad_sop_run` 和 `squad_sop_step_event` 等核心表。验收包必须和生产看板导出的 `multica.production_demo_evidence.v1` JSON 一起留存：前者证明部署、账号、commit、数据库证据和测试命令，后者证明业务闭环、运行证据、trace、token 和观测指标。
