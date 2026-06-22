@@ -68,12 +68,12 @@ const DEMO_TIME_RANGES: Array<{ value: DemoTimeRange; label: string; sinceMs: nu
 ];
 const DEFAULT_DEMO_TIME_RANGE = DEMO_TIME_RANGES[1]!;
 
-const DEFAULT_AGENT_MODEL = "minimax-m2.7-ioa";
+const DEFAULT_AGENT_MODEL = "gpt-5.3-codex-spark";
 const DEFAULT_AGENT_RUNTIME_READINESS: PromptEvaluationRuntimeReadiness = {
   status: "缺失",
-  label: "CodeBuddy 检查中",
-  detail: "正在检查当前工作区的 CodeBuddy 运行时就绪状态。",
-  fix: "等待检查完成；如果持续缺失，请安装并配置 CodeBuddy，启动 Multica 守护进程。",
+  label: "Codex 检查中",
+  detail: "正在检查当前工作区的 Codex 运行时就绪状态。",
+  fix: "等待检查完成；如果持续缺失，请安装并配置 Codex，启动 Multica 守护进程。",
   model: DEFAULT_AGENT_MODEL,
   runtime: null,
   last_seen_age_seconds: -1,
@@ -1071,7 +1071,7 @@ function DemoDashboardPanel({
         <section className="rounded-md border border-border/70 bg-muted/10 p-3">
           <h3 className="text-sm font-semibold">演示状态</h3>
           <div className="mt-3 grid gap-2 text-xs">
-            <DemoChecklistItem ok={runtimeReadiness.status === "就绪"} label="CodeBuddy 运行时可创建真实 Agent 任务" detail={runtimeReadiness.detail} />
+            <DemoChecklistItem ok={runtimeReadiness.status === "就绪"} label="Codex 运行时可创建真实 Agent 任务" detail={runtimeReadiness.detail} />
             <DemoChecklistItem ok={hasAgentEvidence} label="运行历史已有任务/trace 证据" detail={latestRun?.task_id ? `最近任务 ${latestRun.task_id}` : "需要执行一次真实 Agent 评估"} />
             <DemoChecklistItem ok={cases.length > 0} label="数据集/测试套件已有结构化用例" detail={`${cases.length} 条结构化用例`} />
             <DemoChecklistItem ok={Number(trainingAssets["服务端证据快照"] ?? trainingMetrics["服务端证据快照"] ?? 0) > 0} label="运行证据已服务端归档" detail={`${formatNumber(trainingAssets["服务端证据快照"] ?? trainingMetrics["服务端证据快照"])} 条快照，验收归档 ${formatNumber(trainingAssets["验收归档快照"] ?? trainingMetrics["验收归档快照"])}`} />
@@ -1309,7 +1309,7 @@ function WorkbenchPanel({
 	        <div className="flex items-center justify-between gap-2">
 	          <div>
 	            <h3 className="text-sm font-semibold">Agent 调试场</h3>
-	            <p className="mt-1 text-xs text-muted-foreground">可先保存实验包，也可在 CodeBuddy 就绪后创建真实 Agent 任务并写入运行历史。</p>
+	            <p className="mt-1 text-xs text-muted-foreground">可先保存实验包，也可在 Codex 就绪后创建真实 Agent 任务并写入运行历史。</p>
 	          </div>
 	          <div className="flex shrink-0 items-center gap-2">
 	            <Button size="sm" variant="secondary" onClick={onSaveAgentDebugPackage} disabled={!selected || saving}>
@@ -1932,7 +1932,7 @@ function buildExternalDependencyFailureNotice(evidence: PromptEvaluationRunEvide
   if (failureText.includes("模型额度不足") || failureText.includes("无可用Token额度") || failureText.includes("Token额度")) {
     return {
       title: "外部依赖失败：模型额度不足",
-      detail: "CodeBuddy 已领取并执行任务，但上游模型返回额度不足；本次不会产生 token 用量和成本，需补充 minimax/codebuddy 额度后重新运行。",
+      detail: "Codex 已领取并执行任务，但上游模型返回额度不足；本次不会产生 token 用量和成本，需补充 Codex/OpenAI 额度后重新运行。",
     };
   }
   if (evidence.run.status === "失败" && evidence.run.task_id && evidence.task_usage.length === 0) {
@@ -1975,7 +1975,7 @@ function stringFromUnknown(value: unknown): string {
 function buildAgentExecutionStatus(readiness: PromptEvaluationRuntimeReadiness): string {
   const model = readiness.model || DEFAULT_AGENT_MODEL;
   if (readiness.status === "就绪") {
-    return `CodeBuddy 运行时已在线，目标模型 ${model}；此记录是实验包快照，点击“创建真实 Agent 任务”后会入队并采集 trace、token、成本和输出`;
+    return `Codex 运行时已在线，目标模型 ${model}；此记录是实验包快照，点击“创建真实 Agent 任务”后会入队并采集 trace、token、成本和输出`;
   }
   return `${readiness.label}，目标模型 ${model}；未创建真实 Agent 任务`;
 }
@@ -2366,7 +2366,7 @@ function buildAgentDebugPackageRequest(
         执行方式: buildAgentExecutionStatus(readiness),
       },
       运行环境: {
-        目标运行时: "CodeBuddy",
+        目标运行时: "Codex",
         目标模型: readiness.model || DEFAULT_AGENT_MODEL,
         状态: readiness.status,
         说明: readiness.detail,

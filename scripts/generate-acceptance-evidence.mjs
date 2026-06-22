@@ -7,6 +7,7 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 const args = new Set(process.argv.slice(2));
 const runTests = args.has("--run-tests");
 const includeE2E = args.has("--include-e2e") || process.env.ACCEPTANCE_INCLUDE_E2E === "1";
+const includeFullE2E = args.has("--include-full-e2e") || process.env.ACCEPTANCE_INCLUDE_FULL_E2E === "1";
 const timestamp = new Date().toISOString();
 const safeTimestamp = timestamp.replace(/[:.]/g, "-");
 const outputDir = path.join(repoRoot, "artifacts", "acceptance");
@@ -20,6 +21,9 @@ const frontendURL = trimEnv("ACCEPTANCE_FRONTEND_URL")
 const apiURL = trimEnv("ACCEPTANCE_API_URL")
   || trimEnv("NEXT_PUBLIC_API_URL")
   || `http://127.0.0.1:${trimEnv("PORT") || "8080"}`;
+const browserApiURL = trimEnv("ACCEPTANCE_BROWSER_API_URL")
+  || trimEnv("NEXT_PUBLIC_API_URL")
+  || apiURL;
 const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || trimEnv("REAL_AGENT_E2E_WORKSPACE") || "goal-test-daemon";
 const demoAccount = trimEnv("ACCEPTANCE_DEMO_ACCOUNT") || trimEnv("REAL_AGENT_E2E_ACCOUNT") || "goal-test-daemon";
 const demoPassword = trimEnv("ACCEPTANCE_DEMO_PASSWORD") || trimEnv("REAL_AGENT_E2E_PASSWORD") || "e2e-password";
@@ -388,7 +392,11 @@ function normalizePgRow(row) {
 }
 
 function loadLogEvidence() {
-  const logPath = trimEnv("ACCEPTANCE_SERVER_LOG") || path.join(repoRoot, "artifacts", "logs", "server-goal-test.log");
+  const configuredLogPath = trimEnv("ACCEPTANCE_SERVER_LOG");
+  const logPath = configuredLogPath
+    || (existsSync(path.join(repoRoot, ".run", "server.log"))
+      ? path.join(repoRoot, ".run", "server.log")
+      : path.join(repoRoot, "artifacts", "logs", "server-goal-test.log"));
   if (!existsSync(logPath)) {
     return { status: "跳过", path: logPath, reason: "未找到服务日志文件" };
   }
@@ -422,51 +430,75 @@ function buildCommandPlan() {
       name: "Web typecheck",
       command: "pnpm --filter @multica/web typecheck",
       required: true,
+      timeoutMs: 180_000,
     },
     {
       name: "Web build",
       command: "pnpm --filter @multica/web build",
       required: true,
+      timeoutMs: 240_000,
+    },
+    {
+      name: "重启前端服务",
+      command: [
+        "set -e",
+        ". ./.env.worktree",
+        "pkill -f \"next start -p ${FRONTEND_PORT:-3000}\" 2>/dev/null || true",
+        "sleep 1",
+        "setsid pnpm --dir apps/web exec next start -p \"${FRONTEND_PORT:-3000}\" >> .run/web.log 2>&1 < /dev/null & echo $! > .run/web.pid",
+        "for i in $(seq 1 45); do curl --noproxy '*' -fsS \"http://127.0.0.1:${FRONTEND_PORT:-3000}/login\" >/dev/null && break; sleep 1; done",
+        "curl --noproxy '*' -fsS \"http://127.0.0.1:${FRONTEND_PORT:-3000}/login\" >/dev/null",
+      ].join("; "),
+      required: true,
+      timeoutMs: 60_000,
     },
     {
       name: "Desktop typecheck",
       command: "pnpm --filter @multica/desktop typecheck",
       required: true,
+      timeoutMs: 180_000,
     },
     {
       name: "Core reserved route tests",
       command: "pnpm --filter @multica/core test -- paths/consistency.test.ts",
       required: true,
+      timeoutMs: 120_000,
     },
     {
       name: "Web proxy tests",
       command: "pnpm --filter @multica/web test -- proxy.test.ts",
       required: true,
+      timeoutMs: 120_000,
     },
     {
       name: "部署浏览器验收 E2E",
       command: [
         `PLAYWRIGHT_BASE_URL=${shellQuote(frontendURL)}`,
         `FRONTEND_ORIGIN=${shellQuote(frontendURL)}`,
-        `NEXT_PUBLIC_API_URL=${shellQuote(apiURL)}`,
-        `NEXT_PUBLIC_WS_URL=${shellQuote(apiURL.replace(/^http/, "ws") + "/ws")}`,
+        `NEXT_PUBLIC_API_URL=${shellQuote(browserApiURL)}`,
+        `NEXT_PUBLIC_WS_URL=${shellQuote(browserApiURL.replace(/^http/, "ws") + "/ws")}`,
         `ACCEPTANCE_API_URL=${shellQuote(apiURL)}`,
         `ACCEPTANCE_FRONTEND_URL=${shellQuote(frontendURL)}`,
         "pnpm exec playwright test e2e/production-acceptance.spec.ts --project=chromium",
       ].join(" "),
       required: true,
+      timeoutMs: 180_000,
     },
     {
       name: "训练与评估主 E2E",
       command: "pnpm exec playwright test e2e/prompt-library.spec.ts --project=chromium",
-      required: includeE2E,
+      required: includeFullE2E,
       skippedByDefault: true,
+      fullE2EOnly: true,
+      timeoutMs: 900_000,
     },
     {
       name: "小队 SOP E2E",
       command: "pnpm exec playwright test e2e/squad-sop.spec.ts --project=chromium",
-      required: includeE2E,
+      required: includeFullE2E,
       skippedByDefault: true,
+      fullE2EOnly: true,
+      timeoutMs: 900_000,
     },
     {
       name: "Codex curl 端到端 Agent/小队验收",
@@ -485,6 +517,7 @@ function buildCommandPlan() {
       ].join(" "),
       required: includeE2E,
       skippedByDefault: true,
+      timeoutMs: 360_000,
     },
     {
       name: "真实 Agent E2E",
@@ -499,8 +532,10 @@ function buildCommandPlan() {
         `MULTICA_PROMPT_EVALUATION_AGENT_MODEL=${shellQuote(realAgentFallbackModel)}`,
         "pnpm exec playwright test e2e/prompt-library-real-agent.spec.ts --project=chromium",
       ].join(" "),
-      required: includeE2E,
+      required: includeFullE2E,
       skippedByDefault: true,
+      fullE2EOnly: true,
+      timeoutMs: 900_000,
     },
     {
       name: "真实小队 Agent E2E",
@@ -515,11 +550,16 @@ function buildCommandPlan() {
         `MULTICA_PROMPT_EVALUATION_AGENT_MODEL=${shellQuote(realAgentFallbackModel)}`,
         "pnpm exec playwright test e2e/squad-real-agent.spec.ts --project=chromium",
       ].join(" "),
-      required: includeE2E,
+      required: includeFullE2E,
       skippedByDefault: true,
+      fullE2EOnly: true,
+      timeoutMs: 900_000,
     },
   ];
-  return commands.filter((item) => includeE2E || !item.skippedByDefault);
+  return commands.filter((item) => {
+    if (item.fullE2EOnly) return includeFullE2E;
+    return includeE2E || !item.skippedByDefault;
+  });
 }
 
 function shellQuote(value) {
@@ -535,16 +575,55 @@ function runCommands(commands) {
       encoding: "utf8",
       env: process.env,
       maxBuffer: 1024 * 1024 * 16,
+      timeout: item.timeoutMs || 300_000,
+      killSignal: "SIGTERM",
     });
+    const timedOut = res.error?.code === "ETIMEDOUT" || res.signal === "SIGTERM";
     return {
       ...item,
-      status: res.status === 0 ? "通过" : "失败",
+      status: timedOut ? "超时" : res.status === 0 ? "通过" : "失败",
       exitCode: res.status,
+      signal: res.signal || null,
       durationMs: Date.now() - started,
+      timeoutMs: item.timeoutMs || 300_000,
+      summary: summarizeCommandOutput(item.name, res.stdout),
       stdout_tail: tail(res.stdout),
       stderr_tail: tail(res.stderr),
     };
   });
+}
+
+function summarizeCommandOutput(name, stdout) {
+  if (name !== "Codex curl 端到端 Agent/小队验收") return null;
+  const parsed = parseLastJSONObject(stdout);
+  if (!parsed) return { status: "未解析", reason: "stdout 中未找到 JSON 对象" };
+  return {
+    result: parsed.result,
+    task_status: parsed.task?.status || "",
+    task_id: parsed.task?.id || "",
+    runtime_id: parsed.runtime?.id || "",
+    runtime_provider: parsed.runtime?.provider || "",
+    agent_id: parsed.agent?.id || "",
+    agent_model: parsed.agent?.model || "",
+    issue_id: parsed.issue?.id || "",
+    trace_event_count: parsed.trace_event_count ?? 0,
+    message_count: parsed.message_count ?? 0,
+    total_input_tokens: parsed.usage?.total_input_tokens ?? 0,
+    total_output_tokens: parsed.usage?.total_output_tokens ?? 0,
+    external_dependency_failure: parsed.external_dependency_failure === true,
+  };
+}
+
+function parseLastJSONObject(stdout) {
+  const text = String(stdout || "").trim();
+  for (let index = text.lastIndexOf("{"); index >= 0; index = text.lastIndexOf("{", index - 1)) {
+    try {
+      return JSON.parse(text.slice(index));
+    } catch {
+      // Continue scanning; command wrappers may print log lines before JSON.
+    }
+  }
+  return null;
 }
 
 function tail(value) {
