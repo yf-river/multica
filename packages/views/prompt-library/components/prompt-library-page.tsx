@@ -8,6 +8,12 @@ import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { renderPromptTemplate } from "@multica/core/prompt-library";
+import {
+  TRAINING_WORKBENCH_TABS,
+  TRAINING_WORKBENCH_VIEW_BY_TAB,
+  trainingWorkbenchTabFromView,
+  type TrainingWorkbenchTab,
+} from "@multica/core/training";
 import type {
   CreatePromptLibraryItemRequest,
   CreatePromptEvaluationAssetRequest,
@@ -47,8 +53,7 @@ const promptLibraryKeys = {
 };
 
 const PROMPT_TYPES = ["全部", "需求澄清", "系统提示词", "评测提示词", "小队 SOP", "通用"];
-const WORKBENCH_TABS = ["提示词库", "提示词调试场", "Agent 调试场", "数据集", "测试套件", "实验", "优化运行", "运行历史"] as const;
-type WorkbenchTab = typeof WORKBENCH_TABS[number];
+type WorkbenchTab = TrainingWorkbenchTab;
 const DEFAULT_AGENT_MODEL = "minimax-m2.7-ioa";
 const DEFAULT_AGENT_RUNTIME_READINESS: PromptEvaluationRuntimeReadiness = {
   status: "缺失",
@@ -60,25 +65,6 @@ const DEFAULT_AGENT_RUNTIME_READINESS: PromptEvaluationRuntimeReadiness = {
   last_seen_age_seconds: -1,
   checked_at: "",
 };
-
-const TAB_TO_VIEW: Record<WorkbenchTab, string> = {
-  提示词库: "prompts",
-  提示词调试场: "prompt-playground",
-  "Agent 调试场": "agent-playground",
-  数据集: "datasets",
-  测试套件: "test-suites",
-  实验: "experiments",
-  优化运行: "optimization-runs",
-  运行历史: "run-history",
-};
-
-const VIEW_TO_TAB = Object.fromEntries(
-  Object.entries(TAB_TO_VIEW).map(([tab, view]) => [view, tab]),
-) as Record<string, WorkbenchTab>;
-
-function tabFromView(view: string | null): WorkbenchTab {
-  return view ? (VIEW_TO_TAB[view] ?? "提示词库") : "提示词库";
-}
 
 const USER_CENTER_TEMPLATE: CreatePromptLibraryItemRequest = {
   name: "user-center 需求澄清提示词",
@@ -125,11 +111,11 @@ export function PromptLibraryPage() {
   const [draft, setDraft] = useState<PromptDraft>(emptyDraft);
   const [debugValuesText, setDebugValuesText] = useState("");
   const viewParam = navigation.searchParams.get("view");
-  const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => tabFromView(viewParam));
+  const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => trainingWorkbenchTabFromView(viewParam));
   const [agentExpectedText, setAgentExpectedText] = useState("");
 
   useEffect(() => {
-    setActiveTab(tabFromView(viewParam));
+    setActiveTab(trainingWorkbenchTabFromView(viewParam));
   }, [viewParam]);
 
   const listQuery = useQuery({
@@ -353,7 +339,7 @@ export function PromptLibraryPage() {
       invalidateSummary();
       toast.success(`真实 Agent 优化任务已入队：${result.task_id}`);
       setActiveTab("运行历史");
-      navigation.push(workspacePaths.trainingView(TAB_TO_VIEW["运行历史"]));
+      navigation.push(workspacePaths.trainingView(TRAINING_WORKBENCH_VIEW_BY_TAB["运行历史"]));
     },
   });
 
@@ -416,7 +402,7 @@ export function PromptLibraryPage() {
 
   const selectWorkbenchTab = (tab: WorkbenchTab) => {
     setActiveTab(tab);
-    navigation.push(workspacePaths.trainingView(TAB_TO_VIEW[tab]));
+    navigation.push(workspacePaths.trainingView(TRAINING_WORKBENCH_VIEW_BY_TAB[tab]));
   };
 
   const saveDraft = () => {
@@ -549,7 +535,7 @@ export function PromptLibraryPage() {
       </PageHeader>
 
       <div className="flex shrink-0 gap-1 overflow-x-auto border-b px-3 py-2">
-        {WORKBENCH_TABS.map((tab) => (
+        {TRAINING_WORKBENCH_TABS.map((tab) => (
           <FilterButton key={tab} active={activeTab === tab} onClick={() => selectWorkbenchTab(tab)}>
             {tab}
           </FilterButton>

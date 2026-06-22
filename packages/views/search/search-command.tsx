@@ -42,6 +42,7 @@ import { issueDetailOptions } from "@multica/core/issues/queries";
 import { useWorkspaceId } from "@multica/core";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type { WorkspacePaths } from "@multica/core/paths";
+import { TRAINING_WORKBENCH_VIEWS, type TrainingWorkbenchViewId } from "@multica/core/training";
 import { useModalStore } from "@multica/core/modals";
 import { memberListOptions } from "@multica/core/workspace/queries";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
@@ -106,6 +107,27 @@ function matchesMember(member: MemberWithUser, query: string) {
     (query.length >= 3 && member.role.startsWith(query)) ||
     matchesPinyin(member.name, query)
   );
+}
+
+function trainingCommandLabel(t: ReturnType<typeof useT<"search">>["t"], view: TrainingWorkbenchViewId): string {
+  switch (view) {
+    case "prompts":
+      return t(($) => $.commands.open_prompt_library);
+    case "prompt-playground":
+      return t(($) => $.commands.open_prompt_playground);
+    case "agent-playground":
+      return t(($) => $.commands.open_agent_playground);
+    case "datasets":
+      return t(($) => $.commands.open_datasets);
+    case "test-suites":
+      return t(($) => $.commands.open_test_suites);
+    case "experiments":
+      return t(($) => $.commands.open_experiments);
+    case "optimization-runs":
+      return t(($) => $.commands.open_optimization_runs);
+    case "run-history":
+      return t(($) => $.commands.open_run_history);
+  }
 }
 
 function IssueAssigneeAvatar({
@@ -248,14 +270,9 @@ export function SearchCommand() {
           setOpen(false);
         },
       },
-      trainingCommand("prompts", t(($) => $.commands.open_prompt_library), "提示词库 prompt library prompts"),
-      trainingCommand("prompt-playground", t(($) => $.commands.open_prompt_playground), "提示词调试 prompt playground debug"),
-      trainingCommand("agent-playground", t(($) => $.commands.open_agent_playground), "Agent 调试 agent playground debug"),
-      trainingCommand("datasets", t(($) => $.commands.open_datasets), "dataset 数据集 training data"),
-      trainingCommand("test-suites", t(($) => $.commands.open_test_suites), "test suite 测试套件 eval"),
-      trainingCommand("experiments", t(($) => $.commands.open_experiments), "experiment 实验 对比"),
-      trainingCommand("optimization-runs", t(($) => $.commands.open_optimization_runs), "optimization 优化运行"),
-      trainingCommand("run-history", t(($) => $.commands.open_run_history), "history 运行历史 trace"),
+      ...TRAINING_WORKBENCH_VIEWS.map((item) =>
+        trainingCommand(item.view, trainingCommandLabel(t, item.view), item.keywords.join(" ")),
+      ),
     ];
 
     if (currentIssue) {
