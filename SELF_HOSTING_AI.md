@@ -63,6 +63,7 @@ apps/docs/content/docs/production-observability.zh.mdx
 curl -fsS http://localhost:8080/health
 curl -fsS http://localhost:8080/readyz
 curl -fsS -o /tmp/multica-login.html -w '%{http_code} %{time_total}\n' http://localhost:3000/login
+pnpm acceptance:evidence
 ```
 
 然后打开 `/{workspaceSlug}/training?view=demo-dashboard` 并确认：

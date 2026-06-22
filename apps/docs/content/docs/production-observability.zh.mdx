@@ -60,6 +60,46 @@ curl --noproxy '*' -fsS -o /tmp/multica-login.html -w '%{http_code} %{time_total
 
 `/health` 只证明进程活着；`/readyz` 才证明数据库和 migration 状态能支撑生产请求。
 
+## 自动生成验收包
+
+上线前生成一次验收包，避免最后交付只靠口头描述：
+
+```bash
+pnpm acceptance:evidence
+```
+
+默认模式只读检查健康接口、登录页、演示账号权限、git commit 和 worktree 状态，并在 `artifacts/acceptance/` 下生成：
+
+```text
+production-acceptance-<timestamp>.json
+production-acceptance-<timestamp>.md
+```
+
+需要把关键命令也写入验收包时执行：
+
+```bash
+pnpm acceptance:verify
+```
+
+如果要把 Playwright 主链路、真实 Agent 和真实小队验收一起纳入报告：
+
+```bash
+ACCEPTANCE_INCLUDE_E2E=1 pnpm acceptance:verify
+```
+
+常用环境变量：
+
+| 变量 | 用途 |
+|---|---|
+| `ACCEPTANCE_FRONTEND_URL` | 覆盖前端访问地址，例如 `http://9.134.129.162:13680` |
+| `ACCEPTANCE_API_URL` | 覆盖后端地址，例如 `http://9.134.129.162:18760` |
+| `ACCEPTANCE_DEMO_ACCOUNT` | 演示账号 |
+| `ACCEPTANCE_DEMO_PASSWORD` | 演示账号密码；报告只记录“已配置”，不打印明文 |
+| `ACCEPTANCE_WORKSPACE_SLUG` | 领导演示工作区 slug |
+| `ACCEPTANCE_INCLUDE_E2E` | 设为 `1` 后把 Playwright 和真实 Agent 验收命令纳入执行 |
+
+验收包必须和生产看板导出的 `multica.production_demo_evidence.v1` JSON 一起留存：前者证明部署、账号、commit 和测试命令，后者证明业务闭环、运行证据、trace、token 和观测指标。
+
 ## 观测摘要 API
 
 生产看板使用同一个后端接口：

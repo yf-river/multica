@@ -12,6 +12,8 @@
     "typecheck": "turbo typecheck",
     "test": "turbo test",
     "lint": "turbo lint",
+    "acceptance:evidence": "node scripts/generate-acceptance-evidence.mjs",
+    "acceptance:verify": "node scripts/generate-acceptance-evidence.mjs --run-tests",
     "clean": "turbo clean && rm -rf node_modules",
     "ui:add": "cd packages/ui && npx shadcn@latest add",
     "generate:reserved-slugs": "node scripts/generate-reserved-slugs.mjs"
