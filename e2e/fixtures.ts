@@ -70,6 +70,19 @@ interface PromptEvaluationAgentRunResponse {
   message: string;
 }
 
+interface PromptEvaluationRuntimeReadiness {
+  status: string;
+  label: string;
+  detail: string;
+  model: string;
+  runtime?: {
+    id: string;
+    provider: string;
+    status: string;
+    name: string;
+  } | null;
+}
+
 interface PromptEvaluationRunEvidence {
   run: PromptEvaluationRun;
   trials: Array<{
@@ -700,6 +713,17 @@ export class TestApiClient {
     return data.items ?? [];
   }
 
+  async createPromptLibraryItem(data: Record<string, unknown>): Promise<PromptLibraryItem> {
+    const res = await this.authedFetch("/api/prompt-library", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      throw new Error(`create prompt library item failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
   async deletePromptLibraryItem(id: string) {
     await this.authedFetch(`/api/prompt-library/${id}`, { method: "DELETE" });
   }
@@ -965,10 +989,34 @@ export class TestApiClient {
     return res.json();
   }
 
+  async runPromptEvaluationAssetAgent(id: string): Promise<PromptEvaluationAgentRunResponse> {
+    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/agent-run`, { method: "POST" });
+    if (!res.ok) {
+      throw new Error(`run prompt evaluation asset agent failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
   async runPromptEvaluationOptimizationAgent(runId: string): Promise<PromptEvaluationAgentRunResponse> {
     const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/optimization-agent-run`, { method: "POST" });
     if (!res.ok) {
       throw new Error(`run prompt evaluation optimization agent failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async syncPromptEvaluationRun(runId: string): Promise<PromptEvaluationRun> {
+    const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/sync`, { method: "POST" });
+    if (!res.ok) {
+      throw new Error(`sync prompt evaluation run failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async getPromptEvaluationRuntimeReadiness(): Promise<PromptEvaluationRuntimeReadiness> {
+    const res = await this.authedFetch("/api/prompt-evaluation-runtime-readiness");
+    if (!res.ok) {
+      throw new Error(`get prompt evaluation runtime readiness failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
   }
