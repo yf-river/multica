@@ -40,6 +40,12 @@ export function proxy(req: NextRequest) {
     }
 
     if (lastSlug) {
+      if (firstSegment === "prompt-library") {
+        url.pathname = `/${lastSlug}/training`;
+        url.searchParams.set("view", "prompts");
+        return NextResponse.redirect(url);
+      }
+
       // Preserve deep-link path + query: /issues/abc → /{lastSlug}/issues/abc
       url.pathname = `/${lastSlug}${pathname}`;
       return NextResponse.redirect(url);
