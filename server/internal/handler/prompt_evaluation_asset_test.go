@@ -311,6 +311,25 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if created.Source != "manual" || created.CaseIndex != 0 || created.CaseName != "登录失败需要 trace" {
 		t.Fatalf("created case = %+v", created)
 	}
+	runW := httptest.NewRecorder()
+	testHandler.RunPromptEvaluationAsset(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/run", nil), "id", asset.ID))
+	if runW.Code != http.StatusOK {
+		t.Fatalf("run asset with manual case status = %d, body = %s", runW.Code, runW.Body.String())
+	}
+	var trialCaseName string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT t.case_name
+		FROM prompt_evaluation_trial t
+		JOIN prompt_evaluation_run r ON r.id = t.run_id
+		WHERE r.asset_id = $1
+		ORDER BY r.created_at DESC, t.case_index ASC
+		LIMIT 1
+	`, asset.ID).Scan(&trialCaseName); err != nil {
+		t.Fatalf("load manual case trial: %v", err)
+	}
+	if trialCaseName != "登录失败需要 trace" {
+		t.Fatalf("manual structured case was not used by run, got %q", trialCaseName)
+	}
 
 	updateCaseW := httptest.NewRecorder()
 	testHandler.UpdatePromptEvaluationCase(updateCaseW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-cases/"+created.ID, map[string]any{
