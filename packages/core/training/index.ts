@@ -1,13 +1,13 @@
 export const TRAINING_WORKBENCH_VIEWS = [
   {
-    tab: "演示看板",
+    tab: "生产看板",
     view: "demo-dashboard",
-    keywords: ["演示看板", "领导视角", "验收", "demo", "dashboard", "observability"],
+    keywords: ["生产看板", "领导视角", "验收", "demo", "dashboard", "observability"],
   },
   {
-    tab: "提示词库",
+    tab: "提示词资产",
     view: "prompts",
-    keywords: ["提示词库", "prompt", "library", "prompts"],
+    keywords: ["提示词资产", "提示词库", "prompt", "library", "prompts"],
   },
   {
     tab: "提示词调试场",
@@ -51,7 +51,7 @@ export type TrainingWorkbenchTab = TrainingWorkbenchView["tab"];
 export type TrainingWorkbenchViewId = TrainingWorkbenchView["view"];
 
 export const TRAINING_WORKBENCH_TABS = TRAINING_WORKBENCH_VIEWS.map((item) => item.tab) as TrainingWorkbenchTab[];
-export const DEFAULT_TRAINING_WORKBENCH_TAB: TrainingWorkbenchTab = "演示看板";
+export const DEFAULT_TRAINING_WORKBENCH_TAB: TrainingWorkbenchTab = "生产看板";
 export const DEFAULT_TRAINING_WORKBENCH_VIEW: TrainingWorkbenchViewId = "demo-dashboard";
 
 export const TRAINING_WORKBENCH_VIEW_BY_TAB = Object.fromEntries(

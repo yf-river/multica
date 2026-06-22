@@ -15,7 +15,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 /{workspaceSlug}/training?view=demo-dashboard
 ```
 
-页面名称是 **训练与评估 → 演示看板**。它把四类证据放在同一屏：
+页面名称是 **训练与评估 → 生产看板**。它把四类证据放在同一屏：
 
 | 区域 | 证明什么 |
 |---|---|
@@ -24,7 +24,7 @@ import { Callout } from "fumadocs-ui/components/callout";
 | 验收证据 | 结构化用例、真实 Agent 任务/trace、优化候选、最近运行是否存在 |
 | 演示状态 | CodeBuddy 运行时、真实运行证据、结构化用例、优化闭环、摘要完整性是否达标 |
 
-演示时不要只打开一个静态页面。至少要能从演示看板跳到 **运行历史**，展开一条 Agent 执行记录，看到触发来源、创建者、开始/结束时间、任务标识、模型、运行时、token、trace、用例明细和完整运行证据 JSON。
+演示时不要只打开一个静态页面。至少要能从生产看板跳到 **运行历史**，展开一条 Agent 执行记录，看到触发来源、创建者、开始/结束时间、任务标识、模型、运行时、token、trace、用例明细和完整运行证据 JSON。
 
 ## 最小验收标准
 
@@ -35,11 +35,11 @@ import { Callout } from "fumadocs-ui/components/callout";
 | 后端健康 | `/health` 返回 `{"status":"ok"}` |
 | 后端就绪 | `/readyz` 返回 DB 和 migration 都是 `ok` |
 | 前端可访问 | 登录页返回 HTTP 200 |
-| 真实 Agent 运行时 | 演示看板显示 CodeBuddy 运行时已就绪 |
+| 真实 Agent 运行时 | 生产看板显示 CodeBuddy 运行时已就绪 |
 | 训练评估运行 | 运行历史里至少有一条 `Agent执行` 且状态为 `通过` 或明确失败原因 |
 | 证据链 | 运行证据能看到触发来源、创建者、开始/结束时间、trial、任务消息、trace 事件、token、耗时 |
 | 优化闭环 | 失败用例能生成优化候选，候选必须人工确认后发布，不能自动替换生产版本 |
-| 观测完整性 | 演示看板显示观测摘要 `完整`；如果是 `可能截断`，演示前要缩小范围或说明采样限制 |
+| 观测完整性 | 生产看板显示观测摘要 `完整`；如果是 `可能截断`，演示前要缩小范围或说明采样限制 |
 
 ## 健康检查命令
 
@@ -62,7 +62,7 @@ curl --noproxy '*' -fsS -o /tmp/multica-login.html -w '%{http_code} %{time_total
 
 ## 观测摘要 API
 
-演示看板使用同一个后端接口：
+生产看板使用同一个后端接口：
 
 ```bash
 curl -fsS \
@@ -105,7 +105,7 @@ curl -fsS \
   "http://<server-host>:8080/api/prompt-evaluation-summary"
 ```
 
-可选加时间窗口，演示看板的时间范围就是用这个口径：
+可选加时间窗口，生产看板的时间范围就是用这个口径：
 
 ```bash
 curl -fsS \
@@ -182,7 +182,7 @@ MULTICA_PROMPT_EVALUATION_AGENT_MODEL=<可用模型>
 |---|---|
 | 运行标识 | Playwright 输出或 `/api/prompt-evaluation-runs` |
 | 任务标识 | 运行历史或 evidence API |
-| 模型/运行时 | 运行历史、演示看板、evidence API |
+| 模型/运行时 | 运行历史、生产看板、evidence API |
 | 任务消息 | evidence API |
 | trace 事件 | evidence API |
 | token/耗时/成本 | evidence API 与观测摘要 |
@@ -192,7 +192,7 @@ MULTICA_PROMPT_EVALUATION_AGENT_MODEL=<可用模型>
 
 1. 打开登录页，确认没有外部营销弹窗或 waitlist 引导。
 2. 用演示账号登录，进入目标工作区。
-3. 打开 **训练与评估 → 演示看板**，确认看板不是空数据。
+3. 打开 **训练与评估 → 生产看板**，确认看板不是空数据。
 4. 打开 **运行历史**，展开最近一条 Agent 执行，确认运行证据里有触发来源、创建者、开始/结束时间、任务、trace、token、模型、运行时。
 5. 展开 **完整运行证据 JSON**，确认能看到 `run`、`trials`、`task_usage`、`task_messages`、`trace_events`。
 6. 打开 **优化运行**，确认待确认候选必须人工发布或拒绝。
@@ -238,4 +238,4 @@ SOP/任务观测摘要当前状态是 <完整/可能截断>，如果截断，汇
 失败用例不会自动替换生产提示词，只会生成候选，由人工确认发布或拒绝。
 ```
 
-这段话里的每个变量都必须能在演示看板、运行历史、evidence API 或观测摘要 API 中找到。
+这段话里的每个变量都必须能在生产看板、运行历史、evidence API 或观测摘要 API 中找到。

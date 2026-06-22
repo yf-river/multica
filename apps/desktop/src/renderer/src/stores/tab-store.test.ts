@@ -63,9 +63,9 @@ describe("migrateV1ToV2", () => {
   it("groups v1 flat tabs by workspace slug", () => {
     const v1 = {
       tabs: [
-        { id: "t1", path: "/acme/issues", title: "Issues", icon: "ListTodo" },
-        { id: "t2", path: "/acme/projects", title: "Projects", icon: "FolderKanban" },
-        { id: "t3", path: "/butter/issues", title: "Issues", icon: "ListTodo" },
+        { id: "t1", path: "/acme/issues", title: "任务", icon: "ListTodo" },
+        { id: "t2", path: "/acme/projects", title: "项目", icon: "FolderKanban" },
+        { id: "t3", path: "/butter/issues", title: "任务", icon: "ListTodo" },
       ],
       activeTabId: "t2",
     };
@@ -81,9 +81,9 @@ describe("migrateV1ToV2", () => {
   it("drops tabs at root / transition / reserved-slug paths", () => {
     const v1 = {
       tabs: [
-        { id: "t1", path: "/", title: "Issues", icon: "ListTodo" },
+        { id: "t1", path: "/", title: "任务", icon: "ListTodo" },
         { id: "t2", path: "/workspaces/new", title: "New", icon: "Plus" },
-        { id: "t3", path: "/acme/issues", title: "Issues", icon: "ListTodo" },
+        { id: "t3", path: "/acme/issues", title: "任务", icon: "ListTodo" },
       ],
       activeTabId: "t1",
     };
@@ -120,7 +120,7 @@ describe("useTabStore actions", () => {
   it("switchWorkspace without openPath restores the group's last active tab", () => {
     const store = useTabStore.getState();
     store.switchWorkspace("acme");
-    store.addTab("/acme/projects", "Projects", "FolderKanban");
+    store.addTab("/acme/projects", "项目", "FolderKanban");
     const acmeProjectsId = useTabStore.getState().byWorkspace.acme.tabs[1].id;
     store.setActiveTab(acmeProjectsId);
 
@@ -137,7 +137,7 @@ describe("useTabStore actions", () => {
   it("switchWorkspace with openPath dedupes into an existing tab with same path", () => {
     const store = useTabStore.getState();
     store.switchWorkspace("acme"); // creates default /acme/issues
-    store.addTab("/acme/projects", "Projects", "FolderKanban");
+    store.addTab("/acme/projects", "项目", "FolderKanban");
 
     store.switchWorkspace("acme", "/acme/issues");
     const s = useTabStore.getState();
@@ -163,8 +163,8 @@ describe("useTabStore actions", () => {
   it("openTab dedupes by path within the active workspace", () => {
     const store = useTabStore.getState();
     store.switchWorkspace("acme");
-    const id1 = store.openTab("/acme/projects", "Projects", "FolderKanban");
-    const id2 = store.openTab("/acme/projects", "Projects", "FolderKanban");
+    const id1 = store.openTab("/acme/projects", "项目", "FolderKanban");
+    const id2 = store.openTab("/acme/projects", "项目", "FolderKanban");
     expect(id1).toBe(id2);
     expect(useTabStore.getState().byWorkspace.acme.tabs).toHaveLength(2); // default + projects
   });
@@ -336,7 +336,7 @@ describe("togglePin", () => {
   it("moves a newly-pinned tab to the start of the pinned zone", () => {
     const store = useTabStore.getState();
     store.switchWorkspace("acme"); // creates default unpinned tab at index 0
-    store.addTab("/acme/projects", "Projects", "FolderKanban");
+    store.addTab("/acme/projects", "项目", "FolderKanban");
     store.addTab("/acme/agents", "Agents", "Bot");
     const agentsId = useTabStore.getState().byWorkspace.acme.tabs[2].id;
 
@@ -351,7 +351,7 @@ describe("togglePin", () => {
   it("appends a second pinned tab after the first pinned tab", () => {
     const store = useTabStore.getState();
     store.switchWorkspace("acme");
-    store.addTab("/acme/projects", "Projects", "FolderKanban");
+    store.addTab("/acme/projects", "项目", "FolderKanban");
     store.addTab("/acme/agents", "Agents", "Bot");
     const projectsId = useTabStore.getState().byWorkspace.acme.tabs[1].id;
     const agentsId = useTabStore.getState().byWorkspace.acme.tabs[2].id;
@@ -373,7 +373,7 @@ describe("togglePin", () => {
   it("returns an unpinned tab to the start of the unpinned zone", () => {
     const store = useTabStore.getState();
     store.switchWorkspace("acme");
-    store.addTab("/acme/projects", "Projects", "FolderKanban");
+    store.addTab("/acme/projects", "项目", "FolderKanban");
     const issuesId = useTabStore.getState().byWorkspace.acme.tabs[0].id;
     const projectsId = useTabStore.getState().byWorkspace.acme.tabs[1].id;
 
@@ -392,7 +392,7 @@ describe("moveTab boundary clamp", () => {
   it("clamps a pinned-tab move so it never crosses into the unpinned zone", () => {
     const store = useTabStore.getState();
     store.switchWorkspace("acme");
-    store.addTab("/acme/projects", "Projects", "FolderKanban");
+    store.addTab("/acme/projects", "项目", "FolderKanban");
     store.addTab("/acme/agents", "Agents", "Bot");
     const issuesId = useTabStore.getState().byWorkspace.acme.tabs[0].id;
 
@@ -409,7 +409,7 @@ describe("moveTab boundary clamp", () => {
   it("clamps an unpinned-tab move so it never crosses into the pinned zone", () => {
     const store = useTabStore.getState();
     store.switchWorkspace("acme");
-    store.addTab("/acme/projects", "Projects", "FolderKanban");
+    store.addTab("/acme/projects", "项目", "FolderKanban");
     store.addTab("/acme/agents", "Agents", "Bot");
     const issuesId = useTabStore.getState().byWorkspace.acme.tabs[0].id;
     const agentsId = useTabStore.getState().byWorkspace.acme.tabs[2].id;
@@ -428,7 +428,7 @@ describe("moveTab boundary clamp", () => {
   it("reorders freely within the same zone", () => {
     const store = useTabStore.getState();
     store.switchWorkspace("acme");
-    store.addTab("/acme/projects", "Projects", "FolderKanban");
+    store.addTab("/acme/projects", "项目", "FolderKanban");
     store.addTab("/acme/agents", "Agents", "Bot");
 
     // All unpinned; move agents (2) to position 0.
@@ -450,8 +450,8 @@ describe("migrateV2ToV3", () => {
         acme: {
           activeTabId: "t1",
           tabs: [
-            { id: "t1", path: "/acme/issues", title: "Issues", icon: "ListTodo" },
-            { id: "t2", path: "/acme/projects", title: "Projects", icon: "FolderKanban" },
+            { id: "t1", path: "/acme/issues", title: "任务", icon: "ListTodo" },
+            { id: "t2", path: "/acme/projects", title: "项目", icon: "FolderKanban" },
           ],
         },
       },
@@ -459,8 +459,8 @@ describe("migrateV2ToV3", () => {
     const v3 = migrateV2ToV3(v2);
     expect(v3.activeWorkspaceSlug).toBe("acme");
     expect(v3.byWorkspace.acme.tabs).toEqual([
-      { id: "t1", path: "/acme/issues", title: "Issues", icon: "ListTodo", pinned: false },
-      { id: "t2", path: "/acme/projects", title: "Projects", icon: "FolderKanban", pinned: false },
+      { id: "t1", path: "/acme/issues", title: "任务", icon: "ListTodo", pinned: false },
+      { id: "t2", path: "/acme/projects", title: "项目", icon: "FolderKanban", pinned: false },
     ]);
   });
 

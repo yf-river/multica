@@ -659,7 +659,7 @@ export function PromptLibraryPage() {
 
       <TrainingSummaryStrip summary={summary} loading={summaryQuery.isLoading} />
 
-      {activeTab === "演示看板" ? (
+      {activeTab === "生产看板" ? (
         <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
           <DemoDashboardPanel
             trainingSummary={summary}
@@ -984,7 +984,7 @@ function DemoDashboardPanel({
     <section className="mx-auto flex max-w-7xl flex-col gap-4" data-testid="training-demo-dashboard">
       <div className="flex flex-col gap-2 border-b pb-3 md:flex-row md:items-end md:justify-between">
         <div>
-          <h2 className="text-base font-semibold">团队生产演示看板</h2>
+          <h2 className="text-base font-semibold">团队生产看板</h2>
           <p className="mt-1 text-xs text-muted-foreground">
             汇总训练评估、真实 Agent、SOP 观测和验收证据，当前观测范围：{activeRange.label}。
           </p>
@@ -1272,7 +1272,7 @@ function WorkbenchPanel({
     enabled: !!expandedRunId,
   });
 
-  if (activeTab === "提示词库" || activeTab === "提示词调试场") {
+  if (activeTab === "提示词资产" || activeTab === "提示词调试场") {
     return null;
   }
 

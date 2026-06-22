@@ -121,37 +121,37 @@ export const appRoutes: RouteObject[] = [
           {
             path: "issues",
             element: <IssuesPage />,
-            handle: { title: "Issues" },
+            handle: { title: "任务" },
           },
           {
             path: "issues/:id",
             element: <IssueDetailPage />,
-            handle: { title: "Issue" },
+            handle: { title: "任务详情" },
           },
           {
             path: "projects",
             element: <ProjectsPage />,
-            handle: { title: "Projects" },
+            handle: { title: "项目" },
           },
           {
             path: "projects/:id",
             element: <ProjectDetailPage />,
-            handle: { title: "Project" },
+            handle: { title: "项目详情" },
           },
           {
             path: "autopilots",
             element: <AutopilotsPage />,
-            handle: { title: "Autopilot" },
+            handle: { title: "自动化" },
           },
           {
             path: "autopilots/:id",
             element: <AutopilotDetailPage />,
-            handle: { title: "Autopilot" },
+            handle: { title: "自动化详情" },
           },
           {
             path: "my-issues",
             element: <MyIssuesPage />,
-            handle: { title: "My Issues" },
+            handle: { title: "我的任务" },
           },
           {
             path: "runtimes",

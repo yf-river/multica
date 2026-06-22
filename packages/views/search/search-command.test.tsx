@@ -308,7 +308,7 @@ describe("SearchCommand", () => {
     expect(useSearchStore.getState().open).toBe(false);
   });
 
-  it("训练与评估页面入口默认跳转到演示看板", async () => {
+  it("训练与评估页面入口默认跳转到生产看板", async () => {
     const user = userEvent.setup();
     renderSearch();
 
@@ -421,8 +421,8 @@ describe("SearchCommand", () => {
     renderSearch();
 
     const commands = [
-      ["演示看板", "打开演示看板", "/ws-test/training?view=demo-dashboard"],
-      ["提示词库", "打开提示词库", "/ws-test/training?view=prompts"],
+      ["生产看板", "打开生产看板", "/ws-test/training?view=demo-dashboard"],
+      ["提示词资产", "打开提示词资产", "/ws-test/training?view=prompts"],
       ["提示词调试", "打开提示词调试场", "/ws-test/training?view=prompt-playground"],
       ["Agent 调试", "打开 Agent 调试场", "/ws-test/training?view=agent-playground"],
       ["数据集", "打开数据集", "/ws-test/training?view=datasets"],

@@ -10,9 +10,21 @@ async function loginInBrowser(page: Page, account: string) {
   });
   expect(res.ok()).toBe(true);
   const data = await res.json();
-  await page.goto("/", { waitUntil: "domcontentloaded" });
-  await page.evaluate((token) => {
+  const baseURL =
+    process.env.PLAYWRIGHT_BASE_URL ??
+    process.env.FRONTEND_ORIGIN ??
+    "http://localhost:3000";
+  await page.context().addCookies([
+    {
+      name: "multica_logged_in",
+      value: "1",
+      url: baseURL,
+      sameSite: "Lax",
+    },
+  ]);
+  await page.addInitScript((token) => {
     localStorage.setItem("multica_token", token);
+    localStorage.setItem("multica:chat:isOpen", "false");
   }, data.token);
 }
 

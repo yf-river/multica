@@ -15,8 +15,8 @@ const state = vi.hoisted(() => ({
     acme: {
       activeTabId: "tA",
       tabs: [
-        { id: "tA", path: "/acme/issues", title: "Issues", icon: "ListTodo", pinned: false },
-        { id: "tB", path: "/acme/projects", title: "Projects", icon: "ListTodo", pinned: false },
+        { id: "tA", path: "/acme/issues", title: "任务", icon: "ListTodo", pinned: false },
+        { id: "tB", path: "/acme/projects", title: "项目", icon: "ListTodo", pinned: false },
       ] as MockTab[],
     },
   } as Record<string, { activeTabId: string; tabs: MockTab[] }>,
@@ -70,8 +70,8 @@ function reset() {
     acme: {
       activeTabId: "tA",
       tabs: [
-        { id: "tA", path: "/acme/issues", title: "Issues", icon: "ListTodo", pinned: false },
-        { id: "tB", path: "/acme/projects", title: "Projects", icon: "ListTodo", pinned: false },
+        { id: "tA", path: "/acme/issues", title: "任务", icon: "ListTodo", pinned: false },
+        { id: "tB", path: "/acme/projects", title: "项目", icon: "ListTodo", pinned: false },
       ],
     },
   };
@@ -87,8 +87,8 @@ beforeEach(reset);
 describe("TabBar hover action buttons", () => {
   it("renders a Pin button on every unpinned tab and an Unpin button on every pinned tab", () => {
     state.byWorkspace.acme.tabs = [
-      { id: "tA", path: "/acme/issues", title: "Issues", icon: "ListTodo", pinned: true },
-      { id: "tB", path: "/acme/projects", title: "Projects", icon: "ListTodo", pinned: false },
+      { id: "tA", path: "/acme/issues", title: "任务", icon: "ListTodo", pinned: true },
+      { id: "tB", path: "/acme/projects", title: "项目", icon: "ListTodo", pinned: false },
     ];
     const { getAllByLabelText } = render(<TabBar />);
     expect(getAllByLabelText("取消固定标签页")).toHaveLength(1);
@@ -104,8 +104,8 @@ describe("TabBar hover action buttons", () => {
 
   it("clicking the Unpin button on a pinned tab calls togglePin", () => {
     state.byWorkspace.acme.tabs = [
-      { id: "tA", path: "/acme/issues", title: "Issues", icon: "ListTodo", pinned: true },
-      { id: "tB", path: "/acme/projects", title: "Projects", icon: "ListTodo", pinned: false },
+      { id: "tA", path: "/acme/issues", title: "任务", icon: "ListTodo", pinned: true },
+      { id: "tB", path: "/acme/projects", title: "项目", icon: "ListTodo", pinned: false },
     ];
     const { getByLabelText } = render(<TabBar />);
     fireEvent.click(getByLabelText("取消固定标签页"));
@@ -114,8 +114,8 @@ describe("TabBar hover action buttons", () => {
 
   it("hides the X close button on a pinned tab but keeps it on an unpinned tab", () => {
     state.byWorkspace.acme.tabs = [
-      { id: "tA", path: "/acme/issues", title: "Issues", icon: "ListTodo", pinned: true },
-      { id: "tB", path: "/acme/projects", title: "Projects", icon: "ListTodo", pinned: false },
+      { id: "tA", path: "/acme/issues", title: "任务", icon: "ListTodo", pinned: true },
+      { id: "tB", path: "/acme/projects", title: "项目", icon: "ListTodo", pinned: false },
     ];
     const { queryAllByLabelText } = render(<TabBar />);
     // Only the unpinned tab exposes a Close affordance — pinned tab requires
@@ -125,21 +125,21 @@ describe("TabBar hover action buttons", () => {
 
   it("keeps the full title visible on a pinned tab (no icon-only collapse)", () => {
     state.byWorkspace.acme.tabs = [
-      { id: "tA", path: "/acme/issues", title: "Issues", icon: "ListTodo", pinned: true },
+      { id: "tA", path: "/acme/issues", title: "任务", icon: "ListTodo", pinned: true },
     ];
     const { getByLabelText } = render(<TabBar />);
-    const pinnedTab = getByLabelText("Issues（已固定）");
-    expect(within(pinnedTab).getByText("Issues")).toBeTruthy();
+    const pinnedTab = getByLabelText("任务（已固定）");
+    expect(within(pinnedTab).getByText("任务")).toBeTruthy();
   });
 
   it("renders the Pin glyph as the leading icon on a pinned tab and the route icon on an unpinned tab", () => {
     state.byWorkspace.acme.tabs = [
-      { id: "tA", path: "/acme/issues", title: "Issues", icon: "ListTodo", pinned: true },
-      { id: "tB", path: "/acme/projects", title: "Projects", icon: "ListTodo", pinned: false },
+      { id: "tA", path: "/acme/issues", title: "任务", icon: "ListTodo", pinned: true },
+      { id: "tB", path: "/acme/projects", title: "项目", icon: "ListTodo", pinned: false },
     ];
     const { getByLabelText } = render(<TabBar />);
-    const pinnedTab = getByLabelText("Issues（已固定）");
-    const unpinnedTab = getByLabelText("Projects");
+    const pinnedTab = getByLabelText("任务（已固定）");
+    const unpinnedTab = getByLabelText("项目");
     // lucide-react renders the icon name into the class list. The leading
     // slot icon is size-3.5; the hover Pin/Unpin action button is size-2.5,
     // so we qualify on size to avoid matching the action glyph.
@@ -151,11 +151,11 @@ describe("TabBar hover action buttons", () => {
 
   it("renders the training route icon when a tab uses ChartNoAxesCombined", () => {
     state.byWorkspace.acme.tabs = [
-      { id: "tA", path: "/acme/training?view=demo-dashboard", title: "训练与评估 · 演示看板", icon: "ChartNoAxesCombined", pinned: false },
+      { id: "tA", path: "/acme/training?view=demo-dashboard", title: "训练与评估 · 生产看板", icon: "ChartNoAxesCombined", pinned: false },
     ];
 
     const { getByLabelText } = render(<TabBar />);
 
-    expect(getByLabelText("训练与评估 · 演示看板").querySelector(".lucide-chart-no-axes-combined.size-3\\.5")).toBeTruthy();
+    expect(getByLabelText("训练与评估 · 生产看板").querySelector(".lucide-chart-no-axes-combined.size-3\\.5")).toBeTruthy();
   });
 });

@@ -1,5 +1,4 @@
-import { act, render, screen, waitFor } from "@testing-library/react";
-import userEvent from "@testing-library/user-event";
+import { render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@multica/core/i18n/react";
 import enCommon from "../locales/zh-Hans/common.json";
@@ -107,186 +106,7 @@ describe("SourceBackfillModal", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("does not render when the user already recorded a source", () => {
-    setUser({
-      id: "u1",
-      onboarded_at: "2026-01-01T00:00:00Z",
-      onboarding_questionnaire: { source: ["search"] },
-    });
-    renderModal();
-    expect(
-      screen.queryByText(/你是从哪里了解到 Multica 的/i),
-    ).not.toBeInTheDocument();
-  });
-
-  it("opens for an onboarded user with empty source and fires the shown event", async () => {
-    setUser({
-      id: "u1",
-      onboarded_at: "2026-01-01T00:00:00Z",
-      onboarding_questionnaire: { source: [] },
-    });
-    renderModal();
-    await waitFor(() => {
-      expect(
-        screen.getByText(/你是从哪里了解到 Multica 的/i),
-      ).toBeInTheDocument();
-    });
-    expect(mockCaptureEvent).toHaveBeenCalledWith("source_backfill_shown");
-  });
-
-  it("Submit PATCHes the merged questionnaire preserving role / use_case", async () => {
-    setUser({
-      id: "u1",
-      onboarded_at: "2026-01-01T00:00:00Z",
-      onboarding_questionnaire: {
-        source: [],
-        role: "engineer",
-        role_skipped: false,
-        use_case: ["ship_code", "plan_research"],
-        use_case_skipped: false,
-        version: 2,
-      },
-    });
-    const user = userEvent.setup();
-    renderModal();
-    await user.click(await screen.findByText("朋友或同事"));
-    await user.click(screen.getByRole("button", { name: "提交" }));
-
-    await waitFor(() => {
-      expect(mockSaveQuestionnaire).toHaveBeenCalledTimes(1);
-    });
-    const sent = mockSaveQuestionnaire.mock.calls[0]![0];
-    expect(sent.source).toEqual(["friends_colleagues"]);
-    expect(sent.source_skipped).toBe(false);
-    expect(sent.role).toBe("engineer");
-    expect(sent.use_case).toEqual(["ship_code", "plan_research"]);
-    expect(sent.version).toBe(2);
-    expect(mockCaptureEvent).toHaveBeenCalledWith(
-      "source_backfill_submitted",
-      expect.objectContaining({ source: ["friends_colleagues"] }),
-    );
-  });
-
-  it("Skip PATCHes source_skipped=true preserving role / use_case", async () => {
-    setUser({
-      id: "u1",
-      onboarded_at: "2026-01-01T00:00:00Z",
-      onboarding_questionnaire: {
-        source: [],
-        role: "founder",
-        use_case: ["manage_team"],
-        version: 2,
-      },
-    });
-    const user = userEvent.setup();
-    renderModal();
-    await user.click(
-      await screen.findByRole("button", { name: "跳过" }),
-    );
-    await waitFor(() => {
-      expect(mockSaveQuestionnaire).toHaveBeenCalledTimes(1);
-    });
-    const sent = mockSaveQuestionnaire.mock.calls[0]![0];
-    expect(sent.source).toEqual([]);
-    expect(sent.source_skipped).toBe(true);
-    expect(sent.role).toBe("founder");
-    expect(sent.use_case).toEqual(["manage_team"]);
-    expect(mockCaptureEvent).toHaveBeenCalledWith("source_backfill_skipped");
-  });
-
-  it("treats a legacy single-string source as already answered", () => {
-    setUser({
-      id: "u1",
-      onboarded_at: "2026-01-01T00:00:00Z",
-      onboarding_questionnaire: { source: "search" },
-    });
-    renderModal();
-    expect(
-      screen.queryByText(/你是从哪里了解到 Multica 的/i),
-    ).not.toBeInTheDocument();
-  });
-
-  it("renders the GitHub channel rebased from origin/main", async () => {
-    setUser({
-      id: "u1",
-      onboarded_at: "2026-01-01T00:00:00Z",
-      onboarding_questionnaire: { source: [] },
-    });
-    renderModal();
-    expect(await screen.findByText("GitHub")).toBeInTheDocument();
-  });
-
-  it("picking a second option replaces the first (single-select primary source)", async () => {
-    // The modal is now a single-select radio. Industry default for
-    // HDYHAU is to capture the primary acquisition source, so picking
-    // a second option must replace the first — never accumulate.
-    setUser({
-      id: "u1",
-      onboarded_at: "2026-01-01T00:00:00Z",
-      onboarding_questionnaire: { source: [] },
-    });
-    const user = userEvent.setup();
-    renderModal();
-    await screen.findByText("朋友或同事");
-    const radios = screen.getAllByRole("radio");
-    const friends = radios[0]!;
-    const search = radios[1]!;
-
-    await user.click(friends);
-    expect(friends).toHaveAttribute("aria-checked", "true");
-    expect(search).toHaveAttribute("aria-checked", "false");
-
-    // Pick a second option — the first must clear and Submit stays
-    // enabled with exactly one pick in the payload.
-    await user.click(search);
-    expect(friends).toHaveAttribute("aria-checked", "false");
-    expect(search).toHaveAttribute("aria-checked", "true");
-
-    await user.click(screen.getByRole("button", { name: "提交" }));
-    await waitFor(() => {
-      expect(mockSaveQuestionnaire).toHaveBeenCalledTimes(1);
-    });
-    const sent = mockSaveQuestionnaire.mock.calls[0]![0];
-    // Server schema is still `source: string[]` for back-compat with
-    // v2 rows; the client always sends a single-element array.
-    expect(sent.source).toEqual(["search"]);
-    expect(sent.source).not.toContain("friends_colleagues");
-  });
-
-  it("defers the entrance by ~700ms when the user has not opted into reduced motion", async () => {
-    mockPrefersReducedMotion(false);
-    vi.useFakeTimers();
-    try {
-      setUser({
-        id: "u1",
-        onboarded_at: "2026-01-01T00:00:00Z",
-        onboarding_questionnaire: { source: [] },
-      });
-      renderModal();
-      // Immediately after mount: still hidden — the workspace gets a
-      // beat to render before the modal floats in.
-      expect(
-        screen.queryByText(/你是从哪里了解到 Multica 的/i),
-      ).not.toBeInTheDocument();
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(699);
-      });
-      expect(
-        screen.queryByText(/你是从哪里了解到 Multica 的/i),
-      ).not.toBeInTheDocument();
-      await act(async () => {
-        await vi.advanceTimersByTimeAsync(50);
-      });
-      expect(
-        screen.queryByText(/你是从哪里了解到 Multica 的/i),
-      ).toBeInTheDocument();
-    } finally {
-      vi.useRealTimers();
-    }
-  });
-
-  it("does not open once the per-user dismiss cap is reached on this browser", () => {
-    window.localStorage.setItem("multica.source_backfill.dismiss.u1", "3");
+  it("does not render for onboarded users even when source is missing", () => {
     setUser({
       id: "u1",
       onboarded_at: "2026-01-01T00:00:00Z",
@@ -296,5 +116,7 @@ describe("SourceBackfillModal", () => {
     expect(
       screen.queryByText(/你是从哪里了解到 Multica 的/i),
     ).not.toBeInTheDocument();
+    expect(mockCaptureEvent).not.toHaveBeenCalled();
+    expect(mockSaveQuestionnaire).not.toHaveBeenCalled();
   });
 });

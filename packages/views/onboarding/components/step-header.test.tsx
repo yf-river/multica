@@ -25,23 +25,23 @@ function render(ui: React.ReactElement, options?: RenderOptions) {
 
 describe("StepHeader", () => {
   it("renders one dot per step in ONBOARDING_STEP_ORDER", () => {
-    const { container } = render(<StepHeader currentStep="source" />);
+    const { container } = render(<StepHeader currentStep="role" />);
     const dots = container.querySelectorAll('[aria-hidden="true"]');
     expect(dots).toHaveLength(ONBOARDING_STEP_ORDER.length);
   });
 
   it("shows 'Step N of M' text matching the current step's position", () => {
-    // workspace is index 3 (after source/role/use_case) → Step 4.
+    // workspace is index 2 (after role/use_case) → Step 3.
     render(<StepHeader currentStep="workspace" />);
     expect(
-      screen.getByText(`第 4 步 / 共 ${ONBOARDING_STEP_ORDER.length} 步`),
+      screen.getByText(`第 3 步 / 共 ${ONBOARDING_STEP_ORDER.length} 步`),
     ).toBeInTheDocument();
   });
 
   it("sets accessible progressbar attrs", () => {
     render(<StepHeader currentStep="runtime" />);
     const bar = screen.getByRole("progressbar");
-    expect(bar).toHaveAttribute("aria-valuenow", "5"); // runtime is index 4 → step 5
+    expect(bar).toHaveAttribute("aria-valuenow", "4"); // runtime is index 3 → step 4
     expect(bar).toHaveAttribute("aria-valuemax", String(ONBOARDING_STEP_ORDER.length));
   });
 

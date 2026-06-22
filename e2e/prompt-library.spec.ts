@@ -40,8 +40,8 @@ test.describe("训练与评估工作台", () => {
     await page.getByRole("link", { name: "训练与评估" }).click();
     await expect(page).toHaveURL(/\/training(?:\?|$)/, { timeout: 30000 });
     await waitForPageText(page, "训练与评估");
-    await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队生产演示看板", { timeout: 10000 });
-    await page.getByRole("button", { name: "提示词库", exact: true }).click();
+    await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队生产看板", { timeout: 10000 });
+    await page.getByRole("button", { name: "提示词资产", exact: true }).click();
 
     await page.getByRole("button", { name: /user-center 模板/ }).click();
     await page.getByLabel("名称").fill(`${artifactPrefix} user-center 澄清`);
@@ -297,9 +297,9 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("training-summary-输入 token")).toContainText(/[1-9]/);
     await expect(page.getByTestId("training-summary-预估成本")).toContainText("$");
     await expect(page.getByTestId("training-summary-待确认优化候选")).toContainText(/\d/);
-    await page.getByRole("button", { name: "演示看板", exact: true }).click();
+    await page.getByRole("button", { name: "生产看板", exact: true }).click();
     const demoDashboard = page.getByTestId("training-demo-dashboard");
-    await expect(demoDashboard).toContainText("团队生产演示看板", { timeout: 10000 });
+    await expect(demoDashboard).toContainText("团队生产看板", { timeout: 10000 });
     await expect(demoDashboard).toContainText("训练评估闭环");
     await expect(demoDashboard).toContainText("SOP 与任务观测");
     await expect(demoDashboard.getByTestId("training-demo-metric-Agent运行数")).toContainText(/[1-9]/);
@@ -482,8 +482,8 @@ test.describe("训练与评估工作台", () => {
 
     await page.getByRole("link", { name: "训练与评估" }).click();
     await expect(page).toHaveURL(/\/training(?:\?|$)/, { timeout: 30000 });
-    await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队生产演示看板", { timeout: 10000 });
-    await page.getByRole("button", { name: "提示词库", exact: true }).click();
+    await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队生产看板", { timeout: 10000 });
+    await page.getByRole("button", { name: "提示词资产", exact: true }).click();
     await page.getByRole("button", { name: /user-center 模板/ }).click();
     await page.getByLabel("名称").fill(promptName);
     await page.getByLabel("提示词内容").fill(sourceContent);
@@ -677,10 +677,10 @@ test.describe("训练与评估工作台", () => {
       });
   });
 
-  test("旧提示词库路由会跳转到训练与评估提示词视图", async ({ page }) => {
+  test("旧提示词资产路由会跳转到训练与评估提示词视图", async ({ page }) => {
     await page.goto(`/${workspaceSlug}/prompt-library`, { waitUntil: "domcontentloaded" });
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training\\?view=prompts`), { timeout: 30000 });
     await waitForPageText(page, "训练与评估");
-    await expect(page.getByRole("button", { name: "提示词库", exact: true })).toBeVisible();
+    await expect(page.getByRole("button", { name: "提示词资产", exact: true })).toBeVisible();
   });
 });

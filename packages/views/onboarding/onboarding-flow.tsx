@@ -17,7 +17,6 @@ import {
 import { workspaceListOptions } from "@multica/core/workspace/queries";
 import type { AgentRuntime, Workspace } from "@multica/core/types";
 import { StepWelcome } from "./steps/step-welcome";
-import { StepSource } from "./steps/step-source";
 import { StepRole } from "./steps/step-role";
 import { StepUseCase } from "./steps/step-use-case";
 import { StepWorkspace } from "./steps/step-workspace";
@@ -265,7 +264,7 @@ export function OnboardingFlow({
   const handleBack = useCallback((from: OnboardingStep) => {
     const idx = ONBOARDING_STEP_ORDER.indexOf(from);
     if (idx <= 0) {
-      // Source (the first persisted step) returns to Welcome.
+      // The first persisted setup step returns to Welcome.
       setStep("welcome");
       return;
     }
@@ -282,18 +281,6 @@ export function OnboardingFlow({
         onNext={handleWelcomeNext}
         onSkip={canSkipWelcome ? handleWelcomeSkip : undefined}
         isWeb={isWeb}
-      />
-    );
-  }
-
-  if (step === "source") {
-    return (
-      <StepSource
-        answers={answers}
-        onChange={applyAnswers}
-        onAdvance={() => advanceFrom("source")}
-        onSkip={() => advanceFrom("source")}
-        onBack={() => handleBack("source")}
       />
     );
   }
