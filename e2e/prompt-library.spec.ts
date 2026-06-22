@@ -54,6 +54,8 @@ test.describe("训练与评估工作台", () => {
     await expect
       .poll(async () => (await api.listPromptLibraryItems()).some((item) => item.name === `${artifactPrefix} user-center 澄清`), { timeout: 10000 })
       .toBe(true);
+    await expect(page.getByTestId("prompt-version-history")).toContainText("手动创建", { timeout: 10000 });
+    await expect(page.getByTestId("prompt-version-history")).toContainText("当前版本 1");
 
     await expect(page.getByLabel("调试变量")).toHaveValue("issue_title=\nproject_context=", { timeout: 10000 });
     await page.getByLabel("调试变量").fill("issue_title=登录失败\nproject_context=user-center");
@@ -689,6 +691,8 @@ test.describe("训练与评估工作台", () => {
     await expect(candidateRow).toContainText("已人工编辑");
     await candidateRow.getByRole("button", { name: "发布新版本" }).click();
     await expect(page.getByText(/已发布新提示词版本/)).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId("prompt-version-history")).toContainText("优化候选发布", { timeout: 10000 });
+    await expect(page.getByTestId("prompt-version-history")).toContainText(generatedCandidate!.id);
 
     await expect
       .poll(async () => {

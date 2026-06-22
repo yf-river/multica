@@ -33,6 +33,7 @@ import type {
   PromptLibraryItem,
   PromptLibraryStatus,
   PromptLibraryVariable,
+  PromptLibraryVersion,
   UpdatePromptEvaluationAssetRequest,
   UpdatePromptEvaluationOptimizationCandidateRequest,
   UpdatePromptLibraryItemRequest,
@@ -47,6 +48,7 @@ import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 
 const promptLibraryKeys = {
   list: (workspaceId: string) => ["prompt-library", workspaceId, "list"] as const,
+  versions: (workspaceId: string, promptId: string | null) => ["prompt-library", workspaceId, "versions", promptId ?? ""] as const,
   assets: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-assets"] as const,
   cases: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-cases"] as const,
   runs: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-runs"] as const,
@@ -174,6 +176,11 @@ export function PromptLibraryPage() {
     queryFn: () => api.getPromptEvaluationSummary(demoSince ? { since: demoSince } : undefined),
     enabled: !!workspaceId,
   });
+  const versionQuery = useQuery({
+    queryKey: promptLibraryKeys.versions(workspaceId ?? "", selectedId),
+    queryFn: () => api.listPromptLibraryVersions(selectedId ?? ""),
+    enabled: !!workspaceId && !!selectedId,
+  });
 
   const runtimeReadinessQuery = useQuery({
     queryKey: ["training-evaluation", workspaceId ?? "", "runtime-readiness"],
@@ -194,13 +201,17 @@ export function PromptLibraryPage() {
   const candidates = candidateQuery.data?.items ?? [];
   const summary = summaryQuery.data ?? null;
   const selected = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
+  const promptVersions = versionQuery.data?.items ?? [];
   const agentRuntimeReadiness = runtimeReadinessQuery.data ?? DEFAULT_AGENT_RUNTIME_READINESS;
 
   useEffect(() => {
-    if (!selected && selectedId && items.length > 0) {
+    if (!selectedId && items.length > 0) {
       setSelectedId(items[0]?.id ?? null);
     }
-  }, [items, selected, selectedId]);
+    if (selectedId && !selected && items.length > 0 && !listQuery.isFetching) {
+      setSelectedId(items[0]?.id ?? null);
+    }
+  }, [items, listQuery.isFetching, selected, selectedId]);
 
   useEffect(() => {
     if (!selected) return;
@@ -220,6 +231,7 @@ export function PromptLibraryPage() {
   }, [items, query, statusFilter, typeFilter]);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.list(workspaceId ?? "") });
+  const invalidateVersions = (promptId: string | null) => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.versions(workspaceId ?? "", promptId) });
   const invalidateAssets = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId ?? "") });
   const invalidateCases = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId ?? "") });
   const invalidateRuns = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId ?? "") });
@@ -231,6 +243,7 @@ export function PromptLibraryPage() {
     mutationFn: (data: CreatePromptLibraryItemRequest) => api.createPromptLibraryItem(data),
     onSuccess: (item) => {
       invalidate();
+      invalidateVersions(item.id);
       setSelectedId(item.id);
       toast.success("提示词已创建");
     },
@@ -240,6 +253,7 @@ export function PromptLibraryPage() {
     mutationFn: ({ id, data }: { id: string; data: UpdatePromptLibraryItemRequest }) => api.updatePromptLibraryItem(id, data),
     onSuccess: (item) => {
       invalidate();
+      invalidateVersions(item.id);
       setSelectedId(item.id);
       toast.success("提示词已保存");
     },
@@ -389,6 +403,7 @@ export function PromptLibraryPage() {
     mutationFn: (candidateId: string) => api.publishPromptEvaluationOptimizationCandidate(candidateId),
     onSuccess: (result) => {
       invalidate();
+      invalidateVersions(result.prompt.id);
       invalidateCandidates();
       invalidateSummary();
       setSelectedId(result.prompt.id);
@@ -795,6 +810,12 @@ export function PromptLibraryPage() {
               </div>
             </div>
 
+            <PromptVersionHistory
+              selected={selected}
+              versions={promptVersions}
+              loading={versionQuery.isLoading || versionQuery.isFetching}
+            />
+
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="名称">
                 <Input value={draft.name} onChange={(event) => setDraftField(setDraft, "name", event.target.value)} />
@@ -1148,6 +1169,61 @@ function UsageList({ title, rows }: { title: string; rows: ObservabilitySummary[
               </div>
             );
           })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function PromptVersionHistory({
+  selected,
+  versions,
+  loading,
+}: {
+  selected: PromptLibraryItem | null;
+  versions: PromptLibraryVersion[];
+  loading: boolean;
+}) {
+  if (!selected) {
+    return (
+      <section className="rounded-md border border-dashed bg-muted/10 px-3 py-3 text-sm text-muted-foreground">
+        保存后会生成第一个不可变版本记录。
+      </section>
+    );
+  }
+  const latest = versions[0] ?? null;
+  return (
+    <section className="rounded-md border bg-muted/10 p-3" data-testid="prompt-version-history">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <h3 className="text-sm font-semibold">版本历史</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            {loading ? "正在读取版本链" : `${versions.length} 个版本记录 · 当前版本 ${selected.version}`}
+          </p>
+        </div>
+        <Badge variant="outline" className="w-fit shrink-0">
+          {latest ? latest.source : "暂无版本"}
+        </Badge>
+      </div>
+      {versions.length === 0 ? (
+        <div className="mt-3 rounded-md border border-dashed bg-background px-3 py-3 text-sm text-muted-foreground">
+          暂无版本历史；旧数据会在迁移中回填为“历史回填”。
+        </div>
+      ) : (
+        <div className="mt-3 grid gap-2">
+          {versions.slice(0, 4).map((item) => (
+            <div key={item.id} className="grid gap-1 rounded-md border bg-background px-3 py-2 text-xs md:grid-cols-[minmax(0,1fr)_auto]">
+              <div className="min-w-0">
+                <div className="flex min-w-0 flex-wrap items-center gap-2">
+                  <span className="font-medium text-foreground">版本 {item.version}</span>
+                  <Badge variant={item.source === "优化候选发布" ? "secondary" : "outline"}>{item.source}</Badge>
+                  {item.source_candidate_id && <span className="text-muted-foreground">候选 {item.source_candidate_id}</span>}
+                </div>
+                <div className="mt-1 truncate text-muted-foreground">{item.content}</div>
+              </div>
+              <div className="text-muted-foreground md:text-right">{item.created_at || "未记录时间"}</div>
+            </div>
+          ))}
         </div>
       )}
     </section>
