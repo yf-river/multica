@@ -10,7 +10,13 @@ test.describe("训练与评估工作台", () => {
 	  let api: TestApiClient;
 	  let artifactPrefix: string;
 	  let workspaceSlug: string;
-  const expectedAgentModel = process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL || "minimax-m2.7-ioa";
+  let expectedAgentModel = process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL || "minimax-m2.7-ioa";
+
+  async function refreshExpectedAgentModel() {
+    if (process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL) return;
+    const readiness = await api.getPromptEvaluationRuntimeReadiness();
+    expectedAgentModel = readiness.model || expectedAgentModel;
+  }
 
   test.beforeEach(async ({ page }) => {
     api = await createTestApi();
@@ -28,6 +34,7 @@ test.describe("训练与评估工作台", () => {
 
 	  test("可以创建提示词、调试渲染并记录评测资产", async ({ page }) => {
     const runtime = await api.ensureOnlineCodeBuddyRuntime(`${artifactPrefix} CodeBuddy Runtime`);
+    await refreshExpectedAgentModel();
 
     await page.getByRole("link", { name: "训练与评估" }).click();
     await expect(page).toHaveURL(/\/training(?:\?|$)/, { timeout: 30000 });
@@ -288,6 +295,12 @@ test.describe("训练与评估工作台", () => {
     await expect(demoDashboard.getByTestId("training-demo-metric-Agent运行数")).toContainText(/[1-9]/);
     await expect(demoDashboard.getByTestId("training-demo-proof-真实 Agent 证据")).toContainText("已有 task/trace 运行记录");
     await expect(demoDashboard.getByText("CodeBuddy runtime 可创建真实 Agent 任务")).toBeVisible();
+    await expect(demoDashboard).toContainText("最近7天");
+    await demoDashboard.getByRole("button", { name: "最近24小时" }).click();
+    await expect(demoDashboard).toContainText("最近24小时");
+    const evidenceDownload = page.waitForEvent("download");
+    await demoDashboard.getByRole("button", { name: "导出证据 JSON" }).click();
+    expect((await evidenceDownload).suggestedFilename()).toMatch(/^multica-production-evidence-.*\.json$/);
     await page.getByRole("button", { name: "运行历史", exact: true }).click();
     agentRunCard = page.getByTestId(`prompt-evaluation-run-${queuedAgentRun!.id}`);
     await expect(agentRunCard).toContainText("Agent执行 · 通过", { timeout: 10000 });
@@ -418,6 +431,7 @@ test.describe("训练与评估工作台", () => {
     const promptName = `${artifactPrefix} 失败优化闭环`;
     const sourceContent = "请澄清 {{issue_title}}，输出必须使用中文。";
     const runtime = await api.ensureOnlineCodeBuddyRuntime(`${artifactPrefix} 优化 CodeBuddy Runtime`);
+    await refreshExpectedAgentModel();
 
     await page.getByRole("link", { name: "训练与评估" }).click();
     await expect(page).toHaveURL(/\/training(?:\?|$)/, { timeout: 30000 });

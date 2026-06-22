@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, BookOpenText, Loader2, Play, Plus, Save, Search, Trash2 } from "lucide-react";
+import { Archive, BookOpenText, Download, Loader2, Play, Plus, Save, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -55,6 +55,16 @@ const promptLibraryKeys = {
 
 const PROMPT_TYPES = ["全部", "需求澄清", "系统提示词", "评测提示词", "小队 SOP", "通用"];
 type WorkbenchTab = TrainingWorkbenchTab;
+type DemoTimeRange = "24h" | "7d" | "30d" | "all";
+
+const DEMO_TIME_RANGES: Array<{ value: DemoTimeRange; label: string; sinceMs: number | null }> = [
+  { value: "24h", label: "最近24小时", sinceMs: 24 * 60 * 60 * 1000 },
+  { value: "7d", label: "最近7天", sinceMs: 7 * 24 * 60 * 60 * 1000 },
+  { value: "30d", label: "最近30天", sinceMs: 30 * 24 * 60 * 60 * 1000 },
+  { value: "all", label: "全部", sinceMs: null },
+];
+const DEFAULT_DEMO_TIME_RANGE = DEMO_TIME_RANGES[1]!;
+
 const DEFAULT_AGENT_MODEL = "minimax-m2.7-ioa";
 const DEFAULT_AGENT_RUNTIME_READINESS: PromptEvaluationRuntimeReadiness = {
   status: "缺失",
@@ -114,6 +124,12 @@ export function PromptLibraryPage() {
   const viewParam = navigation.searchParams.get("view");
   const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => trainingWorkbenchTabFromView(viewParam));
   const [agentExpectedText, setAgentExpectedText] = useState("");
+  const [demoTimeRange, setDemoTimeRange] = useState<DemoTimeRange>("7d");
+  const demoSince = useMemo(() => {
+    const option = DEMO_TIME_RANGES.find((item) => item.value === demoTimeRange);
+    if (!option?.sinceMs) return null;
+    return new Date(Date.now() - option.sinceMs).toISOString();
+  }, [demoTimeRange]);
 
   useEffect(() => {
     setActiveTab(trainingWorkbenchTabFromView(viewParam));
@@ -157,8 +173,8 @@ export function PromptLibraryPage() {
     enabled: !!workspaceId,
   });
   const observabilitySummaryQuery = useQuery({
-    queryKey: ["training-evaluation", workspaceId ?? "", "workspace-observability-summary"],
-    queryFn: () => api.getWorkspaceObservabilitySummary(workspaceId ?? ""),
+    queryKey: ["training-evaluation", workspaceId ?? "", "workspace-observability-summary", demoSince ?? "all"],
+    queryFn: () => api.getWorkspaceObservabilitySummary(workspaceId ?? "", demoSince ? { since: demoSince } : undefined),
     enabled: !!workspaceId,
     staleTime: 30_000,
   });
@@ -521,6 +537,39 @@ export function PromptLibraryPage() {
     deleteAssetMut.mutate(asset.id);
   };
 
+  const exportDemoEvidence = () => {
+    const range = DEMO_TIME_RANGES.find((item) => item.value === demoTimeRange);
+    const payload = {
+      语义版本: "multica.production_demo_evidence.v1",
+      导出时间: new Date().toISOString(),
+      观测范围: {
+        标签: range?.label ?? demoTimeRange,
+        since: demoSince,
+      },
+      workspace_id: workspaceId,
+      训练评估摘要: summary,
+      观测摘要: observabilitySummaryQuery.data ?? null,
+      真实执行准备度: agentRuntimeReadiness,
+      最近运行: runs.slice(0, 10),
+      资产统计: {
+        提示词数: items.length,
+        评测资产数: assets.length,
+        结构化用例数: cases.length,
+        优化候选数: candidates.length,
+      },
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement("a");
+    anchor.href = url;
+    anchor.download = `multica-production-evidence-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+    document.body.append(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    toast.success("演示证据 JSON 已导出");
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-background">
       <PageHeader>
@@ -558,6 +607,9 @@ export function PromptLibraryPage() {
             trainingLoading={summaryQuery.isLoading}
             observabilitySummary={observabilitySummaryQuery.data ?? null}
             observabilityLoading={observabilitySummaryQuery.isLoading}
+            timeRange={demoTimeRange}
+            onTimeRangeChange={setDemoTimeRange}
+            onExportEvidence={exportDemoEvidence}
             runtimeReadiness={agentRuntimeReadiness}
             runtimeLoading={runtimeReadinessQuery.isLoading}
             runs={runs}
@@ -793,6 +845,9 @@ function DemoDashboardPanel({
   trainingLoading,
   observabilitySummary,
   observabilityLoading,
+  timeRange,
+  onTimeRangeChange,
+  onExportEvidence,
   runtimeReadiness,
   runtimeLoading,
   runs,
@@ -804,6 +859,9 @@ function DemoDashboardPanel({
   trainingLoading: boolean;
   observabilitySummary: ObservabilitySummary | null;
   observabilityLoading: boolean;
+  timeRange: DemoTimeRange;
+  onTimeRangeChange: (value: DemoTimeRange) => void;
+  onExportEvidence: () => void;
   runtimeReadiness: PromptEvaluationRuntimeReadiness;
   runtimeLoading: boolean;
   runs: PromptEvaluationRun[];
@@ -829,6 +887,7 @@ function DemoDashboardPanel({
   const hasAgentEvidence = runs.some((run) => run.run_kind === "Agent执行" && Boolean(run.task_id));
   const hasOptimizationLoop = publishedCandidates > 0 || pendingCandidates > 0 || rejectedCandidates > 0;
   const readinessLabel = runtimeLoading ? "检查中" : runtimeReadiness.label;
+  const activeRange = DEMO_TIME_RANGES.find((item) => item.value === timeRange) ?? DEFAULT_DEMO_TIME_RANGE;
 
   const trainingItems: Array<[string, string]> = [
     ["运行总数", formatNumber(runStatus["运行总数"])],
@@ -865,13 +924,26 @@ function DemoDashboardPanel({
         <div>
           <h2 className="text-base font-semibold">团队生产演示看板</h2>
           <p className="mt-1 text-xs text-muted-foreground">
-            汇总训练评估、真实 Agent、SOP 观测和验收证据，供团队复盘和领导演示使用。
+            汇总训练评估、真实 Agent、SOP 观测和验收证据，当前观测范围：{activeRange.label}。
           </p>
         </div>
-        <div className="flex flex-wrap gap-2 text-xs">
-          <Badge variant={runtimeReadiness.status === "就绪" ? "secondary" : "outline"}>真实 Agent：{readinessLabel}</Badge>
-          <Badge variant={maybeTruncated ? "outline" : "secondary"}>观测完整性：{completenessStatus}</Badge>
-          <Badge variant={hasOptimizationLoop ? "secondary" : "outline"}>优化闭环：{hasOptimizationLoop ? "已有证据" : "待补齐"}</Badge>
+        <div className="flex flex-col gap-2 md:items-end">
+          <div className="flex flex-wrap gap-1.5">
+            {DEMO_TIME_RANGES.map((range) => (
+              <FilterButton key={range.value} active={timeRange === range.value} onClick={() => onTimeRangeChange(range.value)}>
+                {range.label}
+              </FilterButton>
+            ))}
+          </div>
+          <div className="flex flex-wrap gap-2 text-xs">
+            <Badge variant={runtimeReadiness.status === "就绪" ? "secondary" : "outline"}>真实 Agent：{readinessLabel}</Badge>
+            <Badge variant={maybeTruncated ? "outline" : "secondary"}>观测完整性：{completenessStatus}</Badge>
+            <Badge variant={hasOptimizationLoop ? "secondary" : "outline"}>优化闭环：{hasOptimizationLoop ? "已有证据" : "待补齐"}</Badge>
+            <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={onExportEvidence}>
+              <Download className="size-3.5" />
+              导出证据 JSON
+            </Button>
+          </div>
         </div>
       </div>
 
@@ -889,7 +961,11 @@ function DemoDashboardPanel({
         />
         <DemoMetricSection
           title="SOP 与任务观测"
-          subtitle={observabilityLoading ? "正在刷新观测摘要" : String(completeness?.["说明"] ?? "当前筛选条件下的 SOP 执行和任务观测未达到采样上限。")}
+          subtitle={
+            observabilityLoading
+              ? `正在刷新${activeRange.label}观测摘要`
+              : `${activeRange.label} · ${String(completeness?.["说明"] ?? "当前筛选条件下的 SOP 执行和任务观测未达到采样上限。")}`
+          }
           items={observabilityItems}
         />
       </div>
