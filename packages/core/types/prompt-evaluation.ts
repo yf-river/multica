@@ -63,6 +63,7 @@ export interface PromptEvaluationAsset {
   linked_prompt_count: number;
   evaluation_dimension_count: number;
   dataset_row_count: number;
+  test_suite_case_count: number;
 }
 
 export interface PromptEvaluationRun {

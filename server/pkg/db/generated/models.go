@@ -584,6 +584,7 @@ type PromptEvaluationAsset struct {
 	LinkedPromptCount        int32              `json:"linked_prompt_count"`
 	EvaluationDimensionCount int32              `json:"evaluation_dimension_count"`
 	DatasetRowCount          int32              `json:"dataset_row_count"`
+	TestSuiteCaseCount       int32              `json:"test_suite_case_count"`
 }
 
 type PromptEvaluationCase struct {
@@ -701,6 +702,24 @@ type PromptEvaluationRun struct {
 	CreatedBy         pgtype.UUID        `json:"created_by"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
+type PromptEvaluationTestSuiteCase struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	TestSuiteAssetID pgtype.UUID        `json:"test_suite_asset_id"`
+	CaseID           pgtype.UUID        `json:"case_id"`
+	CaseIndex        int32              `json:"case_index"`
+	CaseName         string             `json:"case_name"`
+	Variables        []byte             `json:"variables"`
+	ExpectedContains []byte             `json:"expected_contains"`
+	Expected         []byte             `json:"expected"`
+	Tags             []byte             `json:"tags"`
+	Status           string             `json:"status"`
+	Source           string             `json:"source"`
+	CreatedBy        pgtype.UUID        `json:"created_by"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
 type PromptEvaluationTrial struct {

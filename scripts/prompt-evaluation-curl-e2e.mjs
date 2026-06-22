@@ -90,6 +90,7 @@ const suite = post("/api/prompt-evaluation-assets", {
   status: "启用",
 }, token);
 if (!suite?.id) fail("创建测试套件响应缺少 id");
+if (Number(suite.test_suite_case_count ?? 0) < 1) fail(`测试套件用例计数不足：${suite.test_suite_case_count ?? 0}`);
 const suiteCases = get(`/api/prompt-evaluation-cases?asset_id=${encodeURIComponent(suite.id)}`, token);
 const suiteAssertionCount = assertCaseAssertions(suiteCases, suite.id, 2, "测试套件");
 
@@ -122,7 +123,7 @@ assertVersion(publishedVersions, Number(published.prompt.version || 2), "优化�
 const summary = get("/api/prompt-evaluation-summary", token);
 evidence.prompt = { id: prompt.id, version: prompt.version, version_count: itemCount(initialVersions) };
 evidence.dataset = { id: dataset.id, asset_type: dataset.asset_type, structured_case_count: dataset.structured_case_count, dataset_row_count: dataset.dataset_row_count, assertion_count: datasetAssertionCount };
-evidence.test_suite = { id: suite.id, asset_type: suite.asset_type, structured_case_count: suite.structured_case_count, assertion_count: suiteAssertionCount };
+evidence.test_suite = { id: suite.id, asset_type: suite.asset_type, structured_case_count: suite.structured_case_count, test_suite_case_count: suite.test_suite_case_count, assertion_count: suiteAssertionCount };
 evidence.run = {
   id: failedRun.id,
   status: failedRun.status,

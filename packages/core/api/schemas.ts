@@ -886,6 +886,7 @@ export const PromptEvaluationAssetSchema = z.object({
   linked_prompt_count: z.number().default(0),
   evaluation_dimension_count: z.number().default(0),
   dataset_row_count: z.number().default(0),
+  test_suite_case_count: z.number().default(0),
 }).loose();
 
 export const PromptEvaluationAssetListResponseSchema = z.object({
@@ -1174,6 +1175,7 @@ export const EMPTY_PROMPT_EVALUATION_ASSET: PromptEvaluationAsset = {
   linked_prompt_count: 0,
   evaluation_dimension_count: 0,
   dataset_row_count: 0,
+  test_suite_case_count: 0,
 };
 
 export const EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE: ListPromptEvaluationAssetsResponse = {

@@ -475,6 +475,52 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	}
 	assertPromptEvaluationCaseAssertions(t, created.ID, nil)
 	assertPromptEvaluationDatasetRows(t, asset.ID, nil)
+
+	createSuiteW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAsset(createSuiteW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+		"prompt_id":  promptID,
+		"name":       "评测用例 CRUD 测试套件",
+		"asset_type": "测试套件",
+		"payload":    map[string]any{"cases": []any{}},
+	}))
+	if createSuiteW.Code != http.StatusCreated {
+		t.Fatalf("create test suite status = %d, body = %s", createSuiteW.Code, createSuiteW.Body.String())
+	}
+	var testSuite PromptEvaluationAssetResponse
+	if err := json.Unmarshal(createSuiteW.Body.Bytes(), &testSuite); err != nil {
+		t.Fatalf("decode test suite: %v", err)
+	}
+	createSuiteCaseW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationCase(createSuiteCaseW, newRequest(http.MethodPost, "/api/prompt-evaluation-cases", map[string]any{
+		"asset_id":          testSuite.ID,
+		"case_name":         "测试套件必须输出通过率",
+		"variables":         map[string]any{"issue_title": "登录失败"},
+		"expected_contains": []string{"通过率", "失败原因"},
+		"tags":              []string{"测试套件", "手工用例"},
+	}))
+	if createSuiteCaseW.Code != http.StatusCreated {
+		t.Fatalf("create test suite case status = %d, body = %s", createSuiteCaseW.Code, createSuiteCaseW.Body.String())
+	}
+	var suiteCase PromptEvaluationCaseResponse
+	if err := json.Unmarshal(createSuiteCaseW.Body.Bytes(), &suiteCase); err != nil {
+		t.Fatalf("decode test suite case: %v", err)
+	}
+	assertPromptEvaluationTestSuiteCases(t, testSuite.ID, []string{"测试套件必须输出通过率"})
+	updateSuiteCaseW := httptest.NewRecorder()
+	testHandler.UpdatePromptEvaluationCase(updateSuiteCaseW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-cases/"+suiteCase.ID, map[string]any{
+		"case_name": "测试套件必须输出领导证据",
+		"status":    "归档",
+	}), "id", suiteCase.ID))
+	if updateSuiteCaseW.Code != http.StatusOK {
+		t.Fatalf("update test suite case status = %d, body = %s", updateSuiteCaseW.Code, updateSuiteCaseW.Body.String())
+	}
+	assertPromptEvaluationTestSuiteCases(t, testSuite.ID, []string{"测试套件必须输出领导证据"})
+	deleteSuiteCaseW := httptest.NewRecorder()
+	testHandler.DeletePromptEvaluationCase(deleteSuiteCaseW, withURLParam(newRequest(http.MethodDelete, "/api/prompt-evaluation-cases/"+suiteCase.ID, nil), "id", suiteCase.ID))
+	if deleteSuiteCaseW.Code != http.StatusNoContent {
+		t.Fatalf("delete test suite case status = %d, body = %s", deleteSuiteCaseW.Code, deleteSuiteCaseW.Body.String())
+	}
+	assertPromptEvaluationTestSuiteCases(t, testSuite.ID, nil)
 }
 
 func TestUpdatePromptEvaluationAssetPreservesManualCases(t *testing.T) {
@@ -1921,6 +1967,39 @@ func assertPromptEvaluationDatasetRows(t *testing.T, assetID string, expected []
 	for idx := range expected {
 		if actual[idx] != expected[idx] {
 			t.Fatalf("dataset rows = %#v, want %#v", actual, expected)
+		}
+	}
+}
+
+func assertPromptEvaluationTestSuiteCases(t *testing.T, assetID string, expected []string) {
+	t.Helper()
+	rows, err := testPool.Query(context.Background(), `
+		SELECT case_name
+		FROM prompt_evaluation_test_suite_case
+		WHERE test_suite_asset_id = $1
+		ORDER BY case_index ASC
+	`, assetID)
+	if err != nil {
+		t.Fatalf("query test suite cases: %v", err)
+	}
+	defer rows.Close()
+	actual := []string{}
+	for rows.Next() {
+		var value string
+		if err := rows.Scan(&value); err != nil {
+			t.Fatalf("scan test suite case: %v", err)
+		}
+		actual = append(actual, value)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate test suite cases: %v", err)
+	}
+	if len(actual) != len(expected) {
+		t.Fatalf("test suite cases = %#v, want %#v", actual, expected)
+	}
+	for idx := range expected {
+		if actual[idx] != expected[idx] {
+			t.Fatalf("test suite cases = %#v, want %#v", actual, expected)
 		}
 	}
 }

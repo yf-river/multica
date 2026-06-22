@@ -32,6 +32,7 @@ test.describe("生产部署验收", () => {
     await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队生产看板", { timeout: 30000 });
     await expect(page.getByTestId("training-demo-proof-真实 Agent 证据")).toContainText("已有任务/trace 运行记录");
     await expect(page.getByTestId("training-demo-proof-数据集行")).toContainText(/[1-9]/);
+    await expect(page.getByTestId("training-demo-proof-测试套件用例")).toContainText(/[1-9]/);
     await expect(page.getByTestId("training-demo-proof-服务端证据快照")).toContainText(/验收归档 [1-9]/);
     await expect(page.getByText("运行证据已服务端归档")).toBeVisible();
     await expect(page.getByText("你是从哪里了解到 Multica 的？")).toHaveCount(0);

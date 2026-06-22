@@ -73,6 +73,7 @@ type PromptEvaluationAssetResponse struct {
 	LinkedPromptCount        int32   `json:"linked_prompt_count"`
 	EvaluationDimensionCount int32   `json:"evaluation_dimension_count"`
 	DatasetRowCount          int32   `json:"dataset_row_count"`
+	TestSuiteCaseCount       int32   `json:"test_suite_case_count"`
 }
 
 type CreatePromptEvaluationAssetRequest struct {
@@ -397,6 +398,7 @@ func promptEvaluationAssetToResponse(asset db.PromptEvaluationAsset) PromptEvalu
 		LinkedPromptCount:        asset.LinkedPromptCount,
 		EvaluationDimensionCount: asset.EvaluationDimensionCount,
 		DatasetRowCount:          asset.DatasetRowCount,
+		TestSuiteCaseCount:       asset.TestSuiteCaseCount,
 	}
 }
 
@@ -626,6 +628,41 @@ func syncPromptEvaluationDatasetRow(ctx context.Context, qtx *db.Queries, asset 
 	return refreshPromptEvaluationDatasetRowCount(ctx, qtx, item.WorkspaceID, item.AssetID)
 }
 
+func syncPromptEvaluationTestSuiteCase(ctx context.Context, qtx *db.Queries, asset db.PromptEvaluationAsset, item db.PromptEvaluationCase) error {
+	deletedAssets, err := qtx.DeletePromptEvaluationTestSuiteCasesByCase(ctx, db.DeletePromptEvaluationTestSuiteCasesByCaseParams{
+		WorkspaceID: item.WorkspaceID,
+		CaseID:      item.ID,
+	})
+	if err != nil {
+		return err
+	}
+	for _, testSuiteAssetID := range deletedAssets {
+		if err := refreshPromptEvaluationTestSuiteCaseCount(ctx, qtx, item.WorkspaceID, testSuiteAssetID); err != nil {
+			return err
+		}
+	}
+	if asset.AssetType != promptEvaluationAssetTestSuite {
+		return nil
+	}
+	if _, err := qtx.CreatePromptEvaluationTestSuiteCase(ctx, db.CreatePromptEvaluationTestSuiteCaseParams{
+		WorkspaceID:      item.WorkspaceID,
+		TestSuiteAssetID: item.AssetID,
+		CaseID:           item.ID,
+		CaseIndex:        item.CaseIndex,
+		CaseName:         item.CaseName,
+		Variables:        item.Variables,
+		ExpectedContains: item.ExpectedContains,
+		Expected:         item.Expected,
+		Tags:             item.Tags,
+		Status:           item.Status,
+		Source:           item.Source,
+		CreatedBy:        item.CreatedBy,
+	}); err != nil {
+		return err
+	}
+	return refreshPromptEvaluationTestSuiteCaseCount(ctx, qtx, item.WorkspaceID, item.AssetID)
+}
+
 func deletePromptEvaluationDatasetRowsForCase(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID, caseID pgtype.UUID) error {
 	deletedAssets, err := qtx.DeletePromptEvaluationDatasetRowsByCase(ctx, db.DeletePromptEvaluationDatasetRowsByCaseParams{
 		WorkspaceID: workspaceID,
@@ -642,10 +679,33 @@ func deletePromptEvaluationDatasetRowsForCase(ctx context.Context, qtx *db.Queri
 	return nil
 }
 
+func deletePromptEvaluationTestSuiteCasesForCase(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID, caseID pgtype.UUID) error {
+	deletedAssets, err := qtx.DeletePromptEvaluationTestSuiteCasesByCase(ctx, db.DeletePromptEvaluationTestSuiteCasesByCaseParams{
+		WorkspaceID: workspaceID,
+		CaseID:      caseID,
+	})
+	if err != nil {
+		return err
+	}
+	for _, testSuiteAssetID := range deletedAssets {
+		if err := refreshPromptEvaluationTestSuiteCaseCount(ctx, qtx, workspaceID, testSuiteAssetID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func refreshPromptEvaluationDatasetRowCount(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID, assetID pgtype.UUID) error {
 	return qtx.RefreshPromptEvaluationDatasetRowCount(ctx, db.RefreshPromptEvaluationDatasetRowCountParams{
 		WorkspaceID:    workspaceID,
 		DatasetAssetID: assetID,
+	})
+}
+
+func refreshPromptEvaluationTestSuiteCaseCount(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID, assetID pgtype.UUID) error {
+	return qtx.RefreshPromptEvaluationTestSuiteCaseCount(ctx, db.RefreshPromptEvaluationTestSuiteCaseCountParams{
+		WorkspaceID:      workspaceID,
+		TestSuiteAssetID: assetID,
 	})
 }
 
@@ -743,6 +803,7 @@ func promptEvaluationSummaryToResponse(workspaceID pgtype.UUID, row db.GetPrompt
 			"关联提示词数":  row.AssetProfileLinkedPrompts,
 			"评估维度数":   row.AssetProfileDimensions,
 			"数据集行":    row.DatasetRows,
+			"测试套件用例":  row.TestSuiteCases,
 			"服务端证据快照": row.EvidenceSnapshots,
 			"验收归档快照":  row.AcceptanceSnapshots,
 		},
@@ -1131,6 +1192,10 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation dataset row")
 		return
 	}
+	if err := syncPromptEvaluationTestSuiteCase(r.Context(), qtx, asset, created); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation test suite case")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation case")
 		return
@@ -1257,6 +1322,10 @@ func (h *Handler) UpdatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation dataset row")
 		return
 	}
+	if err := syncPromptEvaluationTestSuiteCase(r.Context(), qtx, asset, updated); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation test suite case")
+		return
+	}
 	if err := tx.Commit(r.Context()); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation case")
 		return
@@ -1291,6 +1360,10 @@ func (h *Handler) DeletePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 	qtx := h.Queries.WithTx(tx)
 	if err := deletePromptEvaluationDatasetRowsForCase(r.Context(), qtx, workspaceUUID, caseID); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to delete prompt evaluation dataset row")
+		return
+	}
+	if err := deletePromptEvaluationTestSuiteCasesForCase(r.Context(), qtx, workspaceUUID, caseID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to delete prompt evaluation test suite case")
 		return
 	}
 	if err := qtx.DeletePromptEvaluationCase(r.Context(), db.DeletePromptEvaluationCaseParams{ID: caseID, WorkspaceID: workspaceUUID}); err != nil {
@@ -2671,6 +2744,10 @@ func (h *Handler) syncPromptEvaluationCasesFromPayload(w http.ResponseWriter, r 
 		writeError(w, http.StatusInternalServerError, "failed to refresh prompt evaluation dataset rows")
 		return false
 	}
+	if err := refreshPromptEvaluationTestSuiteCaseCount(r.Context(), qtx, asset.WorkspaceID, asset.ID); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to refresh prompt evaluation test suite cases")
+		return false
+	}
 	cases := promptEvaluationCases(decodePayloadObject(asset.Payload))
 	for idx, item := range cases {
 		normalized := normalizePromptEvaluationCase(idx, item)
@@ -2700,6 +2777,10 @@ func (h *Handler) syncPromptEvaluationCasesFromPayload(w http.ResponseWriter, r 
 		}
 		if err := syncPromptEvaluationDatasetRow(r.Context(), qtx, asset, created); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation dataset rows")
+			return false
+		}
+		if err := syncPromptEvaluationTestSuiteCase(r.Context(), qtx, asset, created); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation test suite cases")
 			return false
 		}
 	}
