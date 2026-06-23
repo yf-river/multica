@@ -145,7 +145,7 @@ type IssueCreateResult struct {
 //  8. Publish EventIssueCreated to the bus (payload via opts.BroadcastPayload).
 //  9. Capture the IssueCreated analytics event.
 //  10. Enqueue an agent task or trigger the squad leader when the issue is
-//      assigned and not in `backlog`.
+//     assigned and not in `backlog`.
 //
 // Validation that lives in the service (parent existence, project
 // workspace membership, parent → project back-fill) is enforced here so
@@ -167,6 +167,8 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	// WorkspaceID — there is no path from this service to a row in a
 	// foreign workspace.
 	projectID := p.ProjectID
+	var project db.Project
+	var hasProject bool
 	if p.ParentIssueID.Valid {
 		parent, err := qtx.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
 			ID:          p.ParentIssueID,
@@ -183,12 +185,21 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 		}
 	}
 	if projectID.Valid {
-		if _, err := qtx.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{
+		var err error
+		project, err = qtx.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{
 			ID:          projectID,
 			WorkspaceID: p.WorkspaceID,
-		}); err != nil {
+		})
+		if err != nil {
 			return IssueCreateResult{}, ErrProjectNotFound
 		}
+		hasProject = true
+	}
+
+	assigneeType := p.AssigneeType
+	assigneeID := p.AssigneeID
+	if !assigneeType.Valid && !assigneeID.Valid && hasProject {
+		assigneeType, assigneeID = s.defaultProjectLeadAssignee(ctx, qtx, project)
 	}
 
 	duplicate, found, err := issueguard.LockAndFindActiveDuplicate(ctx, qtx, p.WorkspaceID, projectID, p.ParentIssueID, p.Title, p.AllowDuplicate)
@@ -227,8 +238,8 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 			Description:   p.Description,
 			Status:        p.Status,
 			Priority:      p.Priority,
-			AssigneeType:  p.AssigneeType,
-			AssigneeID:    p.AssigneeID,
+			AssigneeType:  assigneeType,
+			AssigneeID:    assigneeID,
 			CreatorType:   p.CreatorType,
 			CreatorID:     p.CreatorID,
 			ParentIssueID: p.ParentIssueID,
@@ -247,8 +258,8 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 			Description:   p.Description,
 			Status:        p.Status,
 			Priority:      p.Priority,
-			AssigneeType:  p.AssigneeType,
-			AssigneeID:    p.AssigneeID,
+			AssigneeType:  assigneeType,
+			AssigneeID:    assigneeID,
 			CreatorType:   p.CreatorType,
 			CreatorID:     p.CreatorID,
 			ParentIssueID: p.ParentIssueID,
@@ -279,6 +290,32 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID)
 
 	return IssueCreateResult{Issue: issue, Attachments: attachments}, nil
+}
+
+func (s *IssueService) defaultProjectLeadAssignee(ctx context.Context, q *db.Queries, project db.Project) (pgtype.Text, pgtype.UUID) {
+	if !project.LeadType.Valid || !project.LeadID.Valid {
+		return pgtype.Text{}, pgtype.UUID{}
+	}
+	switch project.LeadType.String {
+	case "member":
+		if _, err := q.GetMemberByUserAndWorkspace(ctx, db.GetMemberByUserAndWorkspaceParams{
+			UserID:      project.LeadID,
+			WorkspaceID: project.WorkspaceID,
+		}); err != nil {
+			return pgtype.Text{}, pgtype.UUID{}
+		}
+	case "agent":
+		agent, err := q.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+			ID:          project.LeadID,
+			WorkspaceID: project.WorkspaceID,
+		})
+		if err != nil || agent.ArchivedAt.Valid {
+			return pgtype.Text{}, pgtype.UUID{}
+		}
+	default:
+		return pgtype.Text{}, pgtype.UUID{}
+	}
+	return project.LeadType, project.LeadID
 }
 
 // linkAttachments links the given attachment IDs to the newly created

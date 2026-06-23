@@ -75,7 +75,7 @@ if (squadTemplateKey) {
   evidence.agent = { id: agent.id, name: agent.name, role_key: agent.role_key, role: agent.role, provider, model };
   evidence.squad = { id: squad.id, name: squad.name, profile_key: squad?.sop_profile?.profile_key || "" };
   if (verifyCrossProjectChildren) {
-    crossProjectSetup = createCrossProjectSetup(token, suffix);
+    crossProjectSetup = createCrossProjectSetup(token, suffix, runtime.id);
     evidence.cross_project_setup = crossProjectSetup;
   }
 } else {
@@ -188,6 +188,7 @@ if (terminalTask.status === "completed") {
   if (verifyCrossProjectChildren) {
     const crossProjectChildren = await verifyCaptainCreatedCrossProjectChildren({ issue, setup: crossProjectSetup, token });
     captainCreatedChild = crossProjectChildren.children[0] || null;
+    await verifyProjectLeadExecution({ children: crossProjectChildren.children, setup: crossProjectSetup, token });
   }
   if (verifyChildWake) {
     await verifyChildDoneWake({ issue, squad, agent, terminalTask, token, childOverride: captainCreatedChild });
@@ -204,7 +205,17 @@ if (terminalTask.status === "completed") {
   evidence.repair_hint = "检查 daemon 运行环境是否能让 Codex app-server 复用有效 ChatGPT auth，或为 daemon 配置可用的 OpenAI API 认证后重跑本脚本。";
 }
 
-function createCrossProjectSetup(token, value) {
+function createCrossProjectSetup(token, value, runtimeID) {
+  const gatewayLead = createProjectLeadAgent(token, {
+    name: `curl gateway 项目负责人 ${value}`,
+    role: "gateway 项目负责人",
+    runtimeID,
+  });
+  const configLead = createProjectLeadAgent(token, {
+    name: `curl config 项目负责人 ${value}`,
+    role: "config 项目负责人",
+    runtimeID,
+  });
   const usercenter = post("/api/projects", {
     workspace_id: activeWorkspaceId,
     title: `curl usercenter ${value}`,
@@ -216,25 +227,59 @@ function createCrossProjectSetup(token, value) {
     title: `curl gateway ${value}`,
     description: "curl 验收创建的 gateway 子项目，用于验证队长通过 --project 创建跨项目子任务。",
     status: "in_progress",
+    lead_type: "agent",
+    lead_id: gatewayLead.id,
   }, token);
   const config = post("/api/projects", {
     workspace_id: activeWorkspaceId,
     title: `curl config ${value}`,
     description: "curl 验收创建的 config 子项目，用于验证队长通过 --project 创建跨项目子任务。",
     status: "in_progress",
+    lead_type: "agent",
+    lead_id: configLead.id,
   }, token);
   for (const project of [usercenter, gateway, config]) {
     if (!project?.id) fail(`创建跨项目验收项目失败：${JSON.stringify(project)}`);
   }
   return {
     usercenter: pickProject(usercenter),
-    gateway: pickProject(gateway),
-    config: pickProject(config),
+    gateway: { ...pickProject(gateway), lead: gatewayLead },
+    config: { ...pickProject(config), lead: configLead },
   };
 }
 
+function createProjectLeadAgent(token, { name, role, runtimeID }) {
+  const agent = post("/api/agents", {
+    name,
+    description: `curl 验收创建的${role}，用于证明未指派的项目 issue 会自动交给项目负责人并真实执行。`,
+    instructions: [
+      `你是${role}。`,
+      "收到任务后只做验收回复，不修改代码。",
+      "必须用中文输出：执行结论、当前 issue 标识、项目配合结果、给父任务的下一步建议。",
+      "如果任务来自跨项目子 issue，请说明你已完成对应项目的配合事项。",
+    ].join("\n"),
+    runtime_id: runtimeID,
+    workspace_id: activeWorkspaceId,
+    visibility: "private",
+    max_concurrent_tasks: 1,
+    model,
+  }, token);
+  if (!agent?.id) fail(`创建${role}响应缺少 id`);
+  return pickAgent(agent);
+}
+
 function pickProject(project) {
-  return { id: project.id, title: project.title, status: project.status || "" };
+  return {
+    id: project.id,
+    title: project.title,
+    status: project.status || "",
+    lead_type: project.lead_type || null,
+    lead_id: project.lead_id || null,
+  };
+}
+
+function pickAgent(agent) {
+  return { id: agent.id, name: agent.name, provider, model };
 }
 
 writeEvidence(evidence);
@@ -315,13 +360,77 @@ async function verifyCaptainCreatedCrossProjectChildren({ issue, setup, token })
       fail(`子任务 ${child.id} parent_issue_id=${child.parent_issue_id}，期望 ${issue.id}`);
     }
   }
+  assertProjectLeadAssignee(gatewayChild, setup.gateway.lead, "gateway");
+  assertProjectLeadAssignee(configChild, setup.config.lead, "config");
   evidence.cross_project_children = {
     count: children.length,
     gateway: issueSummary(gatewayChild),
     config: issueSummary(configChild),
+    project_lead_auto_assignee_verified: true,
     verified_by_public_api: true,
   };
   return { children: [gatewayChild, configChild] };
+}
+
+function assertProjectLeadAssignee(child, lead, label) {
+  if (child.assignee_type !== "agent" || child.assignee_id !== lead.id) {
+    fail(`${label} 子任务未自动指派给项目负责人：assignee_type=${child.assignee_type || "null"} assignee_id=${child.assignee_id || "null"} lead=${lead.id}`);
+  }
+}
+
+async function verifyProjectLeadExecution({ children, setup, token }) {
+  const childByProject = new Map(children.map((item) => [item.project_id, item]));
+  const checks = [
+    { label: "gateway", child: childByProject.get(setup.gateway.id), lead: setup.gateway.lead },
+    { label: "config", child: childByProject.get(setup.config.id), lead: setup.config.lead },
+  ];
+  const results = [];
+  for (const check of checks) {
+    if (!check.child?.id) fail(`${check.label} 项目负责人执行验证缺少子任务`);
+    const task = await waitTerminalTaskForAgent({
+      issueID: check.child.id,
+      agentID: check.lead.id,
+      token,
+      label: `${check.label} 项目负责人任务`,
+    });
+    if (task.status !== "completed") {
+      fail(`${check.label} 项目负责人任务未完成：${task.status} ${task.failure_reason || task.error || ""}`);
+    }
+    const trace = get(`/api/issues/${check.child.id}/trace`, token);
+    const usage = get(`/api/issues/${check.child.id}/usage`, token);
+    const messages = get(`/api/tasks/${task.id}/messages`, token);
+    const messageCount = Array.isArray(messages) ? messages.length : Number(messages?.items?.length ?? 0);
+    const totalTokens =
+      Number(usage?.total_input_tokens ?? 0) +
+      Number(usage?.total_output_tokens ?? 0) +
+      Number(usage?.total_cache_read_tokens ?? 0) +
+      Number(usage?.total_cache_write_tokens ?? 0);
+    if (messageCount <= 0) fail(`${check.label} 项目负责人任务完成但缺少消息`);
+    if (totalTokens <= 0) fail(`${check.label} 项目负责人任务完成但 usage token 总量为 0`);
+    if (!JSON.stringify(trace).includes(check.lead.id)) fail(`${check.label} 子任务 trace 未包含项目负责人`);
+    results.push({
+      label: check.label,
+      child: issueSummary(check.child),
+      lead: check.lead,
+      task: taskSummary(task),
+      trace_event_count: Array.isArray(trace?.events) ? trace.events.length : Number(trace?.total ?? 0),
+      message_count: messageCount,
+      usage,
+    });
+  }
+  evidence.project_lead_execution = {
+    verified_by_public_api: true,
+    results,
+  };
+}
+
+async function waitTerminalTaskForAgent({ issueID, agentID, token, label }) {
+  return poll(async () => {
+    const items = listIssueTasks(issueID, token);
+    const task = newestLeaderTask(items, agentID);
+    if (!task || ["queued", "dispatched", "running", "waiting_local_directory"].includes(task.status)) return null;
+    return task;
+  }, taskTimeoutMs, `等待${label}完成或失败`);
 }
 
 async function verifyChildDoneWake({ issue, squad, agent, terminalTask, token, childOverride = null }) {
@@ -418,8 +527,9 @@ function issueDescription(templateKey, crossProjectSetup = null) {
           "3. 创建两个 `todo` 子 issue；每个命令都必须带 `--parent <当前 issue id>`，并且必须带对应的 `--project <目标项目 UUID>`：",
           "   - gateway 子 issue：标题包含 gateway，描述说明 API 路径、方法、鉴权和转发要求。",
           "   - config 子 issue：标题包含 config，描述说明配置键、默认值、环境差异和回滚方式。",
-          "4. 创建后调用 `multica squad activity <当前 issue id> action --reason \"已创建跨项目子任务\"`。",
-          "5. 输出验收证据：父 issue id、两个子 issue id、两个项目 UUID、下一步等待子项目负责人处理。",
+          "4. 创建子 issue 时不要传 `--assignee` 或 `--assignee-id`，平台会把未指派的项目 issue 自动交给对应项目负责人。",
+          "5. 创建后调用 `multica squad activity <当前 issue id> action --reason \"已创建跨项目子任务\"`。",
+          "6. 输出验收证据：父 issue id、两个子 issue id、两个项目 UUID、下一步等待子项目负责人处理。",
         ].join("\n");
       }
       return "请作为 user-center 小队队长完成一次最小 SOP 验收：澄清需求、说明阶段、输出 trace/任务标识、验收证据和下一步。不要修改代码。";

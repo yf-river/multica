@@ -796,6 +796,61 @@ func TestCreateSubIssueUsesExplicitProjectOverParentProject(t *testing.T) {
 	}
 }
 
+func TestCreateIssueDefaultsToProjectLeadAgentAndEnqueues(t *testing.T) {
+	leadAgentID := createHandlerTestAgent(t, "Project Lead Agent", []byte("[]"))
+	var projectID, issueID string
+	defer func() {
+		if issueID != "" {
+			req := newRequest("DELETE", "/api/issues/"+issueID, nil)
+			req = withURLParam(req, "id", issueID)
+			testHandler.DeleteIssue(httptest.NewRecorder(), req)
+		}
+		if projectID != "" {
+			req := newRequest("DELETE", "/api/projects/"+projectID, nil)
+			req = withURLParam(req, "id", projectID)
+			testHandler.DeleteProject(httptest.NewRecorder(), req)
+		}
+	}()
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title":     "Project lead default assignee",
+		"lead_type": "agent",
+		"lead_id":   leadAgentID,
+	})
+	testHandler.CreateProject(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var project ProjectResponse
+	json.NewDecoder(w.Body).Decode(&project)
+	projectID = project.ID
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":      "Issue should route to project lead",
+		"project_id": projectID,
+		"status":     "todo",
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var issue IssueResponse
+	json.NewDecoder(w.Body).Decode(&issue)
+	issueID = issue.ID
+
+	if issue.AssigneeType == nil || *issue.AssigneeType != "agent" {
+		t.Fatalf("expected issue assignee_type agent, got %v", issue.AssigneeType)
+	}
+	if issue.AssigneeID == nil || *issue.AssigneeID != leadAgentID {
+		t.Fatalf("expected issue assignee_id %q, got %v", leadAgentID, issue.AssigneeID)
+	}
+	if got := countQueuedOrDispatched(t, leadAgentID, issueID); got != 1 {
+		t.Fatalf("expected one queued/dispatched task for project lead, got %d", got)
+	}
+}
+
 func TestCreateIssueRejectsActiveDuplicate(t *testing.T) {
 	ctx := context.Background()
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())

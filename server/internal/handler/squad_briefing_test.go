@@ -223,6 +223,8 @@ func TestBuildSquadLeaderBriefing_FullSquad(t *testing.T) {
 		"跨项目子任务规则",
 		"--parent <当前 issue id>",
 		"--project <目标项目 id>",
+		"不要额外传 `--assignee` 或 `--assignee-id`",
+		"自动交给项目负责人",
 		"目标项目=gateway",
 		"目标项目=config",
 		"## 小队说明 (Full Squad)",
@@ -293,6 +295,8 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 		"--parent <当前 issue id>",
 		"--project <目标项目 id>",
 		"multica project list --output json",
+		"不要额外传 `--assignee` 或 `--assignee-id`",
+		"自动交给项目负责人",
 		"不要再为同一项工作 @mention 同一个负责人",
 	} {
 		if !strings.Contains(out, want) {
