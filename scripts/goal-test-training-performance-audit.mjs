@@ -208,6 +208,45 @@ async function auditTrainingRoute(page, route) {
 
 function expectedBoundaryFailures(routeId, boundaries) {
   const failures = [];
+  const contracts = {
+    runs: {
+      required: ["prompt_evaluation_summary", "runtime_readiness", "runs", "candidates"],
+      forbidden: ["cases", "assets"],
+    },
+    prompts: {
+      required: ["prompt_evaluation_summary"],
+      forbidden: ["runtime_readiness", "cases", "assets", "runs", "candidates"],
+    },
+    datasets: {
+      required: ["prompt_evaluation_summary", "cases", "assets"],
+      forbidden: ["runtime_readiness", "runs", "candidates"],
+    },
+    "test-suites": {
+      required: ["prompt_evaluation_summary", "cases", "assets"],
+      forbidden: ["runtime_readiness", "runs", "candidates"],
+    },
+    experiments: {
+      required: ["prompt_evaluation_summary", "cases", "assets"],
+      forbidden: ["runtime_readiness", "runs", "candidates"],
+    },
+    "optimization-runs": {
+      required: ["prompt_evaluation_summary", "assets", "runs", "candidates"],
+      forbidden: ["runtime_readiness", "cases"],
+    },
+    "run-history": {
+      required: ["prompt_evaluation_summary", "cases", "runs", "candidates"],
+      forbidden: ["runtime_readiness", "assets"],
+    },
+  };
+  const contract = contracts[routeId];
+  if (contract) {
+    for (const key of contract.required) {
+      if (!boundaries[key]) failures.push(`${routeId} 缺少 ${formatBoundaryName(key)} 请求`);
+    }
+    for (const key of contract.forbidden) {
+      if (boundaries[key]) failures.push(`${routeId} 不应请求 ${formatBoundaryName(key)}`);
+    }
+  }
   if (routeId === "prompt-playground") {
     if (boundaries.prompt_evaluation_summary) failures.push("提示词调试场不应请求 summary");
     if (boundaries.runtime_readiness) failures.push("提示词调试场不应请求 runtime readiness");
@@ -221,6 +260,18 @@ function expectedBoundaryFailures(routeId, boundaries) {
     if (!boundaries.cases) failures.push("智能体调试场缺少 structured cases 请求");
   }
   return failures;
+}
+
+function formatBoundaryName(key) {
+  const labels = {
+    prompt_evaluation_summary: "summary",
+    runtime_readiness: "runtime readiness",
+    cases: "structured cases",
+    assets: "assets",
+    runs: "runs",
+    candidates: "optimization candidates",
+  };
+  return labels[key] || key;
 }
 
 async function login() {
