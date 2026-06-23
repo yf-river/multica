@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, BookOpenText, Download, Loader2, Play, Plus, Save, Search, TerminalSquare, Trash2 } from "lucide-react";
+import { Archive, BookOpenText, Download, Loader2, Play, Plus, Save, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -47,8 +47,6 @@ import { PageHeader } from "../../layout/page-header";
 import { AppLink } from "../../navigation";
 import { useNavigation } from "../../navigation";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
-import { AgentPlaygroundPromptList, PromptPlaygroundPromptList } from "./playground-prompt-lists";
-import { AgentPlaygroundWorkbench, PromptPlaygroundWorkbench } from "./playground-workbenches";
 import {
   DEFAULT_AGENT_MODEL,
   draftToRequest,
@@ -61,7 +59,7 @@ import {
   valuesToDebugText,
   type PromptDraft,
 } from "./prompt-library-request-builders";
-import { useAgentPlaygroundActions, usePromptPlaygroundActions } from "./use-prompt-playground-actions";
+import { usePromptPlaygroundActions } from "./use-prompt-playground-actions";
 
 const promptLibraryKeys = {
   list: (workspaceId: string) => ["prompt-library", workspaceId, "list"] as const,
@@ -79,7 +77,6 @@ const promptLibraryKeys = {
 const PROMPT_TYPES = ["全部", "需求澄清", "系统提示词", "评测提示词", "小队 SOP", "通用"];
 type WorkbenchTab = TrainingWorkbenchTab;
 type DemoTimeRange = "24h" | "7d" | "30d" | "all";
-type PromptLibrarySurface = "training" | "prompt-playground" | "agent-playground";
 
 const DEMO_TIME_RANGES: Array<{ value: DemoTimeRange; label: string; sinceMs: number | null }> = [
   { value: "24h", label: "最近24小时", sinceMs: 24 * 60 * 60 * 1000 },
@@ -121,11 +118,9 @@ function trainingViewFromLocation(pathname: string, searchParams: URLSearchParam
 export function PromptLibraryPage({
   activeView,
   showPromptEditor,
-  surface = "training",
 }: {
   activeView?: TrainingWorkbenchViewId;
   showPromptEditor?: boolean;
-  surface?: PromptLibrarySurface;
 }) {
   const workspaceId = useWorkspaceId();
   const workspacePaths = useWorkspacePaths();
@@ -182,21 +177,6 @@ export function PromptLibraryPage({
     }
   }, [caseDrafts, caseDraftStorageKey]);
 
-  const dedicatedPromptPlayground = surface === "prompt-playground";
-  const dedicatedAgentPlayground = surface === "agent-playground";
-  const isDedicatedPlayground = dedicatedPromptPlayground || dedicatedAgentPlayground;
-  const pageTitle = dedicatedPromptPlayground ? "提示词调试场" : dedicatedAgentPlayground ? "智能体调试场" : "训练与评估";
-  const pageBadge = dedicatedPromptPlayground ? "模板实验" : dedicatedAgentPlayground ? "真实任务" : null;
-  const pageContract = dedicatedPromptPlayground
-    ? "本地渲染 · 不启动智能体"
-    : dedicatedAgentPlayground
-      ? "真实任务 · 写回观测证据"
-      : null;
-  const pageShellTestId = dedicatedPromptPlayground
-    ? "prompt-playground-page-shell"
-    : dedicatedAgentPlayground
-      ? "agent-playground-page-shell"
-      : "training-page-shell";
   const isDashboardTab = activeTab === "运行看板";
   const shouldShowPromptHeaderActions = activeTab === "提示词库";
   const isEvaluationAssetTab =
@@ -206,15 +186,9 @@ export function PromptLibraryPage({
     activeTab === "优化运行";
   const needsPromptItems =
     (shouldShowPromptEditor && activeTab === "提示词库") ||
-    activeTab === "提示词调试场" ||
-    activeTab === "智能体调试场" ||
     isEvaluationAssetTab;
-  const needsEvaluationAssets =
-    activeTab === "提示词调试场" ||
-    activeTab === "智能体调试场" ||
-    isEvaluationAssetTab;
+  const needsEvaluationAssets = isEvaluationAssetTab;
   const needsStructuredCases =
-    activeTab === "智能体调试场" ||
     activeTab === "数据集" ||
     activeTab === "测试套件" ||
     activeTab === "实验" ||
@@ -222,13 +196,10 @@ export function PromptLibraryPage({
   const needsExperimentDimensions = activeTab === "实验";
   const needsRuns =
     isDashboardTab ||
-    activeTab === "提示词调试场" ||
     activeTab === "运行历史" ||
-    activeTab === "优化运行" ||
-    activeTab === "智能体调试场";
+    activeTab === "优化运行";
   const needsCandidates = isDashboardTab || activeTab === "运行历史" || activeTab === "优化运行";
-  const needsRuntimeReadiness = isDashboardTab || activeTab === "智能体调试场";
-  const needsSummary = !isDedicatedPlayground;
+  const needsRuntimeReadiness = isDashboardTab;
 
   const listQuery = useQuery({
     queryKey: promptLibraryKeys.list(workspaceId ?? ""),
@@ -264,7 +235,7 @@ export function PromptLibraryPage({
   const summaryQuery = useQuery({
     queryKey: [...promptLibraryKeys.summary(workspaceId ?? ""), demoSince ?? "all"] as const,
     queryFn: () => api.getPromptEvaluationSummary(demoSince ? { since: demoSince } : undefined),
-    enabled: !!workspaceId && needsSummary,
+    enabled: !!workspaceId,
   });
   const runtimeReadinessQuery = useQuery({
     queryKey: ["training-evaluation", workspaceId ?? "", "runtime-readiness"],
@@ -294,7 +265,7 @@ export function PromptLibraryPage({
   });
   const promptVersions = versionQuery.data?.items ?? [];
   const agentRuntimeReadiness = runtimeReadinessQuery.data ?? DEFAULT_AGENT_RUNTIME_READINESS;
-  const selectedPromptStorageKey = workspaceId ? `multica:training:${surface}:selected-prompt:${workspaceId}` : null;
+  const selectedPromptStorageKey = workspaceId ? `multica:training:prompt-library:selected-prompt:${workspaceId}` : null;
 
   useEffect(() => {
     if (!selectedPromptStorageKey || selectedId || isDraftingNew) return;
@@ -535,16 +506,6 @@ export function PromptLibraryPage({
     onRunsChanged: invalidateRuns,
     onSummaryChanged: invalidateSummary,
   });
-  const agentPlaygroundActions = useAgentPlaygroundActions({
-    draft,
-    selected,
-    agentRuntimeReadiness,
-    onAssetsChanged: invalidateAssets,
-    onCasesChanged: invalidateCases,
-    onExperimentDimensionsChanged: invalidateExperimentDimensions,
-    onRunsChanged: invalidateRuns,
-    onSummaryChanged: invalidateSummary,
-  });
   const {
     debugValuesText,
     setDebugValuesText,
@@ -554,33 +515,20 @@ export function PromptLibraryPage({
     runDebug,
     createWorkbenchAsset,
   } = promptPlaygroundActions;
-  const {
-    debugValuesText: agentDebugValuesText,
-    setDebugValuesText: setAgentDebugValuesText,
-    agentExpectedText,
-    setAgentExpectedText,
-    debugResult: agentDebugResult,
-    runningAgent,
-    creatingAgentPackage,
-    saveAgentDebugPackage,
-    runAgentDebugPackage,
-  } = agentPlaygroundActions;
-  const savingAsset = creatingAsset || creatingAgentPackage || updateAssetMut.isPending || deleteAssetMut.isPending || importDatasetFromTracesMut.isPending;
+  const savingAsset = creatingAsset || updateAssetMut.isPending || deleteAssetMut.isPending || importDatasetFromTracesMut.isPending;
 
   useEffect(() => {
     if (!selected) return;
     setDraft(itemToDraft(selected));
     const nextValues = valuesToDebugText(selected.variables);
     setDebugValuesText(nextValues);
-    setAgentDebugValuesText(nextValues);
-  }, [selected, setAgentDebugValuesText, setDebugValuesText]);
+  }, [selected, setDebugValuesText]);
 
   const startNew = () => {
     setIsDraftingNew(true);
     setSelectedId(null);
     setDraft(emptyDraft());
     setDebugValuesText("");
-    setAgentDebugValuesText("");
   };
 
   const applyUserCenterTemplate = () => {
@@ -589,7 +537,6 @@ export function PromptLibraryPage({
     setDraft(requestToDraft(USER_CENTER_TEMPLATE));
     const nextValues = valuesToDebugText(USER_CENTER_TEMPLATE.variables ?? []);
     setDebugValuesText(nextValues);
-    setAgentDebugValuesText(nextValues);
   };
 
   const saveDraft = () => {
@@ -726,21 +673,12 @@ export function PromptLibraryPage({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background" data-testid={pageShellTestId}>
+    <div className="flex h-full min-h-0 flex-col bg-background" data-testid="training-page-shell">
       <PageHeader>
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          {dedicatedAgentPlayground ? (
-            <TerminalSquare className="size-4 shrink-0 text-muted-foreground" />
-          ) : (
-            <BookOpenText className="size-4 shrink-0 text-muted-foreground" />
-          )}
-          <h1 className="truncate text-sm font-semibold">{pageTitle}</h1>
-          <span className="text-xs text-muted-foreground">{pageBadge ?? items.length}</span>
-          {pageContract && (
-            <Badge variant={dedicatedAgentPlayground ? "secondary" : "outline"} data-testid="playground-page-contract" className="hidden shrink-0 text-[11px] sm:inline-flex">
-              {pageContract}
-            </Badge>
-          )}
+          <BookOpenText className="size-4 shrink-0 text-muted-foreground" />
+          <h1 className="truncate text-sm font-semibold">训练与评估</h1>
+          <span className="text-xs text-muted-foreground">{items.length}</span>
         </div>
         {shouldShowPromptHeaderActions && (
           <div className="flex items-center gap-2">
@@ -752,22 +690,20 @@ export function PromptLibraryPage({
         )}
       </PageHeader>
 
-      {!isDedicatedPlayground && (
-        <div className="flex shrink-0 gap-1 overflow-x-auto border-b px-3 py-2" data-testid="training-tab-strip">
-          {TRAINING_WORKBENCH_TABS.map((tab) => (
-            <FilterButton
-              key={tab}
-              active={activeTab === tab}
-              href={trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB[tab])}
-              onClick={() => setActiveTab(tab)}
-            >
-              {tab}
-            </FilterButton>
-          ))}
-        </div>
-      )}
+      <div className="flex shrink-0 gap-1 overflow-x-auto border-b px-3 py-2" data-testid="training-tab-strip">
+        {TRAINING_WORKBENCH_TABS.map((tab) => (
+          <FilterButton
+            key={tab}
+            active={activeTab === tab}
+            href={trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB[tab])}
+            onClick={() => setActiveTab(tab)}
+          >
+            {tab}
+          </FilterButton>
+        ))}
+      </div>
 
-      {!isDedicatedPlayground && <TrainingSummaryStrip summary={summary} loading={summaryQuery.isLoading} />}
+      <TrainingSummaryStrip summary={summary} loading={summaryQuery.isLoading} />
 
       {activeTab === "运行看板" ? (
         <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
@@ -788,73 +724,6 @@ export function PromptLibraryPage({
             candidates={candidates}
           />
         </main>
-      ) : activeTab === "提示词调试场" ? (
-        <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[280px_minmax(0,1fr)]" data-testid="prompt-playground-workbench">
-          <PromptPlaygroundPromptList
-            query={query}
-            onQueryChange={setQuery}
-            loading={listQuery.isLoading}
-            items={filteredItems}
-            selectedId={selected?.id ?? null}
-            onSelect={(id) => {
-              setIsDraftingNew(false);
-              setSelectedId(id);
-            }}
-          />
-
-          <main className="min-h-0 overflow-y-auto p-4 md:p-6">
-            <PromptPlaygroundWorkbench
-              selected={selected}
-              debugValuesText={debugValuesText}
-              onDebugValuesTextChange={setDebugValuesText}
-              debugResult={debugResult}
-              runningDebug={runningDebug}
-              runs={runs}
-              assets={assets}
-              loading={assetQuery.isLoading || runQuery.isLoading}
-              onRunDebug={runDebug}
-            />
-          </main>
-        </div>
-      ) : activeTab === "智能体调试场" ? (
-        <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[360px_minmax(0,1fr)]" data-testid="agent-playground-workbench">
-          <AgentPlaygroundPromptList
-            query={query}
-            onQueryChange={setQuery}
-            loading={listQuery.isLoading}
-            items={filteredItems}
-            selectedId={selectedId}
-            onSelect={(id) => {
-              setIsDraftingNew(false);
-              setSelectedId(id);
-            }}
-            cases={cases}
-            runs={runs}
-            runtimeReadiness={agentRuntimeReadiness}
-            runtimeLoading={runtimeReadinessQuery.isLoading}
-          />
-
-          <main className="min-h-0 overflow-y-auto p-4 md:p-6">
-            <AgentPlaygroundWorkbench
-              selected={selected}
-              debugValuesText={agentDebugValuesText}
-              onDebugValuesTextChange={setAgentDebugValuesText}
-              debugResult={agentDebugResult}
-              agentExpectedText={agentExpectedText}
-              onAgentExpectedTextChange={setAgentExpectedText}
-              runtimeReadiness={agentRuntimeReadiness}
-              runtimeLoading={runtimeReadinessQuery.isLoading}
-              saving={savingAsset}
-              runningAgent={runningAgent}
-              runs={runs}
-              assets={assets}
-              cases={cases}
-              loading={assetQuery.isLoading || caseQuery.isLoading || runQuery.isLoading}
-              onSaveAgentDebugPackage={saveAgentDebugPackage}
-              onRunAgentDebugPackage={runAgentDebugPackage}
-            />
-          </main>
-        </div>
       ) : shouldShowPromptEditor ? (
         <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[360px_minmax(0,1fr)]" data-testid="prompt-library-editor">
           <aside className="flex min-h-0 flex-col border-b md:border-b-0 md:border-r">
@@ -1058,7 +927,6 @@ export function PromptLibraryPage({
               <WorkbenchPanel
                 activeTab={activeTab}
                 workspaceId={workspaceId ?? ""}
-                selected={selected}
                 assets={assets}
                 cases={cases}
                 experimentDimensions={experimentDimensions}
@@ -1066,14 +934,7 @@ export function PromptLibraryPage({
                 candidates={candidates}
                 loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || runQuery.isLoading || candidateQuery.isLoading}
                 saving={savingAsset}
-                runningAgent={runningAgent}
-                runtimeReadiness={agentRuntimeReadiness}
-                runtimeLoading={runtimeReadinessQuery.isLoading}
-                agentExpectedText={agentExpectedText}
-                onAgentExpectedTextChange={setAgentExpectedText}
                 onCreateAsset={createWorkbenchAsset}
-                onSaveAgentDebugPackage={saveAgentDebugPackage}
-                onRunAgentDebugPackage={runAgentDebugPackage}
                 onToggleAssetStatus={toggleAssetStatus}
                 onDeleteAsset={deleteAsset}
                 onImportDatasetFromTraces={importDatasetFromTraces}
@@ -1110,7 +971,6 @@ export function PromptLibraryPage({
             <WorkbenchPanel
               activeTab={activeTab}
               workspaceId={workspaceId ?? ""}
-              selected={null}
               assets={assets}
               cases={cases}
               experimentDimensions={experimentDimensions}
@@ -1118,14 +978,7 @@ export function PromptLibraryPage({
               candidates={candidates}
               loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || runQuery.isLoading || candidateQuery.isLoading}
               saving={savingAsset}
-              runningAgent={runningAgent}
-              runtimeReadiness={agentRuntimeReadiness}
-              runtimeLoading={runtimeReadinessQuery.isLoading}
-              agentExpectedText={agentExpectedText}
-              onAgentExpectedTextChange={setAgentExpectedText}
               onCreateAsset={createWorkbenchAsset}
-              onSaveAgentDebugPackage={saveAgentDebugPackage}
-              onRunAgentDebugPackage={runAgentDebugPackage}
               onToggleAssetStatus={toggleAssetStatus}
               onDeleteAsset={deleteAsset}
               onImportDatasetFromTraces={importDatasetFromTraces}
@@ -1508,22 +1361,14 @@ function TrainingSummaryStrip({ summary, loading }: { summary: PromptEvaluationS
 function WorkbenchPanel({
   activeTab,
   workspaceId,
-  selected,
   assets,
   cases,
   experimentDimensions,
   runs,
   candidates,
   loading,
-    saving,
-    runningAgent,
-    agentExpectedText,
-    runtimeReadiness,
-    runtimeLoading,
-  onAgentExpectedTextChange,
+  saving,
   onCreateAsset,
-  onSaveAgentDebugPackage,
-  onRunAgentDebugPackage,
   onToggleAssetStatus,
   onDeleteAsset,
   onImportDatasetFromTraces,
@@ -1553,23 +1398,15 @@ function WorkbenchPanel({
 }: {
   activeTab: WorkbenchTab;
   workspaceId: string;
-  selected: PromptLibraryItem | null;
   assets: PromptEvaluationAsset[];
   cases: PromptEvaluationStructuredCase[];
   experimentDimensions: PromptEvaluationExperimentDimension[];
   runs: PromptEvaluationRun[];
   candidates: PromptEvaluationOptimizationCandidate[];
   loading: boolean;
-    saving: boolean;
-    runningAgent: boolean;
-    runtimeReadiness: PromptEvaluationRuntimeReadiness;
-    runtimeLoading: boolean;
-    agentExpectedText: string;
-    onAgentExpectedTextChange: (value: string) => void;
-    onCreateAsset: (assetType: PromptEvaluationAssetType) => void;
-    onSaveAgentDebugPackage: () => void;
-    onRunAgentDebugPackage: () => void;
-    onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
+  saving: boolean;
+  onCreateAsset: (assetType: PromptEvaluationAssetType) => void;
+  onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
   onDeleteAsset: (asset: PromptEvaluationAsset) => void;
   onImportDatasetFromTraces: (asset: PromptEvaluationAsset) => void;
   importingTraceDatasetAssetId: string | null;
@@ -1615,52 +1452,8 @@ function WorkbenchPanel({
     enabled: !!expandedRunId,
   });
 
-  if (activeTab === "提示词库" || activeTab === "提示词调试场") {
+  if (activeTab === "提示词库" || activeTab === "提示词调试场" || activeTab === "智能体调试场") {
     return null;
-  }
-
-	if (activeTab === "智能体调试场") {
-	    return (
-	      <section className="grid gap-3 border-t pt-4">
-	        <div className="flex items-center justify-between gap-2">
-	          <div>
-	            <h3 className="text-sm font-semibold">智能体调试场</h3>
-	            <p className="mt-1 text-xs text-muted-foreground">可先保存实验包，也可在 Codex 就绪后创建真实智能体任务并写入运行历史。</p>
-	          </div>
-	          <div className="flex shrink-0 items-center gap-2">
-	            <Button size="sm" variant="secondary" onClick={onSaveAgentDebugPackage} disabled={!selected || saving}>
-	              {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-	              保存为实验
-	            </Button>
-	            <Button size="sm" onClick={onRunAgentDebugPackage} disabled={!selected || saving || runningAgent || runtimeReadiness.status !== "就绪"}>
-	              {runningAgent ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-	              创建真实智能体任务
-	            </Button>
-	          </div>
-	        </div>
-	        <div className="grid gap-2 rounded-md border bg-muted/20 p-3 text-xs">
-          <div className="flex flex-wrap items-center gap-2">
-            <span className="font-medium text-foreground">真实执行准备度</span>
-            <Badge variant={runtimeReadiness.status === "就绪" ? "secondary" : "outline"}>
-              {runtimeLoading ? "检查中" : runtimeReadiness.label}
-            </Badge>
-            <span className="text-muted-foreground">目标模型 {runtimeReadiness.model || DEFAULT_AGENT_MODEL}</span>
-          </div>
-          <div className="text-muted-foreground">{runtimeLoading ? "正在检查当前工作区的运行时列表。" : runtimeReadiness.detail}</div>
-          {runtimeReadiness.status !== "就绪" && !runtimeLoading && (
-            <div className="text-muted-foreground">修复路径：{runtimeReadiness.fix}</div>
-          )}
-        </div>
-        <Field label="期望输出">
-          <Textarea
-            value={agentExpectedText}
-            onChange={(event) => onAgentExpectedTextChange(event.target.value)}
-            className="min-h-[140px] resize-y text-sm leading-6"
-            placeholder="写下希望智能体最终交付的结构、证据和中文口径。"
-          />
-        </Field>
-      </section>
-    );
   }
 
   return (

@@ -1,4 +1,6 @@
 import { test, expect, type Page, type Request } from "@playwright/test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { createTestApi, loginAsDefault, waitForPageText } from "./helpers";
 import { DEFAULT_TRAINING_ROUTE, TRAINING_ROUTES, trainingRoutePath } from "./training-routes";
 
@@ -39,6 +41,23 @@ function collectPromptEvaluationRequests(page: Page) {
 function currentWorkspaceSlug(page: Page) {
   return new URL(page.url()).pathname.split("/").filter(Boolean)[0] ?? "";
 }
+
+test("training playground route modules stay dedicated", async () => {
+  const repoRoot = process.cwd();
+  const webPromptRoute = readFileSync(join(repoRoot, "apps/web/app/[workspaceSlug]/(dashboard)/training/prompt-playground/page.tsx"), "utf8");
+  const webAgentRoute = readFileSync(join(repoRoot, "apps/web/app/[workspaceSlug]/(dashboard)/training/agent-playground/page.tsx"), "utf8");
+  const webDynamicRoute = readFileSync(join(repoRoot, "apps/web/app/[workspaceSlug]/(dashboard)/training/[trainingView]/page.tsx"), "utf8");
+  const desktopRoutes = readFileSync(join(repoRoot, "apps/desktop/src/renderer/src/routes.tsx"), "utf8");
+
+  expect(webPromptRoute).toContain("PromptPlaygroundPage");
+  expect(webPromptRoute).not.toContain("PromptLibraryPage");
+  expect(webAgentRoute).toContain("AgentPlaygroundPage");
+  expect(webAgentRoute).not.toContain("PromptLibraryPage");
+  expect(webDynamicRoute).toContain('if (view === "prompt-playground") return <PromptPlaygroundPage />;');
+  expect(webDynamicRoute).toContain('if (view === "agent-playground") return <AgentPlaygroundPage />;');
+  expect(desktopRoutes).toContain('path: "prompt-playground", element: <PromptPlaygroundPage />');
+  expect(desktopRoutes).toContain('path: "agent-playground", element: <AgentPlaygroundPage />');
+});
 
 test.describe("Navigation", () => {
   test.beforeEach(async ({ page }) => {

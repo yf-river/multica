@@ -47,6 +47,9 @@ make goal-test-verify-env
 make goal-test-verify-logs
 make goal-test-e2e-preflight
 make goal-test-smoke
+make goal-test-fast-check
+make goal-test-smart-verify MODE=precommit
+make goal-test-smart-verify MODE=final DRY_RUN=1
 make goal-test-ui-audit
 make goal-test-session-retro SESSION=/path/to/codex-session.jsonl
 pnpm acceptance:verify
@@ -60,6 +63,15 @@ For complex goal-test delivery, prefer `gpt-5.5 high` as the main controller. Si
 Goal-test acceptance must include real browser UI checks, E2E/API data closure, performance evidence, current-deployment `.run` log window scans, decision ledger updates, and a commit or explicit reason for not committing. For integration Playwright runs, first run `make goal-test-e2e-preflight`, then use the project variables from `.run/env/goal-test-int.env` plus `PLAYWRIGHT_BASE_URL=http://9.134.129.162:13682`; do not rely on `E2E_BASE_URL` alone. E2E tests may reuse the default account/workspace, but must create their own business data through public API/UI instead of depending on existing prompts, issues, or assets. Prefer `TestApiClient.createPromptForE2E` and `TestApiClient.createIssueForE2E` for unique named fixtures.
 
 For broad goal-test UI or training audits, run `make goal-test-smoke` first. `make goal-test-ui-audit` and `make goal-test-training-performance-audit` already include smoke plus the current deployment marker log scan in their JSON evidence. Deployments archive previous `.run/*-{server,web,daemon}.log` files under `.run/log-archive/` before writing the new marker window. For long-session retrospectives, use `make goal-test-session-retro SESSION=/path/to/session.jsonl` instead of hand-writing the session index and root-cause table.
+
+Speed-first goal-test validation protocol:
+
+- During implementation, prefer `make goal-test-fast-check` or `make goal-test-smart-verify MODE=dev`; do not run deployment, broad UI audit, or training performance audit after every small edit.
+- Each 60-120 minute slice should run at most one `make goal-test-deploy-dev`. Only redeploy earlier if server startup, migrations, environment files, build configuration, or the remote environment itself changed.
+- Before committing, use `make goal-test-smart-verify MODE=precommit` for changed-aware focused checks. Use `MODE=final` only when the slice is stable and ready for ledger evidence.
+- If `MODE=final` sees that the current commit is already deployed and no deployment-affecting files changed, it must verify the existing environment instead of redeploying.
+- If the same Playwright or audit command fails twice, stop rerunning it blindly. Inspect trace, screenshot, console/pageerror, and `.run/int-{server,web,daemon}.log`, fix the root cause, then rerun the smallest failing grep/spec.
+- `scripts/goal-test-smart-verify.mjs` writes command timings to `artifacts/acceptance/command-timings.jsonl`; use that file to identify repeated expensive gates before starting another long continuation.
 
 ## Architecture
 

@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-smoke goal-test-ui-audit goal-test-training-performance-audit goal-test-session-retro
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-audit goal-test-training-performance-audit goal-test-session-retro
 
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
@@ -244,6 +244,12 @@ goal-test-smoke: ## Fast goal-test gate: E2E preflight, environment verify, and 
 	$(MAKE) goal-test-e2e-preflight
 	node scripts/goal-test-environments.mjs verify int
 	node scripts/goal-test-environments.mjs verify-logs int
+
+goal-test-fast-check: ## Changed-aware development gate; avoids deploy/audit unless the smart verifier requires it
+	node scripts/goal-test-smart-verify.mjs --mode dev
+
+goal-test-smart-verify: ## Changed-aware goal-test gate; pass MODE=dev|precommit|final and DRY_RUN=1 to preview
+	node scripts/goal-test-smart-verify.mjs --mode $${MODE:-dev} $${DRY_RUN:+--dry-run}
 
 goal-test-ui-audit: goal-test-smoke ## Run real-browser goal-test integration UI, performance, console, Chinese semantics, and log-window audit
 	node scripts/goal-test-ui-audit.mjs
