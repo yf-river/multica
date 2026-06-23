@@ -168,8 +168,14 @@ export function ChatWindow() {
   const setActiveSession = useChatStore((s) => s.setActiveSession);
   const setSelectedAgentId = useChatStore((s) => s.setSelectedAgentId);
   const user = useAuthStore((s) => s.user);
-  const { data: agents = [] } = useQuery(agentListOptions(wsId));
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { data: agents = [] } = useQuery({
+    ...agentListOptions(wsId),
+    enabled: isOpen,
+  });
+  const { data: members = [] } = useQuery({
+    ...memberListOptions(wsId),
+    enabled: isOpen,
+  });
   // Single sessions cache — eliminates the separate active/all queries
   // that used to drift during the WS-invalidate window.
   const { data: sessions = [] } = useQuery({
@@ -713,6 +719,7 @@ export function ChatWindow() {
             // Use the full agent list (incl. archived) so historical
             // sessions can still resolve their avatar.
             agents={agents}
+            isOpen={isOpen}
             activeSessionId={activeSessionId}
             onSelectSession={handleSelectSession}
           />
@@ -962,11 +969,13 @@ function AgentPickerItem({
 function SessionDropdown({
   sessions,
   agents,
+  isOpen,
   activeSessionId,
   onSelectSession,
 }: {
   sessions: ChatSession[];
   agents: Agent[];
+  isOpen: boolean;
   activeSessionId: string | null;
   onSelectSession: (session: ChatSession) => void;
 }) {
@@ -1004,7 +1013,10 @@ function SessionDropdown({
   // Aggregate "which sessions have an in-flight task right now". Reuses
   // the same workspace-scoped query the FAB consumes, so toggling the chat
   // window doesn't fire a second request — TanStack dedupes by key.
-  const { data: pending } = useQuery(pendingChatTasksOptions(wsId));
+  const { data: pending } = useQuery({
+    ...pendingChatTasksOptions(wsId),
+    enabled: isOpen,
+  });
   const pendingTaskBySessionId = useMemo(
     () => new Map((pending?.tasks ?? []).map((task) => [task.chat_session_id, task])),
     [pending],
