@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env
 
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
@@ -208,18 +208,25 @@ goal-test-build: ## Build backend/CLI binaries and the web production bundle for
 	$(MAKE) build
 	pnpm --filter @multica/web build
 
-goal-test-deploy-prod: ## Build and deploy goal-test production stable environment
+goal-test-deploy-dev: ## Build once, deploy goal-test integration development environment, then verify it
+	$(MAKE) goal-test-build
+	node scripts/goal-test-environments.mjs deploy int
+	node scripts/goal-test-environments.mjs verify int
+
+goal-test-sync-prod: ## Sync the already-built goal-test artifact to production, then verify it
+	node scripts/goal-test-environments.mjs deploy prod
+	node scripts/goal-test-environments.mjs verify prod
+
+goal-test-promote-prod: goal-test-sync-prod ## Alias: promote the current built artifact to production
+
+goal-test-deploy-prod: ## Build and deploy goal-test production stable environment directly
 	node scripts/goal-test-environments.mjs deploy prod --build
 
-goal-test-deploy-int: ## Build and deploy goal-test integration development environment
-	node scripts/goal-test-environments.mjs deploy int --build
+goal-test-deploy-int: goal-test-deploy-dev ## Alias: build and deploy goal-test integration development environment
 
-goal-test-deploy-all: ## Build once, deploy both goal-test environments, then verify
-	$(MAKE) goal-test-build
-	node scripts/goal-test-environments.mjs deploy prod
-	node scripts/goal-test-environments.mjs deploy int
-	node scripts/goal-test-environments.mjs verify prod
-	node scripts/goal-test-environments.mjs verify int
+goal-test-deploy-all: ## Build and deploy dev first, then sync the same artifact to production
+	$(MAKE) goal-test-deploy-dev
+	$(MAKE) goal-test-sync-prod
 
 goal-test-verify-env: ## Verify goal-test production and integration environments
 	node scripts/goal-test-environments.mjs verify prod
