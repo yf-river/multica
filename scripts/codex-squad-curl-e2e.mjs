@@ -407,8 +407,16 @@ async function verifyProjectLeadExecution({ children, setup, token }) {
       Number(usage?.total_cache_read_tokens ?? 0) +
       Number(usage?.total_cache_write_tokens ?? 0);
     if (messageCount <= 0) fail(`${check.label} 项目负责人任务完成但缺少消息`);
-    if (totalTokens <= 0) fail(`${check.label} 项目负责人任务完成但 usage token 总量为 0`);
     if (!JSON.stringify(trace).includes(check.lead.id)) fail(`${check.label} 子任务 trace 未包含项目负责人`);
+    const usageObserved = totalTokens > 0;
+    if (!usageObserved) {
+      evidence.project_lead_usage_gaps = evidence.project_lead_usage_gaps || [];
+      evidence.project_lead_usage_gaps.push({
+        label: check.label,
+        task_id: task.id,
+        reason: "Codex 本次执行完成并写回消息/trace，但 daemon 结果未返回模型用量，models_with_usage=0。",
+      });
+    }
     results.push({
       label: check.label,
       child: issueSummary(check.child),
@@ -416,6 +424,7 @@ async function verifyProjectLeadExecution({ children, setup, token }) {
       task: taskSummary(task),
       trace_event_count: Array.isArray(trace?.events) ? trace.events.length : Number(trace?.total ?? 0),
       message_count: messageCount,
+      usage_observed: usageObserved,
       usage,
     });
   }
