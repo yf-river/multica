@@ -449,6 +449,12 @@ function buildCommandPlan() {
       timeoutMs: 180_000,
     },
     {
+      name: "后端/CLI 二进制构建",
+      command: "make build",
+      required: true,
+      timeoutMs: 180_000,
+    },
+    {
       name: "Web build",
       command: "pnpm --filter @multica/web build",
       required: true,
