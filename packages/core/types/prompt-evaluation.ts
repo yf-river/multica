@@ -249,6 +249,23 @@ export interface PromptEvaluationAgentRunResponse {
   message: string;
 }
 
+export interface CreatePromptEvaluationDatasetFromTracesRequest {
+  task_ids?: string[];
+  event_type?: string;
+  limit?: number;
+  expected_contains?: string[];
+  tags?: string[];
+}
+
+export interface PromptEvaluationDatasetFromTracesResponse {
+  asset: PromptEvaluationAsset;
+  cases: PromptEvaluationStructuredCase[];
+  trace_events: TaskTraceEvent[];
+  created_count: number;
+  skipped_count: number;
+  source: "trace";
+}
+
 export interface PromptEvaluationOptimizationCandidate {
   id: string;
   workspace_id: string;

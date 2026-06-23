@@ -772,6 +772,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/", h.DeletePromptEvaluationAsset)
 					r.Post("/run", h.RunPromptEvaluationAsset)
 					r.Post("/agent-run", h.RunPromptEvaluationAssetAgent)
+					r.Post("/dataset-from-traces", h.CreatePromptEvaluationDatasetFromTraces)
 				})
 			})
 			r.Route("/api/prompt-evaluation-cases", func(r chi.Router) {

@@ -132,6 +132,8 @@ import type {
   PromptEvaluationRuntimeReadiness,
   PromptEvaluationStructuredCase,
   PromptEvaluationAgentRunResponse,
+  CreatePromptEvaluationDatasetFromTracesRequest,
+  PromptEvaluationDatasetFromTracesResponse,
   PromptEvaluationOptimizationCandidate,
   UpdatePromptEvaluationOptimizationCandidateRequest,
   PublishPromptEvaluationOptimizationCandidateResponse,
@@ -225,6 +227,7 @@ import {
   RuntimeUsageListSchema,
   PromptEvaluationAssetSchema,
   PromptEvaluationAssetListResponseSchema,
+  PromptEvaluationDatasetFromTracesResponseSchema,
   PromptEvaluationRunListResponseSchema,
   PromptEvaluationRunSchema,
   PromptEvaluationTrialListResponseSchema,
@@ -1813,6 +1816,26 @@ export class ApiClient {
 
   async deletePromptEvaluationAsset(id: string): Promise<void> {
     await this.fetch(`/api/prompt-evaluation-assets/${id}`, { method: "DELETE" });
+  }
+
+  async createPromptEvaluationDatasetFromTraces(
+    id: string,
+    data: CreatePromptEvaluationDatasetFromTracesRequest = {},
+  ): Promise<PromptEvaluationDatasetFromTracesResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-from-traces`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationDatasetFromTracesResponseSchema, {
+      asset: EMPTY_PROMPT_EVALUATION_ASSET,
+      cases: [],
+      trace_events: [],
+      created_count: 0,
+      skipped_count: 0,
+      source: "trace",
+    }, {
+      endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-from-traces",
+    }) as PromptEvaluationDatasetFromTracesResponse;
   }
 
   async listPromptEvaluationCases(params?: ListPromptEvaluationCasesParams): Promise<ListPromptEvaluationCasesResponse> {

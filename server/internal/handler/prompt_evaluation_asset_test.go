@@ -166,6 +166,83 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	}
 }
 
+func TestPromptEvaluationDatasetFromTraces(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
+	})
+	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, "trace 数据集提示词", "请复盘 {{event_name}}。", `["event_name"]`)
+	assetW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAsset(assetW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+		"prompt_id":   promptID,
+		"name":        "trace 导入数据集",
+		"description": "从真实任务 trace 沉淀评估样本",
+		"asset_type":  "数据集",
+		"payload":     map[string]any{"cases": []map[string]any{}},
+		"status":      "启用",
+	}))
+	if assetW.Code != http.StatusCreated {
+		t.Fatalf("create asset status = %d, body = %s", assetW.Code, assetW.Body.String())
+	}
+	var asset PromptEvaluationAssetResponse
+	if err := json.Unmarshal(assetW.Body.Bytes(), &asset); err != nil {
+		t.Fatalf("decode asset: %v", err)
+	}
+	agentID := createHandlerTestAgent(t, "trace dataset agent", nil)
+	taskID := createHandlerTestTaskForAgent(t, agentID)
+	trace, err := testHandler.Queries.CreateTaskTraceEvent(context.Background(), db.CreateTaskTraceEventParams{
+		WorkspaceID:   parseUUID(testWorkspaceID),
+		TaskID:        parseUUID(taskID),
+		AgentID:       parseUUID(agentID),
+		RuntimeID:     parseUUID(handlerTestRuntimeID(t)),
+		Source:        "daemon",
+		EventType:     "tool.result",
+		EventName:     "接口验收完成",
+		Status:        "completed",
+		Attempt:       1,
+		Provider:      "codex",
+		Model:         "gpt-5.3-codex-spark",
+		InputTokens:   21,
+		OutputTokens:  13,
+		FailureReason: "",
+		ErrorType:     "",
+		DurationMs:    pgtype.Int8{Int64: 1234, Valid: true},
+		TotalMs:       pgtype.Int8{Int64: 2234, Valid: true},
+		Metadata:      []byte(`{"接口":"/api/usercenter/profile","项目":"usercenter"}`),
+	})
+	if err != nil {
+		t.Fatalf("create trace event: %v", err)
+	}
+
+	importW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationDatasetFromTraces(importW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/dataset-from-traces", map[string]any{
+		"task_ids":          []string{taskID},
+		"event_type":        "tool.result",
+		"expected_contains": []string{"接口验收完成", "completed"},
+		"tags":              []string{"usercenter", "trace样本"},
+	}), "id", asset.ID))
+	if importW.Code != http.StatusCreated {
+		t.Fatalf("import status = %d, body = %s", importW.Code, importW.Body.String())
+	}
+	var imported PromptEvaluationDatasetFromTracesResponse
+	if err := json.Unmarshal(importW.Body.Bytes(), &imported); err != nil {
+		t.Fatalf("decode import response: %v", err)
+	}
+	if imported.Asset.ID != asset.ID || imported.Asset.DatasetRowCount != 1 || imported.CreatedCount != 1 || len(imported.Cases) != 1 || len(imported.TraceEvents) != 1 {
+		t.Fatalf("imported response = %+v", imported)
+	}
+	if imported.Cases[0].Source != "trace" || imported.Cases[0].CaseName == "" {
+		t.Fatalf("imported case = %+v", imported.Cases[0])
+	}
+	if imported.TraceEvents[0].ID != uuidToString(trace.ID) || imported.TraceEvents[0].TaskID != taskID {
+		t.Fatalf("imported trace event = %+v, trace=%s task=%s", imported.TraceEvents[0], uuidToString(trace.ID), taskID)
+	}
+	assertPromptEvaluationDatasetRowsContain(t, asset.ID, []string{imported.Cases[0].CaseName})
+}
+
 func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")

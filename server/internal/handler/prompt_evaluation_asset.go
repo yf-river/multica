@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"net/http"
 	"os"
 	"regexp"
@@ -119,6 +120,14 @@ type UpdatePromptEvaluationCaseRequest struct {
 	Expected         json.RawMessage `json:"expected"`
 	Tags             json.RawMessage `json:"tags"`
 	Status           *string         `json:"status"`
+}
+
+type CreatePromptEvaluationDatasetFromTracesRequest struct {
+	TaskIDs          []string `json:"task_ids"`
+	EventType        string   `json:"event_type"`
+	Limit            int32    `json:"limit"`
+	ExpectedContains []string `json:"expected_contains"`
+	Tags             []string `json:"tags"`
 }
 
 type promptEvaluationRunResult struct {
@@ -347,6 +356,15 @@ type PromptEvaluationCaseAssertionResponse struct {
 	Status         string `json:"status"`
 	Source         string `json:"source"`
 	CreatedAt      string `json:"created_at"`
+}
+
+type PromptEvaluationDatasetFromTracesResponse struct {
+	Asset        PromptEvaluationAssetResponse  `json:"asset"`
+	Cases        []PromptEvaluationCaseResponse `json:"cases"`
+	TraceEvents  []TaskTraceEventResponse       `json:"trace_events"`
+	CreatedCount int                            `json:"created_count"`
+	SkippedCount int                            `json:"skipped_count"`
+	Source       string                         `json:"source"`
 }
 
 type PromptEvaluationExperimentDimensionResponse struct {
@@ -1396,6 +1414,244 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	writeJSON(w, http.StatusCreated, promptEvaluationCaseToResponse(created, assertions))
+}
+
+func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter, r *http.Request) {
+	asset, ok := h.loadPromptEvaluationAsset(w, r)
+	if !ok {
+		return
+	}
+	if asset.AssetType != promptEvaluationAssetDataset {
+		writeError(w, http.StatusBadRequest, "only 数据集 assets can import trace events")
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	var req CreatePromptEvaluationDatasetFromTracesRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "invalid trace dataset import payload")
+			return
+		}
+	}
+	limit := req.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	traceEvents, ok := h.promptEvaluationTraceEventsForDataset(w, r, asset.WorkspaceID, req, limit)
+	if !ok {
+		return
+	}
+	if len(traceEvents) == 0 {
+		writeError(w, http.StatusBadRequest, "no trace events found for dataset import")
+		return
+	}
+	existing, err := h.Queries.ListPromptEvaluationCases(r.Context(), db.ListPromptEvaluationCasesParams{WorkspaceID: asset.WorkspaceID, AssetID: asset.ID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to allocate trace dataset case indexes")
+		return
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start trace dataset import transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	cases := make([]PromptEvaluationCaseResponse, 0, len(traceEvents))
+	traceResp := make([]TaskTraceEventResponse, 0, len(traceEvents))
+	for index, event := range traceEvents {
+		caseIndex := int32(len(existing) + index)
+		expectedContains := promptEvaluationTraceExpectedContains(event, req.ExpectedContains)
+		created, err := qtx.CreatePromptEvaluationCase(r.Context(), db.CreatePromptEvaluationCaseParams{
+			WorkspaceID:      asset.WorkspaceID,
+			AssetID:          asset.ID,
+			PromptID:         asset.PromptID,
+			CaseIndex:        caseIndex,
+			CaseName:         promptEvaluationTraceCaseName(event, caseIndex),
+			Variables:        mustJSONBytes(promptEvaluationTraceVariables(event)),
+			ExpectedContains: mustJSONBytes(expectedContains),
+			Input:            mustJSONBytes(promptEvaluationTraceInput(event)),
+			Expected:         mustJSONBytes(promptEvaluationTraceExpected(event, expectedContains)),
+			Tags:             mustJSONBytes(promptEvaluationTraceTags(event, req.Tags)),
+			Status:           "启用",
+			Source:           "trace",
+			CreatedBy:        parseUUID(userID),
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create trace dataset case")
+			return
+		}
+		assertions, err := syncPromptEvaluationCaseAssertions(r.Context(), qtx, created, mustJSONBytes(expectedContains))
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create trace dataset assertions")
+			return
+		}
+		if err := syncPromptEvaluationDatasetRow(r.Context(), qtx, asset, created); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to sync trace dataset row")
+			return
+		}
+		cases = append(cases, promptEvaluationCaseToResponse(created, assertions))
+		traceResp = append(traceResp, taskTraceEventToResponse(event))
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit trace dataset import")
+		return
+	}
+	updatedAsset, err := h.Queries.GetPromptEvaluationAssetInWorkspace(r.Context(), db.GetPromptEvaluationAssetInWorkspaceParams{ID: asset.ID, WorkspaceID: asset.WorkspaceID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reload trace dataset asset")
+		return
+	}
+	writeJSON(w, http.StatusCreated, PromptEvaluationDatasetFromTracesResponse{
+		Asset:        promptEvaluationAssetToResponse(updatedAsset),
+		Cases:        cases,
+		TraceEvents:  traceResp,
+		CreatedCount: len(cases),
+		SkippedCount: 0,
+		Source:       "trace",
+	})
+}
+
+func (h *Handler) promptEvaluationTraceEventsForDataset(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, req CreatePromptEvaluationDatasetFromTracesRequest, limit int32) ([]db.TaskTraceEvent, bool) {
+	if len(req.TaskIDs) > 0 {
+		events := make([]db.TaskTraceEvent, 0, limit)
+		taskIDs, ok := parseUUIDSliceOrBadRequest(w, req.TaskIDs, "task_ids")
+		if !ok {
+			return nil, false
+		}
+		for _, taskID := range taskIDs {
+			items, err := h.Queries.ListTaskTraceEventsByTask(r.Context(), taskID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to list task trace events")
+				return nil, false
+			}
+			for _, item := range items {
+				if item.WorkspaceID != workspaceID {
+					continue
+				}
+				if req.EventType != "" && item.EventType != req.EventType {
+					continue
+				}
+				events = append(events, item)
+				if int32(len(events)) >= limit {
+					return events, true
+				}
+			}
+		}
+		return events, true
+	}
+	var eventType pgtype.Text
+	if strings.TrimSpace(req.EventType) != "" {
+		eventType = pgtype.Text{String: strings.TrimSpace(req.EventType), Valid: true}
+	}
+	events, err := h.Queries.ListWorkspaceTaskTraceEvents(r.Context(), db.ListWorkspaceTaskTraceEventsParams{
+		WorkspaceID: workspaceID,
+		Limit:       limit,
+		Offset:      0,
+		EventType:   eventType,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list workspace trace events")
+		return nil, false
+	}
+	return events, true
+}
+
+func promptEvaluationTraceCaseName(event db.TaskTraceEvent, caseIndex int32) string {
+	name := strings.TrimSpace(event.EventName)
+	if name == "" {
+		name = strings.TrimSpace(event.EventType)
+	}
+	if name == "" {
+		name = "trace 事件"
+	}
+	return "trace样本 " + strconv.Itoa(int(caseIndex+1)) + "：" + name
+}
+
+func promptEvaluationTraceExpectedContains(event db.TaskTraceEvent, requested []string) []string {
+	values := make([]string, 0, len(requested)+2)
+	for _, item := range requested {
+		if text := strings.TrimSpace(item); text != "" {
+			values = append(values, text)
+		}
+	}
+	if strings.TrimSpace(event.Status) != "" {
+		values = append(values, event.Status)
+	}
+	if strings.TrimSpace(event.FailureReason) != "" {
+		values = append(values, event.FailureReason)
+	}
+	return values
+}
+
+func promptEvaluationTraceTags(event db.TaskTraceEvent, requested []string) []string {
+	tags := []string{"trace导入", event.EventType, event.Status}
+	for _, item := range requested {
+		if text := strings.TrimSpace(item); text != "" {
+			tags = append(tags, text)
+		}
+	}
+	return compactStrings(tags)
+}
+
+func promptEvaluationTraceVariables(event db.TaskTraceEvent) map[string]any {
+	return map[string]any{
+		"task_id":        uuidToString(event.TaskID),
+		"trace_event_id": uuidToString(event.ID),
+		"event_type":     event.EventType,
+		"event_name":     event.EventName,
+		"status":         event.Status,
+		"provider":       event.Provider,
+		"model":          event.Model,
+	}
+}
+
+func promptEvaluationTraceInput(event db.TaskTraceEvent) map[string]any {
+	return map[string]any{
+		"来源":        "task_trace_event",
+		"任务ID":      uuidToString(event.TaskID),
+		"trace事件ID": uuidToString(event.ID),
+		"事件类型":      event.EventType,
+		"事件名称":      event.EventName,
+		"状态":        event.Status,
+		"耗时毫秒":      int8ToPtr(event.DurationMs),
+		"总耗时毫秒":     int8ToPtr(event.TotalMs),
+		"provider":  event.Provider,
+		"model":     event.Model,
+		"输入token":   event.InputTokens,
+		"输出token":   event.OutputTokens,
+		"失败原因":      event.FailureReason,
+		"错误类型":      event.ErrorType,
+		"metadata":  decodePayloadObject(event.Metadata),
+	}
+}
+
+func promptEvaluationTraceExpected(event db.TaskTraceEvent, expectedContains []string) map[string]any {
+	return map[string]any{
+		"期望包含": expectedContains,
+		"来源任务": uuidToString(event.TaskID),
+		"状态":   event.Status,
+	}
+}
+
+func compactStrings(values []string) []string {
+	result := make([]string, 0, len(values))
+	seen := map[string]bool{}
+	for _, value := range values {
+		item := strings.TrimSpace(value)
+		if item == "" || seen[item] {
+			continue
+		}
+		seen[item] = true
+		result = append(result, item)
+	}
+	return result
 }
 
 func (h *Handler) UpdatePromptEvaluationCase(w http.ResponseWriter, r *http.Request) {

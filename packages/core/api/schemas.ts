@@ -22,6 +22,7 @@ import type {
   PromptEvaluationRuntimeReadiness,
   PromptEvaluationSummary,
   PromptEvaluationStructuredCase,
+  PromptEvaluationDatasetFromTracesResponse,
   PromptEvaluationExperimentDimension,
   PromptEvaluationOptimizationCandidate,
   ListPromptEvaluationEvidenceSnapshotsResponse,
@@ -1125,6 +1126,15 @@ export const PromptEvaluationCaseSchema = z.object({
 export const PromptEvaluationCaseListResponseSchema = z.object({
   items: z.array(PromptEvaluationCaseSchema).default([]),
   total: z.number().default(0),
+}).loose();
+
+export const PromptEvaluationDatasetFromTracesResponseSchema: z.ZodType<PromptEvaluationDatasetFromTracesResponse> = z.object({
+  asset: PromptEvaluationAssetSchema,
+  cases: z.array(PromptEvaluationCaseSchema).default([]),
+  trace_events: z.array(PromptEvaluationTaskTraceEventSchema).default([]),
+  created_count: z.number().default(0),
+  skipped_count: z.number().default(0),
+  source: z.literal("trace"),
 }).loose();
 
 export const PromptEvaluationExperimentDimensionSchema = z.object({

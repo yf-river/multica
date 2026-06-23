@@ -135,6 +135,13 @@ evidence.runtime_readiness = {
   fix: readiness.fix || "",
 };
 const agentRunEvidence = await runSuiteWithRealAgent(suite.id, token, readiness);
+const traceDatasetEvidence = agentRunEvidence.task_id
+  ? importDatasetFromTrace(dataset.id, agentRunEvidence.task_id, token)
+  : {
+      status: "外部依赖失败",
+      external_dependency_failure: true,
+      reason: "runtime readiness 未就绪，未产生可导入的数据集 trace",
+    };
 
 post(`/api/prompt-evaluation-assets/${suite.id}/run`, null, token);
 const failedRun = await poll(() => {
@@ -193,6 +200,7 @@ assertVersion(publishedVersions, Number(published.prompt.version || 2), "优化�
 const summary = get("/api/prompt-evaluation-summary", token);
 evidence.prompt = { id: prompt.id, version: prompt.version, version_count: itemCount(initialVersions) };
 evidence.dataset = { id: dataset.id, asset_type: dataset.asset_type, structured_case_count: dataset.structured_case_count, dataset_row_count: dataset.dataset_row_count, assertion_count: datasetAssertionCount };
+evidence.dataset_from_trace = traceDatasetEvidence;
 evidence.test_suite = { id: suite.id, asset_type: suite.asset_type, structured_case_count: suite.structured_case_count, test_suite_case_count: suite.test_suite_case_count, assertion_count: suiteAssertionCount };
 evidence.experiment = { id: experiment.id, asset_type: experiment.asset_type, structured_case_count: experiment.structured_case_count, experiment_dimension_count: experiment.experiment_dimension_count, dimension_names: experimentDimensionNames };
 evidence.optimization_run_asset = {
@@ -247,6 +255,31 @@ function post(path, body, token) {
 
 function put(path, body, token) {
   return request("PUT", path, body, token);
+}
+
+function importDatasetFromTrace(datasetId, taskId, token) {
+  const imported = post(`/api/prompt-evaluation-assets/${datasetId}/dataset-from-traces`, {
+    task_ids: [taskId],
+    limit: 5,
+    expected_contains: ["训练评估", "trace"],
+    tags: ["trace导入", "真实Agent"],
+  }, token);
+  if (!imported?.asset?.id || imported.asset.id !== datasetId) fail(`trace 导入数据集资产不匹配：${JSON.stringify(imported)}`);
+  if (Number(imported.created_count || 0) <= 0) fail(`trace 导入没有创建用例：${JSON.stringify(imported)}`);
+  if (!Array.isArray(imported.trace_events) || imported.trace_events.length <= 0) fail(`trace 导入响应缺少 trace_events：${JSON.stringify(imported)}`);
+  const cases = get(`/api/prompt-evaluation-cases?asset_id=${encodeURIComponent(datasetId)}`, token);
+  const items = Array.isArray(cases) ? cases : cases.items ?? [];
+  const traceCases = items.filter((item) => item.source === "trace");
+  if (traceCases.length <= 0) fail(`trace 导入后未能回读 source=trace 的用例：${JSON.stringify(cases)}`);
+  return {
+    asset_id: datasetId,
+    source: imported.source,
+    created_count: imported.created_count,
+    trace_event_count: imported.trace_events.length,
+    case_ids: imported.cases.map((item) => item.id),
+    task_id: taskId,
+    dataset_row_count: imported.asset.dataset_row_count,
+  };
 }
 
 async function runSuiteWithRealAgent(assetId, token, readiness) {

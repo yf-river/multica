@@ -131,6 +131,8 @@ export type {
   PromptEvaluationCaseAssertion,
   PromptEvaluationExperimentDimension,
   PromptEvaluationAgentRunResponse,
+  CreatePromptEvaluationDatasetFromTracesRequest,
+  PromptEvaluationDatasetFromTracesResponse,
   PromptEvaluationOptimizationCandidate,
   PromptEvaluationOptimizationCandidateStatus,
   UpdatePromptEvaluationOptimizationCandidateRequest,
