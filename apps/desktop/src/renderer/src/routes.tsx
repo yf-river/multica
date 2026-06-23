@@ -19,7 +19,7 @@ import { ProjectsPage } from "@multica/views/projects/components";
 import { DashboardPage } from "@multica/views/dashboard";
 import { AutopilotsPage } from "@multica/views/autopilots/components";
 import { MyIssuesPage } from "@multica/views/my-issues";
-import { PromptLibraryPage } from "@multica/views/prompt-library";
+import { AgentPlaygroundPage, PromptLibraryPage, PromptPlaygroundPage } from "@multica/views/prompt-library";
 import { SkillsPage } from "@multica/views/skills";
 import { DesktopRuntimesPage } from "./components/desktop-runtimes-page";
 import { DesktopAgentsPage } from "./components/desktop-agents-page";
@@ -170,8 +170,8 @@ export const appRoutes: RouteObject[] = [
               { index: true, element: <Navigate to="runs" replace /> },
               { path: "runs", element: <PromptLibraryPage activeView="runs" />, handle: { title: "训练与评估" } },
               { path: "prompts", element: <PromptLibraryPage activeView="prompts" />, handle: { title: "训练与评估" } },
-              { path: "prompt-playground", element: <PromptLibraryPage activeView="prompt-playground" />, handle: { title: "训练与评估" } },
-              { path: "agent-playground", element: <PromptLibraryPage activeView="agent-playground" showPromptEditor={false} />, handle: { title: "训练与评估" } },
+              { path: "prompt-playground", element: <PromptPlaygroundPage />, handle: { title: "提示词调试场" } },
+              { path: "agent-playground", element: <AgentPlaygroundPage />, handle: { title: "智能体调试场" } },
               { path: "datasets", element: <PromptLibraryPage activeView="datasets" />, handle: { title: "训练与评估" } },
               { path: "test-suites", element: <PromptLibraryPage activeView="test-suites" />, handle: { title: "训练与评估" } },
               { path: "experiments", element: <PromptLibraryPage activeView="experiments" />, handle: { title: "训练与评估" } },

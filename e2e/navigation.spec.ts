@@ -4,6 +4,15 @@ import { DEFAULT_TRAINING_ROUTE, TRAINING_ROUTES } from "./training-routes";
 
 const ROUTE_CHANGE_TIMEOUT = 30000;
 
+async function expectTrainingPageShell(page, item: (typeof TRAINING_ROUTES)[number]) {
+  const isPromptPlayground = item.path === "prompt-playground";
+  const isAgentPlayground = item.path === "agent-playground";
+  await expect(page.getByTestId("prompt-playground-page-shell")).toHaveCount(isPromptPlayground ? 1 : 0);
+  await expect(page.getByTestId("agent-playground-page-shell")).toHaveCount(isAgentPlayground ? 1 : 0);
+  await expect(page.getByTestId("training-page-shell")).toHaveCount(isPromptPlayground || isAgentPlayground ? 0 : 1);
+  await expect(page.getByTestId("training-tab-strip")).toHaveCount(isPromptPlayground || isAgentPlayground ? 0 : 1);
+}
+
 test.describe("Navigation", () => {
   test.beforeEach(async ({ page }) => {
     await loginAsDefault(page);
@@ -46,6 +55,7 @@ test.describe("Navigation", () => {
 
       await expect(page).toHaveURL(new RegExp(`/training/${item.path}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
       await waitForPageText(page, item.text);
+      await expectTrainingPageShell(page, item);
       await expect(page.locator('[data-active="true"]').filter({ hasText: item.nav }).first()).toBeVisible();
       await expect(page.getByTestId("prompt-library-editor")).toHaveCount(item.showPromptEditor ? 1 : 0);
       if (!item.showPromptEditor) {
@@ -69,6 +79,7 @@ test.describe("Navigation", () => {
       await page.locator('[data-sidebar="menu-button"]').filter({ hasText: item.nav }).first().click();
       await expect(page).toHaveURL(new RegExp(`/training/${item.path}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
       await waitForPageText(page, item.text);
+      await expectTrainingPageShell(page, item);
       await expect(page.locator('[data-active="true"]').filter({ hasText: item.nav }).first()).toBeVisible();
       await expect(page.getByTestId("prompt-library-editor")).toHaveCount(item.showPromptEditor ? 1 : 0);
       if (!item.showPromptEditor) {

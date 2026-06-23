@@ -1,5 +1,5 @@
-import { PromptLibraryPage } from "@multica/views/prompt-library";
+import { PromptPlaygroundPage } from "@multica/views/prompt-library";
 
 export default function TrainingPromptPlaygroundPage() {
-  return <PromptLibraryPage activeView="prompt-playground" />;
+  return <PromptPlaygroundPage />;
 }

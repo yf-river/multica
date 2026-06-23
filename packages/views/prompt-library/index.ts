@@ -1,1 +1,1 @@
-export { PromptLibraryPage, TrainingWorkbenchPage } from "./components";
+export { AgentPlaygroundPage, PromptLibraryPage, PromptPlaygroundPage, TrainingWorkbenchPage } from "./components";

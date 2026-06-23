@@ -67,6 +67,7 @@ const promptLibraryKeys = {
 const PROMPT_TYPES = ["全部", "需求澄清", "系统提示词", "评测提示词", "小队 SOP", "通用"];
 type WorkbenchTab = TrainingWorkbenchTab;
 type DemoTimeRange = "24h" | "7d" | "30d" | "all";
+type PromptLibrarySurface = "training" | "prompt-playground" | "agent-playground";
 
 const DEMO_TIME_RANGES: Array<{ value: DemoTimeRange; label: string; sinceMs: number | null }> = [
   { value: "24h", label: "最近24小时", sinceMs: 24 * 60 * 60 * 1000 },
@@ -129,9 +130,11 @@ function trainingViewFromLocation(pathname: string, searchParams: URLSearchParam
 export function PromptLibraryPage({
   activeView,
   showPromptEditor,
+  surface = "training",
 }: {
   activeView?: TrainingWorkbenchViewId;
   showPromptEditor?: boolean;
+  surface?: PromptLibrarySurface;
 }) {
   const workspaceId = useWorkspaceId();
   const workspacePaths = useWorkspacePaths();
@@ -221,6 +224,16 @@ export function PromptLibraryPage({
     activeTab === "智能体调试场";
   const needsCandidates = isDashboardTab || activeTab === "运行历史" || activeTab === "优化运行";
   const needsRuntimeReadiness = isDashboardTab || activeTab === "智能体调试场";
+  const dedicatedPromptPlayground = surface === "prompt-playground";
+  const dedicatedAgentPlayground = surface === "agent-playground";
+  const isDedicatedPlayground = dedicatedPromptPlayground || dedicatedAgentPlayground;
+  const pageTitle = dedicatedPromptPlayground ? "提示词调试场" : dedicatedAgentPlayground ? "智能体调试场" : "训练与评估";
+  const pageBadge = dedicatedPromptPlayground ? "模板实验" : dedicatedAgentPlayground ? "真实任务" : null;
+  const pageShellTestId = dedicatedPromptPlayground
+    ? "prompt-playground-page-shell"
+    : dedicatedAgentPlayground
+      ? "agent-playground-page-shell"
+      : "training-page-shell";
 
   const listQuery = useQuery({
     queryKey: promptLibraryKeys.list(workspaceId ?? ""),
@@ -775,12 +788,16 @@ export function PromptLibraryPage({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background">
+    <div className="flex h-full min-h-0 flex-col bg-background" data-testid={pageShellTestId}>
       <PageHeader>
         <div className="flex min-w-0 flex-1 items-center gap-2">
-          <BookOpenText className="size-4 shrink-0 text-muted-foreground" />
-          <h1 className="truncate text-sm font-semibold">训练与评估</h1>
-          <span className="text-xs text-muted-foreground">{items.length}</span>
+          {dedicatedAgentPlayground ? (
+            <TerminalSquare className="size-4 shrink-0 text-muted-foreground" />
+          ) : (
+            <BookOpenText className="size-4 shrink-0 text-muted-foreground" />
+          )}
+          <h1 className="truncate text-sm font-semibold">{pageTitle}</h1>
+          <span className="text-xs text-muted-foreground">{pageBadge ?? items.length}</span>
         </div>
         {shouldShowPromptHeaderActions && (
           <div className="flex items-center gap-2">
@@ -792,18 +809,20 @@ export function PromptLibraryPage({
         )}
       </PageHeader>
 
-      <div className="flex shrink-0 gap-1 overflow-x-auto border-b px-3 py-2">
-        {TRAINING_WORKBENCH_TABS.map((tab) => (
-          <FilterButton
-            key={tab}
-            active={activeTab === tab}
-            href={trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB[tab])}
-            onClick={() => setActiveTab(tab)}
-          >
-            {tab}
-          </FilterButton>
-        ))}
-      </div>
+      {!isDedicatedPlayground && (
+        <div className="flex shrink-0 gap-1 overflow-x-auto border-b px-3 py-2" data-testid="training-tab-strip">
+          {TRAINING_WORKBENCH_TABS.map((tab) => (
+            <FilterButton
+              key={tab}
+              active={activeTab === tab}
+              href={trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB[tab])}
+              onClick={() => setActiveTab(tab)}
+            >
+              {tab}
+            </FilterButton>
+          ))}
+        </div>
+      )}
 
       <TrainingSummaryStrip summary={summary} loading={summaryQuery.isLoading} />
 
