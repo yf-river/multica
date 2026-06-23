@@ -43,13 +43,23 @@ export function proxy(req: NextRequest) {
 
     if (lastSlug) {
       if (firstSegment === "prompt-library") {
-        url.pathname = `/${lastSlug}/training`;
-        url.searchParams.set("view", "prompts");
+        url.pathname = `/${lastSlug}/training/prompts`;
+        url.searchParams.delete("view");
         return NextResponse.redirect(url);
       }
       if (firstSegment === "evaluation" || firstSegment === "eval") {
-        url.pathname = `/${lastSlug}/training`;
-        url.searchParams.set("view", "demo-dashboard");
+        url.pathname = `/${lastSlug}/training/runs`;
+        url.searchParams.delete("view");
+        return NextResponse.redirect(url);
+      }
+      if (firstSegment === "training") {
+        const view = url.searchParams.get("view");
+        if (view) {
+          url.pathname = `/${lastSlug}/training/${view === "demo-dashboard" ? "runs" : view}`;
+          url.searchParams.delete("view");
+        } else {
+          url.pathname = `/${lastSlug}${pathname}`;
+        }
         return NextResponse.redirect(url);
       }
 

@@ -42,7 +42,7 @@ describe("sanitizeTabPath", () => {
   it("passes through valid workspace-scoped paths", () => {
     expect(sanitizeTabPath("/acme/issues")).toBe("/acme/issues");
     expect(sanitizeTabPath("/my-team/projects/abc")).toBe("/my-team/projects/abc");
-    expect(sanitizeTabPath("/acme/training?view=run-history")).toBe("/acme/training?view=run-history");
+    expect(sanitizeTabPath("/acme/training/run-history")).toBe("/acme/training/run-history");
   });
 
   it("rejects paths whose first segment is a reserved slug (missing workspace prefix)", () => {

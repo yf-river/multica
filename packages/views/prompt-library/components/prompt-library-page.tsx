@@ -119,6 +119,11 @@ const emptyDraft = (): PromptDraft => ({
   status: "启用",
 });
 
+function trainingViewFromLocation(pathname: string, searchParams: URLSearchParams) {
+  const match = pathname.match(/\/training\/([^/?#]+)/);
+  return match?.[1] ? decodeURIComponent(match[1]) : searchParams.get("view");
+}
+
 export function PromptLibraryPage({ activeView }: { activeView?: TrainingWorkbenchViewId }) {
   const workspaceId = useWorkspaceId();
   const workspacePaths = useWorkspacePaths();
@@ -130,7 +135,7 @@ export function PromptLibraryPage({ activeView }: { activeView?: TrainingWorkben
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<PromptDraft>(emptyDraft);
   const [debugValuesText, setDebugValuesText] = useState("");
-  const viewParam = navigation.searchParams.get("view");
+  const viewParam = trainingViewFromLocation(navigation.pathname, navigation.searchParams);
   const resolvedView = activeView ?? viewParam;
   const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => trainingWorkbenchTabFromView(resolvedView));
   const [agentExpectedText, setAgentExpectedText] = useState("");

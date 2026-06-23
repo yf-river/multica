@@ -110,7 +110,7 @@ test.describe("训练与评估真实 Agent 闭环", () => {
         await page.evaluate((value) => {
           localStorage.setItem("multica_token", value);
         }, token!);
-        await page.goto(`/${workspace.slug}/training?view=run-history`, { waitUntil: "domcontentloaded" });
+        await page.goto(`/${workspace.slug}/training/run-history`, { waitUntil: "domcontentloaded" });
         await waitForPageText(page, "运行历史", 15000);
         const runCard = page.getByTestId(`prompt-evaluation-run-${queued.run.id}`);
         await expect(runCard).toContainText("Agent执行 · 失败", { timeout: 15000 });
@@ -120,7 +120,7 @@ test.describe("训练与评估真实 Agent 闭环", () => {
         await expect(evidencePanel.getByTestId("run-evidence-external-failure")).toContainText("外部依赖失败：模型额度不足", { timeout: 15000 });
         await expect(evidencePanel.getByTestId("run-evidence-metric-失败原因")).toContainText("模型额度不足");
         await expect(evidencePanel.getByText("暂无 token 用量")).toBeVisible();
-        await page.getByRole("button", { name: "生产看板", exact: true }).click();
+        await page.getByRole("button", { name: "运行看板", exact: true }).click();
         await expect(page.getByTestId("training-demo-proof-最近运行")).toContainText("模型额度不足", { timeout: 15000 });
       } else {
         expect(["通过", "未通过", "需人工复核"]).toContain(syncedRun.status);

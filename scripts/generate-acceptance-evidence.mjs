@@ -34,7 +34,7 @@ const realAgentProvider = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER") ||
 const realAgentModel = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "gpt-5.3-codex-spark";
 const realAgentFallbackModel = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_FALLBACK_MODEL") || "gpt-5.4-mini";
 
-const dashboardURL = `${frontendURL}/${encodeURIComponent(workspaceSlug)}/training?view=demo-dashboard`;
+const dashboardURL = `${frontendURL}/${encodeURIComponent(workspaceSlug)}/training/runs`;
 
 const git = {
   head: gitText(["rev-parse", "--short=12", "HEAD"]),
@@ -71,7 +71,7 @@ const evidence = {
     "前端": frontendURL,
     "后端": apiURL,
     "登录页": `${frontendURL}/login`,
-    "领导演示入口": dashboardURL,
+    "运行看板入口": dashboardURL,
   },
   "演示账号": {
     "账号": demoAccount,
@@ -737,8 +737,8 @@ function buildE2EEvidence(commandResults, logEvidence) {
     } : null,
     "部署浏览器验收": browser ? {
       "状态": browser.status,
-      "URL": `${frontendURL}/${encodeURIComponent(workspaceSlug)}/training?view=demo-dashboard`,
-      "请求入口": "/login?next=... -> /:workspace/training?view=demo-dashboard -> view=prompts/prompt-playground/agent-playground/datasets/test-suites/experiments/optimization-runs/run-history",
+      "URL": `${frontendURL}/${encodeURIComponent(workspaceSlug)}/training/runs`,
+      "请求入口": "/login?next=... -> /:workspace/training/runs -> /:workspace/training/prompts -> /:workspace/training/prompt-playground -> /:workspace/training/agent-playground -> /:workspace/training/datasets -> /:workspace/training/test-suites -> /:workspace/training/experiments -> /:workspace/training/optimization-runs -> /:workspace/training/run-history",
       "耗时ms": browser.durationMs,
       "日志位置": logPath,
       "命令": browser.command,
@@ -890,7 +890,7 @@ function buildRisks({ health, ready, login, account, commandResults, git, databa
   if (!ready.ok) risks.push("后端 /readyz 未通过，依赖或数据库连接可能未就绪。");
   if (!login.ok) risks.push("前端 /login 未通过，演示账号无法完成浏览器登录验收。");
   if (!["owner", "admin"].includes(String(account.role || ""))) {
-    risks.push("演示账号权限未确认达到 owner/admin；领导演示前需要确认最高权限。");
+    risks.push("演示账号权限未确认达到 owner/admin；生产验收前需要确认最高权限。");
   }
   const blockingCommandStatuses = new Set(["失败", "超时", "未执行"]);
   if (commandResults.some((item) => blockingCommandStatuses.has(item.status))) {
@@ -914,7 +914,7 @@ function buildRisks({ health, ready, login, account, commandResults, git, databa
     const training = databaseEvidence.training || {};
     const squads = databaseEvidence.squads || {};
     const tasks = databaseEvidence.tasks || {};
-    if (Number(training.run_count || 0) === 0) risks.push("数据库中未发现训练评估运行记录，生产看板会缺少运行证据。");
+    if (Number(training.run_count || 0) === 0) risks.push("数据库中未发现训练评估运行记录，运行看板会缺少运行证据。");
     if (Number(training.dataset_row_count || 0) === 0) risks.push("数据库中未发现数据集行事实表记录，数据集仍缺少可度量行级证据。");
     if (Number(training.test_suite_case_count || 0) === 0) risks.push("数据库中未发现测试套件用例事实表记录，测试套件仍缺少可度量用例证据。");
     if (Number(training.experiment_dimension_count || 0) === 0) risks.push("数据库中未发现实验维度事实表记录，实验模块仍缺少可度量对比证据。");
@@ -922,7 +922,7 @@ function buildRisks({ health, ready, login, account, commandResults, git, databa
     if (Number(training.structured_assertion_count || 0) === 0) risks.push("数据库中未发现结构化评测断言，训练评估可度量证据不足。");
     if (Number(training.optimization_candidate_count || 0) === 0) risks.push("数据库中未发现优化候选，失败用例到人工确认的闭环证据不足。");
     if (Number(countAssetsByType(databaseEvidence, "优化运行") || 0) === 0) risks.push("数据库中未发现优化运行资产，优化运行模块仍缺少可度量资产。");
-    if (Number(training.evidence_snapshot_count || 0) === 0) risks.push("数据库中未发现服务端运行证据快照，领导演示缺少可复核归档。");
+    if (Number(training.evidence_snapshot_count || 0) === 0) risks.push("数据库中未发现服务端运行证据快照，生产验收缺少可复核归档。");
     if (Number(tasks.trace_event_rows || 0) === 0) risks.push("数据库中未发现任务 trace 事件，观测闭环证据不足。");
     if (Number(squads.sop_run_count || 0) === 0) risks.push("数据库中未发现小队 SOP run，小队闭环证据不足。");
     if (Number(squads.completed_leader_task_count || 0) === 0) risks.push("数据库中未发现已完成且带 usage/trace 的小队队长任务；小队闭环仍受模型额度或 runtime 成功率影响。");
@@ -972,7 +972,7 @@ function renderMarkdown(data, jsonPath) {
 - JSON 证据：\`${jsonPath}\`
 - 前端：${data["访问地址"]["前端"]}
 - 后端：${data["访问地址"]["后端"]}
-- 领导演示入口：${data["访问地址"]["领导演示入口"]}
+- 运行看板入口：${data["访问地址"]["运行看板入口"]}
 
 ## 演示账号
 
