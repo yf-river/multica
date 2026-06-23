@@ -255,6 +255,26 @@ export function PromptLibraryPage({
   const selected = selectedFromList ?? (isDraftingNew ? null : items[0] ?? null);
   const promptVersions = versionQuery.data?.items ?? [];
   const agentRuntimeReadiness = runtimeReadinessQuery.data ?? DEFAULT_AGENT_RUNTIME_READINESS;
+  const selectedPromptStorageKey = workspaceId ? `multica:training:selected-prompt:${workspaceId}` : null;
+
+  useEffect(() => {
+    if (!selectedPromptStorageKey || selectedId || isDraftingNew) return;
+    try {
+      const storedId = window.localStorage.getItem(selectedPromptStorageKey);
+      if (storedId) setSelectedId(storedId);
+    } catch {
+      // localStorage is best-effort; route usability must not depend on it.
+    }
+  }, [isDraftingNew, selectedId, selectedPromptStorageKey]);
+
+  useEffect(() => {
+    if (!selectedPromptStorageKey || !selectedId) return;
+    try {
+      window.localStorage.setItem(selectedPromptStorageKey, selectedId);
+    } catch {
+      // Ignore storage failures in private or restricted browser contexts.
+    }
+  }, [selectedId, selectedPromptStorageKey]);
 
   useEffect(() => {
     if (isDraftingNew) return;
