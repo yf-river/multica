@@ -1,8 +1,8 @@
 export const TRAINING_WORKBENCH_VIEWS = [
   {
-    tab: "生产看板",
-    view: "demo-dashboard",
-    keywords: ["生产看板", "领导视角", "验收", "demo", "dashboard", "observability"],
+    tab: "运行看板",
+    view: "runs",
+    keywords: ["运行看板", "验收", "demo", "dashboard", "observability"],
   },
   {
     tab: "提示词库",
@@ -51,8 +51,8 @@ export type TrainingWorkbenchTab = TrainingWorkbenchView["tab"];
 export type TrainingWorkbenchViewId = TrainingWorkbenchView["view"];
 
 export const TRAINING_WORKBENCH_TABS = TRAINING_WORKBENCH_VIEWS.map((item) => item.tab) as TrainingWorkbenchTab[];
-export const DEFAULT_TRAINING_WORKBENCH_TAB: TrainingWorkbenchTab = "生产看板";
-export const DEFAULT_TRAINING_WORKBENCH_VIEW: TrainingWorkbenchViewId = "demo-dashboard";
+export const DEFAULT_TRAINING_WORKBENCH_TAB: TrainingWorkbenchTab = "运行看板";
+export const DEFAULT_TRAINING_WORKBENCH_VIEW: TrainingWorkbenchViewId = "runs";
 
 export const TRAINING_WORKBENCH_VIEW_BY_TAB = Object.fromEntries(
   TRAINING_WORKBENCH_VIEWS.map((item) => [item.tab, item.view]),
@@ -64,6 +64,7 @@ export const TRAINING_WORKBENCH_TAB_BY_VIEW = Object.fromEntries(
 
 export function trainingWorkbenchTabFromView(view: string | null): TrainingWorkbenchTab {
   if (!view) return DEFAULT_TRAINING_WORKBENCH_TAB;
+  if (view === "demo-dashboard") return DEFAULT_TRAINING_WORKBENCH_TAB;
   return TRAINING_WORKBENCH_TAB_BY_VIEW[view as TrainingWorkbenchViewId] ?? DEFAULT_TRAINING_WORKBENCH_TAB;
 }
 

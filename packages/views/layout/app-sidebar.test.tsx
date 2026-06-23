@@ -106,7 +106,7 @@ vi.mock("@multica/core/paths", () => ({
 	    squads: () => "/acme/squads",
 	    usage: () => "/acme/usage",
 	    training: () => "/acme/training",
-	    trainingView: (view: string) => `/acme/training?view=${encodeURIComponent(view)}`,
+	    trainingView: (view: string) => `/acme/training/${view}`,
 	    runtimes: () => "/acme/runtimes",
     skills: () => "/acme/skills",
     settings: () => "/acme/settings",
@@ -209,13 +209,13 @@ describe("AppSidebar workspace nav", () => {
   });
 
   it("renders training submodule links and highlights the current training view", () => {
-    navigation.current.pathname = "/acme/training";
-    navigation.current.searchParams = new URLSearchParams("view=datasets");
+    navigation.current.pathname = "/acme/training/datasets";
+    navigation.current.searchParams = new URLSearchParams();
 
     render(<AppSidebar />);
 
-    expect(document.querySelector('[data-href="/acme/training?view=demo-dashboard"]')).toBeInTheDocument();
-    expect(document.querySelector('[data-href="/acme/training?view=run-history"]')).toBeInTheDocument();
-    expect(document.querySelector('[data-href="/acme/training?view=datasets"]')).toHaveAttribute("data-active", "true");
+    expect(document.querySelector('[data-href="/acme/training/runs"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-href="/acme/training/run-history"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-href="/acme/training/datasets"]')).toHaveAttribute("data-active", "true");
   });
 });

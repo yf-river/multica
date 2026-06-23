@@ -626,7 +626,11 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                 {workspaceNav.map((item) => {
                   const href = p[item.key]();
                   const isActive = !isActivePinnedRoute && isNavActive(pathname, href);
-                  const activeTrainingView = pathname === p.training() ? searchParams.get("view") ?? DEFAULT_TRAINING_WORKBENCH_VIEW : "";
+                  const activeTrainingView = pathname.startsWith(`${p.training()}/`)
+                    ? decodeURIComponent(pathname.slice(`${p.training()}/`.length).split("/")[0] ?? "")
+                    : pathname === p.training()
+                      ? searchParams.get("view") ?? DEFAULT_TRAINING_WORKBENCH_VIEW
+                      : "";
                   return (
                     <SidebarMenuItem key={item.key}>
                       <SidebarMenuButton

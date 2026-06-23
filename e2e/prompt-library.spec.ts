@@ -41,7 +41,7 @@ test.describe("训练与评估工作台", () => {
     await page.getByRole("link", { name: "训练与评估" }).click();
     await expect(page).toHaveURL(/\/training(?:\?|$)/, { timeout: 30000 });
     await waitForPageText(page, "训练与评估");
-    await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队生产看板", { timeout: 10000 });
+    await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队运行看板", { timeout: 10000 });
     await page.getByRole("button", { name: "提示词库", exact: true }).click();
 
     await page.getByRole("button", { name: /user-center 模板/ }).click();
@@ -407,7 +407,7 @@ test.describe("训练与评估工作台", () => {
         passed_cases: 1,
         failed_cases: 0,
       });
-    await page.goto(`/${workspaceSlug}/training?view=run-history`, { waitUntil: "domcontentloaded" });
+    await page.goto(`/${workspaceSlug}/training/run-history`, { waitUntil: "domcontentloaded" });
     await waitForPageText(page, "运行历史", 10000);
     const summaryStrip = page.getByTestId("training-summary-strip");
     await expect(summaryStrip).toContainText("项目总览", { timeout: 10000 });
@@ -418,9 +418,9 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("training-summary-输入 token")).toContainText(/[1-9]/);
     await expect(page.getByTestId("training-summary-预估成本")).toContainText("$");
     await expect(page.getByTestId("training-summary-待确认优化候选")).toContainText(/\d/);
-    await page.getByRole("button", { name: "生产看板", exact: true }).click();
+    await page.getByRole("button", { name: "运行看板", exact: true }).click();
     const demoDashboard = page.getByTestId("training-demo-dashboard");
-    await expect(demoDashboard).toContainText("团队生产看板", { timeout: 10000 });
+    await expect(demoDashboard).toContainText("团队运行看板", { timeout: 10000 });
     await expect(demoDashboard).toContainText("训练评估闭环");
     await expect(demoDashboard).toContainText("SOP 与任务观测");
     await expect(demoDashboard.getByTestId("training-demo-metric-Agent运行数")).toContainText(/[1-9]/);
@@ -628,7 +628,7 @@ test.describe("训练与评估工作台", () => {
 
     await page.getByRole("link", { name: "训练与评估" }).click();
     await expect(page).toHaveURL(/\/training(?:\?|$)/, { timeout: 30000 });
-    await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队生产看板", { timeout: 10000 });
+    await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队运行看板", { timeout: 10000 });
     await page.getByRole("button", { name: "提示词库", exact: true }).click();
     await page.getByRole("button", { name: /user-center 模板/ }).click();
     await page.getByLabel("名称").fill(promptName);
@@ -667,7 +667,7 @@ test.describe("训练与评估工作台", () => {
       .not.toBeNull()
       .then(async () => (await api.listPromptEvaluationRuns({ asset_id: asset.id })).find((run) => run.status === "未通过")!);
 
-    await page.goto(`/${workspaceSlug}/training?view=run-history`, { waitUntil: "domcontentloaded" });
+    await page.goto(`/${workspaceSlug}/training/run-history`, { waitUntil: "domcontentloaded" });
     const failedRunRow = page.getByTestId(`prompt-evaluation-run-${failedRun.id}`);
     await failedRunRow.scrollIntoViewIfNeeded();
     await expect(failedRunRow).toContainText("模板渲染检查 · 未通过", { timeout: 10000 });
@@ -720,7 +720,7 @@ test.describe("训练与评估工作台", () => {
       throw new Error("E2E 未找到 Agent 优化运行记录");
     }
     await api.completePromptEvaluationOptimizationAgentTask(optimizationAgentRun);
-    await page.goto(`/${workspaceSlug}/training?view=run-history`, { waitUntil: "domcontentloaded" });
+    await page.goto(`/${workspaceSlug}/training/run-history`, { waitUntil: "domcontentloaded" });
     const optimizationRunRow = page.getByTestId(`prompt-evaluation-run-${optimizationAgentRun.id}`);
     await optimizationRunRow.scrollIntoViewIfNeeded();
     const optimizationSyncResponse = page.waitForResponse(
@@ -802,7 +802,7 @@ test.describe("训练与评估工作台", () => {
       .not.toBeNull()
       .then(async () => (await api.listPromptEvaluationRuns({ asset_id: asset.id })).find((run) => run.status === "未通过" && run.id !== failedRun.id)!);
 
-    await page.goto(`/${workspaceSlug}/training?view=run-history`, { waitUntil: "domcontentloaded" });
+    await page.goto(`/${workspaceSlug}/training/run-history`, { waitUntil: "domcontentloaded" });
     const rejectRunRow = page.getByTestId(`prompt-evaluation-run-${rejectRun.id}`);
     await rejectRunRow.scrollIntoViewIfNeeded();
     await rejectRunRow.getByRole("button", { name: "生成优化候选" }).click();
@@ -839,14 +839,14 @@ test.describe("训练与评估工作台", () => {
 
   test("旧提示词库路由会跳转到训练与评估提示词视图", async ({ page }) => {
     await page.goto(`/${workspaceSlug}/prompt-library`, { waitUntil: "domcontentloaded" });
-    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training\\?view=prompts`), { timeout: 30000 });
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/prompts$`), { timeout: 30000 });
     await waitForPageText(page, "训练与评估");
     await expect(page.getByRole("button", { name: "提示词库", exact: true })).toBeVisible();
 
     for (const legacyPath of ["evaluation", "eval"]) {
       await page.goto(`/${workspaceSlug}/${legacyPath}`, { waitUntil: "domcontentloaded" });
-      await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training\\?view=demo-dashboard`), { timeout: 30000 });
-      await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队生产看板", { timeout: 10000 });
+      await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/runs$`), { timeout: 30000 });
+      await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队运行看板", { timeout: 10000 });
     }
   });
 });

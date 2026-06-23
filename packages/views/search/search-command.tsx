@@ -115,7 +115,7 @@ function matchesMember(member: MemberWithUser, query: string) {
 
 function trainingCommandLabel(t: ReturnType<typeof useT<"search">>["t"], view: TrainingWorkbenchViewId): string {
   switch (view) {
-    case "demo-dashboard":
+    case "runs":
       return t(($) => $.commands.open_demo_dashboard);
     case "prompts":
       return t(($) => $.commands.open_prompt_library);

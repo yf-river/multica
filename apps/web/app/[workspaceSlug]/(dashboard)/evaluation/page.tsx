@@ -6,5 +6,5 @@ export default async function LegacyEvaluationPage({
   params: Promise<{ workspaceSlug: string }>;
 }) {
   const { workspaceSlug } = await params;
-  redirect(`/${encodeURIComponent(workspaceSlug)}/training?view=demo-dashboard`);
+  redirect(`/${encodeURIComponent(workspaceSlug)}/training/runs`);
 }

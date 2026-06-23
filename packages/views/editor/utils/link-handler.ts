@@ -45,8 +45,10 @@ export function openLink(href: string, currentSlug?: string | null): void {
     let path = href;
     if (currentSlug && !isGlobalPath(path)) {
       const firstSegment = (path.split("/")[1] ?? "").split(/[?#]/)[0];
-      if (firstSegment === "prompt-library" || firstSegment === "evaluation" || firstSegment === "eval") {
-        path = `/${currentSlug}/training?view=prompts`;
+      if (firstSegment === "prompt-library") {
+        path = `/${currentSlug}/training/prompts`;
+      } else if (firstSegment === "evaluation" || firstSegment === "eval") {
+        path = `/${currentSlug}/training/runs`;
       } else if (firstSegment && WORKSPACE_ROUTE_SEGMENTS.has(firstSegment)) {
         // Path looks like /issues/abc (no slug) — prepend current slug.
         path = `/${currentSlug}${path}`;

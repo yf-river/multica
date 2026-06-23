@@ -117,6 +117,11 @@ const emptyDraft = (): PromptDraft => ({
   status: "启用",
 });
 
+function trainingViewFromLocation(pathname: string, searchParams: URLSearchParams) {
+  const match = pathname.match(/\/training\/([^/?#]+)/);
+  return match?.[1] ? decodeURIComponent(match[1]) : searchParams.get("view");
+}
+
 export function PromptLibraryPage() {
   const workspaceId = useWorkspaceId();
   const workspacePaths = useWorkspacePaths();
@@ -128,7 +133,7 @@ export function PromptLibraryPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [draft, setDraft] = useState<PromptDraft>(emptyDraft);
   const [debugValuesText, setDebugValuesText] = useState("");
-  const viewParam = navigation.searchParams.get("view");
+  const viewParam = trainingViewFromLocation(navigation.pathname, navigation.searchParams);
   const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => trainingWorkbenchTabFromView(viewParam));
   const [agentExpectedText, setAgentExpectedText] = useState("");
   const [demoTimeRange, setDemoTimeRange] = useState<DemoTimeRange>("7d");
@@ -700,7 +705,7 @@ export function PromptLibraryPage() {
 
       <TrainingSummaryStrip summary={summary} loading={summaryQuery.isLoading} />
 
-      {activeTab === "生产看板" ? (
+      {activeTab === "运行看板" ? (
         <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
           <DemoDashboardPanel
             trainingSummary={summary}
@@ -1039,7 +1044,7 @@ function DemoDashboardPanel({
     <section className="mx-auto flex max-w-7xl flex-col gap-4" data-testid="training-demo-dashboard">
       <div className="flex flex-col gap-2 border-b pb-3 md:flex-row md:items-end md:justify-between">
         <div>
-          <h2 className="text-base font-semibold">团队生产看板</h2>
+          <h2 className="text-base font-semibold">团队运行看板</h2>
           <p className="mt-1 text-xs text-muted-foreground">
             汇总训练评估、真实 Agent、SOP 观测和验收证据，当前观测范围：{activeRange.label}。
           </p>

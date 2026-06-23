@@ -22,7 +22,7 @@ describe("web proxy legacy route compatibility", () => {
         multica_logged_in: "1",
         last_workspace_slug: "team-a",
       }),
-    ).toBe("http://localhost/team-a/training?source=old-bookmark&view=prompts");
+    ).toBe("http://localhost/team-a/training/prompts?source=old-bookmark");
   });
 
   it("redirects old top-level training deep links into the last workspace", () => {
@@ -31,7 +31,7 @@ describe("web proxy legacy route compatibility", () => {
         multica_logged_in: "1",
         last_workspace_slug: "team-a",
       }),
-    ).toBe("http://localhost/team-a/training?view=run-history");
+    ).toBe("http://localhost/team-a/training/run-history");
   });
 
   it("redirects evaluation aliases to the Chinese training dashboard", () => {
@@ -41,7 +41,7 @@ describe("web proxy legacy route compatibility", () => {
           multica_logged_in: "1",
           last_workspace_slug: "team-a",
         }),
-      ).toBe("http://localhost/team-a/training?view=demo-dashboard");
+      ).toBe("http://localhost/team-a/training/runs");
     }
   });
 
@@ -60,7 +60,7 @@ describe("web proxy legacy route compatibility", () => {
 
   it("does not redirect canonical workspace-scoped training URLs", () => {
     const res = proxy(
-      makeRequest("/team-a/training?view=experiments", {
+      makeRequest("/team-a/training/experiments", {
         multica_logged_in: "1",
         last_workspace_slug: "team-a",
       }),

@@ -146,7 +146,7 @@ vi.mock("@multica/core/paths", () => ({
 	    projects: () => "/ws-test/projects",
 	    agents: () => "/ws-test/agents",
 	    training: () => "/ws-test/training",
-	    trainingView: (view: string) => `/ws-test/training?view=${encodeURIComponent(view)}`,
+	    trainingView: (view: string) => `/ws-test/training/${view}`,
 	    runtimes: () => "/ws-test/runtimes",
     skills: () => "/ws-test/skills",
     settings: () => "/ws-test/settings",
@@ -308,7 +308,7 @@ describe("SearchCommand", () => {
     expect(useSearchStore.getState().open).toBe(false);
   });
 
-  it("训练与评估页面入口默认跳转到生产看板", async () => {
+  it("训练与评估页面入口默认跳转到运行看板", async () => {
     const user = userEvent.setup();
     renderSearch();
 
@@ -318,7 +318,7 @@ describe("SearchCommand", () => {
     const trainingItem = await screen.findByText("训练与评估");
     await user.click(trainingItem);
 
-    expect(mockPush).toHaveBeenCalledWith("/ws-test/training?view=demo-dashboard");
+    expect(mockPush).toHaveBeenCalledWith("/ws-test/training/runs");
     expect(useSearchStore.getState().open).toBe(false);
   });
 
@@ -421,15 +421,15 @@ describe("SearchCommand", () => {
     renderSearch();
 
     const commands = [
-      ["生产看板", "打开生产看板", "/ws-test/training?view=demo-dashboard"],
-      ["提示词库", "打开提示词库", "/ws-test/training?view=prompts"],
-      ["提示词调试", "打开提示词调试场", "/ws-test/training?view=prompt-playground"],
-      ["Agent 调试", "打开 Agent 调试场", "/ws-test/training?view=agent-playground"],
-      ["数据集", "打开数据集", "/ws-test/training?view=datasets"],
-      ["测试套件", "打开测试套件", "/ws-test/training?view=test-suites"],
-      ["实验", "打开实验", "/ws-test/training?view=experiments"],
-      ["优化运行", "打开优化运行", "/ws-test/training?view=optimization-runs"],
-      ["运行历史", "打开运行历史", "/ws-test/training?view=run-history"],
+      ["运行看板", "打开运行看板", "/ws-test/training/runs"],
+      ["提示词库", "打开提示词库", "/ws-test/training/prompts"],
+      ["提示词调试", "打开提示词调试场", "/ws-test/training/prompt-playground"],
+      ["Agent 调试", "打开 Agent 调试场", "/ws-test/training/agent-playground"],
+      ["数据集", "打开数据集", "/ws-test/training/datasets"],
+      ["测试套件", "打开测试套件", "/ws-test/training/test-suites"],
+      ["实验", "打开实验", "/ws-test/training/experiments"],
+      ["优化运行", "打开优化运行", "/ws-test/training/optimization-runs"],
+      ["运行历史", "打开运行历史", "/ws-test/training/run-history"],
     ] as const;
 
     for (const [query, label, href] of commands) {

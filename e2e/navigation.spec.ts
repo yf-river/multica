@@ -1,18 +1,8 @@
 import { test, expect } from "@playwright/test";
 import { loginAsDefault, waitForPageText } from "./helpers";
+import { DEFAULT_TRAINING_ROUTE, TRAINING_ROUTES } from "./training-routes";
 
 const ROUTE_CHANGE_TIMEOUT = 30000;
-const TRAINING_VIEWS = [
-  { query: "生产看板", command: "打开生产看板", view: "demo-dashboard", nav: "生产看板", text: "团队生产看板" },
-  { query: "提示词库", command: "打开提示词库", view: "prompts", nav: "提示词库", text: "提示词库" },
-  { query: "提示词调试", command: "打开提示词调试场", view: "prompt-playground", nav: "提示词调试场", text: "提示词调试场" },
-  { query: "Agent 调试", command: "打开 Agent 调试场", view: "agent-playground", nav: "Agent 调试场", text: "Agent 调试场" },
-  { query: "数据集", command: "打开数据集", view: "datasets", nav: "数据集", text: "数据集" },
-  { query: "测试套件", command: "打开测试套件", view: "test-suites", nav: "测试套件", text: "测试套件" },
-  { query: "实验", command: "打开实验", view: "experiments", nav: "实验", text: "实验" },
-  { query: "优化运行", command: "打开优化运行", view: "optimization-runs", nav: "优化运行", text: "优化运行" },
-  { query: "运行历史", command: "打开运行历史", view: "run-history", nav: "运行历史", text: "运行历史" },
-] as const;
 
 test.describe("Navigation", () => {
   test.beforeEach(async ({ page }) => {
@@ -44,28 +34,30 @@ test.describe("Navigation", () => {
   });
 
   test("command palette opens training submodules", async ({ page }) => {
-    for (const item of TRAINING_VIEWS) {
+    for (const item of TRAINING_ROUTES) {
       await page.getByRole("button", { name: /搜索/ }).click();
       const input = page.getByPlaceholder("输入命令或关键词搜索...");
       await expect(input).toBeVisible({ timeout: 10000 });
       await input.fill(item.query);
       await page.getByText(item.command, { exact: true }).click();
 
-      await expect(page).toHaveURL(new RegExp(`/training\\?view=${item.view}`), { timeout: ROUTE_CHANGE_TIMEOUT });
+      await expect(page).toHaveURL(new RegExp(`/training/${item.path}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
       await waitForPageText(page, item.text);
+      await expect(page.locator('[data-active="true"]').filter({ hasText: item.nav }).first()).toBeVisible();
       await expect(page.getByTestId("training-summary-strip")).toContainText("项目总览", { timeout: 30000 });
     }
   });
 
   test("sidebar opens every training submodule", async ({ page }) => {
     await page.getByRole("link", { name: "训练与评估" }).click();
-    await expect(page).toHaveURL(/\/training(?:\?|$)/, { timeout: ROUTE_CHANGE_TIMEOUT });
-    await waitForPageText(page, "团队生产看板");
+    await expect(page).toHaveURL(new RegExp(`/training/${DEFAULT_TRAINING_ROUTE.path}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
+    await waitForPageText(page, DEFAULT_TRAINING_ROUTE.text);
 
-    for (const item of TRAINING_VIEWS) {
+    for (const item of TRAINING_ROUTES) {
       await page.getByRole("link", { name: item.nav, exact: true }).click();
-      await expect(page).toHaveURL(new RegExp(`/training\\?view=${item.view}`), { timeout: ROUTE_CHANGE_TIMEOUT });
+      await expect(page).toHaveURL(new RegExp(`/training/${item.path}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
       await waitForPageText(page, item.text);
+      await expect(page.locator('[data-active="true"]').filter({ hasText: item.nav }).first()).toBeVisible();
     }
   });
 
