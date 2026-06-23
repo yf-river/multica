@@ -45,3 +45,18 @@ make check            # Full verification pipeline
 ```
 
 See CLAUDE.md for the complete command reference.
+
+### Goal-Test Validation
+
+Use changed-aware checks during goal-test work so long sessions do not spend most of their time redeploying or rerunning broad audits.
+
+```bash
+make goal-test-fast-check                         # Development gate; changed-aware, no deploy
+make goal-test-smart-verify MODE=dev              # Same smart verifier with explicit mode
+make goal-test-smart-verify MODE=precommit        # Focused precommit gate plus smoke
+make goal-test-smart-verify MODE=final DRY_RUN=1  # Preview final deploy/audit plan
+make goal-test-deploy-dev                         # Deploy once at the end of a stable slice
+make goal-test-ui-audit                           # Broad browser/UI audit after deploy/smoke
+```
+
+During implementation, prefer `make goal-test-fast-check`. Run `make goal-test-deploy-dev` at most once per 60-120 minute slice unless backend startup, migrations, environment files, build configuration, or the remote environment changed. `scripts/goal-test-smart-verify.mjs` records command timings in `artifacts/acceptance/command-timings.jsonl`; inspect that file before repeating expensive gates.
