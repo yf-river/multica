@@ -48,7 +48,8 @@ const squadOperatingProtocol = `## 小队负责人操作协议
 - 每轮一条委派评论就够了。避免刷出多条近似重复的评论。
 - 如果 squad 中没有成员能够完成任务，发布评论说明能力缺口（如果可能，@mention issue 的报告者），不要静默地自己动手。
 - 结束本轮前始终调用 ` + "`" + `multica squad activity` + "`" + `，即使 outcome 是 no_action。
-- 你用 ` + "`" + `--status todo` + "`" + ` 创建并指派给 agent 的子 issue 已经会自动触发该 agent；这个指派本身就是触发器。如果你又在父 issue 上为同一项工作 @mention 同一个 agent，这个 agent 会并行运行两次（一次来自 mention，一次来自指派）。只能选择一条路径：要么在这个 issue 上通过 @mention 委派，要么创建一个指派给他们的 ` + "`" + `todo` + "`" + ` 子 issue。不要对同一项工作两者都做。`
+- 你用 ` + "`" + `--status todo` + "`" + ` 创建并指派给 agent 的子 issue 已经会自动触发该 agent；这个指派本身就是触发器。如果你又在父 issue 上为同一项工作 @mention 同一个 agent，这个 agent 会并行运行两次（一次来自 mention，一次来自指派）。只能选择一条路径：要么在这个 issue 上通过 @mention 委派，要么创建一个指派给他们的 ` + "`" + `todo` + "`" + ` 子 issue。不要对同一项工作两者都做。
+- 创建子 issue 时，必须显式带上 ` + "`" + `--parent <当前 issue id>` + "`" + `，否则新 issue 会变成独立任务。跨项目子 issue 还必须显式带上 ` + "`" + `--project <目标 project UUID>` + "`" + `；只带 ` + "`" + `--parent` + "`" + ` 会继承父 issue 的项目，不能表达 gateway/config 等其它项目协作。先用 ` + "`" + `multica project list --output json` + "`" + ` 查目标 project UUID，不要用项目名、issue identifier 或猜测值替代 UUID。`
 
 // buildSquadLeaderBriefing composes the full system briefing appended to a
 // squad leader's Instructions when it claims a task on a squad-assigned
@@ -83,17 +84,18 @@ func buildSquadLeaderBriefing(ctx context.Context, q *db.Queries, squad db.Squad
 }
 
 type squadSOPProfile struct {
-	ProfileKey       string           `json:"profile_key"`
-	Project          string           `json:"project"`
-	Repo             string           `json:"repo"`
-	Mode             string           `json:"mode"`
-	Roles            []map[string]any `json:"roles"`
-	Steps            []map[string]any `json:"steps"`
-	ModelPolicy      map[string]any   `json:"model_policy"`
-	StageSkills      []string         `json:"stage_skills"`
-	OperationSkills  []string         `json:"operation_skills"`
-	Acceptance       []string         `json:"acceptance"`
-	ForbiddenActions []string         `json:"forbidden_actions"`
+	ProfileKey              string           `json:"profile_key"`
+	Project                 string           `json:"project"`
+	Repo                    string           `json:"repo"`
+	Mode                    string           `json:"mode"`
+	Roles                   []map[string]any `json:"roles"`
+	Steps                   []map[string]any `json:"steps"`
+	ModelPolicy             map[string]any   `json:"model_policy"`
+	StageSkills             []string         `json:"stage_skills"`
+	OperationSkills         []string         `json:"operation_skills"`
+	CrossProjectChildIssues []map[string]any `json:"cross_project_child_issues"`
+	Acceptance              []string         `json:"acceptance"`
+	ForbiddenActions        []string         `json:"forbidden_actions"`
 }
 
 func buildSquadSOPProfile(raw []byte) string {
@@ -156,6 +158,37 @@ func buildSquadSOPProfile(raw []byte) string {
 		sb.WriteString("- 可调用操作技能：")
 		sb.WriteString(strings.Join(profile.OperationSkills, "、"))
 		sb.WriteString("\n")
+	}
+	if len(profile.CrossProjectChildIssues) > 0 {
+		sb.WriteString("- 跨项目子任务规则：如果当前 issue 需要其它项目配合，不要只在父 issue 上描述依赖；先运行 `multica project list --output json` 找到目标项目 UUID，再创建 `todo` 子 issue。命令形态必须包含 `--parent <当前 issue id>` 和 `--project <目标项目 id>`，例如 `multica issue create --title \"...\" --description-file ./child.md --status todo --parent <当前 issue id> --project <目标项目 id> --output json`。创建子 issue 后，不要再为同一项工作 @mention 同一个负责人，避免双触发。\n")
+		for _, child := range profile.CrossProjectChildIssues {
+			target := sopStringField(child, "target_project", "project", "name")
+			trigger := sopStringField(child, "trigger", "when")
+			assignee := sopStringField(child, "assignee", "owner")
+			title := sopStringField(child, "title", "title_template")
+			body := sopStringField(child, "body", "description", "instruction")
+			parts := make([]string, 0, 5)
+			if target != "" {
+				parts = append(parts, "目标项目="+target)
+			}
+			if trigger != "" {
+				parts = append(parts, "触发条件="+trigger)
+			}
+			if assignee != "" {
+				parts = append(parts, "指派建议="+assignee)
+			}
+			if title != "" {
+				parts = append(parts, "标题="+title)
+			}
+			if body != "" {
+				parts = append(parts, "描述要点="+body)
+			}
+			if len(parts) > 0 {
+				sb.WriteString("  - ")
+				sb.WriteString(strings.Join(parts, "；"))
+				sb.WriteString("\n")
+			}
+		}
 	}
 	if len(profile.Acceptance) > 0 {
 		sb.WriteString("- 验收要求：")

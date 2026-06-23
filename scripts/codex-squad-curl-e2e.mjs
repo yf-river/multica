@@ -13,6 +13,7 @@ const provider = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER") || "codex";
 const model = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "gpt-5.3-codex-spark";
 const squadTemplateKey = trimEnv("ACCEPTANCE_SQUAD_TEMPLATE_KEY") || trimEnv("REAL_AGENT_E2E_SQUAD_TEMPLATE_KEY");
 const verifyChildWake = trimEnv("ACCEPTANCE_VERIFY_CHILD_WAKE") === "1" || squadTemplateKey !== "";
+const verifyCrossProjectChildren = trimEnv("ACCEPTANCE_VERIFY_CROSS_PROJECT_CHILDREN") === "1";
 const taskTimeoutMs = Number(trimEnv("ACCEPTANCE_TASK_TIMEOUT_MS") || (squadTemplateKey ? 600_000 : 240_000));
 const suffix = Date.now();
 
@@ -26,6 +27,7 @@ const evidence = {
   model,
   squad_template_key: squadTemplateKey || "ad-hoc",
   verify_child_wake: verifyChildWake,
+  verify_cross_project_children: verifyCrossProjectChildren,
   task_timeout_ms: taskTimeoutMs,
   commands: [],
   result: "unknown",
@@ -51,9 +53,13 @@ evidence.runtime = { id: runtime.id, name: runtime.name, provider: runtime.provi
 
 let agent;
 let squad;
+let crossProjectSetup = null;
 if (squadTemplateKey) {
   if (!["user-center", "multica-coding"].includes(squadTemplateKey)) {
     fail("ACCEPTANCE_SQUAD_TEMPLATE_KEY 只能是 user-center 或 multica-coding");
+  }
+  if (verifyCrossProjectChildren && squadTemplateKey !== "user-center") {
+    fail("ACCEPTANCE_VERIFY_CROSS_PROJECT_CHILDREN=1 只支持 user-center 小队");
   }
   const template = post("/api/squads/internal-template", { template_key: squadTemplateKey }, token);
   squad = template?.squad;
@@ -68,6 +74,10 @@ if (squadTemplateKey) {
   };
   evidence.agent = { id: agent.id, name: agent.name, role_key: agent.role_key, role: agent.role, provider, model };
   evidence.squad = { id: squad.id, name: squad.name, profile_key: squad?.sop_profile?.profile_key || "" };
+  if (verifyCrossProjectChildren) {
+    crossProjectSetup = createCrossProjectSetup(token, suffix);
+    evidence.cross_project_setup = crossProjectSetup;
+  }
 } else {
   agent = post("/api/agents", {
     name: `curl Codex 验收智能体 ${suffix}`,
@@ -107,14 +117,15 @@ if (squadTemplateKey) {
 const issue = post("/api/issues", {
   workspace_id: workspace.id,
   title: issueTitle(squadTemplateKey, suffix),
-  description: issueDescription(squadTemplateKey),
+  description: issueDescription(squadTemplateKey, crossProjectSetup),
   status: "todo",
   priority: "medium",
   assignee_type: "squad",
   assignee_id: squad.id,
+  ...(crossProjectSetup?.usercenter?.id ? { project_id: crossProjectSetup.usercenter.id } : {}),
 }, token);
 if (!issue?.id) fail("创建任务响应缺少 id");
-evidence.issue = { id: issue.id, identifier: issue.identifier || "", title: issue.title };
+evidence.issue = { id: issue.id, identifier: issue.identifier || "", title: issue.title, project_id: issue.project_id || null };
 
 if (squadTemplateKey) {
   const sopRun = await poll(async () => {
@@ -173,8 +184,13 @@ if (terminalTask.status === "completed") {
   if (!evidence.trace_provider_model_observed) {
     fail(`任务完成但 trace 未包含 ${provider}/${model}`);
   }
+  let captainCreatedChild = null;
+  if (verifyCrossProjectChildren) {
+    const crossProjectChildren = await verifyCaptainCreatedCrossProjectChildren({ issue, setup: crossProjectSetup, token });
+    captainCreatedChild = crossProjectChildren.children[0] || null;
+  }
   if (verifyChildWake) {
-    await verifyChildDoneWake({ issue, squad, agent, terminalTask, token });
+    await verifyChildDoneWake({ issue, squad, agent, terminalTask, token, childOverride: captainCreatedChild });
   }
   evidence.result = "completed";
 } else {
@@ -186,6 +202,39 @@ if (terminalTask.status === "completed") {
   evidence.external_dependency_failure = true;
   evidence.external_dependency_boundary = "Codex runtime 已通过公开 API 创建 Agent/小队/Issue 并被 daemon 执行；任务失败发生在外部模型认证、额度或容量边界。";
   evidence.repair_hint = "检查 daemon 运行环境是否能让 Codex app-server 复用有效 ChatGPT auth，或为 daemon 配置可用的 OpenAI API 认证后重跑本脚本。";
+}
+
+function createCrossProjectSetup(token, value) {
+  const usercenter = post("/api/projects", {
+    workspace_id: activeWorkspaceId,
+    title: `curl usercenter ${value}`,
+    description: "curl 验收创建的 user-center 父项目，用于验证队长跨项目拆子任务。",
+    status: "in_progress",
+  }, token);
+  const gateway = post("/api/projects", {
+    workspace_id: activeWorkspaceId,
+    title: `curl gateway ${value}`,
+    description: "curl 验收创建的 gateway 子项目，用于验证队长通过 --project 创建跨项目子任务。",
+    status: "in_progress",
+  }, token);
+  const config = post("/api/projects", {
+    workspace_id: activeWorkspaceId,
+    title: `curl config ${value}`,
+    description: "curl 验收创建的 config 子项目，用于验证队长通过 --project 创建跨项目子任务。",
+    status: "in_progress",
+  }, token);
+  for (const project of [usercenter, gateway, config]) {
+    if (!project?.id) fail(`创建跨项目验收项目失败：${JSON.stringify(project)}`);
+  }
+  return {
+    usercenter: pickProject(usercenter),
+    gateway: pickProject(gateway),
+    config: pickProject(config),
+  };
+}
+
+function pickProject(project) {
+  return { id: project.id, title: project.title, status: project.status || "" };
 }
 
 writeEvidence(evidence);
@@ -249,8 +298,34 @@ function taskSummary(task) {
   };
 }
 
-async function verifyChildDoneWake({ issue, squad, agent, terminalTask, token }) {
-  const child = post("/api/issues", {
+async function verifyCaptainCreatedCrossProjectChildren({ issue, setup, token }) {
+  const children = await poll(async () => {
+    const items = get(`/api/issues/${issue.id}/children`, token);
+    const list = Array.isArray(items?.issues) ? items.issues : Array.isArray(items) ? items : [];
+    const byProject = new Map(list.map((item) => [item.project_id, item]));
+    if (byProject.has(setup.gateway.id) && byProject.has(setup.config.id)) return list;
+    return null;
+  }, 60_000, "等待队长创建 gateway/config 跨项目子任务");
+
+  const gatewayChild = children.find((item) => item.project_id === setup.gateway.id);
+  const configChild = children.find((item) => item.project_id === setup.config.id);
+  if (!gatewayChild?.id || !configChild?.id) fail("未回读到 gateway/config 跨项目子任务");
+  for (const child of [gatewayChild, configChild]) {
+    if (child.parent_issue_id !== issue.id) {
+      fail(`子任务 ${child.id} parent_issue_id=${child.parent_issue_id}，期望 ${issue.id}`);
+    }
+  }
+  evidence.cross_project_children = {
+    count: children.length,
+    gateway: issueSummary(gatewayChild),
+    config: issueSummary(configChild),
+    verified_by_public_api: true,
+  };
+  return { children: [gatewayChild, configChild] };
+}
+
+async function verifyChildDoneWake({ issue, squad, agent, terminalTask, token, childOverride = null }) {
+  const child = childOverride || post("/api/issues", {
     workspace_id: activeWorkspaceId,
     title: `curl 小队父子任务唤醒验收 ${Date.now()}`,
     description: "验证子任务完成后，系统评论会回写父任务并再次唤醒小队队长。",
@@ -258,7 +333,7 @@ async function verifyChildDoneWake({ issue, squad, agent, terminalTask, token })
     priority: "medium",
     parent_issue_id: issue.id,
   }, token);
-  if (!child?.id) fail("创建子任务响应缺少 id");
+  if (!child?.id) fail("子任务响应缺少 id");
   put(`/api/issues/${child.id}`, { status: "done" }, token);
 
   const parentComment = await poll(async () => {
@@ -286,6 +361,21 @@ async function verifyChildDoneWake({ issue, squad, agent, terminalTask, token })
     requeued_task_id: requeuedTask.id,
     requeued_task_status: requeuedTask.status,
     requeued_task_is_leader_task: requeuedTask.is_leader_task,
+    used_captain_created_child: Boolean(childOverride),
+    child_project_id: child.project_id || null,
+  };
+}
+
+function issueSummary(issue) {
+  return {
+    id: issue.id,
+    identifier: issue.identifier || "",
+    title: issue.title,
+    status: issue.status,
+    parent_issue_id: issue.parent_issue_id || null,
+    project_id: issue.project_id || null,
+    assignee_type: issue.assignee_type || null,
+    assignee_id: issue.assignee_id || null,
   };
 }
 
@@ -311,9 +401,27 @@ function issueTitle(templateKey, value) {
   }
 }
 
-function issueDescription(templateKey) {
+function issueDescription(templateKey, crossProjectSetup = null) {
   switch (templateKey) {
     case "user-center":
+      if (crossProjectSetup) {
+        return [
+          "请作为 user-center 小队队长完成一次真实跨项目 SOP 验收。不要修改代码。",
+          "",
+          "业务场景：user-center 要新增一个内部用户查询 API，需要 gateway 补路由/鉴权/转发信息，需要 config 补配置项/灰度参数。",
+          "",
+          "必须按以下方式执行：",
+          "1. 先运行 `multica issue get <当前 issue id> --output json` 理解父任务。",
+          "2. 再运行 `multica project list --output json`，找到下面两个目标项目的 UUID：",
+          `   - gateway 项目标题：${crossProjectSetup.gateway.title}`,
+          `   - config 项目标题：${crossProjectSetup.config.title}`,
+          "3. 创建两个 `todo` 子 issue；每个命令都必须带 `--parent <当前 issue id>`，并且必须带对应的 `--project <目标项目 UUID>`：",
+          "   - gateway 子 issue：标题包含 gateway，描述说明 API 路径、方法、鉴权和转发要求。",
+          "   - config 子 issue：标题包含 config，描述说明配置键、默认值、环境差异和回滚方式。",
+          "4. 创建后调用 `multica squad activity <当前 issue id> action --reason \"已创建跨项目子任务\"`。",
+          "5. 输出验收证据：父 issue id、两个子 issue id、两个项目 UUID、下一步等待子项目负责人处理。",
+        ].join("\n");
+      }
       return "请作为 user-center 小队队长完成一次最小 SOP 验收：澄清需求、说明阶段、输出 trace/任务标识、验收证据和下一步。不要修改代码。";
     case "multica-coding":
       return "请作为 Multica 编码小队队长完成一次最小 SOP 验收：说明六角色分工、方案先确认、开发范围边界、独立验收、规约同步和部署运行注意事项。不要修改代码。";

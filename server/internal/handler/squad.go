@@ -122,9 +122,25 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 					{"key": "acceptance", "name": "验收", "role_key": "acceptor"},
 					{"key": "summary", "name": "回写总结", "role_key": "captain"},
 				},
-				"stage_skills":      []string{"user-center/01-clarify", "user-center/02-design", "user-center/03-task-split", "user-center/04-implement", "user-center/05-verify", "user-center/06-archive"},
-				"operation_skills":  []string{"user-center/add-api"},
-				"acceptance":        []string{"阶段产物完整", "测试证据完整", "交接说明明确"},
+				"stage_skills":     []string{"user-center/01-clarify", "user-center/02-design", "user-center/03-task-split", "user-center/04-implement", "user-center/05-verify", "user-center/06-archive"},
+				"operation_skills": []string{"user-center/add-api"},
+				"acceptance":       []string{"阶段产物完整", "测试证据完整", "交接说明明确"},
+				"cross_project_child_issues": []map[string]any{
+					{
+						"target_project": "gateway",
+						"trigger":        "需求需要新增、暴露或调整 user-center API 的网关路由、鉴权、限流或转发配置",
+						"assignee":       "gateway 项目负责人或对应小队",
+						"title":          "为 user-center API 补充 gateway 接入信息",
+						"body":           "说明父 issue、目标 user-center API、请求方法、路径、鉴权要求、回调/错误码和期望交付物。",
+					},
+					{
+						"target_project": "config",
+						"trigger":        "需求需要新增、暴露或调整 user-center API 的配置项、灰度开关、环境变量或发布参数",
+						"assignee":       "config 项目负责人或对应小队",
+						"title":          "为 user-center API 补充配置项和发布参数",
+						"body":           "说明父 issue、目标 user-center API、配置键、默认值、环境差异、回滚方式和验收口径。",
+					},
+				},
 				"forbidden_actions": []string{"跳过验收直接完成", "缺少测试证据时宣称完成", "越过 user-center skill 边界修改无关仓库"},
 			},
 		}, true

@@ -24,6 +24,10 @@ func TestSquadOperatingProtocolWarnsAgainstDualTrigger(t *testing.T) {
 	for _, want := range []string{
 		"--status todo` 创建并指派给 agent 的子 issue 已经会自动触发该 agent",
 		"不要对同一项工作两者都做。",
+		"--parent <当前 issue id>",
+		"--project <目标 project UUID>",
+		"只带 `--parent` 会继承父 issue 的项目",
+		"multica project list --output json",
 	} {
 		if !strings.Contains(compact, want) {
 			t.Errorf("expected squad operating protocol to contain %q\n--- protocol ---\n%s", want, squadOperatingProtocol)
@@ -185,6 +189,10 @@ func TestBuildSquadLeaderBriefing_FullSquad(t *testing.T) {
 		"mode":"stage_chain",
 		"stage_skills":["user-center/01-clarify","user-center/02-design","user-center/03-task-split","user-center/04-implement","user-center/05-verify","user-center/06-archive"],
 		"operation_skills":["user-center/add-api"],
+		"cross_project_child_issues":[
+			{"target_project":"gateway","trigger":"需要网关路由","assignee":"gateway 项目负责人","title":"补充 gateway 接入信息","body":"说明 API 路径、方法和鉴权要求"},
+			{"target_project":"config","trigger":"需要配置项","assignee":"config 项目负责人","title":"补充配置项","body":"说明配置键和环境差异"}
+		],
 		"acceptance":["阶段产物完整","测试证据完整","交接说明明确"]
 	}`)
 
@@ -212,6 +220,11 @@ func TestBuildSquadLeaderBriefing_FullSquad(t *testing.T) {
 		"- 可调用操作技能：user-center/add-api",
 		"阶段产物完整；测试证据完整；交接说明明确",
 		"先按 SOP 阶段链推进",
+		"跨项目子任务规则",
+		"--parent <当前 issue id>",
+		"--project <目标项目 id>",
+		"目标项目=gateway",
+		"目标项目=config",
 		"## 小队说明 (Full Squad)",
 		"Always write tests.",
 		"`[@Helper One](mention://agent/" + helper1 + ")`",
@@ -258,6 +271,32 @@ func TestBuildSquadSOPProfile_MulticaCodingFields(t *testing.T) {
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected SOP briefing to contain %q\n--- output ---\n%s", want, out)
+		}
+	}
+}
+
+func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing.T) {
+	template, ok := internalSquadTemplateByKey("user-center")
+	if !ok {
+		t.Fatal("user-center internal squad template missing")
+	}
+	raw, err := json.Marshal(template.Profile)
+	if err != nil {
+		t.Fatalf("marshal template profile: %v", err)
+	}
+	out := buildSquadSOPProfile(raw)
+	for _, want := range []string{
+		"模板：user-center-sop-flow",
+		"跨项目子任务规则",
+		"目标项目=gateway",
+		"目标项目=config",
+		"--parent <当前 issue id>",
+		"--project <目标项目 id>",
+		"multica project list --output json",
+		"不要再为同一项工作 @mention 同一个负责人",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("expected user-center SOP briefing to contain %q\n--- output ---\n%s", want, out)
 		}
 	}
 }
