@@ -179,7 +179,7 @@ test.describe("生产部署验收", () => {
     await expect(page.getByTestId("prompt-playground-template-lab")).toBeVisible();
     await expect(page.getByTestId("prompt-playground-purpose-map")).toContainText("不创建任务、不消耗模型");
     await expect(page.getByText("调试边界")).toBeVisible();
-    await expect(page.getByText("不启动智能体")).toBeVisible();
+    await expect(page.getByTestId("prompt-playground-contract")).toContainText("不启动智能体");
     await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("本地渲染记录");
     await expect(page.getByTestId("agent-playground-task-pipeline")).toHaveCount(0);
     await expect(page.getByTestId("agent-playground-launch-brief")).toHaveCount(0);

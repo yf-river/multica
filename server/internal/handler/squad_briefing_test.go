@@ -57,9 +57,10 @@ func TestEnsureInternalSquadTemplateCreatesCodingSquadIdempotently(t *testing.T)
 	create := func() InternalSquadTemplateResponse {
 		t.Helper()
 		w := httptest.NewRecorder()
-		testHandler.EnsureInternalSquadTemplate(w, newRequest(http.MethodPost, "/api/squads/internal-template", map[string]any{
+		req := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/squads/internal-template", map[string]any{
 			"template_key": "multica-coding",
-		}))
+		})
+		testHandler.EnsureInternalSquadTemplate(w, withURLParam(req, "workspaceId", testWorkspaceID))
 		if w.Code != http.StatusOK {
 			t.Fatalf("ensure internal squad status = %d, body = %s", w.Code, w.Body.String())
 		}

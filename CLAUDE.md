@@ -52,6 +52,7 @@ make goal-test-smart-verify MODE=precommit
 make goal-test-smart-verify MODE=final DRY_RUN=1
 make goal-test-ui-audit
 make goal-test-session-retro SESSION=/path/to/codex-session.jsonl
+make goal-test-token-audit
 pnpm acceptance:verify
 pnpm exec playwright test e2e/production-acceptance.spec.ts --project=chromium
 node scripts/prompt-evaluation-curl-e2e.mjs
@@ -72,6 +73,10 @@ Speed-first goal-test validation protocol:
 - If `MODE=final` sees that the current commit is already deployed and no deployment-affecting files changed, it must verify the existing environment instead of redeploying.
 - If the same Playwright or audit command fails twice, stop rerunning it blindly. Inspect trace, screenshot, console/pageerror, and `.run/int-{server,web,daemon}.log`, fix the root cause, then rerun the smallest failing grep/spec.
 - `scripts/goal-test-smart-verify.mjs` writes command timings to `artifacts/acceptance/command-timings.jsonl`; use that file to identify repeated expensive gates before starting another long continuation.
+- Token optimization is balanced, not global. `scripts/goal-test-smart-verify.mjs` may summarize high-noise commands through `scripts/goal-test-command-wrapper.mjs`, but it must preserve full raw output under `artifacts/acceptance/raw-command-logs/` and record raw/summary byte counts in `command-timings.jsonl`.
+- Do not auto-compress discovery or exact-evidence commands: `rg`, `find`, `ls`, `git diff`, failing test stack windows, deploy failure windows, and any `panic`/`FATAL`/`ERROR` window must stay directly inspectable. Use the raw log path before rerunning broad gates.
+- RTK is opt-in only via `GOAL_TEST_TOKEN_OPTIMIZER=rtk`; when `rtk` is installed and the command is on the safe allowlist, the wrapper asks `rtk rewrite` for the concrete `rtk ...` command and executes that rewritten command. If RTK is absent, unsafe, or declines to rewrite, fall back to the raw-preserving built-in summary. Never install a global RTK hook for this repository unless the user explicitly asks.
+- Use `make goal-test-token-audit` after a long session or before another continuation to estimate savings and confirm the highest-value commands before adding more compression rules.
 
 ## Architecture
 

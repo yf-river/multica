@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-audit goal-test-training-performance-audit goal-test-session-retro
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-audit goal-test-training-performance-audit goal-test-session-retro goal-test-token-audit
 
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
@@ -260,6 +260,9 @@ goal-test-training-performance-audit: goal-test-smoke ## Run real-browser traini
 goal-test-session-retro: ## Generate fixed session retrospective artifacts; pass SESSION=/path/to/session.jsonl
 	@test -n "$(SESSION)" || (echo "Missing SESSION=/path/to/session.jsonl"; exit 2)
 	node scripts/goal-test-session-retro.mjs "$(SESSION)"
+
+goal-test-token-audit: ## Estimate goal-test token savings from session retro and command timings
+	node scripts/goal-test-token-audit.mjs
 
 db-up: ## Start the shared PostgreSQL container used by main and worktrees
 	@$(COMPOSE) up -d postgres

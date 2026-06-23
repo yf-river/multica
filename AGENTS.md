@@ -57,6 +57,9 @@ make goal-test-smart-verify MODE=precommit        # Focused precommit gate plus 
 make goal-test-smart-verify MODE=final DRY_RUN=1  # Preview final deploy/audit plan
 make goal-test-deploy-dev                         # Deploy once at the end of a stable slice
 make goal-test-ui-audit                           # Broad browser/UI audit after deploy/smoke
+make goal-test-token-audit                        # Estimate token savings and compression risk
 ```
 
 During implementation, prefer `make goal-test-fast-check`. Run `make goal-test-deploy-dev` at most once per 60-120 minute slice unless backend startup, migrations, environment files, build configuration, or the remote environment changed. `scripts/goal-test-smart-verify.mjs` records command timings in `artifacts/acceptance/command-timings.jsonl`; inspect that file before repeating expensive gates.
+
+Token optimization is intentionally conservative. High-noise smart-verify commands may be summarized for the model, but full raw output is preserved under `artifacts/acceptance/raw-command-logs/`. Do not globally compress `rg`, `find`, `ls`, `git diff`, failing stack traces, deploy failure windows, or `panic`/`FATAL`/`ERROR` windows. RTK is opt-in with `GOAL_TEST_TOKEN_OPTIMIZER=rtk`; when installed and the command is safe, the wrapper uses `rtk rewrite` and executes the rewritten `rtk ...` command. Do not install a global RTK hook unless explicitly requested.

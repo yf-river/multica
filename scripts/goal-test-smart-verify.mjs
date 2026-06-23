@@ -26,6 +26,7 @@ const payload = {
   commands: commands.map((command) => ({
     id: command.id,
     command: command.command,
+    token_optimized: commandTokenOptimized(command),
     reason: command.reason,
   })),
 };
@@ -261,6 +262,9 @@ function runInternal(command) {
 }
 
 function runShell(command) {
+  if (commandTokenOptimized(command)) {
+    return runTokenOptimizedShell(command);
+  }
   console.log(`\n==> ${command.command}`);
   const started = Date.now();
   const result = spawnSync("bash", ["-lc", command.command], {
@@ -272,6 +276,37 @@ function runShell(command) {
     exit_code: result.status ?? 1,
     signal: result.signal || "",
     duration_ms: Date.now() - started,
+  };
+}
+
+function runTokenOptimizedShell(command) {
+  const started = Date.now();
+  const result = spawnSync("node", [
+    "scripts/goal-test-command-wrapper.mjs",
+    "--id",
+    command.id,
+    "--command",
+    command.command,
+  ], {
+    cwd: repoRoot,
+    encoding: "utf8",
+    maxBuffer: 16 * 1024 * 1024,
+    env: process.env,
+  });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  const metadata = parseWrapperMetadata(result.stdout || "");
+  return {
+    exit_code: result.status ?? metadata?.exit_code ?? 1,
+    signal: result.signal || metadata?.signal || "",
+    duration_ms: metadata?.duration_ms ?? Date.now() - started,
+    token_optimized: true,
+    optimizer: metadata?.optimizer || "",
+    optimizer_note: metadata?.optimizer_note || "",
+    raw_log_path: metadata?.raw_log_path || "",
+    raw_bytes: metadata?.raw_bytes ?? 0,
+    summary_bytes: metadata?.summary_bytes ?? 0,
+    estimated_savings_ratio: metadata?.estimated_savings_ratio ?? 0,
   };
 }
 
@@ -289,6 +324,13 @@ function appendTiming(command, result) {
     exit_code: result.exit_code,
     signal: result.signal || "",
     error: result.error || "",
+    token_optimized: result.token_optimized === true,
+    optimizer: result.optimizer || "",
+    optimizer_note: result.optimizer_note || "",
+    raw_log_path: result.raw_log_path || "",
+    raw_bytes: result.raw_bytes ?? 0,
+    summary_bytes: result.summary_bytes ?? 0,
+    estimated_savings_ratio: result.estimated_savings_ratio ?? 0,
   };
   writeFileSync(timingPath, `${JSON.stringify(line)}\n`, { flag: "a" });
 }
@@ -301,6 +343,27 @@ function dedupeCommands(commands) {
     seen.add(key);
     return true;
   });
+}
+
+function commandTokenOptimized(command) {
+  const optimizerMode = String(process.env.GOAL_TEST_TOKEN_OPTIMIZER || "builtin").trim().toLowerCase();
+  if (["0", "false", "off", "none", "raw"].includes(optimizerMode)) return false;
+  if (!command.command || command.internal) return false;
+  if (command.id.startsWith("node-check:")) return false;
+  if (command.id === "validate-docs") return false;
+  if (/\b(rg|find|ls|git diff)\b/.test(command.command)) return false;
+  return /(?:typecheck|test|e2e|smoke|deploy|audit|verify-current)/.test(command.id) ||
+    /\b(go test|pnpm .*test|pnpm exec playwright|make goal-test-|goal-test-environments\.mjs verify)\b/.test(command.command);
+}
+
+function parseWrapperMetadata(output) {
+  const line = output.split(/\r?\n/).find((item) => item.startsWith("GOAL_TEST_TOKEN_OPTIMIZER_RESULT "));
+  if (!line) return null;
+  try {
+    return JSON.parse(line.slice("GOAL_TEST_TOKEN_OPTIMIZER_RESULT ".length));
+  } catch {
+    return null;
+  }
 }
 
 function gitText(args) {

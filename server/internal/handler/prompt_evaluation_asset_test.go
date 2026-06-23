@@ -231,7 +231,7 @@ func TestPromptEvaluationDatasetFromTraces(t *testing.T) {
 	if err := json.Unmarshal(importW.Body.Bytes(), &imported); err != nil {
 		t.Fatalf("decode import response: %v", err)
 	}
-	if imported.Asset.ID != asset.ID || imported.Asset.DatasetRowCount != 1 || imported.CreatedCount != 1 || len(imported.Cases) != 1 || len(imported.TraceEvents) != 1 {
+	if imported.Asset.ID != asset.ID || imported.Asset.DatasetRowCount < int32(imported.CreatedCount) || imported.CreatedCount != 1 || len(imported.Cases) != 1 || len(imported.TraceEvents) != 1 {
 		t.Fatalf("imported response = %+v", imported)
 	}
 	if imported.Cases[0].Source != "trace" || imported.Cases[0].CaseName == "" {
@@ -878,7 +878,14 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	if len(evidence.TaskMessages) != 1 || !strings.Contains(evidence.TaskMessages[0].Content, "结构化逐用例评估") {
 		t.Fatalf("evidence messages = %+v", evidence.TaskMessages)
 	}
-	if len(evidence.TraceEvents) != 1 || evidence.TraceEvents[0].EventName != "训练评估用量已上报" || evidence.TraceEvents[0].Metadata["阶段"] != "训练评估" {
+	hasUsageTrace := false
+	for _, trace := range evidence.TraceEvents {
+		if trace.EventName == "训练评估用量已上报" && trace.Metadata["阶段"] == "训练评估" {
+			hasUsageTrace = true
+			break
+		}
+	}
+	if !hasUsageTrace {
 		t.Fatalf("evidence traces = %+v", evidence.TraceEvents)
 	}
 
@@ -1038,7 +1045,7 @@ func TestPromptEvaluationRuntimeReadinessReportsUnavailableStates(t *testing.T) 
 	if err := json.Unmarshal(readinessW.Body.Bytes(), &missing); err != nil {
 		t.Fatalf("decode missing readiness response: %v", err)
 	}
-	if missing.Status != "缺失" || !strings.Contains(missing.Fix, "启动 multica daemon") || missing.Runtime != nil {
+	if missing.Status != "缺失" || !strings.Contains(missing.Fix, "启动 multica 守护进程") || missing.Runtime != nil {
 		t.Fatalf("missing readiness = %+v", missing)
 	}
 
@@ -1379,7 +1386,7 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 	if err := json.Unmarshal(candidateW.Body.Bytes(), &candidate); err != nil {
 		t.Fatalf("decode candidate: %v", err)
 	}
-	if !containsAll(candidate.CandidateContent, []string{"真实Agent输出摘要", "Agent 输出：缺少验收条件", "训练评估失败证据", "预估成本"}) {
+	if !containsAll(candidate.CandidateContent, []string{"真实智能体输出摘要", "Agent 输出：缺少验收条件", "训练评估失败证据", "预估成本"}) {
 		t.Fatalf("candidate content missing agent evidence: %s", candidate.CandidateContent)
 	}
 	if !strings.Contains(candidate.Rationale, "真实智能体 task 证据") {

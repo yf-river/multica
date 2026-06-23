@@ -8,6 +8,7 @@ const args = new Set(process.argv.slice(2));
 const runTests = args.has("--run-tests");
 const includeE2E = args.has("--include-e2e") || process.env.ACCEPTANCE_INCLUDE_E2E === "1";
 const includeFullE2E = args.has("--include-full-e2e") || process.env.ACCEPTANCE_INCLUDE_FULL_E2E === "1";
+const acceptanceTarget = parseTarget();
 const timestamp = new Date().toISOString();
 const safeTimestamp = timestamp.replace(/[:.]/g, "-");
 const outputDir = path.join(repoRoot, "artifacts", "acceptance");
@@ -67,6 +68,7 @@ const risks = buildRisks({ health, ready, login, account, commandResults, git, d
 const evidence = {
   "语义版本": "multica.production_acceptance_evidence.v1",
   "生成时间": timestamp,
+  "验收目标": acceptanceTarget,
   "访问地址": {
     "前端": frontendURL,
     "后端": apiURL,
@@ -116,6 +118,18 @@ function trimEnv(name) {
 function optionalEnv(name) {
   if (!Object.prototype.hasOwnProperty.call(process.env, name)) return undefined;
   return (process.env[name] || "").trim();
+}
+
+function parseTarget() {
+  const fromArg = process.argv.slice(2).find((arg) => arg.startsWith("--target="))?.slice("--target=".length)
+    || (process.argv.includes("--target") ? process.argv[process.argv.indexOf("--target") + 1] : "")
+    || process.env.ACCEPTANCE_TARGET
+    || "all";
+  if (!["int", "prod", "all"].includes(fromArg)) {
+    console.error(`invalid acceptance target ${fromArg}; expected int, prod, or all`);
+    process.exit(2);
+  }
+  return fromArg;
 }
 
 function loadEnvFile(file) {
@@ -407,9 +421,12 @@ function normalizePgRow(row) {
 
 function loadLogEvidence() {
   const configuredLogPath = trimEnv("ACCEPTANCE_SERVER_LOG");
+  const targetLogName = acceptanceTarget === "prod" ? "prod-server.log" : "int-server.log";
   const logPath = configuredLogPath
-    || (existsSync(path.join(repoRoot, ".run", "prod-server.log"))
-      ? path.join(repoRoot, ".run", "prod-server.log")
+    || (existsSync(path.join(repoRoot, ".run", targetLogName))
+      ? path.join(repoRoot, ".run", targetLogName)
+      : existsSync(path.join(repoRoot, ".run", "prod-server.log"))
+        ? path.join(repoRoot, ".run", "prod-server.log")
       : existsSync(path.join(repoRoot, ".run", "server.log"))
         ? path.join(repoRoot, ".run", "server.log")
       : path.join(repoRoot, "artifacts", "logs", "server-goal-test.log"));
@@ -441,6 +458,19 @@ function loadLogEvidence() {
 }
 
 function buildCommandPlan() {
+  const deployCommand = acceptanceTarget === "int"
+    ? "make goal-test-deploy-dev"
+    : acceptanceTarget === "prod"
+      ? "make goal-test-deploy-prod"
+      : "make goal-test-deploy-all";
+  const verifyCommand = acceptanceTarget === "all"
+    ? "make goal-test-verify-env"
+    : `node scripts/goal-test-environments.mjs verify ${acceptanceTarget}`;
+  const verifyName = acceptanceTarget === "int"
+    ? "联调环境验证"
+    : acceptanceTarget === "prod"
+      ? "生产环境验证"
+      : "生产/联调环境验证";
   const commands = [
     {
       name: "Web typecheck",
@@ -461,8 +491,8 @@ function buildCommandPlan() {
       timeoutMs: 240_000,
     },
     {
-      name: "部署生产/联调双环境",
-      command: "make goal-test-deploy-all",
+      name: acceptanceTarget === "all" ? "部署生产/联调双环境" : acceptanceTarget === "int" ? "部署联调环境" : "部署生产环境",
+      command: deployCommand,
       required: true,
       timeoutMs: 600_000,
     },
@@ -479,8 +509,8 @@ function buildCommandPlan() {
       timeoutMs: 120_000,
     },
     {
-      name: "生产/联调环境验证",
-      command: "node scripts/goal-test-environments.mjs verify prod",
+      name: verifyName,
+      command: verifyCommand,
       required: true,
       timeoutMs: 60_000,
     },
@@ -807,7 +837,7 @@ function summarizeCommandOutput(name, stdout) {
       external_dependency_failure: parsed.external_dependency_failure === true,
     };
   }
-  if (name === "生产/联调环境验证" || name === "Opik 迁移对照验证" || name === "注册营销残留审计") {
+  if (name === "生产/联调环境验证" || name === "生产环境验证" || name === "联调环境验证" || name === "Opik 迁移对照验证" || name === "注册营销残留审计") {
     return parsed || { status: "未解析", reason: "stdout 中未找到 JSON 对象" };
   }
   return null;
@@ -831,8 +861,9 @@ function tail(value) {
 }
 
 function loadEnvironmentEvidence() {
-  const file = path.join(repoRoot, ".run", "deployments", "goal-test-prod.json");
-  if (!existsSync(file)) return { status: "跳过", reason: "尚未找到生产部署元数据", path: file };
+  const target = acceptanceTarget === "prod" || acceptanceTarget === "all" ? "prod" : "int";
+  const file = path.join(repoRoot, ".run", "deployments", `goal-test-${target}.json`);
+  if (!existsSync(file)) return { status: "跳过", reason: `尚未找到 ${target} 部署元数据`, path: file };
   try {
     const metadata = JSON.parse(readFileSync(file, "utf8"));
     return {

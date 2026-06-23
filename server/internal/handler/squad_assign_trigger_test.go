@@ -340,7 +340,7 @@ func TestBuildObservabilitySummaryIncludesCostBreakdown(t *testing.T) {
 		t.Fatalf("预估成本 = %v, want > 0", metricsMap["预估成本"])
 	}
 	modelRows := summary["model_breakdown"].([]map[string]any)
-	if len(modelRows) < 2 || modelRows[0]["名称"] != "gpt-5.3-codex-spark" || modelRows[0]["价格已知"] != true {
+	if len(modelRows) < 2 || modelRows[0]["名称"] != "openai/gpt-5.3-codex-spark" || modelRows[0]["价格已知"] != true {
 		t.Fatalf("model_breakdown = %#v", modelRows)
 	}
 	runtimeRows := summary["runtime_breakdown"].([]map[string]any)

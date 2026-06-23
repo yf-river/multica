@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Navigate } from "react-router-dom";
-import { PromptLibraryPage } from "@multica/views/prompt-library";
+import { AgentPlaygroundPage, PromptLibraryPage, PromptPlaygroundPage } from "@multica/views/prompt-library";
 import { appRoutes } from "./routes";
 
 describe("desktop training routes", () => {
@@ -31,22 +31,22 @@ describe("desktop training routes", () => {
   });
 
   it.each([
-    ["runs", "runs"],
-    ["prompts", "prompts"],
-    ["prompt-playground", "prompt-playground"],
-    ["agent-playground", "agent-playground"],
-    ["datasets", "datasets"],
-    ["test-suites", "test-suites"],
-    ["experiments", "experiments"],
-    ["optimization-runs", "optimization-runs"],
-    ["run-history", "run-history"],
-  ])("maps training/%s to the matching training and evaluation view", (routePath, activeView) => {
+    ["runs", "训练与评估", PromptLibraryPage, { activeView: "runs" }],
+    ["prompts", "训练与评估", PromptLibraryPage, { activeView: "prompts" }],
+    ["prompt-playground", "提示词调试场", PromptPlaygroundPage, {}],
+    ["agent-playground", "智能体调试场", AgentPlaygroundPage, {}],
+    ["datasets", "训练与评估", PromptLibraryPage, { activeView: "datasets" }],
+    ["test-suites", "训练与评估", PromptLibraryPage, { activeView: "test-suites" }],
+    ["experiments", "训练与评估", PromptLibraryPage, { activeView: "experiments" }],
+    ["optimization-runs", "训练与评估", PromptLibraryPage, { activeView: "optimization-runs" }],
+    ["run-history", "训练与评估", PromptLibraryPage, { activeView: "run-history" }],
+  ])("maps training/%s to the matching training and evaluation view", (routePath, title, component, props) => {
     const trainingRoute = childRoutes.find((route) => route.path === "training");
     const childRoute = trainingRoute?.children?.find((route) => route.path === routePath);
-    expect(childRoute?.handle).toMatchObject({ title: "训练与评估" });
+    expect(childRoute?.handle).toMatchObject({ title });
     expect(childRoute?.element).toMatchObject({
-      type: PromptLibraryPage,
-      props: expect.objectContaining({ activeView }),
+      type: component,
+      props: expect.objectContaining(props),
     });
   });
 });

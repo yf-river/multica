@@ -37,10 +37,10 @@ func TestQuickCreateSquadTaskTraceCarriesSquadAndProject(t *testing.T) {
 
 	var projectID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO project (workspace_id, name, description, status, created_by)
-		VALUES ($1, $2, '', 'active', $3)
+		INSERT INTO project (workspace_id, title, description, status)
+		VALUES ($1, $2, '', 'planned')
 		RETURNING id
-	`, testWorkspaceID, "quick-create trace project", testUserID).Scan(&projectID); err != nil {
+	`, testWorkspaceID, "quick-create trace project").Scan(&projectID); err != nil {
 		t.Fatalf("create project: %v", err)
 	}
 	t.Cleanup(func() {
