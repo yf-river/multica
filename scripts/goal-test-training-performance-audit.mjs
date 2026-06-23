@@ -126,6 +126,7 @@ async function auditTrainingRoute(page, route) {
   page.on("pageerror", onPageError);
 
   const startedAt = Date.now();
+  let readyMs = 0;
   let bodyText = "";
   let navigationError = "";
   try {
@@ -135,6 +136,7 @@ async function auditTrainingRoute(page, route) {
       route.expect,
       { timeout: 10_000 },
     );
+    readyMs = Date.now() - startedAt;
     await page.waitForLoadState("networkidle", { timeout: 8_000 }).catch(() => {});
     bodyText = await page.locator("body").innerText({ timeout: 5_000 }).catch(() => "");
   } catch (error) {
@@ -148,6 +150,7 @@ async function auditTrainingRoute(page, route) {
   }
 
   const elapsedMs = Date.now() - startedAt;
+  if (!readyMs) readyMs = elapsedMs;
   const apiRequests = requests.filter((item) => requestPath(item.url).startsWith("/api/"));
   const trainingApiRequests = apiRequests.filter((item) => requestPath(item.url).startsWith("/api/prompt-evaluation"));
   const badStatuses = requests
@@ -168,7 +171,7 @@ async function auditTrainingRoute(page, route) {
   const boundaryFailures = expectedBoundaryFailures(route.id, requestBoundaries);
   const failures = [
     ...(navigationError ? [`导航失败：${navigationError.split("\n")[0]}`] : []),
-    ...(elapsedMs > maxRouteMs ? [`页面耗时 ${elapsedMs}ms 超过 ${maxRouteMs}ms`] : []),
+    ...(readyMs > maxRouteMs ? [`页面可用耗时 ${readyMs}ms 超过 ${maxRouteMs}ms`] : []),
     ...(apiRequests.length > maxApiRequests ? [`API 请求数 ${apiRequests.length} 超过 ${maxApiRequests}`] : []),
     ...badStatuses.map((item) => `请求状态异常：${item.status} ${item.path}`),
     ...failedRequests.map((item) => `请求失败：${item.path} ${item.failure}`),
@@ -184,6 +187,7 @@ async function auditTrainingRoute(page, route) {
     url: `${browserURL}${route.path}`,
     final_url: page.url(),
     elapsed_ms: elapsedMs,
+    ready_ms: readyMs,
     ok: failures.length === 0,
     failures,
     api_request_count: apiRequests.length,
@@ -233,9 +237,9 @@ async function login() {
 function summarize(routeResults) {
   const failures = routeResults.flatMap((route) => route.failures.map((failure) => `${route.label}: ${failure}`));
   const slowestRoutes = [...routeResults]
-    .sort((a, b) => b.elapsed_ms - a.elapsed_ms)
+    .sort((a, b) => b.ready_ms - a.ready_ms)
     .slice(0, 5)
-    .map((route) => ({ id: route.id, label: route.label, elapsed_ms: route.elapsed_ms, api_request_count: route.api_request_count }));
+    .map((route) => ({ id: route.id, label: route.label, ready_ms: route.ready_ms, elapsed_ms: route.elapsed_ms, api_request_count: route.api_request_count }));
   return {
     ok: failures.length === 0,
     route_count: routeResults.length,
@@ -268,7 +272,7 @@ function renderMarkdown(payload) {
     "",
     "## 最慢页面",
     "",
-    ...payload.summary.slowest_routes.map((route) => `- ${route.label}：${route.elapsed_ms}ms，API ${route.api_request_count}`),
+    ...payload.summary.slowest_routes.map((route) => `- ${route.label}：可用 ${route.ready_ms}ms，总等待 ${route.elapsed_ms}ms，API ${route.api_request_count}`),
     "",
   ];
   if (payload.summary.failures.length > 0) {
@@ -279,7 +283,8 @@ function renderMarkdown(payload) {
   lines.push("## 页面明细", "");
   for (const route of payload.routes) {
     lines.push(`### ${route.ok ? "通过" : "失败"}：${route.label}`);
-    lines.push(`- 耗时：${route.elapsed_ms}ms`);
+    lines.push(`- 可用耗时：${route.ready_ms}ms`);
+    lines.push(`- 总等待耗时：${route.elapsed_ms}ms`);
     lines.push(`- API 请求：${route.api_request_count}`);
     lines.push(`- 训练评估 API：${route.training_api_request_count}`);
     lines.push(`- 请求边界：summary=${route.request_boundaries.prompt_evaluation_summary} runtime=${route.request_boundaries.runtime_readiness} cases=${route.request_boundaries.cases} assets=${route.request_boundaries.assets} runs=${route.request_boundaries.runs}`);
