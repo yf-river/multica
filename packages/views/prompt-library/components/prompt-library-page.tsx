@@ -47,6 +47,7 @@ import { PageHeader } from "../../layout/page-header";
 import { AppLink } from "../../navigation";
 import { useNavigation } from "../../navigation";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { AgentPlaygroundPromptList, PromptPlaygroundPromptList } from "./playground-prompt-lists";
 import { AgentPlaygroundWorkbench, PromptPlaygroundWorkbench } from "./playground-workbenches";
 import {
   DEFAULT_AGENT_MODEL,
@@ -769,64 +770,17 @@ export function PromptLibraryPage({
         </main>
       ) : activeTab === "提示词调试场" ? (
         <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[280px_minmax(0,1fr)]" data-testid="prompt-playground-workbench">
-          <aside className="flex min-h-0 flex-col border-b bg-muted/10 md:border-b-0 md:border-r" data-testid="prompt-playground-prompt-list">
-            <div className="space-y-3 border-b p-3">
-              <div className="rounded-md border bg-background px-3 py-2" data-testid="prompt-playground-selector-summary">
-                <div className="text-xs font-semibold">本地模板实验室</div>
-                <div className="mt-1 text-xs text-muted-foreground">只验证变量填充和最终提示词文本，不创建任务。</div>
-              </div>
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="搜索要渲染的提示词"
-                  className="h-8 pl-8 text-sm"
-                />
-              </div>
-              <div className="rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-                这里验证模板渲染，不编辑提示词，不创建真实智能体任务。需要修改模板请回到「提示词库」。
-              </div>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {listQuery.isLoading ? (
-                <div className="space-y-2 p-3">
-                  {Array.from({ length: 5 }).map((_, index) => (
-                    <div key={index} className="h-16 rounded-md bg-muted/60" />
-                  ))}
-                </div>
-              ) : filteredItems.length === 0 ? (
-                <div className="p-6 text-sm text-muted-foreground">暂无可调试提示词</div>
-              ) : (
-                <div className="divide-y">
-                  {filteredItems.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => {
-                        setIsDraftingNew(false);
-                        setSelectedId(item.id);
-                      }}
-                      className={`flex w-full flex-col gap-2 px-3 py-3 text-left transition-colors hover:bg-muted/60 ${
-                        selected?.id === item.id ? "bg-muted" : ""
-                      }`}
-                    >
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.name}</span>
-                        <Badge variant={item.status === "启用" ? "secondary" : "outline"} className="shrink-0">
-                          {item.status}
-                        </Badge>
-                      </div>
-                      <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                        <span className="shrink-0">{item.prompt_type}</span>
-                        <span className="truncate">版本 v{item.version}</span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </aside>
+          <PromptPlaygroundPromptList
+            query={query}
+            onQueryChange={setQuery}
+            loading={listQuery.isLoading}
+            items={filteredItems}
+            selectedId={selected?.id ?? null}
+            onSelect={(id) => {
+              setIsDraftingNew(false);
+              setSelectedId(id);
+            }}
+          />
 
           <main className="min-h-0 overflow-y-auto p-4 md:p-6">
             <PromptPlaygroundWorkbench
@@ -844,69 +798,21 @@ export function PromptLibraryPage({
         </div>
       ) : activeTab === "智能体调试场" ? (
         <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[360px_minmax(0,1fr)]" data-testid="agent-playground-workbench">
-          <aside className="flex min-h-0 flex-col border-b md:border-b-0 md:border-r" data-testid="agent-playground-prompt-list">
-            <div className="space-y-3 border-b p-3">
-              <div className="rounded-md border bg-muted/20 px-3 py-2" data-testid="agent-playground-selector-summary">
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold">真实任务入口</span>
-                  <Badge variant={agentRuntimeReadiness.status === "就绪" ? "secondary" : "outline"} className="shrink-0">
-                    {runtimeReadinessQuery.isLoading ? "检查中" : agentRuntimeReadiness.status}
-                  </Badge>
-                </div>
-                <div className="mt-1 text-xs text-muted-foreground">选择模板后创建可观测任务，回写消息、链路追踪、令牌用量和耗时。</div>
-              </div>
-              <div className="relative">
-                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                <Input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="搜索要执行的提示词"
-                  className="h-8 pl-8 text-sm"
-                />
-              </div>
-              <div className="rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-                这里选择执行上下文，不编辑提示词内容。需要改模板请去「提示词库」或「提示词调试场」。
-              </div>
-            </div>
-            <div className="min-h-0 flex-1 overflow-y-auto">
-              {listQuery.isLoading ? (
-                <div className="space-y-2 p-3">
-                  {Array.from({ length: 5 }).map((_, index) => (
-                    <div key={index} className="h-16 rounded-md bg-muted/60" />
-                  ))}
-                </div>
-              ) : filteredItems.length === 0 ? (
-                <div className="p-6 text-sm text-muted-foreground">暂无可执行提示词</div>
-              ) : (
-                <div className="divide-y">
-                  {filteredItems.map((item) => (
-                    <button
-                      key={item.id}
-                      type="button"
-                      onClick={() => {
-                        setIsDraftingNew(false);
-                        setSelectedId(item.id);
-                      }}
-                      className={`flex w-full flex-col gap-2 px-3 py-3 text-left transition-colors hover:bg-muted/60 ${
-                        selectedId === item.id ? "bg-muted" : ""
-                      }`}
-                    >
-                      <div className="flex min-w-0 items-center gap-2">
-                        <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.name}</span>
-                        <Badge variant={item.status === "启用" ? "secondary" : "outline"} className="shrink-0">
-                          {item.status}
-                        </Badge>
-                      </div>
-                      <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                        <span className="shrink-0">{item.prompt_type}</span>
-                        <span className="truncate">{item.description || "无描述"}</span>
-                      </div>
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-          </aside>
+          <AgentPlaygroundPromptList
+            query={query}
+            onQueryChange={setQuery}
+            loading={listQuery.isLoading}
+            items={filteredItems}
+            selectedId={selectedId}
+            onSelect={(id) => {
+              setIsDraftingNew(false);
+              setSelectedId(id);
+            }}
+            cases={cases}
+            runs={runs}
+            runtimeReadiness={agentRuntimeReadiness}
+            runtimeLoading={runtimeReadinessQuery.isLoading}
+          />
 
           <main className="min-h-0 overflow-y-auto p-4 md:p-6">
             <AgentPlaygroundWorkbench
