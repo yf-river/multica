@@ -1274,7 +1274,7 @@ function TrainingSummaryStrip({ summary, loading }: { summary: PromptEvaluationS
     <section className="shrink-0 border-b bg-muted/20 px-3 py-3" data-testid="training-summary-strip">
       <div className="mb-2 flex min-w-0 items-center justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="truncate text-sm font-semibold">领导视角摘要</h2>
+          <h2 className="truncate text-sm font-semibold">项目总览</h2>
           <p className="mt-0.5 truncate text-xs text-muted-foreground">
             {summary?.last_run_at ? `最近运行 ${summary.last_run_at}` : "暂无运行记录"}
           </p>

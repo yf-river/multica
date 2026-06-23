@@ -410,7 +410,7 @@ test.describe("训练与评估工作台", () => {
     await page.goto(`/${workspaceSlug}/training?view=run-history`, { waitUntil: "domcontentloaded" });
     await waitForPageText(page, "运行历史", 10000);
     const summaryStrip = page.getByTestId("training-summary-strip");
-    await expect(summaryStrip).toContainText("领导视角摘要", { timeout: 10000 });
+    await expect(summaryStrip).toContainText("项目总览", { timeout: 10000 });
     await expect(page.getByTestId("training-summary-运行总数")).toContainText(/[1-9]/);
     await expect(page.getByTestId("training-summary-通过率")).toContainText("%");
     await expect(page.getByTestId("training-summary-Agent运行数")).toContainText(/[1-9]/);

@@ -53,7 +53,7 @@ test.describe("Navigation", () => {
 
       await expect(page).toHaveURL(new RegExp(`/training\\?view=${item.view}`), { timeout: ROUTE_CHANGE_TIMEOUT });
       await waitForPageText(page, item.text);
-      await expect(page.getByTestId("training-summary-strip")).toContainText("领导视角摘要", { timeout: 30000 });
+      await expect(page.getByTestId("training-summary-strip")).toContainText("项目总览", { timeout: 30000 });
     }
   });
 
