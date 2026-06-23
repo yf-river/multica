@@ -50,7 +50,9 @@ test.describe("Navigation", () => {
       await expect(page.getByTestId("prompt-library-editor")).toHaveCount(item.showPromptEditor ? 1 : 0);
       await expect(page.getByTestId("prompt-version-history")).toHaveCount(item.showPromptEditor ? 1 : 0);
       await expect(page.getByTestId("agent-playground-workbench")).toHaveCount(item.showAgentWorkbench ? 1 : 0);
-      await expect(page.getByRole("button", { name: "创建 user-center 需求澄清提示词" })).toHaveCount(item.path === "prompts" ? 1 : 0);
+      await expect(page.getByTestId("prompt-template-actions")).toHaveCount(item.path === "prompts" ? 1 : 0);
+      await expect(page.getByRole("button", { name: "应用需求澄清模板" })).toHaveCount(item.path === "prompts" ? 1 : 0);
+      await expect(page.getByRole("button", { name: "创建 user-center 需求澄清提示词" })).toHaveCount(0);
       await expect(page.getByTestId("training-summary-strip")).toContainText("项目总览", { timeout: 30000 });
     }
   });

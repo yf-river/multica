@@ -89,15 +89,15 @@ const DEFAULT_AGENT_RUNTIME_READINESS: PromptEvaluationRuntimeReadiness = {
 };
 
 const USER_CENTER_TEMPLATE: CreatePromptLibraryItemRequest = {
-  name: "user-center 需求澄清提示词",
-  description: "user-center 小队队长使用",
+  name: "用户中心需求澄清提示词",
+  description: "用户中心小队队长使用",
   prompt_type: "需求澄清",
   content: "请先澄清目标、边界、验收条件、风险、影响范围和可观测指标。输出必须使用中文，并列出需要团队确认的问题。",
   variables: [
     { name: "issue_title", label: "任务标题", required: true },
     { name: "project_context", label: "项目背景" },
   ],
-  tags: ["user-center", "小队", "需求澄清"],
+  tags: ["用户中心", "小队", "需求澄清"],
   status: "启用",
 };
 
@@ -353,7 +353,7 @@ export function PromptLibraryPage({
         invalidateExperimentDimensions();
         invalidateRuns();
         invalidateSummary();
-        toast.success(`真实智能体 任务已入队：${result.task_id}`);
+        toast.success(`真实智能体任务已入队：${result.task_id}`);
       },
     });
 
@@ -714,10 +714,6 @@ export function PromptLibraryPage({
         </div>
         {shouldShowPromptHeaderActions && (
           <div className="flex items-center gap-2">
-            <Button size="sm" variant="secondary" onClick={applyUserCenterTemplate}>
-              <BookOpenText className="size-3.5" />
-              创建 user-center 需求澄清提示词
-            </Button>
             <Button size="sm" onClick={startNew}>
               <Plus className="size-3.5" />
               新建
@@ -912,6 +908,22 @@ export function PromptLibraryPage({
 
           <main className="min-h-0 overflow-y-auto p-4 md:p-6">
             <div className="mx-auto flex max-w-5xl flex-col gap-4">
+              {activeTab === "提示词库" && (
+                <section className="rounded-md border bg-muted/20 p-3" data-testid="prompt-template-actions">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div className="min-w-0">
+                      <div className="text-sm font-medium">内置提示词模板</div>
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        用团队内置模板快速起草需求澄清提示词；保存前可以继续修改名称、变量和内容。
+                      </div>
+                    </div>
+                    <Button size="sm" variant="secondary" onClick={applyUserCenterTemplate}>
+                      <BookOpenText className="size-3.5" />
+                      应用需求澄清模板
+                    </Button>
+                  </div>
+                </section>
+              )}
               <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                 <div className="min-w-0">
                   <h2 className="truncate text-base font-semibold">{selected ? selected.name : "新建提示词"}</h2>
@@ -1272,8 +1284,8 @@ function DemoDashboardPanel({
         <section className="rounded-md border border-border/70 bg-muted/10 p-3">
           <h3 className="text-sm font-semibold">演示状态</h3>
           <div className="mt-3 grid gap-2 text-xs">
-            <DemoChecklistItem ok={runtimeReadiness.status === "就绪"} label="Codex 运行时可创建真实智能体 任务" detail={runtimeReadiness.detail} />
-            <DemoChecklistItem ok={hasAgentEvidence} label="运行历史已有任务/trace 证据" detail={latestRun?.task_id ? `最近任务 ${latestRun.task_id}` : "需要执行一次真实智能体 评估"} />
+            <DemoChecklistItem ok={runtimeReadiness.status === "就绪"} label="Codex 运行时可创建真实智能体任务" detail={runtimeReadiness.detail} />
+            <DemoChecklistItem ok={hasAgentEvidence} label="运行历史已有任务/trace 证据" detail={latestRun?.task_id ? `最近任务 ${latestRun.task_id}` : "需要执行一次真实智能体评估"} />
             <DemoChecklistItem ok={cases.length > 0} label="数据集/测试套件已有结构化用例" detail={`${cases.length} 条结构化用例`} />
             <DemoChecklistItem ok={Number(trainingAssets["服务端证据快照"] ?? trainingMetrics["服务端证据快照"] ?? 0) > 0} label="运行证据已服务端归档" detail={`${formatNumber(trainingAssets["服务端证据快照"] ?? trainingMetrics["服务端证据快照"])} 条快照，验收归档 ${formatNumber(trainingAssets["验收归档快照"] ?? trainingMetrics["验收归档快照"])}`} />
             <DemoChecklistItem ok={hasOptimizationLoop} label="失败用例可进入优化候选人工确认" detail={`${pendingCandidates} 待确认，${publishedCandidates} 已发布`} />
@@ -1571,7 +1583,7 @@ function AgentPlaygroundWorkbench({
               </Button>
               <Button size="sm" onClick={onRunAgentDebugPackage} disabled={!canCreateTask}>
                 {runningAgent ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                创建真实智能体 任务
+                创建真实智能体任务
               </Button>
               {!selected && <span className="text-xs text-muted-foreground">先选择提示词后才能保存或执行。</span>}
               {selected && runtimeReadiness.status !== "就绪" && !runtimeLoading && <span className="text-xs text-muted-foreground">{runtimeReadiness.fix}</span>}
@@ -1757,7 +1769,7 @@ function WorkbenchPanel({
 	        <div className="flex items-center justify-between gap-2">
 	          <div>
 	            <h3 className="text-sm font-semibold">智能体调试场</h3>
-	            <p className="mt-1 text-xs text-muted-foreground">可先保存实验包，也可在 Codex 就绪后创建真实智能体 任务并写入运行历史。</p>
+	            <p className="mt-1 text-xs text-muted-foreground">可先保存实验包，也可在 Codex 就绪后创建真实智能体任务并写入运行历史。</p>
 	          </div>
 	          <div className="flex shrink-0 items-center gap-2">
 	            <Button size="sm" variant="secondary" onClick={onSaveAgentDebugPackage} disabled={!selected || saving}>
@@ -1766,7 +1778,7 @@ function WorkbenchPanel({
 	            </Button>
 	            <Button size="sm" onClick={onRunAgentDebugPackage} disabled={!selected || saving || runningAgent || runtimeReadiness.status !== "就绪"}>
 	              {runningAgent ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-	              创建真实智能体 任务
+	              创建真实智能体任务
 	            </Button>
 	          </div>
 	        </div>
@@ -2426,9 +2438,9 @@ function stringFromUnknown(value: unknown): string {
 function buildAgentExecutionStatus(readiness: PromptEvaluationRuntimeReadiness): string {
   const model = readiness.model || DEFAULT_AGENT_MODEL;
   if (readiness.status === "就绪") {
-    return `Codex 运行时已在线，目标模型 ${model}；此记录是实验包快照，点击“创建真实智能体 任务”后会入队并采集 trace、token、成本和输出`;
+    return `Codex 运行时已在线，目标模型 ${model}；此记录是实验包快照，点击“创建真实智能体任务”后会入队并采集 trace、token、成本和输出`;
   }
-  return `${readiness.label}，目标模型 ${model}；未创建真实智能体 任务`;
+  return `${readiness.label}，目标模型 ${model}；未创建真实智能体任务`;
 }
 
 function FilterButton({

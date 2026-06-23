@@ -44,7 +44,7 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队运行看板", { timeout: 10000 });
     await page.getByRole("button", { name: "提示词库", exact: true }).click();
 
-    await page.getByRole("button", { name: "创建 user-center 需求澄清提示词" }).click();
+    await page.getByRole("button", { name: "应用需求澄清模板" }).click();
     await page.getByLabel("名称").fill(`${artifactPrefix} user-center 澄清`);
     await page.getByLabel("提示词内容").fill("请澄清 {{issue_title}}，项目背景：{{project_context}}。");
     await page.getByLabel("调试变量").fill("issue_title=登录失败\nproject_context=user-center");
@@ -76,7 +76,7 @@ test.describe("训练与评估工作台", () => {
     await page.getByLabel("期望输出").fill("输出需求澄清结论、风险、测试证据和下一步建议。");
     await page.getByRole("button", { name: "保存为实验" }).click();
     await expect(page.getByText("资产已创建").last()).toBeVisible({ timeout: 10000 });
-    const createAgentTaskButton = page.getByRole("button", { name: "创建真实智能体 任务" });
+    const createAgentTaskButton = page.getByRole("button", { name: "创建真实智能体任务" });
     await expect(createAgentTaskButton).toBeEnabled({ timeout: 10000 });
     const agentRunResponse = page.waitForResponse(
       (response) => response.request().method() === "POST" && response.url().includes("/agent-run"),
@@ -425,7 +425,7 @@ test.describe("训练与评估工作台", () => {
     await expect(demoDashboard).toContainText("SOP 与任务观测");
     await expect(demoDashboard.getByTestId("training-demo-metric-智能体运行数")).toContainText(/[1-9]/);
     await expect(demoDashboard.getByTestId("training-demo-proof-真实智能体 证据")).toContainText("已有任务/trace 运行记录");
-    await expect(demoDashboard.getByText("Codex 运行时可创建真实智能体 任务")).toBeVisible();
+    await expect(demoDashboard.getByText("Codex 运行时可创建真实智能体任务")).toBeVisible();
     await expect(demoDashboard).toContainText("最近7天");
     await demoDashboard.getByRole("button", { name: "最近24小时" }).click();
     await expect(demoDashboard).toContainText("最近24小时");
@@ -630,7 +630,7 @@ test.describe("训练与评估工作台", () => {
     await expect(page).toHaveURL(/\/training(?:\?|$)/, { timeout: 30000 });
     await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队运行看板", { timeout: 10000 });
     await page.getByRole("button", { name: "提示词库", exact: true }).click();
-    await page.getByRole("button", { name: "创建 user-center 需求澄清提示词" }).click();
+    await page.getByRole("button", { name: "应用需求澄清模板" }).click();
     await page.getByLabel("名称").fill(promptName);
     await page.getByLabel("提示词内容").fill(sourceContent);
     await page.getByLabel("调试变量").fill("issue_title=登录失败");

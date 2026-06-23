@@ -20,7 +20,9 @@ async function expectTrainingRouteShell(page, route: (typeof TRAINING_ROUTES)[nu
   await expect(page.getByTestId("prompt-library-editor")).toHaveCount(route.showPromptEditor ? 1 : 0);
   await expect(page.getByTestId("prompt-version-history")).toHaveCount(route.showPromptEditor ? 1 : 0);
   await expect(page.getByTestId("agent-playground-workbench")).toHaveCount(route.showAgentWorkbench ? 1 : 0);
-  await expect(page.getByRole("button", { name: "创建 user-center 需求澄清提示词" })).toHaveCount(route.path === "prompts" ? 1 : 0);
+  await expect(page.getByTestId("prompt-template-actions")).toHaveCount(route.path === "prompts" ? 1 : 0);
+  await expect(page.getByRole("button", { name: "应用需求澄清模板" })).toHaveCount(route.path === "prompts" ? 1 : 0);
+  await expect(page.getByRole("button", { name: "创建 user-center 需求澄清提示词" })).toHaveCount(0);
 }
 
 test.describe("生产部署验收", () => {
@@ -86,7 +88,7 @@ test.describe("生产部署验收", () => {
     await expect(page.getByText("真实执行准备度")).toBeVisible({ timeout: 15000 });
     await expect(page.getByText("任务上下文预览")).toBeVisible();
     await expect(page.getByText("最近智能体运行")).toBeVisible();
-    await expect(page.getByRole("button", { name: "创建真实智能体 任务" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "创建真实智能体任务" })).toBeVisible();
 
     await page.getByRole("link", { name: "数据集", exact: true }).last().click();
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/datasets$`));
