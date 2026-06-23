@@ -1523,6 +1523,9 @@ func (h *Handler) ListWorkspaceAgentTaskSnapshot(w http.ResponseWriter, r *http.
 
 	tasks, err := h.Queries.ListWorkspaceAgentTaskSnapshot(r.Context(), parseUUID(workspaceID))
 	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to list agent task snapshot")
 		return
 	}

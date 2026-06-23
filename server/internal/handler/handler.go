@@ -215,6 +215,14 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
+func writeClientClosedIfCanceled(w http.ResponseWriter, err error) bool {
+	if !errors.Is(err, context.Canceled) {
+		return false
+	}
+	writeError(w, 499, "request cancelled")
+	return true
+}
+
 // Thin wrappers around util functions.
 //
 // parseUUID is intentionally the panicking variant: any handler call site

@@ -121,6 +121,9 @@ func (h *Handler) ListProjects(w http.ResponseWriter, r *http.Request) {
 		Priority:    priorityFilter,
 	})
 	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to list projects")
 		return
 	}
