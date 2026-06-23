@@ -170,10 +170,12 @@ test.describe("Navigation", () => {
     await expect(page.getByTestId("agent-playground-page-shell")).toBeVisible({ timeout: 30000 });
     await expect(page.getByTestId("training-summary-strip")).toHaveCount(0);
     await expect(page.getByTestId("playground-page-contract")).toContainText("真实任务 · 写回观测证据");
-    await expect(page.getByTestId("agent-playground-selector-summary")).toContainText("真实任务入口");
-    await expect(page.getByTestId("agent-playground-execution-boundary")).toContainText("执行上下文会检查运行时");
+    await expect(page.getByTestId("agent-playground-execution-stage")).toBeVisible();
+    await expect(page.getByTestId("agent-playground-selector-summary")).toContainText("执行目标池");
+    await expect(page.getByTestId("agent-playground-execution-boundary")).toContainText("任务变量、期望输出、运行时准备度");
     await expect(page.getByTestId("agent-playground-run-console")).toContainText("真实任务发射台");
     await expect(page.getByTestId("agent-playground-launch-brief")).toContainText("写入真实任务队列");
+    await expect(page.getByTestId("agent-playground-evidence-strip")).toContainText("真实运行");
     await expect(page.getByTestId("agent-playground-observability-contract")).toContainText("观测回写契约");
     await expect(page.getByTestId("prompt-playground-contract")).toHaveCount(0);
     await expect(page.getByTestId("prompt-playground-purpose-map")).toHaveCount(0);

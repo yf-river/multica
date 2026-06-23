@@ -93,20 +93,20 @@ export function AgentPlaygroundPromptList({
   runtimeLoading: boolean;
 }) {
   return (
-    <aside className="flex min-h-0 flex-col border-b md:border-b-0 md:border-r" data-testid="agent-playground-prompt-list">
+    <aside className="flex min-h-0 flex-col border-t bg-muted/10 xl:border-l xl:border-t-0" data-testid="agent-playground-prompt-list">
       <div className="space-y-3 border-b p-3">
         <div className="rounded-md border bg-muted/20 px-3 py-2" data-testid="agent-playground-selector-summary">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-semibold">真实任务入口</span>
+            <span className="text-xs font-semibold">执行目标池</span>
             <Badge variant={runtimeReadiness.status === "就绪" ? "secondary" : "outline"} className="shrink-0">
               {runtimeLoading ? "检查中" : runtimeReadiness.status}
             </Badge>
           </div>
-          <div className="mt-1 text-xs text-muted-foreground">选择模板后创建可观测任务，回写消息、链路追踪、令牌用量和耗时。</div>
+          <div className="mt-1 text-xs text-muted-foreground">从右侧选择要执行的提示词模板，左侧发射台会创建可观测任务并回写消息、链路追踪、令牌用量和耗时。</div>
         </div>
-        <PromptSearchInput value={query} onChange={onQueryChange} placeholder="搜索要执行的提示词" />
+        <PromptSearchInput value={query} onChange={onQueryChange} placeholder="搜索执行目标" />
         <div className="rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground" data-testid="agent-playground-execution-boundary">
-          执行上下文会检查运行时、结构化用例和最近真实运行；模板内容仍由「提示词库」维护。
+          这里只选执行目标；任务变量、期望输出、运行时准备度和观测证据在左侧发射台完成。
         </div>
       </div>
       <div className="min-h-0 flex-1 overflow-y-auto">

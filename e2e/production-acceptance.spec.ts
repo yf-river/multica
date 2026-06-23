@@ -197,10 +197,12 @@ test.describe("生产部署验收", () => {
     await expectTrainingRouteShell(page, TRAINING_ROUTES[3]!);
     await expect(page.getByTestId("agent-playground-run-console")).toContainText("真实任务发射台", { timeout: 15000 });
     await expect(page.getByTestId("agent-playground-launch-brief")).toContainText("写入真实任务队列");
-    await expect(page.getByTestId("agent-playground-selector-summary")).toContainText("真实任务入口");
+    await expect(page.getByTestId("agent-playground-execution-stage")).toBeVisible();
+    await expect(page.getByTestId("agent-playground-selector-summary")).toContainText("执行目标池");
     await expect(page.getByTestId("agent-playground-selector-summary")).toContainText("链路追踪");
     await expect(page.getByTestId("agent-playground-task-payload")).toBeVisible();
     await expect(page.getByTestId("agent-playground-observability-contract")).toContainText("观测回写契约");
+    await expect(page.getByTestId("agent-playground-evidence-strip")).toContainText("真实运行");
     await expect(page.getByText("真实执行准备度")).toBeVisible({ timeout: 15000 });
     await expect(page.getByText("将入队的任务正文")).toBeVisible();
     await expect(page.getByText("最近智能体运行")).toBeVisible();

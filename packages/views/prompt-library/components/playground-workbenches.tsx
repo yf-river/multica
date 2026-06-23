@@ -245,6 +245,7 @@ export function AgentPlaygroundWorkbench({
     return asset.asset_type === "实验" && (asset.name.includes("智能体调试包") || Object.prototype.hasOwnProperty.call(payload, "调试包"));
   });
   const promptCaseCount = selected ? cases.filter((item) => item.prompt_id === selected.id).length : 0;
+  const selectedAgentRuns = selected ? agentRuns.filter((run) => run.prompt_id === selected.id) : agentRuns;
   const canCreateTask = Boolean(selected) && runtimeReadiness.status === "就绪" && !saving && !runningAgent;
 
   return (
@@ -307,6 +308,20 @@ export function AgentPlaygroundWorkbench({
               </div>
             );
           })}
+        </div>
+
+        <div className="mt-4 grid gap-2 md:grid-cols-4" data-testid="agent-playground-evidence-strip">
+          {[
+            ["运行时", runtimeLoading ? "检查中" : runtimeReadiness.status],
+            ["结构化用例", String(promptCaseCount)],
+            ["真实运行", String(selectedAgentRuns.length)],
+            ["调试包", String(agentPackages.length)],
+          ].map(([label, value]) => (
+            <div key={label} className="min-w-0 rounded-md border bg-background px-3 py-2">
+              <div className="text-[11px] font-medium text-muted-foreground">{label}</div>
+              <div className="mt-1 truncate text-sm font-semibold">{value}</div>
+            </div>
+          ))}
         </div>
       </section>
 

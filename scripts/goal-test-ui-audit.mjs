@@ -45,7 +45,7 @@ const routes = [
     expect: ["提示词调试场"],
     uiContract: {
       requiredText: ["本地模板实验室", "模板渲染实验室", "不启动智能体", "不创建任务、不消耗模型", "本地渲染记录"],
-      forbiddenText: ["真实任务入口", "真实任务发射台", "真实执行准备度", "观测回写契约", "写入真实任务队列"],
+      forbiddenText: ["执行目标池", "真实任务发射台", "真实执行准备度", "观测回写契约", "写入真实任务队列"],
       requiredTestIds: [
         "prompt-playground-page-shell",
         "prompt-playground-workbench",
@@ -60,6 +60,7 @@ const routes = [
         "agent-playground-workbench",
         "agent-playground-run-console",
         "agent-playground-launch-brief",
+        "agent-playground-evidence-strip",
         "agent-playground-task-payload",
         "agent-playground-task-pipeline",
         "agent-playground-observability-contract",
@@ -72,13 +73,15 @@ const routes = [
     path: `/${workspaceSlug}/training/agent-playground`,
     expect: ["智能体调试场"],
     uiContract: {
-      requiredText: ["真实任务入口", "真实任务发射台", "写入真实任务队列", "真实执行准备度", "观测回写契约"],
+      requiredText: ["执行目标池", "真实任务发射台", "写入真实任务队列", "真实执行准备度", "观测回写契约", "真实运行"],
       forbiddenText: ["本地模板实验室", "不启动智能体", "本地渲染记录"],
       requiredTestIds: [
         "agent-playground-page-shell",
         "agent-playground-workbench",
+        "agent-playground-execution-stage",
         "agent-playground-run-console",
         "agent-playground-launch-brief",
+        "agent-playground-evidence-strip",
         "agent-playground-task-payload",
         "agent-playground-task-pipeline",
         "agent-playground-observability-contract",

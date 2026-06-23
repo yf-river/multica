@@ -194,20 +194,8 @@ export function AgentPlaygroundContainer() {
       contract="真实任务 · 写回观测证据"
       contractVariant="secondary"
     >
-      <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[360px_minmax(0,1fr)]" data-testid="agent-playground-workbench">
-        <AgentPlaygroundPromptList
-          query={query}
-          onQueryChange={setQuery}
-          loading={listQuery.isLoading}
-          items={filteredItems}
-          selectedId={selected?.id ?? null}
-          onSelect={selection.select}
-          cases={cases}
-          runs={runs}
-          runtimeReadiness={runtimeReadiness}
-          runtimeLoading={runtimeReadinessQuery.isLoading}
-        />
-        <main className="min-h-0 overflow-y-auto p-4 md:p-6">
+      <div className="flex min-h-0 flex-1 flex-col xl:grid xl:grid-cols-[minmax(0,1fr)_360px]" data-testid="agent-playground-workbench">
+        <main className="min-h-0 overflow-y-auto p-4 md:p-6" data-testid="agent-playground-execution-stage">
           <AgentPlaygroundWorkbench
             selected={selected}
             debugValuesText={actions.debugValuesText}
@@ -227,6 +215,18 @@ export function AgentPlaygroundContainer() {
             onRunAgentDebugPackage={actions.runAgentDebugPackage}
           />
         </main>
+        <AgentPlaygroundPromptList
+          query={query}
+          onQueryChange={setQuery}
+          loading={listQuery.isLoading}
+          items={filteredItems}
+          selectedId={selected?.id ?? null}
+          onSelect={selection.select}
+          cases={cases}
+          runs={runs}
+          runtimeReadiness={runtimeReadiness}
+          runtimeLoading={runtimeReadinessQuery.isLoading}
+        />
       </div>
     </PlaygroundPageShell>
   );

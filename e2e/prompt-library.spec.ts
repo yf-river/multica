@@ -114,8 +114,11 @@ test.describe("训练与评估工作台", () => {
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/agent-playground$`), { timeout: 30000 });
     await expect(page.getByTestId("agent-playground-workbench")).toBeVisible({ timeout: 10000 });
     await expect(page.getByTestId("agent-playground-workbench")).toContainText(`${artifactPrefix} 账号系统 澄清`, { timeout: 10000 });
+    await expect(page.getByTestId("agent-playground-execution-stage")).toBeVisible();
+    await expect(page.getByTestId("agent-playground-selector-summary")).toContainText("执行目标池");
     await expect(page.getByTestId("agent-playground-run-console")).toContainText("真实任务发射台");
     await expect(page.getByTestId("agent-playground-launch-brief")).toContainText("写入真实任务队列");
+    await expect(page.getByTestId("agent-playground-evidence-strip")).toContainText("真实运行");
     await expect(page.getByTestId("agent-playground-task-payload")).toBeVisible();
     await expect(page.getByTestId("agent-playground-observability-contract")).toContainText("观测回写契约");
     await expect(page.getByTestId("agent-playground-task-pipeline")).toContainText("创建真实任务");
