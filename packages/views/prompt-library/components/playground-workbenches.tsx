@@ -13,8 +13,7 @@ import type {
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
 import { Textarea } from "@multica/ui/components/ui/textarea";
-
-export const DEFAULT_AGENT_MODEL = "gpt-5.3-codex-spark";
+import { DEFAULT_AGENT_MODEL } from "./prompt-library-request-builders";
 
 export function PromptPlaygroundWorkbench({
   selected,
