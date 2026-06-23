@@ -39,10 +39,11 @@ test.describe("训练与评估工作台", () => {
     await refreshExpectedAgentModel();
 
     await page.getByRole("link", { name: "训练与评估" }).click();
-    await expect(page).toHaveURL(/\/training(?:\?|$)/, { timeout: 30000 });
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/runs$`), { timeout: 30000 });
     await waitForPageText(page, "训练与评估");
     await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队运行看板", { timeout: 10000 });
-    await page.getByRole("button", { name: "提示词库", exact: true }).click();
+    await page.getByRole("link", { name: "提示词库", exact: true }).last().click();
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/prompts$`), { timeout: 30000 });
 
     await page.getByRole("button", { name: "应用需求澄清模板" }).click();
     await page.getByLabel("名称").fill(`${artifactPrefix} user-center 澄清`);
@@ -627,9 +628,10 @@ test.describe("训练与评估工作台", () => {
     await refreshExpectedAgentModel();
 
     await page.getByRole("link", { name: "训练与评估" }).click();
-    await expect(page).toHaveURL(/\/training(?:\?|$)/, { timeout: 30000 });
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/runs$`), { timeout: 30000 });
     await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队运行看板", { timeout: 10000 });
-    await page.getByRole("button", { name: "提示词库", exact: true }).click();
+    await page.getByRole("link", { name: "提示词库", exact: true }).last().click();
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/prompts$`), { timeout: 30000 });
     await page.getByRole("button", { name: "应用需求澄清模板" }).click();
     await page.getByLabel("名称").fill(promptName);
     await page.getByLabel("提示词内容").fill(sourceContent);
@@ -841,7 +843,7 @@ test.describe("训练与评估工作台", () => {
     await page.goto(`/${workspaceSlug}/prompt-library`, { waitUntil: "domcontentloaded" });
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/prompts$`), { timeout: 30000 });
     await waitForPageText(page, "训练与评估");
-    await expect(page.getByRole("button", { name: "提示词库", exact: true })).toBeVisible();
+    await expect(page.getByRole("link", { name: "提示词库", exact: true }).last()).toBeVisible();
 
     for (const legacyPath of ["evaluation", "eval"]) {
       await page.goto(`/${workspaceSlug}/${legacyPath}`, { waitUntil: "domcontentloaded" });

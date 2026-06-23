@@ -141,6 +141,7 @@ export function PromptLibraryPage({
   const [typeFilter, setTypeFilter] = useState("全部");
   const [statusFilter, setStatusFilter] = useState<"全部" | PromptLibraryStatus>("全部");
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [isDraftingNew, setIsDraftingNew] = useState(false);
   const [draft, setDraft] = useState<PromptDraft>(emptyDraft);
   const [debugValuesText, setDebugValuesText] = useState("");
   const viewParam = trainingViewFromLocation(navigation.pathname, navigation.searchParams);
@@ -252,13 +253,14 @@ export function PromptLibraryPage({
   const agentRuntimeReadiness = runtimeReadinessQuery.data ?? DEFAULT_AGENT_RUNTIME_READINESS;
 
   useEffect(() => {
+    if (isDraftingNew) return;
     if (!selectedId && items.length > 0) {
       setSelectedId(items[0]?.id ?? null);
     }
     if (selectedId && !selected && items.length > 0 && !listQuery.isFetching) {
       setSelectedId(items[0]?.id ?? null);
     }
-  }, [items, listQuery.isFetching, selected, selectedId]);
+  }, [isDraftingNew, items, listQuery.isFetching, selected, selectedId]);
 
   useEffect(() => {
     if (!selected) return;
@@ -292,6 +294,7 @@ export function PromptLibraryPage({
     onSuccess: (item) => {
       invalidate();
       invalidateVersions(item.id);
+      setIsDraftingNew(false);
       setSelectedId(item.id);
       toast.success("提示词已创建");
     },
@@ -302,6 +305,7 @@ export function PromptLibraryPage({
     onSuccess: (item) => {
       invalidate();
       invalidateVersions(item.id);
+      setIsDraftingNew(false);
       setSelectedId(item.id);
       toast.success("提示词已保存");
     },
@@ -498,12 +502,14 @@ export function PromptLibraryPage({
   );
 
   const startNew = () => {
+    setIsDraftingNew(true);
     setSelectedId(null);
     setDraft(emptyDraft());
     setDebugValuesText("");
   };
 
   const applyUserCenterTemplate = () => {
+    setIsDraftingNew(true);
     setSelectedId(null);
     setDraft(requestToDraft(USER_CENTER_TEMPLATE));
     setDebugValuesText(valuesToDebugText(USER_CENTER_TEMPLATE.variables ?? []));
@@ -788,7 +794,10 @@ export function PromptLibraryPage({
                     <button
                       key={item.id}
                       type="button"
-                      onClick={() => setSelectedId(item.id)}
+                      onClick={() => {
+                        setIsDraftingNew(false);
+                        setSelectedId(item.id);
+                      }}
                       className={`flex w-full flex-col gap-2 px-3 py-3 text-left transition-colors hover:bg-muted/60 ${
                         selectedId === item.id ? "bg-muted" : ""
                       }`}
@@ -875,7 +884,10 @@ export function PromptLibraryPage({
                     <button
                       key={item.id}
                       type="button"
-                      onClick={() => setSelectedId(item.id)}
+                      onClick={() => {
+                        setIsDraftingNew(false);
+                        setSelectedId(item.id);
+                      }}
                       className={`flex w-full flex-col gap-2 px-3 py-3 text-left transition-colors hover:bg-muted/60 ${
                         selectedId === item.id ? "bg-muted" : ""
                       }`}
