@@ -1,6 +1,10 @@
 import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import process from "node:process";
 
+const repoRoot = path.resolve(import.meta.dirname, "..");
+const outputDir = path.join(repoRoot, "artifacts", "acceptance");
 const apiURL = trimEnv("ACCEPTANCE_API_URL") || trimEnv("NEXT_PUBLIC_API_URL") || "http://127.0.0.1:8080";
 const account = trimEnv("ACCEPTANCE_DEMO_ACCOUNT") || trimEnv("REAL_AGENT_E2E_ACCOUNT") || "goal-test-daemon";
 const password = trimEnv("ACCEPTANCE_DEMO_PASSWORD") || trimEnv("REAL_AGENT_E2E_PASSWORD") || "e2e-password";
@@ -11,6 +15,7 @@ const suffix = Date.now();
 
 const evidence = {
   schema: "multica.codex_squad_curl_e2e.v1",
+  generated_at: new Date().toISOString(),
   api_url: apiURL,
   account,
   workspace_slug: workspaceSlug,
@@ -39,9 +44,9 @@ if (!runtime?.id) fail(`未找到 2 分钟内在线的 ${provider} runtime`);
 evidence.runtime = { id: runtime.id, name: runtime.name, provider: runtime.provider, last_seen_at: runtime.last_seen_at };
 
 const agent = post("/api/agents", {
-  name: `curl Codex 验收 Agent ${suffix}`,
-  description: "由 scripts/codex-squad-curl-e2e.mjs 通过 curl 创建，用于验证真实端到端 Agent 执行。",
-  instructions: "你是 Multica 端到端验收 Agent。请用中文回复，必须包含：执行结论、trace/任务标识、验收证据、下一步。",
+  name: `curl Codex 验收智能体 ${suffix}`,
+  description: "由 scripts/codex-squad-curl-e2e.mjs 通过 curl 创建，用于验证真实端到端智能体执行。",
+  instructions: "你是 Multica 端到端验收智能体。请用中文回复，必须包含：执行结论、trace/任务标识、验收证据、下一步。",
   runtime_id: runtime.id,
   workspace_id: workspace.id,
   visibility: "private",
@@ -60,7 +65,7 @@ const squad = post("/api/squads", {
     profile_key: "curl-codex-squad-e2e",
     project: "multica",
     mode: "curl_e2e",
-    roles: [{ key: "captain", name: "队长", responsibility: "接收 issue 并用真实 Codex runtime 执行。" }],
+    roles: [{ key: "captain", name: "队长", responsibility: "接收任务并用真实 Codex runtime 执行。" }],
     steps: [
       { key: "receive", name: "接收任务", role_key: "captain" },
       { key: "execute", name: "真实执行", role_key: "captain" },
@@ -131,6 +136,7 @@ if (terminalTask.status === "completed") {
   evidence.repair_hint = "检查 daemon 运行环境是否能让 Codex app-server 复用有效 ChatGPT auth，或为 daemon 配置可用的 OpenAI API 认证后重跑本脚本。";
 }
 
+writeEvidence(evidence);
 console.log(JSON.stringify(evidence, null, 2));
 
 function trimEnv(name) {
@@ -176,8 +182,22 @@ async function poll(fn, timeoutMs, label) {
 
 function fail(message) {
   evidence.error = message;
+  evidence.result = "failed";
+  writeEvidence(evidence);
   console.error(JSON.stringify(evidence, null, 2));
   process.exit(1);
+}
+
+function writeEvidence(data) {
+  mkdirSync(outputDir, { recursive: true });
+  const stamp = new Date(data.generated_at || new Date().toISOString()).toISOString().replace(/[:.]/g, "-");
+  const pathByTime = path.join(outputDir, `codex-squad-curl-e2e-${stamp}.json`);
+  const latestPath = path.join(outputDir, "codex-squad-curl-e2e-latest.json");
+  data.evidence_path = pathByTime;
+  data.latest_evidence_path = latestPath;
+  const content = `${JSON.stringify(data, null, 2)}\n`;
+  writeFileSync(pathByTime, content);
+  writeFileSync(latestPath, content);
 }
 
 function shellQuote(value) {
