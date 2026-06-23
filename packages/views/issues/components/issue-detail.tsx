@@ -1954,7 +1954,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           {childIssues.length > 0 && (() => {
             const doneCount = childIssues.filter((c) => c.status === "done").length;
             return (
-              <div className="mt-10 group/sub-issues">
+              <div className="mt-10 group/sub-issues" data-testid="issue-sub-issues-section">
                 {/* Header */}
                 <div className="flex items-center gap-2 mb-2">
                   <button
@@ -2014,7 +2014,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
                 {/* List */}
                 {!subIssuesCollapsed && (
-                  <div className="overflow-hidden rounded-lg border bg-card/30 divide-y divide-border/60">
+                  <div className="overflow-hidden rounded-lg border bg-card/30 divide-y divide-border/60" data-testid="issue-sub-issues-list">
                     {childIssues.map((child) => (
                       <SubIssueRow key={child.id} child={child} />
                     ))}

@@ -115,7 +115,7 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
   if (activeTasks.length === 0 && pastTasks.length === 0 && traceEvents.length === 0 && sopRuns.length === 0) return null;
 
   return (
-    <div>
+    <div data-testid="issue-execution-log-section">
       <button
         type="button"
         className={`flex w-full items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors mb-2 hover:bg-accent/70 ${
@@ -196,7 +196,7 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
 function SOPRunSummary({ runs }: { runs: SquadSOPRun[] }) {
   const recent = runs.slice(0, 3);
   return (
-    <div className="rounded-md border border-border/70 bg-muted/25 px-2 py-1.5">
+    <div className="rounded-md border border-border/70 bg-muted/25 px-2 py-1.5" data-testid="issue-sop-run-summary">
       <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
         <span>小队 SOP 执行</span>
         <span className="font-mono tabular-nums">{runs.length} 次</span>
@@ -251,7 +251,7 @@ function TraceEventSummary({ events }: { events: TaskTraceEvent[] }) {
   );
 
   return (
-    <div className="rounded-md border border-border/70 bg-muted/25 px-2 py-1.5">
+    <div className="rounded-md border border-border/70 bg-muted/25 px-2 py-1.5" data-testid="issue-trace-event-summary">
       <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
         <span>观测事件</span>
         <span className="font-mono tabular-nums">
