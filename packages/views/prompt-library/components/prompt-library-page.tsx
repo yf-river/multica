@@ -251,7 +251,7 @@ export function PromptLibraryPage({
   const runs = runQuery.data?.items ?? [];
   const candidates = candidateQuery.data?.items ?? [];
   const summary = summaryQuery.data ?? null;
-  const selected = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
+  const selected = selectedId ? items.find((item) => item.id === selectedId) ?? null : isDraftingNew ? null : items[0] ?? null;
   const promptVersions = versionQuery.data?.items ?? [];
   const agentRuntimeReadiness = runtimeReadinessQuery.data ?? DEFAULT_AGENT_RUNTIME_READINESS;
 

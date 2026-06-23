@@ -764,6 +764,7 @@ test.describe("训练与评估工作台", () => {
     await expect(candidateRow).toContainText("已人工编辑");
     await candidateRow.getByRole("button", { name: "发布新版本" }).click();
     await expect(page.getByText(/已发布新提示词版本/)).toBeVisible({ timeout: 10000 });
+    await page.getByRole("link", { name: "提示词库", exact: true }).last().click();
     await expect(page.getByTestId("prompt-version-history")).toContainText("优化候选发布", { timeout: 10000 });
     await expect(page.getByTestId("prompt-version-history")).toContainText(generatedCandidate!.id);
 
