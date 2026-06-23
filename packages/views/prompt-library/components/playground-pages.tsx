@@ -1,9 +1,9 @@
-import { PromptLibraryPage } from "./prompt-library-page";
+import { AgentPlaygroundContainer, PromptPlaygroundContainer } from "./playground-containers";
 
 export function PromptPlaygroundPage() {
-  return <PromptLibraryPage activeView="prompt-playground" surface="prompt-playground" />;
+  return <PromptPlaygroundContainer />;
 }
 
 export function AgentPlaygroundPage() {
-  return <PromptLibraryPage activeView="agent-playground" showPromptEditor={false} surface="agent-playground" />;
+  return <AgentPlaygroundContainer />;
 }
