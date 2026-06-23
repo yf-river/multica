@@ -90,6 +90,8 @@ test.describe("Navigation", () => {
       }
       await expect(page.getByTestId("prompt-playground-workbench")).toHaveCount(item.showPromptPlayground ? 1 : 0);
       await expect(page.getByTestId("agent-playground-workbench")).toHaveCount(item.showAgentWorkbench ? 1 : 0);
+      await expect(page.getByTestId("prompt-playground-selector-summary")).toHaveCount(item.showPromptPlayground ? 1 : 0);
+      await expect(page.getByTestId("agent-playground-selector-summary")).toHaveCount(item.showAgentWorkbench ? 1 : 0);
       await expect(page.getByTestId("prompt-template-actions")).toHaveCount(item.path === "prompts" ? 1 : 0);
       await expect(page.getByRole("button", { name: "应用需求澄清模板" })).toHaveCount(item.path === "prompts" ? 1 : 0);
       await expect(page.getByRole("button", { name: "创建 user-center 需求澄清提示词" })).toHaveCount(0);
@@ -114,6 +116,8 @@ test.describe("Navigation", () => {
       }
       await expect(page.getByTestId("prompt-playground-workbench")).toHaveCount(item.showPromptPlayground ? 1 : 0);
       await expect(page.getByTestId("agent-playground-workbench")).toHaveCount(item.showAgentWorkbench ? 1 : 0);
+      await expect(page.getByTestId("prompt-playground-selector-summary")).toHaveCount(item.showPromptPlayground ? 1 : 0);
+      await expect(page.getByTestId("agent-playground-selector-summary")).toHaveCount(item.showAgentWorkbench ? 1 : 0);
     }
   });
 

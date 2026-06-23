@@ -172,6 +172,8 @@ test.describe("生产部署验收", () => {
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/prompt-playground$`));
     await expectTrainingRouteShell(page, TRAINING_ROUTES[2]!);
     await expect(page.getByTestId("prompt-playground-workbench")).toBeVisible({ timeout: 15000 });
+    await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("本地模板实验室");
+    await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("不创建任务");
     await expect(page.getByLabel("模板变量")).toBeVisible();
     await expect(page.getByTestId("prompt-playground-rendered-output")).toBeVisible();
     await expect(page.getByTestId("prompt-playground-template-lab")).toBeVisible();
@@ -192,6 +194,8 @@ test.describe("生产部署验收", () => {
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/agent-playground$`));
     await expectTrainingRouteShell(page, TRAINING_ROUTES[3]!);
     await expect(page.getByTestId("agent-playground-run-console")).toContainText("真实任务运行控制台", { timeout: 15000 });
+    await expect(page.getByTestId("agent-playground-selector-summary")).toContainText("真实任务入口");
+    await expect(page.getByTestId("agent-playground-selector-summary")).toContainText("链路追踪");
     await expect(page.getByTestId("agent-playground-task-payload")).toBeVisible();
     await expect(page.getByTestId("agent-playground-observability-contract")).toContainText("观测回写契约");
     await expect(page.getByText("真实执行准备度")).toBeVisible({ timeout: 15000 });

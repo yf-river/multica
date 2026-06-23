@@ -847,9 +847,13 @@ export function PromptLibraryPage({
           />
         </main>
       ) : activeTab === "提示词调试场" ? (
-        <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[320px_minmax(0,1fr)]" data-testid="prompt-playground-workbench">
-          <aside className="flex min-h-0 flex-col border-b md:border-b-0 md:border-r" data-testid="prompt-playground-prompt-list">
+        <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[280px_minmax(0,1fr)]" data-testid="prompt-playground-workbench">
+          <aside className="flex min-h-0 flex-col border-b bg-muted/10 md:border-b-0 md:border-r" data-testid="prompt-playground-prompt-list">
             <div className="space-y-3 border-b p-3">
+              <div className="rounded-md border bg-background px-3 py-2" data-testid="prompt-playground-selector-summary">
+                <div className="text-xs font-semibold">本地模板实验室</div>
+                <div className="mt-1 text-xs text-muted-foreground">只验证变量填充和最终提示词文本，不创建任务。</div>
+              </div>
               <div className="relative">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
@@ -918,9 +922,18 @@ export function PromptLibraryPage({
           </main>
         </div>
       ) : activeTab === "智能体调试场" ? (
-        <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[320px_minmax(0,1fr)]" data-testid="agent-playground-workbench">
+        <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[360px_minmax(0,1fr)]" data-testid="agent-playground-workbench">
           <aside className="flex min-h-0 flex-col border-b md:border-b-0 md:border-r" data-testid="agent-playground-prompt-list">
             <div className="space-y-3 border-b p-3">
+              <div className="rounded-md border bg-muted/20 px-3 py-2" data-testid="agent-playground-selector-summary">
+                <div className="flex items-center justify-between gap-2">
+                  <span className="text-xs font-semibold">真实任务入口</span>
+                  <Badge variant={agentRuntimeReadiness.status === "就绪" ? "secondary" : "outline"} className="shrink-0">
+                    {runtimeReadinessQuery.isLoading ? "检查中" : agentRuntimeReadiness.status}
+                  </Badge>
+                </div>
+                <div className="mt-1 text-xs text-muted-foreground">选择模板后创建可观测任务，回写消息、链路追踪、令牌用量和耗时。</div>
+              </div>
               <div className="relative">
                 <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                 <Input
@@ -1760,7 +1773,7 @@ function PromptPlaygroundWorkbench({
             <div className="mt-2 grid gap-1 text-xs text-muted-foreground">
               <div>输出只来自模板变量替换，不调用 Codex、Claude 或其它模型。</div>
               <div>适合检查变量缺失、中文口径、提示词结构和期望字段。</div>
-              <div>需要真实任务、trace、token 和成本证据时，进入「智能体调试场」。</div>
+              <div>需要真实任务、链路追踪、令牌用量和成本证据时，进入「智能体调试场」。</div>
             </div>
           </div>
 
@@ -1891,7 +1904,7 @@ function AgentPlaygroundWorkbench({
           {[
             { label: "检查运行时", detail: runtimeLoading ? "检查中" : runtimeReadiness.status, icon: Activity },
             { label: "创建真实任务", detail: selected ? `模板 v${selected.version}` : "待选择提示词", icon: TerminalSquare },
-            { label: "回写观测证据", detail: "任务、trace、token、成本", icon: ClipboardCheck },
+            { label: "回写观测证据", detail: "任务、链路追踪、令牌用量、成本", icon: ClipboardCheck },
           ].map((item, index) => {
             const Icon = item.icon;
             return (
@@ -1963,7 +1976,7 @@ function AgentPlaygroundWorkbench({
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             {!selected && <span>先选择提示词后才能保存或执行。</span>}
             {selected && runtimeReadiness.status !== "就绪" && !runtimeLoading && <span>{runtimeReadiness.fix}</span>}
-            {selected && runtimeReadiness.status === "就绪" && <span>点击创建后会写入真实任务队列，并在运行历史中回读 task、trace 与用量。</span>}
+            {selected && runtimeReadiness.status === "就绪" && <span>点击创建后会写入真实任务队列，并在运行历史中回读任务标识、链路追踪和用量。</span>}
           </div>
         </section>
 
@@ -1986,8 +1999,8 @@ function AgentPlaygroundWorkbench({
               <Badge variant="outline">真实任务</Badge>
             </div>
             <div className="mt-2 grid gap-1 text-xs text-muted-foreground">
-              <div>入队后生成 task id，并绑定触发来源「智能体调试场」。</div>
-              <div>runtime 完成后同步 messages、trace、token、耗时和失败原因。</div>
+              <div>入队后生成任务标识，并绑定触发来源「智能体调试场」。</div>
+              <div>运行时完成后同步消息、链路追踪、令牌用量、耗时和失败原因。</div>
               <div>运行历史和运行看板必须能回读同一条证据。</div>
             </div>
           </div>
