@@ -52,7 +52,7 @@ test.describe("生产部署验收", () => {
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/runs$`), { timeout: 30000 });
 
     await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队运行看板", { timeout: 30000 });
-    await expect(page.getByTestId("training-demo-proof-真实智能体 证据")).toContainText("已有任务/trace 运行记录");
+    await expect(page.getByTestId("training-demo-proof-真实智能体证据")).toContainText("已有任务/trace 运行记录");
     await expect(page.getByTestId("training-demo-proof-数据集行")).toContainText(/[1-9]/);
     await expect(page.getByTestId("training-demo-proof-测试套件用例")).toContainText(/[1-9]/);
     await expect(page.getByTestId("training-demo-proof-实验维度事实")).toContainText(/[1-9]/);

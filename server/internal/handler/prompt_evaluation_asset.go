@@ -2282,7 +2282,7 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 	}
 	if runtimeEvidence != nil {
 		sourceSummary["真实Agent运行证据"] = runtimeEvidence
-		sourceSummary["生成说明"] = "基于结构化运行记录、失败用例和真实 Agent task 证据生成优化候选；候选不会自动替换生产提示词。"
+		sourceSummary["生成说明"] = "基于结构化运行记录、失败用例和真实智能体 task 证据生成优化候选；候选不会自动替换生产提示词。"
 	}
 	candidateContent, rationale := buildPromptEvaluationCandidateContent(prompt, run, sourceSummary)
 	item, err := h.Queries.CreatePromptEvaluationOptimizationCandidate(r.Context(), db.CreatePromptEvaluationOptimizationCandidateParams{
@@ -2356,7 +2356,7 @@ func (h *Handler) RunPromptEvaluationOptimizationAgent(w http.ResponseWriter, r 
 	}
 	if runtimeEvidence != nil {
 		sourceSummary["真实Agent运行证据"] = runtimeEvidence
-		sourceSummary["生成说明"] = "基于结构化运行记录、失败用例和真实 Agent task 证据创建优化 Agent 任务；输出不会自动替换生产提示词。"
+		sourceSummary["生成说明"] = "基于结构化运行记录、失败用例和真实智能体 task 证据创建智能体优化任务；输出不会自动替换生产提示词。"
 	}
 	member, ok := h.workspaceMember(w, r, uuidToString(workspaceUUID))
 	if !ok {
@@ -2383,7 +2383,7 @@ func (h *Handler) RunPromptEvaluationOptimizationAgent(w http.ResponseWriter, r 
 		WorkspaceID: workspaceUUID,
 		PromptID:    sourceRun.PromptID,
 		Name:        buildPromptEvaluationOptimizationAgentAssetName(prompt, sourceRun),
-		Description: "由失败运行创建的真实 Agent 优化任务，输出用于人工确认后的提示词候选。",
+		Description: "由失败运行创建的真实智能体优化任务，输出用于人工确认后的提示词候选。",
 		AssetType:   promptEvaluationAssetOptimize,
 		Payload:     payloadBytes,
 		Status:      "启用",
@@ -2451,7 +2451,7 @@ func (h *Handler) RunPromptEvaluationOptimizationAgent(w http.ResponseWriter, r 
 		"trace/task id":   uuidToString(task.ID),
 		"chat_session_id": uuidToString(session.ID),
 		"失败原因":            "无",
-		"评估结论":            "等待 Agent 生成优化建议，人工确认后才能发布新提示词版本",
+		"评估结论":            "等待智能体生成优化建议，人工确认后才能发布新提示词版本",
 	}
 	payload["最近Agent运行"] = runIndex
 	payload["Agent运行记录"] = appendPromptEvaluationAgentRunHistory(payload["Agent运行记录"], runIndex)
@@ -2474,7 +2474,7 @@ func (h *Handler) RunPromptEvaluationOptimizationAgent(w http.ResponseWriter, r 
 		RuntimeID:     uuidToString(runtimeRow.ID),
 		Model:         promptEvaluationAgentModel(),
 		Status:        "已入队",
-		Message:       "真实 Agent 优化任务已入队；完成后可在运行历史查看证据，再生成人工确认候选。",
+		Message:       "真实智能体优化任务已入队；完成后可在运行历史查看证据，再生成人工确认候选。",
 	})
 }
 
@@ -2567,7 +2567,8 @@ func (h *Handler) maybeCreatePromptEvaluationCandidateFromOptimizationAgentRun(c
 		return nil, err
 	}
 	payload := decodePayloadObject(asset.Payload)
-	if stringFromAny(payload["任务类型"]) != "Agent 优化运行" {
+	taskType := stringFromAny(payload["任务类型"])
+	if taskType != "智能体优化运行" && taskType != "Agent 优化运行" {
 		return nil, nil
 	}
 	sourceRunID := strings.TrimSpace(stringFromAny(payload["来源运行"]))
@@ -2630,7 +2631,7 @@ func (h *Handler) maybeCreatePromptEvaluationCandidateFromOptimizationAgentRun(c
 	}
 	sourceSummary["来源Agent优化运行"] = uuidToString(agentRun.ID)
 	sourceSummary["来源Agent优化资产"] = uuidToString(agentRun.AssetID)
-	sourceSummary["生成说明"] = "由 Agent 优化运行输出自动生成优化候选；候选不会自动替换生产提示词，必须人工确认后发布。"
+	sourceSummary["生成说明"] = "由智能体优化运行输出自动生成优化候选；候选不会自动替换生产提示词，必须人工确认后发布。"
 	candidateContent, rationale := buildPromptEvaluationAgentOptimizationCandidateContent(prompt, sourceRun, agentRun, sourceSummary)
 	item, err := h.Queries.CreatePromptEvaluationOptimizationCandidate(ctx, db.CreatePromptEvaluationOptimizationCandidateParams{
 		WorkspaceID:          agentRun.WorkspaceID,
@@ -3318,7 +3319,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		"trace/task id":   uuidToString(task.ID),
 		"chat_session_id": uuidToString(session.ID),
 		"失败原因":            "无",
-		"评估结论":            "等待 Agent 执行完成",
+		"评估结论":            "等待智能体执行完成",
 	}
 	payload["最近Agent运行"] = runIndex
 	payload["Agent运行记录"] = appendPromptEvaluationAgentRunHistory(payload["Agent运行记录"], runIndex)
@@ -3346,7 +3347,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		RuntimeID:     uuidToString(runtimeRow.ID),
 		Model:         promptEvaluationAgentModel(),
 		Status:        "已入队",
-		Message:       "真实 Agent 任务已入队；请通过 task messages、usage 和运行历史追踪结果。",
+		Message:       "真实智能体任务已入队；请通过 task messages、usage 和运行历史追踪结果。",
 	})
 }
 
@@ -3455,7 +3456,7 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 		OutputTokens:      0,
 		EstimatedCost:     0,
 		FailureReason:     "无",
-		Conclusion:        "等待 Agent 执行完成",
+		Conclusion:        "等待智能体执行完成",
 		Metrics: mustJSONBytes(map[string]any{
 			"总用例数":          len(cases),
 			"通过数":           0,
@@ -3465,7 +3466,7 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 			"模型":            promptEvaluationAgentModel(),
 			"runtime":       runtime.Provider,
 			"trace/task id": uuidToString(taskID),
-			"评估结论":          "等待 Agent 执行完成",
+			"评估结论":          "等待智能体执行完成",
 		}),
 		Evidence: mustJSONBytes(map[string]any{
 			"task_id":         uuidToString(taskID),
@@ -3495,7 +3496,7 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 			Input:         mustJSONBytes(map[string]any{"变量": firstValue(c, "variables", "变量", "输入变量")}),
 			Expected:      mustJSONBytes(map[string]any{"期望包含": firstValue(c, "expected_contains", "期望包含", "期望")}),
 			Output:        mustJSONBytes(map[string]any{}),
-			FailureReason: "等待 Agent 执行完成",
+			FailureReason: "等待智能体执行完成",
 			Evidence:      mustJSONBytes(map[string]any{"run_id": uuidToString(run.ID), "task_id": uuidToString(taskID)}),
 		}); err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to create queued prompt evaluation trial")
@@ -3639,7 +3640,7 @@ func buildPromptEvaluationCandidateContent(prompt db.PromptLibraryItem, run db.P
 	failedCases, _ := sourceSummary["失败用例"].([]map[string]any)
 	rationale := "基于失败用例补充中文输出约束、失败处理要求、证据字段和验收口径；原提示词不被自动替换，必须人工确认后发布。"
 	if _, ok := sourceSummary["真实Agent运行证据"].(map[string]any); ok {
-		rationale = "基于失败用例和真实 Agent task 证据补充中文输出约束、失败处理要求、证据字段和验收口径；原提示词不被自动替换，必须人工确认后发布。"
+		rationale = "基于失败用例和真实智能体 task 证据补充中文输出约束、失败处理要求、证据字段和验收口径；原提示词不被自动替换，必须人工确认后发布。"
 	}
 	lines := []string{
 		strings.TrimSpace(prompt.Content),
@@ -3671,7 +3672,7 @@ func buildPromptEvaluationCandidateContent(prompt db.PromptLibraryItem, run db.P
 		}
 	}
 	if runtimeEvidence, ok := sourceSummary["真实Agent运行证据"].(map[string]any); ok {
-		lines = append(lines, "", "真实Agent输出摘要：")
+		lines = append(lines, "", "真实智能体输出摘要：")
 		if messages, ok := runtimeEvidence["task消息"].([]map[string]any); ok && len(messages) > 0 {
 			for _, message := range messages {
 				content := strings.TrimSpace(stringFromAny(message["content"]))
@@ -3728,17 +3729,17 @@ func buildPromptEvaluationAgentOptimizationCandidateContent(prompt db.PromptLibr
 		candidateContent = strings.Join([]string{
 			strings.TrimSpace(prompt.Content),
 			"",
-			"【Agent 优化候选】",
+			"【智能体优化候选】",
 			"来源失败运行：" + uuidToString(sourceRun.ID),
-			"来源 Agent 优化运行：" + uuidToString(agentRun.ID),
+			"来源智能体优化运行：" + uuidToString(agentRun.ID),
 			"失败原因：" + failureReason,
 			"",
-			"Agent 优化输出摘要：",
-			truncatePromptEvaluationEvidence(firstNonEmptyPromptEvaluationString(output.Raw, output.Rationale, "Agent 未返回结构化候选正文，已基于运行证据生成待确认候选。"), 1200),
+			"智能体优化输出摘要：",
+			truncatePromptEvaluationEvidence(firstNonEmptyPromptEvaluationString(output.Raw, output.Rationale, "智能体未返回结构化候选正文，已基于运行证据生成待确认候选。"), 1200),
 			"",
 			"请在后续执行中严格遵守：",
 			"1. 全部输出使用中文，明确需求边界、影响范围和验收条件。",
-			"2. 输出必须包含可观测证据：耗时、执行 Agent、模型、runtime、trace/task id、失败原因和评估结论。",
+			"2. 输出必须包含可观测证据：耗时、执行智能体、模型、runtime、trace/task id、失败原因和评估结论。",
 			"3. 对失败场景给出缺失字段、失败用例、修复建议和下一步人工确认点。",
 			"4. 不要自动替换生产提示词；发布前必须由验收者确认。",
 		}, "\n")
@@ -3746,9 +3747,9 @@ func buildPromptEvaluationAgentOptimizationCandidateContent(prompt db.PromptLibr
 	lines := []string{
 		candidateContent,
 		"",
-		"【Agent 优化运行证据】",
+		"【智能体优化运行证据】",
 		"来源失败运行：" + uuidToString(sourceRun.ID),
-		"来源 Agent 优化运行：" + uuidToString(agentRun.ID),
+		"来源智能体优化运行：" + uuidToString(agentRun.ID),
 		"失败原因：" + failureReason,
 	}
 	if output.Rationale != "" {
@@ -3764,9 +3765,9 @@ func buildPromptEvaluationAgentOptimizationCandidateContent(prompt db.PromptLibr
 		}
 	}
 	lines = append(lines, "人工发布要求：发布前必须由验收者确认该候选不会降低原有通过用例质量。")
-	rationale := "由真实 Agent 优化运行输出自动生成候选；原提示词不被自动替换，必须人工确认后发布。"
+	rationale := "由真实智能体优化运行输出自动生成候选；原提示词不被自动替换，必须人工确认后发布。"
 	if output.Rationale != "" {
-		rationale = "由真实 Agent 优化运行输出自动生成候选：" + truncatePromptEvaluationEvidence(output.Rationale, 240)
+		rationale = "由真实智能体优化运行输出自动生成候选：" + truncatePromptEvaluationEvidence(output.Rationale, 240)
 	}
 	return strings.Join(lines, "\n"), rationale
 }
@@ -3883,7 +3884,7 @@ func buildPromptEvaluationOptimizationAgentPayload(prompt db.PromptLibraryItem, 
 	return map[string]any{
 		"schema_version": 1,
 		"语义版本":           "multica.training_evaluation.optimization_agent.v1",
-		"任务类型":           "Agent 优化运行",
+		"任务类型":           "智能体优化运行",
 		"来源运行":           uuidToString(run.ID),
 		"来源资产":           uuidToString(run.AssetID),
 		"来源提示词":          uuidToString(prompt.ID),
@@ -3892,7 +3893,7 @@ func buildPromptEvaluationOptimizationAgentPayload(prompt db.PromptLibraryItem, 
 		"失败摘要":           sourceSummary,
 		"cases":          cases,
 		"优化目标": []string{
-			"基于失败用例和真实 Agent task 证据生成候选提示词正文。",
+			"基于失败用例和真实智能体 task 证据生成候选提示词正文。",
 			"候选必须继续保持中文语义、可观测字段、验收条件和失败处理要求。",
 			"不要自动发布；输出必须便于验收者人工确认后再发布。",
 		},
@@ -3907,7 +3908,7 @@ func buildPromptEvaluationOptimizationAgentPayload(prompt db.PromptLibraryItem, 
 }
 
 func buildPromptEvaluationOptimizationAgentAssetName(prompt db.PromptLibraryItem, run db.PromptEvaluationRun) string {
-	return prompt.Name + " Agent 优化运行 " + run.CreatedAt.Time.Format("20060102") + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
+	return prompt.Name + " 智能体优化运行 " + run.CreatedAt.Time.Format("20060102") + "-" + strconv.FormatInt(time.Now().UnixNano(), 10)
 }
 
 func buildPromptEvaluationCandidateName(prompt db.PromptLibraryItem, run db.PromptEvaluationRun) string {
@@ -4099,10 +4100,10 @@ func (h *Handler) promptEvaluationRuntimeReadiness(ctx context.Context, workspac
 	ageSeconds := promptEvaluationRuntimeAgeSeconds(*best, checkedAt)
 	respRuntime := runtimeToResponse(*best)
 	if best.Status != "online" {
-		return promptEvaluationRuntimeReadinessResponse("离线", providerName+" 离线", "已注册 "+providerName+" runtime「"+best.Name+"」，但当前状态是离线，不能创建真实 Agent 任务。", "启动 multica daemon，并确认 "+provider+" 可执行文件在 PATH 中，或设置对应 MULTICA_<PROVIDER>_PATH 后重启 daemon。", &respRuntime, checkedAt), nil
+		return promptEvaluationRuntimeReadinessResponse("离线", providerName+" 离线", "已注册 "+providerName+" runtime「"+best.Name+"」，但当前状态是离线，不能创建真实智能体任务。", "启动 multica daemon，并确认 "+provider+" 可执行文件在 PATH 中，或设置对应 MULTICA_<PROVIDER>_PATH 后重启 daemon。", &respRuntime, checkedAt), nil
 	}
 	if !best.LastSeenAt.Valid || checkedAt.Sub(best.LastSeenAt.Time) > promptEvaluationRuntimeFreshTTL {
-		return promptEvaluationRuntimeReadinessResponse("过期", providerName+" 心跳过期", providerName+" runtime「"+best.Name+"」状态仍是 online，但最近心跳已经超过 2 分钟，不能证明当前可执行。", "检查 multica daemon 是否仍在运行，确认网络和心跳正常后等待 last_seen_at 刷新，再创建真实 Agent 任务。", &respRuntime, checkedAt), nil
+	return promptEvaluationRuntimeReadinessResponse("过期", providerName+" 心跳过期", providerName+" runtime「"+best.Name+"」状态仍是 online，但最近心跳已经超过 2 分钟，不能证明当前可执行。", "检查 multica daemon 是否仍在运行，确认网络和心跳正常后等待 last_seen_at 刷新，再创建真实智能体任务。", &respRuntime, checkedAt), nil
 	}
 	recentCapacityFailure, err := h.Queries.GetRecentRuntimeCapacityFailure(ctx, db.GetRecentRuntimeCapacityFailureParams{
 		WorkspaceID: workspaceID,
@@ -4122,7 +4123,7 @@ func (h *Handler) promptEvaluationRuntimeReadiness(ctx context.Context, workspac
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return PromptEvaluationRuntimeReadinessResponse{}, err
 	}
-	resp := promptEvaluationRuntimeReadinessResponse("就绪", providerName+" 在线", "已发现在线且心跳新鲜的 "+providerName+" runtime「"+best.Name+"」，可以作为 "+promptEvaluationAgentModel()+" 的真实执行目标。", "无需修复；下一步应创建真实 Agent 任务并采集 trace、token、成本和输出。", &respRuntime, checkedAt)
+	resp := promptEvaluationRuntimeReadinessResponse("就绪", providerName+" 在线", "已发现在线且心跳新鲜的 "+providerName+" runtime「"+best.Name+"」，可以作为 "+promptEvaluationAgentModel()+" 的真实执行目标。", "无需修复；下一步应创建真实智能体任务并采集 trace、token、成本和输出。", &respRuntime, checkedAt)
 	resp.LastSeenAgeSeconds = ageSeconds
 	return resp, nil
 }
@@ -4335,7 +4336,7 @@ func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.Pr
 		AgentName:         "本地提示词渲染器",
 		Model:             "本地模板渲染检查",
 		Runtime:           "server",
-		TraceTaskID:       "未创建 Agent 任务",
+		TraceTaskID:       "未创建智能体任务",
 		FailureReason:     failureReason,
 		Conclusion:        conclusion,
 		MissingVarCount:   missingCount,

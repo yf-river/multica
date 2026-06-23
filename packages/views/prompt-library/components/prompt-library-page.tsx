@@ -472,7 +472,7 @@ export function PromptLibraryPage({
       invalidateCases();
       invalidateRuns();
       invalidateSummary();
-      toast.success(`真实智能体 优化任务已入队：${result.task_id}`);
+      toast.success(`真实智能体优化任务已入队：${result.task_id}`);
       setActiveTab("运行历史");
       navigation.push(trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["运行历史"]));
     },
@@ -1250,7 +1250,7 @@ function DemoDashboardPanel({
     ["结构化画像", `${formatNumber(trainingAssets["画像用例数"] ?? cases.length)} 用例 · ${formatNumber(trainingAssets["画像变量数"])} 变量 · ${formatNumber(trainingAssets["画像断言数"])} 断言 · ${formatNumber(trainingAssets["评估维度数"])} 维度`],
     ["优化候选", `${pendingCandidates} 待确认 · ${publishedCandidates} 已发布 · ${rejectedCandidates} 已拒绝`],
     ["服务端证据快照", `${formatNumber(trainingAssets["服务端证据快照"] ?? trainingMetrics["服务端证据快照"])} 条 · 验收归档 ${formatNumber(trainingAssets["验收归档快照"] ?? trainingMetrics["验收归档快照"])}`],
-    ["真实智能体 证据", hasAgentEvidence ? "已有任务/trace 运行记录" : "暂无真实智能体 运行记录"],
+    ["真实智能体证据", hasAgentEvidence ? "已有任务/trace 运行记录" : "暂无真实智能体运行记录"],
     ["最近运行", latestRun ? summarizeLatestRunForDemo(latestRun) : "暂无运行"],
   ];
 
@@ -1918,7 +1918,7 @@ function WorkbenchPanel({
                         disabled={runningOptimizationAgentRunId === run.id || run.status === "已入队" || run.status === "运行中"}
                       >
                         {runningOptimizationAgentRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                        Agent 优化任务
+                        智能体优化任务
                       </Button>
                       <Button
                         size="sm"
@@ -3020,7 +3020,7 @@ function summarizeAssetPayload(asset: PromptEvaluationAsset, caseSummary?: CaseS
     if (caseSummary.payload > 0) sourceParts.push(`资产载荷 ${caseSummary.payload}`);
     return `结构化用例 ${caseSummary.total} 个${sourceParts.length > 0 ? `（${sourceParts.join("，")}；运行优先使用）` : ""}`;
   }
-  if (payload["最近Agent运行"]) return "包含真实智能体 运行";
+  if (payload["最近Agent运行"]) return "包含真实智能体运行";
   if (payload["调试包"]) return "包含 智能体调试包";
   if (payload["运行结果"]) return "包含运行结果";
   if (asset.asset_type === "实验") return `实验维度事实 ${asset.experiment_dimension_count || (Array.isArray(payload["对比维度"]) ? payload["对比维度"].length : 0)} 个`;

@@ -674,13 +674,13 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 		t.Skip("handler test fixture not initialized")
 	}
 	cleanupPromptEvaluationAgentRunTest(t)
-	created, resp, runtimeID := createPromptEvaluationAgentRunFixture(t, "真实 Agent 运行实验", "登录失败")
+	created, resp, runtimeID := createPromptEvaluationAgentRunFixture(t, "真实智能体运行实验", "登录失败")
 	if resp.TaskID == "" || resp.ChatSessionID == "" || resp.AgentID == "" || resp.RuntimeID != runtimeID || resp.Model != "gpt-5.3-codex-spark" {
 		t.Fatalf("agent run response = %+v, runtimeID=%s", resp, runtimeID)
 	}
 	payload := resp.Asset.Payload.(map[string]any)
 	recent := payload["最近Agent运行"].(map[string]any)
-	if recent["trace/task id"] != resp.TaskID || recent["状态"] != "已入队" || recent["评估结论"] != "等待 Agent 执行完成" {
+	if recent["trace/task id"] != resp.TaskID || recent["状态"] != "已入队" || recent["评估结论"] != "等待智能体执行完成" {
 		t.Fatalf("recent agent run = %#v", recent)
 	}
 	if resp.Run.ID == "" || resp.Run.Status != "已入队" || resp.Run.RunKind != "Agent执行" || resp.Run.TaskID == nil || *resp.Run.TaskID != resp.TaskID {
@@ -1067,7 +1067,7 @@ func TestRunPromptEvaluationAssetAgentCompletedWithoutStructuredVerdictNeedsRevi
 		t.Skip("handler test fixture not initialized")
 	}
 	cleanupPromptEvaluationAgentRunTest(t)
-	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实 Agent 人工复核实验", "缺少结构化评估")
+	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体人工复核实验", "缺少结构化评估")
 
 	if _, err := testPool.Exec(context.Background(), `
 		UPDATE agent_task_queue
@@ -1119,7 +1119,7 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsFailedTask(t *testing.T) {
 		t.Skip("handler test fixture not initialized")
 	}
 	cleanupPromptEvaluationAgentRunTest(t)
-	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实 Agent 失败实验", "部署失败")
+	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体失败实验", "部署失败")
 
 	if _, err := testPool.Exec(context.Background(), `
 		UPDATE agent_task_queue
@@ -1138,7 +1138,7 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsFailedTask(t *testing.T) {
 
 	failW := httptest.NewRecorder()
 	failReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/fail", map[string]any{
-		"error":          "Agent 执行超时",
+		"error":          "智能体执行超时",
 		"failure_reason": "命令超时",
 		"session_id":     "prompt-eval-failed-session",
 		"work_dir":       "/tmp/prompt-eval",
@@ -1157,10 +1157,10 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsFailedTask(t *testing.T) {
 	if err := json.Unmarshal(evidenceW.Body.Bytes(), &evidence); err != nil {
 		t.Fatalf("decode evidence response: %v", err)
 	}
-	if evidence.Run.Status != "失败" || evidence.Run.PassedCases != 0 || evidence.Run.FailedCases != 1 || evidence.Run.FailureReason != "Agent 执行超时" {
+	if evidence.Run.Status != "失败" || evidence.Run.PassedCases != 0 || evidence.Run.FailedCases != 1 || evidence.Run.FailureReason != "智能体执行超时" {
 		t.Fatalf("auto-synced failed run = %+v", evidence.Run)
 	}
-	if len(evidence.Trials) != 1 || evidence.Trials[0].Status != "失败" || evidence.Trials[0].FailureReason != "Agent 执行超时" {
+	if len(evidence.Trials) != 1 || evidence.Trials[0].Status != "失败" || evidence.Trials[0].FailureReason != "智能体执行超时" {
 		t.Fatalf("auto-synced failed trial = %+v", evidence.Trials)
 	}
 }
@@ -1242,7 +1242,7 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 		t.Skip("handler test fixture not initialized")
 	}
 	cleanupPromptEvaluationAgentRunTest(t)
-	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实 Agent 证据优化实验", "缺少验收条件")
+	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体证据优化实验", "缺少验收条件")
 	markPromptEvaluationTaskRunning(t, resp.TaskID)
 
 	if _, err := testPool.Exec(context.Background(), `
@@ -1305,7 +1305,7 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 	if !containsAll(candidate.CandidateContent, []string{"真实Agent输出摘要", "Agent 输出：缺少验收条件", "训练评估失败证据", "预估成本"}) {
 		t.Fatalf("candidate content missing agent evidence: %s", candidate.CandidateContent)
 	}
-	if !strings.Contains(candidate.Rationale, "真实 Agent task 证据") {
+	if !strings.Contains(candidate.Rationale, "真实智能体 task 证据") {
 		t.Fatalf("candidate rationale missing agent evidence: %s", candidate.Rationale)
 	}
 	source := candidate.SourceFailureSummary.(map[string]any)
@@ -1323,7 +1323,7 @@ func TestRunPromptEvaluationOptimizationAgentQueuesRealTask(t *testing.T) {
 		t.Skip("handler test fixture not initialized")
 	}
 	cleanupPromptEvaluationAgentRunTest(t)
-	_, sourceResp, _ := createPromptEvaluationAgentRunFixture(t, "真实 Agent 优化任务来源实验", "输出缺少验收条件")
+	_, sourceResp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体优化任务来源实验", "输出缺少验收条件")
 	markPromptEvaluationTaskRunning(t, sourceResp.TaskID)
 
 	failW := httptest.NewRecorder()
@@ -1354,7 +1354,7 @@ func TestRunPromptEvaluationOptimizationAgentQueuesRealTask(t *testing.T) {
 		t.Fatalf("optimization asset = %+v source=%+v", optResp.Asset, sourceResp.Run)
 	}
 	payload := optResp.Asset.Payload.(map[string]any)
-	if payload["任务类型"] != "Agent 优化运行" || payload["来源运行"] != sourceResp.Run.ID {
+	if payload["任务类型"] != "智能体优化运行" || payload["来源运行"] != sourceResp.Run.ID {
 		t.Fatalf("optimization payload = %#v", payload)
 	}
 	if !containsAll(stringFromAny(payload["语义版本"]), []string{"optimization_agent"}) {
@@ -1378,7 +1378,7 @@ func TestRunPromptEvaluationOptimizationAgentQueuesRealTask(t *testing.T) {
 	`, optResp.TaskID); err != nil {
 		t.Fatalf("insert optimization task usage: %v", err)
 	}
-	optimizationOutput := `Agent 优化输出：
+	optimizationOutput := `智能体优化输出：
 ` + "```json" + `
 {
   "用例结果":[{"case_index":0,"status":"通过","output":"已生成候选提示词正文","failure_reason":"无","evidence":{"命中":["优化候选","验收条件","trace/task id"]}}],
@@ -1406,7 +1406,7 @@ func TestRunPromptEvaluationOptimizationAgentQueuesRealTask(t *testing.T) {
 		ChatSessionID: parseUUID(optResp.ChatSessionID),
 		Source:        "prompt_evaluation",
 		EventType:     "llm.usage_reported",
-		EventName:     "Agent 优化候选已生成",
+		EventName:     "智能体优化候选已生成",
 		Status:        "completed",
 		Attempt:       1,
 		Provider:      "codex",
@@ -1415,7 +1415,7 @@ func TestRunPromptEvaluationOptimizationAgentQueuesRealTask(t *testing.T) {
 		OutputTokens:  13,
 		FailureReason: "无",
 		ErrorType:     "",
-		Metadata:      []byte(`{"阶段":"Agent 优化运行"}`),
+		Metadata:      []byte(`{"阶段":"智能体优化运行"}`),
 	}); err != nil {
 		t.Fatalf("insert optimization task trace event: %v", err)
 	}
@@ -1480,7 +1480,7 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsCancelledTask(t *testing.T) {
 		t.Skip("handler test fixture not initialized")
 	}
 	cleanupPromptEvaluationAgentRunTest(t)
-	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实 Agent 取消实验", "取消任务")
+	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体取消实验", "取消任务")
 
 	if _, err := testHandler.TaskService.CancelTask(context.Background(), parseUUID(resp.TaskID)); err != nil {
 		t.Fatalf("cancel task: %v", err)
@@ -1495,7 +1495,7 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsCancelledTask(t *testing.T) {
 	if err := json.Unmarshal(evidenceW.Body.Bytes(), &evidence); err != nil {
 		t.Fatalf("decode evidence response: %v", err)
 	}
-	if evidence.Run.Status != "已取消" || evidence.Run.Conclusion != "Agent 执行已取消" || evidence.Run.FailureReason != "任务被取消" {
+	if evidence.Run.Status != "已取消" || evidence.Run.Conclusion != "智能体执行已取消" || evidence.Run.FailureReason != "任务被取消" {
 		t.Fatalf("auto-synced cancelled run = %+v", evidence.Run)
 	}
 	if len(evidence.Trials) != 1 || evidence.Trials[0].Status != "已跳过" || evidence.Trials[0].FailureReason != "任务被取消" {
@@ -1508,7 +1508,7 @@ func TestRunPromptEvaluationAssetAgentBatchFailureAutoSyncsTask(t *testing.T) {
 		t.Skip("handler test fixture not initialized")
 	}
 	cleanupPromptEvaluationAgentRunTest(t)
-	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实 Agent 批处理失败实验", "批处理失败")
+	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体批处理失败实验", "批处理失败")
 	markPromptEvaluationTaskRunning(t, resp.TaskID)
 
 	failed, err := testHandler.Queries.FailAgentTask(context.Background(), db.FailAgentTaskParams{
@@ -1543,7 +1543,7 @@ func TestRunPromptEvaluationAssetAgentRetryReassignsRunTask(t *testing.T) {
 		t.Skip("handler test fixture not initialized")
 	}
 	cleanupPromptEvaluationAgentRunTest(t)
-	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实 Agent 重试实验", "运行时离线")
+	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体重试实验", "运行时离线")
 	markPromptEvaluationTaskRunning(t, resp.TaskID)
 
 	failed, err := testHandler.Queries.FailAgentTask(context.Background(), db.FailAgentTaskParams{

@@ -286,6 +286,7 @@ test.describe("训练与评估工作台", () => {
     await page.getByRole("link", { name: "优化运行", exact: true }).last().click();
     const optimizationRow = page.getByTestId(`prompt-evaluation-asset-${optimizationRun!.id}`);
     await expect(optimizationRow.getByText("结构化评测用例", { exact: true })).toBeVisible({ timeout: 10000 });
+    await expect(optimizationRow).toContainText("优化运行", { timeout: 10000 });
     await optimizationRow.getByPlaceholder("手工用例名称").fill("手工优化回归用例");
     await optimizationRow.getByPlaceholder("变量：issue_title=登录失败").fill("issue_title=登录失败\nproject_context=user-center");
     await optimizationRow.getByPlaceholder("期望包含：验收条件, trace/任务标识").fill("优化候选, 失败原因, 人工确认");
@@ -342,7 +343,7 @@ test.describe("训练与评估工作台", () => {
         failed_cases: 0,
         task_id: expect.any(String),
         chat_session_id: expect.any(String),
-        conclusion: "等待 智能体执行完成",
+        conclusion: "等待智能体执行完成",
       });
     const queuedAgentRun = await findQueuedAgentRun();
     expect(queuedAgentRun).toBeTruthy();
@@ -361,7 +362,7 @@ test.describe("训练与评估工作台", () => {
       expect.objectContaining({
         case_name: "智能体调试场用例",
         status: "待执行",
-        failure_reason: "等待 智能体执行完成",
+        failure_reason: "等待智能体执行完成",
       }),
     ]);
     expect(agentEvidence.上下文).toMatchObject({
@@ -432,7 +433,7 @@ test.describe("训练与评估工作台", () => {
     await expect(demoDashboard).toContainText("训练评估闭环");
     await expect(demoDashboard).toContainText("SOP 与任务观测");
     await expect(demoDashboard.getByTestId("training-demo-metric-智能体运行数")).toContainText(/[1-9]/);
-    await expect(demoDashboard.getByTestId("training-demo-proof-真实智能体 证据")).toContainText("已有任务/trace 运行记录");
+    await expect(demoDashboard.getByTestId("training-demo-proof-真实智能体证据")).toContainText("已有任务/trace 运行记录");
     await expect(demoDashboard.getByText("Codex 运行时可创建真实智能体任务")).toBeVisible();
     await expect(demoDashboard).toContainText("最近7天");
     await demoDashboard.getByRole("button", { name: "最近24小时" }).click();
@@ -531,7 +532,7 @@ test.describe("训练与评估工作台", () => {
     await expect(agentRunCard.getByText("缓存读 2 · 缓存写 3")).toBeVisible();
     await expect(agentRunCard.getByText("#1 text：Agent 输出：完成训练评估")).toBeVisible();
     await expect(agentRunCard.getByText(/训练评估用量已上报 · completed · codex\/[^ ]+ · 尝试次数 1 · .*输入 16 · 输出 7/)).toBeVisible();
-    await expect(page.getByText("失败原因：等待 智能体执行完成")).toHaveCount(0);
+    await expect(page.getByText("失败原因：等待智能体执行完成")).toHaveCount(0);
     await expect(agentRunCard.getByText("任务用量")).toBeVisible();
     const syncedAgentEvidence = await api.getPromptEvaluationRunEvidence(queuedAgentRun!.id);
     expect(syncedAgentEvidence.run).toMatchObject({
@@ -686,15 +687,15 @@ test.describe("训练与评估工作台", () => {
         response.url().includes(`/prompt-evaluation-runs/${failedRun.id}/optimization-agent-run`),
       { timeout: 10000 },
     );
-    await failedRunRow.getByRole("button", { name: "Agent 优化任务" }).click();
+    await failedRunRow.getByRole("button", { name: "智能体优化任务" }).click();
     expect((await optimizationAgentResponse).status()).toBe(202);
-    await expect(page.getByText(/真实智能体 优化任务已入队/)).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/真实智能体优化任务已入队/)).toBeVisible({ timeout: 10000 });
 
     let optimizationAgentRun = null as Awaited<ReturnType<typeof api.listPromptEvaluationRuns>>[number] | null;
     await expect
       .poll(async () => {
         const assets = await api.listPromptEvaluationAssets({ prompt_id: prompt.id, asset_type: "优化运行" });
-        const agentAsset = assets.find((item) => item.name.startsWith(`${promptName} Agent 优化运行`));
+        const agentAsset = assets.find((item) => item.name.startsWith(`${promptName} 智能体优化运行`));
         if (!agentAsset) return null;
         const runs = await api.listPromptEvaluationRuns({ asset_id: agentAsset.id });
         const agentRun = runs.find((run) => run.run_kind === "Agent执行") ?? null;
@@ -715,7 +716,7 @@ test.describe("训练与评估工作台", () => {
       }, { timeout: 15000 })
       .toMatchObject({
         asset_type: "优化运行",
-        taskType: "Agent 优化运行",
+        taskType: "智能体优化运行",
         sourceRun: failedRun.id,
         run_kind: "Agent执行",
         status: "已入队",
@@ -726,7 +727,7 @@ test.describe("训练与评估工作台", () => {
       });
 
     if (!optimizationAgentRun) {
-      throw new Error("E2E 未找到 Agent 优化运行记录");
+      throw new Error("E2E 未找到智能体优化运行记录");
     }
     await api.completePromptEvaluationOptimizationAgentTask(optimizationAgentRun);
     await page.goto(`/${workspaceSlug}/training/run-history`, { waitUntil: "domcontentloaded" });

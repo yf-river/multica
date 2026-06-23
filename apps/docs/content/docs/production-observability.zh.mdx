@@ -96,7 +96,7 @@ production-acceptance-<timestamp>.md
 pnpm acceptance:verify
 ```
 
-`acceptance:verify` 会执行 typecheck、build、核心单测、代理测试、公开 API curl E2E 和部署浏览器 E2E。公开 API E2E 会从登录开始，创建真实 Codex Agent、小队、issue、提示词、数据集、测试套件、实验、Agent 运行、trial 和优化候选，并把 runtime id、task id、trace 事件、token 和发布版本写入验收包。部署浏览器 E2E 使用演示账号打开 **训练与评估 → 生产看板**，确认真实智能体 证据、服务端证据快照和运行历史证据可以在已部署页面中看到。
+`acceptance:verify` 会执行 typecheck、build、核心单测、代理测试、公开 API curl E2E 和部署浏览器 E2E。公开 API E2E 会从登录开始，创建真实 Codex 智能体、小队、issue、提示词、数据集、测试套件、实验、智能体运行、trial 和优化候选，并把 runtime id、task id、trace 事件、token 和发布版本写入验收包。部署浏览器 E2E 使用演示账号打开 **训练与评估 → 生产看板**，确认真实智能体证据、服务端证据快照和运行历史证据可以在已部署页面中看到。
 
 如果要额外把导航、命令面板等较慢 Playwright 主链路纳入报告：
 

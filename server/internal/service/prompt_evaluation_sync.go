@@ -105,7 +105,7 @@ func syncPromptEvaluationRunWithTask(ctx context.Context, q *db.Queries, run db.
 	if task.Status == "failed" {
 		if messageReason := promptEvaluationFailureReasonFromMessages(taskMessages); messageReason != "" {
 			failureReason = messageReason
-			conclusion = "Agent 执行失败，已从 task 日志提取可读失败原因"
+			conclusion = "智能体执行失败，已从 task 日志提取可读失败原因"
 		}
 	}
 	if task.Status == "completed" {
@@ -117,7 +117,7 @@ func syncPromptEvaluationRunWithTask(ctx context.Context, q *db.Queries, run db.
 			passed = 0
 			failed = total
 			passRate = 0
-			conclusion = "Agent 执行完成，但未返回可机读的逐用例评估结果，需要验收者人工复核"
+			conclusion = "智能体执行完成，但未返回可机读的逐用例评估结果，需要验收者人工复核"
 			failureReason = "缺少结构化逐用例评估结果"
 		}
 	}
@@ -309,20 +309,20 @@ func promptEvaluationRunStatusFromTask(run db.PromptEvaluationRun, task db.Agent
 	switch task.Status {
 	case "completed":
 		total := run.TotalCases
-		return "通过", total, 0, promptEvaluationPassRate(total, 0), "Agent 执行完成，等待验收者复核输出质量", "无"
+		return "通过", total, 0, promptEvaluationPassRate(total, 0), "智能体执行完成，等待验收者复核输出质量", "无"
 	case "failed":
 		total := run.TotalCases
-		reason := "Agent 执行失败"
+		reason := "智能体执行失败"
 		if task.Error.Valid && strings.TrimSpace(task.Error.String) != "" {
 			reason = task.Error.String
 		}
-		return "失败", 0, total, 0, "Agent 执行失败，需要查看 task 日志和失败原因", reason
+		return "失败", 0, total, 0, "智能体执行失败，需要查看 task 日志和失败原因", reason
 	case "cancelled":
-		return "已取消", run.PassedCases, run.FailedCases, run.PassRate, "Agent 执行已取消", "任务被取消"
+		return "已取消", run.PassedCases, run.FailedCases, run.PassRate, "智能体执行已取消", "任务被取消"
 	case "running":
-		return "运行中", run.PassedCases, run.FailedCases, run.PassRate, "Agent 正在执行", "无"
+		return "运行中", run.PassedCases, run.FailedCases, run.PassRate, "智能体正在执行", "无"
 	default:
-		return "已入队", run.PassedCases, run.FailedCases, run.PassRate, "等待 Agent 执行完成", "无"
+		return "已入队", run.PassedCases, run.FailedCases, run.PassRate, "等待智能体执行完成", "无"
 	}
 }
 

@@ -1083,7 +1083,7 @@ ${latestTraceRows}
 - 运行：${apiTraining["Run ID"] || "未记录"}，状态：${apiTraining["Run状态"] || "未记录"}，失败用例：${apiTraining["失败用例"] ?? "未记录"}
 - 真实智能体 运行：${apiTraining["Agent Run ID"] || "未记录"}，Task：${apiTraining["Agent Task ID"] || "未记录"}
 - 真实智能体 Runtime：${apiTraining["Agent Runtime ID"] || "未记录"}，模型：${apiTraining["Agent模型"] || "未记录"}
-- 真实智能体 证据：trace ${apiTraining["Agent trace事件数"] ?? "未记录"}，trial ${apiTraining["Agent trial数"] ?? "未记录"}，消息 ${apiTraining["Agent消息数"] ?? "未记录"}
+- 真实智能体证据：trace ${apiTraining["Agent trace事件数"] ?? "未记录"}，trial ${apiTraining["Agent trial数"] ?? "未记录"}，消息 ${apiTraining["Agent消息数"] ?? "未记录"}
 - 真实智能体 token：输入 ${apiTraining["Agent输入token"] ?? "未记录"}，输出 ${apiTraining["Agent输出token"] ?? "未记录"}，外部依赖失败：${apiTraining["Agent外部依赖失败"] ? "是" : "否"}
 - 优化候选：${apiTraining["Optimization Candidate ID"] || "未记录"}，状态：${apiTraining["Optimization Candidate状态"] || "未记录"}
 - 优化运行资产：${apiTraining["Optimization Run Asset ID"] || "未记录"}，状态：${apiTraining["Optimization Run Asset状态"] || "未记录"}
