@@ -157,7 +157,7 @@ test.describe("训练与评估工作台", () => {
     await datasetRow.getByPlaceholder("期望包含：验收条件, trace/任务标识").fill("验收条件, trace/任务标识, 可观测证据");
     await datasetRow.getByPlaceholder("标签：user-center, 回归").fill("手工用例, user-center");
     await datasetRow.getByRole("button", { name: "新增用例" }).click();
-    await expect(page.getByText("手工评测用例已创建")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("手工评测用例已创建").last()).toBeVisible({ timeout: 10000 });
     await expect
       .poll(async () => {
         const items = await api.listPromptEvaluationCases({ asset_id: dataset!.id });
@@ -176,7 +176,7 @@ test.describe("训练与评估工作台", () => {
     await datasetRow.getByPlaceholder("编辑期望包含").fill("验收条件, trace/任务标识, 领导演示证据");
     await datasetRow.getByPlaceholder("编辑标签").fill("手工用例, user-center, 领导演示");
     await datasetRow.getByRole("button", { name: "保存用例" }).click();
-    await expect(page.getByText("手工评测用例已保存")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("手工评测用例已保存").last()).toBeVisible({ timeout: 10000 });
     await expect
       .poll(async () => {
         const items = await api.listPromptEvaluationCases({ asset_id: dataset!.id });
@@ -192,7 +192,7 @@ test.describe("训练与评估工作台", () => {
         tags: expect.arrayContaining(["领导演示"]),
       });
     await datasetRow.getByRole("button", { name: "删除用例" }).click();
-    await expect(page.getByText("手工评测用例已删除")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("手工评测用例已删除").last()).toBeVisible({ timeout: 10000 });
     await expect
       .poll(async () => {
         const items = await api.listPromptEvaluationCases({ asset_id: dataset!.id });
@@ -227,7 +227,7 @@ test.describe("训练与评估工作台", () => {
     await testSuiteRow.getByPlaceholder("编辑期望包含").fill("套件结论, 通过率, 领导演示证据");
     await testSuiteRow.getByPlaceholder("编辑标签").fill("测试套件, 回归, 领导演示");
     await testSuiteRow.getByRole("button", { name: "保存用例" }).click();
-    await expect(page.getByText("手工评测用例已保存")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("手工评测用例已保存").last()).toBeVisible({ timeout: 10000 });
     await expect
       .poll(async () => {
         const items = await api.listPromptEvaluationCases({ asset_id: testSuite!.id });
@@ -241,7 +241,7 @@ test.describe("训练与评估工作台", () => {
         tags: expect.arrayContaining(["领导演示"]),
       });
     await testSuiteRow.getByRole("button", { name: "删除用例" }).click();
-    await expect(page.getByText("手工评测用例已删除")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("手工评测用例已删除").last()).toBeVisible({ timeout: 10000 });
     await expect
       .poll(async () => {
         const items = await api.listPromptEvaluationCases({ asset_id: testSuite!.id });
@@ -479,7 +479,7 @@ test.describe("训练与评估工作台", () => {
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-触发来源")).toContainText("智能体调试场");
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-创建者")).toContainText(/[0-9a-f-]{36}/);
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-智能体标识")).toContainText(queuedAgentRun!.agent_id!);
-    await expect(agentEvidencePanel.getByTestId("run-evidence-metric-运行时标识")).toContainText(runtime.id);
+    await expect(agentEvidencePanel.getByTestId("run-evidence-metric-运行时标识")).toContainText(queuedAgentRun!.runtime_id!);
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-会话标识")).toContainText(queuedAgentRun!.chat_session_id!);
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-输入 token")).toContainText("16");
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-输出 token")).toContainText("7");
@@ -490,7 +490,7 @@ test.describe("训练与评估工作台", () => {
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText(`提示词 ${prompt!.name}`);
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText(`评测资产 ${queuedAgentAsset!.name}`);
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText("Agent Multica 训练评估 Agent");
-    await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText(`运行时 ${runtime.name}`);
+    await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText(`运行时 ${expectedAgentRuntimeName}`);
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText(`任务 ${queuedAgentRun!.task_id}`);
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText("用量证据 1");
     const snapshotBar = agentEvidencePanel.getByTestId("run-evidence-snapshots");
