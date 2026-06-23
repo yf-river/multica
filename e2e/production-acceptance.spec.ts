@@ -107,7 +107,10 @@ async function expectTrainingRouteShell(page, route: (typeof TRAINING_ROUTES)[nu
   await expect(page.getByTestId("prompt-playground-page-shell")).toHaveCount(isPromptPlayground ? 1 : 0);
   await expect(page.getByTestId("agent-playground-page-shell")).toHaveCount(isAgentPlayground ? 1 : 0);
   await expect(page.getByTestId("training-page-shell")).toHaveCount(isPromptPlayground || isAgentPlayground ? 0 : 1);
-  await expect(page.getByTestId("training-tab-strip")).toHaveCount(isPromptPlayground || isAgentPlayground ? 0 : 1);
+  await expect(page.getByTestId("training-tab-strip")).toHaveCount(0);
+  if (!isPromptPlayground && !isAgentPlayground) {
+    await expect(page.getByTestId(`training-route-${route.path}`)).toHaveCount(1);
+  }
   await expect(page.getByTestId("prompt-library-editor")).toHaveCount(route.showPromptEditor ? 1 : 0);
   await expect(page.getByTestId("prompt-version-history")).toHaveCount(route.showPromptEditor ? 1 : 0);
   await expect(page.getByTestId("prompt-playground-workbench")).toHaveCount(route.showPromptPlayground ? 1 : 0);

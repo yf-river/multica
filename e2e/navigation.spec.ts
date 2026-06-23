@@ -12,7 +12,10 @@ async function expectTrainingPageShell(page, item: (typeof TRAINING_ROUTES)[numb
   await expect(page.getByTestId("prompt-playground-page-shell")).toHaveCount(isPromptPlayground ? 1 : 0);
   await expect(page.getByTestId("agent-playground-page-shell")).toHaveCount(isAgentPlayground ? 1 : 0);
   await expect(page.getByTestId("training-page-shell")).toHaveCount(isPromptPlayground || isAgentPlayground ? 0 : 1);
-  await expect(page.getByTestId("training-tab-strip")).toHaveCount(isPromptPlayground || isAgentPlayground ? 0 : 1);
+  await expect(page.getByTestId("training-tab-strip")).toHaveCount(0);
+  if (!isPromptPlayground && !isAgentPlayground) {
+    await expect(page.getByTestId(`training-route-${item.path}`)).toHaveCount(1);
+  }
 }
 
 async function expectTrainingNavigationMarker(page, item: (typeof TRAINING_ROUTES)[number]) {

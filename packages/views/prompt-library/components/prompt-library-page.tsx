@@ -8,7 +8,6 @@ import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import {
-  TRAINING_WORKBENCH_TABS,
   TRAINING_WORKBENCH_VIEW_BY_TAB,
   trainingWorkbenchPath,
   trainingWorkbenchShowsPromptEditor,
@@ -178,6 +177,7 @@ export function PromptLibraryPage({
   }, [caseDrafts, caseDraftStorageKey]);
 
   const isDashboardTab = activeTab === "运行看板";
+  const activeViewId = TRAINING_WORKBENCH_VIEW_BY_TAB[activeTab];
   const shouldShowPromptHeaderActions = activeTab === "提示词库";
   const isEvaluationAssetTab =
     activeTab === "数据集" ||
@@ -673,11 +673,14 @@ export function PromptLibraryPage({
   };
 
   return (
-    <div className="flex h-full min-h-0 flex-col bg-background" data-testid="training-page-shell">
+    <div className="flex h-full min-h-0 flex-col bg-background" data-testid="training-page-shell" data-training-view={activeViewId}>
+      <div className="sr-only" data-testid={`training-route-${activeViewId}`}>
+        当前训练与评估子模块：{activeTab}
+      </div>
       <PageHeader>
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <BookOpenText className="size-4 shrink-0 text-muted-foreground" />
-          <h1 className="truncate text-sm font-semibold">训练与评估</h1>
+          <h1 className="truncate text-sm font-semibold">训练与评估 / {activeTab}</h1>
           <span className="text-xs text-muted-foreground">{items.length}</span>
         </div>
         {shouldShowPromptHeaderActions && (
@@ -689,19 +692,6 @@ export function PromptLibraryPage({
           </div>
         )}
       </PageHeader>
-
-      <div className="flex shrink-0 gap-1 overflow-x-auto border-b px-3 py-2" data-testid="training-tab-strip">
-        {TRAINING_WORKBENCH_TABS.map((tab) => (
-          <FilterButton
-            key={tab}
-            active={activeTab === tab}
-            href={trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB[tab])}
-            onClick={() => setActiveTab(tab)}
-          >
-            {tab}
-          </FilterButton>
-        ))}
-      </div>
 
       <TrainingSummaryStrip summary={summary} loading={summaryQuery.isLoading} />
 
