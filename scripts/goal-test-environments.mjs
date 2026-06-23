@@ -316,7 +316,98 @@ function ensureDatabase(databaseURL, databaseName) {
 function seedDemoIdentity(targetDatabaseURL) {
   const sourceEnv = readEnvFile(ensureEnvironment(profiles.prod));
   const sourceDatabaseURL = sourceEnv.DATABASE_URL;
-  const res = spawnSync("bash", ["-lc", `node - <<'NODE'\nconst pg = require('pg');\nconst sourceUrl = ${JSON.stringify(sourceDatabaseURL)};\nconst targetUrl = ${JSON.stringify(targetDatabaseURL)};\nconst account = 'goal-test-daemon';\nconst workspaceSlug = 'goal-test-daemon';\nasync function copyTableRow(source, target, table, whereSql, params) {\n  const src = await source.query('SELECT * FROM ' + table + ' WHERE ' + whereSql + ' LIMIT 1', params);\n  if (src.rowCount === 0) throw new Error('missing seed row in ' + table);\n  const row = src.rows[0];\n  const columns = Object.keys(row);\n  const values = columns.map((c) => row[c]);\n  const quoted = columns.map((c) => '\"' + c.replace(/\"/g, '\"\"') + '\"').join(', ');\n  const placeholders = columns.map((_, i) => '$' + (i + 1)).join(', ');\n  const key = table === '\"user\"' ? 'account' : table === 'workspace' ? 'slug' : 'id';\n  await target.query('INSERT INTO ' + table + ' (' + quoted + ') VALUES (' + placeholders + ') ON CONFLICT (\"' + key + '\") DO NOTHING', values);\n  return row;\n}\n(async () => {\n  const source = new pg.Client(sourceUrl);\n  const target = new pg.Client(targetUrl);\n  await source.connect();\n  await target.connect();\n  try {\n    await target.query('BEGIN');\n    const user = await copyTableRow(source, target, '\"user\"', 'account = $1', [account]);\n    const workspace = await copyTableRow(source, target, 'workspace', 'slug = $1', [workspaceSlug]);\n    const member = await source.query('SELECT * FROM member WHERE user_id = $1 AND workspace_id = $2 LIMIT 1', [user.id, workspace.id]);\n    if (member.rowCount === 0) throw new Error('missing seed row in member');\n    const row = member.rows[0];\n    const columns = Object.keys(row);\n    const quoted = columns.map((c) => '\"' + c.replace(/\"/g, '\"\"') + '\"').join(', ');\n    const placeholders = columns.map((_, i) => '$' + (i + 1)).join(', ');\n    await target.query('INSERT INTO member (' + quoted + ') VALUES (' + placeholders + ') ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = EXCLUDED.role', columns.map((c) => row[c]));\n    await target.query('COMMIT');\n  } catch (error) {\n    await target.query('ROLLBACK');\n    throw error;\n  } finally {\n    await source.end();\n    await target.end();\n  }\n})().catch((error) => {\n  console.error(error.stack || error.message || String(error));\n  process.exit(1);\n});\nNODE`], { cwd: repoRoot, encoding: "utf8" });
+  const res = spawnSync("bash", ["-lc", `node - <<'NODE'
+const crypto = require('crypto');
+const pg = require('pg');
+const sourceUrl = ${JSON.stringify(sourceDatabaseURL)};
+const targetUrl = ${JSON.stringify(targetDatabaseURL)};
+const account = 'goal-test-daemon';
+const workspaceSlug = 'goal-test-daemon';
+
+async function copyTableRow(source, target, table, whereSql, params) {
+  const src = await source.query('SELECT * FROM ' + table + ' WHERE ' + whereSql + ' LIMIT 1', params);
+  if (src.rowCount === 0) throw new Error('missing seed row in ' + table);
+  const row = src.rows[0];
+  const columns = Object.keys(row);
+  const values = columns.map((c) => row[c]);
+  const quoted = columns.map((c) => '"' + c.replace(/"/g, '""') + '"').join(', ');
+  const placeholders = columns.map((_, i) => '$' + (i + 1)).join(', ');
+  const key = table === '"user"' ? 'account' : table === 'workspace' ? 'slug' : 'id';
+  await target.query('INSERT INTO ' + table + ' (' + quoted + ') VALUES (' + placeholders + ') ON CONFLICT ("' + key + '") DO NOTHING', values);
+  return row;
+}
+
+async function targetAlreadySeeded(target) {
+  const result = await target.query(
+    'SELECT m.role FROM "user" u JOIN workspace w ON w.slug = $2 JOIN member m ON m.user_id = u.id AND m.workspace_id = w.id WHERE u.account = $1 LIMIT 1',
+    [account, workspaceSlug],
+  );
+  return result.rowCount > 0 && result.rows[0].role === 'owner';
+}
+
+function passwordHash(password) {
+  const salt = crypto.randomBytes(16);
+  const key = crypto.pbkdf2Sync(password, salt, 210000, 32, 'sha256');
+  return ['pbkdf2_sha256', '210000', salt.toString('base64url'), key.toString('base64url')].join('$');
+}
+
+async function seedFromScratch(target) {
+  const user = await target.query(
+    'INSERT INTO "user" (name, account, onboarded_at, starter_content_state, password_hash, created_at, updated_at) VALUES ($1, $2, now(), $3, $4, now(), now()) ON CONFLICT (account) DO UPDATE SET password_hash = EXCLUDED.password_hash, onboarded_at = COALESCE("user".onboarded_at, now()), updated_at = now() RETURNING id',
+    ['Goal Test Daemon', account, 'imported', passwordHash('e2e-password')],
+  );
+  const workspace = await target.query(
+    'INSERT INTO workspace (name, slug, description, context, issue_prefix) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (slug) DO UPDATE SET updated_at = now() RETURNING id',
+    ['Goal Test Daemon', workspaceSlug, 'goal-test 联调开发工作区', '用于 Multica goal-test 联调、验收和性能调试。', 'GTD'],
+  );
+  await target.query(
+    'INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = EXCLUDED.role',
+    [workspace.rows[0].id, user.rows[0].id, 'owner'],
+  );
+}
+
+(async () => {
+  const source = new pg.Client(sourceUrl);
+  const target = new pg.Client(targetUrl);
+  let sourceConnected = false;
+  await target.connect();
+  try {
+    await target.query('BEGIN');
+    if (await targetAlreadySeeded(target)) {
+      await target.query('COMMIT');
+      return;
+    }
+
+    await source.connect();
+    sourceConnected = true;
+    const sourceUser = await source.query('SELECT id FROM "user" WHERE account = $1 LIMIT 1', [account]);
+    const sourceWorkspace = await source.query('SELECT id FROM workspace WHERE slug = $1 LIMIT 1', [workspaceSlug]);
+    if (sourceUser.rowCount > 0 && sourceWorkspace.rowCount > 0) {
+      const user = await copyTableRow(source, target, '"user"', 'account = $1', [account]);
+      const workspace = await copyTableRow(source, target, 'workspace', 'slug = $1', [workspaceSlug]);
+      const member = await source.query('SELECT * FROM member WHERE user_id = $1 AND workspace_id = $2 LIMIT 1', [user.id, workspace.id]);
+      if (member.rowCount === 0) throw new Error('missing seed row in member');
+      const row = member.rows[0];
+      const columns = Object.keys(row);
+      const quoted = columns.map((c) => '"' + c.replace(/"/g, '""') + '"').join(', ');
+      const placeholders = columns.map((_, i) => '$' + (i + 1)).join(', ');
+      await target.query('INSERT INTO member (' + quoted + ') VALUES (' + placeholders + ') ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = EXCLUDED.role', columns.map((c) => row[c]));
+    } else {
+      await seedFromScratch(target);
+    }
+    await target.query('COMMIT');
+  } catch (error) {
+    await target.query('ROLLBACK');
+    throw error;
+  } finally {
+    if (sourceConnected) await source.end();
+    await target.end();
+  }
+})().catch((error) => {
+  console.error(error.stack || error.message || String(error));
+  process.exit(1);
+});
+NODE`], { cwd: repoRoot, encoding: "utf8" });
   if (res.status !== 0) fail(`seed demo identity failed\n${res.stderr || res.stdout}`);
 }
 

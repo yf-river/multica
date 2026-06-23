@@ -155,36 +155,58 @@ export function PromptLibraryPage({ activeView }: { activeView?: TrainingWorkben
     document.title = trainingWorkbenchTitleFromView(resolvedView);
   }, [resolvedView]);
 
+  const isDashboardTab = activeTab === "运行看板";
+  const needsPromptItems =
+    activeTab === "提示词库" ||
+    activeTab === "提示词调试场" ||
+    activeTab === "Agent 调试场";
+  const needsEvaluationAssets =
+    activeTab === "Agent 调试场" ||
+    activeTab === "数据集" ||
+    activeTab === "测试套件" ||
+    activeTab === "实验" ||
+    activeTab === "优化运行";
+  const needsStructuredCases =
+    activeTab === "Agent 调试场" ||
+    activeTab === "数据集" ||
+    activeTab === "测试套件" ||
+    activeTab === "实验" ||
+    activeTab === "运行历史";
+  const needsExperimentDimensions = activeTab === "实验";
+  const needsRuns = isDashboardTab || activeTab === "运行历史" || activeTab === "优化运行";
+  const needsCandidates = isDashboardTab || activeTab === "运行历史" || activeTab === "优化运行";
+  const needsRuntimeReadiness = isDashboardTab || activeTab === "Agent 调试场";
+
   const listQuery = useQuery({
     queryKey: promptLibraryKeys.list(workspaceId ?? ""),
     queryFn: () => api.listPromptLibraryItems(),
-    enabled: !!workspaceId,
+    enabled: !!workspaceId && needsPromptItems,
   });
 
   const assetQuery = useQuery({
     queryKey: promptLibraryKeys.assets(workspaceId ?? ""),
     queryFn: () => api.listPromptEvaluationAssets(),
-    enabled: !!workspaceId,
+    enabled: !!workspaceId && needsEvaluationAssets,
   });
   const caseQuery = useQuery({
     queryKey: promptLibraryKeys.cases(workspaceId ?? ""),
     queryFn: () => api.listPromptEvaluationCases(),
-    enabled: !!workspaceId,
+    enabled: !!workspaceId && needsStructuredCases,
   });
   const experimentDimensionQuery = useQuery({
     queryKey: promptLibraryKeys.experimentDimensions(workspaceId ?? ""),
     queryFn: () => api.listPromptEvaluationExperimentDimensions(),
-    enabled: !!workspaceId,
+    enabled: !!workspaceId && needsExperimentDimensions,
   });
   const runQuery = useQuery({
     queryKey: [...promptLibraryKeys.runs(workspaceId ?? ""), demoSince ?? "all"] as const,
     queryFn: () => api.listPromptEvaluationRuns({ limit: 100, since: demoSince }),
-    enabled: !!workspaceId,
+    enabled: !!workspaceId && needsRuns,
   });
   const candidateQuery = useQuery({
     queryKey: promptLibraryKeys.candidates(workspaceId ?? ""),
     queryFn: () => api.listPromptEvaluationOptimizationCandidates({ limit: 100 }),
-    enabled: !!workspaceId,
+    enabled: !!workspaceId && needsCandidates,
   });
   const summaryQuery = useQuery({
     queryKey: [...promptLibraryKeys.summary(workspaceId ?? ""), demoSince ?? "all"] as const,
@@ -200,12 +222,12 @@ export function PromptLibraryPage({ activeView }: { activeView?: TrainingWorkben
   const runtimeReadinessQuery = useQuery({
     queryKey: ["training-evaluation", workspaceId ?? "", "runtime-readiness"],
     queryFn: () => api.getPromptEvaluationRuntimeReadiness(),
-    enabled: !!workspaceId,
+    enabled: !!workspaceId && needsRuntimeReadiness,
   });
   const observabilitySummaryQuery = useQuery({
     queryKey: ["training-evaluation", workspaceId ?? "", "workspace-observability-summary", demoSince ?? "all"],
     queryFn: () => api.getWorkspaceObservabilitySummary(workspaceId ?? "", demoSince ? { since: demoSince } : undefined),
-    enabled: !!workspaceId,
+    enabled: !!workspaceId && isDashboardTab,
     staleTime: 30_000,
   });
 

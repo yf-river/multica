@@ -791,7 +791,7 @@ export function SquadsPage() {
       if (typeof window !== "undefined") {
         window.setTimeout(() => {
           if (window.location.pathname !== detailPath) {
-            window.location.assign(detailPath);
+            toast.error("小队已创建，但页面跳转未完成，请从小队列表打开详情。");
           }
         }, 750);
       }

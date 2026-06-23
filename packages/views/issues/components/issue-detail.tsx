@@ -42,7 +42,7 @@ import { Command, CommandInput, CommandList, CommandEmpty, CommandGroup, Command
 import { AvatarGroup, AvatarGroupCount } from "@multica/ui/components/ui/avatar";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { PropRow } from "../../common/prop-row";
-import type { Attachment, Issue, IssueStatus, IssuePriority, TimelineEntry, UpdateIssueRequest } from "@multica/core/types";
+import type { Attachment, Issue, IssueStatus, IssuePriority, ListIssuesCache, TimelineEntry, UpdateIssueRequest } from "@multica/core/types";
 import { contentReferencesAttachment } from "@multica/core/types";
 import { STATUS_CONFIG, PRIORITY_CONFIG } from "@multica/core/issues/config";
 import { formatDateOnly } from "@multica/core/issues/date";
@@ -60,13 +60,13 @@ import { IssueAgentHeaderChip } from "./issue-agent-header-chip";
 import { ExecutionLogSection } from "./execution-log-section";
 import { PullRequestList } from "./pull-request-list";
 import { useGitHubSettings } from "@multica/core/github";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useRecentContextStore } from "@multica/core/chat";
-import { issueListOptions, issueDetailOptions, childIssuesOptions, issueUsageOptions, issueAttachmentsOptions } from "@multica/core/issues/queries";
+import { flattenIssueBuckets, issueDetailOptions, issueKeys, childIssuesOptions, issueUsageOptions, issueAttachmentsOptions } from "@multica/core/issues/queries";
 import { projectDetailOptions } from "@multica/core/projects/queries";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { issueLabelsOptions } from "@multica/core/labels";
@@ -671,6 +671,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
 
   // Issue navigation — read from TQ list cache
   const wsId = useWorkspaceId();
+  const queryClient = useQueryClient();
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   // Workspace owners and admins moderate any comment authored by anyone
@@ -680,7 +681,20 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     members.find((m) => m.user_id === user?.id)?.role ?? null;
   const canModerateComments =
     currentUserRole === "owner" || currentUserRole === "admin";
-  const { data: allIssues = [] } = useQuery(issueListOptions(wsId));
+  const findCachedListIssue = useCallback(
+    (targetId: string | null | undefined) => {
+      if (!targetId) return undefined;
+      const cachedLists = queryClient.getQueriesData<ListIssuesCache>({
+        queryKey: issueKeys.list(wsId),
+      });
+      for (const [, cached] of cachedLists) {
+        const match = cached ? flattenIssueBuckets(cached).find((item) => item.id === targetId) : undefined;
+        if (match) return match;
+      }
+      return undefined;
+    },
+    [queryClient, wsId],
+  );
   const { getActorName } = useActorName();
   const { uploadWithToast } = useFileUpload(api);
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
@@ -820,7 +834,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const { data: issue = null, isLoading: issueLoading } = useQuery({
     ...issueDetailOptions(wsId, id),
     initialData: () => {
-      const cached = allIssues.find((i) => i.id === id);
+      const cached = findCachedListIssue(id);
       return cached?.description != null ? cached : undefined;
     },
   });
@@ -1045,7 +1059,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const { data: parentIssue = null } = useQuery({
     ...issueDetailOptions(wsId, parentIssueId ?? ""),
     enabled: !!parentIssueId,
-    initialData: () => allIssues.find((i) => i.id === parentIssueId),
+    initialData: () => findCachedListIssue(parentIssueId),
   });
 
   // Project segment in the breadcrumb. The issue's project_id is the source of
