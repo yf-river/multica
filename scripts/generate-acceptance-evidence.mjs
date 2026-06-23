@@ -462,15 +462,15 @@ function buildCommandPlan() {
     },
     {
       name: "部署生产环境",
-      command: "node scripts/goal-test-environments.mjs deploy prod",
+      command: "make goal-test-deploy-prod",
       required: true,
-      timeoutMs: 120_000,
+      timeoutMs: 360_000,
     },
     {
       name: "部署联调环境",
-      command: "node scripts/goal-test-environments.mjs deploy int",
+      command: "make goal-test-deploy-int",
       required: true,
-      timeoutMs: 120_000,
+      timeoutMs: 360_000,
     },
     {
       name: "Desktop typecheck",

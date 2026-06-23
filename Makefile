@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env
 
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
@@ -200,6 +200,20 @@ stop: ## Stop backend and frontend processes for the current checkout
 check: ## Run typecheck, TS tests, Go tests, and Playwright E2E for the current checkout
 	$(REQUIRE_ENV)
 	@ENV_FILE="$(ENV_FILE)" bash scripts/check.sh
+
+# ---------- goal-test deployment ----------
+##@ goal-test deployment
+
+goal-test-deploy-prod: ## Build and deploy goal-test production stable environment
+	node scripts/goal-test-environments.mjs deploy prod --build
+
+goal-test-deploy-int: ## Build and deploy goal-test integration development environment
+	node scripts/goal-test-environments.mjs deploy int --build
+
+goal-test-deploy-all: goal-test-deploy-prod goal-test-deploy-int goal-test-verify-env ## Build, deploy, and verify both goal-test environments
+
+goal-test-verify-env: ## Verify goal-test production and integration environments
+	node scripts/goal-test-environments.mjs verify prod
 
 db-up: ## Start the shared PostgreSQL container used by main and worktrees
 	@$(COMPOSE) up -d postgres
