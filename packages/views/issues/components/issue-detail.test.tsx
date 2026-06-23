@@ -816,7 +816,7 @@ describe("IssueDetail (shared)", () => {
         id: "comment-child-done",
         actor_type: "system",
         actor_id: "00000000-0000-0000-0000-000000000000",
-        content: "Sub-issue MUL-123 is done.",
+        content: "子任务 MUL-123 已完成。",
         parent_id: null,
         created_at: "2026-01-18T00:00:00Z",
         updated_at: "2026-01-18T00:00:00Z",
@@ -826,7 +826,7 @@ describe("IssueDetail (shared)", () => {
 
     renderIssueDetail();
 
-    await screen.findByText("Sub-issue MUL-123 is done.");
+    await screen.findByText("子任务 MUL-123 已完成。");
     expect(screen.queryByRole("button", { name: "重试任务" })).not.toBeInTheDocument();
   });
 

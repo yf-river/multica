@@ -138,6 +138,12 @@ func TestChildDoneNotifiesParent(t *testing.T) {
 	if !strings.Contains(content, fx.child.Identifier) {
 		t.Errorf("expected comment to contain child identifier %q, got: %s", fx.child.Identifier, content)
 	}
+	if !strings.Contains(content, "子任务") || !strings.Contains(content, "已完成") {
+		t.Errorf("system comment should use Chinese child-done wording, got: %s", content)
+	}
+	if strings.Contains(content, "Sub-issue") || strings.Contains(content, "is done") {
+		t.Errorf("system comment must not use English child-done wording, got: %s", content)
+	}
 	if strings.Contains(content, "MUL-") {
 		t.Errorf("comment must not hardcode MUL- prefix, got: %s", content)
 	}

@@ -84,7 +84,7 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 	mentionPrefix := h.buildParentAssigneeMention(ctx, parent)
 
 	content := fmt.Sprintf(
-		"%sSub-issue [%s](mention://issue/%s) — \"%s\" — is done. Before promoting any waiting `backlog` sub-issue, read each sibling's description and only promote items whose stated dependencies are already satisfied — do not rely on this parent's higher-level breakdown alone. If a sibling's description conflicts with that breakdown (e.g. it lists a prerequisite the parent treats as parallel), do NOT change its status — leave it `backlog` and post a comment to confirm first.",
+		"%s子任务 [%s](mention://issue/%s)「%s」已完成。提升任何等待中的 `backlog` 子任务前，请先阅读每个同级子任务的描述，只推进依赖条件已经满足的事项；不要只依赖父任务的高层拆解。如果同级子任务描述与父任务拆解冲突（例如它声明了父任务视为并行的前置条件），不要变更它的状态，请保持 `backlog` 并先评论确认。",
 		mentionPrefix, identifier, childID, title,
 	)
 
