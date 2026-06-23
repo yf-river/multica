@@ -63,6 +63,7 @@ export function LocalDirectoryHint({
               {t(($) => $.resources.chat_hint_prefix)}
               <span className="font-medium text-foreground"> {label} </span>
               <span className="font-mono opacity-70">({ref.local_path})</span>
+              <span>，复用服务器已有目录，不隔离 worktree。</span>
             </span>
           </div>
         );

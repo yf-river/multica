@@ -80,6 +80,47 @@ func validateIssueEnum(w http.ResponseWriter, field, value string, allowed []str
 	return false
 }
 
+var (
+	errIssueParentNotFound = errors.New("parent issue not found in this workspace")
+	errIssueParentCycle    = errors.New("circular parent relationship detected")
+)
+
+func (h *Handler) validateIssueParentInWorkspace(ctx context.Context, issue db.Issue, parentID pgtype.UUID) error {
+	if parentID == issue.ID {
+		return errIssueParentCycle
+	}
+	seen := map[string]struct{}{}
+	cursor := parentID
+	for cursor.Valid {
+		key := uuidToString(cursor)
+		if _, exists := seen[key]; exists {
+			return errIssueParentCycle
+		}
+		seen[key] = struct{}{}
+
+		ancestor, err := h.Queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
+			ID:          cursor,
+			WorkspaceID: issue.WorkspaceID,
+		})
+		if err != nil || !ancestor.ID.Valid {
+			return errIssueParentNotFound
+		}
+		if ancestor.ID == issue.ID {
+			return errIssueParentCycle
+		}
+		cursor = ancestor.ParentIssueID
+	}
+	return nil
+}
+
+func (h *Handler) validateProjectInWorkspace(ctx context.Context, workspaceID, projectID pgtype.UUID) error {
+	_, err := h.Queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{
+		ID:          projectID,
+		WorkspaceID: workspaceID,
+	})
+	return err
+}
+
 func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 	identifier := issuePrefix + "-" + strconv.Itoa(int(i.Number))
 	return IssueResponse{
@@ -2413,33 +2454,12 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			// Cannot set self as parent. Compare against prevIssue.ID (the
-			// resolved entity), not the raw URL string — `id` may be an
-			// identifier like "MUL-7".
-			if newParentID == prevIssue.ID {
-				writeError(w, http.StatusBadRequest, "an issue cannot be its own parent")
-				return
-			}
-			// Validate parent exists in the same workspace.
-			if _, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
-				ID:          newParentID,
-				WorkspaceID: prevIssue.WorkspaceID,
-			}); err != nil {
+			if err := h.validateIssueParentInWorkspace(r.Context(), prevIssue, newParentID); errors.Is(err, errIssueParentNotFound) {
 				writeError(w, http.StatusBadRequest, "parent issue not found in this workspace")
 				return
-			}
-			// Cycle detection: walk up from the new parent to ensure we don't reach this issue.
-			cursor := newParentID
-			for depth := 0; depth < 10; depth++ {
-				ancestor, err := h.Queries.GetIssue(r.Context(), cursor)
-				if err != nil || !ancestor.ParentIssueID.Valid {
-					break
-				}
-				if ancestor.ParentIssueID == prevIssue.ID {
-					writeError(w, http.StatusBadRequest, "circular parent relationship detected")
-					return
-				}
-				cursor = ancestor.ParentIssueID
+			} else if err != nil {
+				writeError(w, http.StatusBadRequest, "circular parent relationship detected")
+				return
 			}
 			params.ParentIssueID = newParentID
 		} else {
@@ -2450,6 +2470,10 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		if req.ProjectID != nil {
 			projectUUID, ok := parseUUIDOrBadRequest(w, *req.ProjectID, "project_id")
 			if !ok {
+				return
+			}
+			if err := h.validateProjectInWorkspace(r.Context(), prevIssue.WorkspaceID, projectUUID); err != nil {
+				writeError(w, http.StatusBadRequest, "project not found in this workspace")
 				return
 			}
 			params.ProjectID = projectUUID
@@ -2952,32 +2976,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 				if err != nil {
 					continue
 				}
-				// Cannot set self as parent.
-				if newParentID == prevIssue.ID {
-					continue
-				}
-				// Validate parent exists in the same workspace.
-				if _, err := h.Queries.GetIssueInWorkspace(r.Context(), db.GetIssueInWorkspaceParams{
-					ID:          newParentID,
-					WorkspaceID: prevIssue.WorkspaceID,
-				}); err != nil {
-					continue
-				}
-				// Cycle detection: walk up from the new parent to ensure we don't reach this issue.
-				cycleDetected := false
-				cursor := newParentID
-				for depth := 0; depth < 10; depth++ {
-					ancestor, err := h.Queries.GetIssue(r.Context(), cursor)
-					if err != nil || !ancestor.ParentIssueID.Valid {
-						break
-					}
-					if ancestor.ParentIssueID == prevIssue.ID {
-						cycleDetected = true
-						break
-					}
-					cursor = ancestor.ParentIssueID
-				}
-				if cycleDetected {
+				if err := h.validateIssueParentInWorkspace(r.Context(), prevIssue, newParentID); err != nil {
 					continue
 				}
 				params.ParentIssueID = newParentID
@@ -2989,6 +2988,9 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			if req.Updates.ProjectID != nil {
 				projectUUID, err := util.ParseUUID(*req.Updates.ProjectID)
 				if err != nil {
+					continue
+				}
+				if err := h.validateProjectInWorkspace(r.Context(), prevIssue.WorkspaceID, projectUUID); err != nil {
 					continue
 				}
 				params.ProjectID = projectUUID
