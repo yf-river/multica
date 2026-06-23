@@ -172,7 +172,10 @@ export function ChatWindow() {
   const { data: members = [] } = useQuery(memberListOptions(wsId));
   // Single sessions cache — eliminates the separate active/all queries
   // that used to drift during the WS-invalidate window.
-  const { data: sessions = [] } = useQuery(chatSessionsOptions(wsId));
+  const { data: sessions = [] } = useQuery({
+    ...chatSessionsOptions(wsId),
+    enabled: isOpen,
+  });
   const {
     data: rawMessagePages,
     isLoading: messagesLoading,
