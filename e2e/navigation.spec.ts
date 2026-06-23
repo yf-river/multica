@@ -13,6 +13,14 @@ async function expectTrainingPageShell(page, item: (typeof TRAINING_ROUTES)[numb
   await expect(page.getByTestId("training-tab-strip")).toHaveCount(isPromptPlayground || isAgentPlayground ? 0 : 1);
 }
 
+async function expectTrainingNavigationMarker(page, item: (typeof TRAINING_ROUTES)[number]) {
+  if (item.path === "prompt-playground" || item.path === "agent-playground") {
+    await expect(page.getByRole("link", { name: item.nav, exact: true }).first()).toBeVisible();
+    return;
+  }
+  await expect(page.locator('[data-active="true"]').filter({ hasText: item.nav }).first()).toBeVisible();
+}
+
 test.describe("Navigation", () => {
   test.beforeEach(async ({ page }) => {
     await loginAsDefault(page);
@@ -56,7 +64,7 @@ test.describe("Navigation", () => {
       await expect(page).toHaveURL(new RegExp(`/training/${item.path}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
       await waitForPageText(page, item.text);
       await expectTrainingPageShell(page, item);
-      await expect(page.locator('[data-active="true"]').filter({ hasText: item.nav }).first()).toBeVisible();
+      await expectTrainingNavigationMarker(page, item);
       await expect(page.getByTestId("prompt-library-editor")).toHaveCount(item.showPromptEditor ? 1 : 0);
       if (!item.showPromptEditor) {
         await expect(page.getByTestId("prompt-version-history")).toHaveCount(0);
@@ -80,7 +88,7 @@ test.describe("Navigation", () => {
       await expect(page).toHaveURL(new RegExp(`/training/${item.path}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
       await waitForPageText(page, item.text);
       await expectTrainingPageShell(page, item);
-      await expect(page.locator('[data-active="true"]').filter({ hasText: item.nav }).first()).toBeVisible();
+      await expectTrainingNavigationMarker(page, item);
       await expect(page.getByTestId("prompt-library-editor")).toHaveCount(item.showPromptEditor ? 1 : 0);
       if (!item.showPromptEditor) {
         await expect(page.getByTestId("prompt-version-history")).toHaveCount(0);
