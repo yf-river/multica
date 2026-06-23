@@ -37,8 +37,53 @@ const routes = [
   { id: "settings", label: "设置", path: `/${workspaceSlug}/settings`, expect: ["设置"] },
   { id: "training-runs", label: "训练与评估/运行看板", path: `/${workspaceSlug}/training/runs`, expect: ["运行看板"] },
   { id: "training-prompts", label: "训练与评估/提示词库", path: `/${workspaceSlug}/training/prompts`, expect: ["提示词库"] },
-  { id: "training-prompt-playground", label: "训练与评估/提示词调试场", path: `/${workspaceSlug}/training/prompt-playground`, expect: ["提示词调试场"] },
-  { id: "training-agent-playground", label: "训练与评估/智能体调试场", path: `/${workspaceSlug}/training/agent-playground`, expect: ["智能体调试场"] },
+  {
+    id: "training-prompt-playground",
+    label: "训练与评估/提示词调试场",
+    path: `/${workspaceSlug}/training/prompt-playground`,
+    expect: ["提示词调试场"],
+    uiContract: {
+      requiredText: ["本地模板实验室", "不启动智能体", "本地渲染记录"],
+      forbiddenText: ["真实任务入口", "真实任务运行控制台", "真实执行准备度", "观测回写契约"],
+      requiredTestIds: ["prompt-playground-page-shell", "prompt-playground-workbench", "prompt-playground-template-lab", "prompt-playground-local-pipeline"],
+      forbiddenTestIds: [
+        "training-tab-strip",
+        "training-summary-strip",
+        "agent-playground-page-shell",
+        "agent-playground-workbench",
+        "agent-playground-run-console",
+        "agent-playground-task-payload",
+        "agent-playground-task-pipeline",
+        "agent-playground-observability-contract",
+      ],
+    },
+  },
+  {
+    id: "training-agent-playground",
+    label: "训练与评估/智能体调试场",
+    path: `/${workspaceSlug}/training/agent-playground`,
+    expect: ["智能体调试场"],
+    uiContract: {
+      requiredText: ["真实任务入口", "真实任务运行控制台", "真实执行准备度", "观测回写契约"],
+      forbiddenText: ["本地模板实验室", "不启动智能体", "本地渲染记录"],
+      requiredTestIds: [
+        "agent-playground-page-shell",
+        "agent-playground-workbench",
+        "agent-playground-run-console",
+        "agent-playground-task-payload",
+        "agent-playground-task-pipeline",
+        "agent-playground-observability-contract",
+      ],
+      forbiddenTestIds: [
+        "training-tab-strip",
+        "training-summary-strip",
+        "prompt-playground-page-shell",
+        "prompt-playground-workbench",
+        "prompt-playground-template-lab",
+        "prompt-playground-local-pipeline",
+      ],
+    },
+  },
   { id: "training-datasets", label: "训练与评估/数据集", path: `/${workspaceSlug}/training/datasets`, expect: ["数据集"] },
   { id: "training-test-suites", label: "训练与评估/测试套件", path: `/${workspaceSlug}/training/test-suites`, expect: ["测试套件"] },
   { id: "training-experiments", label: "训练与评估/实验", path: `/${workspaceSlug}/training/experiments`, expect: ["实验"] },
@@ -209,6 +254,7 @@ async function auditRoute(page, route) {
     .slice(0, 20);
   const missingExpectedText = route.expect.filter((text) => !bodyText.includes(text));
   const forbiddenMatches = forbiddenText.filter((text) => bodyText.includes(text));
+  const uiContract = await auditRouteUiContract(page, route, bodyText);
   const loadingResidue = ["Rendering", "Compiling", "Loading", "加载中", "渲染中"].filter((text) => bodyText.includes(text));
   const failures = [
     ...(navigationError ? [`导航失败：${navigationError.split("\n")[0]}`] : []),
@@ -219,6 +265,7 @@ async function auditRoute(page, route) {
     ...failedRequests.map((item) => `请求失败：${requestPath(item.url)} ${item.failure}`),
     ...(apiRequests.length > maxApiRequests ? [`API 请求数 ${apiRequests.length} 超过 ${maxApiRequests}`] : []),
     ...slowRequests.map((item) => `慢请求：${item.ms}ms ${item.path}`),
+    ...uiContract.failures,
     ...loadingResidue.map((text) => `加载残留：${text}`),
     ...forbiddenMatches.map((text) => `中文语义/营销残留：${text}`),
   ];
@@ -239,11 +286,52 @@ async function auditRoute(page, route) {
     failed_requests: failedRequests.map((item) => ({ path: requestPath(item.url), failure: item.failure })),
     events: routeEvents,
     missing_expected_text: missingExpectedText,
+    ui_contract: uiContract,
     forbidden_text: forbiddenMatches,
     loading_residue: loadingResidue,
     screenshot,
     body_excerpt: bodyText.split("\n").filter(Boolean).slice(0, 40),
   };
+}
+
+async function auditRouteUiContract(page, route, bodyText) {
+  const contract = route.uiContract;
+  if (!contract) return { checked: false, failures: [] };
+
+  const missingRequiredText = (contract.requiredText ?? []).filter((text) => !bodyText.includes(text));
+  const forbiddenText = (contract.forbiddenText ?? []).filter((text) => bodyText.includes(text));
+  const requiredTestIds = [];
+  for (const testId of contract.requiredTestIds ?? []) {
+    const count = await testIdCount(page, testId);
+    requiredTestIds.push({ testid: testId, count });
+  }
+  const forbiddenTestIds = [];
+  for (const testId of contract.forbiddenTestIds ?? []) {
+    const count = await testIdCount(page, testId);
+    forbiddenTestIds.push({ testid: testId, count });
+  }
+
+  const failures = [
+    ...missingRequiredText.map((text) => `页面契约缺少文本：${text}`),
+    ...forbiddenText.map((text) => `页面契约出现互斥文本：${text}`),
+    ...requiredTestIds.filter((item) => item.count === 0).map((item) => `页面契约缺少 testid：${item.testid}`),
+    ...forbiddenTestIds.filter((item) => item.count > 0).map((item) => `页面契约出现互斥 testid：${item.testid}`),
+  ];
+
+  return {
+    checked: true,
+    required_text: contract.requiredText ?? [],
+    forbidden_text: contract.forbiddenText ?? [],
+    missing_required_text: missingRequiredText,
+    matched_forbidden_text: forbiddenText,
+    required_testids: requiredTestIds,
+    forbidden_testids: forbiddenTestIds,
+    failures,
+  };
+}
+
+async function testIdCount(page, testId) {
+  return page.locator(`[data-testid="${testId}"]`).count().catch(() => 0);
 }
 
 async function warmupRoutes(authToken) {
