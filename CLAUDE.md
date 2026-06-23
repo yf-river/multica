@@ -45,7 +45,10 @@ Useful goal-test commands:
 ```bash
 make goal-test-verify-env
 make goal-test-verify-logs
+make goal-test-e2e-preflight
+make goal-test-smoke
 make goal-test-ui-audit
+make goal-test-session-retro SESSION=/path/to/codex-session.jsonl
 pnpm acceptance:verify
 pnpm exec playwright test e2e/production-acceptance.spec.ts --project=chromium
 node scripts/prompt-evaluation-curl-e2e.mjs
@@ -54,7 +57,9 @@ node scripts/codex-squad-curl-e2e.mjs
 
 For complex goal-test delivery, prefer `gpt-5.5 high` as the main controller. Simple local slices or generating the goal prompt itself can use `gpt-5.5 medium`. Read-only exploration and repeated verification can use lower-cost models when available. Local runtime should prefer Codex unless the user explicitly chooses another runtime.
 
-Goal-test acceptance must include real browser UI checks, E2E/API data closure, performance evidence, current-deployment `.run` log window scans, decision ledger updates, and a commit or explicit reason for not committing. For integration Playwright runs, use the project variables from `.run/env/goal-test-int.env` plus `PLAYWRIGHT_BASE_URL=http://9.134.129.162:13682`; do not rely on `E2E_BASE_URL` alone. E2E tests may reuse the default account/workspace, but must create their own business data through public API/UI instead of depending on existing prompts, issues, or assets.
+Goal-test acceptance must include real browser UI checks, E2E/API data closure, performance evidence, current-deployment `.run` log window scans, decision ledger updates, and a commit or explicit reason for not committing. For integration Playwright runs, first run `make goal-test-e2e-preflight`, then use the project variables from `.run/env/goal-test-int.env` plus `PLAYWRIGHT_BASE_URL=http://9.134.129.162:13682`; do not rely on `E2E_BASE_URL` alone. E2E tests may reuse the default account/workspace, but must create their own business data through public API/UI instead of depending on existing prompts, issues, or assets. Prefer `TestApiClient.createPromptForE2E` and `TestApiClient.createIssueForE2E` for unique named fixtures.
+
+For broad goal-test UI or training audits, run `make goal-test-smoke` first. `make goal-test-ui-audit` and `make goal-test-training-performance-audit` already include smoke plus the current deployment marker log scan in their JSON evidence. Deployments archive previous `.run/*-{server,web,daemon}.log` files under `.run/log-archive/` before writing the new marker window. For long-session retrospectives, use `make goal-test-session-retro SESSION=/path/to/session.jsonl` instead of hand-writing the session index and root-cause table.
 
 ## Architecture
 

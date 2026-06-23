@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-ui-audit goal-test-training-performance-audit
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-smoke goal-test-ui-audit goal-test-training-performance-audit goal-test-session-retro
 
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
@@ -237,11 +237,23 @@ goal-test-verify-env: ## Verify goal-test production and integration environment
 goal-test-verify-logs: ## Verify current-deployment goal-test logs without scanning old appended history
 	node scripts/goal-test-environments.mjs verify-logs int
 
-goal-test-ui-audit: ## Run real-browser goal-test integration UI, performance, console, and Chinese semantics audit
+goal-test-e2e-preflight: ## Check goal-test Playwright/API/DB prerequisites before browser E2E
+	PLAYWRIGHT_BASE_URL=$${PLAYWRIGHT_BASE_URL:-http://9.134.129.162:13682} node scripts/goal-test-e2e-preflight.mjs
+
+goal-test-smoke: ## Fast goal-test gate: E2E preflight, environment verify, and current log window verify
+	$(MAKE) goal-test-e2e-preflight
+	node scripts/goal-test-environments.mjs verify int
+	node scripts/goal-test-environments.mjs verify-logs int
+
+goal-test-ui-audit: goal-test-smoke ## Run real-browser goal-test integration UI, performance, console, Chinese semantics, and log-window audit
 	node scripts/goal-test-ui-audit.mjs
 
-goal-test-training-performance-audit: ## Run real-browser training/evaluation route request and performance audit
+goal-test-training-performance-audit: goal-test-smoke ## Run real-browser training/evaluation route request, performance, and log-window audit
 	node scripts/goal-test-training-performance-audit.mjs
+
+goal-test-session-retro: ## Generate fixed session retrospective artifacts; pass SESSION=/path/to/session.jsonl
+	@test -n "$(SESSION)" || (echo "Missing SESSION=/path/to/session.jsonl"; exit 2)
+	node scripts/goal-test-session-retro.mjs "$(SESSION)"
 
 db-up: ## Start the shared PostgreSQL container used by main and worktrees
 	@$(COMPOSE) up -d postgres

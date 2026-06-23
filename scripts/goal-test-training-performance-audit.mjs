@@ -1,4 +1,5 @@
 import { chromium } from "@playwright/test";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -53,7 +54,8 @@ for (const route of routes) {
 }
 await browser.close();
 
-const summary = summarize(results);
+const deploymentLogs = runDeploymentLogVerification();
+const summary = summarize(results, deploymentLogs);
 const payload = {
   schema: "multica.goal_test.training_performance_audit.v1",
   generated_at: generatedAt,
@@ -67,6 +69,7 @@ const payload = {
     max_api_ms: maxApiMs,
     max_api_requests: maxApiRequests,
   },
+  deployment_logs: deploymentLogs,
   summary,
   routes: results,
 };
@@ -234,8 +237,10 @@ async function login() {
   return data.token;
 }
 
-function summarize(routeResults) {
-  const failures = routeResults.flatMap((route) => route.failures.map((failure) => `${route.label}: ${failure}`));
+function summarize(routeResults, logEvidence) {
+  const routeFailures = routeResults.flatMap((route) => route.failures.map((failure) => `${route.label}: ${failure}`));
+  const logFailures = logEvidence.ok ? [] : [`当前部署日志窗口未通过：${logEvidence.error || "verify-logs failed"}`];
+  const failures = [...routeFailures, ...logFailures];
   const slowestRoutes = [...routeResults]
     .sort((a, b) => b.ready_ms - a.ready_ms)
     .slice(0, 5)
@@ -247,8 +252,31 @@ function summarize(routeResults) {
     failed_routes: routeResults.filter((route) => !route.ok).length,
     total_api_requests: routeResults.reduce((sum, route) => sum + route.api_request_count, 0),
     total_training_api_requests: routeResults.reduce((sum, route) => sum + route.training_api_request_count, 0),
+    deployment_logs_ok: logEvidence.ok,
     slowest_routes: slowestRoutes,
     failures,
+  };
+}
+
+function runDeploymentLogVerification() {
+  const target = env.GOAL_TEST_ENV || "int";
+  const result = spawnSync("node", ["scripts/goal-test-environments.mjs", "verify-logs", target], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  const raw = result.stdout || result.stderr || "";
+  let evidence = null;
+  try {
+    evidence = raw ? JSON.parse(raw) : null;
+  } catch {
+    evidence = null;
+  }
+  return {
+    ok: result.status === 0 && evidence?.ok === true,
+    target,
+    exit_code: result.status,
+    evidence,
+    error: result.status === 0 ? "" : (result.stderr || result.stdout || "").slice(0, 2000),
   };
 }
 
@@ -269,6 +297,7 @@ function renderMarkdown(payload) {
     `- 失败：${payload.summary.failed_routes}`,
     `- API 请求总数：${payload.summary.total_api_requests}`,
     `- 训练评估 API 请求总数：${payload.summary.total_training_api_requests}`,
+    `- 当前部署日志窗口：${payload.summary.deployment_logs_ok ? "通过" : "未通过"}`,
     "",
     "## 最慢页面",
     "",

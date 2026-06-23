@@ -285,6 +285,7 @@ export class TestApiClient {
   private account: string | null = null;
   private createdIssueIds: string[] = [];
   private createdProjectIds: string[] = [];
+  private createdPromptLibraryIds: string[] = [];
   private createdRuntimeIds: string[] = [];
   private createdSquadIds: string[] = [];
 
@@ -712,6 +713,10 @@ export class TestApiClient {
     return issue;
   }
 
+  async createIssueForE2E(prefix = "E2E Issue", opts?: Record<string, unknown>) {
+    return this.createIssue(this.e2eName(prefix), opts);
+  }
+
   rememberIssue(id: string) {
     if (id && !this.createdIssueIds.includes(id)) {
       this.createdIssueIds.push(id);
@@ -1065,6 +1070,25 @@ export class TestApiClient {
       throw new Error(`create prompt library item failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
+  }
+
+  async createPromptForE2E(prefix = "E2E 提示词", data?: Record<string, unknown>): Promise<PromptLibraryItem> {
+    const name = this.e2eName(prefix);
+    const prompt = await this.createPromptLibraryItem({
+      name,
+      description: "E2E 自建提示词，避免依赖联调环境历史数据。",
+      prompt_type: "需求澄清",
+      content: "请用中文处理 {{issue_title}}，输出目标、边界、验收条件和风险。",
+      variables: [{ name: "issue_title", label: "任务标题", required: true }],
+      tags: ["E2E", "自建数据"],
+      status: "启用",
+      ...data,
+      name: String(data?.name ?? name),
+    });
+    if (prompt.id && !this.createdPromptLibraryIds.includes(prompt.id)) {
+      this.createdPromptLibraryIds.push(prompt.id);
+    }
+    return prompt;
   }
 
   async listPromptLibraryVersions(id: string): Promise<PromptLibraryVersion[]> {
@@ -1604,6 +1628,14 @@ export class TestApiClient {
       }
     }
     this.createdProjectIds = [];
+    for (const id of this.createdPromptLibraryIds) {
+      try {
+        await this.deletePromptLibraryItem(id);
+      } catch {
+        /* ignore — may already be deleted */
+      }
+    }
+    this.createdPromptLibraryIds = [];
     await this.cleanupSeededSquads();
     await this.cleanupInternalSquadTemplates();
     await this.cleanupSeededRuntimes();
@@ -1629,5 +1661,9 @@ export class TestApiClient {
     if (this.workspaceSlug) headers["X-Workspace-Slug"] = this.workspaceSlug;
     else if (this.workspaceId) headers["X-Workspace-ID"] = this.workspaceId;
     return fetch(`${API_BASE}${path}`, { ...init, headers });
+  }
+
+  private e2eName(prefix: string) {
+    return `${prefix} ${Date.now()} ${Math.random().toString(36).slice(2, 8)}`;
   }
 }

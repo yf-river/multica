@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
@@ -7,6 +7,7 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 const runDir = path.join(repoRoot, ".run");
 const envDir = path.join(runDir, "env");
 const deploymentDir = path.join(runDir, "deployments");
+const logArchiveDir = path.join(runDir, "log-archive");
 const publicHost = process.env.GOAL_TEST_PUBLIC_HOST || "9.134.129.162";
 
 const profiles = {
@@ -117,7 +118,7 @@ function deployEnvironment(item, build) {
   killStaleProcesses(item);
   waitForPortFree(item.backendPort, 15_000);
   waitForPortFree(item.frontendPort, 15_000);
-  resetDeploymentLogs(item, deploymentStartedAt, deploymentCommit);
+  const archivedLogs = resetDeploymentLogs(item, deploymentStartedAt, deploymentCommit);
 
   let serverPID = startDetached("./server/bin/server", [], env, logPath(item, "server"));
   waitForHTTP(`http://127.0.0.1:${item.backendPort}/health`, 60_000);
@@ -174,6 +175,7 @@ function deployEnvironment(item, build) {
     log_window: {
       started_at: deploymentStartedAt,
       marker: deploymentLogMarker(item, deploymentStartedAt, deploymentCommit),
+      archives: archivedLogs,
     },
     log_paths: {
       server: logPath(item, "server"),
@@ -346,9 +348,19 @@ function deploymentLogMarker(item, deployedAt, commit) {
 
 function resetDeploymentLogs(item, deployedAt, commit) {
   const marker = deploymentLogMarker(item, deployedAt, commit);
+  const archiveRoot = path.join(logArchiveDir, item.name, `${deployedAt.replace(/[:.]/g, "-")}-${commit}`);
+  const archives = {};
   for (const service of ["server", "web", "daemon"]) {
-    writeFileSync(logPath(item, service), `${marker} service=${service}\n`);
+    const source = logPath(item, service);
+    if (existsSync(source) && statSync(source).size > 0) {
+      mkdirSync(archiveRoot, { recursive: true });
+      const target = path.join(archiveRoot, `${service}.log`);
+      copyFileSync(source, target);
+      archives[service] = target;
+    }
+    writeFileSync(source, `${marker} service=${service}\n`);
   }
+  return archives;
 }
 
 function scanServiceLog(item, service, marker) {
