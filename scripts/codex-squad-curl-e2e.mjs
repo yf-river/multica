@@ -252,12 +252,13 @@ function createProjectLeadAgent(token, { name, role, runtimeID }) {
   const agent = post("/api/agents", {
     name,
     description: `curl 验收创建的${role}，用于证明未指派的项目 issue 会自动交给项目负责人并真实执行。`,
-    instructions: [
-      `你是${role}。`,
-      "收到任务后只做验收回复，不修改代码。",
-      "必须用中文输出：执行结论、当前 issue 标识、项目配合结果、给父任务的下一步建议。",
-      "如果任务来自跨项目子 issue，请说明你已完成对应项目的配合事项。",
-    ].join("\n"),
+	    instructions: [
+	      `你是${role}。`,
+	      "收到任务后只做验收回复，不修改代码。",
+	      "不要调用 shell、multica CLI 或任何 issue status 命令；本验收只需要你用文字说明项目配合已完成。",
+	      "必须用中文输出：执行结论、当前 issue 标识、项目配合结果、给父任务的下一步建议。",
+	      "如果任务来自跨项目子 issue，请说明你已完成对应项目的配合事项。",
+	    ].join("\n"),
     runtime_id: runtimeID,
     workspace_id: activeWorkspaceId,
     visibility: "private",
