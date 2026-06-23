@@ -1579,15 +1579,27 @@ function WorkbenchPanel({
       {activeTab !== "运行历史" && (
         <>
           {activeTab === "优化运行" && (
-            <OptimizationCandidateList
-              candidates={candidates}
-              onUpdateCandidate={onUpdateCandidate}
-              updatingCandidateId={updatingCandidateId}
-              onPublishCandidate={onPublishCandidate}
-              publishingCandidateId={publishingCandidateId}
-              onRejectCandidate={onRejectCandidate}
-              rejectingCandidateId={rejectingCandidateId}
-            />
+            <>
+              <OptimizationStudioPanel
+                workspaceId={workspaceId}
+                assets={visibleAssets}
+                runs={runs}
+                candidates={candidates}
+                onCancelRun={onCancelRun}
+                cancellingRunId={cancellingRunId}
+                onCreateEvidenceSnapshot={onCreateEvidenceSnapshot}
+                creatingEvidenceSnapshotRunId={creatingEvidenceSnapshotRunId}
+              />
+              <OptimizationCandidateList
+                candidates={candidates}
+                onUpdateCandidate={onUpdateCandidate}
+                updatingCandidateId={updatingCandidateId}
+                onPublishCandidate={onPublishCandidate}
+                publishingCandidateId={publishingCandidateId}
+                onRejectCandidate={onRejectCandidate}
+                rejectingCandidateId={rejectingCandidateId}
+              />
+            </>
           )}
           {loading ? (
           <div className="h-20 rounded-md bg-muted/60" />
@@ -1661,6 +1673,150 @@ function WorkbenchPanel({
           </div>
         )}
         </>
+      )}
+    </section>
+  );
+}
+
+function OptimizationStudioPanel({
+  workspaceId,
+  assets,
+  runs,
+  candidates,
+  onCancelRun,
+  cancellingRunId,
+  onCreateEvidenceSnapshot,
+  creatingEvidenceSnapshotRunId,
+}: {
+  workspaceId: string;
+  assets: PromptEvaluationAsset[];
+  runs: PromptEvaluationRun[];
+  candidates: PromptEvaluationOptimizationCandidate[];
+  onCancelRun: (runId: string) => void;
+  cancellingRunId: string | null;
+  onCreateEvidenceSnapshot: (runId: string) => void;
+  creatingEvidenceSnapshotRunId: string | null;
+}) {
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+  const runsByAsset = useMemo(() => {
+    const result = new Map<string, PromptEvaluationRun[]>();
+    for (const run of runs) {
+      const bucket = result.get(run.asset_id) ?? [];
+      bucket.push(run);
+      result.set(run.asset_id, bucket);
+    }
+    for (const bucket of result.values()) {
+      bucket.sort((a, b) => b.created_at.localeCompare(a.created_at));
+    }
+    return result;
+  }, [runs]);
+  const candidatesByRun = useMemo(() => buildCandidatesByRun(candidates), [candidates]);
+  const activeRuns = runs.filter(canCancelPromptEvaluationRun);
+  const publishedCandidates = candidates.filter((candidate) => candidate.status === "已发布").length;
+  const evidenceQuery = useQuery({
+    queryKey: promptLibraryKeys.runEvidence(workspaceId, expandedRunId),
+    queryFn: () => api.getPromptEvaluationRunEvidence(expandedRunId ?? ""),
+    enabled: !!workspaceId && !!expandedRunId,
+  });
+  const evidenceSnapshotQuery = useQuery({
+    queryKey: promptLibraryKeys.runEvidenceSnapshots(workspaceId, expandedRunId),
+    queryFn: () => api.listPromptEvaluationEvidenceSnapshots(expandedRunId ?? "", 5),
+    enabled: !!workspaceId && !!expandedRunId,
+  });
+
+  return (
+    <section className="grid gap-3 rounded-md border border-border/70 bg-muted/10 p-3" data-testid="optimization-studio-panel">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <h4 className="text-sm font-semibold">优化运行作业台</h4>
+          <p className="mt-1 text-xs text-muted-foreground">
+            汇总优化运行资产、真实运行、候选版本和取消入口，避免优化运行只是一组分散候选。
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Badge variant="outline">资产 {assets.length}</Badge>
+          <Badge variant="outline">运行 {runs.length}</Badge>
+          <Badge variant={activeRuns.length > 0 ? "secondary" : "outline"}>活动 {activeRuns.length}</Badge>
+          <Badge variant="outline">候选 {candidates.length}</Badge>
+          <Badge variant="outline">已发布 {publishedCandidates}</Badge>
+        </div>
+      </div>
+
+      {assets.length === 0 ? (
+        <div className="rounded-md border border-dashed px-3 py-5 text-center text-sm text-muted-foreground">
+          暂无优化运行资产。可以先从提示词调试场记录一次优化运行，或在运行历史里对失败运行创建智能体优化任务。
+        </div>
+      ) : (
+        <div className="grid gap-2">
+          {assets.map((asset) => {
+            const assetRuns = runsByAsset.get(asset.id) ?? [];
+            const latestRun = assetRuns[0] ?? null;
+            const candidateCount = assetRuns.reduce((total, run) => total + (candidatesByRun.get(run.id)?.length ?? 0), 0);
+            return (
+              <div key={asset.id} className="grid gap-2 rounded-md border bg-background px-3 py-3" data-testid={`optimization-studio-job-${asset.id}`}>
+                <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="truncate text-sm font-medium">{asset.name}</span>
+                      <Badge variant={asset.status === "启用" ? "secondary" : "outline"} className="shrink-0">{asset.status}</Badge>
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {asset.description || "未记录优化说明"}
+                    </div>
+                    <div className="mt-1 text-[11px] text-muted-foreground">
+                      配置摘要：{summarizeJSONValue(asset.payload)} · 最近运行 {latestRun ? `${displayRunKind(latestRun.run_kind)} / ${latestRun.status}` : "暂无"}
+                    </div>
+                  </div>
+                  <div className="flex flex-wrap justify-start gap-2 md:justify-end">
+                    <Badge variant="outline">运行 {assetRuns.length}</Badge>
+                    <Badge variant="outline">候选 {candidateCount}</Badge>
+                    <Badge variant="outline">用例 {asset.structured_case_count}</Badge>
+                  </div>
+                </div>
+
+                {assetRuns.length > 0 && (
+                  <div className="grid gap-1.5">
+                    {assetRuns.slice(0, 3).map((run) => (
+                      <div key={run.id} className="grid gap-2 rounded-sm border bg-muted/20 px-2 py-2 text-xs md:grid-cols-[minmax(0,1fr)_auto] md:items-center" data-testid={`optimization-studio-run-${run.id}`}>
+                        <div className="min-w-0">
+                          <div className="truncate font-medium text-foreground">{displayRunKind(run.run_kind)} · {run.status}</div>
+                          <div className="mt-1 truncate text-muted-foreground">
+                            运行 {run.id} · 任务 {run.task_id ?? "未绑定"} · 模型 {run.model || "未记录"} · {run.total_duration_ms} ms
+                          </div>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-2">
+                          <Badge variant="outline">候选 {candidatesByRun.get(run.id)?.length ?? 0}</Badge>
+                          <Button size="sm" variant="secondary" onClick={() => setExpandedRunId(expandedRunId === run.id ? null : run.id)}>
+                            {expandedRunId === run.id ? "收起证据" : "查看证据"}
+                          </Button>
+                          {canCancelPromptEvaluationRun(run) && (
+                            <Button size="sm" variant="destructive" onClick={() => onCancelRun(run.id)} disabled={cancellingRunId === run.id}>
+                              {cancellingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <XCircle className="size-3.5" />}
+                              取消运行
+                            </Button>
+                          )}
+                        </div>
+                        {expandedRunId === run.id && (
+                          <div className="md:col-span-2">
+                            <RunEvidencePanel
+                              evidence={evidenceQuery.data ?? null}
+                              snapshots={evidenceSnapshotQuery.data?.items ?? []}
+                              snapshotsLoading={evidenceSnapshotQuery.isLoading || evidenceSnapshotQuery.isFetching}
+                              loading={evidenceQuery.isLoading || evidenceQuery.isFetching}
+                              error={evidenceQuery.isError}
+                              creatingSnapshot={creatingEvidenceSnapshotRunId === run.id}
+                              onCreateSnapshot={() => onCreateEvidenceSnapshot(run.id)}
+                            />
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+        </div>
       )}
     </section>
   );

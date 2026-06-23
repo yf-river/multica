@@ -1005,6 +1005,59 @@ test.describe("训练与评估工作台", () => {
     expect(evidence.trials[0]?.status).toBe("已跳过");
   });
 
+  test("优化运行作业台汇总资产运行候选并支持取消", async ({ page }) => {
+    test.setTimeout(90_000);
+    await api.ensureOnlineCodexRuntime(`${artifactPrefix} 优化作业台 Runtime`);
+    const prompt = await api.createPromptForE2E(artifactPrefix, {
+      name: `${artifactPrefix} 优化作业台提示词`,
+      content: "请优化 {{issue_title}}，输出中文候选、依据和验收条件。",
+      variables: [{ name: "issue_title", label: "任务标题", required: true }],
+    });
+    const asset = await api.createPromptEvaluationAsset({
+      prompt_id: prompt.id,
+      name: `${artifactPrefix} 优化作业台资产`,
+      description: "E2E 优化运行作业台资产",
+      asset_type: "优化运行",
+      payload: {
+        优化目标: "提升失败用例的中文验收质量",
+        cases: [
+          {
+            名称: "优化作业台用例",
+            变量: { issue_title: "优化运行作业台" },
+            期望包含: ["候选", "验收条件"],
+          },
+        ],
+      },
+      status: "启用",
+    });
+    const agentRun = await api.runPromptEvaluationAssetAgent(asset.id);
+
+    await page.goto(`/${workspaceSlug}/training/optimization-runs`, { waitUntil: "domcontentloaded" });
+    const studio = page.getByTestId("optimization-studio-panel");
+    await expect(studio).toContainText("优化运行作业台", { timeout: 10000 });
+    await expect(studio).toContainText("活动 1");
+    const job = page.getByTestId(`optimization-studio-job-${asset.id}`);
+    await expect(job).toContainText(`${artifactPrefix} 优化作业台资产`);
+    await expect(job).toContainText("配置摘要");
+    const run = page.getByTestId(`optimization-studio-run-${agentRun.run.id}`);
+    await expect(run).toContainText("智能体执行 · 已入队");
+    await run.getByRole("button", { name: "查看证据" }).click();
+    const evidencePanel = run.getByTestId(`run-evidence-${agentRun.run.id}`);
+    await expect(evidencePanel).toContainText(`任务 ${agentRun.task_id}`, { timeout: 10000 });
+    await expect(evidencePanel).toContainText("证据快照");
+    const cancelResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes(`/api/prompt-evaluation-runs/${agentRun.run.id}/cancel`),
+      { timeout: 10000 },
+    );
+    await run.getByRole("button", { name: "取消运行" }).click();
+    expect((await cancelResponse).status()).toBe(200);
+    await expect(page.getByText("训练评估运行已取消")).toBeVisible({ timeout: 10000 });
+    await expect(run).toContainText("智能体执行 · 已取消", { timeout: 10000 });
+    await expect(studio).toContainText("活动 0", { timeout: 10000 });
+  });
+
   test("旧提示词库路由会跳转到训练与评估提示词视图", async ({ page }) => {
     await page.goto(`/${workspaceSlug}/prompt-library`, { waitUntil: "domcontentloaded" });
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/prompts$`), { timeout: 30000 });
