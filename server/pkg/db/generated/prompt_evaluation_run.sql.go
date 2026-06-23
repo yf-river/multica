@@ -11,6 +11,65 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const cancelPromptEvaluationRun = `-- name: CancelPromptEvaluationRun :one
+UPDATE prompt_evaluation_run SET
+    status = '已取消',
+    failed_cases = CASE WHEN failed_cases = 0 AND total_cases > passed_cases THEN total_cases - passed_cases ELSE failed_cases END,
+    pass_rate = CASE WHEN total_cases > 0 THEN passed_cases::double precision / total_cases::double precision ELSE 0 END,
+    failure_reason = COALESCE(NULLIF(failure_reason, ''), '用户取消训练评估运行'),
+    conclusion = '训练评估运行已取消；如已绑定真实任务，任务取消会通过 daemon 轮询生效。',
+    completed_at = COALESCE(completed_at, now()),
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND status IN ('已入队', '运行中')
+RETURNING id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at
+`
+
+type CancelPromptEvaluationRunParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) CancelPromptEvaluationRun(ctx context.Context, arg CancelPromptEvaluationRunParams) (PromptEvaluationRun, error) {
+	row := q.db.QueryRow(ctx, cancelPromptEvaluationRun, arg.ID, arg.WorkspaceID)
+	var i PromptEvaluationRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AssetID,
+		&i.PromptID,
+		&i.RunKind,
+		&i.Status,
+		&i.TriggerSource,
+		&i.AgentID,
+		&i.RuntimeID,
+		&i.TaskID,
+		&i.ChatSessionID,
+		&i.Model,
+		&i.RuntimeProvider,
+		&i.TotalCases,
+		&i.PassedCases,
+		&i.FailedCases,
+		&i.PassRate,
+		&i.TotalDurationMs,
+		&i.AverageDurationMs,
+		&i.InputTokens,
+		&i.OutputTokens,
+		&i.EstimatedCost,
+		&i.FailureReason,
+		&i.Conclusion,
+		&i.Metrics,
+		&i.Evidence,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createPromptEvaluationRun = `-- name: CreatePromptEvaluationRun :one
 INSERT INTO prompt_evaluation_run (
     workspace_id,
@@ -712,6 +771,31 @@ func (q *Queries) ListPromptEvaluationTrialsByRun(ctx context.Context, arg ListP
 		return nil, err
 	}
 	return items, nil
+}
+
+const markPromptEvaluationTrialsSkippedByRun = `-- name: MarkPromptEvaluationTrialsSkippedByRun :exec
+UPDATE prompt_evaluation_trial SET
+    status = '已跳过',
+    failure_reason = COALESCE(NULLIF(failure_reason, ''), '运行已取消'),
+    evidence = jsonb_set(
+        COALESCE(evidence, '{}'::jsonb),
+        '{取消原因}',
+        to_jsonb('训练评估运行已取消'::text),
+        true
+    )
+WHERE run_id = $1
+  AND workspace_id = $2
+  AND status IN ('待执行', '需人工复核')
+`
+
+type MarkPromptEvaluationTrialsSkippedByRunParams struct {
+	RunID       pgtype.UUID `json:"run_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) MarkPromptEvaluationTrialsSkippedByRun(ctx context.Context, arg MarkPromptEvaluationTrialsSkippedByRunParams) error {
+	_, err := q.db.Exec(ctx, markPromptEvaluationTrialsSkippedByRun, arg.RunID, arg.WorkspaceID)
+	return err
 }
 
 const reassignPromptEvaluationRunTask = `-- name: ReassignPromptEvaluationRunTask :one

@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, BookOpenText, Download, Loader2, Play, Plus, Save, Search, Trash2 } from "lucide-react";
+import { Archive, BookOpenText, Download, Loader2, Play, Plus, Save, Search, Trash2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -427,6 +427,18 @@ export function PromptLibraryPage({
       invalidateRunEvidenceSnapshots(runId);
       invalidateSummary();
       toast.success("运行记录已同步");
+    },
+  });
+
+  const cancelRunMut = useMutation({
+    mutationFn: (runId: string) => api.cancelPromptEvaluationRun(runId),
+    onSuccess: (run) => {
+      invalidateRuns();
+      invalidateCandidates();
+      queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", run.id) });
+      invalidateRunEvidenceSnapshots(run.id);
+      invalidateSummary();
+      toast.success("训练评估运行已取消");
     },
   });
 
@@ -939,6 +951,8 @@ export function PromptLibraryPage({
                 deletingCaseId={deleteCaseMut.isPending ? deleteCaseMut.variables ?? null : null}
                 onSyncRun={(runId) => syncRunMut.mutate(runId)}
                 syncingRunId={syncRunMut.isPending ? syncRunMut.variables ?? null : null}
+                onCancelRun={(runId) => cancelRunMut.mutate(runId)}
+                cancellingRunId={cancelRunMut.isPending ? cancelRunMut.variables ?? null : null}
                 onCreateEvidenceSnapshot={(runId) => createEvidenceSnapshotMut.mutate(runId)}
                 creatingEvidenceSnapshotRunId={createEvidenceSnapshotMut.isPending ? createEvidenceSnapshotMut.variables ?? null : null}
                 onGenerateCandidate={(runId) => createCandidateMut.mutate(runId)}
@@ -983,6 +997,8 @@ export function PromptLibraryPage({
               deletingCaseId={deleteCaseMut.isPending ? deleteCaseMut.variables ?? null : null}
               onSyncRun={(runId) => syncRunMut.mutate(runId)}
               syncingRunId={syncRunMut.isPending ? syncRunMut.variables ?? null : null}
+              onCancelRun={(runId) => cancelRunMut.mutate(runId)}
+              cancellingRunId={cancelRunMut.isPending ? cancelRunMut.variables ?? null : null}
               onCreateEvidenceSnapshot={(runId) => createEvidenceSnapshotMut.mutate(runId)}
               creatingEvidenceSnapshotRunId={createEvidenceSnapshotMut.isPending ? createEvidenceSnapshotMut.variables ?? null : null}
               onGenerateCandidate={(runId) => createCandidateMut.mutate(runId)}
@@ -1373,6 +1389,8 @@ function WorkbenchPanel({
   deletingCaseId,
   onSyncRun,
   syncingRunId,
+  onCancelRun,
+  cancellingRunId,
   onCreateEvidenceSnapshot,
   creatingEvidenceSnapshotRunId,
   onGenerateCandidate,
@@ -1410,6 +1428,8 @@ function WorkbenchPanel({
   deletingCaseId: string | null;
   onSyncRun: (runId: string) => void;
   syncingRunId: string | null;
+  onCancelRun: (runId: string) => void;
+  cancellingRunId: string | null;
   onCreateEvidenceSnapshot: (runId: string) => void;
   creatingEvidenceSnapshotRunId: string | null;
   onGenerateCandidate: (runId: string) => void;
@@ -1502,6 +1522,18 @@ function WorkbenchPanel({
                     <Button size="sm" variant="secondary" onClick={() => onSyncRun(run.id)} disabled={syncingRunId === run.id}>
                       {syncingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
                       同步任务
+                    </Button>
+                  )}
+                  {canCancelPromptEvaluationRun(run) && (
+                    <Button
+                      size="sm"
+                      variant="destructive"
+                      onClick={() => onCancelRun(run.id)}
+                      disabled={cancellingRunId === run.id}
+                      data-testid={`cancel-prompt-evaluation-run-${run.id}`}
+                    >
+                      {cancellingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <XCircle className="size-3.5" />}
+                      取消运行
                     </Button>
                   )}
                   {canGenerateOptimizationCandidate(run) && (
@@ -2466,6 +2498,10 @@ function canGenerateOptimizationCandidate(run: PromptEvaluationRun): boolean {
   if (run.failed_cases > 0) return true;
   if (run.status === "未通过" || run.status === "失败") return true;
   return Boolean(run.failure_reason && run.failure_reason !== "无");
+}
+
+function canCancelPromptEvaluationRun(run: PromptEvaluationRun): boolean {
+  return run.status === "已入队" || run.status === "运行中";
 }
 
 function summarizeAssetPayload(asset: PromptEvaluationAsset, caseSummary?: CaseSummary): string {

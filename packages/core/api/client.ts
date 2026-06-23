@@ -2007,6 +2007,13 @@ export class ApiClient {
     }) as PromptEvaluationRun;
   }
 
+  async cancelPromptEvaluationRun(runId: string): Promise<PromptEvaluationRun> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/cancel`, { method: "POST" });
+    return parseWithFallback(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
+      endpoint: "POST /api/prompt-evaluation-runs/:id/cancel",
+    }) as PromptEvaluationRun;
+  }
+
   async listPromptEvaluationOptimizationCandidates(params?: ListPromptEvaluationOptimizationCandidatesParams): Promise<ListPromptEvaluationOptimizationCandidatesResponse> {
     const search = new URLSearchParams();
     if (params?.run_id) search.set("run_id", params.run_id);

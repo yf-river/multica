@@ -330,7 +330,7 @@ export function AgentPlaygroundWorkbench({
           <div className="grid gap-3 border-b pb-3 md:grid-cols-[minmax(0,1fr)_220px]">
             <div className="min-w-0">
               <div className="text-xs font-medium text-muted-foreground">任务载荷来源</div>
-              <div className="mt-1 truncate text-sm font-semibold">{selected?.name ?? "请先从左侧选择提示词"}</div>
+              <div className="mt-1 truncate text-sm font-semibold">{selected?.name ?? "请先从右侧执行目标池选择提示词"}</div>
               <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{selected?.description || "智能体调试场只引用已保存模板，模板编辑请回到提示词库。"}</div>
             </div>
             <div className="grid gap-1 text-xs text-muted-foreground">

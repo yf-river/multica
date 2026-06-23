@@ -233,6 +233,34 @@ UPDATE prompt_evaluation_run SET
 WHERE id = $1 AND workspace_id = $2
 RETURNING *;
 
+-- name: CancelPromptEvaluationRun :one
+UPDATE prompt_evaluation_run SET
+    status = '已取消',
+    failed_cases = CASE WHEN failed_cases = 0 AND total_cases > passed_cases THEN total_cases - passed_cases ELSE failed_cases END,
+    pass_rate = CASE WHEN total_cases > 0 THEN passed_cases::double precision / total_cases::double precision ELSE 0 END,
+    failure_reason = COALESCE(NULLIF(failure_reason, ''), '用户取消训练评估运行'),
+    conclusion = '训练评估运行已取消；如已绑定真实任务，任务取消会通过 daemon 轮询生效。',
+    completed_at = COALESCE(completed_at, now()),
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND status IN ('已入队', '运行中')
+RETURNING *;
+
+-- name: MarkPromptEvaluationTrialsSkippedByRun :exec
+UPDATE prompt_evaluation_trial SET
+    status = '已跳过',
+    failure_reason = COALESCE(NULLIF(failure_reason, ''), '运行已取消'),
+    evidence = jsonb_set(
+        COALESCE(evidence, '{}'::jsonb),
+        '{取消原因}',
+        to_jsonb('训练评估运行已取消'::text),
+        true
+    )
+WHERE run_id = $1
+  AND workspace_id = $2
+  AND status IN ('待执行', '需人工复核');
+
 -- name: UpdatePromptEvaluationTrialsFromTask :exec
 UPDATE prompt_evaluation_trial SET
     status = $3,

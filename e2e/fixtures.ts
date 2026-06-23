@@ -1075,7 +1075,6 @@ export class TestApiClient {
   async createPromptForE2E(prefix = "E2E 提示词", data?: Record<string, unknown>): Promise<PromptLibraryItem> {
     const name = this.e2eName(prefix);
     const prompt = await this.createPromptLibraryItem({
-      name,
       description: "E2E 自建提示词，避免依赖联调环境历史数据。",
       prompt_type: "需求澄清",
       content: "请用中文处理 {{issue_title}}，输出目标、边界、验收条件和风险。",
@@ -1389,6 +1388,14 @@ export class TestApiClient {
     const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/sync`, { method: "POST" });
     if (!res.ok) {
       throw new Error(`sync prompt evaluation run failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async cancelPromptEvaluationRun(runId: string): Promise<PromptEvaluationRun> {
+    const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/cancel`, { method: "POST" });
+    if (!res.ok) {
+      throw new Error(`cancel prompt evaluation run failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
   }

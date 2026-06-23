@@ -930,6 +930,59 @@ test.describe("训练与评估工作台", () => {
       });
   });
 
+  test("运行历史可以取消已入队的真实智能体运行", async ({ page }) => {
+    test.setTimeout(90_000);
+    await api.ensureOnlineCodexRuntime(`${artifactPrefix} 取消运行 Runtime`);
+    const prompt = await api.createPromptForE2E(artifactPrefix, {
+      name: `${artifactPrefix} 取消运行提示词`,
+      content: "请处理 {{issue_title}}，输出中文结论和验收证据。",
+      variables: [{ name: "issue_title", label: "任务标题", required: true }],
+    });
+    const asset = await api.createPromptEvaluationAsset({
+      prompt_id: prompt.id,
+      name: `${artifactPrefix} 取消运行实验`,
+      description: "E2E 公开 UI 取消训练评估运行",
+      asset_type: "实验",
+      payload: {
+        cases: [
+          {
+            名称: "取消运行用例",
+            变量: { issue_title: "取消运行" },
+            期望包含: ["中文结论", "验收证据"],
+          },
+        ],
+      },
+      status: "启用",
+    });
+    const agentRun = await api.runPromptEvaluationAssetAgent(asset.id);
+
+    await page.goto(`/${workspaceSlug}/training/run-history`, { waitUntil: "domcontentloaded" });
+    const runRow = page.getByTestId(`prompt-evaluation-run-${agentRun.run.id}`);
+    await expect(runRow).toContainText("智能体执行 · 已入队", { timeout: 10000 });
+    await expect(runRow).toContainText(`任务 ${agentRun.task_id}`);
+    const cancelResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes(`/api/prompt-evaluation-runs/${agentRun.run.id}/cancel`),
+      { timeout: 10000 },
+    );
+    await runRow.getByRole("button", { name: "取消运行" }).click();
+    expect((await cancelResponse).status()).toBe(200);
+    await expect(page.getByText("训练评估运行已取消")).toBeVisible({ timeout: 10000 });
+    await expect(runRow).toContainText("智能体执行 · 已取消", { timeout: 10000 });
+    await expect(runRow.getByRole("button", { name: "取消运行" })).toHaveCount(0);
+    await expect
+      .poll(async () => {
+        const runs = await api.listPromptEvaluationRuns({ asset_id: asset.id });
+        const cancelled = runs.find((run) => run.id === agentRun.run.id);
+        return cancelled ? { status: cancelled.status, task_id: cancelled.task_id } : null;
+      }, { timeout: 15000 })
+      .toEqual({ status: "已取消", task_id: agentRun.task_id });
+    const evidence = await api.getPromptEvaluationRunEvidence(agentRun.run.id);
+    expect(evidence.run.status).toBe("已取消");
+    expect(evidence.trials[0]?.status).toBe("已跳过");
+  });
+
   test("旧提示词库路由会跳转到训练与评估提示词视图", async ({ page }) => {
     await page.goto(`/${workspaceSlug}/prompt-library`, { waitUntil: "domcontentloaded" });
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/prompts$`), { timeout: 30000 });

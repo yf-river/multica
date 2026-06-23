@@ -1981,6 +1981,113 @@ func (h *Handler) GetPromptEvaluationRunEvidence(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (h *Handler) CancelPromptEvaluationRun(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	runID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation run id")
+	if !ok {
+		return
+	}
+	run, err := h.Queries.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{ID: runID, WorkspaceID: workspaceUUID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "prompt evaluation run not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation run")
+		return
+	}
+	if run.Status == "已取消" {
+		writeJSON(w, http.StatusOK, promptEvaluationRunToResponse(run))
+		return
+	}
+	if run.Status != "已入队" && run.Status != "运行中" {
+		writeError(w, http.StatusConflict, "only queued or running prompt evaluation runs can be cancelled")
+		return
+	}
+	if run.TaskID.Valid {
+		if !h.canCancelPromptEvaluationTask(w, r, userID, workspaceID, workspaceUUID, run.TaskID) {
+			return
+		}
+		if _, err := h.TaskService.CancelTaskWithResult(r.Context(), run.TaskID); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	if err := h.Queries.MarkPromptEvaluationTrialsSkippedByRun(r.Context(), db.MarkPromptEvaluationTrialsSkippedByRunParams{
+		RunID:       run.ID,
+		WorkspaceID: workspaceUUID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to mark prompt evaluation trials skipped")
+		return
+	}
+	cancelled, err := h.Queries.CancelPromptEvaluationRun(r.Context(), db.CancelPromptEvaluationRunParams{
+		ID:          run.ID,
+		WorkspaceID: workspaceUUID,
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			reloaded, loadErr := h.Queries.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{ID: run.ID, WorkspaceID: workspaceUUID})
+			if loadErr == nil && reloaded.Status == "已取消" {
+				writeJSON(w, http.StatusOK, promptEvaluationRunToResponse(reloaded))
+				return
+			}
+			writeError(w, http.StatusConflict, "prompt evaluation run is no longer cancellable")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to cancel prompt evaluation run")
+		return
+	}
+	writeJSON(w, http.StatusOK, promptEvaluationRunToResponse(cancelled))
+}
+
+func (h *Handler) canCancelPromptEvaluationTask(w http.ResponseWriter, r *http.Request, userID, workspaceID string, workspaceUUID pgtype.UUID, taskID pgtype.UUID) bool {
+	task, err := h.Queries.GetAgentTaskInWorkspace(r.Context(), db.GetAgentTaskInWorkspaceParams{
+		ID:          taskID,
+		WorkspaceID: workspaceUUID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "task not found")
+		return false
+	}
+	if task.ChatSessionID.Valid {
+		cs, err := h.Queries.GetChatSessionInWorkspace(r.Context(), db.GetChatSessionInWorkspaceParams{
+			ID:          task.ChatSessionID,
+			WorkspaceID: workspaceUUID,
+		})
+		if err != nil {
+			writeError(w, http.StatusNotFound, "task not found")
+			return false
+		}
+		if uuidToString(cs.CreatorID) != userID {
+			writeError(w, http.StatusForbidden, "not your task")
+			return false
+		}
+		return true
+	}
+	agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+		ID:          task.AgentID,
+		WorkspaceID: workspaceUUID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "task not found")
+		return false
+	}
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+		writeError(w, http.StatusForbidden, "you do not have access to this agent")
+		return false
+	}
+	return true
+}
+
 func (h *Handler) buildPromptEvaluationRunEvidenceResponse(ctx context.Context, workspaceUUID pgtype.UUID, runID pgtype.UUID) (PromptEvaluationRunEvidenceResponse, error) {
 	run, err := h.Queries.GetPromptEvaluationRunInWorkspace(ctx, db.GetPromptEvaluationRunInWorkspaceParams{ID: runID, WorkspaceID: workspaceUUID})
 	if err != nil {

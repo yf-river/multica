@@ -1587,6 +1587,41 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsCancelledTask(t *testing.T) {
 	}
 }
 
+func TestCancelPromptEvaluationRunCancelsTaskAndRun(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	cleanupPromptEvaluationAgentRunTest(t)
+	_, resp, _ := createPromptEvaluationAgentRunFixture(t, "公开取消运行实验", "取消公开运行")
+
+	cancelW := httptest.NewRecorder()
+	testHandler.CancelPromptEvaluationRun(cancelW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/cancel", nil), "id", resp.Run.ID))
+	if cancelW.Code != http.StatusOK {
+		t.Fatalf("cancel run status = %d, body = %s", cancelW.Code, cancelW.Body.String())
+	}
+	var cancelled PromptEvaluationRunResponse
+	if err := json.Unmarshal(cancelW.Body.Bytes(), &cancelled); err != nil {
+		t.Fatalf("decode cancel response: %v", err)
+	}
+	if cancelled.Status != "已取消" || cancelled.TaskID == nil || *cancelled.TaskID != resp.TaskID {
+		t.Fatalf("cancelled run response = %+v", cancelled)
+	}
+	var taskStatus, runStatus, trialStatus string
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT q.status, r.status, t.status
+		FROM prompt_evaluation_run r
+		JOIN agent_task_queue q ON q.id = r.task_id
+		JOIN prompt_evaluation_trial t ON t.run_id = r.id
+		WHERE r.id = $1
+		LIMIT 1
+	`, resp.Run.ID).Scan(&taskStatus, &runStatus, &trialStatus); err != nil {
+		t.Fatalf("load cancelled run state: %v", err)
+	}
+	if taskStatus != "cancelled" || runStatus != "已取消" || trialStatus != "已跳过" {
+		t.Fatalf("cancel state mismatch: task=%s run=%s trial=%s", taskStatus, runStatus, trialStatus)
+	}
+}
+
 func TestRunPromptEvaluationAssetAgentBatchFailureAutoSyncsTask(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")
