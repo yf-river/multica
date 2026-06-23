@@ -25,6 +25,36 @@ Multica is an AI-native task management platform — like Linear, but with AI ag
 - Supports local daemon and fixed-machine agent runtimes
 - Built for 2-10 person AI-native teams
 
+## Goal Execution Profile
+
+Use this profile when generating or running long Codex goals for this repository.
+
+- Main repository: `/data/ida/goal-test`
+- Decision ledger: `/data/ida/docs/tapd/20260605-ai设计/全流程sop设计-v4`
+- Integration environment: `http://9.134.129.162:13682`
+- Integration login page: `http://9.134.129.162:13682/login`
+- Default acceptance account: `goal-test-daemon`
+- Default acceptance password for local E2E scripts: `e2e-password`; prefer the relevant environment variable when one is set.
+- Default scope: validate the integration environment first. Touch production only when the user explicitly requests it.
+- Goal-test environment files: `.run/env/goal-test-int.env`, `.run/env/goal-test-prod.env`
+- Goal-test logs: `.run/int-server.log`, `.run/int-web.log`, `.run/int-daemon.log`, `.run/prod-server.log`, `.run/prod-web.log`, `.run/prod-daemon.log`
+- Evidence directories: `artifacts/acceptance/` and `artifacts/acceptance/ui-audit-screenshots/`
+
+Useful goal-test commands:
+
+```bash
+make goal-test-verify-env
+make goal-test-ui-audit
+pnpm acceptance:verify
+pnpm exec playwright test e2e/production-acceptance.spec.ts --project=chromium
+node scripts/prompt-evaluation-curl-e2e.mjs
+node scripts/codex-squad-curl-e2e.mjs
+```
+
+For complex goal-test delivery, prefer `gpt-5.5 high` as the main controller. Simple local slices or generating the goal prompt itself can use `gpt-5.5 medium`. Read-only exploration and repeated verification can use lower-cost models when available. Local runtime should prefer Codex unless the user explicitly chooses another runtime.
+
+Goal-test acceptance must include real browser UI checks, E2E/API data closure, performance evidence, relevant `.run` log scans, decision ledger updates, and a commit or explicit reason for not committing.
+
 ## Architecture
 
 **Go backend + monorepo frontend (pnpm workspaces + Turborepo) with shared packages.**
