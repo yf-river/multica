@@ -198,10 +198,12 @@ export function PromptLibraryPage({
     activeTab === "实验" ||
     activeTab === "优化运行";
   const needsPromptItems =
-    (shouldShowPromptEditor && (activeTab === "提示词库" || activeTab === "提示词调试场")) ||
+    (shouldShowPromptEditor && activeTab === "提示词库") ||
+    activeTab === "提示词调试场" ||
     activeTab === "智能体调试场" ||
     isEvaluationAssetTab;
   const needsEvaluationAssets =
+    activeTab === "提示词调试场" ||
     activeTab === "智能体调试场" ||
     isEvaluationAssetTab;
   const needsStructuredCases =
@@ -211,7 +213,12 @@ export function PromptLibraryPage({
     activeTab === "实验" ||
     activeTab === "运行历史";
   const needsExperimentDimensions = activeTab === "实验";
-  const needsRuns = isDashboardTab || activeTab === "运行历史" || activeTab === "优化运行" || activeTab === "智能体调试场";
+  const needsRuns =
+    isDashboardTab ||
+    activeTab === "提示词调试场" ||
+    activeTab === "运行历史" ||
+    activeTab === "优化运行" ||
+    activeTab === "智能体调试场";
   const needsCandidates = isDashboardTab || activeTab === "运行历史" || activeTab === "优化运行";
   const needsRuntimeReadiness = isDashboardTab || activeTab === "智能体调试场";
 
@@ -819,6 +826,77 @@ export function PromptLibraryPage({
             candidates={candidates}
           />
         </main>
+      ) : activeTab === "提示词调试场" ? (
+        <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[320px_minmax(0,1fr)]" data-testid="prompt-playground-workbench">
+          <aside className="flex min-h-0 flex-col border-b md:border-b-0 md:border-r" data-testid="prompt-playground-prompt-list">
+            <div className="space-y-3 border-b p-3">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="搜索要渲染的提示词"
+                  className="h-8 pl-8 text-sm"
+                />
+              </div>
+              <div className="rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+                这里验证模板渲染，不编辑提示词，不创建真实智能体任务。需要修改模板请回到「提示词库」。
+              </div>
+            </div>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {listQuery.isLoading ? (
+                <div className="space-y-2 p-3">
+                  {Array.from({ length: 5 }).map((_, index) => (
+                    <div key={index} className="h-16 rounded-md bg-muted/60" />
+                  ))}
+                </div>
+              ) : filteredItems.length === 0 ? (
+                <div className="p-6 text-sm text-muted-foreground">暂无可调试提示词</div>
+              ) : (
+                <div className="divide-y">
+                  {filteredItems.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => {
+                        setIsDraftingNew(false);
+                        setSelectedId(item.id);
+                      }}
+                      className={`flex w-full flex-col gap-2 px-3 py-3 text-left transition-colors hover:bg-muted/60 ${
+                        selected?.id === item.id ? "bg-muted" : ""
+                      }`}
+                    >
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.name}</span>
+                        <Badge variant={item.status === "启用" ? "secondary" : "outline"} className="shrink-0">
+                          {item.status}
+                        </Badge>
+                      </div>
+                      <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                        <span className="shrink-0">{item.prompt_type}</span>
+                        <span className="truncate">版本 v{item.version}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </aside>
+
+          <main className="min-h-0 overflow-y-auto p-4 md:p-6">
+            <PromptPlaygroundWorkbench
+              selected={selected}
+              debugValuesText={debugValuesText}
+              onDebugValuesTextChange={setDebugValuesText}
+              debugResult={debugResult}
+              runningDebug={runningDebug}
+              runs={runs}
+              assets={assets}
+              loading={assetQuery.isLoading || runQuery.isLoading}
+              onRunDebug={runDebug}
+            />
+          </main>
+        </div>
       ) : activeTab === "智能体调试场" ? (
         <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[320px_minmax(0,1fr)]" data-testid="agent-playground-workbench">
           <aside className="flex min-h-0 flex-col border-b md:border-b-0 md:border-r" data-testid="agent-playground-prompt-list">
@@ -1538,6 +1616,172 @@ function TrainingSummaryStrip({ summary, loading }: { summary: PromptEvaluationS
             <div className="mt-1 truncate text-sm font-semibold">{item.value}</div>
           </div>
         ))}
+      </div>
+    </section>
+  );
+}
+
+function PromptPlaygroundWorkbench({
+  selected,
+  debugValuesText,
+  onDebugValuesTextChange,
+  debugResult,
+  runningDebug,
+  runs,
+  assets,
+  loading,
+  onRunDebug,
+}: {
+  selected: PromptLibraryItem | null;
+  debugValuesText: string;
+  onDebugValuesTextChange: (value: string) => void;
+  debugResult: ReturnType<typeof renderPromptTemplate>;
+  runningDebug: boolean;
+  runs: PromptEvaluationRun[];
+  assets: PromptEvaluationAsset[];
+  loading: boolean;
+  onRunDebug: () => void;
+}) {
+  const variableNames = selected?.variables.map((item) => item.name).filter(Boolean) ?? [];
+  const templateRuns = runs.filter((run) => run.run_kind === "模板渲染检查" && (!selected || run.prompt_id === selected.id));
+  const debugAssets = assets.filter((asset) => {
+    const payload = asset.payload ?? {};
+    return (
+      asset.asset_type === "优化运行" &&
+      (!selected || asset.prompt_id === selected.id) &&
+      (asset.description.includes("提示词调试场") || Object.prototype.hasOwnProperty.call(payload, "调试输出"))
+    );
+  });
+
+  return (
+    <section className="mx-auto grid max-w-7xl gap-4" data-testid="prompt-playground-panel">
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
+        <section className="rounded-md border border-border/70 bg-muted/10 p-4">
+          <div className="flex flex-col gap-2 border-b pb-3 md:flex-row md:items-start md:justify-between">
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold">提示词调试场</h2>
+              <p className="mt-1 text-xs text-muted-foreground">
+                这里只做模板渲染检查：选择已保存提示词，填入变量，确认最终提示词文本，并把结果记录为一次模板渲染检查。
+              </p>
+            </div>
+            <Badge variant="secondary" className="w-fit shrink-0">本地渲染</Badge>
+          </div>
+
+          <div className="mt-4 grid gap-4">
+            <div className="grid gap-3 rounded-md border bg-background p-3 md:grid-cols-[minmax(0,1fr)_240px]">
+              <div className="min-w-0">
+                <div className="text-xs font-medium text-muted-foreground">当前模板</div>
+                <div className="mt-1 truncate text-sm font-semibold">{selected?.name ?? "请先从左侧选择提示词"}</div>
+                <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{selected?.description || "提示词调试场不编辑模板，只验证变量填充后的最终文本。"}</div>
+              </div>
+              <div className="grid gap-1 text-xs text-muted-foreground">
+                <div>类型：{selected?.prompt_type ?? "未选择"}</div>
+                <div>版本：{selected ? `v${selected.version}` : "未选择"}</div>
+                <div>变量：{variableNames.length > 0 ? variableNames.join("、") : "未声明"}</div>
+              </div>
+            </div>
+
+            <div className="grid gap-4 md:grid-cols-[320px_minmax(0,1fr)]">
+              <Field label="模板变量">
+                <Textarea
+                  value={debugValuesText}
+                  onChange={(event) => onDebugValuesTextChange(event.target.value)}
+                  className="min-h-[220px] resize-y font-mono text-sm leading-6"
+                  placeholder="issue_title=登录失败&#10;project_context=user-center"
+                />
+              </Field>
+              <div className="grid gap-1.5 text-sm">
+                <div className="flex min-h-5 items-center gap-2">
+                  <span className="text-xs font-medium text-muted-foreground">渲染结果</span>
+                  {debugResult.missingVariables.length > 0 ? (
+                    <Badge variant="outline" className="text-[11px]">
+                      缺失 {debugResult.missingVariables.join("、")}
+                    </Badge>
+                  ) : (
+                    <Badge variant="secondary" className="text-[11px]">
+                      变量完整
+                    </Badge>
+                  )}
+                </div>
+                <pre className="min-h-[220px] overflow-auto whitespace-pre-wrap rounded-md border bg-background p-3 font-mono text-sm leading-6" data-testid="prompt-playground-rendered-output">
+                  {debugResult.rendered || "选择提示词并填写变量后生成渲染结果。"}
+                </pre>
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button size="sm" onClick={onRunDebug} disabled={!selected || runningDebug}>
+                {runningDebug ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+                运行并记录
+              </Button>
+              {!selected && <span className="text-xs text-muted-foreground">先选择提示词后才能记录模板渲染。</span>}
+              {selected && debugResult.missingVariables.length > 0 && (
+                <span className="text-xs text-muted-foreground">缺失变量会记录为未通过模板检查。</span>
+              )}
+            </div>
+          </div>
+        </section>
+
+        <section className="grid gap-3">
+          <div className="rounded-md border border-border/70 bg-muted/10 p-3" data-testid="prompt-playground-contract">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold">调试边界</h3>
+              <Badge variant="outline">不启动智能体</Badge>
+            </div>
+            <div className="mt-2 grid gap-1 text-xs text-muted-foreground">
+              <div>输出只来自模板变量替换，不调用 Codex、Claude 或其它模型。</div>
+              <div>适合检查变量缺失、中文口径、提示词结构和期望字段。</div>
+              <div>需要真实任务、trace、token 和成本证据时，进入「智能体调试场」。</div>
+            </div>
+          </div>
+
+          <div className="rounded-md border border-border/70 bg-muted/10 p-3" data-testid="prompt-playground-assets">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold">调试记录资产</h3>
+              <Badge variant="outline">{debugAssets.length}</Badge>
+            </div>
+            {loading ? (
+              <div className="mt-3 h-16 rounded bg-muted/60" />
+            ) : debugAssets.length === 0 ? (
+              <div className="mt-3 rounded border border-dashed px-3 py-4 text-xs text-muted-foreground">暂无提示词调试记录。</div>
+            ) : (
+              <div className="mt-3 divide-y rounded-md border bg-background">
+                {debugAssets.slice(0, 5).map((asset) => (
+                  <div key={asset.id} className="px-3 py-2 text-xs">
+                    <div className="truncate font-medium text-foreground">{asset.name}</div>
+                    <div className="mt-1 truncate text-muted-foreground">{asset.status} · 用例 {asset.structured_case_count} · {asset.created_at}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          <div className="rounded-md border border-border/70 bg-muted/10 p-3" data-testid="prompt-playground-runs">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold">最近模板渲染</h3>
+              <Badge variant="outline">{templateRuns.length}</Badge>
+            </div>
+            {loading ? (
+              <div className="mt-3 h-16 rounded bg-muted/60" />
+            ) : templateRuns.length === 0 ? (
+              <div className="mt-3 rounded border border-dashed px-3 py-4 text-xs text-muted-foreground">暂无模板渲染检查。</div>
+            ) : (
+              <div className="mt-3 divide-y rounded-md border bg-background">
+                {templateRuns.slice(0, 5).map((run) => (
+                  <div key={run.id} className="grid gap-1 px-3 py-2 text-xs">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <Badge variant={run.status === "通过" ? "secondary" : "outline"} className="shrink-0">{run.status}</Badge>
+                      <span className="min-w-0 flex-1 truncate font-medium text-foreground">{run.conclusion || run.trigger_source || run.id}</span>
+                    </div>
+                    <div className="truncate text-muted-foreground">
+                      {run.total_cases} 个用例 · 通过率 {Math.round(run.pass_rate * 100)}% · 耗时 {formatDuration(run.total_duration_ms)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        </section>
       </div>
     </section>
   );

@@ -64,9 +64,15 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("prompt-version-history")).toContainText("手动创建", { timeout: 10000 });
     await expect(page.getByTestId("prompt-version-history")).toContainText("当前版本 1");
 
-    await expect(page.getByLabel("调试变量")).toHaveValue("issue_title=\nproject_context=", { timeout: 10000 });
-    await page.getByLabel("调试变量").fill("issue_title=登录失败\nproject_context=user-center");
-    await expect(page.getByText("请澄清 登录失败，项目背景：user-center。").last()).toBeVisible({ timeout: 10000 });
+    await page.getByRole("link", { name: "提示词调试场", exact: true }).last().click();
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/prompt-playground$`), { timeout: 30000 });
+    await expect(page.getByTestId("prompt-playground-workbench")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId("prompt-library-editor")).toHaveCount(0);
+    await expect(page.getByTestId("agent-playground-workbench")).toHaveCount(0);
+    await expect(page.getByText("不启动智能体")).toBeVisible();
+    await expect(page.getByLabel("模板变量")).toHaveValue("issue_title=\nproject_context=", { timeout: 10000 });
+    await page.getByLabel("模板变量").fill("issue_title=登录失败\nproject_context=user-center");
+    await expect(page.getByTestId("prompt-playground-rendered-output")).toContainText("请澄清 登录失败，项目背景：user-center。", { timeout: 10000 });
     await page.getByRole("button", { name: "运行并记录" }).click();
     await expect(page.getByText("优化运行已记录")).toBeVisible({ timeout: 10000 });
 
@@ -77,13 +83,26 @@ test.describe("训练与评估工作台", () => {
     }
 
     await page.getByRole("link", { name: "智能体调试场", exact: true }).last().click();
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/agent-playground$`), { timeout: 30000 });
+    await expect(page.getByTestId("agent-playground-workbench")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId("agent-playground-workbench")).toContainText(`${artifactPrefix} user-center 澄清`, { timeout: 10000 });
     await expect(page.getByText("Codex 在线")).toBeVisible({ timeout: 10000 });
     if (expectedAgentRuntimeName) {
       await expect(page.getByText(`运行时：${expectedAgentRuntimeName}`)).toBeVisible();
     }
-    await page.getByLabel("期望输出").fill("输出需求澄清结论、风险、测试证据和下一步建议。");
+    const agentExpectedOutput = "输出需求澄清结论、风险、测试证据和下一步建议。";
+    const agentExpectedOutputInput = page.getByTestId("agent-playground-panel").getByLabel("期望输出");
+    await agentExpectedOutputInput.fill(agentExpectedOutput);
+    await expect(agentExpectedOutputInput).toHaveValue(agentExpectedOutput);
     await page.getByRole("button", { name: "保存为实验" }).click();
     await expect(page.getByText("资产已创建").last()).toBeVisible({ timeout: 10000 });
+    await expect
+      .poll(async () => {
+        const assets = await api.listPromptEvaluationAssets({ asset_type: "实验" });
+        const asset = assets.find((item) => item.name.startsWith(`${artifactPrefix} user-center 澄清 智能体调试包`));
+        return (asset?.payload as Record<string, any> | undefined)?.调试包?.期望输出 ?? null;
+      }, { timeout: 15000 })
+      .toBe(agentExpectedOutput);
     const createAgentTaskButton = page.getByRole("button", { name: "创建真实智能体任务" });
     await expect(createAgentTaskButton).toBeEnabled({ timeout: 10000 });
     const agentRunResponse = page.waitForResponse(
@@ -152,11 +171,21 @@ test.describe("训练与评估工作台", () => {
     await page.getByRole("link", { name: "数据集", exact: true }).last().click();
     const datasetRow = page.getByTestId(`prompt-evaluation-asset-${dataset!.id}`);
     await expect(datasetRow).toContainText("结构化用例 1 个", { timeout: 10000 });
-    await datasetRow.getByPlaceholder("手工用例名称").fill("手工补充登录失败验收");
-    await datasetRow.getByPlaceholder("变量：issue_title=登录失败").fill("issue_title=登录失败\nproject_context=user-center");
-    await datasetRow.getByPlaceholder("期望包含：验收条件, trace/任务标识").fill("验收条件, trace/任务标识, 可观测证据");
-    await datasetRow.getByPlaceholder("标签：user-center, 回归").fill("手工用例, user-center");
-    await datasetRow.getByRole("button", { name: "新增用例" }).click();
+    const manualCaseNameInput = datasetRow.getByPlaceholder("手工用例名称");
+    const manualCaseVariablesInput = datasetRow.getByPlaceholder("变量：issue_title=登录失败");
+    const manualCaseExpectedInput = datasetRow.getByPlaceholder("期望包含：验收条件, trace/任务标识");
+    const manualCaseTagsInput = datasetRow.getByPlaceholder("标签：user-center, 回归");
+    await manualCaseNameInput.fill("手工补充登录失败验收");
+    await expect(manualCaseNameInput).toHaveValue("手工补充登录失败验收");
+    await manualCaseVariablesInput.fill("issue_title=登录失败\nproject_context=user-center");
+    await expect(manualCaseVariablesInput).toHaveValue("issue_title=登录失败\nproject_context=user-center");
+    await manualCaseExpectedInput.fill("验收条件, trace/任务标识, 可观测证据");
+    await expect(manualCaseExpectedInput).toHaveValue("验收条件, trace/任务标识, 可观测证据");
+    await manualCaseTagsInput.fill("手工用例, user-center");
+    await expect(manualCaseTagsInput).toHaveValue("手工用例, user-center");
+    const addManualCaseButton = datasetRow.getByRole("button", { name: "新增用例" });
+    await expect(addManualCaseButton).toBeEnabled({ timeout: 10000 });
+    await addManualCaseButton.click();
     await expect(page.getByText("手工评测用例已创建").last()).toBeVisible({ timeout: 10000 });
     await expect
       .poll(async () => {
@@ -609,7 +638,7 @@ test.describe("训练与评估工作台", () => {
           asset_type: "实验",
           payload: {
             调试包: {
-              期望输出: "输出需求澄清结论、风险、测试证据和下一步建议。",
+              期望输出: agentExpectedOutput,
             },
             最近Agent运行: {
               状态: "通过",

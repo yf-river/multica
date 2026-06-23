@@ -31,19 +31,22 @@ describe("desktop training routes", () => {
   });
 
   it.each([
-    "runs",
-    "prompts",
-    "prompt-playground",
-    "agent-playground",
-    "datasets",
-    "test-suites",
-    "experiments",
-    "optimization-runs",
-    "run-history",
-  ])("maps training/%s to the shared training and evaluation page", (routePath) => {
+    ["runs", "runs"],
+    ["prompts", "prompts"],
+    ["prompt-playground", "prompt-playground"],
+    ["agent-playground", "agent-playground"],
+    ["datasets", "datasets"],
+    ["test-suites", "test-suites"],
+    ["experiments", "experiments"],
+    ["optimization-runs", "optimization-runs"],
+    ["run-history", "run-history"],
+  ])("maps training/%s to the matching training and evaluation view", (routePath, activeView) => {
     const trainingRoute = childRoutes.find((route) => route.path === "training");
     const childRoute = trainingRoute?.children?.find((route) => route.path === routePath);
     expect(childRoute?.handle).toMatchObject({ title: "训练与评估" });
-    expect(childRoute?.element).toMatchObject({ type: PromptLibraryPage });
+    expect(childRoute?.element).toMatchObject({
+      type: PromptLibraryPage,
+      props: expect.objectContaining({ activeView }),
+    });
   });
 });

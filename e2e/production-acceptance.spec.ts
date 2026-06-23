@@ -104,6 +104,7 @@ async function prepareTrainingDashboardEvidence() {
 async function expectTrainingRouteShell(page, route: (typeof TRAINING_ROUTES)[number]) {
   await expect(page.getByTestId("prompt-library-editor")).toHaveCount(route.showPromptEditor ? 1 : 0);
   await expect(page.getByTestId("prompt-version-history")).toHaveCount(route.showPromptEditor ? 1 : 0);
+  await expect(page.getByTestId("prompt-playground-workbench")).toHaveCount(route.showPromptPlayground ? 1 : 0);
   await expect(page.getByTestId("agent-playground-workbench")).toHaveCount(route.showAgentWorkbench ? 1 : 0);
   await expect(page.getByTestId("prompt-template-actions")).toHaveCount(route.path === "prompts" ? 1 : 0);
   await expect(page.getByRole("button", { name: "应用需求澄清模板" })).toHaveCount(route.path === "prompts" ? 1 : 0);
@@ -164,9 +165,14 @@ test.describe("生产部署验收", () => {
     await page.getByRole("link", { name: "提示词调试场", exact: true }).last().click();
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/prompt-playground$`));
     await expectTrainingRouteShell(page, TRAINING_ROUTES[2]!);
-    await expect(page.getByText("调试变量")).toBeVisible({ timeout: 15000 });
-    await expect(page.getByText("调试输出")).toBeVisible();
+    await expect(page.getByTestId("prompt-playground-workbench")).toBeVisible({ timeout: 15000 });
+    await expect(page.getByLabel("模板变量")).toBeVisible();
+    await expect(page.getByTestId("prompt-playground-rendered-output")).toBeVisible();
+    await expect(page.getByText("调试边界")).toBeVisible();
+    await expect(page.getByText("不启动智能体")).toBeVisible();
     await expect(page.getByRole("button", { name: "运行并记录" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "创建真实智能体任务" })).toHaveCount(0);
+    await expect(page.getByText("真实执行准备度")).toHaveCount(0);
 
     await page.getByRole("link", { name: "智能体调试场", exact: true }).last().click();
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/agent-playground$`));
@@ -175,6 +181,8 @@ test.describe("生产部署验收", () => {
     await expect(page.getByText("任务上下文预览")).toBeVisible();
     await expect(page.getByText("最近智能体运行")).toBeVisible();
     await expect(page.getByRole("button", { name: "创建真实智能体任务" })).toBeVisible();
+    await expect(page.getByTestId("prompt-playground-workbench")).toHaveCount(0);
+    await expect(page.getByText("不启动智能体")).toHaveCount(0);
 
     await page.getByRole("link", { name: "数据集", exact: true }).last().click();
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/datasets$`));

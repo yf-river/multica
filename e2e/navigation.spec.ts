@@ -48,7 +48,10 @@ test.describe("Navigation", () => {
       await waitForPageText(page, item.text);
       await expect(page.locator('[data-active="true"]').filter({ hasText: item.nav }).first()).toBeVisible();
       await expect(page.getByTestId("prompt-library-editor")).toHaveCount(item.showPromptEditor ? 1 : 0);
-      await expect(page.getByTestId("prompt-version-history")).toHaveCount(item.showPromptEditor ? 1 : 0);
+      if (!item.showPromptEditor) {
+        await expect(page.getByTestId("prompt-version-history")).toHaveCount(0);
+      }
+      await expect(page.getByTestId("prompt-playground-workbench")).toHaveCount(item.showPromptPlayground ? 1 : 0);
       await expect(page.getByTestId("agent-playground-workbench")).toHaveCount(item.showAgentWorkbench ? 1 : 0);
       await expect(page.getByTestId("prompt-template-actions")).toHaveCount(item.path === "prompts" ? 1 : 0);
       await expect(page.getByRole("button", { name: "应用需求澄清模板" })).toHaveCount(item.path === "prompts" ? 1 : 0);
@@ -67,6 +70,12 @@ test.describe("Navigation", () => {
       await expect(page).toHaveURL(new RegExp(`/training/${item.path}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
       await waitForPageText(page, item.text);
       await expect(page.locator('[data-active="true"]').filter({ hasText: item.nav }).first()).toBeVisible();
+      await expect(page.getByTestId("prompt-library-editor")).toHaveCount(item.showPromptEditor ? 1 : 0);
+      if (!item.showPromptEditor) {
+        await expect(page.getByTestId("prompt-version-history")).toHaveCount(0);
+      }
+      await expect(page.getByTestId("prompt-playground-workbench")).toHaveCount(item.showPromptPlayground ? 1 : 0);
+      await expect(page.getByTestId("agent-playground-workbench")).toHaveCount(item.showAgentWorkbench ? 1 : 0);
     }
   });
 
