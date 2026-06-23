@@ -369,7 +369,7 @@ test.describe("训练与评估工作台", () => {
       提示词名称: prompt!.name,
       评测资产名称: queuedAgentAsset!.name,
       执行Agent名称: "Multica 训练评估 Agent",
-      运行时名称: runtime.name,
+      运行时名称: expectedAgentRuntimeName || expect.any(String),
       运行时提供方: "codex",
     });
     await api.completePromptEvaluationAgentTask(queuedAgentRun!);

@@ -145,6 +145,7 @@ export function PromptLibraryPage({
   const [draft, setDraft] = useState<PromptDraft>(emptyDraft);
   const [debugValuesText, setDebugValuesText] = useState("");
   const [caseDrafts, setCaseDrafts] = useState<Record<string, ManualCaseDraft>>({});
+  const caseDraftStorageKey = workspaceId ? `multica:training:case-drafts:${workspaceId}` : null;
   const viewParam = trainingViewFromLocation(navigation.pathname, navigation.searchParams);
   const resolvedView = activeView ?? viewParam;
   const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => trainingWorkbenchTabFromView(resolvedView));
@@ -165,6 +166,29 @@ export function PromptLibraryPage({
   useEffect(() => {
     document.title = trainingWorkbenchTitleFromView(resolvedView);
   }, [resolvedView]);
+
+  useEffect(() => {
+    if (!caseDraftStorageKey) return;
+    try {
+      const stored = window.sessionStorage.getItem(caseDraftStorageKey);
+      if (!stored) return;
+      const parsed = JSON.parse(stored);
+      if (parsed && typeof parsed === "object") {
+        setCaseDrafts(parsed as Record<string, ManualCaseDraft>);
+      }
+    } catch {
+      // 草稿只用于输入体验，恢复失败时继续使用空草稿。
+    }
+  }, [caseDraftStorageKey]);
+
+  useEffect(() => {
+    if (!caseDraftStorageKey) return;
+    try {
+      window.sessionStorage.setItem(caseDraftStorageKey, JSON.stringify(caseDrafts));
+    } catch {
+      // 忽略受限浏览器环境下的 sessionStorage 写入失败。
+    }
+  }, [caseDrafts, caseDraftStorageKey]);
 
   const isDashboardTab = activeTab === "运行看板";
   const shouldShowPromptHeaderActions = activeTab === "提示词库";
