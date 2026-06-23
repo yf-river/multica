@@ -930,6 +930,28 @@ test.describe("训练与评估工作台", () => {
       });
   });
 
+  test("提示词调试场和智能体调试场首屏职责不同", async ({ page }) => {
+    await page.goto(`/${workspaceSlug}/training/prompt-playground`, { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("prompt-playground-page-shell")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId("playground-page-contract")).toContainText("本地渲染 · 不启动智能体");
+    await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("本地模板实验室");
+    await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("本地渲染记录");
+    await expect(page.getByTestId("prompt-playground-template-lab")).toBeVisible();
+    await expect(page.getByTestId("agent-playground-run-console")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "创建真实智能体任务" })).toHaveCount(0);
+
+    await page.goto(`/${workspaceSlug}/training/agent-playground`, { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("agent-playground-page-shell")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId("playground-page-contract")).toContainText("真实任务 · 写回观测证据");
+    await expect(page.getByTestId("agent-playground-selector-summary")).toContainText("执行目标池");
+    await expect(page.getByTestId("agent-playground-run-console")).toContainText("真实任务发射台");
+    await expect(page.getByTestId("agent-playground-task-pipeline")).toContainText("创建真实任务");
+    await expect(page.getByTestId("agent-playground-observability-contract")).toContainText("观测回写契约");
+    await expect(page.getByRole("button", { name: "创建真实智能体任务" })).toBeVisible();
+    await expect(page.getByTestId("prompt-playground-template-lab")).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "运行并记录" })).toHaveCount(0);
+  });
+
   test("运行历史可以取消已入队的真实智能体运行", async ({ page }) => {
     test.setTimeout(90_000);
     await api.ensureOnlineCodexRuntime(`${artifactPrefix} 取消运行 Runtime`);
