@@ -556,6 +556,9 @@ function LocalDirectoryRow({
                     : t(($) => $.resources.local_other_machine_tooltip)}
                 </div>
               )}
+              <div className="text-muted-foreground">
+                复用服务器已有目录，不隔离 worktree。
+              </div>
             </div>
           </TooltipContent>
         </Tooltip>

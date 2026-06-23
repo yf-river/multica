@@ -1983,10 +1983,17 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 	const projectRepoURL = "https://github.com/example/project-only-repo"
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO project_resource (
-			project_id, workspace_id, resource_type, resource_ref, position
-		) VALUES ($1, $2, 'github_repo', $3::jsonb, 0)
-	`, projectID, testWorkspaceID, `{"url":"`+projectRepoURL+`"}`); err != nil {
-		t.Fatalf("create project_resource: %v", err)
+			project_id, workspace_id, resource_type, resource_ref, label, position
+		) VALUES ($1, $2, 'github_repo', $3::jsonb, 'primary repo', 0)
+	`, projectID, testWorkspaceID, `{"url":"`+projectRepoURL+`","default_branch_hint":"main"}`); err != nil {
+		t.Fatalf("create github_repo project_resource: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO project_resource (
+			project_id, workspace_id, resource_type, resource_ref, label, position
+		) VALUES ($1, $2, 'local_directory', $3::jsonb, 'server checkout', 1)
+	`, projectID, testWorkspaceID, `{"local_path":"/srv/multica/project-only-repo","daemon_id":"claim-daemon","label":"server checkout"}`); err != nil {
+		t.Fatalf("create local_directory project_resource: %v", err)
 	}
 
 	// Agent + runtime + queued task in this project.
@@ -2052,8 +2059,47 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 			t.Errorf("workspace repo %q leaked into resp.Repos despite project override", r.URL)
 		}
 	}
-	if len(resp.Task.ProjectResources) != 1 {
-		t.Errorf("expected 1 project_resources entry, got %d", len(resp.Task.ProjectResources))
+	if len(resp.Task.ProjectResources) != 2 {
+		t.Fatalf("expected 2 project_resources entries, got %d", len(resp.Task.ProjectResources))
+	}
+	resourcesByType := map[string]ProjectResourceData{}
+	for _, resource := range resp.Task.ProjectResources {
+		resourcesByType[resource.ResourceType] = resource
+	}
+	repoResource, ok := resourcesByType["github_repo"]
+	if !ok {
+		t.Fatalf("missing github_repo project resource: %+v", resp.Task.ProjectResources)
+	}
+	if repoResource.Label != "primary repo" {
+		t.Fatalf("github_repo label = %q, want primary repo", repoResource.Label)
+	}
+	var repoRef struct {
+		URL               string `json:"url"`
+		DefaultBranchHint string `json:"default_branch_hint"`
+	}
+	if err := json.Unmarshal(repoResource.ResourceRef, &repoRef); err != nil {
+		t.Fatalf("decode github_repo resource_ref: %v", err)
+	}
+	if repoRef.URL != projectRepoURL || repoRef.DefaultBranchHint != "main" {
+		t.Fatalf("github_repo ref = %+v, want url=%q default_branch_hint=main", repoRef, projectRepoURL)
+	}
+	localResource, ok := resourcesByType["local_directory"]
+	if !ok {
+		t.Fatalf("missing local_directory project resource: %+v", resp.Task.ProjectResources)
+	}
+	if localResource.Label != "server checkout" {
+		t.Fatalf("local_directory label = %q, want server checkout", localResource.Label)
+	}
+	var localRef struct {
+		LocalPath string `json:"local_path"`
+		DaemonID  string `json:"daemon_id"`
+		Label     string `json:"label"`
+	}
+	if err := json.Unmarshal(localResource.ResourceRef, &localRef); err != nil {
+		t.Fatalf("decode local_directory resource_ref: %v", err)
+	}
+	if localRef.LocalPath != "/srv/multica/project-only-repo" || localRef.DaemonID != "claim-daemon" || localRef.Label != "server checkout" {
+		t.Fatalf("local_directory ref = %+v", localRef)
 	}
 }
 
