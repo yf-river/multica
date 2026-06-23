@@ -42,7 +42,7 @@ type Event struct {
 
 	// SetOnce properties attach to the person record and are only written the
 	// first time they appear. Use this for acquisition attribution
-	// (initial_utm_source, etc.) so later events don't overwrite the origin.
+	// so later events don't overwrite the origin.
 	SetOnce map[string]any
 
 	// Set properties attach to the person record and overwrite on every write.

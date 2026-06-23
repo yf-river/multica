@@ -347,7 +347,7 @@ func dispatchIncrementsCounter(m *metrics.BusinessMetrics, ev analytics.Event) b
 func defaultPropsForEvent(name string) map[string]any {
 	switch name {
 	case analytics.EventSignup:
-		return map[string]any{"signup_source": "test"}
+		return nil
 	case analytics.EventWorkspaceCreated:
 		return map[string]any{"source": "manual"}
 	case analytics.EventOnboardingStarted:

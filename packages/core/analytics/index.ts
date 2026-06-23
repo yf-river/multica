@@ -1,11 +1,8 @@
 // Frontend analytics glue. Thin wrapper over posthog-js.
 //
-// The source-of-truth event catalog is `docs/analytics.md`. This module only
-// handles the two things the backend can't do itself: attribution capture on
-// first anonymous pageview, and person-identity merge on login. Every funnel
-// event (signup, workspace_created, runtime_registered, issue_executed) is
-// emitted server-side — see
-// `server/internal/analytics`.
+// The source-of-truth event catalog is `docs/analytics.md`. This module keeps
+// only product analytics for authenticated team usage; marketing signup
+// attribution is intentionally disabled in the internal-only account model.
 //
 // Configuration comes from the backend's `/api/config` response (populated
 // from POSTHOG_API_KEY on the server), NOT from NEXT_PUBLIC_* envs. That
@@ -19,20 +16,6 @@ import { isBenignException } from "./benign-exceptions";
 
 export const EVENT_SCHEMA_VERSION = 2;
 
-const SIGNUP_SOURCE_COOKIE = "multica_signup_source";
-// Per-value cap keeps a long utm_content from blowing the budget. We drop
-// the entire cookie if the JSON still exceeds the overall limit — partial
-// JSON is worse than no attribution because PostHog can't parse it.
-const SIGNUP_SOURCE_VALUE_MAX_LEN = 96;
-const SIGNUP_SOURCE_MAX_LEN = 512;
-const UTM_KEYS = [
-  "utm_source",
-  "utm_medium",
-  "utm_campaign",
-  "utm_content",
-  "utm_term",
-] as const;
-
 let initialized = false;
 // auth-initializer fetches /api/config and /api/me in parallel — on a
 // slow-config path, identify() can fire before initAnalytics(). Buffer the
@@ -41,10 +24,9 @@ let initialized = false;
 let pendingIdentify: { userId: string; props?: Record<string, unknown> } | null = null;
 let currentUserId: string | null = null;
 let analyticsEnvironment = "dev";
-// Likewise pageviews: the initial "/" pageview is the anchor of the
-// acquisition funnel, and the Next.js router fires it on mount before the
-// config fetch resolves. We keep the first pending pageview so that step
-// doesn't silently drop.
+// Likewise pageviews: the Next.js router can fire one before the config fetch
+// resolves, so keep the latest pending pageview and flush it once analytics is
+// ready.
 let pendingPageview: string | undefined | null = null;
 // Last $pageview path actually emitted (already section-normalized). Used to
 // collapse consecutive views of the same section so navigating between
@@ -425,71 +407,4 @@ export function capturePageview(path?: string): void {
   if (normalized && normalized === lastCapturedPath) return;
   lastCapturedPath = normalized ?? null;
   posthog.capture("$pageview", normalized ? { $current_url: normalized } : undefined);
-}
-
-/**
- * On the very first anonymous pageview in a browser session, read UTM +
- * referrer and stash them in a cookie that the backend reads during signup.
- *
- * Never use raw `document.referrer` as attribution — it can leak OAuth
- * callback URLs with `code` / `state` in the query string. We keep only the
- * referrer's origin (scheme + host), which is what a funnel actually needs.
- *
- * This cookie is what `signup_source` in the backend's signup event reads
- * from; both fields are intentionally opaque JSON so the schema can evolve
- * without a backend deploy.
- */
-export function captureSignupSource(): void {
-  if (typeof window === "undefined" || typeof document === "undefined") return;
-  if (readCookie(SIGNUP_SOURCE_COOKIE)) return;
-
-  const source: Record<string, string> = {};
-  const cap = (v: string) =>
-    v.length > SIGNUP_SOURCE_VALUE_MAX_LEN ? v.slice(0, SIGNUP_SOURCE_VALUE_MAX_LEN) : v;
-
-  try {
-    const params = new URLSearchParams(window.location.search);
-    for (const key of UTM_KEYS) {
-      const v = params.get(key);
-      if (v) source[key] = cap(v);
-    }
-  } catch {
-    // URL APIs unavailable — skip silently.
-  }
-
-  const refOrigin = safeReferrerOrigin(document.referrer);
-  if (refOrigin) source.referrer_origin = cap(refOrigin);
-
-  if (Object.keys(source).length === 0) return;
-
-  const payload = JSON.stringify(source);
-  // Drop rather than mid-JSON truncate — a half-string would fail to parse
-  // on the backend and the attribution would be worse than missing.
-  if (payload.length > SIGNUP_SOURCE_MAX_LEN) return;
-
-  // 30-day expiry covers the typical signup consideration window. Lax is
-  // the right default — the cookie is only consumed by same-origin auth.
-  const maxAge = 60 * 60 * 24 * 30;
-  document.cookie = `${SIGNUP_SOURCE_COOKIE}=${encodeURIComponent(payload)}; path=/; max-age=${maxAge}; samesite=lax`;
-}
-
-function safeReferrerOrigin(referrer: string): string {
-  if (!referrer) return "";
-  try {
-    const url = new URL(referrer);
-    if (url.origin === window.location.origin) return "";
-    return url.origin;
-  } catch {
-    return "";
-  }
-}
-
-function readCookie(name: string): string {
-  if (typeof document === "undefined") return "";
-  const prefix = `${name}=`;
-  const parts = document.cookie ? document.cookie.split("; ") : [];
-  for (const part of parts) {
-    if (part.startsWith(prefix)) return decodeURIComponent(part.slice(prefix.length));
-  }
-  return "";
 }

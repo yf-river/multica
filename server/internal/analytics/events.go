@@ -104,18 +104,15 @@ const (
 	PlatformCLI     = "cli"
 )
 
-// Signup builds the signup event. signupSource is populated from the
-// frontend's stored UTM/referrer cookie if present; leave empty otherwise.
-func Signup(userID, account, signupSource string) Event {
+// Signup builds the account-created event used by the internal login flow.
+// Marketing acquisition attribution is intentionally not collected in this
+// build; keep the event free of external-source fields.
+func Signup(userID, account string) Event {
 	return Event{
 		Name:       EventSignup,
 		DistinctID: userID,
-		Properties: map[string]any{
-			"signup_source": signupSource,
-		},
 		SetOnce: map[string]any{
-			"account":       account,
-			"signup_source": signupSource,
+			"account": account,
 		},
 	}
 }

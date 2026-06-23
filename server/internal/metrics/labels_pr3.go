@@ -1,9 +1,6 @@
 package metrics
 
-import (
-	"encoding/json"
-	"strings"
-)
+import "strings"
 
 // PR3 normalizers. All inputs go through fixed allow-lists so a misbehaving
 // caller cannot inflate metric cardinality. Every "unknown" / "other" bucket
@@ -18,50 +15,6 @@ var (
 		"mobile":  "mobile",
 		"ios":     "ios",
 		"unknown": "unknown",
-	}
-
-	// knownSignupSources is the fixed bucket set for the signup_source
-	// metric label. The PostHog event still ships the raw cookie value
-	// so analytics keeps the long tail; the Prometheus side gets the
-	// bucketed version so cardinality stays bounded even if a misbehaving
-	// frontend writes a unique-per-visitor cookie. Empty cookie collapses
-	// to "direct" (no attribution = direct visit), unknown channels to
-	// "other".
-	knownSignupSources = map[string]string{
-		"direct":       "direct",
-		"google":       "google",
-		"bing":         "bing",
-		"duckduckgo":   "duckduckgo",
-		"twitter":      "twitter",
-		"x":            "twitter",
-		"linkedin":     "linkedin",
-		"facebook":     "facebook",
-		"instagram":    "instagram",
-		"github":       "github",
-		"gitlab":       "gitlab",
-		"hacker_news":  "hacker_news",
-		"hackernews":   "hacker_news",
-		"reddit":       "reddit",
-		"youtube":      "youtube",
-		"discord":      "discord",
-		"slack":        "slack",
-		"product_hunt": "product_hunt",
-		"producthunt":  "product_hunt",
-		"medium":       "medium",
-		"dev_to":       "dev_to",
-		"devto":        "dev_to",
-		"email":        "email",
-		"newsletter":   "email",
-		"organic":      "organic",
-		"referral":     "referral",
-		"partner":      "partner",
-		"affiliate":    "affiliate",
-		"ad":           "paid",
-		"ads":          "paid",
-		"paid":         "paid",
-		"cpc":          "paid",
-		"sem":          "paid",
-		"other":        "other",
 	}
 
 	knownOnboardingPaths = map[string]string{
@@ -190,90 +143,6 @@ func normalizeFromAllowList(value string, allowList map[string]string, fallback 
 
 func NormalizePlatform(value string) string {
 	return normalizeFromAllowList(value, knownPlatforms, "unknown")
-}
-
-// NormalizeSignupSource buckets the raw multica_signup_source cookie payload
-// into the fixed signup channel allow-list. The cookie carries free-form
-// JSON (utm_source / utm_medium / referrer) on the PostHog side; here we
-// only need a bounded label, so we look at utm_source / source / referrer
-// fields when present, otherwise the bare string. Empty -> "direct".
-// Anything not in the allow-list -> "other".
-func NormalizeSignupSource(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return "direct"
-	}
-	// JSON shape: {"utm_source":"...","utm_medium":"...","referrer":"..."}
-	if strings.HasPrefix(value, "{") {
-		var parsed map[string]any
-		if err := json.Unmarshal([]byte(value), &parsed); err == nil {
-			for _, key := range []string{"utm_source", "source", "referrer", "ref"} {
-				if raw, ok := parsed[key]; ok {
-					if s, ok := raw.(string); ok && strings.TrimSpace(s) != "" {
-						value = s
-						break
-					}
-				}
-			}
-		}
-	}
-	return normalizeFromAllowList(canonicaliseSignupChannel(value), knownSignupSources, "other")
-}
-
-// canonicaliseSignupChannel collapses the raw signup-source string into a
-// shape the allow-list can match: lowercase, trimmed, host-only for URL-ish
-// values, and with a few obvious aliases unified ("twitter.com" -> "twitter").
-// We deliberately keep this defensive — the cookie is set client-side, so any
-// shape is possible.
-func canonicaliseSignupChannel(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	if value == "" {
-		return ""
-	}
-	// Strip an optional URL scheme so "https://twitter.com/foo" -> "twitter.com/foo".
-	for _, scheme := range []string{"https://", "http://", "//"} {
-		if strings.HasPrefix(value, scheme) {
-			value = strings.TrimPrefix(value, scheme)
-			break
-		}
-	}
-	// Take just the host segment.
-	if i := strings.IndexAny(value, "/?#"); i >= 0 {
-		value = value[:i]
-	}
-	value = strings.TrimPrefix(value, "www.")
-	// Map well-known hostnames to their channel bucket.
-	hostAliases := map[string]string{
-		"google.com":           "google",
-		"google.co.uk":         "google",
-		"bing.com":             "bing",
-		"duckduckgo.com":       "duckduckgo",
-		"twitter.com":          "twitter",
-		"x.com":                "twitter",
-		"t.co":                 "twitter",
-		"linkedin.com":         "linkedin",
-		"lnkd.in":              "linkedin",
-		"facebook.com":         "facebook",
-		"fb.com":               "facebook",
-		"instagram.com":        "instagram",
-		"github.com":           "github",
-		"gitlab.com":           "gitlab",
-		"news.ycombinator.com": "hacker_news",
-		"reddit.com":           "reddit",
-		"old.reddit.com":       "reddit",
-		"youtube.com":          "youtube",
-		"youtu.be":             "youtube",
-		"discord.com":          "discord",
-		"discord.gg":           "discord",
-		"slack.com":            "slack",
-		"producthunt.com":      "product_hunt",
-		"medium.com":           "medium",
-		"dev.to":               "dev_to",
-	}
-	if mapped, ok := hostAliases[value]; ok {
-		return mapped
-	}
-	return value
 }
 
 func NormalizeOnboardingPath(value string) string {

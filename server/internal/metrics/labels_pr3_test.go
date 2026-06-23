@@ -26,10 +26,6 @@ func TestNormalizePR3LabelsCollapseUnknownValues(t *testing.T) {
 	}{
 		{"platform_unknown", metrics.NormalizePlatform, "iphone-internal-build-9", "unknown", "unknown"},
 		{"platform_known_web", metrics.NormalizePlatform, "web", "web", "unknown"},
-		{"signup_source_unknown", metrics.NormalizeSignupSource, "rakuten-affiliate-program", "other", "other"},
-		{"signup_source_empty", metrics.NormalizeSignupSource, "", "direct", "direct"},
-		{"signup_source_json_utm", metrics.NormalizeSignupSource, `{"utm_source":"twitter","utm_medium":"social"}`, "twitter", "other"},
-		{"signup_source_url_host", metrics.NormalizeSignupSource, "https://news.ycombinator.com/item?id=42", "hacker_news", "other"},
 		{"onboarding_path_unknown", metrics.NormalizeOnboardingPath, "ab-experiment-123", "unknown", "unknown"},
 		{"autopilot_cadence_unknown", metrics.NormalizeAutopilotCadence, "every_5_min", "unknown", "unknown"},
 		{"autopilot_trigger_unknown", metrics.NormalizeAutopilotTrigger, "future_kind", "unknown", "unknown"},

@@ -226,7 +226,7 @@ func (m *BusinessMetrics) IncForEvent(ev analytics.Event) {
 	}
 	switch ev.Name {
 	case analytics.EventSignup:
-		m.events.signup.WithLabelValues(NormalizeSignupSource(stringProp(ev.Properties, "signup_source"))).Inc()
+		m.events.signup.WithLabelValues().Inc()
 	case analytics.EventWorkspaceCreated:
 		m.events.workspaceCreated.WithLabelValues(NormalizeTaskSource(stringProp(ev.Properties, "source"))).Inc()
 	case analytics.EventOnboardingStarted:

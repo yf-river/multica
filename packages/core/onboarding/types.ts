@@ -1,6 +1,5 @@
 export type OnboardingStep =
   | "welcome"
-  | "source"
   | "role"
   | "use_case"
   | "workspace"
@@ -19,20 +18,10 @@ export type OnboardingCompletionPath =
   | "runtime_skipped"
   | "skip_existing";
 
-export type Source =
-  | "friends_colleagues"
-  | "search"
-  | "social_x"
-  | "social_linkedin"
-  | "social_youtube"
-  | "social_github"
-  | "social_other"
-  | "blog_newsletter"
-  | "ai_assistant"
-  | "from_work"
-  | "event_conference"
-  | "dont_remember"
-  | "other";
+// Historical questionnaire rows may still contain source values. The current
+// internal-team onboarding no longer asks this question, so keep the type
+// open for JSON compatibility without exposing a curated acquisition enum.
+export type Source = string;
 
 export type Role =
   | "engineer"
@@ -58,23 +47,19 @@ export type UseCase =
 
 /**
  * Questionnaire shape. `use_case` allows multiple values (users hire
- * Multica for several jobs at once); `source` and `role` are single-
- * select — for `source` we capture the primary acquisition channel
- * for clean self-reported-attribution math (the array shape is
- * preserved for back-compat with v2 multi-select rows; the client
- * now always commits a one-element array), and `role` stays single
- * because the agent template recommendation wants a primary identity.
+ * Multica for several jobs at once); `role` stays single because the
+ * agent template recommendation wants a primary identity.
  *
  * `*_skipped: true` distinguishes an explicit Skip click from a slot
  * the user never reached. Both states are "unknown" for recommendation
  * purposes; the skip marker exists for analytics and so future
  * re-prompts can avoid nagging users who already declined.
  *
- * Backward compat: prior versions of this app wrote `source` and
- * `use_case` as a single string. `mergeQuestionnaire` in
- * `onboarding-flow.tsx` upgrades those rows to single-element arrays
- * on read; the server's `questionnaireAnswers.UnmarshalJSON` does the
- * same. `version` stays at 2 — the JSONB column is schema-less so a
+ * Backward compat: prior versions of this app wrote `source` and `use_case`
+ * as a single string. `mergeQuestionnaire` in `onboarding-flow.tsx` upgrades
+ * those rows to single-element arrays on read; the server's
+ * `questionnaireAnswers.UnmarshalJSON` does the same. `version` stays at 2
+ * — the JSONB column is schema-less so a
  * mechanical bump would only show up in analytics, not in storage,
  * and we keep one funnel cohort.
  */

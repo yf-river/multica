@@ -188,7 +188,7 @@ func (q questionnaireAnswers) complete() bool {
 	if q.Version != questionnaireSchemaVersion {
 		return false
 	}
-	return q.sourceResolved() && q.roleResolved() && q.useCaseResolved()
+	return q.roleResolved() && q.useCaseResolved()
 }
 
 // PatchOnboarding persists the user's questionnaire answers. The

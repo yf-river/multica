@@ -17,8 +17,7 @@ const (
 	labelModel          = "model"
 	labelModelAlias     = "model_alias"
 
-	// PR3 labels (funnel / community / commercial).
-	labelSignupSource = "signup_source"
+	// PR3 labels (team usage and runtime observability).
 	labelPlatform     = "platform"
 	labelPath         = "path"
 	labelCadence      = "cadence"
@@ -52,7 +51,7 @@ var businessMetricLabels = map[string][]string{
 	"multica_task_lease_expired_total":      {labelSource},
 
 	// PR3 funnel / community / commercial.
-	"multica_signup_total":                             {labelSignupSource},
+	"multica_signup_total":                             {},
 	"multica_workspace_created_total":                  {labelSource},
 	"multica_onboarding_started_total":                 {labelPlatform},
 	"multica_onboarding_questionnaire_submitted_total": {},

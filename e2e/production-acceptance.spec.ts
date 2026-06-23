@@ -1,4 +1,5 @@
 import { test, expect } from "@playwright/test";
+import { readFile } from "node:fs/promises";
 
 const workspaceSlug = process.env.ACCEPTANCE_WORKSPACE_SLUG
   || process.env.REAL_AGENT_E2E_WORKSPACE
@@ -48,6 +49,15 @@ test.describe("生产部署验收", () => {
     await expect(page.getByTestId("training-demo-proof-服务端证据快照")).toContainText(/验收归档 [1-9]/);
     await expect(page.getByText("运行证据已服务端归档")).toBeVisible();
     await expect(page.getByText("你是从哪里了解到 Multica 的？")).toHaveCount(0);
+    const downloadPromise = page.waitForEvent("download");
+    await page.getByRole("button", { name: "导出证据 JSON" }).click();
+    const download = await downloadPromise;
+    const downloadPath = await download.path();
+    expect(downloadPath).toBeTruthy();
+    const exported = JSON.parse(await readFile(downloadPath!, "utf8"));
+    expect(exported["语义版本"]).toBe("multica.production_demo_evidence.v1");
+    expect(exported.workspace_id).toBeTruthy();
+    expect(exported["证据统计"]["运行数"]).toBeGreaterThan(0);
 
     await page.getByRole("button", { name: "提示词库", exact: true }).click();
     await expect(page).toHaveURL(/view=prompts/);
@@ -81,6 +91,7 @@ test.describe("生产部署验收", () => {
 
     await page.getByRole("button", { name: "优化运行", exact: true }).click();
     await expect(page).toHaveURL(/view=optimization-runs/);
+    await expect(page.locator("[data-testid^='prompt-evaluation-asset-']").filter({ hasText: "优化运行" }).first()).toContainText("优化运行", { timeout: 15000 });
     await expect(page.locator("[data-testid^='prompt-evaluation-candidate-']").first()).toContainText(/待确认|已发布|已拒绝/, { timeout: 15000 });
 
     await page.getByRole("button", { name: "运行历史", exact: true }).click();

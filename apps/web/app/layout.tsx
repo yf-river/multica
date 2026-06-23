@@ -61,11 +61,10 @@ export const viewport: Viewport = {
 export const metadata: Metadata = {
   metadataBase: new URL("https://www.multica.ai"),
   title: {
-    default: "Multica — Project Management for Human + Agent Teams",
+    default: "Multica — 团队智能体协作平台",
     template: "%s | Multica",
   },
-  description:
-    "Open-source platform that turns coding agents into real teammates. Assign tasks, track progress, compound skills.",
+  description: "面向团队内部的智能体协作、训练评估、可观测和复盘平台。",
   icons: {
     icon: [{ url: "/favicon.svg", type: "image/svg+xml" }],
     shortcut: ["/favicon.svg"],
@@ -73,12 +72,7 @@ export const metadata: Metadata = {
   openGraph: {
     type: "website",
     siteName: "Multica",
-    locale: "en_US",
-  },
-  twitter: {
-    card: "summary_large_image",
-    site: "@multica_hq",
-    creator: "@multica_hq",
+    locale: "zh_CN",
   },
   alternates: {
     canonical: "/",

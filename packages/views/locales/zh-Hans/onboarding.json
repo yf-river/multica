@@ -43,31 +43,8 @@
     "cancel": "取消",
     "close": "关闭"
   },
-  "source_backfill": {
-    "eyebrow": "顺便问一句",
-    "lede": "我们注意到你之前没有勾选这一项——花一秒补一下，能帮我们更了解像你一样的用户。完成后立刻回到你正在做的事。",
-    "submit": "提交",
-    "hint_ready": "看起来不错，准备好就点提交。"
-  },
   "questions": {
     "eyebrow_about_you": "关于你",
-    "source": {
-      "question": "你是从哪里了解到 Multica 的？",
-      "friends_colleagues": "朋友或同事",
-      "search": "搜索引擎",
-      "social_x": "X / Twitter",
-      "social_linkedin": "LinkedIn",
-      "social_youtube": "YouTube",
-      "social_github": "GitHub",
-      "social_misc": "其他社区",
-      "blog_newsletter": "博客 / Newsletter",
-      "ai_assistant": "ChatGPT / Claude / Cursor 推荐",
-      "from_work": "工作场景接触到",
-      "event_conference": "线下活动 / Meetup",
-      "dont_remember": "想不起来了",
-      "other": "其他",
-      "other_placeholder": "例如：一档播客"
-    },
     "role": {
       "question": "你是什么角色？",
       "engineer": "工程师 / 开发者",

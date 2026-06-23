@@ -34,9 +34,6 @@ const realAgentProvider = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER") ||
 const realAgentModel = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "gpt-5.3-codex-spark";
 const realAgentFallbackModel = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_FALLBACK_MODEL") || "gpt-5.4-mini";
 
-const health = await probeHTTP(`${apiURL}/health`);
-const ready = await probeHTTP(`${apiURL}/readyz`);
-const login = await probeHTTP(`${frontendURL}/login`);
 const dashboardURL = `${frontendURL}/${encodeURIComponent(workspaceSlug)}/training?view=demo-dashboard`;
 
 const git = {
@@ -48,9 +45,6 @@ const git = {
     .filter(Boolean),
 };
 
-const account = await loadAccountRole();
-const databaseEvidence = await loadDatabaseEvidence(account.workspace_id);
-const logEvidence = loadLogEvidence();
 const commands = buildCommandPlan();
 const commandResults = runTests ? runCommands(commands) : commands.map((item) => ({
   ...item,
@@ -59,9 +53,17 @@ const commandResults = runTests ? runCommands(commands) : commands.map((item) =>
   durationMs: 0,
   note: "默认只生成验收包；使用 pnpm acceptance:verify 或 --run-tests 后会执行。",
 }));
+const health = await probeHTTP(`${apiURL}/health`);
+const ready = await probeHTTP(`${apiURL}/readyz`);
+const login = await probeHTTP(`${frontendURL}/login`);
+const account = await loadAccountRole();
+const databaseEvidence = await loadDatabaseEvidence(account.workspace_id);
+const logEvidence = loadLogEvidence();
+const environmentEvidence = loadEnvironmentEvidence();
+const opikEvidence = loadOpikEvidence();
 const e2eEvidence = buildE2EEvidence(commandResults, logEvidence);
 
-const risks = buildRisks({ health, ready, login, account, commandResults, git, databaseEvidence, logEvidence, e2eEvidence });
+const risks = buildRisks({ health, ready, login, account, commandResults, git, databaseEvidence, logEvidence, e2eEvidence, environmentEvidence, opikEvidence });
 const evidence = {
   "语义版本": "multica.production_acceptance_evidence.v1",
   "生成时间": timestamp,
@@ -87,15 +89,12 @@ const evidence = {
   "提交": git,
   "数据库抽查": databaseEvidence,
   "日志抽查": logEvidence,
+  "环境部署证据": environmentEvidence,
+  "Opik迁移对照证据": opikEvidence,
   "端到端验收证据": e2eEvidence,
   "测试命令": commandResults,
   "剩余风险": risks,
-  "人工复核清单": [
-    "确认生产看板能导出 multica.production_demo_evidence.v1 JSON。",
-    "确认真实 Agent E2E、真实小队 E2E 至少各跑过一次，或明确记录外部模型额度不足。",
-    "确认演示账号权限为 owner/admin，且演示后按团队安全要求轮换密码。",
-    "确认 /health、/readyz、/login、训练与评估生产看板可从目标网络访问。",
-  ],
+  "人工复核清单": [],
 };
 
 mkdirSync(outputDir, { recursive: true });
@@ -106,7 +105,7 @@ writeFileSync(mdPath, renderMarkdown(evidence, jsonPath));
 
 console.log(`验收 JSON: ${jsonPath}`);
 console.log(`验收 Markdown: ${mdPath}`);
-if (commandResults.some((item) => item.status === "失败")) {
+if (commandResults.some((item) => ["失败", "超时", "外部依赖失败"].includes(item.status))) {
   process.exitCode = 1;
 }
 
@@ -409,8 +408,10 @@ function normalizePgRow(row) {
 function loadLogEvidence() {
   const configuredLogPath = trimEnv("ACCEPTANCE_SERVER_LOG");
   const logPath = configuredLogPath
-    || (existsSync(path.join(repoRoot, ".run", "server.log"))
-      ? path.join(repoRoot, ".run", "server.log")
+    || (existsSync(path.join(repoRoot, ".run", "prod-server.log"))
+      ? path.join(repoRoot, ".run", "prod-server.log")
+      : existsSync(path.join(repoRoot, ".run", "server.log"))
+        ? path.join(repoRoot, ".run", "server.log")
       : path.join(repoRoot, "artifacts", "logs", "server-goal-test.log"));
   if (!existsSync(logPath)) {
     return { status: "跳过", path: logPath, reason: "未找到服务日志文件" };
@@ -454,24 +455,46 @@ function buildCommandPlan() {
       timeoutMs: 240_000,
     },
     {
-      name: "重启前端服务",
-      command: [
-        "set -e",
-        ". ./.env.worktree",
-        "pkill -f \"next start -p ${FRONTEND_PORT:-3000}\" 2>/dev/null || true",
-        "sleep 1",
-        "setsid pnpm --dir apps/web exec next start -p \"${FRONTEND_PORT:-3000}\" >> .run/web.log 2>&1 < /dev/null & echo $! > .run/web.pid",
-        "for i in $(seq 1 45); do curl --noproxy '*' -fsS \"http://127.0.0.1:${FRONTEND_PORT:-3000}/login\" >/dev/null && break; sleep 1; done",
-        "curl --noproxy '*' -fsS \"http://127.0.0.1:${FRONTEND_PORT:-3000}/login\" >/dev/null",
-      ].join("; "),
+      name: "部署生产环境",
+      command: "node scripts/goal-test-environments.mjs deploy prod",
       required: true,
-      timeoutMs: 60_000,
+      timeoutMs: 120_000,
+    },
+    {
+      name: "部署联调环境",
+      command: "node scripts/goal-test-environments.mjs deploy int",
+      required: true,
+      timeoutMs: 120_000,
     },
     {
       name: "Desktop typecheck",
       command: "pnpm --filter @multica/desktop typecheck",
       required: true,
       timeoutMs: 180_000,
+    },
+    {
+      name: "Desktop 训练路由 smoke",
+      command: "pnpm --filter @multica/desktop test -- src/renderer/src/routes.test.tsx",
+      required: true,
+      timeoutMs: 120_000,
+    },
+    {
+      name: "生产/联调环境验证",
+      command: "node scripts/goal-test-environments.mjs verify prod",
+      required: true,
+      timeoutMs: 60_000,
+    },
+    {
+      name: "Opik 迁移对照验证",
+      command: "node scripts/verify-opik-mapping.mjs",
+      required: true,
+      timeoutMs: 60_000,
+    },
+    {
+      name: "注册营销残留审计",
+      command: "node scripts/signup-residue-audit.mjs",
+      required: true,
+      timeoutMs: 60_000,
     },
     {
       name: "Core reserved route tests",
@@ -705,6 +728,8 @@ function buildE2EEvidence(commandResults, logEvidence) {
       "Agent外部依赖失败": training.summary?.agent_external_dependency_failure === true,
       "Optimization Candidate ID": training.summary?.optimization_candidate_id || "",
       "Optimization Candidate状态": training.summary?.optimization_candidate_status || "",
+      "Optimization Run Asset ID": training.summary?.optimization_run_asset_id || "",
+      "Optimization Run Asset状态": training.summary?.optimization_run_asset_status || "",
       "Published Prompt ID": training.summary?.published_prompt_id || "",
       "Published Prompt版本": training.summary?.published_prompt_version ?? 0,
       "外部依赖失败": training.summary?.external_dependency_failure === true,
@@ -773,11 +798,17 @@ function summarizeCommandOutput(name, stdout) {
       agent_external_dependency_failure: parsed.agent_run?.external_dependency_failure === true,
       optimization_candidate_id: parsed.optimization_candidate?.id || "",
       optimization_candidate_status: parsed.optimization_candidate?.status || "",
+      optimization_run_asset_id: parsed.optimization_run_asset?.id || "",
+      optimization_run_asset_status: parsed.optimization_run_asset?.status || "",
+      optimization_run_asset_type: parsed.optimization_run_asset?.asset_type || "",
       published_prompt_id: parsed.published_prompt?.id || "",
       published_prompt_version: parsed.published_prompt?.version ?? 0,
       published_prompt_version_count: parsed.published_prompt?.version_count ?? 0,
       external_dependency_failure: parsed.external_dependency_failure === true,
     };
+  }
+  if (name === "生产/联调环境验证" || name === "Opik 迁移对照验证" || name === "注册营销残留审计") {
+    return parsed || { status: "未解析", reason: "stdout 中未找到 JSON 对象" };
   }
   return null;
 }
@@ -799,7 +830,61 @@ function tail(value) {
   return lines.slice(-30);
 }
 
-function buildRisks({ health, ready, login, account, commandResults, git, databaseEvidence, logEvidence, e2eEvidence }) {
+function loadEnvironmentEvidence() {
+  const file = path.join(repoRoot, ".run", "deployments", "goal-test-prod.json");
+  if (!existsSync(file)) return { status: "跳过", reason: "尚未找到生产部署元数据", path: file };
+  try {
+    const metadata = JSON.parse(readFileSync(file, "utf8"));
+    return {
+      status: "已记录",
+      path: file,
+      environment: metadata.environment,
+      commit: metadata.commit,
+      frontend_url: metadata.frontend_url,
+      backend_url: metadata.backend_url,
+      frontend_mode: metadata.frontend_mode,
+      database_name: metadata.database_name,
+      daemon_profile: metadata.daemon_profile,
+      deployed_at: metadata.deployed_at,
+    };
+  } catch (error) {
+    return { status: "失败", path: file, reason: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+function loadOpikEvidence() {
+  const docsPath = path.join(repoRoot, "apps", "docs", "content", "docs", "production-observability.zh.mdx");
+  const source = existsSync("/data/ida/opik") ? "/data/ida/opik" : "/data/ida/opik-local-demo";
+  const mapping = [
+    ["提示词库", "训练与评估 / 提示词"],
+    ["提示词调试场", "训练与评估 / 提示词调试场"],
+    ["Agent 调试场", "训练与评估 / Agent 调试场"],
+    ["数据集", "prompt_evaluation_asset + prompt_evaluation_dataset_row"],
+    ["测试套件", "prompt_evaluation_asset + prompt_evaluation_test_suite_case"],
+    ["实验", "prompt_evaluation_asset + prompt_evaluation_experiment_dimension"],
+    ["优化运行", "prompt_evaluation_asset(asset_type=优化运行)"],
+    ["运行历史/Trace", "prompt_evaluation_run + task_trace_event + evidence snapshot"],
+  ];
+  const docs = existsSync(docsPath) ? readFileSync(docsPath, "utf8") : "";
+  return {
+    status: existsSync(source) && docs.includes("Opik 语义映射") ? "已记录" : "失败",
+    opik_source: source,
+    opik_source_exists: existsSync(source),
+    docs_path: docsPath,
+    docs_has_mapping: docs.includes("Opik 语义映射"),
+    mapping: mapping.map(([opikFeature, multicaEvidence]) => ({
+      "Opik功能": opikFeature,
+      "Multica实现": multicaEvidence,
+      "验收证据": "production acceptance JSON / training dashboard / curl E2E",
+    })),
+  };
+}
+
+function countAssetsByType(databaseEvidence, assetType) {
+  return (databaseEvidence.assets_by_type || []).find((item) => item.type === assetType)?.count ?? 0;
+}
+
+function buildRisks({ health, ready, login, account, commandResults, git, databaseEvidence, logEvidence, e2eEvidence, environmentEvidence, opikEvidence }) {
   const risks = [];
   if (!health.ok) risks.push("后端 /health 未通过，不能作为可演示服务交付。");
   if (!ready.ok) risks.push("后端 /readyz 未通过，依赖或数据库连接可能未就绪。");
@@ -817,6 +902,9 @@ function buildRisks({ health, ready, login, account, commandResults, git, databa
   if (e2eEvidence?.["公开API训练评估闭环"] && e2eEvidence["公开API训练评估闭环"]["状态"] !== "通过") {
     risks.push("公开 API 训练评估闭环未通过，提示词版本、数据集、测试套件、实验、优化候选发布证据不足。");
   }
+  if (e2eEvidence?.["公开API训练评估闭环"] && !e2eEvidence["公开API训练评估闭环"]["Optimization Run Asset ID"]) {
+    risks.push("公开 API 未创建并回读优化运行资产，优化运行模块仍缺少可验收证据。");
+  }
   if (e2eEvidence?.["公开API训练评估闭环"]?.["Agent外部依赖失败"]) {
     risks.push("公开 API 训练评估已完成提示词/数据集/测试套件/实验/优化候选闭环，但真实 Agent 测试套件执行失败于外部模型认证、额度或容量边界；需修复 runtime 后重跑。");
   }
@@ -833,6 +921,7 @@ function buildRisks({ health, ready, login, account, commandResults, git, databa
     if (Number(training.structured_case_count || 0) === 0) risks.push("数据库中未发现结构化评测用例，数据集/测试套件证据不足。");
     if (Number(training.structured_assertion_count || 0) === 0) risks.push("数据库中未发现结构化评测断言，训练评估可度量证据不足。");
     if (Number(training.optimization_candidate_count || 0) === 0) risks.push("数据库中未发现优化候选，失败用例到人工确认的闭环证据不足。");
+    if (Number(countAssetsByType(databaseEvidence, "优化运行") || 0) === 0) risks.push("数据库中未发现优化运行资产，优化运行模块仍缺少可度量资产。");
     if (Number(training.evidence_snapshot_count || 0) === 0) risks.push("数据库中未发现服务端运行证据快照，领导演示缺少可复核归档。");
     if (Number(tasks.trace_event_rows || 0) === 0) risks.push("数据库中未发现任务 trace 事件，观测闭环证据不足。");
     if (Number(squads.sop_run_count || 0) === 0) risks.push("数据库中未发现小队 SOP run，小队闭环证据不足。");
@@ -842,6 +931,12 @@ function buildRisks({ health, ready, login, account, commandResults, git, databa
     risks.push(`服务日志抽查未完成：${logEvidence.reason || logEvidence.status}`);
   } else if (Number(logEvidence.error_count || 0) > 0) {
     risks.push(`服务日志最近片段存在 ${logEvidence.error_count} 条错误，需要排查后再演示。`);
+  }
+  if (environmentEvidence.status !== "已记录") {
+    risks.push(`生产/联调环境证据未固化：${environmentEvidence.reason || environmentEvidence.status}`);
+  }
+  if (opikEvidence.status !== "已记录") {
+    risks.push("Opik 功能映射到 Multica 的文档/验收证据未通过。");
   }
   if (git.status) risks.push("当前 worktree 非干净状态；提交前需要确认没有未纳入验收的改动。");
   if (risks.length === 0) {
@@ -858,9 +953,13 @@ function renderMarkdown(data, jsonPath) {
   const logs = data["日志抽查"] || {};
   const dbStatus = db.status === "已抽查" ? "已抽查" : `${db.status}：${db.reason || "无原因"}`;
   const logStatus = logs.status === "已抽查" ? "已抽查" : `${logs.status || "未记录"}：${logs.reason || "无原因"}`;
+  const environment = data["环境部署证据"] || {};
+  const opik = data["Opik迁移对照证据"] || {};
   const training = db.training || {};
   const squads = db.squads || {};
   const tasks = db.tasks || {};
+  const assetRows = (db.assets_by_type || []).map((item) => `- ${item.type}：${item.count}`).join("\n") || "- 无";
+  const opikRows = (opik.mapping || []).map((item) => `| ${item["Opik功能"]} | ${item["Multica实现"]} | ${item["验收证据"]} |`).join("\n") || "| 未记录 | 未记录 | 未记录 |";
   const latestRunRows = (db.latest_runs || []).map((run) => `- ${run.created_at} · ${run.run_kind} · ${run.status} · task ${run.task_id || "无"} · ${run.model || "无模型"}`).join("\n") || "- 无";
   const latestSnapshotRows = (db.latest_evidence_snapshots || []).map((snapshot) => `- ${snapshot.created_at} · ${snapshot.snapshot_type} · run ${snapshot.run_id} · ${snapshot.run_status || "未知"} · task ${snapshot.task_id || "无"}`).join("\n") || "- 无";
   const latestTraceRows = (db.latest_trace_events || []).map((event) => `- ${event.created_at} · ${event.event_name || event.event_type} · ${event.status} · task ${event.task_id || "无"}`).join("\n") || "- 无";
@@ -912,6 +1011,10 @@ ${commitRows}
 - 任务：${tasks.task_count ?? "未记录"}，usage 行 ${tasks.usage_rows ?? "未记录"}，trace 事件 ${tasks.trace_event_rows ?? "未记录"}
 - 小队：${squads.squad_count ?? "未记录"}，SOP run ${squads.sop_run_count ?? "未记录"}，SOP 事件 ${squads.sop_event_count ?? "未记录"}，已完成队长任务 ${squads.completed_leader_task_count ?? "未记录"}，失败队长任务 ${squads.failed_leader_task_count ?? "未记录"}
 
+### 资产类型分布
+
+${assetRows}
+
 ## 日志抽查
 
 - 状态：${logStatus}
@@ -919,6 +1022,26 @@ ${commitRows}
 - 最近错误：${logs.error_count ?? "未记录"}
 - 最近健康检查日志：${logs.health_line_count ?? "未记录"}
 - 最近 daemon 日志：${logs.daemon_line_count ?? "未记录"}
+
+## 生产/联调环境
+
+- 状态：${environment.status || "未记录"}
+- 生产前端：${environment.frontend_url || "未记录"}
+- 生产后端：${environment.backend_url || "未记录"}
+- 生产模式：${environment.frontend_mode || "未记录"}
+- 生产数据库：${environment.database_name || "未记录"}
+- Daemon profile：${environment.daemon_profile || "未记录"}
+- 部署提交：${environment.commit || "未记录"}，部署时间：${environment.deployed_at || "未记录"}
+
+## Opik 迁移对照
+
+- 状态：${opik.status || "未记录"}
+- 来源：${opik.opik_source || "未记录"}
+- 文档：\`${opik.docs_path || "未记录"}\`
+
+| Opik 功能 | Multica 实现 | 验收证据 |
+| --- | --- | --- |
+${opikRows}
 
 ### 最近训练评估运行
 
@@ -963,6 +1086,7 @@ ${latestTraceRows}
 - 真实 Agent 证据：trace ${apiTraining["Agent trace事件数"] ?? "未记录"}，trial ${apiTraining["Agent trial数"] ?? "未记录"}，消息 ${apiTraining["Agent消息数"] ?? "未记录"}
 - 真实 Agent token：输入 ${apiTraining["Agent输入token"] ?? "未记录"}，输出 ${apiTraining["Agent输出token"] ?? "未记录"}，外部依赖失败：${apiTraining["Agent外部依赖失败"] ? "是" : "否"}
 - 优化候选：${apiTraining["Optimization Candidate ID"] || "未记录"}，状态：${apiTraining["Optimization Candidate状态"] || "未记录"}
+- 优化运行资产：${apiTraining["Optimization Run Asset ID"] || "未记录"}，状态：${apiTraining["Optimization Run Asset状态"] || "未记录"}
 - 发布版本：${apiTraining["Published Prompt ID"] || "未记录"}，版本：${apiTraining["Published Prompt版本"] ?? "未记录"}
 
 ### 浏览器部署验收

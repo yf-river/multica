@@ -5,7 +5,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { getApi } from "../api";
 import { useAuthStore } from "../auth";
 import {
-  captureSignupSource,
   identify as identifyAnalytics,
   initAnalytics,
   resetAnalytics,
@@ -40,10 +39,6 @@ export function AuthInitializer({
 
   useEffect(() => {
     const api = getApi();
-
-    // Stamp attribution before anything else — the signup event (server-side)
-    // reads this cookie, so it has to be present before the user hits submit.
-    captureSignupSource();
 
     // Fetch app config (CDN domain, PostHog key, …) in the background — non-blocking.
     api

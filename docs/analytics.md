@@ -145,17 +145,15 @@ registration path had a measured duration.
 
 ### `signup`
 
-Fires when a new user is created through the account/password model.
-
-| Property | Type | Description |
-|---|---|---|
-| `signup_source` | string | Opaque attribution bundle from the frontend cookie `multica_signup_source` (UTM + referrer). Empty when the cookie is absent. |
+Fires when a new user is created through the internal account/password model.
+The internal-team build intentionally does not collect marketing attribution
+or external-source fields.
 
 Person properties set with `$set_once`:
 
 | Property | Type | Description |
 |---|---|---|
-| `signup_source` | string | Same as above; kept on the person for later segmentation. |
+| `account` | string | Internal account name used for login. |
 
 ### `workspace_created`
 
@@ -556,14 +554,9 @@ sent from a pre-workspace surface.
   - `workspace_id`: string (UUID) when the modal opens inside a
     workspace. Omitted on pre-workspace surfaces.
 
-- Attribution is NOT a separate event; UTM + referrer origin are written
-  to the `multica_signup_source` cookie on the first anonymous pageview
-  and read by the backend's `signup` emission. The cookie carries a JSON
-  payload URL-encoded at write time (`encodeURIComponent`) and
-  URL-decoded at read time (`url.QueryUnescape`) — the JSON is never
-  mid-truncated; individual values are capped at 96 chars before
-  `JSON.stringify`, and the entire payload is dropped if it still exceeds
-  512 chars. That way PostHog sees either intact JSON or nothing at all.
+- Marketing attribution is not collected in the internal-team build. Anonymous
+  external-source cookies and "how did you hear about us" prompts are
+  intentionally absent from the active product surface.
 
 ## Reconciliation
 

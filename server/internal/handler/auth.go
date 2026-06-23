@@ -12,7 +12,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -187,35 +186,6 @@ func (h *Handler) issueJWT(user db.User) (string, error) {
 	return token.SignedString(auth.JWTSecret())
 }
 
-// signupSourceFromRequest reads the attribution cookie the web frontend
-// sets on the first pageview (UTM + referrer bundle). The frontend writes
-// a JSON string URL-encoded into the cookie value — Go does not
-// auto-decode Cookie.Value, so we have to unescape here before the string
-// lands in PostHog. Missing cookie / decode failures collapse to the
-// empty string; that simply omits signup_source from the event rather
-// than sending percent-encoded garbage. Never fall back to r.Referer() —
-// the frontend has already sanitised attribution and a raw referer can
-// leak OAuth code/state from the callback URL.
-//
-// The cap is the server-side defence against a client that manages to set
-// an oversize cookie; it matches SIGNUP_SOURCE_MAX_LEN on the frontend.
-const signupSourceMaxLen = 512
-
-func signupSourceFromRequest(r *http.Request) string {
-	c, err := r.Cookie("multica_signup_source")
-	if err != nil || c == nil {
-		return ""
-	}
-	decoded, err := url.QueryUnescape(c.Value)
-	if err != nil {
-		return ""
-	}
-	if len(decoded) > signupSourceMaxLen {
-		return ""
-	}
-	return decoded
-}
-
 func (h *Handler) checkSignupAllowed(account string, isNewUser bool) error {
 	if !isNewUser {
 		return nil // existing users always allowed to log in
@@ -297,7 +267,7 @@ func (h *Handler) AccountPasswordLogin(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusInternalServerError, "failed to save password")
 			return
 		}
-		obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.Signup(uuidToString(user.ID), user.Account, signupSourceFromRequest(r)))
+		obsmetrics.RecordEvent(h.Analytics, h.Metrics, analytics.Signup(uuidToString(user.ID), user.Account))
 	} else {
 		var passwordHash string
 		if err := h.DB.QueryRow(r.Context(), `SELECT COALESCE(password_hash, '') FROM "user" WHERE id = $1`, user.ID).Scan(&passwordHash); err != nil {

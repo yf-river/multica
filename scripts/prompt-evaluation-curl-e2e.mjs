@@ -150,6 +150,32 @@ if (localTrialCount <= 0) fail(`本地评估运行缺少 trial：${JSON.stringif
 const candidate = post(`/api/prompt-evaluation-runs/${failedRun.id}/optimization-candidates`, null, token);
 if (!candidate?.id) fail("创建优化候选响应缺少 id");
 
+const optimizationRun = post("/api/prompt-evaluation-assets", {
+  prompt_id: prompt.id,
+  name: `curl 训练闭环优化运行 ${suffix}`,
+  description: "通过公开 API 创建的优化运行资产，用于证明优化运行模块不是空壳。",
+  asset_type: "优化运行",
+  payload: {
+    schema: "multica.training_evaluation.optimization_run.v1",
+    schema_version: 1,
+    语义版本: "multica.training_evaluation.optimization_run.v1",
+    来源运行: failedRun.id,
+    来源测试套件: suite.id,
+    来源优化候选: candidate.id,
+    优化目标: ["补齐验收条件", "保留 trace/task id", "输出中文失败原因"],
+    指标口径: ["失败用例", "优化候选", "人工确认", "发布版本"],
+  },
+  status: "启用",
+}, token);
+if (!optimizationRun?.id || optimizationRun.asset_type !== "优化运行") {
+  fail(`创建优化运行资产失败：${JSON.stringify(optimizationRun)}`);
+}
+const optimizationAssets = get(`/api/prompt-evaluation-assets?asset_type=${encodeURIComponent("优化运行")}&limit=20`, token);
+const optimizationItems = Array.isArray(optimizationAssets) ? optimizationAssets : optimizationAssets.items ?? [];
+if (!optimizationItems.some((item) => item.id === optimizationRun.id && item.asset_type === "优化运行")) {
+  fail(`优化运行资产未能回读：${JSON.stringify(optimizationAssets)}`);
+}
+
 const edited = put(`/api/prompt-evaluation-optimization-candidates/${candidate.id}`, {
   candidate_name: `${candidate.candidate_name || "curl 优化候选"} 人工确认版`,
   candidate_content: `${candidate.candidate_content || prompt.content}\n\n人工发布要求：保留中文指标，必须输出优化候选、失败原因和 trace/task id。`,
@@ -169,6 +195,13 @@ evidence.prompt = { id: prompt.id, version: prompt.version, version_count: itemC
 evidence.dataset = { id: dataset.id, asset_type: dataset.asset_type, structured_case_count: dataset.structured_case_count, dataset_row_count: dataset.dataset_row_count, assertion_count: datasetAssertionCount };
 evidence.test_suite = { id: suite.id, asset_type: suite.asset_type, structured_case_count: suite.structured_case_count, test_suite_case_count: suite.test_suite_case_count, assertion_count: suiteAssertionCount };
 evidence.experiment = { id: experiment.id, asset_type: experiment.asset_type, structured_case_count: experiment.structured_case_count, experiment_dimension_count: experiment.experiment_dimension_count, dimension_names: experimentDimensionNames };
+evidence.optimization_run_asset = {
+  id: optimizationRun.id,
+  asset_type: optimizationRun.asset_type,
+  status: optimizationRun.status,
+  source_run_id: failedRun.id,
+  source_candidate_id: candidate.id,
+};
 evidence.run = {
   id: failedRun.id,
   status: failedRun.status,
