@@ -24,6 +24,16 @@ type UsePromptPlaygroundActionsOptions = {
   selected: PromptLibraryItem | null;
   items: PromptLibraryItem[];
   selectedPromptStorageKey: string | null;
+  onAssetsChanged: () => void;
+  onCasesChanged: () => void;
+  onExperimentDimensionsChanged: () => void;
+  onRunsChanged: () => void;
+  onSummaryChanged: () => void;
+};
+
+type UseAgentPlaygroundActionsOptions = {
+  draft: PromptDraft;
+  selected: PromptLibraryItem | null;
   agentRuntimeReadiness: PromptEvaluationRuntimeReadiness;
   onAssetsChanged: () => void;
   onCasesChanged: () => void;
@@ -32,20 +42,32 @@ type UsePromptPlaygroundActionsOptions = {
   onSummaryChanged: () => void;
 };
 
+function usePromptDebugState(draft: PromptDraft) {
+  const [debugValuesText, setDebugValuesText] = useState("");
+  const debugResult = useMemo(
+    () => renderPromptTemplate({
+      content: draft.content,
+      variables: parseVariables(draft.variablesText),
+      values: parseDebugValues(debugValuesText),
+    }),
+    [debugValuesText, draft.content, draft.variablesText],
+  );
+
+  return { debugValuesText, setDebugValuesText, debugResult };
+}
+
 export function usePromptPlaygroundActions({
   draft,
   selected,
   items,
   selectedPromptStorageKey,
-  agentRuntimeReadiness,
   onAssetsChanged,
   onCasesChanged,
   onExperimentDimensionsChanged,
   onRunsChanged,
   onSummaryChanged,
 }: UsePromptPlaygroundActionsOptions) {
-  const [debugValuesText, setDebugValuesText] = useState("");
-  const [agentExpectedText, setAgentExpectedText] = useState("");
+  const { debugValuesText, setDebugValuesText, debugResult } = usePromptDebugState(draft);
 
   const runDebugMut = useMutation({
     mutationFn: async (data: CreatePromptEvaluationAssetRequest) => {
@@ -71,30 +93,6 @@ export function usePromptPlaygroundActions({
       toast.success("资产已创建");
     },
   });
-
-  const runAgentMut = useMutation({
-    mutationFn: async (data: CreatePromptEvaluationAssetRequest) => {
-      const asset = await api.createPromptEvaluationAsset(data);
-      return api.runPromptEvaluationAssetAgent(asset.id);
-    },
-    onSuccess: (result) => {
-      onAssetsChanged();
-      onCasesChanged();
-      onExperimentDimensionsChanged();
-      onRunsChanged();
-      onSummaryChanged();
-      toast.success(`真实智能体任务已入队：${result.task_id}`);
-    },
-  });
-
-  const debugResult = useMemo(
-    () => renderPromptTemplate({
-      content: draft.content,
-      variables: parseVariables(draft.variablesText),
-      values: parseDebugValues(debugValuesText),
-    }),
-    [debugValuesText, draft.content, draft.variablesText],
-  );
 
   const runDebug = () => {
     if (!selected) {
@@ -148,6 +146,56 @@ export function usePromptPlaygroundActions({
     });
   };
 
+  return {
+    debugValuesText,
+    setDebugValuesText,
+    debugResult,
+    runningDebug: runDebugMut.isPending,
+    creatingAsset: createAssetMut.isPending,
+    runDebug,
+    createWorkbenchAsset,
+  };
+}
+
+export function useAgentPlaygroundActions({
+  draft,
+  selected,
+  agentRuntimeReadiness,
+  onAssetsChanged,
+  onCasesChanged,
+  onExperimentDimensionsChanged,
+  onRunsChanged,
+  onSummaryChanged,
+}: UseAgentPlaygroundActionsOptions) {
+  const { debugValuesText, setDebugValuesText, debugResult } = usePromptDebugState(draft);
+  const [agentExpectedText, setAgentExpectedText] = useState("");
+
+  const createAssetMut = useMutation({
+    mutationFn: (data: CreatePromptEvaluationAssetRequest) => api.createPromptEvaluationAsset(data),
+    onSuccess: () => {
+      onAssetsChanged();
+      onCasesChanged();
+      onExperimentDimensionsChanged();
+      onSummaryChanged();
+      toast.success("智能体调试包已保存");
+    },
+  });
+
+  const runAgentMut = useMutation({
+    mutationFn: async (data: CreatePromptEvaluationAssetRequest) => {
+      const asset = await api.createPromptEvaluationAsset(data);
+      return api.runPromptEvaluationAssetAgent(asset.id);
+    },
+    onSuccess: (result) => {
+      onAssetsChanged();
+      onCasesChanged();
+      onExperimentDimensionsChanged();
+      onRunsChanged();
+      onSummaryChanged();
+      toast.success(`真实智能体任务已入队：${result.task_id}`);
+    },
+  });
+
   const saveAgentDebugPackage = () => {
     const prompt = selected;
     if (!prompt) {
@@ -177,11 +225,8 @@ export function usePromptPlaygroundActions({
     agentExpectedText,
     setAgentExpectedText,
     debugResult,
-    runningDebug: runDebugMut.isPending,
-    creatingAsset: createAssetMut.isPending,
     runningAgent: runAgentMut.isPending,
-    runDebug,
-    createWorkbenchAsset,
+    creatingAgentPackage: createAssetMut.isPending,
     saveAgentDebugPackage,
     runAgentDebugPackage,
   };

@@ -61,7 +61,7 @@ import {
   valuesToDebugText,
   type PromptDraft,
 } from "./prompt-library-request-builders";
-import { usePromptPlaygroundActions } from "./use-prompt-playground-actions";
+import { useAgentPlaygroundActions, usePromptPlaygroundActions } from "./use-prompt-playground-actions";
 
 const promptLibraryKeys = {
   list: (workspaceId: string) => ["prompt-library", workspaceId, "list"] as const,
@@ -294,7 +294,7 @@ export function PromptLibraryPage({
   });
   const promptVersions = versionQuery.data?.items ?? [];
   const agentRuntimeReadiness = runtimeReadinessQuery.data ?? DEFAULT_AGENT_RUNTIME_READINESS;
-  const selectedPromptStorageKey = workspaceId ? `multica:training:selected-prompt:${workspaceId}` : null;
+  const selectedPromptStorageKey = workspaceId ? `multica:training:${surface}:selected-prompt:${workspaceId}` : null;
 
   useEffect(() => {
     if (!selectedPromptStorageKey || selectedId || isDraftingNew) return;
@@ -324,12 +324,6 @@ export function PromptLibraryPage({
       setSelectedId(items[0]?.id ?? null);
     }
   }, [isDraftingNew, items, listQuery.isFetching, selectedFromList, selectedId]);
-
-  useEffect(() => {
-    if (!selected) return;
-    setDraft(itemToDraft(selected));
-    setDebugValuesText(valuesToDebugText(selected.variables));
-  }, [selected]);
 
   const filteredItems = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -535,6 +529,15 @@ export function PromptLibraryPage({
     selected,
     items,
     selectedPromptStorageKey,
+    onAssetsChanged: invalidateAssets,
+    onCasesChanged: invalidateCases,
+    onExperimentDimensionsChanged: invalidateExperimentDimensions,
+    onRunsChanged: invalidateRuns,
+    onSummaryChanged: invalidateSummary,
+  });
+  const agentPlaygroundActions = useAgentPlaygroundActions({
+    draft,
+    selected,
     agentRuntimeReadiness,
     onAssetsChanged: invalidateAssets,
     onCasesChanged: invalidateCases,
@@ -545,31 +548,48 @@ export function PromptLibraryPage({
   const {
     debugValuesText,
     setDebugValuesText,
-    agentExpectedText,
-    setAgentExpectedText,
     debugResult,
     runningDebug,
     creatingAsset,
-    runningAgent,
     runDebug,
     createWorkbenchAsset,
+  } = promptPlaygroundActions;
+  const {
+    debugValuesText: agentDebugValuesText,
+    setDebugValuesText: setAgentDebugValuesText,
+    agentExpectedText,
+    setAgentExpectedText,
+    debugResult: agentDebugResult,
+    runningAgent,
+    creatingAgentPackage,
     saveAgentDebugPackage,
     runAgentDebugPackage,
-  } = promptPlaygroundActions;
-  const savingAsset = creatingAsset || updateAssetMut.isPending || deleteAssetMut.isPending || importDatasetFromTracesMut.isPending;
+  } = agentPlaygroundActions;
+  const savingAsset = creatingAsset || creatingAgentPackage || updateAssetMut.isPending || deleteAssetMut.isPending || importDatasetFromTracesMut.isPending;
+
+  useEffect(() => {
+    if (!selected) return;
+    setDraft(itemToDraft(selected));
+    const nextValues = valuesToDebugText(selected.variables);
+    setDebugValuesText(nextValues);
+    setAgentDebugValuesText(nextValues);
+  }, [selected, setAgentDebugValuesText, setDebugValuesText]);
 
   const startNew = () => {
     setIsDraftingNew(true);
     setSelectedId(null);
     setDraft(emptyDraft());
     setDebugValuesText("");
+    setAgentDebugValuesText("");
   };
 
   const applyUserCenterTemplate = () => {
     setIsDraftingNew(true);
     setSelectedId(null);
     setDraft(requestToDraft(USER_CENTER_TEMPLATE));
-    setDebugValuesText(valuesToDebugText(USER_CENTER_TEMPLATE.variables ?? []));
+    const nextValues = valuesToDebugText(USER_CENTER_TEMPLATE.variables ?? []);
+    setDebugValuesText(nextValues);
+    setAgentDebugValuesText(nextValues);
   };
 
   const saveDraft = () => {
@@ -817,9 +837,9 @@ export function PromptLibraryPage({
           <main className="min-h-0 overflow-y-auto p-4 md:p-6">
             <AgentPlaygroundWorkbench
               selected={selected}
-              debugValuesText={debugValuesText}
-              onDebugValuesTextChange={setDebugValuesText}
-              debugResult={debugResult}
+              debugValuesText={agentDebugValuesText}
+              onDebugValuesTextChange={setAgentDebugValuesText}
+              debugResult={agentDebugResult}
               agentExpectedText={agentExpectedText}
               onAgentExpectedTextChange={setAgentExpectedText}
               runtimeReadiness={agentRuntimeReadiness}

@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Request } from "@playwright/test";
-import { loginAsDefault, waitForPageText } from "./helpers";
+import { createTestApi, loginAsDefault, waitForPageText } from "./helpers";
 import { DEFAULT_TRAINING_ROUTE, TRAINING_ROUTES, trainingRoutePath } from "./training-routes";
 
 const ROUTE_CHANGE_TIMEOUT = 30000;
@@ -162,6 +162,69 @@ test.describe("Navigation", () => {
     expect(agentRequests.paths.some((path) => path.includes("summary"))).toBe(false);
     expect(agentRequests.paths.some((path) => path.includes("runtime-readiness"))).toBe(true);
     expect(agentRequests.paths.some((path) => path.includes("cases"))).toBe(true);
+  });
+
+  test("training playgrounds keep selected prompt storage isolated by surface", async ({ page }) => {
+    const workspaceSlug = currentWorkspaceSlug(page);
+    const api = await createTestApi();
+    const artifactPrefix = `E2E 导航调试场 ${Date.now()}`;
+    const promptName = `${artifactPrefix} 中文提示词`;
+    const prompt = await api.createPromptLibraryItem({
+      name: promptName,
+      description: "验证两个调试场的选中提示词持久化互不串用",
+      prompt_type: "需求澄清",
+      content: "请处理 {{issue_title}}，并输出中文验收证据。",
+      variables: [{ name: "issue_title", label: "任务标题", required: true }],
+      tags: ["导航验收", "调试场"],
+      status: "启用",
+    });
+    await page.evaluate(() => {
+      for (const key of Object.keys(localStorage)) {
+        if (key.startsWith("multica:training:") && key.includes(":selected-prompt:")) {
+          localStorage.removeItem(key);
+        }
+      }
+    });
+
+    try {
+      await page.goto(trainingRoutePath(workspaceSlug, "prompt-playground"), { waitUntil: "domcontentloaded" });
+      await expect(page.getByTestId("prompt-playground-page-shell")).toBeVisible({ timeout: 30000 });
+      await page.getByTestId("prompt-playground-prompt-list").getByRole("button", { name: new RegExp(promptName) }).click();
+      await expect(page.getByTestId("prompt-playground-rendered-output")).toContainText("请处理");
+      await expect
+        .poll(async () =>
+          page.evaluate(
+            (promptId) =>
+              Object.entries(localStorage).some(([key, value]) => key.startsWith("multica:training:prompt-playground:selected-prompt:") && value === promptId),
+            prompt.id,
+          ),
+        )
+        .toBe(true);
+
+      await page.goto(trainingRoutePath(workspaceSlug, "agent-playground"), { waitUntil: "domcontentloaded" });
+      await expect(page.getByTestId("agent-playground-page-shell")).toBeVisible({ timeout: 30000 });
+      await page.getByTestId("agent-playground-prompt-list").getByRole("button", { name: new RegExp(promptName) }).click();
+      await expect(page.getByTestId("agent-playground-task-payload")).toContainText(promptName);
+      await expect
+        .poll(async () =>
+          page.evaluate(
+            (promptId) =>
+              Object.entries(localStorage).some(([key, value]) => key.startsWith("multica:training:agent-playground:selected-prompt:") && value === promptId),
+            prompt.id,
+          ),
+        )
+        .toBe(true);
+
+      const selectedPromptKeys = await page.evaluate(() =>
+        Object.keys(localStorage).filter((key) => key.startsWith("multica:training:") && key.includes(":selected-prompt:")).sort(),
+      );
+      expect(selectedPromptKeys.some((key) => key.startsWith("multica:training:prompt-playground:selected-prompt:"))).toBe(true);
+      expect(selectedPromptKeys.some((key) => key.startsWith("multica:training:agent-playground:selected-prompt:"))).toBe(true);
+      expect(selectedPromptKeys.some((key) => /^multica:training:selected-prompt:/.test(key))).toBe(false);
+    } finally {
+      await api.cleanupPromptArtifactsByPrefix(artifactPrefix);
+      await api.cleanup();
+    }
   });
 
   test("agents page shows agent list", async ({ page }) => {
