@@ -32,10 +32,11 @@ async function setIssueTimestamps(
 
 test.describe("Issues", () => {
   let api: TestApiClient;
+  let workspaceSlug: string;
 
   test.beforeEach(async ({ page }) => {
     api = await createTestApi();
-    await loginAsDefault(page);
+    workspaceSlug = await loginAsDefault(page);
   });
 
   test.afterEach(async () => {
@@ -178,6 +179,55 @@ test.describe("Issues", () => {
     // Should show the issue leaf and avoid English fallback crumbs.
     await expect(page.getByText(issue.identifier)).toBeVisible();
     await expect(page.getByText("Issues", { exact: true })).toHaveCount(0);
+  });
+
+  test("can create a cross-project child issue from the parent detail page", async ({ page }) => {
+    const suffix = Date.now();
+    const usercenterProject = await api.createProject(`E2E usercenter ${suffix}`);
+    const gatewayProject = await api.createProject(`E2E gateway ${suffix}`);
+    await api.createProject(`E2E config ${suffix}`);
+    const parent = await api.createIssue(`E2E usercenter 父任务 ${suffix}`, {
+      project_id: usercenterProject.id,
+      status: "in_progress",
+    });
+    const childTitle = `E2E gateway 子任务 ${suffix}`;
+
+    await page.goto(`/${workspaceSlug}/issues/${parent.id}`, { waitUntil: "domcontentloaded" });
+    await expect(page.getByText(parent.identifier)).toBeVisible({ timeout: 15000 });
+    await expect(page.getByRole("link", { name: new RegExp(parent.title) })).toBeVisible({ timeout: 15000 });
+
+    await page.getByRole("button", { name: "添加子任务" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByRole("textbox", { name: "任务标题" })).toBeVisible({ timeout: 10000 });
+    await expect(dialog.getByText(`${parent.identifier} 的子任务`)).toBeVisible({ timeout: 10000 });
+    await expect(dialog.getByRole("button", { name: usercenterProject.title })).toBeVisible({ timeout: 10000 });
+
+    await dialog.getByRole("textbox", { name: "任务标题" }).fill(childTitle);
+    await dialog.getByRole("button", { name: usercenterProject.title }).click();
+    await page.getByRole("menuitem", { name: gatewayProject.title }).click();
+    await expect(dialog.getByRole("button", { name: gatewayProject.title })).toBeVisible({ timeout: 10000 });
+
+    await dialog.getByRole("button", { name: "创建任务" }).click();
+    await expect(page.getByText("已创建任务")).toBeVisible({ timeout: 10000 });
+
+    await expect
+      .poll(async () => {
+        const children = await api.listChildIssues(parent.id);
+        return children.some((item: any) => item.title === childTitle);
+      }, { timeout: 15000 })
+      .toBe(true);
+
+    const childIssue = (await api.listChildIssues(parent.id)).find((item: any) => item.title === childTitle) as any;
+    api.rememberIssue(childIssue.id);
+    expect(childIssue.parent_issue_id).toBe(parent.id);
+    expect(childIssue.project_id).toBe(gatewayProject.id);
+
+    await page.getByRole("button", { name: "查看任务" }).click();
+    await page.waitForURL(new RegExp(`/issues/${childIssue.id}$`));
+    await expect(page.getByRole("link", { name: new RegExp(`属于父任务 ${parent.identifier}`) })).toBeVisible({ timeout: 15000 });
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page.getByRole("link", { name: new RegExp(`属于父任务 ${parent.identifier}`) })).toBeVisible({ timeout: 15000 });
+    await expect(page.getByText(gatewayProject.title)).toBeVisible({ timeout: 15000 });
   });
 
   test("can dismiss issue creation", async ({ page }) => {

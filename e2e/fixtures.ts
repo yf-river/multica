@@ -284,6 +284,7 @@ export class TestApiClient {
   private workspaceId: string | null = null;
   private account: string | null = null;
   private createdIssueIds: string[] = [];
+  private createdProjectIds: string[] = [];
   private createdRuntimeIds: string[] = [];
   private createdSquadIds: string[] = [];
 
@@ -703,9 +704,52 @@ export class TestApiClient {
       method: "POST",
       body: JSON.stringify({ title, ...opts }),
     });
+    if (!res.ok) {
+      throw new Error(`create issue failed: ${res.status} ${await res.text()}`);
+    }
     const issue = await res.json();
     this.createdIssueIds.push(issue.id);
     return issue;
+  }
+
+  rememberIssue(id: string) {
+    if (id && !this.createdIssueIds.includes(id)) {
+      this.createdIssueIds.push(id);
+    }
+  }
+
+  async getIssue(issueId: string) {
+    const res = await this.authedFetch(`/api/issues/${issueId}`);
+    if (!res.ok) {
+      throw new Error(`get issue failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async listChildIssues(issueId: string) {
+    const res = await this.authedFetch(`/api/issues/${issueId}/children`);
+    if (!res.ok) {
+      throw new Error(`list child issues failed: ${res.status} ${await res.text()}`);
+    }
+    const data = await res.json();
+    return data.issues ?? [];
+  }
+
+  async createProject(title: string, opts?: Record<string, unknown>) {
+    const res = await this.authedFetch("/api/projects", {
+      method: "POST",
+      body: JSON.stringify({ title, ...opts }),
+    });
+    if (!res.ok) {
+      throw new Error(`create project failed: ${res.status} ${await res.text()}`);
+    }
+    const project = await res.json();
+    this.createdProjectIds.push(project.id);
+    return project;
+  }
+
+  async deleteProject(id: string) {
+    await this.authedFetch(`/api/projects/${id}`, { method: "DELETE" });
   }
 
   async updateIssue(issueId: string, opts?: Record<string, unknown>) {
@@ -1552,6 +1596,14 @@ export class TestApiClient {
       }
     }
     this.createdIssueIds = [];
+    for (const id of this.createdProjectIds) {
+      try {
+        await this.deleteProject(id);
+      } catch {
+        /* ignore — may already be deleted */
+      }
+    }
+    this.createdProjectIds = [];
     await this.cleanupSeededSquads();
     await this.cleanupInternalSquadTemplates();
     await this.cleanupSeededRuntimes();
