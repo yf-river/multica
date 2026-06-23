@@ -229,8 +229,7 @@ goal-test-deploy-all: ## Build and deploy dev first, then sync the same artifact
 	$(MAKE) goal-test-sync-prod
 
 goal-test-verify-env: ## Verify goal-test production and integration environments
-	node scripts/goal-test-environments.mjs verify prod
-	node scripts/goal-test-environments.mjs verify int
+	node scripts/goal-test-environments.mjs verify all
 
 db-up: ## Start the shared PostgreSQL container used by main and worktrees
 	@$(COMPOSE) up -d postgres

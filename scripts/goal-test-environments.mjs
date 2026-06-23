@@ -37,7 +37,7 @@ const profiles = {
 const command = process.argv[2] || "verify";
 const profileName = process.argv[3] && !process.argv[3].startsWith("--") ? process.argv[3] : "prod";
 const profile = profiles[profileName];
-if (!profile) fail(`unknown environment ${profileName}; expected prod or int`);
+if (!profile && !(command === "verify" && profileName === "all")) fail(`unknown environment ${profileName}; expected prod, int, or all`);
 
 if (command === "ensure") {
   ensureEnvironment(profile);
@@ -45,7 +45,7 @@ if (command === "ensure") {
 } else if (command === "deploy") {
   deployEnvironment(profile, process.argv.includes("--build"));
 } else if (command === "verify") {
-  const evidence = verifyAll();
+  const evidence = profileName === "all" ? verifyAll() : verifyTarget(profile);
   console.log(JSON.stringify(evidence, null, 2));
 } else {
   fail(`unknown command ${command}`);
@@ -193,6 +193,19 @@ function verifyAll() {
     integration: intEnv,
     isolation,
     ok: prod.ok && isolation.status === "通过",
+  };
+}
+
+function verifyTarget(item) {
+  ensureEnvironment(item);
+  const result = verifyEnvironment(item, true);
+  return {
+    schema: "multica.goal_test.environment_evidence.v1",
+    generated_at: new Date().toISOString(),
+    current_commit: gitText(["rev-parse", "--short=12", "HEAD"]),
+    target: item.name,
+    [item.name === "prod" ? "prod" : "integration"]: result,
+    ok: result.ok,
   };
 }
 
