@@ -183,6 +183,8 @@ export interface AgentTask {
   autopilot_run_id?: string;
   /** Set when this task was created as an auto-retry of a parent task. */
   parent_task_id?: string;
+  /** True when the task was created for a squad leader rather than a plain agent assignment. */
+  is_leader_task?: boolean;
   /** 1-based attempt counter; >1 means this is a retry. */
   attempt?: number;
   /** Set when an issue comment triggered this task (@mention or assignee comment). */

@@ -246,6 +246,7 @@ type AgentTaskResponse struct {
 	Attempt          int32                 `json:"attempt"`
 	MaxAttempts      int32                 `json:"max_attempts"`
 	ParentTaskID     *string               `json:"parent_task_id,omitempty"`
+	IsLeaderTask     bool                  `json:"is_leader_task,omitempty"`
 	Agent            *TaskAgentData        `json:"agent,omitempty"`
 	Repos            []RepoData            `json:"repos,omitempty"`
 	ProjectID        string                `json:"project_id,omitempty"`        // issue's project, when present
@@ -394,6 +395,7 @@ func taskToResponse(t db.AgentTaskQueue, workspaceID string) AgentTaskResponse {
 		Attempt:          t.Attempt,
 		MaxAttempts:      t.MaxAttempts,
 		ParentTaskID:     uuidToPtr(t.ParentTaskID),
+		IsLeaderTask:     t.IsLeaderTask,
 		CreatedAt:        timestampToString(t.CreatedAt),
 		TriggerCommentID: uuidToPtr(t.TriggerCommentID),
 		TriggerSummary:   textToPtr(t.TriggerSummary),

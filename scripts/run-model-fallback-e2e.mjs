@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
@@ -78,7 +79,21 @@ function printFinal(parsed, modelAttempts) {
     fallback_used: modelAttempts.length > 1,
     selected_model: modelAttempts[modelAttempts.length - 1]?.model || primaryModel,
   };
+  persistFinalEvidence(final);
   console.log(JSON.stringify(final, null, 2));
+}
+
+function persistFinalEvidence(final) {
+  const paths = [final?.evidence_path, final?.latest_evidence_path].filter(Boolean);
+  if (paths.length === 0) return;
+  const content = `${JSON.stringify(final, null, 2)}\n`;
+  for (const outputPath of paths) {
+    try {
+      writeFileSync(outputPath, content);
+    } catch {
+      // Child scripts may return non-file evidence references; wrapper output remains authoritative.
+    }
+  }
 }
 
 function wrapperFailure(message, modelAttempts) {
