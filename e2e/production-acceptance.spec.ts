@@ -211,7 +211,7 @@ test.describe("生产部署验收", () => {
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/run-history$`));
     await expectTrainingRouteShell(page, TRAINING_ROUTES[8]!);
     const firstRun = page.locator("[data-testid^='prompt-evaluation-run-']").first();
-    await expect(firstRun).toContainText(/Agent执行|模板渲染检查/, { timeout: 30000 });
+    await expect(firstRun).toContainText(/智能体执行|模板渲染检查/, { timeout: 30000 });
     await firstRun.getByRole("button", { name: "查看证据" }).click();
     await expect(firstRun.getByTestId("run-evidence-snapshots")).toContainText("服务端证据快照", { timeout: 10000 });
   });

@@ -1637,7 +1637,7 @@ function SquadInstructionsTab({
           </div>
         ) : (
           <div className="mt-3 text-xs text-muted-foreground">
-            尚未配置项目 SOP。可先应用 user-center 模板，再按项目语义调整。
+            尚未配置项目 SOP。可先应用 user-center SOP，再按项目语义调整。
           </div>
         )}
       </div>

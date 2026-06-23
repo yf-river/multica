@@ -1322,7 +1322,7 @@ function DemoDashboardPanel({
   const pendingCandidates = candidates.filter((candidate) => candidate.status === "待确认").length;
   const publishedCandidates = candidates.filter((candidate) => candidate.status === "已发布").length;
   const rejectedCandidates = candidates.filter((candidate) => candidate.status === "已拒绝").length;
-  const hasAgentEvidence = runs.some((run) => run.run_kind === "Agent执行" && Boolean(run.task_id));
+  const hasAgentEvidence = runs.some((run) => isAgentEvaluationRun(run) && Boolean(run.task_id));
   const hasOptimizationLoop = publishedCandidates > 0 || pendingCandidates > 0 || rejectedCandidates > 0;
   const readinessLabel = runtimeLoading ? "检查中" : runtimeReadiness.label;
   const activeRange = DEMO_TIME_RANGES.find((item) => item.value === timeRange) ?? DEFAULT_DEMO_TIME_RANGE;
@@ -1822,7 +1822,7 @@ function AgentPlaygroundWorkbench({
   onSaveAgentDebugPackage: () => void;
   onRunAgentDebugPackage: () => void;
 }) {
-  const agentRuns = runs.filter((run) => run.run_kind === "Agent执行" || Boolean(run.task_id));
+  const agentRuns = runs.filter((run) => isAgentEvaluationRun(run) || Boolean(run.task_id));
   const agentPackages = assets.filter((asset) => {
     const payload = asset.payload ?? {};
     return asset.asset_type === "实验" && (asset.name.includes("智能体调试包") || Object.prototype.hasOwnProperty.call(payload, "调试包"));
@@ -2120,7 +2120,7 @@ function WorkbenchPanel({
             value={agentExpectedText}
             onChange={(event) => onAgentExpectedTextChange(event.target.value)}
             className="min-h-[140px] resize-y text-sm leading-6"
-            placeholder="写下希望 Agent 最终交付的结构、证据和中文口径。"
+            placeholder="写下希望智能体最终交付的结构、证据和中文口径。"
           />
         </Field>
       </section>
@@ -2161,7 +2161,7 @@ function WorkbenchPanel({
               <div key={run.id} data-testid={`prompt-evaluation-run-${run.id}`} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
                 <div className="min-w-0">
                   <div className="flex min-w-0 items-center gap-2">
-                    <span className="truncate text-sm font-medium">{run.run_kind} · {run.status}</span>
+                    <span className="truncate text-sm font-medium">{displayRunKind(run.run_kind)} · {run.status}</span>
                     <Badge variant={run.status === "通过" ? "secondary" : run.status === "已入队" || run.status === "运行中" ? "outline" : "destructive"} className="shrink-0">
                       {run.total_cases} 用例 · 通过率 {Math.round(run.pass_rate * 100)}%
                     </Badge>
@@ -2514,7 +2514,7 @@ function RunEvidencePanel({
         onCreate={onCreateSnapshot}
       />
       <div className="grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
-        <MetricChip label="运行类型" value={evidence.run.run_kind} />
+        <MetricChip label="运行类型" value={displayRunKind(evidence.run.run_kind)} />
         <MetricChip label="运行状态" value={evidence.run.status} />
         <MetricChip label="模型" value={evidence.run.model || "未记录"} />
         <MetricChip label="运行时" value={evidence.run.runtime_provider || "未记录"} />
@@ -3325,7 +3325,7 @@ function summarizeAgentRun(asset: PromptEvaluationAsset): string | null {
 }
 
 function summarizeLatestRunForDemo(run: PromptEvaluationRun): string {
-  const parts = [`${run.run_kind} · ${run.status}`];
+  const parts = [`${displayRunKind(run.run_kind)} · ${run.status}`];
   if (run.failure_reason && run.failure_reason !== "无") {
     parts.push(`失败原因：${truncateText(run.failure_reason, 42)}`);
   }
@@ -3333,6 +3333,15 @@ function summarizeLatestRunForDemo(run: PromptEvaluationRun): string {
     parts.push(`任务标识 ${truncateText(run.task_id, 8)}`);
   }
   return parts.join(" · ");
+}
+
+function isAgentEvaluationRun(run: PromptEvaluationRun): boolean {
+  const kind = String(run.run_kind);
+  return kind === "Agent执行" || kind === "智能体执行" || Boolean(run.task_id);
+}
+
+function displayRunKind(runKind: string): string {
+  return runKind === "Agent执行" ? "智能体执行" : runKind;
 }
 
 function summarizeStructuredRun(run: PromptEvaluationRun): string {

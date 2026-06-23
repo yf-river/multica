@@ -113,7 +113,7 @@ test.describe("训练与评估真实 Agent 闭环", () => {
         await page.goto(`/${workspace.slug}/training/run-history`, { waitUntil: "domcontentloaded" });
         await waitForPageText(page, "运行历史", 15000);
         const runCard = page.getByTestId(`prompt-evaluation-run-${queued.run.id}`);
-        await expect(runCard).toContainText("Agent执行 · 失败", { timeout: 15000 });
+        await expect(runCard).toContainText("智能体执行 · 失败", { timeout: 15000 });
         await expect(runCard).toContainText("模型额度不足");
         await runCard.getByRole("button", { name: "查看证据" }).click();
         const evidencePanel = runCard.getByTestId(`run-evidence-${queued.run.id}`);

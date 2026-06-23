@@ -426,9 +426,9 @@ test.describe("训练与评估工作台", () => {
     const futureRuns = await api.listPromptEvaluationRuns({ since: futureSince, limit: 20 });
     expect(futureRuns).toHaveLength(0);
     await page.getByRole("link", { name: "运行历史", exact: true }).last().click();
-    await expect(page.getByText("Agent执行 · 已入队")).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText("智能体执行 · 已入队")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(`任务 ${queuedAgentRun!.task_id}`)).toBeVisible();
-    let agentRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "Agent执行 · 已入队" }).first();
+    let agentRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "智能体执行 · 已入队" }).first();
     const syncResponse = page.waitForResponse(
       (response) => response.request().method() === "POST" && response.url().includes(`/prompt-evaluation-runs/${queuedAgentRun!.id}/sync`),
       { timeout: 10000 },
@@ -499,7 +499,7 @@ test.describe("训练与评估工作台", () => {
     expect(exportedEvidence["证据统计"]["trace_event条数"]).toBeGreaterThan(0);
     await page.getByRole("link", { name: "运行历史", exact: true }).last().click();
     agentRunCard = page.getByTestId(`prompt-evaluation-run-${queuedAgentRun!.id}`);
-    await expect(agentRunCard).toContainText("Agent执行 · 通过", { timeout: 10000 });
+    await expect(agentRunCard).toContainText("智能体执行 · 通过", { timeout: 10000 });
     await expect(agentRunCard).toContainText(new RegExp(`模型 ${escapeRegExp(expectedAgentModel)} · 运行时 codex · 通过 1\\/1 · 输入 16 token · 输出 7 token`));
     await agentRunCard.getByRole("button", { name: "查看证据" }).click();
     const agentEvidencePanel = agentRunCard.getByTestId(`run-evidence-${queuedAgentRun!.id}`);
@@ -554,7 +554,7 @@ test.describe("训练与评估工作台", () => {
     await expect(localRunCard.getByText("\"task_usage\"")).toBeVisible();
     await expect(localRunCard.getByText("\"trace_events\"")).toBeVisible();
     await localRunCard.getByRole("button", { name: "收起证据" }).click();
-    agentRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "Agent执行 · 通过" }).first();
+    agentRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "智能体执行 · 通过" }).first();
     await agentRunCard.getByRole("button", { name: "查看证据" }).click();
     await expect(agentRunCard.getByText("智能体调试场用例", { exact: true })).toBeVisible({ timeout: 10000 });
     await expect(agentRunCard.getByText(/codex\/[^ ]+ · 输入 11 · 输出 7 · 预估成本 \$/)).toBeVisible();

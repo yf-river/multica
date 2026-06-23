@@ -58,6 +58,10 @@ const forbiddenText = [
   "Contact sales",
   "Agent 调试场",
   "Agent运行数",
+  "Agent执行",
+  "Agent 最终交付",
+  "创建 user-center 需求澄清提示词",
+  "user-center 模板",
   "waitlist",
   "newsletter",
 ];
