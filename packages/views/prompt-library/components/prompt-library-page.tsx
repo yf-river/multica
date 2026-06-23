@@ -596,7 +596,16 @@ export function PromptLibraryPage({
   };
 
   const createWorkbenchAsset = (assetType: PromptEvaluationAssetType) => {
-    const prompt = selected;
+    let prompt = selected;
+    if (!prompt && selectedPromptStorageKey) {
+      try {
+        const storedId = window.localStorage.getItem(selectedPromptStorageKey);
+        prompt = storedId ? items.find((item) => item.id === storedId) ?? null : null;
+      } catch {
+        prompt = null;
+      }
+    }
+    prompt = prompt ?? items[0] ?? null;
     if (!prompt) {
       toast.error("请先保存提示词");
       return;
@@ -1853,7 +1862,7 @@ function WorkbenchPanel({
           </p>
         </div>
         {tabAssetType && (
-          <Button size="sm" onClick={() => onCreateAsset(tabAssetType)} disabled={!selected || saving}>
+          <Button size="sm" onClick={() => onCreateAsset(tabAssetType)} disabled={saving}>
             {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
             新建{tabAssetType}
           </Button>
