@@ -79,7 +79,7 @@ test.describe("训练与评估工作台", () => {
     await page.getByRole("link", { name: "智能体调试场", exact: true }).last().click();
     await expect(page.getByText("Codex 在线")).toBeVisible({ timeout: 10000 });
     if (expectedAgentRuntimeName) {
-      await expect(page.getByText(expectedAgentRuntimeName)).toBeVisible();
+      await expect(page.getByText(`运行时：${expectedAgentRuntimeName}`)).toBeVisible();
     }
     await page.getByLabel("期望输出").fill("输出需求澄清结论、风险、测试证据和下一步建议。");
     await page.getByRole("button", { name: "保存为实验" }).click();

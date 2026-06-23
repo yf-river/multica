@@ -226,12 +226,6 @@ export function PromptLibraryPage({
     queryFn: () => api.getPromptEvaluationSummary(demoSince ? { since: demoSince } : undefined),
     enabled: !!workspaceId,
   });
-  const versionQuery = useQuery({
-    queryKey: promptLibraryKeys.versions(workspaceId ?? "", selectedId),
-    queryFn: () => api.listPromptLibraryVersions(selectedId ?? ""),
-    enabled: !!workspaceId && !!selectedId,
-  });
-
   const runtimeReadinessQuery = useQuery({
     queryKey: ["training-evaluation", workspaceId ?? "", "runtime-readiness"],
     queryFn: () => api.getPromptEvaluationRuntimeReadiness(),
@@ -253,6 +247,11 @@ export function PromptLibraryPage({
   const summary = summaryQuery.data ?? null;
   const selectedFromList = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
   const selected = selectedFromList ?? (isDraftingNew ? null : items[0] ?? null);
+  const versionQuery = useQuery({
+    queryKey: promptLibraryKeys.versions(workspaceId ?? "", selectedFromList?.id ?? null),
+    queryFn: () => api.listPromptLibraryVersions(selectedFromList?.id ?? ""),
+    enabled: !!workspaceId && !!selectedFromList,
+  });
   const promptVersions = versionQuery.data?.items ?? [];
   const agentRuntimeReadiness = runtimeReadinessQuery.data ?? DEFAULT_AGENT_RUNTIME_READINESS;
   const selectedPromptStorageKey = workspaceId ? `multica:training:selected-prompt:${workspaceId}` : null;
@@ -281,10 +280,10 @@ export function PromptLibraryPage({
     if (!selectedId && items.length > 0) {
       setSelectedId(items[0]?.id ?? null);
     }
-    if (selectedId && !selected && items.length > 0 && !listQuery.isFetching) {
+    if (selectedId && !selectedFromList && items.length > 0 && !listQuery.isFetching) {
       setSelectedId(items[0]?.id ?? null);
     }
-  }, [isDraftingNew, items, listQuery.isFetching, selected, selectedId]);
+  }, [isDraftingNew, items, listQuery.isFetching, selectedFromList, selectedId]);
 
   useEffect(() => {
     if (!selected) return;
