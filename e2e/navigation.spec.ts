@@ -19,11 +19,9 @@ async function expectTrainingPageShell(page, item: (typeof TRAINING_ROUTES)[numb
 }
 
 async function expectTrainingNavigationMarker(page, item: (typeof TRAINING_ROUTES)[number]) {
-  if (item.path === "prompt-playground" || item.path === "agent-playground") {
-    await expect(page.getByRole("link", { name: item.nav, exact: true }).first()).toBeVisible();
-    return;
-  }
-  await expect(page.locator('[data-active="true"]').filter({ hasText: item.nav }).first()).toBeVisible();
+  const link = page.getByRole("link", { name: item.nav, exact: true }).first();
+  await expect(link).toBeVisible();
+  await expect(link).toHaveAttribute("href", new RegExp(`/training/${item.path}$`));
 }
 
 function collectPromptEvaluationRequests(page: Page) {
