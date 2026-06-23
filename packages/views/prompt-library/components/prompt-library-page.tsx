@@ -11,9 +11,11 @@ import { renderPromptTemplate } from "@multica/core/prompt-library";
 import {
   TRAINING_WORKBENCH_TABS,
   TRAINING_WORKBENCH_VIEW_BY_TAB,
+  trainingWorkbenchPath,
   trainingWorkbenchTabFromView,
   trainingWorkbenchTitleFromView,
   type TrainingWorkbenchTab,
+  type TrainingWorkbenchViewId,
 } from "@multica/core/training";
 import type {
   CreatePromptLibraryItemRequest,
@@ -117,7 +119,7 @@ const emptyDraft = (): PromptDraft => ({
   status: "启用",
 });
 
-export function PromptLibraryPage() {
+export function PromptLibraryPage({ activeView }: { activeView?: TrainingWorkbenchViewId }) {
   const workspaceId = useWorkspaceId();
   const workspacePaths = useWorkspacePaths();
   const navigation = useNavigation();
@@ -129,7 +131,8 @@ export function PromptLibraryPage() {
   const [draft, setDraft] = useState<PromptDraft>(emptyDraft);
   const [debugValuesText, setDebugValuesText] = useState("");
   const viewParam = navigation.searchParams.get("view");
-  const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => trainingWorkbenchTabFromView(viewParam));
+  const resolvedView = activeView ?? viewParam;
+  const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => trainingWorkbenchTabFromView(resolvedView));
   const [agentExpectedText, setAgentExpectedText] = useState("");
   const [demoTimeRange, setDemoTimeRange] = useState<DemoTimeRange>("7d");
   const [exportingDemoEvidence, setExportingDemoEvidence] = useState(false);
@@ -140,12 +143,12 @@ export function PromptLibraryPage() {
   }, [demoTimeRange]);
 
   useEffect(() => {
-    setActiveTab(trainingWorkbenchTabFromView(viewParam));
-  }, [viewParam]);
+    setActiveTab(trainingWorkbenchTabFromView(resolvedView));
+  }, [resolvedView]);
 
   useEffect(() => {
-    document.title = trainingWorkbenchTitleFromView(viewParam);
-  }, [viewParam]);
+    document.title = trainingWorkbenchTitleFromView(resolvedView);
+  }, [resolvedView]);
 
   const listQuery = useQuery({
     queryKey: promptLibraryKeys.list(workspaceId ?? ""),
@@ -408,7 +411,7 @@ export function PromptLibraryPage() {
       invalidateSummary();
       toast.success(`真实 Agent 优化任务已入队：${result.task_id}`);
       setActiveTab("运行历史");
-      navigation.push(workspacePaths.trainingView(TRAINING_WORKBENCH_VIEW_BY_TAB["运行历史"]));
+      navigation.push(trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["运行历史"]));
     },
   });
 
@@ -472,7 +475,7 @@ export function PromptLibraryPage() {
 
   const selectWorkbenchTab = (tab: WorkbenchTab) => {
     setActiveTab(tab);
-    navigation.push(workspacePaths.trainingView(TRAINING_WORKBENCH_VIEW_BY_TAB[tab]));
+    navigation.push(trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB[tab]));
   };
 
   const saveDraft = () => {
@@ -700,7 +703,7 @@ export function PromptLibraryPage() {
 
       <TrainingSummaryStrip summary={summary} loading={summaryQuery.isLoading} />
 
-      {activeTab === "生产看板" ? (
+      {activeTab === "运行看板" ? (
         <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
           <DemoDashboardPanel
             trainingSummary={summary}
@@ -1039,7 +1042,7 @@ function DemoDashboardPanel({
     <section className="mx-auto flex max-w-7xl flex-col gap-4" data-testid="training-demo-dashboard">
       <div className="flex flex-col gap-2 border-b pb-3 md:flex-row md:items-end md:justify-between">
         <div>
-          <h2 className="text-base font-semibold">团队生产看板</h2>
+          <h2 className="text-base font-semibold">团队运行看板</h2>
           <p className="mt-1 text-xs text-muted-foreground">
             汇总训练评估、真实 Agent、SOP 观测和验收证据，当前观测范围：{activeRange.label}。
           </p>
