@@ -13,6 +13,7 @@ const provider = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER") || "codex";
 const model = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "gpt-5.3-codex-spark";
 const squadTemplateKey = trimEnv("ACCEPTANCE_SQUAD_TEMPLATE_KEY") || trimEnv("REAL_AGENT_E2E_SQUAD_TEMPLATE_KEY");
 const verifyChildWake = trimEnv("ACCEPTANCE_VERIFY_CHILD_WAKE") === "1" || squadTemplateKey !== "";
+const taskTimeoutMs = Number(trimEnv("ACCEPTANCE_TASK_TIMEOUT_MS") || (squadTemplateKey ? 600_000 : 240_000));
 const suffix = Date.now();
 
 const evidence = {
@@ -25,6 +26,7 @@ const evidence = {
   model,
   squad_template_key: squadTemplateKey || "ad-hoc",
   verify_child_wake: verifyChildWake,
+  task_timeout_ms: taskTimeoutMs,
   commands: [],
   result: "unknown",
 };
@@ -131,9 +133,14 @@ if (squadTemplateKey) {
 const terminalTask = await poll(async () => {
   const items = listIssueTasks(issue.id, token);
   const task = newestLeaderTask(items, agent.id);
+  evidence.task_poll_snapshot = {
+    total_tasks: items.length,
+    leader_task: task ? taskSummary(task) : null,
+    tasks: items.slice(0, 5).map(taskSummary),
+  };
   if (!task || ["queued", "dispatched", "running", "waiting_local_directory"].includes(task.status)) return null;
   return task;
-}, 240_000, "等待 Codex 小队任务完成或失败");
+}, taskTimeoutMs, "等待 Codex 小队任务完成或失败");
 evidence.task = {
   id: terminalTask.id,
   status: terminalTask.status,
@@ -226,6 +233,20 @@ function listIssueTasks(issueID, token) {
 function newestLeaderTask(tasks, leaderAgentID) {
   const matching = tasks.filter((item) => item.agent_id === leaderAgentID || item.assignee_id === leaderAgentID);
   return matching[0] || tasks[0] || null;
+}
+
+function taskSummary(task) {
+  return {
+    id: task.id,
+    status: task.status,
+    agent_id: task.agent_id,
+    runtime_id: task.runtime_id,
+    is_leader_task: task.is_leader_task,
+    created_at: task.created_at,
+    started_at: task.started_at,
+    completed_at: task.completed_at,
+    failure_reason: task.failure_reason || "",
+  };
 }
 
 async function verifyChildDoneWake({ issue, squad, agent, terminalTask, token }) {
