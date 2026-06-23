@@ -53,6 +53,8 @@ make goal-test-smart-verify MODE=final DRY_RUN=1
 make goal-test-ui-audit
 make goal-test-session-retro SESSION=/path/to/codex-session.jsonl
 make goal-test-token-audit
+GOAL_TEST_TOKEN_OPTIMIZER=rtk make goal-test-smart-verify MODE=dev
+GOAL_TEST_TOKEN_OPTIMIZER=rtk make goal-test-smart-verify MODE=precommit
 pnpm acceptance:verify
 pnpm exec playwright test e2e/production-acceptance.spec.ts --project=chromium
 node scripts/prompt-evaluation-curl-e2e.mjs

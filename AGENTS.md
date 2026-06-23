@@ -58,6 +58,7 @@ make goal-test-smart-verify MODE=final DRY_RUN=1  # Preview final deploy/audit p
 make goal-test-deploy-dev                         # Deploy once at the end of a stable slice
 make goal-test-ui-audit                           # Broad browser/UI audit after deploy/smoke
 make goal-test-token-audit                        # Estimate token savings and compression risk
+GOAL_TEST_TOKEN_OPTIMIZER=rtk make goal-test-smart-verify MODE=dev
 ```
 
 During implementation, prefer `make goal-test-fast-check`. Run `make goal-test-deploy-dev` at most once per 60-120 minute slice unless backend startup, migrations, environment files, build configuration, or the remote environment changed. `scripts/goal-test-smart-verify.mjs` records command timings in `artifacts/acceptance/command-timings.jsonl`; inspect that file before repeating expensive gates.
