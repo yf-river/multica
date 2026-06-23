@@ -186,6 +186,11 @@ export function PromptLibraryPage({
   const isDedicatedPlayground = dedicatedPromptPlayground || dedicatedAgentPlayground;
   const pageTitle = dedicatedPromptPlayground ? "提示词调试场" : dedicatedAgentPlayground ? "智能体调试场" : "训练与评估";
   const pageBadge = dedicatedPromptPlayground ? "模板实验" : dedicatedAgentPlayground ? "真实任务" : null;
+  const pageContract = dedicatedPromptPlayground
+    ? "本地渲染 · 不启动智能体"
+    : dedicatedAgentPlayground
+      ? "真实任务 · 写回观测证据"
+      : null;
   const pageShellTestId = dedicatedPromptPlayground
     ? "prompt-playground-page-shell"
     : dedicatedAgentPlayground
@@ -710,6 +715,11 @@ export function PromptLibraryPage({
           )}
           <h1 className="truncate text-sm font-semibold">{pageTitle}</h1>
           <span className="text-xs text-muted-foreground">{pageBadge ?? items.length}</span>
+          {pageContract && (
+            <Badge variant={dedicatedAgentPlayground ? "secondary" : "outline"} data-testid="playground-page-contract" className="hidden shrink-0 text-[11px] sm:inline-flex">
+              {pageContract}
+            </Badge>
+          )}
         </div>
         {shouldShowPromptHeaderActions && (
           <div className="flex items-center gap-2">
