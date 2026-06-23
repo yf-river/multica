@@ -1,6 +1,6 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Page, type Request } from "@playwright/test";
 import { loginAsDefault, waitForPageText } from "./helpers";
-import { DEFAULT_TRAINING_ROUTE, TRAINING_ROUTES } from "./training-routes";
+import { DEFAULT_TRAINING_ROUTE, TRAINING_ROUTES, trainingRoutePath } from "./training-routes";
 
 const ROUTE_CHANGE_TIMEOUT = 30000;
 
@@ -19,6 +19,25 @@ async function expectTrainingNavigationMarker(page, item: (typeof TRAINING_ROUTE
     return;
   }
   await expect(page.locator('[data-active="true"]').filter({ hasText: item.nav }).first()).toBeVisible();
+}
+
+function collectPromptEvaluationRequests(page: Page) {
+  const paths: string[] = [];
+  const listener = (request: Request) => {
+    const url = new URL(request.url());
+    if (url.pathname.startsWith("/api/prompt-evaluation")) {
+      paths.push(url.pathname);
+    }
+  };
+  page.on("request", listener);
+  return {
+    paths,
+    stop: () => page.off("request", listener),
+  };
+}
+
+function currentWorkspaceSlug(page: Page) {
+  return new URL(page.url()).pathname.split("/").filter(Boolean)[0] ?? "";
 }
 
 test.describe("Navigation", () => {
@@ -74,7 +93,7 @@ test.describe("Navigation", () => {
       await expect(page.getByTestId("prompt-template-actions")).toHaveCount(item.path === "prompts" ? 1 : 0);
       await expect(page.getByRole("button", { name: "应用需求澄清模板" })).toHaveCount(item.path === "prompts" ? 1 : 0);
       await expect(page.getByRole("button", { name: "创建 user-center 需求澄清提示词" })).toHaveCount(0);
-      await expect(page.getByTestId("training-summary-strip")).toContainText("项目总览", { timeout: 30000 });
+      await expect(page.getByTestId("training-summary-strip")).toHaveCount(item.showPromptPlayground || item.showAgentWorkbench ? 0 : 1);
     }
   });
 
@@ -96,6 +115,34 @@ test.describe("Navigation", () => {
       await expect(page.getByTestId("prompt-playground-workbench")).toHaveCount(item.showPromptPlayground ? 1 : 0);
       await expect(page.getByTestId("agent-playground-workbench")).toHaveCount(item.showAgentWorkbench ? 1 : 0);
     }
+  });
+
+  test("training playgrounds keep distinct request boundaries", async ({ page }) => {
+    const workspaceSlug = currentWorkspaceSlug(page);
+
+    const promptRequests = collectPromptEvaluationRequests(page);
+    await page.goto(trainingRoutePath(workspaceSlug, "prompt-playground"), { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("prompt-playground-page-shell")).toBeVisible({ timeout: 30000 });
+    await expect(page.getByTestId("training-summary-strip")).toHaveCount(0);
+    await page.waitForLoadState("networkidle").catch(() => {});
+    promptRequests.stop();
+
+    expect(promptRequests.paths.some((path) => path.includes("summary"))).toBe(false);
+    expect(promptRequests.paths.some((path) => path.includes("runtime-readiness"))).toBe(false);
+    expect(promptRequests.paths.some((path) => path.includes("cases"))).toBe(false);
+    expect(promptRequests.paths.some((path) => path.includes("assets"))).toBe(true);
+    expect(promptRequests.paths.some((path) => path.includes("runs"))).toBe(true);
+
+    const agentRequests = collectPromptEvaluationRequests(page);
+    await page.goto(trainingRoutePath(workspaceSlug, "agent-playground"), { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("agent-playground-page-shell")).toBeVisible({ timeout: 30000 });
+    await expect(page.getByTestId("training-summary-strip")).toHaveCount(0);
+    await page.waitForLoadState("networkidle").catch(() => {});
+    agentRequests.stop();
+
+    expect(agentRequests.paths.some((path) => path.includes("summary"))).toBe(false);
+    expect(agentRequests.paths.some((path) => path.includes("runtime-readiness"))).toBe(true);
+    expect(agentRequests.paths.some((path) => path.includes("cases"))).toBe(true);
   });
 
   test("agents page shows agent list", async ({ page }) => {

@@ -193,6 +193,16 @@ export function PromptLibraryPage({
     }
   }, [caseDrafts, caseDraftStorageKey]);
 
+  const dedicatedPromptPlayground = surface === "prompt-playground";
+  const dedicatedAgentPlayground = surface === "agent-playground";
+  const isDedicatedPlayground = dedicatedPromptPlayground || dedicatedAgentPlayground;
+  const pageTitle = dedicatedPromptPlayground ? "提示词调试场" : dedicatedAgentPlayground ? "智能体调试场" : "训练与评估";
+  const pageBadge = dedicatedPromptPlayground ? "模板实验" : dedicatedAgentPlayground ? "真实任务" : null;
+  const pageShellTestId = dedicatedPromptPlayground
+    ? "prompt-playground-page-shell"
+    : dedicatedAgentPlayground
+      ? "agent-playground-page-shell"
+      : "training-page-shell";
   const isDashboardTab = activeTab === "运行看板";
   const shouldShowPromptHeaderActions = activeTab === "提示词库";
   const isEvaluationAssetTab =
@@ -224,16 +234,7 @@ export function PromptLibraryPage({
     activeTab === "智能体调试场";
   const needsCandidates = isDashboardTab || activeTab === "运行历史" || activeTab === "优化运行";
   const needsRuntimeReadiness = isDashboardTab || activeTab === "智能体调试场";
-  const dedicatedPromptPlayground = surface === "prompt-playground";
-  const dedicatedAgentPlayground = surface === "agent-playground";
-  const isDedicatedPlayground = dedicatedPromptPlayground || dedicatedAgentPlayground;
-  const pageTitle = dedicatedPromptPlayground ? "提示词调试场" : dedicatedAgentPlayground ? "智能体调试场" : "训练与评估";
-  const pageBadge = dedicatedPromptPlayground ? "模板实验" : dedicatedAgentPlayground ? "真实任务" : null;
-  const pageShellTestId = dedicatedPromptPlayground
-    ? "prompt-playground-page-shell"
-    : dedicatedAgentPlayground
-      ? "agent-playground-page-shell"
-      : "training-page-shell";
+  const needsSummary = !isDedicatedPlayground;
 
   const listQuery = useQuery({
     queryKey: promptLibraryKeys.list(workspaceId ?? ""),
@@ -269,7 +270,7 @@ export function PromptLibraryPage({
   const summaryQuery = useQuery({
     queryKey: [...promptLibraryKeys.summary(workspaceId ?? ""), demoSince ?? "all"] as const,
     queryFn: () => api.getPromptEvaluationSummary(demoSince ? { since: demoSince } : undefined),
-    enabled: !!workspaceId,
+    enabled: !!workspaceId && needsSummary,
   });
   const runtimeReadinessQuery = useQuery({
     queryKey: ["training-evaluation", workspaceId ?? "", "runtime-readiness"],
@@ -824,7 +825,7 @@ export function PromptLibraryPage({
         </div>
       )}
 
-      <TrainingSummaryStrip summary={summary} loading={summaryQuery.isLoading} />
+      {!isDedicatedPlayground && <TrainingSummaryStrip summary={summary} loading={summaryQuery.isLoading} />}
 
       {activeTab === "运行看板" ? (
         <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
