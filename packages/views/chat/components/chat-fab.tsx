@@ -21,7 +21,10 @@ export function ChatFab() {
   const wsId = useWorkspaceId();
   const isOpen = useChatStore((s) => s.isOpen);
   const toggle = useChatStore((s) => s.toggle);
-  const { data: sessions = [] } = useQuery(chatSessionsOptions(wsId));
+  const { data: sessions = [] } = useQuery({
+    ...chatSessionsOptions(wsId),
+    enabled: isOpen,
+  });
   const { data: pending } = useQuery(pendingChatTasksOptions(wsId));
 
   if (isOpen) return null;
