@@ -1443,6 +1443,9 @@ func (h *Handler) GetWorkspaceAgentRunCounts(w http.ResponseWriter, r *http.Requ
 	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
 	allowed, ok := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
 	if !ok {
+		if writeClientClosedIfCanceled(w, r.Context().Err()) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
 		return
 	}
