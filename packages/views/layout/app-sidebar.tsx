@@ -86,6 +86,8 @@ import { useT } from "../i18n";
 import {
   DEFAULT_TRAINING_WORKBENCH_VIEW,
   TRAINING_WORKBENCH_VIEWS,
+  trainingWorkbenchPath,
+  trainingWorkbenchViewFromRoute,
 } from "@multica/core/training";
 
 // Top-level nav items stay active when the user is on a child route
@@ -350,7 +352,7 @@ interface AppSidebarProps {
 
 export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }: AppSidebarProps = {}) {
   const { t } = useT("layout");
-  const { pathname, searchParams } = useNavigation();
+  const { pathname } = useNavigation();
   const user = useAuthStore((s) => s.user);
   const userId = useAuthStore((s) => s.user?.id);
   const logout = useLogout();
@@ -624,9 +626,15 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
             <SidebarGroupContent>
               <SidebarMenu className="gap-0.5">
                 {workspaceNav.map((item) => {
-                  const href = p[item.key]();
-                  const isActive = !isActivePinnedRoute && isNavActive(pathname, href);
-                  const activeTrainingView = pathname === p.training() ? searchParams.get("view") ?? DEFAULT_TRAINING_WORKBENCH_VIEW : "";
+                  const href =
+                    item.key === "training"
+                      ? trainingWorkbenchPath(p.training(), DEFAULT_TRAINING_WORKBENCH_VIEW)
+                      : p[item.key]();
+                  const activeHref = item.key === "training" ? p.training() : href;
+                  const isActive = !isActivePinnedRoute && isNavActive(pathname, activeHref);
+                  const activeTrainingView = pathname.startsWith(p.training() + "/")
+                    ? trainingWorkbenchViewFromRoute(pathname.slice((p.training() + "/").length).split("/")[0] ?? null)
+                    : "";
                   return (
                     <SidebarMenuItem key={item.key}>
                       <SidebarMenuButton
@@ -640,7 +648,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                       {item.key === "training" && isActive && (
                         <SidebarMenu className="ml-6 mt-1 gap-0.5 border-l border-sidebar-border pl-2">
                           {TRAINING_WORKBENCH_VIEWS.map((view) => {
-                            const viewHref = p.trainingView(view.view);
+                            const viewHref = trainingWorkbenchPath(p.training(), view.view);
                             return (
                               <SidebarMenuItem key={view.view}>
                                 <SidebarMenuButton

@@ -45,6 +45,7 @@ import type { WorkspacePaths } from "@multica/core/paths";
 import {
   DEFAULT_TRAINING_WORKBENCH_VIEW,
   TRAINING_WORKBENCH_VIEWS,
+  trainingWorkbenchPath,
   type TrainingWorkbenchViewId,
 } from "@multica/core/training";
 import { useModalStore } from "@multica/core/modals";
@@ -115,7 +116,7 @@ function matchesMember(member: MemberWithUser, query: string) {
 
 function trainingCommandLabel(t: ReturnType<typeof useT<"search">>["t"], view: TrainingWorkbenchViewId): string {
   switch (view) {
-    case "demo-dashboard":
+    case "runs":
       return t(($) => $.commands.open_demo_dashboard);
     case "prompts":
       return t(($) => $.commands.open_prompt_library);
@@ -185,7 +186,7 @@ export function SearchCommand() {
         label: t(($) => $.pages.training),
         icon: ChartNoAxesCombined,
         keywords: ["training", "evaluation", "eval", "dataset", "experiment", "训练", "评估", "数据集", "实验"],
-        href: p.trainingView(DEFAULT_TRAINING_WORKBENCH_VIEW),
+        href: trainingWorkbenchPath(p.training(), DEFAULT_TRAINING_WORKBENCH_VIEW),
       },
       { key: "runtimes", label: t(($) => $.pages.runtimes), icon: Monitor, keywords: ["runtimes", "environments"] },
       { key: "skills", label: t(($) => $.pages.skills), icon: BookOpenText, keywords: ["skills", "技能"] },
@@ -250,13 +251,13 @@ export function SearchCommand() {
         />
       ) : undefined;
 
-    const trainingCommand = (view: string, label: string, keywords: string): CommandItem => ({
+    const trainingCommand = (view: TrainingWorkbenchViewId, label: string, keywords: string): CommandItem => ({
       key: `training-${view}`,
       label,
       icon: ChartNoAxesCombined,
       keywords: keywords.split(" "),
       onSelect: () => {
-        push(p.trainingView(view));
+        push(trainingWorkbenchPath(p.training(), view));
         setOpen(false);
       },
     });
