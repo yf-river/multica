@@ -204,6 +204,24 @@ test.describe("训练与评估工作台", () => {
     await page.getByRole("link", { name: "数据集", exact: true }).last().click();
     const datasetRow = page.getByTestId(`prompt-evaluation-asset-${dataset!.id}`);
     await expect(datasetRow).toContainText("结构化用例 1 个", { timeout: 10000 });
+    const importTraceButton = datasetRow.getByRole("button", { name: "从 trace 导入样本" });
+    await expect(importTraceButton).toBeVisible();
+    const importTraceResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes(`/api/prompt-evaluation-assets/${dataset!.id}/dataset-from-traces`),
+      { timeout: 15000 },
+    );
+    await importTraceButton.click();
+    expect((await importTraceResponse).status()).toBe(201);
+    await expect(page.getByText(/已从 trace 导入 \d+ 条数据集样本/).last()).toBeVisible({ timeout: 10000 });
+    await expect
+      .poll(async () => {
+        const items = await api.listPromptEvaluationCases({ asset_id: dataset!.id });
+        return items.filter((item) => item.source === "trace").length;
+      }, { timeout: 15000 })
+      .toBeGreaterThan(0);
+    await expect(datasetRow).toContainText("trace导入", { timeout: 10000 });
     const manualCaseNameInput = datasetRow.getByPlaceholder("手工用例名称");
     const manualCaseVariablesInput = datasetRow.getByPlaceholder("变量：issue_title=登录失败");
     const manualCaseExpectedInput = datasetRow.getByPlaceholder("期望包含：验收条件, trace/任务标识");

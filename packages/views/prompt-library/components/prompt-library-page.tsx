@@ -402,6 +402,24 @@ export function PromptLibraryPage({
     },
   });
 
+  const importDatasetFromTracesMut = useMutation({
+    mutationFn: (assetId: string) =>
+      api.createPromptEvaluationDatasetFromTraces(assetId, {
+        limit: 5,
+        expected_contains: ["任务", "trace"],
+        tags: ["trace导入", "真实执行记录"],
+      }),
+    onSuccess: (result) => {
+      invalidateAssets();
+      invalidateCases();
+      invalidateSummary();
+      toast.success(`已从 trace 导入 ${result.created_count} 条数据集样本`);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "trace 导入失败，请先产生真实任务记录");
+    },
+  });
+
   const createCaseMut = useMutation({
     mutationFn: (data: CreatePromptEvaluationCaseRequest) => api.createPromptEvaluationCase(data),
     onSuccess: () => {
@@ -532,7 +550,7 @@ export function PromptLibraryPage({
     saveAgentDebugPackage,
     runAgentDebugPackage,
   } = promptPlaygroundActions;
-  const savingAsset = creatingAsset || updateAssetMut.isPending || deleteAssetMut.isPending;
+  const savingAsset = creatingAsset || updateAssetMut.isPending || deleteAssetMut.isPending || importDatasetFromTracesMut.isPending;
 
   const startNew = () => {
     setIsDraftingNew(true);
@@ -589,6 +607,10 @@ export function PromptLibraryPage({
   const deleteAsset = (asset: PromptEvaluationAsset) => {
     if (!window.confirm(`删除资产「${asset.name}」？`)) return;
     deleteAssetMut.mutate(asset.id);
+  };
+
+  const importDatasetFromTraces = (asset: PromptEvaluationAsset) => {
+    importDatasetFromTracesMut.mutate(asset.id);
   };
 
   const exportDemoEvidence = async () => {
@@ -1118,6 +1140,8 @@ export function PromptLibraryPage({
                 onRunAgentDebugPackage={runAgentDebugPackage}
                 onToggleAssetStatus={toggleAssetStatus}
                 onDeleteAsset={deleteAsset}
+                onImportDatasetFromTraces={importDatasetFromTraces}
+                importingTraceDatasetAssetId={importDatasetFromTracesMut.isPending ? importDatasetFromTracesMut.variables ?? null : null}
                 onCreateCase={(data) => createCaseMut.mutate(data)}
                 creatingCaseAssetId={createCaseMut.isPending ? createCaseMut.variables?.asset_id ?? null : null}
                 caseDrafts={caseDrafts}
@@ -1168,6 +1192,8 @@ export function PromptLibraryPage({
               onRunAgentDebugPackage={runAgentDebugPackage}
               onToggleAssetStatus={toggleAssetStatus}
               onDeleteAsset={deleteAsset}
+              onImportDatasetFromTraces={importDatasetFromTraces}
+              importingTraceDatasetAssetId={importDatasetFromTracesMut.isPending ? importDatasetFromTracesMut.variables ?? null : null}
               onCreateCase={(data) => createCaseMut.mutate(data)}
               creatingCaseAssetId={createCaseMut.isPending ? createCaseMut.variables?.asset_id ?? null : null}
               caseDrafts={caseDrafts}
@@ -1564,6 +1590,8 @@ function WorkbenchPanel({
   onRunAgentDebugPackage,
   onToggleAssetStatus,
   onDeleteAsset,
+  onImportDatasetFromTraces,
+  importingTraceDatasetAssetId,
   onCreateCase,
   creatingCaseAssetId,
   caseDrafts,
@@ -1607,6 +1635,8 @@ function WorkbenchPanel({
     onRunAgentDebugPackage: () => void;
     onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
   onDeleteAsset: (asset: PromptEvaluationAsset) => void;
+  onImportDatasetFromTraces: (asset: PromptEvaluationAsset) => void;
+  importingTraceDatasetAssetId: string | null;
   onCreateCase: (data: CreatePromptEvaluationCaseRequest) => void;
   creatingCaseAssetId: string | null;
   caseDrafts: Record<string, ManualCaseDraft>;
@@ -1834,6 +1864,18 @@ function WorkbenchPanel({
                   )}
                 </div>
                 <div className="flex items-center gap-2">
+                  {asset.asset_type === "数据集" && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      data-testid={`import-dataset-from-traces-${asset.id}`}
+                      onClick={() => onImportDatasetFromTraces(asset)}
+                      disabled={saving || importingTraceDatasetAssetId === asset.id}
+                    >
+                      {importingTraceDatasetAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+                      从 trace 导入样本
+                    </Button>
+                  )}
                   <Button size="sm" variant="secondary" onClick={() => onToggleAssetStatus(asset)} disabled={saving}>
                     {asset.status === "启用" ? "归档" : "启用"}
                   </Button>
@@ -2384,6 +2426,7 @@ function ManualCasePanel({
   deletingCaseId: string | null;
 }) {
   const manualCases = cases.filter((item) => item.source === "manual");
+  const traceCases = cases.filter((item) => item.source === "trace");
   const [editingCaseId, setEditingCaseId] = useState<string | null>(null);
   const [editDrafts, setEditDrafts] = useState<Record<string, ManualCaseDraft>>({});
   return (
@@ -2391,7 +2434,7 @@ function ManualCasePanel({
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="text-xs font-medium text-muted-foreground">结构化评测用例</div>
         <Badge variant="outline" className="text-[11px]">
-          手工 {manualCases.length} · 总计 {cases.length}
+          手工 {manualCases.length} · trace导入 {traceCases.length} · 总计 {cases.length}
         </Badge>
       </div>
       {cases.length > 0 ? (
@@ -2403,7 +2446,7 @@ function ManualCasePanel({
               <div key={item.id} className="grid gap-2 rounded border bg-background px-2 py-1.5 text-xs">
                 <div className="flex flex-wrap items-center gap-2">
                   <span className="font-medium text-foreground">{item.case_name || `用例 ${item.case_index + 1}`}</span>
-                  <span className="text-muted-foreground">{item.source === "manual" ? "手工" : "资产载荷"} · {item.status}</span>
+                  <span className="text-muted-foreground">{caseSourceLabel(item.source)} · {item.status}</span>
                   <span className="min-w-0 flex-1 truncate text-muted-foreground">{summarizeStructuredCase(item)}</span>
                   {item.source === "manual" && (
                     <>
@@ -2522,7 +2565,7 @@ function ExperimentDimensionPanel({ asset, dimensions }: { asset: PromptEvaluati
             <div key={item.id} className="grid gap-1 rounded border bg-background px-2 py-1.5 text-xs md:grid-cols-[180px_minmax(0,1fr)_minmax(0,1fr)]">
               <div className="min-w-0">
                 <div className="truncate font-medium text-foreground">{item.dimension_name || `维度 ${item.dimension_index + 1}`}</div>
-                <div className="truncate text-muted-foreground">{item.source === "manual" ? "手工" : "资产载荷"} · {item.status}</div>
+                <div className="truncate text-muted-foreground">{caseSourceLabel(item.source)} · {item.status}</div>
               </div>
               <div className="min-w-0 text-muted-foreground">
                 <span className="text-foreground">对象：</span>
@@ -2561,6 +2604,12 @@ function tabToAssetType(tab: WorkbenchTab): PromptEvaluationAssetType | null {
 
 function canManageStructuredCases(asset: PromptEvaluationAsset): boolean {
   return asset.asset_type === "数据集" || asset.asset_type === "测试套件" || asset.asset_type === "实验" || asset.asset_type === "优化运行";
+}
+
+function caseSourceLabel(source: string): string {
+  if (source === "manual") return "手工";
+  if (source === "trace") return "trace导入";
+  return "资产载荷";
 }
 
 function emptyManualCaseDraft(): ManualCaseDraft {
@@ -2628,15 +2677,18 @@ type CaseSummary = {
   total: number;
   manual: number;
   payload: number;
+  trace: number;
 };
 
 function buildCaseSummaries(cases: PromptEvaluationStructuredCase[]): Map<string, CaseSummary> {
   const counts = new Map<string, CaseSummary>();
   for (const item of cases) {
-    const current = counts.get(item.asset_id) ?? { total: 0, manual: 0, payload: 0 };
+    const current = counts.get(item.asset_id) ?? { total: 0, manual: 0, payload: 0, trace: 0 };
     current.total += 1;
     if (item.source === "manual") {
       current.manual += 1;
+    } else if (item.source === "trace") {
+      current.trace += 1;
     } else {
       current.payload += 1;
     }
@@ -2703,6 +2755,7 @@ function summarizeAssetPayload(asset: PromptEvaluationAsset, caseSummary?: CaseS
   if (caseSummary && caseSummary.total > 0) {
     const sourceParts = [];
     if (caseSummary.manual > 0) sourceParts.push(`手工 ${caseSummary.manual}`);
+    if (caseSummary.trace > 0) sourceParts.push(`trace导入 ${caseSummary.trace}`);
     if (caseSummary.payload > 0) sourceParts.push(`资产载荷 ${caseSummary.payload}`);
     return `结构化用例 ${caseSummary.total} 个${sourceParts.length > 0 ? `（${sourceParts.join("，")}；运行优先使用）` : ""}`;
   }

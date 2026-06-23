@@ -128,6 +128,10 @@ test.describe("Navigation", () => {
     await page.goto(trainingRoutePath(workspaceSlug, "prompt-playground"), { waitUntil: "domcontentloaded" });
     await expect(page.getByTestId("prompt-playground-page-shell")).toBeVisible({ timeout: 30000 });
     await expect(page.getByTestId("training-summary-strip")).toHaveCount(0);
+    await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("本地模板实验室");
+    await expect(page.getByTestId("prompt-playground-contract")).toContainText("不启动智能体");
+    await expect(page.getByTestId("agent-playground-run-console")).toHaveCount(0);
+    await expect(page.getByTestId("agent-playground-observability-contract")).toHaveCount(0);
     await page.waitForLoadState("networkidle").catch(() => {});
     promptRequests.stop();
 
@@ -141,6 +145,11 @@ test.describe("Navigation", () => {
     await page.goto(trainingRoutePath(workspaceSlug, "agent-playground"), { waitUntil: "domcontentloaded" });
     await expect(page.getByTestId("agent-playground-page-shell")).toBeVisible({ timeout: 30000 });
     await expect(page.getByTestId("training-summary-strip")).toHaveCount(0);
+    await expect(page.getByTestId("agent-playground-selector-summary")).toContainText("真实任务入口");
+    await expect(page.getByTestId("agent-playground-run-console")).toContainText("真实任务运行控制台");
+    await expect(page.getByTestId("agent-playground-observability-contract")).toContainText("观测回写契约");
+    await expect(page.getByTestId("prompt-playground-contract")).toHaveCount(0);
+    await expect(page.getByTestId("prompt-playground-local-pipeline")).toHaveCount(0);
     await page.waitForLoadState("networkidle").catch(() => {});
     agentRequests.stop();
 
