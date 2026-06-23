@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env
 
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
@@ -204,13 +204,21 @@ check: ## Run typecheck, TS tests, Go tests, and Playwright E2E for the current 
 # ---------- goal-test deployment ----------
 ##@ goal-test deployment
 
+goal-test-build: ## Build backend/CLI binaries and the web production bundle for goal-test
+	$(MAKE) build
+	pnpm --filter @multica/web build
+
 goal-test-deploy-prod: ## Build and deploy goal-test production stable environment
 	node scripts/goal-test-environments.mjs deploy prod --build
 
 goal-test-deploy-int: ## Build and deploy goal-test integration development environment
 	node scripts/goal-test-environments.mjs deploy int --build
 
-goal-test-deploy-all: goal-test-deploy-prod goal-test-deploy-int goal-test-verify-env ## Build, deploy, and verify both goal-test environments
+goal-test-deploy-all: ## Build once, deploy both goal-test environments, then verify
+	$(MAKE) goal-test-build
+	node scripts/goal-test-environments.mjs deploy prod
+	node scripts/goal-test-environments.mjs deploy int
+	node scripts/goal-test-environments.mjs verify prod
 
 goal-test-verify-env: ## Verify goal-test production and integration environments
 	node scripts/goal-test-environments.mjs verify prod

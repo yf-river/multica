@@ -461,16 +461,10 @@ function buildCommandPlan() {
       timeoutMs: 240_000,
     },
     {
-      name: "部署生产环境",
-      command: "make goal-test-deploy-prod",
+      name: "部署生产/联调双环境",
+      command: "make goal-test-deploy-all",
       required: true,
-      timeoutMs: 360_000,
-    },
-    {
-      name: "部署联调环境",
-      command: "make goal-test-deploy-int",
-      required: true,
-      timeoutMs: 360_000,
+      timeoutMs: 600_000,
     },
     {
       name: "Desktop typecheck",
