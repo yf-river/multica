@@ -34,6 +34,15 @@ func cleanupInboxForIssue(t *testing.T, issueID string) {
 	testPool.Exec(context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issueID)
 }
 
+func inboxItemCountForIssue(t *testing.T, issueID string) int {
+	t.Helper()
+	var count int
+	if err := testPool.QueryRow(context.Background(), `SELECT count(*)::int FROM inbox_item WHERE issue_id = $1`, issueID).Scan(&count); err != nil {
+		t.Fatalf("count inbox items for issue: %v", err)
+	}
+	return count
+}
+
 // addTestSubscriber manually inserts a subscriber for an issue.
 func addTestSubscriber(t *testing.T, issueID, userType, userID, reason string) {
 	t.Helper()
@@ -141,6 +150,51 @@ func TestNotification_IssueCreated_AssigneeNotified(t *testing.T) {
 	// At least one inbox:new event should have been published
 	if len(inboxEvents) < 1 {
 		t.Fatal("expected at least 1 inbox:new event")
+	}
+}
+
+func TestNotification_IssueCreated_SkipsUnsupportedSquadAssigneeDirectInbox(t *testing.T) {
+	queries := db.New(testPool)
+	bus := newNotificationBus(t, queries)
+
+	issueID := createTestIssue(t, testWorkspaceID, testUserID)
+	t.Cleanup(func() {
+		cleanupInboxForIssue(t, issueID)
+		cleanupTestIssue(t, issueID)
+	})
+
+	var inboxEvents []events.Event
+	bus.Subscribe(protocol.EventInboxNew, func(e events.Event) {
+		inboxEvents = append(inboxEvents, e)
+	})
+
+	assigneeType := "squad"
+	assigneeID := "11111111-2222-3333-4444-555555555555"
+	bus.Publish(events.Event{
+		Type:        protocol.EventIssueCreated,
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "member",
+		ActorID:     testUserID,
+		Payload: map[string]any{
+			"issue": handler.IssueResponse{
+				ID:           issueID,
+				WorkspaceID:  testWorkspaceID,
+				Title:        "test squad issue",
+				Status:       "todo",
+				Priority:     "medium",
+				CreatorType:  "member",
+				CreatorID:    testUserID,
+				AssigneeType: &assigneeType,
+				AssigneeID:   &assigneeID,
+			},
+		},
+	})
+
+	if count := inboxItemCountForIssue(t, issueID); count != 0 {
+		t.Fatalf("expected no inbox items for unsupported squad assignee, got %d", count)
+	}
+	if len(inboxEvents) != 0 {
+		t.Fatalf("expected no inbox:new events for unsupported squad assignee, got %d", len(inboxEvents))
 	}
 }
 

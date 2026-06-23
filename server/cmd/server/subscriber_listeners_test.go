@@ -161,6 +161,46 @@ func TestSubscriberIssueCreated_CreatorAndAssignee(t *testing.T) {
 	}
 }
 
+func TestSubscriberIssueCreated_SkipsUnsupportedAssigneeAndIssueMentionTypes(t *testing.T) {
+	queries := db.New(testPool)
+	bus := events.New()
+	registerSubscriberListeners(bus, queries)
+
+	issueID := createTestIssue(t, testWorkspaceID, testUserID)
+	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
+
+	squadType := "squad"
+	squadID := "11111111-2222-3333-4444-555555555555"
+	description := "[GOA-1](mention://issue/22222222-3333-4444-5555-666666666666) blocks this work"
+	bus.Publish(events.Event{
+		Type:        protocol.EventIssueCreated,
+		WorkspaceID: testWorkspaceID,
+		ActorType:   "member",
+		ActorID:     testUserID,
+		Payload: map[string]any{
+			"issue": handler.IssueResponse{
+				ID:           issueID,
+				WorkspaceID:  testWorkspaceID,
+				Title:        "test issue",
+				Status:       "todo",
+				Priority:     "medium",
+				CreatorType:  "member",
+				CreatorID:    testUserID,
+				AssigneeType: &squadType,
+				AssigneeID:   &squadID,
+				Description:  &description,
+			},
+		},
+	})
+
+	if !isSubscribed(t, queries, issueID, "member", testUserID) {
+		t.Fatal("expected creator to remain subscribed")
+	}
+	if count := subscriberCount(t, queries, issueID); count != 1 {
+		t.Fatalf("expected only creator subscriber, got %d", count)
+	}
+}
+
 func TestSubscriberIssueCreated_SelfAssign(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
