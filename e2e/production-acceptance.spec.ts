@@ -1,6 +1,7 @@
 import { test, expect } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { TRAINING_ROUTES } from "./training-routes";
+import { TestApiClient } from "./fixtures";
 
 const workspaceSlug = process.env.ACCEPTANCE_WORKSPACE_SLUG
   || process.env.REAL_AGENT_E2E_WORKSPACE
@@ -15,6 +16,90 @@ const frontendURL = process.env.ACCEPTANCE_FRONTEND_URL
   || process.env.PLAYWRIGHT_BASE_URL
   || process.env.FRONTEND_ORIGIN
   || "http://localhost:3000";
+const workspaceName = process.env.E2E_WORKSPACE_NAME || "goal-test 联调工作区";
+const evidencePrefix = "生产验收训练证据";
+
+async function prepareTrainingDashboardEvidence() {
+  const api = new TestApiClient();
+  await api.login(account, "goal-test 验收账号");
+  await api.ensureWorkspace(workspaceName, workspaceSlug);
+  await api.markUserOnboarded();
+  await api.cleanupPromptArtifactsByPrefix(evidencePrefix);
+  await api.ensureOnlineCodexRuntime(`${evidencePrefix} Codex Runtime`);
+
+  const suffix = Date.now();
+  const prompt = await api.createPromptLibraryItem({
+    name: `${evidencePrefix} ${suffix}`,
+    description: "生产部署验收前通过公开 API 准备的训练评估证据。",
+    prompt_type: "需求澄清",
+    content: "请用中文澄清 {{issue_title}}，输出目标、边界、验收条件和风险。",
+    variables: [{ name: "issue_title", label: "任务标题", required: true }],
+    tags: ["生产验收", "训练与评估"],
+    status: "启用",
+  });
+  const dataset = await api.createPromptEvaluationAsset({
+    prompt_id: prompt.id,
+    name: `${evidencePrefix} 数据集 ${suffix}`,
+    description: "生产验收数据集。",
+    asset_type: "数据集",
+    payload: {
+      schema: "multica.training_evaluation.payload.v1",
+      schema_version: 1,
+      语义版本: "multica.training_evaluation.v1",
+      cases: [{
+        case_name: "登录失败澄清",
+        variables: { issue_title: "user-center 登录失败" },
+        expected_contains: ["验收条件", "trace/task id"],
+        tags: ["生产验收", "数据集"],
+      }],
+    },
+    status: "启用",
+  });
+  const suite = await api.createPromptEvaluationAsset({
+    prompt_id: prompt.id,
+    name: `${evidencePrefix} 测试套件 ${suffix}`,
+    description: "生产验收测试套件。",
+    asset_type: "测试套件",
+    payload: {
+      schema: "multica.training_evaluation.payload.v1",
+      schema_version: 1,
+      语义版本: "multica.training_evaluation.v1",
+      linked_dataset_ids: [dataset.id],
+      cases: [{
+        case_name: "真实智能体证据样本",
+        variables: { issue_title: "user-center 登录失败" },
+        expected_contains: ["需求澄清结论", "风险", "测试证据", "下一步建议"],
+        tags: ["生产验收", "智能体"],
+      }],
+    },
+    status: "启用",
+  });
+  await api.createPromptEvaluationAsset({
+    prompt_id: prompt.id,
+    name: `${evidencePrefix} 实验 ${suffix}`,
+    description: "生产验收实验。",
+    asset_type: "实验",
+    payload: {
+      schema: "multica.training_evaluation.payload.v1",
+      schema_version: 1,
+      语义版本: "multica.training_evaluation.v1",
+      实验对象: prompt.name,
+      对比维度: ["命中率", "缺失变量", "中文一致性"],
+      cases: [{
+        case_name: "实验对比样本",
+        variables: { issue_title: "user-center 登录失败" },
+        expected_contains: ["目标", "验收条件"],
+        tags: ["生产验收", "实验"],
+      }],
+    },
+    status: "启用",
+  });
+
+  const agentRun = await api.runPromptEvaluationAssetAgent(suite.id);
+  await api.completePromptEvaluationAgentTask(agentRun.run);
+  const syncedRun = await api.syncPromptEvaluationRun(agentRun.run.id);
+  await api.createPromptEvaluationEvidenceSnapshot(syncedRun.id);
+}
 
 async function expectTrainingRouteShell(page, route: (typeof TRAINING_ROUTES)[number]) {
   await expect(page.getByTestId("prompt-library-editor")).toHaveCount(route.showPromptEditor ? 1 : 0);
@@ -28,6 +113,7 @@ async function expectTrainingRouteShell(page, route: (typeof TRAINING_ROUTES)[nu
 test.describe("生产部署验收", () => {
   test("验收账号可以看到训练评估运行看板和服务端证据快照", async ({ page }) => {
     test.setTimeout(120_000);
+    await prepareTrainingDashboardEvidence();
     const next = `/${workspaceSlug}/training/runs`;
     await page.addInitScript(() => {
       localStorage.setItem("multica:chat:isOpen", "false");
