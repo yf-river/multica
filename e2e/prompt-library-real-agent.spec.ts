@@ -16,8 +16,8 @@ test.describe("训练与评估真实 Agent 闭环", () => {
 
     const api = new TestApiClient();
     const prefix = `真实Agent验收 ${Date.now()}`;
-    await api.login(REAL_AGENT_ACCOUNT, "Goal Test Daemon");
-    const workspace = await api.ensureWorkspace("Goal Test Daemon", REAL_AGENT_WORKSPACE);
+    await api.login(REAL_AGENT_ACCOUNT, "goal-test 验收账号");
+    const workspace = await api.ensureWorkspace("goal-test 联调工作区", REAL_AGENT_WORKSPACE);
     await api.markUserOnboarded();
     await api.cleanupPromptArtifactsByPrefix(prefix);
 
@@ -37,7 +37,7 @@ test.describe("训练与评估真实 Agent 闭环", () => {
         description: "真实 daemon E2E：创建提示词后由 Codex 执行评估。",
         prompt_type: "需求澄清",
         content: "请用中文澄清 {{issue_title}}，必须输出验收条件、风险、trace/任务标识和下一步建议。",
-        variables: [{ name: "issue_title", label: "Issue 标题", required: true }],
+        variables: [{ name: "issue_title", label: "任务标题", required: true }],
         tags: ["真实Agent", "E2E", "训练与评估"],
         status: "启用",
       });

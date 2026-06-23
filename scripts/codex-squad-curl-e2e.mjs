@@ -81,7 +81,7 @@ const issue = post("/api/issues", {
   assignee_type: "squad",
   assignee_id: squad.id,
 }, token);
-if (!issue?.id) fail("创建 issue 响应缺少 id");
+if (!issue?.id) fail("创建任务响应缺少 id");
 evidence.issue = { id: issue.id, title: issue.title };
 
 const terminalTask = await poll(async () => {

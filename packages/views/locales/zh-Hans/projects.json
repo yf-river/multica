@@ -26,7 +26,7 @@
     "progress": "进度",
     "lead": "负责人",
     "created": "创建时间",
-    "issues": "Issue 数"
+    "issues": "任务数"
   },
   "status": {
     "planned": "计划中",
@@ -69,13 +69,13 @@
     "section_progress": "进度",
     "section_description": "描述",
     "description_placeholder": "添加描述...",
-    "empty_issues_title": "还没有关联的 issue",
-    "empty_issues_hint": "新建一个 issue，或把已有的 issue 关联到这个项目。",
-    "empty_issues_new_button": "新建 issue",
-    "no_issues_yet": "目前还没有 issue",
+    "empty_issues_title": "还没有关联的任务",
+    "empty_issues_hint": "新建一个任务，或把已有的任务关联到这个项目。",
+    "empty_issues_new_button": "新建任务",
+    "no_issues_yet": "目前还没有任务",
     "toast_link_copied": "已复制链接",
     "toast_project_deleted": "已删除项目",
-    "toast_move_issue_failed": "移动 issue 失败"
+    "toast_move_issue_failed": "移动任务失败"
   },
   "resources": {
     "section_header": "资源",
@@ -93,20 +93,20 @@
     "toast_removed": "已移除资源",
     "toast_remove_failed": "移除资源失败",
     "add_local_directory_button": "添加本地目录",
-    "local_daemon_offline_hint": "启动本地 daemon 后才能添加本机目录。",
+    "local_daemon_offline_hint": "启动本地守护进程 后才能添加本机目录。",
     "local_daemon_already_attached_hint": "本机已经关联了一个本地目录到该项目，先移除现有目录再添加新目录。",
     "local_rename_tooltip": "重命名",
     "local_rename_label": "本地目录显示名",
-    "local_no_daemon_tooltip": "尚未识别到本机 daemon，agent 暂时无法打开此目录。",
+    "local_no_daemon_tooltip": "尚未识别到本机守护进程，智能体暂时无法打开此目录。",
     "local_other_machine_tooltip": "此目录仅在最初注册它的电脑上可用。",
-    "chat_hint_prefix": "Agent 将在",
+    "chat_hint_prefix": "智能体将在",
     "toast_local_attached": "已添加本地目录",
     "toast_local_renamed": "已重命名",
     "toast_local_rename_failed": "重命名失败",
     "toast_local_pick_failed": "选择目录失败",
     "toast_local_already_attached": "该目录已经在本机关联到此项目。",
     "toast_local_daemon_already_attached": "本机已经关联了一个本地目录到该项目，先移除现有目录再添加新目录。",
-    "toast_local_daemon_not_running": "本地 daemon 未运行。",
+    "toast_local_daemon_not_running": "本地守护进程 未运行。",
     "local_validate_not_absolute": "请选择绝对路径。",
     "local_validate_not_found": "目录不存在。",
     "local_validate_not_a_directory": "该路径不是目录。",
@@ -116,7 +116,7 @@
   },
   "delete_dialog": {
     "title": "删除项目",
-    "description": "将删除这个项目。issue 不会被删除，只会从项目中解除关联。",
+    "description": "将删除这个项目。任务不会被删除，只会从项目中解除关联。",
     "confirm": "删除",
     "cancel": "取消"
   },

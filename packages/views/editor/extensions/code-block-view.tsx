@@ -81,7 +81,7 @@ function CodeBlockView({ node }: NodeViewProps) {
         <div contentEditable={false} className="mb-1">
           <CodeBlockIframe
             html={debouncedHtml}
-            title="HTML preview"
+            title="HTML 预览"
             heightClassName={HTML_PREVIEW_HEIGHT}
           />
         </div>

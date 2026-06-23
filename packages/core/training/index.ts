@@ -18,10 +18,10 @@ export const TRAINING_WORKBENCH_VIEWS = [
     keywords: ["提示词调试", "prompt", "playground", "debug"],
   },
   {
-    tab: "Agent 调试场",
+    tab: "智能体调试场",
     view: "agent-playground",
     route: "agent-playground",
-    keywords: ["Agent 调试", "agent", "playground", "debug"],
+    keywords: ["智能体调试", "agent", "playground", "debug"],
   },
   {
     tab: "数据集",
@@ -104,6 +104,10 @@ export function trainingWorkbenchTabFromView(view: string | null): TrainingWorkb
 
 export function trainingWorkbenchTitleFromView(view: string | null): string {
   return `训练与评估 · ${trainingWorkbenchTabFromView(view)}`;
+}
+
+export function trainingWorkbenchShowsPromptEditor(view: string | null): boolean {
+  return trainingWorkbenchTabFromView(view) === "提示词库";
 }
 
 export function trainingWorkbenchPath(baseTrainingPath: string, view: string | null): string {

@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { PromptLibraryPage } from "@multica/views/prompt-library";
+import { PromptLibraryPage, TrainingWorkbenchPage } from "@multica/views/prompt-library";
 import {
   TRAINING_WORKBENCH_ROUTE_BY_VIEW,
   trainingWorkbenchPath,
@@ -20,5 +20,14 @@ export default async function TrainingViewPage({
     redirect(trainingWorkbenchPath(baseTrainingPath, view));
   }
 
-  return <PromptLibraryPage activeView={view} />;
+  return view === "runs" ||
+    view === "run-history" ||
+    view === "datasets" ||
+    view === "test-suites" ||
+    view === "experiments" ||
+    view === "optimization-runs" ? (
+    <TrainingWorkbenchPage activeView={view} />
+  ) : (
+    <PromptLibraryPage activeView={view} showPromptEditor />
+  );
 }

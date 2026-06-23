@@ -44,7 +44,7 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队运行看板", { timeout: 10000 });
     await page.getByRole("button", { name: "提示词库", exact: true }).click();
 
-    await page.getByRole("button", { name: /user-center 模板/ }).click();
+    await page.getByRole("button", { name: "创建 user-center 需求澄清提示词" }).click();
     await page.getByLabel("名称").fill(`${artifactPrefix} user-center 澄清`);
     await page.getByLabel("提示词内容").fill("请澄清 {{issue_title}}，项目背景：{{project_context}}。");
     await page.getByLabel("调试变量").fill("issue_title=登录失败\nproject_context=user-center");
@@ -70,13 +70,13 @@ test.describe("训练与评估工作台", () => {
       await expect(page.getByText("资产已创建").last()).toBeVisible({ timeout: 10000 });
     }
 
-    await page.getByRole("button", { name: "Agent 调试场", exact: true }).click();
+    await page.getByRole("button", { name: "智能体调试场", exact: true }).click();
     await expect(page.getByText("Codex 在线")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(runtime.name)).toBeVisible();
     await page.getByLabel("期望输出").fill("输出需求澄清结论、风险、测试证据和下一步建议。");
     await page.getByRole("button", { name: "保存为实验" }).click();
     await expect(page.getByText("资产已创建").last()).toBeVisible({ timeout: 10000 });
-    const createAgentTaskButton = page.getByRole("button", { name: "创建真实 Agent 任务" });
+    const createAgentTaskButton = page.getByRole("button", { name: "创建真实智能体 任务" });
     await expect(createAgentTaskButton).toBeEnabled({ timeout: 10000 });
     const agentRunResponse = page.waitForResponse(
       (response) => response.request().method() === "POST" && response.url().includes("/agent-run"),
@@ -316,7 +316,7 @@ test.describe("训练与评估工作台", () => {
     const findQueuedAgentRun = async () => {
         const assets = await api.listPromptEvaluationAssets({ prompt_id: prompt!.id });
         const agentAssetIds = assets
-          .filter((asset) => asset.name.startsWith(`${artifactPrefix} user-center 澄清 Agent 调试包`))
+          .filter((asset) => asset.name.startsWith(`${artifactPrefix} user-center 澄清 智能体调试包`))
           .map((asset) => asset.id);
         const runs = await api.listPromptEvaluationRuns({ limit: 20 });
         return runs.find((run) => agentAssetIds.includes(run.asset_id) && run.run_kind === "Agent执行") ?? null;
@@ -334,7 +334,7 @@ test.describe("训练与评估工作台", () => {
         failed_cases: 0,
         task_id: expect.any(String),
         chat_session_id: expect.any(String),
-        conclusion: "等待 Agent 执行完成",
+        conclusion: "等待 智能体执行完成",
       });
     const queuedAgentRun = await findQueuedAgentRun();
     expect(queuedAgentRun).toBeTruthy();
@@ -351,9 +351,9 @@ test.describe("训练与评估工作台", () => {
     });
     expect(agentEvidence.trials).toEqual([
       expect.objectContaining({
-        case_name: "Agent 调试场用例",
+        case_name: "智能体调试场用例",
         status: "待执行",
-        failure_reason: "等待 Agent 执行完成",
+        failure_reason: "等待 智能体执行完成",
       }),
     ]);
     expect(agentEvidence.上下文).toMatchObject({
@@ -413,7 +413,7 @@ test.describe("训练与评估工作台", () => {
     await expect(summaryStrip).toContainText("项目总览", { timeout: 10000 });
     await expect(page.getByTestId("training-summary-运行总数")).toContainText(/[1-9]/);
     await expect(page.getByTestId("training-summary-通过率")).toContainText("%");
-    await expect(page.getByTestId("training-summary-Agent运行数")).toContainText(/[1-9]/);
+    await expect(page.getByTestId("training-summary-智能体运行数")).toContainText(/[1-9]/);
     await expect(page.getByTestId("training-summary-需人工复核")).toContainText(/\d/);
     await expect(page.getByTestId("training-summary-输入 token")).toContainText(/[1-9]/);
     await expect(page.getByTestId("training-summary-预估成本")).toContainText("$");
@@ -423,9 +423,9 @@ test.describe("训练与评估工作台", () => {
     await expect(demoDashboard).toContainText("团队运行看板", { timeout: 10000 });
     await expect(demoDashboard).toContainText("训练评估闭环");
     await expect(demoDashboard).toContainText("SOP 与任务观测");
-    await expect(demoDashboard.getByTestId("training-demo-metric-Agent运行数")).toContainText(/[1-9]/);
-    await expect(demoDashboard.getByTestId("training-demo-proof-真实 Agent 证据")).toContainText("已有任务/trace 运行记录");
-    await expect(demoDashboard.getByText("Codex 运行时可创建真实 Agent 任务")).toBeVisible();
+    await expect(demoDashboard.getByTestId("training-demo-metric-智能体运行数")).toContainText(/[1-9]/);
+    await expect(demoDashboard.getByTestId("training-demo-proof-真实智能体 证据")).toContainText("已有任务/trace 运行记录");
+    await expect(demoDashboard.getByText("Codex 运行时可创建真实智能体 任务")).toBeVisible();
     await expect(demoDashboard).toContainText("最近7天");
     await demoDashboard.getByRole("button", { name: "最近24小时" }).click();
     await expect(demoDashboard).toContainText("最近24小时");
@@ -467,7 +467,7 @@ test.describe("训练与评估工作台", () => {
     const agentEvidencePanel = agentRunCard.getByTestId(`run-evidence-${queuedAgentRun!.id}`);
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-模型")).toContainText(expectedAgentModel, { timeout: 10000 });
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-运行时")).toContainText("codex");
-    await expect(agentEvidencePanel.getByTestId("run-evidence-metric-触发来源")).toContainText("Agent 调试场");
+    await expect(agentEvidencePanel.getByTestId("run-evidence-metric-触发来源")).toContainText("智能体调试场");
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-创建者")).toContainText(/[0-9a-f-]{36}/);
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-智能体标识")).toContainText(queuedAgentRun!.agent_id!);
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-运行时标识")).toContainText(runtime.id);
@@ -518,12 +518,12 @@ test.describe("训练与评估工作台", () => {
     await localRunCard.getByRole("button", { name: "收起证据" }).click();
     agentRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "Agent执行 · 通过" }).first();
     await agentRunCard.getByRole("button", { name: "查看证据" }).click();
-    await expect(agentRunCard.getByText("Agent 调试场用例", { exact: true })).toBeVisible({ timeout: 10000 });
+    await expect(agentRunCard.getByText("智能体调试场用例", { exact: true })).toBeVisible({ timeout: 10000 });
     await expect(agentRunCard.getByText(/codex\/[^ ]+ · 输入 11 · 输出 7 · 预估成本 \$/)).toBeVisible();
     await expect(agentRunCard.getByText("缓存读 2 · 缓存写 3")).toBeVisible();
     await expect(agentRunCard.getByText("#1 text：Agent 输出：完成训练评估")).toBeVisible();
     await expect(agentRunCard.getByText(/训练评估用量已上报 · completed · codex\/[^ ]+ · 尝试次数 1 · .*输入 16 · 输出 7/)).toBeVisible();
-    await expect(page.getByText("失败原因：等待 Agent 执行完成")).toHaveCount(0);
+    await expect(page.getByText("失败原因：等待 智能体执行完成")).toHaveCount(0);
     await expect(agentRunCard.getByText("任务用量")).toBeVisible();
     const syncedAgentEvidence = await api.getPromptEvaluationRunEvidence(queuedAgentRun!.id);
     expect(syncedAgentEvidence.run).toMatchObject({
@@ -536,7 +536,7 @@ test.describe("训练与评估工作台", () => {
     });
     expect(syncedAgentEvidence.trials).toEqual([
       expect.objectContaining({
-        case_name: "Agent 调试场用例",
+        case_name: "智能体调试场用例",
         status: "通过",
         input_tokens: 16,
         output_tokens: 7,
@@ -580,7 +580,7 @@ test.describe("训练与评估工作台", () => {
     await expect
       .poll(async () => {
         const assets = await api.listPromptEvaluationAssets({ asset_type: "实验" });
-        const agentAssets = assets.filter((asset) => asset.name.startsWith(`${artifactPrefix} user-center 澄清 Agent 调试包`));
+        const agentAssets = assets.filter((asset) => asset.name.startsWith(`${artifactPrefix} user-center 澄清 智能体调试包`));
         return {
           count: agentAssets.length,
           hasSnapshot: agentAssets.some((asset) => {
@@ -630,7 +630,7 @@ test.describe("训练与评估工作台", () => {
     await expect(page).toHaveURL(/\/training(?:\?|$)/, { timeout: 30000 });
     await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队运行看板", { timeout: 10000 });
     await page.getByRole("button", { name: "提示词库", exact: true }).click();
-    await page.getByRole("button", { name: /user-center 模板/ }).click();
+    await page.getByRole("button", { name: "创建 user-center 需求澄清提示词" }).click();
     await page.getByLabel("名称").fill(promptName);
     await page.getByLabel("提示词内容").fill(sourceContent);
     await page.getByLabel("调试变量").fill("issue_title=登录失败");
@@ -679,7 +679,7 @@ test.describe("训练与评估工作台", () => {
     );
     await failedRunRow.getByRole("button", { name: "Agent 优化任务" }).click();
     expect((await optimizationAgentResponse).status()).toBe(202);
-    await expect(page.getByText(/真实 Agent 优化任务已入队/)).toBeVisible({ timeout: 10000 });
+    await expect(page.getByText(/真实智能体 优化任务已入队/)).toBeVisible({ timeout: 10000 });
 
     let optimizationAgentRun = null as Awaited<ReturnType<typeof api.listPromptEvaluationRuns>>[number] | null;
     await expect

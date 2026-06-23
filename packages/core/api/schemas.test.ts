@@ -266,7 +266,7 @@ describe("PromptLibraryItemSchema", () => {
     description: "小队队长使用",
     prompt_type: "需求澄清",
     content: "请澄清目标、边界、验收条件和风险。",
-    variables: [{ name: "issue_title", label: "issue 标题", required: true }],
+    variables: [{ name: "issue_title", label: "任务标题", required: true }],
     tags: ["user-center", "小队"],
     status: "启用",
     version: 1,
@@ -280,7 +280,7 @@ describe("PromptLibraryItemSchema", () => {
     expect(parsed.name).toBe("user-center 需求澄清提示词");
     expect(parsed.prompt_type).toBe("需求澄清");
     expect(parsed.status).toBe("启用");
-    expect(parsed.variables[0]?.label).toBe("issue 标题");
+    expect(parsed.variables[0]?.label).toBe("任务标题");
     expect(parsed.tags).toEqual(["user-center", "小队"]);
   });
 

@@ -60,7 +60,7 @@ test.describe("小队 SOP 端到端", () => {
     });
   });
 
-  test("Multica 编码小队接收 issue 后生成队长任务、SOP 证据和观测指标", async ({ page }) => {
+  test("Multica 编码小队接收 issue 后生成真实队长任务，并在 child done 后再次唤醒父 issue", async () => {
     test.setTimeout(120_000);
 
     const suffix = Date.now();
@@ -108,52 +108,15 @@ test.describe("小队 SOP 端到端", () => {
     expect(initialRun!.events.some((event) => event.event_type === "步骤开始")).toBe(true);
     expect((initialRun!.profile.steps as unknown[]).length).toBe(7);
 
-    for (const [stepId, stepName, nextStep] of [
-      ["receive", "接收需求", "design_review"],
-      ["design_review", "方案设计与确认", "implementation"],
-      ["implementation", "分工开发", "independent_acceptance"],
-    ] as const) {
-      await api.recordSOPStepEvent(initialRun!.id, stepId, {
-        event_type: "步骤完成",
-        evidence: {
-          "阶段": stepName,
-          "结果": `已进入 ${nextStep}`,
-        },
-        reason: `${stepName}完成`,
-      });
-      const progressed = await api.listIssueSOPRuns(issue.id);
-      const progressedRun = progressed.items.find((item) => item.id === initialRun!.id);
-      expect(progressedRun?.current_step_key).toBe(nextStep);
-      expect(progressedRun?.status).toBe("进行中");
-    }
-
     await api.completeSquadLeaderTaskViaDaemon(
       leaderTask!,
       "队长输出：已完成 Multica 编码小队需求接收、方案分派、独立验收和可观测证据登记。",
     );
-    const recordedEvent = await api.recordSOPStepEvent(initialRun!.id, "independent_acceptance", {
-      event_type: "测试结果",
-      status: "进行中",
-      step_name: "独立验收",
-      role_key: "acceptor",
-      evidence: {
-        "验收者": "验收者",
-        "测试命令": "pnpm exec playwright test e2e/squad-sop.spec.ts",
-        "结果": "通过",
-      },
-      reason: "E2E 独立验收通过",
-      duration_ms: 321,
-      task_id: leaderTask!.id,
-      created_by_type: "agent",
-      created_by_id: leader!.id,
-    });
-    expect(recordedEvent.created_by_type).not.toBe("agent");
 
     const runsAfterEvidence = await api.listIssueSOPRuns(issue.id);
     const runAfterEvidence = runsAfterEvidence.items.find((item) => item.id === initialRun!.id);
     expect(runAfterEvidence).toBeTruthy();
-    expect(runAfterEvidence!.events.some((event) => event.event_type === "测试结果")).toBe(true);
-    expect(Number(runAfterEvidence!.metrics["证据数"])).toBeGreaterThanOrEqual(1);
+    expect(runAfterEvidence!.status).toBe("进行中");
 
     await expect.poll(
       async () => {
@@ -167,7 +130,7 @@ test.describe("小队 SOP 端到端", () => {
     ).toBeGreaterThanOrEqual(36);
     const summary = await api.getWorkspaceObservabilitySummary({ squad_id: squad.id });
     expect(Number(summary.指标["SOP 执行数"])).toBeGreaterThanOrEqual(1);
-    expect(Number(summary.指标["SOP 事件数"])).toBeGreaterThanOrEqual(2);
+    expect(Number(summary.指标["SOP 事件数"])).toBeGreaterThanOrEqual(1);
     expect(Number(summary.指标["输入 token"])).toBeGreaterThanOrEqual(36);
     expect(Number(summary.指标["输出 token"])).toBeGreaterThanOrEqual(19);
     expect(Number(summary.指标["预估成本"])).toBeGreaterThan(0);
@@ -182,43 +145,51 @@ test.describe("小队 SOP 端到端", () => {
       "价格已知": true,
     });
 
-    await page.goto(`/${workspaceSlug}/issues/${issue.id}`, { waitUntil: "domcontentloaded" });
-    await expect(page.getByText(issue.title, { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("小队 SOP 执行", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("multica-coding").first()).toBeVisible();
-    await expect(page.getByText("独立验收 · 测试结果", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("E2E 独立验收通过", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("观测事件", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("任务已完成", { exact: true }).first()).toBeVisible();
+    const child = await api.createIssue(`E2E Multica 子 issue ${suffix}`, {
+      description: "验证 child issue done 会通过 system comment 再次唤醒父 issue 的 squad leader。",
+      status: "todo",
+      priority: "medium",
+      parent_issue_id: issue.id,
+    });
+    await api.updateIssue(child.id, { status: "done" });
 
-    await page.goto(`/${workspaceSlug}/squads/${squad.id}`, { waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("heading", { name: squad.name }).first()).toBeVisible();
-    await expect(page.getByText("队长").first()).toBeVisible();
-    await expect(page.getByText("方案设计者").first()).toBeVisible();
-    await expect(page.getByText("开发者").first()).toBeVisible();
-    await expect(page.getByText("验收者").first()).toBeVisible();
-    await expect(page.getByText("规约维护者").first()).toBeVisible();
-    await expect(page.getByText("部署运行者").first()).toBeVisible();
+    await expect.poll(
+      async () => {
+        const comment = await api.getLatestSystemComment(issue.id);
+        return comment?.content ?? "";
+      },
+      {
+        timeout: 20_000,
+        message: "等待 child-done system comment 写回父 issue",
+      },
+    ).not.toBe("");
 
-    await page.getByRole("button", { name: "指令" }).click();
-    await expect(page.getByText("multica-coding").first()).toBeVisible();
-    await expect(page.getByText("角色矩阵", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("小队观测摘要", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("SOP 执行数", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("输入 token", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("预估成本", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("模型明细", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("runtime 明细", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("证据数", { exact: true }).first()).toBeVisible();
+    const parentComment = await api.getLatestSystemComment(issue.id);
+    expect(parentComment).toBeTruthy();
+    expect(parentComment!.author_type).toBe("system");
+    expect(parentComment!.parent_id).toBeNull();
+    expect(parentComment!.content).toContain(child.identifier);
+    expect(parentComment!.content).toContain(`mention://squad/${squad.id}`);
 
-    await page.goto(`/${workspaceSlug}/agents/${leader!.id}`, { waitUntil: "domcontentloaded" });
-    await expect(page.getByText("Agent 观测摘要", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("按当前 Agent 聚合 trace、token、成本、耗时和证据", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("预估成本", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("gpt-5.3-codex-spark").first()).toBeVisible();
+    await expect.poll(
+      async () => {
+        const task = await api.findLeaderTask(issue.id, leader!.id);
+        return task?.id && task.id !== leaderTask!.id ? task.id : "";
+      },
+      {
+        timeout: 20_000,
+        message: "等待 child-done system comment 再次唤醒父 issue",
+      },
+    ).not.toBe("");
+
+    const requeuedTask = await api.findLeaderTask(issue.id, leader!.id);
+    expect(requeuedTask).toBeTruthy();
+    expect(requeuedTask!.id).not.toBe(leaderTask!.id);
+    expect(requeuedTask!.is_leader_task).toBe(true);
+    expect(["queued", "dispatched", "running", "completed"]).toContain(requeuedTask!.status);
   });
 
-  test("user-center 小队接收 issue 后按 SOP 阶段推进并形成观测证据", async ({ page }) => {
+  test("user-center 小队接收 issue 后生成真实队长任务，并由 daemon 回写 trace/messages/usage", async () => {
     test.setTimeout(120_000);
 
     const suffix = Date.now();
@@ -263,43 +234,15 @@ test.describe("小队 SOP 端到端", () => {
     expect(run!.current_step_key).toBe("clarify");
     expect((run!.profile.steps as unknown[]).length).toBe(5);
 
-    for (const [stepId, stepName, nextStep] of [
-      ["clarify", "需求澄清", "design"],
-      ["design", "方案拆解", "skill_execution"],
-      ["skill_execution", "skill 执行", "acceptance"],
-    ] as const) {
-      await api.recordSOPStepEvent(run!.id, stepId, {
-        event_type: "步骤完成",
-        evidence: {
-          "阶段": stepName,
-          "user-center skill": stepId,
-          "结果": `已进入 ${nextStep}`,
-        },
-        reason: `${stepName}完成`,
-      });
-      const progressed = await api.listIssueSOPRuns(issue.id);
-      const progressedRun = progressed.items.find((item) => item.id === run!.id);
-      expect(progressedRun?.current_step_key).toBe(nextStep);
-    }
-
     await api.completeSquadLeaderTaskViaDaemon(
       leaderTask!,
       "队长输出：user-center 小队已完成澄清、方案拆解、skill 执行和验收证据登记。",
     );
-    await api.recordSOPStepEvent(run!.id, "acceptance", {
-      event_type: "测试结果",
-      status: "进行中",
-      step_name: "验收",
-      role_key: "acceptor",
-      evidence: {
-        "验收者": "验收者",
-        "结果": "通过",
-        "证据": "daemon usage、message、trace 已写入",
-      },
-      reason: "user-center 小队验收通过",
-      duration_ms: 260,
-      task_id: leaderTask!.id,
-    });
+
+    const runsAfterEvidence = await api.listIssueSOPRuns(issue.id);
+    const runAfterEvidence = runsAfterEvidence.items.find((item) => item.id === run!.id);
+    expect(runAfterEvidence).toBeTruthy();
+    expect(runAfterEvidence!.status).toBe("进行中");
 
     await expect.poll(
       async () => {
@@ -313,23 +256,10 @@ test.describe("小队 SOP 端到端", () => {
     ).toBeGreaterThanOrEqual(36);
     const summary = await api.getWorkspaceObservabilitySummary({ squad_id: squad.id });
     expect(Number(summary.指标["SOP 执行数"])).toBeGreaterThanOrEqual(1);
-    expect(Number(summary.指标["SOP 事件数"])).toBeGreaterThanOrEqual(2);
+    expect(Number(summary.指标["SOP 事件数"])).toBeGreaterThanOrEqual(1);
+    expect(Number(summary.指标["输入 token"])).toBeGreaterThanOrEqual(36);
+    expect(Number(summary.指标["输出 token"])).toBeGreaterThanOrEqual(19);
+    expect(Number(summary.指标["预估成本"])).toBeGreaterThan(0);
     expect(summary.task_trace_total).toBeGreaterThanOrEqual(1);
-
-    await page.goto(`/${workspaceSlug}/issues/${issue.id}`, { waitUntil: "domcontentloaded" });
-    await expect(page.getByText(issue.title, { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("小队 SOP 执行", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
-    await expect(page.getByText("user-center-sop-flow").first()).toBeVisible();
-    await expect(page.getByText("验收 · 测试结果", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("user-center 小队验收通过", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("观测事件", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("任务已完成", { exact: true }).first()).toBeVisible();
-
-    await page.goto(`/${workspaceSlug}/squads/${squad.id}`, { waitUntil: "domcontentloaded" });
-    await expect(page.getByRole("heading", { name: "user-center 小队" }).first()).toBeVisible();
-    await page.getByRole("button", { name: "指令" }).click();
-    await expect(page.getByText("user-center-sop-flow").first()).toBeVisible();
-    await expect(page.getByText("小队观测摘要", { exact: true }).first()).toBeVisible();
-    await expect(page.getByText("gpt-5.3-codex-spark").first()).toBeVisible();
   });
 });

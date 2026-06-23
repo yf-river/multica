@@ -23,7 +23,7 @@ func TestPromptLibraryCRUD(t *testing.T) {
 		"description": "给 user-center 小队队长使用的澄清模板",
 		"prompt_type": "需求澄清",
 		"content":     "请先澄清目标、边界、验收条件和风险。",
-		"variables":   []map[string]any{{"name": "issue_title", "label": "issue 标题", "required": true}},
+		"variables":   []map[string]any{{"name": "issue_title", "label": "任务标题", "required": true}},
 		"tags":        []string{"user-center", "小队"},
 		"status":      "启用",
 	}

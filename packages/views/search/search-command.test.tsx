@@ -264,7 +264,7 @@ describe("SearchCommand", () => {
     expect(screen.queryByPlaceholderText("输入命令或关键词搜索...")).not.toBeInTheDocument();
   });
 
-  it("默认只显示新建 issue，并在输入查询前隐藏页面和低频命令", () => {
+  it("默认只显示新建任务，并在输入查询前隐藏页面和低频命令", () => {
     renderSearch();
 
     expect(screen.queryByText("页面")).not.toBeInTheDocument();
@@ -272,7 +272,7 @@ describe("SearchCommand", () => {
     // 其他命令（主题、复制、新建项目）必须输入查询后才显示。
     expect(screen.getByText("命令")).toBeInTheDocument();
     expect(
-      screen.getByText((_, el) => el?.textContent === "新建 issue" && el?.tagName === "SPAN"),
+      screen.getByText((_, el) => el?.textContent === "新建任务" && el?.tagName === "SPAN"),
     ).toBeInTheDocument();
     expect(screen.queryByText("新建项目")).not.toBeInTheDocument();
     expect(screen.queryByText("切换到浅色主题")).not.toBeInTheDocument();
@@ -390,7 +390,7 @@ describe("SearchCommand", () => {
     expect(screen.getByText("MUL-2")).toBeInTheDocument();
   });
 
-  it("在命令分组显示新建 issue / 新建项目，并触发 modal store", async () => {
+  it("在命令分组显示新建任务 / 新建项目，并触发 modal store", async () => {
     const user = userEvent.setup();
     renderSearch();
 
@@ -400,7 +400,7 @@ describe("SearchCommand", () => {
     await waitFor(() => {
       expect(screen.getByText("命令")).toBeInTheDocument();
       expect(
-        screen.getByText((_, el) => el?.textContent === "新建 issue" && el?.tagName === "SPAN"),
+        screen.getByText((_, el) => el?.textContent === "新建任务" && el?.tagName === "SPAN"),
       ).toBeInTheDocument();
       expect(
         screen.getByText((_, el) => el?.textContent === "新建项目" && el?.tagName === "SPAN"),
@@ -408,7 +408,7 @@ describe("SearchCommand", () => {
     });
 
     const newIssue = await screen.findByText(
-      (_, el) => el?.textContent === "新建 issue" && el?.tagName === "SPAN",
+      (_, el) => el?.textContent === "新建任务" && el?.tagName === "SPAN",
     );
     await user.click(newIssue);
 
@@ -424,7 +424,7 @@ describe("SearchCommand", () => {
       ["运行看板", "打开运行看板", "/ws-test/training/runs"],
       ["提示词库", "打开提示词库", "/ws-test/training/prompts"],
       ["提示词调试", "打开提示词调试场", "/ws-test/training/prompt-playground"],
-      ["Agent 调试", "打开 Agent 调试场", "/ws-test/training/agent-playground"],
+      ["智能体调试", "打开智能体调试场", "/ws-test/training/agent-playground"],
       ["数据集", "打开数据集", "/ws-test/training/datasets"],
       ["测试套件", "打开测试套件", "/ws-test/training/test-suites"],
       ["实验", "打开实验", "/ws-test/training/experiments"],
@@ -448,7 +448,7 @@ describe("SearchCommand", () => {
     }
   });
 
-  it("不在 issue 详情路由时隐藏复制链接命令", async () => {
+  it("不在任务详情路由时隐藏复制链接命令", async () => {
     const user = userEvent.setup();
     mockPathname.current = "/ws-test/projects";
     renderSearch();
@@ -457,10 +457,10 @@ describe("SearchCommand", () => {
     await user.type(input, "copy");
 
     // 命令分组可能仍为空或不存在。
-    expect(screen.queryByText("复制 issue 链接")).not.toBeInTheDocument();
+    expect(screen.queryByText("复制任务链接")).not.toBeInTheDocument();
   });
 
-  it("在 issue 详情路由复制 issue 链接和标识符", async () => {
+  it("在任务详情路由复制任务链接和标识符", async () => {
     const user = userEvent.setup();
     // userEvent.setup() installs its own navigator.clipboard; spy on it so we
     // intercept the writeText call without clobbering userEvent's internals.
@@ -477,7 +477,7 @@ describe("SearchCommand", () => {
     await user.type(input, "copy");
 
     const linkItem = await screen.findByText(
-      (_, el) => el?.textContent === "复制 issue 链接" && el?.tagName === "SPAN",
+      (_, el) => el?.textContent === "复制任务链接" && el?.tagName === "SPAN",
     );
     await user.click(linkItem);
 

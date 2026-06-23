@@ -62,7 +62,7 @@ vi.mock("@multica/ui/components/ui/sidebar", () => ({
 }));
 vi.mock("@multica/ui/components/ui/dropdown-menu", () => ({
   DropdownMenu: ({ children }: { children: React.ReactNode }) => <>{children}</>,
-  DropdownMenuContent: () => null,
+  DropdownMenuContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   DropdownMenuGroup: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   DropdownMenuItem: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   DropdownMenuLabel: ({ children }: { children: React.ReactNode }) => <>{children}</>,
@@ -89,9 +89,42 @@ vi.mock("../navigation", () => ({
 vi.mock("../projects/components/project-icon", () => ({ ProjectIcon: () => <span /> }));
 vi.mock("../workspace/workspace-avatar", () => ({ WorkspaceAvatar: () => <span /> }));
 vi.mock("@multica/ui/components/common/actor-avatar", () => ({ ActorAvatar: () => <span /> }));
+vi.mock("../i18n", () => ({
+  useT: () => ({
+    t: (sel: (s: any) => string, vars?: Record<string, string>) =>
+      sel({
+        nav: {
+          inbox: "收件箱",
+          my_issues: "我的 issue",
+          issues: "任务",
+          projects: "项目",
+          autopilots: "自动化",
+          agents: "智能体",
+          squads: "小队",
+          usage: "用量",
+          training: "训练与评估",
+          runtimes: "运行时",
+          skills: "技能",
+          settings: "设置",
+        },
+        sidebar: {
+          unpin_tooltip: "取消固定",
+          workspaces_label: "工作区",
+          create_workspace: "创建工作区",
+          log_out: "退出登录",
+          new_issue: "新建任务",
+          new_issue_shortcut: "C",
+          pinned_label: "固定",
+          workspace_group: "工作区",
+          configure_group: "配置",
+        },
+      }),
+  }),
+}));
 
 vi.mock("@multica/core/auth", () => ({
-  useAuthStore: (selector: (state: { user: { id: string } }) => unknown) => selector({ user: { id: "user-1" } }),
+  useAuthStore: (selector: (state: { user: { id: string; account: string; name: string } }) => unknown) =>
+    selector({ user: { id: "user-1", account: "test", name: "Test User" } }),
 }));
 vi.mock("@multica/core/paths", () => ({
   paths: { workspace: (slug: string) => ({ issues: () => `/${slug}/issues` }) },
@@ -173,6 +206,13 @@ describe("PinRow", () => {
     detail.current = { isPending: false, isError: false, data: { identifier: "MUL-123", title: "Keep this pin", status: "todo" }, error: null };
     render(<AppSidebar />);
     expect(await screen.findByText("MUL-123 Keep this pin")).toBeInTheDocument();
+  });
+
+  it("shows the account label in the user menu instead of promoting the English name", async () => {
+    render(<AppSidebar />);
+
+    expect(await screen.findByText("账号 test")).toBeInTheDocument();
+    expect(screen.getByText("Test User")).toBeInTheDocument();
   });
 
   it("does not also highlight the parent workspace nav for an active pin", async () => {

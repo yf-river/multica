@@ -741,25 +741,25 @@ describe("IssueDetail (shared)", () => {
     expect(screen.getByText("更新时间")).toBeInTheDocument();
   });
 
-  it("issue 不存在时显示未找到信息", async () => {
+  it("任务不存在时显示未找到信息", async () => {
     mockApiObj.getIssue.mockRejectedValue(new Error("Not found"));
 
     renderIssueDetail("nonexistent-id");
 
     await waitFor(() => {
       expect(
-        screen.getByText("这个 issue 不存在或已在该工作区被删除。"),
+        screen.getByText("这个任务不存在或已在该工作区被删除。"),
       ).toBeInTheDocument();
     });
   });
 
-  it("issue 未找到且没有 onDelete prop 时显示返回 issue 列表按钮", async () => {
+  it("issue 未找到且没有 onDelete prop 时显示返回任务列表按钮", async () => {
     mockApiObj.getIssue.mockRejectedValue(new Error("Not found"));
 
     renderIssueDetail("nonexistent-id");
 
     await waitFor(() => {
-      expect(screen.getByText("返回 issue 列表")).toBeInTheDocument();
+      expect(screen.getByText("返回任务列表")).toBeInTheDocument();
     });
   });
 
@@ -801,7 +801,7 @@ describe("IssueDetail (shared)", () => {
     renderIssueDetail();
 
     await screen.findByText("API Error: 500 Internal server error");
-    fireEvent.click(screen.getByRole("button", { name: "重试 task" }));
+    fireEvent.click(screen.getByRole("button", { name: "重试任务" }));
 
     await waitFor(() => {
       expect(mockApiObj.rerunIssue).toHaveBeenCalledWith("issue-1", "task-failed");
@@ -827,7 +827,7 @@ describe("IssueDetail (shared)", () => {
     renderIssueDetail();
 
     await screen.findByText("Sub-issue MUL-123 is done.");
-    expect(screen.queryByRole("button", { name: "重试 task" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重试任务" })).not.toBeInTheDocument();
   });
 
   it("成功的智能体 task 评论不显示重试", async () => {
@@ -850,7 +850,7 @@ describe("IssueDetail (shared)", () => {
     renderIssueDetail();
 
     await screen.findByText("Finished the requested work.");
-    expect(screen.queryByRole("button", { name: "重试 task" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重试任务" })).not.toBeInTheDocument();
   });
 
   it("没有来源 task 的智能体系统评论不显示重试", async () => {
@@ -872,7 +872,7 @@ describe("IssueDetail (shared)", () => {
     renderIssueDetail();
 
     await screen.findByText("System coordination update.");
-    expect(screen.queryByRole("button", { name: "重试 task" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "重试任务" })).not.toBeInTheDocument();
   });
 
   it("折叠非尾部动态块，并默认展开最后一个动态块", async () => {

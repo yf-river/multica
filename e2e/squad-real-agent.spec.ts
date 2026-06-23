@@ -12,13 +12,13 @@ const EXPECTED_AGENT_MODEL = process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL |
 test.describe("小队真实 Agent 闭环", () => {
   test.skip(!RUN_REAL_AGENT_E2E, "设置 RUN_REAL_AGENT_E2E=1 后才运行真实 daemon/Codex 小队验收");
 
-  test("Codex daemon 可以真实执行 user-center 小队队长任务并写回观测证据", async ({ page }) => {
+  test("Codex daemon 可以真实执行 user-center 小队队长任务，并在 child done 后被系统评论再次唤醒", async ({ page }) => {
     test.setTimeout(240_000);
 
     const api = new TestApiClient();
     const suffix = Date.now();
-    await api.login(REAL_AGENT_ACCOUNT, "Goal Test Daemon");
-    const workspace = await api.ensureWorkspace("Goal Test Daemon", REAL_AGENT_WORKSPACE);
+    await api.login(REAL_AGENT_ACCOUNT, "goal-test 验收账号");
+    const workspace = await api.ensureWorkspace("goal-test 联调工作区", REAL_AGENT_WORKSPACE);
     await api.markUserOnboarded();
 
     try {
@@ -102,6 +102,47 @@ test.describe("小队真实 Agent 闭环", () => {
       const summary = await api.getWorkspaceObservabilitySummary({ squad_id: squad.id });
       expect(Number(summary.指标["SOP 执行数"])).toBeGreaterThanOrEqual(1);
       expect(summary.task_trace_total).toBeGreaterThanOrEqual(1);
+
+      const child = await api.createIssue(`真实小队子任务验收 ${suffix}`, {
+        description: "验证 child issue 完成后，父 issue 会通过 system comment 再次唤醒 squad leader。",
+        status: "todo",
+        priority: "medium",
+        parent_issue_id: issue.id,
+      });
+      await api.updateIssue(child.id, { status: "done" });
+
+      await expect.poll(
+        async () => {
+          const comment = await api.getLatestSystemComment(issue.id);
+          return comment?.content ?? "";
+        },
+        {
+          timeout: 20_000,
+          message: "等待 child-done system comment 写回父 issue",
+        },
+      ).not.toBe("");
+      const parentComment = await api.getLatestSystemComment(issue.id);
+      expect(parentComment).toBeTruthy();
+      expect(parentComment!.author_type).toBe("system");
+      expect(parentComment!.parent_id).toBeNull();
+      expect(parentComment!.content).toContain(child.identifier);
+      expect(parentComment!.content).toContain(`mention://squad/${squad.id}`);
+
+      await expect.poll(
+        async () => {
+          const task = await api.findLeaderTask(issue.id, leader!.id);
+          return task?.id && task.id !== terminalTask.id ? task.id : "";
+        },
+        {
+          timeout: 20_000,
+          message: "等待 parent issue 被 child-done system comment 再次唤醒",
+        },
+      ).not.toBe("");
+      const requeuedTask = await api.findLeaderTask(issue.id, leader!.id);
+      expect(requeuedTask).toBeTruthy();
+      expect(requeuedTask!.id).not.toBe(terminalTask.id);
+      expect(requeuedTask!.is_leader_task).toBe(true);
+      expect(["queued", "dispatched", "running", "completed"]).toContain(requeuedTask!.status);
 
       const token = api.getToken();
       expect(token).toBeTruthy();

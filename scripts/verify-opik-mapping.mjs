@@ -10,7 +10,7 @@ const pagePath = path.join(repoRoot, "packages/views/prompt-library/components/p
 const mapping = [
   ["提示词库", "prompt-library", "PromptLibraryPage"],
   ["提示词调试场", "prompt-playground", "运行并记录"],
-  ["Agent 调试场", "agent-playground", "创建真实 Agent 任务"],
+  ["智能体调试场", "agent-playground", "创建真实智能体 任务"],
   ["数据集", "prompt_evaluation_asset", "dataset_row_count"],
   ["测试套件", "prompt_evaluation_asset", "test_suite_case_count"],
   ["实验", "prompt_evaluation_asset", "experiment_dimension_count"],

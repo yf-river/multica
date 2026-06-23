@@ -12,6 +12,7 @@ import {
   TRAINING_WORKBENCH_TABS,
   TRAINING_WORKBENCH_VIEW_BY_TAB,
   trainingWorkbenchPath,
+  trainingWorkbenchShowsPromptEditor,
   trainingWorkbenchTabFromView,
   trainingWorkbenchTitleFromView,
   type TrainingWorkbenchTab,
@@ -46,6 +47,7 @@ import { Input } from "@multica/ui/components/ui/input";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { PageHeader } from "../../layout/page-header";
+import { AppLink } from "../../navigation";
 import { useNavigation } from "../../navigation";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 
@@ -92,7 +94,7 @@ const USER_CENTER_TEMPLATE: CreatePromptLibraryItemRequest = {
   prompt_type: "需求澄清",
   content: "请先澄清目标、边界、验收条件、风险、影响范围和可观测指标。输出必须使用中文，并列出需要团队确认的问题。",
   variables: [
-    { name: "issue_title", label: "issue 标题", required: true },
+    { name: "issue_title", label: "任务标题", required: true },
     { name: "project_context", label: "项目背景" },
   ],
   tags: ["user-center", "小队", "需求澄清"],
@@ -124,7 +126,13 @@ function trainingViewFromLocation(pathname: string, searchParams: URLSearchParam
   return match?.[1] ? decodeURIComponent(match[1]) : searchParams.get("view");
 }
 
-export function PromptLibraryPage({ activeView }: { activeView?: TrainingWorkbenchViewId }) {
+export function PromptLibraryPage({
+  activeView,
+  showPromptEditor,
+}: {
+  activeView?: TrainingWorkbenchViewId;
+  showPromptEditor?: boolean;
+}) {
   const workspaceId = useWorkspaceId();
   const workspacePaths = useWorkspacePaths();
   const navigation = useNavigation();
@@ -141,6 +149,7 @@ export function PromptLibraryPage({ activeView }: { activeView?: TrainingWorkben
   const [agentExpectedText, setAgentExpectedText] = useState("");
   const [demoTimeRange, setDemoTimeRange] = useState<DemoTimeRange>("7d");
   const [exportingDemoEvidence, setExportingDemoEvidence] = useState(false);
+  const shouldShowPromptEditor = showPromptEditor ?? trainingWorkbenchShowsPromptEditor(resolvedView);
   const demoSince = useMemo(() => {
     const option = DEMO_TIME_RANGES.find((item) => item.value === demoTimeRange);
     if (!option?.sinceMs) return null;
@@ -156,18 +165,18 @@ export function PromptLibraryPage({ activeView }: { activeView?: TrainingWorkben
   }, [resolvedView]);
 
   const isDashboardTab = activeTab === "运行看板";
+  const shouldShowPromptHeaderActions = activeTab === "提示词库";
   const needsPromptItems =
-    activeTab === "提示词库" ||
-    activeTab === "提示词调试场" ||
-    activeTab === "Agent 调试场";
+    shouldShowPromptEditor &&
+    (activeTab === "提示词库" || activeTab === "提示词调试场" || activeTab === "智能体调试场");
   const needsEvaluationAssets =
-    activeTab === "Agent 调试场" ||
+    activeTab === "智能体调试场" ||
     activeTab === "数据集" ||
     activeTab === "测试套件" ||
     activeTab === "实验" ||
     activeTab === "优化运行";
   const needsStructuredCases =
-    activeTab === "Agent 调试场" ||
+    activeTab === "智能体调试场" ||
     activeTab === "数据集" ||
     activeTab === "测试套件" ||
     activeTab === "实验" ||
@@ -175,7 +184,7 @@ export function PromptLibraryPage({ activeView }: { activeView?: TrainingWorkben
   const needsExperimentDimensions = activeTab === "实验";
   const needsRuns = isDashboardTab || activeTab === "运行历史" || activeTab === "优化运行";
   const needsCandidates = isDashboardTab || activeTab === "运行历史" || activeTab === "优化运行";
-  const needsRuntimeReadiness = isDashboardTab || activeTab === "Agent 调试场";
+  const needsRuntimeReadiness = isDashboardTab || activeTab === "智能体调试场";
 
   const listQuery = useQuery({
     queryKey: promptLibraryKeys.list(workspaceId ?? ""),
@@ -344,7 +353,7 @@ export function PromptLibraryPage({ activeView }: { activeView?: TrainingWorkben
         invalidateExperimentDimensions();
         invalidateRuns();
         invalidateSummary();
-        toast.success(`真实 Agent 任务已入队：${result.task_id}`);
+        toast.success(`真实智能体 任务已入队：${result.task_id}`);
       },
     });
 
@@ -436,7 +445,7 @@ export function PromptLibraryPage({ activeView }: { activeView?: TrainingWorkben
       invalidateCases();
       invalidateRuns();
       invalidateSummary();
-      toast.success(`真实 Agent 优化任务已入队：${result.task_id}`);
+      toast.success(`真实智能体 优化任务已入队：${result.task_id}`);
       setActiveTab("运行历史");
       navigation.push(trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["运行历史"]));
     },
@@ -498,11 +507,6 @@ export function PromptLibraryPage({ activeView }: { activeView?: TrainingWorkben
     setSelectedId(null);
     setDraft(requestToDraft(USER_CENTER_TEMPLATE));
     setDebugValuesText(valuesToDebugText(USER_CENTER_TEMPLATE.variables ?? []));
-  };
-
-  const selectWorkbenchTab = (tab: WorkbenchTab) => {
-    setActiveTab(tab);
-    navigation.push(trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB[tab]));
   };
 
   const saveDraft = () => {
@@ -708,21 +712,28 @@ export function PromptLibraryPage({ activeView }: { activeView?: TrainingWorkben
           <h1 className="truncate text-sm font-semibold">训练与评估</h1>
           <span className="text-xs text-muted-foreground">{items.length}</span>
         </div>
-        <div className="flex items-center gap-2">
-          <Button size="sm" variant="secondary" onClick={applyUserCenterTemplate}>
-            <BookOpenText className="size-3.5" />
-            user-center 模板
-          </Button>
-          <Button size="sm" onClick={startNew}>
-            <Plus className="size-3.5" />
-            新建
-          </Button>
-        </div>
+        {shouldShowPromptHeaderActions && (
+          <div className="flex items-center gap-2">
+            <Button size="sm" variant="secondary" onClick={applyUserCenterTemplate}>
+              <BookOpenText className="size-3.5" />
+              创建 user-center 需求澄清提示词
+            </Button>
+            <Button size="sm" onClick={startNew}>
+              <Plus className="size-3.5" />
+              新建
+            </Button>
+          </div>
+        )}
       </PageHeader>
 
       <div className="flex shrink-0 gap-1 overflow-x-auto border-b px-3 py-2">
         {TRAINING_WORKBENCH_TABS.map((tab) => (
-          <FilterButton key={tab} active={activeTab === tab} onClick={() => selectWorkbenchTab(tab)}>
+          <FilterButton
+            key={tab}
+            active={activeTab === tab}
+            href={trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB[tab])}
+            onClick={() => setActiveTab(tab)}
+          >
             {tab}
           </FilterButton>
         ))}
@@ -749,205 +760,253 @@ export function PromptLibraryPage({ activeView }: { activeView?: TrainingWorkben
             candidates={candidates}
           />
         </main>
-      ) : (
-      <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[360px_minmax(0,1fr)]">
-        <aside className="flex min-h-0 flex-col border-b md:border-b-0 md:border-r">
-          <div className="space-y-3 border-b p-3">
-            <div className="relative">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                value={query}
-                onChange={(event) => setQuery(event.target.value)}
-                placeholder="搜索名称、标签、内容"
-                className="h-8 pl-8 text-sm"
-              />
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {PROMPT_TYPES.map((type) => (
-                <FilterButton key={type} active={typeFilter === type} onClick={() => setTypeFilter(type)}>
-                  {type}
-                </FilterButton>
-              ))}
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {(["全部", "启用", "归档"] as const).map((status) => (
-                <FilterButton key={status} active={statusFilter === status} onClick={() => setStatusFilter(status)}>
-                  {status}
-                </FilterButton>
-              ))}
-            </div>
-          </div>
-
-          <div className="min-h-0 flex-1 overflow-y-auto">
-            {listQuery.isLoading ? (
-              <div className="space-y-2 p-3">
-                {Array.from({ length: 5 }).map((_, index) => (
-                  <div key={index} className="h-16 rounded-md bg-muted/60" />
+      ) : shouldShowPromptEditor ? (
+        <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[360px_minmax(0,1fr)]" data-testid="prompt-library-editor">
+          <aside className="flex min-h-0 flex-col border-b md:border-b-0 md:border-r">
+            <div className="space-y-3 border-b p-3">
+              <div className="relative">
+                <Search className="pointer-events-none absolute left-2.5 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                <Input
+                  value={query}
+                  onChange={(event) => setQuery(event.target.value)}
+                  placeholder="搜索名称、标签、内容"
+                  className="h-8 pl-8 text-sm"
+                />
+              </div>
+              <div className="flex flex-wrap gap-1.5">
+                {PROMPT_TYPES.map((type) => (
+                  <FilterButton key={type} active={typeFilter === type} onClick={() => setTypeFilter(type)}>
+                    {type}
+                  </FilterButton>
                 ))}
               </div>
-            ) : filteredItems.length === 0 ? (
-              <div className="p-6 text-sm text-muted-foreground">暂无提示词</div>
-            ) : (
-              <div className="divide-y">
-                {filteredItems.map((item) => (
-                  <button
-                    key={item.id}
-                    type="button"
-                    onClick={() => setSelectedId(item.id)}
-                    className={`flex w-full flex-col gap-2 px-3 py-3 text-left transition-colors hover:bg-muted/60 ${
-                      selectedId === item.id ? "bg-muted" : ""
-                    }`}
-                  >
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.name}</span>
-                      <Badge variant={item.status === "启用" ? "secondary" : "outline"} className="shrink-0">
-                        {item.status}
-                      </Badge>
-                    </div>
-                    <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                      <span className="shrink-0">{item.prompt_type}</span>
-                      <span className="truncate">{item.description || "无描述"}</span>
-                    </div>
-                    {item.tags.length > 0 && (
-                      <div className="flex flex-wrap gap-1">
-                        {item.tags.slice(0, 4).map((tag) => (
-                          <span key={tag} className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                  </button>
+              <div className="flex flex-wrap gap-1.5">
+                {(["全部", "启用", "归档"] as const).map((status) => (
+                  <FilterButton key={status} active={statusFilter === status} onClick={() => setStatusFilter(status)}>
+                    {status}
+                  </FilterButton>
                 ))}
-              </div>
-            )}
-          </div>
-        </aside>
-
-        <main className="min-h-0 overflow-y-auto p-4 md:p-6">
-          <div className="mx-auto flex max-w-5xl flex-col gap-4">
-            <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-              <div className="min-w-0">
-                <h2 className="truncate text-base font-semibold">{selected ? selected.name : "新建提示词"}</h2>
-                <div className="mt-1 text-xs text-muted-foreground">
-                  {selected ? `版本 ${selected.version} · ${selected.updated_at}` : "未保存"}
-                </div>
-              </div>
-              <div className="flex shrink-0 items-center gap-2">
-                {selected && (
-                  <>
-                    <Button size="sm" variant="secondary" onClick={toggleArchive} disabled={saving}>
-                      <Archive className="size-3.5" />
-                      {selected.status === "启用" ? "归档" : "启用"}
-                    </Button>
-                    <Button size="sm" variant="destructive" onClick={deleteSelected} disabled={deleting}>
-                      <Trash2 className="size-3.5" />
-                      删除
-                    </Button>
-                  </>
-                )}
-                <Button size="sm" onClick={saveDraft} disabled={saving}>
-                  {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                  保存
-                </Button>
               </div>
             </div>
 
-            <PromptVersionHistory
-              selected={selected}
-              versions={promptVersions}
-              loading={versionQuery.isLoading || versionQuery.isFetching}
-            />
-
-            <div className="grid gap-4 md:grid-cols-2">
-              <Field label="名称">
-                <Input value={draft.name} onChange={(event) => setDraftField(setDraft, "name", event.target.value)} />
-              </Field>
-              <Field label="类型">
-                <Input value={draft.prompt_type} onChange={(event) => setDraftField(setDraft, "prompt_type", event.target.value)} />
-              </Field>
-              <Field label="描述">
-                <Input value={draft.description} onChange={(event) => setDraftField(setDraft, "description", event.target.value)} />
-              </Field>
-              <Field label="状态">
-                <div className="flex h-10 items-center gap-2">
-                  {(["启用", "归档"] as const).map((status) => (
-                    <FilterButton key={status} active={draft.status === status} onClick={() => setDraftField(setDraft, "status", status)}>
-                      {status}
-                    </FilterButton>
+            <div className="min-h-0 flex-1 overflow-y-auto">
+              {listQuery.isLoading ? (
+                <div className="space-y-2 p-3">
+                  {Array.from({ length: 5 }).map((_, index) => (
+                    <div key={index} className="h-16 rounded-md bg-muted/60" />
                   ))}
                 </div>
-              </Field>
-              <Field label="变量">
-                <Input
-                  value={draft.variablesText}
-                  onChange={(event) => setDraftField(setDraft, "variablesText", event.target.value)}
-                  placeholder="issue_title=issue 标题, project_context=项目背景"
-                />
-              </Field>
-              <Field label="标签">
-                <Input
-                  value={draft.tagsText}
-                  onChange={(event) => setDraftField(setDraft, "tagsText", event.target.value)}
-                  placeholder="user-center, 小队, 需求澄清"
-                />
-              </Field>
+              ) : filteredItems.length === 0 ? (
+                <div className="p-6 text-sm text-muted-foreground">暂无提示词</div>
+              ) : (
+                <div className="divide-y">
+                  {filteredItems.map((item) => (
+                    <button
+                      key={item.id}
+                      type="button"
+                      onClick={() => setSelectedId(item.id)}
+                      className={`flex w-full flex-col gap-2 px-3 py-3 text-left transition-colors hover:bg-muted/60 ${
+                        selectedId === item.id ? "bg-muted" : ""
+                      }`}
+                    >
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.name}</span>
+                        <Badge variant={item.status === "启用" ? "secondary" : "outline"} className="shrink-0">
+                          {item.status}
+                        </Badge>
+                      </div>
+                      <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
+                        <span className="shrink-0">{item.prompt_type}</span>
+                        <span className="truncate">{item.description || "无描述"}</span>
+                      </div>
+                      {item.tags.length > 0 && (
+                        <div className="flex flex-wrap gap-1">
+                          {item.tags.slice(0, 4).map((tag) => (
+                            <span key={tag} className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+                      )}
+                    </button>
+                  ))}
+                </div>
+              )}
             </div>
+          </aside>
 
-            <Field label="提示词内容">
-              <Textarea
-                value={draft.content}
-                onChange={(event) => setDraftField(setDraft, "content", event.target.value)}
-                className="min-h-[360px] resize-y font-mono text-sm leading-6"
-              />
-            </Field>
-
-            <section className="grid gap-4 md:grid-cols-[320px_minmax(0,1fr)]">
-              <Field label="调试变量">
-                <Textarea
-                  value={debugValuesText}
-                  onChange={(event) => setDebugValuesText(event.target.value)}
-                  className="min-h-[180px] resize-y font-mono text-sm leading-6"
-                  placeholder="issue_title=登录失败&#10;project_context=user-center"
-                />
-              </Field>
-              <div className="grid gap-1.5 text-sm">
-                <div className="flex min-h-5 items-center gap-2">
-                  <span className="text-xs font-medium text-muted-foreground">调试输出</span>
-                  {debugResult.missingVariables.length > 0 && (
-                    <Badge variant="outline" className="text-[11px]">
-                      缺失 {debugResult.missingVariables.join("、")}
-                    </Badge>
+          <main className="min-h-0 overflow-y-auto p-4 md:p-6">
+            <div className="mx-auto flex max-w-5xl flex-col gap-4">
+              <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <div className="min-w-0">
+                  <h2 className="truncate text-base font-semibold">{selected ? selected.name : "新建提示词"}</h2>
+                  <div className="mt-1 text-xs text-muted-foreground">
+                    {selected ? `版本 ${selected.version} · ${selected.updated_at}` : "未保存"}
+                  </div>
+                </div>
+                <div className="flex shrink-0 items-center gap-2">
+                  {selected && (
+                    <>
+                      <Button size="sm" variant="secondary" onClick={toggleArchive} disabled={saving}>
+                        <Archive className="size-3.5" />
+                        {selected.status === "启用" ? "归档" : "启用"}
+                      </Button>
+                      <Button size="sm" variant="destructive" onClick={deleteSelected} disabled={deleting}>
+                        <Trash2 className="size-3.5" />
+                        删除
+                      </Button>
+                    </>
                   )}
-                  <Button size="sm" variant="secondary" className="ml-auto h-7" onClick={runDebug} disabled={runningDebug}>
-                    {runningDebug ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                    运行并记录
+                  <Button size="sm" onClick={saveDraft} disabled={saving}>
+                    {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+                    保存
                   </Button>
                 </div>
-                <pre className="min-h-[180px] overflow-auto whitespace-pre-wrap rounded-md border bg-muted/20 p-3 font-mono text-sm leading-6">
-                  {debugResult.rendered || "暂无输出"}
-                </pre>
               </div>
-            </section>
 
+              <PromptVersionHistory
+                selected={selected}
+                versions={promptVersions}
+                loading={versionQuery.isLoading || versionQuery.isFetching}
+              />
+
+              <div className="grid gap-4 md:grid-cols-2">
+                <Field label="名称">
+                  <Input value={draft.name} onChange={(event) => setDraftField(setDraft, "name", event.target.value)} />
+                </Field>
+                <Field label="类型">
+                  <Input value={draft.prompt_type} onChange={(event) => setDraftField(setDraft, "prompt_type", event.target.value)} />
+                </Field>
+                <Field label="描述">
+                  <Input value={draft.description} onChange={(event) => setDraftField(setDraft, "description", event.target.value)} />
+                </Field>
+                <Field label="状态">
+                  <div className="flex h-10 items-center gap-2">
+                    {(["启用", "归档"] as const).map((status) => (
+                      <FilterButton key={status} active={draft.status === status} onClick={() => setDraftField(setDraft, "status", status)}>
+                        {status}
+                      </FilterButton>
+                    ))}
+                  </div>
+                </Field>
+                <Field label="变量">
+                  <Input
+                    value={draft.variablesText}
+                    onChange={(event) => setDraftField(setDraft, "variablesText", event.target.value)}
+                    placeholder="issue_title=任务标题, project_context=项目背景"
+                  />
+                </Field>
+                <Field label="标签">
+                  <Input
+                    value={draft.tagsText}
+                    onChange={(event) => setDraftField(setDraft, "tagsText", event.target.value)}
+                    placeholder="user-center, 小队, 需求澄清"
+                  />
+                </Field>
+              </div>
+
+              <Field label="提示词内容">
+                <Textarea
+                  value={draft.content}
+                  onChange={(event) => setDraftField(setDraft, "content", event.target.value)}
+                  className="min-h-[360px] resize-y font-mono text-sm leading-6"
+                />
+              </Field>
+
+              <section className="grid gap-4 md:grid-cols-[320px_minmax(0,1fr)]">
+                <Field label="调试变量">
+                  <Textarea
+                    value={debugValuesText}
+                    onChange={(event) => setDebugValuesText(event.target.value)}
+                    className="min-h-[180px] resize-y font-mono text-sm leading-6"
+                    placeholder="issue_title=登录失败&#10;project_context=user-center"
+                  />
+                </Field>
+                <div className="grid gap-1.5 text-sm">
+                  <div className="flex min-h-5 items-center gap-2">
+                    <span className="text-xs font-medium text-muted-foreground">调试输出</span>
+                    {debugResult.missingVariables.length > 0 && (
+                      <Badge variant="outline" className="text-[11px]">
+                        缺失 {debugResult.missingVariables.join("、")}
+                      </Badge>
+                    )}
+                    <Button size="sm" variant="secondary" className="ml-auto h-7" onClick={runDebug} disabled={runningDebug}>
+                      {runningDebug ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+                      运行并记录
+                    </Button>
+                  </div>
+                  <pre className="min-h-[180px] overflow-auto whitespace-pre-wrap rounded-md border bg-muted/20 p-3 font-mono text-sm leading-6">
+                    {debugResult.rendered || "暂无输出"}
+                  </pre>
+                </div>
+              </section>
+
+              <WorkbenchPanel
+                activeTab={activeTab}
+                workspaceId={workspaceId ?? ""}
+                selected={selected}
+                assets={assets}
+                cases={cases}
+                experimentDimensions={experimentDimensions}
+                runs={runs}
+                candidates={candidates}
+                loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || runQuery.isLoading || candidateQuery.isLoading}
+                saving={savingAsset}
+                runningAgent={runningAgent}
+                runtimeReadiness={agentRuntimeReadiness}
+                runtimeLoading={runtimeReadinessQuery.isLoading}
+                agentExpectedText={agentExpectedText}
+                onAgentExpectedTextChange={setAgentExpectedText}
+                onCreateAsset={createWorkbenchAsset}
+                onSaveAgentDebugPackage={saveAgentDebugPackage}
+                onRunAgentDebugPackage={runAgentDebugPackage}
+                onToggleAssetStatus={toggleAssetStatus}
+                onDeleteAsset={deleteAsset}
+                onCreateCase={(data) => createCaseMut.mutate(data)}
+                creatingCaseAssetId={createCaseMut.isPending ? createCaseMut.variables?.asset_id ?? null : null}
+                onUpdateCase={(caseId, data) => updateCaseMut.mutate({ caseId, data })}
+                updatingCaseId={updateCaseMut.isPending ? updateCaseMut.variables?.caseId ?? null : null}
+                onDeleteCase={(caseId) => deleteCaseMut.mutate(caseId)}
+                deletingCaseId={deleteCaseMut.isPending ? deleteCaseMut.variables ?? null : null}
+                onSyncRun={(runId) => syncRunMut.mutate(runId)}
+                syncingRunId={syncRunMut.isPending ? syncRunMut.variables ?? null : null}
+                onCreateEvidenceSnapshot={(runId) => createEvidenceSnapshotMut.mutate(runId)}
+                creatingEvidenceSnapshotRunId={createEvidenceSnapshotMut.isPending ? createEvidenceSnapshotMut.variables ?? null : null}
+                onGenerateCandidate={(runId) => createCandidateMut.mutate(runId)}
+                generatingCandidateRunId={createCandidateMut.isPending ? createCandidateMut.variables ?? null : null}
+                onRunOptimizationAgent={(runId) => runOptimizationAgentMut.mutate(runId)}
+                runningOptimizationAgentRunId={runOptimizationAgentMut.isPending ? runOptimizationAgentMut.variables ?? null : null}
+                onUpdateCandidate={(candidateId, data) => updateCandidateMut.mutate({ candidateId, data })}
+                updatingCandidateId={updateCandidateMut.isPending ? updateCandidateMut.variables?.candidateId ?? null : null}
+                onPublishCandidate={(candidateId) => publishCandidateMut.mutate(candidateId)}
+                publishingCandidateId={publishCandidateMut.isPending ? publishCandidateMut.variables ?? null : null}
+                onRejectCandidate={(candidateId, reason) => rejectCandidateMut.mutate({ candidateId, reason })}
+                rejectingCandidateId={rejectCandidateMut.isPending ? rejectCandidateMut.variables?.candidateId ?? null : null}
+              />
+            </div>
+          </main>
+        </div>
+      ) : (
+        <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
+          <div className="mx-auto flex max-w-5xl flex-col gap-4">
             <WorkbenchPanel
               activeTab={activeTab}
               workspaceId={workspaceId ?? ""}
-              selected={selected}
+              selected={null}
               assets={assets}
               cases={cases}
               experimentDimensions={experimentDimensions}
               runs={runs}
               candidates={candidates}
               loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || runQuery.isLoading || candidateQuery.isLoading}
-                saving={savingAsset}
-                runningAgent={runningAgent}
-                runtimeReadiness={agentRuntimeReadiness}
-                runtimeLoading={runtimeReadinessQuery.isLoading}
+              saving={savingAsset}
+              runningAgent={runningAgent}
+              runtimeReadiness={agentRuntimeReadiness}
+              runtimeLoading={runtimeReadinessQuery.isLoading}
               agentExpectedText={agentExpectedText}
               onAgentExpectedTextChange={setAgentExpectedText}
               onCreateAsset={createWorkbenchAsset}
-                onSaveAgentDebugPackage={saveAgentDebugPackage}
+              onSaveAgentDebugPackage={saveAgentDebugPackage}
               onRunAgentDebugPackage={runAgentDebugPackage}
               onToggleAssetStatus={toggleAssetStatus}
               onDeleteAsset={deleteAsset}
@@ -974,7 +1033,6 @@ export function PromptLibraryPage({ activeView }: { activeView?: TrainingWorkben
             />
           </div>
         </main>
-      </div>
       )}
     </div>
   );
@@ -1035,7 +1093,7 @@ function DemoDashboardPanel({
     ["运行总数", formatNumber(runStatus["运行总数"])],
     ["通过率", formatPercent(trainingMetrics["通过率"])],
     ["失败数", formatNumber(trainingMetrics["失败数"])],
-    ["Agent运行数", formatNumber(trainingMetrics["Agent运行数"])],
+    ["智能体运行数", formatNumber(trainingMetrics["智能体运行数"] ?? trainingMetrics["Agent运行数"])],
     ["需人工复核", formatNumber(trainingMetrics["需人工复核"])],
     ["输入 token", formatNumber(trainingMetrics["输入token"])],
     ["输出 token", formatNumber(trainingMetrics["输出token"])],
@@ -1061,7 +1119,7 @@ function DemoDashboardPanel({
     ["结构化画像", `${formatNumber(trainingAssets["画像用例数"] ?? cases.length)} 用例 · ${formatNumber(trainingAssets["画像变量数"])} 变量 · ${formatNumber(trainingAssets["画像断言数"])} 断言 · ${formatNumber(trainingAssets["评估维度数"])} 维度`],
     ["优化候选", `${pendingCandidates} 待确认 · ${publishedCandidates} 已发布 · ${rejectedCandidates} 已拒绝`],
     ["服务端证据快照", `${formatNumber(trainingAssets["服务端证据快照"] ?? trainingMetrics["服务端证据快照"])} 条 · 验收归档 ${formatNumber(trainingAssets["验收归档快照"] ?? trainingMetrics["验收归档快照"])}`],
-    ["真实 Agent 证据", hasAgentEvidence ? "已有任务/trace 运行记录" : "暂无真实 Agent 运行记录"],
+    ["真实智能体 证据", hasAgentEvidence ? "已有任务/trace 运行记录" : "暂无真实智能体 运行记录"],
     ["最近运行", latestRun ? summarizeLatestRunForDemo(latestRun) : "暂无运行"],
   ];
 
@@ -1071,7 +1129,7 @@ function DemoDashboardPanel({
         <div>
           <h2 className="text-base font-semibold">团队运行看板</h2>
           <p className="mt-1 text-xs text-muted-foreground">
-            汇总训练评估、真实 Agent、SOP 观测和验收证据，当前观测范围：{activeRange.label}。
+            汇总训练评估、真实智能体、SOP 观测和验收证据，当前观测范围：{activeRange.label}。
           </p>
         </div>
         <div className="flex flex-col gap-2 md:items-end">
@@ -1083,7 +1141,7 @@ function DemoDashboardPanel({
             ))}
           </div>
           <div className="flex flex-wrap gap-2 text-xs">
-            <Badge variant={runtimeReadiness.status === "就绪" ? "secondary" : "outline"}>真实 Agent：{readinessLabel}</Badge>
+            <Badge variant={runtimeReadiness.status === "就绪" ? "secondary" : "outline"}>真实智能体：{readinessLabel}</Badge>
             <Badge variant={maybeTruncated ? "outline" : "secondary"}>观测完整性：{completenessStatus}</Badge>
             <Badge variant={hasOptimizationLoop ? "secondary" : "outline"}>优化闭环：{hasOptimizationLoop ? "已有证据" : "待补齐"}</Badge>
             <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={onExportEvidence} disabled={exportingEvidence}>
@@ -1139,8 +1197,8 @@ function DemoDashboardPanel({
         <section className="rounded-md border border-border/70 bg-muted/10 p-3">
           <h3 className="text-sm font-semibold">演示状态</h3>
           <div className="mt-3 grid gap-2 text-xs">
-            <DemoChecklistItem ok={runtimeReadiness.status === "就绪"} label="Codex 运行时可创建真实 Agent 任务" detail={runtimeReadiness.detail} />
-            <DemoChecklistItem ok={hasAgentEvidence} label="运行历史已有任务/trace 证据" detail={latestRun?.task_id ? `最近任务 ${latestRun.task_id}` : "需要执行一次真实 Agent 评估"} />
+            <DemoChecklistItem ok={runtimeReadiness.status === "就绪"} label="Codex 运行时可创建真实智能体 任务" detail={runtimeReadiness.detail} />
+            <DemoChecklistItem ok={hasAgentEvidence} label="运行历史已有任务/trace 证据" detail={latestRun?.task_id ? `最近任务 ${latestRun.task_id}` : "需要执行一次真实智能体 评估"} />
             <DemoChecklistItem ok={cases.length > 0} label="数据集/测试套件已有结构化用例" detail={`${cases.length} 条结构化用例`} />
             <DemoChecklistItem ok={Number(trainingAssets["服务端证据快照"] ?? trainingMetrics["服务端证据快照"] ?? 0) > 0} label="运行证据已服务端归档" detail={`${formatNumber(trainingAssets["服务端证据快照"] ?? trainingMetrics["服务端证据快照"])} 条快照，验收归档 ${formatNumber(trainingAssets["验收归档快照"] ?? trainingMetrics["验收归档快照"])}`} />
             <DemoChecklistItem ok={hasOptimizationLoop} label="失败用例可进入优化候选人工确认" detail={`${pendingCandidates} 待确认，${publishedCandidates} 已发布`} />
@@ -1286,7 +1344,7 @@ function TrainingSummaryStrip({ summary, loading }: { summary: PromptEvaluationS
     { label: "运行总数", value: formatNumber(runStatus["运行总数"]) },
     { label: "通过率", value: formatPercent(metrics["通过率"]) },
     { label: "失败数", value: formatNumber(metrics["失败数"]) },
-    { label: "Agent运行数", value: formatNumber(metrics["Agent运行数"]) },
+    { label: "智能体运行数", value: formatNumber(metrics["智能体运行数"] ?? metrics["Agent运行数"]) },
     { label: "需人工复核", value: formatNumber(metrics["需人工复核"]) },
     { label: "输入 token", value: formatNumber(metrics["输入token"]) },
     { label: "输出 token", value: formatNumber(metrics["输出token"]) },
@@ -1432,13 +1490,13 @@ function WorkbenchPanel({
     return null;
   }
 
-	if (activeTab === "Agent 调试场") {
+	if (activeTab === "智能体调试场") {
 	    return (
 	      <section className="grid gap-3 border-t pt-4">
 	        <div className="flex items-center justify-between gap-2">
 	          <div>
-	            <h3 className="text-sm font-semibold">Agent 调试场</h3>
-	            <p className="mt-1 text-xs text-muted-foreground">可先保存实验包，也可在 Codex 就绪后创建真实 Agent 任务并写入运行历史。</p>
+	            <h3 className="text-sm font-semibold">智能体调试场</h3>
+	            <p className="mt-1 text-xs text-muted-foreground">可先保存实验包，也可在 Codex 就绪后创建真实智能体 任务并写入运行历史。</p>
 	          </div>
 	          <div className="flex shrink-0 items-center gap-2">
 	            <Button size="sm" variant="secondary" onClick={onSaveAgentDebugPackage} disabled={!selected || saving}>
@@ -1447,7 +1505,7 @@ function WorkbenchPanel({
 	            </Button>
 	            <Button size="sm" onClick={onRunAgentDebugPackage} disabled={!selected || saving || runningAgent || runtimeReadiness.status !== "就绪"}>
 	              {runningAgent ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-	              创建真实 Agent 任务
+	              创建真实智能体 任务
 	            </Button>
 	          </div>
 	        </div>
@@ -2070,7 +2128,7 @@ function buildExternalDependencyFailureNotice(evidence: PromptEvaluationRunEvide
   if (evidence.run.status === "失败" && evidence.run.task_id && evidence.task_usage.length === 0) {
     return {
       title: "外部依赖失败：未采集到模型用量",
-      detail: "Agent 任务失败且没有任务用量记录，请结合任务消息和 trace 事件确认运行时、模型或网络依赖状态。",
+      detail: "智能体任务失败且没有任务用量记录，请结合任务消息和 trace 事件确认运行时、模型或网络依赖状态。",
     };
   }
   return null;
@@ -2107,20 +2165,34 @@ function stringFromUnknown(value: unknown): string {
 function buildAgentExecutionStatus(readiness: PromptEvaluationRuntimeReadiness): string {
   const model = readiness.model || DEFAULT_AGENT_MODEL;
   if (readiness.status === "就绪") {
-    return `Codex 运行时已在线，目标模型 ${model}；此记录是实验包快照，点击“创建真实 Agent 任务”后会入队并采集 trace、token、成本和输出`;
+    return `Codex 运行时已在线，目标模型 ${model}；此记录是实验包快照，点击“创建真实智能体 任务”后会入队并采集 trace、token、成本和输出`;
   }
-  return `${readiness.label}，目标模型 ${model}；未创建真实 Agent 任务`;
+  return `${readiness.label}，目标模型 ${model}；未创建真实智能体 任务`;
 }
 
-function FilterButton({ active, onClick, children }: { active: boolean; onClick: () => void; children: ReactNode }) {
+function FilterButton({
+  active,
+  onClick,
+  href,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  href?: string;
+  children: ReactNode;
+}) {
+  const className = `inline-flex h-7 items-center rounded-md border px-2.5 text-xs transition-colors ${
+    active ? "border-foreground bg-foreground text-background" : "border-border bg-background text-muted-foreground hover:text-foreground"
+  }`;
+  if (href) {
+    return (
+      <AppLink href={href} onClick={onClick} className={className} data-active={active ? "true" : undefined} aria-current={active ? "page" : undefined}>
+        {children}
+      </AppLink>
+    );
+  }
   return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`inline-flex h-7 items-center rounded-md border px-2.5 text-xs transition-colors ${
-        active ? "border-foreground bg-foreground text-background" : "border-border bg-background text-muted-foreground hover:text-foreground"
-      }`}
-    >
+    <button type="button" onClick={onClick} className={className} data-active={active ? "true" : undefined}>
       {children}
     </button>
   );
@@ -2515,15 +2587,15 @@ function buildAgentDebugPackageRequest(
 ): CreatePromptEvaluationAssetRequest {
   return {
     prompt_id: prompt.id,
-    name: `${prompt.name} Agent 调试包 ${new Date().toLocaleString("zh-CN")} #${Date.now()}`,
-    description: `Agent 调试场记录：${buildAgentExecutionStatus(readiness)}`,
+    name: `${prompt.name} 智能体调试包 ${new Date().toLocaleString("zh-CN")} #${Date.now()}`,
+    description: `智能体调试场记录：${buildAgentExecutionStatus(readiness)}`,
     asset_type: "实验",
     payload: {
       schema_version: 1,
       语义版本: "multica.training_evaluation.v1",
       cases: [
         {
-          名称: "Agent 调试场用例",
+          名称: "智能体调试场用例",
           变量: values,
           期望包含: splitList(expectedOutput),
         },
@@ -2631,8 +2703,8 @@ function summarizeAssetPayload(asset: PromptEvaluationAsset, caseSummary?: CaseS
     if (caseSummary.payload > 0) sourceParts.push(`资产载荷 ${caseSummary.payload}`);
     return `结构化用例 ${caseSummary.total} 个${sourceParts.length > 0 ? `（${sourceParts.join("，")}；运行优先使用）` : ""}`;
   }
-  if (payload["最近Agent运行"]) return "包含真实 Agent 运行";
-  if (payload["调试包"]) return "包含 Agent 调试包";
+  if (payload["最近Agent运行"]) return "包含真实智能体 运行";
+  if (payload["调试包"]) return "包含 智能体调试包";
   if (payload["运行结果"]) return "包含运行结果";
   if (asset.asset_type === "实验") return `实验维度事实 ${asset.experiment_dimension_count || (Array.isArray(payload["对比维度"]) ? payload["对比维度"].length : 0)} 个`;
   return cases > 0 ? `${cases} 个用例` : "未记录用例";
@@ -2656,7 +2728,7 @@ function summarizeAgentRun(asset: PromptEvaluationAsset): string | null {
   const taskId = stringFromRecord(record, "trace/任务标识") || stringFromRecord(record, "trace/task id");
   const agent = stringFromRecord(record, "执行Agent");
   const model = stringFromRecord(record, "模型");
-  return `Agent 任务：${status}${taskId ? ` · 任务标识 ${taskId}` : ""}${agent ? ` · ${agent}` : ""}${model ? ` · ${model}` : ""}`;
+  return `智能体任务：${status}${taskId ? ` · 任务标识 ${taskId}` : ""}${agent ? ` · ${agent}` : ""}${model ? ` · ${model}` : ""}`;
 }
 
 function summarizeLatestRunForDemo(run: PromptEvaluationRun): string {

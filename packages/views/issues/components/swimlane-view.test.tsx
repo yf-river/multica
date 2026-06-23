@@ -414,7 +414,7 @@ describe("SwimLaneView", () => {
       />,
     );
 
-    const addButtons = screen.getAllByRole("button", { name: /新建 issue/ });
+    const addButtons = screen.getAllByRole("button", { name: /新建任务/ });
     expect(addButtons.length).toBeGreaterThan(0);
 
     fireEvent.click(addButtons[0]!);
@@ -430,7 +430,7 @@ describe("SwimLaneView", () => {
       />,
     );
 
-    const addButtons = screen.getAllByRole("button", { name: /新建 issue/ });
+    const addButtons = screen.getAllByRole("button", { name: /新建任务/ });
     fireEvent.click(addButtons[0]!);
 
     expect(mockOpenModal).toHaveBeenCalledWith(
@@ -485,7 +485,7 @@ describe("SwimLaneView", () => {
     const realLaneCount = 2;
     const visibleStatusCount = 6; // BOARD_STATUSES default
     expect(
-      screen.getAllByRole("button", { name: /新建 issue/ }).length,
+      screen.getAllByRole("button", { name: /新建任务/ }).length,
     ).toBe(realLaneCount * visibleStatusCount);
   });
 
@@ -560,7 +560,7 @@ describe("SwimLaneView", () => {
       />,
     );
 
-    const links = screen.getAllByRole("link", { name: "打开父级 issue" });
+    const links = screen.getAllByRole("link", { name: "打开父级任务" });
     expect(links).toHaveLength(1);
     expect(links[0]).toHaveAttribute("href", expect.stringContaining("parent-1"));
   });

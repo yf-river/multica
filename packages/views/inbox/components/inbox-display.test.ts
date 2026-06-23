@@ -17,7 +17,7 @@ function item(overrides: Partial<InboxItem>): InboxItem {
     type: "new_comment",
     severity: "info",
     issue_id: "issue-1",
-    title: "issue 标题",
+    title: "任务标题",
     body: null,
     issue_status: null,
     read: false,

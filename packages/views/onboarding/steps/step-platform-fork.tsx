@@ -27,32 +27,14 @@ import { useRuntimePicker } from "../components/use-runtime-picker";
 import { useT } from "../../i18n";
 
 /**
- * Step 3 on **web**. The user is in a browser and hasn't downloaded
- * the desktop app yet, so we can't scan their machine for runtimes.
- * This screen is a fan-out: three clearly clickable cards, each with
- * an explicit right-side button that says what clicking does:
- *
- *   1. **Download desktop** — primary card, black bg, "Download" pill.
- *      Opens the installer in a new tab; the user finishes onboarding
- *      inside the desktop app.
- *   2. **Install the CLI** — alt card, "Show steps" pill → opens a
- *      dialog containing the real install instructions + live runtime
- *      probe. When a runtime appears and the user selects it, the
- *      dialog's "Connect & continue" button fires `onNext(runtime)`
- *      and advances the flow.
- *   3. **Cloud computer** — alt card, "Coming soon" badge. Not yet
- *      available; rendered as a static, non-actionable preview.
- *
- * Footer is simplified — no Continue button, since the CLI dialog
- * owns that advancement itself. Only Skip remains.
+ * Web 端运行时选择步骤。用户在浏览器里完成本机执行节点接入；
+ * 桌面端下载安装、CLI 指引和云端执行节点入口都在这里收口。
+ * CLI 弹窗负责探测运行时并在选中后推进到下一步。
  */
 
 type DialogState = "cli" | null;
 
-// Single canonical download destination — the /download page owns
-// OS + arch detection, the All-Platforms matrix, release-note links,
-// and the CLI / Cloud alternates. Kept in sync with landing-hero.tsx
-// and landing footer nav, both of which target the same path.
+// 下载页统一处理系统识别、版本信息和备用安装方式。
 const DOWNLOAD_PAGE_URL = "/download";
 
 export function StepPlatformFork({

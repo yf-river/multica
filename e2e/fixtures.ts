@@ -233,6 +233,15 @@ interface TaskExecutionEvidence {
   trace_events: Array<Record<string, unknown>>;
 }
 
+interface IssueSystemComment {
+  id: string;
+  content: string;
+  author_type: string;
+  parent_id: string | null;
+  type: string;
+  created_at: string;
+}
+
 interface SquadSOPRun {
   id: string;
   profile_key: string;
@@ -699,6 +708,17 @@ export class TestApiClient {
     return issue;
   }
 
+  async updateIssue(issueId: string, opts?: Record<string, unknown>) {
+    const res = await this.authedFetch(`/api/issues/${issueId}`, {
+      method: "PUT",
+      body: JSON.stringify(opts ?? {}),
+    });
+    if (!res.ok) {
+      throw new Error(`update issue failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
   async ensureInternalSquadTemplate(templateKey: "user-center" | "multica-coding"): Promise<InternalSquadTemplateResponse> {
     const res = await this.authedFetch("/api/squads/internal-template", {
       method: "POST",
@@ -852,6 +872,32 @@ export class TestApiClient {
         messages: messages.rows,
         trace_events: traceEvents.rows,
       };
+    } finally {
+      await client.end();
+    }
+  }
+
+  async getLatestSystemComment(issueId: string): Promise<IssueSystemComment | null> {
+    const client = new pg.Client(DATABASE_URL);
+    await client.connect();
+    try {
+      const result = await client.query<IssueSystemComment>(
+        `
+          SELECT
+            id::text,
+            content,
+            author_type,
+            parent_id::text,
+            type,
+            created_at
+          FROM comment
+          WHERE issue_id = $1 AND author_type = 'system'
+          ORDER BY created_at DESC
+          LIMIT 1
+        `,
+        [issueId],
+      );
+      return result.rows[0] ?? null;
     } finally {
       await client.end();
     }

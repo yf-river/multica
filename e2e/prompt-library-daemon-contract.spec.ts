@@ -27,7 +27,7 @@ test.describe("训练与评估 daemon 协议闭环", () => {
       name: `${artifactPrefix} 提示词`,
       prompt_type: "需求澄清",
       content: "请用中文澄清 {{issue_title}}，必须输出验收条件和 trace/任务标识。",
-      variables: [{ name: "issue_title", label: "Issue 标题", required: true }],
+      variables: [{ name: "issue_title", label: "任务标题", required: true }],
       status: "启用",
     });
     const asset = await api.createPromptEvaluationAsset({
@@ -125,7 +125,7 @@ test.describe("训练与评估 daemon 协议闭环", () => {
       运行时名称: runtime.name,
       运行时提供方: "codebuddy",
       模型: queued.model,
-      触发来源: "Agent 调试场",
+      触发来源: "智能体调试场",
       提示词名称: prompt.name,
       评测资产名称: asset.name,
     });

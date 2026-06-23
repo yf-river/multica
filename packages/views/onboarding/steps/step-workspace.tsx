@@ -43,30 +43,14 @@ import { isReservedSlug } from "@multica/core/paths";
  * Step 2 — create your first workspace, or continue with one set up in
  * an earlier session.
  *
- * Shares Questionnaire's editorial two-column skeleton: 3-region app
- * shell on the left, side panel on the right. One **unified footer CTA**
- * handles both paths — `Open X` when the user picks an existing
- * workspace, `Create X` when they name a new one. The name / slug
- * fields are inlined here (not via the shared `CreateWorkspaceForm`)
- * because the footer-driven interaction needs externalized submit; the
- * shared form's own button would fight the footer CTA.
- *
- * The create-fields block doubles as a pedagogical preview: the URL is
- * rendered as a `<host>/[slug]` pill (host derived from the deployment's
- * app URL so self-hosted instances show their own domain), and a live
- * `Issues will look
- * like ACME-123` line shows the user what their issue IDs will read
- * like before they've created anything.
- *
- * Resume path ships two picker cards (existing + create-new) and the
- * user toggles between them. No-existing path just shows the create
- * fields directly.
+ * 工作区选择步骤。已有工作区走打开路径，新工作区走创建路径；
+ * 页脚 CTA 统一负责提交，避免表单内部按钮和外层流程按钮打架。
+ * 创建区同时展示访问路径和任务编号前缀预览，让用户在创建前确认语义。
  */
 
 function issuePrefix(slug: string): string {
   // Mirrors the server's default prefix derivation — first 4 chars of
-  // the slug, uppercased. Falls back to "WS" when the slug is empty so
-  // the preview line never collapses to a single dangling "-".
+  // 与服务端默认前缀保持一致：取 slug 前 4 个有效字符并转成大写。
   const head = slug.trim().replace(/[^a-z0-9]/g, "").slice(0, 4);
   return (head || "ws").toUpperCase();
 }

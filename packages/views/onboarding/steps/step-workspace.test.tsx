@@ -150,6 +150,8 @@ describe("StepWorkspace — workspace URL prefix", () => {
   it("shows the brand host when no app URL is configured", () => {
     renderStep({ existing: null, disabled: false });
     expect(screen.getByText("multica.ai/")).toBeInTheDocument();
+    expect(screen.getByText("技能")).toBeInTheDocument();
+    expect(screen.queryByText("Skills")).not.toBeInTheDocument();
   });
 
   it("shows the deployment host for self-hosted instances", () => {

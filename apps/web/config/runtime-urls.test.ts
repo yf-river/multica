@@ -3,6 +3,15 @@ import { describe, expect, it } from "vitest";
 import { resolveRemoteApiUrl } from "./runtime-urls";
 
 describe("resolveRemoteApiUrl", () => {
+  it("prefers goal-test deployment API URL over worktree env", () => {
+    expect(
+      resolveRemoteApiUrl({
+        GOAL_TEST_REMOTE_API_URL: "http://127.0.0.1:18762",
+        REMOTE_API_URL: "http://127.0.0.1:18760",
+      }),
+    ).toBe("http://127.0.0.1:18762");
+  });
+
   it("prefers REMOTE_API_URL when explicitly configured", () => {
     expect(
       resolveRemoteApiUrl({

@@ -32,7 +32,7 @@ const prompt = post("/api/prompt-library", {
   description: "通过公开 API 创建，用于验证提示词版本、数据集、测试套件、实验运行和优化候选发布。",
   prompt_type: "需求澄清",
   content: "请用中文澄清 {{issue_title}}，输出目标、边界、验收条件和风险。",
-  variables: [{ name: "issue_title", label: "Issue 标题", required: true }],
+  variables: [{ name: "issue_title", label: "任务标题", required: true }],
   tags: ["curl-e2e", "训练与评估"],
   status: "启用",
 }, token);

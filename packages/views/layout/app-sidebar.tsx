@@ -486,11 +486,13 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                     />
                     <div className="min-w-0 flex-1">
                       <p className="truncate text-sm font-medium leading-tight">
-                        {user?.name}
+                        {user?.account ? `账号 ${user.account}` : user?.name}
                       </p>
-                      <p className="truncate text-xs text-muted-foreground leading-tight">
-                        {user?.account}
-                      </p>
+                      {user?.account && user?.name && user.name !== user.account ? (
+                        <p className="truncate text-xs text-muted-foreground leading-tight">
+                          {user.name}
+                        </p>
+                      ) : null}
                     </div>
                   </div>
                   <DropdownMenuSeparator />

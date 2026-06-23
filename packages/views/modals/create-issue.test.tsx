@@ -393,10 +393,10 @@ describe("CreateIssueModal", () => {
 
     renderModal(<CreateIssueModal onClose={onClose} />);
 
-    fireEvent.change(screen.getByPlaceholderText("issue 标题"), {
+    fireEvent.change(screen.getByPlaceholderText("任务标题"), {
       target: { value: "  Ship create issue regression coverage  " },
     });
-    await user.click(screen.getByRole("button", { name: "创建 issue" }));
+    await user.click(screen.getByRole("button", { name: "创建任务" }));
 
     await waitFor(() => {
       expect(mockCreateIssue).toHaveBeenCalledWith({
@@ -424,11 +424,11 @@ describe("CreateIssueModal", () => {
 
     render(renderToast("toast-1"));
 
-    expect(screen.getByText("已创建 issue")).toBeInTheDocument();
+    expect(screen.getByText("已创建任务")).toBeInTheDocument();
     expect(screen.getByText(/TES-123/)).toBeInTheDocument();
     expect(screen.getByText(/Ship create issue regression coverage/)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "查看 issue" }));
+    await user.click(screen.getByRole("button", { name: "查看任务" }));
 
     expect(mockPush).toHaveBeenCalledWith("/ws-test/issues/issue-123");
     expect(mockToastDismiss).toHaveBeenCalledWith("toast-1");
@@ -441,9 +441,9 @@ describe("CreateIssueModal", () => {
 
     renderModal(<CreateIssueModal onClose={onClose} />);
 
-    await user.type(screen.getByPlaceholderText("issue 标题"), "First follow-up issue");
+    await user.type(screen.getByPlaceholderText("任务标题"), "First follow-up issue");
     await user.type(screen.getByPlaceholderText("添加描述..."), "Description to clear");
-    await user.click(screen.getByRole("button", { name: "创建 issue" }));
+    await user.click(screen.getByRole("button", { name: "创建任务" }));
 
     await waitFor(() => {
       expect(mockCreateIssue).toHaveBeenCalledWith({
@@ -462,7 +462,7 @@ describe("CreateIssueModal", () => {
     });
 
     expect(onClose).not.toHaveBeenCalled();
-    expect(screen.getByPlaceholderText("issue 标题")).toHaveValue("");
+    expect(screen.getByPlaceholderText("任务标题")).toHaveValue("");
     expect(screen.getByPlaceholderText("添加描述...")).toHaveValue("");
     expect(mockSetDraft).toHaveBeenCalledWith({
       title: "",
@@ -533,7 +533,7 @@ describe("CreateIssueModal", () => {
       "1",
     );
 
-    await user.click(screen.getByRole("button", { name: "创建 issue" }));
+    await user.click(screen.getByRole("button", { name: "创建任务" }));
 
     await waitFor(() => {
       expect(mockCreateIssue).toHaveBeenCalledWith(
@@ -601,7 +601,7 @@ describe("CreateIssueModal", () => {
       />,
     );
 
-    await user.type(screen.getByPlaceholderText("issue 标题"), "Refactor auth");
+    await user.type(screen.getByPlaceholderText("任务标题"), "Refactor auth");
     await user.click(screen.getByRole("button", { name: /切换到智能体/i }));
 
     expect(onSwitchMode).toHaveBeenCalledTimes(1);
@@ -634,8 +634,8 @@ describe("CreateIssueModal", () => {
     );
 
     renderModal(<CreateIssueModal onClose={onClose} />);
-    await user.type(screen.getByPlaceholderText("issue 标题"), "Login bug");
-    await user.click(screen.getByRole("button", { name: "创建 issue" }));
+    await user.type(screen.getByPlaceholderText("任务标题"), "Login bug");
+    await user.click(screen.getByRole("button", { name: "创建任务" }));
 
     await waitFor(() => expect(mockToastCustom).toHaveBeenCalledTimes(1));
     expect(mockToastError).not.toHaveBeenCalled();
@@ -645,11 +645,11 @@ describe("CreateIssueModal", () => {
     expect(typeof renderToast).toBe("function");
     render(renderToast("toast-dup"));
 
-    expect(screen.getByText("已存在同名 issue")).toBeInTheDocument();
+    expect(screen.getByText("已存在同名任务")).toBeInTheDocument();
     expect(screen.getByText(/MUL-7/)).toBeInTheDocument();
     expect(screen.getByText(/Login bug/)).toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "查看已有 issue" }));
+    await user.click(screen.getByRole("button", { name: "查看已有任务" }));
     expect(mockPush).toHaveBeenCalledWith("/ws-test/issues/issue-dup");
     expect(mockToastDismiss).toHaveBeenCalledWith("toast-dup");
   });
@@ -667,8 +667,8 @@ describe("CreateIssueModal", () => {
     );
 
     renderModal(<CreateIssueModal onClose={vi.fn()} />);
-    await user.type(screen.getByPlaceholderText("issue 标题"), "Login bug");
-    await user.click(screen.getByRole("button", { name: "创建 issue" }));
+    await user.type(screen.getByPlaceholderText("任务标题"), "Login bug");
+    await user.click(screen.getByRole("button", { name: "创建任务" }));
 
     await waitFor(() => expect(mockToastError).toHaveBeenCalledTimes(1));
     expect(mockToastError).toHaveBeenCalledWith("Backend says title is taken");
@@ -682,8 +682,8 @@ describe("CreateIssueModal", () => {
     mockCreateIssue.mockRejectedValue(new Error("Server is overloaded, try again"));
 
     renderModal(<CreateIssueModal onClose={vi.fn()} />);
-    await user.type(screen.getByPlaceholderText("issue 标题"), "Anything");
-    await user.click(screen.getByRole("button", { name: "创建 issue" }));
+    await user.type(screen.getByPlaceholderText("任务标题"), "Anything");
+    await user.click(screen.getByRole("button", { name: "创建任务" }));
 
     await waitFor(() => expect(mockToastError).toHaveBeenCalledTimes(1));
     expect(mockToastError).toHaveBeenCalledWith("Server is overloaded, try again");
@@ -696,11 +696,11 @@ describe("CreateIssueModal", () => {
     mockCreateIssue.mockRejectedValue("network exploded");
 
     renderModal(<CreateIssueModal onClose={vi.fn()} />);
-    await user.type(screen.getByPlaceholderText("issue 标题"), "Anything");
-    await user.click(screen.getByRole("button", { name: "创建 issue" }));
+    await user.type(screen.getByPlaceholderText("任务标题"), "Anything");
+    await user.click(screen.getByRole("button", { name: "创建任务" }));
 
     await waitFor(() => expect(mockToastError).toHaveBeenCalledTimes(1));
-    expect(mockToastError).toHaveBeenCalledWith("创建 issue 失败");
+    expect(mockToastError).toHaveBeenCalledWith("创建任务失败");
   });
 
   it("forwards the picked project when switching to agent mode", async () => {
@@ -719,7 +719,7 @@ describe("CreateIssueModal", () => {
       />,
     );
 
-    await user.type(screen.getByPlaceholderText("issue 标题"), "Refactor auth");
+    await user.type(screen.getByPlaceholderText("任务标题"), "Refactor auth");
 
     await user.click(screen.getByRole("button", { name: /切换到智能体/i }));
 
@@ -763,7 +763,7 @@ describe("CreateIssueModal", () => {
       />,
     );
 
-    await user.type(screen.getByPlaceholderText("issue 标题"), "Refactor auth");
+    await user.type(screen.getByPlaceholderText("任务标题"), "Refactor auth");
     await user.click(screen.getByRole("button", { name: /切换到智能体/i }));
 
     expect(onSwitchMode).toHaveBeenCalledTimes(1);
@@ -815,7 +815,7 @@ describe("CreateIssueModal", () => {
       />,
     );
 
-    await user.type(screen.getByPlaceholderText("issue 标题"), "Update");
+    await user.type(screen.getByPlaceholderText("任务标题"), "Update");
     await user.type(screen.getByPlaceholderText("添加描述..."), "Some body");
 
     mockSetDraft.mockClear();

@@ -17,7 +17,7 @@ const waitMs = Number(trimEnv("ACCEPTANCE_DEMO_WAIT_MS") || 180_000);
 const forceNewDemoEvidence = trimEnv("ACCEPTANCE_DEMO_FORCE_NEW") === "1";
 
 const token = await login();
-const workspace = await ensureWorkspace(token, "Goal Test Daemon", workspaceSlug);
+const workspace = await ensureWorkspace(token, "goal-test 联调工作区", workspaceSlug);
 await markUserOnboarded(demoAccount);
 
 const readiness = await authedJSON(token, workspace, "/api/prompt-evaluation-runtime-readiness");

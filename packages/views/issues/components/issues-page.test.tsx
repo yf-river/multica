@@ -569,7 +569,7 @@ describe("IssuesPage (shared)", () => {
 
     renderWithQuery(<IssuesPage />);
 
-    await screen.findByText("问题");
+    await screen.findByText("任务");
     // The list header is now `icon + title`, matching the other list pages.
     // The workspace/org name is no longer rendered as a breadcrumb prefix.
     expect(screen.queryByText("Test WS")).not.toBeInTheDocument();
@@ -580,8 +580,8 @@ describe("IssuesPage (shared)", () => {
 
     renderWithQuery(<IssuesPage />);
 
-    await screen.findByText("还没有 issue");
-    expect(screen.getByText("创建一个 issue 开始使用。")).toBeInTheDocument();
+    await screen.findByText("还没有任务");
+    expect(screen.getByText("创建一个任务开始使用。")).toBeInTheDocument();
   });
 
   it("shows scope tab buttons", async () => {

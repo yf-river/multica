@@ -3,6 +3,7 @@ import {
   DEFAULT_TRAINING_WORKBENCH_TAB,
   DEFAULT_TRAINING_WORKBENCH_VIEW,
   trainingWorkbenchTabFromView,
+  trainingWorkbenchShowsPromptEditor,
   trainingWorkbenchTitleFromView,
 } from "./index";
 
@@ -17,6 +18,12 @@ describe("training workbench navigation", () => {
 
   it("keeps legacy prompt-library deep links on the prompt library tab", () => {
     expect(trainingWorkbenchTabFromView("prompts")).toBe("提示词库");
+  });
+
+  it("only shows the prompt editor on the prompt library route", () => {
+    expect(trainingWorkbenchShowsPromptEditor("prompts")).toBe(true);
+    expect(trainingWorkbenchShowsPromptEditor("runs")).toBe(false);
+    expect(trainingWorkbenchShowsPromptEditor("run-history")).toBe(false);
   });
 
   it("builds distinct Chinese titles for desktop training tabs", () => {

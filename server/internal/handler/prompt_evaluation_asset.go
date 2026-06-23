@@ -860,7 +860,7 @@ func promptEvaluationSummaryToResponse(workspaceID pgtype.UUID, row db.GetPrompt
 			"输入token":  row.InputTokens,
 			"输出token":  row.OutputTokens,
 			"预估成本":     row.EstimatedCost,
-			"Agent运行数": row.AgentRuns,
+			"智能体运行数":   row.AgentRuns,
 			"模板渲染检查数":  row.LocalRuns,
 			"需人工复核":    row.ReviewRuns,
 			"待确认优化候选":  row.PendingCandidates,
@@ -3302,7 +3302,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, asset, agentRow, runtimeRow, task.ID, session.ID, parseUUID(userID), "Agent 调试场", payload, cases)
+	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, asset, agentRow, runtimeRow, task.ID, session.ID, parseUUID(userID), "智能体调试场", payload, cases)
 	if !ok {
 		return
 	}
@@ -4094,7 +4094,7 @@ func (h *Handler) promptEvaluationRuntimeReadiness(ctx context.Context, workspac
 		if inaccessibleRuntime > 0 {
 			return promptEvaluationRuntimeReadinessResponse("无权限", providerName+" 无权限", "当前 workspace 存在 "+providerName+" runtime，但你没有绑定或使用权限。", "请让 runtime 所有者将 "+providerName+" runtime 设为 public，或由 workspace 管理员为训练评估 Agent 绑定可用 runtime。", nil, checkedAt), nil
 		}
-		return promptEvaluationRuntimeReadinessResponse("缺失", providerName+" 缺失", "当前 workspace 未发现 "+providerName+" runtime，Agent 调试场不能执行 "+promptEvaluationAgentModel()+"。", "安装并配置 "+provider+"，启动 multica daemon，等待 /api/runtimes 出现 provider="+provider+" 且 status=online 的 runtime。", nil, checkedAt), nil
+		return promptEvaluationRuntimeReadinessResponse("缺失", providerName+" 缺失", "当前工作区未发现 "+providerName+" 运行时，智能体调试场不能执行 "+promptEvaluationAgentModel()+"。", "安装并配置 "+provider+"，启动 multica 守护进程，等待 /api/runtimes 出现 provider="+provider+" 且 status=online 的运行时。", nil, checkedAt), nil
 	}
 	ageSeconds := promptEvaluationRuntimeAgeSeconds(*best, checkedAt)
 	respRuntime := runtimeToResponse(*best)
@@ -4168,7 +4168,7 @@ func promptEvaluationAgentInstructions() string {
 		"你是 Multica 训练与评估 Agent。你只负责执行当前提示词评估任务，必须使用中文输出。",
 		"输出必须包含执行结论、逐用例结果、失败原因、改进建议、可复盘证据。",
 		"最终回复必须包含一个可机读 JSON 代码块，schema 必须是 multica.training_evaluation.agent_verdict.v1，字段为：schema_version、schema、case_results、summary。",
-		"不要修改业务代码，不要创建 issue，不要泄露密钥。",
+		"不要修改业务代码，不要创建任务，不要泄露密钥。",
 	}, "\n")
 }
 

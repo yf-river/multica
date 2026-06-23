@@ -39,7 +39,7 @@ test("旧 onboarding 链接会直接进入已有工作区", async ({ page }) => 
   await loginInBrowser(page, account);
 
   await page.goto("/onboarding", { waitUntil: "domcontentloaded" });
-  await waitForPageText(page, "新建 issue");
+  await waitForPageText(page, "新建任务");
 
   await expect(page).toHaveURL(new RegExp(`/${workspace.slug}/issues$`));
   await expect(page.getByText("你是从哪里了解到 Multica 的？")).toHaveCount(0);

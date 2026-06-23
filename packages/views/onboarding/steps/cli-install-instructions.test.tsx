@@ -25,5 +25,7 @@ describe("CliInstallInstructions", () => {
         "multica setup self-host --server-url http://localhost:3000 --app-url http://localhost:3000",
       ),
     ).toHaveClass(...ligatureClasses);
+    expect(screen.getByText("1. 安装 Multica 命令行工具")).toBeInTheDocument();
+    expect(screen.getByText("2. 连接本平台并启动守护进程")).toBeInTheDocument();
   });
 });

@@ -1,16 +1,17 @@
 import { expect, type Page } from "@playwright/test";
 import { TestApiClient } from "./fixtures";
 
-const DEFAULT_E2E_NAME = "E2E User";
+const DEFAULT_E2E_NAME = process.env.E2E_NAME ?? "E2E User";
 const E2E_WORKER = process.env.TEST_PARALLEL_INDEX ?? process.env.TEST_WORKER_INDEX ?? "0";
 const E2E_RUN_ID = process.env.E2E_RUN_ID ?? `${Date.now().toString(36)}-${process.pid.toString(36)}`;
-const DEFAULT_E2E_ACCOUNT = `e2e-${E2E_WORKER}-${E2E_RUN_ID}`;
-const DEFAULT_E2E_WORKSPACE = `e2e-workspace-${E2E_WORKER}-${E2E_RUN_ID}`;
-const E2E_PASSWORD = "e2e-password";
+const DEFAULT_E2E_ACCOUNT = process.env.E2E_ACCOUNT ?? `e2e-${E2E_WORKER}-${E2E_RUN_ID}`;
+const DEFAULT_E2E_WORKSPACE = process.env.E2E_WORKSPACE ?? `e2e-workspace-${E2E_WORKER}-${E2E_RUN_ID}`;
+const DEFAULT_E2E_WORKSPACE_NAME = process.env.E2E_WORKSPACE_NAME ?? `E2E Workspace ${E2E_WORKER}`;
+const E2E_PASSWORD = process.env.E2E_PASSWORD ?? "e2e-password";
 
 async function waitForIssuesPage(page: Page) {
-  await waitForPageText(page, "新建 issue", 60000);
-  await expect(page.getByRole("button", { name: "新建 issue" })).toBeVisible({
+  await waitForPageText(page, "新建任务", 60000);
+  await expect(page.getByRole("button", { name: "新建任务" })).toBeVisible({
     timeout: 30000,
   });
 }
@@ -25,7 +26,7 @@ export async function waitForPageText(page: Page, text: string, timeout = 30000)
 
 export async function reloadAppPage(page: Page) {
   await page.reload({ waitUntil: "domcontentloaded" });
-  await waitForPageText(page, "Issues");
+  await waitForPageText(page, "新建任务");
 }
 
 /**
@@ -39,7 +40,7 @@ export async function loginAsDefault(page: Page): Promise<string> {
   const api = new TestApiClient();
   await api.login(DEFAULT_E2E_ACCOUNT, DEFAULT_E2E_NAME);
   const workspace = await api.ensureWorkspace(
-    `E2E Workspace ${E2E_WORKER}`,
+    DEFAULT_E2E_WORKSPACE_NAME,
     DEFAULT_E2E_WORKSPACE,
   );
   await api.markUserOnboarded();
@@ -83,7 +84,7 @@ export async function loginAsDefault(page: Page): Promise<string> {
 export async function createTestApi(): Promise<TestApiClient> {
   const api = new TestApiClient();
   await api.login(DEFAULT_E2E_ACCOUNT, DEFAULT_E2E_NAME);
-  await api.ensureWorkspace(`E2E Workspace ${E2E_WORKER}`, DEFAULT_E2E_WORKSPACE);
+  await api.ensureWorkspace(DEFAULT_E2E_WORKSPACE_NAME, DEFAULT_E2E_WORKSPACE);
   await api.markUserOnboarded();
   return api;
 }
@@ -101,7 +102,7 @@ export async function preferManualCreateMode(page: Page) {
 
 export async function openWorkspaceMenu(page: Page) {
   // Click the workspace switcher button (has ChevronDown icon)
-  const workspaceButton = page.getByRole("button", { name: /E2E Workspace/ }).first();
+  const workspaceButton = page.getByRole("button", { name: new RegExp(DEFAULT_E2E_WORKSPACE_NAME) }).first();
   await expect(workspaceButton).toBeVisible({ timeout: 15000 });
   await workspaceButton.click();
   // Wait for dropdown to appear

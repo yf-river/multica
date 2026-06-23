@@ -39,11 +39,17 @@ test.describe("Navigation", () => {
       const input = page.getByPlaceholder("输入命令或关键词搜索...");
       await expect(input).toBeVisible({ timeout: 10000 });
       await input.fill(item.query);
-      await page.getByText(item.command, { exact: true }).click();
+      await page
+        .getByText(item.command, { exact: true })
+        .locator("xpath=ancestor::*[@cmdk-item][1]")
+        .click();
 
       await expect(page).toHaveURL(new RegExp(`/training/${item.path}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
       await waitForPageText(page, item.text);
       await expect(page.locator('[data-active="true"]').filter({ hasText: item.nav }).first()).toBeVisible();
+      await expect(page.getByTestId("prompt-library-editor")).toHaveCount(item.showPromptEditor ? 1 : 0);
+      await expect(page.getByTestId("prompt-version-history")).toHaveCount(item.showPromptEditor ? 1 : 0);
+      await expect(page.getByRole("button", { name: "创建 user-center 需求澄清提示词" })).toHaveCount(item.path === "prompts" ? 1 : 0);
       await expect(page.getByTestId("training-summary-strip")).toContainText("项目总览", { timeout: 30000 });
     }
   });
@@ -54,7 +60,7 @@ test.describe("Navigation", () => {
     await waitForPageText(page, DEFAULT_TRAINING_ROUTE.text);
 
     for (const item of TRAINING_ROUTES) {
-      await page.getByRole("link", { name: item.nav, exact: true }).click();
+      await page.locator('[data-sidebar="menu-button"]').filter({ hasText: item.nav }).first().click();
       await expect(page).toHaveURL(new RegExp(`/training/${item.path}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
       await waitForPageText(page, item.text);
       await expect(page.locator('[data-active="true"]').filter({ hasText: item.nav }).first()).toBeVisible();

@@ -18,7 +18,7 @@
     "show_details": "查看详情",
     "replied_in": "{{elapsed}} 内回复",
     "failed_after": "{{elapsed}} 后失败",
-    "task_failed_fallback": "task 失败",
+    "task_failed_fallback": "任务失败",
     "tools_other": "{{count}} 个工具",
     "tool_result_named": "{{tool}} 结果：",
     "tool_result_unnamed": "结果：",
@@ -82,7 +82,7 @@
   "empty_state": {
     "first_time_title": "和你的智能体对话",
     "first_time_intro": "✨ 它们了解你的工作区——",
-    "first_time_pillars": "issue、项目、skill",
+    "first_time_pillars": "任务、项目、skill",
     "first_time_pillars_suffix": "。",
     "first_time_actions": "让它做一份总结、规划你的一天，或交给它一个小任务。",
     "returning_title_named": "你好，我是 {{name}}",

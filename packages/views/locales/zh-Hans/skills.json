@@ -1,6 +1,6 @@
 {
   "page": {
-    "title": "Skills",
+    "title": "技能",
     "tagline": "工作区里任何智能体都能使用的指令。",
     "learn_more": "了解更多 →",
     "new_skill": "新建 skill",
@@ -153,7 +153,7 @@
       "permissions_owner": "你可以编辑和删除这个 skill。修改在智能体下次运行时生效。",
       "permissions_locked_creator": "只有创建者（{{name}}）或工作区管理员能编辑这个 skill。",
       "permissions_locked": "只有创建者或工作区管理员能编辑这个 skill。",
-      "used_by_empty": "还未分配给任何智能体。打开某个智能体的 Skills 标签页进行分配。"
+      "used_by_empty": "还未分配给任何智能体。打开某个智能体的 技能标签页进行分配。"
     },
     "origin_card": {
       "imported_runtime": "从本地运行时导入",
@@ -165,7 +165,7 @@
     "not_found": {
       "title": "未找到该 skill",
       "fallback": "这个 skill 可能已被删除，或你没有访问权限。",
-      "back": "返回 Skills"
+      "back": "返回技能"
     },
     "toast_saved": "已保存 skill",
     "toast_save_failed": "保存 skill 失败",
@@ -210,7 +210,7 @@
       },
       "url": {
         "title": "从 URL 导入",
-        "desc": "通过 URL 拉取已发布的 skill，文件由服务端拉取。"
+        "desc": "通过 URL 拉取已发布的技能包，文件由服务端拉取。"
       },
       "runtime": {
         "title": "从运行时复制",
@@ -221,7 +221,7 @@
       "manual_title": "手动创建",
       "manual_desc": "从空白 SKILL.md 开始，自己写指令。",
       "url_title": "从 URL 导入",
-      "url_desc": "从 ClawHub 或 Skills.sh 拉取已发布的 skill。",
+      "url_desc": "从 ClawHub 或 Skills.sh 拉取已发布的技能包。",
       "runtime_title": "从运行时复制",
       "runtime_desc": "把本地运行时里已经装好的 skill 提升过来。"
     },

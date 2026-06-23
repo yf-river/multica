@@ -30,7 +30,7 @@ const profiles = {
     daemonProfile: "goal-test-int",
     daemonID: "goal-test-codex-int",
     runtimeName: "Goal Test Codex Int",
-    frontendMode: "next-dev",
+    frontendMode: "next-start",
   },
 };
 
@@ -86,7 +86,13 @@ function ensureEnvironment(item) {
 
 function deployEnvironment(item, build) {
   const envFile = ensureEnvironment(item);
-  const env = { ...process.env, ...readEnvFile(envFile), HOSTNAME: "0.0.0.0", NEXT_PUBLIC_APP_VERSION: gitText(["rev-parse", "--short=12", "HEAD"]) };
+  const env = {
+    ...process.env,
+    ...readEnvFile(envFile),
+    HOSTNAME: "0.0.0.0",
+    NEXT_PUBLIC_APP_VERSION: gitText(["rev-parse", "--short=12", "HEAD"]),
+    GOAL_TEST_REMOTE_API_URL: `http://127.0.0.1:${item.backendPort}`,
+  };
   mkdirSync(runDir, { recursive: true });
   ensureDatabase(env.DATABASE_URL, item.databaseName);
   if (build) {
@@ -348,17 +354,18 @@ async function targetAlreadySeeded(target) {
 function passwordHash(password) {
   const salt = crypto.randomBytes(16);
   const key = crypto.pbkdf2Sync(password, salt, 210000, 32, 'sha256');
-  return ['pbkdf2_sha256', '210000', salt.toString('base64url'), key.toString('base64url')].join('$');
+  const rawBase64 = (buf) => buf.toString('base64').replace(/=+$/, '');
+  return ['pbkdf2_sha256', '210000', rawBase64(salt), rawBase64(key)].join('$');
 }
 
 async function seedFromScratch(target) {
   const user = await target.query(
-    'INSERT INTO "user" (name, account, onboarded_at, starter_content_state, password_hash, created_at, updated_at) VALUES ($1, $2, now(), $3, $4, now(), now()) ON CONFLICT (account) DO UPDATE SET password_hash = EXCLUDED.password_hash, onboarded_at = COALESCE("user".onboarded_at, now()), updated_at = now() RETURNING id',
-    ['Goal Test Daemon', account, 'imported', passwordHash('e2e-password')],
+    'INSERT INTO "user" (name, account, onboarded_at, starter_content_state, password_hash, created_at, updated_at) VALUES ($1, $2, now(), $3, $4, now(), now()) ON CONFLICT (account) DO UPDATE SET name = EXCLUDED.name, password_hash = EXCLUDED.password_hash, onboarded_at = COALESCE("user".onboarded_at, now()), updated_at = now() RETURNING id',
+    ['goal-test 验收账号', account, 'imported', passwordHash('e2e-password')],
   );
   const workspace = await target.query(
-    'INSERT INTO workspace (name, slug, description, context, issue_prefix) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (slug) DO UPDATE SET updated_at = now() RETURNING id',
-    ['Goal Test Daemon', workspaceSlug, 'goal-test 联调开发工作区', '用于 Multica goal-test 联调、验收和性能调试。', 'GTD'],
+    'INSERT INTO workspace (name, slug, description, context, issue_prefix) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, context = EXCLUDED.context, updated_at = now() RETURNING id',
+    ['goal-test 联调工作区', workspaceSlug, 'goal-test 联调开发工作区', '用于 Multica goal-test 联调、验收和性能调试。', 'GTD'],
   );
   await target.query(
     'INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = EXCLUDED.role',
@@ -374,6 +381,7 @@ async function seedFromScratch(target) {
   try {
     await target.query('BEGIN');
     if (await targetAlreadySeeded(target)) {
+      await seedFromScratch(target);
       await target.query('COMMIT');
       return;
     }
@@ -392,6 +400,7 @@ async function seedFromScratch(target) {
       const quoted = columns.map((c) => '"' + c.replace(/"/g, '""') + '"').join(', ');
       const placeholders = columns.map((_, i) => '$' + (i + 1)).join(', ');
       await target.query('INSERT INTO member (' + quoted + ') VALUES (' + placeholders + ') ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = EXCLUDED.role', columns.map((c) => row[c]));
+      await seedFromScratch(target);
     } else {
       await seedFromScratch(target);
     }

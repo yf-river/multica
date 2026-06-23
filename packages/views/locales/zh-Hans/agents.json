@@ -1,7 +1,7 @@
 {
   "page": {
     "title": "智能体",
-    "tagline": "能领取 issue、留下评论、推进状态的 AI 队友。",
+    "tagline": "能领取任务、留下评论、推进状态的 AI 队友。",
     "learn_more": "了解更多 →",
     "new_agent": "新建智能体",
     "search_placeholder": "搜索智能体...",
@@ -40,7 +40,7 @@
   },
   "empty": {
     "title": "还没有智能体",
-    "description": "创建一个智能体，像分配给同事那样把 issue 交给它。本地智能体在你的机器上运行，云智能体在 Multica 运行时上运行。"
+    "description": "创建一个智能体，像分配给同事那样把任务交给它。本地智能体在你的机器上运行，云智能体在 Multica 运行时上运行。"
   },
   "no_matches": {
     "title": "无匹配项",
@@ -91,7 +91,7 @@
     "failed_suffix": " · {{count}} 次失败（{{percent}}%）"
   },
   "row_actions": {
-    "cancel_all_tasks": "取消全部 task",
+    "cancel_all_tasks": "取消全部任务",
     "duplicate": "复制",
     "restore": "恢复",
     "archive": "归档",
@@ -99,20 +99,20 @@
     "archive_failed_toast": "归档智能体失败",
     "agent_restored_toast": "已恢复智能体",
     "restore_failed_toast": "恢复智能体失败",
-    "no_tasks_to_cancel_toast": "没有要取消的活动 task",
-    "cancelled_tasks_toast_other": "已取消 {{count}} 个 task",
-    "cancel_failed_toast": "取消 task 失败",
-    "cancel_dialog_title": "取消\"{{name}}\"的全部 task？",
-    "cancel_dialog_no_tasks": "没有要取消的活动 task。",
+    "no_tasks_to_cancel_toast": "没有要取消的活动任务",
+    "cancelled_tasks_toast_other": "已取消 {{count}} 个任务",
+    "cancel_failed_toast": "取消任务失败",
+    "cancel_dialog_title": "取消\"{{name}}\"的全部任务？",
+    "cancel_dialog_no_tasks": "没有要取消的活动任务。",
     "cancel_dialog_running_one": "{{count}} 个进行中",
     "cancel_dialog_queued_one": "{{count}} 个排队中",
-    "cancel_dialog_impact_other": "将取消 {{summary}} 个 task。",
-    "cancel_dialog_running_note": " 进行中的 task 最多需要 5 秒才能完全停止。",
-    "cancel_dialog_irreversible": " 已取消的 task 无法恢复。",
+    "cancel_dialog_impact_other": "将取消 {{summary}} 个任务。",
+    "cancel_dialog_running_note": " 进行中的任务 最多需要 5 秒才能完全停止。",
+    "cancel_dialog_irreversible": " 已取消的任务 无法恢复。",
     "cancel_dialog_keep": "保留",
-    "cancel_dialog_confirm": "取消全部 task",
+    "cancel_dialog_confirm": "取消全部任务",
     "archive_dialog_title": "归档\"{{name}}\"？",
-    "archive_dialog_description": "归档后这个智能体将无法被分配或提及，进行中的 task 会被取消。所有历史会被保留，可以稍后恢复。",
+    "archive_dialog_description": "归档后这个智能体将无法被分配或提及，进行中的任务 会被取消。所有历史会被保留，可以稍后恢复。",
     "archive_dialog_cancel": "取消",
     "archive_dialog_confirm": "归档"
   },
@@ -141,7 +141,7 @@
   "inspector": {
     "section_properties": "属性",
     "section_details": "详情",
-    "section_skills": "Skills",
+    "section_skills": "技能",
     "section_integrations": "外部集成",
     "prop_runtime": "运行时",
     "prop_model": "模型",
@@ -168,8 +168,8 @@
     "trigger_label": "附加"
   },
   "pickers": {
-    "concurrency_tooltip": "并发 · 最多 {{value}} 个并行 task",
-    "concurrency_range": "最大并行 task 数（{{min}}–{{max}}）",
+    "concurrency_tooltip": "并发 · 最多 {{value}} 个并行任务",
+    "concurrency_range": "最大并行任务 数（{{min}}–{{max}}）",
     "runtime_none": "无运行时",
     "runtime_tooltip": "运行时 · {{name}} · {{status}}",
     "runtime_tooltip_none": "运行时 · 未选择",
@@ -205,9 +205,9 @@
   },
   "tabs": {
     "activity": "动态",
-    "tasks": "Tasks",
+    "tasks": "任务",
     "instructions": "指令",
-    "skills": "Skills",
+    "skills": "技能",
     "environment": "环境变量",
     "custom_args": "自定义参数",
     "mcp_config": "MCP",
@@ -242,7 +242,7 @@
     "cancel": "取消",
     "create_failed_toast": "创建智能体失败",
     "skill_attach_failed_toast": "智能体已创建，但 skill 关联失败：{{error}}",
-    "squad_join_failed_toast": "智能体「{{name}}」已创建，但加入小队失败：{{error}}。你可以在 Members 标签里手动添加。",
+    "squad_join_failed_toast": "智能体「{{name}}」已创建，但加入小队失败：{{error}}。你可以在成员标签里手动添加。",
     "instructions": {
       "label": "指令",
       "placeholder_blank": "点击撰写指令…",
@@ -251,7 +251,7 @@
       "editor_placeholder": "写下这个智能体该做什么、关注什么、要避开什么…"
     },
     "skills_section": {
-      "label": "Skills",
+      "label": "技能",
       "placeholder": "从工作区添加 skill",
       "selected_other": "已选 {{count}} 个 —— 点击修改",
       "collapse": "收起",
@@ -276,7 +276,7 @@
       "unsaved_changes": "未保存的修改"
     },
     "instructions": {
-      "intro": "定义这个智能体的身份和工作风格。会注入到每个 task 的上下文。支持 Markdown。",
+      "intro": "定义这个智能体的身份和工作风格。会注入到每个任务 的上下文。支持 Markdown。",
       "placeholder": "定义这个智能体的角色、专长和工作风格。\n\n# 示例\n你是一名专注 React 和 TypeScript 的前端工程师。\n\n## 工作风格\n- 写小而聚焦的 PR —— 每个逻辑变更一个 commit\n- 优先组合而不是继承\n- 新组件总是配单元测试\n\n## 约束\n- 未经明确批准不要修改 shared/ 下的 type\n- 遵循 features/ 中现有的组件模式"
     },
     "env": {
@@ -323,12 +323,12 @@
       "redacted_hint": "只有智能体所有者或工作区管理员可以读取该配置。"
     },
     "runtime_config": {
-      "intro": "选择 OpenClaw 运行时执行该智能体每一回合的方式。Local 模式让智能体直接在 daemon 进程内运行；Gateway 模式则把每一回合转发到一个 OpenClaw Gateway —— 适合 daemon 宿主只是轻量协调机、希望真正算力落在更强的远端机器上的场景。",
+      "intro": "选择 OpenClaw 运行时执行该智能体每一回合的方式。本地模式让智能体直接在 守护进程内运行；网关模式则把每一回合转发到一个 OpenClaw Gateway —— 适合 守护进程主机只是轻量协调机、希望真正算力落在更强的远端机器上的场景。",
       "mode_label": "路由模式",
       "mode_local": "Local",
       "mode_gateway": "Gateway",
-      "mode_local_hint": "默认。daemon 调用 `openclaw agent --local …`，智能体循环跑在本机。",
-      "mode_gateway_hint": "daemon 连接 OpenClaw Gateway。端点字段留空则继承 daemon 宿主 `~/.openclaw/openclaw.json` 里的配置。",
+      "mode_local_hint": "默认。守护进程调用 `openclaw agent --local …`，智能体循环跑在本机。",
+      "mode_gateway_hint": "守护进程连接 OpenClaw Gateway。端点字段留空则继承 守护进程主机 `~/.openclaw/openclaw.json` 里的配置。",
       "gateway_legend": "Gateway 端点",
       "host_label": "Host",
       "host_placeholder": "gw.internal",
@@ -369,36 +369,36 @@
       "section_last_30d": "近 30 天",
       "section_recent": "最近工作",
       "subtitle_no_active": "无进行中的工作",
-      "subtitle_active_other": "{{count}} 个进行中的 task",
+      "subtitle_active_other": "{{count}} 个进行中的任务",
       "subtitle_performance": "表现",
-      "subtitle_no_recent": "还没有完成的 task",
+      "subtitle_no_recent": "还没有完成的任务",
       "subtitle_recent_progress": "{{shown}} / {{total}}",
       "subtitle_recent_latest": "最近 {{count}} 条",
-      "empty_now": "这个智能体当前没有在跑任何 task。",
+      "empty_now": "这个智能体当前没有在跑任何任务。",
       "empty_30d": "近 30 天没有任何完成记录。",
-      "empty_recent": "这个智能体还没有完成过任何 task。",
+      "empty_recent": "这个智能体还没有完成过任何任务。",
       "show_more": "查看更多 →",
       "runs_other": "次运行",
       "success_pct": "{{percent}}% 成功",
       "avg_duration": "平均 {{value}}",
       "failed_count": "{{count}} 次失败",
-      "source_issue": "Issue",
+      "source_issue": "任务",
       "source_chat": "聊天",
       "source_autopilot": "自动化",
       "source_untracked": "未追踪",
       "source_quick_create": "快速创建",
-      "source_creating_issue": "正在创建 issue",
+      "source_creating_issue": "正在创建任务",
       "source_chat_session": "聊天会话",
       "source_autopilot_run": "自动化运行",
-      "issue_short_fallback": "Issue {{prefix}}...",
+      "issue_short_fallback": "任务 {{prefix}}...",
       "triggered_by": "触发来源",
-      "open_issue_aria": "打开 issue",
-      "open_issue_tooltip": "打开 issue",
+      "open_issue_aria": "打开任务",
+      "open_issue_tooltip": "打开任务",
       "transcript_tooltip": "查看记录",
-      "cancel_task_aria": "取消 task",
-      "cancel_task_tooltip": "取消 task",
+      "cancel_task_aria": "取消任务",
+      "cancel_task_tooltip": "取消任务",
       "cancelling_tooltip": "正在取消...",
-      "cancel_failed_toast": "取消 task 失败",
+      "cancel_failed_toast": "取消任务失败",
       "started_prefix": "{{when}}启动",
       "dispatched_prefix": "{{when}}派发",
       "queued_prefix": "{{when}}排队"
@@ -424,7 +424,7 @@
     "unavailable": "智能体不可用",
     "detail_link": "详情 →",
     "runtime_label": "运行时",
-    "skills_label": "Skills",
+    "skills_label": "技能",
     "owner_label": "所有者",
     "unknown_runtime": "未知运行时"
   },
@@ -456,7 +456,7 @@
   },
   "task_failure": {
     "agent_error": "智能体执行出错",
-    "timeout": "task 超时",
+    "timeout": "任务超时",
     "runtime_offline": "守护进程离线",
     "runtime_recovery": "守护进程已重启",
     "manual": "用户取消"

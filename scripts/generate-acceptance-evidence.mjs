@@ -587,7 +587,7 @@ function buildCommandPlan() {
       timeoutMs: 900_000,
     },
     {
-      name: "真实 Agent E2E",
+      name: "真实智能体 E2E",
       command: [
         "RUN_REAL_AGENT_E2E=1",
         `MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER=${shellQuote(realAgentProvider)}`,
@@ -858,7 +858,7 @@ function loadOpikEvidence() {
   const mapping = [
     ["提示词库", "训练与评估 / 提示词"],
     ["提示词调试场", "训练与评估 / 提示词调试场"],
-    ["Agent 调试场", "训练与评估 / Agent 调试场"],
+    ["智能体调试场", "训练与评估 / 智能体调试场"],
     ["数据集", "prompt_evaluation_asset + prompt_evaluation_dataset_row"],
     ["测试套件", "prompt_evaluation_asset + prompt_evaluation_test_suite_case"],
     ["实验", "prompt_evaluation_asset + prompt_evaluation_experiment_dimension"],
@@ -897,7 +897,7 @@ function buildRisks({ health, ready, login, account, commandResults, git, databa
     risks.push("仍存在未执行或失败的测试命令；正式交付前需跑 acceptance:verify 并保留报告。");
   }
   if (e2eEvidence?.["公开API创建Agent小队Issue"]?.["外部依赖失败"]) {
-    risks.push("公开 API 已创建真实 Agent/小队/Issue 并进入 daemon 执行，但 Codex 外部模型认证、额度或容量失败；该场景未标记为通过，需修复外部 runtime 后重跑。");
+    risks.push("公开 API 已创建真实智能体/小队/Issue 并进入 daemon 执行，但 Codex 外部模型认证、额度或容量失败；该场景未标记为通过，需修复外部 runtime 后重跑。");
   }
   if (e2eEvidence?.["公开API训练评估闭环"] && e2eEvidence["公开API训练评估闭环"]["状态"] !== "通过") {
     risks.push("公开 API 训练评估闭环未通过，提示词版本、数据集、测试套件、实验、优化候选发布证据不足。");
@@ -906,7 +906,7 @@ function buildRisks({ health, ready, login, account, commandResults, git, databa
     risks.push("公开 API 未创建并回读优化运行资产，优化运行模块仍缺少可验收证据。");
   }
   if (e2eEvidence?.["公开API训练评估闭环"]?.["Agent外部依赖失败"]) {
-    risks.push("公开 API 训练评估已完成提示词/数据集/测试套件/实验/优化候选闭环，但真实 Agent 测试套件执行失败于外部模型认证、额度或容量边界；需修复 runtime 后重跑。");
+    risks.push("公开 API 训练评估已完成提示词/数据集/测试套件/实验/优化候选闭环，但真实智能体 测试套件执行失败于外部模型认证、额度或容量边界；需修复 runtime 后重跑。");
   }
   if (databaseEvidence.status !== "已抽查") {
     risks.push(`数据库结果抽查未完成：${databaseEvidence.reason || databaseEvidence.status}`);
@@ -1081,10 +1081,10 @@ ${latestTraceRows}
 - 测试套件：${apiTraining["Test Suite ID"] || "未记录"}，用例：${apiTraining["测试套件用例"] ?? "未记录"}
 - 实验：${apiTraining["Experiment ID"] || "未记录"}，维度事实：${apiTraining["实验维度事实"] ?? "未记录"}
 - 运行：${apiTraining["Run ID"] || "未记录"}，状态：${apiTraining["Run状态"] || "未记录"}，失败用例：${apiTraining["失败用例"] ?? "未记录"}
-- 真实 Agent 运行：${apiTraining["Agent Run ID"] || "未记录"}，Task：${apiTraining["Agent Task ID"] || "未记录"}
-- 真实 Agent Runtime：${apiTraining["Agent Runtime ID"] || "未记录"}，模型：${apiTraining["Agent模型"] || "未记录"}
-- 真实 Agent 证据：trace ${apiTraining["Agent trace事件数"] ?? "未记录"}，trial ${apiTraining["Agent trial数"] ?? "未记录"}，消息 ${apiTraining["Agent消息数"] ?? "未记录"}
-- 真实 Agent token：输入 ${apiTraining["Agent输入token"] ?? "未记录"}，输出 ${apiTraining["Agent输出token"] ?? "未记录"}，外部依赖失败：${apiTraining["Agent外部依赖失败"] ? "是" : "否"}
+- 真实智能体 运行：${apiTraining["Agent Run ID"] || "未记录"}，Task：${apiTraining["Agent Task ID"] || "未记录"}
+- 真实智能体 Runtime：${apiTraining["Agent Runtime ID"] || "未记录"}，模型：${apiTraining["Agent模型"] || "未记录"}
+- 真实智能体 证据：trace ${apiTraining["Agent trace事件数"] ?? "未记录"}，trial ${apiTraining["Agent trial数"] ?? "未记录"}，消息 ${apiTraining["Agent消息数"] ?? "未记录"}
+- 真实智能体 token：输入 ${apiTraining["Agent输入token"] ?? "未记录"}，输出 ${apiTraining["Agent输出token"] ?? "未记录"}，外部依赖失败：${apiTraining["Agent外部依赖失败"] ? "是" : "否"}
 - 优化候选：${apiTraining["Optimization Candidate ID"] || "未记录"}，状态：${apiTraining["Optimization Candidate状态"] || "未记录"}
 - 优化运行资产：${apiTraining["Optimization Run Asset ID"] || "未记录"}，状态：${apiTraining["Optimization Run Asset状态"] || "未记录"}
 - 发布版本：${apiTraining["Published Prompt ID"] || "未记录"}，版本：${apiTraining["Published Prompt版本"] ?? "未记录"}

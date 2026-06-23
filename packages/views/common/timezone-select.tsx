@@ -37,11 +37,21 @@ let cachedBrowserTZ: string | null = null;
 export function browserTimezone(): string {
   if (cachedBrowserTZ !== null) return cachedBrowserTZ;
   try {
-    cachedBrowserTZ = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    const detected = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
+    cachedBrowserTZ = isValidTimeZone(detected) ? detected : "UTC";
   } catch {
     cachedBrowserTZ = "UTC";
   }
   return cachedBrowserTZ;
+}
+
+export function isValidTimeZone(value: string): boolean {
+  try {
+    Intl.DateTimeFormat("en-US", { timeZone: value }).format(0);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 // Clears the module-level browserTimezone() cache. Browser code never
