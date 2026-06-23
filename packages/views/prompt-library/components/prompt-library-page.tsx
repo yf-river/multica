@@ -144,6 +144,7 @@ export function PromptLibraryPage({
   const [isDraftingNew, setIsDraftingNew] = useState(false);
   const [draft, setDraft] = useState<PromptDraft>(emptyDraft);
   const [debugValuesText, setDebugValuesText] = useState("");
+  const [caseDrafts, setCaseDrafts] = useState<Record<string, ManualCaseDraft>>({});
   const viewParam = trainingViewFromLocation(navigation.pathname, navigation.searchParams);
   const resolvedView = activeView ?? viewParam;
   const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => trainingWorkbenchTabFromView(resolvedView));
@@ -1095,6 +1096,8 @@ export function PromptLibraryPage({
                 onDeleteAsset={deleteAsset}
                 onCreateCase={(data) => createCaseMut.mutate(data)}
                 creatingCaseAssetId={createCaseMut.isPending ? createCaseMut.variables?.asset_id ?? null : null}
+                caseDrafts={caseDrafts}
+                onCaseDraftsChange={setCaseDrafts}
                 onUpdateCase={(caseId, data) => updateCaseMut.mutate({ caseId, data })}
                 updatingCaseId={updateCaseMut.isPending ? updateCaseMut.variables?.caseId ?? null : null}
                 onDeleteCase={(caseId) => deleteCaseMut.mutate(caseId)}
@@ -1143,6 +1146,8 @@ export function PromptLibraryPage({
               onDeleteAsset={deleteAsset}
               onCreateCase={(data) => createCaseMut.mutate(data)}
               creatingCaseAssetId={createCaseMut.isPending ? createCaseMut.variables?.asset_id ?? null : null}
+              caseDrafts={caseDrafts}
+              onCaseDraftsChange={setCaseDrafts}
               onUpdateCase={(caseId, data) => updateCaseMut.mutate({ caseId, data })}
               updatingCaseId={updateCaseMut.isPending ? updateCaseMut.variables?.caseId ?? null : null}
               onDeleteCase={(caseId) => deleteCaseMut.mutate(caseId)}
@@ -1723,6 +1728,8 @@ function WorkbenchPanel({
   onDeleteAsset,
   onCreateCase,
   creatingCaseAssetId,
+  caseDrafts,
+  onCaseDraftsChange,
   onUpdateCase,
   updatingCaseId,
   onDeleteCase,
@@ -1764,6 +1771,8 @@ function WorkbenchPanel({
   onDeleteAsset: (asset: PromptEvaluationAsset) => void;
   onCreateCase: (data: CreatePromptEvaluationCaseRequest) => void;
   creatingCaseAssetId: string | null;
+  caseDrafts: Record<string, ManualCaseDraft>;
+  onCaseDraftsChange: Dispatch<SetStateAction<Record<string, ManualCaseDraft>>>;
   onUpdateCase: (caseId: string, data: UpdatePromptEvaluationCaseRequest) => void;
   updatingCaseId: string | null;
   onDeleteCase: (caseId: string) => void;
@@ -1789,7 +1798,6 @@ function WorkbenchPanel({
   const caseSummaries = useMemo(() => buildCaseSummaries(cases), [cases]);
   const casesByAsset = useMemo(() => buildCasesByAsset(cases), [cases]);
   const experimentDimensionsByAsset = useMemo(() => buildExperimentDimensionsByAsset(experimentDimensions), [experimentDimensions]);
-  const [caseDrafts, setCaseDrafts] = useState<Record<string, ManualCaseDraft>>({});
   const candidatesByRun = useMemo(() => buildCandidatesByRun(candidates), [candidates]);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const evidenceQuery = useQuery({
@@ -2001,11 +2009,11 @@ function WorkbenchPanel({
                     asset={asset}
                     cases={casesByAsset.get(asset.id) ?? []}
                     draft={caseDrafts[asset.id] ?? emptyManualCaseDraft()}
-                    onDraftChange={(draft) => setCaseDrafts((prev) => ({ ...prev, [asset.id]: draft }))}
+                    onDraftChange={(draft) => onCaseDraftsChange((prev) => ({ ...prev, [asset.id]: draft }))}
                     onCreateCase={() => {
                       const draft = caseDrafts[asset.id] ?? emptyManualCaseDraft();
                       onCreateCase(buildManualCaseRequest(asset, draft, casesByAsset.get(asset.id)?.length ?? 0));
-                      setCaseDrafts((prev) => ({ ...prev, [asset.id]: emptyManualCaseDraft() }));
+                      onCaseDraftsChange((prev) => ({ ...prev, [asset.id]: emptyManualCaseDraft() }));
                     }}
                     creating={creatingCaseAssetId === asset.id}
                     onUpdateCase={onUpdateCase}
