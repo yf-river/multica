@@ -55,6 +55,17 @@ func isTaskNotFoundError(err error) bool {
 	return strings.Contains(strings.ToLower(reqErr.Body), "task not found")
 }
 
+func isTaskStartConflictError(err error) bool {
+	var reqErr *requestError
+	if !errors.As(err, &reqErr) {
+		return false
+	}
+	if reqErr.StatusCode != http.StatusConflict {
+		return false
+	}
+	return strings.Contains(strings.ToLower(reqErr.Body), "task is no longer startable")
+}
+
 // isUnauthorizedError returns true if the error is a 401 from the server.
 // Used by the token-renewal loop to surface a clear "re-login required"
 // message instead of a generic transport-level retry.
@@ -293,8 +304,8 @@ type (
 func (c *Client) SendHeartbeat(ctx context.Context, runtimeID string) (*HeartbeatResponse, error) {
 	var resp HeartbeatResponse
 	if err := c.postJSON(ctx, "/api/daemon/heartbeat", map[string]any{
-		"runtime_id":             runtimeID,
-		"supports_batch_import":  true,
+		"runtime_id":            runtimeID,
+		"supports_batch_import": true,
 	}, &resp); err != nil {
 		return nil, err
 	}

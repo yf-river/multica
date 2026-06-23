@@ -85,6 +85,24 @@ func TestClient_VersionOmittedWhenUnset(t *testing.T) {
 	}
 }
 
+func TestIsTaskStartConflictError(t *testing.T) {
+	err := &requestError{
+		Method:     http.MethodPost,
+		Path:       "/api/daemon/tasks/task-1/start",
+		StatusCode: http.StatusConflict,
+		Body:       `{"error":"task is no longer startable: current status completed"}`,
+	}
+	if !isTaskStartConflictError(err) {
+		t.Fatal("expected task start conflict to be recognized")
+	}
+	if isTaskStartConflictError(&requestError{StatusCode: http.StatusBadRequest, Body: err.Body}) {
+		t.Fatal("400 must not be treated as start conflict")
+	}
+	if isTaskStartConflictError(&requestError{StatusCode: http.StatusConflict, Body: `{"error":"other conflict"}`}) {
+		t.Fatal("unrelated 409 must not be treated as start conflict")
+	}
+}
+
 // noSleepRetry replaces retrySleep with an immediate no-op so tests don't
 // actually wait the 4s/8s/16s/... backoffs. Returns a restore func.
 func noSleepRetry(t *testing.T) func() {

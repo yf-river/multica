@@ -1863,6 +1863,11 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 
 	task, err := h.TaskService.StartTask(r.Context(), parseUUID(taskID))
 	if err != nil {
+		if errors.Is(err, service.ErrTaskStartConflict) {
+			slog.Info("start task skipped because task is no longer startable", "task_id", taskID, "error", err)
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		slog.Warn("start task failed", "task_id", taskID, "error", err)
 		writeError(w, http.StatusBadRequest, err.Error())
 		return

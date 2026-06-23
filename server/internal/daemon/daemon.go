@@ -25,6 +25,8 @@ import (
 	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
+var errTaskStartConflict = errors.New("task start skipped because task is no longer startable")
+
 // ErrRepoNotConfigured is returned by ensureRepoReady when the requested repo
 // URL is not present in the workspace's repo configuration after a fresh
 // server refresh.
@@ -2798,6 +2800,10 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	}
 
 	if err != nil {
+		if errors.Is(err, errTaskStartConflict) {
+			taskLog.Info("task skipped before start", "error", err)
+			return
+		}
 		taskLog.Error("task failed", "error", err)
 		// runTask returned without a TaskResult, so we don't have a SessionID
 		// to forward — best we can do is record the failure.
@@ -3280,6 +3286,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// "start task failed: <…>" string and the same failure_reason
 	// taxonomy as before — see MUL-2946 for the classifier contract.
 	if err := d.client.StartTask(ctx, task.ID); err != nil {
+		if isTaskStartConflictError(err) {
+			return TaskResult{}, errTaskStartConflict
+		}
 		return TaskResult{}, fmt.Errorf("start task failed: %w", err)
 	}
 	_ = d.client.ReportProgress(ctx, task.ID, fmt.Sprintf("Launching %s", provider), 1, 2)

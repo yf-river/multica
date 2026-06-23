@@ -44,6 +44,20 @@ type TaskService struct {
 	analyticsContextOrder []string
 }
 
+var ErrTaskStartConflict = errors.New("task is no longer startable")
+
+type TaskStartConflictError struct {
+	Status string
+}
+
+func (e TaskStartConflictError) Error() string {
+	return fmt.Sprintf("%s: current status %s", ErrTaskStartConflict, e.Status)
+}
+
+func (e TaskStartConflictError) Is(target error) bool {
+	return target == ErrTaskStartConflict
+}
+
 type TaskWakeupNotifier interface {
 	NotifyTaskAvailable(runtimeID, taskID string)
 }
@@ -1461,6 +1475,11 @@ func (s *TaskService) maybeLogClaimSlow(agentID pgtype.UUID, outcome string, sta
 func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.AgentTaskQueue, error) {
 	task, err := s.Queries.StartAgentTask(ctx, taskID)
 	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			if existing, getErr := s.Queries.GetAgentTask(ctx, taskID); getErr == nil {
+				return nil, TaskStartConflictError{Status: existing.Status}
+			}
+		}
 		return nil, fmt.Errorf("start task: %w", err)
 	}
 
