@@ -47,6 +47,11 @@ if (command === "ensure") {
 } else if (command === "verify") {
   const evidence = profileName === "all" ? verifyAll() : verifyTarget(profile);
   console.log(JSON.stringify(evidence, null, 2));
+  if (!evidence.ok) process.exit(2);
+} else if (command === "verify-logs") {
+  const evidence = profileName === "all" ? verifyAllLogs() : verifyLogsTarget(profile);
+  console.log(JSON.stringify(evidence, null, 2));
+  if (!evidence.ok) process.exit(2);
 } else {
   fail(`unknown command ${command}`);
 }
@@ -86,11 +91,13 @@ function ensureEnvironment(item) {
 
 function deployEnvironment(item, build) {
   const envFile = ensureEnvironment(item);
+  const deploymentStartedAt = new Date().toISOString();
+  const deploymentCommit = gitText(["rev-parse", "--short=12", "HEAD"]);
   const env = {
     ...process.env,
     ...readEnvFile(envFile),
     HOSTNAME: "0.0.0.0",
-    NEXT_PUBLIC_APP_VERSION: gitText(["rev-parse", "--short=12", "HEAD"]),
+    NEXT_PUBLIC_APP_VERSION: deploymentCommit,
     GOAL_TEST_REMOTE_API_URL: `http://127.0.0.1:${item.backendPort}`,
   };
   mkdirSync(runDir, { recursive: true });
@@ -110,6 +117,7 @@ function deployEnvironment(item, build) {
   killStaleProcesses(item);
   waitForPortFree(item.backendPort, 15_000);
   waitForPortFree(item.frontendPort, 15_000);
+  resetDeploymentLogs(item, deploymentStartedAt, deploymentCommit);
 
   let serverPID = startDetached("./server/bin/server", [], env, logPath(item, "server"));
   waitForHTTP(`http://127.0.0.1:${item.backendPort}/health`, 60_000);
@@ -163,6 +171,10 @@ function deployEnvironment(item, build) {
     },
     build_version: env.NEXT_PUBLIC_APP_VERSION,
     env_file: envFile,
+    log_window: {
+      started_at: deploymentStartedAt,
+      marker: deploymentLogMarker(item, deploymentStartedAt, deploymentCommit),
+    },
     log_paths: {
       server: logPath(item, "server"),
       web: logPath(item, "web"),
@@ -212,6 +224,50 @@ function verifyTarget(item) {
     target: item.name,
     [item.name === "prod" ? "prod" : "integration"]: result,
     ok: result.ok,
+  };
+}
+
+function verifyAllLogs() {
+  ensureEnvironment(profiles.prod);
+  ensureEnvironment(profiles.int);
+  const prod = verifyLogsForEnvironment(profiles.prod);
+  const intEnv = verifyLogsForEnvironment(profiles.int);
+  return {
+    schema: "multica.goal_test.log_evidence.v1",
+    generated_at: new Date().toISOString(),
+    current_commit: gitText(["rev-parse", "--short=12", "HEAD"]),
+    prod,
+    integration: intEnv,
+    ok: prod.ok && intEnv.ok,
+  };
+}
+
+function verifyLogsTarget(item) {
+  ensureEnvironment(item);
+  const result = verifyLogsForEnvironment(item);
+  return {
+    schema: "multica.goal_test.log_evidence.v1",
+    generated_at: new Date().toISOString(),
+    current_commit: gitText(["rev-parse", "--short=12", "HEAD"]),
+    target: item.name,
+    [item.name === "prod" ? "prod" : "integration"]: result,
+    ok: result.ok,
+  };
+}
+
+function verifyLogsForEnvironment(item) {
+  const metadata = existsSync(deploymentPath(item)) ? JSON.parse(readFileSync(deploymentPath(item), "utf8")) : null;
+  const marker = metadata?.log_window?.marker || "";
+  const services = ["server", "web", "daemon"].map((service) => scanServiceLog(item, service, marker));
+  const ok = Boolean(metadata) && services.every((service) => service.ok);
+  return {
+    environment: item.name,
+    label: item.label,
+    deployment_commit: metadata?.commit || "",
+    log_window: metadata?.log_window || null,
+    services,
+    ok,
+    status: ok ? "通过" : "失败",
   };
 }
 
@@ -282,6 +338,55 @@ function pidPath(item, name) {
 
 function logPath(item, name) {
   return path.join(runDir, `${item.name}-${name}.log`);
+}
+
+function deploymentLogMarker(item, deployedAt, commit) {
+  return `== goal-test deployment env=${item.name} commit=${commit} started_at=${deployedAt} ==`;
+}
+
+function resetDeploymentLogs(item, deployedAt, commit) {
+  const marker = deploymentLogMarker(item, deployedAt, commit);
+  for (const service of ["server", "web", "daemon"]) {
+    writeFileSync(logPath(item, service), `${marker} service=${service}\n`);
+  }
+}
+
+function scanServiceLog(item, service, marker) {
+  const file = logPath(item, service);
+  if (!existsSync(file)) {
+    return { service, path: file, ok: false, status: "失败", reason: "日志文件不存在", scanned_lines: 0, matches: [] };
+  }
+  const content = readFileSync(file, "utf8");
+  const markerIndex = marker ? content.lastIndexOf(marker) : -1;
+  const markerFound = markerIndex >= 0;
+  const windowContent = markerFound ? content.slice(markerIndex) : "";
+  const lines = windowContent.split(/\r?\n/).filter(Boolean);
+  const blocking = [
+    /\bERR\b/,
+    /\bERROR\b/,
+    /\bFATAL\b/,
+    /\bpanic\b/i,
+    /\bUnhandled\b/,
+    /\bECONNREFUSED\b/,
+    /\bTypeError\b/,
+    /\bReferenceError\b/,
+    /\bstatus=500\b/,
+  ];
+  const matches = [];
+  for (const [index, line] of lines.entries()) {
+    if (blocking.some((pattern) => pattern.test(line))) {
+      matches.push({ line: index + 1, text: line.slice(0, 500) });
+    }
+  }
+  return {
+    service,
+    path: file,
+    ok: markerFound && matches.length === 0,
+    status: markerFound && matches.length === 0 ? "通过" : "失败",
+    marker_found: markerFound,
+    scanned_lines: lines.length,
+    matches,
+  };
 }
 
 function readEnvFile(file) {
