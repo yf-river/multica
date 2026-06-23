@@ -23,7 +23,7 @@ function renderShell(overrides: Partial<React.ComponentProps<typeof StepQuestion
   render(
     <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
       <StepQuestion
-        step="source"
+        step="role"
         number={1}
         question="测试问题"
         options={OPTIONS}
@@ -105,7 +105,7 @@ describe("StepQuestion", () => {
     const { unmount } = render(
       <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
         <StepQuestion
-          step="source"
+          step="role"
           number={1}
           question="测试"
           options={OPTIONS}

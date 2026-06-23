@@ -27,15 +27,15 @@ export interface QuestionOption {
 }
 
 /**
- * Generic per-question step used by Source / Role / Use case. Back
+ * Generic per-question step used by Role / Use case. Back
  * lives in the page header next to the step indicator; Skip + Continue
  * sit inline directly below the options grid (with a status hint),
  * not in a sticky bottom footer — the form usually only fills the top
  * third of the viewport, and a footer pinned to the page bottom left a
  * large dead zone between the options and the action buttons.
  *
- * Supports both single-select (`multiSelect=false`, the default — Role
- * and Source) and multi-select (`multiSelect=true` — Use case). The
+ * Supports both single-select (`multiSelect=false`, the default — Role)
+ * and multi-select (`multiSelect=true` — Use case). The
  * contract is always an array of selected slugs and an `onAnswer(slug)`
  * callback fired when a card is clicked; the parent decides whether to
  * replace (single) or toggle (multi) the selection in its own state.
@@ -114,7 +114,7 @@ export function StepQuestion({
   };
 
   // Footer label:
-  //   - single select (Role / Source): name the picked option
+  //   - single select (Role): name the picked option
   //     ("hint_selected").
   //   - multi-select (Use case) with 1 pick: same.
   //   - multi-select with >1 pick: show count via the existing

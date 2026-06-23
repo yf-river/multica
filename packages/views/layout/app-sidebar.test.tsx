@@ -204,8 +204,8 @@ describe("AppSidebar workspace nav", () => {
   it("renders the 训练与评估 nav item and links to the canonical training route", () => {
     render(<AppSidebar />);
 
-    const item = document.querySelector('[data-href="/acme/training"]');
-    expect(item).toHaveAttribute("data-href", "/acme/training");
+    const item = document.querySelector('[data-href="/acme/training/runs"]');
+    expect(item).toHaveAttribute("data-href", "/acme/training/runs");
   });
 
   it("renders training submodule links and highlights the current training view", () => {
