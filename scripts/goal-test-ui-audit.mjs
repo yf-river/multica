@@ -135,8 +135,9 @@ async function auditRoute(page, route) {
     }
   };
   const onRequestFailed = (request) => {
-    if (isAuditedRequest(request.url())) {
-      failedRequests.push({ url: request.url(), method: request.method(), failure: request.failure()?.errorText || "unknown" });
+    const failure = request.failure()?.errorText || "unknown";
+    if (isAuditedRequest(request.url()) && failure !== "net::ERR_ABORTED") {
+      failedRequests.push({ url: request.url(), method: request.method(), failure });
     }
   };
   const onResponse = (response) => {
