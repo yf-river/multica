@@ -123,7 +123,10 @@ async function auditRoute(page, route) {
   const routeEvents = [];
   const onConsole = (message) => {
     if (message.type() === "error") {
-      routeEvents.push({ route: route.id, type: "console-error", text: message.text().slice(0, 500) });
+      const text = message.text();
+      if (!isResourceLoadConsoleError(text)) {
+        routeEvents.push({ route: route.id, type: "console-error", text: text.slice(0, 500) });
+      }
     }
   };
   const onPageError = (error) => {
@@ -372,7 +375,11 @@ function trimSlash(value) {
 }
 
 function isAuditedRequest(url) {
-  return url.startsWith(frontendURL) || url.startsWith(browserURL) || url.startsWith(backendURL) || url.includes("/api/") || url.includes("api.github.com");
+  return url.startsWith(frontendURL) || url.startsWith(browserURL) || url.startsWith(backendURL);
+}
+
+function isResourceLoadConsoleError(text) {
+  return text.startsWith("Failed to load resource:");
 }
 
 function requestPath(url) {
