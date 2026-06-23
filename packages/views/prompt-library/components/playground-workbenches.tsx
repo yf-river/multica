@@ -50,7 +50,7 @@ export function PromptPlaygroundWorkbench({
   return (
     <section className="mx-auto grid max-w-7xl gap-4" data-testid="prompt-playground-panel">
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
-        <section className="rounded-md border border-border/70 bg-muted/10 p-4">
+        <section className="rounded-md border border-l-4 border-border/70 border-l-sky-500 bg-muted/10 p-4">
           <div className="flex flex-col gap-2 border-b pb-3 md:flex-row md:items-start md:justify-between">
             <div className="min-w-0">
               <h2 className="text-base font-semibold">模板渲染实验室</h2>
@@ -140,7 +140,7 @@ export function PromptPlaygroundWorkbench({
         </section>
 
         <section className="grid gap-3">
-          <div className="rounded-md border border-border/70 bg-muted/10 p-3" data-testid="prompt-playground-contract">
+          <div className="rounded-md border border-l-4 border-border/70 border-l-sky-500 bg-muted/10 p-3" data-testid="prompt-playground-contract">
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-sm font-semibold">调试边界</h3>
               <Badge variant="outline">不启动智能体</Badge>
@@ -250,7 +250,7 @@ export function AgentPlaygroundWorkbench({
 
   return (
     <section className="mx-auto grid max-w-7xl gap-4" data-testid="agent-playground-panel">
-      <section className="rounded-md border border-border/70 bg-background p-4" data-testid="agent-playground-run-console">
+      <section className="rounded-md border border-l-4 border-border/70 border-l-emerald-500 bg-emerald-500/5 p-4" data-testid="agent-playground-run-console">
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
@@ -397,7 +397,7 @@ export function AgentPlaygroundWorkbench({
             </div>
           </div>
 
-          <div className="rounded-md border border-border/70 bg-muted/10 p-3" data-testid="agent-playground-observability-contract">
+          <div className="rounded-md border border-l-4 border-border/70 border-l-emerald-500 bg-muted/10 p-3" data-testid="agent-playground-observability-contract">
             <div className="flex items-center justify-between gap-2">
               <h3 className="text-sm font-semibold">观测回写契约</h3>
               <Badge variant="outline">真实任务</Badge>

@@ -1058,6 +1058,62 @@ test.describe("训练与评估工作台", () => {
     await expect(studio).toContainText("活动 0", { timeout: 10000 });
   });
 
+  test("运行看板可以进入人工复核队列", async ({ page }) => {
+    test.setTimeout(90_000);
+    await api.ensureOnlineCodexRuntime(`${artifactPrefix} 人工复核 Runtime`);
+    const prompt = await api.createPromptForE2E(artifactPrefix, {
+      name: `${artifactPrefix} 人工复核提示词`,
+      content: "请评估 {{issue_title}}，必须返回结构化 JSON。",
+      variables: [{ name: "issue_title", label: "任务标题", required: true }],
+    });
+    const asset = await api.createPromptEvaluationAsset({
+      prompt_id: prompt.id,
+      name: `${artifactPrefix} 人工复核实验`,
+      description: "E2E 人工复核队列入口",
+      asset_type: "实验",
+      payload: {
+        cases: [
+          {
+            名称: "人工复核用例",
+            变量: { issue_title: "缺少结构化输出" },
+            期望包含: ["结构化 JSON"],
+          },
+        ],
+      },
+      status: "启用",
+    });
+    const agentRun = await api.runPromptEvaluationAssetAgent(asset.id);
+    const claimed = await api.claimDaemonTask(agentRun.runtime_id);
+    expect(claimed.task?.id).toBe(agentRun.task_id);
+    await api.startDaemonTask(agentRun.task_id);
+    await api.reportDaemonTaskMessages(agentRun.task_id, "Agent 输出：只给了自然语言结论，没有返回结构化 JSON，需要人工复核。");
+    await api.completeDaemonTask(agentRun.task_id, "Agent 输出：只给了自然语言结论，没有返回结构化 JSON，需要人工复核。");
+    await expect
+      .poll(async () => {
+        const runs = await api.listPromptEvaluationRuns({ asset_id: asset.id });
+        return runs.find((run) => run.id === agentRun.run.id)?.status ?? null;
+      }, { timeout: 15000 })
+      .toBe("需人工复核");
+
+    await page.goto(`/${workspaceSlug}/training/runs`, { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("training-summary-需人工复核")).toContainText(/\d+/, { timeout: 10000 });
+    const queueResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        response.url().includes("/api/prompt-evaluation-runs") &&
+        decodeURIComponent(response.url()).includes("status=需人工复核"),
+      { timeout: 10000 },
+    );
+    await page.getByTestId("training-summary-需人工复核").click();
+    expect((await queueResponse).status()).toBe(200);
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/run-history$`), { timeout: 30000 });
+    await expect(page.getByTestId("run-status-filter-bar")).toContainText("人工复核队列");
+    const runRow = page.getByTestId(`prompt-evaluation-run-${agentRun.run.id}`);
+    await expect(runRow).toContainText("智能体执行 · 需人工复核", { timeout: 10000 });
+    await runRow.getByRole("button", { name: "查看证据" }).click();
+    await expect(runRow.getByTestId(`run-evidence-${agentRun.run.id}`)).toContainText("需要人工复核", { timeout: 10000 });
+  });
+
   test("旧提示词库路由会跳转到训练与评估提示词视图", async ({ page }) => {
     await page.goto(`/${workspaceSlug}/prompt-library`, { waitUntil: "domcontentloaded" });
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/prompts$`), { timeout: 30000 });

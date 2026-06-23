@@ -75,6 +75,9 @@ const promptLibraryKeys = {
 
 const PROMPT_TYPES = ["全部", "需求澄清", "系统提示词", "评测提示词", "小队 SOP", "通用"];
 type WorkbenchTab = TrainingWorkbenchTab;
+type RunStatusFilter = "全部" | PromptEvaluationRun["status"];
+
+const RUN_STATUS_FILTERS: RunStatusFilter[] = ["全部", "已入队", "运行中", "通过", "未通过", "失败", "已取消", "需人工复核"];
 type DemoTimeRange = "24h" | "7d" | "30d" | "all";
 
 const DEMO_TIME_RANGES: Array<{ value: DemoTimeRange; label: string; sinceMs: number | null }> = [
@@ -136,6 +139,7 @@ export function PromptLibraryPage({
   const viewParam = trainingViewFromLocation(navigation.pathname, navigation.searchParams);
   const resolvedView = activeView ?? viewParam;
   const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => trainingWorkbenchTabFromView(resolvedView));
+  const [runStatusFilter, setRunStatusFilter] = useState<RunStatusFilter>("全部");
   const [demoTimeRange, setDemoTimeRange] = useState<DemoTimeRange>("7d");
   const [exportingDemoEvidence, setExportingDemoEvidence] = useState(false);
   const shouldShowPromptEditor = showPromptEditor ?? trainingWorkbenchShowsPromptEditor(resolvedView);
@@ -178,6 +182,7 @@ export function PromptLibraryPage({
 
   const isDashboardTab = activeTab === "运行看板";
   const activeViewId = TRAINING_WORKBENCH_VIEW_BY_TAB[activeTab];
+  const effectiveRunStatusFilter = activeTab === "运行历史" ? runStatusFilter : "全部";
   const shouldShowPromptHeaderActions = activeTab === "提示词库";
   const isEvaluationAssetTab =
     activeTab === "数据集" ||
@@ -223,8 +228,12 @@ export function PromptLibraryPage({
     enabled: !!workspaceId && needsExperimentDimensions,
   });
   const runQuery = useQuery({
-    queryKey: [...promptLibraryKeys.runs(workspaceId ?? ""), demoSince ?? "all"] as const,
-    queryFn: () => api.listPromptEvaluationRuns({ limit: 100, since: demoSince }),
+    queryKey: [...promptLibraryKeys.runs(workspaceId ?? ""), demoSince ?? "all", effectiveRunStatusFilter] as const,
+    queryFn: () => api.listPromptEvaluationRuns({
+      limit: 100,
+      since: demoSince,
+      status: effectiveRunStatusFilter === "全部" ? undefined : effectiveRunStatusFilter,
+    }),
     enabled: !!workspaceId && needsRuns,
   });
   const candidateQuery = useQuery({
@@ -684,6 +693,12 @@ export function PromptLibraryPage({
     }
   };
 
+  const openManualReviewQueue = () => {
+    setRunStatusFilter("需人工复核");
+    setActiveTab("运行历史");
+    navigation.push(trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["运行历史"]));
+  };
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-background" data-testid="training-page-shell" data-training-view={activeViewId}>
       <div className="sr-only" data-testid={`training-route-${activeViewId}`}>
@@ -705,7 +720,7 @@ export function PromptLibraryPage({
         )}
       </PageHeader>
 
-      <TrainingSummaryStrip summary={summary} loading={summaryQuery.isLoading} />
+      <TrainingSummaryStrip summary={summary} loading={summaryQuery.isLoading} onOpenManualReviewQueue={openManualReviewQueue} />
 
       {activeTab === "运行看板" ? (
         <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
@@ -724,6 +739,7 @@ export function PromptLibraryPage({
             assets={assets}
             cases={cases}
             candidates={candidates}
+            onOpenManualReviewQueue={openManualReviewQueue}
           />
         </main>
       ) : shouldShowPromptEditor ? (
@@ -933,6 +949,8 @@ export function PromptLibraryPage({
                 cases={cases}
                 experimentDimensions={experimentDimensions}
                 runs={runs}
+                runStatusFilter={runStatusFilter}
+                onRunStatusFilterChange={setRunStatusFilter}
                 candidates={candidates}
                 loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || runQuery.isLoading || candidateQuery.isLoading}
                 saving={savingAsset}
@@ -979,6 +997,8 @@ export function PromptLibraryPage({
               cases={cases}
               experimentDimensions={experimentDimensions}
               runs={runs}
+              runStatusFilter={runStatusFilter}
+              onRunStatusFilterChange={setRunStatusFilter}
               candidates={candidates}
               loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || runQuery.isLoading || candidateQuery.isLoading}
               saving={savingAsset}
@@ -1034,6 +1054,7 @@ function DemoDashboardPanel({
   assets,
   cases,
   candidates,
+  onOpenManualReviewQueue,
 }: {
   trainingSummary: PromptEvaluationSummary | null;
   trainingLoading: boolean;
@@ -1049,6 +1070,7 @@ function DemoDashboardPanel({
   assets: PromptEvaluationAsset[];
   cases: PromptEvaluationStructuredCase[];
   candidates: PromptEvaluationOptimizationCandidate[];
+  onOpenManualReviewQueue: () => void;
 }) {
   const trainingMetrics = trainingSummary?.指标 ?? {};
   const trainingAssets = trainingSummary?.资产统计 ?? {};
@@ -1128,6 +1150,9 @@ function DemoDashboardPanel({
             <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={onExportEvidence} disabled={exportingEvidence}>
               {exportingEvidence ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
               {exportingEvidence ? "导出中" : "导出证据 JSON"}
+            </Button>
+            <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={onOpenManualReviewQueue}>
+              打开人工复核队列
             </Button>
           </div>
         </div>
@@ -1316,7 +1341,15 @@ function PromptVersionHistory({
   );
 }
 
-function TrainingSummaryStrip({ summary, loading }: { summary: PromptEvaluationSummary | null; loading: boolean }) {
+function TrainingSummaryStrip({
+  summary,
+  loading,
+  onOpenManualReviewQueue,
+}: {
+  summary: PromptEvaluationSummary | null;
+  loading: boolean;
+  onOpenManualReviewQueue: () => void;
+}) {
   const metrics = summary?.指标 ?? {};
   const assets = summary?.资产统计 ?? {};
   const runStatus = summary?.运行状态 ?? {};
@@ -1354,10 +1387,23 @@ function TrainingSummaryStrip({ summary, loading }: { summary: PromptEvaluationS
       </div>
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
         {items.map((item) => (
-          <div key={item.label} className="min-w-0 rounded-md border bg-background px-3 py-2" data-testid={`training-summary-${item.label}`}>
-            <div className="truncate text-[11px] text-muted-foreground">{item.label}</div>
-            <div className="mt-1 truncate text-sm font-semibold">{item.value}</div>
-          </div>
+          item.label === "需人工复核" ? (
+            <button
+              key={item.label}
+              type="button"
+              className="min-w-0 rounded-md border bg-background px-3 py-2 text-left transition-colors hover:bg-muted/60"
+              data-testid={`training-summary-${item.label}`}
+              onClick={onOpenManualReviewQueue}
+            >
+              <div className="truncate text-[11px] text-muted-foreground">{item.label}</div>
+              <div className="mt-1 truncate text-sm font-semibold">{item.value}</div>
+            </button>
+          ) : (
+            <div key={item.label} className="min-w-0 rounded-md border bg-background px-3 py-2" data-testid={`training-summary-${item.label}`}>
+              <div className="truncate text-[11px] text-muted-foreground">{item.label}</div>
+              <div className="mt-1 truncate text-sm font-semibold">{item.value}</div>
+            </div>
+          )
         ))}
       </div>
     </section>
@@ -1371,6 +1417,8 @@ function WorkbenchPanel({
   cases,
   experimentDimensions,
   runs,
+  runStatusFilter,
+  onRunStatusFilterChange,
   candidates,
   loading,
   saving,
@@ -1410,6 +1458,8 @@ function WorkbenchPanel({
   cases: PromptEvaluationStructuredCase[];
   experimentDimensions: PromptEvaluationExperimentDimension[];
   runs: PromptEvaluationRun[];
+  runStatusFilter: RunStatusFilter;
+  onRunStatusFilterChange: (status: RunStatusFilter) => void;
   candidates: PromptEvaluationOptimizationCandidate[];
   loading: boolean;
   saving: boolean;
@@ -1493,11 +1543,18 @@ function WorkbenchPanel({
         loading ? (
           <div className="h-20 rounded-md bg-muted/60" />
         ) : runs.length === 0 ? (
-          <div className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">暂无结构化运行记录</div>
+          <div className="grid gap-3">
+            <RunStatusFilterBar value={runStatusFilter} onChange={onRunStatusFilterChange} />
+            <div className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
+              {runStatusFilter === "全部" ? "暂无结构化运行记录" : `暂无${runStatusFilter}运行记录`}
+            </div>
+          </div>
         ) : (
-          <div className="divide-y rounded-md border">
-            {runs.map((run) => (
-              <div key={run.id} data-testid={`prompt-evaluation-run-${run.id}`} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
+          <div className="grid gap-3">
+            <RunStatusFilterBar value={runStatusFilter} onChange={onRunStatusFilterChange} />
+            <div className="divide-y rounded-md border" data-testid="prompt-evaluation-run-list">
+              {runs.map((run) => (
+                <div key={run.id} data-testid={`prompt-evaluation-run-${run.id}`} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
                 <div className="min-w-0">
                   <div className="flex min-w-0 items-center gap-2">
                     <span className="truncate text-sm font-medium">{displayRunKind(run.run_kind)} · {run.status}</span>
@@ -1570,8 +1627,9 @@ function WorkbenchPanel({
                     onCreateSnapshot={() => onCreateEvidenceSnapshot(run.id)}
                   />
                 )}
-              </div>
-            ))}
+                </div>
+              ))}
+            </div>
           </div>
         )
       )}
@@ -1675,6 +1733,25 @@ function WorkbenchPanel({
         </>
       )}
     </section>
+  );
+}
+
+function RunStatusFilterBar({
+  value,
+  onChange,
+}: {
+  value: RunStatusFilter;
+  onChange: (status: RunStatusFilter) => void;
+}) {
+  return (
+    <div className="flex flex-wrap items-center gap-2 rounded-md border border-border/70 bg-muted/10 px-3 py-2" data-testid="run-status-filter-bar">
+      <span className="text-xs font-medium text-muted-foreground">运行状态</span>
+      {RUN_STATUS_FILTERS.map((status) => (
+        <FilterButton key={status} active={value === status} onClick={() => onChange(status)}>
+          {status === "需人工复核" ? "人工复核队列" : status}
+        </FilterButton>
+      ))}
+    </div>
   );
 }
 
