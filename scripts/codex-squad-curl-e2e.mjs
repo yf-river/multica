@@ -54,7 +54,7 @@ evidence.agent = { id: agent.id, name: agent.name, provider, model };
 const squad = post("/api/squads", {
   workspace_id: workspace.id,
   name: `curl Codex 验收小队 ${suffix}`,
-  description: "通过公开 API 创建的端到端验收小队，队长为真实 Codex Agent。",
+  description: "通过公开 API 创建的端到端验收小队，队长为真实 Codex 智能体。",
   leader_id: agent.id,
   sop_profile: {
     profile_key: "curl-codex-squad-e2e",

@@ -1081,7 +1081,7 @@ ${latestTraceRows}
 - 测试套件：${apiTraining["Test Suite ID"] || "未记录"}，用例：${apiTraining["测试套件用例"] ?? "未记录"}
 - 实验：${apiTraining["Experiment ID"] || "未记录"}，维度事实：${apiTraining["实验维度事实"] ?? "未记录"}
 - 运行：${apiTraining["Run ID"] || "未记录"}，状态：${apiTraining["Run状态"] || "未记录"}，失败用例：${apiTraining["失败用例"] ?? "未记录"}
-- 真实智能体 运行：${apiTraining["Agent Run ID"] || "未记录"}，Task：${apiTraining["Agent Task ID"] || "未记录"}
+- 真实智能体运行：${apiTraining["Agent Run ID"] || "未记录"}，Task：${apiTraining["Agent Task ID"] || "未记录"}
 - 真实智能体 Runtime：${apiTraining["Agent Runtime ID"] || "未记录"}，模型：${apiTraining["Agent模型"] || "未记录"}
 - 真实智能体证据：trace ${apiTraining["Agent trace事件数"] ?? "未记录"}，trial ${apiTraining["Agent trial数"] ?? "未记录"}，消息 ${apiTraining["Agent消息数"] ?? "未记录"}
 - 真实智能体 token：输入 ${apiTraining["Agent输入token"] ?? "未记录"}，输出 ${apiTraining["Agent输出token"] ?? "未记录"}，外部依赖失败：${apiTraining["Agent外部依赖失败"] ? "是" : "否"}
