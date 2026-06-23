@@ -44,6 +44,7 @@ Useful goal-test commands:
 
 ```bash
 make goal-test-verify-env
+make goal-test-verify-logs
 make goal-test-ui-audit
 pnpm acceptance:verify
 pnpm exec playwright test e2e/production-acceptance.spec.ts --project=chromium
@@ -53,7 +54,7 @@ node scripts/codex-squad-curl-e2e.mjs
 
 For complex goal-test delivery, prefer `gpt-5.5 high` as the main controller. Simple local slices or generating the goal prompt itself can use `gpt-5.5 medium`. Read-only exploration and repeated verification can use lower-cost models when available. Local runtime should prefer Codex unless the user explicitly chooses another runtime.
 
-Goal-test acceptance must include real browser UI checks, E2E/API data closure, performance evidence, relevant `.run` log scans, decision ledger updates, and a commit or explicit reason for not committing.
+Goal-test acceptance must include real browser UI checks, E2E/API data closure, performance evidence, current-deployment `.run` log window scans, decision ledger updates, and a commit or explicit reason for not committing. For integration Playwright runs, use the project variables from `.run/env/goal-test-int.env` plus `PLAYWRIGHT_BASE_URL=http://9.134.129.162:13682`; do not rely on `E2E_BASE_URL` alone. E2E tests may reuse the default account/workspace, but must create their own business data through public API/UI instead of depending on existing prompts, issues, or assets.
 
 ## Architecture
 
