@@ -92,10 +92,12 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("prompt-playground-template-lab")).toBeVisible();
     await expect(page.getByTestId("agent-playground-run-console")).toHaveCount(0);
     await expect(page.getByTestId("agent-playground-task-payload")).toHaveCount(0);
-    await expect(page.getByText("不启动智能体")).toBeVisible();
+    await expect(page.getByTestId("prompt-playground-contract")).toContainText("不启动智能体");
+    await expect(page.getByTestId("prompt-playground-purpose-map")).toContainText("不创建任务、不消耗模型");
     await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("本地渲染");
     await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("本地渲染记录");
     await expect(page.getByTestId("agent-playground-task-pipeline")).toHaveCount(0);
+    await expect(page.getByTestId("agent-playground-launch-brief")).toHaveCount(0);
     await expect(page.getByLabel("模板变量")).toHaveValue("issue_title=\nproject_context=", { timeout: 10000 });
     await page.getByLabel("模板变量").fill("issue_title=登录失败\nproject_context=账号系统");
     await expect(page.getByTestId("prompt-playground-rendered-output")).toContainText("请澄清 登录失败，项目背景：账号系统。", { timeout: 10000 });
@@ -112,11 +114,13 @@ test.describe("训练与评估工作台", () => {
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/agent-playground$`), { timeout: 30000 });
     await expect(page.getByTestId("agent-playground-workbench")).toBeVisible({ timeout: 10000 });
     await expect(page.getByTestId("agent-playground-workbench")).toContainText(`${artifactPrefix} 账号系统 澄清`, { timeout: 10000 });
-    await expect(page.getByTestId("agent-playground-run-console")).toContainText("真实任务运行控制台");
+    await expect(page.getByTestId("agent-playground-run-console")).toContainText("真实任务发射台");
+    await expect(page.getByTestId("agent-playground-launch-brief")).toContainText("写入真实任务队列");
     await expect(page.getByTestId("agent-playground-task-payload")).toBeVisible();
     await expect(page.getByTestId("agent-playground-observability-contract")).toContainText("观测回写契约");
     await expect(page.getByTestId("agent-playground-task-pipeline")).toContainText("创建真实任务");
     await expect(page.getByTestId("agent-playground-task-pipeline")).toContainText("回写观测证据");
+    await expect(page.getByTestId("prompt-playground-purpose-map")).toHaveCount(0);
     await expect(page.getByTestId("prompt-playground-local-pipeline")).toHaveCount(0);
     await expect(page.getByTestId("prompt-playground-template-lab")).toHaveCount(0);
     await expect(page.getByText("Codex 在线")).toBeVisible({ timeout: 10000 });

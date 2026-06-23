@@ -1,4 +1,5 @@
 import { chromium } from "@playwright/test";
+import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -43,15 +44,22 @@ const routes = [
     path: `/${workspaceSlug}/training/prompt-playground`,
     expect: ["提示词调试场"],
     uiContract: {
-      requiredText: ["本地模板实验室", "不启动智能体", "本地渲染记录"],
-      forbiddenText: ["真实任务入口", "真实任务运行控制台", "真实执行准备度", "观测回写契约"],
-      requiredTestIds: ["prompt-playground-page-shell", "prompt-playground-workbench", "prompt-playground-template-lab", "prompt-playground-local-pipeline"],
+      requiredText: ["本地模板实验室", "模板渲染实验室", "不启动智能体", "不创建任务、不消耗模型", "本地渲染记录"],
+      forbiddenText: ["真实任务入口", "真实任务发射台", "真实执行准备度", "观测回写契约", "写入真实任务队列"],
+      requiredTestIds: [
+        "prompt-playground-page-shell",
+        "prompt-playground-workbench",
+        "prompt-playground-purpose-map",
+        "prompt-playground-template-lab",
+        "prompt-playground-local-pipeline",
+      ],
       forbiddenTestIds: [
         "training-tab-strip",
         "training-summary-strip",
         "agent-playground-page-shell",
         "agent-playground-workbench",
         "agent-playground-run-console",
+        "agent-playground-launch-brief",
         "agent-playground-task-payload",
         "agent-playground-task-pipeline",
         "agent-playground-observability-contract",
@@ -64,12 +72,13 @@ const routes = [
     path: `/${workspaceSlug}/training/agent-playground`,
     expect: ["智能体调试场"],
     uiContract: {
-      requiredText: ["真实任务入口", "真实任务运行控制台", "真实执行准备度", "观测回写契约"],
+      requiredText: ["真实任务入口", "真实任务发射台", "写入真实任务队列", "真实执行准备度", "观测回写契约"],
       forbiddenText: ["本地模板实验室", "不启动智能体", "本地渲染记录"],
       requiredTestIds: [
         "agent-playground-page-shell",
         "agent-playground-workbench",
         "agent-playground-run-console",
+        "agent-playground-launch-brief",
         "agent-playground-task-payload",
         "agent-playground-task-pipeline",
         "agent-playground-observability-contract",
@@ -79,6 +88,7 @@ const routes = [
         "training-summary-strip",
         "prompt-playground-page-shell",
         "prompt-playground-workbench",
+        "prompt-playground-purpose-map",
         "prompt-playground-template-lab",
         "prompt-playground-local-pipeline",
       ],
@@ -134,7 +144,8 @@ for (const route of routes) {
 
 await browser.close();
 
-const summary = summarize(results, events);
+const deploymentLogs = runDeploymentLogVerification();
+const summary = summarize(results, events, deploymentLogs);
 const payload = {
   schema: "multica.goal_test.ui_audit.v1",
   generated_at: generatedAt,
@@ -150,6 +161,7 @@ const payload = {
     post_load_wait_ms: 1_500,
   },
   warmup,
+  deployment_logs: deploymentLogs,
   summary,
   routes: results,
   events,
@@ -378,17 +390,41 @@ async function login() {
   return data.token;
 }
 
-function summarize(routeResults, browserEvents) {
+function summarize(routeResults, browserEvents, logEvidence) {
   const routeFailures = routeResults.flatMap((route) => route.failures.map((failure) => `${route.label}: ${failure}`));
   const eventFailures = browserEvents.map((event) => `${event.route}: ${event.type} ${event.text}`);
-  const failures = [...routeFailures, ...eventFailures];
+  const logFailures = logEvidence.ok ? [] : [`当前部署日志窗口未通过：${logEvidence.error || "verify-logs failed"}`];
+  const failures = [...routeFailures, ...eventFailures, ...logFailures];
   return {
     ok: failures.length === 0,
     route_count: routeResults.length,
     passed_routes: routeResults.filter((route) => route.ok).length,
     failed_routes: routeResults.filter((route) => !route.ok).length,
     browser_event_count: browserEvents.length,
+    deployment_logs_ok: logEvidence.ok,
     failures,
+  };
+}
+
+function runDeploymentLogVerification() {
+  const target = env.GOAL_TEST_ENV || "int";
+  const result = spawnSync("node", ["scripts/goal-test-environments.mjs", "verify-logs", target], {
+    cwd: repoRoot,
+    encoding: "utf8",
+  });
+  const raw = result.stdout || result.stderr || "";
+  let evidence = null;
+  try {
+    evidence = raw ? JSON.parse(raw) : null;
+  } catch {
+    evidence = null;
+  }
+  return {
+    ok: result.status === 0 && evidence?.ok === true,
+    target,
+    exit_code: result.status,
+    evidence,
+    error: result.status === 0 ? "" : (result.stderr || result.stdout || "").slice(0, 2000),
   };
 }
 
@@ -408,6 +444,7 @@ function renderMarkdown(payload) {
     `- 通过：${payload.summary.passed_routes}`,
     `- 失败：${payload.summary.failed_routes}`,
     `- 浏览器错误事件：${payload.summary.browser_event_count}`,
+    `- 当前部署日志窗口：${payload.summary.deployment_logs_ok ? "通过" : "未通过"}`,
     `- 预热：${payload.warmup.enabled ? "已执行" : "未执行"}`,
     "",
   ];

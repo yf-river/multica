@@ -53,15 +53,29 @@ export function PromptPlaygroundWorkbench({
         <section className="rounded-md border border-border/70 bg-muted/10 p-4">
           <div className="flex flex-col gap-2 border-b pb-3 md:flex-row md:items-start md:justify-between">
             <div className="min-w-0">
-              <h2 className="text-base font-semibold">提示词调试场</h2>
+              <h2 className="text-base font-semibold">模板渲染实验室</h2>
               <p className="mt-1 text-xs text-muted-foreground">
-                这里只做模板渲染检查：选择已保存提示词，填入变量，确认最终提示词文本，并把结果记录为一次模板渲染检查。
+                这里只做本地模板渲染：选择已保存提示词，填入变量，确认最终提示词文本，并把结果记录为一次模板渲染检查。
               </p>
             </div>
             <Badge variant="secondary" className="w-fit shrink-0">本地渲染</Badge>
           </div>
 
           <div className="mt-4 grid gap-4">
+            <div className="grid gap-2 md:grid-cols-4" data-testid="prompt-playground-purpose-map">
+              {[
+                ["输入", "提示词模板和变量样本"],
+                ["执行", "浏览器本地渲染"],
+                ["产出", "渲染文本和调试记录"],
+                ["边界", "不创建任务、不消耗模型"],
+              ].map(([label, detail]) => (
+                <div key={label} className="min-w-0 rounded-md border bg-background px-3 py-2">
+                  <div className="text-[11px] font-medium text-muted-foreground">{label}</div>
+                  <div className="mt-1 truncate text-sm font-semibold">{detail}</div>
+                </div>
+              ))}
+            </div>
+
             <div className="grid gap-2 rounded-md border border-dashed bg-background p-3 md:grid-cols-3" data-testid="prompt-playground-local-pipeline">
               {["选择已保存模板", "填写变量样本", "本地渲染记录"].map((label, index) => (
                 <div key={label} className="min-w-0">
@@ -240,7 +254,7 @@ export function AgentPlaygroundWorkbench({
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
               <TerminalSquare className="size-4 shrink-0 text-muted-foreground" />
-              <h2 className="truncate text-base font-semibold">真实任务运行控制台</h2>
+              <h2 className="truncate text-base font-semibold">真实任务发射台</h2>
             </div>
             <p className="mt-1 text-xs text-muted-foreground">
               这里不做本地模板试算，而是把已保存提示词变成一次可观测的智能体任务，等待 runtime 领取并回写运行证据。
@@ -259,6 +273,20 @@ export function AgentPlaygroundWorkbench({
               创建真实智能体任务
             </Button>
           </div>
+        </div>
+
+        <div className="mt-4 grid gap-2 md:grid-cols-4" data-testid="agent-playground-launch-brief">
+          {[
+            ["输入", "提示词模板、任务变量、期望输出"],
+            ["执行", "写入真实任务队列"],
+            ["产出", "task_id、消息、trace、token"],
+            ["边界", "需要运行时就绪"],
+          ].map(([label, detail]) => (
+            <div key={label} className="min-w-0 rounded-md border bg-muted/20 px-3 py-2">
+              <div className="text-[11px] font-medium text-muted-foreground">{label}</div>
+              <div className="mt-1 truncate text-sm font-semibold">{detail}</div>
+            </div>
+          ))}
         </div>
 
         <div className="mt-4 grid gap-2 md:grid-cols-3" data-testid="agent-playground-task-pipeline">
@@ -298,7 +326,7 @@ export function AgentPlaygroundWorkbench({
           </div>
 
           <div className="grid gap-3 xl:grid-cols-[300px_minmax(0,1fr)]">
-            <Field label="执行变量">
+            <Field label="任务变量">
               <Textarea
                 value={debugValuesText}
                 onChange={(event) => onDebugValuesTextChange(event.target.value)}
@@ -308,7 +336,7 @@ export function AgentPlaygroundWorkbench({
             </Field>
             <div className="grid gap-1.5 text-sm" data-testid="agent-playground-context-preview">
               <div className="flex min-h-5 items-center gap-2">
-                <span className="text-xs font-medium text-muted-foreground">任务上下文预览</span>
+                <span className="text-xs font-medium text-muted-foreground">将入队的任务正文</span>
                 {debugResult.missingVariables.length > 0 ? (
                   <Badge variant="outline" className="text-[11px]">
                     缺失 {debugResult.missingVariables.join("、")}
