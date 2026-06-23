@@ -3008,6 +3008,45 @@ func TestPrepareCodexResolvesUserSkillSymlinks(t *testing.T) {
 	}
 }
 
+// TestPrepareCodexSkipsStaleUserSkillSymlink covers local Codex skill
+// registries that outlive their target directories. A stale user registration
+// must not produce a fake skill in the per-task home or fail task setup.
+func TestPrepareCodexSkipsStaleUserSkillSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink semantics differ on Windows; covered by Unix path")
+	}
+	// Cannot use t.Parallel() with t.Setenv.
+
+	sharedHome := t.TempDir()
+	t.Setenv("CODEX_HOME", sharedHome)
+
+	userSkills := filepath.Join(sharedHome, "skills")
+	if err := os.MkdirAll(userSkills, 0o755); err != nil {
+		t.Fatalf("seed user skills dir: %v", err)
+	}
+	missingTarget := filepath.Join(t.TempDir(), "removed-skill")
+	if err := os.Symlink(missingTarget, filepath.Join(userSkills, "removed-skill")); err != nil {
+		t.Fatalf("seed stale user skill symlink: %v", err)
+	}
+
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: t.TempDir(),
+		WorkspaceID:    "ws-stale-user-skill",
+		TaskID:         "ab0c1d2e-3f4a-5678-bcde-012345678901",
+		AgentName:      "Codex Agent",
+		Provider:       "codex",
+		Task:           TaskContextForEnv{IssueID: "stale-user-skill-test"},
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer env.Cleanup(true)
+
+	if _, err := os.Stat(filepath.Join(env.CodexHome, "skills", "removed-skill")); !os.IsNotExist(err) {
+		t.Errorf("stale user skill should not be seeded, err=%v", err)
+	}
+}
+
 // TestReuseSeedsUserSkillUpdates ensures that user-skill edits between two
 // runs of the same task (the Reuse path) propagate into the per-task home.
 func TestReuseSeedsUserSkillUpdates(t *testing.T) {

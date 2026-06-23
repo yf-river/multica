@@ -388,6 +388,137 @@ func TestChildDoneMentionsParentAssignee_Squad(t *testing.T) {
 	}
 }
 
+// TestCrossProjectChildrenWakeUserCenterParentSquad proves the microservice
+// orchestration shape users expect from the user-center SOP: a parent issue
+// stays in the usercenter project and is owned by a squad, while gateway and
+// config child issues live in their own projects. Completing the children
+// must write parent comments and wake the parent squad leader.
+func TestCrossProjectChildrenWakeUserCenterParentSquad(t *testing.T) {
+	sq := newSquadCommentTriggerFixture(t)
+	ctx := context.Background()
+	var usercenterProjectID, gatewayProjectID, configProjectID string
+	var parentID, gatewayChildID, configChildID string
+	defer func() {
+		for _, issueID := range []string{gatewayChildID, configChildID, parentID} {
+			if issueID != "" {
+				testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+			}
+		}
+		for _, projectID := range []string{configProjectID, gatewayProjectID, usercenterProjectID} {
+			if projectID != "" {
+				testPool.Exec(ctx, `DELETE FROM project WHERE id = $1`, projectID)
+			}
+		}
+	}()
+
+	createProject := func(title string) string {
+		t.Helper()
+		w := httptest.NewRecorder()
+		req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+			"title": title,
+		})
+		testHandler.CreateProject(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("CreateProject %q: expected 201, got %d: %s", title, w.Code, w.Body.String())
+		}
+		var project ProjectResponse
+		if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
+			t.Fatalf("decode project %q: %v", title, err)
+		}
+		return project.ID
+	}
+	createIssue := func(title, projectID string, parentIssueID *string, assigneeType *string, assigneeID *string) IssueResponse {
+		t.Helper()
+		body := map[string]any{
+			"title":      title,
+			"status":     "todo",
+			"project_id": projectID,
+		}
+		if parentIssueID != nil {
+			body["parent_issue_id"] = *parentIssueID
+			body["status"] = "in_progress"
+		}
+		if assigneeType != nil && assigneeID != nil {
+			body["assignee_type"] = *assigneeType
+			body["assignee_id"] = *assigneeID
+		}
+		w := httptest.NewRecorder()
+		req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, body)
+		testHandler.CreateIssue(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("CreateIssue %q: expected 201, got %d: %s", title, w.Code, w.Body.String())
+		}
+		var issue IssueResponse
+		if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+			t.Fatalf("decode issue %q: %v", title, err)
+		}
+		return issue
+	}
+
+	usercenterProjectID = createProject("usercenter")
+	gatewayProjectID = createProject("gateway")
+	configProjectID = createProject("config")
+
+	squadAssigneeType := "squad"
+	parent := createIssue("usercenter 添加内部 API", usercenterProjectID, nil, &squadAssigneeType, &sq.SquadID)
+	parentID = parent.ID
+	if parent.ProjectID == nil || *parent.ProjectID != usercenterProjectID {
+		t.Fatalf("parent project_id = %v, want usercenter %s", parent.ProjectID, usercenterProjectID)
+	}
+	if parent.AssigneeType == nil || *parent.AssigneeType != "squad" || parent.AssigneeID == nil || *parent.AssigneeID != sq.SquadID {
+		t.Fatalf("parent assignee = %v/%v, want squad %s", parent.AssigneeType, parent.AssigneeID, sq.SquadID)
+	}
+
+	gatewayChild := createIssue("gateway 注册 usercenter API 路由", gatewayProjectID, &parentID, nil, nil)
+	gatewayChildID = gatewayChild.ID
+	configChild := createIssue("config 下发 usercenter API 配置", configProjectID, &parentID, nil, nil)
+	configChildID = configChild.ID
+
+	if gatewayChild.ParentIssueID == nil || *gatewayChild.ParentIssueID != parentID || gatewayChild.ProjectID == nil || *gatewayChild.ProjectID != gatewayProjectID {
+		t.Fatalf("gateway child parent/project = %v/%v, want %s/%s", gatewayChild.ParentIssueID, gatewayChild.ProjectID, parentID, gatewayProjectID)
+	}
+	if configChild.ParentIssueID == nil || *configChild.ParentIssueID != parentID || configChild.ProjectID == nil || *configChild.ProjectID != configProjectID {
+		t.Fatalf("config child parent/project = %v/%v, want %s/%s", configChild.ParentIssueID, configChild.ProjectID, parentID, configProjectID)
+	}
+
+	updateChildStatus(t, gatewayChildID, "done")
+	updateChildStatus(t, configChildID, "done")
+
+	if got := countSystemCommentsOn(t, parentID); got != 2 {
+		t.Fatalf("expected 2 child-completion comments on usercenter parent, got %d", got)
+	}
+	var comments []string
+	rows, err := testPool.Query(ctx, `
+		SELECT content
+		FROM comment
+		WHERE issue_id = $1 AND author_type = 'system'
+		ORDER BY created_at ASC
+	`, parentID)
+	if err != nil {
+		t.Fatalf("list parent comments: %v", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var content string
+		if err := rows.Scan(&content); err != nil {
+			t.Fatalf("scan parent comment: %v", err)
+		}
+		comments = append(comments, content)
+	}
+	if len(comments) != 2 {
+		t.Fatalf("expected 2 loaded comments, got %d", len(comments))
+	}
+	for _, want := range []string{gatewayChild.Identifier, configChild.Identifier, "mention://squad/" + sq.SquadID} {
+		joined := strings.Join(comments, "\n")
+		if !strings.Contains(joined, want) {
+			t.Errorf("expected parent comments to contain %q, got: %s", want, joined)
+		}
+	}
+	if got := countPendingTasksForAgent(t, parentID, sq.LeaderID); got != 1 {
+		t.Errorf("expected one pending parent leader task after child completion wake, got %d", got)
+	}
+}
+
 // TestChildDoneTriggersParentAgentWhenSameAgentOwnsChild — when the parent
 // agent assignee is the SAME agent that owns the just-finished child, the
 // parent agent must still be triggered (MUL-2808). A child finishing and

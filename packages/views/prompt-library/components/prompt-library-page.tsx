@@ -1668,6 +1668,15 @@ function PromptPlaygroundWorkbench({
           </div>
 
           <div className="mt-4 grid gap-4">
+            <div className="grid gap-2 rounded-md border border-dashed bg-background p-3 md:grid-cols-3" data-testid="prompt-playground-local-pipeline">
+              {["选择已保存模板", "填写变量样本", "本地渲染记录"].map((label, index) => (
+                <div key={label} className="min-w-0">
+                  <div className="text-[11px] font-medium text-muted-foreground">步骤 {index + 1}</div>
+                  <div className="mt-1 truncate text-sm font-semibold">{label}</div>
+                </div>
+              ))}
+            </div>
+
             <div className="grid gap-3 rounded-md border bg-background p-3 md:grid-cols-[minmax(0,1fr)_240px]">
               <div className="min-w-0">
                 <div className="text-xs font-medium text-muted-foreground">当前模板</div>
@@ -1847,6 +1856,20 @@ function AgentPlaygroundWorkbench({
           </div>
 
           <div className="mt-4 grid gap-4">
+            <div className="grid gap-2 rounded-md border bg-background p-3 md:grid-cols-3" data-testid="agent-playground-task-pipeline">
+              {[
+                { label: "检查运行时", detail: runtimeReadiness.status },
+                { label: "创建真实任务", detail: selected ? "已选择提示词" : "待选择提示词" },
+                { label: "回写观测证据", detail: "任务、trace、token、成本" },
+              ].map((item, index) => (
+                <div key={item.label} className="min-w-0 rounded-md bg-muted/30 px-3 py-2">
+                  <div className="text-[11px] font-medium text-muted-foreground">阶段 {index + 1}</div>
+                  <div className="mt-1 truncate text-sm font-semibold">{item.label}</div>
+                  <div className="mt-1 truncate text-xs text-muted-foreground">{item.detail}</div>
+                </div>
+              ))}
+            </div>
+
             <div className="grid gap-3 rounded-md border bg-background p-3 md:grid-cols-[minmax(0,1fr)_240px]">
               <div className="min-w-0">
                 <div className="text-xs font-medium text-muted-foreground">执行提示词</div>

@@ -63,6 +63,10 @@ func seedUserCodexSkills(codexHome string, workspaceSkills []SkillContextForEnv,
 		// copy the real content into the per-task home.
 		resolved, err := filepath.EvalSymlinks(src)
 		if err != nil {
+			if os.IsNotExist(err) {
+				logger.Debug("execenv: codex user-skill target missing; skipping stale registration", "name", name, "error", err)
+				continue
+			}
 			logger.Warn("execenv: codex user-skill resolve failed", "name", name, "error", err)
 			continue
 		}

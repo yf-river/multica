@@ -170,6 +170,8 @@ test.describe("生产部署验收", () => {
     await expect(page.getByTestId("prompt-playground-rendered-output")).toBeVisible();
     await expect(page.getByText("调试边界")).toBeVisible();
     await expect(page.getByText("不启动智能体")).toBeVisible();
+    await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("本地渲染记录");
+    await expect(page.getByTestId("agent-playground-task-pipeline")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "运行并记录" })).toBeVisible();
     await expect(page.getByRole("button", { name: "创建真实智能体任务" })).toHaveCount(0);
     await expect(page.getByText("真实执行准备度")).toHaveCount(0);
@@ -180,6 +182,9 @@ test.describe("生产部署验收", () => {
     await expect(page.getByText("真实执行准备度")).toBeVisible({ timeout: 15000 });
     await expect(page.getByText("任务上下文预览")).toBeVisible();
     await expect(page.getByText("最近智能体运行")).toBeVisible();
+    await expect(page.getByTestId("agent-playground-task-pipeline")).toContainText("创建真实任务");
+    await expect(page.getByTestId("agent-playground-task-pipeline")).toContainText("回写观测证据");
+    await expect(page.getByTestId("prompt-playground-local-pipeline")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "创建真实智能体任务" })).toBeVisible();
     await expect(page.getByTestId("prompt-playground-workbench")).toHaveCount(0);
     await expect(page.getByText("不启动智能体")).toHaveCount(0);
