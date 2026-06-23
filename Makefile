@@ -219,9 +219,11 @@ goal-test-deploy-all: ## Build once, deploy both goal-test environments, then ve
 	node scripts/goal-test-environments.mjs deploy prod
 	node scripts/goal-test-environments.mjs deploy int
 	node scripts/goal-test-environments.mjs verify prod
+	node scripts/goal-test-environments.mjs verify int
 
 goal-test-verify-env: ## Verify goal-test production and integration environments
 	node scripts/goal-test-environments.mjs verify prod
+	node scripts/goal-test-environments.mjs verify int
 
 db-up: ## Start the shared PostgreSQL container used by main and worktrees
 	@$(COMPOSE) up -d postgres
