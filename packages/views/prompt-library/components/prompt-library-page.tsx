@@ -167,15 +167,18 @@ export function PromptLibraryPage({
 
   const isDashboardTab = activeTab === "运行看板";
   const shouldShowPromptHeaderActions = activeTab === "提示词库";
-  const needsPromptItems =
-    (shouldShowPromptEditor && (activeTab === "提示词库" || activeTab === "提示词调试场")) ||
-    activeTab === "智能体调试场";
-  const needsEvaluationAssets =
-    activeTab === "智能体调试场" ||
+  const isEvaluationAssetTab =
     activeTab === "数据集" ||
     activeTab === "测试套件" ||
     activeTab === "实验" ||
     activeTab === "优化运行";
+  const needsPromptItems =
+    (shouldShowPromptEditor && (activeTab === "提示词库" || activeTab === "提示词调试场")) ||
+    activeTab === "智能体调试场" ||
+    isEvaluationAssetTab;
+  const needsEvaluationAssets =
+    activeTab === "智能体调试场" ||
+    isEvaluationAssetTab;
   const needsStructuredCases =
     activeTab === "智能体调试场" ||
     activeTab === "数据集" ||
