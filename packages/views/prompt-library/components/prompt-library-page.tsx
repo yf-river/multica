@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, BookOpenText, Download, Loader2, Play, Plus, Save, Search, Trash2 } from "lucide-react";
+import { Activity, Archive, BookOpenText, ClipboardCheck, Download, Loader2, Play, Plus, Save, Search, TerminalSquare, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -1690,7 +1690,7 @@ function PromptPlaygroundWorkbench({
               </div>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-[320px_minmax(0,1fr)]">
+            <div className="grid gap-4 md:grid-cols-[320px_minmax(0,1fr)]" data-testid="prompt-playground-template-lab">
               <Field label="模板变量">
                 <Textarea
                   value={debugValuesText}
@@ -1841,97 +1841,113 @@ function AgentPlaygroundWorkbench({
 
   return (
     <section className="mx-auto grid max-w-7xl gap-4" data-testid="agent-playground-panel">
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
-        <section className="rounded-md border border-border/70 bg-muted/10 p-4">
-          <div className="flex flex-col gap-2 border-b pb-3 md:flex-row md:items-start md:justify-between">
-            <div className="min-w-0">
-              <h2 className="text-base font-semibold">智能体调试场</h2>
-              <p className="mt-1 text-xs text-muted-foreground">
-                这里验证真实智能体任务：选择提示词、填入执行变量、定义期望输出，然后创建任务并回写运行历史、trace、token 和成本证据。
-              </p>
+      <section className="rounded-md border border-border/70 bg-background p-4" data-testid="agent-playground-run-console">
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="min-w-0">
+            <div className="flex min-w-0 items-center gap-2">
+              <TerminalSquare className="size-4 shrink-0 text-muted-foreground" />
+              <h2 className="truncate text-base font-semibold">真实任务运行控制台</h2>
             </div>
+            <p className="mt-1 text-xs text-muted-foreground">
+              这里不做本地模板试算，而是把已保存提示词变成一次可观测的智能体任务，等待 runtime 领取并回写运行证据。
+            </p>
+          </div>
+          <div className="flex flex-wrap items-center gap-2">
             <Badge variant={runtimeReadiness.status === "就绪" ? "secondary" : "outline"} className="w-fit shrink-0">
               {runtimeLoading ? "运行时检查中" : runtimeReadiness.label}
             </Badge>
+            <Button size="sm" variant="secondary" onClick={onSaveAgentDebugPackage} disabled={!selected || saving}>
+              {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+              保存为实验
+            </Button>
+            <Button size="sm" onClick={onRunAgentDebugPackage} disabled={!canCreateTask}>
+              {runningAgent ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+              创建真实智能体任务
+            </Button>
+          </div>
+        </div>
+
+        <div className="mt-4 grid gap-2 md:grid-cols-3" data-testid="agent-playground-task-pipeline">
+          {[
+            { label: "检查运行时", detail: runtimeLoading ? "检查中" : runtimeReadiness.status, icon: Activity },
+            { label: "创建真实任务", detail: selected ? `模板 v${selected.version}` : "待选择提示词", icon: TerminalSquare },
+            { label: "回写观测证据", detail: "任务、trace、token、成本", icon: ClipboardCheck },
+          ].map((item, index) => {
+            const Icon = item.icon;
+            return (
+              <div key={item.label} className="min-w-0 rounded-md border bg-muted/20 px-3 py-3">
+                <div className="flex items-center gap-2">
+                  <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+                  <span className="text-[11px] font-medium text-muted-foreground">阶段 {index + 1}</span>
+                </div>
+                <div className="mt-2 truncate text-sm font-semibold">{item.label}</div>
+                <div className="mt-1 truncate text-xs text-muted-foreground">{item.detail}</div>
+              </div>
+            );
+          })}
+        </div>
+      </section>
+
+      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_340px]">
+        <section className="grid gap-3 rounded-md border border-border/70 bg-muted/10 p-4" data-testid="agent-playground-task-payload">
+          <div className="grid gap-3 border-b pb-3 md:grid-cols-[minmax(0,1fr)_220px]">
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-muted-foreground">任务载荷来源</div>
+              <div className="mt-1 truncate text-sm font-semibold">{selected?.name ?? "请先从左侧选择提示词"}</div>
+              <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{selected?.description || "智能体调试场只引用已保存模板，模板编辑请回到提示词库。"}</div>
+            </div>
+            <div className="grid gap-1 text-xs text-muted-foreground">
+              <div>类型：{selected?.prompt_type ?? "未选择"}</div>
+              <div>版本：{selected ? `v${selected.version}` : "未选择"}</div>
+              <div>结构化用例：{promptCaseCount}</div>
+            </div>
           </div>
 
-          <div className="mt-4 grid gap-4">
-            <div className="grid gap-2 rounded-md border bg-background p-3 md:grid-cols-3" data-testid="agent-playground-task-pipeline">
-              {[
-                { label: "检查运行时", detail: runtimeReadiness.status },
-                { label: "创建真实任务", detail: selected ? "已选择提示词" : "待选择提示词" },
-                { label: "回写观测证据", detail: "任务、trace、token、成本" },
-              ].map((item, index) => (
-                <div key={item.label} className="min-w-0 rounded-md bg-muted/30 px-3 py-2">
-                  <div className="text-[11px] font-medium text-muted-foreground">阶段 {index + 1}</div>
-                  <div className="mt-1 truncate text-sm font-semibold">{item.label}</div>
-                  <div className="mt-1 truncate text-xs text-muted-foreground">{item.detail}</div>
-                </div>
-              ))}
-            </div>
-
-            <div className="grid gap-3 rounded-md border bg-background p-3 md:grid-cols-[minmax(0,1fr)_240px]">
-              <div className="min-w-0">
-                <div className="text-xs font-medium text-muted-foreground">执行提示词</div>
-                <div className="mt-1 truncate text-sm font-semibold">{selected?.name ?? "请先从左侧选择提示词"}</div>
-                <div className="mt-1 line-clamp-2 text-xs text-muted-foreground">{selected?.description || "智能体调试场不编辑提示词，只引用已保存模板作为执行上下文。"}</div>
-              </div>
-              <div className="grid gap-1 text-xs text-muted-foreground">
-                <div>类型：{selected?.prompt_type ?? "未选择"}</div>
-                <div>版本：{selected ? `v${selected.version}` : "未选择"}</div>
-                <div>结构化用例：{promptCaseCount}</div>
-              </div>
-            </div>
-
-            <div className="grid gap-4 md:grid-cols-[320px_minmax(0,1fr)]">
-              <Field label="执行变量">
-                <Textarea
-                  value={debugValuesText}
-                  onChange={(event) => onDebugValuesTextChange(event.target.value)}
-                  className="min-h-[180px] resize-y font-mono text-sm leading-6"
-                  placeholder="issue_title=登录失败&#10;project_context=user-center"
-                />
-              </Field>
-              <div className="grid gap-1.5 text-sm">
-                <div className="flex min-h-5 items-center gap-2">
-                  <span className="text-xs font-medium text-muted-foreground">任务上下文预览</span>
-                  {debugResult.missingVariables.length > 0 && (
-                    <Badge variant="outline" className="text-[11px]">
-                      缺失 {debugResult.missingVariables.join("、")}
-                    </Badge>
-                  )}
-                </div>
-                <pre className="min-h-[180px] overflow-auto whitespace-pre-wrap rounded-md border bg-background p-3 font-mono text-sm leading-6">
-                  {debugResult.rendered || "选择提示词并填写变量后生成任务上下文。"}
-                </pre>
-              </div>
-            </div>
-
-            <Field label="期望输出">
+          <div className="grid gap-3 xl:grid-cols-[300px_minmax(0,1fr)]">
+            <Field label="执行变量">
               <Textarea
-                value={agentExpectedText}
-                onChange={(event) => onAgentExpectedTextChange(event.target.value)}
-                className="min-h-[120px] resize-y text-sm leading-6"
-                placeholder="写下希望智能体最终交付的结构、证据和中文口径。"
+                value={debugValuesText}
+                onChange={(event) => onDebugValuesTextChange(event.target.value)}
+                className="min-h-[180px] resize-y font-mono text-sm leading-6"
+                placeholder="issue_title=登录失败&#10;project_context=user-center"
               />
             </Field>
-
-            <div className="flex flex-wrap items-center gap-2">
-              <Button size="sm" variant="secondary" onClick={onSaveAgentDebugPackage} disabled={!selected || saving}>
-                {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                保存为实验
-              </Button>
-              <Button size="sm" onClick={onRunAgentDebugPackage} disabled={!canCreateTask}>
-                {runningAgent ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                创建真实智能体任务
-              </Button>
-              {!selected && <span className="text-xs text-muted-foreground">先选择提示词后才能保存或执行。</span>}
-              {selected && runtimeReadiness.status !== "就绪" && !runtimeLoading && <span className="text-xs text-muted-foreground">{runtimeReadiness.fix}</span>}
+            <div className="grid gap-1.5 text-sm" data-testid="agent-playground-context-preview">
+              <div className="flex min-h-5 items-center gap-2">
+                <span className="text-xs font-medium text-muted-foreground">任务上下文预览</span>
+                {debugResult.missingVariables.length > 0 ? (
+                  <Badge variant="outline" className="text-[11px]">
+                    缺失 {debugResult.missingVariables.join("、")}
+                  </Badge>
+                ) : (
+                  <Badge variant="secondary" className="text-[11px]">
+                    可入队
+                  </Badge>
+                )}
+              </div>
+              <pre className="min-h-[180px] overflow-auto whitespace-pre-wrap rounded-md border bg-background p-3 font-mono text-sm leading-6">
+                {debugResult.rendered || "选择提示词并填写变量后生成任务上下文。"}
+              </pre>
             </div>
+          </div>
+
+          <Field label="期望输出">
+            <Textarea
+              value={agentExpectedText}
+              onChange={(event) => onAgentExpectedTextChange(event.target.value)}
+              className="min-h-[120px] resize-y text-sm leading-6"
+              placeholder="写下希望智能体最终交付的结构、证据和中文口径。"
+            />
+          </Field>
+
+          <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            {!selected && <span>先选择提示词后才能保存或执行。</span>}
+            {selected && runtimeReadiness.status !== "就绪" && !runtimeLoading && <span>{runtimeReadiness.fix}</span>}
+            {selected && runtimeReadiness.status === "就绪" && <span>点击创建后会写入真实任务队列，并在运行历史中回读 task、trace 与用量。</span>}
           </div>
         </section>
 
-        <section className="grid gap-3">
+        <section className="grid content-start gap-3">
           <div className="rounded-md border border-border/70 bg-muted/10 p-3" data-testid="agent-playground-runtime">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-semibold">真实执行准备度</h3>
@@ -1941,6 +1957,18 @@ function AgentPlaygroundWorkbench({
               <div>{runtimeLoading ? "正在检查当前工作区的运行时列表。" : runtimeReadiness.detail}</div>
               <div>目标模型：{runtimeReadiness.model || DEFAULT_AGENT_MODEL}</div>
               <div>运行时：{runtimeReadiness.runtime?.name ?? runtimeReadiness.runtime?.id ?? "未选择"}</div>
+            </div>
+          </div>
+
+          <div className="rounded-md border border-border/70 bg-muted/10 p-3" data-testid="agent-playground-observability-contract">
+            <div className="flex items-center justify-between gap-2">
+              <h3 className="text-sm font-semibold">观测回写契约</h3>
+              <Badge variant="outline">真实任务</Badge>
+            </div>
+            <div className="mt-2 grid gap-1 text-xs text-muted-foreground">
+              <div>入队后生成 task id，并绑定触发来源「智能体调试场」。</div>
+              <div>runtime 完成后同步 messages、trace、token、耗时和失败原因。</div>
+              <div>运行历史和运行看板必须能回读同一条证据。</div>
             </div>
           </div>
 

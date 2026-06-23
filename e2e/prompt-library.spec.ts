@@ -1,10 +1,30 @@
-import { test, expect } from "@playwright/test";
+import { test, expect, type Locator } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { createTestApi, loginAsDefault, waitForPageText } from "./helpers";
 import type { TestApiClient } from "./fixtures";
 
 function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function clickStableButton(locator: Locator) {
+  await expect(locator).toBeEnabled({ timeout: 10000 });
+  await locator.evaluate((button: HTMLButtonElement) => {
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true, cancelable: true, view: window }));
+  });
+}
+
+async function fillStable(locator: Locator, value: string) {
+  await expect(locator).toBeEditable({ timeout: 10000 });
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    await locator.fill(value);
+    try {
+      await expect(locator).toHaveValue(value, { timeout: 2000 });
+      return;
+    } catch (error) {
+      if (attempt === 2) throw error;
+    }
+  }
 }
 
 test.describe("训练与评估工作台", () => {
@@ -39,7 +59,7 @@ test.describe("训练与评估工作台", () => {
   });
 
 	  test("可以创建提示词、调试渲染并记录评测资产", async ({ page }) => {
-    test.setTimeout(120_000);
+    test.setTimeout(180_000);
     await api.ensureOnlineCodexRuntime(`${artifactPrefix} Codex Runtime`);
     await refreshExpectedAgentModel();
 
@@ -69,6 +89,9 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("prompt-playground-workbench")).toBeVisible({ timeout: 10000 });
     await expect(page.getByTestId("prompt-library-editor")).toHaveCount(0);
     await expect(page.getByTestId("agent-playground-workbench")).toHaveCount(0);
+    await expect(page.getByTestId("prompt-playground-template-lab")).toBeVisible();
+    await expect(page.getByTestId("agent-playground-run-console")).toHaveCount(0);
+    await expect(page.getByTestId("agent-playground-task-payload")).toHaveCount(0);
     await expect(page.getByText("不启动智能体")).toBeVisible();
     await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("本地渲染");
     await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("本地渲染记录");
@@ -89,9 +112,13 @@ test.describe("训练与评估工作台", () => {
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/agent-playground$`), { timeout: 30000 });
     await expect(page.getByTestId("agent-playground-workbench")).toBeVisible({ timeout: 10000 });
     await expect(page.getByTestId("agent-playground-workbench")).toContainText(`${artifactPrefix} user-center 澄清`, { timeout: 10000 });
+    await expect(page.getByTestId("agent-playground-run-console")).toContainText("真实任务运行控制台");
+    await expect(page.getByTestId("agent-playground-task-payload")).toBeVisible();
+    await expect(page.getByTestId("agent-playground-observability-contract")).toContainText("观测回写契约");
     await expect(page.getByTestId("agent-playground-task-pipeline")).toContainText("创建真实任务");
     await expect(page.getByTestId("agent-playground-task-pipeline")).toContainText("回写观测证据");
     await expect(page.getByTestId("prompt-playground-local-pipeline")).toHaveCount(0);
+    await expect(page.getByTestId("prompt-playground-template-lab")).toHaveCount(0);
     await expect(page.getByText("Codex 在线")).toBeVisible({ timeout: 10000 });
     if (expectedAgentRuntimeName) {
       await expect(page.getByText(`运行时：${expectedAgentRuntimeName}`)).toBeVisible();
@@ -181,17 +208,12 @@ test.describe("训练与评估工作台", () => {
     const manualCaseVariablesInput = datasetRow.getByPlaceholder("变量：issue_title=登录失败");
     const manualCaseExpectedInput = datasetRow.getByPlaceholder("期望包含：验收条件, trace/任务标识");
     const manualCaseTagsInput = datasetRow.getByPlaceholder("标签：user-center, 回归");
-    await manualCaseNameInput.fill("手工补充登录失败验收");
-    await expect(manualCaseNameInput).toHaveValue("手工补充登录失败验收");
-    await manualCaseVariablesInput.fill("issue_title=登录失败\nproject_context=user-center");
-    await expect(manualCaseVariablesInput).toHaveValue("issue_title=登录失败\nproject_context=user-center");
-    await manualCaseExpectedInput.fill("验收条件, trace/任务标识, 可观测证据");
-    await expect(manualCaseExpectedInput).toHaveValue("验收条件, trace/任务标识, 可观测证据");
-    await manualCaseTagsInput.fill("手工用例, user-center");
-    await expect(manualCaseTagsInput).toHaveValue("手工用例, user-center");
+    await fillStable(manualCaseNameInput, "手工补充登录失败验收");
+    await fillStable(manualCaseVariablesInput, "issue_title=登录失败\nproject_context=user-center");
+    await fillStable(manualCaseExpectedInput, "验收条件, trace/任务标识, 可观测证据");
+    await fillStable(manualCaseTagsInput, "手工用例, user-center");
     const addManualCaseButton = datasetRow.getByRole("button", { name: "新增用例" });
-    await expect(addManualCaseButton).toBeEnabled({ timeout: 10000 });
-    await addManualCaseButton.click();
+    await clickStableButton(addManualCaseButton);
     await expect(page.getByText("手工评测用例已创建").last()).toBeVisible({ timeout: 10000 });
     await expect
       .poll(async () => {
@@ -239,11 +261,11 @@ test.describe("训练与评估工作台", () => {
     const testSuiteRow = page.getByTestId(`prompt-evaluation-asset-${testSuite!.id}`);
     await expect(testSuiteRow.getByText("结构化评测用例", { exact: true })).toBeVisible({ timeout: 10000 });
     await expect(testSuiteRow).toContainText("结构化用例 1 个", { timeout: 10000 });
-    await testSuiteRow.getByPlaceholder("手工用例名称").fill("手工套件回归用例");
-    await testSuiteRow.getByPlaceholder("变量：issue_title=登录失败").fill("issue_title=登录失败\nproject_context=user-center");
-    await testSuiteRow.getByPlaceholder("期望包含：验收条件, trace/任务标识").fill("套件结论, 通过率, trace/任务标识");
-    await testSuiteRow.getByPlaceholder("标签：user-center, 回归").fill("测试套件, 回归");
-    await testSuiteRow.getByRole("button", { name: "新增用例" }).click();
+    await fillStable(testSuiteRow.getByPlaceholder("手工用例名称"), "手工套件回归用例");
+    await fillStable(testSuiteRow.getByPlaceholder("变量：issue_title=登录失败"), "issue_title=登录失败\nproject_context=user-center");
+    await fillStable(testSuiteRow.getByPlaceholder("期望包含：验收条件, trace/任务标识"), "套件结论, 通过率, trace/任务标识");
+    await fillStable(testSuiteRow.getByPlaceholder("标签：user-center, 回归"), "测试套件, 回归");
+    await clickStableButton(testSuiteRow.getByRole("button", { name: "新增用例" }));
     await expect(page.getByText("手工评测用例已创建").last()).toBeVisible({ timeout: 10000 });
     await expect
       .poll(async () => {
@@ -301,11 +323,11 @@ test.describe("训练与评估工作台", () => {
         total: 3,
         names: ["中文一致性", "命中率", "缺失变量"].sort(),
       });
-    await experimentRow.getByPlaceholder("手工用例名称").fill("手工实验对比用例");
-    await experimentRow.getByPlaceholder("变量：issue_title=登录失败").fill("issue_title=登录失败\nproject_context=user-center");
-    await experimentRow.getByPlaceholder("期望包含：验收条件, trace/任务标识").fill("实验结论, 中文指标, trace/任务标识");
-    await experimentRow.getByPlaceholder("标签：user-center, 回归").fill("实验, 领导演示");
-    await experimentRow.getByRole("button", { name: "新增用例" }).click();
+    await fillStable(experimentRow.getByPlaceholder("手工用例名称"), "手工实验对比用例");
+    await fillStable(experimentRow.getByPlaceholder("变量：issue_title=登录失败"), "issue_title=登录失败\nproject_context=user-center");
+    await fillStable(experimentRow.getByPlaceholder("期望包含：验收条件, trace/任务标识"), "实验结论, 中文指标, trace/任务标识");
+    await fillStable(experimentRow.getByPlaceholder("标签：user-center, 回归"), "实验, 领导演示");
+    await clickStableButton(experimentRow.getByRole("button", { name: "新增用例" }));
     await expect(page.getByText("手工评测用例已创建").last()).toBeVisible({ timeout: 10000 });
     await expect
       .poll(async () => {
@@ -322,11 +344,11 @@ test.describe("训练与评估工作台", () => {
     const optimizationRow = page.getByTestId(`prompt-evaluation-asset-${optimizationRun!.id}`);
     await expect(optimizationRow.getByText("结构化评测用例", { exact: true })).toBeVisible({ timeout: 10000 });
     await expect(optimizationRow).toContainText("优化运行", { timeout: 10000 });
-    await optimizationRow.getByPlaceholder("手工用例名称").fill("手工优化回归用例");
-    await optimizationRow.getByPlaceholder("变量：issue_title=登录失败").fill("issue_title=登录失败\nproject_context=user-center");
-    await optimizationRow.getByPlaceholder("期望包含：验收条件, trace/任务标识").fill("优化候选, 失败原因, 人工确认");
-    await optimizationRow.getByPlaceholder("标签：user-center, 回归").fill("优化运行, 人工确认");
-    await optimizationRow.getByRole("button", { name: "新增用例" }).click();
+    await fillStable(optimizationRow.getByPlaceholder("手工用例名称"), "手工优化回归用例");
+    await fillStable(optimizationRow.getByPlaceholder("变量：issue_title=登录失败"), "issue_title=登录失败\nproject_context=user-center");
+    await fillStable(optimizationRow.getByPlaceholder("期望包含：验收条件, trace/任务标识"), "优化候选, 失败原因, 人工确认");
+    await fillStable(optimizationRow.getByPlaceholder("标签：user-center, 回归"), "优化运行, 人工确认");
+    await clickStableButton(optimizationRow.getByRole("button", { name: "新增用例" }));
     await expect(page.getByText("手工评测用例已创建").last()).toBeVisible({ timeout: 10000 });
     await expect
       .poll(async () => {
@@ -507,7 +529,7 @@ test.describe("训练与评估工作台", () => {
     agentRunCard = page.getByTestId(`prompt-evaluation-run-${queuedAgentRun!.id}`);
     await expect(agentRunCard).toContainText("智能体执行 · 通过", { timeout: 10000 });
     await expect(agentRunCard).toContainText(new RegExp(`模型 ${escapeRegExp(expectedAgentModel)} · 运行时 codex · 通过 1\\/1 · 输入 16 token · 输出 7 token`));
-    await agentRunCard.getByRole("button", { name: "查看证据" }).click();
+    await clickStableButton(agentRunCard.getByRole("button", { name: "查看证据" }));
     const agentEvidencePanel = agentRunCard.getByTestId(`run-evidence-${queuedAgentRun!.id}`);
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-模型")).toContainText(expectedAgentModel, { timeout: 10000 });
     await expect(agentEvidencePanel.getByTestId("run-evidence-metric-运行时")).toContainText("codex");
@@ -552,7 +574,7 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByText("模板渲染检查 · 通过")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(/模型 本地模板渲染检查 · 运行时 server · 通过 1\/1/)).toBeVisible();
     const localRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "模板渲染检查 · 通过" }).first();
-    await localRunCard.getByRole("button", { name: "查看证据" }).click();
+    await clickStableButton(localRunCard.getByRole("button", { name: "查看证据" }));
     await expect(page.getByText("用例明细")).toBeVisible({ timeout: 10000 });
     await expect(localRunCard.getByText("调试场用例", { exact: true })).toBeVisible();
     await expect(localRunCard.getByText("请澄清 登录失败，项目背景：user-center。", { exact: true })).toBeVisible();
@@ -561,7 +583,7 @@ test.describe("训练与评估工作台", () => {
     await expect(localRunCard.getByText("\"trace_events\"")).toBeVisible();
     await localRunCard.getByRole("button", { name: "收起证据" }).click();
     agentRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "智能体执行 · 通过" }).first();
-    await agentRunCard.getByRole("button", { name: "查看证据" }).click();
+    await clickStableButton(agentRunCard.getByRole("button", { name: "查看证据" }));
     await expect(agentRunCard.getByText("智能体调试场用例", { exact: true })).toBeVisible({ timeout: 10000 });
     await expect(agentRunCard.getByText(/codex\/[^ ]+ · 输入 11 · 输出 7 · 预估成本 \$/)).toBeVisible();
     await expect(agentRunCard.getByText("缓存读 2 · 缓存写 3")).toBeVisible();

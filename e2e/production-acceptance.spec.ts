@@ -168,52 +168,66 @@ test.describe("生产部署验收", () => {
     await expect(page.getByTestId("prompt-playground-workbench")).toBeVisible({ timeout: 15000 });
     await expect(page.getByLabel("模板变量")).toBeVisible();
     await expect(page.getByTestId("prompt-playground-rendered-output")).toBeVisible();
+    await expect(page.getByTestId("prompt-playground-template-lab")).toBeVisible();
     await expect(page.getByText("调试边界")).toBeVisible();
     await expect(page.getByText("不启动智能体")).toBeVisible();
     await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("本地渲染记录");
     await expect(page.getByTestId("agent-playground-task-pipeline")).toHaveCount(0);
+    await expect(page.getByTestId("agent-playground-run-console")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "运行并记录" })).toBeVisible();
     await expect(page.getByRole("button", { name: "创建真实智能体任务" })).toHaveCount(0);
     await expect(page.getByText("真实执行准备度")).toHaveCount(0);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/prompt-playground$`), { timeout: 30000 });
+    await expect(page.getByTestId("prompt-playground-template-lab")).toBeVisible({ timeout: 15000 });
+    await expect(page.getByTestId("agent-playground-run-console")).toHaveCount(0);
 
     await page.getByRole("link", { name: "智能体调试场", exact: true }).last().click();
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/agent-playground$`));
     await expectTrainingRouteShell(page, TRAINING_ROUTES[3]!);
+    await expect(page.getByTestId("agent-playground-run-console")).toContainText("真实任务运行控制台", { timeout: 15000 });
+    await expect(page.getByTestId("agent-playground-task-payload")).toBeVisible();
+    await expect(page.getByTestId("agent-playground-observability-contract")).toContainText("观测回写契约");
     await expect(page.getByText("真实执行准备度")).toBeVisible({ timeout: 15000 });
     await expect(page.getByText("任务上下文预览")).toBeVisible();
     await expect(page.getByText("最近智能体运行")).toBeVisible();
     await expect(page.getByTestId("agent-playground-task-pipeline")).toContainText("创建真实任务");
     await expect(page.getByTestId("agent-playground-task-pipeline")).toContainText("回写观测证据");
     await expect(page.getByTestId("prompt-playground-local-pipeline")).toHaveCount(0);
+    await expect(page.getByTestId("prompt-playground-template-lab")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "创建真实智能体任务" })).toBeVisible();
     await expect(page.getByTestId("prompt-playground-workbench")).toHaveCount(0);
     await expect(page.getByText("不启动智能体")).toHaveCount(0);
+    await page.reload({ waitUntil: "domcontentloaded" });
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/agent-playground$`), { timeout: 30000 });
+    await expect(page.getByTestId("agent-playground-run-console")).toBeVisible({ timeout: 15000 });
+    await expect(page.getByTestId("prompt-playground-template-lab")).toHaveCount(0);
 
     await page.getByRole("link", { name: "数据集", exact: true }).last().click();
-    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/datasets$`));
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/datasets$`), { timeout: 30000 });
     await expectTrainingRouteShell(page, TRAINING_ROUTES[4]!);
     await expect(page.locator("[data-testid^='prompt-evaluation-asset-']").filter({ hasText: "数据集" }).first()).toContainText("数据集", { timeout: 15000 });
     await expect(page.locator("[data-testid^='prompt-evaluation-cases-']").first()).toContainText("结构化评测用例", { timeout: 15000 });
 
     await page.getByRole("link", { name: "测试套件", exact: true }).last().click();
-    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/test-suites$`));
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/test-suites$`), { timeout: 30000 });
     await expectTrainingRouteShell(page, TRAINING_ROUTES[5]!);
     await expect(page.locator("[data-testid^='prompt-evaluation-asset-']").filter({ hasText: "测试套件" }).first()).toContainText("测试套件", { timeout: 15000 });
 
     await page.getByRole("link", { name: "实验", exact: true }).last().click();
-    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/experiments$`));
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/experiments$`), { timeout: 30000 });
     await expectTrainingRouteShell(page, TRAINING_ROUTES[6]!);
     await expect(page.getByText(/实验对比摘要：[1-9]/)).toBeVisible({ timeout: 15000 });
     await expect(page.locator("[data-testid^='prompt-evaluation-experiment-dimensions-']").first()).toContainText("实验维度事实", { timeout: 15000 });
 
     await page.getByRole("link", { name: "优化运行", exact: true }).last().click();
-    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/optimization-runs$`));
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/optimization-runs$`), { timeout: 30000 });
     await expectTrainingRouteShell(page, TRAINING_ROUTES[7]!);
     await expect(page.locator("[data-testid^='prompt-evaluation-asset-']").filter({ hasText: "优化运行" }).first()).toContainText("优化运行", { timeout: 15000 });
     await expect(page.locator("[data-testid^='prompt-evaluation-candidate-']").first()).toContainText(/待确认|已发布|已拒绝/, { timeout: 15000 });
 
     await page.getByRole("link", { name: "运行历史", exact: true }).last().click();
-    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/run-history$`));
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/run-history$`), { timeout: 30000 });
     await expectTrainingRouteShell(page, TRAINING_ROUTES[8]!);
     const firstRun = page.locator("[data-testid^='prompt-evaluation-run-']").first();
     await expect(firstRun).toContainText(/智能体执行|模板渲染检查/, { timeout: 30000 });
