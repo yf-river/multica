@@ -7,7 +7,6 @@ import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
-import { renderPromptTemplate } from "@multica/core/prompt-library";
 import {
   TRAINING_WORKBENCH_TABS,
   TRAINING_WORKBENCH_VIEW_BY_TAB,
@@ -20,7 +19,6 @@ import {
 } from "@multica/core/training";
 import type {
   CreatePromptLibraryItemRequest,
-  CreatePromptEvaluationAssetRequest,
   CreatePromptEvaluationCaseRequest,
   UpdatePromptEvaluationCaseRequest,
   PromptEvaluationAsset,
@@ -52,19 +50,17 @@ import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { AgentPlaygroundWorkbench, PromptPlaygroundWorkbench } from "./playground-workbenches";
 import {
   DEFAULT_AGENT_MODEL,
-  buildAgentDebugPackageRequest,
-  buildAssetPayload,
   draftToRequest,
   emptyDraft,
   itemToDraft,
   parseDebugValues,
-  parseVariables,
   requestToDraft,
   setDraftField,
   splitList,
   valuesToDebugText,
   type PromptDraft,
 } from "./prompt-library-request-builders";
+import { usePromptPlaygroundActions } from "./use-prompt-playground-actions";
 
 const promptLibraryKeys = {
   list: (workspaceId: string) => ["prompt-library", workspaceId, "list"] as const,
@@ -140,13 +136,11 @@ export function PromptLibraryPage({
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isDraftingNew, setIsDraftingNew] = useState(false);
   const [draft, setDraft] = useState<PromptDraft>(emptyDraft);
-  const [debugValuesText, setDebugValuesText] = useState("");
   const [caseDrafts, setCaseDrafts] = useState<Record<string, ManualCaseDraft>>({});
   const caseDraftStorageKey = workspaceId ? `multica:training:case-drafts:${workspaceId}` : null;
   const viewParam = trainingViewFromLocation(navigation.pathname, navigation.searchParams);
   const resolvedView = activeView ?? viewParam;
   const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => trainingWorkbenchTabFromView(resolvedView));
-  const [agentExpectedText, setAgentExpectedText] = useState("");
   const [demoTimeRange, setDemoTimeRange] = useState<DemoTimeRange>("7d");
   const [exportingDemoEvidence, setExportingDemoEvidence] = useState(false);
   const shouldShowPromptEditor = showPromptEditor ?? trainingWorkbenchShowsPromptEditor(resolvedView);
@@ -384,46 +378,6 @@ export function PromptLibraryPage({
     },
   });
 
-  const runDebugMut = useMutation({
-    mutationFn: async (data: CreatePromptEvaluationAssetRequest) => {
-      const asset = await api.createPromptEvaluationAsset(data);
-      return api.runPromptEvaluationAsset(asset.id);
-    },
-    onSuccess: () => {
-      invalidateAssets();
-      invalidateCases();
-      invalidateRuns();
-      invalidateSummary();
-      toast.success("优化运行已记录");
-    },
-  });
-
-    const createAssetMut = useMutation({
-      mutationFn: (data: CreatePromptEvaluationAssetRequest) => api.createPromptEvaluationAsset(data),
-      onSuccess: () => {
-        invalidateAssets();
-        invalidateCases();
-        invalidateExperimentDimensions();
-        invalidateSummary();
-        toast.success("资产已创建");
-      },
-    });
-
-    const runAgentMut = useMutation({
-      mutationFn: async (data: CreatePromptEvaluationAssetRequest) => {
-        const asset = await api.createPromptEvaluationAsset(data);
-        return api.runPromptEvaluationAssetAgent(asset.id);
-      },
-      onSuccess: (result) => {
-        invalidateAssets();
-        invalidateCases();
-        invalidateExperimentDimensions();
-        invalidateRuns();
-        invalidateSummary();
-        toast.success(`真实智能体任务已入队：${result.task_id}`);
-      },
-    });
-
   const updateAssetMut = useMutation({
     mutationFn: ({ id, data }: { id: string; data: UpdatePromptEvaluationAssetRequest }) => api.updatePromptEvaluationAsset(id, data),
     onSuccess: () => {
@@ -552,17 +506,33 @@ export function PromptLibraryPage({
 
   const saving = createMut.isPending || updateMut.isPending;
   const deleting = deleteMut.isPending;
-  const runningDebug = runDebugMut.isPending;
-    const savingAsset = createAssetMut.isPending || updateAssetMut.isPending || deleteAssetMut.isPending;
-    const runningAgent = runAgentMut.isPending;
-  const debugResult = useMemo(
-    () => renderPromptTemplate({
-      content: draft.content,
-      variables: parseVariables(draft.variablesText),
-      values: parseDebugValues(debugValuesText),
-    }),
-    [debugValuesText, draft.content, draft.variablesText],
-  );
+  const promptPlaygroundActions = usePromptPlaygroundActions({
+    draft,
+    selected,
+    items,
+    selectedPromptStorageKey,
+    agentRuntimeReadiness,
+    onAssetsChanged: invalidateAssets,
+    onCasesChanged: invalidateCases,
+    onExperimentDimensionsChanged: invalidateExperimentDimensions,
+    onRunsChanged: invalidateRuns,
+    onSummaryChanged: invalidateSummary,
+  });
+  const {
+    debugValuesText,
+    setDebugValuesText,
+    agentExpectedText,
+    setAgentExpectedText,
+    debugResult,
+    runningDebug,
+    creatingAsset,
+    runningAgent,
+    runDebug,
+    createWorkbenchAsset,
+    saveAgentDebugPackage,
+    runAgentDebugPackage,
+  } = promptPlaygroundActions;
+  const savingAsset = creatingAsset || updateAssetMut.isPending || deleteAssetMut.isPending;
 
   const startNew = () => {
     setIsDraftingNew(true);
@@ -608,81 +578,6 @@ export function PromptLibraryPage({
     if (!window.confirm(`删除提示词「${selected.name}」？`)) return;
     deleteMut.mutate(selected.id);
   };
-
-  const runDebug = () => {
-    if (!selected) {
-      toast.error("请先保存提示词");
-      return;
-    }
-    const values = parseDebugValues(debugValuesText);
-    runDebugMut.mutate({
-      prompt_id: selected.id,
-      name: `${selected.name} 优化运行 ${new Date().toLocaleString("zh-CN")}`,
-      description: "从提示词调试场记录",
-      asset_type: "优化运行",
-      payload: {
-        cases: [
-          {
-            名称: "调试场用例",
-            变量: values,
-            期望包含: debugResult.missingVariables.length === 0 ? debugResult.usedVariables.map((key) => values[key]).filter(Boolean) : [],
-          },
-        ],
-        调试输出: debugResult.rendered,
-      },
-      status: "启用",
-    });
-  };
-
-  const createWorkbenchAsset = (assetType: PromptEvaluationAssetType) => {
-    let prompt = selected;
-    if (!prompt && selectedPromptStorageKey) {
-      try {
-        const storedId = window.localStorage.getItem(selectedPromptStorageKey);
-        prompt = storedId ? items.find((item) => item.id === storedId) ?? null : null;
-      } catch {
-        prompt = null;
-      }
-    }
-    prompt = prompt ?? items[0] ?? null;
-    if (!prompt) {
-      toast.error("请先保存提示词");
-      return;
-    }
-    const values = parseDebugValues(debugValuesText);
-    const now = new Date().toLocaleString("zh-CN");
-    createAssetMut.mutate({
-      prompt_id: prompt.id,
-      name: `${prompt.name} ${assetType} ${now}`,
-      description: `从中文工作台创建的${assetType}`,
-      asset_type: assetType,
-      payload: buildAssetPayload(assetType, prompt, values, debugResult.rendered),
-      status: "启用",
-    });
-  };
-
-    const saveAgentDebugPackage = () => {
-      const prompt = selected;
-      if (!prompt) {
-        toast.error("请先保存提示词");
-        return;
-      }
-      createAssetMut.mutate(buildAgentDebugPackageRequest(prompt, parseDebugValues(debugValuesText), debugResult.rendered, agentExpectedText, agentRuntimeReadiness));
-    };
-
-    const runAgentDebugPackage = () => {
-      const prompt = selected;
-      if (!prompt) {
-        toast.error("请先保存提示词");
-        return;
-      }
-      if (agentRuntimeReadiness.status !== "就绪") {
-        toast.error(agentRuntimeReadiness.fix);
-        return;
-      }
-      const values = parseDebugValues(debugValuesText);
-      runAgentMut.mutate(buildAgentDebugPackageRequest(prompt, values, debugResult.rendered, agentExpectedText, agentRuntimeReadiness));
-    };
 
   const toggleAssetStatus = (asset: PromptEvaluationAsset) => {
     updateAssetMut.mutate({
