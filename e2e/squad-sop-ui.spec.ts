@@ -1,82 +1,110 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { createTestApi, loginAsDefault } from "./helpers";
 
-type SquadCurlEvidence = {
-  workspace_slug: string;
-  issue: { id: string; identifier: string; title: string };
-  squad: { name: string };
-  cross_project_children: {
-    gateway: { id: string; identifier: string; title: string };
-    config: { id: string; identifier: string; title: string };
-  };
-  child_done_wake: {
-    parent_comment_id: string;
-    child_identifier: string;
-    parent_comment_mentions_squad: boolean;
-    requeued_task_id: string;
-  };
-};
-
-function latestUserCenterEvidence(): SquadCurlEvidence {
-  const path = join(process.cwd(), "artifacts/acceptance/codex-squad-curl-e2e-latest.json");
-  return JSON.parse(readFileSync(path, "utf8")) as SquadCurlEvidence;
-}
-
 test.describe("user-center 小队 SOP 页面证据", () => {
   test("可以在页面回看父子任务、SOP 执行、观测事件和评论唤醒", async ({ page }) => {
-    const evidence = latestUserCenterEvidence();
-    expect(evidence.child_done_wake.parent_comment_mentions_squad).toBe(true);
-    expect(evidence.child_done_wake.requeued_task_id).toBeTruthy();
+    test.setTimeout(120_000);
 
     const workspaceSlug = await loginAsDefault(page);
-    expect(workspaceSlug).toBe(evidence.workspace_slug);
     const api = await createTestApi();
+    const createdIssueIds: string[] = [];
+    const createdProjectIds: string[] = [];
+
     try {
-      const uiChild = await api.createIssue(`UI 验收 child-done 中文评论 ${Date.now()}`, {
-        description: "通过公开 API 创建的页面回看夹具，用于验证子任务完成后的中文系统评论。",
+      const suffix = Date.now();
+      const template = await api.ensureInternalSquadTemplate("user-center");
+      const squad = template.squad;
+      const leader = template.agents.find((agent) => agent.role_key === "captain");
+      expect(leader).toBeTruthy();
+
+      const usercenterProject = await api.createProject(`UI usercenter ${suffix}`);
+      const gatewayProject = await api.createProject(`UI gateway ${suffix}`);
+      const configProject = await api.createProject(`UI config ${suffix}`);
+      createdProjectIds.push(configProject.id, gatewayProject.id, usercenterProject.id);
+
+      const parent = await api.createIssue(`UI user-center SOP 父任务 ${suffix}`, {
+        description: "页面验收：user-center 小队父任务必须能展示 SOP、trace、跨项目子任务和 child-done 中文系统评论。",
         status: "todo",
         priority: "medium",
-        parent_issue_id: evidence.issue.id,
+        project_id: usercenterProject.id,
+        assignee_type: "squad",
+        assignee_id: squad.id,
       });
-      await api.updateIssue(uiChild.id, { status: "done" });
+      createdIssueIds.push(parent.id);
+
+      await expect
+        .poll(async () => (await api.findLeaderTask(parent.id, leader!.id))?.id ?? "", {
+          timeout: 15000,
+          message: "等待 user-center 小队队长任务入队",
+        })
+        .not.toBe("");
+      const leaderTask = await api.findLeaderTask(parent.id, leader!.id);
+      expect(leaderTask).toBeTruthy();
+      await api.completeSquadLeaderTaskViaDaemon(
+        leaderTask!,
+        "队长输出：已完成页面验收所需的 user-center SOP 执行证据、trace 和用量回写。",
+      );
+
+      const gatewayChild = await api.createIssue(`UI gateway 子任务 ${suffix}`, {
+        description: "补充 user-center API 网关路由、鉴权、转发信息。",
+        status: "todo",
+        priority: "medium",
+        parent_issue_id: parent.id,
+        project_id: gatewayProject.id,
+      });
+      const configChild = await api.createIssue(`UI config 子任务 ${suffix}`, {
+        description: "补充 user-center API 配置键、默认值、灰度和回滚方式。",
+        status: "todo",
+        priority: "medium",
+        parent_issue_id: parent.id,
+        project_id: configProject.id,
+      });
+      createdIssueIds.push(configChild.id, gatewayChild.id);
+
+      await api.updateIssue(gatewayChild.id, { status: "done" });
+      let systemCommentId = "";
       await expect
         .poll(async () => {
-          const comment = await api.getLatestSystemComment(evidence.issue.id);
+          const comment = await api.getLatestSystemComment(parent.id);
+          if (comment?.content?.includes(`子任务 [${gatewayChild.identifier}]`)) {
+            systemCommentId = comment.id;
+          }
           return comment?.content ?? "";
         }, { timeout: 15000 })
-        .toContain(`子任务 [${uiChild.identifier}]`);
+        .toContain(`子任务 [${gatewayChild.identifier}]`);
 
-      await page.goto(`/${workspaceSlug}/issues/${evidence.issue.id}`, { waitUntil: "domcontentloaded" });
-      await expect(page.getByRole("link", { name: new RegExp(`${evidence.issue.identifier}.*${evidence.issue.title}`) })).toBeVisible({ timeout: 15000 });
-      await expect(page.getByText(evidence.squad.name).first()).toBeVisible({ timeout: 15000 });
+      await page.goto(`/${workspaceSlug}/issues/${parent.id}#comment-${systemCommentId}`, { waitUntil: "domcontentloaded" });
+      await expect(page.getByRole("link", { name: new RegExp(`${parent.identifier}.*${parent.title}`) })).toBeVisible({ timeout: 15000 });
+      await expect(page.getByText(squad.name).first()).toBeVisible({ timeout: 15000 });
 
       const subIssues = page.getByTestId("issue-sub-issues-section");
       await expect(subIssues).toContainText("子任务", { timeout: 15000 });
-      await expect(subIssues).toContainText(evidence.cross_project_children.gateway.identifier);
-      await expect(subIssues).toContainText(evidence.cross_project_children.gateway.title);
-      await expect(subIssues).toContainText(evidence.cross_project_children.config.identifier);
-      await expect(subIssues).toContainText(evidence.cross_project_children.config.title);
+      await expect(subIssues).toContainText(gatewayChild.identifier);
+      await expect(subIssues).toContainText(gatewayChild.title);
+      await expect(subIssues).toContainText(configChild.identifier);
+      await expect(subIssues).toContainText(configChild.title);
 
       const executionLog = page.getByTestId("issue-execution-log-section");
       await expect(executionLog).toContainText("小队 SOP 执行", { timeout: 15000 });
       await expect(page.getByTestId("issue-sop-run-summary")).toContainText("user-center-sop-flow");
       await expect(page.getByTestId("issue-trace-event-summary")).toContainText("观测事件");
 
-      const systemComment = page
-        .getByTestId("issue-comment-card")
-        .filter({ hasText: uiChild.identifier })
-        .filter({ hasText: "子任务" })
-        .filter({ hasText: "已完成" });
-      await expect(systemComment).toContainText(uiChild.identifier, { timeout: 15000 });
+      const systemComment = page.locator(`#comment-${systemCommentId}`).getByTestId("issue-comment-card");
+      await expect(systemComment).toContainText(gatewayChild.identifier, { timeout: 15000 });
+      await expect(systemComment).toContainText("子任务");
+      await expect(systemComment).toContainText("已完成");
       await expect(systemComment).not.toContainText("Sub-issue");
 
-      await page.goto(`/${workspaceSlug}/issues/${evidence.cross_project_children.gateway.id}`, { waitUntil: "domcontentloaded" });
-      await expect(page.getByText(evidence.cross_project_children.gateway.identifier)).toBeVisible({ timeout: 15000 });
-      await expect(page.getByRole("link", { name: new RegExp(`属于父任务 ${evidence.issue.identifier}`) })).toBeVisible({ timeout: 15000 });
+      await page.goto(`/${workspaceSlug}/issues/${gatewayChild.id}`, { waitUntil: "domcontentloaded" });
+      await expect(page.getByText(gatewayChild.identifier).first()).toBeVisible({ timeout: 15000 });
+      await expect(page.getByRole("link", { name: new RegExp(`属于父任务 ${parent.identifier}`) })).toBeVisible({ timeout: 15000 });
     } finally {
-      await api.cleanup();
+      for (const id of createdIssueIds) {
+        await api.deleteIssue(id).catch(() => undefined);
+      }
+      for (const id of createdProjectIds) {
+        await api.deleteProject(id).catch(() => undefined);
+      }
     }
   });
 });
