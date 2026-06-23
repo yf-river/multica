@@ -157,7 +157,7 @@ describe("WorkspaceTab — issue prefix editing", () => {
       "workspace-1",
       expect.not.objectContaining({ issue_prefix: expect.anything() }),
     );
-    expect(screen.queryByText(/确认修改 issue 前缀/)).toBeNull();
+    expect(screen.queryByText(/确认修改任务编号前缀/)).toBeNull();
     // Non-prefix saves must NOT invalidate the issue cache — would
     // trigger an unnecessary workspace-wide refetch on every name edit.
     expect(mockInvalidateQueries).not.toHaveBeenCalledWith(
@@ -179,7 +179,7 @@ describe("WorkspaceTab — issue prefix editing", () => {
     expect(mockUpdateWorkspace).not.toHaveBeenCalled();
 
     // Dialog body mentions both the old and new prefix in the warning.
-    await screen.findByText(/确认修改 issue 前缀/);
+    await screen.findByText(/确认修改任务编号前缀/);
     expect(screen.getByText(/TES-N/)).toBeTruthy();
     expect(screen.getByText(/NEW-N/)).toBeTruthy();
 
@@ -211,7 +211,7 @@ describe("WorkspaceTab — issue prefix editing", () => {
 
     await user.click(screen.getByRole("button", { name: /^保存$/ }));
 
-    await screen.findByText(/确认修改 issue 前缀/);
+    await screen.findByText(/确认修改任务编号前缀/);
     await user.click(screen.getByRole("button", { name: "取消" }));
 
     expect(mockUpdateWorkspace).not.toHaveBeenCalled();

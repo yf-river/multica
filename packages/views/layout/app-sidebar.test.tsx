@@ -91,7 +91,7 @@ vi.mock("../workspace/workspace-avatar", () => ({ WorkspaceAvatar: () => <span /
 vi.mock("@multica/ui/components/common/actor-avatar", () => ({ ActorAvatar: () => <span /> }));
 vi.mock("../i18n", () => ({
   useT: () => ({
-    t: (sel: (s: any) => string, vars?: Record<string, string>) =>
+    t: (sel: (s: any) => string) =>
       sel({
         nav: {
           inbox: "收件箱",

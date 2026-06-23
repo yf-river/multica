@@ -164,11 +164,11 @@ describe("IssueActionsDropdown", () => {
     expect(screen.getByText("截止日期")).toBeInTheDocument();
     expect(screen.getByText("复制链接")).toBeInTheDocument();
     expect(screen.getByText("更多")).toBeInTheDocument();
-    expect(screen.getByText("删除 issue")).toBeInTheDocument();
+    expect(screen.getByText("删除任务")).toBeInTheDocument();
     // Relationship actions are hidden inside the "更多" submenu by default.
-    expect(screen.queryByText("Create sub-issue")).not.toBeInTheDocument();
-    expect(screen.queryByText("Set parent issue...")).not.toBeInTheDocument();
-    expect(screen.queryByText("Add sub-issue...")).not.toBeInTheDocument();
+    expect(screen.queryByText("创建子任务")).not.toBeInTheDocument();
+    expect(screen.queryByText("设置父任务...")).not.toBeInTheDocument();
+    expect(screen.queryByText("添加子任务...")).not.toBeInTheDocument();
   });
 
   it("clicking the Assignee item opens the shared AssigneePicker popover", async () => {
@@ -194,7 +194,7 @@ describe("IssueActionsDropdown", () => {
     expect(await screen.findByText("Test User")).toBeInTheDocument();
   });
 
-  it("clicking Delete issue opens the delete-confirm modal", async () => {
+  it("clicking Delete task opens the delete-confirm modal", async () => {
     render(
       wrap(
         <IssueActionsDropdown
@@ -206,7 +206,7 @@ describe("IssueActionsDropdown", () => {
     );
 
     fireEvent.click(screen.getByTestId("trigger"));
-    const del = await screen.findByText("删除 issue");
+    const del = await screen.findByText("删除任务");
     fireEvent.click(del);
 
     expect(mockOpenModal).toHaveBeenCalledWith("issue-delete-confirm", {
@@ -230,6 +230,6 @@ describe("IssueActionsContextMenu", () => {
     fireEvent.contextMenu(screen.getByTestId("row"));
 
     expect(await screen.findByText("状态")).toBeInTheDocument();
-    expect(screen.getByText("删除 issue")).toBeInTheDocument();
+    expect(screen.getByText("删除任务")).toBeInTheDocument();
   });
 });

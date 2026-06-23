@@ -378,7 +378,7 @@ describe("SlashCommandList built-in command rendering", () => {
 
     expect(getByText("/note")).toBeInTheDocument();
     expect(
-      getByText("添加备注 — 不触发任何 Agent"),
+      getByText("添加备注 — 不触发任何智能体"),
     ).toBeInTheDocument();
   });
 });

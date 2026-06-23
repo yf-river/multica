@@ -113,22 +113,20 @@ interface ContentEditorProps {
   onSubmit?: () => void;
   onBlur?: () => void;
   onUploadFile?: (file: File) => Promise<UploadResult | null>;
-  /** Show the floating formatting toolbar on text selection. Defaults true. */
+  /** 选中文字时显示浮动格式工具栏，默认开启。 */
   showBubbleMenu?: boolean;
-  /** When true, bare Enter submits (chat-style). Mod-Enter always submits. */
+  /** 开启后直接按 Enter 提交，Mod-Enter 始终提交。 */
   submitOnEnter?: boolean;
   /**
-   * ID of the issue this editor belongs to. When set, the bubble menu exposes
-   * a "Create sub-issue from selection" action that parents the new issue
-   * under this ID and replaces the selection with a mention link.
+   * 当前编辑器所属任务 ID。设置后，浮动菜单会显示“从选区创建子任务”，
+   * 并把新任务挂到这个父任务下，同时用提及链接替换选区。
    */
   currentIssueId?: string;
   /**
-   * When true, the `@` suggestion picker is disabled but the mention node
-   * type remains in the schema, so existing mentions pasted in from other
-   * Multica editors still render as the normal pill. Use for editors where
-   * *creating* a new mention has no business meaning (e.g. agent system
-   * prompts) but *preserving* an existing one still matters.
+   * 开启后禁用 `@` 建议选择器，但保留提及节点 schema，确保从其他位置
+   * 粘贴进来的既有提及仍能正常解析。
+   * Multica 编辑器仍会按普通胶囊样式渲染。用于不应该新建提及、
+   * 但仍需要保留既有提及的编辑器，例如智能体系统提示词。
    */
   disableMentions?: boolean;
   /** Chat can surface current/recent issue/project suggestions. Other editors use default mention behavior. */
