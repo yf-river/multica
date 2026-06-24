@@ -82,6 +82,7 @@ type EvidenceFocus = {
   traceSeq: string | null;
   toolChainId: string | null;
   trialAnchor: string | null;
+  assertionAnchor: string | null;
   messageSeq: string | null;
   spanAnchor: string | null;
   failureAnchor: string | null;
@@ -101,6 +102,7 @@ const EMPTY_EVIDENCE_FOCUS: EvidenceFocus = {
   traceSeq: null,
   toolChainId: null,
   trialAnchor: null,
+  assertionAnchor: null,
   messageSeq: null,
   spanAnchor: null,
   failureAnchor: null,
@@ -161,6 +163,7 @@ export function PromptLibraryPage({
     traceSeq: navigation.searchParams.get("trace"),
     toolChainId: navigation.searchParams.get("tool"),
     trialAnchor: navigation.searchParams.get("trial"),
+    assertionAnchor: navigation.searchParams.get("assertion"),
     messageSeq: navigation.searchParams.get("message"),
     spanAnchor: navigation.searchParams.get("span"),
     failureAnchor: navigation.searchParams.get("failure"),
@@ -2933,23 +2936,47 @@ function RunEvidencePanel({
           <div className="rounded-md border border-dashed px-3 py-3 text-xs text-muted-foreground">暂无单次执行记录</div>
         ) : (
           <div className="divide-y rounded-md border bg-background">
-            {evidence.trials.map((trial) => (
-              <div
-                key={trial.id}
-                className={`grid gap-1 px-3 py-2 text-xs ${isFocusedTrial(evidenceFocus.trialAnchor, trial) ? "bg-emerald-500/10 ring-2 ring-inset ring-emerald-500/30" : ""}`}
-                data-testid={`run-evidence-trial-${trial.id}`}
-                data-evidence-anchor={`trial:${trial.id}`}
-                data-evidence-anchor-alias={`trial:${trial.case_index + 1}`}
-              >
-                <div className="flex min-w-0 items-center gap-2">
-                  <span className="truncate font-medium">{trial.case_name || `用例 ${trial.case_index + 1}`}</span>
-                  <Badge variant={trial.status === "通过" ? "secondary" : trial.status === "待执行" ? "outline" : "destructive"}>{trial.status}</Badge>
-                  <span className="ml-auto text-muted-foreground">{trial.duration_ms} ms</span>
+            {evidence.trials.map((trial) => {
+              const assertionRows = buildTrialAssertionRows(trial);
+              return (
+                <div
+                  key={trial.id}
+                  className={`grid gap-1 px-3 py-2 text-xs ${isFocusedTrial(evidenceFocus.trialAnchor, trial) ? "bg-emerald-500/10 ring-2 ring-inset ring-emerald-500/30" : ""}`}
+                  data-testid={`run-evidence-trial-${trial.id}`}
+                  data-evidence-anchor={`trial:${trial.id}`}
+                  data-evidence-anchor-alias={`trial:${trial.case_index + 1}`}
+                >
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="truncate font-medium">{trial.case_name || `用例 ${trial.case_index + 1}`}</span>
+                    <Badge variant={trial.status === "通过" ? "secondary" : trial.status === "待执行" ? "outline" : "destructive"}>{trial.status}</Badge>
+                    <span className="ml-auto text-muted-foreground">{trial.duration_ms} ms</span>
+                  </div>
+                  {trial.failure_reason && trial.failure_reason !== "无" && <div className="text-muted-foreground">失败原因：{trial.failure_reason}</div>}
+                  {assertionRows.length > 0 && (
+                    <div className="grid gap-1" data-testid={`run-evidence-trial-assertions-${trial.id}`}>
+                      {assertionRows.map((assertion) => {
+                        const focused = isFocusedAssertion(evidenceFocus.assertionAnchor, trial, assertion.index);
+                        return (
+                          <div
+                            key={`${trial.id}-${assertion.index}`}
+                            className={`flex min-w-0 flex-wrap items-center gap-2 rounded border px-2 py-1 text-[11px] leading-5 ${
+                              focused ? "border-emerald-500 bg-emerald-500/10 ring-2 ring-emerald-500/30" : "bg-muted/20"
+                            }`}
+                            data-testid={`run-evidence-assertion-${trial.id}-${assertion.index}`}
+                            data-evidence-anchor={`assertion:${trial.id}:${assertion.index}`}
+                            data-evidence-anchor-alias={`assertion:${trial.case_index + 1}.${assertion.index}`}
+                          >
+                            <Badge variant={assertion.matched ? "secondary" : "destructive"}>{assertion.matched ? "已命中" : "未命中"}</Badge>
+                            <span className="min-w-0 break-words">断言 #{assertion.index}：包含 {assertion.expectedText}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  {trial.rendered_prompt && <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted/30 p-2 text-[11px] leading-5">{trial.rendered_prompt}</pre>}
                 </div>
-                {trial.failure_reason && trial.failure_reason !== "无" && <div className="text-muted-foreground">失败原因：{trial.failure_reason}</div>}
-                {trial.rendered_prompt && <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted/30 p-2 text-[11px] leading-5">{trial.rendered_prompt}</pre>}
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </div>
@@ -3160,10 +3187,11 @@ function EvidenceAnchorSummary({
   const traceCount = evidence.trace_events.length;
   const toolCount = evidence.tool_call_chains.length;
   const trialCount = evidence.trials.length;
+  const assertionCount = evidence.trials.reduce((sum, trial) => sum + buildTrialAssertionRows(trial).length, 0);
   const messageCount = evidence.task_messages.length;
   const spanCount = evidence.execution_spans.length;
   const failureCount = buildFailureReviewItems(evidence).length;
-  if (traceCount === 0 && toolCount === 0 && trialCount === 0 && messageCount === 0 && spanCount === 0 && failureCount === 0) return null;
+  if (traceCount === 0 && toolCount === 0 && trialCount === 0 && assertionCount === 0 && messageCount === 0 && spanCount === 0 && failureCount === 0) return null;
   return (
     <div className="grid gap-1.5 rounded-md border bg-background p-2 text-xs" data-testid="run-evidence-anchor-summary">
       <div className="font-medium text-muted-foreground">证据锚点</div>
@@ -3181,6 +3209,10 @@ function EvidenceAnchorSummary({
           {evidenceFocus.trialAnchor ? ` · 当前定位 trial=${evidenceFocus.trialAnchor}` : ""}
         </div>
         <div>
+          断言锚点：{assertionCount > 0 ? "使用 assertion=<用例id>:<序号> 或 assertion=<用例序号>.<断言序号>" : "暂无断言"}
+          {evidenceFocus.assertionAnchor ? ` · 当前定位 assertion=${evidenceFocus.assertionAnchor}` : ""}
+        </div>
+        <div>
           消息锚点：{messageCount > 0 ? "使用 message=<消息seq>" : "暂无消息"}
           {evidenceFocus.messageSeq ? ` · 当前定位 message=${evidenceFocus.messageSeq}` : ""}
         </div>
@@ -3189,7 +3221,7 @@ function EvidenceAnchorSummary({
           {evidenceFocus.spanAnchor ? ` · 当前定位 span=${evidenceFocus.spanAnchor}` : ""}
         </div>
         <div>
-          失败锚点：{failureCount > 0 ? "使用 failure=run|trial|tool|trace" : "暂无失败线索"}
+          失败锚点：{failureCount > 0 ? "使用 failure=run|trial|assertion|tool|trace" : "暂无失败线索"}
           {evidenceFocus.failureAnchor ? ` · 当前定位 failure=${evidenceFocus.failureAnchor}` : ""}
         </div>
       </div>
@@ -3552,6 +3584,10 @@ function evidenceFocusSelector(focus: EvidenceFocus): string {
     selectors.push(evidenceAnchorSelector("data-evidence-anchor", `trial:${focus.trialAnchor}`));
     selectors.push(evidenceAnchorSelector("data-evidence-anchor-alias", `trial:${focus.trialAnchor}`));
   }
+  if (focus.assertionAnchor) {
+    selectors.push(evidenceAnchorSelector("data-evidence-anchor", `assertion:${focus.assertionAnchor}`));
+    selectors.push(evidenceAnchorSelector("data-evidence-anchor-alias", `assertion:${focus.assertionAnchor}`));
+  }
   if (focus.messageSeq) selectors.push(evidenceAnchorSelector("data-evidence-anchor", `message:${focus.messageSeq}`));
   if (focus.spanAnchor) {
     selectors.push(evidenceAnchorSelector("data-evidence-anchor", `span:${focus.spanAnchor}`));
@@ -3575,8 +3611,35 @@ function isFocusedSpan(focusedSpanAnchor: string | null, span: PromptEvaluationR
   return focusedSpanAnchor === span.id || focusedSpanAnchor === String(span.seq);
 }
 
+function isFocusedAssertion(focusedAssertionAnchor: string | null, trial: PromptEvaluationRunEvidence["trials"][number], assertionIndex: number): boolean {
+  if (!focusedAssertionAnchor) return false;
+  return focusedAssertionAnchor === `${trial.id}:${assertionIndex}` || focusedAssertionAnchor === `${trial.case_index + 1}.${assertionIndex}`;
+}
+
+function buildTrialAssertionRows(trial: PromptEvaluationRunEvidence["trials"][number]): Array<{ index: number; expectedText: string; matched: boolean }> {
+  const expected = stringListFromUnknownMap(trial.expected, "期望包含", "expected_contains");
+  const matched = new Set(stringListFromUnknownMap(trial.output, "已匹配", "matched_contains"));
+  return expected.map((expectedText, index) => ({
+    index: index + 1,
+    expectedText,
+    matched: matched.has(expectedText),
+  }));
+}
+
+function stringListFromUnknownMap(value: unknown, ...keys: string[]): string[] {
+  if (!value || typeof value !== "object") return [];
+  const record = value as Record<string, unknown>;
+  for (const key of keys) {
+    const raw = record[key];
+    if (Array.isArray(raw)) {
+      return raw.map((item) => String(item)).filter(Boolean);
+    }
+  }
+  return [];
+}
+
 type FailureReviewItem = {
-  kind: "run" | "trial" | "tool" | "trace";
+  kind: "run" | "trial" | "assertion" | "tool" | "trace";
   label: string;
   title: string;
   detail: string;
@@ -3603,6 +3666,17 @@ function buildFailureReviewItems(evidence: PromptEvaluationRunEvidence): Failure
         detail: trial.failure_reason,
         anchor: "failure:trial",
       });
+    }
+    for (const assertion of buildTrialAssertionRows(trial)) {
+      if (!assertion.matched) {
+        items.push({
+          kind: "assertion",
+          label: "断言",
+          title: trial.case_name || `用例 ${trial.case_index + 1}`,
+          detail: `断言 #${assertion.index} 未命中：包含 ${assertion.expectedText}`,
+          anchor: "failure:assertion",
+        });
+      }
     }
   }
   for (const chain of evidence.tool_call_chains) {
