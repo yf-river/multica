@@ -4233,8 +4233,19 @@ function ManualCasePanel({
 }) {
   const manualCases = cases.filter((item) => item.source === "manual");
   const traceCases = cases.filter((item) => item.source === "trace");
+  const [caseSourceFilter, setCaseSourceFilter] = useState<"全部" | "手工" | "trace导入" | "资产载荷">("全部");
+  const [caseTagFilter, setCaseTagFilter] = useState("全部");
   const [editingCaseId, setEditingCaseId] = useState<string | null>(null);
   const [editDrafts, setEditDrafts] = useState<Record<string, ManualCaseDraft>>({});
+  const caseTags = useMemo(() => uniqueSortedStrings(cases.flatMap((item) => item.tags.map((value) => String(value)).filter(Boolean))), [cases]);
+  const filteredCases = useMemo(() => {
+    return cases.filter((item) => {
+      const sourceOK = caseSourceFilter === "全部" || caseSourceLabel(item.source) === caseSourceFilter;
+      const tagOK = caseTagFilter === "全部" || item.tags.some((value) => String(value) === caseTagFilter);
+      return sourceOK && tagOK;
+    });
+  }, [caseSourceFilter, caseTagFilter, cases]);
+  const sampleCases = filteredCases.slice(0, 3);
   return (
     <div data-testid={`prompt-evaluation-cases-${asset.id}`} className="md:col-span-2 grid gap-2 rounded-md border border-border/70 bg-muted/10 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -4243,9 +4254,26 @@ function ManualCasePanel({
           手工 {manualCases.length} · trace导入 {traceCases.length} · 总计 {cases.length}
         </Badge>
       </div>
+      {asset.asset_type === "数据集" && (
+        <DatasetCaseGovernanceBar
+          assetId={asset.id}
+          totalCount={cases.length}
+          visibleCount={filteredCases.length}
+          tags={caseTags}
+          sourceFilter={caseSourceFilter}
+          onSourceFilterChange={setCaseSourceFilter}
+          tagFilter={caseTagFilter}
+          onTagFilterChange={setCaseTagFilter}
+          samples={sampleCases}
+        />
+      )}
       {cases.length > 0 ? (
         <div className="grid gap-1.5">
-          {cases.map((item) => {
+          {filteredCases.length === 0 ? (
+            <div className="rounded border border-dashed px-2 py-2 text-xs text-muted-foreground" data-testid={`dataset-case-filter-empty-${asset.id}`}>
+              当前筛选没有命中用例，请切换来源或标签。
+            </div>
+          ) : filteredCases.map((item) => {
             const editing = editingCaseId === item.id;
             const editDraft = editDrafts[item.id] ?? manualCaseToDraft(item);
             return (
@@ -4353,6 +4381,73 @@ function ManualCasePanel({
         </div>
       </div>
     </div>
+  );
+}
+
+function DatasetCaseGovernanceBar({
+  assetId,
+  totalCount,
+  visibleCount,
+  tags,
+  sourceFilter,
+  onSourceFilterChange,
+  tagFilter,
+  onTagFilterChange,
+  samples,
+}: {
+  assetId: string;
+  totalCount: number;
+  visibleCount: number;
+  tags: string[];
+  sourceFilter: "全部" | "手工" | "trace导入" | "资产载荷";
+  onSourceFilterChange: (value: "全部" | "手工" | "trace导入" | "资产载荷") => void;
+  tagFilter: string;
+  onTagFilterChange: (value: string) => void;
+  samples: PromptEvaluationStructuredCase[];
+}) {
+  return (
+    <section className="grid gap-2 rounded-md border bg-background px-3 py-2 text-xs" data-testid={`dataset-case-governance-${assetId}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="font-medium text-foreground">数据集用例治理</div>
+          <div className="mt-0.5 text-muted-foreground">按来源和标签筛选题库，并抽样预览当前将进入版本快照的样本。</div>
+        </div>
+        <Badge variant="outline" data-testid={`dataset-case-filter-count-${assetId}`}>
+          命中 {visibleCount} / {totalCount}
+        </Badge>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-muted-foreground">来源</span>
+        {(["全部", "手工", "trace导入", "资产载荷"] as const).map((source) => (
+          <FilterButton key={source} active={sourceFilter === source} onClick={() => onSourceFilterChange(source)}>
+            {source}
+          </FilterButton>
+        ))}
+        <span className="ml-1 text-muted-foreground">标签</span>
+        <select
+          aria-label="筛选数据集用例标签"
+          className="h-8 rounded-md border bg-background px-2 text-xs"
+          value={tagFilter}
+          onChange={(event) => onTagFilterChange(event.target.value)}
+        >
+          <option value="全部">全部标签</option>
+          {tags.map((tag) => (
+            <option key={tag} value={tag}>{tag}</option>
+          ))}
+        </select>
+      </div>
+      <div className="grid gap-1.5" data-testid={`dataset-case-sampling-preview-${assetId}`}>
+        <div className="text-[11px] font-medium text-muted-foreground">采样预览</div>
+        {samples.length === 0 ? (
+          <div className="rounded border border-dashed px-2 py-2 text-muted-foreground">当前筛选没有可预览样本。</div>
+        ) : samples.map((item, index) => (
+          <div key={item.id} className="rounded border bg-muted/20 px-2 py-1.5">
+            <span className="font-medium text-foreground">样本 {index + 1}：{item.case_name || `用例 ${item.case_index + 1}`}</span>
+            <span className="ml-2 text-muted-foreground">{caseSourceLabel(item.source)} · {item.tags.map(String).join("、") || "无标签"}</span>
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
 
@@ -4516,6 +4611,10 @@ function buildCasesByAsset(cases: PromptEvaluationStructuredCase[]): Map<string,
   return result;
 }
 
+function uniqueSortedStrings(values: string[]): string[] {
+  return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-CN"));
+}
+
 function buildExperimentDimensionsByAsset(dimensions: PromptEvaluationExperimentDimension[]): Map<string, PromptEvaluationExperimentDimension[]> {
   const result = new Map<string, PromptEvaluationExperimentDimension[]>();
   for (const item of dimensions) {
@@ -4672,7 +4771,7 @@ function DatasetVersionControls({ asset, saving }: { asset: PromptEvaluationAsse
   const [loaded, setLoaded] = useState(false);
   const versionsQuery = useQuery({
     queryKey: promptLibraryKeys.datasetVersions(workspaceId, asset.id),
-    queryFn: () => api.listPromptEvaluationDatasetVersions(asset.id, 5),
+    queryFn: () => api.listPromptEvaluationDatasetVersions(asset.id, 20),
     enabled: Boolean(loaded && workspaceId && asset.id),
   });
   const invalidateDataset = () => {
@@ -4714,6 +4813,7 @@ function DatasetVersionControls({ asset, saving }: { asset: PromptEvaluationAsse
   });
   const versions = versionsQuery.data?.items ?? [];
   const latest = versions[0];
+  const oldestLoaded = versions[versions.length - 1] ?? null;
   const busy = versionsQuery.isLoading || versionsQuery.isFetching || diffMut.isPending || restoreMut.isPending;
   const disabled = saving || busy;
 
@@ -4749,6 +4849,14 @@ function DatasetVersionControls({ asset, saving }: { asset: PromptEvaluationAsse
           对比最近版本
         </Button>
       </div>
+      {loaded && (
+        <div className="rounded border bg-background px-2 py-1.5 text-muted-foreground" data-testid={`dataset-version-chain-${asset.id}`}>
+          版本链回放：已加载最近 {versions.length} 个快照
+          {latest ? ` · 最新 v${latest.version}` : ""}
+          {oldestLoaded && oldestLoaded.id !== latest?.id ? ` · 最早 v${oldestLoaded.version}` : ""}
+          {versions.length >= 20 ? " · 继续缩小数据集后再做长链复盘" : ""}
+        </div>
+      )}
       {versions.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {versions.map((version) => (
