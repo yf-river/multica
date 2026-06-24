@@ -519,6 +519,9 @@ export function AgentPlaygroundWorkbench({
             recentRuns={recentSelectedAgentRuns}
             agents={agents}
             runtimes={runtimes}
+            selectedExecutionAgent={selectedExecutionAgent}
+            evaluationAgent={evaluationAgent}
+            selectedRuntime={selectedRuntime}
             runHistoryHrefForRun={runHistoryHrefForRun}
           />
 
@@ -604,6 +607,9 @@ function AgentExecutionConfigComparison({
   recentRuns,
   agents,
   runtimes,
+  selectedExecutionAgent,
+  evaluationAgent,
+  selectedRuntime,
   runHistoryHrefForRun,
 }: {
   current: {
@@ -616,6 +622,9 @@ function AgentExecutionConfigComparison({
   recentRuns: PromptEvaluationRun[];
   agents: Agent[];
   runtimes: AgentRuntime[];
+  selectedExecutionAgent: Agent | null;
+  evaluationAgent: Agent | null;
+  selectedRuntime: AgentRuntime | null;
   runHistoryHrefForRun: (runId: string) => string;
 }) {
   const latestAgent = latestRun?.agent_id ? agents.find((agent) => agent.id === latestRun.agent_id) ?? null : null;
@@ -656,10 +665,155 @@ function AgentExecutionConfigComparison({
             暂无同提示词真实运行；创建真实智能体任务后会在这里对比执行智能体、运行时、模型、token 和成本。
           </div>
         )}
+        <AgentModelParameterMatrix
+          current={current}
+          selectedExecutionAgent={selectedExecutionAgent}
+          evaluationAgent={evaluationAgent}
+          selectedRuntime={selectedRuntime}
+          latestRun={latestRun}
+          agents={agents}
+          runtimes={runtimes}
+        />
         <AgentRunComparisonTable runs={recentRuns} agents={agents} runtimes={runtimes} runHistoryHrefForRun={runHistoryHrefForRun} />
       </div>
     </div>
   );
+}
+
+function AgentModelParameterMatrix({
+  current,
+  selectedExecutionAgent,
+  evaluationAgent,
+  selectedRuntime,
+  latestRun,
+  agents,
+  runtimes,
+}: {
+  current: {
+    agent: string;
+    runtime: string;
+    model: string;
+    prompt: string;
+  };
+  selectedExecutionAgent: Agent | null;
+  evaluationAgent: Agent | null;
+  selectedRuntime: AgentRuntime | null;
+  latestRun: PromptEvaluationRun | null;
+  agents: Agent[];
+  runtimes: AgentRuntime[];
+}) {
+  const effectiveAgent = selectedExecutionAgent ?? evaluationAgent;
+  const latestAgent = latestRun?.agent_id ? agents.find((agent) => agent.id === latestRun.agent_id) ?? null : null;
+  const latestRuntime = latestRun?.runtime_id ? runtimes.find((runtime) => runtime.id === latestRun.runtime_id) ?? null : null;
+  const rows = [
+    buildModelMatrixRow({
+      label: "当前待执行",
+      source: selectedExecutionAgent ? "手动指定" : "自动选择",
+      agentLabel: current.agent,
+      runtimeLabel: current.runtime,
+      runtime: selectedRuntime,
+      agent: effectiveAgent,
+      model: current.model,
+      evidence: "页面选择态",
+    }),
+    buildModelMatrixRow({
+      label: "训练评估默认",
+      source: evaluationAgent ? "工作区智能体" : "未创建",
+      agentLabel: evaluationAgent ? formatAgentDisplayName(evaluationAgent) ?? evaluationAgent.name : "暂无训练评估智能体",
+      runtimeLabel: evaluationAgent ? runtimes.find((runtime) => runtime.id === evaluationAgent.runtime_id)?.name ?? evaluationAgent.runtime_id : "未绑定",
+      runtime: evaluationAgent ? runtimes.find((runtime) => runtime.id === evaluationAgent.runtime_id) ?? null : null,
+      agent: evaluationAgent,
+      model: evaluationAgent?.model || DEFAULT_AGENT_MODEL,
+      evidence: "自动模式候选",
+    }),
+    buildModelMatrixRow({
+      label: "最近真实运行",
+      source: latestRun ? latestRun.status : "暂无",
+      agentLabel: latestAgent ? formatAgentDisplayName(latestAgent) ?? latestAgent.name : latestRun?.agent_id ? `智能体 ${latestRun.agent_id.slice(0, 8)}` : "未绑定",
+      runtimeLabel: latestRuntime?.name ?? latestRun?.runtime_id ?? "未绑定",
+      runtime: latestRuntime,
+      agent: latestAgent,
+      model: latestRun?.model || "未记录",
+      evidence: latestRun?.task_id ? `任务 ${latestRun.task_id.slice(0, 8)}` : "运行事实",
+    }),
+  ];
+  return (
+    <div className="rounded border px-2 py-2" data-testid="agent-playground-model-matrix">
+      <div className="flex items-center justify-between gap-2">
+        <div className="font-medium text-foreground">模型参数矩阵</div>
+        <Badge variant="outline" className="text-[10px]">事实字段</Badge>
+      </div>
+      <div className="mt-2 overflow-x-auto">
+        <table className="w-full min-w-[680px] text-left text-[11px]">
+          <thead className="text-muted-foreground">
+            <tr className="border-b">
+              <th className="py-1 pr-2 font-medium">配置</th>
+              <th className="py-1 pr-2 font-medium">来源</th>
+              <th className="py-1 pr-2 font-medium">智能体</th>
+              <th className="py-1 pr-2 font-medium">运行时</th>
+              <th className="py-1 pr-2 font-medium">provider</th>
+              <th className="py-1 pr-2 font-medium">模型</th>
+              <th className="py-1 pr-2 font-medium">思考等级</th>
+              <th className="py-1 pr-2 font-medium">并发</th>
+              <th className="py-1 pr-2 font-medium">参数</th>
+              <th className="py-1 font-medium">证据</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.label} className="border-b last:border-b-0">
+                <td className="whitespace-nowrap py-1.5 pr-2 font-medium text-foreground">{row.label}</td>
+                <td className="whitespace-nowrap py-1.5 pr-2 text-muted-foreground">{row.source}</td>
+                <td className="max-w-32 truncate py-1.5 pr-2 text-muted-foreground">{row.agentLabel}</td>
+                <td className="max-w-32 truncate py-1.5 pr-2 text-muted-foreground">{row.runtimeLabel}</td>
+                <td className="whitespace-nowrap py-1.5 pr-2 text-muted-foreground">{row.provider}</td>
+                <td className="max-w-32 truncate py-1.5 pr-2 text-muted-foreground">{row.model}</td>
+                <td className="whitespace-nowrap py-1.5 pr-2 text-muted-foreground">{row.thinkingLevel}</td>
+                <td className="whitespace-nowrap py-1.5 pr-2 text-muted-foreground">{row.concurrency}</td>
+                <td className="whitespace-nowrap py-1.5 pr-2 text-muted-foreground">{row.parameterSummary}</td>
+                <td className="whitespace-nowrap py-1.5 text-muted-foreground">{row.evidence}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function buildModelMatrixRow({
+  label,
+  source,
+  agentLabel,
+  runtimeLabel,
+  runtime,
+  agent,
+  model,
+  evidence,
+}: {
+  label: string;
+  source: string;
+  agentLabel: string;
+  runtimeLabel: string;
+  runtime: AgentRuntime | null;
+  agent: Agent | null;
+  model: string;
+  evidence: string;
+}) {
+  const customArgCount = agent?.custom_args?.length ?? 0;
+  const customEnvCount = agent?.custom_env_key_count ?? 0;
+  return {
+    label,
+    source,
+    agentLabel,
+    runtimeLabel,
+    provider: runtime?.provider || "未记录",
+    model,
+    thinkingLevel: agent?.thinking_level ? agent.thinking_level : "默认",
+    concurrency: agent ? String(agent.max_concurrent_tasks) : "--",
+    parameterSummary: `参数 ${customArgCount} · 环境 ${customEnvCount}`,
+    evidence,
+  };
 }
 
 function AgentRunComparisonTable({
