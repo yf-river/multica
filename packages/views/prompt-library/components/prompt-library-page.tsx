@@ -46,6 +46,11 @@ import { Badge } from "@multica/ui/components/ui/badge";
 import { PageHeader } from "../../layout/page-header";
 import { AppLink } from "../../navigation";
 import { useNavigation } from "../../navigation";
+import {
+  AcceptanceFixtureNotice,
+  isAcceptanceFixtureRecord,
+  isAcceptanceFixtureText,
+} from "../../common/acceptance-fixtures";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import {
   DEFAULT_AGENT_MODEL,
@@ -172,6 +177,7 @@ export function PromptLibraryPage({
   const [runStatusFilter, setRunStatusFilter] = useState<RunStatusFilter>("全部");
   const [demoTimeRange, setDemoTimeRange] = useState<DemoTimeRange>("7d");
   const [exportingDemoEvidence, setExportingDemoEvidence] = useState(false);
+  const [showAcceptanceFixtures, setShowAcceptanceFixtures] = useState(false);
   const shouldShowPromptEditor = showPromptEditor ?? trainingWorkbenchShowsPromptEditor(resolvedView);
   const demoSince = useMemo(() => {
     const option = DEMO_TIME_RANGES.find((item) => item.value === demoTimeRange);
@@ -302,8 +308,27 @@ export function PromptLibraryPage({
   const runs = runQuery.data?.items ?? [];
   const candidates = candidateQuery.data?.items ?? [];
   const summary = summaryQuery.data ?? null;
-  const selectedFromList = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
-  const selected = selectedFromList ?? (isDraftingNew ? null : items[0] ?? null);
+  const acceptanceFixtureItems = useMemo(
+    () =>
+      items.filter((item) =>
+        isAcceptanceFixtureRecord(item as unknown as Record<string, unknown>, [
+          "name",
+          "description",
+          "content",
+          "tags",
+        ]),
+      ),
+    [items],
+  );
+  const visiblePromptItems = useMemo(
+    () =>
+      showAcceptanceFixtures
+        ? items
+        : items.filter((item) => !acceptanceFixtureItems.includes(item)),
+    [acceptanceFixtureItems, items, showAcceptanceFixtures],
+  );
+  const selectedFromList = selectedId ? visiblePromptItems.find((item) => item.id === selectedId) ?? null : null;
+  const selected = selectedFromList ?? (isDraftingNew ? null : visiblePromptItems[0] ?? null);
   const versionQuery = useQuery({
     queryKey: promptLibraryKeys.versions(workspaceId ?? "", selectedFromList?.id ?? null),
     queryFn: () => api.listPromptLibraryVersions(selectedFromList?.id ?? ""),
@@ -334,24 +359,24 @@ export function PromptLibraryPage({
 
   useEffect(() => {
     if (isDraftingNew) return;
-    if (!selectedId && items.length > 0) {
-      setSelectedId(items[0]?.id ?? null);
+    if (!selectedId && visiblePromptItems.length > 0) {
+      setSelectedId(visiblePromptItems[0]?.id ?? null);
     }
-    if (selectedId && !selectedFromList && items.length > 0 && !listQuery.isFetching) {
-      setSelectedId(items[0]?.id ?? null);
+    if (selectedId && !selectedFromList && visiblePromptItems.length > 0 && !listQuery.isFetching) {
+      setSelectedId(visiblePromptItems[0]?.id ?? null);
     }
-  }, [isDraftingNew, items, listQuery.isFetching, selectedFromList, selectedId]);
+  }, [isDraftingNew, listQuery.isFetching, selectedFromList, selectedId, visiblePromptItems]);
 
   const filteredItems = useMemo(() => {
     const q = query.trim().toLowerCase();
-    return items.filter((item) => {
+    return visiblePromptItems.filter((item) => {
       if (typeFilter !== "全部" && item.prompt_type !== typeFilter) return false;
       if (statusFilter !== "全部" && item.status !== statusFilter) return false;
       if (!q) return true;
       const haystack = [item.name, item.description, item.prompt_type, item.content, ...item.tags].join(" ");
       return haystack.toLowerCase().includes(q) || matchesPinyin(haystack, q);
     });
-  }, [items, query, statusFilter, typeFilter]);
+  }, [query, statusFilter, typeFilter, visiblePromptItems]);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.list(workspaceId ?? "") });
   const invalidateVersions = (promptId: string | null) => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.versions(workspaceId ?? "", promptId) });
@@ -604,7 +629,7 @@ export function PromptLibraryPage({
   const promptPlaygroundActions = usePromptPlaygroundActions({
     draft,
     selected,
-    items,
+    items: visiblePromptItems,
     selectedPromptStorageKey,
     onAssetsChanged: invalidateAssets,
     onCasesChanged: invalidateCases,
@@ -810,7 +835,7 @@ export function PromptLibraryPage({
         <div className="flex min-w-0 flex-1 items-center gap-2">
           <BookOpenText className="size-4 shrink-0 text-muted-foreground" />
           <h1 className="truncate text-sm font-semibold">训练与评估 / {activeTab}</h1>
-          <span className="text-xs text-muted-foreground">{items.length}</span>
+          <span className="text-xs text-muted-foreground">{visiblePromptItems.length}</span>
         </div>
         {shouldShowPromptHeaderActions && (
           <div className="flex items-center gap-2">
@@ -871,6 +896,13 @@ export function PromptLibraryPage({
                   </FilterButton>
                 ))}
               </div>
+              <AcceptanceFixtureNotice
+                count={acceptanceFixtureItems.length}
+                noun="提示词"
+                showing={showAcceptanceFixtures}
+                onShow={() => setShowAcceptanceFixtures(true)}
+                onHide={() => setShowAcceptanceFixtures(false)}
+              />
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto">
@@ -1058,6 +1090,9 @@ export function PromptLibraryPage({
                 candidates={candidates}
                 loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || runQuery.isLoading || candidateQuery.isLoading}
                 saving={savingAsset}
+                showAcceptanceFixtures={showAcceptanceFixtures}
+                onShowAcceptanceFixtures={() => setShowAcceptanceFixtures(true)}
+                onHideAcceptanceFixtures={() => setShowAcceptanceFixtures(false)}
                 onCreateAsset={createWorkbenchAsset}
                 onToggleAssetStatus={toggleAssetStatus}
                 onDeleteAsset={deleteAsset}
@@ -1114,6 +1149,9 @@ export function PromptLibraryPage({
               candidates={candidates}
               loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || runQuery.isLoading || candidateQuery.isLoading}
               saving={savingAsset}
+              showAcceptanceFixtures={showAcceptanceFixtures}
+              onShowAcceptanceFixtures={() => setShowAcceptanceFixtures(true)}
+              onHideAcceptanceFixtures={() => setShowAcceptanceFixtures(false)}
               onCreateAsset={createWorkbenchAsset}
               onToggleAssetStatus={toggleAssetStatus}
               onDeleteAsset={deleteAsset}
@@ -1542,6 +1580,9 @@ function WorkbenchPanel({
   candidates,
   loading,
   saving,
+  showAcceptanceFixtures,
+  onShowAcceptanceFixtures,
+  onHideAcceptanceFixtures,
   onCreateAsset,
   onToggleAssetStatus,
   onDeleteAsset,
@@ -1591,6 +1632,9 @@ function WorkbenchPanel({
   candidates: PromptEvaluationOptimizationCandidate[];
   loading: boolean;
   saving: boolean;
+  showAcceptanceFixtures: boolean;
+  onShowAcceptanceFixtures: () => void;
+  onHideAcceptanceFixtures: () => void;
   onCreateAsset: (assetType: PromptEvaluationAssetType) => void;
   onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
   onDeleteAsset: (asset: PromptEvaluationAsset) => void;
@@ -1628,7 +1672,13 @@ function WorkbenchPanel({
   rejectingCandidateId: string | null;
 }) {
   const tabAssetType = tabToAssetType(activeTab);
-  const visibleAssets = tabAssetType ? assets.filter((asset) => asset.asset_type === tabAssetType) : assets;
+  const tabAssets = tabAssetType ? assets.filter((asset) => asset.asset_type === tabAssetType) : assets;
+  const acceptanceFixtureAssets = tabAssets.filter((asset) =>
+    isAcceptanceFixtureText(asset.name, asset.description, asset.payload),
+  );
+  const visibleAssets = showAcceptanceFixtures
+    ? tabAssets
+    : tabAssets.filter((asset) => !acceptanceFixtureAssets.includes(asset));
 
   if (activeTab === "提示词库" || activeTab === "提示词调试场" || activeTab === "智能体调试场") {
     return null;
@@ -1668,6 +1718,13 @@ function WorkbenchPanel({
         runs={runs}
         candidates={candidates}
         runStatusFilter={runStatusFilter}
+      />
+      <AcceptanceFixtureNotice
+        count={acceptanceFixtureAssets.length}
+        noun="训练资产"
+        showing={showAcceptanceFixtures}
+        onShow={onShowAcceptanceFixtures}
+        onHide={onHideAcceptanceFixtures}
       />
 
       {activeTab === "运行历史" && (

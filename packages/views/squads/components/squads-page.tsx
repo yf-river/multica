@@ -80,6 +80,10 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { ActorAvatar } from "../../common/actor-avatar";
+import {
+  AcceptanceFixtureNotice,
+  isAcceptanceFixtureRecord,
+} from "../../common/acceptance-fixtures";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import { useNavigation, useRowLink } from "../../navigation";
 import { PageHeader } from "../../layout/page-header";
@@ -755,6 +759,7 @@ export function SquadsPage() {
   const navigation = useNavigation();
   const queryClient = useQueryClient();
   const currentUser = useAuthStore((s) => s.user);
+  const [showAcceptanceFixtures, setShowAcceptanceFixtures] = useState(false);
 
   const { data: squads = [], isLoading } = useQuery({
     ...squadListOptions(wsId),
@@ -863,7 +868,7 @@ export function SquadsPage() {
     return [...m.values()];
   }, [scopeRows, membersById]);
 
-  const rows = useMemo<Squad[]>(() => {
+  const filteredRows = useMemo<Squad[]>(() => {
     const inScope = scopeRows.filter((s) => {
       if (filters.leaders.length > 0 && !filters.leaders.includes(s.leader_id)) {
         return false;
@@ -893,6 +898,24 @@ export function SquadsPage() {
     });
     return sorted;
   }, [scopeRows, filters, sortField, sortDirection]);
+
+  const acceptanceFixtureRows = useMemo(
+    () =>
+      filteredRows.filter((squad) =>
+        isAcceptanceFixtureRecord(squad as unknown as Record<string, unknown>, [
+          "name",
+          "description",
+        ]),
+      ),
+    [filteredRows],
+  );
+  const rows = useMemo(
+    () =>
+      showAcceptanceFixtures
+        ? filteredRows
+        : filteredRows.filter((squad) => !acceptanceFixtureRows.includes(squad)),
+    [acceptanceFixtureRows, filteredRows, showAcceptanceFixtures],
+  );
 
   return (
     <div className="flex flex-1 min-h-0 flex-col">
@@ -1003,6 +1026,13 @@ export function SquadsPage() {
             onSortDirectionChange={setSortDirection}
             hiddenColumns={hiddenColumns}
             onToggleColumn={toggleColumn}
+          />
+          <AcceptanceFixtureNotice
+            count={acceptanceFixtureRows.length}
+            noun="小队"
+            showing={showAcceptanceFixtures}
+            onShow={() => setShowAcceptanceFixtures(true)}
+            onHide={() => setShowAcceptanceFixtures(false)}
           />
           <div className="min-h-0 flex-1 overflow-auto @container">
             <ListGrid

@@ -31,8 +31,20 @@ const routes = [
   { id: "login", label: "登录页", path: "/login", auth: false, expect: ["登录 Multica"] },
   { id: "issues", label: "任务", path: `/${workspaceSlug}/issues`, expect: ["新建任务"] },
   { id: "inbox", label: "收件箱", path: `/${workspaceSlug}/inbox`, expect: ["收件箱"] },
-  { id: "agents", label: "智能体", path: `/${workspaceSlug}/agents`, expect: ["智能体"] },
-  { id: "squads", label: "小队", path: `/${workspaceSlug}/squads`, expect: ["小队"] },
+  {
+    id: "agents",
+    label: "智能体",
+    path: `/${workspaceSlug}/agents`,
+    expect: ["智能体"],
+    uiContract: { forbiddenText: ["curl Codex", "curl gateway", "curl config"] },
+  },
+  {
+    id: "squads",
+    label: "小队",
+    path: `/${workspaceSlug}/squads`,
+    expect: ["小队"],
+    uiContract: { forbiddenText: ["curl Codex", "curl gateway", "curl config"] },
+  },
   { id: "usage", label: "用量", path: `/${workspaceSlug}/usage`, expect: ["用量"] },
   { id: "runtimes", label: "运行时", path: `/${workspaceSlug}/runtimes`, expect: ["运行时"] },
   { id: "settings", label: "设置", path: `/${workspaceSlug}/settings`, expect: ["设置"] },
@@ -48,7 +60,11 @@ const routes = [
     label: "训练与评估/提示词库",
     path: `/${workspaceSlug}/training/prompts`,
     expect: ["提示词库"],
-    uiContract: { requiredTestIds: ["training-route-prompts"], forbiddenTestIds: ["training-tab-strip"] },
+    uiContract: {
+      requiredTestIds: ["training-route-prompts"],
+      forbiddenText: ["curl 训练闭环", "浏览器验收提示词"],
+      forbiddenTestIds: ["training-tab-strip"],
+    },
   },
   {
     id: "training-prompt-playground",
@@ -133,7 +149,7 @@ const routes = [
     expect: ["数据集"],
     uiContract: {
       requiredText: ["数据集工作台", "样本入库、版本快照、下游复用", "trace 导入或手工样本", "生成数据集版本快照"],
-      forbiddenText: ["测试套件工作台", "实验工作台", "优化运行工作台"],
+      forbiddenText: ["测试套件工作台", "实验工作台", "优化运行工作台", "curl 训练闭环", "页面验收数据集"],
       requiredTestIds: ["training-route-datasets", "training-route-operating-model-datasets", "training-route-operating-step-datasets-1", "training-route-operating-step-datasets-2", "training-route-operating-step-datasets-3"],
       forbiddenTestIds: ["training-tab-strip", "training-route-operating-model-test-suites", "training-route-operating-model-experiments", "training-route-operating-model-optimization-runs"],
     },
@@ -145,7 +161,7 @@ const routes = [
     expect: ["测试套件"],
     uiContract: {
       requiredText: ["测试套件工作台", "固定试卷、断言回归、失败定位", "用例组成套件", "断言级复盘"],
-      forbiddenText: ["数据集工作台", "实验工作台", "优化运行工作台"],
+      forbiddenText: ["数据集工作台", "实验工作台", "优化运行工作台", "curl 训练闭环", "页面验收测试套件"],
       requiredTestIds: ["training-route-test-suites", "training-route-operating-model-test-suites", "training-route-operating-step-test-suites-1", "training-route-operating-step-test-suites-2", "training-route-operating-step-test-suites-3"],
       forbiddenTestIds: ["training-tab-strip", "training-route-operating-model-datasets", "training-route-operating-model-experiments", "training-route-operating-model-optimization-runs"],
     },
@@ -157,7 +173,7 @@ const routes = [
     expect: ["实验"],
     uiContract: {
       requiredText: ["实验工作台", "变量矩阵、版本绑定、横向排行", "实验维度事实", "质量和成本横向比较"],
-      forbiddenText: ["数据集工作台", "测试套件工作台", "优化运行工作台"],
+      forbiddenText: ["数据集工作台", "测试套件工作台", "优化运行工作台", "curl 训练闭环", "页面验收实验"],
       requiredTestIds: ["training-route-experiments", "training-route-operating-model-experiments", "training-route-operating-step-experiments-1", "training-route-operating-step-experiments-2", "training-route-operating-step-experiments-3"],
       forbiddenTestIds: ["training-tab-strip", "training-route-operating-model-datasets", "training-route-operating-model-test-suites", "training-route-operating-model-optimization-runs"],
     },
@@ -169,7 +185,7 @@ const routes = [
     expect: ["优化运行"],
     uiContract: {
       requiredText: ["优化运行工作台", "失败样本、候选生成、人工发布", "待确认优化候选", "人工把关新版本"],
-      forbiddenText: ["数据集工作台", "测试套件工作台", "实验工作台"],
+      forbiddenText: ["数据集工作台", "测试套件工作台", "实验工作台", "curl 训练闭环", "页面验收优化运行"],
       requiredTestIds: ["training-route-optimization-runs", "training-route-operating-model-optimization-runs", "training-route-operating-step-optimization-runs-1", "training-route-operating-step-optimization-runs-2", "training-route-operating-step-optimization-runs-3"],
       forbiddenTestIds: ["training-tab-strip", "training-route-operating-model-datasets", "training-route-operating-model-test-suites", "training-route-operating-model-experiments"],
     },

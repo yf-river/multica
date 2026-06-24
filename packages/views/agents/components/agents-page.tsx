@@ -73,6 +73,10 @@ import {
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
 import { useNavigation, useRowLink } from "../../navigation";
+import {
+  AcceptanceFixtureNotice,
+  isAcceptanceFixtureRecord,
+} from "../../common/acceptance-fixtures";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { PageHeader } from "../../layout/page-header";
 import { availabilityConfig } from "../presence";
@@ -819,6 +823,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
     new Set(),
   );
+  const [showAcceptanceFixtures, setShowAcceptanceFixtures] = useState(false);
 
   const rawScope = useAgentsViewStore((s) => s.scope);
   const scope = AGENT_SCOPES.includes(rawScope) ? rawScope : "mine";
@@ -926,7 +931,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
   ]);
 
   // Visible rows: filters, then sort.
-  const rows = useMemo<AgentListRow[]>(() => {
+  const filteredRows = useMemo<AgentListRow[]>(() => {
     const filtered = scopeRows.filter((row) => {
       if (
         filters.availability.length > 0 &&
@@ -984,6 +989,24 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     });
     return filtered;
   }, [scopeRows, filters, sortField, sortDirection]);
+
+  const acceptanceFixtureRows = useMemo(
+    () =>
+      filteredRows.filter((row) =>
+        isAcceptanceFixtureRecord(row.agent as unknown as Record<string, unknown>, [
+          "name",
+          "description",
+        ]),
+      ),
+    [filteredRows],
+  );
+  const rows = useMemo(
+    () =>
+      showAcceptanceFixtures
+        ? filteredRows
+        : filteredRows.filter((row) => !acceptanceFixtureRows.includes(row)),
+    [acceptanceFixtureRows, filteredRows, showAcceptanceFixtures],
+  );
 
   // Row virtualization — headless math, offsets as padding on the rows
   // wrapper, fixed-height rows. The scroll element is the SINGLE outer
@@ -1088,6 +1111,13 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
             allRows={scopeRows}
             members={members}
             visibleCount={rows.length}
+          />
+          <AcceptanceFixtureNotice
+            count={acceptanceFixtureRows.length}
+            noun="智能体"
+            showing={showAcceptanceFixtures}
+            onShow={() => setShowAcceptanceFixtures(true)}
+            onHide={() => setShowAcceptanceFixtures(false)}
           />
           <div
             ref={listScrollRef}
