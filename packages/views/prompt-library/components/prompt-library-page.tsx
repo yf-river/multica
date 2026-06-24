@@ -1527,18 +1527,6 @@ function WorkbenchPanel({
   const caseSummaries = useMemo(() => buildCaseSummaries(cases), [cases]);
   const casesByAsset = useMemo(() => buildCasesByAsset(cases), [cases]);
   const experimentDimensionsByAsset = useMemo(() => buildExperimentDimensionsByAsset(experimentDimensions), [experimentDimensions]);
-  const candidatesByRun = useMemo(() => buildCandidatesByRun(candidates), [candidates]);
-  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
-  const evidenceQuery = useQuery({
-    queryKey: promptLibraryKeys.runEvidence(workspaceId, expandedRunId),
-    queryFn: () => api.getPromptEvaluationRunEvidence(expandedRunId ?? ""),
-    enabled: !!expandedRunId,
-  });
-  const evidenceSnapshotQuery = useQuery({
-    queryKey: promptLibraryKeys.runEvidenceSnapshots(workspaceId, expandedRunId),
-    queryFn: () => api.listPromptEvaluationEvidenceSnapshots(expandedRunId ?? "", 5),
-    enabled: !!expandedRunId,
-  });
 
   if (activeTab === "提示词库" || activeTab === "提示词调试场" || activeTab === "智能体调试场") {
     return null;
@@ -1576,129 +1564,26 @@ function WorkbenchPanel({
       )}
 
       {activeTab === "运行历史" && (
-        <section className="grid gap-3" aria-label="运行历史内容" data-testid="training-route-panel-run-history">
-        {loading ? (
-          <div className="h-20 rounded-md bg-muted/60" />
-        ) : runs.length === 0 ? (
-          <div className="grid gap-3">
-            <RunStatusFilterBar value={runStatusFilter} onChange={onRunStatusFilterChange} />
-            <div className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground" data-testid="training-route-empty-run-history">
-              {runStatusFilter === "全部" ? "暂无结构化运行记录" : `暂无${runStatusFilter}运行记录`}
-            </div>
-          </div>
-        ) : (
-          <div className="grid gap-3">
-            <RunStatusFilterBar value={runStatusFilter} onChange={onRunStatusFilterChange} />
-            <div className="divide-y rounded-md border" data-testid="prompt-evaluation-run-list">
-              {runs.map((run) => (
-                <div key={run.id} data-testid={`prompt-evaluation-run-${run.id}`} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
-                <div className="min-w-0">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="truncate text-sm font-medium">{displayRunKind(run.run_kind)} · {run.status}</span>
-                    <Badge variant={run.status === "通过" ? "secondary" : run.status === "已入队" || run.status === "运行中" ? "outline" : "destructive"} className="shrink-0">
-                      {run.total_cases} 用例 · 通过率 {Math.round(run.pass_rate * 100)}%
-                    </Badge>
-                  </div>
-                  <div className="mt-1 text-xs text-muted-foreground">{summarizeStructuredRun(run)}</div>
-                  {run.review_decision && (
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      人工复核：{run.review_decision}{run.review_note ? ` · ${run.review_note}` : ""}{run.reviewed_at ? ` · ${run.reviewed_at}` : ""}
-                    </div>
-                  )}
-                  <div className="mt-1 break-all text-[11px] text-muted-foreground">
-                    运行 {run.id}{run.task_id ? ` · 任务 ${run.task_id}` : ""}
-                  </div>
-                </div>
-                <div className="flex items-center justify-end gap-2 text-right text-[11px] text-muted-foreground">
-                  <div>
-                    <div>{run.created_at}</div>
-                    <div>{run.total_duration_ms} ms</div>
-                  </div>
-                  <Button size="sm" variant="secondary" onClick={() => setExpandedRunId(expandedRunId === run.id ? null : run.id)}>
-                    {expandedRunId === run.id ? "收起证据" : "查看证据"}
-                  </Button>
-                  {run.task_id && (
-                    <Button size="sm" variant="secondary" onClick={() => onSyncRun(run.id)} disabled={syncingRunId === run.id}>
-                      {syncingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                      同步任务
-                    </Button>
-                  )}
-                  {canCancelPromptEvaluationRun(run) && (
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      onClick={() => onCancelRun(run.id)}
-                      disabled={cancellingRunId === run.id}
-                      data-testid={`cancel-prompt-evaluation-run-${run.id}`}
-                    >
-                      {cancellingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <XCircle className="size-3.5" />}
-                      取消运行
-                    </Button>
-                  )}
-                  {canReviewPromptEvaluationRun(run) && (
-                    <>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => onReviewRun(run, "通过")}
-                        disabled={reviewingRunId === run.id}
-                        data-testid={`review-prompt-evaluation-run-pass-${run.id}`}
-                      >
-                        {reviewingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle className="size-3.5" />}
-                        人工通过
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="destructive"
-                        onClick={() => onReviewRun(run, "未通过")}
-                        disabled={reviewingRunId === run.id}
-                        data-testid={`review-prompt-evaluation-run-fail-${run.id}`}
-                      >
-                        {reviewingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <XCircle className="size-3.5" />}
-                        人工驳回
-                      </Button>
-                    </>
-                  )}
-                  {canGenerateOptimizationCandidate(run) && (
-                    <>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => onRunOptimizationAgent(run.id)}
-                        disabled={runningOptimizationAgentRunId === run.id || run.status === "已入队" || run.status === "运行中"}
-                      >
-                        {runningOptimizationAgentRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                        智能体优化任务
-                      </Button>
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() => onGenerateCandidate(run.id)}
-                        disabled={generatingCandidateRunId === run.id || (candidatesByRun.get(run.id)?.some((candidate) => candidate.status === "待确认") ?? false)}
-                      >
-                        {generatingCandidateRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-                        {candidatesByRun.get(run.id)?.some((candidate) => candidate.status === "待确认") ? "已有候选" : "生成优化候选"}
-                      </Button>
-                    </>
-                  )}
-                </div>
-                {expandedRunId === run.id && (
-                  <RunEvidencePanel
-                    evidence={evidenceQuery.data ?? null}
-                    snapshots={evidenceSnapshotQuery.data?.items ?? []}
-                    snapshotsLoading={evidenceSnapshotQuery.isLoading || evidenceSnapshotQuery.isFetching}
-                    loading={evidenceQuery.isLoading || evidenceQuery.isFetching}
-                    error={evidenceQuery.isError}
-                    creatingSnapshot={creatingEvidenceSnapshotRunId === run.id}
-                    onCreateSnapshot={() => onCreateEvidenceSnapshot(run.id)}
-                  />
-                )}
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-        </section>
+        <RunHistoryPanel
+          workspaceId={workspaceId}
+          runs={runs}
+          runStatusFilter={runStatusFilter}
+          onRunStatusFilterChange={onRunStatusFilterChange}
+          candidates={candidates}
+          loading={loading}
+          onSyncRun={onSyncRun}
+          syncingRunId={syncingRunId}
+          onCancelRun={onCancelRun}
+          cancellingRunId={cancellingRunId}
+          onReviewRun={onReviewRun}
+          reviewingRunId={reviewingRunId}
+          onCreateEvidenceSnapshot={onCreateEvidenceSnapshot}
+          creatingEvidenceSnapshotRunId={creatingEvidenceSnapshotRunId}
+          onGenerateCandidate={onGenerateCandidate}
+          generatingCandidateRunId={generatingCandidateRunId}
+          onRunOptimizationAgent={onRunOptimizationAgent}
+          runningOptimizationAgentRunId={runningOptimizationAgentRunId}
+        />
       )}
 
       {activeTab !== "运行历史" && (
@@ -1800,6 +1685,188 @@ function WorkbenchPanel({
           </div>
         )}
         </section>
+      )}
+    </section>
+  );
+}
+
+function RunHistoryPanel({
+  workspaceId,
+  runs,
+  runStatusFilter,
+  onRunStatusFilterChange,
+  candidates,
+  loading,
+  onSyncRun,
+  syncingRunId,
+  onCancelRun,
+  cancellingRunId,
+  onReviewRun,
+  reviewingRunId,
+  onCreateEvidenceSnapshot,
+  creatingEvidenceSnapshotRunId,
+  onGenerateCandidate,
+  generatingCandidateRunId,
+  onRunOptimizationAgent,
+  runningOptimizationAgentRunId,
+}: {
+  workspaceId: string;
+  runs: PromptEvaluationRun[];
+  runStatusFilter: RunStatusFilter;
+  onRunStatusFilterChange: (status: RunStatusFilter) => void;
+  candidates: PromptEvaluationOptimizationCandidate[];
+  loading: boolean;
+  onSyncRun: (runId: string) => void;
+  syncingRunId: string | null;
+  onCancelRun: (runId: string) => void;
+  cancellingRunId: string | null;
+  onReviewRun: (run: PromptEvaluationRun, decision: "通过" | "未通过") => void;
+  reviewingRunId: string | null;
+  onCreateEvidenceSnapshot: (runId: string) => void;
+  creatingEvidenceSnapshotRunId: string | null;
+  onGenerateCandidate: (runId: string) => void;
+  generatingCandidateRunId: string | null;
+  onRunOptimizationAgent: (runId: string) => void;
+  runningOptimizationAgentRunId: string | null;
+}) {
+  const candidatesByRun = useMemo(() => buildCandidatesByRun(candidates), [candidates]);
+  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+  const evidenceQuery = useQuery({
+    queryKey: promptLibraryKeys.runEvidence(workspaceId, expandedRunId),
+    queryFn: () => api.getPromptEvaluationRunEvidence(expandedRunId ?? ""),
+    enabled: !!expandedRunId,
+  });
+  const evidenceSnapshotQuery = useQuery({
+    queryKey: promptLibraryKeys.runEvidenceSnapshots(workspaceId, expandedRunId),
+    queryFn: () => api.listPromptEvaluationEvidenceSnapshots(expandedRunId ?? "", 5),
+    enabled: !!expandedRunId,
+  });
+
+  return (
+    <section className="grid gap-3" aria-label="运行历史内容" data-testid="training-route-panel-run-history">
+      {loading ? (
+        <div className="h-20 rounded-md bg-muted/60" />
+      ) : runs.length === 0 ? (
+        <div className="grid gap-3">
+          <RunStatusFilterBar value={runStatusFilter} onChange={onRunStatusFilterChange} />
+          <div className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground" data-testid="training-route-empty-run-history">
+            {runStatusFilter === "全部" ? "暂无结构化运行记录" : `暂无${runStatusFilter}运行记录`}
+          </div>
+        </div>
+      ) : (
+        <div className="grid gap-3">
+          <RunStatusFilterBar value={runStatusFilter} onChange={onRunStatusFilterChange} />
+          <div className="divide-y rounded-md border" data-testid="prompt-evaluation-run-list">
+            {runs.map((run) => {
+              const hasPendingCandidate = candidatesByRun.get(run.id)?.some((candidate) => candidate.status === "待确认") ?? false;
+              return (
+                <div key={run.id} data-testid={`prompt-evaluation-run-${run.id}`} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-center gap-2">
+                      <span className="truncate text-sm font-medium">{displayRunKind(run.run_kind)} · {run.status}</span>
+                      <Badge variant={run.status === "通过" ? "secondary" : run.status === "已入队" || run.status === "运行中" ? "outline" : "destructive"} className="shrink-0">
+                        {run.total_cases} 用例 · 通过率 {Math.round(run.pass_rate * 100)}%
+                      </Badge>
+                    </div>
+                    <div className="mt-1 text-xs text-muted-foreground">{summarizeStructuredRun(run)}</div>
+                    {run.review_decision && (
+                      <div className="mt-1 text-xs text-muted-foreground">
+                        人工复核：{run.review_decision}{run.review_note ? ` · ${run.review_note}` : ""}{run.reviewed_at ? ` · ${run.reviewed_at}` : ""}
+                      </div>
+                    )}
+                    <div className="mt-1 break-all text-[11px] text-muted-foreground">
+                      运行 {run.id}{run.task_id ? ` · 任务 ${run.task_id}` : ""}
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-end gap-2 text-right text-[11px] text-muted-foreground">
+                    <div>
+                      <div>{run.created_at}</div>
+                      <div>{run.total_duration_ms} ms</div>
+                    </div>
+                    <Button size="sm" variant="secondary" onClick={() => setExpandedRunId(expandedRunId === run.id ? null : run.id)}>
+                      {expandedRunId === run.id ? "收起证据" : "查看证据"}
+                    </Button>
+                    {run.task_id && (
+                      <Button size="sm" variant="secondary" onClick={() => onSyncRun(run.id)} disabled={syncingRunId === run.id}>
+                        {syncingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+                        同步任务
+                      </Button>
+                    )}
+                    {canCancelPromptEvaluationRun(run) && (
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => onCancelRun(run.id)}
+                        disabled={cancellingRunId === run.id}
+                        data-testid={`cancel-prompt-evaluation-run-${run.id}`}
+                      >
+                        {cancellingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <XCircle className="size-3.5" />}
+                        取消运行
+                      </Button>
+                    )}
+                    {canReviewPromptEvaluationRun(run) && (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => onReviewRun(run, "通过")}
+                          disabled={reviewingRunId === run.id}
+                          data-testid={`review-prompt-evaluation-run-pass-${run.id}`}
+                        >
+                          {reviewingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle className="size-3.5" />}
+                          人工通过
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="destructive"
+                          onClick={() => onReviewRun(run, "未通过")}
+                          disabled={reviewingRunId === run.id}
+                          data-testid={`review-prompt-evaluation-run-fail-${run.id}`}
+                        >
+                          {reviewingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <XCircle className="size-3.5" />}
+                          人工驳回
+                        </Button>
+                      </>
+                    )}
+                    {canGenerateOptimizationCandidate(run) && (
+                      <>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => onRunOptimizationAgent(run.id)}
+                          disabled={runningOptimizationAgentRunId === run.id || run.status === "已入队" || run.status === "运行中"}
+                        >
+                          {runningOptimizationAgentRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+                          智能体优化任务
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant="secondary"
+                          onClick={() => onGenerateCandidate(run.id)}
+                          disabled={generatingCandidateRunId === run.id || hasPendingCandidate}
+                        >
+                          {generatingCandidateRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+                          {hasPendingCandidate ? "已有候选" : "生成优化候选"}
+                        </Button>
+                      </>
+                    )}
+                  </div>
+                  {expandedRunId === run.id && (
+                    <RunEvidencePanel
+                      evidence={evidenceQuery.data ?? null}
+                      snapshots={evidenceSnapshotQuery.data?.items ?? []}
+                      snapshotsLoading={evidenceSnapshotQuery.isLoading || evidenceSnapshotQuery.isFetching}
+                      loading={evidenceQuery.isLoading || evidenceQuery.isFetching}
+                      error={evidenceQuery.isError}
+                      creatingSnapshot={creatingEvidenceSnapshotRunId === run.id}
+                      onCreateSnapshot={() => onCreateEvidenceSnapshot(run.id)}
+                    />
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </div>
       )}
     </section>
   );
