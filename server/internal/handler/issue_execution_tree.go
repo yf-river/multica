@@ -7,6 +7,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 type IssueExecutionTreeResponse struct {
@@ -15,12 +16,13 @@ type IssueExecutionTreeResponse struct {
 }
 
 type IssueExecutionNodeResponse struct {
-	Issue          IssueResponse                `json:"issue"`
-	Tasks          []AgentTaskResponse          `json:"tasks"`
-	SOPRuns        []SquadSOPRunResponse        `json:"sop_runs"`
-	TraceEvents    []TaskTraceEventResponse     `json:"trace_events"`
-	WakeupComments []IssueWakeupCommentBrief    `json:"wakeup_comments"`
-	Children       []IssueExecutionNodeResponse `json:"children"`
+	Issue           IssueResponse                             `json:"issue"`
+	Tasks           []AgentTaskResponse                       `json:"tasks"`
+	SOPRuns         []SquadSOPRunResponse                     `json:"sop_runs"`
+	TraceEvents     []TaskTraceEventResponse                  `json:"trace_events"`
+	ToolCallSummary []PromptEvaluationToolCallSummaryResponse `json:"tool_call_summary"`
+	WakeupComments  []IssueWakeupCommentBrief                 `json:"wakeup_comments"`
+	Children        []IssueExecutionNodeResponse              `json:"children"`
 }
 
 type IssueWakeupCommentBrief struct {
@@ -63,10 +65,21 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 		return IssueExecutionNodeResponse{}, err
 	}
 	taskResp := make([]AgentTaskResponse, 0, len(tasks))
+	taskMessages := make([]protocol.TaskMessagePayload, 0)
 	workspaceID := uuidToString(issue.WorkspaceID)
 	for _, task := range tasks {
 		taskResp = append(taskResp, taskToResponse(task, workspaceID))
+		messages, err := h.Queries.ListTaskMessages(ctx, task.ID)
+		if err != nil {
+			return IssueExecutionNodeResponse{}, err
+		}
+		taskID := uuidToString(task.ID)
+		issueID := uuidToString(issue.ID)
+		for _, message := range messages {
+			taskMessages = append(taskMessages, taskMessageToPayload(message, taskID, issueID))
+		}
 	}
+	toolCallSummary := buildPromptEvaluationToolCallSummary(buildPromptEvaluationToolCallChains(taskMessages))
 
 	runs, err := h.Queries.ListIssueSquadSOPRuns(ctx, db.ListIssueSquadSOPRunsParams{
 		IssueID:     issue.ID,
@@ -137,12 +150,13 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 	}
 
 	return IssueExecutionNodeResponse{
-		Issue:          issueToResponse(issue, prefix),
-		Tasks:          taskResp,
-		SOPRuns:        runResp,
-		TraceEvents:    traceResp,
-		WakeupComments: wakeupComments,
-		Children:       childrenResp,
+		Issue:           issueToResponse(issue, prefix),
+		Tasks:           taskResp,
+		SOPRuns:         runResp,
+		TraceEvents:     traceResp,
+		ToolCallSummary: toolCallSummary,
+		WakeupComments:  wakeupComments,
+		Children:        childrenResp,
 	}, nil
 }
 
@@ -153,6 +167,8 @@ func summarizeIssueExecutionTree(root IssueExecutionNodeResponse) map[string]int
 		"SOP执行数": 0,
 		"SOP事件数": 0,
 		"观测事件数":  0,
+		"工具调用数":  0,
+		"异常工具数":  0,
 		"唤醒评论数":  0,
 		"完成任务数":  0,
 		"失败任务数":  0,
@@ -166,6 +182,10 @@ func summarizeIssueExecutionTree(root IssueExecutionNodeResponse) map[string]int
 		summary["任务数"] += len(node.Tasks)
 		summary["SOP执行数"] += len(node.SOPRuns)
 		summary["观测事件数"] += len(node.TraceEvents)
+		for _, tool := range node.ToolCallSummary {
+			summary["工具调用数"] += tool.TotalCalls
+			summary["异常工具数"] += tool.FailureSignalCalls + tool.MissingResultCalls + tool.OrphanResultCalls
+		}
 		summary["唤醒评论数"] += len(node.WakeupComments)
 		for _, run := range node.SOPRuns {
 			summary["SOP事件数"] += len(run.Events)

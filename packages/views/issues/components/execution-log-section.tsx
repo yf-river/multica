@@ -213,6 +213,7 @@ function hasMeaningfulExecutionTree(tree: IssueExecutionTreeResponse | undefined
     Number(summary["子任务数"] ?? 0) > 0 ||
     Number(summary["SOP执行数"] ?? 0) > 0 ||
     Number(summary["观测事件数"] ?? 0) > 0 ||
+    Number(summary["工具调用数"] ?? 0) > 0 ||
     Number(summary["唤醒评论数"] ?? 0) > 0
   );
 }
@@ -231,6 +232,7 @@ function CollaborationExecutionTree({ tree }: { tree: IssueExecutionTreeResponse
         <span className="truncate">任务 {Number(summary["任务数"] ?? 0)} / 完成 {Number(summary["完成任务数"] ?? 0)}</span>
         <span className="truncate">SOP {Number(summary["SOP执行数"] ?? 0)} / 事件 {Number(summary["SOP事件数"] ?? 0)}</span>
         <span className="truncate">观测 {Number(summary["观测事件数"] ?? 0)} / 唤醒 {Number(summary["唤醒评论数"] ?? 0)}</span>
+        <span className="truncate">工具 {Number(summary["工具调用数"] ?? 0)} / 异常 {Number(summary["异常工具数"] ?? 0)}</span>
       </div>
       <div className="space-y-1">
         <ExecutionTreeNodeRow node={tree.root} root />
@@ -250,6 +252,9 @@ function CollaborationExecutionTree({ tree }: { tree: IssueExecutionTreeResponse
 function ExecutionTreeNodeRow({ node, root = false }: { node: IssueExecutionNode; root?: boolean }) {
   const terminalTasks = node.tasks.filter((task) => ["completed", "failed", "cancelled"].includes(task.status)).length;
   const latestWakeup = node.wakeup_comments.at(-1);
+  const toolSummary = node.tool_call_summary ?? [];
+  const toolCallCount = toolSummary.reduce((sum, item) => sum + item.total_calls, 0);
+  const toolAttentionCount = toolSummary.reduce((sum, item) => sum + item.failure_signal_calls + item.missing_result_calls + item.orphan_result_calls, 0);
   return (
     <div className={`grid gap-0.5 border-l-2 ${root ? "border-info/70" : "border-emerald-500/70"} pl-2 text-xs`}>
       <div className="flex min-w-0 items-center gap-2">
@@ -264,8 +269,18 @@ function ExecutionTreeNodeRow({ node, root = false }: { node: IssueExecutionNode
         <span className="truncate">任务 {node.tasks.length} / 终态 {terminalTasks}</span>
         <span className="truncate">SOP {node.sop_runs.length} / trace {node.trace_events.length}</span>
         <span className="truncate">子任务 {node.children.length}</span>
+        <span className="truncate">工具 {toolCallCount} / 异常 {toolAttentionCount}</span>
         <span className="truncate">唤醒评论 {node.wakeup_comments.length}</span>
       </div>
+      {toolSummary.length > 0 && (
+        <div className="grid gap-0.5 text-[11px] leading-5 text-muted-foreground" data-testid={`issue-execution-tool-summary-${node.issue.id}`}>
+          {toolSummary.slice(0, 3).map((item) => (
+            <div key={item.tool} className="truncate">
+              工具 {item.tool}：调用 {item.total_calls}，异常线索 {item.failure_signal_calls}，最慢 {formatNullableMilliseconds(item.max_duration_ms ?? 0)}
+            </div>
+          ))}
+        </div>
+      )}
       {latestWakeup && (
         <div className="truncate text-[11px] leading-5 text-muted-foreground">
           最近唤醒：{latestWakeup.content}

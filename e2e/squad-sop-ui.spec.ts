@@ -92,6 +92,8 @@ test.describe("user-center 小队 SOP 页面证据", () => {
       await expect(executionTree).toContainText(parent.identifier);
       await expect(executionTree).toContainText("子任务");
       await expect(executionTree).toContainText(gatewayChild.identifier);
+      await expect(executionTree).toContainText("工具");
+      await expect(executionTree).toContainText("异常");
       await expect(executionTree).toContainText("唤醒评论");
       await expect(page.getByTestId("issue-sop-run-summary")).toContainText("user-center-sop-flow");
       await expect(page.getByTestId("issue-trace-event-summary")).toContainText("观测事件");

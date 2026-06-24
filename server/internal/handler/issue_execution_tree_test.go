@@ -53,6 +53,14 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 	`, agentID, testRuntimeID, fx.parent.ID).Scan(&taskID); err != nil {
 		t.Fatalf("create task: %v", err)
 	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO task_message (task_id, seq, type, tool, content, input, output, created_at)
+		VALUES
+			($1, 1, 'tool_use', 'curl-check', '', '{"tool_call_id":"tree-call-1","url":"/health"}'::jsonb, NULL, now() - interval '2 seconds'),
+			($1, 2, 'tool_result', 'curl-check', '', '{}'::jsonb, 'Error: HTTP 500 from upstream', now() - interval '1 seconds')
+	`, taskID); err != nil {
+		t.Fatalf("create task messages: %v", err)
+	}
 
 	run, err := testHandler.Queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
 		WorkspaceID:    parseUUID(testWorkspaceID),
@@ -135,6 +143,15 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 	}
 	if resp.Summary["观测事件数"] != 1 {
 		t.Fatalf("trace summary = %+v, want one trace event", resp.Summary)
+	}
+	if resp.Summary["工具调用数"] != 1 || resp.Summary["异常工具数"] != 1 {
+		t.Fatalf("tool summary = %+v, want one tool call with attention", resp.Summary)
+	}
+	if len(resp.Root.ToolCallSummary) != 1 {
+		t.Fatalf("root tool summary = %+v, want one row", resp.Root.ToolCallSummary)
+	}
+	if resp.Root.ToolCallSummary[0].Tool != "curl-check" || resp.Root.ToolCallSummary[0].FailureSignalCalls != 1 || !resp.Root.ToolCallSummary[0].NeedsAttention {
+		t.Fatalf("root tool summary row = %+v", resp.Root.ToolCallSummary[0])
 	}
 	if resp.Summary["唤醒评论数"] != 1 || len(resp.Root.WakeupComments) != 1 {
 		t.Fatalf("wakeup comments = %+v / %+v, want one", resp.Summary, resp.Root.WakeupComments)

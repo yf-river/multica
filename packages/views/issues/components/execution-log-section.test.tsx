@@ -176,6 +176,8 @@ describe("ExecutionLogSection trace", () => {
         SOP执行数: 1,
         SOP事件数: 2,
         观测事件数: 3,
+        工具调用数: 2,
+        异常工具数: 1,
         唤醒评论数: 1,
         完成任务数: 1,
         失败任务数: 0,
@@ -207,6 +209,22 @@ describe("ExecutionLogSection trace", () => {
         tasks: [makeTask({ id: "task-parent", status: "completed", issue_id: "issue-parent" })],
         sop_runs: [{ id: "run-1", events: [{ id: "event-1" }, { id: "event-2" }] }],
         trace_events: [{ id: "trace-1" }, { id: "trace-2" }],
+        tool_call_summary: [
+          {
+            tool: "curl-check",
+            total_calls: 2,
+            paired_calls: 2,
+            missing_result_calls: 0,
+            orphan_result_calls: 0,
+            average_duration_ms: 900,
+            max_duration_ms: 1200,
+            slowest_tool_call_chain_id: "tool:call-1",
+            result_categories: { 已返回: 1, 异常线索: 1 },
+            failure_signal_calls: 1,
+            needs_attention: true,
+            summary: "curl-check：调用 2 次，异常线索 1 次",
+          },
+        ],
         wakeup_comments: [
           {
             id: "comment-1",
@@ -245,6 +263,7 @@ describe("ExecutionLogSection trace", () => {
             tasks: [makeTask({ id: "task-child", status: "queued", issue_id: "issue-child" })],
             sop_runs: [],
             trace_events: [{ id: "trace-child" }],
+            tool_call_summary: [],
             wakeup_comments: [],
             children: [],
           },
@@ -260,8 +279,10 @@ describe("ExecutionLogSection trace", () => {
     expect(screen.getByText("任务 2 / 完成 1")).toBeInTheDocument();
     expect(screen.getByText("SOP 1 / 事件 2")).toBeInTheDocument();
     expect(screen.getByText("观测 3 / 唤醒 1")).toBeInTheDocument();
+    expect(screen.getAllByText("工具 2 / 异常 1").length).toBeGreaterThan(0);
     expect(screen.getByText(/父任务 GTD-1/)).toBeInTheDocument();
     expect(screen.getByText(/子任务 GTD-2/)).toBeInTheDocument();
+    expect(screen.getByText(/工具 curl-check：调用 2，异常线索 1，最慢 1s/)).toBeInTheDocument();
     expect(screen.getByText(/最近唤醒：子任务 \[GTD-2\]/)).toBeInTheDocument();
   });
 });
