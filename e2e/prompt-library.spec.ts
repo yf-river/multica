@@ -1571,6 +1571,119 @@ test.describe("训练与评估工作台", () => {
     expect((await candidateFromFailurePanelResponse).status()).toBe(201);
     await expect(page.getByText("优化候选已生成，等待人工确认")).toBeVisible({ timeout: 10000 });
 
+    const optimizationAgentFromFailurePanelResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes(`/api/prompt-evaluation-runs/${agentRun.run.id}/optimization-agent-run`),
+      { timeout: 10000 },
+    );
+    await failureDeepLinkEvidence.getByTestId("run-evidence-failure-run-optimization-agent").click();
+    const optimizationAgentResponse = await optimizationAgentFromFailurePanelResponse;
+    expect(optimizationAgentResponse.status()).toBe(202);
+    const optimizationAgentPayload = (await optimizationAgentResponse.json()) as {
+      run: {
+        id: string;
+        asset_id: string;
+        task_id: string;
+        runtime_id: string;
+        run_kind: string;
+        status: string;
+      };
+      task_id: string;
+      runtime_id: string;
+      model: string;
+    };
+    await expect(page.getByText(/真实智能体优化任务已入队/)).toBeVisible({ timeout: 10000 });
+    expect(optimizationAgentPayload.run).toMatchObject({
+      run_kind: "Agent执行",
+      status: "已入队",
+      task_id: optimizationAgentPayload.task_id,
+      runtime_id: optimizationAgentPayload.runtime_id,
+    });
+    expect(optimizationAgentPayload.model).toBe(expectedAgentModel);
+
+    const optimizationClaim = await api.claimDaemonTask(optimizationAgentPayload.runtime_id);
+    expect(optimizationClaim.task?.id).toBe(optimizationAgentPayload.task_id);
+    const optimizationOutput = [
+      "智能体优化输出：已基于失败复盘入口的工具异常线索生成候选。",
+      "```json",
+      JSON.stringify({
+        用例结果: [
+          {
+            case_index: 0,
+            status: "通过",
+            output: "已生成优化候选提示词正文。",
+            failure_reason: "无",
+            evidence: {
+              命中: ["优化候选", "验收条件", "trace/task id"],
+              trace_task_id: optimizationAgentPayload.task_id,
+            },
+          },
+        ],
+        评估结论: "智能体优化任务已完成，候选需要人工确认后发布",
+        优化候选名称: "失败复盘入口智能体优化候选",
+        候选提示词正文:
+          "请评估 {{issue_title}}，必须返回结构化 JSON；若工具异常，必须输出失败原因、验收条件、trace/task id 和下一步人工确认点。",
+        逐条修改依据: "把工具异常、结构化 JSON、验收条件和 trace/task id 固定为输出约束，方便运行证据复盘。",
+        可能影响的通过用例: "需要回归人工复核用例，确认没有降低中文输出质量。",
+        人工验收清单: ["确认中文输出", "确认包含 trace/task id", "确认原提示词未被自动替换"],
+      }),
+      "```",
+    ].join("\n");
+    await api.startDaemonTask(optimizationAgentPayload.task_id);
+    await api.reportDaemonTaskUsage(optimizationAgentPayload.task_id, {
+      provider: "codex",
+      model: optimizationAgentPayload.model,
+      input_tokens: 34,
+      output_tokens: 21,
+      cache_read_tokens: 5,
+      cache_write_tokens: 3,
+    });
+    await api.reportDaemonTaskMessages(optimizationAgentPayload.task_id, [
+      {
+        seq: 1,
+        type: "text",
+        content: optimizationOutput,
+      },
+      {
+        seq: 2,
+        type: "tool_use",
+        tool: "failure-review-optimizer",
+        input: { tool_call_id: "failure-review-optimizer-1", run_id: agentRun.run.id },
+      },
+      {
+        seq: 3,
+        type: "tool_result",
+        tool: "failure-review-optimizer",
+        output: "已生成智能体优化候选草案，等待人工确认。",
+      },
+    ]);
+    await api.completeDaemonTask(optimizationAgentPayload.task_id, optimizationOutput);
+    const syncedOptimizationRun = await api.syncPromptEvaluationRun(optimizationAgentPayload.run.id);
+    expect(syncedOptimizationRun).toMatchObject({
+      id: optimizationAgentPayload.run.id,
+      run_kind: "Agent执行",
+      status: "通过",
+      model: optimizationAgentPayload.model,
+      runtime_provider: "codex",
+      task_id: optimizationAgentPayload.task_id,
+    });
+    const optimizationEvidence = await api.getPromptEvaluationRunEvidence(optimizationAgentPayload.run.id);
+    expect(optimizationEvidence.task_messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          task_id: optimizationAgentPayload.task_id,
+          tool: "failure-review-optimizer",
+        }),
+      ]),
+    );
+    await expect
+      .poll(async () => {
+        const candidates = await api.listPromptEvaluationOptimizationCandidates({ run_id: agentRun.run.id });
+        return candidates.filter((candidate) => candidate.status === "待确认").length;
+      }, { timeout: 10000 })
+      .toBeGreaterThanOrEqual(2);
+
     await page.goto(`/${workspaceSlug}/training/runs`, { waitUntil: "domcontentloaded" });
     await expect(page.getByTestId("training-summary-需人工复核")).toContainText(/\d+/, { timeout: 10000 });
     const queueResponse = page.waitForResponse(
