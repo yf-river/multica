@@ -133,6 +133,7 @@ async function auditAgentPlayground(page) {
     executionTopology: "agent-playground-execution-topology",
     configComparison: "agent-playground-config-comparison",
     modelMatrix: "agent-playground-model-matrix",
+    toolEnvDiff: "agent-playground-tool-env-diff",
     runComparison: "agent-playground-run-comparison",
     taskPayload: "agent-playground-task-payload",
     observabilityContract: "agent-playground-observability-contract",
@@ -140,8 +141,8 @@ async function auditAgentPlayground(page) {
   const text = await page.locator("body").innerText({ timeout: 5_000 });
   const forbidden = await countsFor(page, ["prompt-playground-template-lab", "prompt-playground-source-panel", "prompt-playground-variable-checklist"]);
   const failures = [
-    ...requireText(text, ["真实任务 · 写回观测证据", "真实任务发射台", "执行目标池", "创建真实任务", "执行配置对比", "模型参数矩阵", "最近运行横向对比", "观测回写契约"]),
-    ...nonZeroBoxFailures(boxes, ["shell", "workbench", "executionStage", "promptList", "runConsole", "executionTopology", "configComparison", "modelMatrix", "runComparison", "taskPayload", "observabilityContract"]),
+    ...requireText(text, ["真实任务 · 写回观测证据", "真实任务发射台", "执行目标池", "创建真实任务", "执行配置对比", "模型参数矩阵", "工具与环境差异", "MCP", "环境变量", "最近运行横向对比", "观测回写契约"]),
+    ...nonZeroBoxFailures(boxes, ["shell", "workbench", "executionStage", "promptList", "runConsole", "executionTopology", "configComparison", "modelMatrix", "toolEnvDiff", "runComparison", "taskPayload", "observabilityContract"]),
     ...forbiddenCountFailures(forbidden),
   ];
   if (boxes.executionStage && boxes.promptList && boxes.executionStage.x >= boxes.promptList.x) {
@@ -158,7 +159,7 @@ async function auditAgentPlayground(page) {
     screenshot,
     boxes,
     forbidden_counts: forbidden,
-    visible_contracts: pickVisibleLines(text, ["真实任务", "执行目标池", "执行配置", "模型参数", "横向对比", "观测回写", "本地渲染", "模板源"]),
+    visible_contracts: pickVisibleLines(text, ["真实任务", "执行目标池", "执行配置", "模型参数", "工具与环境", "MCP", "环境变量", "横向对比", "观测回写", "本地渲染", "模板源"]),
   };
 }
 

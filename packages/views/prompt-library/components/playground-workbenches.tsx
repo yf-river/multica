@@ -674,6 +674,15 @@ function AgentExecutionConfigComparison({
           agents={agents}
           runtimes={runtimes}
         />
+        <AgentToolEnvironmentDiff
+          current={current}
+          selectedExecutionAgent={selectedExecutionAgent}
+          evaluationAgent={evaluationAgent}
+          selectedRuntime={selectedRuntime}
+          latestRun={latestRun}
+          agents={agents}
+          runtimes={runtimes}
+        />
         <AgentRunComparisonTable runs={recentRuns} agents={agents} runtimes={runtimes} runHistoryHrefForRun={runHistoryHrefForRun} />
       </div>
     </div>
@@ -814,6 +823,151 @@ function buildModelMatrixRow({
     parameterSummary: `参数 ${customArgCount} · 环境 ${customEnvCount}`,
     evidence,
   };
+}
+
+function AgentToolEnvironmentDiff({
+  current,
+  selectedExecutionAgent,
+  evaluationAgent,
+  selectedRuntime,
+  latestRun,
+  agents,
+  runtimes,
+}: {
+  current: {
+    agent: string;
+    runtime: string;
+    model: string;
+    prompt: string;
+  };
+  selectedExecutionAgent: Agent | null;
+  evaluationAgent: Agent | null;
+  selectedRuntime: AgentRuntime | null;
+  latestRun: PromptEvaluationRun | null;
+  agents: Agent[];
+  runtimes: AgentRuntime[];
+}) {
+  const effectiveAgent = selectedExecutionAgent ?? evaluationAgent;
+  const latestAgent = latestRun?.agent_id ? agents.find((agent) => agent.id === latestRun.agent_id) ?? null : null;
+  const latestRuntime = latestRun?.runtime_id ? runtimes.find((runtime) => runtime.id === latestRun.runtime_id) ?? null : null;
+  const rows = [
+    buildToolEnvironmentRow({
+      label: "当前待执行",
+      source: selectedExecutionAgent ? "手动指定" : "自动选择",
+      agentLabel: current.agent,
+      runtimeLabel: current.runtime,
+      agent: effectiveAgent,
+      runtime: selectedRuntime,
+      evidence: "页面选择态",
+    }),
+    buildToolEnvironmentRow({
+      label: "训练评估默认",
+      source: evaluationAgent ? "工作区智能体" : "未创建",
+      agentLabel: evaluationAgent ? formatAgentDisplayName(evaluationAgent) ?? evaluationAgent.name : "暂无训练评估智能体",
+      runtimeLabel: evaluationAgent ? runtimes.find((runtime) => runtime.id === evaluationAgent.runtime_id)?.name ?? evaluationAgent.runtime_id : "未绑定",
+      agent: evaluationAgent,
+      runtime: evaluationAgent ? runtimes.find((runtime) => runtime.id === evaluationAgent.runtime_id) ?? null : null,
+      evidence: "自动模式候选",
+    }),
+    buildToolEnvironmentRow({
+      label: "最近真实运行",
+      source: latestRun ? latestRun.status : "暂无",
+      agentLabel: latestAgent ? formatAgentDisplayName(latestAgent) ?? latestAgent.name : latestRun?.agent_id ? `智能体 ${latestRun.agent_id.slice(0, 8)}` : "未绑定",
+      runtimeLabel: latestRuntime?.name ?? latestRun?.runtime_id ?? "未绑定",
+      agent: latestAgent,
+      runtime: latestRuntime,
+      evidence: latestRun?.task_id ? `任务 ${latestRun.task_id.slice(0, 8)}` : "运行事实",
+    }),
+  ];
+  return (
+    <div className="rounded border px-2 py-2" data-testid="agent-playground-tool-env-diff">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="font-medium text-foreground">工具与环境差异</div>
+        <Badge variant="outline" className="text-[10px]">密钥只显示数量</Badge>
+      </div>
+      <div className="mt-2 overflow-x-auto">
+        <table className="w-full min-w-[760px] text-left text-[11px]">
+          <thead className="text-muted-foreground">
+            <tr className="border-b">
+              <th className="py-1 pr-2 font-medium">配置</th>
+              <th className="py-1 pr-2 font-medium">来源</th>
+              <th className="py-1 pr-2 font-medium">智能体</th>
+              <th className="py-1 pr-2 font-medium">运行时</th>
+              <th className="py-1 pr-2 font-medium">技能</th>
+              <th className="py-1 pr-2 font-medium">CLI 参数</th>
+              <th className="py-1 pr-2 font-medium">环境变量</th>
+              <th className="py-1 pr-2 font-medium">MCP</th>
+              <th className="py-1 pr-2 font-medium">运行时权限</th>
+              <th className="py-1 font-medium">证据</th>
+            </tr>
+          </thead>
+          <tbody>
+            {rows.map((row) => (
+              <tr key={row.label} className="border-b last:border-b-0">
+                <td className="whitespace-nowrap py-1.5 pr-2 font-medium text-foreground">{row.label}</td>
+                <td className="whitespace-nowrap py-1.5 pr-2 text-muted-foreground">{row.source}</td>
+                <td className="max-w-32 truncate py-1.5 pr-2 text-muted-foreground">{row.agentLabel}</td>
+                <td className="max-w-32 truncate py-1.5 pr-2 text-muted-foreground">{row.runtimeLabel}</td>
+                <td className="whitespace-nowrap py-1.5 pr-2 text-muted-foreground">{row.skillSummary}</td>
+                <td className="whitespace-nowrap py-1.5 pr-2 text-muted-foreground">{row.customArgs}</td>
+                <td className="whitespace-nowrap py-1.5 pr-2 text-muted-foreground">{row.customEnv}</td>
+                <td className="max-w-36 truncate py-1.5 pr-2 text-muted-foreground">{row.mcp}</td>
+                <td className="whitespace-nowrap py-1.5 pr-2 text-muted-foreground">{row.runtimeSecurity}</td>
+                <td className="whitespace-nowrap py-1.5 text-muted-foreground">{row.evidence}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+function buildToolEnvironmentRow({
+  label,
+  source,
+  agentLabel,
+  runtimeLabel,
+  agent,
+  runtime,
+  evidence,
+}: {
+  label: string;
+  source: string;
+  agentLabel: string;
+  runtimeLabel: string;
+  agent: Agent | null;
+  runtime: AgentRuntime | null;
+  evidence: string;
+}) {
+  const customEnvCount = agent?.custom_env_key_count ?? 0;
+  const hasCustomEnv = Boolean(agent?.has_custom_env || customEnvCount > 0);
+  return {
+    label,
+    source,
+    agentLabel,
+    runtimeLabel,
+    skillSummary: agent ? `技能 ${agent.skills.length}` : "未绑定",
+    customArgs: agent ? `参数 ${agent.custom_args?.length ?? 0}` : "未绑定",
+    customEnv: agent ? (hasCustomEnv ? `已配置 ${customEnvCount} 个` : "未配置") : "未绑定",
+    mcp: summarizeMcpConfig(agent),
+    runtimeSecurity: runtime ? `${runtime.runtime_mode === "local" ? "本地" : "云端"} · ${runtime.visibility === "public" ? "工作区可绑定" : "私有绑定"}` : "未绑定",
+    evidence,
+  };
+}
+
+function summarizeMcpConfig(agent: Agent | null): string {
+  if (!agent) return "未绑定";
+  if (agent.mcp_config_redacted) return "已配置，内容脱敏";
+  if (agent.mcp_config == null) return "未配置";
+  if (typeof agent.mcp_config !== "object") return "已配置";
+  const record = agent.mcp_config as Record<string, unknown>;
+  const servers = record["mcpServers"] ?? record["servers"];
+  if (servers && typeof servers === "object" && !Array.isArray(servers)) {
+    return `已配置 ${Object.keys(servers as Record<string, unknown>).length} 个服务`;
+  }
+  if (Array.isArray(servers)) return `已配置 ${servers.length} 个服务`;
+  return "已配置";
 }
 
 function AgentRunComparisonTable({

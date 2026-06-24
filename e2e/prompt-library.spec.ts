@@ -1013,6 +1013,10 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("agent-playground-model-matrix")).toContainText("当前待执行");
     await expect(page.getByTestId("agent-playground-model-matrix")).toContainText("思考等级");
     await expect(page.getByTestId("agent-playground-model-matrix")).toContainText("参数");
+    await expect(page.getByTestId("agent-playground-tool-env-diff")).toContainText("工具与环境差异");
+    await expect(page.getByTestId("agent-playground-tool-env-diff")).toContainText("密钥只显示数量");
+    await expect(page.getByTestId("agent-playground-tool-env-diff")).toContainText("环境变量");
+    await expect(page.getByTestId("agent-playground-tool-env-diff")).toContainText("MCP");
     await expect(page.getByRole("button", { name: "创建真实智能体任务" })).toBeVisible();
     await expect(page.getByTestId("prompt-playground-template-lab")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "运行并记录" })).toHaveCount(0);
