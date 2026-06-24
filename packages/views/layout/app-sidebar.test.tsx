@@ -258,4 +258,15 @@ describe("AppSidebar workspace nav", () => {
     expect(document.querySelector('[data-href="/acme/training/run-history"]')).toBeInTheDocument();
     expect(document.querySelector('[data-href="/acme/training/datasets"]')).toHaveAttribute("data-active", "true");
   });
+
+  it("preserves the training acceptance data scope across training submodule links", () => {
+    navigation.current.pathname = "/acme/training/run-history";
+    navigation.current.searchParams = new URLSearchParams("training_data=acceptance");
+
+    render(<AppSidebar />);
+
+    expect(document.querySelector('[data-href="/acme/training/runs?training_data=acceptance"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-href="/acme/training/datasets?training_data=acceptance"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-href="/acme/training/run-history?training_data=acceptance"]')).toHaveAttribute("data-active", "true");
+  });
 });

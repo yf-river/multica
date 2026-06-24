@@ -104,6 +104,8 @@ const DEMO_TIME_RANGES: Array<{ value: DemoTimeRange; label: string; sinceMs: nu
   { value: "all", label: "全部", sinceMs: null },
 ];
 const DEFAULT_DEMO_TIME_RANGE = DEMO_TIME_RANGES[1]!;
+const TRAINING_DATA_SCOPE_PARAM = "training_data";
+const TRAINING_DATA_SCOPE_ACCEPTANCE = "acceptance";
 const EMPTY_EVIDENCE_FOCUS: EvidenceFocus = {
   traceSeq: null,
   toolChainId: null,
@@ -143,6 +145,17 @@ function trainingViewFromLocation(pathname: string, searchParams: URLSearchParam
   return match?.[1] ? decodeURIComponent(match[1]) : searchParams.get("view");
 }
 
+function trainingPathWithAcceptanceScope(pathname: string, searchParams: URLSearchParams, showAcceptanceFixtures: boolean) {
+  const nextParams = new URLSearchParams(searchParams);
+  if (showAcceptanceFixtures) {
+    nextParams.set(TRAINING_DATA_SCOPE_PARAM, TRAINING_DATA_SCOPE_ACCEPTANCE);
+  } else {
+    nextParams.delete(TRAINING_DATA_SCOPE_PARAM);
+  }
+  const query = nextParams.toString();
+  return query ? `${pathname}?${query}` : pathname;
+}
+
 export function PromptLibraryPage({
   activeView,
   showPromptEditor,
@@ -165,6 +178,7 @@ export function PromptLibraryPage({
   const viewParam = trainingViewFromLocation(navigation.pathname, navigation.searchParams);
   const resolvedView = activeView ?? viewParam;
   const promptIdParam = navigation.searchParams.get("prompt_id");
+  const showAcceptanceFromURL = navigation.searchParams.get(TRAINING_DATA_SCOPE_PARAM) === TRAINING_DATA_SCOPE_ACCEPTANCE;
   const focusedRunId = navigation.searchParams.get("run");
   const evidenceFocus: EvidenceFocus = {
     traceSeq: navigation.searchParams.get("trace"),
@@ -179,7 +193,7 @@ export function PromptLibraryPage({
   const [runStatusFilter, setRunStatusFilter] = useState<RunStatusFilter>("全部");
   const [demoTimeRange, setDemoTimeRange] = useState<DemoTimeRange>("7d");
   const [exportingDemoEvidence, setExportingDemoEvidence] = useState(false);
-  const [showAcceptanceFixtures, setShowAcceptanceFixtures] = useState(false);
+  const [showAcceptanceFixtures, setShowAcceptanceFixtures] = useState(showAcceptanceFromURL);
   const shouldShowPromptEditor = showPromptEditor ?? trainingWorkbenchShowsPromptEditor(resolvedView);
   const demoSince = useMemo(() => {
     const option = DEMO_TIME_RANGES.find((item) => item.value === demoTimeRange);
@@ -190,6 +204,10 @@ export function PromptLibraryPage({
   useEffect(() => {
     setActiveTab(trainingWorkbenchTabFromView(resolvedView));
   }, [resolvedView]);
+
+  useEffect(() => {
+    setShowAcceptanceFixtures(showAcceptanceFromURL);
+  }, [showAcceptanceFromURL]);
 
   useEffect(() => {
     if (!focusedRunId) return;
@@ -895,7 +913,21 @@ export function PromptLibraryPage({
   const openManualReviewQueue = () => {
     setRunStatusFilter("需人工复核");
     setActiveTab("运行历史");
-    navigation.push(trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["运行历史"]));
+    navigation.push(trainingPathWithAcceptanceScope(
+      trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["运行历史"]),
+      navigation.searchParams,
+      showAcceptanceFixtures,
+    ));
+  };
+
+  const updateAcceptanceFixtureScope = (next: boolean) => {
+    setShowAcceptanceFixtures(next);
+    const nextPath = trainingPathWithAcceptanceScope(navigation.pathname, navigation.searchParams, next);
+    const currentQuery = navigation.searchParams.toString();
+    const currentPath = currentQuery ? `${navigation.pathname}?${currentQuery}` : navigation.pathname;
+    if (nextPath !== currentPath) {
+      navigation.replace(nextPath);
+    }
   };
 
   return (
@@ -921,7 +953,7 @@ export function PromptLibraryPage({
           type="button"
           size="sm"
           variant="outline"
-          onClick={() => setShowAcceptanceFixtures((value) => !value)}
+          onClick={() => updateAcceptanceFixtureScope(!showAcceptanceFixtures)}
         >
           {showAcceptanceFixtures ? "隐藏验收数据" : "显示验收数据"}
         </Button>
@@ -986,8 +1018,8 @@ export function PromptLibraryPage({
                 count={acceptanceFixtureItems.length}
                 noun="提示词"
                 showing={showAcceptanceFixtures}
-                onShow={() => setShowAcceptanceFixtures(true)}
-                onHide={() => setShowAcceptanceFixtures(false)}
+                onShow={() => updateAcceptanceFixtureScope(true)}
+                onHide={() => updateAcceptanceFixtureScope(false)}
               />
             </div>
 
@@ -1178,8 +1210,8 @@ export function PromptLibraryPage({
                 loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || experimentVersionsLoading || runQuery.isLoading || candidateQuery.isLoading}
                 saving={savingAsset}
                 showAcceptanceFixtures={showAcceptanceFixtures}
-                onShowAcceptanceFixtures={() => setShowAcceptanceFixtures(true)}
-                onHideAcceptanceFixtures={() => setShowAcceptanceFixtures(false)}
+                onShowAcceptanceFixtures={() => updateAcceptanceFixtureScope(true)}
+                onHideAcceptanceFixtures={() => updateAcceptanceFixtureScope(false)}
                 onCreateAsset={createWorkbenchAsset}
                 onToggleAssetStatus={toggleAssetStatus}
                 onDeleteAsset={deleteAsset}
@@ -1238,8 +1270,8 @@ export function PromptLibraryPage({
               loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || experimentVersionsLoading || runQuery.isLoading || candidateQuery.isLoading}
               saving={savingAsset}
               showAcceptanceFixtures={showAcceptanceFixtures}
-              onShowAcceptanceFixtures={() => setShowAcceptanceFixtures(true)}
-              onHideAcceptanceFixtures={() => setShowAcceptanceFixtures(false)}
+              onShowAcceptanceFixtures={() => updateAcceptanceFixtureScope(true)}
+              onHideAcceptanceFixtures={() => updateAcceptanceFixtureScope(false)}
               onCreateAsset={createWorkbenchAsset}
               onToggleAssetStatus={toggleAssetStatus}
               onDeleteAsset={deleteAsset}

@@ -107,6 +107,15 @@ const EMPTY_PINS: PinnedItem[] = [];
 const EMPTY_WORKSPACES: Awaited<ReturnType<typeof api.listWorkspaces>> = [];
 const EMPTY_INBOX: Awaited<ReturnType<typeof api.listInbox>> = [];
 const SIDEBAR_RUNTIME_UPDATE_DELAY_MS = 5_000;
+const TRAINING_DATA_SCOPE_PARAM = "training_data";
+const TRAINING_DATA_SCOPE_ACCEPTANCE = "acceptance";
+
+function trainingHrefWithCurrentDataScope(href: string, searchParams: URLSearchParams) {
+  if (searchParams.get(TRAINING_DATA_SCOPE_PARAM) !== TRAINING_DATA_SCOPE_ACCEPTANCE) return href;
+  const params = new URLSearchParams();
+  params.set(TRAINING_DATA_SCOPE_PARAM, TRAINING_DATA_SCOPE_ACCEPTANCE);
+  return `${href}?${params.toString()}`;
+}
 
 // Nav items reference WorkspacePaths method names so they can be resolved
 // against the current workspace slug at render time (see AppSidebar body).
@@ -353,7 +362,7 @@ interface AppSidebarProps {
 
 export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }: AppSidebarProps = {}) {
   const { t } = useT("layout");
-  const { pathname } = useNavigation();
+  const { pathname, searchParams } = useNavigation();
   const user = useAuthStore((s) => s.user);
   const userId = useAuthStore((s) => s.user?.id);
   const logout = useLogout();
@@ -638,7 +647,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                 {workspaceNav.map((item) => {
                   const href =
                     item.key === "training"
-                      ? trainingWorkbenchPath(p.training(), DEFAULT_TRAINING_WORKBENCH_VIEW)
+                      ? trainingHrefWithCurrentDataScope(trainingWorkbenchPath(p.training(), DEFAULT_TRAINING_WORKBENCH_VIEW), searchParams)
                       : p[item.key]();
                   const activeHref = item.key === "training" ? p.training() : href;
                   const isActive = !isActivePinnedRoute && isNavActive(pathname, activeHref);
@@ -658,7 +667,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                       {item.key === "training" && isActive && (
                         <SidebarMenu className="ml-6 mt-1 gap-0.5 border-l border-sidebar-border pl-2">
                           {TRAINING_WORKBENCH_VIEWS.map((view) => {
-                            const viewHref = trainingWorkbenchPath(p.training(), view.view);
+                            const viewHref = trainingHrefWithCurrentDataScope(trainingWorkbenchPath(p.training(), view.view), searchParams);
                             return (
                               <SidebarMenuItem key={view.view}>
                                 <SidebarMenuButton
