@@ -184,6 +184,7 @@ function ActorSubContent({
   counts,
   selected,
   onToggle,
+  enabled,
   showNoAssignee,
   includeNoAssignee,
   onToggleNoAssignee,
@@ -193,6 +194,7 @@ function ActorSubContent({
   counts: Map<string, number>;
   selected: ActorFilterValue[];
   onToggle: (value: ActorFilterValue) => void;
+  enabled: boolean;
   showNoAssignee?: boolean;
   includeNoAssignee?: boolean;
   onToggleNoAssignee?: () => void;
@@ -202,9 +204,18 @@ function ActorSubContent({
   const { t } = useT("issues");
   const [search, setSearch] = useState("");
   const wsId = useWorkspaceId();
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
-  const { data: agents = [] } = useQuery(agentListOptions(wsId));
-  const { data: squads = [] } = useQuery(squadListOptions(wsId));
+  const { data: members = [] } = useQuery({
+    ...memberListOptions(wsId),
+    enabled: enabled && !!wsId,
+  });
+  const { data: agents = [] } = useQuery({
+    ...agentListOptions(wsId),
+    enabled: enabled && !!wsId,
+  });
+  const { data: squads = [] } = useQuery({
+    ...squadListOptions(wsId),
+    enabled: enabled && !!wsId,
+  });
   const query = search.trim().toLowerCase();
   const filteredMembers = members.filter((m) =>
     m.name.toLowerCase().includes(query) || matchesPinyin(m.name, query),
@@ -356,6 +367,7 @@ function ProjectSubContent({
   counts,
   selected,
   onToggle,
+  enabled,
   includeNoProject,
   onToggleNoProject,
   noProjectCount,
@@ -363,6 +375,7 @@ function ProjectSubContent({
   counts: Map<string, number>;
   selected: string[];
   onToggle: (projectId: string) => void;
+  enabled: boolean;
   includeNoProject: boolean;
   onToggleNoProject: () => void;
   noProjectCount: number;
@@ -370,7 +383,10 @@ function ProjectSubContent({
   const { t } = useT("issues");
   const [search, setSearch] = useState("");
   const wsId = useWorkspaceId();
-  const { data: projects = [] } = useQuery(projectListOptions(wsId));
+  const { data: projects = [] } = useQuery({
+    ...projectListOptions(wsId),
+    enabled: enabled && !!wsId,
+  });
   const query = search.trim().toLowerCase();
   const filtered = projects.filter((p) =>
     p.title.toLowerCase().includes(query),
@@ -447,15 +463,20 @@ function LabelSubContent({
   counts,
   selected,
   onToggle,
+  enabled,
 }: {
   counts: Map<string, number>;
   selected: string[];
   onToggle: (labelId: string) => void;
+  enabled: boolean;
 }) {
   const { t } = useT("issues");
   const [search, setSearch] = useState("");
   const wsId = useWorkspaceId();
-  const { data: labels = [] } = useQuery(labelListOptions(wsId));
+  const { data: labels = [] } = useQuery({
+    ...labelListOptions(wsId),
+    enabled: enabled && !!wsId,
+  });
   const query = search.trim().toLowerCase();
   const filtered = labels.filter((l) => l.name.toLowerCase().includes(query));
 
@@ -771,6 +792,7 @@ export function IssueDisplayControls({
   const swimlaneGrouping = useViewStore((s) => s.swimlaneGrouping);
   const cardProperties = useViewStore((s) => s.cardProperties);
   const act = useViewStoreApi().getState();
+  const [filterOpen, setFilterOpen] = useState(false);
 
   const counts = useIssueCounts(scopedIssues);
   const showDateFilter = !!onDateFilterChange;
@@ -830,7 +852,7 @@ export function IssueDisplayControls({
   return (
     <div className="flex shrink-0 items-center gap-1">
         {/* Filter */}
-        <DropdownMenu>
+        <DropdownMenu open={filterOpen} onOpenChange={setFilterOpen}>
           <Tooltip>
             <DropdownMenuTrigger
               render={
@@ -986,6 +1008,7 @@ export function IssueDisplayControls({
                   counts={counts.assignee}
                   selected={assigneeFilters}
                   onToggle={act.toggleAssigneeFilter}
+                  enabled={filterOpen}
                   showNoAssignee
                   includeNoAssignee={includeNoAssignee}
                   onToggleNoAssignee={act.toggleNoAssignee}
@@ -1010,6 +1033,7 @@ export function IssueDisplayControls({
                   counts={counts.creator}
                   selected={creatorFilters}
                   onToggle={act.toggleCreatorFilter}
+                  enabled={filterOpen}
                   showSquads={false}
                 />
               </DropdownMenuSubContent>
@@ -1031,6 +1055,7 @@ export function IssueDisplayControls({
                   counts={counts.project}
                   selected={projectFilters}
                   onToggle={act.toggleProjectFilter}
+                  enabled={filterOpen}
                   includeNoProject={includeNoProject}
                   onToggleNoProject={act.toggleNoProject}
                   noProjectCount={counts.noProject}
@@ -1054,6 +1079,7 @@ export function IssueDisplayControls({
                   counts={counts.label}
                   selected={labelFilters}
                   onToggle={act.toggleLabelFilter}
+                  enabled={filterOpen}
                 />
               </DropdownMenuSubContent>
             </DropdownMenuSub>

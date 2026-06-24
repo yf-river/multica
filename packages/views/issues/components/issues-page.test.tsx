@@ -117,6 +117,8 @@ const mockListSquads = vi.hoisted(() =>
 const mockGetAssigneeFrequency = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 const mockGetChildIssueProgress = vi.hoisted(() => vi.fn().mockResolvedValue({ progress: [] }));
 const mockGetAgentTaskSnapshot = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+const mockListProjects = vi.hoisted(() => vi.fn().mockResolvedValue({ projects: [], total: 0 }));
+const mockListLabels = vi.hoisted(() => vi.fn().mockResolvedValue({ labels: [] }));
 vi.mock("@multica/core/api", () => ({
   api: {
     getBaseUrl: () => "http://127.0.0.1:8080",
@@ -130,6 +132,8 @@ vi.mock("@multica/core/api", () => ({
     getAssigneeFrequency: (...args: any[]) => mockGetAssigneeFrequency(...args),
     getChildIssueProgress: (...args: any[]) => mockGetChildIssueProgress(...args),
     getAgentTaskSnapshot: (...args: any[]) => mockGetAgentTaskSnapshot(...args),
+    listProjects: (...args: any[]) => mockListProjects(...args),
+    listLabels: (...args: any[]) => mockListLabels(...args),
   },
   getApi: () => ({
     listIssues: (...args: any[]) => mockListIssues(...args),
@@ -142,6 +146,8 @@ vi.mock("@multica/core/api", () => ({
     getAssigneeFrequency: (...args: any[]) => mockGetAssigneeFrequency(...args),
     getChildIssueProgress: (...args: any[]) => mockGetChildIssueProgress(...args),
     getAgentTaskSnapshot: (...args: any[]) => mockGetAgentTaskSnapshot(...args),
+    listProjects: (...args: any[]) => mockListProjects(...args),
+    listLabels: (...args: any[]) => mockListLabels(...args),
   }),
   setApiInstance: vi.fn(),
 }));
@@ -509,6 +515,8 @@ describe("IssuesPage (shared)", () => {
     mockGetAssigneeFrequency.mockResolvedValue([]);
     mockGetChildIssueProgress.mockResolvedValue({ progress: [] });
     mockGetAgentTaskSnapshot.mockResolvedValue([]);
+    mockListProjects.mockResolvedValue({ projects: [], total: 0 });
+    mockListLabels.mockResolvedValue({ labels: [] });
     mockViewState.viewMode = "board";
     mockViewState.grouping = "status";
     mockViewState.statusFilters = [];
@@ -540,6 +548,19 @@ describe("IssuesPage (shared)", () => {
 
     await screen.findByText("Implement auth");
     expect(mockGetAssigneeFrequency).not.toHaveBeenCalled();
+  });
+
+  it("does not load filter directory data before the filter menu opens", async () => {
+    mockListIssueBuckets.mockResolvedValue({ by_status: {} });
+
+    renderWithQuery(<IssuesPage />);
+
+    await screen.findByText("还没有任务");
+    expect(mockListMembers).not.toHaveBeenCalled();
+    expect(mockListAgents).not.toHaveBeenCalled();
+    expect(mockListSquads).not.toHaveBeenCalled();
+    expect(mockListProjects).not.toHaveBeenCalled();
+    expect(mockListLabels).not.toHaveBeenCalled();
   });
 
   it("renders board column headers", async () => {
