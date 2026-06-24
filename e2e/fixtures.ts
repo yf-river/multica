@@ -1183,6 +1183,17 @@ export class TestApiClient {
     return data.items ?? [];
   }
 
+  async updatePromptLibraryItem(id: string, data: Record<string, unknown>): Promise<PromptLibraryItem> {
+    const res = await this.authedFetch(`/api/prompt-library/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      throw new Error(`update prompt library item failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
   async deletePromptLibraryItem(id: string) {
     await this.authedFetch(`/api/prompt-library/${id}`, { method: "DELETE" });
   }

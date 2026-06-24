@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, BookOpenText, CheckCircle, Download, Loader2, Play, Plus, Save, Search, Trash2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
@@ -352,6 +352,30 @@ export function PromptLibraryPage({
     enabled: !!workspaceId && needsPromptVersions && !!selectedFromList,
   });
   const promptVersions = versionQuery.data?.items ?? [];
+  const experimentPromptIds = useMemo(() => {
+    if (activeTab !== "实验") return [];
+    return uniqueSortedStrings(
+      assets
+        .filter((asset) => asset.asset_type === "实验" && !!asset.prompt_id)
+        .filter((asset) => showAcceptanceFixtures || !isAcceptanceFixtureText(asset.name, asset.description, asset.payload))
+        .map((asset) => asset.prompt_id ?? ""),
+    );
+  }, [activeTab, assets, showAcceptanceFixtures]);
+  const experimentVersionQueries = useQueries({
+    queries: experimentPromptIds.map((promptId) => ({
+      queryKey: promptLibraryKeys.versions(workspaceId ?? "", promptId),
+      queryFn: () => api.listPromptLibraryVersions(promptId),
+      enabled: !!workspaceId && activeTab === "实验" && !!promptId,
+    })),
+  });
+  const experimentVersionsByPromptId = useMemo(() => {
+    const result = new Map<string, PromptLibraryVersion[]>();
+    experimentPromptIds.forEach((promptId, index) => {
+      result.set(promptId, experimentVersionQueries[index]?.data?.items ?? []);
+    });
+    return result;
+  }, [experimentPromptIds, experimentVersionQueries]);
+  const experimentVersionsLoading = experimentVersionQueries.some((query) => query.isLoading || query.isFetching);
   const agentRuntimeReadiness = runtimeReadinessQuery.data ?? DEFAULT_AGENT_RUNTIME_READINESS;
   const selectedPromptStorageKey = workspaceId ? `multica:training:prompt-library:selected-prompt:${workspaceId}` : null;
 
@@ -1113,13 +1137,14 @@ export function PromptLibraryPage({
                 assets={assets}
                 cases={cases}
                 experimentDimensions={experimentDimensions}
+                experimentVersionsByPromptId={experimentVersionsByPromptId}
                 runs={runs}
                 focusedRunId={focusedRunId}
                 evidenceFocus={evidenceFocus}
                 runStatusFilter={runStatusFilter}
                 onRunStatusFilterChange={setRunStatusFilter}
                 candidates={candidates}
-                loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || runQuery.isLoading || candidateQuery.isLoading}
+                loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || experimentVersionsLoading || runQuery.isLoading || candidateQuery.isLoading}
                 saving={savingAsset}
                 showAcceptanceFixtures={showAcceptanceFixtures}
                 onShowAcceptanceFixtures={() => setShowAcceptanceFixtures(true)}
@@ -1172,13 +1197,14 @@ export function PromptLibraryPage({
               assets={assets}
               cases={cases}
               experimentDimensions={experimentDimensions}
+              experimentVersionsByPromptId={experimentVersionsByPromptId}
               runs={runs}
               focusedRunId={focusedRunId}
               evidenceFocus={evidenceFocus}
               runStatusFilter={runStatusFilter}
               onRunStatusFilterChange={setRunStatusFilter}
               candidates={candidates}
-              loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || runQuery.isLoading || candidateQuery.isLoading}
+              loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || experimentVersionsLoading || runQuery.isLoading || candidateQuery.isLoading}
               saving={savingAsset}
               showAcceptanceFixtures={showAcceptanceFixtures}
               onShowAcceptanceFixtures={() => setShowAcceptanceFixtures(true)}
@@ -1608,6 +1634,7 @@ function WorkbenchPanel({
   assets,
   cases,
   experimentDimensions,
+  experimentVersionsByPromptId,
   runs,
   focusedRunId,
   evidenceFocus,
@@ -1660,6 +1687,7 @@ function WorkbenchPanel({
   assets: PromptEvaluationAsset[];
   cases: PromptEvaluationStructuredCase[];
   experimentDimensions: PromptEvaluationExperimentDimension[];
+  experimentVersionsByPromptId: Map<string, PromptLibraryVersion[]>;
   runs: PromptEvaluationRun[];
   focusedRunId: string | null;
   evidenceFocus: EvidenceFocus;
@@ -1827,6 +1855,7 @@ function WorkbenchPanel({
             <ExperimentComparisonPanel
               experiments={visibleAssets}
               dimensions={experimentDimensions}
+              versionsByPromptId={experimentVersionsByPromptId}
               runs={runs}
             />
           ) : activeTab === "优化运行" ? (
@@ -1863,6 +1892,9 @@ function WorkbenchPanel({
 type ExperimentComparisonRow = {
   asset: PromptEvaluationAsset;
   dimensions: PromptEvaluationExperimentDimension[];
+  promptVersions: PromptLibraryVersion[];
+  versionRows: ExperimentPromptVersionRow[];
+  promptVersionRunCount: number;
   runs: PromptEvaluationRun[];
   totalCases: number;
   passedCases: number;
@@ -1875,17 +1907,28 @@ type ExperimentComparisonRow = {
   latestRun: PromptEvaluationRun | null;
 };
 
+type ExperimentPromptVersionRow = {
+  version: PromptLibraryVersion;
+  previousVersion: PromptLibraryVersion | null;
+  runCount: number;
+  passRate: number;
+  estimatedCost: number;
+  contentDelta: number;
+};
+
 function ExperimentComparisonPanel({
   experiments,
   dimensions,
+  versionsByPromptId,
   runs,
 }: {
   experiments: PromptEvaluationAsset[];
   dimensions: PromptEvaluationExperimentDimension[];
+  versionsByPromptId: Map<string, PromptLibraryVersion[]>;
   runs: PromptEvaluationRun[];
 }) {
   const dimensionsByAsset = useMemo(() => buildExperimentDimensionsByAsset(dimensions), [dimensions]);
-  const rows = useMemo(() => buildExperimentComparisonRows(experiments, dimensionsByAsset, runs), [experiments, dimensionsByAsset, runs]);
+  const rows = useMemo(() => buildExperimentComparisonRows(experiments, dimensionsByAsset, versionsByPromptId, runs), [experiments, dimensionsByAsset, versionsByPromptId, runs]);
   const totalRuns = rows.reduce((sum, row) => sum + row.runs.length, 0);
   const totalCost = rows.reduce((sum, row) => sum + row.estimatedCost, 0);
   const bestRow = rows.find((row) => row.runs.length > 0);
@@ -1953,11 +1996,62 @@ function ExperimentComparisonPanel({
               <MetricCell label="平均耗时" value={formatDuration(row.runs.length > 0 ? row.totalDurationMs / row.runs.length : 0)} />
               <MetricCell label="令牌" value={`${formatNumber(row.inputTokens)} / ${formatNumber(row.outputTokens)}`} />
               <MetricCell label="预估成本" value={formatMoney(row.estimatedCost)} />
+              <ExperimentPromptVersionComparison row={row} />
             </div>
           ))}
         </div>
       )}
     </section>
+  );
+}
+
+function ExperimentPromptVersionComparison({ row }: { row: ExperimentComparisonRow }) {
+  if (!row.asset.prompt_id) {
+    return (
+      <div className="rounded border border-dashed px-2 py-2 text-xs text-muted-foreground lg:col-span-6" data-testid={`experiment-prompt-version-comparison-${row.asset.id}`}>
+        该实验未绑定提示词，暂不能做提示词版本对比。
+      </div>
+    );
+  }
+  return (
+    <div className="grid gap-2 rounded border border-border/70 bg-muted/10 px-2 py-2 text-xs lg:col-span-6" data-testid={`experiment-prompt-version-comparison-${row.asset.id}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="font-medium text-foreground">提示词版本对比</div>
+          <div className="mt-0.5 text-muted-foreground">
+            对比同一提示词最近版本的来源、内容变化和已记录的版本级运行归因。
+          </div>
+        </div>
+        <Badge variant="outline">已加载 {formatNumber(row.promptVersions.length)} 个版本</Badge>
+      </div>
+      {row.promptVersions.length === 0 ? (
+        <div className="rounded border border-dashed px-2 py-2 text-muted-foreground">暂无提示词版本历史。</div>
+      ) : (
+        <div className="grid gap-1.5">
+          {row.versionRows.slice(0, 4).map((item) => (
+            <div key={item.version.id} className="grid gap-1 rounded border bg-background px-2 py-1.5 md:grid-cols-[minmax(0,1fr)_repeat(4,minmax(78px,auto))]">
+              <div className="min-w-0">
+                <div className="flex flex-wrap items-center gap-2">
+                  <span className="font-medium text-foreground">v{item.version.version}</span>
+                  <Badge variant={item.version.source === "优化候选发布" ? "secondary" : "outline"}>{item.version.source}</Badge>
+                  {item.previousVersion ? <span className="text-muted-foreground">相对 v{item.previousVersion.version}</span> : <span className="text-muted-foreground">基线版本</span>}
+                </div>
+                <div className="mt-1 truncate text-muted-foreground">{item.version.content}</div>
+              </div>
+              <MetricCell label="内容变化" value={formatSignedNumber(item.contentDelta)} />
+              <MetricCell label="版本运行" value={formatNumber(item.runCount)} />
+              <MetricCell label="通过率" value={item.runCount > 0 ? formatPercent(item.passRate) : "未记录"} />
+              <MetricCell label="成本" value={formatMoney(item.estimatedCost)} />
+            </div>
+          ))}
+          {row.runs.length > row.promptVersionRunCount && (
+            <div className="rounded border border-dashed px-2 py-2 text-muted-foreground" data-testid={`experiment-prompt-version-unattributed-${row.asset.id}`}>
+              {formatNumber(row.runs.length - row.promptVersionRunCount)} 次运行未记录提示词版本；旧运行会按实验归属保留，但不能冒充版本级对比证据。
+            </div>
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -4683,12 +4777,15 @@ function buildExperimentDimensionsByAsset(dimensions: PromptEvaluationExperiment
 function buildExperimentComparisonRows(
   experiments: PromptEvaluationAsset[],
   dimensionsByAsset: Map<string, PromptEvaluationExperimentDimension[]>,
+  versionsByPromptId: Map<string, PromptLibraryVersion[]>,
   runs: PromptEvaluationRun[],
 ): ExperimentComparisonRow[] {
   const runsByAsset = buildRunsByAsset(runs);
   return experiments
     .map((asset) => {
       const assetRuns = [...(runsByAsset.get(asset.id) ?? [])].sort(comparePromptEvaluationRunByRecent);
+      const promptVersions = asset.prompt_id ? [...(versionsByPromptId.get(asset.prompt_id) ?? [])].sort((a, b) => b.version - a.version) : [];
+      const versionRows = buildExperimentPromptVersionRows(promptVersions, assetRuns);
       const totalCases = assetRuns.reduce((sum, run) => sum + run.total_cases, 0);
       const passedCases = assetRuns.reduce((sum, run) => sum + run.passed_cases, 0);
       const failedCases = assetRuns.reduce((sum, run) => sum + run.failed_cases, 0);
@@ -4699,6 +4796,9 @@ function buildExperimentComparisonRows(
       return {
         asset,
         dimensions: dimensionsByAsset.get(asset.id) ?? [],
+        promptVersions,
+        versionRows,
+        promptVersionRunCount: versionRows.reduce((sum, row) => sum + row.runCount, 0),
         runs: assetRuns,
         totalCases,
         passedCases,
@@ -4722,6 +4822,32 @@ function buildExperimentComparisonRows(
       if (costDelta !== 0) return costDelta;
       return comparePromptEvaluationAssetByRecent(a.asset, b.asset);
     });
+}
+
+function buildExperimentPromptVersionRows(
+  versions: PromptLibraryVersion[],
+  runs: PromptEvaluationRun[],
+): ExperimentPromptVersionRow[] {
+  return versions.map((version, index) => {
+    const versionRuns = runs.filter((run) => promptVersionFromRun(run) === version.version);
+    const totalCases = versionRuns.reduce((sum, run) => sum + run.total_cases, 0);
+    const passedCases = versionRuns.reduce((sum, run) => sum + run.passed_cases, 0);
+    const previousVersion = versions[index + 1] ?? null;
+    return {
+      version,
+      previousVersion,
+      runCount: versionRuns.length,
+      passRate: totalCases > 0 ? passedCases / totalCases : 0,
+      estimatedCost: versionRuns.reduce((sum, run) => sum + run.estimated_cost, 0),
+      contentDelta: version.content.length - (previousVersion?.content.length ?? 0),
+    };
+  });
+}
+
+function promptVersionFromRun(run: PromptEvaluationRun): number | null {
+  const fromMetrics = numberFromRecord(run.metrics, "提示词版本") ?? numberFromRecord(run.metrics, "prompt_version");
+  if (fromMetrics !== null) return fromMetrics;
+  return numberFromRecord(run.evidence, "提示词版本") ?? numberFromRecord(run.evidence, "prompt_version");
 }
 
 function buildRunsByAsset(runs: PromptEvaluationRun[]): Map<string, PromptEvaluationRun[]> {
@@ -5024,12 +5150,27 @@ function stringFromRecord(record: Record<string, unknown>, key: string): string 
 	return "";
 }
 
+function numberFromRecord(record: Record<string, unknown>, key: string): number | null {
+  const value = record[key];
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : null;
+  }
+  return null;
+}
+
 function truncateText(value: string, maxLength: number): string {
   return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
 }
 
 function formatNumber(value: unknown): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toLocaleString("zh-CN") : "0";
+}
+
+function formatSignedNumber(value: number): string {
+  if (!Number.isFinite(value) || value === 0) return "0";
+  return `${value > 0 ? "+" : ""}${value.toLocaleString("zh-CN")}`;
 }
 
 function formatMoney(value: unknown): string {

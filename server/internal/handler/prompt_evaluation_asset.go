@@ -204,6 +204,7 @@ type promptEvaluationRunResult struct {
 	RunAt             string                          `json:"运行时间"`
 	AssetType         string                          `json:"资产类型"`
 	PromptName        string                          `json:"提示词"`
+	PromptVersion     int32                           `json:"提示词版本"`
 	TotalCases        int                             `json:"总用例数"`
 	PassedCases       int                             `json:"通过用例数"`
 	FailedCases       int                             `json:"失败用例数"`
@@ -4019,7 +4020,7 @@ func (h *Handler) RunPromptEvaluationOptimizationAgent(w http.ResponseWriter, r 
 		writeError(w, http.StatusInternalServerError, "failed to link optimization agent message to task")
 		return
 	}
-	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, asset, agentRow, runtimeRow, task.ID, session.ID, parseUUID(userID), "优化运行", payload, cases)
+	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, asset, prompt, agentRow, runtimeRow, task.ID, session.ID, parseUUID(userID), "优化运行", payload, cases)
 	if !ok {
 		return
 	}
@@ -4899,7 +4900,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 			triggerSource = "优化运行"
 		}
 	}
-	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, asset, agentRow, runtimeRow, task.ID, session.ID, parseUUID(userID), triggerSource, payload, cases)
+	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, asset, prompt, agentRow, runtimeRow, task.ID, session.ID, parseUUID(userID), triggerSource, payload, cases)
 	if !ok {
 		return
 	}
@@ -4987,6 +4988,7 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 		"执行Agent": result.AgentName,
 		"模型":      result.Model,
 		"runtime": result.Runtime,
+		"提示词版本":   result.PromptVersion,
 		"失败原因":    result.FailureReason,
 		"评估结论":    result.Conclusion,
 	}
@@ -5018,7 +5020,7 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 		FailureReason:     result.FailureReason,
 		Conclusion:        result.Conclusion,
 		Metrics:           mustJSONBytes(metrics),
-		Evidence:          mustJSONBytes(map[string]any{"资产类型": asset.AssetType, "运行方式": "本地提示词渲染", "数据集版本": datasetVersionBindings}),
+		Evidence:          mustJSONBytes(map[string]any{"资产类型": asset.AssetType, "运行方式": "本地提示词渲染", "提示词版本": result.PromptVersion, "数据集版本": datasetVersionBindings}),
 		StartedAt:         pgtype.Timestamptz{Time: now, Valid: true},
 		CompletedAt:       pgtype.Timestamptz{Time: now, Valid: true},
 		CreatedBy:         createdBy,
@@ -5056,7 +5058,7 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 	return run, true
 }
 
-func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r *http.Request, asset db.PromptEvaluationAsset, agent db.Agent, runtime db.AgentRuntime, taskID pgtype.UUID, chatSessionID pgtype.UUID, createdBy pgtype.UUID, triggerSource string, payload map[string]any, cases []map[string]any) (db.PromptEvaluationRun, bool) {
+func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r *http.Request, asset db.PromptEvaluationAsset, prompt db.PromptLibraryItem, agent db.Agent, runtime db.AgentRuntime, taskID pgtype.UUID, chatSessionID pgtype.UUID, createdBy pgtype.UUID, triggerSource string, payload map[string]any, cases []map[string]any) (db.PromptEvaluationRun, bool) {
 	datasetVersionBindings, ok := h.promptEvaluationDatasetVersionBindings(w, r, asset.WorkspaceID, payload)
 	if !ok {
 		return db.PromptEvaluationRun{}, false
@@ -5093,6 +5095,7 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 			"执行Agent":       agent.Name,
 			"模型":            promptEvaluationModelForAgent(agent),
 			"runtime":       runtime.Provider,
+			"提示词版本":         prompt.Version,
 			"trace/task id": uuidToString(taskID),
 			"评估结论":          "等待智能体执行完成",
 			"数据集版本数":        len(datasetVersionBindings),
@@ -5102,6 +5105,7 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 			"chat_session_id": uuidToString(chatSessionID),
 			"agent_id":        uuidToString(agent.ID),
 			"runtime_id":      uuidToString(runtime.ID),
+			"提示词版本":           prompt.Version,
 			"数据集版本":           datasetVersionBindings,
 		}),
 		StartedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
@@ -6030,6 +6034,7 @@ func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.Pr
 		RunAt:             time.Now().UTC().Format(time.RFC3339),
 		AssetType:         asset.AssetType,
 		PromptName:        prompt.Name,
+		PromptVersion:     prompt.Version,
 		TotalCases:        totalCases,
 		PassedCases:       passed,
 		FailedCases:       failed,

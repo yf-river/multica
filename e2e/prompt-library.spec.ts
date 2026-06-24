@@ -1189,6 +1189,12 @@ test.describe("训练与评估工作台", () => {
       content: "请分析 {{issue_title}}，输出目标和验收条件。",
       variables: [{ name: "issue_title", label: "任务标题", required: true }],
     });
+    const promptV2 = await api.updatePromptLibraryItem(prompt.id, {
+      content: "请分析 {{issue_title}}，输出目标、验收条件和中文风险说明。",
+      tags: ["E2E", "实验", "提示词版本对比"],
+      status: "启用",
+    });
+    expect(promptV2.version).toBe(2);
     const dataset = await api.createPromptEvaluationAsset({
       prompt_id: prompt.id,
       name: `${artifactPrefix} 实验基准数据集`,
@@ -1245,7 +1251,9 @@ test.describe("训练与评估工作台", () => {
       .poll(async () => (await api.listPromptEvaluationRuns({ asset_id: experiment.id, limit: 5 }))[0]?.id ?? "", { timeout: 15000 })
       .not.toBe("");
     const run = (await api.listPromptEvaluationRuns({ asset_id: experiment.id, limit: 5 }))[0]!;
+    expect(run.metrics).toMatchObject({ 提示词版本: 2 });
     const evidence = await api.getPromptEvaluationRunEvidence(run.id);
+    expect(evidence.evidence).toMatchObject({ 提示词版本: 2 });
     const versions = Array.isArray(evidence.evidence["数据集版本"]) ? evidence.evidence["数据集版本"] as Array<Record<string, unknown>> : [];
     expect(versions).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -1257,12 +1265,19 @@ test.describe("训练与评估工作台", () => {
     ]));
 
     await page.goto(`/${workspaceSlug}/training/experiments`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("button", { name: "显示验收数据" }).first().click();
     await expect(page.getByTestId("experiment-comparison-panel")).toContainText("实验对比排行", { timeout: 15000 });
     const comparisonRow = page.getByTestId(`experiment-comparison-row-${experiment.id}`);
     await expect(comparisonRow).toContainText(experiment.name, { timeout: 15000 });
     await expect(comparisonRow).toContainText("通过率");
     await expect(comparisonRow).toContainText("预估成本");
     await expect(comparisonRow).toContainText(`v${datasetVersion.version}`);
+    const promptVersionComparison = comparisonRow.getByTestId(`experiment-prompt-version-comparison-${experiment.id}`);
+    await expect(promptVersionComparison).toContainText("提示词版本对比");
+    await expect(promptVersionComparison).toContainText("v2");
+    await expect(promptVersionComparison).toContainText("v1");
+    await expect(promptVersionComparison).toContainText("版本运行");
+    await expect(promptVersionComparison).toContainText("手动更新");
     const experimentRow = page.getByTestId(`prompt-evaluation-asset-${experiment.id}`);
     await expect(experimentRow).toBeVisible({ timeout: 15000 });
     await expect(experimentRow.getByTestId(`linked-dataset-version-summary-${experiment.id}`)).toContainText("绑定数据集版本");
