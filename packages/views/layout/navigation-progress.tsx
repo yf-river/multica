@@ -4,9 +4,9 @@ import { useEffect, useState } from "react";
 
 import { useIsNavigating } from "../navigation";
 
-// 2px top-of-content progress bar for platform adapters that expose a pending
-// navigation signal. It stays mounted so a future adapter can opt into the
-// same fade behavior without changing layout structure.
+// 2px top-of-content progress bar shown while a transition-wrapped
+// push/replace is mid-flight. Indeterminate by design — we don't know
+// when the next route will commit, just that it's coming.
 //
 // The container stays mounted so it can fade out over 200ms instead of
 // vanishing in one frame. The inner sweep is mounted only while navigating
