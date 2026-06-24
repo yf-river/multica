@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-audit goal-test-training-performance-audit goal-test-session-retro goal-test-token-audit
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-audit goal-test-training-performance-audit goal-test-session-retro goal-test-token-audit
 
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
@@ -29,6 +29,8 @@ MULTICA_ARGS ?= $(ARGS)
 COMPOSE := docker compose
 GOAL_TEST_TMPDIR ?= /data/tmp/goal-test
 GOAL_TEST_GOCACHE ?= /data/tmp/goal-test-gocache
+GOAL_TEST_REAL_AGENT_PROVIDER ?= codex
+GOAL_TEST_REAL_AGENT_MODEL ?= gpt-5.3-codex-spark
 
 define REQUIRE_ENV
 	@if [ ! -f "$(ENV_FILE)" ]; then \
@@ -251,6 +253,14 @@ goal-test-e2e: goal-test-e2e-preflight ## Run goal-test Playwright with fixed in
 goal-test-e2e-all: goal-test-e2e-preflight ## Run all goal-test Playwright specs with fixed int env
 	@mkdir -p "$(GOAL_TEST_TMPDIR)"
 	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-playwright.mjs --project=chromium
+
+goal-test-real-agent-e2e: goal-test-e2e-preflight ## Run slow real Codex Agent E2E for user-center squad and training/evaluation
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	RUN_REAL_AGENT_E2E=1 \
+	MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER="$(GOAL_TEST_REAL_AGENT_PROVIDER)" \
+	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_MODEL)" \
+	TMPDIR="$(GOAL_TEST_TMPDIR)" \
+	node scripts/goal-test-playwright.mjs e2e/squad-real-agent.spec.ts e2e/prompt-library-real-agent.spec.ts --project=chromium
 
 goal-test-smoke: ## Fast goal-test gate: E2E preflight, environment verify, and current log window verify
 	$(MAKE) goal-test-e2e-preflight
