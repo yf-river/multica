@@ -1536,6 +1536,16 @@ test.describe("训练与评估工作台", () => {
     await expect(failureDeepLinkEvidence.getByTestId("run-evidence-anchor-summary")).toContainText("当前定位 failure=tool", { timeout: 10000 });
     await expect(failureDeepLinkEvidence.getByTestId("run-evidence-failure-review")).toContainText("失败复盘入口");
     await expect(failureDeepLinkEvidence.getByTestId("run-evidence-failure-tool").first()).toHaveClass(/ring-2/);
+    await expect(failureDeepLinkEvidence.getByTestId("run-evidence-failure-review-actions")).toContainText("生成优化候选");
+    const candidateFromFailurePanelResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes(`/api/prompt-evaluation-runs/${agentRun.run.id}/optimization-candidate`),
+      { timeout: 10000 },
+    );
+    await failureDeepLinkEvidence.getByTestId("run-evidence-failure-generate-candidate").click();
+    expect((await candidateFromFailurePanelResponse).status()).toBe(201);
+    await expect(page.getByText("优化候选已生成，等待人工确认")).toBeVisible({ timeout: 10000 });
 
     await page.goto(`/${workspaceSlug}/training/runs`, { waitUntil: "domcontentloaded" });
     await expect(page.getByTestId("training-summary-需人工复核")).toContainText(/\d+/, { timeout: 10000 });

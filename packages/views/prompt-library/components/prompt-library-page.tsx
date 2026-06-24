@@ -2183,6 +2183,14 @@ function RunHistoryPanel({
                       loading={evidenceQuery.isLoading || evidenceQuery.isFetching}
                       error={evidenceQuery.isError}
                       evidenceFocus={evidenceFocus}
+                      optimizationActions={{
+                        canGenerate: canGenerateOptimizationCandidate(run),
+                        hasPendingCandidate,
+                        generatingCandidate: generatingCandidateRunId === run.id,
+                        runningOptimizationAgent: runningOptimizationAgentRunId === run.id,
+                        onGenerateCandidate: () => onGenerateCandidate(run.id),
+                        onRunOptimizationAgent: () => onRunOptimizationAgent(run.id),
+                      }}
                       creatingSnapshot={creatingEvidenceSnapshotRunId === run.id}
                       onCreateSnapshot={() => onCreateEvidenceSnapshot(run.id)}
                     />
@@ -2855,6 +2863,7 @@ function RunEvidencePanel({
   loading,
   error,
   evidenceFocus = EMPTY_EVIDENCE_FOCUS,
+  optimizationActions,
   creatingSnapshot,
   onCreateSnapshot,
 }: {
@@ -2864,6 +2873,7 @@ function RunEvidencePanel({
   loading: boolean;
   error: boolean;
   evidenceFocus?: EvidenceFocus;
+  optimizationActions?: FailureReviewActions;
   creatingSnapshot: boolean;
   onCreateSnapshot: () => void;
 }) {
@@ -2926,7 +2936,7 @@ function RunEvidencePanel({
 
       <EvidenceContextPanel context={evidence.上下文} />
       <EvidenceAnchorSummary evidence={evidence} evidenceFocus={evidenceFocus} />
-      <FailureReviewPanel evidence={evidence} evidenceFocus={evidenceFocus} />
+      <FailureReviewPanel evidence={evidence} evidenceFocus={evidenceFocus} actions={optimizationActions} />
       <ExecutionSpanTreePanel evidence={evidence} evidenceFocus={evidenceFocus} />
       <TraceEventTreePanel evidence={evidence} focusedTraceSeq={evidenceFocus.traceSeq} />
 
@@ -3143,7 +3153,24 @@ function EvidenceList({
   );
 }
 
-function FailureReviewPanel({ evidence, evidenceFocus }: { evidence: PromptEvaluationRunEvidence; evidenceFocus: EvidenceFocus }) {
+type FailureReviewActions = {
+  canGenerate: boolean;
+  hasPendingCandidate: boolean;
+  generatingCandidate: boolean;
+  runningOptimizationAgent: boolean;
+  onGenerateCandidate: () => void;
+  onRunOptimizationAgent: () => void;
+};
+
+function FailureReviewPanel({
+  evidence,
+  evidenceFocus,
+  actions,
+}: {
+  evidence: PromptEvaluationRunEvidence;
+  evidenceFocus: EvidenceFocus;
+  actions?: FailureReviewActions;
+}) {
   const items = buildFailureReviewItems(evidence);
   if (items.length === 0) return null;
   return (
@@ -3173,6 +3200,30 @@ function FailureReviewPanel({ evidence, evidenceFocus }: { evidence: PromptEvalu
           );
         })}
       </div>
+      {actions?.canGenerate && (
+        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-destructive/20 pt-2" data-testid="run-evidence-failure-review-actions">
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={actions.onRunOptimizationAgent}
+            disabled={actions.runningOptimizationAgent}
+            data-testid="run-evidence-failure-run-optimization-agent"
+          >
+            {actions.runningOptimizationAgent ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+            智能体优化任务
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={actions.onGenerateCandidate}
+            disabled={actions.generatingCandidate || actions.hasPendingCandidate}
+            data-testid="run-evidence-failure-generate-candidate"
+          >
+            {actions.generatingCandidate ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+            {actions.hasPendingCandidate ? "已有候选" : "生成优化候选"}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }
