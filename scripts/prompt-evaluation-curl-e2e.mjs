@@ -6,6 +6,7 @@ const account = trimEnv("ACCEPTANCE_DEMO_ACCOUNT") || trimEnv("REAL_AGENT_E2E_AC
 const password = trimEnv("ACCEPTANCE_DEMO_PASSWORD") || trimEnv("REAL_AGENT_E2E_PASSWORD") || "e2e-password";
 const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || trimEnv("REAL_AGENT_E2E_WORKSPACE") || "goal-test-daemon";
 const suffix = Date.now();
+const maxRecordedCommands = Number(trimEnv("PROMPT_EVALUATION_CURL_E2E_MAX_COMMANDS") || 40);
 
 const evidence = {
   schema: "multica.prompt_evaluation_curl_e2e.v1",
@@ -13,6 +14,7 @@ const evidence = {
   account,
   workspace_slug: workspaceSlug,
   commands: [],
+  omitted_command_count: 0,
   result: "unknown",
 };
 let activeWorkspaceId = "";
@@ -66,6 +68,27 @@ if (!dataset?.id) fail("创建数据集响应缺少 id");
 if (Number(dataset.dataset_row_count ?? 0) < 1) fail(`数据集行计数不足：${dataset.dataset_row_count ?? 0}`);
 const datasetCases = get(`/api/prompt-evaluation-cases?asset_id=${encodeURIComponent(dataset.id)}`, token);
 const datasetAssertionCount = assertCaseAssertions(datasetCases, dataset.id, 2, "数据集");
+const datasetVersion = post(`/api/prompt-evaluation-assets/${dataset.id}/dataset-versions`, {
+  version_label: "curl 初始快照",
+  metadata: {
+    来源: "curl-e2e",
+    用途: "固定训练评估输入样本，验证 Opik 数据集版本语义迁移",
+  },
+}, token);
+if (!datasetVersion?.id || Number(datasetVersion.version || 0) !== 1) fail(`创建数据集版本失败：${JSON.stringify(datasetVersion)}`);
+if (Number(datasetVersion.row_count || 0) !== Number(dataset.dataset_row_count || 0)) {
+  fail(`数据集版本行数不匹配：${JSON.stringify({ datasetVersion, dataset_row_count: dataset.dataset_row_count })}`);
+}
+if (!datasetVersion.row_fingerprint) fail(`数据集版本缺少行指纹：${JSON.stringify(datasetVersion)}`);
+const datasetVersionList = get(`/api/prompt-evaluation-assets/${dataset.id}/dataset-versions?limit=5`, token);
+const datasetVersionItems = Array.isArray(datasetVersionList) ? datasetVersionList : datasetVersionList.items ?? [];
+if (!datasetVersionItems.some((item) => item.id === datasetVersion.id && Number(item.version) === 1)) {
+  fail(`数据集版本未能回读：${JSON.stringify(datasetVersionList)}`);
+}
+const datasetVersionRows = get(`/api/prompt-evaluation-assets/${dataset.id}/dataset-versions/${datasetVersion.id}/rows`, token);
+if (Number(datasetVersionRows.total ?? datasetVersionRows.items?.length ?? 0) !== Number(datasetVersion.row_count || 0)) {
+  fail(`数据集版本行回读不匹配：${JSON.stringify(datasetVersionRows)}`);
+}
 
 const suite = post("/api/prompt-evaluation-assets", {
   prompt_id: prompt.id,
@@ -77,6 +100,12 @@ const suite = post("/api/prompt-evaluation-assets", {
     schema_version: 1,
     语义版本: "multica.training_evaluation.v1",
     linked_dataset_ids: [dataset.id],
+    linked_dataset_versions: [{
+      dataset_id: dataset.id,
+      dataset_version_id: datasetVersion.id,
+      version: datasetVersion.version,
+      row_fingerprint: datasetVersion.row_fingerprint,
+    }],
     cases: [
       {
         case_name: "必须输出优化候选",
@@ -154,6 +183,10 @@ if (!failedRun?.id) fail("未找到失败评估运行");
 const runEvidence = get(`/api/prompt-evaluation-runs/${failedRun.id}/evidence`, token);
 const localTrialCount = Array.isArray(runEvidence?.trials) ? runEvidence.trials.length : 0;
 if (localTrialCount <= 0) fail(`本地评估运行缺少 trial：${JSON.stringify(runEvidence)}`);
+const localDatasetVersions = Array.isArray(runEvidence?.evidence?.["数据集版本"]) ? runEvidence.evidence["数据集版本"] : [];
+if (!localDatasetVersions.some((item) => item.dataset_version_id === datasetVersion.id && item.dataset_asset_id === dataset.id)) {
+  fail(`本地评估运行未绑定数据集版本：${JSON.stringify(runEvidence?.evidence)}`);
+}
 const candidate = post(`/api/prompt-evaluation-runs/${failedRun.id}/optimization-candidates`, null, token);
 if (!candidate?.id) fail("创建优化候选响应缺少 id");
 
@@ -200,6 +233,15 @@ assertVersion(publishedVersions, Number(published.prompt.version || 2), "优化�
 const summary = get("/api/prompt-evaluation-summary", token);
 evidence.prompt = { id: prompt.id, version: prompt.version, version_count: itemCount(initialVersions) };
 evidence.dataset = { id: dataset.id, asset_type: dataset.asset_type, structured_case_count: dataset.structured_case_count, dataset_row_count: dataset.dataset_row_count, assertion_count: datasetAssertionCount };
+evidence.dataset_version = {
+  id: datasetVersion.id,
+  dataset_asset_id: datasetVersion.dataset_asset_id,
+  version: datasetVersion.version,
+  row_count: datasetVersion.row_count,
+  row_fingerprint: datasetVersion.row_fingerprint,
+  listed_count: datasetVersionItems.length,
+  row_readback_count: Number(datasetVersionRows.total ?? datasetVersionRows.items?.length ?? 0),
+};
 evidence.dataset_from_trace = traceDatasetEvidence;
 evidence.test_suite = { id: suite.id, asset_type: suite.asset_type, structured_case_count: suite.structured_case_count, test_suite_case_count: suite.test_suite_case_count, assertion_count: suiteAssertionCount };
 evidence.experiment = { id: experiment.id, asset_type: experiment.asset_type, structured_case_count: experiment.structured_case_count, experiment_dimension_count: experiment.experiment_dimension_count, dimension_names: experimentDimensionNames };
@@ -217,6 +259,7 @@ evidence.run = {
   failed_cases: failedRun.failed_cases,
   trace_task_id: failedRun.task_id || failedRun.id,
   evidence_trial_count: localTrialCount,
+  dataset_version_ids: localDatasetVersions.map((item) => item.dataset_version_id),
 };
 evidence.agent_run = agentRunEvidence;
 evidence.optimization_candidate = {
@@ -304,7 +347,7 @@ async function runSuiteWithRealAgent(assetId, token, readiness) {
     const found = items.find((run) => run.id === queued.run.id);
     if (!found || found.status === "已入队" || found.status === "运行中") return null;
     return found;
-  }, 240_000, "等待真实 Agent 训练评估运行完成或失败");
+  }, 420_000, "等待真实 Agent 训练评估运行完成或失败");
 
   const evidenceData = get(`/api/prompt-evaluation-runs/${queued.run.id}/evidence`, token);
   const traceCount = Array.isArray(evidenceData?.trace_events) ? evidenceData.trace_events.length : 0;
@@ -354,7 +397,7 @@ function request(method, path, body, token) {
   if (token) args.push("-H", `Authorization: Bearer ${token}`);
   if (token && activeWorkspaceId) args.push("-H", `X-Workspace-ID: ${activeWorkspaceId}`);
   if (body !== null && body !== undefined) args.push("--data", JSON.stringify(body));
-  evidence.commands.push(`curl ${redactArgs(args).map(shellQuote).join(" ")}`);
+  recordCommand(`curl ${redactArgs(args).map(shellQuote).join(" ")}`);
   const out = execFileSync("curl", args, { encoding: "utf8", maxBuffer: 10 * 1024 * 1024 });
   const splitAt = out.lastIndexOf("\n");
   const responseBody = splitAt >= 0 ? out.slice(0, splitAt) : out;
@@ -402,6 +445,14 @@ function fail(message) {
   evidence.error = message;
   console.error(JSON.stringify(evidence, null, 2));
   process.exit(1);
+}
+
+function recordCommand(command) {
+  if (evidence.commands.length < maxRecordedCommands) {
+    evidence.commands.push(command);
+    return;
+  }
+  evidence.omitted_command_count += 1;
 }
 
 function shellQuote(value) {

@@ -773,6 +773,11 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/run", h.RunPromptEvaluationAsset)
 					r.Post("/agent-run", h.RunPromptEvaluationAssetAgent)
 					r.Post("/dataset-from-traces", h.CreatePromptEvaluationDatasetFromTraces)
+					r.Route("/dataset-versions", func(r chi.Router) {
+						r.Get("/", h.ListPromptEvaluationDatasetVersions)
+						r.Post("/", h.CreatePromptEvaluationDatasetVersion)
+						r.Get("/{versionId}/rows", h.ListPromptEvaluationDatasetVersionRows)
+					})
 				})
 			})
 			r.Route("/api/prompt-evaluation-cases", func(r chi.Router) {

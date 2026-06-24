@@ -3,8 +3,10 @@ package handler
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -129,6 +131,41 @@ type CreatePromptEvaluationDatasetFromTracesRequest struct {
 	Limit            int32    `json:"limit"`
 	ExpectedContains []string `json:"expected_contains"`
 	Tags             []string `json:"tags"`
+}
+
+type CreatePromptEvaluationDatasetVersionRequest struct {
+	VersionLabel string          `json:"version_label"`
+	Metadata     json.RawMessage `json:"metadata"`
+}
+
+type PromptEvaluationDatasetVersionResponse struct {
+	ID             string  `json:"id"`
+	WorkspaceID    string  `json:"workspace_id"`
+	DatasetAssetID string  `json:"dataset_asset_id"`
+	Version        int32   `json:"version"`
+	VersionLabel   string  `json:"version_label"`
+	RowCount       int32   `json:"row_count"`
+	RowFingerprint string  `json:"row_fingerprint"`
+	Metadata       any     `json:"metadata"`
+	CreatedBy      *string `json:"created_by"`
+	CreatedAt      string  `json:"created_at"`
+}
+
+type PromptEvaluationDatasetVersionRowResponse struct {
+	ID               string  `json:"id"`
+	WorkspaceID      string  `json:"workspace_id"`
+	DatasetVersionID string  `json:"dataset_version_id"`
+	DatasetAssetID   string  `json:"dataset_asset_id"`
+	SourceRowID      *string `json:"source_row_id"`
+	CaseID           *string `json:"case_id"`
+	RowIndex         int32   `json:"row_index"`
+	RowName          string  `json:"row_name"`
+	Variables        any     `json:"variables"`
+	ExpectedContains any     `json:"expected_contains"`
+	Expected         any     `json:"expected"`
+	Tags             any     `json:"tags"`
+	Source           string  `json:"source"`
+	CreatedAt        string  `json:"created_at"`
 }
 
 type promptEvaluationRunResult struct {
@@ -453,6 +490,40 @@ func promptEvaluationAssetToResponse(asset db.PromptEvaluationAsset) PromptEvalu
 		DatasetRowCount:          asset.DatasetRowCount,
 		TestSuiteCaseCount:       asset.TestSuiteCaseCount,
 		ExperimentDimensionCount: asset.ExperimentDimensionCount,
+	}
+}
+
+func promptEvaluationDatasetVersionToResponse(version db.PromptEvaluationDatasetVersion) PromptEvaluationDatasetVersionResponse {
+	return PromptEvaluationDatasetVersionResponse{
+		ID:             uuidToString(version.ID),
+		WorkspaceID:    uuidToString(version.WorkspaceID),
+		DatasetAssetID: uuidToString(version.DatasetAssetID),
+		Version:        version.Version,
+		VersionLabel:   version.VersionLabel,
+		RowCount:       version.RowCount,
+		RowFingerprint: version.RowFingerprint,
+		Metadata:       decodeJSONDefault(version.Metadata, map[string]any{}),
+		CreatedBy:      uuidToPtr(version.CreatedBy),
+		CreatedAt:      timestampToString(version.CreatedAt),
+	}
+}
+
+func promptEvaluationDatasetVersionRowToResponse(row db.PromptEvaluationDatasetVersionRow) PromptEvaluationDatasetVersionRowResponse {
+	return PromptEvaluationDatasetVersionRowResponse{
+		ID:               uuidToString(row.ID),
+		WorkspaceID:      uuidToString(row.WorkspaceID),
+		DatasetVersionID: uuidToString(row.DatasetVersionID),
+		DatasetAssetID:   uuidToString(row.DatasetAssetID),
+		SourceRowID:      uuidToPtr(row.SourceRowID),
+		CaseID:           uuidToPtr(row.CaseID),
+		RowIndex:         row.RowIndex,
+		RowName:          row.RowName,
+		Variables:        decodeJSONDefault(row.Variables, map[string]any{}),
+		ExpectedContains: decodeJSONDefault(row.ExpectedContains, []any{}),
+		Expected:         decodeJSONDefault(row.Expected, map[string]any{}),
+		Tags:             decodeJSONDefault(row.Tags, []any{}),
+		Source:           row.Source,
+		CreatedAt:        timestampToString(row.CreatedAt),
 	}
 }
 
@@ -1530,6 +1601,171 @@ func (h *Handler) CreatePromptEvaluationDatasetFromTraces(w http.ResponseWriter,
 		SkippedCount: 0,
 		Source:       "trace",
 	})
+}
+
+func (h *Handler) ListPromptEvaluationDatasetVersions(w http.ResponseWriter, r *http.Request) {
+	asset, ok := h.loadPromptEvaluationAsset(w, r)
+	if !ok {
+		return
+	}
+	if asset.AssetType != promptEvaluationAssetDataset {
+		writeError(w, http.StatusBadRequest, "only 数据集 assets have versions")
+		return
+	}
+	limit := int32(20)
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed <= 0 {
+			writeError(w, http.StatusBadRequest, "limit must be a positive integer")
+			return
+		}
+		if parsed > 100 {
+			parsed = 100
+		}
+		limit = int32(parsed)
+	}
+	items, err := h.Queries.ListPromptEvaluationDatasetVersions(r.Context(), db.ListPromptEvaluationDatasetVersionsParams{
+		WorkspaceID:    asset.WorkspaceID,
+		DatasetAssetID: asset.ID,
+		Limit:          limit,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list dataset versions")
+		return
+	}
+	resp := make([]PromptEvaluationDatasetVersionResponse, len(items))
+	for i, item := range items {
+		resp[i] = promptEvaluationDatasetVersionToResponse(item)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
+}
+
+func (h *Handler) CreatePromptEvaluationDatasetVersion(w http.ResponseWriter, r *http.Request) {
+	asset, ok := h.loadPromptEvaluationAsset(w, r)
+	if !ok {
+		return
+	}
+	if asset.AssetType != promptEvaluationAssetDataset {
+		writeError(w, http.StatusBadRequest, "only 数据集 assets can create versions")
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	var req CreatePromptEvaluationDatasetVersionRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "invalid dataset version payload")
+			return
+		}
+	}
+	metadata, ok := jsonObjectField(w, req.Metadata, "metadata")
+	if !ok {
+		return
+	}
+	if metadata == nil {
+		metadata = mustJSONBytes(map[string]any{})
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start dataset version transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	rows, err := qtx.ListPromptEvaluationDatasetRows(r.Context(), db.ListPromptEvaluationDatasetRowsParams{
+		WorkspaceID:    asset.WorkspaceID,
+		DatasetAssetID: asset.ID,
+		Status:         pgtype.Text{String: "启用", Valid: true},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list dataset rows for version")
+		return
+	}
+	if len(rows) == 0 {
+		writeError(w, http.StatusBadRequest, "dataset version requires at least one enabled row")
+		return
+	}
+	nextVersion, err := qtx.NextPromptEvaluationDatasetVersion(r.Context(), db.NextPromptEvaluationDatasetVersionParams{
+		WorkspaceID:    asset.WorkspaceID,
+		DatasetAssetID: asset.ID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to allocate dataset version")
+		return
+	}
+	version, err := qtx.CreatePromptEvaluationDatasetVersion(r.Context(), db.CreatePromptEvaluationDatasetVersionParams{
+		WorkspaceID:    asset.WorkspaceID,
+		DatasetAssetID: asset.ID,
+		Version:        nextVersion,
+		RowCount:       int32(len(rows)),
+		RowFingerprint: promptEvaluationDatasetRowsFingerprint(rows),
+		VersionLabel:   strings.TrimSpace(req.VersionLabel),
+		Metadata:       metadata,
+		CreatedBy:      parseUUID(userID),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create dataset version")
+		return
+	}
+	if err := qtx.CreatePromptEvaluationDatasetVersionRowsFromCurrent(r.Context(), db.CreatePromptEvaluationDatasetVersionRowsFromCurrentParams{
+		WorkspaceID:      asset.WorkspaceID,
+		DatasetAssetID:   asset.ID,
+		DatasetVersionID: version.ID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create dataset version rows")
+		return
+	}
+	payload := decodePayloadObject(asset.Payload)
+	payload["最近数据集版本"] = promptEvaluationDatasetVersionSummary(version)
+	payload["数据集版本说明"] = "数据集版本是当前启用样本行的不可变快照；评估运行会在证据中记录当次绑定版本，保证后续复盘可追溯。"
+	if _, err := qtx.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
+		ID:          asset.ID,
+		WorkspaceID: asset.WorkspaceID,
+		PromptID:    asset.PromptID,
+		Payload:     mustJSONBytes(payload),
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save dataset version summary")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit dataset version")
+		return
+	}
+	writeJSON(w, http.StatusCreated, promptEvaluationDatasetVersionToResponse(version))
+}
+
+func (h *Handler) ListPromptEvaluationDatasetVersionRows(w http.ResponseWriter, r *http.Request) {
+	asset, ok := h.loadPromptEvaluationAsset(w, r)
+	if !ok {
+		return
+	}
+	if asset.AssetType != promptEvaluationAssetDataset {
+		writeError(w, http.StatusBadRequest, "only 数据集 assets have version rows")
+		return
+	}
+	versionID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "versionId"), "dataset version id")
+	if !ok {
+		return
+	}
+	rows, err := h.Queries.ListPromptEvaluationDatasetVersionRows(r.Context(), db.ListPromptEvaluationDatasetVersionRowsParams{
+		WorkspaceID:      asset.WorkspaceID,
+		DatasetVersionID: versionID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list dataset version rows")
+		return
+	}
+	resp := make([]PromptEvaluationDatasetVersionRowResponse, len(rows))
+	for i, row := range rows {
+		if row.DatasetAssetID != asset.ID {
+			writeError(w, http.StatusNotFound, "dataset version does not belong to this asset")
+			return
+		}
+		resp[i] = promptEvaluationDatasetVersionRowToResponse(row)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
 }
 
 func (h *Handler) promptEvaluationTraceEventsForDataset(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, req CreatePromptEvaluationDatasetFromTracesRequest, limit int32) ([]db.TaskTraceEvent, bool) {
@@ -3831,6 +4067,10 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 		"失败原因":    result.FailureReason,
 		"评估结论":    result.Conclusion,
 	}
+	datasetVersionBindings := h.latestPromptEvaluationDatasetVersionBindings(r.Context(), asset.WorkspaceID, decodePayloadObject(asset.Payload))
+	if len(datasetVersionBindings) > 0 {
+		metrics["数据集版本数"] = len(datasetVersionBindings)
+	}
 	run, err := h.Queries.CreatePromptEvaluationRun(r.Context(), db.CreatePromptEvaluationRunParams{
 		WorkspaceID:       asset.WorkspaceID,
 		AssetID:           asset.ID,
@@ -3852,7 +4092,7 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 		FailureReason:     result.FailureReason,
 		Conclusion:        result.Conclusion,
 		Metrics:           mustJSONBytes(metrics),
-		Evidence:          mustJSONBytes(map[string]any{"资产类型": asset.AssetType, "运行方式": "本地提示词渲染"}),
+		Evidence:          mustJSONBytes(map[string]any{"资产类型": asset.AssetType, "运行方式": "本地提示词渲染", "数据集版本": datasetVersionBindings}),
 		StartedAt:         pgtype.Timestamptz{Time: now, Valid: true},
 		CompletedAt:       pgtype.Timestamptz{Time: now, Valid: true},
 		CreatedBy:         createdBy,
@@ -3891,6 +4131,7 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 }
 
 func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r *http.Request, asset db.PromptEvaluationAsset, agent db.Agent, runtime db.AgentRuntime, taskID pgtype.UUID, chatSessionID pgtype.UUID, createdBy pgtype.UUID, triggerSource string, payload map[string]any, cases []map[string]any) (db.PromptEvaluationRun, bool) {
+	datasetVersionBindings := h.latestPromptEvaluationDatasetVersionBindings(r.Context(), asset.WorkspaceID, payload)
 	run, err := h.Queries.CreatePromptEvaluationRun(r.Context(), db.CreatePromptEvaluationRunParams{
 		WorkspaceID:       asset.WorkspaceID,
 		AssetID:           asset.ID,
@@ -3925,12 +4166,14 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 			"runtime":       runtime.Provider,
 			"trace/task id": uuidToString(taskID),
 			"评估结论":          "等待智能体执行完成",
+			"数据集版本数":        len(datasetVersionBindings),
 		}),
 		Evidence: mustJSONBytes(map[string]any{
 			"task_id":         uuidToString(taskID),
 			"chat_session_id": uuidToString(chatSessionID),
 			"agent_id":        uuidToString(agent.ID),
 			"runtime_id":      uuidToString(runtime.ID),
+			"数据集版本":           datasetVersionBindings,
 		}),
 		StartedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		CreatedBy: createdBy,
@@ -4957,6 +5200,101 @@ func appendPromptEvaluationAgentRunHistory(raw any, result map[string]any) []any
 		next = next[:20]
 	}
 	return next
+}
+
+func promptEvaluationDatasetRowsFingerprint(rows []db.PromptEvaluationDatasetRow) string {
+	snapshot := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		snapshot = append(snapshot, map[string]any{
+			"row_index":         row.RowIndex,
+			"row_name":          row.RowName,
+			"variables":         decodeJSONDefault(row.Variables, map[string]any{}),
+			"expected_contains": decodeJSONDefault(row.ExpectedContains, []any{}),
+			"expected":          decodeJSONDefault(row.Expected, map[string]any{}),
+			"tags":              decodeJSONDefault(row.Tags, []any{}),
+			"source":            row.Source,
+		})
+	}
+	sum := sha256.Sum256(mustJSONBytes(snapshot))
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func promptEvaluationDatasetVersionSummary(version db.PromptEvaluationDatasetVersion) map[string]any {
+	return map[string]any{
+		"dataset_version_id": uuidToString(version.ID),
+		"version":            version.Version,
+		"version_label":      version.VersionLabel,
+		"row_count":          version.RowCount,
+		"row_fingerprint":    version.RowFingerprint,
+		"created_at":         timestampToString(version.CreatedAt),
+	}
+}
+
+func (h *Handler) latestPromptEvaluationDatasetVersionBindings(ctx context.Context, workspaceID pgtype.UUID, payload map[string]any) []map[string]any {
+	datasetIDs := promptEvaluationLinkedDatasetIDs(payload)
+	if len(datasetIDs) == 0 {
+		return nil
+	}
+	bindings := make([]map[string]any, 0, len(datasetIDs))
+	seen := map[string]bool{}
+	for _, rawID := range datasetIDs {
+		datasetID, err := util.ParseUUID(rawID)
+		if err != nil {
+			continue
+		}
+		key := uuidToString(datasetID)
+		if key == "" || seen[key] {
+			continue
+		}
+		seen[key] = true
+		version, err := h.Queries.GetLatestPromptEvaluationDatasetVersion(ctx, db.GetLatestPromptEvaluationDatasetVersionParams{
+			WorkspaceID:    workspaceID,
+			DatasetAssetID: datasetID,
+		})
+		if err != nil {
+			continue
+		}
+		summary := promptEvaluationDatasetVersionSummary(version)
+		summary["dataset_asset_id"] = key
+		summary["绑定方式"] = "运行开始时读取最新数据集版本"
+		bindings = append(bindings, summary)
+	}
+	return bindings
+}
+
+func promptEvaluationLinkedDatasetIDs(payload map[string]any) []string {
+	values := []any{
+		firstValue(payload, "linked_dataset_ids", "dataset_ids", "数据集ID", "关联数据集ID"),
+	}
+	if nested, ok := firstValue(payload, "linked_dataset_versions", "数据集版本", "关联数据集版本").([]any); ok {
+		for _, item := range nested {
+			if m, ok := item.(map[string]any); ok {
+				values = append(values, firstValue(m, "dataset_id", "dataset_asset_id", "数据集ID"))
+			}
+		}
+	}
+	result := []string{}
+	for _, value := range values {
+		switch v := value.(type) {
+		case string:
+			if strings.TrimSpace(v) != "" {
+				result = append(result, strings.TrimSpace(v))
+			}
+		case []any:
+			for _, item := range v {
+				if s := strings.TrimSpace(stringFromAny(item)); s != "" {
+					result = append(result, s)
+				}
+			}
+		case []string:
+			for _, item := range v {
+				if strings.TrimSpace(item) != "" {
+					result = append(result, strings.TrimSpace(item))
+				}
+			}
+		}
+	}
+	return result
 }
 
 func firstValue(m map[string]any, keys ...string) any {

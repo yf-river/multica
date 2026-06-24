@@ -400,6 +400,25 @@ export function PromptLibraryPage({
     },
   });
 
+  const createDatasetVersionMut = useMutation({
+    mutationFn: (assetId: string) => api.createPromptEvaluationDatasetVersion(assetId, {
+      version_label: "手动快照",
+      metadata: {
+        来源: "训练与评估页面",
+        用途: "固定当前数据集样本，供后续评估运行和实验对比复盘",
+        创建时间: new Date().toISOString(),
+      },
+    }),
+    onSuccess: (version) => {
+      invalidateAssets();
+      invalidateSummary();
+      toast.success(`数据集版本 v${version.version} 已生成`);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "数据集版本生成失败，请先补充启用样本行");
+    },
+  });
+
   const createCaseMut = useMutation({
     mutationFn: (data: CreatePromptEvaluationCaseRequest) => api.createPromptEvaluationCase(data),
     onSuccess: () => {
@@ -549,7 +568,7 @@ export function PromptLibraryPage({
     runDebug,
     createWorkbenchAsset,
   } = promptPlaygroundActions;
-  const savingAsset = creatingAsset || updateAssetMut.isPending || deleteAssetMut.isPending || importDatasetFromTracesMut.isPending;
+  const savingAsset = creatingAsset || updateAssetMut.isPending || deleteAssetMut.isPending || importDatasetFromTracesMut.isPending || createDatasetVersionMut.isPending;
 
   useEffect(() => {
     if (!selected) return;
@@ -979,6 +998,8 @@ export function PromptLibraryPage({
                 onDeleteAsset={deleteAsset}
                 onImportDatasetFromTraces={importDatasetFromTraces}
                 importingTraceDatasetAssetId={importDatasetFromTracesMut.isPending ? importDatasetFromTracesMut.variables ?? null : null}
+                onCreateDatasetVersion={(asset) => createDatasetVersionMut.mutate(asset.id)}
+                creatingDatasetVersionAssetId={createDatasetVersionMut.isPending ? createDatasetVersionMut.variables ?? null : null}
                 onCreateCase={(data) => createCaseMut.mutate(data)}
                 creatingCaseAssetId={createCaseMut.isPending ? createCaseMut.variables?.asset_id ?? null : null}
                 caseDrafts={caseDrafts}
@@ -1029,6 +1050,8 @@ export function PromptLibraryPage({
               onDeleteAsset={deleteAsset}
               onImportDatasetFromTraces={importDatasetFromTraces}
               importingTraceDatasetAssetId={importDatasetFromTracesMut.isPending ? importDatasetFromTracesMut.variables ?? null : null}
+              onCreateDatasetVersion={(asset) => createDatasetVersionMut.mutate(asset.id)}
+              creatingDatasetVersionAssetId={createDatasetVersionMut.isPending ? createDatasetVersionMut.variables ?? null : null}
               onCreateCase={(data) => createCaseMut.mutate(data)}
               creatingCaseAssetId={createCaseMut.isPending ? createCaseMut.variables?.asset_id ?? null : null}
               caseDrafts={caseDrafts}
@@ -1451,6 +1474,8 @@ function WorkbenchPanel({
   onDeleteAsset,
   onImportDatasetFromTraces,
   importingTraceDatasetAssetId,
+  onCreateDatasetVersion,
+  creatingDatasetVersionAssetId,
   onCreateCase,
   creatingCaseAssetId,
   caseDrafts,
@@ -1494,6 +1519,8 @@ function WorkbenchPanel({
   onDeleteAsset: (asset: PromptEvaluationAsset) => void;
   onImportDatasetFromTraces: (asset: PromptEvaluationAsset) => void;
   importingTraceDatasetAssetId: string | null;
+  onCreateDatasetVersion: (asset: PromptEvaluationAsset) => void;
+  creatingDatasetVersionAssetId: string | null;
   onCreateCase: (data: CreatePromptEvaluationCaseRequest) => void;
   creatingCaseAssetId: string | null;
   caseDrafts: Record<string, ManualCaseDraft>;
@@ -1597,6 +1624,8 @@ function WorkbenchPanel({
           onDeleteAsset={onDeleteAsset}
           onImportDatasetFromTraces={onImportDatasetFromTraces}
           importingTraceDatasetAssetId={importingTraceDatasetAssetId}
+          onCreateDatasetVersion={onCreateDatasetVersion}
+          creatingDatasetVersionAssetId={creatingDatasetVersionAssetId}
           onCreateCase={onCreateCase}
           creatingCaseAssetId={creatingCaseAssetId}
           caseDrafts={caseDrafts}
@@ -1647,6 +1676,8 @@ function TrainingAssetPanel({
   onDeleteAsset,
   onImportDatasetFromTraces,
   importingTraceDatasetAssetId,
+  onCreateDatasetVersion,
+  creatingDatasetVersionAssetId,
   onCreateCase,
   creatingCaseAssetId,
   caseDrafts,
@@ -1669,6 +1700,8 @@ function TrainingAssetPanel({
   onDeleteAsset: (asset: PromptEvaluationAsset) => void;
   onImportDatasetFromTraces: (asset: PromptEvaluationAsset) => void;
   importingTraceDatasetAssetId: string | null;
+  onCreateDatasetVersion: (asset: PromptEvaluationAsset) => void;
+  creatingDatasetVersionAssetId: string | null;
   onCreateCase: (data: CreatePromptEvaluationCaseRequest) => void;
   creatingCaseAssetId: string | null;
   caseDrafts: Record<string, ManualCaseDraft>;
@@ -1712,19 +1745,36 @@ function TrainingAssetPanel({
                     {summarizeAgentRun(asset)}
                   </div>
                 )}
+                {asset.asset_type === "数据集" && summarizeDatasetVersion(asset) && (
+                  <div className="mt-1 text-[11px] text-muted-foreground" data-testid={`dataset-version-summary-${asset.id}`}>
+                    {summarizeDatasetVersion(asset)}
+                  </div>
+                )}
               </div>
               <div className="flex items-center gap-2">
                 {asset.asset_type === "数据集" && (
-                  <Button
-                    size="sm"
-                    variant="secondary"
-                    data-testid={`import-dataset-from-traces-${asset.id}`}
-                    onClick={() => onImportDatasetFromTraces(asset)}
-                    disabled={saving || importingTraceDatasetAssetId === asset.id}
-                  >
-                    {importingTraceDatasetAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
-                    从 trace 导入样本
-                  </Button>
+                  <>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      data-testid={`create-dataset-version-${asset.id}`}
+                      onClick={() => onCreateDatasetVersion(asset)}
+                      disabled={saving || creatingDatasetVersionAssetId === asset.id}
+                    >
+                      {creatingDatasetVersionAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+                      生成版本快照
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      data-testid={`import-dataset-from-traces-${asset.id}`}
+                      onClick={() => onImportDatasetFromTraces(asset)}
+                      disabled={saving || importingTraceDatasetAssetId === asset.id}
+                    >
+                      {importingTraceDatasetAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+                      从 trace 导入样本
+                    </Button>
+                  </>
                 )}
                 <Button size="sm" variant="secondary" onClick={() => onToggleAssetStatus(asset)} disabled={saving}>
                   {asset.status === "启用" ? "归档" : "启用"}
@@ -3139,6 +3189,23 @@ function summarizeAgentRun(asset: PromptEvaluationAsset): string | null {
   const agent = stringFromRecord(record, "执行Agent");
   const model = stringFromRecord(record, "模型");
   return `智能体任务：${status}${taskId ? ` · 任务标识 ${taskId}` : ""}${agent ? ` · ${agent}` : ""}${model ? ` · ${model}` : ""}`;
+}
+
+function summarizeDatasetVersion(asset: PromptEvaluationAsset): string | null {
+  const payload = asset.payload ?? {};
+  const version = payload["最近数据集版本"];
+  if (!version || typeof version !== "object" || Array.isArray(version)) return null;
+  const record = version as Record<string, unknown>;
+  const versionNumber = stringFromRecord(record, "version");
+  const rowCount = stringFromRecord(record, "row_count");
+  const fingerprint = stringFromRecord(record, "row_fingerprint");
+  const createdAt = stringFromRecord(record, "created_at");
+  if (!versionNumber && !rowCount && !fingerprint) return null;
+  const parts = [`数据集版本 v${versionNumber || "?"}`];
+  if (rowCount) parts.push(`${rowCount} 行`);
+  if (fingerprint) parts.push(`指纹 ${fingerprint.slice(0, 12)}`);
+  if (createdAt) parts.push(createdAt);
+  return parts.join(" · ");
 }
 
 function summarizeLatestRunForDemo(run: PromptEvaluationRun): string {

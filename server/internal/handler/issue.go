@@ -390,15 +390,16 @@ var identifierNumberRe = regexp.MustCompile(`(?i)^[a-z]+-(\d+)$`)
 // parseQueryNumber extracts an issue number from the query if it looks like
 // an identifier (e.g. "MUL-123") or a bare number (e.g. "123").
 func parseQueryNumber(q string) (int, bool) {
+	const maxIssueNumber = 2147483647
 	q = strings.TrimSpace(q)
 	// Check for identifier pattern like "MUL-123"
 	if m := identifierNumberRe.FindStringSubmatch(q); m != nil {
-		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 {
+		if n, err := strconv.Atoi(m[1]); err == nil && n > 0 && n <= maxIssueNumber {
 			return n, true
 		}
 	}
 	// Check for bare number
-	if n, err := strconv.Atoi(q); err == nil && n > 0 {
+	if n, err := strconv.Atoi(q); err == nil && n > 0 && n <= maxIssueNumber {
 		return n, true
 	}
 	return 0, false

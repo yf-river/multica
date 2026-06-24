@@ -638,6 +638,36 @@ type PromptEvaluationDatasetRow struct {
 	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
 }
 
+type PromptEvaluationDatasetVersion struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	DatasetAssetID pgtype.UUID        `json:"dataset_asset_id"`
+	Version        int32              `json:"version"`
+	VersionLabel   string             `json:"version_label"`
+	RowCount       int32              `json:"row_count"`
+	RowFingerprint string             `json:"row_fingerprint"`
+	Metadata       []byte             `json:"metadata"`
+	CreatedBy      pgtype.UUID        `json:"created_by"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+}
+
+type PromptEvaluationDatasetVersionRow struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	DatasetVersionID pgtype.UUID        `json:"dataset_version_id"`
+	DatasetAssetID   pgtype.UUID        `json:"dataset_asset_id"`
+	SourceRowID      pgtype.UUID        `json:"source_row_id"`
+	CaseID           pgtype.UUID        `json:"case_id"`
+	RowIndex         int32              `json:"row_index"`
+	RowName          string             `json:"row_name"`
+	Variables        []byte             `json:"variables"`
+	ExpectedContains []byte             `json:"expected_contains"`
+	Expected         []byte             `json:"expected"`
+	Tags             []byte             `json:"tags"`
+	Source           string             `json:"source"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+}
+
 type PromptEvaluationEvidenceSnapshot struct {
 	ID            pgtype.UUID        `json:"id"`
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`

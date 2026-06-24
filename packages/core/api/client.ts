@@ -133,7 +133,9 @@ import type {
   PromptEvaluationStructuredCase,
   PromptEvaluationAgentRunResponse,
   CreatePromptEvaluationDatasetFromTracesRequest,
+  CreatePromptEvaluationDatasetVersionRequest,
   PromptEvaluationDatasetFromTracesResponse,
+  PromptEvaluationDatasetVersion,
   PromptEvaluationOptimizationCandidate,
   UpdatePromptEvaluationOptimizationCandidateRequest,
   PublishPromptEvaluationOptimizationCandidateResponse,
@@ -144,6 +146,8 @@ import type {
   PromptEvaluationSummaryParams,
   ListPromptEvaluationOptimizationCandidatesParams,
   ListPromptEvaluationAssetsResponse,
+  ListPromptEvaluationDatasetVersionRowsResponse,
+  ListPromptEvaluationDatasetVersionsResponse,
   ListPromptEvaluationRunsResponse,
   ListPromptEvaluationTrialsResponse,
   ListPromptEvaluationEvidenceSnapshotsResponse,
@@ -200,6 +204,8 @@ import {
   EMPTY_PROMPT_LIBRARY_VERSION_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_ASSET,
   EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_DATASET_VERSION_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_DATASET_VERSION_ROW_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_RUN,
   EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE,
@@ -229,6 +235,9 @@ import {
   PromptEvaluationAssetSchema,
   PromptEvaluationAssetListResponseSchema,
   PromptEvaluationDatasetFromTracesResponseSchema,
+  PromptEvaluationDatasetVersionListResponseSchema,
+  PromptEvaluationDatasetVersionRowListResponseSchema,
+  PromptEvaluationDatasetVersionSchema,
   PromptEvaluationRunListResponseSchema,
   PromptEvaluationRunSchema,
   PromptEvaluationTrialListResponseSchema,
@@ -1837,6 +1846,47 @@ export class ApiClient {
     }, {
       endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-from-traces",
     }) as PromptEvaluationDatasetFromTracesResponse;
+  }
+
+  async listPromptEvaluationDatasetVersions(id: string, limit?: number): Promise<ListPromptEvaluationDatasetVersionsResponse> {
+    const search = new URLSearchParams();
+    if (limit) search.set("limit", String(limit));
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationDatasetVersionListResponseSchema, EMPTY_PROMPT_EVALUATION_DATASET_VERSION_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-versions",
+    }) as ListPromptEvaluationDatasetVersionsResponse;
+  }
+
+  async createPromptEvaluationDatasetVersion(
+    id: string,
+    data: CreatePromptEvaluationDatasetVersionRequest = {},
+  ): Promise<PromptEvaluationDatasetVersion> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationDatasetVersionSchema, {
+      id: "",
+      workspace_id: "",
+      dataset_asset_id: id,
+      version: 0,
+      version_label: "",
+      row_count: 0,
+      row_fingerprint: "",
+      metadata: {},
+      created_by: null,
+      created_at: "",
+    }, {
+      endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-versions",
+    }) as PromptEvaluationDatasetVersion;
+  }
+
+  async listPromptEvaluationDatasetVersionRows(id: string, versionId: string): Promise<ListPromptEvaluationDatasetVersionRowsResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions/${versionId}/rows`);
+    return parseWithFallback(raw, PromptEvaluationDatasetVersionRowListResponseSchema, EMPTY_PROMPT_EVALUATION_DATASET_VERSION_ROW_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-versions/:versionId/rows",
+    }) as ListPromptEvaluationDatasetVersionRowsResponse;
   }
 
   async listPromptEvaluationCases(params?: ListPromptEvaluationCasesParams): Promise<ListPromptEvaluationCasesResponse> {

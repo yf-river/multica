@@ -67,6 +67,36 @@ export interface PromptEvaluationAsset {
   experiment_dimension_count: number;
 }
 
+export interface PromptEvaluationDatasetVersion {
+  id: string;
+  workspace_id: string;
+  dataset_asset_id: string;
+  version: number;
+  version_label: string;
+  row_count: number;
+  row_fingerprint: string;
+  metadata: Record<string, unknown>;
+  created_by: string | null;
+  created_at: string;
+}
+
+export interface PromptEvaluationDatasetVersionRow {
+  id: string;
+  workspace_id: string;
+  dataset_version_id: string;
+  dataset_asset_id: string;
+  source_row_id: string | null;
+  case_id: string | null;
+  row_index: number;
+  row_name: string;
+  variables: Record<string, unknown>;
+  expected_contains: unknown[];
+  expected: Record<string, unknown>;
+  tags: unknown[];
+  source: string;
+  created_at: string;
+}
+
 export interface PromptEvaluationRun {
   id: string;
   workspace_id: string;
@@ -308,6 +338,16 @@ export interface ListPromptEvaluationAssetsResponse {
   total: number;
 }
 
+export interface ListPromptEvaluationDatasetVersionsResponse {
+  items: PromptEvaluationDatasetVersion[];
+  total: number;
+}
+
+export interface ListPromptEvaluationDatasetVersionRowsResponse {
+  items: PromptEvaluationDatasetVersionRow[];
+  total: number;
+}
+
 export interface ListPromptEvaluationRunsResponse {
   items: PromptEvaluationRun[];
   total: number;
@@ -414,4 +454,9 @@ export interface UpdatePromptEvaluationAssetRequest {
   asset_type?: PromptEvaluationAssetType;
   payload?: Record<string, unknown>;
   status?: PromptEvaluationAssetStatus;
+}
+
+export interface CreatePromptEvaluationDatasetVersionRequest {
+  version_label?: string;
+  metadata?: Record<string, unknown>;
 }

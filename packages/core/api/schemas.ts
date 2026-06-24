@@ -9,6 +9,8 @@ import type {
   GroupedIssuesResponse,
   ListIssuesResponse,
   ListPromptEvaluationAssetsResponse,
+  ListPromptEvaluationDatasetVersionRowsResponse,
+  ListPromptEvaluationDatasetVersionsResponse,
   ListPromptEvaluationExperimentDimensionsResponse,
   ListPromptEvaluationOptimizationCandidatesResponse,
   ListPromptLibraryItemsResponse,
@@ -898,6 +900,46 @@ export const PromptEvaluationAssetListResponseSchema = z.object({
   total: z.number().default(0),
 }).loose();
 
+export const PromptEvaluationDatasetVersionSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  dataset_asset_id: z.string(),
+  version: z.number().default(0),
+  version_label: z.string().default(""),
+  row_count: z.number().default(0),
+  row_fingerprint: z.string().default(""),
+  metadata: z.record(z.string(), z.unknown()).default({}),
+  created_by: z.string().nullable().optional().transform((v) => v ?? null),
+  created_at: z.string().default(""),
+}).loose();
+
+export const PromptEvaluationDatasetVersionRowSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  dataset_version_id: z.string(),
+  dataset_asset_id: z.string(),
+  source_row_id: z.string().nullable().optional().transform((v) => v ?? null),
+  case_id: z.string().nullable().optional().transform((v) => v ?? null),
+  row_index: z.number().default(0),
+  row_name: z.string().default(""),
+  variables: z.record(z.string(), z.unknown()).default({}),
+  expected_contains: z.array(z.unknown()).default([]),
+  expected: z.record(z.string(), z.unknown()).default({}),
+  tags: z.array(z.unknown()).default([]),
+  source: z.string().default("payload"),
+  created_at: z.string().default(""),
+}).loose();
+
+export const PromptEvaluationDatasetVersionListResponseSchema = z.object({
+  items: z.array(PromptEvaluationDatasetVersionSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const PromptEvaluationDatasetVersionRowListResponseSchema = z.object({
+  items: z.array(PromptEvaluationDatasetVersionRowSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
 export const PromptEvaluationRunSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
@@ -1218,6 +1260,16 @@ export const EMPTY_PROMPT_EVALUATION_ASSET: PromptEvaluationAsset = {
 };
 
 export const EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE: ListPromptEvaluationAssetsResponse = {
+  items: [],
+  total: 0,
+};
+
+export const EMPTY_PROMPT_EVALUATION_DATASET_VERSION_LIST_RESPONSE: ListPromptEvaluationDatasetVersionsResponse = {
+  items: [],
+  total: 0,
+};
+
+export const EMPTY_PROMPT_EVALUATION_DATASET_VERSION_ROW_LIST_RESPONSE: ListPromptEvaluationDatasetVersionRowsResponse = {
   items: [],
   total: 0,
 };

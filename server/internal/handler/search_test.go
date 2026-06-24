@@ -76,6 +76,15 @@ func TestBuildSearchQuery_WithNumber(t *testing.T) {
 	}
 }
 
+func TestParseQueryNumber_IgnoresInt4Overflow(t *testing.T) {
+	if n, ok := parseQueryNumber("1782266512025"); ok {
+		t.Fatalf("expected oversized numeric query to stay text-only, got %d", n)
+	}
+	if n, ok := parseQueryNumber("MUL-1782266512025"); ok {
+		t.Fatalf("expected oversized identifier query to stay text-only, got %d", n)
+	}
+}
+
 func TestBuildSearchQuery_IncludeClosed(t *testing.T) {
 	query, _ := buildSearchQuery("test", []string{"test"}, 0, false, true)
 
