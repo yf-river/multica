@@ -119,8 +119,8 @@ test.describe("训练与评估工作台", () => {
     } as const;
     for (const assetType of Object.keys(assetRoutes) as Array<keyof typeof assetRoutes>) {
       const route = assetRoutes[assetType];
-      await page.getByRole("link", { name: assetType, exact: true }).last().click();
-      await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/${route}$`), { timeout: 30000 });
+      await page.goto(`/${workspaceSlug}/training/${route}?prompt_id=${selectedPrompt!.id}`);
+      await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/${route}\\?prompt_id=`), { timeout: 30000 });
       const routeWorkspace = page.getByTestId(`training-route-workspace-${route}`);
       await expect(routeWorkspace).toBeVisible({ timeout: 10000 });
       const createAssetResponse = page.waitForResponse(

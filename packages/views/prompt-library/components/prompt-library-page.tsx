@@ -164,6 +164,7 @@ export function PromptLibraryPage({
   const caseDraftStorageKey = workspaceId ? `multica:training:case-drafts:${workspaceId}` : null;
   const viewParam = trainingViewFromLocation(navigation.pathname, navigation.searchParams);
   const resolvedView = activeView ?? viewParam;
+  const promptIdParam = navigation.searchParams.get("prompt_id");
   const focusedRunId = navigation.searchParams.get("run");
   const evidenceFocus: EvidenceFocus = {
     traceSeq: navigation.searchParams.get("trace"),
@@ -452,6 +453,12 @@ export function PromptLibraryPage({
       // localStorage persistence is best-effort; in-memory selection is still updated.
     }
   };
+
+  useEffect(() => {
+    if (!promptIdParam || promptIdParam === selectedId || !items.some((item) => item.id === promptIdParam)) return;
+    setIsDraftingNew(false);
+    rememberSelectedPrompt(promptIdParam);
+  }, [items, promptIdParam, selectedId]);
 
   const createMut = useMutation({
     mutationFn: (data: CreatePromptLibraryItemRequest) => api.createPromptLibraryItem(data),
