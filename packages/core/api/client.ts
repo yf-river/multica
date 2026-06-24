@@ -129,6 +129,7 @@ import type {
   PromptEvaluationAsset,
   PromptEvaluationRun,
   PromptEvaluationRunEvidence,
+  PromptEvaluationAssetEvidenceSnapshotResponse,
   PromptEvaluationEvidenceSnapshot,
   PromptEvaluationEvidenceSnapshotType,
   PromptEvaluationSummary,
@@ -224,6 +225,7 @@ import {
   EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE,
+  EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE,
   EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT,
   EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_SUMMARY,
@@ -263,6 +265,7 @@ import {
   PromptEvaluationRunSchema,
   PromptEvaluationTrialListResponseSchema,
   PromptEvaluationRunEvidenceSchema,
+  PromptEvaluationAssetEvidenceSnapshotResponseSchema,
   PromptEvaluationEvidenceSnapshotSchema,
   PromptEvaluationEvidenceSnapshotListResponseSchema,
   PromptEvaluationSummarySchema,
@@ -2152,6 +2155,14 @@ export class ApiClient {
     return parseWithFallback(raw, PromptEvaluationEvidenceSnapshotSchema, EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT, {
       endpoint: "POST /api/prompt-evaluation-runs/:id/evidence-snapshots",
     }) as PromptEvaluationEvidenceSnapshot;
+  }
+
+  async createPromptEvaluationAssetEvidenceSnapshots(assetId: string, snapshotType: PromptEvaluationEvidenceSnapshotType = "验收归档", limit = 20): Promise<PromptEvaluationAssetEvidenceSnapshotResponse> {
+    const search = new URLSearchParams({ snapshot_type: snapshotType, limit: String(limit) });
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${assetId}/evidence-snapshots?${search.toString()}`, { method: "POST" });
+    return parseWithFallback(raw, PromptEvaluationAssetEvidenceSnapshotResponseSchema, EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE, {
+      endpoint: "POST /api/prompt-evaluation-assets/:id/evidence-snapshots",
+    }) as PromptEvaluationAssetEvidenceSnapshotResponse;
   }
 
   async getPromptEvaluationEvidenceSnapshot(runId: string, snapshotId: string): Promise<PromptEvaluationEvidenceSnapshot> {

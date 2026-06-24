@@ -1701,6 +1701,43 @@ func TestPromptEvaluationEvidenceSnapshotArchivesRunEvidence(t *testing.T) {
 	}
 }
 
+func TestPromptEvaluationAssetEvidenceSnapshotsArchiveRecentRuns(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	cleanupPromptEvaluationAgentRunTest(t)
+	created, resp, _ := createPromptEvaluationAgentRunFixture(t, "资产级证据快照实验", "需要批量归档")
+
+	createW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAssetEvidenceSnapshots(createW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", created.ID))
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("asset snapshot status = %d, body = %s", createW.Code, createW.Body.String())
+	}
+	var batch PromptEvaluationAssetEvidenceSnapshotResponse
+	if err := json.Unmarshal(createW.Body.Bytes(), &batch); err != nil {
+		t.Fatalf("decode asset snapshot response: %v", err)
+	}
+	if batch.AssetID != created.ID || batch.SnapshotType != "验收归档" || batch.TotalRuns != 1 || batch.CreatedCount != 1 || batch.SkippedCount != 0 || len(batch.Items) != 1 {
+		t.Fatalf("asset snapshot batch = %+v", batch)
+	}
+	if batch.Items[0].RunID != resp.Run.ID || batch.Items[0].Evidence != nil {
+		t.Fatalf("asset snapshot item = %+v", batch.Items[0])
+	}
+
+	retryW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAssetEvidenceSnapshots(retryW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", created.ID))
+	if retryW.Code != http.StatusCreated {
+		t.Fatalf("asset snapshot retry status = %d, body = %s", retryW.Code, retryW.Body.String())
+	}
+	var retry PromptEvaluationAssetEvidenceSnapshotResponse
+	if err := json.Unmarshal(retryW.Body.Bytes(), &retry); err != nil {
+		t.Fatalf("decode asset snapshot retry response: %v", err)
+	}
+	if retry.CreatedCount != 0 || retry.SkippedCount != 1 || len(retry.Skipped) != 1 || retry.Skipped[0].RunID != resp.Run.ID {
+		t.Fatalf("asset snapshot retry = %+v", retry)
+	}
+}
+
 func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")

@@ -447,6 +447,30 @@ test.describe("训练与评估工作台", () => {
         rendered_prompt: "请澄清 登录失败，项目背景：账号系统。",
       }),
     ]);
+    const archiveAssetEvidenceButton = optimizationRow.getByTestId(`archive-asset-evidence-${optimizationRun!.id}`);
+    await expect(archiveAssetEvidenceButton).toBeVisible({ timeout: 10000 });
+    const archiveAssetEvidenceResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes(`/api/prompt-evaluation-assets/${optimizationRun!.id}/evidence-snapshots`),
+      { timeout: 15000 },
+    );
+    await archiveAssetEvidenceButton.click();
+    const archiveAssetEvidence = await archiveAssetEvidenceResponse;
+    expect(archiveAssetEvidence.status()).toBe(201);
+    const archiveAssetEvidenceJson = await archiveAssetEvidence.json() as { created_count: number; total_runs: number; items: Array<{ run_id: string }> };
+    expect(archiveAssetEvidenceJson).toMatchObject({
+      created_count: 1,
+      total_runs: expect.any(Number),
+      items: [expect.objectContaining({ run_id: localRenderRun.id })],
+    });
+    await expect(page.getByText(/已归档 1 条运行证据/).last()).toBeVisible({ timeout: 10000 });
+    await expect
+      .poll(async () => (await api.listPromptEvaluationEvidenceSnapshots(localRenderRun.id))[0] ?? null, { timeout: 10000 })
+      .toMatchObject({
+        run_id: localRenderRun.id,
+        snapshot_type: "验收归档",
+      });
     const findQueuedAgentRun = async () => {
         const assets = await api.listPromptEvaluationAssets({ prompt_id: prompt!.id });
         const agentAssetIds = assets

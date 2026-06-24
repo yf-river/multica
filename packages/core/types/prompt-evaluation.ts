@@ -284,6 +284,21 @@ export interface ListPromptEvaluationEvidenceSnapshotsResponse {
   total: number;
 }
 
+export interface PromptEvaluationAssetEvidenceSnapshotSkip {
+  run_id: string;
+  reason: string;
+}
+
+export interface PromptEvaluationAssetEvidenceSnapshotResponse {
+  asset_id: string;
+  snapshot_type: PromptEvaluationEvidenceSnapshotType;
+  total_runs: number;
+  created_count: number;
+  skipped_count: number;
+  items: PromptEvaluationEvidenceSnapshot[];
+  skipped: PromptEvaluationAssetEvidenceSnapshotSkip[];
+}
+
 export interface PromptEvaluationSummary {
   workspace_id: string;
   generated_at: string;

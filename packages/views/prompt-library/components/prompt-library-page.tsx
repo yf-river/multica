@@ -675,6 +675,19 @@ export function PromptLibraryPage({
     },
   });
 
+  const createAssetEvidenceSnapshotsMut = useMutation({
+    mutationFn: (assetId: string) => api.createPromptEvaluationAssetEvidenceSnapshots(assetId, "验收归档", 20),
+    onSuccess: (result) => {
+      invalidateRuns();
+      invalidateSummary();
+      for (const snapshot of result.items) {
+        invalidateRunEvidenceSnapshots(snapshot.run_id);
+      }
+      const skippedText = result.skipped_count > 0 ? `，跳过 ${result.skipped_count} 条已归档` : "";
+      toast.success(`已归档 ${result.created_count} 条运行证据${skippedText}`);
+    },
+  });
+
   const createCandidateMut = useMutation({
     mutationFn: (runId: string) => api.createPromptEvaluationOptimizationCandidate(runId),
     onSuccess: () => {
@@ -1290,6 +1303,8 @@ export function PromptLibraryPage({
                 reviewingRunId={reviewRunMut.isPending ? reviewRunMut.variables?.runId ?? null : null}
                 onCreateEvidenceSnapshot={(runId) => createEvidenceSnapshotMut.mutate(runId)}
                 creatingEvidenceSnapshotRunId={createEvidenceSnapshotMut.isPending ? createEvidenceSnapshotMut.variables ?? null : null}
+                onCreateAssetEvidenceSnapshots={(assetId) => createAssetEvidenceSnapshotsMut.mutate(assetId)}
+                creatingAssetEvidenceSnapshotsAssetId={createAssetEvidenceSnapshotsMut.isPending ? createAssetEvidenceSnapshotsMut.variables ?? null : null}
                 onGenerateCandidate={(runId) => createCandidateMut.mutate(runId)}
                 generatingCandidateRunId={createCandidateMut.isPending ? createCandidateMut.variables ?? null : null}
                 onRunOptimizationAgent={(runId) => runOptimizationAgentMut.mutate(runId)}
@@ -1352,6 +1367,8 @@ export function PromptLibraryPage({
               reviewingRunId={reviewRunMut.isPending ? reviewRunMut.variables?.runId ?? null : null}
               onCreateEvidenceSnapshot={(runId) => createEvidenceSnapshotMut.mutate(runId)}
               creatingEvidenceSnapshotRunId={createEvidenceSnapshotMut.isPending ? createEvidenceSnapshotMut.variables ?? null : null}
+              onCreateAssetEvidenceSnapshots={(assetId) => createAssetEvidenceSnapshotsMut.mutate(assetId)}
+              creatingAssetEvidenceSnapshotsAssetId={createAssetEvidenceSnapshotsMut.isPending ? createAssetEvidenceSnapshotsMut.variables ?? null : null}
               onGenerateCandidate={(runId) => createCandidateMut.mutate(runId)}
               generatingCandidateRunId={createCandidateMut.isPending ? createCandidateMut.variables ?? null : null}
               onRunOptimizationAgent={(runId) => runOptimizationAgentMut.mutate(runId)}
@@ -1791,6 +1808,8 @@ function WorkbenchPanel({
   reviewingRunId,
   onCreateEvidenceSnapshot,
   creatingEvidenceSnapshotRunId,
+  onCreateAssetEvidenceSnapshots,
+  creatingAssetEvidenceSnapshotsAssetId,
   onGenerateCandidate,
   generatingCandidateRunId,
   onRunOptimizationAgent,
@@ -1846,6 +1865,8 @@ function WorkbenchPanel({
   reviewingRunId: string | null;
   onCreateEvidenceSnapshot: (runId: string) => void;
   creatingEvidenceSnapshotRunId: string | null;
+  onCreateAssetEvidenceSnapshots: (assetId: string) => void;
+  creatingAssetEvidenceSnapshotsAssetId: string | null;
   onGenerateCandidate: (runId: string) => void;
   generatingCandidateRunId: string | null;
   onRunOptimizationAgent: (runId: string) => void;
@@ -1957,6 +1978,7 @@ function WorkbenchPanel({
           route={routeIntro.route}
           title={routeIntro.title}
           assets={visibleAssets}
+          runs={runs}
           cases={cases}
           experimentDimensions={experimentDimensions}
           loading={loading}
@@ -1975,6 +1997,8 @@ function WorkbenchPanel({
           updatingCaseId={updatingCaseId}
           onDeleteCase={onDeleteCase}
           deletingCaseId={deletingCaseId}
+          onCreateAssetEvidenceSnapshots={onCreateAssetEvidenceSnapshots}
+          creatingAssetEvidenceSnapshotsAssetId={creatingAssetEvidenceSnapshotsAssetId}
           beforeAssetList={activeTab === "实验" ? (
             <ExperimentComparisonPanel
               experiments={visibleAssets}
@@ -2330,6 +2354,7 @@ function TrainingAssetPanel({
   route,
   title,
   assets,
+  runs,
   cases,
   experimentDimensions,
   loading,
@@ -2348,12 +2373,15 @@ function TrainingAssetPanel({
   updatingCaseId,
   onDeleteCase,
   deletingCaseId,
+  onCreateAssetEvidenceSnapshots,
+  creatingAssetEvidenceSnapshotsAssetId,
   beforeAssetList,
 }: {
   activeTab: WorkbenchTab;
   route: string;
   title: string;
   assets: PromptEvaluationAsset[];
+  runs: PromptEvaluationRun[];
   cases: PromptEvaluationStructuredCase[];
   experimentDimensions: PromptEvaluationExperimentDimension[];
   loading: boolean;
@@ -2372,11 +2400,20 @@ function TrainingAssetPanel({
   updatingCaseId: string | null;
   onDeleteCase: (caseId: string) => void;
   deletingCaseId: string | null;
+  onCreateAssetEvidenceSnapshots: (assetId: string) => void;
+  creatingAssetEvidenceSnapshotsAssetId: string | null;
   beforeAssetList?: ReactNode;
 }) {
   const caseSummaries = useMemo(() => buildCaseSummaries(cases), [cases]);
   const casesByAsset = useMemo(() => buildCasesByAsset(cases), [cases]);
   const experimentDimensionsByAsset = useMemo(() => buildExperimentDimensionsByAsset(experimentDimensions), [experimentDimensions]);
+  const runCountByAsset = useMemo(() => {
+    const counts = new Map<string, number>();
+    for (const run of runs) {
+      counts.set(run.asset_id, (counts.get(run.asset_id) ?? 0) + 1);
+    }
+    return counts;
+  }, [runs]);
 
   return (
     <section className="grid gap-3" aria-label={`${title}内容`} data-testid={`training-route-panel-${route}`}>
@@ -2421,7 +2458,19 @@ function TrainingAssetPanel({
                   <DatasetVersionControls asset={asset} saving={saving} />
                 )}
               </div>
-              <div className="flex items-center gap-2">
+              <div className="flex flex-wrap items-center justify-end gap-2">
+                {(runCountByAsset.get(asset.id) ?? 0) > 0 && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    data-testid={`archive-asset-evidence-${asset.id}`}
+                    onClick={() => onCreateAssetEvidenceSnapshots(asset.id)}
+                    disabled={saving || creatingAssetEvidenceSnapshotsAssetId === asset.id}
+                  >
+                    {creatingAssetEvidenceSnapshotsAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
+                    归档运行证据
+                  </Button>
+                )}
                 {asset.asset_type === "数据集" && (
                   <>
                     <Button

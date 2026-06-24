@@ -444,6 +444,21 @@ type PromptEvaluationEvidenceSnapshotResponse struct {
 	CreatedAt     string  `json:"created_at"`
 }
 
+type PromptEvaluationAssetEvidenceSnapshotResponse struct {
+	AssetID      string                                      `json:"asset_id"`
+	SnapshotType string                                      `json:"snapshot_type"`
+	TotalRuns    int                                         `json:"total_runs"`
+	CreatedCount int                                         `json:"created_count"`
+	SkippedCount int                                         `json:"skipped_count"`
+	Items        []PromptEvaluationEvidenceSnapshotResponse  `json:"items"`
+	Skipped      []PromptEvaluationAssetEvidenceSnapshotSkip `json:"skipped"`
+}
+
+type PromptEvaluationAssetEvidenceSnapshotSkip struct {
+	RunID  string `json:"run_id"`
+	Reason string `json:"reason"`
+}
+
 type promptEvaluationEvidenceRefs struct {
 	Asset   *db.PromptEvaluationAsset
 	Prompt  *db.PromptLibraryItem
@@ -3243,19 +3258,106 @@ func (h *Handler) CreatePromptEvaluationEvidenceSnapshot(w http.ResponseWriter, 
 		writeError(w, http.StatusBadRequest, "snapshot_type must be 手动归档, 验收归档 or 自动归档")
 		return
 	}
-	evidence, err := h.buildPromptEvaluationRunEvidenceResponse(r.Context(), workspaceUUID, runID)
+	item, err := h.createPromptEvaluationEvidenceSnapshotRecord(r.Context(), workspaceUUID, runID, snapshotType, parseUUID(userID))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			writeError(w, http.StatusNotFound, "prompt evaluation run not found")
 			return
 		}
-		writeError(w, http.StatusInternalServerError, "failed to build prompt evaluation evidence snapshot")
+		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation evidence snapshot")
 		return
 	}
-	insight, err := h.buildPromptEvaluationEvidenceSnapshotInsight(r.Context(), workspaceUUID, evidence)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to build prompt evaluation evidence snapshot insight")
+	writeJSON(w, http.StatusCreated, promptEvaluationEvidenceSnapshotToResponse(item, true))
+}
+
+func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWriter, r *http.Request) {
+	asset, ok := h.loadPromptEvaluationAsset(w, r)
+	if !ok {
 		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	snapshotType := strings.TrimSpace(r.URL.Query().Get("snapshot_type"))
+	if snapshotType == "" {
+		snapshotType = "验收归档"
+	}
+	if !validPromptEvaluationEvidenceSnapshotType(snapshotType) {
+		writeError(w, http.StatusBadRequest, "snapshot_type must be 手动归档, 验收归档 or 自动归档")
+		return
+	}
+	limit := int32(20)
+	if value := r.URL.Query().Get("limit"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 100 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 100")
+			return
+		}
+		limit = int32(parsed)
+	}
+	runs, err := h.Queries.ListPromptEvaluationRuns(r.Context(), db.ListPromptEvaluationRunsParams{
+		WorkspaceID: asset.WorkspaceID,
+		Limit:       limit,
+		AssetID:     asset.ID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation runs for asset")
+		return
+	}
+	resp := PromptEvaluationAssetEvidenceSnapshotResponse{
+		AssetID:      uuidToString(asset.ID),
+		SnapshotType: snapshotType,
+		TotalRuns:    len(runs),
+		Items:        []PromptEvaluationEvidenceSnapshotResponse{},
+		Skipped:      []PromptEvaluationAssetEvidenceSnapshotSkip{},
+	}
+	createdBy := parseUUID(userID)
+	for _, run := range runs {
+		runID := run.ID
+		existing, err := h.Queries.ListPromptEvaluationEvidenceSnapshotsByRun(r.Context(), db.ListPromptEvaluationEvidenceSnapshotsByRunParams{
+			WorkspaceID: asset.WorkspaceID,
+			RunID:       runID,
+			Limit:       100,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to list existing prompt evaluation evidence snapshots")
+			return
+		}
+		alreadyArchived := false
+		for _, item := range existing {
+			if item.SnapshotType == snapshotType {
+				alreadyArchived = true
+				break
+			}
+		}
+		if alreadyArchived {
+			resp.SkippedCount++
+			resp.Skipped = append(resp.Skipped, PromptEvaluationAssetEvidenceSnapshotSkip{
+				RunID:  uuidToString(runID),
+				Reason: "已存在同类型服务端证据快照",
+			})
+			continue
+		}
+		item, err := h.createPromptEvaluationEvidenceSnapshotRecord(r.Context(), asset.WorkspaceID, runID, snapshotType, createdBy)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation evidence snapshot")
+			return
+		}
+		resp.CreatedCount++
+		resp.Items = append(resp.Items, promptEvaluationEvidenceSnapshotToResponse(item, false))
+	}
+	writeJSON(w, http.StatusCreated, resp)
+}
+
+func (h *Handler) createPromptEvaluationEvidenceSnapshotRecord(ctx context.Context, workspaceUUID pgtype.UUID, runID pgtype.UUID, snapshotType string, createdBy pgtype.UUID) (db.PromptEvaluationEvidenceSnapshot, error) {
+	evidence, err := h.buildPromptEvaluationRunEvidenceResponse(ctx, workspaceUUID, runID)
+	if err != nil {
+		return db.PromptEvaluationEvidenceSnapshot{}, err
+	}
+	insight, err := h.buildPromptEvaluationEvidenceSnapshotInsight(ctx, workspaceUUID, evidence)
+	if err != nil {
+		return db.PromptEvaluationEvidenceSnapshot{}, err
 	}
 	now := time.Now().UTC()
 	payload := map[string]any{
@@ -3265,20 +3367,15 @@ func (h *Handler) CreatePromptEvaluationEvidenceSnapshot(w http.ResponseWriter, 
 		"运行证据":    evidence,
 		"服务端解释快照": insight,
 	}
-	item, err := h.Queries.CreatePromptEvaluationEvidenceSnapshot(r.Context(), db.CreatePromptEvaluationEvidenceSnapshotParams{
+	return h.Queries.CreatePromptEvaluationEvidenceSnapshot(ctx, db.CreatePromptEvaluationEvidenceSnapshotParams{
 		WorkspaceID:   workspaceUUID,
 		RunID:         runID,
 		SnapshotType:  snapshotType,
 		SchemaVersion: "multica.prompt_evaluation.evidence_snapshot.v1",
 		Summary:       mustJSONBytes(buildPromptEvaluationEvidenceSnapshotSummary(evidence, now, insight)),
 		Evidence:      mustJSONBytes(payload),
-		CreatedBy:     parseUUID(userID),
+		CreatedBy:     createdBy,
 	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation evidence snapshot")
-		return
-	}
-	writeJSON(w, http.StatusCreated, promptEvaluationEvidenceSnapshotToResponse(item, true))
 }
 
 func (h *Handler) GetPromptEvaluationEvidenceSnapshot(w http.ResponseWriter, r *http.Request) {

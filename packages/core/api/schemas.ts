@@ -20,6 +20,7 @@ import type {
   ObservabilitySummary,
   ListWebhookDeliveriesResponse,
   PromptEvaluationAsset,
+  PromptEvaluationAssetEvidenceSnapshotResponse,
   PromptEvaluationEvidenceSnapshot,
   PromptEvaluationRunEvidence,
   PromptEvaluationRuntimeReadiness,
@@ -1188,6 +1189,19 @@ export const PromptEvaluationEvidenceSnapshotListResponseSchema = z.object({
   total: z.number().default(0),
 }).loose();
 
+export const PromptEvaluationAssetEvidenceSnapshotResponseSchema = z.object({
+  asset_id: z.string().default(""),
+  snapshot_type: z.enum(["手动归档", "验收归档", "自动归档"]).default("验收归档"),
+  total_runs: z.number().default(0),
+  created_count: z.number().default(0),
+  skipped_count: z.number().default(0),
+  items: z.array(PromptEvaluationEvidenceSnapshotSchema).default([]),
+  skipped: z.array(z.object({
+    run_id: z.string().default(""),
+    reason: z.string().default(""),
+  }).loose()).default([]),
+}).loose();
+
 export const PromptEvaluationSummarySchema = z.object({
   workspace_id: z.string().default(""),
   generated_at: z.string().default(""),
@@ -1508,6 +1522,16 @@ export const EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT: PromptEvaluationEvidence
   evidence: {},
   created_by: null,
   created_at: "",
+};
+
+export const EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE: PromptEvaluationAssetEvidenceSnapshotResponse = {
+  asset_id: "",
+  snapshot_type: "验收归档",
+  total_runs: 0,
+  created_count: 0,
+  skipped_count: 0,
+  items: [],
+  skipped: [],
 };
 
 export const EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT_LIST_RESPONSE: ListPromptEvaluationEvidenceSnapshotsResponse = {
