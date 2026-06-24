@@ -61,6 +61,17 @@ vi.mock("../../workspace/workspace-avatar", () => ({
 
 // Mock api (queries use api internally)
 const mockListIssues = vi.hoisted(() => vi.fn().mockResolvedValue({ issues: [], total: 0 }));
+const mockListIssueBuckets = vi.hoisted(() =>
+  vi.fn(async (params: any = {}) => {
+    const by_status: Record<string, { issues: Issue[]; total: number }> = {};
+    for (const status of params.statuses ?? []) {
+      const result = await mockListIssues({ ...params, status });
+      const issues = result.issues ?? [];
+      by_status[status] = { issues, total: result.total ?? issues.length };
+    }
+    return { by_status };
+  }),
+);
 const mockListGroupedIssues = vi.hoisted(() => vi.fn().mockResolvedValue({ groups: [] }));
 const mockListMembers = vi.hoisted(() =>
   vi.fn().mockResolvedValue([
@@ -117,6 +128,7 @@ vi.mock("@multica/core/api", () => ({
   api: {
     getBaseUrl: () => "http://127.0.0.1:8080",
     listIssues: (...args: any[]) => mockListIssues(...args),
+    listIssueBuckets: (...args: any[]) => mockListIssueBuckets(...args),
     listGroupedIssues: (...args: any[]) => mockListGroupedIssues(...args),
     updateIssue: vi.fn(),
     listMembers: (...args: any[]) => mockListMembers(...args),
@@ -125,6 +137,7 @@ vi.mock("@multica/core/api", () => ({
   },
   getApi: () => ({
     listIssues: (...args: any[]) => mockListIssues(...args),
+    listIssueBuckets: (...args: any[]) => mockListIssueBuckets(...args),
     listGroupedIssues: (...args: any[]) => mockListGroupedIssues(...args),
     updateIssue: vi.fn(),
     listMembers: (...args: any[]) => mockListMembers(...args),
@@ -481,6 +494,15 @@ describe("IssuesPage (shared)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockListIssues.mockResolvedValue({ issues: [], total: 0 });
+    mockListIssueBuckets.mockImplementation(async (params: any = {}) => {
+      const by_status: Record<string, { issues: Issue[]; total: number }> = {};
+      for (const status of params.statuses ?? []) {
+        const result = await mockListIssues({ ...params, status });
+        const issues = result.issues ?? [];
+        by_status[status] = { issues, total: result.total ?? issues.length };
+      }
+      return { by_status };
+    });
     mockListGroupedIssues.mockResolvedValue({ groups: [] });
     mockViewState.viewMode = "board";
     mockViewState.grouping = "status";
