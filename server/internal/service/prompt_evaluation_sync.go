@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -129,6 +130,8 @@ func syncPromptEvaluationRunWithTask(ctx context.Context, q *db.Queries, run db.
 		averageMs = durationMs / int64(run.TotalCases)
 	}
 	evidence := promptEvaluationTaskEvidence(run, task, usages, taskMessages)
+	preserved := promptEvaluationPreservedRunFacts(run)
+	dimensionScores := promptEvaluationAgentDimensionScoresFromRun(run, agentVerdicts, hasStructuredVerdicts)
 	agentName := util.UUIDToString(task.AgentID)
 	if agent, err := q.GetAgent(ctx, task.AgentID); err == nil && strings.TrimSpace(agent.Name) != "" {
 		agentName = agent.Name
@@ -152,6 +155,21 @@ func syncPromptEvaluationRunWithTask(ctx context.Context, q *db.Queries, run db.
 		"trace/task id": util.UUIDToString(task.ID),
 		"失败原因":          failureReason,
 		"评估结论":          conclusion,
+	}
+	if value, ok := preserved["提示词版本"]; ok {
+		metrics["提示词版本"] = value
+	}
+	if value, ok := preserved["数据集版本"]; ok {
+		metrics["数据集版本"] = value
+	}
+	if len(dimensionScores) > 0 {
+		metrics["实验维度评分"] = dimensionScores
+	}
+	for key, value := range preserved {
+		evidence[key] = value
+	}
+	if len(dimensionScores) > 0 {
+		evidence["实验维度评分"] = dimensionScores
 	}
 	updated, err := q.UpdatePromptEvaluationRunFromTask(ctx, db.UpdatePromptEvaluationRunFromTaskParams{
 		ID:                run.ID,
@@ -462,6 +480,17 @@ func promptEvaluationTrialStatusFromRunStatus(status string) string {
 	}
 }
 
+type promptEvaluationAgentDimensionScore struct {
+	DimensionIndex int32   `json:"维度序号"`
+	DimensionName  string  `json:"维度名称"`
+	Score          float64 `json:"得分"`
+	PassedCases    int     `json:"通过用例数"`
+	TotalCases     int     `json:"总用例数"`
+	Status         string  `json:"状态"`
+	Rule           string  `json:"评分规则"`
+	Evidence       string  `json:"证据"`
+}
+
 type promptEvaluationAgentCaseVerdict struct {
 	CaseIndex     int32
 	Status        string
@@ -469,6 +498,172 @@ type promptEvaluationAgentCaseVerdict struct {
 	Conclusion    string
 	Output        any
 	Evidence      map[string]any
+}
+
+func promptEvaluationPreservedRunFacts(run db.PromptEvaluationRun) map[string]any {
+	result := map[string]any{}
+	for _, raw := range []any{
+		decodeJSONDefault(run.Metrics, map[string]any{}),
+		decodeJSONDefault(run.Evidence, map[string]any{}),
+	} {
+		record, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, key := range []string{"提示词版本", "prompt_version", "数据集版本", "dataset_versions"} {
+			if value, exists := record[key]; exists && value != nil {
+				result[key] = value
+			}
+		}
+	}
+	return result
+}
+
+func promptEvaluationAgentDimensionScoresFromRun(run db.PromptEvaluationRun, verdicts []promptEvaluationAgentCaseVerdict, scored bool) []promptEvaluationAgentDimensionScore {
+	dimensions := promptEvaluationDimensionScoresFromRaw(decodeJSONDefault(run.Metrics, map[string]any{}))
+	if len(dimensions) == 0 {
+		dimensions = promptEvaluationDimensionScoresFromRaw(decodeJSONDefault(run.Evidence, map[string]any{}))
+	}
+	if len(dimensions) == 0 {
+		return nil
+	}
+	if !scored {
+		return dimensions
+	}
+	result := make([]promptEvaluationAgentDimensionScore, 0, len(dimensions))
+	for _, dimension := range dimensions {
+		name := strings.TrimSpace(dimension.DimensionName)
+		if name == "" {
+			name = "维度 " + strconv.Itoa(int(dimension.DimensionIndex)+1)
+		}
+		passed := 0
+		for _, verdict := range verdicts {
+			if promptEvaluationAgentDimensionVerdictPassed(name, verdict) {
+				passed++
+			}
+		}
+		total := len(verdicts)
+		score := 0.0
+		status := "无用例"
+		if total > 0 {
+			score = float64(passed) / float64(total)
+			status = "已评分"
+		}
+		rule := promptEvaluationAgentDimensionRule(name)
+		result = append(result, promptEvaluationAgentDimensionScore{
+			DimensionIndex: dimension.DimensionIndex,
+			DimensionName:  name,
+			Score:          score,
+			PassedCases:    passed,
+			TotalCases:     total,
+			Status:         status,
+			Rule:           rule,
+			Evidence:       rule + "：" + strconv.Itoa(passed) + "/" + strconv.Itoa(total),
+		})
+	}
+	return result
+}
+
+func promptEvaluationDimensionScoresFromRaw(raw any) []promptEvaluationAgentDimensionScore {
+	record, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	list, ok := firstValue(record, "实验维度评分", "experiment_dimension_scores").([]any)
+	if !ok || len(list) == 0 {
+		return nil
+	}
+	result := make([]promptEvaluationAgentDimensionScore, 0, len(list))
+	for index, item := range list {
+		row, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		dimensionIndex := int32(index)
+		if value, ok := intFromAny(firstValue(row, "维度序号", "dimension_index")); ok {
+			dimensionIndex = int32(value)
+		}
+		name := firstNonEmptyString(row, "维度名称", "dimension_name")
+		if name == "" {
+			name = "维度 " + strconv.Itoa(int(dimensionIndex)+1)
+		}
+		passed, _ := intFromAny(firstValue(row, "通过用例数", "passed_cases"))
+		total, _ := intFromAny(firstValue(row, "总用例数", "total_cases"))
+		score := 0.0
+		if numeric, ok := floatFromAny(firstValue(row, "得分", "score")); ok {
+			score = numeric
+		}
+		result = append(result, promptEvaluationAgentDimensionScore{
+			DimensionIndex: dimensionIndex,
+			DimensionName:  name,
+			Score:          score,
+			PassedCases:    passed,
+			TotalCases:     total,
+			Status:         firstNonEmptyString(row, "状态", "status"),
+			Rule:           firstNonEmptyString(row, "评分规则", "rule"),
+			Evidence:       firstNonEmptyString(row, "证据", "evidence"),
+		})
+	}
+	return result
+}
+
+func promptEvaluationAgentDimensionVerdictPassed(dimensionName string, verdict promptEvaluationAgentCaseVerdict) bool {
+	normalized := strings.ToLower(strings.TrimSpace(dimensionName))
+	switch {
+	case strings.Contains(normalized, "缺失变量") || strings.Contains(normalized, "变量"):
+		return verdict.Status == "通过" && promptEvaluationAgentEvidenceListEmpty(verdict.Evidence, "缺失", "missing", "missing_variables")
+	case strings.Contains(normalized, "中文"):
+		return containsHanRune(stringFromAny(verdict.Output)) || containsHanRune(verdict.Conclusion)
+	case strings.Contains(normalized, "命中") || strings.Contains(normalized, "覆盖") || strings.Contains(normalized, "期望"):
+		return verdict.Status == "通过" && promptEvaluationAgentEvidenceListNonEmpty(verdict.Evidence, "命中", "matched", "matched_contains")
+	default:
+		return verdict.Status == "通过"
+	}
+}
+
+func promptEvaluationAgentDimensionRule(dimensionName string) string {
+	normalized := strings.ToLower(strings.TrimSpace(dimensionName))
+	switch {
+	case strings.Contains(normalized, "缺失变量") || strings.Contains(normalized, "变量"):
+		return "逐用例检查 Agent 结构化证据中缺失项为空"
+	case strings.Contains(normalized, "中文"):
+		return "逐用例检查 Agent 输出或结论包含中文字符"
+	case strings.Contains(normalized, "命中") || strings.Contains(normalized, "覆盖") || strings.Contains(normalized, "期望"):
+		return "逐用例检查 Agent 结构化证据中有命中项"
+	default:
+		return "逐用例沿用 Agent 结构化通过状态"
+	}
+}
+
+func promptEvaluationAgentEvidenceListEmpty(record map[string]any, keys ...string) bool {
+	value := firstValue(record, keys...)
+	if value == nil {
+		return true
+	}
+	if list, ok := value.([]any); ok {
+		return len(list) == 0
+	}
+	if text := strings.TrimSpace(stringFromAny(value)); text != "" {
+		return text == "无" || text == "[]"
+	}
+	return true
+}
+
+func promptEvaluationAgentEvidenceListNonEmpty(record map[string]any, keys ...string) bool {
+	value := firstValue(record, keys...)
+	if list, ok := value.([]any); ok {
+		return len(list) > 0
+	}
+	return strings.TrimSpace(stringFromAny(value)) != ""
+}
+
+func containsHanRune(value string) bool {
+	for _, r := range value {
+		if unicode.Is(unicode.Han, r) {
+			return true
+		}
+	}
+	return false
 }
 
 func promptEvaluationAgentVerdictsFromTask(run db.PromptEvaluationRun, task db.AgentTaskQueue, messages []db.TaskMessage) ([]promptEvaluationAgentCaseVerdict, bool) {
@@ -906,6 +1101,24 @@ func intFromAny(value any) (int, bool) {
 		return int(v), true
 	case string:
 		parsed, err := strconv.Atoi(strings.TrimSpace(v))
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
+}
+
+func floatFromAny(value any) (float64, bool) {
+	switch v := value.(type) {
+	case int:
+		return float64(v), true
+	case int32:
+		return float64(v), true
+	case int64:
+		return float64(v), true
+	case float64:
+		return v, true
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(v), 64)
 		return parsed, err == nil
 	default:
 		return 0, false

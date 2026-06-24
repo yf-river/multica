@@ -462,6 +462,27 @@ test.describe("训练与评估工作台", () => {
       运行时提供方: "codex",
     });
     await api.completePromptEvaluationAgentTask(queuedAgentRun!);
+    const syncedAgentDimensionEvidence = await api.getPromptEvaluationRunEvidence(queuedAgentRun!.id);
+    const syncedDimensionScores = Array.isArray(syncedAgentDimensionEvidence.run.metrics["实验维度评分"]) ? syncedAgentDimensionEvidence.run.metrics["实验维度评分"] as Array<Record<string, unknown>> : [];
+    expect(syncedDimensionScores).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        维度名称: "上下文完整性",
+        状态: "已评分",
+        通过用例数: 1,
+        评分规则: "逐用例沿用 Agent 结构化通过状态",
+      }),
+      expect.objectContaining({
+        维度名称: "期望输出覆盖",
+        状态: "已评分",
+      }),
+      expect.objectContaining({
+        维度名称: "中文语义一致性",
+        状态: "已评分",
+      }),
+    ]));
+    expect(syncedAgentDimensionEvidence.evidence["实验维度评分"]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ 维度名称: "上下文完整性", 状态: "已评分" }),
+    ]));
     await expect
       .poll(async () => {
         const summary = await api.getPromptEvaluationSummary();

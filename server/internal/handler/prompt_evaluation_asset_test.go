@@ -1100,6 +1100,25 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	if evidence.Run.EstimatedCost <= 0 {
 		t.Fatalf("auto-synced run estimated cost = %v, want > 0", evidence.Run.EstimatedCost)
 	}
+	runMetrics, ok := evidence.Run.Metrics.(map[string]any)
+	if !ok {
+		t.Fatalf("run metrics type = %T", evidence.Run.Metrics)
+	}
+	dimensionScores, ok := runMetrics["实验维度评分"].([]any)
+	if !ok || len(dimensionScores) != 3 {
+		t.Fatalf("run metrics missing agent dimension scores: %#v", runMetrics)
+	}
+	firstDimensionScore, _ := dimensionScores[0].(map[string]any)
+	if firstDimensionScore["维度名称"] != "命中率" || firstDimensionScore["状态"] != "已评分" || firstDimensionScore["通过用例数"] != float64(1) {
+		t.Fatalf("first agent dimension score = %#v", firstDimensionScore)
+	}
+	runEvidence, ok := evidence.Run.Evidence.(map[string]any)
+	if !ok {
+		t.Fatalf("run evidence type = %T", evidence.Run.Evidence)
+	}
+	if evidenceScores, ok := runEvidence["实验维度评分"].([]any); !ok || len(evidenceScores) != 3 {
+		t.Fatalf("run evidence missing agent dimension scores: %#v", runEvidence)
+	}
 	if evidence.Trials[0].Status != "通过" || evidence.Trials[0].FailureReason != "无" || evidence.Trials[0].InputTokens != 16 || evidence.Trials[0].OutputTokens != 7 {
 		t.Fatalf("auto-synced trial = %+v", evidence.Trials[0])
 	}
@@ -2190,6 +2209,7 @@ func createPromptEvaluationAgentRunFixture(t *testing.T, assetName string, caseN
 		"name":       assetName,
 		"asset_type": "实验",
 		"payload": map[string]any{
+			"对比维度":  []string{"命中率", "缺失变量", "中文一致性"},
 			"cases": []map[string]any{{"名称": caseName, "变量": map[string]any{"issue_title": caseName}, "期望包含": []string{caseName}}},
 		},
 	}))
