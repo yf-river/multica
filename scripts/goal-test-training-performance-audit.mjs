@@ -17,6 +17,7 @@ const workspaceSlug = process.env.GOAL_TEST_WORKSPACE_SLUG || "goal-test-daemon"
 const account = process.env.GOAL_TEST_ACCOUNT || "goal-test-daemon";
 const password = process.env.GOAL_TEST_PASSWORD || "e2e-password";
 const maxRouteMs = Number(process.env.GOAL_TEST_TRAINING_AUDIT_MAX_ROUTE_MS || "3500");
+const maxClickMs = Number(process.env.GOAL_TEST_TRAINING_AUDIT_MAX_CLICK_MS || "3500");
 const maxApiMs = Number(process.env.GOAL_TEST_TRAINING_AUDIT_MAX_API_MS || "1200");
 const maxApiRequests = Number(process.env.GOAL_TEST_TRAINING_AUDIT_MAX_API_REQUESTS || "18");
 const artifactRoot = path.resolve(process.env.GOAL_TEST_TRAINING_AUDIT_DIR || path.join(repoRoot, "artifacts/acceptance"));
@@ -52,10 +53,13 @@ for (const route of routes) {
   results.push(await auditTrainingRoute(page, route));
   await page.close().catch(() => {});
 }
+const clickPage = await context.newPage();
+const clickResults = await auditTrainingRouteClicks(clickPage);
+await clickPage.close().catch(() => {});
 await browser.close();
 
 const deploymentLogs = runDeploymentLogVerification();
-const summary = summarize(results, deploymentLogs);
+const summary = summarize(results, clickResults, deploymentLogs);
 const payload = {
   schema: "multica.goal_test.training_performance_audit.v1",
   generated_at: generatedAt,
@@ -66,12 +70,14 @@ const payload = {
   account,
   thresholds: {
     max_route_ms: maxRouteMs,
+    max_click_ms: maxClickMs,
     max_api_ms: maxApiMs,
     max_api_requests: maxApiRequests,
   },
   deployment_logs: deploymentLogs,
   summary,
   routes: results,
+  click_results: clickResults,
 };
 
 const jsonPath = path.join(artifactRoot, `training-performance-audit-${stamp}.json`);
@@ -206,6 +212,87 @@ async function auditTrainingRoute(page, route) {
   };
 }
 
+async function auditTrainingRouteClicks(page) {
+  const consoleErrors = [];
+  const pageErrors = [];
+  const onConsole = (message) => {
+    if (message.type() === "error" && !message.text().startsWith("Failed to load resource:")) {
+      consoleErrors.push(message.text().slice(0, 500));
+    }
+  };
+  const onPageError = (error) => {
+    pageErrors.push(error.message.slice(0, 500));
+  };
+  page.on("console", onConsole);
+  page.on("pageerror", onPageError);
+
+  const clicks = [];
+  let setupError = "";
+  try {
+    await page.goto(`${browserURL}/${workspaceSlug}/training/runs`, { waitUntil: "domcontentloaded", timeout: 15_000 });
+    await page.waitForFunction(
+      (expected) => document.body?.innerText.includes(expected),
+      routes[0].expect,
+      { timeout: 10_000 },
+    );
+    await page.waitForLoadState("networkidle", { timeout: 8_000 }).catch(() => {});
+  } catch (error) {
+    setupError = error instanceof Error ? error.message : String(error);
+  }
+
+  if (!setupError) {
+    for (const route of routes) {
+      const startedAt = Date.now();
+      let errorText = "";
+      try {
+        await page.getByRole("link", { name: route.label, exact: true }).last().click({ timeout: 10_000 });
+        await page.waitForURL(`**${route.path}`, { timeout: 15_000 });
+        await page.waitForFunction(
+          (expected) => document.body?.innerText.includes(expected),
+          route.expect,
+          { timeout: 10_000 },
+        );
+      } catch (error) {
+        errorText = error instanceof Error ? error.message.split("\n")[0] : String(error);
+      }
+      const elapsedMs = Date.now() - startedAt;
+      const failures = [
+        ...(errorText ? [`点击失败：${errorText}`] : []),
+        ...(elapsedMs > maxClickMs ? [`点击可用耗时 ${elapsedMs}ms 超过 ${maxClickMs}ms`] : []),
+      ];
+      clicks.push({
+        id: route.id,
+        label: route.label,
+        target_path: route.path,
+        final_url: page.url(),
+        elapsed_ms: elapsedMs,
+        ok: failures.length === 0,
+        failures,
+      });
+    }
+  }
+
+  page.off("console", onConsole);
+  page.off("pageerror", onPageError);
+  const failures = [
+    ...(setupError ? [`点击审计初始化失败：${setupError.split("\n")[0]}`] : []),
+    ...clicks.flatMap((item) => item.failures.map((failure) => `${item.label}: ${failure}`)),
+    ...consoleErrors.map((item) => `console error：${item}`),
+    ...pageErrors.map((item) => `pageerror：${item}`),
+  ];
+  return {
+    ok: failures.length === 0,
+    max_click_ms: maxClickMs,
+    click_count: clicks.length,
+    passed_clicks: clicks.filter((item) => item.ok).length,
+    failed_clicks: clicks.filter((item) => !item.ok).length,
+    failures,
+    clicks,
+    console_errors: consoleErrors,
+    page_errors: pageErrors,
+  };
+}
+
 function expectedBoundaryFailures(routeId, boundaries) {
   const failures = [];
   const contracts = {
@@ -288,10 +375,11 @@ async function login() {
   return data.token;
 }
 
-function summarize(routeResults, logEvidence) {
+function summarize(routeResults, clickResults, logEvidence) {
   const routeFailures = routeResults.flatMap((route) => route.failures.map((failure) => `${route.label}: ${failure}`));
+  const clickFailures = clickResults.ok ? [] : clickResults.failures.map((failure) => `点击审计：${failure}`);
   const logFailures = logEvidence.ok ? [] : [`当前部署日志窗口未通过：${logEvidence.error || "verify-logs failed"}`];
-  const failures = [...routeFailures, ...logFailures];
+  const failures = [...routeFailures, ...clickFailures, ...logFailures];
   const slowestRoutes = [...routeResults]
     .sort((a, b) => b.ready_ms - a.ready_ms)
     .slice(0, 5)
@@ -303,6 +391,9 @@ function summarize(routeResults, logEvidence) {
     failed_routes: routeResults.filter((route) => !route.ok).length,
     total_api_requests: routeResults.reduce((sum, route) => sum + route.api_request_count, 0),
     total_training_api_requests: routeResults.reduce((sum, route) => sum + route.training_api_request_count, 0),
+    click_count: clickResults.click_count,
+    passed_clicks: clickResults.passed_clicks,
+    failed_clicks: clickResults.failed_clicks,
     deployment_logs_ok: logEvidence.ok,
     slowest_routes: slowestRoutes,
     failures,
@@ -348,6 +439,7 @@ function renderMarkdown(payload) {
     `- 失败：${payload.summary.failed_routes}`,
     `- API 请求总数：${payload.summary.total_api_requests}`,
     `- 训练评估 API 请求总数：${payload.summary.total_training_api_requests}`,
+    `- 点击路径：${payload.summary.passed_clicks}/${payload.summary.click_count} 通过`,
     `- 当前部署日志窗口：${payload.summary.deployment_logs_ok ? "通过" : "未通过"}`,
     "",
     "## 最慢页面",
@@ -360,6 +452,12 @@ function renderMarkdown(payload) {
     for (const failure of payload.summary.failures.slice(0, 100)) lines.push(`- ${failure}`);
     lines.push("");
   }
+  lines.push("## 点击耗时", "");
+  for (const click of payload.click_results.clicks) {
+    lines.push(`- ${click.ok ? "通过" : "失败"}：${click.label}，点击到可用 ${click.elapsed_ms}ms，目标 ${click.target_path}`);
+    for (const failure of click.failures) lines.push(`  - 问题：${failure}`);
+  }
+  lines.push("");
   lines.push("## 页面明细", "");
   for (const route of payload.routes) {
     lines.push(`### ${route.ok ? "通过" : "失败"}：${route.label}`);
