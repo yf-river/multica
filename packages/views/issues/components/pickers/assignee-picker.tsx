@@ -63,11 +63,29 @@ export function AssigneePicker({
   const [filter, setFilter] = useState("");
   const user = useAuthStore((s) => s.user);
   const wsId = useWorkspaceId();
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
-  const { data: agents = [] } = useQuery(agentListOptions(wsId));
-  const { data: squads = [] } = useQuery(squadListOptions(wsId));
-  const { data: frequency = [] } = useQuery(assigneeFrequencyOptions(wsId));
-  const { getActorName } = useActorName();
+  const pickerDataEnabled = open && !!wsId;
+  const { data: members = [] } = useQuery({
+    ...memberListOptions(wsId),
+    enabled: pickerDataEnabled,
+  });
+  const { data: agents = [] } = useQuery({
+    ...agentListOptions(wsId),
+    enabled: pickerDataEnabled,
+  });
+  const { data: squads = [] } = useQuery({
+    ...squadListOptions(wsId),
+    enabled: pickerDataEnabled,
+  });
+  const { data: frequency = [] } = useQuery({
+    ...assigneeFrequencyOptions(wsId),
+    enabled: pickerDataEnabled,
+  });
+  const shouldResolveTriggerLabel = !customTrigger && !triggerRender && !!assigneeType && !!assigneeId;
+  const { getActorName } = useActorName({
+    members: shouldResolveTriggerLabel && assigneeType === "member",
+    agents: shouldResolveTriggerLabel && assigneeType === "agent",
+    squads: shouldResolveTriggerLabel && assigneeType === "squad",
+  });
 
   const currentMember = members.find((m) => m.user_id === user?.id);
   const memberRole = currentMember?.role;

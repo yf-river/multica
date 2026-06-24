@@ -61,6 +61,7 @@ vi.mock("../../workspace/workspace-avatar", () => ({
 
 // Mock api (queries use api internally)
 const mockListIssues = vi.hoisted(() => vi.fn().mockResolvedValue({ issues: [], total: 0 }));
+const mockListIssueBuckets = vi.hoisted(() => vi.fn().mockResolvedValue({ by_status: {} }));
 const mockListGroupedIssues = vi.hoisted(() => vi.fn().mockResolvedValue({ groups: [] }));
 const mockListMembers = vi.hoisted(() =>
   vi.fn().mockResolvedValue([
@@ -113,23 +114,34 @@ const mockListSquads = vi.hoisted(() =>
     },
   ]),
 );
+const mockGetAssigneeFrequency = vi.hoisted(() => vi.fn().mockResolvedValue([]));
+const mockGetChildIssueProgress = vi.hoisted(() => vi.fn().mockResolvedValue({ progress: [] }));
+const mockGetAgentTaskSnapshot = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 vi.mock("@multica/core/api", () => ({
   api: {
     getBaseUrl: () => "http://127.0.0.1:8080",
     listIssues: (...args: any[]) => mockListIssues(...args),
+    listIssueBuckets: (...args: any[]) => mockListIssueBuckets(...args),
     listGroupedIssues: (...args: any[]) => mockListGroupedIssues(...args),
     updateIssue: vi.fn(),
     listMembers: (...args: any[]) => mockListMembers(...args),
     listAgents: (...args: any[]) => mockListAgents(...args),
     listSquads: (...args: any[]) => mockListSquads(...args),
+    getAssigneeFrequency: (...args: any[]) => mockGetAssigneeFrequency(...args),
+    getChildIssueProgress: (...args: any[]) => mockGetChildIssueProgress(...args),
+    getAgentTaskSnapshot: (...args: any[]) => mockGetAgentTaskSnapshot(...args),
   },
   getApi: () => ({
     listIssues: (...args: any[]) => mockListIssues(...args),
+    listIssueBuckets: (...args: any[]) => mockListIssueBuckets(...args),
     listGroupedIssues: (...args: any[]) => mockListGroupedIssues(...args),
     updateIssue: vi.fn(),
     listMembers: (...args: any[]) => mockListMembers(...args),
     listAgents: (...args: any[]) => mockListAgents(...args),
     listSquads: (...args: any[]) => mockListSquads(...args),
+    getAssigneeFrequency: (...args: any[]) => mockGetAssigneeFrequency(...args),
+    getChildIssueProgress: (...args: any[]) => mockGetChildIssueProgress(...args),
+    getAgentTaskSnapshot: (...args: any[]) => mockGetAgentTaskSnapshot(...args),
   }),
   setApiInstance: vi.fn(),
 }));
@@ -420,6 +432,17 @@ const mockIssues: Issue[] = [
   },
 ];
 
+function mockIssueBuckets(issues: Issue[]) {
+  const by_status: Record<string, { issues: Issue[]; total: number }> = {};
+  for (const issue of issues) {
+    const bucket = by_status[issue.status] ?? { issues: [], total: 0 };
+    bucket.issues.push(issue);
+    bucket.total = bucket.issues.length;
+    by_status[issue.status] = bucket;
+  }
+  return { by_status };
+}
+
 function mockAssigneeGroups(issues: Issue[]) {
   const groups = new Map<string, { assignee_type: Issue["assignee_type"]; assignee_id: string | null; issues: Issue[] }>();
   for (const issue of issues) {
@@ -481,7 +504,11 @@ describe("IssuesPage (shared)", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockListIssues.mockResolvedValue({ issues: [], total: 0 });
+    mockListIssueBuckets.mockResolvedValue({ by_status: {} });
     mockListGroupedIssues.mockResolvedValue({ groups: [] });
+    mockGetAssigneeFrequency.mockResolvedValue([]);
+    mockGetChildIssueProgress.mockResolvedValue({ progress: [] });
+    mockGetAgentTaskSnapshot.mockResolvedValue([]);
     mockViewState.viewMode = "board";
     mockViewState.grouping = "status";
     mockViewState.statusFilters = [];
@@ -497,12 +524,7 @@ describe("IssuesPage (shared)", () => {
   });
 
   it("renders issue titles after data loads", async () => {
-    mockListIssues.mockImplementation((params: any) =>
-      Promise.resolve({
-        issues: mockIssues.filter((i) => i.status === params?.status),
-        total: mockIssues.filter((i) => i.status === params?.status).length,
-      }),
-    );
+    mockListIssueBuckets.mockResolvedValue(mockIssueBuckets(mockIssues));
 
     renderWithQuery(<IssuesPage />);
 
@@ -511,13 +533,17 @@ describe("IssuesPage (shared)", () => {
     expect(screen.getByText("Write tests")).toBeInTheDocument();
   });
 
+  it("does not load assignee frequency before an assignee picker opens", async () => {
+    mockListIssueBuckets.mockResolvedValue(mockIssueBuckets(mockIssues));
+
+    renderWithQuery(<IssuesPage />);
+
+    await screen.findByText("Implement auth");
+    expect(mockGetAssigneeFrequency).not.toHaveBeenCalled();
+  });
+
   it("renders board column headers", async () => {
-    mockListIssues.mockImplementation((params: any) =>
-      Promise.resolve({
-        issues: mockIssues.filter((i) => i.status === params?.status),
-        total: mockIssues.filter((i) => i.status === params?.status).length,
-      }),
-    );
+    mockListIssueBuckets.mockResolvedValue(mockIssueBuckets(mockIssues));
 
     renderWithQuery(<IssuesPage />);
 
@@ -556,16 +582,11 @@ describe("IssuesPage (shared)", () => {
         statuses: ["backlog", "todo", "in_progress", "in_review", "done", "blocked"],
       }),
     );
-    expect(mockListIssues).not.toHaveBeenCalled();
+    expect(mockListIssueBuckets).not.toHaveBeenCalled();
   });
 
   it("shows the issue section header without a workspace prefix", async () => {
-    mockListIssues.mockImplementation((params: any) =>
-      Promise.resolve({
-        issues: mockIssues.filter((i) => i.status === params?.status),
-        total: mockIssues.filter((i) => i.status === params?.status).length,
-      }),
-    );
+    mockListIssueBuckets.mockResolvedValue(mockIssueBuckets(mockIssues));
 
     renderWithQuery(<IssuesPage />);
 
@@ -576,7 +597,7 @@ describe("IssuesPage (shared)", () => {
   });
 
   it("shows empty state when there are no issues", async () => {
-    mockListIssues.mockResolvedValue({ issues: [], total: 0 });
+    mockListIssueBuckets.mockResolvedValue({ by_status: {} });
 
     renderWithQuery(<IssuesPage />);
 
@@ -595,12 +616,7 @@ describe("IssuesPage (shared)", () => {
   it("agents scope includes squad-assigned issues", async () => {
     mockScope = "agents";
     mockViewState.viewMode = "list";
-    mockListIssues.mockImplementation((params: any) =>
-      Promise.resolve({
-        issues: mockIssues.filter((i) => i.status === params?.status),
-        total: mockIssues.filter((i) => i.status === params?.status).length,
-      }),
-    );
+    mockListIssueBuckets.mockResolvedValue(mockIssueBuckets(mockIssues));
     renderWithQuery(<IssuesPage />);
 
     // Squad task and agent task should be visible
@@ -613,12 +629,7 @@ describe("IssuesPage (shared)", () => {
   it("members scope excludes squad-assigned issues", async () => {
     mockScope = "members";
     mockViewState.viewMode = "list";
-    mockListIssues.mockImplementation((params: any) =>
-      Promise.resolve({
-        issues: mockIssues.filter((i) => i.status === params?.status),
-        total: mockIssues.filter((i) => i.status === params?.status).length,
-      }),
-    );
+    mockListIssueBuckets.mockResolvedValue(mockIssueBuckets(mockIssues));
     renderWithQuery(<IssuesPage />);
 
     await screen.findByText("Implement auth");
