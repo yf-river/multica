@@ -66,7 +66,7 @@ test.describe("训练与评估工作台", () => {
     await page.getByRole("link", { name: "训练与评估" }).click();
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/runs$`), { timeout: 30000 });
     await waitForPageText(page, "训练与评估");
-    await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队运行看板", { timeout: 10000 });
+    await expect(page.getByTestId("training-demo-dashboard")).toContainText("训练运行看板", { timeout: 10000 });
     await page.getByRole("link", { name: "提示词库", exact: true }).last().click();
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/prompts$`), { timeout: 30000 });
 
@@ -518,7 +518,7 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("training-summary-待确认优化候选")).toContainText(/\d/);
     await page.getByRole("link", { name: "运行看板", exact: true }).last().click();
     const demoDashboard = page.getByTestId("training-demo-dashboard");
-    await expect(demoDashboard).toContainText("团队运行看板", { timeout: 10000 });
+    await expect(demoDashboard).toContainText("训练运行看板", { timeout: 10000 });
     await expect(demoDashboard).toContainText("训练评估闭环");
     await expect(demoDashboard).toContainText("SOP 与任务观测");
     await expect(demoDashboard.getByTestId("training-demo-metric-智能体运行数")).toContainText(/[1-9]/);
@@ -770,7 +770,7 @@ test.describe("训练与评估工作台", () => {
 
     await page.getByRole("link", { name: "训练与评估" }).click();
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/runs$`), { timeout: 30000 });
-    await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队运行看板", { timeout: 10000 });
+    await expect(page.getByTestId("training-demo-dashboard")).toContainText("训练运行看板", { timeout: 10000 });
     await page.getByRole("link", { name: "提示词库", exact: true }).last().click();
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/prompts$`), { timeout: 30000 });
     await page.getByRole("button", { name: "起草需求澄清模板" }).click();
@@ -1774,7 +1774,7 @@ test.describe("训练与评估工作台", () => {
     for (const legacyPath of ["evaluation", "eval"]) {
       await page.goto(`/${workspaceSlug}/${legacyPath}`, { waitUntil: "domcontentloaded" });
       await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/runs$`), { timeout: 30000 });
-      await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队运行看板", { timeout: 10000 });
+      await expect(page.getByTestId("training-demo-dashboard")).toContainText("训练运行看板", { timeout: 10000 });
     }
   });
 });

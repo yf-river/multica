@@ -30,7 +30,7 @@ const stamp = generatedAt.replace(/[:.]/g, "-");
 mkdirSync(artifactRoot, { recursive: true });
 
 const routes = [
-  { id: "runs", label: "运行看板", path: `/${workspaceSlug}/training/runs`, expect: "团队运行看板" },
+  { id: "runs", label: "运行看板", path: `/${workspaceSlug}/training/runs`, expect: "训练运行看板" },
   { id: "prompts", label: "提示词库", path: `/${workspaceSlug}/training/prompts`, expect: "提示词库" },
   { id: "prompt-playground", label: "提示词调试场", path: `/${workspaceSlug}/training/prompt-playground`, expect: "提示词调试场" },
   { id: "agent-playground", label: "智能体调试场", path: `/${workspaceSlug}/training/agent-playground`, expect: "智能体调试场" },

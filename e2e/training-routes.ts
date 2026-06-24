@@ -1,5 +1,5 @@
 export const TRAINING_ROUTES = [
-  { query: "运行看板", command: "打开运行看板", path: "runs", nav: "运行看板", text: "团队运行看板", showPromptEditor: false, showPromptPlayground: false, showAgentWorkbench: false },
+  { query: "运行看板", command: "打开运行看板", path: "runs", nav: "运行看板", text: "训练运行看板", showPromptEditor: false, showPromptPlayground: false, showAgentWorkbench: false },
   { query: "提示词库", command: "打开提示词库", path: "prompts", nav: "提示词库", text: "提示词库", showPromptEditor: true, showPromptPlayground: false, showAgentWorkbench: false },
   { query: "提示词调试", command: "打开提示词调试场", path: "prompt-playground", nav: "提示词调试场", text: "提示词调试场", showPromptEditor: false, showPromptPlayground: true, showAgentWorkbench: false },
   { query: "智能体调试", command: "打开智能体调试场", path: "agent-playground", nav: "智能体调试场", text: "智能体调试场", showPromptEditor: false, showPromptPlayground: false, showAgentWorkbench: true },

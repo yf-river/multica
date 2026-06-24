@@ -1319,9 +1319,9 @@ function DemoDashboardPanel({
     <section className="mx-auto flex max-w-7xl flex-col gap-4" data-testid="training-demo-dashboard">
       <div className="flex flex-col gap-2 border-b pb-3 md:flex-row md:items-end md:justify-between">
         <div>
-          <h2 className="text-base font-semibold">团队运行看板</h2>
+          <h2 className="text-base font-semibold">训练运行看板</h2>
           <p className="mt-1 text-xs text-muted-foreground">
-            汇总训练评估、真实智能体、SOP 观测和验收证据，当前观测范围：{activeRange.label}。
+            汇总训练评估、真实智能体、SOP 观测和验收证据；团队级 token、成本和任务耗时在左侧「用量」查看。当前观测范围：{activeRange.label}。
           </p>
         </div>
         <div className="flex flex-col gap-2 md:items-end">
