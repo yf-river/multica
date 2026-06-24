@@ -48,6 +48,7 @@ import type {
   RuntimeUsage,
   IssueUsageSummary,
   IssueTaskTraceResponse,
+  IssueExecutionTreeResponse,
   ListIssueSOPRunsResponse,
   CreateSOPRunRequest,
   CreateSOPStepEventRequest,
@@ -1284,6 +1285,10 @@ export class ApiClient {
 
   async listIssueTaskTraceEvents(issueId: string): Promise<IssueTaskTraceResponse> {
     return this.fetch(`/api/issues/${issueId}/trace`);
+  }
+
+  async getIssueExecutionTree(issueId: string): Promise<IssueExecutionTreeResponse> {
+    return this.fetch(`/api/issues/${issueId}/execution-tree`);
   }
 
   async listIssueSOPRuns(issueId: string): Promise<ListIssueSOPRunsResponse> {

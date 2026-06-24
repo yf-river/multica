@@ -5,8 +5,8 @@ import { useQuery } from "@tanstack/react-query";
 import { Ban, CheckCircle2, ChevronRight, Loader2, RotateCcw, Square, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
-import { issueKeys, issueTaskTraceOptions, issueSOPRunsOptions } from "@multica/core/issues/queries";
-import type { AgentTask, SquadSOPRun, TaskFailureReason, TaskTraceEvent } from "@multica/core/types";
+import { issueKeys, issueExecutionTreeOptions, issueTaskTraceOptions, issueSOPRunsOptions } from "@multica/core/issues/queries";
+import type { AgentTask, IssueExecutionNode, IssueExecutionTreeResponse, SquadSOPRun, TaskFailureReason, TaskTraceEvent } from "@multica/core/types";
 import { useTimeAgo } from "../../i18n";
 import {
   Tooltip,
@@ -77,6 +77,7 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
   const traceEvents = traceData?.events ?? [];
   const { data: sopData } = useQuery(issueSOPRunsOptions(issueId));
   const sopRuns = sopData?.items ?? [];
+  const { data: executionTree } = useQuery(issueExecutionTreeOptions(issueId));
 
   const activeTasks = useMemo(
     () =>
@@ -112,7 +113,9 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
     });
   }, [tasks]);
 
-  if (activeTasks.length === 0 && pastTasks.length === 0 && traceEvents.length === 0 && sopRuns.length === 0) return null;
+  const hasExecutionTree = hasMeaningfulExecutionTree(executionTree);
+
+  if (activeTasks.length === 0 && pastTasks.length === 0 && traceEvents.length === 0 && sopRuns.length === 0 && !hasExecutionTree) return null;
 
   return (
     <div data-testid="issue-execution-log-section">
@@ -142,9 +145,18 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
             <ActiveTaskRow key={task.id} task={task} issueId={issueId} />
           ))}
 
-          {sopRuns.length > 0 && (
+          {hasExecutionTree && executionTree && (
             <>
               {activeTasks.length > 0 && (
+                <div className="my-1.5 border-t border-border/60" />
+              )}
+              <CollaborationExecutionTree tree={executionTree} />
+            </>
+          )}
+
+          {sopRuns.length > 0 && (
+            <>
+              {(activeTasks.length > 0 || hasExecutionTree) && (
                 <div className="my-1.5 border-t border-border/60" />
               )}
               <SOPRunSummary runs={sopRuns} />
@@ -153,7 +165,7 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
 
           {pastTasks.length > 0 && (
             <>
-              {(activeTasks.length > 0 || sopRuns.length > 0) && (
+              {(activeTasks.length > 0 || hasExecutionTree || sopRuns.length > 0) && (
                 <div className="my-1.5 border-t border-border/60" />
               )}
               <button
@@ -181,12 +193,82 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
           )}
           {traceEvents.length > 0 && (
             <>
-              {(activeTasks.length > 0 || pastTasks.length > 0 || sopRuns.length > 0) && (
+              {(activeTasks.length > 0 || hasExecutionTree || pastTasks.length > 0 || sopRuns.length > 0) && (
                 <div className="my-1.5 border-t border-border/60" />
               )}
               <TraceEventSummary events={traceEvents} />
             </>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function hasMeaningfulExecutionTree(tree: IssueExecutionTreeResponse | undefined): boolean {
+  if (!tree?.root) return false;
+  const summary = tree.summary ?? {};
+  return (
+    Number(summary["任务数"] ?? 0) > 0 ||
+    Number(summary["子任务数"] ?? 0) > 0 ||
+    Number(summary["SOP执行数"] ?? 0) > 0 ||
+    Number(summary["观测事件数"] ?? 0) > 0 ||
+    Number(summary["唤醒评论数"] ?? 0) > 0
+  );
+}
+
+function CollaborationExecutionTree({ tree }: { tree: IssueExecutionTreeResponse }) {
+  const childPreview = tree.root.children.slice(0, 4);
+  const summary = tree.summary ?? {};
+  return (
+    <div className="rounded-md border border-border/70 bg-muted/25 px-2 py-1.5" data-testid="issue-collaboration-execution-tree">
+      <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+        <span>协作执行树</span>
+        <span className="font-mono tabular-nums">{Number(summary["子任务数"] ?? 0)} 个子任务</span>
+      </div>
+      <div className="mb-1.5 grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-2">
+        <span className="truncate">根任务 {tree.root.issue.identifier}</span>
+        <span className="truncate">任务 {Number(summary["任务数"] ?? 0)} / 完成 {Number(summary["完成任务数"] ?? 0)}</span>
+        <span className="truncate">SOP {Number(summary["SOP执行数"] ?? 0)} / 事件 {Number(summary["SOP事件数"] ?? 0)}</span>
+        <span className="truncate">观测 {Number(summary["观测事件数"] ?? 0)} / 唤醒 {Number(summary["唤醒评论数"] ?? 0)}</span>
+      </div>
+      <div className="space-y-1">
+        <ExecutionTreeNodeRow node={tree.root} root />
+        {childPreview.map((child) => (
+          <ExecutionTreeNodeRow key={child.issue.id} node={child} />
+        ))}
+        {tree.root.children.length > childPreview.length && (
+          <div className="pl-3 text-[11px] text-muted-foreground">
+            还有 {tree.root.children.length - childPreview.length} 个子任务未展开
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ExecutionTreeNodeRow({ node, root = false }: { node: IssueExecutionNode; root?: boolean }) {
+  const terminalTasks = node.tasks.filter((task) => ["completed", "failed", "cancelled"].includes(task.status)).length;
+  const latestWakeup = node.wakeup_comments.at(-1);
+  return (
+    <div className={`grid gap-0.5 border-l-2 ${root ? "border-info/70" : "border-emerald-500/70"} pl-2 text-xs`}>
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="min-w-0 flex-1 truncate text-foreground">
+          {root ? "父任务" : "子任务"} {node.issue.identifier} · {node.issue.title}
+        </span>
+        <span className="shrink-0 rounded border border-border/70 px-1.5 py-0.5 text-[11px] text-muted-foreground">
+          {node.issue.status}
+        </span>
+      </div>
+      <div className="grid gap-x-2 gap-y-0.5 text-[11px] leading-5 text-muted-foreground sm:grid-cols-2">
+        <span className="truncate">任务 {node.tasks.length} / 终态 {terminalTasks}</span>
+        <span className="truncate">SOP {node.sop_runs.length} / trace {node.trace_events.length}</span>
+        <span className="truncate">子任务 {node.children.length}</span>
+        <span className="truncate">唤醒评论 {node.wakeup_comments.length}</span>
+      </div>
+      {latestWakeup && (
+        <div className="truncate text-[11px] leading-5 text-muted-foreground">
+          最近唤醒：{latestWakeup.content}
         </div>
       )}
     </div>

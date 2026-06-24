@@ -86,6 +86,13 @@ test.describe("user-center 小队 SOP 页面证据", () => {
 
       const executionLog = page.getByTestId("issue-execution-log-section");
       await expect(executionLog).toContainText("小队 SOP 执行", { timeout: 15000 });
+      const executionTree = page.getByTestId("issue-collaboration-execution-tree");
+      await expect(executionTree).toContainText("协作执行树", { timeout: 15000 });
+      await expect(executionTree).toContainText("父任务");
+      await expect(executionTree).toContainText(parent.identifier);
+      await expect(executionTree).toContainText("子任务");
+      await expect(executionTree).toContainText(gatewayChild.identifier);
+      await expect(executionTree).toContainText("唤醒评论");
       await expect(page.getByTestId("issue-sop-run-summary")).toContainText("user-center-sop-flow");
       await expect(page.getByTestId("issue-trace-event-summary")).toContainText("观测事件");
       await expect(page.getByTestId("issue-trace-event-summary")).toContainText("任务事件树");

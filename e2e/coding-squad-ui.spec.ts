@@ -103,6 +103,11 @@ test.describe("Multica 编码小队页面证据", () => {
 
       const executionLog = page.getByTestId("issue-execution-log-section");
       await expect(executionLog).toContainText("小队 SOP 执行", { timeout: 15_000 });
+      const executionTree = page.getByTestId("issue-collaboration-execution-tree");
+      await expect(executionTree).toContainText("协作执行树", { timeout: 15_000 });
+      await expect(executionTree).toContainText(issue.identifier);
+      await expect(executionTree).toContainText("SOP");
+      await expect(executionTree).toContainText("观测");
       const sopSummary = page.getByTestId("issue-sop-run-summary");
       await expect(sopSummary).toContainText("multica-coding");
       await expect(sopSummary).toContainText("design_review");

@@ -93,6 +93,8 @@ export const issueKeys = {
   usage: (issueId: string) => [...issueKeys.usageAll(), issueId] as const,
   traceAll: () => ["issues", "trace"] as const,
   trace: (issueId: string) => [...issueKeys.traceAll(), issueId] as const,
+  executionTreeAll: () => ["issues", "execution-tree"] as const,
+  executionTree: (issueId: string) => [...issueKeys.executionTreeAll(), issueId] as const,
   sopRunsAll: () => ["issues", "sop-runs"] as const,
   sopRuns: (issueId: string) => [...issueKeys.sopRunsAll(), issueId] as const,
   attachmentsAll: () => ["issues", "attachments"] as const,
@@ -526,6 +528,13 @@ export function issueTaskTraceOptions(issueId: string) {
   return queryOptions({
     queryKey: issueKeys.trace(issueId),
     queryFn: () => api.listIssueTaskTraceEvents(issueId),
+  });
+}
+
+export function issueExecutionTreeOptions(issueId: string) {
+  return queryOptions({
+    queryKey: issueKeys.executionTree(issueId),
+    queryFn: () => api.getIssueExecutionTree(issueId),
   });
 }
 

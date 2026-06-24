@@ -1,4 +1,5 @@
 export type { Issue, IssueStatus, IssuePriority, IssueAssigneeType, IssueMetadata, IssueMetadataValue, IssueReaction } from "./issue";
+export type { IssueExecutionNode, IssueExecutionTreeResponse, IssueWakeupCommentBrief } from "./issue-execution";
 export type {
   Agent,
   AgentStatus,

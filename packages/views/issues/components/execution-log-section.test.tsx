@@ -11,6 +11,7 @@ const mockState = vi.hoisted(() => ({
   taskMessagesOptions: vi.fn(),
   listTasksByIssue: vi.fn(),
   listIssueTaskTraceEvents: vi.fn(),
+  getIssueExecutionTree: vi.fn(),
   cancelTask: vi.fn(),
 }));
 
@@ -18,6 +19,7 @@ vi.mock("@multica/core/api", () => ({
   api: {
     listTasksByIssue: mockState.listTasksByIssue,
     listIssueTaskTraceEvents: mockState.listIssueTaskTraceEvents,
+    getIssueExecutionTree: mockState.getIssueExecutionTree,
     cancelTask: mockState.cancelTask,
   },
 }));
@@ -68,6 +70,7 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-06-08T08:05:04Z"));
   mockState.listTasksByIssue.mockResolvedValue([]);
   mockState.listIssueTaskTraceEvents.mockResolvedValue({ events: [] });
+  mockState.getIssueExecutionTree.mockResolvedValue(undefined);
 });
 
 afterEach(() => {
@@ -162,5 +165,103 @@ describe("ExecutionLogSection trace", () => {
     expect(screen.getByText("模型用量")).toBeInTheDocument();
     expect(screen.getByText("模型用量已上报")).toBeInTheDocument();
     expect(screen.getAllByText(/150 tokens/).length).toBeGreaterThan(0);
+  });
+
+  it("renders the collaboration execution tree across parent and child issues", async () => {
+    vi.useRealTimers();
+    mockState.getIssueExecutionTree.mockResolvedValue({
+      summary: {
+        任务数: 2,
+        子任务数: 1,
+        SOP执行数: 1,
+        SOP事件数: 2,
+        观测事件数: 3,
+        唤醒评论数: 1,
+        完成任务数: 1,
+        失败任务数: 0,
+        取消任务数: 0,
+      },
+      root: {
+        issue: {
+          id: "issue-parent",
+          workspace_id: "workspace-1",
+          number: 1,
+          identifier: "GTD-1",
+          title: "user-center 父任务",
+          description: null,
+          status: "in_progress",
+          priority: "medium",
+          assignee_type: "squad",
+          assignee_id: "squad-1",
+          creator_type: "member",
+          creator_id: "user-1",
+          parent_issue_id: null,
+          project_id: "project-usercenter",
+          position: 1,
+          start_date: null,
+          due_date: null,
+          created_at: "2026-06-08T08:00:00Z",
+          updated_at: "2026-06-08T08:00:00Z",
+          metadata: {},
+        },
+        tasks: [makeTask({ id: "task-parent", status: "completed", issue_id: "issue-parent" })],
+        sop_runs: [{ id: "run-1", events: [{ id: "event-1" }, { id: "event-2" }] }],
+        trace_events: [{ id: "trace-1" }, { id: "trace-2" }],
+        wakeup_comments: [
+          {
+            id: "comment-1",
+            issue_id: "issue-parent",
+            author_type: "system",
+            type: "system",
+            content: "子任务 [GTD-2]「gateway 子任务」已完成。",
+            parent_id: null,
+            created_at: "2026-06-08T08:03:00Z",
+          },
+        ],
+        children: [
+          {
+            issue: {
+              id: "issue-child",
+              workspace_id: "workspace-1",
+              number: 2,
+              identifier: "GTD-2",
+              title: "gateway 子任务",
+              description: null,
+              status: "done",
+              priority: "medium",
+              assignee_type: null,
+              assignee_id: null,
+              creator_type: "member",
+              creator_id: "user-1",
+              parent_issue_id: "issue-parent",
+              project_id: "project-gateway",
+              position: 2,
+              start_date: null,
+              due_date: null,
+              created_at: "2026-06-08T08:01:00Z",
+              updated_at: "2026-06-08T08:02:00Z",
+              metadata: {},
+            },
+            tasks: [makeTask({ id: "task-child", status: "queued", issue_id: "issue-child" })],
+            sop_runs: [],
+            trace_events: [{ id: "trace-child" }],
+            wakeup_comments: [],
+            children: [],
+          },
+        ],
+      },
+    });
+
+    renderWithQuery(<ExecutionLogSection issueId="issue-parent" />);
+
+    expect(await screen.findByText("协作执行树")).toBeInTheDocument();
+    expect(screen.getByText("1 个子任务")).toBeInTheDocument();
+    expect(screen.getByText("根任务 GTD-1")).toBeInTheDocument();
+    expect(screen.getByText("任务 2 / 完成 1")).toBeInTheDocument();
+    expect(screen.getByText("SOP 1 / 事件 2")).toBeInTheDocument();
+    expect(screen.getByText("观测 3 / 唤醒 1")).toBeInTheDocument();
+    expect(screen.getByText(/父任务 GTD-1/)).toBeInTheDocument();
+    expect(screen.getByText(/子任务 GTD-2/)).toBeInTheDocument();
+    expect(screen.getByText(/最近唤醒：子任务 \[GTD-2\]/)).toBeInTheDocument();
   });
 });
