@@ -237,6 +237,9 @@ test.describe("生产部署验收", () => {
     await page.getByRole("link", { name: "提示词调试场", exact: true }).last().click();
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/prompt-playground$`));
     await expectTrainingRouteShell(page, TRAINING_ROUTES[2]!);
+    await expect(page.getByTestId("playground-page-subtitle")).toContainText("本地模板渲染");
+    await expect(page.getByTestId("playground-page-subtitle")).toContainText("不创建智能体任务");
+    await expect(page.getByTestId("playground-page-count")).toContainText("提示词");
     await expect(page.getByTestId("prompt-playground-workbench")).toBeVisible({ timeout: 15000 });
     await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("本地模板实验室");
     await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("不创建任务");
@@ -262,6 +265,9 @@ test.describe("生产部署验收", () => {
     await page.getByRole("link", { name: "智能体调试场", exact: true }).last().click();
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/agent-playground$`));
     await expectTrainingRouteShell(page, TRAINING_ROUTES[3]!);
+    await expect(page.getByTestId("playground-page-subtitle")).toContainText("创建真实任务");
+    await expect(page.getByTestId("playground-page-subtitle")).toContainText("链路追踪");
+    await expect(page.getByTestId("playground-page-count")).toContainText("执行目标");
     await expect(page.getByTestId("agent-playground-run-console")).toContainText("真实任务发射台", { timeout: 15000 });
     await expect(page.getByTestId("agent-playground-launch-brief")).toContainText("写入真实任务队列");
     await expect(page.getByTestId("agent-playground-execution-stage")).toBeVisible();

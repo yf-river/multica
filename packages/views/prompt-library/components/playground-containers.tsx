@@ -98,7 +98,9 @@ export function PromptPlaygroundContainer() {
       testId="prompt-playground-page-shell"
       icon="prompt"
       title="提示词调试场"
+      subtitle="本地模板渲染、变量检查和调试记录，不创建智能体任务。"
       count={items.length}
+      countLabel="提示词"
       contract="本地渲染 · 不启动智能体"
       contractVariant="outline"
     >
@@ -210,7 +212,9 @@ export function AgentPlaygroundContainer() {
       testId="agent-playground-page-shell"
       icon="agent"
       title="智能体调试场"
+      subtitle="选择执行智能体和运行时，创建真实任务并回写链路追踪、消息、用量和耗时。"
       count={items.length}
+      countLabel="执行目标"
       contract="真实任务 · 写回观测证据"
       contractVariant="secondary"
     >
@@ -261,7 +265,9 @@ function PlaygroundPageShell({
   testId,
   icon,
   title,
+  subtitle,
   count,
+  countLabel,
   contract,
   contractVariant,
   children,
@@ -269,7 +275,9 @@ function PlaygroundPageShell({
   testId: string;
   icon: "prompt" | "agent";
   title: string;
+  subtitle: string;
   count: number;
+  countLabel: string;
   contract: string;
   contractVariant: "outline" | "secondary";
   children: ReactNode;
@@ -278,13 +286,27 @@ function PlaygroundPageShell({
   return (
     <div className="flex h-full min-h-0 flex-col bg-background" data-testid={testId}>
       <PageHeader>
-        <div className="flex min-w-0 flex-1 items-center gap-2">
-          <Icon className="size-4 shrink-0 text-muted-foreground" />
-          <h1 className="truncate text-sm font-semibold">{title}</h1>
-          <span className="text-xs text-muted-foreground">{count}</span>
-          <Badge variant={contractVariant} data-testid="playground-page-contract" className="hidden shrink-0 text-[11px] sm:inline-flex">
-            {contract}
-          </Badge>
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <div className={`flex size-8 shrink-0 items-center justify-center rounded-md border ${
+            icon === "agent" ? "bg-emerald-500/10 text-emerald-700" : "bg-sky-500/10 text-sky-700"
+          }`}>
+            <Icon className="size-4" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="flex min-w-0 items-center gap-2">
+              <h1 className="truncate text-sm font-semibold">{title}</h1>
+              <Badge variant={contractVariant} data-testid="playground-page-contract" className="hidden shrink-0 text-[11px] sm:inline-flex">
+                {contract}
+              </Badge>
+            </div>
+            <div className="mt-0.5 truncate text-xs text-muted-foreground" data-testid="playground-page-subtitle">
+              {subtitle}
+            </div>
+          </div>
+          <div className="hidden shrink-0 rounded-md border bg-muted/30 px-2.5 py-1 text-right sm:block" data-testid="playground-page-count">
+            <div className="font-mono text-sm font-semibold leading-4">{count}</div>
+            <div className="text-[10px] leading-4 text-muted-foreground">{countLabel}</div>
+          </div>
         </div>
       </PageHeader>
       {children}
