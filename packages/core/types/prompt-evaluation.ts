@@ -488,6 +488,7 @@ export interface ListPromptEvaluationExperimentDimensionsParams {
 
 export interface PromptEvaluationSummaryParams {
   since?: string | null;
+  include_acceptance_fixtures?: boolean;
 }
 
 export interface CreatePromptEvaluationCaseRequest {

@@ -1995,6 +1995,9 @@ export class ApiClient {
   async getPromptEvaluationSummary(params?: PromptEvaluationSummaryParams): Promise<PromptEvaluationSummary> {
     const search = new URLSearchParams();
     if (params?.since) search.set("since", params.since);
+    if (typeof params?.include_acceptance_fixtures === "boolean") {
+      search.set("include_acceptance_fixtures", String(params.include_acceptance_fixtures));
+    }
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-summary${query ? `?${query}` : ""}`);
     return parseWithFallback(raw, PromptEvaluationSummarySchema, EMPTY_PROMPT_EVALUATION_SUMMARY, {

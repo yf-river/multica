@@ -285,8 +285,11 @@ export function PromptLibraryPage({
     enabled: !!workspaceId && needsCandidates,
   });
   const summaryQuery = useQuery({
-    queryKey: [...promptLibraryKeys.summary(workspaceId ?? ""), demoSince ?? "all"] as const,
-    queryFn: () => api.getPromptEvaluationSummary(demoSince ? { since: demoSince } : undefined),
+    queryKey: [...promptLibraryKeys.summary(workspaceId ?? ""), demoSince ?? "all", showAcceptanceFixtures ? "with-acceptance" : "business"] as const,
+    queryFn: () => api.getPromptEvaluationSummary({
+      ...(demoSince ? { since: demoSince } : {}),
+      include_acceptance_fixtures: showAcceptanceFixtures,
+    }),
     enabled: !!workspaceId,
   });
   const runtimeReadinessQuery = useQuery({
@@ -328,6 +331,20 @@ export function PromptLibraryPage({
     [acceptanceFixtureItems, items, showAcceptanceFixtures],
   );
   const selectedFromList = selectedId ? visiblePromptItems.find((item) => item.id === selectedId) ?? null : null;
+  const visibleCandidatesForDashboard = useMemo(
+    () =>
+      showAcceptanceFixtures
+        ? candidates
+        : candidates.filter((candidate) =>
+            !isAcceptanceFixtureRecord(candidate as unknown as Record<string, unknown>, [
+              "candidate_name",
+              "candidate_content",
+              "rationale",
+              "metrics",
+            ]),
+          ),
+    [candidates, showAcceptanceFixtures],
+  );
   const selected = selectedFromList ?? (isDraftingNew ? null : visiblePromptItems[0] ?? null);
   const versionQuery = useQuery({
     queryKey: promptLibraryKeys.versions(workspaceId ?? "", selectedFromList?.id ?? null),
@@ -845,9 +862,22 @@ export function PromptLibraryPage({
             </Button>
           </div>
         )}
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          onClick={() => setShowAcceptanceFixtures((value) => !value)}
+        >
+          {showAcceptanceFixtures ? "隐藏验收数据" : "显示验收数据"}
+        </Button>
       </PageHeader>
 
-      <TrainingSummaryStrip summary={summary} loading={summaryQuery.isLoading} onOpenManualReviewQueue={openManualReviewQueue} />
+      <TrainingSummaryStrip
+        summary={summary}
+        loading={summaryQuery.isLoading}
+        includesAcceptanceFixtures={showAcceptanceFixtures}
+        onOpenManualReviewQueue={openManualReviewQueue}
+      />
 
       {activeTab === "运行看板" ? (
         <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
@@ -865,7 +895,8 @@ export function PromptLibraryPage({
             runs={runs}
             assets={assets}
             cases={cases}
-            candidates={candidates}
+            candidates={visibleCandidatesForDashboard}
+            includesAcceptanceFixtures={showAcceptanceFixtures}
             onOpenManualReviewQueue={openManualReviewQueue}
           />
         </main>
@@ -1210,6 +1241,7 @@ function DemoDashboardPanel({
   assets,
   cases,
   candidates,
+  includesAcceptanceFixtures,
   onOpenManualReviewQueue,
 }: {
   trainingSummary: PromptEvaluationSummary | null;
@@ -1226,6 +1258,7 @@ function DemoDashboardPanel({
   assets: PromptEvaluationAsset[];
   cases: PromptEvaluationStructuredCase[];
   candidates: PromptEvaluationOptimizationCandidate[];
+  includesAcceptanceFixtures: boolean;
   onOpenManualReviewQueue: () => void;
 }) {
   const trainingMetrics = trainingSummary?.指标 ?? {};
@@ -1301,6 +1334,7 @@ function DemoDashboardPanel({
           </div>
           <div className="flex flex-wrap gap-2 text-xs">
             <Badge variant={runtimeReadiness.status === "就绪" ? "secondary" : "outline"}>真实智能体：{readinessLabel}</Badge>
+            <Badge variant="outline">训练摘要：{includesAcceptanceFixtures ? "含验收数据" : "业务口径"}</Badge>
             <Badge variant={maybeTruncated ? "outline" : "secondary"}>观测完整性：{completenessStatus}</Badge>
             <Badge variant={hasOptimizationLoop ? "secondary" : "outline"}>优化闭环：{hasOptimizationLoop ? "已有证据" : "待补齐"}</Badge>
             <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={onExportEvidence} disabled={exportingEvidence}>
@@ -1500,10 +1534,12 @@ function PromptVersionHistory({
 function TrainingSummaryStrip({
   summary,
   loading,
+  includesAcceptanceFixtures,
   onOpenManualReviewQueue,
 }: {
   summary: PromptEvaluationSummary | null;
   loading: boolean;
+  includesAcceptanceFixtures: boolean;
   onOpenManualReviewQueue: () => void;
 }) {
   const metrics = summary?.指标 ?? {};
@@ -1538,7 +1574,7 @@ function TrainingSummaryStrip({
           </p>
         </div>
         <Badge variant="outline" className="shrink-0">
-          {loading ? "刷新中" : "训练评估"}
+          {loading ? "刷新中" : includesAcceptanceFixtures ? "含验收数据" : "业务口径"}
         </Badge>
       </div>
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">

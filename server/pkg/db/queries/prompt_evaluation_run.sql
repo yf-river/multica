@@ -70,7 +70,20 @@ ORDER BY created_at DESC
 LIMIT $2;
 
 -- name: GetPromptEvaluationSummary :one
-WITH asset_summary AS (
+WITH filtered_assets AS (
+    SELECT pea.*
+    FROM prompt_evaluation_asset pea
+    WHERE pea.workspace_id = $1
+      AND (
+        sqlc.arg('include_acceptance_fixtures')::boolean
+        OR pea.name IN ('user-center 小队', '用户中心小队', 'Multica 编码小队', 'Multica 训练评估智能体', '用户中心需求澄清提示词')
+        OR NOT (
+            concat_ws(' ', pea.name, pea.description, pea.payload::text)
+            ~* '(curl|e2e|goal-test|smoke[ -]?test|端到端验收|真实端到端|真实.*agent|真实.*智能体|训练闭环|生产部署验收|生产验收|页面验收|验收创建|验收小队|验收智能体|验收\s*agent|codex\s*验收)'
+        )
+      )
+),
+asset_summary AS (
     SELECT
         COUNT(*)::bigint AS total_assets,
         COUNT(*) FILTER (WHERE status = '启用')::bigint AS active_assets,
@@ -87,56 +100,67 @@ WITH asset_summary AS (
         COALESCE(SUM(dataset_row_count), 0)::bigint AS dataset_rows,
         COALESCE(SUM(test_suite_case_count), 0)::bigint AS test_suite_cases,
         COALESCE(SUM(experiment_dimension_count), 0)::bigint AS experiment_dimensions
-    FROM prompt_evaluation_asset pea
-    WHERE pea.workspace_id = $1
+    FROM filtered_assets pea
 ),
 case_summary AS (
     SELECT
         COUNT(*)::bigint AS total_cases,
-        COUNT(*) FILTER (WHERE status = '启用')::bigint AS active_cases
+        COUNT(*) FILTER (WHERE pec.status = '启用')::bigint AS active_cases
     FROM prompt_evaluation_case pec
+    JOIN filtered_assets pea ON pea.id = pec.asset_id
     WHERE pec.workspace_id = $1
 ),
 run_summary AS (
     SELECT
         COUNT(*)::bigint AS total_runs,
-        COUNT(*) FILTER (WHERE run_kind = '本地渲染')::bigint AS local_runs,
-        COUNT(*) FILTER (WHERE run_kind = 'Agent执行')::bigint AS agent_runs,
-        COUNT(*) FILTER (WHERE status = '已入队')::bigint AS queued_runs,
-        COUNT(*) FILTER (WHERE status = '运行中')::bigint AS running_runs,
-        COUNT(*) FILTER (WHERE status = '通过')::bigint AS passed_runs,
-        COUNT(*) FILTER (WHERE status = '未通过')::bigint AS not_passed_runs,
-        COUNT(*) FILTER (WHERE status = '失败')::bigint AS failed_runs,
-        COUNT(*) FILTER (WHERE status = '已取消')::bigint AS cancelled_runs,
-        COUNT(*) FILTER (WHERE status = '需人工复核')::bigint AS review_runs,
-        COALESCE(SUM(total_cases), 0)::bigint AS evaluated_cases,
-        COALESCE(SUM(passed_cases), 0)::bigint AS passed_cases,
-        COALESCE(SUM(failed_cases), 0)::bigint AS failed_cases,
-        COALESCE(SUM(total_duration_ms), 0)::bigint AS total_duration_ms,
-        COALESCE(AVG(NULLIF(average_duration_ms, 0)), 0)::double precision AS average_duration_ms,
-        COALESCE(SUM(input_tokens), 0)::bigint AS input_tokens,
-        COALESCE(SUM(output_tokens), 0)::bigint AS output_tokens,
-        COALESCE(SUM(estimated_cost), 0)::double precision AS estimated_cost,
-        MAX(created_at)::timestamptz AS last_run_at
+        COUNT(*) FILTER (WHERE per.run_kind = '本地渲染')::bigint AS local_runs,
+        COUNT(*) FILTER (WHERE per.run_kind = 'Agent执行')::bigint AS agent_runs,
+        COUNT(*) FILTER (WHERE per.status = '已入队')::bigint AS queued_runs,
+        COUNT(*) FILTER (WHERE per.status = '运行中')::bigint AS running_runs,
+        COUNT(*) FILTER (WHERE per.status = '通过')::bigint AS passed_runs,
+        COUNT(*) FILTER (WHERE per.status = '未通过')::bigint AS not_passed_runs,
+        COUNT(*) FILTER (WHERE per.status = '失败')::bigint AS failed_runs,
+        COUNT(*) FILTER (WHERE per.status = '已取消')::bigint AS cancelled_runs,
+        COUNT(*) FILTER (WHERE per.status = '需人工复核')::bigint AS review_runs,
+        COALESCE(SUM(per.total_cases), 0)::bigint AS evaluated_cases,
+        COALESCE(SUM(per.passed_cases), 0)::bigint AS passed_cases,
+        COALESCE(SUM(per.failed_cases), 0)::bigint AS failed_cases,
+        COALESCE(SUM(per.total_duration_ms), 0)::bigint AS total_duration_ms,
+        COALESCE(AVG(NULLIF(per.average_duration_ms, 0)), 0)::double precision AS average_duration_ms,
+        COALESCE(SUM(per.input_tokens), 0)::bigint AS input_tokens,
+        COALESCE(SUM(per.output_tokens), 0)::bigint AS output_tokens,
+        COALESCE(SUM(per.estimated_cost), 0)::double precision AS estimated_cost,
+        MAX(per.created_at)::timestamptz AS last_run_at
     FROM prompt_evaluation_run per
+    JOIN filtered_assets pea ON pea.id = per.asset_id
     WHERE per.workspace_id = $1
       AND (sqlc.narg('since')::timestamptz IS NULL OR per.created_at >= sqlc.narg('since'))
 ),
 candidate_summary AS (
     SELECT
         COUNT(*)::bigint AS total_candidates,
-        COUNT(*) FILTER (WHERE status = '待确认')::bigint AS pending_candidates,
-        COUNT(*) FILTER (WHERE status = '已发布')::bigint AS published_candidates,
-        COUNT(*) FILTER (WHERE status = '已拒绝')::bigint AS rejected_candidates
+        COUNT(*) FILTER (WHERE peoc.status = '待确认')::bigint AS pending_candidates,
+        COUNT(*) FILTER (WHERE peoc.status = '已发布')::bigint AS published_candidates,
+        COUNT(*) FILTER (WHERE peoc.status = '已拒绝')::bigint AS rejected_candidates
     FROM prompt_evaluation_optimization_candidate peoc
+    JOIN filtered_assets pea ON pea.id = peoc.asset_id
     WHERE peoc.workspace_id = $1
       AND (sqlc.narg('since')::timestamptz IS NULL OR peoc.created_at >= sqlc.narg('since'))
+      AND (
+        sqlc.arg('include_acceptance_fixtures')::boolean
+        OR NOT (
+            concat_ws(' ', peoc.candidate_name, peoc.candidate_content, peoc.rationale, peoc.metrics::text)
+            ~* '(curl|e2e|goal-test|smoke[ -]?test|端到端验收|真实端到端|真实.*agent|真实.*智能体|训练闭环|生产部署验收|生产验收|页面验收|验收创建|验收小队|验收智能体|验收\s*agent|codex\s*验收)'
+        )
+      )
 ),
 snapshot_summary AS (
     SELECT
         COUNT(*)::bigint AS evidence_snapshots,
-        COUNT(*) FILTER (WHERE snapshot_type = '验收归档')::bigint AS acceptance_snapshots
+        COUNT(*) FILTER (WHERE pees.snapshot_type = '验收归档')::bigint AS acceptance_snapshots
     FROM prompt_evaluation_evidence_snapshot pees
+    JOIN prompt_evaluation_run per ON per.id = pees.run_id
+    JOIN filtered_assets pea ON pea.id = per.asset_id
     WHERE pees.workspace_id = $1
       AND (sqlc.narg('since')::timestamptz IS NULL OR pees.created_at >= sqlc.narg('since'))
 )

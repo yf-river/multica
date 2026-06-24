@@ -2488,9 +2488,19 @@ func (h *Handler) GetPromptEvaluationSummary(w http.ResponseWriter, r *http.Requ
 		}
 		since = pgtype.Timestamptz{Time: parsed, Valid: true}
 	}
+	includeAcceptanceFixtures := true
+	if raw := r.URL.Query().Get("include_acceptance_fixtures"); raw != "" {
+		parsed, err := strconv.ParseBool(raw)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "include_acceptance_fixtures must be boolean")
+			return
+		}
+		includeAcceptanceFixtures = parsed
+	}
 	row, err := h.Queries.GetPromptEvaluationSummary(r.Context(), db.GetPromptEvaluationSummaryParams{
-		WorkspaceID: workspaceUUID,
-		Since:       since,
+		WorkspaceID:               workspaceUUID,
+		IncludeAcceptanceFixtures: includeAcceptanceFixtures,
+		Since:                     since,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation summary")

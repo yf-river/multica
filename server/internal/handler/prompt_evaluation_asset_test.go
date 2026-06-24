@@ -540,6 +540,65 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 	}
 }
 
+func TestGetPromptEvaluationSummaryCanExcludeAcceptanceFixtures(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
+	})
+
+	var businessAssetID, acceptanceAssetID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO prompt_evaluation_asset (workspace_id, name, description, asset_type, payload, status)
+		VALUES ($1, '业务需求评估套件', '日常 usercenter 需求拆解评估', '测试套件', '{"cases":[{"名称":"业务用例"}]}'::jsonb, '启用')
+		RETURNING id::text
+	`, testWorkspaceID).Scan(&businessAssetID); err != nil {
+		t.Fatalf("create business asset: %v", err)
+	}
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO prompt_evaluation_asset (workspace_id, name, description, asset_type, payload, status)
+		VALUES ($1, 'goal-test curl 端到端验收套件', '只用于页面验收和 e2e 证据', '测试套件', '{"cases":[{"名称":"验收用例"}]}'::jsonb, '启用')
+		RETURNING id::text
+	`, testWorkspaceID).Scan(&acceptanceAssetID); err != nil {
+		t.Fatalf("create acceptance asset: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		INSERT INTO prompt_evaluation_run (workspace_id, asset_id, run_kind, status, total_cases, passed_cases, input_tokens, output_tokens, estimated_cost)
+		VALUES
+			($1, $2, '本地渲染', '通过', 1, 1, 11, 7, 0.01),
+			($1, $3, '本地渲染', '通过', 1, 1, 100, 70, 0.10)
+	`, testWorkspaceID, businessAssetID, acceptanceAssetID); err != nil {
+		t.Fatalf("create evaluation runs: %v", err)
+	}
+
+	allW := httptest.NewRecorder()
+	testHandler.GetPromptEvaluationSummary(allW, newRequest(http.MethodGet, "/api/prompt-evaluation-summary", nil))
+	if allW.Code != http.StatusOK {
+		t.Fatalf("all summary status = %d, body = %s", allW.Code, allW.Body.String())
+	}
+	var allSummary PromptEvaluationSummaryResponse
+	if err := json.Unmarshal(allW.Body.Bytes(), &allSummary); err != nil {
+		t.Fatalf("decode all summary: %v", err)
+	}
+	if allSummary.Assets["资产总数"] != 2 || allSummary.RunStatus["运行总数"] != 2 || allSummary.Metrics["输入token"].(float64) != 111 {
+		t.Fatalf("all summary should include acceptance fixtures, assets=%#v status=%#v metrics=%#v", allSummary.Assets, allSummary.RunStatus, allSummary.Metrics)
+	}
+
+	businessW := httptest.NewRecorder()
+	testHandler.GetPromptEvaluationSummary(businessW, newRequest(http.MethodGet, "/api/prompt-evaluation-summary?include_acceptance_fixtures=false", nil))
+	if businessW.Code != http.StatusOK {
+		t.Fatalf("business summary status = %d, body = %s", businessW.Code, businessW.Body.String())
+	}
+	var businessSummary PromptEvaluationSummaryResponse
+	if err := json.Unmarshal(businessW.Body.Bytes(), &businessSummary); err != nil {
+		t.Fatalf("decode business summary: %v", err)
+	}
+	if businessSummary.Assets["资产总数"] != 1 || businessSummary.RunStatus["运行总数"] != 1 || businessSummary.Metrics["输入token"].(float64) != 11 {
+		t.Fatalf("business summary should exclude acceptance fixtures, assets=%#v status=%#v metrics=%#v", businessSummary.Assets, businessSummary.RunStatus, businessSummary.Metrics)
+	}
+}
+
 func TestRunPromptEvaluationAssetReadsDatasetPayload(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")
