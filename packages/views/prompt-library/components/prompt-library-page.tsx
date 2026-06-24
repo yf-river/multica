@@ -686,6 +686,8 @@ export function PromptLibraryPage({
               task_usage: [],
               task_messages: [],
               trace_events: [],
+              execution_spans: [],
+              execution_summary: {},
               evidence: {},
               错误: error instanceof Error ? error.message : "未知错误",
             };
@@ -701,6 +703,7 @@ export function PromptLibraryPage({
           acc.task_usage条数 += evidence.task_usage.length;
           acc.task_message条数 += evidence.task_messages.length;
           acc.trace_event条数 += evidence.trace_events.length;
+          acc.execution_span条数 += evidence.execution_spans.length;
           return acc;
         },
         {
@@ -711,6 +714,7 @@ export function PromptLibraryPage({
           task_usage条数: 0,
           task_message条数: 0,
           trace_event条数: 0,
+          execution_span条数: 0,
         },
       );
       const payload = {
@@ -2748,6 +2752,7 @@ function RunEvidencePanel({
       </div>
 
       <EvidenceContextPanel context={evidence.上下文} />
+      <ExecutionSpanTreePanel evidence={evidence} />
       <TraceEventTreePanel evidence={evidence} />
 
       <div className="grid gap-2">
@@ -2911,6 +2916,72 @@ function EvidenceList({ title, empty, items }: { title: string; empty: string; i
       )}
     </div>
   );
+}
+
+function ExecutionSpanTreePanel({ evidence }: { evidence: PromptEvaluationRunEvidence }) {
+  const spans = evidence.execution_spans ?? [];
+  const summary = evidence.execution_summary ?? {};
+  const tokenMarked = Number(summary["token标记合计"] ?? 0);
+  return (
+    <section className="grid gap-2 rounded-md border bg-background p-2 text-xs" data-testid="run-evidence-execution-spans">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="font-medium text-muted-foreground">执行观测树</div>
+          <div className="mt-1 break-all text-[11px] leading-5 text-muted-foreground">
+            根任务 {String(summary["根任务"] ?? evidence.run.task_id ?? evidence.run.id)} · {evidence.run.status} · {evidence.run.trigger_source || "未记录触发来源"}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <Badge variant="outline">span {spans.length}</Badge>
+          <Badge variant="outline">生命周期 {String(summary["生命周期span数"] ?? 0)}</Badge>
+          <Badge variant="outline">工具 {String(summary["工具span数"] ?? 0)}</Badge>
+          <Badge variant="outline">消息 {String(summary["消息span数"] ?? 0)}</Badge>
+          <Badge variant={Number(summary["用量span数"] ?? 0) > 0 ? "secondary" : "outline"}>用量 {String(summary["用量span数"] ?? 0)}</Badge>
+          <Badge variant={summary["是否缺失用量"] ? "destructive" : "outline"}>{summary["是否缺失用量"] ? "缺失用量" : "用量正常"}</Badge>
+          <Badge variant={tokenMarked > 0 ? "secondary" : "outline"}>token标记 {tokenMarked}</Badge>
+        </div>
+      </div>
+      {spans.length === 0 ? (
+        <div className="rounded-md border border-dashed px-3 py-3 text-muted-foreground">暂无执行 span；真实任务开始后会从 trace、消息和用量证据中生成观测树。</div>
+      ) : (
+        <div className="grid gap-1.5">
+          {spans.map((span) => (
+            <ExecutionSpanNode key={span.id} span={span} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function ExecutionSpanNode({ span }: { span: PromptEvaluationRunEvidence["execution_spans"][number] }) {
+  const tone = executionSpanTone(span.span_kind, span.status);
+  return (
+    <div className={`grid gap-1 rounded-md border border-l-4 ${tone} bg-muted/15 px-3 py-2`} data-testid={`run-evidence-execution-span-${span.seq}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-mono text-[11px] text-muted-foreground">#{span.seq}</span>
+        <span className="font-medium text-foreground">{span.span_name || span.span_kind}</span>
+        <Badge variant={span.span_kind.includes("缺失") || span.status === "失败" ? "destructive" : span.span_kind.includes("用量") ? "secondary" : "outline"}>{span.span_kind}</Badge>
+        <span className="text-muted-foreground">{span.status || "未记录"}</span>
+      </div>
+      <div className="grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
+        <div className="truncate">时间 {span.created_at || "未记录"}</div>
+        <div className="truncate">耗时 {span.duration_ms ? `${span.duration_ms}ms` : "未记录"}</div>
+        <div className="truncate">模型 {span.provider || "未记录"}/{span.model || "未记录"}</div>
+        <div className="truncate">token {span.token_total}</div>
+      </div>
+      {span.tool && <div className="break-words text-[11px] leading-5 text-muted-foreground">工具：{span.tool}</div>}
+      {span.summary && <div className="break-words text-[11px] leading-5 text-muted-foreground">摘要：{span.summary}</div>}
+    </div>
+  );
+}
+
+function executionSpanTone(spanKind: string, status: string): string {
+  if (spanKind.includes("缺失") || status === "失败") return "border-l-destructive/70";
+  if (spanKind.includes("用量")) return "border-l-sky-500/70";
+  if (spanKind.includes("工具")) return "border-l-amber-500/70";
+  if (spanKind.includes("消息")) return "border-l-violet-500/70";
+  return "border-l-emerald-500/70";
 }
 
 function TraceEventTreePanel({ evidence }: { evidence: PromptEvaluationRunEvidence }) {

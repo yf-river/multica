@@ -198,12 +198,32 @@ export interface PromptEvaluationTaskUsage {
   updated_at: string;
 }
 
+export interface PromptEvaluationExecutionSpan {
+  id: string;
+  parent_id?: string;
+  span_kind: string;
+  span_name: string;
+  status: string;
+  seq: number;
+  task_id?: string;
+  tool?: string;
+  provider?: string;
+  model?: string;
+  token_total: number;
+  duration_ms: number;
+  summary: string;
+  details?: Record<string, unknown>;
+  created_at?: string;
+}
+
 export interface PromptEvaluationRunEvidence {
   run: PromptEvaluationRun;
   trials: PromptEvaluationTrial[];
   task_usage: PromptEvaluationTaskUsage[];
   task_messages: TaskMessagePayload[];
   trace_events: TaskTraceEvent[];
+  execution_spans: PromptEvaluationExecutionSpan[];
+  execution_summary: Record<string, unknown>;
   evidence: Record<string, unknown>;
   上下文: Record<string, unknown>;
 }

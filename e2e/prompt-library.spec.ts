@@ -552,8 +552,11 @@ test.describe("训练与评估工作台", () => {
     expect(exportedRunEvidence.task_usage[0].input_tokens).toBeGreaterThan(0);
     expect(exportedRunEvidence.task_usage[0].model).toEqual(expect.any(String));
     expect(exportedRunEvidence.trace_events.length).toBeGreaterThan(0);
+    expect(exportedRunEvidence.execution_spans.length).toBeGreaterThan(0);
+    expect(exportedRunEvidence.execution_summary["span总数"]).toBeGreaterThan(0);
     expect(exportedEvidence["证据统计"]["task_usage条数"]).toBeGreaterThan(0);
     expect(exportedEvidence["证据统计"]["trace_event条数"]).toBeGreaterThan(0);
+    expect(exportedEvidence["证据统计"]["execution_span条数"]).toBeGreaterThan(0);
     await page.getByRole("link", { name: "运行历史", exact: true }).last().click();
     agentRunCard = page.getByTestId(`prompt-evaluation-run-${queuedAgentRun!.id}`);
     await expect(agentRunCard).toContainText("智能体执行 · 通过", { timeout: 10000 });
@@ -579,6 +582,11 @@ test.describe("训练与评估工作台", () => {
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText(`运行时 ${expectedAgentRuntimeName}`);
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText(`任务 ${queuedAgentRun!.task_id}`);
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText("用量证据 1");
+    const executionTree = agentEvidencePanel.getByTestId("run-evidence-execution-spans");
+    await expect(executionTree).toContainText("执行观测树");
+    await expect(executionTree).toContainText(`根任务 ${queuedAgentRun!.task_id}`);
+    await expect(executionTree).toContainText("模型用量");
+    await expect(executionTree).toContainText("训练评估用量已上报");
     const traceTree = agentEvidencePanel.getByTestId("run-evidence-trace-tree");
     await expect(traceTree).toContainText("任务事件树");
     await expect(traceTree).toContainText(`根任务 ${queuedAgentRun!.task_id}`);
@@ -662,6 +670,23 @@ test.describe("训练与评估工作台", () => {
         output_tokens: 7,
       }),
     ]);
+    expect(syncedAgentEvidence.execution_spans).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          span_kind: "任务根节点",
+          span_name: "评估任务执行",
+        }),
+        expect.objectContaining({
+          span_kind: "模型用量",
+          span_name: "训练评估用量已上报",
+        }),
+      ]),
+    );
+    expect(syncedAgentEvidence.execution_summary).toMatchObject({
+      "生命周期span数": expect.any(Number),
+      "用量span数": expect.any(Number),
+      "span总数": expect.any(Number),
+    });
 
     await expect(api.updatePromptEvaluationAsset(dataset!.id, { status: "归档" })).resolves.toMatchObject({
       id: dataset!.id,

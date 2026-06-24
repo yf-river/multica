@@ -351,14 +351,34 @@ type PromptEvaluationTaskUsageResponse struct {
 	UpdatedAt        string  `json:"updated_at"`
 }
 
+type PromptEvaluationExecutionSpanResponse struct {
+	ID         string         `json:"id"`
+	ParentID   string         `json:"parent_id,omitempty"`
+	SpanKind   string         `json:"span_kind"`
+	SpanName   string         `json:"span_name"`
+	Status     string         `json:"status"`
+	Seq        int            `json:"seq"`
+	TaskID     string         `json:"task_id,omitempty"`
+	Tool       string         `json:"tool,omitempty"`
+	Provider   string         `json:"provider,omitempty"`
+	Model      string         `json:"model,omitempty"`
+	TokenTotal int64          `json:"token_total"`
+	DurationMs int64          `json:"duration_ms"`
+	Summary    string         `json:"summary"`
+	Details    map[string]any `json:"details,omitempty"`
+	CreatedAt  string         `json:"created_at,omitempty"`
+}
+
 type PromptEvaluationRunEvidenceResponse struct {
-	Run          PromptEvaluationRunResponse         `json:"run"`
-	Trials       []PromptEvaluationTrialResponse     `json:"trials"`
-	TaskUsage    []PromptEvaluationTaskUsageResponse `json:"task_usage"`
-	TaskMessages []protocol.TaskMessagePayload       `json:"task_messages"`
-	TraceEvents  []TaskTraceEventResponse            `json:"trace_events"`
-	Evidence     any                                 `json:"evidence"`
-	Context      map[string]any                      `json:"上下文"`
+	Run              PromptEvaluationRunResponse             `json:"run"`
+	Trials           []PromptEvaluationTrialResponse         `json:"trials"`
+	TaskUsage        []PromptEvaluationTaskUsageResponse     `json:"task_usage"`
+	TaskMessages     []protocol.TaskMessagePayload           `json:"task_messages"`
+	TraceEvents      []TaskTraceEventResponse                `json:"trace_events"`
+	ExecutionSpans   []PromptEvaluationExecutionSpanResponse `json:"execution_spans"`
+	ExecutionSummary map[string]any                          `json:"execution_summary"`
+	Evidence         any                                     `json:"evidence"`
+	Context          map[string]any                          `json:"上下文"`
 }
 
 type PromptEvaluationEvidenceSnapshotResponse struct {
@@ -2746,15 +2766,18 @@ func (h *Handler) buildPromptEvaluationRunEvidenceResponse(ctx context.Context, 
 		}
 	}
 	refs := h.loadPromptEvaluationEvidenceRefs(ctx, workspaceUUID, run, task, traceResp)
+	executionSpans, executionSummary := buildPromptEvaluationExecutionEvidence(promptEvaluationRunToResponse(run), usageResp, messageResp, traceResp)
 
 	return PromptEvaluationRunEvidenceResponse{
-		Run:          promptEvaluationRunToResponse(run),
-		Trials:       trialResp,
-		TaskUsage:    usageResp,
-		TaskMessages: messageResp,
-		TraceEvents:  traceResp,
-		Evidence:     decodeJSONDefault(run.Evidence, map[string]any{}),
-		Context:      buildPromptEvaluationEvidenceContext(run, task, refs, trialResp, usageResp, messageResp, traceResp),
+		Run:              promptEvaluationRunToResponse(run),
+		Trials:           trialResp,
+		TaskUsage:        usageResp,
+		TaskMessages:     messageResp,
+		TraceEvents:      traceResp,
+		ExecutionSpans:   executionSpans,
+		ExecutionSummary: executionSummary,
+		Evidence:         decodeJSONDefault(run.Evidence, map[string]any{}),
+		Context:          buildPromptEvaluationEvidenceContext(run, task, refs, trialResp, usageResp, messageResp, traceResp),
 	}, nil
 }
 
@@ -2968,6 +2991,239 @@ func firstTraceUUID(traceEvents []TaskTraceEventResponse, selectID func(TaskTrac
 	return pgtype.UUID{}
 }
 
+func buildPromptEvaluationExecutionEvidence(
+	run PromptEvaluationRunResponse,
+	usages []PromptEvaluationTaskUsageResponse,
+	messages []protocol.TaskMessagePayload,
+	traceEvents []TaskTraceEventResponse,
+) ([]PromptEvaluationExecutionSpanResponse, map[string]any) {
+	rootID := firstNonEmptyPromptEvaluationString(ptrString(run.TaskID), run.ID)
+	rootSpanID := "task:" + rootID
+	spans := []PromptEvaluationExecutionSpanResponse{{
+		ID:         rootSpanID,
+		SpanKind:   "任务根节点",
+		SpanName:   "评估任务执行",
+		Status:     run.Status,
+		Seq:        0,
+		TaskID:     ptrString(run.TaskID),
+		Provider:   run.RuntimeProvider,
+		Model:      run.Model,
+		TokenTotal: int64(run.InputTokens + run.OutputTokens),
+		DurationMs: run.TotalDurationMs,
+		Summary:    firstNonEmptyPromptEvaluationString(run.Conclusion, run.FailureReason, "评估任务执行上下文"),
+		Details: map[string]any{
+			"运行":   run.ID,
+			"运行类型": run.RunKind,
+			"触发来源": run.TriggerSource,
+			"通过数":  run.PassedCases,
+			"失败数":  run.FailedCases,
+			"预估成本": run.EstimatedCost,
+		},
+		CreatedAt: run.CreatedAt,
+	}}
+
+	summary := map[string]any{
+		"根任务":         rootID,
+		"生命周期span数":   0,
+		"工具span数":     0,
+		"消息span数":     0,
+		"用量span数":     0,
+		"trace span数": 0,
+		"token标记合计":   int64(0),
+		"是否缺失用量":      false,
+	}
+
+	seq := 1
+	for _, event := range traceEvents {
+		kind := promptEvaluationTraceSpanKind(event.EventType)
+		if strings.HasPrefix(event.EventType, "task.") {
+			incrementPromptEvaluationSummary(summary, "生命周期span数")
+		}
+		if strings.HasPrefix(event.EventType, "llm.") {
+			incrementPromptEvaluationSummary(summary, "用量span数")
+		}
+		if event.EventType == "llm.usage_unavailable" {
+			summary["是否缺失用量"] = true
+		}
+		incrementPromptEvaluationSummary(summary, "trace span数")
+		tokenTotal := int64(event.InputTokens + event.OutputTokens + event.CacheReadTokens + event.CacheWriteTokens)
+		summary["token标记合计"] = summary["token标记合计"].(int64) + tokenTotal
+		spans = append(spans, PromptEvaluationExecutionSpanResponse{
+			ID:         fmt.Sprintf("trace:%s:%d", event.ID, seq),
+			ParentID:   rootSpanID,
+			SpanKind:   kind,
+			SpanName:   firstNonEmptyPromptEvaluationString(event.EventName, event.EventType),
+			Status:     event.Status,
+			Seq:        seq,
+			TaskID:     event.TaskID,
+			Provider:   event.Provider,
+			Model:      event.Model,
+			TokenTotal: tokenTotal,
+			DurationMs: promptEvaluationTraceDurationMs(event),
+			Summary:    promptEvaluationTraceSpanSummary(event),
+			Details: map[string]any{
+				"事件类型":   event.EventType,
+				"失败原因":   event.FailureReason,
+				"错误类型":   event.ErrorType,
+				"排队耗时ms": event.QueueWaitMs,
+				"执行耗时ms": event.RunMs,
+				"总耗时ms":  event.TotalMs,
+				"元数据":    event.Metadata,
+			},
+			CreatedAt: event.CreatedAt,
+		})
+		seq++
+	}
+
+	for _, message := range messages {
+		kind := promptEvaluationMessageSpanKind(message.Type)
+		if kind == "工具调用" || kind == "工具结果" {
+			incrementPromptEvaluationSummary(summary, "工具span数")
+		} else {
+			incrementPromptEvaluationSummary(summary, "消息span数")
+		}
+		spans = append(spans, PromptEvaluationExecutionSpanResponse{
+			ID:       fmt.Sprintf("message:%d", message.Seq),
+			ParentID: rootSpanID,
+			SpanKind: kind,
+			SpanName: firstNonEmptyPromptEvaluationString(message.Tool, promptEvaluationMessageSpanName(message.Type)),
+			Status:   "已记录",
+			Seq:      seq,
+			TaskID:   message.TaskID,
+			Tool:     message.Tool,
+			Summary:  truncatePromptEvaluationEvidence(firstNonEmptyPromptEvaluationString(message.Content, message.Output, promptEvaluationEvidenceSummaryString(message.Input), message.Type), 240),
+			Details: map[string]any{
+				"消息序号": message.Seq,
+				"消息类型": message.Type,
+				"输入":   message.Input,
+				"输出":   message.Output,
+			},
+			CreatedAt: message.CreatedAt,
+		})
+		seq++
+	}
+
+	for i, usage := range usages {
+		tokenTotal := usage.InputTokens + usage.OutputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
+		summary["token标记合计"] = summary["token标记合计"].(int64) + tokenTotal
+		incrementPromptEvaluationSummary(summary, "用量span数")
+		spans = append(spans, PromptEvaluationExecutionSpanResponse{
+			ID:         fmt.Sprintf("usage:%s:%d", usage.ID, i+1),
+			ParentID:   rootSpanID,
+			SpanKind:   "模型用量",
+			SpanName:   "模型 token 用量",
+			Status:     "已计量",
+			Seq:        seq,
+			TaskID:     usage.TaskID,
+			Provider:   usage.Provider,
+			Model:      usage.Model,
+			TokenTotal: tokenTotal,
+			Summary:    fmt.Sprintf("输入 %d，输出 %d，缓存读 %d，缓存写 %d，预估成本 %.6f", usage.InputTokens, usage.OutputTokens, usage.CacheReadTokens, usage.CacheWriteTokens, usage.EstimatedCost),
+			Details: map[string]any{
+				"输入token": usage.InputTokens,
+				"输出token": usage.OutputTokens,
+				"缓存读":     usage.CacheReadTokens,
+				"缓存写":     usage.CacheWriteTokens,
+				"预估成本":    usage.EstimatedCost,
+				"已定价":     usage.Priced,
+			},
+			CreatedAt: usage.CreatedAt,
+		})
+		seq++
+	}
+
+	summary["span总数"] = len(spans)
+	return spans, summary
+}
+
+func incrementPromptEvaluationSummary(summary map[string]any, key string) {
+	current, _ := summary[key].(int)
+	summary[key] = current + 1
+}
+
+func ptrString(value *string) string {
+	if value == nil {
+		return ""
+	}
+	return *value
+}
+
+func promptEvaluationTraceSpanKind(eventType string) string {
+	switch {
+	case strings.HasPrefix(eventType, "task."):
+		return "生命周期"
+	case eventType == "llm.usage_unavailable":
+		return "模型用量缺失"
+	case strings.HasPrefix(eventType, "llm."):
+		return "模型用量"
+	default:
+		return "trace事件"
+	}
+}
+
+func promptEvaluationTraceSpanSummary(event TaskTraceEventResponse) string {
+	parts := []string{event.EventName}
+	if event.FailureReason != "" {
+		parts = append(parts, "失败原因："+event.FailureReason)
+	}
+	if event.Provider != "" || event.Model != "" {
+		parts = append(parts, "模型："+strings.Trim(strings.Join([]string{event.Provider, event.Model}, "/"), "/"))
+	}
+	if tokenTotal := event.InputTokens + event.OutputTokens + event.CacheReadTokens + event.CacheWriteTokens; tokenTotal > 0 {
+		parts = append(parts, fmt.Sprintf("token：%d", tokenTotal))
+	}
+	return truncatePromptEvaluationEvidence(strings.Join(nonEmptyStrings(parts...), "；"), 240)
+}
+
+func nonEmptyStrings(values ...string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			result = append(result, value)
+		}
+	}
+	return result
+}
+
+func promptEvaluationTraceDurationMs(event TaskTraceEventResponse) int64 {
+	for _, value := range []*int64{event.TotalMs, event.RunMs, event.DurationMs, event.QueueWaitMs} {
+		if value != nil {
+			return *value
+		}
+	}
+	return 0
+}
+
+func promptEvaluationMessageSpanKind(messageType string) string {
+	switch messageType {
+	case "tool_use":
+		return "工具调用"
+	case "tool_result":
+		return "工具结果"
+	case "thinking":
+		return "思考消息"
+	case "error":
+		return "错误消息"
+	default:
+		return "Agent消息"
+	}
+}
+
+func promptEvaluationMessageSpanName(messageType string) string {
+	switch messageType {
+	case "tool_use":
+		return "工具调用"
+	case "tool_result":
+		return "工具结果"
+	case "thinking":
+		return "思考过程"
+	case "error":
+		return "错误输出"
+	default:
+		return "文本输出"
+	}
+}
+
 func buildPromptEvaluationEvidenceContext(
 	run db.PromptEvaluationRun,
 	task *db.AgentTaskQueue,
@@ -3087,32 +3343,33 @@ func validPromptEvaluationEvidenceSnapshotType(value string) bool {
 func buildPromptEvaluationEvidenceSnapshotSummary(evidence PromptEvaluationRunEvidenceResponse, generatedAt time.Time) map[string]any {
 	run := evidence.Run
 	return map[string]any{
-		"语义版本":          "multica.prompt_evaluation.evidence_snapshot.summary.v1",
-		"生成时间":          generatedAt.Format(time.RFC3339),
-		"运行ID":          run.ID,
-		"运行类型":          run.RunKind,
-		"运行状态":          run.Status,
-		"触发来源":          run.TriggerSource,
-		"总用例数":          run.TotalCases,
-		"通过数":           run.PassedCases,
-		"失败数":           run.FailedCases,
-		"通过率":           run.PassRate,
-		"总耗时毫秒":         run.TotalDurationMs,
-		"输入token":       run.InputTokens,
-		"输出token":       run.OutputTokens,
-		"预估成本":          run.EstimatedCost,
-		"执行Agent":       run.AgentID,
-		"模型":            run.Model,
-		"runtime":       run.RuntimeID,
-		"runtime供应商":    run.RuntimeProvider,
-		"trace/task id": run.TaskID,
-		"失败原因":          promptEvaluationEvidenceFailureReason(evidence),
-		"评估结论":          run.Conclusion,
-		"trial数":        len(evidence.Trials),
-		"usage行数":       len(evidence.TaskUsage),
-		"任务消息数":         len(evidence.TaskMessages),
-		"trace事件数":      len(evidence.TraceEvents),
-		"上下文字段数":        len(evidence.Context),
+		"语义版本":            "multica.prompt_evaluation.evidence_snapshot.summary.v1",
+		"生成时间":            generatedAt.Format(time.RFC3339),
+		"运行ID":            run.ID,
+		"运行类型":            run.RunKind,
+		"运行状态":            run.Status,
+		"触发来源":            run.TriggerSource,
+		"总用例数":            run.TotalCases,
+		"通过数":             run.PassedCases,
+		"失败数":             run.FailedCases,
+		"通过率":             run.PassRate,
+		"总耗时毫秒":           run.TotalDurationMs,
+		"输入token":         run.InputTokens,
+		"输出token":         run.OutputTokens,
+		"预估成本":            run.EstimatedCost,
+		"执行Agent":         run.AgentID,
+		"模型":              run.Model,
+		"runtime":         run.RuntimeID,
+		"runtime供应商":      run.RuntimeProvider,
+		"trace/task id":   run.TaskID,
+		"失败原因":            promptEvaluationEvidenceFailureReason(evidence),
+		"评估结论":            run.Conclusion,
+		"trial数":          len(evidence.Trials),
+		"usage行数":         len(evidence.TaskUsage),
+		"任务消息数":           len(evidence.TaskMessages),
+		"trace事件数":        len(evidence.TraceEvents),
+		"execution span数": len(evidence.ExecutionSpans),
+		"上下文字段数":          len(evidence.Context),
 	}
 }
 

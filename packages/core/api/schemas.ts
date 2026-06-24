@@ -1084,12 +1084,32 @@ const PromptEvaluationTaskTraceEventSchema = z.object({
   created_at: z.string().default(""),
 }).loose();
 
+const PromptEvaluationExecutionSpanSchema = z.object({
+  id: z.string(),
+  parent_id: z.string().optional(),
+  span_kind: z.string().default(""),
+  span_name: z.string().default(""),
+  status: z.string().default(""),
+  seq: z.number().default(0),
+  task_id: z.string().optional(),
+  tool: z.string().optional(),
+  provider: z.string().optional(),
+  model: z.string().optional(),
+  token_total: z.number().default(0),
+  duration_ms: z.number().default(0),
+  summary: z.string().default(""),
+  details: z.record(z.string(), z.unknown()).optional(),
+  created_at: z.string().optional(),
+}).loose();
+
 export const PromptEvaluationRunEvidenceSchema = z.object({
   run: PromptEvaluationRunSchema,
   trials: z.array(PromptEvaluationTrialSchema).default([]),
   task_usage: z.array(PromptEvaluationTaskUsageSchema).default([]),
   task_messages: z.array(PromptEvaluationTaskMessageSchema).default([]),
   trace_events: z.array(PromptEvaluationTaskTraceEventSchema).default([]),
+  execution_spans: z.array(PromptEvaluationExecutionSpanSchema).default([]),
+  execution_summary: z.record(z.string(), z.unknown()).default({}),
   evidence: z.record(z.string(), z.unknown()).default({}),
   上下文: z.record(z.string(), z.unknown()).default({}),
 }).loose();
@@ -1341,6 +1361,8 @@ export const EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE: PromptEvaluationRunEvidence =
   task_usage: [],
   task_messages: [],
   trace_events: [],
+  execution_spans: [],
+  execution_summary: {},
   evidence: {},
   上下文: {},
 };

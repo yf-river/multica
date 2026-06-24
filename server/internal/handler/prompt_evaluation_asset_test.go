@@ -888,6 +888,25 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	if !hasUsageTrace {
 		t.Fatalf("evidence traces = %+v", evidence.TraceEvents)
 	}
+	if len(evidence.ExecutionSpans) == 0 {
+		t.Fatalf("evidence execution spans empty")
+	}
+	hasRootSpan := false
+	hasUsageSpan := false
+	for _, span := range evidence.ExecutionSpans {
+		if span.SpanKind == "任务根节点" && span.SpanName == "评估任务执行" {
+			hasRootSpan = true
+		}
+		if span.SpanKind == "模型用量" && strings.Contains(span.SpanName, "训练评估用量已上报") {
+			hasUsageSpan = true
+		}
+	}
+	if !hasRootSpan || !hasUsageSpan {
+		t.Fatalf("evidence execution spans = %+v", evidence.ExecutionSpans)
+	}
+	if evidence.ExecutionSummary["span总数"] == nil || evidence.ExecutionSummary["用量span数"] == nil {
+		t.Fatalf("evidence execution summary = %+v", evidence.ExecutionSummary)
+	}
 
 	assetW := httptest.NewRecorder()
 	testHandler.GetPromptEvaluationAsset(assetW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-assets/"+created.ID, nil), "id", created.ID))
