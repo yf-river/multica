@@ -457,6 +457,7 @@ function withIssueSummaries(issues: Issue[]): Issue[] {
   };
   return issues.map((issue, index) => ({
     ...issue,
+    child_progress: index === 0 ? { done: 1, total: 2 } : { done: 0, total: 0 },
     project_id: index === 0 ? "project-1" : issue.project_id,
     project:
       index === 0
@@ -599,6 +600,7 @@ describe("IssuesPage (shared)", () => {
     expect(mockListAgents).not.toHaveBeenCalled();
     expect(mockListSquads).not.toHaveBeenCalled();
     expect(mockListProjects).not.toHaveBeenCalled();
+    expect(mockGetChildIssueProgress).not.toHaveBeenCalled();
   });
 
   it("renders board column headers", async () => {

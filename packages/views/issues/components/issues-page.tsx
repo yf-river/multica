@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 import { ListTodo } from "lucide-react";
-import type { UpdateIssueRequest } from "@multica/core/types";
+import type { Issue, UpdateIssueRequest } from "@multica/core/types";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { useQuery } from "@tanstack/react-query";
 import { useIssueViewStore, useClearFiltersOnWorkspaceChange, type IssueDateFilter } from "@multica/core/issues/stores/view-store";
@@ -27,6 +27,19 @@ import type { ChildProgress } from "./list-row";
 import { useT } from "../../i18n";
 
 const EMPTY_CHILD_PROGRESS = new Map<string, ChildProgress>();
+
+function childProgressMapFromIssues(issues: Issue[]): Map<string, ChildProgress> {
+  const map = new Map<string, ChildProgress>();
+  for (const issue of issues) {
+    if (!issue.child_progress || issue.child_progress.total <= 0) continue;
+    map.set(issue.id, issue.child_progress);
+  }
+  return map;
+}
+
+function hasCompleteChildProgressSummaries(issues: Issue[]) {
+  return issues.every((issue) => issue.child_progress !== undefined);
+}
 
 function issueDateFilterToApiParams(filter: IssueDateFilter | null) {
   if (!filter) return {};
@@ -187,9 +200,17 @@ export function IssuesPage() {
     agentRunningFilter,
   ]);
 
-  // Fetch sub-issue progress from the backend so counts are accurate
-  // regardless of client-side pagination or filtering of done issues.
-  const { data: childProgressMap = EMPTY_CHILD_PROGRESS } = useQuery(childIssueProgressOptions(wsId));
+  const childProgressSourceIssues = usesAssigneeBoard ? assigneeIssues : allIssues;
+  const hasListChildProgress = hasCompleteChildProgressSummaries(childProgressSourceIssues);
+  const listChildProgressMap = useMemo(
+    () => childProgressMapFromIssues(childProgressSourceIssues),
+    [childProgressSourceIssues],
+  );
+  const { data: fallbackChildProgressMap = EMPTY_CHILD_PROGRESS } = useQuery({
+    ...childIssueProgressOptions(wsId),
+    enabled: !hasListChildProgress,
+  });
+  const childProgressMap = hasListChildProgress ? listChildProgressMap : fallbackChildProgressMap;
 
   const visibleStatuses = useMemo(() => {
     if (statusFilters.length > 0)

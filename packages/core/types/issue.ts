@@ -58,6 +58,10 @@ export interface Issue {
     title: string;
     icon: string | null;
   } | null;
+  child_progress?: {
+    done: number;
+    total: number;
+  };
   position: number;
   // Calendar days as date-only "YYYY-MM-DD" (no time, no timezone). Use the
   // helpers in @multica/core/issues/date to format/compare — never `new Date()`

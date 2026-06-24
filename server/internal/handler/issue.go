@@ -67,6 +67,9 @@ type IssueResponse struct {
 	// lazy-load the authoritative profile when opened.
 	Assignee *IssueActorSummaryResponse   `json:"assignee,omitempty"`
 	Project  *IssueProjectSummaryResponse `json:"project,omitempty"`
+	// Present on list-style responses so issue cards can render sub-issue
+	// progress without a workspace-wide child-progress request.
+	ChildProgress *IssueChildProgressResponse `json:"child_progress,omitempty"`
 }
 
 type IssueActorSummaryResponse struct {
@@ -80,6 +83,11 @@ type IssueProjectSummaryResponse struct {
 	ID    string  `json:"id"`
 	Title string  `json:"title"`
 	Icon  *string `json:"icon"`
+}
+
+type IssueChildProgressResponse struct {
+	Done  int64 `json:"done"`
+	Total int64 `json:"total"`
 }
 
 // validIssueStatuses / validIssuePriorities mirror the CHECK constraints on
@@ -293,6 +301,8 @@ type issueListSummary struct {
 	AssigneeAvatarURL pgtype.Text
 	ProjectTitle      pgtype.Text
 	ProjectIcon       pgtype.Text
+	ChildDone         int64
+	ChildTotal        int64
 }
 
 const issueListSelectSQL = `i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
@@ -301,7 +311,9 @@ const issueListSelectSQL = `i.id, i.workspace_id, i.title, i.description, i.stat
        COALESCE(assignee_member.name, assignee_agent.name, assignee_squad.name) AS assignee_name,
        COALESCE(assignee_member.avatar_url, assignee_agent.avatar_url, assignee_squad.avatar_url) AS assignee_avatar_url,
        project.title AS project_title,
-       project.icon AS project_icon`
+       project.icon AS project_icon,
+       COALESCE(child_progress.child_done, 0)::bigint AS child_done,
+       COALESCE(child_progress.child_total, 0)::bigint AS child_total`
 
 const issueListJoinSQL = `LEFT JOIN "user" assignee_member
        ON i.assignee_type = 'member'
@@ -316,7 +328,17 @@ LEFT JOIN squad assignee_squad
       AND assignee_squad.workspace_id = i.workspace_id
 LEFT JOIN project
        ON project.id = i.project_id
-      AND project.workspace_id = i.workspace_id`
+      AND project.workspace_id = i.workspace_id
+LEFT JOIN (
+       SELECT parent_issue_id,
+              COUNT(*) FILTER (WHERE status IN ('done', 'cancelled'))::bigint AS child_done,
+              COUNT(*)::bigint AS child_total
+         FROM issue
+        WHERE workspace_id = $1
+          AND parent_issue_id IS NOT NULL
+        GROUP BY parent_issue_id
+) child_progress
+       ON child_progress.parent_issue_id = i.id`
 
 func scanIssueListRow(rows interface{ Scan(dest ...any) error }, row *issueListRow) error {
 	return rows.Scan(issueListScanDest(row)...)
@@ -347,6 +369,8 @@ func issueListScanDest(row *issueListRow) []any {
 		&row.Summary.AssigneeAvatarURL,
 		&row.Summary.ProjectTitle,
 		&row.Summary.ProjectIcon,
+		&row.Summary.ChildDone,
+		&row.Summary.ChildTotal,
 	}
 }
 
@@ -375,6 +399,10 @@ func attachIssueListSummary(resp *IssueResponse, summary issueListSummary) {
 			Title: summary.ProjectTitle.String,
 			Icon:  textToPtr(summary.ProjectIcon),
 		}
+	}
+	resp.ChildProgress = &IssueChildProgressResponse{
+		Done:  summary.ChildDone,
+		Total: summary.ChildTotal,
 	}
 }
 
@@ -1402,7 +1430,7 @@ func (h *Handler) ListIssueBuckets(w http.ResponseWriter, r *http.Request) {
 SELECT id, workspace_id, title, description, status, priority,
        assignee_type, assignee_id, creator_type, creator_id,
        parent_issue_id, position, start_date, due_date, created_at, updated_at, number, project_id, metadata,
-       assignee_name, assignee_avatar_url, project_title, project_icon, status_total
+       assignee_name, assignee_avatar_url, project_title, project_icon, child_done, child_total, status_total
   FROM ranked
  WHERE status_row_number > %s
    AND status_row_number <= (%s + %s)
@@ -1894,7 +1922,7 @@ SELECT
 	assignee_type, assignee_id, creator_type, creator_id,
 	parent_issue_id, position, start_date, due_date, created_at, updated_at,
 	number, project_id, metadata,
-	assignee_name, assignee_avatar_url, project_title, project_icon, group_total
+	assignee_name, assignee_avatar_url, project_title, project_icon, child_done, child_total, group_total
 FROM ranked
 WHERE rn > %s AND rn <= %s + %s
 ORDER BY

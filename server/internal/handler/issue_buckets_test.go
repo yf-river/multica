@@ -53,6 +53,19 @@ func TestListIssueBucketsReturnsFirstPagePerStatus(t *testing.T) {
 	firstTodo := insertIssue(fmt.Sprintf("bucket-todo-first-%d", suffix), "todo", 1, true)
 	secondTodo := insertIssue(fmt.Sprintf("bucket-todo-second-%d", suffix), "todo", 2, false)
 	doneIssue := insertIssue(fmt.Sprintf("bucket-done-%d", suffix), "done", 1, false)
+	if err := testPool.QueryRow(ctx, `
+		UPDATE workspace
+		SET issue_counter = GREATEST(issue_counter, (SELECT COALESCE(MAX(number), 0) FROM issue WHERE workspace_id = $1)) + 1
+		WHERE id = $1 RETURNING issue_counter
+	`, testWorkspaceID).Scan(new(int)); err != nil {
+		t.Fatalf("next child issue number: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, position, number, project_id, parent_issue_id)
+		VALUES ($1, $2, 'done', 'none', 'member', $3, 99, (SELECT issue_counter FROM workspace WHERE id = $1), $4, $5)
+	`, testWorkspaceID, fmt.Sprintf("bucket-child-%d", suffix), testUserID, projectID, firstTodo); err != nil {
+		t.Fatalf("create child issue: %v", err)
+	}
 
 	path := fmt.Sprintf(
 		"/api/issues/buckets?workspace_id=%s&project_id=%s&statuses=todo,done,blocked&limit=1&sort=position",
@@ -80,6 +93,9 @@ func TestListIssueBucketsReturnsFirstPagePerStatus(t *testing.T) {
 	}
 	if project := resp.ByStatus["todo"].Issues[0].Project; project == nil || project.ID != projectID || project.Title == "" {
 		t.Fatalf("todo project summary missing: %#v", project)
+	}
+	if progress := resp.ByStatus["todo"].Issues[0].ChildProgress; progress == nil || progress.Done != 1 || progress.Total != 1 {
+		t.Fatalf("todo child progress mismatch: %#v", progress)
 	}
 	if got := resp.ByStatus["done"].Issues; len(got) != 1 || got[0].ID != doneIssue {
 		t.Fatalf("done first page: want [%s], got %#v", doneIssue, got)
