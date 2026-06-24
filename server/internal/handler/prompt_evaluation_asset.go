@@ -2451,6 +2451,9 @@ func (h *Handler) ListPromptEvaluationRuns(w http.ResponseWriter, r *http.Reques
 		Limit:       limit,
 	})
 	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		slog.Error(
 			"failed to list prompt evaluation runs",
 			"workspace_id", workspaceID,
