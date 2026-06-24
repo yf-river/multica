@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, use, useMemo, useTransition } from "react";
+import { createContext, use } from "react";
 import type { NavigationAdapter } from "./types";
 
 const NavigationContext = createContext<NavigationAdapter | null>(null);
@@ -13,23 +13,9 @@ export function NavigationProvider({
   value: NavigationAdapter;
   children: React.ReactNode;
 }) {
-  // Wrap push/replace in startTransition so any caller of useNavigation()
-  // (sidebar AppLink, command palette, modal post-create jumps) gets a
-  // React pending signal during route commit. On web this stays true until
-  // Next.js commits the new RSC payload; on desktop it flips off quickly
-  // because react-router commits synchronously — both are correct.
-  const [isPending, startTransition] = useTransition();
-  const wrapped = useMemo<NavigationAdapter>(
-    () => ({
-      ...value,
-      push: (path: string) => startTransition(() => value.push(path)),
-      replace: (path: string) => startTransition(() => value.replace(path)),
-    }),
-    [value],
-  );
   return (
-    <NavigationContext.Provider value={wrapped}>
-      <NavigationPendingContext.Provider value={isPending}>
+    <NavigationContext.Provider value={value}>
+      <NavigationPendingContext.Provider value={false}>
         {children}
       </NavigationPendingContext.Provider>
     </NavigationContext.Provider>
@@ -43,7 +29,7 @@ export function useNavigation(): NavigationAdapter {
   return ctx;
 }
 
-/** True while a transition-wrapped push/replace is committing. */
+/** Reserved for platform adapters that expose a navigation pending signal. */
 export function useIsNavigating(): boolean {
   return use(NavigationPendingContext);
 }
