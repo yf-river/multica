@@ -2748,6 +2748,7 @@ function RunEvidencePanel({
       </div>
 
       <EvidenceContextPanel context={evidence.上下文} />
+      <TraceEventTreePanel evidence={evidence} />
 
       <div className="grid gap-2">
         <div className="text-xs font-medium text-muted-foreground">用例明细</div>
@@ -2843,7 +2844,7 @@ function EvidenceContextPanel({ context }: { context: Record<string, unknown> })
     `工作区 ${stringFromUnknown(context["工作区"]) || "未记录"}`,
     `提示词 ${stringFromUnknown(context["提示词名称"]) || stringFromUnknown(context["提示词"]) || "未绑定"}`,
     `评测资产 ${stringFromUnknown(context["评测资产名称"]) || stringFromUnknown(context["评测资产"]) || "未记录"}`,
-    `Agent ${stringFromUnknown(context["执行Agent名称"]) || stringFromUnknown(context["执行Agent"]) || "未记录"}`,
+    `智能体 ${stringFromUnknown(context["执行Agent名称"]) || stringFromUnknown(context["执行Agent"]) || "未记录"}`,
     `运行时 ${stringFromUnknown(context["运行时名称"]) || stringFromUnknown(context["运行时标识"]) || stringFromUnknown(context["运行时"]) || "未记录"}`,
     `issue ${stringFromUnknown(context["issue标题"]) || stringFromUnknown(context["issue"]) || "未绑定"}`,
     `项目 ${stringFromUnknown(context["项目名称"]) || stringFromUnknown(context["项目"]) || "未绑定"}`,
@@ -2910,6 +2911,120 @@ function EvidenceList({ title, empty, items }: { title: string; empty: string; i
       )}
     </div>
   );
+}
+
+function TraceEventTreePanel({ evidence }: { evidence: PromptEvaluationRunEvidence }) {
+  const events = evidence.trace_events;
+  const tokenTotal = events.reduce((sum, event) => sum + traceEventTokenTotal(event), 0);
+  const lifecycleCount = events.filter((event) => event.event_type.startsWith("task.")).length;
+  const usageCount = events.filter((event) => event.event_type === "llm.usage_reported" || traceEventTokenTotal(event) > 0).length;
+  const rootTaskId = evidence.run.task_id ?? events[0]?.task_id ?? evidence.run.id;
+  return (
+    <section className="grid gap-2 rounded-md border bg-background p-2 text-xs" data-testid="run-evidence-trace-tree">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="min-w-0">
+          <div className="font-medium text-muted-foreground">任务事件树</div>
+          <div className="mt-1 break-all text-[11px] leading-5 text-muted-foreground">
+            根任务 {rootTaskId} · {evidence.run.trigger_source || "未记录触发来源"} · {evidence.run.status}
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-1.5">
+          <Badge variant="outline">事件 {events.length}</Badge>
+          <Badge variant="outline">生命周期 {lifecycleCount}</Badge>
+          <Badge variant={usageCount > 0 ? "secondary" : "outline"}>用量事件 {usageCount}</Badge>
+          <Badge variant={tokenTotal > 0 ? "secondary" : "outline"}>token {tokenTotal}</Badge>
+        </div>
+      </div>
+      {events.length === 0 ? (
+        <div className="rounded-md border border-dashed px-3 py-3 text-muted-foreground">暂无 trace 事件；真实任务开始后会按时间顺序追加生命周期、模型用量和失败原因。</div>
+      ) : (
+        <div className="grid gap-1.5">
+          {events.map((event, index) => (
+            <TraceEventTreeNode key={event.id} event={event} index={index} />
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function TraceEventTreeNode({
+  event,
+  index,
+}: {
+  event: PromptEvaluationRunEvidence["trace_events"][number];
+  index: number;
+}) {
+  const tokenTotal = traceEventTokenTotal(event);
+  const metadataSummary = traceMetadataSummary(event.metadata);
+  return (
+    <div className="grid gap-1 rounded-md border border-l-4 border-l-emerald-500/70 bg-muted/15 px-3 py-2" data-testid={`run-evidence-trace-node-${index + 1}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-mono text-[11px] text-muted-foreground">#{index + 1}</span>
+        <span className="font-medium text-foreground">{event.event_name || traceEventStageLabel(event.event_type)}</span>
+        <Badge variant={event.status === "completed" || event.status === "success" ? "secondary" : event.status === "failed" ? "destructive" : "outline"}>
+          {traceEventStageLabel(event.event_type)}
+        </Badge>
+        <span className="text-muted-foreground">{event.status || "未知状态"}</span>
+      </div>
+      <div className="grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
+        <div className="truncate">时间 {event.created_at || "未记录"}</div>
+        <div className="truncate">耗时 {formatTraceEventDuration(event)}</div>
+        <div className="truncate">模型 {event.provider || "未记录"}/{event.model || "未记录"}</div>
+        <div className="truncate">token {tokenTotal}</div>
+      </div>
+      {(event.failure_reason && event.failure_reason !== "无") || event.error_type ? (
+        <div className="rounded bg-destructive/10 px-2 py-1 text-[11px] leading-5 text-destructive">
+          失败原因：{event.failure_reason || "未记录"}{event.error_type ? ` · 错误类型：${event.error_type}` : ""}
+        </div>
+      ) : null}
+      {metadataSummary && <div className="break-words text-[11px] leading-5 text-muted-foreground">元数据：{metadataSummary}</div>}
+    </div>
+  );
+}
+
+function traceEventStageLabel(eventType: string): string {
+  switch (eventType) {
+    case "task.queued":
+      return "任务入队";
+    case "task.dispatched":
+      return "任务领取";
+    case "task.started":
+      return "任务开始";
+    case "task.waiting_local_directory":
+      return "等待本地目录";
+    case "task.completed":
+      return "任务完成";
+    case "task.failed":
+      return "任务失败";
+    case "task.cancelled":
+      return "任务取消";
+    case "llm.usage_reported":
+      return "模型用量";
+    default:
+      return eventType || "未分类事件";
+  }
+}
+
+function traceEventTokenTotal(event: PromptEvaluationRunEvidence["trace_events"][number]): number {
+  return event.input_tokens + event.output_tokens + event.cache_read_tokens + event.cache_write_tokens;
+}
+
+function formatTraceEventDuration(event: PromptEvaluationRunEvidence["trace_events"][number]): string {
+  const parts = [
+    event.queue_wait_ms != null ? `排队 ${event.queue_wait_ms}ms` : "",
+    event.run_ms != null ? `执行 ${event.run_ms}ms` : "",
+    event.duration_ms != null ? `阶段 ${event.duration_ms}ms` : "",
+    event.total_ms != null ? `总计 ${event.total_ms}ms` : "",
+  ].filter(Boolean);
+  return parts.join(" / ") || "未记录";
+}
+
+function traceMetadataSummary(metadata: Record<string, unknown>): string {
+  return Object.entries(metadata)
+    .slice(0, 4)
+    .map(([key, value]) => `${key}=${truncateText(stringFromUnknown(value) || JSON.stringify(value) || "", 80)}`)
+    .join("，");
 }
 
 function buildExternalDependencyFailureNotice(evidence: PromptEvaluationRunEvidence): { title: string; detail: string } | null {

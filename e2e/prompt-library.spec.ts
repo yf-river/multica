@@ -73,7 +73,7 @@ test.describe("训练与评估工作台", () => {
     await page.getByRole("button", { name: "起草需求澄清模板" }).click();
     await page.getByLabel("名称").fill(`${artifactPrefix} 账号系统 澄清`);
     await page.getByLabel("提示词内容").fill("请澄清 {{issue_title}}，项目背景：{{project_context}}。");
-    await page.getByLabel("变量").fill("issue_title=任务标题, project_context=项目背景");
+    await page.getByLabel("变量", { exact: true }).fill("issue_title=任务标题, project_context=项目背景");
     await page.getByLabel("调试变量").fill("issue_title=登录失败\nproject_context=账号系统");
 
     await expect(page.getByText("请澄清 登录失败，项目背景：账号系统。").last()).toBeVisible();
@@ -576,6 +576,12 @@ test.describe("训练与评估工作台", () => {
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText(`运行时 ${expectedAgentRuntimeName}`);
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText(`任务 ${queuedAgentRun!.task_id}`);
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText("用量证据 1");
+    const traceTree = agentEvidencePanel.getByTestId("run-evidence-trace-tree");
+    await expect(traceTree).toContainText("任务事件树");
+    await expect(traceTree).toContainText(`根任务 ${queuedAgentRun!.task_id}`);
+    await expect(traceTree).toContainText("模型用量");
+    await expect(traceTree).toContainText("训练评估用量已上报");
+    await expect(traceTree).toContainText(/token \d+/);
     const snapshotBar = agentEvidencePanel.getByTestId("run-evidence-snapshots");
     await expect(snapshotBar).toContainText("暂无服务端归档", { timeout: 10000 });
     const snapshotResponse = page.waitForResponse(

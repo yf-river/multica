@@ -1612,6 +1612,30 @@ func TestRunPromptEvaluationOptimizationAgentQueuesRealTask(t *testing.T) {
 	}
 }
 
+func TestPromptEvaluationRequestedAgentIDIgnoresAutoModeLabel(t *testing.T) {
+	payload := map[string]any{
+		"调试包": map[string]any{
+			"执行智能体": nil,
+		},
+		"运行环境": map[string]any{
+			"目标智能体":   "自动选择训练评估智能体",
+			"目标智能体标识": nil,
+		},
+	}
+	if got := promptEvaluationRequestedAgentID(payload); got != "" {
+		t.Fatalf("requested agent id = %q, want empty auto mode", got)
+	}
+
+	explicit := "11111111-1111-4111-8111-111111111111"
+	payload["运行环境"] = map[string]any{
+		"目标智能体":   "指定执行智能体",
+		"目标智能体标识": explicit,
+	}
+	if got := promptEvaluationRequestedAgentID(payload); got != explicit {
+		t.Fatalf("requested agent id = %q, want %q", got, explicit)
+	}
+}
+
 func TestRunPromptEvaluationAssetAgentAutoSyncsCancelledTask(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")

@@ -315,7 +315,7 @@ export function AgentPlaygroundWorkbench({
             ["执行对象", executionAgentLabel],
             ["运行位置", selectedRuntime?.name ?? runtimeReadiness.label],
             ["模型策略", executionModel],
-            ["产出证据", "任务标识、消息、链路追踪、令牌"],
+            ["入队链路", "写入真实任务队列"],
           ].map(([label, detail]) => (
             <div key={label} className="min-w-0 rounded-md border bg-muted/20 px-3 py-2">
               <div className="text-[11px] font-medium text-muted-foreground">{label}</div>
