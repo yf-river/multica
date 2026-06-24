@@ -78,6 +78,14 @@ const promptLibraryKeys = {
 const PROMPT_TYPES = ["全部", "需求澄清", "系统提示词", "评测提示词", "小队 SOP", "通用"];
 type WorkbenchTab = TrainingWorkbenchTab;
 type RunStatusFilter = "全部" | PromptEvaluationRun["status"];
+type EvidenceFocus = {
+  traceSeq: string | null;
+  toolChainId: string | null;
+  trialAnchor: string | null;
+  messageSeq: string | null;
+  spanAnchor: string | null;
+  failureAnchor: string | null;
+};
 
 const RUN_STATUS_FILTERS: RunStatusFilter[] = ["全部", "已入队", "运行中", "通过", "未通过", "失败", "已取消", "需人工复核"];
 type DemoTimeRange = "24h" | "7d" | "30d" | "all";
@@ -89,6 +97,14 @@ const DEMO_TIME_RANGES: Array<{ value: DemoTimeRange; label: string; sinceMs: nu
   { value: "all", label: "全部", sinceMs: null },
 ];
 const DEFAULT_DEMO_TIME_RANGE = DEMO_TIME_RANGES[1]!;
+const EMPTY_EVIDENCE_FOCUS: EvidenceFocus = {
+  traceSeq: null,
+  toolChainId: null,
+  trialAnchor: null,
+  messageSeq: null,
+  spanAnchor: null,
+  failureAnchor: null,
+};
 
 const DEFAULT_AGENT_RUNTIME_READINESS: PromptEvaluationRuntimeReadiness = {
   status: "缺失",
@@ -141,8 +157,14 @@ export function PromptLibraryPage({
   const viewParam = trainingViewFromLocation(navigation.pathname, navigation.searchParams);
   const resolvedView = activeView ?? viewParam;
   const focusedRunId = navigation.searchParams.get("run");
-  const focusedTraceSeq = navigation.searchParams.get("trace");
-  const focusedToolChainId = navigation.searchParams.get("tool");
+  const evidenceFocus: EvidenceFocus = {
+    traceSeq: navigation.searchParams.get("trace"),
+    toolChainId: navigation.searchParams.get("tool"),
+    trialAnchor: navigation.searchParams.get("trial"),
+    messageSeq: navigation.searchParams.get("message"),
+    spanAnchor: navigation.searchParams.get("span"),
+    failureAnchor: navigation.searchParams.get("failure"),
+  };
   const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => trainingWorkbenchTabFromView(resolvedView));
   const [runStatusFilter, setRunStatusFilter] = useState<RunStatusFilter>("全部");
   const [demoTimeRange, setDemoTimeRange] = useState<DemoTimeRange>("7d");
@@ -1026,8 +1048,7 @@ export function PromptLibraryPage({
                 experimentDimensions={experimentDimensions}
                 runs={runs}
                 focusedRunId={focusedRunId}
-                focusedTraceSeq={focusedTraceSeq}
-                focusedToolChainId={focusedToolChainId}
+                evidenceFocus={evidenceFocus}
                 runStatusFilter={runStatusFilter}
                 onRunStatusFilterChange={setRunStatusFilter}
                 candidates={candidates}
@@ -1083,8 +1104,7 @@ export function PromptLibraryPage({
               experimentDimensions={experimentDimensions}
               runs={runs}
               focusedRunId={focusedRunId}
-              focusedTraceSeq={focusedTraceSeq}
-              focusedToolChainId={focusedToolChainId}
+              evidenceFocus={evidenceFocus}
               runStatusFilter={runStatusFilter}
               onRunStatusFilterChange={setRunStatusFilter}
               candidates={candidates}
@@ -1512,8 +1532,7 @@ function WorkbenchPanel({
   experimentDimensions,
   runs,
   focusedRunId,
-  focusedTraceSeq,
-  focusedToolChainId,
+  evidenceFocus,
   runStatusFilter,
   onRunStatusFilterChange,
   candidates,
@@ -1562,8 +1581,7 @@ function WorkbenchPanel({
   experimentDimensions: PromptEvaluationExperimentDimension[];
   runs: PromptEvaluationRun[];
   focusedRunId: string | null;
-  focusedTraceSeq: string | null;
-  focusedToolChainId: string | null;
+  evidenceFocus: EvidenceFocus;
   runStatusFilter: RunStatusFilter;
   onRunStatusFilterChange: (status: RunStatusFilter) => void;
   candidates: PromptEvaluationOptimizationCandidate[];
@@ -1642,8 +1660,7 @@ function WorkbenchPanel({
           workspaceId={workspaceId}
           runs={runs}
           focusedRunId={focusedRunId}
-          focusedTraceSeq={focusedTraceSeq}
-          focusedToolChainId={focusedToolChainId}
+          evidenceFocus={evidenceFocus}
           runStatusFilter={runStatusFilter}
           onRunStatusFilterChange={onRunStatusFilterChange}
           candidates={candidates}
@@ -1987,8 +2004,7 @@ function RunHistoryPanel({
   workspaceId,
   runs,
   focusedRunId,
-  focusedTraceSeq,
-  focusedToolChainId,
+  evidenceFocus,
   runStatusFilter,
   onRunStatusFilterChange,
   candidates,
@@ -2009,8 +2025,7 @@ function RunHistoryPanel({
   workspaceId: string;
   runs: PromptEvaluationRun[];
   focusedRunId: string | null;
-  focusedTraceSeq: string | null;
-  focusedToolChainId: string | null;
+  evidenceFocus: EvidenceFocus;
   runStatusFilter: RunStatusFilter;
   onRunStatusFilterChange: (status: RunStatusFilter) => void;
   candidates: PromptEvaluationOptimizationCandidate[];
@@ -2164,8 +2179,7 @@ function RunHistoryPanel({
                       snapshotsLoading={evidenceSnapshotQuery.isLoading || evidenceSnapshotQuery.isFetching}
                       loading={evidenceQuery.isLoading || evidenceQuery.isFetching}
                       error={evidenceQuery.isError}
-                      focusedTraceSeq={focusedTraceSeq}
-                      focusedToolChainId={focusedToolChainId}
+                      evidenceFocus={evidenceFocus}
                       creatingSnapshot={creatingEvidenceSnapshotRunId === run.id}
                       onCreateSnapshot={() => onCreateEvidenceSnapshot(run.id)}
                     />
@@ -2837,8 +2851,7 @@ function RunEvidencePanel({
   snapshotsLoading,
   loading,
   error,
-  focusedTraceSeq,
-  focusedToolChainId,
+  evidenceFocus = EMPTY_EVIDENCE_FOCUS,
   creatingSnapshot,
   onCreateSnapshot,
 }: {
@@ -2847,23 +2860,18 @@ function RunEvidencePanel({
   snapshotsLoading: boolean;
   loading: boolean;
   error: boolean;
-  focusedTraceSeq?: string | null;
-  focusedToolChainId?: string | null;
+  evidenceFocus?: EvidenceFocus;
   creatingSnapshot: boolean;
   onCreateSnapshot: () => void;
 }) {
   useEffect(() => {
     if (!evidence || loading) return;
-    const selector = focusedToolChainId
-      ? `[data-evidence-anchor="tool:${cssEscape(focusedToolChainId)}"]`
-      : focusedTraceSeq
-        ? `[data-evidence-anchor="trace:${cssEscape(focusedTraceSeq)}"]`
-        : "";
+    const selector = evidenceFocusSelector(evidenceFocus);
     if (!selector) return;
     window.requestAnimationFrame(() => {
       document.querySelector(selector)?.scrollIntoView({ block: "center" });
     });
-  }, [evidence, focusedToolChainId, focusedTraceSeq, loading]);
+  }, [evidence, evidenceFocus, loading]);
 
   if (loading) {
     return <div className="md:col-span-2 rounded-md border bg-muted/30 px-3 py-4 text-sm text-muted-foreground">正在加载运行证据...</div>;
@@ -2914,9 +2922,10 @@ function RunEvidencePanel({
       </div>
 
       <EvidenceContextPanel context={evidence.上下文} />
-      <EvidenceAnchorSummary evidence={evidence} focusedTraceSeq={focusedTraceSeq ?? null} focusedToolChainId={focusedToolChainId ?? null} />
-      <ExecutionSpanTreePanel evidence={evidence} focusedToolChainId={focusedToolChainId ?? null} />
-      <TraceEventTreePanel evidence={evidence} focusedTraceSeq={focusedTraceSeq ?? null} />
+      <EvidenceAnchorSummary evidence={evidence} evidenceFocus={evidenceFocus} />
+      <FailureReviewPanel evidence={evidence} evidenceFocus={evidenceFocus} />
+      <ExecutionSpanTreePanel evidence={evidence} evidenceFocus={evidenceFocus} />
+      <TraceEventTreePanel evidence={evidence} focusedTraceSeq={evidenceFocus.traceSeq} />
 
       <div className="grid gap-2">
         <div className="text-xs font-medium text-muted-foreground">用例明细</div>
@@ -2925,7 +2934,13 @@ function RunEvidencePanel({
         ) : (
           <div className="divide-y rounded-md border bg-background">
             {evidence.trials.map((trial) => (
-              <div key={trial.id} className="grid gap-1 px-3 py-2 text-xs">
+              <div
+                key={trial.id}
+                className={`grid gap-1 px-3 py-2 text-xs ${isFocusedTrial(evidenceFocus.trialAnchor, trial) ? "bg-emerald-500/10 ring-2 ring-inset ring-emerald-500/30" : ""}`}
+                data-testid={`run-evidence-trial-${trial.id}`}
+                data-evidence-anchor={`trial:${trial.id}`}
+                data-evidence-anchor-alias={`trial:${trial.case_index + 1}`}
+              >
                 <div className="flex min-w-0 items-center gap-2">
                   <span className="truncate font-medium">{trial.case_name || `用例 ${trial.case_index + 1}`}</span>
                   <Badge variant={trial.status === "通过" ? "secondary" : trial.status === "待执行" ? "outline" : "destructive"}>{trial.status}</Badge>
@@ -2949,6 +2964,8 @@ function RunEvidencePanel({
           title="任务消息"
           empty="暂无任务消息"
           items={evidence.task_messages.map((message) => `#${message.seq} ${message.type}${message.tool ? ` · ${message.tool}` : ""}：${truncateText(message.content || message.output || "", 160)}`)}
+          anchors={evidence.task_messages.map((message) => `message:${message.seq}`)}
+          focusedAnchor={evidenceFocus.messageSeq ? `message:${evidenceFocus.messageSeq}` : null}
         />
         <EvidenceList
           title="trace 事件"
@@ -3062,7 +3079,19 @@ function MetricChip({ label, value }: { label: string; value: string }) {
   );
 }
 
-function EvidenceList({ title, empty, items }: { title: string; empty: string; items: string[] }) {
+function EvidenceList({
+  title,
+  empty,
+  items,
+  anchors,
+  focusedAnchor,
+}: {
+  title: string;
+  empty: string;
+  items: string[];
+  anchors?: Array<string | null>;
+  focusedAnchor?: string | null;
+}) {
   return (
     <div className="grid gap-1.5 rounded-md border bg-background p-2 text-xs">
       <div className="font-medium text-muted-foreground">{title}</div>
@@ -3071,7 +3100,13 @@ function EvidenceList({ title, empty, items }: { title: string; empty: string; i
       ) : (
         <div className="grid gap-1">
           {items.slice(0, 6).map((item, index) => (
-            <div key={`${title}-${index}`} className="break-words rounded bg-muted/30 px-2 py-1 text-[11px] leading-5">
+            <div
+              key={`${title}-${index}`}
+              className={`break-words rounded px-2 py-1 text-[11px] leading-5 ${
+                focusedAnchor && anchors?.[index] === focusedAnchor ? "bg-emerald-500/10 ring-2 ring-emerald-500/30" : "bg-muted/30"
+              }`}
+              data-evidence-anchor={anchors?.[index] ?? undefined}
+            >
               {item || "空消息"}
             </div>
           ))}
@@ -3081,36 +3116,88 @@ function EvidenceList({ title, empty, items }: { title: string; empty: string; i
   );
 }
 
+function FailureReviewPanel({ evidence, evidenceFocus }: { evidence: PromptEvaluationRunEvidence; evidenceFocus: EvidenceFocus }) {
+  const items = buildFailureReviewItems(evidence);
+  if (items.length === 0) return null;
+  return (
+    <div className="grid gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs" data-testid="run-evidence-failure-review">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="font-medium text-destructive">失败复盘入口</div>
+        <Badge variant="destructive">{items.length} 条线索</Badge>
+      </div>
+      <div className="grid gap-1.5 md:grid-cols-2">
+        {items.map((item, index) => {
+          const focused = evidenceFocus.failureAnchor === item.kind;
+          return (
+            <div
+              key={`${item.kind}-${index}`}
+              className={`grid gap-1 rounded border px-2 py-1.5 text-[11px] leading-5 ${
+                focused ? "border-destructive bg-destructive/10 ring-2 ring-destructive/30" : "bg-background"
+              }`}
+              data-testid={`run-evidence-failure-${item.kind}`}
+              data-evidence-anchor={item.anchor}
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <Badge variant="outline">{item.label}</Badge>
+                <span className="font-medium text-foreground">{item.title}</span>
+              </div>
+              <div className="break-words text-muted-foreground">{truncateText(item.detail, 220)}</div>
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 function EvidenceAnchorSummary({
   evidence,
-  focusedTraceSeq,
-  focusedToolChainId,
+  evidenceFocus,
 }: {
   evidence: PromptEvaluationRunEvidence;
-  focusedTraceSeq: string | null;
-  focusedToolChainId: string | null;
+  evidenceFocus: EvidenceFocus;
 }) {
   const traceCount = evidence.trace_events.length;
   const toolCount = evidence.tool_call_chains.length;
-  if (traceCount === 0 && toolCount === 0) return null;
+  const trialCount = evidence.trials.length;
+  const messageCount = evidence.task_messages.length;
+  const spanCount = evidence.execution_spans.length;
+  const failureCount = buildFailureReviewItems(evidence).length;
+  if (traceCount === 0 && toolCount === 0 && trialCount === 0 && messageCount === 0 && spanCount === 0 && failureCount === 0) return null;
   return (
     <div className="grid gap-1.5 rounded-md border bg-background p-2 text-xs" data-testid="run-evidence-anchor-summary">
       <div className="font-medium text-muted-foreground">证据锚点</div>
-      <div className="grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-2">
+      <div className="grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-2 lg:grid-cols-3">
         <div>
           trace 锚点：{traceCount > 0 ? `trace=1 到 trace=${traceCount}` : "暂无 trace"}
-          {focusedTraceSeq ? ` · 当前定位 trace=${focusedTraceSeq}` : ""}
+          {evidenceFocus.traceSeq ? ` · 当前定位 trace=${evidenceFocus.traceSeq}` : ""}
         </div>
         <div>
           工具锚点：{toolCount > 0 ? "使用 tool=<工具链id>" : "暂无工具链"}
-          {focusedToolChainId ? ` · 当前定位 tool=${focusedToolChainId}` : ""}
+          {evidenceFocus.toolChainId ? ` · 当前定位 tool=${evidenceFocus.toolChainId}` : ""}
+        </div>
+        <div>
+          用例锚点：{trialCount > 0 ? "使用 trial=<用例id或序号>" : "暂无用例"}
+          {evidenceFocus.trialAnchor ? ` · 当前定位 trial=${evidenceFocus.trialAnchor}` : ""}
+        </div>
+        <div>
+          消息锚点：{messageCount > 0 ? "使用 message=<消息seq>" : "暂无消息"}
+          {evidenceFocus.messageSeq ? ` · 当前定位 message=${evidenceFocus.messageSeq}` : ""}
+        </div>
+        <div>
+          span 锚点：{spanCount > 0 ? "使用 span=<span seq或id>" : "暂无 span"}
+          {evidenceFocus.spanAnchor ? ` · 当前定位 span=${evidenceFocus.spanAnchor}` : ""}
+        </div>
+        <div>
+          失败锚点：{failureCount > 0 ? "使用 failure=run|trial|tool|trace" : "暂无失败线索"}
+          {evidenceFocus.failureAnchor ? ` · 当前定位 failure=${evidenceFocus.failureAnchor}` : ""}
         </div>
       </div>
     </div>
   );
 }
 
-function ExecutionSpanTreePanel({ evidence, focusedToolChainId }: { evidence: PromptEvaluationRunEvidence; focusedToolChainId: string | null }) {
+function ExecutionSpanTreePanel({ evidence, evidenceFocus }: { evidence: PromptEvaluationRunEvidence; evidenceFocus: EvidenceFocus }) {
   const spans = evidence.execution_spans ?? [];
   const toolCallChains = evidence.tool_call_chains ?? [];
   const toolCallSummary = evidence.tool_call_summary ?? [];
@@ -3137,13 +3224,13 @@ function ExecutionSpanTreePanel({ evidence, focusedToolChainId }: { evidence: Pr
         </div>
       </div>
       <ToolCallSummaryPanel rows={toolCallSummary} />
-      <ToolCallChainPanel chains={toolCallChains} focusedToolChainId={focusedToolChainId} />
+      <ToolCallChainPanel chains={toolCallChains} focusedToolChainId={evidenceFocus.toolChainId} />
       {spans.length === 0 ? (
         <div className="rounded-md border border-dashed px-3 py-3 text-muted-foreground">暂无执行 span；真实任务开始后会从 trace、消息和用量证据中生成观测树。</div>
       ) : (
         <div className="grid gap-1.5">
           {spans.map((span) => (
-            <ExecutionSpanNode key={span.id} span={span} />
+            <ExecutionSpanNode key={span.id} span={span} focused={isFocusedSpan(evidenceFocus.spanAnchor, span)} />
           ))}
         </div>
       )}
@@ -3276,10 +3363,17 @@ function ToolCallChainPanel({
   );
 }
 
-function ExecutionSpanNode({ span }: { span: PromptEvaluationRunEvidence["execution_spans"][number] }) {
+function ExecutionSpanNode({ span, focused }: { span: PromptEvaluationRunEvidence["execution_spans"][number]; focused: boolean }) {
   const tone = executionSpanTone(span.span_kind, span.status);
   return (
-    <div className={`grid gap-1 rounded-md border border-l-4 ${tone} bg-muted/15 px-3 py-2`} data-testid={`run-evidence-execution-span-${span.seq}`}>
+    <div
+      className={`grid gap-1 rounded-md border border-l-4 ${tone} px-3 py-2 ${
+        focused ? "border-emerald-500 bg-emerald-500/10 ring-2 ring-emerald-500/30" : "bg-muted/15"
+      }`}
+      data-testid={`run-evidence-execution-span-${span.seq}`}
+      data-evidence-anchor={`span:${span.seq}`}
+      data-evidence-anchor-alias={`span:${span.id}`}
+    >
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-mono text-[11px] text-muted-foreground">#{span.seq}</span>
         <span className="font-medium text-foreground">{span.span_name || span.span_kind}</span>
@@ -3448,6 +3542,92 @@ function buildExternalDependencyFailureNotice(evidence: PromptEvaluationRunEvide
     };
   }
   return null;
+}
+
+function evidenceFocusSelector(focus: EvidenceFocus): string {
+  const selectors: string[] = [];
+  if (focus.toolChainId) selectors.push(evidenceAnchorSelector("data-evidence-anchor", `tool:${focus.toolChainId}`));
+  if (focus.traceSeq) selectors.push(evidenceAnchorSelector("data-evidence-anchor", `trace:${focus.traceSeq}`));
+  if (focus.trialAnchor) {
+    selectors.push(evidenceAnchorSelector("data-evidence-anchor", `trial:${focus.trialAnchor}`));
+    selectors.push(evidenceAnchorSelector("data-evidence-anchor-alias", `trial:${focus.trialAnchor}`));
+  }
+  if (focus.messageSeq) selectors.push(evidenceAnchorSelector("data-evidence-anchor", `message:${focus.messageSeq}`));
+  if (focus.spanAnchor) {
+    selectors.push(evidenceAnchorSelector("data-evidence-anchor", `span:${focus.spanAnchor}`));
+    selectors.push(evidenceAnchorSelector("data-evidence-anchor-alias", `span:${focus.spanAnchor}`));
+  }
+  if (focus.failureAnchor) selectors.push(evidenceAnchorSelector("data-evidence-anchor", `failure:${focus.failureAnchor}`));
+  return selectors.join(",");
+}
+
+function evidenceAnchorSelector(attribute: string, value: string): string {
+  return `[${attribute}="${cssEscape(value)}"]`;
+}
+
+function isFocusedTrial(focusedTrialAnchor: string | null, trial: PromptEvaluationRunEvidence["trials"][number]): boolean {
+  if (!focusedTrialAnchor) return false;
+  return focusedTrialAnchor === trial.id || focusedTrialAnchor === String(trial.case_index + 1);
+}
+
+function isFocusedSpan(focusedSpanAnchor: string | null, span: PromptEvaluationRunEvidence["execution_spans"][number]): boolean {
+  if (!focusedSpanAnchor) return false;
+  return focusedSpanAnchor === span.id || focusedSpanAnchor === String(span.seq);
+}
+
+type FailureReviewItem = {
+  kind: "run" | "trial" | "tool" | "trace";
+  label: string;
+  title: string;
+  detail: string;
+  anchor: string;
+};
+
+function buildFailureReviewItems(evidence: PromptEvaluationRunEvidence): FailureReviewItem[] {
+  const items: FailureReviewItem[] = [];
+  if (evidence.run.failure_reason && evidence.run.failure_reason !== "无") {
+    items.push({
+      kind: "run",
+      label: "运行",
+      title: "运行失败原因",
+      detail: evidence.run.failure_reason,
+      anchor: "failure:run",
+    });
+  }
+  for (const trial of evidence.trials) {
+    if ((trial.status === "未通过" || trial.status === "失败" || trial.status === "需人工复核") && trial.failure_reason && trial.failure_reason !== "无") {
+      items.push({
+        kind: "trial",
+        label: "用例",
+        title: trial.case_name || `用例 ${trial.case_index + 1}`,
+        detail: trial.failure_reason,
+        anchor: "failure:trial",
+      });
+    }
+  }
+  for (const chain of evidence.tool_call_chains) {
+    if (chain.failure_signal || (chain.failure_reason && chain.failure_reason !== "无")) {
+      items.push({
+        kind: "tool",
+        label: "工具",
+        title: chain.tool || "未记录工具",
+        detail: chain.failure_reason || chain.summary || "工具调用存在异常线索",
+        anchor: "failure:tool",
+      });
+    }
+  }
+  for (const event of evidence.trace_events) {
+    if ((event.failure_reason && event.failure_reason !== "无") || event.error_type) {
+      items.push({
+        kind: "trace",
+        label: "trace",
+        title: event.event_name || traceEventStageLabel(event.event_type),
+        detail: [event.failure_reason, event.error_type].filter(Boolean).join(" · "),
+        anchor: "failure:trace",
+      });
+    }
+  }
+  return items.slice(0, 8);
 }
 
 function formatTraceEventEvidence(event: PromptEvaluationRunEvidence["trace_events"][number]): string {

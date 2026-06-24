@@ -127,6 +127,7 @@ interface PromptEvaluationRunEvidence {
   上下文: Record<string, unknown>;
   trials: Array<{
     id: string;
+    case_index: number;
     case_name: string;
     status: string;
     rendered_prompt: string;
@@ -144,6 +145,8 @@ interface PromptEvaluationRunEvidence {
   }>;
   task_messages: unknown[];
   trace_events: unknown[];
+  execution_spans: Array<{ id: string; seq: number }>;
+  tool_call_chains: Array<{ id: string; tool?: string }>;
   evidence: Record<string, unknown>;
 }
 
