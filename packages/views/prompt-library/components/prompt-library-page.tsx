@@ -331,7 +331,7 @@ export function PromptLibraryPage({
         : items.filter((item) => !acceptanceFixtureItems.includes(item)),
     [acceptanceFixtureItems, items, showAcceptanceFixtures],
   );
-  const selectedFromList = selectedId ? visiblePromptItems.find((item) => item.id === selectedId) ?? null : null;
+  const selectedFromList = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
   const visibleCandidatesForDashboard = useMemo(
     () =>
       showAcceptanceFixtures
@@ -387,13 +387,13 @@ export function PromptLibraryPage({
       const storedId = [selectedPromptStorageKey, ...selectedPromptLegacyStorageKeys]
         .map((key) => window.localStorage.getItem(key))
         .find(Boolean);
-      if (storedId && storedId !== selectedId && visiblePromptItems.some((item) => item.id === storedId)) {
+      if (storedId && storedId !== selectedId && items.some((item) => item.id === storedId)) {
         setSelectedId(storedId);
       }
     } catch {
       // localStorage is best-effort; route usability must not depend on it.
     }
-  }, [isDraftingNew, selectedId, selectedPromptLegacyStorageKeys, selectedPromptStorageKey, visiblePromptItems]);
+  }, [isDraftingNew, items, selectedId, selectedPromptLegacyStorageKeys, selectedPromptStorageKey]);
 
   useEffect(() => {
     if (!selectedPromptStorageKey || !selectedId) return;
