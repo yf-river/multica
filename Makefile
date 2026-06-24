@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-audit goal-test-training-performance-audit goal-test-session-retro goal-test-token-audit
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-audit goal-test-training-performance-audit goal-test-session-retro goal-test-token-audit
 
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
@@ -243,6 +243,14 @@ goal-test-verify-logs: ## Verify current-deployment goal-test logs without scann
 
 goal-test-e2e-preflight: ## Check goal-test Playwright/API/DB prerequisites before browser E2E
 	PLAYWRIGHT_BASE_URL=$${PLAYWRIGHT_BASE_URL:-http://9.134.129.162:13682} node scripts/goal-test-e2e-preflight.mjs
+
+goal-test-e2e: goal-test-e2e-preflight ## Run goal-test Playwright with fixed int env; pass SPEC="e2e/file.spec.ts" and ARGS="--project=chromium"
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-playwright.mjs
+
+goal-test-e2e-all: goal-test-e2e-preflight ## Run all goal-test Playwright specs with fixed int env
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-playwright.mjs --project=chromium
 
 goal-test-smoke: ## Fast goal-test gate: E2E preflight, environment verify, and current log window verify
 	$(MAKE) goal-test-e2e-preflight
