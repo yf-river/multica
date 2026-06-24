@@ -252,6 +252,26 @@ describe("ProjectsPage compact row navigation", () => {
     ).not.toBeInTheDocument();
   });
 
+  it("hides acceptance fixture projects by default and can reveal them", async () => {
+    const user = userEvent.setup();
+    const fixtureProject: Project = {
+      ...PROJECT,
+      id: "project-fixture",
+      title: "curl gateway 1782316918018",
+      description: "curl user-center 小队真实端到端验收",
+    };
+    mocks.projects = [PROJECT, fixtureProject];
+
+    renderProjects();
+
+    expect(screen.getByText(PROJECT.title)).toBeInTheDocument();
+    expect(screen.queryByText(fixtureProject.title)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "显示验收数据" }));
+
+    expect(screen.getByText(fixtureProject.title)).toBeInTheDocument();
+  });
+
   it("navigates from the row surface", async () => {
     const user = userEvent.setup();
     const push = vi.fn();

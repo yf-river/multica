@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Issue } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
@@ -568,6 +568,27 @@ describe("IssuesPage (shared)", () => {
     await screen.findByText("Implement auth");
     expect(screen.getByText("Design landing page")).toBeInTheDocument();
     expect(screen.getByText("Write tests")).toBeInTheDocument();
+  });
+
+  it("hides acceptance fixture issues by default and can reveal them", async () => {
+    const fixtureIssue: Issue = {
+      ...mockIssues[0]!,
+      id: "issue-fixture",
+      number: 99,
+      identifier: "TES-99",
+      title: "curl user-center 小队真实端到端验收",
+      project: { id: "project-fixture", title: "curl gateway 1782316918018", icon: null },
+    };
+    mockListIssueBuckets.mockResolvedValue(mockIssueBuckets([...mockIssues, fixtureIssue]));
+
+    renderWithQuery(<IssuesPage />);
+
+    await screen.findByText("Implement auth");
+    expect(screen.queryByText(fixtureIssue.title)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "显示验收数据" }));
+
+    expect(await screen.findByText(fixtureIssue.title)).toBeInTheDocument();
   });
 
   it("does not load assignee frequency before an assignee picker opens", async () => {

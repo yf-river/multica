@@ -101,6 +101,10 @@ import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { useFormatRelativeDate } from "./labels";
 import { ProjectStatusBadge, ProjectPriorityBadge } from "./project-badge";
 import { ProjectLeadPicker } from "./project-lead-picker";
+import {
+  AcceptanceFixtureNotice,
+  isAcceptanceFixtureRecord,
+} from "../../common/acceptance-fixtures";
 
 // Sort order maps for the enum columns (header sort needs a total order).
 const PRIORITY_ORDER: Record<ProjectPriority, number> = {
@@ -125,6 +129,16 @@ const progressOf = (p: Project) =>
 // refs alike.
 function leadFilterValue(p: Project): string | null {
   return p.lead_type && p.lead_id ? `${p.lead_type}:${p.lead_id}` : null;
+}
+
+function isProjectAcceptanceFixture(project: Project) {
+  return isAcceptanceFixtureRecord(
+    {
+      title: project.title,
+      description: project.description,
+    },
+    ["title", "description"],
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -812,6 +826,7 @@ export function ProjectsPage() {
   }, [pins]);
 
   const [search, setSearch] = useState("");
+  const [showAcceptanceFixtures, setShowAcceptanceFixtures] = useState(false);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const toggleSelected = (id: string) =>
     setSelectedIds((prev) => {
@@ -823,12 +838,23 @@ export function ProjectsPage() {
 
   const activeFilterCount = countActiveFilters(filters);
   const hasActiveFilters = activeFilterCount > 0;
+  const hiddenAcceptanceProjects = useMemo(
+    () => projects.filter(isProjectAcceptanceFixture),
+    [projects],
+  );
+  const displayProjects = useMemo(
+    () =>
+      showAcceptanceFixtures
+        ? projects
+        : projects.filter((project) => !isProjectAcceptanceFixture(project)),
+    [projects, showAcceptanceFixtures],
+  );
 
   // Filter option counts derive from the full set so toggling one dimension
   // doesn't make the others vanish.
   const leadOptions = useMemo(() => {
     const m = new Map<string, { type: string; id: string; count: number }>();
-    for (const p of projects) {
+    for (const p of displayProjects) {
       const v = leadFilterValue(p);
       if (!v || !p.lead_type || !p.lead_id) continue;
       const e = m.get(v);
@@ -836,11 +862,11 @@ export function ProjectsPage() {
       else m.set(v, { type: p.lead_type, id: p.lead_id, count: 1 });
     }
     return m;
-  }, [projects]);
+  }, [displayProjects]);
 
   const visible = useMemo(() => {
     const q = search.trim().toLowerCase();
-    const filtered = projects.filter((p) => {
+    const filtered = displayProjects.filter((p) => {
       if (q && !p.title.toLowerCase().includes(q) && !matchesPinyin(p.title, q)) {
         return false;
       }
@@ -876,7 +902,7 @@ export function ProjectsPage() {
       return (Date.parse(a.created_at) - Date.parse(b.created_at)) * dir;
     });
     return sorted;
-  }, [projects, search, filters, sortField, sortDirection]);
+  }, [displayProjects, search, filters, sortField, sortDirection]);
 
   const selectedProjects = visible.filter((p) => selectedIds.has(p.id));
   const allSelected = visible.length > 0 && selectedProjects.length === visible.length;
@@ -905,7 +931,7 @@ export function ProjectsPage() {
             ? t(($) => $.table.issues)
             : t(($) => $.table.created);
 
-  const showEmpty = !isLoading && projects.length === 0;
+  const showEmpty = !isLoading && displayProjects.length === 0 && projects.length === 0;
   const countBadge = (n: number) => (
     <span className="ml-auto pl-3 text-xs text-muted-foreground">{n}</span>
   );
@@ -917,9 +943,9 @@ export function ProjectsPage() {
         <div className="flex items-center gap-2">
           <FolderKanban className="h-4 w-4 text-muted-foreground" />
           <h1 className="text-sm font-medium">{t(($) => $.page.title)}</h1>
-          {projects.length > 0 && (
+          {displayProjects.length > 0 && (
             <span className="font-mono text-xs tabular-nums text-muted-foreground/70">
-              {projects.length}
+              {displayProjects.length}
             </span>
           )}
         </div>
@@ -946,6 +972,13 @@ export function ProjectsPage() {
       ) : (
         <>
           {/* Toolbar */}
+          <AcceptanceFixtureNotice
+            count={hiddenAcceptanceProjects.length}
+            noun="项目"
+            showing={showAcceptanceFixtures}
+            onShow={() => setShowAcceptanceFixtures(true)}
+            onHide={() => setShowAcceptanceFixtures(false)}
+          />
           <div className="flex h-12 shrink-0 items-center justify-between gap-2 px-5">
             <div className="flex min-w-0 items-center gap-2">
               <div className="relative hidden md:block">
@@ -962,7 +995,7 @@ export function ProjectsPage() {
                   title={t(($) => $.toolbar.result_count_title)}
                   className="hidden shrink-0 text-xs tabular-nums text-muted-foreground md:inline"
                 >
-                  {visible.length} / {projects.length}
+                  {visible.length} / {displayProjects.length}
                 </span>
               )}
             </div>

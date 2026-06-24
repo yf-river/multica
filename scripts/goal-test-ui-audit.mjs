@@ -27,10 +27,39 @@ const stamp = generatedAt.replace(/[:.]/g, "-");
 
 mkdirSync(screenshotDir, { recursive: true });
 
+const forbiddenAcceptanceTexts = [
+  "curl user-center 小队真实端到端验收",
+  "curl Multica 编码小队真实端到端验收",
+  "curl 小队父子任务唤醒验收",
+  "curl gateway",
+  "curl config",
+  "curl usercenter",
+  "GOAL_TEST_ACCEPTANCE",
+];
+
 const routes = [
   { id: "login", label: "登录页", path: "/login", auth: false, expect: ["登录 Multica"] },
-  { id: "issues", label: "任务", path: `/${workspaceSlug}/issues`, expect: ["新建任务"] },
-  { id: "inbox", label: "收件箱", path: `/${workspaceSlug}/inbox`, expect: ["收件箱"] },
+  {
+    id: "issues",
+    label: "任务",
+    path: `/${workspaceSlug}/issues`,
+    expect: ["新建任务"],
+    uiContract: { forbiddenText: forbiddenAcceptanceTexts },
+  },
+  {
+    id: "inbox",
+    label: "收件箱",
+    path: `/${workspaceSlug}/inbox`,
+    expect: ["收件箱"],
+    uiContract: { forbiddenText: forbiddenAcceptanceTexts },
+  },
+  {
+    id: "projects",
+    label: "项目",
+    path: `/${workspaceSlug}/projects`,
+    expect: ["项目"],
+    uiContract: { forbiddenText: forbiddenAcceptanceTexts },
+  },
   {
     id: "agents",
     label: "智能体",

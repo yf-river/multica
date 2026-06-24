@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { ListTodo } from "lucide-react";
 import type { Issue, UpdateIssueRequest } from "@multica/core/types";
@@ -25,6 +25,10 @@ import { SwimLaneView } from "./swimlane-view";
 import { BatchActionToolbar } from "./batch-action-toolbar";
 import type { ChildProgress } from "./list-row";
 import { useT } from "../../i18n";
+import {
+  AcceptanceFixtureNotice,
+  isAcceptanceFixtureRecord,
+} from "../../common/acceptance-fixtures";
 
 const EMPTY_CHILD_PROGRESS = new Map<string, ChildProgress>();
 
@@ -72,9 +76,32 @@ function issueDateFilterToApiParams(filter: IssueDateFilter | null) {
   };
 }
 
+function isIssueAcceptanceFixture(issue: Issue) {
+  return isAcceptanceFixtureRecord(
+    {
+      title: issue.title,
+      description: issue.description,
+      project: issue.project,
+      assignee: issue.assignee,
+      metadata: issue.metadata,
+    },
+    ["title", "description", "project", "assignee", "metadata"],
+  );
+}
+
+function uniqueIssues(issues: Issue[]) {
+  const seen = new Set<string>();
+  return issues.filter((issue) => {
+    if (seen.has(issue.id)) return false;
+    seen.add(issue.id);
+    return true;
+  });
+}
+
 export function IssuesPage() {
   const { t } = useT("issues");
   const wsId = useWorkspaceId();
+  const [showAcceptanceFixtures, setShowAcceptanceFixtures] = useState(false);
 
   const scope = useIssuesScopeStore((s) => s.scope);
   const viewMode = useIssueViewStore((s) => s.viewMode);
@@ -146,6 +173,37 @@ export function IssuesPage() {
   const loading = usesAssigneeBoard
     ? assigneeGroupsQuery.isLoading
     : statusIssuesQuery.isLoading;
+  const rawDisplaySourceIssues = useMemo(
+    () => (usesAssigneeBoard ? assigneeIssues : allIssues),
+    [allIssues, assigneeIssues, usesAssigneeBoard],
+  );
+  const hiddenAcceptanceIssues = useMemo(
+    () => rawDisplaySourceIssues.filter(isIssueAcceptanceFixture),
+    [rawDisplaySourceIssues],
+  );
+  const visibleAllIssues = useMemo(
+    () =>
+      showAcceptanceFixtures
+        ? allIssues
+        : allIssues.filter((issue) => !isIssueAcceptanceFixture(issue)),
+    [allIssues, showAcceptanceFixtures],
+  );
+  const visibleAssigneeGroups = useMemo(() => {
+    const groups = assigneeGroupsQuery.data?.groups ?? [];
+    if (showAcceptanceFixtures) return groups;
+    return groups
+      .map((group) => {
+        const groupIssues = group.issues.filter(
+          (issue) => !isIssueAcceptanceFixture(issue),
+        );
+        return { ...group, issues: groupIssues, total: groupIssues.length };
+      })
+      .filter((group) => group.issues.length > 0);
+  }, [assigneeGroupsQuery.data, showAcceptanceFixtures]);
+  const visibleAssigneeIssues = useMemo(
+    () => visibleAssigneeGroups.flatMap((group) => group.issues),
+    [visibleAssigneeGroups],
+  );
 
   // Clear filter state when switching between workspaces (URL-driven).
   useClearFiltersOnWorkspaceChange(useIssueViewStore, wsId);
@@ -157,15 +215,15 @@ export function IssuesPage() {
   // Scope pre-filter: narrow by assignee type
   const scopedIssues = useMemo(() => {
     if (scope === "members")
-      return allIssues.filter((i) => i.assignee_type === "member");
+      return visibleAllIssues.filter((i) => i.assignee_type === "member");
     if (scope === "agents")
-      return allIssues.filter((i) => i.assignee_type === "agent" || i.assignee_type === "squad");
-    return allIssues;
-  }, [allIssues, scope]);
+      return visibleAllIssues.filter((i) => i.assignee_type === "agent" || i.assignee_type === "squad");
+    return visibleAllIssues;
+  }, [visibleAllIssues, scope]);
 
-  const headerIssues = usesAssigneeBoard ? assigneeIssues : scopedIssues;
+  const headerIssues = usesAssigneeBoard ? visibleAssigneeIssues : scopedIssues;
 
-  const agentActivitySourceIssues = usesAssigneeBoard ? assigneeIssues : allIssues;
+  const agentActivitySourceIssues = usesAssigneeBoard ? visibleAssigneeIssues : visibleAllIssues;
   const hasListAgentActivity = hasCompleteAgentActivitySummaries(agentActivitySourceIssues);
   const listRunningIssueIds = useMemo(
     () => runningIssueIdsFromAgentActivitySummaries(agentActivitySourceIssues),
@@ -216,7 +274,7 @@ export function IssuesPage() {
     agentRunningFilter,
   ]);
 
-  const childProgressSourceIssues = usesAssigneeBoard ? assigneeIssues : allIssues;
+  const childProgressSourceIssues = usesAssigneeBoard ? visibleAssigneeIssues : visibleAllIssues;
   const hasListChildProgress = hasCompleteChildProgressSummaries(childProgressSourceIssues);
   const listChildProgressMap = useMemo(
     () => childProgressMapFromIssues(childProgressSourceIssues),
@@ -288,6 +346,13 @@ export function IssuesPage() {
           dateFilter={dateFilter}
           onDateFilterChange={setDateFilter}
         />
+        <AcceptanceFixtureNotice
+          count={uniqueIssues(hiddenAcceptanceIssues).length}
+          noun="任务"
+          showing={showAcceptanceFixtures}
+          onShow={() => setShowAcceptanceFixtures(true)}
+          onHide={() => setShowAcceptanceFixtures(false)}
+        />
 
         {loading ? contentSkeleton : headerIssues.length === 0 ? (
           <div className="flex flex-1 min-h-0 flex-col items-center justify-center gap-2 text-muted-foreground">
@@ -299,8 +364,8 @@ export function IssuesPage() {
           <div className="flex flex-col flex-1 min-h-0">
             {viewMode === "board" ? (
               <BoardView
-                issues={usesAssigneeBoard ? assigneeIssues : issues}
-                assigneeGroups={usesAssigneeBoard ? assigneeGroupsQuery.data?.groups : undefined}
+                issues={usesAssigneeBoard ? visibleAssigneeIssues : issues}
+                assigneeGroups={usesAssigneeBoard ? visibleAssigneeGroups : undefined}
                 assigneeGroupQueryKey={usesAssigneeBoard ? assigneeGroupsOptions.queryKey : undefined}
                 assigneeGroupFilter={usesAssigneeBoard ? assigneeGroupFilter : undefined}
                 visibleStatuses={visibleStatuses}
