@@ -52,15 +52,15 @@ func memberAllowedForPrivateAgent(agent db.Agent, userID, role string) bool {
 // accessibleAgentIDs returns the set of agent IDs in the workspace the actor
 // is allowed to see, for use by workspace-wide aggregation endpoints
 // (run counts, activity histograms, task snapshots) that need to filter out
-// private agents the member can't access. Returns nil and false on error.
-func (h *Handler) accessibleAgentIDs(ctx context.Context, workspaceID, actorType, actorID, role string) (map[string]struct{}, bool) {
+// private agents the member can't access.
+func (h *Handler) accessibleAgentIDs(ctx context.Context, workspaceID, actorType, actorID, role string) (map[string]struct{}, error) {
 	wsUUID, err := util.ParseUUID(workspaceID)
 	if err != nil {
-		return nil, false
+		return nil, err
 	}
 	agents, err := h.Queries.ListAllAgents(ctx, wsUUID)
 	if err != nil {
-		return nil, false
+		return nil, err
 	}
 	allowed := make(map[string]struct{}, len(agents))
 	for _, a := range agents {
@@ -71,8 +71,9 @@ func (h *Handler) accessibleAgentIDs(ctx context.Context, workspaceID, actorType
 		}
 		allowed[uuidToString(a.ID)] = struct{}{}
 	}
-	return allowed, true
+	return allowed, nil
 }
+
 // canEnqueueSquadLeader returns true when the given actor is allowed to
 // trigger the squad's private leader. It loads the leader agent and delegates
 // to canAccessPrivateAgent. Non-private leaders always pass. System-initiated
