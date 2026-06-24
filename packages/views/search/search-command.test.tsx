@@ -40,6 +40,8 @@ const {
   mockOpenModal,
   mockToastSuccess,
   mockClipboardWrite,
+  mockUseQueryCalls,
+  mockUseQueriesCalls,
 } = vi.hoisted(() => ({
   mockPush: vi.fn(),
   mockSearchIssues: vi.fn(),
@@ -79,6 +81,8 @@ const {
   mockOpenModal: vi.fn(),
   mockToastSuccess: vi.fn(),
   mockClipboardWrite: vi.fn(() => Promise.resolve()),
+  mockUseQueryCalls: { current: [] as Array<{ queryKey: readonly unknown[]; enabled?: boolean }> },
+  mockUseQueriesCalls: { current: [] as Array<{ queryKey: readonly unknown[] }> },
 }));
 
 vi.mock("@multica/core/api", () => ({
@@ -187,6 +191,8 @@ function resolveIssue(key: readonly unknown[]) {
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: (opts: { queryKey: readonly unknown[]; enabled?: boolean }) => {
+    mockUseQueryCalls.current.push(opts);
+    if (opts.enabled === false) return { data: undefined };
     const key = opts.queryKey;
     if (key[0] === "workspaces" && key[2] === "members") {
       return { data: mockMembers.current };
@@ -197,11 +203,12 @@ vi.mock("@tanstack/react-query", () => ({
     if (key[0] === "workspaces" && key[2] === "squads") {
       return { data: mockSquads.current };
     }
-    if (opts.enabled === false) return { data: undefined };
     return { data: resolveIssue(key) };
   },
-  useQueries: (opts: { queries: Array<{ queryKey: readonly unknown[] }> }) =>
-    opts.queries.map((q) => ({ data: resolveIssue(q.queryKey) })),
+  useQueries: (opts: { queries: Array<{ queryKey: readonly unknown[] }> }) => {
+    mockUseQueriesCalls.current.push(...opts.queries);
+    return opts.queries.map((q) => ({ data: resolveIssue(q.queryKey) }));
+  },
 }));
 
 vi.mock("../navigation", () => ({
@@ -237,6 +244,8 @@ describe("SearchCommand", () => {
     mockOpenModal.mockReset();
     mockToastSuccess.mockReset();
     mockClipboardWrite.mockReset().mockResolvedValue(undefined);
+    mockUseQueryCalls.current = [];
+    mockUseQueriesCalls.current = [];
 
     // cmdk calls scrollIntoView on the first selected item, which jsdom doesn't implement
     Element.prototype.scrollIntoView = vi.fn();
@@ -244,6 +253,32 @@ describe("SearchCommand", () => {
     act(() => {
       useSearchStore.setState({ open: true });
     });
+  });
+
+  it("命令面板关闭时不预拉成员、最近任务和当前任务详情", () => {
+    act(() => {
+      useSearchStore.setState({ open: false });
+    });
+    mockRecentItems.current = [
+      { id: "issue-1", visitedAt: 1000 },
+      { id: "issue-2", visitedAt: 900 },
+    ];
+    mockPathname.current = "/ws-test/issues/issue-1";
+
+    renderSearch();
+
+    expect(screen.queryByPlaceholderText("输入命令或关键词搜索...")).not.toBeInTheDocument();
+    expect(mockUseQueriesCalls.current).toHaveLength(0);
+    expect(
+      mockUseQueryCalls.current.some(
+        (call) => call.queryKey[0] === "workspaces" && call.queryKey[2] === "members" && call.enabled !== false,
+      ),
+    ).toBe(false);
+    expect(
+      mockUseQueryCalls.current.some(
+        (call) => call.queryKey[0] === "issues" && call.queryKey[2] === "detail" && call.enabled !== false,
+      ),
+    ).toBe(false);
   });
 
   it("从搜索输入框按一次 Escape 会关闭命令面板", async () => {

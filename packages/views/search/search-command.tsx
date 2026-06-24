@@ -199,14 +199,17 @@ export function SearchCommand() {
   const wsId = useWorkspaceId();
   const recentItems = useRecentIssuesStore(selectRecentIssues(wsId));
   const { theme, setTheme } = useTheme();
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
+  const { data: members = [] } = useQuery({
+    ...memberListOptions(wsId),
+    enabled: open && !!wsId,
+  });
 
   // Resolve each recent issue via its cached detail entry. Recent items are
   // typically already in the detail cache because the user has opened them;
   // if not, this triggers a lookup per id so Recent never depends on whether
   // the issue falls inside the paginated list cache.
   const recentDetailQueries = useQueries({
-    queries: recentItems.map((item) => issueDetailOptions(wsId, item.id)),
+    queries: open ? recentItems.map((item) => issueDetailOptions(wsId, item.id)) : [],
   });
   const recentIssues = useMemo(
     () =>
@@ -239,7 +242,7 @@ export function SearchCommand() {
   }, [pathname]);
   const { data: currentIssue = null } = useQuery({
     ...issueDetailOptions(wsId, currentIssueId ?? ""),
-    enabled: !!currentIssueId,
+    enabled: open && !!currentIssueId,
   });
 
   const commands = useMemo<CommandItem[]>(() => {
