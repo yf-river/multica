@@ -151,6 +151,7 @@ import type {
   ListPromptEvaluationExperimentDimensionsParams,
   ListPromptEvaluationDimensionScoresParams,
   ListPromptEvaluationDimensionScoreSummariesParams,
+  ListPromptEvaluationDimensionScoreTrendsParams,
   PromptEvaluationSummaryParams,
   ListPromptEvaluationOptimizationCandidatesParams,
   ListPromptEvaluationAssetsResponse,
@@ -163,6 +164,7 @@ import type {
   ListPromptEvaluationExperimentDimensionsResponse,
   ListPromptEvaluationDimensionScoresResponse,
   ListPromptEvaluationDimensionScoreSummariesResponse,
+  ListPromptEvaluationDimensionScoreTrendsResponse,
   ListPromptEvaluationOptimizationCandidatesResponse,
   CreatePromptEvaluationAssetRequest,
   UpdatePromptEvaluationAssetRequest,
@@ -231,6 +233,7 @@ import {
   EMPTY_PROMPT_EVALUATION_EXPERIMENT_DIMENSION_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_SUMMARY_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_TREND_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
   EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE,
   EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE,
@@ -269,6 +272,7 @@ import {
   PromptEvaluationExperimentDimensionListResponseSchema,
   PromptEvaluationDimensionScoreListResponseSchema,
   PromptEvaluationDimensionScoreSummaryListResponseSchema,
+  PromptEvaluationDimensionScoreTrendListResponseSchema,
   PromptEvaluationOptimizationCandidateSchema,
   PromptEvaluationOptimizationCandidateListResponseSchema,
   PublishPromptEvaluationOptimizationCandidateResponseSchema,
@@ -2023,6 +2027,19 @@ export class ApiClient {
     return parseWithFallback(raw, PromptEvaluationDimensionScoreSummaryListResponseSchema, EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_SUMMARY_LIST_RESPONSE, {
       endpoint: "GET /api/prompt-evaluation-dimension-score-summaries",
     }) as ListPromptEvaluationDimensionScoreSummariesResponse;
+  }
+
+  async listPromptEvaluationDimensionScoreTrends(params?: ListPromptEvaluationDimensionScoreTrendsParams): Promise<ListPromptEvaluationDimensionScoreTrendsResponse> {
+    const search = new URLSearchParams();
+    if (params?.asset_id) search.set("asset_id", params.asset_id);
+    if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
+    if (params?.status) search.set("status", params.status);
+    if (params?.since) search.set("since", params.since);
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-dimension-score-trends${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationDimensionScoreTrendListResponseSchema, EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_TREND_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-dimension-score-trends",
+    }) as ListPromptEvaluationDimensionScoreTrendsResponse;
   }
 
   async getPromptEvaluationSummary(params?: PromptEvaluationSummaryParams): Promise<PromptEvaluationSummary> {

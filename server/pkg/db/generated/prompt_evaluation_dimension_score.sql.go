@@ -154,6 +154,172 @@ func (q *Queries) ListPromptEvaluationDimensionScoreSummaries(ctx context.Contex
 	return items, nil
 }
 
+const listPromptEvaluationDimensionScoreTrends = `-- name: ListPromptEvaluationDimensionScoreTrends :many
+WITH filtered_scores AS (
+    SELECT
+        s.workspace_id,
+        s.asset_id,
+        s.prompt_id,
+        s.dimension_index,
+        s.dimension_name,
+        s.status,
+        s.passed_cases,
+        s.total_cases,
+        s.rule,
+        s.evidence,
+        s.source,
+        s.updated_at,
+        to_char(date_trunc('day', r.created_at), 'YYYY-MM-DD') AS period,
+        CASE
+            WHEN COALESCE(r.metrics->>'提示词版本', r.metrics->>'prompt_version', '') ~ '^[0-9]+$'
+                THEN COALESCE(r.metrics->>'提示词版本', r.metrics->>'prompt_version')::int
+            ELSE 0
+        END AS prompt_version
+    FROM prompt_evaluation_dimension_score s
+    JOIN prompt_evaluation_run r
+      ON r.id = s.run_id
+     AND r.workspace_id = s.workspace_id
+    WHERE s.workspace_id = $1
+      AND ($2::uuid IS NULL OR s.asset_id = $2)
+      AND ($3::uuid IS NULL OR s.prompt_id = $3)
+      AND ($4::text IS NULL OR s.status = $4)
+      AND ($5::timestamptz IS NULL OR r.created_at >= $5)
+),
+latest_scores AS (
+    SELECT DISTINCT ON (asset_id, prompt_id, dimension_index, dimension_name, period, prompt_version)
+        asset_id,
+        prompt_id,
+        dimension_index,
+        dimension_name,
+        period,
+        prompt_version,
+        status AS latest_status,
+        rule AS latest_rule,
+        evidence AS latest_evidence,
+        source AS latest_source,
+        updated_at AS latest_scored_at
+    FROM filtered_scores
+    ORDER BY asset_id, prompt_id, dimension_index, dimension_name, period, prompt_version, updated_at DESC
+)
+SELECT
+    f.workspace_id,
+    f.asset_id,
+    f.prompt_id,
+    f.dimension_index,
+    f.dimension_name,
+    f.period,
+    f.prompt_version,
+    COUNT(*)::bigint AS run_count,
+    COUNT(*) FILTER (WHERE f.status = '已评分')::bigint AS scored_run_count,
+    COALESCE(SUM(f.passed_cases) FILTER (WHERE f.status = '已评分'), 0)::bigint AS passed_cases,
+    COALESCE(SUM(f.total_cases) FILTER (WHERE f.status = '已评分'), 0)::bigint AS total_cases,
+    CASE
+        WHEN COALESCE(SUM(f.total_cases) FILTER (WHERE f.status = '已评分'), 0) > 0
+            THEN COALESCE(SUM(f.passed_cases) FILTER (WHERE f.status = '已评分'), 0)::double precision
+                / COALESCE(SUM(f.total_cases) FILTER (WHERE f.status = '已评分'), 0)::double precision
+        ELSE 0::double precision
+    END AS score,
+    l.latest_status,
+    l.latest_rule,
+    l.latest_evidence,
+    l.latest_source,
+    l.latest_scored_at
+FROM filtered_scores f
+JOIN latest_scores l
+  ON l.asset_id = f.asset_id
+ AND l.prompt_id IS NOT DISTINCT FROM f.prompt_id
+ AND l.dimension_index = f.dimension_index
+ AND l.dimension_name = f.dimension_name
+ AND l.period = f.period
+ AND l.prompt_version = f.prompt_version
+GROUP BY
+    f.workspace_id,
+    f.asset_id,
+    f.prompt_id,
+    f.dimension_index,
+    f.dimension_name,
+    f.period,
+    f.prompt_version,
+    l.latest_status,
+    l.latest_rule,
+    l.latest_evidence,
+    l.latest_source,
+    l.latest_scored_at
+ORDER BY f.period DESC, f.asset_id, f.dimension_index ASC, f.dimension_name ASC, f.prompt_version DESC
+`
+
+type ListPromptEvaluationDimensionScoreTrendsParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	AssetID     pgtype.UUID        `json:"asset_id"`
+	PromptID    pgtype.UUID        `json:"prompt_id"`
+	Status      pgtype.Text        `json:"status"`
+	Since       pgtype.Timestamptz `json:"since"`
+}
+
+type ListPromptEvaluationDimensionScoreTrendsRow struct {
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	AssetID        pgtype.UUID        `json:"asset_id"`
+	PromptID       pgtype.UUID        `json:"prompt_id"`
+	DimensionIndex int32              `json:"dimension_index"`
+	DimensionName  string             `json:"dimension_name"`
+	Period         string             `json:"period"`
+	PromptVersion  int32              `json:"prompt_version"`
+	RunCount       int64              `json:"run_count"`
+	ScoredRunCount int64              `json:"scored_run_count"`
+	PassedCases    int64              `json:"passed_cases"`
+	TotalCases     int64              `json:"total_cases"`
+	Score          float64            `json:"score"`
+	LatestStatus   string             `json:"latest_status"`
+	LatestRule     string             `json:"latest_rule"`
+	LatestEvidence string             `json:"latest_evidence"`
+	LatestSource   string             `json:"latest_source"`
+	LatestScoredAt pgtype.Timestamptz `json:"latest_scored_at"`
+}
+
+func (q *Queries) ListPromptEvaluationDimensionScoreTrends(ctx context.Context, arg ListPromptEvaluationDimensionScoreTrendsParams) ([]ListPromptEvaluationDimensionScoreTrendsRow, error) {
+	rows, err := q.db.Query(ctx, listPromptEvaluationDimensionScoreTrends,
+		arg.WorkspaceID,
+		arg.AssetID,
+		arg.PromptID,
+		arg.Status,
+		arg.Since,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPromptEvaluationDimensionScoreTrendsRow{}
+	for rows.Next() {
+		var i ListPromptEvaluationDimensionScoreTrendsRow
+		if err := rows.Scan(
+			&i.WorkspaceID,
+			&i.AssetID,
+			&i.PromptID,
+			&i.DimensionIndex,
+			&i.DimensionName,
+			&i.Period,
+			&i.PromptVersion,
+			&i.RunCount,
+			&i.ScoredRunCount,
+			&i.PassedCases,
+			&i.TotalCases,
+			&i.Score,
+			&i.LatestStatus,
+			&i.LatestRule,
+			&i.LatestEvidence,
+			&i.LatestSource,
+			&i.LatestScoredAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPromptEvaluationDimensionScores = `-- name: ListPromptEvaluationDimensionScores :many
 SELECT id, workspace_id, run_id, asset_id, prompt_id, dimension_index, dimension_name, score, passed_cases, total_cases, status, rule, evidence, source, created_at, updated_at FROM prompt_evaluation_dimension_score
 WHERE workspace_id = $1

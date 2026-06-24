@@ -1470,6 +1470,22 @@ test.describe("训练与评估工作台", () => {
         latest_source: "local_run",
       }),
     ]));
+    const factDimensionScoreTrends = await api.listPromptEvaluationDimensionScoreTrends({ asset_id: experiment.id });
+    expect(factDimensionScoreTrends.total).toBe(3);
+    expect(factDimensionScoreTrends.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        asset_id: experiment.id,
+        dimension_name: "命中率",
+        prompt_version: 2,
+        run_count: 1,
+        scored_run_count: 1,
+        passed_cases: 1,
+        total_cases: 1,
+        score: 1,
+        latest_source: "local_run",
+      }),
+    ]));
+    expect(factDimensionScoreTrends.items[0]?.period).toMatch(/^\d{4}-\d{2}-\d{2}$/);
     const evidence = await api.getPromptEvaluationRunEvidence(run.id);
     expect(evidence.evidence).toMatchObject({ 提示词版本: 2 });
     expect(evidence.evidence["实验维度评分"]).toEqual(expect.arrayContaining([
@@ -1491,6 +1507,12 @@ test.describe("训练与评估工作台", () => {
         response.url().includes("/api/prompt-evaluation-dimension-score-summaries") &&
         response.status() === 200,
     );
+    const dimensionScoreTrendsResponsePromise = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        response.url().includes("/api/prompt-evaluation-dimension-score-trends") &&
+        response.status() === 200,
+    );
     await page.goto(`/${workspaceSlug}/training/experiments`, { waitUntil: "domcontentloaded" });
     const dimensionScoreSummariesResponse = await dimensionScoreSummariesResponsePromise;
     const dimensionScoreSummariesPayload = await dimensionScoreSummariesResponse.json() as { items?: Array<Record<string, unknown>>; total?: number };
@@ -1499,6 +1521,16 @@ test.describe("训练与评估工作台", () => {
         asset_id: experiment.id,
         dimension_name: "命中率",
         latest_status: "已评分",
+        run_count: 1,
+      }),
+    ]));
+    const dimensionScoreTrendsResponse = await dimensionScoreTrendsResponsePromise;
+    const dimensionScoreTrendsPayload = await dimensionScoreTrendsResponse.json() as { items?: Array<Record<string, unknown>>; total?: number };
+    expect(dimensionScoreTrendsPayload.items ?? []).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        asset_id: experiment.id,
+        dimension_name: "命中率",
+        prompt_version: 2,
         run_count: 1,
       }),
     ]));
@@ -1521,6 +1553,10 @@ test.describe("训练与评估工作台", () => {
     await expect(dimensionScoreComparison).toContainText("缺失变量");
     await expect(dimensionScoreComparison).toContainText("中文一致性");
     await expect(dimensionScoreComparison).toContainText("逐用例检查期望内容全部命中");
+    const dimensionScoreTrend = comparisonRow.getByTestId(`experiment-dimension-score-trend-${experiment.id}`);
+    await expect(dimensionScoreTrend).toContainText("维度趋势");
+    await expect(dimensionScoreTrend).toContainText("v2");
+    await expect(dimensionScoreTrend).toContainText("命中率");
     const promptVersionComparison = comparisonRow.getByTestId(`experiment-prompt-version-comparison-${experiment.id}`);
     await expect(promptVersionComparison).toContainText("提示词版本对比");
     await expect(promptVersionComparison).toContainText("v2");

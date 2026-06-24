@@ -518,6 +518,24 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 	if summaryScoresResp.Items[0].LatestStatus != "已评分" || summaryScoresResp.Items[0].LatestSource != "local_run" || summaryScoresResp.Items[0].LatestRule == "" || summaryScoresResp.Items[0].LatestEvidence == "" {
 		t.Fatalf("dimension score summary latest fields = %+v", summaryScoresResp.Items[0])
 	}
+	trendScoresW := httptest.NewRecorder()
+	testHandler.ListPromptEvaluationDimensionScoreTrends(trendScoresW, newRequest(http.MethodGet, "/api/prompt-evaluation-dimension-score-trends?asset_id="+created.ID, nil))
+	if trendScoresW.Code != http.StatusOK {
+		t.Fatalf("list dimension score trends status = %d, body = %s", trendScoresW.Code, trendScoresW.Body.String())
+	}
+	var trendScoresResp struct {
+		Items []PromptEvaluationDimensionScoreTrendResponse `json:"items"`
+		Total int                                           `json:"total"`
+	}
+	if err := json.Unmarshal(trendScoresW.Body.Bytes(), &trendScoresResp); err != nil {
+		t.Fatalf("decode dimension score trends response: %v", err)
+	}
+	if trendScoresResp.Total != 2 {
+		t.Fatalf("dimension score trends total = %d, items = %+v", trendScoresResp.Total, trendScoresResp.Items)
+	}
+	if trendScoresResp.Items[0].Period == "" || trendScoresResp.Items[0].PromptVersion != 1 || trendScoresResp.Items[0].RunCount != 1 || trendScoresResp.Items[0].Score != 1 {
+		t.Fatalf("dimension score trend aggregate = %+v", trendScoresResp.Items[0])
+	}
 
 	snapshotW := httptest.NewRecorder()
 	testHandler.CreatePromptEvaluationEvidenceSnapshot(snapshotW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+runID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", runID))

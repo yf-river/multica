@@ -22,6 +22,7 @@ import type {
   UpdatePromptEvaluationCaseRequest,
   PromptEvaluationAsset,
   PromptEvaluationDimensionScoreSummary,
+  PromptEvaluationDimensionScoreTrend,
   PromptEvaluationEvidenceSnapshot,
   PromptEvaluationExperimentDimension,
   PromptEvaluationOptimizationCandidate,
@@ -76,6 +77,7 @@ const promptLibraryKeys = {
   cases: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-cases"] as const,
   experimentDimensions: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-experiment-dimensions"] as const,
   dimensionScoreSummaries: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-dimension-score-summaries"] as const,
+  dimensionScoreTrends: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-dimension-score-trends"] as const,
   runs: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-runs"] as const,
   runEvidence: (workspaceId: string, runId: string | null) => ["prompt-library", workspaceId, "run-evidence", runId ?? ""] as const,
   runEvidenceSnapshots: (workspaceId: string, runId: string | null) => ["prompt-library", workspaceId, "run-evidence-snapshots", runId ?? ""] as const,
@@ -264,6 +266,7 @@ export function PromptLibraryPage({
     activeTab === "运行历史";
   const needsExperimentDimensions = activeTab === "实验";
   const needsDimensionScoreSummaries = activeTab === "实验";
+  const needsDimensionScoreTrends = activeTab === "实验";
   const needsRuns =
     isDashboardTab ||
     activeTab === "实验" ||
@@ -297,6 +300,11 @@ export function PromptLibraryPage({
     queryKey: promptLibraryKeys.dimensionScoreSummaries(workspaceId ?? ""),
     queryFn: () => api.listPromptEvaluationDimensionScoreSummaries(),
     enabled: !!workspaceId && needsDimensionScoreSummaries,
+  });
+  const dimensionScoreTrendQuery = useQuery({
+    queryKey: [...promptLibraryKeys.dimensionScoreTrends(workspaceId ?? ""), demoSince ?? "all"] as const,
+    queryFn: () => api.listPromptEvaluationDimensionScoreTrends({ since: demoSince }),
+    enabled: !!workspaceId && needsDimensionScoreTrends,
   });
   const runQuery = useQuery({
     queryKey: [...promptLibraryKeys.runs(workspaceId ?? ""), demoSince ?? "all", effectiveRunStatusFilter] as const,
@@ -337,6 +345,7 @@ export function PromptLibraryPage({
   const cases = caseQuery.data?.items ?? [];
   const experimentDimensions = experimentDimensionQuery.data?.items ?? [];
   const dimensionScoreSummaries = dimensionScoreSummaryQuery.data?.items ?? [];
+  const dimensionScoreTrends = dimensionScoreTrendQuery.data?.items ?? [];
   const runs = runQuery.data?.items ?? [];
   const candidates = candidateQuery.data?.items ?? [];
   const summary = summaryQuery.data ?? null;
@@ -462,6 +471,7 @@ export function PromptLibraryPage({
   const invalidateCases = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId ?? "") });
   const invalidateExperimentDimensions = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.experimentDimensions(workspaceId ?? "") });
   const invalidateDimensionScoreSummaries = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.dimensionScoreSummaries(workspaceId ?? "") });
+  const invalidateDimensionScoreTrends = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.dimensionScoreTrends(workspaceId ?? "") });
   const invalidateRuns = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId ?? "") });
   const invalidateCandidates = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.candidates(workspaceId ?? "") });
   const invalidateSummary = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId ?? "") });
@@ -527,6 +537,7 @@ export function PromptLibraryPage({
       invalidateCases();
       invalidateExperimentDimensions();
       invalidateDimensionScoreSummaries();
+      invalidateDimensionScoreTrends();
       invalidateRuns();
       invalidateSummary();
       toast.success("资产已更新");
@@ -540,6 +551,7 @@ export function PromptLibraryPage({
       invalidateCases();
       invalidateExperimentDimensions();
       invalidateDimensionScoreSummaries();
+      invalidateDimensionScoreTrends();
       invalidateRuns();
       invalidateSummary();
       toast.success("资产已删除");
@@ -616,6 +628,7 @@ export function PromptLibraryPage({
     onSuccess: (_run, runId) => {
       invalidateRuns();
       invalidateDimensionScoreSummaries();
+      invalidateDimensionScoreTrends();
       invalidateCandidates();
       queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", runId) });
       invalidateRunEvidenceSnapshots(runId);
@@ -629,6 +642,7 @@ export function PromptLibraryPage({
     onSuccess: (run) => {
       invalidateRuns();
       invalidateDimensionScoreSummaries();
+      invalidateDimensionScoreTrends();
       invalidateCandidates();
       queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", run.id) });
       invalidateRunEvidenceSnapshots(run.id);
@@ -643,6 +657,7 @@ export function PromptLibraryPage({
     onSuccess: (run) => {
       invalidateRuns();
       invalidateDimensionScoreSummaries();
+      invalidateDimensionScoreTrends();
       invalidateCandidates();
       queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", run.id) });
       invalidateRunEvidenceSnapshots(run.id);
@@ -676,6 +691,7 @@ export function PromptLibraryPage({
       invalidateCases();
       invalidateRuns();
       invalidateDimensionScoreSummaries();
+      invalidateDimensionScoreTrends();
       invalidateSummary();
       toast.success(`真实智能体优化任务已入队：${result.task_id}`);
       setActiveTab("运行历史");
@@ -690,6 +706,7 @@ export function PromptLibraryPage({
       invalidateCases();
       invalidateRuns();
       invalidateDimensionScoreSummaries();
+      invalidateDimensionScoreTrends();
       invalidateSummary();
       queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", result.run.id) });
       toast.success(`优化运行重试已入队：${result.task_id}`);
@@ -1218,6 +1235,7 @@ export function PromptLibraryPage({
                 cases={cases}
                 experimentDimensions={experimentDimensions}
                 dimensionScoreSummaries={dimensionScoreSummaries}
+                dimensionScoreTrends={dimensionScoreTrends}
                 experimentVersionsByPromptId={experimentVersionsByPromptId}
                 runs={runs}
                 focusedRunId={focusedRunId}
@@ -1225,7 +1243,7 @@ export function PromptLibraryPage({
                 runStatusFilter={runStatusFilter}
                 onRunStatusFilterChange={setRunStatusFilter}
                 candidates={candidates}
-                loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || dimensionScoreSummaryQuery.isLoading || experimentVersionsLoading || runQuery.isLoading || candidateQuery.isLoading}
+                loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || dimensionScoreSummaryQuery.isLoading || dimensionScoreTrendQuery.isLoading || experimentVersionsLoading || runQuery.isLoading || candidateQuery.isLoading}
                 saving={savingAsset}
                 showAcceptanceFixtures={showAcceptanceFixtures}
                 onShowAcceptanceFixtures={() => updateAcceptanceFixtureScope(true)}
@@ -1279,6 +1297,7 @@ export function PromptLibraryPage({
               cases={cases}
               experimentDimensions={experimentDimensions}
               dimensionScoreSummaries={dimensionScoreSummaries}
+              dimensionScoreTrends={dimensionScoreTrends}
               experimentVersionsByPromptId={experimentVersionsByPromptId}
               runs={runs}
               focusedRunId={focusedRunId}
@@ -1286,7 +1305,7 @@ export function PromptLibraryPage({
               runStatusFilter={runStatusFilter}
               onRunStatusFilterChange={setRunStatusFilter}
               candidates={candidates}
-              loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || dimensionScoreSummaryQuery.isLoading || experimentVersionsLoading || runQuery.isLoading || candidateQuery.isLoading}
+              loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || dimensionScoreSummaryQuery.isLoading || dimensionScoreTrendQuery.isLoading || experimentVersionsLoading || runQuery.isLoading || candidateQuery.isLoading}
               saving={savingAsset}
               showAcceptanceFixtures={showAcceptanceFixtures}
               onShowAcceptanceFixtures={() => updateAcceptanceFixtureScope(true)}
@@ -1717,6 +1736,7 @@ function WorkbenchPanel({
   cases,
   experimentDimensions,
   dimensionScoreSummaries,
+  dimensionScoreTrends,
   experimentVersionsByPromptId,
   runs,
   focusedRunId,
@@ -1771,6 +1791,7 @@ function WorkbenchPanel({
   cases: PromptEvaluationStructuredCase[];
   experimentDimensions: PromptEvaluationExperimentDimension[];
   dimensionScoreSummaries: PromptEvaluationDimensionScoreSummary[];
+  dimensionScoreTrends: PromptEvaluationDimensionScoreTrend[];
   experimentVersionsByPromptId: Map<string, PromptLibraryVersion[]>;
   runs: PromptEvaluationRun[];
   focusedRunId: string | null;
@@ -1940,6 +1961,7 @@ function WorkbenchPanel({
               experiments={visibleAssets}
               dimensions={experimentDimensions}
               dimensionScoreSummaries={dimensionScoreSummaries}
+              dimensionScoreTrends={dimensionScoreTrends}
               versionsByPromptId={experimentVersionsByPromptId}
               runs={runs}
             />
@@ -1978,6 +2000,7 @@ type ExperimentComparisonRow = {
   asset: PromptEvaluationAsset;
   dimensions: PromptEvaluationExperimentDimension[];
   dimensionScoreRows: ExperimentDimensionScoreRow[];
+  dimensionTrendRows: ExperimentDimensionScoreTrendRow[];
   promptVersions: PromptLibraryVersion[];
   versionRows: ExperimentPromptVersionRow[];
   promptVersionRunCount: number;
@@ -2016,6 +2039,19 @@ type ExperimentDimensionScoreRow = {
   evidence: string;
 };
 
+type ExperimentDimensionScoreTrendRow = {
+  dimensionIndex: number;
+  dimensionName: string;
+  period: string;
+  promptVersion: number;
+  score: number;
+  passedCases: number;
+  totalCases: number;
+  runCount: number;
+  scoredRunCount: number;
+  status: string;
+};
+
 type ExperimentPromptVersionRow = {
   version: PromptLibraryVersion;
   previousVersion: PromptLibraryVersion | null;
@@ -2029,20 +2065,23 @@ function ExperimentComparisonPanel({
   experiments,
   dimensions,
   dimensionScoreSummaries,
+  dimensionScoreTrends,
   versionsByPromptId,
   runs,
 }: {
   experiments: PromptEvaluationAsset[];
   dimensions: PromptEvaluationExperimentDimension[];
   dimensionScoreSummaries: PromptEvaluationDimensionScoreSummary[];
+  dimensionScoreTrends: PromptEvaluationDimensionScoreTrend[];
   versionsByPromptId: Map<string, PromptLibraryVersion[]>;
   runs: PromptEvaluationRun[];
 }) {
   const dimensionsByAsset = useMemo(() => buildExperimentDimensionsByAsset(dimensions), [dimensions]);
   const dimensionScoreSummariesByAsset = useMemo(() => buildDimensionScoreSummariesByAsset(dimensionScoreSummaries), [dimensionScoreSummaries]);
+  const dimensionScoreTrendsByAsset = useMemo(() => buildDimensionScoreTrendsByAsset(dimensionScoreTrends), [dimensionScoreTrends]);
   const rows = useMemo(
-    () => buildExperimentComparisonRows(experiments, dimensionsByAsset, dimensionScoreSummariesByAsset, versionsByPromptId, runs),
-    [experiments, dimensionsByAsset, dimensionScoreSummariesByAsset, versionsByPromptId, runs],
+    () => buildExperimentComparisonRows(experiments, dimensionsByAsset, dimensionScoreSummariesByAsset, dimensionScoreTrendsByAsset, versionsByPromptId, runs),
+    [experiments, dimensionsByAsset, dimensionScoreSummariesByAsset, dimensionScoreTrendsByAsset, versionsByPromptId, runs],
   );
   const totalRuns = rows.reduce((sum, row) => sum + row.runs.length, 0);
   const totalCost = rows.reduce((sum, row) => sum + row.estimatedCost, 0);
@@ -2176,6 +2215,39 @@ function ExperimentDimensionScoreComparison({ row }: { row: ExperimentComparison
               </div>
               <div className="truncate text-muted-foreground" title={item.rule}>{item.rule}</div>
               <div className="truncate text-muted-foreground" title={item.evidence}>{item.evidence}</div>
+            </div>
+          ))}
+        </div>
+      )}
+      <ExperimentDimensionScoreTrend row={row} />
+    </div>
+  );
+}
+
+function ExperimentDimensionScoreTrend({ row }: { row: ExperimentComparisonRow }) {
+  const visibleTrends = row.dimensionTrendRows.slice(0, 6);
+  return (
+    <div className="grid gap-1.5 rounded border bg-background px-2 py-1.5" data-testid={`experiment-dimension-score-trend-${row.asset.id}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="font-medium text-foreground">维度趋势</div>
+        <Badge variant="outline">{formatNumber(row.dimensionTrendRows.length)} 条日版本趋势</Badge>
+      </div>
+      {visibleTrends.length === 0 ? (
+        <div className="text-muted-foreground">暂无趋势。运行实验后会按日期和提示词版本生成趋势。</div>
+      ) : (
+        <div className="grid gap-1 md:grid-cols-2">
+          {visibleTrends.map((item) => (
+            <div key={`${item.period}:${item.promptVersion}:${item.dimensionIndex}:${item.dimensionName}`} className="flex min-w-0 items-center justify-between gap-2 rounded border px-2 py-1">
+              <div className="min-w-0">
+                <div className="truncate font-medium">{item.dimensionName}</div>
+                <div className="text-muted-foreground">
+                  {item.period} · v{item.promptVersion || "未记录"} · {formatNumber(item.scoredRunCount)}/{formatNumber(item.runCount)} 次运行
+                </div>
+              </div>
+              <div className="shrink-0 text-right">
+                <div className="font-semibold">{item.scoredRunCount > 0 ? formatPercent(item.score) : "待评分"}</div>
+                <div className="text-muted-foreground">{formatNumber(item.passedCases)}/{formatNumber(item.totalCases)}</div>
+              </div>
             </div>
           ))}
         </div>
@@ -4998,10 +5070,30 @@ function buildDimensionScoreSummariesByAsset(summaries: PromptEvaluationDimensio
   return result;
 }
 
+function buildDimensionScoreTrendsByAsset(trends: PromptEvaluationDimensionScoreTrend[]): Map<string, PromptEvaluationDimensionScoreTrend[]> {
+  const result = new Map<string, PromptEvaluationDimensionScoreTrend[]>();
+  for (const item of trends) {
+    const bucket = result.get(item.asset_id) ?? [];
+    bucket.push(item);
+    result.set(item.asset_id, bucket);
+  }
+  for (const bucket of result.values()) {
+    bucket.sort((a, b) => {
+      const periodDelta = b.period.localeCompare(a.period);
+      if (periodDelta !== 0) return periodDelta;
+      const versionDelta = b.prompt_version - a.prompt_version;
+      if (versionDelta !== 0) return versionDelta;
+      return a.dimension_index - b.dimension_index || a.dimension_name.localeCompare(b.dimension_name, "zh-CN");
+    });
+  }
+  return result;
+}
+
 function buildExperimentComparisonRows(
   experiments: PromptEvaluationAsset[],
   dimensionsByAsset: Map<string, PromptEvaluationExperimentDimension[]>,
   dimensionScoreSummariesByAsset: Map<string, PromptEvaluationDimensionScoreSummary[]>,
+  dimensionScoreTrendsByAsset: Map<string, PromptEvaluationDimensionScoreTrend[]>,
   versionsByPromptId: Map<string, PromptLibraryVersion[]>,
   runs: PromptEvaluationRun[],
 ): ExperimentComparisonRow[] {
@@ -5011,9 +5103,11 @@ function buildExperimentComparisonRows(
       const assetRuns = [...(runsByAsset.get(asset.id) ?? [])].sort(comparePromptEvaluationRunByRecent);
       const assetDimensions = dimensionsByAsset.get(asset.id) ?? [];
       const assetDimensionScoreSummaries = dimensionScoreSummariesByAsset.get(asset.id) ?? [];
+      const assetDimensionScoreTrends = dimensionScoreTrendsByAsset.get(asset.id) ?? [];
       const promptVersions = asset.prompt_id ? [...(versionsByPromptId.get(asset.prompt_id) ?? [])].sort((a, b) => b.version - a.version) : [];
       const versionRows = buildExperimentPromptVersionRows(promptVersions, assetRuns);
       const dimensionScoreRows = buildExperimentDimensionScoreRows(assetDimensions, assetDimensionScoreSummaries);
+      const dimensionTrendRows = buildExperimentDimensionTrendRows(assetDimensionScoreTrends);
       const totalCases = assetRuns.reduce((sum, run) => sum + run.total_cases, 0);
       const passedCases = assetRuns.reduce((sum, run) => sum + run.passed_cases, 0);
       const failedCases = assetRuns.reduce((sum, run) => sum + run.failed_cases, 0);
@@ -5026,6 +5120,7 @@ function buildExperimentComparisonRows(
         asset,
         dimensions: assetDimensions,
         dimensionScoreRows,
+        dimensionTrendRows,
         promptVersions,
         versionRows,
         promptVersionRunCount: versionRows.reduce((sum, row) => sum + row.runCount, 0),
@@ -5166,6 +5261,29 @@ function dimensionScoreSummaryToRow(summary: PromptEvaluationDimensionScoreSumma
     rule: summary.latest_rule || "未记录评分规则",
     evidence: summary.latest_evidence || "暂无运行评分证据",
   };
+}
+
+function buildExperimentDimensionTrendRows(trends: PromptEvaluationDimensionScoreTrend[]): ExperimentDimensionScoreTrendRow[] {
+  return trends
+    .map((trend) => ({
+      dimensionIndex: trend.dimension_index,
+      dimensionName: trend.dimension_name || `维度 ${trend.dimension_index + 1}`,
+      period: trend.period,
+      promptVersion: trend.prompt_version,
+      score: trend.score,
+      passedCases: trend.passed_cases,
+      totalCases: trend.total_cases,
+      runCount: trend.run_count,
+      scoredRunCount: trend.scored_run_count,
+      status: trend.scored_run_count > 0 ? "已评分" : trend.latest_status,
+    }))
+    .sort((a, b) => {
+      const periodDelta = b.period.localeCompare(a.period);
+      if (periodDelta !== 0) return periodDelta;
+      const versionDelta = b.promptVersion - a.promptVersion;
+      if (versionDelta !== 0) return versionDelta;
+      return a.dimensionIndex - b.dimensionIndex || a.dimensionName.localeCompare(b.dimensionName, "zh-CN");
+    });
 }
 
 function experimentDimensionScoreKey(index: number, name: string): string {

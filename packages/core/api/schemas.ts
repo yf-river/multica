@@ -33,6 +33,8 @@ import type {
   ListPromptEvaluationDimensionScoresResponse,
   PromptEvaluationDimensionScoreSummary,
   ListPromptEvaluationDimensionScoreSummariesResponse,
+  PromptEvaluationDimensionScoreTrend,
+  ListPromptEvaluationDimensionScoreTrendsResponse,
   PromptEvaluationOptimizationCandidate,
   ListPromptEvaluationEvidenceSnapshotsResponse,
   PromptLibraryItem,
@@ -1351,6 +1353,31 @@ export const PromptEvaluationDimensionScoreSummaryListResponseSchema = z.object(
   total: z.number().default(0),
 }).loose();
 
+export const PromptEvaluationDimensionScoreTrendSchema = z.object({
+  workspace_id: z.string(),
+  asset_id: z.string(),
+  prompt_id: z.string().nullable().optional().transform((v) => v ?? null),
+  dimension_index: z.number().default(0),
+  dimension_name: z.string().default(""),
+  period: z.string().default(""),
+  prompt_version: z.number().default(0),
+  run_count: z.number().default(0),
+  scored_run_count: z.number().default(0),
+  passed_cases: z.number().default(0),
+  total_cases: z.number().default(0),
+  score: z.number().default(0),
+  latest_status: z.enum(["待执行", "已评分", "无用例"]).default("待执行"),
+  latest_rule: z.string().default(""),
+  latest_evidence: z.string().default(""),
+  latest_source: z.string().default(""),
+  latest_scored_at: z.string().default(""),
+}).loose();
+
+export const PromptEvaluationDimensionScoreTrendListResponseSchema = z.object({
+  items: z.array(PromptEvaluationDimensionScoreTrendSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
 export const PromptEvaluationOptimizationCandidateSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
@@ -1529,6 +1556,11 @@ export const EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_SUMMARY_LIST_RESPONSE: List
   total: 0,
 };
 
+export const EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_TREND_LIST_RESPONSE: ListPromptEvaluationDimensionScoreTrendsResponse = {
+  items: [],
+  total: 0,
+};
+
 export const EMPTY_PROMPT_EVALUATION_EXPERIMENT_DIMENSION: PromptEvaluationExperimentDimension = {
   id: "",
   workspace_id: "",
@@ -1570,6 +1602,26 @@ export const EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_SUMMARY: PromptEvaluationDi
   prompt_id: null,
   dimension_index: 0,
   dimension_name: "",
+  run_count: 0,
+  scored_run_count: 0,
+  passed_cases: 0,
+  total_cases: 0,
+  score: 0,
+  latest_status: "待执行",
+  latest_rule: "",
+  latest_evidence: "",
+  latest_source: "",
+  latest_scored_at: "",
+};
+
+export const EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_TREND: PromptEvaluationDimensionScoreTrend = {
+  workspace_id: "",
+  asset_id: "",
+  prompt_id: null,
+  dimension_index: 0,
+  dimension_name: "",
+  period: "",
+  prompt_version: 0,
   run_count: 0,
   scored_run_count: 0,
   passed_cases: 0,
