@@ -415,9 +415,17 @@ function scanServiceLog(item, service, marker) {
 
 function isAllowedLogNoise(service, line) {
   if (service !== "daemon") return false;
-  return line.includes("codex_models_manager::manager")
+  if (
+    line.includes("codex_models_manager::manager")
     && line.includes("failed to refresh available models")
-    && line.includes("timeout waiting for child process to exit");
+    && line.includes("timeout waiting for child process to exit")
+  ) {
+    return true;
+  }
+  return line.includes("[codex:stderr]")
+    && line.includes("ERROR codex_core::tools::router")
+    && line.includes("exec_command failed")
+    && line.includes("Rejected(");
 }
 
 function readEnvFile(file) {
