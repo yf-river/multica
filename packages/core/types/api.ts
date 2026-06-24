@@ -141,6 +141,11 @@ export interface ListIssuesCache {
   byStatus: Partial<Record<IssueStatus, IssueStatusBucket>>;
 }
 
+/** Raw backend response shape for `GET /api/issues/buckets`. */
+export interface ListIssueBucketsResponse {
+  by_status: Partial<Record<IssueStatus, IssueStatusBucket>>;
+}
+
 export interface SearchIssueResult extends Issue {
   match_source: "title" | "description" | "comment";
   matched_snippet?: string;

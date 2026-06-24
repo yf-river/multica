@@ -3,6 +3,8 @@ import type {
   CreateIssueRequest,
   UpdateIssueRequest,
   GroupedIssuesResponse,
+  IssueStatus,
+  ListIssueBucketsResponse,
   ListIssuesResponse,
   SearchIssuesResponse,
   SearchProjectsResponse,
@@ -193,6 +195,7 @@ import {
   EMPTY_ATTACHMENT,
   EMPTY_CREATE_AGENT_FROM_TEMPLATE_RESPONSE,
   EMPTY_GROUPED_ISSUES_RESPONSE,
+  EMPTY_LIST_ISSUE_BUCKETS_RESPONSE,
   EMPTY_LIST_ISSUES_RESPONSE,
   EMPTY_SQUAD,
   EMPTY_SQUAD_LIST,
@@ -230,6 +233,7 @@ import {
   AppConfigSchema,
   type AppConfigResponse,
   GroupedIssuesResponseSchema,
+  ListIssueBucketsResponseSchema,
   ListAutopilotsResponseSchema,
   EMPTY_LIST_AUTOPILOTS_RESPONSE,
   ListIssuesResponseSchema,
@@ -337,6 +341,31 @@ export class PreviewUnsupportedError extends Error {
     super("attachment type not supported for inline preview");
     this.name = "PreviewUnsupportedError";
   }
+}
+
+function issueSearchParams(params?: ListIssuesParams) {
+  const search = new URLSearchParams();
+  if (params?.limit) search.set("limit", String(params.limit));
+  if (params?.offset) search.set("offset", String(params.offset));
+  if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
+  if (params?.status) search.set("status", params.status);
+  if (params?.priority) search.set("priority", params.priority);
+  if (params?.assignee_id) search.set("assignee_id", params.assignee_id);
+  if (params?.assignee_ids?.length) search.set("assignee_ids", params.assignee_ids.join(","));
+  if (params?.creator_id) search.set("creator_id", params.creator_id);
+  if (params?.project_id) search.set("project_id", params.project_id);
+  if (params?.involves_user_id) search.set("involves_user_id", params.involves_user_id);
+  if (params?.metadata && Object.keys(params.metadata).length > 0) {
+    search.set("metadata", JSON.stringify(params.metadata));
+  }
+  if (params?.open_only) search.set("open_only", "true");
+  if (params?.scheduled) search.set("scheduled", "true");
+  if (params?.date_field) search.set("date_field", params.date_field);
+  if (params?.date_start) search.set("date_start", params.date_start);
+  if (params?.date_end) search.set("date_end", params.date_end);
+  if (params?.sort_by) search.set("sort", params.sort_by);
+  if (params?.sort_direction) search.set("direction", params.sort_direction);
+  return search;
 }
 
 export class ApiClient {
@@ -525,31 +554,21 @@ export class ApiClient {
 
   // Issues
   async listIssues(params?: ListIssuesParams): Promise<ListIssuesResponse> {
-    const search = new URLSearchParams();
-    if (params?.limit) search.set("limit", String(params.limit));
-    if (params?.offset) search.set("offset", String(params.offset));
-    if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
-    if (params?.status) search.set("status", params.status);
-    if (params?.priority) search.set("priority", params.priority);
-    if (params?.assignee_id) search.set("assignee_id", params.assignee_id);
-    if (params?.assignee_ids?.length) search.set("assignee_ids", params.assignee_ids.join(","));
-    if (params?.creator_id) search.set("creator_id", params.creator_id);
-    if (params?.project_id) search.set("project_id", params.project_id);
-    if (params?.involves_user_id) search.set("involves_user_id", params.involves_user_id);
-    if (params?.metadata && Object.keys(params.metadata).length > 0) {
-      search.set("metadata", JSON.stringify(params.metadata));
-    }
-    if (params?.open_only) search.set("open_only", "true");
-    if (params?.scheduled) search.set("scheduled", "true");
-    if (params?.date_field) search.set("date_field", params.date_field);
-    if (params?.date_start) search.set("date_start", params.date_start);
-    if (params?.date_end) search.set("date_end", params.date_end);
-    if (params?.sort_by) search.set("sort", params.sort_by);
-    if (params?.sort_direction) search.set("direction", params.sort_direction);
+    const search = issueSearchParams(params);
     const path = `/api/issues?${search}`;
     const raw = await this.fetch<unknown>(path);
     return parseWithFallback(raw, ListIssuesResponseSchema, EMPTY_LIST_ISSUES_RESPONSE, {
       endpoint: "GET /api/issues",
+    });
+  }
+
+  async listIssueBuckets(params?: ListIssuesParams & { statuses?: IssueStatus[] }): Promise<ListIssueBucketsResponse> {
+    const search = issueSearchParams(params);
+    if (params?.statuses?.length) search.set("statuses", params.statuses.join(","));
+    const path = `/api/issues/buckets?${search}`;
+    const raw = await this.fetch<unknown>(path);
+    return parseWithFallback(raw, ListIssueBucketsResponseSchema, EMPTY_LIST_ISSUE_BUCKETS_RESPONSE, {
+      endpoint: "GET /api/issues/buckets",
     });
   }
 

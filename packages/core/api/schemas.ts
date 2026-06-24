@@ -7,6 +7,7 @@ import type {
   CancelTaskResponse,
   CreateAgentFromTemplateResponse,
   GroupedIssuesResponse,
+  ListIssueBucketsResponse,
   ListIssuesResponse,
   ListPromptEvaluationAssetsResponse,
   ListPromptEvaluationDatasetVersionRowsResponse,
@@ -271,6 +272,19 @@ export const ListIssuesResponseSchema = z.object({
 export const EMPTY_LIST_ISSUES_RESPONSE: ListIssuesResponse = {
   issues: [],
   total: 0,
+};
+
+const IssueStatusBucketSchema = z.object({
+  issues: z.array(IssueSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const ListIssueBucketsResponseSchema = z.object({
+  by_status: z.record(z.string(), IssueStatusBucketSchema).default({}),
+}).loose();
+
+export const EMPTY_LIST_ISSUE_BUCKETS_RESPONSE: ListIssueBucketsResponse = {
+  by_status: {},
 };
 
 const IssueAssigneeGroupSchema = z.object({

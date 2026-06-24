@@ -138,15 +138,16 @@ export function flattenIssueBuckets(data: ListIssuesCache) {
 }
 
 async function fetchFirstPages(filter: MyIssuesFilter = {}, sort?: IssueSortParam): Promise<ListIssuesCache> {
-  const responses = await Promise.all(
-    PAGINATED_STATUSES.map((status) =>
-      api.listIssues({ status, limit: ISSUE_PAGE_SIZE, offset: 0, ...sort, ...filter }),
-    ),
-  );
+  const response = await api.listIssueBuckets({
+    statuses: [...PAGINATED_STATUSES],
+    limit: ISSUE_PAGE_SIZE,
+    offset: 0,
+    ...sort,
+    ...filter,
+  });
   const byStatus: ListIssuesCache["byStatus"] = {};
-  PAGINATED_STATUSES.forEach((status, i) => {
-    const res = responses[i]!;
-    byStatus[status] = { issues: res.issues, total: res.total };
+  PAGINATED_STATUSES.forEach((status) => {
+    byStatus[status] = response.by_status[status] ?? { issues: [], total: 0 };
   });
   return { byStatus };
 }
@@ -161,10 +162,9 @@ async function fetchFirstPages(filter: MyIssuesFilter = {}, sort?: IssueSortPara
  * the first-seen position (each sub-fetch is already server-sorted).
  *
  * Personal lists are bounded (tens to a few hundred issues across all
- * three relations), so 3× the request count is acceptable — a single
- * fetchFirstPages already runs 7 status fetches in parallel, so the total
- * here is 21 small parallel requests. Easy enough; no need to add a new
- * backend query just for this scope.
+ * three relations), so 3× the request count is acceptable — `fetchFirstPages`
+ * uses one bucketed request for all visible statuses, so this remains three
+ * small parallel requests.
  *
  * `total` per bucket is set to the merged length, not the true server
  * total — pagination on the "All" scope is out of scope; the first

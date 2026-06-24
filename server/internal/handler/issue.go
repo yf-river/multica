@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -246,6 +247,20 @@ type GroupedIssuesResponse struct {
 type groupedIssueRow struct {
 	db.ListIssuesRow
 	GroupTotal int64
+}
+
+type IssueStatusBucketResponse struct {
+	Issues []IssueResponse `json:"issues"`
+	Total  int64           `json:"total"`
+}
+
+type ListIssueBucketsResponse struct {
+	ByStatus map[string]IssueStatusBucketResponse `json:"by_status"`
+}
+
+type issueBucketRow struct {
+	db.ListIssuesRow
+	StatusTotal int64
 }
 
 func assigneeGroupID(assigneeType pgtype.Text, assigneeID pgtype.UUID) string {
@@ -1097,6 +1112,265 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 		"issues": resp,
 		"total":  total,
 	})
+}
+
+func (h *Handler) ListIssueBuckets(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	if h.DB == nil {
+		writeError(w, http.StatusInternalServerError, "database is unavailable")
+		return
+	}
+
+	workspaceID := h.resolveWorkspaceID(r)
+	wsUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+
+	statuses := splitCommaParam(r.URL.Query().Get("statuses"))
+	if len(statuses) == 0 {
+		statuses = validIssueStatuses
+	}
+	for _, status := range statuses {
+		if !slices.Contains(validIssueStatuses, status) {
+			writeError(w, http.StatusBadRequest, "invalid statuses")
+			return
+		}
+	}
+
+	limit := 50
+	offset := 0
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if v, err := strconv.Atoi(l); err == nil && v > 0 {
+			limit = v
+		}
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if v, err := strconv.Atoi(o); err == nil && v >= 0 {
+			offset = v
+		}
+	}
+
+	where := []string{"i.workspace_id = $1", "i.status = ANY($2::text[])"}
+	args := []any{wsUUID, statuses}
+	addArg := func(v any) string {
+		args = append(args, v)
+		return "$" + strconv.Itoa(len(args))
+	}
+
+	if p := r.URL.Query().Get("priority"); p != "" {
+		where = append(where, fmt.Sprintf("i.priority = %s", addArg(p)))
+	}
+	if raw := r.URL.Query().Get("assignee_id"); raw != "" {
+		id, ok := parseUUIDOrBadRequest(w, raw, "assignee_id")
+		if !ok {
+			return
+		}
+		where = append(where, fmt.Sprintf("i.assignee_id = %s::uuid", addArg(id)))
+	}
+	if raw := r.URL.Query().Get("assignee_ids"); raw != "" {
+		ids, ok := parseUUIDParamList(w, raw, "assignee_ids")
+		if !ok {
+			return
+		}
+		if len(ids) > 0 {
+			where = append(where, fmt.Sprintf("i.assignee_id = ANY(%s::uuid[])", addArg(ids)))
+		}
+	}
+	if raw := r.URL.Query().Get("creator_id"); raw != "" {
+		id, ok := parseUUIDOrBadRequest(w, raw, "creator_id")
+		if !ok {
+			return
+		}
+		where = append(where, fmt.Sprintf("i.creator_id = %s::uuid", addArg(id)))
+	}
+	if raw := r.URL.Query().Get("project_id"); raw != "" {
+		id, ok := parseUUIDOrBadRequest(w, raw, "project_id")
+		if !ok {
+			return
+		}
+		where = append(where, fmt.Sprintf("i.project_id = %s::uuid", addArg(id)))
+	}
+	if raw := r.URL.Query().Get("involves_user_id"); raw != "" {
+		id, ok := parseUUIDOrBadRequest(w, raw, "involves_user_id")
+		if !ok {
+			return
+		}
+		ref := addArg(id)
+		where = append(where, fmt.Sprintf(`(
+    (i.assignee_type = 'agent' AND i.assignee_id IN (
+       SELECT a.id FROM agent a
+        WHERE a.workspace_id = $1
+          AND a.owner_id     = %[1]s::uuid
+    ))
+    OR (i.assignee_type = 'squad' AND i.assignee_id IN (
+       SELECT sm.squad_id
+         FROM squad_member sm
+         JOIN squad s ON s.id = sm.squad_id
+        WHERE s.workspace_id = $1
+          AND sm.member_type = 'member'
+          AND sm.member_id   = %[1]s::uuid
+       UNION
+       SELECT s.id
+         FROM squad s
+         JOIN agent a ON a.id = s.leader_id
+        WHERE s.workspace_id = $1
+          AND a.workspace_id = $1
+          AND a.owner_id     = %[1]s::uuid
+       UNION
+       SELECT sm.squad_id
+         FROM squad_member sm
+         JOIN squad s ON s.id = sm.squad_id
+         JOIN agent a ON a.id = sm.member_id
+        WHERE s.workspace_id = $1
+          AND sm.member_type = 'agent'
+          AND a.workspace_id = $1
+          AND a.owner_id     = %[1]s::uuid
+    ))
+)`, ref))
+	}
+	metadataFilter, ok := parseMetadataFilterParam(w, r.URL.Query().Get("metadata"))
+	if !ok {
+		return
+	}
+	if metadataFilter != nil {
+		where = append(where, fmt.Sprintf("i.metadata @> %s::jsonb", addArg(string(metadataFilter))))
+	}
+	dateFilter, ok := parseIssueDateFilter(w, r.URL.Query())
+	if !ok {
+		return
+	}
+	where = appendIssueDateFilter(where, addArg, dateFilter)
+
+	sortCol := "position"
+	if s := r.URL.Query().Get("sort"); s != "" {
+		switch s {
+		case "position", "title", "created_at", "start_date", "due_date":
+			sortCol = s
+		case "priority":
+			sortCol = "CASE i.priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 WHEN 'medium' THEN 2 WHEN 'low' THEN 3 ELSE 4 END"
+		default:
+			writeError(w, http.StatusBadRequest, "invalid sort value")
+			return
+		}
+	}
+	sortDir := "ASC"
+	if sortCol != "position" {
+		if d := r.URL.Query().Get("direction"); d != "" {
+			switch strings.ToLower(d) {
+			case "asc":
+				sortDir = "ASC"
+			case "desc":
+				sortDir = "DESC"
+			default:
+				writeError(w, http.StatusBadRequest, "invalid direction value")
+				return
+			}
+		}
+	}
+	orderBy := sortCol
+	if !strings.HasPrefix(sortCol, "CASE") {
+		orderBy = "i." + sortCol
+	}
+	orderBy += " " + sortDir
+	if sortCol == "start_date" || sortCol == "due_date" {
+		orderBy += " NULLS LAST"
+	}
+	orderBy += ", i.created_at DESC"
+
+	whereSQL := strings.Join(where, " AND ")
+	offsetRef := addArg(int64(offset))
+	limitRef := addArg(int64(limit))
+	query := fmt.Sprintf(`WITH ranked AS (
+  SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
+         i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
+         i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.metadata,
+         COUNT(*) OVER (PARTITION BY i.status) AS status_total,
+         ROW_NUMBER() OVER (PARTITION BY i.status ORDER BY %s) AS status_row_number
+    FROM issue i
+   WHERE %s
+)
+SELECT id, workspace_id, title, description, status, priority,
+       assignee_type, assignee_id, creator_type, creator_id,
+       parent_issue_id, position, start_date, due_date, created_at, updated_at, number, project_id, metadata, status_total
+  FROM ranked
+ WHERE status_row_number > %s
+   AND status_row_number <= (%s + %s)
+ ORDER BY status, status_row_number`, orderBy, whereSQL, offsetRef, offsetRef, limitRef)
+
+	rows, err := h.DB.Query(ctx, query, args...)
+	if err != nil {
+		slog.Warn("ListIssueBuckets query failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list issue buckets")
+		return
+	}
+	defer rows.Close()
+
+	bucketRows := []issueBucketRow{}
+	for rows.Next() {
+		var row issueBucketRow
+		if err := rows.Scan(
+			&row.ID,
+			&row.WorkspaceID,
+			&row.Title,
+			&row.Description,
+			&row.Status,
+			&row.Priority,
+			&row.AssigneeType,
+			&row.AssigneeID,
+			&row.CreatorType,
+			&row.CreatorID,
+			&row.ParentIssueID,
+			&row.Position,
+			&row.StartDate,
+			&row.DueDate,
+			&row.CreatedAt,
+			&row.UpdatedAt,
+			&row.Number,
+			&row.ProjectID,
+			&row.Metadata,
+			&row.StatusTotal,
+		); err != nil {
+			slog.Warn("ListIssueBuckets scan failed", "error", err)
+			writeError(w, http.StatusInternalServerError, "failed to list issue buckets")
+			return
+		}
+		bucketRows = append(bucketRows, row)
+	}
+	if err := rows.Err(); err != nil {
+		slog.Warn("ListIssueBuckets rows failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to list issue buckets")
+		return
+	}
+
+	ids := make([]pgtype.UUID, len(bucketRows))
+	for i, row := range bucketRows {
+		ids[i] = row.ID
+	}
+	prefix := h.getIssuePrefix(ctx, wsUUID)
+	labelsMap := h.labelsByIssue(ctx, wsUUID, ids)
+	byStatus := make(map[string]IssueStatusBucketResponse, len(statuses))
+	for _, status := range statuses {
+		byStatus[status] = IssueStatusBucketResponse{Issues: []IssueResponse{}, Total: 0}
+	}
+	for _, row := range bucketRows {
+		status := row.Status
+		issue := issueListRowToResponse(row.ListIssuesRow, prefix)
+		labels := labelsMap[issue.ID]
+		if labels == nil {
+			labels = []LabelResponse{}
+		}
+		issue.Labels = &labels
+		bucket := byStatus[status]
+		bucket.Issues = append(bucket.Issues, issue)
+		bucket.Total = row.StatusTotal
+		byStatus[status] = bucket
+	}
+
+	writeJSON(w, http.StatusOK, ListIssueBucketsResponse{ByStatus: byStatus})
 }
 
 type issueActorFilter struct {

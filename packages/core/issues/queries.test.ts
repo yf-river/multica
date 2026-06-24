@@ -3,13 +3,16 @@ import { QueryClient } from "@tanstack/react-query";
 
 import { setApiInstance } from "../api";
 import type { ApiClient } from "../api/client";
-import type { Issue, ListIssuesParams, ListIssuesResponse } from "../types";
+import type { Issue, ListIssueBucketsResponse, ListIssuesParams, ListIssuesResponse } from "../types";
 import {
   CHILDREN_BY_PARENTS_CHUNK_SIZE,
+  ISSUE_PAGE_SIZE,
+  PAGINATED_STATUSES,
   PROJECT_GANTT_MAX_ISSUES,
   PROJECT_GANTT_PAGE_LIMIT,
   childrenByParentsOptions,
   issueKeys,
+  issueListOptions,
   projectGanttIssuesOptions,
 } from "./queries";
 
@@ -43,8 +46,11 @@ function makeIssue(idx: number): Issue {
 }
 
 // Type-only shim — only the methods the queries.ts code path under test calls.
-function installFakeApi(listIssues: (params?: ListIssuesParams) => Promise<ListIssuesResponse>) {
-  setApiInstance({ listIssues } as unknown as ApiClient);
+function installFakeApi(
+  listIssues: (params?: ListIssuesParams) => Promise<ListIssuesResponse>,
+  listIssueBuckets?: (params?: ListIssuesParams & { statuses?: Issue["status"][] }) => Promise<ListIssueBucketsResponse>,
+) {
+  setApiInstance({ listIssues, listIssueBuckets } as unknown as ApiClient);
 }
 
 function installFakeChildrenApi(
@@ -52,6 +58,48 @@ function installFakeChildrenApi(
 ) {
   setApiInstance({ listChildrenByParents } as unknown as ApiClient);
 }
+
+describe("issueListOptions", () => {
+  let qc: QueryClient;
+
+  beforeEach(() => {
+    qc = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+  });
+
+  afterEach(() => {
+    qc.clear();
+    vi.restoreAllMocks();
+  });
+
+  it("loads the board first pages with one bucketed API request", async () => {
+    const listIssues = vi.fn<(params?: ListIssuesParams) => Promise<ListIssuesResponse>>();
+    const listIssueBuckets = vi
+      .fn<(params?: ListIssuesParams & { statuses?: Issue["status"][] }) => Promise<ListIssueBucketsResponse>>()
+      .mockResolvedValue({
+        by_status: {
+          todo: { issues: [makeIssue(1)], total: 1 },
+          done: { issues: [makeIssue(2)], total: 3 },
+        },
+      });
+    installFakeApi(listIssues, listIssueBuckets);
+
+    const data = await qc.fetchQuery(issueListOptions(WS_ID, { sort_by: "position" }));
+
+    expect(listIssues).not.toHaveBeenCalled();
+    expect(listIssueBuckets).toHaveBeenCalledTimes(1);
+    expect(listIssueBuckets).toHaveBeenCalledWith({
+      statuses: [...PAGINATED_STATUSES],
+      limit: ISSUE_PAGE_SIZE,
+      offset: 0,
+      sort_by: "position",
+    });
+    expect(data.byStatus.todo?.issues.map((issue) => issue.id)).toEqual(["issue-1"]);
+    expect(data.byStatus.done?.total).toBe(3);
+    expect(data.byStatus.backlog).toEqual({ issues: [], total: 0 });
+  });
+});
 
 describe("projectGanttIssuesOptions", () => {
   let qc: QueryClient;
