@@ -27,6 +27,8 @@ export
 MULTICA_ARGS ?= $(ARGS)
 
 COMPOSE := docker compose
+GOAL_TEST_TMPDIR ?= /data/tmp/goal-test
+GOAL_TEST_GOCACHE ?= /data/tmp/goal-test-gocache
 
 define REQUIRE_ENV
 	@if [ ! -f "$(ENV_FILE)" ]; then \
@@ -209,7 +211,8 @@ goal-test-build: ## Build backend/CLI binaries and the web production bundle for
 	pnpm --filter @multica/web build
 
 goal-test-deploy-dev: ## Build once, deploy goal-test integration development environment, then verify it
-	node scripts/goal-test-environments.mjs deploy int --build
+	@mkdir -p "$(GOAL_TEST_TMPDIR)" "$(GOAL_TEST_GOCACHE)"
+	TMPDIR="$(GOAL_TEST_TMPDIR)" GOCACHE="$(GOAL_TEST_GOCACHE)" node scripts/goal-test-environments.mjs deploy int --build
 	node scripts/goal-test-environments.mjs verify int
 	node scripts/goal-test-environments.mjs verify-logs int
 
@@ -221,7 +224,8 @@ goal-test-sync-prod: ## Sync the already-built goal-test artifact to production,
 goal-test-promote-prod: goal-test-sync-prod ## Alias: promote the current built artifact to production
 
 goal-test-deploy-prod: ## Build and deploy goal-test production stable environment directly
-	node scripts/goal-test-environments.mjs deploy prod --build
+	@mkdir -p "$(GOAL_TEST_TMPDIR)" "$(GOAL_TEST_GOCACHE)"
+	TMPDIR="$(GOAL_TEST_TMPDIR)" GOCACHE="$(GOAL_TEST_GOCACHE)" node scripts/goal-test-environments.mjs deploy prod --build
 	node scripts/goal-test-environments.mjs verify prod
 	node scripts/goal-test-environments.mjs verify-logs prod
 
@@ -252,10 +256,12 @@ goal-test-smart-verify: ## Changed-aware goal-test gate; pass MODE=dev|precommit
 	node scripts/goal-test-smart-verify.mjs --mode $${MODE:-dev} $${DRY_RUN:+--dry-run}
 
 goal-test-ui-audit: goal-test-smoke ## Run real-browser goal-test integration UI, performance, console, Chinese semantics, and log-window audit
-	node scripts/goal-test-ui-audit.mjs
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-ui-audit.mjs
 
 goal-test-training-performance-audit: goal-test-smoke ## Run real-browser training/evaluation route request, performance, and log-window audit
-	node scripts/goal-test-training-performance-audit.mjs
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-training-performance-audit.mjs
 
 goal-test-session-retro: ## Generate fixed session retrospective artifacts; pass SESSION=/path/to/session.jsonl
 	@test -n "$(SESSION)" || (echo "Missing SESSION=/path/to/session.jsonl"; exit 2)
