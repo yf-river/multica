@@ -1017,7 +1017,7 @@ function AgentRunComparisonTable({
       </div>
       {runs.length === 0 ? (
         <div className="mt-2 rounded border border-dashed px-2 py-3 text-muted-foreground" data-testid="agent-playground-run-comparison-empty">
-          暂无可对比的真实运行。
+          暂无可对比的真实运行；后续将按执行智能体、运行时、模型、耗时、token、成本和证据链接横向对比。
         </div>
       ) : (
         <div className="mt-2 overflow-x-auto" data-testid="agent-playground-run-comparison-table">

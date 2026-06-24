@@ -78,7 +78,7 @@ test.describe("训练与评估工作台", () => {
 
     await expect(page.getByText("请澄清 登录失败，项目背景：账号系统。").last()).toBeVisible();
 
-    await page.getByRole("button", { name: "保存" }).click();
+    await page.getByRole("button", { name: "保存", exact: true }).click();
     await expect
       .poll(async () => (await api.listPromptLibraryItems()).some((item) => item.name === `${artifactPrefix} 账号系统 澄清`), { timeout: 10000 })
       .toBe(true);
@@ -95,7 +95,7 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("agent-playground-task-payload")).toHaveCount(0);
     await expect(page.getByTestId("prompt-playground-contract")).toContainText("不启动智能体");
     await expect(page.getByTestId("prompt-playground-purpose-map")).toContainText("不创建任务、不消耗模型");
-    await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("本地渲染");
+    await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("解析模板源");
     await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("保存质检记录");
     await expect(page.getByTestId("prompt-playground-source-panel")).toContainText("模板源");
     await expect(page.getByTestId("prompt-playground-variable-checklist")).toContainText("变量样本");
@@ -134,7 +134,7 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("prompt-playground-template-lab")).toHaveCount(0);
     await expect(page.getByText("Codex 在线")).toBeVisible({ timeout: 10000 });
     if (expectedAgentRuntimeName) {
-      await expect(page.getByText(`运行时：${expectedAgentRuntimeName}`)).toBeVisible();
+      await expect(page.getByTestId("agent-playground-runtime").getByText(`运行时：${expectedAgentRuntimeName}`)).toBeVisible();
     }
     const agentExpectedOutput = "输出需求澄清结论、风险、测试证据和下一步建议。";
     const agentExpectedOutputInput = page.getByTestId("agent-playground-panel").getByLabel("期望输出");
