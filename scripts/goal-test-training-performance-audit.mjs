@@ -316,8 +316,8 @@ function expectedBoundaryFailures(routeId, boundaries) {
       forbidden: ["runtime_readiness", "runs", "candidates"],
     },
     experiments: {
-      required: ["prompt_evaluation_summary", "cases", "assets"],
-      forbidden: ["runtime_readiness", "runs", "candidates"],
+      required: ["prompt_evaluation_summary", "cases", "assets", "runs"],
+      forbidden: ["runtime_readiness", "candidates"],
     },
     "optimization-runs": {
       required: ["prompt_evaluation_summary", "assets", "runs", "candidates"],

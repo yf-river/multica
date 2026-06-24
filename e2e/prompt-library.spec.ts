@@ -1139,6 +1139,12 @@ test.describe("训练与评估工作台", () => {
     ]));
 
     await page.goto(`/${workspaceSlug}/training/experiments`, { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("experiment-comparison-panel")).toContainText("实验对比排行", { timeout: 15000 });
+    const comparisonRow = page.getByTestId(`experiment-comparison-row-${experiment.id}`);
+    await expect(comparisonRow).toContainText(experiment.name, { timeout: 15000 });
+    await expect(comparisonRow).toContainText("通过率");
+    await expect(comparisonRow).toContainText("预估成本");
+    await expect(comparisonRow).toContainText(`v${datasetVersion.version}`);
     const experimentRow = page.getByTestId(`prompt-evaluation-asset-${experiment.id}`);
     await expect(experimentRow).toBeVisible({ timeout: 15000 });
     await expect(experimentRow.getByTestId(`linked-dataset-version-summary-${experiment.id}`)).toContainText("绑定数据集版本");

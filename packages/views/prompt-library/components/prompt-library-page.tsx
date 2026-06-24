@@ -203,6 +203,7 @@ export function PromptLibraryPage({
   const needsExperimentDimensions = activeTab === "实验";
   const needsRuns =
     isDashboardTab ||
+    activeTab === "实验" ||
     activeTab === "运行历史" ||
     activeTab === "优化运行";
   const needsCandidates = isDashboardTab || activeTab === "运行历史" || activeTab === "优化运行";
@@ -1580,7 +1581,6 @@ function WorkbenchPanel({
 }) {
   const tabAssetType = tabToAssetType(activeTab);
   const visibleAssets = tabAssetType ? assets.filter((asset) => asset.asset_type === tabAssetType) : assets;
-  const experiments = assets.filter((asset) => asset.asset_type === "实验");
 
   if (activeTab === "提示词库" || activeTab === "提示词调试场" || activeTab === "智能体调试场") {
     return null;
@@ -1610,12 +1610,6 @@ function WorkbenchPanel({
           </Button>
         ) : null}
       />
-
-      {activeTab === "实验" && (
-        <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
-          实验对比摘要：{experiments.length} 个实验，启用 {experiments.filter((asset) => asset.status === "启用").length} 个，归档 {experiments.filter((asset) => asset.status === "归档").length} 个。
-        </div>
-      )}
 
       {activeTab === "运行历史" && (
         <RunHistoryPanel
@@ -1664,7 +1658,13 @@ function WorkbenchPanel({
           updatingCaseId={updatingCaseId}
           onDeleteCase={onDeleteCase}
           deletingCaseId={deletingCaseId}
-          beforeAssetList={activeTab === "优化运行" ? (
+          beforeAssetList={activeTab === "实验" ? (
+            <ExperimentComparisonPanel
+              experiments={visibleAssets}
+              dimensions={experimentDimensions}
+              runs={runs}
+            />
+          ) : activeTab === "优化运行" ? (
             <>
               <OptimizationStudioPanel
                 workspaceId={workspaceId}
@@ -1690,6 +1690,107 @@ function WorkbenchPanel({
             </>
           ) : null}
         />
+      )}
+    </section>
+  );
+}
+
+type ExperimentComparisonRow = {
+  asset: PromptEvaluationAsset;
+  dimensions: PromptEvaluationExperimentDimension[];
+  runs: PromptEvaluationRun[];
+  totalCases: number;
+  passedCases: number;
+  failedCases: number;
+  passRate: number;
+  totalDurationMs: number;
+  inputTokens: number;
+  outputTokens: number;
+  estimatedCost: number;
+  latestRun: PromptEvaluationRun | null;
+};
+
+function ExperimentComparisonPanel({
+  experiments,
+  dimensions,
+  runs,
+}: {
+  experiments: PromptEvaluationAsset[];
+  dimensions: PromptEvaluationExperimentDimension[];
+  runs: PromptEvaluationRun[];
+}) {
+  const dimensionsByAsset = useMemo(() => buildExperimentDimensionsByAsset(dimensions), [dimensions]);
+  const rows = useMemo(() => buildExperimentComparisonRows(experiments, dimensionsByAsset, runs), [experiments, dimensionsByAsset, runs]);
+  const totalRuns = rows.reduce((sum, row) => sum + row.runs.length, 0);
+  const totalCost = rows.reduce((sum, row) => sum + row.estimatedCost, 0);
+  const bestRow = rows.find((row) => row.runs.length > 0);
+
+  return (
+    <section className="grid gap-3 rounded-md border border-border/70 bg-muted/10 p-3" data-testid="experiment-comparison-panel">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-semibold">实验对比排行</h3>
+          <p className="mt-1 text-xs text-muted-foreground">
+            按实验资产聚合最近运行，直接对比通过率、失败数、耗时、令牌和预估成本。
+          </p>
+        </div>
+        <div className="grid grid-cols-3 gap-2 text-right text-xs">
+          <div className="rounded border bg-background px-2 py-1">
+            <div className="text-muted-foreground">实验</div>
+            <div className="font-semibold">{formatNumber(experiments.length)}</div>
+          </div>
+          <div className="rounded border bg-background px-2 py-1">
+            <div className="text-muted-foreground">运行</div>
+            <div className="font-semibold">{formatNumber(totalRuns)}</div>
+          </div>
+          <div className="rounded border bg-background px-2 py-1">
+            <div className="text-muted-foreground">成本</div>
+            <div className="font-semibold">{formatMoney(totalCost)}</div>
+          </div>
+        </div>
+      </div>
+
+      {bestRow ? (
+        <div className="rounded-md border bg-background px-3 py-2 text-xs" data-testid="experiment-comparison-best">
+          当前最优：<span className="font-medium">{bestRow.asset.name}</span>，
+          通过率 {formatPercent(bestRow.passRate)}，失败 {formatNumber(bestRow.failedCases)}，成本 {formatMoney(bestRow.estimatedCost)}。
+        </div>
+      ) : (
+        <div className="rounded-md border border-dashed px-3 py-3 text-xs text-muted-foreground" data-testid="experiment-comparison-empty">
+          暂无实验运行。先运行实验后，这里会按质量、耗时和成本形成排行。
+        </div>
+      )}
+
+      {rows.length > 0 && (
+        <div className="grid gap-2">
+          {rows.map((row, index) => (
+            <div
+              key={row.asset.id}
+              className="grid gap-2 rounded-md border bg-background px-3 py-2 text-xs lg:grid-cols-[minmax(0,1.2fr)_repeat(5,minmax(90px,auto))]"
+              data-testid={`experiment-comparison-row-${row.asset.id}`}
+            >
+              <div className="min-w-0">
+                <div className="flex items-center gap-2">
+                  <Badge variant={index === 0 && row.runs.length > 0 ? "secondary" : "outline"}>第 {index + 1}</Badge>
+                  <span className="truncate font-medium">{row.asset.name}</span>
+                </div>
+                <div className="mt-1 text-muted-foreground">
+                  {row.dimensions.length} 个维度 · {summarizeLinkedDatasetVersions(row.asset) || "未绑定数据集版本"}
+                </div>
+                {row.latestRun && (
+                  <div className="mt-1 text-muted-foreground">
+                    最近运行：{row.latestRun.status} · {row.latestRun.run_kind} · {row.latestRun.model || "未记录模型"}
+                  </div>
+                )}
+              </div>
+              <MetricCell label="通过率" value={formatPercent(row.passRate)} />
+              <MetricCell label="失败数" value={formatNumber(row.failedCases)} />
+              <MetricCell label="平均耗时" value={formatDuration(row.runs.length > 0 ? row.totalDurationMs / row.runs.length : 0)} />
+              <MetricCell label="令牌" value={`${formatNumber(row.inputTokens)} / ${formatNumber(row.outputTokens)}`} />
+              <MetricCell label="预估成本" value={formatMoney(row.estimatedCost)} />
+            </div>
+          ))}
+        </div>
       )}
     </section>
   );
@@ -3504,6 +3605,73 @@ function buildExperimentDimensionsByAsset(dimensions: PromptEvaluationExperiment
   return result;
 }
 
+function buildExperimentComparisonRows(
+  experiments: PromptEvaluationAsset[],
+  dimensionsByAsset: Map<string, PromptEvaluationExperimentDimension[]>,
+  runs: PromptEvaluationRun[],
+): ExperimentComparisonRow[] {
+  const runsByAsset = buildRunsByAsset(runs);
+  return experiments
+    .map((asset) => {
+      const assetRuns = [...(runsByAsset.get(asset.id) ?? [])].sort(comparePromptEvaluationRunByRecent);
+      const totalCases = assetRuns.reduce((sum, run) => sum + run.total_cases, 0);
+      const passedCases = assetRuns.reduce((sum, run) => sum + run.passed_cases, 0);
+      const failedCases = assetRuns.reduce((sum, run) => sum + run.failed_cases, 0);
+      const totalDurationMs = assetRuns.reduce((sum, run) => sum + run.total_duration_ms, 0);
+      const inputTokens = assetRuns.reduce((sum, run) => sum + run.input_tokens, 0);
+      const outputTokens = assetRuns.reduce((sum, run) => sum + run.output_tokens, 0);
+      const estimatedCost = assetRuns.reduce((sum, run) => sum + run.estimated_cost, 0);
+      return {
+        asset,
+        dimensions: dimensionsByAsset.get(asset.id) ?? [],
+        runs: assetRuns,
+        totalCases,
+        passedCases,
+        failedCases,
+        passRate: totalCases > 0 ? passedCases / totalCases : 0,
+        totalDurationMs,
+        inputTokens,
+        outputTokens,
+        estimatedCost,
+        latestRun: assetRuns[0] ?? null,
+      };
+    })
+    .sort((a, b) => {
+      const runDelta = Number(b.runs.length > 0) - Number(a.runs.length > 0);
+      if (runDelta !== 0) return runDelta;
+      const passDelta = b.passRate - a.passRate;
+      if (passDelta !== 0) return passDelta;
+      const failureDelta = a.failedCases - b.failedCases;
+      if (failureDelta !== 0) return failureDelta;
+      const costDelta = a.estimatedCost - b.estimatedCost;
+      if (costDelta !== 0) return costDelta;
+      return comparePromptEvaluationAssetByRecent(a.asset, b.asset);
+    });
+}
+
+function buildRunsByAsset(runs: PromptEvaluationRun[]): Map<string, PromptEvaluationRun[]> {
+  const result = new Map<string, PromptEvaluationRun[]>();
+  for (const run of runs) {
+    const bucket = result.get(run.asset_id) ?? [];
+    bucket.push(run);
+    result.set(run.asset_id, bucket);
+  }
+  return result;
+}
+
+function comparePromptEvaluationRunByRecent(a: PromptEvaluationRun, b: PromptEvaluationRun): number {
+  return timestampForSort(b.completed_at || b.updated_at || b.created_at) - timestampForSort(a.completed_at || a.updated_at || a.created_at);
+}
+
+function comparePromptEvaluationAssetByRecent(a: PromptEvaluationAsset, b: PromptEvaluationAsset): number {
+  return timestampForSort(b.updated_at || b.created_at) - timestampForSort(a.updated_at || a.created_at);
+}
+
+function timestampForSort(value: string): number {
+  const timestamp = Date.parse(value);
+  return Number.isFinite(timestamp) ? timestamp : 0;
+}
+
 function buildCandidatesByRun(candidates: PromptEvaluationOptimizationCandidate[]): Map<string, PromptEvaluationOptimizationCandidate[]> {
   const result = new Map<string, PromptEvaluationOptimizationCandidate[]>();
   for (const candidate of candidates) {
@@ -3512,6 +3680,15 @@ function buildCandidatesByRun(candidates: PromptEvaluationOptimizationCandidate[
     result.set(candidate.run_id, bucket);
   }
   return result;
+}
+
+function MetricCell({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded border bg-muted/20 px-2 py-1">
+      <div className="truncate text-[11px] text-muted-foreground">{label}</div>
+      <div className="mt-0.5 truncate font-semibold text-foreground">{value}</div>
+    </div>
+  );
 }
 
 function summarizeJSONValue(value: unknown): string {

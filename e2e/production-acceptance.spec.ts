@@ -316,8 +316,10 @@ test.describe("生产部署验收", () => {
     await page.getByRole("link", { name: "实验", exact: true }).last().click();
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/experiments$`), { timeout: 30000 });
     await expectTrainingRouteShell(page, TRAINING_ROUTES[6]!);
-    await expect(page.getByText(/实验对比摘要：[1-9]/)).toBeVisible({ timeout: 15000 });
+    await expect(page.getByTestId("experiment-comparison-panel")).toContainText("实验对比排行", { timeout: 15000 });
     const experimentRow = page.getByTestId(`prompt-evaluation-asset-${evidence.experiment.id}`);
+    await expect(page.getByTestId(`experiment-comparison-row-${evidence.experiment.id}`)).toContainText("通过率", { timeout: 15000 });
+    await expect(page.getByTestId(`experiment-comparison-row-${evidence.experiment.id}`)).toContainText("预估成本");
     await expect(experimentRow).toContainText(evidence.experiment.name, { timeout: 15000 });
     await expect(experimentRow).toContainText("实验");
     const experimentDimensions = page.getByTestId(`prompt-evaluation-experiment-dimensions-${evidence.experiment.id}`);
