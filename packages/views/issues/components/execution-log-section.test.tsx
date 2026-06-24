@@ -156,7 +156,11 @@ describe("ExecutionLogSection trace", () => {
     renderWithQuery(<ExecutionLogSection issueId="issue-1" />);
 
     expect(await screen.findByText("观测事件")).toBeInTheDocument();
+    expect(screen.getByText("任务事件树")).toBeInTheDocument();
+    expect(screen.getByText("根任务 task-1")).toBeInTheDocument();
+    expect(screen.getByText("用量事件 1")).toBeInTheDocument();
+    expect(screen.getByText("模型用量")).toBeInTheDocument();
     expect(screen.getByText("模型用量已上报")).toBeInTheDocument();
-    expect(screen.getAllByText("150 tokens").length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/150 tokens/).length).toBeGreaterThan(0);
   });
 });

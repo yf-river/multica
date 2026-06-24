@@ -110,6 +110,7 @@ test.describe("Multica 编码小队页面证据", () => {
       await expect(sopSummary).toContainText("人工确认");
       await expect(sopSummary).toContainText("等待人工确认后再开发");
       await expect(page.getByTestId("issue-trace-event-summary")).toContainText("观测事件");
+      await expect(page.getByTestId("issue-trace-event-summary")).toContainText("任务事件树");
     } finally {
       for (const id of createdIssueIds) {
         await api.deleteIssue(id).catch(() => undefined);

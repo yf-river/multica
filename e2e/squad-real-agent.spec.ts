@@ -154,6 +154,7 @@ test.describe("小队真实 Agent 闭环", () => {
       await waitForPageText(page, issue.title, 15_000);
       await expect(page.getByText("小队 SOP 执行", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
       await expect(page.getByText("观测事件", { exact: true }).first()).toBeVisible();
+      await expect(page.getByText("任务事件树", { exact: true }).first()).toBeVisible();
       await expect(page.getByText(/任务已完成|任务已失败|任务已取消/).first()).toBeVisible();
     } finally {
       await api.cleanup();

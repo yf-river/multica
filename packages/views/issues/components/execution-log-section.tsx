@@ -239,16 +239,13 @@ function SOPRunSummary({ runs }: { runs: SquadSOPRun[] }) {
 }
 
 function TraceEventSummary({ events }: { events: TaskTraceEvent[] }) {
-  const recent = events.slice(-5).toReversed();
-  const tokenTotal = events.reduce(
-    (sum, ev) =>
-      sum +
-      ev.input_tokens +
-      ev.output_tokens +
-      ev.cache_read_tokens +
-      ev.cache_write_tokens,
-    0,
-  );
+  const recent = events.slice(-6);
+  const tokenTotal = events.reduce((sum, event) => sum + traceEventTokenTotal(event), 0);
+  const lifecycleCount = events.filter((event) => event.event_type.startsWith("task.")).length;
+  const usageCount = events.filter(
+    (event) => event.event_type === "llm.usage_reported" || traceEventTokenTotal(event) > 0,
+  ).length;
+  const rootTaskId = events.find((event) => event.task_id)?.task_id ?? "未记录";
 
   return (
     <div className="rounded-md border border-border/70 bg-muted/25 px-2 py-1.5" data-testid="issue-trace-event-summary">
@@ -258,32 +255,139 @@ function TraceEventSummary({ events }: { events: TaskTraceEvent[] }) {
           {events.length} 条{tokenTotal > 0 ? ` / ${tokenTotal.toLocaleString()} tokens` : ""}
         </span>
       </div>
+      <div className="mb-1.5 space-y-1 rounded border border-dashed border-border/70 bg-background/45 px-2 py-1.5">
+        <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-[11px]">
+          <span className="font-medium text-foreground">任务事件树</span>
+          <span className="rounded border border-border/70 px-1.5 py-0.5 text-muted-foreground">生命周期 {lifecycleCount}</span>
+          <span className="rounded border border-border/70 px-1.5 py-0.5 text-muted-foreground">用量事件 {usageCount}</span>
+          <span className="rounded border border-border/70 px-1.5 py-0.5 text-muted-foreground">token {tokenTotal.toLocaleString()}</span>
+        </div>
+        <div className="break-all text-[11px] leading-5 text-muted-foreground">
+          根任务 {rootTaskId}
+        </div>
+      </div>
       <div className="space-y-1">
-        {recent.map((event) => (
-          <div key={event.id} className="flex min-w-0 items-center gap-2 text-xs">
-            <span className="min-w-0 flex-1 truncate text-foreground">
-              {event.event_name || event.event_type}
-            </span>
-            <span className="shrink-0 text-muted-foreground">
-              {formatTraceMetric(event)}
-            </span>
-          </div>
+        {recent.map((event, index) => (
+          <TraceEventTreeRow
+            key={event.id}
+            event={event}
+            index={events.length - recent.length + index + 1}
+          />
         ))}
       </div>
     </div>
   );
 }
 
+function TraceEventTreeRow({
+  event,
+  index,
+}: {
+  event: TaskTraceEvent;
+  index: number;
+}) {
+  const metadataSummary = traceMetadataSummary(event.metadata);
+  const failure = traceFailureSummary(event);
+  return (
+    <div className="grid gap-0.5 border-l-2 border-emerald-500/70 pl-2 text-xs">
+      <div className="flex min-w-0 items-center gap-2">
+        <span className="shrink-0 font-mono text-[11px] text-muted-foreground">#{index}</span>
+        <span className="min-w-0 flex-1 truncate text-foreground">
+          {event.event_name || traceEventStageLabel(event.event_type)}
+        </span>
+        <span className="shrink-0 rounded border border-border/70 px-1.5 py-0.5 text-[11px] text-muted-foreground">
+          {traceEventStageLabel(event.event_type)}
+        </span>
+      </div>
+      <div className="grid gap-x-2 gap-y-0.5 text-[11px] leading-5 text-muted-foreground sm:grid-cols-2">
+        <span className="truncate">状态 {event.status || "未知"}</span>
+        <span className="truncate">耗时 {formatTraceEventDuration(event)}</span>
+        <span className="truncate">模型 {event.provider || "未记录"}/{event.model || "未记录"}</span>
+        <span className="truncate">token {traceEventTokenTotal(event).toLocaleString()}</span>
+      </div>
+      {failure && (
+        <div className="rounded bg-destructive/10 px-1.5 py-0.5 text-[11px] leading-5 text-destructive">
+          {failure}
+        </div>
+      )}
+      {metadataSummary && (
+        <div className="truncate text-[11px] leading-5 text-muted-foreground">
+          元数据：{metadataSummary}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function traceEventTokenTotal(event: TaskTraceEvent): number {
+  return event.input_tokens + event.output_tokens + event.cache_read_tokens + event.cache_write_tokens;
+}
+
+function traceEventStageLabel(eventType: string): string {
+  switch (eventType) {
+    case "task.queued":
+      return "任务入队";
+    case "task.dispatched":
+      return "任务领取";
+    case "task.started":
+      return "任务开始";
+    case "task.waiting_local_directory":
+      return "等待本地目录";
+    case "task.completed":
+      return "任务完成";
+    case "task.failed":
+      return "任务失败";
+    case "task.cancelled":
+      return "任务取消";
+    case "llm.usage_reported":
+      return "模型用量";
+    default:
+      return eventType || "未分类事件";
+  }
+}
+
+function formatTraceEventDuration(event: TaskTraceEvent): string {
+  const parts = [
+    event.queue_wait_ms != null ? `排队 ${formatMilliseconds(event.queue_wait_ms)}` : "",
+    event.run_ms != null ? `执行 ${formatMilliseconds(event.run_ms)}` : "",
+    event.duration_ms != null ? `阶段 ${formatMilliseconds(event.duration_ms)}` : "",
+    event.total_ms != null ? `总计 ${formatMilliseconds(event.total_ms)}` : "",
+  ].filter(Boolean);
+  return parts.join(" / ") || formatTraceMetric(event);
+}
+
 function formatTraceMetric(event: TaskTraceEvent): string {
-  const tokenTotal =
-    event.input_tokens +
-    event.output_tokens +
-    event.cache_read_tokens +
-    event.cache_write_tokens;
+  const tokenTotal = traceEventTokenTotal(event);
   if (tokenTotal > 0) return `${tokenTotal.toLocaleString()} tokens`;
   const ms = event.run_ms ?? event.duration_ms ?? event.total_ms ?? event.queue_wait_ms;
   if (typeof ms === "number") return formatMilliseconds(ms);
   return event.status;
+}
+
+function traceFailureSummary(event: TaskTraceEvent): string {
+  const parts = [
+    event.failure_reason && event.failure_reason !== "无" ? `失败原因：${event.failure_reason}` : "",
+    event.error_type ? `错误类型：${event.error_type}` : "",
+  ].filter(Boolean);
+  return parts.join(" · ");
+}
+
+function traceMetadataSummary(metadata: Record<string, unknown>): string {
+  return Object.entries(metadata)
+    .slice(0, 3)
+    .map(([key, value]) => `${key}=${formatTraceMetadataValue(value)}`)
+    .join("，");
+}
+
+function formatTraceMetadataValue(value: unknown): string {
+  if (typeof value === "string") return truncateTraceText(value, 48);
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
+  if (value == null) return "空";
+  return truncateTraceText(JSON.stringify(value), 48);
+}
+
+function truncateTraceText(value: string, max: number): string {
+  return value.length > max ? `${value.slice(0, max)}...` : value;
 }
 
 function formatNullableMilliseconds(ms: number | null | undefined): string {
