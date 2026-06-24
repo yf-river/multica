@@ -237,7 +237,7 @@ function buildExecution(command, optimizer) {
 function isSafeRTKCommand(command) {
   const normalized = command.replace(/\s+/g, " ").trim();
   if (/\b(rg|find|ls|git diff)\b/.test(normalized)) return false;
-  return /\b(go test|pnpm (?:--filter [^ ]+ )?(?:exec playwright test|test|typecheck)|make goal-test-(?:smoke|e2e|e2e-all|real-agent-e2e|ui-audit|training-performance-audit|public-training-performance-audit)|node scripts\/goal-test-environments\.mjs verify(?:-logs)? )/.test(normalized);
+  return /\b(go test|pnpm (?:--filter [^ ]+ )?(?:exec playwright test|test|typecheck)|make goal-test-(?:smoke|e2e|e2e-all|real-agent-e2e|ui-audit|training-performance-audit|public-training-performance-audit|playground-difference-audit)|node scripts\/goal-test-environments\.mjs verify(?:-logs)? )/.test(normalized);
 }
 
 function rewriteWithRTK(rtkPath, command) {
