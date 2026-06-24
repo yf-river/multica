@@ -104,7 +104,7 @@ export function PromptPlaygroundWorkbench({
                   value={debugValuesText}
                   onChange={(event) => onDebugValuesTextChange(event.target.value)}
                   className="min-h-[220px] resize-y font-mono text-sm leading-6"
-                  placeholder="issue_title=登录失败&#10;project_context=账号系统"
+                  placeholder="任务标题=登录失败&#10;项目背景=账号系统"
                 />
               </Field>
               <div className="grid gap-1.5 text-sm">
@@ -346,7 +346,7 @@ export function AgentPlaygroundWorkbench({
                 value={debugValuesText}
                 onChange={(event) => onDebugValuesTextChange(event.target.value)}
                 className="min-h-[180px] resize-y font-mono text-sm leading-6"
-                placeholder="issue_title=登录失败&#10;project_context=账号系统"
+                placeholder="任务标题=登录失败&#10;项目背景=账号系统"
               />
             </Field>
             <div className="grid gap-1.5 text-sm" data-testid="agent-playground-context-preview">

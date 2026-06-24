@@ -920,7 +920,7 @@ export function SquadsPage() {
                 onClick={() => ensureInternalSquad.mutate("user-center")}
               >
                 {ensureInternalSquad.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Users className="h-3.5 w-3.5" />}
-                <span className="hidden lg:inline">user-center 小队</span>
+                <span className="hidden lg:inline">用户中心小队</span>
               </Button>
               <Button
                 size="sm"
@@ -971,7 +971,7 @@ export function SquadsPage() {
                 disabled={ensureInternalSquad.isPending}
                 onClick={() => ensureInternalSquad.mutate("user-center")}
               >
-                user-center 小队
+                用户中心小队
               </Button>
               <Button
                 size="sm"

@@ -103,10 +103,10 @@ const USER_CENTER_TEMPLATE: CreatePromptLibraryItemRequest = {
   name: "用户中心需求澄清提示词",
   description: "用户中心小队队长使用",
   prompt_type: "需求澄清",
-  content: "请先澄清目标、边界、验收条件、风险、影响范围和可观测指标。输出必须使用中文，并列出需要团队确认的问题。",
+  content: "请围绕 {{任务标题}} 先澄清目标、边界、验收条件、风险、影响范围和可观测指标。项目背景：{{项目背景}}。输出必须使用中文，并列出需要团队确认的问题。",
   variables: [
-    { name: "issue_title", label: "任务标题", required: true },
-    { name: "project_context", label: "项目背景" },
+    { name: "任务标题", label: "任务标题", required: true },
+    { name: "项目背景", label: "项目背景" },
   ],
   tags: ["用户中心", "小队", "需求澄清"],
   status: "启用",
@@ -846,14 +846,14 @@ export function PromptLibraryPage({
                 <section className="rounded-md border bg-muted/20 p-3" data-testid="prompt-template-actions">
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
                     <div className="min-w-0">
-                      <div className="text-sm font-medium">内置提示词模板</div>
+                      <div className="text-sm font-medium">团队提示词模板</div>
                       <div className="mt-1 text-xs text-muted-foreground">
-                        用团队内置模板快速起草需求澄清提示词；保存前可以继续修改名称、变量和内容。
+                        在提示词库中起草一份需求澄清模板，保存前可以继续调整名称、变量和内容。
                       </div>
                     </div>
                     <Button size="sm" variant="secondary" onClick={applyUserCenterTemplate}>
                       <BookOpenText className="size-3.5" />
-                      应用需求澄清模板
+                      起草需求澄清模板
                     </Button>
                   </div>
                 </section>
@@ -914,7 +914,7 @@ export function PromptLibraryPage({
                   <Input
                     value={draft.variablesText}
                     onChange={(event) => setDraftField(setDraft, "variablesText", event.target.value)}
-                    placeholder="issue_title=任务标题, project_context=项目背景"
+                    placeholder="任务标题=任务标题, 项目背景=项目背景"
                   />
                 </Field>
                 <Field label="标签">
@@ -940,7 +940,7 @@ export function PromptLibraryPage({
                     value={debugValuesText}
                     onChange={(event) => setDebugValuesText(event.target.value)}
                     className="min-h-[180px] resize-y font-mono text-sm leading-6"
-                    placeholder="issue_title=登录失败&#10;project_context=账号系统"
+                    placeholder="任务标题=登录失败&#10;项目背景=账号系统"
                   />
                 </Field>
                 <div className="grid gap-1.5 text-sm">
@@ -2520,7 +2520,7 @@ function ManualCasePanel({
                       value={editDraft.variablesText}
                       onChange={(event) => setEditDrafts((prev) => ({ ...prev, [item.id]: { ...editDraft, variablesText: event.target.value } }))}
                       className="min-h-20 text-xs"
-                      placeholder="编辑变量：issue_title=登录失败"
+                      placeholder="编辑变量：任务标题=登录失败"
                     />
                     <Input
                       value={editDraft.expectedText}
@@ -2568,7 +2568,7 @@ function ManualCasePanel({
           value={draft.variablesText}
           onChange={(event) => onDraftChange({ ...draft, variablesText: event.target.value })}
           className="min-h-20 text-sm"
-          placeholder="变量：issue_title=登录失败"
+          placeholder="变量：任务标题=登录失败"
         />
         <Input
           value={draft.expectedText}

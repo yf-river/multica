@@ -70,9 +70,10 @@ test.describe("训练与评估工作台", () => {
     await page.getByRole("link", { name: "提示词库", exact: true }).last().click();
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/prompts$`), { timeout: 30000 });
 
-    await page.getByRole("button", { name: "应用需求澄清模板" }).click();
+    await page.getByRole("button", { name: "起草需求澄清模板" }).click();
     await page.getByLabel("名称").fill(`${artifactPrefix} 账号系统 澄清`);
     await page.getByLabel("提示词内容").fill("请澄清 {{issue_title}}，项目背景：{{project_context}}。");
+    await page.getByLabel("变量").fill("issue_title=任务标题, project_context=项目背景");
     await page.getByLabel("调试变量").fill("issue_title=登录失败\nproject_context=账号系统");
 
     await expect(page.getByText("请澄清 登录失败，项目背景：账号系统。").last()).toBeVisible();
@@ -230,7 +231,7 @@ test.describe("训练与评估工作台", () => {
       .toBeGreaterThan(0);
     await expect(datasetRow).toContainText("trace导入", { timeout: 10000 });
     const manualCaseNameInput = datasetRow.getByPlaceholder("手工用例名称");
-    const manualCaseVariablesInput = datasetRow.getByPlaceholder("变量：issue_title=登录失败");
+    const manualCaseVariablesInput = datasetRow.getByPlaceholder("变量：任务标题=登录失败");
     const manualCaseExpectedInput = datasetRow.getByPlaceholder("期望包含：验收条件, trace/任务标识");
     const manualCaseTagsInput = datasetRow.getByPlaceholder("标签：账号系统, 回归");
     await fillStable(manualCaseNameInput, "手工补充登录失败验收");
@@ -254,7 +255,7 @@ test.describe("训练与评估工作台", () => {
     await expect(datasetRow).toContainText("手工 1", { timeout: 10000 });
     await datasetRow.getByRole("button", { name: "编辑用例" }).click();
     await datasetRow.getByPlaceholder("编辑用例名称").fill("手工补充登录失败验收 v2");
-    await datasetRow.getByPlaceholder("编辑变量：issue_title=登录失败").fill("issue_title=登录失败\nproject_context=账号系统\npriority=P0");
+    await datasetRow.getByPlaceholder("编辑变量：任务标题=登录失败").fill("issue_title=登录失败\nproject_context=账号系统\npriority=P0");
     await datasetRow.getByPlaceholder("编辑期望包含").fill("验收条件, trace/任务标识, 领导演示证据");
     await datasetRow.getByPlaceholder("编辑标签").fill("手工用例, 账号系统, 领导演示");
     await datasetRow.getByRole("button", { name: "保存用例" }).click();
@@ -287,7 +288,7 @@ test.describe("训练与评估工作台", () => {
     await expect(testSuiteRow.getByText("结构化评测用例", { exact: true })).toBeVisible({ timeout: 10000 });
     await expect(testSuiteRow).toContainText("结构化用例 1 个", { timeout: 10000 });
     await fillStable(testSuiteRow.getByPlaceholder("手工用例名称"), "手工套件回归用例");
-    await fillStable(testSuiteRow.getByPlaceholder("变量：issue_title=登录失败"), "issue_title=登录失败\nproject_context=账号系统");
+    await fillStable(testSuiteRow.getByPlaceholder("变量：任务标题=登录失败"), "issue_title=登录失败\nproject_context=账号系统");
     await fillStable(testSuiteRow.getByPlaceholder("期望包含：验收条件, trace/任务标识"), "套件结论, 通过率, trace/任务标识");
     await fillStable(testSuiteRow.getByPlaceholder("标签：账号系统, 回归"), "测试套件, 回归");
     await clickStableButton(testSuiteRow.getByRole("button", { name: "新增用例" }));
@@ -305,7 +306,7 @@ test.describe("训练与评估工作台", () => {
     await expect(testSuiteRow).toContainText("手工 1", { timeout: 10000 });
     await testSuiteRow.getByRole("button", { name: "编辑用例" }).click();
     await testSuiteRow.getByPlaceholder("编辑用例名称").fill("手工套件回归用例 v2");
-    await testSuiteRow.getByPlaceholder("编辑变量：issue_title=登录失败").fill("issue_title=登录失败\nproject_context=账号系统\nowner=qa");
+    await testSuiteRow.getByPlaceholder("编辑变量：任务标题=登录失败").fill("issue_title=登录失败\nproject_context=账号系统\nowner=qa");
     await testSuiteRow.getByPlaceholder("编辑期望包含").fill("套件结论, 通过率, 领导演示证据");
     await testSuiteRow.getByPlaceholder("编辑标签").fill("测试套件, 回归, 领导演示");
     await testSuiteRow.getByRole("button", { name: "保存用例" }).click();
@@ -349,7 +350,7 @@ test.describe("训练与评估工作台", () => {
         names: ["中文一致性", "命中率", "缺失变量"].sort(),
       });
     await fillStable(experimentRow.getByPlaceholder("手工用例名称"), "手工实验对比用例");
-    await fillStable(experimentRow.getByPlaceholder("变量：issue_title=登录失败"), "issue_title=登录失败\nproject_context=账号系统");
+    await fillStable(experimentRow.getByPlaceholder("变量：任务标题=登录失败"), "issue_title=登录失败\nproject_context=账号系统");
     await fillStable(experimentRow.getByPlaceholder("期望包含：验收条件, trace/任务标识"), "实验结论, 中文指标, trace/任务标识");
     await fillStable(experimentRow.getByPlaceholder("标签：账号系统, 回归"), "实验, 领导演示");
     await clickStableButton(experimentRow.getByRole("button", { name: "新增用例" }));
@@ -370,7 +371,7 @@ test.describe("训练与评估工作台", () => {
     await expect(optimizationRow.getByText("结构化评测用例", { exact: true })).toBeVisible({ timeout: 10000 });
     await expect(optimizationRow).toContainText("优化运行", { timeout: 10000 });
     await fillStable(optimizationRow.getByPlaceholder("手工用例名称"), "手工优化回归用例");
-    await fillStable(optimizationRow.getByPlaceholder("变量：issue_title=登录失败"), "issue_title=登录失败\nproject_context=账号系统");
+    await fillStable(optimizationRow.getByPlaceholder("变量：任务标题=登录失败"), "issue_title=登录失败\nproject_context=账号系统");
     await fillStable(optimizationRow.getByPlaceholder("期望包含：验收条件, trace/任务标识"), "优化候选, 失败原因, 人工确认");
     await fillStable(optimizationRow.getByPlaceholder("标签：账号系统, 回归"), "优化运行, 人工确认");
     await clickStableButton(optimizationRow.getByRole("button", { name: "新增用例" }));
@@ -722,9 +723,10 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("training-demo-dashboard")).toContainText("团队运行看板", { timeout: 10000 });
     await page.getByRole("link", { name: "提示词库", exact: true }).last().click();
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/prompts$`), { timeout: 30000 });
-    await page.getByRole("button", { name: "应用需求澄清模板" }).click();
+    await page.getByRole("button", { name: "起草需求澄清模板" }).click();
     await page.getByLabel("名称").fill(promptName);
     await page.getByLabel("提示词内容").fill(sourceContent);
+    await page.getByLabel("变量").fill("issue_title=任务标题");
     await page.getByLabel("调试变量").fill("issue_title=登录失败");
     await page.getByRole("button", { name: "保存" }).click();
     await expect(page.getByText("提示词已创建")).toBeVisible({ timeout: 10000 });

@@ -116,7 +116,7 @@ async function expectTrainingRouteShell(page, route: (typeof TRAINING_ROUTES)[nu
   await expect(page.getByTestId("prompt-playground-workbench")).toHaveCount(route.showPromptPlayground ? 1 : 0);
   await expect(page.getByTestId("agent-playground-workbench")).toHaveCount(route.showAgentWorkbench ? 1 : 0);
   await expect(page.getByTestId("prompt-template-actions")).toHaveCount(route.path === "prompts" ? 1 : 0);
-  await expect(page.getByRole("button", { name: "应用需求澄清模板" })).toHaveCount(route.path === "prompts" ? 1 : 0);
+  await expect(page.getByRole("button", { name: "起草需求澄清模板" })).toHaveCount(route.path === "prompts" ? 1 : 0);
   await expect(page.getByRole("button", { name: "创建 user-center 需求澄清提示词" })).toHaveCount(0);
 }
 
@@ -260,7 +260,7 @@ test.describe("生产部署验收", () => {
     await expectTrainingRouteShell(page, TRAINING_ROUTES[8]!);
     const firstRun = page.locator("[data-testid^='prompt-evaluation-run-']").first();
     await expect(firstRun).toContainText(/智能体执行|模板渲染检查/, { timeout: 30000 });
-    await firstRun.getByRole("button", { name: "查看证据" }).click();
+    await firstRun.locator("button").filter({ hasText: "查看证据" }).first().click();
     await expect(firstRun.getByTestId("run-evidence-snapshots")).toContainText("服务端证据快照", { timeout: 10000 });
     await expectTrainingRouteSurvivesReload(page, TRAINING_ROUTES[8]!);
   });

@@ -394,7 +394,7 @@ export function SquadDetailPage() {
           onRemoveMember={(m) => removeMemberMut.mutate(m)}
           onUpdateRole={async (m, role) => { await updateRoleMut.mutateAsync({ member: m, role }); }}
           onSaveInstructions={async (next) => { await updateSquadMut.mutateAsync({ instructions: next }); toast.success("小队指令已保存"); }}
-          onApplyUserCenterSOP={async () => { await updateSquadMut.mutateAsync({ sop_profile: USER_CENTER_SOP_PROFILE }); toast.success("user-center SOP 已应用"); }}
+          onApplyUserCenterSOP={async () => { await updateSquadMut.mutateAsync({ sop_profile: USER_CENTER_SOP_PROFILE }); toast.success("用户中心 SOP 已应用"); }}
           onApplyMulticaCodingSOP={async () => { await updateSquadMut.mutateAsync({ sop_profile: MULTICA_CODING_SOP_PROFILE }); toast.success("Multica 编码小队模板已应用"); }}
           setLeaderPending={setLeaderMut.isPending}
         />
@@ -1568,7 +1568,7 @@ function SquadInstructionsTab({
               ) : (
                 <FileText className="h-3.5 w-3.5" />
               )}
-              {hasUserCenterProfile ? "重新应用 user-center SOP" : "应用 user-center SOP"}
+              {hasUserCenterProfile ? "重新应用用户中心 SOP" : "应用用户中心 SOP"}
             </Button>
             <Button
               type="button"
@@ -1637,7 +1637,7 @@ function SquadInstructionsTab({
           </div>
         ) : (
           <div className="mt-3 text-xs text-muted-foreground">
-            尚未配置项目 SOP。可先应用 user-center SOP，再按项目语义调整。
+            尚未配置项目 SOP。可先应用用户中心 SOP，再按项目语义调整。
           </div>
         )}
       </div>
