@@ -533,6 +533,25 @@ type PromptEvaluationExperimentDimensionResponse struct {
 	UpdatedAt         string  `json:"updated_at"`
 }
 
+type PromptEvaluationDimensionScoreResponse struct {
+	ID             string  `json:"id"`
+	WorkspaceID    string  `json:"workspace_id"`
+	RunID          string  `json:"run_id"`
+	AssetID        string  `json:"asset_id"`
+	PromptID       *string `json:"prompt_id"`
+	DimensionIndex int32   `json:"dimension_index"`
+	DimensionName  string  `json:"dimension_name"`
+	Score          float64 `json:"score"`
+	PassedCases    int32   `json:"passed_cases"`
+	TotalCases     int32   `json:"total_cases"`
+	Status         string  `json:"status"`
+	Rule           string  `json:"rule"`
+	Evidence       string  `json:"evidence"`
+	Source         string  `json:"source"`
+	CreatedAt      string  `json:"created_at"`
+	UpdatedAt      string  `json:"updated_at"`
+}
+
 type PromptEvaluationOptimizationCandidateResponse struct {
 	ID                   string  `json:"id"`
 	WorkspaceID          string  `json:"workspace_id"`
@@ -796,6 +815,27 @@ func promptEvaluationExperimentDimensionToResponse(item db.PromptEvaluationExper
 		CreatedBy:         uuidToPtr(item.CreatedBy),
 		CreatedAt:         timestampToString(item.CreatedAt),
 		UpdatedAt:         timestampToString(item.UpdatedAt),
+	}
+}
+
+func promptEvaluationDimensionScoreToResponse(item db.PromptEvaluationDimensionScore) PromptEvaluationDimensionScoreResponse {
+	return PromptEvaluationDimensionScoreResponse{
+		ID:             uuidToString(item.ID),
+		WorkspaceID:    uuidToString(item.WorkspaceID),
+		RunID:          uuidToString(item.RunID),
+		AssetID:        uuidToString(item.AssetID),
+		PromptID:       uuidToPtr(item.PromptID),
+		DimensionIndex: item.DimensionIndex,
+		DimensionName:  item.DimensionName,
+		Score:          item.Score,
+		PassedCases:    item.PassedCases,
+		TotalCases:     item.TotalCases,
+		Status:         item.Status,
+		Rule:           item.Rule,
+		Evidence:       item.Evidence,
+		Source:         item.Source,
+		CreatedAt:      timestampToString(item.CreatedAt),
+		UpdatedAt:      timestampToString(item.UpdatedAt),
 	}
 }
 
@@ -1485,6 +1525,71 @@ func (h *Handler) ListPromptEvaluationExperimentDimensions(w http.ResponseWriter
 		resp[i] = promptEvaluationExperimentDimensionToResponse(item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
+}
+
+func (h *Handler) ListPromptEvaluationDimensionScores(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	var runID pgtype.UUID
+	if value := r.URL.Query().Get("run_id"); value != "" {
+		parsed, ok := parseUUIDOrBadRequest(w, value, "run_id")
+		if !ok {
+			return
+		}
+		runID = parsed
+	}
+	var assetID pgtype.UUID
+	if value := r.URL.Query().Get("asset_id"); value != "" {
+		parsed, ok := parseUUIDOrBadRequest(w, value, "asset_id")
+		if !ok {
+			return
+		}
+		assetID = parsed
+	}
+	var promptID pgtype.UUID
+	if value := r.URL.Query().Get("prompt_id"); value != "" {
+		parsed, ok := parseUUIDOrBadRequest(w, value, "prompt_id")
+		if !ok {
+			return
+		}
+		promptID = parsed
+	}
+	var status pgtype.Text
+	if value := r.URL.Query().Get("status"); value != "" {
+		if !validPromptEvaluationDimensionScoreStatus(value) {
+			writeError(w, http.StatusBadRequest, "status must be 待执行, 已评分 or 无用例")
+			return
+		}
+		status = pgtype.Text{String: value, Valid: true}
+	}
+	items, err := h.Queries.ListPromptEvaluationDimensionScores(r.Context(), db.ListPromptEvaluationDimensionScoresParams{
+		WorkspaceID: workspaceUUID,
+		RunID:       runID,
+		AssetID:     assetID,
+		PromptID:    promptID,
+		Status:      status,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation dimension scores")
+		return
+	}
+	resp := make([]PromptEvaluationDimensionScoreResponse, len(items))
+	for i, item := range items {
+		resp[i] = promptEvaluationDimensionScoreToResponse(item)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
+}
+
+func validPromptEvaluationDimensionScoreStatus(status string) bool {
+	switch status {
+	case "待执行", "已评分", "无用例":
+		return true
+	default:
+		return false
+	}
 }
 
 func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Request) {
@@ -5052,6 +5157,10 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 		writeError(w, http.StatusInternalServerError, "failed to create prompt evaluation run")
 		return db.PromptEvaluationRun{}, false
 	}
+	if err := h.persistPromptEvaluationDimensionScores(r.Context(), run, result.DimensionScores, "local_run"); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to persist prompt evaluation dimension scores")
+		return db.PromptEvaluationRun{}, false
+	}
 	for idx, caseResult := range result.CaseResults {
 		failureReason := ""
 		if caseResult.Status != "通过" {
@@ -5141,6 +5250,10 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 		writeError(w, http.StatusInternalServerError, "failed to create queued prompt evaluation run")
 		return db.PromptEvaluationRun{}, false
 	}
+	if err := h.persistPromptEvaluationDimensionScores(r.Context(), run, dimensionScores, "run_metrics"); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to persist queued prompt evaluation dimension scores")
+		return db.PromptEvaluationRun{}, false
+	}
 	for idx, c := range cases {
 		name := stringFromAny(firstValue(c, "name", "名称"))
 		if name == "" {
@@ -5164,6 +5277,51 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 		}
 	}
 	return run, true
+}
+
+func (h *Handler) persistPromptEvaluationDimensionScores(ctx context.Context, run db.PromptEvaluationRun, scores []promptEvaluationExperimentDimensionScore, source string) error {
+	if len(scores) == 0 {
+		return nil
+	}
+	if err := h.Queries.DeletePromptEvaluationDimensionScoresByRun(ctx, db.DeletePromptEvaluationDimensionScoresByRunParams{
+		WorkspaceID: run.WorkspaceID,
+		RunID:       run.ID,
+	}); err != nil {
+		return err
+	}
+	for _, score := range scores {
+		dimensionName := strings.TrimSpace(score.DimensionName)
+		if dimensionName == "" {
+			dimensionName = "维度 " + strconv.Itoa(int(score.DimensionIndex)+1)
+		}
+		if _, err := h.Queries.UpsertPromptEvaluationDimensionScore(ctx, db.UpsertPromptEvaluationDimensionScoreParams{
+			WorkspaceID:    run.WorkspaceID,
+			RunID:          run.ID,
+			AssetID:        run.AssetID,
+			PromptID:       run.PromptID,
+			DimensionIndex: score.DimensionIndex,
+			DimensionName:  dimensionName,
+			Score:          score.Score,
+			PassedCases:    int32(score.PassedCases),
+			TotalCases:     int32(score.TotalCases),
+			Status:         promptEvaluationDimensionScoreStatus(score.Status),
+			Rule:           score.Rule,
+			Evidence:       score.Evidence,
+			Source:         source,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func promptEvaluationDimensionScoreStatus(status string) string {
+	switch status {
+	case "待执行", "已评分", "无用例":
+		return status
+	default:
+		return "待执行"
+	}
 }
 
 func (h *Handler) promptEvaluationCasesForAsset(w http.ResponseWriter, r *http.Request, asset db.PromptEvaluationAsset) ([]map[string]any, bool) {

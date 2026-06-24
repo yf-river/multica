@@ -193,6 +193,9 @@ func syncPromptEvaluationRunWithTask(ctx context.Context, q *db.Queries, run db.
 	if err != nil {
 		return db.PromptEvaluationRun{}, err
 	}
+	if err := persistPromptEvaluationAgentDimensionScores(ctx, q, updated, dimensionScores); err != nil {
+		return db.PromptEvaluationRun{}, err
+	}
 	trialStatus := promptEvaluationTrialStatusFromRunStatus(status)
 	trialFailureReason := failureReason
 	if trialStatus == "通过" {
@@ -562,6 +565,51 @@ func promptEvaluationAgentDimensionScoresFromRun(run db.PromptEvaluationRun, ver
 		})
 	}
 	return result
+}
+
+func persistPromptEvaluationAgentDimensionScores(ctx context.Context, q *db.Queries, run db.PromptEvaluationRun, scores []promptEvaluationAgentDimensionScore) error {
+	if len(scores) == 0 {
+		return nil
+	}
+	if err := q.DeletePromptEvaluationDimensionScoresByRun(ctx, db.DeletePromptEvaluationDimensionScoresByRunParams{
+		WorkspaceID: run.WorkspaceID,
+		RunID:       run.ID,
+	}); err != nil {
+		return err
+	}
+	for _, score := range scores {
+		dimensionName := strings.TrimSpace(score.DimensionName)
+		if dimensionName == "" {
+			dimensionName = "维度 " + strconv.Itoa(int(score.DimensionIndex)+1)
+		}
+		if _, err := q.UpsertPromptEvaluationDimensionScore(ctx, db.UpsertPromptEvaluationDimensionScoreParams{
+			WorkspaceID:    run.WorkspaceID,
+			RunID:          run.ID,
+			AssetID:        run.AssetID,
+			PromptID:       run.PromptID,
+			DimensionIndex: score.DimensionIndex,
+			DimensionName:  dimensionName,
+			Score:          score.Score,
+			PassedCases:    int32(score.PassedCases),
+			TotalCases:     int32(score.TotalCases),
+			Status:         promptEvaluationAgentDimensionScoreStatus(score.Status),
+			Rule:           score.Rule,
+			Evidence:       score.Evidence,
+			Source:         "agent_sync",
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func promptEvaluationAgentDimensionScoreStatus(status string) string {
+	switch status {
+	case "待执行", "已评分", "无用例":
+		return status
+	default:
+		return "待执行"
+	}
 }
 
 func promptEvaluationDimensionScoresFromRaw(raw any) []promptEvaluationAgentDimensionScore {

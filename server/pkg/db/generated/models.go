@@ -668,6 +668,25 @@ type PromptEvaluationDatasetVersionRow struct {
 	CreatedAt        pgtype.Timestamptz `json:"created_at"`
 }
 
+type PromptEvaluationDimensionScore struct {
+	ID             pgtype.UUID        `json:"id"`
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	RunID          pgtype.UUID        `json:"run_id"`
+	AssetID        pgtype.UUID        `json:"asset_id"`
+	PromptID       pgtype.UUID        `json:"prompt_id"`
+	DimensionIndex int32              `json:"dimension_index"`
+	DimensionName  string             `json:"dimension_name"`
+	Score          float64            `json:"score"`
+	PassedCases    int32              `json:"passed_cases"`
+	TotalCases     int32              `json:"total_cases"`
+	Status         string             `json:"status"`
+	Rule           string             `json:"rule"`
+	Evidence       string             `json:"evidence"`
+	Source         string             `json:"source"`
+	CreatedAt      pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
+}
+
 type PromptEvaluationEvidenceSnapshot struct {
 	ID            pgtype.UUID        `json:"id"`
 	WorkspaceID   pgtype.UUID        `json:"workspace_id"`

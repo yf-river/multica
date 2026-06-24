@@ -412,6 +412,7 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 		"name":       "澄清渲染测试套件",
 		"asset_type": "测试套件",
 		"payload": map[string]any{
+			"对比维度": []string{"命中率", "中文一致性"},
 			"cases": []map[string]any{
 				{
 					"名称":   "登录失败澄清",
@@ -476,6 +477,25 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 	}
 	if renderedPrompt != "请澄清 登录失败，仓库是 user-center。" {
 		t.Fatalf("structured trial rendered prompt = %q", renderedPrompt)
+	}
+	assertPromptEvaluationDimensionScores(t, runID, []expectedPromptEvaluationDimensionScore{
+		{name: "命中率", status: "已评分", source: "local_run", passed: 1, total: 1},
+		{name: "中文一致性", status: "已评分", source: "local_run", passed: 1, total: 1},
+	})
+	scoresW := httptest.NewRecorder()
+	testHandler.ListPromptEvaluationDimensionScores(scoresW, newRequest(http.MethodGet, "/api/prompt-evaluation-dimension-scores?run_id="+runID, nil))
+	if scoresW.Code != http.StatusOK {
+		t.Fatalf("list dimension scores status = %d, body = %s", scoresW.Code, scoresW.Body.String())
+	}
+	var scoresResp struct {
+		Items []PromptEvaluationDimensionScoreResponse `json:"items"`
+		Total int                                      `json:"total"`
+	}
+	if err := json.Unmarshal(scoresW.Body.Bytes(), &scoresResp); err != nil {
+		t.Fatalf("decode dimension scores response: %v", err)
+	}
+	if scoresResp.Total != 2 || scoresResp.Items[0].RunID != runID || scoresResp.Items[0].Source != "local_run" {
+		t.Fatalf("dimension scores response = %+v", scoresResp)
 	}
 
 	snapshotW := httptest.NewRecorder()
@@ -1120,6 +1140,11 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	if evidenceScores, ok := runEvidence["实验维度评分"].([]any); !ok || len(evidenceScores) != 3 {
 		t.Fatalf("run evidence missing agent dimension scores: %#v", runEvidence)
 	}
+	assertPromptEvaluationDimensionScores(t, resp.Run.ID, []expectedPromptEvaluationDimensionScore{
+		{name: "命中率", status: "已评分", source: "agent_sync", passed: 1, total: 1},
+		{name: "缺失变量", status: "已评分", source: "agent_sync", passed: 1, total: 1},
+		{name: "中文一致性", status: "已评分", source: "agent_sync", passed: 1, total: 1},
+	})
 	if evidence.Trials[0].Status != "通过" || evidence.Trials[0].FailureReason != "无" || evidence.Trials[0].InputTokens != 16 || evidence.Trials[0].OutputTokens != 7 {
 		t.Fatalf("auto-synced trial = %+v", evidence.Trials[0])
 	}
@@ -2679,6 +2704,47 @@ func assertPromptEvaluationExperimentDimensions(t *testing.T, assetID string, ex
 	for idx := range expected {
 		if actual[idx] != expected[idx] {
 			t.Fatalf("experiment dimensions = %#v, want %#v", actual, expected)
+		}
+	}
+}
+
+type expectedPromptEvaluationDimensionScore struct {
+	name   string
+	status string
+	source string
+	passed int
+	total  int
+}
+
+func assertPromptEvaluationDimensionScores(t *testing.T, runID string, expected []expectedPromptEvaluationDimensionScore) {
+	t.Helper()
+	rows, err := testPool.Query(context.Background(), `
+		SELECT dimension_name, status, source, passed_cases, total_cases
+		FROM prompt_evaluation_dimension_score
+		WHERE run_id = $1
+		ORDER BY dimension_index ASC
+	`, runID)
+	if err != nil {
+		t.Fatalf("query dimension scores: %v", err)
+	}
+	defer rows.Close()
+	actual := []expectedPromptEvaluationDimensionScore{}
+	for rows.Next() {
+		var item expectedPromptEvaluationDimensionScore
+		if err := rows.Scan(&item.name, &item.status, &item.source, &item.passed, &item.total); err != nil {
+			t.Fatalf("scan dimension score: %v", err)
+		}
+		actual = append(actual, item)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate dimension scores: %v", err)
+	}
+	if len(actual) != len(expected) {
+		t.Fatalf("dimension scores = %#v, want %#v", actual, expected)
+	}
+	for idx := range expected {
+		if actual[idx] != expected[idx] {
+			t.Fatalf("dimension scores = %#v, want %#v", actual, expected)
 		}
 	}
 }
