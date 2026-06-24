@@ -253,11 +253,13 @@ test.describe("生产部署验收", () => {
     await expect(page.getByTestId("playground-page-subtitle")).toContainText("不创建智能体任务");
     await expect(page.getByTestId("playground-page-count")).toContainText("提示词");
     await expect(page.getByTestId("prompt-playground-workbench")).toBeVisible({ timeout: 15000 });
-    await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("本地模板实验室");
+    await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("本地模板目录");
+    await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("质检工作单");
     await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("不创建任务");
     await expect(page.getByLabel("模板变量")).toBeVisible();
     await expect(page.getByTestId("prompt-playground-rendered-output")).toBeVisible();
     await expect(page.getByTestId("prompt-playground-template-lab")).toBeVisible();
+    await expect(page.getByTestId("prompt-playground-inspection-board")).toBeVisible();
     await expect(page.getByTestId("prompt-playground-source-panel")).toContainText("模板源");
     await expect(page.getByTestId("prompt-playground-variable-checklist")).toContainText("变量样本");
     await expect(page.getByTestId("prompt-playground-purpose-map")).toContainText("不创建任务、不消耗模型");
@@ -293,6 +295,7 @@ test.describe("生产部署验收", () => {
     await expect(page.getByText("将入队的任务正文")).toBeVisible();
     await expect(page.getByText("最近智能体运行")).toBeVisible();
     await expect(page.getByTestId("agent-playground-task-pipeline")).toContainText("创建真实任务");
+    await expect(page.getByTestId("agent-playground-readiness-lane")).toHaveCount(3);
     await expect(page.getByTestId("agent-playground-execution-bus")).toContainText("Trace");
     await expect(page.getByTestId("agent-playground-execution-bus")).toContainText("用量");
     await expect(page.getByTestId("agent-playground-task-pipeline")).toContainText("回写观测证据");

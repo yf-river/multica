@@ -28,14 +28,14 @@ export function PromptPlaygroundPromptList({
   onSelect,
 }: PromptSelectorProps) {
   return (
-    <aside className="flex min-h-0 flex-col border-b bg-muted/10 md:border-b-0 md:border-r" data-testid="prompt-playground-prompt-list">
+    <aside className="flex min-h-0 flex-col border-b bg-sky-500/5 md:border-b-0 md:border-r" data-testid="prompt-playground-prompt-list">
       <div className="space-y-3 border-b p-3">
-        <div className="rounded-md border bg-background px-3 py-2" data-testid="prompt-playground-selector-summary">
-          <div className="text-xs font-semibold">本地模板实验室</div>
-          <div className="mt-1 text-xs text-muted-foreground">只验证变量填充和最终提示词文本，不创建任务。</div>
+        <div className="rounded-md border border-sky-500/30 bg-background px-3 py-2" data-testid="prompt-playground-selector-summary">
+          <div className="text-xs font-semibold">本地模板目录</div>
+          <div className="mt-1 text-xs text-muted-foreground">只挑选已保存版本，进入右侧质检工作单做变量覆盖和渲染检查。</div>
         </div>
         <PromptSearchInput value={query} onChange={onQueryChange} placeholder="搜索要渲染的提示词" />
-        <div className="rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground" data-testid="prompt-playground-template-boundary">
+        <div className="rounded-md border border-dashed border-sky-500/30 bg-background px-3 py-2 text-xs text-muted-foreground" data-testid="prompt-playground-template-boundary">
           模板选择只显示版本和变量，不读取运行时、不创建真实任务。
         </div>
       </div>
@@ -51,8 +51,9 @@ export function PromptPlaygroundPromptList({
                 key={item.id}
                 type="button"
                 onClick={() => onSelect(item.id)}
-                className={`flex w-full flex-col gap-2 px-3 py-3 text-left transition-colors hover:bg-muted/60 ${
-                  selectedId === item.id ? "bg-muted" : ""
+                data-testid="prompt-playground-template-card"
+                className={`flex w-full flex-col gap-2 border-l-4 px-3 py-3 text-left transition-colors hover:bg-sky-500/10 ${
+                  selectedId === item.id ? "border-l-sky-500 bg-sky-500/10" : "border-l-transparent"
                 }`}
               >
                 <div className="flex min-w-0 items-center gap-2">
@@ -61,10 +62,13 @@ export function PromptPlaygroundPromptList({
                     {item.status}
                   </Badge>
                 </div>
-                <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                  <span className="shrink-0">{item.prompt_type}</span>
-                  <span className="truncate">版本 v{item.version}</span>
-                  <span className="truncate">模板变量 {item.variables.length}</span>
+                <div className="grid gap-1 text-xs text-muted-foreground" data-testid="prompt-playground-template-brief">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <span className="shrink-0">{item.prompt_type}</span>
+                    <span className="truncate">版本 v{item.version}</span>
+                    <span className="truncate">模板变量 {item.variables.length}</span>
+                  </div>
+                  <div className="truncate">质检对象：模板源、变量样本、最终渲染文本</div>
                 </div>
               </button>
             ))}

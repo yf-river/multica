@@ -978,7 +978,9 @@ test.describe("训练与评估工作台", () => {
     await page.goto(`/${workspaceSlug}/training/prompt-playground`, { waitUntil: "domcontentloaded" });
     await expect(page.getByTestId("prompt-playground-page-shell")).toBeVisible({ timeout: 10000 });
     await expect(page.getByTestId("playground-page-contract")).toContainText("本地渲染 · 不启动智能体");
-    await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("本地模板实验室");
+    await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("本地模板目录");
+    await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("质检工作单");
+    await expect(page.getByTestId("prompt-playground-inspection-board")).toBeVisible();
     await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("保存质检记录");
     await expect(page.getByTestId("prompt-playground-quality-gate")).toContainText("质检结论");
     await expect(page.getByTestId("prompt-playground-template-lab")).toBeVisible();

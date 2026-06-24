@@ -175,7 +175,9 @@ test.describe("Navigation", () => {
     await expect(page.getByTestId("prompt-playground-page-shell")).toBeVisible({ timeout: 30000 });
     await expect(page.getByTestId("training-summary-strip")).toHaveCount(0);
     await expect(page.getByTestId("playground-page-contract")).toContainText("本地渲染 · 不启动智能体");
-    await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("本地模板实验室");
+    await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("本地模板目录");
+    await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("质检工作单");
+    await expect(page.getByTestId("prompt-playground-inspection-board")).toBeVisible();
     await expect(page.getByTestId("prompt-playground-purpose-map")).toContainText("不创建任务、不消耗模型");
     await expect(page.getByTestId("prompt-playground-template-boundary")).toContainText("模板选择只显示版本和变量");
     await expect(page.getByTestId("prompt-playground-source-panel")).toContainText("模板源");
@@ -204,6 +206,7 @@ test.describe("Navigation", () => {
     await expect(page.getByTestId("agent-playground-execution-boundary")).toContainText("任务变量、期望输出、运行时准备度");
     await expect(page.getByTestId("agent-playground-run-console")).toContainText("真实任务发射台");
     await expect(page.getByTestId("agent-playground-launch-brief")).toContainText("写入真实任务队列");
+    await expect(page.getByTestId("agent-playground-readiness-lane")).toHaveCount(3);
     await expect(page.getByTestId("agent-playground-evidence-strip")).toContainText("真实运行");
     await expect(page.getByTestId("agent-playground-observability-contract")).toContainText("观测回写契约");
     await expect(page.getByTestId("prompt-playground-contract")).toHaveCount(0);
