@@ -13,6 +13,9 @@ const env = {
 const browserURL = trimSlash(process.env.GOAL_TEST_BROWSER_URL || `http://127.0.0.1:${env.FRONTEND_PORT || "13682"}`);
 const frontendURL = trimSlash(process.env.GOAL_TEST_FRONTEND_URL || env.FRONTEND_ORIGIN || "http://9.134.129.162:13682");
 const backendURL = trimSlash(process.env.GOAL_TEST_BACKEND_URL || env.REMOTE_API_URL || "http://127.0.0.1:18762");
+const noProxy = mergeNoProxy(process.env.NO_PROXY || process.env.no_proxy || "", [browserURL, frontendURL, backendURL]);
+process.env.NO_PROXY = noProxy;
+process.env.no_proxy = noProxy;
 const workspaceSlug = process.env.GOAL_TEST_WORKSPACE_SLUG || "goal-test-daemon";
 const account = process.env.GOAL_TEST_ACCOUNT || "goal-test-daemon";
 const password = process.env.GOAL_TEST_PASSWORD || "e2e-password";
@@ -39,7 +42,7 @@ const routes = [
 ];
 
 const token = await login();
-const browser = await chromium.launch({ headless: true, args: ["--no-proxy-server"] });
+const browser = await chromium.launch({ headless: true, args: ["--no-proxy-server", "--proxy-server=direct://", "--proxy-bypass-list=*"] });
 const context = await browser.newContext({ viewport: { width: 1440, height: 900 }, ignoreHTTPSErrors: true });
 await context.addCookies([{ name: "multica_logged_in", value: "1", url: browserURL, sameSite: "Lax" }]);
 await context.addInitScript((authToken) => {
@@ -519,4 +522,24 @@ function readEnvFile(file) {
 
 function trimSlash(value) {
   return value.replace(/\/+$/, "");
+}
+
+function mergeNoProxy(current, urls) {
+  const hosts = new Set(
+    String(current || "")
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean),
+  );
+  for (const url of urls) {
+    try {
+      const parsed = new URL(url);
+      if (parsed.hostname) hosts.add(parsed.hostname);
+    } catch {
+      // Ignore non-URL values.
+    }
+  }
+  hosts.add("127.0.0.1");
+  hosts.add("localhost");
+  return Array.from(hosts).join(",");
 }

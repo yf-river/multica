@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-audit goal-test-training-performance-audit goal-test-session-retro goal-test-token-audit
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-session-retro goal-test-token-audit
 
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
@@ -279,6 +279,11 @@ goal-test-ui-audit: goal-test-smoke ## Run real-browser goal-test integration UI
 
 goal-test-training-performance-audit: goal-test-smoke ## Run real-browser training/evaluation route request, performance, and log-window audit
 	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-training-performance-audit.mjs
+
+goal-test-public-training-performance-audit: goal-test-smoke ## Run training/evaluation performance audit through the public frontend URL
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	GOAL_TEST_BROWSER_URL="$${GOAL_TEST_BROWSER_URL:-http://9.134.129.162:13682}" \
 	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-training-performance-audit.mjs
 
 goal-test-session-retro: ## Generate fixed session retrospective artifacts; pass SESSION=/path/to/session.jsonl
