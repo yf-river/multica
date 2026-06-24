@@ -65,9 +65,13 @@ function buildGroups(
     if (groups.has(id)) continue;
 
     if (issue.assignee_type && issue.assignee_id) {
+      const assigneeSummary =
+        issue.assignee?.type === issue.assignee_type && issue.assignee?.id === issue.assignee_id
+          ? issue.assignee
+          : null;
       groups.set(id, {
         id,
-        title: getActorName(issue.assignee_type, issue.assignee_id),
+        title: assigneeSummary?.name ?? getActorName(issue.assignee_type, issue.assignee_id),
         assigneeType: issue.assignee_type,
         assigneeId: issue.assignee_id,
         createData: {
@@ -145,11 +149,28 @@ export function BoardView({
   const sortLabel = sortBy !== "position"
     ? t(($) => $.board.ordered_by, { field: t(($) => $.display[`sort_${sortFieldKey}` as keyof typeof $.display]) })
     : null;
-  const needsAssigneeNames = grouping === "assignee";
+  const missingAssigneeGroupName = useMemo(() => {
+    if (grouping !== "assignee") return { member: false, agent: false, squad: false };
+    const sourceIssues = assigneeGroups
+      ? assigneeGroups.flatMap((group) => group.issues)
+      : issues;
+    return sourceIssues.reduce(
+      (acc, issue) => {
+        if (!issue.assignee_type || !issue.assignee_id) return acc;
+        const hasSummary =
+          issue.assignee?.type === issue.assignee_type &&
+          issue.assignee?.id === issue.assignee_id &&
+          !!issue.assignee.name;
+        if (!hasSummary) acc[issue.assignee_type] = true;
+        return acc;
+      },
+      { member: false, agent: false, squad: false },
+    );
+  }, [assigneeGroups, grouping, issues]);
   const { getActorName } = useActorName({
-    members: needsAssigneeNames,
-    agents: needsAssigneeNames,
-    squads: needsAssigneeNames,
+    members: missingAssigneeGroupName.member,
+    agents: missingAssigneeGroupName.agent,
+    squads: missingAssigneeGroupName.squad,
   });
   const myIssuesOpts = myIssuesScope
     ? { scope: myIssuesScope, filter: myIssuesFilter ?? {} }
@@ -174,7 +195,12 @@ export function BoardView({
         id: group.id,
         title:
           group.assignee_type && group.assignee_id
-            ? getActorName(group.assignee_type, group.assignee_id)
+            ? group.issues.find(
+                (issue) =>
+                  issue.assignee?.type === group.assignee_type &&
+                  issue.assignee?.id === group.assignee_id &&
+                  !!issue.assignee.name,
+              )?.assignee?.name ?? getActorName(group.assignee_type, group.assignee_id)
             : t(($) => $.filters.no_assignee),
         assigneeType: group.assignee_type,
         assigneeId: group.assignee_id,

@@ -43,10 +43,21 @@ export interface Issue {
   priority: IssuePriority;
   assignee_type: IssueAssigneeType | null;
   assignee_id: string | null;
+  assignee?: {
+    type: IssueAssigneeType;
+    id: string;
+    name: string;
+    avatar_url: string | null;
+  } | null;
   creator_type: IssueAssigneeType;
   creator_id: string;
   parent_issue_id: string | null;
   project_id: string | null;
+  project?: {
+    id: string;
+    title: string;
+    icon: string | null;
+  } | null;
   position: number;
   // Calendar days as date-only "YYYY-MM-DD" (no time, no timezone). Use the
   // helpers in @multica/core/issues/date to format/compare — never `new Date()`

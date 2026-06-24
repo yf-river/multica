@@ -52,11 +52,13 @@ function ListRowContent({
   const p = useWorkspacePaths();
   const storeProperties = useViewStore((s) => s.cardProperties);
   const wsId = useWorkspaceId();
+  const embeddedProject =
+    issue.project_id && issue.project?.id === issue.project_id ? issue.project : undefined;
   const { data: projects = [] } = useQuery({
     ...projectListOptions(wsId),
-    enabled: storeProperties.project && !!issue.project_id,
+    enabled: storeProperties.project && !!issue.project_id && !embeddedProject,
   });
-  const project = issue.project_id ? projects.find((pr) => pr.id === issue.project_id) : undefined;
+  const project = embeddedProject ?? (issue.project_id ? projects.find((pr) => pr.id === issue.project_id) : undefined);
   const labels = issue.labels ?? [];
 
   const showProject = storeProperties.project && project;
@@ -65,6 +67,12 @@ function ListRowContent({
   const showStartDate = storeProperties.startDate && issue.start_date;
   const showDueDate = storeProperties.dueDate && issue.due_date;
   const showLabels = storeProperties.labels && labels.length > 0;
+  const assigneeSummary =
+    showAssignee &&
+    issue.assignee?.type === issue.assignee_type &&
+    issue.assignee?.id === issue.assignee_id
+      ? issue.assignee
+      : null;
 
   return (
     <IssueActionsContextMenu issue={issue}>
@@ -145,6 +153,8 @@ function ListRowContent({
             <ActorAvatar
               actorType={issue.assignee_type!}
               actorId={issue.assignee_id!}
+              actorName={assigneeSummary?.name}
+              actorAvatarUrl={assigneeSummary?.avatar_url}
               size={20}
               enableHoverCard
             />

@@ -449,6 +449,31 @@ function mockIssueBuckets(issues: Issue[]) {
   return { by_status };
 }
 
+function withIssueSummaries(issues: Issue[]): Issue[] {
+  const names: Record<string, string> = {
+    "user-1": "成员摘要",
+    "agent-1": "智能体摘要",
+    "squad-1": "小队摘要",
+  };
+  return issues.map((issue, index) => ({
+    ...issue,
+    project_id: index === 0 ? "project-1" : issue.project_id,
+    project:
+      index === 0
+        ? { id: "project-1", title: "项目摘要", icon: "项" }
+        : issue.project,
+    assignee:
+      issue.assignee_type && issue.assignee_id
+        ? {
+            type: issue.assignee_type,
+            id: issue.assignee_id,
+            name: names[issue.assignee_id] ?? "负责人摘要",
+            avatar_url: null,
+          }
+        : issue.assignee,
+  }));
+}
+
 function mockAssigneeGroups(issues: Issue[]) {
   const groups = new Map<string, { assignee_type: Issue["assignee_type"]; assignee_id: string | null; issues: Issue[] }>();
   for (const issue of issues) {
@@ -561,6 +586,19 @@ describe("IssuesPage (shared)", () => {
     expect(mockListSquads).not.toHaveBeenCalled();
     expect(mockListProjects).not.toHaveBeenCalled();
     expect(mockListLabels).not.toHaveBeenCalled();
+  });
+
+  it("renders issue summaries without loading workspace directories", async () => {
+    mockListIssueBuckets.mockResolvedValue(mockIssueBuckets(withIssueSummaries(mockIssues)));
+
+    renderWithQuery(<IssuesPage />);
+
+    await screen.findByText("成员摘要");
+    expect(screen.getByText("项目摘要")).toBeInTheDocument();
+    expect(mockListMembers).not.toHaveBeenCalled();
+    expect(mockListAgents).not.toHaveBeenCalled();
+    expect(mockListSquads).not.toHaveBeenCalled();
+    expect(mockListProjects).not.toHaveBeenCalled();
   });
 
   it("renders board column headers", async () => {

@@ -34,6 +34,8 @@ export type AgentHoverCardVariant = "profile" | "live";
 interface ActorAvatarProps {
   actorType: string;
   actorId: string;
+  actorName?: string | null;
+  actorAvatarUrl?: string | null;
   size?: number;
   className?: string;
   /**
@@ -71,6 +73,8 @@ const PROFILE_LINK_CONTROL_SELECTOR =
 export function ActorAvatar({
   actorType,
   actorId,
+  actorName,
+  actorAvatarUrl,
   size,
   className,
   enableHoverCard,
@@ -78,17 +82,23 @@ export function ActorAvatar({
   hoverCardVariant = "profile",
   profileLink,
 }: ActorAvatarProps) {
+  const shouldResolveIdentity = actorName === undefined || actorAvatarUrl === undefined;
   const { getActorName, getActorInitials, getActorAvatarUrl } = useActorName({
-    members: actorType === "member",
-    agents: actorType === "agent",
-    squads: actorType === "squad",
+    members: shouldResolveIdentity && actorType === "member",
+    agents: shouldResolveIdentity && actorType === "agent",
+    squads: shouldResolveIdentity && actorType === "squad",
   });
+  const resolvedName = actorName ?? getActorName(actorType, actorId);
+  const resolvedAvatarUrl =
+    actorAvatarUrl === undefined ? getActorAvatarUrl(actorType, actorId) : actorAvatarUrl;
+  const resolvedInitials =
+    actorName === undefined ? getActorInitials(actorType, actorId) : initialsFromName(resolvedName);
   const paths = useWorkspacePaths();
   const avatar = (
     <ActorAvatarBase
-      name={getActorName(actorType, actorId)}
-      initials={getActorInitials(actorType, actorId)}
-      avatarUrl={getActorAvatarUrl(actorType, actorId)}
+      name={resolvedName}
+      initials={resolvedInitials}
+      avatarUrl={resolvedAvatarUrl}
       isAgent={actorType === "agent"}
       isSystem={actorType === "system"}
       isSquad={actorType === "squad"}
@@ -145,6 +155,15 @@ export function ActorAvatar({
     return <SquadAvatarHoverCard squadId={actorId}>{content}</SquadAvatarHoverCard>;
   }
   return content;
+}
+
+function initialsFromName(name: string) {
+  return name
+    .split(" ")
+    .map((w) => w[0])
+    .join("")
+    .toUpperCase()
+    .slice(0, 2);
 }
 
 function ActorAvatarProfileLink({

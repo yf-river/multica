@@ -25,7 +25,7 @@ func TestListIssueBucketsReturnsFirstPagePerStatus(t *testing.T) {
 		testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, projectID)
 	})
 
-	insertIssue := func(title, status string, position int) string {
+	insertIssue := func(title, status string, position int, assignee bool) string {
 		var number int
 		if err := testPool.QueryRow(ctx, `
 			UPDATE workspace
@@ -35,18 +35,24 @@ func TestListIssueBucketsReturnsFirstPagePerStatus(t *testing.T) {
 			t.Fatalf("next issue number: %v", err)
 		}
 		var id string
+		var assigneeType any
+		var assigneeID any
+		if assignee {
+			assigneeType = "member"
+			assigneeID = testUserID
+		}
 		if err := testPool.QueryRow(ctx, `
-			INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, position, number, project_id)
-			VALUES ($1, $2, $3, 'none', 'member', $4, $5, $6, $7) RETURNING id
-		`, testWorkspaceID, title, status, testUserID, position, number, projectID).Scan(&id); err != nil {
+			INSERT INTO issue (workspace_id, title, status, priority, assignee_type, assignee_id, creator_type, creator_id, position, number, project_id)
+			VALUES ($1, $2, $3, 'none', $4, $5, 'member', $6, $7, $8, $9) RETURNING id
+		`, testWorkspaceID, title, status, assigneeType, assigneeID, testUserID, position, number, projectID).Scan(&id); err != nil {
 			t.Fatalf("create issue %q: %v", title, err)
 		}
 		return id
 	}
 
-	firstTodo := insertIssue(fmt.Sprintf("bucket-todo-first-%d", suffix), "todo", 1)
-	secondTodo := insertIssue(fmt.Sprintf("bucket-todo-second-%d", suffix), "todo", 2)
-	doneIssue := insertIssue(fmt.Sprintf("bucket-done-%d", suffix), "done", 1)
+	firstTodo := insertIssue(fmt.Sprintf("bucket-todo-first-%d", suffix), "todo", 1, true)
+	secondTodo := insertIssue(fmt.Sprintf("bucket-todo-second-%d", suffix), "todo", 2, false)
+	doneIssue := insertIssue(fmt.Sprintf("bucket-done-%d", suffix), "done", 1, false)
 
 	path := fmt.Sprintf(
 		"/api/issues/buckets?workspace_id=%s&project_id=%s&statuses=todo,done,blocked&limit=1&sort=position",
@@ -68,6 +74,12 @@ func TestListIssueBucketsReturnsFirstPagePerStatus(t *testing.T) {
 	}
 	if total := resp.ByStatus["todo"].Total; total != 2 {
 		t.Fatalf("todo total: want 2, got %d", total)
+	}
+	if summary := resp.ByStatus["todo"].Issues[0].Assignee; summary == nil || summary.Type != "member" || summary.ID != testUserID || summary.Name == "" {
+		t.Fatalf("todo assignee summary missing: %#v", summary)
+	}
+	if project := resp.ByStatus["todo"].Issues[0].Project; project == nil || project.ID != projectID || project.Title == "" {
+		t.Fatalf("todo project summary missing: %#v", project)
 	}
 	if got := resp.ByStatus["done"].Issues; len(got) != 1 || got[0].ID != doneIssue {
 		t.Fatalf("done first page: want [%s], got %#v", doneIssue, got)

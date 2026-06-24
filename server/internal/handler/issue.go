@@ -62,6 +62,24 @@ type IssueResponse struct {
 	// preserves whatever labels are already in cache. nil pointer = "field
 	// absent, do not touch"; non-nil (incl. empty slice) = authoritative list.
 	Labels *[]LabelResponse `json:"labels,omitempty"`
+	// Summary fields let list/board cards render their first screen without
+	// fetching full member/agent/squad/project directories. Detail hovers still
+	// lazy-load the authoritative profile when opened.
+	Assignee *IssueActorSummaryResponse   `json:"assignee,omitempty"`
+	Project  *IssueProjectSummaryResponse `json:"project,omitempty"`
+}
+
+type IssueActorSummaryResponse struct {
+	Type      string  `json:"type"`
+	ID        string  `json:"id"`
+	Name      string  `json:"name"`
+	AvatarURL *string `json:"avatar_url"`
+}
+
+type IssueProjectSummaryResponse struct {
+	ID    string  `json:"id"`
+	Title string  `json:"title"`
+	Icon  *string `json:"icon"`
 }
 
 // validIssueStatuses / validIssuePriorities mirror the CHECK constraints on
@@ -247,6 +265,7 @@ type GroupedIssuesResponse struct {
 type groupedIssueRow struct {
 	db.ListIssuesRow
 	GroupTotal int64
+	Summary    issueListSummary
 }
 
 type IssueStatusBucketResponse struct {
@@ -261,6 +280,115 @@ type ListIssueBucketsResponse struct {
 type issueBucketRow struct {
 	db.ListIssuesRow
 	StatusTotal int64
+	Summary     issueListSummary
+}
+
+type issueListRow struct {
+	db.ListIssuesRow
+	Summary issueListSummary
+}
+
+type issueListSummary struct {
+	AssigneeName      pgtype.Text
+	AssigneeAvatarURL pgtype.Text
+	ProjectTitle      pgtype.Text
+	ProjectIcon       pgtype.Text
+}
+
+const issueListSelectSQL = `i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
+       i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
+       i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.metadata,
+       COALESCE(assignee_member.name, assignee_agent.name, assignee_squad.name) AS assignee_name,
+       COALESCE(assignee_member.avatar_url, assignee_agent.avatar_url, assignee_squad.avatar_url) AS assignee_avatar_url,
+       project.title AS project_title,
+       project.icon AS project_icon`
+
+const issueListJoinSQL = `LEFT JOIN "user" assignee_member
+       ON i.assignee_type = 'member'
+      AND assignee_member.id = i.assignee_id
+LEFT JOIN agent assignee_agent
+       ON i.assignee_type = 'agent'
+      AND assignee_agent.id = i.assignee_id
+      AND assignee_agent.workspace_id = i.workspace_id
+LEFT JOIN squad assignee_squad
+       ON i.assignee_type = 'squad'
+      AND assignee_squad.id = i.assignee_id
+      AND assignee_squad.workspace_id = i.workspace_id
+LEFT JOIN project
+       ON project.id = i.project_id
+      AND project.workspace_id = i.workspace_id`
+
+func scanIssueListRow(rows interface{ Scan(dest ...any) error }, row *issueListRow) error {
+	return rows.Scan(issueListScanDest(row)...)
+}
+
+func issueListScanDest(row *issueListRow) []any {
+	return []any{
+		&row.ID,
+		&row.WorkspaceID,
+		&row.Title,
+		&row.Description,
+		&row.Status,
+		&row.Priority,
+		&row.AssigneeType,
+		&row.AssigneeID,
+		&row.CreatorType,
+		&row.CreatorID,
+		&row.ParentIssueID,
+		&row.Position,
+		&row.StartDate,
+		&row.DueDate,
+		&row.CreatedAt,
+		&row.UpdatedAt,
+		&row.Number,
+		&row.ProjectID,
+		&row.Metadata,
+		&row.Summary.AssigneeName,
+		&row.Summary.AssigneeAvatarURL,
+		&row.Summary.ProjectTitle,
+		&row.Summary.ProjectIcon,
+	}
+}
+
+func issueListRowWithSummaryToResponse(row issueListRow, issuePrefix string) IssueResponse {
+	resp := issueListRowToResponse(row.ListIssuesRow, issuePrefix)
+	attachIssueListSummary(&resp, row.Summary)
+	return resp
+}
+
+func attachIssueListSummary(resp *IssueResponse, summary issueListSummary) {
+	if resp.AssigneeType != nil && resp.AssigneeID != nil {
+		name := unknownIssueAssigneeName(*resp.AssigneeType)
+		if summary.AssigneeName.Valid {
+			name = summary.AssigneeName.String
+		}
+		resp.Assignee = &IssueActorSummaryResponse{
+			Type:      *resp.AssigneeType,
+			ID:        *resp.AssigneeID,
+			Name:      name,
+			AvatarURL: textToPtr(summary.AssigneeAvatarURL),
+		}
+	}
+	if resp.ProjectID != nil && summary.ProjectTitle.Valid {
+		resp.Project = &IssueProjectSummaryResponse{
+			ID:    *resp.ProjectID,
+			Title: summary.ProjectTitle.String,
+			Icon:  textToPtr(summary.ProjectIcon),
+		}
+	}
+}
+
+func unknownIssueAssigneeName(assigneeType string) string {
+	switch assigneeType {
+	case "member":
+		return "未知成员"
+	case "agent":
+		return "未知智能体"
+	case "squad":
+		return "未知小队"
+	default:
+		return "未知负责人"
+	}
 }
 
 func assigneeGroupID(assigneeType pgtype.Text, assigneeID pgtype.UUID) string {
@@ -1031,13 +1159,12 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	offsetRef := addArg(int64(offset))
 	limitRef := addArg(int64(limit))
 
-	query := fmt.Sprintf(`SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
-       i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
-       i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.metadata
+	query := fmt.Sprintf(`SELECT %s
 FROM issue i
+%s
 WHERE %s
 ORDER BY %s
-LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
+LIMIT %s OFFSET %s`, issueListSelectSQL, issueListJoinSQL, whereSql, orderBy, limitRef, offsetRef)
 
 	rows, err := h.DB.Query(ctx, query, args...)
 	if err != nil {
@@ -1047,30 +1174,10 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 	}
 	defer rows.Close()
 
-	var issues []db.ListIssuesRow
+	var issues []issueListRow
 	for rows.Next() {
-		var row db.ListIssuesRow
-		if err := rows.Scan(
-			&row.ID,
-			&row.WorkspaceID,
-			&row.Title,
-			&row.Description,
-			&row.Status,
-			&row.Priority,
-			&row.AssigneeType,
-			&row.AssigneeID,
-			&row.CreatorType,
-			&row.CreatorID,
-			&row.ParentIssueID,
-			&row.Position,
-			&row.StartDate,
-			&row.DueDate,
-			&row.CreatedAt,
-			&row.UpdatedAt,
-			&row.Number,
-			&row.ProjectID,
-			&row.Metadata,
-		); err != nil {
+		var row issueListRow
+		if err := scanIssueListRow(rows, &row); err != nil {
 			slog.Warn("ListIssues scan failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to list issues")
 			return
@@ -1100,7 +1207,7 @@ LIMIT %s OFFSET %s`, whereSql, orderBy, limitRef, offsetRef)
 	labelsMap := h.labelsByIssue(ctx, wsUUID, ids)
 	resp := make([]IssueResponse, len(issues))
 	for i, issue := range issues {
-		resp[i] = issueListRowToResponse(issue, prefix)
+		resp[i] = issueListRowWithSummaryToResponse(issue, prefix)
 		labels := labelsMap[resp[i].ID]
 		if labels == nil {
 			labels = []LabelResponse{}
@@ -1285,21 +1392,21 @@ func (h *Handler) ListIssueBuckets(w http.ResponseWriter, r *http.Request) {
 	offsetRef := addArg(int64(offset))
 	limitRef := addArg(int64(limit))
 	query := fmt.Sprintf(`WITH ranked AS (
-  SELECT i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
-         i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
-         i.parent_issue_id, i.position, i.start_date, i.due_date, i.created_at, i.updated_at, i.number, i.project_id, i.metadata,
+  SELECT %s,
          COUNT(*) OVER (PARTITION BY i.status) AS status_total,
          ROW_NUMBER() OVER (PARTITION BY i.status ORDER BY %s) AS status_row_number
     FROM issue i
+    %s
    WHERE %s
 )
 SELECT id, workspace_id, title, description, status, priority,
        assignee_type, assignee_id, creator_type, creator_id,
-       parent_issue_id, position, start_date, due_date, created_at, updated_at, number, project_id, metadata, status_total
+       parent_issue_id, position, start_date, due_date, created_at, updated_at, number, project_id, metadata,
+       assignee_name, assignee_avatar_url, project_title, project_icon, status_total
   FROM ranked
  WHERE status_row_number > %s
    AND status_row_number <= (%s + %s)
- ORDER BY status, status_row_number`, orderBy, whereSQL, offsetRef, offsetRef, limitRef)
+ ORDER BY status, status_row_number`, issueListSelectSQL, orderBy, issueListJoinSQL, whereSQL, offsetRef, offsetRef, limitRef)
 
 	rows, err := h.DB.Query(ctx, query, args...)
 	if err != nil {
@@ -1312,32 +1419,15 @@ SELECT id, workspace_id, title, description, status, priority,
 	bucketRows := []issueBucketRow{}
 	for rows.Next() {
 		var row issueBucketRow
-		if err := rows.Scan(
-			&row.ID,
-			&row.WorkspaceID,
-			&row.Title,
-			&row.Description,
-			&row.Status,
-			&row.Priority,
-			&row.AssigneeType,
-			&row.AssigneeID,
-			&row.CreatorType,
-			&row.CreatorID,
-			&row.ParentIssueID,
-			&row.Position,
-			&row.StartDate,
-			&row.DueDate,
-			&row.CreatedAt,
-			&row.UpdatedAt,
-			&row.Number,
-			&row.ProjectID,
-			&row.Metadata,
-			&row.StatusTotal,
-		); err != nil {
+		base := issueListRow{ListIssuesRow: row.ListIssuesRow, Summary: row.Summary}
+		dest := append(issueListScanDest(&base), &row.StatusTotal)
+		if err := rows.Scan(dest...); err != nil {
 			slog.Warn("ListIssueBuckets scan failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to list issue buckets")
 			return
 		}
+		row.ListIssuesRow = base.ListIssuesRow
+		row.Summary = base.Summary
 		bucketRows = append(bucketRows, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -1358,7 +1448,10 @@ SELECT id, workspace_id, title, description, status, priority,
 	}
 	for _, row := range bucketRows {
 		status := row.Status
-		issue := issueListRowToResponse(row.ListIssuesRow, prefix)
+		issue := issueListRowWithSummaryToResponse(issueListRow{
+			ListIssuesRow: row.ListIssuesRow,
+			Summary:       row.Summary,
+		}, prefix)
 		labels := labelsMap[issue.ID]
 		if labels == nil {
 			labels = []LabelResponse{}
@@ -1786,23 +1879,22 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 	query := fmt.Sprintf(`
 WITH ranked AS (
 	SELECT
-		i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
-		i.assignee_type, i.assignee_id, i.creator_type, i.creator_id,
-		i.parent_issue_id, i.position, i.due_date, i.created_at, i.updated_at,
-		i.number, i.project_id, i.metadata,
+		%s,
 		COUNT(*) OVER (PARTITION BY i.assignee_type, i.assignee_id) AS group_total,
 		ROW_NUMBER() OVER (
 			PARTITION BY i.assignee_type, i.assignee_id
 			ORDER BY %s
 		) AS rn
 	FROM issue i
+	%s
 	WHERE %s
 )
 SELECT
 	id, workspace_id, title, description, status, priority,
 	assignee_type, assignee_id, creator_type, creator_id,
-	parent_issue_id, position, due_date, created_at, updated_at,
-	number, project_id, metadata, group_total
+	parent_issue_id, position, start_date, due_date, created_at, updated_at,
+	number, project_id, metadata,
+	assignee_name, assignee_avatar_url, project_title, project_icon, group_total
 FROM ranked
 WHERE rn > %s AND rn <= %s + %s
 ORDER BY
@@ -1814,7 +1906,7 @@ ORDER BY
 	END,
 	assignee_type NULLS LAST,
 	assignee_id NULLS LAST,
-	rn`, intraGroupOrder, strings.Join(where, " AND "), offsetRef, offsetRef, limitRef)
+	rn`, issueListSelectSQL, intraGroupOrder, issueListJoinSQL, strings.Join(where, " AND "), offsetRef, offsetRef, limitRef)
 
 	rows, err := h.DB.Query(ctx, query, args...)
 	if err != nil {
@@ -1827,31 +1919,15 @@ ORDER BY
 	groupedRows := []groupedIssueRow{}
 	for rows.Next() {
 		var row groupedIssueRow
-		if err := rows.Scan(
-			&row.ID,
-			&row.WorkspaceID,
-			&row.Title,
-			&row.Description,
-			&row.Status,
-			&row.Priority,
-			&row.AssigneeType,
-			&row.AssigneeID,
-			&row.CreatorType,
-			&row.CreatorID,
-			&row.ParentIssueID,
-			&row.Position,
-			&row.DueDate,
-			&row.CreatedAt,
-			&row.UpdatedAt,
-			&row.Number,
-			&row.ProjectID,
-			&row.Metadata,
-			&row.GroupTotal,
-		); err != nil {
+		base := issueListRow{ListIssuesRow: row.ListIssuesRow, Summary: row.Summary}
+		dest := append(issueListScanDest(&base), &row.GroupTotal)
+		if err := rows.Scan(dest...); err != nil {
 			slog.Warn("ListGroupedIssues scan failed", "error", err)
 			writeError(w, http.StatusInternalServerError, "failed to list grouped issues")
 			return
 		}
+		row.ListIssuesRow = base.ListIssuesRow
+		row.Summary = base.Summary
 		groupedRows = append(groupedRows, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -1884,7 +1960,10 @@ ORDER BY
 			})
 		}
 
-		issue := issueListRowToResponse(row.ListIssuesRow, prefix)
+		issue := issueListRowWithSummaryToResponse(issueListRow{
+			ListIssuesRow: row.ListIssuesRow,
+			Summary:       row.Summary,
+		}, prefix)
 		labels := labelsMap[issue.ID]
 		if labels == nil {
 			labels = []LabelResponse{}

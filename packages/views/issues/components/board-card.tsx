@@ -69,11 +69,13 @@ export const BoardCardContent = memo(function BoardCardContent({
   const timeAgo = useTimeAgo();
   const storeProperties = useViewStore((s) => s.cardProperties);
   const wsId = useWorkspaceId();
+  const embeddedProject =
+    issue.project_id && issue.project?.id === issue.project_id ? issue.project : undefined;
   const { data: projects = [] } = useQuery({
     ...projectListOptions(wsId),
-    enabled: storeProperties.project && !!issue.project_id,
+    enabled: storeProperties.project && !!issue.project_id && !embeddedProject,
   });
-  const project = issue.project_id ? projects.find((p) => p.id === issue.project_id) : undefined;
+  const project = embeddedProject ?? (issue.project_id ? projects.find((p) => p.id === issue.project_id) : undefined);
   const labels = issue.labels ?? [];
 
   const updateIssueMutation = useUpdateIssue();
@@ -98,6 +100,12 @@ export const BoardCardContent = memo(function BoardCardContent({
   const showDescription = storeProperties.description && issue.description;
   const showAssigneeSection = storeProperties.assignee;
   const hasAssignee = !!issue.assignee_type && !!issue.assignee_id;
+  const assigneeSummary =
+    hasAssignee &&
+    issue.assignee?.type === issue.assignee_type &&
+    issue.assignee?.id === issue.assignee_id
+      ? issue.assignee
+      : null;
   const showStartDate = storeProperties.startDate && issue.start_date;
   const showDueDate = storeProperties.dueDate && issue.due_date;
   const showProject = storeProperties.project && project;
@@ -106,14 +114,15 @@ export const BoardCardContent = memo(function BoardCardContent({
 
   const showAssigneeName = showAssigneeSection && hasAssignee && !showStartDate && !showDueDate;
   const showUpdatedHint = showAssigneeName && !showChildProgress;
+  const needsAssigneeNameFallback = showAssigneeName && !assigneeSummary?.name;
   const { getActorName } = useActorName({
-    members: showAssigneeName && issue.assignee_type === "member",
-    agents: showAssigneeName && issue.assignee_type === "agent",
-    squads: showAssigneeName && issue.assignee_type === "squad",
+    members: needsAssigneeNameFallback && issue.assignee_type === "member",
+    agents: needsAssigneeNameFallback && issue.assignee_type === "agent",
+    squads: needsAssigneeNameFallback && issue.assignee_type === "squad",
   });
   const assigneeName =
     showAssigneeName && issue.assignee_type && issue.assignee_id
-      ? getActorName(issue.assignee_type, issue.assignee_id)
+      ? assigneeSummary?.name ?? getActorName(issue.assignee_type, issue.assignee_id)
       : null;
 
   const priorityLabel = t(($) => $.priority[issue.priority]);
@@ -152,6 +161,8 @@ export const BoardCardContent = memo(function BoardCardContent({
       <ActorAvatar
         actorType={issue.assignee_type!}
         actorId={issue.assignee_id!}
+        actorName={assigneeSummary?.name}
+        actorAvatarUrl={assigneeSummary?.avatar_url}
         size={20}
         enableHoverCard
         className="shrink-0"
