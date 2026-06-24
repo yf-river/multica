@@ -1,12 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { agentListOptions, squadListOptions } from "../workspace/queries";
 import { runtimeListOptions } from "../runtimes/queries";
 import { agentTaskSnapshotOptions } from "./queries";
-
-export const WORKSPACE_PRESENCE_PREFETCH_DELAY_MS = 5_000;
 
 // Subscribe to the queries that power agent presence and the @mention
 // suggestion list so they're warm by the time any hover card / inline
@@ -24,25 +21,9 @@ export const WORKSPACE_PRESENCE_PREFETCH_DELAY_MS = 5_000;
 // wiring here. The workspace-scoped layouts on both apps gate rendering on
 // "workspace resolved", so callers can safely pass useWorkspaceId() — by the
 // time this hook mounts, wsId is guaranteed non-empty.
-function useDeferredPresencePrefetch(wsId: string | undefined): boolean {
-  const [enabled, setEnabled] = useState(false);
-
-  useEffect(() => {
-    setEnabled(false);
-    if (!wsId) return;
-
-    const timer = setTimeout(() => setEnabled(true), WORKSPACE_PRESENCE_PREFETCH_DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [wsId]);
-
-  return enabled;
-}
-
 export function useWorkspacePresencePrefetch(wsId: string | undefined): void {
-  const enabled = useDeferredPresencePrefetch(wsId);
-
-  useQuery({ ...agentListOptions(wsId ?? ""), enabled: enabled && !!wsId });
-  useQuery({ ...runtimeListOptions(wsId ?? ""), enabled: enabled && !!wsId });
-  useQuery({ ...agentTaskSnapshotOptions(wsId ?? ""), enabled: enabled && !!wsId });
-  useQuery({ ...squadListOptions(wsId ?? ""), enabled: enabled && !!wsId });
+  useQuery({ ...agentListOptions(wsId ?? ""), enabled: !!wsId });
+  useQuery({ ...runtimeListOptions(wsId ?? ""), enabled: !!wsId });
+  useQuery({ ...agentTaskSnapshotOptions(wsId ?? ""), enabled: !!wsId });
+  useQuery({ ...squadListOptions(wsId ?? ""), enabled: !!wsId });
 }
