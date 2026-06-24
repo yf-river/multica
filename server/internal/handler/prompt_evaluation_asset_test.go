@@ -567,6 +567,7 @@ func TestGetPromptEvaluationSummaryCanExcludeAcceptanceFixtures(t *testing.T) {
 		INSERT INTO prompt_evaluation_run (workspace_id, asset_id, run_kind, status, total_cases, passed_cases, input_tokens, output_tokens, estimated_cost)
 		VALUES
 			($1, $2, '本地渲染', '通过', 1, 1, 11, 7, 0.01),
+			($1, $2, 'Agent执行', '通过', 1, 1, 13, 9, 0.02),
 			($1, $3, '本地渲染', '通过', 1, 1, 100, 70, 0.10)
 	`, testWorkspaceID, businessAssetID, acceptanceAssetID); err != nil {
 		t.Fatalf("create evaluation runs: %v", err)
@@ -581,7 +582,7 @@ func TestGetPromptEvaluationSummaryCanExcludeAcceptanceFixtures(t *testing.T) {
 	if err := json.Unmarshal(allW.Body.Bytes(), &allSummary); err != nil {
 		t.Fatalf("decode all summary: %v", err)
 	}
-	if allSummary.Assets["资产总数"] != 2 || allSummary.RunStatus["运行总数"] != 2 || allSummary.Metrics["输入token"].(float64) != 111 {
+	if allSummary.Assets["资产总数"] != 2 || allSummary.RunStatus["运行总数"] != 3 || allSummary.Metrics["输入token"].(float64) != 124 || allSummary.Metrics["智能体运行数"].(float64) != 1 {
 		t.Fatalf("all summary should include acceptance fixtures, assets=%#v status=%#v metrics=%#v", allSummary.Assets, allSummary.RunStatus, allSummary.Metrics)
 	}
 
@@ -594,7 +595,7 @@ func TestGetPromptEvaluationSummaryCanExcludeAcceptanceFixtures(t *testing.T) {
 	if err := json.Unmarshal(businessW.Body.Bytes(), &businessSummary); err != nil {
 		t.Fatalf("decode business summary: %v", err)
 	}
-	if businessSummary.Assets["资产总数"] != 1 || businessSummary.RunStatus["运行总数"] != 1 || businessSummary.Metrics["输入token"].(float64) != 11 {
+	if businessSummary.Assets["资产总数"] != 1 || businessSummary.RunStatus["运行总数"] != 2 || businessSummary.RunStatus["智能体执行"] != 1 || businessSummary.Metrics["输入token"].(float64) != 24 || businessSummary.Metrics["智能体运行数"].(float64) != 1 {
 		t.Fatalf("business summary should exclude acceptance fixtures, assets=%#v status=%#v metrics=%#v", businessSummary.Assets, businessSummary.RunStatus, businessSummary.Metrics)
 	}
 }

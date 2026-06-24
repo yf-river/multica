@@ -35,6 +35,7 @@ async function showAcceptanceFixturesIfAvailable(page: Page) {
     const showButton = showButtons.nth(index);
     if (await showButton.isVisible({ timeout: 500 }).catch(() => false)) {
       await showButton.click({ force: true });
+      await expect(page.getByTestId("training-summary-strip")).toContainText("含验收数据", { timeout: 10000 });
       break;
     }
   }
@@ -557,21 +558,23 @@ test.describe("训练与评估工作台", () => {
     ]));
     await page.goto(`/${workspaceSlug}/training/run-history`, { waitUntil: "domcontentloaded" });
     await waitForPageText(page, "运行历史", 10000);
+    await showAcceptanceFixturesIfAvailable(page);
     const summaryStrip = page.getByTestId("training-summary-strip");
     await expect(summaryStrip).toContainText("项目总览", { timeout: 10000 });
     await expect(page.getByTestId("training-summary-运行总数")).toContainText(/[1-9]/);
     await expect(page.getByTestId("training-summary-通过率")).toContainText("%");
-    await expect(page.getByTestId("training-summary-智能体运行数")).toContainText(/\d/);
+    await expect(page.getByTestId("training-summary-智能体运行数")).toContainText(/[1-9]/);
     await expect(page.getByTestId("training-summary-需人工复核")).toContainText(/\d/);
     await expect(page.getByTestId("training-summary-输入 token")).toContainText(/[1-9]/);
     await expect(page.getByTestId("training-summary-预估成本")).toContainText("$");
     await expect(page.getByTestId("training-summary-待确认优化候选")).toContainText(/\d/);
     await page.getByRole("link", { name: "运行看板", exact: true }).last().click();
+    await showAcceptanceFixturesIfAvailable(page);
     const demoDashboard = page.getByTestId("training-demo-dashboard");
     await expect(demoDashboard).toContainText("训练运行看板", { timeout: 10000 });
     await expect(demoDashboard).toContainText("训练评估闭环");
     await expect(demoDashboard).toContainText("SOP 与任务观测");
-    await expect(demoDashboard.getByTestId("training-demo-metric-智能体运行数")).toContainText(/\d/);
+    await expect(demoDashboard.getByTestId("training-demo-metric-智能体运行数")).toContainText(/[1-9]/);
     await expect(demoDashboard.getByTestId("training-demo-proof-真实智能体证据")).toContainText("已有任务/trace 运行记录");
     await expect(demoDashboard.getByText("Codex 运行时可创建真实智能体任务")).toBeVisible();
     await expect(demoDashboard).toContainText("最近7天");
