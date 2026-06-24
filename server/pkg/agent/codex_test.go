@@ -603,6 +603,37 @@ func TestParseCodexSessionFileSubtractsCachedInput(t *testing.T) {
 	}
 }
 
+func TestParseCodexLogFileExtractsResponseCompletedUsage(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "logs_2.sqlite")
+	content := strings.Join([]string{
+		`sqlite page noise`,
+		`Received message {"type":"response.completed","response":{"model":"gpt-5.3-codex-spark","usage":{"input_tokens":7737,"input_tokens_details":{"cached_tokens":2000},"output_tokens":0,"total_tokens":7737}}}`,
+		"",
+	}, "\n")
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatalf("write fixture: %v", err)
+	}
+
+	got := parseCodexLogFile(path)
+	if got == nil {
+		t.Fatal("expected usage")
+	}
+	if got.model != "gpt-5.3-codex-spark" {
+		t.Fatalf("model = %q, want gpt-5.3-codex-spark", got.model)
+	}
+	if got.usage.InputTokens != 5737 {
+		t.Fatalf("input tokens = %d, want uncached 5737", got.usage.InputTokens)
+	}
+	if got.usage.CacheReadTokens != 2000 {
+		t.Fatalf("cache read tokens = %d, want 2000", got.usage.CacheReadTokens)
+	}
+	if got.usage.OutputTokens != 0 {
+		t.Fatalf("output tokens = %d, want 0", got.usage.OutputTokens)
+	}
+}
+
 func TestCodexRawItemCommandExecution(t *testing.T) {
 	t.Parallel()
 

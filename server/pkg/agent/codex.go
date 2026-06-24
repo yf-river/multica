@@ -891,7 +891,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		// Fallback: if no usage from JSON-RPC, scan Codex session JSONL logs.
 		// Codex writes token_count events to ~/.codex/sessions/YYYY/MM/DD/*.jsonl.
 		if u.InputTokens == 0 && u.OutputTokens == 0 {
-			if scanned := scanCodexSessionUsage(startTime); scanned != nil {
+			if scanned := scanCodexSessionUsage(startTime, b.cfg.Env["CODEX_HOME"]); scanned != nil {
 				u = scanned.usage
 				if scanned.model != "" && opts.Model == "" {
 					opts.Model = scanned.model
@@ -1819,49 +1819,85 @@ type codexSessionUsage struct {
 	model string
 }
 
-// scanCodexSessionUsage scans Codex session JSONL files written after startTime
-// to extract token usage. Codex writes token_count events to
-// ~/.codex/sessions/YYYY/MM/DD/*.jsonl.
-func scanCodexSessionUsage(startTime time.Time) *codexSessionUsage {
-	root := codexSessionRoot()
-	if root == "" {
-		return nil
+// scanCodexSessionUsage scans Codex session files written after startTime to
+// extract token usage. Older Codex builds write token_count JSONL events under
+// sessions/YYYY/MM/DD. Current app-server builds also persist raw response logs
+// in $CODEX_HOME/logs_*.sqlite; those files are SQLite databases, but the log
+// bodies are plain text in the file and WAL pages, so we can recover usage
+// without adding a SQLite driver to the daemon.
+func scanCodexSessionUsage(startTime time.Time, codexHome string) *codexSessionUsage {
+	var result codexSessionUsage
+
+	if root := codexSessionRoot(codexHome); root != "" {
+		dateDir := filepath.Join(root,
+			fmt.Sprintf("%04d", startTime.Year()),
+			fmt.Sprintf("%02d", int(startTime.Month())),
+			fmt.Sprintf("%02d", startTime.Day()),
+		)
+
+		files, err := filepath.Glob(filepath.Join(dateDir, "*.jsonl"))
+		if err == nil {
+			for _, f := range files {
+				info, err := os.Stat(f)
+				if err != nil || info.ModTime().Before(startTime) {
+					continue
+				}
+				if u := parseCodexSessionFile(f); u != nil {
+					// Take the last matching file's data (usually there's only one per task).
+					result = *u
+				}
+			}
+		}
 	}
 
-	// Look in today's session directory.
-	dateDir := filepath.Join(root,
-		fmt.Sprintf("%04d", startTime.Year()),
-		fmt.Sprintf("%02d", int(startTime.Month())),
-		fmt.Sprintf("%02d", startTime.Day()),
-	)
+	if usageHasTokens(result.usage) {
+		return &result
+	}
+	if scanned := scanCodexLogUsage(startTime, codexHome); scanned != nil {
+		return scanned
+	}
+	return nil
+}
 
-	files, err := filepath.Glob(filepath.Join(dateDir, "*.jsonl"))
-	if err != nil || len(files) == 0 {
+func usageHasTokens(u TokenUsage) bool {
+	return u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 || u.CacheWriteTokens > 0
+}
+
+func scanCodexLogUsage(startTime time.Time, codexHome string) *codexSessionUsage {
+	if codexHome == "" {
 		return nil
 	}
+	var files []string
+	for _, pattern := range []string{"logs_*.sqlite", "logs_*.sqlite-wal"} {
+		matches, err := filepath.Glob(filepath.Join(codexHome, pattern))
+		if err == nil {
+			files = append(files, matches...)
+		}
+	}
+	sort.Strings(files)
 
-	// Only scan files modified after startTime (this task's session).
 	var result codexSessionUsage
 	for _, f := range files {
 		info, err := os.Stat(f)
 		if err != nil || info.ModTime().Before(startTime) {
 			continue
 		}
-		if u := parseCodexSessionFile(f); u != nil {
-			// Take the last matching file's data (usually there's only one per task).
+		if u := parseCodexLogFile(f); u != nil {
 			result = *u
 		}
 	}
-
-	if result.usage.InputTokens == 0 && result.usage.OutputTokens == 0 {
+	if !usageHasTokens(result.usage) {
 		return nil
 	}
 	return &result
 }
 
 // codexSessionRoot returns the Codex sessions directory.
-func codexSessionRoot() string {
-	if codexHome := os.Getenv("CODEX_HOME"); codexHome != "" {
+func codexSessionRoot(codexHome string) string {
+	if codexHome == "" {
+		codexHome = os.Getenv("CODEX_HOME")
+	}
+	if codexHome != "" {
 		dir := filepath.Join(codexHome, "sessions")
 		if info, err := os.Stat(dir); err == nil && info.IsDir() {
 			return dir
@@ -1904,6 +1940,111 @@ type codexSessionTokenCount struct {
 		} `json:"info"`
 		Model string `json:"model"`
 	} `json:"payload"`
+}
+
+type codexResponseCompletedLog struct {
+	Type     string `json:"type"`
+	Response *struct {
+		Model string `json:"model"`
+		Usage *struct {
+			InputTokens        int64 `json:"input_tokens"`
+			OutputTokens       int64 `json:"output_tokens"`
+			CacheReadTokens    int64 `json:"cache_read_tokens"`
+			CacheWriteTokens   int64 `json:"cache_write_tokens"`
+			InputTokensDetails *struct {
+				CachedTokens int64 `json:"cached_tokens"`
+			} `json:"input_tokens_details"`
+		} `json:"usage"`
+	} `json:"response"`
+}
+
+func parseCodexLogFile(path string) *codexSessionUsage {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil
+	}
+
+	const prefix = "Received message "
+	var result codexSessionUsage
+	found := false
+	offset := 0
+	for {
+		idx := bytes.Index(data[offset:], []byte(prefix))
+		if idx < 0 {
+			break
+		}
+		start := offset + idx + len(prefix)
+		jsonStart := bytes.IndexByte(data[start:], '{')
+		if jsonStart < 0 {
+			break
+		}
+		start += jsonStart
+		raw := extractJSONObjectBytes(data[start:])
+		if len(raw) == 0 {
+			offset = start + 1
+			continue
+		}
+		offset = start + len(raw)
+
+		var evt codexResponseCompletedLog
+		if err := json.Unmarshal(raw, &evt); err != nil || evt.Type != "response.completed" || evt.Response == nil || evt.Response.Usage == nil {
+			continue
+		}
+
+		usage := evt.Response.Usage
+		cacheReadTokens := usage.CacheReadTokens
+		if usage.InputTokensDetails != nil && usage.InputTokensDetails.CachedTokens > cacheReadTokens {
+			cacheReadTokens = usage.InputTokensDetails.CachedTokens
+		}
+		result.usage = TokenUsage{
+			InputTokens:      codexUncachedInputTokens(usage.InputTokens, cacheReadTokens),
+			OutputTokens:     usage.OutputTokens,
+			CacheReadTokens:  cacheReadTokens,
+			CacheWriteTokens: usage.CacheWriteTokens,
+		}
+		if evt.Response.Model != "" {
+			result.model = evt.Response.Model
+		}
+		found = true
+	}
+
+	if !found {
+		return nil
+	}
+	return &result
+}
+
+func extractJSONObjectBytes(data []byte) []byte {
+	depth := 0
+	inString := false
+	escaped := false
+	for i, b := range data {
+		if inString {
+			if escaped {
+				escaped = false
+				continue
+			}
+			switch b {
+			case '\\':
+				escaped = true
+			case '"':
+				inString = false
+			}
+			continue
+		}
+		switch b {
+		case '"':
+			inString = true
+		case '{':
+			depth++
+		case '}':
+			depth--
+			if depth == 0 {
+				return data[:i+1]
+			}
+		}
+	}
+	return nil
 }
 
 // parseCodexSessionFile extracts the final token_count from a Codex session file.
