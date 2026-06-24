@@ -3062,6 +3062,21 @@ function ExecutionSpanTreePanel({ evidence }: { evidence: PromptEvaluationRunEvi
 }
 
 function ToolCallChainPanel({ chains }: { chains: PromptEvaluationRunEvidence["tool_call_chains"] }) {
+  const [query, setQuery] = useState("");
+  const [statusFilter, setStatusFilter] = useState("全部");
+  const visibleChains = useMemo(() => {
+    const normalizedQuery = query.trim().toLowerCase();
+    return chains.filter((chain) => {
+      if (statusFilter !== "全部" && chain.status !== statusFilter) return false;
+      if (!normalizedQuery) return true;
+      const haystack = [chain.tool, chain.status, chain.result_category, chain.summary, chain.output, chain.id, chain.use_seq, chain.result_seq]
+        .filter((value) => value != null)
+        .map((value) => String(value).toLowerCase())
+        .join(" ");
+      return haystack.includes(normalizedQuery);
+    });
+  }, [chains, query, statusFilter]);
+  const statuses = useMemo(() => ["全部", ...Array.from(new Set(chains.map((chain) => chain.status).filter(Boolean)))], [chains]);
   if (chains.length === 0) {
     return (
       <div className="rounded-md border border-dashed px-3 py-2 text-[11px] text-muted-foreground" data-testid="run-evidence-tool-call-chains">
@@ -3073,15 +3088,38 @@ function ToolCallChainPanel({ chains }: { chains: PromptEvaluationRunEvidence["t
     <div className="grid gap-1.5 rounded-md border bg-muted/10 p-2" data-testid="run-evidence-tool-call-chains">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="font-medium text-muted-foreground">工具调用链</div>
-        <Badge variant="outline">{chains.length} 条</Badge>
+        <Badge variant="outline">
+          {visibleChains.length}/{chains.length} 条
+        </Badge>
+      </div>
+      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_160px]" data-testid="run-evidence-tool-call-chain-filters">
+        <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索工具、结果、摘要" className="h-8 text-[11px]" aria-label="搜索工具调用链" />
+        <select
+          value={statusFilter}
+          onChange={(event) => setStatusFilter(event.target.value)}
+          className="h-8 rounded-md border border-input bg-background px-2 text-[11px]"
+          aria-label="筛选工具调用链状态"
+        >
+          {statuses.map((status) => (
+            <option key={status} value={status}>
+              {status}
+            </option>
+          ))}
+        </select>
       </div>
       <div className="grid gap-1.5">
-        {chains.map((chain) => (
+        {visibleChains.length === 0 ? (
+          <div className="rounded border border-dashed px-2 py-2 text-[11px] text-muted-foreground">没有匹配的工具调用链。</div>
+        ) : null}
+        {visibleChains.map((chain) => (
           <div key={chain.id} className="grid gap-1 rounded border bg-background px-2 py-1.5 text-[11px] leading-5" data-testid={`run-evidence-tool-call-chain-${chain.id}`}>
             <div className="flex flex-wrap items-center gap-2">
               <span className="font-medium text-foreground">{chain.tool || "未记录工具"}</span>
               <Badge variant={chain.status === "已配对" ? "secondary" : chain.status === "缺少结果" ? "destructive" : "outline"}>{chain.status || "未记录"}</Badge>
-              <span className="text-muted-foreground">调用 #{chain.use_seq ?? "-"} · 结果 #{chain.result_seq ?? "-"}</span>
+              {chain.result_category && <Badge variant="outline">{chain.result_category}</Badge>}
+              <span className="text-muted-foreground">
+                调用 #{chain.use_seq ?? "-"} · 结果 #{chain.result_seq ?? "-"} · 耗时 {formatDuration(chain.duration_ms ?? 0)}
+              </span>
             </div>
             <div className="break-words text-muted-foreground">{chain.summary || "未记录摘要"}</div>
             {chain.output && <div className="break-words text-muted-foreground">输出：{truncateText(chain.output, 180)}</div>}

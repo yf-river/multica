@@ -370,19 +370,21 @@ type PromptEvaluationExecutionSpanResponse struct {
 }
 
 type PromptEvaluationToolCallChainResponse struct {
-	ID           string         `json:"id"`
-	TaskID       string         `json:"task_id,omitempty"`
-	Tool         string         `json:"tool,omitempty"`
-	Status       string         `json:"status"`
-	UseSeq       int            `json:"use_seq,omitempty"`
-	ResultSeq    int            `json:"result_seq,omitempty"`
-	UseSpanID    string         `json:"use_span_id,omitempty"`
-	ResultSpanID string         `json:"result_span_id,omitempty"`
-	Input        map[string]any `json:"input,omitempty"`
-	Output       string         `json:"output,omitempty"`
-	Summary      string         `json:"summary"`
-	CreatedAt    string         `json:"created_at,omitempty"`
-	CompletedAt  string         `json:"completed_at,omitempty"`
+	ID             string         `json:"id"`
+	TaskID         string         `json:"task_id,omitempty"`
+	Tool           string         `json:"tool,omitempty"`
+	Status         string         `json:"status"`
+	UseSeq         int            `json:"use_seq,omitempty"`
+	ResultSeq      int            `json:"result_seq,omitempty"`
+	UseSpanID      string         `json:"use_span_id,omitempty"`
+	ResultSpanID   string         `json:"result_span_id,omitempty"`
+	Input          map[string]any `json:"input,omitempty"`
+	Output         string         `json:"output,omitempty"`
+	DurationMs     int64          `json:"duration_ms,omitempty"`
+	ResultCategory string         `json:"result_category,omitempty"`
+	Summary        string         `json:"summary"`
+	CreatedAt      string         `json:"created_at,omitempty"`
+	CompletedAt    string         `json:"completed_at,omitempty"`
 }
 
 type PromptEvaluationRunEvidenceResponse struct {
@@ -3196,15 +3198,16 @@ func buildPromptEvaluationToolCallChains(messages []protocol.TaskMessagePayload)
 				callID = fmt.Sprintf("%s:%d", tool, message.Seq)
 			}
 			chain := PromptEvaluationToolCallChainResponse{
-				ID:        "tool:" + callID,
-				TaskID:    message.TaskID,
-				Tool:      tool,
-				Status:    "缺少结果",
-				UseSeq:    message.Seq,
-				UseSpanID: fmt.Sprintf("message:%d", message.Seq),
-				Input:     message.Input,
-				Summary:   truncatePromptEvaluationEvidence("工具调用："+firstNonEmptyPromptEvaluationString(tool, promptEvaluationEvidenceSummaryString(message.Input)), 240),
-				CreatedAt: message.CreatedAt,
+				ID:             "tool:" + callID,
+				TaskID:         message.TaskID,
+				Tool:           tool,
+				Status:         "缺少结果",
+				UseSeq:         message.Seq,
+				UseSpanID:      fmt.Sprintf("message:%d", message.Seq),
+				Input:          message.Input,
+				ResultCategory: "未返回",
+				Summary:        truncatePromptEvaluationEvidence("工具调用："+firstNonEmptyPromptEvaluationString(tool, promptEvaluationEvidenceSummaryString(message.Input)), 240),
+				CreatedAt:      message.CreatedAt,
 			}
 			chains = append(chains, chain)
 			pendingByTool[tool] = append(pendingByTool[tool], len(chains)-1)
@@ -3221,6 +3224,8 @@ func buildPromptEvaluationToolCallChains(messages []protocol.TaskMessagePayload)
 				chains[index].ResultSeq = message.Seq
 				chains[index].ResultSpanID = fmt.Sprintf("message:%d", message.Seq)
 				chains[index].Output = message.Output
+				chains[index].DurationMs = promptEvaluationDurationBetween(chains[index].CreatedAt, message.CreatedAt)
+				chains[index].ResultCategory = "已返回"
 				chains[index].CompletedAt = message.CreatedAt
 				chains[index].Summary = truncatePromptEvaluationEvidence(
 					fmt.Sprintf("工具 %s 已配对：调用 #%d，结果 #%d", tool, chains[index].UseSeq, message.Seq),
@@ -3233,15 +3238,16 @@ func buildPromptEvaluationToolCallChains(messages []protocol.TaskMessagePayload)
 				callID = fmt.Sprintf("%s:result:%d", tool, message.Seq)
 			}
 			chains = append(chains, PromptEvaluationToolCallChainResponse{
-				ID:           "tool:" + callID,
-				TaskID:       message.TaskID,
-				Tool:         tool,
-				Status:       "孤立结果",
-				ResultSeq:    message.Seq,
-				ResultSpanID: fmt.Sprintf("message:%d", message.Seq),
-				Output:       message.Output,
-				Summary:      truncatePromptEvaluationEvidence("工具结果没有找到对应调用："+firstNonEmptyPromptEvaluationString(message.Output, tool), 240),
-				CompletedAt:  message.CreatedAt,
+				ID:             "tool:" + callID,
+				TaskID:         message.TaskID,
+				Tool:           tool,
+				Status:         "孤立结果",
+				ResultSeq:      message.Seq,
+				ResultSpanID:   fmt.Sprintf("message:%d", message.Seq),
+				Output:         message.Output,
+				ResultCategory: "孤立返回",
+				Summary:        truncatePromptEvaluationEvidence("工具结果没有找到对应调用："+firstNonEmptyPromptEvaluationString(message.Output, tool), 240),
+				CompletedAt:    message.CreatedAt,
 			})
 		}
 	}
@@ -3259,6 +3265,20 @@ func buildPromptEvaluationToolCallChainByMessageSeq(chains []PromptEvaluationToo
 		}
 	}
 	return result
+}
+
+func promptEvaluationDurationBetween(start string, end string) int64 {
+	start = strings.TrimSpace(start)
+	end = strings.TrimSpace(end)
+	if start == "" || end == "" {
+		return 0
+	}
+	startAt, startErr := time.Parse(time.RFC3339Nano, start)
+	endAt, endErr := time.Parse(time.RFC3339Nano, end)
+	if startErr != nil || endErr != nil || endAt.Before(startAt) {
+		return 0
+	}
+	return endAt.Sub(startAt).Milliseconds()
 }
 
 func promptEvaluationToolCallID(message protocol.TaskMessagePayload) string {

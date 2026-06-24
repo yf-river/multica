@@ -65,8 +65,14 @@ func TestBuildPromptEvaluationExecutionEvidencePairsToolCalls(t *testing.T) {
 	if chains[0].ID != "tool:call-1" || chains[0].Status != "已配对" || chains[0].UseSeq != 1 || chains[0].ResultSeq != 2 || chains[0].Output != "ok" {
 		t.Fatalf("paired chain = %+v", chains[0])
 	}
+	if chains[0].DurationMs != 1000 || chains[0].ResultCategory != "已返回" {
+		t.Fatalf("paired chain timing/category = %+v", chains[0])
+	}
 	if chains[1].Status != "孤立结果" || chains[1].ResultSeq != 3 {
 		t.Fatalf("orphan chain = %+v", chains[1])
+	}
+	if chains[1].ResultCategory != "孤立返回" {
+		t.Fatalf("orphan chain category = %+v", chains[1])
 	}
 	if summary["工具调用链数"] != 2 || summary["已配对工具调用数"] != 1 || summary["孤立工具结果数"] != 1 {
 		t.Fatalf("tool summary = %+v", summary)

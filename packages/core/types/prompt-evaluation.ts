@@ -227,6 +227,8 @@ export interface PromptEvaluationToolCallChain {
   result_span_id?: string;
   input?: Record<string, unknown>;
   output?: string;
+  duration_ms?: number;
+  result_category?: string;
   summary: string;
   created_at?: string;
   completed_at?: string;

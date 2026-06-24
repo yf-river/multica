@@ -1442,6 +1442,12 @@ test.describe("训练与评估工作台", () => {
     await expect(toolChains).toContainText("工具调用链", { timeout: 10000 });
     await expect(toolChains).toContainText("playwright-inspect");
     await expect(toolChains).toContainText("已配对");
+    await expect(toolChains).toContainText("已返回");
+    await expect(toolChains.getByTestId("run-evidence-tool-call-chain-filters")).toBeVisible();
+    await toolChains.getByLabel("搜索工具调用链").fill("playwright-inspect");
+    await expect(toolChains).toContainText("1/1 条");
+    await toolChains.getByLabel("筛选工具调用链状态").selectOption("已配对");
+    await expect(toolChains).toContainText("耗时");
 
     page.once("dialog", async (dialog) => {
       expect(dialog.message()).toContain("通过说明");

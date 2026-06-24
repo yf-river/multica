@@ -1113,6 +1113,8 @@ const PromptEvaluationToolCallChainSchema = z.object({
   result_span_id: z.string().optional(),
   input: z.record(z.string(), z.unknown()).optional(),
   output: z.string().optional(),
+  duration_ms: z.number().optional(),
+  result_category: z.string().optional(),
   summary: z.string().default(""),
   created_at: z.string().optional(),
   completed_at: z.string().optional(),
