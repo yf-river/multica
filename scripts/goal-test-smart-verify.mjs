@@ -79,6 +79,7 @@ function classifyChanges(files) {
     file.includes("prompt-library") ||
     file.includes("training") ||
     file.includes("prompt-evaluation") ||
+    file.includes("goal-test-dashboard-click-audit") ||
     file.includes("goal-test-training-performance") ||
     file.includes("goal-test-playground-difference-audit"),
   );
@@ -100,6 +101,7 @@ function classifyChanges(files) {
       file === "scripts/goal-test-environments.mjs" ||
       file === "scripts/goal-test-e2e-preflight.mjs" ||
       file === "scripts/goal-test-ui-audit.mjs" ||
+      file === "scripts/goal-test-dashboard-click-audit.mjs" ||
       file === "scripts/goal-test-training-performance-audit.mjs" ||
       file === "scripts/goal-test-playground-difference-audit.mjs",
     ),
@@ -166,6 +168,7 @@ function buildCommands(mode, info) {
     }
     if (info.views_changed || info.web_changed || info.training_related || info.e2e_changed) {
       add("goal-test-ui-audit", "make goal-test-ui-audit", "Final UI gate for changed browser-facing behavior.");
+      add("goal-test-dashboard-click-audit", "make goal-test-dashboard-click-audit", "Final click-latency gate for dashboard navigation.");
     }
     if (info.training_related) {
       add("goal-test-training-performance-audit", "make goal-test-training-performance-audit", "Final training/evaluation route performance gate.");
