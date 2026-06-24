@@ -1006,6 +1006,9 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("agent-playground-config-comparison")).toContainText("当前待执行配置");
     await expect(page.getByTestId("agent-playground-config-comparison")).toContainText("执行智能体");
     await expect(page.getByTestId("agent-playground-config-comparison")).toContainText("模型");
+    await expect(page.getByTestId("agent-playground-run-comparison")).toContainText("最近运行横向对比");
+    await expect(page.getByTestId("agent-playground-run-comparison")).toContainText("耗时");
+    await expect(page.getByTestId("agent-playground-run-comparison")).toContainText("token");
     await expect(page.getByRole("button", { name: "创建真实智能体任务" })).toBeVisible();
     await expect(page.getByTestId("prompt-playground-template-lab")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "运行并记录" })).toHaveCount(0);

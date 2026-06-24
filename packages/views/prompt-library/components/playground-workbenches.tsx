@@ -310,7 +310,8 @@ export function AgentPlaygroundWorkbench({
   });
   const promptCaseCount = selected ? cases.filter((item) => item.prompt_id === selected.id).length : 0;
   const selectedAgentRuns = selected ? agentRuns.filter((run) => run.prompt_id === selected.id) : agentRuns;
-  const latestSelectedAgentRun = [...selectedAgentRuns].sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null;
+  const recentSelectedAgentRuns = [...selectedAgentRuns].sort((a, b) => b.created_at.localeCompare(a.created_at)).slice(0, 5);
+  const latestSelectedAgentRun = recentSelectedAgentRuns[0] ?? null;
   const selectableAgents = agents.filter((agent) => !agent.archived_at);
   const selectedExecutionAgent = selectedExecutionAgentId === "__auto__" ? null : selectableAgents.find((agent) => agent.id === selectedExecutionAgentId) ?? null;
   const evaluationAgent = agents.find((agent) => agent.name.includes("训练评估") || agent.name.includes("训练与评估")) ?? null;
@@ -512,6 +513,7 @@ export function AgentPlaygroundWorkbench({
               prompt: selected?.name ?? "未选择提示词",
             }}
             latestRun={latestSelectedAgentRun}
+            recentRuns={recentSelectedAgentRuns}
             agents={agents}
             runtimes={runtimes}
           />
@@ -595,6 +597,7 @@ export function AgentPlaygroundWorkbench({
 function AgentExecutionConfigComparison({
   current,
   latestRun,
+  recentRuns,
   agents,
   runtimes,
 }: {
@@ -605,6 +608,7 @@ function AgentExecutionConfigComparison({
     prompt: string;
   };
   latestRun: PromptEvaluationRun | null;
+  recentRuns: PromptEvaluationRun[];
   agents: Agent[];
   runtimes: AgentRuntime[];
 }) {
@@ -646,7 +650,72 @@ function AgentExecutionConfigComparison({
             暂无同提示词真实运行；创建真实智能体任务后会在这里对比执行智能体、运行时、模型、token 和成本。
           </div>
         )}
+        <AgentRunComparisonTable runs={recentRuns} agents={agents} runtimes={runtimes} />
       </div>
+    </div>
+  );
+}
+
+function AgentRunComparisonTable({
+  runs,
+  agents,
+  runtimes,
+}: {
+  runs: PromptEvaluationRun[];
+  agents: Agent[];
+  runtimes: AgentRuntime[];
+}) {
+  return (
+    <div className="rounded border px-2 py-2" data-testid="agent-playground-run-comparison">
+      <div className="flex items-center justify-between gap-2">
+        <div className="font-medium text-foreground">最近运行横向对比</div>
+        <Badge variant="outline" className="text-[10px]">最多 5 条</Badge>
+      </div>
+      {runs.length === 0 ? (
+        <div className="mt-2 rounded border border-dashed px-2 py-3 text-muted-foreground" data-testid="agent-playground-run-comparison-empty">
+          暂无可对比的真实运行。
+        </div>
+      ) : (
+        <div className="mt-2 overflow-x-auto" data-testid="agent-playground-run-comparison-table">
+          <table className="w-full min-w-[560px] text-left text-[11px]">
+            <thead className="text-muted-foreground">
+              <tr className="border-b">
+                <th className="py-1 pr-2 font-medium">状态</th>
+                <th className="py-1 pr-2 font-medium">执行智能体</th>
+                <th className="py-1 pr-2 font-medium">运行时</th>
+                <th className="py-1 pr-2 font-medium">模型</th>
+                <th className="py-1 pr-2 font-medium">耗时</th>
+                <th className="py-1 pr-2 font-medium">token</th>
+                <th className="py-1 font-medium">成本</th>
+              </tr>
+            </thead>
+            <tbody>
+              {runs.map((run) => {
+                const agentLabel = run.agent_id
+                  ? formatAgentDisplayName(agents.find((agent) => agent.id === run.agent_id) ?? null) ?? `智能体 ${run.agent_id.slice(0, 8)}`
+                  : "未绑定";
+                const runtimeLabel = run.runtime_id
+                  ? runtimes.find((runtime) => runtime.id === run.runtime_id)?.name ?? `运行时 ${run.runtime_id.slice(0, 8)}`
+                  : "未绑定";
+                const tokenTotal = run.input_tokens + run.output_tokens;
+                return (
+                  <tr key={run.id} className="border-b last:border-b-0">
+                    <td className="py-1.5 pr-2">
+                      <Badge variant={run.status === "通过" ? "secondary" : "outline"} className="text-[10px]">{run.status}</Badge>
+                    </td>
+                    <td className="max-w-28 truncate py-1.5 pr-2 text-muted-foreground">{agentLabel}</td>
+                    <td className="max-w-28 truncate py-1.5 pr-2 text-muted-foreground">{runtimeLabel}</td>
+                    <td className="max-w-32 truncate py-1.5 pr-2 text-muted-foreground">{run.model || "未记录"}</td>
+                    <td className="whitespace-nowrap py-1.5 pr-2 text-muted-foreground">{formatDuration(run.total_duration_ms)}</td>
+                    <td className="whitespace-nowrap py-1.5 pr-2 text-muted-foreground">{tokenTotal.toLocaleString()}</td>
+                    <td className="whitespace-nowrap py-1.5 text-muted-foreground">{formatMoney(run.estimated_cost)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }
