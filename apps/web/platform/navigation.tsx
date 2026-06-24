@@ -16,9 +16,18 @@ function NavigationProviderInner({
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
+  const pushWithFallback = (path: string) => {
+    router.push(path);
+    scheduleBrowserNavigationFallback(path, "push");
+  };
+  const replaceWithFallback = (path: string) => {
+    router.replace(path);
+    scheduleBrowserNavigationFallback(path, "replace");
+  };
+
   const adapter: NavigationAdapter = {
-    push: (path: string) => router.push(path),
-    replace: (path: string) => router.replace(path),
+    push: pushWithFallback,
+    replace: replaceWithFallback,
     back: () => router.back(),
     pathname,
     searchParams: new URLSearchParams(searchParams.toString()),
@@ -33,6 +42,24 @@ function NavigationProviderInner({
   };
 
   return <NavigationProvider value={adapter}>{children}</NavigationProvider>;
+}
+
+function scheduleBrowserNavigationFallback(path: string, mode: "push" | "replace") {
+  if (typeof window === "undefined") return;
+  const before = currentPathWithSearch();
+  const target = new URL(path, window.location.origin);
+  const targetPath = `${target.pathname}${target.search}${target.hash}`;
+  if (before === targetPath) return;
+  window.setTimeout(() => {
+    const current = currentPathWithSearch();
+    if (current !== before || current === targetPath) return;
+    if (mode === "replace") window.location.replace(path);
+    else window.location.assign(path);
+  }, 1_000);
+}
+
+function currentPathWithSearch() {
+  return `${window.location.pathname}${window.location.search}${window.location.hash}`;
 }
 
 export function WebNavigationProvider({
