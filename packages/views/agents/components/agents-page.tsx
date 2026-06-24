@@ -881,6 +881,15 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     let all = 0;
     let archived = 0;
     for (const a of agents) {
+      if (
+        !showAcceptanceFixtures &&
+        isAcceptanceFixtureRecord(a as unknown as Record<string, unknown>, [
+          "name",
+          "description",
+        ])
+      ) {
+        continue;
+      }
       if (a.archived_at) {
         archived++;
         continue;
@@ -889,12 +898,12 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
       if (currentUser && a.owner_id === currentUser.id) mine++;
     }
     return { mine, all, archived };
-  }, [agents, currentUser]);
+  }, [agents, currentUser, showAcceptanceFixtures]);
 
   // Rows within the current scope, unfiltered, fully assembled — the
   // toolbar's option lists and the "n / total" denominator derive from
   // this; cells never pull their own queries.
-  const scopeRows = useMemo<AgentListRow[]>(() => {
+  const scopedRowsWithFixtures = useMemo<AgentListRow[]>(() => {
     const inScope = agents.filter((a) => {
       if (scope === "archived") return !!a.archived_at;
       if (a.archived_at) return false;
@@ -929,6 +938,23 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     runCountsById,
     isWorkspaceAdmin,
   ]);
+  const hiddenScopedFixtureRows = useMemo(
+    () =>
+      scopedRowsWithFixtures.filter((row) =>
+        isAcceptanceFixtureRecord(row.agent as unknown as Record<string, unknown>, [
+          "name",
+          "description",
+        ]),
+      ),
+    [scopedRowsWithFixtures],
+  );
+  const scopeRows = useMemo(
+    () =>
+      showAcceptanceFixtures
+        ? scopedRowsWithFixtures
+        : scopedRowsWithFixtures.filter((row) => !hiddenScopedFixtureRows.includes(row)),
+    [hiddenScopedFixtureRows, scopedRowsWithFixtures, showAcceptanceFixtures],
+  );
 
   // Visible rows: filters, then sort.
   const filteredRows = useMemo<AgentListRow[]>(() => {
@@ -990,16 +1016,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     return filtered;
   }, [scopeRows, filters, sortField, sortDirection]);
 
-  const acceptanceFixtureRows = useMemo(
-    () =>
-      filteredRows.filter((row) =>
-        isAcceptanceFixtureRecord(row.agent as unknown as Record<string, unknown>, [
-          "name",
-          "description",
-        ]),
-      ),
-    [filteredRows],
-  );
+  const acceptanceFixtureRows = hiddenScopedFixtureRows;
   const rows = useMemo(
     () =>
       showAcceptanceFixtures
@@ -1073,7 +1090,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     );
   }
 
-  const totalCount = agents.filter((a) => !a.archived_at).length;
+  const totalCount = scopeCounts.all;
   const showEmpty = !isLoading && agents.length === 0;
 
   return (

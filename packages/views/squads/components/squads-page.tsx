@@ -821,15 +821,26 @@ export function SquadsPage() {
 
   const scopeCounts = useMemo<Record<SquadsScope, number>>(() => {
     let mine = 0;
-    if (currentUser) {
-      for (const s of squads) if (s.creator_id === currentUser.id) mine++;
+    let all = 0;
+    for (const s of squads) {
+      if (
+        !showAcceptanceFixtures &&
+        isAcceptanceFixtureRecord(s as unknown as Record<string, unknown>, [
+          "name",
+          "description",
+        ])
+      ) {
+        continue;
+      }
+      all++;
+      if (currentUser && s.creator_id === currentUser.id) mine++;
     }
-    return { mine, all: squads.length };
-  }, [squads, currentUser]);
+    return { mine, all };
+  }, [squads, currentUser, showAcceptanceFixtures]);
 
   // Rows within the current scope, unfiltered — filter option lists + the
   // "n / total" denominator derive from this.
-  const scopeRows = useMemo<Squad[]>(() => {
+  const scopedRowsWithFixtures = useMemo<Squad[]>(() => {
     return squads.filter((s) => {
       if (scope === "mine") {
         return !!currentUser && s.creator_id === currentUser.id;
@@ -837,6 +848,23 @@ export function SquadsPage() {
       return true;
     });
   }, [squads, scope, currentUser]);
+  const hiddenScopedFixtureRows = useMemo(
+    () =>
+      scopedRowsWithFixtures.filter((squad) =>
+        isAcceptanceFixtureRecord(squad as unknown as Record<string, unknown>, [
+          "name",
+          "description",
+        ]),
+      ),
+    [scopedRowsWithFixtures],
+  );
+  const scopeRows = useMemo(
+    () =>
+      showAcceptanceFixtures
+        ? scopedRowsWithFixtures
+        : scopedRowsWithFixtures.filter((squad) => !hiddenScopedFixtureRows.includes(squad)),
+    [hiddenScopedFixtureRows, scopedRowsWithFixtures, showAcceptanceFixtures],
+  );
 
   const leaderOptions = useMemo(() => {
     const m = new Map<string, { id: string; name: string; count: number }>();
@@ -899,16 +927,7 @@ export function SquadsPage() {
     return sorted;
   }, [scopeRows, filters, sortField, sortDirection]);
 
-  const acceptanceFixtureRows = useMemo(
-    () =>
-      filteredRows.filter((squad) =>
-        isAcceptanceFixtureRecord(squad as unknown as Record<string, unknown>, [
-          "name",
-          "description",
-        ]),
-      ),
-    [filteredRows],
-  );
+  const acceptanceFixtureRows = hiddenScopedFixtureRows;
   const rows = useMemo(
     () =>
       showAcceptanceFixtures
@@ -923,9 +942,9 @@ export function SquadsPage() {
         <div className="flex items-center gap-2">
           <Users className="h-4 w-4 text-muted-foreground" />
           <h1 className="text-sm font-medium">{t(($) => $.page.title)}</h1>
-          {squads.length > 0 && (
+          {scopeCounts.all > 0 && (
             <span className="font-mono text-xs tabular-nums text-muted-foreground/70">
-              {squads.length}
+              {scopeCounts.all}
             </span>
           )}
         </div>
