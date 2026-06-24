@@ -141,6 +141,8 @@ export function PromptLibraryPage({
   const viewParam = trainingViewFromLocation(navigation.pathname, navigation.searchParams);
   const resolvedView = activeView ?? viewParam;
   const focusedRunId = navigation.searchParams.get("run");
+  const focusedTraceSeq = navigation.searchParams.get("trace");
+  const focusedToolChainId = navigation.searchParams.get("tool");
   const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => trainingWorkbenchTabFromView(resolvedView));
   const [runStatusFilter, setRunStatusFilter] = useState<RunStatusFilter>("全部");
   const [demoTimeRange, setDemoTimeRange] = useState<DemoTimeRange>("7d");
@@ -1024,6 +1026,8 @@ export function PromptLibraryPage({
                 experimentDimensions={experimentDimensions}
                 runs={runs}
                 focusedRunId={focusedRunId}
+                focusedTraceSeq={focusedTraceSeq}
+                focusedToolChainId={focusedToolChainId}
                 runStatusFilter={runStatusFilter}
                 onRunStatusFilterChange={setRunStatusFilter}
                 candidates={candidates}
@@ -1079,6 +1083,8 @@ export function PromptLibraryPage({
               experimentDimensions={experimentDimensions}
               runs={runs}
               focusedRunId={focusedRunId}
+              focusedTraceSeq={focusedTraceSeq}
+              focusedToolChainId={focusedToolChainId}
               runStatusFilter={runStatusFilter}
               onRunStatusFilterChange={setRunStatusFilter}
               candidates={candidates}
@@ -1506,6 +1512,8 @@ function WorkbenchPanel({
   experimentDimensions,
   runs,
   focusedRunId,
+  focusedTraceSeq,
+  focusedToolChainId,
   runStatusFilter,
   onRunStatusFilterChange,
   candidates,
@@ -1554,6 +1562,8 @@ function WorkbenchPanel({
   experimentDimensions: PromptEvaluationExperimentDimension[];
   runs: PromptEvaluationRun[];
   focusedRunId: string | null;
+  focusedTraceSeq: string | null;
+  focusedToolChainId: string | null;
   runStatusFilter: RunStatusFilter;
   onRunStatusFilterChange: (status: RunStatusFilter) => void;
   candidates: PromptEvaluationOptimizationCandidate[];
@@ -1632,6 +1642,8 @@ function WorkbenchPanel({
           workspaceId={workspaceId}
           runs={runs}
           focusedRunId={focusedRunId}
+          focusedTraceSeq={focusedTraceSeq}
+          focusedToolChainId={focusedToolChainId}
           runStatusFilter={runStatusFilter}
           onRunStatusFilterChange={onRunStatusFilterChange}
           candidates={candidates}
@@ -1975,6 +1987,8 @@ function RunHistoryPanel({
   workspaceId,
   runs,
   focusedRunId,
+  focusedTraceSeq,
+  focusedToolChainId,
   runStatusFilter,
   onRunStatusFilterChange,
   candidates,
@@ -1995,6 +2009,8 @@ function RunHistoryPanel({
   workspaceId: string;
   runs: PromptEvaluationRun[];
   focusedRunId: string | null;
+  focusedTraceSeq: string | null;
+  focusedToolChainId: string | null;
   runStatusFilter: RunStatusFilter;
   onRunStatusFilterChange: (status: RunStatusFilter) => void;
   candidates: PromptEvaluationOptimizationCandidate[];
@@ -2148,6 +2164,8 @@ function RunHistoryPanel({
                       snapshotsLoading={evidenceSnapshotQuery.isLoading || evidenceSnapshotQuery.isFetching}
                       loading={evidenceQuery.isLoading || evidenceQuery.isFetching}
                       error={evidenceQuery.isError}
+                      focusedTraceSeq={focusedTraceSeq}
+                      focusedToolChainId={focusedToolChainId}
                       creatingSnapshot={creatingEvidenceSnapshotRunId === run.id}
                       onCreateSnapshot={() => onCreateEvidenceSnapshot(run.id)}
                     />
@@ -2819,6 +2837,8 @@ function RunEvidencePanel({
   snapshotsLoading,
   loading,
   error,
+  focusedTraceSeq,
+  focusedToolChainId,
   creatingSnapshot,
   onCreateSnapshot,
 }: {
@@ -2827,9 +2847,24 @@ function RunEvidencePanel({
   snapshotsLoading: boolean;
   loading: boolean;
   error: boolean;
+  focusedTraceSeq?: string | null;
+  focusedToolChainId?: string | null;
   creatingSnapshot: boolean;
   onCreateSnapshot: () => void;
 }) {
+  useEffect(() => {
+    if (!evidence || loading) return;
+    const selector = focusedToolChainId
+      ? `[data-evidence-anchor="tool:${cssEscape(focusedToolChainId)}"]`
+      : focusedTraceSeq
+        ? `[data-evidence-anchor="trace:${cssEscape(focusedTraceSeq)}"]`
+        : "";
+    if (!selector) return;
+    window.requestAnimationFrame(() => {
+      document.querySelector(selector)?.scrollIntoView({ block: "center" });
+    });
+  }, [evidence, focusedToolChainId, focusedTraceSeq, loading]);
+
   if (loading) {
     return <div className="md:col-span-2 rounded-md border bg-muted/30 px-3 py-4 text-sm text-muted-foreground">正在加载运行证据...</div>;
   }
@@ -2879,8 +2914,9 @@ function RunEvidencePanel({
       </div>
 
       <EvidenceContextPanel context={evidence.上下文} />
-      <ExecutionSpanTreePanel evidence={evidence} />
-      <TraceEventTreePanel evidence={evidence} />
+      <EvidenceAnchorSummary evidence={evidence} focusedTraceSeq={focusedTraceSeq ?? null} focusedToolChainId={focusedToolChainId ?? null} />
+      <ExecutionSpanTreePanel evidence={evidence} focusedToolChainId={focusedToolChainId ?? null} />
+      <TraceEventTreePanel evidence={evidence} focusedTraceSeq={focusedTraceSeq ?? null} />
 
       <div className="grid gap-2">
         <div className="text-xs font-medium text-muted-foreground">用例明细</div>
@@ -3045,7 +3081,36 @@ function EvidenceList({ title, empty, items }: { title: string; empty: string; i
   );
 }
 
-function ExecutionSpanTreePanel({ evidence }: { evidence: PromptEvaluationRunEvidence }) {
+function EvidenceAnchorSummary({
+  evidence,
+  focusedTraceSeq,
+  focusedToolChainId,
+}: {
+  evidence: PromptEvaluationRunEvidence;
+  focusedTraceSeq: string | null;
+  focusedToolChainId: string | null;
+}) {
+  const traceCount = evidence.trace_events.length;
+  const toolCount = evidence.tool_call_chains.length;
+  if (traceCount === 0 && toolCount === 0) return null;
+  return (
+    <div className="grid gap-1.5 rounded-md border bg-background p-2 text-xs" data-testid="run-evidence-anchor-summary">
+      <div className="font-medium text-muted-foreground">证据锚点</div>
+      <div className="grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-2">
+        <div>
+          trace 锚点：{traceCount > 0 ? `trace=1 到 trace=${traceCount}` : "暂无 trace"}
+          {focusedTraceSeq ? ` · 当前定位 trace=${focusedTraceSeq}` : ""}
+        </div>
+        <div>
+          工具锚点：{toolCount > 0 ? "使用 tool=<工具链id>" : "暂无工具链"}
+          {focusedToolChainId ? ` · 当前定位 tool=${focusedToolChainId}` : ""}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ExecutionSpanTreePanel({ evidence, focusedToolChainId }: { evidence: PromptEvaluationRunEvidence; focusedToolChainId: string | null }) {
   const spans = evidence.execution_spans ?? [];
   const toolCallChains = evidence.tool_call_chains ?? [];
   const toolCallSummary = evidence.tool_call_summary ?? [];
@@ -3072,7 +3137,7 @@ function ExecutionSpanTreePanel({ evidence }: { evidence: PromptEvaluationRunEvi
         </div>
       </div>
       <ToolCallSummaryPanel rows={toolCallSummary} />
-      <ToolCallChainPanel chains={toolCallChains} />
+      <ToolCallChainPanel chains={toolCallChains} focusedToolChainId={focusedToolChainId} />
       {spans.length === 0 ? (
         <div className="rounded-md border border-dashed px-3 py-3 text-muted-foreground">暂无执行 span；真实任务开始后会从 trace、消息和用量证据中生成观测树。</div>
       ) : (
@@ -3124,7 +3189,13 @@ function ToolCallSummaryPanel({ rows }: { rows: PromptEvaluationRunEvidence["too
   );
 }
 
-function ToolCallChainPanel({ chains }: { chains: PromptEvaluationRunEvidence["tool_call_chains"] }) {
+function ToolCallChainPanel({
+  chains,
+  focusedToolChainId,
+}: {
+  chains: PromptEvaluationRunEvidence["tool_call_chains"];
+  focusedToolChainId: string | null;
+}) {
   const [query, setQuery] = useState("");
   const [statusFilter, setStatusFilter] = useState("全部");
   const visibleChains = useMemo(() => {
@@ -3174,22 +3245,32 @@ function ToolCallChainPanel({ chains }: { chains: PromptEvaluationRunEvidence["t
         {visibleChains.length === 0 ? (
           <div className="rounded border border-dashed px-2 py-2 text-[11px] text-muted-foreground">没有匹配的工具调用链。</div>
         ) : null}
-        {visibleChains.map((chain) => (
-          <div key={chain.id} className="grid gap-1 rounded border bg-background px-2 py-1.5 text-[11px] leading-5" data-testid={`run-evidence-tool-call-chain-${chain.id}`}>
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="font-medium text-foreground">{chain.tool || "未记录工具"}</span>
-              <Badge variant={chain.status === "已配对" ? "secondary" : chain.status === "缺少结果" ? "destructive" : "outline"}>{chain.status || "未记录"}</Badge>
-              {chain.result_category && <Badge variant="outline">{chain.result_category}</Badge>}
-              {chain.failure_signal && <Badge variant="destructive">异常线索</Badge>}
-              <span className="text-muted-foreground">
-                调用 #{chain.use_seq ?? "-"} · 结果 #{chain.result_seq ?? "-"} · 耗时 {formatDuration(chain.duration_ms ?? 0)}
-              </span>
+        {visibleChains.map((chain) => {
+          const focused = focusedToolChainId === chain.id;
+          return (
+            <div
+              key={chain.id}
+              className={`grid gap-1 rounded border px-2 py-1.5 text-[11px] leading-5 ${
+                focused ? "border-emerald-500 bg-emerald-500/10 ring-2 ring-emerald-500/30" : "bg-background"
+              }`}
+              data-testid={`run-evidence-tool-call-chain-${chain.id}`}
+              data-evidence-anchor={`tool:${chain.id}`}
+            >
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium text-foreground">{chain.tool || "未记录工具"}</span>
+                <Badge variant={chain.status === "已配对" ? "secondary" : chain.status === "缺少结果" ? "destructive" : "outline"}>{chain.status || "未记录"}</Badge>
+                {chain.result_category && <Badge variant="outline">{chain.result_category}</Badge>}
+                {chain.failure_signal && <Badge variant="destructive">异常线索</Badge>}
+                <span className="text-muted-foreground">
+                  调用 #{chain.use_seq ?? "-"} · 结果 #{chain.result_seq ?? "-"} · 耗时 {formatDuration(chain.duration_ms ?? 0)}
+                </span>
+              </div>
+              <div className="break-words text-muted-foreground">{chain.summary || "未记录摘要"}</div>
+              {chain.failure_reason && <div className="break-words text-muted-foreground">异常原因：{chain.failure_reason}</div>}
+              {chain.output && <div className="break-words text-muted-foreground">输出：{truncateText(chain.output, 180)}</div>}
             </div>
-            <div className="break-words text-muted-foreground">{chain.summary || "未记录摘要"}</div>
-            {chain.failure_reason && <div className="break-words text-muted-foreground">异常原因：{chain.failure_reason}</div>}
-            {chain.output && <div className="break-words text-muted-foreground">输出：{truncateText(chain.output, 180)}</div>}
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
@@ -3225,7 +3306,7 @@ function executionSpanTone(spanKind: string, status: string): string {
   return "border-l-emerald-500/70";
 }
 
-function TraceEventTreePanel({ evidence }: { evidence: PromptEvaluationRunEvidence }) {
+function TraceEventTreePanel({ evidence, focusedTraceSeq }: { evidence: PromptEvaluationRunEvidence; focusedTraceSeq: string | null }) {
   const events = evidence.trace_events;
   const tokenTotal = events.reduce((sum, event) => sum + traceEventTokenTotal(event), 0);
   const lifecycleCount = events.filter((event) => event.event_type.startsWith("task.")).length;
@@ -3252,7 +3333,7 @@ function TraceEventTreePanel({ evidence }: { evidence: PromptEvaluationRunEviden
       ) : (
         <div className="grid gap-1.5">
           {events.map((event, index) => (
-            <TraceEventTreeNode key={event.id} event={event} index={index} />
+            <TraceEventTreeNode key={event.id} event={event} index={index} focused={focusedTraceSeq === String(index + 1)} />
           ))}
         </div>
       )}
@@ -3263,14 +3344,22 @@ function TraceEventTreePanel({ evidence }: { evidence: PromptEvaluationRunEviden
 function TraceEventTreeNode({
   event,
   index,
+  focused,
 }: {
   event: PromptEvaluationRunEvidence["trace_events"][number];
   index: number;
+  focused: boolean;
 }) {
   const tokenTotal = traceEventTokenTotal(event);
   const metadataSummary = traceMetadataSummary(event.metadata);
   return (
-    <div className="grid gap-1 rounded-md border border-l-4 border-l-emerald-500/70 bg-muted/15 px-3 py-2" data-testid={`run-evidence-trace-node-${index + 1}`}>
+    <div
+      className={`grid gap-1 rounded-md border border-l-4 border-l-emerald-500/70 px-3 py-2 ${
+        focused ? "border-emerald-500 bg-emerald-500/10 ring-2 ring-emerald-500/30" : "bg-muted/15"
+      }`}
+      data-testid={`run-evidence-trace-node-${index + 1}`}
+      data-evidence-anchor={`trace:${index + 1}`}
+    >
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-mono text-[11px] text-muted-foreground">#{index + 1}</span>
         <span className="font-medium text-foreground">{event.event_name || traceEventStageLabel(event.event_type)}</span>
@@ -3387,6 +3476,13 @@ function stringFromUnknown(value: unknown): string {
   if (typeof value === "string") return value;
   if (typeof value === "number" || typeof value === "boolean") return String(value);
   return "";
+}
+
+function cssEscape(value: string): string {
+  if (typeof CSS !== "undefined" && typeof CSS.escape === "function") {
+    return CSS.escape(value);
+  }
+  return value.replace(/["\\]/g, "\\$&");
 }
 
 function FilterButton({
