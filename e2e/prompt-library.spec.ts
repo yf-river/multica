@@ -1291,6 +1291,12 @@ test.describe("训练与评估工作台", () => {
     await expect(comparisonRow).toContainText("通过率");
     await expect(comparisonRow).toContainText("预估成本");
     await expect(comparisonRow).toContainText(`v${datasetVersion.version}`);
+    const qualityExplanation = comparisonRow.getByTestId(`experiment-quality-explanation-${experiment.id}`);
+    await expect(qualityExplanation).toContainText("成本质量解释");
+    await expect(qualityExplanation).toContainText("单位通过成本");
+    await expect(qualityExplanation).toContainText("成本判断");
+    await expect(qualityExplanation).toContainText("失败主因");
+    await expect(qualityExplanation).toContainText("建议动作");
     const dimensionScoreComparison = comparisonRow.getByTestId(`experiment-dimension-score-comparison-${experiment.id}`);
     await expect(dimensionScoreComparison).toContainText("实验维度评分");
     await expect(dimensionScoreComparison).toContainText("命中率");

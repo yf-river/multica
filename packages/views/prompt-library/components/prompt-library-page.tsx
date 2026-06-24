@@ -1896,6 +1896,7 @@ type ExperimentComparisonRow = {
   promptVersions: PromptLibraryVersion[];
   versionRows: ExperimentPromptVersionRow[];
   promptVersionRunCount: number;
+  qualityExplanation: ExperimentQualityExplanation;
   runs: PromptEvaluationRun[];
   totalCases: number;
   passedCases: number;
@@ -1906,6 +1907,15 @@ type ExperimentComparisonRow = {
   outputTokens: number;
   estimatedCost: number;
   latestRun: PromptEvaluationRun | null;
+};
+
+type ExperimentQualityExplanation = {
+  qualityLabel: string;
+  costPerPassedCase: number;
+  costConclusion: string;
+  durationConclusion: string;
+  failureConclusion: string;
+  recommendation: string;
 };
 
 type ExperimentDimensionScoreRow = {
@@ -2010,6 +2020,7 @@ function ExperimentComparisonPanel({
               <MetricCell label="平均耗时" value={formatDuration(row.runs.length > 0 ? row.totalDurationMs / row.runs.length : 0)} />
               <MetricCell label="令牌" value={`${formatNumber(row.inputTokens)} / ${formatNumber(row.outputTokens)}`} />
               <MetricCell label="预估成本" value={formatMoney(row.estimatedCost)} />
+              <ExperimentQualityExplanationPanel row={row} />
               <ExperimentDimensionScoreComparison row={row} />
               <ExperimentPromptVersionComparison row={row} />
             </div>
@@ -2017,6 +2028,32 @@ function ExperimentComparisonPanel({
         </div>
       )}
     </section>
+  );
+}
+
+function ExperimentQualityExplanationPanel({ row }: { row: ExperimentComparisonRow }) {
+  const explanation = row.qualityExplanation;
+  return (
+    <div className="grid gap-2 rounded border border-border/70 bg-muted/10 px-2 py-2 text-xs lg:col-span-6" data-testid={`experiment-quality-explanation-${row.asset.id}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="font-medium text-foreground">成本质量解释</div>
+          <div className="mt-0.5 text-muted-foreground">
+            解释本实验的质量状态、单位通过成本、耗时和失败主因，便于复盘是否值得继续优化。
+          </div>
+        </div>
+        <Badge variant={row.passRate >= 0.8 ? "secondary" : "outline"}>{explanation.qualityLabel}</Badge>
+      </div>
+      <div className="grid gap-1.5 md:grid-cols-4">
+        <MetricCell label="单位通过成本" value={row.passedCases > 0 ? formatMoney(explanation.costPerPassedCase) : "暂无通过"} />
+        <MetricCell label="成本判断" value={explanation.costConclusion} />
+        <MetricCell label="耗时判断" value={explanation.durationConclusion} />
+        <MetricCell label="失败主因" value={explanation.failureConclusion} />
+      </div>
+      <div className="rounded border bg-background px-2 py-1.5 text-muted-foreground">
+        建议动作：<span className="text-foreground">{explanation.recommendation}</span>
+      </div>
+    </div>
   );
 }
 
@@ -4846,6 +4883,7 @@ function buildExperimentComparisonRows(
       const inputTokens = assetRuns.reduce((sum, run) => sum + run.input_tokens, 0);
       const outputTokens = assetRuns.reduce((sum, run) => sum + run.output_tokens, 0);
       const estimatedCost = assetRuns.reduce((sum, run) => sum + run.estimated_cost, 0);
+      const passRate = totalCases > 0 ? passedCases / totalCases : 0;
       return {
         asset,
         dimensions: assetDimensions,
@@ -4853,11 +4891,12 @@ function buildExperimentComparisonRows(
         promptVersions,
         versionRows,
         promptVersionRunCount: versionRows.reduce((sum, row) => sum + row.runCount, 0),
+        qualityExplanation: buildExperimentQualityExplanation(assetRuns, passedCases, failedCases, passRate, totalDurationMs, estimatedCost),
         runs: assetRuns,
         totalCases,
         passedCases,
         failedCases,
-        passRate: totalCases > 0 ? passedCases / totalCases : 0,
+        passRate,
         totalDurationMs,
         inputTokens,
         outputTokens,
@@ -4876,6 +4915,63 @@ function buildExperimentComparisonRows(
       if (costDelta !== 0) return costDelta;
       return comparePromptEvaluationAssetByRecent(a.asset, b.asset);
     });
+}
+
+function buildExperimentQualityExplanation(
+  runs: PromptEvaluationRun[],
+  passedCases: number,
+  failedCases: number,
+  passRate: number,
+  totalDurationMs: number,
+  estimatedCost: number,
+): ExperimentQualityExplanation {
+  const costPerPassedCase = passedCases > 0 ? estimatedCost / passedCases : 0;
+  const averageRunMs = runs.length > 0 ? totalDurationMs / runs.length : 0;
+  const dominantFailure = dominantExperimentFailureReason(runs);
+  const qualityLabel = runs.length === 0 ? "暂无运行" : passRate >= 0.8 ? "质量稳定" : passRate >= 0.5 ? "质量待优化" : "质量风险高";
+  const costConclusion = runs.length === 0
+    ? "暂无成本"
+    : passedCases === 0
+      ? "成本未转化"
+      : costPerPassedCase <= 0.05
+        ? "单位成本低"
+        : costPerPassedCase <= 0.2
+          ? "单位成本可控"
+          : "单位成本偏高";
+  const durationConclusion = runs.length === 0
+    ? "暂无耗时"
+    : averageRunMs <= 1000
+      ? "响应很快"
+      : averageRunMs <= 5000
+        ? "耗时可控"
+        : "耗时偏高";
+  const failureConclusion = failedCases === 0 ? "暂无失败" : dominantFailure;
+  let recommendation = "先补一次真实运行，形成质量和成本基线。";
+  if (runs.length > 0 && failedCases === 0 && costPerPassedCase <= 0.2) {
+    recommendation = "当前质量和成本可作为回归基线，后续重点观察版本变化。";
+  } else if (failedCases > 0) {
+    recommendation = `优先复盘失败主因「${dominantFailure}」，再生成优化候选并回归同一数据集版本。`;
+  } else if (costPerPassedCase > 0.2) {
+    recommendation = "质量可用但单位通过成本偏高，优先压缩提示词上下文或改用更轻模型复测。";
+  }
+  return {
+    qualityLabel,
+    costPerPassedCase,
+    costConclusion,
+    durationConclusion,
+    failureConclusion,
+    recommendation,
+  };
+}
+
+function dominantExperimentFailureReason(runs: PromptEvaluationRun[]): string {
+  const counts = new Map<string, number>();
+  for (const run of runs) {
+    if (run.failed_cases <= 0 && run.status !== "未通过" && run.status !== "失败") continue;
+    const reason = (run.failure_reason && run.failure_reason !== "无" ? run.failure_reason : run.conclusion || "未记录失败原因").trim();
+    counts.set(reason, (counts.get(reason) ?? 0) + 1);
+  }
+  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh-CN"))[0]?.[0] ?? "未记录失败原因";
 }
 
 function buildExperimentDimensionScoreRows(
