@@ -1,4 +1,6 @@
 import { execFileSync } from "node:child_process";
+import { mkdirSync, writeFileSync } from "node:fs";
+import path from "node:path";
 import process from "node:process";
 
 const apiURL = trimEnv("ACCEPTANCE_API_URL") || trimEnv("NEXT_PUBLIC_API_URL") || "http://127.0.0.1:8080";
@@ -7,12 +9,21 @@ const password = trimEnv("ACCEPTANCE_DEMO_PASSWORD") || trimEnv("REAL_AGENT_E2E_
 const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || trimEnv("REAL_AGENT_E2E_WORKSPACE") || "goal-test-daemon";
 const suffix = Date.now();
 const maxRecordedCommands = Number(trimEnv("PROMPT_EVALUATION_CURL_E2E_MAX_COMMANDS") || 40);
+const repoRoot = path.resolve(import.meta.dirname, "..");
+const artifactRoot = path.resolve(trimEnv("PROMPT_EVALUATION_CURL_E2E_DIR") || path.join(repoRoot, "artifacts/acceptance"));
+const generatedAt = new Date().toISOString();
+const stamp = generatedAt.replace(/[:.]/g, "-");
+const evidencePath = path.join(artifactRoot, `prompt-evaluation-curl-e2e-${stamp}.json`);
+const latestEvidencePath = path.join(artifactRoot, "prompt-evaluation-curl-e2e-latest.json");
 
 const evidence = {
   schema: "multica.prompt_evaluation_curl_e2e.v1",
+  generated_at: generatedAt,
   api_url: apiURL,
   account,
   workspace_slug: workspaceSlug,
+  evidence_path: evidencePath,
+  latest_evidence_path: latestEvidencePath,
   commands: [],
   omitted_command_count: 0,
   result: "unknown",
@@ -282,6 +293,7 @@ if (agentRunEvidence.external_dependency_failure) {
   evidence.repair_hint = "修复 Codex runtime 模型认证、额度或容量后重跑 scripts/prompt-evaluation-curl-e2e.mjs。";
 }
 
+writeEvidence();
 console.log(JSON.stringify(evidence, null, 2));
 
 function trimEnv(name) {
@@ -443,8 +455,16 @@ function itemCount(response) {
 
 function fail(message) {
   evidence.error = message;
+  evidence.result = "failed";
+  writeEvidence();
   console.error(JSON.stringify(evidence, null, 2));
   process.exit(1);
+}
+
+function writeEvidence() {
+  mkdirSync(artifactRoot, { recursive: true });
+  writeFileSync(evidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
+  writeFileSync(latestEvidencePath, `${JSON.stringify(evidence, null, 2)}\n`);
 }
 
 function recordCommand(command) {
