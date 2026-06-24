@@ -2337,7 +2337,7 @@ func (h *Handler) UpdatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 		Expected:         expected,
 		Tags:             tags,
 		Status:           status,
-		Source:           "manual",
+		Source:           current.Source,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to update prompt evaluation case")

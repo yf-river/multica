@@ -4237,6 +4237,8 @@ function ManualCasePanel({
   const [caseTagFilter, setCaseTagFilter] = useState("全部");
   const [editingCaseId, setEditingCaseId] = useState<string | null>(null);
   const [editDrafts, setEditDrafts] = useState<Record<string, ManualCaseDraft>>({});
+  const [tagEditingCaseId, setTagEditingCaseId] = useState<string | null>(null);
+  const [tagEditDrafts, setTagEditDrafts] = useState<Record<string, string>>({});
   const caseTags = useMemo(() => uniqueSortedStrings(cases.flatMap((item) => item.tags.map((value) => String(value)).filter(Boolean))), [cases]);
   const filteredCases = useMemo(() => {
     return cases.filter((item) => {
@@ -4301,7 +4303,46 @@ function ManualCasePanel({
                       </Button>
                     </>
                   )}
+                  {asset.asset_type === "数据集" && item.source !== "manual" && (
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      className="h-7"
+                      onClick={() => {
+                        setTagEditingCaseId(item.id);
+                        setTagEditDrafts((prev) => ({ ...prev, [item.id]: item.tags.map((value) => String(value)).join(", ") }));
+                      }}
+                    >
+                      编辑标签
+                    </Button>
+                  )}
                 </div>
+                {tagEditingCaseId === item.id && (
+                  <div className="flex flex-wrap items-center gap-2 rounded-sm border border-border/70 bg-muted/20 p-2" data-testid={`dataset-case-tag-editor-${item.id}`}>
+                    <Input
+                      value={tagEditDrafts[item.id] ?? item.tags.map((value) => String(value)).join(", ")}
+                      onChange={(event) => setTagEditDrafts((prev) => ({ ...prev, [item.id]: event.target.value }))}
+                      placeholder="编辑数据集标签"
+                      aria-label="编辑数据集标签"
+                      className="h-9 min-w-52 flex-1 text-xs"
+                    />
+                    <Button
+                      size="sm"
+                      className="h-9 shrink-0"
+                      onClick={() => {
+                        onUpdateCase(item.id, buildCaseTagUpdateRequest(asset, item, tagEditDrafts[item.id] ?? ""));
+                        setTagEditingCaseId(null);
+                      }}
+                      disabled={updatingCaseId === item.id}
+                    >
+                      {updatingCaseId === item.id ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+                      保存标签
+                    </Button>
+                    <Button size="sm" variant="ghost" className="h-9 shrink-0" onClick={() => setTagEditingCaseId(null)}>
+                      取消
+                    </Button>
+                  </div>
+                )}
                 {editing && (
                   <div className="grid gap-2 rounded-sm border border-border/70 bg-muted/20 p-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
                     <Input
@@ -4561,6 +4602,17 @@ function buildManualCaseUpdateRequest(asset: PromptEvaluationAsset, item: Prompt
       期望包含: expectedContains,
     },
     tags: splitList(draft.tagsText),
+    status: item.status,
+  };
+}
+
+function buildCaseTagUpdateRequest(asset: PromptEvaluationAsset, item: PromptEvaluationStructuredCase, tagsText: string): UpdatePromptEvaluationCaseRequest {
+  return {
+    asset_id: asset.id,
+    prompt_id: item.prompt_id ?? asset.prompt_id,
+    case_index: item.case_index,
+    case_name: item.case_name,
+    tags: splitList(tagsText),
     status: item.status,
   };
 }

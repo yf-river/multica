@@ -788,6 +788,34 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if len(listedManual.Assertions) != 1 || listedManual.Assertions[0].ExpectedText != "可观测证据" {
 		t.Fatalf("listed assertions = %+v", listedManual.Assertions)
 	}
+	var listedPayload *PromptEvaluationCaseResponse
+	for idx := range listed.Items {
+		if listed.Items[idx].Source == "payload" {
+			listedPayload = &listed.Items[idx]
+			break
+		}
+	}
+	if listedPayload == nil {
+		t.Fatalf("payload case not found in listed cases = %+v", listed)
+	}
+	updatePayloadTagsW := httptest.NewRecorder()
+	testHandler.UpdatePromptEvaluationCase(updatePayloadTagsW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-cases/"+listedPayload.ID, map[string]any{
+		"tags": []string{"资产载荷", "治理标签"},
+	}), "id", listedPayload.ID))
+	if updatePayloadTagsW.Code != http.StatusOK {
+		t.Fatalf("update payload case tags status = %d, body = %s", updatePayloadTagsW.Code, updatePayloadTagsW.Body.String())
+	}
+	var updatedPayload PromptEvaluationCaseResponse
+	if err := json.Unmarshal(updatePayloadTagsW.Body.Bytes(), &updatedPayload); err != nil {
+		t.Fatalf("decode updated payload case: %v", err)
+	}
+	updatedPayloadTags, err := json.Marshal(updatedPayload.Tags)
+	if err != nil {
+		t.Fatalf("encode updated payload tags: %v", err)
+	}
+	if updatedPayload.Source != "payload" || !containsAll(string(updatedPayloadTags), []string{"资产载荷", "治理标签"}) {
+		t.Fatalf("updated payload case should preserve source and tags, got %+v", updatedPayload)
+	}
 
 	deleteCaseW := httptest.NewRecorder()
 	testHandler.DeletePromptEvaluationCase(deleteCaseW, withURLParam(newRequest(http.MethodDelete, "/api/prompt-evaluation-cases/"+created.ID, nil), "id", created.ID))

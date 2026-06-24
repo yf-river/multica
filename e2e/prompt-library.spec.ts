@@ -1136,7 +1136,30 @@ test.describe("训练与评估工作台", () => {
     await governance.getByRole("button", { name: "手工" }).click();
     await expect(governance.getByTestId(`dataset-case-filter-count-${dataset.id}`)).toContainText("命中 1 / 2");
     await expect(governance.getByTestId(`dataset-case-sampling-preview-${dataset.id}`)).toContainText("版本二新增用例");
+    await governance.getByRole("button", { name: "资产载荷" }).click();
+    await expect(governance.getByTestId(`dataset-case-filter-count-${dataset.id}`)).toContainText("命中 1 / 2");
+    await expect(governance.getByTestId(`dataset-case-sampling-preview-${dataset.id}`)).toContainText("版本一登录用例");
+    await datasetRow.getByRole("button", { name: "编辑标签" }).click();
+    await datasetRow.getByLabel("编辑数据集标签").fill("版本一, 资产载荷, 领导演示");
+    const tagUpdateResponse = page.waitForResponse(
+      (response) => response.request().method() === "PUT" && response.url().includes("/api/prompt-evaluation-cases/"),
+      { timeout: 15000 },
+    );
+    await datasetRow.getByRole("button", { name: "保存标签" }).click();
+    expect((await tagUpdateResponse).status()).toBe(200);
+    await expect
+      .poll(async () => {
+        const items = await api.listPromptEvaluationCases({ asset_id: dataset.id });
+        return items.find((item) => item.case_name === "版本一登录用例") ?? null;
+      }, { timeout: 15000 })
+      .toMatchObject({
+        source: "payload",
+        tags: expect.arrayContaining(["资产载荷", "领导演示"]),
+      });
+    await governance.getByLabel("筛选数据集用例标签").selectOption("领导演示");
+    await expect(governance.getByTestId(`dataset-case-filter-count-${dataset.id}`)).toContainText("命中 1 / 2");
     await governance.getByRole("button", { name: "全部" }).click();
+    await governance.getByLabel("筛选数据集用例标签").selectOption("全部");
     await datasetRow.getByTestId(`load-dataset-versions-${dataset.id}`).click();
     await expect(datasetRow.getByTestId(`dataset-version-controls-${dataset.id}`)).toContainText("最新 v2", { timeout: 15000 });
     await expect(datasetRow.getByTestId(`dataset-version-chain-${dataset.id}`)).toContainText("版本链回放");
