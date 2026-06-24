@@ -384,7 +384,6 @@ export class TestApiClient {
           SET
             onboarded_at = COALESCE(onboarded_at, now()),
             onboarding_questionnaire = COALESCE(onboarding_questionnaire, '{}'::jsonb)
-              || '{"source":["friends_colleagues"],"source_other":null,"source_skipped":false}'::jsonb
           WHERE account = $1
         `,
         [this.account],

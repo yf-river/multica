@@ -37,6 +37,14 @@ const checks = [
     forbidden: ["source_backfill", "How did you hear", "friends_colleagues", "blog_newsletter", "Newsletter"],
   },
   {
+    path: "packages/core/permissions/rules.ts",
+    forbidden: ["Sign in to", "Only the", "Personal agent", "Join this workspace", "Agent-authored comments cannot"],
+  },
+  {
+    path: "e2e/fixtures.ts",
+    forbidden: ["friends_colleagues", "source_other", "source_skipped"],
+  },
+  {
     path: "packages/views/onboarding/steps/step-source.tsx",
     forbidden: ["StepSource", "How did you hear", "friends_colleagues", "blog_newsletter"],
     allowMissing: true,
@@ -62,7 +70,7 @@ for (const check of checks) {
 const evidence = {
   schema: "multica.signup_residue_audit.v1",
   status: failures.length === 0 ? "通过" : "失败",
-  scope: "当前部署会生效的中文 SEO、来源采集弹窗、signup_source 归因 cookie、服务端 signup_source 指标/文档",
+  scope: "当前部署会生效的中文 SEO、来源采集弹窗、signup_source 归因 cookie、服务端 signup_source 指标/文档、权限拒绝文案和 E2E 默认问卷数据",
   failures,
 };
 

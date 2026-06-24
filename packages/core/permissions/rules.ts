@@ -31,13 +31,13 @@ const isAdminLike = (role: MemberRole | null) =>
  */
 export function canEditAgent(agent: Agent, ctx: PermissionContext): Decision {
   if (ctx.userId === null) {
-    return deny("not_authenticated", "Sign in to edit this agent.");
+    return deny("not_authenticated", "请先登录后再编辑智能体。");
   }
   if (isAdminLike(ctx.role)) return ALLOW;
   if (agent.owner_id !== null && agent.owner_id === ctx.userId) return ALLOW;
   return deny(
     "not_resource_owner",
-    "Only the agent owner and workspace admins can edit this agent.",
+    "只有智能体所有者和工作区管理员可以编辑这个智能体。",
   );
 }
 
@@ -51,11 +51,11 @@ export function canAssignAgentToIssue(
   ctx: PermissionContext,
 ): Decision {
   if (ctx.userId === null) {
-    return deny("not_authenticated", "Sign in to assign agents.");
+    return deny("not_authenticated", "请先登录后再分配智能体。");
   }
   if (agent.visibility === "workspace") {
     if (ctx.role === null) {
-      return deny("not_member", "Join this workspace to assign agents.");
+      return deny("not_member", "加入这个工作区后才能分配智能体。");
     }
     return ALLOW;
   }
@@ -64,7 +64,7 @@ export function canAssignAgentToIssue(
   if (agent.owner_id !== null && agent.owner_id === ctx.userId) return ALLOW;
   return deny(
     "private_visibility",
-    "Personal agent — only the owner and workspace admins can assign work.",
+    "这是个人智能体，只有所有者和工作区管理员可以分配任务。",
   );
 }
 
@@ -72,7 +72,7 @@ export function canAssignAgentToIssue(
 
 export function canEditSkill(skill: Skill, ctx: PermissionContext): Decision {
   if (ctx.userId === null) {
-    return deny("not_authenticated", "Sign in to edit this skill.");
+    return deny("not_authenticated", "请先登录后再编辑技能。");
   }
   if (isAdminLike(ctx.role)) return ALLOW;
   if (skill.created_by !== null && skill.created_by === ctx.userId) {
@@ -80,7 +80,7 @@ export function canEditSkill(skill: Skill, ctx: PermissionContext): Decision {
   }
   return deny(
     "not_resource_owner",
-    "Only the creator and workspace admins can edit this skill.",
+    "只有创建者和工作区管理员可以编辑这个技能。",
   );
 }
 
@@ -95,21 +95,21 @@ export function canEditComment(
   ctx: PermissionContext,
 ): Decision {
   if (ctx.userId === null) {
-    return deny("not_authenticated", "Sign in to edit comments.");
+    return deny("not_authenticated", "请先登录后再编辑评论。");
   }
   // Only member-authored comments can be edited; agent-authored comments are
   // immutable from any human's perspective.
   if (comment.author_type !== "member") {
     return deny(
       "not_resource_owner",
-      "Agent-authored comments cannot be edited.",
+      "智能体发布的评论不能被编辑。",
     );
   }
   if (comment.author_id === ctx.userId) return ALLOW;
   if (isAdminLike(ctx.role)) return ALLOW;
   return deny(
     "not_resource_owner",
-    "Only the author and workspace admins can edit this comment.",
+    "只有作者和工作区管理员可以编辑这条评论。",
   );
 }
 
@@ -118,7 +118,7 @@ export function canDeleteComment(
   ctx: PermissionContext,
 ): Decision {
   if (ctx.userId === null) {
-    return deny("not_authenticated", "Sign in to delete comments.");
+    return deny("not_authenticated", "请先登录后再删除评论。");
   }
   if (comment.author_type === "member" && comment.author_id === ctx.userId) {
     return ALLOW;
@@ -126,7 +126,7 @@ export function canDeleteComment(
   if (isAdminLike(ctx.role)) return ALLOW;
   return deny(
     "not_resource_owner",
-    "Only the author and workspace admins can delete this comment.",
+    "只有作者和工作区管理员可以删除这条评论。",
   );
 }
 
@@ -137,7 +137,7 @@ export function canDeleteRuntime(
   ctx: PermissionContext,
 ): Decision {
   if (ctx.userId === null) {
-    return deny("not_authenticated", "Sign in to delete runtimes.");
+    return deny("not_authenticated", "请先登录后再删除运行时。");
   }
   if (isAdminLike(ctx.role)) return ALLOW;
   if (runtime.owner_id !== null && runtime.owner_id === ctx.userId) {
@@ -145,7 +145,7 @@ export function canDeleteRuntime(
   }
   return deny(
     "not_resource_owner",
-    "Only the runtime owner and workspace admins can delete this runtime.",
+    "只有运行时所有者和工作区管理员可以删除这个运行时。",
   );
 }
 
@@ -155,7 +155,7 @@ export function canUpdateWorkspaceSettings(ctx: PermissionContext): Decision {
   if (isAdminLike(ctx.role)) return ALLOW;
   return deny(
     "not_admin_role",
-    "Only workspace owners and admins can update workspace settings.",
+    "只有工作区所有者和管理员可以修改工作区设置。",
   );
 }
 
@@ -163,7 +163,7 @@ export function canDeleteWorkspace(ctx: PermissionContext): Decision {
   if (ctx.role === "owner") return ALLOW;
   return deny(
     "not_owner_role",
-    "Only the workspace owner can delete this workspace.",
+    "只有工作区所有者可以删除这个工作区。",
   );
 }
 
@@ -171,7 +171,7 @@ export function canManageMembers(ctx: PermissionContext): Decision {
   if (isAdminLike(ctx.role)) return ALLOW;
   return deny(
     "not_admin_role",
-    "Only workspace owners and admins can manage members.",
+    "只有工作区所有者和管理员可以管理成员。",
   );
 }
 
@@ -196,13 +196,13 @@ export function canChangeMemberRole(
     if (ctx.role !== "owner") {
       return deny(
         "not_owner_role",
-        "Only the workspace owner can change another owner's role.",
+        "只有工作区所有者可以修改另一位所有者的角色。",
       );
     }
     if (ownerCount <= 1) {
       return deny(
         "last_owner",
-        "Promote another member to owner first — a workspace must keep at least one owner.",
+        "请先提升另一位成员为所有者；工作区必须至少保留一位所有者。",
       );
     }
   }
