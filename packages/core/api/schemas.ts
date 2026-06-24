@@ -29,6 +29,8 @@ import type {
   PromptEvaluationDatasetVersionDiff,
   RestorePromptEvaluationDatasetVersionResponse,
   PromptEvaluationExperimentDimension,
+  PromptEvaluationDimensionScore,
+  ListPromptEvaluationDimensionScoresResponse,
   PromptEvaluationOptimizationCandidate,
   ListPromptEvaluationEvidenceSnapshotsResponse,
   PromptLibraryItem,
@@ -1300,6 +1302,30 @@ export const PromptEvaluationExperimentDimensionListResponseSchema = z.object({
   total: z.number().default(0),
 }).loose();
 
+export const PromptEvaluationDimensionScoreSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  run_id: z.string(),
+  asset_id: z.string(),
+  prompt_id: z.string().nullable().optional().transform((v) => v ?? null),
+  dimension_index: z.number().default(0),
+  dimension_name: z.string().default(""),
+  score: z.number().default(0),
+  passed_cases: z.number().default(0),
+  total_cases: z.number().default(0),
+  status: z.enum(["待执行", "已评分", "无用例"]).default("待执行"),
+  rule: z.string().default(""),
+  evidence: z.string().default(""),
+  source: z.string().default(""),
+  created_at: z.string().default(""),
+  updated_at: z.string().default(""),
+}).loose();
+
+export const PromptEvaluationDimensionScoreListResponseSchema = z.object({
+  items: z.array(PromptEvaluationDimensionScoreSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
 export const PromptEvaluationOptimizationCandidateSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
@@ -1468,6 +1494,11 @@ export const EMPTY_PROMPT_EVALUATION_EXPERIMENT_DIMENSION_LIST_RESPONSE: ListPro
   total: 0,
 };
 
+export const EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_LIST_RESPONSE: ListPromptEvaluationDimensionScoresResponse = {
+  items: [],
+  total: 0,
+};
+
 export const EMPTY_PROMPT_EVALUATION_EXPERIMENT_DIMENSION: PromptEvaluationExperimentDimension = {
   id: "",
   workspace_id: "",
@@ -1480,6 +1511,25 @@ export const EMPTY_PROMPT_EVALUATION_EXPERIMENT_DIMENSION: PromptEvaluationExper
   status: "启用",
   source: "payload",
   created_by: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE: PromptEvaluationDimensionScore = {
+  id: "",
+  workspace_id: "",
+  run_id: "",
+  asset_id: "",
+  prompt_id: null,
+  dimension_index: 0,
+  dimension_name: "",
+  score: 0,
+  passed_cases: 0,
+  total_cases: 0,
+  status: "待执行",
+  rule: "",
+  evidence: "",
+  source: "",
   created_at: "",
   updated_at: "",
 };

@@ -356,6 +356,27 @@ export interface PromptEvaluationExperimentDimension {
   updated_at: string;
 }
 
+export type PromptEvaluationDimensionScoreStatus = "待执行" | "已评分" | "无用例";
+
+export interface PromptEvaluationDimensionScore {
+  id: string;
+  workspace_id: string;
+  run_id: string;
+  asset_id: string;
+  prompt_id: string | null;
+  dimension_index: number;
+  dimension_name: string;
+  score: number;
+  passed_cases: number;
+  total_cases: number;
+  status: PromptEvaluationDimensionScoreStatus;
+  rule: string;
+  evidence: string;
+  source: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface PromptEvaluationAgentRunResponse {
   asset: PromptEvaluationAsset;
   run: PromptEvaluationRun;
@@ -453,6 +474,11 @@ export interface ListPromptEvaluationExperimentDimensionsResponse {
   total: number;
 }
 
+export interface ListPromptEvaluationDimensionScoresResponse {
+  items: PromptEvaluationDimensionScore[];
+  total: number;
+}
+
 export interface ListPromptEvaluationOptimizationCandidatesResponse {
   items: PromptEvaluationOptimizationCandidate[];
   total: number;
@@ -484,6 +510,13 @@ export interface ListPromptEvaluationCasesParams {
 export interface ListPromptEvaluationExperimentDimensionsParams {
   asset_id?: string;
   status?: PromptEvaluationAssetStatus;
+}
+
+export interface ListPromptEvaluationDimensionScoresParams {
+  run_id?: string;
+  asset_id?: string;
+  prompt_id?: string;
+  status?: PromptEvaluationDimensionScoreStatus;
 }
 
 export interface PromptEvaluationSummaryParams {

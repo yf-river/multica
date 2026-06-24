@@ -1329,7 +1329,7 @@ test.describe("训练与评估工作台", () => {
   });
 
   test("实验运行会绑定资产声明的明确数据集版本", async ({ page }) => {
-    test.setTimeout(90_000);
+    test.setTimeout(120_000);
     const prompt = await api.createPromptForE2E(artifactPrefix, {
       name: `${artifactPrefix} 实验版本绑定提示词`,
       content: "请分析 {{issue_title}}，输出目标和验收条件。",
@@ -1398,8 +1398,8 @@ test.describe("训练与评估工作台", () => {
       .not.toBe("");
     const run = (await api.listPromptEvaluationRuns({ asset_id: experiment.id, limit: 5 }))[0]!;
     expect(run.metrics).toMatchObject({ 提示词版本: 2 });
-    const dimensionScores = Array.isArray(run.metrics["实验维度评分"]) ? run.metrics["实验维度评分"] as Array<Record<string, unknown>> : [];
-    expect(dimensionScores).toEqual(expect.arrayContaining([
+    const metricDimensionScores = Array.isArray(run.metrics["实验维度评分"]) ? run.metrics["实验维度评分"] as Array<Record<string, unknown>> : [];
+    expect(metricDimensionScores).toEqual(expect.arrayContaining([
       expect.objectContaining({
         维度名称: "命中率",
         状态: "已评分",
@@ -1412,6 +1412,32 @@ test.describe("训练与评估工作台", () => {
       expect.objectContaining({
         维度名称: "中文一致性",
         状态: "已评分",
+      }),
+    ]));
+    const factDimensionScores = await api.listPromptEvaluationDimensionScores({ run_id: run.id });
+    expect(factDimensionScores.total).toBe(3);
+    expect(factDimensionScores.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        asset_id: experiment.id,
+        run_id: run.id,
+        dimension_name: "命中率",
+        status: "已评分",
+        source: "local_run",
+        rule: "逐用例检查期望内容全部命中",
+      }),
+      expect.objectContaining({
+        asset_id: experiment.id,
+        run_id: run.id,
+        dimension_name: "缺失变量",
+        status: "已评分",
+        source: "local_run",
+      }),
+      expect.objectContaining({
+        asset_id: experiment.id,
+        run_id: run.id,
+        dimension_name: "中文一致性",
+        status: "已评分",
+        source: "local_run",
       }),
     ]));
     const evidence = await api.getPromptEvaluationRunEvidence(run.id);
@@ -1429,7 +1455,23 @@ test.describe("训练与评估工作台", () => {
       }),
     ]));
 
+    const dimensionScoresResponsePromise = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        response.url().includes("/api/prompt-evaluation-dimension-scores") &&
+        response.status() === 200,
+    );
     await page.goto(`/${workspaceSlug}/training/experiments`, { waitUntil: "domcontentloaded" });
+    const dimensionScoresResponse = await dimensionScoresResponsePromise;
+    const dimensionScoresPayload = await dimensionScoresResponse.json() as { items?: Array<Record<string, unknown>>; total?: number };
+    expect(dimensionScoresPayload.items ?? []).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        asset_id: experiment.id,
+        run_id: run.id,
+        dimension_name: "命中率",
+        status: "已评分",
+      }),
+    ]));
     await page.getByRole("button", { name: "显示验收数据" }).first().click();
     await expect(page.getByTestId("experiment-comparison-panel")).toContainText("实验对比排行", { timeout: 15000 });
     const comparisonRow = page.getByTestId(`experiment-comparison-row-${experiment.id}`);

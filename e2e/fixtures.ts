@@ -70,6 +70,24 @@ interface PromptEvaluationRun {
   review_note?: string;
   reviewed_by?: string | null;
   reviewed_at?: string;
+  metrics: Record<string, unknown>;
+  evidence: Record<string, unknown>;
+}
+
+interface PromptEvaluationDimensionScore {
+  id: string;
+  run_id: string;
+  asset_id: string;
+  prompt_id: string | null;
+  dimension_index: number;
+  dimension_name: string;
+  score: number;
+  passed_cases: number;
+  total_cases: number;
+  status: "待执行" | "已评分" | "无用例";
+  rule: string;
+  evidence: string;
+  source: string;
 }
 
 interface PromptEvaluationAgentRunResponse {
@@ -1680,6 +1698,20 @@ export class TestApiClient {
     const res = await this.authedFetch(`/api/prompt-evaluation-experiment-dimensions${search.toString() ? `?${search}` : ""}`);
     if (!res.ok) {
       throw new Error(`list prompt evaluation experiment dimensions failed: ${res.status}`);
+    }
+    const data = await res.json();
+    return { items: data.items ?? [], total: data.total ?? 0 };
+  }
+
+  async listPromptEvaluationDimensionScores(params?: { run_id?: string; asset_id?: string; prompt_id?: string; status?: string }): Promise<{ items: PromptEvaluationDimensionScore[]; total: number }> {
+    const search = new URLSearchParams();
+    if (params?.run_id) search.set("run_id", params.run_id);
+    if (params?.asset_id) search.set("asset_id", params.asset_id);
+    if (params?.prompt_id) search.set("prompt_id", params.prompt_id);
+    if (params?.status) search.set("status", params.status);
+    const res = await this.authedFetch(`/api/prompt-evaluation-dimension-scores${search.toString() ? `?${search}` : ""}`);
+    if (!res.ok) {
+      throw new Error(`list prompt evaluation dimension scores failed: ${res.status}`);
     }
     const data = await res.json();
     return { items: data.items ?? [], total: data.total ?? 0 };
