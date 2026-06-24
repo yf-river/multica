@@ -6,10 +6,10 @@ import { BookOpenText, TerminalSquare } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
+import { runtimeListOptions } from "@multica/core/runtimes/queries";
 import { TRAINING_WORKBENCH_VIEW_BY_TAB, trainingWorkbenchPath } from "@multica/core/training";
 import type {
   Agent,
-  AgentRuntime,
   PromptEvaluationRuntimeReadiness,
   PromptLibraryItem,
 } from "@multica/core/types";
@@ -45,7 +45,6 @@ const agentPlaygroundKeys = {
   runs: (workspaceId: string) => ["agent-playground", workspaceId, "evaluation-runs"] as const,
   runtimeReadiness: (workspaceId: string) => ["agent-playground", workspaceId, "runtime-readiness"] as const,
   agents: (workspaceId: string) => ["agent-playground", workspaceId, "agents"] as const,
-  runtimes: (workspaceId: string) => ["agent-playground", workspaceId, "runtimes"] as const,
 };
 
 export function PromptPlaygroundContainer() {
@@ -176,11 +175,7 @@ export function AgentPlaygroundContainer() {
     queryFn: () => api.listAgents({ workspace_id: workspaceId ?? undefined }),
     enabled: !!workspaceId,
   });
-  const runtimeQuery = useQuery<AgentRuntime[]>({
-    queryKey: agentPlaygroundKeys.runtimes(workspaceId ?? ""),
-    queryFn: () => api.listRuntimes({ workspace_id: workspaceId ?? undefined }),
-    enabled: !!workspaceId,
-  });
+  const runtimeQuery = useQuery({ ...runtimeListOptions(workspaceId ?? ""), enabled: !!workspaceId });
 
   const items = listQuery.data?.items ?? [];
   const cases = caseQuery.data?.items ?? [];
