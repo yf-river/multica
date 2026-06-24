@@ -1440,6 +1440,21 @@ test.describe("训练与评估工作台", () => {
         source: "local_run",
       }),
     ]));
+    const factDimensionScoreSummaries = await api.listPromptEvaluationDimensionScoreSummaries({ asset_id: experiment.id });
+    expect(factDimensionScoreSummaries.total).toBe(3);
+    expect(factDimensionScoreSummaries.items).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        asset_id: experiment.id,
+        dimension_name: "命中率",
+        run_count: 1,
+        scored_run_count: 1,
+        passed_cases: 1,
+        total_cases: 1,
+        score: 1,
+        latest_status: "已评分",
+        latest_source: "local_run",
+      }),
+    ]));
     const evidence = await api.getPromptEvaluationRunEvidence(run.id);
     expect(evidence.evidence).toMatchObject({ 提示词版本: 2 });
     expect(evidence.evidence["实验维度评分"]).toEqual(expect.arrayContaining([
@@ -1455,21 +1470,21 @@ test.describe("训练与评估工作台", () => {
       }),
     ]));
 
-    const dimensionScoresResponsePromise = page.waitForResponse(
+    const dimensionScoreSummariesResponsePromise = page.waitForResponse(
       (response) =>
         response.request().method() === "GET" &&
-        response.url().includes("/api/prompt-evaluation-dimension-scores") &&
+        response.url().includes("/api/prompt-evaluation-dimension-score-summaries") &&
         response.status() === 200,
     );
     await page.goto(`/${workspaceSlug}/training/experiments`, { waitUntil: "domcontentloaded" });
-    const dimensionScoresResponse = await dimensionScoresResponsePromise;
-    const dimensionScoresPayload = await dimensionScoresResponse.json() as { items?: Array<Record<string, unknown>>; total?: number };
-    expect(dimensionScoresPayload.items ?? []).toEqual(expect.arrayContaining([
+    const dimensionScoreSummariesResponse = await dimensionScoreSummariesResponsePromise;
+    const dimensionScoreSummariesPayload = await dimensionScoreSummariesResponse.json() as { items?: Array<Record<string, unknown>>; total?: number };
+    expect(dimensionScoreSummariesPayload.items ?? []).toEqual(expect.arrayContaining([
       expect.objectContaining({
         asset_id: experiment.id,
-        run_id: run.id,
         dimension_name: "命中率",
-        status: "已评分",
+        latest_status: "已评分",
+        run_count: 1,
       }),
     ]));
     await page.getByRole("button", { name: "显示验收数据" }).first().click();

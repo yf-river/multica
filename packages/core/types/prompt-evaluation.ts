@@ -377,6 +377,24 @@ export interface PromptEvaluationDimensionScore {
   updated_at: string;
 }
 
+export interface PromptEvaluationDimensionScoreSummary {
+  workspace_id: string;
+  asset_id: string;
+  prompt_id: string | null;
+  dimension_index: number;
+  dimension_name: string;
+  run_count: number;
+  scored_run_count: number;
+  passed_cases: number;
+  total_cases: number;
+  score: number;
+  latest_status: PromptEvaluationDimensionScoreStatus;
+  latest_rule: string;
+  latest_evidence: string;
+  latest_source: string;
+  latest_scored_at: string;
+}
+
 export interface PromptEvaluationAgentRunResponse {
   asset: PromptEvaluationAsset;
   run: PromptEvaluationRun;
@@ -479,6 +497,11 @@ export interface ListPromptEvaluationDimensionScoresResponse {
   total: number;
 }
 
+export interface ListPromptEvaluationDimensionScoreSummariesResponse {
+  items: PromptEvaluationDimensionScoreSummary[];
+  total: number;
+}
+
 export interface ListPromptEvaluationOptimizationCandidatesResponse {
   items: PromptEvaluationOptimizationCandidate[];
   total: number;
@@ -514,6 +537,12 @@ export interface ListPromptEvaluationExperimentDimensionsParams {
 
 export interface ListPromptEvaluationDimensionScoresParams {
   run_id?: string;
+  asset_id?: string;
+  prompt_id?: string;
+  status?: PromptEvaluationDimensionScoreStatus;
+}
+
+export interface ListPromptEvaluationDimensionScoreSummariesParams {
   asset_id?: string;
   prompt_id?: string;
   status?: PromptEvaluationDimensionScoreStatus;

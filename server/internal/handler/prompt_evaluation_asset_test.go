@@ -497,6 +497,27 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 	if scoresResp.Total != 2 || scoresResp.Items[0].RunID != runID || scoresResp.Items[0].Source != "local_run" {
 		t.Fatalf("dimension scores response = %+v", scoresResp)
 	}
+	summaryScoresW := httptest.NewRecorder()
+	testHandler.ListPromptEvaluationDimensionScoreSummaries(summaryScoresW, newRequest(http.MethodGet, "/api/prompt-evaluation-dimension-score-summaries?asset_id="+created.ID, nil))
+	if summaryScoresW.Code != http.StatusOK {
+		t.Fatalf("list dimension score summaries status = %d, body = %s", summaryScoresW.Code, summaryScoresW.Body.String())
+	}
+	var summaryScoresResp struct {
+		Items []PromptEvaluationDimensionScoreSummaryResponse `json:"items"`
+		Total int                                             `json:"total"`
+	}
+	if err := json.Unmarshal(summaryScoresW.Body.Bytes(), &summaryScoresResp); err != nil {
+		t.Fatalf("decode dimension score summaries response: %v", err)
+	}
+	if summaryScoresResp.Total != 2 {
+		t.Fatalf("dimension score summaries total = %d, items = %+v", summaryScoresResp.Total, summaryScoresResp.Items)
+	}
+	if summaryScoresResp.Items[0].RunCount != 1 || summaryScoresResp.Items[0].ScoredRunCount != 1 || summaryScoresResp.Items[0].PassedCases != 1 || summaryScoresResp.Items[0].TotalCases != 1 || summaryScoresResp.Items[0].Score != 1 {
+		t.Fatalf("dimension score summary aggregate = %+v", summaryScoresResp.Items[0])
+	}
+	if summaryScoresResp.Items[0].LatestStatus != "已评分" || summaryScoresResp.Items[0].LatestSource != "local_run" || summaryScoresResp.Items[0].LatestRule == "" || summaryScoresResp.Items[0].LatestEvidence == "" {
+		t.Fatalf("dimension score summary latest fields = %+v", summaryScoresResp.Items[0])
+	}
 
 	snapshotW := httptest.NewRecorder()
 	testHandler.CreatePromptEvaluationEvidenceSnapshot(snapshotW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+runID+"/evidence-snapshots?snapshot_type=验收归档", nil), "id", runID))

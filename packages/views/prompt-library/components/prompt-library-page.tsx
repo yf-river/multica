@@ -21,7 +21,7 @@ import type {
   CreatePromptEvaluationCaseRequest,
   UpdatePromptEvaluationCaseRequest,
   PromptEvaluationAsset,
-  PromptEvaluationDimensionScore,
+  PromptEvaluationDimensionScoreSummary,
   PromptEvaluationEvidenceSnapshot,
   PromptEvaluationExperimentDimension,
   PromptEvaluationOptimizationCandidate,
@@ -75,7 +75,7 @@ const promptLibraryKeys = {
   datasetVersions: (workspaceId: string, assetId: string) => ["prompt-library", workspaceId, "evaluation-dataset-versions", assetId] as const,
   cases: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-cases"] as const,
   experimentDimensions: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-experiment-dimensions"] as const,
-  dimensionScores: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-dimension-scores"] as const,
+  dimensionScoreSummaries: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-dimension-score-summaries"] as const,
   runs: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-runs"] as const,
   runEvidence: (workspaceId: string, runId: string | null) => ["prompt-library", workspaceId, "run-evidence", runId ?? ""] as const,
   runEvidenceSnapshots: (workspaceId: string, runId: string | null) => ["prompt-library", workspaceId, "run-evidence-snapshots", runId ?? ""] as const,
@@ -263,7 +263,7 @@ export function PromptLibraryPage({
     activeTab === "实验" ||
     activeTab === "运行历史";
   const needsExperimentDimensions = activeTab === "实验";
-  const needsDimensionScores = activeTab === "实验";
+  const needsDimensionScoreSummaries = activeTab === "实验";
   const needsRuns =
     isDashboardTab ||
     activeTab === "实验" ||
@@ -293,10 +293,10 @@ export function PromptLibraryPage({
     queryFn: () => api.listPromptEvaluationExperimentDimensions(),
     enabled: !!workspaceId && needsExperimentDimensions,
   });
-  const dimensionScoreQuery = useQuery({
-    queryKey: promptLibraryKeys.dimensionScores(workspaceId ?? ""),
-    queryFn: () => api.listPromptEvaluationDimensionScores(),
-    enabled: !!workspaceId && needsDimensionScores,
+  const dimensionScoreSummaryQuery = useQuery({
+    queryKey: promptLibraryKeys.dimensionScoreSummaries(workspaceId ?? ""),
+    queryFn: () => api.listPromptEvaluationDimensionScoreSummaries(),
+    enabled: !!workspaceId && needsDimensionScoreSummaries,
   });
   const runQuery = useQuery({
     queryKey: [...promptLibraryKeys.runs(workspaceId ?? ""), demoSince ?? "all", effectiveRunStatusFilter] as const,
@@ -336,7 +336,7 @@ export function PromptLibraryPage({
   const assets = assetQuery.data?.items ?? [];
   const cases = caseQuery.data?.items ?? [];
   const experimentDimensions = experimentDimensionQuery.data?.items ?? [];
-  const dimensionScores = dimensionScoreQuery.data?.items ?? [];
+  const dimensionScoreSummaries = dimensionScoreSummaryQuery.data?.items ?? [];
   const runs = runQuery.data?.items ?? [];
   const candidates = candidateQuery.data?.items ?? [];
   const summary = summaryQuery.data ?? null;
@@ -461,7 +461,7 @@ export function PromptLibraryPage({
   const invalidateAssets = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId ?? "") });
   const invalidateCases = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId ?? "") });
   const invalidateExperimentDimensions = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.experimentDimensions(workspaceId ?? "") });
-  const invalidateDimensionScores = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.dimensionScores(workspaceId ?? "") });
+  const invalidateDimensionScoreSummaries = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.dimensionScoreSummaries(workspaceId ?? "") });
   const invalidateRuns = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId ?? "") });
   const invalidateCandidates = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.candidates(workspaceId ?? "") });
   const invalidateSummary = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId ?? "") });
@@ -526,7 +526,7 @@ export function PromptLibraryPage({
       invalidateAssets();
       invalidateCases();
       invalidateExperimentDimensions();
-      invalidateDimensionScores();
+      invalidateDimensionScoreSummaries();
       invalidateRuns();
       invalidateSummary();
       toast.success("资产已更新");
@@ -539,7 +539,7 @@ export function PromptLibraryPage({
       invalidateAssets();
       invalidateCases();
       invalidateExperimentDimensions();
-      invalidateDimensionScores();
+      invalidateDimensionScoreSummaries();
       invalidateRuns();
       invalidateSummary();
       toast.success("资产已删除");
@@ -615,7 +615,7 @@ export function PromptLibraryPage({
     mutationFn: (runId: string) => api.syncPromptEvaluationRun(runId),
     onSuccess: (_run, runId) => {
       invalidateRuns();
-      invalidateDimensionScores();
+      invalidateDimensionScoreSummaries();
       invalidateCandidates();
       queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", runId) });
       invalidateRunEvidenceSnapshots(runId);
@@ -628,7 +628,7 @@ export function PromptLibraryPage({
     mutationFn: (runId: string) => api.cancelPromptEvaluationRun(runId),
     onSuccess: (run) => {
       invalidateRuns();
-      invalidateDimensionScores();
+      invalidateDimensionScoreSummaries();
       invalidateCandidates();
       queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", run.id) });
       invalidateRunEvidenceSnapshots(run.id);
@@ -642,7 +642,7 @@ export function PromptLibraryPage({
       api.reviewPromptEvaluationRun(runId, { decision, note }),
     onSuccess: (run) => {
       invalidateRuns();
-      invalidateDimensionScores();
+      invalidateDimensionScoreSummaries();
       invalidateCandidates();
       queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", run.id) });
       invalidateRunEvidenceSnapshots(run.id);
@@ -675,7 +675,7 @@ export function PromptLibraryPage({
       invalidateAssets();
       invalidateCases();
       invalidateRuns();
-      invalidateDimensionScores();
+      invalidateDimensionScoreSummaries();
       invalidateSummary();
       toast.success(`真实智能体优化任务已入队：${result.task_id}`);
       setActiveTab("运行历史");
@@ -689,7 +689,7 @@ export function PromptLibraryPage({
       invalidateAssets();
       invalidateCases();
       invalidateRuns();
-      invalidateDimensionScores();
+      invalidateDimensionScoreSummaries();
       invalidateSummary();
       queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", result.run.id) });
       toast.success(`优化运行重试已入队：${result.task_id}`);
@@ -1217,7 +1217,7 @@ export function PromptLibraryPage({
                 assets={assets}
                 cases={cases}
                 experimentDimensions={experimentDimensions}
-                dimensionScores={dimensionScores}
+                dimensionScoreSummaries={dimensionScoreSummaries}
                 experimentVersionsByPromptId={experimentVersionsByPromptId}
                 runs={runs}
                 focusedRunId={focusedRunId}
@@ -1225,7 +1225,7 @@ export function PromptLibraryPage({
                 runStatusFilter={runStatusFilter}
                 onRunStatusFilterChange={setRunStatusFilter}
                 candidates={candidates}
-                loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || dimensionScoreQuery.isLoading || experimentVersionsLoading || runQuery.isLoading || candidateQuery.isLoading}
+                loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || dimensionScoreSummaryQuery.isLoading || experimentVersionsLoading || runQuery.isLoading || candidateQuery.isLoading}
                 saving={savingAsset}
                 showAcceptanceFixtures={showAcceptanceFixtures}
                 onShowAcceptanceFixtures={() => updateAcceptanceFixtureScope(true)}
@@ -1278,7 +1278,7 @@ export function PromptLibraryPage({
               assets={assets}
               cases={cases}
               experimentDimensions={experimentDimensions}
-              dimensionScores={dimensionScores}
+              dimensionScoreSummaries={dimensionScoreSummaries}
               experimentVersionsByPromptId={experimentVersionsByPromptId}
               runs={runs}
               focusedRunId={focusedRunId}
@@ -1286,7 +1286,7 @@ export function PromptLibraryPage({
               runStatusFilter={runStatusFilter}
               onRunStatusFilterChange={setRunStatusFilter}
               candidates={candidates}
-              loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || dimensionScoreQuery.isLoading || experimentVersionsLoading || runQuery.isLoading || candidateQuery.isLoading}
+              loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || dimensionScoreSummaryQuery.isLoading || experimentVersionsLoading || runQuery.isLoading || candidateQuery.isLoading}
               saving={savingAsset}
               showAcceptanceFixtures={showAcceptanceFixtures}
               onShowAcceptanceFixtures={() => updateAcceptanceFixtureScope(true)}
@@ -1716,7 +1716,7 @@ function WorkbenchPanel({
   assets,
   cases,
   experimentDimensions,
-  dimensionScores,
+  dimensionScoreSummaries,
   experimentVersionsByPromptId,
   runs,
   focusedRunId,
@@ -1770,7 +1770,7 @@ function WorkbenchPanel({
   assets: PromptEvaluationAsset[];
   cases: PromptEvaluationStructuredCase[];
   experimentDimensions: PromptEvaluationExperimentDimension[];
-  dimensionScores: PromptEvaluationDimensionScore[];
+  dimensionScoreSummaries: PromptEvaluationDimensionScoreSummary[];
   experimentVersionsByPromptId: Map<string, PromptLibraryVersion[]>;
   runs: PromptEvaluationRun[];
   focusedRunId: string | null;
@@ -1939,7 +1939,7 @@ function WorkbenchPanel({
             <ExperimentComparisonPanel
               experiments={visibleAssets}
               dimensions={experimentDimensions}
-              dimensionScores={dimensionScores}
+              dimensionScoreSummaries={dimensionScoreSummaries}
               versionsByPromptId={experimentVersionsByPromptId}
               runs={runs}
             />
@@ -2028,21 +2028,21 @@ type ExperimentPromptVersionRow = {
 function ExperimentComparisonPanel({
   experiments,
   dimensions,
-  dimensionScores,
+  dimensionScoreSummaries,
   versionsByPromptId,
   runs,
 }: {
   experiments: PromptEvaluationAsset[];
   dimensions: PromptEvaluationExperimentDimension[];
-  dimensionScores: PromptEvaluationDimensionScore[];
+  dimensionScoreSummaries: PromptEvaluationDimensionScoreSummary[];
   versionsByPromptId: Map<string, PromptLibraryVersion[]>;
   runs: PromptEvaluationRun[];
 }) {
   const dimensionsByAsset = useMemo(() => buildExperimentDimensionsByAsset(dimensions), [dimensions]);
-  const dimensionScoresByAsset = useMemo(() => buildDimensionScoresByAsset(dimensionScores), [dimensionScores]);
+  const dimensionScoreSummariesByAsset = useMemo(() => buildDimensionScoreSummariesByAsset(dimensionScoreSummaries), [dimensionScoreSummaries]);
   const rows = useMemo(
-    () => buildExperimentComparisonRows(experiments, dimensionsByAsset, dimensionScoresByAsset, versionsByPromptId, runs),
-    [experiments, dimensionsByAsset, dimensionScoresByAsset, versionsByPromptId, runs],
+    () => buildExperimentComparisonRows(experiments, dimensionsByAsset, dimensionScoreSummariesByAsset, versionsByPromptId, runs),
+    [experiments, dimensionsByAsset, dimensionScoreSummariesByAsset, versionsByPromptId, runs],
   );
   const totalRuns = rows.reduce((sum, row) => sum + row.runs.length, 0);
   const totalCost = rows.reduce((sum, row) => sum + row.estimatedCost, 0);
@@ -4953,17 +4953,15 @@ function buildExperimentDimensionsByAsset(dimensions: PromptEvaluationExperiment
   return result;
 }
 
-function buildDimensionScoresByAsset(scores: PromptEvaluationDimensionScore[]): Map<string, PromptEvaluationDimensionScore[]> {
-  const result = new Map<string, PromptEvaluationDimensionScore[]>();
-  for (const item of scores) {
+function buildDimensionScoreSummariesByAsset(summaries: PromptEvaluationDimensionScoreSummary[]): Map<string, PromptEvaluationDimensionScoreSummary[]> {
+  const result = new Map<string, PromptEvaluationDimensionScoreSummary[]>();
+  for (const item of summaries) {
     const bucket = result.get(item.asset_id) ?? [];
     bucket.push(item);
     result.set(item.asset_id, bucket);
   }
   for (const bucket of result.values()) {
     bucket.sort((a, b) => {
-      const createdDelta = Date.parse(b.created_at || "") - Date.parse(a.created_at || "");
-      if (createdDelta !== 0) return createdDelta;
       return a.dimension_index - b.dimension_index || a.dimension_name.localeCompare(b.dimension_name, "zh-CN");
     });
   }
@@ -4973,7 +4971,7 @@ function buildDimensionScoresByAsset(scores: PromptEvaluationDimensionScore[]): 
 function buildExperimentComparisonRows(
   experiments: PromptEvaluationAsset[],
   dimensionsByAsset: Map<string, PromptEvaluationExperimentDimension[]>,
-  dimensionScoresByAsset: Map<string, PromptEvaluationDimensionScore[]>,
+  dimensionScoreSummariesByAsset: Map<string, PromptEvaluationDimensionScoreSummary[]>,
   versionsByPromptId: Map<string, PromptLibraryVersion[]>,
   runs: PromptEvaluationRun[],
 ): ExperimentComparisonRow[] {
@@ -4982,10 +4980,10 @@ function buildExperimentComparisonRows(
     .map((asset) => {
       const assetRuns = [...(runsByAsset.get(asset.id) ?? [])].sort(comparePromptEvaluationRunByRecent);
       const assetDimensions = dimensionsByAsset.get(asset.id) ?? [];
-      const assetDimensionScores = dimensionScoresByAsset.get(asset.id) ?? [];
+      const assetDimensionScoreSummaries = dimensionScoreSummariesByAsset.get(asset.id) ?? [];
       const promptVersions = asset.prompt_id ? [...(versionsByPromptId.get(asset.prompt_id) ?? [])].sort((a, b) => b.version - a.version) : [];
       const versionRows = buildExperimentPromptVersionRows(promptVersions, assetRuns);
-      const dimensionScoreRows = buildExperimentDimensionScoreRows(assetDimensions, assetDimensionScores);
+      const dimensionScoreRows = buildExperimentDimensionScoreRows(assetDimensions, assetDimensionScoreSummaries);
       const totalCases = assetRuns.reduce((sum, run) => sum + run.total_cases, 0);
       const passedCases = assetRuns.reduce((sum, run) => sum + run.passed_cases, 0);
       const failedCases = assetRuns.reduce((sum, run) => sum + run.failed_cases, 0);
@@ -5086,14 +5084,14 @@ function dominantExperimentFailureReason(runs: PromptEvaluationRun[]): string {
 
 function buildExperimentDimensionScoreRows(
   dimensions: PromptEvaluationExperimentDimension[],
-  scores: PromptEvaluationDimensionScore[],
+  summaries: PromptEvaluationDimensionScoreSummary[],
 ): ExperimentDimensionScoreRow[] {
   const dimensionKeys = new Map<string, { index: number; name: string }>();
   dimensions.forEach((dimension) => {
     const name = dimension.dimension_name || `维度 ${dimension.dimension_index + 1}`;
     dimensionKeys.set(experimentDimensionScoreKey(dimension.dimension_index, name), { index: dimension.dimension_index, name });
   });
-  const rawScores = scores.map((score) => dimensionScoreFactToRow(score));
+  const rawScores = summaries.map((summary) => dimensionScoreSummaryToRow(summary));
   rawScores.forEach((score) => {
     dimensionKeys.set(experimentDimensionScoreKey(score.dimensionIndex, score.dimensionName), {
       index: score.dimensionIndex,
@@ -5106,6 +5104,8 @@ function buildExperimentDimensionScoreRows(
       const scored = scores.filter((score) => score.status === "已评分" && score.totalCases > 0);
       const passedCases = scored.reduce((sum, score) => sum + score.passedCases, 0);
       const totalCases = scored.reduce((sum, score) => sum + score.totalCases, 0);
+      const runCount = scores.reduce((sum, score) => sum + score.runCount, 0);
+      const scoredRunCount = scores.reduce((sum, score) => sum + score.scoredRunCount, 0);
       const latest = scores[0] ?? null;
       return {
         dimensionIndex: dimension.index,
@@ -5113,9 +5113,9 @@ function buildExperimentDimensionScoreRows(
         score: totalCases > 0 ? passedCases / totalCases : 0,
         passedCases,
         totalCases,
-        runCount: scores.length,
-        scoredRunCount: scored.length,
-        status: scored.length > 0 ? "已评分" : latest?.status ?? "待评分",
+        runCount,
+        scoredRunCount,
+        status: scoredRunCount > 0 ? "已评分" : latest?.status ?? "待评分",
         rule: latest?.rule ?? "等待运行生成评分规则",
         evidence: latest?.evidence ?? "暂无运行评分证据",
       };
@@ -5123,18 +5123,18 @@ function buildExperimentDimensionScoreRows(
     .sort((a, b) => a.dimensionIndex - b.dimensionIndex || a.dimensionName.localeCompare(b.dimensionName, "zh-CN"));
 }
 
-function dimensionScoreFactToRow(score: PromptEvaluationDimensionScore): ExperimentDimensionScoreRow {
+function dimensionScoreSummaryToRow(summary: PromptEvaluationDimensionScoreSummary): ExperimentDimensionScoreRow {
   return {
-    dimensionIndex: score.dimension_index,
-    dimensionName: score.dimension_name || `维度 ${score.dimension_index + 1}`,
-    score: score.score,
-    passedCases: score.passed_cases,
-    totalCases: score.total_cases,
-    runCount: 1,
-    scoredRunCount: score.status === "已评分" ? 1 : 0,
-    status: score.status,
-    rule: score.rule || "未记录评分规则",
-    evidence: score.evidence || "暂无运行评分证据",
+    dimensionIndex: summary.dimension_index,
+    dimensionName: summary.dimension_name || `维度 ${summary.dimension_index + 1}`,
+    score: summary.score,
+    passedCases: summary.passed_cases,
+    totalCases: summary.total_cases,
+    runCount: summary.run_count,
+    scoredRunCount: summary.scored_run_count,
+    status: summary.scored_run_count > 0 ? "已评分" : summary.latest_status,
+    rule: summary.latest_rule || "未记录评分规则",
+    evidence: summary.latest_evidence || "暂无运行评分证据",
   };
 }
 

@@ -26,6 +26,134 @@ func (q *Queries) DeletePromptEvaluationDimensionScoresByRun(ctx context.Context
 	return err
 }
 
+const listPromptEvaluationDimensionScoreSummaries = `-- name: ListPromptEvaluationDimensionScoreSummaries :many
+WITH filtered_scores AS (
+    SELECT id, workspace_id, run_id, asset_id, prompt_id, dimension_index, dimension_name, score, passed_cases, total_cases, status, rule, evidence, source, created_at, updated_at
+    FROM prompt_evaluation_dimension_score
+    WHERE workspace_id = $1
+      AND ($2::uuid IS NULL OR asset_id = $2)
+      AND ($3::uuid IS NULL OR prompt_id = $3)
+      AND ($4::text IS NULL OR status = $4)
+),
+latest_scores AS (
+    SELECT DISTINCT ON (asset_id, dimension_index, dimension_name)
+        asset_id,
+        dimension_index,
+        dimension_name,
+        status AS latest_status,
+        rule AS latest_rule,
+        evidence AS latest_evidence,
+        source AS latest_source,
+        updated_at AS latest_scored_at
+    FROM filtered_scores
+    ORDER BY asset_id, dimension_index, dimension_name, updated_at DESC, created_at DESC
+)
+SELECT
+    f.workspace_id,
+    f.asset_id,
+    f.prompt_id,
+    f.dimension_index,
+    f.dimension_name,
+    COUNT(*)::bigint AS run_count,
+    COUNT(*) FILTER (WHERE f.status = '已评分')::bigint AS scored_run_count,
+    COALESCE(SUM(f.passed_cases) FILTER (WHERE f.status = '已评分'), 0)::bigint AS passed_cases,
+    COALESCE(SUM(f.total_cases) FILTER (WHERE f.status = '已评分'), 0)::bigint AS total_cases,
+    CASE
+        WHEN COALESCE(SUM(f.total_cases) FILTER (WHERE f.status = '已评分'), 0) > 0
+            THEN COALESCE(SUM(f.passed_cases) FILTER (WHERE f.status = '已评分'), 0)::double precision
+                / COALESCE(SUM(f.total_cases) FILTER (WHERE f.status = '已评分'), 0)::double precision
+        ELSE 0::double precision
+    END AS score,
+    l.latest_status,
+    l.latest_rule,
+    l.latest_evidence,
+    l.latest_source,
+    l.latest_scored_at
+FROM filtered_scores f
+JOIN latest_scores l
+  ON l.asset_id = f.asset_id
+ AND l.dimension_index = f.dimension_index
+ AND l.dimension_name = f.dimension_name
+GROUP BY
+    f.workspace_id,
+    f.asset_id,
+    f.prompt_id,
+    f.dimension_index,
+    f.dimension_name,
+    l.latest_status,
+    l.latest_rule,
+    l.latest_evidence,
+    l.latest_source,
+    l.latest_scored_at
+ORDER BY f.asset_id, f.dimension_index ASC, f.dimension_name ASC
+`
+
+type ListPromptEvaluationDimensionScoreSummariesParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AssetID     pgtype.UUID `json:"asset_id"`
+	PromptID    pgtype.UUID `json:"prompt_id"`
+	Status      pgtype.Text `json:"status"`
+}
+
+type ListPromptEvaluationDimensionScoreSummariesRow struct {
+	WorkspaceID    pgtype.UUID        `json:"workspace_id"`
+	AssetID        pgtype.UUID        `json:"asset_id"`
+	PromptID       pgtype.UUID        `json:"prompt_id"`
+	DimensionIndex int32              `json:"dimension_index"`
+	DimensionName  string             `json:"dimension_name"`
+	RunCount       int64              `json:"run_count"`
+	ScoredRunCount int64              `json:"scored_run_count"`
+	PassedCases    int64              `json:"passed_cases"`
+	TotalCases     int64              `json:"total_cases"`
+	Score          float64            `json:"score"`
+	LatestStatus   string             `json:"latest_status"`
+	LatestRule     string             `json:"latest_rule"`
+	LatestEvidence string             `json:"latest_evidence"`
+	LatestSource   string             `json:"latest_source"`
+	LatestScoredAt pgtype.Timestamptz `json:"latest_scored_at"`
+}
+
+func (q *Queries) ListPromptEvaluationDimensionScoreSummaries(ctx context.Context, arg ListPromptEvaluationDimensionScoreSummariesParams) ([]ListPromptEvaluationDimensionScoreSummariesRow, error) {
+	rows, err := q.db.Query(ctx, listPromptEvaluationDimensionScoreSummaries,
+		arg.WorkspaceID,
+		arg.AssetID,
+		arg.PromptID,
+		arg.Status,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPromptEvaluationDimensionScoreSummariesRow{}
+	for rows.Next() {
+		var i ListPromptEvaluationDimensionScoreSummariesRow
+		if err := rows.Scan(
+			&i.WorkspaceID,
+			&i.AssetID,
+			&i.PromptID,
+			&i.DimensionIndex,
+			&i.DimensionName,
+			&i.RunCount,
+			&i.ScoredRunCount,
+			&i.PassedCases,
+			&i.TotalCases,
+			&i.Score,
+			&i.LatestStatus,
+			&i.LatestRule,
+			&i.LatestEvidence,
+			&i.LatestSource,
+			&i.LatestScoredAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPromptEvaluationDimensionScores = `-- name: ListPromptEvaluationDimensionScores :many
 SELECT id, workspace_id, run_id, asset_id, prompt_id, dimension_index, dimension_name, score, passed_cases, total_cases, status, rule, evidence, source, created_at, updated_at FROM prompt_evaluation_dimension_score
 WHERE workspace_id = $1

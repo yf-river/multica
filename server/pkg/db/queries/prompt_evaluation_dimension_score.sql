@@ -52,3 +52,64 @@ WHERE workspace_id = $1
   AND (sqlc.narg('prompt_id')::uuid IS NULL OR prompt_id = sqlc.narg('prompt_id'))
   AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status'))
 ORDER BY created_at DESC, dimension_index ASC;
+
+-- name: ListPromptEvaluationDimensionScoreSummaries :many
+WITH filtered_scores AS (
+    SELECT *
+    FROM prompt_evaluation_dimension_score
+    WHERE workspace_id = $1
+      AND (sqlc.narg('asset_id')::uuid IS NULL OR asset_id = sqlc.narg('asset_id'))
+      AND (sqlc.narg('prompt_id')::uuid IS NULL OR prompt_id = sqlc.narg('prompt_id'))
+      AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status'))
+),
+latest_scores AS (
+    SELECT DISTINCT ON (asset_id, dimension_index, dimension_name)
+        asset_id,
+        dimension_index,
+        dimension_name,
+        status AS latest_status,
+        rule AS latest_rule,
+        evidence AS latest_evidence,
+        source AS latest_source,
+        updated_at AS latest_scored_at
+    FROM filtered_scores
+    ORDER BY asset_id, dimension_index, dimension_name, updated_at DESC, created_at DESC
+)
+SELECT
+    f.workspace_id,
+    f.asset_id,
+    f.prompt_id,
+    f.dimension_index,
+    f.dimension_name,
+    COUNT(*)::bigint AS run_count,
+    COUNT(*) FILTER (WHERE f.status = '已评分')::bigint AS scored_run_count,
+    COALESCE(SUM(f.passed_cases) FILTER (WHERE f.status = '已评分'), 0)::bigint AS passed_cases,
+    COALESCE(SUM(f.total_cases) FILTER (WHERE f.status = '已评分'), 0)::bigint AS total_cases,
+    CASE
+        WHEN COALESCE(SUM(f.total_cases) FILTER (WHERE f.status = '已评分'), 0) > 0
+            THEN COALESCE(SUM(f.passed_cases) FILTER (WHERE f.status = '已评分'), 0)::double precision
+                / COALESCE(SUM(f.total_cases) FILTER (WHERE f.status = '已评分'), 0)::double precision
+        ELSE 0::double precision
+    END AS score,
+    l.latest_status,
+    l.latest_rule,
+    l.latest_evidence,
+    l.latest_source,
+    l.latest_scored_at
+FROM filtered_scores f
+JOIN latest_scores l
+  ON l.asset_id = f.asset_id
+ AND l.dimension_index = f.dimension_index
+ AND l.dimension_name = f.dimension_name
+GROUP BY
+    f.workspace_id,
+    f.asset_id,
+    f.prompt_id,
+    f.dimension_index,
+    f.dimension_name,
+    l.latest_status,
+    l.latest_rule,
+    l.latest_evidence,
+    l.latest_source,
+    l.latest_scored_at
+ORDER BY f.asset_id, f.dimension_index ASC, f.dimension_name ASC;

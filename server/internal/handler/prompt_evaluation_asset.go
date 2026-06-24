@@ -552,6 +552,24 @@ type PromptEvaluationDimensionScoreResponse struct {
 	UpdatedAt      string  `json:"updated_at"`
 }
 
+type PromptEvaluationDimensionScoreSummaryResponse struct {
+	WorkspaceID    string  `json:"workspace_id"`
+	AssetID        string  `json:"asset_id"`
+	PromptID       *string `json:"prompt_id"`
+	DimensionIndex int32   `json:"dimension_index"`
+	DimensionName  string  `json:"dimension_name"`
+	RunCount       int64   `json:"run_count"`
+	ScoredRunCount int64   `json:"scored_run_count"`
+	PassedCases    int64   `json:"passed_cases"`
+	TotalCases     int64   `json:"total_cases"`
+	Score          float64 `json:"score"`
+	LatestStatus   string  `json:"latest_status"`
+	LatestRule     string  `json:"latest_rule"`
+	LatestEvidence string  `json:"latest_evidence"`
+	LatestSource   string  `json:"latest_source"`
+	LatestScoredAt string  `json:"latest_scored_at"`
+}
+
 type PromptEvaluationOptimizationCandidateResponse struct {
 	ID                   string  `json:"id"`
 	WorkspaceID          string  `json:"workspace_id"`
@@ -836,6 +854,26 @@ func promptEvaluationDimensionScoreToResponse(item db.PromptEvaluationDimensionS
 		Source:         item.Source,
 		CreatedAt:      timestampToString(item.CreatedAt),
 		UpdatedAt:      timestampToString(item.UpdatedAt),
+	}
+}
+
+func promptEvaluationDimensionScoreSummaryToResponse(item db.ListPromptEvaluationDimensionScoreSummariesRow) PromptEvaluationDimensionScoreSummaryResponse {
+	return PromptEvaluationDimensionScoreSummaryResponse{
+		WorkspaceID:    uuidToString(item.WorkspaceID),
+		AssetID:        uuidToString(item.AssetID),
+		PromptID:       uuidToPtr(item.PromptID),
+		DimensionIndex: item.DimensionIndex,
+		DimensionName:  item.DimensionName,
+		RunCount:       item.RunCount,
+		ScoredRunCount: item.ScoredRunCount,
+		PassedCases:    item.PassedCases,
+		TotalCases:     item.TotalCases,
+		Score:          item.Score,
+		LatestStatus:   item.LatestStatus,
+		LatestRule:     item.LatestRule,
+		LatestEvidence: item.LatestEvidence,
+		LatestSource:   item.LatestSource,
+		LatestScoredAt: timestampToString(item.LatestScoredAt),
 	}
 }
 
@@ -1579,6 +1617,53 @@ func (h *Handler) ListPromptEvaluationDimensionScores(w http.ResponseWriter, r *
 	resp := make([]PromptEvaluationDimensionScoreResponse, len(items))
 	for i, item := range items {
 		resp[i] = promptEvaluationDimensionScoreToResponse(item)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
+}
+
+func (h *Handler) ListPromptEvaluationDimensionScoreSummaries(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	var assetID pgtype.UUID
+	if value := r.URL.Query().Get("asset_id"); value != "" {
+		parsed, ok := parseUUIDOrBadRequest(w, value, "asset_id")
+		if !ok {
+			return
+		}
+		assetID = parsed
+	}
+	var promptID pgtype.UUID
+	if value := r.URL.Query().Get("prompt_id"); value != "" {
+		parsed, ok := parseUUIDOrBadRequest(w, value, "prompt_id")
+		if !ok {
+			return
+		}
+		promptID = parsed
+	}
+	var status pgtype.Text
+	if value := r.URL.Query().Get("status"); value != "" {
+		if !validPromptEvaluationDimensionScoreStatus(value) {
+			writeError(w, http.StatusBadRequest, "status must be 待执行, 已评分 or 无用例")
+			return
+		}
+		status = pgtype.Text{String: value, Valid: true}
+	}
+	items, err := h.Queries.ListPromptEvaluationDimensionScoreSummaries(r.Context(), db.ListPromptEvaluationDimensionScoreSummariesParams{
+		WorkspaceID: workspaceUUID,
+		AssetID:     assetID,
+		PromptID:    promptID,
+		Status:      status,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation dimension score summaries")
+		return
+	}
+	resp := make([]PromptEvaluationDimensionScoreSummaryResponse, len(items))
+	for i, item := range items {
+		resp[i] = promptEvaluationDimensionScoreSummaryToResponse(item)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
 }

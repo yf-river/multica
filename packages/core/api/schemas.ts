@@ -31,6 +31,8 @@ import type {
   PromptEvaluationExperimentDimension,
   PromptEvaluationDimensionScore,
   ListPromptEvaluationDimensionScoresResponse,
+  PromptEvaluationDimensionScoreSummary,
+  ListPromptEvaluationDimensionScoreSummariesResponse,
   PromptEvaluationOptimizationCandidate,
   ListPromptEvaluationEvidenceSnapshotsResponse,
   PromptLibraryItem,
@@ -1326,6 +1328,29 @@ export const PromptEvaluationDimensionScoreListResponseSchema = z.object({
   total: z.number().default(0),
 }).loose();
 
+export const PromptEvaluationDimensionScoreSummarySchema = z.object({
+  workspace_id: z.string(),
+  asset_id: z.string(),
+  prompt_id: z.string().nullable().optional().transform((v) => v ?? null),
+  dimension_index: z.number().default(0),
+  dimension_name: z.string().default(""),
+  run_count: z.number().default(0),
+  scored_run_count: z.number().default(0),
+  passed_cases: z.number().default(0),
+  total_cases: z.number().default(0),
+  score: z.number().default(0),
+  latest_status: z.enum(["待执行", "已评分", "无用例"]).default("待执行"),
+  latest_rule: z.string().default(""),
+  latest_evidence: z.string().default(""),
+  latest_source: z.string().default(""),
+  latest_scored_at: z.string().default(""),
+}).loose();
+
+export const PromptEvaluationDimensionScoreSummaryListResponseSchema = z.object({
+  items: z.array(PromptEvaluationDimensionScoreSummarySchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
 export const PromptEvaluationOptimizationCandidateSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
@@ -1499,6 +1524,11 @@ export const EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_LIST_RESPONSE: ListPromptEv
   total: 0,
 };
 
+export const EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_SUMMARY_LIST_RESPONSE: ListPromptEvaluationDimensionScoreSummariesResponse = {
+  items: [],
+  total: 0,
+};
+
 export const EMPTY_PROMPT_EVALUATION_EXPERIMENT_DIMENSION: PromptEvaluationExperimentDimension = {
   id: "",
   workspace_id: "",
@@ -1532,6 +1562,24 @@ export const EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE: PromptEvaluationDimensionS
   source: "",
   created_at: "",
   updated_at: "",
+};
+
+export const EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_SUMMARY: PromptEvaluationDimensionScoreSummary = {
+  workspace_id: "",
+  asset_id: "",
+  prompt_id: null,
+  dimension_index: 0,
+  dimension_name: "",
+  run_count: 0,
+  scored_run_count: 0,
+  passed_cases: 0,
+  total_cases: 0,
+  score: 0,
+  latest_status: "待执行",
+  latest_rule: "",
+  latest_evidence: "",
+  latest_source: "",
+  latest_scored_at: "",
 };
 
 export const EMPTY_PROMPT_EVALUATION_CASE: PromptEvaluationStructuredCase = {
