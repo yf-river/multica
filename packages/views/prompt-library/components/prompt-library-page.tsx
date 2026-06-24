@@ -1828,7 +1828,7 @@ function ExperimentComparisonPanel({
                 </div>
                 {row.latestRun && (
                   <div className="mt-1 text-muted-foreground">
-                    最近运行：{row.latestRun.status} · {row.latestRun.run_kind} · {row.latestRun.model || "未记录模型"}
+                    最近运行：{row.latestRun.status} · {displayRunKind(row.latestRun.run_kind)} · {row.latestRun.model || "未记录模型"}
                   </div>
                 )}
               </div>

@@ -652,7 +652,7 @@ function AgentExecutionConfigComparison({
           <div className="rounded border px-2 py-2" data-testid="agent-playground-latest-run-config">
             <div className="font-medium text-foreground">最近同提示词真实运行</div>
             <div className="mt-1 grid gap-1 text-muted-foreground">
-              <div className="truncate">状态：{latestRun.status} · {latestRun.run_kind}</div>
+              <div className="truncate">状态：{latestRun.status} · {displayRunKind(latestRun.run_kind)}</div>
               <div className="truncate">执行智能体：{latestAgentLabel}</div>
               <div className="truncate">运行时：{latestRuntimeLabel}</div>
               <div className="truncate">模型：{latestRun.model || "未记录"}</div>
@@ -1058,6 +1058,10 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 function isAgentEvaluationRun(run: PromptEvaluationRun): boolean {
   const kind = String(run.run_kind);
   return kind === "Agent执行" || kind === "智能体执行" || Boolean(run.task_id);
+}
+
+function displayRunKind(runKind: string): string {
+  return runKind === "Agent执行" ? "智能体执行" : runKind;
 }
 
 function formatDuration(value: unknown): string {
