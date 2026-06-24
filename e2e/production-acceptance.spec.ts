@@ -25,6 +25,13 @@ const ROUTE_INTRO_TITLES: Record<string, string> = {
   "optimization-runs": "优化运行作业台",
   "run-history": "运行历史与证据",
 };
+const ROUTE_OPERATING_TEXT: Record<string, string> = {
+  datasets: "样本入库、版本快照、下游复用",
+  "test-suites": "固定试卷、断言回归、失败定位",
+  experiments: "变量矩阵、版本绑定、横向排行",
+  "optimization-runs": "失败样本、候选生成、人工发布",
+  "run-history": "运行检索、证据展开、人工复核",
+};
 
 async function prepareTrainingDashboardEvidence() {
   const api = new TestApiClient();
@@ -161,8 +168,13 @@ async function expectTrainingRouteShell(page, route: (typeof TRAINING_ROUTES)[nu
   }
   await expect(page.getByTestId(`training-route-intro-${route.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
   await expect(page.getByTestId(`training-route-panel-${route.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
+  await expect(page.getByTestId(`training-route-operating-model-${route.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
   if (routeIntroTitle) {
     await expect(page.getByTestId(`training-route-intro-${route.path}`)).toContainText(routeIntroTitle);
+    await expect(page.getByTestId(`training-route-operating-model-${route.path}`)).toContainText(ROUTE_OPERATING_TEXT[route.path]!);
+    await expect(page.getByTestId(`training-route-operating-step-${route.path}-1`)).toBeVisible();
+    await expect(page.getByTestId(`training-route-operating-step-${route.path}-2`)).toBeVisible();
+    await expect(page.getByTestId(`training-route-operating-step-${route.path}-3`)).toBeVisible();
   }
   await expect(page.getByTestId("prompt-library-editor")).toHaveCount(route.showPromptEditor ? 1 : 0);
   await expect(page.getByTestId("prompt-version-history")).toHaveCount(route.showPromptEditor ? 1 : 0);

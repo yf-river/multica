@@ -12,6 +12,13 @@ const ROUTE_INTRO_TITLES: Record<string, string> = {
   "optimization-runs": "优化运行作业台",
   "run-history": "运行历史与证据",
 };
+const ROUTE_OPERATING_TEXT: Record<string, string> = {
+  datasets: "样本入库、版本快照、下游复用",
+  "test-suites": "固定试卷、断言回归、失败定位",
+  experiments: "变量矩阵、版本绑定、横向排行",
+  "optimization-runs": "失败样本、候选生成、人工发布",
+  "run-history": "运行检索、证据展开、人工复核",
+};
 
 async function expectTrainingPageShell(page, item: (typeof TRAINING_ROUTES)[number]) {
   const isPromptPlayground = item.path === "prompt-playground";
@@ -27,8 +34,13 @@ async function expectTrainingPageShell(page, item: (typeof TRAINING_ROUTES)[numb
   }
   await expect(page.getByTestId(`training-route-intro-${item.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
   await expect(page.getByTestId(`training-route-panel-${item.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
+  await expect(page.getByTestId(`training-route-operating-model-${item.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
   if (routeIntroTitle) {
     await expect(page.getByTestId(`training-route-intro-${item.path}`)).toContainText(routeIntroTitle);
+    await expect(page.getByTestId(`training-route-operating-model-${item.path}`)).toContainText(ROUTE_OPERATING_TEXT[item.path]!);
+    await expect(page.getByTestId(`training-route-operating-step-${item.path}-1`)).toBeVisible();
+    await expect(page.getByTestId(`training-route-operating-step-${item.path}-2`)).toBeVisible();
+    await expect(page.getByTestId(`training-route-operating-step-${item.path}-3`)).toBeVisible();
   }
 }
 

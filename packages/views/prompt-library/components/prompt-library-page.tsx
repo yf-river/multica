@@ -1659,6 +1659,17 @@ function WorkbenchPanel({
         ) : null}
       />
 
+      <TrainingRouteWorkspaceBand
+        activeTab={activeTab}
+        route={routeIntro.route}
+        visibleAssets={visibleAssets}
+        cases={cases}
+        experimentDimensions={experimentDimensions}
+        runs={runs}
+        candidates={candidates}
+        runStatusFilter={runStatusFilter}
+      />
+
       {activeTab === "运行历史" && (
         <RunHistoryPanel
           workspaceId={workspaceId}
@@ -2357,6 +2368,160 @@ function TrainingRouteIntroCard({
       </div>
     </section>
   );
+}
+
+function TrainingRouteWorkspaceBand({
+  activeTab,
+  route,
+  visibleAssets,
+  cases,
+  experimentDimensions,
+  runs,
+  candidates,
+  runStatusFilter,
+}: {
+  activeTab: WorkbenchTab;
+  route: string;
+  visibleAssets: PromptEvaluationAsset[];
+  cases: PromptEvaluationStructuredCase[];
+  experimentDimensions: PromptEvaluationExperimentDimension[];
+  runs: PromptEvaluationRun[];
+  candidates: PromptEvaluationOptimizationCandidate[];
+  runStatusFilter: RunStatusFilter;
+}) {
+  const config = trainingRouteOperatingModel(activeTab, {
+    visibleAssets,
+    cases,
+    experimentDimensions,
+    runs,
+    candidates,
+    runStatusFilter,
+  });
+  if (!config) return null;
+  return (
+    <section className={`grid gap-3 rounded-md border px-4 py-3 ${config.className}`} data-testid={`training-route-operating-model-${route}`}>
+      <div className="flex flex-col gap-2 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0">
+          <div className="text-xs font-medium text-muted-foreground">{config.kicker}</div>
+          <h3 className="mt-1 text-sm font-semibold">{config.title}</h3>
+          <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">{config.description}</p>
+        </div>
+        <Badge variant="outline" className="w-fit shrink-0">{config.badge}</Badge>
+      </div>
+      <div className="grid gap-2 md:grid-cols-3">
+        {config.steps.map((step, index) => (
+          <div key={step.label} className="min-w-0 rounded-md border bg-background px-3 py-2" data-testid={`training-route-operating-step-${route}-${index + 1}`}>
+            <div className="text-[11px] font-medium text-muted-foreground">{step.label}</div>
+            <div className="mt-1 truncate text-sm font-semibold">{step.title}</div>
+            <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{step.detail}</div>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+type TrainingRouteOperatingModel = {
+  kicker: string;
+  title: string;
+  description: string;
+  badge: string;
+  className: string;
+  steps: Array<{ label: string; title: string; detail: string }>;
+};
+
+function trainingRouteOperatingModel(
+  activeTab: WorkbenchTab,
+  context: {
+    visibleAssets: PromptEvaluationAsset[];
+    cases: PromptEvaluationStructuredCase[];
+    experimentDimensions: PromptEvaluationExperimentDimension[];
+    runs: PromptEvaluationRun[];
+    candidates: PromptEvaluationOptimizationCandidate[];
+    runStatusFilter: RunStatusFilter;
+  },
+): TrainingRouteOperatingModel | null {
+  switch (activeTab) {
+    case "数据集": {
+      const datasetRows = context.visibleAssets.reduce((sum, asset) => sum + asset.dataset_row_count, 0);
+      const traceCases = context.cases.filter((item) => item.source === "trace").length;
+      return {
+        kicker: "数据集工作台",
+        title: "样本入库、版本快照、下游复用",
+        description: "数据集页面关注题库资产本身：从 trace 或手工样例形成行级事实，生成可追溯版本，再供测试套件和实验引用。",
+        badge: "题库事实",
+        className: "border-sky-500/30 bg-sky-500/5",
+        steps: [
+          { label: "入口", title: "trace 导入或手工样本", detail: `${formatNumber(traceCases)} 条 trace 样本，资产 ${formatNumber(context.visibleAssets.length)} 个` },
+          { label: "版本", title: "生成数据集版本快照", detail: `${formatNumber(datasetRows)} 行样本可形成版本指纹，避免实验偷偷读最新数据` },
+          { label: "复用", title: "供测试套件和实验绑定", detail: "下游资产通过数据集版本证明输入一致，便于回归和对比" },
+        ],
+      };
+    }
+    case "测试套件": {
+      const suiteCases = context.visibleAssets.reduce((sum, asset) => sum + asset.test_suite_case_count, 0);
+      return {
+        kicker: "测试套件工作台",
+        title: "固定试卷、断言回归、失败定位",
+        description: "测试套件页面关注稳定回归：把多条用例和断言组织成一张试卷，反复验证提示词、智能体或小队流程是否退化。",
+        badge: "回归试卷",
+        className: "border-violet-500/30 bg-violet-500/5",
+        steps: [
+          { label: "组织", title: "用例组成套件", detail: `${formatNumber(suiteCases)} 条套件用例，${formatNumber(context.cases.length)} 条结构化用例` },
+          { label: "执行", title: "反复运行同一试卷", detail: "运行历史会记录通过率、失败原因、耗时和 token" },
+          { label: "定位", title: "断言级复盘", detail: "失败后可跳到运行证据、生成候选或进入人工复核" },
+        ],
+      };
+    }
+    case "实验": {
+      return {
+        kicker: "实验工作台",
+        title: "变量矩阵、版本绑定、横向排行",
+        description: "实验页面关注对比：同一数据集版本下比较不同提示词、变量、执行方式和模型策略，沉淀质量、耗时和成本事实。",
+        badge: "对比矩阵",
+        className: "border-amber-500/30 bg-amber-500/5",
+        steps: [
+          { label: "维度", title: "实验维度事实", detail: `${formatNumber(context.experimentDimensions.length)} 个维度用于说明比较对象` },
+          { label: "绑定", title: "明确数据集版本", detail: "实验应引用固定版本，避免输入样本变化污染对比结论" },
+          { label: "排行", title: "质量和成本横向比较", detail: `${formatNumber(context.runs.length)} 条运行可用于通过率、失败数和成本排行` },
+        ],
+      };
+    }
+    case "优化运行": {
+      const pending = context.candidates.filter((candidate) => candidate.status === "待确认").length;
+      const published = context.candidates.filter((candidate) => candidate.status === "已发布").length;
+      return {
+        kicker: "优化运行工作台",
+        title: "失败样本、候选生成、人工发布",
+        description: "优化运行页面关注闭环作业：从失败运行提取证据，生成候选提示词，由人确认、编辑、发布或拒绝。",
+        badge: "优化闭环",
+        className: "border-rose-500/30 bg-rose-500/5",
+        steps: [
+          { label: "来源", title: "失败运行和复盘证据", detail: `${formatNumber(context.runs.filter((run) => run.status === "未通过" || run.status === "失败").length)} 条失败/异常运行可作为优化来源` },
+          { label: "候选", title: "待确认优化候选", detail: `${formatNumber(pending)} 个待确认，${formatNumber(published)} 个已发布` },
+          { label: "发布", title: "人工把关新版本", detail: "候选发布后进入提示词版本链，拒绝原因也会留下处理证据" },
+        ],
+      };
+    }
+    case "运行历史": {
+      const taskRuns = context.runs.filter((run) => Boolean(run.task_id)).length;
+      const reviewRuns = context.runs.filter((run) => run.status === "需人工复核").length;
+      return {
+        kicker: "运行历史工作台",
+        title: "运行检索、证据展开、人工复核",
+        description: "运行历史页面关注证据检索：按状态筛选运行，展开 task、message、trace、usage、span 和服务端快照。",
+        badge: context.runStatusFilter === "全部" ? "证据检索" : context.runStatusFilter,
+        className: "border-emerald-500/30 bg-emerald-500/5",
+        steps: [
+          { label: "筛选", title: "按运行状态定位", detail: `当前筛选：${context.runStatusFilter === "全部" ? "全部运行" : context.runStatusFilter}` },
+          { label: "证据", title: "任务和 Trace 展开", detail: `${formatNumber(taskRuns)} 条运行绑定任务，可展开消息、工具调用和用量` },
+          { label: "复核", title: "人工复核队列", detail: `${formatNumber(reviewRuns)} 条运行等待人工判断，可通过或驳回` },
+        ],
+      };
+    }
+    default:
+      return null;
+  }
 }
 
 function RunStatusFilterBar({
