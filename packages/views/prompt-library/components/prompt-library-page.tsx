@@ -3123,7 +3123,10 @@ function OptimizationCandidateList({
         const draft = drafts[candidate.id] ?? candidateToDraft(candidate);
         const rejectReason = rejectReasons[candidate.id] ?? "候选未覆盖验收要求，暂不采纳。";
         const canHandle = candidate.status === "待确认";
-        const hasManualEdit = Boolean((candidate.metrics as Record<string, unknown>)["人工编辑"]);
+        const candidateMetrics = candidate.metrics as Record<string, unknown>;
+        const hasManualEdit = Boolean(candidateMetrics["人工编辑"]);
+        const candidatePriority = stringFromRecord(candidateMetrics, "候选优先级");
+        const weakDimensions = promptEvaluationCandidateWeakDimensions(candidateMetrics["失败维度"]);
         return (
           <div key={candidate.id} data-testid={`prompt-evaluation-candidate-${candidate.id}`} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
             <div className="min-w-0">
@@ -3132,9 +3135,19 @@ function OptimizationCandidateList({
                 <Badge variant={canHandle ? "secondary" : "outline"} className="shrink-0">
                   {candidate.status} · 失败 {candidate.failed_case_count}
                 </Badge>
+                {candidatePriority && <Badge variant={candidatePriority === "高" ? "destructive" : "outline"} className="shrink-0">优先级 {candidatePriority}</Badge>}
                 {hasManualEdit && <Badge variant="outline" className="shrink-0">已人工编辑</Badge>}
               </div>
               <div className="mt-1 text-xs text-muted-foreground">{candidate.rationale || "基于失败用例生成，等待人工确认。"}</div>
+              {weakDimensions.length > 0 && (
+                <div className="mt-2 flex flex-wrap gap-1" data-testid={`optimization-candidate-weak-dimensions-${candidate.id}`}>
+                  {weakDimensions.slice(0, 4).map((item) => (
+                    <Badge key={`${item.name}:${item.priority}`} variant="outline" className="max-w-full truncate">
+                      {item.name} · {item.priority} · {item.score}
+                    </Badge>
+                  ))}
+                </div>
+              )}
               <div className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap rounded-sm border bg-muted/30 px-2 py-1.5 text-[11px] text-foreground">
                 {candidate.candidate_content}
               </div>
@@ -3397,6 +3410,23 @@ function candidateToDraft(candidate: PromptEvaluationOptimizationCandidate): Upd
     candidate_content: candidate.candidate_content,
     rationale: candidate.rationale,
   };
+}
+
+function promptEvaluationCandidateWeakDimensions(value: unknown): Array<{ name: string; priority: string; score: string }> {
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+      const record = item as Record<string, unknown>;
+      const name = stringFromRecord(record, "维度名称");
+      if (!name) return null;
+      return {
+        name,
+        priority: stringFromRecord(record, "优先级") || "中",
+        score: stringFromRecord(record, "得分") || "未评分",
+      };
+    })
+    .filter((item): item is { name: string; priority: string; score: string } => item !== null);
 }
 
 function RunEvidencePanel({

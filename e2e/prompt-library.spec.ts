@@ -1225,7 +1225,22 @@ test.describe("训练与评估工作台", () => {
         prompt_id: prompt.id,
         status: "待确认",
       });
+    const candidates = await api.listPromptEvaluationOptimizationCandidates({ run_id: agentRun.run.id });
+    const candidate = candidates[0]!;
+    expect(candidate.metrics).toMatchObject({
+      候选优先级: "高",
+      候选优先级依据: expect.stringContaining("实验维度评分摘要"),
+    });
+    expect(candidate.metrics["失败维度"]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ 维度名称: "命中率", 优先级: "高" }),
+    ]));
     await expect(runRow.getByTestId(`agent-playground-run-generate-candidate-${agentRun.run.id}`)).toContainText("已有候选", { timeout: 10000 });
+
+    await page.goto(`/${workspaceSlug}/training/optimization-runs?training_data=acceptance`, { waitUntil: "domcontentloaded" });
+    const candidateRow = page.getByTestId(`prompt-evaluation-candidate-${candidate.id}`);
+    await expect(candidateRow).toBeVisible({ timeout: 15000 });
+    await expect(candidateRow).toContainText("优先级 高");
+    await expect(candidateRow.getByTestId(`optimization-candidate-weak-dimensions-${candidate.id}`)).toContainText("命中率");
   });
 
   test("数据集版本可以对比并恢复为新的可追溯版本", async ({ page }) => {

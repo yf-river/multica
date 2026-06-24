@@ -1001,7 +1001,7 @@ func syncPromptEvaluationExperimentDimensions(ctx context.Context, qtx *db.Queri
 	if asset.AssetType != promptEvaluationAssetExperiment {
 		return refreshPromptEvaluationExperimentDimensionCount(ctx, qtx, asset.WorkspaceID, asset.ID)
 	}
-	dimensions := promptEvaluationExperimentDimensions(decodePayloadObject(asset.Payload))
+	dimensions := promptEvaluationExperimentDimensionsForAsset(asset.AssetType, decodePayloadObject(asset.Payload))
 	for idx, item := range dimensions {
 		if _, err := qtx.CreatePromptEvaluationExperimentDimension(ctx, db.CreatePromptEvaluationExperimentDimensionParams{
 			WorkspaceID:       asset.WorkspaceID,
@@ -1231,7 +1231,7 @@ func promptEvaluationPayloadField(w http.ResponseWriter, raw json.RawMessage, fi
 	return mustJSONBytes(normalizePromptEvaluationPayloadObject(obj)), true
 }
 
-func promptEvaluationAssetProfileFromPayload(raw []byte, promptID pgtype.UUID) promptEvaluationAssetProfile {
+func promptEvaluationAssetProfileFromPayload(raw []byte, promptID pgtype.UUID, assetType string) promptEvaluationAssetProfile {
 	payload := decodePayloadObject(raw)
 	cases := promptEvaluationCases(payload)
 	variableCount := 0
@@ -1245,6 +1245,10 @@ func promptEvaluationAssetProfileFromPayload(raw []byte, promptID pgtype.UUID) p
 	if promptID.Valid {
 		linkedPromptCount++
 	}
+	experimentDimensions := promptEvaluationExperimentDimensions(payload)
+	if assetType == promptEvaluationAssetExperiment && len(experimentDimensions) == 0 {
+		experimentDimensions = promptEvaluationDefaultExperimentDimensions()
+	}
 	return promptEvaluationAssetProfile{
 		StructureSchema:          promptEvaluationAssetProfileV1,
 		StructuredCaseCount:      int32(len(cases)),
@@ -1253,7 +1257,7 @@ func promptEvaluationAssetProfileFromPayload(raw []byte, promptID pgtype.UUID) p
 		LinkedDatasetCount:       int32(countPromptEvaluationProfileValues(payload, "dataset_ids", "数据集ID", "关联数据集", "包含数据集", "linked_dataset_ids")),
 		LinkedPromptCount:        int32(linkedPromptCount),
 		EvaluationDimensionCount: int32(countPromptEvaluationProfileValues(payload, "evaluation_dimensions", "评估维度", "指标", "指标口径", "metric_contract")),
-		ExperimentDimensionCount: int32(len(promptEvaluationExperimentDimensions(payload))),
+		ExperimentDimensionCount: int32(len(experimentDimensions)),
 	}
 }
 
@@ -1307,6 +1311,26 @@ func promptEvaluationExperimentDimensions(payload map[string]any) []normalizedPr
 			ExperimentTarget:  target,
 			BaselineOutput:    baseline,
 			ComparisonPayload: value.Payload,
+		})
+	}
+	return result
+}
+
+func promptEvaluationExperimentDimensionsForAsset(assetType string, payload map[string]any) []normalizedPromptEvaluationExperimentDimension {
+	dimensions := promptEvaluationExperimentDimensions(payload)
+	if len(dimensions) == 0 && assetType == promptEvaluationAssetExperiment {
+		return promptEvaluationDefaultExperimentDimensions()
+	}
+	return dimensions
+}
+
+func promptEvaluationDefaultExperimentDimensions() []normalizedPromptEvaluationExperimentDimension {
+	names := []string{"命中率", "缺失变量", "中文一致性"}
+	result := make([]normalizedPromptEvaluationExperimentDimension, 0, len(names))
+	for _, name := range names {
+		result = append(result, normalizedPromptEvaluationExperimentDimension{
+			Name:              name,
+			ComparisonPayload: map[string]any{"来源": "默认实验维度"},
 		})
 	}
 	return result
@@ -2248,7 +2272,7 @@ func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r
 		"restored_at":        time.Now().Format(time.RFC3339),
 	}
 	payloadBytes := mustJSONBytes(payload)
-	profile := promptEvaluationAssetProfileFromPayload(payloadBytes, asset.PromptID)
+	profile := promptEvaluationAssetProfileFromPayload(payloadBytes, asset.PromptID, asset.AssetType)
 	updatedAsset, err := qtx.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
 		ID:                       asset.ID,
 		WorkspaceID:              asset.WorkspaceID,
@@ -4082,6 +4106,30 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 		sourceSummary["真实Agent运行证据"] = runtimeEvidence
 		sourceSummary["生成说明"] = "基于结构化运行记录、失败用例和真实智能体 task 证据生成优化候选；候选不会自动替换生产提示词。"
 	}
+	dimensionSummaries, err := h.Queries.ListPromptEvaluationDimensionScoreSummaries(r.Context(), db.ListPromptEvaluationDimensionScoreSummariesParams{
+		WorkspaceID: workspaceUUID,
+		AssetID:     run.AssetID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation dimension summaries")
+		return
+	}
+	weakDimensions := promptEvaluationWeakDimensionSummaries(dimensionSummaries)
+	if len(weakDimensions) == 0 {
+		weakDimensions = promptEvaluationDefaultWeakDimensionSummaries(run)
+	}
+	candidateMetrics, _ := decodeJSONDefault(run.Metrics, map[string]any{}).(map[string]any)
+	if candidateMetrics == nil {
+		candidateMetrics = map[string]any{}
+	}
+	if len(weakDimensions) > 0 {
+		priority := promptEvaluationCandidatePriority(weakDimensions)
+		sourceSummary["失败维度"] = weakDimensions
+		sourceSummary["候选优先级"] = priority
+		candidateMetrics["失败维度"] = weakDimensions
+		candidateMetrics["候选优先级"] = priority
+		candidateMetrics["候选优先级依据"] = "基于实验维度评分摘要自动计算，待执行或低分维度优先处理。"
+	}
 	candidateContent, rationale := buildPromptEvaluationCandidateContent(prompt, run, sourceSummary)
 	item, err := h.Queries.CreatePromptEvaluationOptimizationCandidate(r.Context(), db.CreatePromptEvaluationOptimizationCandidateParams{
 		WorkspaceID:          workspaceUUID,
@@ -4094,7 +4142,7 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 		Rationale:            rationale,
 		SourceFailureSummary: mustJSONBytes(sourceSummary),
 		SourcePromptSnapshot: mustJSONBytes(buildPromptEvaluationSourcePromptSnapshot(prompt)),
-		Metrics:              run.Metrics,
+		Metrics:              mustJSONBytes(candidateMetrics),
 		Status:               "待确认",
 		CreatedBy:            parseUUID(userID),
 	})
@@ -4824,7 +4872,7 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	profile := promptEvaluationAssetProfileFromPayload(payload, promptID)
+	profile := promptEvaluationAssetProfileFromPayload(payload, promptID, req.AssetType)
 	tx, err := h.TxStarter.Begin(r.Context())
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation transaction")
@@ -4913,7 +4961,7 @@ func (h *Handler) UpdatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 	}
 	var profile *promptEvaluationAssetProfile
 	if payload != nil {
-		next := promptEvaluationAssetProfileFromPayload(payload, promptID)
+		next := promptEvaluationAssetProfileFromPayload(payload, promptID, existing.AssetType)
 		profile = &next
 	}
 	tx, err := h.TxStarter.Begin(r.Context())
@@ -5280,7 +5328,7 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 	if !ok {
 		return db.PromptEvaluationRun{}, false
 	}
-	dimensionScores := pendingPromptEvaluationExperimentDimensionScores(promptEvaluationExperimentDimensions(payload), len(cases))
+	dimensionScores := pendingPromptEvaluationExperimentDimensionScores(promptEvaluationExperimentDimensionsForAsset(asset.AssetType, payload), len(cases))
 	run, err := h.Queries.CreatePromptEvaluationRun(r.Context(), db.CreatePromptEvaluationRunParams{
 		WorkspaceID:       asset.WorkspaceID,
 		AssetID:           asset.ID,
@@ -5487,6 +5535,88 @@ func promptEvaluationRunFailedCaseCount(run db.PromptEvaluationRun, trials []db.
 	return 1
 }
 
+func promptEvaluationWeakDimensionSummaries(rows []db.ListPromptEvaluationDimensionScoreSummariesRow) []map[string]any {
+	result := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		weak := row.LatestStatus != "已评分" || row.TotalCases == 0 || row.Score < 1
+		if !weak {
+			continue
+		}
+		priority := "中"
+		if row.LatestStatus != "已评分" || row.TotalCases == 0 || row.Score < 0.5 {
+			priority = "高"
+		}
+		result = append(result, map[string]any{
+			"维度名称":  row.DimensionName,
+			"维度序号":  row.DimensionIndex,
+			"得分":    row.Score,
+			"通过用例数": row.PassedCases,
+			"总用例数":  row.TotalCases,
+			"运行次数":  row.RunCount,
+			"已评分次数": row.ScoredRunCount,
+			"最新状态":  row.LatestStatus,
+			"最新证据":  row.LatestEvidence,
+			"评分规则":  row.LatestRule,
+			"优先级":   priority,
+		})
+	}
+	sort.Slice(result, func(i, j int) bool {
+		priorityRank := map[string]int{"高": 0, "中": 1, "低": 2}
+		leftPriority := priorityRank[stringFromAny(result[i]["优先级"])]
+		rightPriority := priorityRank[stringFromAny(result[j]["优先级"])]
+		if leftPriority != rightPriority {
+			return leftPriority < rightPriority
+		}
+		leftScore := floatFromAny(result[i]["得分"])
+		rightScore := floatFromAny(result[j]["得分"])
+		if leftScore != rightScore {
+			return leftScore < rightScore
+		}
+		return stringFromAny(result[i]["维度名称"]) < stringFromAny(result[j]["维度名称"])
+	})
+	return result
+}
+
+func promptEvaluationCandidatePriority(weakDimensions []map[string]any) string {
+	for _, item := range weakDimensions {
+		if stringFromAny(item["优先级"]) == "高" {
+			return "高"
+		}
+	}
+	if len(weakDimensions) > 0 {
+		return "中"
+	}
+	return "低"
+}
+
+func promptEvaluationDefaultWeakDimensionSummaries(run db.PromptEvaluationRun) []map[string]any {
+	if !promptEvaluationRunHasFailure(run) {
+		return nil
+	}
+	totalCases := int(run.TotalCases)
+	if totalCases <= 0 {
+		totalCases = 1
+	}
+	defaults := promptEvaluationDefaultExperimentDimensions()
+	result := make([]map[string]any, 0, len(defaults))
+	for idx, item := range defaults {
+		result = append(result, map[string]any{
+			"维度名称":  item.Name,
+			"维度序号":  int32(idx),
+			"得分":    0.0,
+			"通过用例数": 0,
+			"总用例数":  totalCases,
+			"运行次数":  1,
+			"已评分次数": 0,
+			"最新状态":  "待执行",
+			"最新证据":  "运行缺少实验维度评分事实，按默认实验维度标记为失败复盘重点",
+			"评分规则":  promptEvaluationDimensionRule(item.Name),
+			"优先级":   "高",
+		})
+	}
+	return result
+}
+
 func buildPromptEvaluationCandidateFailureSummary(run db.PromptEvaluationRun, trials []db.PromptEvaluationTrial) map[string]any {
 	trialSummaries := make([]map[string]any, 0, len(trials))
 	for _, trial := range trials {
@@ -5573,6 +5703,17 @@ func buildPromptEvaluationCandidateContent(prompt db.PromptLibraryItem, run db.P
 			}
 			lines = append(lines, "- "+name+"："+reason)
 		}
+	}
+	if weakDimensions, ok := sourceSummary["失败维度"].([]map[string]any); ok && len(weakDimensions) > 0 {
+		lines = append(lines, "", "维度优先级：")
+		for _, item := range weakDimensions {
+			name := stringFromAny(item["维度名称"])
+			if name == "" {
+				name = "未命名维度"
+			}
+			lines = append(lines, "- "+name+"："+stringFromAny(item["优先级"])+"优先级，得分 "+stringFromAny(item["得分"])+"，证据："+truncatePromptEvaluationEvidence(stringFromAny(item["最新证据"]), 160))
+		}
+		rationale = "基于失败用例、维度评分弱项和真实运行证据补充中文输出约束、失败处理要求、证据字段和验收口径；原提示词不被自动替换，必须人工确认后发布。"
 	}
 	if runtimeEvidence, ok := sourceSummary["真实Agent运行证据"].(map[string]any); ok {
 		lines = append(lines, "", "真实智能体输出摘要：")
@@ -6299,7 +6440,7 @@ func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.Pr
 		failureReason = "存在缺失变量或期望内容未命中"
 		conclusion = "未通过"
 	}
-	dimensionScores := buildPromptEvaluationExperimentDimensionScores(promptEvaluationExperimentDimensions(payload), results)
+	dimensionScores := buildPromptEvaluationExperimentDimensionScores(promptEvaluationExperimentDimensionsForAsset(asset.AssetType, payload), results)
 	return promptEvaluationRunResult{
 		RunAt:             time.Now().UTC().Format(time.RFC3339),
 		AssetType:         asset.AssetType,
@@ -6701,6 +6842,29 @@ func intFromAny(value any) int {
 		return int(parsed)
 	case string:
 		parsed, _ := strconv.Atoi(strings.TrimSpace(typed))
+		return parsed
+	default:
+		return 0
+	}
+}
+
+func floatFromAny(value any) float64 {
+	switch typed := value.(type) {
+	case float64:
+		return typed
+	case float32:
+		return float64(typed)
+	case int:
+		return float64(typed)
+	case int32:
+		return float64(typed)
+	case int64:
+		return float64(typed)
+	case json.Number:
+		parsed, _ := typed.Float64()
+		return parsed
+	case string:
+		parsed, _ := strconv.ParseFloat(strings.TrimSpace(typed), 64)
 		return parsed
 	default:
 		return 0

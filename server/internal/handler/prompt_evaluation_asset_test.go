@@ -1737,11 +1737,11 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 	if err := json.Unmarshal(candidateW.Body.Bytes(), &candidate); err != nil {
 		t.Fatalf("decode candidate: %v", err)
 	}
-	if !containsAll(candidate.CandidateContent, []string{"真实智能体输出摘要", "Agent 输出：缺少验收条件", "训练评估失败证据", "预估成本"}) {
+	if !containsAll(candidate.CandidateContent, []string{"真实智能体输出摘要", "Agent 输出：缺少验收条件", "训练评估失败证据", "预估成本", "维度优先级", "命中率"}) {
 		t.Fatalf("candidate content missing agent evidence: %s", candidate.CandidateContent)
 	}
-	if !strings.Contains(candidate.Rationale, "真实智能体 task 证据") {
-		t.Fatalf("candidate rationale missing agent evidence: %s", candidate.Rationale)
+	if !containsAll(candidate.Rationale, []string{"维度评分弱项", "真实运行证据"}) {
+		t.Fatalf("candidate rationale missing dimension or agent evidence: %s", candidate.Rationale)
 	}
 	source := candidate.SourceFailureSummary.(map[string]any)
 	runtimeEvidence, ok := source["真实Agent运行证据"].(map[string]any)
@@ -1750,6 +1750,17 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 	}
 	if len(runtimeEvidence["task消息"].([]any)) != 1 || len(runtimeEvidence["trace事件"].([]any)) < 1 || len(runtimeEvidence["task用量"].([]any)) != 1 {
 		t.Fatalf("runtime evidence incomplete: %#v", runtimeEvidence)
+	}
+	weakDimensions, ok := source["失败维度"].([]any)
+	if !ok || len(weakDimensions) != 3 {
+		t.Fatalf("source summary missing weak dimensions: %#v", source)
+	}
+	if source["候选优先级"] != "高" {
+		t.Fatalf("source priority = %#v", source["候选优先级"])
+	}
+	candidateMetrics := candidate.Metrics.(map[string]any)
+	if candidateMetrics["候选优先级"] != "高" || candidateMetrics["候选优先级依据"] == "" {
+		t.Fatalf("candidate metrics missing priority: %#v", candidateMetrics)
 	}
 }
 
@@ -2143,6 +2154,63 @@ func markPromptEvaluationTaskRunning(t *testing.T, taskID string) {
 	`, taskID); err != nil {
 		t.Fatalf("start agent task: %v", err)
 	}
+}
+
+func TestRunPromptEvaluationAssetAgentDefaultsExperimentDimensions(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	cleanupPromptEvaluationAgentRunTest(t)
+	var runtimeID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 默认维度运行时', '{}'::jsonb, $4, 'private', now())
+		RETURNING id
+	`, testWorkspaceID, "prompt-eval-default-dimension-daemon-"+randomID()[:8], "prompt-eval-default-dimension-"+randomID()[:8], testUserID).Scan(&runtimeID); err != nil {
+		t.Fatalf("create codex runtime: %v", err)
+	}
+	promptID := createPromptEvaluationTestPromptWithContent(
+		t,
+		testWorkspaceID,
+		"默认维度提示词",
+		"请评估 {{issue_title}}，输出中文结论。",
+		`[]`,
+	)
+	createW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+		"prompt_id":  promptID,
+		"name":       "默认维度实验",
+		"asset_type": "实验",
+		"payload": map[string]any{
+			"cases": []map[string]any{{"名称": "默认维度用例", "变量": map[string]any{"issue_title": "默认维度"}, "期望包含": []string{"中文结论"}}},
+		},
+	}))
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
+	}
+	var created PromptEvaluationAssetResponse
+	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if created.ExperimentDimensionCount != 3 {
+		t.Fatalf("experiment dimension count = %d, want 3", created.ExperimentDimensionCount)
+	}
+	assertPromptEvaluationExperimentDimensions(t, created.ID, []string{"命中率", "缺失变量", "中文一致性"})
+
+	runW := httptest.NewRecorder()
+	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
+	if runW.Code != http.StatusAccepted {
+		t.Fatalf("agent run status = %d, body = %s", runW.Code, runW.Body.String())
+	}
+	var resp PromptEvaluationAgentRunResponse
+	if err := json.Unmarshal(runW.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode agent run response: %v", err)
+	}
+	assertPromptEvaluationDimensionScores(t, resp.Run.ID, []expectedPromptEvaluationDimensionScore{
+		{name: "命中率", status: "待执行", source: "run_metrics", passed: 0, total: 1},
+		{name: "缺失变量", status: "待执行", source: "run_metrics", passed: 0, total: 1},
+		{name: "中文一致性", status: "待执行", source: "run_metrics", passed: 0, total: 1},
+	})
 }
 
 func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
