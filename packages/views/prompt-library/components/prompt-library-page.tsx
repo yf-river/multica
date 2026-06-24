@@ -435,6 +435,21 @@ export function PromptLibraryPage({
   const invalidateCandidates = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.candidates(workspaceId ?? "") });
   const invalidateSummary = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId ?? "") });
   const invalidateRunEvidenceSnapshots = (runId: string) => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidenceSnapshots(workspaceId ?? "", runId) });
+  const rememberSelectedPrompt = (promptId: string | null) => {
+    setSelectedId(promptId);
+    if (!selectedPromptStorageKey) return;
+    try {
+      for (const key of [selectedPromptStorageKey, ...selectedPromptLegacyStorageKeys]) {
+        if (promptId) {
+          window.localStorage.setItem(key, promptId);
+        } else {
+          window.localStorage.removeItem(key);
+        }
+      }
+    } catch {
+      // localStorage persistence is best-effort; in-memory selection is still updated.
+    }
+  };
 
   const createMut = useMutation({
     mutationFn: (data: CreatePromptLibraryItemRequest) => api.createPromptLibraryItem(data),
@@ -442,7 +457,7 @@ export function PromptLibraryPage({
       invalidate();
       invalidateVersions(item.id);
       setIsDraftingNew(false);
-      setSelectedId(item.id);
+      rememberSelectedPrompt(item.id);
       toast.success("提示词已创建");
     },
   });
@@ -453,7 +468,7 @@ export function PromptLibraryPage({
       invalidate();
       invalidateVersions(item.id);
       setIsDraftingNew(false);
-      setSelectedId(item.id);
+      rememberSelectedPrompt(item.id);
       toast.success("提示词已保存");
     },
   });
@@ -462,7 +477,7 @@ export function PromptLibraryPage({
     mutationFn: (id: string) => api.deletePromptLibraryItem(id),
     onSuccess: () => {
       invalidate();
-      setSelectedId(null);
+      rememberSelectedPrompt(null);
       setDraft(emptyDraft());
       toast.success("提示词已删除");
     },
@@ -647,7 +662,7 @@ export function PromptLibraryPage({
       invalidateVersions(result.prompt.id);
       invalidateCandidates();
       invalidateSummary();
-      setSelectedId(result.prompt.id);
+      rememberSelectedPrompt(result.prompt.id);
       toast.success(`已发布新提示词版本：${result.prompt.name}`);
     },
   });
@@ -705,14 +720,14 @@ export function PromptLibraryPage({
 
   const startNew = () => {
     setIsDraftingNew(true);
-    setSelectedId(null);
+    rememberSelectedPrompt(null);
     setDraft(emptyDraft());
     setDebugValuesText("");
   };
 
   const applyUserCenterTemplate = () => {
     setIsDraftingNew(true);
-    setSelectedId(null);
+    rememberSelectedPrompt(null);
     setDraft(requestToDraft(USER_CENTER_TEMPLATE));
     const nextValues = valuesToDebugText(USER_CENTER_TEMPLATE.variables ?? []);
     setDebugValuesText(nextValues);
@@ -984,7 +999,7 @@ export function PromptLibraryPage({
                       type="button"
                       onClick={() => {
                         setIsDraftingNew(false);
-                        setSelectedId(item.id);
+                        rememberSelectedPrompt(item.id);
                       }}
                       className={`flex w-full flex-col gap-2 px-3 py-3 text-left transition-colors hover:bg-muted/60 ${
                         selectedId === item.id ? "bg-muted" : ""
