@@ -1679,6 +1679,17 @@ function WorkbenchPanel({
   const visibleAssets = showAcceptanceFixtures
     ? tabAssets
     : tabAssets.filter((asset) => !acceptanceFixtureAssets.includes(asset));
+  const acceptanceFixtureCandidates = candidates.filter((candidate) =>
+    isAcceptanceFixtureText(
+      candidate.candidate_name,
+      candidate.candidate_content,
+      candidate.rationale,
+      candidate.metrics,
+    ),
+  );
+  const visibleCandidates = showAcceptanceFixtures
+    ? candidates
+    : candidates.filter((candidate) => !acceptanceFixtureCandidates.includes(candidate));
 
   if (activeTab === "提示词库" || activeTab === "提示词调试场" || activeTab === "智能体调试场") {
     return null;
@@ -1689,7 +1700,7 @@ function WorkbenchPanel({
     cases,
     experimentDimensions,
     runs,
-    candidates,
+    candidates: visibleCandidates,
     runStatusFilter,
   });
 
@@ -1716,12 +1727,12 @@ function WorkbenchPanel({
         cases={cases}
         experimentDimensions={experimentDimensions}
         runs={runs}
-        candidates={candidates}
+        candidates={visibleCandidates}
         runStatusFilter={runStatusFilter}
       />
       <AcceptanceFixtureNotice
-        count={acceptanceFixtureAssets.length}
-        noun="训练资产"
+        count={acceptanceFixtureAssets.length + acceptanceFixtureCandidates.length}
+        noun="训练证据"
         showing={showAcceptanceFixtures}
         onShow={onShowAcceptanceFixtures}
         onHide={onHideAcceptanceFixtures}
@@ -1735,7 +1746,7 @@ function WorkbenchPanel({
           evidenceFocus={evidenceFocus}
           runStatusFilter={runStatusFilter}
           onRunStatusFilterChange={onRunStatusFilterChange}
-          candidates={candidates}
+          candidates={visibleCandidates}
           loading={loading}
           onSyncRun={onSyncRun}
           syncingRunId={syncingRunId}
@@ -1788,7 +1799,7 @@ function WorkbenchPanel({
                 workspaceId={workspaceId}
                 assets={visibleAssets}
                 runs={runs}
-                candidates={candidates}
+                candidates={visibleCandidates}
                 onCancelRun={onCancelRun}
                 cancellingRunId={cancellingRunId}
                 onCreateEvidenceSnapshot={onCreateEvidenceSnapshot}
@@ -1797,7 +1808,7 @@ function WorkbenchPanel({
                 retryingOptimizationAssetId={retryingOptimizationAssetId}
               />
               <OptimizationCandidateList
-                candidates={candidates}
+                candidates={visibleCandidates}
                 onUpdateCandidate={onUpdateCandidate}
                 updatingCandidateId={updatingCandidateId}
                 onPublishCandidate={onPublishCandidate}
