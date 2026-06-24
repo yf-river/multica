@@ -223,7 +223,7 @@ export function parseDebugValues(value: string): Record<string, string> {
 function buildAgentExecutionStatus(readiness: PromptEvaluationRuntimeReadiness): string {
   const model = readiness.model || DEFAULT_AGENT_MODEL;
   if (readiness.status === "就绪") {
-    return `Codex 运行时已在线，目标模型 ${model}；此记录是实验包快照，点击“创建真实智能体任务”后会入队并采集 trace、token、成本和输出`;
+    return `Codex 运行时已在线，目标模型 ${model}；此记录是实验包快照，点击“创建真实智能体任务”后会入队并采集链路追踪、令牌、成本和输出`;
   }
   return `${readiness.label}，目标模型 ${model}；未创建真实智能体任务`;
 }

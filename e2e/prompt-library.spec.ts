@@ -451,7 +451,7 @@ test.describe("训练与评估工作台", () => {
     expect(agentEvidence.上下文).toMatchObject({
       提示词名称: prompt!.name,
       评测资产名称: queuedAgentAsset!.name,
-      执行Agent名称: "Multica 训练评估 Agent",
+      执行Agent名称: "Multica 训练评估智能体",
       运行时名称: expectedAgentRuntimeName || expect.any(String),
       运行时提供方: "codex",
     });
@@ -572,7 +572,7 @@ test.describe("训练与评估工作台", () => {
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText("上下文摘要");
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText(`提示词 ${prompt!.name}`);
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText(`评测资产 ${queuedAgentAsset!.name}`);
-    await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText("Agent Multica 训练评估 Agent");
+    await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText("智能体 Multica 训练评估智能体");
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText(`运行时 ${expectedAgentRuntimeName}`);
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText(`任务 ${queuedAgentRun!.task_id}`);
     await expect(agentEvidencePanel.getByTestId("run-evidence-context")).toContainText("用量证据 1");

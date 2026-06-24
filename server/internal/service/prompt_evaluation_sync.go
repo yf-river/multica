@@ -18,7 +18,7 @@ import (
 )
 
 // SyncPromptEvaluationRunForTask回写绑定到该任务的训练评估运行。
-// 返回 synced=false 表示该任务不是训练评估 Agent 运行，不需要处理。
+// 返回 synced=false 表示该任务不是训练评估智能体 运行，不需要处理。
 func SyncPromptEvaluationRunForTask(ctx context.Context, q *db.Queries, task db.AgentTaskQueue) (db.PromptEvaluationRun, bool, error) {
 	run, err := q.GetPromptEvaluationRunByTask(ctx, task.ID)
 	if err != nil {

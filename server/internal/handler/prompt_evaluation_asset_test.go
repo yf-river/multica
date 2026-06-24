@@ -1737,32 +1737,32 @@ func cleanupPromptEvaluationAgentRunTest(t *testing.T) {
 		_, _ = testPool.Exec(context.Background(), `
 			DELETE FROM task_usage WHERE task_id IN (
 				SELECT atq.id FROM agent_task_queue atq JOIN agent a ON a.id = atq.agent_id
-				WHERE a.workspace_id = $1 AND a.name = 'Multica 训练评估 Agent'
+				WHERE a.workspace_id = $1 AND a.name = 'Multica 训练评估智能体'
 			)
 		`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `
 			DELETE FROM task_message WHERE task_id IN (
 				SELECT atq.id FROM agent_task_queue atq JOIN agent a ON a.id = atq.agent_id
-				WHERE a.workspace_id = $1 AND a.name = 'Multica 训练评估 Agent'
+				WHERE a.workspace_id = $1 AND a.name = 'Multica 训练评估智能体'
 			)
 		`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `
 			DELETE FROM chat_message WHERE chat_session_id IN (
 				SELECT cs.id FROM chat_session cs JOIN agent a ON a.id = cs.agent_id
-				WHERE a.workspace_id = $1 AND a.name = 'Multica 训练评估 Agent'
+				WHERE a.workspace_id = $1 AND a.name = 'Multica 训练评估智能体'
 			)
 		`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `
 			DELETE FROM agent_task_queue WHERE agent_id IN (
-				SELECT id FROM agent WHERE workspace_id = $1 AND name = 'Multica 训练评估 Agent'
+				SELECT id FROM agent WHERE workspace_id = $1 AND name = 'Multica 训练评估智能体'
 			)
 		`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `
 			DELETE FROM chat_session WHERE agent_id IN (
-				SELECT id FROM agent WHERE workspace_id = $1 AND name = 'Multica 训练评估 Agent'
+				SELECT id FROM agent WHERE workspace_id = $1 AND name = 'Multica 训练评估智能体'
 			)
 		`, testWorkspaceID)
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE workspace_id = $1 AND name = 'Multica 训练评估 Agent'`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE workspace_id = $1 AND name = 'Multica 训练评估智能体'`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE workspace_id = $1 AND provider = 'codex' AND name LIKE 'prompt-eval-codex-%'`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)

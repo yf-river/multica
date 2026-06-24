@@ -6,6 +6,8 @@ import { BookOpenText, TerminalSquare } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import type {
+  Agent,
+  AgentRuntime,
   PromptEvaluationRuntimeReadiness,
   PromptLibraryItem,
 } from "@multica/core/types";
@@ -40,6 +42,8 @@ const agentPlaygroundKeys = {
   cases: (workspaceId: string) => ["agent-playground", workspaceId, "evaluation-cases"] as const,
   runs: (workspaceId: string) => ["agent-playground", workspaceId, "evaluation-runs"] as const,
   runtimeReadiness: (workspaceId: string) => ["agent-playground", workspaceId, "runtime-readiness"] as const,
+  agents: (workspaceId: string) => ["agent-playground", workspaceId, "agents"] as const,
+  runtimes: (workspaceId: string) => ["agent-playground", workspaceId, "runtimes"] as const,
 };
 
 export function PromptPlaygroundContainer() {
@@ -160,6 +164,16 @@ export function AgentPlaygroundContainer() {
     queryFn: () => api.getPromptEvaluationRuntimeReadiness(),
     enabled: !!workspaceId,
   });
+  const agentQuery = useQuery<Agent[]>({
+    queryKey: agentPlaygroundKeys.agents(workspaceId ?? ""),
+    queryFn: () => api.listAgents({ workspace_id: workspaceId ?? undefined }),
+    enabled: !!workspaceId,
+  });
+  const runtimeQuery = useQuery<AgentRuntime[]>({
+    queryKey: agentPlaygroundKeys.runtimes(workspaceId ?? ""),
+    queryFn: () => api.listRuntimes({ workspace_id: workspaceId ?? undefined }),
+    enabled: !!workspaceId,
+  });
 
   const items = listQuery.data?.items ?? [];
   const cases = caseQuery.data?.items ?? [];
@@ -205,6 +219,9 @@ export function AgentPlaygroundContainer() {
             onAgentExpectedTextChange={actions.setAgentExpectedText}
             runtimeReadiness={runtimeReadiness}
             runtimeLoading={runtimeReadinessQuery.isLoading}
+            agents={agentQuery.data ?? []}
+            runtimes={runtimeQuery.data ?? []}
+            executionCatalogLoading={agentQuery.isLoading || runtimeQuery.isLoading}
             saving={actions.creatingAgentPackage}
             runningAgent={actions.runningAgent}
             runs={runs}

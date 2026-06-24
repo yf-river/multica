@@ -300,7 +300,7 @@ export function AgentDetailPage({ agentId }: AgentDetailPageProps) {
           />
           <ObservabilitySummaryCard
             title="Agent 观测摘要"
-            scopeLabel="按当前 Agent 聚合 trace、token、成本、耗时和证据"
+            scopeLabel="按当前智能体聚合链路追踪、令牌、成本、耗时和证据"
             agentId={agent.id}
           />
         </div>

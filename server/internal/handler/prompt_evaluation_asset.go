@@ -33,7 +33,8 @@ const (
 	promptEvaluationAssetExperiment      = "实验"
 	promptEvaluationAssetOptimize        = "优化运行"
 	promptEvaluationAssetProfileV1       = "multica.training_evaluation.asset_profile.v1"
-	promptEvaluationAgentName            = "Multica 训练评估 Agent"
+	promptEvaluationAgentName            = "Multica 训练评估智能体"
+	legacyPromptEvaluationAgentName      = "Multica 训练评估 Agent"
 	defaultPromptEvaluationAgentProvider = "codex"
 	defaultPromptEvaluationAgentModel    = "gpt-5.3-codex-spark"
 	fallbackPromptEvaluationAgentModel   = "gpt-5.4-mini"
@@ -4704,16 +4705,18 @@ func (h *Handler) ensurePromptEvaluationAgent(w http.ResponseWriter, r *http.Req
 	}
 	instructions := promptEvaluationAgentInstructions()
 	for _, existing := range agents {
-		if existing.Name != promptEvaluationAgentName {
+		if existing.Name != promptEvaluationAgentName && existing.Name != legacyPromptEvaluationAgentName {
 			continue
 		}
 		if uuidToString(existing.RuntimeID) == uuidToString(runtime.ID) &&
 			existing.Model.String == promptEvaluationAgentModel() &&
-			existing.Instructions == instructions {
+			existing.Instructions == instructions &&
+			existing.Name == promptEvaluationAgentName {
 			return existing, runtime, true
 		}
 		updated, err := h.Queries.UpdateAgent(r.Context(), db.UpdateAgentParams{
 			ID:           existing.ID,
+			Name:         pgtype.Text{String: promptEvaluationAgentName, Valid: true},
 			RuntimeMode:  pgtype.Text{String: runtime.RuntimeMode, Valid: true},
 			RuntimeID:    runtime.ID,
 			Instructions: pgtype.Text{String: instructions, Valid: true},
@@ -4794,7 +4797,7 @@ func (h *Handler) promptEvaluationRuntimeReadiness(ctx context.Context, workspac
 	}
 	if best == nil {
 		if inaccessibleRuntime > 0 {
-			return promptEvaluationRuntimeReadinessResponse("无权限", providerName+" 无权限", "当前 workspace 存在 "+providerName+" runtime，但你没有绑定或使用权限。", "请让 runtime 所有者将 "+providerName+" runtime 设为 public，或由 workspace 管理员为训练评估 Agent 绑定可用 runtime。", nil, checkedAt), nil
+			return promptEvaluationRuntimeReadinessResponse("无权限", providerName+" 无权限", "当前工作区存在 "+providerName+" 运行时，但你没有绑定或使用权限。", "请让运行时所有者将 "+providerName+" 运行时设为公开，或由工作区管理员为训练评估智能体绑定可用运行时。", nil, checkedAt), nil
 		}
 		return promptEvaluationRuntimeReadinessResponse("缺失", providerName+" 缺失", "当前工作区未发现 "+providerName+" 运行时，智能体调试场不能执行 "+promptEvaluationAgentModel()+"。", "安装并配置 "+provider+"，启动 multica 守护进程，等待 /api/runtimes 出现 provider="+provider+" 且 status=online 的运行时。", nil, checkedAt), nil
 	}
@@ -4824,7 +4827,7 @@ func (h *Handler) promptEvaluationRuntimeReadiness(ctx context.Context, workspac
 	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 		return PromptEvaluationRuntimeReadinessResponse{}, err
 	}
-	resp := promptEvaluationRuntimeReadinessResponse("就绪", providerName+" 在线", "已发现在线且心跳新鲜的 "+providerName+" runtime「"+best.Name+"」，可以作为 "+promptEvaluationAgentModel()+" 的真实执行目标。", "无需修复；下一步应创建真实智能体任务并采集 trace、token、成本和输出。", &respRuntime, checkedAt)
+	resp := promptEvaluationRuntimeReadinessResponse("就绪", providerName+" 在线", "已发现在线且心跳新鲜的 "+providerName+" 运行时「"+best.Name+"」，可以作为 "+promptEvaluationAgentModel()+" 的真实执行目标。", "无需修复；下一步应创建真实智能体任务并采集链路追踪、令牌、成本和输出。", &respRuntime, checkedAt)
 	resp.LastSeenAgeSeconds = ageSeconds
 	return resp, nil
 }

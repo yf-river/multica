@@ -1224,7 +1224,7 @@ export class TestApiClient {
           INSERT INTO task_message (task_id, seq, type, tool, content, input, output)
           VALUES
             ($1, 1, 'text', NULL, $2, '{}'::jsonb, NULL),
-            ($1, 2, 'tool_result', '训练评估同步', '已收集 trace、token 和结构化逐用例结论', '{}'::jsonb, '通过')
+            ($1, 2, 'tool_result', '训练评估同步', '已收集链路追踪、令牌和结构化逐用例结论', '{}'::jsonb, '通过')
         `,
         [run.task_id, structuredOutput],
       );
@@ -1569,7 +1569,7 @@ export class TestApiClient {
             `
               DELETE FROM agent
               WHERE runtime_id = $1
-                 OR (workspace_id = $2 AND name = 'Multica 训练评估 Agent')
+                 OR (workspace_id = $2 AND name = 'Multica 训练评估智能体')
             `,
             [runtimeId, this.workspaceId],
           );

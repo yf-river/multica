@@ -4,6 +4,8 @@ import type { ReactNode } from "react";
 import { Activity, ClipboardCheck, Loader2, Play, Save, TerminalSquare } from "lucide-react";
 import { renderPromptTemplate } from "@multica/core/prompt-library";
 import type {
+  Agent,
+  AgentRuntime,
   PromptEvaluationAsset,
   PromptEvaluationRun,
   PromptEvaluationRuntimeReadiness,
@@ -213,6 +215,9 @@ export function AgentPlaygroundWorkbench({
   onAgentExpectedTextChange,
   runtimeReadiness,
   runtimeLoading,
+  agents,
+  runtimes,
+  executionCatalogLoading,
   saving,
   runningAgent,
   runs,
@@ -230,6 +235,9 @@ export function AgentPlaygroundWorkbench({
   onAgentExpectedTextChange: (value: string) => void;
   runtimeReadiness: PromptEvaluationRuntimeReadiness;
   runtimeLoading: boolean;
+  agents: Agent[];
+  runtimes: AgentRuntime[];
+  executionCatalogLoading: boolean;
   saving: boolean;
   runningAgent: boolean;
   runs: PromptEvaluationRun[];
@@ -247,6 +255,13 @@ export function AgentPlaygroundWorkbench({
   const promptCaseCount = selected ? cases.filter((item) => item.prompt_id === selected.id).length : 0;
   const selectedAgentRuns = selected ? agentRuns.filter((run) => run.prompt_id === selected.id) : agentRuns;
   const canCreateTask = Boolean(selected) && runtimeReadiness.status === "就绪" && !saving && !runningAgent;
+  const evaluationAgent = agents.find((agent) => agent.name.includes("训练评估") || agent.name.includes("训练与评估")) ?? null;
+  const selectedRuntime = runtimeReadiness.runtime ?? runtimes.find((runtime) => runtime.status === "online") ?? runtimes[0] ?? null;
+  const onlineRuntimeCount = runtimes.filter((runtime) => runtime.status === "online").length;
+  const executionAgentLabel = executionCatalogLoading
+    ? "读取中"
+    : formatAgentDisplayName(evaluationAgent) ?? "运行时就绪后自动创建训练评估执行智能体";
+  const executionModel = evaluationAgent?.model || runtimeReadiness.model || DEFAULT_AGENT_MODEL;
 
   return (
     <section className="mx-auto grid max-w-7xl gap-4" data-testid="agent-playground-panel">
@@ -278,16 +293,38 @@ export function AgentPlaygroundWorkbench({
 
         <div className="mt-4 grid gap-2 md:grid-cols-4" data-testid="agent-playground-launch-brief">
           {[
-            ["输入", "提示词模板、任务变量、期望输出"],
-            ["执行", "写入真实任务队列"],
-            ["产出", "task_id、消息、trace、token"],
-            ["边界", "需要运行时就绪"],
+            ["执行对象", executionAgentLabel],
+            ["运行位置", selectedRuntime?.name ?? runtimeReadiness.label],
+            ["模型策略", executionModel],
+            ["产出证据", "任务标识、消息、链路追踪、令牌"],
           ].map(([label, detail]) => (
             <div key={label} className="min-w-0 rounded-md border bg-muted/20 px-3 py-2">
               <div className="text-[11px] font-medium text-muted-foreground">{label}</div>
               <div className="mt-1 truncate text-sm font-semibold">{detail}</div>
             </div>
           ))}
+        </div>
+
+        <div className="mt-4 grid gap-3 rounded-md border bg-background p-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_240px]" data-testid="agent-playground-execution-topology">
+          <div className="min-w-0" data-testid="agent-playground-agent-selector">
+            <div className="text-[11px] font-medium text-muted-foreground">自动执行者</div>
+            <div className="mt-1 truncate text-sm font-semibold">{executionAgentLabel}</div>
+            <div className="mt-1 truncate text-xs text-muted-foreground">
+              {evaluationAgent ? `状态 ${formatAgentStatus(evaluationAgent.status)} · 可见性 ${formatAgentVisibility(evaluationAgent.visibility)}` : "服务端会在真实运行前确保训练评估执行智能体存在。"}
+            </div>
+          </div>
+          <div className="min-w-0" data-testid="agent-playground-runtime-selector">
+            <div className="text-[11px] font-medium text-muted-foreground">真实运行时</div>
+            <div className="mt-1 truncate text-sm font-semibold">{selectedRuntime?.name ?? "暂无可用运行时"}</div>
+            <div className="mt-1 truncate text-xs text-muted-foreground">
+              在线 {onlineRuntimeCount} / 全部 {runtimes.length} · 供应方 {formatRuntimeProvider(selectedRuntime?.provider)}
+            </div>
+          </div>
+          <div className="min-w-0 rounded-md border border-dashed px-3 py-2" data-testid="agent-playground-queue-contract">
+            <div className="text-[11px] font-medium text-muted-foreground">入队链路</div>
+            <div className="mt-1 truncate text-sm font-semibold">公开 API 创建资产后入队</div>
+            <div className="mt-1 truncate text-xs text-muted-foreground">回写运行历史、任务消息和用量。</div>
+          </div>
         </div>
 
         <div className="mt-4 grid gap-2 md:grid-cols-3" data-testid="agent-playground-task-pipeline">
@@ -340,7 +377,7 @@ export function AgentPlaygroundWorkbench({
             </div>
           </div>
 
-          <div className="grid gap-3 xl:grid-cols-[300px_minmax(0,1fr)]">
+          <div className="grid gap-3 2xl:grid-cols-[300px_minmax(0,1fr)]">
             <Field label="任务变量">
               <Textarea
                 value={debugValuesText}
@@ -479,4 +516,39 @@ function formatDuration(value: unknown): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "未记录";
   if (value < 1000) return `${Math.round(value)}ms`;
   return `${(value / 1000).toFixed(1)}s`;
+}
+
+function formatAgentStatus(status: Agent["status"]): string {
+  const labels: Record<Agent["status"], string> = {
+    idle: "空闲",
+    working: "执行中",
+    blocked: "阻塞",
+    error: "异常",
+    offline: "离线",
+  };
+  return labels[status] ?? status;
+}
+
+function formatAgentDisplayName(agent: Agent | null): string | null {
+  if (!agent) return null;
+  if (agent.name === "Multica 训练评估 Agent") return "Multica 训练评估智能体";
+  return agent.name;
+}
+
+function formatAgentVisibility(visibility: Agent["visibility"]): string {
+  const labels: Record<Agent["visibility"], string> = {
+    workspace: "工作区可见",
+    private: "私有",
+  };
+  return labels[visibility] ?? visibility;
+}
+
+function formatRuntimeProvider(provider: string | undefined): string {
+  if (!provider) return "未选择";
+  const labels: Record<string, string> = {
+    codex: "Codex",
+    claude: "Claude",
+    codebuddy: "CodeBuddy",
+  };
+  return labels[provider.toLowerCase()] ?? provider;
 }
