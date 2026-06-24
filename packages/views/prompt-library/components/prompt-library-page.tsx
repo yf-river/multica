@@ -1753,6 +1753,11 @@ function TrainingAssetPanel({
                     {summarizeDatasetVersion(asset)}
                   </div>
                 )}
+                {asset.asset_type !== "数据集" && summarizeLinkedDatasetVersions(asset) && (
+                  <div className="mt-1 text-[11px] text-muted-foreground" data-testid={`linked-dataset-version-summary-${asset.id}`}>
+                    {summarizeLinkedDatasetVersions(asset)}
+                  </div>
+                )}
                 {asset.asset_type === "数据集" && (
                   <DatasetVersionControls asset={asset} saving={saving} />
                 )}
@@ -3324,6 +3329,26 @@ function summarizeDatasetVersion(asset: PromptEvaluationAsset): string | null {
   return parts.join(" · ");
 }
 
+function summarizeLinkedDatasetVersions(asset: PromptEvaluationAsset): string | null {
+  const payload = asset.payload ?? {};
+  const raw = payload["linked_dataset_versions"] ?? payload["数据集版本"] ?? payload["关联数据集版本"];
+  if (!Array.isArray(raw) || raw.length === 0) return null;
+  const parts = raw
+    .map((item) => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return "";
+      const record = item as Record<string, unknown>;
+      const datasetName = stringFromRecord(record, "dataset_name") || stringFromRecord(record, "数据集名称") || stringFromRecord(record, "name") || stringFromRecord(record, "名称");
+      const version = stringFromRecord(record, "version") || stringFromRecord(record, "版本");
+      const fingerprint = stringFromRecord(record, "row_fingerprint") || stringFromRecord(record, "行指纹");
+      const versionId = stringFromRecord(record, "dataset_version_id") || stringFromRecord(record, "数据集版本ID");
+      const label = datasetName || "数据集";
+      const versionLabel = version ? `v${version}` : versionId ? `版本 ${versionId.slice(0, 8)}` : "未声明版本";
+      return `${label} ${versionLabel}${fingerprint ? ` · 指纹 ${fingerprint.slice(0, 10)}` : ""}`;
+    })
+    .filter(Boolean);
+  return parts.length > 0 ? `绑定数据集版本：${parts.join("；")}` : null;
+}
+
 function summarizeLatestRunForDemo(run: PromptEvaluationRun): string {
   const parts = [`${displayRunKind(run.run_kind)} · ${run.status}`];
   if (run.failure_reason && run.failure_reason !== "无") {
@@ -3358,8 +3383,10 @@ function summarizeStructuredRun(run: PromptEvaluationRun): string {
 }
 
 function stringFromRecord(record: Record<string, unknown>, key: string): string {
-  const value = record[key];
-  return typeof value === "string" ? value : "";
+	const value = record[key];
+	if (typeof value === "string") return value;
+	if (typeof value === "number" && Number.isFinite(value)) return String(value);
+	return "";
 }
 
 function truncateText(value: string, maxLength: number): string {

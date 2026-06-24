@@ -1021,6 +1021,87 @@ test.describe("训练与评估工作台", () => {
     expect(restoredRows.map((row) => row.row_name)).not.toContain("版本二新增用例");
   });
 
+  test("实验运行会绑定资产声明的明确数据集版本", async ({ page }) => {
+    test.setTimeout(90_000);
+    const prompt = await api.createPromptForE2E(artifactPrefix, {
+      name: `${artifactPrefix} 实验版本绑定提示词`,
+      content: "请分析 {{issue_title}}，输出目标和验收条件。",
+      variables: [{ name: "issue_title", label: "任务标题", required: true }],
+    });
+    const dataset = await api.createPromptEvaluationAsset({
+      prompt_id: prompt.id,
+      name: `${artifactPrefix} 实验基准数据集`,
+      description: "E2E 验证实验资产绑定明确数据集版本",
+      asset_type: "数据集",
+      payload: {
+        cases: [
+          {
+            名称: "实验基准样本",
+            变量: { issue_title: "user-center 登录失败" },
+            期望包含: ["目标", "验收条件"],
+            标签: ["实验基准"],
+          },
+        ],
+      },
+      status: "启用",
+    });
+    const datasetVersion = await api.createPromptEvaluationDatasetVersion(dataset.id, { version_label: "实验基准 v1" });
+    const experiment = await api.createPromptEvaluationAsset({
+      prompt_id: prompt.id,
+      name: `${artifactPrefix} 明确版本实验`,
+      description: "E2E 验证实验运行 evidence 不再偷偷读取最新版本",
+      asset_type: "实验",
+      payload: {
+        schema: "multica.training_evaluation.payload.v1",
+        schema_version: 1,
+        语义版本: "multica.training_evaluation.v1",
+        实验对象: prompt.name,
+        对比维度: ["命中率", "缺失变量", "中文一致性"],
+        linked_dataset_ids: [dataset.id],
+        linked_dataset_versions: [
+          {
+            dataset_id: dataset.id,
+            dataset_name: dataset.name,
+            dataset_version_id: datasetVersion.id,
+            version: datasetVersion.version,
+            row_fingerprint: datasetVersion.row_fingerprint,
+          },
+        ],
+        cases: [
+          {
+            case_name: "实验版本绑定样本",
+            variables: { issue_title: "user-center 登录失败" },
+            expected_contains: ["目标", "验收条件"],
+            tags: ["实验", "数据集版本"],
+          },
+        ],
+      },
+      status: "启用",
+    });
+
+    await api.runPromptEvaluationAsset(experiment.id);
+    await expect
+      .poll(async () => (await api.listPromptEvaluationRuns({ asset_id: experiment.id, limit: 5 }))[0]?.id ?? "", { timeout: 15000 })
+      .not.toBe("");
+    const run = (await api.listPromptEvaluationRuns({ asset_id: experiment.id, limit: 5 }))[0]!;
+    const evidence = await api.getPromptEvaluationRunEvidence(run.id);
+    const versions = Array.isArray(evidence.evidence["数据集版本"]) ? evidence.evidence["数据集版本"] as Array<Record<string, unknown>> : [];
+    expect(versions).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        dataset_asset_id: dataset.id,
+        dataset_version_id: datasetVersion.id,
+        version: datasetVersion.version,
+        绑定方式: "资产声明的明确数据集版本",
+      }),
+    ]));
+
+    await page.goto(`/${workspaceSlug}/training/experiments`, { waitUntil: "domcontentloaded" });
+    const experimentRow = page.getByTestId(`prompt-evaluation-asset-${experiment.id}`);
+    await expect(experimentRow).toBeVisible({ timeout: 15000 });
+    await expect(experimentRow.getByTestId(`linked-dataset-version-summary-${experiment.id}`)).toContainText("绑定数据集版本");
+    await expect(experimentRow.getByTestId(`linked-dataset-version-summary-${experiment.id}`)).toContainText(`v${datasetVersion.version}`);
+  });
+
   test("智能体调试场公开 API 可以指定执行智能体", async () => {
     test.setTimeout(90_000);
     const runtime = await api.ensureOnlineCodexRuntime(`${artifactPrefix} 指定执行智能体 Runtime`);

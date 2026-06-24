@@ -4339,7 +4339,10 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 		"失败原因":    result.FailureReason,
 		"评估结论":    result.Conclusion,
 	}
-	datasetVersionBindings := h.latestPromptEvaluationDatasetVersionBindings(r.Context(), asset.WorkspaceID, decodePayloadObject(asset.Payload))
+	datasetVersionBindings, ok := h.promptEvaluationDatasetVersionBindings(w, r, asset.WorkspaceID, decodePayloadObject(asset.Payload))
+	if !ok {
+		return db.PromptEvaluationRun{}, false
+	}
 	if len(datasetVersionBindings) > 0 {
 		metrics["数据集版本数"] = len(datasetVersionBindings)
 	}
@@ -4403,7 +4406,10 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 }
 
 func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r *http.Request, asset db.PromptEvaluationAsset, agent db.Agent, runtime db.AgentRuntime, taskID pgtype.UUID, chatSessionID pgtype.UUID, createdBy pgtype.UUID, triggerSource string, payload map[string]any, cases []map[string]any) (db.PromptEvaluationRun, bool) {
-	datasetVersionBindings := h.latestPromptEvaluationDatasetVersionBindings(r.Context(), asset.WorkspaceID, payload)
+	datasetVersionBindings, ok := h.promptEvaluationDatasetVersionBindings(w, r, asset.WorkspaceID, payload)
+	if !ok {
+		return db.PromptEvaluationRun{}, false
+	}
 	run, err := h.Queries.CreatePromptEvaluationRun(r.Context(), db.CreatePromptEvaluationRunParams{
 		WorkspaceID:       asset.WorkspaceID,
 		AssetID:           asset.ID,
@@ -5688,12 +5694,54 @@ func promptEvaluationDatasetVersionSummary(version db.PromptEvaluationDatasetVer
 	}
 }
 
-func (h *Handler) latestPromptEvaluationDatasetVersionBindings(ctx context.Context, workspaceID pgtype.UUID, payload map[string]any) []map[string]any {
+func (h *Handler) promptEvaluationDatasetVersionBindings(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, payload map[string]any) ([]map[string]any, bool) {
 	datasetIDs := promptEvaluationLinkedDatasetIDs(payload)
-	if len(datasetIDs) == 0 {
-		return nil
+	explicit := promptEvaluationExplicitDatasetVersionRefs(payload)
+	if len(datasetIDs) == 0 && len(explicit) == 0 {
+		return nil, true
 	}
-	bindings := make([]map[string]any, 0, len(datasetIDs))
+	bindings := make([]map[string]any, 0, len(datasetIDs)+len(explicit))
+	seenVersions := map[string]bool{}
+	explicitDatasets := map[string]bool{}
+	for _, ref := range explicit {
+		datasetID, err := util.ParseUUID(ref.DatasetAssetID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "linked dataset version has invalid dataset_asset_id")
+			return nil, false
+		}
+		versionID, err := util.ParseUUID(ref.DatasetVersionID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "linked dataset version has invalid dataset_version_id")
+			return nil, false
+		}
+		datasetKey := uuidToString(datasetID)
+		versionKey := uuidToString(versionID)
+		explicitDatasets[datasetKey] = true
+		if seenVersions[datasetKey+"."+versionKey] {
+			continue
+		}
+		version, err := h.Queries.GetPromptEvaluationDatasetVersionInAsset(r.Context(), db.GetPromptEvaluationDatasetVersionInAssetParams{
+			WorkspaceID:    workspaceID,
+			DatasetAssetID: datasetID,
+			ID:             versionID,
+		})
+		if err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				writeError(w, http.StatusBadRequest, "linked dataset version does not belong to this workspace dataset")
+				return nil, false
+			}
+			writeError(w, http.StatusInternalServerError, "failed to load linked dataset version")
+			return nil, false
+		}
+		summary := promptEvaluationDatasetVersionSummary(version)
+		summary["dataset_asset_id"] = datasetKey
+		summary["绑定方式"] = "资产声明的明确数据集版本"
+		if strings.TrimSpace(ref.DatasetName) != "" {
+			summary["dataset_name"] = strings.TrimSpace(ref.DatasetName)
+		}
+		bindings = append(bindings, summary)
+		seenVersions[datasetKey+"."+versionKey] = true
+	}
 	seen := map[string]bool{}
 	for _, rawID := range datasetIDs {
 		datasetID, err := util.ParseUUID(rawID)
@@ -5701,11 +5749,11 @@ func (h *Handler) latestPromptEvaluationDatasetVersionBindings(ctx context.Conte
 			continue
 		}
 		key := uuidToString(datasetID)
-		if key == "" || seen[key] {
+		if key == "" || seen[key] || explicitDatasets[key] {
 			continue
 		}
 		seen[key] = true
-		version, err := h.Queries.GetLatestPromptEvaluationDatasetVersion(ctx, db.GetLatestPromptEvaluationDatasetVersionParams{
+		version, err := h.Queries.GetLatestPromptEvaluationDatasetVersion(r.Context(), db.GetLatestPromptEvaluationDatasetVersionParams{
 			WorkspaceID:    workspaceID,
 			DatasetAssetID: datasetID,
 		})
@@ -5717,7 +5765,43 @@ func (h *Handler) latestPromptEvaluationDatasetVersionBindings(ctx context.Conte
 		summary["绑定方式"] = "运行开始时读取最新数据集版本"
 		bindings = append(bindings, summary)
 	}
-	return bindings
+	return bindings, true
+}
+
+type promptEvaluationDatasetVersionRef struct {
+	DatasetAssetID   string
+	DatasetVersionID string
+	DatasetName      string
+}
+
+func promptEvaluationExplicitDatasetVersionRefs(payload map[string]any) []promptEvaluationDatasetVersionRef {
+	raw := firstValue(payload, "linked_dataset_versions", "数据集版本", "关联数据集版本")
+	items, ok := raw.([]any)
+	if !ok {
+		return nil
+	}
+	result := make([]promptEvaluationDatasetVersionRef, 0, len(items))
+	for _, item := range items {
+		m, ok := item.(map[string]any)
+		if !ok {
+			continue
+		}
+		versionID := strings.TrimSpace(stringFromAny(firstValue(m, "dataset_version_id", "version_id", "数据集版本ID")))
+		if versionID == "" {
+			continue
+		}
+		datasetID := strings.TrimSpace(stringFromAny(firstValue(m, "dataset_id", "dataset_asset_id", "数据集ID")))
+		if datasetID == "" {
+			result = append(result, promptEvaluationDatasetVersionRef{DatasetVersionID: versionID})
+			continue
+		}
+		result = append(result, promptEvaluationDatasetVersionRef{
+			DatasetAssetID:   datasetID,
+			DatasetVersionID: versionID,
+			DatasetName:      strings.TrimSpace(stringFromAny(firstValue(m, "dataset_name", "数据集名称", "name", "名称"))),
+		})
+	}
+	return result
 }
 
 func promptEvaluationLinkedDatasetIDs(payload map[string]any) []string {
