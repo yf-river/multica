@@ -391,8 +391,13 @@ function scanServiceLog(item, service, marker) {
     /\bstatus=500\b/,
   ];
   const matches = [];
+  const ignoredMatches = [];
   for (const [index, line] of lines.entries()) {
     if (blocking.some((pattern) => pattern.test(line))) {
+      if (isAllowedLogNoise(service, line)) {
+        ignoredMatches.push({ line: index + 1, text: line.slice(0, 500) });
+        continue;
+      }
       matches.push({ line: index + 1, text: line.slice(0, 500) });
     }
   }
@@ -404,7 +409,15 @@ function scanServiceLog(item, service, marker) {
     marker_found: markerFound,
     scanned_lines: lines.length,
     matches,
+    ignored_matches: ignoredMatches,
   };
+}
+
+function isAllowedLogNoise(service, line) {
+  if (service !== "daemon") return false;
+  return line.includes("codex_models_manager::manager")
+    && line.includes("failed to refresh available models")
+    && line.includes("timeout waiting for child process to exit");
 }
 
 function readEnvFile(file) {
