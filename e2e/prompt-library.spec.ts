@@ -97,6 +97,9 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("prompt-playground-purpose-map")).toContainText("不创建任务、不消耗模型");
     await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("本地渲染");
     await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("本地渲染记录");
+    await expect(page.getByTestId("prompt-playground-source-panel")).toContainText("模板源");
+    await expect(page.getByTestId("prompt-playground-variable-checklist")).toContainText("变量样本");
+    await expect(page.getByTestId("prompt-playground-template-source")).toBeVisible();
     await expect(page.getByTestId("agent-playground-task-pipeline")).toHaveCount(0);
     await expect(page.getByTestId("agent-playground-launch-brief")).toHaveCount(0);
     await expect(page.getByLabel("模板变量")).toHaveValue("issue_title=\nproject_context=", { timeout: 10000 });
@@ -945,8 +948,17 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("本地模板实验室");
     await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("本地渲染记录");
     await expect(page.getByTestId("prompt-playground-template-lab")).toBeVisible();
+    await expect(page.getByTestId("prompt-playground-source-panel")).toContainText("模板源");
+    await expect(page.getByTestId("prompt-playground-variable-checklist")).toContainText("变量样本");
+    await expect(page.getByTestId("prompt-playground-template-source")).toBeVisible();
+    const sourcePanelBox = await page.getByTestId("prompt-playground-source-panel").boundingBox();
+    const variablePanelBox = await page.getByTestId("prompt-playground-variable-checklist").boundingBox();
     const renderedOutputBox = await page.getByTestId("prompt-playground-rendered-output").boundingBox();
-    expect(renderedOutputBox?.width ?? 0).toBeGreaterThan(320);
+    const viewport = page.viewportSize();
+    for (const box of [sourcePanelBox, variablePanelBox, renderedOutputBox]) {
+      expect(box?.width ?? 0).toBeGreaterThan(160);
+      expect((box?.x ?? 0) + (box?.width ?? 0)).toBeLessThanOrEqual((viewport?.width ?? 0) + 1);
+    }
     await expect(page.getByTestId("agent-playground-run-console")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "创建真实智能体任务" })).toHaveCount(0);
 

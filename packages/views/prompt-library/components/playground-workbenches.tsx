@@ -1,7 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Activity, ClipboardCheck, Loader2, Play, Save, TerminalSquare } from "lucide-react";
+import { Activity, Braces, ClipboardCheck, FileText, Loader2, Play, Save, TerminalSquare } from "lucide-react";
 import { renderPromptTemplate } from "@multica/core/prompt-library";
 import type {
   Agent,
@@ -46,6 +46,7 @@ export function PromptPlaygroundWorkbench({
   onRunDebug: () => void;
 }) {
   const variableNames = selected?.variables.map((item) => item.name).filter(Boolean) ?? [];
+  const missingVariableSet = new Set(debugResult.missingVariables);
   const templateRuns = runs.filter((run) => run.run_kind === "模板渲染检查" && (!selected || run.prompt_id === selected.id));
   const debugAssets = assets.filter((asset) => {
     const payload = asset.payload ?? {};
@@ -107,18 +108,62 @@ export function PromptPlaygroundWorkbench({
               </div>
             </div>
 
-            <div className="grid gap-4 2xl:grid-cols-[320px_minmax(0,1fr)]" data-testid="prompt-playground-template-lab">
-              <Field label="模板变量">
+            <div className="grid gap-3 xl:grid-cols-[minmax(0,0.85fr)_minmax(0,0.9fr)_minmax(0,1.25fr)]" data-testid="prompt-playground-template-lab">
+              <section className="grid min-h-[260px] content-start gap-3 rounded-md border bg-background p-3" data-testid="prompt-playground-source-panel">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <FileText className="size-3.5 shrink-0 text-muted-foreground" />
+                    <h3 className="truncate text-sm font-semibold">模板源</h3>
+                  </div>
+                  <Badge variant="outline" className="shrink-0 text-[11px]">只读</Badge>
+                </div>
+                <pre className="max-h-[260px] min-h-[180px] overflow-auto whitespace-pre-wrap rounded-md border bg-muted/20 p-3 font-mono text-xs leading-5" data-testid="prompt-playground-template-source">
+                  {selected?.content || "从左侧选择提示词后查看模板源。"}
+                </pre>
+                <div className="grid gap-1 text-[11px] text-muted-foreground">
+                  <div>模板类型：{selected?.prompt_type ?? "未选择"}</div>
+                  <div>版本：{selected ? `v${selected.version}` : "未选择"}</div>
+                  <div>变量声明：{variableNames.length}</div>
+                </div>
+              </section>
+
+              <section className="grid min-h-[260px] content-start gap-3 rounded-md border bg-background p-3" data-testid="prompt-playground-variable-checklist">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2">
+                    <Braces className="size-3.5 shrink-0 text-muted-foreground" />
+                    <h3 className="truncate text-sm font-semibold">变量样本</h3>
+                  </div>
+                  <Badge variant={debugResult.missingVariables.length > 0 ? "outline" : "secondary"} className="shrink-0 text-[11px]">
+                    {debugResult.missingVariables.length > 0 ? `缺失 ${debugResult.missingVariables.length}` : "完整"}
+                  </Badge>
+                </div>
                 <Textarea
                   value={debugValuesText}
+                  aria-label="模板变量"
                   onChange={(event) => onDebugValuesTextChange(event.target.value)}
-                  className="min-h-[220px] resize-y font-mono text-sm leading-6"
+                  className="min-h-[150px] resize-y font-mono text-sm leading-6"
                   placeholder="任务标题=登录失败&#10;项目背景=账号系统"
                 />
-              </Field>
-              <div className="grid gap-1.5 text-sm">
+                <div className="grid gap-1.5">
+                  {selected && selected.variables.length > 0 ? (
+                    selected.variables.map((variable) => (
+                      <div key={variable.name} className="flex min-w-0 items-center gap-2 rounded border bg-muted/10 px-2 py-1.5 text-xs">
+                        <span className="min-w-0 flex-1 truncate font-medium">{variable.label || variable.name}</span>
+                        <span className="shrink-0 text-muted-foreground">{variable.name}</span>
+                        <Badge variant={missingVariableSet.has(variable.name) ? "outline" : "secondary"} className="shrink-0 text-[10px]">
+                          {missingVariableSet.has(variable.name) ? "缺失" : "已填"}
+                        </Badge>
+                      </div>
+                    ))
+                  ) : (
+                    <div className="rounded border border-dashed px-3 py-4 text-xs text-muted-foreground">该模板未声明变量。</div>
+                  )}
+                </div>
+              </section>
+
+              <section className="grid min-h-[260px] content-start gap-2 rounded-md border bg-background p-3">
                 <div className="flex min-h-5 items-center gap-2">
-                  <span className="text-xs font-medium text-muted-foreground">渲染结果</span>
+                  <span className="text-xs font-medium text-muted-foreground">渲染文本</span>
                   {debugResult.missingVariables.length > 0 ? (
                     <Badge variant="outline" className="text-[11px]">
                       缺失 {debugResult.missingVariables.join("、")}
@@ -129,10 +174,10 @@ export function PromptPlaygroundWorkbench({
                     </Badge>
                   )}
                 </div>
-                <pre className="min-h-[220px] overflow-auto whitespace-pre-wrap rounded-md border bg-background p-3 font-mono text-sm leading-6" data-testid="prompt-playground-rendered-output">
+                <pre className="min-h-[250px] overflow-auto whitespace-pre-wrap rounded-md border bg-background p-3 font-mono text-sm leading-6" data-testid="prompt-playground-rendered-output">
                   {debugResult.rendered || "选择提示词并填写变量后生成渲染结果。"}
                 </pre>
-              </div>
+              </section>
             </div>
 
             <div className="flex flex-wrap items-center gap-2">

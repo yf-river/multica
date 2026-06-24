@@ -166,6 +166,8 @@ test.describe("Navigation", () => {
     await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("本地模板实验室");
     await expect(page.getByTestId("prompt-playground-purpose-map")).toContainText("不创建任务、不消耗模型");
     await expect(page.getByTestId("prompt-playground-template-boundary")).toContainText("模板选择只显示版本和变量");
+    await expect(page.getByTestId("prompt-playground-source-panel")).toContainText("模板源");
+    await expect(page.getByTestId("prompt-playground-variable-checklist")).toContainText("变量样本");
     await expect(page.getByTestId("prompt-playground-contract")).toContainText("不启动智能体");
     await expect(page.getByTestId("agent-playground-run-console")).toHaveCount(0);
     await expect(page.getByTestId("agent-playground-launch-brief")).toHaveCount(0);
@@ -194,6 +196,8 @@ test.describe("Navigation", () => {
     await expect(page.getByTestId("agent-playground-observability-contract")).toContainText("观测回写契约");
     await expect(page.getByTestId("prompt-playground-contract")).toHaveCount(0);
     await expect(page.getByTestId("prompt-playground-purpose-map")).toHaveCount(0);
+    await expect(page.getByTestId("prompt-playground-source-panel")).toHaveCount(0);
+    await expect(page.getByTestId("prompt-playground-variable-checklist")).toHaveCount(0);
     await expect(page.getByTestId("prompt-playground-local-pipeline")).toHaveCount(0);
     await expect(page.getByTestId("prompt-playground-template-boundary")).toHaveCount(0);
     await page.waitForLoadState("networkidle").catch(() => {});

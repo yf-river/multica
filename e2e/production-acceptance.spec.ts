@@ -243,6 +243,8 @@ test.describe("生产部署验收", () => {
     await expect(page.getByLabel("模板变量")).toBeVisible();
     await expect(page.getByTestId("prompt-playground-rendered-output")).toBeVisible();
     await expect(page.getByTestId("prompt-playground-template-lab")).toBeVisible();
+    await expect(page.getByTestId("prompt-playground-source-panel")).toContainText("模板源");
+    await expect(page.getByTestId("prompt-playground-variable-checklist")).toContainText("变量样本");
     await expect(page.getByTestId("prompt-playground-purpose-map")).toContainText("不创建任务、不消耗模型");
     await expect(page.getByText("调试边界")).toBeVisible();
     await expect(page.getByTestId("prompt-playground-contract")).toContainText("不启动智能体");
@@ -275,6 +277,8 @@ test.describe("生产部署验收", () => {
     await expect(page.getByTestId("agent-playground-task-pipeline")).toContainText("回写观测证据");
     await expect(page.getByTestId("prompt-playground-local-pipeline")).toHaveCount(0);
     await expect(page.getByTestId("prompt-playground-purpose-map")).toHaveCount(0);
+    await expect(page.getByTestId("prompt-playground-source-panel")).toHaveCount(0);
+    await expect(page.getByTestId("prompt-playground-variable-checklist")).toHaveCount(0);
     await expect(page.getByTestId("prompt-playground-template-lab")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "创建真实智能体任务" })).toBeVisible();
     await expect(page.getByTestId("prompt-playground-workbench")).toHaveCount(0);
