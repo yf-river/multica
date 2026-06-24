@@ -2451,6 +2451,15 @@ func (h *Handler) ListPromptEvaluationRuns(w http.ResponseWriter, r *http.Reques
 		Limit:       limit,
 	})
 	if err != nil {
+		slog.Error(
+			"failed to list prompt evaluation runs",
+			"workspace_id", workspaceID,
+			"asset_id", uuidToString(assetID),
+			"status", status.String,
+			"since", since.Time,
+			"limit", limit,
+			"error", err,
+		)
 		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation runs")
 		return
 	}
