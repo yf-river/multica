@@ -939,6 +939,8 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("本地模板实验室");
     await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("本地渲染记录");
     await expect(page.getByTestId("prompt-playground-template-lab")).toBeVisible();
+    const renderedOutputBox = await page.getByTestId("prompt-playground-rendered-output").boundingBox();
+    expect(renderedOutputBox?.width ?? 0).toBeGreaterThan(320);
     await expect(page.getByTestId("agent-playground-run-console")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "创建真实智能体任务" })).toHaveCount(0);
 

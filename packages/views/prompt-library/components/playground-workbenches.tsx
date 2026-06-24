@@ -58,7 +58,7 @@ export function PromptPlaygroundWorkbench({
 
   return (
     <section className="mx-auto grid max-w-7xl gap-4" data-testid="prompt-playground-panel">
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
+      <div className="grid gap-3 2xl:grid-cols-[minmax(0,1.2fr)_minmax(320px,0.8fr)]">
         <section className="rounded-md border border-l-4 border-border/70 border-l-sky-500 bg-muted/10 p-4">
           <div className="flex flex-col gap-2 border-b pb-3 md:flex-row md:items-start md:justify-between">
             <div className="min-w-0">
@@ -107,7 +107,7 @@ export function PromptPlaygroundWorkbench({
               </div>
             </div>
 
-            <div className="grid gap-4 md:grid-cols-[320px_minmax(0,1fr)]" data-testid="prompt-playground-template-lab">
+            <div className="grid gap-4 2xl:grid-cols-[320px_minmax(0,1fr)]" data-testid="prompt-playground-template-lab">
               <Field label="模板变量">
                 <Textarea
                   value={debugValuesText}
