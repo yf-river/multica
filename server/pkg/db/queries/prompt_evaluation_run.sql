@@ -298,7 +298,7 @@ UPDATE prompt_evaluation_run SET
         jsonb_build_object(
             '处理结果', $3,
             '处理说明', COALESCE(sqlc.narg('note')::text, ''),
-            '复核人', $4::text,
+            '复核人', $4::uuid::text,
             '复核时间', now()
         ),
         true

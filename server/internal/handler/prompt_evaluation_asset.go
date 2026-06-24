@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"regexp"
@@ -2120,6 +2121,7 @@ func (h *Handler) ReviewPromptEvaluationRun(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusConflict, "prompt evaluation run is no longer waiting for manual review")
 			return
 		}
+		slog.Error("failed to review prompt evaluation run", "run_id", uuidToString(run.ID), "workspace_id", workspaceID, "user_id", userID, "decision", decision, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to review prompt evaluation run")
 		return
 	}
@@ -2129,10 +2131,12 @@ func (h *Handler) ReviewPromptEvaluationRun(w http.ResponseWriter, r *http.Reque
 		Status:      decision,
 		Note:        pgtype.Text{String: note, Valid: true},
 	}); err != nil {
+		slog.Error("failed to review prompt evaluation trials", "run_id", uuidToString(run.ID), "workspace_id", workspaceID, "decision", decision, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to review prompt evaluation trials")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
+		slog.Error("failed to commit prompt evaluation review", "run_id", uuidToString(run.ID), "workspace_id", workspaceID, "decision", decision, "error", err)
 		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation review")
 		return
 	}
