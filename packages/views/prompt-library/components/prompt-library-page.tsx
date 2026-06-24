@@ -1892,6 +1892,7 @@ function WorkbenchPanel({
 type ExperimentComparisonRow = {
   asset: PromptEvaluationAsset;
   dimensions: PromptEvaluationExperimentDimension[];
+  dimensionScoreRows: ExperimentDimensionScoreRow[];
   promptVersions: PromptLibraryVersion[];
   versionRows: ExperimentPromptVersionRow[];
   promptVersionRunCount: number;
@@ -1905,6 +1906,19 @@ type ExperimentComparisonRow = {
   outputTokens: number;
   estimatedCost: number;
   latestRun: PromptEvaluationRun | null;
+};
+
+type ExperimentDimensionScoreRow = {
+  dimensionIndex: number;
+  dimensionName: string;
+  score: number;
+  passedCases: number;
+  totalCases: number;
+  runCount: number;
+  scoredRunCount: number;
+  status: string;
+  rule: string;
+  evidence: string;
 };
 
 type ExperimentPromptVersionRow = {
@@ -1996,12 +2010,49 @@ function ExperimentComparisonPanel({
               <MetricCell label="平均耗时" value={formatDuration(row.runs.length > 0 ? row.totalDurationMs / row.runs.length : 0)} />
               <MetricCell label="令牌" value={`${formatNumber(row.inputTokens)} / ${formatNumber(row.outputTokens)}`} />
               <MetricCell label="预估成本" value={formatMoney(row.estimatedCost)} />
+              <ExperimentDimensionScoreComparison row={row} />
               <ExperimentPromptVersionComparison row={row} />
             </div>
           ))}
         </div>
       )}
     </section>
+  );
+}
+
+function ExperimentDimensionScoreComparison({ row }: { row: ExperimentComparisonRow }) {
+  return (
+    <div className="grid gap-2 rounded border border-border/70 bg-muted/10 px-2 py-2 text-xs lg:col-span-6" data-testid={`experiment-dimension-score-comparison-${row.asset.id}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="font-medium text-foreground">实验维度评分</div>
+          <div className="mt-0.5 text-muted-foreground">
+            按运行证据中的中文评分事实聚合，区分已评分维度和待执行维度。
+          </div>
+        </div>
+        <Badge variant="outline">{formatNumber(row.dimensionScoreRows.length)} 个评分维度</Badge>
+      </div>
+      {row.dimensionScoreRows.length === 0 ? (
+        <div className="rounded border border-dashed px-2 py-2 text-muted-foreground">暂无维度评分。运行实验后会根据维度事实生成评分。</div>
+      ) : (
+        <div className="grid gap-1.5 md:grid-cols-3">
+          {row.dimensionScoreRows.map((item) => (
+            <div key={`${item.dimensionIndex}:${item.dimensionName}`} className="grid gap-1 rounded border bg-background px-2 py-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="truncate font-medium text-foreground">{item.dimensionName}</span>
+                <Badge variant={item.status === "已评分" ? "secondary" : "outline"}>{item.status}</Badge>
+              </div>
+              <div className="text-lg font-semibold leading-6">{item.scoredRunCount > 0 ? formatPercent(item.score) : "待评分"}</div>
+              <div className="text-muted-foreground">
+                {formatNumber(item.passedCases)}/{formatNumber(item.totalCases)} 用例 · {formatNumber(item.scoredRunCount)}/{formatNumber(item.runCount)} 次运行
+              </div>
+              <div className="truncate text-muted-foreground" title={item.rule}>{item.rule}</div>
+              <div className="truncate text-muted-foreground" title={item.evidence}>{item.evidence}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -4784,8 +4835,10 @@ function buildExperimentComparisonRows(
   return experiments
     .map((asset) => {
       const assetRuns = [...(runsByAsset.get(asset.id) ?? [])].sort(comparePromptEvaluationRunByRecent);
+      const assetDimensions = dimensionsByAsset.get(asset.id) ?? [];
       const promptVersions = asset.prompt_id ? [...(versionsByPromptId.get(asset.prompt_id) ?? [])].sort((a, b) => b.version - a.version) : [];
       const versionRows = buildExperimentPromptVersionRows(promptVersions, assetRuns);
+      const dimensionScoreRows = buildExperimentDimensionScoreRows(assetDimensions, assetRuns);
       const totalCases = assetRuns.reduce((sum, run) => sum + run.total_cases, 0);
       const passedCases = assetRuns.reduce((sum, run) => sum + run.passed_cases, 0);
       const failedCases = assetRuns.reduce((sum, run) => sum + run.failed_cases, 0);
@@ -4795,7 +4848,8 @@ function buildExperimentComparisonRows(
       const estimatedCost = assetRuns.reduce((sum, run) => sum + run.estimated_cost, 0);
       return {
         asset,
-        dimensions: dimensionsByAsset.get(asset.id) ?? [],
+        dimensions: assetDimensions,
+        dimensionScoreRows,
         promptVersions,
         versionRows,
         promptVersionRunCount: versionRows.reduce((sum, row) => sum + row.runCount, 0),
@@ -4822,6 +4876,74 @@ function buildExperimentComparisonRows(
       if (costDelta !== 0) return costDelta;
       return comparePromptEvaluationAssetByRecent(a.asset, b.asset);
     });
+}
+
+function buildExperimentDimensionScoreRows(
+  dimensions: PromptEvaluationExperimentDimension[],
+  runs: PromptEvaluationRun[],
+): ExperimentDimensionScoreRow[] {
+  const dimensionKeys = new Map<string, { index: number; name: string }>();
+  dimensions.forEach((dimension) => {
+    const name = dimension.dimension_name || `维度 ${dimension.dimension_index + 1}`;
+    dimensionKeys.set(experimentDimensionScoreKey(dimension.dimension_index, name), { index: dimension.dimension_index, name });
+  });
+  const rawScores = runs.flatMap((run) => experimentDimensionScoresFromRun(run));
+  rawScores.forEach((score) => {
+    dimensionKeys.set(experimentDimensionScoreKey(score.dimensionIndex, score.dimensionName), {
+      index: score.dimensionIndex,
+      name: score.dimensionName,
+    });
+  });
+  return Array.from(dimensionKeys.values())
+    .map((dimension) => {
+      const scores = rawScores.filter((score) => score.dimensionIndex === dimension.index || score.dimensionName === dimension.name);
+      const scored = scores.filter((score) => score.status === "已评分" && score.totalCases > 0);
+      const passedCases = scored.reduce((sum, score) => sum + score.passedCases, 0);
+      const totalCases = scored.reduce((sum, score) => sum + score.totalCases, 0);
+      const latest = scores[0] ?? null;
+      return {
+        dimensionIndex: dimension.index,
+        dimensionName: dimension.name,
+        score: totalCases > 0 ? passedCases / totalCases : 0,
+        passedCases,
+        totalCases,
+        runCount: scores.length,
+        scoredRunCount: scored.length,
+        status: scored.length > 0 ? "已评分" : latest?.status ?? "待评分",
+        rule: latest?.rule ?? "等待运行生成评分规则",
+        evidence: latest?.evidence ?? "暂无运行评分证据",
+      };
+    })
+    .sort((a, b) => a.dimensionIndex - b.dimensionIndex || a.dimensionName.localeCompare(b.dimensionName, "zh-CN"));
+}
+
+function experimentDimensionScoresFromRun(run: PromptEvaluationRun): ExperimentDimensionScoreRow[] {
+  const raw = run.metrics["实验维度评分"] ?? run.metrics["experiment_dimension_scores"] ?? run.evidence["实验维度评分"] ?? run.evidence["experiment_dimension_scores"];
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item) => {
+      const record = recordFromUnknown(item);
+      if (!record) return null;
+      const dimensionIndex = numberFromRecord(record, "维度序号") ?? numberFromRecord(record, "dimension_index") ?? 0;
+      const dimensionName = stringFromRecord(record, "维度名称") || stringFromRecord(record, "dimension_name") || `维度 ${dimensionIndex + 1}`;
+      return {
+        dimensionIndex,
+        dimensionName,
+        score: numberFromRecord(record, "得分") ?? numberFromRecord(record, "score") ?? 0,
+        passedCases: numberFromRecord(record, "通过用例数") ?? numberFromRecord(record, "passed_cases") ?? 0,
+        totalCases: numberFromRecord(record, "总用例数") ?? numberFromRecord(record, "total_cases") ?? 0,
+        runCount: 1,
+        scoredRunCount: stringFromRecord(record, "状态") === "已评分" ? 1 : 0,
+        status: stringFromRecord(record, "状态") || stringFromRecord(record, "status") || "未知",
+        rule: stringFromRecord(record, "评分规则") || stringFromRecord(record, "rule") || "未记录评分规则",
+        evidence: stringFromRecord(record, "证据") || stringFromRecord(record, "evidence") || summarizeStructuredRun(run),
+      };
+    })
+    .filter((item): item is ExperimentDimensionScoreRow => item !== null);
+}
+
+function experimentDimensionScoreKey(index: number, name: string): string {
+  return `${index}:${name}`;
 }
 
 function buildExperimentPromptVersionRows(
@@ -5148,6 +5270,11 @@ function stringFromRecord(record: Record<string, unknown>, key: string): string 
 	if (typeof value === "string") return value;
 	if (typeof value === "number" && Number.isFinite(value)) return String(value);
 	return "";
+}
+
+function recordFromUnknown(value: unknown): Record<string, unknown> | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
 }
 
 function numberFromRecord(record: Record<string, unknown>, key: string): number | null {

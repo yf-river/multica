@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -201,27 +202,28 @@ type RestorePromptEvaluationDatasetVersionResponse struct {
 }
 
 type promptEvaluationRunResult struct {
-	RunAt             string                          `json:"运行时间"`
-	AssetType         string                          `json:"资产类型"`
-	PromptName        string                          `json:"提示词"`
-	PromptVersion     int32                           `json:"提示词版本"`
-	TotalCases        int                             `json:"总用例数"`
-	PassedCases       int                             `json:"通过用例数"`
-	FailedCases       int                             `json:"失败用例数"`
-	PassRate          float64                         `json:"通过率"`
-	TotalDurationMs   int64                           `json:"总耗时毫秒"`
-	AverageDurationMs int64                           `json:"平均耗时毫秒"`
-	InputTokens       int                             `json:"输入token"`
-	OutputTokens      int                             `json:"输出token"`
-	EstimatedCost     float64                         `json:"预估成本"`
-	AgentName         string                          `json:"执行Agent"`
-	Model             string                          `json:"模型"`
-	Runtime           string                          `json:"runtime"`
-	TraceTaskID       string                          `json:"trace/task id"`
-	FailureReason     string                          `json:"失败原因"`
-	Conclusion        string                          `json:"评估结论"`
-	MissingVarCount   int                             `json:"缺失变量数"`
-	CaseResults       []promptEvaluationCaseRunResult `json:"用例结果"`
+	RunAt             string                                     `json:"运行时间"`
+	AssetType         string                                     `json:"资产类型"`
+	PromptName        string                                     `json:"提示词"`
+	PromptVersion     int32                                      `json:"提示词版本"`
+	TotalCases        int                                        `json:"总用例数"`
+	PassedCases       int                                        `json:"通过用例数"`
+	FailedCases       int                                        `json:"失败用例数"`
+	PassRate          float64                                    `json:"通过率"`
+	TotalDurationMs   int64                                      `json:"总耗时毫秒"`
+	AverageDurationMs int64                                      `json:"平均耗时毫秒"`
+	InputTokens       int                                        `json:"输入token"`
+	OutputTokens      int                                        `json:"输出token"`
+	EstimatedCost     float64                                    `json:"预估成本"`
+	AgentName         string                                     `json:"执行Agent"`
+	Model             string                                     `json:"模型"`
+	Runtime           string                                     `json:"runtime"`
+	TraceTaskID       string                                     `json:"trace/task id"`
+	FailureReason     string                                     `json:"失败原因"`
+	Conclusion        string                                     `json:"评估结论"`
+	MissingVarCount   int                                        `json:"缺失变量数"`
+	CaseResults       []promptEvaluationCaseRunResult            `json:"用例结果"`
+	DimensionScores   []promptEvaluationExperimentDimensionScore `json:"实验维度评分"`
 }
 
 type promptEvaluationCaseRunResult struct {
@@ -233,6 +235,17 @@ type promptEvaluationCaseRunResult struct {
 	MissingVariables []string          `json:"缺失变量"`
 	ExpectedContains []string          `json:"期望包含"`
 	MatchedContains  []string          `json:"已匹配"`
+}
+
+type promptEvaluationExperimentDimensionScore struct {
+	DimensionIndex int32   `json:"维度序号"`
+	DimensionName  string  `json:"维度名称"`
+	Score          float64 `json:"得分"`
+	PassedCases    int     `json:"通过用例数"`
+	TotalCases     int     `json:"总用例数"`
+	Status         string  `json:"状态"`
+	Rule           string  `json:"评分规则"`
+	Evidence       string  `json:"证据"`
 }
 
 type normalizedPromptEvaluationCase struct {
@@ -2504,6 +2517,15 @@ func (h *Handler) GetPromptEvaluationSummary(w http.ResponseWriter, r *http.Requ
 		Since:                     since,
 	})
 	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
+		slog.Error("failed to load prompt evaluation summary",
+			"workspace_id", workspaceID,
+			"include_acceptance_fixtures", includeAcceptanceFixtures,
+			"since", timestampToString(since),
+			"error", err,
+		)
 		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation summary")
 		return
 	}
@@ -4989,6 +5011,7 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 		"模型":      result.Model,
 		"runtime": result.Runtime,
 		"提示词版本":   result.PromptVersion,
+		"实验维度评分":  result.DimensionScores,
 		"失败原因":    result.FailureReason,
 		"评估结论":    result.Conclusion,
 	}
@@ -5020,7 +5043,7 @@ func (h *Handler) persistPromptEvaluationLocalRun(w http.ResponseWriter, r *http
 		FailureReason:     result.FailureReason,
 		Conclusion:        result.Conclusion,
 		Metrics:           mustJSONBytes(metrics),
-		Evidence:          mustJSONBytes(map[string]any{"资产类型": asset.AssetType, "运行方式": "本地提示词渲染", "提示词版本": result.PromptVersion, "数据集版本": datasetVersionBindings}),
+		Evidence:          mustJSONBytes(map[string]any{"资产类型": asset.AssetType, "运行方式": "本地提示词渲染", "提示词版本": result.PromptVersion, "数据集版本": datasetVersionBindings, "实验维度评分": result.DimensionScores}),
 		StartedAt:         pgtype.Timestamptz{Time: now, Valid: true},
 		CompletedAt:       pgtype.Timestamptz{Time: now, Valid: true},
 		CreatedBy:         createdBy,
@@ -5063,6 +5086,7 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 	if !ok {
 		return db.PromptEvaluationRun{}, false
 	}
+	dimensionScores := pendingPromptEvaluationExperimentDimensionScores(promptEvaluationExperimentDimensions(payload), len(cases))
 	run, err := h.Queries.CreatePromptEvaluationRun(r.Context(), db.CreatePromptEvaluationRunParams{
 		WorkspaceID:       asset.WorkspaceID,
 		AssetID:           asset.ID,
@@ -5096,6 +5120,7 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 			"模型":            promptEvaluationModelForAgent(agent),
 			"runtime":       runtime.Provider,
 			"提示词版本":         prompt.Version,
+			"实验维度评分":        dimensionScores,
 			"trace/task id": uuidToString(taskID),
 			"评估结论":          "等待智能体执行完成",
 			"数据集版本数":        len(datasetVersionBindings),
@@ -5107,6 +5132,7 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 			"runtime_id":      uuidToString(runtime.ID),
 			"提示词版本":           prompt.Version,
 			"数据集版本":           datasetVersionBindings,
+			"实验维度评分":          dimensionScores,
 		}),
 		StartedAt: pgtype.Timestamptz{Time: time.Now(), Valid: true},
 		CreatedBy: createdBy,
@@ -6030,6 +6056,7 @@ func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.Pr
 		failureReason = "存在缺失变量或期望内容未命中"
 		conclusion = "未通过"
 	}
+	dimensionScores := buildPromptEvaluationExperimentDimensionScores(promptEvaluationExperimentDimensions(payload), results)
 	return promptEvaluationRunResult{
 		RunAt:             time.Now().UTC().Format(time.RFC3339),
 		AssetType:         asset.AssetType,
@@ -6052,7 +6079,108 @@ func buildPromptEvaluationRunResult(asset db.PromptEvaluationAsset, prompt db.Pr
 		Conclusion:        conclusion,
 		MissingVarCount:   missingCount,
 		CaseResults:       results,
+		DimensionScores:   dimensionScores,
 	}
+}
+
+func buildPromptEvaluationExperimentDimensionScores(dimensions []normalizedPromptEvaluationExperimentDimension, results []promptEvaluationCaseRunResult) []promptEvaluationExperimentDimensionScore {
+	if len(dimensions) == 0 {
+		return nil
+	}
+	scores := make([]promptEvaluationExperimentDimensionScore, 0, len(dimensions))
+	for idx, dimension := range dimensions {
+		name := strings.TrimSpace(dimension.Name)
+		if name == "" {
+			name = "维度 " + strconv.Itoa(idx+1)
+		}
+		passed := 0
+		rule := promptEvaluationDimensionRule(name)
+		for _, result := range results {
+			if promptEvaluationDimensionCasePassed(name, result) {
+				passed++
+			}
+		}
+		total := len(results)
+		score := 0.0
+		status := "无用例"
+		if total > 0 {
+			score = float64(passed) / float64(total)
+			status = "已评分"
+		}
+		scores = append(scores, promptEvaluationExperimentDimensionScore{
+			DimensionIndex: int32(idx),
+			DimensionName:  name,
+			Score:          score,
+			PassedCases:    passed,
+			TotalCases:     total,
+			Status:         status,
+			Rule:           rule,
+			Evidence:       fmt.Sprintf("%s：%d/%d", rule, passed, total),
+		})
+	}
+	return scores
+}
+
+func pendingPromptEvaluationExperimentDimensionScores(dimensions []normalizedPromptEvaluationExperimentDimension, totalCases int) []promptEvaluationExperimentDimensionScore {
+	if len(dimensions) == 0 {
+		return nil
+	}
+	scores := make([]promptEvaluationExperimentDimensionScore, 0, len(dimensions))
+	for idx, dimension := range dimensions {
+		name := strings.TrimSpace(dimension.Name)
+		if name == "" {
+			name = "维度 " + strconv.Itoa(idx+1)
+		}
+		rule := promptEvaluationDimensionRule(name)
+		scores = append(scores, promptEvaluationExperimentDimensionScore{
+			DimensionIndex: int32(idx),
+			DimensionName:  name,
+			Score:          0,
+			PassedCases:    0,
+			TotalCases:     totalCases,
+			Status:         "待执行",
+			Rule:           rule,
+			Evidence:       "等待智能体返回结构化评估结果后再评分",
+		})
+	}
+	return scores
+}
+
+func promptEvaluationDimensionCasePassed(dimensionName string, result promptEvaluationCaseRunResult) bool {
+	normalized := strings.ToLower(strings.TrimSpace(dimensionName))
+	switch {
+	case strings.Contains(normalized, "缺失变量") || strings.Contains(normalized, "变量"):
+		return len(result.MissingVariables) == 0
+	case strings.Contains(normalized, "中文"):
+		return containsHanRune(result.RenderedPrompt)
+	case strings.Contains(normalized, "命中") || strings.Contains(normalized, "覆盖") || strings.Contains(normalized, "期望"):
+		return len(result.ExpectedContains) == len(result.MatchedContains)
+	default:
+		return result.Status == "通过"
+	}
+}
+
+func promptEvaluationDimensionRule(dimensionName string) string {
+	normalized := strings.ToLower(strings.TrimSpace(dimensionName))
+	switch {
+	case strings.Contains(normalized, "缺失变量") || strings.Contains(normalized, "变量"):
+		return "逐用例检查缺失变量数为 0"
+	case strings.Contains(normalized, "中文"):
+		return "逐用例检查渲染提示词包含中文字符"
+	case strings.Contains(normalized, "命中") || strings.Contains(normalized, "覆盖") || strings.Contains(normalized, "期望"):
+		return "逐用例检查期望内容全部命中"
+	default:
+		return "逐用例沿用总体通过状态"
+	}
+}
+
+func containsHanRune(value string) bool {
+	for _, r := range value {
+		if unicode.Is(unicode.Han, r) {
+			return true
+		}
+	}
+	return false
 }
 
 func promptEvaluationCases(payload map[string]any) []map[string]any {

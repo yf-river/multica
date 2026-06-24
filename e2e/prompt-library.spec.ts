@@ -1252,8 +1252,27 @@ test.describe("训练与评估工作台", () => {
       .not.toBe("");
     const run = (await api.listPromptEvaluationRuns({ asset_id: experiment.id, limit: 5 }))[0]!;
     expect(run.metrics).toMatchObject({ 提示词版本: 2 });
+    const dimensionScores = Array.isArray(run.metrics["实验维度评分"]) ? run.metrics["实验维度评分"] as Array<Record<string, unknown>> : [];
+    expect(dimensionScores).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        维度名称: "命中率",
+        状态: "已评分",
+        评分规则: "逐用例检查期望内容全部命中",
+      }),
+      expect.objectContaining({
+        维度名称: "缺失变量",
+        状态: "已评分",
+      }),
+      expect.objectContaining({
+        维度名称: "中文一致性",
+        状态: "已评分",
+      }),
+    ]));
     const evidence = await api.getPromptEvaluationRunEvidence(run.id);
     expect(evidence.evidence).toMatchObject({ 提示词版本: 2 });
+    expect(evidence.evidence["实验维度评分"]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ 维度名称: "命中率", 状态: "已评分" }),
+    ]));
     const versions = Array.isArray(evidence.evidence["数据集版本"]) ? evidence.evidence["数据集版本"] as Array<Record<string, unknown>> : [];
     expect(versions).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -1272,6 +1291,12 @@ test.describe("训练与评估工作台", () => {
     await expect(comparisonRow).toContainText("通过率");
     await expect(comparisonRow).toContainText("预估成本");
     await expect(comparisonRow).toContainText(`v${datasetVersion.version}`);
+    const dimensionScoreComparison = comparisonRow.getByTestId(`experiment-dimension-score-comparison-${experiment.id}`);
+    await expect(dimensionScoreComparison).toContainText("实验维度评分");
+    await expect(dimensionScoreComparison).toContainText("命中率");
+    await expect(dimensionScoreComparison).toContainText("缺失变量");
+    await expect(dimensionScoreComparison).toContainText("中文一致性");
+    await expect(dimensionScoreComparison).toContainText("逐用例检查期望内容全部命中");
     const promptVersionComparison = comparisonRow.getByTestId(`experiment-prompt-version-comparison-${experiment.id}`);
     await expect(promptVersionComparison).toContainText("提示词版本对比");
     await expect(promptVersionComparison).toContainText("v2");
