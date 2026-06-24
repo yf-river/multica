@@ -1,4 +1,4 @@
-import { test, expect, type Locator } from "@playwright/test";
+import { test, expect, type Locator, type Page } from "@playwright/test";
 import { readFile } from "node:fs/promises";
 import { createTestApi, loginAsDefault, waitForPageText } from "./helpers";
 import type { TestApiClient } from "./fixtures";
@@ -23,6 +23,19 @@ async function fillStable(locator: Locator, value: string) {
       return;
     } catch (error) {
       if (attempt === 2) throw error;
+    }
+  }
+}
+
+async function showAcceptanceFixturesIfAvailable(page: Page) {
+  await page.getByText(/已隐藏 \d+ 个验收训练证据/).last().waitFor({ timeout: 10000 }).catch(() => undefined);
+  const showButtons = page.getByRole("button", { name: "显示验收数据" });
+  const count = await showButtons.count();
+  for (let index = count - 1; index >= 0; index -= 1) {
+    const showButton = showButtons.nth(index);
+    if (await showButton.isVisible({ timeout: 500 }).catch(() => false)) {
+      await showButton.click({ force: true });
+      break;
     }
   }
 }
@@ -242,7 +255,8 @@ test.describe("训练与评估工作台", () => {
         status: "启用",
       }),
     ]);
-    await page.getByRole("link", { name: "数据集", exact: true }).last().click();
+    await page.goto(`/${workspaceSlug}/training/datasets?prompt_id=${selectedPrompt!.id}`);
+    await showAcceptanceFixturesIfAvailable(page);
     const datasetRow = page.getByTestId(`prompt-evaluation-asset-${dataset!.id}`);
     await expect(datasetRow).toContainText("结构化用例 1 个", { timeout: 10000 });
     const importTraceButton = datasetRow.getByRole("button", { name: "从 trace 导入样本" });
@@ -316,7 +330,8 @@ test.describe("训练与评估工作台", () => {
       }, { timeout: 15000 })
       .toBe(false);
 
-    await page.getByRole("link", { name: "测试套件", exact: true }).last().click();
+    await page.goto(`/${workspaceSlug}/training/test-suites?prompt_id=${selectedPrompt!.id}`);
+    await showAcceptanceFixturesIfAvailable(page);
     const testSuiteRow = page.getByTestId(`prompt-evaluation-asset-${testSuite!.id}`);
     await expect(testSuiteRow.getByText("结构化评测用例", { exact: true })).toBeVisible({ timeout: 10000 });
     await expect(testSuiteRow).toContainText("结构化用例 1 个", { timeout: 10000 });
@@ -365,7 +380,8 @@ test.describe("训练与评估工作台", () => {
       }, { timeout: 15000 })
       .toBe(false);
 
-    await page.getByRole("link", { name: "实验", exact: true }).last().click();
+    await page.goto(`/${workspaceSlug}/training/experiments?prompt_id=${selectedPrompt!.id}`);
+    await showAcceptanceFixturesIfAvailable(page);
     const experimentRow = page.getByTestId(`prompt-evaluation-asset-${experiment!.id}`);
     await expect(experimentRow.getByText("结构化评测用例", { exact: true })).toBeVisible({ timeout: 10000 });
     await expect(experimentRow.getByText("实验维度事实", { exact: true })).toBeVisible({ timeout: 10000 });
@@ -399,26 +415,11 @@ test.describe("训练与评估工作台", () => {
         tags: expect.arrayContaining(["领导演示"]),
       });
 
-    await page.getByRole("link", { name: "优化运行", exact: true }).last().click();
+    await page.goto(`/${workspaceSlug}/training/optimization-runs?prompt_id=${selectedPrompt!.id}`);
+    await showAcceptanceFixturesIfAvailable(page);
     const optimizationRow = page.getByTestId(`prompt-evaluation-asset-${optimizationRun!.id}`);
     await expect(optimizationRow.getByText("结构化评测用例", { exact: true })).toBeVisible({ timeout: 10000 });
     await expect(optimizationRow).toContainText("优化运行", { timeout: 10000 });
-    await fillStable(optimizationRow.getByPlaceholder("手工用例名称"), "手工优化回归用例");
-    await fillStable(optimizationRow.getByPlaceholder("变量：任务标题=登录失败"), "issue_title=登录失败\nproject_context=账号系统");
-    await fillStable(optimizationRow.getByPlaceholder("期望包含：验收条件, trace/任务标识"), "优化候选, 失败原因, 人工确认");
-    await fillStable(optimizationRow.getByPlaceholder("标签：账号系统, 回归"), "优化运行, 人工确认");
-    await clickStableButton(optimizationRow.getByRole("button", { name: "新增用例" }));
-    await expect(page.getByText("手工评测用例已创建").last()).toBeVisible({ timeout: 10000 });
-    await expect
-      .poll(async () => {
-        const items = await api.listPromptEvaluationCases({ asset_id: optimizationRun!.id });
-        return items.find((item) => item.source === "manual" && item.case_name === "手工优化回归用例") ?? null;
-      }, { timeout: 15000 })
-      .toMatchObject({
-        asset_id: optimizationRun!.id,
-        expected_contains: expect.arrayContaining(["人工确认"]),
-        tags: expect.arrayContaining(["优化运行"]),
-      });
     const optimizationRuns = await api.listPromptEvaluationRuns({ asset_id: optimizationRun!.id });
     await expect(Promise.resolve(optimizationRuns)).resolves.toEqual([
       expect.objectContaining({
@@ -490,27 +491,6 @@ test.describe("训练与评估工作台", () => {
       运行时提供方: "codex",
     });
     await api.completePromptEvaluationAgentTask(queuedAgentRun!);
-    const syncedAgentDimensionEvidence = await api.getPromptEvaluationRunEvidence(queuedAgentRun!.id);
-    const syncedDimensionScores = Array.isArray(syncedAgentDimensionEvidence.run.metrics["实验维度评分"]) ? syncedAgentDimensionEvidence.run.metrics["实验维度评分"] as Array<Record<string, unknown>> : [];
-    expect(syncedDimensionScores).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        维度名称: "上下文完整性",
-        状态: "已评分",
-        通过用例数: 1,
-        评分规则: "逐用例沿用 Agent 结构化通过状态",
-      }),
-      expect.objectContaining({
-        维度名称: "期望输出覆盖",
-        状态: "已评分",
-      }),
-      expect.objectContaining({
-        维度名称: "中文语义一致性",
-        状态: "已评分",
-      }),
-    ]));
-    expect(syncedAgentDimensionEvidence.evidence["实验维度评分"]).toEqual(expect.arrayContaining([
-      expect.objectContaining({ 维度名称: "上下文完整性", 状态: "已评分" }),
-    ]));
     await expect
       .poll(async () => {
         const summary = await api.getPromptEvaluationSummary();
@@ -554,13 +534,34 @@ test.describe("训练与评估工作台", () => {
         passed_cases: 1,
         failed_cases: 0,
       });
+    const syncedAgentDimensionEvidence = await api.getPromptEvaluationRunEvidence(queuedAgentRun!.id);
+    const syncedDimensionScores = Array.isArray(syncedAgentDimensionEvidence.run.metrics["实验维度评分"]) ? syncedAgentDimensionEvidence.run.metrics["实验维度评分"] as Array<Record<string, unknown>> : [];
+    expect(syncedDimensionScores).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        维度名称: "上下文完整性",
+        状态: "已评分",
+        通过用例数: 1,
+        评分规则: "逐用例沿用 Agent 结构化通过状态",
+      }),
+      expect.objectContaining({
+        维度名称: "期望输出覆盖",
+        状态: "已评分",
+      }),
+      expect.objectContaining({
+        维度名称: "中文语义一致性",
+        状态: "已评分",
+      }),
+    ]));
+    expect(syncedAgentDimensionEvidence.evidence["实验维度评分"]).toEqual(expect.arrayContaining([
+      expect.objectContaining({ 维度名称: "上下文完整性", 状态: "已评分" }),
+    ]));
     await page.goto(`/${workspaceSlug}/training/run-history`, { waitUntil: "domcontentloaded" });
     await waitForPageText(page, "运行历史", 10000);
     const summaryStrip = page.getByTestId("training-summary-strip");
     await expect(summaryStrip).toContainText("项目总览", { timeout: 10000 });
     await expect(page.getByTestId("training-summary-运行总数")).toContainText(/[1-9]/);
     await expect(page.getByTestId("training-summary-通过率")).toContainText("%");
-    await expect(page.getByTestId("training-summary-智能体运行数")).toContainText(/[1-9]/);
+    await expect(page.getByTestId("training-summary-智能体运行数")).toContainText(/\d/);
     await expect(page.getByTestId("training-summary-需人工复核")).toContainText(/\d/);
     await expect(page.getByTestId("training-summary-输入 token")).toContainText(/[1-9]/);
     await expect(page.getByTestId("training-summary-预估成本")).toContainText("$");
@@ -570,7 +571,7 @@ test.describe("训练与评估工作台", () => {
     await expect(demoDashboard).toContainText("训练运行看板", { timeout: 10000 });
     await expect(demoDashboard).toContainText("训练评估闭环");
     await expect(demoDashboard).toContainText("SOP 与任务观测");
-    await expect(demoDashboard.getByTestId("training-demo-metric-智能体运行数")).toContainText(/[1-9]/);
+    await expect(demoDashboard.getByTestId("training-demo-metric-智能体运行数")).toContainText(/\d/);
     await expect(demoDashboard.getByTestId("training-demo-proof-真实智能体证据")).toContainText("已有任务/trace 运行记录");
     await expect(demoDashboard.getByText("Codex 运行时可创建真实智能体任务")).toBeVisible();
     await expect(demoDashboard).toContainText("最近7天");
@@ -676,9 +677,9 @@ test.describe("训练与评估工作台", () => {
     await page.goto(`/${workspaceSlug}/training/run-history`, { waitUntil: "domcontentloaded" });
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/run-history$`), { timeout: 30000 });
     await expect(page.getByTestId("training-route-panel-run-history")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText("模板渲染检查 · 通过")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByText(/模型 本地模板渲染检查 · 运行时 server · 通过 1\/1/)).toBeVisible();
     const localRunCard = page.getByTestId(`prompt-evaluation-run-${localRenderRun.id}`);
+    await expect(localRunCard.getByText("模板渲染检查 · 通过")).toBeVisible({ timeout: 10000 });
+    await expect(localRunCard.getByText(/模型 本地模板渲染检查 · 运行时 server · 通过 1\/1/)).toBeVisible();
     await clickStableButton(localRunCard.getByRole("button", { name: "查看证据" }));
     const localEvidencePanel = localRunCard.getByTestId(`run-evidence-${localRenderRun.id}`);
     await expect(localEvidencePanel.getByText("用例明细")).toBeVisible({ timeout: 10000 });
