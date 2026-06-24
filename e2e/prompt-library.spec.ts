@@ -108,10 +108,36 @@ test.describe("训练与评估工作台", () => {
     await page.getByRole("button", { name: "保存本地渲染检查" }).click();
     await expect(page.getByText("优化运行已记录")).toBeVisible({ timeout: 10000 });
 
-    for (const assetType of ["数据集", "测试套件", "实验"] as const) {
+    const assetRoutes = {
+      数据集: "datasets",
+      测试套件: "test-suites",
+      实验: "experiments",
+    } as const;
+    for (const assetType of Object.keys(assetRoutes) as Array<keyof typeof assetRoutes>) {
+      const route = assetRoutes[assetType];
       await page.getByRole("link", { name: assetType, exact: true }).last().click();
-      await page.getByRole("button", { name: `新建${assetType}` }).click();
+      await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/${route}$`), { timeout: 30000 });
+      const routeWorkspace = page.getByTestId(`training-route-workspace-${route}`);
+      await expect(routeWorkspace).toBeVisible({ timeout: 10000 });
+      const createAssetResponse = page.waitForResponse(
+        (response) => response.request().method() === "POST" && response.url().includes("/prompt-evaluation-assets"),
+        { timeout: 10000 },
+      );
+      await routeWorkspace.getByRole("button", { name: `新建${assetType}` }).click();
+      const createdAssetResponse = await createAssetResponse;
+      expect([200, 201]).toContain(createdAssetResponse.status());
+      const createdAsset = await createdAssetResponse.json() as PromptEvaluationAsset;
+      expect(createdAsset.asset_type).toBe(assetType);
       await expect(page.getByText("资产已创建").last()).toBeVisible({ timeout: 10000 });
+      await expect
+        .poll(async () => {
+          const prompts = await api.listPromptLibraryItems();
+          const prompt = prompts.find((item) => item.name === `${artifactPrefix} 账号系统 澄清`);
+          if (!prompt) return null;
+          return (await api.listPromptEvaluationAssets({ prompt_id: prompt.id, asset_type: assetType }))
+            .find((asset) => asset.id === createdAsset.id) ?? null;
+        }, { timeout: 15000 })
+        .toMatchObject({ asset_type: assetType });
     }
 
     await page.getByRole("link", { name: "智能体调试场", exact: true }).last().click();

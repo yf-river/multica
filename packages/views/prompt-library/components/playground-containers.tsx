@@ -19,6 +19,7 @@ import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { AgentPlaygroundPromptList, PromptPlaygroundPromptList } from "./playground-prompt-lists";
 import { AgentPlaygroundWorkbench, PromptPlaygroundWorkbench } from "./playground-workbenches";
 import { DEFAULT_AGENT_MODEL, itemToDraft, valuesToDebugText } from "./prompt-library-request-builders";
+import { legacyTrainingSelectedPromptStorageKeys, trainingSelectedPromptStorageKey } from "./prompt-selection-storage";
 import { useAgentPlaygroundActions, usePromptPlaygroundActions } from "./use-prompt-playground-actions";
 
 const DEFAULT_AGENT_RUNTIME_READINESS: PromptEvaluationRuntimeReadiness = {
@@ -315,27 +316,37 @@ function PlaygroundPageShell({
 }
 
 function usePlaygroundPromptSelection(surface: "prompt-playground" | "agent-playground", workspaceId: string | null) {
-  const storageKey = workspaceId ? `multica:training:${surface}:selected-prompt:${workspaceId}` : null;
+  const storageKey = trainingSelectedPromptStorageKey(workspaceId);
+  const legacyStorageKeys = useMemo(() => {
+    if (!workspaceId) return [];
+    const surfaceKey = `multica:training:${surface}:selected-prompt:${workspaceId}`;
+    return [surfaceKey, ...legacyTrainingSelectedPromptStorageKeys(workspaceId).filter((key) => key !== surfaceKey)];
+  }, [surface, workspaceId]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
 
   useEffect(() => {
     if (!storageKey || selectedId) return;
     try {
-      const storedId = window.localStorage.getItem(storageKey);
+      const storedId = [storageKey, ...legacyStorageKeys]
+        .map((key) => window.localStorage.getItem(key))
+        .find(Boolean);
       if (storedId) setSelectedId(storedId);
     } catch {
       // localStorage is best-effort; route usability must not depend on it.
     }
-  }, [selectedId, storageKey]);
+  }, [legacyStorageKeys, selectedId, storageKey]);
 
   useEffect(() => {
     if (!storageKey || !selectedId) return;
     try {
       window.localStorage.setItem(storageKey, selectedId);
+      for (const key of legacyStorageKeys) {
+        window.localStorage.setItem(key, selectedId);
+      }
     } catch {
       // Ignore storage failures in private or restricted browser contexts.
     }
-  }, [selectedId, storageKey]);
+  }, [legacyStorageKeys, selectedId, storageKey]);
 
   return {
     storageKey,

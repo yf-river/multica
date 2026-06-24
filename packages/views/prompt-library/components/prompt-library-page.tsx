@@ -64,6 +64,7 @@ import {
   valuesToDebugText,
   type PromptDraft,
 } from "./prompt-library-request-builders";
+import { legacyTrainingSelectedPromptStorageKeys, trainingSelectedPromptStorageKey } from "./prompt-selection-storage";
 import { usePromptPlaygroundActions } from "./use-prompt-playground-actions";
 
 const promptLibraryKeys = {
@@ -377,26 +378,32 @@ export function PromptLibraryPage({
   }, [experimentPromptIds, experimentVersionQueries]);
   const experimentVersionsLoading = experimentVersionQueries.some((query) => query.isLoading || query.isFetching);
   const agentRuntimeReadiness = runtimeReadinessQuery.data ?? DEFAULT_AGENT_RUNTIME_READINESS;
-  const selectedPromptStorageKey = workspaceId ? `multica:training:prompt-library:selected-prompt:${workspaceId}` : null;
+  const selectedPromptStorageKey = trainingSelectedPromptStorageKey(workspaceId);
+  const selectedPromptLegacyStorageKeys = useMemo(() => legacyTrainingSelectedPromptStorageKeys(workspaceId), [workspaceId]);
 
   useEffect(() => {
     if (!selectedPromptStorageKey || selectedId || isDraftingNew) return;
     try {
-      const storedId = window.localStorage.getItem(selectedPromptStorageKey);
+      const storedId = [selectedPromptStorageKey, ...selectedPromptLegacyStorageKeys]
+        .map((key) => window.localStorage.getItem(key))
+        .find(Boolean);
       if (storedId) setSelectedId(storedId);
     } catch {
       // localStorage is best-effort; route usability must not depend on it.
     }
-  }, [isDraftingNew, selectedId, selectedPromptStorageKey]);
+  }, [isDraftingNew, selectedId, selectedPromptLegacyStorageKeys, selectedPromptStorageKey]);
 
   useEffect(() => {
     if (!selectedPromptStorageKey || !selectedId) return;
     try {
       window.localStorage.setItem(selectedPromptStorageKey, selectedId);
+      for (const key of selectedPromptLegacyStorageKeys) {
+        window.localStorage.setItem(key, selectedId);
+      }
     } catch {
       // Ignore storage failures in private or restricted browser contexts.
     }
-  }, [selectedId, selectedPromptStorageKey]);
+  }, [selectedId, selectedPromptLegacyStorageKeys, selectedPromptStorageKey]);
 
   useEffect(() => {
     if (isDraftingNew) return;
