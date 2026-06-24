@@ -88,12 +88,13 @@ async function auditPromptPlayground(page) {
     sourcePanel: "prompt-playground-source-panel",
     variableChecklist: "prompt-playground-variable-checklist",
     renderedOutput: "prompt-playground-rendered-output",
+    qualityGate: "prompt-playground-quality-gate",
   });
   const text = await page.locator("body").innerText({ timeout: 5_000 });
   const forbidden = await countsFor(page, ["agent-playground-run-console", "agent-playground-task-payload", "agent-playground-task-pipeline"]);
   const failures = [
-    ...requireText(text, ["本地渲染 · 不启动智能体", "本地模板实验室", "模板源", "变量样本", "本地渲染记录"]),
-    ...nonZeroBoxFailures(boxes, ["shell", "workbench", "promptList", "templateLab", "sourcePanel", "variableChecklist", "renderedOutput"]),
+    ...requireText(text, ["本地渲染 · 不启动智能体", "本地模板实验室", "模板质检台", "模板源", "变量样本", "保存质检记录", "质检结论"]),
+    ...nonZeroBoxFailures(boxes, ["shell", "workbench", "promptList", "templateLab", "sourcePanel", "variableChecklist", "renderedOutput", "qualityGate"]),
     ...forbiddenCountFailures(forbidden),
   ];
   if (boxes.promptList && boxes.templateLab && boxes.promptList.x >= boxes.templateLab.x) {
@@ -115,7 +116,7 @@ async function auditPromptPlayground(page) {
     screenshot,
     boxes,
     forbidden_counts: forbidden,
-    visible_contracts: pickVisibleLines(text, ["本地渲染", "本地模板实验室", "模板源", "变量样本", "真实任务"]),
+    visible_contracts: pickVisibleLines(text, ["本地渲染", "本地模板实验室", "模板质检", "模板源", "变量样本", "质检结论", "真实任务"]),
     surface_signature: buildPromptSurfaceSignature(boxes),
   };
 }
@@ -136,6 +137,7 @@ async function auditAgentPlayground(page) {
     targetQueueItem: "agent-playground-target-queue-item",
     runConsole: "agent-playground-run-console",
     executionTopology: "agent-playground-execution-topology",
+    executionBus: "agent-playground-execution-bus",
     configComparison: "agent-playground-config-comparison",
     modelMatrix: "agent-playground-model-matrix",
     toolEnvDiff: "agent-playground-tool-env-diff",
@@ -146,8 +148,8 @@ async function auditAgentPlayground(page) {
   const text = await page.locator("body").innerText({ timeout: 5_000 });
   const forbidden = await countsFor(page, ["prompt-playground-template-lab", "prompt-playground-source-panel", "prompt-playground-variable-checklist"]);
   const failures = [
-    ...requireText(text, ["真实任务 · 写回观测证据", "真实任务发射台", "执行目标池", "入队目标", "创建真实任务", "执行配置对比", "模型参数矩阵", "工具与环境差异", "MCP", "环境变量", "最近运行横向对比", "观测回写契约"]),
-    ...nonZeroBoxFailures(boxes, ["shell", "workbench", "executionStage", "promptList", "targetQueue", "targetQueueItem", "runConsole", "executionTopology", "configComparison", "modelMatrix", "toolEnvDiff", "runComparison", "taskPayload", "observabilityContract"]),
+    ...requireText(text, ["真实任务 · 写回观测证据", "真实任务发射台", "执行目标池", "入队目标", "创建真实任务", "执行节点", "Trace", "用量", "执行配置对比", "模型参数矩阵", "工具与环境差异", "MCP", "环境变量", "最近运行横向对比", "观测回写契约"]),
+    ...nonZeroBoxFailures(boxes, ["shell", "workbench", "executionStage", "promptList", "targetQueue", "targetQueueItem", "runConsole", "executionTopology", "executionBus", "configComparison", "modelMatrix", "toolEnvDiff", "runComparison", "taskPayload", "observabilityContract"]),
     ...forbiddenCountFailures(forbidden),
   ];
   if (boxes.executionStage && boxes.promptList && boxes.executionStage.x >= boxes.promptList.x) {
@@ -164,7 +166,7 @@ async function auditAgentPlayground(page) {
     screenshot,
     boxes,
     forbidden_counts: forbidden,
-    visible_contracts: pickVisibleLines(text, ["真实任务", "执行目标池", "入队目标", "执行配置", "模型参数", "工具与环境", "MCP", "环境变量", "横向对比", "观测回写", "本地渲染", "模板源"]),
+    visible_contracts: pickVisibleLines(text, ["真实任务", "执行目标池", "入队目标", "执行节点", "Trace", "用量", "执行配置", "模型参数", "工具与环境", "MCP", "环境变量", "横向对比", "观测回写", "本地渲染", "模板源"]),
     surface_signature: buildAgentSurfaceSignature(boxes),
   };
 }
@@ -231,7 +233,7 @@ function buildPromptSurfaceSignature(boxes) {
   return {
     prompt_list_side: boxes.promptList && boxes.templateLab && boxes.promptList.x < boxes.templateLab.x ? "left" : "unknown",
     primary_pattern: "left-list-three-column-local-lab",
-    exclusive_regions: ["prompt-playground-template-lab", "prompt-playground-source-panel", "prompt-playground-variable-checklist"],
+    exclusive_regions: ["prompt-playground-template-lab", "prompt-playground-source-panel", "prompt-playground-variable-checklist", "prompt-playground-quality-gate"],
   };
 }
 
@@ -239,7 +241,7 @@ function buildAgentSurfaceSignature(boxes) {
   return {
     prompt_list_side: boxes.executionStage && boxes.promptList && boxes.executionStage.x < boxes.promptList.x ? "right" : "unknown",
     primary_pattern: "left-execution-console-right-target-pool",
-    exclusive_regions: ["agent-playground-run-console", "agent-playground-task-payload", "agent-playground-tool-env-diff"],
+    exclusive_regions: ["agent-playground-run-console", "agent-playground-execution-bus", "agent-playground-task-payload", "agent-playground-tool-env-diff"],
   };
 }
 

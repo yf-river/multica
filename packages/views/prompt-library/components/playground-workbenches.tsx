@@ -64,20 +64,20 @@ export function PromptPlaygroundWorkbench({
         <section className="rounded-md border border-l-4 border-border/70 border-l-sky-500 bg-muted/10 p-4">
           <div className="flex flex-col gap-2 border-b pb-3 md:flex-row md:items-start md:justify-between">
             <div className="min-w-0">
-              <h2 className="text-base font-semibold">模板渲染实验室</h2>
+              <h2 className="text-base font-semibold">模板质检台</h2>
               <p className="mt-1 text-xs text-muted-foreground">
-                这里只做本地模板渲染：选择已保存提示词，填入变量，确认最终提示词文本，并把结果记录为一次模板渲染检查。
+                这里只做离线模板质检：解析模板源、核对变量样本、确认最终提示词文本，并把结果保存为一次本地检查。
               </p>
             </div>
-            <Badge variant="secondary" className="w-fit shrink-0">本地渲染</Badge>
+            <Badge variant="secondary" className="w-fit shrink-0">离线质检</Badge>
           </div>
 
           <div className="mt-4 grid gap-4">
             <div className="grid gap-2 md:grid-cols-4" data-testid="prompt-playground-purpose-map">
               {[
-                ["输入", "提示词模板和变量样本"],
-                ["执行", "浏览器本地渲染"],
-                ["产出", "渲染文本和调试记录"],
+                ["输入", "模板源和变量样本"],
+                ["处理", "浏览器离线展开"],
+                ["产出", "渲染文本和质检记录"],
                 ["边界", "不创建任务、不消耗模型"],
               ].map(([label, detail]) => (
                 <div key={label} className="min-w-0 rounded-md border bg-background px-3 py-2">
@@ -88,7 +88,7 @@ export function PromptPlaygroundWorkbench({
             </div>
 
             <div className="grid gap-2 rounded-md border border-dashed bg-background p-3 md:grid-cols-3" data-testid="prompt-playground-local-pipeline">
-              {["选择已保存模板", "填写变量样本", "本地渲染记录"].map((label, index) => (
+              {["解析模板源", "核对变量样本", "保存质检记录"].map((label, index) => (
                 <div key={label} className="min-w-0">
                   <div className="text-[11px] font-medium text-muted-foreground">步骤 {index + 1}</div>
                   <div className="mt-1 truncate text-sm font-semibold">{label}</div>
@@ -181,10 +181,24 @@ export function PromptPlaygroundWorkbench({
               </section>
             </div>
 
+            <div className="grid gap-2 rounded-md border border-sky-500/30 bg-sky-500/5 p-3 md:grid-cols-4" data-testid="prompt-playground-quality-gate">
+              {[
+                ["模板源", selected ? "已读取已保存版本" : "待选择"],
+                ["变量声明", variableNames.length > 0 ? `${variableNames.length} 个变量` : "未声明"],
+                ["缺失变量", debugResult.missingVariables.length > 0 ? debugResult.missingVariables.join("、") : "无缺失"],
+                ["质检结论", debugResult.missingVariables.length > 0 ? "不可直接发布" : "可保存检查"],
+              ].map(([label, value]) => (
+                <div key={label} className="min-w-0">
+                  <div className="text-[11px] font-medium text-muted-foreground">{label}</div>
+                  <div className="mt-1 truncate text-sm font-semibold">{value}</div>
+                </div>
+              ))}
+            </div>
+
             <div className="flex flex-wrap items-center gap-2">
               <Button size="sm" onClick={onRunDebug} disabled={!selected || runningDebug}>
                 {runningDebug ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                运行并记录
+                保存本地渲染检查
               </Button>
               {!selected && <span className="text-xs text-muted-foreground">先选择提示词后才能记录模板渲染。</span>}
               {selected && debugResult.missingVariables.length > 0 && (
@@ -410,6 +424,20 @@ export function AgentPlaygroundWorkbench({
             <div className="mt-1 truncate text-sm font-semibold">写入真实任务队列</div>
             <div className="mt-1 truncate text-xs text-muted-foreground">回写运行历史、任务消息和用量。</div>
           </div>
+        </div>
+
+        <div className="mt-4 grid gap-2 rounded-md border border-emerald-500/30 bg-background p-3 md:grid-cols-4" data-testid="agent-playground-execution-bus">
+          {[
+            ["队列", "创建真实任务"],
+            ["执行节点", selectedRuntime?.name ?? runtimeReadiness.label],
+            ["Trace", "消息和工具调用"],
+            ["用量", "token、耗时、成本"],
+          ].map(([label, detail]) => (
+            <div key={label} className="min-w-0">
+              <div className="text-[11px] font-medium text-muted-foreground">{label}</div>
+              <div className="mt-1 truncate text-sm font-semibold">{detail}</div>
+            </div>
+          ))}
         </div>
 
         <div className="mt-4 grid gap-2 md:grid-cols-3" data-testid="agent-playground-task-pipeline">

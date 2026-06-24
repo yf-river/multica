@@ -1035,7 +1035,7 @@ export function PromptLibraryPage({
                     )}
                     <Button size="sm" variant="secondary" className="ml-auto h-7" onClick={runDebug} disabled={runningDebug}>
                       {runningDebug ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                      运行并记录
+                      保存本地渲染检查
                     </Button>
                   </div>
                   <pre className="min-h-[180px] overflow-auto whitespace-pre-wrap rounded-md border bg-muted/20 p-3 font-mono text-sm leading-6">

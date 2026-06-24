@@ -6,10 +6,11 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 const opikRoot = existsSync("/data/ida/opik") ? "/data/ida/opik" : "/data/ida/opik-local-demo";
 const docsPath = path.join(repoRoot, "apps/docs/content/docs/production-observability.zh.mdx");
 const pagePath = path.join(repoRoot, "packages/views/prompt-library/components/prompt-library-page.tsx");
+const workbenchPath = path.join(repoRoot, "packages/views/prompt-library/components/playground-workbenches.tsx");
 
 const mapping = [
   ["提示词库", "prompt-library", "PromptLibraryPage"],
-  ["提示词调试场", "prompt-playground", "运行并记录"],
+  ["提示词调试场", "prompt-playground", "保存本地渲染检查"],
   ["智能体调试场", "agent-playground", "创建真实智能体任务"],
   ["数据集", "prompt_evaluation_asset", "dataset_row_count"],
   ["测试套件", "prompt_evaluation_asset", "test_suite_case_count"],
@@ -20,7 +21,10 @@ const mapping = [
 
 const opikExists = existsSync(opikRoot);
 const docs = existsSync(docsPath) ? readFileSync(docsPath, "utf8") : "";
-const page = existsSync(pagePath) ? readFileSync(pagePath, "utf8") : "";
+const page = [
+  existsSync(pagePath) ? readFileSync(pagePath, "utf8") : "",
+  existsSync(workbenchPath) ? readFileSync(workbenchPath, "utf8") : "",
+].join("\n");
 const missingPageTerms = mapping
   .map(([feature, , marker]) => ({ feature, marker }))
   .filter(({ marker }) => !page.includes(marker));
@@ -35,6 +39,7 @@ const evidence = {
   docs_has_mapping: missingDocTerms.length === 0,
   missing_doc_terms: missingDocTerms,
   page_path: pagePath,
+  workbench_path: workbenchPath,
   missing_page_markers: missingPageTerms,
   mapping: mapping.map(([opikFeature, multicaConcept, evidenceAnchor]) => ({
     "Opik功能": opikFeature,

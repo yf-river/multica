@@ -56,7 +56,7 @@ const routes = [
     path: `/${workspaceSlug}/training/prompt-playground`,
     expect: ["提示词调试场"],
     uiContract: {
-      requiredText: ["本地模板实验室", "模板渲染实验室", "不启动智能体", "不创建任务、不消耗模型", "本地渲染记录"],
+      requiredText: ["本地模板实验室", "模板质检台", "不启动智能体", "不创建任务、不消耗模型", "保存质检记录", "质检结论"],
       forbiddenText: ["执行目标池", "真实任务发射台", "真实执行准备度", "观测回写契约", "写入真实任务队列"],
       requiredTestIds: [
         "prompt-playground-page-shell",
@@ -64,6 +64,7 @@ const routes = [
         "prompt-playground-purpose-map",
         "prompt-playground-template-lab",
         "prompt-playground-local-pipeline",
+        "prompt-playground-quality-gate",
       ],
       forbiddenTestIds: [
         "training-tab-strip",
@@ -73,6 +74,7 @@ const routes = [
         "agent-playground-run-console",
         "agent-playground-launch-brief",
         "agent-playground-execution-topology",
+        "agent-playground-execution-bus",
         "agent-playground-agent-selector",
         "agent-playground-runtime-selector",
         "agent-playground-queue-contract",
@@ -89,8 +91,8 @@ const routes = [
     path: `/${workspaceSlug}/training/agent-playground`,
     expect: ["智能体调试场"],
     uiContract: {
-      requiredText: ["执行目标池", "入队目标", "真实任务发射台", "执行对象", "执行智能体", "自动选择训练评估智能体", "真实运行时", "入队链路", "写入真实任务队列", "真实执行准备度", "观测回写契约", "真实运行"],
-      forbiddenText: ["本地模板实验室", "不启动智能体", "本地渲染记录"],
+      requiredText: ["执行目标池", "入队目标", "真实任务发射台", "执行对象", "执行智能体", "自动选择训练评估智能体", "真实运行时", "入队链路", "写入真实任务队列", "执行节点", "Trace", "用量", "真实执行准备度", "观测回写契约", "真实运行"],
+      forbiddenText: ["本地模板实验室", "不启动智能体", "保存质检记录", "质检结论"],
       requiredTestIds: [
         "agent-playground-page-shell",
         "agent-playground-workbench",
@@ -100,6 +102,7 @@ const routes = [
         "agent-playground-run-console",
         "agent-playground-launch-brief",
         "agent-playground-execution-topology",
+        "agent-playground-execution-bus",
         "agent-playground-agent-selector",
         "agent-playground-runtime-selector",
         "agent-playground-queue-contract",
@@ -116,6 +119,7 @@ const routes = [
         "prompt-playground-purpose-map",
         "prompt-playground-template-lab",
         "prompt-playground-local-pipeline",
+        "prompt-playground-quality-gate",
       ],
     },
   },

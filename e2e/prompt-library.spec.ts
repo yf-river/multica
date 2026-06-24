@@ -96,7 +96,7 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("prompt-playground-contract")).toContainText("不启动智能体");
     await expect(page.getByTestId("prompt-playground-purpose-map")).toContainText("不创建任务、不消耗模型");
     await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("本地渲染");
-    await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("本地渲染记录");
+    await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("保存质检记录");
     await expect(page.getByTestId("prompt-playground-source-panel")).toContainText("模板源");
     await expect(page.getByTestId("prompt-playground-variable-checklist")).toContainText("变量样本");
     await expect(page.getByTestId("prompt-playground-template-source")).toBeVisible();
@@ -105,7 +105,7 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByLabel("模板变量")).toHaveValue("issue_title=\nproject_context=", { timeout: 10000 });
     await page.getByLabel("模板变量").fill("issue_title=登录失败\nproject_context=账号系统");
     await expect(page.getByTestId("prompt-playground-rendered-output")).toContainText("请澄清 登录失败，项目背景：账号系统。", { timeout: 10000 });
-    await page.getByRole("button", { name: "运行并记录" }).click();
+    await page.getByRole("button", { name: "保存本地渲染检查" }).click();
     await expect(page.getByText("优化运行已记录")).toBeVisible({ timeout: 10000 });
 
     for (const assetType of ["数据集", "测试套件", "实验"] as const) {
@@ -126,6 +126,8 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("agent-playground-task-payload")).toBeVisible();
     await expect(page.getByTestId("agent-playground-observability-contract")).toContainText("观测回写契约");
     await expect(page.getByTestId("agent-playground-task-pipeline")).toContainText("创建真实任务");
+    await expect(page.getByTestId("agent-playground-execution-bus")).toContainText("Trace");
+    await expect(page.getByTestId("agent-playground-execution-bus")).toContainText("用量");
     await expect(page.getByTestId("agent-playground-task-pipeline")).toContainText("回写观测证据");
     await expect(page.getByTestId("prompt-playground-purpose-map")).toHaveCount(0);
     await expect(page.getByTestId("prompt-playground-local-pipeline")).toHaveCount(0);
@@ -977,7 +979,8 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("prompt-playground-page-shell")).toBeVisible({ timeout: 10000 });
     await expect(page.getByTestId("playground-page-contract")).toContainText("本地渲染 · 不启动智能体");
     await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("本地模板实验室");
-    await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("本地渲染记录");
+    await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("保存质检记录");
+    await expect(page.getByTestId("prompt-playground-quality-gate")).toContainText("质检结论");
     await expect(page.getByTestId("prompt-playground-template-lab")).toBeVisible();
     await expect(page.getByTestId("prompt-playground-source-panel")).toContainText("模板源");
     await expect(page.getByTestId("prompt-playground-variable-checklist")).toContainText("变量样本");
@@ -1003,6 +1006,9 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("agent-playground-agent-selector")).toContainText("执行智能体");
     await expect(page.getByTestId("agent-playground-agent-selector")).toContainText("自动选择训练评估智能体");
     await expect(page.getByTestId("agent-playground-task-pipeline")).toContainText("创建真实任务");
+    await expect(page.getByTestId("agent-playground-execution-bus")).toContainText("执行节点");
+    await expect(page.getByTestId("agent-playground-execution-bus")).toContainText("Trace");
+    await expect(page.getByTestId("agent-playground-execution-bus")).toContainText("用量");
     await expect(page.getByTestId("agent-playground-observability-contract")).toContainText("观测回写契约");
     await expect(page.getByTestId("agent-playground-config-comparison")).toContainText("执行配置对比");
     await expect(page.getByTestId("agent-playground-config-comparison")).toContainText("当前待执行配置");
@@ -1021,7 +1027,7 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("agent-playground-tool-env-diff")).toContainText("MCP");
     await expect(page.getByRole("button", { name: "创建真实智能体任务" })).toBeVisible();
     await expect(page.getByTestId("prompt-playground-template-lab")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "运行并记录" })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "保存本地渲染检查" })).toHaveCount(0);
   });
 
   test("智能体调试场横向对比可以跳到运行证据", async ({ page }) => {

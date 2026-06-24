@@ -251,11 +251,12 @@ test.describe("生产部署验收", () => {
     await expect(page.getByTestId("prompt-playground-purpose-map")).toContainText("不创建任务、不消耗模型");
     await expect(page.getByText("调试边界")).toBeVisible();
     await expect(page.getByTestId("prompt-playground-contract")).toContainText("不启动智能体");
-    await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("本地渲染记录");
+    await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("保存质检记录");
+    await expect(page.getByTestId("prompt-playground-quality-gate")).toContainText("质检结论");
     await expect(page.getByTestId("agent-playground-task-pipeline")).toHaveCount(0);
     await expect(page.getByTestId("agent-playground-launch-brief")).toHaveCount(0);
     await expect(page.getByTestId("agent-playground-run-console")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "运行并记录" })).toBeVisible();
+    await expect(page.getByRole("button", { name: "保存本地渲染检查" })).toBeVisible();
     await expect(page.getByRole("button", { name: "创建真实智能体任务" })).toHaveCount(0);
     await expect(page.getByText("真实执行准备度")).toHaveCount(0);
     await expectTrainingRouteSurvivesReload(page, TRAINING_ROUTES[2]!);
@@ -280,6 +281,8 @@ test.describe("生产部署验收", () => {
     await expect(page.getByText("将入队的任务正文")).toBeVisible();
     await expect(page.getByText("最近智能体运行")).toBeVisible();
     await expect(page.getByTestId("agent-playground-task-pipeline")).toContainText("创建真实任务");
+    await expect(page.getByTestId("agent-playground-execution-bus")).toContainText("Trace");
+    await expect(page.getByTestId("agent-playground-execution-bus")).toContainText("用量");
     await expect(page.getByTestId("agent-playground-task-pipeline")).toContainText("回写观测证据");
     await expect(page.getByTestId("prompt-playground-local-pipeline")).toHaveCount(0);
     await expect(page.getByTestId("prompt-playground-purpose-map")).toHaveCount(0);
