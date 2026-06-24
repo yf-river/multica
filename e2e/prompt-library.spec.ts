@@ -554,11 +554,13 @@ test.describe("训练与评估工作台", () => {
     expect(exportedRunEvidence.trace_events.length).toBeGreaterThan(0);
     expect(exportedRunEvidence.execution_spans.length).toBeGreaterThan(0);
     expect(exportedRunEvidence.tool_call_chains).toEqual(expect.any(Array));
+    expect(exportedRunEvidence.tool_call_summary).toEqual(expect.any(Array));
     expect(exportedRunEvidence.execution_summary["span总数"]).toBeGreaterThan(0);
     expect(exportedEvidence["证据统计"]["task_usage条数"]).toBeGreaterThan(0);
     expect(exportedEvidence["证据统计"]["trace_event条数"]).toBeGreaterThan(0);
     expect(exportedEvidence["证据统计"]["execution_span条数"]).toBeGreaterThan(0);
     expect(exportedEvidence["证据统计"]["tool_call_chain条数"]).toEqual(expect.any(Number));
+    expect(exportedEvidence["证据统计"]["tool_call_summary条数"]).toEqual(expect.any(Number));
     await page.getByRole("link", { name: "运行历史", exact: true }).last().click();
     agentRunCard = page.getByTestId(`prompt-evaluation-run-${queuedAgentRun!.id}`);
     await expect(agentRunCard).toContainText("智能体执行 · 通过", { timeout: 10000 });
@@ -1443,6 +1445,12 @@ test.describe("训练与评估工作台", () => {
     await expect(toolChains).toContainText("playwright-inspect");
     await expect(toolChains).toContainText("已配对");
     await expect(toolChains).toContainText("已返回");
+    const toolSummary = evidencePanel.getByTestId("run-evidence-tool-call-summary");
+    await expect(toolSummary).toContainText("工具调用摘要");
+    await expect(toolSummary).toContainText("playwright-inspect");
+    await expect(toolSummary).toContainText("结果正常");
+    await expect(toolSummary).toContainText("平均耗时");
+    await expect(toolSummary).toContainText("结果分类");
     await expect(toolChains.getByTestId("run-evidence-tool-call-chain-filters")).toBeVisible();
     await toolChains.getByLabel("搜索工具调用链").fill("playwright-inspect");
     await expect(toolChains).toContainText("1/1 条");

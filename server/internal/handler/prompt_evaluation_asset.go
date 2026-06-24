@@ -387,17 +387,32 @@ type PromptEvaluationToolCallChainResponse struct {
 	CompletedAt    string         `json:"completed_at,omitempty"`
 }
 
+type PromptEvaluationToolCallSummaryResponse struct {
+	Tool                   string         `json:"tool"`
+	TotalCalls             int            `json:"total_calls"`
+	PairedCalls            int            `json:"paired_calls"`
+	MissingResultCalls     int            `json:"missing_result_calls"`
+	OrphanResultCalls      int            `json:"orphan_result_calls"`
+	AverageDurationMs      int64          `json:"average_duration_ms,omitempty"`
+	MaxDurationMs          int64          `json:"max_duration_ms,omitempty"`
+	SlowestToolCallChainID string         `json:"slowest_tool_call_chain_id,omitempty"`
+	ResultCategories       map[string]int `json:"result_categories,omitempty"`
+	NeedsAttention         bool           `json:"needs_attention"`
+	Summary                string         `json:"summary"`
+}
+
 type PromptEvaluationRunEvidenceResponse struct {
-	Run              PromptEvaluationRunResponse             `json:"run"`
-	Trials           []PromptEvaluationTrialResponse         `json:"trials"`
-	TaskUsage        []PromptEvaluationTaskUsageResponse     `json:"task_usage"`
-	TaskMessages     []protocol.TaskMessagePayload           `json:"task_messages"`
-	TraceEvents      []TaskTraceEventResponse                `json:"trace_events"`
-	ExecutionSpans   []PromptEvaluationExecutionSpanResponse `json:"execution_spans"`
-	ToolCallChains   []PromptEvaluationToolCallChainResponse `json:"tool_call_chains"`
-	ExecutionSummary map[string]any                          `json:"execution_summary"`
-	Evidence         any                                     `json:"evidence"`
-	Context          map[string]any                          `json:"上下文"`
+	Run              PromptEvaluationRunResponse               `json:"run"`
+	Trials           []PromptEvaluationTrialResponse           `json:"trials"`
+	TaskUsage        []PromptEvaluationTaskUsageResponse       `json:"task_usage"`
+	TaskMessages     []protocol.TaskMessagePayload             `json:"task_messages"`
+	TraceEvents      []TaskTraceEventResponse                  `json:"trace_events"`
+	ExecutionSpans   []PromptEvaluationExecutionSpanResponse   `json:"execution_spans"`
+	ToolCallChains   []PromptEvaluationToolCallChainResponse   `json:"tool_call_chains"`
+	ToolCallSummary  []PromptEvaluationToolCallSummaryResponse `json:"tool_call_summary"`
+	ExecutionSummary map[string]any                            `json:"execution_summary"`
+	Evidence         any                                       `json:"evidence"`
+	Context          map[string]any                            `json:"上下文"`
 }
 
 type PromptEvaluationEvidenceSnapshotResponse struct {
@@ -2785,7 +2800,7 @@ func (h *Handler) buildPromptEvaluationRunEvidenceResponse(ctx context.Context, 
 		}
 	}
 	refs := h.loadPromptEvaluationEvidenceRefs(ctx, workspaceUUID, run, task, traceResp)
-	executionSpans, toolCallChains, executionSummary := buildPromptEvaluationExecutionEvidence(promptEvaluationRunToResponse(run), usageResp, messageResp, traceResp)
+	executionSpans, toolCallChains, toolCallSummary, executionSummary := buildPromptEvaluationExecutionEvidence(promptEvaluationRunToResponse(run), usageResp, messageResp, traceResp)
 
 	return PromptEvaluationRunEvidenceResponse{
 		Run:              promptEvaluationRunToResponse(run),
@@ -2795,6 +2810,7 @@ func (h *Handler) buildPromptEvaluationRunEvidenceResponse(ctx context.Context, 
 		TraceEvents:      traceResp,
 		ExecutionSpans:   executionSpans,
 		ToolCallChains:   toolCallChains,
+		ToolCallSummary:  toolCallSummary,
 		ExecutionSummary: executionSummary,
 		Evidence:         decodeJSONDefault(run.Evidence, map[string]any{}),
 		Context:          buildPromptEvaluationEvidenceContext(run, task, refs, trialResp, usageResp, messageResp, traceResp),
@@ -3016,10 +3032,11 @@ func buildPromptEvaluationExecutionEvidence(
 	usages []PromptEvaluationTaskUsageResponse,
 	messages []protocol.TaskMessagePayload,
 	traceEvents []TaskTraceEventResponse,
-) ([]PromptEvaluationExecutionSpanResponse, []PromptEvaluationToolCallChainResponse, map[string]any) {
+) ([]PromptEvaluationExecutionSpanResponse, []PromptEvaluationToolCallChainResponse, []PromptEvaluationToolCallSummaryResponse, map[string]any) {
 	rootID := firstNonEmptyPromptEvaluationString(ptrString(run.TaskID), run.ID)
 	rootSpanID := "task:" + rootID
 	toolCallChains := buildPromptEvaluationToolCallChains(messages)
+	toolCallSummary := buildPromptEvaluationToolCallSummary(toolCallChains)
 	toolCallChainByMessageSeq := buildPromptEvaluationToolCallChainByMessageSeq(toolCallChains)
 	spans := []PromptEvaluationExecutionSpanResponse{{
 		ID:         rootSpanID,
@@ -3180,7 +3197,7 @@ func buildPromptEvaluationExecutionEvidence(
 	}
 
 	summary["span总数"] = len(spans)
-	return spans, toolCallChains, summary
+	return spans, toolCallChains, toolCallSummary, summary
 }
 
 func buildPromptEvaluationToolCallChains(messages []protocol.TaskMessagePayload) []PromptEvaluationToolCallChainResponse {
@@ -3252,6 +3269,82 @@ func buildPromptEvaluationToolCallChains(messages []protocol.TaskMessagePayload)
 		}
 	}
 	return chains
+}
+
+func buildPromptEvaluationToolCallSummary(chains []PromptEvaluationToolCallChainResponse) []PromptEvaluationToolCallSummaryResponse {
+	if len(chains) == 0 {
+		return []PromptEvaluationToolCallSummaryResponse{}
+	}
+	byTool := map[string]*PromptEvaluationToolCallSummaryResponse{}
+	durationSums := map[string]int64{}
+	durationCounts := map[string]int64{}
+	for _, chain := range chains {
+		tool := strings.TrimSpace(chain.Tool)
+		if tool == "" {
+			tool = "未记录工具"
+		}
+		item := byTool[tool]
+		if item == nil {
+			item = &PromptEvaluationToolCallSummaryResponse{
+				Tool:             tool,
+				ResultCategories: map[string]int{},
+			}
+			byTool[tool] = item
+		}
+		item.TotalCalls++
+		switch chain.Status {
+		case "已配对":
+			item.PairedCalls++
+		case "缺少结果":
+			item.MissingResultCalls++
+		case "孤立结果":
+			item.OrphanResultCalls++
+		}
+		category := strings.TrimSpace(chain.ResultCategory)
+		if category == "" {
+			category = "未归类"
+		}
+		item.ResultCategories[category]++
+		if chain.DurationMs > 0 {
+			durationSums[tool] += chain.DurationMs
+			durationCounts[tool]++
+			if chain.DurationMs > item.MaxDurationMs {
+				item.MaxDurationMs = chain.DurationMs
+				item.SlowestToolCallChainID = chain.ID
+			}
+		}
+	}
+	result := make([]PromptEvaluationToolCallSummaryResponse, 0, len(byTool))
+	for tool, item := range byTool {
+		if count := durationCounts[tool]; count > 0 {
+			item.AverageDurationMs = durationSums[tool] / count
+		}
+		item.NeedsAttention = item.MissingResultCalls > 0 || item.OrphanResultCalls > 0
+		item.Summary = fmt.Sprintf(
+			"%s：调用 %d 次，已配对 %d 次，缺少结果 %d 次，孤立结果 %d 次，平均耗时 %dms，最慢 %dms",
+			tool,
+			item.TotalCalls,
+			item.PairedCalls,
+			item.MissingResultCalls,
+			item.OrphanResultCalls,
+			item.AverageDurationMs,
+			item.MaxDurationMs,
+		)
+		result = append(result, *item)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].NeedsAttention != result[j].NeedsAttention {
+			return result[i].NeedsAttention
+		}
+		if result[i].MaxDurationMs != result[j].MaxDurationMs {
+			return result[i].MaxDurationMs > result[j].MaxDurationMs
+		}
+		if result[i].TotalCalls != result[j].TotalCalls {
+			return result[i].TotalCalls > result[j].TotalCalls
+		}
+		return result[i].Tool < result[j].Tool
+	})
+	return result
 }
 
 func buildPromptEvaluationToolCallChainByMessageSeq(chains []PromptEvaluationToolCallChainResponse) map[int]PromptEvaluationToolCallChainResponse {
@@ -3497,34 +3590,35 @@ func validPromptEvaluationEvidenceSnapshotType(value string) bool {
 func buildPromptEvaluationEvidenceSnapshotSummary(evidence PromptEvaluationRunEvidenceResponse, generatedAt time.Time) map[string]any {
 	run := evidence.Run
 	return map[string]any{
-		"语义版本":             "multica.prompt_evaluation.evidence_snapshot.summary.v1",
-		"生成时间":             generatedAt.Format(time.RFC3339),
-		"运行ID":             run.ID,
-		"运行类型":             run.RunKind,
-		"运行状态":             run.Status,
-		"触发来源":             run.TriggerSource,
-		"总用例数":             run.TotalCases,
-		"通过数":              run.PassedCases,
-		"失败数":              run.FailedCases,
-		"通过率":              run.PassRate,
-		"总耗时毫秒":            run.TotalDurationMs,
-		"输入token":          run.InputTokens,
-		"输出token":          run.OutputTokens,
-		"预估成本":             run.EstimatedCost,
-		"执行Agent":          run.AgentID,
-		"模型":               run.Model,
-		"runtime":          run.RuntimeID,
-		"runtime供应商":       run.RuntimeProvider,
-		"trace/task id":    run.TaskID,
-		"失败原因":             promptEvaluationEvidenceFailureReason(evidence),
-		"评估结论":             run.Conclusion,
-		"trial数":           len(evidence.Trials),
-		"usage行数":          len(evidence.TaskUsage),
-		"任务消息数":            len(evidence.TaskMessages),
-		"trace事件数":         len(evidence.TraceEvents),
-		"execution span数":  len(evidence.ExecutionSpans),
-		"tool call chain数": len(evidence.ToolCallChains),
-		"上下文字段数":           len(evidence.Context),
+		"语义版本":                "multica.prompt_evaluation.evidence_snapshot.summary.v1",
+		"生成时间":                generatedAt.Format(time.RFC3339),
+		"运行ID":                run.ID,
+		"运行类型":                run.RunKind,
+		"运行状态":                run.Status,
+		"触发来源":                run.TriggerSource,
+		"总用例数":                run.TotalCases,
+		"通过数":                 run.PassedCases,
+		"失败数":                 run.FailedCases,
+		"通过率":                 run.PassRate,
+		"总耗时毫秒":               run.TotalDurationMs,
+		"输入token":             run.InputTokens,
+		"输出token":             run.OutputTokens,
+		"预估成本":                run.EstimatedCost,
+		"执行Agent":             run.AgentID,
+		"模型":                  run.Model,
+		"runtime":             run.RuntimeID,
+		"runtime供应商":          run.RuntimeProvider,
+		"trace/task id":       run.TaskID,
+		"失败原因":                promptEvaluationEvidenceFailureReason(evidence),
+		"评估结论":                run.Conclusion,
+		"trial数":              len(evidence.Trials),
+		"usage行数":             len(evidence.TaskUsage),
+		"任务消息数":               len(evidence.TaskMessages),
+		"trace事件数":            len(evidence.TraceEvents),
+		"execution span数":     len(evidence.ExecutionSpans),
+		"tool call chain数":    len(evidence.ToolCallChains),
+		"tool call summary行数": len(evidence.ToolCallSummary),
+		"上下文字段数":              len(evidence.Context),
 	}
 }
 

@@ -58,7 +58,7 @@ func TestBuildPromptEvaluationExecutionEvidencePairsToolCalls(t *testing.T) {
 		},
 	}
 
-	spans, chains, summary := buildPromptEvaluationExecutionEvidence(run, nil, messages, nil)
+	spans, chains, toolSummary, summary := buildPromptEvaluationExecutionEvidence(run, nil, messages, nil)
 	if len(chains) != 2 {
 		t.Fatalf("tool call chains = %+v, want 2", chains)
 	}
@@ -73,6 +73,15 @@ func TestBuildPromptEvaluationExecutionEvidencePairsToolCalls(t *testing.T) {
 	}
 	if chains[1].ResultCategory != "孤立返回" {
 		t.Fatalf("orphan chain category = %+v", chains[1])
+	}
+	if len(toolSummary) != 2 {
+		t.Fatalf("tool summary = %+v, want 2 rows", toolSummary)
+	}
+	if toolSummary[0].Tool != "browser" || !toolSummary[0].NeedsAttention || toolSummary[0].OrphanResultCalls != 1 {
+		t.Fatalf("attention summary row = %+v", toolSummary[0])
+	}
+	if toolSummary[1].Tool != "shell" || toolSummary[1].AverageDurationMs != 1000 || toolSummary[1].MaxDurationMs != 1000 || toolSummary[1].SlowestToolCallChainID != "tool:call-1" {
+		t.Fatalf("shell summary row = %+v", toolSummary[1])
 	}
 	if summary["工具调用链数"] != 2 || summary["已配对工具调用数"] != 1 || summary["孤立工具结果数"] != 1 {
 		t.Fatalf("tool summary = %+v", summary)

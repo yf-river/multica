@@ -234,6 +234,20 @@ export interface PromptEvaluationToolCallChain {
   completed_at?: string;
 }
 
+export interface PromptEvaluationToolCallSummary {
+  tool: string;
+  total_calls: number;
+  paired_calls: number;
+  missing_result_calls: number;
+  orphan_result_calls: number;
+  average_duration_ms?: number;
+  max_duration_ms?: number;
+  slowest_tool_call_chain_id?: string;
+  result_categories?: Record<string, number>;
+  needs_attention: boolean;
+  summary: string;
+}
+
 export interface PromptEvaluationRunEvidence {
   run: PromptEvaluationRun;
   trials: PromptEvaluationTrial[];
@@ -242,6 +256,7 @@ export interface PromptEvaluationRunEvidence {
   trace_events: TaskTraceEvent[];
   execution_spans: PromptEvaluationExecutionSpan[];
   tool_call_chains: PromptEvaluationToolCallChain[];
+  tool_call_summary: PromptEvaluationToolCallSummary[];
   execution_summary: Record<string, unknown>;
   evidence: Record<string, unknown>;
   上下文: Record<string, unknown>;

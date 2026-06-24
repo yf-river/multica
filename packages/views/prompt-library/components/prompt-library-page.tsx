@@ -689,6 +689,7 @@ export function PromptLibraryPage({
               trace_events: [],
               execution_spans: [],
               tool_call_chains: [],
+              tool_call_summary: [],
               execution_summary: {},
               evidence: {},
               错误: error instanceof Error ? error.message : "未知错误",
@@ -707,6 +708,7 @@ export function PromptLibraryPage({
           acc.trace_event条数 += evidence.trace_events.length;
           acc.execution_span条数 += evidence.execution_spans.length;
           acc.tool_call_chain条数 += evidence.tool_call_chains.length;
+          acc.tool_call_summary条数 += evidence.tool_call_summary.length;
           return acc;
         },
         {
@@ -719,6 +721,7 @@ export function PromptLibraryPage({
           trace_event条数: 0,
           execution_span条数: 0,
           tool_call_chain条数: 0,
+          tool_call_summary条数: 0,
         },
       );
       const payload = {
@@ -3025,6 +3028,7 @@ function EvidenceList({ title, empty, items }: { title: string; empty: string; i
 function ExecutionSpanTreePanel({ evidence }: { evidence: PromptEvaluationRunEvidence }) {
   const spans = evidence.execution_spans ?? [];
   const toolCallChains = evidence.tool_call_chains ?? [];
+  const toolCallSummary = evidence.tool_call_summary ?? [];
   const summary = evidence.execution_summary ?? {};
   const tokenMarked = Number(summary["token标记合计"] ?? 0);
   return (
@@ -3047,6 +3051,7 @@ function ExecutionSpanTreePanel({ evidence }: { evidence: PromptEvaluationRunEvi
           <Badge variant={tokenMarked > 0 ? "secondary" : "outline"}>token标记 {tokenMarked}</Badge>
         </div>
       </div>
+      <ToolCallSummaryPanel rows={toolCallSummary} />
       <ToolCallChainPanel chains={toolCallChains} />
       {spans.length === 0 ? (
         <div className="rounded-md border border-dashed px-3 py-3 text-muted-foreground">暂无执行 span；真实任务开始后会从 trace、消息和用量证据中生成观测树。</div>
@@ -3058,6 +3063,44 @@ function ExecutionSpanTreePanel({ evidence }: { evidence: PromptEvaluationRunEvi
         </div>
       )}
     </section>
+  );
+}
+
+function ToolCallSummaryPanel({ rows }: { rows: PromptEvaluationRunEvidence["tool_call_summary"] }) {
+  if (rows.length === 0) {
+    return null;
+  }
+  return (
+    <div className="grid gap-1.5 rounded-md border bg-muted/10 p-2" data-testid="run-evidence-tool-call-summary">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="font-medium text-muted-foreground">工具调用摘要</div>
+        <Badge variant="outline">{rows.length} 个工具</Badge>
+      </div>
+      <div className="grid gap-1.5">
+        {rows.map((row) => {
+          const categoryText = Object.entries(row.result_categories ?? {})
+            .map(([name, count]) => `${name} ${count}`)
+            .join(" · ");
+          return (
+            <div key={row.tool} className="grid gap-1 rounded border bg-background px-2 py-1.5 text-[11px] leading-5" data-testid={`run-evidence-tool-call-summary-${row.tool}`}>
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium text-foreground">{row.tool || "未记录工具"}</span>
+                <Badge variant={row.needs_attention ? "destructive" : "secondary"}>{row.needs_attention ? "需要关注" : "结果正常"}</Badge>
+                <span className="text-muted-foreground">
+                  调用 {row.total_calls} · 配对 {row.paired_calls} · 缺少 {row.missing_result_calls} · 孤立 {row.orphan_result_calls}
+                </span>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+                <span>平均耗时 {formatDuration(row.average_duration_ms ?? 0)}</span>
+                <span>最慢 {formatDuration(row.max_duration_ms ?? 0)}</span>
+                {row.slowest_tool_call_chain_id && <span>最慢链路 {row.slowest_tool_call_chain_id}</span>}
+              </div>
+              {categoryText && <div className="break-words text-muted-foreground">结果分类：{categoryText}</div>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
   );
 }
 
