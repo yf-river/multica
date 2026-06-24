@@ -2,6 +2,13 @@ export function trainingSelectedPromptStorageKey(workspaceId: string | null | un
   return workspaceId ? `multica:training:selected-prompt:${workspaceId}` : null;
 }
 
+export function trainingPlaygroundSelectedPromptStorageKey(
+  surface: "prompt-playground" | "agent-playground",
+  workspaceId: string | null | undefined,
+) {
+  return workspaceId ? `multica:training:${surface}:selected-prompt:${workspaceId}` : null;
+}
+
 export function legacyTrainingSelectedPromptStorageKeys(workspaceId: string | null | undefined) {
   if (!workspaceId) return [];
   return [
