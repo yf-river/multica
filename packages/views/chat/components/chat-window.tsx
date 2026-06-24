@@ -188,7 +188,10 @@ export function ChatWindow() {
     fetchNextPage: fetchOlderMessages,
     hasNextPage: hasOlderMessages,
     isFetchingNextPage: isFetchingOlderMessages,
-  } = useInfiniteQuery(chatMessagesPageOptions(activeSessionId ?? ""));
+  } = useInfiniteQuery({
+    ...chatMessagesPageOptions(activeSessionId ?? ""),
+    enabled: isOpen && !!activeSessionId,
+  });
   // When no active session, always show empty — don't use stale cache.
   // Page 0 contains the latest chronological window; later cursor pages are
   // older chronological windows. Reverse pages so older fetched pages render
@@ -211,9 +214,10 @@ export function ChatWindow() {
   // (chat:message / chat:done / task:*) keep it invalidated in real time.
   //
   // This is the SOLE source for pendingTaskId — no mirror in the store.
-  const { data: pendingTask } = useQuery(
-    pendingChatTaskOptions(activeSessionId ?? ""),
-  );
+  const { data: pendingTask } = useQuery({
+    ...pendingChatTaskOptions(activeSessionId ?? ""),
+    enabled: isOpen && !!activeSessionId,
+  });
   const pendingTaskId = pendingTask?.task_id ?? null;
   const stopRequestedBeforeTaskRef = useRef(false);
   const [restoreDraftRequest, setRestoreDraftRequest] = useState<{
@@ -255,7 +259,7 @@ export function ChatWindow() {
   // disable) so the input doesn't flash a fake "no agent" state in the
   // few hundred ms before the agent list query resolves. Only `"none"`
   // (server confirmed: zero usable agents) drives the disabled UI.
-  const agentAvailability = useWorkspaceAgentAvailability();
+  const agentAvailability = useWorkspaceAgentAvailability(isOpen);
   const noAgent = agentAvailability === "none";
 
   // Presence drives both the avatar status dot (via ActorAvatar) and the
@@ -263,7 +267,7 @@ export function ChatWindow() {
   // returns "loading" while queries are still resolving — pass `undefined`
   // downstream so banners and pill copy stay silent during loading rather
   // than flash speculative offline text.
-  const presenceDetail = useAgentPresenceDetail(wsId, activeAgent?.id);
+  const presenceDetail = useAgentPresenceDetail(wsId, activeAgent?.id, isOpen);
   const availability =
     presenceDetail === "loading" ? undefined : presenceDetail.availability;
 

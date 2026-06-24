@@ -32,15 +32,19 @@ export type WorkspaceAgentAvailability = "loading" | "none" | "available";
  * role to decide visibility for `private` agents — without member data,
  * a freshly-loaded agent list could still produce wrong answers.
  */
-export function useWorkspaceAgentAvailability(): WorkspaceAgentAvailability {
+export function useWorkspaceAgentAvailability(enabled = true): WorkspaceAgentAvailability {
   const wsId = useWorkspaceId();
   const userId = useAuthStore((s) => s.user?.id);
-  const { data: agents, isFetched: agentsFetched } = useQuery(
-    agentListOptions(wsId),
-  );
-  const { data: members, isFetched: membersFetched } = useQuery(
-    memberListOptions(wsId),
-  );
+  const { data: agents, isFetched: agentsFetched } = useQuery({
+    ...agentListOptions(wsId),
+    enabled: enabled && !!wsId,
+  });
+  const { data: members, isFetched: membersFetched } = useQuery({
+    ...memberListOptions(wsId),
+    enabled: enabled && !!wsId,
+  });
+
+  if (!enabled) return "loading";
 
   if (!agentsFetched || !membersFetched) return "loading";
 
