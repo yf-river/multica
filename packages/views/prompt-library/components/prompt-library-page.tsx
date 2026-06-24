@@ -265,8 +265,8 @@ export function PromptLibraryPage({
     activeTab === "实验" ||
     activeTab === "运行历史";
   const needsExperimentDimensions = activeTab === "实验";
-  const needsDimensionScoreSummaries = activeTab === "实验";
-  const needsDimensionScoreTrends = activeTab === "实验";
+  const needsDimensionScoreSummaries = isDashboardTab || activeTab === "实验";
+  const needsDimensionScoreTrends = isDashboardTab || activeTab === "实验";
   const needsRuns =
     isDashboardTab ||
     activeTab === "实验" ||
@@ -907,6 +907,20 @@ export function PromptLibraryPage({
           tool_call_summary条数: 0,
         },
       );
+      const optimizationCandidateEvidence = candidates.map((candidate) => {
+        const metrics = candidate.metrics as Record<string, unknown>;
+        return {
+          id: candidate.id,
+          run_id: candidate.run_id,
+          prompt_id: candidate.prompt_id,
+          状态: candidate.status,
+          失败用例数: candidate.failed_case_count,
+          候选优先级: stringFromRecord(metrics, "候选优先级") || "未标记",
+          失败维度: Array.isArray(metrics["失败维度"]) ? metrics["失败维度"] : [],
+          候选优先级依据: stringFromRecord(metrics, "候选优先级依据"),
+          rationale: candidate.rationale,
+        };
+      });
       const payload = {
         语义版本: "multica.production_demo_evidence.v1",
         导出时间: new Date().toISOString(),
@@ -921,12 +935,17 @@ export function PromptLibraryPage({
         真实执行准备度: agentRuntimeReadiness,
         最近运行: recentRuns,
         最近运行证据: recentRunEvidence,
+        训练维度评分摘要: dimensionScoreSummaries,
+        训练维度评分趋势: dimensionScoreTrends,
+        优化候选证据: optimizationCandidateEvidence,
         证据统计: evidenceStats,
         资产统计: {
           提示词数: items.length,
           评测资产数: assets.length,
           结构化用例数: cases.length,
           优化候选数: candidates.length,
+          维度评分摘要数: dimensionScoreSummaries.length,
+          维度评分趋势数: dimensionScoreTrends.length,
         },
       };
       const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });

@@ -614,11 +614,27 @@ test.describe("训练与评估工作台", () => {
     expect(exportedRunEvidence.tool_call_chains).toEqual(expect.any(Array));
     expect(exportedRunEvidence.tool_call_summary).toEqual(expect.any(Array));
     expect(exportedRunEvidence.execution_summary["span总数"]).toBeGreaterThan(0);
+    expect(exportedEvidence["训练维度评分摘要"]).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        asset_id: queuedAgentRun!.asset_id,
+        dimension_name: "上下文完整性",
+      }),
+    ]));
+    expect(exportedEvidence["训练维度评分趋势"]).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        asset_id: queuedAgentRun!.asset_id,
+        dimension_name: "上下文完整性",
+        run_count: expect.any(Number),
+      }),
+    ]));
+    expect(exportedEvidence["优化候选证据"]).toEqual(expect.any(Array));
     expect(exportedEvidence["证据统计"]["task_usage条数"]).toBeGreaterThan(0);
     expect(exportedEvidence["证据统计"]["trace_event条数"]).toBeGreaterThan(0);
     expect(exportedEvidence["证据统计"]["execution_span条数"]).toBeGreaterThan(0);
     expect(exportedEvidence["证据统计"]["tool_call_chain条数"]).toEqual(expect.any(Number));
     expect(exportedEvidence["证据统计"]["tool_call_summary条数"]).toEqual(expect.any(Number));
+    expect(exportedEvidence["资产统计"]["维度评分摘要数"]).toBeGreaterThan(0);
+    expect(exportedEvidence["资产统计"]["维度评分趋势数"]).toBeGreaterThan(0);
     await page.goto(`/${workspaceSlug}/training/run-history`, { waitUntil: "domcontentloaded" });
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/run-history$`), { timeout: 30000 });
     await expect(page.getByTestId("training-route-panel-run-history")).toBeVisible({ timeout: 10000 });
