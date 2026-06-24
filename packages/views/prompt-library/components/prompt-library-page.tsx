@@ -1576,12 +1576,13 @@ function WorkbenchPanel({
       )}
 
       {activeTab === "运行历史" && (
-        loading ? (
+        <section className="grid gap-3" aria-label="运行历史内容" data-testid="training-route-panel-run-history">
+        {loading ? (
           <div className="h-20 rounded-md bg-muted/60" />
         ) : runs.length === 0 ? (
           <div className="grid gap-3">
             <RunStatusFilterBar value={runStatusFilter} onChange={onRunStatusFilterChange} />
-            <div className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">
+            <div className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground" data-testid="training-route-empty-run-history">
               {runStatusFilter === "全部" ? "暂无结构化运行记录" : `暂无${runStatusFilter}运行记录`}
             </div>
           </div>
@@ -1696,11 +1697,12 @@ function WorkbenchPanel({
               ))}
             </div>
           </div>
-        )
+        )}
+        </section>
       )}
 
       {activeTab !== "运行历史" && (
-        <>
+        <section className="grid gap-3" aria-label={`${routeIntro.title}内容`} data-testid={`training-route-panel-${routeIntro.route}`}>
           {activeTab === "优化运行" && (
             <>
               <OptimizationStudioPanel
@@ -1727,9 +1729,11 @@ function WorkbenchPanel({
           {loading ? (
           <div className="h-20 rounded-md bg-muted/60" />
         ) : visibleAssets.length === 0 ? (
-          <div className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground">暂无资产</div>
+          <div className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground" data-testid={`training-route-empty-${routeIntro.route}`}>
+            {emptyTrainingRouteText(activeTab)}
+          </div>
         ) : (
-          <div className="divide-y rounded-md border">
+          <div className="divide-y rounded-md border" data-testid={`training-route-list-${routeIntro.route}`}>
             {visibleAssets.map((asset) => (
               <div key={asset.id} data-testid={`prompt-evaluation-asset-${asset.id}`} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
                 <div className="min-w-0">
@@ -1795,10 +1799,25 @@ function WorkbenchPanel({
             ))}
           </div>
         )}
-        </>
+        </section>
       )}
     </section>
   );
+}
+
+function emptyTrainingRouteText(activeTab: WorkbenchTab) {
+  switch (activeTab) {
+    case "数据集":
+      return "暂无数据集题库，先新建数据集或从 trace 导入样本";
+    case "测试套件":
+      return "暂无测试套件，先把稳定用例组织成可回归的套件";
+    case "实验":
+      return "暂无实验，先创建实验来对比提示词、变量和执行方式";
+    case "优化运行":
+      return "暂无优化运行作业，先创建优化运行资产并从失败结果生成候选";
+    default:
+      return "暂无训练与评估资产";
+  }
 }
 
 type TrainingRouteIntro = {

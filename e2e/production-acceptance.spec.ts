@@ -18,6 +18,13 @@ const frontendURL = process.env.ACCEPTANCE_FRONTEND_URL
   || "http://localhost:3000";
 const workspaceName = process.env.E2E_WORKSPACE_NAME || "goal-test 联调工作区";
 const evidencePrefix = "生产验收训练证据";
+const ROUTE_INTRO_TITLES: Record<string, string> = {
+  datasets: "数据集题库",
+  "test-suites": "测试套件回归",
+  experiments: "实验对比",
+  "optimization-runs": "优化运行作业台",
+  "run-history": "运行历史与证据",
+};
 
 async function prepareTrainingDashboardEvidence() {
   const api = new TestApiClient();
@@ -104,7 +111,8 @@ async function prepareTrainingDashboardEvidence() {
 async function expectTrainingRouteShell(page, route: (typeof TRAINING_ROUTES)[number]) {
   const isPromptPlayground = route.path === "prompt-playground";
   const isAgentPlayground = route.path === "agent-playground";
-  const hasRouteIntro = ["datasets", "test-suites", "experiments", "optimization-runs", "run-history"].includes(route.path);
+  const routeIntroTitle = ROUTE_INTRO_TITLES[route.path];
+  const hasRouteIntro = Boolean(routeIntroTitle);
   await expect(page.getByTestId("prompt-playground-page-shell")).toHaveCount(isPromptPlayground ? 1 : 0);
   await expect(page.getByTestId("agent-playground-page-shell")).toHaveCount(isAgentPlayground ? 1 : 0);
   await expect(page.getByTestId("training-page-shell")).toHaveCount(isPromptPlayground || isAgentPlayground ? 0 : 1);
@@ -113,6 +121,10 @@ async function expectTrainingRouteShell(page, route: (typeof TRAINING_ROUTES)[nu
     await expect(page.getByTestId(`training-route-${route.path}`)).toHaveCount(1);
   }
   await expect(page.getByTestId(`training-route-intro-${route.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
+  await expect(page.getByTestId(`training-route-panel-${route.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
+  if (routeIntroTitle) {
+    await expect(page.getByTestId(`training-route-intro-${route.path}`)).toContainText(routeIntroTitle);
+  }
   await expect(page.getByTestId("prompt-library-editor")).toHaveCount(route.showPromptEditor ? 1 : 0);
   await expect(page.getByTestId("prompt-version-history")).toHaveCount(route.showPromptEditor ? 1 : 0);
   await expect(page.getByTestId("prompt-playground-workbench")).toHaveCount(route.showPromptPlayground ? 1 : 0);

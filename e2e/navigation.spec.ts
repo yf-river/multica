@@ -5,11 +5,19 @@ import { createTestApi, loginAsDefault, waitForPageText } from "./helpers";
 import { DEFAULT_TRAINING_ROUTE, TRAINING_ROUTES, trainingRoutePath } from "./training-routes";
 
 const ROUTE_CHANGE_TIMEOUT = 30000;
+const ROUTE_INTRO_TITLES: Record<string, string> = {
+  datasets: "数据集题库",
+  "test-suites": "测试套件回归",
+  experiments: "实验对比",
+  "optimization-runs": "优化运行作业台",
+  "run-history": "运行历史与证据",
+};
 
 async function expectTrainingPageShell(page, item: (typeof TRAINING_ROUTES)[number]) {
   const isPromptPlayground = item.path === "prompt-playground";
   const isAgentPlayground = item.path === "agent-playground";
-  const hasRouteIntro = ["datasets", "test-suites", "experiments", "optimization-runs", "run-history"].includes(item.path);
+  const routeIntroTitle = ROUTE_INTRO_TITLES[item.path];
+  const hasRouteIntro = Boolean(routeIntroTitle);
   await expect(page.getByTestId("prompt-playground-page-shell")).toHaveCount(isPromptPlayground ? 1 : 0);
   await expect(page.getByTestId("agent-playground-page-shell")).toHaveCount(isAgentPlayground ? 1 : 0);
   await expect(page.getByTestId("training-page-shell")).toHaveCount(isPromptPlayground || isAgentPlayground ? 0 : 1);
@@ -18,6 +26,10 @@ async function expectTrainingPageShell(page, item: (typeof TRAINING_ROUTES)[numb
     await expect(page.getByTestId(`training-route-${item.path}`)).toHaveCount(1);
   }
   await expect(page.getByTestId(`training-route-intro-${item.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
+  await expect(page.getByTestId(`training-route-panel-${item.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
+  if (routeIntroTitle) {
+    await expect(page.getByTestId(`training-route-intro-${item.path}`)).toContainText(routeIntroTitle);
+  }
 }
 
 async function expectTrainingNavigationMarker(page, item: (typeof TRAINING_ROUTES)[number]) {
