@@ -1,6 +1,6 @@
 "use client";
 
-import { Search } from "lucide-react";
+import { CheckCircle2, PlayCircle, Search, Target } from "lucide-react";
 import type {
   PromptEvaluationRun,
   PromptEvaluationRuntimeReadiness,
@@ -93,11 +93,14 @@ export function AgentPlaygroundPromptList({
   runtimeLoading: boolean;
 }) {
   return (
-    <aside className="flex min-h-0 flex-col border-t bg-muted/10 xl:border-l xl:border-t-0" data-testid="agent-playground-prompt-list">
-      <div className="space-y-3 border-b p-3">
-        <div className="rounded-md border bg-muted/20 px-3 py-2" data-testid="agent-playground-selector-summary">
+    <aside className="flex min-h-0 flex-col border-t bg-emerald-500/5 xl:border-l xl:border-t-0" data-testid="agent-playground-prompt-list">
+      <div className="space-y-3 border-b bg-background/80 p-3">
+        <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2" data-testid="agent-playground-selector-summary">
           <div className="flex items-center justify-between gap-2">
-            <span className="text-xs font-semibold">执行目标池</span>
+            <span className="inline-flex items-center gap-1.5 text-xs font-semibold">
+              <Target className="size-3.5 text-emerald-600" />
+              执行目标池
+            </span>
             <Badge variant={runtimeReadiness.status === "就绪" ? "secondary" : "outline"} className="shrink-0">
               {runtimeLoading ? "检查中" : runtimeReadiness.status}
             </Badge>
@@ -105,39 +108,58 @@ export function AgentPlaygroundPromptList({
           <div className="mt-1 text-xs text-muted-foreground">从右侧选择要执行的提示词模板，左侧发射台会创建可观测任务并回写消息、链路追踪、令牌用量和耗时。</div>
         </div>
         <PromptSearchInput value={query} onChange={onQueryChange} placeholder="搜索执行目标" />
-        <div className="rounded-md border bg-muted/20 px-3 py-2 text-xs text-muted-foreground" data-testid="agent-playground-execution-boundary">
+        <div className="rounded-md border border-dashed border-emerald-500/30 bg-background px-3 py-2 text-xs text-muted-foreground" data-testid="agent-playground-execution-boundary">
           这里只选执行目标；任务变量、期望输出、运行时准备度和观测证据在左侧发射台完成。
         </div>
       </div>
-      <div className="min-h-0 flex-1 overflow-y-auto">
+      <div className="min-h-0 flex-1 overflow-y-auto p-3">
         {loading ? (
           <PromptListSkeleton />
         ) : items.length === 0 ? (
           <div className="p-6 text-sm text-muted-foreground">暂无可执行提示词</div>
         ) : (
-          <div className="divide-y">
-            {items.map((item) => {
+          <div className="grid gap-2" data-testid="agent-playground-target-queue">
+            {items.map((item, index) => {
               const caseCount = cases.filter((entry) => entry.prompt_id === item.id).length;
               const runCount = runs.filter((run) => run.prompt_id === item.id && (run.run_kind === "Agent执行" || Boolean(run.task_id))).length;
+              const selected = selectedId === item.id;
+              const readyLabel = runtimeLoading ? "准备度检查中" : runtimeReadiness.status === "就绪" ? "可发射" : "待修复运行时";
               return (
                 <button
                   key={item.id}
                   type="button"
                   onClick={() => onSelect(item.id)}
-                  className={`flex w-full flex-col gap-2 px-3 py-3 text-left transition-colors hover:bg-muted/60 ${
-                    selectedId === item.id ? "bg-muted" : ""
+                  data-testid="agent-playground-target-queue-item"
+                  className={`grid w-full grid-cols-[2.25rem_minmax(0,1fr)] gap-2 rounded-md border px-2.5 py-2.5 text-left transition-colors hover:border-emerald-500/50 hover:bg-emerald-500/10 ${
+                    selected ? "border-emerald-500 bg-emerald-500/10 shadow-sm" : "border-border bg-background"
                   }`}
                 >
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.name}</span>
-                    <Badge variant={item.status === "启用" ? "secondary" : "outline"} className="shrink-0">
-                      {item.status}
-                    </Badge>
-                  </div>
-                  <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
-                    <span className="shrink-0">{item.prompt_type}</span>
-                    <span className="truncate">执行用例 {caseCount}</span>
-                    <span className="truncate">真实运行 {runCount}</span>
+                  <span className={`flex size-9 items-center justify-center rounded-md border text-xs font-semibold ${
+                    selected ? "border-emerald-500 bg-emerald-600 text-white" : "bg-muted/40 text-muted-foreground"
+                  }`}>
+                    {String(index + 1).padStart(2, "0")}
+                  </span>
+                  <div className="min-w-0">
+                    <div className="flex min-w-0 items-start gap-2">
+                      <span className="min-w-0 flex-1 truncate text-sm font-semibold">{item.name}</span>
+                      <Badge variant={item.status === "启用" ? "secondary" : "outline"} className="shrink-0">
+                        {item.status}
+                      </Badge>
+                    </div>
+                    <div className="mt-1 grid gap-1 text-xs text-muted-foreground">
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <PlayCircle className="size-3.5 shrink-0 text-emerald-600" />
+                        <span className="truncate">入队目标 · {item.prompt_type}</span>
+                      </div>
+                      <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+                        <span className="inline-flex items-center gap-1">
+                          <CheckCircle2 className="size-3.5 text-muted-foreground" />
+                          执行用例 {caseCount}
+                        </span>
+                        <span>真实运行 {runCount}</span>
+                        <span>{readyLabel}</span>
+                      </div>
+                    </div>
                   </div>
                 </button>
               );

@@ -89,11 +89,13 @@ const routes = [
     path: `/${workspaceSlug}/training/agent-playground`,
     expect: ["智能体调试场"],
     uiContract: {
-      requiredText: ["执行目标池", "真实任务发射台", "执行对象", "执行智能体", "自动选择训练评估智能体", "真实运行时", "入队链路", "写入真实任务队列", "真实执行准备度", "观测回写契约", "真实运行"],
+      requiredText: ["执行目标池", "入队目标", "真实任务发射台", "执行对象", "执行智能体", "自动选择训练评估智能体", "真实运行时", "入队链路", "写入真实任务队列", "真实执行准备度", "观测回写契约", "真实运行"],
       forbiddenText: ["本地模板实验室", "不启动智能体", "本地渲染记录"],
       requiredTestIds: [
         "agent-playground-page-shell",
         "agent-playground-workbench",
+        "agent-playground-target-queue",
+        "agent-playground-target-queue-item",
         "agent-playground-execution-stage",
         "agent-playground-run-console",
         "agent-playground-launch-brief",

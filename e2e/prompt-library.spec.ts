@@ -997,6 +997,8 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("agent-playground-page-shell")).toBeVisible({ timeout: 10000 });
     await expect(page.getByTestId("playground-page-contract")).toContainText("真实任务 · 写回观测证据");
     await expect(page.getByTestId("agent-playground-selector-summary")).toContainText("执行目标池");
+    await expect(page.getByTestId("agent-playground-target-queue")).toBeVisible();
+    await expect(page.getByTestId("agent-playground-target-queue-item").first()).toContainText("入队目标");
     await expect(page.getByTestId("agent-playground-run-console")).toContainText("真实任务发射台");
     await expect(page.getByTestId("agent-playground-agent-selector")).toContainText("执行智能体");
     await expect(page.getByTestId("agent-playground-agent-selector")).toContainText("自动选择训练评估智能体");
