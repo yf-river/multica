@@ -106,7 +106,11 @@ export const BoardCardContent = memo(function BoardCardContent({
 
   const showAssigneeName = showAssigneeSection && hasAssignee && !showStartDate && !showDueDate;
   const showUpdatedHint = showAssigneeName && !showChildProgress;
-  const { getActorName } = useActorName();
+  const { getActorName } = useActorName({
+    members: showAssigneeName && issue.assignee_type === "member",
+    agents: showAssigneeName && issue.assignee_type === "agent",
+    squads: showAssigneeName && issue.assignee_type === "squad",
+  });
   const assigneeName =
     showAssigneeName && issue.assignee_type && issue.assignee_id
       ? getActorName(issue.assignee_type, issue.assignee_id)

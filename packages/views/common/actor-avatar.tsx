@@ -78,7 +78,11 @@ export function ActorAvatar({
   hoverCardVariant = "profile",
   profileLink,
 }: ActorAvatarProps) {
-  const { getActorName, getActorInitials, getActorAvatarUrl } = useActorName();
+  const { getActorName, getActorInitials, getActorAvatarUrl } = useActorName({
+    members: actorType === "member",
+    agents: actorType === "agent",
+    squads: actorType === "squad",
+  });
   const paths = useWorkspacePaths();
   const avatar = (
     <ActorAvatarBase

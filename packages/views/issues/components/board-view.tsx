@@ -145,7 +145,12 @@ export function BoardView({
   const sortLabel = sortBy !== "position"
     ? t(($) => $.board.ordered_by, { field: t(($) => $.display[`sort_${sortFieldKey}` as keyof typeof $.display]) })
     : null;
-  const { getActorName } = useActorName();
+  const needsAssigneeNames = grouping === "assignee";
+  const { getActorName } = useActorName({
+    members: needsAssigneeNames,
+    agents: needsAssigneeNames,
+    squads: needsAssigneeNames,
+  });
   const myIssuesOpts = myIssuesScope
     ? { scope: myIssuesScope, filter: myIssuesFilter ?? {} }
     : undefined;

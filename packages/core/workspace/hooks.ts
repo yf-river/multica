@@ -6,25 +6,49 @@ import { useWorkspaceId } from "../hooks";
 import { memberListOptions, agentListOptions, squadListOptions } from "./queries";
 import { resolvePublicFileUrl } from "./avatar-url";
 
-export function useActorName() {
+export type ActorNameQueryScope = {
+  members?: boolean;
+  agents?: boolean;
+  squads?: boolean;
+};
+
+const DEFAULT_ACTOR_NAME_QUERY_SCOPE: Required<ActorNameQueryScope> = {
+  members: true,
+  agents: true,
+  squads: true,
+};
+
+export function useActorName(scope: ActorNameQueryScope = DEFAULT_ACTOR_NAME_QUERY_SCOPE) {
   const wsId = useWorkspaceId();
-  const { data: members = [] } = useQuery(memberListOptions(wsId));
-  const { data: agents = [] } = useQuery(agentListOptions(wsId));
-  const { data: squads = [] } = useQuery(squadListOptions(wsId));
+  const loadMembers = scope.members !== false;
+  const loadAgents = scope.agents !== false;
+  const loadSquads = scope.squads !== false;
+  const { data: members = [] } = useQuery({
+    ...memberListOptions(wsId),
+    enabled: !!wsId && loadMembers,
+  });
+  const { data: agents = [] } = useQuery({
+    ...agentListOptions(wsId),
+    enabled: !!wsId && loadAgents,
+  });
+  const { data: squads = [] } = useQuery({
+    ...squadListOptions(wsId),
+    enabled: !!wsId && loadSquads,
+  });
 
   const getMemberName = useCallback((userId: string) => {
     const m = members.find((m) => m.user_id === userId);
-    return m?.name ?? "Unknown";
+    return m?.name ?? "未知成员";
   }, [members]);
 
   const getAgentName = useCallback((agentId: string) => {
     const a = agents.find((a) => a.id === agentId);
-    return a?.name ?? "Unknown Agent";
+    return a?.name ?? "未知智能体";
   }, [agents]);
 
   const getSquadName = useCallback((squadId: string) => {
     const s = squads.find((s) => s.id === squadId);
-    return s?.name ?? "Unknown Squad";
+    return s?.name ?? "未知小队";
   }, [squads]);
 
   const getActorName = useCallback((type: string, id: string) => {
@@ -32,7 +56,7 @@ export function useActorName() {
     if (type === "agent") return getAgentName(id);
     if (type === "squad") return getSquadName(id);
     if (type === "system") return "Multica";
-    return "System";
+    return "系统";
   }, [getAgentName, getMemberName, getSquadName]);
 
   const getActorInitials = useCallback((type: string, id: string) => {

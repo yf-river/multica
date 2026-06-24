@@ -37,7 +37,10 @@ export function AgentActivityHoverContent({
 }: AgentActivityHoverContentProps) {
   const { t } = useT("issues");
   const wsId = useWorkspaceId();
-  const { getActorName, getActorInitials, getActorAvatarUrl } = useActorName();
+  const { getActorName, getActorInitials, getActorAvatarUrl } = useActorName({
+    members: false,
+    squads: false,
+  });
   const { data: agents = [] } = useQuery(agentListOptions(wsId));
   const { data: runtimes = [] } = useQuery(runtimeListOptions(wsId));
 
