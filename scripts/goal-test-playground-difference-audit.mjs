@@ -38,10 +38,11 @@ const prompt = await auditPromptPlayground(page);
 const agent = await auditAgentPlayground(page);
 await browser.close();
 
+const surfaceSimilarity = compareSurfaceSimilarity(prompt, agent);
 const failures = [
   ...prompt.failures.map((failure) => `提示词调试场：${failure}`),
   ...agent.failures.map((failure) => `智能体调试场：${failure}`),
-  ...crossSurfaceFailures(prompt, agent),
+  ...crossSurfaceFailures(prompt, agent, surfaceSimilarity),
 ];
 const payload = {
   schema: "multica.goal_test.playground_difference_audit.v1",
@@ -53,6 +54,7 @@ const payload = {
   account,
   ok: failures.length === 0,
   failures,
+  surface_similarity: surfaceSimilarity,
   screenshots: {
     prompt_playground: prompt.screenshot,
     agent_playground: agent.screenshot,
@@ -114,6 +116,7 @@ async function auditPromptPlayground(page) {
     boxes,
     forbidden_counts: forbidden,
     visible_contracts: pickVisibleLines(text, ["本地渲染", "本地模板实验室", "模板源", "变量样本", "真实任务"]),
+    surface_signature: buildPromptSurfaceSignature(boxes),
   };
 }
 
@@ -160,10 +163,11 @@ async function auditAgentPlayground(page) {
     boxes,
     forbidden_counts: forbidden,
     visible_contracts: pickVisibleLines(text, ["真实任务", "执行目标池", "执行配置", "模型参数", "工具与环境", "MCP", "环境变量", "横向对比", "观测回写", "本地渲染", "模板源"]),
+    surface_signature: buildAgentSurfaceSignature(boxes),
   };
 }
 
-function crossSurfaceFailures(prompt, agent) {
+function crossSurfaceFailures(prompt, agent, similarity) {
   const failures = [];
   const promptHasThreeColumns =
     prompt.boxes.sourcePanel &&
@@ -183,7 +187,58 @@ function crossSurfaceFailures(prompt, agent) {
     const agentInnerColumns = [agent.boxes.executionStage?.width, agent.boxes.promptList?.width].filter(Boolean).join("/");
     if (promptInnerColumns === agentInnerColumns) failures.push("两个调试场内层列宽完全相同，容易退化成同构页面");
   }
+  if (prompt.surface_signature?.prompt_list_side === agent.surface_signature?.prompt_list_side) {
+    failures.push("两个调试场的目标列表位于同侧，首屏结构容易同构");
+  }
+  if (prompt.surface_signature?.primary_pattern === agent.surface_signature?.primary_pattern) {
+    failures.push(`两个调试场主工作区结构签名相同：${prompt.surface_signature.primary_pattern}`);
+  }
+  if (similarity.visible_contract_jaccard > 0.45) {
+    failures.push(`两个调试场可见契约文本相似度过高：${similarity.visible_contract_jaccard}`);
+  }
   return failures;
+}
+
+function compareSurfaceSimilarity(prompt, agent) {
+  const promptTokens = visibleContractTokens(prompt.visible_contracts);
+  const agentTokens = visibleContractTokens(agent.visible_contracts);
+  const shared = promptTokens.filter((token) => agentTokens.includes(token));
+  const union = Array.from(new Set([...promptTokens, ...agentTokens]));
+  return {
+    visible_contract_jaccard: union.length === 0 ? 0 : roundNumber(shared.length / union.length, 3),
+    shared_tokens: shared.slice(0, 20),
+    prompt_signature: prompt.surface_signature,
+    agent_signature: agent.surface_signature,
+  };
+}
+
+function visibleContractTokens(lines) {
+  const stopWords = new Set(["的", "和", "与", "在", "到", "为", "不", "已", "可", "个", "条"]);
+  return Array.from(
+    new Set(
+      lines
+        .join("\n")
+        .split(/[^\p{Script=Han}A-Za-z0-9_]+/u)
+        .map((token) => token.trim())
+        .filter((token) => token.length >= 2 && !stopWords.has(token)),
+    ),
+  );
+}
+
+function buildPromptSurfaceSignature(boxes) {
+  return {
+    prompt_list_side: boxes.promptList && boxes.templateLab && boxes.promptList.x < boxes.templateLab.x ? "left" : "unknown",
+    primary_pattern: "left-list-three-column-local-lab",
+    exclusive_regions: ["prompt-playground-template-lab", "prompt-playground-source-panel", "prompt-playground-variable-checklist"],
+  };
+}
+
+function buildAgentSurfaceSignature(boxes) {
+  return {
+    prompt_list_side: boxes.executionStage && boxes.promptList && boxes.executionStage.x < boxes.promptList.x ? "right" : "unknown",
+    primary_pattern: "left-execution-console-right-target-pool",
+    exclusive_regions: ["agent-playground-run-console", "agent-playground-task-payload", "agent-playground-tool-env-diff"],
+  };
 }
 
 async function boxesFor(page, ids) {
@@ -240,6 +295,11 @@ function roundBox(box) {
   };
 }
 
+function roundNumber(value, digits) {
+  const scale = 10 ** digits;
+  return Math.round(value * scale) / scale;
+}
+
 async function login() {
   const response = await fetch(`${backendURL}/auth/login`, {
     method: "POST",
@@ -272,6 +332,10 @@ function renderMarkdown(payload) {
     "",
     `- 提示词调试场：${payload.prompt_playground.visible_contracts.join("；")}`,
     `- 智能体调试场：${payload.agent_playground.visible_contracts.join("；")}`,
+    `- 可见契约文本相似度：${payload.surface_similarity.visible_contract_jaccard}`,
+    `- 提示词调试场结构签名：${payload.prompt_playground.surface_signature.primary_pattern}，列表位置 ${payload.prompt_playground.surface_signature.prompt_list_side}`,
+    `- 智能体调试场结构签名：${payload.agent_playground.surface_signature.primary_pattern}，列表位置 ${payload.agent_playground.surface_signature.prompt_list_side}`,
+    payload.surface_similarity.shared_tokens.length > 0 ? `- 共享词：${payload.surface_similarity.shared_tokens.join("、")}` : "- 共享词：无",
     "",
   ];
   if (payload.failures.length > 0) {
