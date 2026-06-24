@@ -402,7 +402,8 @@ test.describe("训练与评估工作台", () => {
         failed_cases: 0,
       }),
     ]);
-    const runEvidence = await api.getPromptEvaluationRunEvidence(optimizationRuns[0]!.id);
+    const localRenderRun = optimizationRuns[0]!;
+    const runEvidence = await api.getPromptEvaluationRunEvidence(localRenderRun.id);
     expect(runEvidence.trials).toEqual([
       expect.objectContaining({
         case_name: "调试场用例",
@@ -484,7 +485,7 @@ test.describe("训练与评估工作台", () => {
     expect(futureSummary.资产统计["资产总数"]).toBeGreaterThan(0);
     const futureRuns = await api.listPromptEvaluationRuns({ since: futureSince, limit: 20 });
     expect(futureRuns).toHaveLength(0);
-    await page.getByRole("link", { name: "运行历史", exact: true }).last().click();
+    await page.goto(`/${workspaceSlug}/training/run-history`, { waitUntil: "domcontentloaded" });
     await expect(page.getByText("智能体执行 · 已入队")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(`任务 ${queuedAgentRun!.task_id}`)).toBeVisible();
     let agentRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "智能体执行 · 已入队" }).first();
@@ -563,7 +564,9 @@ test.describe("训练与评估工作台", () => {
     expect(exportedEvidence["证据统计"]["execution_span条数"]).toBeGreaterThan(0);
     expect(exportedEvidence["证据统计"]["tool_call_chain条数"]).toEqual(expect.any(Number));
     expect(exportedEvidence["证据统计"]["tool_call_summary条数"]).toEqual(expect.any(Number));
-    await page.getByRole("link", { name: "运行历史", exact: true }).last().click();
+    await page.goto(`/${workspaceSlug}/training/run-history`, { waitUntil: "domcontentloaded" });
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/run-history$`), { timeout: 30000 });
+    await expect(page.getByTestId("training-route-panel-run-history")).toBeVisible({ timeout: 10000 });
     agentRunCard = page.getByTestId(`prompt-evaluation-run-${queuedAgentRun!.id}`);
     await expect(agentRunCard).toContainText("智能体执行 · 通过", { timeout: 10000 });
     await expect(agentRunCard).toContainText(new RegExp(`模型 ${escapeRegExp(expectedAgentModel)} · 运行时 codex · 通过 1\\/1 · 输入 16 token · 输出 7 token`));
@@ -621,26 +624,31 @@ test.describe("训练与评估工作台", () => {
           "trace/task id": queuedAgentRun!.task_id,
         }),
       });
+    await page.goto(`/${workspaceSlug}/training/run-history`, { waitUntil: "domcontentloaded" });
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/run-history$`), { timeout: 30000 });
+    await expect(page.getByTestId("training-route-panel-run-history")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText("模板渲染检查 · 通过")).toBeVisible({ timeout: 10000 });
     await expect(page.getByText(/模型 本地模板渲染检查 · 运行时 server · 通过 1\/1/)).toBeVisible();
-    const localRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "模板渲染检查 · 通过" }).first();
+    const localRunCard = page.getByTestId(`prompt-evaluation-run-${localRenderRun.id}`);
     await clickStableButton(localRunCard.getByRole("button", { name: "查看证据" }));
-    await expect(page.getByText("用例明细")).toBeVisible({ timeout: 10000 });
-    await expect(localRunCard.getByText("调试场用例", { exact: true })).toBeVisible();
+    const localEvidencePanel = localRunCard.getByTestId(`run-evidence-${localRenderRun.id}`);
+    await expect(localEvidencePanel.getByText("用例明细")).toBeVisible({ timeout: 10000 });
+    await expect(localEvidencePanel.getByText("调试场用例", { exact: true })).toBeVisible();
     await expect(localRunCard.getByText("请澄清 登录失败，项目背景：账号系统。", { exact: true })).toBeVisible();
-    await localRunCard.getByText("完整运行证据 JSON").click();
-    await expect(localRunCard.getByText("\"task_usage\"")).toBeVisible();
-    await expect(localRunCard.getByText("\"trace_events\"")).toBeVisible();
+    await localEvidencePanel.getByText("完整运行证据 JSON").click();
+    await expect(localEvidencePanel.getByText("\"task_usage\"")).toBeVisible();
+    await expect(localEvidencePanel.getByText("\"trace_events\"")).toBeVisible();
     await localRunCard.getByRole("button", { name: "收起证据" }).click();
-    agentRunCard = page.locator("div.grid.gap-2.px-3.py-3").filter({ hasText: "智能体执行 · 通过" }).first();
+    agentRunCard = page.getByTestId(`prompt-evaluation-run-${queuedAgentRun!.id}`);
     await clickStableButton(agentRunCard.getByRole("button", { name: "查看证据" }));
-    await expect(agentRunCard.getByText("智能体调试场用例", { exact: true })).toBeVisible({ timeout: 10000 });
-    await expect(agentRunCard.getByText(/codex\/[^ ]+ · 输入 11 · 输出 7 · 预估成本 \$/)).toBeVisible();
-    await expect(agentRunCard.getByText("缓存读 2 · 缓存写 3")).toBeVisible();
-    await expect(agentRunCard.getByText("#1 text：Agent 输出：完成训练评估")).toBeVisible();
-    await expect(agentRunCard.getByText(/训练评估用量已上报 · completed · codex\/[^ ]+ · 尝试次数 1 · .*输入 16 · 输出 7/)).toBeVisible();
+    const syncedAgentEvidencePanel = agentRunCard.getByTestId(`run-evidence-${queuedAgentRun!.id}`);
+    await expect(syncedAgentEvidencePanel).toContainText("智能体调试场用例", { timeout: 10000 });
+    await expect(syncedAgentEvidencePanel).toContainText(/codex\/[^ ]+ · 输入 11 · 输出 7 · 预估成本 \$/);
+    await expect(syncedAgentEvidencePanel).toContainText("缓存读 2 · 缓存写 3");
+    await expect(syncedAgentEvidencePanel).toContainText("#1 text：Agent 输出：完成训练评估");
+    await expect(syncedAgentEvidencePanel).toContainText(/训练评估用量已上报 · completed · codex\/[^ ]+ · 尝试次数 1 · .*输入 16 · 输出 7/);
     await expect(page.getByText("失败原因：等待智能体执行完成")).toHaveCount(0);
-    await expect(agentRunCard.getByText("任务用量")).toBeVisible();
+    await expect(syncedAgentEvidencePanel).toContainText("任务用量");
     const syncedAgentEvidence = await api.getPromptEvaluationRunEvidence(queuedAgentRun!.id);
     expect(syncedAgentEvidence.run).toMatchObject({
       status: "通过",
