@@ -74,6 +74,20 @@ test.describe("Multica 编码小队页面证据", () => {
         leaderTask!,
         "队长输出：已接收需求，并分派方案设计者先输出技术方案、影响面和测试方案，等待人工确认后再进入开发。",
       );
+      await api.reportDaemonTaskMessages(leaderTask!.id, [
+        {
+          seq: 2,
+          type: "tool_use",
+          tool: "multica squad activity",
+          input: { tool_call_id: "coding-squad-tool-1", action: "record_design_gate" },
+        },
+        {
+          seq: 3,
+          type: "tool_result",
+          tool: "multica squad activity",
+          output: "已记录编码小队方案确认门禁，等待人工确认后再开发。",
+        },
+      ]);
       await api.recordSOPStepEvent(run!.id, "receive", {
         event_type: "步骤完成",
         status: "已完成",
