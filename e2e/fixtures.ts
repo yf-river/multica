@@ -1682,6 +1682,14 @@ export class TestApiClient {
     return res.json();
   }
 
+  async getPromptEvaluationEvidenceSnapshot(runId: string, snapshotId: string): Promise<PromptEvaluationEvidenceSnapshot> {
+    const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots/${snapshotId}`);
+    if (!res.ok) {
+      throw new Error(`get prompt evaluation evidence snapshot failed: ${res.status}`);
+    }
+    return res.json();
+  }
+
   async getPromptEvaluationSummary(params?: { since?: string }): Promise<PromptEvaluationSummary> {
     const search = new URLSearchParams();
     if (params?.since) search.set("since", params.since);

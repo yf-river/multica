@@ -3252,19 +3252,25 @@ func (h *Handler) CreatePromptEvaluationEvidenceSnapshot(w http.ResponseWriter, 
 		writeError(w, http.StatusInternalServerError, "failed to build prompt evaluation evidence snapshot")
 		return
 	}
+	insight, err := h.buildPromptEvaluationEvidenceSnapshotInsight(r.Context(), workspaceUUID, evidence)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to build prompt evaluation evidence snapshot insight")
+		return
+	}
 	now := time.Now().UTC()
 	payload := map[string]any{
-		"语义版本": "multica.prompt_evaluation.evidence_snapshot.v1",
-		"生成时间": now.Format(time.RFC3339),
-		"快照类型": snapshotType,
-		"运行证据": evidence,
+		"语义版本":    "multica.prompt_evaluation.evidence_snapshot.v1",
+		"生成时间":    now.Format(time.RFC3339),
+		"快照类型":    snapshotType,
+		"运行证据":    evidence,
+		"服务端解释快照": insight,
 	}
 	item, err := h.Queries.CreatePromptEvaluationEvidenceSnapshot(r.Context(), db.CreatePromptEvaluationEvidenceSnapshotParams{
 		WorkspaceID:   workspaceUUID,
 		RunID:         runID,
 		SnapshotType:  snapshotType,
 		SchemaVersion: "multica.prompt_evaluation.evidence_snapshot.v1",
-		Summary:       mustJSONBytes(buildPromptEvaluationEvidenceSnapshotSummary(evidence, now)),
+		Summary:       mustJSONBytes(buildPromptEvaluationEvidenceSnapshotSummary(evidence, now, insight)),
 		Evidence:      mustJSONBytes(payload),
 		CreatedBy:     parseUUID(userID),
 	})
@@ -4036,9 +4042,9 @@ func validPromptEvaluationEvidenceSnapshotType(value string) bool {
 	}
 }
 
-func buildPromptEvaluationEvidenceSnapshotSummary(evidence PromptEvaluationRunEvidenceResponse, generatedAt time.Time) map[string]any {
+func buildPromptEvaluationEvidenceSnapshotSummary(evidence PromptEvaluationRunEvidenceResponse, generatedAt time.Time, insight map[string]any) map[string]any {
 	run := evidence.Run
-	return map[string]any{
+	summary := map[string]any{
 		"语义版本":                "multica.prompt_evaluation.evidence_snapshot.summary.v1",
 		"生成时间":                generatedAt.Format(time.RFC3339),
 		"运行ID":                run.ID,
@@ -4069,6 +4075,151 @@ func buildPromptEvaluationEvidenceSnapshotSummary(evidence PromptEvaluationRunEv
 		"tool call summary行数": len(evidence.ToolCallSummary),
 		"上下文字段数":              len(evidence.Context),
 	}
+	if insight != nil {
+		summary["服务端解释"] = map[string]any{
+			"质量判断":   stringFromAny(insight["质量判断"]),
+			"建议动作":   stringFromAny(insight["建议动作"]),
+			"失败主因":   stringFromAny(insight["失败主因"]),
+			"维度摘要数":  len(anySliceFromRecord(insight, "维度评分摘要")),
+			"维度趋势数":  len(anySliceFromRecord(insight, "维度评分趋势")),
+			"优化候选数":  len(anySliceFromRecord(insight, "优化候选证据")),
+			"单位通过成本": insight["单位通过成本"],
+		}
+	}
+	return summary
+}
+
+func (h *Handler) buildPromptEvaluationEvidenceSnapshotInsight(ctx context.Context, workspaceID pgtype.UUID, evidence PromptEvaluationRunEvidenceResponse) (map[string]any, error) {
+	run := evidence.Run
+	assetID := parseUUID(run.AssetID)
+	summaries, err := h.Queries.ListPromptEvaluationDimensionScoreSummaries(ctx, db.ListPromptEvaluationDimensionScoreSummariesParams{
+		WorkspaceID: workspaceID,
+		AssetID:     assetID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	trends, err := h.Queries.ListPromptEvaluationDimensionScoreTrends(ctx, db.ListPromptEvaluationDimensionScoreTrendsParams{
+		WorkspaceID: workspaceID,
+		AssetID:     assetID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	candidates, err := h.Queries.ListPromptEvaluationOptimizationCandidates(ctx, db.ListPromptEvaluationOptimizationCandidatesParams{
+		WorkspaceID: workspaceID,
+		RunID:       parseUUID(run.ID),
+		Limit:       20,
+	})
+	if err != nil {
+		return nil, err
+	}
+	summaryItems := make([]PromptEvaluationDimensionScoreSummaryResponse, len(summaries))
+	for i, item := range summaries {
+		summaryItems[i] = promptEvaluationDimensionScoreSummaryToResponse(item)
+	}
+	trendItems := make([]PromptEvaluationDimensionScoreTrendResponse, len(trends))
+	for i, item := range trends {
+		trendItems[i] = promptEvaluationDimensionScoreTrendToResponse(item)
+	}
+	candidateItems := make([]map[string]any, 0, len(candidates))
+	for _, item := range candidates {
+		resp := promptEvaluationOptimizationCandidateToResponse(item)
+		metrics, _ := resp.Metrics.(map[string]any)
+		candidateItems = append(candidateItems, map[string]any{
+			"id":        resp.ID,
+			"run_id":    resp.RunID,
+			"prompt_id": resp.PromptID,
+			"状态":        resp.Status,
+			"失败用例数":     resp.FailedCaseCount,
+			"候选优先级":     stringFromAny(metrics["候选优先级"]),
+			"失败维度":      metrics["失败维度"],
+			"优先级依据":     stringFromAny(metrics["候选优先级依据"]),
+			"修改依据":      resp.Rationale,
+		})
+	}
+	return map[string]any{
+		"语义版本":   "multica.prompt_evaluation.evidence_snapshot.insight.v1",
+		"运行ID":   run.ID,
+		"资产ID":   run.AssetID,
+		"质量判断":   promptEvaluationEvidenceQualityLabel(run),
+		"单位通过成本": promptEvaluationEvidenceCostPerPassedCase(run),
+		"失败主因":   promptEvaluationEvidenceFailureReason(evidence),
+		"建议动作":   promptEvaluationEvidenceRecommendation(evidence, len(candidateItems)),
+		"维度评分摘要": summaryItems,
+		"维度评分趋势": trendItems,
+		"优化候选证据": candidateItems,
+	}, nil
+}
+
+func anySliceFromRecord(record map[string]any, key string) []any {
+	if record == nil {
+		return nil
+	}
+	switch value := record[key].(type) {
+	case []any:
+		return value
+	case []PromptEvaluationDimensionScoreSummaryResponse:
+		result := make([]any, len(value))
+		for i := range value {
+			result[i] = value[i]
+		}
+		return result
+	case []PromptEvaluationDimensionScoreTrendResponse:
+		result := make([]any, len(value))
+		for i := range value {
+			result[i] = value[i]
+		}
+		return result
+	case []map[string]any:
+		result := make([]any, len(value))
+		for i := range value {
+			result[i] = value[i]
+		}
+		return result
+	default:
+		return nil
+	}
+}
+
+func promptEvaluationEvidenceQualityLabel(run PromptEvaluationRunResponse) string {
+	if run.TotalCases == 0 {
+		return "暂无用例"
+	}
+	if run.Status == "失败" || run.FailedCases > 0 {
+		return "质量风险高"
+	}
+	if run.PassRate >= 0.8 {
+		return "质量稳定"
+	}
+	if run.PassRate >= 0.5 {
+		return "质量待优化"
+	}
+	return "质量风险高"
+}
+
+func promptEvaluationEvidenceCostPerPassedCase(run PromptEvaluationRunResponse) float64 {
+	if run.PassedCases <= 0 {
+		return 0
+	}
+	return run.EstimatedCost / float64(run.PassedCases)
+}
+
+func promptEvaluationEvidenceRecommendation(evidence PromptEvaluationRunEvidenceResponse, candidateCount int) string {
+	run := evidence.Run
+	if run.Status == "失败" || run.FailedCases > 0 {
+		if candidateCount > 0 {
+			return "已有优化候选，建议验收者优先确认高优先级候选并回归同一数据集版本。"
+		}
+		return "优先根据失败主因生成优化候选，再用同一实验数据回归验证。"
+	}
+	if run.PassedCases > 0 && promptEvaluationEvidenceCostPerPassedCase(run) > 0.2 {
+		return "质量可用但单位通过成本偏高，建议压缩提示词上下文或尝试更轻模型复测。"
+	}
+	if run.PassedCases > 0 {
+		return "当前运行可作为质量基线，后续观察维度趋势和提示词版本变化。"
+	}
+	return "先补充可评分运行，形成质量和成本基线。"
 }
 
 func promptEvaluationEvidenceFailureReason(evidence PromptEvaluationRunEvidenceResponse) string {

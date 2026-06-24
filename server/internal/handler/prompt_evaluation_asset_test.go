@@ -1654,9 +1654,20 @@ func TestPromptEvaluationEvidenceSnapshotArchivesRunEvidence(t *testing.T) {
 	if !ok || summary["运行状态"] != "失败" || summary["失败原因"] != "429 当前无可用Token额度" || summary["trace/task id"] != resp.TaskID {
 		t.Fatalf("snapshot summary = %#v", snapshot.Summary)
 	}
+	insightSummary, ok := summary["服务端解释"].(map[string]any)
+	if !ok || insightSummary["质量判断"] != "质量风险高" || insightSummary["建议动作"] == "" || insightSummary["维度摘要数"].(float64) < 1 {
+		t.Fatalf("snapshot insight summary = %#v", summary["服务端解释"])
+	}
 	payload, ok := snapshot.Evidence.(map[string]any)
 	if !ok || payload["语义版本"] != "multica.prompt_evaluation.evidence_snapshot.v1" || payload["运行证据"] == nil {
 		t.Fatalf("snapshot evidence payload = %#v", snapshot.Evidence)
+	}
+	insight, ok := payload["服务端解释快照"].(map[string]any)
+	if !ok || insight["语义版本"] != "multica.prompt_evaluation.evidence_snapshot.insight.v1" || insight["质量判断"] != "质量风险高" {
+		t.Fatalf("snapshot insight payload = %#v", payload["服务端解释快照"])
+	}
+	if scores, ok := insight["维度评分摘要"].([]any); !ok || len(scores) < 1 {
+		t.Fatalf("snapshot insight missing dimension summaries: %#v", insight)
 	}
 
 	listW := httptest.NewRecorder()
