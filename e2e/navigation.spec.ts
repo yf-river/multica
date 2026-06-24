@@ -9,6 +9,7 @@ const ROUTE_CHANGE_TIMEOUT = 30000;
 async function expectTrainingPageShell(page, item: (typeof TRAINING_ROUTES)[number]) {
   const isPromptPlayground = item.path === "prompt-playground";
   const isAgentPlayground = item.path === "agent-playground";
+  const hasRouteIntro = ["datasets", "test-suites", "experiments", "optimization-runs", "run-history"].includes(item.path);
   await expect(page.getByTestId("prompt-playground-page-shell")).toHaveCount(isPromptPlayground ? 1 : 0);
   await expect(page.getByTestId("agent-playground-page-shell")).toHaveCount(isAgentPlayground ? 1 : 0);
   await expect(page.getByTestId("training-page-shell")).toHaveCount(isPromptPlayground || isAgentPlayground ? 0 : 1);
@@ -16,6 +17,7 @@ async function expectTrainingPageShell(page, item: (typeof TRAINING_ROUTES)[numb
   if (!isPromptPlayground && !isAgentPlayground) {
     await expect(page.getByTestId(`training-route-${item.path}`)).toHaveCount(1);
   }
+  await expect(page.getByTestId(`training-route-intro-${item.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
 }
 
 async function expectTrainingNavigationMarker(page, item: (typeof TRAINING_ROUTES)[number]) {

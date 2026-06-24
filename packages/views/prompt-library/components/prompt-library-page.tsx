@@ -1544,22 +1544,30 @@ function WorkbenchPanel({
     return null;
   }
 
+  const routeIntro = trainingRouteIntro(activeTab, {
+    visibleAssets,
+    cases,
+    experimentDimensions,
+    runs,
+    candidates,
+    runStatusFilter,
+  });
+
   return (
-    <section className="grid gap-3 border-t pt-4">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <h3 className="text-sm font-semibold">{activeTab}</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            {activeTab === "运行历史" ? "按结构化运行记录展示运行、任务、模型、耗时和评估结论。" : "复用提示词评测资产，全部语义按中文记录。"}
-          </p>
-        </div>
-        {tabAssetType && (
+    <section className="grid gap-3 border-t pt-4" data-testid={`training-route-workspace-${routeIntro.route}`}>
+      <TrainingRouteIntroCard
+        route={routeIntro.route}
+        title={routeIntro.title}
+        subtitle={routeIntro.subtitle}
+        facts={routeIntro.facts}
+        evidence={routeIntro.evidence}
+        action={tabAssetType ? (
           <Button size="sm" onClick={() => onCreateAsset(tabAssetType)} disabled={saving}>
             {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
             新建{tabAssetType}
           </Button>
-        )}
-      </div>
+        ) : null}
+      />
 
       {activeTab === "实验" && (
         <div className="rounded-md border border-border/70 bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
@@ -1789,6 +1797,144 @@ function WorkbenchPanel({
         )}
         </>
       )}
+    </section>
+  );
+}
+
+type TrainingRouteIntro = {
+  route: string;
+  title: string;
+  subtitle: string;
+  facts: Array<[string, string]>;
+  evidence: string;
+};
+
+function trainingRouteIntro(
+  activeTab: WorkbenchTab,
+  context: {
+    visibleAssets: PromptEvaluationAsset[];
+    cases: PromptEvaluationStructuredCase[];
+    experimentDimensions: PromptEvaluationExperimentDimension[];
+    runs: PromptEvaluationRun[];
+    candidates: PromptEvaluationOptimizationCandidate[];
+    runStatusFilter: RunStatusFilter;
+  },
+): TrainingRouteIntro {
+  const enabledAssets = context.visibleAssets.filter((asset) => asset.status === "启用").length;
+  switch (activeTab) {
+    case "数据集": {
+      const datasetRows = context.visibleAssets.reduce((sum, asset) => sum + asset.dataset_row_count, 0);
+      const traceCases = context.cases.filter((item) => item.source === "trace").length;
+      return {
+        route: "datasets",
+        title: "数据集题库",
+        subtitle: "把真实 trace 和手工样例沉淀成可复跑的评测题库，用于后续测试套件和实验。",
+        facts: [
+          ["数据集资产", String(context.visibleAssets.length)],
+          ["启用", String(enabledAssets)],
+          ["数据集行", formatNumber(datasetRows)],
+          ["trace 样本", formatNumber(traceCases)],
+        ],
+        evidence: "公开 API 创建/回读数据集，页面可从真实 trace 导入样本并生成结构化用例。",
+      };
+    }
+    case "测试套件": {
+      const suiteCases = context.visibleAssets.reduce((sum, asset) => sum + asset.test_suite_case_count, 0);
+      return {
+        route: "test-suites",
+        title: "测试套件回归",
+        subtitle: "把一组稳定用例固定为回归套件，用来反复验证提示词、智能体和小队 SOP 是否退化。",
+        facts: [
+          ["测试套件", String(context.visibleAssets.length)],
+          ["启用", String(enabledAssets)],
+          ["套件用例", formatNumber(suiteCases)],
+          ["结构化用例", formatNumber(context.cases.length)],
+        ],
+        evidence: "页面可创建套件资产、维护手工用例，并通过运行历史回读每次套件执行结果。",
+      };
+    }
+    case "实验": {
+      return {
+        route: "experiments",
+        title: "实验对比",
+        subtitle: "对比不同提示词、变量、数据集或执行方式，沉淀质量、成本和中文一致性的实验事实。",
+        facts: [
+          ["实验资产", String(context.visibleAssets.length)],
+          ["启用", String(enabledAssets)],
+          ["维度事实", formatNumber(context.experimentDimensions.length)],
+          ["结构化用例", formatNumber(context.cases.length)],
+        ],
+        evidence: "页面展示实验维度事实，并与运行历史、证据快照和优化候选形成可复盘链路。",
+      };
+    }
+    case "优化运行": {
+      const activeRuns = context.runs.filter((run) => run.status === "已入队" || run.status === "运行中").length;
+      return {
+        route: "optimization-runs",
+        title: "优化运行作业台",
+        subtitle: "按优化运行资产聚合作业、运行、候选和证据，用失败结果推动下一版提示词改进。",
+        facts: [
+          ["优化作业", String(context.visibleAssets.length)],
+          ["活动运行", formatNumber(activeRuns)],
+          ["优化候选", formatNumber(context.candidates.length)],
+          ["已发布", formatNumber(context.candidates.filter((candidate) => candidate.status === "已发布").length)],
+        ],
+        evidence: "作业台可展开运行证据、取消活动运行，并查看候选的确认、发布或拒绝结果。",
+      };
+    }
+    case "运行历史": {
+      const reviewRuns = context.runs.filter((run) => run.status === "需人工复核").length;
+      return {
+        route: "run-history",
+        title: context.runStatusFilter === "需人工复核" ? "人工复核队列" : "运行历史与证据",
+        subtitle: "按运行记录回看任务、模型、耗时、评估结论和服务端证据快照，支持同步、取消和人工复核。",
+        facts: [
+          ["当前筛选", context.runStatusFilter === "全部" ? "全部运行" : context.runStatusFilter],
+          ["运行记录", formatNumber(context.runs.length)],
+          ["人工复核", formatNumber(reviewRuns)],
+          ["带任务记录", formatNumber(context.runs.filter((run) => Boolean(run.task_id)).length)],
+        ],
+        evidence: "每条运行可展开 task/message/trace/usage 证据，并可归档服务端证据快照。",
+      };
+    }
+    default:
+      return {
+        route: "assets",
+        title: activeTab,
+        subtitle: "训练与评估资产页面。",
+        facts: [["资产", String(context.visibleAssets.length)]],
+        evidence: "通过公开 API 创建和回读。",
+      };
+  }
+}
+
+function TrainingRouteIntroCard({
+  route,
+  title,
+  subtitle,
+  facts,
+  evidence,
+  action,
+}: TrainingRouteIntro & { action?: ReactNode }) {
+  return (
+    <section className="rounded-md border border-border/70 bg-muted/15 px-4 py-3" data-testid={`training-route-intro-${route}`}>
+      <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="text-xs font-medium text-muted-foreground">训练与评估子模块</div>
+          <h3 className="mt-1 text-base font-semibold">{title}</h3>
+          <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">{subtitle}</p>
+          <p className="mt-2 max-w-3xl text-xs leading-5 text-muted-foreground">{evidence}</p>
+        </div>
+        {action ? <div className="shrink-0">{action}</div> : null}
+      </div>
+      <div className="mt-3 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        {facts.map(([label, value]) => (
+          <div key={label} className="min-w-0 rounded-md border bg-background px-3 py-2" data-testid={`training-route-intro-fact-${route}-${label}`}>
+            <div className="truncate text-[11px] text-muted-foreground">{label}</div>
+            <div className="mt-1 truncate text-sm font-semibold">{value}</div>
+          </div>
+        ))}
+      </div>
     </section>
   );
 }
