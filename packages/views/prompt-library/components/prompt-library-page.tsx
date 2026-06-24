@@ -1524,9 +1524,6 @@ function WorkbenchPanel({
   const tabAssetType = tabToAssetType(activeTab);
   const visibleAssets = tabAssetType ? assets.filter((asset) => asset.asset_type === tabAssetType) : assets;
   const experiments = assets.filter((asset) => asset.asset_type === "实验");
-  const caseSummaries = useMemo(() => buildCaseSummaries(cases), [cases]);
-  const casesByAsset = useMemo(() => buildCasesByAsset(cases), [cases]);
-  const experimentDimensionsByAsset = useMemo(() => buildExperimentDimensionsByAsset(experimentDimensions), [experimentDimensions]);
 
   if (activeTab === "提示词库" || activeTab === "提示词调试场" || activeTab === "智能体调试场") {
     return null;
@@ -1587,8 +1584,28 @@ function WorkbenchPanel({
       )}
 
       {activeTab !== "运行历史" && (
-        <section className="grid gap-3" aria-label={`${routeIntro.title}内容`} data-testid={`training-route-panel-${routeIntro.route}`}>
-          {activeTab === "优化运行" && (
+        <TrainingAssetPanel
+          activeTab={activeTab}
+          route={routeIntro.route}
+          title={routeIntro.title}
+          assets={visibleAssets}
+          cases={cases}
+          experimentDimensions={experimentDimensions}
+          loading={loading}
+          saving={saving}
+          onToggleAssetStatus={onToggleAssetStatus}
+          onDeleteAsset={onDeleteAsset}
+          onImportDatasetFromTraces={onImportDatasetFromTraces}
+          importingTraceDatasetAssetId={importingTraceDatasetAssetId}
+          onCreateCase={onCreateCase}
+          creatingCaseAssetId={creatingCaseAssetId}
+          caseDrafts={caseDrafts}
+          onCaseDraftsChange={onCaseDraftsChange}
+          onUpdateCase={onUpdateCase}
+          updatingCaseId={updatingCaseId}
+          onDeleteCase={onDeleteCase}
+          deletingCaseId={deletingCaseId}
+          beforeAssetList={activeTab === "优化运行" ? (
             <>
               <OptimizationStudioPanel
                 workspaceId={workspaceId}
@@ -1610,81 +1627,137 @@ function WorkbenchPanel({
                 rejectingCandidateId={rejectingCandidateId}
               />
             </>
-          )}
-          {loading ? (
-          <div className="h-20 rounded-md bg-muted/60" />
-        ) : visibleAssets.length === 0 ? (
-          <div className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground" data-testid={`training-route-empty-${routeIntro.route}`}>
-            {emptyTrainingRouteText(activeTab)}
-          </div>
-        ) : (
-          <div className="divide-y rounded-md border" data-testid={`training-route-list-${routeIntro.route}`}>
-            {visibleAssets.map((asset) => (
-              <div key={asset.id} data-testid={`prompt-evaluation-asset-${asset.id}`} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
-                <div className="min-w-0">
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="truncate text-sm font-medium">{asset.name}</span>
-                    <Badge variant={asset.status === "启用" ? "secondary" : "outline"} className="shrink-0">
-                      {asset.asset_type} · {asset.status}
-                    </Badge>
-                  </div>
-                  <div className="mt-1 truncate text-xs text-muted-foreground">{asset.description || "无描述"}</div>
+          ) : null}
+        />
+      )}
+    </section>
+  );
+}
+
+function TrainingAssetPanel({
+  activeTab,
+  route,
+  title,
+  assets,
+  cases,
+  experimentDimensions,
+  loading,
+  saving,
+  onToggleAssetStatus,
+  onDeleteAsset,
+  onImportDatasetFromTraces,
+  importingTraceDatasetAssetId,
+  onCreateCase,
+  creatingCaseAssetId,
+  caseDrafts,
+  onCaseDraftsChange,
+  onUpdateCase,
+  updatingCaseId,
+  onDeleteCase,
+  deletingCaseId,
+  beforeAssetList,
+}: {
+  activeTab: WorkbenchTab;
+  route: string;
+  title: string;
+  assets: PromptEvaluationAsset[];
+  cases: PromptEvaluationStructuredCase[];
+  experimentDimensions: PromptEvaluationExperimentDimension[];
+  loading: boolean;
+  saving: boolean;
+  onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
+  onDeleteAsset: (asset: PromptEvaluationAsset) => void;
+  onImportDatasetFromTraces: (asset: PromptEvaluationAsset) => void;
+  importingTraceDatasetAssetId: string | null;
+  onCreateCase: (data: CreatePromptEvaluationCaseRequest) => void;
+  creatingCaseAssetId: string | null;
+  caseDrafts: Record<string, ManualCaseDraft>;
+  onCaseDraftsChange: Dispatch<SetStateAction<Record<string, ManualCaseDraft>>>;
+  onUpdateCase: (caseId: string, data: UpdatePromptEvaluationCaseRequest) => void;
+  updatingCaseId: string | null;
+  onDeleteCase: (caseId: string) => void;
+  deletingCaseId: string | null;
+  beforeAssetList?: ReactNode;
+}) {
+  const caseSummaries = useMemo(() => buildCaseSummaries(cases), [cases]);
+  const casesByAsset = useMemo(() => buildCasesByAsset(cases), [cases]);
+  const experimentDimensionsByAsset = useMemo(() => buildExperimentDimensionsByAsset(experimentDimensions), [experimentDimensions]);
+
+  return (
+    <section className="grid gap-3" aria-label={`${title}内容`} data-testid={`training-route-panel-${route}`}>
+      {beforeAssetList}
+      {loading ? (
+        <div className="h-20 rounded-md bg-muted/60" />
+      ) : assets.length === 0 ? (
+        <div className="rounded-md border border-dashed px-3 py-6 text-center text-sm text-muted-foreground" data-testid={`training-route-empty-${route}`}>
+          {emptyTrainingRouteText(activeTab)}
+        </div>
+      ) : (
+        <div className="divide-y rounded-md border" data-testid={`training-route-list-${route}`}>
+          {assets.map((asset) => (
+            <div key={asset.id} data-testid={`prompt-evaluation-asset-${asset.id}`} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
+              <div className="min-w-0">
+                <div className="flex min-w-0 items-center gap-2">
+                  <span className="truncate text-sm font-medium">{asset.name}</span>
+                  <Badge variant={asset.status === "启用" ? "secondary" : "outline"} className="shrink-0">
+                    {asset.asset_type} · {asset.status}
+                  </Badge>
+                </div>
+                <div className="mt-1 truncate text-xs text-muted-foreground">{asset.description || "无描述"}</div>
+                <div className="mt-1 text-[11px] text-muted-foreground">
+                  更新于 {asset.updated_at} · {summarizeAssetPayload(asset, caseSummaries.get(asset.id))}
+                </div>
+                {summarizeAgentRun(asset) && (
                   <div className="mt-1 text-[11px] text-muted-foreground">
-                    更新于 {asset.updated_at} · {summarizeAssetPayload(asset, caseSummaries.get(asset.id))}
+                    {summarizeAgentRun(asset)}
                   </div>
-                  {summarizeAgentRun(asset) && (
-                    <div className="mt-1 text-[11px] text-muted-foreground">
-                      {summarizeAgentRun(asset)}
-                    </div>
-                  )}
-                </div>
-                <div className="flex items-center gap-2">
-                  {asset.asset_type === "数据集" && (
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      data-testid={`import-dataset-from-traces-${asset.id}`}
-                      onClick={() => onImportDatasetFromTraces(asset)}
-                      disabled={saving || importingTraceDatasetAssetId === asset.id}
-                    >
-                      {importingTraceDatasetAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
-                      从 trace 导入样本
-                    </Button>
-                  )}
-                  <Button size="sm" variant="secondary" onClick={() => onToggleAssetStatus(asset)} disabled={saving}>
-                    {asset.status === "启用" ? "归档" : "启用"}
-                  </Button>
-                  <Button size="sm" variant="destructive" onClick={() => onDeleteAsset(asset)} disabled={saving}>
-                    <Trash2 className="size-3.5" />
-                    删除
-                  </Button>
-                </div>
-                {canManageStructuredCases(asset) && (
-                  <ManualCasePanel
-                    asset={asset}
-                    cases={casesByAsset.get(asset.id) ?? []}
-                    draft={caseDrafts[asset.id] ?? emptyManualCaseDraft()}
-                    onDraftChange={(draft) => onCaseDraftsChange((prev) => ({ ...prev, [asset.id]: draft }))}
-                    onCreateCase={() => {
-                      const draft = caseDrafts[asset.id] ?? emptyManualCaseDraft();
-                      onCreateCase(buildManualCaseRequest(asset, draft, casesByAsset.get(asset.id)?.length ?? 0));
-                      onCaseDraftsChange((prev) => ({ ...prev, [asset.id]: emptyManualCaseDraft() }));
-                    }}
-                    creating={creatingCaseAssetId === asset.id}
-                    onUpdateCase={onUpdateCase}
-                    updatingCaseId={updatingCaseId}
-                    onDeleteCase={onDeleteCase}
-                    deletingCaseId={deletingCaseId}
-                  />
-                )}
-                {asset.asset_type === "实验" && (
-                  <ExperimentDimensionPanel asset={asset} dimensions={experimentDimensionsByAsset.get(asset.id) ?? []} />
                 )}
               </div>
-            ))}
-          </div>
-        )}
-        </section>
+              <div className="flex items-center gap-2">
+                {asset.asset_type === "数据集" && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    data-testid={`import-dataset-from-traces-${asset.id}`}
+                    onClick={() => onImportDatasetFromTraces(asset)}
+                    disabled={saving || importingTraceDatasetAssetId === asset.id}
+                  >
+                    {importingTraceDatasetAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+                    从 trace 导入样本
+                  </Button>
+                )}
+                <Button size="sm" variant="secondary" onClick={() => onToggleAssetStatus(asset)} disabled={saving}>
+                  {asset.status === "启用" ? "归档" : "启用"}
+                </Button>
+                <Button size="sm" variant="destructive" onClick={() => onDeleteAsset(asset)} disabled={saving}>
+                  <Trash2 className="size-3.5" />
+                  删除
+                </Button>
+              </div>
+              {canManageStructuredCases(asset) && (
+                <ManualCasePanel
+                  asset={asset}
+                  cases={casesByAsset.get(asset.id) ?? []}
+                  draft={caseDrafts[asset.id] ?? emptyManualCaseDraft()}
+                  onDraftChange={(draft) => onCaseDraftsChange((prev) => ({ ...prev, [asset.id]: draft }))}
+                  onCreateCase={() => {
+                    const draft = caseDrafts[asset.id] ?? emptyManualCaseDraft();
+                    onCreateCase(buildManualCaseRequest(asset, draft, casesByAsset.get(asset.id)?.length ?? 0));
+                    onCaseDraftsChange((prev) => ({ ...prev, [asset.id]: emptyManualCaseDraft() }));
+                  }}
+                  creating={creatingCaseAssetId === asset.id}
+                  onUpdateCase={onUpdateCase}
+                  updatingCaseId={updatingCaseId}
+                  onDeleteCase={onDeleteCase}
+                  deletingCaseId={deletingCaseId}
+                />
+              )}
+              {asset.asset_type === "实验" && (
+                <ExperimentDimensionPanel asset={asset} dimensions={experimentDimensionsByAsset.get(asset.id) ?? []} />
+              )}
+            </div>
+          ))}
+        </div>
       )}
     </section>
   );
