@@ -1545,6 +1545,18 @@ test.describe("训练与评估工作台", () => {
     await expect(failureDeepLinkEvidence.getByTestId("run-evidence-failure-review")).toContainText("失败复盘入口");
     await expect(failureDeepLinkEvidence.getByTestId("run-evidence-failure-tool").first()).toHaveClass(/ring-2/);
     await expect(failureDeepLinkEvidence.getByTestId("run-evidence-failure-review-actions")).toContainText("生成优化候选");
+    const reportDownloadPromise = page.waitForEvent("download");
+    await failureDeepLinkEvidence.getByTestId("run-evidence-failure-download-report").click();
+    const reportDownload = await reportDownloadPromise;
+    expect(reportDownload.suggestedFilename()).toMatch(/^multica-failure-review-.*\.md$/);
+    const reportPath = await reportDownload.path();
+    expect(reportPath).toBeTruthy();
+    const reportMarkdown = await readFile(reportPath!, "utf8");
+    expect(reportMarkdown).toContain("# Multica 失败复盘报告");
+    expect(reportMarkdown).toContain(`运行 ID：${agentRun.run.id}`);
+    expect(reportMarkdown).toContain(`trace=${firstTraceEventId}`);
+    expect(reportMarkdown).toContain("工具异常");
+    expect(reportMarkdown).toContain("生成优化候选");
     const candidateFromFailurePanelResponse = page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&

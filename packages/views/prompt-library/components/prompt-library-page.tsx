@@ -3173,11 +3173,26 @@ function FailureReviewPanel({
 }) {
   const items = buildFailureReviewItems(evidence);
   if (items.length === 0) return null;
+  const handleDownloadReport = () => {
+    const markdown = buildFailureReviewMarkdown(evidence, items, window.location.href);
+    downloadTextFile(
+      markdown,
+      `multica-failure-review-${evidence.run.id.slice(0, 8)}-${new Date().toISOString().replace(/[:.]/g, "-")}.md`,
+      "text/markdown;charset=utf-8",
+    );
+    toast.success("失败复盘报告已导出");
+  };
   return (
     <div className="grid gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs" data-testid="run-evidence-failure-review">
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="font-medium text-destructive">失败复盘入口</div>
-        <Badge variant="destructive">{items.length} 条线索</Badge>
+        <div className="flex flex-wrap items-center gap-2">
+          <Badge variant="destructive">{items.length} 条线索</Badge>
+          <Button size="sm" variant="outline" onClick={handleDownloadReport} data-testid="run-evidence-failure-download-report">
+            <Download className="size-3.5" />
+            导出复盘报告
+          </Button>
+        </div>
       </div>
       <div className="grid gap-1.5 md:grid-cols-2">
         {items.map((item, index) => {
@@ -3226,6 +3241,18 @@ function FailureReviewPanel({
       )}
     </div>
   );
+}
+
+function downloadTextFile(content: string, filename: string, type: string) {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }
 
 function EvidenceAnchorSummary({
@@ -3762,6 +3789,83 @@ function buildFailureReviewItems(evidence: PromptEvaluationRunEvidence): Failure
     }
   }
   return items.slice(0, 8);
+}
+
+function buildFailureReviewMarkdown(evidence: PromptEvaluationRunEvidence, items: FailureReviewItem[], sourceUrl: string): string {
+  const run = evidence.run;
+  const context = evidence.上下文 ?? {};
+  const completeness = isRecord(context["证据完整性"]) ? context["证据完整性"] : {};
+  const firstTraceId = evidence.trace_events[0]?.id ?? "";
+  const failedTrials = evidence.trials.filter((trial) => trial.status === "未通过" || trial.status === "失败" || trial.status === "需人工复核");
+  const failedToolChains = evidence.tool_call_chains.filter((chain) => chain.failure_signal || (chain.failure_reason && chain.failure_reason !== "无"));
+  const failedTraceEvents = evidence.trace_events.filter((event) => (event.failure_reason && event.failure_reason !== "无") || event.error_type);
+  const lines = [
+    "# Multica 失败复盘报告",
+    "",
+    `- 语义版本：multica.failure_review_report.v1`,
+    `- 导出时间：${new Date().toISOString()}`,
+    `- 页面链接：${sourceUrl || "未记录"}`,
+    `- 运行 ID：${run.id}`,
+    `- 运行状态：${run.status}`,
+    `- 运行类型：${displayRunKind(run.run_kind)}`,
+    `- 触发来源：${run.trigger_source || "未记录"}`,
+    `- 任务 ID：${run.task_id || "未绑定"}`,
+    `- 模型：${run.model || "未记录"}`,
+    `- 运行时：${run.runtime_provider || "未记录"}`,
+    `- 总耗时：${formatDuration(run.total_duration_ms)}`,
+    `- token：输入 ${run.input_tokens}，输出 ${run.output_tokens}`,
+    `- 预估成本：${formatMoney(run.estimated_cost)}`,
+    `- 评估结论：${run.conclusion || "未记录"}`,
+    "",
+    "## 上下文",
+    "",
+    `- 工作区：${stringFromUnknown(context["工作区"]) || "未记录"}`,
+    `- 提示词：${stringFromUnknown(context["提示词名称"]) || stringFromUnknown(context["提示词"]) || "未绑定"}`,
+    `- 评测资产：${stringFromUnknown(context["评测资产名称"]) || stringFromUnknown(context["评测资产"]) || "未记录"}`,
+    `- 智能体：${stringFromUnknown(context["执行Agent名称"]) || stringFromUnknown(context["执行Agent"]) || "未记录"}`,
+    `- issue：${stringFromUnknown(context["issue标题"]) || stringFromUnknown(context["issue"]) || "未绑定"}`,
+    `- 项目：${stringFromUnknown(context["项目名称"]) || stringFromUnknown(context["项目"]) || "未绑定"}`,
+    `- 小队：${stringFromUnknown(context["小队名称"]) || stringFromUnknown(context["小队"]) || "未绑定"}`,
+    `- 证据完整性：用例 ${stringFromUnknown(completeness["用例数"]) || evidence.trials.length}，任务消息 ${stringFromUnknown(completeness["任务消息条数"]) || evidence.task_messages.length}，trace 事件 ${stringFromUnknown(completeness["trace事件条数"]) || evidence.trace_events.length}`,
+    "",
+    "## 可复核锚点",
+    "",
+    `- 运行：run=${run.id}`,
+    `- trace 序号：${evidence.trace_events.length > 0 ? `trace=1 到 trace=${evidence.trace_events.length}` : "暂无"}`,
+    `- trace 事件 ID：${firstTraceId ? `trace=${firstTraceId}` : "暂无"}`,
+    `- 工具链：${evidence.tool_call_chains.length > 0 ? "tool=<工具链id>" : "暂无"}`,
+    `- 用例：${evidence.trials.length > 0 ? "trial=<用例id或序号>" : "暂无"}`,
+    `- 断言：${evidence.trials.some((trial) => buildTrialAssertionRows(trial).length > 0) ? "assertion=<用例id>:<断言序号>" : "暂无"}`,
+    "",
+    "## 失败线索",
+    "",
+    ...items.map((item, index) => `${index + 1}. 【${item.label}】${item.title}：${item.detail}（锚点 ${item.anchor}）`),
+    "",
+    "## 失败用例",
+    "",
+    ...(failedTrials.length > 0
+      ? failedTrials.map((trial) => `- ${trial.case_name || `用例 ${trial.case_index + 1}`}：${trial.status}，${trial.failure_reason || "未记录失败原因"}`)
+      : ["- 暂无失败用例"]),
+    "",
+    "## 工具异常",
+    "",
+    ...(failedToolChains.length > 0
+      ? failedToolChains.map((chain) => `- ${chain.tool || "未记录工具"}：${chain.failure_reason || chain.summary || "存在异常线索"}；工具链 ${chain.id}`)
+      : ["- 暂无工具异常线索"]),
+    "",
+    "## trace 失败事件",
+    "",
+    ...(failedTraceEvents.length > 0
+      ? failedTraceEvents.map((event) => `- ${event.event_name || traceEventStageLabel(event.event_type)}：${event.failure_reason || "未记录失败原因"}${event.error_type ? `；错误类型 ${event.error_type}` : ""}；trace=${event.id}`)
+      : ["- 暂无 trace 失败事件"]),
+    "",
+    "## 建议动作",
+    "",
+    "- 若失败线索来自提示词输出或断言未命中，优先生成优化候选并进入人工确认。",
+    "- 若失败线索来自工具或运行时，先检查工具输入输出、运行时配置、环境变量和外部依赖。",
+    "- 复盘结论应回写到对应 issue、实验或优化运行，不只停留在本地下载文件。",
+  ];
+  return `${lines.join("\n")}\n`;
 }
 
 function formatTraceEventEvidence(event: PromptEvaluationRunEvidence["trace_events"][number]): string {
