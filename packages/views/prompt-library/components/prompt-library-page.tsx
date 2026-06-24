@@ -227,6 +227,7 @@ export function PromptLibraryPage({
   const needsPromptItems =
     (shouldShowPromptEditor && activeTab === "提示词库") ||
     isEvaluationAssetTab;
+  const needsPromptVersions = shouldShowPromptEditor && activeTab === "提示词库";
   const needsEvaluationAssets = isEvaluationAssetTab;
   const needsStructuredCases =
     activeTab === "数据集" ||
@@ -306,7 +307,7 @@ export function PromptLibraryPage({
   const versionQuery = useQuery({
     queryKey: promptLibraryKeys.versions(workspaceId ?? "", selectedFromList?.id ?? null),
     queryFn: () => api.listPromptLibraryVersions(selectedFromList?.id ?? ""),
-    enabled: !!workspaceId && !!selectedFromList,
+    enabled: !!workspaceId && needsPromptVersions && !!selectedFromList,
   });
   const promptVersions = versionQuery.data?.items ?? [];
   const agentRuntimeReadiness = runtimeReadinessQuery.data ?? DEFAULT_AGENT_RUNTIME_READINESS;
