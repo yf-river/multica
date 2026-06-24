@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-training-browser-e2e goal-test-training-curl-e2e goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e goal-test-squad-curl-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-final-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-playground-difference-audit goal-test-session-retro goal-test-token-audit
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-training-browser-e2e goal-test-training-curl-e2e goal-test-seed-business-training goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e goal-test-squad-curl-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-final-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-playground-difference-audit goal-test-session-retro goal-test-token-audit
 
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
@@ -281,6 +281,16 @@ goal-test-training-curl-e2e: goal-test-smoke ## Run public API curl E2E for trai
 	PROMPT_EVALUATION_CURL_E2E_DIR="$(CURDIR)/artifacts/acceptance" \
 	TMPDIR="$(GOAL_TEST_TMPDIR)" \
 	node scripts/prompt-evaluation-curl-e2e.mjs
+
+goal-test-seed-business-training: goal-test-smoke ## Seed stable non-acceptance business training assets through the public API
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	ACCEPTANCE_API_URL="$(GOAL_TEST_INT_API_URL)" \
+	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
+	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
+	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
+	BUSINESS_TRAINING_SEED_DIR="$(CURDIR)/artifacts/acceptance" \
+	TMPDIR="$(GOAL_TEST_TMPDIR)" \
+	node scripts/seed-business-training-assets.mjs
 
 goal-test-coding-squad-curl-e2e: goal-test-smoke ## Run real curl/API + daemon E2E for the Multica coding squad
 	@mkdir -p "$(GOAL_TEST_TMPDIR)"
