@@ -109,7 +109,7 @@ export function AgentPlaygroundPromptList({
               {runtimeLoading ? "检查中" : runtimeReadiness.status}
             </Badge>
           </div>
-          <div className="mt-1 text-xs text-muted-foreground">从右侧选择要执行的提示词模板，左侧发射台会创建可观测任务并回写消息、链路追踪、令牌用量和耗时。</div>
+          <div className="mt-1 text-xs text-muted-foreground">从右侧选择入队目标，左侧发射台会创建可观测任务并回写消息、链路追踪、令牌用量和耗时。</div>
         </div>
         <PromptSearchInput value={query} onChange={onQueryChange} placeholder="搜索执行目标" />
         <div className="rounded-md border border-dashed border-emerald-500/30 bg-background px-3 py-2 text-xs text-muted-foreground" data-testid="agent-playground-execution-boundary">
