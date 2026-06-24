@@ -382,6 +382,8 @@ type PromptEvaluationToolCallChainResponse struct {
 	Output         string         `json:"output,omitempty"`
 	DurationMs     int64          `json:"duration_ms,omitempty"`
 	ResultCategory string         `json:"result_category,omitempty"`
+	FailureSignal  bool           `json:"failure_signal"`
+	FailureReason  string         `json:"failure_reason,omitempty"`
 	Summary        string         `json:"summary"`
 	CreatedAt      string         `json:"created_at,omitempty"`
 	CompletedAt    string         `json:"completed_at,omitempty"`
@@ -397,6 +399,7 @@ type PromptEvaluationToolCallSummaryResponse struct {
 	MaxDurationMs          int64          `json:"max_duration_ms,omitempty"`
 	SlowestToolCallChainID string         `json:"slowest_tool_call_chain_id,omitempty"`
 	ResultCategories       map[string]int `json:"result_categories,omitempty"`
+	FailureSignalCalls     int            `json:"failure_signal_calls"`
 	NeedsAttention         bool           `json:"needs_attention"`
 	Summary                string         `json:"summary"`
 }
@@ -3243,6 +3246,11 @@ func buildPromptEvaluationToolCallChains(messages []protocol.TaskMessagePayload)
 				chains[index].Output = message.Output
 				chains[index].DurationMs = promptEvaluationDurationBetween(chains[index].CreatedAt, message.CreatedAt)
 				chains[index].ResultCategory = "已返回"
+				if failureSignal, failureReason := promptEvaluationToolFailureSignal(message.Output); failureSignal {
+					chains[index].FailureSignal = true
+					chains[index].FailureReason = failureReason
+					chains[index].ResultCategory = "异常线索"
+				}
 				chains[index].CompletedAt = message.CreatedAt
 				chains[index].Summary = truncatePromptEvaluationEvidence(
 					fmt.Sprintf("工具 %s 已配对：调用 #%d，结果 #%d", tool, chains[index].UseSeq, message.Seq),
@@ -3305,6 +3313,9 @@ func buildPromptEvaluationToolCallSummary(chains []PromptEvaluationToolCallChain
 			category = "未归类"
 		}
 		item.ResultCategories[category]++
+		if chain.FailureSignal {
+			item.FailureSignalCalls++
+		}
 		if chain.DurationMs > 0 {
 			durationSums[tool] += chain.DurationMs
 			durationCounts[tool]++
@@ -3319,14 +3330,15 @@ func buildPromptEvaluationToolCallSummary(chains []PromptEvaluationToolCallChain
 		if count := durationCounts[tool]; count > 0 {
 			item.AverageDurationMs = durationSums[tool] / count
 		}
-		item.NeedsAttention = item.MissingResultCalls > 0 || item.OrphanResultCalls > 0
+		item.NeedsAttention = item.MissingResultCalls > 0 || item.OrphanResultCalls > 0 || item.FailureSignalCalls > 0
 		item.Summary = fmt.Sprintf(
-			"%s：调用 %d 次，已配对 %d 次，缺少结果 %d 次，孤立结果 %d 次，平均耗时 %dms，最慢 %dms",
+			"%s：调用 %d 次，已配对 %d 次，缺少结果 %d 次，孤立结果 %d 次，异常线索 %d 次，平均耗时 %dms，最慢 %dms",
 			tool,
 			item.TotalCalls,
 			item.PairedCalls,
 			item.MissingResultCalls,
 			item.OrphanResultCalls,
+			item.FailureSignalCalls,
 			item.AverageDurationMs,
 			item.MaxDurationMs,
 		)
@@ -3372,6 +3384,43 @@ func promptEvaluationDurationBetween(start string, end string) int64 {
 		return 0
 	}
 	return endAt.Sub(startAt).Milliseconds()
+}
+
+func promptEvaluationToolFailureSignal(output string) (bool, string) {
+	normalized := strings.ToLower(strings.TrimSpace(output))
+	if normalized == "" {
+		return false, ""
+	}
+	patterns := []struct {
+		needle string
+		reason string
+	}{
+		{"exit status", "工具结果包含退出状态错误"},
+		{"exit code 1", "工具结果包含非零退出码"},
+		{"exit code 2", "工具结果包含非零退出码"},
+		{"error:", "工具结果包含错误信息"},
+		{"exception", "工具结果包含异常信息"},
+		{"failed", "工具结果包含失败信息"},
+		{"failure", "工具结果包含失败信息"},
+		{"panic", "工具结果包含崩溃信息"},
+		{"timeout", "工具结果包含超时信息"},
+		{"timed out", "工具结果包含超时信息"},
+		{"permission denied", "工具结果包含权限拒绝信息"},
+		{"http 500", "工具结果包含服务端错误状态码"},
+		{"status 500", "工具结果包含服务端错误状态码"},
+		{"错误", "工具结果包含错误信息"},
+		{"失败", "工具结果包含失败信息"},
+		{"异常", "工具结果包含异常信息"},
+		{"超时", "工具结果包含超时信息"},
+		{"无权限", "工具结果包含权限问题"},
+		{"权限拒绝", "工具结果包含权限拒绝信息"},
+	}
+	for _, pattern := range patterns {
+		if strings.Contains(normalized, pattern.needle) {
+			return true, pattern.reason
+		}
+	}
+	return false, ""
 }
 
 func promptEvaluationToolCallID(message protocol.TaskMessagePayload) string {

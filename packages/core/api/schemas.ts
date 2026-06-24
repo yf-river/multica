@@ -1115,6 +1115,8 @@ const PromptEvaluationToolCallChainSchema = z.object({
   output: z.string().optional(),
   duration_ms: z.number().optional(),
   result_category: z.string().optional(),
+  failure_signal: z.boolean().default(false),
+  failure_reason: z.string().optional(),
   summary: z.string().default(""),
   created_at: z.string().optional(),
   completed_at: z.string().optional(),
@@ -1130,6 +1132,7 @@ const PromptEvaluationToolCallSummarySchema = z.object({
   max_duration_ms: z.number().optional(),
   slowest_tool_call_chain_id: z.string().optional(),
   result_categories: z.record(z.string(), z.number()).optional(),
+  failure_signal_calls: z.number().default(0),
   needs_attention: z.boolean().default(false),
   summary: z.string().default(""),
 }).loose();

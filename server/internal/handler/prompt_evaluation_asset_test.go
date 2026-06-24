@@ -56,11 +56,27 @@ func TestBuildPromptEvaluationExecutionEvidencePairsToolCalls(t *testing.T) {
 			Tool:   "browser",
 			Output: "orphan",
 		},
+		{
+			TaskID:    taskID,
+			Seq:       4,
+			Type:      "tool_use",
+			Tool:      "curl",
+			Input:     map[string]any{"tool_call_id": "call-2", "url": "https://example.test"},
+			CreatedAt: "2026-06-24T00:00:03Z",
+		},
+		{
+			TaskID:    taskID,
+			Seq:       5,
+			Type:      "tool_result",
+			Tool:      "curl",
+			Output:    "Error: HTTP 500 from upstream",
+			CreatedAt: "2026-06-24T00:00:05Z",
+		},
 	}
 
 	spans, chains, toolSummary, summary := buildPromptEvaluationExecutionEvidence(run, nil, messages, nil)
-	if len(chains) != 2 {
-		t.Fatalf("tool call chains = %+v, want 2", chains)
+	if len(chains) != 3 {
+		t.Fatalf("tool call chains = %+v, want 3", chains)
 	}
 	if chains[0].ID != "tool:call-1" || chains[0].Status != "已配对" || chains[0].UseSeq != 1 || chains[0].ResultSeq != 2 || chains[0].Output != "ok" {
 		t.Fatalf("paired chain = %+v", chains[0])
@@ -74,16 +90,22 @@ func TestBuildPromptEvaluationExecutionEvidencePairsToolCalls(t *testing.T) {
 	if chains[1].ResultCategory != "孤立返回" {
 		t.Fatalf("orphan chain category = %+v", chains[1])
 	}
-	if len(toolSummary) != 2 {
-		t.Fatalf("tool summary = %+v, want 2 rows", toolSummary)
+	if chains[2].Status != "已配对" || !chains[2].FailureSignal || chains[2].ResultCategory != "异常线索" || chains[2].FailureReason == "" {
+		t.Fatalf("failure signal chain = %+v", chains[2])
 	}
-	if toolSummary[0].Tool != "browser" || !toolSummary[0].NeedsAttention || toolSummary[0].OrphanResultCalls != 1 {
+	if len(toolSummary) != 3 {
+		t.Fatalf("tool summary = %+v, want 3 rows", toolSummary)
+	}
+	if toolSummary[0].Tool != "curl" || !toolSummary[0].NeedsAttention || toolSummary[0].FailureSignalCalls != 1 || toolSummary[0].MaxDurationMs != 2000 {
 		t.Fatalf("attention summary row = %+v", toolSummary[0])
 	}
-	if toolSummary[1].Tool != "shell" || toolSummary[1].AverageDurationMs != 1000 || toolSummary[1].MaxDurationMs != 1000 || toolSummary[1].SlowestToolCallChainID != "tool:call-1" {
-		t.Fatalf("shell summary row = %+v", toolSummary[1])
+	if toolSummary[1].Tool != "browser" || !toolSummary[1].NeedsAttention || toolSummary[1].OrphanResultCalls != 1 {
+		t.Fatalf("orphan summary row = %+v", toolSummary[1])
 	}
-	if summary["工具调用链数"] != 2 || summary["已配对工具调用数"] != 1 || summary["孤立工具结果数"] != 1 {
+	if toolSummary[2].Tool != "shell" || toolSummary[2].AverageDurationMs != 1000 || toolSummary[2].MaxDurationMs != 1000 || toolSummary[2].SlowestToolCallChainID != "tool:call-1" {
+		t.Fatalf("shell summary row = %+v", toolSummary[2])
+	}
+	if summary["工具调用链数"] != 3 || summary["已配对工具调用数"] != 2 || summary["孤立工具结果数"] != 1 {
 		t.Fatalf("tool summary = %+v", summary)
 	}
 	var useSpan, resultSpan *PromptEvaluationExecutionSpanResponse

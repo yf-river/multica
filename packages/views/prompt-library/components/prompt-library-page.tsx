@@ -3087,7 +3087,7 @@ function ToolCallSummaryPanel({ rows }: { rows: PromptEvaluationRunEvidence["too
                 <span className="font-medium text-foreground">{row.tool || "未记录工具"}</span>
                 <Badge variant={row.needs_attention ? "destructive" : "secondary"}>{row.needs_attention ? "需要关注" : "结果正常"}</Badge>
                 <span className="text-muted-foreground">
-                  调用 {row.total_calls} · 配对 {row.paired_calls} · 缺少 {row.missing_result_calls} · 孤立 {row.orphan_result_calls}
+                  调用 {row.total_calls} · 配对 {row.paired_calls} · 缺少 {row.missing_result_calls} · 孤立 {row.orphan_result_calls} · 异常线索 {row.failure_signal_calls}
                 </span>
               </div>
               <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
@@ -3160,11 +3160,13 @@ function ToolCallChainPanel({ chains }: { chains: PromptEvaluationRunEvidence["t
               <span className="font-medium text-foreground">{chain.tool || "未记录工具"}</span>
               <Badge variant={chain.status === "已配对" ? "secondary" : chain.status === "缺少结果" ? "destructive" : "outline"}>{chain.status || "未记录"}</Badge>
               {chain.result_category && <Badge variant="outline">{chain.result_category}</Badge>}
+              {chain.failure_signal && <Badge variant="destructive">异常线索</Badge>}
               <span className="text-muted-foreground">
                 调用 #{chain.use_seq ?? "-"} · 结果 #{chain.result_seq ?? "-"} · 耗时 {formatDuration(chain.duration_ms ?? 0)}
               </span>
             </div>
             <div className="break-words text-muted-foreground">{chain.summary || "未记录摘要"}</div>
+            {chain.failure_reason && <div className="break-words text-muted-foreground">异常原因：{chain.failure_reason}</div>}
             {chain.output && <div className="break-words text-muted-foreground">输出：{truncateText(chain.output, 180)}</div>}
           </div>
         ))}

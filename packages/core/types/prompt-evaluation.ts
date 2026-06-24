@@ -229,6 +229,8 @@ export interface PromptEvaluationToolCallChain {
   output?: string;
   duration_ms?: number;
   result_category?: string;
+  failure_signal: boolean;
+  failure_reason?: string;
   summary: string;
   created_at?: string;
   completed_at?: string;
@@ -244,6 +246,7 @@ export interface PromptEvaluationToolCallSummary {
   max_duration_ms?: number;
   slowest_tool_call_chain_id?: string;
   result_categories?: Record<string, number>;
+  failure_signal_calls: number;
   needs_attention: boolean;
   summary: string;
 }

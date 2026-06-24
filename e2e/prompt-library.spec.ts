@@ -1413,6 +1413,18 @@ test.describe("训练与评估工作台", () => {
         tool: "playwright-inspect",
         output: "页面可打开，但输出没有结构化 JSON。",
       },
+      {
+        seq: 4,
+        type: "tool_use",
+        tool: "curl-check",
+        input: { tool_call_id: "manual-review-tool-2", url: "/api/prompt-evaluation-runs" },
+      },
+      {
+        seq: 5,
+        type: "tool_result",
+        tool: "curl-check",
+        output: "Error: HTTP 500 from upstream",
+      },
     ]);
     await api.completeDaemonTask(agentRun.task_id, "Agent 输出：只给了自然语言结论，没有返回结构化 JSON，需要人工复核。");
     await expect
@@ -1451,11 +1463,17 @@ test.describe("训练与评估工作台", () => {
     await expect(toolSummary).toContainText("结果正常");
     await expect(toolSummary).toContainText("平均耗时");
     await expect(toolSummary).toContainText("结果分类");
+    await expect(toolSummary).toContainText("curl-check");
+    await expect(toolSummary).toContainText("需要关注");
+    await expect(toolSummary).toContainText("异常线索 1");
     await expect(toolChains.getByTestId("run-evidence-tool-call-chain-filters")).toBeVisible();
     await toolChains.getByLabel("搜索工具调用链").fill("playwright-inspect");
-    await expect(toolChains).toContainText("1/1 条");
+    await expect(toolChains).toContainText("1/2 条");
     await toolChains.getByLabel("筛选工具调用链状态").selectOption("已配对");
     await expect(toolChains).toContainText("耗时");
+    await toolChains.getByLabel("搜索工具调用链").fill("curl-check");
+    await expect(toolChains).toContainText("异常原因");
+    await expect(toolChains).toContainText("工具结果包含错误信息");
 
     page.once("dialog", async (dialog) => {
       expect(dialog.message()).toContain("通过说明");
