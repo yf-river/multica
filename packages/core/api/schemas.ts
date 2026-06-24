@@ -930,6 +930,10 @@ export const PromptEvaluationRunSchema = z.object({
   created_by: z.string().nullable().optional().transform((v) => v ?? null),
   created_at: z.string().default(""),
   updated_at: z.string().default(""),
+  review_decision: z.enum(["", "通过", "未通过"]).default(""),
+  review_note: z.string().default(""),
+  reviewed_by: z.string().nullable().optional().transform((v) => v ?? null),
+  reviewed_at: z.string().default(""),
 }).loose();
 
 export const PromptEvaluationTrialSchema = z.object({

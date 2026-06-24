@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, BookOpenText, Download, Loader2, Play, Plus, Save, Search, Trash2, XCircle } from "lucide-react";
+import { Archive, BookOpenText, CheckCircle, Download, Loader2, Play, Plus, Save, Search, Trash2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -451,6 +451,19 @@ export function PromptLibraryPage({
     },
   });
 
+  const reviewRunMut = useMutation({
+    mutationFn: ({ runId, decision, note }: { runId: string; decision: "通过" | "未通过"; note: string }) =>
+      api.reviewPromptEvaluationRun(runId, { decision, note }),
+    onSuccess: (run) => {
+      invalidateRuns();
+      invalidateCandidates();
+      queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", run.id) });
+      invalidateRunEvidenceSnapshots(run.id);
+      invalidateSummary();
+      toast.success(`人工复核已处理：${run.review_decision || run.status}`);
+    },
+  });
+
   const createEvidenceSnapshotMut = useMutation({
     mutationFn: (runId: string) => api.createPromptEvaluationEvidenceSnapshot(runId, "验收归档"),
     onSuccess: (snapshot) => {
@@ -605,6 +618,13 @@ export function PromptLibraryPage({
 
   const importDatasetFromTraces = (asset: PromptEvaluationAsset) => {
     importDatasetFromTracesMut.mutate(asset.id);
+  };
+
+  const reviewRun = (run: PromptEvaluationRun, decision: "通过" | "未通过") => {
+    const defaultNote = decision === "通过" ? "人工复核确认通过" : "人工复核驳回";
+    const note = window.prompt(`请输入${decision === "通过" ? "通过" : "驳回"}说明`, defaultNote);
+    if (note === null) return;
+    reviewRunMut.mutate({ runId: run.id, decision, note: note.trim() || defaultNote });
   };
 
   const exportDemoEvidence = async () => {
@@ -971,6 +991,8 @@ export function PromptLibraryPage({
                 syncingRunId={syncRunMut.isPending ? syncRunMut.variables ?? null : null}
                 onCancelRun={(runId) => cancelRunMut.mutate(runId)}
                 cancellingRunId={cancelRunMut.isPending ? cancelRunMut.variables ?? null : null}
+                onReviewRun={reviewRun}
+                reviewingRunId={reviewRunMut.isPending ? reviewRunMut.variables?.runId ?? null : null}
                 onCreateEvidenceSnapshot={(runId) => createEvidenceSnapshotMut.mutate(runId)}
                 creatingEvidenceSnapshotRunId={createEvidenceSnapshotMut.isPending ? createEvidenceSnapshotMut.variables ?? null : null}
                 onGenerateCandidate={(runId) => createCandidateMut.mutate(runId)}
@@ -1019,6 +1041,8 @@ export function PromptLibraryPage({
               syncingRunId={syncRunMut.isPending ? syncRunMut.variables ?? null : null}
               onCancelRun={(runId) => cancelRunMut.mutate(runId)}
               cancellingRunId={cancelRunMut.isPending ? cancelRunMut.variables ?? null : null}
+              onReviewRun={reviewRun}
+              reviewingRunId={reviewRunMut.isPending ? reviewRunMut.variables?.runId ?? null : null}
               onCreateEvidenceSnapshot={(runId) => createEvidenceSnapshotMut.mutate(runId)}
               creatingEvidenceSnapshotRunId={createEvidenceSnapshotMut.isPending ? createEvidenceSnapshotMut.variables ?? null : null}
               onGenerateCandidate={(runId) => createCandidateMut.mutate(runId)}
@@ -1439,6 +1463,8 @@ function WorkbenchPanel({
   syncingRunId,
   onCancelRun,
   cancellingRunId,
+  onReviewRun,
+  reviewingRunId,
   onCreateEvidenceSnapshot,
   creatingEvidenceSnapshotRunId,
   onGenerateCandidate,
@@ -1480,6 +1506,8 @@ function WorkbenchPanel({
   syncingRunId: string | null;
   onCancelRun: (runId: string) => void;
   cancellingRunId: string | null;
+  onReviewRun: (run: PromptEvaluationRun, decision: "通过" | "未通过") => void;
+  reviewingRunId: string | null;
   onCreateEvidenceSnapshot: (runId: string) => void;
   creatingEvidenceSnapshotRunId: string | null;
   onGenerateCandidate: (runId: string) => void;
@@ -1563,6 +1591,11 @@ function WorkbenchPanel({
                     </Badge>
                   </div>
                   <div className="mt-1 text-xs text-muted-foreground">{summarizeStructuredRun(run)}</div>
+                  {run.review_decision && (
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      人工复核：{run.review_decision}{run.review_note ? ` · ${run.review_note}` : ""}{run.reviewed_at ? ` · ${run.reviewed_at}` : ""}
+                    </div>
+                  )}
                   <div className="mt-1 break-all text-[11px] text-muted-foreground">
                     运行 {run.id}{run.task_id ? ` · 任务 ${run.task_id}` : ""}
                   </div>
@@ -1592,6 +1625,30 @@ function WorkbenchPanel({
                       {cancellingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <XCircle className="size-3.5" />}
                       取消运行
                     </Button>
+                  )}
+                  {canReviewPromptEvaluationRun(run) && (
+                    <>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => onReviewRun(run, "通过")}
+                        disabled={reviewingRunId === run.id}
+                        data-testid={`review-prompt-evaluation-run-pass-${run.id}`}
+                      >
+                        {reviewingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <CheckCircle className="size-3.5" />}
+                        人工通过
+                      </Button>
+                      <Button
+                        size="sm"
+                        variant="destructive"
+                        onClick={() => onReviewRun(run, "未通过")}
+                        disabled={reviewingRunId === run.id}
+                        data-testid={`review-prompt-evaluation-run-fail-${run.id}`}
+                      >
+                        {reviewingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <XCircle className="size-3.5" />}
+                        人工驳回
+                      </Button>
+                    </>
                   )}
                   {canGenerateOptimizationCandidate(run) && (
                     <>
@@ -2735,6 +2792,10 @@ function canGenerateOptimizationCandidate(run: PromptEvaluationRun): boolean {
 
 function canCancelPromptEvaluationRun(run: PromptEvaluationRun): boolean {
   return run.status === "已入队" || run.status === "运行中";
+}
+
+function canReviewPromptEvaluationRun(run: PromptEvaluationRun): boolean {
+  return run.status === "需人工复核";
 }
 
 function summarizeAssetPayload(asset: PromptEvaluationAsset, caseSummary?: CaseSummary): string {

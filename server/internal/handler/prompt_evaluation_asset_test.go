@@ -1196,6 +1196,38 @@ func TestRunPromptEvaluationAssetAgentCompletedWithoutStructuredVerdictNeedsRevi
 	if len(evidence.Trials) != 1 || evidence.Trials[0].Status != "需人工复核" || evidence.Trials[0].FailureReason != "缺少结构化逐用例评估结果" {
 		t.Fatalf("completed trial without structured verdict = %+v", evidence.Trials)
 	}
+
+	reviewW := httptest.NewRecorder()
+	testHandler.ReviewPromptEvaluationRun(reviewW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/review", map[string]any{
+		"decision": "通过",
+		"note":     "人工确认可作为通过样例",
+	}), "id", resp.Run.ID))
+	if reviewW.Code != http.StatusOK {
+		t.Fatalf("review status = %d, body = %s", reviewW.Code, reviewW.Body.String())
+	}
+	var reviewed PromptEvaluationRunResponse
+	if err := json.Unmarshal(reviewW.Body.Bytes(), &reviewed); err != nil {
+		t.Fatalf("decode reviewed run: %v", err)
+	}
+	if reviewed.Status != "通过" || reviewed.ReviewDecision != "通过" || reviewed.ReviewNote != "人工确认可作为通过样例" || reviewed.ReviewedBy == nil || *reviewed.ReviewedBy != testUserID || reviewed.ReviewedAt == "" {
+		t.Fatalf("reviewed run = %+v", reviewed)
+	}
+	reviewedEvidenceW := httptest.NewRecorder()
+	testHandler.GetPromptEvaluationRunEvidence(reviewedEvidenceW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-runs/"+resp.Run.ID+"/evidence", nil), "id", resp.Run.ID))
+	if reviewedEvidenceW.Code != http.StatusOK {
+		t.Fatalf("reviewed evidence status = %d, body = %s", reviewedEvidenceW.Code, reviewedEvidenceW.Body.String())
+	}
+	var reviewedEvidence PromptEvaluationRunEvidenceResponse
+	if err := json.Unmarshal(reviewedEvidenceW.Body.Bytes(), &reviewedEvidence); err != nil {
+		t.Fatalf("decode reviewed evidence response: %v", err)
+	}
+	if len(reviewedEvidence.Trials) != 1 || reviewedEvidence.Trials[0].Status != "通过" || reviewedEvidence.Trials[0].FailureReason != "无" {
+		t.Fatalf("reviewed trial = %+v", reviewedEvidence.Trials)
+	}
+	manualReview, ok := reviewedEvidence.Run.Metrics.(map[string]any)["人工复核"].(map[string]any)
+	if !ok || manualReview["处理结果"] != "通过" || manualReview["处理说明"] != "人工确认可作为通过样例" {
+		t.Fatalf("manual review metrics = %#v", reviewedEvidence.Run.Metrics)
+	}
 }
 
 func TestRunPromptEvaluationAssetAgentAutoSyncsFailedTask(t *testing.T) {

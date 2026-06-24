@@ -66,6 +66,10 @@ interface PromptEvaluationRun {
   estimated_cost: number;
   failure_reason: string;
   conclusion: string;
+  review_decision?: "" | "通过" | "未通过";
+  review_note?: string;
+  reviewed_by?: string | null;
+  reviewed_at?: string;
 }
 
 interface PromptEvaluationAgentRunResponse {
@@ -1396,6 +1400,17 @@ export class TestApiClient {
     const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/cancel`, { method: "POST" });
     if (!res.ok) {
       throw new Error(`cancel prompt evaluation run failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async reviewPromptEvaluationRun(runId: string, decision: "通过" | "未通过", note: string): Promise<PromptEvaluationRun> {
+    const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/review`, {
+      method: "POST",
+      body: JSON.stringify({ decision, note }),
+    });
+    if (!res.ok) {
+      throw new Error(`review prompt evaluation run failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
   }

@@ -99,6 +99,10 @@ export interface PromptEvaluationRun {
   created_by: string | null;
   created_at: string;
   updated_at: string;
+  review_decision: "" | "通过" | "未通过";
+  review_note: string;
+  reviewed_by: string | null;
+  reviewed_at: string;
 }
 
 export interface PromptEvaluationTrial {
@@ -340,6 +344,11 @@ export interface ListPromptEvaluationRunsParams {
   status?: PromptEvaluationRun["status"];
   since?: string | null;
   limit?: number;
+}
+
+export interface ReviewPromptEvaluationRunRequest {
+  decision: "通过" | "未通过";
+  note?: string;
 }
 
 export interface ListPromptEvaluationCasesParams {

@@ -719,6 +719,10 @@ type PromptEvaluationRun struct {
 	CreatedBy         pgtype.UUID        `json:"created_by"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+	ReviewDecision    string             `json:"review_decision"`
+	ReviewNote        string             `json:"review_note"`
+	ReviewedBy        pgtype.UUID        `json:"reviewed_by"`
+	ReviewedAt        pgtype.Timestamptz `json:"reviewed_at"`
 }
 
 type PromptEvaluationTestSuiteCase struct {

@@ -261,6 +261,75 @@ WHERE run_id = $1
   AND workspace_id = $2
   AND status IN ('待执行', '需人工复核');
 
+-- name: ReviewPromptEvaluationRun :one
+UPDATE prompt_evaluation_run SET
+    status = $3,
+    passed_cases = CASE
+        WHEN $3 = '通过' AND total_cases > 0 THEN total_cases
+        WHEN $3 = '通过' THEN passed_cases
+        ELSE 0
+    END,
+    failed_cases = CASE
+        WHEN $3 = '未通过' AND total_cases > 0 THEN total_cases
+        WHEN $3 = '未通过' AND total_cases = 0 THEN GREATEST(failed_cases, 1)
+        ELSE 0
+    END,
+    pass_rate = CASE
+        WHEN $3 = '通过' AND total_cases > 0 THEN 1
+        WHEN $3 = '未通过' THEN 0
+        ELSE pass_rate
+    END,
+    failure_reason = CASE
+        WHEN $3 = '未通过' THEN COALESCE(NULLIF(sqlc.narg('note')::text, ''), '人工复核驳回')
+        ELSE '无'
+    END,
+    conclusion = CASE
+        WHEN COALESCE(NULLIF(sqlc.narg('note')::text, ''), '') = ''
+            THEN '人工复核' || $3
+        ELSE '人工复核' || $3 || '：' || sqlc.narg('note')::text
+    END,
+    review_decision = $3,
+    review_note = COALESCE(sqlc.narg('note')::text, ''),
+    reviewed_by = $4,
+    reviewed_at = now(),
+    metrics = jsonb_set(
+        COALESCE(metrics, '{}'::jsonb),
+        '{人工复核}',
+        jsonb_build_object(
+            '处理结果', $3,
+            '处理说明', COALESCE(sqlc.narg('note')::text, ''),
+            '复核人', $4::text,
+            '复核时间', now()
+        ),
+        true
+    ),
+    completed_at = COALESCE(completed_at, now()),
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND status = '需人工复核'
+RETURNING *;
+
+-- name: MarkPromptEvaluationReviewTrialsByRun :exec
+UPDATE prompt_evaluation_trial SET
+    status = $3,
+    failure_reason = CASE
+        WHEN $3 = '未通过' THEN COALESCE(NULLIF(sqlc.narg('note')::text, ''), '人工复核驳回')
+        ELSE '无'
+    END,
+    evidence = jsonb_set(
+        COALESCE(evidence, '{}'::jsonb),
+        '{人工复核}',
+        jsonb_build_object(
+            '处理结果', $3,
+            '处理说明', COALESCE(sqlc.narg('note')::text, '')
+        ),
+        true
+    )
+WHERE run_id = $1
+  AND workspace_id = $2
+  AND status = '需人工复核';
+
 -- name: UpdatePromptEvaluationTrialsFromTask :exec
 UPDATE prompt_evaluation_trial SET
     status = $3,

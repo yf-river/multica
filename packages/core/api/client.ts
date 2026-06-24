@@ -152,6 +152,7 @@ import type {
   ListPromptEvaluationOptimizationCandidatesResponse,
   CreatePromptEvaluationAssetRequest,
   UpdatePromptEvaluationAssetRequest,
+  ReviewPromptEvaluationRunRequest,
   CreatePromptEvaluationCaseRequest,
   UpdatePromptEvaluationCaseRequest,
   ListPromptLibraryItemsParams,
@@ -2011,6 +2012,16 @@ export class ApiClient {
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/cancel`, { method: "POST" });
     return parseWithFallback(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
       endpoint: "POST /api/prompt-evaluation-runs/:id/cancel",
+    }) as PromptEvaluationRun;
+  }
+
+  async reviewPromptEvaluationRun(runId: string, data: ReviewPromptEvaluationRunRequest): Promise<PromptEvaluationRun> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs/${runId}/review`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationRunSchema, EMPTY_PROMPT_EVALUATION_RUN, {
+      endpoint: "POST /api/prompt-evaluation-runs/:id/review",
     }) as PromptEvaluationRun;
   }
 

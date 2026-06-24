@@ -798,6 +798,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					})
 					r.Post("/sync", h.SyncPromptEvaluationRunFromTask)
 					r.Post("/cancel", h.CancelPromptEvaluationRun)
+					r.Post("/review", h.ReviewPromptEvaluationRun)
 					r.Post("/optimization-candidates", h.CreatePromptEvaluationOptimizationCandidate)
 					r.Post("/optimization-agent-run", h.RunPromptEvaluationOptimizationAgent)
 				})

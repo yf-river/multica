@@ -1112,6 +1112,27 @@ test.describe("训练与评估工作台", () => {
     await expect(runRow).toContainText("智能体执行 · 需人工复核", { timeout: 10000 });
     await runRow.getByRole("button", { name: "查看证据" }).click();
     await expect(runRow.getByTestId(`run-evidence-${agentRun.run.id}`)).toContainText("需要人工复核", { timeout: 10000 });
+
+    page.once("dialog", async (dialog) => {
+      expect(dialog.message()).toContain("通过说明");
+      await dialog.accept("人工复核确认该输出可作为通过样例");
+    });
+    const reviewResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes(`/api/prompt-evaluation-runs/${agentRun.run.id}/review`),
+      { timeout: 10000 },
+    );
+    await runRow.getByRole("button", { name: "人工通过" }).click();
+    expect((await reviewResponse).status()).toBe(200);
+    await expect(page.getByText("人工复核已处理：通过")).toBeVisible({ timeout: 10000 });
+    await expect
+      .poll(async () => {
+        const runs = await api.listPromptEvaluationRuns({ asset_id: asset.id });
+        const reviewed = runs.find((run) => run.id === agentRun.run.id);
+        return `${reviewed?.status ?? ""}|${reviewed?.review_decision ?? ""}|${reviewed?.review_note ?? ""}`;
+      }, { timeout: 15000 })
+      .toContain("通过|通过|人工复核确认该输出可作为通过样例");
   });
 
   test("旧提示词库路由会跳转到训练与评估提示词视图", async ({ page }) => {

@@ -235,6 +235,15 @@ type PromptEvaluationRunResponse struct {
 	CreatedBy         *string `json:"created_by"`
 	CreatedAt         string  `json:"created_at"`
 	UpdatedAt         string  `json:"updated_at"`
+	ReviewDecision    string  `json:"review_decision"`
+	ReviewNote        string  `json:"review_note"`
+	ReviewedBy        *string `json:"reviewed_by"`
+	ReviewedAt        string  `json:"reviewed_at"`
+}
+
+type ReviewPromptEvaluationRunRequest struct {
+	Decision string `json:"decision"`
+	Note     string `json:"note"`
 }
 
 type PromptEvaluationTrialResponse struct {
@@ -479,6 +488,10 @@ func promptEvaluationRunToResponse(run db.PromptEvaluationRun) PromptEvaluationR
 		CreatedBy:         uuidToPtr(run.CreatedBy),
 		CreatedAt:         timestampToString(run.CreatedAt),
 		UpdatedAt:         timestampToString(run.UpdatedAt),
+		ReviewDecision:    run.ReviewDecision,
+		ReviewNote:        run.ReviewNote,
+		ReviewedBy:        uuidToPtr(run.ReviewedBy),
+		ReviewedAt:        timestampToString(run.ReviewedAt),
 	}
 }
 
@@ -2046,6 +2059,84 @@ func (h *Handler) CancelPromptEvaluationRun(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	writeJSON(w, http.StatusOK, promptEvaluationRunToResponse(cancelled))
+}
+
+func (h *Handler) ReviewPromptEvaluationRun(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	runID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation run id")
+	if !ok {
+		return
+	}
+	var req ReviewPromptEvaluationRunRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "invalid review payload")
+			return
+		}
+	}
+	decision := strings.TrimSpace(req.Decision)
+	if decision != "通过" && decision != "未通过" {
+		writeError(w, http.StatusBadRequest, "decision must be 通过 or 未通过")
+		return
+	}
+	note := strings.TrimSpace(req.Note)
+	run, err := h.Queries.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{ID: runID, WorkspaceID: workspaceUUID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "prompt evaluation run not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation run")
+		return
+	}
+	if run.Status != "需人工复核" {
+		writeError(w, http.StatusConflict, "only prompt evaluation runs requiring manual review can be reviewed")
+		return
+	}
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation review transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	reviewed, err := qtx.ReviewPromptEvaluationRun(r.Context(), db.ReviewPromptEvaluationRunParams{
+		ID:          run.ID,
+		WorkspaceID: workspaceUUID,
+		Status:      decision,
+		ReviewedBy:  parseUUID(userID),
+		Note:        pgtype.Text{String: note, Valid: true},
+	})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusConflict, "prompt evaluation run is no longer waiting for manual review")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to review prompt evaluation run")
+		return
+	}
+	if err := qtx.MarkPromptEvaluationReviewTrialsByRun(r.Context(), db.MarkPromptEvaluationReviewTrialsByRunParams{
+		RunID:       run.ID,
+		WorkspaceID: workspaceUUID,
+		Status:      decision,
+		Note:        pgtype.Text{String: note, Valid: true},
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to review prompt evaluation trials")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation review")
+		return
+	}
+	writeJSON(w, http.StatusOK, promptEvaluationRunToResponse(reviewed))
 }
 
 func (h *Handler) canCancelPromptEvaluationTask(w http.ResponseWriter, r *http.Request, userID, workspaceID string, workspaceUUID pgtype.UUID, taskID pgtype.UUID) bool {

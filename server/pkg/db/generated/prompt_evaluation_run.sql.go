@@ -23,7 +23,7 @@ UPDATE prompt_evaluation_run SET
 WHERE id = $1
   AND workspace_id = $2
   AND status IN ('已入队', '运行中')
-RETURNING id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at
+RETURNING id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at, review_decision, review_note, reviewed_by, reviewed_at
 `
 
 type CancelPromptEvaluationRunParams struct {
@@ -66,6 +66,10 @@ func (q *Queries) CancelPromptEvaluationRun(ctx context.Context, arg CancelPromp
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReviewDecision,
+		&i.ReviewNote,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
 	)
 	return i, err
 }
@@ -130,7 +134,7 @@ INSERT INTO prompt_evaluation_run (
     $27,
     $28
 )
-RETURNING id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at
+RETURNING id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at, review_decision, review_note, reviewed_by, reviewed_at
 `
 
 type CreatePromptEvaluationRunParams struct {
@@ -228,6 +232,10 @@ func (q *Queries) CreatePromptEvaluationRun(ctx context.Context, arg CreatePromp
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReviewDecision,
+		&i.ReviewNote,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
 	)
 	return i, err
 }
@@ -329,7 +337,7 @@ func (q *Queries) CreatePromptEvaluationTrial(ctx context.Context, arg CreatePro
 }
 
 const getPromptEvaluationRunByTask = `-- name: GetPromptEvaluationRunByTask :one
-SELECT id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at FROM prompt_evaluation_run
+SELECT id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at, review_decision, review_note, reviewed_by, reviewed_at FROM prompt_evaluation_run
 WHERE task_id = $1
 `
 
@@ -368,12 +376,16 @@ func (q *Queries) GetPromptEvaluationRunByTask(ctx context.Context, taskID pgtyp
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReviewDecision,
+		&i.ReviewNote,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
 	)
 	return i, err
 }
 
 const getPromptEvaluationRunInWorkspace = `-- name: GetPromptEvaluationRunInWorkspace :one
-SELECT id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at FROM prompt_evaluation_run
+SELECT id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at, review_decision, review_note, reviewed_by, reviewed_at FROM prompt_evaluation_run
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -417,6 +429,10 @@ func (q *Queries) GetPromptEvaluationRunInWorkspace(ctx context.Context, arg Get
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReviewDecision,
+		&i.ReviewNote,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
 	)
 	return i, err
 }
@@ -649,7 +665,7 @@ func (q *Queries) GetPromptEvaluationSummary(ctx context.Context, arg GetPromptE
 }
 
 const listPromptEvaluationRuns = `-- name: ListPromptEvaluationRuns :many
-SELECT id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at FROM prompt_evaluation_run
+SELECT id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at, review_decision, review_note, reviewed_by, reviewed_at FROM prompt_evaluation_run
 WHERE workspace_id = $1
   AND ($3::uuid IS NULL OR asset_id = $3)
   AND ($4::text IS NULL OR status = $4)
@@ -713,6 +729,10 @@ func (q *Queries) ListPromptEvaluationRuns(ctx context.Context, arg ListPromptEv
 			&i.CreatedBy,
 			&i.CreatedAt,
 			&i.UpdatedAt,
+			&i.ReviewDecision,
+			&i.ReviewNote,
+			&i.ReviewedBy,
+			&i.ReviewedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -773,6 +793,44 @@ func (q *Queries) ListPromptEvaluationTrialsByRun(ctx context.Context, arg ListP
 	return items, nil
 }
 
+const markPromptEvaluationReviewTrialsByRun = `-- name: MarkPromptEvaluationReviewTrialsByRun :exec
+UPDATE prompt_evaluation_trial SET
+    status = $3,
+    failure_reason = CASE
+        WHEN $3 = '未通过' THEN COALESCE(NULLIF($4::text, ''), '人工复核驳回')
+        ELSE '无'
+    END,
+    evidence = jsonb_set(
+        COALESCE(evidence, '{}'::jsonb),
+        '{人工复核}',
+        jsonb_build_object(
+            '处理结果', $3,
+            '处理说明', COALESCE($4::text, '')
+        ),
+        true
+    )
+WHERE run_id = $1
+  AND workspace_id = $2
+  AND status = '需人工复核'
+`
+
+type MarkPromptEvaluationReviewTrialsByRunParams struct {
+	RunID       pgtype.UUID `json:"run_id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Status      string      `json:"status"`
+	Note        pgtype.Text `json:"note"`
+}
+
+func (q *Queries) MarkPromptEvaluationReviewTrialsByRun(ctx context.Context, arg MarkPromptEvaluationReviewTrialsByRunParams) error {
+	_, err := q.db.Exec(ctx, markPromptEvaluationReviewTrialsByRun,
+		arg.RunID,
+		arg.WorkspaceID,
+		arg.Status,
+		arg.Note,
+	)
+	return err
+}
+
 const markPromptEvaluationTrialsSkippedByRun = `-- name: MarkPromptEvaluationTrialsSkippedByRun :exec
 UPDATE prompt_evaluation_trial SET
     status = '已跳过',
@@ -807,7 +865,7 @@ UPDATE prompt_evaluation_run SET
     conclusion = 'Agent 自动重试已入队，等待新任务执行完成',
     updated_at = now()
 WHERE task_id = $1
-RETURNING id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at
+RETURNING id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at, review_decision, review_note, reviewed_by, reviewed_at
 `
 
 type ReassignPromptEvaluationRunTaskParams struct {
@@ -851,6 +909,117 @@ func (q *Queries) ReassignPromptEvaluationRunTask(ctx context.Context, arg Reass
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReviewDecision,
+		&i.ReviewNote,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
+	)
+	return i, err
+}
+
+const reviewPromptEvaluationRun = `-- name: ReviewPromptEvaluationRun :one
+UPDATE prompt_evaluation_run SET
+    status = $3,
+    passed_cases = CASE
+        WHEN $3 = '通过' AND total_cases > 0 THEN total_cases
+        WHEN $3 = '通过' THEN passed_cases
+        ELSE 0
+    END,
+    failed_cases = CASE
+        WHEN $3 = '未通过' AND total_cases > 0 THEN total_cases
+        WHEN $3 = '未通过' AND total_cases = 0 THEN GREATEST(failed_cases, 1)
+        ELSE 0
+    END,
+    pass_rate = CASE
+        WHEN $3 = '通过' AND total_cases > 0 THEN 1
+        WHEN $3 = '未通过' THEN 0
+        ELSE pass_rate
+    END,
+    failure_reason = CASE
+        WHEN $3 = '未通过' THEN COALESCE(NULLIF($5::text, ''), '人工复核驳回')
+        ELSE '无'
+    END,
+    conclusion = CASE
+        WHEN COALESCE(NULLIF($5::text, ''), '') = ''
+            THEN '人工复核' || $3
+        ELSE '人工复核' || $3 || '：' || $5::text
+    END,
+    review_decision = $3,
+    review_note = COALESCE($5::text, ''),
+    reviewed_by = $4,
+    reviewed_at = now(),
+    metrics = jsonb_set(
+        COALESCE(metrics, '{}'::jsonb),
+        '{人工复核}',
+        jsonb_build_object(
+            '处理结果', $3,
+            '处理说明', COALESCE($5::text, ''),
+            '复核人', $4::text,
+            '复核时间', now()
+        ),
+        true
+    ),
+    completed_at = COALESCE(completed_at, now()),
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+  AND status = '需人工复核'
+RETURNING id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at, review_decision, review_note, reviewed_by, reviewed_at
+`
+
+type ReviewPromptEvaluationRunParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Status      string      `json:"status"`
+	ReviewedBy  pgtype.UUID `json:"reviewed_by"`
+	Note        pgtype.Text `json:"note"`
+}
+
+func (q *Queries) ReviewPromptEvaluationRun(ctx context.Context, arg ReviewPromptEvaluationRunParams) (PromptEvaluationRun, error) {
+	row := q.db.QueryRow(ctx, reviewPromptEvaluationRun,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.Status,
+		arg.ReviewedBy,
+		arg.Note,
+	)
+	var i PromptEvaluationRun
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AssetID,
+		&i.PromptID,
+		&i.RunKind,
+		&i.Status,
+		&i.TriggerSource,
+		&i.AgentID,
+		&i.RuntimeID,
+		&i.TaskID,
+		&i.ChatSessionID,
+		&i.Model,
+		&i.RuntimeProvider,
+		&i.TotalCases,
+		&i.PassedCases,
+		&i.FailedCases,
+		&i.PassRate,
+		&i.TotalDurationMs,
+		&i.AverageDurationMs,
+		&i.InputTokens,
+		&i.OutputTokens,
+		&i.EstimatedCost,
+		&i.FailureReason,
+		&i.Conclusion,
+		&i.Metrics,
+		&i.Evidence,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ReviewDecision,
+		&i.ReviewNote,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
 	)
 	return i, err
 }
@@ -874,7 +1043,7 @@ UPDATE prompt_evaluation_run SET
     completed_at = $17,
     updated_at = now()
 WHERE id = $1 AND workspace_id = $2
-RETURNING id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at
+RETURNING id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at, review_decision, review_note, reviewed_by, reviewed_at
 `
 
 type UpdatePromptEvaluationRunFromTaskParams struct {
@@ -950,6 +1119,10 @@ func (q *Queries) UpdatePromptEvaluationRunFromTask(ctx context.Context, arg Upd
 		&i.CreatedBy,
 		&i.CreatedAt,
 		&i.UpdatedAt,
+		&i.ReviewDecision,
+		&i.ReviewNote,
+		&i.ReviewedBy,
+		&i.ReviewedAt,
 	)
 	return i, err
 }

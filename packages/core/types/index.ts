@@ -154,6 +154,7 @@ export type {
   ListPromptEvaluationOptimizationCandidatesParams,
   CreatePromptEvaluationAssetRequest,
   UpdatePromptEvaluationAssetRequest,
+  ReviewPromptEvaluationRunRequest,
   CreatePromptEvaluationCaseRequest,
   UpdatePromptEvaluationCaseRequest,
 } from "./prompt-evaluation";
