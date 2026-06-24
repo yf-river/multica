@@ -14,6 +14,7 @@ const model = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "gpt-5.3-codex
 const squadTemplateKey = trimEnv("ACCEPTANCE_SQUAD_TEMPLATE_KEY") || trimEnv("REAL_AGENT_E2E_SQUAD_TEMPLATE_KEY");
 const verifyChildWake = trimEnv("ACCEPTANCE_VERIFY_CHILD_WAKE") === "1" || squadTemplateKey !== "";
 const verifyCrossProjectChildren = trimEnv("ACCEPTANCE_VERIFY_CROSS_PROJECT_CHILDREN") === "1";
+const cleanupActiveTasks = trimEnv("ACCEPTANCE_CLEANUP_ACTIVE_TASKS") !== "0";
 const taskTimeoutMs = Number(trimEnv("ACCEPTANCE_TASK_TIMEOUT_MS") || (squadTemplateKey ? 600_000 : 240_000));
 const suffix = Date.now();
 
@@ -28,6 +29,7 @@ const evidence = {
   squad_template_key: squadTemplateKey || "ad-hoc",
   verify_child_wake: verifyChildWake,
   verify_cross_project_children: verifyCrossProjectChildren,
+  cleanup_active_tasks: cleanupActiveTasks,
   task_timeout_ms: taskTimeoutMs,
   commands: [],
   result: "unknown",
@@ -193,6 +195,7 @@ if (terminalTask.status === "completed") {
   if (verifyChildWake) {
     await verifyChildDoneWake({ issue, squad, agent, terminalTask, token, childOverride: captainCreatedChild });
   }
+  cleanupAcceptanceTasks({ issueID: issue.id, keepTaskIDs: new Set([terminalTask.id]), token });
   evidence.result = "completed";
 } else {
   const errorText = JSON.stringify(evidence);
@@ -304,6 +307,14 @@ function put(path, body, token) {
 }
 
 function request(method, path, body, token) {
+  const { status, responseBody } = requestRaw(method, path, body, token);
+  if (status < 200 || status >= 300) {
+    fail(`${method} ${path} 返回 ${status}: ${responseBody}`);
+  }
+  return responseBody.trim() ? JSON.parse(responseBody) : null;
+}
+
+function requestRaw(method, path, body, token) {
   const url = `${apiURL}${path}`;
   const args = ["--noproxy", "*", "-sS", "-w", "\n%{http_code}", "-X", method, url, "-H", "content-type: application/json"];
   if (token) args.push("-H", `Authorization: Bearer ${token}`);
@@ -314,10 +325,7 @@ function request(method, path, body, token) {
   const splitAt = out.lastIndexOf("\n");
   const responseBody = splitAt >= 0 ? out.slice(0, splitAt) : out;
   const status = Number(splitAt >= 0 ? out.slice(splitAt + 1).trim() : 0);
-  if (status < 200 || status >= 300) {
-    fail(`${method} ${path} 返回 ${status}: ${responseBody}`);
-  }
-  return responseBody.trim() ? JSON.parse(responseBody) : null;
+  return { status, responseBody };
 }
 
 function listIssueTasks(issueID, token) {
@@ -342,6 +350,39 @@ function taskSummary(task) {
     completed_at: task.completed_at,
     failure_reason: task.failure_reason || "",
   };
+}
+
+function cleanupAcceptanceTasks({ issueID, keepTaskIDs, token }) {
+  const activeStatuses = new Set(["queued", "dispatched", "running", "waiting_local_directory"]);
+  const cleanup = {
+    enabled: cleanupActiveTasks,
+    issue_id: issueID,
+    cancelled: [],
+    skipped: [],
+    failures: [],
+  };
+  evidence.acceptance_cleanup = cleanup;
+  if (!cleanupActiveTasks) return;
+
+  const tasks = listIssueTasks(issueID, token);
+  for (const task of tasks) {
+    if (!task?.id) continue;
+    if (keepTaskIDs.has(task.id)) {
+      cleanup.skipped.push({ ...taskSummary(task), reason: "kept_primary_task" });
+      continue;
+    }
+    if (!activeStatuses.has(task.status)) {
+      cleanup.skipped.push({ ...taskSummary(task), reason: "terminal_or_inactive" });
+      continue;
+    }
+    const result = requestRaw("POST", `/api/tasks/${task.id}/cancel`, null, token);
+    const item = { ...taskSummary(task), cancel_http_status: result.status };
+    if (result.status >= 200 && result.status < 300) {
+      cleanup.cancelled.push(item);
+    } else {
+      cleanup.failures.push({ ...item, response: result.responseBody.slice(0, 500) });
+    }
+  }
 }
 
 async function verifyCaptainCreatedCrossProjectChildren({ issue, setup, token }) {
@@ -562,7 +603,12 @@ function issueDescription(templateKey, crossProjectSetup = null) {
       }
       return "请作为 user-center 小队队长完成一次最小 SOP 验收：澄清需求、说明阶段、输出 trace/任务标识、验收证据和下一步。不要修改代码。";
     case "multica-coding":
-      return "请作为 Multica 编码小队队长完成一次最小 SOP 验收：说明六角色分工、方案先确认、开发范围边界、独立验收、规约同步和部署运行注意事项。不要修改代码。";
+      return [
+        "请作为 Multica 编码小队队长完成一次最小 SOP 验收。",
+        "只用中文文字回复，不要运行 shell、multica CLI、文件系统读写或任何工具命令；本验收不需要修改代码。",
+        "必须说明：六角色分工、方案先确认、开发范围边界、独立验收、规约同步和部署运行注意事项。",
+        "输出验收证据：当前任务已由队长接收、不会越权开发、下一步等待人工确认方案后再分派开发。",
+      ].join("\n");
     default:
       return "请用中文完成一次最小验收：说明你已收到任务，输出 trace/任务标识占位、验收证据和下一步。不要修改代码。";
   }
