@@ -540,6 +540,8 @@ function issueDescription(templateKey, crossProjectSetup = null) {
           "4. 创建子 issue 时不要传 `--assignee` 或 `--assignee-id`，平台会把未指派的项目 issue 自动交给对应项目负责人。",
           "5. 创建后调用 `multica squad activity <当前 issue id> action --reason \"已创建跨项目子任务\"`。",
           "6. 输出验收证据：父 issue id、两个子 issue id、两个项目 UUID、下一步等待子项目负责人处理。",
+          "",
+          "命令边界：只运行上面列出的 `multica issue get`、`multica project list`、`multica issue create` 和 `multica squad activity`。不要读取评论，不要运行 `comment list`、`issue comment list` 或其他探索性命令。",
         ].join("\n");
       }
       return "请作为 user-center 小队队长完成一次最小 SOP 验收：澄清需求、说明阶段、输出 trace/任务标识、验收证据和下一步。不要修改代码。";

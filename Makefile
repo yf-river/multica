@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-playground-difference-audit goal-test-session-retro goal-test-token-audit
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e goal-test-squad-curl-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-playground-difference-audit goal-test-session-retro goal-test-token-audit
 
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
@@ -31,6 +31,11 @@ GOAL_TEST_TMPDIR ?= /data/tmp/goal-test
 GOAL_TEST_GOCACHE ?= /data/tmp/goal-test-gocache
 GOAL_TEST_REAL_AGENT_PROVIDER ?= codex
 GOAL_TEST_REAL_AGENT_MODEL ?= gpt-5.3-codex-spark
+GOAL_TEST_REAL_AGENT_FALLBACK_MODEL ?= gpt-5.4-mini
+GOAL_TEST_INT_API_URL ?= http://127.0.0.1:18762
+GOAL_TEST_INT_WORKSPACE ?= goal-test-daemon
+GOAL_TEST_INT_ACCOUNT ?= goal-test-daemon
+GOAL_TEST_INT_PASSWORD ?= e2e-password
 
 define REQUIRE_ENV
 	@if [ ! -f "$(ENV_FILE)" ]; then \
@@ -261,6 +266,39 @@ goal-test-real-agent-e2e: goal-test-e2e-preflight ## Run slow real Codex Agent E
 	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_MODEL)" \
 	TMPDIR="$(GOAL_TEST_TMPDIR)" \
 	node scripts/goal-test-playwright.mjs e2e/squad-real-agent.spec.ts e2e/prompt-library-real-agent.spec.ts --project=chromium
+
+goal-test-coding-squad-curl-e2e: goal-test-smoke ## Run real curl/API + daemon E2E for the Multica coding squad
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	ACCEPTANCE_API_URL="$(GOAL_TEST_INT_API_URL)" \
+	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
+	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
+	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
+	ACCEPTANCE_SQUAD_TEMPLATE_KEY=multica-coding \
+	MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER="$(GOAL_TEST_REAL_AGENT_PROVIDER)" \
+	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_MODEL)" \
+	MULTICA_PROMPT_EVALUATION_AGENT_FALLBACK_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
+	ACCEPTANCE_TASK_TIMEOUT_MS=600000 \
+	ACCEPTANCE_MODEL_ATTEMPT_TIMEOUT_MS=720000 \
+	TMPDIR="$(GOAL_TEST_TMPDIR)" \
+	node scripts/run-model-fallback-e2e.mjs scripts/codex-squad-curl-e2e.mjs
+
+goal-test-user-center-squad-curl-e2e: goal-test-smoke ## Run real curl/API + daemon E2E for user-center cross-project squad SOP
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	ACCEPTANCE_API_URL="$(GOAL_TEST_INT_API_URL)" \
+	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
+	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
+	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
+	ACCEPTANCE_SQUAD_TEMPLATE_KEY=user-center \
+	ACCEPTANCE_VERIFY_CROSS_PROJECT_CHILDREN=1 \
+	MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER="$(GOAL_TEST_REAL_AGENT_PROVIDER)" \
+	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_MODEL)" \
+	MULTICA_PROMPT_EVALUATION_AGENT_FALLBACK_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
+	ACCEPTANCE_TASK_TIMEOUT_MS=900000 \
+	ACCEPTANCE_MODEL_ATTEMPT_TIMEOUT_MS=960000 \
+	TMPDIR="$(GOAL_TEST_TMPDIR)" \
+	node scripts/run-model-fallback-e2e.mjs scripts/codex-squad-curl-e2e.mjs
+
+goal-test-squad-curl-e2e: goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e ## Run both real curl/API squad SOP E2E suites
 
 goal-test-smoke: ## Fast goal-test gate: E2E preflight, environment verify, and current log window verify
 	$(MAKE) goal-test-e2e-preflight
