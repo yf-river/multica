@@ -22,6 +22,7 @@ import {
   SelectValue,
 } from "@multica/ui/components/ui/select";
 import { Textarea } from "@multica/ui/components/ui/textarea";
+import { AppLink } from "../../navigation";
 import { DEFAULT_AGENT_MODEL } from "./prompt-library-request-builders";
 
 export function PromptPlaygroundWorkbench({
@@ -280,6 +281,7 @@ export function AgentPlaygroundWorkbench({
   loading,
   onSaveAgentDebugPackage,
   onRunAgentDebugPackage,
+  runHistoryHrefForRun,
 }: {
   selected: PromptLibraryItem | null;
   debugValuesText: string;
@@ -302,6 +304,7 @@ export function AgentPlaygroundWorkbench({
   loading: boolean;
   onSaveAgentDebugPackage: () => void;
   onRunAgentDebugPackage: () => void;
+  runHistoryHrefForRun: (runId: string) => string;
 }) {
   const agentRuns = runs.filter((run) => isAgentEvaluationRun(run) || Boolean(run.task_id));
   const agentPackages = assets.filter((asset) => {
@@ -516,6 +519,7 @@ export function AgentPlaygroundWorkbench({
             recentRuns={recentSelectedAgentRuns}
             agents={agents}
             runtimes={runtimes}
+            runHistoryHrefForRun={runHistoryHrefForRun}
           />
 
           <div className="rounded-md border border-border/70 bg-muted/10 p-3" data-testid="agent-playground-runtime">
@@ -600,6 +604,7 @@ function AgentExecutionConfigComparison({
   recentRuns,
   agents,
   runtimes,
+  runHistoryHrefForRun,
 }: {
   current: {
     agent: string;
@@ -611,6 +616,7 @@ function AgentExecutionConfigComparison({
   recentRuns: PromptEvaluationRun[];
   agents: Agent[];
   runtimes: AgentRuntime[];
+  runHistoryHrefForRun: (runId: string) => string;
 }) {
   const latestAgent = latestRun?.agent_id ? agents.find((agent) => agent.id === latestRun.agent_id) ?? null : null;
   const latestRuntime = latestRun?.runtime_id ? runtimes.find((runtime) => runtime.id === latestRun.runtime_id) ?? null : null;
@@ -650,7 +656,7 @@ function AgentExecutionConfigComparison({
             暂无同提示词真实运行；创建真实智能体任务后会在这里对比执行智能体、运行时、模型、token 和成本。
           </div>
         )}
-        <AgentRunComparisonTable runs={recentRuns} agents={agents} runtimes={runtimes} />
+        <AgentRunComparisonTable runs={recentRuns} agents={agents} runtimes={runtimes} runHistoryHrefForRun={runHistoryHrefForRun} />
       </div>
     </div>
   );
@@ -660,10 +666,12 @@ function AgentRunComparisonTable({
   runs,
   agents,
   runtimes,
+  runHistoryHrefForRun,
 }: {
   runs: PromptEvaluationRun[];
   agents: Agent[];
   runtimes: AgentRuntime[];
+  runHistoryHrefForRun: (runId: string) => string;
 }) {
   return (
     <div className="rounded border px-2 py-2" data-testid="agent-playground-run-comparison">
@@ -677,7 +685,7 @@ function AgentRunComparisonTable({
         </div>
       ) : (
         <div className="mt-2 overflow-x-auto" data-testid="agent-playground-run-comparison-table">
-          <table className="w-full min-w-[560px] text-left text-[11px]">
+          <table className="w-full min-w-[640px] text-left text-[11px]">
             <thead className="text-muted-foreground">
               <tr className="border-b">
                 <th className="py-1 pr-2 font-medium">状态</th>
@@ -686,7 +694,8 @@ function AgentRunComparisonTable({
                 <th className="py-1 pr-2 font-medium">模型</th>
                 <th className="py-1 pr-2 font-medium">耗时</th>
                 <th className="py-1 pr-2 font-medium">token</th>
-                <th className="py-1 font-medium">成本</th>
+                <th className="py-1 pr-2 font-medium">成本</th>
+                <th className="py-1 font-medium">证据</th>
               </tr>
             </thead>
             <tbody>
@@ -708,7 +717,16 @@ function AgentRunComparisonTable({
                     <td className="max-w-32 truncate py-1.5 pr-2 text-muted-foreground">{run.model || "未记录"}</td>
                     <td className="whitespace-nowrap py-1.5 pr-2 text-muted-foreground">{formatDuration(run.total_duration_ms)}</td>
                     <td className="whitespace-nowrap py-1.5 pr-2 text-muted-foreground">{tokenTotal.toLocaleString()}</td>
-                    <td className="whitespace-nowrap py-1.5 text-muted-foreground">{formatMoney(run.estimated_cost)}</td>
+                    <td className="whitespace-nowrap py-1.5 pr-2 text-muted-foreground">{formatMoney(run.estimated_cost)}</td>
+                    <td className="whitespace-nowrap py-1.5">
+                      <AppLink
+                        href={runHistoryHrefForRun(run.id)}
+                        className="text-emerald-700 underline-offset-2 hover:underline dark:text-emerald-300"
+                        data-testid={`agent-playground-run-evidence-link-${run.id}`}
+                      >
+                        查看证据
+                      </AppLink>
+                    </td>
                   </tr>
                 );
               })}

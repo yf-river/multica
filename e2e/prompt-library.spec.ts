@@ -1014,6 +1014,48 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByRole("button", { name: "运行并记录" })).toHaveCount(0);
   });
 
+  test("智能体调试场横向对比可以跳到运行证据", async ({ page }) => {
+    test.setTimeout(90_000);
+    await api.ensureOnlineCodexRuntime(`${artifactPrefix} 证据跳转 Runtime`);
+    const prompt = await api.createPromptForE2E(artifactPrefix, {
+      name: `${artifactPrefix} 智能体证据跳转`,
+      content: "请评估 {{issue_title}}，输出中文结论和证据链接。",
+      variables: [{ name: "issue_title", label: "任务标题", required: true }],
+    });
+    const asset = await api.createPromptEvaluationAsset({
+      prompt_id: prompt.id,
+      name: `${artifactPrefix} 智能体证据跳转实验`,
+      description: "E2E 验证智能体调试场横向对比可以跳转运行证据",
+      asset_type: "实验",
+      payload: {
+        cases: [
+          {
+            名称: "证据跳转用例",
+            变量: { issue_title: "智能体调试场证据跳转" },
+            期望包含: ["中文结论", "证据链接"],
+          },
+        ],
+      },
+      status: "启用",
+    });
+    const agentRun = await api.runPromptEvaluationAssetAgent(asset.id);
+
+    await page.goto(`/${workspaceSlug}/training/agent-playground`, { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("agent-playground-page-shell")).toBeVisible({ timeout: 10000 });
+    await page.getByPlaceholder("搜索执行目标").fill(prompt.name);
+    await page.getByRole("button", { name: new RegExp(escapeRegExp(prompt.name)) }).click();
+    const evidenceLink = page.getByTestId(`agent-playground-run-evidence-link-${agentRun.run.id}`);
+    await expect(evidenceLink).toBeVisible({ timeout: 10000 });
+    await evidenceLink.click();
+
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/run-history\\?run=${escapeRegExp(agentRun.run.id)}`), { timeout: 10000 });
+    const runRow = page.getByTestId(`prompt-evaluation-run-${agentRun.run.id}`);
+    await expect(runRow).toBeVisible({ timeout: 10000 });
+    await expect(runRow).toContainText(`任务 ${agentRun.task_id}`);
+    await expect(runRow.getByRole("button", { name: "收起证据" })).toBeVisible({ timeout: 10000 });
+    await expect(page.getByTestId(`run-evidence-${agentRun.run.id}`)).toBeVisible({ timeout: 15000 });
+  });
+
   test("数据集版本可以对比并恢复为新的可追溯版本", async ({ page }) => {
     test.setTimeout(90_000);
     const prompt = await api.createPromptForE2E(artifactPrefix, {

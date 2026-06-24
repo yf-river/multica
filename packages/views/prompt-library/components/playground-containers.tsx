@@ -5,6 +5,8 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { BookOpenText, TerminalSquare } from "lucide-react";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { useWorkspacePaths } from "@multica/core/paths";
+import { TRAINING_WORKBENCH_VIEW_BY_TAB, trainingWorkbenchPath } from "@multica/core/training";
 import type {
   Agent,
   AgentRuntime,
@@ -133,10 +135,12 @@ export function PromptPlaygroundContainer() {
 
 export function AgentPlaygroundContainer() {
   const workspaceId = useWorkspaceId();
+  const workspacePaths = useWorkspacePaths();
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [selectedExecutionAgentId, setSelectedExecutionAgentId] = useState("__auto__");
   const selection = usePlaygroundPromptSelection("agent-playground", workspaceId);
+  const runHistoryPath = trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["运行历史"]);
 
   useEffect(() => {
     document.title = "训练与评估 · 智能体调试场";
@@ -242,6 +246,7 @@ export function AgentPlaygroundContainer() {
             loading={assetQuery.isLoading || caseQuery.isLoading || runQuery.isLoading}
             onSaveAgentDebugPackage={actions.saveAgentDebugPackage}
             onRunAgentDebugPackage={actions.runAgentDebugPackage}
+            runHistoryHrefForRun={(runId) => `${runHistoryPath}?run=${encodeURIComponent(runId)}`}
           />
         </main>
         <AgentPlaygroundPromptList

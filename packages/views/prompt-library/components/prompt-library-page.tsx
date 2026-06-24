@@ -140,6 +140,7 @@ export function PromptLibraryPage({
   const caseDraftStorageKey = workspaceId ? `multica:training:case-drafts:${workspaceId}` : null;
   const viewParam = trainingViewFromLocation(navigation.pathname, navigation.searchParams);
   const resolvedView = activeView ?? viewParam;
+  const focusedRunId = navigation.searchParams.get("run");
   const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => trainingWorkbenchTabFromView(resolvedView));
   const [runStatusFilter, setRunStatusFilter] = useState<RunStatusFilter>("全部");
   const [demoTimeRange, setDemoTimeRange] = useState<DemoTimeRange>("7d");
@@ -154,6 +155,11 @@ export function PromptLibraryPage({
   useEffect(() => {
     setActiveTab(trainingWorkbenchTabFromView(resolvedView));
   }, [resolvedView]);
+
+  useEffect(() => {
+    if (!focusedRunId) return;
+    setRunStatusFilter("全部");
+  }, [focusedRunId]);
 
   useEffect(() => {
     document.title = trainingWorkbenchTitleFromView(resolvedView);
@@ -1017,6 +1023,7 @@ export function PromptLibraryPage({
                 cases={cases}
                 experimentDimensions={experimentDimensions}
                 runs={runs}
+                focusedRunId={focusedRunId}
                 runStatusFilter={runStatusFilter}
                 onRunStatusFilterChange={setRunStatusFilter}
                 candidates={candidates}
@@ -1071,6 +1078,7 @@ export function PromptLibraryPage({
               cases={cases}
               experimentDimensions={experimentDimensions}
               runs={runs}
+              focusedRunId={focusedRunId}
               runStatusFilter={runStatusFilter}
               onRunStatusFilterChange={setRunStatusFilter}
               candidates={candidates}
@@ -1497,6 +1505,7 @@ function WorkbenchPanel({
   cases,
   experimentDimensions,
   runs,
+  focusedRunId,
   runStatusFilter,
   onRunStatusFilterChange,
   candidates,
@@ -1544,6 +1553,7 @@ function WorkbenchPanel({
   cases: PromptEvaluationStructuredCase[];
   experimentDimensions: PromptEvaluationExperimentDimension[];
   runs: PromptEvaluationRun[];
+  focusedRunId: string | null;
   runStatusFilter: RunStatusFilter;
   onRunStatusFilterChange: (status: RunStatusFilter) => void;
   candidates: PromptEvaluationOptimizationCandidate[];
@@ -1621,6 +1631,7 @@ function WorkbenchPanel({
         <RunHistoryPanel
           workspaceId={workspaceId}
           runs={runs}
+          focusedRunId={focusedRunId}
           runStatusFilter={runStatusFilter}
           onRunStatusFilterChange={onRunStatusFilterChange}
           candidates={candidates}
@@ -1963,6 +1974,7 @@ function TrainingAssetPanel({
 function RunHistoryPanel({
   workspaceId,
   runs,
+  focusedRunId,
   runStatusFilter,
   onRunStatusFilterChange,
   candidates,
@@ -1982,6 +1994,7 @@ function RunHistoryPanel({
 }: {
   workspaceId: string;
   runs: PromptEvaluationRun[];
+  focusedRunId: string | null;
   runStatusFilter: RunStatusFilter;
   onRunStatusFilterChange: (status: RunStatusFilter) => void;
   candidates: PromptEvaluationOptimizationCandidate[];
@@ -2001,6 +2014,13 @@ function RunHistoryPanel({
 }) {
   const candidatesByRun = useMemo(() => buildCandidatesByRun(candidates), [candidates]);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
+  useEffect(() => {
+    if (!focusedRunId || !runs.some((run) => run.id === focusedRunId)) return;
+    setExpandedRunId(focusedRunId);
+    window.requestAnimationFrame(() => {
+      document.querySelector(`[data-testid="prompt-evaluation-run-${focusedRunId}"]`)?.scrollIntoView({ block: "center" });
+    });
+  }, [focusedRunId, runs]);
   const evidenceQuery = useQuery({
     queryKey: promptLibraryKeys.runEvidence(workspaceId, expandedRunId),
     queryFn: () => api.getPromptEvaluationRunEvidence(expandedRunId ?? ""),
