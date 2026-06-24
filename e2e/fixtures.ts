@@ -171,6 +171,44 @@ interface PromptEvaluationCase {
   source: string;
 }
 
+interface PromptEvaluationDatasetVersion {
+  id: string;
+  dataset_asset_id: string;
+  version: number;
+  version_label: string;
+  row_count: number;
+  row_fingerprint: string;
+}
+
+interface PromptEvaluationDatasetVersionRow {
+  id: string;
+  dataset_version_id: string;
+  dataset_asset_id: string;
+  row_index: number;
+  row_name: string;
+  variables: Record<string, unknown>;
+  expected_contains: unknown[];
+  tags: unknown[];
+  source: string;
+}
+
+interface PromptEvaluationDatasetVersionDiff {
+  base_version: PromptEvaluationDatasetVersion;
+  target_version: PromptEvaluationDatasetVersion;
+  summary: Record<string, number>;
+  added: PromptEvaluationDatasetVersionRow[];
+  removed: PromptEvaluationDatasetVersionRow[];
+  changed: Array<{ row_index: number; base: PromptEvaluationDatasetVersionRow; target: PromptEvaluationDatasetVersionRow }>;
+  unchanged: PromptEvaluationDatasetVersionRow[];
+}
+
+interface RestorePromptEvaluationDatasetVersionResponse {
+  asset: PromptEvaluationAsset;
+  restored_from: PromptEvaluationDatasetVersion;
+  restored_version: PromptEvaluationDatasetVersion;
+  restored_cases: PromptEvaluationCase[];
+}
+
 interface PromptEvaluationExperimentDimension {
   id: string;
   experiment_asset_id: string;
@@ -1172,6 +1210,17 @@ export class TestApiClient {
     return res.json();
   }
 
+  async createPromptEvaluationCase(data: Record<string, unknown>): Promise<PromptEvaluationCase> {
+    const res = await this.authedFetch("/api/prompt-evaluation-cases", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      throw new Error(`create prompt evaluation case failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
   async updatePromptEvaluationAsset(id: string, data: Record<string, unknown>): Promise<PromptEvaluationAsset> {
     const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}`, {
       method: "PUT",
@@ -1179,6 +1228,55 @@ export class TestApiClient {
     });
     if (!res.ok) {
       throw new Error(`update prompt evaluation asset failed: ${res.status}`);
+    }
+    return res.json();
+  }
+
+  async listPromptEvaluationDatasetVersions(id: string): Promise<PromptEvaluationDatasetVersion[]> {
+    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/dataset-versions`);
+    if (!res.ok) {
+      throw new Error(`list prompt evaluation dataset versions failed: ${res.status} ${await res.text()}`);
+    }
+    const data = await res.json();
+    return data.items ?? [];
+  }
+
+  async createPromptEvaluationDatasetVersion(id: string, data: Record<string, unknown> = {}): Promise<PromptEvaluationDatasetVersion> {
+    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/dataset-versions`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      throw new Error(`create prompt evaluation dataset version failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async listPromptEvaluationDatasetVersionRows(id: string, versionId: string): Promise<PromptEvaluationDatasetVersionRow[]> {
+    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/dataset-versions/${versionId}/rows`);
+    if (!res.ok) {
+      throw new Error(`list prompt evaluation dataset version rows failed: ${res.status} ${await res.text()}`);
+    }
+    const data = await res.json();
+    return data.items ?? [];
+  }
+
+  async diffPromptEvaluationDatasetVersion(id: string, baseVersionId: string, targetVersionId: string): Promise<PromptEvaluationDatasetVersionDiff> {
+    const search = new URLSearchParams({ target_version_id: targetVersionId });
+    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/dataset-versions/${baseVersionId}/diff?${search}`);
+    if (!res.ok) {
+      throw new Error(`diff prompt evaluation dataset version failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async restorePromptEvaluationDatasetVersion(id: string, versionId: string): Promise<RestorePromptEvaluationDatasetVersionResponse> {
+    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/dataset-versions/${versionId}/restore`, {
+      method: "POST",
+      body: JSON.stringify({ version_label: "E2E 恢复快照", metadata: { 来源: "E2E" } }),
+    });
+    if (!res.ok) {
+      throw new Error(`restore prompt evaluation dataset version failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
   }

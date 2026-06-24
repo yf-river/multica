@@ -40,6 +40,12 @@ WHERE workspace_id = $1
 ORDER BY version DESC, created_at DESC
 LIMIT 1;
 
+-- name: GetPromptEvaluationDatasetVersionInAsset :one
+SELECT * FROM prompt_evaluation_dataset_version
+WHERE workspace_id = $1
+  AND dataset_asset_id = $2
+  AND id = $3;
+
 -- name: CreatePromptEvaluationDatasetVersionRowsFromCurrent :exec
 INSERT INTO prompt_evaluation_dataset_version_row (
     workspace_id,

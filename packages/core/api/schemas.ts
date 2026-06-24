@@ -25,6 +25,8 @@ import type {
   PromptEvaluationSummary,
   PromptEvaluationStructuredCase,
   PromptEvaluationDatasetFromTracesResponse,
+  PromptEvaluationDatasetVersionDiff,
+  RestorePromptEvaluationDatasetVersionResponse,
   PromptEvaluationExperimentDimension,
   PromptEvaluationOptimizationCandidate,
   ListPromptEvaluationEvidenceSnapshotsResponse,
@@ -930,6 +932,22 @@ export const PromptEvaluationDatasetVersionRowSchema = z.object({
   created_at: z.string().default(""),
 }).loose();
 
+export const PromptEvaluationDatasetVersionChangedRowSchema = z.object({
+  row_index: z.number().default(0),
+  base: PromptEvaluationDatasetVersionRowSchema,
+  target: PromptEvaluationDatasetVersionRowSchema,
+}).loose();
+
+export const PromptEvaluationDatasetVersionDiffSchema = z.object({
+  base_version: PromptEvaluationDatasetVersionSchema,
+  target_version: PromptEvaluationDatasetVersionSchema,
+  summary: z.record(z.string(), z.number()).default({}),
+  added: z.array(PromptEvaluationDatasetVersionRowSchema).default([]),
+  removed: z.array(PromptEvaluationDatasetVersionRowSchema).default([]),
+  changed: z.array(PromptEvaluationDatasetVersionChangedRowSchema).default([]),
+  unchanged: z.array(PromptEvaluationDatasetVersionRowSchema).default([]),
+}).loose();
+
 export const PromptEvaluationDatasetVersionListResponseSchema = z.object({
   items: z.array(PromptEvaluationDatasetVersionSchema).default([]),
   total: z.number().default(0),
@@ -938,6 +956,13 @@ export const PromptEvaluationDatasetVersionListResponseSchema = z.object({
 export const PromptEvaluationDatasetVersionRowListResponseSchema = z.object({
   items: z.array(PromptEvaluationDatasetVersionRowSchema).default([]),
   total: z.number().default(0),
+}).loose();
+
+export const RestorePromptEvaluationDatasetVersionResponseSchema = z.object({
+  asset: PromptEvaluationAssetSchema,
+  restored_from: PromptEvaluationDatasetVersionSchema,
+  restored_version: PromptEvaluationDatasetVersionSchema,
+  restored_cases: z.array(z.lazy(() => PromptEvaluationCaseSchema)).default([]),
 }).loose();
 
 export const PromptEvaluationRunSchema = z.object({
@@ -1274,6 +1299,24 @@ export const EMPTY_PROMPT_EVALUATION_DATASET_VERSION_ROW_LIST_RESPONSE: ListProm
   total: 0,
 };
 
+export const EMPTY_PROMPT_EVALUATION_DATASET_VERSION_DIFF: PromptEvaluationDatasetVersionDiff = {
+  base_version: PromptEvaluationDatasetVersionSchema.parse({
+    id: "",
+    workspace_id: "",
+    dataset_asset_id: "",
+  }),
+  target_version: PromptEvaluationDatasetVersionSchema.parse({
+    id: "",
+    workspace_id: "",
+    dataset_asset_id: "",
+  }),
+  summary: {},
+  added: [],
+  removed: [],
+  changed: [],
+  unchanged: [],
+};
+
 export const EMPTY_PROMPT_EVALUATION_RUN = PromptEvaluationRunSchema.parse({
   id: "",
   workspace_id: "",
@@ -1384,6 +1427,13 @@ export const EMPTY_PROMPT_EVALUATION_CASE: PromptEvaluationStructuredCase = {
   created_by: null,
   created_at: "",
   updated_at: "",
+};
+
+export const EMPTY_RESTORE_PROMPT_EVALUATION_DATASET_VERSION_RESPONSE: RestorePromptEvaluationDatasetVersionResponse = {
+  asset: EMPTY_PROMPT_EVALUATION_ASSET,
+  restored_from: EMPTY_PROMPT_EVALUATION_DATASET_VERSION_DIFF.base_version,
+  restored_version: EMPTY_PROMPT_EVALUATION_DATASET_VERSION_DIFF.target_version,
+  restored_cases: [],
 };
 
 export const EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE: PromptEvaluationOptimizationCandidate = {

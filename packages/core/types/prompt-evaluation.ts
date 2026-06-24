@@ -97,6 +97,34 @@ export interface PromptEvaluationDatasetVersionRow {
   created_at: string;
 }
 
+export interface PromptEvaluationDatasetVersionChangedRow {
+  row_index: number;
+  base: PromptEvaluationDatasetVersionRow;
+  target: PromptEvaluationDatasetVersionRow;
+}
+
+export interface PromptEvaluationDatasetVersionDiff {
+  base_version: PromptEvaluationDatasetVersion;
+  target_version: PromptEvaluationDatasetVersion;
+  summary: Record<string, number>;
+  added: PromptEvaluationDatasetVersionRow[];
+  removed: PromptEvaluationDatasetVersionRow[];
+  changed: PromptEvaluationDatasetVersionChangedRow[];
+  unchanged: PromptEvaluationDatasetVersionRow[];
+}
+
+export interface RestorePromptEvaluationDatasetVersionRequest {
+  version_label?: string;
+  metadata?: Record<string, unknown>;
+}
+
+export interface RestorePromptEvaluationDatasetVersionResponse {
+  asset: PromptEvaluationAsset;
+  restored_from: PromptEvaluationDatasetVersion;
+  restored_version: PromptEvaluationDatasetVersion;
+  restored_cases: PromptEvaluationStructuredCase[];
+}
+
 export interface PromptEvaluationRun {
   id: string;
   workspace_id: string;

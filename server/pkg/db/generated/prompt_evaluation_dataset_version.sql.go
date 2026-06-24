@@ -149,6 +149,37 @@ func (q *Queries) GetLatestPromptEvaluationDatasetVersion(ctx context.Context, a
 	return i, err
 }
 
+const getPromptEvaluationDatasetVersionInAsset = `-- name: GetPromptEvaluationDatasetVersionInAsset :one
+SELECT id, workspace_id, dataset_asset_id, version, version_label, row_count, row_fingerprint, metadata, created_by, created_at FROM prompt_evaluation_dataset_version
+WHERE workspace_id = $1
+  AND dataset_asset_id = $2
+  AND id = $3
+`
+
+type GetPromptEvaluationDatasetVersionInAssetParams struct {
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	DatasetAssetID pgtype.UUID `json:"dataset_asset_id"`
+	ID             pgtype.UUID `json:"id"`
+}
+
+func (q *Queries) GetPromptEvaluationDatasetVersionInAsset(ctx context.Context, arg GetPromptEvaluationDatasetVersionInAssetParams) (PromptEvaluationDatasetVersion, error) {
+	row := q.db.QueryRow(ctx, getPromptEvaluationDatasetVersionInAsset, arg.WorkspaceID, arg.DatasetAssetID, arg.ID)
+	var i PromptEvaluationDatasetVersion
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.DatasetAssetID,
+		&i.Version,
+		&i.VersionLabel,
+		&i.RowCount,
+		&i.RowFingerprint,
+		&i.Metadata,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const listPromptEvaluationDatasetVersionRows = `-- name: ListPromptEvaluationDatasetVersionRows :many
 SELECT id, workspace_id, dataset_version_id, dataset_asset_id, source_row_id, case_id, row_index, row_name, variables, expected_contains, expected, tags, source, created_at FROM prompt_evaluation_dataset_version_row
 WHERE workspace_id = $1

@@ -136,6 +136,9 @@ import type {
   CreatePromptEvaluationDatasetVersionRequest,
   PromptEvaluationDatasetFromTracesResponse,
   PromptEvaluationDatasetVersion,
+  PromptEvaluationDatasetVersionDiff,
+  RestorePromptEvaluationDatasetVersionRequest,
+  RestorePromptEvaluationDatasetVersionResponse,
   PromptEvaluationOptimizationCandidate,
   UpdatePromptEvaluationOptimizationCandidateRequest,
   PublishPromptEvaluationOptimizationCandidateResponse,
@@ -204,6 +207,7 @@ import {
   EMPTY_PROMPT_LIBRARY_VERSION_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_ASSET,
   EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_DATASET_VERSION_DIFF,
   EMPTY_PROMPT_EVALUATION_DATASET_VERSION_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_DATASET_VERSION_ROW_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_RUN,
@@ -220,6 +224,7 @@ import {
   EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
   EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE,
   EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE,
+  EMPTY_RESTORE_PROMPT_EVALUATION_DATASET_VERSION_RESPONSE,
   EMPTY_WEBHOOK_DELIVERY,
   AppConfigSchema,
   type AppConfigResponse,
@@ -235,9 +240,11 @@ import {
   PromptEvaluationAssetSchema,
   PromptEvaluationAssetListResponseSchema,
   PromptEvaluationDatasetFromTracesResponseSchema,
+  PromptEvaluationDatasetVersionDiffSchema,
   PromptEvaluationDatasetVersionListResponseSchema,
   PromptEvaluationDatasetVersionRowListResponseSchema,
   PromptEvaluationDatasetVersionSchema,
+  RestorePromptEvaluationDatasetVersionResponseSchema,
   PromptEvaluationRunListResponseSchema,
   PromptEvaluationRunSchema,
   PromptEvaluationTrialListResponseSchema,
@@ -1887,6 +1894,32 @@ export class ApiClient {
     return parseWithFallback(raw, PromptEvaluationDatasetVersionRowListResponseSchema, EMPTY_PROMPT_EVALUATION_DATASET_VERSION_ROW_LIST_RESPONSE, {
       endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-versions/:versionId/rows",
     }) as ListPromptEvaluationDatasetVersionRowsResponse;
+  }
+
+  async diffPromptEvaluationDatasetVersion(
+    id: string,
+    baseVersionId: string,
+    targetVersionId: string,
+  ): Promise<PromptEvaluationDatasetVersionDiff> {
+    const search = new URLSearchParams({ target_version_id: targetVersionId });
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions/${baseVersionId}/diff?${search}`);
+    return parseWithFallback(raw, PromptEvaluationDatasetVersionDiffSchema, EMPTY_PROMPT_EVALUATION_DATASET_VERSION_DIFF, {
+      endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-versions/:versionId/diff",
+    }) as PromptEvaluationDatasetVersionDiff;
+  }
+
+  async restorePromptEvaluationDatasetVersion(
+    id: string,
+    versionId: string,
+    data: RestorePromptEvaluationDatasetVersionRequest = {},
+  ): Promise<RestorePromptEvaluationDatasetVersionResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions/${versionId}/restore`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, RestorePromptEvaluationDatasetVersionResponseSchema, EMPTY_RESTORE_PROMPT_EVALUATION_DATASET_VERSION_RESPONSE, {
+      endpoint: "POST /api/prompt-evaluation-assets/:id/dataset-versions/:versionId/restore",
+    }) as RestorePromptEvaluationDatasetVersionResponse;
   }
 
   async listPromptEvaluationCases(params?: ListPromptEvaluationCasesParams): Promise<ListPromptEvaluationCasesResponse> {

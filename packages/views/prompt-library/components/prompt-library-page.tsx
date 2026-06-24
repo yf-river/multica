@@ -30,6 +30,7 @@ import type {
   PromptEvaluationRuntimeReadiness,
   PromptEvaluationSummary,
   PromptEvaluationAssetType,
+  PromptEvaluationDatasetVersionDiff,
   ObservabilitySummary,
   PromptLibraryItem,
   PromptLibraryStatus,
@@ -64,6 +65,7 @@ const promptLibraryKeys = {
   list: (workspaceId: string) => ["prompt-library", workspaceId, "list"] as const,
   versions: (workspaceId: string, promptId: string | null) => ["prompt-library", workspaceId, "versions", promptId ?? ""] as const,
   assets: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-assets"] as const,
+  datasetVersions: (workspaceId: string, assetId: string) => ["prompt-library", workspaceId, "evaluation-dataset-versions", assetId] as const,
   cases: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-cases"] as const,
   experimentDimensions: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-experiment-dimensions"] as const,
   runs: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-runs"] as const,
@@ -409,9 +411,10 @@ export function PromptLibraryPage({
         创建时间: new Date().toISOString(),
       },
     }),
-    onSuccess: (version) => {
+    onSuccess: (version, assetId) => {
       invalidateAssets();
       invalidateSummary();
+      queryClient.invalidateQueries({ queryKey: promptLibraryKeys.datasetVersions(workspaceId ?? "", assetId) });
       toast.success(`数据集版本 v${version.version} 已生成`);
     },
     onError: (error) => {
@@ -1749,6 +1752,9 @@ function TrainingAssetPanel({
                   <div className="mt-1 text-[11px] text-muted-foreground" data-testid={`dataset-version-summary-${asset.id}`}>
                     {summarizeDatasetVersion(asset)}
                   </div>
+                )}
+                {asset.asset_type === "数据集" && (
+                  <DatasetVersionControls asset={asset} saving={saving} />
                 )}
               </div>
               <div className="flex items-center gap-2">
@@ -3177,6 +3183,116 @@ function summarizeStructuredCase(item: PromptEvaluationStructuredCase): string {
   if (variables.length > 0) parts.push(`变量 ${variables.join("、")}`);
   if (expected.length > 0) parts.push(`期望 ${expected.join("、")}`);
   return parts.length > 0 ? parts.join(" · ") : "未记录变量和期望";
+}
+
+function DatasetVersionControls({ asset, saving }: { asset: PromptEvaluationAsset; saving: boolean }) {
+  const workspaceId = useWorkspaceId() ?? "";
+  const queryClient = useQueryClient();
+  const [diff, setDiff] = useState<PromptEvaluationDatasetVersionDiff | null>(null);
+  const [loaded, setLoaded] = useState(false);
+  const versionsQuery = useQuery({
+    queryKey: promptLibraryKeys.datasetVersions(workspaceId, asset.id),
+    queryFn: () => api.listPromptEvaluationDatasetVersions(asset.id, 5),
+    enabled: Boolean(loaded && workspaceId && asset.id),
+  });
+  const invalidateDataset = () => {
+    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.datasetVersions(workspaceId, asset.id) });
+    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId) });
+    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId) });
+    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId) });
+  };
+  const diffMut = useMutation({
+    mutationFn: () => {
+      const versions = versionsQuery.data?.items ?? [];
+      if (versions.length < 2) {
+        throw new Error("至少需要两个数据集版本才能对比");
+      }
+      return api.diffPromptEvaluationDatasetVersion(asset.id, versions[1]!.id, versions[0]!.id);
+    },
+    onSuccess: (result) => {
+      setDiff(result);
+      toast.success("数据集版本对比已生成");
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "数据集版本对比失败"),
+  });
+  const restoreMut = useMutation({
+    mutationFn: (versionId: string) =>
+      api.restorePromptEvaluationDatasetVersion(asset.id, versionId, {
+        version_label: "从历史版本恢复",
+        metadata: {
+          来源: "训练与评估页面",
+          用途: "恢复历史数据集版本并生成新的可追溯快照",
+          恢复时间: new Date().toISOString(),
+        },
+      }),
+    onSuccess: (result) => {
+      setDiff(null);
+      invalidateDataset();
+      toast.success(`已恢复 v${result.restored_from.version}，并生成 v${result.restored_version.version}`);
+    },
+    onError: (error) => toast.error(error instanceof Error ? error.message : "数据集版本恢复失败"),
+  });
+  const versions = versionsQuery.data?.items ?? [];
+  const latest = versions[0];
+  const busy = versionsQuery.isLoading || versionsQuery.isFetching || diffMut.isPending || restoreMut.isPending;
+  const disabled = saving || busy;
+
+  return (
+    <div className="mt-2 grid gap-2 rounded-md border border-border/70 bg-muted/20 p-2 text-[11px]" data-testid={`dataset-version-controls-${asset.id}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium text-foreground">版本治理</span>
+        {!loaded ? (
+          <span className="text-muted-foreground">按需加载版本快照，避免列表页批量请求</span>
+        ) : latest ? (
+          <span className="text-muted-foreground">最新 v{latest.version} · {latest.row_count} 行 · 指纹 {latest.row_fingerprint.slice(0, 10)}</span>
+        ) : (
+          <span className="text-muted-foreground">暂无版本快照</span>
+        )}
+        <Button
+          size="sm"
+          variant="secondary"
+          data-testid={`load-dataset-versions-${asset.id}`}
+          onClick={() => setLoaded(true)}
+          disabled={saving || loaded || busy}
+        >
+          {versionsQuery.isLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
+          查看版本
+        </Button>
+        <Button
+          size="sm"
+          variant="secondary"
+          data-testid={`diff-dataset-version-${asset.id}`}
+          onClick={() => diffMut.mutate()}
+          disabled={disabled || !loaded || versions.length < 2}
+        >
+          {diffMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
+          对比最近版本
+        </Button>
+      </div>
+      {versions.length > 0 && (
+        <div className="flex flex-wrap gap-2">
+          {versions.map((version) => (
+            <Button
+              key={version.id}
+              size="sm"
+              variant={version.id === latest?.id ? "outline" : "secondary"}
+              data-testid={`restore-dataset-version-${asset.id}-${version.version}`}
+              onClick={() => restoreMut.mutate(version.id)}
+              disabled={disabled}
+            >
+              {restoreMut.isPending && restoreMut.variables === version.id ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
+              恢复 v{version.version}
+            </Button>
+          ))}
+        </div>
+      )}
+      {diff && (
+        <div className="text-muted-foreground" data-testid={`dataset-version-diff-${asset.id}`}>
+          对比 v{diff.base_version.version} → v{diff.target_version.version}：新增 {diff.summary["新增"] ?? 0} · 删除 {diff.summary["删除"] ?? 0} · 变更 {diff.summary["变更"] ?? 0} · 未变更 {diff.summary["未变更"] ?? 0}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function summarizeAgentRun(asset: PromptEvaluationAsset): string | null {

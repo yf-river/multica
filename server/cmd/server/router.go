@@ -776,6 +776,8 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Route("/dataset-versions", func(r chi.Router) {
 						r.Get("/", h.ListPromptEvaluationDatasetVersions)
 						r.Post("/", h.CreatePromptEvaluationDatasetVersion)
+						r.Get("/{versionId}/diff", h.DiffPromptEvaluationDatasetVersion)
+						r.Post("/{versionId}/restore", h.RestorePromptEvaluationDatasetVersion)
 						r.Get("/{versionId}/rows", h.ListPromptEvaluationDatasetVersionRows)
 					})
 				})

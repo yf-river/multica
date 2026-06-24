@@ -42,7 +42,10 @@ const (
 	promptEvaluationRuntimeLimitTTL      = 10 * time.Minute
 )
 
-var promptTemplateVariablePattern = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}`)
+var (
+	promptTemplateVariablePattern           = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_.-]+)\s*\}\}`)
+	errPromptEvaluationDatasetVersionNoRows = errors.New("dataset version requires at least one enabled row")
+)
 
 func promptEvaluationAgentModel() string {
 	if value := strings.TrimSpace(os.Getenv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL")); value != "" {
@@ -139,6 +142,11 @@ type CreatePromptEvaluationDatasetVersionRequest struct {
 	Metadata     json.RawMessage `json:"metadata"`
 }
 
+type RestorePromptEvaluationDatasetVersionRequest struct {
+	VersionLabel string          `json:"version_label"`
+	Metadata     json.RawMessage `json:"metadata"`
+}
+
 type PromptEvaluationDatasetVersionResponse struct {
 	ID             string  `json:"id"`
 	WorkspaceID    string  `json:"workspace_id"`
@@ -167,6 +175,29 @@ type PromptEvaluationDatasetVersionRowResponse struct {
 	Tags             any     `json:"tags"`
 	Source           string  `json:"source"`
 	CreatedAt        string  `json:"created_at"`
+}
+
+type PromptEvaluationDatasetVersionDiffResponse struct {
+	BaseVersion   PromptEvaluationDatasetVersionResponse      `json:"base_version"`
+	TargetVersion PromptEvaluationDatasetVersionResponse      `json:"target_version"`
+	Summary       map[string]int                              `json:"summary"`
+	Added         []PromptEvaluationDatasetVersionRowResponse `json:"added"`
+	Removed       []PromptEvaluationDatasetVersionRowResponse `json:"removed"`
+	Changed       []PromptEvaluationDatasetVersionChangedRow  `json:"changed"`
+	Unchanged     []PromptEvaluationDatasetVersionRowResponse `json:"unchanged"`
+}
+
+type PromptEvaluationDatasetVersionChangedRow struct {
+	RowIndex int32                                     `json:"row_index"`
+	Base     PromptEvaluationDatasetVersionRowResponse `json:"base"`
+	Target   PromptEvaluationDatasetVersionRowResponse `json:"target"`
+}
+
+type RestorePromptEvaluationDatasetVersionResponse struct {
+	Asset           PromptEvaluationAssetResponse          `json:"asset"`
+	RestoredFrom    PromptEvaluationDatasetVersionResponse `json:"restored_from"`
+	RestoredVersion PromptEvaluationDatasetVersionResponse `json:"restored_version"`
+	RestoredCases   []PromptEvaluationCaseResponse         `json:"restored_cases"`
 }
 
 type promptEvaluationRunResult struct {
@@ -1675,59 +1706,13 @@ func (h *Handler) CreatePromptEvaluationDatasetVersion(w http.ResponseWriter, r 
 	}
 	defer tx.Rollback(r.Context())
 	qtx := h.Queries.WithTx(tx)
-	rows, err := qtx.ListPromptEvaluationDatasetRows(r.Context(), db.ListPromptEvaluationDatasetRowsParams{
-		WorkspaceID:    asset.WorkspaceID,
-		DatasetAssetID: asset.ID,
-		Status:         pgtype.Text{String: "启用", Valid: true},
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list dataset rows for version")
-		return
-	}
-	if len(rows) == 0 {
+	version, err := h.createPromptEvaluationDatasetVersionFromCurrent(r.Context(), qtx, asset, parseUUID(userID), strings.TrimSpace(req.VersionLabel), metadata)
+	if errors.Is(err, errPromptEvaluationDatasetVersionNoRows) {
 		writeError(w, http.StatusBadRequest, "dataset version requires at least one enabled row")
 		return
 	}
-	nextVersion, err := qtx.NextPromptEvaluationDatasetVersion(r.Context(), db.NextPromptEvaluationDatasetVersionParams{
-		WorkspaceID:    asset.WorkspaceID,
-		DatasetAssetID: asset.ID,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to allocate dataset version")
-		return
-	}
-	version, err := qtx.CreatePromptEvaluationDatasetVersion(r.Context(), db.CreatePromptEvaluationDatasetVersionParams{
-		WorkspaceID:    asset.WorkspaceID,
-		DatasetAssetID: asset.ID,
-		Version:        nextVersion,
-		RowCount:       int32(len(rows)),
-		RowFingerprint: promptEvaluationDatasetRowsFingerprint(rows),
-		VersionLabel:   strings.TrimSpace(req.VersionLabel),
-		Metadata:       metadata,
-		CreatedBy:      parseUUID(userID),
-	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create dataset version")
-		return
-	}
-	if err := qtx.CreatePromptEvaluationDatasetVersionRowsFromCurrent(r.Context(), db.CreatePromptEvaluationDatasetVersionRowsFromCurrentParams{
-		WorkspaceID:      asset.WorkspaceID,
-		DatasetAssetID:   asset.ID,
-		DatasetVersionID: version.ID,
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create dataset version rows")
-		return
-	}
-	payload := decodePayloadObject(asset.Payload)
-	payload["最近数据集版本"] = promptEvaluationDatasetVersionSummary(version)
-	payload["数据集版本说明"] = "数据集版本是当前启用样本行的不可变快照；评估运行会在证据中记录当次绑定版本，保证后续复盘可追溯。"
-	if _, err := qtx.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
-		ID:          asset.ID,
-		WorkspaceID: asset.WorkspaceID,
-		PromptID:    asset.PromptID,
-		Payload:     mustJSONBytes(payload),
-	}); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save dataset version summary")
 		return
 	}
 	if err := tx.Commit(r.Context()); err != nil {
@@ -1735,6 +1720,59 @@ func (h *Handler) CreatePromptEvaluationDatasetVersion(w http.ResponseWriter, r 
 		return
 	}
 	writeJSON(w, http.StatusCreated, promptEvaluationDatasetVersionToResponse(version))
+}
+
+func (h *Handler) createPromptEvaluationDatasetVersionFromCurrent(ctx context.Context, qtx *db.Queries, asset db.PromptEvaluationAsset, createdBy pgtype.UUID, versionLabel string, metadata []byte) (db.PromptEvaluationDatasetVersion, error) {
+	rows, err := qtx.ListPromptEvaluationDatasetRows(ctx, db.ListPromptEvaluationDatasetRowsParams{
+		WorkspaceID:    asset.WorkspaceID,
+		DatasetAssetID: asset.ID,
+		Status:         pgtype.Text{String: "启用", Valid: true},
+	})
+	if err != nil {
+		return db.PromptEvaluationDatasetVersion{}, err
+	}
+	if len(rows) == 0 {
+		return db.PromptEvaluationDatasetVersion{}, errPromptEvaluationDatasetVersionNoRows
+	}
+	nextVersion, err := qtx.NextPromptEvaluationDatasetVersion(ctx, db.NextPromptEvaluationDatasetVersionParams{
+		WorkspaceID:    asset.WorkspaceID,
+		DatasetAssetID: asset.ID,
+	})
+	if err != nil {
+		return db.PromptEvaluationDatasetVersion{}, err
+	}
+	version, err := qtx.CreatePromptEvaluationDatasetVersion(ctx, db.CreatePromptEvaluationDatasetVersionParams{
+		WorkspaceID:    asset.WorkspaceID,
+		DatasetAssetID: asset.ID,
+		Version:        nextVersion,
+		RowCount:       int32(len(rows)),
+		RowFingerprint: promptEvaluationDatasetRowsFingerprint(rows),
+		VersionLabel:   strings.TrimSpace(versionLabel),
+		Metadata:       metadata,
+		CreatedBy:      createdBy,
+	})
+	if err != nil {
+		return db.PromptEvaluationDatasetVersion{}, err
+	}
+	if err := qtx.CreatePromptEvaluationDatasetVersionRowsFromCurrent(ctx, db.CreatePromptEvaluationDatasetVersionRowsFromCurrentParams{
+		WorkspaceID:      asset.WorkspaceID,
+		DatasetAssetID:   asset.ID,
+		DatasetVersionID: version.ID,
+	}); err != nil {
+		return db.PromptEvaluationDatasetVersion{}, err
+	}
+	payload := decodePayloadObject(asset.Payload)
+	payload["最近数据集版本"] = promptEvaluationDatasetVersionSummary(version)
+	payload["数据集版本说明"] = "数据集版本是当前启用样本行的不可变快照；评估运行会在证据中记录当次绑定版本，保证后续复盘可追溯。"
+	if _, err := qtx.UpdatePromptEvaluationAsset(ctx, db.UpdatePromptEvaluationAssetParams{
+		ID:          asset.ID,
+		WorkspaceID: asset.WorkspaceID,
+		PromptID:    asset.PromptID,
+		Payload:     mustJSONBytes(payload),
+	}); err != nil {
+		return db.PromptEvaluationDatasetVersion{}, err
+	}
+	return version, nil
 }
 
 func (h *Handler) ListPromptEvaluationDatasetVersionRows(w http.ResponseWriter, r *http.Request) {
@@ -1767,6 +1805,239 @@ func (h *Handler) ListPromptEvaluationDatasetVersionRows(w http.ResponseWriter, 
 		resp[i] = promptEvaluationDatasetVersionRowToResponse(row)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
+}
+
+func (h *Handler) DiffPromptEvaluationDatasetVersion(w http.ResponseWriter, r *http.Request) {
+	asset, ok := h.loadPromptEvaluationAsset(w, r)
+	if !ok {
+		return
+	}
+	if asset.AssetType != promptEvaluationAssetDataset {
+		writeError(w, http.StatusBadRequest, "only 数据集 assets have version diff")
+		return
+	}
+	baseVersionID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "versionId"), "dataset version id")
+	if !ok {
+		return
+	}
+	targetRaw := strings.TrimSpace(r.URL.Query().Get("target_version_id"))
+	if targetRaw == "" {
+		writeError(w, http.StatusBadRequest, "target_version_id is required")
+		return
+	}
+	targetVersionID, ok := parseUUIDOrBadRequest(w, targetRaw, "target dataset version id")
+	if !ok {
+		return
+	}
+	baseVersion, err := h.Queries.GetPromptEvaluationDatasetVersionInAsset(r.Context(), db.GetPromptEvaluationDatasetVersionInAssetParams{
+		WorkspaceID:    asset.WorkspaceID,
+		DatasetAssetID: asset.ID,
+		ID:             baseVersionID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "base dataset version not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load base dataset version")
+		return
+	}
+	targetVersion, err := h.Queries.GetPromptEvaluationDatasetVersionInAsset(r.Context(), db.GetPromptEvaluationDatasetVersionInAssetParams{
+		WorkspaceID:    asset.WorkspaceID,
+		DatasetAssetID: asset.ID,
+		ID:             targetVersionID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "target dataset version not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load target dataset version")
+		return
+	}
+	baseRows, err := h.Queries.ListPromptEvaluationDatasetVersionRows(r.Context(), db.ListPromptEvaluationDatasetVersionRowsParams{
+		WorkspaceID:      asset.WorkspaceID,
+		DatasetVersionID: baseVersion.ID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list base dataset version rows")
+		return
+	}
+	targetRows, err := h.Queries.ListPromptEvaluationDatasetVersionRows(r.Context(), db.ListPromptEvaluationDatasetVersionRowsParams{
+		WorkspaceID:      asset.WorkspaceID,
+		DatasetVersionID: targetVersion.ID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list target dataset version rows")
+		return
+	}
+	diff := buildPromptEvaluationDatasetVersionDiff(baseRows, targetRows)
+	diff.BaseVersion = promptEvaluationDatasetVersionToResponse(baseVersion)
+	diff.TargetVersion = promptEvaluationDatasetVersionToResponse(targetVersion)
+	writeJSON(w, http.StatusOK, diff)
+}
+
+func (h *Handler) RestorePromptEvaluationDatasetVersion(w http.ResponseWriter, r *http.Request) {
+	asset, ok := h.loadPromptEvaluationAsset(w, r)
+	if !ok {
+		return
+	}
+	if asset.AssetType != promptEvaluationAssetDataset {
+		writeError(w, http.StatusBadRequest, "only 数据集 assets can restore versions")
+		return
+	}
+	versionID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "versionId"), "dataset version id")
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	var req RestorePromptEvaluationDatasetVersionRequest
+	if r.Body != nil {
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil && !errors.Is(err, io.EOF) {
+			writeError(w, http.StatusBadRequest, "invalid dataset version restore payload")
+			return
+		}
+	}
+	requestMetadata, ok := jsonObjectField(w, req.Metadata, "metadata")
+	if !ok {
+		return
+	}
+	version, err := h.Queries.GetPromptEvaluationDatasetVersionInAsset(r.Context(), db.GetPromptEvaluationDatasetVersionInAssetParams{
+		WorkspaceID:    asset.WorkspaceID,
+		DatasetAssetID: asset.ID,
+		ID:             versionID,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "dataset version not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load dataset version")
+		return
+	}
+	rows, err := h.Queries.ListPromptEvaluationDatasetVersionRows(r.Context(), db.ListPromptEvaluationDatasetVersionRowsParams{
+		WorkspaceID:      asset.WorkspaceID,
+		DatasetVersionID: version.ID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list dataset version rows")
+		return
+	}
+	if len(rows) == 0 {
+		writeError(w, http.StatusBadRequest, "dataset version has no rows to restore")
+		return
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start dataset version restore transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	if err := qtx.DeletePromptEvaluationCasesByAsset(r.Context(), db.DeletePromptEvaluationCasesByAssetParams{
+		WorkspaceID: asset.WorkspaceID,
+		AssetID:     asset.ID,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to clear current dataset cases")
+		return
+	}
+
+	restoredCases := make([]PromptEvaluationCaseResponse, 0, len(rows))
+	for _, row := range rows {
+		created, err := qtx.CreatePromptEvaluationCase(r.Context(), db.CreatePromptEvaluationCaseParams{
+			WorkspaceID:      asset.WorkspaceID,
+			AssetID:          asset.ID,
+			PromptID:         asset.PromptID,
+			CaseIndex:        row.RowIndex,
+			CaseName:         row.RowName,
+			Variables:        row.Variables,
+			ExpectedContains: row.ExpectedContains,
+			Input:            []byte("{}"),
+			Expected:         row.Expected,
+			Tags:             row.Tags,
+			Status:           "启用",
+			Source:           "manual",
+			CreatedBy:        parseUUID(userID),
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to recreate dataset case from version")
+			return
+		}
+		assertions, err := syncPromptEvaluationCaseAssertions(r.Context(), qtx, created, row.ExpectedContains)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to recreate dataset case assertions")
+			return
+		}
+		if err := syncPromptEvaluationDatasetRow(r.Context(), qtx, asset, created); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to sync restored dataset row")
+			return
+		}
+		restoredCases = append(restoredCases, promptEvaluationCaseToResponse(created, assertions))
+	}
+
+	payload := normalizePromptEvaluationPayloadObject(promptEvaluationPayloadWithCases(decodePayloadObject(asset.Payload), promptEvaluationPayloadCasesFromDatasetVersionRows(rows)))
+	payload["最近恢复数据集版本"] = map[string]any{
+		"dataset_version_id": uuidToString(version.ID),
+		"version":            version.Version,
+		"version_label":      version.VersionLabel,
+		"restored_at":        time.Now().Format(time.RFC3339),
+	}
+	payloadBytes := mustJSONBytes(payload)
+	profile := promptEvaluationAssetProfileFromPayload(payloadBytes, asset.PromptID)
+	updatedAsset, err := qtx.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
+		ID:                       asset.ID,
+		WorkspaceID:              asset.WorkspaceID,
+		PromptID:                 asset.PromptID,
+		Payload:                  payloadBytes,
+		StructureSchema:          pgtype.Text{String: profile.StructureSchema, Valid: true},
+		StructuredCaseCount:      pgtype.Int4{Int32: profile.StructuredCaseCount, Valid: true},
+		StructuredVariableCount:  pgtype.Int4{Int32: profile.StructuredVariableCount, Valid: true},
+		StructuredAssertionCount: pgtype.Int4{Int32: profile.StructuredAssertionCount, Valid: true},
+		LinkedDatasetCount:       pgtype.Int4{Int32: profile.LinkedDatasetCount, Valid: true},
+		LinkedPromptCount:        pgtype.Int4{Int32: profile.LinkedPromptCount, Valid: true},
+		EvaluationDimensionCount: pgtype.Int4{Int32: profile.EvaluationDimensionCount, Valid: true},
+		ExperimentDimensionCount: pgtype.Int4{Int32: profile.ExperimentDimensionCount, Valid: true},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update restored dataset asset")
+		return
+	}
+	metadata := promptEvaluationDatasetVersionRestoreMetadata(version, requestMetadata)
+	versionLabel := strings.TrimSpace(req.VersionLabel)
+	if versionLabel == "" {
+		versionLabel = fmt.Sprintf("从 v%d 恢复", version.Version)
+	}
+	restoredVersion, err := h.createPromptEvaluationDatasetVersionFromCurrent(r.Context(), qtx, updatedAsset, parseUUID(userID), versionLabel, metadata)
+	if errors.Is(err, errPromptEvaluationDatasetVersionNoRows) {
+		writeError(w, http.StatusBadRequest, "dataset version requires at least one enabled row")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create restored dataset version")
+		return
+	}
+	finalAsset, err := qtx.GetPromptEvaluationAssetInWorkspace(r.Context(), db.GetPromptEvaluationAssetInWorkspaceParams{
+		ID:          asset.ID,
+		WorkspaceID: asset.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reload restored dataset asset")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit dataset version restore")
+		return
+	}
+	writeJSON(w, http.StatusOK, RestorePromptEvaluationDatasetVersionResponse{
+		Asset:           promptEvaluationAssetToResponse(finalAsset),
+		RestoredFrom:    promptEvaluationDatasetVersionToResponse(version),
+		RestoredVersion: promptEvaluationDatasetVersionToResponse(restoredVersion),
+		RestoredCases:   restoredCases,
+	})
 }
 
 func (h *Handler) promptEvaluationTraceEventsForDataset(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, req CreatePromptEvaluationDatasetFromTracesRequest, limit int32) ([]db.TaskTraceEvent, bool) {
@@ -5294,6 +5565,116 @@ func promptEvaluationDatasetRowsFingerprint(rows []db.PromptEvaluationDatasetRow
 	}
 	sum := sha256.Sum256(mustJSONBytes(snapshot))
 	return fmt.Sprintf("%x", sum[:])
+}
+
+func promptEvaluationDatasetVersionRowFingerprint(row db.PromptEvaluationDatasetVersionRow) string {
+	snapshot := map[string]any{
+		"row_index":         row.RowIndex,
+		"row_name":          row.RowName,
+		"variables":         decodeJSONDefault(row.Variables, map[string]any{}),
+		"expected_contains": decodeJSONDefault(row.ExpectedContains, []any{}),
+		"expected":          decodeJSONDefault(row.Expected, map[string]any{}),
+		"tags":              decodeJSONDefault(row.Tags, []any{}),
+		"source":            row.Source,
+	}
+	sum := sha256.Sum256(mustJSONBytes(snapshot))
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func buildPromptEvaluationDatasetVersionDiff(baseRows []db.PromptEvaluationDatasetVersionRow, targetRows []db.PromptEvaluationDatasetVersionRow) PromptEvaluationDatasetVersionDiffResponse {
+	baseByIndex := make(map[int32]db.PromptEvaluationDatasetVersionRow, len(baseRows))
+	targetByIndex := make(map[int32]db.PromptEvaluationDatasetVersionRow, len(targetRows))
+	indexSet := map[int32]bool{}
+	for _, row := range baseRows {
+		baseByIndex[row.RowIndex] = row
+		indexSet[row.RowIndex] = true
+	}
+	for _, row := range targetRows {
+		targetByIndex[row.RowIndex] = row
+		indexSet[row.RowIndex] = true
+	}
+	indexes := make([]int, 0, len(indexSet))
+	for index := range indexSet {
+		indexes = append(indexes, int(index))
+	}
+	sort.Ints(indexes)
+
+	resp := PromptEvaluationDatasetVersionDiffResponse{
+		Summary: map[string]int{
+			"新增":  0,
+			"删除":  0,
+			"变更":  0,
+			"未变更": 0,
+		},
+		Added:     []PromptEvaluationDatasetVersionRowResponse{},
+		Removed:   []PromptEvaluationDatasetVersionRowResponse{},
+		Changed:   []PromptEvaluationDatasetVersionChangedRow{},
+		Unchanged: []PromptEvaluationDatasetVersionRowResponse{},
+	}
+	for _, rawIndex := range indexes {
+		index := int32(rawIndex)
+		base, hasBase := baseByIndex[index]
+		target, hasTarget := targetByIndex[index]
+		switch {
+		case !hasBase && hasTarget:
+			resp.Added = append(resp.Added, promptEvaluationDatasetVersionRowToResponse(target))
+			resp.Summary["新增"]++
+		case hasBase && !hasTarget:
+			resp.Removed = append(resp.Removed, promptEvaluationDatasetVersionRowToResponse(base))
+			resp.Summary["删除"]++
+		case promptEvaluationDatasetVersionRowFingerprint(base) != promptEvaluationDatasetVersionRowFingerprint(target):
+			resp.Changed = append(resp.Changed, PromptEvaluationDatasetVersionChangedRow{
+				RowIndex: index,
+				Base:     promptEvaluationDatasetVersionRowToResponse(base),
+				Target:   promptEvaluationDatasetVersionRowToResponse(target),
+			})
+			resp.Summary["变更"]++
+		default:
+			resp.Unchanged = append(resp.Unchanged, promptEvaluationDatasetVersionRowToResponse(target))
+			resp.Summary["未变更"]++
+		}
+	}
+	return resp
+}
+
+func promptEvaluationPayloadCasesFromDatasetVersionRows(rows []db.PromptEvaluationDatasetVersionRow) []map[string]any {
+	cases := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		cases = append(cases, map[string]any{
+			"name":              row.RowName,
+			"case_name":         row.RowName,
+			"名称":                row.RowName,
+			"variables":         decodeJSONDefault(row.Variables, map[string]any{}),
+			"变量":                decodeJSONDefault(row.Variables, map[string]any{}),
+			"expected_contains": decodeJSONDefault(row.ExpectedContains, []any{}),
+			"期望包含":              decodeJSONDefault(row.ExpectedContains, []any{}),
+			"expected":          decodeJSONDefault(row.Expected, map[string]any{}),
+			"期望":                decodeJSONDefault(row.Expected, map[string]any{}),
+			"tags":              decodeJSONDefault(row.Tags, []any{}),
+			"标签":                decodeJSONDefault(row.Tags, []any{}),
+		})
+	}
+	return cases
+}
+
+func promptEvaluationDatasetVersionRestoreMetadata(version db.PromptEvaluationDatasetVersion, requestMetadata []byte) []byte {
+	metadata := map[string]any{
+		"来源":        "数据集版本恢复",
+		"恢复来源版本":    version.Version,
+		"恢复来源版本标识":  uuidToString(version.ID),
+		"恢复来源版本名称":  version.VersionLabel,
+		"恢复来源版本行指纹": version.RowFingerprint,
+		"恢复时间":      time.Now().Format(time.RFC3339),
+	}
+	if len(requestMetadata) > 0 {
+		var extra map[string]any
+		if err := json.Unmarshal(requestMetadata, &extra); err == nil {
+			for key, value := range extra {
+				metadata[key] = value
+			}
+		}
+	}
+	return mustJSONBytes(metadata)
 }
 
 func promptEvaluationDatasetVersionSummary(version db.PromptEvaluationDatasetVersion) map[string]any {

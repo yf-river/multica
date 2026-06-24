@@ -956,6 +956,69 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByRole("button", { name: "运行并记录" })).toHaveCount(0);
   });
 
+  test("数据集版本可以对比并恢复为新的可追溯版本", async ({ page }) => {
+    test.setTimeout(90_000);
+    const prompt = await api.createPromptForE2E(artifactPrefix, {
+      name: `${artifactPrefix} 数据集版本提示词`,
+      content: "请处理 {{issue_title}}，输出中文验收结论。",
+      variables: [{ name: "issue_title", label: "任务标题", required: true }],
+    });
+    const dataset = await api.createPromptEvaluationAsset({
+      prompt_id: prompt.id,
+      name: `${artifactPrefix} 数据集版本治理`,
+      description: "E2E 公开 API 和 UI 验证数据集版本对比恢复",
+      asset_type: "数据集",
+      payload: {
+        cases: [
+          {
+            名称: "版本一登录用例",
+            变量: { issue_title: "登录失败" },
+            期望包含: ["中文验收结论"],
+            标签: ["版本一"],
+          },
+        ],
+      },
+      status: "启用",
+    });
+    const v1 = await api.createPromptEvaluationDatasetVersion(dataset.id, { version_label: "E2E v1" });
+    await api.createPromptEvaluationCase({
+      asset_id: dataset.id,
+      prompt_id: prompt.id,
+      case_index: 1,
+      case_name: "版本二新增用例",
+      variables: { issue_title: "新增 API" },
+      expected_contains: ["新增 API 验收"],
+      tags: ["版本二"],
+      status: "启用",
+    });
+    const v2 = await api.createPromptEvaluationDatasetVersion(dataset.id, { version_label: "E2E v2" });
+    const apiDiff = await api.diffPromptEvaluationDatasetVersion(dataset.id, v1.id, v2.id);
+    expect(apiDiff.summary["新增"]).toBe(1);
+    expect(apiDiff.summary["未变更"]).toBe(1);
+
+    await page.goto(`/${workspaceSlug}/training/datasets`, { waitUntil: "domcontentloaded" });
+    const datasetRow = page.getByTestId(`prompt-evaluation-asset-${dataset.id}`);
+    await expect(datasetRow).toBeVisible({ timeout: 15000 });
+    await datasetRow.getByTestId(`load-dataset-versions-${dataset.id}`).click();
+    await expect(datasetRow.getByTestId(`dataset-version-controls-${dataset.id}`)).toContainText("最新 v2", { timeout: 15000 });
+    await datasetRow.getByTestId(`diff-dataset-version-${dataset.id}`).click();
+    await expect(datasetRow.getByTestId(`dataset-version-diff-${dataset.id}`)).toContainText("新增 1", { timeout: 15000 });
+
+    await datasetRow.getByTestId(`restore-dataset-version-${dataset.id}-1`).click();
+    await expect
+      .poll(async () => (await api.listPromptEvaluationDatasetVersions(dataset.id))[0]?.version ?? 0, { timeout: 15000 })
+      .toBe(3);
+    await expect(datasetRow.getByTestId(`dataset-version-controls-${dataset.id}`)).toContainText("最新 v3", { timeout: 15000 });
+    const latest = (await api.listPromptEvaluationDatasetVersions(dataset.id))[0]!;
+    const restoredRows = await api.listPromptEvaluationDatasetVersionRows(dataset.id, latest.id);
+    expect(restoredRows).toHaveLength(1);
+    expect(restoredRows[0]).toMatchObject({
+      row_index: 0,
+      row_name: "版本一登录用例",
+    });
+    expect(restoredRows.map((row) => row.row_name)).not.toContain("版本二新增用例");
+  });
+
   test("智能体调试场公开 API 可以指定执行智能体", async () => {
     test.setTimeout(90_000);
     const runtime = await api.ensureOnlineCodexRuntime(`${artifactPrefix} 指定执行智能体 Runtime`);
