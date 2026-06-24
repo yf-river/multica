@@ -29,6 +29,7 @@ mkdirSync(artifactRoot, { recursive: true });
 const dashboardClicks = [
   { id: "inbox", label: "收件箱", link: "收件箱", path: `/${workspaceSlug}/inbox`, ready: { heading: "收件箱" } },
   { id: "issues", label: "任务", link: "任务", path: `/${workspaceSlug}/issues`, ready: { heading: "任务" } },
+  { id: "projects", label: "项目", link: "项目", path: `/${workspaceSlug}/projects`, ready: { heading: "项目" } },
   { id: "agents", label: "智能体", link: "智能体", path: `/${workspaceSlug}/agents`, ready: { heading: "智能体" } },
   { id: "squads", label: "小队", link: "小队", path: `/${workspaceSlug}/squads`, ready: { heading: "小队" } },
   { id: "usage", label: "用量", link: "用量", path: `/${workspaceSlug}/usage`, ready: { heading: "用量" } },
