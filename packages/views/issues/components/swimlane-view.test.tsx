@@ -1527,10 +1527,6 @@ describe("SwimLaneView", () => {
       position: 13,
     };
 
-    mockGetAgentTaskSnapshot.mockResolvedValueOnce([
-      { id: "task-1", status: "running", issue_id: "gc-running" },
-    ]);
-
     mockListChildrenByParents.mockResolvedValueOnce({
       issues: [runningGrandchild, nonRunningGrandchild],
     });
@@ -1551,6 +1547,7 @@ describe("SwimLaneView", () => {
           includeNoProject: false,
           labelFilters: [],
           agentRunningFilter: true,
+          runningIssueIds: new Set(["gc-running"]),
         }}
         childProgressMap={childProgressMap}
         onMoveIssue={vi.fn()}
@@ -1565,5 +1562,6 @@ describe("SwimLaneView", () => {
       expect(screen.getByText("Running Child")).toBeInTheDocument();
       expect(screen.queryByText("Non-running Child")).toBeNull();
     });
+    expect(mockGetAgentTaskSnapshot).not.toHaveBeenCalled();
   });
 });
