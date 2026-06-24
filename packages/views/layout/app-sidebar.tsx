@@ -106,6 +106,7 @@ function isNavActive(pathname: string, href: string): boolean {
 const EMPTY_PINS: PinnedItem[] = [];
 const EMPTY_WORKSPACES: Awaited<ReturnType<typeof api.listWorkspaces>> = [];
 const EMPTY_INBOX: Awaited<ReturnType<typeof api.listInbox>> = [];
+const SIDEBAR_RUNTIME_UPDATE_DELAY_MS = 5_000;
 
 // Nav items reference WorkspacePaths method names so they can be resolved
 // against the current workspace slug at render time (see AppSidebar body).
@@ -371,7 +372,14 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
     () => deduplicateInboxItems(inboxItems).filter((i) => !i.read).length,
     [inboxItems],
   );
-  const hasRuntimeUpdates = useMyRuntimesNeedUpdate(wsId);
+  const [runtimeUpdateCheckEnabled, setRuntimeUpdateCheckEnabled] = useState(false);
+  useEffect(() => {
+    setRuntimeUpdateCheckEnabled(false);
+    if (!wsId) return;
+    const timer = setTimeout(() => setRuntimeUpdateCheckEnabled(true), SIDEBAR_RUNTIME_UPDATE_DELAY_MS);
+    return () => clearTimeout(timer);
+  }, [wsId]);
+  const hasRuntimeUpdates = useMyRuntimesNeedUpdate(wsId, runtimeUpdateCheckEnabled);
   const { data: pinnedItems = EMPTY_PINS } = useQuery({
     ...pinListOptions(wsId ?? "", userId ?? ""),
     enabled: !!wsId && !!userId,

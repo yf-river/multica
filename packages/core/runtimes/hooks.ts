@@ -45,13 +45,16 @@ function runtimeNeedsUpdate(
  * Returns true if the current user has any local runtime with an outdated CLI version.
  * Accepts wsId as parameter so callers outside WorkspaceIdProvider can use it safely.
  */
-export function useMyRuntimesNeedUpdate(wsId: string | undefined): boolean {
+export function useMyRuntimesNeedUpdate(wsId: string | undefined, enabled = true): boolean {
   const userId = useAuthStore((s) => s.user?.id);
   const { data: runtimes } = useQuery({
     ...runtimeListOptions(wsId ?? ""),
-    enabled: !!wsId,
+    enabled: enabled && !!wsId,
   });
-  const { data: latestVersion } = useQuery(latestCliVersionOptions());
+  const { data: latestVersion } = useQuery({
+    ...latestCliVersionOptions(),
+    enabled,
+  });
 
   if (!runtimes || !latestVersion || !userId) return false;
 
