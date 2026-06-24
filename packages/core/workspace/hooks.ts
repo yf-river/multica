@@ -5,6 +5,7 @@ import { useQuery } from "@tanstack/react-query";
 import { useWorkspaceId } from "../hooks";
 import { memberListOptions, agentListOptions, squadListOptions } from "./queries";
 import { resolvePublicFileUrl } from "./avatar-url";
+import type { Agent, MemberWithUser, Squad } from "../types";
 
 export type ActorNameQueryScope = {
   members?: boolean;
@@ -17,21 +18,24 @@ const DEFAULT_ACTOR_NAME_QUERY_SCOPE: Required<ActorNameQueryScope> = {
   agents: true,
   squads: true,
 };
+const EMPTY_MEMBERS: MemberWithUser[] = [];
+const EMPTY_AGENTS: Agent[] = [];
+const EMPTY_SQUADS: Squad[] = [];
 
 export function useActorName(scope: ActorNameQueryScope = DEFAULT_ACTOR_NAME_QUERY_SCOPE) {
   const wsId = useWorkspaceId();
   const loadMembers = scope.members !== false;
   const loadAgents = scope.agents !== false;
   const loadSquads = scope.squads !== false;
-  const { data: members = [] } = useQuery({
+  const { data: members = EMPTY_MEMBERS } = useQuery({
     ...memberListOptions(wsId),
     enabled: !!wsId && loadMembers,
   });
-  const { data: agents = [] } = useQuery({
+  const { data: agents = EMPTY_AGENTS } = useQuery({
     ...agentListOptions(wsId),
     enabled: !!wsId && loadAgents,
   });
-  const { data: squads = [] } = useQuery({
+  const { data: squads = EMPTY_SQUADS } = useQuery({
     ...squadListOptions(wsId),
     enabled: !!wsId && loadSquads,
   });
