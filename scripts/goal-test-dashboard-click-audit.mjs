@@ -165,7 +165,8 @@ async function measureClick(page, item) {
   let errorText = "";
   let bodyText = "";
   try {
-    await page.getByRole("link", { name: item.link }).last().click({ timeout: 10_000 });
+    const navLink = await locateNavigationLink(page, item);
+    await navLink.click({ timeout: 10_000 });
     await page.waitForURL(`**${item.path}`, { timeout: 15_000 });
     await waitForReadySignal(page, item.ready, 10_000);
     readyMs = Date.now() - startedAt;
@@ -228,6 +229,26 @@ async function measureClick(page, item) {
     loading_residue: loadingResidue,
     body_excerpt: bodyText.split("\n").filter(Boolean).slice(0, 24),
   };
+}
+
+async function locateNavigationLink(page, item) {
+  const links = page.locator("a");
+  const count = await links.count();
+  for (let i = 0; i < count; i += 1) {
+    const link = links.nth(i);
+    const href = await link.getAttribute("href").catch(() => null);
+    if (!href) continue;
+    let pathname = "";
+    try {
+      pathname = new URL(href, browserURL).pathname;
+    } catch {
+      continue;
+    }
+    if (pathname !== item.path) continue;
+    const box = await link.boundingBox().catch(() => null);
+    if (box && box.width > 0 && box.height > 0) return link;
+  }
+  return page.getByRole("link", { name: item.link }).first();
 }
 
 async function waitForReadySignal(page, ready, timeout) {

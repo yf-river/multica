@@ -17,9 +17,9 @@ function NavigationProviderInner({
   const searchParams = useSearchParams();
 
   const adapter: NavigationAdapter = {
-    push: router.push,
-    replace: router.replace,
-    back: router.back,
+    push: (path: string) => router.push(path),
+    replace: (path: string) => router.replace(path),
+    back: () => router.back(),
     pathname,
     searchParams: new URLSearchParams(searchParams.toString()),
     getShareableUrl: (path: string) =>
