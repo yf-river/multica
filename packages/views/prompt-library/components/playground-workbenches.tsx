@@ -310,6 +310,7 @@ export function AgentPlaygroundWorkbench({
   });
   const promptCaseCount = selected ? cases.filter((item) => item.prompt_id === selected.id).length : 0;
   const selectedAgentRuns = selected ? agentRuns.filter((run) => run.prompt_id === selected.id) : agentRuns;
+  const latestSelectedAgentRun = [...selectedAgentRuns].sort((a, b) => b.created_at.localeCompare(a.created_at))[0] ?? null;
   const selectableAgents = agents.filter((agent) => !agent.archived_at);
   const selectedExecutionAgent = selectedExecutionAgentId === "__auto__" ? null : selectableAgents.find((agent) => agent.id === selectedExecutionAgentId) ?? null;
   const evaluationAgent = agents.find((agent) => agent.name.includes("训练评估") || agent.name.includes("训练与评估")) ?? null;
@@ -503,6 +504,18 @@ export function AgentPlaygroundWorkbench({
         </section>
 
         <section className="grid content-start gap-3">
+          <AgentExecutionConfigComparison
+            current={{
+              agent: executionAgentLabel || "未选择执行智能体",
+              runtime: selectedRuntime?.name ?? runtimeReadiness.label,
+              model: executionModel,
+              prompt: selected?.name ?? "未选择提示词",
+            }}
+            latestRun={latestSelectedAgentRun}
+            agents={agents}
+            runtimes={runtimes}
+          />
+
           <div className="rounded-md border border-border/70 bg-muted/10 p-3" data-testid="agent-playground-runtime">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <h3 className="text-sm font-semibold">真实执行准备度</h3>
@@ -579,6 +592,65 @@ export function AgentPlaygroundWorkbench({
   );
 }
 
+function AgentExecutionConfigComparison({
+  current,
+  latestRun,
+  agents,
+  runtimes,
+}: {
+  current: {
+    agent: string;
+    runtime: string;
+    model: string;
+    prompt: string;
+  };
+  latestRun: PromptEvaluationRun | null;
+  agents: Agent[];
+  runtimes: AgentRuntime[];
+}) {
+  const latestAgent = latestRun?.agent_id ? agents.find((agent) => agent.id === latestRun.agent_id) ?? null : null;
+  const latestRuntime = latestRun?.runtime_id ? runtimes.find((runtime) => runtime.id === latestRun.runtime_id) ?? null : null;
+  const latestAgentLabel = latestAgent ? formatAgentDisplayName(latestAgent) ?? latestAgent.name : latestRun?.agent_id ? `智能体 ${latestRun.agent_id}` : "未绑定智能体";
+  const latestRuntimeLabel = latestRuntime?.name ?? latestRun?.runtime_id ?? "未绑定运行时";
+  const latestTokenTotal = (latestRun?.input_tokens ?? 0) + (latestRun?.output_tokens ?? 0);
+  return (
+    <div className="rounded-md border border-border/70 bg-background p-3" data-testid="agent-playground-config-comparison">
+      <div className="flex items-center justify-between gap-2">
+        <h3 className="text-sm font-semibold">执行配置对比</h3>
+        <Badge variant={latestRun ? "secondary" : "outline"}>{latestRun ? "有历史运行" : "暂无历史"}</Badge>
+      </div>
+      <div className="mt-2 grid gap-2 text-xs">
+        <div className="rounded border border-dashed px-2 py-2" data-testid="agent-playground-current-config">
+          <div className="font-medium text-foreground">当前待执行配置</div>
+          <div className="mt-1 grid gap-1 text-muted-foreground">
+            <div className="truncate">提示词：{current.prompt}</div>
+            <div className="truncate">执行智能体：{current.agent}</div>
+            <div className="truncate">运行时：{current.runtime}</div>
+            <div className="truncate">模型：{current.model}</div>
+          </div>
+        </div>
+        {latestRun ? (
+          <div className="rounded border px-2 py-2" data-testid="agent-playground-latest-run-config">
+            <div className="font-medium text-foreground">最近同提示词真实运行</div>
+            <div className="mt-1 grid gap-1 text-muted-foreground">
+              <div className="truncate">状态：{latestRun.status} · {latestRun.run_kind}</div>
+              <div className="truncate">执行智能体：{latestAgentLabel}</div>
+              <div className="truncate">运行时：{latestRuntimeLabel}</div>
+              <div className="truncate">模型：{latestRun.model || "未记录"}</div>
+              <div className="truncate">任务：{latestRun.task_id ?? "未绑定"}</div>
+              <div className="truncate">耗时：{formatDuration(latestRun.total_duration_ms)} · token {latestTokenTotal.toLocaleString()} · 预估成本 {formatMoney(latestRun.estimated_cost)}</div>
+            </div>
+          </div>
+        ) : (
+          <div className="rounded border border-dashed px-2 py-2 text-muted-foreground" data-testid="agent-playground-config-empty">
+            暂无同提示词真实运行；创建真实智能体任务后会在这里对比执行智能体、运行时、模型、token 和成本。
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="grid gap-1.5 text-sm">
@@ -597,6 +669,11 @@ function formatDuration(value: unknown): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "未记录";
   if (value < 1000) return `${Math.round(value)}ms`;
   return `${(value / 1000).toFixed(1)}s`;
+}
+
+function formatMoney(value: unknown): string {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return "未记录";
+  return `$${value.toFixed(4)}`;
 }
 
 function formatAgentStatus(status: Agent["status"]): string {

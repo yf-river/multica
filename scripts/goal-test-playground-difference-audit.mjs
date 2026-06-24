@@ -131,14 +131,15 @@ async function auditAgentPlayground(page) {
     promptList: "agent-playground-prompt-list",
     runConsole: "agent-playground-run-console",
     executionTopology: "agent-playground-execution-topology",
+    configComparison: "agent-playground-config-comparison",
     taskPayload: "agent-playground-task-payload",
     observabilityContract: "agent-playground-observability-contract",
   });
   const text = await page.locator("body").innerText({ timeout: 5_000 });
   const forbidden = await countsFor(page, ["prompt-playground-template-lab", "prompt-playground-source-panel", "prompt-playground-variable-checklist"]);
   const failures = [
-    ...requireText(text, ["真实任务 · 写回观测证据", "真实任务发射台", "执行目标池", "创建真实任务", "观测回写契约"]),
-    ...nonZeroBoxFailures(boxes, ["shell", "workbench", "executionStage", "promptList", "runConsole", "executionTopology", "taskPayload", "observabilityContract"]),
+    ...requireText(text, ["真实任务 · 写回观测证据", "真实任务发射台", "执行目标池", "创建真实任务", "执行配置对比", "观测回写契约"]),
+    ...nonZeroBoxFailures(boxes, ["shell", "workbench", "executionStage", "promptList", "runConsole", "executionTopology", "configComparison", "taskPayload", "observabilityContract"]),
     ...forbiddenCountFailures(forbidden),
   ];
   if (boxes.executionStage && boxes.promptList && boxes.executionStage.x >= boxes.promptList.x) {
@@ -155,7 +156,7 @@ async function auditAgentPlayground(page) {
     screenshot,
     boxes,
     forbidden_counts: forbidden,
-    visible_contracts: pickVisibleLines(text, ["真实任务", "执行目标池", "观测回写", "本地渲染", "模板源"]),
+    visible_contracts: pickVisibleLines(text, ["真实任务", "执行目标池", "执行配置", "观测回写", "本地渲染", "模板源"]),
   };
 }
 
