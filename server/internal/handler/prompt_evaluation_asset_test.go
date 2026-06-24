@@ -1473,8 +1473,29 @@ func TestRunPromptEvaluationOptimizationAgentQueuesRealTask(t *testing.T) {
 	if payload["任务类型"] != "智能体优化运行" || payload["来源运行"] != sourceResp.Run.ID {
 		t.Fatalf("optimization payload = %#v", payload)
 	}
-	if !containsAll(stringFromAny(payload["语义版本"]), []string{"optimization_agent"}) {
-		t.Fatalf("optimization payload version = %#v", payload["语义版本"])
+	if payload["schema"] != "multica.training_evaluation.optimization_run.v2" ||
+		payload["语义版本"] != "multica.training_evaluation.optimization_run.v2" {
+		t.Fatalf("optimization payload contract version = %#v", payload)
+	}
+	contract, ok := payload["优化运行契约"].(map[string]any)
+	if !ok || !strings.Contains(stringFromAny(contract["重试入口"]), "/agent-run") || stringFromAny(contract["人工确认要求"]) == "" {
+		t.Fatalf("optimization contract = %#v", payload["优化运行契约"])
+	}
+	rounds, ok := payload["优化轮次"].([]any)
+	if !ok || len(rounds) != 1 {
+		t.Fatalf("optimization rounds = %#v", payload["优化轮次"])
+	}
+	firstRound, ok := rounds[0].(map[string]any)
+	if !ok || intFromAny(firstRound["轮次"]) != 1 || intFromAny(firstRound["重试序号"]) != 0 || firstRound["运行ID"] != optResp.Run.ID || firstRound["trace/task id"] != optResp.TaskID {
+		t.Fatalf("first optimization round = %#v", firstRound)
+	}
+	logs, ok := payload["日志流"].([]any)
+	if !ok || len(logs) != 1 {
+		t.Fatalf("optimization log stream = %#v", payload["日志流"])
+	}
+	firstLog, ok := logs[0].(map[string]any)
+	if !ok || firstLog["事件"] != "创建优化运行" || intFromAny(firstLog["轮次"]) != 1 {
+		t.Fatalf("first optimization log = %#v", firstLog)
 	}
 	var caseCount int
 	if err := testPool.QueryRow(context.Background(), `

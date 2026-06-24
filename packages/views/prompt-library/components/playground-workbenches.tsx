@@ -344,8 +344,8 @@ export function AgentPlaygroundWorkbench({
               {selectedExecutionAgent
                 ? `状态 ${formatAgentStatus(selectedExecutionAgent.status)} · 可见性 ${formatAgentVisibility(selectedExecutionAgent.visibility)}`
                 : evaluationAgent
-                  ? `自动模式会使用 ${formatAgentDisplayName(evaluationAgent)}，也可指定其它工作区智能体。`
-                  : "自动模式会在真实运行前确保训练评估执行智能体存在。"}
+                  ? `自动选择训练评估智能体：自动模式会使用 ${formatAgentDisplayName(evaluationAgent)}，也可指定其它工作区智能体。`
+                  : "自动选择训练评估智能体：真实运行前会确保训练评估执行智能体存在。"}
             </div>
           </div>
           <div className="min-w-0" data-testid="agent-playground-runtime-selector">
@@ -357,7 +357,7 @@ export function AgentPlaygroundWorkbench({
           </div>
           <div className="min-w-0 rounded-md border border-dashed px-3 py-2" data-testid="agent-playground-queue-contract">
             <div className="text-[11px] font-medium text-muted-foreground">入队链路</div>
-            <div className="mt-1 truncate text-sm font-semibold">公开 API 创建资产后入队</div>
+            <div className="mt-1 truncate text-sm font-semibold">写入真实任务队列</div>
             <div className="mt-1 truncate text-xs text-muted-foreground">回写运行历史、任务消息和用量。</div>
           </div>
         </div>

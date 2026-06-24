@@ -517,6 +517,21 @@ export function PromptLibraryPage({
     },
   });
 
+  const retryOptimizationAssetMut = useMutation({
+    mutationFn: (assetId: string) => api.runPromptEvaluationAssetAgent(assetId),
+    onSuccess: (result) => {
+      invalidateAssets();
+      invalidateCases();
+      invalidateRuns();
+      invalidateSummary();
+      queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", result.run.id) });
+      toast.success(`优化运行重试已入队：${result.task_id}`);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "优化运行重试失败，请检查 Codex 运行时状态");
+    },
+  });
+
   const publishCandidateMut = useMutation({
     mutationFn: (candidateId: string) => api.publishPromptEvaluationOptimizationCandidate(candidateId),
     onSuccess: (result) => {
@@ -1023,6 +1038,8 @@ export function PromptLibraryPage({
                 generatingCandidateRunId={createCandidateMut.isPending ? createCandidateMut.variables ?? null : null}
                 onRunOptimizationAgent={(runId) => runOptimizationAgentMut.mutate(runId)}
                 runningOptimizationAgentRunId={runOptimizationAgentMut.isPending ? runOptimizationAgentMut.variables ?? null : null}
+                onRetryOptimizationAsset={(assetId) => retryOptimizationAssetMut.mutate(assetId)}
+                retryingOptimizationAssetId={retryOptimizationAssetMut.isPending ? retryOptimizationAssetMut.variables ?? null : null}
                 onUpdateCandidate={(candidateId, data) => updateCandidateMut.mutate({ candidateId, data })}
                 updatingCandidateId={updateCandidateMut.isPending ? updateCandidateMut.variables?.candidateId ?? null : null}
                 onPublishCandidate={(candidateId) => publishCandidateMut.mutate(candidateId)}
@@ -1075,6 +1092,8 @@ export function PromptLibraryPage({
               generatingCandidateRunId={createCandidateMut.isPending ? createCandidateMut.variables ?? null : null}
               onRunOptimizationAgent={(runId) => runOptimizationAgentMut.mutate(runId)}
               runningOptimizationAgentRunId={runOptimizationAgentMut.isPending ? runOptimizationAgentMut.variables ?? null : null}
+              onRetryOptimizationAsset={(assetId) => retryOptimizationAssetMut.mutate(assetId)}
+              retryingOptimizationAssetId={retryOptimizationAssetMut.isPending ? retryOptimizationAssetMut.variables ?? null : null}
               onUpdateCandidate={(candidateId, data) => updateCandidateMut.mutate({ candidateId, data })}
               updatingCandidateId={updateCandidateMut.isPending ? updateCandidateMut.variables?.candidateId ?? null : null}
               onPublishCandidate={(candidateId) => publishCandidateMut.mutate(candidateId)}
@@ -1499,6 +1518,8 @@ function WorkbenchPanel({
   generatingCandidateRunId,
   onRunOptimizationAgent,
   runningOptimizationAgentRunId,
+  onRetryOptimizationAsset,
+  retryingOptimizationAssetId,
   onUpdateCandidate,
   updatingCandidateId,
   onPublishCandidate,
@@ -1544,6 +1565,8 @@ function WorkbenchPanel({
   generatingCandidateRunId: string | null;
   onRunOptimizationAgent: (runId: string) => void;
   runningOptimizationAgentRunId: string | null;
+  onRetryOptimizationAsset: (assetId: string) => void;
+  retryingOptimizationAssetId: string | null;
   onUpdateCandidate: (candidateId: string, data: UpdatePromptEvaluationOptimizationCandidateRequest) => void;
   updatingCandidateId: string | null;
   onPublishCandidate: (candidateId: string) => void;
@@ -1648,6 +1671,8 @@ function WorkbenchPanel({
                 cancellingRunId={cancellingRunId}
                 onCreateEvidenceSnapshot={onCreateEvidenceSnapshot}
                 creatingEvidenceSnapshotRunId={creatingEvidenceSnapshotRunId}
+                onRetryOptimizationAsset={onRetryOptimizationAsset}
+                retryingOptimizationAssetId={retryingOptimizationAssetId}
               />
               <OptimizationCandidateList
                 candidates={candidates}
@@ -2187,6 +2212,8 @@ function OptimizationStudioPanel({
   cancellingRunId,
   onCreateEvidenceSnapshot,
   creatingEvidenceSnapshotRunId,
+  onRetryOptimizationAsset,
+  retryingOptimizationAssetId,
 }: {
   workspaceId: string;
   assets: PromptEvaluationAsset[];
@@ -2196,6 +2223,8 @@ function OptimizationStudioPanel({
   cancellingRunId: string | null;
   onCreateEvidenceSnapshot: (runId: string) => void;
   creatingEvidenceSnapshotRunId: string | null;
+  onRetryOptimizationAsset: (assetId: string) => void;
+  retryingOptimizationAssetId: string | null;
 }) {
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
   const runsByAsset = useMemo(() => {
@@ -2252,6 +2281,9 @@ function OptimizationStudioPanel({
             const assetRuns = runsByAsset.get(asset.id) ?? [];
             const latestRun = assetRuns[0] ?? null;
             const candidateCount = assetRuns.reduce((total, run) => total + (candidatesByRun.get(run.id)?.length ?? 0), 0);
+            const optimizationContract = buildOptimizationContractSummary(asset);
+            const optimizationRounds = optimizationRunRounds(asset);
+            const optimizationLogs = optimizationRunLogs(asset);
             return (
               <div key={asset.id} className="grid gap-2 rounded-md border bg-background px-3 py-3" data-testid={`optimization-studio-job-${asset.id}`}>
                 <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
@@ -2269,9 +2301,25 @@ function OptimizationStudioPanel({
                   </div>
                   <div className="flex flex-wrap justify-start gap-2 md:justify-end">
                     <Badge variant="outline">运行 {assetRuns.length}</Badge>
+                    <Badge variant="outline">轮次 {optimizationRounds.length}</Badge>
                     <Badge variant="outline">候选 {candidateCount}</Badge>
                     <Badge variant="outline">用例 {asset.structured_case_count}</Badge>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      data-testid={`retry-optimization-run-${asset.id}`}
+                      onClick={() => onRetryOptimizationAsset(asset.id)}
+                      disabled={!asset.prompt_id || retryingOptimizationAssetId === asset.id}
+                    >
+                      {retryingOptimizationAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+                      重试优化运行
+                    </Button>
                   </div>
+                </div>
+
+                <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+                  <OptimizationRoundPanel assetId={asset.id} contract={optimizationContract} rounds={optimizationRounds} />
+                  <OptimizationLogStreamPanel assetId={asset.id} logs={optimizationLogs} />
                 </div>
 
                 {assetRuns.length > 0 && (
@@ -2484,6 +2532,146 @@ function OptimizationCandidateList({
       })}
     </div>
   );
+}
+
+type OptimizationContractSummary = {
+  schema: string;
+  retryEntry: string;
+  humanReview: string;
+  sourceRun: string;
+};
+
+type OptimizationRoundSummary = {
+  round: string;
+  retry: string;
+  status: string;
+  runId: string;
+  taskId: string;
+  model: string;
+  createdAt: string;
+};
+
+type OptimizationLogSummary = {
+  seq: string;
+  event: string;
+  status: string;
+  round: string;
+  message: string;
+  createdAt: string;
+};
+
+function OptimizationRoundPanel({
+  assetId,
+  contract,
+  rounds,
+}: {
+  assetId: string;
+  contract: OptimizationContractSummary;
+  rounds: OptimizationRoundSummary[];
+}) {
+  return (
+    <section className="rounded-md border border-border/70 bg-muted/15 p-2 text-xs" data-testid={`optimization-studio-rounds-${assetId}`}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="font-medium text-muted-foreground">优化轮次</div>
+        <Badge variant={contract.schema ? "secondary" : "outline"}>{contract.schema || "未声明契约"}</Badge>
+      </div>
+      <div className="mt-1 text-[11px] leading-5 text-muted-foreground">
+        重试入口：{contract.retryEntry || "未记录"} · 人工确认：{contract.humanReview || "未记录"}
+      </div>
+      {rounds.length === 0 ? (
+        <div className="mt-2 rounded border border-dashed px-2 py-2 text-muted-foreground">暂无轮次记录；创建或重试优化运行后会写入。</div>
+      ) : (
+        <div className="mt-2 grid gap-1.5">
+          {rounds.slice(0, 4).map((round) => (
+            <div key={`${round.runId}-${round.round}-${round.retry}`} className="rounded border bg-background px-2 py-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium text-foreground">轮次 {round.round}</span>
+                <Badge variant={round.status === "已入队" || round.status === "运行中" ? "outline" : "secondary"}>重试 {round.retry}</Badge>
+                <span className="text-muted-foreground">{round.status || "未知状态"}</span>
+              </div>
+              <div className="mt-1 break-all text-[11px] leading-5 text-muted-foreground">
+                运行 {round.runId || "未记录"} · 任务 {round.taskId || "未记录"} · 模型 {round.model || "未记录"} · {round.createdAt || "未记录时间"}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function OptimizationLogStreamPanel({ assetId, logs }: { assetId: string; logs: OptimizationLogSummary[] }) {
+  return (
+    <section className="rounded-md border border-border/70 bg-muted/15 p-2 text-xs" data-testid={`optimization-studio-log-stream-${assetId}`}>
+      <div className="flex items-center justify-between gap-2">
+        <div className="font-medium text-muted-foreground">日志流</div>
+        <Badge variant="outline">{logs.length} 条</Badge>
+      </div>
+      {logs.length === 0 ? (
+        <div className="mt-2 rounded border border-dashed px-2 py-2 text-muted-foreground">暂无日志流；优化运行入队、重试和同步会继续追加。</div>
+      ) : (
+        <div className="mt-2 grid gap-1.5">
+          {logs.slice(-5).reverse().map((log) => (
+            <div key={`${log.seq}-${log.createdAt}-${log.event}`} className="rounded border bg-background px-2 py-1.5">
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="font-medium text-foreground">#{log.seq || "?"} {log.event || "未命名事件"}</span>
+                <Badge variant="outline">轮次 {log.round || "?"}</Badge>
+                <span className="text-muted-foreground">{log.status || "未知状态"}</span>
+              </div>
+              <div className="mt-1 text-[11px] leading-5 text-muted-foreground">{log.message || "未记录消息"} · {log.createdAt || "未记录时间"}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function buildOptimizationContractSummary(asset: PromptEvaluationAsset): OptimizationContractSummary {
+  const payload = asset.payload ?? {};
+  const contract = isRecord(payload["优化运行契约"]) ? payload["优化运行契约"] : {};
+  return {
+    schema: stringFromUnknown(contract["schema"]) || stringFromUnknown(payload["schema"]) || stringFromUnknown(payload["语义版本"]),
+    retryEntry: stringFromUnknown(contract["重试入口"]) || stringFromUnknown((isRecord(payload["重试策略"]) ? payload["重试策略"] : {})["重试入口"]),
+    humanReview: stringFromUnknown(contract["人工确认要求"]),
+    sourceRun: stringFromUnknown(contract["来源运行"]) || stringFromUnknown(payload["来源运行"]),
+  };
+}
+
+function optimizationRunRounds(asset: PromptEvaluationAsset): OptimizationRoundSummary[] {
+  const payload = asset.payload ?? {};
+  const rawRounds = Array.isArray(payload["优化轮次"]) ? payload["优化轮次"] : [];
+  if (rawRounds.length === 0) {
+    const latest = payload["最近Agent运行"];
+    if (!isRecord(latest)) return [];
+    return [optimizationRoundFromRecord(latest, 1)];
+  }
+  return rawRounds.filter(isRecord).map((item, index) => optimizationRoundFromRecord(item, index + 1));
+}
+
+function optimizationRoundFromRecord(record: Record<string, unknown>, fallbackRound: number): OptimizationRoundSummary {
+  return {
+    round: stringFromUnknown(record["轮次"]) || String(fallbackRound),
+    retry: stringFromUnknown(record["重试序号"]) || "0",
+    status: stringFromUnknown(record["状态"]),
+    runId: stringFromUnknown(record["运行ID"]) || stringFromUnknown(record["run_id"]),
+    taskId: stringFromUnknown(record["任务ID"]) || stringFromUnknown(record["trace/task id"]) || stringFromUnknown(record["trace/任务标识"]),
+    model: stringFromUnknown(record["模型"]),
+    createdAt: stringFromUnknown(record["创建时间"]) || stringFromUnknown(record["运行时间"]),
+  };
+}
+
+function optimizationRunLogs(asset: PromptEvaluationAsset): OptimizationLogSummary[] {
+  const payload = asset.payload ?? {};
+  const rawLogs = Array.isArray(payload["日志流"]) ? payload["日志流"] : [];
+  return rawLogs.filter(isRecord).map((item, index) => ({
+    seq: stringFromUnknown(item["seq"]) || String(index + 1),
+    event: stringFromUnknown(item["事件"]) || stringFromUnknown(item["event"]),
+    status: stringFromUnknown(item["状态"]) || stringFromUnknown(item["status"]),
+    round: stringFromUnknown(item["轮次"]),
+    message: stringFromUnknown(item["消息"]) || stringFromUnknown(item["message"]),
+    createdAt: stringFromUnknown(item["记录时间"]) || stringFromUnknown(item["created_at"]),
+  }));
 }
 
 function candidateToDraft(candidate: PromptEvaluationOptimizationCandidate): UpdatePromptEvaluationOptimizationCandidateRequest {

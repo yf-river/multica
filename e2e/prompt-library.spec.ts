@@ -1254,8 +1254,47 @@ test.describe("训练与评估工作台", () => {
     const job = page.getByTestId(`optimization-studio-job-${asset.id}`);
     await expect(job).toContainText(`${artifactPrefix} 优化作业台资产`);
     await expect(job).toContainText("配置摘要");
+    await expect(job.getByTestId(`optimization-studio-rounds-${asset.id}`)).toContainText("优化轮次");
+    await expect(job.getByTestId(`optimization-studio-rounds-${asset.id}`)).toContainText("multica.training_evaluation.optimization_run.v2");
+    await expect(job.getByTestId(`optimization-studio-rounds-${asset.id}`)).toContainText("轮次 1");
+    await expect(job.getByTestId(`optimization-studio-rounds-${asset.id}`)).toContainText("重试 0");
+    await expect(job.getByTestId(`optimization-studio-log-stream-${asset.id}`)).toContainText("日志流");
+    await expect(job.getByTestId(`optimization-studio-log-stream-${asset.id}`)).toContainText("创建优化运行");
     const run = page.getByTestId(`optimization-studio-run-${agentRun.run.id}`);
     await expect(run).toContainText("智能体执行 · 已入队");
+    const retryResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes(`/api/prompt-evaluation-assets/${asset.id}/agent-run`),
+      { timeout: 10000 },
+    );
+    await job.getByTestId(`retry-optimization-run-${asset.id}`).click();
+    expect((await retryResponse).status()).toBe(202);
+    await expect(page.getByText(/优化运行重试已入队/)).toBeVisible({ timeout: 10000 });
+    await expect
+      .poll(async () => {
+        const assets = await api.listPromptEvaluationAssets({ prompt_id: prompt.id, asset_type: "优化运行" });
+        const reloaded = assets.find((item) => item.id === asset.id);
+        const payload = reloaded?.payload as Record<string, any> | undefined;
+        return {
+          roundCount: Array.isArray(payload?.优化轮次) ? payload!.优化轮次.length : 0,
+          latestRound: Array.isArray(payload?.优化轮次) ? payload!.优化轮次[0] : null,
+          logCount: Array.isArray(payload?.日志流) ? payload!.日志流.length : 0,
+          retryCount: payload?.重试策略?.当前重试次数 ?? -1,
+        };
+      }, { timeout: 15000 })
+      .toMatchObject({
+        roundCount: 2,
+        latestRound: {
+          轮次: 2,
+          重试序号: 1,
+          状态: "已入队",
+        },
+        logCount: 2,
+        retryCount: 1,
+      });
+    await expect(job.getByTestId(`optimization-studio-rounds-${asset.id}`)).toContainText("轮次 2", { timeout: 10000 });
+    await expect(job.getByTestId(`optimization-studio-log-stream-${asset.id}`)).toContainText("重试优化运行", { timeout: 10000 });
     await run.getByRole("button", { name: "查看证据" }).click();
     const evidencePanel = run.getByTestId(`run-evidence-${agentRun.run.id}`);
     await expect(evidencePanel).toContainText(`任务 ${agentRun.task_id}`, { timeout: 10000 });
@@ -1270,7 +1309,7 @@ test.describe("训练与评估工作台", () => {
     expect((await cancelResponse).status()).toBe(200);
     await expect(page.getByText("训练评估运行已取消")).toBeVisible({ timeout: 10000 });
     await expect(run).toContainText("智能体执行 · 已取消", { timeout: 10000 });
-    await expect(studio).toContainText("活动 0", { timeout: 10000 });
+    await expect(studio).toContainText("活动 1", { timeout: 10000 });
   });
 
   test("运行看板可以进入人工复核队列", async ({ page }) => {

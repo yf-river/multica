@@ -8,6 +8,7 @@ const runDir = path.join(repoRoot, ".run");
 const envDir = path.join(runDir, "env");
 const deploymentDir = path.join(runDir, "deployments");
 const logArchiveDir = path.join(runDir, "log-archive");
+const workspacesDir = path.join(runDir, "workspaces");
 const publicHost = process.env.GOAL_TEST_PUBLIC_HOST || "9.134.129.162";
 
 const profiles = {
@@ -60,6 +61,8 @@ if (command === "ensure") {
 function ensureEnvironment(item) {
   mkdirSync(envDir, { recursive: true });
   mkdirSync(deploymentDir, { recursive: true });
+  const daemonWorkspacesRoot = path.join(workspacesDir, `goal-test-${item.name}`);
+  mkdirSync(daemonWorkspacesRoot, { recursive: true });
   const file = envPath(item);
   const base = readEnvFile(path.join(repoRoot, ".env.worktree"));
   const databaseURL = deriveDatabaseURL(base.DATABASE_URL, item.databaseName);
@@ -77,6 +80,7 @@ function ensureEnvironment(item) {
     `JWT_SECRET=${base.JWT_SECRET || "change-me-in-production"}`,
     `MULTICA_SERVER_URL=ws://127.0.0.1:${item.backendPort}/ws`,
     `MULTICA_APP_URL=${frontendURL}`,
+    `MULTICA_WORKSPACES_ROOT=${daemonWorkspacesRoot}`,
     `FRONTEND_PORT=${item.frontendPort}`,
     `FRONTEND_ORIGIN=${frontendURL}`,
     `REMOTE_API_URL=http://127.0.0.1:${item.backendPort}`,
@@ -166,6 +170,7 @@ function deployEnvironment(item, build) {
     daemon_profile: item.daemonProfile,
     daemon_profile_path: daemonProfilePath,
     daemon_id: item.daemonID,
+    daemon_workspaces_root: env.MULTICA_WORKSPACES_ROOT,
     frontend_mode: item.frontendMode,
     binary_versions: {
       multica: binaryVersion("./server/bin/multica", ["version"], env),
@@ -321,6 +326,7 @@ function describeEnvironment(item) {
     database_url_redacted: redactDatabaseURL(env.DATABASE_URL || ""),
     daemon_profile: item.daemonProfile,
     daemon_id: item.daemonID,
+    daemon_workspaces_root: env.MULTICA_WORKSPACES_ROOT || "",
     env_file: envPath(item),
     frontend_mode: item.frontendMode,
   };
