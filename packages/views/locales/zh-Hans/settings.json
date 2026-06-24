@@ -21,7 +21,7 @@
       "profile": "个人资料",
       "preferences": "偏好设置",
       "notifications": "通知",
-      "tokens": "API Token",
+      "tokens": "访问令牌",
       "general": "通用",
       "repositories": "代码仓库",
       "github": "GitHub",
@@ -87,9 +87,9 @@
     }
   },
   "tokens": {
-    "title": "API Token",
-    "description": "个人访问 token 让 CLI 和外部集成可以代表你的账号进行身份验证。",
-    "name_placeholder": "Token 名称（例如：我的 CLI）",
+    "title": "访问令牌",
+    "description": "个人访问令牌让 CLI 和外部集成可以代表你的账号进行身份验证。",
+    "name_placeholder": "令牌名称（例如：我的 CLI）",
     "expiry": {
       "30": "30 天",
       "90": "90 天",
@@ -98,10 +98,10 @@
     },
     "create": "创建",
     "creating": "创建中...",
-    "toast_load_failed": "加载 token 失败",
-    "toast_create_failed": "创建 token 失败",
-    "toast_revoked": "已吊销 token",
-    "toast_revoke_failed": "吊销 token 失败",
+    "toast_load_failed": "加载令牌失败",
+    "toast_create_failed": "创建令牌失败",
+    "toast_revoked": "已吊销令牌",
+    "toast_revoke_failed": "吊销令牌失败",
     "metadata_prefix": "{{prefix}}... · 创建于 {{created}} · {{lastUsed}}",
     "last_used_with_date": "最后使用 {{date}}",
     "last_used_never": "未使用",
@@ -109,15 +109,15 @@
     "revoke_aria": "吊销 {{name}}",
     "revoke_tooltip": "吊销",
     "revoke_dialog": {
-      "title": "吊销 token",
-      "description": "该 token 将被永久吊销且不再可用。此操作不可撤销。",
+      "title": "吊销令牌",
+      "description": "该令牌将被永久吊销且不再可用。此操作不可撤销。",
       "cancel": "取消",
       "confirm": "吊销"
     },
     "created_dialog": {
-      "title": "Token 已创建",
-      "description": "立即复制你的个人访问 token——它不会再次显示。",
-      "copy_tooltip": "复制 token",
+      "title": "令牌已创建",
+      "description": "立即复制你的个人访问令牌——它不会再次显示。",
+      "copy_tooltip": "复制令牌",
       "done": "完成"
     }
   },

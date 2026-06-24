@@ -81,10 +81,10 @@
   },
   "empty_state": {
     "first_time_title": "和你的智能体对话",
-    "first_time_intro": "✨ 它们了解你的工作区——",
-    "first_time_pillars": "任务、项目、skill",
+    "first_time_intro": "聊天会使用当前工作区上下文：",
+    "first_time_pillars": "任务、项目、技能和运行记录",
     "first_time_pillars_suffix": "。",
-    "first_time_actions": "让它做一份总结、规划你的一天，或交给它一个小任务。",
+    "first_time_actions": "你可以直接提问，也可以围绕任务和智能体执行记录继续追问。",
     "returning_title_named": "你好，我是 {{name}}",
     "returning_title_default": "欢迎使用 Multica",
     "returning_subtitle": "试试问"

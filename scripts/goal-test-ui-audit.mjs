@@ -204,6 +204,13 @@ const forbiddenText = [
   "Agent 最终交付",
   "创建 user-center 需求澄清提示词",
   "user-center 模板",
+  "查看当前 Workspace",
+  "API Token",
+  "Token ·",
+  "每日 Token",
+  "每周 Token",
+  "它们了解你的工作区",
+  "任务、项目、skill",
   "waitlist",
   "newsletter",
 ];
