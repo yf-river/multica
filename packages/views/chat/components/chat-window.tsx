@@ -21,6 +21,7 @@ import { api } from "@multica/core/api";
 import { useAgentPresenceDetail, useWorkspaceAgentAvailability } from "@multica/core/agents";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { isAcceptanceFixtureRecord } from "../../common/acceptance-fixtures";
 import {
   PickerEmpty,
   PickerItem,
@@ -57,6 +58,22 @@ import { useT } from "../../i18n";
 const uiLogger = createLogger("chat.ui");
 const apiLogger = createLogger("chat.api");
 const CHAT_VIRTUOSO_INITIAL_FIRST_ITEM_INDEX = 1_000_000;
+
+export function getVisibleChatAgents(
+  agents: Agent[],
+  userId: string | undefined,
+  memberRole: string | undefined,
+): Agent[] {
+  return agents.filter(
+    (agent) =>
+      !agent.archived_at &&
+      canAssignAgent(agent, userId, memberRole) &&
+      !isAcceptanceFixtureRecord(agent as unknown as Record<string, unknown>, [
+        "name",
+        "description",
+      ]),
+  );
+}
 
 function appendChatMessageToLatestPageCache(
   qc: ReturnType<typeof useQueryClient>,
@@ -245,8 +262,9 @@ export function ChatWindow() {
 
   const currentMember = members.find((m) => m.user_id === user?.id);
   const memberRole = currentMember?.role;
-  const availableAgents = agents.filter(
-    (a) => !a.archived_at && canAssignAgent(a, user?.id, memberRole),
+  const availableAgents = useMemo(
+    () => getVisibleChatAgents(agents, user?.id, memberRole),
+    [agents, user?.id, memberRole],
   );
 
   // Resolve selected agent: stored preference → first available
@@ -254,6 +272,28 @@ export function ChatWindow() {
     availableAgents.find((a) => a.id === selectedAgentId) ??
     availableAgents[0] ??
     null;
+
+  useEffect(() => {
+    if (!isOpen || !selectedAgentId || agents.length === 0) return;
+    if (availableAgents.some((agent) => agent.id === selectedAgentId)) return;
+    const nextAgent = availableAgents[0];
+    if (!nextAgent) return;
+    uiLogger.info("selectedAgent unavailable; reset to visible agent", {
+      from: selectedAgentId,
+      to: nextAgent.id,
+      previousSessionId: activeSessionId,
+    });
+    setSelectedAgentId(nextAgent.id);
+    setActiveSession(null);
+  }, [
+    activeSessionId,
+    agents.length,
+    availableAgents,
+    isOpen,
+    selectedAgentId,
+    setActiveSession,
+    setSelectedAgentId,
+  ]);
 
   // Three-state availability — "loading" stays neutral (no banner, no
   // disable) so the input doesn't flash a fake "no agent" state in the
