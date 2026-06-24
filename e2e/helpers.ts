@@ -24,6 +24,35 @@ export async function waitForPageText(page: Page, text: string, timeout = 30000)
   );
 }
 
+export async function authenticateBrowserSession(page: Page, token: string, workspaceSlug?: string) {
+  await page.addInitScript((value) => {
+    localStorage.setItem("multica_token", value);
+    localStorage.setItem("multica:chat:isOpen", "false");
+  }, token);
+
+  const baseURL =
+    process.env.PLAYWRIGHT_BASE_URL ??
+    process.env.FRONTEND_ORIGIN ??
+    "http://localhost:3000";
+  const cookies = [
+    {
+      name: "multica_logged_in",
+      value: "1",
+      url: baseURL,
+      sameSite: "Lax" as const,
+    },
+  ];
+  if (workspaceSlug) {
+    cookies.push({
+      name: "last_workspace_slug",
+      value: workspaceSlug,
+      url: baseURL,
+      sameSite: "Lax" as const,
+    });
+  }
+  await page.context().addCookies(cookies);
+}
+
 export async function reloadAppPage(page: Page) {
   await page.reload({ waitUntil: "domcontentloaded" });
   await waitForPageText(page, "新建任务");
@@ -56,22 +85,7 @@ export async function loginAsDefault(page: Page): Promise<string> {
   if (!browserLogin.ok()) {
     throw new Error(`E2E browser login failed: ${browserLogin.status()}`);
   }
-  const baseURL =
-    process.env.PLAYWRIGHT_BASE_URL ??
-    process.env.FRONTEND_ORIGIN ??
-    "http://localhost:3000";
-  await page.context().addCookies([
-    {
-      name: "multica_logged_in",
-      value: "1",
-      url: baseURL,
-      sameSite: "Lax",
-    },
-  ]);
-  await page.addInitScript((t) => {
-    localStorage.setItem("multica_token", t);
-    localStorage.setItem("multica:chat:isOpen", "false");
-  }, token);
+  await authenticateBrowserSession(page, token, workspace.slug);
   await page.goto(`/${workspace.slug}/issues`, { waitUntil: "domcontentloaded" });
   await waitForIssuesPage(page);
   return workspace.slug;

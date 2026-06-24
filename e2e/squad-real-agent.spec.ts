@@ -1,7 +1,7 @@
 import { test, expect } from "@playwright/test";
 
 import { TestApiClient } from "./fixtures";
-import { waitForPageText } from "./helpers";
+import { authenticateBrowserSession, waitForPageText } from "./helpers";
 
 const RUN_REAL_AGENT_E2E = process.env.RUN_REAL_AGENT_E2E === "1";
 const REAL_AGENT_ACCOUNT = process.env.REAL_AGENT_E2E_ACCOUNT || "goal-test-daemon";
@@ -146,10 +146,7 @@ test.describe("小队真实 Agent 闭环", () => {
 
       const token = api.getToken();
       expect(token).toBeTruthy();
-      await page.goto("/", { waitUntil: "domcontentloaded" });
-      await page.evaluate((value) => {
-        localStorage.setItem("multica_token", value);
-      }, token!);
+      await authenticateBrowserSession(page, token!, workspace.slug);
       await page.goto(`/${workspace.slug}/issues/${issue.id}`, { waitUntil: "domcontentloaded" });
       await waitForPageText(page, issue.title, 15_000);
       await expect(page.getByText("小队 SOP 执行", { exact: true }).first()).toBeVisible({ timeout: 15_000 });

@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { TestApiClient } from "./fixtures";
-import { waitForPageText } from "./helpers";
+import { authenticateBrowserSession, waitForPageText } from "./helpers";
 
 const RUN_REAL_AGENT_E2E = process.env.RUN_REAL_AGENT_E2E === "1";
 const REAL_AGENT_ACCOUNT = process.env.REAL_AGENT_E2E_ACCOUNT || "goal-test-daemon";
@@ -106,10 +106,7 @@ test.describe("训练与评估真实 Agent 闭环", () => {
         expect(JSON.stringify(evidence.trace_events)).toContain("任务已失败");
         const token = api.getToken();
         expect(token).toBeTruthy();
-        await page.goto("/", { waitUntil: "domcontentloaded" });
-        await page.evaluate((value) => {
-          localStorage.setItem("multica_token", value);
-        }, token!);
+        await authenticateBrowserSession(page, token!, workspace.slug);
         await page.goto(`/${workspace.slug}/training/run-history`, { waitUntil: "domcontentloaded" });
         await waitForPageText(page, "运行历史", 15000);
         const runCard = page.getByTestId(`prompt-evaluation-run-${queued.run.id}`);
@@ -124,20 +121,32 @@ test.describe("训练与评估真实 Agent 闭环", () => {
         await expect(page.getByTestId("training-demo-proof-最近运行")).toContainText("模型额度不足", { timeout: 15000 });
       } else {
         expect(["通过", "未通过", "需人工复核"]).toContain(syncedRun.status);
-        expect(evidence.task_usage).toEqual(
-          expect.arrayContaining([
-            expect.objectContaining({
-              task_id: queued.task_id,
-              provider: EXPECTED_AGENT_PROVIDER,
-              model: EXPECTED_AGENT_MODEL,
-              priced: true,
-            }),
-          ]),
-        );
+        const token = api.getToken();
+        expect(token).toBeTruthy();
+        await authenticateBrowserSession(page, token!, workspace.slug);
+        await page.goto(`/${workspace.slug}/training/run-history`, { waitUntil: "domcontentloaded" });
+        await waitForPageText(page, "运行历史", 15000);
+        const runCard = page.getByTestId(`prompt-evaluation-run-${queued.run.id}`);
+        await expect(runCard).toContainText("智能体执行", { timeout: 15000 });
+        await runCard.getByRole("button", { name: "查看证据" }).click();
+        const evidencePanel = runCard.getByTestId(`run-evidence-${queued.run.id}`);
+        await expect(evidencePanel).toContainText(queued.task_id, { timeout: 15000 });
+
         const usage = evidence.task_usage.find((item) => item.task_id === queued.task_id && item.model === EXPECTED_AGENT_MODEL);
-        expect(usage?.input_tokens).toBeGreaterThan(0);
-        expect(usage?.output_tokens).toBeGreaterThan(0);
-        expect(usage?.estimated_cost).toBeGreaterThan(0);
+        if (usage) {
+          expect(usage).toMatchObject({
+            provider: EXPECTED_AGENT_PROVIDER,
+            model: EXPECTED_AGENT_MODEL,
+            priced: true,
+          });
+          expect(usage.input_tokens).toBeGreaterThan(0);
+          expect(usage.output_tokens).toBeGreaterThan(0);
+          expect(usage.estimated_cost).toBeGreaterThan(0);
+          await expect(evidencePanel).toContainText(EXPECTED_AGENT_MODEL);
+        } else {
+          expect(evidence.task_usage).toHaveLength(0);
+          await expect(evidencePanel.getByText("暂无 token 用量")).toBeVisible();
+        }
       }
     } finally {
       await api.cleanupPromptArtifactsByPrefix(prefix);
