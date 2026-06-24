@@ -81,7 +81,7 @@ async function prepareTrainingDashboardEvidence() {
     },
     status: "启用",
   });
-  await api.createPromptEvaluationAsset({
+  const experiment = await api.createPromptEvaluationAsset({
     prompt_id: prompt.id,
     name: `${evidencePrefix} 实验 ${suffix}`,
     description: "生产验收实验。",
@@ -101,11 +101,50 @@ async function prepareTrainingDashboardEvidence() {
     },
     status: "启用",
   });
+  const optimizationAsset = await api.createPromptEvaluationAsset({
+    prompt_id: prompt.id,
+    name: `${evidencePrefix} 优化运行 ${suffix}`,
+    description: "生产验收优化运行。",
+    asset_type: "优化运行",
+    payload: {
+      schema: "multica.training_evaluation.payload.v1",
+      schema_version: 1,
+      语义版本: "multica.training_evaluation.v1",
+      cases: [{
+        case_name: "缺失 trace 的优化样本",
+        variables: { issue_title: "user-center 登录失败" },
+        expected_contains: ["这个断言用于制造失败候选", "trace/task id"],
+        tags: ["生产验收", "优化运行"],
+      }],
+    },
+    status: "启用",
+  });
 
   const agentRun = await api.runPromptEvaluationAssetAgent(suite.id);
   await api.completePromptEvaluationAgentTask(agentRun.run);
   const syncedRun = await api.syncPromptEvaluationRun(agentRun.run.id);
-  await api.createPromptEvaluationEvidenceSnapshot(syncedRun.id);
+  const snapshot = await api.createPromptEvaluationEvidenceSnapshot(syncedRun.id);
+  await api.runPromptEvaluationAsset(optimizationAsset.id);
+  const failedRun = await expect
+    .poll(async () => {
+      const runs = await api.listPromptEvaluationRuns({ asset_id: optimizationAsset.id });
+      return runs.find((run) => run.status === "未通过") ?? null;
+    }, { timeout: 15000 })
+    .not.toBeNull()
+    .then(async () => (await api.listPromptEvaluationRuns({ asset_id: optimizationAsset.id })).find((run) => run.status === "未通过")!);
+  const candidate = await api.createPromptEvaluationOptimizationCandidate(failedRun.id);
+
+  return {
+    prompt,
+    dataset,
+    suite,
+    experiment,
+    optimizationAsset,
+    syncedRun,
+    snapshot,
+    failedRun,
+    candidate,
+  };
 }
 
 async function expectTrainingRouteShell(page, route: (typeof TRAINING_ROUTES)[number]) {
@@ -144,7 +183,9 @@ async function expectTrainingRouteSurvivesReload(page, route: (typeof TRAINING_R
 test.describe("生产部署验收", () => {
   test("验收账号可以看到训练评估运行看板和服务端证据快照", async ({ page }) => {
     test.setTimeout(120_000);
-    await prepareTrainingDashboardEvidence();
+    const evidence = await prepareTrainingDashboardEvidence();
+    expect(evidence.snapshot.id).toBeTruthy();
+    expect(evidence.syncedRun.task_id).toBeTruthy();
     const next = `/${workspaceSlug}/training/runs`;
     await page.addInitScript(() => {
       localStorage.setItem("multica:chat:isOpen", "false");
@@ -245,37 +286,59 @@ test.describe("生产部署验收", () => {
     await page.getByRole("link", { name: "数据集", exact: true }).last().click();
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/datasets$`), { timeout: 30000 });
     await expectTrainingRouteShell(page, TRAINING_ROUTES[4]!);
-    await expect(page.locator("[data-testid^='prompt-evaluation-asset-']").filter({ hasText: "数据集" }).first()).toContainText("数据集", { timeout: 15000 });
-    await expect(page.locator("[data-testid^='prompt-evaluation-cases-']").first()).toContainText("结构化评测用例", { timeout: 15000 });
+    const datasetRow = page.getByTestId(`prompt-evaluation-asset-${evidence.dataset.id}`);
+    await expect(datasetRow).toContainText(evidence.dataset.name, { timeout: 15000 });
+    await expect(datasetRow).toContainText("数据集");
+    await expect(page.getByTestId(`prompt-evaluation-cases-${evidence.dataset.id}`)).toContainText("登录失败澄清", { timeout: 15000 });
     await expectTrainingRouteSurvivesReload(page, TRAINING_ROUTES[4]!);
+    await expect(page.getByTestId(`prompt-evaluation-asset-${evidence.dataset.id}`)).toContainText(evidence.dataset.name, { timeout: 15000 });
 
     await page.getByRole("link", { name: "测试套件", exact: true }).last().click();
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/test-suites$`), { timeout: 30000 });
     await expectTrainingRouteShell(page, TRAINING_ROUTES[5]!);
-    await expect(page.locator("[data-testid^='prompt-evaluation-asset-']").filter({ hasText: "测试套件" }).first()).toContainText("测试套件", { timeout: 15000 });
+    const suiteRow = page.getByTestId(`prompt-evaluation-asset-${evidence.suite.id}`);
+    await expect(suiteRow).toContainText(evidence.suite.name, { timeout: 15000 });
+    await expect(suiteRow).toContainText("测试套件");
+    await expect(page.getByTestId(`prompt-evaluation-cases-${evidence.suite.id}`)).toContainText("真实智能体证据样本", { timeout: 15000 });
     await expectTrainingRouteSurvivesReload(page, TRAINING_ROUTES[5]!);
+    await expect(page.getByTestId(`prompt-evaluation-asset-${evidence.suite.id}`)).toContainText(evidence.suite.name, { timeout: 15000 });
 
     await page.getByRole("link", { name: "实验", exact: true }).last().click();
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/experiments$`), { timeout: 30000 });
     await expectTrainingRouteShell(page, TRAINING_ROUTES[6]!);
     await expect(page.getByText(/实验对比摘要：[1-9]/)).toBeVisible({ timeout: 15000 });
-    await expect(page.locator("[data-testid^='prompt-evaluation-experiment-dimensions-']").first()).toContainText("实验维度事实", { timeout: 15000 });
+    const experimentRow = page.getByTestId(`prompt-evaluation-asset-${evidence.experiment.id}`);
+    await expect(experimentRow).toContainText(evidence.experiment.name, { timeout: 15000 });
+    await expect(experimentRow).toContainText("实验");
+    const experimentDimensions = page.getByTestId(`prompt-evaluation-experiment-dimensions-${evidence.experiment.id}`);
+    await expect(experimentDimensions).toContainText("实验维度事实", { timeout: 15000 });
+    await expect(experimentDimensions).toContainText("命中率");
+    await expect(experimentDimensions).toContainText("缺失变量");
+    await expect(experimentDimensions).toContainText("中文一致性");
     await expectTrainingRouteSurvivesReload(page, TRAINING_ROUTES[6]!);
+    await expect(page.getByTestId(`prompt-evaluation-asset-${evidence.experiment.id}`)).toContainText(evidence.experiment.name, { timeout: 15000 });
 
     await page.getByRole("link", { name: "优化运行", exact: true }).last().click();
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/optimization-runs$`), { timeout: 30000 });
     await expectTrainingRouteShell(page, TRAINING_ROUTES[7]!);
-    await expect(page.locator("[data-testid^='prompt-evaluation-asset-']").filter({ hasText: "优化运行" }).first()).toContainText("优化运行", { timeout: 15000 });
-    await expect(page.locator("[data-testid^='prompt-evaluation-candidate-']").first()).toContainText(/待确认|已发布|已拒绝/, { timeout: 15000 });
+    const optimizationRow = page.getByTestId(`prompt-evaluation-asset-${evidence.optimizationAsset.id}`);
+    await expect(optimizationRow).toContainText(evidence.optimizationAsset.name, { timeout: 15000 });
+    await expect(optimizationRow).toContainText("优化运行");
+    await expect(page.getByTestId(`prompt-evaluation-candidate-${evidence.candidate.id}`)).toContainText("待确认", { timeout: 15000 });
     await expectTrainingRouteSurvivesReload(page, TRAINING_ROUTES[7]!);
+    await expect(page.getByTestId(`prompt-evaluation-candidate-${evidence.candidate.id}`)).toContainText("待确认", { timeout: 15000 });
 
     await page.getByRole("link", { name: "运行历史", exact: true }).last().click();
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/run-history$`), { timeout: 30000 });
     await expectTrainingRouteShell(page, TRAINING_ROUTES[8]!);
-    const firstRun = page.locator("[data-testid^='prompt-evaluation-run-']").first();
-    await expect(firstRun).toContainText(/智能体执行|模板渲染检查/, { timeout: 30000 });
-    await firstRun.locator("button").filter({ hasText: "查看证据" }).first().click();
-    await expect(firstRun.getByTestId("run-evidence-snapshots")).toContainText("服务端证据快照", { timeout: 10000 });
+    const syncedRunRow = page.getByTestId(`prompt-evaluation-run-${evidence.syncedRun.id}`);
+    await syncedRunRow.scrollIntoViewIfNeeded();
+    await expect(syncedRunRow).toContainText("智能体执行", { timeout: 30000 });
+    await expect(syncedRunRow).toContainText(evidence.syncedRun.id);
+    await syncedRunRow.locator("button").filter({ hasText: "查看证据" }).first().click();
+    await expect(syncedRunRow.getByTestId("run-evidence-snapshots")).toContainText("服务端证据快照", { timeout: 10000 });
+    await expect(syncedRunRow.getByTestId("run-evidence-snapshots")).toContainText(evidence.syncedRun.task_id!, { timeout: 10000 });
     await expectTrainingRouteSurvivesReload(page, TRAINING_ROUTES[8]!);
+    await expect(page.getByTestId(`prompt-evaluation-run-${evidence.syncedRun.id}`)).toContainText(evidence.syncedRun.id, { timeout: 30000 });
   });
 });

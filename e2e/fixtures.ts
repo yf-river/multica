@@ -1487,6 +1487,14 @@ export class TestApiClient {
     return data.items ?? [];
   }
 
+  async createPromptEvaluationOptimizationCandidate(runId: string): Promise<PromptEvaluationOptimizationCandidate> {
+    const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/optimization-candidates`, { method: "POST" });
+    if (!res.ok) {
+      throw new Error(`create prompt evaluation optimization candidate failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
   async listPromptEvaluationCases(params?: { asset_id?: string; status?: string }): Promise<PromptEvaluationCase[]> {
     const search = new URLSearchParams();
     if (params?.asset_id) search.set("asset_id", params.asset_id);
