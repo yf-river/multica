@@ -348,9 +348,25 @@ function usePlaygroundPromptSelection(surface: "prompt-playground" | "agent-play
     }
   }, [legacyStorageKeys, selectedId, storageKey]);
 
+  const select = (promptId: string | null) => {
+    setSelectedId(promptId);
+    if (!storageKey) return;
+    try {
+      for (const key of [storageKey, ...legacyStorageKeys]) {
+        if (promptId) {
+          window.localStorage.setItem(key, promptId);
+        } else {
+          window.localStorage.removeItem(key);
+        }
+      }
+    } catch {
+      // localStorage persistence is best-effort; in-memory selection is still updated.
+    }
+  };
+
   return {
     storageKey,
-    select: setSelectedId,
+    select,
     resolve(items: PromptLibraryItem[]) {
       const selected = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
       return selected ?? items[0] ?? null;

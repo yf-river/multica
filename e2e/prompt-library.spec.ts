@@ -88,6 +88,8 @@ test.describe("训练与评估工作台", () => {
     await page.getByRole("link", { name: "提示词调试场", exact: true }).last().click();
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/prompt-playground$`), { timeout: 30000 });
     await expect(page.getByTestId("prompt-playground-workbench")).toBeVisible({ timeout: 10000 });
+    await page.getByRole("button", { name: new RegExp(escapeRegExp(`${artifactPrefix} 账号系统 澄清`)) }).click();
+    await expect(page.getByTestId("prompt-playground-workbench")).toContainText(`${artifactPrefix} 账号系统 澄清`, { timeout: 10000 });
     await expect(page.getByTestId("prompt-library-editor")).toHaveCount(0);
     await expect(page.getByTestId("agent-playground-workbench")).toHaveCount(0);
     await expect(page.getByTestId("prompt-playground-template-lab")).toBeVisible();
