@@ -382,16 +382,18 @@ export function PromptLibraryPage({
   const selectedPromptLegacyStorageKeys = useMemo(() => legacyTrainingSelectedPromptStorageKeys(workspaceId), [workspaceId]);
 
   useEffect(() => {
-    if (!selectedPromptStorageKey || selectedId || isDraftingNew) return;
+    if (!selectedPromptStorageKey || isDraftingNew) return;
     try {
       const storedId = [selectedPromptStorageKey, ...selectedPromptLegacyStorageKeys]
         .map((key) => window.localStorage.getItem(key))
         .find(Boolean);
-      if (storedId) setSelectedId(storedId);
+      if (storedId && storedId !== selectedId && visiblePromptItems.some((item) => item.id === storedId)) {
+        setSelectedId(storedId);
+      }
     } catch {
       // localStorage is best-effort; route usability must not depend on it.
     }
-  }, [isDraftingNew, selectedId, selectedPromptLegacyStorageKeys, selectedPromptStorageKey]);
+  }, [isDraftingNew, selectedId, selectedPromptLegacyStorageKeys, selectedPromptStorageKey, visiblePromptItems]);
 
   useEffect(() => {
     if (!selectedPromptStorageKey || !selectedId) return;
