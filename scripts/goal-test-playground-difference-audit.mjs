@@ -246,7 +246,7 @@ function buildAgentSurfaceSignature(boxes) {
 async function boxesFor(page, ids) {
   const result = {};
   for (const [key, id] of Object.entries(ids)) {
-    const box = await page.getByTestId(id).boundingBox().catch(() => null);
+    const box = await page.getByTestId(id).first().boundingBox().catch(() => null);
     result[key] = box ? roundBox(box) : null;
   }
   return result;
