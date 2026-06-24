@@ -1492,12 +1492,20 @@ test.describe("训练与评估工作台", () => {
     expect(playwrightToolChain?.id).toBeTruthy();
     expect(evidence.trials[0]?.id).toBeTruthy();
     expect(evidence.execution_spans[0]?.seq).toBeDefined();
+    const firstTraceEventId = evidence.trace_events[0]?.id;
+    expect(firstTraceEventId).toBeTruthy();
 
     await page.goto(`/${workspaceSlug}/training/run-history?run=${agentRun.run.id}&trace=1`, { waitUntil: "domcontentloaded" });
     const traceDeepLinkRun = page.getByTestId(`prompt-evaluation-run-${agentRun.run.id}`);
     const traceDeepLinkEvidence = traceDeepLinkRun.getByTestId(`run-evidence-${agentRun.run.id}`);
     await expect(traceDeepLinkEvidence.getByTestId("run-evidence-anchor-summary")).toContainText("当前定位 trace=1", { timeout: 10000 });
     await expect(traceDeepLinkEvidence.getByTestId("run-evidence-trace-node-1")).toHaveClass(/ring-2/);
+
+    await page.goto(`/${workspaceSlug}/training/run-history?run=${agentRun.run.id}&trace=${firstTraceEventId}`, { waitUntil: "domcontentloaded" });
+    const traceIdDeepLinkRun = page.getByTestId(`prompt-evaluation-run-${agentRun.run.id}`);
+    const traceIdDeepLinkEvidence = traceIdDeepLinkRun.getByTestId(`run-evidence-${agentRun.run.id}`);
+    await expect(traceIdDeepLinkEvidence.getByTestId("run-evidence-anchor-summary")).toContainText(`当前定位 trace=${firstTraceEventId}`, { timeout: 10000 });
+    await expect(traceIdDeepLinkEvidence.getByTestId("run-evidence-trace-node-1")).toHaveClass(/ring-2/);
 
     await page.goto(`/${workspaceSlug}/training/run-history?run=${agentRun.run.id}&tool=${playwrightToolChain!.id}`, { waitUntil: "domcontentloaded" });
     const toolDeepLinkRun = page.getByTestId(`prompt-evaluation-run-${agentRun.run.id}`);

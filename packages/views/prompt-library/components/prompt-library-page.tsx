@@ -3248,7 +3248,7 @@ function EvidenceAnchorSummary({
       <div className="font-medium text-muted-foreground">证据锚点</div>
       <div className="grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-2 lg:grid-cols-3">
         <div>
-          trace 锚点：{traceCount > 0 ? `trace=1 到 trace=${traceCount}` : "暂无 trace"}
+          trace 锚点：{traceCount > 0 ? `trace=1 到 trace=${traceCount}，或 trace=<事件id>` : "暂无 trace"}
           {evidenceFocus.traceSeq ? ` · 当前定位 trace=${evidenceFocus.traceSeq}` : ""}
         </div>
         <div>
@@ -3510,7 +3510,7 @@ function TraceEventTreePanel({ evidence, focusedTraceSeq }: { evidence: PromptEv
       ) : (
         <div className="grid gap-1.5">
           {events.map((event, index) => (
-            <TraceEventTreeNode key={event.id} event={event} index={index} focused={focusedTraceSeq === String(index + 1)} />
+            <TraceEventTreeNode key={event.id} event={event} index={index} focused={isFocusedTraceEvent(focusedTraceSeq, event, index)} />
           ))}
         </div>
       )}
@@ -3536,6 +3536,7 @@ function TraceEventTreeNode({
       }`}
       data-testid={`run-evidence-trace-node-${index + 1}`}
       data-evidence-anchor={`trace:${index + 1}`}
+      data-evidence-anchor-alias={`trace:${event.id}`}
     >
       <div className="flex flex-wrap items-center gap-2">
         <span className="font-mono text-[11px] text-muted-foreground">#{index + 1}</span>
@@ -3630,7 +3631,10 @@ function buildExternalDependencyFailureNotice(evidence: PromptEvaluationRunEvide
 function evidenceFocusSelector(focus: EvidenceFocus): string {
   const selectors: string[] = [];
   if (focus.toolChainId) selectors.push(evidenceAnchorSelector("data-evidence-anchor", `tool:${focus.toolChainId}`));
-  if (focus.traceSeq) selectors.push(evidenceAnchorSelector("data-evidence-anchor", `trace:${focus.traceSeq}`));
+  if (focus.traceSeq) {
+    selectors.push(evidenceAnchorSelector("data-evidence-anchor", `trace:${focus.traceSeq}`));
+    selectors.push(evidenceAnchorSelector("data-evidence-anchor-alias", `trace:${focus.traceSeq}`));
+  }
   if (focus.trialAnchor) {
     selectors.push(evidenceAnchorSelector("data-evidence-anchor", `trial:${focus.trialAnchor}`));
     selectors.push(evidenceAnchorSelector("data-evidence-anchor-alias", `trial:${focus.trialAnchor}`));
@@ -3660,6 +3664,11 @@ function isFocusedTrial(focusedTrialAnchor: string | null, trial: PromptEvaluati
 function isFocusedSpan(focusedSpanAnchor: string | null, span: PromptEvaluationRunEvidence["execution_spans"][number]): boolean {
   if (!focusedSpanAnchor) return false;
   return focusedSpanAnchor === span.id || focusedSpanAnchor === String(span.seq);
+}
+
+function isFocusedTraceEvent(focusedTraceAnchor: string | null, event: PromptEvaluationRunEvidence["trace_events"][number], index: number): boolean {
+  if (!focusedTraceAnchor) return false;
+  return focusedTraceAnchor === event.id || focusedTraceAnchor === String(index + 1);
 }
 
 function isFocusedAssertion(focusedAssertionAnchor: string | null, trial: PromptEvaluationRunEvidence["trials"][number], assertionIndex: number): boolean {
