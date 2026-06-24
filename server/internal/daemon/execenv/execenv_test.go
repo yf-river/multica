@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 )
@@ -2644,6 +2645,39 @@ func TestReuseRestoresCodexHome(t *testing.T) {
 	}
 	if !strings.Contains(string(data), multicaManagedBeginMarker) {
 		t.Error("reused config.toml missing multica-managed block")
+	}
+}
+
+func TestPrepareCodexHomeTrustsTaskWorkDir(t *testing.T) {
+	// Cannot use t.Parallel() with t.Setenv.
+
+	sharedHome := t.TempDir()
+	t.Setenv("CODEX_HOME", sharedHome)
+
+	env, err := Prepare(PrepareParams{
+		WorkspacesRoot: t.TempDir(),
+		WorkspaceID:    "ws-codex-trust",
+		TaskID:         "aabbccdd-1111-2222-3333-444455556666",
+		AgentName:      "Codex Agent",
+		Provider:       "codex",
+		Task:           TaskContextForEnv{IssueID: "trust-test"},
+	}, testLogger())
+	if err != nil {
+		t.Fatalf("Prepare failed: %v", err)
+	}
+	defer env.Cleanup(true)
+
+	data, err := os.ReadFile(filepath.Join(env.CodexHome, "config.toml"))
+	if err != nil {
+		t.Fatalf("read config.toml: %v", err)
+	}
+	wantHeader := "[projects." + strconv.Quote(env.WorkDir) + "]"
+	s := string(data)
+	if !strings.Contains(s, wantHeader) {
+		t.Fatalf("config.toml missing trusted workdir header %q:\n%s", wantHeader, s)
+	}
+	if !strings.Contains(s, "trust_level = \"trusted\"") {
+		t.Fatalf("config.toml missing trusted workdir level:\n%s", s)
 	}
 }
 

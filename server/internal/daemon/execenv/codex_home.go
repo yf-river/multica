@@ -6,6 +6,8 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 )
 
 // Directories to symlink from the shared ~/.codex/ into the per-task CODEX_HOME.
@@ -37,6 +39,10 @@ type CodexHomeOptions struct {
 	// daemon falls back to danger-full-access for network access. See
 	// codex_sandbox.go for details.
 	CodexVersion string
+	// WorkDir is the daemon-managed task workdir. It is written as a trusted
+	// project in the per-task config so headless Codex runs do not emit
+	// project-local-config trust errors for each dynamic task directory.
+	WorkDir string
 	// GOOS overrides the target platform when deciding the sandbox policy.
 	// Empty means use runtime.GOOS. Primarily exists so tests can exercise
 	// both macOS and Linux paths deterministically.
@@ -133,7 +139,55 @@ func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *s
 		logger.Warn("execenv: codex-home ensure memory config failed", "error", err)
 	}
 
+	if err := ensureCodexTrustedProject(filepath.Join(codexHome, "config.toml"), opts.WorkDir); err != nil {
+		logger.Warn("execenv: codex-home ensure trusted project failed", "error", err)
+	}
+
 	return nil
+}
+
+func ensureCodexTrustedProject(configPath, workDir string) error {
+	if strings.TrimSpace(workDir) == "" {
+		return nil
+	}
+	absWorkDir, err := filepath.Abs(workDir)
+	if err != nil {
+		absWorkDir = workDir
+	}
+
+	data, err := os.ReadFile(configPath)
+	if err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("read config.toml: %w", err)
+	}
+
+	header := "[projects." + strconv.Quote(absWorkDir) + "]"
+	content := stripTomlTable(string(data), header)
+	content = strings.TrimRight(content, "\n")
+	if content != "" {
+		content += "\n\n"
+	}
+	content += header + "\ntrust_level = \"trusted\"\n"
+	return os.WriteFile(configPath, []byte(content), 0o600)
+}
+
+func stripTomlTable(content, header string) string {
+	lines := strings.Split(content, "\n")
+	out := make([]string, 0, len(lines))
+	skipping := false
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == header {
+			skipping = true
+			continue
+		}
+		if skipping && strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			skipping = false
+		}
+		if !skipping {
+			out = append(out, line)
+		}
+	}
+	return strings.Join(out, "\n")
 }
 
 // resolveSharedCodexHome returns the path to the user's shared Codex home.

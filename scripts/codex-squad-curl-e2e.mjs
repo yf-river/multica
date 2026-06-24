@@ -409,12 +409,21 @@ async function verifyProjectLeadExecution({ children, setup, token }) {
     if (messageCount <= 0) fail(`${check.label} 项目负责人任务完成但缺少消息`);
     if (!JSON.stringify(trace).includes(check.lead.id)) fail(`${check.label} 子任务 trace 未包含项目负责人`);
     const usageObserved = totalTokens > 0;
-    if (!usageObserved) {
-      evidence.project_lead_usage_gaps = evidence.project_lead_usage_gaps || [];
-      evidence.project_lead_usage_gaps.push({
+    const traceEvents = Array.isArray(trace?.events) ? trace.events : [];
+    const usageUnavailableEvent = traceEvents.find((event) => event?.event_type === "llm.usage_unavailable");
+    const usageReportedEvent = traceEvents.find((event) => event?.event_type === "llm.usage_reported");
+    const usageObservabilityOk = usageObserved || Boolean(usageUnavailableEvent);
+    if (!usageObservabilityOk) {
+      fail(`${check.label} 项目负责人任务缺少模型用量，也缺少 llm.usage_unavailable trace`);
+    }
+    if (!usageObserved && usageUnavailableEvent) {
+      evidence.project_lead_usage_boundaries = evidence.project_lead_usage_boundaries || [];
+      evidence.project_lead_usage_boundaries.push({
         label: check.label,
         task_id: task.id,
-        reason: "Codex 本次执行完成并写回消息/trace，但 daemon 结果未返回模型用量，models_with_usage=0。",
+        event_type: usageUnavailableEvent.event_type,
+        event_name: usageUnavailableEvent.event_name,
+        reason: "Codex 本次执行完成并写回消息/trace，但执行器未返回可精确计量的模型用量；平台已用 llm.usage_unavailable trace 明确记录该边界。",
       });
     }
     results.push({
@@ -425,6 +434,13 @@ async function verifyProjectLeadExecution({ children, setup, token }) {
       trace_event_count: Array.isArray(trace?.events) ? trace.events.length : Number(trace?.total ?? 0),
       message_count: messageCount,
       usage_observed: usageObserved,
+      usage_unavailable_observed: Boolean(usageUnavailableEvent),
+      usage_observability_ok: usageObservabilityOk,
+      usage_trace_event: usageReportedEvent
+        ? { event_type: usageReportedEvent.event_type, event_name: usageReportedEvent.event_name }
+        : usageUnavailableEvent
+          ? { event_type: usageUnavailableEvent.event_type, event_name: usageUnavailableEvent.event_name }
+          : null,
       usage,
     });
   }
