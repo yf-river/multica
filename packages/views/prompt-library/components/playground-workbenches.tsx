@@ -1,12 +1,13 @@
 "use client";
 
 import type { ReactNode } from "react";
-import { Activity, Braces, ClipboardCheck, FileText, Loader2, Play, Save, TerminalSquare } from "lucide-react";
+import { Activity, Braces, ClipboardCheck, FileText, Loader2, Play, Plus, Save, TerminalSquare } from "lucide-react";
 import { renderPromptTemplate } from "@multica/core/prompt-library";
 import type {
   Agent,
   AgentRuntime,
   PromptEvaluationAsset,
+  PromptEvaluationOptimizationCandidate,
   PromptEvaluationRun,
   PromptEvaluationRuntimeReadiness,
   PromptEvaluationStructuredCase,
@@ -292,9 +293,14 @@ export function AgentPlaygroundWorkbench({
   runs,
   assets,
   cases,
+  candidates,
   loading,
   onSaveAgentDebugPackage,
   onRunAgentDebugPackage,
+  onGenerateCandidate,
+  generatingCandidateRunId,
+  onRunOptimizationAgent,
+  runningOptimizationAgentRunId,
   runHistoryHrefForRun,
 }: {
   selected: PromptLibraryItem | null;
@@ -315,9 +321,14 @@ export function AgentPlaygroundWorkbench({
   runs: PromptEvaluationRun[];
   assets: PromptEvaluationAsset[];
   cases: PromptEvaluationStructuredCase[];
+  candidates: PromptEvaluationOptimizationCandidate[];
   loading: boolean;
   onSaveAgentDebugPackage: () => void;
   onRunAgentDebugPackage: () => void;
+  onGenerateCandidate: (runId: string) => void;
+  generatingCandidateRunId: string | null;
+  onRunOptimizationAgent: (runId: string) => void;
+  runningOptimizationAgentRunId: string | null;
   runHistoryHrefForRun: (runId: string) => string;
 }) {
   const agentRuns = runs.filter((run) => isAgentEvaluationRun(run) || Boolean(run.task_id));
@@ -550,6 +561,11 @@ export function AgentPlaygroundWorkbench({
             selectedExecutionAgent={selectedExecutionAgent}
             evaluationAgent={evaluationAgent}
             selectedRuntime={selectedRuntime}
+            candidates={candidates}
+            onGenerateCandidate={onGenerateCandidate}
+            generatingCandidateRunId={generatingCandidateRunId}
+            onRunOptimizationAgent={onRunOptimizationAgent}
+            runningOptimizationAgentRunId={runningOptimizationAgentRunId}
             runHistoryHrefForRun={runHistoryHrefForRun}
           />
 
@@ -638,6 +654,11 @@ function AgentExecutionConfigComparison({
   selectedExecutionAgent,
   evaluationAgent,
   selectedRuntime,
+  candidates,
+  onGenerateCandidate,
+  generatingCandidateRunId,
+  onRunOptimizationAgent,
+  runningOptimizationAgentRunId,
   runHistoryHrefForRun,
 }: {
   current: {
@@ -653,6 +674,11 @@ function AgentExecutionConfigComparison({
   selectedExecutionAgent: Agent | null;
   evaluationAgent: Agent | null;
   selectedRuntime: AgentRuntime | null;
+  candidates: PromptEvaluationOptimizationCandidate[];
+  onGenerateCandidate: (runId: string) => void;
+  generatingCandidateRunId: string | null;
+  onRunOptimizationAgent: (runId: string) => void;
+  runningOptimizationAgentRunId: string | null;
   runHistoryHrefForRun: (runId: string) => string;
 }) {
   const latestAgent = latestRun?.agent_id ? agents.find((agent) => agent.id === latestRun.agent_id) ?? null : null;
@@ -711,7 +737,17 @@ function AgentExecutionConfigComparison({
           agents={agents}
           runtimes={runtimes}
         />
-        <AgentRunComparisonTable runs={recentRuns} agents={agents} runtimes={runtimes} runHistoryHrefForRun={runHistoryHrefForRun} />
+        <AgentRunComparisonTable
+          runs={recentRuns}
+          agents={agents}
+          runtimes={runtimes}
+          candidates={candidates}
+          onGenerateCandidate={onGenerateCandidate}
+          generatingCandidateRunId={generatingCandidateRunId}
+          onRunOptimizationAgent={onRunOptimizationAgent}
+          runningOptimizationAgentRunId={runningOptimizationAgentRunId}
+          runHistoryHrefForRun={runHistoryHrefForRun}
+        />
       </div>
     </div>
   );
@@ -1002,35 +1038,48 @@ function AgentRunComparisonTable({
   runs,
   agents,
   runtimes,
+  candidates,
+  onGenerateCandidate,
+  generatingCandidateRunId,
+  onRunOptimizationAgent,
+  runningOptimizationAgentRunId,
   runHistoryHrefForRun,
 }: {
   runs: PromptEvaluationRun[];
   agents: Agent[];
   runtimes: AgentRuntime[];
+  candidates: PromptEvaluationOptimizationCandidate[];
+  onGenerateCandidate: (runId: string) => void;
+  generatingCandidateRunId: string | null;
+  onRunOptimizationAgent: (runId: string) => void;
+  runningOptimizationAgentRunId: string | null;
   runHistoryHrefForRun: (runId: string) => string;
 }) {
+  const candidatesByRun = buildCandidatesByRun(candidates);
   return (
     <div className="rounded border px-2 py-2" data-testid="agent-playground-run-comparison">
       <div className="flex items-center justify-between gap-2">
         <div className="font-medium text-foreground">最近运行横向对比</div>
-        <Badge variant="outline" className="text-[10px]">最多 5 条</Badge>
+        <Badge variant="outline" className="text-[10px]">失败可回灌</Badge>
       </div>
       {runs.length === 0 ? (
         <div className="mt-2 rounded border border-dashed px-2 py-3 text-muted-foreground" data-testid="agent-playground-run-comparison-empty">
-          暂无可对比的真实运行；后续将按执行智能体、运行时、模型、耗时、token、成本和证据链接横向对比。
+          暂无可对比的真实运行；后续将按执行智能体、运行时、模型、耗时、token、成本、证据链接和失败回灌动作横向对比。
         </div>
       ) : (
         <div className="mt-2 overflow-x-auto" data-testid="agent-playground-run-comparison-table">
-          <table className="w-full min-w-[640px] text-left text-[11px]">
+          <table className="w-full min-w-[840px] text-left text-[11px]">
             <thead className="text-muted-foreground">
               <tr className="border-b">
                 <th className="py-1 pr-2 font-medium">状态</th>
+                <th className="py-1 pr-2 font-medium">失败线索</th>
                 <th className="py-1 pr-2 font-medium">执行智能体</th>
                 <th className="py-1 pr-2 font-medium">运行时</th>
                 <th className="py-1 pr-2 font-medium">模型</th>
                 <th className="py-1 pr-2 font-medium">耗时</th>
                 <th className="py-1 pr-2 font-medium">token</th>
                 <th className="py-1 pr-2 font-medium">成本</th>
+                <th className="py-1 pr-2 font-medium">优化回灌</th>
                 <th className="py-1 font-medium">证据</th>
               </tr>
             </thead>
@@ -1043,10 +1092,16 @@ function AgentRunComparisonTable({
                   ? runtimes.find((runtime) => runtime.id === run.runtime_id)?.name ?? `运行时 ${run.runtime_id.slice(0, 8)}`
                   : "未绑定";
                 const tokenTotal = run.input_tokens + run.output_tokens;
+                const runCandidates = candidatesByRun.get(run.id) ?? [];
+                const hasPendingCandidate = runCandidates.some((candidate) => candidate.status === "待确认");
+                const canGenerate = canGenerateOptimizationCandidate(run);
                 return (
-                  <tr key={run.id} className="border-b last:border-b-0">
+                  <tr key={run.id} className="border-b last:border-b-0" data-testid={`agent-playground-run-comparison-row-${run.id}`}>
                     <td className="py-1.5 pr-2">
                       <Badge variant={run.status === "通过" ? "secondary" : "outline"} className="text-[10px]">{run.status}</Badge>
+                    </td>
+                    <td className="max-w-32 truncate py-1.5 pr-2 text-muted-foreground">
+                      {summarizeFailureSignal(run)}
                     </td>
                     <td className="max-w-28 truncate py-1.5 pr-2 text-muted-foreground">{agentLabel}</td>
                     <td className="max-w-28 truncate py-1.5 pr-2 text-muted-foreground">{runtimeLabel}</td>
@@ -1054,6 +1109,36 @@ function AgentRunComparisonTable({
                     <td className="whitespace-nowrap py-1.5 pr-2 text-muted-foreground">{formatDuration(run.total_duration_ms)}</td>
                     <td className="whitespace-nowrap py-1.5 pr-2 text-muted-foreground">{tokenTotal.toLocaleString()}</td>
                     <td className="whitespace-nowrap py-1.5 pr-2 text-muted-foreground">{formatMoney(run.estimated_cost)}</td>
+                    <td className="py-1.5 pr-2">
+                      {canGenerate ? (
+                        <div className="flex flex-wrap gap-1">
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            className="h-7 px-2 text-[11px]"
+                            onClick={() => onRunOptimizationAgent(run.id)}
+                            disabled={runningOptimizationAgentRunId === run.id || run.status === "已入队" || run.status === "运行中"}
+                            data-testid={`agent-playground-run-optimization-agent-${run.id}`}
+                          >
+                            {runningOptimizationAgentRunId === run.id ? <Loader2 className="size-3 animate-spin" /> : <Play className="size-3" />}
+                            智能体优化
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="secondary"
+                            className="h-7 px-2 text-[11px]"
+                            onClick={() => onGenerateCandidate(run.id)}
+                            disabled={generatingCandidateRunId === run.id || hasPendingCandidate}
+                            data-testid={`agent-playground-run-generate-candidate-${run.id}`}
+                          >
+                            {generatingCandidateRunId === run.id ? <Loader2 className="size-3 animate-spin" /> : <Plus className="size-3" />}
+                            {hasPendingCandidate ? "已有候选" : "生成候选"}
+                          </Button>
+                        </div>
+                      ) : (
+                        <span className="text-muted-foreground">无需回灌</span>
+                      )}
+                    </td>
                     <td className="whitespace-nowrap py-1.5">
                       <AppLink
                         href={runHistoryHrefForRun(run.id)}
@@ -1072,6 +1157,30 @@ function AgentRunComparisonTable({
       )}
     </div>
   );
+}
+
+function canGenerateOptimizationCandidate(run: PromptEvaluationRun): boolean {
+  if (!run.prompt_id) return false;
+  if (run.failed_cases > 0) return true;
+  if (run.status === "未通过" || run.status === "失败") return true;
+  return Boolean(run.failure_reason && run.failure_reason !== "无");
+}
+
+function summarizeFailureSignal(run: PromptEvaluationRun): string {
+  if (run.failed_cases > 0) return `失败用例 ${run.failed_cases}`;
+  if (run.failure_reason && run.failure_reason !== "无") return String(run.failure_reason);
+  if (run.status === "未通过" || run.status === "失败") return run.conclusion || run.status;
+  return "无";
+}
+
+function buildCandidatesByRun(candidates: PromptEvaluationOptimizationCandidate[]): Map<string, PromptEvaluationOptimizationCandidate[]> {
+  const result = new Map<string, PromptEvaluationOptimizationCandidate[]>();
+  for (const candidate of candidates) {
+    const entries = result.get(candidate.run_id) ?? [];
+    entries.push(candidate);
+    result.set(candidate.run_id, entries);
+  }
+  return result;
 }
 
 function Field({ label, children }: { label: string; children: ReactNode }) {

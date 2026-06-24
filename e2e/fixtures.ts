@@ -618,6 +618,21 @@ export class TestApiClient {
     }
   }
 
+  async failDaemonTask(taskId: string, data: { error: string; failure_reason: string }) {
+    const res = await this.authedFetch(`/api/daemon/tasks/${taskId}/fail`, {
+      method: "POST",
+      body: JSON.stringify({
+        error: data.error,
+        failure_reason: data.failure_reason,
+        session_id: `e2e-session-${taskId}`,
+        work_dir: `/tmp/multica-e2e/${taskId}`,
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to fail daemon task: ${res.status} ${await res.text()}`);
+    }
+  }
+
   async createCodingSquadFixture(name = `E2E Multica 编码小队 ${Date.now()}`): Promise<CodingSquadFixture> {
     if (!this.workspaceId) {
       throw new Error("Cannot seed coding squad before workspace is selected");

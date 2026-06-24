@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useMemo, useState, type ReactNode } from "react";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { BookOpenText, TerminalSquare } from "lucide-react";
+import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -10,6 +11,7 @@ import { runtimeListOptions } from "@multica/core/runtimes/queries";
 import { TRAINING_WORKBENCH_VIEW_BY_TAB, trainingWorkbenchPath } from "@multica/core/training";
 import type {
   Agent,
+  PromptEvaluationOptimizationCandidate,
   PromptEvaluationRuntimeReadiness,
   PromptLibraryItem,
 } from "@multica/core/types";
@@ -44,6 +46,7 @@ const agentPlaygroundKeys = {
   assets: (workspaceId: string) => ["agent-playground", workspaceId, "evaluation-assets"] as const,
   cases: (workspaceId: string) => ["agent-playground", workspaceId, "evaluation-cases"] as const,
   runs: (workspaceId: string) => ["agent-playground", workspaceId, "evaluation-runs"] as const,
+  candidates: (workspaceId: string) => ["agent-playground", workspaceId, "optimization-candidates"] as const,
   runtimeReadiness: (workspaceId: string) => ["agent-playground", workspaceId, "runtime-readiness"] as const,
   agents: (workspaceId: string) => ["agent-playground", workspaceId, "agents"] as const,
 };
@@ -166,6 +169,11 @@ export function AgentPlaygroundContainer() {
     queryFn: () => api.listPromptEvaluationRuns({ limit: 100 }),
     enabled: !!workspaceId,
   });
+  const candidateQuery = useQuery({
+    queryKey: agentPlaygroundKeys.candidates(workspaceId ?? ""),
+    queryFn: () => api.listPromptEvaluationOptimizationCandidates({ limit: 100 }),
+    enabled: !!workspaceId,
+  });
   const runtimeReadinessQuery = useQuery({
     queryKey: agentPlaygroundKeys.runtimeReadiness(workspaceId ?? ""),
     queryFn: () => api.getPromptEvaluationRuntimeReadiness(),
@@ -182,6 +190,7 @@ export function AgentPlaygroundContainer() {
   const cases = caseQuery.data?.items ?? [];
   const runs = runQuery.data?.items ?? [];
   const assets = assetQuery.data?.items ?? [];
+  const candidates = candidateQuery.data?.items ?? [];
   const filteredItems = useFilteredPromptItems(items, query);
   const selected = selection.resolve(items);
   const runtimeReadiness = runtimeReadinessQuery.data ?? DEFAULT_AGENT_RUNTIME_READINESS;
@@ -200,6 +209,24 @@ export function AgentPlaygroundContainer() {
     onExperimentDimensionsChanged: () => undefined,
     onRunsChanged: () => queryClient.invalidateQueries({ queryKey: agentPlaygroundKeys.runs(workspaceId ?? "") }),
     onSummaryChanged: () => undefined,
+  });
+
+  const createCandidateMut = useMutation({
+    mutationFn: (runId: string) => api.createPromptEvaluationOptimizationCandidate(runId),
+    onSuccess: (candidate: PromptEvaluationOptimizationCandidate) => {
+      queryClient.invalidateQueries({ queryKey: agentPlaygroundKeys.candidates(workspaceId ?? "") });
+      toast.success(`优化候选已生成：${candidate.candidate_name}`);
+    },
+  });
+
+  const runOptimizationAgentMut = useMutation({
+    mutationFn: (runId: string) => api.runPromptEvaluationOptimizationAgent(runId),
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: agentPlaygroundKeys.assets(workspaceId ?? "") });
+      queryClient.invalidateQueries({ queryKey: agentPlaygroundKeys.cases(workspaceId ?? "") });
+      queryClient.invalidateQueries({ queryKey: agentPlaygroundKeys.runs(workspaceId ?? "") });
+      toast.success(`真实智能体优化任务已入队：${result.task_id}`);
+    },
   });
 
   useEffect(() => {
@@ -239,9 +266,14 @@ export function AgentPlaygroundContainer() {
             runs={runs}
             assets={assets}
             cases={cases}
+            candidates={candidates}
             loading={assetQuery.isLoading || caseQuery.isLoading || runQuery.isLoading}
             onSaveAgentDebugPackage={actions.saveAgentDebugPackage}
             onRunAgentDebugPackage={actions.runAgentDebugPackage}
+            onGenerateCandidate={(runId) => createCandidateMut.mutate(runId)}
+            generatingCandidateRunId={createCandidateMut.isPending ? createCandidateMut.variables ?? null : null}
+            onRunOptimizationAgent={(runId) => runOptimizationAgentMut.mutate(runId)}
+            runningOptimizationAgentRunId={runOptimizationAgentMut.isPending ? runOptimizationAgentMut.variables ?? null : null}
             runHistoryHrefForRun={(runId) => `${runHistoryPath}?run=${encodeURIComponent(runId)}`}
           />
         </main>

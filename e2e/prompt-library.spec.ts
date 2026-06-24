@@ -1137,6 +1137,97 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId(`run-evidence-${agentRun.run.id}`)).toBeVisible({ timeout: 15000 });
   });
 
+  test("智能体调试场失败运行可以直接生成优化候选", async ({ page }) => {
+    test.setTimeout(90_000);
+    await api.ensureOnlineCodexRuntime(`${artifactPrefix} 调试场失败回灌 Runtime`);
+    const prompt = await api.createPromptForE2E(artifactPrefix, {
+      name: `${artifactPrefix} 智能体失败回灌`,
+      content: "请评估 {{issue_title}}，输出中文结论、验收条件和 trace/task id。",
+      variables: [{ name: "issue_title", label: "任务标题", required: true }],
+    });
+    const asset = await api.createPromptEvaluationAsset({
+      prompt_id: prompt.id,
+      name: `${artifactPrefix} 智能体失败回灌实验`,
+      description: "E2E 验证智能体调试场失败运行可以直接生成优化候选",
+      asset_type: "实验",
+      payload: {
+        cases: [
+          {
+            名称: "失败回灌用例",
+            变量: { issue_title: "智能体调试场失败回灌" },
+            期望包含: ["验收条件", "trace/task id"],
+          },
+        ],
+      },
+      status: "启用",
+    });
+    const agentRun = await api.runPromptEvaluationAssetAgent(asset.id);
+    if (!agentRun.task_id || !agentRun.runtime_id) {
+      throw new Error(`智能体调试场失败回灌缺少 task/runtime：${JSON.stringify(agentRun)}`);
+    }
+    const claimed = await api.claimDaemonTask(agentRun.runtime_id);
+    expect(claimed.task?.id).toBe(agentRun.task_id);
+    await api.startDaemonTask(agentRun.task_id);
+    await api.reportDaemonTaskUsage(agentRun.task_id, {
+      model: agentRun.model,
+      input_tokens: 42,
+      output_tokens: 8,
+      cache_read_tokens: 3,
+      cache_write_tokens: 2,
+    });
+    await api.reportDaemonTaskMessages(agentRun.task_id, [
+      { seq: 1, type: "text", content: "Agent 输出：未能生成验收条件和 trace/task id。" },
+      {
+        seq: 2,
+        type: "tool_result",
+        tool: "prompt-evaluation",
+        content: "断言未命中",
+        output: "缺失验收条件、trace/task id",
+      },
+    ]);
+    await api.failDaemonTask(agentRun.task_id, {
+      error: "Agent 输出缺失验收证据",
+      failure_reason: "assertion_mismatch",
+    });
+    const failedRun = await api.syncPromptEvaluationRun(agentRun.run.id);
+    expect(failedRun).toMatchObject({
+      id: agentRun.run.id,
+      status: "失败",
+    });
+    expect(failedRun.failure_reason).toContain("未能生成验收条件");
+
+    await page.goto(`/${workspaceSlug}/training/agent-playground`, { waitUntil: "domcontentloaded" });
+    await expect(page.getByTestId("agent-playground-page-shell")).toBeVisible({ timeout: 10000 });
+    await page.getByPlaceholder("搜索执行目标").fill(prompt.name);
+    await page.getByRole("button", { name: new RegExp(escapeRegExp(prompt.name)) }).click();
+    const runRow = page.getByTestId(`agent-playground-run-comparison-row-${agentRun.run.id}`);
+    await expect(runRow).toBeVisible({ timeout: 10000 });
+    await expect(runRow).toContainText("失败用例 1");
+    await expect(runRow.getByTestId(`agent-playground-run-evidence-link-${agentRun.run.id}`)).toBeVisible();
+
+    const candidateResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        response.url().includes(`/api/prompt-evaluation-runs/${agentRun.run.id}/optimization-candidates`),
+      { timeout: 10000 },
+    );
+    await runRow.getByTestId(`agent-playground-run-generate-candidate-${agentRun.run.id}`).click();
+    expect((await candidateResponse).status()).toBe(201);
+    await expect(page.getByText(/优化候选已生成/)).toBeVisible({ timeout: 10000 });
+
+    await expect
+      .poll(async () => {
+        const candidates = await api.listPromptEvaluationOptimizationCandidates({ run_id: agentRun.run.id });
+        return candidates[0] ?? null;
+      }, { timeout: 15000 })
+      .toMatchObject({
+        run_id: agentRun.run.id,
+        prompt_id: prompt.id,
+        status: "待确认",
+      });
+    await expect(runRow.getByTestId(`agent-playground-run-generate-candidate-${agentRun.run.id}`)).toContainText("已有候选", { timeout: 10000 });
+  });
+
   test("数据集版本可以对比并恢复为新的可追溯版本", async ({ page }) => {
     test.setTimeout(90_000);
     const prompt = await api.createPromptForE2E(artifactPrefix, {
