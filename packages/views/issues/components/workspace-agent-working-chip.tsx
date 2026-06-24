@@ -10,7 +10,7 @@ import {
 } from "@multica/ui/components/ui/hover-card";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
-import type { AgentTask } from "@multica/core/types";
+import type { AgentTask, Issue } from "@multica/core/types";
 import { AgentAvatarStack } from "../../agents/components/agent-avatar-stack";
 import { AgentActivityHoverContent } from "../../agents/components/agent-activity-hover-content";
 import { useT } from "../../i18n";
@@ -27,6 +27,11 @@ interface WorkspaceAgentWorkingChipProps {
   // "my" running tasks, not the whole workspace). When omitted, the chip
   // shows workspace-wide running agents.
   scopedIssueIds?: ReadonlySet<string>;
+  // Optional list-page activity summaries. When every issue in scope carries
+  // this summary, the chip can render its first screen without the
+  // workspace-wide agent-task-snapshot request. Hovering an active chip still
+  // loads the full snapshot for task-level details.
+  scopedIssues?: readonly Pick<Issue, "id" | "agent_activity">[];
 }
 
 /**
@@ -60,13 +65,41 @@ export function WorkspaceAgentWorkingChip({
   value,
   onToggle,
   scopedIssueIds,
+  scopedIssues,
 }: WorkspaceAgentWorkingChipProps) {
   const { t } = useT("issues");
   const wsId = useWorkspaceId();
   const [open, setOpen] = useState(false);
-  const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
+  const hasCompleteSummaries =
+    scopedIssues !== undefined &&
+    scopedIssues.every((issue) => issue.agent_activity !== undefined);
+  const summaryAgentIds = useMemo(() => {
+    if (!hasCompleteSummaries) return [];
+    const ids = new Set<string>();
+    for (const issue of scopedIssues ?? []) {
+      if (scopedIssueIds && !scopedIssueIds.has(issue.id)) continue;
+      if ((issue.agent_activity?.running_count ?? 0) <= 0) continue;
+      for (const agentId of issue.agent_activity?.agent_ids ?? []) ids.add(agentId);
+    }
+    return [...ids];
+  }, [hasCompleteSummaries, scopedIssueIds, scopedIssues]);
+  const { data: snapshot = [] } = useQuery({
+    ...agentTaskSnapshotOptions(wsId),
+    enabled: !hasCompleteSummaries || (open && summaryAgentIds.length > 0),
+  });
 
   const { runningTasks, agentIds } = useMemo(() => {
+    if (hasCompleteSummaries) {
+      const running: AgentTask[] = [];
+      if (open) {
+        for (const task of snapshot) {
+          if (task.status !== "running") continue;
+          if (scopedIssueIds && !scopedIssueIds.has(task.issue_id)) continue;
+          running.push(task);
+        }
+      }
+      return { runningTasks: running, agentIds: summaryAgentIds };
+    }
     const running: AgentTask[] = [];
     for (const task of snapshot) {
       if (task.status !== "running") continue;
@@ -78,7 +111,7 @@ export function WorkspaceAgentWorkingChip({
     }
     const unique = [...new Set(running.map((tk) => tk.agent_id))];
     return { runningTasks: running, agentIds: unique };
-  }, [snapshot, scopedIssueIds]);
+  }, [hasCompleteSummaries, open, scopedIssueIds, snapshot, summaryAgentIds]);
 
   const hasAgents = agentIds.length > 0;
   // Active (brand-filled) class — must explicitly re-pin text and bg in

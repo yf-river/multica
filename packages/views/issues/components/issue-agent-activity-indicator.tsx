@@ -9,7 +9,7 @@ import {
 } from "@multica/ui/components/ui/hover-card";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
-import type { AgentTask } from "@multica/core/types";
+import type { AgentTask, Issue } from "@multica/core/types";
 import { cn } from "@multica/ui/lib/utils";
 import { AgentAvatarStack } from "../../agents/components/agent-avatar-stack";
 import { AgentActivityHoverContent } from "../../agents/components/agent-activity-hover-content";
@@ -17,6 +17,7 @@ import { useT } from "../../i18n";
 
 interface IssueAgentActivityIndicatorProps {
   issueId: string;
+  agentActivity?: Issue["agent_activity"];
   // Avatar size in px. Kept very small — this is a corner-of-card cue,
   // not a primary control. Default 12 reads as a dot at typical board
   // densities while still showing the agent's face on hover-zoom.
@@ -48,14 +49,29 @@ interface IssueAgentActivityIndicatorProps {
  */
 export const IssueAgentActivityIndicator = memo(function IssueAgentActivityIndicator({
   issueId,
+  agentActivity,
   size = 12,
 }: IssueAgentActivityIndicatorProps) {
   const { t } = useT("issues");
   const wsId = useWorkspaceId();
   const [open, setOpen] = useState(false);
-  const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
+  const hasSummary = agentActivity !== undefined;
+  const { data: snapshot = [] } = useQuery({
+    ...agentTaskSnapshotOptions(wsId),
+    enabled: !hasSummary || open,
+  });
 
   const { runningTasks, queuedTasks, agentIds, opacity } = useMemo(() => {
+    if (hasSummary) {
+      const running = agentActivity?.running_count ?? 0;
+      const queued = agentActivity?.queued_count ?? 0;
+      return {
+        runningTasks: [] as AgentTask[],
+        queuedTasks: [] as AgentTask[],
+        agentIds: agentActivity?.agent_ids ?? [],
+        opacity: (running > 0 ? "full" : queued > 0 ? "half" : "none") as "full" | "half" | "none",
+      };
+    }
     const running: AgentTask[] = [];
     const queued: AgentTask[] = [];
     for (const task of snapshot) {
@@ -84,10 +100,27 @@ export const IssueAgentActivityIndicator = memo(function IssueAgentActivityIndic
       agentIds: uniqueAgents,
       opacity: (running.length > 0 ? "full" : "half") as "full" | "half",
     };
-  }, [snapshot, issueId]);
+  }, [agentActivity, hasSummary, issueId, snapshot]);
 
-  if (agentIds.length === 0) return null;
-  const hoverTasks = [...runningTasks, ...queuedTasks];
+  const hoverTasks = useMemo(() => {
+    if (!hasSummary) return [...runningTasks, ...queuedTasks];
+    const running: AgentTask[] = [];
+    const queued: AgentTask[] = [];
+    for (const task of snapshot) {
+      if (task.issue_id !== issueId) continue;
+      if (task.status === "running") running.push(task);
+      else if (
+        task.status === "queued" ||
+        task.status === "dispatched" ||
+        task.status === "waiting_local_directory"
+      ) {
+        queued.push(task);
+      }
+    }
+    return [...running, ...queued];
+  }, [hasSummary, issueId, queuedTasks, runningTasks, snapshot]);
+
+  if (agentIds.length === 0 || opacity === "none") return null;
   const isRunning = opacity === "full";
 
   return (

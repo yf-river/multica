@@ -70,6 +70,9 @@ type IssueResponse struct {
 	// Present on list-style responses so issue cards can render sub-issue
 	// progress without a workspace-wide child-progress request.
 	ChildProgress *IssueChildProgressResponse `json:"child_progress,omitempty"`
+	// Present on list-style responses so issue cards can render live agent
+	// cues and the "working" filter without a workspace-wide task snapshot.
+	AgentActivity *IssueAgentActivitySummaryResponse `json:"agent_activity,omitempty"`
 }
 
 type IssueActorSummaryResponse struct {
@@ -88,6 +91,12 @@ type IssueProjectSummaryResponse struct {
 type IssueChildProgressResponse struct {
 	Done  int64 `json:"done"`
 	Total int64 `json:"total"`
+}
+
+type IssueAgentActivitySummaryResponse struct {
+	RunningCount int64    `json:"running_count"`
+	QueuedCount  int64    `json:"queued_count"`
+	AgentIDs     []string `json:"agent_ids"`
 }
 
 // validIssueStatuses / validIssuePriorities mirror the CHECK constraints on
@@ -303,6 +312,9 @@ type issueListSummary struct {
 	ProjectIcon       pgtype.Text
 	ChildDone         int64
 	ChildTotal        int64
+	AgentRunningCount int64
+	AgentQueuedCount  int64
+	AgentIDs          []pgtype.UUID
 }
 
 const issueListSelectSQL = `i.id, i.workspace_id, i.title, i.description, i.status, i.priority,
@@ -313,9 +325,13 @@ const issueListSelectSQL = `i.id, i.workspace_id, i.title, i.description, i.stat
        project.title AS project_title,
        project.icon AS project_icon,
        COALESCE(child_progress.child_done, 0)::bigint AS child_done,
-       COALESCE(child_progress.child_total, 0)::bigint AS child_total`
+       COALESCE(child_progress.child_total, 0)::bigint AS child_total,
+       COALESCE(agent_activity.running_count, 0)::bigint AS agent_running_count,
+       COALESCE(agent_activity.queued_count, 0)::bigint AS agent_queued_count,
+       COALESCE(agent_activity.agent_ids, ARRAY[]::uuid[]) AS agent_ids`
 
-const issueListJoinSQL = `LEFT JOIN "user" assignee_member
+func issueListJoinSQL(visibleAgentIDsRef string) string {
+	return fmt.Sprintf(`LEFT JOIN "user" assignee_member
        ON i.assignee_type = 'member'
       AND assignee_member.id = i.assignee_id
 LEFT JOIN agent assignee_agent
@@ -338,7 +354,22 @@ LEFT JOIN (
           AND parent_issue_id IS NOT NULL
         GROUP BY parent_issue_id
 ) child_progress
-       ON child_progress.parent_issue_id = i.id`
+       ON child_progress.parent_issue_id = i.id
+LEFT JOIN (
+       SELECT issue_id,
+              COUNT(*) FILTER (WHERE status = 'running')::bigint AS running_count,
+              COUNT(*) FILTER (WHERE status IN ('queued', 'dispatched', 'waiting_local_directory'))::bigint AS queued_count,
+              ARRAY_AGG(DISTINCT agent_id) FILTER (
+                  WHERE status IN ('queued', 'dispatched', 'waiting_local_directory', 'running')
+              ) AS agent_ids
+         FROM agent_task_queue
+        WHERE issue_id IS NOT NULL
+          AND agent_id = ANY(%s::uuid[])
+          AND status IN ('queued', 'dispatched', 'waiting_local_directory', 'running')
+        GROUP BY issue_id
+) agent_activity
+       ON agent_activity.issue_id = i.id`, visibleAgentIDsRef)
+}
 
 func scanIssueListRow(rows interface{ Scan(dest ...any) error }, row *issueListRow) error {
 	return rows.Scan(issueListScanDest(row)...)
@@ -371,6 +402,9 @@ func issueListScanDest(row *issueListRow) []any {
 		&row.Summary.ProjectIcon,
 		&row.Summary.ChildDone,
 		&row.Summary.ChildTotal,
+		&row.Summary.AgentRunningCount,
+		&row.Summary.AgentQueuedCount,
+		&row.Summary.AgentIDs,
 	}
 }
 
@@ -404,6 +438,17 @@ func attachIssueListSummary(resp *IssueResponse, summary issueListSummary) {
 		Done:  summary.ChildDone,
 		Total: summary.ChildTotal,
 	}
+	agentIDs := make([]string, 0, len(summary.AgentIDs))
+	for _, id := range summary.AgentIDs {
+		if id.Valid {
+			agentIDs = append(agentIDs, uuidToString(id))
+		}
+	}
+	resp.AgentActivity = &IssueAgentActivitySummaryResponse{
+		RunningCount: summary.AgentRunningCount,
+		QueuedCount:  summary.AgentQueuedCount,
+		AgentIDs:     agentIDs,
+	}
 }
 
 func unknownIssueAssigneeName(assigneeType string) string {
@@ -417,6 +462,30 @@ func unknownIssueAssigneeName(assigneeType string) string {
 	default:
 		return "未知负责人"
 	}
+}
+
+func (h *Handler) visibleAgentUUIDsForIssueList(w http.ResponseWriter, r *http.Request, workspaceID string) ([]pgtype.UUID, bool) {
+	member, ok := h.workspaceMember(w, r, workspaceID)
+	if !ok {
+		return nil, false
+	}
+	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+	allowed, err := h.accessibleAgentIDs(r.Context(), workspaceID, actorType, actorID, member.Role)
+	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return nil, false
+		}
+		writeError(w, http.StatusInternalServerError, "failed to resolve agent access")
+		return nil, false
+	}
+	ids := make([]pgtype.UUID, 0, len(allowed))
+	for id := range allowed {
+		parsed, err := util.ParseUUID(id)
+		if err == nil {
+			ids = append(ids, parsed)
+		}
+	}
+	return ids, true
 }
 
 func assigneeGroupID(assigneeType pgtype.Text, assigneeID pgtype.UUID) string {
@@ -1172,6 +1241,7 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	whereSql := strings.Join(where, " AND ")
+	countArgs := append([]any(nil), args...)
 
 	// Build ORDER BY clause.
 	orderBy := sortCol
@@ -1184,6 +1254,11 @@ func (h *Handler) ListIssues(w http.ResponseWriter, r *http.Request) {
 	}
 	orderBy += ", i.created_at DESC"
 
+	visibleAgentIDs, ok := h.visibleAgentUUIDsForIssueList(w, r, workspaceID)
+	if !ok {
+		return
+	}
+	visibleAgentIDsRef := addArg(visibleAgentIDs)
 	offsetRef := addArg(int64(offset))
 	limitRef := addArg(int64(limit))
 
@@ -1192,7 +1267,7 @@ FROM issue i
 %s
 WHERE %s
 ORDER BY %s
-LIMIT %s OFFSET %s`, issueListSelectSQL, issueListJoinSQL, whereSql, orderBy, limitRef, offsetRef)
+LIMIT %s OFFSET %s`, issueListSelectSQL, issueListJoinSQL(visibleAgentIDsRef), whereSql, orderBy, limitRef, offsetRef)
 
 	rows, err := h.DB.Query(ctx, query, args...)
 	if err != nil {
@@ -1220,8 +1295,6 @@ LIMIT %s OFFSET %s`, issueListSelectSQL, issueListJoinSQL, whereSql, orderBy, li
 
 	// Get the true total count for pagination awareness.
 	countQuery := fmt.Sprintf(`SELECT COUNT(*) FROM issue i WHERE %s`, whereSql)
-	// Count query uses the same args minus the OFFSET and LIMIT params (last two added).
-	countArgs := args[:len(args)-2]
 	var total int64
 	if err := h.DB.QueryRow(ctx, countQuery, countArgs...).Scan(&total); err != nil {
 		total = int64(len(issues))
@@ -1417,6 +1490,11 @@ func (h *Handler) ListIssueBuckets(w http.ResponseWriter, r *http.Request) {
 	orderBy += ", i.created_at DESC"
 
 	whereSQL := strings.Join(where, " AND ")
+	visibleAgentIDs, ok := h.visibleAgentUUIDsForIssueList(w, r, workspaceID)
+	if !ok {
+		return
+	}
+	visibleAgentIDsRef := addArg(visibleAgentIDs)
 	offsetRef := addArg(int64(offset))
 	limitRef := addArg(int64(limit))
 	query := fmt.Sprintf(`WITH ranked AS (
@@ -1430,11 +1508,12 @@ func (h *Handler) ListIssueBuckets(w http.ResponseWriter, r *http.Request) {
 SELECT id, workspace_id, title, description, status, priority,
        assignee_type, assignee_id, creator_type, creator_id,
        parent_issue_id, position, start_date, due_date, created_at, updated_at, number, project_id, metadata,
-       assignee_name, assignee_avatar_url, project_title, project_icon, child_done, child_total, status_total
+       assignee_name, assignee_avatar_url, project_title, project_icon, child_done, child_total,
+       agent_running_count, agent_queued_count, agent_ids, status_total
   FROM ranked
  WHERE status_row_number > %s
    AND status_row_number <= (%s + %s)
- ORDER BY status, status_row_number`, issueListSelectSQL, orderBy, issueListJoinSQL, whereSQL, offsetRef, offsetRef, limitRef)
+ ORDER BY status, status_row_number`, issueListSelectSQL, orderBy, issueListJoinSQL(visibleAgentIDsRef), whereSQL, offsetRef, offsetRef, limitRef)
 
 	rows, err := h.DB.Query(ctx, query, args...)
 	if err != nil {
@@ -1904,6 +1983,11 @@ func (h *Handler) ListGroupedIssues(w http.ResponseWriter, r *http.Request) {
 
 	offsetRef := addArg(int64(offset))
 	limitRef := addArg(int64(limit))
+	visibleAgentIDs, ok := h.visibleAgentUUIDsForIssueList(w, r, workspaceID)
+	if !ok {
+		return
+	}
+	visibleAgentIDsRef := addArg(visibleAgentIDs)
 	query := fmt.Sprintf(`
 WITH ranked AS (
 	SELECT
@@ -1922,7 +2006,8 @@ SELECT
 	assignee_type, assignee_id, creator_type, creator_id,
 	parent_issue_id, position, start_date, due_date, created_at, updated_at,
 	number, project_id, metadata,
-	assignee_name, assignee_avatar_url, project_title, project_icon, child_done, child_total, group_total
+	assignee_name, assignee_avatar_url, project_title, project_icon, child_done, child_total,
+	agent_running_count, agent_queued_count, agent_ids, group_total
 FROM ranked
 WHERE rn > %s AND rn <= %s + %s
 ORDER BY
@@ -1934,7 +2019,7 @@ ORDER BY
 	END,
 	assignee_type NULLS LAST,
 	assignee_id NULLS LAST,
-	rn`, issueListSelectSQL, intraGroupOrder, issueListJoinSQL, strings.Join(where, " AND "), offsetRef, offsetRef, limitRef)
+	rn`, issueListSelectSQL, intraGroupOrder, issueListJoinSQL(visibleAgentIDsRef), strings.Join(where, " AND "), offsetRef, offsetRef, limitRef)
 
 	rows, err := h.DB.Query(ctx, query, args...)
 	if err != nil {

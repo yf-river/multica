@@ -41,6 +41,18 @@ function hasCompleteChildProgressSummaries(issues: Issue[]) {
   return issues.every((issue) => issue.child_progress !== undefined);
 }
 
+function runningIssueIdsFromAgentActivitySummaries(issues: Issue[]): Set<string> {
+  const ids = new Set<string>();
+  for (const issue of issues) {
+    if ((issue.agent_activity?.running_count ?? 0) > 0) ids.add(issue.id);
+  }
+  return ids;
+}
+
+function hasCompleteAgentActivitySummaries(issues: Issue[]) {
+  return issues.every((issue) => issue.agent_activity !== undefined);
+}
+
 function issueDateFilterToApiParams(filter: IssueDateFilter | null) {
   if (!filter) return {};
 
@@ -98,21 +110,6 @@ export function IssuesPage() {
     [dateParams, sort],
   );
 
-  // Derive the set of issue ids that currently have at least one
-  // `running` agent task. Used by the workspace agents-working filter
-  // chip. Subscribing the page here (not deep in filter.ts) keeps the
-  // filter pure and lets the snapshot stay cached at one workspace-
-  // scoped place — every issue card already subscribes for its own
-  // indicator, so this is a no-op extra fetch.
-  const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
-  const runningIssueIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const t of snapshot) {
-      if (t.status === "running" && t.issue_id) ids.add(t.issue_id);
-    }
-    return ids;
-  }, [snapshot]);
-
   const assigneeGroupFilter = useMemo<AssigneeGroupedIssuesFilter>(() => {
     const filter: AssigneeGroupedIssuesFilter = {
       statuses: statusFilters.length > 0 ? statusFilters : [...BOARD_STATUSES],
@@ -167,6 +164,25 @@ export function IssuesPage() {
   }, [allIssues, scope]);
 
   const headerIssues = usesAssigneeBoard ? assigneeIssues : scopedIssues;
+
+  const agentActivitySourceIssues = usesAssigneeBoard ? assigneeIssues : allIssues;
+  const hasListAgentActivity = hasCompleteAgentActivitySummaries(agentActivitySourceIssues);
+  const listRunningIssueIds = useMemo(
+    () => runningIssueIdsFromAgentActivitySummaries(agentActivitySourceIssues),
+    [agentActivitySourceIssues],
+  );
+  const { data: fallbackSnapshot = [] } = useQuery({
+    ...agentTaskSnapshotOptions(wsId),
+    enabled: !hasListAgentActivity,
+  });
+  const fallbackRunningIssueIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const t of fallbackSnapshot) {
+      if (t.status === "running" && t.issue_id) ids.add(t.issue_id);
+    }
+    return ids;
+  }, [fallbackSnapshot]);
+  const runningIssueIds = hasListAgentActivity ? listRunningIssueIds : fallbackRunningIssueIds;
 
   const issues = useMemo(
     () => filterIssues(scopedIssues, { statusFilters, priorityFilters, assigneeFilters, includeNoAssignee, creatorFilters, projectFilters, includeNoProject, labelFilters, agentRunningFilter, runningIssueIds }),

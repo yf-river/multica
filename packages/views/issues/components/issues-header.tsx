@@ -747,6 +747,7 @@ export function IssuesHeader({
             value={agentRunningFilter}
             onToggle={toggleAgentRunningFilter}
             scopedIssueIds={scopedIssueIds}
+            scopedIssues={scopedIssues}
           />
           <IssueDisplayControls
             scopedIssues={scopedIssues}

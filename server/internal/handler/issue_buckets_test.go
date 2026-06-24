@@ -8,6 +8,8 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgtype"
 )
 
 func TestListIssueBucketsReturnsFirstPagePerStatus(t *testing.T) {
@@ -53,6 +55,23 @@ func TestListIssueBucketsReturnsFirstPagePerStatus(t *testing.T) {
 	firstTodo := insertIssue(fmt.Sprintf("bucket-todo-first-%d", suffix), "todo", 1, true)
 	secondTodo := insertIssue(fmt.Sprintf("bucket-todo-second-%d", suffix), "todo", 2, false)
 	doneIssue := insertIssue(fmt.Sprintf("bucket-done-%d", suffix), "done", 1, false)
+	var agentID string
+	var runtimeID pgtype.UUID
+	if err := testPool.QueryRow(ctx, `
+		SELECT a.id, a.runtime_id
+		  FROM agent a
+		 WHERE a.workspace_id = $1
+		 ORDER BY a.created_at
+		 LIMIT 1
+	`, testWorkspaceID).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("load test agent: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, priority)
+		VALUES ($1, $2, $3, 'running', 0)
+	`, agentID, firstTodo, runtimeID); err != nil {
+		t.Fatalf("create running task: %v", err)
+	}
 	if err := testPool.QueryRow(ctx, `
 		UPDATE workspace
 		SET issue_counter = GREATEST(issue_counter, (SELECT COALESCE(MAX(number), 0) FROM issue WHERE workspace_id = $1)) + 1
@@ -96,6 +115,9 @@ func TestListIssueBucketsReturnsFirstPagePerStatus(t *testing.T) {
 	}
 	if progress := resp.ByStatus["todo"].Issues[0].ChildProgress; progress == nil || progress.Done != 1 || progress.Total != 1 {
 		t.Fatalf("todo child progress mismatch: %#v", progress)
+	}
+	if activity := resp.ByStatus["todo"].Issues[0].AgentActivity; activity == nil || activity.RunningCount != 1 || activity.QueuedCount != 0 || len(activity.AgentIDs) != 1 || activity.AgentIDs[0] != agentID {
+		t.Fatalf("todo agent activity summary mismatch: %#v", activity)
 	}
 	if got := resp.ByStatus["done"].Issues; len(got) != 1 || got[0].ID != doneIssue {
 		t.Fatalf("done first page: want [%s], got %#v", doneIssue, got)

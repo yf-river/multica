@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Issue } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
@@ -188,6 +188,7 @@ const mockViewState = {
   projectFilters: [] as string[],
   includeNoProject: false,
   labelFilters: [] as string[],
+  agentRunningFilter: false,
   sortBy: "position" as const,
   sortDirection: "asc" as const,
   cardProperties: { priority: true, description: true, assignee: true, dueDate: true, project: true, childProgress: true, labels: true },
@@ -458,6 +459,7 @@ function withIssueSummaries(issues: Issue[]): Issue[] {
   return issues.map((issue, index) => ({
     ...issue,
     child_progress: index === 0 ? { done: 1, total: 2 } : { done: 0, total: 0 },
+    agent_activity: { running_count: 0, queued_count: 0, agent_ids: [] },
     project_id: index === 0 ? "project-1" : issue.project_id,
     project:
       index === 0
@@ -547,6 +549,7 @@ describe("IssuesPage (shared)", () => {
     mockViewState.grouping = "status";
     mockViewState.statusFilters = [];
     mockViewState.priorityFilters = [];
+    mockViewState.agentRunningFilter = false;
     mockScope = "all";
   });
 
@@ -601,6 +604,25 @@ describe("IssuesPage (shared)", () => {
     expect(mockListSquads).not.toHaveBeenCalled();
     expect(mockListProjects).not.toHaveBeenCalled();
     expect(mockGetChildIssueProgress).not.toHaveBeenCalled();
+    expect(mockGetAgentTaskSnapshot).not.toHaveBeenCalled();
+  });
+
+  it("uses issue agent activity summaries for the working filter without loading the workspace snapshot", async () => {
+    mockViewState.agentRunningFilter = true;
+    const issues = withIssueSummaries(mockIssues).map((issue) =>
+      issue.id === "issue-2"
+        ? { ...issue, agent_activity: { running_count: 1, queued_count: 0, agent_ids: ["agent-1"] } }
+        : issue,
+    );
+    mockListIssueBuckets.mockResolvedValue(mockIssueBuckets(issues));
+
+    renderWithQuery(<IssuesPage />);
+
+    await screen.findByText("Design landing page");
+    await waitFor(() => {
+      expect(screen.queryByText("Implement auth")).not.toBeInTheDocument();
+    });
+    expect(mockGetAgentTaskSnapshot).not.toHaveBeenCalled();
   });
 
   it("renders board column headers", async () => {

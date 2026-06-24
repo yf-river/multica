@@ -201,7 +201,7 @@ export const BoardCardContent = memo(function BoardCardContent({
           {priorityIconNode}
           <p className="text-xs text-muted-foreground truncate">{issue.identifier}</p>
         </div>
-        <IssueAgentActivityIndicator issueId={issue.id} />
+        <IssueAgentActivityIndicator issueId={issue.id} agentActivity={issue.agent_activity} />
       </div>
 
       {/* Row 2: Title */}

@@ -100,6 +100,7 @@ export function MyIssuesHeader({ allIssues }: { allIssues: Issue[] }) {
             value={agentRunningFilter}
             onToggle={act.toggleAgentRunningFilter}
             scopedIssueIds={scopedIssueIds}
+            scopedIssues={allIssues}
           />
           <IssueDisplayControls scopedIssues={allIssues} />
         </div>

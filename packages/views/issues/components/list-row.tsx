@@ -108,7 +108,7 @@ function ListRowContent({
           <span className="w-16 shrink-0 text-xs text-muted-foreground">
             {issue.identifier}
           </span>
-          <IssueAgentActivityIndicator issueId={issue.id} />
+          <IssueAgentActivityIndicator issueId={issue.id} agentActivity={issue.agent_activity} />
 
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <span className="truncate">{issue.title}</span>

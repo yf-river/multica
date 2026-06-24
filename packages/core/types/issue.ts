@@ -62,6 +62,11 @@ export interface Issue {
     done: number;
     total: number;
   };
+  agent_activity?: {
+    running_count: number;
+    queued_count: number;
+    agent_ids: string[];
+  };
   position: number;
   // Calendar days as date-only "YYYY-MM-DD" (no time, no timezone). Use the
   // helpers in @multica/core/issues/date to format/compare — never `new Date()`
