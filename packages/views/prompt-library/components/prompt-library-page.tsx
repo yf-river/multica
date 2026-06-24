@@ -688,6 +688,7 @@ export function PromptLibraryPage({
               task_messages: [],
               trace_events: [],
               execution_spans: [],
+              tool_call_chains: [],
               execution_summary: {},
               evidence: {},
               错误: error instanceof Error ? error.message : "未知错误",
@@ -705,6 +706,7 @@ export function PromptLibraryPage({
           acc.task_message条数 += evidence.task_messages.length;
           acc.trace_event条数 += evidence.trace_events.length;
           acc.execution_span条数 += evidence.execution_spans.length;
+          acc.tool_call_chain条数 += evidence.tool_call_chains.length;
           return acc;
         },
         {
@@ -716,6 +718,7 @@ export function PromptLibraryPage({
           task_message条数: 0,
           trace_event条数: 0,
           execution_span条数: 0,
+          tool_call_chain条数: 0,
         },
       );
       const payload = {
@@ -3021,6 +3024,7 @@ function EvidenceList({ title, empty, items }: { title: string; empty: string; i
 
 function ExecutionSpanTreePanel({ evidence }: { evidence: PromptEvaluationRunEvidence }) {
   const spans = evidence.execution_spans ?? [];
+  const toolCallChains = evidence.tool_call_chains ?? [];
   const summary = evidence.execution_summary ?? {};
   const tokenMarked = Number(summary["token标记合计"] ?? 0);
   return (
@@ -3036,12 +3040,14 @@ function ExecutionSpanTreePanel({ evidence }: { evidence: PromptEvaluationRunEvi
           <Badge variant="outline">span {spans.length}</Badge>
           <Badge variant="outline">生命周期 {String(summary["生命周期span数"] ?? 0)}</Badge>
           <Badge variant="outline">工具 {String(summary["工具span数"] ?? 0)}</Badge>
+          <Badge variant={toolCallChains.length > 0 ? "secondary" : "outline"}>工具链 {String(summary["工具调用链数"] ?? toolCallChains.length)}</Badge>
           <Badge variant="outline">消息 {String(summary["消息span数"] ?? 0)}</Badge>
           <Badge variant={Number(summary["用量span数"] ?? 0) > 0 ? "secondary" : "outline"}>用量 {String(summary["用量span数"] ?? 0)}</Badge>
           <Badge variant={summary["是否缺失用量"] ? "destructive" : "outline"}>{summary["是否缺失用量"] ? "缺失用量" : "用量正常"}</Badge>
           <Badge variant={tokenMarked > 0 ? "secondary" : "outline"}>token标记 {tokenMarked}</Badge>
         </div>
       </div>
+      <ToolCallChainPanel chains={toolCallChains} />
       {spans.length === 0 ? (
         <div className="rounded-md border border-dashed px-3 py-3 text-muted-foreground">暂无执行 span；真实任务开始后会从 trace、消息和用量证据中生成观测树。</div>
       ) : (
@@ -3052,6 +3058,37 @@ function ExecutionSpanTreePanel({ evidence }: { evidence: PromptEvaluationRunEvi
         </div>
       )}
     </section>
+  );
+}
+
+function ToolCallChainPanel({ chains }: { chains: PromptEvaluationRunEvidence["tool_call_chains"] }) {
+  if (chains.length === 0) {
+    return (
+      <div className="rounded-md border border-dashed px-3 py-2 text-[11px] text-muted-foreground" data-testid="run-evidence-tool-call-chains">
+        暂无工具调用链；当任务产生工具调用和工具结果时会自动配对展示。
+      </div>
+    );
+  }
+  return (
+    <div className="grid gap-1.5 rounded-md border bg-muted/10 p-2" data-testid="run-evidence-tool-call-chains">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="font-medium text-muted-foreground">工具调用链</div>
+        <Badge variant="outline">{chains.length} 条</Badge>
+      </div>
+      <div className="grid gap-1.5">
+        {chains.map((chain) => (
+          <div key={chain.id} className="grid gap-1 rounded border bg-background px-2 py-1.5 text-[11px] leading-5" data-testid={`run-evidence-tool-call-chain-${chain.id}`}>
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-medium text-foreground">{chain.tool || "未记录工具"}</span>
+              <Badge variant={chain.status === "已配对" ? "secondary" : chain.status === "缺少结果" ? "destructive" : "outline"}>{chain.status || "未记录"}</Badge>
+              <span className="text-muted-foreground">调用 #{chain.use_seq ?? "-"} · 结果 #{chain.result_seq ?? "-"}</span>
+            </div>
+            <div className="break-words text-muted-foreground">{chain.summary || "未记录摘要"}</div>
+            {chain.output && <div className="break-words text-muted-foreground">输出：{truncateText(chain.output, 180)}</div>}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 

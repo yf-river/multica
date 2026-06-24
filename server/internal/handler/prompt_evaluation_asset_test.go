@@ -12,7 +12,81 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
+	"github.com/multica-ai/multica/server/pkg/protocol"
 )
+
+func TestBuildPromptEvaluationExecutionEvidencePairsToolCalls(t *testing.T) {
+	run := PromptEvaluationRunResponse{
+		ID:              "run-1",
+		RunKind:         "Agent执行",
+		Status:          "通过",
+		TriggerSource:   "智能体调试场",
+		RuntimeProvider: "codex",
+		Model:           "gpt-5.3-codex-spark",
+		TotalCases:      1,
+		PassedCases:     1,
+		FailedCases:     0,
+		InputTokens:     10,
+		OutputTokens:    5,
+		CreatedAt:       "2026-06-24T00:00:00Z",
+	}
+	taskID := "task-1"
+	run.TaskID = &taskID
+	messages := []protocol.TaskMessagePayload{
+		{
+			TaskID:    taskID,
+			Seq:       1,
+			Type:      "tool_use",
+			Tool:      "shell",
+			Input:     map[string]any{"tool_call_id": "call-1", "cmd": "echo ok"},
+			CreatedAt: "2026-06-24T00:00:01Z",
+		},
+		{
+			TaskID:    taskID,
+			Seq:       2,
+			Type:      "tool_result",
+			Tool:      "shell",
+			Output:    "ok",
+			CreatedAt: "2026-06-24T00:00:02Z",
+		},
+		{
+			TaskID: taskID,
+			Seq:    3,
+			Type:   "tool_result",
+			Tool:   "browser",
+			Output: "orphan",
+		},
+	}
+
+	spans, chains, summary := buildPromptEvaluationExecutionEvidence(run, nil, messages, nil)
+	if len(chains) != 2 {
+		t.Fatalf("tool call chains = %+v, want 2", chains)
+	}
+	if chains[0].ID != "tool:call-1" || chains[0].Status != "已配对" || chains[0].UseSeq != 1 || chains[0].ResultSeq != 2 || chains[0].Output != "ok" {
+		t.Fatalf("paired chain = %+v", chains[0])
+	}
+	if chains[1].Status != "孤立结果" || chains[1].ResultSeq != 3 {
+		t.Fatalf("orphan chain = %+v", chains[1])
+	}
+	if summary["工具调用链数"] != 2 || summary["已配对工具调用数"] != 1 || summary["孤立工具结果数"] != 1 {
+		t.Fatalf("tool summary = %+v", summary)
+	}
+	var useSpan, resultSpan *PromptEvaluationExecutionSpanResponse
+	for i := range spans {
+		if spans[i].ID == "message:1" {
+			useSpan = &spans[i]
+		}
+		if spans[i].ID == "message:2" {
+			resultSpan = &spans[i]
+		}
+	}
+	if useSpan == nil || resultSpan == nil {
+		t.Fatalf("message spans missing: %+v", spans)
+	}
+	if useSpan.Details["工具调用链ID"] != "tool:call-1" || resultSpan.Details["工具调用链ID"] != "tool:call-1" {
+		t.Fatalf("span chain details: use=%+v result=%+v", useSpan.Details, resultSpan.Details)
+	}
+}
 
 func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	if testHandler == nil || testPool == nil {

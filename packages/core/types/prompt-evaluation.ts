@@ -216,6 +216,22 @@ export interface PromptEvaluationExecutionSpan {
   created_at?: string;
 }
 
+export interface PromptEvaluationToolCallChain {
+  id: string;
+  task_id?: string;
+  tool?: string;
+  status: "已配对" | "缺少结果" | "孤立结果" | string;
+  use_seq?: number;
+  result_seq?: number;
+  use_span_id?: string;
+  result_span_id?: string;
+  input?: Record<string, unknown>;
+  output?: string;
+  summary: string;
+  created_at?: string;
+  completed_at?: string;
+}
+
 export interface PromptEvaluationRunEvidence {
   run: PromptEvaluationRun;
   trials: PromptEvaluationTrial[];
@@ -223,6 +239,7 @@ export interface PromptEvaluationRunEvidence {
   task_messages: TaskMessagePayload[];
   trace_events: TaskTraceEvent[];
   execution_spans: PromptEvaluationExecutionSpan[];
+  tool_call_chains: PromptEvaluationToolCallChain[];
   execution_summary: Record<string, unknown>;
   evidence: Record<string, unknown>;
   上下文: Record<string, unknown>;

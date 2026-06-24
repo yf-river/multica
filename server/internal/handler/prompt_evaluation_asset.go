@@ -369,6 +369,22 @@ type PromptEvaluationExecutionSpanResponse struct {
 	CreatedAt  string         `json:"created_at,omitempty"`
 }
 
+type PromptEvaluationToolCallChainResponse struct {
+	ID           string         `json:"id"`
+	TaskID       string         `json:"task_id,omitempty"`
+	Tool         string         `json:"tool,omitempty"`
+	Status       string         `json:"status"`
+	UseSeq       int            `json:"use_seq,omitempty"`
+	ResultSeq    int            `json:"result_seq,omitempty"`
+	UseSpanID    string         `json:"use_span_id,omitempty"`
+	ResultSpanID string         `json:"result_span_id,omitempty"`
+	Input        map[string]any `json:"input,omitempty"`
+	Output       string         `json:"output,omitempty"`
+	Summary      string         `json:"summary"`
+	CreatedAt    string         `json:"created_at,omitempty"`
+	CompletedAt  string         `json:"completed_at,omitempty"`
+}
+
 type PromptEvaluationRunEvidenceResponse struct {
 	Run              PromptEvaluationRunResponse             `json:"run"`
 	Trials           []PromptEvaluationTrialResponse         `json:"trials"`
@@ -376,6 +392,7 @@ type PromptEvaluationRunEvidenceResponse struct {
 	TaskMessages     []protocol.TaskMessagePayload           `json:"task_messages"`
 	TraceEvents      []TaskTraceEventResponse                `json:"trace_events"`
 	ExecutionSpans   []PromptEvaluationExecutionSpanResponse `json:"execution_spans"`
+	ToolCallChains   []PromptEvaluationToolCallChainResponse `json:"tool_call_chains"`
 	ExecutionSummary map[string]any                          `json:"execution_summary"`
 	Evidence         any                                     `json:"evidence"`
 	Context          map[string]any                          `json:"上下文"`
@@ -2766,7 +2783,7 @@ func (h *Handler) buildPromptEvaluationRunEvidenceResponse(ctx context.Context, 
 		}
 	}
 	refs := h.loadPromptEvaluationEvidenceRefs(ctx, workspaceUUID, run, task, traceResp)
-	executionSpans, executionSummary := buildPromptEvaluationExecutionEvidence(promptEvaluationRunToResponse(run), usageResp, messageResp, traceResp)
+	executionSpans, toolCallChains, executionSummary := buildPromptEvaluationExecutionEvidence(promptEvaluationRunToResponse(run), usageResp, messageResp, traceResp)
 
 	return PromptEvaluationRunEvidenceResponse{
 		Run:              promptEvaluationRunToResponse(run),
@@ -2775,6 +2792,7 @@ func (h *Handler) buildPromptEvaluationRunEvidenceResponse(ctx context.Context, 
 		TaskMessages:     messageResp,
 		TraceEvents:      traceResp,
 		ExecutionSpans:   executionSpans,
+		ToolCallChains:   toolCallChains,
 		ExecutionSummary: executionSummary,
 		Evidence:         decodeJSONDefault(run.Evidence, map[string]any{}),
 		Context:          buildPromptEvaluationEvidenceContext(run, task, refs, trialResp, usageResp, messageResp, traceResp),
@@ -2996,9 +3014,11 @@ func buildPromptEvaluationExecutionEvidence(
 	usages []PromptEvaluationTaskUsageResponse,
 	messages []protocol.TaskMessagePayload,
 	traceEvents []TaskTraceEventResponse,
-) ([]PromptEvaluationExecutionSpanResponse, map[string]any) {
+) ([]PromptEvaluationExecutionSpanResponse, []PromptEvaluationToolCallChainResponse, map[string]any) {
 	rootID := firstNonEmptyPromptEvaluationString(ptrString(run.TaskID), run.ID)
 	rootSpanID := "task:" + rootID
+	toolCallChains := buildPromptEvaluationToolCallChains(messages)
+	toolCallChainByMessageSeq := buildPromptEvaluationToolCallChainByMessageSeq(toolCallChains)
 	spans := []PromptEvaluationExecutionSpanResponse{{
 		ID:         rootSpanID,
 		SpanKind:   "任务根节点",
@@ -3031,6 +3051,20 @@ func buildPromptEvaluationExecutionEvidence(
 		"trace span数": 0,
 		"token标记合计":   int64(0),
 		"是否缺失用量":      false,
+		"工具调用链数":      len(toolCallChains),
+		"已配对工具调用数":    0,
+		"缺少结果工具调用数":   0,
+		"孤立工具结果数":     0,
+	}
+	for _, chain := range toolCallChains {
+		switch chain.Status {
+		case "已配对":
+			incrementPromptEvaluationSummary(summary, "已配对工具调用数")
+		case "缺少结果":
+			incrementPromptEvaluationSummary(summary, "缺少结果工具调用数")
+		case "孤立结果":
+			incrementPromptEvaluationSummary(summary, "孤立工具结果数")
+		}
 	}
 
 	seq := 1
@@ -3082,22 +3116,33 @@ func buildPromptEvaluationExecutionEvidence(
 		} else {
 			incrementPromptEvaluationSummary(summary, "消息span数")
 		}
+		details := map[string]any{
+			"消息序号": message.Seq,
+			"消息类型": message.Type,
+			"输入":   message.Input,
+			"输出":   message.Output,
+		}
+		if chain, ok := toolCallChainByMessageSeq[message.Seq]; ok {
+			details["工具调用链ID"] = chain.ID
+			details["工具调用链状态"] = chain.Status
+			if chain.UseSeq > 0 {
+				details["工具调用序号"] = chain.UseSeq
+			}
+			if chain.ResultSeq > 0 {
+				details["工具结果序号"] = chain.ResultSeq
+			}
+		}
 		spans = append(spans, PromptEvaluationExecutionSpanResponse{
-			ID:       fmt.Sprintf("message:%d", message.Seq),
-			ParentID: rootSpanID,
-			SpanKind: kind,
-			SpanName: firstNonEmptyPromptEvaluationString(message.Tool, promptEvaluationMessageSpanName(message.Type)),
-			Status:   "已记录",
-			Seq:      seq,
-			TaskID:   message.TaskID,
-			Tool:     message.Tool,
-			Summary:  truncatePromptEvaluationEvidence(firstNonEmptyPromptEvaluationString(message.Content, message.Output, promptEvaluationEvidenceSummaryString(message.Input), message.Type), 240),
-			Details: map[string]any{
-				"消息序号": message.Seq,
-				"消息类型": message.Type,
-				"输入":   message.Input,
-				"输出":   message.Output,
-			},
+			ID:        fmt.Sprintf("message:%d", message.Seq),
+			ParentID:  rootSpanID,
+			SpanKind:  kind,
+			SpanName:  firstNonEmptyPromptEvaluationString(message.Tool, promptEvaluationMessageSpanName(message.Type)),
+			Status:    "已记录",
+			Seq:       seq,
+			TaskID:    message.TaskID,
+			Tool:      message.Tool,
+			Summary:   truncatePromptEvaluationEvidence(firstNonEmptyPromptEvaluationString(message.Content, message.Output, promptEvaluationEvidenceSummaryString(message.Input), message.Type), 240),
+			Details:   details,
 			CreatedAt: message.CreatedAt,
 		})
 		seq++
@@ -3133,7 +3178,96 @@ func buildPromptEvaluationExecutionEvidence(
 	}
 
 	summary["span总数"] = len(spans)
-	return spans, summary
+	return spans, toolCallChains, summary
+}
+
+func buildPromptEvaluationToolCallChains(messages []protocol.TaskMessagePayload) []PromptEvaluationToolCallChainResponse {
+	chains := []PromptEvaluationToolCallChainResponse{}
+	pendingByTool := map[string][]int{}
+	for _, message := range messages {
+		switch message.Type {
+		case "tool_use":
+			tool := strings.TrimSpace(message.Tool)
+			if tool == "" {
+				tool = "未记录工具"
+			}
+			callID := promptEvaluationToolCallID(message)
+			if callID == "" {
+				callID = fmt.Sprintf("%s:%d", tool, message.Seq)
+			}
+			chain := PromptEvaluationToolCallChainResponse{
+				ID:        "tool:" + callID,
+				TaskID:    message.TaskID,
+				Tool:      tool,
+				Status:    "缺少结果",
+				UseSeq:    message.Seq,
+				UseSpanID: fmt.Sprintf("message:%d", message.Seq),
+				Input:     message.Input,
+				Summary:   truncatePromptEvaluationEvidence("工具调用："+firstNonEmptyPromptEvaluationString(tool, promptEvaluationEvidenceSummaryString(message.Input)), 240),
+				CreatedAt: message.CreatedAt,
+			}
+			chains = append(chains, chain)
+			pendingByTool[tool] = append(pendingByTool[tool], len(chains)-1)
+		case "tool_result":
+			tool := strings.TrimSpace(message.Tool)
+			if tool == "" {
+				tool = "未记录工具"
+			}
+			pending := pendingByTool[tool]
+			if len(pending) > 0 {
+				index := pending[0]
+				pendingByTool[tool] = pending[1:]
+				chains[index].Status = "已配对"
+				chains[index].ResultSeq = message.Seq
+				chains[index].ResultSpanID = fmt.Sprintf("message:%d", message.Seq)
+				chains[index].Output = message.Output
+				chains[index].CompletedAt = message.CreatedAt
+				chains[index].Summary = truncatePromptEvaluationEvidence(
+					fmt.Sprintf("工具 %s 已配对：调用 #%d，结果 #%d", tool, chains[index].UseSeq, message.Seq),
+					240,
+				)
+				continue
+			}
+			callID := promptEvaluationToolCallID(message)
+			if callID == "" {
+				callID = fmt.Sprintf("%s:result:%d", tool, message.Seq)
+			}
+			chains = append(chains, PromptEvaluationToolCallChainResponse{
+				ID:           "tool:" + callID,
+				TaskID:       message.TaskID,
+				Tool:         tool,
+				Status:       "孤立结果",
+				ResultSeq:    message.Seq,
+				ResultSpanID: fmt.Sprintf("message:%d", message.Seq),
+				Output:       message.Output,
+				Summary:      truncatePromptEvaluationEvidence("工具结果没有找到对应调用："+firstNonEmptyPromptEvaluationString(message.Output, tool), 240),
+				CompletedAt:  message.CreatedAt,
+			})
+		}
+	}
+	return chains
+}
+
+func buildPromptEvaluationToolCallChainByMessageSeq(chains []PromptEvaluationToolCallChainResponse) map[int]PromptEvaluationToolCallChainResponse {
+	result := map[int]PromptEvaluationToolCallChainResponse{}
+	for _, chain := range chains {
+		if chain.UseSeq > 0 {
+			result[chain.UseSeq] = chain
+		}
+		if chain.ResultSeq > 0 {
+			result[chain.ResultSeq] = chain
+		}
+	}
+	return result
+}
+
+func promptEvaluationToolCallID(message protocol.TaskMessagePayload) string {
+	for _, key := range []string{"tool_call_id", "call_id", "id", "工具调用ID", "调用ID"} {
+		if value := strings.TrimSpace(stringFromAny(message.Input[key])); value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func incrementPromptEvaluationSummary(summary map[string]any, key string) {
@@ -3343,33 +3477,34 @@ func validPromptEvaluationEvidenceSnapshotType(value string) bool {
 func buildPromptEvaluationEvidenceSnapshotSummary(evidence PromptEvaluationRunEvidenceResponse, generatedAt time.Time) map[string]any {
 	run := evidence.Run
 	return map[string]any{
-		"语义版本":            "multica.prompt_evaluation.evidence_snapshot.summary.v1",
-		"生成时间":            generatedAt.Format(time.RFC3339),
-		"运行ID":            run.ID,
-		"运行类型":            run.RunKind,
-		"运行状态":            run.Status,
-		"触发来源":            run.TriggerSource,
-		"总用例数":            run.TotalCases,
-		"通过数":             run.PassedCases,
-		"失败数":             run.FailedCases,
-		"通过率":             run.PassRate,
-		"总耗时毫秒":           run.TotalDurationMs,
-		"输入token":         run.InputTokens,
-		"输出token":         run.OutputTokens,
-		"预估成本":            run.EstimatedCost,
-		"执行Agent":         run.AgentID,
-		"模型":              run.Model,
-		"runtime":         run.RuntimeID,
-		"runtime供应商":      run.RuntimeProvider,
-		"trace/task id":   run.TaskID,
-		"失败原因":            promptEvaluationEvidenceFailureReason(evidence),
-		"评估结论":            run.Conclusion,
-		"trial数":          len(evidence.Trials),
-		"usage行数":         len(evidence.TaskUsage),
-		"任务消息数":           len(evidence.TaskMessages),
-		"trace事件数":        len(evidence.TraceEvents),
-		"execution span数": len(evidence.ExecutionSpans),
-		"上下文字段数":          len(evidence.Context),
+		"语义版本":             "multica.prompt_evaluation.evidence_snapshot.summary.v1",
+		"生成时间":             generatedAt.Format(time.RFC3339),
+		"运行ID":             run.ID,
+		"运行类型":             run.RunKind,
+		"运行状态":             run.Status,
+		"触发来源":             run.TriggerSource,
+		"总用例数":             run.TotalCases,
+		"通过数":              run.PassedCases,
+		"失败数":              run.FailedCases,
+		"通过率":              run.PassRate,
+		"总耗时毫秒":            run.TotalDurationMs,
+		"输入token":          run.InputTokens,
+		"输出token":          run.OutputTokens,
+		"预估成本":             run.EstimatedCost,
+		"执行Agent":          run.AgentID,
+		"模型":               run.Model,
+		"runtime":          run.RuntimeID,
+		"runtime供应商":       run.RuntimeProvider,
+		"trace/task id":    run.TaskID,
+		"失败原因":             promptEvaluationEvidenceFailureReason(evidence),
+		"评估结论":             run.Conclusion,
+		"trial数":           len(evidence.Trials),
+		"usage行数":          len(evidence.TaskUsage),
+		"任务消息数":            len(evidence.TaskMessages),
+		"trace事件数":         len(evidence.TraceEvents),
+		"execution span数":  len(evidence.ExecutionSpans),
+		"tool call chain数": len(evidence.ToolCallChains),
+		"上下文字段数":           len(evidence.Context),
 	}
 }
 

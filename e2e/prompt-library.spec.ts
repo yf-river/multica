@@ -553,10 +553,12 @@ test.describe("训练与评估工作台", () => {
     expect(exportedRunEvidence.task_usage[0].model).toEqual(expect.any(String));
     expect(exportedRunEvidence.trace_events.length).toBeGreaterThan(0);
     expect(exportedRunEvidence.execution_spans.length).toBeGreaterThan(0);
+    expect(exportedRunEvidence.tool_call_chains).toEqual(expect.any(Array));
     expect(exportedRunEvidence.execution_summary["span总数"]).toBeGreaterThan(0);
     expect(exportedEvidence["证据统计"]["task_usage条数"]).toBeGreaterThan(0);
     expect(exportedEvidence["证据统计"]["trace_event条数"]).toBeGreaterThan(0);
     expect(exportedEvidence["证据统计"]["execution_span条数"]).toBeGreaterThan(0);
+    expect(exportedEvidence["证据统计"]["tool_call_chain条数"]).toEqual(expect.any(Number));
     await page.getByRole("link", { name: "运行历史", exact: true }).last().click();
     agentRunCard = page.getByTestId(`prompt-evaluation-run-${queuedAgentRun!.id}`);
     await expect(agentRunCard).toContainText("智能体执行 · 通过", { timeout: 10000 });
@@ -587,6 +589,7 @@ test.describe("训练与评估工作台", () => {
     await expect(executionTree).toContainText(`根任务 ${queuedAgentRun!.task_id}`);
     await expect(executionTree).toContainText("模型用量");
     await expect(executionTree).toContainText("训练评估用量已上报");
+    await expect(executionTree.getByTestId("run-evidence-tool-call-chains")).toContainText(/工具调用链|暂无工具调用链/);
     const traceTree = agentEvidencePanel.getByTestId("run-evidence-trace-tree");
     await expect(traceTree).toContainText("任务事件树");
     await expect(traceTree).toContainText(`根任务 ${queuedAgentRun!.task_id}`);
@@ -685,6 +688,7 @@ test.describe("训练与评估工作台", () => {
     expect(syncedAgentEvidence.execution_summary).toMatchObject({
       "生命周期span数": expect.any(Number),
       "用量span数": expect.any(Number),
+      "工具调用链数": expect.any(Number),
       "span总数": expect.any(Number),
     });
 
@@ -1389,7 +1393,25 @@ test.describe("训练与评估工作台", () => {
     const claimed = await api.claimDaemonTask(agentRun.runtime_id);
     expect(claimed.task?.id).toBe(agentRun.task_id);
     await api.startDaemonTask(agentRun.task_id);
-    await api.reportDaemonTaskMessages(agentRun.task_id, "Agent 输出：只给了自然语言结论，没有返回结构化 JSON，需要人工复核。");
+    await api.reportDaemonTaskMessages(agentRun.task_id, [
+      {
+        seq: 1,
+        type: "text",
+        content: "Agent 输出：只给了自然语言结论，没有返回结构化 JSON，需要人工复核。",
+      },
+      {
+        seq: 2,
+        type: "tool_use",
+        tool: "playwright-inspect",
+        input: { tool_call_id: "manual-review-tool-1", url: "/training/runs" },
+      },
+      {
+        seq: 3,
+        type: "tool_result",
+        tool: "playwright-inspect",
+        output: "页面可打开，但输出没有结构化 JSON。",
+      },
+    ]);
     await api.completeDaemonTask(agentRun.task_id, "Agent 输出：只给了自然语言结论，没有返回结构化 JSON，需要人工复核。");
     await expect
       .poll(async () => {
@@ -1414,7 +1436,12 @@ test.describe("训练与评估工作台", () => {
     const runRow = page.getByTestId(`prompt-evaluation-run-${agentRun.run.id}`);
     await expect(runRow).toContainText("智能体执行 · 需人工复核", { timeout: 10000 });
     await runRow.getByRole("button", { name: "查看证据" }).click();
-    await expect(runRow.getByTestId(`run-evidence-${agentRun.run.id}`)).toContainText("需要人工复核", { timeout: 10000 });
+    const evidencePanel = runRow.getByTestId(`run-evidence-${agentRun.run.id}`);
+    await expect(evidencePanel).toContainText("需要人工复核", { timeout: 10000 });
+    const toolChains = evidencePanel.getByTestId("run-evidence-tool-call-chains");
+    await expect(toolChains).toContainText("工具调用链", { timeout: 10000 });
+    await expect(toolChains).toContainText("playwright-inspect");
+    await expect(toolChains).toContainText("已配对");
 
     page.once("dialog", async (dialog) => {
       expect(dialog.message()).toContain("通过说明");

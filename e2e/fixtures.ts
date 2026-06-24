@@ -590,10 +590,11 @@ export class TestApiClient {
     }
   }
 
-  async reportDaemonTaskMessages(taskId: string, content: string) {
+  async reportDaemonTaskMessages(taskId: string, content: string | Array<Record<string, unknown>>) {
+    const messages = Array.isArray(content) ? content : [{ seq: 1, type: "text", content }];
     const res = await this.authedFetch(`/api/daemon/tasks/${taskId}/messages`, {
       method: "POST",
-      body: JSON.stringify({ messages: [{ seq: 1, type: "text", content }] }),
+      body: JSON.stringify({ messages }),
     });
     if (!res.ok) {
       throw new Error(`Failed to report daemon task messages: ${res.status} ${await res.text()}`);
