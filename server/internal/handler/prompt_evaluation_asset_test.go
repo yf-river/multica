@@ -1781,6 +1781,93 @@ func markPromptEvaluationTaskRunning(t *testing.T, taskID string) {
 	}
 }
 
+func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	cleanupPromptEvaluationAgentRunTest(t)
+	var runtimeID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 指定运行时', '{}'::jsonb, $4, 'private', now())
+		RETURNING id
+	`, testWorkspaceID, "prompt-eval-selected-daemon-"+randomID()[:8], "prompt-eval-selected-"+randomID()[:8], testUserID).Scan(&runtimeID); err != nil {
+		t.Fatalf("create codex runtime: %v", err)
+	}
+	agent, err := testHandler.Queries.CreateAgent(context.Background(), db.CreateAgentParams{
+		WorkspaceID:        parseUUID(testWorkspaceID),
+		Name:               "训练评估指定执行智能体",
+		Description:        "用于验证智能体调试场显式选择执行者。",
+		RuntimeMode:        "local",
+		RuntimeConfig:      []byte("{}"),
+		RuntimeID:          parseUUID(runtimeID),
+		Visibility:         "workspace",
+		MaxConcurrentTasks: 1,
+		OwnerID:            parseUUID(testUserID),
+		Instructions:       "只输出结构化评估结论。",
+		CustomEnv:          []byte("{}"),
+		CustomArgs:         []byte("[]"),
+		Model:              pgtype.Text{String: "gpt-5.4-mini", Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("create selected agent: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM task_usage WHERE task_id IN (SELECT id FROM agent_task_queue WHERE agent_id = $1)`, agent.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM task_message WHERE task_id IN (SELECT id FROM agent_task_queue WHERE agent_id = $1)`, agent.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM chat_message WHERE chat_session_id IN (SELECT id FROM chat_session WHERE agent_id = $1)`, agent.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE agent_id = $1`, agent.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM chat_session WHERE agent_id = $1`, agent.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agent.ID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, parseUUID(runtimeID))
+	})
+	promptID := createPromptEvaluationTestPromptWithContent(
+		t,
+		testWorkspaceID,
+		"指定执行智能体提示词",
+		"请评估 {{issue_title}}。",
+		`[]`,
+	)
+	createW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+		"prompt_id":  promptID,
+		"name":       "指定执行智能体实验",
+		"asset_type": "实验",
+		"payload": map[string]any{
+			"执行智能体": map[string]any{"agent_id": uuidToString(agent.ID)},
+			"cases": []map[string]any{{
+				"名称":   "指定执行智能体用例",
+				"变量":   map[string]any{"issue_title": "登录失败"},
+				"期望包含": []string{"登录失败"},
+			}},
+		},
+	}))
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
+	}
+	var created PromptEvaluationAssetResponse
+	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	runW := httptest.NewRecorder()
+	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
+	if runW.Code != http.StatusAccepted {
+		t.Fatalf("agent run status = %d, body = %s", runW.Code, runW.Body.String())
+	}
+	var resp PromptEvaluationAgentRunResponse
+	if err := json.Unmarshal(runW.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode agent run response: %v", err)
+	}
+	if resp.AgentID != uuidToString(agent.ID) || resp.RuntimeID != runtimeID || resp.Model != "gpt-5.4-mini" {
+		t.Fatalf("agent run did not use requested agent: resp=%+v agent=%s runtime=%s", resp, uuidToString(agent.ID), runtimeID)
+	}
+	payload := resp.Asset.Payload.(map[string]any)
+	recent := payload["最近Agent运行"].(map[string]any)
+	if recent["agent_id"] != uuidToString(agent.ID) || recent["执行Agent"] != "训练评估指定执行智能体" || recent["模型"] != "gpt-5.4-mini" {
+		t.Fatalf("recent agent run did not record requested agent: %#v", recent)
+	}
+}
+
 func createPromptEvaluationAgentRunFixture(t *testing.T, assetName string, caseName string) (PromptEvaluationAssetResponse, PromptEvaluationAgentRunResponse, string) {
 	t.Helper()
 	var runtimeID string

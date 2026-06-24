@@ -3958,7 +3958,8 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 	if !ok {
 		return
 	}
-	agentRow, runtimeRow, ok := h.ensurePromptEvaluationAgent(w, r, asset.WorkspaceID, parseUUID(userID), member)
+	payload := decodePayloadObject(asset.Payload)
+	agentRow, runtimeRow, ok := h.selectPromptEvaluationExecutionAgent(w, r, asset.WorkspaceID, parseUUID(userID), member, payload)
 	if !ok {
 		return
 	}
@@ -3973,7 +3974,6 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to create training evaluation chat session")
 		return
 	}
-	payload := decodePayloadObject(asset.Payload)
 	cases, ok := h.promptEvaluationCasesForAsset(w, r, asset)
 	if !ok {
 		return
@@ -4008,7 +4008,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		"状态":              "已入队",
 		"执行Agent":         agentRow.Name,
 		"agent_id":        uuidToString(agentRow.ID),
-		"模型":              promptEvaluationAgentModel(),
+		"模型":              promptEvaluationModelForAgent(agentRow),
 		"runtime":         runtimeRow.Provider,
 		"runtime_id":      uuidToString(runtimeRow.ID),
 		"trace/task id":   uuidToString(task.ID),
@@ -4040,7 +4040,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		ChatSessionID: uuidToString(session.ID),
 		AgentID:       uuidToString(agentRow.ID),
 		RuntimeID:     uuidToString(runtimeRow.ID),
-		Model:         promptEvaluationAgentModel(),
+		Model:         promptEvaluationModelForAgent(agentRow),
 		Status:        "已入队",
 		Message:       "真实智能体任务已入队；请通过 task messages、usage 和运行历史追踪结果。",
 	})
@@ -4144,7 +4144,7 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 		RuntimeID:         runtime.ID,
 		TaskID:            taskID,
 		ChatSessionID:     chatSessionID,
-		Model:             promptEvaluationAgentModel(),
+		Model:             promptEvaluationModelForAgent(agent),
 		RuntimeProvider:   runtime.Provider,
 		TotalCases:        int32(len(cases)),
 		PassedCases:       0,
@@ -4163,7 +4163,7 @@ func (h *Handler) persistPromptEvaluationQueuedAgentRun(w http.ResponseWriter, r
 			"失败数":           0,
 			"通过率":           0,
 			"执行Agent":       agent.Name,
-			"模型":            promptEvaluationAgentModel(),
+			"模型":            promptEvaluationModelForAgent(agent),
 			"runtime":       runtime.Provider,
 			"trace/task id": uuidToString(taskID),
 			"评估结论":          "等待智能体执行完成",
@@ -4752,6 +4752,47 @@ func (h *Handler) ensurePromptEvaluationAgent(w http.ResponseWriter, r *http.Req
 	return created, runtime, true
 }
 
+func (h *Handler) selectPromptEvaluationExecutionAgent(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, ownerID pgtype.UUID, member db.Member, payload map[string]any) (db.Agent, db.AgentRuntime, bool) {
+	requestedAgentID := promptEvaluationRequestedAgentID(payload)
+	if requestedAgentID == "" {
+		return h.ensurePromptEvaluationAgent(w, r, workspaceID, ownerID, member)
+	}
+	agentID := parseUUID(requestedAgentID)
+	if !agentID.Valid {
+		writeError(w, http.StatusBadRequest, "执行智能体标识无效")
+		return db.Agent{}, db.AgentRuntime{}, false
+	}
+	agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+		ID:          agentID,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "执行智能体不属于当前工作区")
+		return db.Agent{}, db.AgentRuntime{}, false
+	}
+	if agent.ArchivedAt.Valid {
+		writeError(w, http.StatusBadRequest, "执行智能体已归档，不能创建真实调试任务")
+		return db.Agent{}, db.AgentRuntime{}, false
+	}
+	runtime, err := h.Queries.GetAgentRuntimeForWorkspace(r.Context(), db.GetAgentRuntimeForWorkspaceParams{
+		ID:          agent.RuntimeID,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "执行智能体绑定的运行时不可用")
+		return db.Agent{}, db.AgentRuntime{}, false
+	}
+	if !canUseRuntimeForAgent(member, runtime) {
+		writeError(w, http.StatusForbidden, "当前成员不能使用该执行智能体绑定的运行时")
+		return db.Agent{}, db.AgentRuntime{}, false
+	}
+	if runtime.Status != "online" {
+		writeError(w, http.StatusServiceUnavailable, "执行智能体绑定的运行时不在线，请先启动运行时")
+		return db.Agent{}, db.AgentRuntime{}, false
+	}
+	return agent, runtime, true
+}
+
 func (h *Handler) selectPromptEvaluationRuntime(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, member db.Member) (db.AgentRuntime, bool) {
 	readiness, err := h.promptEvaluationRuntimeReadiness(r.Context(), workspaceID, member)
 	if err != nil {
@@ -4770,6 +4811,39 @@ func (h *Handler) selectPromptEvaluationRuntime(w http.ResponseWriter, r *http.R
 	}
 	writeError(w, http.StatusServiceUnavailable, readiness.Fix)
 	return db.AgentRuntime{}, false
+}
+
+func promptEvaluationRequestedAgentID(payload map[string]any) string {
+	for _, raw := range []any{
+		payload["执行智能体"],
+		payload["目标智能体"],
+		firstValue(payload, "execution_agent", "target_agent"),
+		firstValue(asMap(payload["调试包"]), "执行智能体", "目标智能体", "execution_agent", "target_agent"),
+		firstValue(asMap(payload["运行环境"]), "执行智能体", "目标智能体", "execution_agent", "target_agent"),
+	} {
+		if id := promptEvaluationAgentIDFromAny(raw); id != "" {
+			return id
+		}
+	}
+	return ""
+}
+
+func promptEvaluationAgentIDFromAny(raw any) string {
+	switch v := raw.(type) {
+	case string:
+		return strings.TrimSpace(v)
+	case map[string]any:
+		return stringFromAny(firstValue(v, "agent_id", "id", "智能体标识", "执行智能体标识"))
+	default:
+		return ""
+	}
+}
+
+func promptEvaluationModelForAgent(agent db.Agent) string {
+	if agent.Model.Valid && strings.TrimSpace(agent.Model.String) != "" {
+		return strings.TrimSpace(agent.Model.String)
+	}
+	return promptEvaluationAgentModel()
 }
 
 func (h *Handler) promptEvaluationRuntimeReadiness(ctx context.Context, workspaceID pgtype.UUID, member db.Member) (PromptEvaluationRuntimeReadinessResponse, error) {
@@ -5307,6 +5381,13 @@ func firstValue(m map[string]any, keys ...string) any {
 		}
 	}
 	return nil
+}
+
+func asMap(value any) map[string]any {
+	if m, ok := value.(map[string]any); ok {
+		return m
+	}
+	return map[string]any{}
 }
 
 func stringFromAny(value any) string {

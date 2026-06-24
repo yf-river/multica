@@ -947,11 +947,78 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("playground-page-contract")).toContainText("真实任务 · 写回观测证据");
     await expect(page.getByTestId("agent-playground-selector-summary")).toContainText("执行目标池");
     await expect(page.getByTestId("agent-playground-run-console")).toContainText("真实任务发射台");
+    await expect(page.getByTestId("agent-playground-agent-selector")).toContainText("执行智能体");
+    await expect(page.getByTestId("agent-playground-agent-selector")).toContainText("自动选择训练评估智能体");
     await expect(page.getByTestId("agent-playground-task-pipeline")).toContainText("创建真实任务");
     await expect(page.getByTestId("agent-playground-observability-contract")).toContainText("观测回写契约");
     await expect(page.getByRole("button", { name: "创建真实智能体任务" })).toBeVisible();
     await expect(page.getByTestId("prompt-playground-template-lab")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "运行并记录" })).toHaveCount(0);
+  });
+
+  test("智能体调试场公开 API 可以指定执行智能体", async () => {
+    test.setTimeout(90_000);
+    const runtime = await api.ensureOnlineCodexRuntime(`${artifactPrefix} 指定执行智能体 Runtime`);
+    const agent = await api.createAgent({
+      name: `${artifactPrefix} 指定执行智能体`,
+      runtime_id: runtime.id,
+      model: "gpt-5.4-mini",
+      visibility: "workspace",
+      max_concurrent_tasks: 1,
+      instructions: "你是 E2E 指定执行智能体，只输出中文结论和可验收证据。",
+    });
+    const prompt = await api.createPromptForE2E(artifactPrefix, {
+      name: `${artifactPrefix} 指定执行智能体提示词`,
+      content: "请评估 {{issue_title}}，输出中文结论和验收证据。",
+      variables: [{ name: "issue_title", label: "任务标题", required: true }],
+    });
+    const asset = await api.createPromptEvaluationAsset({
+      prompt_id: prompt.id,
+      name: `${artifactPrefix} 指定执行智能体实验`,
+      description: "E2E 通过公开 API 指定智能体调试场执行者",
+      asset_type: "实验",
+      payload: {
+        执行智能体: {
+          agent_id: agent.id,
+          名称: agent.name,
+        },
+        调试包: {
+          执行智能体: {
+            agent_id: agent.id,
+            名称: agent.name,
+          },
+        },
+        cases: [
+          {
+            名称: "指定执行智能体用例",
+            变量: { issue_title: "指定执行智能体" },
+            期望包含: ["中文结论", "验收证据"],
+          },
+        ],
+      },
+      status: "启用",
+    });
+
+    const agentRun = await api.runPromptEvaluationAssetAgent(asset.id);
+    expect(agentRun.agent_id).toBe(agent.id);
+    expect(agentRun.runtime_id).toBe(runtime.id);
+    expect(agentRun.model).toBe("gpt-5.4-mini");
+    expect(agentRun.run).toMatchObject({
+      asset_id: asset.id,
+      agent_id: agent.id,
+      runtime_id: runtime.id,
+      model: "gpt-5.4-mini",
+      run_kind: "Agent执行",
+      status: "已入队",
+    });
+    expect(agentRun.asset.payload).toMatchObject({
+      最近Agent运行: {
+        agent_id: agent.id,
+        runtime_id: runtime.id,
+        模型: "gpt-5.4-mini",
+        状态: "已入队",
+      },
+    });
   });
 
   test("运行历史可以取消已入队的真实智能体运行", async ({ page }) => {

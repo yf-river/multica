@@ -133,6 +133,7 @@ export function AgentPlaygroundContainer() {
   const workspaceId = useWorkspaceId();
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
+  const [selectedExecutionAgentId, setSelectedExecutionAgentId] = useState("__auto__");
   const selection = usePlaygroundPromptSelection("agent-playground", workspaceId);
 
   useEffect(() => {
@@ -182,11 +183,16 @@ export function AgentPlaygroundContainer() {
   const filteredItems = useFilteredPromptItems(items, query);
   const selected = selection.resolve(items);
   const runtimeReadiness = runtimeReadinessQuery.data ?? DEFAULT_AGENT_RUNTIME_READINESS;
+  const agents = agentQuery.data ?? [];
+  const selectedExecutionAgent = selectedExecutionAgentId === "__auto__"
+    ? null
+    : agents.find((agent) => agent.id === selectedExecutionAgentId && !agent.archived_at) ?? null;
   const draft = useMemo(() => selected ? itemToDraft(selected) : emptyPlaygroundDraft(), [selected]);
   const actions = useAgentPlaygroundActions({
     draft,
     selected,
     agentRuntimeReadiness: runtimeReadiness,
+    selectedExecutionAgent,
     onAssetsChanged: () => queryClient.invalidateQueries({ queryKey: agentPlaygroundKeys.assets(workspaceId ?? "") }),
     onCasesChanged: () => queryClient.invalidateQueries({ queryKey: agentPlaygroundKeys.cases(workspaceId ?? "") }),
     onExperimentDimensionsChanged: () => undefined,
@@ -219,9 +225,11 @@ export function AgentPlaygroundContainer() {
             onAgentExpectedTextChange={actions.setAgentExpectedText}
             runtimeReadiness={runtimeReadiness}
             runtimeLoading={runtimeReadinessQuery.isLoading}
-            agents={agentQuery.data ?? []}
+            agents={agents}
             runtimes={runtimeQuery.data ?? []}
             executionCatalogLoading={agentQuery.isLoading || runtimeQuery.isLoading}
+            selectedExecutionAgentId={selectedExecutionAgentId}
+            onSelectedExecutionAgentIdChange={setSelectedExecutionAgentId}
             saving={actions.creatingAgentPackage}
             runningAgent={actions.runningAgent}
             runs={runs}

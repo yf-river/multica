@@ -105,6 +105,15 @@ interface DaemonRuntimeResponse {
   status: string;
 }
 
+interface AgentResponse {
+  id: string;
+  workspace_id: string;
+  runtime_id: string;
+  name: string;
+  model: string;
+  status: string;
+}
+
 interface DaemonClaimResponse {
   task: null | {
     id: string;
@@ -442,6 +451,36 @@ export class TestApiClient {
 
   async ensureOnlineCodeBuddyRuntime(name = `E2E CodeBuddy Runtime ${Date.now()}`) {
     return this.ensureOnlineRuntime("codebuddy", name);
+  }
+
+  async createAgent(data: {
+    name: string;
+    runtime_id: string;
+    description?: string;
+    instructions?: string;
+    model?: string;
+    visibility?: "workspace" | "private";
+    max_concurrent_tasks?: number;
+  }): Promise<AgentResponse> {
+    const res = await this.authedFetch("/api/agents", {
+      method: "POST",
+      body: JSON.stringify({
+        name: data.name,
+        description: data.description ?? "E2E 创建的训练评估执行智能体",
+        instructions: data.instructions ?? "请只输出中文结论和可验收证据。",
+        runtime_id: data.runtime_id,
+        runtime_config: {},
+        custom_env: {},
+        custom_args: [],
+        visibility: data.visibility ?? "workspace",
+        max_concurrent_tasks: data.max_concurrent_tasks ?? 1,
+        model: data.model ?? "gpt-5.4-mini",
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`Failed to create agent: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
   }
 
   async registerDaemonCodeBuddyRuntime(name = `E2E Daemon CodeBuddy Runtime ${Date.now()}`) {

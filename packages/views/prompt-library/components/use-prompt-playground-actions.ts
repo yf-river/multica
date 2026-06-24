@@ -6,6 +6,7 @@ import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { renderPromptTemplate } from "@multica/core/prompt-library";
 import type {
+  Agent,
   CreatePromptEvaluationAssetRequest,
   PromptEvaluationAssetType,
   PromptEvaluationRuntimeReadiness,
@@ -35,6 +36,7 @@ type UseAgentPlaygroundActionsOptions = {
   draft: PromptDraft;
   selected: PromptLibraryItem | null;
   agentRuntimeReadiness: PromptEvaluationRuntimeReadiness;
+  selectedExecutionAgent: Agent | null;
   onAssetsChanged: () => void;
   onCasesChanged: () => void;
   onExperimentDimensionsChanged: () => void;
@@ -161,6 +163,7 @@ export function useAgentPlaygroundActions({
   draft,
   selected,
   agentRuntimeReadiness,
+  selectedExecutionAgent,
   onAssetsChanged,
   onCasesChanged,
   onExperimentDimensionsChanged,
@@ -202,7 +205,7 @@ export function useAgentPlaygroundActions({
       toast.error("请先保存提示词");
       return;
     }
-    createAssetMut.mutate(buildAgentDebugPackageRequest(prompt, parseDebugValues(debugValuesText), debugResult.rendered, agentExpectedText, agentRuntimeReadiness));
+    createAssetMut.mutate(buildAgentDebugPackageRequest(prompt, parseDebugValues(debugValuesText), debugResult.rendered, agentExpectedText, agentRuntimeReadiness, selectedExecutionAgent));
   };
 
   const runAgentDebugPackage = () => {
@@ -211,12 +214,12 @@ export function useAgentPlaygroundActions({
       toast.error("请先保存提示词");
       return;
     }
-    if (agentRuntimeReadiness.status !== "就绪") {
+    if (!selectedExecutionAgent && agentRuntimeReadiness.status !== "就绪") {
       toast.error(agentRuntimeReadiness.fix);
       return;
     }
     const values = parseDebugValues(debugValuesText);
-    runAgentMut.mutate(buildAgentDebugPackageRequest(prompt, values, debugResult.rendered, agentExpectedText, agentRuntimeReadiness));
+    runAgentMut.mutate(buildAgentDebugPackageRequest(prompt, values, debugResult.rendered, agentExpectedText, agentRuntimeReadiness, selectedExecutionAgent));
   };
 
   return {

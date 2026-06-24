@@ -1,5 +1,6 @@
 import type { Dispatch, SetStateAction } from "react";
 import type {
+  Agent,
   CreatePromptEvaluationAssetRequest,
   CreatePromptLibraryItemRequest,
   PromptEvaluationAssetType,
@@ -146,7 +147,14 @@ export function buildAgentDebugPackageRequest(
   rendered: string,
   expectedOutput: string,
   readiness: PromptEvaluationRuntimeReadiness,
+  executionAgent?: Agent | null,
 ): CreatePromptEvaluationAssetRequest {
+  const executionAgentPayload = executionAgent ? {
+    agent_id: executionAgent.id,
+    名称: executionAgent.name,
+    模型: executionAgent.model,
+    运行时标识: executionAgent.runtime_id,
+  } : null;
   return {
     prompt_id: prompt.id,
     name: `${prompt.name} 智能体调试包 ${new Date().toLocaleString("zh-CN")} #${Date.now()}`,
@@ -167,11 +175,14 @@ export function buildAgentDebugPackageRequest(
         变量: values,
         上下文: rendered,
         期望输出: expectedOutput,
+        执行智能体: executionAgentPayload,
         执行方式: buildAgentExecutionStatus(readiness),
       },
       运行环境: {
+        目标智能体: executionAgent?.name ?? "自动选择训练评估智能体",
+        目标智能体标识: executionAgent?.id ?? null,
         目标运行时: "Codex",
-        目标模型: readiness.model || DEFAULT_AGENT_MODEL,
+        目标模型: executionAgent?.model || readiness.model || DEFAULT_AGENT_MODEL,
         状态: readiness.status,
         说明: readiness.detail,
         修复路径: readiness.fix,

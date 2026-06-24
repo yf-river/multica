@@ -14,6 +14,13 @@ import type {
 } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
 import { Button } from "@multica/ui/components/ui/button";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@multica/ui/components/ui/select";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { DEFAULT_AGENT_MODEL } from "./prompt-library-request-builders";
 
@@ -218,6 +225,8 @@ export function AgentPlaygroundWorkbench({
   agents,
   runtimes,
   executionCatalogLoading,
+  selectedExecutionAgentId,
+  onSelectedExecutionAgentIdChange,
   saving,
   runningAgent,
   runs,
@@ -238,6 +247,8 @@ export function AgentPlaygroundWorkbench({
   agents: Agent[];
   runtimes: AgentRuntime[];
   executionCatalogLoading: boolean;
+  selectedExecutionAgentId: string;
+  onSelectedExecutionAgentIdChange: (agentId: string) => void;
   saving: boolean;
   runningAgent: boolean;
   runs: PromptEvaluationRun[];
@@ -254,14 +265,22 @@ export function AgentPlaygroundWorkbench({
   });
   const promptCaseCount = selected ? cases.filter((item) => item.prompt_id === selected.id).length : 0;
   const selectedAgentRuns = selected ? agentRuns.filter((run) => run.prompt_id === selected.id) : agentRuns;
-  const canCreateTask = Boolean(selected) && runtimeReadiness.status === "就绪" && !saving && !runningAgent;
+  const selectableAgents = agents.filter((agent) => !agent.archived_at);
+  const selectedExecutionAgent = selectedExecutionAgentId === "__auto__" ? null : selectableAgents.find((agent) => agent.id === selectedExecutionAgentId) ?? null;
   const evaluationAgent = agents.find((agent) => agent.name.includes("训练评估") || agent.name.includes("训练与评估")) ?? null;
-  const selectedRuntime = runtimeReadiness.runtime ?? runtimes.find((runtime) => runtime.status === "online") ?? runtimes[0] ?? null;
+  const selectedRuntime = selectedExecutionAgent
+    ? runtimes.find((runtime) => runtime.id === selectedExecutionAgent.runtime_id) ?? runtimeReadiness.runtime ?? runtimes.find((runtime) => runtime.status === "online") ?? runtimes[0] ?? null
+    : runtimeReadiness.runtime ?? runtimes.find((runtime) => runtime.status === "online") ?? runtimes[0] ?? null;
   const onlineRuntimeCount = runtimes.filter((runtime) => runtime.status === "online").length;
   const executionAgentLabel = executionCatalogLoading
     ? "读取中"
-    : formatAgentDisplayName(evaluationAgent) ?? "运行时就绪后自动创建训练评估执行智能体";
-  const executionModel = evaluationAgent?.model || runtimeReadiness.model || DEFAULT_AGENT_MODEL;
+    : selectedExecutionAgent
+      ? formatAgentDisplayName(selectedExecutionAgent)
+      : "自动选择训练评估智能体";
+  const executionModel = selectedExecutionAgent?.model || evaluationAgent?.model || runtimeReadiness.model || DEFAULT_AGENT_MODEL;
+  const explicitAgentReady = Boolean(selectedExecutionAgent && selectedRuntime?.status === "online");
+  const autoAgentReady = runtimeReadiness.status === "就绪";
+  const canCreateTask = Boolean(selected) && (selectedExecutionAgent ? explicitAgentReady : autoAgentReady) && !saving && !runningAgent;
 
   return (
     <section className="mx-auto grid max-w-7xl gap-4" data-testid="agent-playground-panel">
@@ -307,10 +326,26 @@ export function AgentPlaygroundWorkbench({
 
         <div className="mt-4 grid gap-3 rounded-md border bg-background p-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_240px]" data-testid="agent-playground-execution-topology">
           <div className="min-w-0" data-testid="agent-playground-agent-selector">
-            <div className="text-[11px] font-medium text-muted-foreground">自动执行者</div>
-            <div className="mt-1 truncate text-sm font-semibold">{executionAgentLabel}</div>
+            <div className="text-[11px] font-medium text-muted-foreground">执行智能体</div>
+            <Select value={selectedExecutionAgentId} onValueChange={(value) => onSelectedExecutionAgentIdChange(value ?? "__auto__")}>
+              <SelectTrigger size="sm" className="mt-1 w-full">
+                <SelectValue>{executionAgentLabel}</SelectValue>
+              </SelectTrigger>
+              <SelectContent align="start" className="max-h-72">
+                <SelectItem value="__auto__">自动选择训练评估智能体</SelectItem>
+                {selectableAgents.map((agent) => (
+                  <SelectItem key={agent.id} value={agent.id}>
+                    {formatAgentDisplayName(agent)} · {formatAgentStatus(agent.status)}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <div className="mt-1 truncate text-xs text-muted-foreground">
-              {evaluationAgent ? `状态 ${formatAgentStatus(evaluationAgent.status)} · 可见性 ${formatAgentVisibility(evaluationAgent.visibility)}` : "服务端会在真实运行前确保训练评估执行智能体存在。"}
+              {selectedExecutionAgent
+                ? `状态 ${formatAgentStatus(selectedExecutionAgent.status)} · 可见性 ${formatAgentVisibility(selectedExecutionAgent.visibility)}`
+                : evaluationAgent
+                  ? `自动模式会使用 ${formatAgentDisplayName(evaluationAgent)}，也可指定其它工作区智能体。`
+                  : "自动模式会在真实运行前确保训练评估执行智能体存在。"}
             </div>
           </div>
           <div className="min-w-0" data-testid="agent-playground-runtime-selector">
@@ -416,8 +451,9 @@ export function AgentPlaygroundWorkbench({
 
           <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
             {!selected && <span>先选择提示词后才能保存或执行。</span>}
-            {selected && runtimeReadiness.status !== "就绪" && !runtimeLoading && <span>{runtimeReadiness.fix}</span>}
-            {selected && runtimeReadiness.status === "就绪" && <span>点击创建后会写入真实任务队列，并在运行历史中回读任务标识、链路追踪和用量。</span>}
+            {selected && selectedExecutionAgent && !explicitAgentReady && <span>所选智能体绑定的运行时不在线，请先启动运行时。</span>}
+            {selected && !selectedExecutionAgent && runtimeReadiness.status !== "就绪" && !runtimeLoading && <span>{runtimeReadiness.fix}</span>}
+            {selected && (selectedExecutionAgent ? explicitAgentReady : runtimeReadiness.status === "就绪") && <span>点击创建后会写入真实任务队列，并在运行历史中回读任务标识、链路追踪和用量。</span>}
           </div>
         </section>
 
