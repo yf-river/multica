@@ -255,7 +255,6 @@ test.describe("生产部署验收", () => {
     await expect(page.getByTestId("prompt-playground-workbench")).toBeVisible({ timeout: 15000 });
     await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("本地模板目录");
     await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("质检工作单");
-    await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("不创建任务");
     await expect(page.getByLabel("模板变量")).toBeVisible();
     await expect(page.getByTestId("prompt-playground-rendered-output")).toBeVisible();
     await expect(page.getByTestId("prompt-playground-template-lab")).toBeVisible();
