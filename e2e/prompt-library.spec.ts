@@ -1473,7 +1473,7 @@ test.describe("训练与评估工作台", () => {
     await expect(toolChains).toContainText("耗时");
     await toolChains.getByLabel("搜索工具调用链").fill("curl-check");
     await expect(toolChains).toContainText("异常原因");
-    await expect(toolChains).toContainText("工具结果包含错误信息");
+    await expect(toolChains).toContainText("工具结果包含 HTTP 状态码 500");
 
     page.once("dialog", async (dialog) => {
       expect(dialog.message()).toContain("通过说明");

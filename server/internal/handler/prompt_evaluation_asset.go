@@ -3391,6 +3391,12 @@ func promptEvaluationToolFailureSignal(output string) (bool, string) {
 	if normalized == "" {
 		return false, ""
 	}
+	if statusCode := promptEvaluationToolHTTPStatusCode(normalized); statusCode >= 400 {
+		return true, fmt.Sprintf("工具结果包含 HTTP 状态码 %d", statusCode)
+	}
+	if exitCode, ok := promptEvaluationToolExitCode(normalized); ok && exitCode != 0 {
+		return true, fmt.Sprintf("工具结果包含非零退出码 %d", exitCode)
+	}
 	patterns := []struct {
 		needle string
 		reason string
@@ -3421,6 +3427,42 @@ func promptEvaluationToolFailureSignal(output string) (bool, string) {
 		}
 	}
 	return false, ""
+}
+
+func promptEvaluationToolHTTPStatusCode(output string) int {
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`\bhttp(?:/[\d.]+)?\s*(?:status\s*)?([45]\d{2})\b`),
+		regexp.MustCompile(`\bstatus(?:\s*code)?\s*[:=]?\s*([45]\d{2})\b`),
+	}
+	for _, pattern := range patterns {
+		matches := pattern.FindStringSubmatch(output)
+		if len(matches) < 2 {
+			continue
+		}
+		statusCode, err := strconv.Atoi(matches[1])
+		if err == nil {
+			return statusCode
+		}
+	}
+	return 0
+}
+
+func promptEvaluationToolExitCode(output string) (int, bool) {
+	patterns := []*regexp.Regexp{
+		regexp.MustCompile(`\bexit\s+(?:status|code)\s*[:=]?\s*(\d+)\b`),
+		regexp.MustCompile(`\bexited\s+with\s+(?:status|code)\s*[:=]?\s*(\d+)\b`),
+	}
+	for _, pattern := range patterns {
+		matches := pattern.FindStringSubmatch(output)
+		if len(matches) < 2 {
+			continue
+		}
+		exitCode, err := strconv.Atoi(matches[1])
+		if err == nil {
+			return exitCode, true
+		}
+	}
+	return 0, false
 }
 
 func promptEvaluationToolCallID(message protocol.TaskMessagePayload) string {

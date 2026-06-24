@@ -222,7 +222,7 @@ describe("ExecutionLogSection trace", () => {
             duration_ms: 1200,
             result_category: "异常线索",
             failure_signal: true,
-            failure_reason: "工具结果包含错误信息",
+            failure_reason: "工具结果包含 HTTP 状态码 500",
             summary: "工具 curl-check 已配对：调用 #1，结果 #2",
             created_at: "2026-06-08T08:02:00Z",
             completed_at: "2026-06-08T08:02:01Z",
@@ -305,7 +305,7 @@ describe("ExecutionLogSection trace", () => {
     expect(screen.getByText(/工具 curl-check：调用 2，异常线索 1，最慢 1s/)).toBeInTheDocument();
     expect(screen.getByText("工具链明细")).toBeInTheDocument();
     expect(screen.getByText(/curl-check · 异常线索 · 1s · 异常线索/)).toBeInTheDocument();
-    expect(screen.getByText(/调用 #1 \/ 结果 #2 · 工具结果包含错误信息/)).toBeInTheDocument();
+    expect(screen.getByText(/调用 #1 \/ 结果 #2 · 工具结果包含 HTTP 状态码 500/)).toBeInTheDocument();
     expect(screen.getByText(/最近唤醒：子任务 \[GTD-2\]/)).toBeInTheDocument();
   });
 });

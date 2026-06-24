@@ -90,7 +90,7 @@ func TestBuildPromptEvaluationExecutionEvidencePairsToolCalls(t *testing.T) {
 	if chains[1].ResultCategory != "孤立返回" {
 		t.Fatalf("orphan chain category = %+v", chains[1])
 	}
-	if chains[2].Status != "已配对" || !chains[2].FailureSignal || chains[2].ResultCategory != "异常线索" || chains[2].FailureReason == "" {
+	if chains[2].Status != "已配对" || !chains[2].FailureSignal || chains[2].ResultCategory != "异常线索" || chains[2].FailureReason != "工具结果包含 HTTP 状态码 500" {
 		t.Fatalf("failure signal chain = %+v", chains[2])
 	}
 	if len(toolSummary) != 3 {
@@ -122,6 +122,42 @@ func TestBuildPromptEvaluationExecutionEvidencePairsToolCalls(t *testing.T) {
 	}
 	if useSpan.Details["工具调用链ID"] != "tool:call-1" || resultSpan.Details["工具调用链ID"] != "tool:call-1" {
 		t.Fatalf("span chain details: use=%+v result=%+v", useSpan.Details, resultSpan.Details)
+	}
+}
+
+func TestPromptEvaluationToolFailureSignalExtractsStructuredStatus(t *testing.T) {
+	tests := []struct {
+		name       string
+		output     string
+		wantSignal bool
+		wantReason string
+	}{
+		{
+			name:       "http status",
+			output:     "Error: HTTP 503 from upstream",
+			wantSignal: true,
+			wantReason: "工具结果包含 HTTP 状态码 503",
+		},
+		{
+			name:       "exit status",
+			output:     "command failed with exit status 2",
+			wantSignal: true,
+			wantReason: "工具结果包含非零退出码 2",
+		},
+		{
+			name:       "zero exit",
+			output:     "command exited with status 0",
+			wantSignal: false,
+			wantReason: "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotSignal, gotReason := promptEvaluationToolFailureSignal(tt.output)
+			if gotSignal != tt.wantSignal || gotReason != tt.wantReason {
+				t.Fatalf("promptEvaluationToolFailureSignal(%q) = (%v, %q), want (%v, %q)", tt.output, gotSignal, gotReason, tt.wantSignal, tt.wantReason)
+			}
+		})
 	}
 }
 
