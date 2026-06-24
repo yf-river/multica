@@ -14,7 +14,6 @@ import { cn } from "@multica/ui/lib/utils";
 import { AgentAvatarStack } from "../../agents/components/agent-avatar-stack";
 import { AgentActivityHoverContent } from "../../agents/components/agent-activity-hover-content";
 import { useT } from "../../i18n";
-import { useDeferredAgentActivityEnabled } from "../hooks/use-deferred-agent-activity";
 
 interface IssueAgentActivityIndicatorProps {
   issueId: string;
@@ -53,11 +52,7 @@ export const IssueAgentActivityIndicator = memo(function IssueAgentActivityIndic
 }: IssueAgentActivityIndicatorProps) {
   const { t } = useT("issues");
   const wsId = useWorkspaceId();
-  const agentActivityEnabled = useDeferredAgentActivityEnabled(false, wsId);
-  const { data: snapshot = [] } = useQuery({
-    ...agentTaskSnapshotOptions(wsId),
-    enabled: agentActivityEnabled,
-  });
+  const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
 
   const { runningTasks, queuedTasks, agentIds, opacity } = useMemo(() => {
     const running: AgentTask[] = [];

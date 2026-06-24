@@ -25,7 +25,6 @@ import { SwimLaneView } from "./swimlane-view";
 import { BatchActionToolbar } from "./batch-action-toolbar";
 import type { ChildProgress } from "./list-row";
 import { useT } from "../../i18n";
-import { useDeferredAgentActivityEnabled } from "../hooks/use-deferred-agent-activity";
 
 const EMPTY_CHILD_PROGRESS = new Map<string, ChildProgress>();
 
@@ -92,11 +91,7 @@ export function IssuesPage() {
   // filter pure and lets the snapshot stay cached at one workspace-
   // scoped place — every issue card already subscribes for its own
   // indicator, so this is a no-op extra fetch.
-  const agentActivityEnabled = useDeferredAgentActivityEnabled(agentRunningFilter, wsId);
-  const { data: snapshot = [] } = useQuery({
-    ...agentTaskSnapshotOptions(wsId),
-    enabled: agentActivityEnabled,
-  });
+  const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
   const runningIssueIds = useMemo(() => {
     const ids = new Set<string>();
     for (const t of snapshot) {
