@@ -1982,6 +1982,7 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	h.emitIssueExecutedOnFirstCompletion(r, task)
+	h.captureTaskUsageUnavailableIfMissing(r.Context(), *task)
 
 	// Best-effort revoke of any agent task token minted at claim time.
 	// The token would naturally expire at the 24h watermark and is also
@@ -1995,6 +1996,21 @@ func (h *Handler) CompleteTask(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("task completed", "task_id", taskID, "agent_id", uuidToString(task.AgentID))
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
+}
+
+func (h *Handler) captureTaskUsageUnavailableIfMissing(ctx context.Context, task db.AgentTaskQueue) {
+	usages, err := h.Queries.GetTaskUsage(ctx, task.ID)
+	if err != nil {
+		slog.Warn("complete task: failed to inspect task usage",
+			"task_id", uuidToString(task.ID),
+			"error", err,
+		)
+		return
+	}
+	if len(usages) > 0 {
+		return
+	}
+	h.TaskService.CaptureTaskUsageUnavailable(ctx, task, "daemon 完成任务时没有随结果上报模型 token 用量")
 }
 
 // emitIssueExecutedOnFirstCompletion atomically flips issue.first_executed_at

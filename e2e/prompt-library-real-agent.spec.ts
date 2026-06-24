@@ -145,7 +145,9 @@ test.describe("训练与评估真实 Agent 闭环", () => {
           await expect(evidencePanel).toContainText(EXPECTED_AGENT_MODEL);
         } else {
           expect(evidence.task_usage).toHaveLength(0);
+          expect(JSON.stringify(evidence.trace_events)).toContain("模型用量未返回");
           await expect(evidencePanel.getByText("暂无 token 用量")).toBeVisible();
+          await expect(evidencePanel).toContainText("模型用量未返回");
         }
       }
     } finally {

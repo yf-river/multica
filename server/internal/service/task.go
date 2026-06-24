@@ -256,6 +256,30 @@ func (s *TaskService) CaptureTaskUsage(ctx context.Context, task db.AgentTaskQue
 	s.Metrics.RecordLLMUsage(source, runtimeMode, provider, model, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens)
 }
 
+func (s *TaskService) CaptureTaskUsageUnavailable(ctx context.Context, task db.AgentTaskQueue, reason string) {
+	events, err := s.Queries.ListTaskTraceEventsByTask(ctx, task.ID)
+	if err != nil {
+		slog.Warn("list task trace events before usage unavailable trace failed",
+			"task_id", util.UUIDToString(task.ID),
+			"error", err,
+		)
+	} else {
+		for _, event := range events {
+			if event.EventType == "llm.usage_reported" || event.EventType == "llm.usage_unavailable" {
+				return
+			}
+		}
+	}
+
+	metadata, _ := json.Marshal(map[string]string{
+		"原因": reason,
+		"说明": "执行器完成任务但模型没有返回 token 用量，本次任务不会计入 token 或成本聚合。",
+	})
+	s.recordTaskTraceEvent(ctx, task, "llm.usage_unavailable", "模型用量未返回", taskTraceOptions{
+		Metadata: metadata,
+	})
+}
+
 func (s *TaskService) CaptureQueuedExpiredTasks(ctx context.Context, tasks []db.AgentTaskQueue) {
 	if s.Metrics == nil {
 		return

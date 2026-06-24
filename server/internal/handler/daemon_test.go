@@ -1335,6 +1335,82 @@ func TestReportTaskUsageStoresUsageAndTrace(t *testing.T) {
 	}
 }
 
+func TestCompleteTaskWithoutUsageCreatesUsageUnavailableTrace(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	runtimeID := createClaimReclaimRuntime(t, ctx, "Usage unavailable runtime")
+	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Usage unavailable agent")
+
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority, started_at
+		)
+		VALUES ($1, $2, $3, 'running', 0, now())
+		RETURNING id
+	`, agentID, runtimeID, issueID).Scan(&taskID); err != nil {
+		t.Fatalf("setup: create running task: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM task_trace_event WHERE task_id = $1`, taskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM task_usage WHERE task_id = $1`, taskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+	})
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/complete", map[string]any{
+		"output": "完成",
+	}, testWorkspaceID, "usage-unavailable-daemon")
+	req = withURLParam(req, "taskId", taskID)
+
+	testHandler.CompleteTask(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("CompleteTask status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	usages, err := testHandler.Queries.GetTaskUsage(ctx, parseUUID(taskID))
+	if err != nil {
+		t.Fatalf("get task usage: %v", err)
+	}
+	if len(usages) != 0 {
+		t.Fatalf("task usage rows = %+v, want none", usages)
+	}
+
+	events, err := testHandler.Queries.ListTaskTraceEventsByTask(ctx, parseUUID(taskID))
+	if err != nil {
+		t.Fatalf("list task trace events: %v", err)
+	}
+	var usageUnavailable *db.TaskTraceEvent
+	for i := range events {
+		if events[i].EventType == "llm.usage_unavailable" {
+			usageUnavailable = &events[i]
+			break
+		}
+	}
+	if usageUnavailable == nil {
+		t.Fatalf("missing llm.usage_unavailable trace in %+v", events)
+	}
+	if usageUnavailable.EventName != "模型用量未返回" {
+		t.Fatalf("usage unavailable event_name = %q", usageUnavailable.EventName)
+	}
+	if usageUnavailable.Provider != "handler_test_runtime" {
+		t.Fatalf("usage unavailable provider = %q, want handler_test_runtime", usageUnavailable.Provider)
+	}
+	if usageUnavailable.InputTokens != 0 || usageUnavailable.OutputTokens != 0 || usageUnavailable.CacheReadTokens != 0 || usageUnavailable.CacheWriteTokens != 0 {
+		t.Fatalf("usage unavailable trace should not invent token counts: %+v", usageUnavailable)
+	}
+	var metadata map[string]string
+	if err := json.Unmarshal(usageUnavailable.Metadata, &metadata); err != nil {
+		t.Fatalf("unmarshal usage unavailable metadata: %v", err)
+	}
+	if metadata["原因"] == "" || metadata["说明"] == "" {
+		t.Fatalf("usage unavailable metadata = %+v", metadata)
+	}
+}
+
 // TestListIssueTaskTraceEvents_CrossWorkspace_Returns404 verifies that durable
 // task trace events are not readable across workspaces via a bare issue UUID.
 func TestListIssueTaskTraceEvents_CrossWorkspace_Returns404(t *testing.T) {
