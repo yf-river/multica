@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useState } from "react";
 import { MessageCircle } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { cn } from "@multica/ui/lib/utils";
@@ -15,17 +16,35 @@ import {
 import { useT } from "../../i18n";
 
 const logger = createLogger("chat.ui");
+const CHAT_FAB_STATUS_DELAY_MS = 2_000;
+
+function useDeferredFabStatus(isOpen: boolean, wsId: string) {
+  const [enabled, setEnabled] = useState(false);
+
+  useEffect(() => {
+    setEnabled(false);
+    if (isOpen || !wsId) return;
+    const timer = window.setTimeout(() => setEnabled(true), CHAT_FAB_STATUS_DELAY_MS);
+    return () => window.clearTimeout(timer);
+  }, [isOpen, wsId]);
+
+  return enabled;
+}
 
 export function ChatFab() {
   const { t } = useT("chat");
   const wsId = useWorkspaceId();
   const isOpen = useChatStore((s) => s.isOpen);
   const toggle = useChatStore((s) => s.toggle);
+  const statusEnabled = useDeferredFabStatus(isOpen, wsId);
   const { data: sessions = [] } = useQuery({
     ...chatSessionsOptions(wsId),
     enabled: isOpen,
   });
-  const { data: pending } = useQuery(pendingChatTasksOptions(wsId));
+  const { data: pending } = useQuery({
+    ...pendingChatTasksOptions(wsId),
+    enabled: statusEnabled,
+  });
 
   if (isOpen) return null;
 
