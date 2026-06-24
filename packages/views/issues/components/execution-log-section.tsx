@@ -253,6 +253,7 @@ function ExecutionTreeNodeRow({ node, root = false }: { node: IssueExecutionNode
   const terminalTasks = node.tasks.filter((task) => ["completed", "failed", "cancelled"].includes(task.status)).length;
   const latestWakeup = node.wakeup_comments.at(-1);
   const toolSummary = node.tool_call_summary ?? [];
+  const toolChains = node.tool_call_chains ?? [];
   const toolCallCount = toolSummary.reduce((sum, item) => sum + item.total_calls, 0);
   const toolAttentionCount = toolSummary.reduce((sum, item) => sum + item.failure_signal_calls + item.missing_result_calls + item.orphan_result_calls, 0);
   return (
@@ -279,6 +280,27 @@ function ExecutionTreeNodeRow({ node, root = false }: { node: IssueExecutionNode
               工具 {item.tool}：调用 {item.total_calls}，异常线索 {item.failure_signal_calls}，最慢 {formatNullableMilliseconds(item.max_duration_ms ?? 0)}
             </div>
           ))}
+        </div>
+      )}
+      {toolChains.length > 0 && (
+        <div className="space-y-0.5 rounded border border-dashed border-border/70 bg-background/40 px-1.5 py-1 text-[11px] leading-5 text-muted-foreground" data-testid={`issue-execution-tool-chains-${node.issue.id}`}>
+          <div className="font-medium text-foreground">工具链明细</div>
+          {toolChains.slice(0, 3).map((chain) => (
+            <div key={chain.id} className="min-w-0">
+              <div className="truncate">
+                {chain.tool || "未记录工具"} · {chain.result_category || chain.status}
+                {chain.duration_ms ? ` · ${formatNullableMilliseconds(chain.duration_ms)}` : ""}
+                {chain.failure_signal ? " · 异常线索" : ""}
+              </div>
+              <div className="truncate">
+                调用 #{chain.use_seq || "-"} / 结果 #{chain.result_seq || "-"}
+                {chain.failure_reason ? ` · ${chain.failure_reason}` : ""}
+              </div>
+            </div>
+          ))}
+          {toolChains.length > 3 && (
+            <div className="truncate">还有 {toolChains.length - 3} 条工具链未展开</div>
+          )}
         </div>
       )}
       {latestWakeup && (

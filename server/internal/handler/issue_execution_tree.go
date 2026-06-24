@@ -20,6 +20,7 @@ type IssueExecutionNodeResponse struct {
 	Tasks           []AgentTaskResponse                       `json:"tasks"`
 	SOPRuns         []SquadSOPRunResponse                     `json:"sop_runs"`
 	TraceEvents     []TaskTraceEventResponse                  `json:"trace_events"`
+	ToolCallChains  []PromptEvaluationToolCallChainResponse   `json:"tool_call_chains"`
 	ToolCallSummary []PromptEvaluationToolCallSummaryResponse `json:"tool_call_summary"`
 	WakeupComments  []IssueWakeupCommentBrief                 `json:"wakeup_comments"`
 	Children        []IssueExecutionNodeResponse              `json:"children"`
@@ -79,7 +80,8 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 			taskMessages = append(taskMessages, taskMessageToPayload(message, taskID, issueID))
 		}
 	}
-	toolCallSummary := buildPromptEvaluationToolCallSummary(buildPromptEvaluationToolCallChains(taskMessages))
+	toolCallChains := buildPromptEvaluationToolCallChains(taskMessages)
+	toolCallSummary := buildPromptEvaluationToolCallSummary(toolCallChains)
 
 	runs, err := h.Queries.ListIssueSquadSOPRuns(ctx, db.ListIssueSquadSOPRunsParams{
 		IssueID:     issue.ID,
@@ -154,6 +156,7 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 		Tasks:           taskResp,
 		SOPRuns:         runResp,
 		TraceEvents:     traceResp,
+		ToolCallChains:  toolCallChains,
 		ToolCallSummary: toolCallSummary,
 		WakeupComments:  wakeupComments,
 		Children:        childrenResp,

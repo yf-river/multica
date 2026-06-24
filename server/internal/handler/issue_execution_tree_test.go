@@ -153,6 +153,16 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 	if resp.Root.ToolCallSummary[0].Tool != "curl-check" || resp.Root.ToolCallSummary[0].FailureSignalCalls != 1 || !resp.Root.ToolCallSummary[0].NeedsAttention {
 		t.Fatalf("root tool summary row = %+v", resp.Root.ToolCallSummary[0])
 	}
+	if len(resp.Root.ToolCallChains) != 1 {
+		t.Fatalf("root tool chains = %+v, want one chain", resp.Root.ToolCallChains)
+	}
+	chain := resp.Root.ToolCallChains[0]
+	if chain.Tool != "curl-check" || chain.Status != "已配对" || chain.ResultCategory != "异常线索" || !chain.FailureSignal {
+		t.Fatalf("root tool chain = %+v, want paired failure signal", chain)
+	}
+	if chain.UseSeq != 1 || chain.ResultSeq != 2 || chain.FailureReason == "" {
+		t.Fatalf("root tool chain seq/failure reason = %+v, want call/result seq and reason", chain)
+	}
 	if resp.Summary["唤醒评论数"] != 1 || len(resp.Root.WakeupComments) != 1 {
 		t.Fatalf("wakeup comments = %+v / %+v, want one", resp.Summary, resp.Root.WakeupComments)
 	}

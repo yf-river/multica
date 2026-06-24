@@ -209,6 +209,25 @@ describe("ExecutionLogSection trace", () => {
         tasks: [makeTask({ id: "task-parent", status: "completed", issue_id: "issue-parent" })],
         sop_runs: [{ id: "run-1", events: [{ id: "event-1" }, { id: "event-2" }] }],
         trace_events: [{ id: "trace-1" }, { id: "trace-2" }],
+        tool_call_chains: [
+          {
+            id: "tool:call-1",
+            task_id: "task-parent",
+            tool: "curl-check",
+            status: "已配对",
+            use_seq: 1,
+            result_seq: 2,
+            input: { url: "/health" },
+            output: "Error: HTTP 500 from upstream",
+            duration_ms: 1200,
+            result_category: "异常线索",
+            failure_signal: true,
+            failure_reason: "工具结果包含错误信息",
+            summary: "工具 curl-check 已配对：调用 #1，结果 #2",
+            created_at: "2026-06-08T08:02:00Z",
+            completed_at: "2026-06-08T08:02:01Z",
+          },
+        ],
         tool_call_summary: [
           {
             tool: "curl-check",
@@ -263,6 +282,7 @@ describe("ExecutionLogSection trace", () => {
             tasks: [makeTask({ id: "task-child", status: "queued", issue_id: "issue-child" })],
             sop_runs: [],
             trace_events: [{ id: "trace-child" }],
+            tool_call_chains: [],
             tool_call_summary: [],
             wakeup_comments: [],
             children: [],
@@ -283,6 +303,9 @@ describe("ExecutionLogSection trace", () => {
     expect(screen.getByText(/父任务 GTD-1/)).toBeInTheDocument();
     expect(screen.getByText(/子任务 GTD-2/)).toBeInTheDocument();
     expect(screen.getByText(/工具 curl-check：调用 2，异常线索 1，最慢 1s/)).toBeInTheDocument();
+    expect(screen.getByText("工具链明细")).toBeInTheDocument();
+    expect(screen.getByText(/curl-check · 异常线索 · 1s · 异常线索/)).toBeInTheDocument();
+    expect(screen.getByText(/调用 #1 \/ 结果 #2 · 工具结果包含错误信息/)).toBeInTheDocument();
     expect(screen.getByText(/最近唤醒：子任务 \[GTD-2\]/)).toBeInTheDocument();
   });
 });

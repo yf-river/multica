@@ -124,6 +124,9 @@ test.describe("Multica 编码小队页面证据", () => {
       await expect(executionTree).toContainText("观测");
       await expect(executionTree).toContainText("工具");
       await expect(executionTree).toContainText("multica squad activity");
+      await expect(executionTree).toContainText("工具链明细");
+      await expect(executionTree).toContainText("已返回");
+      await expect(executionTree).toContainText("调用 #2 / 结果 #3");
       const sopSummary = page.getByTestId("issue-sop-run-summary");
       await expect(sopSummary).toContainText("multica-coding");
       await expect(sopSummary).toContainText("design_review");
