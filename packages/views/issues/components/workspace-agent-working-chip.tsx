@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -63,6 +63,7 @@ export function WorkspaceAgentWorkingChip({
 }: WorkspaceAgentWorkingChipProps) {
   const { t } = useT("issues");
   const wsId = useWorkspaceId();
+  const [open, setOpen] = useState(false);
   const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
 
   const { runningTasks, agentIds } = useMemo(() => {
@@ -99,7 +100,7 @@ export function WorkspaceAgentWorkingChip({
   // reads as broken next to an active one that pops a panel.
   if (!hasAgents) {
     return (
-      <HoverCard>
+      <HoverCard open={open} onOpenChange={setOpen}>
         <HoverCardTrigger
           render={
             <Button
@@ -124,7 +125,7 @@ export function WorkspaceAgentWorkingChip({
   }
 
   return (
-    <HoverCard>
+    <HoverCard open={open} onOpenChange={setOpen}>
       <HoverCardTrigger
         render={
           <Button
@@ -146,7 +147,7 @@ export function WorkspaceAgentWorkingChip({
         }
       />
       <HoverCardContent align="end" className="w-72">
-        <AgentActivityHoverContent tasks={runningTasks} />
+        {open ? <AgentActivityHoverContent tasks={runningTasks} /> : null}
       </HoverCardContent>
     </HoverCard>
   );

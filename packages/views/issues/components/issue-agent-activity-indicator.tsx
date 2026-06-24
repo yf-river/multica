@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useMemo } from "react";
+import { memo, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import {
   HoverCard,
@@ -52,6 +52,7 @@ export const IssueAgentActivityIndicator = memo(function IssueAgentActivityIndic
 }: IssueAgentActivityIndicatorProps) {
   const { t } = useT("issues");
   const wsId = useWorkspaceId();
+  const [open, setOpen] = useState(false);
   const { data: snapshot = [] } = useQuery(agentTaskSnapshotOptions(wsId));
 
   const { runningTasks, queuedTasks, agentIds, opacity } = useMemo(() => {
@@ -90,7 +91,7 @@ export const IssueAgentActivityIndicator = memo(function IssueAgentActivityIndic
   const isRunning = opacity === "full";
 
   return (
-    <HoverCard>
+    <HoverCard open={open} onOpenChange={setOpen}>
       <HoverCardTrigger
         render={
           <span className="inline-flex shrink-0 items-center gap-1" />
@@ -116,7 +117,7 @@ export const IssueAgentActivityIndicator = memo(function IssueAgentActivityIndic
         </span>
       </HoverCardTrigger>
       <HoverCardContent align="end" className="w-72">
-        <AgentActivityHoverContent tasks={hoverTasks} />
+        {open ? <AgentActivityHoverContent tasks={hoverTasks} /> : null}
       </HoverCardContent>
     </HoverCard>
   );

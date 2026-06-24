@@ -284,6 +284,7 @@ function ActorAvatarHoverCardShell({
 }) {
   const triggerRef = useRef<HTMLSpanElement>(null);
   const [standalone, setStandalone] = useState(false);
+  const [open, setOpen] = useState(false);
 
   useEffect(() => {
     const el = triggerRef.current;
@@ -293,7 +294,7 @@ function ActorAvatarHoverCardShell({
   }, []);
 
   return (
-    <HoverCard>
+    <HoverCard open={open} onOpenChange={setOpen}>
       <HoverCardTrigger
         render={<span ref={triggerRef} />}
         tabIndex={standalone ? 0 : -1}
@@ -306,7 +307,7 @@ function ActorAvatarHoverCardShell({
         {children}
       </HoverCardTrigger>
       <HoverCardContent align="start" className="w-72">
-        {content}
+        {open ? content : null}
       </HoverCardContent>
     </HoverCard>
   );
