@@ -109,6 +109,8 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("prompt-playground-rendered-output")).toContainText("请澄清 登录失败，项目背景：账号系统。", { timeout: 10000 });
     await page.getByRole("button", { name: "保存本地渲染检查" }).click();
     await expect(page.getByText("优化运行已记录")).toBeVisible({ timeout: 10000 });
+    const selectedPrompt = (await api.listPromptLibraryItems()).find((item) => item.name === `${artifactPrefix} 账号系统 澄清`);
+    expect(selectedPrompt).toBeTruthy();
 
     const assetRoutes = {
       数据集: "datasets",
@@ -130,13 +132,11 @@ test.describe("训练与评估工作台", () => {
       expect([200, 201]).toContain(createdAssetResponse.status());
       const createdAsset = await createdAssetResponse.json() as PromptEvaluationAsset;
       expect(createdAsset.asset_type).toBe(assetType);
+      expect(createdAsset.prompt_id).toBe(selectedPrompt!.id);
       await expect(page.getByText("资产已创建").last()).toBeVisible({ timeout: 10000 });
       await expect
         .poll(async () => {
-          const prompts = await api.listPromptLibraryItems();
-          const prompt = prompts.find((item) => item.name === `${artifactPrefix} 账号系统 澄清`);
-          if (!prompt) return null;
-          return (await api.listPromptEvaluationAssets({ prompt_id: prompt.id, asset_type: assetType }))
+          return (await api.listPromptEvaluationAssets({ prompt_id: selectedPrompt!.id, asset_type: assetType }))
             .find((asset) => asset.id === createdAsset.id) ?? null;
         }, { timeout: 15000 })
         .toMatchObject({ asset_type: assetType });

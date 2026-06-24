@@ -122,8 +122,8 @@ export function usePromptPlaygroundActions({
   };
 
   const createWorkbenchAsset = (assetType: PromptEvaluationAssetType) => {
-    let prompt = selected;
-    if (!prompt && selectedPromptStorageKey) {
+    let prompt: PromptLibraryItem | null = null;
+    if (selectedPromptStorageKey) {
       try {
         const storedId = window.localStorage.getItem(selectedPromptStorageKey);
         prompt = storedId ? items.find((item) => item.id === storedId) ?? null : null;
@@ -131,6 +131,7 @@ export function usePromptPlaygroundActions({
         prompt = null;
       }
     }
+    prompt = prompt ?? selected;
     prompt = prompt ?? items[0] ?? null;
     if (!prompt) {
       toast.error("请先保存提示词");
