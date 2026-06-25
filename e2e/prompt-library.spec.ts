@@ -1490,6 +1490,36 @@ test.describe("训练与评估工作台", () => {
         return items.find((item) => item.case_name === "版本一登录用例")?.tags.includes("批量验收") ?? true;
       }, { timeout: 15000 })
       .toBe(false);
+    await governance.getByLabel("选择要整理的数据集标签").selectOption("领导演示");
+    await governance.getByLabel("输入整理后的数据集标签").fill("领导展示");
+    const renameCaseResponse = page.waitForResponse(
+      (response) => response.request().method() === "PUT" && response.url().includes("/api/prompt-evaluation-cases/"),
+      { timeout: 15000 },
+    );
+    const renameAssetResponse = page.waitForResponse(
+      (response) => response.request().method() === "PUT" && response.url().includes(`/api/prompt-evaluation-assets/${dataset.id}`),
+      { timeout: 15000 },
+    );
+    await governance.getByTestId(`dataset-case-rename-tag-${dataset.id}`).click();
+    expect((await renameCaseResponse).status()).toBe(200);
+    expect((await renameAssetResponse).status()).toBe(200);
+    await expect
+      .poll(async () => {
+        const items = await api.listPromptEvaluationCases({ asset_id: dataset.id });
+        const current = items.find((item) => item.case_name === "版本一登录用例");
+        return current ? { hasNewTag: current.tags.includes("领导展示"), hasOldTag: current.tags.includes("领导演示") } : null;
+      }, { timeout: 15000 })
+      .toEqual({ hasNewTag: true, hasOldTag: false });
+    await expect
+      .poll(async () => {
+        const assets = await api.listPromptEvaluationAssets({ asset_type: "数据集" });
+        const current = assets.find((item) => item.id === dataset.id);
+        const payloadCase = ((current?.payload as Record<string, any> | undefined)?.cases as Array<Record<string, any>> | undefined)?.[0];
+        return Array.isArray(payloadCase?.tags) ? payloadCase.tags : payloadCase?.["标签"] ?? [];
+      }, { timeout: 15000 })
+      .toEqual(expect.arrayContaining(["领导展示"]));
+    await expect(governance.getByTestId(`dataset-case-tag-stats-${dataset.id}`)).toContainText("领导展示 1");
+    await expect(governance.getByTestId(`dataset-case-tag-stats-${dataset.id}`)).not.toContainText("领导演示 1");
     await governance.getByLabel("筛选数据集用例关键词").fill("");
     await governance.getByRole("button", { name: "全部" }).click();
     await governance.getByLabel("筛选数据集用例标签").selectOption("全部");

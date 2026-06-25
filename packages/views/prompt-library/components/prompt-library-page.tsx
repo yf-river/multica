@@ -4739,6 +4739,9 @@ function ManualCasePanel({
   const [tagEditDrafts, setTagEditDrafts] = useState<Record<string, string>>({});
   const [bulkTagsText, setBulkTagsText] = useState("");
   const [bulkTagMode, setBulkTagMode] = useState<"追加" | "移除" | null>(null);
+  const [renameSourceTag, setRenameSourceTag] = useState("");
+  const [renameTargetTag, setRenameTargetTag] = useState("");
+  const [renamingTag, setRenamingTag] = useState(false);
   const [savedFilterName, setSavedFilterName] = useState("");
   const [savingFilter, setSavingFilter] = useState<"保存" | "删除" | null>(null);
   const caseTags = useMemo(() => uniqueSortedStrings(cases.flatMap((item) => item.tags.map((value) => String(value)).filter(Boolean))), [cases]);
@@ -4813,6 +4816,52 @@ function ManualCasePanel({
       setBulkTagMode(null);
     }
   };
+  const renameDatasetTag = async () => {
+    const sourceTag = renameSourceTag.trim();
+    const targetTag = renameTargetTag.trim();
+    if (!sourceTag) {
+      toast.error("请先选择要整理的原标签");
+      return;
+    }
+    if (!targetTag) {
+      toast.error("请先输入整理后的新标签");
+      return;
+    }
+    if (sourceTag === targetTag) {
+      toast.error("新标签不能和原标签相同");
+      return;
+    }
+    const matchingCases = cases.filter((item) => item.tags.some((tag) => String(tag) === sourceTag));
+    if (matchingCases.length === 0) {
+      toast.error("当前数据集没有使用这个标签的用例");
+      return;
+    }
+    setRenamingTag(true);
+    try {
+      let changedCount = 0;
+      const updatedCases = cases.map((item) => {
+        const currentTags = item.tags.map((value) => String(value)).filter(Boolean);
+        if (!currentTags.includes(sourceTag)) return item;
+        const nextTags = uniqueSortedStrings(currentTags.map((tag) => (tag === sourceTag ? targetTag : tag)));
+        changedCount += 1;
+        return { ...item, tags: nextTags };
+      });
+      for (const item of updatedCases) {
+        const original = cases.find((candidate) => candidate.id === item.id);
+        if (!original || sameStringList(original.tags.map(String), item.tags.map(String))) continue;
+        await onUpdateCase(item.id, buildCaseTagUpdateRequest(asset, item, item.tags.join(", ")));
+      }
+      await onUpdateAsset(asset.id, { payload: datasetPayloadWithSavedFilters(asset, savedFilters, updatedCases) });
+      if (caseTagFilter === sourceTag) setCaseTagFilter(targetTag);
+      setRenameSourceTag(targetTag);
+      setRenameTargetTag("");
+      toast.success(`已整理 ${changedCount} 条用例标签`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "标签整理失败");
+    } finally {
+      setRenamingTag(false);
+    }
+  };
   const saveCurrentFilter = async () => {
     const name = savedFilterName.trim() || `筛选方案 ${savedFilters.length + 1}`;
     const filter: DatasetSavedFilter = {
@@ -4876,6 +4925,12 @@ function ManualCasePanel({
           onBulkTagsTextChange={setBulkTagsText}
           bulkTagMode={bulkTagMode}
           onBulkTagUpdate={updateFilteredCaseTags}
+          renameSourceTag={renameSourceTag}
+          onRenameSourceTagChange={setRenameSourceTag}
+          renameTargetTag={renameTargetTag}
+          onRenameTargetTagChange={setRenameTargetTag}
+          renamingTag={renamingTag}
+          onRenameDatasetTag={renameDatasetTag}
           savedFilterName={savedFilterName}
           onSavedFilterNameChange={setSavedFilterName}
           savedFilters={savedFilters}
@@ -5059,6 +5114,12 @@ function DatasetCaseGovernanceBar({
   onBulkTagsTextChange,
   bulkTagMode,
   onBulkTagUpdate,
+  renameSourceTag,
+  onRenameSourceTagChange,
+  renameTargetTag,
+  onRenameTargetTagChange,
+  renamingTag,
+  onRenameDatasetTag,
   savedFilterName,
   onSavedFilterNameChange,
   savedFilters,
@@ -5084,6 +5145,12 @@ function DatasetCaseGovernanceBar({
   onBulkTagsTextChange: (value: string) => void;
   bulkTagMode: "追加" | "移除" | null;
   onBulkTagUpdate: (mode: "追加" | "移除") => void;
+  renameSourceTag: string;
+  onRenameSourceTagChange: (value: string) => void;
+  renameTargetTag: string;
+  onRenameTargetTagChange: (value: string) => void;
+  renamingTag: boolean;
+  onRenameDatasetTag: () => void;
   savedFilterName: string;
   onSavedFilterNameChange: (value: string) => void;
   savedFilters: DatasetSavedFilter[];
@@ -5241,6 +5308,38 @@ function DatasetCaseGovernanceBar({
         >
           {bulkTagMode === "移除" ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
           从当前筛选移除
+        </Button>
+      </div>
+      <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed bg-muted/10 px-2 py-2" data-testid={`dataset-case-rename-tags-${assetId}`}>
+        <span className="text-[11px] font-medium text-muted-foreground">标签整理</span>
+        <select
+          aria-label="选择要整理的数据集标签"
+          className="h-8 rounded-md border bg-background px-2 text-xs"
+          value={renameSourceTag}
+          onChange={(event) => onRenameSourceTagChange(event.target.value)}
+        >
+          <option value="">选择原标签</option>
+          {tags.map((tag) => (
+            <option key={tag} value={tag}>{tag}</option>
+          ))}
+        </select>
+        <Input
+          value={renameTargetTag}
+          onChange={(event) => onRenameTargetTagChange(event.target.value)}
+          placeholder="新标签；已存在则合并"
+          aria-label="输入整理后的数据集标签"
+          className="h-8 min-w-56 flex-1 text-xs"
+        />
+        <Button
+          size="sm"
+          variant="secondary"
+          className="h-8"
+          onClick={onRenameDatasetTag}
+          disabled={renamingTag || renameSourceTag.trim() === "" || renameTargetTag.trim() === ""}
+          data-testid={`dataset-case-rename-tag-${assetId}`}
+        >
+          {renamingTag ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+          重命名或合并标签
         </Button>
       </div>
       <div className="grid gap-1.5" data-testid={`dataset-case-sampling-preview-${assetId}`}>
