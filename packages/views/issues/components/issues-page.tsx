@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo } from "react";
 import { toast } from "sonner";
 import { ListTodo } from "lucide-react";
 import type { Issue, UpdateIssueRequest } from "@multica/core/types";
@@ -25,10 +25,6 @@ import { SwimLaneView } from "./swimlane-view";
 import { BatchActionToolbar } from "./batch-action-toolbar";
 import type { ChildProgress } from "./list-row";
 import { useT } from "../../i18n";
-import {
-  AcceptanceFixtureNotice,
-  isAcceptanceFixtureRecord,
-} from "../../common/acceptance-fixtures";
 
 const EMPTY_CHILD_PROGRESS = new Map<string, ChildProgress>();
 
@@ -76,32 +72,9 @@ function issueDateFilterToApiParams(filter: IssueDateFilter | null) {
   };
 }
 
-function isIssueAcceptanceFixture(issue: Issue) {
-  return isAcceptanceFixtureRecord(
-    {
-      title: issue.title,
-      description: issue.description,
-      project: issue.project,
-      assignee: issue.assignee,
-      metadata: issue.metadata,
-    },
-    ["title", "description", "project", "assignee", "metadata"],
-  );
-}
-
-function uniqueIssues(issues: Issue[]) {
-  const seen = new Set<string>();
-  return issues.filter((issue) => {
-    if (seen.has(issue.id)) return false;
-    seen.add(issue.id);
-    return true;
-  });
-}
-
 export function IssuesPage() {
   const { t } = useT("issues");
   const wsId = useWorkspaceId();
-  const [showAcceptanceFixtures, setShowAcceptanceFixtures] = useState(false);
 
   const scope = useIssuesScopeStore((s) => s.scope);
   const viewMode = useIssueViewStore((s) => s.viewMode);
@@ -166,40 +139,13 @@ export function IssuesPage() {
     () => statusIssuesQuery.data ?? [],
     [statusIssuesQuery.data],
   );
-  const assigneeIssues = useMemo(
-    () => assigneeGroupsQuery.data?.groups.flatMap((group) => group.issues) ?? [],
-    [assigneeGroupsQuery.data],
-  );
   const loading = usesAssigneeBoard
     ? assigneeGroupsQuery.isLoading
     : statusIssuesQuery.isLoading;
-  const rawDisplaySourceIssues = useMemo(
-    () => (usesAssigneeBoard ? assigneeIssues : allIssues),
-    [allIssues, assigneeIssues, usesAssigneeBoard],
-  );
-  const hiddenAcceptanceIssues = useMemo(
-    () => rawDisplaySourceIssues.filter(isIssueAcceptanceFixture),
-    [rawDisplaySourceIssues],
-  );
-  const visibleAllIssues = useMemo(
-    () =>
-      showAcceptanceFixtures
-        ? allIssues
-        : allIssues.filter((issue) => !isIssueAcceptanceFixture(issue)),
-    [allIssues, showAcceptanceFixtures],
-  );
+  const visibleAllIssues = allIssues;
   const visibleAssigneeGroups = useMemo(() => {
-    const groups = assigneeGroupsQuery.data?.groups ?? [];
-    if (showAcceptanceFixtures) return groups;
-    return groups
-      .map((group) => {
-        const groupIssues = group.issues.filter(
-          (issue) => !isIssueAcceptanceFixture(issue),
-        );
-        return { ...group, issues: groupIssues, total: groupIssues.length };
-      })
-      .filter((group) => group.issues.length > 0);
-  }, [assigneeGroupsQuery.data, showAcceptanceFixtures]);
+    return assigneeGroupsQuery.data?.groups ?? [];
+  }, [assigneeGroupsQuery.data]);
   const visibleAssigneeIssues = useMemo(
     () => visibleAssigneeGroups.flatMap((group) => group.issues),
     [visibleAssigneeGroups],
@@ -345,13 +291,6 @@ export function IssuesPage() {
           scopedIssues={headerIssues}
           dateFilter={dateFilter}
           onDateFilterChange={setDateFilter}
-        />
-        <AcceptanceFixtureNotice
-          count={uniqueIssues(hiddenAcceptanceIssues).length}
-          noun="任务"
-          showing={showAcceptanceFixtures}
-          onShow={() => setShowAcceptanceFixtures(true)}
-          onHide={() => setShowAcceptanceFixtures(false)}
         />
 
         {loading ? contentSkeleton : headerIssues.length === 0 ? (

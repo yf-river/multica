@@ -55,22 +55,6 @@ import { InboxListItem, useTimeAgo } from "./inbox-list-item";
 import { useTypeLabels } from "./inbox-detail-label";
 import { getInboxDisplayTitle } from "./inbox-display";
 import { useT } from "../../i18n";
-import {
-  AcceptanceFixtureNotice,
-  isAcceptanceFixtureRecord,
-} from "../../common/acceptance-fixtures";
-
-function isInboxAcceptanceFixture(item: InboxItem) {
-  return isAcceptanceFixtureRecord(
-    {
-      title: item.title,
-      body: item.body,
-      details: item.details,
-      type: item.type,
-    },
-    ["title", "body", "details", "type"],
-  );
-}
 
 export function InboxPage() {
   const { t } = useT("inbox");
@@ -79,7 +63,6 @@ export function InboxPage() {
   const wsPaths = useWorkspacePaths();
 
   const [selectedKey, setSelectedKeyState] = useState(() => urlIssue);
-  const [showAcceptanceFixtures, setShowAcceptanceFixtures] = useState(false);
 
   // Sync from URL when searchParams change (e.g. navigation)
   useEffect(() => {
@@ -89,17 +72,7 @@ export function InboxPage() {
   const wsId = useWorkspaceId();
   const { data: rawItems = [], isLoading: loading } = useQuery(inboxListOptions(wsId));
   const items = useMemo(() => deduplicateInboxItems(rawItems), [rawItems]);
-  const hiddenAcceptanceItems = useMemo(
-    () => items.filter(isInboxAcceptanceFixture),
-    [items],
-  );
-  const visibleItems = useMemo(
-    () =>
-      showAcceptanceFixtures
-        ? items
-        : items.filter((item) => !isInboxAcceptanceFixture(item)),
-    [items, showAcceptanceFixtures],
-  );
+  const visibleItems = items;
 
   const selected =
     visibleItems.find((i) => (i.issue_id ?? i.id) === selectedKey) ?? null;
@@ -130,19 +103,12 @@ export function InboxPage() {
     if (loading) return;
     if (!selectedKey) return;
     if (selected) return;
-    if (
-      !showAcceptanceFixtures &&
-      items.some((item) => (item.issue_id ?? item.id) === selectedKey)
-    ) {
-      setSelectedKey("");
-      return;
-    }
     if (lastResolvedKeyRef.current === selectedKey) {
       setSelectedKey("");
       return;
     }
     replace(wsPaths.issueDetail(selectedKey));
-  }, [items, loading, selectedKey, selected, showAcceptanceFixtures, replace, wsPaths, setSelectedKey]);
+  }, [loading, selectedKey, selected, replace, wsPaths, setSelectedKey]);
 
   const { defaultLayout, onLayoutChanged } = useDefaultLayout({
     id: "multica_inbox_layout",
@@ -307,16 +273,6 @@ export function InboxPage() {
     </PageHeader>
   );
 
-  const fixtureNotice = (
-    <AcceptanceFixtureNotice
-      count={hiddenAcceptanceItems.length}
-      noun="收件箱消息"
-      showing={showAcceptanceFixtures}
-      onShow={() => setShowAcceptanceFixtures(true)}
-      onHide={() => setShowAcceptanceFixtures(false)}
-    />
-  );
-
   const listBody = visibleItems.length === 0 ? (
     <div className="flex flex-col items-center justify-center py-16 text-muted-foreground">
       <Inbox className="mb-3 h-8 w-8 text-muted-foreground/50" />
@@ -464,7 +420,6 @@ export function InboxPage() {
     return (
       <div className="flex flex-1 flex-col min-h-0">
         {listHeader}
-        {fixtureNotice}
         <div className="flex-1 min-h-0 overflow-y-auto">
           {listBody}
         </div>
@@ -511,7 +466,6 @@ export function InboxPage() {
       <ResizablePanel id="list" defaultSize={320} minSize={240} maxSize={480} groupResizeBehavior="preserve-pixel-size">
       <div className="flex flex-col border-r h-full">
         {listHeader}
-        {fixtureNotice}
         <div className="flex-1 min-h-0 overflow-y-auto">
           {listBody}
         </div>

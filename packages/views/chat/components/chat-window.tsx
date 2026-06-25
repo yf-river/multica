@@ -21,7 +21,6 @@ import { api } from "@multica/core/api";
 import { useAgentPresenceDetail, useWorkspaceAgentAvailability } from "@multica/core/agents";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { ActorAvatar } from "../../common/actor-avatar";
-import { isAcceptanceFixtureRecord } from "../../common/acceptance-fixtures";
 import {
   PickerEmpty,
   PickerItem,
@@ -67,11 +66,7 @@ export function getVisibleChatAgents(
   return agents.filter(
     (agent) =>
       !agent.archived_at &&
-      canAssignAgent(agent, userId, memberRole) &&
-      !isAcceptanceFixtureRecord(agent as unknown as Record<string, unknown>, [
-        "name",
-        "description",
-      ]),
+      canAssignAgent(agent, userId, memberRole),
   );
 }
 

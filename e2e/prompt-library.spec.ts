@@ -27,18 +27,8 @@ async function fillStable(locator: Locator, value: string) {
   }
 }
 
-async function showAcceptanceFixturesIfAvailable(page: Page) {
-  await page.getByText(/已隐藏 \d+ 个验收训练证据/).last().waitFor({ timeout: 10000 }).catch(() => undefined);
-  const showButtons = page.getByRole("button", { name: "显示验收数据" });
-  const count = await showButtons.count();
-  for (let index = count - 1; index >= 0; index -= 1) {
-    const showButton = showButtons.nth(index);
-    if (await showButton.isVisible({ timeout: 500 }).catch(() => false)) {
-      await showButton.click({ force: true });
-      await expect(page.getByTestId("training-summary-strip")).toContainText("含验收数据", { timeout: 10000 });
-      break;
-    }
-  }
+async function assertNoAcceptanceFixtureToggle(page: Page) {
+  await expect(page.getByRole("button", { name: "显示验收数据" })).toHaveCount(0);
 }
 
 test.describe("训练与评估工作台", () => {
@@ -263,7 +253,7 @@ test.describe("训练与评估工作台", () => {
       }),
     ]);
     await page.goto(`/${workspaceSlug}/training/datasets?prompt_id=${selectedPrompt!.id}`);
-    await showAcceptanceFixturesIfAvailable(page);
+    await assertNoAcceptanceFixtureToggle(page);
     const datasetRow = page.getByTestId(`prompt-evaluation-asset-${dataset!.id}`);
     await expect(datasetRow).toContainText("结构化用例 1 个", { timeout: 10000 });
     const importTraceButton = datasetRow.getByRole("button", { name: "从 trace 导入样本" });
@@ -338,7 +328,7 @@ test.describe("训练与评估工作台", () => {
       .toBe(false);
 
     await page.goto(`/${workspaceSlug}/training/test-suites?prompt_id=${selectedPrompt!.id}`);
-    await showAcceptanceFixturesIfAvailable(page);
+    await assertNoAcceptanceFixtureToggle(page);
     const testSuiteRow = page.getByTestId(`prompt-evaluation-asset-${testSuite!.id}`);
     await expect(testSuiteRow.getByText("结构化评测用例", { exact: true })).toBeVisible({ timeout: 10000 });
     await expect(testSuiteRow).toContainText("结构化用例 1 个", { timeout: 10000 });
@@ -388,7 +378,7 @@ test.describe("训练与评估工作台", () => {
       .toBe(false);
 
     await page.goto(`/${workspaceSlug}/training/experiments?prompt_id=${selectedPrompt!.id}`);
-    await showAcceptanceFixturesIfAvailable(page);
+    await assertNoAcceptanceFixtureToggle(page);
     const experimentRow = page.getByTestId(`prompt-evaluation-asset-${experiment!.id}`);
     await expect(experimentRow.getByText("结构化评测用例", { exact: true })).toBeVisible({ timeout: 10000 });
     await expect(experimentRow.getByText("实验维度事实", { exact: true })).toBeVisible({ timeout: 10000 });
@@ -423,7 +413,7 @@ test.describe("训练与评估工作台", () => {
       });
 
     await page.goto(`/${workspaceSlug}/training/optimization-runs?prompt_id=${selectedPrompt!.id}`);
-    await showAcceptanceFixturesIfAvailable(page);
+    await assertNoAcceptanceFixtureToggle(page);
     const optimizationRow = page.getByTestId(`prompt-evaluation-asset-${optimizationRun!.id}`);
     await expect(optimizationRow.getByText("结构化评测用例", { exact: true })).toBeVisible({ timeout: 10000 });
     await expect(optimizationRow).toContainText("优化运行", { timeout: 10000 });
@@ -624,8 +614,7 @@ test.describe("训练与评估工作台", () => {
     ]));
     await page.goto(`/${workspaceSlug}/training/run-history`, { waitUntil: "domcontentloaded" });
     await waitForPageText(page, "运行历史", 10000);
-    await showAcceptanceFixturesIfAvailable(page);
-    await expect(page).toHaveURL(/training_data=acceptance/);
+    await assertNoAcceptanceFixtureToggle(page);
     const summaryStrip = page.getByTestId("training-summary-strip");
     await expect(summaryStrip).toContainText("项目总览", { timeout: 10000 });
     await expect(page.getByTestId("training-summary-运行总数")).toContainText(/[1-9]/);
@@ -636,8 +625,8 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("training-summary-预估成本")).toContainText("$");
     await expect(page.getByTestId("training-summary-待确认优化候选")).toContainText(/\d/);
     await page.getByRole("link", { name: "运行看板", exact: true }).last().click();
-    await expect(page).toHaveURL(/\/training\/runs\?training_data=acceptance/);
-    await showAcceptanceFixturesIfAvailable(page);
+    await expect(page).toHaveURL(/\/training\/runs$/);
+    await assertNoAcceptanceFixtureToggle(page);
     const demoDashboard = page.getByTestId("training-demo-dashboard");
     await expect(demoDashboard).toContainText("训练运行看板", { timeout: 10000 });
     await expect(demoDashboard).toContainText("训练评估闭环");
@@ -1332,7 +1321,7 @@ test.describe("训练与评估工作台", () => {
     ]));
     await expect(runRow.getByTestId(`agent-playground-run-generate-candidate-${agentRun.run.id}`)).toContainText("已有候选", { timeout: 10000 });
 
-    await page.goto(`/${workspaceSlug}/training/optimization-runs?training_data=acceptance`, { waitUntil: "domcontentloaded" });
+    await page.goto(`/${workspaceSlug}/training/optimization-runs`, { waitUntil: "domcontentloaded" });
     const candidateRow = page.getByTestId(`prompt-evaluation-candidate-${candidate.id}`);
     await expect(candidateRow).toBeVisible({ timeout: 15000 });
     await expect(candidateRow).toContainText("优先级 高");
@@ -1397,7 +1386,6 @@ test.describe("训练与评估工作台", () => {
     });
 
     await page.goto(`/${workspaceSlug}/training/datasets`, { waitUntil: "domcontentloaded" });
-    await page.getByRole("button", { name: "显示验收数据" }).first().click();
     const tagDatasetSummaryResponse = page.waitForResponse(
       (response) => response.request().method() === "GET" && response.url().includes("/api/prompt-evaluation-cases/tag-dataset-summaries"),
       { timeout: 15000 },
@@ -1730,7 +1718,7 @@ test.describe("训练与评估工作台", () => {
 
     await page.goto(`/${workspaceSlug}/training/datasets`, { waitUntil: "domcontentloaded" });
     await waitForPageText(page, "数据集");
-    await showAcceptanceFixturesIfAvailable(page);
+    await assertNoAcceptanceFixtureToggle(page);
     const datasetRow = page.getByTestId(`prompt-evaluation-asset-${dataset.id}`);
     await expect(datasetRow).toBeVisible({ timeout: 15000 });
 
@@ -1964,7 +1952,6 @@ test.describe("训练与评估工作台", () => {
         run_count: 1,
       }),
     ]));
-    await page.getByRole("button", { name: "显示验收数据" }).first().click();
     await expect(page.getByTestId("experiment-comparison-panel")).toContainText("实验对比排行", { timeout: 15000 });
     const comparisonRow = page.getByTestId(`experiment-comparison-row-${experiment.id}`);
     await expect(comparisonRow).toContainText(experiment.name, { timeout: 15000 });

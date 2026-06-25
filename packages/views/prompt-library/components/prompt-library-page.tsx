@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
+import { useCallback, useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Archive, BookOpenText, CheckCircle, Download, Loader2, Play, Plus, Save, Search, Trash2, XCircle } from "lucide-react";
 import { toast } from "sonner";
@@ -55,11 +55,6 @@ import { Badge } from "@multica/ui/components/ui/badge";
 import { PageHeader } from "../../layout/page-header";
 import { AppLink } from "../../navigation";
 import { useNavigation } from "../../navigation";
-import {
-  AcceptanceFixtureNotice,
-  isAcceptanceFixtureRecord,
-  isAcceptanceFixtureText,
-} from "../../common/acceptance-fixtures";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import {
   DEFAULT_AGENT_MODEL,
@@ -118,8 +113,6 @@ const DEMO_TIME_RANGES: Array<{ value: DemoTimeRange; label: string; sinceMs: nu
   { value: "all", label: "全部", sinceMs: null },
 ];
 const DEFAULT_DEMO_TIME_RANGE = DEMO_TIME_RANGES[1]!;
-const TRAINING_DATA_SCOPE_PARAM = "training_data";
-const TRAINING_DATA_SCOPE_ACCEPTANCE = "acceptance";
 const EMPTY_EVIDENCE_FOCUS: EvidenceFocus = {
   traceSeq: null,
   toolChainId: null,
@@ -159,17 +152,6 @@ function trainingViewFromLocation(pathname: string, searchParams: URLSearchParam
   return match?.[1] ? decodeURIComponent(match[1]) : searchParams.get("view");
 }
 
-function trainingPathWithAcceptanceScope(pathname: string, searchParams: URLSearchParams, showAcceptanceFixtures: boolean) {
-  const nextParams = new URLSearchParams(searchParams);
-  if (showAcceptanceFixtures) {
-    nextParams.set(TRAINING_DATA_SCOPE_PARAM, TRAINING_DATA_SCOPE_ACCEPTANCE);
-  } else {
-    nextParams.delete(TRAINING_DATA_SCOPE_PARAM);
-  }
-  const query = nextParams.toString();
-  return query ? `${pathname}?${query}` : pathname;
-}
-
 export function PromptLibraryPage({
   activeView,
   showPromptEditor,
@@ -192,7 +174,6 @@ export function PromptLibraryPage({
   const viewParam = trainingViewFromLocation(navigation.pathname, navigation.searchParams);
   const resolvedView = activeView ?? viewParam;
   const promptIdParam = navigation.searchParams.get("prompt_id");
-  const showAcceptanceFromURL = navigation.searchParams.get(TRAINING_DATA_SCOPE_PARAM) === TRAINING_DATA_SCOPE_ACCEPTANCE;
   const focusedRunId = navigation.searchParams.get("run");
   const evidenceFocus: EvidenceFocus = {
     traceSeq: navigation.searchParams.get("trace"),
@@ -206,23 +187,23 @@ export function PromptLibraryPage({
   const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => trainingWorkbenchTabFromView(resolvedView));
   const [runStatusFilter, setRunStatusFilter] = useState<RunStatusFilter>("全部");
   const [demoTimeRange, setDemoTimeRange] = useState<DemoTimeRange>("7d");
+  const [demoTimeAnchor, setDemoTimeAnchor] = useState(() => Date.now());
   const [exportingDemoEvidence, setExportingDemoEvidence] = useState(false);
   const [exportingAssetEvidencePackageAssetId, setExportingAssetEvidencePackageAssetId] = useState<string | null>(null);
-  const [showAcceptanceFixtures, setShowAcceptanceFixtures] = useState(showAcceptanceFromURL);
   const shouldShowPromptEditor = showPromptEditor ?? trainingWorkbenchShowsPromptEditor(resolvedView);
   const demoSince = useMemo(() => {
     const option = DEMO_TIME_RANGES.find((item) => item.value === demoTimeRange);
     if (!option?.sinceMs) return null;
-    return new Date(Date.now() - option.sinceMs).toISOString();
-  }, [demoTimeRange]);
+    return new Date(demoTimeAnchor - option.sinceMs).toISOString();
+  }, [demoTimeAnchor, demoTimeRange]);
+  const handleDemoTimeRangeChange = useCallback((value: DemoTimeRange) => {
+    setDemoTimeRange(value);
+    setDemoTimeAnchor(Date.now());
+  }, []);
 
   useEffect(() => {
     setActiveTab(trainingWorkbenchTabFromView(resolvedView));
   }, [resolvedView]);
-
-  useEffect(() => {
-    setShowAcceptanceFixtures(showAcceptanceFromURL);
-  }, [showAcceptanceFromURL]);
 
   useEffect(() => {
     if (!focusedRunId) return;
@@ -332,12 +313,11 @@ export function PromptLibraryPage({
     enabled: !!workspaceId && needsCandidates,
   });
   const summaryQuery = useQuery({
-    queryKey: [...promptLibraryKeys.summary(workspaceId ?? ""), demoSince ?? "all", showAcceptanceFixtures ? "with-acceptance" : "business"] as const,
+    queryKey: [...promptLibraryKeys.summary(workspaceId ?? ""), demoSince ?? "all"] as const,
     queryFn: () => api.getPromptEvaluationSummary({
       ...(demoSince ? { since: demoSince } : {}),
-      include_acceptance_fixtures: showAcceptanceFixtures,
     }),
-    enabled: !!workspaceId,
+    enabled: !!workspaceId && isDashboardTab,
   });
   const runtimeReadinessQuery = useQuery({
     queryKey: ["training-evaluation", workspaceId ?? "", "runtime-readiness"],
@@ -360,40 +340,9 @@ export function PromptLibraryPage({
   const runs = runQuery.data?.items ?? [];
   const candidates = candidateQuery.data?.items ?? [];
   const summary = summaryQuery.data ?? null;
-  const acceptanceFixtureItems = useMemo(
-    () =>
-      items.filter((item) =>
-        isAcceptanceFixtureRecord(item as unknown as Record<string, unknown>, [
-          "name",
-          "description",
-          "content",
-          "tags",
-        ]),
-      ),
-    [items],
-  );
-  const visiblePromptItems = useMemo(
-    () =>
-      showAcceptanceFixtures
-        ? items
-        : items.filter((item) => !acceptanceFixtureItems.includes(item)),
-    [acceptanceFixtureItems, items, showAcceptanceFixtures],
-  );
+  const visiblePromptItems = items;
   const selectedFromList = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
-  const visibleCandidatesForDashboard = useMemo(
-    () =>
-      showAcceptanceFixtures
-        ? candidates
-        : candidates.filter((candidate) =>
-            !isAcceptanceFixtureRecord(candidate as unknown as Record<string, unknown>, [
-              "candidate_name",
-              "candidate_content",
-              "rationale",
-              "metrics",
-            ]),
-          ),
-    [candidates, showAcceptanceFixtures],
-  );
+  const visibleCandidatesForDashboard = candidates;
   const selected = selectedFromList ?? (isDraftingNew ? null : visiblePromptItems[0] ?? null);
   const versionQuery = useQuery({
     queryKey: promptLibraryKeys.versions(workspaceId ?? "", selectedFromList?.id ?? null),
@@ -406,10 +355,9 @@ export function PromptLibraryPage({
     return uniqueSortedStrings(
       assets
         .filter((asset) => asset.asset_type === "实验" && !!asset.prompt_id)
-        .filter((asset) => showAcceptanceFixtures || !isAcceptanceFixtureText(asset.name, asset.description, asset.payload))
         .map((asset) => asset.prompt_id ?? ""),
     );
-  }, [activeTab, assets, showAcceptanceFixtures]);
+  }, [activeTab, assets]);
   const experimentVersionQueries = useQueries({
     queries: experimentPromptIds.map((promptId) => ({
       queryKey: promptLibraryKeys.versions(workspaceId ?? "", promptId),
@@ -1043,21 +991,7 @@ export function PromptLibraryPage({
   const openManualReviewQueue = () => {
     setRunStatusFilter("需人工复核");
     setActiveTab("运行历史");
-    navigation.push(trainingPathWithAcceptanceScope(
-      trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["运行历史"]),
-      navigation.searchParams,
-      showAcceptanceFixtures,
-    ));
-  };
-
-  const updateAcceptanceFixtureScope = (next: boolean) => {
-    setShowAcceptanceFixtures(next);
-    const nextPath = trainingPathWithAcceptanceScope(navigation.pathname, navigation.searchParams, next);
-    const currentQuery = navigation.searchParams.toString();
-    const currentPath = currentQuery ? `${navigation.pathname}?${currentQuery}` : navigation.pathname;
-    if (nextPath !== currentPath) {
-      navigation.replace(nextPath);
-    }
+    navigation.push(trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["运行历史"]));
   };
 
   return (
@@ -1079,22 +1013,15 @@ export function PromptLibraryPage({
             </Button>
           </div>
         )}
-        <Button
-          type="button"
-          size="sm"
-          variant="outline"
-          onClick={() => updateAcceptanceFixtureScope(!showAcceptanceFixtures)}
-        >
-          {showAcceptanceFixtures ? "隐藏验收数据" : "显示验收数据"}
-        </Button>
       </PageHeader>
 
-      <TrainingSummaryStrip
-        summary={summary}
-        loading={summaryQuery.isLoading}
-        includesAcceptanceFixtures={showAcceptanceFixtures}
-        onOpenManualReviewQueue={openManualReviewQueue}
-      />
+      {isDashboardTab && (
+        <TrainingSummaryStrip
+          summary={summary}
+          loading={summaryQuery.isLoading}
+          onOpenManualReviewQueue={openManualReviewQueue}
+        />
+      )}
 
       {activeTab === "运行看板" ? (
         <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
@@ -1104,7 +1031,7 @@ export function PromptLibraryPage({
             observabilitySummary={observabilitySummaryQuery.data ?? null}
             observabilityLoading={observabilitySummaryQuery.isLoading}
             timeRange={demoTimeRange}
-            onTimeRangeChange={setDemoTimeRange}
+            onTimeRangeChange={handleDemoTimeRangeChange}
             onExportEvidence={exportDemoEvidence}
             exportingEvidence={exportingDemoEvidence}
             runtimeReadiness={agentRuntimeReadiness}
@@ -1113,7 +1040,6 @@ export function PromptLibraryPage({
             assets={assets}
             cases={cases}
             candidates={visibleCandidatesForDashboard}
-            includesAcceptanceFixtures={showAcceptanceFixtures}
             onOpenManualReviewQueue={openManualReviewQueue}
           />
         </main>
@@ -1144,13 +1070,6 @@ export function PromptLibraryPage({
                   </FilterButton>
                 ))}
               </div>
-              <AcceptanceFixtureNotice
-                count={acceptanceFixtureItems.length}
-                noun="提示词"
-                showing={showAcceptanceFixtures}
-                onShow={() => updateAcceptanceFixtureScope(true)}
-                onHide={() => updateAcceptanceFixtureScope(false)}
-              />
             </div>
 
             <div className="min-h-0 flex-1 overflow-y-auto">
@@ -1341,9 +1260,6 @@ export function PromptLibraryPage({
                 candidates={candidates}
                 loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || dimensionScoreSummaryQuery.isLoading || dimensionScoreTrendQuery.isLoading || experimentVersionsLoading || runQuery.isLoading || candidateQuery.isLoading}
                 saving={savingAsset}
-                showAcceptanceFixtures={showAcceptanceFixtures}
-                onShowAcceptanceFixtures={() => updateAcceptanceFixtureScope(true)}
-                onHideAcceptanceFixtures={() => updateAcceptanceFixtureScope(false)}
                 onCreateAsset={createWorkbenchAsset}
                 onToggleAssetStatus={toggleAssetStatus}
                 onUpdateAsset={(assetId, data) => updateAssetMut.mutateAsync({ id: assetId, data })}
@@ -1412,9 +1328,6 @@ export function PromptLibraryPage({
               candidates={candidates}
               loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || dimensionScoreSummaryQuery.isLoading || dimensionScoreTrendQuery.isLoading || experimentVersionsLoading || runQuery.isLoading || candidateQuery.isLoading}
               saving={savingAsset}
-              showAcceptanceFixtures={showAcceptanceFixtures}
-              onShowAcceptanceFixtures={() => updateAcceptanceFixtureScope(true)}
-              onHideAcceptanceFixtures={() => updateAcceptanceFixtureScope(false)}
               onCreateAsset={createWorkbenchAsset}
               onToggleAssetStatus={toggleAssetStatus}
               onUpdateAsset={(assetId, data) => updateAssetMut.mutateAsync({ id: assetId, data })}
@@ -1482,7 +1395,6 @@ function DemoDashboardPanel({
   assets,
   cases,
   candidates,
-  includesAcceptanceFixtures,
   onOpenManualReviewQueue,
 }: {
   trainingSummary: PromptEvaluationSummary | null;
@@ -1499,7 +1411,6 @@ function DemoDashboardPanel({
   assets: PromptEvaluationAsset[];
   cases: PromptEvaluationStructuredCase[];
   candidates: PromptEvaluationOptimizationCandidate[];
-  includesAcceptanceFixtures: boolean;
   onOpenManualReviewQueue: () => void;
 }) {
   const trainingMetrics = trainingSummary?.指标 ?? {};
@@ -1575,7 +1486,7 @@ function DemoDashboardPanel({
           </div>
           <div className="flex flex-wrap gap-2 text-xs">
             <Badge variant={runtimeReadiness.status === "就绪" ? "secondary" : "outline"}>真实智能体：{readinessLabel}</Badge>
-            <Badge variant="outline">训练摘要：{includesAcceptanceFixtures ? "含验收数据" : "业务口径"}</Badge>
+            <Badge variant="outline">训练摘要：全部数据</Badge>
             <Badge variant={maybeTruncated ? "outline" : "secondary"}>观测完整性：{completenessStatus}</Badge>
             <Badge variant={hasOptimizationLoop ? "secondary" : "outline"}>优化闭环：{hasOptimizationLoop ? "已有证据" : "待补齐"}</Badge>
             <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={onExportEvidence} disabled={exportingEvidence}>
@@ -1775,12 +1686,10 @@ function PromptVersionHistory({
 function TrainingSummaryStrip({
   summary,
   loading,
-  includesAcceptanceFixtures,
   onOpenManualReviewQueue,
 }: {
   summary: PromptEvaluationSummary | null;
   loading: boolean;
-  includesAcceptanceFixtures: boolean;
   onOpenManualReviewQueue: () => void;
 }) {
   const metrics = summary?.指标 ?? {};
@@ -1815,7 +1724,7 @@ function TrainingSummaryStrip({
           </p>
         </div>
         <Badge variant="outline" className="shrink-0">
-          {loading ? "刷新中" : includesAcceptanceFixtures ? "含验收数据" : "业务口径"}
+          {loading ? "刷新中" : "全部数据"}
         </Badge>
       </div>
       <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
@@ -1860,9 +1769,6 @@ function WorkbenchPanel({
   candidates,
   loading,
   saving,
-  showAcceptanceFixtures,
-  onShowAcceptanceFixtures,
-  onHideAcceptanceFixtures,
   onCreateAsset,
   onToggleAssetStatus,
   onUpdateAsset,
@@ -1924,9 +1830,6 @@ function WorkbenchPanel({
   candidates: PromptEvaluationOptimizationCandidate[];
   loading: boolean;
   saving: boolean;
-  showAcceptanceFixtures: boolean;
-  onShowAcceptanceFixtures: () => void;
-  onHideAcceptanceFixtures: () => void;
   onCreateAsset: (assetType: PromptEvaluationAssetType) => void;
   onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
   onUpdateAsset: (assetId: string, data: UpdatePromptEvaluationAssetRequest) => Promise<unknown>;
@@ -1974,23 +1877,8 @@ function WorkbenchPanel({
 }) {
   const tabAssetType = tabToAssetType(activeTab);
   const tabAssets = tabAssetType ? assets.filter((asset) => asset.asset_type === tabAssetType) : assets;
-  const acceptanceFixtureAssets = tabAssets.filter((asset) =>
-    isAcceptanceFixtureText(asset.name, asset.description, asset.payload),
-  );
-  const visibleAssets = showAcceptanceFixtures
-    ? tabAssets
-    : tabAssets.filter((asset) => !acceptanceFixtureAssets.includes(asset));
-  const acceptanceFixtureCandidates = candidates.filter((candidate) =>
-    isAcceptanceFixtureText(
-      candidate.candidate_name,
-      candidate.candidate_content,
-      candidate.rationale,
-      candidate.metrics,
-    ),
-  );
-  const visibleCandidates = showAcceptanceFixtures
-    ? candidates
-    : candidates.filter((candidate) => !acceptanceFixtureCandidates.includes(candidate));
+  const visibleAssets = tabAssets;
+  const visibleCandidates = candidates;
 
   if (activeTab === "提示词库" || activeTab === "提示词调试场" || activeTab === "智能体调试场") {
     return null;
@@ -2031,14 +1919,6 @@ function WorkbenchPanel({
         candidates={visibleCandidates}
         runStatusFilter={runStatusFilter}
       />
-      <AcceptanceFixtureNotice
-        count={acceptanceFixtureAssets.length + acceptanceFixtureCandidates.length}
-        noun="训练证据"
-        showing={showAcceptanceFixtures}
-        onShow={onShowAcceptanceFixtures}
-        onHide={onHideAcceptanceFixtures}
-      />
-
       {activeTab === "运行历史" && (
         <RunHistoryPanel
           workspaceId={workspaceId}

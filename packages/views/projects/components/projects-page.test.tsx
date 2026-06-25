@@ -252,8 +252,7 @@ describe("ProjectsPage compact row navigation", () => {
     ).not.toBeInTheDocument();
   });
 
-  it("hides acceptance fixture projects by default and can reveal them", async () => {
-    const user = userEvent.setup();
+  it("shows development acceptance projects as normal data", () => {
     const fixtureProject: Project = {
       ...PROJECT,
       id: "project-fixture",
@@ -265,10 +264,6 @@ describe("ProjectsPage compact row navigation", () => {
     renderProjects();
 
     expect(screen.getByText(PROJECT.title)).toBeInTheDocument();
-    expect(screen.queryByText(fixtureProject.title)).not.toBeInTheDocument();
-
-    await user.click(screen.getByRole("button", { name: "显示验收数据" }));
-
     expect(screen.getByText(fixtureProject.title)).toBeInTheDocument();
   });
 

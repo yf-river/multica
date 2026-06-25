@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-training-browser-e2e goal-test-training-curl-e2e goal-test-seed-business-training goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e goal-test-squad-curl-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-final-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-dataset-stream-audit goal-test-playground-difference-audit goal-test-session-retro goal-test-token-audit
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-training-browser-e2e goal-test-training-curl-e2e goal-test-seed-business-training goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e goal-test-squad-curl-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-final-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-dataset-stream-audit goal-test-prune-dev-data goal-test-playground-difference-audit goal-test-session-retro goal-test-token-audit
 
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
@@ -371,6 +371,10 @@ goal-test-public-training-performance-audit: goal-test-smoke ## Run training/eva
 goal-test-dataset-stream-audit: goal-test-smoke ## Create a large dataset through public API and audit Dataset Stream pagination/aggregation
 	@mkdir -p "$(GOAL_TEST_TMPDIR)"
 	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-dataset-stream-audit.mjs
+
+goal-test-prune-dev-data: goal-test-smoke ## Prune old goal-test integration data through public APIs; pass APPLY=1 to execute
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-prune-dev-data.mjs $${APPLY:+--apply} $${KEEP:+--keep=$${KEEP}}
 
 goal-test-playground-difference-audit: goal-test-smoke ## Capture and verify prompt/agent playground visual and contract differences
 	@mkdir -p "$(GOAL_TEST_TMPDIR)"

@@ -74,14 +74,7 @@ WITH filtered_assets AS (
     SELECT pea.*
     FROM prompt_evaluation_asset pea
     WHERE pea.workspace_id = $1
-      AND (
-        sqlc.arg('include_acceptance_fixtures')::boolean
-        OR pea.name IN ('user-center 小队', '用户中心小队', 'Multica 编码小队', 'Multica 训练评估智能体', '用户中心需求澄清提示词')
-        OR NOT (
-            concat_ws(' ', pea.name, pea.description, pea.payload::text)
-            ~* '(curl|e2e|goal-test|smoke[ -]?test|端到端验收|真实端到端|真实.*agent|真实.*智能体|训练闭环|生产部署验收|生产验收|页面验收|验收创建|验收小队|验收智能体|验收\s*agent|codex\s*验收)'
-        )
-      )
+      AND (sqlc.arg('include_acceptance_fixtures')::boolean OR TRUE)
 ),
 asset_summary AS (
     SELECT
@@ -146,13 +139,7 @@ candidate_summary AS (
     JOIN filtered_assets pea ON pea.id = peoc.asset_id
     WHERE peoc.workspace_id = $1
       AND (sqlc.narg('since')::timestamptz IS NULL OR peoc.created_at >= sqlc.narg('since'))
-      AND (
-        sqlc.arg('include_acceptance_fixtures')::boolean
-        OR NOT (
-            concat_ws(' ', peoc.candidate_name, peoc.candidate_content, peoc.rationale, peoc.metrics::text)
-            ~* '(curl|e2e|goal-test|smoke[ -]?test|端到端验收|真实端到端|真实.*agent|真实.*智能体|训练闭环|生产部署验收|生产验收|页面验收|验收创建|验收小队|验收智能体|验收\s*agent|codex\s*验收)'
-        )
-      )
+      AND (sqlc.arg('include_acceptance_fixtures')::boolean OR TRUE)
 ),
 snapshot_summary AS (
     SELECT

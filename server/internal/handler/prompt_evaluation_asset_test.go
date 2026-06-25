@@ -729,7 +729,7 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 	}
 }
 
-func TestGetPromptEvaluationSummaryCanExcludeAcceptanceFixtures(t *testing.T) {
+func TestGetPromptEvaluationSummaryIncludesDevelopmentFixtures(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")
 	}
@@ -775,17 +775,17 @@ func TestGetPromptEvaluationSummaryCanExcludeAcceptanceFixtures(t *testing.T) {
 		t.Fatalf("all summary should include acceptance fixtures, assets=%#v status=%#v metrics=%#v", allSummary.Assets, allSummary.RunStatus, allSummary.Metrics)
 	}
 
-	businessW := httptest.NewRecorder()
-	testHandler.GetPromptEvaluationSummary(businessW, newRequest(http.MethodGet, "/api/prompt-evaluation-summary?include_acceptance_fixtures=false", nil))
-	if businessW.Code != http.StatusOK {
-		t.Fatalf("business summary status = %d, body = %s", businessW.Code, businessW.Body.String())
+	compatW := httptest.NewRecorder()
+	testHandler.GetPromptEvaluationSummary(compatW, newRequest(http.MethodGet, "/api/prompt-evaluation-summary?include_acceptance_fixtures=false", nil))
+	if compatW.Code != http.StatusOK {
+		t.Fatalf("compat summary status = %d, body = %s", compatW.Code, compatW.Body.String())
 	}
-	var businessSummary PromptEvaluationSummaryResponse
-	if err := json.Unmarshal(businessW.Body.Bytes(), &businessSummary); err != nil {
-		t.Fatalf("decode business summary: %v", err)
+	var compatSummary PromptEvaluationSummaryResponse
+	if err := json.Unmarshal(compatW.Body.Bytes(), &compatSummary); err != nil {
+		t.Fatalf("decode compat summary: %v", err)
 	}
-	if businessSummary.Assets["资产总数"] != 1 || businessSummary.RunStatus["运行总数"] != 2 || businessSummary.RunStatus["智能体执行"] != 1 || businessSummary.Metrics["输入token"].(float64) != 24 || businessSummary.Metrics["智能体运行数"].(float64) != 1 {
-		t.Fatalf("business summary should exclude acceptance fixtures, assets=%#v status=%#v metrics=%#v", businessSummary.Assets, businessSummary.RunStatus, businessSummary.Metrics)
+	if compatSummary.Assets["资产总数"] != 2 || compatSummary.RunStatus["运行总数"] != 3 || compatSummary.Metrics["输入token"].(float64) != 124 {
+		t.Fatalf("compat summary should include acceptance fixtures, assets=%#v status=%#v metrics=%#v", compatSummary.Assets, compatSummary.RunStatus, compatSummary.Metrics)
 	}
 }
 

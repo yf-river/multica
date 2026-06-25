@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Issue } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
@@ -570,7 +570,7 @@ describe("IssuesPage (shared)", () => {
     expect(screen.getByText("Write tests")).toBeInTheDocument();
   });
 
-  it("hides acceptance fixture issues by default and can reveal them", async () => {
+  it("shows development acceptance issues as normal data", async () => {
     const fixtureIssue: Issue = {
       ...mockIssues[0]!,
       id: "issue-fixture",
@@ -584,10 +584,6 @@ describe("IssuesPage (shared)", () => {
     renderWithQuery(<IssuesPage />);
 
     await screen.findByText("Implement auth");
-    expect(screen.queryByText(fixtureIssue.title)).not.toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: "显示验收数据" }));
-
     expect(await screen.findByText(fixtureIssue.title)).toBeInTheDocument();
   });
 

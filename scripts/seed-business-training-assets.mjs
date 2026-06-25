@@ -40,7 +40,7 @@ const prompt = await upsertPrompt(token);
 const dataset = await upsertAsset(token, "数据集", DATASET_NAME, {
   prompt_id: prompt.id,
   name: DATASET_NAME,
-  description: "用户中心日常需求拆解样例，用于训练与评估默认业务口径。",
+  description: "用户中心日常需求拆解样例，用于训练与评估默认数据。",
   asset_type: "数据集",
   payload: {
     schema: "multica.training_evaluation.payload.v1",
@@ -68,7 +68,7 @@ const dataset = await upsertAsset(token, "数据集", DATASET_NAME, {
 const suite = await upsertAsset(token, "测试套件", SUITE_NAME, {
   prompt_id: prompt.id,
   name: SUITE_NAME,
-  description: "用户中心提示词业务回归套件，默认纳入运行看板业务口径。",
+  description: "用户中心提示词业务回归套件，默认纳入运行看板。",
   asset_type: "测试套件",
   payload: {
     schema: "multica.training_evaluation.payload.v1",
@@ -118,11 +118,11 @@ const experiment = await upsertAsset(token, "实验", EXPERIMENT_NAME, {
 });
 
 const runAsset = post(`/api/prompt-evaluation-assets/${suite.id}/run`, null, token);
-const summary = get("/api/prompt-evaluation-summary?include_acceptance_fixtures=false", token);
+const summary = get("/api/prompt-evaluation-summary", token);
 const runTotal = Number(summary?.["运行状态"]?.["运行总数"] ?? 0);
 const assetTotal = Number(summary?.["资产统计"]?.["资产总数"] ?? 0);
 if (runTotal < 1 || assetTotal < 3) {
-  fail(`业务口径摘要不足：${JSON.stringify({ runTotal, assetTotal, summary })}`);
+  fail(`训练摘要不足：${JSON.stringify({ runTotal, assetTotal, summary })}`);
 }
 
 Object.assign(evidence, {

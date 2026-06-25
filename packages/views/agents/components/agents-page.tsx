@@ -73,10 +73,6 @@ import {
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
 import { useNavigation, useRowLink } from "../../navigation";
-import {
-  AcceptanceFixtureNotice,
-  isAcceptanceFixtureRecord,
-} from "../../common/acceptance-fixtures";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { PageHeader } from "../../layout/page-header";
 import { availabilityConfig } from "../presence";
@@ -823,7 +819,6 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(
     new Set(),
   );
-  const [showAcceptanceFixtures, setShowAcceptanceFixtures] = useState(false);
 
   const rawScope = useAgentsViewStore((s) => s.scope);
   const scope = AGENT_SCOPES.includes(rawScope) ? rawScope : "mine";
@@ -881,15 +876,6 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     let all = 0;
     let archived = 0;
     for (const a of agents) {
-      if (
-        !showAcceptanceFixtures &&
-        isAcceptanceFixtureRecord(a as unknown as Record<string, unknown>, [
-          "name",
-          "description",
-        ])
-      ) {
-        continue;
-      }
       if (a.archived_at) {
         archived++;
         continue;
@@ -898,7 +884,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
       if (currentUser && a.owner_id === currentUser.id) mine++;
     }
     return { mine, all, archived };
-  }, [agents, currentUser, showAcceptanceFixtures]);
+  }, [agents, currentUser]);
 
   // Rows within the current scope, unfiltered, fully assembled — the
   // toolbar's option lists and the "n / total" denominator derive from
@@ -938,23 +924,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     runCountsById,
     isWorkspaceAdmin,
   ]);
-  const hiddenScopedFixtureRows = useMemo(
-    () =>
-      scopedRowsWithFixtures.filter((row) =>
-        isAcceptanceFixtureRecord(row.agent as unknown as Record<string, unknown>, [
-          "name",
-          "description",
-        ]),
-      ),
-    [scopedRowsWithFixtures],
-  );
-  const scopeRows = useMemo(
-    () =>
-      showAcceptanceFixtures
-        ? scopedRowsWithFixtures
-        : scopedRowsWithFixtures.filter((row) => !hiddenScopedFixtureRows.includes(row)),
-    [hiddenScopedFixtureRows, scopedRowsWithFixtures, showAcceptanceFixtures],
-  );
+  const scopeRows = scopedRowsWithFixtures;
 
   // Visible rows: filters, then sort.
   const filteredRows = useMemo<AgentListRow[]>(() => {
@@ -1016,14 +986,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
     return filtered;
   }, [scopeRows, filters, sortField, sortDirection]);
 
-  const acceptanceFixtureRows = hiddenScopedFixtureRows;
-  const rows = useMemo(
-    () =>
-      showAcceptanceFixtures
-        ? filteredRows
-        : filteredRows.filter((row) => !acceptanceFixtureRows.includes(row)),
-    [acceptanceFixtureRows, filteredRows, showAcceptanceFixtures],
-  );
+  const rows = filteredRows;
 
   // Row virtualization — headless math, offsets as padding on the rows
   // wrapper, fixed-height rows. The scroll element is the SINGLE outer
@@ -1128,13 +1091,6 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
             allRows={scopeRows}
             members={members}
             visibleCount={rows.length}
-          />
-          <AcceptanceFixtureNotice
-            count={acceptanceFixtureRows.length}
-            noun="智能体"
-            showing={showAcceptanceFixtures}
-            onShow={() => setShowAcceptanceFixtures(true)}
-            onHide={() => setShowAcceptanceFixtures(false)}
           />
           <div
             ref={listScrollRef}

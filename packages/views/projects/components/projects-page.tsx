@@ -101,10 +101,6 @@ import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { useFormatRelativeDate } from "./labels";
 import { ProjectStatusBadge, ProjectPriorityBadge } from "./project-badge";
 import { ProjectLeadPicker } from "./project-lead-picker";
-import {
-  AcceptanceFixtureNotice,
-  isAcceptanceFixtureRecord,
-} from "../../common/acceptance-fixtures";
 
 // Sort order maps for the enum columns (header sort needs a total order).
 const PRIORITY_ORDER: Record<ProjectPriority, number> = {
@@ -129,16 +125,6 @@ const progressOf = (p: Project) =>
 // refs alike.
 function leadFilterValue(p: Project): string | null {
   return p.lead_type && p.lead_id ? `${p.lead_type}:${p.lead_id}` : null;
-}
-
-function isProjectAcceptanceFixture(project: Project) {
-  return isAcceptanceFixtureRecord(
-    {
-      title: project.title,
-      description: project.description,
-    },
-    ["title", "description"],
-  );
 }
 
 // ---------------------------------------------------------------------------
@@ -826,7 +812,6 @@ export function ProjectsPage() {
   }, [pins]);
 
   const [search, setSearch] = useState("");
-  const [showAcceptanceFixtures, setShowAcceptanceFixtures] = useState(false);
   const [selectedIds, setSelectedIds] = useState<ReadonlySet<string>>(new Set());
   const toggleSelected = (id: string) =>
     setSelectedIds((prev) => {
@@ -838,17 +823,7 @@ export function ProjectsPage() {
 
   const activeFilterCount = countActiveFilters(filters);
   const hasActiveFilters = activeFilterCount > 0;
-  const hiddenAcceptanceProjects = useMemo(
-    () => projects.filter(isProjectAcceptanceFixture),
-    [projects],
-  );
-  const displayProjects = useMemo(
-    () =>
-      showAcceptanceFixtures
-        ? projects
-        : projects.filter((project) => !isProjectAcceptanceFixture(project)),
-    [projects, showAcceptanceFixtures],
-  );
+  const displayProjects = projects;
 
   // Filter option counts derive from the full set so toggling one dimension
   // doesn't make the others vanish.
@@ -972,13 +947,6 @@ export function ProjectsPage() {
       ) : (
         <>
           {/* Toolbar */}
-          <AcceptanceFixtureNotice
-            count={hiddenAcceptanceProjects.length}
-            noun="项目"
-            showing={showAcceptanceFixtures}
-            onShow={() => setShowAcceptanceFixtures(true)}
-            onHide={() => setShowAcceptanceFixtures(false)}
-          />
           <div className="flex h-12 shrink-0 items-center justify-between gap-2 px-5">
             <div className="flex min-w-0 items-center gap-2">
               <div className="relative hidden md:block">

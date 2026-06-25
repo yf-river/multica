@@ -64,7 +64,7 @@ function renderDropdown(onSelect = vi.fn()) {
 }
 
 describe("AgentDropdown", () => {
-  it("聊天可选智能体默认排除验收造数", () => {
+  it("聊天可选智能体把开发验收智能体作为正常数据展示", () => {
     const visible = getVisibleChatAgents(
       [
         ...agents,
@@ -85,7 +85,7 @@ describe("AgentDropdown", () => {
       "owner",
     );
 
-    expect(visible.map((agent) => agent.id)).not.toContain("fixture-curl-codex");
+    expect(visible.map((agent) => agent.id)).toContain("fixture-curl-codex");
     expect(visible.map((agent) => agent.id)).toContain("multica-coding");
   });
 

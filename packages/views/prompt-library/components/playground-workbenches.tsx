@@ -359,14 +359,14 @@ export function AgentPlaygroundWorkbench({
 
   return (
     <section className="mx-auto grid max-w-7xl gap-4" data-testid="agent-playground-panel">
-      <section className="rounded-md border border-emerald-800 bg-zinc-950 p-4 text-zinc-50 shadow-sm" data-testid="agent-playground-run-console">
+      <section className="rounded-md border border-emerald-500/30 bg-background p-4 text-foreground shadow-sm" data-testid="agent-playground-run-console">
         <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
           <div className="min-w-0">
             <div className="flex min-w-0 items-center gap-2">
-              <TerminalSquare className="size-4 shrink-0 text-emerald-300" />
+              <TerminalSquare className="size-4 shrink-0 text-emerald-600" />
               <h2 className="truncate text-base font-semibold">真实任务发射台</h2>
             </div>
-            <p className="mt-1 text-xs text-emerald-100/80">
+            <p className="mt-1 text-xs text-muted-foreground">
               这里不做本地模板试算，而是把已保存提示词变成一次可观测的智能体任务，等待 runtime 领取并回写运行证据。
             </p>
           </div>
@@ -392,16 +392,16 @@ export function AgentPlaygroundWorkbench({
             ["模型策略", executionModel],
             ["入队链路", "写入真实任务队列"],
           ].map(([label, detail]) => (
-            <div key={label} className="min-w-0 rounded-md border border-emerald-800 bg-zinc-900/80 px-3 py-2">
-              <div className="text-[11px] font-medium text-emerald-100/70">{label}</div>
-              <div className="mt-1 truncate text-sm font-semibold text-zinc-50">{detail}</div>
+            <div key={label} className="min-w-0 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2">
+              <div className="text-[11px] font-medium text-emerald-700">{label}</div>
+              <div className="mt-1 truncate text-sm font-semibold text-foreground">{detail}</div>
             </div>
           ))}
         </div>
 
-        <div className="mt-4 grid gap-3 rounded-md border border-emerald-800 bg-zinc-900/80 p-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_240px]" data-testid="agent-playground-execution-topology">
+        <div className="mt-4 grid gap-3 rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)_240px]" data-testid="agent-playground-execution-topology">
           <div className="min-w-0" data-testid="agent-playground-agent-selector">
-            <div className="text-[11px] font-medium text-emerald-100/70">执行智能体</div>
+            <div className="text-[11px] font-medium text-emerald-700">执行智能体</div>
             <Select value={selectedExecutionAgentId} onValueChange={(value) => onSelectedExecutionAgentIdChange(value ?? "__auto__")}>
               <SelectTrigger size="sm" className="mt-1 w-full">
                 <SelectValue>{executionAgentLabel}</SelectValue>
@@ -415,7 +415,7 @@ export function AgentPlaygroundWorkbench({
                 ))}
               </SelectContent>
             </Select>
-            <div className="mt-1 truncate text-xs text-emerald-100/70">
+            <div className="mt-1 truncate text-xs text-muted-foreground">
               {selectedExecutionAgent
                 ? `状态 ${formatAgentStatus(selectedExecutionAgent.status)} · 可见性 ${formatAgentVisibility(selectedExecutionAgent.visibility)}`
                 : evaluationAgent
@@ -424,20 +424,20 @@ export function AgentPlaygroundWorkbench({
             </div>
           </div>
           <div className="min-w-0" data-testid="agent-playground-runtime-selector">
-            <div className="text-[11px] font-medium text-emerald-100/70">真实运行时</div>
-            <div className="mt-1 truncate text-sm font-semibold text-zinc-50">{selectedRuntime?.name ?? "暂无可用运行时"}</div>
-            <div className="mt-1 truncate text-xs text-emerald-100/70">
+            <div className="text-[11px] font-medium text-emerald-700">真实运行时</div>
+            <div className="mt-1 truncate text-sm font-semibold text-foreground">{selectedRuntime?.name ?? "暂无可用运行时"}</div>
+            <div className="mt-1 truncate text-xs text-muted-foreground">
               在线 {onlineRuntimeCount} / 全部 {runtimes.length} · 供应方 {formatRuntimeProvider(selectedRuntime?.provider)}
             </div>
           </div>
-          <div className="min-w-0 rounded-md border border-dashed border-emerald-700 px-3 py-2" data-testid="agent-playground-queue-contract">
-            <div className="text-[11px] font-medium text-emerald-100/70">入队链路</div>
-            <div className="mt-1 truncate text-sm font-semibold text-zinc-50">写入真实任务队列</div>
-            <div className="mt-1 truncate text-xs text-emerald-100/70">回写运行历史、任务消息和用量。</div>
+          <div className="min-w-0 rounded-md border border-dashed border-emerald-500/40 bg-background px-3 py-2" data-testid="agent-playground-queue-contract">
+            <div className="text-[11px] font-medium text-emerald-700">入队链路</div>
+            <div className="mt-1 truncate text-sm font-semibold text-foreground">写入真实任务队列</div>
+            <div className="mt-1 truncate text-xs text-muted-foreground">回写运行历史、任务消息和用量。</div>
           </div>
         </div>
 
-        <div className="mt-4 grid gap-2 rounded-md border border-emerald-800 bg-zinc-900/80 p-3 md:grid-cols-4" data-testid="agent-playground-execution-bus">
+        <div className="mt-4 grid gap-2 rounded-md border border-emerald-500/30 bg-emerald-500/5 p-3 md:grid-cols-4" data-testid="agent-playground-execution-bus">
           {[
             ["队列", "创建真实任务"],
             ["执行节点", selectedRuntime?.name ?? runtimeReadiness.label],
@@ -445,8 +445,8 @@ export function AgentPlaygroundWorkbench({
             ["用量", "token、耗时、成本"],
           ].map(([label, detail]) => (
             <div key={label} className="min-w-0">
-              <div className="text-[11px] font-medium text-emerald-100/70">{label}</div>
-              <div className="mt-1 truncate text-sm font-semibold text-zinc-50">{detail}</div>
+              <div className="text-[11px] font-medium text-emerald-700">{label}</div>
+              <div className="mt-1 truncate text-sm font-semibold text-foreground">{detail}</div>
             </div>
           ))}
         </div>
@@ -459,13 +459,13 @@ export function AgentPlaygroundWorkbench({
           ].map((item, index) => {
             const Icon = item.icon;
             return (
-              <div key={item.label} className="min-w-0 rounded-md border border-emerald-800 bg-zinc-900/80 px-3 py-3" data-testid="agent-playground-readiness-lane">
+              <div key={item.label} className="min-w-0 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-3" data-testid="agent-playground-readiness-lane">
                 <div className="flex items-center gap-2">
-                  <Icon className="size-3.5 shrink-0 text-emerald-300" />
-                  <span className="text-[11px] font-medium text-emerald-100/70">阶段 {index + 1}</span>
+                  <Icon className="size-3.5 shrink-0 text-emerald-600" />
+                  <span className="text-[11px] font-medium text-emerald-700">阶段 {index + 1}</span>
                 </div>
-                <div className="mt-2 truncate text-sm font-semibold text-zinc-50">{item.label}</div>
-                <div className="mt-1 truncate text-xs text-emerald-100/70">{item.detail}</div>
+                <div className="mt-2 truncate text-sm font-semibold text-foreground">{item.label}</div>
+                <div className="mt-1 truncate text-xs text-muted-foreground">{item.detail}</div>
               </div>
             );
           })}
@@ -478,9 +478,9 @@ export function AgentPlaygroundWorkbench({
             ["真实运行", String(selectedAgentRuns.length)],
             ["调试包", String(agentPackages.length)],
           ].map(([label, value]) => (
-            <div key={label} className="min-w-0 rounded-md border border-emerald-800 bg-zinc-900/80 px-3 py-2">
-              <div className="text-[11px] font-medium text-emerald-100/70">{label}</div>
-              <div className="mt-1 truncate text-sm font-semibold text-zinc-50">{value}</div>
+            <div key={label} className="min-w-0 rounded-md border border-emerald-500/30 bg-emerald-500/5 px-3 py-2">
+              <div className="text-[11px] font-medium text-emerald-700">{label}</div>
+              <div className="mt-1 truncate text-sm font-semibold text-foreground">{value}</div>
             </div>
           ))}
         </div>
