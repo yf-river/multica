@@ -1527,6 +1527,16 @@ test.describe("训练与评估工作台", () => {
     await expect(datasetRow.getByTestId(`dataset-version-controls-${dataset.id}`)).toContainText("最新 v2", { timeout: 15000 });
     await expect(datasetRow.getByTestId(`dataset-version-chain-${dataset.id}`)).toContainText("版本链回放");
     await expect(datasetRow.getByTestId(`dataset-version-chain-${dataset.id}`)).toContainText("已加载最近 2 个快照");
+    const versionRowsResponse = page.waitForResponse(
+      (response) => response.request().method() === "GET" && response.url().includes(`/api/prompt-evaluation-assets/${dataset.id}/dataset-versions/${v2.id}/rows`),
+      { timeout: 15000 },
+    );
+    await datasetRow.getByTestId(`show-dataset-version-rows-${dataset.id}-2`).click();
+    expect((await versionRowsResponse).status()).toBe(200);
+    await expect(datasetRow.getByTestId(`dataset-version-rows-${dataset.id}`)).toContainText("行级快照 v2", { timeout: 15000 });
+    await expect(datasetRow.getByTestId(`dataset-version-rows-${dataset.id}`)).toContainText("已加载 2 / 2 行");
+    await expect(datasetRow.getByTestId(`dataset-version-rows-${dataset.id}`)).toContainText("版本一登录用例");
+    await expect(datasetRow.getByTestId(`dataset-version-rows-${dataset.id}`)).toContainText("版本二新增用例");
     await datasetRow.getByTestId(`diff-dataset-version-${dataset.id}`).click();
     await expect(datasetRow.getByTestId(`dataset-version-diff-${dataset.id}`)).toContainText("新增 1", { timeout: 15000 });
 

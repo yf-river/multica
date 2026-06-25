@@ -34,6 +34,7 @@ import type {
   PromptEvaluationSummary,
   PromptEvaluationAssetType,
   PromptEvaluationDatasetVersionDiff,
+  PromptEvaluationDatasetVersionRow,
   ObservabilitySummary,
   PromptLibraryItem,
   PromptLibraryStatus,
@@ -75,6 +76,7 @@ const promptLibraryKeys = {
   versions: (workspaceId: string, promptId: string | null) => ["prompt-library", workspaceId, "versions", promptId ?? ""] as const,
   assets: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-assets"] as const,
   datasetVersions: (workspaceId: string, assetId: string) => ["prompt-library", workspaceId, "evaluation-dataset-versions", assetId] as const,
+  datasetVersionRows: (workspaceId: string, assetId: string, versionId: string | null) => ["prompt-library", workspaceId, "evaluation-dataset-version-rows", assetId, versionId ?? ""] as const,
   cases: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-cases"] as const,
   experimentDimensions: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-experiment-dimensions"] as const,
   dimensionScoreSummaries: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-dimension-score-summaries"] as const,
@@ -6014,13 +6016,20 @@ function DatasetVersionControls({ asset, saving }: { asset: PromptEvaluationAsse
   const queryClient = useQueryClient();
   const [diff, setDiff] = useState<PromptEvaluationDatasetVersionDiff | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [selectedVersionId, setSelectedVersionId] = useState<string | null>(null);
   const versionsQuery = useQuery({
     queryKey: promptLibraryKeys.datasetVersions(workspaceId, asset.id),
     queryFn: () => api.listPromptEvaluationDatasetVersions(asset.id, 20),
     enabled: Boolean(loaded && workspaceId && asset.id),
   });
+  const versionRowsQuery = useQuery({
+    queryKey: promptLibraryKeys.datasetVersionRows(workspaceId, asset.id, selectedVersionId),
+    queryFn: () => api.listPromptEvaluationDatasetVersionRows(asset.id, selectedVersionId!),
+    enabled: Boolean(loaded && workspaceId && asset.id && selectedVersionId),
+  });
   const invalidateDataset = () => {
     queryClient.invalidateQueries({ queryKey: promptLibraryKeys.datasetVersions(workspaceId, asset.id) });
+    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.datasetVersionRows(workspaceId, asset.id, selectedVersionId) });
     queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId) });
     queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId) });
     queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId) });
@@ -6059,6 +6068,8 @@ function DatasetVersionControls({ asset, saving }: { asset: PromptEvaluationAsse
   const versions = versionsQuery.data?.items ?? [];
   const latest = versions[0];
   const oldestLoaded = versions[versions.length - 1] ?? null;
+  const selectedVersion = versions.find((version) => version.id === selectedVersionId) ?? null;
+  const selectedRows = versionRowsQuery.data?.items ?? [];
   const busy = versionsQuery.isLoading || versionsQuery.isFetching || diffMut.isPending || restoreMut.isPending;
   const disabled = saving || busy;
 
@@ -6103,20 +6114,44 @@ function DatasetVersionControls({ asset, saving }: { asset: PromptEvaluationAsse
         </div>
       )}
       {versions.length > 0 && (
-        <div className="flex flex-wrap gap-2">
-          {versions.map((version) => (
-            <Button
-              key={version.id}
-              size="sm"
-              variant={version.id === latest?.id ? "outline" : "secondary"}
-              data-testid={`restore-dataset-version-${asset.id}-${version.version}`}
-              onClick={() => restoreMut.mutate(version.id)}
-              disabled={disabled}
-            >
-              {restoreMut.isPending && restoreMut.variables === version.id ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
-              恢复 v{version.version}
-            </Button>
-          ))}
+        <div className="grid gap-2" data-testid={`dataset-version-timeline-${asset.id}`}>
+          <div className="grid gap-1">
+            {versions.map((version) => (
+              <div key={version.id} className="flex flex-wrap items-center gap-2 rounded border bg-background px-2 py-1.5">
+                <button
+                  type="button"
+                  className="text-left font-medium text-foreground hover:underline"
+                  data-testid={`show-dataset-version-rows-${asset.id}-${version.version}`}
+                  onClick={() => setSelectedVersionId(version.id)}
+                >
+                  v{version.version} · {version.version_label || "未命名快照"}
+                </button>
+                <span className="text-muted-foreground">{version.row_count} 行 · 指纹 {version.row_fingerprint.slice(0, 10)}</span>
+                <span className="text-muted-foreground">{version.created_at || "未记录时间"}</span>
+                {version.id === latest?.id && <Badge variant="outline" className="text-[10px]">最新</Badge>}
+                {selectedVersionId === version.id && <Badge variant="secondary" className="text-[10px]">正在查看</Badge>}
+                <Button
+                  size="sm"
+                  variant={version.id === latest?.id ? "outline" : "secondary"}
+                  className="ml-auto h-7"
+                  data-testid={`restore-dataset-version-${asset.id}-${version.version}`}
+                  onClick={() => restoreMut.mutate(version.id)}
+                  disabled={disabled}
+                >
+                  {restoreMut.isPending && restoreMut.variables === version.id ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
+                  恢复 v{version.version}
+                </Button>
+              </div>
+            ))}
+          </div>
+          {selectedVersion && (
+            <DatasetVersionRowsPanel
+              assetId={asset.id}
+              version={selectedVersion}
+              rows={selectedRows}
+              loading={versionRowsQuery.isLoading || versionRowsQuery.isFetching}
+            />
+          )}
         </div>
       )}
       {diff && (
@@ -6124,6 +6159,47 @@ function DatasetVersionControls({ asset, saving }: { asset: PromptEvaluationAsse
           对比 v{diff.base_version.version} → v{diff.target_version.version}：新增 {diff.summary["新增"] ?? 0} · 删除 {diff.summary["删除"] ?? 0} · 变更 {diff.summary["变更"] ?? 0} · 未变更 {diff.summary["未变更"] ?? 0}
         </div>
       )}
+    </div>
+  );
+}
+
+function DatasetVersionRowsPanel({
+  assetId,
+  version,
+  rows,
+  loading,
+}: {
+  assetId: string;
+  version: { id: string; version: number; row_count: number; version_label: string };
+  rows: PromptEvaluationDatasetVersionRow[];
+  loading: boolean;
+}) {
+  return (
+    <div className="grid gap-1.5 rounded border border-border/70 bg-muted/20 px-2 py-2" data-testid={`dataset-version-rows-${assetId}`}>
+      <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+        <span className="font-medium text-foreground">行级快照 v{version.version}</span>
+        <span>{version.version_label || "未命名快照"}</span>
+        <span>已加载 {rows.length} / {version.row_count} 行</span>
+        {loading && <Loader2 className="size-3.5 animate-spin" />}
+      </div>
+      {loading ? (
+        <div className="rounded border border-dashed px-2 py-2 text-muted-foreground">正在读取版本行级快照。</div>
+      ) : rows.length === 0 ? (
+        <div className="rounded border border-dashed px-2 py-2 text-muted-foreground">该版本没有可展示的行级快照。</div>
+      ) : (
+        rows.slice(0, 8).map((row) => (
+          <div key={row.id} className="grid gap-1 rounded border bg-background px-2 py-1.5">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="font-medium text-foreground">#{row.row_index + 1} {row.row_name || "未命名用例"}</span>
+              <span className="text-muted-foreground">{caseSourceLabel(row.source)} · {row.tags.map(String).join("、") || "无标签"}</span>
+            </div>
+            <div className="text-muted-foreground">
+              变量 {Object.keys(row.variables ?? {}).join("、") || "无"} · 期望 {row.expected_contains.map(String).filter(Boolean).join("、") || "无"}
+            </div>
+          </div>
+        ))
+      )}
+      {rows.length > 8 && <div className="text-muted-foreground">已截取前 8 行展示；完整数据仍通过公开 API 回读。</div>}
     </div>
   );
 }
