@@ -51,6 +51,17 @@ make goal-test-fast-check
 make goal-test-smart-verify MODE=precommit
 make goal-test-smart-verify MODE=final DRY_RUN=1
 make goal-test-ui-audit
+make goal-test-ui-acceptance
+make goal-test-final-acceptance
+make goal-test-dashboard-click-audit
+make goal-test-training-browser-e2e
+make goal-test-training-curl-e2e
+make goal-test-squad-curl-e2e
+make goal-test-coding-squad-curl-e2e
+make goal-test-user-center-squad-curl-e2e
+make goal-test-real-agent-e2e
+make goal-test-playground-difference-audit
+make goal-test-seed-business-training
 make goal-test-session-retro SESSION=/path/to/codex-session.jsonl
 make goal-test-token-audit
 GOAL_TEST_TOKEN_OPTIMIZER=rtk make goal-test-smart-verify MODE=dev
@@ -79,6 +90,28 @@ Speed-first goal-test validation protocol:
 - Do not auto-compress discovery or exact-evidence commands: `rg`, `find`, `ls`, `git diff`, failing test stack windows, deploy failure windows, and any `panic`/`FATAL`/`ERROR` window must stay directly inspectable. Use the raw log path before rerunning broad gates.
 - RTK is opt-in only via `GOAL_TEST_TOKEN_OPTIMIZER=rtk`; when `rtk` is installed and the command is on the safe allowlist, the wrapper asks `rtk rewrite` for the concrete `rtk ...` command and executes that rewritten command. If RTK is absent, unsafe, or declines to rewrite, fall back to the raw-preserving built-in summary. Never install a global RTK hook for this repository unless the user explicitly asks.
 - Use `make goal-test-token-audit` after a long session or before another continuation to estimate savings and confirm the highest-value commands before adding more compression rules.
+
+Continuous goal-test governance for long sessions:
+
+- Output a checkpoint after every 3-5 decision-ledger entries, at every wave end, before and after final acceptance, and before automatically entering a new topic. The checkpoint must include approximate completion percentage, current branch, committed commit, deployed commit, uncommitted diff, running commands, evidence paths, open P0/P1, next suggested command, next-slice benefit/cost/risk, and explicit "do not do next" notes.
+- Before starting another automatic P0/P1 slice, write why it is worth doing now. Include expected user/product benefit, validation cost, likely risk, whether deploy/E2E is needed, and what would be deferred if the slice is skipped.
+- Classify failures before rerunning or widening scope. Use these categories by default: product gap, test script bug, fixture or dirty-data noise, external runtime or sandbox instability, deploy mismatch, log noise, performance regression, and evidence parsing error.
+- Dirty deploy is allowed only to prove or disprove a hypothesis. Ledger evidence, final acceptance, and demo evidence must come from a clean committed deploy, or the inability to clean-deploy must be recorded as a blocker.
+- Acceptance data must be created through public UI/API/CLI with unique names. Prefer archive, hide, disable, or test marking over deleting evidence; delete only when the test contract explicitly allows it. Reused evidence must state why it is still valid and what would invalidate it.
+- Separate `demo-ready` from `production-complete`. A flow can be demo-ready when the integration UI/API/E2E evidence is solid enough to show, but it is not production-complete while deep Opik features, permissions, security, migrations, stability, cost controls, or full final acceptance remain open.
+
+Goal-test gate applicability:
+
+- Dev gate: `make goal-test-fast-check` or `make goal-test-smart-verify MODE=dev`; use while editing and before broad validation.
+- Precommit gate: `make goal-test-smart-verify MODE=precommit`; use before committing focused code changes.
+- Deployment/log gate: `make goal-test-deploy-dev`, then `make goal-test-verify-env` and `make goal-test-verify-logs`; use when code needs integration-environment proof.
+- UI acceptance gate: `make goal-test-ui-acceptance`; use for broad deployed UI behavior without forcing every long daemon path.
+- Final gate: `make goal-test-final-acceptance`; use for wave or milestone closure when training, squads, observability, and deployed behavior must be demonstrated together.
+- Training UI gate: `make goal-test-training-browser-e2e` and `make goal-test-training-performance-audit`; use for training pages, route panels, run history, datasets, test suites, experiments, optimization runs, or performance-sensitive training navigation.
+- Training API/agent gate: `make goal-test-training-curl-e2e`; use for training API, prompt-evaluation, optimizer, or agent-run semantics that can be validated without a full browser path.
+- Squad/SOP gate: `make goal-test-squad-curl-e2e`, `make goal-test-coding-squad-curl-e2e`, `make goal-test-user-center-squad-curl-e2e`, or `make goal-test-real-agent-e2e`; use when squad orchestration, SOP execution, real-agent dispatch, or cross-project runtime behavior changed.
+- Performance/playground gates: `make goal-test-dashboard-click-audit`, `make goal-test-playground-difference-audit`, and `make goal-test-public-training-performance-audit`; use only when the affected surface or milestone requires that evidence.
+- Fixture seed gate: `make goal-test-seed-business-training`; use only when the test needs fresh business training fixtures rather than historical artifacts.
 
 ## Architecture
 
