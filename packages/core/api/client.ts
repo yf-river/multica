@@ -150,6 +150,7 @@ import type {
   ListPromptEvaluationAssetsParams,
   ListPromptEvaluationRunsParams,
   ListPromptEvaluationCasesParams,
+  ListPromptEvaluationCaseOperationsParams,
   ListPromptEvaluationExperimentDimensionsParams,
   ListPromptEvaluationDimensionScoresParams,
   ListPromptEvaluationDimensionScoreSummariesParams,
@@ -163,6 +164,7 @@ import type {
   ListPromptEvaluationTrialsResponse,
   ListPromptEvaluationEvidenceSnapshotsResponse,
   ListPromptEvaluationCasesResponse,
+  ListPromptEvaluationCaseOperationsResponse,
   ListPromptEvaluationExperimentDimensionsResponse,
   ListPromptEvaluationDimensionScoresResponse,
   ListPromptEvaluationDimensionScoreSummariesResponse,
@@ -173,6 +175,8 @@ import type {
   ReviewPromptEvaluationRunRequest,
   CreatePromptEvaluationCaseRequest,
   UpdatePromptEvaluationCaseRequest,
+  BulkUpdatePromptEvaluationCaseTagsRequest,
+  BulkUpdatePromptEvaluationCaseTagsResponse,
   ListPromptLibraryItemsParams,
   ListPromptLibraryItemsResponse,
   ListPromptLibraryVersionsResponse,
@@ -234,6 +238,8 @@ import {
   EMPTY_PROMPT_EVALUATION_RUNTIME_READINESS,
   EMPTY_PROMPT_EVALUATION_CASE,
   EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_CASE_OPERATION_LIST_RESPONSE,
+  EMPTY_BULK_PROMPT_EVALUATION_CASE_TAGS_RESPONSE,
   EMPTY_PROMPT_EVALUATION_EXPERIMENT_DIMENSION_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_SUMMARY_LIST_RESPONSE,
@@ -275,6 +281,8 @@ import {
   PromptEvaluationRuntimeReadinessSchema,
   PromptEvaluationCaseSchema,
   PromptEvaluationCaseListResponseSchema,
+  PromptEvaluationCaseOperationListResponseSchema,
+  BulkUpdatePromptEvaluationCaseTagsResponseSchema,
   PromptEvaluationExperimentDimensionListResponseSchema,
   PromptEvaluationDimensionScoreListResponseSchema,
   PromptEvaluationDimensionScoreSummaryListResponseSchema,
@@ -1979,6 +1987,16 @@ export class ApiClient {
     }) as ListPromptEvaluationCasesResponse;
   }
 
+  async listPromptEvaluationCaseOperations(id: string, params?: ListPromptEvaluationCaseOperationsParams): Promise<ListPromptEvaluationCaseOperationsResponse> {
+    const search = new URLSearchParams();
+    if (params?.limit) search.set("limit", String(params.limit));
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/case-operations${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationCaseOperationListResponseSchema, EMPTY_PROMPT_EVALUATION_CASE_OPERATION_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-assets/:id/case-operations",
+    }) as ListPromptEvaluationCaseOperationsResponse;
+  }
+
   async createPromptEvaluationCase(data: CreatePromptEvaluationCaseRequest): Promise<PromptEvaluationStructuredCase> {
     const raw = await this.fetch<unknown>("/api/prompt-evaluation-cases", {
       method: "POST",
@@ -1987,6 +2005,16 @@ export class ApiClient {
     return parseWithFallback(raw, PromptEvaluationCaseSchema, EMPTY_PROMPT_EVALUATION_CASE, {
       endpoint: "POST /api/prompt-evaluation-cases",
     }) as PromptEvaluationStructuredCase;
+  }
+
+  async bulkUpdatePromptEvaluationCaseTags(data: BulkUpdatePromptEvaluationCaseTagsRequest): Promise<BulkUpdatePromptEvaluationCaseTagsResponse> {
+    const raw = await this.fetch<unknown>("/api/prompt-evaluation-cases/bulk-tags", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, BulkUpdatePromptEvaluationCaseTagsResponseSchema, EMPTY_BULK_PROMPT_EVALUATION_CASE_TAGS_RESPONSE, {
+      endpoint: "POST /api/prompt-evaluation-cases/bulk-tags",
+    }) as BulkUpdatePromptEvaluationCaseTagsResponse;
   }
 
   async updatePromptEvaluationCase(id: string, data: UpdatePromptEvaluationCaseRequest): Promise<PromptEvaluationStructuredCase> {

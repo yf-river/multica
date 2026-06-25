@@ -14,6 +14,7 @@ import type {
   ListPromptEvaluationDatasetVersionsResponse,
   ListPromptEvaluationExperimentDimensionsResponse,
   ListPromptEvaluationOptimizationCandidatesResponse,
+  ListPromptEvaluationCaseOperationsResponse,
   ListPromptLibraryItemsResponse,
   ListPromptLibraryVersionsResponse,
   ListIssueSOPRunsResponse,
@@ -26,6 +27,8 @@ import type {
   PromptEvaluationRuntimeReadiness,
   PromptEvaluationSummary,
   PromptEvaluationStructuredCase,
+  PromptEvaluationCaseOperation,
+  BulkUpdatePromptEvaluationCaseTagsResponse,
   PromptEvaluationDatasetFromTracesResponse,
   PromptEvaluationDatasetVersionDiff,
   RestorePromptEvaluationDatasetVersionResponse,
@@ -1307,6 +1310,32 @@ export const PromptEvaluationCaseListResponseSchema = z.object({
   total: z.number().default(0),
 }).loose();
 
+export const PromptEvaluationCaseOperationSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  asset_id: z.string(),
+  operation_type: z.string().default(""),
+  filter: z.record(z.string(), z.unknown()).default({}),
+  input: z.record(z.string(), z.unknown()).default({}),
+  changed_count: z.number().default(0),
+  skipped_count: z.number().default(0),
+  sample_case_ids: z.array(z.unknown()).default([]),
+  created_by: z.string().nullable().optional().transform((v) => v ?? null),
+  created_at: z.string().default(""),
+}).loose();
+
+export const PromptEvaluationCaseOperationListResponseSchema = z.object({
+  items: z.array(PromptEvaluationCaseOperationSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const BulkUpdatePromptEvaluationCaseTagsResponseSchema = z.object({
+  operation: PromptEvaluationCaseOperationSchema,
+  cases: z.array(PromptEvaluationCaseSchema).default([]),
+  changed_count: z.number().default(0),
+  skipped_count: z.number().default(0),
+}).loose();
+
 export const PromptEvaluationDatasetFromTracesResponseSchema: z.ZodType<PromptEvaluationDatasetFromTracesResponse> = z.object({
   asset: PromptEvaluationAssetSchema,
   cases: z.array(PromptEvaluationCaseSchema).default([]),
@@ -1593,6 +1622,32 @@ export const EMPTY_PROMPT_EVALUATION_RUNTIME_READINESS: PromptEvaluationRuntimeR
 export const EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE = {
   items: [],
   total: 0,
+};
+
+export const EMPTY_PROMPT_EVALUATION_CASE_OPERATION: PromptEvaluationCaseOperation = {
+  id: "",
+  workspace_id: "",
+  asset_id: "",
+  operation_type: "",
+  filter: {},
+  input: {},
+  changed_count: 0,
+  skipped_count: 0,
+  sample_case_ids: [],
+  created_by: null,
+  created_at: "",
+};
+
+export const EMPTY_PROMPT_EVALUATION_CASE_OPERATION_LIST_RESPONSE: ListPromptEvaluationCaseOperationsResponse = {
+  items: [],
+  total: 0,
+};
+
+export const EMPTY_BULK_PROMPT_EVALUATION_CASE_TAGS_RESPONSE: BulkUpdatePromptEvaluationCaseTagsResponse = {
+  operation: EMPTY_PROMPT_EVALUATION_CASE_OPERATION,
+  cases: [],
+  changed_count: 0,
+  skipped_count: 0,
 };
 
 export const EMPTY_PROMPT_EVALUATION_EXPERIMENT_DIMENSION_LIST_RESPONSE: ListPromptEvaluationExperimentDimensionsResponse = {

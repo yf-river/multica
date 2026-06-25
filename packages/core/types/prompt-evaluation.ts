@@ -360,6 +360,20 @@ export interface PromptEvaluationStructuredCase {
   updated_at: string;
 }
 
+export interface PromptEvaluationCaseOperation {
+  id: string;
+  workspace_id: string;
+  asset_id: string;
+  operation_type: string;
+  filter: Record<string, unknown>;
+  input: Record<string, unknown>;
+  changed_count: number;
+  skipped_count: number;
+  sample_case_ids: unknown[];
+  created_by: string | null;
+  created_at: string;
+}
+
 export interface PromptEvaluationCaseAssertion {
   id: string;
   workspace_id: string;
@@ -540,6 +554,18 @@ export interface ListPromptEvaluationCasesResponse {
   total: number;
 }
 
+export interface ListPromptEvaluationCaseOperationsResponse {
+  items: PromptEvaluationCaseOperation[];
+  total: number;
+}
+
+export interface BulkUpdatePromptEvaluationCaseTagsResponse {
+  operation: PromptEvaluationCaseOperation;
+  cases: PromptEvaluationStructuredCase[];
+  changed_count: number;
+  skipped_count: number;
+}
+
 export interface ListPromptEvaluationExperimentDimensionsResponse {
   items: PromptEvaluationExperimentDimension[];
   total: number;
@@ -589,6 +615,10 @@ export interface ListPromptEvaluationCasesParams {
   source?: "manual" | "trace" | "payload";
   tag?: string;
   keyword?: string;
+  limit?: number;
+}
+
+export interface ListPromptEvaluationCaseOperationsParams {
   limit?: number;
 }
 
@@ -646,6 +676,17 @@ export interface UpdatePromptEvaluationCaseRequest {
   expected?: Record<string, unknown>;
   tags?: unknown[];
   status?: PromptEvaluationAssetStatus;
+}
+
+export interface BulkUpdatePromptEvaluationCaseTagsRequest {
+  asset_id: string;
+  source?: "manual" | "trace" | "payload";
+  tag?: string;
+  keyword?: string;
+  status?: PromptEvaluationAssetStatus;
+  tags: string[];
+  mode: "追加" | "移除";
+  limit?: number;
 }
 
 export interface ListPromptEvaluationOptimizationCandidatesParams {

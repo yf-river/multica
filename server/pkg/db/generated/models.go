@@ -620,6 +620,20 @@ type PromptEvaluationCaseAssertion struct {
 	CreatedAt      pgtype.Timestamptz `json:"created_at"`
 }
 
+type PromptEvaluationCaseOperation struct {
+	ID            pgtype.UUID        `json:"id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	AssetID       pgtype.UUID        `json:"asset_id"`
+	OperationType string             `json:"operation_type"`
+	Filter        []byte             `json:"filter"`
+	Input         []byte             `json:"input"`
+	ChangedCount  int32              `json:"changed_count"`
+	SkippedCount  int32              `json:"skipped_count"`
+	SampleCaseIds []byte             `json:"sample_case_ids"`
+	CreatedBy     pgtype.UUID        `json:"created_by"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+}
+
 type PromptEvaluationDatasetRow struct {
 	ID               pgtype.UUID        `json:"id"`
 	WorkspaceID      pgtype.UUID        `json:"workspace_id"`

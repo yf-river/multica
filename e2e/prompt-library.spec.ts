@@ -1470,7 +1470,7 @@ test.describe("训练与评估工作台", () => {
     await expect(governance.getByLabel("筛选数据集用例关键词")).toHaveValue("登录");
     await governance.getByLabel("批量处理数据集用例标签").fill("批量验收");
     const bulkAddResponse = page.waitForResponse(
-      (response) => response.request().method() === "PUT" && response.url().includes("/api/prompt-evaluation-cases/"),
+      (response) => response.request().method() === "POST" && response.url().includes("/api/prompt-evaluation-cases/bulk-tags"),
       { timeout: 15000 },
     );
     await governance.getByTestId(`dataset-case-bulk-add-tags-${dataset.id}`).click();
@@ -1482,6 +1482,25 @@ test.describe("训练与评估工作台", () => {
       }, { timeout: 15000 })
       .toBe(true);
     await expect(governance.getByTestId(`dataset-case-tag-stats-${dataset.id}`)).toContainText("批量验收 1");
+    await expect(governance.getByTestId(`dataset-case-operation-audit-${dataset.id}`)).toContainText("批量追加标签", { timeout: 15000 });
+    await expect(governance.getByTestId(`dataset-case-operation-audit-${dataset.id}`)).toContainText("变更 1");
+    await expect
+      .poll(async () => {
+        const operations = await api.listPromptEvaluationCaseOperations(dataset.id, { limit: 5 });
+        return operations.items[0] ?? null;
+      }, { timeout: 15000 })
+      .toMatchObject({
+        operation_type: "批量追加标签",
+        changed_count: 1,
+      });
+    await expect
+      .poll(async () => {
+        const assets = await api.listPromptEvaluationAssets({ asset_type: "数据集" });
+        const current = assets.find((item) => item.id === dataset.id);
+        const payloadCase = ((current?.payload as Record<string, any> | undefined)?.cases as Array<Record<string, any>> | undefined)?.[0];
+        return Array.isArray(payloadCase?.tags) ? payloadCase.tags : payloadCase?.["标签"] ?? [];
+      }, { timeout: 15000 })
+      .toEqual(expect.arrayContaining(["批量验收"]));
     const datasetSampleDownload = page.waitForEvent("download");
     await governance.getByTestId(`download-dataset-sample-${dataset.id}`).click();
     const downloadedDatasetSample = await datasetSampleDownload;
@@ -1501,7 +1520,7 @@ test.describe("训练与评估工作台", () => {
       }),
     ]);
     const bulkRemoveResponse = page.waitForResponse(
-      (response) => response.request().method() === "PUT" && response.url().includes("/api/prompt-evaluation-cases/"),
+      (response) => response.request().method() === "POST" && response.url().includes("/api/prompt-evaluation-cases/bulk-tags"),
       { timeout: 15000 },
     );
     await governance.getByTestId(`dataset-case-bulk-remove-tags-${dataset.id}`).click();
@@ -1512,6 +1531,7 @@ test.describe("训练与评估工作台", () => {
         return items.find((item) => item.case_name === "版本一登录用例")?.tags.includes("批量验收") ?? true;
       }, { timeout: 15000 })
       .toBe(false);
+    await expect(governance.getByTestId(`dataset-case-operation-audit-${dataset.id}`)).toContainText("批量移除标签", { timeout: 15000 });
     await governance.getByLabel("选择要整理的数据集标签").selectOption("领导演示");
     await governance.getByLabel("输入整理后的数据集标签").fill("领导展示");
     const renameCaseResponse = page.waitForResponse(

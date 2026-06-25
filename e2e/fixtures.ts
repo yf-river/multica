@@ -226,6 +226,18 @@ interface PromptEvaluationCase {
   source: string;
 }
 
+interface PromptEvaluationCaseOperation {
+  id: string;
+  asset_id: string;
+  operation_type: string;
+  filter: Record<string, unknown>;
+  input: Record<string, unknown>;
+  changed_count: number;
+  skipped_count: number;
+  sample_case_ids: unknown[];
+  created_at: string;
+}
+
 interface PromptEvaluationDatasetVersion {
   id: string;
   dataset_asset_id: string;
@@ -1299,6 +1311,16 @@ export class TestApiClient {
     });
     if (!res.ok) {
       throw new Error(`create prompt evaluation case failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async listPromptEvaluationCaseOperations(id: string, params?: { limit?: number }): Promise<{ items: PromptEvaluationCaseOperation[]; total: number }> {
+    const search = new URLSearchParams();
+    if (params?.limit) search.set("limit", String(params.limit));
+    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${id}/case-operations${search.toString() ? `?${search}` : ""}`);
+    if (!res.ok) {
+      throw new Error(`list prompt evaluation case operations failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
   }

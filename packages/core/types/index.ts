@@ -133,6 +133,7 @@ export type {
   PromptEvaluationRuntimeReadiness,
   PromptEvaluationRuntimeReadinessStatus,
   PromptEvaluationStructuredCase,
+  PromptEvaluationCaseOperation,
   PromptEvaluationCaseAssertion,
   PromptEvaluationDatasetVersion,
   PromptEvaluationDatasetVersionRow,
@@ -161,6 +162,8 @@ export type {
   ListPromptEvaluationTrialsResponse,
   ListPromptEvaluationEvidenceSnapshotsResponse,
   ListPromptEvaluationCasesResponse,
+  ListPromptEvaluationCaseOperationsResponse,
+  BulkUpdatePromptEvaluationCaseTagsResponse,
   ListPromptEvaluationExperimentDimensionsResponse,
   ListPromptEvaluationDimensionScoresResponse,
   ListPromptEvaluationDimensionScoreSummariesResponse,
@@ -169,6 +172,7 @@ export type {
   ListPromptEvaluationAssetsParams,
   ListPromptEvaluationRunsParams,
   ListPromptEvaluationCasesParams,
+  ListPromptEvaluationCaseOperationsParams,
   ListPromptEvaluationExperimentDimensionsParams,
   ListPromptEvaluationDimensionScoresParams,
   ListPromptEvaluationDimensionScoreSummariesParams,
@@ -181,6 +185,7 @@ export type {
   ReviewPromptEvaluationRunRequest,
   CreatePromptEvaluationCaseRequest,
   UpdatePromptEvaluationCaseRequest,
+  BulkUpdatePromptEvaluationCaseTagsRequest,
 } from "./prompt-evaluation";
 export type {
   SOPRunStatus,

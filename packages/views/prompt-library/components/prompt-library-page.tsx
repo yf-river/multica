@@ -27,6 +27,7 @@ import type {
   PromptEvaluationExperimentDimension,
   PromptEvaluationOptimizationCandidate,
   PromptEvaluationStructuredCase,
+  PromptEvaluationCaseOperation,
   PromptEvaluationRun,
   PromptEvaluationRunEvidence,
   PromptEvaluationAssetEvidenceArchivePackage,
@@ -4736,6 +4737,8 @@ function ManualCasePanel({
   onDeleteCase: (caseId: string) => void;
   deletingCaseId: string | null;
 }) {
+  const workspaceId = useWorkspaceId();
+  const queryClient = useQueryClient();
   const manualCases = cases.filter((item) => item.source === "manual");
   const traceCases = cases.filter((item) => item.source === "trace");
   const [caseSourceFilter, setCaseSourceFilter] = useState<"全部" | "手工" | "trace导入" | "资产载荷">("全部");
@@ -4752,6 +4755,7 @@ function ManualCasePanel({
   const [renamingTag, setRenamingTag] = useState(false);
   const [serverSearchResult, setServerSearchResult] = useState<DatasetServerCaseSearchResult | null>(null);
   const [serverSearchLoading, setServerSearchLoading] = useState(false);
+  const [caseOperations, setCaseOperations] = useState<PromptEvaluationCaseOperation[]>([]);
   const [savedFilterName, setSavedFilterName] = useState("");
   const [savingFilter, setSavingFilter] = useState<"保存" | "删除" | null>(null);
   const caseTags = useMemo(() => uniqueSortedStrings(cases.flatMap((item) => item.tags.map((value) => String(value)).filter(Boolean))), [cases]);
@@ -4831,17 +4835,22 @@ function ManualCasePanel({
     }
     setBulkTagMode(mode);
     try {
-      let changedCount = 0;
-      for (const item of filteredCases) {
-        const currentTags = item.tags.map((value) => String(value)).filter(Boolean);
-        const nextTags = mode === "追加"
-          ? uniqueSortedStrings([...currentTags, ...targetTags])
-          : currentTags.filter((tag) => !targetTags.includes(tag));
-        if (sameStringList(currentTags, nextTags)) continue;
-        await onUpdateCase(item.id, buildCaseTagUpdateRequest(asset, item, nextTags.join(", ")));
-        changedCount += 1;
-      }
-      toast.success(`已${mode} ${changedCount} 条用例标签`);
+      const result = await api.bulkUpdatePromptEvaluationCaseTags({
+        asset_id: asset.id,
+        source: datasetCaseSourceFilterToApiSource(caseSourceFilter),
+        tag: caseTagFilter === "全部" ? undefined : caseTagFilter,
+        keyword: caseKeywordFilter.trim() || undefined,
+        tags: targetTags,
+        mode,
+        limit: 500,
+      });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId ?? "") }),
+        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId ?? "") }),
+        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId ?? "") }),
+      ]);
+      setCaseOperations((current) => [result.operation, ...current.filter((item) => item.id !== result.operation.id)].slice(0, 5));
+      toast.success(`已${mode} ${result.changed_count} 条用例标签，审计已记录`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "批量标签处理失败");
     } finally {
@@ -4953,6 +4962,8 @@ function ManualCasePanel({
           keywordFilter={caseKeywordFilter}
           onKeywordFilterChange={setCaseKeywordFilter}
           tagStats={tagStats}
+          caseOperations={caseOperations}
+          caseOperationsLoading={false}
           serverSearchResult={serverSearchResult}
           serverSearchLoading={serverSearchLoading}
           onServerSearch={runServerCaseSearch}
@@ -5145,6 +5156,8 @@ function DatasetCaseGovernanceBar({
   keywordFilter,
   onKeywordFilterChange,
   tagStats,
+  caseOperations,
+  caseOperationsLoading,
   serverSearchResult,
   serverSearchLoading,
   onServerSearch,
@@ -5179,6 +5192,8 @@ function DatasetCaseGovernanceBar({
   keywordFilter: string;
   onKeywordFilterChange: (value: string) => void;
   tagStats: Array<{ tag: string; count: number }>;
+  caseOperations: PromptEvaluationCaseOperation[];
+  caseOperationsLoading: boolean;
   serverSearchResult: DatasetServerCaseSearchResult | null;
   serverSearchLoading: boolean;
   onServerSearch: () => void;
@@ -5386,6 +5401,30 @@ function DatasetCaseGovernanceBar({
           {bulkTagMode === "移除" ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
           从当前筛选移除
         </Button>
+      </div>
+      <div className="grid gap-1.5 rounded-md border border-dashed bg-muted/10 px-2 py-2" data-testid={`dataset-case-operation-audit-${assetId}`}>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] font-medium text-muted-foreground">批量操作审计</span>
+          {caseOperationsLoading && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
+          <span className="text-muted-foreground">记录最近服务端批量标签操作的筛选条件、输入和变更数量。</span>
+        </div>
+        {caseOperations.length === 0 ? (
+          <div className="rounded border border-dashed px-2 py-2 text-muted-foreground">暂无批量操作记录。</div>
+        ) : (
+          <div className="grid gap-1">
+            {caseOperations.slice(0, 3).map((operation) => (
+              <div key={operation.id} className="rounded border bg-background px-2 py-1.5" data-testid={`dataset-case-operation-audit-row-${assetId}-${operation.id}`}>
+                <span className="font-medium text-foreground">{operation.operation_type}</span>
+                <span className="ml-2 text-muted-foreground">
+                  变更 {operation.changed_count} · 跳过 {operation.skipped_count} · {operation.created_at}
+                </span>
+                <div className="mt-1 truncate text-muted-foreground">
+                  筛选 {summarizeJSONValue(operation.filter)} · 输入 {summarizeJSONValue(operation.input)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed bg-muted/10 px-2 py-2" data-testid={`dataset-case-rename-tags-${assetId}`}>
         <span className="text-[11px] font-medium text-muted-foreground">标签整理</span>

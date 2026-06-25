@@ -130,6 +130,17 @@ type UpdatePromptEvaluationCaseRequest struct {
 	Status           *string         `json:"status"`
 }
 
+type BulkPromptEvaluationCaseTagsRequest struct {
+	AssetID string   `json:"asset_id"`
+	Source  string   `json:"source"`
+	Tag     string   `json:"tag"`
+	Keyword string   `json:"keyword"`
+	Status  string   `json:"status"`
+	Tags    []string `json:"tags"`
+	Mode    string   `json:"mode"`
+	Limit   int32    `json:"limit"`
+}
+
 type CreatePromptEvaluationDatasetFromTracesRequest struct {
 	TaskIDs          []string `json:"task_ids"`
 	EventType        string   `json:"event_type"`
@@ -528,6 +539,27 @@ type PromptEvaluationCaseResponse struct {
 	UpdatedAt        string                                  `json:"updated_at"`
 }
 
+type PromptEvaluationCaseOperationResponse struct {
+	ID            string  `json:"id"`
+	WorkspaceID   string  `json:"workspace_id"`
+	AssetID       string  `json:"asset_id"`
+	OperationType string  `json:"operation_type"`
+	Filter        any     `json:"filter"`
+	Input         any     `json:"input"`
+	ChangedCount  int32   `json:"changed_count"`
+	SkippedCount  int32   `json:"skipped_count"`
+	SampleCaseIDs any     `json:"sample_case_ids"`
+	CreatedBy     *string `json:"created_by"`
+	CreatedAt     string  `json:"created_at"`
+}
+
+type BulkPromptEvaluationCaseTagsResponse struct {
+	Operation    PromptEvaluationCaseOperationResponse `json:"operation"`
+	Cases        []PromptEvaluationCaseResponse        `json:"cases"`
+	ChangedCount int32                                 `json:"changed_count"`
+	SkippedCount int32                                 `json:"skipped_count"`
+}
+
 type PromptEvaluationCaseAssertionResponse struct {
 	ID             string `json:"id"`
 	WorkspaceID    string `json:"workspace_id"`
@@ -826,6 +858,22 @@ func promptEvaluationCaseToResponse(item db.PromptEvaluationCase, assertions []d
 		CreatedBy:        uuidToPtr(item.CreatedBy),
 		CreatedAt:        timestampToString(item.CreatedAt),
 		UpdatedAt:        timestampToString(item.UpdatedAt),
+	}
+}
+
+func promptEvaluationCaseOperationToResponse(item db.PromptEvaluationCaseOperation) PromptEvaluationCaseOperationResponse {
+	return PromptEvaluationCaseOperationResponse{
+		ID:            uuidToString(item.ID),
+		WorkspaceID:   uuidToString(item.WorkspaceID),
+		AssetID:       uuidToString(item.AssetID),
+		OperationType: item.OperationType,
+		Filter:        decodeJSONDefault(item.Filter, map[string]any{}),
+		Input:         decodeJSONDefault(item.Input, map[string]any{}),
+		ChangedCount:  item.ChangedCount,
+		SkippedCount:  item.SkippedCount,
+		SampleCaseIDs: decodeJSONDefault(item.SampleCaseIds, []any{}),
+		CreatedBy:     uuidToPtr(item.CreatedBy),
+		CreatedAt:     timestampToString(item.CreatedAt),
 	}
 }
 
@@ -1653,6 +1701,256 @@ func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Reque
 		resp[i] = promptEvaluationCaseToResponse(item, assertionsByCase[uuidToString(item.ID)])
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
+}
+
+func (h *Handler) ListPromptEvaluationCaseOperations(w http.ResponseWriter, r *http.Request) {
+	asset, ok := h.loadPromptEvaluationAsset(w, r)
+	if !ok {
+		return
+	}
+	var limit pgtype.Int4
+	if value := strings.TrimSpace(r.URL.Query().Get("limit")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 100 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 100")
+			return
+		}
+		limit = pgtype.Int4{Int32: int32(parsed), Valid: true}
+	}
+	rows, err := h.Queries.ListPromptEvaluationCaseOperations(r.Context(), db.ListPromptEvaluationCaseOperationsParams{
+		WorkspaceID: asset.WorkspaceID,
+		AssetID:     asset.ID,
+		Limit:       limit,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation case operations")
+		return
+	}
+	resp := make([]PromptEvaluationCaseOperationResponse, len(rows))
+	for i, item := range rows {
+		resp[i] = promptEvaluationCaseOperationToResponse(item)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
+}
+
+func (h *Handler) BulkUpdatePromptEvaluationCaseTags(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	var req BulkPromptEvaluationCaseTagsRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid prompt evaluation bulk tag payload")
+		return
+	}
+	assetID, ok := parseUUIDOrBadRequest(w, req.AssetID, "asset_id")
+	if !ok {
+		return
+	}
+	asset, err := h.Queries.GetPromptEvaluationAssetInWorkspace(r.Context(), db.GetPromptEvaluationAssetInWorkspaceParams{ID: assetID, WorkspaceID: workspaceUUID})
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			writeError(w, http.StatusNotFound, "prompt evaluation asset not found")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation asset")
+		return
+	}
+	if asset.AssetType != promptEvaluationAssetDataset {
+		writeError(w, http.StatusBadRequest, "only 数据集 assets support bulk case tag operations")
+		return
+	}
+	mode := strings.TrimSpace(req.Mode)
+	if mode != "追加" && mode != "移除" {
+		writeError(w, http.StatusBadRequest, "mode must be 追加 or 移除")
+		return
+	}
+	targetTags := compactStrings(req.Tags)
+	if len(targetTags) == 0 {
+		writeError(w, http.StatusBadRequest, "tags must contain at least one non-empty tag")
+		return
+	}
+	limit := req.Limit
+	if limit == 0 {
+		limit = 500
+	}
+	if limit < 1 || limit > 500 {
+		writeError(w, http.StatusBadRequest, "limit must be between 1 and 500")
+		return
+	}
+	var source pgtype.Text
+	if value := strings.TrimSpace(req.Source); value != "" {
+		if value != "manual" && value != "trace" && value != "payload" {
+			writeError(w, http.StatusBadRequest, "source must be manual, trace, or payload")
+			return
+		}
+		source = pgtype.Text{String: value, Valid: true}
+	}
+	var status pgtype.Text
+	if value := strings.TrimSpace(req.Status); value != "" {
+		if !validPromptLibraryStatus(value) {
+			writeError(w, http.StatusBadRequest, "status must be 启用 or 归档")
+			return
+		}
+		status = pgtype.Text{String: value, Valid: true}
+	}
+	var tag pgtype.Text
+	if value := strings.TrimSpace(req.Tag); value != "" {
+		tag = pgtype.Text{String: value, Valid: true}
+	}
+	var keyword pgtype.Text
+	if value := strings.TrimSpace(req.Keyword); value != "" {
+		keyword = pgtype.Text{String: value, Valid: true}
+	}
+	matched, err := h.Queries.ListPromptEvaluationCases(r.Context(), db.ListPromptEvaluationCasesParams{
+		WorkspaceID: workspaceUUID,
+		AssetID:     asset.ID,
+		Status:      status,
+		Source:      source,
+		Tag:         tag,
+		Keyword:     keyword,
+		Limit:       pgtype.Int4{Int32: limit, Valid: true},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation cases")
+		return
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation case bulk transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	changed := make([]db.PromptEvaluationCase, 0, len(matched))
+	sampleIDs := make([]string, 0, 20)
+	skippedCount := int32(0)
+	for _, item := range matched {
+		currentTags := stringListFromAny(decodeJSONDefault(item.Tags, []any{}))
+		nextTags := bulkPromptEvaluationCaseTags(currentTags, targetTags, mode)
+		if samePromptEvaluationStringList(currentTags, nextTags) {
+			skippedCount += 1
+			continue
+		}
+		updated, err := qtx.UpdatePromptEvaluationCase(r.Context(), db.UpdatePromptEvaluationCaseParams{
+			ID:               item.ID,
+			WorkspaceID:      workspaceUUID,
+			AssetID:          item.AssetID,
+			PromptID:         item.PromptID,
+			CaseIndex:        item.CaseIndex,
+			CaseName:         item.CaseName,
+			Variables:        item.Variables,
+			ExpectedContains: item.ExpectedContains,
+			Input:            item.Input,
+			Expected:         item.Expected,
+			Tags:             mustJSONBytes(nextTags),
+			Status:           item.Status,
+			Source:           item.Source,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update prompt evaluation case tags")
+			return
+		}
+		if err := syncPromptEvaluationDatasetRow(r.Context(), qtx, asset, updated); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation dataset row")
+			return
+		}
+		if err := syncPromptEvaluationTestSuiteCase(r.Context(), qtx, asset, updated); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation test suite case")
+			return
+		}
+		changed = append(changed, updated)
+		if len(sampleIDs) < 20 {
+			sampleIDs = append(sampleIDs, uuidToString(updated.ID))
+		}
+	}
+
+	if len(changed) > 0 {
+		allCases, err := qtx.ListPromptEvaluationCases(r.Context(), db.ListPromptEvaluationCasesParams{
+			WorkspaceID: workspaceUUID,
+			AssetID:     asset.ID,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to reload prompt evaluation cases")
+			return
+		}
+		payload := normalizePromptEvaluationPayloadObject(promptEvaluationPayloadWithCases(decodePayloadObject(asset.Payload), promptEvaluationPayloadCasesFromCaseRows(allCases)))
+		payload["最近批量用例操作"] = map[string]any{
+			"operation_type": "批量" + mode + "标签",
+			"changed_count":  len(changed),
+			"skipped_count":  skippedCount,
+			"tags":           targetTags,
+			"created_at":     time.Now().Format(time.RFC3339),
+		}
+		payloadBytes := mustJSONBytes(payload)
+		profile := promptEvaluationAssetProfileFromPayload(payloadBytes, asset.PromptID, asset.AssetType)
+		asset, err = qtx.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
+			ID:                       asset.ID,
+			WorkspaceID:              asset.WorkspaceID,
+			PromptID:                 asset.PromptID,
+			Payload:                  payloadBytes,
+			StructureSchema:          pgtype.Text{String: profile.StructureSchema, Valid: true},
+			StructuredCaseCount:      pgtype.Int4{Int32: profile.StructuredCaseCount, Valid: true},
+			StructuredVariableCount:  pgtype.Int4{Int32: profile.StructuredVariableCount, Valid: true},
+			StructuredAssertionCount: pgtype.Int4{Int32: profile.StructuredAssertionCount, Valid: true},
+			LinkedDatasetCount:       pgtype.Int4{Int32: profile.LinkedDatasetCount, Valid: true},
+			LinkedPromptCount:        pgtype.Int4{Int32: profile.LinkedPromptCount, Valid: true},
+			EvaluationDimensionCount: pgtype.Int4{Int32: profile.EvaluationDimensionCount, Valid: true},
+			ExperimentDimensionCount: pgtype.Int4{Int32: profile.ExperimentDimensionCount, Valid: true},
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to update prompt evaluation asset payload")
+			return
+		}
+	}
+
+	filterPayload := map[string]any{
+		"asset_id": uuidToString(asset.ID),
+		"source":   strings.TrimSpace(req.Source),
+		"tag":      strings.TrimSpace(req.Tag),
+		"keyword":  strings.TrimSpace(req.Keyword),
+		"status":   strings.TrimSpace(req.Status),
+		"limit":    limit,
+	}
+	inputPayload := map[string]any{
+		"mode": mode,
+		"tags": targetTags,
+	}
+	operation, err := qtx.CreatePromptEvaluationCaseOperation(r.Context(), db.CreatePromptEvaluationCaseOperationParams{
+		WorkspaceID:   workspaceUUID,
+		AssetID:       asset.ID,
+		OperationType: "批量" + mode + "标签",
+		Filter:        mustJSONBytes(filterPayload),
+		Input:         mustJSONBytes(inputPayload),
+		ChangedCount:  int32(len(changed)),
+		SkippedCount:  skippedCount,
+		SampleCaseIds: mustJSONBytes(sampleIDs),
+		CreatedBy:     parseUUID(userID),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record prompt evaluation case operation")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation case bulk update")
+		return
+	}
+	respCases := make([]PromptEvaluationCaseResponse, len(changed))
+	for i, item := range changed {
+		respCases[i] = promptEvaluationCaseToResponse(item, nil)
+	}
+	writeJSON(w, http.StatusOK, BulkPromptEvaluationCaseTagsResponse{
+		Operation:    promptEvaluationCaseOperationToResponse(operation),
+		Cases:        respCases,
+		ChangedCount: int32(len(changed)),
+		SkippedCount: skippedCount,
+	})
 }
 
 func (h *Handler) ListPromptEvaluationExperimentDimensions(w http.ResponseWriter, r *http.Request) {
@@ -2620,6 +2918,62 @@ func compactStrings(values []string) []string {
 		result = append(result, item)
 	}
 	return result
+}
+
+func samePromptEvaluationStringList(a []string, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if a[i] != b[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func bulkPromptEvaluationCaseTags(current []string, target []string, mode string) []string {
+	if mode == "移除" {
+		removing := map[string]bool{}
+		for _, tag := range target {
+			removing[tag] = true
+		}
+		next := make([]string, 0, len(current))
+		for _, tag := range current {
+			if !removing[tag] {
+				next = append(next, tag)
+			}
+		}
+		return next
+	}
+	return compactStrings(append(append([]string{}, current...), target...))
+}
+
+func promptEvaluationPayloadCasesFromCaseRows(rows []db.PromptEvaluationCase) []map[string]any {
+	cases := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		if row.Source != "payload" {
+			continue
+		}
+		cases = append(cases, map[string]any{
+			"name":              row.CaseName,
+			"case_name":         row.CaseName,
+			"名称":                row.CaseName,
+			"variables":         decodeJSONDefault(row.Variables, map[string]any{}),
+			"变量":                decodeJSONDefault(row.Variables, map[string]any{}),
+			"expected_contains": decodeJSONDefault(row.ExpectedContains, []any{}),
+			"期望包含":              decodeJSONDefault(row.ExpectedContains, []any{}),
+			"input":             decodeJSONDefault(row.Input, map[string]any{}),
+			"输入":                decodeJSONDefault(row.Input, map[string]any{}),
+			"expected":          decodeJSONDefault(row.Expected, map[string]any{}),
+			"期望":                decodeJSONDefault(row.Expected, map[string]any{}),
+			"tags":              decodeJSONDefault(row.Tags, []any{}),
+			"标签":                decodeJSONDefault(row.Tags, []any{}),
+			"status":            row.Status,
+			"状态":                row.Status,
+		})
+	}
+	return cases
 }
 
 func (h *Handler) UpdatePromptEvaluationCase(w http.ResponseWriter, r *http.Request) {
@@ -7056,6 +7410,11 @@ func containsHanRune(value string) bool {
 
 func promptEvaluationCases(payload map[string]any) []map[string]any {
 	raw := firstValue(payload, "cases", "test_cases", "用例", "测试用例", "数据集", "training_cases", "evaluation_cases", "用例集")
+	if arr, ok := raw.([]map[string]any); ok && len(arr) > 0 {
+		cases := make([]map[string]any, len(arr))
+		copy(cases, arr)
+		return cases
+	}
 	if arr, ok := raw.([]any); ok {
 		cases := make([]map[string]any, 0, len(arr))
 		for _, item := range arr {

@@ -897,6 +897,66 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 		t.Fatalf("updated payload case should preserve source and tags, got %+v", updatedPayload)
 	}
 
+	bulkTagsW := httptest.NewRecorder()
+	testHandler.BulkUpdatePromptEvaluationCaseTags(bulkTagsW, newRequest(http.MethodPost, "/api/prompt-evaluation-cases/bulk-tags", map[string]any{
+		"asset_id": asset.ID,
+		"source":   "payload",
+		"tag":      "治理标签",
+		"tags":     []string{"批量验收"},
+		"mode":     "追加",
+		"limit":    50,
+	}))
+	if bulkTagsW.Code != http.StatusOK {
+		t.Fatalf("bulk tags status = %d, body = %s", bulkTagsW.Code, bulkTagsW.Body.String())
+	}
+	var bulkTags struct {
+		Operation PromptEvaluationCaseOperationResponse `json:"operation"`
+		Cases     []PromptEvaluationCaseResponse        `json:"cases"`
+	}
+	if err := json.Unmarshal(bulkTagsW.Body.Bytes(), &bulkTags); err != nil {
+		t.Fatalf("decode bulk tags: %v", err)
+	}
+	if bulkTags.Operation.OperationType != "批量追加标签" || bulkTags.Operation.ChangedCount != 1 || len(bulkTags.Cases) != 1 {
+		t.Fatalf("bulk operation = %+v cases = %+v", bulkTags.Operation, bulkTags.Cases)
+	}
+	if !containsAll(strings.Join(stringListFromAny(bulkTags.Cases[0].Tags), ","), []string{"治理标签", "批量验收"}) {
+		t.Fatalf("bulk updated tags = %+v", bulkTags.Cases[0].Tags)
+	}
+	operationsW := httptest.NewRecorder()
+	testHandler.ListPromptEvaluationCaseOperations(operationsW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-assets/"+asset.ID+"/case-operations", nil), "id", asset.ID))
+	if operationsW.Code != http.StatusOK {
+		t.Fatalf("list operations status = %d, body = %s", operationsW.Code, operationsW.Body.String())
+	}
+	var operations struct {
+		Items []PromptEvaluationCaseOperationResponse `json:"items"`
+		Total int                                     `json:"total"`
+	}
+	if err := json.Unmarshal(operationsW.Body.Bytes(), &operations); err != nil {
+		t.Fatalf("decode operations: %v", err)
+	}
+	if operations.Total != 1 || operations.Items[0].OperationType != "批量追加标签" || operations.Items[0].ChangedCount != 1 {
+		t.Fatalf("operations = %+v", operations)
+	}
+	reloadedAsset, err := testHandler.Queries.GetPromptEvaluationAssetInWorkspace(context.Background(), db.GetPromptEvaluationAssetInWorkspaceParams{ID: parseUUID(asset.ID), WorkspaceID: parseUUID(testWorkspaceID)})
+	if err != nil {
+		t.Fatalf("reload asset after bulk tags: %v", err)
+	}
+	if !containsAll(string(reloadedAsset.Payload), []string{"治理标签", "批量验收", "最近批量用例操作"}) {
+		t.Fatalf("asset payload was not synced after bulk tags: %s", string(reloadedAsset.Payload))
+	}
+	var reloadedPayload map[string]any
+	if err := json.Unmarshal(reloadedAsset.Payload, &reloadedPayload); err != nil {
+		t.Fatalf("decode reloaded asset payload: %v", err)
+	}
+	payloadCases, ok := reloadedPayload["cases"].([]any)
+	if !ok || len(payloadCases) != 1 {
+		t.Fatalf("normalized payload cases were not preserved: %#v", reloadedPayload["cases"])
+	}
+	payloadCase, ok := payloadCases[0].(map[string]any)
+	if !ok || !containsAll(strings.Join(stringListFromAny(payloadCase["tags"]), ","), []string{"治理标签", "批量验收"}) {
+		t.Fatalf("normalized payload case tags were not synced: %#v", payloadCases[0])
+	}
+
 	deleteCaseW := httptest.NewRecorder()
 	testHandler.DeletePromptEvaluationCase(deleteCaseW, withURLParam(newRequest(http.MethodDelete, "/api/prompt-evaluation-cases/"+created.ID, nil), "id", created.ID))
 	if deleteCaseW.Code != http.StatusNoContent {
