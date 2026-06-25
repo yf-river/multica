@@ -1308,6 +1308,13 @@ export const PromptEvaluationCaseSchema = z.object({
 export const PromptEvaluationCaseListResponseSchema = z.object({
   items: z.array(PromptEvaluationCaseSchema).default([]),
   total: z.number().default(0),
+  total_count: z.number().default(0),
+  limit: z.number().default(0),
+  offset: z.number().default(0),
+  has_more: z.boolean().default(false),
+  next_cursor: z.string().nullable().optional().transform((v) => v ?? null),
+  sort_by: z.enum(["case_index", "case_name", "source", "created_at", "updated_at"]).default("case_index"),
+  sort_direction: z.enum(["asc", "desc"]).default("asc"),
 }).loose();
 
 export const PromptEvaluationCaseOperationSchema = z.object({
@@ -1622,6 +1629,13 @@ export const EMPTY_PROMPT_EVALUATION_RUNTIME_READINESS: PromptEvaluationRuntimeR
 export const EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE = {
   items: [],
   total: 0,
+  total_count: 0,
+  limit: 0,
+  offset: 0,
+  has_more: false,
+  next_cursor: null,
+  sort_by: "case_index",
+  sort_direction: "asc",
 };
 
 export const EMPTY_PROMPT_EVALUATION_CASE_OPERATION: PromptEvaluationCaseOperation = {

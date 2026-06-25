@@ -6,11 +6,7 @@ WHERE workspace_id = $1
   AND (sqlc.narg('source')::text IS NULL OR source = sqlc.narg('source'))
   AND (
     sqlc.narg('tag')::text IS NULL
-    OR EXISTS (
-      SELECT 1
-      FROM jsonb_array_elements_text(tags) AS dataset_tag(value)
-      WHERE dataset_tag.value = sqlc.narg('tag')
-    )
+    OR tags ? sqlc.narg('tag')::text
   )
   AND (
     sqlc.narg('keyword')::text IS NULL
@@ -23,8 +19,42 @@ WHERE workspace_id = $1
     OR expected::text ILIKE '%' || sqlc.narg('keyword') || '%'
     OR tags::text ILIKE '%' || sqlc.narg('keyword') || '%'
   )
-ORDER BY asset_id, case_index ASC, created_at ASC
-LIMIT COALESCE(sqlc.narg('limit')::int, 5000);
+ORDER BY
+  CASE WHEN COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'case_index' AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'asc' THEN case_index END ASC,
+  CASE WHEN COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'case_index' AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'desc' THEN case_index END DESC,
+  CASE WHEN COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'case_name' AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'asc' THEN case_name END ASC,
+  CASE WHEN COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'case_name' AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'desc' THEN case_name END DESC,
+  CASE WHEN COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'source' AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'asc' THEN source END ASC,
+  CASE WHEN COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'source' AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'desc' THEN source END DESC,
+  CASE WHEN COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'created_at' AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'asc' THEN created_at END ASC,
+  CASE WHEN COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'created_at' AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'desc' THEN created_at END DESC,
+  CASE WHEN COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'updated_at' AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'asc' THEN updated_at END ASC,
+  CASE WHEN COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'updated_at' AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'desc' THEN updated_at END DESC,
+  id ASC
+LIMIT COALESCE(sqlc.narg('limit')::int, 5000)
+OFFSET COALESCE(sqlc.narg('offset')::int, 0);
+
+-- name: CountPromptEvaluationCases :one
+SELECT count(*) FROM prompt_evaluation_case
+WHERE workspace_id = $1
+  AND (sqlc.narg('asset_id')::uuid IS NULL OR asset_id = sqlc.narg('asset_id'))
+  AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status'))
+  AND (sqlc.narg('source')::text IS NULL OR source = sqlc.narg('source'))
+  AND (
+    sqlc.narg('tag')::text IS NULL
+    OR tags ? sqlc.narg('tag')::text
+  )
+  AND (
+    sqlc.narg('keyword')::text IS NULL
+    OR case_name ILIKE '%' || sqlc.narg('keyword') || '%'
+    OR status ILIKE '%' || sqlc.narg('keyword') || '%'
+    OR source ILIKE '%' || sqlc.narg('keyword') || '%'
+    OR variables::text ILIKE '%' || sqlc.narg('keyword') || '%'
+    OR expected_contains::text ILIKE '%' || sqlc.narg('keyword') || '%'
+    OR input::text ILIKE '%' || sqlc.narg('keyword') || '%'
+    OR expected::text ILIKE '%' || sqlc.narg('keyword') || '%'
+    OR tags::text ILIKE '%' || sqlc.narg('keyword') || '%'
+  );
 
 -- name: GetPromptEvaluationCaseInWorkspace :one
 SELECT * FROM prompt_evaluation_case

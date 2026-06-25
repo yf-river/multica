@@ -11,6 +11,52 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
+const countPromptEvaluationCases = `-- name: CountPromptEvaluationCases :one
+SELECT count(*) FROM prompt_evaluation_case
+WHERE workspace_id = $1
+  AND ($2::uuid IS NULL OR asset_id = $2)
+  AND ($3::text IS NULL OR status = $3)
+  AND ($4::text IS NULL OR source = $4)
+  AND (
+    $5::text IS NULL
+    OR tags ? $5::text
+  )
+  AND (
+    $6::text IS NULL
+    OR case_name ILIKE '%' || $6 || '%'
+    OR status ILIKE '%' || $6 || '%'
+    OR source ILIKE '%' || $6 || '%'
+    OR variables::text ILIKE '%' || $6 || '%'
+    OR expected_contains::text ILIKE '%' || $6 || '%'
+    OR input::text ILIKE '%' || $6 || '%'
+    OR expected::text ILIKE '%' || $6 || '%'
+    OR tags::text ILIKE '%' || $6 || '%'
+  )
+`
+
+type CountPromptEvaluationCasesParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AssetID     pgtype.UUID `json:"asset_id"`
+	Status      pgtype.Text `json:"status"`
+	Source      pgtype.Text `json:"source"`
+	Tag         pgtype.Text `json:"tag"`
+	Keyword     pgtype.Text `json:"keyword"`
+}
+
+func (q *Queries) CountPromptEvaluationCases(ctx context.Context, arg CountPromptEvaluationCasesParams) (int64, error) {
+	row := q.db.QueryRow(ctx, countPromptEvaluationCases,
+		arg.WorkspaceID,
+		arg.AssetID,
+		arg.Status,
+		arg.Source,
+		arg.Tag,
+		arg.Keyword,
+	)
+	var count int64
+	err := row.Scan(&count)
+	return count, err
+}
+
 const createPromptEvaluationCase = `-- name: CreatePromptEvaluationCase :one
 INSERT INTO prompt_evaluation_case (
     workspace_id,
@@ -185,11 +231,7 @@ WHERE workspace_id = $1
   AND ($4::text IS NULL OR source = $4)
   AND (
     $5::text IS NULL
-    OR EXISTS (
-      SELECT 1
-      FROM jsonb_array_elements_text(tags) AS dataset_tag(value)
-      WHERE dataset_tag.value = $5
-    )
+    OR tags ? $5::text
   )
   AND (
     $6::text IS NULL
@@ -202,18 +244,33 @@ WHERE workspace_id = $1
     OR expected::text ILIKE '%' || $6 || '%'
     OR tags::text ILIKE '%' || $6 || '%'
   )
-ORDER BY asset_id, case_index ASC, created_at ASC
-LIMIT COALESCE($7::int, 5000)
+ORDER BY
+  CASE WHEN COALESCE($7::text, 'case_index') = 'case_index' AND COALESCE($8::text, 'asc') = 'asc' THEN case_index END ASC,
+  CASE WHEN COALESCE($7::text, 'case_index') = 'case_index' AND COALESCE($8::text, 'asc') = 'desc' THEN case_index END DESC,
+  CASE WHEN COALESCE($7::text, 'case_index') = 'case_name' AND COALESCE($8::text, 'asc') = 'asc' THEN case_name END ASC,
+  CASE WHEN COALESCE($7::text, 'case_index') = 'case_name' AND COALESCE($8::text, 'asc') = 'desc' THEN case_name END DESC,
+  CASE WHEN COALESCE($7::text, 'case_index') = 'source' AND COALESCE($8::text, 'asc') = 'asc' THEN source END ASC,
+  CASE WHEN COALESCE($7::text, 'case_index') = 'source' AND COALESCE($8::text, 'asc') = 'desc' THEN source END DESC,
+  CASE WHEN COALESCE($7::text, 'case_index') = 'created_at' AND COALESCE($8::text, 'asc') = 'asc' THEN created_at END ASC,
+  CASE WHEN COALESCE($7::text, 'case_index') = 'created_at' AND COALESCE($8::text, 'asc') = 'desc' THEN created_at END DESC,
+  CASE WHEN COALESCE($7::text, 'case_index') = 'updated_at' AND COALESCE($8::text, 'asc') = 'asc' THEN updated_at END ASC,
+  CASE WHEN COALESCE($7::text, 'case_index') = 'updated_at' AND COALESCE($8::text, 'asc') = 'desc' THEN updated_at END DESC,
+  id ASC
+LIMIT COALESCE($10::int, 5000)
+OFFSET COALESCE($9::int, 0)
 `
 
 type ListPromptEvaluationCasesParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	AssetID     pgtype.UUID `json:"asset_id"`
-	Status      pgtype.Text `json:"status"`
-	Source      pgtype.Text `json:"source"`
-	Tag         pgtype.Text `json:"tag"`
-	Keyword     pgtype.Text `json:"keyword"`
-	Limit       pgtype.Int4 `json:"limit"`
+	WorkspaceID   pgtype.UUID `json:"workspace_id"`
+	AssetID       pgtype.UUID `json:"asset_id"`
+	Status        pgtype.Text `json:"status"`
+	Source        pgtype.Text `json:"source"`
+	Tag           pgtype.Text `json:"tag"`
+	Keyword       pgtype.Text `json:"keyword"`
+	SortBy        pgtype.Text `json:"sort_by"`
+	SortDirection pgtype.Text `json:"sort_direction"`
+	Offset        pgtype.Int4 `json:"offset"`
+	Limit         pgtype.Int4 `json:"limit"`
 }
 
 func (q *Queries) ListPromptEvaluationCases(ctx context.Context, arg ListPromptEvaluationCasesParams) ([]PromptEvaluationCase, error) {
@@ -224,6 +281,9 @@ func (q *Queries) ListPromptEvaluationCases(ctx context.Context, arg ListPromptE
 		arg.Source,
 		arg.Tag,
 		arg.Keyword,
+		arg.SortBy,
+		arg.SortDirection,
+		arg.Offset,
 		arg.Limit,
 	)
 	if err != nil {

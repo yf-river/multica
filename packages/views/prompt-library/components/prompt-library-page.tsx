@@ -28,6 +28,7 @@ import type {
   PromptEvaluationOptimizationCandidate,
   PromptEvaluationStructuredCase,
   PromptEvaluationCaseOperation,
+  PromptEvaluationCaseSortBy,
   PromptEvaluationRun,
   PromptEvaluationRunEvidence,
   PromptEvaluationAssetEvidenceArchivePackage,
@@ -4709,6 +4710,13 @@ type ManualCaseDraft = {
 type DatasetServerCaseSearchResult = {
   items: PromptEvaluationStructuredCase[];
   total: number;
+  totalCount: number;
+  limit: number;
+  offset: number;
+  hasMore: boolean;
+  nextCursor: string | null;
+  sortBy: PromptEvaluationCaseSortBy;
+  sortDirection: "asc" | "desc";
   executedAt: string;
 };
 
@@ -4755,6 +4763,8 @@ function ManualCasePanel({
   const [renamingTag, setRenamingTag] = useState(false);
   const [serverSearchResult, setServerSearchResult] = useState<DatasetServerCaseSearchResult | null>(null);
   const [serverSearchLoading, setServerSearchLoading] = useState(false);
+  const [serverCaseSortBy, setServerCaseSortBy] = useState<PromptEvaluationCaseSortBy>("case_index");
+  const [serverCaseSortDirection, setServerCaseSortDirection] = useState<"asc" | "desc">("asc");
   const [caseOperations, setCaseOperations] = useState<PromptEvaluationCaseOperation[]>([]);
   const [caseOperationsLoading, setCaseOperationsLoading] = useState(false);
   const [savedFilterName, setSavedFilterName] = useState("");
@@ -4802,7 +4812,7 @@ function ManualCasePanel({
     );
     toast.success(`数据集采样已导出：${filteredCases.length} 条`);
   };
-  const runServerCaseSearch = async () => {
+  const runServerCaseSearch = async (cursor?: string | null) => {
     setServerSearchLoading(true);
     try {
       const result = await api.listPromptEvaluationCases({
@@ -4811,13 +4821,23 @@ function ManualCasePanel({
         tag: caseTagFilter === "全部" ? undefined : caseTagFilter,
         keyword: caseKeywordFilter.trim() || undefined,
         limit: 20,
+        cursor: cursor || undefined,
+        sort_by: serverCaseSortBy,
+        sort_direction: serverCaseSortDirection,
       });
-      setServerSearchResult({
-        items: result.items,
+      setServerSearchResult((current) => ({
+        items: cursor && current ? [...current.items, ...result.items] : result.items,
         total: result.total,
+        totalCount: result.total_count,
+        limit: result.limit,
+        offset: result.offset,
+        hasMore: result.has_more,
+        nextCursor: result.next_cursor,
+        sortBy: result.sort_by,
+        sortDirection: result.sort_direction,
         executedAt: new Date().toISOString(),
-      });
-      toast.success(`服务端检索返回 ${result.items.length} 条样本`);
+      }));
+      toast.success(cursor ? `已追加 ${result.items.length} 条服务端样本` : `服务端检索返回 ${result.items.length} 条样本`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "服务端检索失败");
     } finally {
@@ -4979,6 +4999,10 @@ function ManualCasePanel({
           onLoadCaseOperations={loadCaseOperationHistory}
           serverSearchResult={serverSearchResult}
           serverSearchLoading={serverSearchLoading}
+          serverCaseSortBy={serverCaseSortBy}
+          onServerCaseSortByChange={setServerCaseSortBy}
+          serverCaseSortDirection={serverCaseSortDirection}
+          onServerCaseSortDirectionChange={setServerCaseSortDirection}
           onServerSearch={runServerCaseSearch}
           bulkTagsText={bulkTagsText}
           onBulkTagsTextChange={setBulkTagsText}
@@ -5174,6 +5198,10 @@ function DatasetCaseGovernanceBar({
   onLoadCaseOperations,
   serverSearchResult,
   serverSearchLoading,
+  serverCaseSortBy,
+  onServerCaseSortByChange,
+  serverCaseSortDirection,
+  onServerCaseSortDirectionChange,
   onServerSearch,
   bulkTagsText,
   onBulkTagsTextChange,
@@ -5211,7 +5239,11 @@ function DatasetCaseGovernanceBar({
   onLoadCaseOperations: () => void;
   serverSearchResult: DatasetServerCaseSearchResult | null;
   serverSearchLoading: boolean;
-  onServerSearch: () => void;
+  serverCaseSortBy: PromptEvaluationCaseSortBy;
+  onServerCaseSortByChange: (value: PromptEvaluationCaseSortBy) => void;
+  serverCaseSortDirection: "asc" | "desc";
+  onServerCaseSortDirectionChange: (value: "asc" | "desc") => void;
+  onServerSearch: (cursor?: string | null) => void;
   bulkTagsText: string;
   onBulkTagsTextChange: (value: string) => void;
   bulkTagMode: "追加" | "移除" | null;
@@ -5301,12 +5333,35 @@ function DatasetCaseGovernanceBar({
       <div className="grid gap-1.5 rounded-md border border-dashed bg-muted/10 px-2 py-2" data-testid={`dataset-case-server-search-${assetId}`}>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[11px] font-medium text-muted-foreground">服务端检索</span>
-          <span className="text-muted-foreground">按当前来源、标签和关键词从服务端读取前 20 条样本。</span>
+          <span className="text-muted-foreground">按当前来源、标签和关键词从服务端分页读取样本。</span>
+          <select
+            aria-label="服务端检索排序字段"
+            className="h-8 rounded-md border bg-background px-2 text-xs"
+            value={serverCaseSortBy}
+            onChange={(event) => onServerCaseSortByChange(event.target.value as PromptEvaluationCaseSortBy)}
+            data-testid={`dataset-case-server-sort-by-${assetId}`}
+          >
+            <option value="case_index">用例序号</option>
+            <option value="case_name">用例名称</option>
+            <option value="source">来源</option>
+            <option value="created_at">创建时间</option>
+            <option value="updated_at">更新时间</option>
+          </select>
+          <select
+            aria-label="服务端检索排序方向"
+            className="h-8 rounded-md border bg-background px-2 text-xs"
+            value={serverCaseSortDirection}
+            onChange={(event) => onServerCaseSortDirectionChange(event.target.value as "asc" | "desc")}
+            data-testid={`dataset-case-server-sort-direction-${assetId}`}
+          >
+            <option value="asc">升序</option>
+            <option value="desc">降序</option>
+          </select>
           <Button
             size="sm"
             variant="secondary"
             className="h-8"
-            onClick={onServerSearch}
+            onClick={() => onServerSearch()}
             disabled={serverSearchLoading}
             data-testid={`dataset-case-server-search-button-${assetId}`}
           >
@@ -5317,19 +5372,32 @@ function DatasetCaseGovernanceBar({
         {serverSearchResult && (
           <div className="grid gap-1 text-muted-foreground" data-testid={`dataset-case-server-search-result-${assetId}`}>
             <div>
-              服务端返回 {serverSearchResult.items.length} 条 · 记录时间 {serverSearchResult.executedAt}
-              {serverSearchResult.total !== serverSearchResult.items.length ? ` · total ${serverSearchResult.total}` : ""}
+              已加载 {serverSearchResult.items.length} / {serverSearchResult.totalCount} 条 · 本页 {serverSearchResult.limit} 条 · offset {serverSearchResult.offset}
+              · {serverSearchResult.sortBy}/{serverSearchResult.sortDirection} · 记录时间 {serverSearchResult.executedAt}
             </div>
             {serverSearchResult.items.length === 0 ? (
               <div className="rounded border border-dashed px-2 py-2">当前服务端筛选没有命中样本。</div>
             ) : (
-              <div className="flex flex-wrap gap-1.5">
-                {serverSearchResult.items.slice(0, 5).map((item) => (
-                  <span key={item.id} className="rounded-md border bg-background px-2 py-1">
-                    {item.case_name || `用例 ${item.case_index + 1}`} · {caseSourceLabel(item.source)}
-                  </span>
-                ))}
-              </div>
+              <>
+                <div className="flex flex-wrap gap-1.5">
+                  {serverSearchResult.items.slice(0, 8).map((item) => (
+                    <span key={item.id} className="rounded-md border bg-background px-2 py-1">
+                      {item.case_name || `用例 ${item.case_index + 1}`} · {caseSourceLabel(item.source)}
+                    </span>
+                  ))}
+                </div>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-8 w-fit"
+                  onClick={() => onServerSearch(serverSearchResult.nextCursor)}
+                  disabled={serverSearchLoading || !serverSearchResult.hasMore || !serverSearchResult.nextCursor}
+                  data-testid={`dataset-case-server-load-more-${assetId}`}
+                >
+                  {serverSearchLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
+                  加载下一页
+                </Button>
+              </>
             )}
           </div>
         )}

@@ -1428,18 +1428,40 @@ test.describe("训练与评估工作台", () => {
           tags: expect.arrayContaining(["领导演示"]),
         }),
       ]);
+    const firstCasePage = await api.listPromptEvaluationCasesPage({ asset_id: dataset.id, limit: 1, sort_by: "case_index", sort_direction: "asc" });
+    expect(firstCasePage).toMatchObject({
+      total: 2,
+      total_count: 2,
+      limit: 1,
+      offset: 0,
+      has_more: true,
+      sort_by: "case_index",
+      sort_direction: "asc",
+    });
+    expect(firstCasePage.next_cursor).toBeTruthy();
+    const secondCasePage = await api.listPromptEvaluationCasesPage({ asset_id: dataset.id, limit: 1, cursor: firstCasePage.next_cursor! });
+    expect(secondCasePage).toMatchObject({
+      total_count: 2,
+      offset: 1,
+      has_more: false,
+      next_cursor: null,
+    });
+    expect(secondCasePage.items).toHaveLength(1);
     const serverSearchResponse = page.waitForResponse(
       (response) =>
         response.request().method() === "GET" &&
         response.url().includes("/api/prompt-evaluation-cases") &&
         response.url().includes("source=payload") &&
         response.url().includes("tag=%E9%A2%86%E5%AF%BC%E6%BC%94%E7%A4%BA") &&
-        response.url().includes("keyword=%E7%99%BB%E5%BD%95"),
+        response.url().includes("keyword=%E7%99%BB%E5%BD%95") &&
+        response.url().includes("sort_by=case_index") &&
+        response.url().includes("sort_direction=asc"),
       { timeout: 15000 },
     );
     await governance.getByTestId(`dataset-case-server-search-button-${dataset.id}`).click();
     expect((await serverSearchResponse).status()).toBe(200);
-    await expect(governance.getByTestId(`dataset-case-server-search-result-${dataset.id}`)).toContainText("服务端返回 1 条", { timeout: 15000 });
+    await expect(governance.getByTestId(`dataset-case-server-search-result-${dataset.id}`)).toContainText("已加载 1 / 1 条", { timeout: 15000 });
+    await expect(governance.getByTestId(`dataset-case-server-search-result-${dataset.id}`)).toContainText("case_index/asc");
     await expect(governance.getByTestId(`dataset-case-server-search-result-${dataset.id}`)).toContainText("版本一登录用例");
     await governance.getByLabel("数据集筛选方案名称").fill("登录领导样本");
     const saveFilterResponse = page.waitForResponse(

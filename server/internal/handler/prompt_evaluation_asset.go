@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -560,6 +561,10 @@ type BulkPromptEvaluationCaseTagsResponse struct {
 	Cases        []PromptEvaluationCaseResponse        `json:"cases"`
 	ChangedCount int32                                 `json:"changed_count"`
 	SkippedCount int32                                 `json:"skipped_count"`
+}
+
+type promptEvaluationCaseCursor struct {
+	Offset int32 `json:"offset"`
 }
 
 type PromptEvaluationCaseAssertionResponse struct {
@@ -1667,22 +1672,63 @@ func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Reque
 		keyword = pgtype.Text{String: value, Valid: true}
 	}
 	var limit pgtype.Int4
+	effectiveLimit := int32(5000)
 	if value := strings.TrimSpace(r.URL.Query().Get("limit")); value != "" {
 		parsed, err := strconv.Atoi(value)
 		if err != nil || parsed < 1 || parsed > 500 {
 			writeError(w, http.StatusBadRequest, "limit must be between 1 and 500")
 			return
 		}
-		limit = pgtype.Int4{Int32: int32(parsed), Valid: true}
+		effectiveLimit = int32(parsed)
+		limit = pgtype.Int4{Int32: effectiveLimit, Valid: true}
 	}
-	cases, err := h.Queries.ListPromptEvaluationCases(r.Context(), db.ListPromptEvaluationCasesParams{
+	sortByValue := strings.TrimSpace(r.URL.Query().Get("sort_by"))
+	if sortByValue == "" {
+		sortByValue = "case_index"
+	}
+	if !validPromptEvaluationCaseSortBy(sortByValue) {
+		writeError(w, http.StatusBadRequest, "sort_by must be case_index, case_name, source, created_at, or updated_at")
+		return
+	}
+	sortDirectionValue := strings.TrimSpace(r.URL.Query().Get("sort_direction"))
+	if sortDirectionValue == "" {
+		sortDirectionValue = "asc"
+	}
+	if sortDirectionValue != "asc" && sortDirectionValue != "desc" {
+		writeError(w, http.StatusBadRequest, "sort_direction must be asc or desc")
+		return
+	}
+	offset := int32(0)
+	if value := strings.TrimSpace(r.URL.Query().Get("cursor")); value != "" {
+		decodedOffset, ok := decodePromptEvaluationCaseCursor(w, value)
+		if !ok {
+			return
+		}
+		offset = decodedOffset
+	}
+	totalCount, err := h.Queries.CountPromptEvaluationCases(r.Context(), db.CountPromptEvaluationCasesParams{
 		WorkspaceID: workspaceUUID,
 		AssetID:     assetID,
 		Status:      status,
 		Source:      source,
 		Tag:         tag,
 		Keyword:     keyword,
-		Limit:       limit,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to count prompt evaluation cases")
+		return
+	}
+	cases, err := h.Queries.ListPromptEvaluationCases(r.Context(), db.ListPromptEvaluationCasesParams{
+		WorkspaceID:   workspaceUUID,
+		AssetID:       assetID,
+		Status:        status,
+		Source:        source,
+		Tag:           tag,
+		Keyword:       keyword,
+		Limit:         limit,
+		SortBy:        pgtype.Text{String: sortByValue, Valid: true},
+		SortDirection: pgtype.Text{String: sortDirectionValue, Valid: true},
+		Offset:        pgtype.Int4{Int32: offset, Valid: true},
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation cases")
@@ -1702,7 +1748,24 @@ func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Reque
 	for i, item := range cases {
 		resp[i] = promptEvaluationCaseToResponse(item, assertionsByCase[uuidToString(item.ID)])
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
+	nextOffset := offset + int32(len(resp))
+	hasMore := int64(nextOffset) < totalCount
+	var nextCursor *string
+	if hasMore {
+		cursor := encodePromptEvaluationCaseCursor(nextOffset)
+		nextCursor = &cursor
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":          resp,
+		"total":          totalCount,
+		"total_count":    totalCount,
+		"limit":          effectiveLimit,
+		"offset":         offset,
+		"has_more":       hasMore,
+		"next_cursor":    nextCursor,
+		"sort_by":        sortByValue,
+		"sort_direction": sortDirectionValue,
+	})
 }
 
 func (h *Handler) ListPromptEvaluationCaseOperations(w http.ResponseWriter, r *http.Request) {
@@ -2940,6 +3003,34 @@ func promptEvaluationTraceExpected(event db.TaskTraceEvent, expectedContains []s
 		"来源任务": uuidToString(event.TaskID),
 		"状态":   event.Status,
 	}
+}
+
+func validPromptEvaluationCaseSortBy(value string) bool {
+	switch value {
+	case "case_index", "case_name", "source", "created_at", "updated_at":
+		return true
+	default:
+		return false
+	}
+}
+
+func encodePromptEvaluationCaseCursor(offset int32) string {
+	payload, _ := json.Marshal(promptEvaluationCaseCursor{Offset: offset})
+	return base64.RawURLEncoding.EncodeToString(payload)
+}
+
+func decodePromptEvaluationCaseCursor(w http.ResponseWriter, value string) (int32, bool) {
+	raw, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "cursor is invalid")
+		return 0, false
+	}
+	var cursor promptEvaluationCaseCursor
+	if err := json.Unmarshal(raw, &cursor); err != nil || cursor.Offset < 0 {
+		writeError(w, http.StatusBadRequest, "cursor is invalid")
+		return 0, false
+	}
+	return cursor.Offset, true
 }
 
 func compactStrings(values []string) []string {

@@ -829,8 +829,9 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 		t.Fatalf("list case status = %d, body = %s", listW.Code, listW.Body.String())
 	}
 	var listed struct {
-		Items []PromptEvaluationCaseResponse `json:"items"`
-		Total int                            `json:"total"`
+		Items      []PromptEvaluationCaseResponse `json:"items"`
+		Total      int                            `json:"total"`
+		TotalCount int                            `json:"total_count"`
 	}
 	if err := json.Unmarshal(listW.Body.Bytes(), &listed); err != nil {
 		t.Fatalf("decode listed cases: %v", err)
@@ -842,11 +843,51 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 			break
 		}
 	}
-	if listed.Total != 2 || listedManual == nil {
+	if listed.Total != 2 || listed.TotalCount != 2 || listedManual == nil {
 		t.Fatalf("listed cases = %+v", listed)
 	}
 	if len(listedManual.Assertions) != 1 || listedManual.Assertions[0].ExpectedText != "可观测证据" {
 		t.Fatalf("listed assertions = %+v", listedManual.Assertions)
+	}
+	firstPageW := httptest.NewRecorder()
+	testHandler.ListPromptEvaluationCases(firstPageW, newRequest(http.MethodGet, "/api/prompt-evaluation-cases?asset_id="+asset.ID+"&limit=1&sort_by=case_index&sort_direction=asc", nil))
+	if firstPageW.Code != http.StatusOK {
+		t.Fatalf("first page status = %d, body = %s", firstPageW.Code, firstPageW.Body.String())
+	}
+	var firstPage struct {
+		Items         []PromptEvaluationCaseResponse `json:"items"`
+		Total         int                            `json:"total"`
+		TotalCount    int                            `json:"total_count"`
+		Limit         int                            `json:"limit"`
+		Offset        int                            `json:"offset"`
+		HasMore       bool                           `json:"has_more"`
+		NextCursor    *string                        `json:"next_cursor"`
+		SortBy        string                         `json:"sort_by"`
+		SortDirection string                         `json:"sort_direction"`
+	}
+	if err := json.Unmarshal(firstPageW.Body.Bytes(), &firstPage); err != nil {
+		t.Fatalf("decode first page: %v", err)
+	}
+	if firstPage.Total != 2 || firstPage.TotalCount != 2 || firstPage.Limit != 1 || firstPage.Offset != 0 || !firstPage.HasMore || firstPage.NextCursor == nil || firstPage.SortBy != "case_index" || firstPage.SortDirection != "asc" {
+		t.Fatalf("first page metadata = %+v", firstPage)
+	}
+	secondPageW := httptest.NewRecorder()
+	testHandler.ListPromptEvaluationCases(secondPageW, newRequest(http.MethodGet, "/api/prompt-evaluation-cases?asset_id="+asset.ID+"&limit=1&cursor="+*firstPage.NextCursor, nil))
+	if secondPageW.Code != http.StatusOK {
+		t.Fatalf("second page status = %d, body = %s", secondPageW.Code, secondPageW.Body.String())
+	}
+	var secondPage struct {
+		Items      []PromptEvaluationCaseResponse `json:"items"`
+		TotalCount int                            `json:"total_count"`
+		Offset     int                            `json:"offset"`
+		HasMore    bool                           `json:"has_more"`
+		NextCursor *string                        `json:"next_cursor"`
+	}
+	if err := json.Unmarshal(secondPageW.Body.Bytes(), &secondPage); err != nil {
+		t.Fatalf("decode second page: %v", err)
+	}
+	if secondPage.TotalCount != 2 || secondPage.Offset != 1 || secondPage.HasMore || secondPage.NextCursor != nil || len(secondPage.Items) != 1 {
+		t.Fatalf("second page metadata = %+v", secondPage)
 	}
 	filteredW := httptest.NewRecorder()
 	testHandler.ListPromptEvaluationCases(filteredW, newRequest(http.MethodGet, "/api/prompt-evaluation-cases?asset_id="+asset.ID+"&source=manual&tag=user-center&keyword=%E5%8F%AF%E8%A7%82%E6%B5%8B&limit=1", nil))

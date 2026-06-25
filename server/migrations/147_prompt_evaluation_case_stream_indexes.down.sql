@@ -1,0 +1,4 @@
+DROP INDEX IF EXISTS idx_prompt_evaluation_case_tags_gin;
+DROP INDEX IF EXISTS idx_prompt_evaluation_case_stream_updated;
+DROP INDEX IF EXISTS idx_prompt_evaluation_case_stream_created;
+DROP INDEX IF EXISTS idx_prompt_evaluation_case_stream_index;

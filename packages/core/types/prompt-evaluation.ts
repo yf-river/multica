@@ -4,6 +4,7 @@ import type { AgentRuntime, TaskTraceEvent } from "./agent";
 
 export type PromptEvaluationAssetType = "数据集" | "测试套件" | "实验" | "优化运行";
 export type PromptEvaluationAssetStatus = "启用" | "归档";
+export type PromptEvaluationCaseSortBy = "case_index" | "case_name" | "source" | "created_at" | "updated_at";
 export type PromptEvaluationOptimizationCandidateStatus = "待确认" | "已发布" | "已拒绝";
 
 export interface PromptEvaluationCase {
@@ -552,6 +553,13 @@ export interface ListPromptEvaluationTrialsResponse {
 export interface ListPromptEvaluationCasesResponse {
   items: PromptEvaluationStructuredCase[];
   total: number;
+  total_count: number;
+  limit: number;
+  offset: number;
+  has_more: boolean;
+  next_cursor: string | null;
+  sort_by: PromptEvaluationCaseSortBy;
+  sort_direction: "asc" | "desc";
 }
 
 export interface ListPromptEvaluationCaseOperationsResponse {
@@ -616,6 +624,9 @@ export interface ListPromptEvaluationCasesParams {
   tag?: string;
   keyword?: string;
   limit?: number;
+  cursor?: string;
+  sort_by?: PromptEvaluationCaseSortBy;
+  sort_direction?: "asc" | "desc";
 }
 
 export interface ListPromptEvaluationCaseOperationsParams {

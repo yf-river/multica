@@ -1743,7 +1743,17 @@ export class TestApiClient {
     return res.json();
   }
 
-  async listPromptEvaluationCases(params?: { asset_id?: string; status?: string; source?: string; tag?: string; keyword?: string; limit?: number }): Promise<PromptEvaluationCase[]> {
+  async listPromptEvaluationCasesPage(params?: {
+    asset_id?: string;
+    status?: string;
+    source?: string;
+    tag?: string;
+    keyword?: string;
+    limit?: number;
+    cursor?: string;
+    sort_by?: string;
+    sort_direction?: string;
+  }): Promise<{ items: PromptEvaluationCase[]; total: number; total_count: number; limit: number; offset: number; has_more: boolean; next_cursor: string | null; sort_by: string; sort_direction: string }> {
     const search = new URLSearchParams();
     if (params?.asset_id) search.set("asset_id", params.asset_id);
     if (params?.status) search.set("status", params.status);
@@ -1751,12 +1761,29 @@ export class TestApiClient {
     if (params?.tag) search.set("tag", params.tag);
     if (params?.keyword) search.set("keyword", params.keyword);
     if (params?.limit) search.set("limit", String(params.limit));
+    if (params?.cursor) search.set("cursor", params.cursor);
+    if (params?.sort_by) search.set("sort_by", params.sort_by);
+    if (params?.sort_direction) search.set("sort_direction", params.sort_direction);
     const res = await this.authedFetch(`/api/prompt-evaluation-cases${search.toString() ? `?${search}` : ""}`);
     if (!res.ok) {
       throw new Error(`list prompt evaluation cases failed: ${res.status}`);
     }
     const data = await res.json();
-    return data.items ?? [];
+    return {
+      items: data.items ?? [],
+      total: data.total ?? 0,
+      total_count: data.total_count ?? data.total ?? 0,
+      limit: data.limit ?? 0,
+      offset: data.offset ?? 0,
+      has_more: Boolean(data.has_more),
+      next_cursor: data.next_cursor ?? null,
+      sort_by: data.sort_by ?? "case_index",
+      sort_direction: data.sort_direction ?? "asc",
+    };
+  }
+
+  async listPromptEvaluationCases(params?: { asset_id?: string; status?: string; source?: string; tag?: string; keyword?: string; limit?: number; cursor?: string; sort_by?: string; sort_direction?: string }): Promise<PromptEvaluationCase[]> {
+    return (await this.listPromptEvaluationCasesPage(params)).items;
   }
 
   async listPromptEvaluationExperimentDimensions(params?: { asset_id?: string; status?: string }): Promise<{ items: PromptEvaluationExperimentDimension[]; total: number }> {

@@ -151,6 +151,7 @@ export type {
   PromptEvaluationDatasetFromTracesResponse,
   PromptEvaluationOptimizationCandidate,
   PromptEvaluationOptimizationCandidateStatus,
+  PromptEvaluationCaseSortBy,
   UpdatePromptEvaluationOptimizationCandidateRequest,
   PublishPromptEvaluationOptimizationCandidateResponse,
   PromptEvaluationAssetType,
