@@ -4756,6 +4756,7 @@ function ManualCasePanel({
   const [serverSearchResult, setServerSearchResult] = useState<DatasetServerCaseSearchResult | null>(null);
   const [serverSearchLoading, setServerSearchLoading] = useState(false);
   const [caseOperations, setCaseOperations] = useState<PromptEvaluationCaseOperation[]>([]);
+  const [caseOperationsLoading, setCaseOperationsLoading] = useState(false);
   const [savedFilterName, setSavedFilterName] = useState("");
   const [savingFilter, setSavingFilter] = useState<"保存" | "删除" | null>(null);
   const caseTags = useMemo(() => uniqueSortedStrings(cases.flatMap((item) => item.tags.map((value) => String(value)).filter(Boolean))), [cases]);
@@ -4821,6 +4822,18 @@ function ManualCasePanel({
       toast.error(error instanceof Error ? error.message : "服务端检索失败");
     } finally {
       setServerSearchLoading(false);
+    }
+  };
+  const loadCaseOperationHistory = async () => {
+    setCaseOperationsLoading(true);
+    try {
+      const result = await api.listPromptEvaluationCaseOperations(asset.id, { limit: 5 });
+      setCaseOperations(result.items);
+      toast.success(`已读取 ${result.items.length} 条批量操作审计`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "批量操作审计读取失败");
+    } finally {
+      setCaseOperationsLoading(false);
     }
   };
   const updateFilteredCaseTags = async (mode: "追加" | "移除") => {
@@ -4963,7 +4976,8 @@ function ManualCasePanel({
           onKeywordFilterChange={setCaseKeywordFilter}
           tagStats={tagStats}
           caseOperations={caseOperations}
-          caseOperationsLoading={false}
+          caseOperationsLoading={caseOperationsLoading}
+          onLoadCaseOperations={loadCaseOperationHistory}
           serverSearchResult={serverSearchResult}
           serverSearchLoading={serverSearchLoading}
           onServerSearch={runServerCaseSearch}
@@ -5158,6 +5172,7 @@ function DatasetCaseGovernanceBar({
   tagStats,
   caseOperations,
   caseOperationsLoading,
+  onLoadCaseOperations,
   serverSearchResult,
   serverSearchLoading,
   onServerSearch,
@@ -5194,6 +5209,7 @@ function DatasetCaseGovernanceBar({
   tagStats: Array<{ tag: string; count: number }>;
   caseOperations: PromptEvaluationCaseOperation[];
   caseOperationsLoading: boolean;
+  onLoadCaseOperations: () => void;
   serverSearchResult: DatasetServerCaseSearchResult | null;
   serverSearchLoading: boolean;
   onServerSearch: () => void;
@@ -5407,6 +5423,17 @@ function DatasetCaseGovernanceBar({
           <span className="text-[11px] font-medium text-muted-foreground">批量操作审计</span>
           {caseOperationsLoading && <Loader2 className="size-3.5 animate-spin text-muted-foreground" />}
           <span className="text-muted-foreground">记录最近服务端批量标签操作的筛选条件、输入和变更数量。</span>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="h-8"
+            onClick={onLoadCaseOperations}
+            disabled={caseOperationsLoading}
+            data-testid={`dataset-case-load-operation-audit-${assetId}`}
+          >
+            {caseOperationsLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
+            查看审计历史
+          </Button>
         </div>
         {caseOperations.length === 0 ? (
           <div className="rounded border border-dashed px-2 py-2 text-muted-foreground">暂无批量操作记录。</div>

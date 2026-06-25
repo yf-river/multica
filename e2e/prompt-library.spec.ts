@@ -1493,6 +1493,15 @@ test.describe("训练与评估工作台", () => {
         operation_type: "批量追加标签",
         changed_count: 1,
       });
+    const operationHistoryResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        response.url().includes(`/api/prompt-evaluation-assets/${dataset.id}/case-operations`),
+      { timeout: 15000 },
+    );
+    await governance.getByTestId(`dataset-case-load-operation-audit-${dataset.id}`).click();
+    expect((await operationHistoryResponse).status()).toBe(200);
+    await expect(governance.getByTestId(`dataset-case-operation-audit-${dataset.id}`)).toContainText("批量追加标签", { timeout: 15000 });
     await expect
       .poll(async () => {
         const assets = await api.listPromptEvaluationAssets({ asset_type: "数据集" });
