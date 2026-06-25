@@ -957,6 +957,59 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 		t.Fatalf("normalized payload case tags were not synced: %#v", payloadCases[0])
 	}
 
+	renameTagsW := httptest.NewRecorder()
+	testHandler.BulkUpdatePromptEvaluationCaseTags(renameTagsW, newRequest(http.MethodPost, "/api/prompt-evaluation-cases/bulk-tags", map[string]any{
+		"asset_id":   asset.ID,
+		"source_tag": "治理标签",
+		"target_tag": "治理展示",
+		"mode":       "重命名",
+		"limit":      50,
+	}))
+	if renameTagsW.Code != http.StatusOK {
+		t.Fatalf("bulk rename tags status = %d, body = %s", renameTagsW.Code, renameTagsW.Body.String())
+	}
+	var renamedTags struct {
+		Operation PromptEvaluationCaseOperationResponse `json:"operation"`
+		Cases     []PromptEvaluationCaseResponse        `json:"cases"`
+	}
+	if err := json.Unmarshal(renameTagsW.Body.Bytes(), &renamedTags); err != nil {
+		t.Fatalf("decode bulk rename tags: %v", err)
+	}
+	if renamedTags.Operation.OperationType != "批量重命名/合并标签" || renamedTags.Operation.ChangedCount != 1 || len(renamedTags.Cases) != 1 {
+		t.Fatalf("bulk rename operation = %+v cases = %+v", renamedTags.Operation, renamedTags.Cases)
+	}
+	renamedCaseTags := strings.Join(stringListFromAny(renamedTags.Cases[0].Tags), ",")
+	if !containsAll(renamedCaseTags, []string{"治理展示", "批量验收"}) || strings.Contains(renamedCaseTags, "治理标签") {
+		t.Fatalf("bulk renamed tags = %+v", renamedTags.Cases[0].Tags)
+	}
+	operationsAfterRenameW := httptest.NewRecorder()
+	testHandler.ListPromptEvaluationCaseOperations(operationsAfterRenameW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-assets/"+asset.ID+"/case-operations", nil), "id", asset.ID))
+	if operationsAfterRenameW.Code != http.StatusOK {
+		t.Fatalf("list operations after rename status = %d, body = %s", operationsAfterRenameW.Code, operationsAfterRenameW.Body.String())
+	}
+	if err := json.Unmarshal(operationsAfterRenameW.Body.Bytes(), &operations); err != nil {
+		t.Fatalf("decode operations after rename: %v", err)
+	}
+	if operations.Total != 2 || operations.Items[0].OperationType != "批量重命名/合并标签" || operations.Items[0].ChangedCount != 1 {
+		t.Fatalf("operations after rename = %+v", operations)
+	}
+	reloadedAsset, err = testHandler.Queries.GetPromptEvaluationAssetInWorkspace(context.Background(), db.GetPromptEvaluationAssetInWorkspaceParams{ID: parseUUID(asset.ID), WorkspaceID: parseUUID(testWorkspaceID)})
+	if err != nil {
+		t.Fatalf("reload asset after bulk rename: %v", err)
+	}
+	if err := json.Unmarshal(reloadedAsset.Payload, &reloadedPayload); err != nil {
+		t.Fatalf("decode reloaded asset after rename: %v", err)
+	}
+	payloadCases, ok = reloadedPayload["cases"].([]any)
+	if !ok || len(payloadCases) != 1 {
+		t.Fatalf("renamed payload cases were not preserved: %#v", reloadedPayload["cases"])
+	}
+	payloadCase, ok = payloadCases[0].(map[string]any)
+	renamedPayloadTags := strings.Join(stringListFromAny(payloadCase["tags"]), ",")
+	if !ok || !containsAll(renamedPayloadTags, []string{"治理展示", "批量验收"}) || strings.Contains(renamedPayloadTags, "治理标签") {
+		t.Fatalf("renamed payload case tags were not synced: %#v", payloadCases[0])
+	}
+
 	deleteCaseW := httptest.NewRecorder()
 	testHandler.DeletePromptEvaluationCase(deleteCaseW, withURLParam(newRequest(http.MethodDelete, "/api/prompt-evaluation-cases/"+created.ID, nil), "id", created.ID))
 	if deleteCaseW.Code != http.StatusNoContent {

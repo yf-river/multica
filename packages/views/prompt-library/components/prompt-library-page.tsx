@@ -4892,24 +4892,23 @@ function ManualCasePanel({
     }
     setRenamingTag(true);
     try {
-      let changedCount = 0;
-      const updatedCases = cases.map((item) => {
-        const currentTags = item.tags.map((value) => String(value)).filter(Boolean);
-        if (!currentTags.includes(sourceTag)) return item;
-        const nextTags = uniqueSortedStrings(currentTags.map((tag) => (tag === sourceTag ? targetTag : tag)));
-        changedCount += 1;
-        return { ...item, tags: nextTags };
+      const result = await api.bulkUpdatePromptEvaluationCaseTags({
+        asset_id: asset.id,
+        source_tag: sourceTag,
+        target_tag: targetTag,
+        mode: "重命名",
+        limit: 500,
       });
-      for (const item of updatedCases) {
-        const original = cases.find((candidate) => candidate.id === item.id);
-        if (!original || sameStringList(original.tags.map(String), item.tags.map(String))) continue;
-        await onUpdateCase(item.id, buildCaseTagUpdateRequest(asset, item, item.tags.join(", ")));
-      }
-      await onUpdateAsset(asset.id, { payload: datasetPayloadWithSavedFilters(asset, savedFilters, updatedCases) });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId ?? "") }),
+        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId ?? "") }),
+        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId ?? "") }),
+      ]);
+      setCaseOperations((current) => [result.operation, ...current.filter((item) => item.id !== result.operation.id)].slice(0, 5));
       if (caseTagFilter === sourceTag) setCaseTagFilter(targetTag);
       setRenameSourceTag(targetTag);
       setRenameTargetTag("");
-      toast.success(`已整理 ${changedCount} 条用例标签`);
+      toast.success(`已整理 ${result.changed_count} 条用例标签，审计已记录`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "标签整理失败");
     } finally {
@@ -5611,11 +5610,6 @@ function datasetPayloadCaseFromStructuredCase(item: PromptEvaluationStructuredCa
 function datasetCaseSourceFilterFromUnknown(value: unknown): DatasetCaseSourceFilter {
   if (value === "手工" || value === "trace导入" || value === "资产载荷") return value;
   return "全部";
-}
-
-function sameStringList(a: string[], b: string[]) {
-  if (a.length !== b.length) return false;
-  return a.every((item, index) => item === b[index]);
 }
 
 function ExperimentDimensionPanel({ asset, dimensions }: { asset: PromptEvaluationAsset; dimensions: PromptEvaluationExperimentDimension[] }) {

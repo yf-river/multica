@@ -131,14 +131,16 @@ type UpdatePromptEvaluationCaseRequest struct {
 }
 
 type BulkPromptEvaluationCaseTagsRequest struct {
-	AssetID string   `json:"asset_id"`
-	Source  string   `json:"source"`
-	Tag     string   `json:"tag"`
-	Keyword string   `json:"keyword"`
-	Status  string   `json:"status"`
-	Tags    []string `json:"tags"`
-	Mode    string   `json:"mode"`
-	Limit   int32    `json:"limit"`
+	AssetID   string   `json:"asset_id"`
+	Source    string   `json:"source"`
+	Tag       string   `json:"tag"`
+	Keyword   string   `json:"keyword"`
+	Status    string   `json:"status"`
+	Tags      []string `json:"tags"`
+	SourceTag string   `json:"source_tag"`
+	TargetTag string   `json:"target_tag"`
+	Mode      string   `json:"mode"`
+	Limit     int32    `json:"limit"`
 }
 
 type CreatePromptEvaluationDatasetFromTracesRequest struct {
@@ -1766,12 +1768,28 @@ func (h *Handler) BulkUpdatePromptEvaluationCaseTags(w http.ResponseWriter, r *h
 		return
 	}
 	mode := strings.TrimSpace(req.Mode)
-	if mode != "追加" && mode != "移除" {
-		writeError(w, http.StatusBadRequest, "mode must be 追加 or 移除")
+	if mode != "追加" && mode != "移除" && mode != "重命名" {
+		writeError(w, http.StatusBadRequest, "mode must be 追加, 移除, or 重命名")
 		return
 	}
 	targetTags := compactStrings(req.Tags)
-	if len(targetTags) == 0 {
+	sourceTag := strings.TrimSpace(req.SourceTag)
+	targetTag := strings.TrimSpace(req.TargetTag)
+	if mode == "重命名" {
+		if sourceTag == "" {
+			writeError(w, http.StatusBadRequest, "source_tag is required when mode is 重命名")
+			return
+		}
+		if targetTag == "" {
+			writeError(w, http.StatusBadRequest, "target_tag is required when mode is 重命名")
+			return
+		}
+		if sourceTag == targetTag {
+			writeError(w, http.StatusBadRequest, "target_tag must be different from source_tag")
+			return
+		}
+		targetTags = []string{targetTag}
+	} else if len(targetTags) == 0 {
 		writeError(w, http.StatusBadRequest, "tags must contain at least one non-empty tag")
 		return
 	}
@@ -1803,6 +1821,9 @@ func (h *Handler) BulkUpdatePromptEvaluationCaseTags(w http.ResponseWriter, r *h
 	if value := strings.TrimSpace(req.Tag); value != "" {
 		tag = pgtype.Text{String: value, Valid: true}
 	}
+	if mode == "重命名" {
+		tag = pgtype.Text{String: sourceTag, Valid: true}
+	}
 	var keyword pgtype.Text
 	if value := strings.TrimSpace(req.Keyword); value != "" {
 		keyword = pgtype.Text{String: value, Valid: true}
@@ -1833,7 +1854,7 @@ func (h *Handler) BulkUpdatePromptEvaluationCaseTags(w http.ResponseWriter, r *h
 	skippedCount := int32(0)
 	for _, item := range matched {
 		currentTags := stringListFromAny(decodeJSONDefault(item.Tags, []any{}))
-		nextTags := bulkPromptEvaluationCaseTags(currentTags, targetTags, mode)
+		nextTags := bulkPromptEvaluationCaseTags(currentTags, targetTags, mode, sourceTag, targetTag)
 		if samePromptEvaluationStringList(currentTags, nextTags) {
 			skippedCount += 1
 			continue
@@ -1880,12 +1901,18 @@ func (h *Handler) BulkUpdatePromptEvaluationCaseTags(w http.ResponseWriter, r *h
 			writeError(w, http.StatusInternalServerError, "failed to reload prompt evaluation cases")
 			return
 		}
+		operationType := "批量" + mode + "标签"
+		if mode == "重命名" {
+			operationType = "批量重命名/合并标签"
+		}
 		payload := normalizePromptEvaluationPayloadObject(promptEvaluationPayloadWithCases(decodePayloadObject(asset.Payload), promptEvaluationPayloadCasesFromCaseRows(allCases)))
 		payload["最近批量用例操作"] = map[string]any{
-			"operation_type": "批量" + mode + "标签",
+			"operation_type": operationType,
 			"changed_count":  len(changed),
 			"skipped_count":  skippedCount,
 			"tags":           targetTags,
+			"source_tag":     sourceTag,
+			"target_tag":     targetTag,
 			"created_at":     time.Now().Format(time.RFC3339),
 		}
 		payloadBytes := mustJSONBytes(payload)
@@ -1918,14 +1945,23 @@ func (h *Handler) BulkUpdatePromptEvaluationCaseTags(w http.ResponseWriter, r *h
 		"status":   strings.TrimSpace(req.Status),
 		"limit":    limit,
 	}
+	if mode == "重命名" {
+		filterPayload["tag"] = sourceTag
+	}
 	inputPayload := map[string]any{
-		"mode": mode,
-		"tags": targetTags,
+		"mode":       mode,
+		"tags":       targetTags,
+		"source_tag": sourceTag,
+		"target_tag": targetTag,
+	}
+	operationType := "批量" + mode + "标签"
+	if mode == "重命名" {
+		operationType = "批量重命名/合并标签"
 	}
 	operation, err := qtx.CreatePromptEvaluationCaseOperation(r.Context(), db.CreatePromptEvaluationCaseOperationParams{
 		WorkspaceID:   workspaceUUID,
 		AssetID:       asset.ID,
-		OperationType: "批量" + mode + "标签",
+		OperationType: operationType,
 		Filter:        mustJSONBytes(filterPayload),
 		Input:         mustJSONBytes(inputPayload),
 		ChangedCount:  int32(len(changed)),
@@ -2932,7 +2968,18 @@ func samePromptEvaluationStringList(a []string, b []string) bool {
 	return true
 }
 
-func bulkPromptEvaluationCaseTags(current []string, target []string, mode string) []string {
+func bulkPromptEvaluationCaseTags(current []string, target []string, mode string, sourceTag string, targetTag string) []string {
+	if mode == "重命名" {
+		next := make([]string, 0, len(current))
+		for _, tag := range current {
+			if tag == sourceTag {
+				next = append(next, targetTag)
+				continue
+			}
+			next = append(next, tag)
+		}
+		return compactStrings(next)
+	}
 	if mode == "移除" {
 		removing := map[string]bool{}
 		for _, tag := range target {

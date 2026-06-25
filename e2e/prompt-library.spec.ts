@@ -1543,17 +1543,22 @@ test.describe("训练与评估工作台", () => {
     await expect(governance.getByTestId(`dataset-case-operation-audit-${dataset.id}`)).toContainText("批量移除标签", { timeout: 15000 });
     await governance.getByLabel("选择要整理的数据集标签").selectOption("领导演示");
     await governance.getByLabel("输入整理后的数据集标签").fill("领导展示");
-    const renameCaseResponse = page.waitForResponse(
-      (response) => response.request().method() === "PUT" && response.url().includes("/api/prompt-evaluation-cases/"),
-      { timeout: 15000 },
-    );
-    const renameAssetResponse = page.waitForResponse(
-      (response) => response.request().method() === "PUT" && response.url().includes(`/api/prompt-evaluation-assets/${dataset.id}`),
+    const renameTagResponse = page.waitForResponse(
+      (response) => response.request().method() === "POST" && response.url().includes("/api/prompt-evaluation-cases/bulk-tags"),
       { timeout: 15000 },
     );
     await governance.getByTestId(`dataset-case-rename-tag-${dataset.id}`).click();
-    expect((await renameCaseResponse).status()).toBe(200);
-    expect((await renameAssetResponse).status()).toBe(200);
+    expect((await renameTagResponse).status()).toBe(200);
+    await expect(governance.getByTestId(`dataset-case-operation-audit-${dataset.id}`)).toContainText("批量重命名/合并标签", { timeout: 15000 });
+    await expect
+      .poll(async () => {
+        const operations = await api.listPromptEvaluationCaseOperations(dataset.id, { limit: 5 });
+        return operations.items[0] ?? null;
+      }, { timeout: 15000 })
+      .toMatchObject({
+        operation_type: "批量重命名/合并标签",
+        changed_count: 1,
+      });
     await expect
       .poll(async () => {
         const items = await api.listPromptEvaluationCases({ asset_id: dataset.id });

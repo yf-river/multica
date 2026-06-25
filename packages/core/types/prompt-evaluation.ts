@@ -684,8 +684,10 @@ export interface BulkUpdatePromptEvaluationCaseTagsRequest {
   tag?: string;
   keyword?: string;
   status?: PromptEvaluationAssetStatus;
-  tags: string[];
-  mode: "追加" | "移除";
+  tags?: string[];
+  source_tag?: string;
+  target_tag?: string;
+  mode: "追加" | "移除" | "重命名";
   limit?: number;
 }
 
