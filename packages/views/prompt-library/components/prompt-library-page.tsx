@@ -1309,7 +1309,7 @@ export function PromptLibraryPage({
                 creatingCaseAssetId={createCaseMut.isPending ? createCaseMut.variables?.asset_id ?? null : null}
                 caseDrafts={caseDrafts}
                 onCaseDraftsChange={setCaseDrafts}
-                onUpdateCase={(caseId, data) => updateCaseMut.mutate({ caseId, data })}
+                onUpdateCase={(caseId, data) => updateCaseMut.mutateAsync({ caseId, data })}
                 updatingCaseId={updateCaseMut.isPending ? updateCaseMut.variables?.caseId ?? null : null}
                 onDeleteCase={(caseId) => deleteCaseMut.mutate(caseId)}
                 deletingCaseId={deleteCaseMut.isPending ? deleteCaseMut.variables ?? null : null}
@@ -1375,7 +1375,7 @@ export function PromptLibraryPage({
               creatingCaseAssetId={createCaseMut.isPending ? createCaseMut.variables?.asset_id ?? null : null}
               caseDrafts={caseDrafts}
               onCaseDraftsChange={setCaseDrafts}
-              onUpdateCase={(caseId, data) => updateCaseMut.mutate({ caseId, data })}
+              onUpdateCase={(caseId, data) => updateCaseMut.mutateAsync({ caseId, data })}
               updatingCaseId={updateCaseMut.isPending ? updateCaseMut.variables?.caseId ?? null : null}
               onDeleteCase={(caseId) => deleteCaseMut.mutate(caseId)}
               deletingCaseId={deleteCaseMut.isPending ? deleteCaseMut.variables ?? null : null}
@@ -1877,7 +1877,7 @@ function WorkbenchPanel({
   creatingCaseAssetId: string | null;
   caseDrafts: Record<string, ManualCaseDraft>;
   onCaseDraftsChange: Dispatch<SetStateAction<Record<string, ManualCaseDraft>>>;
-  onUpdateCase: (caseId: string, data: UpdatePromptEvaluationCaseRequest) => void;
+  onUpdateCase: (caseId: string, data: UpdatePromptEvaluationCaseRequest) => Promise<unknown>;
   updatingCaseId: string | null;
   onDeleteCase: (caseId: string) => void;
   deletingCaseId: string | null;
@@ -4727,6 +4727,8 @@ function ManualCasePanel({
   const [editDrafts, setEditDrafts] = useState<Record<string, ManualCaseDraft>>({});
   const [tagEditingCaseId, setTagEditingCaseId] = useState<string | null>(null);
   const [tagEditDrafts, setTagEditDrafts] = useState<Record<string, string>>({});
+  const [bulkTagsText, setBulkTagsText] = useState("");
+  const [bulkTagMode, setBulkTagMode] = useState<"追加" | "移除" | null>(null);
   const caseTags = useMemo(() => uniqueSortedStrings(cases.flatMap((item) => item.tags.map((value) => String(value)).filter(Boolean))), [cases]);
   const tagStats = useMemo(() => buildDatasetCaseTagStats(cases), [cases]);
   const filteredCases = useMemo(() => {
@@ -4769,6 +4771,35 @@ function ManualCasePanel({
     );
     toast.success(`数据集采样已导出：${filteredCases.length} 条`);
   };
+  const updateFilteredCaseTags = async (mode: "追加" | "移除") => {
+    const targetTags = splitList(bulkTagsText);
+    if (targetTags.length === 0) {
+      toast.error("请先输入要批量处理的标签");
+      return;
+    }
+    if (filteredCases.length === 0) {
+      toast.error("当前筛选没有命中用例");
+      return;
+    }
+    setBulkTagMode(mode);
+    try {
+      let changedCount = 0;
+      for (const item of filteredCases) {
+        const currentTags = item.tags.map((value) => String(value)).filter(Boolean);
+        const nextTags = mode === "追加"
+          ? uniqueSortedStrings([...currentTags, ...targetTags])
+          : currentTags.filter((tag) => !targetTags.includes(tag));
+        if (sameStringList(currentTags, nextTags)) continue;
+        await onUpdateCase(item.id, buildCaseTagUpdateRequest(asset, item, nextTags.join(", ")));
+        changedCount += 1;
+      }
+      toast.success(`已${mode} ${changedCount} 条用例标签`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "批量标签处理失败");
+    } finally {
+      setBulkTagMode(null);
+    }
+  };
   return (
     <div data-testid={`prompt-evaluation-cases-${asset.id}`} className="md:col-span-2 grid gap-2 rounded-md border border-border/70 bg-muted/10 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -4790,6 +4821,10 @@ function ManualCasePanel({
           keywordFilter={caseKeywordFilter}
           onKeywordFilterChange={setCaseKeywordFilter}
           tagStats={tagStats}
+          bulkTagsText={bulkTagsText}
+          onBulkTagsTextChange={setBulkTagsText}
+          bulkTagMode={bulkTagMode}
+          onBulkTagUpdate={updateFilteredCaseTags}
           samples={sampleCases}
           onDownloadSample={downloadDatasetSample}
         />
@@ -4855,7 +4890,7 @@ function ManualCasePanel({
                       size="sm"
                       className="h-9 shrink-0"
                       onClick={() => {
-                        onUpdateCase(item.id, buildCaseTagUpdateRequest(asset, item, tagEditDrafts[item.id] ?? ""));
+                        void onUpdateCase(item.id, buildCaseTagUpdateRequest(asset, item, tagEditDrafts[item.id] ?? ""));
                         setTagEditingCaseId(null);
                       }}
                       disabled={updatingCaseId === item.id}
@@ -4896,7 +4931,7 @@ function ManualCasePanel({
                         size="sm"
                         className="h-10 shrink-0"
                         onClick={() => {
-                          onUpdateCase(item.id, buildManualCaseUpdateRequest(asset, item, editDraft));
+                          void onUpdateCase(item.id, buildManualCaseUpdateRequest(asset, item, editDraft));
                           setEditingCaseId(null);
                         }}
                         disabled={updatingCaseId === item.id || !editDraft.caseName.trim()}
@@ -4962,6 +4997,10 @@ function DatasetCaseGovernanceBar({
   keywordFilter,
   onKeywordFilterChange,
   tagStats,
+  bulkTagsText,
+  onBulkTagsTextChange,
+  bulkTagMode,
+  onBulkTagUpdate,
   samples,
   onDownloadSample,
 }: {
@@ -4976,6 +5015,10 @@ function DatasetCaseGovernanceBar({
   keywordFilter: string;
   onKeywordFilterChange: (value: string) => void;
   tagStats: Array<{ tag: string; count: number }>;
+  bulkTagsText: string;
+  onBulkTagsTextChange: (value: string) => void;
+  bulkTagMode: "追加" | "移除" | null;
+  onBulkTagUpdate: (mode: "追加" | "移除") => void;
   samples: PromptEvaluationStructuredCase[];
   onDownloadSample: () => void;
 }) {
@@ -5045,6 +5088,38 @@ function DatasetCaseGovernanceBar({
           ))}
         </div>
       )}
+      <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed bg-muted/10 px-2 py-2" data-testid={`dataset-case-bulk-tags-${assetId}`}>
+        <span className="text-[11px] font-medium text-muted-foreground">批量标签</span>
+        <Input
+          value={bulkTagsText}
+          onChange={(event) => onBulkTagsTextChange(event.target.value)}
+          placeholder="输入标签，用逗号分隔"
+          aria-label="批量处理数据集用例标签"
+          className="h-8 min-w-56 flex-1 text-xs"
+        />
+        <Button
+          size="sm"
+          variant="secondary"
+          className="h-8"
+          onClick={() => onBulkTagUpdate("追加")}
+          disabled={visibleCount === 0 || bulkTagMode !== null || bulkTagsText.trim() === ""}
+          data-testid={`dataset-case-bulk-add-tags-${assetId}`}
+        >
+          {bulkTagMode === "追加" ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+          追加到当前筛选
+        </Button>
+        <Button
+          size="sm"
+          variant="outline"
+          className="h-8"
+          onClick={() => onBulkTagUpdate("移除")}
+          disabled={visibleCount === 0 || bulkTagMode !== null || bulkTagsText.trim() === ""}
+          data-testid={`dataset-case-bulk-remove-tags-${assetId}`}
+        >
+          {bulkTagMode === "移除" ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
+          从当前筛选移除
+        </Button>
+      </div>
       <div className="grid gap-1.5" data-testid={`dataset-case-sampling-preview-${assetId}`}>
         <div className="text-[11px] font-medium text-muted-foreground">采样预览</div>
         {samples.length === 0 ? (
@@ -5099,6 +5174,11 @@ function buildDatasetCaseTagStats(cases: PromptEvaluationStructuredCase[]) {
   return [...counts.entries()]
     .map(([tag, count]) => ({ tag, count }))
     .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, "zh-Hans"));
+}
+
+function sameStringList(a: string[], b: string[]) {
+  if (a.length !== b.length) return false;
+  return a.every((item, index) => item === b[index]);
 }
 
 function ExperimentDimensionPanel({ asset, dimensions }: { asset: PromptEvaluationAsset; dimensions: PromptEvaluationExperimentDimension[] }) {

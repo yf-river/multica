@@ -1419,6 +1419,20 @@ test.describe("训练与评估工作台", () => {
     await governance.getByLabel("筛选数据集用例关键词").fill("登录");
     await expect(governance.getByTestId(`dataset-case-filter-count-${dataset.id}`)).toContainText("命中 1 / 2");
     await expect(governance.getByTestId(`dataset-case-sampling-preview-${dataset.id}`)).toContainText("版本一登录用例");
+    await governance.getByLabel("批量处理数据集用例标签").fill("批量验收");
+    const bulkAddResponse = page.waitForResponse(
+      (response) => response.request().method() === "PUT" && response.url().includes("/api/prompt-evaluation-cases/"),
+      { timeout: 15000 },
+    );
+    await governance.getByTestId(`dataset-case-bulk-add-tags-${dataset.id}`).click();
+    expect((await bulkAddResponse).status()).toBe(200);
+    await expect
+      .poll(async () => {
+        const items = await api.listPromptEvaluationCases({ asset_id: dataset.id });
+        return items.find((item) => item.case_name === "版本一登录用例")?.tags.includes("批量验收") ?? false;
+      }, { timeout: 15000 })
+      .toBe(true);
+    await expect(governance.getByTestId(`dataset-case-tag-stats-${dataset.id}`)).toContainText("批量验收 1");
     const datasetSampleDownload = page.waitForEvent("download");
     await governance.getByTestId(`download-dataset-sample-${dataset.id}`).click();
     const downloadedDatasetSample = await datasetSampleDownload;
@@ -1434,9 +1448,21 @@ test.describe("训练与评估工作台", () => {
       expect.objectContaining({
         名称: "版本一登录用例",
         来源: "资产载荷",
-        标签: expect.arrayContaining(["领导演示"]),
+        标签: expect.arrayContaining(["领导演示", "批量验收"]),
       }),
     ]);
+    const bulkRemoveResponse = page.waitForResponse(
+      (response) => response.request().method() === "PUT" && response.url().includes("/api/prompt-evaluation-cases/"),
+      { timeout: 15000 },
+    );
+    await governance.getByTestId(`dataset-case-bulk-remove-tags-${dataset.id}`).click();
+    expect((await bulkRemoveResponse).status()).toBe(200);
+    await expect
+      .poll(async () => {
+        const items = await api.listPromptEvaluationCases({ asset_id: dataset.id });
+        return items.find((item) => item.case_name === "版本一登录用例")?.tags.includes("批量验收") ?? true;
+      }, { timeout: 15000 })
+      .toBe(false);
     await governance.getByLabel("筛选数据集用例关键词").fill("");
     await governance.getByRole("button", { name: "全部" }).click();
     await governance.getByLabel("筛选数据集用例标签").selectOption("全部");
