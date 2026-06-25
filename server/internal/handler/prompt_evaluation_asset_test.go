@@ -909,6 +909,21 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if filtered.Total != 1 || len(filtered.Items) != 1 || filtered.Items[0].ID != created.ID {
 		t.Fatalf("filtered cases = %+v", filtered)
 	}
+	tagSummaryW := httptest.NewRecorder()
+	testHandler.ListPromptEvaluationCaseTagSummaries(tagSummaryW, newRequest(http.MethodGet, "/api/prompt-evaluation-cases/tag-summaries?asset_id="+asset.ID+"&source=manual&keyword=%E5%8F%AF%E8%A7%82%E6%B5%8B&limit=5", nil))
+	if tagSummaryW.Code != http.StatusOK {
+		t.Fatalf("tag summary status = %d, body = %s", tagSummaryW.Code, tagSummaryW.Body.String())
+	}
+	var tagSummary struct {
+		Items []PromptEvaluationCaseTagSummaryResponse `json:"items"`
+		Total int                                      `json:"total"`
+	}
+	if err := json.Unmarshal(tagSummaryW.Body.Bytes(), &tagSummary); err != nil {
+		t.Fatalf("decode tag summary: %v", err)
+	}
+	if tagSummary.Total == 0 || !promptEvaluationTagSummaryContains(tagSummary.Items, "user-center", 1) {
+		t.Fatalf("tag summary = %+v", tagSummary)
+	}
 	invalidLimitW := httptest.NewRecorder()
 	testHandler.ListPromptEvaluationCases(invalidLimitW, newRequest(http.MethodGet, "/api/prompt-evaluation-cases?asset_id="+asset.ID+"&limit=9999", nil))
 	if invalidLimitW.Code != http.StatusBadRequest {
@@ -3116,4 +3131,13 @@ func containsAll(value string, needles []string) bool {
 		}
 	}
 	return true
+}
+
+func promptEvaluationTagSummaryContains(items []PromptEvaluationCaseTagSummaryResponse, tag string, count int32) bool {
+	for _, item := range items {
+		if item.Tag == tag && item.CaseCount == count {
+			return true
+		}
+	}
+	return false
 }

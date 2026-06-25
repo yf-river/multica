@@ -150,6 +150,7 @@ import type {
   ListPromptEvaluationAssetsParams,
   ListPromptEvaluationRunsParams,
   ListPromptEvaluationCasesParams,
+  ListPromptEvaluationCaseTagSummariesParams,
   ListPromptEvaluationCaseOperationsParams,
   ListPromptEvaluationExperimentDimensionsParams,
   ListPromptEvaluationDimensionScoresParams,
@@ -164,6 +165,7 @@ import type {
   ListPromptEvaluationTrialsResponse,
   ListPromptEvaluationEvidenceSnapshotsResponse,
   ListPromptEvaluationCasesResponse,
+  ListPromptEvaluationCaseTagSummariesResponse,
   ListPromptEvaluationCaseOperationsResponse,
   ListPromptEvaluationExperimentDimensionsResponse,
   ListPromptEvaluationDimensionScoresResponse,
@@ -238,6 +240,7 @@ import {
   EMPTY_PROMPT_EVALUATION_RUNTIME_READINESS,
   EMPTY_PROMPT_EVALUATION_CASE,
   EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_CASE_TAG_SUMMARY_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_CASE_OPERATION_LIST_RESPONSE,
   EMPTY_BULK_PROMPT_EVALUATION_CASE_TAGS_RESPONSE,
   EMPTY_PROMPT_EVALUATION_EXPERIMENT_DIMENSION_LIST_RESPONSE,
@@ -281,6 +284,7 @@ import {
   PromptEvaluationRuntimeReadinessSchema,
   PromptEvaluationCaseSchema,
   PromptEvaluationCaseListResponseSchema,
+  PromptEvaluationCaseTagSummaryListResponseSchema,
   PromptEvaluationCaseOperationListResponseSchema,
   BulkUpdatePromptEvaluationCaseTagsResponseSchema,
   PromptEvaluationExperimentDimensionListResponseSchema,
@@ -1988,6 +1992,20 @@ export class ApiClient {
     return parseWithFallback(raw, PromptEvaluationCaseListResponseSchema, EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE, {
       endpoint: "GET /api/prompt-evaluation-cases",
     }) as ListPromptEvaluationCasesResponse;
+  }
+
+  async listPromptEvaluationCaseTagSummaries(params?: ListPromptEvaluationCaseTagSummariesParams): Promise<ListPromptEvaluationCaseTagSummariesResponse> {
+    const search = new URLSearchParams();
+    if (params?.asset_id) search.set("asset_id", params.asset_id);
+    if (params?.status) search.set("status", params.status);
+    if (params?.source) search.set("source", params.source);
+    if (params?.keyword) search.set("keyword", params.keyword);
+    if (params?.limit) search.set("limit", String(params.limit));
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-cases/tag-summaries${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationCaseTagSummaryListResponseSchema, EMPTY_PROMPT_EVALUATION_CASE_TAG_SUMMARY_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-cases/tag-summaries",
+    }) as ListPromptEvaluationCaseTagSummariesResponse;
   }
 
   async listPromptEvaluationCaseOperations(id: string, params?: ListPromptEvaluationCaseOperationsParams): Promise<ListPromptEvaluationCaseOperationsResponse> {

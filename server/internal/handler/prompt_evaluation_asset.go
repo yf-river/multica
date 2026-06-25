@@ -563,6 +563,11 @@ type BulkPromptEvaluationCaseTagsResponse struct {
 	SkippedCount int32                                 `json:"skipped_count"`
 }
 
+type PromptEvaluationCaseTagSummaryResponse struct {
+	Tag       string `json:"tag"`
+	CaseCount int32  `json:"case_count"`
+}
+
 type promptEvaluationCaseCursor struct {
 	Offset        int32  `json:"offset"`
 	SortBy        string `json:"sort_by"`
@@ -1817,6 +1822,74 @@ func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Reque
 		"sort_by":        sortByValue,
 		"sort_direction": sortDirectionValue,
 	})
+}
+
+func (h *Handler) ListPromptEvaluationCaseTagSummaries(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	var assetID pgtype.UUID
+	if value := r.URL.Query().Get("asset_id"); value != "" {
+		parsed, ok := parseUUIDOrBadRequest(w, value, "asset_id")
+		if !ok {
+			return
+		}
+		assetID = parsed
+	}
+	var status pgtype.Text
+	if value := r.URL.Query().Get("status"); value != "" {
+		if !validPromptLibraryStatus(value) {
+			writeError(w, http.StatusBadRequest, "status must be 启用 or 归档")
+			return
+		}
+		status = pgtype.Text{String: value, Valid: true}
+	}
+	var source pgtype.Text
+	if value := strings.TrimSpace(r.URL.Query().Get("source")); value != "" {
+		if value != "manual" && value != "trace" && value != "payload" {
+			writeError(w, http.StatusBadRequest, "source must be manual, trace, or payload")
+			return
+		}
+		source = pgtype.Text{String: value, Valid: true}
+	}
+	var keyword pgtype.Text
+	if value := strings.TrimSpace(r.URL.Query().Get("keyword")); value != "" {
+		keyword = pgtype.Text{String: value, Valid: true}
+	}
+	limit := pgtype.Int4{Int32: 50, Valid: true}
+	if value := strings.TrimSpace(r.URL.Query().Get("limit")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 200 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 200")
+			return
+		}
+		limit = pgtype.Int4{Int32: int32(parsed), Valid: true}
+	}
+	rows, err := h.Queries.ListPromptEvaluationCaseTagSummaries(r.Context(), db.ListPromptEvaluationCaseTagSummariesParams{
+		WorkspaceID: workspaceUUID,
+		AssetID:     assetID,
+		Status:      status,
+		Source:      source,
+		Keyword:     keyword,
+		Limit:       limit,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation case tag summaries")
+		return
+	}
+	resp := make([]PromptEvaluationCaseTagSummaryResponse, 0, len(rows))
+	for _, item := range rows {
+		if !item.Tag.Valid || strings.TrimSpace(item.Tag.String) == "" {
+			continue
+		}
+		resp = append(resp, PromptEvaluationCaseTagSummaryResponse{
+			Tag:       item.Tag.String,
+			CaseCount: item.CaseCount,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
 }
 
 func (h *Handler) ListPromptEvaluationCaseOperations(w http.ResponseWriter, r *http.Request) {

@@ -138,6 +138,30 @@ WHERE workspace_id = $1
     OR tags::text ILIKE '%' || sqlc.narg('keyword') || '%'
   );
 
+-- name: ListPromptEvaluationCaseTagSummaries :many
+SELECT tag, count(*)::int AS case_count
+FROM prompt_evaluation_case c
+CROSS JOIN LATERAL jsonb_array_elements_text(c.tags) AS tag
+WHERE c.workspace_id = $1
+  AND (sqlc.narg('asset_id')::uuid IS NULL OR c.asset_id = sqlc.narg('asset_id'))
+  AND (sqlc.narg('status')::text IS NULL OR c.status = sqlc.narg('status'))
+  AND (sqlc.narg('source')::text IS NULL OR c.source = sqlc.narg('source'))
+  AND btrim(tag) <> ''
+  AND (
+    sqlc.narg('keyword')::text IS NULL
+    OR c.case_name ILIKE '%' || sqlc.narg('keyword') || '%'
+    OR c.status ILIKE '%' || sqlc.narg('keyword') || '%'
+    OR c.source ILIKE '%' || sqlc.narg('keyword') || '%'
+    OR c.variables::text ILIKE '%' || sqlc.narg('keyword') || '%'
+    OR c.expected_contains::text ILIKE '%' || sqlc.narg('keyword') || '%'
+    OR c.input::text ILIKE '%' || sqlc.narg('keyword') || '%'
+    OR c.expected::text ILIKE '%' || sqlc.narg('keyword') || '%'
+    OR c.tags::text ILIKE '%' || sqlc.narg('keyword') || '%'
+  )
+GROUP BY tag
+ORDER BY case_count DESC, tag ASC
+LIMIT COALESCE(sqlc.narg('limit')::int, 50);
+
 -- name: GetPromptEvaluationCaseInWorkspace :one
 SELECT * FROM prompt_evaluation_case
 WHERE id = $1 AND workspace_id = $2;

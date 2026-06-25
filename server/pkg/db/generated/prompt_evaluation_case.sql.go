@@ -223,6 +223,72 @@ func (q *Queries) GetPromptEvaluationCaseInWorkspace(ctx context.Context, arg Ge
 	return i, err
 }
 
+const listPromptEvaluationCaseTagSummaries = `-- name: ListPromptEvaluationCaseTagSummaries :many
+SELECT tag, count(*)::int AS case_count
+FROM prompt_evaluation_case c
+CROSS JOIN LATERAL jsonb_array_elements_text(c.tags) AS tag
+WHERE c.workspace_id = $1
+  AND ($2::uuid IS NULL OR c.asset_id = $2)
+  AND ($3::text IS NULL OR c.status = $3)
+  AND ($4::text IS NULL OR c.source = $4)
+  AND btrim(tag) <> ''
+  AND (
+    $5::text IS NULL
+    OR c.case_name ILIKE '%' || $5 || '%'
+    OR c.status ILIKE '%' || $5 || '%'
+    OR c.source ILIKE '%' || $5 || '%'
+    OR c.variables::text ILIKE '%' || $5 || '%'
+    OR c.expected_contains::text ILIKE '%' || $5 || '%'
+    OR c.input::text ILIKE '%' || $5 || '%'
+    OR c.expected::text ILIKE '%' || $5 || '%'
+    OR c.tags::text ILIKE '%' || $5 || '%'
+  )
+GROUP BY tag
+ORDER BY case_count DESC, tag ASC
+LIMIT COALESCE($6::int, 50)
+`
+
+type ListPromptEvaluationCaseTagSummariesParams struct {
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	AssetID     pgtype.UUID `json:"asset_id"`
+	Status      pgtype.Text `json:"status"`
+	Source      pgtype.Text `json:"source"`
+	Keyword     pgtype.Text `json:"keyword"`
+	Limit       pgtype.Int4 `json:"limit"`
+}
+
+type ListPromptEvaluationCaseTagSummariesRow struct {
+	Tag       pgtype.Text `json:"tag"`
+	CaseCount int32       `json:"case_count"`
+}
+
+func (q *Queries) ListPromptEvaluationCaseTagSummaries(ctx context.Context, arg ListPromptEvaluationCaseTagSummariesParams) ([]ListPromptEvaluationCaseTagSummariesRow, error) {
+	rows, err := q.db.Query(ctx, listPromptEvaluationCaseTagSummaries,
+		arg.WorkspaceID,
+		arg.AssetID,
+		arg.Status,
+		arg.Source,
+		arg.Keyword,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPromptEvaluationCaseTagSummariesRow{}
+	for rows.Next() {
+		var i ListPromptEvaluationCaseTagSummariesRow
+		if err := rows.Scan(&i.Tag, &i.CaseCount); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPromptEvaluationCases = `-- name: ListPromptEvaluationCases :many
 SELECT id, workspace_id, asset_id, prompt_id, case_index, case_name, variables, expected_contains, input, expected, tags, status, source, created_by, created_at, updated_at FROM prompt_evaluation_case
 WHERE workspace_id = $1

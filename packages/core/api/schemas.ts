@@ -14,6 +14,7 @@ import type {
   ListPromptEvaluationDatasetVersionsResponse,
   ListPromptEvaluationExperimentDimensionsResponse,
   ListPromptEvaluationOptimizationCandidatesResponse,
+  ListPromptEvaluationCaseTagSummariesResponse,
   ListPromptEvaluationCaseOperationsResponse,
   ListPromptLibraryItemsResponse,
   ListPromptLibraryVersionsResponse,
@@ -1317,6 +1318,16 @@ export const PromptEvaluationCaseListResponseSchema = z.object({
   sort_direction: z.enum(["asc", "desc"]).default("asc"),
 }).loose();
 
+export const PromptEvaluationCaseTagSummarySchema = z.object({
+  tag: z.string().default(""),
+  case_count: z.number().default(0),
+}).loose();
+
+export const PromptEvaluationCaseTagSummaryListResponseSchema = z.object({
+  items: z.array(PromptEvaluationCaseTagSummarySchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
 export const PromptEvaluationCaseOperationSchema = z.object({
   id: z.string(),
   workspace_id: z.string(),
@@ -1636,6 +1647,11 @@ export const EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE = {
   next_cursor: null,
   sort_by: "case_index",
   sort_direction: "asc",
+};
+
+export const EMPTY_PROMPT_EVALUATION_CASE_TAG_SUMMARY_LIST_RESPONSE: ListPromptEvaluationCaseTagSummariesResponse = {
+  items: [],
+  total: 0,
 };
 
 export const EMPTY_PROMPT_EVALUATION_CASE_OPERATION: PromptEvaluationCaseOperation = {

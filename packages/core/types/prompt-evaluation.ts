@@ -562,6 +562,16 @@ export interface ListPromptEvaluationCasesResponse {
   sort_direction: "asc" | "desc";
 }
 
+export interface PromptEvaluationCaseTagSummary {
+  tag: string;
+  case_count: number;
+}
+
+export interface ListPromptEvaluationCaseTagSummariesResponse {
+  items: PromptEvaluationCaseTagSummary[];
+  total: number;
+}
+
 export interface ListPromptEvaluationCaseOperationsResponse {
   items: PromptEvaluationCaseOperation[];
   total: number;
@@ -630,6 +640,14 @@ export interface ListPromptEvaluationCasesParams {
 }
 
 export interface ListPromptEvaluationCaseOperationsParams {
+  limit?: number;
+}
+
+export interface ListPromptEvaluationCaseTagSummariesParams {
+  asset_id?: string;
+  status?: PromptEvaluationAssetStatus;
+  source?: "manual" | "trace" | "payload";
+  keyword?: string;
   limit?: number;
 }
 

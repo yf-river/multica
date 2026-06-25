@@ -1458,11 +1458,21 @@ test.describe("训练与评估工作台", () => {
         response.url().includes("sort_direction=asc"),
       { timeout: 15000 },
     );
+    const serverTagSummaryResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        response.url().includes("/api/prompt-evaluation-cases/tag-summaries") &&
+        response.url().includes("source=payload") &&
+        response.url().includes("keyword=%E7%99%BB%E5%BD%95"),
+      { timeout: 15000 },
+    );
     await governance.getByTestId(`dataset-case-server-search-button-${dataset.id}`).click();
     expect((await serverSearchResponse).status()).toBe(200);
+    expect((await serverTagSummaryResponse).status()).toBe(200);
     await expect(governance.getByTestId(`dataset-case-server-search-result-${dataset.id}`)).toContainText("已加载 1 / 1 条", { timeout: 15000 });
     await expect(governance.getByTestId(`dataset-case-server-search-result-${dataset.id}`)).toContainText("case_index/asc");
     await expect(governance.getByTestId(`dataset-case-server-search-result-${dataset.id}`)).toContainText("版本一登录用例");
+    await expect(governance.getByTestId(`dataset-case-server-tag-stats-${dataset.id}`)).toContainText("领导演示 1");
     await governance.getByLabel("数据集筛选方案名称").fill("登录领导样本");
     const saveFilterResponse = page.waitForResponse(
       (response) => response.request().method() === "PUT" && response.url().includes(`/api/prompt-evaluation-assets/${dataset.id}`),

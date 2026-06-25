@@ -28,6 +28,7 @@ import type {
   PromptEvaluationOptimizationCandidate,
   PromptEvaluationStructuredCase,
   PromptEvaluationCaseOperation,
+  PromptEvaluationCaseTagSummary,
   PromptEvaluationCaseSortBy,
   PromptEvaluationRun,
   PromptEvaluationRunEvidence,
@@ -4717,6 +4718,7 @@ type DatasetServerCaseSearchResult = {
   nextCursor: string | null;
   sortBy: PromptEvaluationCaseSortBy;
   sortDirection: "asc" | "desc";
+  tagStats: PromptEvaluationCaseTagSummary[];
   executedAt: string;
 };
 
@@ -4815,16 +4817,26 @@ function ManualCasePanel({
   const runServerCaseSearch = async (cursor?: string | null) => {
     setServerSearchLoading(true);
     try {
-      const result = await api.listPromptEvaluationCases({
-        asset_id: asset.id,
-        source: datasetCaseSourceFilterToApiSource(caseSourceFilter),
-        tag: caseTagFilter === "全部" ? undefined : caseTagFilter,
-        keyword: caseKeywordFilter.trim() || undefined,
-        limit: 20,
-        cursor: cursor || undefined,
-        sort_by: serverCaseSortBy,
-        sort_direction: serverCaseSortDirection,
-      });
+      const source = datasetCaseSourceFilterToApiSource(caseSourceFilter);
+      const keyword = caseKeywordFilter.trim() || undefined;
+      const [result, tagSummaryResult] = await Promise.all([
+        api.listPromptEvaluationCases({
+          asset_id: asset.id,
+          source,
+          tag: caseTagFilter === "全部" ? undefined : caseTagFilter,
+          keyword,
+          limit: 20,
+          cursor: cursor || undefined,
+          sort_by: serverCaseSortBy,
+          sort_direction: serverCaseSortDirection,
+        }),
+        api.listPromptEvaluationCaseTagSummaries({
+          asset_id: asset.id,
+          source,
+          keyword,
+          limit: 12,
+        }),
+      ]);
       setServerSearchResult((current) => ({
         items: cursor && current ? [...current.items, ...result.items] : result.items,
         total: result.total,
@@ -4835,6 +4847,7 @@ function ManualCasePanel({
         nextCursor: result.next_cursor,
         sortBy: result.sort_by,
         sortDirection: result.sort_direction,
+        tagStats: tagSummaryResult.items,
         executedAt: new Date().toISOString(),
       }));
       toast.success(cursor ? `已追加 ${result.items.length} 条服务端样本` : `服务端检索返回 ${result.items.length} 条样本`);
@@ -4994,6 +5007,7 @@ function ManualCasePanel({
           keywordFilter={caseKeywordFilter}
           onKeywordFilterChange={setCaseKeywordFilter}
           tagStats={tagStats}
+          serverTagStats={serverSearchResult?.tagStats ?? []}
           caseOperations={caseOperations}
           caseOperationsLoading={caseOperationsLoading}
           onLoadCaseOperations={loadCaseOperationHistory}
@@ -5193,6 +5207,7 @@ function DatasetCaseGovernanceBar({
   keywordFilter,
   onKeywordFilterChange,
   tagStats,
+  serverTagStats,
   caseOperations,
   caseOperationsLoading,
   onLoadCaseOperations,
@@ -5234,6 +5249,7 @@ function DatasetCaseGovernanceBar({
   keywordFilter: string;
   onKeywordFilterChange: (value: string) => void;
   tagStats: Array<{ tag: string; count: number }>;
+  serverTagStats: PromptEvaluationCaseTagSummary[];
   caseOperations: PromptEvaluationCaseOperation[];
   caseOperationsLoading: boolean;
   onLoadCaseOperations: () => void;
@@ -5326,6 +5342,23 @@ function DatasetCaseGovernanceBar({
               onClick={() => onTagFilterChange(item.tag)}
             >
               {item.tag} {item.count}
+            </button>
+          ))}
+        </div>
+      )}
+      {serverTagStats.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5" data-testid={`dataset-case-server-tag-stats-${assetId}`}>
+          <span className="mr-1 text-[11px] font-medium text-muted-foreground">服务端标签统计</span>
+          {serverTagStats.slice(0, 8).map((item) => (
+            <button
+              key={item.tag}
+              type="button"
+              className={`rounded-md border px-2 py-1 text-[11px] ${
+                tagFilter === item.tag ? "border-foreground bg-foreground text-background" : "bg-background text-muted-foreground hover:text-foreground"
+              }`}
+              onClick={() => onTagFilterChange(item.tag)}
+            >
+              {item.tag} {item.case_count}
             </button>
           ))}
         </div>

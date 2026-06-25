@@ -789,6 +789,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			})
 			r.Route("/api/prompt-evaluation-cases", func(r chi.Router) {
 				r.Get("/", h.ListPromptEvaluationCases)
+				r.Get("/tag-summaries", h.ListPromptEvaluationCaseTagSummaries)
 				r.Post("/", h.CreatePromptEvaluationCase)
 				r.Post("/bulk-tags", h.BulkUpdatePromptEvaluationCaseTags)
 				r.Route("/{id}", func(r chi.Router) {
