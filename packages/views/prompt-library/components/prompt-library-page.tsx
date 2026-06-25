@@ -4722,18 +4722,22 @@ function ManualCasePanel({
   const traceCases = cases.filter((item) => item.source === "trace");
   const [caseSourceFilter, setCaseSourceFilter] = useState<"全部" | "手工" | "trace导入" | "资产载荷">("全部");
   const [caseTagFilter, setCaseTagFilter] = useState("全部");
+  const [caseKeywordFilter, setCaseKeywordFilter] = useState("");
   const [editingCaseId, setEditingCaseId] = useState<string | null>(null);
   const [editDrafts, setEditDrafts] = useState<Record<string, ManualCaseDraft>>({});
   const [tagEditingCaseId, setTagEditingCaseId] = useState<string | null>(null);
   const [tagEditDrafts, setTagEditDrafts] = useState<Record<string, string>>({});
   const caseTags = useMemo(() => uniqueSortedStrings(cases.flatMap((item) => item.tags.map((value) => String(value)).filter(Boolean))), [cases]);
+  const tagStats = useMemo(() => buildDatasetCaseTagStats(cases), [cases]);
   const filteredCases = useMemo(() => {
+    const keyword = caseKeywordFilter.trim().toLowerCase();
     return cases.filter((item) => {
       const sourceOK = caseSourceFilter === "全部" || caseSourceLabel(item.source) === caseSourceFilter;
       const tagOK = caseTagFilter === "全部" || item.tags.some((value) => String(value) === caseTagFilter);
-      return sourceOK && tagOK;
+      const keywordOK = !keyword || datasetCaseSearchText(item).includes(keyword);
+      return sourceOK && tagOK && keywordOK;
     });
-  }, [caseSourceFilter, caseTagFilter, cases]);
+  }, [caseSourceFilter, caseTagFilter, caseKeywordFilter, cases]);
   const sampleCases = filteredCases.slice(0, 3);
   const downloadDatasetSample = () => {
     const payload = {
@@ -4748,6 +4752,7 @@ function ManualCasePanel({
       筛选条件: {
         来源: caseSourceFilter,
         标签: caseTagFilter,
+        关键词: caseKeywordFilter.trim() || "全部",
       },
       统计: {
         总用例数: cases.length,
@@ -4782,6 +4787,9 @@ function ManualCasePanel({
           onSourceFilterChange={setCaseSourceFilter}
           tagFilter={caseTagFilter}
           onTagFilterChange={setCaseTagFilter}
+          keywordFilter={caseKeywordFilter}
+          onKeywordFilterChange={setCaseKeywordFilter}
+          tagStats={tagStats}
           samples={sampleCases}
           onDownloadSample={downloadDatasetSample}
         />
@@ -4951,6 +4959,9 @@ function DatasetCaseGovernanceBar({
   onSourceFilterChange,
   tagFilter,
   onTagFilterChange,
+  keywordFilter,
+  onKeywordFilterChange,
+  tagStats,
   samples,
   onDownloadSample,
 }: {
@@ -4962,6 +4973,9 @@ function DatasetCaseGovernanceBar({
   onSourceFilterChange: (value: "全部" | "手工" | "trace导入" | "资产载荷") => void;
   tagFilter: string;
   onTagFilterChange: (value: string) => void;
+  keywordFilter: string;
+  onKeywordFilterChange: (value: string) => void;
+  tagStats: Array<{ tag: string; count: number }>;
   samples: PromptEvaluationStructuredCase[];
   onDownloadSample: () => void;
 }) {
@@ -5006,7 +5020,31 @@ function DatasetCaseGovernanceBar({
             <option key={tag} value={tag}>{tag}</option>
           ))}
         </select>
+        <Input
+          value={keywordFilter}
+          onChange={(event) => onKeywordFilterChange(event.target.value)}
+          placeholder="搜索名称、变量、期望或标签"
+          aria-label="筛选数据集用例关键词"
+          className="h-8 min-w-60 flex-1 text-xs"
+        />
       </div>
+      {tagStats.length > 0 && (
+        <div className="flex flex-wrap items-center gap-1.5" data-testid={`dataset-case-tag-stats-${assetId}`}>
+          <span className="mr-1 text-[11px] font-medium text-muted-foreground">标签统计</span>
+          {tagStats.slice(0, 8).map((item) => (
+            <button
+              key={item.tag}
+              type="button"
+              className={`rounded-md border px-2 py-1 text-[11px] ${
+                tagFilter === item.tag ? "border-foreground bg-foreground text-background" : "bg-muted/20 text-muted-foreground hover:text-foreground"
+              }`}
+              onClick={() => onTagFilterChange(item.tag)}
+            >
+              {item.tag} {item.count}
+            </button>
+          ))}
+        </div>
+      )}
       <div className="grid gap-1.5" data-testid={`dataset-case-sampling-preview-${assetId}`}>
         <div className="text-[11px] font-medium text-muted-foreground">采样预览</div>
         {samples.length === 0 ? (
@@ -5035,6 +5073,32 @@ function datasetCaseExportRow(item: PromptEvaluationStructuredCase) {
     输入: item.input,
     期望: item.expected,
   };
+}
+
+function datasetCaseSearchText(item: PromptEvaluationStructuredCase) {
+  return [
+    item.case_name,
+    item.status,
+    caseSourceLabel(item.source),
+    ...item.tags.map(String),
+    summarizeStructuredCase(item),
+    summarizeJSONValue(item.variables),
+    summarizeJSONValue(item.expected_contains),
+    summarizeJSONValue(item.input),
+    summarizeJSONValue(item.expected),
+  ].join(" ").toLowerCase();
+}
+
+function buildDatasetCaseTagStats(cases: PromptEvaluationStructuredCase[]) {
+  const counts = new Map<string, number>();
+  for (const item of cases) {
+    for (const tag of item.tags.map((value) => String(value)).filter(Boolean)) {
+      counts.set(tag, (counts.get(tag) ?? 0) + 1);
+    }
+  }
+  return [...counts.entries()]
+    .map(([tag, count]) => ({ tag, count }))
+    .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, "zh-Hans"));
 }
 
 function ExperimentDimensionPanel({ asset, dimensions }: { asset: PromptEvaluationAsset; dimensions: PromptEvaluationExperimentDimension[] }) {
