@@ -1419,6 +1419,33 @@ test.describe("训练与评估工作台", () => {
     await governance.getByLabel("筛选数据集用例关键词").fill("登录");
     await expect(governance.getByTestId(`dataset-case-filter-count-${dataset.id}`)).toContainText("命中 1 / 2");
     await expect(governance.getByTestId(`dataset-case-sampling-preview-${dataset.id}`)).toContainText("版本一登录用例");
+    await governance.getByLabel("数据集筛选方案名称").fill("登录领导样本");
+    const saveFilterResponse = page.waitForResponse(
+      (response) => response.request().method() === "PUT" && response.url().includes(`/api/prompt-evaluation-assets/${dataset.id}`),
+      { timeout: 15000 },
+    );
+    await governance.getByTestId(`dataset-case-save-filter-${dataset.id}`).click();
+    expect((await saveFilterResponse).status()).toBe(200);
+    await expect(governance.getByTestId(`dataset-case-saved-filters-${dataset.id}`)).toContainText("登录领导样本", { timeout: 15000 });
+    await expect
+      .poll(async () => {
+        const assets = await api.listPromptEvaluationAssets({ asset_type: "数据集" });
+        const current = assets.find((item) => item.id === dataset.id);
+        return (current?.payload as Record<string, any> | undefined)?.["数据集筛选方案"]?.[0] ?? null;
+      }, { timeout: 15000 })
+      .toMatchObject({
+        name: "登录领导样本",
+        source_filter: "资产载荷",
+        tag_filter: "领导演示",
+        keyword_filter: "登录",
+      });
+    await governance.getByLabel("筛选数据集用例关键词").fill("");
+    await governance.getByRole("button", { name: "全部" }).click();
+    await governance.getByLabel("筛选数据集用例标签").selectOption("全部");
+    await expect(governance.getByTestId(`dataset-case-filter-count-${dataset.id}`)).toContainText("命中 2 / 2");
+    await governance.locator(`[data-testid^="dataset-case-apply-filter-${dataset.id}-"]`).first().click();
+    await expect(governance.getByTestId(`dataset-case-filter-count-${dataset.id}`)).toContainText("命中 1 / 2");
+    await expect(governance.getByLabel("筛选数据集用例关键词")).toHaveValue("登录");
     await governance.getByLabel("批量处理数据集用例标签").fill("批量验收");
     const bulkAddResponse = page.waitForResponse(
       (response) => response.request().method() === "PUT" && response.url().includes("/api/prompt-evaluation-cases/"),

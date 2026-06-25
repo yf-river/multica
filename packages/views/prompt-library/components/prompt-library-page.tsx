@@ -1300,6 +1300,7 @@ export function PromptLibraryPage({
                 onHideAcceptanceFixtures={() => updateAcceptanceFixtureScope(false)}
                 onCreateAsset={createWorkbenchAsset}
                 onToggleAssetStatus={toggleAssetStatus}
+                onUpdateAsset={(assetId, data) => updateAssetMut.mutateAsync({ id: assetId, data })}
                 onDeleteAsset={deleteAsset}
                 onImportDatasetFromTraces={importDatasetFromTraces}
                 importingTraceDatasetAssetId={importDatasetFromTracesMut.isPending ? importDatasetFromTracesMut.variables ?? null : null}
@@ -1366,6 +1367,7 @@ export function PromptLibraryPage({
               onHideAcceptanceFixtures={() => updateAcceptanceFixtureScope(false)}
               onCreateAsset={createWorkbenchAsset}
               onToggleAssetStatus={toggleAssetStatus}
+              onUpdateAsset={(assetId, data) => updateAssetMut.mutateAsync({ id: assetId, data })}
               onDeleteAsset={deleteAsset}
               onImportDatasetFromTraces={importDatasetFromTraces}
               importingTraceDatasetAssetId={importDatasetFromTracesMut.isPending ? importDatasetFromTracesMut.variables ?? null : null}
@@ -1809,6 +1811,7 @@ function WorkbenchPanel({
   onHideAcceptanceFixtures,
   onCreateAsset,
   onToggleAssetStatus,
+  onUpdateAsset,
   onDeleteAsset,
   onImportDatasetFromTraces,
   importingTraceDatasetAssetId,
@@ -1868,6 +1871,7 @@ function WorkbenchPanel({
   onHideAcceptanceFixtures: () => void;
   onCreateAsset: (assetType: PromptEvaluationAssetType) => void;
   onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
+  onUpdateAsset: (assetId: string, data: UpdatePromptEvaluationAssetRequest) => Promise<unknown>;
   onDeleteAsset: (asset: PromptEvaluationAsset) => void;
   onImportDatasetFromTraces: (asset: PromptEvaluationAsset) => void;
   importingTraceDatasetAssetId: string | null;
@@ -2010,6 +2014,7 @@ function WorkbenchPanel({
           loading={loading}
           saving={saving}
           onToggleAssetStatus={onToggleAssetStatus}
+          onUpdateAsset={onUpdateAsset}
           onDeleteAsset={onDeleteAsset}
           onImportDatasetFromTraces={onImportDatasetFromTraces}
           importingTraceDatasetAssetId={importingTraceDatasetAssetId}
@@ -2388,6 +2393,7 @@ function TrainingAssetPanel({
   loading,
   saving,
   onToggleAssetStatus,
+  onUpdateAsset,
   onDeleteAsset,
   onImportDatasetFromTraces,
   importingTraceDatasetAssetId,
@@ -2417,6 +2423,7 @@ function TrainingAssetPanel({
   loading: boolean;
   saving: boolean;
   onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
+  onUpdateAsset: (assetId: string, data: UpdatePromptEvaluationAssetRequest) => Promise<unknown>;
   onDeleteAsset: (asset: PromptEvaluationAsset) => void;
   onImportDatasetFromTraces: (asset: PromptEvaluationAsset) => void;
   importingTraceDatasetAssetId: string | null;
@@ -2426,7 +2433,7 @@ function TrainingAssetPanel({
   creatingCaseAssetId: string | null;
   caseDrafts: Record<string, ManualCaseDraft>;
   onCaseDraftsChange: Dispatch<SetStateAction<Record<string, ManualCaseDraft>>>;
-  onUpdateCase: (caseId: string, data: UpdatePromptEvaluationCaseRequest) => void;
+  onUpdateCase: (caseId: string, data: UpdatePromptEvaluationCaseRequest) => Promise<unknown>;
   updatingCaseId: string | null;
   onDeleteCase: (caseId: string) => void;
   deletingCaseId: string | null;
@@ -2559,6 +2566,7 @@ function TrainingAssetPanel({
                     onCaseDraftsChange((prev) => ({ ...prev, [asset.id]: emptyManualCaseDraft() }));
                   }}
                   creating={creatingCaseAssetId === asset.id}
+                  onUpdateAsset={onUpdateAsset}
                   onUpdateCase={onUpdateCase}
                   updatingCaseId={updatingCaseId}
                   onDeleteCase={onDeleteCase}
@@ -4702,6 +4710,7 @@ function ManualCasePanel({
   onDraftChange,
   onCreateCase,
   creating,
+  onUpdateAsset,
   onUpdateCase,
   updatingCaseId,
   onDeleteCase,
@@ -4713,7 +4722,8 @@ function ManualCasePanel({
   onDraftChange: (draft: ManualCaseDraft) => void;
   onCreateCase: () => void;
   creating: boolean;
-  onUpdateCase: (caseId: string, data: UpdatePromptEvaluationCaseRequest) => void;
+  onUpdateAsset: (assetId: string, data: UpdatePromptEvaluationAssetRequest) => Promise<unknown>;
+  onUpdateCase: (caseId: string, data: UpdatePromptEvaluationCaseRequest) => Promise<unknown>;
   updatingCaseId: string | null;
   onDeleteCase: (caseId: string) => void;
   deletingCaseId: string | null;
@@ -4729,8 +4739,11 @@ function ManualCasePanel({
   const [tagEditDrafts, setTagEditDrafts] = useState<Record<string, string>>({});
   const [bulkTagsText, setBulkTagsText] = useState("");
   const [bulkTagMode, setBulkTagMode] = useState<"追加" | "移除" | null>(null);
+  const [savedFilterName, setSavedFilterName] = useState("");
+  const [savingFilter, setSavingFilter] = useState<"保存" | "删除" | null>(null);
   const caseTags = useMemo(() => uniqueSortedStrings(cases.flatMap((item) => item.tags.map((value) => String(value)).filter(Boolean))), [cases]);
   const tagStats = useMemo(() => buildDatasetCaseTagStats(cases), [cases]);
+  const savedFilters = useMemo(() => datasetSavedFilters(asset), [asset]);
   const filteredCases = useMemo(() => {
     const keyword = caseKeywordFilter.trim().toLowerCase();
     return cases.filter((item) => {
@@ -4800,6 +4813,44 @@ function ManualCasePanel({
       setBulkTagMode(null);
     }
   };
+  const saveCurrentFilter = async () => {
+    const name = savedFilterName.trim() || `筛选方案 ${savedFilters.length + 1}`;
+    const filter: DatasetSavedFilter = {
+      id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      name,
+      source_filter: caseSourceFilter,
+      tag_filter: caseTagFilter,
+      keyword_filter: caseKeywordFilter.trim(),
+      created_at: new Date().toISOString(),
+    };
+    const nextFilters = [filter, ...savedFilters.filter((item) => item.name !== name)].slice(0, 12);
+    setSavingFilter("保存");
+    try {
+      await onUpdateAsset(asset.id, { payload: datasetPayloadWithSavedFilters(asset, nextFilters, cases) });
+      setSavedFilterName("");
+      toast.success(`筛选方案已保存：${name}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "筛选方案保存失败");
+    } finally {
+      setSavingFilter(null);
+    }
+  };
+  const applySavedFilter = (filter: DatasetSavedFilter) => {
+    setCaseSourceFilter(filter.source_filter);
+    setCaseTagFilter(filter.tag_filter || "全部");
+    setCaseKeywordFilter(filter.keyword_filter || "");
+  };
+  const deleteSavedFilter = async (filter: DatasetSavedFilter) => {
+    setSavingFilter("删除");
+    try {
+      await onUpdateAsset(asset.id, { payload: datasetPayloadWithSavedFilters(asset, savedFilters.filter((item) => item.id !== filter.id), cases) });
+      toast.success(`筛选方案已删除：${filter.name}`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "筛选方案删除失败");
+    } finally {
+      setSavingFilter(null);
+    }
+  };
   return (
     <div data-testid={`prompt-evaluation-cases-${asset.id}`} className="md:col-span-2 grid gap-2 rounded-md border border-border/70 bg-muted/10 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -4825,6 +4876,13 @@ function ManualCasePanel({
           onBulkTagsTextChange={setBulkTagsText}
           bulkTagMode={bulkTagMode}
           onBulkTagUpdate={updateFilteredCaseTags}
+          savedFilterName={savedFilterName}
+          onSavedFilterNameChange={setSavedFilterName}
+          savedFilters={savedFilters}
+          savingFilter={savingFilter}
+          onSaveCurrentFilter={saveCurrentFilter}
+          onApplySavedFilter={applySavedFilter}
+          onDeleteSavedFilter={deleteSavedFilter}
           samples={sampleCases}
           onDownloadSample={downloadDatasetSample}
         />
@@ -5001,6 +5059,13 @@ function DatasetCaseGovernanceBar({
   onBulkTagsTextChange,
   bulkTagMode,
   onBulkTagUpdate,
+  savedFilterName,
+  onSavedFilterNameChange,
+  savedFilters,
+  savingFilter,
+  onSaveCurrentFilter,
+  onApplySavedFilter,
+  onDeleteSavedFilter,
   samples,
   onDownloadSample,
 }: {
@@ -5019,6 +5084,13 @@ function DatasetCaseGovernanceBar({
   onBulkTagsTextChange: (value: string) => void;
   bulkTagMode: "追加" | "移除" | null;
   onBulkTagUpdate: (mode: "追加" | "移除") => void;
+  savedFilterName: string;
+  onSavedFilterNameChange: (value: string) => void;
+  savedFilters: DatasetSavedFilter[];
+  savingFilter: "保存" | "删除" | null;
+  onSaveCurrentFilter: () => void;
+  onApplySavedFilter: (filter: DatasetSavedFilter) => void;
+  onDeleteSavedFilter: (filter: DatasetSavedFilter) => void;
   samples: PromptEvaluationStructuredCase[];
   onDownloadSample: () => void;
 }) {
@@ -5088,6 +5160,57 @@ function DatasetCaseGovernanceBar({
           ))}
         </div>
       )}
+      <div className="grid gap-2 rounded-md border border-dashed bg-muted/10 px-2 py-2" data-testid={`dataset-case-saved-filters-${assetId}`}>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] font-medium text-muted-foreground">筛选方案</span>
+          <Input
+            value={savedFilterName}
+            onChange={(event) => onSavedFilterNameChange(event.target.value)}
+            placeholder="方案名称"
+            aria-label="数据集筛选方案名称"
+            className="h-8 min-w-48 flex-1 text-xs"
+          />
+          <Button
+            size="sm"
+            variant="secondary"
+            className="h-8"
+            onClick={onSaveCurrentFilter}
+            disabled={savingFilter !== null}
+            data-testid={`dataset-case-save-filter-${assetId}`}
+          >
+            {savingFilter === "保存" ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
+            保存当前筛选
+          </Button>
+        </div>
+        {savedFilters.length > 0 && (
+          <div className="flex flex-wrap items-center gap-1.5">
+            {savedFilters.map((filter) => (
+              <span key={filter.id} className="inline-flex items-center gap-1 rounded-md border bg-background px-1.5 py-1 text-[11px]">
+                <button
+                  type="button"
+                  className="font-medium text-foreground hover:underline"
+                  onClick={() => onApplySavedFilter(filter)}
+                  data-testid={`dataset-case-apply-filter-${assetId}-${filter.id}`}
+                >
+                  {filter.name}
+                </button>
+                <span className="text-muted-foreground">
+                  {filter.source_filter}/{filter.tag_filter || "全部"}/{filter.keyword_filter || "无关键词"}
+                </span>
+                <button
+                  type="button"
+                  className="rounded px-1 text-muted-foreground hover:bg-muted hover:text-foreground"
+                  aria-label={`删除筛选方案 ${filter.name}`}
+                  onClick={() => onDeleteSavedFilter(filter)}
+                  disabled={savingFilter !== null}
+                >
+                  <Trash2 className="size-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+      </div>
       <div className="flex flex-wrap items-center gap-2 rounded-md border border-dashed bg-muted/10 px-2 py-2" data-testid={`dataset-case-bulk-tags-${assetId}`}>
         <span className="text-[11px] font-medium text-muted-foreground">批量标签</span>
         <Input
@@ -5174,6 +5297,71 @@ function buildDatasetCaseTagStats(cases: PromptEvaluationStructuredCase[]) {
   return [...counts.entries()]
     .map(([tag, count]) => ({ tag, count }))
     .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag, "zh-Hans"));
+}
+
+type DatasetCaseSourceFilter = "全部" | "手工" | "trace导入" | "资产载荷";
+
+type DatasetSavedFilter = {
+  id: string;
+  name: string;
+  source_filter: DatasetCaseSourceFilter;
+  tag_filter: string;
+  keyword_filter: string;
+  created_at: string;
+};
+
+function datasetSavedFilters(asset: PromptEvaluationAsset): DatasetSavedFilter[] {
+  const payload = isRecord(asset.payload) ? asset.payload : {};
+  const raw = payload["数据集筛选方案"];
+  if (!Array.isArray(raw)) return [];
+  return raw.flatMap((item, index) => {
+    if (!isRecord(item)) return [];
+    const source = datasetCaseSourceFilterFromUnknown(item.source_filter ?? item["来源"]);
+    const name = stringFromUnknown(item.name ?? item["名称"]).trim();
+    if (!name) return [];
+    return [{
+      id: stringFromUnknown(item.id).trim() || `saved-filter-${index}`,
+      name,
+      source_filter: source,
+      tag_filter: stringFromUnknown(item.tag_filter ?? item["标签"]).trim() || "全部",
+      keyword_filter: stringFromUnknown(item.keyword_filter ?? item["关键词"]).trim(),
+      created_at: stringFromUnknown(item.created_at ?? item["创建时间"]).trim(),
+    }];
+  }).slice(0, 12);
+}
+
+function datasetPayloadWithSavedFilters(asset: PromptEvaluationAsset, filters: DatasetSavedFilter[], cases: PromptEvaluationStructuredCase[]) {
+  const payload = isRecord(asset.payload) ? { ...asset.payload } : {};
+  payload["数据集筛选方案"] = filters.map((filter) => ({
+    id: filter.id,
+    name: filter.name,
+    source_filter: filter.source_filter,
+    tag_filter: filter.tag_filter,
+    keyword_filter: filter.keyword_filter,
+    created_at: filter.created_at,
+  }));
+  const payloadCases = cases.filter((item) => item.source === "payload");
+  if (payloadCases.length > 0) {
+    payload.cases = payloadCases.map(datasetPayloadCaseFromStructuredCase);
+  }
+  return payload;
+}
+
+function datasetPayloadCaseFromStructuredCase(item: PromptEvaluationStructuredCase) {
+  return {
+    case_name: item.case_name,
+    variables: item.variables,
+    expected_contains: item.expected_contains,
+    input: item.input,
+    expected: item.expected,
+    tags: item.tags,
+    status: item.status,
+  };
+}
+
+function datasetCaseSourceFilterFromUnknown(value: unknown): DatasetCaseSourceFilter {
+  if (value === "手工" || value === "trace导入" || value === "资产载荷") return value;
+  return "全部";
 }
 
 function sameStringList(a: string[], b: string[]) {
