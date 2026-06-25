@@ -95,6 +95,7 @@ type squadSOPProfile struct {
 	OperationSkills         []string         `json:"operation_skills"`
 	CrossProjectChildIssues []map[string]any `json:"cross_project_child_issues"`
 	Acceptance              []string         `json:"acceptance"`
+	ArchivePolicy           string           `json:"archive_policy"`
 	ForbiddenActions        []string         `json:"forbidden_actions"`
 }
 
@@ -193,6 +194,11 @@ func buildSquadSOPProfile(raw []byte) string {
 	if len(profile.Acceptance) > 0 {
 		sb.WriteString("- 验收要求：")
 		sb.WriteString(strings.Join(profile.Acceptance, "；"))
+		sb.WriteString("\n")
+	}
+	if strings.TrimSpace(profile.ArchivePolicy) != "" {
+		sb.WriteString("- 归档口径：")
+		sb.WriteString(strings.TrimSpace(profile.ArchivePolicy))
 		sb.WriteString("\n")
 	}
 	if len(profile.Roles) > 0 {

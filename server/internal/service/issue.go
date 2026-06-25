@@ -50,22 +50,25 @@ func NewIssueService(q *db.Queries, tx TxStarter, bus *events.Bus, ac analytics.
 // to IssueService.Create. The handler owns the parsing step that turns its
 // request payload into this struct; the service stays transport-agnostic.
 type IssueCreateParams struct {
-	WorkspaceID    pgtype.UUID
-	Title          string
-	Description    pgtype.Text
-	Status         string
-	Priority       string
-	AssigneeType   pgtype.Text
-	AssigneeID     pgtype.UUID
-	CreatorType    string // "agent" or "member"
-	CreatorID      pgtype.UUID
-	ParentIssueID  pgtype.UUID
-	ProjectID      pgtype.UUID
-	StartDate      pgtype.Date
-	DueDate        pgtype.Date
-	OriginType     pgtype.Text
-	OriginID       pgtype.UUID
-	AttachmentIDs  []pgtype.UUID
+	WorkspaceID   pgtype.UUID
+	Title         string
+	Description   pgtype.Text
+	Status        string
+	Priority      string
+	AssigneeType  pgtype.Text
+	AssigneeID    pgtype.UUID
+	CreatorType   string // "agent" or "member"
+	CreatorID     pgtype.UUID
+	ParentIssueID pgtype.UUID
+	ProjectID     pgtype.UUID
+	StartDate     pgtype.Date
+	DueDate       pgtype.Date
+	OriginType    pgtype.Text
+	OriginID      pgtype.UUID
+	AttachmentIDs []pgtype.UUID
+	// Metadata is a handler-validated flat KV map written in the same
+	// transaction as the issue row so broadcasts and HTTP responses agree.
+	Metadata       map[string][]byte
 	AllowDuplicate bool
 }
 
@@ -272,6 +275,17 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	}
 	if err != nil {
 		return IssueCreateResult{}, fmt.Errorf("create issue: %w", err)
+	}
+	for key, value := range p.Metadata {
+		issue, err = qtx.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+			ID:          issue.ID,
+			WorkspaceID: issue.WorkspaceID,
+			Key:         key,
+			Value:       value,
+		})
+		if err != nil {
+			return IssueCreateResult{}, fmt.Errorf("set issue metadata %q: %w", key, err)
+		}
 	}
 
 	if err := tx.Commit(ctx); err != nil {

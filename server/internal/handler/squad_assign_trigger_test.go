@@ -150,6 +150,7 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 		"duration_ms":     123,
 		"created_by_type": "agent",
 		"created_by_id":   leaderID,
+		"task_id":         taskID,
 	})
 	eventReq = withURLParams(eventReq, "runId", runID, "stepId", "acceptance")
 	eventW := httptest.NewRecorder()
@@ -173,6 +174,70 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 		t.Fatalf("SOP run changed after 测试结果 evidence: step=%s status=%s, want acceptance/进行中", currentStep, runStatus)
 	}
 	if _, err := testPool.Exec(ctx, `
+		INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens)
+		VALUES ($1, 'codex', 'gpt-5.3-codex-spark', 120, 45, 9, 3)
+		ON CONFLICT (task_id, provider, model) DO UPDATE SET
+			input_tokens = EXCLUDED.input_tokens,
+			output_tokens = EXCLUDED.output_tokens,
+			cache_read_tokens = EXCLUDED.cache_read_tokens,
+			cache_write_tokens = EXCLUDED.cache_write_tokens
+	`, taskID); err != nil {
+		t.Fatalf("insert task usage: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO task_message (task_id, seq, type, content)
+		VALUES
+			($1, 9001, 'thinking', '分析阶段输入'),
+			($1, 9002, 'text', '输出阶段结论'),
+			($1, 9003, 'tool_result', '工具结果')
+		ON CONFLICT DO NOTHING
+	`, taskID); err != nil {
+		t.Fatalf("insert task messages: %v", err)
+	}
+	metricsReq := newRequest("GET", "/api/issues/"+created.ID+"/sop-runs?workspace_id="+testWorkspaceID, nil)
+	metricsReq = withURLParam(metricsReq, "id", created.ID)
+	metricsW := httptest.NewRecorder()
+	testHandler.ListIssueSOPRuns(metricsW, metricsReq)
+	if metricsW.Code != http.StatusOK {
+		t.Fatalf("ListIssueSOPRuns(metrics): expected 200, got %d: %s", metricsW.Code, metricsW.Body.String())
+	}
+	var metricsResp struct {
+		Items []SquadSOPRunResponse `json:"items"`
+	}
+	if err := json.NewDecoder(metricsW.Body).Decode(&metricsResp); err != nil {
+		t.Fatalf("decode SOP metrics response: %v", err)
+	}
+	if len(metricsResp.Items) == 0 {
+		t.Fatalf("expected SOP run in metrics response")
+	}
+	stageMetrics, _ := metricsResp.Items[0].Metrics["阶段指标"].([]any)
+	if len(stageMetrics) == 0 {
+		t.Fatalf("missing 阶段指标 in SOP metrics: %+v", metricsResp.Items[0].Metrics)
+	}
+	var acceptance map[string]any
+	for _, raw := range stageMetrics {
+		stage, _ := raw.(map[string]any)
+		if stage["step_key"] == "acceptance" {
+			acceptance = stage
+			break
+		}
+	}
+	if acceptance == nil {
+		t.Fatalf("acceptance stage metrics missing: %+v", stageMetrics)
+	}
+	if got := acceptance["duration_ms"]; got != float64(123) {
+		t.Fatalf("acceptance duration_ms = %v, want 123", got)
+	}
+	if got := acceptance["input_tokens"]; got != float64(120) {
+		t.Fatalf("acceptance input_tokens = %v, want 120", got)
+	}
+	if got := acceptance["output_tokens"]; got != float64(45) {
+		t.Fatalf("acceptance output_tokens = %v, want 45", got)
+	}
+	if got := acceptance["agent_turn_count"]; got != float64(2) {
+		t.Fatalf("acceptance agent_turn_count = %v, want 2", got)
+	}
+	if _, err := testPool.Exec(ctx, `
 		INSERT INTO task_trace_event (
 			workspace_id, task_id, issue_id, squad_id, agent_id, runtime_id,
 			source, event_type, event_name, status, provider, model,
@@ -181,7 +246,7 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 		)
 		VALUES (
 			$1, $2, $3, $4, $5, $6,
-			'squad_sop', 'squad.leader.completed', '编码小队队长任务完成',
+			'squad_sop', 'llm.usage_reported', '模型用量已上报',
 			'completed', 'codex', 'gpt-5.3-codex-spark',
 			36, 19, 5, 7, '无', '', '{}'::jsonb
 		)
@@ -214,6 +279,30 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 	}
 	if got := agentMetrics["预估成本"]; got == nil || got == float64(0) {
 		t.Fatalf("agent 预估成本 = %v, want > 0", got)
+	}
+	stageRows, _ := agentSummary["sop_stage_breakdown"].([]any)
+	if len(stageRows) == 0 {
+		t.Fatalf("agent summary missing sop_stage_breakdown: %#v", agentSummary)
+	}
+	var summaryAcceptance map[string]any
+	for _, raw := range stageRows {
+		row, _ := raw.(map[string]any)
+		if row["step_key"] == "acceptance" {
+			summaryAcceptance = row
+			break
+		}
+	}
+	if summaryAcceptance == nil {
+		t.Fatalf("acceptance stage missing from sop_stage_breakdown: %#v", stageRows)
+	}
+	if got := summaryAcceptance["duration_ms"]; got != float64(123) {
+		t.Fatalf("summary acceptance duration_ms = %v, want 123", got)
+	}
+	if got := summaryAcceptance["input_tokens"]; got != float64(36) {
+		t.Fatalf("summary acceptance input_tokens = %v, want 36", got)
+	}
+	if got := summaryAcceptance["agent_turn_count"]; got != float64(2) {
+		t.Fatalf("summary acceptance agent_turn_count = %v, want 2", got)
 	}
 }
 
@@ -334,7 +423,7 @@ func TestBuildObservabilitySummaryIncludesCostBreakdown(t *testing.T) {
 			OutputTokens: 5,
 		},
 	}
-	summary := buildObservabilitySummary(nil, traces, 0, observabilitySummarySampleLimit)
+	summary := buildObservabilitySummary(nil, nil, traces, nil, 0, observabilitySummarySampleLimit)
 	metricsMap := summary["指标"].(map[string]any)
 	if cost, ok := metricsMap["预估成本"].(float64); !ok || cost <= 0 {
 		t.Fatalf("预估成本 = %v, want > 0", metricsMap["预估成本"])
@@ -383,7 +472,7 @@ func TestBuildObservabilitySummaryDedupesRepeatedUsageReports(t *testing.T) {
 			CreatedAt:        pgtype.Timestamptz{Time: base.Add(time.Minute), Valid: true},
 		},
 	}
-	summary := buildObservabilitySummary(nil, traces, 0, observabilitySummarySampleLimit)
+	summary := buildObservabilitySummary(nil, nil, traces, nil, 0, observabilitySummarySampleLimit)
 	metricsMap := summary["指标"].(map[string]any)
 	if got := metricsMap["输入 token"]; got != int64(30) {
 		t.Fatalf("输入 token = %v, want latest usage report 30", got)
@@ -405,7 +494,7 @@ func TestBuildObservabilitySummaryDedupesRepeatedUsageReports(t *testing.T) {
 
 func TestBuildObservabilitySummaryMarksPossibleTruncation(t *testing.T) {
 	traces := make([]db.TaskTraceEvent, observabilitySummarySampleLimit)
-	summary := buildObservabilitySummary(nil, traces, 12, observabilitySummarySampleLimit)
+	summary := buildObservabilitySummary(nil, nil, traces, nil, 12, observabilitySummarySampleLimit)
 	metricsMap := summary["指标"].(map[string]any)
 	if got := summary["task_trace_maybe_truncated"]; got != true {
 		t.Fatalf("task_trace_maybe_truncated = %v, want true", got)

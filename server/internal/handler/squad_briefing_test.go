@@ -188,13 +188,22 @@ func TestBuildSquadLeaderBriefing_FullSquad(t *testing.T) {
 		"project":"user-center",
 		"repo":"/data/ida/user-center",
 		"mode":"stage_chain",
-		"stage_skills":["user-center/01-clarify","user-center/02-design","user-center/03-task-split","user-center/04-implement","user-center/05-verify","user-center/06-archive"],
+		"steps":[
+			{"key":"pm","name":"PM 调度","role_key":"pm"},
+			{"key":"01-clarify","name":"01 需求澄清","role_key":"01-clarify","skill":"user-center/01-clarify"},
+			{"key":"02-design","name":"02 方案设计","role_key":"02-design","skill":"user-center/02-design"},
+			{"key":"03-task-split","name":"03 任务拆分","role_key":"03-task-split","skill":"user-center/03-task-split"},
+			{"key":"04-implement","name":"04 代码开发","role_key":"04-implement","skill":"user-center/04-implement"},
+			{"key":"05-verify","name":"05 测试验证","role_key":"05-verify","skill":"user-center/05-verify"}
+		],
+		"stage_skills":["user-center/01-clarify","user-center/02-design","user-center/03-task-split","user-center/04-implement","user-center/05-verify"],
 		"operation_skills":["user-center/add-api"],
 		"cross_project_child_issues":[
 			{"target_project":"gateway","trigger":"需要网关路由","assignee":"gateway 项目负责人","title":"补充 gateway 接入信息","body":"说明 API 路径、方法和鉴权要求"},
-			{"target_project":"config","trigger":"需要配置项","assignee":"config 项目负责人","title":"补充配置项","body":"说明配置键和环境差异"}
+			{"target_project":"ida-deployment","trigger":"需要部署配置","assignee":"ida-deployment 项目负责人","title":"补充部署配置","body":"说明配置键和环境差异"}
 		],
-		"acceptance":["阶段产物完整","测试证据完整","交接说明明确"]
+		"acceptance":["阶段产物完整","测试证据完整","交接说明明确"],
+		"archive_policy":"06-archive 不作为必跑阶段；最终结论、证据摘要和 handoff 状态由 05-verify 输出。"
 	}`)
 
 	helper1 := createHandlerTestAgent(t, "Helper One", []byte("[]"))
@@ -216,10 +225,12 @@ func TestBuildSquadLeaderBriefing_FullSquad(t *testing.T) {
 		"## 项目 SOP 配置",
 		"- 项目：user-center",
 		"- 仓库：`/data/ida/user-center`",
+		"SOP 步骤链：PM 调度 → 01 需求澄清 → 02 方案设计 → 03 任务拆分 → 04 代码开发 → 05 测试验证",
 		"user-center/01-clarify → user-center/02-design → user-center/03-task-split",
 		"记录当前阶段、验收要求和证据",
 		"- 可调用操作技能：user-center/add-api",
 		"阶段产物完整；测试证据完整；交接说明明确",
+		"归档口径：06-archive 不作为必跑阶段",
 		"先按 SOP 阶段链推进",
 		"跨项目子任务规则",
 		"--parent <当前 issue id>",
@@ -227,7 +238,7 @@ func TestBuildSquadLeaderBriefing_FullSquad(t *testing.T) {
 		"不要额外传 `--assignee` 或 `--assignee-id`",
 		"自动交给项目负责人",
 		"目标项目=gateway",
-		"目标项目=config",
+		"目标项目=ida-deployment",
 		"## 小队说明 (Full Squad)",
 		"Always write tests.",
 		"`[@Helper One](mention://agent/" + helper1 + ")`",
@@ -283,26 +294,46 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 	if !ok {
 		t.Fatal("user-center internal squad template missing")
 	}
+	if len(template.Roles) != 6 {
+		t.Fatalf("user-center template roles = %d, want 6", len(template.Roles))
+	}
 	raw, err := json.Marshal(template.Profile)
 	if err != nil {
 		t.Fatalf("marshal template profile: %v", err)
 	}
+	var profile struct {
+		StageSkills []string `json:"stage_skills"`
+	}
+	if err := json.Unmarshal(raw, &profile); err != nil {
+		t.Fatalf("unmarshal template profile: %v", err)
+	}
+	for _, skill := range profile.StageSkills {
+		if skill == "user-center/06-archive" {
+			t.Fatalf("user-center template stage_skills must not include 06-archive: %+v", profile.StageSkills)
+		}
+	}
 	out := buildSquadSOPProfile(raw)
 	for _, want := range []string{
 		"模板：user-center-sop-flow",
+		"SOP 步骤链：PM 调度 → 01 需求澄清 → 02 方案设计 → 03 任务拆分 → 04 代码开发 → 05 测试验证",
+		"SOP 阶段链：user-center/01-clarify → user-center/02-design → user-center/03-task-split → user-center/04-implement → user-center/05-verify",
 		"跨项目子任务规则",
 		"目标项目=gateway",
-		"目标项目=config",
+		"目标项目=ida-deployment",
 		"--parent <当前 issue id>",
 		"--project <目标项目 id>",
 		"multica project list --output json",
 		"不要额外传 `--assignee` 或 `--assignee-id`",
 		"自动交给项目负责人",
 		"不要再为同一项工作 @mention 同一个负责人",
+		"归档口径：06-archive 不作为必跑阶段",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected user-center SOP briefing to contain %q\n--- output ---\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "user-center/06-archive") {
+		t.Fatalf("user-center SOP briefing must not include 06-archive in required stage skills\n--- output ---\n%s", out)
 	}
 }
 

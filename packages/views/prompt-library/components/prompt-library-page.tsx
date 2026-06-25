@@ -1432,6 +1432,7 @@ function DemoDashboardPanel({
   const hasOptimizationLoop = publishedCandidates > 0 || pendingCandidates > 0 || rejectedCandidates > 0;
   const readinessLabel = runtimeLoading ? "检查中" : runtimeReadiness.label;
   const activeRange = DEMO_TIME_RANGES.find((item) => item.value === timeRange) ?? DEFAULT_DEMO_TIME_RANGE;
+  const sopStageRows = observabilitySummary?.sop_stage_breakdown ?? [];
 
   const trainingItems: Array<[string, string]> = [
     ["运行总数", formatNumber(runStatus["运行总数"])],
@@ -1523,6 +1524,8 @@ function DemoDashboardPanel({
         />
       </div>
 
+      <SOPStageBreakdownPanel rows={sopStageRows} loading={observabilityLoading} />
+
       <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_360px]">
         <section className="rounded-md border border-border/70 bg-muted/10 p-3">
           <div className="mb-3 flex items-center justify-between gap-2">
@@ -1559,6 +1562,73 @@ function DemoDashboardPanel({
         <UsageList title="模型用量明细" rows={observabilitySummary?.model_breakdown ?? []} />
         <UsageList title="运行时用量明细" rows={observabilitySummary?.runtime_breakdown ?? []} />
       </div>
+    </section>
+  );
+}
+
+function SOPStageBreakdownPanel({
+  rows,
+  loading,
+}: {
+  rows: ObservabilitySummary["sop_stage_breakdown"];
+  loading: boolean;
+}) {
+  const visibleRows = rows.slice(0, 8);
+  const totalTokens = (row: ObservabilitySummary["sop_stage_breakdown"][number]) =>
+    Number(row.input_tokens ?? 0) +
+    Number(row.output_tokens ?? 0) +
+    Number(row.cache_read_tokens ?? 0) +
+    Number(row.cache_write_tokens ?? 0);
+
+  return (
+    <section className="rounded-md border border-border/70 bg-muted/10 p-3" data-testid="training-sop-stage-breakdown">
+      <div className="mb-3 flex items-center justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold">SOP 阶段指标</h3>
+          <p className="mt-1 text-xs text-muted-foreground">按 pm、01-05 等阶段汇总耗时、任务、消息、agent 轮次和 token。</p>
+        </div>
+        <Badge variant={rows.length > 0 ? "secondary" : "outline"}>{loading ? "刷新中" : `${rows.length} 阶段`}</Badge>
+      </div>
+      {rows.length === 0 ? (
+        <div className="rounded-md border border-dashed bg-background px-3 py-4 text-sm text-muted-foreground">
+          {loading ? "正在读取阶段指标" : "暂无 SOP 阶段指标"}
+        </div>
+      ) : (
+        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+          {visibleRows.map((row) => {
+            const label = row.step_key || row.step_name || "unknown";
+            return (
+              <div key={label} className="min-w-0 rounded-md border bg-background px-3 py-2" data-testid={`training-sop-stage-${label}`}>
+                <div className="flex min-w-0 items-center justify-between gap-2">
+                  <div className="min-w-0 truncate text-xs font-semibold text-foreground">
+                    {label}
+                    {row.step_name ? <span className="ml-1 font-normal text-muted-foreground">{row.step_name}</span> : null}
+                  </div>
+                  <Badge variant={row.status ? "secondary" : "outline"}>{row.status || row.role_key || "未开始"}</Badge>
+                </div>
+                <div className="mt-2 grid gap-1 text-[11px] leading-5 text-muted-foreground">
+                  <div className="flex justify-between gap-2">
+                    <span>耗时</span>
+                    <span className="font-mono tabular-nums">{formatDuration(row.duration_ms)}</span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span>任务/消息/轮次</span>
+                    <span className="font-mono tabular-nums">{formatNumber(row.task_count)} / {formatNumber(row.message_count)} / {formatNumber(row.agent_turn_count)}</span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span>token</span>
+                    <span className="font-mono tabular-nums">{formatNumber(totalTokens(row))}</span>
+                  </div>
+                  <div className="flex justify-between gap-2">
+                    <span>事件/证据</span>
+                    <span className="font-mono tabular-nums">{formatNumber(row.event_count)} / {formatNumber(row.evidence_count)}</span>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
     </section>
   );
 }

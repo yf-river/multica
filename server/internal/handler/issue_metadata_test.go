@@ -245,6 +245,121 @@ func TestNewIssueDefaultsToEmptyMetadata(t *testing.T) {
 	}
 }
 
+func TestCreateIssueWithMetadata(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":           "TAPD linked issue",
+		"status":          "todo",
+		"priority":        "medium",
+		"allow_duplicate": true,
+		"metadata": map[string]any{
+			"source_provider": "tapd",
+			"tapd_workspace":  "47654106",
+			"tapd_wiki_id":    "1147654106001004154",
+			"source_title":    "User quick entry requirement",
+			"source_synced":   true,
+			"source_version":  1,
+		},
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if got := created.Metadata["source_provider"]; got != "tapd" {
+		t.Fatalf("create response metadata source_provider = %T %v", got, got)
+	}
+	if got := created.Metadata["source_version"]; got != float64(1) {
+		t.Fatalf("create response metadata source_version = %T %v", got, got)
+	}
+	if got := created.Metadata["source_synced"]; got != true {
+		t.Fatalf("create response metadata source_synced = %T %v", got, got)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("GET", "/api/issues/"+created.ID, nil)
+	req = withURLParam(req, "id", created.ID)
+	testHandler.GetIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetIssue: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var fetched IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&fetched); err != nil {
+		t.Fatalf("decode get response: %v", err)
+	}
+	if fetched.Metadata["tapd_wiki_id"] != "1147654106001004154" {
+		t.Fatalf("metadata not persisted: %+v", fetched.Metadata)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("GET", `/api/issues?metadata={"source_provider":"tapd","tapd_wiki_id":"1147654106001004154"}`, nil)
+	testHandler.ListIssues(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListIssues metadata filter: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var listResp struct {
+		Issues []IssueResponse `json:"issues"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&listResp); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	found := false
+	for _, issue := range listResp.Issues {
+		if issue.ID == created.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("created TAPD issue missing from metadata filter result")
+	}
+}
+
+func TestCreateIssueMetadataValidation(t *testing.T) {
+	cases := []struct {
+		name     string
+		metadata map[string]any
+	}{
+		{"bad key", map[string]any{"1bad": "x"}},
+		{"null value", map[string]any{"source_provider": nil}},
+		{"object value", map[string]any{"source_provider": map[string]any{"nested": true}}},
+		{"array value", map[string]any{"source_provider": []string{"tapd"}}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+				"title":    "Invalid create metadata " + c.name,
+				"status":   "todo",
+				"priority": "medium",
+				"metadata": c.metadata,
+			})
+			testHandler.CreateIssue(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+
+	tooMany := make(map[string]any, maxIssueMetadataKeys+1)
+	for i := 0; i <= maxIssueMetadataKeys; i++ {
+		tooMany[fmt.Sprintf("k_%d", i)] = "v"
+	}
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":    "Invalid create metadata too many",
+		"status":   "todo",
+		"priority": "medium",
+		"metadata": tooMany,
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("too many keys: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 func createMetadataTestIssue(t *testing.T, title string) string {
 	t.Helper()
 	w := httptest.NewRecorder()

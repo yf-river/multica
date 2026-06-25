@@ -482,6 +482,76 @@ func (q *Queries) ListWorkspaceSquadSOPRuns(ctx context.Context, arg ListWorkspa
 	return items, nil
 }
 
+const listWorkspaceSquadSOPStepEvents = `-- name: ListWorkspaceSquadSOPStepEvents :many
+SELECT e.id, e.run_id, e.workspace_id, e.issue_id, e.squad_id, e.step_key, e.step_name, e.role_key, e.event_type, e.status, e.evidence, e.reason, e.duration_ms, e.created_by_type, e.created_by_id, e.task_id, e.created_at
+FROM squad_sop_step_event e
+JOIN issue i ON i.id = e.issue_id
+LEFT JOIN agent_task_queue atq ON atq.id = e.task_id
+WHERE e.workspace_id = $1
+  AND ($4::timestamptz IS NULL OR e.created_at >= $4)
+  AND ($5::uuid IS NULL OR e.squad_id = $5)
+  AND ($6::uuid IS NULL OR i.project_id = $6)
+  AND ($7::uuid IS NULL OR atq.agent_id = $7)
+ORDER BY e.created_at DESC, e.id DESC
+LIMIT $2 OFFSET $3
+`
+
+type ListWorkspaceSquadSOPStepEventsParams struct {
+	WorkspaceID pgtype.UUID        `json:"workspace_id"`
+	Limit       int32              `json:"limit"`
+	Offset      int32              `json:"offset"`
+	Since       pgtype.Timestamptz `json:"since"`
+	SquadID     pgtype.UUID        `json:"squad_id"`
+	ProjectID   pgtype.UUID        `json:"project_id"`
+	AgentID     pgtype.UUID        `json:"agent_id"`
+}
+
+func (q *Queries) ListWorkspaceSquadSOPStepEvents(ctx context.Context, arg ListWorkspaceSquadSOPStepEventsParams) ([]SquadSopStepEvent, error) {
+	rows, err := q.db.Query(ctx, listWorkspaceSquadSOPStepEvents,
+		arg.WorkspaceID,
+		arg.Limit,
+		arg.Offset,
+		arg.Since,
+		arg.SquadID,
+		arg.ProjectID,
+		arg.AgentID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SquadSopStepEvent{}
+	for rows.Next() {
+		var i SquadSopStepEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.WorkspaceID,
+			&i.IssueID,
+			&i.SquadID,
+			&i.StepKey,
+			&i.StepName,
+			&i.RoleKey,
+			&i.EventType,
+			&i.Status,
+			&i.Evidence,
+			&i.Reason,
+			&i.DurationMs,
+			&i.CreatedByType,
+			&i.CreatedByID,
+			&i.TaskID,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const updateSquadSOPRunStatus = `-- name: UpdateSquadSOPRunStatus :one
 UPDATE squad_sop_run
 SET status = $3,

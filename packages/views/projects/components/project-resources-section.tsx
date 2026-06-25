@@ -6,6 +6,7 @@ import {
   ChevronRight,
   FolderGit,
   FolderOpen,
+  GitBranch,
   Pencil,
   Plus,
   Search,
@@ -21,6 +22,7 @@ import {
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import type {
+  GongfengRepoResourceRef,
   GithubRepoResourceRef,
   LocalDirectoryResourceRef,
   ProjectResource,
@@ -57,10 +59,24 @@ function isGithubRef(r: ProjectResource): r is ProjectResource & {
   return r.resource_type === "github_repo";
 }
 
+function isGongfengRef(r: ProjectResource): r is ProjectResource & {
+  resource_ref: GongfengRepoResourceRef;
+} {
+  return r.resource_type === "gongfeng_repo";
+}
+
 function isLocalDirectoryRef(r: ProjectResource): r is ProjectResource & {
   resource_ref: LocalDirectoryResourceRef;
 } {
   return r.resource_type === "local_directory";
+}
+
+function isGongfengURL(url: string): boolean {
+  try {
+    return new URL(url).hostname.toLowerCase() === "git.code.tencent.com";
+  } catch {
+    return false;
+  }
 }
 
 export function ProjectResourcesSection({ projectId }: { projectId: string }) {
@@ -121,6 +137,27 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
       const msg = err instanceof Error ? err.message : t(($) => $.resources.toast_attach_failed);
       toast.error(msg);
     }
+  };
+
+  const handleAttachGongfeng = async (url: string) => {
+    try {
+      await createResource.mutateAsync({
+        resource_type: "gongfeng_repo",
+        resource_ref: { url },
+      });
+      toast.success(t(($) => $.resources.toast_gongfeng_attached));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : t(($) => $.resources.toast_attach_failed);
+      toast.error(msg);
+    }
+  };
+
+  const handleAttachURL = async (url: string) => {
+    if (isGongfengURL(url)) {
+      await handleAttachGongfeng(url);
+      return;
+    }
+    await handleAttach(url);
   };
 
   const handleAttachLocalDirectory = async () => {
@@ -344,7 +381,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
               )}
               <CustomRepoForm
                 onSubmit={async (url) => {
-                  await handleAttach(url);
+                  await handleAttachURL(url);
                   setAddOpen(false);
                 }}
               />
@@ -447,6 +484,50 @@ function ResourceRow({
         onRemove={onRemove}
         onRename={onRenameLocalDirectory}
       />
+    );
+  }
+
+  if (isGongfengRef(resource)) {
+    const ref = resource.resource_ref;
+    const display =
+      resource.label ||
+      ref.title ||
+      [ref.project_path, ref.ref].filter(Boolean).join(" @ ") ||
+      ref.url;
+    const detail = [ref.resource_kind, ref.ref].filter(Boolean).join(": ");
+    return (
+      <div className="flex items-center gap-2 text-xs group">
+        <GitBranch className="size-3.5 text-muted-foreground shrink-0" />
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <a
+                href={ref.url}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="truncate flex-1 hover:underline"
+              >
+                {display}
+              </a>
+            }
+          />
+          <TooltipContent side="top">
+            <div className="space-y-0.5 text-[11px]">
+              <div className="font-mono">{ref.project_path}</div>
+              {detail && <div className="text-muted-foreground">{detail}</div>}
+              <div className="text-muted-foreground">Gongfeng</div>
+            </div>
+          </TooltipContent>
+        </Tooltip>
+        <button
+          type="button"
+          onClick={onRemove}
+          className="opacity-0 group-hover:opacity-100 transition-opacity rounded-sm p-0.5 hover:bg-accent"
+          title={t(($) => $.resources.remove_tooltip)}
+        >
+          <Trash2 className="size-3 text-muted-foreground" />
+        </button>
+      </div>
     );
   }
 

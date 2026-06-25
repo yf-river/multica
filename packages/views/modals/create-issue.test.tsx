@@ -434,6 +434,41 @@ describe("CreateIssueModal", () => {
     expect(mockToastDismiss).toHaveBeenCalledWith("toast-1");
   });
 
+  it("saves TAPD source metadata from the source link field", async () => {
+    const user = userEvent.setup();
+    mockCreateIssue.mockResolvedValue({
+      id: "issue-tapd",
+      identifier: "TES-456",
+      title: "TAPD sourced issue",
+      status: "todo",
+    });
+
+    renderModal(<CreateIssueModal onClose={vi.fn()} />);
+
+    await user.type(screen.getByPlaceholderText("任务标题"), "TAPD sourced issue");
+    fireEvent.change(screen.getByPlaceholderText("粘贴 TAPD 文档或需求链接"), {
+      target: {
+        value: "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",
+      },
+    });
+    await user.click(screen.getByRole("button", { name: "创建任务" }));
+
+    await waitFor(() => {
+      expect(mockCreateIssue).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "TAPD sourced issue",
+          metadata: {
+            source_provider: "tapd",
+            source_url: "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",
+            tapd_workspace_id: "47654106",
+            tapd_resource_type: "markdown_wiki",
+            tapd_resource_id: "1147654106001004154",
+          },
+        }),
+      );
+    });
+  });
+
   it("keeps manual mode open and clears content when create another is enabled", async () => {
     const user = userEvent.setup();
     const onClose = vi.fn();

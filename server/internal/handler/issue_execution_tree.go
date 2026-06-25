@@ -100,7 +100,11 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 		for _, event := range events {
 			eventResp = append(eventResp, squadSOPEventToResponse(event))
 		}
-		runResp = append(runResp, squadSOPRunToResponse(run, eventResp))
+		enrichedRun, err := h.squadSOPRunToResponseWithStageMetrics(ctx, run, eventResp)
+		if err != nil {
+			return IssueExecutionNodeResponse{}, err
+		}
+		runResp = append(runResp, enrichedRun)
 	}
 
 	traces, err := h.Queries.ListIssueTaskTraceEvents(ctx, issue.ID)

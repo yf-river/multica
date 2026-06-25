@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"sort"
@@ -81,6 +82,23 @@ type SquadSOPEventResponse struct {
 	TaskID        *string        `json:"task_id"`
 	CreatedAt     string         `json:"created_at"`
 	Metrics       map[string]any `json:"metrics"`
+}
+
+type SOPStageMetricResponse struct {
+	StepKey          string `json:"step_key"`
+	StepName         string `json:"step_name"`
+	RoleKey          string `json:"role_key"`
+	Status           string `json:"status"`
+	DurationMs       int64  `json:"duration_ms"`
+	EventCount       int    `json:"event_count"`
+	EvidenceCount    int    `json:"evidence_count"`
+	TaskCount        int    `json:"task_count"`
+	MessageCount     int    `json:"message_count"`
+	AgentTurnCount   int    `json:"agent_turn_count"`
+	InputTokens      int64  `json:"input_tokens"`
+	OutputTokens     int64  `json:"output_tokens"`
+	CacheReadTokens  int64  `json:"cache_read_tokens"`
+	CacheWriteTokens int64  `json:"cache_write_tokens"`
 }
 
 type CreateSOPRunRequest struct {
@@ -166,6 +184,120 @@ func squadSOPEventToResponse(event db.SquadSopStepEvent) SquadSOPEventResponse {
 	}
 }
 
+func (h *Handler) squadSOPRunToResponseWithStageMetrics(ctx context.Context, run db.SquadSopRun, events []SquadSOPEventResponse) (SquadSOPRunResponse, error) {
+	resp := squadSOPRunToResponse(run, events)
+	stageMetrics, err := h.buildSOPStageMetrics(ctx, run.Profile, events)
+	if err != nil {
+		return SquadSOPRunResponse{}, err
+	}
+	resp.Metrics["阶段指标"] = stageMetrics
+	return resp, nil
+}
+
+func (h *Handler) buildSOPStageMetrics(ctx context.Context, profile []byte, events []SquadSOPEventResponse) ([]SOPStageMetricResponse, error) {
+	type stageAccumulator struct {
+		metric SOPStageMetricResponse
+		tasks  map[string]struct{}
+	}
+	steps := sopProfileStepsForHandler(profile)
+	accs := make([]*stageAccumulator, 0, len(steps))
+	byKey := map[string]*stageAccumulator{}
+	ensure := func(stepKey, stepName, roleKey string) *stageAccumulator {
+		if acc, ok := byKey[stepKey]; ok {
+			if acc.metric.StepName == "" {
+				acc.metric.StepName = stepName
+			}
+			if acc.metric.RoleKey == "" {
+				acc.metric.RoleKey = roleKey
+			}
+			return acc
+		}
+		acc := &stageAccumulator{
+			metric: SOPStageMetricResponse{
+				StepKey:  stepKey,
+				StepName: stepName,
+				RoleKey:  roleKey,
+				Status:   "未开始",
+			},
+			tasks: map[string]struct{}{},
+		}
+		accs = append(accs, acc)
+		byKey[stepKey] = acc
+		return acc
+	}
+	for _, step := range steps {
+		ensure(step.Key, step.Name, step.RoleKey)
+	}
+	for _, event := range events {
+		stepKey := event.StepKey
+		if strings.TrimSpace(stepKey) == "" {
+			stepKey = "unknown"
+		}
+		acc := ensure(stepKey, event.StepName, event.RoleKey)
+		acc.metric.EventCount++
+		acc.metric.EvidenceCount += evidenceCountFromAny(event.Evidence)
+		if event.DurationMs != nil {
+			acc.metric.DurationMs += *event.DurationMs
+		}
+		if strings.TrimSpace(event.Status) != "" {
+			acc.metric.Status = event.Status
+		}
+		if event.TaskID == nil || strings.TrimSpace(*event.TaskID) == "" {
+			continue
+		}
+		taskID := strings.TrimSpace(*event.TaskID)
+		if _, seen := acc.tasks[taskID]; seen {
+			continue
+		}
+		acc.tasks[taskID] = struct{}{}
+		acc.metric.TaskCount++
+		taskUUID := parseUUID(taskID)
+		usages, err := h.Queries.GetTaskUsage(ctx, taskUUID)
+		if err != nil {
+			return nil, err
+		}
+		for _, usage := range usages {
+			acc.metric.InputTokens += usage.InputTokens
+			acc.metric.OutputTokens += usage.OutputTokens
+			acc.metric.CacheReadTokens += usage.CacheReadTokens
+			acc.metric.CacheWriteTokens += usage.CacheWriteTokens
+		}
+		messages, err := h.Queries.ListTaskMessages(ctx, taskUUID)
+		if err != nil {
+			return nil, err
+		}
+		acc.metric.MessageCount += len(messages)
+		for _, message := range messages {
+			if isAgentTurnMessageType(message.Type) {
+				acc.metric.AgentTurnCount++
+			}
+		}
+	}
+	out := make([]SOPStageMetricResponse, 0, len(accs))
+	for _, acc := range accs {
+		out = append(out, acc.metric)
+	}
+	return out, nil
+}
+
+func evidenceCountFromAny(v any) int {
+	switch evidence := v.(type) {
+	case map[string]any:
+		return len(evidence)
+	default:
+		return 0
+	}
+}
+
+func isAgentTurnMessageType(messageType string) bool {
+	switch strings.ToLower(strings.TrimSpace(messageType)) {
+	case "text", "thinking", "assistant", "agent_message", "message":
+		return true
+	default:
+		return false
+	}
+}
+
 func (h *Handler) ListIssueSOPRuns(w http.ResponseWriter, r *http.Request) {
 	issue, ok := h.loadSOPIssue(w, r)
 	if !ok {
@@ -190,7 +322,12 @@ func (h *Handler) ListIssueSOPRuns(w http.ResponseWriter, r *http.Request) {
 		for _, event := range events {
 			eventResp = append(eventResp, squadSOPEventToResponse(event))
 		}
-		resp = append(resp, squadSOPRunToResponse(run, eventResp))
+		runResp, err := h.squadSOPRunToResponseWithStageMetrics(r.Context(), run, eventResp)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to build SOP run metrics")
+			return
+		}
+		resp = append(resp, runResp)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
 }
@@ -529,8 +666,44 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 		writeError(w, http.StatusInternalServerError, "failed to count SOP events")
 		return
 	}
-	summary := buildObservabilitySummary(runs, traces, eventCount, observabilitySummarySampleLimit)
+	events, err := h.Queries.ListWorkspaceSquadSOPStepEvents(r.Context(), db.ListWorkspaceSquadSOPStepEventsParams{
+		WorkspaceID: workspaceID,
+		Limit:       observabilitySummarySampleLimit,
+		Since:       since,
+		SquadID:     squadID,
+		ProjectID:   projectID,
+		AgentID:     agentID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list SOP step events")
+		return
+	}
+	taskMessages, err := h.loadObservabilityTaskMessages(r.Context(), events)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list task messages")
+		return
+	}
+	summary := buildObservabilitySummary(runs, events, traces, taskMessages, eventCount, observabilitySummarySampleLimit)
 	writeJSON(w, http.StatusOK, summary)
+}
+
+func (h *Handler) loadObservabilityTaskMessages(ctx context.Context, events []db.SquadSopStepEvent) (map[string][]db.TaskMessage, error) {
+	result := map[string][]db.TaskMessage{}
+	for _, event := range events {
+		taskID := uuidToString(event.TaskID)
+		if taskID == "" {
+			continue
+		}
+		if _, ok := result[taskID]; ok {
+			continue
+		}
+		messages, err := h.Queries.ListTaskMessages(ctx, event.TaskID)
+		if err != nil {
+			return nil, err
+		}
+		result[taskID] = messages
+	}
+	return result, nil
 }
 
 func (h *Handler) loadSOPIssue(w http.ResponseWriter, r *http.Request) (db.Issue, bool) {
@@ -709,7 +882,31 @@ type observabilityUsageBreakdown struct {
 	HasPrice         bool
 }
 
-func buildObservabilitySummary(runs []db.SquadSopRun, traces []db.TaskTraceEvent, sopEventCount int64, sampleLimit int32) map[string]any {
+type observabilitySOPStageMetric struct {
+	StepKey          string `json:"step_key"`
+	StepName         string `json:"step_name"`
+	RoleKey          string `json:"role_key"`
+	Status           string `json:"status"`
+	DurationMs       int64  `json:"duration_ms"`
+	EventCount       int    `json:"event_count"`
+	EvidenceCount    int    `json:"evidence_count"`
+	TaskCount        int    `json:"task_count"`
+	MessageCount     int    `json:"message_count"`
+	AgentTurnCount   int    `json:"agent_turn_count"`
+	InputTokens      int64  `json:"input_tokens"`
+	OutputTokens     int64  `json:"output_tokens"`
+	CacheReadTokens  int64  `json:"cache_read_tokens"`
+	CacheWriteTokens int64  `json:"cache_write_tokens"`
+}
+
+func buildObservabilitySummary(
+	runs []db.SquadSopRun,
+	events []db.SquadSopStepEvent,
+	traces []db.TaskTraceEvent,
+	taskMessages map[string][]db.TaskMessage,
+	sopEventCount int64,
+	sampleLimit int32,
+) map[string]any {
 	if sampleLimit <= 0 {
 		sampleLimit = observabilitySummarySampleLimit
 	}
@@ -743,6 +940,7 @@ func buildObservabilitySummary(runs []db.SquadSopRun, traces []db.TaskTraceEvent
 	modelBreakdown := map[string]*observabilityUsageBreakdown{}
 	runtimeBreakdown := map[string]*observabilityUsageBreakdown{}
 	unpricedModels := map[string]int{}
+	usageTracesByTask := map[string][]db.TaskTraceEvent{}
 	for _, trace := range traces {
 		if trace.QueueWaitMs.Valid {
 			queueWait += trace.QueueWaitMs.Int64
@@ -767,6 +965,12 @@ func buildObservabilitySummary(runs []db.SquadSopRun, traces []db.TaskTraceEvent
 		}
 	}
 	for _, trace := range dedupeObservabilityUsageTraces(traces) {
+		if trace.EventType == "llm.usage_reported" {
+			taskID := uuidToString(trace.TaskID)
+			if taskID != "" {
+				usageTracesByTask[taskID] = append(usageTracesByTask[taskID], trace)
+			}
+		}
 		inputTokens += trace.InputTokens
 		outputTokens += trace.OutputTokens
 		cacheReadTokens += trace.CacheReadTokens
@@ -815,6 +1019,7 @@ func buildObservabilitySummary(runs []db.SquadSopRun, traces []db.TaskTraceEvent
 			HasPrice:         hasPrice,
 		})
 	}
+	stageBreakdown := buildObservabilitySOPStageBreakdown(runs, events, usageTracesByTask, taskMessages)
 	return map[string]any{
 		"指标": map[string]any{
 			"SOP 执行数":   durationCountOrTotal(durationCount, len(runs)),
@@ -856,9 +1061,93 @@ func buildObservabilitySummary(runs []db.SquadSopRun, traces []db.TaskTraceEvent
 			"SOP 执行可能截断": runMaybeTruncated,
 			"任务观测可能截断":   traceMaybeTruncated,
 		},
-		"model_breakdown":   observabilityBreakdownRows(modelBreakdown),
-		"runtime_breakdown": observabilityBreakdownRows(runtimeBreakdown),
+		"model_breakdown":     observabilityBreakdownRows(modelBreakdown),
+		"runtime_breakdown":   observabilityBreakdownRows(runtimeBreakdown),
+		"sop_stage_breakdown": stageBreakdown,
 	}
+}
+
+func buildObservabilitySOPStageBreakdown(
+	runs []db.SquadSopRun,
+	events []db.SquadSopStepEvent,
+	usageTracesByTask map[string][]db.TaskTraceEvent,
+	taskMessages map[string][]db.TaskMessage,
+) []observabilitySOPStageMetric {
+	type stageAccumulator struct {
+		metric observabilitySOPStageMetric
+		tasks  map[string]struct{}
+	}
+	accs := make([]*stageAccumulator, 0)
+	byKey := map[string]*stageAccumulator{}
+	ensure := func(stepKey, stepName, roleKey string) *stageAccumulator {
+		stepKey = strings.TrimSpace(stepKey)
+		if stepKey == "" {
+			stepKey = "unknown"
+		}
+		if existing, ok := byKey[stepKey]; ok {
+			if existing.metric.StepName == "" {
+				existing.metric.StepName = strings.TrimSpace(stepName)
+			}
+			if existing.metric.RoleKey == "" {
+				existing.metric.RoleKey = strings.TrimSpace(roleKey)
+			}
+			return existing
+		}
+		acc := &stageAccumulator{
+			metric: observabilitySOPStageMetric{
+				StepKey:  stepKey,
+				StepName: strings.TrimSpace(stepName),
+				RoleKey:  strings.TrimSpace(roleKey),
+			},
+			tasks: map[string]struct{}{},
+		}
+		byKey[stepKey] = acc
+		accs = append(accs, acc)
+		return acc
+	}
+	for _, run := range runs {
+		for _, step := range sopProfileStepsForHandler(run.Profile) {
+			ensure(step.Key, step.Name, step.RoleKey)
+		}
+	}
+	for _, event := range events {
+		acc := ensure(event.StepKey, event.StepName, event.RoleKey)
+		acc.metric.EventCount++
+		acc.metric.EvidenceCount += evidenceCount(event.Evidence)
+		if event.DurationMs.Valid {
+			acc.metric.DurationMs += event.DurationMs.Int64
+		}
+		if strings.TrimSpace(event.Status) != "" {
+			acc.metric.Status = event.Status
+		}
+		taskID := uuidToString(event.TaskID)
+		if taskID == "" {
+			continue
+		}
+		if _, seen := acc.tasks[taskID]; seen {
+			continue
+		}
+		acc.tasks[taskID] = struct{}{}
+		acc.metric.TaskCount++
+		for _, trace := range usageTracesByTask[taskID] {
+			acc.metric.InputTokens += trace.InputTokens
+			acc.metric.OutputTokens += trace.OutputTokens
+			acc.metric.CacheReadTokens += trace.CacheReadTokens
+			acc.metric.CacheWriteTokens += trace.CacheWriteTokens
+		}
+		messages := taskMessages[taskID]
+		acc.metric.MessageCount += len(messages)
+		for _, message := range messages {
+			if isAgentTurnMessageType(message.Type) {
+				acc.metric.AgentTurnCount++
+			}
+		}
+	}
+	result := make([]observabilitySOPStageMetric, 0, len(accs))
+	for _, acc := range accs {
+		result = append(result, acc.metric)
+	}
+	return result
 }
 
 func dedupeObservabilityUsageTraces(traces []db.TaskTraceEvent) []db.TaskTraceEvent {

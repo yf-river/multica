@@ -74,6 +74,8 @@ func validateAndNormalizeResourceRef(resourceType string, ref json.RawMessage) (
 	switch resourceType {
 	case "github_repo":
 		return validateGithubRepoRef(ref)
+	case "gongfeng_repo":
+		return validateGongfengRepoRef(ref)
 	case "local_directory":
 		return validateLocalDirectoryRef(ref)
 	default:
@@ -84,6 +86,16 @@ func validateAndNormalizeResourceRef(resourceType string, ref json.RawMessage) (
 type githubRepoRef struct {
 	URL               string `json:"url"`
 	DefaultBranchHint string `json:"default_branch_hint,omitempty"`
+}
+
+type gongfengRepoRef struct {
+	Provider     string `json:"provider"`
+	URL          string `json:"url"`
+	ProjectPath  string `json:"project_path"`
+	ResourceKind string `json:"resource_kind"`
+	Ref          string `json:"ref,omitempty"`
+	HeadCommit   string `json:"head_commit,omitempty"`
+	Title        string `json:"title,omitempty"`
 }
 
 func validateGithubRepoRef(ref json.RawMessage) (json.RawMessage, error) {
@@ -104,6 +116,136 @@ func validateGithubRepoRef(ref json.RawMessage) (json.RawMessage, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+func validateGongfengRepoRef(ref json.RawMessage) (json.RawMessage, error) {
+	var payload gongfengRepoRef
+	if err := json.Unmarshal(ref, &payload); err != nil {
+		return nil, fmt.Errorf("invalid gongfeng_repo payload: %w", err)
+	}
+	payload.URL = strings.TrimSpace(payload.URL)
+	if payload.URL == "" {
+		return nil, errors.New("gongfeng_repo: url is required")
+	}
+	parsed, err := parseGongfengURL(payload.URL)
+	if err != nil {
+		return nil, err
+	}
+	payload.Provider = "gongfeng"
+	payload.ProjectPath = strings.Trim(strings.TrimSpace(payload.ProjectPath), "/")
+	if payload.ProjectPath == "" {
+		payload.ProjectPath = parsed.ProjectPath
+	}
+	if payload.ProjectPath == "" {
+		return nil, errors.New("gongfeng_repo: project_path is required")
+	}
+	payload.ResourceKind = strings.TrimSpace(payload.ResourceKind)
+	if payload.ResourceKind == "" {
+		payload.ResourceKind = parsed.ResourceKind
+	}
+	if !isValidGongfengResourceKind(payload.ResourceKind) {
+		return nil, errors.New("gongfeng_repo: resource_kind must be project, branch, commits, commit, tag, file, or merge_request")
+	}
+	payload.Ref = strings.TrimSpace(payload.Ref)
+	if payload.Ref == "" {
+		payload.Ref = parsed.Ref
+	}
+	payload.HeadCommit = strings.TrimSpace(payload.HeadCommit)
+	payload.Title = strings.TrimSpace(payload.Title)
+	out, err := json.Marshal(payload)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+type parsedGongfengURL struct {
+	ProjectPath  string
+	ResourceKind string
+	Ref          string
+}
+
+func parseGongfengURL(raw string) (parsedGongfengURL, error) {
+	u, err := url.Parse(raw)
+	if err != nil || u.Host == "" {
+		return parsedGongfengURL{}, errors.New("gongfeng_repo: url must be a valid https URL")
+	}
+	if u.Scheme != "https" && u.Scheme != "http" {
+		return parsedGongfengURL{}, errors.New("gongfeng_repo: url must be a valid http(s) URL")
+	}
+	if !strings.EqualFold(u.Host, "git.code.tencent.com") {
+		return parsedGongfengURL{}, errors.New("gongfeng_repo: host must be git.code.tencent.com")
+	}
+	segments := splitCleanPath(u.Path)
+	if len(segments) == 0 {
+		return parsedGongfengURL{}, errors.New("gongfeng_repo: project_path is required")
+	}
+	if i := indexSegment(segments, "-"); i >= 0 {
+		segments = append(segments[:i], segments[i+1:]...)
+	}
+	marker := len(segments)
+	kind := "project"
+	ref := ""
+	for i, segment := range segments {
+		switch segment {
+		case "commits":
+			marker, kind = i, "commits"
+		case "commit":
+			marker, kind = i, "commit"
+		case "tree", "branches", "branch":
+			marker, kind = i, "branch"
+		case "tags", "tag":
+			marker, kind = i, "tag"
+		case "blob", "file", "files":
+			marker, kind = i, "file"
+		case "merge_requests", "merge_request":
+			marker, kind = i, "merge_request"
+		default:
+			continue
+		}
+		if marker+1 < len(segments) {
+			ref = strings.Join(segments[marker+1:], "/")
+		}
+		break
+	}
+	projectSegments := segments[:marker]
+	if len(projectSegments) == 0 {
+		return parsedGongfengURL{}, errors.New("gongfeng_repo: project_path is required")
+	}
+	projectPath := strings.TrimSuffix(strings.Join(projectSegments, "/"), ".git")
+	if projectPath == "" {
+		return parsedGongfengURL{}, errors.New("gongfeng_repo: project_path is required")
+	}
+	return parsedGongfengURL{ProjectPath: projectPath, ResourceKind: kind, Ref: ref}, nil
+}
+
+func splitCleanPath(path string) []string {
+	parts := strings.Split(strings.Trim(path, "/"), "/")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		if part = strings.TrimSpace(part); part != "" {
+			out = append(out, part)
+		}
+	}
+	return out
+}
+
+func indexSegment(segments []string, needle string) int {
+	for i, segment := range segments {
+		if segment == needle {
+			return i
+		}
+	}
+	return -1
+}
+
+func isValidGongfengResourceKind(kind string) bool {
+	switch kind {
+	case "project", "branch", "commits", "commit", "tag", "file", "merge_request":
+		return true
+	default:
+		return false
+	}
 }
 
 // localDirectoryRef is the JSONB shape stored for resource_type=local_directory.

@@ -72,6 +72,26 @@ func validateIssueMetadataValue(raw json.RawMessage) error {
 	}
 }
 
+func validateIssueMetadataObject(raw map[string]json.RawMessage) (map[string][]byte, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	if len(raw) > maxIssueMetadataKeys {
+		return nil, fmt.Errorf("metadata cannot exceed %d keys", maxIssueMetadataKeys)
+	}
+	out := make(map[string][]byte, len(raw))
+	for key, value := range raw {
+		if err := validateIssueMetadataKey(key); err != nil {
+			return nil, fmt.Errorf("metadata %s", err.Error())
+		}
+		if err := validateIssueMetadataValue(value); err != nil {
+			return nil, fmt.Errorf("metadata value for %q %s", key, err.Error())
+		}
+		out[key] = []byte(value)
+	}
+	return out, nil
+}
+
 // parseIssueMetadata decodes the JSONB bytes from db.Issue.Metadata into a
 // Go map suitable for response serialization. Empty or unparseable blobs
 // degrade to an empty map — the DB CHECK guarantees object shape, so this

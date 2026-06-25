@@ -16,6 +16,7 @@ const verifyChildWake = trimEnv("ACCEPTANCE_VERIFY_CHILD_WAKE") === "1" || squad
 const verifyCrossProjectChildren = trimEnv("ACCEPTANCE_VERIFY_CROSS_PROJECT_CHILDREN") === "1";
 const cleanupActiveTasks = trimEnv("ACCEPTANCE_CLEANUP_ACTIVE_TASKS") !== "0";
 const taskTimeoutMs = Number(trimEnv("ACCEPTANCE_TASK_TIMEOUT_MS") || (squadTemplateKey ? 600_000 : 240_000));
+const tapdSourceURL = trimEnv("ACCEPTANCE_TAPD_SOURCE_URL") || "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154";
 const suffix = Date.now();
 
 const evidence = {
@@ -31,6 +32,7 @@ const evidence = {
   verify_cross_project_children: verifyCrossProjectChildren,
   cleanup_active_tasks: cleanupActiveTasks,
   task_timeout_ms: taskTimeoutMs,
+  tapd_source_url: tapdSourceURL,
   commands: [],
   result: "unknown",
 };
@@ -65,7 +67,7 @@ if (squadTemplateKey) {
   }
   const template = post("/api/squads/internal-template", { template_key: squadTemplateKey }, token);
   squad = template?.squad;
-  agent = template?.agents?.find((item) => item.role_key === "captain");
+  agent = template?.agents?.find((item) => item.role_key === "pm") || template?.agents?.find((item) => item.role_key === "captain");
   if (!squad?.id || !agent?.id) fail(`内置小队模板返回不完整：${squadTemplateKey}`);
   evidence.internal_template = {
     key: squadTemplateKey,
@@ -125,9 +127,18 @@ const issue = post("/api/issues", {
   assignee_type: "squad",
   assignee_id: squad.id,
   ...(crossProjectSetup?.usercenter?.id ? { project_id: crossProjectSetup.usercenter.id } : {}),
+  ...(squadTemplateKey === "user-center" ? { metadata: buildTAPDSourceMetadata(tapdSourceURL) } : {}),
 }, token);
 if (!issue?.id) fail("创建任务响应缺少 id");
 evidence.issue = { id: issue.id, identifier: issue.identifier || "", title: issue.title, project_id: issue.project_id || null };
+if (squadTemplateKey === "user-center") {
+  evidence.tapd_source = {
+    url: tapdSourceURL,
+    metadata: issue.metadata || null,
+    persisted: issue.metadata?.source_provider === "tapd" && issue.metadata?.source_url === tapdSourceURL,
+  };
+  if (!evidence.tapd_source.persisted) fail(`TAPD metadata 未随父任务保存：${JSON.stringify(issue.metadata || null)}`);
+}
 
 if (squadTemplateKey) {
   const sopRun = await poll(async () => {
@@ -186,14 +197,14 @@ if (terminalTask.status === "completed") {
   if (!evidence.trace_provider_model_observed) {
     fail(`任务完成但 trace 未包含 ${provider}/${model}`);
   }
-  let captainCreatedChild = null;
+  let leaderCreatedChild = null;
   if (verifyCrossProjectChildren) {
-    const crossProjectChildren = await verifyCaptainCreatedCrossProjectChildren({ issue, setup: crossProjectSetup, token });
-    captainCreatedChild = crossProjectChildren.children[0] || null;
+    const crossProjectChildren = await verifyLeaderCreatedCrossProjectChildren({ issue, setup: crossProjectSetup, token });
+    leaderCreatedChild = crossProjectChildren.children[0] || null;
     await verifyProjectLeadExecution({ children: crossProjectChildren.children, setup: crossProjectSetup, token });
   }
   if (verifyChildWake) {
-    await verifyChildDoneWake({ issue, squad, agent, terminalTask, token, childOverride: captainCreatedChild });
+    await verifyChildDoneWake({ issue, squad, agent, terminalTask, token, childOverride: leaderCreatedChild });
   }
   cleanupAcceptanceTasks({ issueID: issue.id, keepTaskIDs: new Set([terminalTask.id]), token });
   evidence.result = "completed";
@@ -214,9 +225,9 @@ function createCrossProjectSetup(token, value, runtimeID) {
     role: "gateway 项目负责人",
     runtimeID,
   });
-  const configLead = createProjectLeadAgent(token, {
-    name: `curl config 项目负责人 ${value}`,
-    role: "config 项目负责人",
+  const deploymentLead = createProjectLeadAgent(token, {
+    name: `curl ida-deployment 项目负责人 ${value}`,
+    role: "ida-deployment 项目负责人",
     runtimeID,
   });
   const usercenter = post("/api/projects", {
@@ -233,21 +244,21 @@ function createCrossProjectSetup(token, value, runtimeID) {
     lead_type: "agent",
     lead_id: gatewayLead.id,
   }, token);
-  const config = post("/api/projects", {
+  const deployment = post("/api/projects", {
     workspace_id: activeWorkspaceId,
-    title: `curl config ${value}`,
-    description: "curl 验收创建的 config 子项目，用于验证队长通过 --project 创建跨项目子任务。",
+    title: `curl ida-deployment ${value}`,
+    description: "curl 验收创建的 ida-deployment 子项目，用于验证队长通过 --project 创建跨项目子任务。",
     status: "in_progress",
     lead_type: "agent",
-    lead_id: configLead.id,
+    lead_id: deploymentLead.id,
   }, token);
-  for (const project of [usercenter, gateway, config]) {
+  for (const project of [usercenter, gateway, deployment]) {
     if (!project?.id) fail(`创建跨项目验收项目失败：${JSON.stringify(project)}`);
   }
   return {
     usercenter: pickProject(usercenter),
     gateway: { ...pickProject(gateway), lead: gatewayLead },
-    config: { ...pickProject(config), lead: configLead },
+    deployment: { ...pickProject(deployment), lead: deploymentLead },
   };
 }
 
@@ -385,33 +396,33 @@ function cleanupAcceptanceTasks({ issueID, keepTaskIDs, token }) {
   }
 }
 
-async function verifyCaptainCreatedCrossProjectChildren({ issue, setup, token }) {
+async function verifyLeaderCreatedCrossProjectChildren({ issue, setup, token }) {
   const children = await poll(async () => {
     const items = get(`/api/issues/${issue.id}/children`, token);
     const list = Array.isArray(items?.issues) ? items.issues : Array.isArray(items) ? items : [];
     const byProject = new Map(list.map((item) => [item.project_id, item]));
-    if (byProject.has(setup.gateway.id) && byProject.has(setup.config.id)) return list;
+    if (byProject.has(setup.gateway.id) && byProject.has(setup.deployment.id)) return list;
     return null;
-  }, 60_000, "等待队长创建 gateway/config 跨项目子任务");
+  }, 60_000, "等待队长创建 gateway/ida-deployment 跨项目子任务");
 
   const gatewayChild = children.find((item) => item.project_id === setup.gateway.id);
-  const configChild = children.find((item) => item.project_id === setup.config.id);
-  if (!gatewayChild?.id || !configChild?.id) fail("未回读到 gateway/config 跨项目子任务");
-  for (const child of [gatewayChild, configChild]) {
+  const deploymentChild = children.find((item) => item.project_id === setup.deployment.id);
+  if (!gatewayChild?.id || !deploymentChild?.id) fail("未回读到 gateway/ida-deployment 跨项目子任务");
+  for (const child of [gatewayChild, deploymentChild]) {
     if (child.parent_issue_id !== issue.id) {
       fail(`子任务 ${child.id} parent_issue_id=${child.parent_issue_id}，期望 ${issue.id}`);
     }
   }
   assertProjectLeadAssignee(gatewayChild, setup.gateway.lead, "gateway");
-  assertProjectLeadAssignee(configChild, setup.config.lead, "config");
+  assertProjectLeadAssignee(deploymentChild, setup.deployment.lead, "ida-deployment");
   evidence.cross_project_children = {
     count: children.length,
     gateway: issueSummary(gatewayChild),
-    config: issueSummary(configChild),
+    deployment: issueSummary(deploymentChild),
     project_lead_auto_assignee_verified: true,
     verified_by_public_api: true,
   };
-  return { children: [gatewayChild, configChild] };
+  return { children: [gatewayChild, deploymentChild] };
 }
 
 function assertProjectLeadAssignee(child, lead, label) {
@@ -424,7 +435,7 @@ async function verifyProjectLeadExecution({ children, setup, token }) {
   const childByProject = new Map(children.map((item) => [item.project_id, item]));
   const checks = [
     { label: "gateway", child: childByProject.get(setup.gateway.id), lead: setup.gateway.lead },
-    { label: "config", child: childByProject.get(setup.config.id), lead: setup.config.lead },
+    { label: "ida-deployment", child: childByProject.get(setup.deployment.id), lead: setup.deployment.lead },
   ];
   const results = [];
   for (const check of checks) {
@@ -537,7 +548,7 @@ async function verifyChildDoneWake({ issue, squad, agent, terminalTask, token, c
     requeued_task_id: requeuedTask.id,
     requeued_task_status: requeuedTask.status,
     requeued_task_is_leader_task: requeuedTask.is_leader_task,
-    used_captain_created_child: Boolean(childOverride),
+    used_leader_created_child: Boolean(childOverride),
     child_project_id: child.project_id || null,
   };
 }
@@ -584,16 +595,16 @@ function issueDescription(templateKey, crossProjectSetup = null) {
         return [
           "请作为 user-center 小队队长完成一次真实跨项目 SOP 验收。不要修改代码。",
           "",
-          "业务场景：user-center 要新增一个内部用户查询 API，需要 gateway 补路由/鉴权/转发信息，需要 config 补配置项/灰度参数。",
+          "业务场景：user-center 要新增一个内部用户查询 API，需要 gateway 补路由/鉴权/转发信息，需要 ida-deployment 补部署配置项/灰度参数。",
           "",
           "必须按以下方式执行：",
           "1. 先运行 `multica issue get <当前 issue id> --output json` 理解父任务。",
           "2. 再运行 `multica project list --output json`，找到下面两个目标项目的 UUID：",
           `   - gateway 项目标题：${crossProjectSetup.gateway.title}`,
-          `   - config 项目标题：${crossProjectSetup.config.title}`,
+          `   - ida-deployment 项目标题：${crossProjectSetup.deployment.title}`,
           "3. 创建两个 `todo` 子 issue；每个命令都必须带 `--parent <当前 issue id>`，并且必须带对应的 `--project <目标项目 UUID>`：",
           "   - gateway 子 issue：标题包含 gateway，描述说明 API 路径、方法、鉴权和转发要求。",
-          "   - config 子 issue：标题包含 config，描述说明配置键、默认值、环境差异和回滚方式。",
+          "   - ida-deployment 子 issue：标题包含 ida-deployment，描述说明部署配置键、默认值、环境差异和回滚方式。",
           "4. 创建子 issue 时不要传 `--assignee` 或 `--assignee-id`，平台会把未指派的项目 issue 自动交给对应项目负责人。",
           "5. 创建后调用 `multica squad activity <当前 issue id> action --reason \"已创建跨项目子任务\"`。",
           "6. 输出验收证据：父 issue id、两个子 issue id、两个项目 UUID、下一步等待子项目负责人处理。",
@@ -612,6 +623,29 @@ function issueDescription(templateKey, crossProjectSetup = null) {
     default:
       return "请用中文完成一次最小验收：说明你已收到任务，输出 trace/任务标识占位、验收证据和下一步。不要修改代码。";
   }
+}
+
+function buildTAPDSourceMetadata(rawURL) {
+  const sourceURL = String(rawURL || "").trim();
+  const url = new URL(sourceURL);
+  const metadata = {
+    source_provider: "tapd",
+    source_url: sourceURL,
+    tapd_resource_type: tapdResourceTypeFromPath(url.pathname),
+  };
+  const workspaceID = url.pathname.split("/").find((part) => /^\d{4,}$/.test(part));
+  if (workspaceID) metadata.tapd_workspace_id = workspaceID;
+  const resourceID = url.hash.match(/\d{6,}/)?.[0] || [...url.pathname.matchAll(/\d{6,}/g)].at(-1)?.[0] || url.searchParams.get("id") || "";
+  if (resourceID) metadata.tapd_resource_id = resourceID;
+  return metadata;
+}
+
+function tapdResourceTypeFromPath(pathname) {
+  if (pathname.includes("/markdown_wikis/")) return "markdown_wiki";
+  if (pathname.includes("/stories/")) return "story";
+  if (pathname.includes("/bugs/")) return "bug";
+  if (pathname.includes("/tasks/")) return "task";
+  return "tapd_resource";
 }
 
 function fail(message) {

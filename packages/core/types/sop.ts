@@ -119,6 +119,7 @@ export interface ObservabilitySummary {
   };
   model_breakdown: ObservabilityUsageBreakdown[];
   runtime_breakdown: ObservabilityUsageBreakdown[];
+  sop_stage_breakdown: ObservabilitySOPStageBreakdown[];
 }
 
 export interface ObservabilityUsageBreakdown {
@@ -133,4 +134,22 @@ export interface ObservabilityUsageBreakdown {
   "任务数": number;
   "预估成本": number;
   "价格已知": boolean;
+}
+
+export interface ObservabilitySOPStageBreakdown {
+  step_key: string;
+  step_name: string;
+  role_key: string;
+  status: string;
+  duration_ms: number;
+  event_count: number;
+  evidence_count: number;
+  task_count: number;
+  message_count: number;
+  agent_turn_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  [key: string]: unknown;
 }

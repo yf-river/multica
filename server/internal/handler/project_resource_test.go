@@ -232,6 +232,174 @@ func TestIsValidGitRepoURL(t *testing.T) {
 	}
 }
 
+func TestProjectResourceGongfengLifecycle(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Gongfeng resource project",
+	})
+	testHandler.CreateProject(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateProject: %d %s", w.Code, w.Body.String())
+	}
+	var project ProjectResponse
+	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
+		t.Fatalf("decode CreateProject: %v", err)
+	}
+	defer func() {
+		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
+		r = withURLParam(r, "id", project.ID)
+		testHandler.DeleteProject(httptest.NewRecorder(), r)
+	}()
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+		"resource_type": "gongfeng_repo",
+		"resource_ref": map[string]any{
+			"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+		},
+		"label": "user-center dev",
+	})
+	req = withURLParam(req, "id", project.ID)
+	testHandler.CreateProjectResource(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateProjectResource: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created ProjectResourceResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode CreateProjectResource: %v", err)
+	}
+	if created.ResourceType != "gongfeng_repo" {
+		t.Fatalf("ResourceType = %q, want gongfeng_repo", created.ResourceType)
+	}
+	var ref gongfengRepoRef
+	if err := json.Unmarshal(created.ResourceRef, &ref); err != nil {
+		t.Fatalf("decode resource_ref: %v", err)
+	}
+	if ref.Provider != "gongfeng" ||
+		ref.ProjectPath != "ChainWeaver/ida/user-center" ||
+		ref.ResourceKind != "commits" ||
+		ref.Ref != "v5.0.0_dev" {
+		t.Fatalf("normalized gongfeng ref = %+v", ref)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+		"resource_type": "gongfeng_repo",
+		"resource_ref": map[string]any{
+			"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+		},
+	})
+	req = withURLParam(req, "id", project.ID)
+	testHandler.CreateProjectResource(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("duplicate CreateProjectResource: expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("PUT", "/api/projects/"+project.ID+"/resources/"+created.ID, map[string]any{
+		"resource_ref": map[string]any{
+			"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/-/tree/release",
+		},
+	})
+	req = withURLParams(req, "id", project.ID, "resourceId", created.ID)
+	testHandler.UpdateProjectResource(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateProjectResource: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var updated ProjectResourceResponse
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode UpdateProjectResource: %v", err)
+	}
+	if err := json.Unmarshal(updated.ResourceRef, &ref); err != nil {
+		t.Fatalf("decode updated resource_ref: %v", err)
+	}
+	if ref.ProjectPath != "ChainWeaver/ida/user-center" || ref.ResourceKind != "branch" || ref.Ref != "release" {
+		t.Fatalf("updated gongfeng ref = %+v", ref)
+	}
+}
+
+func TestProjectResourceGongfengValidation(t *testing.T) {
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Gongfeng validation project",
+	})
+	testHandler.CreateProject(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateProject: %d %s", w.Code, w.Body.String())
+	}
+	var project ProjectResponse
+	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
+		t.Fatalf("decode CreateProject: %v", err)
+	}
+	defer func() {
+		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
+		r = withURLParam(r, "id", project.ID)
+		testHandler.DeleteProject(httptest.NewRecorder(), r)
+	}()
+
+	cases := []struct {
+		name string
+		ref  any
+	}{
+		{"missing url", map[string]any{"project_path": "ChainWeaver/ida/user-center"}},
+		{"wrong host", map[string]any{"url": "https://github.com/ChainWeaver/ida"}},
+		{"unsupported scheme", map[string]any{"url": "ssh://git@git.code.tencent.com/ChainWeaver/ida/user-center.git"}},
+		{"bad resource kind", map[string]any{"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center", "resource_kind": "github"}},
+		{"wrong type", map[string]any{"url": 42}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			w := httptest.NewRecorder()
+			req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+				"resource_type": "gongfeng_repo",
+				"resource_ref":  tc.ref,
+			})
+			req = withURLParam(req, "id", project.ID)
+			testHandler.CreateProjectResource(w, req)
+			if w.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400, got %d: %s", w.Code, w.Body.String())
+			}
+		})
+	}
+}
+
+func TestParseGongfengURL(t *testing.T) {
+	cases := []struct {
+		raw         string
+		projectPath string
+		kind        string
+		ref         string
+	}{
+		{
+			"https://git.code.tencent.com/ChainWeaver/ida/user-center",
+			"ChainWeaver/ida/user-center",
+			"project",
+			"",
+		},
+		{
+			"https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+			"ChainWeaver/ida/user-center",
+			"commits",
+			"v5.0.0_dev",
+		},
+		{
+			"https://git.code.tencent.com/ChainWeaver/ida/user-center/-/tree/v5.0.0_dev",
+			"ChainWeaver/ida/user-center",
+			"branch",
+			"v5.0.0_dev",
+		},
+	}
+	for _, tc := range cases {
+		got, err := parseGongfengURL(tc.raw)
+		if err != nil {
+			t.Fatalf("parseGongfengURL(%q): %v", tc.raw, err)
+		}
+		if got.ProjectPath != tc.projectPath || got.ResourceKind != tc.kind || got.Ref != tc.ref {
+			t.Fatalf("parseGongfengURL(%q) = %+v", tc.raw, got)
+		}
+	}
+}
+
 // TestProjectResourceLocalDirectoryLifecycle covers the full CRUD path for the
 // local_directory resource type added in MUL-2662. Unlike github_repo, the
 // ref schema requires local_path + daemon_id and forbids any path that isn't

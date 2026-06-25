@@ -11,6 +11,7 @@ import {
   CalendarClock,
   Check,
   ChevronRight,
+  Link2,
   Maximize2,
   Minimize2,
   MoreHorizontal,
@@ -57,6 +58,48 @@ import { FileUploadButton } from "@multica/ui/components/common/file-upload-butt
 import { PillButton } from "../common/pill-button";
 import { IssuePickerModal } from "./issue-picker-modal";
 import { useT } from "../i18n";
+
+function tapdResourceTypeFromPath(pathname: string): string {
+  if (pathname.includes("/markdown_wikis/")) return "markdown_wiki";
+  if (pathname.includes("/stories/")) return "story";
+  if (pathname.includes("/bugs/")) return "bug";
+  if (pathname.includes("/tasks/")) return "task";
+  return "tapd_resource";
+}
+
+function tapdResourceIDFromURL(url: URL): string {
+  const hashID = url.hash.match(/\d{6,}/)?.[0];
+  if (hashID) return hashID;
+  const pathID = [...url.pathname.matchAll(/\d{6,}/g)].at(-1)?.[0];
+  if (pathID) return pathID;
+  return url.searchParams.get("id")?.trim() ?? "";
+}
+
+function tapdWorkspaceIDFromURL(url: URL): string {
+  return url.pathname.split("/").find((part) => /^\d{4,}$/.test(part)) ?? "";
+}
+
+export function buildTAPDSourceMetadata(rawURL: string): Record<string, string> | undefined {
+  const sourceURL = rawURL.trim();
+  if (!sourceURL) return undefined;
+  let url: URL;
+  try {
+    url = new URL(sourceURL);
+  } catch {
+    return undefined;
+  }
+  if (!url.hostname.endsWith("tapd.cn")) return undefined;
+  const metadata: Record<string, string> = {
+    source_provider: "tapd",
+    source_url: sourceURL,
+    tapd_resource_type: tapdResourceTypeFromPath(url.pathname),
+  };
+  const workspaceID = tapdWorkspaceIDFromURL(url);
+  if (workspaceID) metadata.tapd_workspace_id = workspaceID;
+  const resourceID = tapdResourceIDFromURL(url);
+  if (resourceID) metadata.tapd_resource_id = resourceID;
+  return metadata;
+}
 
 function toDraftAttachment(attachment: Attachment): Attachment {
   return {
@@ -137,6 +180,9 @@ export function ManualCreatePanel({
   const [projectId, setProjectId] = useState<string | undefined>(
     (data?.project_id as string) || undefined,
   );
+  const [sourceURL, setSourceURL] = useState<string>(
+    (data?.source_url as string) || "",
+  );
   const [parentIssueId, setParentIssueId] = useState<string | undefined>(
     (data?.parent_issue_id as string) || undefined,
   );
@@ -210,6 +256,7 @@ export function ManualCreatePanel({
     setStartDate(null);
     setDueDate(null);
     setProjectId(undefined);
+    setSourceURL("");
     setParentIssueId(undefined);
     setChildIssues([]);
     setDraft({
@@ -235,6 +282,7 @@ export function ManualCreatePanel({
       const activeAttachmentIds = draftAttachments
         .filter((a) => contentReferencesAttachment(description ?? "", a))
         .map((a) => a.id);
+      const sourceMetadata = buildTAPDSourceMetadata(sourceURL);
       const issue = await createIssueMutation.mutateAsync({
         title: title.trim(),
         description,
@@ -247,6 +295,7 @@ export function ManualCreatePanel({
         attachment_ids: activeAttachmentIds.length > 0 ? activeAttachmentIds : undefined,
         parent_issue_id: parentIssueId,
         project_id: projectId,
+        ...(sourceMetadata ? { metadata: sourceMetadata } : {}),
       });
 
       // Link queued children to the new parent. Deferred to after create
@@ -508,6 +557,18 @@ export function ManualCreatePanel({
                 onChange={(v) => updateTitle(v)}
                 onSubmit={handleSubmit}
               />
+            </div>
+
+            <div className="px-5 pb-2 shrink-0">
+              <label className="flex items-center gap-2 rounded-md border bg-background/70 px-2.5 py-1.5 text-xs text-muted-foreground focus-within:border-ring focus-within:ring-[2px] focus-within:ring-ring/20">
+                <Link2 className="size-3.5 shrink-0" />
+                <input
+                  value={sourceURL}
+                  placeholder={t(($) => $.create_issue.tapd_source_placeholder)}
+                  onChange={(event) => setSourceURL(event.target.value)}
+                  className="min-w-0 flex-1 bg-transparent text-foreground outline-none placeholder:text-muted-foreground"
+                />
+              </label>
             </div>
 
             {/* Description — takes remaining space */}

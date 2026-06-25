@@ -720,6 +720,23 @@ const ObservabilityUsageBreakdownSchema = z.object({
   "价格已知": z.boolean().default(false),
 }).loose();
 
+const ObservabilitySOPStageBreakdownSchema = z.object({
+  step_key: z.string().default(""),
+  step_name: z.string().default(""),
+  role_key: z.string().default(""),
+  status: z.string().default(""),
+  duration_ms: z.number().default(0),
+  event_count: z.number().default(0),
+  evidence_count: z.number().default(0),
+  task_count: z.number().default(0),
+  message_count: z.number().default(0),
+  agent_turn_count: z.number().default(0),
+  input_tokens: z.number().default(0),
+  output_tokens: z.number().default(0),
+  cache_read_tokens: z.number().default(0),
+  cache_write_tokens: z.number().default(0),
+}).loose();
+
 export const ObservabilitySummarySchema = z.object({
   指标: z.record(z.string(), z.unknown()).default({}),
   sop_status_counts: z.record(z.string(), z.number()).default({}),
@@ -751,6 +768,7 @@ export const ObservabilitySummarySchema = z.object({
   }),
   model_breakdown: z.array(ObservabilityUsageBreakdownSchema).default([]),
   runtime_breakdown: z.array(ObservabilityUsageBreakdownSchema).default([]),
+  sop_stage_breakdown: z.array(ObservabilitySOPStageBreakdownSchema).default([]),
 }).loose();
 
 export const EMPTY_OBSERVABILITY_SUMMARY: ObservabilitySummary = {
@@ -776,6 +794,7 @@ export const EMPTY_OBSERVABILITY_SUMMARY: ObservabilitySummary = {
   },
   model_breakdown: [],
   runtime_breakdown: [],
+  sop_stage_breakdown: [],
 };
 
 const PromptLibraryVariableSchema = z.object({

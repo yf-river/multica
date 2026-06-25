@@ -323,6 +323,9 @@ function SOPRunSummary({ runs }: { runs: SquadSOPRun[] }) {
       <div className="space-y-1">
         {recent.map((run) => {
           const evidenceCount = Number(run.metrics?.["证据数"] ?? run.events.length);
+          const stageMetrics = parseSOPStageMetrics(run.metrics?.["阶段指标"]);
+          const stageTokenTotal = stageMetrics.reduce((sum, item) => sum + item.input_tokens + item.output_tokens, 0);
+          const stageTurnTotal = stageMetrics.reduce((sum, item) => sum + item.agent_turn_count, 0);
           return (
             <div key={run.id} className="space-y-0.5">
               <div className="flex min-w-0 items-center gap-2 text-xs">
@@ -339,6 +342,30 @@ function SOPRunSummary({ runs }: { runs: SquadSOPRun[] }) {
                 </span>
                 <span className="shrink-0">{evidenceCount} 条证据</span>
               </div>
+              {stageMetrics.length > 0 && (
+                <div className="rounded border border-dashed border-border/70 bg-background/45 px-1.5 py-1 text-[11px] leading-5 text-muted-foreground">
+                  <div className="mb-0.5 truncate">
+                    阶段指标 {stageMetrics.length} 阶段
+                    {stageTurnTotal > 0 ? ` / ${stageTurnTotal} 轮` : ""}
+                    {stageTokenTotal > 0 ? ` / ${stageTokenTotal.toLocaleString()} tokens` : ""}
+                  </div>
+                  {stageMetrics.slice(0, 6).map((stage) => {
+                    const tokens = stage.input_tokens + stage.output_tokens;
+                    return (
+                      <div key={stage.step_key} className="grid gap-x-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+                        <span className="truncate">
+                          {stage.step_name || stage.step_key} · {stage.status || "未开始"}
+                        </span>
+                        <span className="shrink-0 tabular-nums">
+                          {formatNullableMilliseconds(stage.duration_ms)}
+                          {stage.agent_turn_count > 0 ? ` · ${stage.agent_turn_count} 轮` : ""}
+                          {tokens > 0 ? ` · ${tokens.toLocaleString()} tok` : ""}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
               {run.events.slice(-2).toReversed().map((event) => (
                 <div key={event.id} className="flex min-w-0 items-center gap-2 pl-2 text-[11px]">
                   <span className="min-w-0 flex-1 truncate text-muted-foreground">
@@ -355,6 +382,45 @@ function SOPRunSummary({ runs }: { runs: SquadSOPRun[] }) {
       </div>
     </div>
   );
+}
+
+type SOPStageMetric = {
+  step_key: string;
+  step_name: string;
+  status: string;
+  duration_ms: number;
+  agent_turn_count: number;
+  input_tokens: number;
+  output_tokens: number;
+};
+
+function parseSOPStageMetrics(raw: unknown): SOPStageMetric[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item): SOPStageMetric | null => {
+      if (!item || typeof item !== "object") return null;
+      const record = item as Record<string, unknown>;
+      const stepKey = stringMetric(record.step_key);
+      if (!stepKey) return null;
+      return {
+        step_key: stepKey,
+        step_name: stringMetric(record.step_name),
+        status: stringMetric(record.status),
+        duration_ms: numberMetric(record.duration_ms),
+        agent_turn_count: numberMetric(record.agent_turn_count),
+        input_tokens: numberMetric(record.input_tokens),
+        output_tokens: numberMetric(record.output_tokens),
+      };
+    })
+    .filter((item): item is SOPStageMetric => item !== null);
+}
+
+function stringMetric(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
+function numberMetric(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : 0;
 }
 
 function TraceEventSummary({ events }: { events: TaskTraceEvent[] }) {

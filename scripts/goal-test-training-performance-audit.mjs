@@ -141,6 +141,7 @@ async function auditTrainingRoute(page, route) {
   let readyMs = 0;
   let bodyText = "";
   let navigationError = "";
+  let stageVisibility = null;
   try {
     await page.goto(`${browserURL}${route.path}`, { waitUntil: "domcontentloaded", timeout: 15_000 });
     await page.waitForFunction(
@@ -151,6 +152,14 @@ async function auditTrainingRoute(page, route) {
     readyMs = Date.now() - startedAt;
     await page.waitForLoadState("networkidle", { timeout: 8_000 }).catch(() => {});
     bodyText = await page.locator("body").innerText({ timeout: 5_000 }).catch(() => "");
+    if (route.id === "runs") {
+      const requiredStages = ["pm", "01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"];
+      stageVisibility = {
+        panel_visible: bodyText.includes("SOP 阶段指标"),
+        required_stages: requiredStages,
+        visible_stages: requiredStages.filter((stage) => bodyText.includes(stage)),
+      };
+    }
   } catch (error) {
     navigationError = error instanceof Error ? error.message : String(error);
   } finally {
@@ -181,6 +190,14 @@ async function auditTrainingRoute(page, route) {
     candidates: hasPath(trainingApiRequests, "optimization-candidates"),
   };
   const boundaryFailures = expectedBoundaryFailures(route.id, requestBoundaries);
+  const stageVisibilityFailures = route.id === "runs" && stageVisibility
+    ? [
+        ...(stageVisibility.panel_visible ? [] : ["训练运行看板缺少 SOP 阶段指标面板"]),
+        ...(stageVisibility.visible_stages.length === stageVisibility.required_stages.length
+          ? []
+          : [`训练运行看板缺少阶段 key：${stageVisibility.required_stages.filter((stage) => !stageVisibility.visible_stages.includes(stage)).join(", ")}`]),
+      ]
+    : [];
   const failures = [
     ...(navigationError ? [`导航失败：${navigationError.split("\n")[0]}`] : []),
     ...(readyMs > maxRouteMs ? [`页面可用耗时 ${readyMs}ms 超过 ${maxRouteMs}ms`] : []),
@@ -191,6 +208,7 @@ async function auditTrainingRoute(page, route) {
     ...consoleErrors.map((item) => `console error：${item}`),
     ...pageErrors.map((item) => `pageerror：${item}`),
     ...boundaryFailures,
+    ...stageVisibilityFailures,
   ];
 
   return {
@@ -205,6 +223,7 @@ async function auditTrainingRoute(page, route) {
     api_request_count: apiRequests.length,
     training_api_request_count: trainingApiRequests.length,
     request_boundaries: requestBoundaries,
+    stage_visibility: stageVisibility,
     api_path_counts: countByPath(apiRequests),
     slow_requests: slowRequests,
     bad_statuses: badStatuses,
@@ -304,27 +323,27 @@ function expectedBoundaryFailures(routeId, boundaries) {
       forbidden: ["cases", "assets"],
     },
     prompts: {
-      required: ["prompt_evaluation_summary"],
+      required: [],
       forbidden: ["runtime_readiness", "cases", "assets", "runs", "candidates"],
     },
     datasets: {
-      required: ["prompt_evaluation_summary", "cases", "assets"],
+      required: ["cases", "assets"],
       forbidden: ["runtime_readiness", "runs", "candidates"],
     },
     "test-suites": {
-      required: ["prompt_evaluation_summary", "cases", "assets"],
+      required: ["cases", "assets"],
       forbidden: ["runtime_readiness", "runs", "candidates"],
     },
     experiments: {
-      required: ["prompt_evaluation_summary", "cases", "assets", "runs"],
+      required: ["cases", "assets", "runs"],
       forbidden: ["runtime_readiness", "candidates"],
     },
     "optimization-runs": {
-      required: ["prompt_evaluation_summary", "assets", "runs", "candidates"],
+      required: ["assets", "runs", "candidates"],
       forbidden: ["runtime_readiness", "cases"],
     },
     "run-history": {
-      required: ["prompt_evaluation_summary", "cases", "runs", "candidates"],
+      required: ["cases", "runs", "candidates"],
       forbidden: ["runtime_readiness", "assets"],
     },
   };

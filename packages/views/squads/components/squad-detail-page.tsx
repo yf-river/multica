@@ -76,6 +76,7 @@ type SquadSOPProfile = {
   stage_skills: string[];
   operation_skills: string[];
   acceptance: string[];
+  archive_policy?: string;
   forbidden_actions?: string[];
 };
 
@@ -85,16 +86,20 @@ const USER_CENTER_SOP_PROFILE: SquadSOPProfile = {
   repo: "/data/ida/user-center",
   mode: "stage_chain",
   roles: [
-    { key: "captain", name: "队长", responsibility: "接收 issue、按阶段链推进、汇总证据并决定是否进入下一阶段。" },
-    { key: "skill-member", name: "skill 队员", responsibility: "按 user-center skill 边界执行具体处理，不越权修改无关模块。" },
-    { key: "acceptor", name: "验收者", responsibility: "独立检查实现、测试结果和回写记录。" },
+    { key: "pm", name: "PM", responsibility: "接收 issue/TAPD 输入，检查阶段产物，处理阻断，推进 pm -> 01 -> 02 -> 03 -> 04 -> 05。" },
+    { key: "01-clarify", name: "01 需求澄清", responsibility: "执行 user-center/01-clarify，明确需求边界、验收口径和 handoff。" },
+    { key: "02-design", name: "02 方案设计", responsibility: "执行 user-center/02-design，输出方案、影响面、接口/数据契约和 handoff。" },
+    { key: "03-task-split", name: "03 任务拆分", responsibility: "执行 user-center/03-task-split，输出任务拆分、跨项目依赖和 handoff。" },
+    { key: "04-implement", name: "04 代码开发", responsibility: "执行 user-center/04-implement，按边界实现并保留证据。" },
+    { key: "05-verify", name: "05 测试验证", responsibility: "执行 user-center/05-verify，独立验证、总结证据和最终 handoff。" },
   ],
   steps: [
-    { key: "clarify", name: "需求澄清", role_key: "captain" },
-    { key: "design", name: "方案拆解", role_key: "captain" },
-    { key: "skill_execution", name: "skill 执行", role_key: "skill-member" },
-    { key: "acceptance", name: "验收", role_key: "acceptor" },
-    { key: "summary", name: "回写总结", role_key: "captain" },
+    { key: "pm", name: "PM 调度", role_key: "pm" },
+    { key: "01-clarify", name: "01 需求澄清", role_key: "01-clarify", skill: "user-center/01-clarify" },
+    { key: "02-design", name: "02 方案设计", role_key: "02-design", skill: "user-center/02-design" },
+    { key: "03-task-split", name: "03 任务拆分", role_key: "03-task-split", skill: "user-center/03-task-split" },
+    { key: "04-implement", name: "04 代码开发", role_key: "04-implement", skill: "user-center/04-implement" },
+    { key: "05-verify", name: "05 测试验证", role_key: "05-verify", skill: "user-center/05-verify" },
   ],
   stage_skills: [
     "user-center/01-clarify",
@@ -102,11 +107,11 @@ const USER_CENTER_SOP_PROFILE: SquadSOPProfile = {
     "user-center/03-task-split",
     "user-center/04-implement",
     "user-center/05-verify",
-    "user-center/06-archive",
   ],
   operation_skills: ["user-center/add-api"],
   acceptance: ["阶段产物完整", "测试证据完整", "交接说明明确"],
-  forbidden_actions: ["跳过验收直接完成", "缺少测试证据时宣称完成", "越过 user-center skill 边界修改无关仓库"],
+  archive_policy: "06-archive 不作为必跑阶段；最终结论、证据摘要和 handoff 状态由 05-verify 输出。",
+  forbidden_actions: ["跳过验收直接完成", "缺少测试证据时宣称完成", "越过 user-center skill 边界修改无关仓库", "把 06-archive 当作必跑验收阶段"],
 };
 
 const MULTICA_CODING_SOP_PROFILE: SquadSOPProfile = {
@@ -1715,6 +1720,7 @@ function normalizeSOPProfile(raw: Record<string, unknown> | null | undefined): S
   const stageSkills = toStringList(raw.stage_skills);
   const operationSkills = toStringList(raw.operation_skills);
   const acceptance = toStringList(raw.acceptance);
+  const archivePolicy = typeof raw.archive_policy === "string" ? raw.archive_policy.trim() : "";
   const forbiddenActions = toStringList(raw.forbidden_actions);
 
   if (!profileKey && !project && !repo && !mode && roles.length === 0 && steps.length === 0 && stageSkills.length === 0 && operationSkills.length === 0 && acceptance.length === 0) {
@@ -1732,6 +1738,7 @@ function normalizeSOPProfile(raw: Record<string, unknown> | null | undefined): S
     stage_skills: stageSkills,
     operation_skills: operationSkills,
     acceptance,
+    archive_policy: archivePolicy || undefined,
     forbidden_actions: forbiddenActions,
   };
 }
