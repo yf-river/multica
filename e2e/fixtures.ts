@@ -1721,10 +1721,14 @@ export class TestApiClient {
     return res.json();
   }
 
-  async listPromptEvaluationCases(params?: { asset_id?: string; status?: string }): Promise<PromptEvaluationCase[]> {
+  async listPromptEvaluationCases(params?: { asset_id?: string; status?: string; source?: string; tag?: string; keyword?: string; limit?: number }): Promise<PromptEvaluationCase[]> {
     const search = new URLSearchParams();
     if (params?.asset_id) search.set("asset_id", params.asset_id);
     if (params?.status) search.set("status", params.status);
+    if (params?.source) search.set("source", params.source);
+    if (params?.tag) search.set("tag", params.tag);
+    if (params?.keyword) search.set("keyword", params.keyword);
+    if (params?.limit) search.set("limit", String(params.limit));
     const res = await this.authedFetch(`/api/prompt-evaluation-cases${search.toString() ? `?${search}` : ""}`);
     if (!res.ok) {
       throw new Error(`list prompt evaluation cases failed: ${res.status}`);

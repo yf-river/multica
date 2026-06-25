@@ -4705,6 +4705,12 @@ type ManualCaseDraft = {
   tagsText: string;
 };
 
+type DatasetServerCaseSearchResult = {
+  items: PromptEvaluationStructuredCase[];
+  total: number;
+  executedAt: string;
+};
+
 function ManualCasePanel({
   asset,
   cases,
@@ -4744,6 +4750,8 @@ function ManualCasePanel({
   const [renameSourceTag, setRenameSourceTag] = useState("");
   const [renameTargetTag, setRenameTargetTag] = useState("");
   const [renamingTag, setRenamingTag] = useState(false);
+  const [serverSearchResult, setServerSearchResult] = useState<DatasetServerCaseSearchResult | null>(null);
+  const [serverSearchLoading, setServerSearchLoading] = useState(false);
   const [savedFilterName, setSavedFilterName] = useState("");
   const [savingFilter, setSavingFilter] = useState<"保存" | "删除" | null>(null);
   const caseTags = useMemo(() => uniqueSortedStrings(cases.flatMap((item) => item.tags.map((value) => String(value)).filter(Boolean))), [cases]);
@@ -4788,6 +4796,28 @@ function ManualCasePanel({
       "application/json;charset=utf-8",
     );
     toast.success(`数据集采样已导出：${filteredCases.length} 条`);
+  };
+  const runServerCaseSearch = async () => {
+    setServerSearchLoading(true);
+    try {
+      const result = await api.listPromptEvaluationCases({
+        asset_id: asset.id,
+        source: datasetCaseSourceFilterToApiSource(caseSourceFilter),
+        tag: caseTagFilter === "全部" ? undefined : caseTagFilter,
+        keyword: caseKeywordFilter.trim() || undefined,
+        limit: 20,
+      });
+      setServerSearchResult({
+        items: result.items,
+        total: result.total,
+        executedAt: new Date().toISOString(),
+      });
+      toast.success(`服务端检索返回 ${result.items.length} 条样本`);
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "服务端检索失败");
+    } finally {
+      setServerSearchLoading(false);
+    }
   };
   const updateFilteredCaseTags = async (mode: "追加" | "移除") => {
     const targetTags = splitList(bulkTagsText);
@@ -4923,6 +4953,9 @@ function ManualCasePanel({
           keywordFilter={caseKeywordFilter}
           onKeywordFilterChange={setCaseKeywordFilter}
           tagStats={tagStats}
+          serverSearchResult={serverSearchResult}
+          serverSearchLoading={serverSearchLoading}
+          onServerSearch={runServerCaseSearch}
           bulkTagsText={bulkTagsText}
           onBulkTagsTextChange={setBulkTagsText}
           bulkTagMode={bulkTagMode}
@@ -5112,6 +5145,9 @@ function DatasetCaseGovernanceBar({
   keywordFilter,
   onKeywordFilterChange,
   tagStats,
+  serverSearchResult,
+  serverSearchLoading,
+  onServerSearch,
   bulkTagsText,
   onBulkTagsTextChange,
   bulkTagMode,
@@ -5143,6 +5179,9 @@ function DatasetCaseGovernanceBar({
   keywordFilter: string;
   onKeywordFilterChange: (value: string) => void;
   tagStats: Array<{ tag: string; count: number }>;
+  serverSearchResult: DatasetServerCaseSearchResult | null;
+  serverSearchLoading: boolean;
+  onServerSearch: () => void;
   bulkTagsText: string;
   onBulkTagsTextChange: (value: string) => void;
   bulkTagMode: "追加" | "移除" | null;
@@ -5229,6 +5268,42 @@ function DatasetCaseGovernanceBar({
           ))}
         </div>
       )}
+      <div className="grid gap-1.5 rounded-md border border-dashed bg-muted/10 px-2 py-2" data-testid={`dataset-case-server-search-${assetId}`}>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] font-medium text-muted-foreground">服务端检索</span>
+          <span className="text-muted-foreground">按当前来源、标签和关键词从服务端读取前 20 条样本。</span>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="h-8"
+            onClick={onServerSearch}
+            disabled={serverSearchLoading}
+            data-testid={`dataset-case-server-search-button-${assetId}`}
+          >
+            {serverSearchLoading ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
+            服务端检索当前筛选
+          </Button>
+        </div>
+        {serverSearchResult && (
+          <div className="grid gap-1 text-muted-foreground" data-testid={`dataset-case-server-search-result-${assetId}`}>
+            <div>
+              服务端返回 {serverSearchResult.items.length} 条 · 记录时间 {serverSearchResult.executedAt}
+              {serverSearchResult.total !== serverSearchResult.items.length ? ` · total ${serverSearchResult.total}` : ""}
+            </div>
+            {serverSearchResult.items.length === 0 ? (
+              <div className="rounded border border-dashed px-2 py-2">当前服务端筛选没有命中样本。</div>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {serverSearchResult.items.slice(0, 5).map((item) => (
+                  <span key={item.id} className="rounded-md border bg-background px-2 py-1">
+                    {item.case_name || `用例 ${item.case_index + 1}`} · {caseSourceLabel(item.source)}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
       <div className="grid gap-2 rounded-md border border-dashed bg-muted/10 px-2 py-2" data-testid={`dataset-case-saved-filters-${assetId}`}>
         <div className="flex flex-wrap items-center gap-2">
           <span className="text-[11px] font-medium text-muted-foreground">筛选方案</span>
@@ -5401,6 +5476,13 @@ function buildDatasetCaseTagStats(cases: PromptEvaluationStructuredCase[]) {
 }
 
 type DatasetCaseSourceFilter = "全部" | "手工" | "trace导入" | "资产载荷";
+
+function datasetCaseSourceFilterToApiSource(value: DatasetCaseSourceFilter): "manual" | "trace" | "payload" | undefined {
+  if (value === "手工") return "manual";
+  if (value === "trace导入") return "trace";
+  if (value === "资产载荷") return "payload";
+  return undefined;
+}
 
 type DatasetSavedFilter = {
   id: string;

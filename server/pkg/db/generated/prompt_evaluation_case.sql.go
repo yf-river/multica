@@ -182,17 +182,50 @@ SELECT id, workspace_id, asset_id, prompt_id, case_index, case_name, variables, 
 WHERE workspace_id = $1
   AND ($2::uuid IS NULL OR asset_id = $2)
   AND ($3::text IS NULL OR status = $3)
+  AND ($4::text IS NULL OR source = $4)
+  AND (
+    $5::text IS NULL
+    OR EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements_text(tags) AS dataset_tag(value)
+      WHERE dataset_tag.value = $5
+    )
+  )
+  AND (
+    $6::text IS NULL
+    OR case_name ILIKE '%' || $6 || '%'
+    OR status ILIKE '%' || $6 || '%'
+    OR source ILIKE '%' || $6 || '%'
+    OR variables::text ILIKE '%' || $6 || '%'
+    OR expected_contains::text ILIKE '%' || $6 || '%'
+    OR input::text ILIKE '%' || $6 || '%'
+    OR expected::text ILIKE '%' || $6 || '%'
+    OR tags::text ILIKE '%' || $6 || '%'
+  )
 ORDER BY asset_id, case_index ASC, created_at ASC
+LIMIT COALESCE($7::int, 5000)
 `
 
 type ListPromptEvaluationCasesParams struct {
 	WorkspaceID pgtype.UUID `json:"workspace_id"`
 	AssetID     pgtype.UUID `json:"asset_id"`
 	Status      pgtype.Text `json:"status"`
+	Source      pgtype.Text `json:"source"`
+	Tag         pgtype.Text `json:"tag"`
+	Keyword     pgtype.Text `json:"keyword"`
+	Limit       pgtype.Int4 `json:"limit"`
 }
 
 func (q *Queries) ListPromptEvaluationCases(ctx context.Context, arg ListPromptEvaluationCasesParams) ([]PromptEvaluationCase, error) {
-	rows, err := q.db.Query(ctx, listPromptEvaluationCases, arg.WorkspaceID, arg.AssetID, arg.Status)
+	rows, err := q.db.Query(ctx, listPromptEvaluationCases,
+		arg.WorkspaceID,
+		arg.AssetID,
+		arg.Status,
+		arg.Source,
+		arg.Tag,
+		arg.Keyword,
+		arg.Limit,
+	)
 	if err != nil {
 		return nil, err
 	}

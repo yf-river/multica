@@ -3,7 +3,28 @@ SELECT * FROM prompt_evaluation_case
 WHERE workspace_id = $1
   AND (sqlc.narg('asset_id')::uuid IS NULL OR asset_id = sqlc.narg('asset_id'))
   AND (sqlc.narg('status')::text IS NULL OR status = sqlc.narg('status'))
-ORDER BY asset_id, case_index ASC, created_at ASC;
+  AND (sqlc.narg('source')::text IS NULL OR source = sqlc.narg('source'))
+  AND (
+    sqlc.narg('tag')::text IS NULL
+    OR EXISTS (
+      SELECT 1
+      FROM jsonb_array_elements_text(tags) AS dataset_tag(value)
+      WHERE dataset_tag.value = sqlc.narg('tag')
+    )
+  )
+  AND (
+    sqlc.narg('keyword')::text IS NULL
+    OR case_name ILIKE '%' || sqlc.narg('keyword') || '%'
+    OR status ILIKE '%' || sqlc.narg('keyword') || '%'
+    OR source ILIKE '%' || sqlc.narg('keyword') || '%'
+    OR variables::text ILIKE '%' || sqlc.narg('keyword') || '%'
+    OR expected_contains::text ILIKE '%' || sqlc.narg('keyword') || '%'
+    OR input::text ILIKE '%' || sqlc.narg('keyword') || '%'
+    OR expected::text ILIKE '%' || sqlc.narg('keyword') || '%'
+    OR tags::text ILIKE '%' || sqlc.narg('keyword') || '%'
+  )
+ORDER BY asset_id, case_index ASC, created_at ASC
+LIMIT COALESCE(sqlc.narg('limit')::int, 5000);
 
 -- name: GetPromptEvaluationCaseInWorkspace :one
 SELECT * FROM prompt_evaluation_case

@@ -1968,6 +1968,10 @@ export class ApiClient {
     const search = new URLSearchParams();
     if (params?.asset_id) search.set("asset_id", params.asset_id);
     if (params?.status) search.set("status", params.status);
+    if (params?.source) search.set("source", params.source);
+    if (params?.tag) search.set("tag", params.tag);
+    if (params?.keyword) search.set("keyword", params.keyword);
+    if (params?.limit) search.set("limit", String(params.limit));
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-cases${query ? `?${query}` : ""}`);
     return parseWithFallback(raw, PromptEvaluationCaseListResponseSchema, EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE, {

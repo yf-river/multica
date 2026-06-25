@@ -848,6 +848,26 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if len(listedManual.Assertions) != 1 || listedManual.Assertions[0].ExpectedText != "可观测证据" {
 		t.Fatalf("listed assertions = %+v", listedManual.Assertions)
 	}
+	filteredW := httptest.NewRecorder()
+	testHandler.ListPromptEvaluationCases(filteredW, newRequest(http.MethodGet, "/api/prompt-evaluation-cases?asset_id="+asset.ID+"&source=manual&tag=user-center&keyword=%E5%8F%AF%E8%A7%82%E6%B5%8B&limit=1", nil))
+	if filteredW.Code != http.StatusOK {
+		t.Fatalf("filtered case status = %d, body = %s", filteredW.Code, filteredW.Body.String())
+	}
+	var filtered struct {
+		Items []PromptEvaluationCaseResponse `json:"items"`
+		Total int                            `json:"total"`
+	}
+	if err := json.Unmarshal(filteredW.Body.Bytes(), &filtered); err != nil {
+		t.Fatalf("decode filtered cases: %v", err)
+	}
+	if filtered.Total != 1 || len(filtered.Items) != 1 || filtered.Items[0].ID != created.ID {
+		t.Fatalf("filtered cases = %+v", filtered)
+	}
+	invalidLimitW := httptest.NewRecorder()
+	testHandler.ListPromptEvaluationCases(invalidLimitW, newRequest(http.MethodGet, "/api/prompt-evaluation-cases?asset_id="+asset.ID+"&limit=9999", nil))
+	if invalidLimitW.Code != http.StatusBadRequest {
+		t.Fatalf("invalid limit status = %d, body = %s", invalidLimitW.Code, invalidLimitW.Body.String())
+	}
 	var listedPayload *PromptEvaluationCaseResponse
 	for idx := range listed.Items {
 		if listed.Items[idx].Source == "payload" {

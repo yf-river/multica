@@ -1600,10 +1600,39 @@ func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Reque
 		}
 		status = pgtype.Text{String: value, Valid: true}
 	}
+	var source pgtype.Text
+	if value := strings.TrimSpace(r.URL.Query().Get("source")); value != "" {
+		if value != "manual" && value != "trace" && value != "payload" {
+			writeError(w, http.StatusBadRequest, "source must be manual, trace, or payload")
+			return
+		}
+		source = pgtype.Text{String: value, Valid: true}
+	}
+	var tag pgtype.Text
+	if value := strings.TrimSpace(r.URL.Query().Get("tag")); value != "" {
+		tag = pgtype.Text{String: value, Valid: true}
+	}
+	var keyword pgtype.Text
+	if value := strings.TrimSpace(r.URL.Query().Get("keyword")); value != "" {
+		keyword = pgtype.Text{String: value, Valid: true}
+	}
+	var limit pgtype.Int4
+	if value := strings.TrimSpace(r.URL.Query().Get("limit")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 500 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 500")
+			return
+		}
+		limit = pgtype.Int4{Int32: int32(parsed), Valid: true}
+	}
 	cases, err := h.Queries.ListPromptEvaluationCases(r.Context(), db.ListPromptEvaluationCasesParams{
 		WorkspaceID: workspaceUUID,
 		AssetID:     assetID,
 		Status:      status,
+		Source:      source,
+		Tag:         tag,
+		Keyword:     keyword,
+		Limit:       limit,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation cases")

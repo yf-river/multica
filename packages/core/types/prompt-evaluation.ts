@@ -586,6 +586,10 @@ export interface ReviewPromptEvaluationRunRequest {
 export interface ListPromptEvaluationCasesParams {
   asset_id?: string;
   status?: PromptEvaluationAssetStatus;
+  source?: "manual" | "trace" | "payload";
+  tag?: string;
+  keyword?: string;
+  limit?: number;
 }
 
 export interface ListPromptEvaluationExperimentDimensionsParams {

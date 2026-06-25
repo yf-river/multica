@@ -1419,6 +1419,28 @@ test.describe("训练与评估工作台", () => {
     await governance.getByLabel("筛选数据集用例关键词").fill("登录");
     await expect(governance.getByTestId(`dataset-case-filter-count-${dataset.id}`)).toContainText("命中 1 / 2");
     await expect(governance.getByTestId(`dataset-case-sampling-preview-${dataset.id}`)).toContainText("版本一登录用例");
+    await expect
+      .poll(async () => api.listPromptEvaluationCases({ asset_id: dataset.id, source: "payload", tag: "领导演示", keyword: "登录", limit: 20 }), { timeout: 15000 })
+      .toEqual([
+        expect.objectContaining({
+          case_name: "版本一登录用例",
+          source: "payload",
+          tags: expect.arrayContaining(["领导演示"]),
+        }),
+      ]);
+    const serverSearchResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        response.url().includes("/api/prompt-evaluation-cases") &&
+        response.url().includes("source=payload") &&
+        response.url().includes("tag=%E9%A2%86%E5%AF%BC%E6%BC%94%E7%A4%BA") &&
+        response.url().includes("keyword=%E7%99%BB%E5%BD%95"),
+      { timeout: 15000 },
+    );
+    await governance.getByTestId(`dataset-case-server-search-button-${dataset.id}`).click();
+    expect((await serverSearchResponse).status()).toBe(200);
+    await expect(governance.getByTestId(`dataset-case-server-search-result-${dataset.id}`)).toContainText("服务端返回 1 条", { timeout: 15000 });
+    await expect(governance.getByTestId(`dataset-case-server-search-result-${dataset.id}`)).toContainText("版本一登录用例");
     await governance.getByLabel("数据集筛选方案名称").fill("登录领导样本");
     const saveFilterResponse = page.waitForResponse(
       (response) => response.request().method() === "PUT" && response.url().includes(`/api/prompt-evaluation-assets/${dataset.id}`),
