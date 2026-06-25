@@ -227,6 +227,81 @@ func (q *Queries) ListPromptEvaluationDatasetVersionRows(ctx context.Context, ar
 	return items, nil
 }
 
+const listPromptEvaluationDatasetVersionTagTrends = `-- name: ListPromptEvaluationDatasetVersionTagTrends :many
+WITH versions AS (
+    SELECT d.id, d.workspace_id, d.dataset_asset_id, d.version, d.version_label, d.row_count, d.row_fingerprint, d.metadata, d.created_by, d.created_at
+    FROM prompt_evaluation_dataset_version d
+    WHERE d.workspace_id = $1
+      AND d.dataset_asset_id = $2
+    ORDER BY d.version DESC, d.created_at DESC
+    LIMIT COALESCE($4::int, 20)
+)
+SELECT
+    v.id AS dataset_version_id,
+    v.version,
+    v.version_label,
+    v.created_at,
+    tag,
+    count(*)::int AS case_count
+FROM versions v
+JOIN prompt_evaluation_dataset_version_row r
+  ON r.workspace_id = v.workspace_id
+ AND r.dataset_version_id = v.id
+CROSS JOIN LATERAL jsonb_array_elements_text(r.tags) AS tag
+WHERE btrim(tag) <> ''
+GROUP BY v.id, v.version, v.version_label, v.created_at, tag
+ORDER BY v.version DESC, case_count DESC, tag ASC
+LIMIT COALESCE($3::int, 200)
+`
+
+type ListPromptEvaluationDatasetVersionTagTrendsParams struct {
+	WorkspaceID    pgtype.UUID `json:"workspace_id"`
+	DatasetAssetID pgtype.UUID `json:"dataset_asset_id"`
+	Limit          pgtype.Int4 `json:"limit"`
+	VersionLimit   pgtype.Int4 `json:"version_limit"`
+}
+
+type ListPromptEvaluationDatasetVersionTagTrendsRow struct {
+	DatasetVersionID pgtype.UUID        `json:"dataset_version_id"`
+	Version          int32              `json:"version"`
+	VersionLabel     string             `json:"version_label"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	Tag              pgtype.Text        `json:"tag"`
+	CaseCount        int32              `json:"case_count"`
+}
+
+func (q *Queries) ListPromptEvaluationDatasetVersionTagTrends(ctx context.Context, arg ListPromptEvaluationDatasetVersionTagTrendsParams) ([]ListPromptEvaluationDatasetVersionTagTrendsRow, error) {
+	rows, err := q.db.Query(ctx, listPromptEvaluationDatasetVersionTagTrends,
+		arg.WorkspaceID,
+		arg.DatasetAssetID,
+		arg.Limit,
+		arg.VersionLimit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPromptEvaluationDatasetVersionTagTrendsRow{}
+	for rows.Next() {
+		var i ListPromptEvaluationDatasetVersionTagTrendsRow
+		if err := rows.Scan(
+			&i.DatasetVersionID,
+			&i.Version,
+			&i.VersionLabel,
+			&i.CreatedAt,
+			&i.Tag,
+			&i.CaseCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPromptEvaluationDatasetVersions = `-- name: ListPromptEvaluationDatasetVersions :many
 SELECT id, workspace_id, dataset_asset_id, version, version_label, row_count, row_fingerprint, metadata, created_by, created_at FROM prompt_evaluation_dataset_version
 WHERE workspace_id = $1

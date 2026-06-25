@@ -152,6 +152,7 @@ import type {
   ListPromptEvaluationCasesParams,
   ListPromptEvaluationCaseTagSummariesParams,
   ListPromptEvaluationCaseOperationsParams,
+  ListPromptEvaluationDatasetVersionTagTrendsParams,
   ListPromptEvaluationExperimentDimensionsParams,
   ListPromptEvaluationDimensionScoresParams,
   ListPromptEvaluationDimensionScoreSummariesParams,
@@ -160,6 +161,7 @@ import type {
   ListPromptEvaluationOptimizationCandidatesParams,
   ListPromptEvaluationAssetsResponse,
   ListPromptEvaluationDatasetVersionRowsResponse,
+  ListPromptEvaluationDatasetVersionTagTrendsResponse,
   ListPromptEvaluationDatasetVersionsResponse,
   ListPromptEvaluationRunsResponse,
   ListPromptEvaluationTrialsResponse,
@@ -228,6 +230,7 @@ import {
   EMPTY_PROMPT_EVALUATION_DATASET_VERSION_DIFF,
   EMPTY_PROMPT_EVALUATION_DATASET_VERSION_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_DATASET_VERSION_ROW_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_DATASET_VERSION_TAG_TREND_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_RUN,
   EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE,
@@ -270,6 +273,7 @@ import {
   PromptEvaluationDatasetVersionDiffSchema,
   PromptEvaluationDatasetVersionListResponseSchema,
   PromptEvaluationDatasetVersionRowListResponseSchema,
+  PromptEvaluationDatasetVersionTagTrendListResponseSchema,
   PromptEvaluationDatasetVersionSchema,
   RestorePromptEvaluationDatasetVersionResponseSchema,
   PromptEvaluationRunListResponseSchema,
@@ -1917,6 +1921,17 @@ export class ApiClient {
     return parseWithFallback(raw, PromptEvaluationDatasetVersionListResponseSchema, EMPTY_PROMPT_EVALUATION_DATASET_VERSION_LIST_RESPONSE, {
       endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-versions",
     }) as ListPromptEvaluationDatasetVersionsResponse;
+  }
+
+  async listPromptEvaluationDatasetVersionTagTrends(id: string, params?: ListPromptEvaluationDatasetVersionTagTrendsParams): Promise<ListPromptEvaluationDatasetVersionTagTrendsResponse> {
+    const search = new URLSearchParams();
+    if (params?.version_limit) search.set("version_limit", String(params.version_limit));
+    if (params?.limit) search.set("limit", String(params.limit));
+    const query = search.toString();
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-versions/tag-trends${query ? `?${query}` : ""}`);
+    return parseWithFallback(raw, PromptEvaluationDatasetVersionTagTrendListResponseSchema, EMPTY_PROMPT_EVALUATION_DATASET_VERSION_TAG_TREND_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-versions/tag-trends",
+    }) as ListPromptEvaluationDatasetVersionTagTrendsResponse;
   }
 
   async createPromptEvaluationDatasetVersion(

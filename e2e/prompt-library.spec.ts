@@ -1611,10 +1611,26 @@ test.describe("训练与评估工作台", () => {
     await governance.getByLabel("筛选数据集用例关键词").fill("");
     await governance.getByRole("button", { name: "全部" }).click();
     await governance.getByLabel("筛选数据集用例标签").selectOption("全部");
+    const versionListResponse = page.waitForResponse(
+      (response) => response.request().method() === "GET" && response.url().includes(`/api/prompt-evaluation-assets/${dataset.id}/dataset-versions?limit=20`),
+      { timeout: 15000 },
+    );
+    const versionTagTrendResponse = page.waitForResponse(
+      (response) => response.request().method() === "GET" && response.url().includes(`/api/prompt-evaluation-assets/${dataset.id}/dataset-versions/tag-trends`),
+      { timeout: 15000 },
+    );
     await datasetRow.getByTestId(`load-dataset-versions-${dataset.id}`).click();
+    expect((await versionListResponse).status()).toBe(200);
+    expect((await versionTagTrendResponse).status()).toBe(200);
     await expect(datasetRow.getByTestId(`dataset-version-controls-${dataset.id}`)).toContainText("最新 v2", { timeout: 15000 });
     await expect(datasetRow.getByTestId(`dataset-version-chain-${dataset.id}`)).toContainText("版本链回放");
     await expect(datasetRow.getByTestId(`dataset-version-chain-${dataset.id}`)).toContainText("已加载最近 2 个快照");
+    const tagTrendPanel = datasetRow.getByTestId(`dataset-version-tag-trends-${dataset.id}`);
+    await expect(tagTrendPanel).toContainText("版本标签趋势", { timeout: 15000 });
+    await expect(tagTrendPanel).toContainText("版本一");
+    await expect(tagTrendPanel).toContainText("v2:1");
+    await expect(tagTrendPanel).toContainText("v1:1");
+    await expect(tagTrendPanel).toContainText("版本二");
     const versionRowsResponse = page.waitForResponse(
       (response) => response.request().method() === "GET" && response.url().includes(`/api/prompt-evaluation-assets/${dataset.id}/dataset-versions/${v2.id}/rows`),
       { timeout: 15000 },

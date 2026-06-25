@@ -11,6 +11,7 @@ import type {
   ListIssuesResponse,
   ListPromptEvaluationAssetsResponse,
   ListPromptEvaluationDatasetVersionRowsResponse,
+  ListPromptEvaluationDatasetVersionTagTrendsResponse,
   ListPromptEvaluationDatasetVersionsResponse,
   ListPromptEvaluationExperimentDimensionsResponse,
   ListPromptEvaluationOptimizationCandidatesResponse,
@@ -958,6 +959,15 @@ export const PromptEvaluationDatasetVersionRowSchema = z.object({
   created_at: z.string().default(""),
 }).loose();
 
+export const PromptEvaluationDatasetVersionTagTrendSchema = z.object({
+  dataset_version_id: z.string(),
+  version: z.number().default(0),
+  version_label: z.string().default(""),
+  created_at: z.string().default(""),
+  tag: z.string().default(""),
+  case_count: z.number().default(0),
+}).loose();
+
 export const PromptEvaluationDatasetVersionChangedRowSchema = z.object({
   row_index: z.number().default(0),
   base: PromptEvaluationDatasetVersionRowSchema,
@@ -981,6 +991,11 @@ export const PromptEvaluationDatasetVersionListResponseSchema = z.object({
 
 export const PromptEvaluationDatasetVersionRowListResponseSchema = z.object({
   items: z.array(PromptEvaluationDatasetVersionRowSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
+export const PromptEvaluationDatasetVersionTagTrendListResponseSchema = z.object({
+  items: z.array(PromptEvaluationDatasetVersionTagTrendSchema).default([]),
   total: z.number().default(0),
 }).loose();
 
@@ -1522,6 +1537,11 @@ export const EMPTY_PROMPT_EVALUATION_DATASET_VERSION_LIST_RESPONSE: ListPromptEv
 };
 
 export const EMPTY_PROMPT_EVALUATION_DATASET_VERSION_ROW_LIST_RESPONSE: ListPromptEvaluationDatasetVersionRowsResponse = {
+  items: [],
+  total: 0,
+};
+
+export const EMPTY_PROMPT_EVALUATION_DATASET_VERSION_TAG_TREND_LIST_RESPONSE: ListPromptEvaluationDatasetVersionTagTrendsResponse = {
   items: [],
   total: 0,
 };

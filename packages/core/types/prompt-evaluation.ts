@@ -98,6 +98,15 @@ export interface PromptEvaluationDatasetVersionRow {
   created_at: string;
 }
 
+export interface PromptEvaluationDatasetVersionTagTrend {
+  dataset_version_id: string;
+  version: number;
+  version_label: string;
+  created_at: string;
+  tag: string;
+  case_count: number;
+}
+
 export interface PromptEvaluationDatasetVersionChangedRow {
   row_index: number;
   base: PromptEvaluationDatasetVersionRow;
@@ -540,6 +549,11 @@ export interface ListPromptEvaluationDatasetVersionRowsResponse {
   total: number;
 }
 
+export interface ListPromptEvaluationDatasetVersionTagTrendsResponse {
+  items: PromptEvaluationDatasetVersionTagTrend[];
+  total: number;
+}
+
 export interface ListPromptEvaluationRunsResponse {
   items: PromptEvaluationRun[];
   total: number;
@@ -648,6 +662,11 @@ export interface ListPromptEvaluationCaseTagSummariesParams {
   status?: PromptEvaluationAssetStatus;
   source?: "manual" | "trace" | "payload";
   keyword?: string;
+  limit?: number;
+}
+
+export interface ListPromptEvaluationDatasetVersionTagTrendsParams {
+  version_limit?: number;
   limit?: number;
 }
 

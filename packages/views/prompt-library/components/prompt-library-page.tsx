@@ -38,6 +38,7 @@ import type {
   PromptEvaluationAssetType,
   PromptEvaluationDatasetVersionDiff,
   PromptEvaluationDatasetVersionRow,
+  PromptEvaluationDatasetVersionTagTrend,
   ObservabilitySummary,
   PromptLibraryItem,
   PromptLibraryStatus,
@@ -80,6 +81,7 @@ const promptLibraryKeys = {
   assets: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-assets"] as const,
   datasetVersions: (workspaceId: string, assetId: string) => ["prompt-library", workspaceId, "evaluation-dataset-versions", assetId] as const,
   datasetVersionRows: (workspaceId: string, assetId: string, versionId: string | null) => ["prompt-library", workspaceId, "evaluation-dataset-version-rows", assetId, versionId ?? ""] as const,
+  datasetVersionTagTrends: (workspaceId: string, assetId: string) => ["prompt-library", workspaceId, "evaluation-dataset-version-tag-trends", assetId] as const,
   cases: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-cases"] as const,
   experimentDimensions: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-experiment-dimensions"] as const,
   dimensionScoreSummaries: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-dimension-score-summaries"] as const,
@@ -6265,6 +6267,11 @@ function DatasetVersionControls({ asset, saving }: { asset: PromptEvaluationAsse
     queryFn: () => api.listPromptEvaluationDatasetVersions(asset.id, 20),
     enabled: Boolean(loaded && workspaceId && asset.id),
   });
+  const tagTrendsQuery = useQuery({
+    queryKey: promptLibraryKeys.datasetVersionTagTrends(workspaceId, asset.id),
+    queryFn: () => api.listPromptEvaluationDatasetVersionTagTrends(asset.id, { version_limit: 20, limit: 200 }),
+    enabled: Boolean(loaded && workspaceId && asset.id),
+  });
   const versionRowsQuery = useQuery({
     queryKey: promptLibraryKeys.datasetVersionRows(workspaceId, asset.id, selectedVersionId),
     queryFn: () => api.listPromptEvaluationDatasetVersionRows(asset.id, selectedVersionId!),
@@ -6273,6 +6280,7 @@ function DatasetVersionControls({ asset, saving }: { asset: PromptEvaluationAsse
   const invalidateDataset = () => {
     queryClient.invalidateQueries({ queryKey: promptLibraryKeys.datasetVersions(workspaceId, asset.id) });
     queryClient.invalidateQueries({ queryKey: promptLibraryKeys.datasetVersionRows(workspaceId, asset.id, selectedVersionId) });
+    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.datasetVersionTagTrends(workspaceId, asset.id) });
     queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId) });
     queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId) });
     queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId) });
@@ -6313,6 +6321,7 @@ function DatasetVersionControls({ asset, saving }: { asset: PromptEvaluationAsse
   const oldestLoaded = versions[versions.length - 1] ?? null;
   const selectedVersion = versions.find((version) => version.id === selectedVersionId) ?? null;
   const selectedRows = versionRowsQuery.data?.items ?? [];
+  const tagTrends = tagTrendsQuery.data?.items ?? [];
   const busy = versionsQuery.isLoading || versionsQuery.isFetching || diffMut.isPending || restoreMut.isPending;
   const disabled = saving || busy;
 
@@ -6355,6 +6364,13 @@ function DatasetVersionControls({ asset, saving }: { asset: PromptEvaluationAsse
           {oldestLoaded && oldestLoaded.id !== latest?.id ? ` · 最早 v${oldestLoaded.version}` : ""}
           {versions.length >= 20 ? " · 继续缩小数据集后再做长链复盘" : ""}
         </div>
+      )}
+      {loaded && (
+        <DatasetVersionTagTrendsPanel
+          assetId={asset.id}
+          trends={tagTrends}
+          loading={tagTrendsQuery.isLoading || tagTrendsQuery.isFetching}
+        />
       )}
       {versions.length > 0 && (
         <div className="grid gap-2" data-testid={`dataset-version-timeline-${asset.id}`}>
@@ -6400,6 +6416,56 @@ function DatasetVersionControls({ asset, saving }: { asset: PromptEvaluationAsse
       {diff && (
         <div className="text-muted-foreground" data-testid={`dataset-version-diff-${asset.id}`}>
           对比 v{diff.base_version.version} → v{diff.target_version.version}：新增 {diff.summary["新增"] ?? 0} · 删除 {diff.summary["删除"] ?? 0} · 变更 {diff.summary["变更"] ?? 0} · 未变更 {diff.summary["未变更"] ?? 0}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function DatasetVersionTagTrendsPanel({
+  assetId,
+  trends,
+  loading,
+}: {
+  assetId: string;
+  trends: PromptEvaluationDatasetVersionTagTrend[];
+  loading: boolean;
+}) {
+  const grouped = useMemo(() => {
+    const byTag = new Map<string, PromptEvaluationDatasetVersionTagTrend[]>();
+    for (const item of trends) {
+      const tag = item.tag.trim();
+      if (!tag) continue;
+      const bucket = byTag.get(tag) ?? [];
+      bucket.push(item);
+      byTag.set(tag, bucket);
+    }
+    return Array.from(byTag.entries())
+      .map(([tag, items]) => ({
+        tag,
+        total: items.reduce((sum, item) => sum + item.case_count, 0),
+        items: items.slice().sort((a, b) => b.version - a.version),
+      }))
+      .sort((a, b) => b.total - a.total || a.tag.localeCompare(b.tag, "zh-Hans-CN"))
+      .slice(0, 8);
+  }, [trends]);
+  return (
+    <div className="rounded border bg-background px-2 py-1.5" data-testid={`dataset-version-tag-trends-${assetId}`}>
+      <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
+        <span className="font-medium text-foreground">版本标签趋势</span>
+        {loading ? <Loader2 className="size-3.5 animate-spin" /> : <span>基于不可变版本快照统计</span>}
+      </div>
+      {!loading && grouped.length === 0 && (
+        <div className="mt-1 text-muted-foreground">暂无可统计标签。</div>
+      )}
+      {grouped.length > 0 && (
+        <div className="mt-1 flex flex-wrap gap-1.5">
+          {grouped.map((group) => (
+            <span key={group.tag} className="rounded border bg-muted/20 px-2 py-1 text-muted-foreground">
+              <span className="font-medium text-foreground">{group.tag}</span>{" "}
+              {group.items.map((item) => `v${item.version}:${item.case_count}`).join(" / ")}
+            </span>
+          ))}
         </div>
       )}
     </div>

@@ -192,6 +192,15 @@ type PromptEvaluationDatasetVersionRowResponse struct {
 	CreatedAt        string  `json:"created_at"`
 }
 
+type PromptEvaluationDatasetVersionTagTrendResponse struct {
+	DatasetVersionID string `json:"dataset_version_id"`
+	Version          int32  `json:"version"`
+	VersionLabel     string `json:"version_label"`
+	CreatedAt        string `json:"created_at"`
+	Tag              string `json:"tag"`
+	CaseCount        int32  `json:"case_count"`
+}
+
 type PromptEvaluationDatasetVersionDiffResponse struct {
 	BaseVersion   PromptEvaluationDatasetVersionResponse      `json:"base_version"`
 	TargetVersion PromptEvaluationDatasetVersionResponse      `json:"target_version"`
@@ -2635,6 +2644,60 @@ func (h *Handler) ListPromptEvaluationDatasetVersions(w http.ResponseWriter, r *
 	resp := make([]PromptEvaluationDatasetVersionResponse, len(items))
 	for i, item := range items {
 		resp[i] = promptEvaluationDatasetVersionToResponse(item)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
+}
+
+func (h *Handler) ListPromptEvaluationDatasetVersionTagTrends(w http.ResponseWriter, r *http.Request) {
+	asset, ok := h.loadPromptEvaluationAsset(w, r)
+	if !ok {
+		return
+	}
+	if asset.AssetType != promptEvaluationAssetDataset {
+		writeError(w, http.StatusBadRequest, "only 数据集 assets have version tag trends")
+		return
+	}
+	limit := pgtype.Int4{Int32: 200, Valid: true}
+	if raw := strings.TrimSpace(r.URL.Query().Get("limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 500 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 500")
+			return
+		}
+		limit = pgtype.Int4{Int32: int32(parsed), Valid: true}
+	}
+	versionLimit := pgtype.Int4{Int32: 20, Valid: true}
+	if raw := strings.TrimSpace(r.URL.Query().Get("version_limit")); raw != "" {
+		parsed, err := strconv.Atoi(raw)
+		if err != nil || parsed < 1 || parsed > 100 {
+			writeError(w, http.StatusBadRequest, "version_limit must be between 1 and 100")
+			return
+		}
+		versionLimit = pgtype.Int4{Int32: int32(parsed), Valid: true}
+	}
+	rows, err := h.Queries.ListPromptEvaluationDatasetVersionTagTrends(r.Context(), db.ListPromptEvaluationDatasetVersionTagTrendsParams{
+		WorkspaceID:    asset.WorkspaceID,
+		DatasetAssetID: asset.ID,
+		Limit:          limit,
+		VersionLimit:   versionLimit,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list dataset version tag trends")
+		return
+	}
+	resp := make([]PromptEvaluationDatasetVersionTagTrendResponse, 0, len(rows))
+	for _, row := range rows {
+		if !row.Tag.Valid || strings.TrimSpace(row.Tag.String) == "" {
+			continue
+		}
+		resp = append(resp, PromptEvaluationDatasetVersionTagTrendResponse{
+			DatasetVersionID: uuidToString(row.DatasetVersionID),
+			Version:          row.Version,
+			VersionLabel:     row.VersionLabel,
+			CreatedAt:        timestampToString(row.CreatedAt),
+			Tag:              row.Tag.String,
+			CaseCount:        row.CaseCount,
+		})
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
 }

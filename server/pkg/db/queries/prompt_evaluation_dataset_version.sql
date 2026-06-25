@@ -85,3 +85,29 @@ SELECT * FROM prompt_evaluation_dataset_version_row
 WHERE workspace_id = $1
   AND dataset_version_id = $2
 ORDER BY row_index ASC, created_at ASC;
+
+-- name: ListPromptEvaluationDatasetVersionTagTrends :many
+WITH versions AS (
+    SELECT d.*
+    FROM prompt_evaluation_dataset_version d
+    WHERE d.workspace_id = $1
+      AND d.dataset_asset_id = $2
+    ORDER BY d.version DESC, d.created_at DESC
+    LIMIT COALESCE(sqlc.narg('version_limit')::int, 20)
+)
+SELECT
+    v.id AS dataset_version_id,
+    v.version,
+    v.version_label,
+    v.created_at,
+    tag,
+    count(*)::int AS case_count
+FROM versions v
+JOIN prompt_evaluation_dataset_version_row r
+  ON r.workspace_id = v.workspace_id
+ AND r.dataset_version_id = v.id
+CROSS JOIN LATERAL jsonb_array_elements_text(r.tags) AS tag
+WHERE btrim(tag) <> ''
+GROUP BY v.id, v.version, v.version_label, v.created_at, tag
+ORDER BY v.version DESC, case_count DESC, tag ASC
+LIMIT COALESCE(sqlc.narg('limit')::int, 200);

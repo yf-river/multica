@@ -1017,6 +1017,13 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if !ok || !containsAll(strings.Join(stringListFromAny(payloadCase["tags"]), ","), []string{"治理标签", "批量验收"}) {
 		t.Fatalf("normalized payload case tags were not synced: %#v", payloadCases[0])
 	}
+	createVersionBeforeRenameW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationDatasetVersion(createVersionBeforeRenameW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/dataset-versions", map[string]any{
+		"version_label": "重命名前",
+	}), "id", asset.ID))
+	if createVersionBeforeRenameW.Code != http.StatusCreated {
+		t.Fatalf("create version before rename status = %d, body = %s", createVersionBeforeRenameW.Code, createVersionBeforeRenameW.Body.String())
+	}
 
 	renameTagsW := httptest.NewRecorder()
 	testHandler.BulkUpdatePromptEvaluationCaseTags(renameTagsW, newRequest(http.MethodPost, "/api/prompt-evaluation-cases/bulk-tags", map[string]any{
@@ -1069,6 +1076,30 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	renamedPayloadTags := strings.Join(stringListFromAny(payloadCase["tags"]), ",")
 	if !ok || !containsAll(renamedPayloadTags, []string{"治理展示", "批量验收"}) || strings.Contains(renamedPayloadTags, "治理标签") {
 		t.Fatalf("renamed payload case tags were not synced: %#v", payloadCases[0])
+	}
+	createVersionAfterRenameW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationDatasetVersion(createVersionAfterRenameW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+asset.ID+"/dataset-versions", map[string]any{
+		"version_label": "重命名后",
+	}), "id", asset.ID))
+	if createVersionAfterRenameW.Code != http.StatusCreated {
+		t.Fatalf("create version after rename status = %d, body = %s", createVersionAfterRenameW.Code, createVersionAfterRenameW.Body.String())
+	}
+	tagTrendsW := httptest.NewRecorder()
+	testHandler.ListPromptEvaluationDatasetVersionTagTrends(tagTrendsW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-assets/"+asset.ID+"/dataset-versions/tag-trends?version_limit=2&limit=20", nil), "id", asset.ID))
+	if tagTrendsW.Code != http.StatusOK {
+		t.Fatalf("tag trends status = %d, body = %s", tagTrendsW.Code, tagTrendsW.Body.String())
+	}
+	var tagTrends struct {
+		Items []PromptEvaluationDatasetVersionTagTrendResponse `json:"items"`
+		Total int                                              `json:"total"`
+	}
+	if err := json.Unmarshal(tagTrendsW.Body.Bytes(), &tagTrends); err != nil {
+		t.Fatalf("decode tag trends: %v", err)
+	}
+	if tagTrends.Total == 0 ||
+		!promptEvaluationDatasetVersionTagTrendContains(tagTrends.Items, 1, "治理标签", 1) ||
+		!promptEvaluationDatasetVersionTagTrendContains(tagTrends.Items, 2, "治理展示", 1) {
+		t.Fatalf("tag trends = %+v", tagTrends)
 	}
 
 	deleteCaseW := httptest.NewRecorder()
@@ -3136,6 +3167,15 @@ func containsAll(value string, needles []string) bool {
 func promptEvaluationTagSummaryContains(items []PromptEvaluationCaseTagSummaryResponse, tag string, count int32) bool {
 	for _, item := range items {
 		if item.Tag == tag && item.CaseCount == count {
+			return true
+		}
+	}
+	return false
+}
+
+func promptEvaluationDatasetVersionTagTrendContains(items []PromptEvaluationDatasetVersionTagTrendResponse, version int32, tag string, count int32) bool {
+	for _, item := range items {
+		if item.Version == version && item.Tag == tag && item.CaseCount == count {
 			return true
 		}
 	}
