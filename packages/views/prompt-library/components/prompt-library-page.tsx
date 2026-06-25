@@ -4926,6 +4926,30 @@ function ManualCasePanel({
       setCaseOperationsLoading(false);
     }
   };
+  const refreshDatasetQueries = async () => {
+    await Promise.all([
+      queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId ?? "") }),
+      queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId ?? "") }),
+      queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId ?? "") }),
+    ]);
+  };
+  const pollBulkOperation = async (operationId: string, label: string) => {
+    for (let attempt = 0; attempt < 30; attempt += 1) {
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      const result = await api.listPromptEvaluationCaseOperations(asset.id, { limit: 5 });
+      setCaseOperations(result.items);
+      const operation = result.items.find((item) => item.id === operationId);
+      if (!operation || operation.status === "已入队" || operation.status === "运行中") continue;
+      if (operation.status === "已完成") {
+        await refreshDatasetQueries();
+        toast.success(`${label}已完成：变更 ${operation.changed_count} 条，跳过 ${operation.skipped_count} 条`);
+        return;
+      }
+      toast.error(operation.error_message || `${label}失败`);
+      return;
+    }
+    toast.message(`${label}仍在后台执行，可稍后查看审计历史`);
+  };
   const updateFilteredCaseTags = async (mode: "追加" | "移除") => {
     const targetTags = splitList(bulkTagsText);
     if (targetTags.length === 0) {
@@ -4945,15 +4969,12 @@ function ManualCasePanel({
         keyword: caseKeywordFilter.trim() || undefined,
         tags: targetTags,
         mode,
+        execution_mode: "后台",
         limit: 500,
       });
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId ?? "") }),
-        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId ?? "") }),
-        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId ?? "") }),
-      ]);
       setCaseOperations((current) => [result.operation, ...current.filter((item) => item.id !== result.operation.id)].slice(0, 5));
-      toast.success(`已${mode} ${result.changed_count} 条用例标签，审计已记录`);
+      toast.success(`已提交后台${mode}标签操作，审计已记录`);
+      void pollBulkOperation(result.operation.id, `后台${mode}标签`);
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "批量标签处理失败");
     } finally {
@@ -4987,18 +5008,15 @@ function ManualCasePanel({
         source_tag: sourceTag,
         target_tag: targetTag,
         mode: "重命名",
+        execution_mode: "后台",
         limit: 500,
       });
-      await Promise.all([
-        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId ?? "") }),
-        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId ?? "") }),
-        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId ?? "") }),
-      ]);
       setCaseOperations((current) => [result.operation, ...current.filter((item) => item.id !== result.operation.id)].slice(0, 5));
       if (caseTagFilter === sourceTag) setCaseTagFilter(targetTag);
       setRenameSourceTag(targetTag);
       setRenameTargetTag("");
-      toast.success(`已整理 ${result.changed_count} 条用例标签，审计已记录`);
+      toast.success("已提交后台标签整理操作，审计已记录");
+      void pollBulkOperation(result.operation.id, "后台标签整理");
     } catch (error) {
       toast.error(error instanceof Error ? error.message : "标签整理失败");
     } finally {
@@ -5600,11 +5618,12 @@ function DatasetCaseGovernanceBar({
               <div key={operation.id} className="rounded border bg-background px-2 py-1.5" data-testid={`dataset-case-operation-audit-row-${assetId}-${operation.id}`}>
                 <span className="font-medium text-foreground">{operation.operation_type}</span>
                 <span className="ml-2 text-muted-foreground">
-                  变更 {operation.changed_count} · 跳过 {operation.skipped_count} · {operation.created_at}
+                  {operation.status} · 变更 {operation.changed_count} · 跳过 {operation.skipped_count} · {operation.created_at}
                 </span>
                 <div className="mt-1 truncate text-muted-foreground">
                   筛选 {summarizeJSONValue(operation.filter)} · 输入 {summarizeJSONValue(operation.input)}
                 </div>
+                {operation.error_message && <div className="mt-1 text-destructive">{operation.error_message}</div>}
               </div>
             ))}
           </div>

@@ -236,6 +236,11 @@ interface PromptEvaluationCaseOperation {
   skipped_count: number;
   sample_case_ids: unknown[];
   created_at: string;
+  status: string;
+  error_message: string;
+  started_at: string | null;
+  completed_at: string | null;
+  updated_at: string;
 }
 
 interface PromptEvaluationDatasetVersion {

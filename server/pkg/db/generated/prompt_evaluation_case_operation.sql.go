@@ -11,54 +11,35 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 )
 
-const createPromptEvaluationCaseOperation = `-- name: CreatePromptEvaluationCaseOperation :one
-INSERT INTO prompt_evaluation_case_operation (
-    workspace_id,
-    asset_id,
-    operation_type,
-    filter,
-    input,
-    changed_count,
-    skipped_count,
-    sample_case_ids,
-    created_by
-) VALUES (
-    $1,
-    $2,
-    $3,
-    COALESCE($6::jsonb, '{}'::jsonb),
-    COALESCE($7::jsonb, '{}'::jsonb),
-    $4,
-    $5,
-    COALESCE($8::jsonb, '[]'::jsonb),
-    $9
-)
-RETURNING id, workspace_id, asset_id, operation_type, filter, input, changed_count, skipped_count, sample_case_ids, created_by, created_at
+const completePromptEvaluationCaseOperation = `-- name: CompletePromptEvaluationCaseOperation :one
+UPDATE prompt_evaluation_case_operation
+SET status = '已完成',
+    changed_count = $3,
+    skipped_count = $4,
+    sample_case_ids = COALESCE($5::jsonb, '[]'::jsonb),
+    error_message = '',
+    completed_at = now(),
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+RETURNING id, workspace_id, asset_id, operation_type, filter, input, changed_count, skipped_count, sample_case_ids, created_by, created_at, status, error_message, started_at, completed_at, updated_at
 `
 
-type CreatePromptEvaluationCaseOperationParams struct {
+type CompletePromptEvaluationCaseOperationParams struct {
+	ID            pgtype.UUID `json:"id"`
 	WorkspaceID   pgtype.UUID `json:"workspace_id"`
-	AssetID       pgtype.UUID `json:"asset_id"`
-	OperationType string      `json:"operation_type"`
 	ChangedCount  int32       `json:"changed_count"`
 	SkippedCount  int32       `json:"skipped_count"`
-	Filter        []byte      `json:"filter"`
-	Input         []byte      `json:"input"`
 	SampleCaseIds []byte      `json:"sample_case_ids"`
-	CreatedBy     pgtype.UUID `json:"created_by"`
 }
 
-func (q *Queries) CreatePromptEvaluationCaseOperation(ctx context.Context, arg CreatePromptEvaluationCaseOperationParams) (PromptEvaluationCaseOperation, error) {
-	row := q.db.QueryRow(ctx, createPromptEvaluationCaseOperation,
+func (q *Queries) CompletePromptEvaluationCaseOperation(ctx context.Context, arg CompletePromptEvaluationCaseOperationParams) (PromptEvaluationCaseOperation, error) {
+	row := q.db.QueryRow(ctx, completePromptEvaluationCaseOperation,
+		arg.ID,
 		arg.WorkspaceID,
-		arg.AssetID,
-		arg.OperationType,
 		arg.ChangedCount,
 		arg.SkippedCount,
-		arg.Filter,
-		arg.Input,
 		arg.SampleCaseIds,
-		arg.CreatedBy,
 	)
 	var i PromptEvaluationCaseOperation
 	err := row.Scan(
@@ -73,12 +54,180 @@ func (q *Queries) CreatePromptEvaluationCaseOperation(ctx context.Context, arg C
 		&i.SampleCaseIds,
 		&i.CreatedBy,
 		&i.CreatedAt,
+		&i.Status,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const createPromptEvaluationCaseOperation = `-- name: CreatePromptEvaluationCaseOperation :one
+INSERT INTO prompt_evaluation_case_operation (
+    workspace_id,
+    asset_id,
+    operation_type,
+    filter,
+    input,
+    changed_count,
+    skipped_count,
+    sample_case_ids,
+    created_by,
+    status,
+    error_message,
+    started_at,
+    completed_at
+) VALUES (
+    $1,
+    $2,
+    $3,
+    COALESCE($6::jsonb, '{}'::jsonb),
+    COALESCE($7::jsonb, '{}'::jsonb),
+    $4,
+    $5,
+    COALESCE($8::jsonb, '[]'::jsonb),
+    $9,
+    COALESCE($10::text, '已完成'),
+    COALESCE($11::text, ''),
+    $12,
+    $13
+)
+RETURNING id, workspace_id, asset_id, operation_type, filter, input, changed_count, skipped_count, sample_case_ids, created_by, created_at, status, error_message, started_at, completed_at, updated_at
+`
+
+type CreatePromptEvaluationCaseOperationParams struct {
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	AssetID       pgtype.UUID        `json:"asset_id"`
+	OperationType string             `json:"operation_type"`
+	ChangedCount  int32              `json:"changed_count"`
+	SkippedCount  int32              `json:"skipped_count"`
+	Filter        []byte             `json:"filter"`
+	Input         []byte             `json:"input"`
+	SampleCaseIds []byte             `json:"sample_case_ids"`
+	CreatedBy     pgtype.UUID        `json:"created_by"`
+	Status        pgtype.Text        `json:"status"`
+	ErrorMessage  pgtype.Text        `json:"error_message"`
+	StartedAt     pgtype.Timestamptz `json:"started_at"`
+	CompletedAt   pgtype.Timestamptz `json:"completed_at"`
+}
+
+func (q *Queries) CreatePromptEvaluationCaseOperation(ctx context.Context, arg CreatePromptEvaluationCaseOperationParams) (PromptEvaluationCaseOperation, error) {
+	row := q.db.QueryRow(ctx, createPromptEvaluationCaseOperation,
+		arg.WorkspaceID,
+		arg.AssetID,
+		arg.OperationType,
+		arg.ChangedCount,
+		arg.SkippedCount,
+		arg.Filter,
+		arg.Input,
+		arg.SampleCaseIds,
+		arg.CreatedBy,
+		arg.Status,
+		arg.ErrorMessage,
+		arg.StartedAt,
+		arg.CompletedAt,
+	)
+	var i PromptEvaluationCaseOperation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AssetID,
+		&i.OperationType,
+		&i.Filter,
+		&i.Input,
+		&i.ChangedCount,
+		&i.SkippedCount,
+		&i.SampleCaseIds,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.Status,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const failPromptEvaluationCaseOperation = `-- name: FailPromptEvaluationCaseOperation :one
+UPDATE prompt_evaluation_case_operation
+SET status = '失败',
+    error_message = $3,
+    completed_at = now(),
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+RETURNING id, workspace_id, asset_id, operation_type, filter, input, changed_count, skipped_count, sample_case_ids, created_by, created_at, status, error_message, started_at, completed_at, updated_at
+`
+
+type FailPromptEvaluationCaseOperationParams struct {
+	ID           pgtype.UUID `json:"id"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	ErrorMessage string      `json:"error_message"`
+}
+
+func (q *Queries) FailPromptEvaluationCaseOperation(ctx context.Context, arg FailPromptEvaluationCaseOperationParams) (PromptEvaluationCaseOperation, error) {
+	row := q.db.QueryRow(ctx, failPromptEvaluationCaseOperation, arg.ID, arg.WorkspaceID, arg.ErrorMessage)
+	var i PromptEvaluationCaseOperation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AssetID,
+		&i.OperationType,
+		&i.Filter,
+		&i.Input,
+		&i.ChangedCount,
+		&i.SkippedCount,
+		&i.SampleCaseIds,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.Status,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
+const getPromptEvaluationCaseOperationInWorkspace = `-- name: GetPromptEvaluationCaseOperationInWorkspace :one
+SELECT id, workspace_id, asset_id, operation_type, filter, input, changed_count, skipped_count, sample_case_ids, created_by, created_at, status, error_message, started_at, completed_at, updated_at FROM prompt_evaluation_case_operation
+WHERE id = $1
+  AND workspace_id = $2
+`
+
+type GetPromptEvaluationCaseOperationInWorkspaceParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) GetPromptEvaluationCaseOperationInWorkspace(ctx context.Context, arg GetPromptEvaluationCaseOperationInWorkspaceParams) (PromptEvaluationCaseOperation, error) {
+	row := q.db.QueryRow(ctx, getPromptEvaluationCaseOperationInWorkspace, arg.ID, arg.WorkspaceID)
+	var i PromptEvaluationCaseOperation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AssetID,
+		&i.OperationType,
+		&i.Filter,
+		&i.Input,
+		&i.ChangedCount,
+		&i.SkippedCount,
+		&i.SampleCaseIds,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.Status,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
 
 const listPromptEvaluationCaseOperations = `-- name: ListPromptEvaluationCaseOperations :many
-SELECT id, workspace_id, asset_id, operation_type, filter, input, changed_count, skipped_count, sample_case_ids, created_by, created_at FROM prompt_evaluation_case_operation
+SELECT id, workspace_id, asset_id, operation_type, filter, input, changed_count, skipped_count, sample_case_ids, created_by, created_at, status, error_message, started_at, completed_at, updated_at FROM prompt_evaluation_case_operation
 WHERE workspace_id = $1
   AND asset_id = $2
 ORDER BY created_at DESC
@@ -112,6 +261,11 @@ func (q *Queries) ListPromptEvaluationCaseOperations(ctx context.Context, arg Li
 			&i.SampleCaseIds,
 			&i.CreatedBy,
 			&i.CreatedAt,
+			&i.Status,
+			&i.ErrorMessage,
+			&i.StartedAt,
+			&i.CompletedAt,
+			&i.UpdatedAt,
 		); err != nil {
 			return nil, err
 		}
@@ -121,4 +275,44 @@ func (q *Queries) ListPromptEvaluationCaseOperations(ctx context.Context, arg Li
 		return nil, err
 	}
 	return items, nil
+}
+
+const markPromptEvaluationCaseOperationRunning = `-- name: MarkPromptEvaluationCaseOperationRunning :one
+UPDATE prompt_evaluation_case_operation
+SET status = '运行中',
+    error_message = '',
+    started_at = COALESCE(started_at, now()),
+    updated_at = now()
+WHERE id = $1
+  AND workspace_id = $2
+RETURNING id, workspace_id, asset_id, operation_type, filter, input, changed_count, skipped_count, sample_case_ids, created_by, created_at, status, error_message, started_at, completed_at, updated_at
+`
+
+type MarkPromptEvaluationCaseOperationRunningParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+}
+
+func (q *Queries) MarkPromptEvaluationCaseOperationRunning(ctx context.Context, arg MarkPromptEvaluationCaseOperationRunningParams) (PromptEvaluationCaseOperation, error) {
+	row := q.db.QueryRow(ctx, markPromptEvaluationCaseOperationRunning, arg.ID, arg.WorkspaceID)
+	var i PromptEvaluationCaseOperation
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.AssetID,
+		&i.OperationType,
+		&i.Filter,
+		&i.Input,
+		&i.ChangedCount,
+		&i.SkippedCount,
+		&i.SampleCaseIds,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.Status,
+		&i.ErrorMessage,
+		&i.StartedAt,
+		&i.CompletedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
 }

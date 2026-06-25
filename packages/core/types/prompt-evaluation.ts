@@ -382,6 +382,11 @@ export interface PromptEvaluationCaseOperation {
   sample_case_ids: unknown[];
   created_by: string | null;
   created_at: string;
+  status: "已入队" | "运行中" | "已完成" | "失败";
+  error_message: string;
+  started_at: string | null;
+  completed_at: string | null;
+  updated_at: string;
 }
 
 export interface PromptEvaluationCaseAssertion {
@@ -762,6 +767,7 @@ export interface BulkUpdatePromptEvaluationCaseTagsRequest {
   source_tag?: string;
   target_tag?: string;
   mode: "追加" | "移除" | "重命名";
+  execution_mode?: "同步" | "后台";
   limit?: number;
 }
 

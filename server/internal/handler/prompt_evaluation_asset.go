@@ -132,16 +132,17 @@ type UpdatePromptEvaluationCaseRequest struct {
 }
 
 type BulkPromptEvaluationCaseTagsRequest struct {
-	AssetID   string   `json:"asset_id"`
-	Source    string   `json:"source"`
-	Tag       string   `json:"tag"`
-	Keyword   string   `json:"keyword"`
-	Status    string   `json:"status"`
-	Tags      []string `json:"tags"`
-	SourceTag string   `json:"source_tag"`
-	TargetTag string   `json:"target_tag"`
-	Mode      string   `json:"mode"`
-	Limit     int32    `json:"limit"`
+	AssetID       string   `json:"asset_id"`
+	Source        string   `json:"source"`
+	Tag           string   `json:"tag"`
+	Keyword       string   `json:"keyword"`
+	Status        string   `json:"status"`
+	Tags          []string `json:"tags"`
+	SourceTag     string   `json:"source_tag"`
+	TargetTag     string   `json:"target_tag"`
+	Mode          string   `json:"mode"`
+	ExecutionMode string   `json:"execution_mode"`
+	Limit         int32    `json:"limit"`
 }
 
 type CreatePromptEvaluationDatasetFromTracesRequest struct {
@@ -563,6 +564,11 @@ type PromptEvaluationCaseOperationResponse struct {
 	SampleCaseIDs any     `json:"sample_case_ids"`
 	CreatedBy     *string `json:"created_by"`
 	CreatedAt     string  `json:"created_at"`
+	Status        string  `json:"status"`
+	ErrorMessage  string  `json:"error_message"`
+	StartedAt     *string `json:"started_at"`
+	CompletedAt   *string `json:"completed_at"`
+	UpdatedAt     string  `json:"updated_at"`
 }
 
 type BulkPromptEvaluationCaseTagsResponse struct {
@@ -570,6 +576,31 @@ type BulkPromptEvaluationCaseTagsResponse struct {
 	Cases        []PromptEvaluationCaseResponse        `json:"cases"`
 	ChangedCount int32                                 `json:"changed_count"`
 	SkippedCount int32                                 `json:"skipped_count"`
+}
+
+type promptEvaluationCaseBulkTagsJob struct {
+	WorkspaceID   pgtype.UUID
+	Asset         db.PromptEvaluationAsset
+	CreatedBy     pgtype.UUID
+	Source        pgtype.Text
+	Status        pgtype.Text
+	Tag           pgtype.Text
+	Keyword       pgtype.Text
+	Limit         int32
+	Mode          string
+	TargetTags    []string
+	SourceTag     string
+	TargetTag     string
+	OperationType string
+	FilterPayload map[string]any
+	InputPayload  map[string]any
+}
+
+type promptEvaluationCaseBulkTagsResult struct {
+	Operation    db.PromptEvaluationCaseOperation
+	ChangedCases []db.PromptEvaluationCase
+	ChangedCount int32
+	SkippedCount int32
 }
 
 type PromptEvaluationCaseTagSummaryResponse struct {
@@ -916,6 +947,11 @@ func promptEvaluationCaseOperationToResponse(item db.PromptEvaluationCaseOperati
 		SampleCaseIDs: decodeJSONDefault(item.SampleCaseIds, []any{}),
 		CreatedBy:     uuidToPtr(item.CreatedBy),
 		CreatedAt:     timestampToString(item.CreatedAt),
+		Status:        item.Status,
+		ErrorMessage:  item.ErrorMessage,
+		StartedAt:     timestampToPtr(item.StartedAt),
+		CompletedAt:   timestampToPtr(item.CompletedAt),
+		UpdatedAt:     timestampToString(item.UpdatedAt),
 	}
 }
 
@@ -2124,115 +2160,6 @@ func (h *Handler) BulkUpdatePromptEvaluationCaseTags(w http.ResponseWriter, r *h
 	if value := strings.TrimSpace(req.Keyword); value != "" {
 		keyword = pgtype.Text{String: value, Valid: true}
 	}
-	matched, err := h.Queries.ListPromptEvaluationCases(r.Context(), db.ListPromptEvaluationCasesParams{
-		WorkspaceID: workspaceUUID,
-		AssetID:     asset.ID,
-		Status:      status,
-		Source:      source,
-		Tag:         tag,
-		Keyword:     keyword,
-		Limit:       pgtype.Int4{Int32: limit, Valid: true},
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation cases")
-		return
-	}
-
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation case bulk transaction")
-		return
-	}
-	defer tx.Rollback(r.Context())
-	qtx := h.Queries.WithTx(tx)
-	changed := make([]db.PromptEvaluationCase, 0, len(matched))
-	sampleIDs := make([]string, 0, 20)
-	skippedCount := int32(0)
-	for _, item := range matched {
-		currentTags := stringListFromAny(decodeJSONDefault(item.Tags, []any{}))
-		nextTags := bulkPromptEvaluationCaseTags(currentTags, targetTags, mode, sourceTag, targetTag)
-		if samePromptEvaluationStringList(currentTags, nextTags) {
-			skippedCount += 1
-			continue
-		}
-		updated, err := qtx.UpdatePromptEvaluationCase(r.Context(), db.UpdatePromptEvaluationCaseParams{
-			ID:               item.ID,
-			WorkspaceID:      workspaceUUID,
-			AssetID:          item.AssetID,
-			PromptID:         item.PromptID,
-			CaseIndex:        item.CaseIndex,
-			CaseName:         item.CaseName,
-			Variables:        item.Variables,
-			ExpectedContains: item.ExpectedContains,
-			Input:            item.Input,
-			Expected:         item.Expected,
-			Tags:             mustJSONBytes(nextTags),
-			Status:           item.Status,
-			Source:           item.Source,
-		})
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to update prompt evaluation case tags")
-			return
-		}
-		if err := syncPromptEvaluationDatasetRow(r.Context(), qtx, asset, updated); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation dataset row")
-			return
-		}
-		if err := syncPromptEvaluationTestSuiteCase(r.Context(), qtx, asset, updated); err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to sync prompt evaluation test suite case")
-			return
-		}
-		changed = append(changed, updated)
-		if len(sampleIDs) < 20 {
-			sampleIDs = append(sampleIDs, uuidToString(updated.ID))
-		}
-	}
-
-	if len(changed) > 0 {
-		allCases, err := qtx.ListPromptEvaluationCases(r.Context(), db.ListPromptEvaluationCasesParams{
-			WorkspaceID: workspaceUUID,
-			AssetID:     asset.ID,
-		})
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to reload prompt evaluation cases")
-			return
-		}
-		operationType := "批量" + mode + "标签"
-		if mode == "重命名" {
-			operationType = "批量重命名/合并标签"
-		}
-		payload := normalizePromptEvaluationPayloadObject(promptEvaluationPayloadWithCases(decodePayloadObject(asset.Payload), promptEvaluationPayloadCasesFromCaseRows(allCases)))
-		payload["最近批量用例操作"] = map[string]any{
-			"operation_type": operationType,
-			"changed_count":  len(changed),
-			"skipped_count":  skippedCount,
-			"tags":           targetTags,
-			"source_tag":     sourceTag,
-			"target_tag":     targetTag,
-			"created_at":     time.Now().Format(time.RFC3339),
-		}
-		payloadBytes := mustJSONBytes(payload)
-		profile := promptEvaluationAssetProfileFromPayload(payloadBytes, asset.PromptID, asset.AssetType)
-		asset, err = qtx.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
-			ID:                       asset.ID,
-			WorkspaceID:              asset.WorkspaceID,
-			PromptID:                 asset.PromptID,
-			Payload:                  payloadBytes,
-			StructureSchema:          pgtype.Text{String: profile.StructureSchema, Valid: true},
-			StructuredCaseCount:      pgtype.Int4{Int32: profile.StructuredCaseCount, Valid: true},
-			StructuredVariableCount:  pgtype.Int4{Int32: profile.StructuredVariableCount, Valid: true},
-			StructuredAssertionCount: pgtype.Int4{Int32: profile.StructuredAssertionCount, Valid: true},
-			LinkedDatasetCount:       pgtype.Int4{Int32: profile.LinkedDatasetCount, Valid: true},
-			LinkedPromptCount:        pgtype.Int4{Int32: profile.LinkedPromptCount, Valid: true},
-			EvaluationDimensionCount: pgtype.Int4{Int32: profile.EvaluationDimensionCount, Valid: true},
-			ExperimentDimensionCount: pgtype.Int4{Int32: profile.ExperimentDimensionCount, Valid: true},
-		})
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to update prompt evaluation asset payload")
-			return
-		}
-	}
-
 	filterPayload := map[string]any{
 		"asset_id": uuidToString(asset.ID),
 		"source":   strings.TrimSpace(req.Source),
@@ -2254,35 +2181,233 @@ func (h *Handler) BulkUpdatePromptEvaluationCaseTags(w http.ResponseWriter, r *h
 	if mode == "重命名" {
 		operationType = "批量重命名/合并标签"
 	}
-	operation, err := qtx.CreatePromptEvaluationCaseOperation(r.Context(), db.CreatePromptEvaluationCaseOperationParams{
+	job := promptEvaluationCaseBulkTagsJob{
 		WorkspaceID:   workspaceUUID,
-		AssetID:       asset.ID,
-		OperationType: operationType,
-		Filter:        mustJSONBytes(filterPayload),
-		Input:         mustJSONBytes(inputPayload),
-		ChangedCount:  int32(len(changed)),
-		SkippedCount:  skippedCount,
-		SampleCaseIds: mustJSONBytes(sampleIDs),
+		Asset:         asset,
 		CreatedBy:     parseUUID(userID),
-	})
+		Source:        source,
+		Status:        status,
+		Tag:           tag,
+		Keyword:       keyword,
+		Limit:         limit,
+		Mode:          mode,
+		TargetTags:    targetTags,
+		SourceTag:     sourceTag,
+		TargetTag:     targetTag,
+		OperationType: operationType,
+		FilterPayload: filterPayload,
+		InputPayload:  inputPayload,
+	}
+	executionMode := strings.TrimSpace(req.ExecutionMode)
+	if executionMode == "" {
+		executionMode = "同步"
+	}
+	if executionMode != "同步" && executionMode != "后台" {
+		writeError(w, http.StatusBadRequest, "execution_mode must be 同步 or 后台")
+		return
+	}
+	if executionMode == "后台" {
+		operation, err := h.Queries.CreatePromptEvaluationCaseOperation(r.Context(), db.CreatePromptEvaluationCaseOperationParams{
+			WorkspaceID:   workspaceUUID,
+			AssetID:       asset.ID,
+			OperationType: operationType,
+			Filter:        mustJSONBytes(filterPayload),
+			Input:         mustJSONBytes(inputPayload),
+			ChangedCount:  0,
+			SkippedCount:  0,
+			SampleCaseIds: mustJSONBytes([]string{}),
+			CreatedBy:     parseUUID(userID),
+			Status:        pgtype.Text{String: "已入队", Valid: true},
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to queue prompt evaluation case operation")
+			return
+		}
+		go h.runPromptEvaluationCaseBulkTagsBackground(operation.ID, job)
+		writeJSON(w, http.StatusAccepted, BulkPromptEvaluationCaseTagsResponse{
+			Operation:    promptEvaluationCaseOperationToResponse(operation),
+			Cases:        []PromptEvaluationCaseResponse{},
+			ChangedCount: 0,
+			SkippedCount: 0,
+		})
+		return
+	}
+
+	result, err := h.executePromptEvaluationCaseBulkTags(r.Context(), job, pgtype.UUID{})
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to record prompt evaluation case operation")
+		slog.Warn("prompt evaluation case bulk tags failed", "error", err, "asset_id", req.AssetID, "workspace_id", workspaceID)
+		writeError(w, http.StatusInternalServerError, "failed to run prompt evaluation case bulk tags")
 		return
 	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation case bulk update")
-		return
-	}
-	respCases := make([]PromptEvaluationCaseResponse, len(changed))
-	for i, item := range changed {
+	respCases := make([]PromptEvaluationCaseResponse, len(result.ChangedCases))
+	for i, item := range result.ChangedCases {
 		respCases[i] = promptEvaluationCaseToResponse(item, nil)
 	}
 	writeJSON(w, http.StatusOK, BulkPromptEvaluationCaseTagsResponse{
-		Operation:    promptEvaluationCaseOperationToResponse(operation),
+		Operation:    promptEvaluationCaseOperationToResponse(result.Operation),
 		Cases:        respCases,
+		ChangedCount: result.ChangedCount,
+		SkippedCount: result.SkippedCount,
+	})
+}
+
+func (h *Handler) runPromptEvaluationCaseBulkTagsBackground(operationID pgtype.UUID, job promptEvaluationCaseBulkTagsJob) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
+	defer cancel()
+	if _, err := h.executePromptEvaluationCaseBulkTags(ctx, job, operationID); err != nil {
+		slog.Warn("background prompt evaluation case bulk tags failed", "error", err, "operation_id", uuidToString(operationID), "asset_id", uuidToString(job.Asset.ID))
+		_, _ = h.Queries.FailPromptEvaluationCaseOperation(ctx, db.FailPromptEvaluationCaseOperationParams{
+			ID:           operationID,
+			WorkspaceID:  job.WorkspaceID,
+			ErrorMessage: err.Error(),
+		})
+	}
+}
+
+func (h *Handler) executePromptEvaluationCaseBulkTags(ctx context.Context, job promptEvaluationCaseBulkTagsJob, operationID pgtype.UUID) (promptEvaluationCaseBulkTagsResult, error) {
+	if operationID.Valid {
+		if _, err := h.Queries.MarkPromptEvaluationCaseOperationRunning(ctx, db.MarkPromptEvaluationCaseOperationRunningParams{
+			ID:          operationID,
+			WorkspaceID: job.WorkspaceID,
+		}); err != nil {
+			return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("mark operation running: %w", err)
+		}
+	}
+	matched, err := h.Queries.ListPromptEvaluationCases(ctx, db.ListPromptEvaluationCasesParams{
+		WorkspaceID: job.WorkspaceID,
+		AssetID:     job.Asset.ID,
+		Status:      job.Status,
+		Source:      job.Source,
+		Tag:         job.Tag,
+		Keyword:     job.Keyword,
+		Limit:       pgtype.Int4{Int32: job.Limit, Valid: true},
+	})
+	if err != nil {
+		return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("list prompt evaluation cases: %w", err)
+	}
+
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("start prompt evaluation case bulk transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+	qtx := h.Queries.WithTx(tx)
+	changed := make([]db.PromptEvaluationCase, 0, len(matched))
+	sampleIDs := make([]string, 0, 20)
+	skippedCount := int32(0)
+	for _, item := range matched {
+		currentTags := stringListFromAny(decodeJSONDefault(item.Tags, []any{}))
+		nextTags := bulkPromptEvaluationCaseTags(currentTags, job.TargetTags, job.Mode, job.SourceTag, job.TargetTag)
+		if samePromptEvaluationStringList(currentTags, nextTags) {
+			skippedCount += 1
+			continue
+		}
+		updated, err := qtx.UpdatePromptEvaluationCase(ctx, db.UpdatePromptEvaluationCaseParams{
+			ID:               item.ID,
+			WorkspaceID:      job.WorkspaceID,
+			AssetID:          item.AssetID,
+			PromptID:         item.PromptID,
+			CaseIndex:        item.CaseIndex,
+			CaseName:         item.CaseName,
+			Variables:        item.Variables,
+			ExpectedContains: item.ExpectedContains,
+			Input:            item.Input,
+			Expected:         item.Expected,
+			Tags:             mustJSONBytes(nextTags),
+			Status:           item.Status,
+			Source:           item.Source,
+		})
+		if err != nil {
+			return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("update prompt evaluation case tags: %w", err)
+		}
+		if err := syncPromptEvaluationDatasetRow(ctx, qtx, job.Asset, updated); err != nil {
+			return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("sync prompt evaluation dataset row: %w", err)
+		}
+		if err := syncPromptEvaluationTestSuiteCase(ctx, qtx, job.Asset, updated); err != nil {
+			return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("sync prompt evaluation test suite case: %w", err)
+		}
+		changed = append(changed, updated)
+		if len(sampleIDs) < 20 {
+			sampleIDs = append(sampleIDs, uuidToString(updated.ID))
+		}
+	}
+
+	if len(changed) > 0 {
+		allCases, err := qtx.ListPromptEvaluationCases(ctx, db.ListPromptEvaluationCasesParams{
+			WorkspaceID: job.WorkspaceID,
+			AssetID:     job.Asset.ID,
+		})
+		if err != nil {
+			return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("reload prompt evaluation cases: %w", err)
+		}
+		payload := normalizePromptEvaluationPayloadObject(promptEvaluationPayloadWithCases(decodePayloadObject(job.Asset.Payload), promptEvaluationPayloadCasesFromCaseRows(allCases)))
+		payload["最近批量用例操作"] = map[string]any{
+			"operation_type": job.OperationType,
+			"changed_count":  len(changed),
+			"skipped_count":  skippedCount,
+			"tags":           job.TargetTags,
+			"source_tag":     job.SourceTag,
+			"target_tag":     job.TargetTag,
+			"created_at":     time.Now().Format(time.RFC3339),
+		}
+		payloadBytes := mustJSONBytes(payload)
+		profile := promptEvaluationAssetProfileFromPayload(payloadBytes, job.Asset.PromptID, job.Asset.AssetType)
+		if _, err = qtx.UpdatePromptEvaluationAsset(ctx, db.UpdatePromptEvaluationAssetParams{
+			ID:                       job.Asset.ID,
+			WorkspaceID:              job.Asset.WorkspaceID,
+			PromptID:                 job.Asset.PromptID,
+			Payload:                  payloadBytes,
+			StructureSchema:          pgtype.Text{String: profile.StructureSchema, Valid: true},
+			StructuredCaseCount:      pgtype.Int4{Int32: profile.StructuredCaseCount, Valid: true},
+			StructuredVariableCount:  pgtype.Int4{Int32: profile.StructuredVariableCount, Valid: true},
+			StructuredAssertionCount: pgtype.Int4{Int32: profile.StructuredAssertionCount, Valid: true},
+			LinkedDatasetCount:       pgtype.Int4{Int32: profile.LinkedDatasetCount, Valid: true},
+			LinkedPromptCount:        pgtype.Int4{Int32: profile.LinkedPromptCount, Valid: true},
+			EvaluationDimensionCount: pgtype.Int4{Int32: profile.EvaluationDimensionCount, Valid: true},
+			ExperimentDimensionCount: pgtype.Int4{Int32: profile.ExperimentDimensionCount, Valid: true},
+		}); err != nil {
+			return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("update prompt evaluation asset payload: %w", err)
+		}
+	}
+
+	var operation db.PromptEvaluationCaseOperation
+	if operationID.Valid {
+		operation, err = qtx.CompletePromptEvaluationCaseOperation(ctx, db.CompletePromptEvaluationCaseOperationParams{
+			ID:            operationID,
+			WorkspaceID:   job.WorkspaceID,
+			ChangedCount:  int32(len(changed)),
+			SkippedCount:  skippedCount,
+			SampleCaseIds: mustJSONBytes(sampleIDs),
+		})
+	} else {
+		now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+		operation, err = qtx.CreatePromptEvaluationCaseOperation(ctx, db.CreatePromptEvaluationCaseOperationParams{
+			WorkspaceID:   job.WorkspaceID,
+			AssetID:       job.Asset.ID,
+			OperationType: job.OperationType,
+			Filter:        mustJSONBytes(job.FilterPayload),
+			Input:         mustJSONBytes(job.InputPayload),
+			ChangedCount:  int32(len(changed)),
+			SkippedCount:  skippedCount,
+			SampleCaseIds: mustJSONBytes(sampleIDs),
+			CreatedBy:     job.CreatedBy,
+			Status:        pgtype.Text{String: "已完成", Valid: true},
+			StartedAt:     now,
+			CompletedAt:   now,
+		})
+	}
+	if err != nil {
+		return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("record prompt evaluation case operation: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return promptEvaluationCaseBulkTagsResult{}, fmt.Errorf("commit prompt evaluation case bulk update: %w", err)
+	}
+	return promptEvaluationCaseBulkTagsResult{
+		Operation:    operation,
+		ChangedCases: changed,
 		ChangedCount: int32(len(changed)),
 		SkippedCount: skippedCount,
-	})
+	}, nil
 }
 
 func (h *Handler) ListPromptEvaluationExperimentDimensions(w http.ResponseWriter, r *http.Request) {

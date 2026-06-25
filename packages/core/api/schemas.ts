@@ -1374,6 +1374,11 @@ export const PromptEvaluationCaseOperationSchema = z.object({
   sample_case_ids: z.array(z.unknown()).default([]),
   created_by: z.string().nullable().optional().transform((v) => v ?? null),
   created_at: z.string().default(""),
+  status: z.enum(["已入队", "运行中", "已完成", "失败"]).default("已完成"),
+  error_message: z.string().default(""),
+  started_at: z.string().nullable().optional().transform((v) => v ?? null),
+  completed_at: z.string().nullable().optional().transform((v) => v ?? null),
+  updated_at: z.string().default(""),
 }).loose();
 
 export const PromptEvaluationCaseOperationListResponseSchema = z.object({
@@ -1710,6 +1715,11 @@ export const EMPTY_PROMPT_EVALUATION_CASE_OPERATION: PromptEvaluationCaseOperati
   sample_case_ids: [],
   created_by: null,
   created_at: "",
+  status: "已完成",
+  error_message: "",
+  started_at: null,
+  completed_at: null,
+  updated_at: "",
 };
 
 export const EMPTY_PROMPT_EVALUATION_CASE_OPERATION_LIST_RESPONSE: ListPromptEvaluationCaseOperationsResponse = {

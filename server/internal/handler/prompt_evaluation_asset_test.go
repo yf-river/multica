@@ -1039,6 +1039,71 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if operations.Total != 1 || operations.Items[0].OperationType != "批量追加标签" || operations.Items[0].ChangedCount != 1 {
 		t.Fatalf("operations = %+v", operations)
 	}
+	backgroundTagsW := httptest.NewRecorder()
+	testHandler.BulkUpdatePromptEvaluationCaseTags(backgroundTagsW, newRequest(http.MethodPost, "/api/prompt-evaluation-cases/bulk-tags", map[string]any{
+		"asset_id":       asset.ID,
+		"source":         "payload",
+		"tag":            "批量验收",
+		"tags":           []string{"后台验收"},
+		"mode":           "追加",
+		"execution_mode": "后台",
+		"limit":          50,
+	}))
+	if backgroundTagsW.Code != http.StatusAccepted {
+		t.Fatalf("background bulk tags status = %d, body = %s", backgroundTagsW.Code, backgroundTagsW.Body.String())
+	}
+	var backgroundTags struct {
+		Operation PromptEvaluationCaseOperationResponse `json:"operation"`
+	}
+	if err := json.Unmarshal(backgroundTagsW.Body.Bytes(), &backgroundTags); err != nil {
+		t.Fatalf("decode background bulk tags: %v", err)
+	}
+	if backgroundTags.Operation.Status != "已入队" {
+		t.Fatalf("background operation status = %+v", backgroundTags.Operation)
+	}
+	var completedBackground PromptEvaluationCaseOperationResponse
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		pollW := httptest.NewRecorder()
+		testHandler.ListPromptEvaluationCaseOperations(pollW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-assets/"+asset.ID+"/case-operations", nil), "id", asset.ID))
+		if pollW.Code != http.StatusOK {
+			t.Fatalf("poll operations status = %d, body = %s", pollW.Code, pollW.Body.String())
+		}
+		var polled struct {
+			Items []PromptEvaluationCaseOperationResponse `json:"items"`
+			Total int                                     `json:"total"`
+		}
+		if err := json.Unmarshal(pollW.Body.Bytes(), &polled); err != nil {
+			t.Fatalf("decode polled operations: %v", err)
+		}
+		for _, item := range polled.Items {
+			if item.ID == backgroundTags.Operation.ID && item.Status == "已完成" {
+				completedBackground = item
+				break
+			}
+		}
+		if completedBackground.ID != "" {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if completedBackground.Status != "已完成" || completedBackground.ChangedCount != 1 || completedBackground.CompletedAt == nil {
+		t.Fatalf("background operation did not complete: %+v", completedBackground)
+	}
+	backgroundCasesW := httptest.NewRecorder()
+	testHandler.ListPromptEvaluationCases(backgroundCasesW, newRequest(http.MethodGet, "/api/prompt-evaluation-cases?asset_id="+asset.ID+"&tag="+url.QueryEscape("后台验收"), nil))
+	if backgroundCasesW.Code != http.StatusOK {
+		t.Fatalf("list background cases status = %d, body = %s", backgroundCasesW.Code, backgroundCasesW.Body.String())
+	}
+	var backgroundCases struct {
+		Items []PromptEvaluationCaseResponse `json:"items"`
+	}
+	if err := json.Unmarshal(backgroundCasesW.Body.Bytes(), &backgroundCases); err != nil {
+		t.Fatalf("decode background cases: %v", err)
+	}
+	if len(backgroundCases.Items) != 1 || !containsAll(strings.Join(stringListFromAny(backgroundCases.Items[0].Tags), ","), []string{"后台验收", "批量验收"}) {
+		t.Fatalf("background updated cases = %+v", backgroundCases.Items)
+	}
 	reloadedAsset, err := testHandler.Queries.GetPromptEvaluationAssetInWorkspace(context.Background(), db.GetPromptEvaluationAssetInWorkspaceParams{ID: parseUUID(asset.ID), WorkspaceID: parseUUID(testWorkspaceID)})
 	if err != nil {
 		t.Fatalf("reload asset after bulk tags: %v", err)
@@ -1099,7 +1164,7 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if err := json.Unmarshal(operationsAfterRenameW.Body.Bytes(), &operations); err != nil {
 		t.Fatalf("decode operations after rename: %v", err)
 	}
-	if operations.Total != 2 || operations.Items[0].OperationType != "批量重命名/合并标签" || operations.Items[0].ChangedCount != 1 {
+	if operations.Total != 3 || operations.Items[0].OperationType != "批量重命名/合并标签" || operations.Items[0].ChangedCount != 1 {
 		t.Fatalf("operations after rename = %+v", operations)
 	}
 	reloadedAsset, err = testHandler.Queries.GetPromptEvaluationAssetInWorkspace(context.Background(), db.GetPromptEvaluationAssetInWorkspaceParams{ID: parseUUID(asset.ID), WorkspaceID: parseUUID(testWorkspaceID)})

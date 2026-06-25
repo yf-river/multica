@@ -1534,7 +1534,7 @@ test.describe("训练与评估工作台", () => {
       { timeout: 15000 },
     );
     await governance.getByTestId(`dataset-case-bulk-add-tags-${dataset.id}`).click();
-    expect((await bulkAddResponse).status()).toBe(200);
+    expect((await bulkAddResponse).status()).toBe(202);
     await expect
       .poll(async () => {
         const items = await api.listPromptEvaluationCases({ asset_id: dataset.id });
@@ -1551,6 +1551,7 @@ test.describe("训练与评估工作台", () => {
       }, { timeout: 15000 })
       .toMatchObject({
         operation_type: "批量追加标签",
+        status: "已完成",
         changed_count: 1,
       });
     const operationHistoryResponse = page.waitForResponse(
@@ -1593,7 +1594,7 @@ test.describe("训练与评估工作台", () => {
       { timeout: 15000 },
     );
     await governance.getByTestId(`dataset-case-bulk-remove-tags-${dataset.id}`).click();
-    expect((await bulkRemoveResponse).status()).toBe(200);
+    expect((await bulkRemoveResponse).status()).toBe(202);
     await expect
       .poll(async () => {
         const items = await api.listPromptEvaluationCases({ asset_id: dataset.id });
@@ -1608,7 +1609,7 @@ test.describe("训练与评估工作台", () => {
       { timeout: 15000 },
     );
     await governance.getByTestId(`dataset-case-rename-tag-${dataset.id}`).click();
-    expect((await renameTagResponse).status()).toBe(200);
+    expect((await renameTagResponse).status()).toBe(202);
     await expect(governance.getByTestId(`dataset-case-operation-audit-${dataset.id}`)).toContainText("批量重命名/合并标签", { timeout: 15000 });
     await expect
       .poll(async () => {
@@ -1617,6 +1618,7 @@ test.describe("训练与评估工作台", () => {
       }, { timeout: 15000 })
       .toMatchObject({
         operation_type: "批量重命名/合并标签",
+        status: "已完成",
         changed_count: 1,
       });
     await expect

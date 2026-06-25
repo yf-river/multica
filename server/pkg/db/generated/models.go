@@ -632,6 +632,11 @@ type PromptEvaluationCaseOperation struct {
 	SampleCaseIds []byte             `json:"sample_case_ids"`
 	CreatedBy     pgtype.UUID        `json:"created_by"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	Status        string             `json:"status"`
+	ErrorMessage  string             `json:"error_message"`
+	StartedAt     pgtype.Timestamptz `json:"started_at"`
+	CompletedAt   pgtype.Timestamptz `json:"completed_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
 }
 
 type PromptEvaluationDatasetRow struct {
