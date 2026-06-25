@@ -29,6 +29,7 @@ import type {
   PromptEvaluationStructuredCase,
   PromptEvaluationRun,
   PromptEvaluationRunEvidence,
+  PromptEvaluationAssetEvidenceArchivePackage,
   PromptEvaluationRuntimeReadiness,
   PromptEvaluationSummary,
   PromptEvaluationAssetType,
@@ -197,6 +198,7 @@ export function PromptLibraryPage({
   const [runStatusFilter, setRunStatusFilter] = useState<RunStatusFilter>("全部");
   const [demoTimeRange, setDemoTimeRange] = useState<DemoTimeRange>("7d");
   const [exportingDemoEvidence, setExportingDemoEvidence] = useState(false);
+  const [exportingAssetEvidencePackageAssetId, setExportingAssetEvidencePackageAssetId] = useState<string | null>(null);
   const [showAcceptanceFixtures, setShowAcceptanceFixtures] = useState(showAcceptanceFromURL);
   const shouldShowPromptEditor = showPromptEditor ?? trainingWorkbenchShowsPromptEditor(resolvedView);
   const demoSince = useMemo(() => {
@@ -687,6 +689,22 @@ export function PromptLibraryPage({
       toast.success(`已归档 ${result.created_count} 条运行证据${skippedText}`);
     },
   });
+
+  const handleDownloadAssetEvidencePackage = async (assetId: string) => {
+    setExportingAssetEvidencePackageAssetId(assetId);
+    try {
+      const archivePackage: PromptEvaluationAssetEvidenceArchivePackage = await api.getPromptEvaluationAssetEvidenceArchivePackage(assetId, "验收归档", 20);
+      const filename = `multica-training-asset-evidence-${assetId}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
+      downloadTextFile(JSON.stringify(archivePackage, null, 2), filename, "application/json;charset=utf-8");
+      if (archivePackage.archived_run_count > 0) {
+        toast.success(`资产归档包已导出：${archivePackage.archived_run_count} 条运行证据`);
+      } else {
+        toast.info("资产归档包已导出，但该资产还没有服务端证据快照");
+      }
+    } finally {
+      setExportingAssetEvidencePackageAssetId(null);
+    }
+  };
 
   const createCandidateMut = useMutation({
     mutationFn: (runId: string) => api.createPromptEvaluationOptimizationCandidate(runId),
@@ -1305,6 +1323,8 @@ export function PromptLibraryPage({
                 creatingEvidenceSnapshotRunId={createEvidenceSnapshotMut.isPending ? createEvidenceSnapshotMut.variables ?? null : null}
                 onCreateAssetEvidenceSnapshots={(assetId) => createAssetEvidenceSnapshotsMut.mutate(assetId)}
                 creatingAssetEvidenceSnapshotsAssetId={createAssetEvidenceSnapshotsMut.isPending ? createAssetEvidenceSnapshotsMut.variables ?? null : null}
+                onDownloadAssetEvidencePackage={handleDownloadAssetEvidencePackage}
+                exportingAssetEvidencePackageAssetId={exportingAssetEvidencePackageAssetId}
                 onGenerateCandidate={(runId) => createCandidateMut.mutate(runId)}
                 generatingCandidateRunId={createCandidateMut.isPending ? createCandidateMut.variables ?? null : null}
                 onRunOptimizationAgent={(runId) => runOptimizationAgentMut.mutate(runId)}
@@ -1369,6 +1389,8 @@ export function PromptLibraryPage({
               creatingEvidenceSnapshotRunId={createEvidenceSnapshotMut.isPending ? createEvidenceSnapshotMut.variables ?? null : null}
               onCreateAssetEvidenceSnapshots={(assetId) => createAssetEvidenceSnapshotsMut.mutate(assetId)}
               creatingAssetEvidenceSnapshotsAssetId={createAssetEvidenceSnapshotsMut.isPending ? createAssetEvidenceSnapshotsMut.variables ?? null : null}
+              onDownloadAssetEvidencePackage={handleDownloadAssetEvidencePackage}
+              exportingAssetEvidencePackageAssetId={exportingAssetEvidencePackageAssetId}
               onGenerateCandidate={(runId) => createCandidateMut.mutate(runId)}
               generatingCandidateRunId={createCandidateMut.isPending ? createCandidateMut.variables ?? null : null}
               onRunOptimizationAgent={(runId) => runOptimizationAgentMut.mutate(runId)}
@@ -1810,6 +1832,8 @@ function WorkbenchPanel({
   creatingEvidenceSnapshotRunId,
   onCreateAssetEvidenceSnapshots,
   creatingAssetEvidenceSnapshotsAssetId,
+  onDownloadAssetEvidencePackage,
+  exportingAssetEvidencePackageAssetId,
   onGenerateCandidate,
   generatingCandidateRunId,
   onRunOptimizationAgent,
@@ -1867,6 +1891,8 @@ function WorkbenchPanel({
   creatingEvidenceSnapshotRunId: string | null;
   onCreateAssetEvidenceSnapshots: (assetId: string) => void;
   creatingAssetEvidenceSnapshotsAssetId: string | null;
+  onDownloadAssetEvidencePackage: (assetId: string) => void;
+  exportingAssetEvidencePackageAssetId: string | null;
   onGenerateCandidate: (runId: string) => void;
   generatingCandidateRunId: string | null;
   onRunOptimizationAgent: (runId: string) => void;
@@ -1999,6 +2025,8 @@ function WorkbenchPanel({
           deletingCaseId={deletingCaseId}
           onCreateAssetEvidenceSnapshots={onCreateAssetEvidenceSnapshots}
           creatingAssetEvidenceSnapshotsAssetId={creatingAssetEvidenceSnapshotsAssetId}
+          onDownloadAssetEvidencePackage={onDownloadAssetEvidencePackage}
+          exportingAssetEvidencePackageAssetId={exportingAssetEvidencePackageAssetId}
           beforeAssetList={activeTab === "实验" ? (
             <ExperimentComparisonPanel
               experiments={visibleAssets}
@@ -2375,6 +2403,8 @@ function TrainingAssetPanel({
   deletingCaseId,
   onCreateAssetEvidenceSnapshots,
   creatingAssetEvidenceSnapshotsAssetId,
+  onDownloadAssetEvidencePackage,
+  exportingAssetEvidencePackageAssetId,
   beforeAssetList,
 }: {
   activeTab: WorkbenchTab;
@@ -2402,6 +2432,8 @@ function TrainingAssetPanel({
   deletingCaseId: string | null;
   onCreateAssetEvidenceSnapshots: (assetId: string) => void;
   creatingAssetEvidenceSnapshotsAssetId: string | null;
+  onDownloadAssetEvidencePackage: (assetId: string) => void;
+  exportingAssetEvidencePackageAssetId: string | null;
   beforeAssetList?: ReactNode;
 }) {
   const caseSummaries = useMemo(() => buildCaseSummaries(cases), [cases]);
@@ -2469,6 +2501,18 @@ function TrainingAssetPanel({
                   >
                     {creatingAssetEvidenceSnapshotsAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
                     归档运行证据
+                  </Button>
+                )}
+                {(runCountByAsset.get(asset.id) ?? 0) > 0 && (
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    data-testid={`download-asset-evidence-package-${asset.id}`}
+                    onClick={() => onDownloadAssetEvidencePackage(asset.id)}
+                    disabled={saving || exportingAssetEvidencePackageAssetId === asset.id}
+                  >
+                    {exportingAssetEvidencePackageAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+                    下载归档包
                   </Button>
                 )}
                 {asset.asset_type === "数据集" && (

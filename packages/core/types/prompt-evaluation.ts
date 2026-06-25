@@ -299,6 +299,24 @@ export interface PromptEvaluationAssetEvidenceSnapshotResponse {
   skipped: PromptEvaluationAssetEvidenceSnapshotSkip[];
 }
 
+export interface PromptEvaluationAssetEvidenceArchiveItem {
+  run: PromptEvaluationRun;
+  snapshots: PromptEvaluationEvidenceSnapshot[];
+}
+
+export interface PromptEvaluationAssetEvidenceArchivePackage {
+  schema_version: string;
+  generated_at: string;
+  asset_id: string;
+  snapshot_type: PromptEvaluationEvidenceSnapshotType;
+  total_runs: number;
+  archived_run_count: number;
+  missing_run_count: number;
+  asset: PromptEvaluationAsset;
+  items: PromptEvaluationAssetEvidenceArchiveItem[];
+  中文摘要: Record<string, unknown>;
+}
+
 export interface PromptEvaluationSummary {
   workspace_id: string;
   generated_at: string;

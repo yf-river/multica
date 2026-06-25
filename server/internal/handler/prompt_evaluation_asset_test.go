@@ -1736,6 +1736,32 @@ func TestPromptEvaluationAssetEvidenceSnapshotsArchiveRecentRuns(t *testing.T) {
 	if retry.CreatedCount != 0 || retry.SkippedCount != 1 || len(retry.Skipped) != 1 || retry.Skipped[0].RunID != resp.Run.ID {
 		t.Fatalf("asset snapshot retry = %+v", retry)
 	}
+
+	exportW := httptest.NewRecorder()
+	testHandler.GetPromptEvaluationAssetEvidenceSnapshotPackage(exportW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-assets/"+created.ID+"/evidence-snapshots/export?snapshot_type=验收归档", nil), "id", created.ID))
+	if exportW.Code != http.StatusOK {
+		t.Fatalf("asset snapshot export status = %d, body = %s", exportW.Code, exportW.Body.String())
+	}
+	var archivePackage PromptEvaluationAssetEvidenceArchivePackage
+	if err := json.Unmarshal(exportW.Body.Bytes(), &archivePackage); err != nil {
+		t.Fatalf("decode asset snapshot export response: %v", err)
+	}
+	if archivePackage.SchemaVersion != "multica.prompt_evaluation.asset_evidence_archive.v1" ||
+		archivePackage.AssetID != created.ID ||
+		archivePackage.SnapshotType != "验收归档" ||
+		archivePackage.TotalRuns != 1 ||
+		archivePackage.ArchivedRunCount != 1 ||
+		archivePackage.MissingRunCount != 0 ||
+		len(archivePackage.Items) != 1 {
+		t.Fatalf("asset snapshot export = %+v", archivePackage)
+	}
+	if archivePackage.Items[0].Run.ID != resp.Run.ID || len(archivePackage.Items[0].Snapshots) != 1 || archivePackage.Items[0].Snapshots[0].Evidence == nil {
+		t.Fatalf("asset snapshot export item = %+v", archivePackage.Items[0])
+	}
+	evidence, ok := archivePackage.Items[0].Snapshots[0].Evidence.(map[string]any)
+	if !ok || evidence["服务端解释快照"] == nil {
+		t.Fatalf("asset snapshot export evidence missing insight: %#v", archivePackage.Items[0].Snapshots[0].Evidence)
+	}
 }
 
 func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {

@@ -454,6 +454,24 @@ type PromptEvaluationAssetEvidenceSnapshotResponse struct {
 	Skipped      []PromptEvaluationAssetEvidenceSnapshotSkip `json:"skipped"`
 }
 
+type PromptEvaluationAssetEvidenceArchiveItem struct {
+	Run       PromptEvaluationRunResponse                `json:"run"`
+	Snapshots []PromptEvaluationEvidenceSnapshotResponse `json:"snapshots"`
+}
+
+type PromptEvaluationAssetEvidenceArchivePackage struct {
+	SchemaVersion    string                                     `json:"schema_version"`
+	GeneratedAt      string                                     `json:"generated_at"`
+	AssetID          string                                     `json:"asset_id"`
+	SnapshotType     string                                     `json:"snapshot_type"`
+	TotalRuns        int                                        `json:"total_runs"`
+	ArchivedRunCount int                                        `json:"archived_run_count"`
+	MissingRunCount  int                                        `json:"missing_run_count"`
+	Asset            PromptEvaluationAssetResponse              `json:"asset"`
+	Items            []PromptEvaluationAssetEvidenceArchiveItem `json:"items"`
+	ChineseSummary   map[string]any                             `json:"中文摘要"`
+}
+
 type PromptEvaluationAssetEvidenceSnapshotSkip struct {
 	RunID  string `json:"run_id"`
 	Reason string `json:"reason"`
@@ -3348,6 +3366,99 @@ func (h *Handler) CreatePromptEvaluationAssetEvidenceSnapshots(w http.ResponseWr
 		resp.Items = append(resp.Items, promptEvaluationEvidenceSnapshotToResponse(item, false))
 	}
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+func (h *Handler) GetPromptEvaluationAssetEvidenceSnapshotPackage(w http.ResponseWriter, r *http.Request) {
+	asset, ok := h.loadPromptEvaluationAsset(w, r)
+	if !ok {
+		return
+	}
+	snapshotType := strings.TrimSpace(r.URL.Query().Get("snapshot_type"))
+	if snapshotType == "" {
+		snapshotType = "验收归档"
+	}
+	if !validPromptEvaluationEvidenceSnapshotType(snapshotType) {
+		writeError(w, http.StatusBadRequest, "snapshot_type must be 手动归档, 验收归档 or 自动归档")
+		return
+	}
+	limit := int32(20)
+	if value := r.URL.Query().Get("limit"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 100 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 100")
+			return
+		}
+		limit = int32(parsed)
+	}
+	runs, err := h.Queries.ListPromptEvaluationRuns(r.Context(), db.ListPromptEvaluationRunsParams{
+		WorkspaceID: asset.WorkspaceID,
+		Limit:       limit,
+		AssetID:     asset.ID,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation runs for asset")
+		return
+	}
+	items := make([]PromptEvaluationAssetEvidenceArchiveItem, 0, len(runs))
+	missingRunCount := 0
+	for _, run := range runs {
+		rows, err := h.Queries.ListPromptEvaluationEvidenceSnapshotsByRun(r.Context(), db.ListPromptEvaluationEvidenceSnapshotsByRunParams{
+			WorkspaceID: asset.WorkspaceID,
+			RunID:       run.ID,
+			Limit:       100,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation evidence snapshots")
+			return
+		}
+		snapshots := make([]PromptEvaluationEvidenceSnapshotResponse, 0, len(rows))
+		for _, row := range rows {
+			if row.SnapshotType != snapshotType {
+				continue
+			}
+			detail, err := h.Queries.GetPromptEvaluationEvidenceSnapshotInWorkspace(r.Context(), db.GetPromptEvaluationEvidenceSnapshotInWorkspaceParams{
+				ID:          row.ID,
+				WorkspaceID: asset.WorkspaceID,
+			})
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation evidence snapshot")
+				return
+			}
+			snapshots = append(snapshots, promptEvaluationEvidenceSnapshotToResponse(detail, true))
+		}
+		if len(snapshots) == 0 {
+			missingRunCount++
+			continue
+		}
+		items = append(items, PromptEvaluationAssetEvidenceArchiveItem{
+			Run:       promptEvaluationRunToResponse(run),
+			Snapshots: snapshots,
+		})
+	}
+	now := time.Now().UTC()
+	resp := PromptEvaluationAssetEvidenceArchivePackage{
+		SchemaVersion:    "multica.prompt_evaluation.asset_evidence_archive.v1",
+		GeneratedAt:      now.Format(time.RFC3339),
+		AssetID:          uuidToString(asset.ID),
+		SnapshotType:     snapshotType,
+		TotalRuns:        len(runs),
+		ArchivedRunCount: len(items),
+		MissingRunCount:  missingRunCount,
+		Asset:            promptEvaluationAssetToResponse(asset),
+		Items:            items,
+		ChineseSummary: map[string]any{
+			"语义版本":   "multica.prompt_evaluation.asset_evidence_archive.v1",
+			"生成时间":   now.Format(time.RFC3339),
+			"资产名称":   asset.Name,
+			"资产类型":   asset.AssetType,
+			"快照类型":   snapshotType,
+			"运行总数":   len(runs),
+			"已归档运行数": len(items),
+			"未归档运行数": missingRunCount,
+			"说明":     "该归档包按资产聚合已存在的服务端证据快照；每条快照保留原始运行证据和服务端解释快照。",
+		},
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (h *Handler) createPromptEvaluationEvidenceSnapshotRecord(ctx context.Context, workspaceUUID pgtype.UUID, runID pgtype.UUID, snapshotType string, createdBy pgtype.UUID) (db.PromptEvaluationEvidenceSnapshot, error) {

@@ -125,6 +125,8 @@ export type {
   PromptEvaluationRunEvidence,
   PromptEvaluationEvidenceSnapshot,
   PromptEvaluationEvidenceSnapshotType,
+  PromptEvaluationAssetEvidenceArchiveItem,
+  PromptEvaluationAssetEvidenceArchivePackage,
   PromptEvaluationAssetEvidenceSnapshotResponse,
   PromptEvaluationAssetEvidenceSnapshotSkip,
   PromptEvaluationSummary,

@@ -38,6 +38,7 @@ import type {
   ListPromptEvaluationDimensionScoreTrendsResponse,
   PromptEvaluationOptimizationCandidate,
   ListPromptEvaluationEvidenceSnapshotsResponse,
+  PromptEvaluationAssetEvidenceArchivePackage,
   PromptLibraryItem,
   PromptLibraryVersion,
   PublishPromptEvaluationOptimizationCandidateResponse,
@@ -1202,6 +1203,22 @@ export const PromptEvaluationAssetEvidenceSnapshotResponseSchema = z.object({
   }).loose()).default([]),
 }).loose();
 
+export const PromptEvaluationAssetEvidenceArchivePackageSchema = z.object({
+  schema_version: z.string().default("multica.prompt_evaluation.asset_evidence_archive.v1"),
+  generated_at: z.string().default(""),
+  asset_id: z.string().default(""),
+  snapshot_type: z.enum(["手动归档", "验收归档", "自动归档"]).default("验收归档"),
+  total_runs: z.number().default(0),
+  archived_run_count: z.number().default(0),
+  missing_run_count: z.number().default(0),
+  asset: PromptEvaluationAssetSchema,
+  items: z.array(z.object({
+    run: PromptEvaluationRunSchema,
+    snapshots: z.array(PromptEvaluationEvidenceSnapshotSchema).default([]),
+  }).loose()).default([]),
+  中文摘要: z.record(z.string(), z.unknown()).default({}),
+}).loose();
+
 export const PromptEvaluationSummarySchema = z.object({
   workspace_id: z.string().default(""),
   generated_at: z.string().default(""),
@@ -1532,6 +1549,19 @@ export const EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE: PromptEva
   skipped_count: 0,
   items: [],
   skipped: [],
+};
+
+export const EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_ARCHIVE_PACKAGE: PromptEvaluationAssetEvidenceArchivePackage = {
+  schema_version: "multica.prompt_evaluation.asset_evidence_archive.v1",
+  generated_at: "",
+  asset_id: "",
+  snapshot_type: "验收归档",
+  total_runs: 0,
+  archived_run_count: 0,
+  missing_run_count: 0,
+  asset: EMPTY_PROMPT_EVALUATION_ASSET,
+  items: [],
+  中文摘要: {},
 };
 
 export const EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT_LIST_RESPONSE: ListPromptEvaluationEvidenceSnapshotsResponse = {

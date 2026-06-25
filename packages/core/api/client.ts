@@ -129,6 +129,7 @@ import type {
   PromptEvaluationAsset,
   PromptEvaluationRun,
   PromptEvaluationRunEvidence,
+  PromptEvaluationAssetEvidenceArchivePackage,
   PromptEvaluationAssetEvidenceSnapshotResponse,
   PromptEvaluationEvidenceSnapshot,
   PromptEvaluationEvidenceSnapshotType,
@@ -225,6 +226,7 @@ import {
   EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_TRIAL_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_RUN_EVIDENCE,
+  EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_ARCHIVE_PACKAGE,
   EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE,
   EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT,
   EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT_LIST_RESPONSE,
@@ -265,6 +267,7 @@ import {
   PromptEvaluationRunSchema,
   PromptEvaluationTrialListResponseSchema,
   PromptEvaluationRunEvidenceSchema,
+  PromptEvaluationAssetEvidenceArchivePackageSchema,
   PromptEvaluationAssetEvidenceSnapshotResponseSchema,
   PromptEvaluationEvidenceSnapshotSchema,
   PromptEvaluationEvidenceSnapshotListResponseSchema,
@@ -2163,6 +2166,14 @@ export class ApiClient {
     return parseWithFallback(raw, PromptEvaluationAssetEvidenceSnapshotResponseSchema, EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_SNAPSHOT_RESPONSE, {
       endpoint: "POST /api/prompt-evaluation-assets/:id/evidence-snapshots",
     }) as PromptEvaluationAssetEvidenceSnapshotResponse;
+  }
+
+  async getPromptEvaluationAssetEvidenceArchivePackage(assetId: string, snapshotType: PromptEvaluationEvidenceSnapshotType = "验收归档", limit = 20): Promise<PromptEvaluationAssetEvidenceArchivePackage> {
+    const search = new URLSearchParams({ snapshot_type: snapshotType, limit: String(limit) });
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${assetId}/evidence-snapshots/export?${search.toString()}`);
+    return parseWithFallback(raw, PromptEvaluationAssetEvidenceArchivePackageSchema, EMPTY_PROMPT_EVALUATION_ASSET_EVIDENCE_ARCHIVE_PACKAGE, {
+      endpoint: "GET /api/prompt-evaluation-assets/:id/evidence-snapshots/export",
+    }) as PromptEvaluationAssetEvidenceArchivePackage;
   }
 
   async getPromptEvaluationEvidenceSnapshot(runId: string, snapshotId: string): Promise<PromptEvaluationEvidenceSnapshot> {

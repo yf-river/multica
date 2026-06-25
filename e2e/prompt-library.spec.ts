@@ -471,6 +471,41 @@ test.describe("训练与评估工作台", () => {
         run_id: localRenderRun.id,
         snapshot_type: "验收归档",
       });
+    const downloadAssetEvidencePackageButton = optimizationRow.getByTestId(`download-asset-evidence-package-${optimizationRun!.id}`);
+    await expect(downloadAssetEvidencePackageButton).toBeVisible({ timeout: 10000 });
+    const assetEvidencePackageResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        response.url().includes(`/api/prompt-evaluation-assets/${optimizationRun!.id}/evidence-snapshots/export`),
+      { timeout: 15000 },
+    );
+    const assetEvidencePackageDownload = page.waitForEvent("download");
+    await downloadAssetEvidencePackageButton.click();
+    const [assetEvidencePackage, downloadedAssetEvidencePackage] = await Promise.all([assetEvidencePackageResponse, assetEvidencePackageDownload]);
+    expect(assetEvidencePackage.status()).toBe(200);
+    expect(downloadedAssetEvidencePackage.suggestedFilename()).toMatch(/^multica-training-asset-evidence-.*\.json$/);
+    const downloadedAssetEvidencePackagePath = await downloadedAssetEvidencePackage.path();
+    expect(downloadedAssetEvidencePackagePath).toBeTruthy();
+    const assetEvidenceArchive = JSON.parse(await readFile(downloadedAssetEvidencePackagePath!, "utf8")) as Record<string, any>;
+    expect(assetEvidenceArchive.schema_version).toBe("multica.prompt_evaluation.asset_evidence_archive.v1");
+    expect(assetEvidenceArchive.asset_id).toBe(optimizationRun!.id);
+    expect(assetEvidenceArchive.snapshot_type).toBe("验收归档");
+    expect(assetEvidenceArchive.archived_run_count).toBeGreaterThanOrEqual(1);
+    expect(assetEvidenceArchive.items).toEqual([
+      expect.objectContaining({
+        run: expect.objectContaining({ id: localRenderRun.id }),
+        snapshots: [
+          expect.objectContaining({
+            run_id: localRenderRun.id,
+            evidence: expect.objectContaining({
+              服务端解释快照: expect.objectContaining({
+                语义版本: "multica.prompt_evaluation.evidence_snapshot.insight.v1",
+              }),
+            }),
+          }),
+        ],
+      }),
+    ]);
     const findQueuedAgentRun = async () => {
         const assets = await api.listPromptEvaluationAssets({ prompt_id: prompt!.id });
         const agentAssetIds = assets
