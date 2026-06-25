@@ -19,6 +19,89 @@ WHERE workspace_id = $1
     OR expected::text ILIKE '%' || sqlc.narg('keyword') || '%'
     OR tags::text ILIKE '%' || sqlc.narg('keyword') || '%'
   )
+  AND (
+    sqlc.narg('cursor_id')::uuid IS NULL
+    OR (
+      COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'case_index'
+      AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'asc'
+      AND (
+        case_index > sqlc.narg('cursor_case_index')::int
+        OR (case_index = sqlc.narg('cursor_case_index')::int AND id > sqlc.narg('cursor_id')::uuid)
+      )
+    )
+    OR (
+      COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'case_index'
+      AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'desc'
+      AND (
+        case_index < sqlc.narg('cursor_case_index')::int
+        OR (case_index = sqlc.narg('cursor_case_index')::int AND id > sqlc.narg('cursor_id')::uuid)
+      )
+    )
+    OR (
+      COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'case_name'
+      AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'asc'
+      AND (
+        case_name > sqlc.narg('cursor_case_name')::text
+        OR (case_name = sqlc.narg('cursor_case_name')::text AND id > sqlc.narg('cursor_id')::uuid)
+      )
+    )
+    OR (
+      COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'case_name'
+      AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'desc'
+      AND (
+        case_name < sqlc.narg('cursor_case_name')::text
+        OR (case_name = sqlc.narg('cursor_case_name')::text AND id > sqlc.narg('cursor_id')::uuid)
+      )
+    )
+    OR (
+      COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'source'
+      AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'asc'
+      AND (
+        source > sqlc.narg('cursor_source')::text
+        OR (source = sqlc.narg('cursor_source')::text AND id > sqlc.narg('cursor_id')::uuid)
+      )
+    )
+    OR (
+      COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'source'
+      AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'desc'
+      AND (
+        source < sqlc.narg('cursor_source')::text
+        OR (source = sqlc.narg('cursor_source')::text AND id > sqlc.narg('cursor_id')::uuid)
+      )
+    )
+    OR (
+      COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'created_at'
+      AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'asc'
+      AND (
+        created_at > sqlc.narg('cursor_created_at')::timestamptz
+        OR (created_at = sqlc.narg('cursor_created_at')::timestamptz AND id > sqlc.narg('cursor_id')::uuid)
+      )
+    )
+    OR (
+      COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'created_at'
+      AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'desc'
+      AND (
+        created_at < sqlc.narg('cursor_created_at')::timestamptz
+        OR (created_at = sqlc.narg('cursor_created_at')::timestamptz AND id > sqlc.narg('cursor_id')::uuid)
+      )
+    )
+    OR (
+      COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'updated_at'
+      AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'asc'
+      AND (
+        updated_at > sqlc.narg('cursor_updated_at')::timestamptz
+        OR (updated_at = sqlc.narg('cursor_updated_at')::timestamptz AND id > sqlc.narg('cursor_id')::uuid)
+      )
+    )
+    OR (
+      COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'updated_at'
+      AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'desc'
+      AND (
+        updated_at < sqlc.narg('cursor_updated_at')::timestamptz
+        OR (updated_at = sqlc.narg('cursor_updated_at')::timestamptz AND id > sqlc.narg('cursor_id')::uuid)
+      )
+    )
+  )
 ORDER BY
   CASE WHEN COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'case_index' AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'asc' THEN case_index END ASC,
   CASE WHEN COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'case_index' AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'desc' THEN case_index END DESC,
@@ -31,8 +114,7 @@ ORDER BY
   CASE WHEN COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'updated_at' AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'asc' THEN updated_at END ASC,
   CASE WHEN COALESCE(sqlc.narg('sort_by')::text, 'case_index') = 'updated_at' AND COALESCE(sqlc.narg('sort_direction')::text, 'asc') = 'desc' THEN updated_at END DESC,
   id ASC
-LIMIT COALESCE(sqlc.narg('limit')::int, 5000)
-OFFSET COALESCE(sqlc.narg('offset')::int, 0);
+LIMIT COALESCE(sqlc.narg('limit')::int, 5000);
 
 -- name: CountPromptEvaluationCases :one
 SELECT count(*) FROM prompt_evaluation_case

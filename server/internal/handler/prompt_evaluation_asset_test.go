@@ -889,6 +889,11 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if secondPage.TotalCount != 2 || secondPage.Offset != 1 || secondPage.HasMore || secondPage.NextCursor != nil || len(secondPage.Items) != 1 {
 		t.Fatalf("second page metadata = %+v", secondPage)
 	}
+	mismatchedCursorW := httptest.NewRecorder()
+	testHandler.ListPromptEvaluationCases(mismatchedCursorW, newRequest(http.MethodGet, "/api/prompt-evaluation-cases?asset_id="+asset.ID+"&limit=1&sort_direction=desc&cursor="+*firstPage.NextCursor, nil))
+	if mismatchedCursorW.Code != http.StatusBadRequest {
+		t.Fatalf("mismatched cursor status = %d, body = %s", mismatchedCursorW.Code, mismatchedCursorW.Body.String())
+	}
 	filteredW := httptest.NewRecorder()
 	testHandler.ListPromptEvaluationCases(filteredW, newRequest(http.MethodGet, "/api/prompt-evaluation-cases?asset_id="+asset.ID+"&source=manual&tag=user-center&keyword=%E5%8F%AF%E8%A7%82%E6%B5%8B&limit=1", nil))
 	if filteredW.Code != http.StatusOK {

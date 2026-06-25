@@ -244,33 +244,120 @@ WHERE workspace_id = $1
     OR expected::text ILIKE '%' || $6 || '%'
     OR tags::text ILIKE '%' || $6 || '%'
   )
+  AND (
+    $7::uuid IS NULL
+    OR (
+      COALESCE($8::text, 'case_index') = 'case_index'
+      AND COALESCE($9::text, 'asc') = 'asc'
+      AND (
+        case_index > $10::int
+        OR (case_index = $10::int AND id > $7::uuid)
+      )
+    )
+    OR (
+      COALESCE($8::text, 'case_index') = 'case_index'
+      AND COALESCE($9::text, 'asc') = 'desc'
+      AND (
+        case_index < $10::int
+        OR (case_index = $10::int AND id > $7::uuid)
+      )
+    )
+    OR (
+      COALESCE($8::text, 'case_index') = 'case_name'
+      AND COALESCE($9::text, 'asc') = 'asc'
+      AND (
+        case_name > $11::text
+        OR (case_name = $11::text AND id > $7::uuid)
+      )
+    )
+    OR (
+      COALESCE($8::text, 'case_index') = 'case_name'
+      AND COALESCE($9::text, 'asc') = 'desc'
+      AND (
+        case_name < $11::text
+        OR (case_name = $11::text AND id > $7::uuid)
+      )
+    )
+    OR (
+      COALESCE($8::text, 'case_index') = 'source'
+      AND COALESCE($9::text, 'asc') = 'asc'
+      AND (
+        source > $12::text
+        OR (source = $12::text AND id > $7::uuid)
+      )
+    )
+    OR (
+      COALESCE($8::text, 'case_index') = 'source'
+      AND COALESCE($9::text, 'asc') = 'desc'
+      AND (
+        source < $12::text
+        OR (source = $12::text AND id > $7::uuid)
+      )
+    )
+    OR (
+      COALESCE($8::text, 'case_index') = 'created_at'
+      AND COALESCE($9::text, 'asc') = 'asc'
+      AND (
+        created_at > $13::timestamptz
+        OR (created_at = $13::timestamptz AND id > $7::uuid)
+      )
+    )
+    OR (
+      COALESCE($8::text, 'case_index') = 'created_at'
+      AND COALESCE($9::text, 'asc') = 'desc'
+      AND (
+        created_at < $13::timestamptz
+        OR (created_at = $13::timestamptz AND id > $7::uuid)
+      )
+    )
+    OR (
+      COALESCE($8::text, 'case_index') = 'updated_at'
+      AND COALESCE($9::text, 'asc') = 'asc'
+      AND (
+        updated_at > $14::timestamptz
+        OR (updated_at = $14::timestamptz AND id > $7::uuid)
+      )
+    )
+    OR (
+      COALESCE($8::text, 'case_index') = 'updated_at'
+      AND COALESCE($9::text, 'asc') = 'desc'
+      AND (
+        updated_at < $14::timestamptz
+        OR (updated_at = $14::timestamptz AND id > $7::uuid)
+      )
+    )
+  )
 ORDER BY
-  CASE WHEN COALESCE($7::text, 'case_index') = 'case_index' AND COALESCE($8::text, 'asc') = 'asc' THEN case_index END ASC,
-  CASE WHEN COALESCE($7::text, 'case_index') = 'case_index' AND COALESCE($8::text, 'asc') = 'desc' THEN case_index END DESC,
-  CASE WHEN COALESCE($7::text, 'case_index') = 'case_name' AND COALESCE($8::text, 'asc') = 'asc' THEN case_name END ASC,
-  CASE WHEN COALESCE($7::text, 'case_index') = 'case_name' AND COALESCE($8::text, 'asc') = 'desc' THEN case_name END DESC,
-  CASE WHEN COALESCE($7::text, 'case_index') = 'source' AND COALESCE($8::text, 'asc') = 'asc' THEN source END ASC,
-  CASE WHEN COALESCE($7::text, 'case_index') = 'source' AND COALESCE($8::text, 'asc') = 'desc' THEN source END DESC,
-  CASE WHEN COALESCE($7::text, 'case_index') = 'created_at' AND COALESCE($8::text, 'asc') = 'asc' THEN created_at END ASC,
-  CASE WHEN COALESCE($7::text, 'case_index') = 'created_at' AND COALESCE($8::text, 'asc') = 'desc' THEN created_at END DESC,
-  CASE WHEN COALESCE($7::text, 'case_index') = 'updated_at' AND COALESCE($8::text, 'asc') = 'asc' THEN updated_at END ASC,
-  CASE WHEN COALESCE($7::text, 'case_index') = 'updated_at' AND COALESCE($8::text, 'asc') = 'desc' THEN updated_at END DESC,
+  CASE WHEN COALESCE($8::text, 'case_index') = 'case_index' AND COALESCE($9::text, 'asc') = 'asc' THEN case_index END ASC,
+  CASE WHEN COALESCE($8::text, 'case_index') = 'case_index' AND COALESCE($9::text, 'asc') = 'desc' THEN case_index END DESC,
+  CASE WHEN COALESCE($8::text, 'case_index') = 'case_name' AND COALESCE($9::text, 'asc') = 'asc' THEN case_name END ASC,
+  CASE WHEN COALESCE($8::text, 'case_index') = 'case_name' AND COALESCE($9::text, 'asc') = 'desc' THEN case_name END DESC,
+  CASE WHEN COALESCE($8::text, 'case_index') = 'source' AND COALESCE($9::text, 'asc') = 'asc' THEN source END ASC,
+  CASE WHEN COALESCE($8::text, 'case_index') = 'source' AND COALESCE($9::text, 'asc') = 'desc' THEN source END DESC,
+  CASE WHEN COALESCE($8::text, 'case_index') = 'created_at' AND COALESCE($9::text, 'asc') = 'asc' THEN created_at END ASC,
+  CASE WHEN COALESCE($8::text, 'case_index') = 'created_at' AND COALESCE($9::text, 'asc') = 'desc' THEN created_at END DESC,
+  CASE WHEN COALESCE($8::text, 'case_index') = 'updated_at' AND COALESCE($9::text, 'asc') = 'asc' THEN updated_at END ASC,
+  CASE WHEN COALESCE($8::text, 'case_index') = 'updated_at' AND COALESCE($9::text, 'asc') = 'desc' THEN updated_at END DESC,
   id ASC
-LIMIT COALESCE($10::int, 5000)
-OFFSET COALESCE($9::int, 0)
+LIMIT COALESCE($15::int, 5000)
 `
 
 type ListPromptEvaluationCasesParams struct {
-	WorkspaceID   pgtype.UUID `json:"workspace_id"`
-	AssetID       pgtype.UUID `json:"asset_id"`
-	Status        pgtype.Text `json:"status"`
-	Source        pgtype.Text `json:"source"`
-	Tag           pgtype.Text `json:"tag"`
-	Keyword       pgtype.Text `json:"keyword"`
-	SortBy        pgtype.Text `json:"sort_by"`
-	SortDirection pgtype.Text `json:"sort_direction"`
-	Offset        pgtype.Int4 `json:"offset"`
-	Limit         pgtype.Int4 `json:"limit"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	AssetID         pgtype.UUID        `json:"asset_id"`
+	Status          pgtype.Text        `json:"status"`
+	Source          pgtype.Text        `json:"source"`
+	Tag             pgtype.Text        `json:"tag"`
+	Keyword         pgtype.Text        `json:"keyword"`
+	CursorID        pgtype.UUID        `json:"cursor_id"`
+	SortBy          pgtype.Text        `json:"sort_by"`
+	SortDirection   pgtype.Text        `json:"sort_direction"`
+	CursorCaseIndex pgtype.Int4        `json:"cursor_case_index"`
+	CursorCaseName  pgtype.Text        `json:"cursor_case_name"`
+	CursorSource    pgtype.Text        `json:"cursor_source"`
+	CursorCreatedAt pgtype.Timestamptz `json:"cursor_created_at"`
+	CursorUpdatedAt pgtype.Timestamptz `json:"cursor_updated_at"`
+	Limit           pgtype.Int4        `json:"limit"`
 }
 
 func (q *Queries) ListPromptEvaluationCases(ctx context.Context, arg ListPromptEvaluationCasesParams) ([]PromptEvaluationCase, error) {
@@ -281,9 +368,14 @@ func (q *Queries) ListPromptEvaluationCases(ctx context.Context, arg ListPromptE
 		arg.Source,
 		arg.Tag,
 		arg.Keyword,
+		arg.CursorID,
 		arg.SortBy,
 		arg.SortDirection,
-		arg.Offset,
+		arg.CursorCaseIndex,
+		arg.CursorCaseName,
+		arg.CursorSource,
+		arg.CursorCreatedAt,
+		arg.CursorUpdatedAt,
 		arg.Limit,
 	)
 	if err != nil {

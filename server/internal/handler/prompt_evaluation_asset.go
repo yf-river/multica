@@ -564,7 +564,15 @@ type BulkPromptEvaluationCaseTagsResponse struct {
 }
 
 type promptEvaluationCaseCursor struct {
-	Offset int32 `json:"offset"`
+	Offset        int32  `json:"offset"`
+	SortBy        string `json:"sort_by"`
+	SortDirection string `json:"sort_direction"`
+	LastID        string `json:"last_id"`
+	CaseIndex     int32  `json:"case_index"`
+	CaseName      string `json:"case_name,omitempty"`
+	Source        string `json:"source,omitempty"`
+	CreatedAt     string `json:"created_at,omitempty"`
+	UpdatedAt     string `json:"updated_at,omitempty"`
 }
 
 type PromptEvaluationCaseAssertionResponse struct {
@@ -1699,12 +1707,50 @@ func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	offset := int32(0)
+	var cursorID pgtype.UUID
+	var cursorCaseIndex pgtype.Int4
+	var cursorCaseName pgtype.Text
+	var cursorSource pgtype.Text
+	var cursorCreatedAt pgtype.Timestamptz
+	var cursorUpdatedAt pgtype.Timestamptz
 	if value := strings.TrimSpace(r.URL.Query().Get("cursor")); value != "" {
-		decodedOffset, ok := decodePromptEvaluationCaseCursor(w, value)
+		decodedCursor, ok := decodePromptEvaluationCaseCursor(w, value)
 		if !ok {
 			return
 		}
-		offset = decodedOffset
+		if decodedCursor.SortBy != sortByValue || decodedCursor.SortDirection != sortDirectionValue {
+			writeError(w, http.StatusBadRequest, "cursor does not match sort")
+			return
+		}
+		parsedID, err := util.ParseUUID(decodedCursor.LastID)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "cursor is invalid")
+			return
+		}
+		offset = decodedCursor.Offset
+		cursorID = parsedID
+		switch sortByValue {
+		case "case_index":
+			cursorCaseIndex = pgtype.Int4{Int32: decodedCursor.CaseIndex, Valid: true}
+		case "case_name":
+			cursorCaseName = pgtype.Text{String: decodedCursor.CaseName, Valid: true}
+		case "source":
+			cursorSource = pgtype.Text{String: decodedCursor.Source, Valid: true}
+		case "created_at":
+			parsedTime, err := time.Parse(time.RFC3339Nano, decodedCursor.CreatedAt)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "cursor is invalid")
+				return
+			}
+			cursorCreatedAt = pgtype.Timestamptz{Time: parsedTime, Valid: true}
+		case "updated_at":
+			parsedTime, err := time.Parse(time.RFC3339Nano, decodedCursor.UpdatedAt)
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "cursor is invalid")
+				return
+			}
+			cursorUpdatedAt = pgtype.Timestamptz{Time: parsedTime, Valid: true}
+		}
 	}
 	totalCount, err := h.Queries.CountPromptEvaluationCases(r.Context(), db.CountPromptEvaluationCasesParams{
 		WorkspaceID: workspaceUUID,
@@ -1719,16 +1765,21 @@ func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	cases, err := h.Queries.ListPromptEvaluationCases(r.Context(), db.ListPromptEvaluationCasesParams{
-		WorkspaceID:   workspaceUUID,
-		AssetID:       assetID,
-		Status:        status,
-		Source:        source,
-		Tag:           tag,
-		Keyword:       keyword,
-		Limit:         limit,
-		SortBy:        pgtype.Text{String: sortByValue, Valid: true},
-		SortDirection: pgtype.Text{String: sortDirectionValue, Valid: true},
-		Offset:        pgtype.Int4{Int32: offset, Valid: true},
+		WorkspaceID:     workspaceUUID,
+		AssetID:         assetID,
+		Status:          status,
+		Source:          source,
+		Tag:             tag,
+		Keyword:         keyword,
+		CursorID:        cursorID,
+		Limit:           limit,
+		SortBy:          pgtype.Text{String: sortByValue, Valid: true},
+		SortDirection:   pgtype.Text{String: sortDirectionValue, Valid: true},
+		CursorCaseIndex: cursorCaseIndex,
+		CursorCaseName:  cursorCaseName,
+		CursorSource:    cursorSource,
+		CursorCreatedAt: cursorCreatedAt,
+		CursorUpdatedAt: cursorUpdatedAt,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation cases")
@@ -1751,8 +1802,8 @@ func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Reque
 	nextOffset := offset + int32(len(resp))
 	hasMore := int64(nextOffset) < totalCount
 	var nextCursor *string
-	if hasMore {
-		cursor := encodePromptEvaluationCaseCursor(nextOffset)
+	if hasMore && len(cases) > 0 {
+		cursor := encodePromptEvaluationCaseCursor(nextOffset, sortByValue, sortDirectionValue, cases[len(cases)-1])
 		nextCursor = &cursor
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
@@ -3014,23 +3065,38 @@ func validPromptEvaluationCaseSortBy(value string) bool {
 	}
 }
 
-func encodePromptEvaluationCaseCursor(offset int32) string {
-	payload, _ := json.Marshal(promptEvaluationCaseCursor{Offset: offset})
+func encodePromptEvaluationCaseCursor(offset int32, sortBy string, sortDirection string, item db.PromptEvaluationCase) string {
+	cursor := promptEvaluationCaseCursor{
+		Offset:        offset,
+		SortBy:        sortBy,
+		SortDirection: sortDirection,
+		LastID:        uuidToString(item.ID),
+		CaseIndex:     item.CaseIndex,
+		CaseName:      item.CaseName,
+		Source:        item.Source,
+	}
+	if item.CreatedAt.Valid {
+		cursor.CreatedAt = item.CreatedAt.Time.Format(time.RFC3339Nano)
+	}
+	if item.UpdatedAt.Valid {
+		cursor.UpdatedAt = item.UpdatedAt.Time.Format(time.RFC3339Nano)
+	}
+	payload, _ := json.Marshal(cursor)
 	return base64.RawURLEncoding.EncodeToString(payload)
 }
 
-func decodePromptEvaluationCaseCursor(w http.ResponseWriter, value string) (int32, bool) {
+func decodePromptEvaluationCaseCursor(w http.ResponseWriter, value string) (promptEvaluationCaseCursor, bool) {
 	raw, err := base64.RawURLEncoding.DecodeString(value)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, "cursor is invalid")
-		return 0, false
+		return promptEvaluationCaseCursor{}, false
 	}
 	var cursor promptEvaluationCaseCursor
-	if err := json.Unmarshal(raw, &cursor); err != nil || cursor.Offset < 0 {
+	if err := json.Unmarshal(raw, &cursor); err != nil || cursor.Offset < 0 || cursor.LastID == "" || !validPromptEvaluationCaseSortBy(cursor.SortBy) || (cursor.SortDirection != "asc" && cursor.SortDirection != "desc") {
 		writeError(w, http.StatusBadRequest, "cursor is invalid")
-		return 0, false
+		return promptEvaluationCaseCursor{}, false
 	}
-	return cursor.Offset, true
+	return cursor, true
 }
 
 func compactStrings(values []string) []string {
