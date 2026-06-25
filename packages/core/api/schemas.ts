@@ -26,6 +26,8 @@ import type {
   PromptEvaluationAsset,
   PromptEvaluationAssetEvidenceSnapshotResponse,
   PromptEvaluationEvidenceSnapshot,
+  PromptEvaluationDatasetExportResponse,
+  ImportPromptEvaluationDatasetResponse,
   PromptEvaluationRunEvidence,
   PromptEvaluationRuntimeReadiness,
   PromptEvaluationSummary,
@@ -1332,6 +1334,23 @@ export const PromptEvaluationCaseListResponseSchema = z.object({
   next_cursor: z.string().nullable().optional().transform((v) => v ?? null),
   sort_by: z.enum(["case_index", "case_name", "source", "created_at", "updated_at"]).default("case_index"),
   sort_direction: z.enum(["asc", "desc"]).default("asc"),
+}).loose();
+
+export const PromptEvaluationDatasetExportResponseSchema: z.ZodType<PromptEvaluationDatasetExportResponse> = z.object({
+  schema: z.literal("multica.prompt_evaluation.dataset_export.v1"),
+  exported_at: z.string().default(""),
+  source_asset_id: z.string().default(""),
+  asset: PromptEvaluationAssetSchema,
+  case_count: z.number().default(0),
+  cases: z.array(PromptEvaluationCaseSchema).default([]),
+  payload: z.record(z.string(), z.unknown()).default({}),
+}).loose();
+
+export const ImportPromptEvaluationDatasetResponseSchema: z.ZodType<ImportPromptEvaluationDatasetResponse> = z.object({
+  asset: PromptEvaluationAssetSchema,
+  source_asset_id: z.string().default(""),
+  case_count: z.number().default(0),
+  cases: z.array(PromptEvaluationCaseSchema).default([]),
 }).loose();
 
 export const PromptEvaluationCaseTagSummarySchema = z.object({

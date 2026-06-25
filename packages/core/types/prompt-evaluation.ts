@@ -796,6 +796,31 @@ export interface UpdatePromptEvaluationAssetRequest {
   status?: PromptEvaluationAssetStatus;
 }
 
+export interface PromptEvaluationDatasetExportResponse {
+  schema: "multica.prompt_evaluation.dataset_export.v1";
+  exported_at: string;
+  source_asset_id: string;
+  asset: PromptEvaluationAsset;
+  case_count: number;
+  cases: PromptEvaluationStructuredCase[];
+  payload: Record<string, unknown>;
+}
+
+export interface ImportPromptEvaluationDatasetRequest {
+  name?: string;
+  description?: string;
+  prompt_id?: string | null;
+  status?: PromptEvaluationAssetStatus;
+  export: PromptEvaluationDatasetExportResponse;
+}
+
+export interface ImportPromptEvaluationDatasetResponse {
+  asset: PromptEvaluationAsset;
+  source_asset_id: string;
+  case_count: number;
+  cases: PromptEvaluationStructuredCase[];
+}
+
 export interface CreatePromptEvaluationDatasetVersionRequest {
   version_label?: string;
   metadata?: Record<string, unknown>;

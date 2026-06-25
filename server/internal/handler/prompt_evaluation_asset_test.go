@@ -313,6 +313,136 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	}
 }
 
+func TestPromptEvaluationDatasetExportImportProtocol(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
+	})
+	promptID := createPromptEvaluationTestPrompt(t, testWorkspaceID, "导入导出提示词")
+
+	createW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+		"prompt_id":   promptID,
+		"name":        "完整协议源数据集",
+		"description": "验证完整导入导出",
+		"asset_type":  "数据集",
+		"payload": map[string]any{"cases": []map[string]any{{
+			"case_name":         "载荷用例",
+			"variables":         map[string]any{"需求": "登录失败"},
+			"expected_contains": []string{"边界"},
+			"input":             map[string]any{"来源": "payload"},
+			"expected":          map[string]any{"结论": "追问"},
+			"tags":              []string{"载荷", "协议"},
+		}}},
+		"status": "启用",
+	}))
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("create dataset status = %d, body = %s", createW.Code, createW.Body.String())
+	}
+	var sourceAsset PromptEvaluationAssetResponse
+	if err := json.Unmarshal(createW.Body.Bytes(), &sourceAsset); err != nil {
+		t.Fatalf("decode source asset: %v", err)
+	}
+
+	createCaseW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationCase(createCaseW, newRequest(http.MethodPost, "/api/prompt-evaluation-cases", map[string]any{
+		"asset_id":          sourceAsset.ID,
+		"prompt_id":         promptID,
+		"case_name":         "手工用例",
+		"variables":         map[string]any{"模块": "usercenter"},
+		"expected_contains": []string{"验收"},
+		"input":             map[string]any{"来源": "manual"},
+		"expected":          map[string]any{"结论": "补充验收"},
+		"tags":              []string{"手工", "协议"},
+		"status":            "启用",
+	}))
+	if createCaseW.Code != http.StatusCreated {
+		t.Fatalf("create manual case status = %d, body = %s", createCaseW.Code, createCaseW.Body.String())
+	}
+
+	exportW := httptest.NewRecorder()
+	testHandler.ExportPromptEvaluationDataset(exportW, withURLParam(newRequest(http.MethodGet, "/api/prompt-evaluation-assets/"+sourceAsset.ID+"/dataset-export", nil), "id", sourceAsset.ID))
+	if exportW.Code != http.StatusOK {
+		t.Fatalf("export status = %d, body = %s", exportW.Code, exportW.Body.String())
+	}
+	var exported PromptEvaluationDatasetExportResponse
+	if err := json.Unmarshal(exportW.Body.Bytes(), &exported); err != nil {
+		t.Fatalf("decode export response: %v", err)
+	}
+	if exported.Schema != promptEvaluationDatasetExportV1 || exported.CaseCount != 2 || len(exported.Cases) != 2 {
+		t.Fatalf("exported protocol = %+v", exported)
+	}
+	sources := map[string]bool{}
+	for _, item := range exported.Cases {
+		sources[item.Source] = true
+	}
+	if !sources["payload"] || !sources["manual"] {
+		t.Fatalf("exported sources = %+v", sources)
+	}
+
+	importW := httptest.NewRecorder()
+	testHandler.ImportPromptEvaluationDataset(importW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets/dataset-import", map[string]any{
+		"name":        "完整协议导入副本",
+		"description": "由完整协议导入",
+		"prompt_id":   promptID,
+		"status":      "启用",
+		"export":      exported,
+	}))
+	if importW.Code != http.StatusCreated {
+		t.Fatalf("import status = %d, body = %s", importW.Code, importW.Body.String())
+	}
+	var imported ImportPromptEvaluationDatasetResponse
+	if err := json.Unmarshal(importW.Body.Bytes(), &imported); err != nil {
+		t.Fatalf("decode import response: %v", err)
+	}
+	if imported.CaseCount != 2 || imported.SourceAssetID != sourceAsset.ID || imported.Asset.AssetType != "数据集" || imported.Asset.DatasetRowCount != 2 {
+		t.Fatalf("imported response = %+v", imported)
+	}
+	if imported.Asset.StructuredCaseCount != 2 || imported.Asset.StructuredAssertionCount != 2 {
+		t.Fatalf("imported asset profile = %+v", imported.Asset)
+	}
+	assertPromptEvaluationDatasetRows(t, imported.Asset.ID, []string{"载荷用例", "手工用例"})
+
+	rows, err := testPool.Query(context.Background(), `
+		SELECT source
+		FROM prompt_evaluation_case
+		WHERE workspace_id = $1 AND asset_id = $2
+		ORDER BY case_index ASC, id ASC
+	`, testWorkspaceID, imported.Asset.ID)
+	if err != nil {
+		t.Fatalf("query imported sources: %v", err)
+	}
+	defer rows.Close()
+	var importedSources []string
+	for rows.Next() {
+		var source string
+		if err := rows.Scan(&source); err != nil {
+			t.Fatalf("scan imported source: %v", err)
+		}
+		importedSources = append(importedSources, source)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate imported sources: %v", err)
+	}
+	if len(importedSources) != 2 || importedSources[0] != "payload" || importedSources[1] != "manual" {
+		t.Fatalf("imported sources = %#v", importedSources)
+	}
+	var importedCaseCount, importedAssertionCount int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT
+			(SELECT count(*)::int FROM prompt_evaluation_case WHERE workspace_id = $1 AND asset_id = $2),
+			(SELECT count(*)::int FROM prompt_evaluation_case_assertion WHERE workspace_id = $1 AND asset_id = $2)
+	`, testWorkspaceID, imported.Asset.ID).Scan(&importedCaseCount, &importedAssertionCount); err != nil {
+		t.Fatalf("count imported facts: %v", err)
+	}
+	if importedCaseCount != 2 || importedAssertionCount != 2 {
+		t.Fatalf("imported facts case=%d assertion=%d", importedCaseCount, importedAssertionCount)
+	}
+}
+
 func TestPromptEvaluationDatasetFromTraces(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")

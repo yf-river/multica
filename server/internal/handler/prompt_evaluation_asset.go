@@ -35,6 +35,8 @@ const (
 	promptEvaluationAssetExperiment      = "实验"
 	promptEvaluationAssetOptimize        = "优化运行"
 	promptEvaluationAssetProfileV1       = "multica.training_evaluation.asset_profile.v1"
+	promptEvaluationDatasetExportV1      = "multica.prompt_evaluation.dataset_export.v1"
+	promptEvaluationDatasetImportV1      = "multica.prompt_evaluation.dataset_import.v1"
 	promptEvaluationAgentName            = "Multica 训练评估智能体"
 	legacyPromptEvaluationAgentName      = "Multica 训练评估 Agent"
 	defaultPromptEvaluationAgentProvider = "codex"
@@ -103,6 +105,31 @@ type UpdatePromptEvaluationAssetRequest struct {
 	AssetType   *string         `json:"asset_type"`
 	Payload     json.RawMessage `json:"payload"`
 	Status      *string         `json:"status"`
+}
+
+type PromptEvaluationDatasetExportResponse struct {
+	Schema        string                         `json:"schema"`
+	ExportedAt    string                         `json:"exported_at"`
+	SourceAssetID string                         `json:"source_asset_id"`
+	Asset         PromptEvaluationAssetResponse  `json:"asset"`
+	CaseCount     int                            `json:"case_count"`
+	Cases         []PromptEvaluationCaseResponse `json:"cases"`
+	Payload       map[string]any                 `json:"payload"`
+}
+
+type ImportPromptEvaluationDatasetRequest struct {
+	Name        string                                `json:"name"`
+	Description string                                `json:"description"`
+	PromptID    json.RawMessage                       `json:"prompt_id"`
+	Status      string                                `json:"status"`
+	Export      PromptEvaluationDatasetExportResponse `json:"export"`
+}
+
+type ImportPromptEvaluationDatasetResponse struct {
+	Asset         PromptEvaluationAssetResponse  `json:"asset"`
+	SourceAssetID string                         `json:"source_asset_id"`
+	CaseCount     int                            `json:"case_count"`
+	Cases         []PromptEvaluationCaseResponse `json:"cases"`
 }
 
 type CreatePromptEvaluationCaseRequest struct {
@@ -6240,6 +6267,240 @@ func (h *Handler) syncPromptEvaluationCasesFromPayload(w http.ResponseWriter, r 
 		}
 	}
 	return true
+}
+
+func (h *Handler) exportPromptEvaluationDatasetCases(ctx context.Context, workspaceID pgtype.UUID, assetID pgtype.UUID) ([]db.PromptEvaluationCase, error) {
+	const pageSize int32 = 5000
+	items := make([]db.PromptEvaluationCase, 0)
+	var cursorID pgtype.UUID
+	var cursorCaseIndex pgtype.Int4
+	for {
+		page, err := h.Queries.ListPromptEvaluationCases(ctx, db.ListPromptEvaluationCasesParams{
+			WorkspaceID:     workspaceID,
+			AssetID:         assetID,
+			CursorID:        cursorID,
+			CursorCaseIndex: cursorCaseIndex,
+			SortBy:          pgtype.Text{String: "case_index", Valid: true},
+			SortDirection:   pgtype.Text{String: "asc", Valid: true},
+			Limit:           pgtype.Int4{Int32: pageSize, Valid: true},
+		})
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, page...)
+		if int32(len(page)) < pageSize {
+			return items, nil
+		}
+		last := page[len(page)-1]
+		cursorID = last.ID
+		cursorCaseIndex = pgtype.Int4{Int32: last.CaseIndex, Valid: true}
+	}
+}
+
+func (h *Handler) ExportPromptEvaluationDataset(w http.ResponseWriter, r *http.Request) {
+	asset, ok := h.loadPromptEvaluationAsset(w, r)
+	if !ok {
+		return
+	}
+	if asset.AssetType != promptEvaluationAssetDataset {
+		writeError(w, http.StatusBadRequest, "only 数据集 assets can be exported as dataset protocol")
+		return
+	}
+	items, err := h.exportPromptEvaluationDatasetCases(r.Context(), asset.WorkspaceID, asset.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation dataset cases")
+		return
+	}
+	cases := make([]PromptEvaluationCaseResponse, len(items))
+	for i, item := range items {
+		cases[i] = promptEvaluationCaseToResponse(item, nil)
+	}
+	writeJSON(w, http.StatusOK, PromptEvaluationDatasetExportResponse{
+		Schema:        promptEvaluationDatasetExportV1,
+		ExportedAt:    time.Now().UTC().Format(time.RFC3339Nano),
+		SourceAssetID: uuidToString(asset.ID),
+		Asset:         promptEvaluationAssetToResponse(asset),
+		CaseCount:     len(cases),
+		Cases:         cases,
+		Payload:       decodePayloadObject(asset.Payload),
+	})
+}
+
+func normalizeImportedPromptEvaluationCaseSource(source string) string {
+	switch strings.TrimSpace(source) {
+	case "manual", "trace", "payload":
+		return strings.TrimSpace(source)
+	default:
+		return "payload"
+	}
+}
+
+func promptEvaluationDatasetImportPayload(export PromptEvaluationDatasetExportResponse, cases []PromptEvaluationCaseResponse) []byte {
+	payloadCases := make([]map[string]any, 0, len(cases))
+	for _, item := range cases {
+		payloadCases = append(payloadCases, map[string]any{
+			"case_name":         item.CaseName,
+			"case_index":        item.CaseIndex,
+			"variables":         item.Variables,
+			"expected_contains": item.ExpectedContains,
+			"input":             item.Input,
+			"expected":          item.Expected,
+			"tags":              item.Tags,
+			"source":            normalizeImportedPromptEvaluationCaseSource(item.Source),
+		})
+	}
+	return mustJSONBytes(map[string]any{
+		"schema": promptEvaluationDatasetImportV1,
+		"导入来源": map[string]any{
+			"schema":          export.Schema,
+			"source_asset_id": export.SourceAssetID,
+			"source_name":     export.Asset.Name,
+			"exported_at":     export.ExportedAt,
+			"imported_at":     time.Now().UTC().Format(time.RFC3339Nano),
+		},
+		"cases": payloadCases,
+	})
+}
+
+func (h *Handler) ImportPromptEvaluationDataset(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	var req ImportPromptEvaluationDatasetRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Export.Schema != promptEvaluationDatasetExportV1 {
+		writeError(w, http.StatusBadRequest, "export.schema must be "+promptEvaluationDatasetExportV1)
+		return
+	}
+	if req.Export.Asset.AssetType != promptEvaluationAssetDataset {
+		writeError(w, http.StatusBadRequest, "only 数据集 exports can be imported")
+		return
+	}
+	name := strings.TrimSpace(req.Name)
+	if name == "" {
+		name = strings.TrimSpace(req.Export.Asset.Name)
+		if name == "" {
+			name = "导入数据集"
+		}
+		name += " 导入副本"
+	}
+	description := strings.TrimSpace(req.Description)
+	if description == "" {
+		description = fmt.Sprintf("从数据集 %s 的完整导出协议导入。", req.Export.SourceAssetID)
+	}
+	status := normalizePromptLibraryStatus(req.Status)
+	if !validPromptLibraryStatus(status) {
+		writeError(w, http.StatusBadRequest, "status must be 启用 or 归档")
+		return
+	}
+	promptID, ok := h.promptEvaluationPromptID(w, r, workspaceUUID, req.PromptID, pgtype.UUID{})
+	if !ok {
+		return
+	}
+	payload := promptEvaluationDatasetImportPayload(req.Export, req.Export.Cases)
+	profile := promptEvaluationAssetProfileFromPayload(payload, promptID, promptEvaluationAssetDataset)
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start prompt evaluation dataset import transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+	asset, err := qtx.CreatePromptEvaluationAsset(r.Context(), db.CreatePromptEvaluationAssetParams{
+		WorkspaceID:              workspaceUUID,
+		Name:                     name,
+		Description:              description,
+		AssetType:                promptEvaluationAssetDataset,
+		CreatedBy:                parseUUID(userID),
+		PromptID:                 promptID,
+		Payload:                  payload,
+		Status:                   status,
+		StructureSchema:          profile.StructureSchema,
+		StructuredCaseCount:      profile.StructuredCaseCount,
+		StructuredVariableCount:  profile.StructuredVariableCount,
+		StructuredAssertionCount: profile.StructuredAssertionCount,
+		LinkedDatasetCount:       profile.LinkedDatasetCount,
+		LinkedPromptCount:        profile.LinkedPromptCount,
+		EvaluationDimensionCount: profile.EvaluationDimensionCount,
+		ExperimentDimensionCount: profile.ExperimentDimensionCount,
+	})
+	if err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusConflict, "an evaluation dataset with this name already exists")
+			return
+		}
+		if isCheckViolation(err) {
+			writeError(w, http.StatusBadRequest, "prompt evaluation dataset import rejected: a field value failed a database constraint")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to create imported prompt evaluation dataset")
+		return
+	}
+	importedCases := make([]PromptEvaluationCaseResponse, 0, len(req.Export.Cases))
+	for idx, item := range req.Export.Cases {
+		caseIndex := item.CaseIndex
+		if caseIndex < 0 {
+			caseIndex = int32(idx)
+		}
+		expectedContains := mustJSONBytes(item.ExpectedContains)
+		created, err := qtx.CreatePromptEvaluationCase(r.Context(), db.CreatePromptEvaluationCaseParams{
+			WorkspaceID:      workspaceUUID,
+			AssetID:          asset.ID,
+			PromptID:         promptID,
+			CaseIndex:        caseIndex,
+			CaseName:         strings.TrimSpace(item.CaseName),
+			Variables:        mustJSONBytes(item.Variables),
+			ExpectedContains: expectedContains,
+			Input:            mustJSONBytes(item.Input),
+			Expected:         mustJSONBytes(item.Expected),
+			Tags:             mustJSONBytes(item.Tags),
+			Status:           normalizePromptLibraryStatus(item.Status),
+			Source:           normalizeImportedPromptEvaluationCaseSource(item.Source),
+			CreatedBy:        parseUUID(userID),
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to create imported prompt evaluation case")
+			return
+		}
+		assertions, err := syncPromptEvaluationCaseAssertions(r.Context(), qtx, created, expectedContains)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to sync imported prompt evaluation case assertions")
+			return
+		}
+		if err := syncPromptEvaluationDatasetRow(r.Context(), qtx, asset, created); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to sync imported prompt evaluation dataset rows")
+			return
+		}
+		if err := syncPromptEvaluationTestSuiteCase(r.Context(), qtx, asset, created); err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to sync imported prompt evaluation test suite cases")
+			return
+		}
+		importedCases = append(importedCases, promptEvaluationCaseToResponse(created, assertions))
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit prompt evaluation dataset import")
+		return
+	}
+	createdAsset, err := h.Queries.GetPromptEvaluationAssetInWorkspace(r.Context(), db.GetPromptEvaluationAssetInWorkspaceParams{ID: asset.ID, WorkspaceID: asset.WorkspaceID})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to reload imported prompt evaluation dataset")
+		return
+	}
+	writeJSON(w, http.StatusCreated, ImportPromptEvaluationDatasetResponse{
+		Asset:         promptEvaluationAssetToResponse(createdAsset),
+		SourceAssetID: req.Export.SourceAssetID,
+		CaseCount:     len(importedCases),
+		Cases:         importedCases,
+	})
 }
 
 func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Request) {

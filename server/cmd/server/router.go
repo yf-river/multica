@@ -768,6 +768,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Route("/api/prompt-evaluation-assets", func(r chi.Router) {
 				r.Get("/", h.ListPromptEvaluationAssets)
 				r.Post("/", h.CreatePromptEvaluationAsset)
+				r.Post("/dataset-import", h.ImportPromptEvaluationDataset)
 				r.Route("/{id}", func(r chi.Router) {
 					r.Get("/", h.GetPromptEvaluationAsset)
 					r.Put("/", h.UpdatePromptEvaluationAsset)
@@ -778,6 +779,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/evidence-snapshots/export", h.GetPromptEvaluationAssetEvidenceSnapshotPackage)
 					r.Get("/case-operations", h.ListPromptEvaluationCaseOperations)
 					r.Post("/dataset-from-traces", h.CreatePromptEvaluationDatasetFromTraces)
+					r.Get("/dataset-export", h.ExportPromptEvaluationDataset)
 					r.Route("/dataset-versions", func(r chi.Router) {
 						r.Get("/", h.ListPromptEvaluationDatasetVersions)
 						r.Post("/", h.CreatePromptEvaluationDatasetVersion)

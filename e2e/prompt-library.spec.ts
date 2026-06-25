@@ -1689,6 +1689,90 @@ test.describe("训练与评估工作台", () => {
     expect(restoredRows.map((row) => row.row_name)).not.toContain("版本二新增用例");
   });
 
+  test("数据集可以导出完整协议并通过 UI 导入副本", async ({ page }) => {
+    test.setTimeout(90_000);
+    const prompt = await api.createPromptForE2E(artifactPrefix, {
+      name: `${artifactPrefix} 数据集协议提示词`,
+      content: "请根据 {{issue_title}} 输出中文验收结论。",
+      variables: [{ name: "issue_title", label: "任务标题", required: true }],
+    });
+    const dataset = await api.createPromptEvaluationAsset({
+      prompt_id: prompt.id,
+      name: `${artifactPrefix} 完整协议数据集`,
+      description: "E2E 验证完整导出协议和导入副本",
+      asset_type: "数据集",
+      payload: {
+        cases: [
+          {
+            case_name: "协议载荷用例",
+            variables: { issue_title: "登录失败" },
+            expected_contains: ["中文验收结论"],
+            input: { 来源: "payload" },
+            expected: { 结论: "追问验收条件" },
+            tags: ["协议", "载荷"],
+          },
+        ],
+      },
+      status: "启用",
+    });
+    await api.createPromptEvaluationCase({
+      asset_id: dataset.id,
+      prompt_id: prompt.id,
+      case_index: 1,
+      case_name: "协议手工用例",
+      variables: { issue_title: "重置密码" },
+      expected_contains: ["风险"],
+      input: { 来源: "manual" },
+      expected: { 结论: "补充风险" },
+      tags: ["协议", "手工"],
+      status: "启用",
+    });
+
+    await page.goto(`/${workspaceSlug}/training/datasets`, { waitUntil: "domcontentloaded" });
+    await waitForPageText(page, "数据集");
+    await showAcceptanceFixturesIfAvailable(page);
+    const datasetRow = page.getByTestId(`prompt-evaluation-asset-${dataset.id}`);
+    await expect(datasetRow).toBeVisible({ timeout: 15000 });
+
+    const datasetExportResponse = page.waitForResponse(
+      (response) =>
+        response.request().method() === "GET" &&
+        response.url().includes(`/api/prompt-evaluation-assets/${dataset.id}/dataset-export`),
+      { timeout: 15000 },
+    );
+    const datasetExportDownload = page.waitForEvent("download");
+    await datasetRow.getByTestId(`export-dataset-protocol-${dataset.id}`).click();
+    expect((await datasetExportResponse).status()).toBe(200);
+    const downloadedDatasetExport = await datasetExportDownload;
+    expect(downloadedDatasetExport.suggestedFilename()).toMatch(/^multica-dataset-export-.*\.json$/);
+    const downloadedDatasetExportPath = await downloadedDatasetExport.path();
+    expect(downloadedDatasetExportPath).toBeTruthy();
+    const exportedDataset = JSON.parse(await readFile(downloadedDatasetExportPath!, "utf8")) as Record<string, any>;
+    expect(exportedDataset.schema).toBe("multica.prompt_evaluation.dataset_export.v1");
+    expect(exportedDataset.source_asset_id).toBe(dataset.id);
+    expect(exportedDataset.case_count).toBe(2);
+    expect(exportedDataset.cases.map((item: Record<string, any>) => item.case_name)).toEqual(["协议载荷用例", "协议手工用例"]);
+    expect(exportedDataset.cases.map((item: Record<string, any>) => item.source)).toEqual(["payload", "manual"]);
+
+    const importCopyResponse = page.waitForResponse(
+      (response) => response.request().method() === "POST" && response.url().includes("/api/prompt-evaluation-assets/dataset-import"),
+      { timeout: 15000 },
+    );
+    await clickStableButton(datasetRow.getByTestId(`import-dataset-copy-${dataset.id}`));
+    const importResponse = await importCopyResponse;
+    expect(importResponse.status()).toBe(201);
+    const imported = await importResponse.json() as { asset: { id: string; name: string; asset_type: string }; case_count: number; source_asset_id: string };
+    expect(imported.source_asset_id).toBe(dataset.id);
+    expect(imported.case_count).toBe(2);
+    expect(imported.asset.asset_type).toBe("数据集");
+    await expect(page.getByTestId(`prompt-evaluation-asset-${imported.asset.id}`)).toContainText("导入副本", { timeout: 15000 });
+
+    const importedCases = await api.listPromptEvaluationCases({ asset_id: imported.asset.id, sort_by: "case_index", sort_direction: "asc" });
+    expect(importedCases.map((item) => item.case_name)).toEqual(["协议载荷用例", "协议手工用例"]);
+    expect(importedCases.map((item) => item.source)).toEqual(["payload", "manual"]);
+    expect(importedCases.flatMap((item) => item.tags)).toEqual(expect.arrayContaining(["载荷", "手工"]));
+  });
+
   test("实验运行会绑定资产声明的明确数据集版本", async ({ page }) => {
     test.setTimeout(120_000);
     const prompt = await api.createPromptForE2E(artifactPrefix, {

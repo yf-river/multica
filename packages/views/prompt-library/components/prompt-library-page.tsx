@@ -587,6 +587,43 @@ export function PromptLibraryPage({
     },
   });
 
+  const exportDatasetProtocolMut = useMutation({
+    mutationFn: (assetId: string) => api.exportPromptEvaluationDataset(assetId),
+    onSuccess: (result) => {
+      downloadTextFile(
+        JSON.stringify(result, null, 2),
+        `multica-dataset-export-${result.asset.id}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`,
+        "application/json;charset=utf-8",
+      );
+      toast.success(`数据集完整协议已导出：${result.case_count} 条`);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "数据集完整协议导出失败");
+    },
+  });
+
+  const importDatasetCopyMut = useMutation({
+    mutationFn: async (asset: PromptEvaluationAsset) => {
+      const exported = await api.exportPromptEvaluationDataset(asset.id);
+      return api.importPromptEvaluationDataset({
+        name: `${asset.name} 导入副本 ${new Date().toISOString().slice(0, 19).replace("T", " ")}`,
+        description: `通过完整数据集协议从「${asset.name}」导入的副本。`,
+        prompt_id: asset.prompt_id ?? null,
+        status: asset.status,
+        export: exported,
+      });
+    },
+    onSuccess: (result) => {
+      invalidateAssets();
+      invalidateCases();
+      invalidateSummary();
+      toast.success(`数据集副本已导入：${result.case_count} 条`);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "数据集副本导入失败");
+    },
+  });
+
   const createDatasetVersionMut = useMutation({
     mutationFn: (assetId: string) => api.createPromptEvaluationDatasetVersion(assetId, {
       version_label: "手动快照",
@@ -810,7 +847,7 @@ export function PromptLibraryPage({
     runDebug,
     createWorkbenchAsset,
   } = promptPlaygroundActions;
-  const savingAsset = creatingAsset || updateAssetMut.isPending || deleteAssetMut.isPending || importDatasetFromTracesMut.isPending || createDatasetVersionMut.isPending;
+  const savingAsset = creatingAsset || updateAssetMut.isPending || deleteAssetMut.isPending || importDatasetFromTracesMut.isPending || exportDatasetProtocolMut.isPending || importDatasetCopyMut.isPending || createDatasetVersionMut.isPending;
 
   useEffect(() => {
     if (!selected) return;
@@ -1313,6 +1350,10 @@ export function PromptLibraryPage({
                 onDeleteAsset={deleteAsset}
                 onImportDatasetFromTraces={importDatasetFromTraces}
                 importingTraceDatasetAssetId={importDatasetFromTracesMut.isPending ? importDatasetFromTracesMut.variables ?? null : null}
+                onExportDatasetProtocol={(asset) => exportDatasetProtocolMut.mutate(asset.id)}
+                exportingDatasetProtocolAssetId={exportDatasetProtocolMut.isPending ? exportDatasetProtocolMut.variables ?? null : null}
+                onImportDatasetCopy={(asset) => importDatasetCopyMut.mutate(asset)}
+                importingDatasetCopyAssetId={importDatasetCopyMut.isPending ? importDatasetCopyMut.variables?.id ?? null : null}
                 onCreateDatasetVersion={(asset) => createDatasetVersionMut.mutate(asset.id)}
                 creatingDatasetVersionAssetId={createDatasetVersionMut.isPending ? createDatasetVersionMut.variables ?? null : null}
                 onCreateCase={(data) => createCaseMut.mutate(data)}
@@ -1380,6 +1421,10 @@ export function PromptLibraryPage({
               onDeleteAsset={deleteAsset}
               onImportDatasetFromTraces={importDatasetFromTraces}
               importingTraceDatasetAssetId={importDatasetFromTracesMut.isPending ? importDatasetFromTracesMut.variables ?? null : null}
+              onExportDatasetProtocol={(asset) => exportDatasetProtocolMut.mutate(asset.id)}
+              exportingDatasetProtocolAssetId={exportDatasetProtocolMut.isPending ? exportDatasetProtocolMut.variables ?? null : null}
+              onImportDatasetCopy={(asset) => importDatasetCopyMut.mutate(asset)}
+              importingDatasetCopyAssetId={importDatasetCopyMut.isPending ? importDatasetCopyMut.variables?.id ?? null : null}
               onCreateDatasetVersion={(asset) => createDatasetVersionMut.mutate(asset.id)}
               creatingDatasetVersionAssetId={createDatasetVersionMut.isPending ? createDatasetVersionMut.variables ?? null : null}
               onCreateCase={(data) => createCaseMut.mutate(data)}
@@ -1824,6 +1869,10 @@ function WorkbenchPanel({
   onDeleteAsset,
   onImportDatasetFromTraces,
   importingTraceDatasetAssetId,
+  onExportDatasetProtocol,
+  exportingDatasetProtocolAssetId,
+  onImportDatasetCopy,
+  importingDatasetCopyAssetId,
   onCreateDatasetVersion,
   creatingDatasetVersionAssetId,
   onCreateCase,
@@ -1884,6 +1933,10 @@ function WorkbenchPanel({
   onDeleteAsset: (asset: PromptEvaluationAsset) => void;
   onImportDatasetFromTraces: (asset: PromptEvaluationAsset) => void;
   importingTraceDatasetAssetId: string | null;
+  onExportDatasetProtocol: (asset: PromptEvaluationAsset) => void;
+  exportingDatasetProtocolAssetId: string | null;
+  onImportDatasetCopy: (asset: PromptEvaluationAsset) => void;
+  importingDatasetCopyAssetId: string | null;
   onCreateDatasetVersion: (asset: PromptEvaluationAsset) => void;
   creatingDatasetVersionAssetId: string | null;
   onCreateCase: (data: CreatePromptEvaluationCaseRequest) => void;
@@ -2027,6 +2080,10 @@ function WorkbenchPanel({
           onDeleteAsset={onDeleteAsset}
           onImportDatasetFromTraces={onImportDatasetFromTraces}
           importingTraceDatasetAssetId={importingTraceDatasetAssetId}
+          onExportDatasetProtocol={onExportDatasetProtocol}
+          exportingDatasetProtocolAssetId={exportingDatasetProtocolAssetId}
+          onImportDatasetCopy={onImportDatasetCopy}
+          importingDatasetCopyAssetId={importingDatasetCopyAssetId}
           onCreateDatasetVersion={onCreateDatasetVersion}
           creatingDatasetVersionAssetId={creatingDatasetVersionAssetId}
           onCreateCase={onCreateCase}
@@ -2459,6 +2516,10 @@ function TrainingAssetPanel({
   onDeleteAsset,
   onImportDatasetFromTraces,
   importingTraceDatasetAssetId,
+  onExportDatasetProtocol,
+  exportingDatasetProtocolAssetId,
+  onImportDatasetCopy,
+  importingDatasetCopyAssetId,
   onCreateDatasetVersion,
   creatingDatasetVersionAssetId,
   onCreateCase,
@@ -2489,6 +2550,10 @@ function TrainingAssetPanel({
   onDeleteAsset: (asset: PromptEvaluationAsset) => void;
   onImportDatasetFromTraces: (asset: PromptEvaluationAsset) => void;
   importingTraceDatasetAssetId: string | null;
+  onExportDatasetProtocol: (asset: PromptEvaluationAsset) => void;
+  exportingDatasetProtocolAssetId: string | null;
+  onImportDatasetCopy: (asset: PromptEvaluationAsset) => void;
+  importingDatasetCopyAssetId: string | null;
   onCreateDatasetVersion: (asset: PromptEvaluationAsset) => void;
   creatingDatasetVersionAssetId: string | null;
   onCreateCase: (data: CreatePromptEvaluationCaseRequest) => void;
@@ -2605,6 +2670,26 @@ function TrainingAssetPanel({
                     >
                       {importingTraceDatasetAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
                       从 trace 导入样本
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      data-testid={`export-dataset-protocol-${asset.id}`}
+                      onClick={() => onExportDatasetProtocol(asset)}
+                      disabled={saving || exportingDatasetProtocolAssetId === asset.id}
+                    >
+                      {exportingDatasetProtocolAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
+                      导出完整协议
+                    </Button>
+                    <Button
+                      size="sm"
+                      variant="secondary"
+                      data-testid={`import-dataset-copy-${asset.id}`}
+                      onClick={() => onImportDatasetCopy(asset)}
+                      disabled={saving || importingDatasetCopyAssetId === asset.id}
+                    >
+                      {importingDatasetCopyAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+                      导入副本
                     </Button>
                   </>
                 )}

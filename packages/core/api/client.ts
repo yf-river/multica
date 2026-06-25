@@ -138,6 +138,9 @@ import type {
   PromptEvaluationStructuredCase,
   PromptEvaluationAgentRunResponse,
   CreatePromptEvaluationDatasetFromTracesRequest,
+  PromptEvaluationDatasetExportResponse,
+  ImportPromptEvaluationDatasetRequest,
+  ImportPromptEvaluationDatasetResponse,
   CreatePromptEvaluationDatasetVersionRequest,
   PromptEvaluationDatasetFromTracesResponse,
   PromptEvaluationDatasetVersion,
@@ -272,6 +275,8 @@ import {
   RuntimeUsageListSchema,
   PromptEvaluationAssetSchema,
   PromptEvaluationAssetListResponseSchema,
+  PromptEvaluationDatasetExportResponseSchema,
+  ImportPromptEvaluationDatasetResponseSchema,
   PromptEvaluationDatasetFromTracesResponseSchema,
   PromptEvaluationDatasetVersionDiffSchema,
   PromptEvaluationDatasetVersionListResponseSchema,
@@ -1895,6 +1900,36 @@ export class ApiClient {
 
   async deletePromptEvaluationAsset(id: string): Promise<void> {
     await this.fetch(`/api/prompt-evaluation-assets/${id}`, { method: "DELETE" });
+  }
+
+  async exportPromptEvaluationDataset(id: string): Promise<PromptEvaluationDatasetExportResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-export`);
+    return parseWithFallback(raw, PromptEvaluationDatasetExportResponseSchema, {
+      schema: "multica.prompt_evaluation.dataset_export.v1",
+      exported_at: "",
+      source_asset_id: id,
+      asset: EMPTY_PROMPT_EVALUATION_ASSET,
+      case_count: 0,
+      cases: [],
+      payload: {},
+    }, {
+      endpoint: "GET /api/prompt-evaluation-assets/:id/dataset-export",
+    }) as PromptEvaluationDatasetExportResponse;
+  }
+
+  async importPromptEvaluationDataset(data: ImportPromptEvaluationDatasetRequest): Promise<ImportPromptEvaluationDatasetResponse> {
+    const raw = await this.fetch<unknown>("/api/prompt-evaluation-assets/dataset-import", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, ImportPromptEvaluationDatasetResponseSchema, {
+      asset: EMPTY_PROMPT_EVALUATION_ASSET,
+      source_asset_id: data.export.source_asset_id,
+      case_count: 0,
+      cases: [],
+    }, {
+      endpoint: "POST /api/prompt-evaluation-assets/dataset-import",
+    }) as ImportPromptEvaluationDatasetResponse;
   }
 
   async createPromptEvaluationDatasetFromTraces(
