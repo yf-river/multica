@@ -4735,6 +4735,35 @@ function ManualCasePanel({
     });
   }, [caseSourceFilter, caseTagFilter, cases]);
   const sampleCases = filteredCases.slice(0, 3);
+  const downloadDatasetSample = () => {
+    const payload = {
+      schema_version: "multica.prompt_evaluation.dataset_sample_export.v1",
+      导出时间: new Date().toISOString(),
+      数据集: {
+        id: asset.id,
+        名称: asset.name,
+        描述: asset.description,
+        状态: asset.status,
+      },
+      筛选条件: {
+        来源: caseSourceFilter,
+        标签: caseTagFilter,
+      },
+      统计: {
+        总用例数: cases.length,
+        命中用例数: filteredCases.length,
+        采样预览数: sampleCases.length,
+      },
+      采样预览: sampleCases.map(datasetCaseExportRow),
+      命中用例: filteredCases.map(datasetCaseExportRow),
+    };
+    downloadTextFile(
+      JSON.stringify(payload, null, 2),
+      `multica-dataset-sample-${asset.id}-${new Date().toISOString().replace(/[:.]/g, "-")}.json`,
+      "application/json;charset=utf-8",
+    );
+    toast.success(`数据集采样已导出：${filteredCases.length} 条`);
+  };
   return (
     <div data-testid={`prompt-evaluation-cases-${asset.id}`} className="md:col-span-2 grid gap-2 rounded-md border border-border/70 bg-muted/10 p-3">
       <div className="flex flex-wrap items-center justify-between gap-2">
@@ -4754,6 +4783,7 @@ function ManualCasePanel({
           tagFilter={caseTagFilter}
           onTagFilterChange={setCaseTagFilter}
           samples={sampleCases}
+          onDownloadSample={downloadDatasetSample}
         />
       )}
       {cases.length > 0 ? (
@@ -4922,6 +4952,7 @@ function DatasetCaseGovernanceBar({
   tagFilter,
   onTagFilterChange,
   samples,
+  onDownloadSample,
 }: {
   assetId: string;
   totalCount: number;
@@ -4932,6 +4963,7 @@ function DatasetCaseGovernanceBar({
   tagFilter: string;
   onTagFilterChange: (value: string) => void;
   samples: PromptEvaluationStructuredCase[];
+  onDownloadSample: () => void;
 }) {
   return (
     <section className="grid gap-2 rounded-md border bg-background px-3 py-2 text-xs" data-testid={`dataset-case-governance-${assetId}`}>
@@ -4943,6 +4975,17 @@ function DatasetCaseGovernanceBar({
         <Badge variant="outline" data-testid={`dataset-case-filter-count-${assetId}`}>
           命中 {visibleCount} / {totalCount}
         </Badge>
+        <Button
+          size="sm"
+          variant="secondary"
+          className="h-8"
+          data-testid={`download-dataset-sample-${assetId}`}
+          onClick={onDownloadSample}
+          disabled={visibleCount === 0}
+        >
+          <Download className="size-3.5" />
+          下载当前采样
+        </Button>
       </div>
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-muted-foreground">来源</span>
@@ -4977,6 +5020,21 @@ function DatasetCaseGovernanceBar({
       </div>
     </section>
   );
+}
+
+function datasetCaseExportRow(item: PromptEvaluationStructuredCase) {
+  return {
+    id: item.id,
+    名称: item.case_name || `用例 ${item.case_index + 1}`,
+    序号: item.case_index,
+    来源: caseSourceLabel(item.source),
+    状态: item.status,
+    标签: item.tags,
+    变量: item.variables,
+    期望包含: item.expected_contains,
+    输入: item.input,
+    期望: item.expected,
+  };
 }
 
 function ExperimentDimensionPanel({ asset, dimensions }: { asset: PromptEvaluationAsset; dimensions: PromptEvaluationExperimentDimension[] }) {

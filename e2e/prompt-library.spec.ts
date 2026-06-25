@@ -1415,6 +1415,24 @@ test.describe("训练与评估工作台", () => {
       });
     await governance.getByLabel("筛选数据集用例标签").selectOption("领导演示");
     await expect(governance.getByTestId(`dataset-case-filter-count-${dataset.id}`)).toContainText("命中 1 / 2");
+    const datasetSampleDownload = page.waitForEvent("download");
+    await governance.getByTestId(`download-dataset-sample-${dataset.id}`).click();
+    const downloadedDatasetSample = await datasetSampleDownload;
+    expect(downloadedDatasetSample.suggestedFilename()).toMatch(/^multica-dataset-sample-.*\.json$/);
+    const downloadedDatasetSamplePath = await downloadedDatasetSample.path();
+    expect(downloadedDatasetSamplePath).toBeTruthy();
+    const exportedDatasetSample = JSON.parse(await readFile(downloadedDatasetSamplePath!, "utf8")) as Record<string, any>;
+    expect(exportedDatasetSample.schema_version).toBe("multica.prompt_evaluation.dataset_sample_export.v1");
+    expect(exportedDatasetSample["数据集"]).toMatchObject({ id: dataset.id, 名称: dataset.name });
+    expect(exportedDatasetSample["筛选条件"]).toEqual({ 来源: "资产载荷", 标签: "领导演示" });
+    expect(exportedDatasetSample["统计"]).toMatchObject({ 总用例数: 2, 命中用例数: 1, 采样预览数: 1 });
+    expect(exportedDatasetSample["命中用例"]).toEqual([
+      expect.objectContaining({
+        名称: "版本一登录用例",
+        来源: "资产载荷",
+        标签: expect.arrayContaining(["领导演示"]),
+      }),
+    ]);
     await governance.getByRole("button", { name: "全部" }).click();
     await governance.getByLabel("筛选数据集用例标签").selectOption("全部");
     await datasetRow.getByTestId(`load-dataset-versions-${dataset.id}`).click();
