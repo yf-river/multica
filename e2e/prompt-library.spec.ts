@@ -1378,9 +1378,37 @@ test.describe("训练与评估工作台", () => {
     const apiDiff = await api.diffPromptEvaluationDatasetVersion(dataset.id, v1.id, v2.id);
     expect(apiDiff.summary["新增"]).toBe(1);
     expect(apiDiff.summary["未变更"]).toBe(1);
+    await api.createPromptEvaluationAsset({
+      prompt_id: prompt.id,
+      name: `${artifactPrefix} 数据集版本治理扩展`,
+      description: "E2E 跨数据集标签分布辅助数据集",
+      asset_type: "数据集",
+      payload: {
+        cases: [
+          {
+            名称: "跨数据集标签用例",
+            变量: { issue_title: "标签分布" },
+            期望包含: ["跨数据集"],
+            标签: ["版本一", "跨集标签"],
+          },
+        ],
+      },
+      status: "启用",
+    });
 
     await page.goto(`/${workspaceSlug}/training/datasets`, { waitUntil: "domcontentloaded" });
     await page.getByRole("button", { name: "显示验收数据" }).first().click();
+    const tagDatasetSummaryResponse = page.waitForResponse(
+      (response) => response.request().method() === "GET" && response.url().includes("/api/prompt-evaluation-cases/tag-dataset-summaries"),
+      { timeout: 15000 },
+    );
+    await page.getByTestId("load-dataset-tag-dataset-summaries").click();
+    expect((await tagDatasetSummaryResponse).status()).toBe(200);
+    const tagDatasetSummaryPanel = page.getByTestId("dataset-tag-dataset-summary-panel");
+    await expect(tagDatasetSummaryPanel).toContainText("跨数据集标签分布", { timeout: 15000 });
+    await expect(tagDatasetSummaryPanel.getByTestId("dataset-tag-dataset-summary-results")).toContainText("版本一");
+    await expect(tagDatasetSummaryPanel.getByTestId("dataset-tag-dataset-summary-results")).toContainText("2 个数据集");
+    await expect(tagDatasetSummaryPanel.getByTestId("dataset-tag-dataset-summary-results")).toContainText("2 条用例");
     const datasetRow = page.getByTestId(`prompt-evaluation-asset-${dataset.id}`);
     await expect(datasetRow).toBeVisible({ timeout: 15000 });
     const governance = datasetRow.getByTestId(`dataset-case-governance-${dataset.id}`);

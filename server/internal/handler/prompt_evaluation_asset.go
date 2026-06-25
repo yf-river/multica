@@ -577,6 +577,19 @@ type PromptEvaluationCaseTagSummaryResponse struct {
 	CaseCount int32  `json:"case_count"`
 }
 
+type PromptEvaluationCaseTagDatasetSummaryDatasetResponse struct {
+	AssetID   string `json:"asset_id"`
+	AssetName string `json:"asset_name"`
+	CaseCount int32  `json:"case_count"`
+}
+
+type PromptEvaluationCaseTagDatasetSummaryResponse struct {
+	Tag          string                                                 `json:"tag"`
+	CaseCount    int32                                                  `json:"case_count"`
+	DatasetCount int32                                                  `json:"dataset_count"`
+	TopDatasets  []PromptEvaluationCaseTagDatasetSummaryDatasetResponse `json:"top_datasets"`
+}
+
 type promptEvaluationCaseCursor struct {
 	Offset        int32  `json:"offset"`
 	SortBy        string `json:"sort_by"`
@@ -1897,6 +1910,93 @@ func (h *Handler) ListPromptEvaluationCaseTagSummaries(w http.ResponseWriter, r 
 			Tag:       item.Tag.String,
 			CaseCount: item.CaseCount,
 		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
+}
+
+func (h *Handler) ListPromptEvaluationCaseTagDatasetSummaries(w http.ResponseWriter, r *http.Request) {
+	workspaceID := h.resolveWorkspaceID(r)
+	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
+	if !ok {
+		return
+	}
+	var status pgtype.Text
+	if value := r.URL.Query().Get("status"); value != "" {
+		if !validPromptLibraryStatus(value) {
+			writeError(w, http.StatusBadRequest, "status must be 启用 or 归档")
+			return
+		}
+		status = pgtype.Text{String: value, Valid: true}
+	}
+	var source pgtype.Text
+	if value := strings.TrimSpace(r.URL.Query().Get("source")); value != "" {
+		if value != "manual" && value != "trace" && value != "payload" {
+			writeError(w, http.StatusBadRequest, "source must be manual, trace, or payload")
+			return
+		}
+		source = pgtype.Text{String: value, Valid: true}
+	}
+	var keyword pgtype.Text
+	if value := strings.TrimSpace(r.URL.Query().Get("keyword")); value != "" {
+		keyword = pgtype.Text{String: value, Valid: true}
+	}
+	limit := pgtype.Int4{Int32: 20, Valid: true}
+	if value := strings.TrimSpace(r.URL.Query().Get("limit")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 100 {
+			writeError(w, http.StatusBadRequest, "limit must be between 1 and 100")
+			return
+		}
+		limit = pgtype.Int4{Int32: int32(parsed), Valid: true}
+	}
+	topDatasetLimit := pgtype.Int4{Int32: 3, Valid: true}
+	if value := strings.TrimSpace(r.URL.Query().Get("top_dataset_limit")); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 1 || parsed > 10 {
+			writeError(w, http.StatusBadRequest, "top_dataset_limit must be between 1 and 10")
+			return
+		}
+		topDatasetLimit = pgtype.Int4{Int32: int32(parsed), Valid: true}
+	}
+	rows, err := h.Queries.ListPromptEvaluationCaseTagDatasetSummaries(r.Context(), db.ListPromptEvaluationCaseTagDatasetSummariesParams{
+		WorkspaceID:     workspaceUUID,
+		Status:          status,
+		Source:          source,
+		Keyword:         keyword,
+		Limit:           limit,
+		TopDatasetLimit: topDatasetLimit,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation case tag dataset summaries")
+		return
+	}
+	byTag := make(map[string]*PromptEvaluationCaseTagDatasetSummaryResponse)
+	order := make([]string, 0, len(rows))
+	for _, row := range rows {
+		if !row.Tag.Valid || strings.TrimSpace(row.Tag.String) == "" {
+			continue
+		}
+		tag := row.Tag.String
+		item := byTag[tag]
+		if item == nil {
+			item = &PromptEvaluationCaseTagDatasetSummaryResponse{
+				Tag:          tag,
+				CaseCount:    row.TotalCaseCount,
+				DatasetCount: row.DatasetCount,
+				TopDatasets:  []PromptEvaluationCaseTagDatasetSummaryDatasetResponse{},
+			}
+			byTag[tag] = item
+			order = append(order, tag)
+		}
+		item.TopDatasets = append(item.TopDatasets, PromptEvaluationCaseTagDatasetSummaryDatasetResponse{
+			AssetID:   uuidToString(row.AssetID),
+			AssetName: row.AssetName,
+			CaseCount: row.CaseCount,
+		})
+	}
+	resp := make([]PromptEvaluationCaseTagDatasetSummaryResponse, 0, len(order))
+	for _, tag := range order {
+		resp = append(resp, *byTag[tag])
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
 }

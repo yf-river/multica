@@ -586,6 +586,24 @@ export interface ListPromptEvaluationCaseTagSummariesResponse {
   total: number;
 }
 
+export interface PromptEvaluationCaseTagDatasetSummaryDataset {
+  asset_id: string;
+  asset_name: string;
+  case_count: number;
+}
+
+export interface PromptEvaluationCaseTagDatasetSummary {
+  tag: string;
+  case_count: number;
+  dataset_count: number;
+  top_datasets: PromptEvaluationCaseTagDatasetSummaryDataset[];
+}
+
+export interface ListPromptEvaluationCaseTagDatasetSummariesResponse {
+  items: PromptEvaluationCaseTagDatasetSummary[];
+  total: number;
+}
+
 export interface ListPromptEvaluationCaseOperationsResponse {
   items: PromptEvaluationCaseOperation[];
   total: number;
@@ -663,6 +681,14 @@ export interface ListPromptEvaluationCaseTagSummariesParams {
   source?: "manual" | "trace" | "payload";
   keyword?: string;
   limit?: number;
+}
+
+export interface ListPromptEvaluationCaseTagDatasetSummariesParams {
+  status?: PromptEvaluationAssetStatus;
+  source?: "manual" | "trace" | "payload";
+  keyword?: string;
+  limit?: number;
+  top_dataset_limit?: number;
 }
 
 export interface ListPromptEvaluationDatasetVersionTagTrendsParams {

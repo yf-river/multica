@@ -924,6 +924,47 @@ func TestPromptEvaluationCaseCRUD(t *testing.T) {
 	if tagSummary.Total == 0 || !promptEvaluationTagSummaryContains(tagSummary.Items, "user-center", 1) {
 		t.Fatalf("tag summary = %+v", tagSummary)
 	}
+	createSecondAssetW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAsset(createSecondAssetW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+		"prompt_id":  promptID,
+		"name":       "评测用例 CRUD 第二数据集",
+		"asset_type": "数据集",
+		"payload":    map[string]any{"cases": []any{}},
+	}))
+	if createSecondAssetW.Code != http.StatusCreated {
+		t.Fatalf("create second asset status = %d, body = %s", createSecondAssetW.Code, createSecondAssetW.Body.String())
+	}
+	var secondAsset PromptEvaluationAssetResponse
+	if err := json.Unmarshal(createSecondAssetW.Body.Bytes(), &secondAsset); err != nil {
+		t.Fatalf("decode second asset: %v", err)
+	}
+	createSecondCaseW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationCase(createSecondCaseW, newRequest(http.MethodPost, "/api/prompt-evaluation-cases", map[string]any{
+		"asset_id":          secondAsset.ID,
+		"case_name":         "跨数据集标签分布",
+		"variables":         map[string]any{"issue_title": "标签治理"},
+		"expected_contains": []string{"跨数据集"},
+		"tags":              []string{"user-center", "跨集标签"},
+		"status":            "启用",
+	}))
+	if createSecondCaseW.Code != http.StatusCreated {
+		t.Fatalf("create second case status = %d, body = %s", createSecondCaseW.Code, createSecondCaseW.Body.String())
+	}
+	tagDatasetSummaryW := httptest.NewRecorder()
+	testHandler.ListPromptEvaluationCaseTagDatasetSummaries(tagDatasetSummaryW, newRequest(http.MethodGet, "/api/prompt-evaluation-cases/tag-dataset-summaries?limit=5&top_dataset_limit=5", nil))
+	if tagDatasetSummaryW.Code != http.StatusOK {
+		t.Fatalf("tag dataset summary status = %d, body = %s", tagDatasetSummaryW.Code, tagDatasetSummaryW.Body.String())
+	}
+	var tagDatasetSummary struct {
+		Items []PromptEvaluationCaseTagDatasetSummaryResponse `json:"items"`
+		Total int                                             `json:"total"`
+	}
+	if err := json.Unmarshal(tagDatasetSummaryW.Body.Bytes(), &tagDatasetSummary); err != nil {
+		t.Fatalf("decode tag dataset summary: %v", err)
+	}
+	if tagDatasetSummary.Total == 0 || !promptEvaluationTagDatasetSummaryContains(tagDatasetSummary.Items, "user-center", 2, 2) {
+		t.Fatalf("tag dataset summary = %+v", tagDatasetSummary)
+	}
 	invalidLimitW := httptest.NewRecorder()
 	testHandler.ListPromptEvaluationCases(invalidLimitW, newRequest(http.MethodGet, "/api/prompt-evaluation-cases?asset_id="+asset.ID+"&limit=9999", nil))
 	if invalidLimitW.Code != http.StatusBadRequest {
@@ -3167,6 +3208,15 @@ func containsAll(value string, needles []string) bool {
 func promptEvaluationTagSummaryContains(items []PromptEvaluationCaseTagSummaryResponse, tag string, count int32) bool {
 	for _, item := range items {
 		if item.Tag == tag && item.CaseCount == count {
+			return true
+		}
+	}
+	return false
+}
+
+func promptEvaluationTagDatasetSummaryContains(items []PromptEvaluationCaseTagDatasetSummaryResponse, tag string, count int32, datasetCount int32) bool {
+	for _, item := range items {
+		if item.Tag == tag && item.CaseCount == count && item.DatasetCount == datasetCount && len(item.TopDatasets) == int(datasetCount) {
 			return true
 		}
 	}

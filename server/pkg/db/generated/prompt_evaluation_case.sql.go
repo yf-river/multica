@@ -223,6 +223,113 @@ func (q *Queries) GetPromptEvaluationCaseInWorkspace(ctx context.Context, arg Ge
 	return i, err
 }
 
+const listPromptEvaluationCaseTagDatasetSummaries = `-- name: ListPromptEvaluationCaseTagDatasetSummaries :many
+WITH tag_assets AS (
+  SELECT
+    tag,
+    c.asset_id,
+    a.name AS asset_name,
+    count(*)::int AS case_count
+  FROM prompt_evaluation_case c
+  JOIN prompt_evaluation_asset a
+    ON a.workspace_id = c.workspace_id
+   AND a.id = c.asset_id
+   AND a.asset_type = '数据集'
+  CROSS JOIN LATERAL jsonb_array_elements_text(c.tags) AS tag
+  WHERE c.workspace_id = $1
+    AND ($3::text IS NULL OR c.status = $3)
+    AND ($4::text IS NULL OR c.source = $4)
+    AND btrim(tag) <> ''
+    AND (
+      $5::text IS NULL
+      OR c.case_name ILIKE '%' || $5 || '%'
+      OR c.status ILIKE '%' || $5 || '%'
+      OR c.source ILIKE '%' || $5 || '%'
+      OR c.variables::text ILIKE '%' || $5 || '%'
+      OR c.expected_contains::text ILIKE '%' || $5 || '%'
+      OR c.input::text ILIKE '%' || $5 || '%'
+      OR c.expected::text ILIKE '%' || $5 || '%'
+      OR c.tags::text ILIKE '%' || $5 || '%'
+    )
+  GROUP BY tag, c.asset_id, a.name
+),
+top_tags AS (
+  SELECT tag
+  FROM tag_assets
+  GROUP BY tag
+  ORDER BY sum(case_count) DESC, tag ASC
+  LIMIT COALESCE($6::int, 20)
+),
+ranked AS (
+  SELECT
+    ta.tag,
+    ta.asset_id,
+    ta.asset_name,
+    ta.case_count,
+    sum(ta.case_count) OVER (PARTITION BY ta.tag)::int AS total_case_count,
+    count(*) OVER (PARTITION BY ta.tag)::int AS dataset_count,
+    row_number() OVER (PARTITION BY ta.tag ORDER BY ta.case_count DESC, ta.asset_name ASC, ta.asset_id ASC) AS dataset_rank
+  FROM tag_assets ta
+  JOIN top_tags tt ON tt.tag = ta.tag
+)
+SELECT tag, total_case_count, dataset_count, asset_id, asset_name, case_count
+FROM ranked
+WHERE dataset_rank <= COALESCE($2::int, 3)
+ORDER BY total_case_count DESC, tag ASC, dataset_rank ASC
+`
+
+type ListPromptEvaluationCaseTagDatasetSummariesParams struct {
+	WorkspaceID     pgtype.UUID `json:"workspace_id"`
+	TopDatasetLimit pgtype.Int4 `json:"top_dataset_limit"`
+	Status          pgtype.Text `json:"status"`
+	Source          pgtype.Text `json:"source"`
+	Keyword         pgtype.Text `json:"keyword"`
+	Limit           pgtype.Int4 `json:"limit"`
+}
+
+type ListPromptEvaluationCaseTagDatasetSummariesRow struct {
+	Tag            pgtype.Text `json:"tag"`
+	TotalCaseCount int32       `json:"total_case_count"`
+	DatasetCount   int32       `json:"dataset_count"`
+	AssetID        pgtype.UUID `json:"asset_id"`
+	AssetName      string      `json:"asset_name"`
+	CaseCount      int32       `json:"case_count"`
+}
+
+func (q *Queries) ListPromptEvaluationCaseTagDatasetSummaries(ctx context.Context, arg ListPromptEvaluationCaseTagDatasetSummariesParams) ([]ListPromptEvaluationCaseTagDatasetSummariesRow, error) {
+	rows, err := q.db.Query(ctx, listPromptEvaluationCaseTagDatasetSummaries,
+		arg.WorkspaceID,
+		arg.TopDatasetLimit,
+		arg.Status,
+		arg.Source,
+		arg.Keyword,
+		arg.Limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListPromptEvaluationCaseTagDatasetSummariesRow{}
+	for rows.Next() {
+		var i ListPromptEvaluationCaseTagDatasetSummariesRow
+		if err := rows.Scan(
+			&i.Tag,
+			&i.TotalCaseCount,
+			&i.DatasetCount,
+			&i.AssetID,
+			&i.AssetName,
+			&i.CaseCount,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPromptEvaluationCaseTagSummaries = `-- name: ListPromptEvaluationCaseTagSummaries :many
 SELECT tag, count(*)::int AS case_count
 FROM prompt_evaluation_case c

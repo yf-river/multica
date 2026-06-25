@@ -29,6 +29,7 @@ import type {
   PromptEvaluationStructuredCase,
   PromptEvaluationCaseOperation,
   PromptEvaluationCaseTagSummary,
+  PromptEvaluationCaseTagDatasetSummary,
   PromptEvaluationCaseSortBy,
   PromptEvaluationRun,
   PromptEvaluationRunEvidence,
@@ -83,6 +84,7 @@ const promptLibraryKeys = {
   datasetVersionRows: (workspaceId: string, assetId: string, versionId: string | null) => ["prompt-library", workspaceId, "evaluation-dataset-version-rows", assetId, versionId ?? ""] as const,
   datasetVersionTagTrends: (workspaceId: string, assetId: string) => ["prompt-library", workspaceId, "evaluation-dataset-version-tag-trends", assetId] as const,
   cases: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-cases"] as const,
+  caseTagDatasetSummaries: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-case-tag-dataset-summaries"] as const,
   experimentDimensions: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-experiment-dimensions"] as const,
   dimensionScoreSummaries: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-dimension-score-summaries"] as const,
   dimensionScoreTrends: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-dimension-score-trends"] as const,
@@ -2039,7 +2041,9 @@ function WorkbenchPanel({
           creatingAssetEvidenceSnapshotsAssetId={creatingAssetEvidenceSnapshotsAssetId}
           onDownloadAssetEvidencePackage={onDownloadAssetEvidencePackage}
           exportingAssetEvidencePackageAssetId={exportingAssetEvidencePackageAssetId}
-          beforeAssetList={activeTab === "实验" ? (
+          beforeAssetList={activeTab === "数据集" ? (
+            <DatasetTagDatasetSummaryPanel workspaceId={workspaceId} />
+          ) : activeTab === "实验" ? (
             <ExperimentComparisonPanel
               experiments={visibleAssets}
               dimensions={experimentDimensions}
@@ -2074,6 +2078,57 @@ function WorkbenchPanel({
             </>
           ) : null}
         />
+      )}
+    </section>
+  );
+}
+
+function DatasetTagDatasetSummaryPanel({ workspaceId }: { workspaceId: string }) {
+  const [loaded, setLoaded] = useState(false);
+  const summaryQuery = useQuery({
+    queryKey: promptLibraryKeys.caseTagDatasetSummaries(workspaceId),
+    queryFn: () => api.listPromptEvaluationCaseTagDatasetSummaries({ limit: 100, top_dataset_limit: 3 }),
+    enabled: Boolean(loaded && workspaceId),
+  });
+  const summaries: PromptEvaluationCaseTagDatasetSummary[] = summaryQuery.data?.items ?? [];
+  const loading = summaryQuery.isLoading || summaryQuery.isFetching;
+  const load = () => {
+    if (loaded) {
+      summaryQuery.refetch();
+      return;
+    }
+    setLoaded(true);
+  };
+  return (
+    <section className="grid gap-2 rounded-md border bg-background px-3 py-2 text-xs" data-testid="dataset-tag-dataset-summary-panel">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div>
+          <div className="font-medium text-foreground">跨数据集标签分布</div>
+          <div className="mt-0.5 text-muted-foreground">按标签聚合所有数据集，查看哪些标签覆盖多个题库。</div>
+        </div>
+        <Button size="sm" variant="secondary" onClick={load} data-testid="load-dataset-tag-dataset-summaries">
+          {loading ? <Loader2 className="size-3.5 animate-spin" /> : <Search className="size-3.5" />}
+          {loaded ? "刷新分布" : "查看分布"}
+        </Button>
+      </div>
+      {loaded && !loading && summaries.length === 0 && (
+        <div className="rounded border border-dashed bg-muted/10 px-2 py-2 text-muted-foreground">暂无可统计的跨数据集标签。</div>
+      )}
+      {summaries.length > 0 && (
+        <div className="grid gap-1.5" data-testid="dataset-tag-dataset-summary-results">
+          {summaries.map((item) => (
+            <div key={item.tag} className="flex flex-wrap items-center gap-2 rounded border bg-muted/10 px-2 py-1.5">
+              <span className="font-medium text-foreground">{item.tag}</span>
+              <span className="text-muted-foreground">{item.dataset_count} 个数据集</span>
+              <span className="text-muted-foreground">{item.case_count} 条用例</span>
+              {item.top_datasets.length > 0 && (
+                <span className="text-muted-foreground">
+                  样例：{item.top_datasets.map((dataset) => `${dataset.asset_name} ${dataset.case_count}`).join(" / ")}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
       )}
     </section>
   );
