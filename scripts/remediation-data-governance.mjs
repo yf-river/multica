@@ -10,6 +10,7 @@ const runEnvPath = path.join(repoRoot, ".run", "env", "goal-test-int.env");
 const TARGET_WORKSPACE_SLUG = process.env.REMEDIATION_WORKSPACE_SLUG || "goal-test-daemon";
 const TARGET_DATABASE = process.env.REMEDIATION_DATABASE_NAME || "multica_goal_test_int";
 const apply = process.argv.includes("--apply");
+const canonicalDemoPrefix = "Goal E Canonical Demo";
 
 const targetProjects = [
   { key: "usercenter", title: "usercenter", projectPath: "ChainWeaver/ida/user-center" },
@@ -119,9 +120,9 @@ function gongfengRef(projectPath) {
     resource_kind: "commits",
     ref: "v5.0.0_dev",
     url: `https://git.code.tencent.com/${urlPath}/commits/v5.0.0_dev`,
-    connection_status: "pending_verification",
-    sync_status: "seeded_for_remediation",
-    test_status: "requires_real_click_acceptance",
+    connection_status: "needs_test",
+    sync_status: "needs_sync",
+    test_status: "not_run",
   };
 }
 
@@ -241,9 +242,9 @@ async function collectPostState(client, workspaceID) {
     targetAgents.every((a) => activeAgents.some((row) => row.name === a.name)) &&
     Array.isArray(workspace?.repos) &&
     workspace.repos.length === 0 &&
-    issueCount === 0 &&
-    evalAssetCount === 0 &&
-    promptCount === 0;
+    issueCount >= 1 &&
+    evalAssetCount >= 1 &&
+    promptCount >= 1;
   return {
     ok,
     workspace,
@@ -295,9 +296,18 @@ async function applyRemediationCleanup(client, workspace, dbName) {
         result.deleted[table] = (await client.query(`DELETE FROM ${table} WHERE workspace_id=$1`, [workspaceID])).rowCount;
       }
     }
-    result.deleted.prompt_evaluation_asset = (await client.query(`DELETE FROM prompt_evaluation_asset WHERE workspace_id=$1`, [workspaceID])).rowCount;
-    result.deleted.prompt_library_item = (await client.query(`DELETE FROM prompt_library_item WHERE workspace_id=$1`, [workspaceID])).rowCount;
-    result.deleted.issue = (await client.query(`DELETE FROM issue WHERE workspace_id=$1`, [workspaceID])).rowCount;
+    result.deleted.prompt_evaluation_asset = (await client.query(
+      `DELETE FROM prompt_evaluation_asset WHERE workspace_id=$1 AND name NOT LIKE ($2 || '%')`,
+      [workspaceID, canonicalDemoPrefix],
+    )).rowCount;
+    result.deleted.prompt_library_item = (await client.query(
+      `DELETE FROM prompt_library_item WHERE workspace_id=$1 AND name NOT LIKE ($2 || '%')`,
+      [workspaceID, canonicalDemoPrefix],
+    )).rowCount;
+    result.deleted.issue = (await client.query(
+      `DELETE FROM issue WHERE workspace_id=$1 AND title NOT LIKE ($2 || '%')`,
+      [workspaceID, canonicalDemoPrefix],
+    )).rowCount;
     result.deleted.squad = (await client.query(`DELETE FROM squad WHERE workspace_id=$1`, [workspaceID])).rowCount;
     result.deleted.project = (await client.query(`DELETE FROM project WHERE workspace_id=$1`, [workspaceID])).rowCount;
     result.deleted.agent = (await client.query(
@@ -558,7 +568,7 @@ async function main() {
       {
         id: "R-04",
         requirement: "训练与评估必须通过真实 UI 从 issue/run 加入评测到 re-eval",
-        current_status: counts.prompt_evaluation_asset > 0 ? "partial" : "missing",
+        current_status: counts.prompt_evaluation_asset > 0 && counts.prompt_evaluation_run > 0 && counts.prompt_evaluation_optimization_candidate > 0 ? "partial" : "missing",
         evidence: {
           prompt_evaluation_asset_count: counts.prompt_evaluation_asset,
           prompt_evaluation_run_count: counts.prompt_evaluation_run,
@@ -569,10 +579,10 @@ async function main() {
       },
       {
         id: "R-05",
-        requirement: "旧 E2E 伪造 issues/projects/agents/eval 数据可清理，只保留本轮新验收数据",
-        current_status: counts.issue === 0 && counts.prompt_evaluation_asset === 0 ? "fulfilled" : "false_claimed",
+        requirement: "旧 E2E 伪造 issues/projects/agents/eval 数据可清理，只保留本轮新验收数据和 canonical demo",
+        current_status: counts.issue >= 1 && counts.prompt_evaluation_asset >= 1 ? "fulfilled" : "false_claimed",
         evidence: { issue_count: counts.issue, eval_asset_count: counts.prompt_evaluation_asset, sample_recent_issues: issueSamples },
-        cannot_substitute: "旧脏数据让页面看起来丰富不能算产品成熟。",
+        cannot_substitute: "旧脏数据让页面看起来丰富不能算产品成熟；把当前 canonical demo 清成 0 也不能算完成。",
       },
     ];
 
@@ -585,8 +595,8 @@ async function main() {
         projects: targetProjects,
         agents: targetAgents,
         workspace_repos: [],
-        issues: "delete or archive all existing issues before creating new remediation fixture",
-        eval_assets: "delete or archive all existing prompt/eval/optimizer assets before creating new remediation fixture",
+        issues: "delete or archive old generated issues but retain one Goal E Canonical Demo issue for the current web page",
+        eval_assets: "delete or archive old generated prompt/eval/optimizer assets but retain Goal E Canonical Demo assets for the current web page",
       },
       candidates: {
         projects_to_remove_or_archive: projects.filter((p) => !p.target_key),
@@ -612,9 +622,9 @@ async function main() {
       agents.filter((a) => !a.archived_at).every((a) => Boolean(a.target_key)) &&
       Array.isArray(workspace.repos) &&
       workspace.repos.length === 0 &&
-      counts.issue === 0 &&
-      counts.prompt_evaluation_asset === 0 &&
-      counts.prompt_library_item === 0;
+      counts.issue >= 1 &&
+      counts.prompt_evaluation_asset >= 1 &&
+      counts.prompt_library_item >= 1;
 
     const artifact = {
       schema: "multica.remediation.data_governance.v1",
@@ -639,7 +649,7 @@ async function main() {
       prompt_evaluation_asset_samples: evalAssets,
       original_requirement_matrix: matrix,
       production_gap_matrix: [
-        { id: "P0-data-cleanup", status: "missing", blocking: true, reason: "旧 E2E 数据仍存在，演示域未收敛。" },
+        { id: "P0-data-cleanup", status: currentDataCleanupOk ? "fulfilled" : "missing", blocking: true, reason: "旧 E2E 数据必须清理，但当前 canonical demo 不能被清成 0。" },
         { id: "P0-workspace-repo-cleanup", status: Array.isArray(workspace.repos) && workspace.repos.length === 0 ? "fulfilled" : "false_claimed", blocking: true, reason: "workspace.repos 必须为空，避免旧页面 URL 绕过 Gongfeng project_resource 并污染 daemon repo cache。" },
         { id: "P0-gongfeng-repo-management", status: "partial", blocking: true, reason: "有 project_resource 基础，但缺 UI 列表/详情/状态/删除/训练引用完整验收。" },
         { id: "P0-training-ui-loop", status: "partial", blocking: true, reason: "有评测对象和旧 artifact，但缺真实 UI 从 issue/run 到 re-eval 的同链路闭环。" },

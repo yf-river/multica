@@ -17,20 +17,22 @@ const goalCEvidence = buildGoalCEvidence();
 const goalDSkillEvidence = buildGoalDSkillEvidence();
 const goalEGongfengSkillWritebackEvidence = buildGoalEGongfengSkillWritebackEvidence();
 const uiPlaywrightEvidence = buildGoalEUIEvidence();
+const canonicalDemoEvidence = buildCanonicalDemoEvidence();
+const realPMRunEvidence = buildRealPMRunEvidence();
 const gongfengTouchpointEvidence = buildGoalEGongfengTouchpointEvidence();
 const finalEvidencePackage = buildGoalEFinalEvidencePackage();
 
 const databaseStageEvidence = databaseURL && e2e.issue?.id
   ? await loadStageEvidence(databaseURL, e2e.issue.id)
   : { stages: [], task_count: 0, error: "DATABASE_URL or e2e.issue.id unavailable" };
-const stageEvidence = resolveStageEvidence(databaseStageEvidence);
+const stageEvidence = resolveStageEvidence(databaseStageEvidence, realPMRunEvidence);
 const crossServiceEvidence = buildCrossServiceEvidence();
 const handoffEvidence = buildHandoffEvidence();
 const uiApiEvidence = buildUIAPIEvidence();
 
 const originalRequirements = buildOriginalRequirementMatrix({ e2e, stageEvidence, crossServiceEvidence });
 const productionReadiness = buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEvidence, handoffEvidence, uiApiEvidence });
-const goalERequirements = buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, finalEvidencePackage });
+const goalERequirements = buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, canonicalDemoEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, finalEvidencePackage });
 const blockingOpen = [
   ...originalRequirements.filter((item) => ["missing", "partial", "false_claimed", "blocked"].includes(item.status)),
   ...goalERequirements.filter((item) => ["missing", "partial", "false_claimed", "blocked"].includes(item.status)),
@@ -47,6 +49,7 @@ const artifact = {
   source_artifacts: {
     e2e: e2ePath,
     sop_stage_evidence: stageEvidence.source_artifact || null,
+    real_pm_0105_run: realPMRunEvidence.latest_json_path || null,
     deployment_log_window: e2e.deployment_log_window || null,
   },
   e2e,
@@ -71,6 +74,8 @@ const artifact = {
   goal_d_skill_chain: goalDSkillEvidence,
   goal_e_gongfeng_skill_writeback: goalEGongfengSkillWritebackEvidence,
   goal_e_ui_playwright: uiPlaywrightEvidence,
+  goal_e_canonical_demo: canonicalDemoEvidence,
+  goal_e_real_pm_0105_run: realPMRunEvidence,
   goal_e_final_evidence_package: finalEvidencePackage,
   project_owner_notifications: e2e.project_owner_notifications || null,
   project_owner_approval: e2e.project_owner_approval || null,
@@ -221,7 +226,7 @@ function buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEviden
   ];
 }
 
-function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, finalEvidencePackage }) {
+function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, canonicalDemoEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, finalEvidencePackage }) {
   const stageKeys = new Set((stageEvidence.stages || []).map((stage) => stage.key));
   const requiredStageKeys = ["pm", "01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"];
   const allStagesPresent = requiredStageKeys.every((key) => stageKeys.has(key));
@@ -411,7 +416,26 @@ function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence,
     finalPackageEvidence.screenshots === true &&
     finalPackageEvidence.logs === true &&
     finalPackageEvidence.gap_audit === true;
+  const canonicalDemoPassed =
+    canonicalDemoEvidence.latest_json?.ok === true &&
+    canonicalDemoEvidence.latest_json?.final_real_pm_0105_required === true &&
+    canonicalDemoEvidence.latest_json?.issue?.id &&
+    Array.isArray(canonicalDemoEvidence.latest_json?.role_task_evidence) &&
+    canonicalDemoEvidence.latest_json.role_task_evidence.length >= 6 &&
+    canonicalDemoEvidence.latest_json.role_task_evidence.every((item) => item.status === "completed") &&
+    canonicalDemoEvidence.latest_json?.issue_execution_tree?.node_count >= 6 &&
+    canonicalDemoEvidence.latest_json?.prompt_evaluation?.failed_run_id &&
+    canonicalDemoEvidence.latest_json?.prompt_evaluation?.candidate_id &&
+    canonicalDemoEvidence.latest_json?.prompt_evaluation?.apply_status === "applied" &&
+    canonicalDemoEvidence.latest_json?.prompt_evaluation?.re_eval_status === "通过";
   return [
+    matrixItem("E-00", "Current goal-test-daemon Web/API state retains a visible canonical demo chain instead of empty archived-only evidence",
+      canonicalDemoPassed,
+      canonicalDemoEvidence.latest_json_path
+        ? "Canonical demo artifact exists, but current issue/task/eval/candidate/re-eval evidence is incomplete. This artifact is a demo fixture and still does not replace final real PM+01-05 model execution."
+        : "No current canonical demo artifact exists; final page may be empty even if old artifacts pass.",
+      canonicalDemoEvidence,
+      canonicalDemoEvidence.latest_json_path ? "partial" : "missing"),
     matrixItem("E-01", "Gongfeng-only product semantics across repository/branch/commit/MR user paths",
       touchpointAuditPassed,
       touchpointAuditExists
@@ -642,6 +666,88 @@ function buildGoalEGongfengTouchpointEvidence() {
   };
 }
 
+function buildCanonicalDemoEvidence() {
+  const latestPath = fileIfExists(path.join(artifactRoot, "goal-e-canonical-demo-seed-latest.json"));
+  let latestJSON = null;
+  if (latestPath) {
+    try {
+      latestJSON = readJSON(latestPath);
+    } catch {
+      latestJSON = null;
+    }
+  }
+  return {
+    latest_json_path: latestPath,
+    latest_json: latestJSON,
+    proof_boundary: latestJSON?.final_real_pm_0105_required === true
+      ? "Current Web/API demo fixture only; final real PM+01-05 model execution is still required before demo-ready."
+      : "missing or not marked with final real-run requirement",
+  };
+}
+
+function buildRealPMRunEvidence() {
+  const latestPath = fileIfExists(path.join(artifactRoot, "goal-e-real-pm-0105-run-latest.json"));
+  let latestJSON = null;
+  if (latestPath) {
+    try {
+      latestJSON = readJSON(latestPath);
+    } catch {
+      latestJSON = null;
+    }
+  }
+  return {
+    latest_json_path: latestPath,
+    latest_json: latestJSON,
+    stage_evidence: realPMStageEvidence(latestJSON),
+    proof_boundary: latestJSON?.ok === true
+      ? "Real PM+01-05 model execution completed with per-stage task/messages/usage/trace evidence."
+      : "missing or failed real PM+01-05 model execution",
+  };
+}
+
+function realPMStageEvidence(run) {
+  if (!run || run.ok !== true || run.run_type !== "real_pm_0105_model_execution" || !Array.isArray(run.stages)) {
+    return { stages: [], task_count: 0, error: "real PM+01-05 run artifact missing or not ok" };
+  }
+  const stages = run.stages.map((stage) => {
+    const usage = Array.isArray(stage.usage_rows) ? stage.usage_rows : [];
+    const tokens = usage.reduce((sum, row) => ({
+      input_tokens: sum.input_tokens + Number(row.input_tokens || 0),
+      output_tokens: sum.output_tokens + Number(row.output_tokens || 0),
+      cache_read_tokens: sum.cache_read_tokens + Number(row.cache_read_tokens || 0),
+      cache_write_tokens: sum.cache_write_tokens + Number(row.cache_write_tokens || 0),
+    }), { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 });
+    return {
+      key: stage.key,
+      step_key: stage.key,
+      role_key: stage.role_key || stage.key,
+      task_id: stage.task_id,
+      agent_id: stage.agent_id,
+      agent_name: stage.agent_name,
+      model: stage.model,
+      status: stage.status,
+      started_at: stage.started_at,
+      completed_at: stage.completed_at,
+      duration_ms: Number(stage.duration_ms || 0),
+      failure_reason: stage.failure_reason || "",
+      trigger_summary: "goal-e-real-pm-0105-run",
+      trace_event_count: Number(stage.trace_event_count || 0),
+      message_count: Number(stage.message_count || 0),
+      agent_turn_count: Number(stage.turn_count || stage.message_count || 0),
+      input_tokens: tokens.input_tokens,
+      output_tokens: tokens.output_tokens,
+      cache_read_tokens: tokens.cache_read_tokens,
+      cache_write_tokens: tokens.cache_write_tokens,
+      usage_unavailable_trace: false,
+    };
+  });
+  return {
+    issue_id: run.issue?.id || run.canonical_issue_id || null,
+    task_count: stages.length,
+    stages,
+  };
+}
+
 function buildGoalEFinalEvidencePackage() {
   const latestJSONPath = latestMatching(/^goal-e-final-evidence-package-.*\.json$/);
   let latestJSON = null;
@@ -694,7 +800,18 @@ function prodItem(id, title, ok, reason = "") {
   };
 }
 
-function resolveStageEvidence(current) {
+function resolveStageEvidence(current, realPMRunEvidence) {
+  const realPMStages = realPMRunEvidence?.stage_evidence;
+  if (hasCompleteStageEvidence(realPMStages?.stages)) {
+    return {
+      ...realPMStages,
+      source: "real_pm_0105_run_artifact",
+      source_artifact: realPMRunEvidence.latest_json_path,
+      selected_model: realPMRunEvidence.latest_json?.selected_model || realPMRunEvidence.latest_json?.model || null,
+      fallback_used: realPMRunEvidence.latest_json?.fallback_used === true,
+    };
+  }
+
   if (hasCompleteStageEvidence(current?.stages)) {
     return {
       ...current,
@@ -703,21 +820,12 @@ function resolveStageEvidence(current) {
     };
   }
 
-  const archived = loadArchivedStageEvidence();
-  if (archived) {
-    return {
-      ...archived.stage_evidence,
-      source: "archived_final_acceptance_artifact",
-      source_artifact: archived.file_path,
-      archived_generated_at: archived.generated_at || null,
-      current_database_stage_evidence: summarizeStageEvidence(current),
-    };
-  }
-
   return {
     ...current,
     source: "database_current_incomplete",
     source_artifact: null,
+    archived_fallback_forbidden: true,
+    reason: "Current product-visible acceptance must be proven from the current DB/Web state; archived final acceptance artifacts are not allowed for PM+01-05 stage evidence.",
   };
 }
 

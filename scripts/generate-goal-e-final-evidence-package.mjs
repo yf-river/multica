@@ -19,11 +19,15 @@ const runbookPath = fileIfExists(path.join(artifactRoot, "tapd-gongfeng-sop-prod
 const goalCSlicePath = latestMatching(/^goal-c-issue-timeline-slice-.*\.md$/);
 const goalDSkillPath = latestMatching(/^goal-d-skill-full-local-e2e-.*\.json$/);
 const gongfengAuditPath = latestMatching(/^goal-e-gongfeng-touchpoint-audit-.*\.json$/);
+const canonicalDemoPath = fileIfExists(path.join(artifactRoot, "goal-e-canonical-demo-seed-latest.json"));
+const realPMRunPath = fileIfExists(path.join(artifactRoot, "goal-e-real-pm-0105-run-latest.json"));
 
 const unifiedUI = unifiedUIPath ? readJSON(unifiedUIPath) : null;
 const finalAcceptance = finalAcceptancePath ? readJSON(finalAcceptancePath) : null;
 const gapAudit = gapAuditPath ? readJSON(gapAuditPath) : null;
 const goalDSkill = goalDSkillPath ? readJSON(goalDSkillPath) : null;
+const canonicalDemo = canonicalDemoPath ? readJSON(canonicalDemoPath) : null;
+const realPMRun = realPMRunPath ? readJSON(realPMRunPath) : null;
 const logEvidence = runJSONCommand(["node", "scripts/goal-test-environments.mjs", "verify-logs", "int"]);
 const gitCommit = runTextCommand(["git", "rev-parse", "HEAD"]).trim();
 const gitStatus = runTextCommand(["git", "status", "--short"])
@@ -55,6 +59,16 @@ const requiredEvidence = {
   screenshots: Object.keys(unifiedUI?.screenshots || {}).length >= 5,
   logs: logsClean,
   gap_audit: Boolean(gapAuditPath && gapAudit?.summary),
+  canonical_current_demo: canonicalDemo?.ok === true &&
+    canonicalDemo?.final_real_pm_0105_required === true &&
+    Array.isArray(canonicalDemo?.role_task_evidence) &&
+    canonicalDemo.role_task_evidence.length >= 6 &&
+    canonicalDemo?.prompt_evaluation?.re_eval_status === "通过",
+  real_pm_0105_model_run: realPMRun?.ok === true &&
+    realPMRun?.run_type === "real_pm_0105_model_execution" &&
+    Array.isArray(realPMRun?.stages) &&
+    realPMRun.stages.length >= 6 &&
+    realPMRun.stages.every((stage) => stage.status === "completed" && stage.model_execution === true),
 };
 
 const packageOk = playwrightClean && logsClean && performanceClean && Object.values(requiredEvidence).every(Boolean);
@@ -92,6 +106,8 @@ const artifact = {
   },
   commands: [
     "node scripts/goal-test-environments.mjs verify-logs int",
+    "node scripts/seed-goal-e-canonical-demo.mjs",
+    "node scripts/run-goal-e-real-pm-0105.mjs",
     "NEXT_PUBLIC_API_URL=http://127.0.0.1:18760 PLAYWRIGHT_BASE_URL=http://127.0.0.1:13680 FRONTEND_ORIGIN=http://127.0.0.1:13680 pnpm exec playwright test e2e/goal-e-unified-ui.spec.ts --project=chromium",
     "node scripts/generate-tapd-gongfeng-sop-final-acceptance.mjs",
     "node scripts/tapd-gongfeng-sop-gap-audit.mjs",
@@ -105,16 +121,28 @@ const artifact = {
     goal_c_issue_timeline: goalCSlicePath,
     goal_d_skill_chain: goalDSkillPath,
     gongfeng_touchpoint_audit: gongfengAuditPath,
+    canonical_demo: canonicalDemoPath,
+    real_pm_0105_model_run: realPMRunPath,
   },
   ids: {
     issue_id: unifiedUI?.issue?.id || finalAcceptance?.e2e?.issue?.id || null,
     project_id: unifiedUI?.project?.id || null,
     workspace_slug: unifiedUI?.workspace?.slug || null,
+    canonical_issue_id: canonicalDemo?.issue?.id || null,
     prompt_evaluation_asset_id: unifiedUI?.prompt_evaluation?.asset_id || goalDSkill?.asset_id || null,
     failed_run_id: unifiedUI?.prompt_evaluation?.failed_run_id || goalDSkill?.failed_run_id || null,
     candidate_id: unifiedUI?.prompt_evaluation?.candidate_id || goalDSkill?.candidate_id || null,
     re_eval_run_id: unifiedUI?.prompt_evaluation?.re_eval_run_id || goalDSkill?.re_eval_run_id || null,
   },
+  canonical_demo: canonicalDemo ? {
+    issue_id: canonicalDemo.issue?.id || null,
+    role_task_count: canonicalDemo.role_task_evidence?.length || 0,
+    failed_run_id: canonicalDemo.prompt_evaluation?.failed_run_id || null,
+    candidate_id: canonicalDemo.prompt_evaluation?.candidate_id || null,
+    re_eval_run_id: canonicalDemo.prompt_evaluation?.re_eval_run_id || null,
+    proof_boundary: canonicalDemo.boundary || null,
+  } : null,
+  real_pm_0105_model_run: realPMRun || null,
   urls_or_api_paths: {
     issue: unifiedUI?.issue?.id && unifiedUI?.workspace?.slug ? `/${unifiedUI.workspace.slug}/issues/${unifiedUI.issue.id}` : null,
     run_history: unifiedUI?.prompt_evaluation?.failed_run_id && unifiedUI?.workspace?.slug

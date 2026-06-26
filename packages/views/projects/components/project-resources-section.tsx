@@ -7,16 +7,25 @@ import {
   FolderGit,
   FolderOpen,
   GitBranch,
+  Loader2,
   Pencil,
   Plus,
+  Power,
+  PowerOff,
+  RefreshCw,
   Search,
   Trash2,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { toast } from "sonner";
 import {
   projectResourcesOptions,
   useCreateProjectResource,
   useDeleteProjectResource,
+  useDisableProjectResource,
+  useEnableProjectResource,
+  useSyncProjectResource,
+  useTestProjectResource,
   useUpdateProjectResource,
 } from "@multica/core/projects";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -88,6 +97,10 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const createResource = useCreateProjectResource(wsId, projectId);
   const updateResource = useUpdateProjectResource(wsId, projectId);
   const deleteResource = useDeleteProjectResource(wsId, projectId);
+  const testResource = useTestProjectResource(wsId, projectId);
+  const syncResource = useSyncProjectResource(wsId, projectId);
+  const disableResource = useDisableProjectResource(wsId, projectId);
+  const enableResource = useEnableProjectResource(wsId, projectId);
 
   // Desktop-only entry points. We hide (not just disable) on web so users
   // there don't see an action they can never complete — the spec calls for
@@ -221,6 +234,52 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
     }
   };
 
+  const handleTest = async (resource: ProjectResource) => {
+    try {
+      await testResource.mutateAsync(resource.id);
+      toast.success(t(($) => $.resources.toast_tested));
+    } catch (err) {
+      toast.error(
+        err instanceof Error && err.message
+          ? err.message
+          : t(($) => $.resources.toast_test_failed),
+      );
+    }
+  };
+
+  const handleSync = async (resource: ProjectResource) => {
+    try {
+      await syncResource.mutateAsync(resource.id);
+      toast.success(t(($) => $.resources.toast_synced));
+    } catch (err) {
+      toast.error(
+        err instanceof Error && err.message
+          ? err.message
+          : t(($) => $.resources.toast_sync_failed),
+      );
+    }
+  };
+
+  const handleToggle = async (resource: ProjectResource) => {
+    if (!isGongfengRef(resource)) return;
+    const disabled = Boolean(resource.resource_ref.disabled);
+    try {
+      if (disabled) {
+        await enableResource.mutateAsync(resource.id);
+        toast.success(t(($) => $.resources.toast_enabled));
+      } else {
+        await disableResource.mutateAsync(resource.id);
+        toast.success(t(($) => $.resources.toast_disabled));
+      }
+    } catch (err) {
+      toast.error(
+        err instanceof Error && err.message
+          ? err.message
+          : t(($) => $.resources.toast_toggle_failed),
+      );
+    }
+  };
+
   const handleRenameLocalDirectory = async (
     resource: ProjectResource & { resource_ref: LocalDirectoryResourceRef },
     nextLabel: string,
@@ -276,6 +335,15 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                   localDaemonId={localDaemonId}
                   canEdit={desktopMode}
                   onRemove={() => handleRemove(resource)}
+                  onTest={() => handleTest(resource)}
+                  onSync={() => handleSync(resource)}
+                  onToggle={() => handleToggle(resource)}
+                  pendingAction={
+                    testResource.isPending ||
+                    syncResource.isPending ||
+                    disableResource.isPending ||
+                    enableResource.isPending
+                  }
                   onRenameLocalDirectory={handleRenameLocalDirectory}
                 />
               ))}
@@ -411,6 +479,10 @@ interface ResourceRowProps {
   localDaemonId: string | null;
   canEdit: boolean;
   onRemove: () => void;
+  onTest: () => void;
+  onSync: () => void;
+  onToggle: () => void;
+  pendingAction: boolean;
   onRenameLocalDirectory: (
     resource: ProjectResource & { resource_ref: LocalDirectoryResourceRef },
     nextLabel: string,
@@ -422,6 +494,10 @@ function ResourceRow({
   localDaemonId,
   canEdit,
   onRemove,
+  onTest,
+  onSync,
+  onToggle,
+  pendingAction,
   onRenameLocalDirectory,
 }: ResourceRowProps) {
   const { t } = useT("projects");
@@ -452,6 +528,7 @@ function ResourceRow({
       { label: "同步", value: ref.sync_status },
       { label: "测试", value: ref.test_status },
     ].filter((item): item is { label: string; value: string } => Boolean(item.value));
+    const disabled = Boolean(ref.disabled);
     return (
       <div className="flex items-start gap-2 rounded-md px-1.5 py-1 text-xs group hover:bg-accent/40">
         <GitBranch className="mt-0.5 size-3.5 text-muted-foreground shrink-0" />
@@ -498,14 +575,33 @@ function ResourceRow({
             </div>
           </TooltipContent>
         </Tooltip>
-        <button
-          type="button"
-          onClick={onRemove}
-          className="opacity-0 group-hover:opacity-100 transition-opacity rounded-sm p-0.5 hover:bg-accent"
-          title={t(($) => $.resources.remove_tooltip)}
-        >
-          <Trash2 className="size-3 text-muted-foreground" />
-        </button>
+        <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+          <IconAction
+            title={t(($) => $.resources.test_tooltip)}
+            disabled={pendingAction || disabled}
+            onClick={onTest}
+            icon={pendingAction ? Loader2 : RefreshCw}
+            spin={pendingAction}
+          />
+          <IconAction
+            title={t(($) => $.resources.sync_tooltip)}
+            disabled={pendingAction || disabled}
+            onClick={onSync}
+            icon={RefreshCw}
+          />
+          <IconAction
+            title={disabled ? t(($) => $.resources.enable_tooltip) : t(($) => $.resources.disable_tooltip)}
+            disabled={pendingAction}
+            onClick={onToggle}
+            icon={disabled ? Power : PowerOff}
+          />
+          <IconAction
+            title={t(($) => $.resources.remove_tooltip)}
+            disabled={pendingAction}
+            onClick={onRemove}
+            icon={Trash2}
+          />
+        </div>
       </div>
     );
   }
@@ -524,6 +620,33 @@ function ResourceRow({
         <Trash2 className="size-3" />
       </button>
     </div>
+  );
+}
+
+function IconAction({
+  title,
+  icon: Icon,
+  onClick,
+  disabled,
+  spin,
+}: {
+  title: string;
+  icon: LucideIcon;
+  onClick: () => void;
+  disabled?: boolean;
+  spin?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="rounded-sm p-0.5 hover:bg-accent disabled:cursor-not-allowed disabled:opacity-40"
+      title={title}
+      aria-label={title}
+    >
+      <Icon className={`size-3 text-muted-foreground ${spin ? "animate-spin" : ""}`} />
+    </button>
   );
 }
 
@@ -553,6 +676,12 @@ function statusLabel(value: string): string {
       return "已停用";
     case "pending_verification":
       return "待验证";
+    case "needs_test":
+      return "待测试";
+    case "needs_sync":
+      return "待同步";
+    case "not_run":
+      return "未运行";
     case "seeded_for_remediation":
       return "已建档";
     case "requires_real_click_acceptance":
