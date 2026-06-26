@@ -179,6 +179,38 @@ func TestChildDoneNotificationIsIdempotent(t *testing.T) {
 	}
 }
 
+func TestChildDoneWaitsForAllSiblingChildren(t *testing.T) {
+	fx := newChildDoneFixture(t, "in_progress")
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":           "child-done sibling " + time.Now().Format(time.RFC3339Nano),
+		"status":          "in_progress",
+		"parent_issue_id": fx.parent.ID,
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("create sibling child: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var sibling IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&sibling); err != nil {
+		t.Fatalf("decode sibling: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, sibling.ID)
+	})
+
+	updateChildStatus(t, fx.child.ID, "done")
+	if got := countSystemCommentsOn(t, fx.parent.ID); got != 0 {
+		t.Fatalf("after first child done: expected parent to wait for sibling, got %d comments", got)
+	}
+
+	updateChildStatus(t, sibling.ID, "done")
+	if got := countSystemCommentsOn(t, fx.parent.ID); got != 1 {
+		t.Fatalf("after all children done: expected exactly 1 parent notification, got %d", got)
+	}
+}
+
 // TestChildReopenAndDoneFiresAgain — done → in_progress → done IS a real
 // new completion event and should produce a second notification. This
 // captures the "reopen + done counts as a new event" line from MUL-2538.
@@ -490,8 +522,8 @@ func TestCrossProjectChildrenWakeUserCenterParentSquad(t *testing.T) {
 	updateChildStatus(t, gatewayChildID, "done")
 	updateChildStatus(t, configChildID, "done")
 
-	if got := countSystemCommentsOn(t, parentID); got != 2 {
-		t.Fatalf("expected 2 child-completion comments on usercenter parent, got %d", got)
+	if got := countSystemCommentsOn(t, parentID); got != 1 {
+		t.Fatalf("expected 1 all-sibling child-completion comment on usercenter parent, got %d", got)
 	}
 	var comments []string
 	rows, err := testPool.Query(ctx, `
@@ -511,10 +543,10 @@ func TestCrossProjectChildrenWakeUserCenterParentSquad(t *testing.T) {
 		}
 		comments = append(comments, content)
 	}
-	if len(comments) != 2 {
-		t.Fatalf("expected 2 loaded comments, got %d", len(comments))
+	if len(comments) != 1 {
+		t.Fatalf("expected 1 loaded comment, got %d", len(comments))
 	}
-	for _, want := range []string{gatewayChild.Identifier, configChild.Identifier, "mention://squad/" + sq.SquadID} {
+	for _, want := range []string{configChild.Identifier, "mention://squad/" + sq.SquadID} {
 		joined := strings.Join(comments, "\n")
 		if !strings.Contains(joined, want) {
 			t.Errorf("expected parent comments to contain %q, got: %s", want, joined)

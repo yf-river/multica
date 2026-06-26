@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/events"
@@ -754,6 +755,49 @@ func (s *TaskService) EnqueueTaskForSquadLeader(ctx context.Context, issue db.Is
 	return s.enqueueMentionTask(ctx, issue, leaderID, triggerCommentID, true, false)
 }
 
+// EnqueueProjectOwnerApprovalTask asks a project lead agent to review a
+// backlog child issue before the issue's assigned SOP squad is allowed to run.
+// It deliberately does not use is_leader_task: the agent is acting as project
+// owner/reviewer, not as the issue assignee or squad leader.
+func (s *TaskService) EnqueueProjectOwnerApprovalTask(ctx context.Context, issue db.Issue, project db.Project) (db.AgentTaskQueue, error) {
+	if !project.LeadType.Valid || project.LeadType.String != "agent" || !project.LeadID.Valid {
+		return db.AgentTaskQueue{}, fmt.Errorf("project lead is not an agent")
+	}
+	agent, err := s.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+		ID:          project.LeadID,
+		WorkspaceID: project.WorkspaceID,
+	})
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("load project lead agent: %w", err)
+	}
+	if agent.ArchivedAt.Valid {
+		return db.AgentTaskQueue{}, fmt.Errorf("project lead agent is archived")
+	}
+	if !agent.RuntimeID.Valid {
+		return db.AgentTaskQueue{}, fmt.Errorf("project lead agent has no runtime")
+	}
+	task, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
+		AgentID:           agent.ID,
+		RuntimeID:         agent.RuntimeID,
+		IssueID:           issue.ID,
+		Priority:          priorityToInt(issue.Priority),
+		TriggerSummary:    pgtype.Text{String: fmt.Sprintf("Project owner approval review for %s", project.Title), Valid: true},
+		ForceFreshSession: pgtype.Bool{Bool: true, Valid: true},
+	})
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("create project owner approval task: %w", err)
+	}
+	slog.Info("project owner approval task enqueued",
+		"task_id", util.UUIDToString(task.ID),
+		"issue_id", util.UUIDToString(issue.ID),
+		"agent_id", util.UUIDToString(agent.ID),
+		"project_id", util.UUIDToString(project.ID),
+	)
+	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
+	s.NotifyTaskEnqueued(ctx, task)
+	return task, nil
+}
+
 func (s *TaskService) enqueueMentionTask(ctx context.Context, issue db.Issue, agentID pgtype.UUID, triggerCommentID pgtype.UUID, isLeader bool, forceFreshSession bool) (db.AgentTaskQueue, error) {
 	agent, err := s.Queries.GetAgent(ctx, agentID)
 	if err != nil {
@@ -852,6 +896,174 @@ func (s *TaskService) ensureSquadSOPRunForLeaderTask(ctx context.Context, issue 
 			"task_id", util.UUIDToString(task.ID),
 			"error", err)
 	}
+	if util.UUIDToString(run.LeaderTaskID) == util.UUIDToString(task.ID) {
+		s.enqueueSquadStageTasks(ctx, issue, squad, run, profile, task.ID)
+	}
+}
+
+type squadSOPStageStep struct {
+	Key     string
+	Name    string
+	RoleKey string
+}
+
+func (s *TaskService) enqueueSquadStageTasks(ctx context.Context, issue db.Issue, squad db.Squad, run db.SquadSopRun, profile []byte, leaderTaskID pgtype.UUID) {
+	steps := squadSOPProfileSteps(profile)
+	if len(steps) <= 1 {
+		return
+	}
+	members, err := s.Queries.ListSquadMembers(ctx, squad.ID)
+	if err != nil {
+		slog.Warn("squad SOP stage task planning skipped: list members failed",
+			"issue_id", util.UUIDToString(issue.ID),
+			"squad_id", util.UUIDToString(squad.ID),
+			"error", err)
+		return
+	}
+	for index, step := range steps {
+		if index == 0 {
+			continue
+		}
+		agentID, ok := squadStageAgentForStep(members, step)
+		if !ok {
+			slog.Warn("squad SOP stage task planning skipped: no agent for step",
+				"issue_id", util.UUIDToString(issue.ID),
+				"squad_id", util.UUIDToString(squad.ID),
+				"step_key", step.Key,
+				"role_key", step.RoleKey)
+			continue
+		}
+		agent, err := s.Queries.GetAgent(ctx, agentID)
+		if err != nil || agent.ArchivedAt.Valid || !agent.RuntimeID.Valid {
+			slog.Warn("squad SOP stage task planning skipped: agent unavailable",
+				"issue_id", util.UUIDToString(issue.ID),
+				"squad_id", util.UUIDToString(squad.ID),
+				"step_key", step.Key,
+				"agent_id", util.UUIDToString(agentID),
+				"error", err)
+			continue
+		}
+		summary := fmt.Sprintf("SOP stage %s: %s", step.Key, step.Name)
+		task, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
+			AgentID:           agentID,
+			RuntimeID:         agent.RuntimeID,
+			IssueID:           issue.ID,
+			Priority:          priorityToInt(issue.Priority),
+			TriggerSummary:    pgtype.Text{String: summary, Valid: true},
+			ParentTaskID:      leaderTaskID,
+			ForceFreshSession: pgtype.Bool{Bool: true, Valid: true},
+		})
+		if err != nil {
+			if isServiceUniqueViolation(err, "idx_one_pending_task_per_issue_agent") {
+				slog.Debug("squad SOP stage task planning skipped: stage task already pending",
+					"issue_id", util.UUIDToString(issue.ID),
+					"squad_id", util.UUIDToString(squad.ID),
+					"step_key", step.Key,
+					"agent_id", util.UUIDToString(agentID))
+				continue
+			}
+			slog.Warn("squad SOP stage task planning failed: create task",
+				"issue_id", util.UUIDToString(issue.ID),
+				"squad_id", util.UUIDToString(squad.ID),
+				"step_key", step.Key,
+				"agent_id", util.UUIDToString(agentID),
+				"error", err)
+			continue
+		}
+		if _, err := s.Queries.CreateSquadSOPStepEvent(ctx, db.CreateSquadSOPStepEventParams{
+			RunID:         run.ID,
+			WorkspaceID:   issue.WorkspaceID,
+			IssueID:       issue.ID,
+			SquadID:       squad.ID,
+			StepKey:       step.Key,
+			StepName:      step.Name,
+			RoleKey:       step.RoleKey,
+			EventType:     "步骤开始",
+			Status:        "待开始",
+			Reason:        "SOP 阶段任务已自动入队，等待对应 Agent 执行并回写阶段证据。",
+			CreatedByType: "system",
+			TaskID:        task.ID,
+		}); err != nil {
+			slog.Warn("squad SOP stage task planning failed: create event",
+				"run_id", util.UUIDToString(run.ID),
+				"task_id", util.UUIDToString(task.ID),
+				"step_key", step.Key,
+				"error", err)
+		}
+		s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
+		s.NotifyTaskEnqueued(ctx, task)
+	}
+}
+
+func isServiceUniqueViolation(err error, constraintName string) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		return false
+	}
+	return constraintName == "" || pgErr.ConstraintName == constraintName
+}
+
+func squadSOPProfileSteps(profile []byte) []squadSOPStageStep {
+	var obj map[string]any
+	if json.Unmarshal(profile, &obj) != nil || obj == nil {
+		return nil
+	}
+	rawSteps, _ := obj["steps"].([]any)
+	steps := make([]squadSOPStageStep, 0, len(rawSteps))
+	for _, raw := range rawSteps {
+		step, _ := raw.(map[string]any)
+		if step == nil {
+			continue
+		}
+		out := squadSOPStageStep{
+			Key:     firstSOPStringField(step, "key", "step_key", "id"),
+			Name:    firstSOPStringField(step, "name", "title", "label"),
+			RoleKey: firstSOPStringField(step, "role_key", "role"),
+		}
+		if out.Key != "" {
+			steps = append(steps, out)
+		}
+	}
+	return steps
+}
+
+func firstSOPStringField(obj map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if v, ok := obj[key].(string); ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+func squadStageAgentForStep(members []db.SquadMember, step squadSOPStageStep) (pgtype.UUID, bool) {
+	for _, member := range members {
+		if member.MemberType != "agent" {
+			continue
+		}
+		if squadMemberRoleMatchesStep(member.Role, step) {
+			return member.MemberID, true
+		}
+	}
+	return pgtype.UUID{}, false
+}
+
+func squadMemberRoleMatchesStep(role string, step squadSOPStageStep) bool {
+	normalizedRole := normalizeSOPRoleForMatch(role)
+	for _, candidate := range []string{step.RoleKey, step.Key, step.Name} {
+		if normalizedRole == normalizeSOPRoleForMatch(candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeSOPRoleForMatch(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, " ", "")
+	value = strings.ReplaceAll(value, "-", "")
+	value = strings.ReplaceAll(value, "_", "")
+	return value
 }
 
 func normalizeSquadSOPProfile(raw []byte) []byte {
@@ -1878,14 +2090,19 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 }
 
 // retryableReasons enumerates failure reasons that the auto-retry path is
-// allowed to act on. Agent-side errors (compile failures, model rejections,
-// etc.) are intentionally excluded — those are real problems that the user
-// should see, not infrastructure flakiness.
+// allowed to act on. Deterministic agent-side errors (compile failures,
+// unsupported models, auth, quota, malformed prompts, etc.) are intentionally
+// excluded. Transient provider failures are retryable because they have the
+// same user-facing shape as runtime/network flakiness and are bounded by the
+// task's max_attempts budget.
 var retryableReasons = map[string]bool{
-	"runtime_offline":           true,
-	"runtime_recovery":          true,
-	"timeout":                   true,
-	"codex_semantic_inactivity": true,
+	taskfailure.ReasonRuntimeOffline.String():                    true,
+	taskfailure.ReasonRuntimeRecovery.String():                   true,
+	taskfailure.ReasonTimeout.String():                           true,
+	"codex_semantic_inactivity":                                  true,
+	taskfailure.ReasonAgentProviderCapacityOrRateLimit.String():  true,
+	taskfailure.ReasonAgentProviderServerError.String():          true,
+	taskfailure.ReasonAgentProviderNetwork.String():              true,
 }
 
 func resumeUnsafeFailureReason(reason string) bool {

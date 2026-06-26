@@ -252,6 +252,7 @@ type AgentTaskResponse struct {
 	ProjectID        string                `json:"project_id,omitempty"`        // issue's project, when present
 	ProjectTitle     string                `json:"project_title,omitempty"`     // for surfacing in agent context
 	ProjectResources []ProjectResourceData `json:"project_resources,omitempty"` // resources attached to the project
+	SourceContext    *TaskSourceContext    `json:"source_context,omitempty"`    // structured source/MCP context for TAPD/Gongfeng-backed tasks
 	CreatedAt        string                `json:"created_at"`
 	PriorSessionID   string                `json:"prior_session_id,omitempty"` // session ID from a previous task on same issue
 	PriorWorkDir     string                `json:"prior_work_dir,omitempty"`   // work_dir from a previous task on same issue
@@ -325,6 +326,34 @@ type AgentTaskResponse struct {
 	// owning user; the daemon must not fall back to its own credential. See
 	// MUL-3292.
 	AuthToken string `json:"auth_token,omitempty"`
+}
+
+type TaskSourceContext struct {
+	Provider            string                                   `json:"provider,omitempty"`
+	URL                 string                                   `json:"url,omitempty"`
+	TAPD                *TAPDTaskSourceContext                   `json:"tapd,omitempty"`
+	ExternalCredentials map[string]TaskExternalCredentialContext `json:"external_credentials,omitempty"`
+}
+
+type TAPDTaskSourceContext struct {
+	WorkspaceID   string `json:"workspace_id,omitempty"`
+	ResourceType  string `json:"resource_type,omitempty"`
+	ResourceID    string `json:"resource_id,omitempty"`
+	FetchProvider string `json:"fetch_provider,omitempty"`
+	FetchStatus   string `json:"fetch_status,omitempty"`
+	FetchError    string `json:"fetch_error,omitempty"`
+}
+
+type TaskExternalCredentialContext struct {
+	Provider      string `json:"provider"`
+	Scope         string `json:"scope"`
+	Inheritance   string `json:"inheritance"`
+	UserID        string `json:"user_id,omitempty"`
+	ProfileID     string `json:"profile_id,omitempty"`
+	ProfileName   string `json:"profile_name,omitempty"`
+	ProfileStatus string `json:"profile_status,omitempty"`
+	MCPServer     string `json:"mcp_server,omitempty"`
+	Configured    bool   `json:"configured"`
 }
 
 // ChatAttachmentMeta is the structured attachment metadata embedded in

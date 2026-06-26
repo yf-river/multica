@@ -851,6 +851,194 @@ func TestCreateIssueDefaultsToProjectLeadAgentAndEnqueues(t *testing.T) {
 	}
 }
 
+func TestProjectLeadMemberBacklogIssueRequiresApprovalBeforeSquadRuns(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	leaderAgentID := createHandlerTestAgent(t, "Project Approval Squad Leader", nil)
+
+	var squadID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
+		VALUES ($1, $2, '', $3, $4)
+		RETURNING id
+	`, testWorkspaceID, "Project Approval Squad "+fmt.Sprint(time.Now().UnixNano()), leaderAgentID, testUserID).Scan(&squadID); err != nil {
+		t.Fatalf("create squad: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title":     "Human lead approval project " + fmt.Sprint(time.Now().UnixNano()),
+		"lead_type": "member",
+		"lead_id":   testUserID,
+	})
+	testHandler.CreateProject(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var project ProjectResponse
+	json.NewDecoder(w.Body).Decode(&project)
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
+	})
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":         "Cross-service child waiting for owner approval",
+		"project_id":    project.ID,
+		"status":        "backlog",
+		"assignee_type": "squad",
+		"assignee_id":   squadID,
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var issue IssueResponse
+	json.NewDecoder(w.Body).Decode(&issue)
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issue.ID)
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issue.ID)
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issue.ID)
+	})
+	if issue.Status != "backlog" {
+		t.Fatalf("member-led issue status = %q, want backlog", issue.Status)
+	}
+	var inboxCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM inbox_item
+		WHERE issue_id = $1
+		  AND recipient_type = 'member'
+		  AND recipient_id = $2
+		  AND type = 'project_issue_approval_requested'
+	`, issue.ID, testUserID).Scan(&inboxCount); err != nil {
+		t.Fatalf("count approval inbox: %v", err)
+	}
+	if inboxCount != 1 {
+		t.Fatalf("approval inbox count = %d, want 1", inboxCount)
+	}
+	if got := countQueuedOrDispatched(t, leaderAgentID, issue.ID); got != 0 {
+		t.Fatalf("squad leader tasks before approval = %d, want 0", got)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("PUT", "/api/issues/"+issue.ID, map[string]any{"status": "todo"})
+	req = withURLParam(req, "id", issue.ID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateIssue approval: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := countQueuedOrDispatched(t, leaderAgentID, issue.ID); got != 1 {
+		t.Fatalf("squad leader tasks after approval = %d, want 1", got)
+	}
+}
+
+func TestProjectLeadAgentBacklogIssueCreatesReviewTaskBeforeSquadRuns(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	projectLeadAgentID := createHandlerTestAgent(t, "Project Review Approval Lead", nil)
+	leaderAgentID := createHandlerTestAgent(t, "Project Review Approval Squad Leader", nil)
+
+	var squadID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
+		VALUES ($1, $2, '', $3, $4)
+		RETURNING id
+	`, testWorkspaceID, "Project Review Approval Squad "+fmt.Sprint(time.Now().UnixNano()), leaderAgentID, testUserID).Scan(&squadID); err != nil {
+		t.Fatalf("create squad: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title":     "Agent review approval project " + fmt.Sprint(time.Now().UnixNano()),
+		"lead_type": "agent",
+		"lead_id":   projectLeadAgentID,
+	})
+	testHandler.CreateProject(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var project ProjectResponse
+	json.NewDecoder(w.Body).Decode(&project)
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
+	})
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":         "Cross-service child reviewed by agent owner",
+		"project_id":    project.ID,
+		"status":        "backlog",
+		"assignee_type": "squad",
+		"assignee_id":   squadID,
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var issue IssueResponse
+	json.NewDecoder(w.Body).Decode(&issue)
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issue.ID)
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issue.ID)
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issue.ID)
+	})
+	if issue.Status != "backlog" {
+		t.Fatalf("agent-led issue status = %q, want backlog", issue.Status)
+	}
+	if got := issue.Metadata["project_owner_approval_status"]; got != "pending" {
+		t.Fatalf("project_owner_approval_status = %v, want pending", got)
+	}
+	if got := issue.Metadata["project_owner_approval_mode"]; got != "agent_review_task" {
+		t.Fatalf("project_owner_approval_mode = %v, want agent_review_task", got)
+	}
+	if got := countQueuedOrDispatched(t, leaderAgentID, issue.ID); got != 0 {
+		t.Fatalf("squad leader tasks before agent review approval = %d, want 0", got)
+	}
+	reviewTasks := countQueuedOrDispatched(t, projectLeadAgentID, issue.ID)
+	if reviewTasks != 1 {
+		t.Fatalf("project lead review tasks = %d, want 1", reviewTasks)
+	}
+	var inboxCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM inbox_item
+		WHERE issue_id = $1 AND type = 'project_issue_approval_requested'
+	`, issue.ID).Scan(&inboxCount); err != nil {
+		t.Fatalf("count approval inbox: %v", err)
+	}
+	if inboxCount != 0 {
+		t.Fatalf("agent-led issue approval inbox count = %d, want 0", inboxCount)
+	}
+
+	var reviewTaskID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT id::text
+		FROM agent_task_queue
+		WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched')
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, issue.ID, projectLeadAgentID).Scan(&reviewTaskID); err != nil {
+		t.Fatalf("load review task id: %v", err)
+	}
+	w = httptest.NewRecorder()
+	req = newRequest("PUT", "/api/issues/"+issue.ID, map[string]any{"status": "todo"})
+	req = withURLParam(req, "id", issue.ID)
+	req.Header.Set("X-Agent-ID", projectLeadAgentID)
+	req.Header.Set("X-Task-ID", reviewTaskID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateIssue approval: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := countQueuedOrDispatched(t, leaderAgentID, issue.ID); got != 1 {
+		t.Fatalf("squad leader tasks after agent review approval = %d, want 1", got)
+	}
+}
+
 func TestCreateIssueRejectsActiveDuplicate(t *testing.T) {
 	ctx := context.Background()
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())

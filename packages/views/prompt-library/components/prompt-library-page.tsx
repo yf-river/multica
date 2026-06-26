@@ -2,11 +2,13 @@
 
 import { useCallback, useEffect, useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from "react";
 import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Archive, BookOpenText, CheckCircle, Download, Loader2, Play, Plus, Save, Search, Trash2, XCircle } from "lucide-react";
+import { Archive, BookOpenText, CheckCircle, Download, Loader2, Play, Plus, RefreshCw, Save, Search, Trash2, XCircle } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
+import { issueExecutionTreeOptions } from "@multica/core/issues/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
+import { projectListOptions, projectResourcesOptions } from "@multica/core/projects";
 import {
   TRAINING_WORKBENCH_VIEW_BY_TAB,
   trainingWorkbenchPath,
@@ -33,6 +35,7 @@ import type {
   PromptEvaluationCaseSortBy,
   PromptEvaluationRun,
   PromptEvaluationRunEvidence,
+  PromptEvaluationTrial,
   PromptEvaluationAssetEvidenceArchivePackage,
   PromptEvaluationRuntimeReadiness,
   PromptEvaluationSummary,
@@ -41,6 +44,10 @@ import type {
   PromptEvaluationDatasetVersionRow,
   PromptEvaluationDatasetVersionTagTrend,
   ObservabilitySummary,
+  IssueExecutionTreeResponse,
+  IssueTimelineNode,
+  Project,
+  ProjectResource,
   PromptLibraryItem,
   PromptLibraryStatus,
   PromptLibraryVersion,
@@ -105,6 +112,25 @@ type EvidenceFocus = {
 
 const RUN_STATUS_FILTERS: RunStatusFilter[] = ["全部", "已入队", "运行中", "通过", "未通过", "失败", "已取消", "需人工复核"];
 type DemoTimeRange = "24h" | "7d" | "30d" | "all";
+type TrainingOperationalLoopSummary = {
+  latestRun: PromptEvaluationRun | null;
+  failedRun: PromptEvaluationRun | null;
+  latestCandidate: PromptEvaluationOptimizationCandidate | null;
+  failedRunCount: number;
+  candidateCounts: {
+    pending: number;
+    published: number;
+    rejected: number;
+  };
+  issueAnchor: string;
+  usageBoundary: string;
+  skillState: {
+    label: string;
+    detail: string;
+    ok: boolean;
+  };
+  nextStep: string;
+};
 
 const DEMO_TIME_RANGES: Array<{ value: DemoTimeRange; label: string; sinceMs: number | null }> = [
   { value: "24h", label: "最近24小时", sinceMs: 24 * 60 * 60 * 1000 },
@@ -265,6 +291,7 @@ export function PromptLibraryPage({
     activeTab === "运行历史" ||
     activeTab === "优化运行";
   const needsCandidates = isDashboardTab || activeTab === "运行历史" || activeTab === "优化运行";
+  const needsSkillResources = activeTab === "优化运行";
   const needsRuntimeReadiness = isDashboardTab;
 
   const listQuery = useQuery({
@@ -312,6 +339,18 @@ export function PromptLibraryPage({
     queryFn: () => api.listPromptEvaluationOptimizationCandidates({ limit: 100 }),
     enabled: !!workspaceId && needsCandidates,
   });
+  const projectQuery = useQuery({
+    ...projectListOptions(workspaceId ?? ""),
+    enabled: !!workspaceId && needsSkillResources,
+  });
+  const projectResourceQueries = useQueries({
+    queries: (projectQuery.data ?? [])
+      .filter((project) => project.resource_count > 0)
+      .map((project) => ({
+        ...projectResourcesOptions(workspaceId ?? "", project.id),
+        enabled: !!workspaceId && needsSkillResources,
+      })),
+  });
   const summaryQuery = useQuery({
     queryKey: [...promptLibraryKeys.summary(workspaceId ?? ""), demoSince ?? "all"] as const,
     queryFn: () => api.getPromptEvaluationSummary({
@@ -339,6 +378,10 @@ export function PromptLibraryPage({
   const dimensionScoreTrends = dimensionScoreTrendQuery.data?.items ?? [];
   const runs = runQuery.data?.items ?? [];
   const candidates = candidateQuery.data?.items ?? [];
+  const skillResourceOptions = useMemo(
+    () => buildSkillResourceOptions(projectQuery.data ?? [], projectResourceQueries.map((query) => query.data ?? [])),
+    [projectQuery.data, projectResourceQueries],
+  );
   const summary = summaryQuery.data ?? null;
   const visiblePromptItems = items;
   const selectedFromList = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
@@ -993,6 +1036,15 @@ export function PromptLibraryPage({
     setActiveTab("运行历史");
     navigation.push(trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["运行历史"]));
   };
+  const openRunHistory = () => {
+    setRunStatusFilter("全部");
+    setActiveTab("运行历史");
+    navigation.push(trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["运行历史"]));
+  };
+  const openOptimizationRuns = () => {
+    setActiveTab("优化运行");
+    navigation.push(trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["优化运行"]));
+  };
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-background" data-testid="training-page-shell" data-training-view={activeViewId}>
@@ -1041,6 +1093,8 @@ export function PromptLibraryPage({
             cases={cases}
             candidates={visibleCandidatesForDashboard}
             onOpenManualReviewQueue={openManualReviewQueue}
+            onOpenRunHistory={openRunHistory}
+            onOpenOptimizationRuns={openOptimizationRuns}
           />
         </main>
       ) : shouldShowPromptEditor ? (
@@ -1258,6 +1312,7 @@ export function PromptLibraryPage({
                 runStatusFilter={runStatusFilter}
                 onRunStatusFilterChange={setRunStatusFilter}
                 candidates={candidates}
+                skillResources={skillResourceOptions}
                 loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || dimensionScoreSummaryQuery.isLoading || dimensionScoreTrendQuery.isLoading || experimentVersionsLoading || runQuery.isLoading || candidateQuery.isLoading}
                 saving={savingAsset}
                 onCreateAsset={createWorkbenchAsset}
@@ -1326,6 +1381,7 @@ export function PromptLibraryPage({
               runStatusFilter={runStatusFilter}
               onRunStatusFilterChange={setRunStatusFilter}
               candidates={candidates}
+              skillResources={skillResourceOptions}
               loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || dimensionScoreSummaryQuery.isLoading || dimensionScoreTrendQuery.isLoading || experimentVersionsLoading || runQuery.isLoading || candidateQuery.isLoading}
               saving={savingAsset}
               onCreateAsset={createWorkbenchAsset}
@@ -1396,6 +1452,8 @@ function DemoDashboardPanel({
   cases,
   candidates,
   onOpenManualReviewQueue,
+  onOpenRunHistory,
+  onOpenOptimizationRuns,
 }: {
   trainingSummary: PromptEvaluationSummary | null;
   trainingLoading: boolean;
@@ -1412,6 +1470,8 @@ function DemoDashboardPanel({
   cases: PromptEvaluationStructuredCase[];
   candidates: PromptEvaluationOptimizationCandidate[];
   onOpenManualReviewQueue: () => void;
+  onOpenRunHistory: () => void;
+  onOpenOptimizationRuns: () => void;
 }) {
   const trainingMetrics = trainingSummary?.指标 ?? {};
   const trainingAssets = trainingSummary?.资产统计 ?? {};
@@ -1433,6 +1493,7 @@ function DemoDashboardPanel({
   const readinessLabel = runtimeLoading ? "检查中" : runtimeReadiness.label;
   const activeRange = DEMO_TIME_RANGES.find((item) => item.value === timeRange) ?? DEFAULT_DEMO_TIME_RANGE;
   const sopStageRows = observabilitySummary?.sop_stage_breakdown ?? [];
+  const operationalLoop = buildTrainingOperationalLoopSummary(runs, candidates, cases);
 
   const trainingItems: Array<[string, string]> = [
     ["运行总数", formatNumber(runStatus["运行总数"])],
@@ -1507,6 +1568,13 @@ function DemoDashboardPanel({
         </div>
       )}
 
+      <TrainingOperationalLoopPanel
+        summary={operationalLoop}
+        onOpenRunHistory={onOpenRunHistory}
+        onOpenOptimizationRuns={onOpenOptimizationRuns}
+        onOpenManualReviewQueue={onOpenManualReviewQueue}
+      />
+
       <div className="grid gap-3 lg:grid-cols-2">
         <DemoMetricSection
           title="训练评估闭环"
@@ -1564,6 +1632,208 @@ function DemoDashboardPanel({
       </div>
     </section>
   );
+}
+
+function TrainingOperationalLoopPanel({
+  summary,
+  onOpenRunHistory,
+  onOpenOptimizationRuns,
+  onOpenManualReviewQueue,
+}: {
+  summary: TrainingOperationalLoopSummary;
+  onOpenRunHistory: () => void;
+  onOpenOptimizationRuns: () => void;
+  onOpenManualReviewQueue: () => void;
+}) {
+  const latestRunLabel = summary.latestRun
+    ? `${displayRunKind(summary.latestRun.run_kind)} · ${summary.latestRun.status} · ${shortId(summary.latestRun.id)}`
+    : "暂无运行";
+  const failureLabel = summary.failedRun
+    ? `${summary.failedRunCount} 个失败运行 · 最近 ${shortId(summary.failedRun.id)}`
+    : summary.failedRunCount > 0
+      ? `${summary.failedRunCount} 个失败运行`
+      : "暂无失败运行";
+  const candidateLabel = summary.latestCandidate
+    ? `${summary.candidateCounts.pending} 待确认 · ${summary.candidateCounts.published} 已发布 · ${summary.candidateCounts.rejected} 已拒绝 · 最近 ${shortId(summary.latestCandidate.id)}`
+    : "暂无优化候选";
+
+  return (
+    <section className="rounded-md border border-border/70 bg-background p-3" data-testid="training-operational-loop-panel">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <h3 className="text-sm font-semibold">运行闭环</h3>
+            <Badge variant={summary.skillState.ok ? "secondary" : "outline"}>{summary.skillState.label}</Badge>
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            最近运行、失败复盘、优化候选、Skill 发布、复测和用量边界使用同一批运行证据。
+          </p>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={onOpenRunHistory}>
+            运行历史
+          </Button>
+          <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={onOpenOptimizationRuns}>
+            优化运行
+          </Button>
+          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onOpenManualReviewQueue}>
+            人工复核
+          </Button>
+        </div>
+      </div>
+
+      <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-5">
+        <OperationalLoopFact
+          testId="training-operational-loop-run"
+          label="最近运行"
+          value={latestRunLabel}
+          detail={summary.latestRun ? summarizeLatestRunForDemo(summary.latestRun) : "需要先执行一次评估运行"}
+        />
+        <OperationalLoopFact
+          testId="training-operational-loop-failure"
+          label="失败复盘"
+          value={failureLabel}
+          detail={summary.failedRun?.failure_reason && summary.failedRun.failure_reason !== "无" ? truncateText(summary.failedRun.failure_reason, 64) : summary.issueAnchor}
+        />
+        <OperationalLoopFact
+          testId="training-operational-loop-candidate"
+          label="优化候选"
+          value={candidateLabel}
+          detail={summary.latestCandidate?.rationale ? truncateText(summary.latestCandidate.rationale, 72) : "失败运行还未生成候选"}
+        />
+        <OperationalLoopFact
+          testId="training-operational-loop-skill"
+          label="Skill 发布"
+          value={summary.skillState.label}
+          detail={summary.skillState.detail}
+        />
+        <OperationalLoopFact
+          testId="training-operational-loop-usage-boundary"
+          label="用量边界"
+          value={summary.usageBoundary}
+          detail="缺少真实 usage 时显式标记 unavailable"
+        />
+      </div>
+
+      <div className="mt-3 rounded-md border bg-muted/20 px-3 py-2 text-xs" data-testid="training-operational-loop-next-step">
+        <span className="font-medium text-foreground">下一步：</span>
+        <span className="text-muted-foreground">{summary.nextStep}</span>
+      </div>
+    </section>
+  );
+}
+
+function OperationalLoopFact({ testId, label, value, detail }: { testId: string; label: string; value: string; detail: string }) {
+  return (
+    <div className="min-w-0 rounded-md border bg-muted/10 px-3 py-2" data-testid={testId}>
+      <div className="truncate text-[11px] text-muted-foreground">{label}</div>
+      <div className="mt-1 truncate text-sm font-semibold">{value}</div>
+      <div className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">{detail}</div>
+    </div>
+  );
+}
+
+function buildTrainingOperationalLoopSummary(
+  runs: PromptEvaluationRun[],
+  candidates: PromptEvaluationOptimizationCandidate[],
+  cases: PromptEvaluationStructuredCase[],
+): TrainingOperationalLoopSummary {
+  const sortedRuns = [...runs].sort((a, b) => timestampOfRun(b) - timestampOfRun(a));
+  const sortedCandidates = [...candidates].sort((a, b) => timestampOfCandidate(b) - timestampOfCandidate(a));
+  const latestRun = sortedRuns[0] ?? null;
+  const failedRuns = sortedRuns.filter((run) => run.status === "未通过" || run.status === "失败" || run.failed_cases > 0);
+  const failedRun = failedRuns[0] ?? null;
+  const skillCandidate = sortedCandidates.find((candidate) => Boolean(candidate.skill_patch)) ?? sortedCandidates[0] ?? null;
+  const candidateCounts = {
+    pending: candidates.filter((candidate) => candidate.status === "待确认").length,
+    published: candidates.filter((candidate) => candidate.status === "已发布").length,
+    rejected: candidates.filter((candidate) => candidate.status === "已拒绝").length,
+  };
+  const skillEvidence = skillCandidate ? candidateSkillWorkflowEvidence(skillCandidate) : null;
+  const applyStatus = skillEvidence ? stringFromUnknown(skillEvidence.apply["status"]) : "";
+  const reEvalRunId = skillEvidence ? stringFromUnknown(skillEvidence.reEvalRun["run_id"]) || stringFromUnknown(skillEvidence.reEvalRun["id"]) : "";
+  const reEvalStatus = skillEvidence ? stringFromUnknown(skillEvidence.reEvalRun["status"]) || stringFromUnknown(skillEvidence.reEvalRun["run_status"]) : "";
+  const hasSkillPatch = Boolean(skillCandidate?.skill_patch);
+  const hasAppliedSkill = applyStatus === "applied";
+  const hasReEvalRun = Boolean(reEvalRunId || reEvalStatus);
+  const skillState = !skillCandidate
+    ? { label: "待生成候选", detail: `${cases.length} 个结构化用例可用于生成候选`, ok: false }
+    : !hasSkillPatch
+      ? { label: "候选待补丁", detail: `候选 ${shortId(skillCandidate.id)} 尚未绑定 skill_patch`, ok: false }
+      : !hasAppliedSkill
+        ? { label: "待 Apply", detail: `候选 ${shortId(skillCandidate.id)} 已有 diff/risk/validation`, ok: false }
+        : hasReEvalRun
+          ? { label: "已复测", detail: `apply ${applyStatus} · re-eval ${reEvalStatus || shortId(reEvalRunId)}`, ok: true }
+          : { label: "待复测", detail: `apply ${applyStatus}，尚未生成 re-eval run`, ok: false };
+  const issueAnchor = extractOperationalIssueAnchor(latestRun, failedRun);
+  const usageBoundary = summarizeRunUsageBoundary(latestRun);
+  const nextStep = nextTrainingOperationalStep({ latestRun, failedRun, skillCandidate, hasSkillPatch, hasAppliedSkill, hasReEvalRun });
+
+  return {
+    latestRun,
+    failedRun,
+    latestCandidate: skillCandidate,
+    failedRunCount: failedRuns.length,
+    candidateCounts,
+    issueAnchor,
+    usageBoundary,
+    skillState,
+    nextStep,
+  };
+}
+
+function nextTrainingOperationalStep({
+  latestRun,
+  failedRun,
+  skillCandidate,
+  hasSkillPatch,
+  hasAppliedSkill,
+  hasReEvalRun,
+}: {
+  latestRun: PromptEvaluationRun | null;
+  failedRun: PromptEvaluationRun | null;
+  skillCandidate: PromptEvaluationOptimizationCandidate | null;
+  hasSkillPatch: boolean;
+  hasAppliedSkill: boolean;
+  hasReEvalRun: boolean;
+}): string {
+  if (!latestRun) return "创建评估资产并执行一次运行，形成 run/trial/usage/evidence 基线。";
+  if (failedRun && !skillCandidate) return `打开运行历史复盘 ${shortId(failedRun.id)}，从失败用例生成优化候选。`;
+  if (skillCandidate && !hasSkillPatch) return `在优化运行中补齐候选 ${shortId(skillCandidate.id)} 的 diff、risk 和 validation plan。`;
+  if (skillCandidate && hasSkillPatch && !hasAppliedSkill) return `对候选 ${shortId(skillCandidate.id)} 执行 freshness、apply 和 CHANGELOG 写回。`;
+  if (skillCandidate && hasAppliedSkill && !hasReEvalRun) return `为候选 ${shortId(skillCandidate.id)} 准备 re-eval 资产并运行复测。`;
+  if (failedRun) return `复查失败运行 ${shortId(failedRun.id)} 与复测结果，确认是否发布或回滚。`;
+  return "当前闭环可复测，继续用新 issue/run 扩充样本。";
+}
+
+function summarizeRunUsageBoundary(run: PromptEvaluationRun | null): string {
+  if (!run) return "usage unavailable: 无运行";
+  const totalTokens = Number(run.input_tokens ?? 0) + Number(run.output_tokens ?? 0);
+  if (totalTokens > 0) return `${formatNumber(totalTokens)} token · ${formatMoney(run.estimated_cost)}`;
+  if (run.task_id) return "usage unavailable: task usage 未采集";
+  return "usage unavailable: 未绑定 task";
+}
+
+function extractOperationalIssueAnchor(...runs: Array<PromptEvaluationRun | null>): string {
+  for (const run of runs) {
+    if (!run) continue;
+    const evidence = isRecord(run.evidence) ? run.evidence : {};
+    const metrics = isRecord(run.metrics) ? run.metrics : {};
+    const direct = stringFromUnknown(evidence["issue_id"]) || stringFromUnknown(metrics["issue_id"]);
+    if (direct) return `Issue ${shortId(direct)}`;
+    const text = JSON.stringify({ evidence, metrics });
+    const match = text.match(/[0-9a-f]{8}-[0-9a-f-]{27,}/i);
+    if (match?.[0]) return `Issue ${shortId(match[0])}`;
+  }
+  return "未发现 issue 锚点";
+}
+
+function timestampOfRun(run: PromptEvaluationRun): number {
+  return Date.parse(run.completed_at || run.started_at || run.updated_at || run.created_at || "") || 0;
+}
+
+function timestampOfCandidate(candidate: PromptEvaluationOptimizationCandidate): number {
+  return Date.parse(candidate.updated_at || candidate.created_at || "") || 0;
 }
 
 function SOPStageBreakdownPanel({
@@ -1837,6 +2107,7 @@ function WorkbenchPanel({
   runStatusFilter,
   onRunStatusFilterChange,
   candidates,
+  skillResources,
   loading,
   saving,
   onCreateAsset,
@@ -1898,6 +2169,7 @@ function WorkbenchPanel({
   runStatusFilter: RunStatusFilter;
   onRunStatusFilterChange: (status: RunStatusFilter) => void;
   candidates: PromptEvaluationOptimizationCandidate[];
+  skillResources: SkillResourceOption[];
   loading: boolean;
   saving: boolean;
   onCreateAsset: (assetType: PromptEvaluationAssetType) => void;
@@ -1998,6 +2270,7 @@ function WorkbenchPanel({
           runStatusFilter={runStatusFilter}
           onRunStatusFilterChange={onRunStatusFilterChange}
           candidates={visibleCandidates}
+          skillResources={skillResources}
           loading={loading}
           onSyncRun={onSyncRun}
           syncingRunId={syncingRunId}
@@ -2075,6 +2348,7 @@ function WorkbenchPanel({
               />
               <OptimizationCandidateList
                 candidates={visibleCandidates}
+                skillResources={skillResources}
                 onUpdateCandidate={onUpdateCandidate}
                 updatingCandidateId={updatingCandidateId}
                 onPublishCandidate={onPublishCandidate}
@@ -2689,6 +2963,7 @@ function RunHistoryPanel({
   runStatusFilter,
   onRunStatusFilterChange,
   candidates,
+  skillResources,
   loading,
   onSyncRun,
   syncingRunId,
@@ -2710,6 +2985,7 @@ function RunHistoryPanel({
   runStatusFilter: RunStatusFilter;
   onRunStatusFilterChange: (status: RunStatusFilter) => void;
   candidates: PromptEvaluationOptimizationCandidate[];
+  skillResources: SkillResourceOption[];
   loading: boolean;
   onSyncRun: (runId: string) => void;
   syncingRunId: string | null;
@@ -2860,6 +3136,7 @@ function RunHistoryPanel({
                       snapshotsLoading={evidenceSnapshotQuery.isLoading || evidenceSnapshotQuery.isFetching}
                       loading={evidenceQuery.isLoading || evidenceQuery.isFetching}
                       error={evidenceQuery.isError}
+                      skillResources={skillResources}
                       evidenceFocus={evidenceFocus}
                       optimizationActions={{
                         canGenerate: canGenerateOptimizationCandidate(run),
@@ -3358,6 +3635,7 @@ function OptimizationStudioPanel({
                               snapshotsLoading={evidenceSnapshotQuery.isLoading || evidenceSnapshotQuery.isFetching}
                               loading={evidenceQuery.isLoading || evidenceQuery.isFetching}
                               error={evidenceQuery.isError}
+                              skillResources={[]}
                               creatingSnapshot={creatingEvidenceSnapshotRunId === run.id}
                               onCreateSnapshot={() => onCreateEvidenceSnapshot(run.id)}
                             />
@@ -3378,6 +3656,7 @@ function OptimizationStudioPanel({
 
 function OptimizationCandidateList({
   candidates,
+  skillResources,
   onUpdateCandidate,
   updatingCandidateId,
   onPublishCandidate,
@@ -3386,6 +3665,7 @@ function OptimizationCandidateList({
   rejectingCandidateId,
 }: {
   candidates: PromptEvaluationOptimizationCandidate[];
+  skillResources: SkillResourceOption[];
   onUpdateCandidate: (candidateId: string, data: UpdatePromptEvaluationOptimizationCandidateRequest) => void;
   updatingCandidateId: string | null;
   onPublishCandidate: (candidateId: string) => void;
@@ -3393,10 +3673,70 @@ function OptimizationCandidateList({
   onRejectCandidate: (candidateId: string, reason: string) => void;
   rejectingCandidateId: string | null;
 }) {
+  const workspaceId = useWorkspaceId();
+  const queryClient = useQueryClient();
   const [editingCandidateId, setEditingCandidateId] = useState<string | null>(null);
   const [rejectingDraftCandidateId, setRejectingDraftCandidateId] = useState<string | null>(null);
   const [drafts, setDrafts] = useState<Record<string, UpdatePromptEvaluationOptimizationCandidateRequest>>({});
   const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
+  const [skillDrafts, setSkillDrafts] = useState<Record<string, SkillCandidateWorkflowDraft>>({});
+  const [skillAction, setSkillAction] = useState<{ candidateId: string; action: SkillCandidateWorkflowAction } | null>(null);
+  const invalidateSkillWorkflow = useCallback(() => {
+    if (!workspaceId) return;
+    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.candidates(workspaceId) });
+    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId) });
+    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId) });
+    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId) });
+  }, [queryClient, workspaceId]);
+  const runSkillWorkflowAction = useCallback(async (
+    candidate: PromptEvaluationOptimizationCandidate,
+    action: SkillCandidateWorkflowAction,
+  ) => {
+    const draft = skillDrafts[candidate.id] ?? defaultSkillCandidateWorkflowDraft(candidate);
+    setSkillAction({ candidateId: candidate.id, action });
+    try {
+      if (action === "freshness") {
+        const result = await api.checkPromptEvaluationSkillCandidateFreshness(candidate.id, {
+          source_resource_id: draft.sourceResourceId || undefined,
+          repo_path: draft.repoPath.trim() || undefined,
+          target_branch: draft.targetBranch.trim() || undefined,
+          skill_path: draft.skillPath.trim() || undefined,
+        });
+        toast.success(`Skill freshness: ${result.status} / ${result.patch_check}`);
+      } else if (action === "apply") {
+        const result = await api.applyPromptEvaluationSkillCandidate(candidate.id, {
+          source_resource_id: draft.sourceResourceId || undefined,
+          repo_path: draft.repoPath.trim() || undefined,
+          target_branch: draft.targetBranch.trim() || undefined,
+          skill_path: draft.skillPath.trim() || undefined,
+          changelog_path: draft.changelogPath.trim() || undefined,
+          allow_dirty: draft.allowDirty,
+          skip_changelog: draft.skipChangelog,
+        });
+        toast.success(`Skill apply: ${result.apply.status}，re-eval ${result.apply.re_eval_required ? "required" : "not required"}`);
+      } else if (action === "prepare-re-eval") {
+        const result = await api.preparePromptEvaluationSkillReEvalAsset(candidate.id, {
+          source_resource_id: draft.sourceResourceId || undefined,
+          repo_path: draft.repoPath.trim() || undefined,
+          target_branch: draft.targetBranch.trim() || undefined,
+          skill_path: draft.skillPath.trim() || undefined,
+          include_draft: draft.includeDraft,
+        });
+        setSkillDrafts((prev) => ({ ...prev, [candidate.id]: { ...draft, reEvalAssetId: result.asset.id } }));
+        toast.success(`Skill re-eval asset ready: ${result.case_count} cases`);
+      } else {
+        const result = await api.runPromptEvaluationSkillReEval(candidate.id, {
+          asset_id: draft.reEvalAssetId.trim() || undefined,
+        });
+        toast.success(`Skill re-eval run: ${result.run.status}，${result.case_count} cases`);
+      }
+      invalidateSkillWorkflow();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Skill workflow action failed");
+    } finally {
+      setSkillAction(null);
+    }
+  }, [invalidateSkillWorkflow, skillDrafts]);
   if (candidates.length === 0) {
     return (
       <div className="rounded-md border border-dashed px-3 py-5 text-center text-sm text-muted-foreground">
@@ -3416,6 +3756,8 @@ function OptimizationCandidateList({
         const hasManualEdit = Boolean(candidateMetrics["人工编辑"]);
         const candidatePriority = stringFromRecord(candidateMetrics, "候选优先级");
         const weakDimensions = promptEvaluationCandidateWeakDimensions(candidateMetrics["失败维度"]);
+        const skillDraft = skillDrafts[candidate.id] ?? defaultSkillCandidateWorkflowDraft(candidate);
+        const skillEvidence = candidateSkillWorkflowEvidence(candidate);
         return (
           <div key={candidate.id} data-testid={`prompt-evaluation-candidate-${candidate.id}`} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
             <div className="min-w-0">
@@ -3443,6 +3785,16 @@ function OptimizationCandidateList({
               <div className="mt-1 break-all text-[11px] text-muted-foreground">
                 来源运行 {candidate.run_id}{candidate.published_prompt_id ? ` · 已发布 ${candidate.published_prompt_id}` : ""}
               </div>
+              <SkillCandidateWorkflowPanel
+                candidate={candidate}
+                draft={skillDraft}
+                evidence={skillEvidence}
+                resources={skillResources}
+                pendingAction={skillAction?.candidateId === candidate.id ? skillAction.action : null}
+                disabled={!canHandle}
+                onDraftChange={(next) => setSkillDrafts((prev) => ({ ...prev, [candidate.id]: next }))}
+                onRunAction={(action) => void runSkillWorkflowAction(candidate, action)}
+              />
               {editing && (
                 <div className="mt-3 grid gap-2 rounded-sm border border-border/70 bg-background px-2 py-2">
                   <label className="grid gap-1 text-xs">
@@ -3550,6 +3902,256 @@ function OptimizationCandidateList({
         );
       })}
     </div>
+  );
+}
+
+type SkillCandidateWorkflowAction = "freshness" | "apply" | "prepare-re-eval" | "run-re-eval";
+
+type SkillResourceOption = {
+  id: string;
+  projectTitle: string;
+  label: string;
+  resourceType: string;
+  repo: string;
+  repoPath: string;
+  branch: string;
+  detail: string;
+  requiresRepoPath: boolean;
+};
+
+type SkillCandidateWorkflowDraft = {
+  sourceResourceId: string;
+  repoPath: string;
+  targetBranch: string;
+  skillPath: string;
+  changelogPath: string;
+  reEvalAssetId: string;
+  includeDraft: boolean;
+  allowDirty: boolean;
+  skipChangelog: boolean;
+};
+
+type SkillCandidateWorkflowEvidence = {
+  snapshot: Record<string, unknown>;
+  freshness: Record<string, unknown>;
+  apply: Record<string, unknown>;
+  reEval: Record<string, unknown>;
+  reEvalRun: Record<string, unknown>;
+};
+
+function SkillCandidateWorkflowPanel({
+  candidate,
+  draft,
+  evidence,
+  resources,
+  pendingAction,
+  disabled,
+  onDraftChange,
+  onRunAction,
+}: {
+  candidate: PromptEvaluationOptimizationCandidate;
+  draft: SkillCandidateWorkflowDraft;
+  evidence: SkillCandidateWorkflowEvidence;
+  resources: SkillResourceOption[];
+  pendingAction: SkillCandidateWorkflowAction | null;
+  disabled: boolean;
+  onDraftChange: (draft: SkillCandidateWorkflowDraft) => void;
+  onRunAction: (action: SkillCandidateWorkflowAction) => void;
+}) {
+  const snapshotHash = stringFromUnknown(evidence.snapshot["skill_hash"]);
+  const freshnessStatus = stringFromUnknown(evidence.freshness["status"]) || "未检查";
+  const applyStatus = stringFromUnknown(evidence.apply["status"]) || "未应用";
+  const reEvalAssetId = draft.reEvalAssetId || stringFromUnknown(evidence.reEval["asset_id"]);
+  const reEvalRunId = stringFromUnknown(evidence.reEvalRun["run_id"]);
+  const canRunReEval = !disabled && Boolean(reEvalAssetId);
+  const selectedResource = resources.find((resource) => resource.id === draft.sourceResourceId) ?? null;
+  const skillPatch = asRecord(candidate.skill_patch);
+  const patchText = stringFromUnknown(skillPatch["patch"]);
+  const expectedImprovement = stringFromUnknown(skillPatch["expected_improvement"]);
+  const risk = stringFromUnknown(skillPatch["risk"]);
+  const verificationPlan = stringFromUnknown(skillPatch["verification_plan"]);
+  const patchHash = stringFromUnknown(skillPatch["patch_hash"]);
+  const publicationStatus = stringFromUnknown(skillPatch["publication_status"]);
+  return (
+    <section className="mt-3 grid gap-2 rounded-sm border border-border/70 bg-muted/10 px-2 py-2 text-xs" data-testid={`skill-candidate-workflow-${candidate.id}`}>
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="font-medium">Skill 发布链路</div>
+        <div className="flex flex-wrap gap-1">
+          <Badge variant={snapshotHash ? "secondary" : "outline"}>snapshot {shortId(snapshotHash) || "missing"}</Badge>
+          <Badge variant={freshnessStatus === "conflict" || freshnessStatus === "stale" ? "destructive" : "outline"}>{freshnessStatus}</Badge>
+          <Badge variant={applyStatus === "applied" ? "secondary" : applyStatus === "conflict" || applyStatus === "blocked" ? "destructive" : "outline"}>{applyStatus}</Badge>
+          {reEvalRunId && <Badge variant="secondary">re-eval {shortId(reEvalRunId)}</Badge>}
+        </div>
+      </div>
+      <label className="grid gap-1">
+        <span className="text-muted-foreground">项目资源</span>
+        <select
+          value={draft.sourceResourceId}
+          onChange={(event) => {
+            const nextResource = resources.find((resource) => resource.id === event.target.value) ?? null;
+            onDraftChange({
+              ...draft,
+              sourceResourceId: event.target.value,
+              repoPath: nextResource?.repoPath || draft.repoPath,
+              targetBranch: nextResource?.branch || draft.targetBranch,
+            });
+          }}
+          className="h-8 rounded-sm border border-input bg-background px-2 text-xs"
+        >
+          <option value="">手动填写本地 checkout</option>
+          {resources.map((resource) => (
+            <option key={resource.id} value={resource.id}>
+              {resource.label}
+            </option>
+          ))}
+        </select>
+        <span className="text-[11px] text-muted-foreground">
+          {selectedResource
+            ? `${selectedResource.detail}${selectedResource.requiresRepoPath ? " · 仍需填写本地 checkout" : ""}`
+            : "可选择 Gongfeng/local project resource；Gongfeng 资源当前仍需本地 checkout 承载读写。"}
+        </span>
+      </label>
+      <div className="grid gap-2 md:grid-cols-3">
+        <label className="grid gap-1">
+          <span className="text-muted-foreground">本地工蜂 checkout</span>
+          <Input
+            value={draft.repoPath}
+            onChange={(event) => onDraftChange({ ...draft, repoPath: event.target.value })}
+            placeholder="/data/ida/goal-test"
+            className="h-8 text-xs"
+          />
+        </label>
+        <label className="grid gap-1">
+          <span className="text-muted-foreground">目标分支</span>
+          <Input
+            value={draft.targetBranch}
+            onChange={(event) => onDraftChange({ ...draft, targetBranch: event.target.value })}
+            placeholder="v5.0.0_dev_sop"
+            className="h-8 text-xs"
+          />
+        </label>
+        <label className="grid gap-1">
+          <span className="text-muted-foreground">Skill 路径</span>
+          <Input
+            value={draft.skillPath}
+            onChange={(event) => onDraftChange({ ...draft, skillPath: event.target.value })}
+            placeholder=".codebuddy/skills/05-verify/SKILL.md"
+            className="h-8 text-xs"
+          />
+        </label>
+      </div>
+      <div className="grid gap-2 md:grid-cols-2">
+        <label className="grid gap-1">
+          <span className="text-muted-foreground">CHANGELOG 路径</span>
+          <Input
+            value={draft.changelogPath}
+            onChange={(event) => onDraftChange({ ...draft, changelogPath: event.target.value })}
+            placeholder="默认写入 skill 旁边 CHANGELOG.md"
+            className="h-8 text-xs"
+          />
+        </label>
+        <label className="grid gap-1">
+          <span className="text-muted-foreground">Re-eval 资产</span>
+          <Input
+            value={draft.reEvalAssetId}
+            onChange={(event) => onDraftChange({ ...draft, reEvalAssetId: event.target.value })}
+            placeholder={stringFromUnknown(evidence.reEval["asset_id"]) || "准备 re-eval 后自动填充"}
+            className="h-8 text-xs"
+          />
+        </label>
+      </div>
+      <div className="flex flex-wrap gap-3 text-[11px] text-muted-foreground">
+        <label className="inline-flex items-center gap-1.5">
+          <input
+            type="checkbox"
+            checked={draft.includeDraft}
+            onChange={(event) => onDraftChange({ ...draft, includeDraft: event.target.checked })}
+          />
+          re-eval 包含 draft case
+        </label>
+        <label className="inline-flex items-center gap-1.5">
+          <input
+            type="checkbox"
+            checked={draft.allowDirty}
+            onChange={(event) => onDraftChange({ ...draft, allowDirty: event.target.checked })}
+          />
+          允许 dirty worktree
+        </label>
+        <label className="inline-flex items-center gap-1.5">
+          <input
+            type="checkbox"
+            checked={draft.skipChangelog}
+            onChange={(event) => onDraftChange({ ...draft, skipChangelog: event.target.checked })}
+          />
+          跳过 CHANGELOG
+        </label>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <SkillWorkflowButton action="freshness" pendingAction={pendingAction} disabled={disabled} onRunAction={onRunAction}>
+          Freshness
+        </SkillWorkflowButton>
+        <SkillWorkflowButton action="apply" pendingAction={pendingAction} disabled={disabled} onRunAction={onRunAction}>
+          Apply + CHANGELOG
+        </SkillWorkflowButton>
+        <SkillWorkflowButton action="prepare-re-eval" pendingAction={pendingAction} disabled={disabled} onRunAction={onRunAction}>
+          Prepare re-eval
+        </SkillWorkflowButton>
+        <SkillWorkflowButton action="run-re-eval" pendingAction={pendingAction} disabled={!canRunReEval} onRunAction={onRunAction}>
+          Run re-eval
+        </SkillWorkflowButton>
+      </div>
+      <div className="grid gap-1 break-all text-[11px] text-muted-foreground md:grid-cols-2">
+        <div>base {shortId(stringFromUnknown(evidence.snapshot["base_commit"])) || "missing"} · path {draft.skillPath || stringFromUnknown(evidence.snapshot["skill_path"]) || "missing"}</div>
+        <div>re-eval asset {shortId(reEvalAssetId) || "missing"} · run {shortId(reEvalRunId) || "not run"}</div>
+      </div>
+      {(patchText || expectedImprovement || risk || verificationPlan || patchHash || publicationStatus) && (
+        <div className="grid gap-1 rounded border bg-background px-2 py-2 text-[11px] leading-5" data-testid={`skill-candidate-diff-risk-${candidate.id}`}>
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge variant={patchHash ? "secondary" : "outline"}>patch {shortId(patchHash) || "draft"}</Badge>
+            <Badge variant="outline">发布 {publicationStatus || "draft"}</Badge>
+          </div>
+          <div className="grid gap-1 md:grid-cols-3">
+            <div className="min-w-0">
+              <div className="font-medium text-foreground">预期改善</div>
+              <div className="mt-1 text-muted-foreground">{expectedImprovement || "未记录"}</div>
+            </div>
+            <div className="min-w-0">
+              <div className="font-medium text-foreground">风险</div>
+              <div className="mt-1 text-muted-foreground">{risk || "未记录"}</div>
+            </div>
+            <div className="min-w-0">
+              <div className="font-medium text-foreground">验证计划</div>
+              <div className="mt-1 text-muted-foreground">{verificationPlan || "未记录"}</div>
+            </div>
+          </div>
+          {patchText && (
+            <pre className="max-h-36 overflow-auto whitespace-pre-wrap rounded bg-muted/30 px-2 py-1 font-mono text-[11px] leading-5 text-foreground">{patchText}</pre>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function SkillWorkflowButton({
+  action,
+  pendingAction,
+  disabled,
+  children,
+  onRunAction,
+}: {
+  action: SkillCandidateWorkflowAction;
+  pendingAction: SkillCandidateWorkflowAction | null;
+  disabled: boolean;
+  children: ReactNode;
+  onRunAction: (action: SkillCandidateWorkflowAction) => void;
+}) {
+  const pending = pendingAction === action;
+  return (
+    <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={() => onRunAction(action)} disabled={disabled || pendingAction !== null}>
+      {pending ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+      {children}
+    </Button>
   );
 }
 
@@ -3701,6 +4303,112 @@ function candidateToDraft(candidate: PromptEvaluationOptimizationCandidate): Upd
   };
 }
 
+function defaultSkillCandidateWorkflowDraft(candidate: PromptEvaluationOptimizationCandidate): SkillCandidateWorkflowDraft {
+  const evidence = candidateSkillWorkflowEvidence(candidate);
+  const skillPatch = asRecord(candidate.skill_patch);
+  return {
+    sourceResourceId: stringFromUnknown(skillPatch["source_resource_id"]) || stringFromUnknown(evidence.snapshot["source_resource_id"]),
+    repoPath: stringFromUnknown(skillPatch["repo_path"]) || stringFromUnknown(evidence.snapshot["repo_path"]),
+    targetBranch: stringFromUnknown(evidence.freshness["target_branch"]) || stringFromUnknown(skillPatch["target_branch"]) || stringFromUnknown(evidence.snapshot["branch"]),
+    skillPath: stringFromUnknown(evidence.freshness["skill_path"]) || stringFromUnknown(skillPatch["skill_path"]) || stringFromUnknown(evidence.snapshot["skill_path"]),
+    changelogPath: stringFromUnknown(evidence.apply["changelog_path"]) || stringFromUnknown(skillPatch["changelog_path"]),
+    reEvalAssetId: stringFromUnknown(evidence.reEval["asset_id"]),
+    includeDraft: false,
+    allowDirty: false,
+    skipChangelog: false,
+  };
+}
+
+function buildSkillResourceOptions(projects: Project[], resourceGroups: ProjectResource[][]): SkillResourceOption[] {
+  const projectTitles = new Map(projects.map((project) => [project.id, project.title]));
+  return resourceGroups
+    .flat()
+    .filter((resource) => resource.resource_type === "gongfeng_repo" || resource.resource_type === "local_directory")
+    .filter((resource) => !isRecord(resource.resource_ref) || resource.resource_ref["disabled"] !== true)
+    .map((resource) => skillResourceOptionFromProjectResource(resource, projectTitles.get(resource.project_id) || "未命名项目"))
+    .filter((resource): resource is SkillResourceOption => resource !== null)
+    .sort((a, b) => `${a.projectTitle}:${a.label}`.localeCompare(`${b.projectTitle}:${b.label}`, "zh-Hans"));
+}
+
+function skillResourceOptionFromProjectResource(resource: ProjectResource, projectTitle: string): SkillResourceOption | null {
+  const ref = isRecord(resource.resource_ref) ? resource.resource_ref : {};
+  const resourceLabel = typeof resource.label === "string" && resource.label.trim() ? resource.label.trim() : "";
+  if (resource.resource_type === "gongfeng_repo") {
+    const repo = stringFromUnknown(ref["project_path"]) || stringFromUnknown(ref["url"]);
+    if (!repo) return null;
+    const branch = stringFromUnknown(ref["ref"]);
+    const title = resourceLabel || stringFromUnknown(ref["title"]) || repo;
+    return {
+      id: resource.id,
+      projectTitle,
+      label: `${projectTitle} · 工蜂 · ${title}`,
+      resourceType: resource.resource_type,
+      repo,
+      repoPath: "",
+      branch,
+      detail: `${projectTitle} · ${repo}${branch ? ` · ${branch}` : ""}`,
+      requiresRepoPath: true,
+    };
+  }
+  const repoPath = stringFromUnknown(ref["local_path"]);
+  if (!repoPath) return null;
+  const title = resourceLabel || stringFromUnknown(ref["label"]) || repoPath;
+  return {
+    id: resource.id,
+    projectTitle,
+    label: `${projectTitle} · 本地 · ${title}`,
+    resourceType: resource.resource_type,
+    repo: title,
+    repoPath,
+    branch: "HEAD",
+    detail: `${projectTitle} · ${repoPath}`,
+    requiresRepoPath: false,
+  };
+}
+
+function candidateSkillWorkflowEvidence(candidate: PromptEvaluationOptimizationCandidate): SkillCandidateWorkflowEvidence {
+  const metrics = isRecord(candidate.metrics) ? candidate.metrics : {};
+  const skillPatch = asRecord(candidate.skill_patch);
+  const apply = asRecord(metrics["skill_apply"]);
+  const freshness = firstRecord(asRecord(metrics["skill_freshness"]), asRecord(apply["freshness"]));
+  const reEval = asRecord(metrics["skill_re_eval"]);
+  const reEvalRun = asRecord(metrics["skill_re_eval_run"]);
+  const sourceSnapshot = isRecord(candidate.source_prompt_snapshot) ? candidate.source_prompt_snapshot : {};
+  const snapshot = firstRecord(
+    asRecord(apply["snapshot"]),
+    asRecord(freshness["snapshot"]),
+    asRecord(reEval["re_eval_snapshot"]),
+    asRecord(reEval["source_snapshot"]),
+    asRecord(skillPatch["source_snapshot"]),
+    asRecord(sourceSnapshot["skill_snapshot"]),
+    hasSkillSnapshotShape(sourceSnapshot) ? sourceSnapshot : {},
+  );
+  return {
+    snapshot,
+    freshness,
+    apply,
+    reEval,
+    reEvalRun,
+  };
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return isRecord(value) ? value : {};
+}
+
+function firstRecord(...values: Record<string, unknown>[]): Record<string, unknown> {
+  return values.find((value) => Object.keys(value).length > 0) ?? {};
+}
+
+function hasSkillSnapshotShape(value: Record<string, unknown>): boolean {
+  return Boolean(value["base_commit"] || value["skill_hash"] || value["skill_path"]);
+}
+
+function shortId(value: string): string {
+  if (!value) return "";
+  return value.length > 10 ? value.slice(0, 10) : value;
+}
+
 function promptEvaluationCandidateWeakDimensions(value: unknown): Array<{ name: string; priority: string; score: string }> {
   if (!Array.isArray(value)) return [];
   return value
@@ -3724,6 +4432,7 @@ function RunEvidencePanel({
   snapshotsLoading,
   loading,
   error,
+  skillResources = [],
   evidenceFocus = EMPTY_EVIDENCE_FOCUS,
   optimizationActions,
   creatingSnapshot,
@@ -3734,6 +4443,7 @@ function RunEvidencePanel({
   snapshotsLoading: boolean;
   loading: boolean;
   error: boolean;
+  skillResources?: SkillResourceOption[];
   evidenceFocus?: EvidenceFocus;
   optimizationActions?: FailureReviewActions;
   creatingSnapshot: boolean;
@@ -3798,6 +4508,8 @@ function RunEvidencePanel({
 
       <EvidenceContextPanel context={evidence.上下文} />
       <EvidenceAnchorSummary evidence={evidence} evidenceFocus={evidenceFocus} />
+      <IssueRunReviewPanel evidence={evidence} />
+      <IssueRunEvaluationPanel evidence={evidence} skillResources={skillResources} />
       <FailureReviewPanel evidence={evidence} evidenceFocus={evidenceFocus} actions={optimizationActions} />
       <ExecutionSpanTreePanel evidence={evidence} evidenceFocus={evidenceFocus} />
       <TraceEventTreePanel evidence={evidence} focusedTraceSeq={evidenceFocus.traceSeq} />
@@ -3879,6 +4591,538 @@ function RunEvidencePanel({
       </details>
     </div>
   );
+}
+
+function IssueRunReviewPanel({ evidence }: { evidence: PromptEvaluationRunEvidence }) {
+  const issueId = extractEvidenceIssueId(evidence);
+  const paths = useWorkspacePaths();
+  const treeQuery = useQuery({
+    ...issueExecutionTreeOptions(issueId ?? ""),
+    enabled: Boolean(issueId),
+  });
+  if (!issueId) return null;
+  if (treeQuery.isLoading || treeQuery.isFetching) {
+    return (
+      <section className="rounded-md border bg-background p-2 text-xs text-muted-foreground" data-testid="run-evidence-issue-review-loading">
+        正在加载关联 issue 运行复盘...
+      </section>
+    );
+  }
+  if (treeQuery.isError || !treeQuery.data) {
+    return (
+      <section className="rounded-md border border-dashed bg-background p-2 text-xs text-muted-foreground" data-testid="run-evidence-issue-review-unavailable">
+        关联 issue 运行复盘暂不可用：{issueId}
+      </section>
+    );
+  }
+  return <IssueRunReviewTree tree={treeQuery.data} issueId={issueId} issueHref={paths.issueDetail(issueId)} />;
+}
+
+function IssueRunEvaluationPanel({ evidence, skillResources }: { evidence: PromptEvaluationRunEvidence; skillResources: SkillResourceOption[] }) {
+  const workspaceId = useWorkspaceId();
+  const queryClient = useQueryClient();
+  const [createdCaseId, setCreatedCaseId] = useState<string | null>(null);
+  const [evalRun, setEvalRun] = useState<PromptEvaluationRun | null>(null);
+  const issueId = extractEvidenceIssueId(evidence);
+  const sourceTrial = selectIssueRunEvaluationTrial(evidence);
+  const canCreate = Boolean(issueId && sourceTrial);
+  const evalRunEvidenceQuery = useQuery({
+    queryKey: evalRun && workspaceId ? promptLibraryKeys.runEvidence(workspaceId, evalRun.id) : ["prompt-evaluation", "run-evidence", "disabled"],
+    queryFn: () => api.getPromptEvaluationRunEvidence(evalRun?.id ?? ""),
+    enabled: Boolean(evalRun?.id),
+  });
+  const createCaseMut = useMutation({
+    mutationFn: () => api.createPromptEvaluationCase(buildIssueRunEvaluationCaseRequest(evidence, issueId ?? "", sourceTrial)),
+    onSuccess: (item) => {
+      setCreatedCaseId(item.id);
+      if (workspaceId) {
+        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId) });
+        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId) });
+        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId) });
+      }
+      toast.success("已从运行复盘加入评测用例");
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "加入评测失败");
+    },
+  });
+  const runEvalMut = useMutation({
+    mutationFn: async () => {
+      await api.runPromptEvaluationAsset(evidence.run.asset_id);
+      const runs = (await api.listPromptEvaluationRuns({ asset_id: evidence.run.asset_id, limit: 10 })).items;
+      return runs.find((run) => run.id !== evidence.run.id) ?? runs[0] ?? null;
+    },
+    onSuccess: (run) => {
+      if (run) {
+        setEvalRun(run);
+        if (workspaceId) {
+          queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId, run.id) });
+        }
+      }
+      if (workspaceId) {
+        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId) });
+        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId) });
+        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId) });
+      }
+      toast.success(run ? `评测运行已生成：${run.status}` : "评测运行已生成");
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "运行评测失败");
+    },
+  });
+  if (!issueId) return null;
+  const canRunEval = Boolean(createdCaseId);
+  return (
+    <section className="grid gap-2 rounded-md border bg-background p-2 text-xs" data-testid="run-evidence-eval-link">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-medium text-muted-foreground">复盘加入评测</div>
+          <div className="mt-1 break-all text-[11px] leading-5 text-muted-foreground">
+            issue {issueId} · run {evidence.run.id} · asset {evidence.run.asset_id}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge variant={sourceTrial ? "secondary" : "outline"}>{sourceTrial ? `来源用例 ${sourceTrial.case_index + 1}` : "缺少 trial"}</Badge>
+          {createdCaseId && <Badge variant="secondary">case {shortId(createdCaseId)}</Badge>}
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => createCaseMut.mutate()}
+            disabled={!canCreate || createCaseMut.isPending}
+            data-testid="run-evidence-create-eval-case"
+          >
+            {createCaseMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+            加入评测
+          </Button>
+          <Button
+            size="sm"
+            variant="secondary"
+            onClick={() => runEvalMut.mutate()}
+            disabled={!canRunEval || runEvalMut.isPending}
+            data-testid="run-evidence-run-eval"
+          >
+            {runEvalMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
+            运行评测
+          </Button>
+        </div>
+      </div>
+      <div className="grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-3">
+        <div className="truncate">case 来源 {sourceTrial?.case_name || "未选择"}</div>
+        <div className="truncate">运行状态 {evidence.run.status}</div>
+        <div className="truncate">失败原因 {sourceTrial?.failure_reason || evidence.run.failure_reason || "无"}</div>
+      </div>
+      {createdCaseId && (
+        <div className="rounded border border-info/30 bg-info/5 px-2 py-1 text-[11px] leading-5 text-muted-foreground" data-testid="run-evidence-created-eval-case">
+          已创建评测用例 {createdCaseId}，可在数据集/测试套件用例列表继续确认、运行 eval 和生成优化候选。
+        </div>
+      )}
+      {evalRun && (
+        <div className="rounded border border-emerald-500/30 bg-emerald-500/5 px-2 py-1 text-[11px] leading-5 text-muted-foreground" data-testid="run-evidence-created-eval-run">
+          已生成评测运行 {evalRun.id}，状态 {evalRun.status}，用例 {evalRun.total_cases}，失败 {evalRun.failed_cases}。
+        </div>
+      )}
+      {evalRun && (
+        <IssueRunEvaluationReview
+          run={evalRun}
+          evidence={evalRunEvidenceQuery.data ?? null}
+          loading={evalRunEvidenceQuery.isLoading || evalRunEvidenceQuery.isFetching}
+          createdCaseId={createdCaseId}
+          skillResources={skillResources}
+        />
+      )}
+    </section>
+  );
+}
+
+function IssueRunEvaluationReview({
+  run,
+  evidence,
+  loading,
+  createdCaseId,
+  skillResources,
+}: {
+  run: PromptEvaluationRun;
+  evidence: PromptEvaluationRunEvidence | null;
+  loading: boolean;
+  createdCaseId: string | null;
+  skillResources: SkillResourceOption[];
+}) {
+  const trials = evidence?.trials ?? [];
+  const failedTrials = trials.filter((trial) => trial.status === "未通过" || trial.status === "失败" || trial.failure_reason);
+  const score = Number.isFinite(run.pass_rate) ? Math.round(run.pass_rate * 100) : 0;
+  const evidenceCount = (evidence?.trace_events.length ?? 0) + (evidence?.execution_spans.length ?? 0) + (evidence?.tool_call_chains.length ?? 0);
+  const workspaceId = useWorkspaceId();
+  const queryClient = useQueryClient();
+  const [skillDrafts, setSkillDrafts] = useState<Record<string, SkillCandidateWorkflowDraft>>({});
+  const [skillAction, setSkillAction] = useState<{ candidateId: string; action: SkillCandidateWorkflowAction } | null>(null);
+  const runCandidatesQuery = useQuery({
+    queryKey: workspaceId ? ["prompt-library", workspaceId, "optimization-candidates", "run", run.id] as const : ["prompt-library", "no-workspace", "optimization-candidates", "run", run.id] as const,
+    queryFn: () => api.listPromptEvaluationOptimizationCandidates({ run_id: run.id, limit: 5 }),
+    enabled: Boolean(workspaceId && run.id),
+  });
+  const candidate = runCandidatesQuery.data?.items[0] ?? null;
+  const invalidateRunCandidates = useCallback(() => {
+    if (!workspaceId) return;
+    queryClient.invalidateQueries({ queryKey: ["prompt-library", workspaceId, "optimization-candidates", "run", run.id] });
+    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.candidates(workspaceId) });
+    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId) });
+    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId) });
+    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId) });
+  }, [queryClient, run.id, workspaceId]);
+  const generateCandidateMut = useMutation({
+    mutationFn: () => api.createPromptEvaluationOptimizationCandidate(run.id),
+    onSuccess: () => {
+      invalidateRunCandidates();
+      toast.success("已从失败评测生成优化候选");
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "生成优化候选失败");
+    },
+  });
+  const runSkillWorkflowAction = useCallback(async (
+    item: PromptEvaluationOptimizationCandidate,
+    action: SkillCandidateWorkflowAction,
+  ) => {
+    const draft = skillDrafts[item.id] ?? defaultSkillCandidateWorkflowDraft(item);
+    setSkillAction({ candidateId: item.id, action });
+    try {
+      if (action === "freshness") {
+        const result = await api.checkPromptEvaluationSkillCandidateFreshness(item.id, {
+          source_resource_id: draft.sourceResourceId || undefined,
+          repo_path: draft.repoPath.trim() || undefined,
+          target_branch: draft.targetBranch.trim() || undefined,
+          skill_path: draft.skillPath.trim() || undefined,
+        });
+        toast.success(`Skill freshness: ${result.status} / ${result.patch_check}`);
+      } else if (action === "apply") {
+        const result = await api.applyPromptEvaluationSkillCandidate(item.id, {
+          source_resource_id: draft.sourceResourceId || undefined,
+          repo_path: draft.repoPath.trim() || undefined,
+          target_branch: draft.targetBranch.trim() || undefined,
+          skill_path: draft.skillPath.trim() || undefined,
+          changelog_path: draft.changelogPath.trim() || undefined,
+          allow_dirty: draft.allowDirty,
+          skip_changelog: draft.skipChangelog,
+        });
+        toast.success(`Skill apply: ${result.apply.status}，re-eval ${result.apply.re_eval_required ? "required" : "not required"}`);
+      } else if (action === "prepare-re-eval") {
+        const result = await api.preparePromptEvaluationSkillReEvalAsset(item.id, {
+          source_resource_id: draft.sourceResourceId || undefined,
+          repo_path: draft.repoPath.trim() || undefined,
+          target_branch: draft.targetBranch.trim() || undefined,
+          skill_path: draft.skillPath.trim() || undefined,
+          include_draft: draft.includeDraft,
+        });
+        setSkillDrafts((prev) => ({ ...prev, [item.id]: { ...draft, reEvalAssetId: result.asset.id } }));
+        toast.success(`Skill re-eval asset ready: ${result.case_count} cases`);
+      } else {
+        const result = await api.runPromptEvaluationSkillReEval(item.id, {
+          asset_id: draft.reEvalAssetId.trim() || undefined,
+        });
+        toast.success(`Skill re-eval run: ${result.run.status}，${result.case_count} cases`);
+      }
+      invalidateRunCandidates();
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : "Skill workflow action failed");
+    } finally {
+      setSkillAction(null);
+    }
+  }, [invalidateRunCandidates, skillDrafts]);
+  return (
+    <div className="grid gap-2 rounded border border-border/70 bg-muted/10 px-2 py-2" data-testid="run-evidence-eval-run-review">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="font-medium text-muted-foreground">评测结果复盘</div>
+        <div className="flex flex-wrap items-center gap-1">
+          <Badge variant={run.status === "通过" ? "secondary" : run.failed_cases > 0 ? "destructive" : "outline"}>{run.status}</Badge>
+          <Badge variant="outline">评分 {score}%</Badge>
+          <Badge variant={failedTrials.length > 0 ? "destructive" : "outline"}>失败 {failedTrials.length}</Badge>
+          <Badge variant={evidenceCount > 0 ? "secondary" : "outline"}>证据 {evidenceCount}</Badge>
+          <Button
+            size="sm"
+            variant="secondary"
+            className="h-7 text-xs"
+            onClick={() => generateCandidateMut.mutate()}
+            disabled={run.failed_cases <= 0 || generateCandidateMut.isPending || candidate !== null}
+            data-testid="run-evidence-generate-candidate"
+          >
+            {generateCandidateMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+            生成候选
+          </Button>
+        </div>
+      </div>
+      <div className="grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-4">
+        <div className="truncate">eval run {shortId(run.id)}</div>
+        <div className="truncate">case {shortId(createdCaseId ?? "") || "未记录"}</div>
+        <div className="truncate">trial {loading ? "加载中" : trials.length}</div>
+        <div className="truncate">耗时 {formatEvidenceMilliseconds(run.total_duration_ms)}</div>
+      </div>
+      {loading ? (
+        <div className="rounded border border-dashed px-2 py-2 text-[11px] text-muted-foreground">正在加载 eval evidence...</div>
+      ) : trials.length === 0 ? (
+        <div className="rounded border border-dashed px-2 py-2 text-[11px] text-muted-foreground">暂无 eval trial 证据。</div>
+      ) : (
+        <div className="grid gap-1" data-testid="run-evidence-eval-trials">
+          {trials.slice(0, 4).map((trial) => (
+            <div key={trial.id} className="grid gap-1 rounded border bg-background px-2 py-1 text-[11px] leading-5 sm:grid-cols-[minmax(0,1fr)_80px_80px]">
+              <span className="truncate font-medium text-foreground" title={trial.case_name}>
+                {trial.case_name || `用例 ${trial.case_index + 1}`}
+              </span>
+              <span className="text-muted-foreground">{trial.status}</span>
+              <span className="text-right tabular-nums text-muted-foreground">{formatEvidenceMilliseconds(trial.duration_ms)}</span>
+              {(trial.failure_reason || trial.rendered_prompt) && (
+                <span className="min-w-0 truncate text-muted-foreground sm:col-span-3" title={trial.failure_reason || trial.rendered_prompt}>
+                  {trial.failure_reason || trial.rendered_prompt}
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
+      {candidate && (
+        <div className="grid gap-1 rounded border border-info/30 bg-info/5 px-2 py-2 text-[11px] leading-5" data-testid="run-evidence-generated-candidate">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Badge variant="secondary" className="break-all">candidate {candidate.id}</Badge>
+            <Badge variant="outline">{candidate.status}</Badge>
+            <Badge variant="outline" className="break-all">来源 {candidate.run_id}</Badge>
+            <Badge variant={candidate.failed_case_count > 0 ? "destructive" : "outline"}>失败 {candidate.failed_case_count}</Badge>
+            <Button
+              size="sm"
+              variant="ghost"
+              className="h-6 px-2 text-[11px]"
+              onClick={() => runCandidatesQuery.refetch()}
+              disabled={runCandidatesQuery.isFetching}
+              data-testid="run-evidence-refresh-candidate"
+            >
+              {runCandidatesQuery.isFetching ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
+              刷新候选
+            </Button>
+          </div>
+          <div className="font-medium text-foreground">{candidate.candidate_name}</div>
+          <div className="text-muted-foreground">{candidate.rationale || "基于失败 eval run 生成，等待人工确认。"}</div>
+          <div className="max-h-20 overflow-auto whitespace-pre-wrap rounded bg-background px-2 py-1 text-muted-foreground">{candidate.candidate_content}</div>
+          <SkillCandidateWorkflowPanel
+            candidate={candidate}
+            draft={skillDrafts[candidate.id] ?? defaultSkillCandidateWorkflowDraft(candidate)}
+            evidence={candidateSkillWorkflowEvidence(candidate)}
+            resources={skillResources}
+            pendingAction={skillAction?.candidateId === candidate.id ? skillAction.action : null}
+            disabled={candidate.status !== "待确认"}
+            onDraftChange={(next) => setSkillDrafts((prev) => ({ ...prev, [candidate.id]: next }))}
+            onRunAction={(action) => void runSkillWorkflowAction(candidate, action)}
+          />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function selectIssueRunEvaluationTrial(evidence: PromptEvaluationRunEvidence): PromptEvaluationTrial | null {
+  return evidence.trials.find((trial) => trial.status === "未通过" || trial.status === "失败" || trial.failure_reason) ?? evidence.trials[0] ?? null;
+}
+
+function buildIssueRunEvaluationCaseRequest(
+  evidence: PromptEvaluationRunEvidence,
+  issueId: string,
+  trial: PromptEvaluationTrial | null,
+): CreatePromptEvaluationCaseRequest {
+  const caseIndex = Math.floor(Date.now() / 1000);
+  const sourceName = trial?.case_name || evidence.run.conclusion || "运行复盘评测样本";
+  const failureReason = trial?.failure_reason || evidence.run.failure_reason || "运行复盘未记录失败原因";
+  const expectedContains = [
+    "issue",
+    "evidence",
+    evidence.run.failed_cases > 0 ? "failure" : "acceptance",
+  ];
+  return {
+    asset_id: evidence.run.asset_id,
+    prompt_id: evidence.run.prompt_id,
+    case_index: caseIndex,
+    case_name: `Issue ${shortId(issueId)} · ${sourceName}`.slice(0, 120),
+    variables: {
+      issue_id: issueId,
+      run_id: evidence.run.id,
+      trial_id: trial?.id ?? "",
+      failure_reason: failureReason,
+    },
+    expected_contains: expectedContains,
+    input: {
+      来源: "run_evidence_issue_review",
+      issue_id: issueId,
+      run_id: evidence.run.id,
+      trial_id: trial?.id ?? "",
+      trial_case_index: trial?.case_index ?? null,
+      rendered_prompt: trial?.rendered_prompt ?? "",
+      trial_input: trial?.input ?? {},
+      run_status: evidence.run.status,
+      evidence_summary: {
+        task_id: evidence.run.task_id,
+        trace_events: evidence.trace_events.length,
+        spans: evidence.execution_spans.length,
+        tool_chains: evidence.tool_call_chains.length,
+      },
+    },
+    expected: {
+      期望行为: "基于 issue/run 复盘证据复现失败或验收判断，并保留 trace/evidence 回链。",
+      原始失败原因: failureReason,
+      来源证据: {
+        issue_id: issueId,
+        run_id: evidence.run.id,
+        trial_id: trial?.id ?? "",
+      },
+    },
+    tags: ["issue-review", "run-evidence", issueId, evidence.run.status],
+    status: "启用",
+  };
+}
+
+function IssueRunReviewTree({
+  tree,
+  issueId,
+  issueHref,
+}: {
+  tree: IssueExecutionTreeResponse;
+  issueId: string;
+  issueHref: string;
+}) {
+  const summary = tree.issue_summary;
+  const nodes = tree.timeline_nodes ?? [];
+  const preview = nodes.slice(0, 8);
+  const tokenTotal = summary
+    ? summary.total_input_tokens + summary.total_output_tokens + summary.total_cache_read_tokens + summary.total_cache_write_tokens
+    : 0;
+  const summaryCounts = tree.summary ?? {};
+  return (
+    <section className="grid gap-2 rounded-md border bg-background p-2 text-xs" data-testid="run-evidence-issue-review">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-medium text-muted-foreground">关联 Issue 运行复盘</div>
+          <div className="mt-1 break-all text-[11px] leading-5 text-muted-foreground">
+            issue {issueId} · 根任务 {tree.root.issue.identifier || tree.root.issue.id}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-1.5">
+          <Badge variant={nodes.length > 0 ? "secondary" : "outline"}>节点 {nodes.length}</Badge>
+          <Badge variant={tokenTotal > 0 ? "secondary" : "outline"}>token {tokenTotal.toLocaleString()}</Badge>
+          <Badge variant={summary?.usage_unavailable ? "destructive" : "outline"}>
+            {summary?.usage_unavailable ? "usage unavailable" : "usage checked"}
+          </Badge>
+          <AppLink
+            href={issueHref}
+            className="inline-flex h-7 items-center rounded-md bg-secondary px-2 text-xs font-medium text-secondary-foreground hover:bg-secondary/80"
+          >
+            打开 Issue
+          </AppLink>
+        </div>
+      </div>
+      <div className="grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
+        <div className="truncate">验收状态 {summary?.acceptance_status || "unknown"}</div>
+        <div className="truncate">总耗时 {formatEvidenceMilliseconds(summary?.total_duration_ms ?? 0)}</div>
+        <div className="truncate">消息 {summary?.message_count ?? 0} / 轮次 {summary?.agent_turn_count ?? 0}</div>
+        <div className="truncate">trace {summary?.trace_event_count ?? 0}</div>
+        <div className="truncate">子任务 {Number(summaryCounts["子任务数"] ?? 0)}</div>
+        <div className="truncate">SOP {Number(summaryCounts["SOP执行数"] ?? 0)} / 事件 {Number(summaryCounts["SOP事件数"] ?? 0)}</div>
+        <div className="truncate">工具 {Number(summaryCounts["工具调用数"] ?? 0)} / 异常 {Number(summaryCounts["异常工具数"] ?? 0)}</div>
+        <div className="truncate">证据锚点 {nodes.reduce((sum, node) => sum + node.evidence_refs.length, 0)}</div>
+      </div>
+      {summary?.failure_summary && (
+        <div className="rounded border border-destructive/30 bg-destructive/5 px-2 py-1 text-[11px] leading-5 text-destructive" data-testid="run-evidence-issue-review-failure">
+          失败摘要：{summary.failure_summary}
+        </div>
+      )}
+      <div className="overflow-hidden rounded border border-dashed border-border/70 bg-muted/10" data-testid="run-evidence-issue-review-nodes">
+        <div className="grid grid-cols-[92px_minmax(0,1fr)_76px_76px_80px] gap-2 border-b border-border/60 px-1.5 py-1 text-[11px] font-medium text-muted-foreground">
+          <span>节点</span>
+          <span>摘要</span>
+          <span className="text-right">耗时</span>
+          <span className="text-right">token</span>
+          <span className="text-right">证据</span>
+        </div>
+        {preview.length === 0 ? (
+          <div className="px-2 py-2 text-[11px] text-muted-foreground">暂无 issue timeline 节点。</div>
+        ) : (
+          preview.map((node) => <IssueRunReviewNodeRow key={node.node_id} node={node} />)
+        )}
+      </div>
+      {nodes.length > preview.length && (
+        <div className="text-[11px] leading-5 text-muted-foreground">还有 {nodes.length - preview.length} 个 issue timeline 节点未在预览中展示。</div>
+      )}
+    </section>
+  );
+}
+
+function IssueRunReviewNodeRow({ node }: { node: IssueTimelineNode }) {
+  const tokenTotal = node.input_tokens + node.output_tokens + node.cache_read_tokens + node.cache_write_tokens;
+  return (
+    <div className="grid grid-cols-[92px_minmax(0,1fr)_76px_76px_80px] gap-2 border-b border-border/40 px-1.5 py-1 text-[11px] leading-5 last:border-b-0">
+      <span className="truncate text-muted-foreground" title={node.node_type}>
+        {issueTimelineNodeTypeLabel(node.node_type)}
+      </span>
+      <span className="min-w-0 truncate text-foreground" title={node.summary}>
+        {node.summary || node.status}
+        {node.child_issue_id ? ` · child ${node.child_issue_id}` : ""}
+        {node.usage_unavailable_trace ? " · usage unavailable" : ""}
+      </span>
+      <span className="text-right tabular-nums text-muted-foreground">{formatEvidenceMilliseconds(node.duration_ms)}</span>
+      <span className="text-right tabular-nums text-muted-foreground">{tokenTotal > 0 ? tokenTotal.toLocaleString() : "-"}</span>
+      <span className="text-right tabular-nums text-muted-foreground">{node.evidence_refs.length}</span>
+    </div>
+  );
+}
+
+function issueTimelineNodeTypeLabel(type: IssueTimelineNode["node_type"]): string {
+  switch (type) {
+    case "agent_task":
+      return "Agent";
+    case "squad_step":
+      return "SOP";
+    case "tool_call":
+      return "工具";
+    case "evidence":
+      return "证据";
+    case "approval":
+      return "审批";
+    case "child_issue_ref":
+      return "子任务";
+    case "source_fetch":
+      return "来源";
+    case "status_change":
+      return "状态";
+  }
+}
+
+function extractEvidenceIssueId(evidence: PromptEvaluationRunEvidence): string | null {
+  const context = evidence.上下文 ?? {};
+  const candidates = [
+    context["issue"],
+    context["issue_id"],
+    evidence.evidence?.["issue_id"],
+    evidence.evidence?.["issue"],
+  ];
+  for (const candidate of candidates) {
+    const value = stringFromUnknown(candidate).trim();
+    if (value) return value;
+  }
+  for (const trial of evidence.trials ?? []) {
+    const trialCandidates = [
+      trial.input?.["issue_id"],
+      trial.input?.["issue"],
+      trial.evidence?.["issue_id"],
+      trial.evidence?.["issue"],
+      trial.rendered_prompt,
+      trial.case_name,
+    ];
+    for (const candidate of trialCandidates) {
+      const value = extractUuidFromUnknown(candidate);
+      if (value) return value;
+    }
+  }
+  return null;
+}
+
+function extractUuidFromUnknown(value: unknown): string {
+  const raw = stringFromUnknown(value);
+  const match = raw.match(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i);
+  return match?.[0] ?? "";
 }
 
 function EvidenceSnapshotBar({
@@ -4195,6 +5439,7 @@ function ExecutionSpanTreePanel({ evidence, evidenceFocus }: { evidence: PromptE
           <Badge variant={tokenMarked > 0 ? "secondary" : "outline"}>token标记 {tokenMarked}</Badge>
         </div>
       </div>
+      <ExecutionSpanTimeline spans={spans} runStartedAt={evidence.run.started_at || evidence.run.created_at} runDurationMs={evidence.run.total_duration_ms} />
       <ToolCallSummaryPanel rows={toolCallSummary} />
       <ToolCallChainPanel chains={toolCallChains} focusedToolChainId={evidenceFocus.toolChainId} />
       {spans.length === 0 ? (
@@ -4208,6 +5453,75 @@ function ExecutionSpanTreePanel({ evidence, evidenceFocus }: { evidence: PromptE
       )}
     </section>
   );
+}
+
+function ExecutionSpanTimeline({
+  spans,
+  runStartedAt,
+  runDurationMs,
+}: {
+  spans: PromptEvaluationRunEvidence["execution_spans"];
+  runStartedAt: string;
+  runDurationMs: number;
+}) {
+  if (spans.length === 0) return null;
+  const base = Date.parse(runStartedAt);
+  const hasTimeBase = Number.isFinite(base);
+  const maxEnd = Math.max(
+    runDurationMs,
+    ...spans.map((span, index) => {
+      const startOffset = hasTimeBase && span.created_at ? Math.max(0, Date.parse(span.created_at) - base) : index * 1000;
+      return startOffset + Math.max(span.duration_ms, 120);
+    }),
+  );
+  const total = Math.max(maxEnd, 1000);
+  return (
+    <div className="grid gap-1.5 rounded-md border bg-muted/10 p-2" data-testid="run-evidence-horizontal-timeline">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="font-medium text-muted-foreground">横向时序图</div>
+        <Badge variant={hasTimeBase ? "secondary" : "outline"}>
+          {hasTimeBase ? `跨度 ${formatEvidenceMilliseconds(total)}` : "按顺序展示"}
+        </Badge>
+      </div>
+      <div className="grid gap-1.5">
+        {spans.slice(0, 12).map((span, index) => {
+          const rawStart = hasTimeBase && span.created_at ? Date.parse(span.created_at) - base : index * Math.max(total / spans.length, 1);
+          const left = Math.max(0, Math.min(96, (rawStart / total) * 100));
+          const width = Math.max(4, Math.min(100 - left, (Math.max(span.duration_ms, 120) / total) * 100));
+          return (
+            <div key={span.id} className="grid gap-1 text-[11px] leading-5 sm:grid-cols-[132px_minmax(0,1fr)_92px] sm:items-center">
+              <div className="truncate text-muted-foreground" title={span.span_name}>
+                #{span.seq} {span.span_kind}
+              </div>
+              <div className="relative h-6 rounded border bg-background">
+                <div
+                  className={`absolute top-1 h-4 rounded ${span.status === "失败" || span.status === "failed" ? "bg-destructive/70" : span.token_total > 0 ? "bg-emerald-500/70" : "bg-info/70"}`}
+                  style={{ left: `${left}%`, width: `${width}%` }}
+                  title={`${span.span_name} · ${formatEvidenceMilliseconds(span.duration_ms)} · token ${span.token_total}`}
+                />
+              </div>
+              <div className="truncate text-right tabular-nums text-muted-foreground">
+                {formatEvidenceMilliseconds(span.duration_ms)} · {span.token_total > 0 ? `${span.token_total.toLocaleString()} tok` : span.status}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {spans.length > 12 && (
+        <div className="text-[11px] leading-5 text-muted-foreground">还有 {spans.length - 12} 个 span 未在时序图预览中展示</div>
+      )}
+    </div>
+  );
+}
+
+function formatEvidenceMilliseconds(ms: number): string {
+  if (!Number.isFinite(ms) || ms <= 0) return "0ms";
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  const seconds = Math.round(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const rest = seconds % 60;
+  return rest === 0 ? `${minutes}m` : `${minutes}m ${rest}s`;
 }
 
 function ToolCallSummaryPanel({ rows }: { rows: PromptEvaluationRunEvidence["tool_call_summary"] }) {

@@ -56,6 +56,7 @@ type Task struct {
 	ProjectID                string                `json:"project_id,omitempty"`                  // issue's project, when present
 	ProjectTitle             string                `json:"project_title,omitempty"`               // human-readable project title for context injection
 	ProjectResources         []ProjectResourceData `json:"project_resources,omitempty"`           // project-scoped resources to expose to the agent
+	SourceContext            *TaskSourceContext    `json:"source_context,omitempty"`              // structured source/MCP context for TAPD/Gongfeng-backed tasks
 	PriorSessionID           string                `json:"prior_session_id,omitempty"`            // Claude session ID from a previous task on this issue
 	PriorWorkDir             string                `json:"prior_work_dir,omitempty"`              // work_dir from a previous task on this issue
 	TriggerCommentID         string                `json:"trigger_comment_id,omitempty"`          // comment that triggered this task
@@ -109,6 +110,34 @@ type Task struct {
 	// Empty or non-task-scoped values are fatal for writable agent tasks; the
 	// daemon must not fall back to its own token. See MUL-3292.
 	AuthToken string `json:"auth_token,omitempty"`
+}
+
+type TaskSourceContext struct {
+	Provider            string                                   `json:"provider,omitempty"`
+	URL                 string                                   `json:"url,omitempty"`
+	TAPD                *TAPDTaskSourceContext                   `json:"tapd,omitempty"`
+	ExternalCredentials map[string]TaskExternalCredentialContext `json:"external_credentials,omitempty"`
+}
+
+type TAPDTaskSourceContext struct {
+	WorkspaceID   string `json:"workspace_id,omitempty"`
+	ResourceType  string `json:"resource_type,omitempty"`
+	ResourceID    string `json:"resource_id,omitempty"`
+	FetchProvider string `json:"fetch_provider,omitempty"`
+	FetchStatus   string `json:"fetch_status,omitempty"`
+	FetchError    string `json:"fetch_error,omitempty"`
+}
+
+type TaskExternalCredentialContext struct {
+	Provider      string `json:"provider"`
+	Scope         string `json:"scope"`
+	Inheritance   string `json:"inheritance"`
+	UserID        string `json:"user_id,omitempty"`
+	ProfileID     string `json:"profile_id,omitempty"`
+	ProfileName   string `json:"profile_name,omitempty"`
+	ProfileStatus string `json:"profile_status,omitempty"`
+	MCPServer     string `json:"mcp_server,omitempty"`
+	Configured    bool   `json:"configured"`
 }
 
 // ChatAttachmentMeta is the structured attachment metadata the daemon

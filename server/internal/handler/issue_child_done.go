@@ -66,6 +66,9 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 	if parent.Status == "done" || parent.Status == "cancelled" {
 		return
 	}
+	if !h.allSiblingChildrenResolved(ctx, parent.ID, issue.ID) {
+		return
+	}
 	// Human-assigned parents read their own timeline; an automated system
 	// comment is just noise and there is no agent task to trigger. Skip the
 	// whole notification (comment + mention + inbox row) — MUL-2538.
@@ -84,7 +87,7 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 	mentionPrefix := h.buildParentAssigneeMention(ctx, parent)
 
 	content := fmt.Sprintf(
-		"%s子任务 [%s](mention://issue/%s)「%s」已完成。提升任何等待中的 `backlog` 子任务前，请先阅读每个同级子任务的描述，只推进依赖条件已经满足的事项；不要只依赖父任务的高层拆解。如果同级子任务描述与父任务拆解冲突（例如它声明了父任务视为并行的前置条件），不要变更它的状态，请保持 `backlog` 并先评论确认。",
+		"%s子任务 [%s](mention://issue/%s)「%s」已完成，且同一父任务下所有子任务均已结束。请汇总子任务结果后再推进父任务验收；如果子任务结论之间存在冲突，先评论确认，不要直接收口。",
 		mentionPrefix, identifier, childID, title,
 	)
 
@@ -123,6 +126,24 @@ func (h *Handler) notifyParentOfChildDone(ctx context.Context, prev, issue db.Is
 	// title inert and gives the platform a single place to apply the loop
 	// and idempotency guards.
 	h.dispatchParentAssigneeTrigger(ctx, parent, issue, comment, actorType, actorID)
+}
+
+func (h *Handler) allSiblingChildrenResolved(ctx context.Context, parentID, completedChildID pgtype.UUID) bool {
+	var openSiblings int
+	if err := h.DB.QueryRow(ctx, `
+		SELECT count(*)::int
+		FROM issue
+		WHERE parent_issue_id = $1
+		  AND id <> $2
+		  AND status NOT IN ('done', 'cancelled')
+	`, parentID, completedChildID).Scan(&openSiblings); err != nil {
+		slog.Warn("child done: failed to count sibling children",
+			"error", err,
+			"parent_id", uuidToString(parentID),
+			"child_id", uuidToString(completedChildID))
+		return false
+	}
+	return openSiblings == 0
 }
 
 // sanitizeChildTitleForSystemComment removes mention-style markdown from a

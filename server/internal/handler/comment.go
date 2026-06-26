@@ -809,7 +809,8 @@ type commentAgentTrigger struct {
 }
 
 type commentTriggerComputeOptions struct {
-	ExcludeTriggerCommentID pgtype.UUID
+	ExcludeTriggerCommentID     pgtype.UUID
+	SuppressAssignedSquadLeader bool
 }
 
 func commentAgentTriggerReason(trigger commentAgentTrigger) string {
@@ -977,10 +978,12 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	// request, so an agent legitimately commenting on a different issue must
 	// not be blocked by its current task's trigger. Assignment-triggered
 	// tasks (no TriggerCommentID) are also unaffected.
+	var sourceTaskID pgtype.UUID
 	if authorType == "agent" {
 		if taskIDHeader := r.Header.Get("X-Task-ID"); taskIDHeader != "" {
 			taskUUID, parseErr := util.ParseUUID(taskIDHeader)
 			if parseErr == nil {
+				sourceTaskID = taskUUID
 				task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
 				if err == nil && task.IssueID.Valid && uuidToString(task.IssueID) == uuidToString(issue.ID) {
 					if task.TriggerCommentID.Valid {
@@ -1027,13 +1030,14 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 	}
 
 	comment, err := h.Queries.CreateComment(r.Context(), db.CreateCommentParams{
-		IssueID:     issue.ID,
-		WorkspaceID: issue.WorkspaceID,
-		AuthorType:  authorType,
-		AuthorID:    parseUUID(authorID),
-		Content:     req.Content,
-		Type:        req.Type,
-		ParentID:    parentID,
+		IssueID:      issue.ID,
+		WorkspaceID:  issue.WorkspaceID,
+		AuthorType:   authorType,
+		AuthorID:     parseUUID(authorID),
+		Content:      req.Content,
+		Type:         req.Type,
+		ParentID:     parentID,
+		SourceTaskID: sourceTaskID,
 	})
 	if err != nil {
 		slog.Warn("create comment failed", append(logger.RequestAttrs(r), "error", err, "issue_id", issueID)...)
@@ -1091,9 +1095,38 @@ func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, co
 	if isNoteComment(comment.Content) {
 		return
 	}
-	triggers := h.computeCommentAgentTriggers(ctx, issue, comment.Content, parentComment, actorType, actorID, commentTriggerComputeOptions{})
+	opts := commentTriggerComputeOptions{
+		SuppressAssignedSquadLeader: h.isSquadSOPWorkerStageComment(ctx, issue, comment),
+	}
+	triggers := h.computeCommentAgentTriggers(ctx, issue, comment.Content, parentComment, actorType, actorID, opts)
 	triggers = filterSuppressedCommentAgentTriggers(triggers, suppressAgentIDs)
 	h.enqueueCommentAgentTriggers(ctx, issue, comment.ID, triggers)
+}
+
+func (h *Handler) isSquadSOPWorkerStageComment(ctx context.Context, issue db.Issue, comment db.Comment) bool {
+	if !comment.SourceTaskID.Valid || comment.AuthorType != "agent" {
+		return false
+	}
+	task, err := h.Queries.GetAgentTask(ctx, comment.SourceTaskID)
+	if err != nil || !task.IssueID.Valid || uuidToString(task.IssueID) != uuidToString(issue.ID) {
+		return false
+	}
+	if task.IsLeaderTask {
+		return false
+	}
+	events, err := h.Queries.ListIssueSquadSOPStepEvents(ctx, db.ListIssueSquadSOPStepEventsParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		return false
+	}
+	for _, event := range events {
+		if event.TaskID.Valid && uuidToString(event.TaskID) == uuidToString(comment.SourceTaskID) {
+			return true
+		}
+	}
+	return false
 }
 
 func filterSuppressedCommentAgentTriggers(triggers []commentAgentTrigger, suppressAgentIDs []pgtype.UUID) []commentAgentTrigger {
@@ -1193,6 +1226,9 @@ func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issu
 }
 
 func (h *Handler) computeAssignedSquadLeaderCommentTrigger(ctx context.Context, issue db.Issue, content, authorType, authorID string, opts commentTriggerComputeOptions) (commentAgentTrigger, bool) {
+	if opts.SuppressAssignedSquadLeader {
+		return commentAgentTrigger{}, false
+	}
 	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
 		return commentAgentTrigger{}, false
 	}

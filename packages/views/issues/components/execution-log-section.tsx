@@ -6,7 +6,7 @@ import { Ban, CheckCircle2, ChevronRight, Loader2, RotateCcw, Square, XCircle } 
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { issueKeys, issueExecutionTreeOptions, issueTaskTraceOptions, issueSOPRunsOptions } from "@multica/core/issues/queries";
-import type { AgentTask, IssueExecutionNode, IssueExecutionTreeResponse, SquadSOPRun, TaskFailureReason, TaskTraceEvent } from "@multica/core/types";
+import type { AgentTask, IssueExecutionNode, IssueExecutionTreeResponse, IssueTimelineNode, SquadSOPRun, TaskFailureReason, TaskTraceEvent } from "@multica/core/types";
 import { useTimeAgo } from "../../i18n";
 import {
   Tooltip,
@@ -150,6 +150,8 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
               {activeTasks.length > 0 && (
                 <div className="my-1.5 border-t border-border/60" />
               )}
+              <IssueTimelineSummaryCard tree={executionTree} />
+              <div className="my-1.5 border-t border-border/60" />
               <CollaborationExecutionTree tree={executionTree} />
             </>
           )}
@@ -214,8 +216,95 @@ function hasMeaningfulExecutionTree(tree: IssueExecutionTreeResponse | undefined
     Number(summary["SOP执行数"] ?? 0) > 0 ||
     Number(summary["观测事件数"] ?? 0) > 0 ||
     Number(summary["工具调用数"] ?? 0) > 0 ||
-    Number(summary["唤醒评论数"] ?? 0) > 0
+    Number(summary["唤醒评论数"] ?? 0) > 0 ||
+    Number(tree.timeline_nodes?.length ?? 0) > 0
   );
+}
+
+function IssueTimelineSummaryCard({ tree }: { tree: IssueExecutionTreeResponse }) {
+  const nodes = tree.timeline_nodes ?? [];
+  const summary = tree.issue_summary;
+  if (nodes.length === 0 || !summary) return null;
+  const preview = nodes.slice(0, 6);
+  const tokenTotal = summary.total_input_tokens + summary.total_output_tokens + summary.total_cache_read_tokens + summary.total_cache_write_tokens;
+  return (
+    <div className="rounded-md border border-border/70 bg-muted/25 px-2 py-1.5" data-testid="issue-timeline-summary">
+      <div className="mb-1 flex items-center justify-between gap-2 text-[11px] text-muted-foreground">
+        <span>Issue 运行时间流</span>
+        <span className="font-mono tabular-nums">
+          {summary.node_count} 节点{tokenTotal > 0 ? ` / ${tokenTotal.toLocaleString()} tokens` : ""}
+        </span>
+      </div>
+      <div className="mb-1.5 grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-2">
+        <span className="truncate">总耗时 {formatNullableMilliseconds(summary.total_duration_ms)}</span>
+        <span className="truncate">消息 {summary.message_count} / 轮次 {summary.agent_turn_count}</span>
+        <span className="truncate">trace {summary.trace_event_count}</span>
+        <span className="truncate">验收 {summary.acceptance_status}</span>
+        {summary.usage_unavailable && (
+          <span className="truncate text-warning">存在 usage_unavailable_trace</span>
+        )}
+        {summary.failure_summary && (
+          <span className="truncate text-destructive">失败：{summary.failure_summary}</span>
+        )}
+      </div>
+      <div className="overflow-hidden rounded border border-dashed border-border/70 bg-background/45">
+        <div className="grid grid-cols-[88px_minmax(0,1fr)_72px_72px] gap-2 border-b border-border/60 px-1.5 py-1 text-[11px] font-medium text-muted-foreground">
+          <span>节点</span>
+          <span>摘要</span>
+          <span className="text-right">耗时</span>
+          <span className="text-right">token</span>
+        </div>
+        {preview.map((node) => (
+          <IssueTimelineNodeRow key={node.node_id} node={node} />
+        ))}
+      </div>
+      {nodes.length > preview.length && (
+        <div className="mt-1 text-[11px] leading-5 text-muted-foreground">
+          还有 {nodes.length - preview.length} 个时间流节点未展开
+        </div>
+      )}
+    </div>
+  );
+}
+
+function IssueTimelineNodeRow({ node }: { node: IssueTimelineNode }) {
+  const tokenTotal = node.input_tokens + node.output_tokens + node.cache_read_tokens + node.cache_write_tokens;
+  return (
+    <div className="grid grid-cols-[88px_minmax(0,1fr)_72px_72px] gap-2 border-b border-border/40 px-1.5 py-1 text-[11px] leading-5 last:border-b-0">
+      <span className="truncate text-muted-foreground" title={node.node_type}>
+        {timelineNodeTypeLabel(node.node_type)}
+      </span>
+      <span className="min-w-0 truncate text-foreground" title={node.summary}>
+        {node.summary || node.status}
+        {node.child_issue_id ? ` · ${node.child_issue_id}` : ""}
+        {node.usage_unavailable_trace ? " · usage unavailable" : ""}
+        {node.evidence_refs.length > 0 ? ` · 证据 ${node.evidence_refs.length}` : ""}
+      </span>
+      <span className="text-right tabular-nums text-muted-foreground">{formatNullableMilliseconds(node.duration_ms)}</span>
+      <span className="text-right tabular-nums text-muted-foreground">{tokenTotal > 0 ? tokenTotal.toLocaleString() : "-"}</span>
+    </div>
+  );
+}
+
+function timelineNodeTypeLabel(type: IssueTimelineNode["node_type"]): string {
+  switch (type) {
+    case "agent_task":
+      return "Agent";
+    case "squad_step":
+      return "SOP";
+    case "tool_call":
+      return "工具";
+    case "evidence":
+      return "证据";
+    case "approval":
+      return "审批";
+    case "child_issue_ref":
+      return "子任务";
+    case "source_fetch":
+      return "来源";
+    case "status_change":
+      return "状态";
+  }
 }
 
 function CollaborationExecutionTree({ tree }: { tree: IssueExecutionTreeResponse }) {

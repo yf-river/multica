@@ -1,10 +1,13 @@
 package handler
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
@@ -232,13 +235,15 @@ func TestBuildSquadLeaderBriefing_FullSquad(t *testing.T) {
 		"阶段产物完整；测试证据完整；交接说明明确",
 		"归档口径：06-archive 不作为必跑阶段",
 		"先按 SOP 阶段链推进",
-		"跨项目子任务规则",
-		"--parent <当前 issue id>",
-		"--project <目标项目 id>",
-		"不要额外传 `--assignee` 或 `--assignee-id`",
-		"自动交给项目负责人",
-		"目标项目=gateway",
-		"目标项目=ida-deployment",
+			"跨项目子任务规则",
+			"--parent <当前 issue id>",
+			"--project <目标项目 id>",
+			"明确给出目标小队 UUID",
+			"--assignee-id <目标小队 UUID>",
+			"逐项核对“目标项目 UUID + 目标小队 UUID”映射",
+			"自动交给项目负责人",
+			"目标项目=gateway",
+			"目标项目=ida-deployment",
 		"## 小队说明 (Full Squad)",
 		"Always write tests.",
 		"`[@Helper One](mention://agent/" + helper1 + ")`",
@@ -303,9 +308,33 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 	}
 	var profile struct {
 		StageSkills []string `json:"stage_skills"`
+		MCPServers  []string `json:"mcp_servers"`
 	}
 	if err := json.Unmarshal(raw, &profile); err != nil {
 		t.Fatalf("unmarshal template profile: %v", err)
+	}
+	if !slices.Contains(profile.MCPServers, "mcp-server-tapd") || !slices.Contains(profile.MCPServers, "gongfeng") {
+		t.Fatalf("user-center template mcp_servers = %+v", profile.MCPServers)
+	}
+	for _, role := range template.Roles {
+		if len(role.MCPConfig) == 0 {
+			t.Fatalf("role %s missing MCPConfig", role.Key)
+		}
+		var mcp struct {
+			MCPServers map[string]json.RawMessage `json:"mcpServers"`
+		}
+		if err := json.Unmarshal(role.MCPConfig, &mcp); err != nil {
+			t.Fatalf("role %s MCPConfig invalid: %v", role.Key, err)
+		}
+		if _, ok := mcp.MCPServers["mcp-server-tapd"]; !ok {
+			t.Fatalf("role %s MCPConfig missing mcp-server-tapd: %s", role.Key, string(role.MCPConfig))
+		}
+		if _, ok := mcp.MCPServers["gongfeng"]; !ok {
+			t.Fatalf("role %s MCPConfig missing gongfeng: %s", role.Key, string(role.MCPConfig))
+		}
+		if strings.Contains(string(role.MCPConfig), "TAPD_ACCESS_TOKEN") {
+			t.Fatalf("role %s MCPConfig must not embed TAPD token env values: %s", role.Key, string(role.MCPConfig))
+		}
 	}
 	for _, skill := range profile.StageSkills {
 		if skill == "user-center/06-archive" {
@@ -320,12 +349,14 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 		"跨项目子任务规则",
 		"目标项目=gateway",
 		"目标项目=ida-deployment",
-		"--parent <当前 issue id>",
-		"--project <目标项目 id>",
-		"multica project list --output json",
-		"不要额外传 `--assignee` 或 `--assignee-id`",
-		"自动交给项目负责人",
-		"不要再为同一项工作 @mention 同一个负责人",
+			"--parent <当前 issue id>",
+			"--project <目标项目 id>",
+			"multica project list --output json",
+			"明确给出目标小队 UUID",
+			"--assignee-id <目标小队 UUID>",
+			"逐项核对“目标项目 UUID + 目标小队 UUID”映射",
+			"自动交给项目负责人",
+			"不要再为同一项工作 @mention 同一个负责人",
 		"归档口径：06-archive 不作为必跑阶段",
 	} {
 		if !strings.Contains(out, want) {
@@ -334,6 +365,312 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 	}
 	if strings.Contains(out, "user-center/06-archive") {
 		t.Fatalf("user-center SOP briefing must not include 06-archive in required stage skills\n--- output ---\n%s", out)
+	}
+}
+
+func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	ctx := context.Background()
+	cleanup := func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name = 'user-center 小队'`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND name LIKE 'user-center 小队 · %'`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE workspace_id = $1 AND name LIKE 'internal-user-center-codex-test-%'`, testWorkspaceID)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex user-center 小队测试运行时', '{}'::jsonb, $4, 'private', now())
+	`, testWorkspaceID, "internal-user-center-codex-daemon-"+randomID()[:8], "internal-user-center-codex-test-"+randomID()[:8], testUserID); err != nil {
+		t.Fatalf("create codex runtime: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/squads/internal-template", map[string]any{
+		"template_key": "user-center",
+	})
+	testHandler.EnsureInternalSquadTemplate(w, withURLParam(req, "workspaceId", testWorkspaceID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("ensure user-center internal squad status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	rows, err := testPool.Query(ctx, `
+		SELECT name, mcp_config
+		FROM agent
+		WHERE workspace_id = $1 AND name LIKE 'user-center 小队 · %'
+		ORDER BY name
+	`, testWorkspaceID)
+	if err != nil {
+		t.Fatalf("query user-center agents: %v", err)
+	}
+	defer rows.Close()
+	count := 0
+	for rows.Next() {
+		var name string
+		var raw []byte
+		if err := rows.Scan(&name, &raw); err != nil {
+			t.Fatalf("scan user-center agent: %v", err)
+		}
+		count++
+		var mcp struct {
+			MCPServers map[string]json.RawMessage `json:"mcpServers"`
+		}
+		if err := json.Unmarshal(raw, &mcp); err != nil {
+			t.Fatalf("%s mcp_config invalid: %v", name, err)
+		}
+		if _, ok := mcp.MCPServers["mcp-server-tapd"]; !ok {
+			t.Fatalf("%s mcp_config missing mcp-server-tapd: %s", name, string(raw))
+		}
+		if _, ok := mcp.MCPServers["gongfeng"]; !ok {
+			t.Fatalf("%s mcp_config missing gongfeng: %s", name, string(raw))
+		}
+		if strings.Contains(string(raw), "TAPD_ACCESS_TOKEN") {
+			t.Fatalf("%s mcp_config must not embed TAPD token env values: %s", name, string(raw))
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate user-center agents: %v", err)
+	}
+	if count != 6 {
+		t.Fatalf("user-center agent count = %d, want 6", count)
+	}
+
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent
+		SET model = 'stale-model-before-template-resync'
+		WHERE workspace_id = $1 AND name LIKE 'user-center 小队 · %'
+	`, testWorkspaceID); err != nil {
+		t.Fatalf("stale user-center agent models: %v", err)
+	}
+	w = httptest.NewRecorder()
+	overrideModel := "gpt-template-resync-test"
+	req = newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/squads/internal-template", map[string]any{
+		"template_key": "user-center",
+		"model":        overrideModel,
+	})
+	testHandler.EnsureInternalSquadTemplate(w, withURLParam(req, "workspaceId", testWorkspaceID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("re-ensure user-center internal squad status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var staleModelCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)::int
+		FROM agent
+		WHERE workspace_id = $1
+		  AND name LIKE 'user-center 小队 · %'
+		  AND model IS DISTINCT FROM $2
+	`, testWorkspaceID, overrideModel).Scan(&staleModelCount); err != nil {
+		t.Fatalf("count stale user-center agent models: %v", err)
+	}
+	if staleModelCount != 0 {
+		t.Fatalf("re-ensure left %d user-center agents on stale model", staleModelCount)
+	}
+}
+
+func TestUserCenterSquadAssignmentCreatesStageTasks(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	ctx := context.Background()
+	cleanup := func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id IN (SELECT id FROM issue WHERE workspace_id = $1 AND title LIKE 'user-center stage task test%')`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE workspace_id = $1 AND title LIKE 'user-center stage task test%'`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name = 'user-center 小队'`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND name LIKE 'user-center 小队 · %'`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE workspace_id = $1 AND name LIKE 'internal-user-center-stage-test-%'`, testWorkspaceID)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex user-center stage 测试运行时', '{}'::jsonb, $4, 'private', now())
+	`, testWorkspaceID, "internal-user-center-stage-daemon-"+randomID()[:8], "internal-user-center-stage-test-"+randomID()[:8], testUserID); err != nil {
+		t.Fatalf("create codex runtime: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/squads/internal-template", map[string]any{
+		"template_key": "user-center",
+	})
+	testHandler.EnsureInternalSquadTemplate(w, withURLParam(req, "workspaceId", testWorkspaceID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("ensure user-center internal squad status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var ensured InternalSquadTemplateResponse
+	if err := json.NewDecoder(w.Body).Decode(&ensured); err != nil {
+		t.Fatalf("decode ensure response: %v", err)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":         "user-center stage task test",
+		"assignee_type": "squad",
+		"assignee_id":   ensured.Squad.ID,
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode created issue: %v", err)
+	}
+
+	rows, err := testPool.Query(ctx, `
+		SELECT e.step_key, COALESCE(e.task_id::text, ''), count(tte.id)::int AS trace_count
+		FROM squad_sop_step_event e
+		LEFT JOIN task_trace_event tte ON tte.task_id = e.task_id
+		WHERE e.issue_id = $1 AND e.event_type = '步骤开始'
+		GROUP BY e.step_key, e.task_id
+	`, created.ID)
+	if err != nil {
+		t.Fatalf("query stage task evidence: %v", err)
+	}
+	defer rows.Close()
+	seen := map[string]struct {
+		TaskID     string
+		TraceCount int
+	}{}
+	for rows.Next() {
+		var stepKey, taskID string
+		var traceCount int
+		if err := rows.Scan(&stepKey, &taskID, &traceCount); err != nil {
+			t.Fatalf("scan stage evidence: %v", err)
+		}
+		seen[stepKey] = struct {
+			TaskID     string
+			TraceCount int
+		}{TaskID: taskID, TraceCount: traceCount}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate stage evidence: %v", err)
+	}
+	for _, stepKey := range []string{"pm", "01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"} {
+		got, ok := seen[stepKey]
+		if !ok {
+			t.Fatalf("missing SOP stage start event for %s; seen=%+v", stepKey, seen)
+		}
+		if strings.TrimSpace(got.TaskID) == "" {
+			t.Fatalf("stage %s missing task_id", stepKey)
+		}
+		if got.TraceCount == 0 {
+			t.Fatalf("stage %s task %s missing trace event", stepKey, got.TaskID)
+		}
+	}
+
+	var leaderTaskID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT id::text
+		FROM agent_task_queue
+		WHERE issue_id = $1 AND is_leader_task IS TRUE
+		ORDER BY created_at ASC
+		LIMIT 1
+	`, created.ID).Scan(&leaderTaskID); err != nil {
+		t.Fatalf("query leader task: %v", err)
+	}
+	var workerTaskCountBefore int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)::int
+		FROM agent_task_queue
+		WHERE issue_id = $1
+		  AND COALESCE(is_leader_task, false) IS FALSE
+		  AND status IN ('queued', 'dispatched')
+	`, created.ID).Scan(&workerTaskCountBefore); err != nil {
+		t.Fatalf("count worker tasks before duplicate planning: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent_task_queue
+		SET status = 'completed', completed_at = now()
+		WHERE id = $1
+	`, leaderTaskID); err != nil {
+		t.Fatalf("complete leader task: %v", err)
+	}
+	var stageOneTaskID, stageOneAgentID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT id::text, agent_id::text
+		FROM agent_task_queue
+		WHERE issue_id = $1 AND trigger_summary LIKE 'SOP stage 01-clarify:%'
+		ORDER BY created_at ASC
+		LIMIT 1
+	`, created.ID).Scan(&stageOneTaskID, &stageOneAgentID); err != nil {
+		t.Fatalf("query stage 01 task: %v", err)
+	}
+	var activeLeaderBeforeComment int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)::int
+		FROM agent_task_queue
+		WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+	`, created.ID, ensured.Squad.LeaderID).Scan(&activeLeaderBeforeComment); err != nil {
+		t.Fatalf("count active leader before stage comment: %v", err)
+	}
+	if activeLeaderBeforeComment != 0 {
+		t.Fatalf("precondition: expected no active leader task before stage comment, got %d", activeLeaderBeforeComment)
+	}
+	w = httptest.NewRecorder()
+	req = newRequest(http.MethodPost, "/api/issues/"+created.ID+"/comments", map[string]any{
+		"content": "01 阶段已完成澄清，回写阶段证据。",
+	})
+	req.Header.Set("X-Agent-ID", stageOneAgentID)
+	req.Header.Set("X-Task-ID", stageOneTaskID)
+	testHandler.CreateComment(w, withURLParam(req, "id", created.ID))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateComment from SOP worker stage: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var stageComment CommentResponse
+	if err := json.NewDecoder(w.Body).Decode(&stageComment); err != nil {
+		t.Fatalf("decode stage comment: %v", err)
+	}
+	if stageComment.SourceTaskID == nil || *stageComment.SourceTaskID != stageOneTaskID {
+		t.Fatalf("stage comment source_task_id = %v, want %s", stageComment.SourceTaskID, stageOneTaskID)
+	}
+	var activeLeaderAfterComment int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)::int
+		FROM agent_task_queue
+		WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+	`, created.ID, ensured.Squad.LeaderID).Scan(&activeLeaderAfterComment); err != nil {
+		t.Fatalf("count active leader after stage comment: %v", err)
+	}
+	if activeLeaderAfterComment != 0 {
+		t.Fatalf("SOP worker stage comment re-enqueued leader task; active leader tasks = %d", activeLeaderAfterComment)
+	}
+	if _, err := testPool.Exec(ctx, `
+		UPDATE squad_sop_run
+		SET leader_task_id = NULL
+		WHERE issue_id = $1 AND status IN ('待开始', '进行中', '已阻塞')
+	`, created.ID); err != nil {
+		t.Fatalf("detach leader task from SOP run: %v", err)
+	}
+	issue, err := testHandler.Queries.GetIssue(ctx, parseUUID(created.ID))
+	if err != nil {
+		t.Fatalf("load created issue: %v", err)
+	}
+	var logs bytes.Buffer
+	prevLogger := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	defer slog.SetDefault(prevLogger)
+	_, err = testHandler.TaskService.EnqueueTaskForSquadLeader(ctx, issue, parseUUID(ensured.Squad.LeaderID), pgtype.UUID{})
+	slog.SetDefault(prevLogger)
+	if err != nil {
+		t.Fatalf("second leader enqueue: %v", err)
+	}
+	if strings.Contains(logs.String(), "squad SOP stage task planning failed: create task") {
+		t.Fatalf("duplicate stage planning should be idempotent, got logs:\n%s", logs.String())
+	}
+	var workerTaskCountAfter int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)::int
+		FROM agent_task_queue
+		WHERE issue_id = $1
+		  AND COALESCE(is_leader_task, false) IS FALSE
+		  AND status IN ('queued', 'dispatched')
+	`, created.ID).Scan(&workerTaskCountAfter); err != nil {
+		t.Fatalf("count worker tasks after duplicate planning: %v", err)
+	}
+	if workerTaskCountAfter != workerTaskCountBefore {
+		t.Fatalf("duplicate planning changed worker task count: before=%d after=%d", workerTaskCountBefore, workerTaskCountAfter)
 	}
 }
 

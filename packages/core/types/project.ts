@@ -81,6 +81,15 @@ export interface GongfengRepoResourceRef {
   resource_kind: "project" | "branch" | "commits" | "commit" | "tag" | "file" | "merge_request";
   ref?: string;
   head_commit?: string;
+  branch?: string;
+  commit_sha?: string;
+  connection_status?: string;
+  sync_status?: string;
+  test_status?: string;
+  last_tested_at?: string;
+  last_synced_at?: string;
+  disabled?: boolean;
+  disabled_at?: string;
   title?: string;
 }
 

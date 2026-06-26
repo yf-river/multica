@@ -519,6 +519,7 @@ export interface PromptEvaluationOptimizationCandidate {
   source_failure_summary: Record<string, unknown>;
   source_prompt_snapshot: Record<string, unknown>;
   metrics: Record<string, unknown>;
+  skill_patch?: PromptEvaluationSkillPatch | null;
   status: PromptEvaluationOptimizationCandidateStatus;
   published_prompt_id: string | null;
   published_at: string;
@@ -527,11 +528,251 @@ export interface PromptEvaluationOptimizationCandidate {
   updated_at: string;
 }
 
+export interface PromptEvaluationSkillPatch {
+  schema_version: "multica.skill.patch.v1" | string;
+  patch: string;
+  patch_hash: string;
+  patch_bytes: number;
+  source_snapshot?: PromptEvaluationSkillSnapshot;
+  source_resource_id?: string;
+  repo_path?: string;
+  target_branch?: string;
+  skill_path?: string;
+  changelog_path?: string;
+  expected_improvement?: string;
+  risk?: string;
+  verification_plan?: string;
+  publication_status: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface CreatePromptEvaluationSkillInventoryRequest {
+  provider?: string;
+  repo?: string;
+  repo_path: string;
+  branch?: string;
+  skill_root?: string;
+  source_resource_id?: string;
+}
+
+export interface PromptEvaluationSkillInventoryItem {
+  skill_path: string;
+  skill_name: string;
+  skill_hash: string;
+  last_commit?: string;
+  last_commit_subject?: string;
+  last_updated_at?: string;
+  changelog_path?: string;
+  has_changelog: boolean;
+  tracked: boolean;
+}
+
+export interface PromptEvaluationSkillInventoryResult {
+  schema_version: "multica.skill.inventory.v1" | string;
+  provider: string;
+  repo: string;
+  repo_path?: string;
+  branch: string;
+  head_commit: string;
+  skill_root: string;
+  items: PromptEvaluationSkillInventoryItem[];
+  discovered_count: number;
+  snapshot_time: string;
+  source_resource_id?: string;
+}
+
+export interface PromptEvaluationSkillInventoryResponse {
+  asset: PromptEvaluationAsset;
+  inventory: PromptEvaluationSkillInventoryResult;
+}
+
+export interface CreatePromptEvaluationSkillSnapshotRequest {
+  provider?: string;
+  repo?: string;
+  repo_path: string;
+  branch?: string;
+  skill_path: string;
+  source_resource_id?: string;
+}
+
+export interface PromptEvaluationSkillSnapshot {
+  schema_version: "multica.skill.snapshot.v1" | string;
+  provider: string;
+  repo: string;
+  repo_path?: string;
+  branch: string;
+  base_commit: string;
+  skill_path: string;
+  skill_hash: string;
+  snapshot_time: string;
+  source_resource_id?: string;
+}
+
+export interface PromptEvaluationSkillSnapshotResult {
+  asset: PromptEvaluationAsset;
+  snapshot: PromptEvaluationSkillSnapshot;
+}
+
+export interface CreatePromptEvaluationSkillCaseDraftsRequest {
+  repo_path: string;
+  skill_path: string;
+  limit?: number;
+  auto_approve?: boolean;
+}
+
+export interface PromptEvaluationSkillCaseDraft {
+  schema_version: "multica.skill.case_draft.v1" | string;
+  status: "draft" | "approved" | string;
+  input: string;
+  expected_behavior: string;
+  verification: string;
+  evidence_source: string;
+  applicable_skill_hash?: string;
+  applicable_scope: string;
+  source_commit: string;
+  commit_subject: string;
+  skill_path: string;
+  before_hash?: string;
+  after_hash?: string;
+}
+
+export interface PromptEvaluationSkillCaseDraftsResult {
+  asset: PromptEvaluationAsset;
+  drafts: PromptEvaluationSkillCaseDraft[];
+  created_count: number;
+}
+
+export type PromptEvaluationSkillFreshnessStatus =
+  | "fresh"
+  | "branch_changed_skill_unchanged"
+  | "stale"
+  | "conflict"
+  | "rebaseable";
+
+export interface CheckPromptEvaluationSkillFreshnessRequest {
+  source_resource_id?: string;
+  repo_path?: string;
+  target_branch?: string;
+  skill_path?: string;
+  candidate_patch?: string;
+  snapshot?: PromptEvaluationSkillSnapshot;
+}
+
+export interface PromptEvaluationSkillFreshnessResult {
+  schema_version: "multica.skill.freshness.v1" | string;
+  status: PromptEvaluationSkillFreshnessStatus;
+  reason: string;
+  target_branch: string;
+  head_commit: string;
+  base_commit: string;
+  skill_path: string;
+  base_skill_hash: string;
+  current_skill_hash: string;
+  patch_check: "not_needed" | "missing_patch" | "conflict" | "applies" | string;
+  checked_at: string;
+  snapshot: PromptEvaluationSkillSnapshot;
+}
+
+export type PromptEvaluationSkillApplyStatus = "dry_run" | "applied" | "blocked" | "conflict";
+
+export interface ApplyPromptEvaluationSkillCandidateRequest {
+  source_resource_id?: string;
+  repo_path?: string;
+  target_branch?: string;
+  skill_path?: string;
+  candidate_patch?: string;
+  changelog_path?: string;
+  change_reason?: string;
+  verification_result?: string;
+  rollback_plan?: string;
+  dry_run?: boolean;
+  allow_dirty?: boolean;
+  skip_changelog?: boolean;
+  snapshot?: PromptEvaluationSkillSnapshot;
+}
+
+export interface PromptEvaluationSkillApplyResult {
+  schema_version: "multica.skill.apply.v1" | string;
+  status: PromptEvaluationSkillApplyStatus;
+  reason: string;
+  repo_path: string;
+  target_branch: string;
+  head_commit: string;
+  skill_path: string;
+  skill_hash_before: string;
+  skill_hash_after: string;
+  changelog_path?: string;
+  patch_check: "not_run" | "applies" | "conflict" | string;
+  freshness: PromptEvaluationSkillFreshnessResult;
+  changed_files: string[];
+  re_eval_required: boolean;
+  re_eval_plan: Record<string, unknown>;
+  checked_at: string;
+  applied_at?: string;
+  snapshot: PromptEvaluationSkillSnapshot;
+}
+
+export interface PromptEvaluationSkillApplyCandidateResponse {
+  candidate: PromptEvaluationOptimizationCandidate;
+  apply: PromptEvaluationSkillApplyResult;
+}
+
+export interface PreparePromptEvaluationSkillReEvalRequest {
+  source_resource_id?: string;
+  repo_path?: string;
+  target_branch?: string;
+  skill_path?: string;
+  name?: string;
+  description?: string;
+  statuses?: string[];
+  include_draft?: boolean;
+  snapshot?: PromptEvaluationSkillSnapshot;
+}
+
+export interface RunPromptEvaluationSkillReEvalRequest {
+  asset_id?: string;
+}
+
+export interface PromptEvaluationSkillReEvalCase {
+  name: string;
+  variables: Record<string, unknown>;
+  expected_contains: string[];
+  tags: string[];
+  input: Record<string, unknown>;
+  expected: Record<string, unknown>;
+  source_commit: string;
+  evidence_source: string;
+  status: string;
+}
+
+export interface PromptEvaluationSkillReEvalAssetResponse {
+  candidate: PromptEvaluationOptimizationCandidate;
+  asset: PromptEvaluationAsset;
+  source_snapshot: PromptEvaluationSkillSnapshot;
+  re_eval_snapshot: PromptEvaluationSkillSnapshot;
+  case_count: number;
+  cases: PromptEvaluationSkillReEvalCase[];
+  re_eval_plan: Record<string, unknown>;
+}
+
+export interface PromptEvaluationSkillReEvalRunResponse {
+  candidate: PromptEvaluationOptimizationCandidate;
+  asset: PromptEvaluationAsset;
+  run: PromptEvaluationRun;
+  source_snapshot: PromptEvaluationSkillSnapshot;
+  re_eval_snapshot: PromptEvaluationSkillSnapshot;
+  case_count: number;
+  proof_scope: string;
+  re_eval_run: Record<string, unknown>;
+}
+
 export interface UpdatePromptEvaluationOptimizationCandidateRequest {
   candidate_name: string;
   candidate_content: string;
   rationale?: string;
   edit_note?: string;
+  skill_patch?: Partial<PromptEvaluationSkillPatch> & { patch: string };
 }
 
 export interface PublishPromptEvaluationOptimizationCandidateResponse {

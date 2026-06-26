@@ -222,13 +222,13 @@ func TestWorkingOnIssuesSkillCoversIssueLoopContracts(t *testing.T) {
 	mustContain := []string{
 		"multica issue pull-requests <issue-id> --output json",
 		"Default for code-changing issue work",
-		"open or update a PR before posting the final Multica issue comment",
+		"open or update an MR before posting the final Multica issue comment",
 		"This is a default, not",
-		"Use a routable issue key in the PR title, body, or branch",
-		"include the PR URL when a PR exists",
+		"Use a routable issue key in the MR title, body, or branch",
+		"include the MR URL when an MR exists",
 		"Closes MUL-2759",
 		"--status backlog",
-		"pr_url",
+		"mr_url",
 		"references/working-on-issues-source-map.md",
 	}
 	for _, want := range mustContain {

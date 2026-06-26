@@ -180,6 +180,17 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.Metrics = opts.BusinessMetrics
 	h.TaskService.Metrics = opts.BusinessMetrics
 	h.IssueService.Metrics = opts.BusinessMetrics
+	if externalKey, err := secretbox.LoadKey("MULTICA_EXTERNAL_CREDENTIAL_KEY"); err == nil {
+		box, err := secretbox.New(externalKey)
+		if err != nil {
+			slog.Error("external credentials: secretbox.New failed; raw token writes disabled", "error", err)
+		} else {
+			h.ExternalCredentialBox = box
+			slog.Info("external credential profile encryption enabled")
+		}
+	} else {
+		slog.Info("external credential profile encryption disabled (MULTICA_EXTERNAL_CREDENTIAL_KEY not set); secret_ref bindings still supported")
+	}
 	if opts.DaemonWakeup != nil {
 		h.TaskService.Wakeup = opts.DaemonWakeup
 		if notifier, ok := opts.DaemonWakeup.(handler.RuntimeProfileRefreshNotifier); ok {
@@ -652,6 +663,15 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Delete("/{id}", h.RevokePersonalAccessToken)
 		})
 
+		r.Route("/api/external-credential-profiles", func(r chi.Router) {
+			r.Get("/", h.ListExternalCredentialProfiles)
+			r.Post("/", h.CreateExternalCredentialProfile)
+			r.Get("/{id}", h.GetExternalCredentialProfile)
+			r.Patch("/{id}", h.UpdateExternalCredentialProfile)
+			r.Put("/{id}", h.UpdateExternalCredentialProfile)
+			r.Delete("/{id}", h.DeleteExternalCredentialProfile)
+		})
+
 		// --- Workspace-scoped routes (all require workspace membership) ---
 		r.Group(func(r chi.Router) {
 			r.Use(middleware.RequireWorkspaceMember(queries))
@@ -701,6 +721,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/metadata", h.ListIssueMetadata)
 					r.Put("/metadata/{key}", h.SetIssueMetadataKey)
 					r.Delete("/metadata/{key}", h.DeleteIssueMetadataKey)
+					r.Post("/source-fetch", h.RecordIssueSourceFetch)
 					r.Get("/pull-requests", h.ListPullRequestsForIssue)
 				})
 			})
@@ -731,6 +752,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/resources", h.ListProjectResources)
 					r.Post("/resources", h.CreateProjectResource)
 					r.Put("/resources/{resourceId}", h.UpdateProjectResource)
+					r.Post("/resources/{resourceId}/test", h.TestProjectResource)
+					r.Post("/resources/{resourceId}/sync", h.SyncProjectResource)
+					r.Post("/resources/{resourceId}/disable", h.DisableProjectResource)
+					r.Post("/resources/{resourceId}/enable", h.EnableProjectResource)
 					r.Delete("/resources/{resourceId}", h.DeleteProjectResource)
 				})
 			})
@@ -775,6 +800,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/", h.DeletePromptEvaluationAsset)
 					r.Post("/run", h.RunPromptEvaluationAsset)
 					r.Post("/agent-run", h.RunPromptEvaluationAssetAgent)
+					r.Post("/skill-inventory", h.CreatePromptEvaluationSkillInventory)
+					r.Post("/skill-snapshot", h.CreatePromptEvaluationSkillSnapshot)
+					r.Post("/skill-case-drafts", h.CreatePromptEvaluationSkillCaseDrafts)
 					r.Post("/evidence-snapshots", h.CreatePromptEvaluationAssetEvidenceSnapshots)
 					r.Get("/evidence-snapshots/export", h.GetPromptEvaluationAssetEvidenceSnapshotPackage)
 					r.Get("/case-operations", h.ListPromptEvaluationCaseOperations)
@@ -830,6 +858,10 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/", h.UpdatePromptEvaluationOptimizationCandidate)
 					r.Post("/publish", h.PublishPromptEvaluationOptimizationCandidate)
 					r.Post("/reject", h.RejectPromptEvaluationOptimizationCandidate)
+					r.Post("/skill-freshness", h.CheckPromptEvaluationSkillCandidateFreshness)
+					r.Post("/skill-apply", h.ApplyPromptEvaluationSkillCandidate)
+					r.Post("/skill-re-eval-asset", h.PreparePromptEvaluationSkillReEvalAsset)
+					r.Post("/skill-re-eval-run", h.RunPromptEvaluationSkillReEval)
 				})
 			})
 

@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
@@ -78,6 +79,7 @@ function ensureEnvironment(item) {
     `DATABASE_URL=${databaseURL}`,
     `PORT=${item.backendPort}`,
     `JWT_SECRET=${base.JWT_SECRET || "change-me-in-production"}`,
+    `MULTICA_EXTERNAL_CREDENTIAL_KEY=${base.MULTICA_EXTERNAL_CREDENTIAL_KEY || ensureStableSecretKey(item, "external-credential")}`,
     `MULTICA_SERVER_URL=ws://127.0.0.1:${item.backendPort}/ws`,
     `MULTICA_APP_URL=${frontendURL}`,
     `MULTICA_WORKSPACES_ROOT=${daemonWorkspacesRoot}`,
@@ -92,6 +94,17 @@ function ensureEnvironment(item) {
   ];
   writeFileSync(file, `${lines.join("\n")}\n`);
   return file;
+}
+
+function ensureStableSecretKey(item, name) {
+  const keyPath = path.join(envDir, `${item.name}-${name}.key`);
+  if (existsSync(keyPath)) {
+    const existing = readFileSync(keyPath, "utf8").trim();
+    if (existing) return existing;
+  }
+  const value = randomBytes(32).toString("base64");
+  writeFileSync(keyPath, `${value}\n`, { mode: 0o600 });
+  return value;
 }
 
 function deployEnvironment(item, build) {
@@ -143,7 +156,7 @@ function deployEnvironment(item, build) {
     "--runtime-name",
     item.runtimeName,
     "--agent-timeout",
-    "5m0s",
+    "0",
     "--max-concurrent-tasks",
     "1",
     "--no-auto-update",

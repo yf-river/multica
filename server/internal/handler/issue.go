@@ -2614,6 +2614,7 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	if !validateIssueEnum(w, "priority", priority, validIssuePriorities) {
 		return
 	}
+	req.Metadata = h.enrichSourceCredentialMetadata(r.Context(), req.Metadata, creatorID)
 	metadata, err := validateIssueMetadataObject(req.Metadata)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -2803,6 +2804,53 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	resp := issueToResponse(issue, prefix)
 	resp.Attachments = buildAttachmentResponses(res.Attachments)
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+func (h *Handler) enrichSourceCredentialMetadata(ctx context.Context, metadata map[string]json.RawMessage, creatorUserID string) map[string]json.RawMessage {
+	provider, ok := metadataString(metadata, "source_provider")
+	if !ok || provider != externalCredentialProviderTAPD {
+		return metadata
+	}
+	out := make(map[string]json.RawMessage, len(metadata)+8)
+	for key, value := range metadata {
+		out[key] = value
+	}
+	set := func(key, value string) {
+		raw, _ := json.Marshal(value)
+		out[key] = raw
+	}
+	set("source_fetch_provider", "tapd_mcp")
+	set("source_credential_scope", "account")
+	set("source_credential_inheritance", "task_creator_or_trigger_user")
+	profile, err := h.Queries.GetDefaultExternalCredentialProfileForUser(ctx, db.GetDefaultExternalCredentialProfileForUserParams{
+		UserID:   parseUUID(creatorUserID),
+		Provider: externalCredentialProviderTAPD,
+	})
+	if err != nil {
+		set("source_fetch_status", "blocked_missing_profile")
+		set("source_fetch_error", "no account-level TAPD credential profile for task creator")
+		return out
+	}
+	set("source_credential_profile_id", uuidToString(profile.ID))
+	set("source_credential_profile_name", profile.Name)
+	set("source_credential_profile_status", profile.Status)
+	set("source_fetch_status", "pending_mcp_fetch")
+	return out
+}
+
+func metadataString(metadata map[string]json.RawMessage, key string) (string, bool) {
+	if len(metadata) == 0 {
+		return "", false
+	}
+	raw, ok := metadata[key]
+	if !ok {
+		return "", false
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return "", false
+	}
+	return strings.TrimSpace(strings.ToLower(value)), true
 }
 
 type UpdateIssueRequest struct {
@@ -3056,7 +3104,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	// chain.
 	if statusChanged && !assigneeChanged &&
 		prevIssue.Status == "backlog" && issue.Status != "done" && issue.Status != "cancelled" &&
-		!h.isAgentRunningOnIssue(r, actorType, issue) {
+		!h.isAssignedAgentRunningOnIssue(r.Context(), r, actorType, actorID, issue) {
 		if h.isAgentAssigneeReady(r.Context(), issue) {
 			h.TaskService.EnqueueTaskForIssue(r.Context(), issue)
 		}
@@ -3200,23 +3248,25 @@ func (h *Handler) shouldEnqueueOnComment(ctx context.Context, issue db.Issue, ac
 	return true
 }
 
-// isAgentRunningOnIssue reports whether the calling agent's current task
-// (identified by X-Task-ID) is running for the exact issue being promoted.
-// That is the only true self-loop on backlog→active: the agent flipping
-// the same issue its own task is executing for would immediately re-enqueue
-// itself, complete the run, flip again, and so on.
+// isAssignedAgentRunningOnIssue reports whether the calling agent's current
+// task is running for the exact issue being promoted AND that agent is the
+// issue's current executor (direct assignee or squad leader). That is the true
+// self-loop on backlog→active: the executor flipping its own issue would
+// immediately re-enqueue itself.
 //
-// Same-agent cross-issue handoff (Agent A finishing a task on issue I1 then
-// promoting issue I2 — even when I2 is also assigned to A) is NOT a loop
-// and must fire; that is the documented serial sub-task chain. Member
-// actors never match.
+// Project-owner review tasks can also run on the same issue, but the reviewer
+// is not the issue executor; approving backlog→todo must wake the assigned
+// agent or squad leader. Same-agent cross-issue handoff remains allowed too.
 //
 // X-Task-ID is guaranteed to be present and consistent when actorType is
 // "agent": resolveActor demotes the actor to "member" otherwise (handler.go
 // resolveActor). We still recheck defensively — a future caller could pass
 // agent identity through a different path.
-func (h *Handler) isAgentRunningOnIssue(r *http.Request, actorType string, issue db.Issue) bool {
+func (h *Handler) isAssignedAgentRunningOnIssue(ctx context.Context, r *http.Request, actorType, actorID string, issue db.Issue) bool {
 	if actorType != "agent" {
+		return false
+	}
+	if !h.actorIsIssueExecutor(ctx, actorID, issue) {
 		return false
 	}
 	taskIDStr := r.Header.Get("X-Task-ID")
@@ -3227,7 +3277,7 @@ func (h *Handler) isAgentRunningOnIssue(r *http.Request, actorType string, issue
 	if err != nil {
 		return false
 	}
-	task, err := h.Queries.GetAgentTask(r.Context(), taskUUID)
+	task, err := h.Queries.GetAgentTask(ctx, taskUUID)
 	if err != nil {
 		return false
 	}
@@ -3235,6 +3285,27 @@ func (h *Handler) isAgentRunningOnIssue(r *http.Request, actorType string, issue
 		return false
 	}
 	return uuidToString(task.IssueID) == uuidToString(issue.ID)
+}
+
+func (h *Handler) actorIsIssueExecutor(ctx context.Context, actorID string, issue db.Issue) bool {
+	if actorID == "" || !issue.AssigneeType.Valid || !issue.AssigneeID.Valid {
+		return false
+	}
+	switch issue.AssigneeType.String {
+	case "agent":
+		return actorID == uuidToString(issue.AssigneeID)
+	case "squad":
+		squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
+			ID:          issue.AssigneeID,
+			WorkspaceID: issue.WorkspaceID,
+		})
+		if err != nil {
+			return false
+		}
+		return actorID == uuidToString(squad.LeaderID)
+	default:
+		return false
+	}
 }
 
 // isAgentAssigneeReady checks if an issue is assigned to an active agent
@@ -3525,7 +3596,7 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		// prevents an agent from re-triggering itself on the same issue.
 		if statusChanged && !assigneeChanged &&
 			prevIssue.Status == "backlog" && issue.Status != "done" && issue.Status != "cancelled" &&
-			!h.isAgentRunningOnIssue(r, actorType, issue) {
+			!h.isAssignedAgentRunningOnIssue(r.Context(), r, actorType, actorID, issue) {
 			if h.isAgentAssigneeReady(r.Context(), issue) {
 				h.TaskService.EnqueueTaskForIssue(r.Context(), issue)
 			}

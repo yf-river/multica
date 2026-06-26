@@ -5,6 +5,91 @@ import (
 	"testing"
 )
 
+func TestBuildPromptIncludesTapdSourceContext(t *testing.T) {
+	out := BuildPrompt(Task{
+		IssueID: "issue-1",
+		SourceContext: &TaskSourceContext{
+			Provider: "tapd",
+			URL:      "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",
+			TAPD: &TAPDTaskSourceContext{
+				WorkspaceID:   "47654106",
+				ResourceType:  "markdown_wiki",
+				ResourceID:    "1147654106001004154",
+				FetchProvider: "tapd_mcp",
+				FetchStatus:   "pending_mcp_fetch",
+			},
+			ExternalCredentials: map[string]TaskExternalCredentialContext{
+				"tapd": {
+					Provider:      "tapd",
+					Scope:         "account",
+					Inheritance:   "task_creator_or_trigger_user",
+					ProfileID:     "profile-1",
+					ProfileStatus: "unverified",
+					MCPServer:     "mcp-server-tapd",
+					Configured:    true,
+				},
+			},
+		},
+	}, "codex")
+
+	for _, want := range []string{
+		"Source context:",
+		"provider: tapd",
+		"workspace_id=47654106",
+		"resource_type=markdown_wiki",
+		"resource_id=1147654106001004154",
+		"fetch_status=pending_mcp_fetch",
+		"use MCP server `mcp-server-tapd`",
+		"multica issue source-fetch issue-1 --provider tapd --status fetched",
+		"profile_id=profile-1",
+		"inheritance=task_creator_or_trigger_user",
+		"--status fetch_failed --error",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("BuildPrompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+}
+
+func TestBuildPromptBlocksTapdWhenProfileMissing(t *testing.T) {
+	out := BuildPrompt(Task{
+		IssueID: "issue-1",
+		SourceContext: &TaskSourceContext{
+			Provider: "tapd",
+			TAPD: &TAPDTaskSourceContext{
+				WorkspaceID:   "47654106",
+				ResourceType:  "markdown_wiki",
+				ResourceID:    "1147654106001004154",
+				FetchProvider: "tapd_mcp",
+				FetchStatus:   "blocked_missing_profile",
+				FetchError:    "no account-level TAPD credential profile",
+			},
+			ExternalCredentials: map[string]TaskExternalCredentialContext{
+				"tapd": {
+					Provider:    "tapd",
+					Scope:       "account",
+					Inheritance: "task_creator_or_trigger_user",
+					MCPServer:   "mcp-server-tapd",
+				},
+			},
+		},
+	}, "codex")
+
+	for _, want := range []string{
+		"fetch_status=blocked_missing_profile",
+		"TAPD fetch error: no account-level TAPD credential profile",
+		"stop and report that the requester must configure an account-level TAPD credential profile",
+		"Do not claim the document was read",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("BuildPrompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "use MCP server `mcp-server-tapd`") {
+		t.Fatalf("blocked prompt must not tell the agent to fetch anyway\n--- output ---\n%s", out)
+	}
+}
+
 // TestBuildQuickCreatePromptRules locks in the rules that govern how the
 // quick-create agent is allowed to translate raw user input into the issue
 // description body. Each substring corresponds to a concrete failure mode

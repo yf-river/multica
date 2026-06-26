@@ -299,6 +299,14 @@ interface PromptEvaluationOptimizationCandidate {
   prompt_id: string;
   candidate_name: string;
   candidate_content: string;
+  skill_patch?: {
+    patch?: string;
+    source_snapshot?: {
+      skill_hash?: string;
+      [key: string]: unknown;
+    };
+    [key: string]: unknown;
+  } | null;
   failed_case_count: number;
   status: string;
   published_prompt_id: string | null;
@@ -354,6 +362,40 @@ interface TaskExecutionEvidence {
   usage: Array<Record<string, unknown>>;
   messages: Array<Record<string, unknown>>;
   trace_events: Array<Record<string, unknown>>;
+}
+
+interface IssueExecutionTreeResponse {
+  summary: Record<string, number>;
+  timeline_nodes?: Array<{
+    node_id: string;
+    node_type: string;
+    status: string;
+    duration_ms: number;
+    input_tokens: number;
+    output_tokens: number;
+    cache_read_tokens: number;
+    cache_write_tokens: number;
+    message_count: number;
+    agent_turn_count: number;
+    trace_event_count: number;
+    usage_unavailable_trace: boolean;
+    evidence_refs: Array<{ type: string; id: string; href?: string }>;
+  }>;
+  issue_summary?: {
+    issue_id: string;
+    node_count: number;
+    total_duration_ms: number;
+    total_input_tokens: number;
+    total_output_tokens: number;
+    total_cache_read_tokens: number;
+    total_cache_write_tokens: number;
+    message_count: number;
+    agent_turn_count: number;
+    trace_event_count: number;
+    usage_unavailable: boolean;
+    acceptance_status: string;
+    full_analysis_deep_link: string;
+  };
 }
 
 interface IssueSystemComment {
@@ -908,6 +950,14 @@ export class TestApiClient {
     return data.issues ?? [];
   }
 
+  async getIssueExecutionTree(issueId: string): Promise<IssueExecutionTreeResponse> {
+    const res = await this.authedFetch(`/api/issues/${issueId}/execution-tree`);
+    if (!res.ok) {
+      throw new Error(`get issue execution tree failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
   async createProject(title: string, opts?: Record<string, unknown>) {
     const res = await this.authedFetch("/api/projects", {
       method: "POST",
@@ -919,6 +969,28 @@ export class TestApiClient {
     const project = await res.json();
     this.createdProjectIds.push(project.id);
     return project;
+  }
+
+  async createProjectResource(projectId: string, data: Record<string, unknown>) {
+    const res = await this.authedFetch(`/api/projects/${projectId}/resources`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      throw new Error(`create project resource failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async updateWorkspace(id: string, data: Record<string, unknown>): Promise<TestWorkspace> {
+    const res = await this.authedFetch(`/api/workspaces/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      throw new Error(`update workspace failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
   }
 
   async deleteProject(id: string) {
@@ -1320,6 +1392,39 @@ export class TestApiClient {
     return res.json();
   }
 
+  async createPromptEvaluationSkillInventory(assetId: string, data: Record<string, unknown>) {
+    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${assetId}/skill-inventory`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      throw new Error(`create skill inventory failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async createPromptEvaluationSkillSnapshot(assetId: string, data: Record<string, unknown>) {
+    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${assetId}/skill-snapshot`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      throw new Error(`create skill snapshot failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async createPromptEvaluationSkillCaseDrafts(assetId: string, data: Record<string, unknown>) {
+    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${assetId}/skill-case-drafts`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      throw new Error(`create skill case drafts failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
   async listPromptEvaluationCaseOperations(id: string, params?: { limit?: number }): Promise<{ items: PromptEvaluationCaseOperation[]; total: number }> {
     const search = new URLSearchParams();
     if (params?.limit) search.set("limit", String(params.limit));
@@ -1709,6 +1814,26 @@ export class TestApiClient {
     return res.json();
   }
 
+  async createPromptEvaluationAssetEvidenceSnapshots(assetId: string): Promise<Record<string, unknown>> {
+    const search = new URLSearchParams({ snapshot_type: "验收归档", limit: "20" });
+    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${assetId}/evidence-snapshots?${search.toString()}`, {
+      method: "POST",
+    });
+    if (!res.ok) {
+      throw new Error(`create prompt evaluation asset evidence snapshots failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async getPromptEvaluationAssetEvidenceArchivePackage(assetId: string): Promise<Record<string, unknown>> {
+    const search = new URLSearchParams({ snapshot_type: "验收归档", limit: "20" });
+    const res = await this.authedFetch(`/api/prompt-evaluation-assets/${assetId}/evidence-snapshots/export?${search.toString()}`);
+    if (!res.ok) {
+      throw new Error(`get prompt evaluation asset evidence archive package failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
   async getPromptEvaluationEvidenceSnapshot(runId: string, snapshotId: string): Promise<PromptEvaluationEvidenceSnapshot> {
     const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/evidence-snapshots/${snapshotId}`);
     if (!res.ok) {
@@ -1744,6 +1869,61 @@ export class TestApiClient {
     const res = await this.authedFetch(`/api/prompt-evaluation-runs/${runId}/optimization-candidates`, { method: "POST" });
     if (!res.ok) {
       throw new Error(`create prompt evaluation optimization candidate failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async updatePromptEvaluationOptimizationCandidate(candidateId: string, data: Record<string, unknown>): Promise<PromptEvaluationOptimizationCandidate> {
+    const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      throw new Error(`update prompt evaluation optimization candidate failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async checkPromptEvaluationSkillCandidateFreshness(candidateId: string, data: Record<string, unknown>) {
+    const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-freshness`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      throw new Error(`check skill freshness failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async applyPromptEvaluationSkillCandidate(candidateId: string, data: Record<string, unknown>) {
+    const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-apply`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      throw new Error(`apply skill candidate failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async preparePromptEvaluationSkillReEvalAsset(candidateId: string, data: Record<string, unknown>) {
+    const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-asset`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      throw new Error(`prepare skill re-eval asset failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async runPromptEvaluationSkillReEval(candidateId: string, data: Record<string, unknown> = {}) {
+    const res = await this.authedFetch(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-run`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    if (!res.ok) {
+      throw new Error(`run skill re-eval failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
   }

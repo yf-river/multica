@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -157,6 +158,7 @@ type IssueCreateResult struct {
 // Caller-owned validation is limited to transport-shaped checks: title
 // required, RFC3339 date format, assignee pair sanity.
 func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts IssueCreateOpts) (IssueCreateResult, error) {
+	requestedStatus := p.Status
 	tx, err := s.TxStarter.Begin(ctx)
 	if err != nil {
 		return IssueCreateResult{}, fmt.Errorf("begin tx: %w", err)
@@ -203,6 +205,22 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	assigneeID := p.AssigneeID
 	if !assigneeType.Valid && !assigneeID.Valid && hasProject {
 		assigneeType, assigneeID = s.defaultProjectLeadAssignee(ctx, qtx, project)
+	}
+	agentLeadReviewRequested := false
+	if requestedStatus == "backlog" && hasProject && project.LeadType.Valid && project.LeadType.String == "agent" && project.LeadID.Valid {
+		if leadAgent, err := qtx.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+			ID:          project.LeadID,
+			WorkspaceID: project.WorkspaceID,
+		}); err == nil && !leadAgent.ArchivedAt.Valid {
+			agentLeadReviewRequested = true
+			if p.Metadata == nil {
+				p.Metadata = map[string][]byte{}
+			}
+			setMetadataString(p.Metadata, "project_owner_approval_status", "pending")
+			setMetadataString(p.Metadata, "project_owner_approval_mode", "agent_review_task")
+			setMetadataString(p.Metadata, "project_owner_reviewer_type", "agent")
+			setMetadataString(p.Metadata, "project_owner_reviewer_id", util.UUIDToString(project.LeadID))
+		}
 	}
 
 	duplicate, found, err := issueguard.LockAndFindActiveDuplicate(ctx, qtx, p.WorkspaceID, projectID, p.ParentIssueID, p.Title, p.AllowDuplicate)
@@ -301,9 +319,133 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 
 	s.publishIssueCreated(issue, attachments, p.CreatorType, actorID, opts)
 	s.captureCreatedAnalytics(issue, p.CreatorType, actorID, opts)
+	if requestedStatus == "backlog" && hasProject && agentLeadReviewRequested {
+		s.enqueueProjectOwnerApprovalTask(ctx, issue, project)
+	} else if requestedStatus == "backlog" && hasProject {
+		s.notifyProjectLeadApprovalRequested(ctx, project, issue, p.CreatorType, actorID)
+	}
 	s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID)
 
 	return IssueCreateResult{Issue: issue, Attachments: attachments}, nil
+}
+
+func (s *IssueService) enqueueProjectOwnerApprovalTask(ctx context.Context, issue db.Issue, project db.Project) {
+	if s.TaskService == nil {
+		return
+	}
+	task, err := s.TaskService.EnqueueProjectOwnerApprovalTask(ctx, issue, project)
+	if err != nil {
+		slog.Warn("project owner approval task enqueue failed",
+			"project_id", util.UUIDToString(project.ID),
+			"issue_id", util.UUIDToString(issue.ID),
+			"lead_id", util.UUIDToString(project.LeadID),
+			"error", err)
+		return
+	}
+	updated, err := s.Queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+		ID:          issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+		Key:         "project_owner_review_task_id",
+		Value:       mustJSONStringBytes(util.UUIDToString(task.ID)),
+	})
+	if err != nil {
+		slog.Warn("project owner approval task metadata write failed",
+			"project_id", util.UUIDToString(project.ID),
+			"issue_id", util.UUIDToString(issue.ID),
+			"task_id", util.UUIDToString(task.ID),
+			"error", err)
+		return
+	}
+	if s.Bus != nil {
+		s.Bus.Publish(events.Event{
+			Type:        protocol.EventIssueMetadataChanged,
+			WorkspaceID: util.UUIDToString(issue.WorkspaceID),
+			ActorType:   "system",
+			ActorID:     "",
+			Payload: map[string]any{
+				"issue_id": util.UUIDToString(issue.ID),
+				"issue":    updated,
+				"metadata": map[string]any{"project_owner_review_task_id": util.UUIDToString(task.ID)},
+			},
+		})
+	}
+}
+
+func setMetadataString(metadata map[string][]byte, key, value string) {
+	raw, _ := json.Marshal(value)
+	metadata[key] = raw
+}
+
+func mustJSONStringBytes(value string) []byte {
+	raw, _ := json.Marshal(value)
+	return raw
+}
+
+func (s *IssueService) notifyProjectLeadApprovalRequested(ctx context.Context, project db.Project, issue db.Issue, actorType, actorID string) {
+	if s.Bus == nil || !project.LeadType.Valid || !project.LeadID.Valid || project.LeadType.String != "member" {
+		return
+	}
+	details, _ := json.Marshal(map[string]string{
+		"project_id":    util.UUIDToString(project.ID),
+		"project_title": project.Title,
+		"reason":        "project_backlog_approval",
+	})
+	item, err := s.Queries.CreateInboxItem(ctx, db.CreateInboxItemParams{
+		WorkspaceID:   issue.WorkspaceID,
+		RecipientType: "member",
+		RecipientID:   project.LeadID,
+		Type:          "project_issue_approval_requested",
+		Severity:      "info",
+		IssueID:       issue.ID,
+		Title:         issue.Title,
+		Body:          pgtype.Text{String: "Project backlog issue is waiting for owner approval.", Valid: true},
+		ActorType:     pgtype.Text{String: actorType, Valid: actorType != ""},
+		ActorID:       parseServiceUUID(actorID),
+		Details:       details,
+	})
+	if err != nil {
+		slog.Error("project lead approval inbox write failed",
+			"project_id", util.UUIDToString(project.ID),
+			"issue_id", util.UUIDToString(issue.ID),
+			"recipient_id", util.UUIDToString(project.LeadID),
+			"error", err,
+		)
+		return
+	}
+	s.Bus.Publish(events.Event{
+		Type:        protocol.EventInboxNew,
+		WorkspaceID: util.UUIDToString(issue.WorkspaceID),
+		ActorType:   actorType,
+		ActorID:     actorID,
+		Payload: map[string]any{
+			"item": map[string]any{
+				"id":             util.UUIDToString(item.ID),
+				"workspace_id":   util.UUIDToString(item.WorkspaceID),
+				"recipient_type": item.RecipientType,
+				"recipient_id":   util.UUIDToString(item.RecipientID),
+				"type":           item.Type,
+				"severity":       item.Severity,
+				"issue_id":       util.UUIDToPtr(item.IssueID),
+				"issue_status":   issue.Status,
+				"title":          item.Title,
+				"body":           util.TextToPtr(item.Body),
+				"read":           item.Read,
+				"archived":       item.Archived,
+				"created_at":     util.TimestampToString(item.CreatedAt),
+				"actor_type":     util.TextToPtr(item.ActorType),
+				"actor_id":       util.UUIDToPtr(item.ActorID),
+				"details":        json.RawMessage(item.Details),
+			},
+		},
+	})
+}
+
+func parseServiceUUID(value string) pgtype.UUID {
+	id, err := util.ParseUUID(value)
+	if err != nil {
+		return pgtype.UUID{}
+	}
+	return id
 }
 
 func (s *IssueService) defaultProjectLeadAssignee(ctx context.Context, q *db.Queries, project db.Project) (pgtype.Text, pgtype.UUID) {

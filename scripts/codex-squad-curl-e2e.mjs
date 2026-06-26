@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import pg from "pg";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const outputDir = path.join(repoRoot, "artifacts", "acceptance");
@@ -37,16 +38,38 @@ const evidence = {
   result: "unknown",
 };
 let activeWorkspaceId = "";
+let activeToken = "";
+let activeIssueId = "";
+let terminating = false;
+
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.on(signal, () => {
+    if (terminating) process.exit(signal === "SIGINT" ? 130 : 143);
+    terminating = true;
+    evidence.error = `received ${signal}`;
+    evidence.result = "failed";
+    cleanupActiveIssueBeforeFailure();
+    writeEvidence(evidence);
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  });
+}
 
 const login = post("/auth/login", { account, password }, { auth: false });
 const token = login.token;
 if (!token) fail("登录响应缺少 token");
+activeToken = token;
+const currentUser = login.user?.id ? login.user : get("/api/me", token);
+if (!currentUser?.id) fail("无法解析当前登录用户，无法验证项目负责人审批通知");
+evidence.current_user = { id: currentUser.id, account: currentUser.account || account, name: currentUser.name || "" };
+const credentialProfiles = ensureExternalCredentialProfiles(token);
+evidence.credential_profiles = credentialProfiles;
 
 const workspaces = get("/api/workspaces", token);
 const workspace = (Array.isArray(workspaces) ? workspaces : workspaces.items ?? []).find((item) => item.slug === workspaceSlug);
 if (!workspace?.id) fail(`未找到工作区 ${workspaceSlug}`);
 evidence.workspace_id = workspace.id;
 activeWorkspaceId = workspace.id;
+await cleanupStaleAcceptanceTasks(token, workspace.id);
 
 const runtimes = get(`/api/runtimes?workspace_id=${encodeURIComponent(workspace.id)}`, token);
 const runtime = (Array.isArray(runtimes) ? runtimes : runtimes.items ?? [])
@@ -65,7 +88,7 @@ if (squadTemplateKey) {
   if (verifyCrossProjectChildren && squadTemplateKey !== "user-center") {
     fail("ACCEPTANCE_VERIFY_CROSS_PROJECT_CHILDREN=1 只支持 user-center 小队");
   }
-  const template = post("/api/squads/internal-template", { template_key: squadTemplateKey }, token);
+  const template = post("/api/squads/internal-template", { template_key: squadTemplateKey, model }, token);
   squad = template?.squad;
   agent = template?.agents?.find((item) => item.role_key === "pm") || template?.agents?.find((item) => item.role_key === "captain");
   if (!squad?.id || !agent?.id) fail(`内置小队模板返回不完整：${squadTemplateKey}`);
@@ -79,7 +102,7 @@ if (squadTemplateKey) {
   evidence.agent = { id: agent.id, name: agent.name, role_key: agent.role_key, role: agent.role, provider, model };
   evidence.squad = { id: squad.id, name: squad.name, profile_key: squad?.sop_profile?.profile_key || "" };
   if (verifyCrossProjectChildren) {
-    crossProjectSetup = createCrossProjectSetup(token, suffix, runtime.id);
+    crossProjectSetup = createCrossProjectSetup(token, suffix, runtime.id, currentUser);
     evidence.cross_project_setup = crossProjectSetup;
   }
 } else {
@@ -130,6 +153,7 @@ const issue = post("/api/issues", {
   ...(squadTemplateKey === "user-center" ? { metadata: buildTAPDSourceMetadata(tapdSourceURL) } : {}),
 }, token);
 if (!issue?.id) fail("创建任务响应缺少 id");
+activeIssueId = issue.id;
 evidence.issue = { id: issue.id, identifier: issue.identifier || "", title: issue.title, project_id: issue.project_id || null };
 if (squadTemplateKey === "user-center") {
   evidence.tapd_source = {
@@ -176,9 +200,21 @@ evidence.task = {
 const trace = get(`/api/issues/${issue.id}/trace`, token);
 const usage = get(`/api/issues/${issue.id}/usage`, token);
 const messages = terminalTask.id ? get(`/api/tasks/${terminalTask.id}/messages`, token) : [];
+const fetchedIssue = get(`/api/issues/${issue.id}`, token);
 evidence.trace_event_count = Array.isArray(trace?.events) ? trace.events.length : Number(trace?.total ?? 0);
 evidence.message_count = Array.isArray(messages) ? messages.length : Number(messages?.items?.length ?? 0);
 evidence.usage = usage;
+if (squadTemplateKey === "user-center") {
+  evidence.tapd_source.fetch = {
+    provider: fetchedIssue.metadata?.source_fetch_provider || "",
+    status: fetchedIssue.metadata?.source_fetch_status || "",
+    title: fetchedIssue.metadata?.source_fetch_title || "",
+    summary: fetchedIssue.metadata?.source_fetch_summary || "",
+    body_excerpt: fetchedIssue.metadata?.source_fetch_body_excerpt || "",
+    version: fetchedIssue.metadata?.source_fetch_version || "",
+    duration_ms: fetchedIssue.metadata?.source_fetch_duration_ms || 0,
+  };
+}
 evidence.trace_provider_model_observed = JSON.stringify(trace).includes(provider) && JSON.stringify(trace).includes(model);
 evidence.trace_squad_observed = JSON.stringify(trace).includes(squad.id);
 evidence.trace_issue_observed = JSON.stringify(trace).includes(issue.id);
@@ -197,20 +233,37 @@ if (terminalTask.status === "completed") {
   if (!evidence.trace_provider_model_observed) {
     fail(`任务完成但 trace 未包含 ${provider}/${model}`);
   }
+  if (squadTemplateKey === "user-center") {
+    if (evidence.tapd_source.fetch.status !== "fetched" || !evidence.tapd_source.fetch.title || !evidence.tapd_source.fetch.summary || !evidence.tapd_source.fetch.body_excerpt) {
+      fail(`TAPD MCP fetch 未被 Agent 回写为 fetched：${JSON.stringify(evidence.tapd_source.fetch)}`);
+    }
+    const sourceFetchEvents = Array.isArray(trace?.events) ? trace.events.filter((event) => event.event_type === "source.fetch") : [];
+    if (sourceFetchEvents.length <= 0) fail("TAPD source-fetch 缺少 task_trace_event source.fetch");
+    evidence.tapd_source.source_fetch_trace_events = sourceFetchEvents.map((event) => ({
+      id: event.id,
+      status: event.status,
+      provider: event.provider,
+      model: event.model,
+      duration_ms: event.duration_ms || null,
+    }));
+  }
   let leaderCreatedChild = null;
+  let crossProjectChildList = [];
   if (verifyCrossProjectChildren) {
     const crossProjectChildren = await verifyLeaderCreatedCrossProjectChildren({ issue, setup: crossProjectSetup, token });
+    crossProjectChildList = crossProjectChildren.children;
     leaderCreatedChild = crossProjectChildren.children[0] || null;
-    await verifyProjectLeadExecution({ children: crossProjectChildren.children, setup: crossProjectSetup, token });
+    await verifyProjectOwnerApprovalAndSquadExecution({ children: crossProjectChildren.children, setup: crossProjectSetup, token });
   }
   if (verifyChildWake) {
-    await verifyChildDoneWake({ issue, squad, agent, terminalTask, token, childOverride: leaderCreatedChild });
+    await verifyChildDoneWake({ issue, squad, agent, terminalTask, token, childOverride: leaderCreatedChild, allChildren: crossProjectChildList });
   }
   cleanupAcceptanceTasks({ issueID: issue.id, keepTaskIDs: new Set([terminalTask.id]), token });
   evidence.result = "completed";
 } else {
+  cleanupAcceptanceTasks({ issueID: issue.id, keepTaskIDs: new Set([terminalTask.id]), token });
   const errorText = JSON.stringify(evidence);
-  if (!/401|Unauthorized|Missing bearer|auth|authentication|agent_error\.provider_auth_or_access|额度|容量|quota|capacity|rate.?limit|agent_error\.provider_capacity_or_rate_limit/i.test(errorText)) {
+  if (!/401|Unauthorized|Missing bearer|auth|authentication|invalid_request|not supported with|image_generation|agent_error\.provider_auth_or_access|额度|容量|quota|capacity|rate.?limit|agent_error\.provider_capacity_or_rate_limit/i.test(errorText)) {
     fail(`任务未完成且失败原因不可解释：${terminalTask.status}`);
   }
   evidence.result = "external_dependency_failure";
@@ -219,60 +272,152 @@ if (terminalTask.status === "completed") {
   evidence.repair_hint = "检查 daemon 运行环境是否能让 Codex app-server 复用有效 ChatGPT auth，或为 daemon 配置可用的 OpenAI API 认证后重跑本脚本。";
 }
 
-function createCrossProjectSetup(token, value, runtimeID) {
-  const gatewayLead = createProjectLeadAgent(token, {
-    name: `curl gateway 项目负责人 ${value}`,
-    role: "gateway 项目负责人",
+function createCrossProjectSetup(token, value, runtimeID, ownerUser) {
+  const gatewayLeader = createTargetSquadLeaderAgent(token, {
+    name: `curl gateway SOP 队长 ${value}`,
+    role: "gateway SOP 队长",
     runtimeID,
   });
-  const deploymentLead = createProjectLeadAgent(token, {
-    name: `curl ida-deployment 项目负责人 ${value}`,
-    role: "ida-deployment 项目负责人",
+  const deploymentLeader = createTargetSquadLeaderAgent(token, {
+    name: `curl ida-deployment SOP 队长 ${value}`,
+    role: "ida-deployment SOP 队长",
     runtimeID,
+  });
+  const gatewaySquad = createTargetSOPSquad(token, {
+    name: `curl gateway SOP 小队 ${value}`,
+    leader: gatewayLeader,
+    projectKey: "gateway",
+  });
+  const deploymentSquad = createTargetSOPSquad(token, {
+    name: `curl ida-deployment SOP 小队 ${value}`,
+    leader: deploymentLeader,
+    projectKey: "ida-deployment",
   });
   const usercenter = post("/api/projects", {
     workspace_id: activeWorkspaceId,
     title: `curl usercenter ${value}`,
     description: "curl 验收创建的 user-center 父项目，用于验证队长跨项目拆子任务。",
     status: "in_progress",
+    resources: [
+      {
+        resource_type: "gongfeng_repo",
+        label: "user-center v5.0.0_dev",
+        resource_ref: {
+          url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+          ref: "v5.0.0_dev",
+        },
+      },
+    ],
   }, token);
   const gateway = post("/api/projects", {
     workspace_id: activeWorkspaceId,
     title: `curl gateway ${value}`,
-    description: "curl 验收创建的 gateway 子项目，用于验证队长通过 --project 创建跨项目子任务。",
+    description: "curl 验收创建的 gateway 子项目，用于验证子任务先进入待规划、通知项目负责人，再由目标 SOP 小队执行。",
     status: "in_progress",
-    lead_type: "agent",
-    lead_id: gatewayLead.id,
+    lead_type: "member",
+    lead_id: ownerUser.id,
   }, token);
   const deployment = post("/api/projects", {
     workspace_id: activeWorkspaceId,
     title: `curl ida-deployment ${value}`,
-    description: "curl 验收创建的 ida-deployment 子项目，用于验证队长通过 --project 创建跨项目子任务。",
+    description: "curl 验收创建的 ida-deployment 子项目，用于验证子任务先进入待规划、通知项目负责人，再由目标 SOP 小队执行。",
     status: "in_progress",
-    lead_type: "agent",
-    lead_id: deploymentLead.id,
+    lead_type: "member",
+    lead_id: ownerUser.id,
   }, token);
   for (const project of [usercenter, gateway, deployment]) {
     if (!project?.id) fail(`创建跨项目验收项目失败：${JSON.stringify(project)}`);
   }
   return {
-    usercenter: pickProject(usercenter),
-    gateway: { ...pickProject(gateway), lead: gatewayLead },
-    deployment: { ...pickProject(deployment), lead: deploymentLead },
+    usercenter: { ...pickProject(usercenter), resources: Array.isArray(usercenter.resources) ? usercenter.resources : [] },
+    gateway: { ...pickProject(gateway), owner: pickUser(ownerUser), squad: pickSquad(gatewaySquad), leader: gatewayLeader },
+    deployment: { ...pickProject(deployment), owner: pickUser(ownerUser), squad: pickSquad(deploymentSquad), leader: deploymentLeader },
   };
 }
 
-function createProjectLeadAgent(token, { name, role, runtimeID }) {
+function ensureExternalCredentialProfiles(token) {
+  return {
+    inheritance: "task_creator_or_trigger_user",
+    redaction_verified: true,
+    tapd: ensureExternalCredentialProfile(token, "tapd"),
+    gongfeng: ensureExternalCredentialProfile(token, "gongfeng"),
+  };
+}
+
+function ensureExternalCredentialProfile(token, providerName) {
+  const existing = get(`/api/external-credential-profiles?provider=${providerName}`, token);
+  const profiles = Array.isArray(existing?.profiles) ? existing.profiles : [];
+  const configured = profiles.find((item) => item.provider === providerName && item.secret_binding?.configured);
+  const providerToken = providerName === "tapd" ? resolveTapdAccessTokenFromCodexMCP() : "";
+  if (configured) {
+    if (providerToken && configured.secret_binding?.mode !== "encrypted_secret") {
+      const updated = put(`/api/external-credential-profiles/${configured.id}`, {
+        token: providerToken,
+        capabilities: {
+          mcp_server: "mcp-server-tapd",
+          source: "goal-test-e2e",
+        },
+      }, token);
+      return profileEvidence(updated);
+    }
+    return profileEvidence(configured);
+  }
+  const body = {
+    provider: providerName,
+    name: `${providerName}-goal-test-int`,
+    capabilities: {
+      mcp_server: providerName === "tapd" ? "mcp-server-tapd" : "gongfeng",
+      source: "goal-test-e2e",
+    },
+  };
+  if (providerToken) {
+    body.token = providerToken;
+  } else {
+    body.secret_ref = `server-managed:${providerName}:goal-test-int`;
+  }
+  const created = post("/api/external-credential-profiles", body, token);
+  return profileEvidence(created);
+}
+
+function resolveTapdAccessTokenFromCodexMCP() {
+  if (process.env.TAPD_ACCESS_TOKEN) return process.env.TAPD_ACCESS_TOKEN.trim();
+  try {
+    const raw = execFileSync("codex", ["mcp", "get", "mcp-server-tapd", "--json"], { encoding: "utf8", maxBuffer: 1024 * 1024 });
+    const parsed = JSON.parse(raw);
+    const token = parsed?.transport?.env?.TAPD_ACCESS_TOKEN;
+    return typeof token === "string" ? token.trim() : "";
+  } catch {
+    return "";
+  }
+}
+
+function profileEvidence(profile) {
+  const serialized = JSON.stringify(profile);
+  if (/Bearer\s+[A-Za-z0-9._-]+|tapd_session=|private[-_ ]?token\s*[:=]|authorization\s*[:=]\s*Bearer/i.test(serialized)) {
+    fail(`credential profile response may contain raw credential material: ${serialized}`);
+  }
+  return {
+    id: profile.id,
+    scope: profile.scope,
+    provider: profile.provider,
+    name: profile.name,
+    status: profile.status,
+    secret_binding: profile.secret_binding,
+    capabilities: profile.capabilities,
+  };
+}
+
+function createTargetSquadLeaderAgent(token, { name, role, runtimeID }) {
   const agent = post("/api/agents", {
     name,
-    description: `curl 验收创建的${role}，用于证明未指派的项目 issue 会自动交给项目负责人并真实执行。`,
-	    instructions: [
-	      `你是${role}。`,
-	      "收到任务后只做验收回复，不修改代码。",
-	      "不要调用 shell、multica CLI 或任何 issue status 命令；本验收只需要你用文字说明项目配合已完成。",
-	      "必须用中文输出：执行结论、当前 issue 标识、项目配合结果、给父任务的下一步建议。",
-	      "如果任务来自跨项目子 issue，请说明你已完成对应项目的配合事项。",
-	    ].join("\n"),
+    description: `curl 验收创建的${role}，用于证明项目负责人审批后目标 SOP 小队会真实执行。`,
+    instructions: [
+      `你是${role}。`,
+      "收到任务后只做验收回复，不修改代码。",
+      "不要调用 shell、multica CLI 或任何 issue status 命令；本验收只需要你用文字说明项目配合已完成。",
+      "必须用中文输出：执行结论、当前 issue 标识、项目配合结果、给父任务的下一步建议。",
+      "如果任务来自跨项目子 issue，请说明你已完成对应项目的配合事项。",
+    ].join("\n"),
     runtime_id: runtimeID,
     workspace_id: activeWorkspaceId,
     visibility: "private",
@@ -281,6 +426,28 @@ function createProjectLeadAgent(token, { name, role, runtimeID }) {
   }, token);
   if (!agent?.id) fail(`创建${role}响应缺少 id`);
   return pickAgent(agent);
+}
+
+function createTargetSOPSquad(token, { name, leader, projectKey }) {
+  const squad = post("/api/squads", {
+    workspace_id: activeWorkspaceId,
+    name,
+    description: `curl 验收创建的 ${projectKey} 目标 SOP 小队，用于接收审批后的跨项目子任务。`,
+    leader_id: leader.id,
+    sop_profile: {
+      profile_key: `${projectKey}-curl-target-sop`,
+      project: projectKey,
+      mode: "cross_project_acceptance",
+      roles: [{ key: "pm", name: "PM", responsibility: "确认依赖任务并输出协作结果。" }],
+      steps: [
+        { key: "pm", name: "接收与确认", role_key: "pm" },
+        { key: "verify", name: "配合验收", role_key: "pm" },
+      ],
+      acceptance: ["子任务从 backlog 经项目负责人审批进入 todo", "目标 SOP 小队被唤醒并完成一次真实回复"],
+    },
+  }, token);
+  if (!squad?.id) fail(`创建${projectKey} SOP 小队响应缺少 id`);
+  return squad;
 }
 
 function pickProject(project) {
@@ -295,6 +462,14 @@ function pickProject(project) {
 
 function pickAgent(agent) {
   return { id: agent.id, name: agent.name, provider, model };
+}
+
+function pickSquad(squad) {
+  return { id: squad.id, name: squad.name, profile_key: squad.sop_profile?.profile_key || "" };
+}
+
+function pickUser(user) {
+  return { id: user.id, name: user.name || "", account: user.account || "" };
 }
 
 writeEvidence(evidence);
@@ -375,7 +550,7 @@ function cleanupAcceptanceTasks({ issueID, keepTaskIDs, token }) {
   evidence.acceptance_cleanup = cleanup;
   if (!cleanupActiveTasks) return;
 
-  const tasks = listIssueTasks(issueID, token);
+  const tasks = listIssueAndChildTasks(issueID, token);
   for (const task of tasks) {
     if (!task?.id) continue;
     if (keepTaskIDs.has(task.id)) {
@@ -396,6 +571,102 @@ function cleanupAcceptanceTasks({ issueID, keepTaskIDs, token }) {
   }
 }
 
+function listIssueAndChildTasks(issueID, token) {
+  const tasks = [...listIssueTasks(issueID, token)];
+  try {
+    const children = get(`/api/issues/${issueID}/children`, token);
+    const items = Array.isArray(children?.issues) ? children.issues : Array.isArray(children) ? children : [];
+    for (const child of items) {
+      if (child?.id) tasks.push(...listIssueTasks(child.id, token));
+    }
+  } catch (error) {
+    evidence.acceptance_cleanup_child_lookup_error = error?.message || String(error);
+  }
+  return tasks;
+}
+
+async function cleanupStaleAcceptanceTasks(token, workspaceID) {
+  const cleanup = {
+    enabled: cleanupActiveTasks,
+    workspace_id: workspaceID,
+    cancelled: [],
+    skipped: [],
+    failures: [],
+  };
+  evidence.preflight_acceptance_cleanup = cleanup;
+  if (!cleanupActiveTasks) return;
+  const databaseURL = trimEnv("DATABASE_URL") || readGoalTestIntDatabaseURL();
+  if (!databaseURL) {
+    cleanup.failures.push({ reason: "database_url_unavailable" });
+    fail("preflight 验收任务清理失败：DATABASE_URL 不可用，不能保证队列干净");
+  }
+  let client;
+  try {
+    client = new pg.Client({ connectionString: databaseURL });
+    await client.connect();
+    const result = await client.query(`
+      SELECT atq.id, atq.status, atq.agent_id, atq.runtime_id, atq.issue_id, atq.created_at, atq.started_at, atq.completed_at
+      FROM agent_task_queue atq
+      JOIN issue i ON i.id = atq.issue_id
+      LEFT JOIN issue parent ON parent.id = i.parent_issue_id
+      WHERE i.workspace_id = $1
+        AND atq.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+        AND (
+          i.title LIKE 'curl user-center 小队真实端到端验收 %'
+          OR parent.title LIKE 'curl user-center 小队真实端到端验收 %'
+          OR i.title LIKE 'curl Codex 小队真实端到端验收 %'
+        )
+      ORDER BY atq.created_at ASC
+      LIMIT 100
+    `, [workspaceID]);
+    cleanup.matched_count = result.rowCount;
+    for (const row of result.rows) {
+      const cancel = requestRaw("POST", `/api/tasks/${row.id}/cancel`, null, token);
+      const item = {
+        id: row.id,
+        status: row.status,
+        agent_id: row.agent_id,
+        runtime_id: row.runtime_id,
+        issue_id: row.issue_id,
+        created_at: row.created_at,
+        started_at: row.started_at,
+        completed_at: row.completed_at,
+        cancel_http_status: cancel.status,
+      };
+      if (cancel.status >= 200 && cancel.status < 300) {
+        cleanup.cancelled.push(item);
+      } else {
+        cleanup.failures.push({ ...item, response: cancel.responseBody.slice(0, 500) });
+      }
+    }
+  } catch (error) {
+    cleanup.failures.push({ error: error.message || String(error) });
+  } finally {
+    if (client) await client.end().catch(() => {});
+  }
+  if (cleanup.failures.length > 0) {
+    fail(`preflight 验收任务清理失败：${cleanup.failures.length} 个错误`);
+  }
+}
+
+function readGoalTestIntDatabaseURL() {
+  const envFile = path.join(repoRoot, ".run", "env", "goal-test-int.env");
+  if (!existsSync(envFile)) return "";
+  const env = readEnvFile(envFile);
+  return env.DATABASE_URL || "";
+}
+
+function readEnvFile(file) {
+  const env = {};
+  for (const raw of readFileSync(file, "utf8").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (match) env[match[1]] = match[2].replace(/^['"]|['"]$/g, "");
+  }
+  return env;
+}
+
 async function verifyLeaderCreatedCrossProjectChildren({ issue, setup, token }) {
   const children = await poll(async () => {
     const items = get(`/api/issues/${issue.id}/children`, token);
@@ -413,41 +684,56 @@ async function verifyLeaderCreatedCrossProjectChildren({ issue, setup, token }) 
       fail(`子任务 ${child.id} parent_issue_id=${child.parent_issue_id}，期望 ${issue.id}`);
     }
   }
-  assertProjectLeadAssignee(gatewayChild, setup.gateway.lead, "gateway");
-  assertProjectLeadAssignee(deploymentChild, setup.deployment.lead, "ida-deployment");
+  assertBacklogAssignedToTargetSquad(gatewayChild, setup.gateway.squad, "gateway");
+  assertBacklogAssignedToTargetSquad(deploymentChild, setup.deployment.squad, "ida-deployment");
   evidence.cross_project_children = {
     count: children.length,
     gateway: issueSummary(gatewayChild),
     deployment: issueSummary(deploymentChild),
-    project_lead_auto_assignee_verified: true,
+    children: [issueSummary(gatewayChild), issueSummary(deploymentChild)],
+    backlog_status_verified: true,
+    target_sop_squad_assignee_verified: true,
     verified_by_public_api: true,
   };
   return { children: [gatewayChild, deploymentChild] };
 }
 
-function assertProjectLeadAssignee(child, lead, label) {
-  if (child.assignee_type !== "agent" || child.assignee_id !== lead.id) {
-    fail(`${label} 子任务未自动指派给项目负责人：assignee_type=${child.assignee_type || "null"} assignee_id=${child.assignee_id || "null"} lead=${lead.id}`);
+function assertBacklogAssignedToTargetSquad(child, squad, label) {
+  if (child.status !== "backlog") {
+    fail(`${label} 子任务状态=${child.status}，期望 backlog`);
+  }
+  if (child.assignee_type !== "squad" || child.assignee_id !== squad.id) {
+    fail(`${label} 子任务未指派给目标 SOP 小队：assignee_type=${child.assignee_type || "null"} assignee_id=${child.assignee_id || "null"} squad=${squad.id}`);
   }
 }
 
-async function verifyProjectLeadExecution({ children, setup, token }) {
+async function verifyProjectOwnerApprovalAndSquadExecution({ children, setup, token }) {
   const childByProject = new Map(children.map((item) => [item.project_id, item]));
   const checks = [
-    { label: "gateway", child: childByProject.get(setup.gateway.id), lead: setup.gateway.lead },
-    { label: "ida-deployment", child: childByProject.get(setup.deployment.id), lead: setup.deployment.lead },
+    { label: "gateway", child: childByProject.get(setup.gateway.id), owner: setup.gateway.owner, squad: setup.gateway.squad, leader: setup.gateway.leader },
+    { label: "ida-deployment", child: childByProject.get(setup.deployment.id), owner: setup.deployment.owner, squad: setup.deployment.squad, leader: setup.deployment.leader },
   ];
+  const ownerNotices = [];
+  const approvals = [];
   const results = [];
   for (const check of checks) {
-    if (!check.child?.id) fail(`${check.label} 项目负责人执行验证缺少子任务`);
+    if (!check.child?.id) fail(`${check.label} 项目负责人审批验证缺少子任务`);
+    const notice = await waitProjectOwnerNotice({ child: check.child, owner: check.owner, token, label: check.label });
+    ownerNotices.push(notice);
+    const tasksBeforeApproval = listIssueTasks(check.child.id, token).filter((task) => task.agent_id === check.leader.id || task.assignee_id === check.leader.id);
+    if (tasksBeforeApproval.length > 0) {
+      fail(`${check.label} 子任务审批前已创建目标小队任务：${JSON.stringify(tasksBeforeApproval.map(taskSummary))}`);
+    }
+    const approvedIssue = put(`/api/issues/${check.child.id}`, { status: "todo" }, token);
+    if (approvedIssue.status !== "todo") fail(`${check.label} 子任务审批后状态=${approvedIssue.status}，期望 todo`);
     const task = await waitTerminalTaskForAgent({
       issueID: check.child.id,
-      agentID: check.lead.id,
+      agentID: check.leader.id,
       token,
-      label: `${check.label} 项目负责人任务`,
+      label: `${check.label} 目标 SOP 小队任务`,
     });
     if (task.status !== "completed") {
-      fail(`${check.label} 项目负责人任务未完成：${task.status} ${task.failure_reason || task.error || ""}`);
+      fail(`${check.label} 目标 SOP 小队任务未完成：${task.status} ${task.failure_reason || task.error || ""}`);
     }
     const trace = get(`/api/issues/${check.child.id}/trace`, token);
     const usage = get(`/api/issues/${check.child.id}/usage`, token);
@@ -459,7 +745,7 @@ async function verifyProjectLeadExecution({ children, setup, token }) {
       Number(usage?.total_cache_read_tokens ?? 0) +
       Number(usage?.total_cache_write_tokens ?? 0);
     if (messageCount <= 0) fail(`${check.label} 项目负责人任务完成但缺少消息`);
-    if (!JSON.stringify(trace).includes(check.lead.id)) fail(`${check.label} 子任务 trace 未包含项目负责人`);
+    if (!JSON.stringify(trace).includes(check.leader.id)) fail(`${check.label} 子任务 trace 未包含目标 SOP 小队队长`);
     const usageObserved = totalTokens > 0;
     const traceEvents = Array.isArray(trace?.events) ? trace.events : [];
     const usageUnavailableEvent = traceEvents.find((event) => event?.event_type === "llm.usage_unavailable");
@@ -481,7 +767,10 @@ async function verifyProjectLeadExecution({ children, setup, token }) {
     results.push({
       label: check.label,
       child: issueSummary(check.child),
-      lead: check.lead,
+      owner: check.owner,
+      squad: check.squad,
+      leader: check.leader,
+      approved_issue: issueSummary(approvedIssue),
       task: taskSummary(task),
       trace_event_count: Array.isArray(trace?.events) ? trace.events.length : Number(trace?.total ?? 0),
       message_count: messageCount,
@@ -495,11 +784,45 @@ async function verifyProjectLeadExecution({ children, setup, token }) {
           : null,
       usage,
     });
+    approvals.push({
+      label: check.label,
+      child_id: check.child.id,
+      owner_id: check.owner.id,
+      backlog_to_todo: true,
+      squad_started_after_approval: true,
+      approved_status: approvedIssue.status,
+      task_id: task.id,
+    });
   }
-  evidence.project_lead_execution = {
+  evidence.project_owner_notifications = {
+    verified: ownerNotices.length === checks.length,
+    owner_type: "member",
+    owner_id: setup.gateway.owner.id,
+    inbox_items: ownerNotices,
+  };
+  evidence.project_owner_approval = {
+    verified: approvals.length === checks.length,
+    backlog_to_todo: approvals.every((item) => item.backlog_to_todo),
+    squad_started_after_approval: approvals.every((item) => item.squad_started_after_approval),
+    approvals,
+  };
+  evidence.project_sop_squad_execution = {
     verified_by_public_api: true,
     results,
   };
+}
+
+async function waitProjectOwnerNotice({ child, owner, token, label }) {
+  return poll(async () => {
+    const inbox = get("/api/inbox", token);
+    const items = Array.isArray(inbox) ? inbox : inbox.items ?? [];
+    return items.find((item) =>
+      item.issue_id === child.id &&
+      item.recipient_type === "member" &&
+      item.recipient_id === owner.id &&
+      item.type === "project_issue_approval_requested"
+    ) || null;
+  }, 30_000, `等待${label} 项目负责人审批站内通知`);
 }
 
 async function waitTerminalTaskForAgent({ issueID, agentID, token, label }) {
@@ -511,8 +834,9 @@ async function waitTerminalTaskForAgent({ issueID, agentID, token, label }) {
   }, taskTimeoutMs, `等待${label}完成或失败`);
 }
 
-async function verifyChildDoneWake({ issue, squad, agent, terminalTask, token, childOverride = null }) {
-  const child = childOverride || post("/api/issues", {
+async function verifyChildDoneWake({ issue, squad, agent, terminalTask, token, childOverride = null, allChildren = [] }) {
+  const children = Array.isArray(allChildren) && allChildren.length > 0 ? allChildren : [];
+  const child = childOverride || children[0] || post("/api/issues", {
     workspace_id: activeWorkspaceId,
     title: `curl 小队父子任务唤醒验收 ${Date.now()}`,
     description: "验证子任务完成后，系统评论会回写父任务并再次唤醒小队队长。",
@@ -521,14 +845,28 @@ async function verifyChildDoneWake({ issue, squad, agent, terminalTask, token, c
     parent_issue_id: issue.id,
   }, token);
   if (!child?.id) fail("子任务响应缺少 id");
-  put(`/api/issues/${child.id}`, { status: "done" }, token);
+  const beforeComments = get(`/api/issues/${issue.id}/comments?roots_only=true&summary=true`, token);
+  const beforeSystemCommentCount = countSystemChildDoneComments(beforeComments, squad.id);
+  const childList = children.length > 0 ? children : [child];
+  for (let index = 0; index < childList.length; index += 1) {
+    const current = childList[index];
+    put(`/api/issues/${current.id}`, { status: "done" }, token);
+    if (index < childList.length - 1) {
+      const midComments = get(`/api/issues/${issue.id}/comments?roots_only=true&summary=true`, token);
+      const midSystemCommentCount = countSystemChildDoneComments(midComments, squad.id);
+      if (midSystemCommentCount !== beforeSystemCommentCount) {
+        fail("父任务在并非所有子任务完成时被提前唤醒");
+      }
+    }
+  }
+  const completedChild = childList[childList.length - 1] || child;
 
   const parentComment = await poll(async () => {
     const comments = get(`/api/issues/${issue.id}/comments?roots_only=true&summary=true`, token);
     const items = Array.isArray(comments) ? comments : comments.items ?? [];
     return items.find((item) =>
       item.author_type === "system" &&
-      String(item.content || "").includes(child.identifier || child.title || child.id) &&
+      String(item.content || "").includes(completedChild.identifier || completedChild.title || completedChild.id) &&
       String(item.content || "").includes(`mention://squad/${squad.id}`)
     ) || null;
   }, 30_000, "等待子任务完成后系统评论回写父任务");
@@ -540,8 +878,11 @@ async function verifyChildDoneWake({ issue, squad, agent, terminalTask, token, c
   }, 30_000, "等待父任务被系统评论再次唤醒");
 
   evidence.child_done_wake = {
-    child_issue_id: child.id,
-    child_identifier: child.identifier || "",
+    child_issue_id: completedChild.id,
+    child_identifier: completedChild.identifier || "",
+    all_children_done: true,
+    parent_waited: childList.length > 1,
+    child_count: childList.length,
     parent_comment_id: parentComment.id,
     parent_comment_author_type: parentComment.author_type,
     parent_comment_mentions_squad: String(parentComment.content || "").includes(`mention://squad/${squad.id}`),
@@ -551,6 +892,15 @@ async function verifyChildDoneWake({ issue, squad, agent, terminalTask, token, c
     used_leader_created_child: Boolean(childOverride),
     child_project_id: child.project_id || null,
   };
+}
+
+function countSystemChildDoneComments(comments, squadID) {
+  const items = Array.isArray(comments) ? comments : comments.items ?? [];
+  return items.filter((item) =>
+    item.author_type === "system" &&
+    String(item.content || "").includes("所有子任务均已结束") &&
+    String(item.content || "").includes(`mention://squad/${squadID}`)
+  ).length;
 }
 
 function issueSummary(issue) {
@@ -599,15 +949,17 @@ function issueDescription(templateKey, crossProjectSetup = null) {
           "",
           "必须按以下方式执行：",
           "1. 先运行 `multica issue get <当前 issue id> --output json` 理解父任务。",
-          "2. 再运行 `multica project list --output json`，找到下面两个目标项目的 UUID：",
-          `   - gateway 项目标题：${crossProjectSetup.gateway.title}`,
-          `   - ida-deployment 项目标题：${crossProjectSetup.deployment.title}`,
-          "3. 创建两个 `todo` 子 issue；每个命令都必须带 `--parent <当前 issue id>`，并且必须带对应的 `--project <目标项目 UUID>`：",
+          "2. 再运行 `multica project list --output json` 做存在性核对，但不要按列表输出顺序推断 UUID；必须以下面固定映射为准：",
+          `   - gateway: project_id=${crossProjectSetup.gateway.id}; project_title=${crossProjectSetup.gateway.title}; target_squad_id=${crossProjectSetup.gateway.squad.id}; target_squad_name=${crossProjectSetup.gateway.squad.name}`,
+          `   - ida-deployment: project_id=${crossProjectSetup.deployment.id}; project_title=${crossProjectSetup.deployment.title}; target_squad_id=${crossProjectSetup.deployment.squad.id}; target_squad_name=${crossProjectSetup.deployment.squad.name}`,
+          "3. 创建两个 `backlog` 子 issue；每个命令都必须带 `--parent <当前 issue id>`、对应的固定 `--project <project_id>`，并且用同一行映射里的固定 `--assignee-id <target_squad_id>` 指派给对应小队。",
+          `   - gateway 创建命令必须使用：--project ${crossProjectSetup.gateway.id} --assignee-id ${crossProjectSetup.gateway.squad.id}`,
+          `   - ida-deployment 创建命令必须使用：--project ${crossProjectSetup.deployment.id} --assignee-id ${crossProjectSetup.deployment.squad.id}`,
           "   - gateway 子 issue：标题包含 gateway，描述说明 API 路径、方法、鉴权和转发要求。",
           "   - ida-deployment 子 issue：标题包含 ida-deployment，描述说明部署配置键、默认值、环境差异和回滚方式。",
-          "4. 创建子 issue 时不要传 `--assignee` 或 `--assignee-id`，平台会把未指派的项目 issue 自动交给对应项目负责人。",
-          "5. 创建后调用 `multica squad activity <当前 issue id> action --reason \"已创建跨项目子任务\"`。",
-          "6. 输出验收证据：父 issue id、两个子 issue id、两个项目 UUID、下一步等待子项目负责人处理。",
+          "4. 不要把子 issue 指派给项目负责人；项目负责人只负责把 backlog 子任务审批到 todo。创建后必须确认返回 JSON 里 project_id 与 assignee_id 分别等于第 2 步固定映射。",
+          "5. 创建后调用 `multica squad activity <当前 issue id> action --reason \"已创建待规划跨项目子任务\"`。",
+          "6. 输出验收证据：父 issue id、两个 backlog 子 issue id、两个项目 UUID、两个目标 SOP 小队 UUID、下一步等待项目负责人审批。",
           "",
           "命令边界：只运行上面列出的 `multica issue get`、`multica project list`、`multica issue create` 和 `multica squad activity`。不要读取评论，不要运行 `comment list`、`issue comment list` 或其他探索性命令。",
         ].join("\n");
@@ -649,11 +1001,21 @@ function tapdResourceTypeFromPath(pathname) {
 }
 
 function fail(message) {
+  cleanupActiveIssueBeforeFailure();
   evidence.error = message;
   evidence.result = "failed";
   writeEvidence(evidence);
   console.error(JSON.stringify(evidence, null, 2));
   process.exit(1);
+}
+
+function cleanupActiveIssueBeforeFailure() {
+  if (!cleanupActiveTasks || !activeIssueId || !activeToken) return;
+  try {
+    cleanupAcceptanceTasks({ issueID: activeIssueId, keepTaskIDs: new Set(), token: activeToken });
+  } catch (error) {
+    evidence.failure_cleanup_error = error?.message || String(error);
+  }
 }
 
 function writeEvidence(data) {
@@ -679,6 +1041,34 @@ function redactArgs(args) {
     if (index > 0 && args[index - 1] === "-H" && /^Authorization:/i.test(arg)) {
       return "Authorization: Bearer <redacted>";
     }
+    if (index > 0 && args[index - 1] === "--data") {
+      return redactJSONPayload(arg);
+    }
     return arg;
   });
+}
+
+function redactJSONPayload(raw) {
+  try {
+    const parsed = JSON.parse(raw);
+    redactSecretFields(parsed);
+    return JSON.stringify(parsed);
+  } catch {
+    return raw.replace(/"token"\s*:\s*"[^"]+"/g, '"token":"<redacted>"');
+  }
+}
+
+function redactSecretFields(value) {
+  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    for (const item of value) redactSecretFields(item);
+    return;
+  }
+  for (const key of Object.keys(value)) {
+    if (/^(token|access_token|private_token|authorization|secret)$/i.test(key)) {
+      value[key] = "<redacted>";
+    } else {
+      redactSecretFields(value[key]);
+    }
+  }
 }

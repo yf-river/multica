@@ -161,7 +161,7 @@ func buildSquadSOPProfile(raw []byte) string {
 		sb.WriteString("\n")
 	}
 	if len(profile.CrossProjectChildIssues) > 0 {
-		sb.WriteString("- 跨项目子任务规则：如果当前 issue 需要其它项目配合，不要只在父 issue 上描述依赖；先运行 `multica project list --output json` 找到目标项目 UUID，再创建 `todo` 子 issue。命令形态必须包含 `--parent <当前 issue id>` 和 `--project <目标项目 id>`，例如 `multica issue create --title \"...\" --description-file ./child.md --status todo --parent <当前 issue id> --project <目标项目 id> --output json`。如果目标项目配置了负责人/lead，不要额外传 `--assignee` 或 `--assignee-id`，平台会把未指派的项目 issue 自动交给项目负责人。创建子 issue 后，不要再为同一项工作 @mention 同一个负责人，避免双触发。\n")
+		sb.WriteString("- 跨项目子任务规则：如果当前 issue 需要其它项目配合，不要只在父 issue 上描述依赖；先运行 `multica project list --output json` 找到目标项目 UUID，再创建子 issue。命令形态必须包含 `--parent <当前 issue id>` 和 `--project <目标项目 id>`，例如 `multica issue create --title \"...\" --description-file ./child.md --status backlog --parent <当前 issue id> --project <目标项目 id> --output json`。如果父 issue 或任务说明明确给出目标小队 UUID，必须在同一条创建命令中传 `--assignee-id <目标小队 UUID>`，并逐项核对“目标项目 UUID + 目标小队 UUID”映射，不能按 project list 的输出顺序猜测；如果没有明确目标小队 UUID，才不要额外传 `--assignee` 或 `--assignee-id`，平台会把未指派的项目 issue 自动交给项目负责人。创建子 issue 后，不要再为同一项工作 @mention 同一个负责人，避免双触发。\n")
 		for _, child := range profile.CrossProjectChildIssues {
 			target := sopStringField(child, "target_project", "project", "name")
 			trigger := sopStringField(child, "trigger", "when")

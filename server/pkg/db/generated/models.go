@@ -248,6 +248,22 @@ type DaemonToken struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 }
 
+type ExternalCredentialProfile struct {
+	ID              pgtype.UUID        `json:"id"`
+	UserID          pgtype.UUID        `json:"user_id"`
+	Provider        string             `json:"provider"`
+	Name            string             `json:"name"`
+	SecretRef       string             `json:"secret_ref"`
+	EncryptedSecret []byte             `json:"encrypted_secret"`
+	SecretHint      string             `json:"secret_hint"`
+	Capabilities    []byte             `json:"capabilities"`
+	Status          string             `json:"status"`
+	LastVerifiedAt  pgtype.Timestamptz `json:"last_verified_at"`
+	LastError       string             `json:"last_error"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
 type Feedback struct {
 	ID          pgtype.UUID        `json:"id"`
 	UserID      pgtype.UUID        `json:"user_id"`

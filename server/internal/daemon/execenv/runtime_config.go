@@ -129,6 +129,38 @@ func formatProjectResource(r ProjectResourceForEnv) string {
 			out += " — " + label
 		}
 		return out
+	case "gongfeng_repo":
+		var payload struct {
+			URL          string `json:"url"`
+			ProjectPath  string `json:"project_path"`
+			ResourceKind string `json:"resource_kind"`
+			Ref          string `json:"ref,omitempty"`
+			HeadCommit   string `json:"head_commit,omitempty"`
+			Title        string `json:"title,omitempty"`
+		}
+		_ = json.Unmarshal(r.ResourceRef, &payload)
+		out := fmt.Sprintf("**Gongfeng repo**: %s", payload.ProjectPath)
+		if payload.ResourceKind != "" {
+			out += fmt.Sprintf(" (%s", payload.ResourceKind)
+			if payload.Ref != "" {
+				out += fmt.Sprintf(": `%s`", payload.Ref)
+			}
+			out += ")"
+		}
+		if payload.HeadCommit != "" {
+			out += fmt.Sprintf(" head `%s`", payload.HeadCommit)
+		}
+		if payload.URL != "" {
+			out += fmt.Sprintf(" — %s", payload.URL)
+		}
+		if payload.Title != "" {
+			out += " — " + payload.Title
+		}
+		if label != "" {
+			out += " — " + label
+		}
+		out += ". Use the `gongfeng` MCP server for branch/file/MR resolution; do not treat this as a GitHub resource."
+		return out
 	default:
 		ref := string(r.ResourceRef)
 		if ref == "" {
@@ -495,6 +527,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	b.WriteString("- `multica issue metadata list <issue-id> [--output json]` — List every metadata key pinned to an issue. Empty `{}` is normal.\n")
 	b.WriteString("- `multica issue metadata set <issue-id> --key <k> --value <v> [--type string|number|bool]` — Pin (or overwrite) a single metadata key. The CLI auto-infers JSON primitives, so URLs and plain text are stored as strings — pass `--type number` or `--type bool` only when the semantic type matters.\n")
 	b.WriteString("- `multica issue metadata delete <issue-id> --key <k>` — Remove a metadata key.\n\n")
+	b.WriteString("- `multica issue source-fetch <issue-id> --provider tapd|gongfeng --status fetched|fetch_failed ... --output json` — Record external source fetch evidence after an MCP call. Use it instead of hand-writing `source_fetch_*` metadata so the platform can attach trace to this task.\n\n")
 	b.WriteString("### Squad maintenance\n")
 	b.WriteString("- `multica squad member set-role <squad-id> --member-id <id> --member-type <agent|member> --role <role> [--output json]` — Change a squad member role in place; use this instead of remove+add when only the role changes.\n\n")
 
@@ -566,7 +599,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 				fmt.Fprintf(&b, "- %s\n", formatProjectResource(r))
 			}
 			b.WriteString("\nResources are pointers — open them only when relevant to the task. ")
-			b.WriteString("For `github_repo` resources, use `multica repo checkout <url>` to fetch the code. Add `--ref <branch-or-sha>` when a task or handoff names an exact revision.\n\n")
+			b.WriteString("For `github_repo` and `gongfeng_repo` resources, use `multica repo checkout <url>` to fetch the code. Gongfeng page URLs such as `/commits/<branch>` are normalized automatically; add `--ref <branch-or-sha>` when a task or handoff names an exact revision.\n\n")
 		} else {
 			b.WriteString("This project has no resources attached yet.\n\n")
 		}

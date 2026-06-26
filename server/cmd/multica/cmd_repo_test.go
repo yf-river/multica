@@ -188,3 +188,34 @@ func TestRunRepoRemoveRejectsMissingRepoWithoutPatch(t *testing.T) {
 		t.Fatalf("patchCount = %d, want 0", patchCount)
 	}
 }
+
+func TestNormalizeRepoCheckoutURL_GongfengPageURL(t *testing.T) {
+	repoURL, ref := normalizeRepoCheckoutURL("https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev")
+	if repoURL != "https://git.code.tencent.com/ChainWeaver/ida/user-center.git" {
+		t.Fatalf("repoURL = %q", repoURL)
+	}
+	if ref != "v5.0.0_dev" {
+		t.Fatalf("ref = %q", ref)
+	}
+}
+
+func TestNormalizeRepoCheckoutURL_GongfengProjectURL(t *testing.T) {
+	repoURL, ref := normalizeRepoCheckoutURL("https://git.code.tencent.com/ChainWeaver/ida/user-center")
+	if repoURL != "https://git.code.tencent.com/ChainWeaver/ida/user-center.git" {
+		t.Fatalf("repoURL = %q", repoURL)
+	}
+	if ref != "" {
+		t.Fatalf("ref = %q", ref)
+	}
+}
+
+func TestNormalizeRepoCheckoutURL_NonGongfengPassthrough(t *testing.T) {
+	const input = "https://github.com/example/repo.git"
+	repoURL, ref := normalizeRepoCheckoutURL(input)
+	if repoURL != input {
+		t.Fatalf("repoURL = %q", repoURL)
+	}
+	if ref != "" {
+		t.Fatalf("ref = %q", ref)
+	}
+}

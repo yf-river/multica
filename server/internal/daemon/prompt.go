@@ -40,6 +40,7 @@ func BuildPrompt(task Task, provider string) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
+	writeSourceContextPrompt(&b, task)
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). `multica issue comment list %s --output json` returns all comments for the issue (server caps at 2000). On long-running issues use `--recent 20 --output json` to read the 20 most recently active threads, then page older threads via the stderr `Next thread cursor: ...` line and the matching `--before` / `--before-id` until you have enough history. `--since <RFC3339>` is still available for incremental polling and may combine with `--recent`.\n", task.IssueID)
 	return b.String()
@@ -168,6 +169,7 @@ func buildCommentPrompt(task Task, provider string) string {
 			fmt.Fprintf(&b, "⚠️ **小队负责人 no_action 规则：** 如果你判断无需行动，调用 `multica squad activity %s no_action --reason \"...\"` 后直接退出。不要发布任何评论，包括“无需行动”或“静默退出”这类评论。squad activity 已经记录了你的决策，额外评论只会制造噪声。\n\n", task.IssueID)
 		}
 	}
+	writeSourceContextPrompt(&b, task)
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then decide how to proceed.\n\n", task.IssueID)
 	// Comment-reading pointer. Warm path with new comments: issue-wide
 	// since-delta count, but steer the agent to read the triggering thread
@@ -186,6 +188,50 @@ func buildCommentPrompt(task Task, provider string) string {
 	}
 	b.WriteString(execenv.BuildCommentReplyInstructions(provider, task.IssueID, task.TriggerCommentID))
 	return b.String()
+}
+
+func writeSourceContextPrompt(b *strings.Builder, task Task) {
+	if task.SourceContext == nil {
+		return
+	}
+	source := task.SourceContext
+	b.WriteString("Source context:\n")
+	if source.Provider != "" {
+		fmt.Fprintf(b, "- provider: %s\n", source.Provider)
+	}
+	if source.URL != "" {
+		fmt.Fprintf(b, "- url: %s\n", source.URL)
+	}
+	if source.TAPD != nil {
+		tapd := source.TAPD
+		fmt.Fprintf(b, "- TAPD: workspace_id=%s resource_type=%s resource_id=%s fetch_provider=%s fetch_status=%s\n",
+			tapd.WorkspaceID, tapd.ResourceType, tapd.ResourceID, tapd.FetchProvider, tapd.FetchStatus)
+		if tapd.FetchError != "" {
+			fmt.Fprintf(b, "- TAPD fetch error: %s\n", tapd.FetchError)
+		}
+		if strings.HasPrefix(tapd.FetchStatus, "blocked") {
+			b.WriteString("- TAPD action: stop and report that the requester must configure an account-level TAPD credential profile. Do not claim the document was read.\n")
+		} else {
+			serverName := "mcp-server-tapd"
+			if cred, ok := source.ExternalCredentials["tapd"]; ok && cred.MCPServer != "" {
+				serverName = cred.MCPServer
+			}
+			fmt.Fprintf(b, "- TAPD action: before design or implementation, use MCP server `%s` to fetch the referenced TAPD document, then record it with `multica issue source-fetch %s --provider tapd --status fetched --source-workspace-id %s --resource-type %s --resource-id %s --title \"<fetched title>\" --summary \"<short factual summary>\" --body-excerpt \"<short excerpt from fetched markdown/body>\" --version \"<modified/revision if available>\" --duration-ms <milliseconds> --output json`. If the MCP call fails, run the same command with `--status fetch_failed --error \"<reason>\"` instead of guessing.\n",
+				serverName, task.IssueID, tapd.WorkspaceID, tapd.ResourceType, tapd.ResourceID)
+		}
+	}
+	if len(source.ExternalCredentials) > 0 {
+		b.WriteString("- external credential profiles:\n")
+		for provider, credential := range source.ExternalCredentials {
+			status := "missing"
+			if credential.Configured {
+				status = credential.ProfileStatus
+			}
+			fmt.Fprintf(b, "  - %s: scope=%s inheritance=%s profile_id=%s status=%s mcp_server=%s\n",
+				provider, credential.Scope, credential.Inheritance, credential.ProfileID, status, credential.MCPServer)
+		}
+	}
+	b.WriteString("\n")
 }
 
 // buildChatPrompt constructs a prompt for interactive chat tasks.

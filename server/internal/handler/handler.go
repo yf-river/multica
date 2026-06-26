@@ -26,6 +26,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/storage"
 	"github.com/multica-ai/multica/server/internal/util"
+	"github.com/multica-ai/multica/server/internal/util/secretbox"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
@@ -113,6 +114,10 @@ type Handler struct {
 	MembershipCache      *auth.MembershipCache
 	WebhookRateLimiter   WebhookRateLimiter
 	WebhookIPRateLimiter WebhookRateLimiter
+	// ExternalCredentialBox encrypts account-level TAPD/Gongfeng secrets at
+	// rest. Nil means this deployment can still store secret_ref bindings, but
+	// raw token writes are refused rather than falling back to plaintext.
+	ExternalCredentialBox *secretbox.Box
 	// Lark integration. All three are nil when the Lark master key
 	// (MULTICA_LARK_SECRET_KEY) is unset; the corresponding HTTP
 	// handlers return 503 in that case so a misconfigured self-host

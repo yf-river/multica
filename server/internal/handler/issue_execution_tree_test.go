@@ -169,4 +169,41 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 	if !strings.Contains(resp.Root.WakeupComments[0].Content, fx.child.Identifier) {
 		t.Fatalf("wakeup comment does not mention child identifier: %s", resp.Root.WakeupComments[0].Content)
 	}
+	if len(resp.TimelineNodes) == 0 {
+		t.Fatalf("timeline_nodes missing")
+	}
+	nodeTypes := map[string]int{}
+	for _, node := range resp.TimelineNodes {
+		nodeTypes[node.NodeType]++
+		if node.IssueID != fx.parent.ID {
+			t.Fatalf("timeline node issue id = %q, want parent %q: %+v", node.IssueID, fx.parent.ID, node)
+		}
+	}
+	for _, nodeType := range []string{"agent_task", "squad_step", "tool_call", "status_change", "child_issue_ref", "approval"} {
+		if nodeTypes[nodeType] == 0 {
+			t.Fatalf("timeline node type %s missing: %+v", nodeType, nodeTypes)
+		}
+	}
+	var childRef IssueTimelineNodeResponse
+	for _, node := range resp.TimelineNodes {
+		if node.NodeType == "child_issue_ref" {
+			childRef = node
+			break
+		}
+	}
+	if childRef.ChildIssueID != fx.child.ID {
+		t.Fatalf("child_issue_ref = %+v, want child %s", childRef, fx.child.ID)
+	}
+	if childRef.TraceEventCount != 0 || childRef.MessageCount != 0 || childRef.AgentTurnCount != 0 {
+		t.Fatalf("child_issue_ref must not expand child internals: %+v", childRef)
+	}
+	if resp.IssueSummary.IssueID != fx.parent.ID || resp.IssueSummary.NodeCount != len(resp.TimelineNodes) {
+		t.Fatalf("issue_summary = %+v, timeline nodes = %d", resp.IssueSummary, len(resp.TimelineNodes))
+	}
+	if resp.IssueSummary.TotalInputTokens < 36 || resp.IssueSummary.TotalOutputTokens < 19 {
+		t.Fatalf("issue_summary token totals = %+v, want trace usage included", resp.IssueSummary)
+	}
+	if resp.IssueSummary.FullAnalysisDeepLink == "" {
+		t.Fatalf("issue_summary missing deep link: %+v", resp.IssueSummary)
+	}
 }

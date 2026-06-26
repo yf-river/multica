@@ -109,6 +109,13 @@ var issuePullRequestsCmd = &cobra.Command{
 	RunE:    runIssuePullRequests,
 }
 
+var issueSourceFetchCmd = &cobra.Command{
+	Use:   "source-fetch <id>",
+	Short: "Record external source fetch evidence on an issue",
+	Args:  exactArgs(1),
+	RunE:  runIssueSourceFetch,
+}
+
 var issueCreateCmd = &cobra.Command{
 	Use:   "create",
 	Short: "Create a new issue",
@@ -263,6 +270,7 @@ func init() {
 	issueCmd.AddCommand(issueListCmd)
 	issueCmd.AddCommand(issueGetCmd)
 	issueCmd.AddCommand(issuePullRequestsCmd)
+	issueCmd.AddCommand(issueSourceFetchCmd)
 	issueCmd.AddCommand(issueCreateCmd)
 	issueCmd.AddCommand(issueUpdateCmd)
 	issueCmd.AddCommand(issueAssignCmd)
@@ -300,6 +308,22 @@ func init() {
 
 	// issue pull-requests
 	issuePullRequestsCmd.Flags().String("output", "table", "Output format: table or json")
+
+	// issue source-fetch
+	issueSourceFetchCmd.Flags().String("provider", "tapd", "Source provider: tapd or gongfeng")
+	issueSourceFetchCmd.Flags().String("fetch-provider", "", "Fetch mechanism, defaults to <provider>_mcp")
+	issueSourceFetchCmd.Flags().String("status", "", "Fetch status: fetched or fetch_failed (required)")
+	issueSourceFetchCmd.Flags().String("url", "", "Fetched source URL")
+	issueSourceFetchCmd.Flags().String("source-workspace-id", "", "External source workspace ID")
+	issueSourceFetchCmd.Flags().String("resource-type", "", "External source resource type")
+	issueSourceFetchCmd.Flags().String("resource-id", "", "External source resource ID")
+	issueSourceFetchCmd.Flags().String("title", "", "Fetched source title")
+	issueSourceFetchCmd.Flags().String("summary", "", "Short fetched source summary")
+	issueSourceFetchCmd.Flags().String("body-excerpt", "", "Short excerpt from the fetched source body or markdown")
+	issueSourceFetchCmd.Flags().String("version", "", "External source version, revision, or modified timestamp")
+	issueSourceFetchCmd.Flags().String("error", "", "Fetch failure reason, required for fetch_failed")
+	issueSourceFetchCmd.Flags().Int64("duration-ms", 0, "Fetch duration in milliseconds")
+	issueSourceFetchCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// issue create
 	issueCreateCmd.Flags().String("title", "", "Issue title (required)")

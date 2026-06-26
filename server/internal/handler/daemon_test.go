@@ -2179,6 +2179,93 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 	}
 }
 
+func TestClaimTask_ProjectGongfengRepoIsCheckoutRepo(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+
+	setHandlerTestWorkspaceRepos(t, []map[string]string{
+		{"url": "https://github.com/example/workspace-fallback", "description": "ws"},
+	})
+
+	var projectID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
+	`, testWorkspaceID, "Claim gongfeng project repo").Scan(&projectID); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
+
+	const pageURL = "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev"
+	const cloneURL = "https://git.code.tencent.com/ChainWeaver/ida/user-center.git"
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO project_resource (
+			project_id, workspace_id, resource_type, resource_ref, label, position
+		) VALUES ($1, $2, 'gongfeng_repo', $3::jsonb, 'gongfeng user-center', 0)
+	`, projectID, testWorkspaceID, `{"provider":"gongfeng","url":"`+pageURL+`","project_path":"ChainWeaver/ida/user-center","resource_kind":"commits","ref":"v5.0.0_dev"}`); err != nil {
+		t.Fatalf("create gongfeng_repo project_resource: %v", err)
+	}
+
+	var agentID, runtimeID string
+	if err := testPool.QueryRow(ctx,
+		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 LIMIT 1`,
+		testWorkspaceID,
+	).Scan(&agentID, &runtimeID); err != nil {
+		t.Fatalf("get agent: %v", err)
+	}
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (
+			workspace_id, project_id, title, status, priority, creator_id, creator_type, number, position
+		) VALUES ($1, $2, 'gongfeng project repo', 'todo', 'medium', $3, 'member', 88003, 0)
+		RETURNING id
+	`, testWorkspaceID, projectID, testUserID).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
+
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority
+		) VALUES ($1, $2, $3, 'queued', 0)
+		RETURNING id
+	`, agentID, runtimeID, issueID).Scan(&taskID); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, "test-claim-gongfeng-project-repos")
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: %d %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Task *struct {
+			Repos            []RepoData            `json:"repos"`
+			ProjectResources []ProjectResourceData `json:"project_resources"`
+		} `json:"task"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Task == nil {
+		t.Fatal("expected task in response")
+	}
+	if len(resp.Task.Repos) != 1 || resp.Task.Repos[0].URL != cloneURL {
+		t.Fatalf("expected canonical gongfeng clone URL in repos, got %+v", resp.Task.Repos)
+	}
+	if len(resp.Task.ProjectResources) != 1 || resp.Task.ProjectResources[0].ResourceType != "gongfeng_repo" {
+		t.Fatalf("expected gongfeng project resource to remain visible, got %+v", resp.Task.ProjectResources)
+	}
+}
+
 // When the issue's project has no github_repo resources, the claim handler
 // must fall back to workspace repos (the pre-override behavior).
 func TestClaimTask_ProjectWithoutRepos_FallsBackToWorkspaceRepos(t *testing.T) {

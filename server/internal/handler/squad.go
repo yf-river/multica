@@ -89,11 +89,13 @@ type internalSquadRole struct {
 	Name        string
 	Instruction string
 	MemberRole  string
+	MCPConfig   []byte
 }
 
 func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 	switch strings.TrimSpace(key) {
 	case "user-center":
+		mcpConfig := userCenterSOPMCPConfig()
 		return internalSquadTemplate{
 			Key:          "user-center-sop-flow",
 			Name:         "user-center 小队",
@@ -101,12 +103,12 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 			Instructions: "PM 按 user-center SOP 分阶段推进；每个阶段都要记录输入、输出、失败原因、耗时和验收证据；不得跳过验收。06-archive 不属于必跑阶段。",
 			Model:        promptEvaluationAgentModel(),
 			Roles: []internalSquadRole{
-				{Key: "pm", Name: "PM", Instruction: "接收 issue 和 TAPD 输入，检查当前阶段产物，处理阻断，推进 pm -> 01 -> 02 -> 03 -> 04 -> 05。", MemberRole: "PM"},
-				{Key: "01-clarify", Name: "01 需求澄清", Instruction: "只执行 user-center/01-clarify，产出需求边界、验收口径和 handoff。", MemberRole: "01 需求澄清"},
-				{Key: "02-design", Name: "02 方案设计", Instruction: "只执行 user-center/02-design，产出方案、影响面、接口/数据契约和 handoff。", MemberRole: "02 方案设计"},
-				{Key: "03-task-split", Name: "03 任务拆分", Instruction: "只执行 user-center/03-task-split，产出任务拆分、跨项目依赖和 handoff。", MemberRole: "03 任务拆分"},
-				{Key: "04-implement", Name: "04 代码开发", Instruction: "只执行 user-center/04-implement，按既定边界实现，不越权修改无关模块。", MemberRole: "04 代码开发"},
-				{Key: "05-verify", Name: "05 测试验证", Instruction: "只执行 user-center/05-verify，独立检查实现、测试结果、回写记录和最终 handoff。", MemberRole: "05 测试验证"},
+				{Key: "pm", Name: "PM", Instruction: "接收 issue 和 TAPD 输入，必须先根据 source_context 使用 mcp-server-tapd 读取 TAPD 正文；遇到 git.code.tencent.com 链接或项目资源时使用 gongfeng MCP 解析。检查当前阶段产物，处理阻断，推进 pm -> 01 -> 02 -> 03 -> 04 -> 05。", MemberRole: "PM", MCPConfig: mcpConfig},
+				{Key: "01-clarify", Name: "01 需求澄清", Instruction: "只执行 user-center/01-clarify；先读取 source_context 中的 TAPD 正文，产出需求边界、验收口径和 handoff。", MemberRole: "01 需求澄清", MCPConfig: mcpConfig},
+				{Key: "02-design", Name: "02 方案设计", Instruction: "只执行 user-center/02-design；需要仓库上下文时使用 gongfeng MCP 或本地仓库，产出方案、影响面、接口/数据契约和 handoff。", MemberRole: "02 方案设计", MCPConfig: mcpConfig},
+				{Key: "03-task-split", Name: "03 任务拆分", Instruction: "只执行 user-center/03-task-split；用 TAPD/Gongfeng 上下文识别跨项目依赖，产出任务拆分、跨项目依赖和 handoff。", MemberRole: "03 任务拆分", MCPConfig: mcpConfig},
+				{Key: "04-implement", Name: "04 代码开发", Instruction: "只执行 user-center/04-implement，按既定边界实现，不越权修改无关模块；需要工蜂上下文时使用 gongfeng MCP。", MemberRole: "04 代码开发", MCPConfig: mcpConfig},
+				{Key: "05-verify", Name: "05 测试验证", Instruction: "只执行 user-center/05-verify，独立检查实现、测试结果、回写记录和最终 handoff；核对 TAPD/Gongfeng/source_context 证据。", MemberRole: "05 测试验证", MCPConfig: mcpConfig},
 			},
 			Profile: map[string]any{
 				"profile_key": "user-center-sop-flow",
@@ -131,7 +133,12 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 				},
 				"stage_skills":     []string{"user-center/01-clarify", "user-center/02-design", "user-center/03-task-split", "user-center/04-implement", "user-center/05-verify"},
 				"operation_skills": []string{"user-center/add-api"},
-				"acceptance":       []string{"阶段产物完整", "测试证据完整", "交接说明明确"},
+				"mcp_servers":      []string{"mcp-server-tapd", "gongfeng"},
+				"source_context": map[string]any{
+					"tapd":     "从 task.source_context.tapd 获取 workspace_id/resource_type/resource_id/fetch_status；状态为 blocked_missing_profile 时必须阻断并要求用户配置账号级 TAPD profile。",
+					"gongfeng": "从 project_resources.gongfeng_repo 或 git.code.tencent.com 链接解析项目、分支、提交和文件上下文；需要账号级 Gongfeng profile。",
+				},
+				"acceptance": []string{"阶段产物完整", "测试证据完整", "交接说明明确"},
 				"cross_project_child_issues": []map[string]any{
 					{
 						"target_project": "gateway",
@@ -206,6 +213,30 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 	default:
 		return internalSquadTemplate{}, false
 	}
+}
+
+func userCenterSOPMCPConfig() []byte {
+	return mustJSONBytes(map[string]any{
+		"mcpServers": map[string]any{
+			"mcp-server-tapd": map[string]any{
+				"command": "uvx",
+				"args": []string{
+					"mcp-server-tapd",
+					"--api-base-url=https://api.tapd.cn",
+					"--tapd-base-url=https://www.tapd.cn",
+					"--keep-links=true",
+					"--tools-set=lookup_tapd_tool",
+				},
+			},
+			"gongfeng": map[string]any{
+				"command": "zsh",
+				"args": []string{
+					"-lc",
+					". /root/.config/gongfeng-mcp/env && exec node /data/ida/gongfeng-mcp-server/dist/index.js",
+				},
+			},
+		},
+	})
 }
 
 // ── Converters ──────────────────────────────────────────────────────────────
@@ -465,6 +496,7 @@ func (h *Handler) EnsureInternalSquadTemplate(w http.ResponseWriter, r *http.Req
 
 	var req struct {
 		TemplateKey string `json:"template_key"`
+		Model       string `json:"model"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -474,6 +506,12 @@ func (h *Handler) EnsureInternalSquadTemplate(w http.ResponseWriter, r *http.Req
 	if !ok {
 		writeError(w, http.StatusBadRequest, "template_key must be user-center or multica-coding")
 		return
+	}
+	if model := strings.TrimSpace(req.Model); model != "" {
+		template.Model = model
+		if policy, ok := template.Profile["model_policy"].(map[string]any); ok {
+			policy["默认模型"] = model
+		}
 	}
 
 	runtime, ok := h.selectInternalSquadRuntime(w, r, wsUUID, member)
@@ -542,19 +580,21 @@ func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgt
 	result := make([]InternalSquadAgent, 0, len(template.Roles))
 	for _, role := range template.Roles {
 		name := template.Name + " · " + role.Name
+		runtimeConfig := mustJSONBytes(map[string]any{
+			"provider": runtime.Provider,
+			"用途":       template.Name,
+			"角色":       role.Name,
+			"模板":       template.Key,
+		})
+		instructions := "你是" + template.Name + "的" + role.Name + "。" + role.Instruction + "所有输出必须使用中文，并保留可验收证据。"
+		model := pgtype.Text{String: template.Model, Valid: template.Model != ""}
 		agentRow, ok := byName[name]
 		if !ok {
-			runtimeConfig := mustJSONBytes(map[string]any{
-				"provider": runtime.Provider,
-				"用途":       template.Name,
-				"角色":       role.Name,
-				"模板":       template.Key,
-			})
 			agentRow, err = h.Queries.CreateAgent(ctx, db.CreateAgentParams{
 				WorkspaceID:        workspaceID,
 				Name:               name,
 				Description:        template.Description,
-				Instructions:       "你是" + template.Name + "的" + role.Name + "。" + role.Instruction + "所有输出必须使用中文，并保留可验收证据。",
+				Instructions:       instructions,
 				RuntimeMode:        runtime.RuntimeMode,
 				RuntimeConfig:      runtimeConfig,
 				RuntimeID:          runtime.ID,
@@ -563,7 +603,25 @@ func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgt
 				OwnerID:            ownerID,
 				CustomEnv:          []byte("{}"),
 				CustomArgs:         []byte("[]"),
-				Model:              pgtype.Text{String: template.Model, Valid: template.Model != ""},
+				McpConfig:          role.MCPConfig,
+				Model:              model,
+			})
+			if err != nil {
+				return nil, err
+			}
+		} else if internalSquadAgentNeedsSync(agentRow, runtime, template, role, runtimeConfig, instructions, model) {
+			agentRow, err = h.Queries.UpdateAgent(ctx, db.UpdateAgentParams{
+				ID:                 agentRow.ID,
+				Description:        pgtype.Text{String: template.Description, Valid: true},
+				RuntimeConfig:      runtimeConfig,
+				RuntimeMode:        pgtype.Text{String: runtime.RuntimeMode, Valid: true},
+				RuntimeID:          runtime.ID,
+				Visibility:         pgtype.Text{String: "workspace", Valid: true},
+				MaxConcurrentTasks: pgtype.Int4{Int32: 2, Valid: true},
+				Instructions:       pgtype.Text{String: instructions, Valid: true},
+				CustomArgs:         []byte("[]"),
+				McpConfig:          role.MCPConfig,
+				Model:              model,
 			})
 			if err != nil {
 				return nil, err
@@ -577,6 +635,27 @@ func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgt
 		})
 	}
 	return result, nil
+}
+
+func internalSquadAgentNeedsSync(agent db.Agent, runtime db.AgentRuntime, template internalSquadTemplate, role internalSquadRole, runtimeConfig []byte, instructions string, model pgtype.Text) bool {
+	if agent.Description != template.Description ||
+		agent.RuntimeMode != runtime.RuntimeMode ||
+		uuidToString(agent.RuntimeID) != uuidToString(runtime.ID) ||
+		agent.Visibility != "workspace" ||
+		agent.MaxConcurrentTasks != 2 ||
+		agent.Instructions != instructions ||
+		!bytes.Equal(bytes.TrimSpace(agent.RuntimeConfig), bytes.TrimSpace(runtimeConfig)) ||
+		!bytes.Equal(bytes.TrimSpace(agent.CustomArgs), []byte("[]")) ||
+		!bytes.Equal(bytes.TrimSpace(agent.McpConfig), bytes.TrimSpace(role.MCPConfig)) {
+		return true
+	}
+	if model.Valid != agent.Model.Valid {
+		return true
+	}
+	if model.Valid && model.String != agent.Model.String {
+		return true
+	}
+	return false
 }
 
 func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UUID, creatorID pgtype.UUID, template internalSquadTemplate, agents []InternalSquadAgent) (db.Squad, error) {

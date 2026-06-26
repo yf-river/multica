@@ -768,6 +768,7 @@ type PromptEvaluationOptimizationCandidateResponse struct {
 	SourceFailureSummary any     `json:"source_failure_summary"`
 	SourcePromptSnapshot any     `json:"source_prompt_snapshot"`
 	Metrics              any     `json:"metrics"`
+	SkillPatch           any     `json:"skill_patch,omitempty"`
 	Status               string  `json:"status"`
 	PublishedPromptID    *string `json:"published_prompt_id"`
 	PublishedAt          string  `json:"published_at"`
@@ -782,10 +783,11 @@ type PublishPromptEvaluationOptimizationCandidateResponse struct {
 }
 
 type UpdatePromptEvaluationOptimizationCandidateRequest struct {
-	CandidateName    string `json:"candidate_name"`
-	CandidateContent string `json:"candidate_content"`
-	Rationale        string `json:"rationale"`
-	EditNote         string `json:"edit_note"`
+	CandidateName    string                      `json:"candidate_name"`
+	CandidateContent string                      `json:"candidate_content"`
+	Rationale        string                      `json:"rationale"`
+	EditNote         string                      `json:"edit_note"`
+	SkillPatch       *PromptEvaluationSkillPatch `json:"skill_patch,omitempty"`
 }
 
 type RejectPromptEvaluationOptimizationCandidateRequest struct {
@@ -1316,6 +1318,7 @@ func promptEvaluationOptimizationCandidateToResponse(item db.PromptEvaluationOpt
 		SourceFailureSummary: decodeJSONDefault(item.SourceFailureSummary, map[string]any{}),
 		SourcePromptSnapshot: decodeJSONDefault(item.SourcePromptSnapshot, map[string]any{}),
 		Metrics:              decodeJSONDefault(item.Metrics, map[string]any{}),
+		SkillPatch:           skillPatchFromCandidate(item),
 		Status:               item.Status,
 		PublishedPromptID:    uuidToPtr(item.PublishedPromptID),
 		PublishedAt:          timestampToString(item.PublishedAt),
@@ -6092,6 +6095,20 @@ func (h *Handler) UpdatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 		}
 		writeError(w, http.StatusInternalServerError, "failed to update optimization candidate")
 		return
+	}
+	if req.SkillPatch != nil {
+		normalizedPatch, err := normalizePromptEvaluationSkillPatch(*req.SkillPatch, candidate, time.Now().UTC())
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		updatedCandidate, err = h.mergePromptEvaluationOptimizationCandidateMetrics(r.Context(), workspaceUUID, candidateID, map[string]any{
+			"skill_patch": normalizedPatch,
+		})
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to persist skill patch candidate")
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, promptEvaluationOptimizationCandidateToResponse(updatedCandidate))
 }

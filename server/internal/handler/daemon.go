@@ -1290,8 +1290,12 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	// project explicitly attached its repos, those are the authoritative set
 	// for issues inside that project. When the project has no github_repo
 	// resources (or no project at all), we fall back to the workspace repos.
+	var issueForSource db.Issue
+	hasIssueForSource := false
 	if task.IssueID.Valid {
 		if issue, err := h.Queries.GetIssue(r.Context(), task.IssueID); err == nil {
+			issueForSource = issue
+			hasIssueForSource = true
 			resp.WorkspaceID = uuidToString(issue.WorkspaceID)
 			resp.ThreadName = issue.Title
 
@@ -1344,7 +1348,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 							ResourceRef:  ref,
 							Label:        label,
 						})
-						// Lift github_repo resources into the daemon's repo list
+						// Lift git-backed project resources into the daemon's repo list
 						// so `multica repo checkout` and the meta-skill render
 						// them as the issue's repos.
 						if row.ResourceType == "github_repo" {
@@ -1353,6 +1357,16 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 							}
 							if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
 								projectRepos = append(projectRepos, RepoData{URL: payload.URL})
+							}
+						} else if row.ResourceType == "gongfeng_repo" {
+							var payload struct {
+								URL         string `json:"url"`
+								ProjectPath string `json:"project_path"`
+							}
+							if json.Unmarshal(row.ResourceRef, &payload) == nil {
+								if cloneURL := canonicalGongfengCloneURL(payload.URL, payload.ProjectPath); cloneURL != "" {
+									projectRepos = append(projectRepos, RepoData{URL: cloneURL})
+								}
 							}
 						}
 					}
@@ -1437,6 +1451,19 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 						resp.NewCommentsSince = startedAt.Time.UTC().Format(time.RFC3339)
 					}
 				}
+			}
+		}
+
+		if hasIssueForSource {
+			credentialUserID := issueForSource.CreatorID
+			if resp.InitiatorType == "member" && resp.InitiatorID != "" {
+				if initiatorID, err := util.ParseUUID(resp.InitiatorID); err == nil {
+					credentialUserID = initiatorID
+				}
+			}
+			resp.SourceContext = h.buildIssueSourceContext(r.Context(), issueForSource, credentialUserID)
+			if resp.Agent != nil {
+				resp.Agent.McpConfig = h.injectSourceCredentialMCPEnv(r.Context(), resp.Agent.McpConfig, resp.SourceContext)
 			}
 		}
 
@@ -1626,6 +1653,16 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 								if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
 									projectRepos = append(projectRepos, RepoData{URL: payload.URL})
 								}
+							} else if row.ResourceType == "gongfeng_repo" {
+								var payload struct {
+									URL         string `json:"url"`
+									ProjectPath string `json:"project_path"`
+								}
+								if json.Unmarshal(row.ResourceRef, &payload) == nil {
+									if cloneURL := canonicalGongfengCloneURL(payload.URL, payload.ProjectPath); cloneURL != "" {
+										projectRepos = append(projectRepos, RepoData{URL: cloneURL})
+									}
+								}
 							}
 						}
 						resp.ProjectResources = out
@@ -1801,6 +1838,20 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 
 	slog.Info("task claimed by runtime", "task_id", uuidToString(task.ID), "runtime_id", runtimeID, "agent_id", uuidToString(task.AgentID), "prior_session", resp.PriorSessionID)
 	writeJSON(w, http.StatusOK, map[string]any{"task": resp})
+}
+
+func canonicalGongfengCloneURL(rawURL, projectPath string) string {
+	projectPath = strings.Trim(strings.TrimSpace(projectPath), "/")
+	if projectPath == "" {
+		parsed, err := parseGongfengURL(rawURL)
+		if err == nil {
+			projectPath = parsed.ProjectPath
+		}
+	}
+	if projectPath == "" {
+		return ""
+	}
+	return "https://git.code.tencent.com/" + strings.TrimSuffix(projectPath, ".git") + ".git"
 }
 
 // trailingUserMessages returns the run of user messages after the last

@@ -1560,7 +1560,7 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	}
 	structuredOutput := `Agent 输出：
 ` + "```json" + `
-{"schema_version":1,"schema":"multica.training_evaluation.agent_verdict.v1","case_results":[{"case_index":0,"status":"通过","output":"已覆盖验收条件和 trace/任务标识","failure_reason":"无","conclusion":"通过","evidence":{"命中":["验收条件","trace/任务标识"]}}],"summary":{"total_cases":1,"passed_cases":1,"failed_cases":0,"failure_reason":"无","conclusion":"Agent 已返回结构化逐用例评估"}}
+{"schema_version":1,"schema":"multica.training_evaluation.agent_verdict.v1","case_results":[{"case_index":0,"status":"通过","output":"登录失败：已覆盖验收条件和 trace/任务标识","failure_reason":"无","conclusion":"通过","命中":["登录失败","验收条件","trace/任务标识"],"缺失":[],"evidence":{"命中":["登录失败","验收条件","trace/任务标识"]}}],"summary":{"total_cases":1,"passed_cases":1,"failed_cases":0,"failure_reason":"无","conclusion":"Agent 已返回结构化逐用例评估"}}
 ` + "```"
 	if _, err := testHandler.Queries.CreateTaskMessage(context.Background(), db.CreateTaskMessageParams{
 		TaskID:  parseUUID(resp.TaskID),
@@ -1939,7 +1939,7 @@ func TestPromptEvaluationRuntimeReadinessReportsUnavailableStates(t *testing.T) 
 	if err := json.Unmarshal(noPermissionW.Body.Bytes(), &noPermission); err != nil {
 		t.Fatalf("decode no permission readiness response: %v", err)
 	}
-	if noPermission.Status != "无权限" || !strings.Contains(noPermission.Fix, "runtime 所有者") || noPermission.Runtime != nil {
+	if noPermission.Status != "无权限" || !strings.Contains(noPermission.Fix, "运行时所有者") || noPermission.Runtime != nil {
 		t.Fatalf("no permission readiness = %+v", noPermission)
 	}
 }
@@ -2089,8 +2089,8 @@ func TestPromptEvaluationEvidenceSnapshotArchivesRunEvidence(t *testing.T) {
 
 	failW := httptest.NewRecorder()
 	failReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/fail", map[string]any{
-		"error":          "429 当前无可用Token额度",
-		"failure_reason": "agent_error.provider_capacity_or_rate_limit",
+		"error":          "402 当前账号 Token 额度已耗尽",
+		"failure_reason": "agent_error.provider_quota_limit",
 		"session_id":     "prompt-eval-snapshot-session",
 		"work_dir":       "/tmp/prompt-eval-snapshot",
 	}, testWorkspaceID, "prompt-eval-codex-daemon")
@@ -2112,7 +2112,7 @@ func TestPromptEvaluationEvidenceSnapshotArchivesRunEvidence(t *testing.T) {
 		t.Fatalf("snapshot = %+v", snapshot)
 	}
 	summary, ok := snapshot.Summary.(map[string]any)
-	if !ok || summary["运行状态"] != "失败" || summary["失败原因"] != "429 当前无可用Token额度" || summary["trace/task id"] != resp.TaskID {
+	if !ok || summary["运行状态"] != "失败" || summary["失败原因"] != "402 当前账号 Token 额度已耗尽" || summary["trace/task id"] != resp.TaskID {
 		t.Fatalf("snapshot summary = %#v", snapshot.Summary)
 	}
 	insightSummary, ok := summary["服务端解释"].(map[string]any)

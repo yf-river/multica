@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -89,13 +90,22 @@ type githubRepoRef struct {
 }
 
 type gongfengRepoRef struct {
-	Provider     string `json:"provider"`
-	URL          string `json:"url"`
-	ProjectPath  string `json:"project_path"`
-	ResourceKind string `json:"resource_kind"`
-	Ref          string `json:"ref,omitempty"`
-	HeadCommit   string `json:"head_commit,omitempty"`
-	Title        string `json:"title,omitempty"`
+	Provider         string `json:"provider"`
+	URL              string `json:"url"`
+	ProjectPath      string `json:"project_path"`
+	ResourceKind     string `json:"resource_kind"`
+	Ref              string `json:"ref,omitempty"`
+	HeadCommit       string `json:"head_commit,omitempty"`
+	Branch           string `json:"branch,omitempty"`
+	CommitSHA        string `json:"commit_sha,omitempty"`
+	ConnectionStatus string `json:"connection_status,omitempty"`
+	SyncStatus       string `json:"sync_status,omitempty"`
+	TestStatus       string `json:"test_status,omitempty"`
+	LastTestedAt     string `json:"last_tested_at,omitempty"`
+	LastSyncedAt     string `json:"last_synced_at,omitempty"`
+	Disabled         bool   `json:"disabled,omitempty"`
+	DisabledAt       string `json:"disabled_at,omitempty"`
+	Title            string `json:"title,omitempty"`
 }
 
 func validateGithubRepoRef(ref json.RawMessage) (json.RawMessage, error) {
@@ -151,6 +161,14 @@ func validateGongfengRepoRef(ref json.RawMessage) (json.RawMessage, error) {
 		payload.Ref = parsed.Ref
 	}
 	payload.HeadCommit = strings.TrimSpace(payload.HeadCommit)
+	payload.Branch = strings.TrimSpace(payload.Branch)
+	payload.CommitSHA = strings.TrimSpace(payload.CommitSHA)
+	payload.ConnectionStatus = strings.TrimSpace(payload.ConnectionStatus)
+	payload.SyncStatus = strings.TrimSpace(payload.SyncStatus)
+	payload.TestStatus = strings.TrimSpace(payload.TestStatus)
+	payload.LastTestedAt = strings.TrimSpace(payload.LastTestedAt)
+	payload.LastSyncedAt = strings.TrimSpace(payload.LastSyncedAt)
+	payload.DisabledAt = strings.TrimSpace(payload.DisabledAt)
 	payload.Title = strings.TrimSpace(payload.Title)
 	out, err := json.Marshal(payload)
 	if err != nil {
@@ -578,6 +596,164 @@ func (h *Handler) UpdateProjectResource(w http.ResponseWriter, r *http.Request) 
 		map[string]any{"resource": resp, "project_id": uuidToString(project.ID)},
 	)
 	writeJSON(w, http.StatusOK, resp)
+}
+
+// TestProjectResource performs a real reachability probe for a Gongfeng
+// project resource and records the result in resource_ref. A 302 to the
+// sign-in page is deliberately stored as auth_required instead of pretending
+// repository content was readable.
+func (h *Handler) TestProjectResource(w http.ResponseWriter, r *http.Request) {
+	h.updateGongfengResourceState(w, r, "test")
+}
+
+// SyncProjectResource refreshes locally known branch/sync metadata. Full
+// commit discovery requires a bound Gongfeng profile; until then this action
+// records that the resource was refreshed without inventing a commit SHA.
+func (h *Handler) SyncProjectResource(w http.ResponseWriter, r *http.Request) {
+	h.updateGongfengResourceState(w, r, "sync")
+}
+
+// DisableProjectResource keeps the resource row for audit/history but removes
+// it from training selection paths that filter disabled resources.
+func (h *Handler) DisableProjectResource(w http.ResponseWriter, r *http.Request) {
+	h.updateGongfengResourceState(w, r, "disable")
+}
+
+// EnableProjectResource re-activates a disabled Gongfeng project resource. The
+// next test/sync is intentionally left pending instead of reusing stale status.
+func (h *Handler) EnableProjectResource(w http.ResponseWriter, r *http.Request) {
+	h.updateGongfengResourceState(w, r, "enable")
+}
+
+func (h *Handler) updateGongfengResourceState(w http.ResponseWriter, r *http.Request, action string) {
+	project, ok := h.loadProjectForResource(w, r, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+	resourceUUID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "resourceId"), "resource id")
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	existing, err := h.Queries.GetProjectResourceInWorkspace(r.Context(), db.GetProjectResourceInWorkspaceParams{
+		ID: resourceUUID, WorkspaceID: project.WorkspaceID,
+	})
+	if err != nil || uuidToString(existing.ProjectID) != uuidToString(project.ID) {
+		writeError(w, http.StatusNotFound, "project resource not found")
+		return
+	}
+	if existing.ResourceType != "gongfeng_repo" {
+		writeError(w, http.StatusBadRequest, "project resource is not a gongfeng_repo")
+		return
+	}
+	var ref gongfengRepoRef
+	if err := json.Unmarshal(existing.ResourceRef, &ref); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid gongfeng_repo resource_ref")
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	switch action {
+	case "test":
+		result := probeGongfengURL(r.Context(), ref.URL)
+		ref.ConnectionStatus = result.ConnectionStatus
+		ref.TestStatus = result.TestStatus
+		ref.LastTestedAt = now
+	case "sync":
+		if ref.Disabled {
+			writeError(w, http.StatusConflict, "disabled gongfeng_repo cannot be synced")
+			return
+		}
+		if ref.Branch == "" {
+			ref.Branch = ref.Ref
+		}
+		if ref.CommitSHA == "" {
+			ref.CommitSHA = ref.HeadCommit
+		}
+		ref.SyncStatus = "synced"
+		ref.LastSyncedAt = now
+	case "disable":
+		ref.Disabled = true
+		ref.DisabledAt = now
+		ref.ConnectionStatus = "disabled"
+		ref.SyncStatus = "disabled"
+		ref.TestStatus = "disabled"
+	case "enable":
+		ref.Disabled = false
+		ref.DisabledAt = ""
+		ref.ConnectionStatus = "pending_verification"
+		ref.SyncStatus = "pending_verification"
+		ref.TestStatus = "pending_verification"
+	default:
+		writeError(w, http.StatusBadRequest, "unknown project resource action")
+		return
+	}
+	nextRef, err := validateAndNormalizeResourceRef(existing.ResourceType, mustMarshalRaw(ref))
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	updated, err := h.Queries.UpdateProjectResource(r.Context(), db.UpdateProjectResourceParams{
+		ID:          existing.ID,
+		ResourceRef: nextRef,
+		Label:       existing.Label,
+		Position:    existing.Position,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update project resource")
+		return
+	}
+	resp := projectResourceToResponse(updated)
+	h.publish(
+		protocol.EventProjectResourceUpdated,
+		uuidToString(project.WorkspaceID),
+		"member",
+		userID,
+		map[string]any{"resource": resp, "project_id": uuidToString(project.ID), "action": action},
+	)
+	writeJSON(w, http.StatusOK, resp)
+}
+
+type gongfengProbeResult struct {
+	ConnectionStatus string
+	TestStatus       string
+}
+
+func probeGongfengURL(ctx context.Context, rawURL string) gongfengProbeResult {
+	req, err := http.NewRequestWithContext(ctx, http.MethodHead, rawURL, nil)
+	if err != nil {
+		return gongfengProbeResult{ConnectionStatus: "invalid_url", TestStatus: "failed"}
+	}
+	client := &http.Client{
+		Timeout: 8 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return gongfengProbeResult{ConnectionStatus: "unreachable", TestStatus: "failed"}
+	}
+	defer resp.Body.Close()
+	location := resp.Header.Get("Location")
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden ||
+		(resp.StatusCode >= 300 && resp.StatusCode < 400 && strings.Contains(location, "/users/sign_in")) {
+		return gongfengProbeResult{ConnectionStatus: "auth_required", TestStatus: "passed"}
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode < 400 {
+		return gongfengProbeResult{ConnectionStatus: "reachable", TestStatus: "passed"}
+	}
+	return gongfengProbeResult{ConnectionStatus: fmt.Sprintf("http_%d", resp.StatusCode), TestStatus: "failed"}
+}
+
+func mustMarshalRaw(v any) json.RawMessage {
+	out, err := json.Marshal(v)
+	if err != nil {
+		return json.RawMessage("{}")
+	}
+	return out
 }
 
 // findLocalDirectoryConflict enforces "at most one local_directory resource

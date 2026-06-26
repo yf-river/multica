@@ -15,7 +15,11 @@ export {
 export {
   projectResourceKeys,
   projectResourcesOptions,
+  useDisableProjectResource,
+  useEnableProjectResource,
   useCreateProjectResource,
   useUpdateProjectResource,
+  useSyncProjectResource,
+  useTestProjectResource,
   useDeleteProjectResource,
 } from "./resource-queries";

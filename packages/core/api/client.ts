@@ -150,6 +150,20 @@ import type {
   PromptEvaluationOptimizationCandidate,
   UpdatePromptEvaluationOptimizationCandidateRequest,
   PublishPromptEvaluationOptimizationCandidateResponse,
+  ApplyPromptEvaluationSkillCandidateRequest,
+  CheckPromptEvaluationSkillFreshnessRequest,
+  CreatePromptEvaluationSkillCaseDraftsRequest,
+  CreatePromptEvaluationSkillInventoryRequest,
+  CreatePromptEvaluationSkillSnapshotRequest,
+  PreparePromptEvaluationSkillReEvalRequest,
+  RunPromptEvaluationSkillReEvalRequest,
+  PromptEvaluationSkillApplyCandidateResponse,
+  PromptEvaluationSkillCaseDraftsResult,
+  PromptEvaluationSkillFreshnessResult,
+  PromptEvaluationSkillInventoryResponse,
+  PromptEvaluationSkillReEvalAssetResponse,
+  PromptEvaluationSkillReEvalRunResponse,
+  PromptEvaluationSkillSnapshotResult,
   ListPromptEvaluationAssetsParams,
   ListPromptEvaluationRunsParams,
   ListPromptEvaluationCasesParams,
@@ -258,6 +272,13 @@ import {
   EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_TREND_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE,
   EMPTY_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_LIST_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_SKILL_APPLY_CANDIDATE_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_SKILL_CASE_DRAFTS_RESULT,
+  EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT,
+  EMPTY_PROMPT_EVALUATION_SKILL_INVENTORY_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_ASSET_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_RUN_RESPONSE,
+  EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT_RESULT,
   EMPTY_PUBLISH_PROMPT_EVALUATION_OPTIMIZATION_CANDIDATE_RESPONSE,
   EMPTY_RESTORE_PROMPT_EVALUATION_DATASET_VERSION_RESPONSE,
   EMPTY_WEBHOOK_DELIVERY,
@@ -306,6 +327,13 @@ import {
   PromptEvaluationDimensionScoreTrendListResponseSchema,
   PromptEvaluationOptimizationCandidateSchema,
   PromptEvaluationOptimizationCandidateListResponseSchema,
+  PromptEvaluationSkillApplyCandidateResponseSchema,
+  PromptEvaluationSkillCaseDraftsResultSchema,
+  PromptEvaluationSkillFreshnessResultSchema,
+  PromptEvaluationSkillInventoryResponseSchema,
+  PromptEvaluationSkillReEvalAssetResponseSchema,
+  PromptEvaluationSkillReEvalRunResponseSchema,
+  PromptEvaluationSkillSnapshotResultSchema,
   PublishPromptEvaluationOptimizationCandidateResponseSchema,
   PromptLibraryItemSchema,
   PromptLibraryItemListResponseSchema,
@@ -1902,6 +1930,45 @@ export class ApiClient {
     await this.fetch(`/api/prompt-evaluation-assets/${id}`, { method: "DELETE" });
   }
 
+  async createPromptEvaluationSkillInventory(
+    id: string,
+    data: CreatePromptEvaluationSkillInventoryRequest,
+  ): Promise<PromptEvaluationSkillInventoryResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/skill-inventory`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationSkillInventoryResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_INVENTORY_RESPONSE, {
+      endpoint: "POST /api/prompt-evaluation-assets/:id/skill-inventory",
+    }) as PromptEvaluationSkillInventoryResponse;
+  }
+
+  async createPromptEvaluationSkillSnapshot(
+    id: string,
+    data: CreatePromptEvaluationSkillSnapshotRequest,
+  ): Promise<PromptEvaluationSkillSnapshotResult> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/skill-snapshot`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationSkillSnapshotResultSchema, EMPTY_PROMPT_EVALUATION_SKILL_SNAPSHOT_RESULT, {
+      endpoint: "POST /api/prompt-evaluation-assets/:id/skill-snapshot",
+    }) as PromptEvaluationSkillSnapshotResult;
+  }
+
+  async createPromptEvaluationSkillCaseDrafts(
+    id: string,
+    data: CreatePromptEvaluationSkillCaseDraftsRequest,
+  ): Promise<PromptEvaluationSkillCaseDraftsResult> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/skill-case-drafts`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationSkillCaseDraftsResultSchema, EMPTY_PROMPT_EVALUATION_SKILL_CASE_DRAFTS_RESULT, {
+      endpoint: "POST /api/prompt-evaluation-assets/:id/skill-case-drafts",
+    }) as PromptEvaluationSkillCaseDraftsResult;
+  }
+
   async exportPromptEvaluationDataset(id: string): Promise<PromptEvaluationDatasetExportResponse> {
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-assets/${id}/dataset-export`);
     return parseWithFallback(raw, PromptEvaluationDatasetExportResponseSchema, {
@@ -2365,6 +2432,58 @@ export class ApiClient {
     }) as PublishPromptEvaluationOptimizationCandidateResponse;
   }
 
+  async checkPromptEvaluationSkillCandidateFreshness(
+    candidateId: string,
+    data: CheckPromptEvaluationSkillFreshnessRequest = {},
+  ): Promise<PromptEvaluationSkillFreshnessResult> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-freshness`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationSkillFreshnessResultSchema, EMPTY_PROMPT_EVALUATION_SKILL_FRESHNESS_RESULT, {
+      endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-freshness",
+    }) as PromptEvaluationSkillFreshnessResult;
+  }
+
+  async applyPromptEvaluationSkillCandidate(
+    candidateId: string,
+    data: ApplyPromptEvaluationSkillCandidateRequest,
+  ): Promise<PromptEvaluationSkillApplyCandidateResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-apply`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationSkillApplyCandidateResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_APPLY_CANDIDATE_RESPONSE, {
+      endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-apply",
+    }) as PromptEvaluationSkillApplyCandidateResponse;
+  }
+
+  async preparePromptEvaluationSkillReEvalAsset(
+    candidateId: string,
+    data: PreparePromptEvaluationSkillReEvalRequest = {},
+  ): Promise<PromptEvaluationSkillReEvalAssetResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-asset`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationSkillReEvalAssetResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_ASSET_RESPONSE, {
+      endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-re-eval-asset",
+    }) as PromptEvaluationSkillReEvalAssetResponse;
+  }
+
+  async runPromptEvaluationSkillReEval(
+    candidateId: string,
+    data: RunPromptEvaluationSkillReEvalRequest = {},
+  ): Promise<PromptEvaluationSkillReEvalRunResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/skill-re-eval-run`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptEvaluationSkillReEvalRunResponseSchema, EMPTY_PROMPT_EVALUATION_SKILL_RE_EVAL_RUN_RESPONSE, {
+      endpoint: "POST /api/prompt-evaluation-optimization-candidates/:id/skill-re-eval-run",
+    }) as PromptEvaluationSkillReEvalRunResponse;
+  }
+
   async rejectPromptEvaluationOptimizationCandidate(candidateId: string, reason?: string): Promise<PromptEvaluationOptimizationCandidate> {
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-optimization-candidates/${candidateId}/reject`, {
       method: "POST",
@@ -2400,6 +2519,42 @@ export class ApiClient {
     return this.fetch(`/api/projects/${projectId}/resources/${resourceId}`, {
       method: "PUT",
       body: JSON.stringify(data),
+    });
+  }
+
+  async testProjectResource(
+    projectId: string,
+    resourceId: string,
+  ): Promise<ProjectResource> {
+    return this.fetch(`/api/projects/${projectId}/resources/${resourceId}/test`, {
+      method: "POST",
+    });
+  }
+
+  async syncProjectResource(
+    projectId: string,
+    resourceId: string,
+  ): Promise<ProjectResource> {
+    return this.fetch(`/api/projects/${projectId}/resources/${resourceId}/sync`, {
+      method: "POST",
+    });
+  }
+
+  async disableProjectResource(
+    projectId: string,
+    resourceId: string,
+  ): Promise<ProjectResource> {
+    return this.fetch(`/api/projects/${projectId}/resources/${resourceId}/disable`, {
+      method: "POST",
+    });
+  }
+
+  async enableProjectResource(
+    projectId: string,
+    resourceId: string,
+  ): Promise<ProjectResource> {
+    return this.fetch(`/api/projects/${projectId}/resources/${resourceId}/enable`, {
+      method: "POST",
     });
   }
 

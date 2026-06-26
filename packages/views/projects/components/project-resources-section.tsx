@@ -23,7 +23,6 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import type {
   GongfengRepoResourceRef,
-  GithubRepoResourceRef,
   LocalDirectoryResourceRef,
   ProjectResource,
 } from "@multica/core/types";
@@ -53,12 +52,6 @@ import { useT } from "../../i18n";
 //   (1) extending the server validator
 //   (2) extending ProjectResourceType in @multica/core/types
 //   (3) adding a render case in ResourceRow and an add-control here
-function isGithubRef(r: ProjectResource): r is ProjectResource & {
-  resource_ref: GithubRepoResourceRef;
-} {
-  return r.resource_type === "github_repo";
-}
-
 function isGongfengRef(r: ProjectResource): r is ProjectResource & {
   resource_ref: GongfengRepoResourceRef;
 } {
@@ -104,7 +97,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const localDaemonId = daemonStatus.daemonId;
 
   const attachedUrls = new Set(
-    resources.filter(isGithubRef).map((r) => r.resource_ref.url),
+    resources.filter(isGongfengRef).map((r) => r.resource_ref.url),
   );
   const attachedLocalPaths = new Set(
     resources
@@ -124,20 +117,9 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
 
   const repoQuery = repoSearch.trim().toLowerCase();
   const filteredRepos =
-    workspace?.repos?.filter((repo) => repo.url.toLowerCase().includes(repoQuery)) ?? [];
-
-  const handleAttach = async (url: string) => {
-    try {
-      await createResource.mutateAsync({
-        resource_type: "github_repo",
-        resource_ref: { url },
-      });
-      toast.success(t(($) => $.resources.toast_attached));
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : t(($) => $.resources.toast_attach_failed);
-      toast.error(msg);
-    }
-  };
+    workspace?.repos
+      ?.filter((repo) => isGongfengURL(repo.url))
+      .filter((repo) => repo.url.toLowerCase().includes(repoQuery)) ?? [];
 
   const handleAttachGongfeng = async (url: string) => {
     try {
@@ -153,11 +135,11 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   };
 
   const handleAttachURL = async (url: string) => {
-    if (isGongfengURL(url)) {
-      await handleAttachGongfeng(url);
+    if (!isGongfengURL(url)) {
+      toast.error(t(($) => $.resources.toast_gongfeng_url_required));
       return;
     }
-    await handleAttach(url);
+    await handleAttachGongfeng(url);
   };
 
   const handleAttachLocalDirectory = async () => {
@@ -354,7 +336,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                           aria-disabled={isDisabled}
                           onClick={async () => {
                             if (isDisabled) return;
-                            await handleAttach(repo.url);
+                            await handleAttachGongfeng(repo.url);
                             setAddOpen(false);
                           }}
                           className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-left hover:bg-accent transition-colors aria-disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:hover:bg-transparent"
@@ -443,38 +425,6 @@ function ResourceRow({
   onRenameLocalDirectory,
 }: ResourceRowProps) {
   const { t } = useT("projects");
-  if (isGithubRef(resource)) {
-    const ref = resource.resource_ref;
-    return (
-      <div className="flex items-center gap-2 text-xs group">
-        <FolderGit className="size-3.5 text-muted-foreground shrink-0" />
-        <Tooltip>
-          <TooltipTrigger
-            render={
-              <a
-                href={ref.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="truncate flex-1 hover:underline"
-              >
-                {resource.label || ref.url}
-              </a>
-            }
-          />
-          <TooltipContent side="top">{ref.url}</TooltipContent>
-        </Tooltip>
-        <button
-          type="button"
-          onClick={onRemove}
-          className="opacity-0 group-hover:opacity-100 transition-opacity rounded-sm p-0.5 hover:bg-accent"
-          title={t(($) => $.resources.remove_tooltip)}
-        >
-          <Trash2 className="size-3 text-muted-foreground" />
-        </button>
-      </div>
-    );
-  }
-
   if (isLocalDirectoryRef(resource)) {
     return (
       <LocalDirectoryRow
@@ -494,27 +444,56 @@ function ResourceRow({
       ref.title ||
       [ref.project_path, ref.ref].filter(Boolean).join(" @ ") ||
       ref.url;
-    const detail = [ref.resource_kind, ref.ref].filter(Boolean).join(": ");
+    const branch = ref.branch || ref.ref || "";
+    const commit = ref.commit_sha || ref.head_commit || "";
+    const detail = [ref.resource_kind, branch].filter(Boolean).join(": ");
+    const statusItems = [
+      { label: "连接", value: ref.connection_status },
+      { label: "同步", value: ref.sync_status },
+      { label: "测试", value: ref.test_status },
+    ].filter((item): item is { label: string; value: string } => Boolean(item.value));
     return (
-      <div className="flex items-center gap-2 text-xs group">
-        <GitBranch className="size-3.5 text-muted-foreground shrink-0" />
+      <div className="flex items-start gap-2 rounded-md px-1.5 py-1 text-xs group hover:bg-accent/40">
+        <GitBranch className="mt-0.5 size-3.5 text-muted-foreground shrink-0" />
         <Tooltip>
           <TooltipTrigger
             render={
-              <a
-                href={ref.url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="truncate flex-1 hover:underline"
-              >
-                {display}
-              </a>
+              <div className="min-w-0 flex-1 space-y-1">
+                <a
+                  href={ref.url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="block truncate font-medium hover:underline"
+                  data-testid="gongfeng-resource-link"
+                >
+                  {display}
+                </a>
+                <div className="flex flex-wrap items-center gap-1 text-[10px] leading-4 text-muted-foreground">
+                  {branch && <span className="rounded border px-1 font-mono">{branch}</span>}
+                  {commit && <span className="rounded border px-1 font-mono">{shortCommit(commit)}</span>}
+                  {statusItems.map((item) => (
+                    <span
+                      key={`${item.label}:${item.value}`}
+                      className="rounded border px-1"
+                      data-testid="gongfeng-resource-status"
+                    >
+                      {item.label}: {statusLabel(item.value)}
+                    </span>
+                  ))}
+                </div>
+              </div>
             }
           />
           <TooltipContent side="top">
             <div className="space-y-0.5 text-[11px]">
               <div className="font-mono">{ref.project_path}</div>
               {detail && <div className="text-muted-foreground">{detail}</div>}
+              {commit && <div className="font-mono text-muted-foreground">{commit}</div>}
+              {statusItems.map((item) => (
+                <div key={item.label} className="text-muted-foreground">
+                  {item.label}: {statusLabel(item.value)}
+                </div>
+              ))}
               <div className="text-muted-foreground">Gongfeng</div>
             </div>
           </TooltipContent>
@@ -534,7 +513,7 @@ function ResourceRow({
   return (
     <div className="flex items-center gap-2 text-xs text-muted-foreground">
       <span className="truncate flex-1">
-        {resource.label || resource.resource_type}
+        {resource.label || t(($) => $.resources.legacy_resource_label)}
       </span>
       <button
         type="button"
@@ -546,6 +525,41 @@ function ResourceRow({
       </button>
     </div>
   );
+}
+
+function shortCommit(value: string): string {
+  return value.length > 12 ? value.slice(0, 12) : value;
+}
+
+function statusLabel(value: string): string {
+  switch (value) {
+    case "ok":
+    case "passed":
+    case "connected":
+    case "synced":
+      return "通过";
+    case "reachable":
+      return "可达";
+    case "auth_required":
+      return "需凭据";
+    case "unreachable":
+      return "不可达";
+    case "invalid_url":
+      return "地址无效";
+    case "failed":
+    case "error":
+      return "失败";
+    case "disabled":
+      return "已停用";
+    case "pending_verification":
+      return "待验证";
+    case "seeded_for_remediation":
+      return "已建档";
+    case "requires_real_click_acceptance":
+      return "待 UI 验收";
+    default:
+      return value.replace(/_/g, " ");
+  }
 }
 
 interface LocalDirectoryRowProps {

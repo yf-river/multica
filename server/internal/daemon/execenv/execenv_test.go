@@ -225,6 +225,44 @@ func TestPrepareWithProjectResources(t *testing.T) {
 	}
 }
 
+func TestRuntimeConfigFormatsGongfengProjectResource(t *testing.T) {
+	t.Parallel()
+
+	out := buildMetaSkillContent("codex", TaskContextForEnv{
+		IssueID:      "issue-1",
+		ProjectID:    "project-1",
+		ProjectTitle: "user-center",
+		ProjectResources: []ProjectResourceForEnv{
+			{
+				ID:           "resource-1",
+				ResourceType: "gongfeng_repo",
+				ResourceRef: []byte(`{
+					"provider":"gongfeng",
+					"url":"https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+					"project_path":"ChainWeaver/ida/user-center",
+					"resource_kind":"commits",
+					"ref":"v5.0.0_dev",
+					"head_commit":"eb2291dfd3c670fc70b5f94231babd8d53db3837",
+					"title":"user-center v5.0.0_dev"
+				}`),
+				Label: "主仓库",
+			},
+		},
+	})
+
+	for _, want := range []string{
+		"**Gongfeng repo**: ChainWeaver/ida/user-center",
+		"(commits: `v5.0.0_dev`)",
+		"head `eb2291dfd3c670fc70b5f94231babd8d53db3837`",
+		"Use the `gongfeng` MCP server",
+		"do not treat this as a GitHub resource",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("runtime config missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+}
+
 // When the issue's project has its own github_repo resources, those should be
 // the only repos rendered in the meta-skill — workspace-level repos must not
 // leak into the agent prompt to avoid confusing it about which repo to use.
@@ -4016,6 +4054,7 @@ func TestInjectRuntimeConfigIssueMetadataSectionScope(t *testing.T) {
 		"multica issue metadata list <issue-id>",
 		"multica issue metadata set <issue-id> --key <k> --value <v> [--type string|number|bool]",
 		"multica issue metadata delete <issue-id> --key <k>",
+		"multica issue source-fetch <issue-id>",
 	}
 
 	type wantSection struct {

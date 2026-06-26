@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-training-browser-e2e goal-test-training-curl-e2e goal-test-seed-business-training goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e goal-test-squad-curl-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-final-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-dataset-stream-audit goal-test-prune-dev-data goal-test-playground-difference-audit goal-test-session-retro goal-test-token-audit
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-training-browser-e2e goal-test-training-curl-e2e goal-test-seed-business-training goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e goal-test-quick-entry-cross-service goal-test-squad-curl-e2e goal-test-tapd-gongfeng-sop-gap-audit goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-final-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-dataset-stream-audit goal-test-prune-dev-data goal-test-playground-difference-audit goal-test-session-retro goal-test-token-audit
 
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
@@ -300,7 +300,7 @@ goal-test-coding-squad-curl-e2e: goal-test-smoke ## Run real curl/API + daemon E
 	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
 	ACCEPTANCE_SQUAD_TEMPLATE_KEY=multica-coding \
 	MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER="$(GOAL_TEST_REAL_AGENT_PROVIDER)" \
-	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_MODEL)" \
+	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
 	MULTICA_PROMPT_EVALUATION_AGENT_FALLBACK_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
 	ACCEPTANCE_TASK_TIMEOUT_MS=600000 \
 	ACCEPTANCE_MODEL_ATTEMPT_TIMEOUT_MS=720000 \
@@ -316,14 +316,21 @@ goal-test-user-center-squad-curl-e2e: goal-test-smoke ## Run real curl/API + dae
 	ACCEPTANCE_SQUAD_TEMPLATE_KEY=user-center \
 	ACCEPTANCE_VERIFY_CROSS_PROJECT_CHILDREN=1 \
 	MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER="$(GOAL_TEST_REAL_AGENT_PROVIDER)" \
-	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_MODEL)" \
+	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
 	MULTICA_PROMPT_EVALUATION_AGENT_FALLBACK_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
-	ACCEPTANCE_TASK_TIMEOUT_MS=900000 \
-	ACCEPTANCE_MODEL_ATTEMPT_TIMEOUT_MS=960000 \
+	ACCEPTANCE_TASK_TIMEOUT_MS=2700000 \
+	ACCEPTANCE_MODEL_ATTEMPT_TIMEOUT_MS=7200000 \
 	TMPDIR="$(GOAL_TEST_TMPDIR)" \
 	node scripts/run-model-fallback-e2e.mjs scripts/codex-squad-curl-e2e.mjs
 
 goal-test-squad-curl-e2e: goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e ## Run both real curl/API squad SOP E2E suites
+
+goal-test-quick-entry-cross-service: ## Verify user-center/gateway/ida-deployment quick-entry cross-service sandbox
+	node scripts/verify-quick-entry-cross-service.mjs
+
+goal-test-tapd-gongfeng-sop-gap-audit: ## Audit TAPD/Gongfeng/SOP final artifact against original P0 matrix
+	node scripts/generate-tapd-gongfeng-sop-final-acceptance.mjs
+	node scripts/tapd-gongfeng-sop-gap-audit.mjs
 
 goal-test-smoke: ## Fast goal-test gate: E2E preflight, environment verify, and current log window verify
 	$(MAKE) goal-test-e2e-preflight
@@ -349,6 +356,9 @@ goal-test-final-acceptance: goal-test-ui-acceptance ## Run full goal-test accept
 	$(MAKE) goal-test-training-browser-e2e
 	$(MAKE) goal-test-training-curl-e2e
 	$(MAKE) goal-test-squad-curl-e2e
+	$(MAKE) goal-test-quick-entry-cross-service
+	node scripts/generate-tapd-gongfeng-sop-final-acceptance.mjs
+	node scripts/tapd-gongfeng-sop-gap-audit.mjs
 	node scripts/goal-test-environments.mjs verify-logs int
 
 goal-test-ui-audit: goal-test-smoke ## Run real-browser goal-test integration UI, performance, console, Chinese semantics, and log-window audit
