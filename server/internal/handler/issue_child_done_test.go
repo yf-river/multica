@@ -426,6 +426,34 @@ func TestChildDoneMentionsParentAssignee_Squad(t *testing.T) {
 	}
 }
 
+// TestChildDoneTriggersParentSquadWhenSameSquadOwnsChild proves the canonical
+// SOP shape: a squad-owned parent may create squad-owned child issues, and
+// once all child work is done the parent leader must be woken to summarize and
+// close the parent. The guard for shared-leader loops must not suppress this
+// same-squad cross-issue handoff.
+func TestChildDoneTriggersParentSquadWhenSameSquadOwnsChild(t *testing.T) {
+	fx := newChildDoneFixture(t, "in_progress")
+	sq := newSquadCommentTriggerFixture(t)
+
+	setIssueAssigneeDirect(t, fx.parent.ID, "squad", sq.SquadID)
+	setIssueAssigneeDirect(t, fx.child.ID, "squad", sq.SquadID)
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(),
+			`DELETE FROM agent_task_queue WHERE issue_id IN ($1, $2)`,
+			fx.parent.ID, fx.child.ID)
+	})
+
+	updateChildStatus(t, fx.child.ID, "done")
+
+	content := parentSystemCommentContent(t, fx.parent.ID)
+	if !strings.Contains(content, "mention://squad/"+sq.SquadID) {
+		t.Errorf("expected parent-squad mention in system comment, got: %s", content)
+	}
+	if got := countPendingTasksForAgent(t, fx.parent.ID, sq.LeaderID); got != 1 {
+		t.Errorf("expected 1 pending parent leader task for same-squad child handoff, got %d", got)
+	}
+}
+
 // TestCrossProjectChildrenWakeUserCenterParentSquad proves the microservice
 // orchestration shape users expect from the user-center SOP: a parent issue
 // stays in the usercenter project and is owned by a squad, while gateway and

@@ -316,12 +316,12 @@ func (h *Handler) triggerChildDoneAgent(ctx context.Context, parent db.Issue, tr
 }
 
 // triggerChildDoneSquad enqueues a leader-role task for the parent's squad
-// assignee, applying the self-trigger guard against:
-//   - same squad on both sides (the leader already observed the child via
-//     its own coordination cycle), and
-//   - same effective leader on both sides — child agent == leader, or
-//     child squad's leader == this squad's leader (the cross-squad shared
-//     leader loop).
+// assignee. A child finishing and waking its parent is a serial sub-task
+// handoff between two different issues, so same-squad children must wake the
+// parent leader; without that, canonical squad-owned parent/child plans strand
+// the parent after all children finish. The loop guard remains for distinct
+// child owners with the same effective leader — child agent == leader, or a
+// different child squad's leader == this squad's leader.
 func (h *Handler) triggerChildDoneSquad(ctx context.Context, parent, child db.Issue, triggerCommentID pgtype.UUID, actorType, actorID string) {
 	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
 		ID:          parent.AssigneeID,
@@ -336,17 +336,16 @@ func (h *Handler) triggerChildDoneSquad(ctx context.Context, parent, child db.Is
 		return
 	}
 
-	// Same-squad child → the leader has already observed the work via its
-	// own coordination cycle on the child; firing again on the parent would
-	// just re-trigger the same leader run with no new signal.
-	if childAssigneeIsSquad(child, parent.AssigneeID) {
-		return
-	}
+	sameSquadChild := childAssigneeIsSquad(child, parent.AssigneeID)
 	// Shared-leader loop: child driven directly by the parent squad's leader,
-	// or by another squad whose leader is the same agent.
-	if owner := h.effectiveChildAgentOwner(ctx, child); owner.Valid &&
-		uuidToString(owner) == uuidToString(squad.LeaderID) {
-		return
+	// or by another squad whose leader is the same agent. Same-squad children
+	// are allowed because the signal is a cross-issue handoff back to the
+	// parent, mirroring the same-agent parent path above.
+	if !sameSquadChild {
+		if owner := h.effectiveChildAgentOwner(ctx, child); owner.Valid &&
+			uuidToString(owner) == uuidToString(squad.LeaderID) {
+			return
+		}
 	}
 
 	agent, err := h.Queries.GetAgent(ctx, squad.LeaderID)
