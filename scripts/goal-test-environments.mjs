@@ -11,6 +11,15 @@ const deploymentDir = path.join(runDir, "deployments");
 const logArchiveDir = path.join(runDir, "log-archive");
 const workspacesDir = path.join(runDir, "workspaces");
 const publicHost = process.env.GOAL_TEST_PUBLIC_HOST || "9.134.129.162";
+const gongfengMCPEnvPath = "/root/.config/gongfeng-mcp/env";
+const gongfengEnvKeys = [
+  "GONGFENG_API_BASE",
+  "GONGFENG_PRIVATE_TOKEN",
+  "GONGFENG_ACCESS_TOKEN",
+  "GONGFENG_SSH_KEY_PATH",
+  "GONGFENG_KNOWN_HOSTS_PATH",
+  "GONGFENG_WORKDIR",
+];
 
 const profiles = {
   prod: {
@@ -66,6 +75,7 @@ function ensureEnvironment(item) {
   mkdirSync(daemonWorkspacesRoot, { recursive: true });
   const file = envPath(item);
   const base = readEnvFile(path.join(repoRoot, ".env.worktree"));
+  const gongfengEnv = readGongfengMCPEnv();
   const databaseURL = deriveDatabaseURL(base.DATABASE_URL, item.databaseName);
   const frontendURL = `http://${publicHost}:${item.frontendPort}`;
   const lines = [
@@ -92,6 +102,9 @@ function ensureEnvironment(item) {
     `ALLOW_SIGNUP=false`,
     `ALLOWED_ACCOUNTS=goal-test-daemon`,
   ];
+  for (const key of gongfengEnvKeys) {
+    if (gongfengEnv[key]) lines.push(`${key}=${gongfengEnv[key]}`);
+  }
   writeFileSync(file, `${lines.join("\n")}\n`);
   return file;
 }
@@ -449,6 +462,22 @@ function readEnvFile(file) {
     if (!line || line.startsWith("#")) continue;
     const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
     if (match) env[match[1]] = match[2].replace(/^['"]|['"]$/g, "");
+  }
+  return env;
+}
+
+function readGongfengMCPEnv() {
+  if (!existsSync(gongfengMCPEnvPath)) return {};
+  const env = {};
+  const home = process.env.HOME || "/root";
+  for (const raw of readFileSync(gongfengMCPEnvPath, "utf8").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const match = line.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (!match || !gongfengEnvKeys.includes(match[1])) continue;
+    let value = match[2].trim().replace(/^['"]|['"]$/g, "");
+    value = value.replace(/\$HOME\b/g, home);
+    if (value) env[match[1]] = value;
   }
   return env;
 }
