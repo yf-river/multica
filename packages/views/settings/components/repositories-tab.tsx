@@ -14,6 +14,7 @@ import { memberListOptions, workspaceKeys } from "@multica/core/workspace/querie
 import { api } from "@multica/core/api";
 import type { Workspace, WorkspaceRepo } from "@multica/core/types";
 import { useT } from "../../i18n";
+import { ProjectGongfengRepositories } from "./project-gongfeng-repositories";
 
 function dropAndShiftIndex(set: Set<number>, removed: number): Set<number> {
   const next = new Set<number>();
@@ -104,6 +105,8 @@ export function RepositoriesTab() {
 
   return (
     <div className="space-y-8">
+      <ProjectGongfengRepositories />
+
       <section className="space-y-4">
         <h2 className="text-sm font-semibold">{t(($) => $.repositories.section_title)}</h2>
 

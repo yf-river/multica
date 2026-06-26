@@ -20,7 +20,12 @@ const membersRef = vi.hoisted(() => ({
 }));
 
 vi.mock("@tanstack/react-query", () => ({
-  useQuery: () => ({ data: membersRef.current }),
+  queryOptions: (options: unknown) => options,
+  useQuery: (options?: { queryKey?: readonly unknown[] }) =>
+    options?.queryKey?.[0] === "projects"
+      ? { data: [] }
+      : { data: membersRef.current },
+  useQueries: () => [],
   useQueryClient: () => ({ setQueryData: vi.fn() }),
 }));
 
@@ -30,6 +35,9 @@ vi.mock("@multica/core/hooks", () => ({
 
 vi.mock("@multica/core/paths", () => ({
   useCurrentWorkspace: () => workspaceRef.current,
+  useWorkspacePaths: () => ({
+    projectDetail: (id: string) => `/test-workspace/projects/${id}`,
+  }),
 }));
 
 vi.mock("@multica/core/workspace/queries", () => ({
