@@ -1031,6 +1031,7 @@ function inspectLeaderCrossProjectBehavior(messages) {
       /\bmultica\s+issue\s+metadata\s+list\b/.test(command) ||
       /\bmultica\s+issue\s+comment\s+list\b/.test(command) ||
       /\bmultica\s+issue\s+comment\s+add\b/.test(command) ||
+      /\bmultica\s+issue\s+status\b/.test(command) ||
       /\bmultica\s+project\s+list\b/.test(command) ||
       /\bmultica\s+issue\s+create\b/.test(command) ||
       /\bmultica\s+squad\s+activity\b/.test(command) ||
@@ -1041,6 +1042,7 @@ function inspectLeaderCrossProjectBehavior(messages) {
     /\bmultica\s+issue\s+metadata\s+list\b/.test(command) ||
     /\bmultica\s+issue\s+comment\s+list\b/.test(command) ||
     /\bmultica\s+issue\s+comment\s+add\b/.test(command) ||
+    /\bmultica\s+issue\s+status\b/.test(command) ||
     /\brm\s+-f\s+/.test(command)
   );
   const textMessages = items
@@ -1063,7 +1065,7 @@ function inspectLeaderCrossProjectBehavior(messages) {
         ].filter(Boolean).join("；"),
     blocking,
     allowed_commands: ["issue get", "issue source-fetch", "project list", "issue create", "squad activity"],
-    tolerated_warning_commands: ["issue metadata list", "issue comment list", "issue comment add", "rm -f"],
+    tolerated_warning_commands: ["issue metadata list", "issue comment list", "issue comment add", "issue status", "rm -f"],
     blocking_commands: blockingCommands.map(redactCommandForEvidence),
     warning_commands: warningCommands.map(redactCommandForEvidence),
     delegated_to_03: delegationEvidence.length > 0,
