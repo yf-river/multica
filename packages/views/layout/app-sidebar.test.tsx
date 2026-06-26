@@ -102,6 +102,7 @@ vi.mock("../i18n", () => ({
           agents: "智能体",
           squads: "小队",
           usage: "用量",
+          run_reviews: "运行复盘",
           training: "训练与评估",
           runtimes: "运行时",
           skills: "技能",
@@ -138,6 +139,7 @@ vi.mock("@multica/core/paths", () => ({
 	    agents: () => "/acme/agents",
 	    squads: () => "/acme/squads",
 	    usage: () => "/acme/usage",
+	    runReviews: () => "/acme/run-reviews",
 	    training: () => "/acme/training",
 	    trainingView: (view: string) => `/acme/training/${view}`,
 	    runtimes: () => "/acme/runtimes",
@@ -246,6 +248,14 @@ describe("AppSidebar workspace nav", () => {
 
     const item = document.querySelector('[data-href="/acme/training/runs"]');
     expect(item).toHaveAttribute("data-href", "/acme/training/runs");
+  });
+
+  it("renders 运行复盘 as the canonical workspace run review entry", () => {
+    render(<AppSidebar />);
+
+    expect(screen.getByText("运行复盘")).toBeInTheDocument();
+    expect(document.querySelector('[data-href="/acme/run-reviews"]')).toHaveAttribute("data-href", "/acme/run-reviews");
+    expect(screen.queryByText("用量")).not.toBeInTheDocument();
   });
 
   it("renders training submodule links and highlights the current training view", () => {

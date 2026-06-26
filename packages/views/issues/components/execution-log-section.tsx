@@ -6,6 +6,7 @@ import { Ban, CheckCircle2, ChevronRight, Loader2, RotateCcw, Square, XCircle } 
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { issueKeys, issueExecutionTreeOptions, issueTaskTraceOptions, issueSOPRunsOptions } from "@multica/core/issues/queries";
+import { useWorkspacePaths } from "@multica/core/paths";
 import type { AgentTask, IssueExecutionNode, IssueExecutionTreeResponse, IssueTimelineNode, SquadSOPRun, TaskFailureReason, TaskTraceEvent } from "@multica/core/types";
 import { useTimeAgo } from "../../i18n";
 import {
@@ -141,6 +142,8 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
       </button>
       {open && (
         <div className="space-y-0.5 pl-2">
+          <GoalLoopActionCard issueId={issueId} hasExecutionTree={hasExecutionTree} sopRuns={sopRuns.length} />
+
           {activeTasks.map((task) => (
             <ActiveTaskRow key={task.id} task={task} issueId={issueId} />
           ))}
@@ -203,6 +206,41 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
           )}
         </div>
       )}
+    </div>
+  );
+}
+
+function GoalLoopActionCard({
+  issueId,
+  hasExecutionTree,
+  sopRuns,
+}: {
+  issueId: string;
+  hasExecutionTree: boolean;
+  sopRuns: number;
+}) {
+  const paths = useWorkspacePaths();
+  const runReviewHref = `${paths.runReviews()}?issue=${encodeURIComponent(issueId)}`;
+  return (
+    <div className="mb-1.5 rounded-md border border-info/30 bg-info/5 px-2 py-2 text-xs" data-testid="issue-goal-loop-actions">
+      <div className="flex flex-wrap items-start justify-between gap-2">
+        <div className="min-w-0">
+          <div className="font-medium text-foreground">完整链路复盘</div>
+          <div className="mt-0.5 text-[11px] leading-5 text-muted-foreground">
+            {hasExecutionTree || sopRuns > 0
+              ? "已捕获运行时间流、SOP 阶段、token 和证据。下一步可以把本次复盘沉淀为评测，再进入优化运行。"
+              : "任务开始后这里会出现运行时间流、SOP 阶段、token 和证据。"}
+          </div>
+        </div>
+        <div className="flex shrink-0 flex-wrap gap-1">
+          <a
+            className="rounded border bg-background px-2 py-1 text-[11px] hover:bg-accent"
+            href={runReviewHref}
+          >
+            完整链路
+          </a>
+        </div>
+      </div>
     </div>
   );
 }

@@ -28,6 +28,12 @@ vi.mock("@multica/core/chat/queries", () => ({
   taskMessagesOptions: mockState.taskMessagesOptions,
 }));
 
+vi.mock("@multica/core/paths", () => ({
+  useWorkspacePaths: () => ({
+    runReviews: () => "/test/run-reviews",
+  }),
+}));
+
 vi.mock("../../common/actor-avatar", () => ({
   ActorAvatar: () => <span data-testid="actor-avatar" />,
 }));
@@ -294,6 +300,12 @@ describe("ExecutionLogSection trace", () => {
     renderWithQuery(<ExecutionLogSection issueId="issue-parent" />);
 
     expect(await screen.findByText("协作执行树")).toBeInTheDocument();
+    expect(screen.getByText("完整链路复盘")).toBeInTheDocument();
+    expect(screen.getByText(/已捕获运行时间流、SOP 阶段、token 和证据/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "完整链路" })).toHaveAttribute(
+      "href",
+      "/test/run-reviews?issue=issue-parent",
+    );
     expect(screen.getByText("1 个子任务")).toBeInTheDocument();
     expect(screen.getByText("根任务 GTD-1")).toBeInTheDocument();
     expect(screen.getByText("任务 2 / 完成 1")).toBeInTheDocument();

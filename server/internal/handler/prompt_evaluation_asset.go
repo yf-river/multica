@@ -1695,8 +1695,8 @@ func (h *Handler) ListPromptEvaluationAssets(w http.ResponseWriter, r *http.Requ
 	}
 	var status pgtype.Text
 	if value := r.URL.Query().Get("status"); value != "" {
-		if !validPromptLibraryStatus(value) {
-			writeError(w, http.StatusBadRequest, "status must be 启用 or 归档")
+		if !validPromptEvaluationCaseStatus(value) {
+			writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError())
 			return
 		}
 		status = pgtype.Text{String: value, Valid: true}
@@ -1750,8 +1750,8 @@ func (h *Handler) ListPromptEvaluationCases(w http.ResponseWriter, r *http.Reque
 	}
 	var status pgtype.Text
 	if value := r.URL.Query().Get("status"); value != "" {
-		if !validPromptLibraryStatus(value) {
-			writeError(w, http.StatusBadRequest, "status must be 启用 or 归档")
+		if !validPromptEvaluationCaseStatus(value) {
+			writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError())
 			return
 		}
 		status = pgtype.Text{String: value, Valid: true}
@@ -1928,8 +1928,8 @@ func (h *Handler) ListPromptEvaluationCaseTagSummaries(w http.ResponseWriter, r 
 	}
 	var status pgtype.Text
 	if value := r.URL.Query().Get("status"); value != "" {
-		if !validPromptLibraryStatus(value) {
-			writeError(w, http.StatusBadRequest, "status must be 启用 or 归档")
+		if !validPromptEvaluationCaseStatus(value) {
+			writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError())
 			return
 		}
 		status = pgtype.Text{String: value, Valid: true}
@@ -1988,8 +1988,8 @@ func (h *Handler) ListPromptEvaluationCaseTagDatasetSummaries(w http.ResponseWri
 	}
 	var status pgtype.Text
 	if value := r.URL.Query().Get("status"); value != "" {
-		if !validPromptLibraryStatus(value) {
-			writeError(w, http.StatusBadRequest, "status must be 启用 or 归档")
+		if !validPromptEvaluationCaseStatus(value) {
+			writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError())
 			return
 		}
 		status = pgtype.Text{String: value, Valid: true}
@@ -2173,8 +2173,8 @@ func (h *Handler) BulkUpdatePromptEvaluationCaseTags(w http.ResponseWriter, r *h
 	}
 	var status pgtype.Text
 	if value := strings.TrimSpace(req.Status); value != "" {
-		if !validPromptLibraryStatus(value) {
-			writeError(w, http.StatusBadRequest, "status must be 启用 or 归档")
+		if !validPromptEvaluationCaseStatus(value) {
+			writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError())
 			return
 		}
 		status = pgtype.Text{String: value, Valid: true}
@@ -2647,6 +2647,19 @@ func validPromptEvaluationDimensionScoreStatus(status string) bool {
 	}
 }
 
+func validPromptEvaluationCaseStatus(status string) bool {
+	switch status {
+	case "启用", "归档", "draft", "approved", "active":
+		return true
+	default:
+		return false
+	}
+}
+
+func promptEvaluationCaseStatusError() string {
+	return "status must be 启用, 归档, draft, approved, or active"
+}
+
 func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Request) {
 	workspaceID := h.resolveWorkspaceID(r)
 	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
@@ -2694,8 +2707,8 @@ func (h *Handler) CreatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 	if status == "" {
 		status = "启用"
 	}
-	if !validPromptLibraryStatus(status) {
-		writeError(w, http.StatusBadRequest, "status must be 启用 or 归档")
+	if !validPromptEvaluationCaseStatus(status) {
+		writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError())
 		return
 	}
 	variables, ok := jsonObjectBytesOrDefault(w, req.Variables, "variables", []byte("{}"))
@@ -3631,8 +3644,8 @@ func (h *Handler) UpdatePromptEvaluationCase(w http.ResponseWriter, r *http.Requ
 	if req.Status != nil {
 		status = strings.TrimSpace(*req.Status)
 	}
-	if !validPromptLibraryStatus(status) {
-		writeError(w, http.StatusBadRequest, "status must be 启用 or 归档")
+	if !validPromptEvaluationCaseStatus(status) {
+		writeError(w, http.StatusBadRequest, promptEvaluationCaseStatusError())
 		return
 	}
 	variables, ok := jsonObjectBytesForUpdate(w, req.Variables, "variables", current.Variables)
@@ -7145,27 +7158,31 @@ func (h *Handler) promptEvaluationCasesForAsset(w http.ResponseWriter, r *http.R
 	rows, err := h.Queries.ListPromptEvaluationCases(r.Context(), db.ListPromptEvaluationCasesParams{
 		WorkspaceID: asset.WorkspaceID,
 		AssetID:     asset.ID,
-		Status:      pgtype.Text{String: "启用", Valid: true},
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation cases")
 		return nil, false
 	}
-	if len(rows) == 0 {
+	executableRows := make([]db.PromptEvaluationCase, 0, len(rows))
+	for _, row := range rows {
+		if row.Status == "启用" || row.Status == "active" {
+			executableRows = append(executableRows, row)
+		}
+	}
+	if len(executableRows) == 0 {
 		return promptEvaluationCases(decodePayloadObject(asset.Payload)), true
 	}
 	assertions, err := h.Queries.ListPromptEvaluationCaseAssertions(r.Context(), db.ListPromptEvaluationCaseAssertionsParams{
 		WorkspaceID: asset.WorkspaceID,
 		AssetID:     asset.ID,
-		Status:      pgtype.Text{String: "启用", Valid: true},
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation case assertions")
 		return nil, false
 	}
 	assertionsByCase := promptEvaluationAssertionsByCase(assertions)
-	cases := make([]map[string]any, 0, len(rows))
-	for _, row := range rows {
+	cases := make([]map[string]any, 0, len(executableRows))
+	for _, row := range executableRows {
 		cases = append(cases, map[string]any{
 			"名称":   row.CaseName,
 			"变量":   decodeJSONDefault(row.Variables, map[string]any{}),

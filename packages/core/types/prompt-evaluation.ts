@@ -4,6 +4,7 @@ import type { AgentRuntime, TaskTraceEvent } from "./agent";
 
 export type PromptEvaluationAssetType = "数据集" | "测试套件" | "实验" | "优化运行";
 export type PromptEvaluationAssetStatus = "启用" | "归档";
+export type PromptEvaluationCaseStatus = PromptEvaluationAssetStatus | "draft" | "approved" | "active";
 export type PromptEvaluationCaseSortBy = "case_index" | "case_name" | "source" | "created_at" | "updated_at";
 export type PromptEvaluationOptimizationCandidateStatus = "待确认" | "已发布" | "已拒绝";
 
@@ -363,7 +364,7 @@ export interface PromptEvaluationStructuredCase {
   input: Record<string, unknown>;
   expected: Record<string, unknown>;
   tags: unknown[];
-  status: PromptEvaluationAssetStatus;
+  status: PromptEvaluationCaseStatus;
   source: string;
   created_by: string | null;
   created_at: string;
@@ -397,7 +398,7 @@ export interface PromptEvaluationCaseAssertion {
   assertion_index: number;
   assertion_type: "包含文本";
   expected_text: string;
-  status: PromptEvaluationAssetStatus;
+  status: PromptEvaluationCaseStatus;
   source: string;
   created_at: string;
 }
@@ -907,7 +908,7 @@ export interface ReviewPromptEvaluationRunRequest {
 
 export interface ListPromptEvaluationCasesParams {
   asset_id?: string;
-  status?: PromptEvaluationAssetStatus;
+  status?: PromptEvaluationCaseStatus;
   source?: "manual" | "trace" | "payload";
   tag?: string;
   keyword?: string;
@@ -923,14 +924,14 @@ export interface ListPromptEvaluationCaseOperationsParams {
 
 export interface ListPromptEvaluationCaseTagSummariesParams {
   asset_id?: string;
-  status?: PromptEvaluationAssetStatus;
+  status?: PromptEvaluationCaseStatus;
   source?: "manual" | "trace" | "payload";
   keyword?: string;
   limit?: number;
 }
 
 export interface ListPromptEvaluationCaseTagDatasetSummariesParams {
-  status?: PromptEvaluationAssetStatus;
+  status?: PromptEvaluationCaseStatus;
   source?: "manual" | "trace" | "payload";
   keyword?: string;
   limit?: number;
@@ -944,7 +945,7 @@ export interface ListPromptEvaluationDatasetVersionTagTrendsParams {
 
 export interface ListPromptEvaluationExperimentDimensionsParams {
   asset_id?: string;
-  status?: PromptEvaluationAssetStatus;
+  status?: PromptEvaluationCaseStatus;
 }
 
 export interface ListPromptEvaluationDimensionScoresParams {
@@ -982,7 +983,7 @@ export interface CreatePromptEvaluationCaseRequest {
   input?: Record<string, unknown>;
   expected?: Record<string, unknown>;
   tags?: unknown[];
-  status?: PromptEvaluationAssetStatus;
+  status?: PromptEvaluationCaseStatus;
 }
 
 export interface UpdatePromptEvaluationCaseRequest {
@@ -995,7 +996,7 @@ export interface UpdatePromptEvaluationCaseRequest {
   input?: Record<string, unknown>;
   expected?: Record<string, unknown>;
   tags?: unknown[];
-  status?: PromptEvaluationAssetStatus;
+  status?: PromptEvaluationCaseStatus;
 }
 
 export interface BulkUpdatePromptEvaluationCaseTagsRequest {
@@ -1003,7 +1004,7 @@ export interface BulkUpdatePromptEvaluationCaseTagsRequest {
   source?: "manual" | "trace" | "payload";
   tag?: string;
   keyword?: string;
-  status?: PromptEvaluationAssetStatus;
+  status?: PromptEvaluationCaseStatus;
   tags?: string[];
   source_tag?: string;
   target_tag?: string;

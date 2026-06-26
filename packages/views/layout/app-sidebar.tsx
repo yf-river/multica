@@ -120,6 +120,7 @@ type NavKey =
   | "agents"
   | "squads"
   | "usage"
+  | "runReviews"
   | "training"
   | "runtimes"
   | "skills"
@@ -135,6 +136,7 @@ type NavLabelKey =
   | "agents"
   | "squads"
   | "usage"
+  | "run_reviews"
   | "training"
   | "runtimes"
   | "skills"
@@ -151,7 +153,7 @@ const workspaceNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[]
   { key: "autopilots", labelKey: "autopilots", icon: Zap },
   { key: "agents", labelKey: "agents", icon: Bot },
   { key: "squads", labelKey: "squads", icon: Users },
-  { key: "usage", labelKey: "usage", icon: BarChart3 },
+  { key: "runReviews", labelKey: "run_reviews", icon: BarChart3 },
   { key: "training", labelKey: "training", icon: ChartNoAxesCombined },
 ];
 

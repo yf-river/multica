@@ -460,6 +460,16 @@ export function AgentCreatePanel({
           </div>
         )}
 
+        {selectedSquad && (
+          <div className="mx-5 mb-2 shrink-0 rounded-md border border-info/30 bg-info/5 px-3 py-2 text-xs text-info">
+            <div className="font-medium">SOP 小队任务</div>
+            <div className="mt-0.5 text-muted-foreground">
+              粘贴 TAPD 链接和目标仓库/分支，选择项目后创建。系统会使用账号级 TAPD / 工蜂凭据读取需求和仓库资源；
+              如果涉及 gateway、ida-deployment 等跨项目依赖，小队会在运行复盘里记录拆分、等待和验收证据。
+            </div>
+          </div>
+        )}
+
         {/* Prompt — same rich editor Advanced uses, so paste/drop images,
             mentions, and formatting all work. The dropZone wrapper enables
             drag-and-drop file uploads alongside paste. */}

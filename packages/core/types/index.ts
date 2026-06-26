@@ -201,6 +201,7 @@ export type {
   PublishPromptEvaluationOptimizationCandidateResponse,
   PromptEvaluationAssetType,
   PromptEvaluationAssetStatus,
+  PromptEvaluationCaseStatus,
   ListPromptEvaluationAssetsResponse,
   ListPromptEvaluationDatasetVersionsResponse,
   ListPromptEvaluationDatasetVersionRowsResponse,
