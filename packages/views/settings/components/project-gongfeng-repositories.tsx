@@ -115,22 +115,22 @@ function GongfengCredentialPanel() {
   const configured = Boolean(profile?.secret_binding?.configured);
   const [mode, setMode] = useState<"token" | "secret_ref">("token");
   const [token, setToken] = useState("");
-  const [secretRef, setSecretRef] = useState("env:GONGFENG_ACCESS_TOKEN");
+  const [secretRef, setSecretRef] = useState("GONGFENG_ACCESS_TOKEN");
   const pending = createProfile.isPending || updateProfile.isPending || deleteProfile.isPending;
 
   const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const isToken = mode === "token";
-    const credentialValue = isToken ? token.trim() : secretRef.trim();
+    const credentialValue = isToken ? token.trim() : normalizeEnvName(secretRef);
     if (!credentialValue) {
-      toast.error(isToken ? "请输入工蜂访问令牌" : "请输入服务端密钥引用");
+      toast.error(isToken ? "请输入工蜂访问令牌" : "请输入服务端环境变量名");
       return;
     }
     const payload = {
       name: profile?.name || "gongfeng-default",
       capabilities: { mcp_server: "gongfeng", source: "settings-repositories" },
       verify_now: true,
-      ...(isToken ? { token: credentialValue } : { secret_ref: credentialValue }),
+      ...(isToken ? { token: credentialValue } : { secret_ref: `env:${credentialValue}` }),
     };
     const options = {
       onSuccess: (saved: ExternalCredentialProfile) => {
@@ -218,7 +218,7 @@ function GongfengCredentialPanel() {
             type="text"
             value={secretRef}
             onChange={(event) => setSecretRef(event.target.value)}
-            placeholder="env:GONGFENG_ACCESS_TOKEN"
+            placeholder="GONGFENG_ACCESS_TOKEN"
             className="h-8 min-w-0 rounded-md border bg-background px-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring"
           />
         )}
@@ -233,6 +233,10 @@ function GongfengCredentialPanel() {
       </form>
     </div>
   );
+}
+
+function normalizeEnvName(value: string): string {
+  return value.trim().replace(/^env:/i, "").trim();
 }
 
 function CredentialStatus({
