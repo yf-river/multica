@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -372,7 +373,55 @@ func verifyExternalCredentialProfile(provider, secretRef string, encrypted []byt
 	if provider == "" || (secretRef == "" && len(encrypted) == 0) {
 		return "failed", now, pgtype.Text{String: "credential binding is missing", Valid: true}
 	}
-	return "unverified", now, pgtype.Text{String: "live provider verification is not wired yet", Valid: true}
+	if msg := externalCredentialSecretRefError(secretRef); msg != "" {
+		return "failed", now, pgtype.Text{String: msg, Valid: true}
+	}
+	return "unverified", now, pgtype.Text{String: "凭据绑定已保存；实时工蜂/TAPD API 校验尚未接入。", Valid: true}
+}
+
+func externalCredentialSecretRefError(secretRef string) string {
+	secretRef = strings.TrimSpace(secretRef)
+	if secretRef == "" {
+		return ""
+	}
+	if strings.HasPrefix(secretRef, "env:") {
+		key := strings.TrimSpace(strings.TrimPrefix(secretRef, "env:"))
+		if key == "" {
+			return "服务端环境变量名称为空；请填写 env:GONGFENG_ACCESS_TOKEN 这类引用。"
+		}
+		if strings.TrimSpace(os.Getenv(key)) == "" {
+			return "服务器环境变量 " + key + " 未设置；请改用访问令牌，或让管理员配置该变量并重启服务。"
+		}
+		return ""
+	}
+	if strings.HasPrefix(secretRef, "server-managed:") {
+		parts := strings.Split(secretRef, ":")
+		if len(parts) < 2 {
+			return "server-managed 凭据引用格式无效。"
+		}
+		keys := externalCredentialProviderEnvKeys(parts[1])
+		if len(keys) == 0 {
+			return "server-managed 凭据 provider 不支持：" + parts[1]
+		}
+		for _, key := range keys {
+			if strings.TrimSpace(os.Getenv(key)) != "" {
+				return ""
+			}
+		}
+		return "服务器环境变量 " + strings.Join(keys, " / ") + " 未设置；请改用访问令牌，或让管理员配置变量并重启服务。"
+	}
+	return ""
+}
+
+func externalCredentialProviderEnvKeys(provider string) []string {
+	switch strings.TrimSpace(strings.ToLower(provider)) {
+	case externalCredentialProviderTAPD:
+		return []string{"TAPD_ACCESS_TOKEN"}
+	case externalCredentialProviderGongfeng:
+		return []string{"GONGFENG_ACCESS_TOKEN", "GONGFENG_PRIVATE_TOKEN"}
+	default:
+		return nil
+	}
 }
 
 func isSupportedExternalCredentialProvider(provider string) bool {

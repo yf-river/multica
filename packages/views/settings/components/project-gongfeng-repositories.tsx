@@ -129,11 +129,16 @@ function GongfengCredentialPanel() {
     const payload = {
       name: profile?.name || "gongfeng-default",
       capabilities: { mcp_server: "gongfeng", source: "settings-repositories" },
+      verify_now: true,
       ...(isToken ? { token: credentialValue } : { secret_ref: credentialValue }),
     };
     const options = {
-      onSuccess: () => {
-        toast.success("工蜂凭据已保存");
+      onSuccess: (saved: ExternalCredentialProfile) => {
+        if (saved.status === "failed") {
+          toast.error(saved.last_error || "工蜂凭据不可用");
+        } else {
+          toast.success("工蜂凭据已保存");
+        }
         setToken("");
       },
       onError: (err: unknown) =>
@@ -158,6 +163,11 @@ function GongfengCredentialPanel() {
           <p className="max-w-3xl text-muted-foreground">
             连接显示“需要凭据”表示工蜂返回登录/鉴权页，服务可达但还不能读取私有仓库内容。这里配置账号级工蜂 token 后，智能体运行时会注入 GONGFENG_ACCESS_TOKEN / GONGFENG_PRIVATE_TOKEN。
           </p>
+          {profile?.last_error && (
+            <p className={profile.status === "failed" ? "text-destructive" : "text-muted-foreground"}>
+              {profile.last_error}
+            </p>
+          )}
         </div>
         {profile && (
           <button
@@ -240,9 +250,19 @@ function CredentialStatus({
     );
   }
   const hint = profile.secret_binding?.hint;
+  const label =
+    profile.status === "failed"
+      ? "校验失败"
+      : configured
+        ? "已设置"
+        : "未设置";
+  const tone =
+    profile.status === "failed"
+      ? "border-red-200 bg-red-50 text-red-700"
+      : "border bg-background text-muted-foreground";
   return (
-    <span className="rounded border bg-background px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground">
-      {configured ? "已设置" : "未设置"}
+    <span className={`rounded px-1.5 py-0.5 text-[11px] font-normal ${tone}`}>
+      {label}
       {hint ? ` · ${hint}` : ""}
     </span>
   );

@@ -131,6 +131,40 @@ func TestExternalCredentialProfileSupportsGongfengProvider(t *testing.T) {
 	}
 }
 
+func TestExternalCredentialProfileVerifyMissingEnvSecretRef(t *testing.T) {
+	t.Setenv("GONGFENG_ACCESS_TOKEN_EXPECTED_MISSING", "")
+	name := fmt.Sprintf("gongfeng-missing-env-%d", time.Now().UnixNano())
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/external-credential-profiles", map[string]any{
+		"provider":   "gongfeng",
+		"name":       name,
+		"secret_ref": "env:GONGFENG_ACCESS_TOKEN_EXPECTED_MISSING",
+		"verify_now": true,
+	})
+	testHandler.CreateExternalCredentialProfile(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateExternalCredentialProfile(gongfeng): expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	if strings.Contains(w.Body.String(), "env:GONGFENG_ACCESS_TOKEN_EXPECTED_MISSING") {
+		t.Fatalf("response leaked raw secret_ref: %s", w.Body.String())
+	}
+
+	var created ExternalCredentialProfileResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM external_credential_profile WHERE id = $1`, created.ID)
+	})
+	if created.Status != "failed" {
+		t.Fatalf("status = %q, want failed; response=%+v", created.Status, created)
+	}
+	if !strings.Contains(created.LastError, "服务器环境变量 GONGFENG_ACCESS_TOKEN_EXPECTED_MISSING 未设置") {
+		t.Fatalf("last_error = %q", created.LastError)
+	}
+}
+
 func TestCreateTapdIssueInheritsAccountCredentialProfile(t *testing.T) {
 	name := fmt.Sprintf("tapd-default-%d", time.Now().UnixNano())
 
