@@ -1,17 +1,25 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
   Ban,
   CheckCircle2,
   FolderGit,
   Info,
+  KeyRound,
   Power,
   RefreshCw,
+  Save,
   Trash2,
 } from "lucide-react";
 import { useQueries, useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
+import {
+  externalCredentialProfilesOptions,
+  useCreateExternalCredentialProfile,
+  useDeleteExternalCredentialProfile,
+  useUpdateExternalCredentialProfile,
+} from "@multica/core/external-credentials";
 import {
   projectListOptions,
   projectResourcesOptions,
@@ -24,6 +32,7 @@ import {
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type {
+  ExternalCredentialProfile,
   GongfengRepoResourceRef,
   Project,
   ProjectResource,
@@ -61,7 +70,7 @@ export function ProjectGongfengRepositories() {
   }, [projects, resourceQueries]);
 
   return (
-    <section className="space-y-2" data-testid="settings-gongfeng-repository-inventory">
+    <section className="space-y-3" data-testid="settings-gongfeng-repository-inventory">
       <div>
         <div className="flex items-center gap-2">
           <FolderGit className="size-4 text-muted-foreground" />
@@ -74,6 +83,7 @@ export function ProjectGongfengRepositories() {
           项目资源中的 Gongfeng 仓库会作为智能体任务、训练评估和证据链的代码来源。
         </p>
       </div>
+      <GongfengCredentialPanel />
       {rows.length === 0 ? (
         <div className="rounded-md border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">
           暂无已关联的项目工蜂仓库。
@@ -90,6 +100,151 @@ export function ProjectGongfengRepositories() {
         </div>
       )}
     </section>
+  );
+}
+
+function GongfengCredentialPanel() {
+  const { data } = useQuery(externalCredentialProfilesOptions("gongfeng"));
+  const createProfile = useCreateExternalCredentialProfile("gongfeng");
+  const updateProfile = useUpdateExternalCredentialProfile("gongfeng");
+  const deleteProfile = useDeleteExternalCredentialProfile("gongfeng");
+  const profiles = data?.profiles ?? [];
+  const profile =
+    profiles.find((item) => item.provider === "gongfeng" && item.secret_binding?.configured) ??
+    profiles.find((item) => item.provider === "gongfeng");
+  const configured = Boolean(profile?.secret_binding?.configured);
+  const [mode, setMode] = useState<"token" | "secret_ref">("token");
+  const [token, setToken] = useState("");
+  const [secretRef, setSecretRef] = useState("env:GONGFENG_ACCESS_TOKEN");
+  const pending = createProfile.isPending || updateProfile.isPending || deleteProfile.isPending;
+
+  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const isToken = mode === "token";
+    const credentialValue = isToken ? token.trim() : secretRef.trim();
+    if (!credentialValue) {
+      toast.error(isToken ? "请输入工蜂访问令牌" : "请输入服务端密钥引用");
+      return;
+    }
+    const payload = {
+      name: profile?.name || "gongfeng-default",
+      capabilities: { mcp_server: "gongfeng", source: "settings-repositories" },
+      ...(isToken ? { token: credentialValue } : { secret_ref: credentialValue }),
+    };
+    const options = {
+      onSuccess: () => {
+        toast.success("工蜂凭据已保存");
+        setToken("");
+      },
+      onError: (err: unknown) =>
+        toast.error(err instanceof Error ? err.message : "保存工蜂凭据失败"),
+    };
+    if (profile) {
+      updateProfile.mutate({ id: profile.id, data: payload }, options);
+    } else {
+      createProfile.mutate({ provider: "gongfeng", ...payload }, options);
+    }
+  };
+
+  return (
+    <div className="rounded-md border bg-muted/20 p-3 text-xs">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+        <div className="space-y-1">
+          <div className="flex flex-wrap items-center gap-2 font-medium">
+            <KeyRound className="size-4 text-muted-foreground" />
+            <span>工蜂访问凭据</span>
+            <CredentialStatus profile={profile} configured={configured} />
+          </div>
+          <p className="max-w-3xl text-muted-foreground">
+            连接显示“需要凭据”表示工蜂返回登录/鉴权页，服务可达但还不能读取私有仓库内容。这里配置账号级工蜂 token 后，智能体运行时会注入 GONGFENG_ACCESS_TOKEN / GONGFENG_PRIVATE_TOKEN。
+          </p>
+        </div>
+        {profile && (
+          <button
+            type="button"
+            className="inline-flex h-7 items-center justify-center rounded-md border px-2 text-[11px] text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
+            disabled={pending}
+            onClick={() => {
+              deleteProfile.mutate(profile, {
+                onSuccess: () => toast.success("工蜂凭据已移除"),
+                onError: (err) =>
+                  toast.error(err instanceof Error ? err.message : "移除工蜂凭据失败"),
+              });
+            }}
+          >
+            移除凭据
+          </button>
+        )}
+      </div>
+
+      <form className="mt-3 grid gap-2 lg:grid-cols-[auto_minmax(220px,1fr)_auto]" onSubmit={handleSubmit}>
+        <div className="inline-flex w-fit rounded-md border bg-background p-0.5">
+          <button
+            type="button"
+            className={`h-7 rounded px-2 text-[11px] ${mode === "token" ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted"}`}
+            onClick={() => setMode("token")}
+          >
+            访问令牌
+          </button>
+          <button
+            type="button"
+            className={`h-7 rounded px-2 text-[11px] ${mode === "secret_ref" ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted"}`}
+            onClick={() => setMode("secret_ref")}
+          >
+            环境变量
+          </button>
+        </div>
+        {mode === "token" ? (
+          <input
+            type="password"
+            value={token}
+            onChange={(event) => setToken(event.target.value)}
+            placeholder={configured ? "输入新 token 可替换当前凭据" : "粘贴工蜂 access token"}
+            className="h-8 min-w-0 rounded-md border bg-background px-2 text-xs outline-none focus:ring-2 focus:ring-ring"
+            autoComplete="off"
+          />
+        ) : (
+          <input
+            type="text"
+            value={secretRef}
+            onChange={(event) => setSecretRef(event.target.value)}
+            placeholder="env:GONGFENG_ACCESS_TOKEN"
+            className="h-8 min-w-0 rounded-md border bg-background px-2 font-mono text-xs outline-none focus:ring-2 focus:ring-ring"
+          />
+        )}
+        <button
+          type="submit"
+          className="inline-flex h-8 items-center justify-center gap-1 rounded-md bg-foreground px-3 text-xs text-background hover:bg-foreground/90 disabled:cursor-not-allowed disabled:opacity-50"
+          disabled={pending}
+        >
+          <Save className="size-3.5" />
+          保存凭据
+        </button>
+      </form>
+    </div>
+  );
+}
+
+function CredentialStatus({
+  profile,
+  configured,
+}: {
+  profile: ExternalCredentialProfile | undefined;
+  configured: boolean;
+}) {
+  if (!profile) {
+    return (
+      <span className="rounded border px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground">
+        未设置
+      </span>
+    );
+  }
+  const hint = profile.secret_binding?.hint;
+  return (
+    <span className="rounded border bg-background px-1.5 py-0.5 text-[11px] font-normal text-muted-foreground">
+      {configured ? "已设置" : "未设置"}
+      {hint ? ` · ${hint}` : ""}
+    </span>
   );
 }
 
@@ -160,11 +315,12 @@ function GongfengRepositoryRow({
               ))
             )}
           </div>
-          <div className="flex items-center gap-1 rounded-md border bg-muted/20 p-0.5">
-            <IconButton label="查看仓库详情" onClick={() => setDetailOpen(true)}>
+          <div className="flex flex-wrap items-center justify-end gap-1">
+            <ActionButton label="查看仓库详情" onClick={() => setDetailOpen(true)}>
               <Info className="size-3.5" />
-            </IconButton>
-            <IconButton
+              详情
+            </ActionButton>
+            <ActionButton
               label="测试连接"
               disabled={testResource.isPending || Boolean(ref.disabled)}
               onClick={() => {
@@ -175,8 +331,9 @@ function GongfengRepositoryRow({
               }}
             >
               <CheckCircle2 className="size-3.5" />
-            </IconButton>
-            <IconButton
+              测试
+            </ActionButton>
+            <ActionButton
               label="刷新同步状态"
               disabled={syncResource.isPending || Boolean(ref.disabled)}
               onClick={() => {
@@ -187,9 +344,10 @@ function GongfengRepositoryRow({
               }}
             >
               <RefreshCw className="size-3.5" />
-            </IconButton>
+              同步
+            </ActionButton>
             {ref.disabled ? (
-              <IconButton
+              <ActionButton
                 label="启用仓库"
                 disabled={enableResource.isPending}
                 onClick={() => {
@@ -200,9 +358,10 @@ function GongfengRepositoryRow({
                 }}
               >
                 <Power className="size-3.5" />
-              </IconButton>
+                启用
+              </ActionButton>
             ) : (
-              <IconButton
+              <ActionButton
                 label="禁用仓库"
                 disabled={disableResource.isPending}
                 onClick={() => {
@@ -213,9 +372,10 @@ function GongfengRepositoryRow({
                 }}
               >
                 <Ban className="size-3.5" />
-              </IconButton>
+                禁用
+              </ActionButton>
             )}
-            <IconButton
+            <ActionButton
               label="删除仓库关联"
               danger
               onClick={() => {
@@ -226,7 +386,8 @@ function GongfengRepositoryRow({
               }}
             >
               <Trash2 className="size-3.5" />
-            </IconButton>
+              删除
+            </ActionButton>
           </div>
         </div>
       </div>
@@ -252,14 +413,15 @@ function MetaBadge({ children }: { children: ReactNode }) {
 }
 
 function StatusBadge({ label, value }: { label: string; value: string }) {
+  const tone = statusTone(value);
   return (
-    <span className="rounded border bg-muted/40 px-1.5 py-0.5 text-[11px] leading-none">
+    <span className={`rounded border px-1.5 py-0.5 text-[11px] leading-none ${tone}`}>
       {label}: {statusLabel(value)}
     </span>
   );
 }
 
-function IconButton({
+function ActionButton({
   children,
   danger,
   disabled,
@@ -275,8 +437,8 @@ function IconButton({
   return (
     <button
       type="button"
-      className={`flex size-7 items-center justify-center rounded-md text-muted-foreground hover:bg-accent disabled:opacity-40 ${
-        danger ? "hover:text-destructive" : "hover:text-foreground"
+      className={`inline-flex h-7 items-center justify-center gap-1 rounded-md border bg-background px-2 text-[11px] transition-colors hover:bg-muted disabled:cursor-not-allowed disabled:opacity-40 ${
+        danger ? "text-destructive hover:bg-destructive/10" : "text-foreground"
       }`}
       aria-label={label}
       title={label}
@@ -331,7 +493,7 @@ function statusLabel(value: string): string {
     case "reachable":
       return "可达";
     case "auth_required":
-      return "需凭据";
+      return "需要凭据";
     case "unreachable":
       return "不可达";
     case "invalid_url":
@@ -349,5 +511,21 @@ function statusLabel(value: string): string {
       return "待 UI 验收";
     default:
       return value.replace(/_/g, " ");
+  }
+}
+
+function statusTone(value: string): string {
+  switch (value) {
+    case "auth_required":
+      return "border-amber-300 bg-amber-50 text-amber-800";
+    case "failed":
+    case "error":
+    case "unreachable":
+    case "invalid_url":
+      return "border-red-200 bg-red-50 text-red-700";
+    case "disabled":
+      return "bg-muted text-muted-foreground";
+    default:
+      return "bg-muted/40 text-foreground";
   }
 }

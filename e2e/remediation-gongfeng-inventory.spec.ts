@@ -25,6 +25,9 @@ test("settings repositories page shows the added Gongfeng repository inventory",
   await expect(page.getByRole("heading", { name: "代码仓库" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "工作区 Git 仓库" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "已关联工蜂仓库" })).toBeVisible();
+  await expect(inventory.getByText("工蜂访问凭据")).toBeVisible();
+  await expect(inventory.getByText(/连接显示“需要凭据”/)).toBeVisible();
+  await expect(inventory.getByRole("button", { name: "保存凭据" })).toBeVisible();
   const requiredRepos = [
     { project: "usercenter", repo: "ChainWeaver/ida/user-center" },
     { project: "gateway", repo: "ChainWeaver/ida/gateway" },
@@ -44,6 +47,10 @@ test("settings repositories page shows the added Gongfeng repository inventory",
     await expect(row.getByRole("button", { name: "测试连接" })).toHaveCount(1);
     await expect(row.getByRole("button", { name: "刷新同步状态" })).toHaveCount(1);
     await expect(row.getByRole("button", { name: "删除仓库关联" })).toHaveCount(1);
+    await expect(row.getByRole("button", { name: "查看仓库详情" })).toContainText("详情");
+    await expect(row.getByRole("button", { name: "测试连接" })).toContainText("测试");
+    await expect(row.getByRole("button", { name: "刷新同步状态" })).toContainText("同步");
+    await expect(row.getByRole("button", { name: "删除仓库关联" })).toContainText("删除");
   }
   const usercenterRow = inventory
     .getByTestId("settings-gongfeng-repository-row")
@@ -53,11 +60,12 @@ test("settings repositories page shows the added Gongfeng repository inventory",
   await expect(usercenterRow).toBeVisible();
   if ((await usercenterRow.getByRole("button", { name: "启用仓库" }).count()) > 0) {
     await usercenterRow.getByRole("button", { name: "启用仓库" }).click();
-    await expect(usercenterRow.getByText(/连接: (待验证|需凭据|可达)/)).toBeVisible({
+    await expect(usercenterRow.getByText(/连接: (待验证|需要凭据|可达)/)).toBeVisible({
       timeout: 15000,
     });
   }
   await expect(usercenterRow.getByRole("button", { name: "禁用仓库" })).toHaveCount(1);
+  await expect(usercenterRow.getByRole("button", { name: "禁用仓库" })).toContainText("禁用");
 
   await usercenterRow.getByRole("button", { name: "查看仓库详情" }).click();
   const detail = page.getByTestId("settings-gongfeng-repository-detail");
@@ -69,7 +77,7 @@ test("settings repositories page shows the added Gongfeng repository inventory",
   await expect(detail).toBeHidden();
 
   await usercenterRow.getByRole("button", { name: "测试连接" }).click();
-  await expect(usercenterRow.getByText("连接: 需凭据").or(usercenterRow.getByText("连接: 可达"))).toBeVisible({
+  await expect(usercenterRow.getByText("连接: 需要凭据").or(usercenterRow.getByText("连接: 可达"))).toBeVisible({
     timeout: 15000,
   });
   await expect(usercenterRow.getByText("测试: 通过")).toBeVisible();
@@ -86,12 +94,12 @@ test("settings repositories page shows the added Gongfeng repository inventory",
   await expect(usercenterRow.getByRole("button", { name: "启用仓库" })).toHaveCount(1);
 
   await usercenterRow.getByRole("button", { name: "启用仓库" }).click();
-  await expect(usercenterRow.getByText(/连接: (待验证|需凭据|可达)/)).toBeVisible({
+  await expect(usercenterRow.getByText(/连接: (待验证|需要凭据|可达)/)).toBeVisible({
     timeout: 15000,
   });
   await expect(usercenterRow.getByRole("button", { name: "禁用仓库" })).toHaveCount(1);
   await usercenterRow.getByRole("button", { name: "测试连接" }).click();
-  await expect(usercenterRow.getByText("连接: 需凭据").or(usercenterRow.getByText("连接: 可达"))).toBeVisible({
+  await expect(usercenterRow.getByText("连接: 需要凭据").or(usercenterRow.getByText("连接: 可达"))).toBeVisible({
     timeout: 15000,
   });
   await expect(usercenterRow.getByText("测试: 通过")).toBeVisible();

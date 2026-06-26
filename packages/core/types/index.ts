@@ -72,6 +72,15 @@ export type {
 } from "./agent";
 export { RUNTIME_PROFILE_PROTOCOL_FAMILIES } from "./agent";
 export type { Workspace, WorkspaceRepo, Member, MemberRole, User, MemberWithUser } from "./workspace";
+export type {
+  ExternalCredentialProvider,
+  ExternalCredentialStatus,
+  ExternalCredentialSecretBinding,
+  ExternalCredentialProfile,
+  ListExternalCredentialProfilesResponse,
+  CreateExternalCredentialProfileRequest,
+  UpdateExternalCredentialProfileRequest,
+} from "./external-credential";
 export type { InboxItem, InboxSeverity, InboxItemType } from "./inbox";
 export type { NotificationGroupKey, NotificationGroupValue, NotificationPreferences, NotificationPreferenceResponse } from "./notification-preference";
 export type { Comment, CommentType, CommentAuthorType, CommentTriggerPreview, CommentTriggerPreviewAgent, CommentTriggerSource, Reaction } from "./comment";

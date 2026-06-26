@@ -205,6 +205,11 @@ import type {
   ListPromptLibraryVersionsResponse,
   CreatePromptLibraryItemRequest,
   UpdatePromptLibraryItemRequest,
+  ExternalCredentialProvider,
+  ExternalCredentialProfile,
+  ListExternalCredentialProfilesResponse,
+  CreateExternalCredentialProfileRequest,
+  UpdateExternalCredentialProfileRequest,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import { type Logger, noopLogger } from "../logger";
@@ -2563,6 +2568,40 @@ export class ApiClient {
     resourceId: string,
   ): Promise<void> {
     await this.fetch(`/api/projects/${projectId}/resources/${resourceId}`, {
+      method: "DELETE",
+    });
+  }
+
+  async listExternalCredentialProfiles(
+    provider?: ExternalCredentialProvider,
+  ): Promise<ListExternalCredentialProfilesResponse> {
+    const search = new URLSearchParams();
+    if (provider) search.set("provider", provider);
+    const query = search.toString();
+    return this.fetch(`/api/external-credential-profiles${query ? `?${query}` : ""}`);
+  }
+
+  async createExternalCredentialProfile(
+    data: CreateExternalCredentialProfileRequest,
+  ): Promise<ExternalCredentialProfile> {
+    return this.fetch("/api/external-credential-profiles", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async updateExternalCredentialProfile(
+    id: string,
+    data: UpdateExternalCredentialProfileRequest,
+  ): Promise<ExternalCredentialProfile> {
+    return this.fetch(`/api/external-credential-profiles/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async deleteExternalCredentialProfile(id: string): Promise<void> {
+    await this.fetch(`/api/external-credential-profiles/${id}`, {
       method: "DELETE",
     });
   }

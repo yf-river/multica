@@ -664,7 +664,7 @@ function statusLabel(value: string): string {
     case "reachable":
       return "可达";
     case "auth_required":
-      return "需凭据";
+      return "需要凭据";
     case "unreachable":
       return "不可达";
     case "invalid_url":

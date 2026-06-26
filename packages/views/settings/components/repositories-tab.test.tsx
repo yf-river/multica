@@ -26,7 +26,8 @@ vi.mock("@tanstack/react-query", () => ({
       ? { data: [] }
       : { data: membersRef.current },
   useQueries: () => [],
-  useQueryClient: () => ({ setQueryData: vi.fn() }),
+  useMutation: () => ({ mutate: vi.fn(), isPending: false }),
+  useQueryClient: () => ({ setQueryData: vi.fn(), invalidateQueries: vi.fn() }),
 }));
 
 vi.mock("@multica/core/hooks", () => ({
