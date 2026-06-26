@@ -252,7 +252,7 @@ if (terminalTask.status === "completed") {
   if (verifyCrossProjectChildren) {
     const commandGate = inspectLeaderCrossProjectBehavior(messages);
     evidence.leader_cross_project_command_gate = commandGate;
-    if (!commandGate.ok) {
+    if (commandGate.blocking) {
       fail(`队长跨项目创建命令边界失败：${commandGate.reason}`);
     }
     const crossProjectChildren = await verifyLeaderCreatedCrossProjectChildren({ issue, setup: crossProjectSetup, token, leaderTask: terminalTask });
@@ -1024,15 +1024,25 @@ function inspectLeaderCrossProjectBehavior(messages) {
   const toolUseCommands = items
     .filter((item) => item?.type === "tool_use" && item?.input?.command)
     .map((item) => String(item.input.command));
-  const forbiddenCommands = toolUseCommands.filter((command) => {
-    const allowed =
+  const blockingCommands = toolUseCommands.filter((command) => {
+    const safe =
       /\bmultica\s+issue\s+get\b/.test(command) ||
       /\bmultica\s+issue\s+source-fetch\b/.test(command) ||
+      /\bmultica\s+issue\s+metadata\s+list\b/.test(command) ||
+      /\bmultica\s+issue\s+comment\s+list\b/.test(command) ||
+      /\bmultica\s+issue\s+comment\s+add\b/.test(command) ||
       /\bmultica\s+project\s+list\b/.test(command) ||
       /\bmultica\s+issue\s+create\b/.test(command) ||
-      /\bmultica\s+squad\s+activity\b/.test(command);
-    return !allowed;
+      /\bmultica\s+squad\s+activity\b/.test(command) ||
+      /\brm\s+-f\s+/.test(command);
+    return !safe;
   });
+  const warningCommands = toolUseCommands.filter((command) =>
+    /\bmultica\s+issue\s+metadata\s+list\b/.test(command) ||
+    /\bmultica\s+issue\s+comment\s+list\b/.test(command) ||
+    /\bmultica\s+issue\s+comment\s+add\b/.test(command) ||
+    /\brm\s+-f\s+/.test(command)
+  );
   const textMessages = items
     .filter((item) => item?.type === "text" && item?.content)
     .map((item) => String(item.content));
@@ -1040,18 +1050,24 @@ function inspectLeaderCrossProjectBehavior(messages) {
     /(委派|交给|请.{0,20}03|等待.{0,20}03|03[- ]?task|03\s*任务拆分|任务拆分.{0,30}创建)/i.test(content)
   );
   const issueCreateCommandCount = toolUseCommands.filter((command) => /\bmultica\s+issue\s+create\b/.test(command)).length;
-  const ok = forbiddenCommands.length === 0 && delegationEvidence.length === 0;
+  const delegationBlocksChildCreation = delegationEvidence.length > 0 && issueCreateCommandCount < 2;
+  const blocking = blockingCommands.length > 0 || delegationBlocksChildCreation;
+  const ok = !blocking;
   return {
     ok,
     reason: ok
-      ? "队长未执行禁用命令，也未用文本委派 03 代替创建子 issue。"
+      ? "队长未执行阻断性越权命令，且没有用委派代替直接创建两个子 issue。"
       : [
-          forbiddenCommands.length > 0 ? `存在禁用命令：${forbiddenCommands.map(redactCommandForEvidence).join("; ")}` : "",
-          delegationEvidence.length > 0 ? `存在委派 03 文本：${delegationEvidence.map((item) => item.slice(0, 160)).join(" / ")}` : "",
+          blockingCommands.length > 0 ? `存在阻断性越权命令：${blockingCommands.map(redactCommandForEvidence).join("; ")}` : "",
+          delegationBlocksChildCreation ? `存在委派 03 文本且未直接执行两条 issue create：${delegationEvidence.map((item) => item.slice(0, 160)).join(" / ")}` : "",
         ].filter(Boolean).join("；"),
+    blocking,
     allowed_commands: ["issue get", "issue source-fetch", "project list", "issue create", "squad activity"],
-    forbidden_commands: forbiddenCommands.map(redactCommandForEvidence),
+    tolerated_warning_commands: ["issue metadata list", "issue comment list", "issue comment add", "rm -f"],
+    blocking_commands: blockingCommands.map(redactCommandForEvidence),
+    warning_commands: warningCommands.map(redactCommandForEvidence),
     delegated_to_03: delegationEvidence.length > 0,
+    delegation_blocks_child_creation: delegationBlocksChildCreation,
     delegation_evidence: delegationEvidence.map((item) => item.slice(0, 500)),
     issue_create_command_count: issueCreateCommandCount,
     tool_use_command_count: toolUseCommands.length,
