@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -124,8 +125,17 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 	taskResp := make([]AgentTaskResponse, 0, len(tasks))
 	taskMessages := make([]protocol.TaskMessagePayload, 0)
 	workspaceID := uuidToString(issue.WorkspaceID)
+	agentNameByID := make(map[string]string)
 	for _, task := range tasks {
-		taskResp = append(taskResp, taskToResponse(task, workspaceID))
+		resp := taskToResponse(task, workspaceID)
+		agentID := uuidToString(task.AgentID)
+		if name, ok := agentNameByID[agentID]; ok {
+			resp.Agent = &TaskAgentData{ID: agentID, Name: name}
+		} else if agent, err := h.Queries.GetAgent(ctx, task.AgentID); err == nil {
+			agentNameByID[agentID] = agent.Name
+			resp.Agent = &TaskAgentData{ID: agentID, Name: agent.Name}
+		}
+		taskResp = append(taskResp, resp)
 		messages, err := h.Queries.ListTaskMessages(ctx, task.ID)
 		if err != nil {
 			return IssueExecutionNodeResponse{}, err
@@ -306,8 +316,11 @@ func buildIssueTimelineNodes(root IssueExecutionNodeResponse) []IssueTimelineNod
 			AgentTurnCount:        agentTurnCounts[task.ID],
 			TraceEventCount:       len(taskTraces),
 			UsageUnavailableTrace: hasUsageUnavailableTrace(taskTraces),
-			Summary:               firstNonEmpty(ptrString(task.TriggerSummary), task.FailureReason, "Agent task "+task.Status),
+			Summary:               timelineTaskSummary(task),
 			EvidenceRefs:          []IssueTimelineEvidenceRef{{Type: "agent_task", ID: task.ID}},
+		}
+		if task.Agent != nil {
+			node.AgentName = task.Agent.Name
 		}
 		for _, event := range taskTraces {
 			node.InputTokens += event.InputTokens
@@ -321,7 +334,7 @@ func buildIssueTimelineNodes(root IssueExecutionNodeResponse) []IssueTimelineNod
 				node.SquadID = ptrString(event.SquadID)
 			}
 			if node.AgentName == "" && event.AgentID != "" {
-				node.AgentName = task.AgentID
+				node.AgentName = event.AgentID
 			}
 		}
 		nodes = append(nodes, node)
@@ -506,9 +519,26 @@ func durationFromTraceOrTask(events []TaskTraceEventResponse, task AgentTaskResp
 		return total
 	}
 	if task.StartedAt != nil && task.CompletedAt != nil {
-		return 0
+		start, startErr := time.Parse(time.RFC3339, *task.StartedAt)
+		end, endErr := time.Parse(time.RFC3339, *task.CompletedAt)
+		if startErr == nil && endErr == nil && end.After(start) {
+			return end.Sub(start).Milliseconds()
+		}
 	}
 	return 0
+}
+
+func timelineTaskSummary(task AgentTaskResponse) string {
+	if summary := ptrString(task.TriggerSummary); summary != "" {
+		return summary
+	}
+	if task.IsLeaderTask {
+		if task.Agent != nil && task.Agent.Name != "" {
+			return "SOP leader: " + task.Agent.Name
+		}
+		return "SOP leader task"
+	}
+	return firstNonEmpty(task.FailureReason, "Agent task "+task.Status)
 }
 
 func traceDurationMs(event TaskTraceEventResponse) int64 {

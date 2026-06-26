@@ -488,11 +488,26 @@ function formatTimeTick(value: number) {
 function buildStageRows(nodes: IssueTimelineNode[]) {
   return STAGES.map((stage) => ({
     ...stage,
-    node: nodes.find((node) => {
+    node: nodes.filter((node) => {
       const haystack = `${node.agent_name ?? ""} ${node.summary ?? ""} ${node.node_id ?? ""}`.toLowerCase();
       return stage.names.some((name) => haystack.includes(name));
-    }),
+    }).sort(compareStageNodeCandidates)[0],
   }));
+}
+
+function compareStageNodeCandidates(left: IssueTimelineNode, right: IssueTimelineNode) {
+  return stageNodeScore(right) - stageNodeScore(left);
+}
+
+function stageNodeScore(node: IssueTimelineNode) {
+  let score = 0;
+  if (node.node_type === "agent_task") score += 1000;
+  if (node.status === "completed" || node.status === "已完成") score += 200;
+  if (node.status === "cancelled" || node.status === "已取消") score -= 200;
+  if ((node.input_tokens ?? 0) + (node.output_tokens ?? 0) > 0) score += 100;
+  if (node.started_at && node.completed_at) score += 50;
+  if ((node.agent_turn_count ?? 0) > 0) score += 25;
+  return score;
 }
 
 function buildChildLanes(tree: IssueExecutionTreeResponse | undefined) {
