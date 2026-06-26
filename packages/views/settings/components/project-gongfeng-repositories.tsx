@@ -51,6 +51,12 @@ type GongfengResourceRow = ProjectResource & {
   project: Project;
 };
 
+const CANONICAL_GONGFENG_PROJECTS: Record<string, string> = {
+  usercenter: "ChainWeaver/ida/user-center",
+  gateway: "ChainWeaver/ida/gateway",
+  "ida-deployment": "ChainWeaver/ida/ida-deployment",
+};
+
 export function ProjectGongfengRepositories() {
   const wsId = useWorkspaceId();
   const wsPaths = useWorkspacePaths();
@@ -60,11 +66,21 @@ export function ProjectGongfengRepositories() {
   });
 
   const rows = useMemo<GongfengResourceRow[]>(() => {
+    const seen = new Set<string>();
     return resourceQueries.flatMap((query, idx) => {
       const project = projects[idx];
       if (!project) return [];
+      const expectedPath = CANONICAL_GONGFENG_PROJECTS[project.title];
+      if (!expectedPath) return [];
       return (query.data ?? [])
         .filter(isGongfengResource)
+        .filter((resource) => resource.resource_ref.project_path === expectedPath)
+        .filter((resource) => {
+          const key = `${project.title}:${resource.resource_ref.project_path}`;
+          if (seen.has(key)) return false;
+          seen.add(key);
+          return true;
+        })
         .map((resource) => ({ ...resource, project }));
     });
   }, [projects, resourceQueries]);

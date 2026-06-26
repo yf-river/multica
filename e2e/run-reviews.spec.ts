@@ -58,6 +58,9 @@ test.describe("run review eval draft flow", () => {
     await page.goto(`/${workspaceSlug}/run-reviews?issue=${issue.id}`, { waitUntil: "domcontentloaded" });
     await expect(page.getByRole("heading", { name: "运行复盘" })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole("heading", { name: issue.title })).toBeVisible({ timeout: 30_000 });
+    await expect(page.getByTestId("run-review-horizontal-timeline")).toBeVisible();
+    await expect(page.getByTestId("run-review-horizontal-timeline")).toContainText("PM");
+    await expect(page.getByTestId("run-review-horizontal-timeline")).toContainText("gateway 子任务");
     await expect(page.getByText("节点表")).toBeVisible();
     await expect(page.getByRole("cell", { name: "PM", exact: true })).toBeVisible();
 

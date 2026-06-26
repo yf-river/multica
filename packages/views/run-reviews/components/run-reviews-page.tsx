@@ -211,25 +211,8 @@ function RunReviewDetail({
       {loading ? <DetailSkeleton /> : null}
 
       <section className="rounded-md border bg-card">
-        <SectionTitle title="横向时序图" subtitle="PM+01-05 必须在这里可见；缺失阶段会明确标记。" />
-        <div className="grid gap-2 px-4 pb-4 md:grid-cols-6">
-          {stageRows.map((stage) => (
-            <div key={stage.key} className={cn("min-h-24 rounded-md border p-2", stage.node ? "bg-background" : "border-dashed bg-muted/20")}>
-              <div className="flex items-center justify-between gap-2">
-                <div className="text-xs font-medium">{stage.label}</div>
-                <span className={cn("rounded px-1.5 py-0.5 text-[10px]", stage.node ? "bg-success/10 text-success" : "bg-warning/10 text-warning")}>
-                  {stage.node ? statusLabel(stage.node.status) : "缺失"}
-                </span>
-              </div>
-              <div className="mt-3 text-[11px] text-muted-foreground">
-                <div>Agent：{stage.node?.agent_name ?? stage.key}</div>
-                <div>耗时：{formatDuration(stage.node?.duration_ms ?? 0)}</div>
-                <div>Token：{formatNumber((stage.node?.input_tokens ?? 0) + (stage.node?.output_tokens ?? 0))}</div>
-                <div>轮次：{formatNumber(stage.node?.agent_turn_count ?? 0)}</div>
-              </div>
-            </div>
-          ))}
-        </div>
+        <SectionTitle title="横向时序图" subtitle="按真实开始/结束时间绘制 PM+01-05 与跨项目子任务泳道；缺时间或缺节点会明确标记。" />
+        <TimelineLaneChart stageRows={stageRows} childLanes={childLanes} timelineNodes={timelineNodes} />
       </section>
 
       <section className="rounded-md border bg-card">
@@ -352,6 +335,154 @@ function NodeFact({ label, value }: { label: string; value: string }) {
       <span className="break-words">{value}</span>
     </div>
   );
+}
+
+type StageRow = ReturnType<typeof buildStageRows>[number];
+type ChildLane = ReturnType<typeof buildChildLanes>[number];
+
+interface TimelineBarRow {
+  key: string;
+  label: string;
+  kind: "stage" | "child";
+  status: string;
+  startMs: number | null;
+  endMs: number | null;
+  durationMs: number;
+  tokenTotal: number;
+  turns: number;
+  missing: boolean;
+}
+
+function TimelineLaneChart({
+  stageRows,
+  childLanes,
+  timelineNodes,
+}: {
+  stageRows: StageRow[];
+  childLanes: ChildLane[];
+  timelineNodes: IssueTimelineNode[];
+}) {
+  const rows = buildTimelineBarRows(stageRows, childLanes, timelineNodes);
+  const timedRows = rows.filter((row) => row.startMs !== null && row.endMs !== null);
+  const min = timedRows.length > 0 ? Math.min(...timedRows.map((row) => row.startMs as number)) : 0;
+  const max = timedRows.length > 0 ? Math.max(...timedRows.map((row) => row.endMs as number)) : min + 1;
+  const span = Math.max(max - min, 1);
+  const ticks = timedRows.length > 0
+    ? [min, min + span / 2, max].map((value) => formatTimeTick(value))
+    : ["开始", "中点", "结束"];
+
+  return (
+    <div className="px-4 pb-4" data-testid="run-review-horizontal-timeline">
+      <div className="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-x-3 text-[11px] text-muted-foreground">
+        <div />
+        <div className="grid grid-cols-3">
+          {ticks.map((tick, index) => (
+            <div key={`${tick}-${index}`} className={cn(index === 1 && "text-center", index === 2 && "text-right")}>
+              {tick}
+            </div>
+          ))}
+        </div>
+      </div>
+      <div className="mt-2 space-y-1.5">
+        {rows.map((row) => (
+          <div key={row.key} className="grid grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-x-3">
+            <div className="min-w-0">
+              <div className="truncate text-xs font-medium">{row.label}</div>
+              <div className="truncate text-[11px] text-muted-foreground">{statusLabel(row.status)}</div>
+            </div>
+            <div className="relative h-9 overflow-hidden rounded-md border bg-muted/20">
+              <div className="absolute inset-y-0 left-1/3 w-px bg-border/70" />
+              <div className="absolute inset-y-0 left-2/3 w-px bg-border/70" />
+              {row.missing || row.startMs === null || row.endMs === null ? (
+                <div className="flex h-full items-center px-2 text-[11px] text-muted-foreground">
+                  {row.missing ? "缺节点" : "缺时间"}
+                </div>
+              ) : (
+                <div
+                  className={cn(
+                    "absolute top-1 bottom-1 min-w-[2rem] rounded px-2 text-[11px] leading-7 text-white shadow-sm",
+                    row.kind === "child" ? "bg-sky-600" : "bg-emerald-600",
+                  )}
+                  data-testid={`run-review-timeline-bar-${row.key}`}
+                  style={{
+                    left: `${Math.max(0, ((row.startMs - min) / span) * 100)}%`,
+                    width: `${Math.max(6, ((row.endMs - row.startMs) / span) * 100)}%`,
+                  }}
+                  title={`${row.label} · ${formatDuration(row.durationMs)} · Token ${formatNumber(row.tokenTotal)} · 轮次 ${formatNumber(row.turns)}`}
+                >
+                  <span className="block truncate">
+                    {formatDuration(row.durationMs)} · {formatNumber(row.tokenTotal)} token
+                  </span>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function buildTimelineBarRows(
+  stageRows: StageRow[],
+  childLanes: ChildLane[],
+  timelineNodes: IssueTimelineNode[],
+): TimelineBarRow[] {
+  const stageBars = stageRows.map((stage) => {
+    const timing = timelineTiming(stage.node);
+    return {
+      key: stage.key,
+      label: stage.label,
+      kind: "stage" as const,
+      status: stage.node?.status ?? "missing",
+      ...timing,
+      durationMs: stage.node?.duration_ms ?? timing.durationMs,
+      tokenTotal: (stage.node?.input_tokens ?? 0) + (stage.node?.output_tokens ?? 0),
+      turns: stage.node?.agent_turn_count ?? 0,
+      missing: !stage.node,
+    };
+  });
+  const childBars = childLanes.map((lane) => {
+    const node = timelineNodes.find((item) => item.node_type === "child_issue_ref" && item.child_issue_id === lane.issue?.id);
+    const timing = timelineTiming(node);
+    return {
+      key: lane.key,
+      label: lane.label,
+      kind: "child" as const,
+      status: lane.issue?.status ?? "missing",
+      ...timing,
+      durationMs: node?.duration_ms ?? timing.durationMs,
+      tokenTotal: (node?.input_tokens ?? 0) + (node?.output_tokens ?? 0),
+      turns: node?.agent_turn_count ?? 0,
+      missing: !lane.issue,
+    };
+  });
+  return [...stageBars, ...childBars];
+}
+
+function timelineTiming(node: IssueTimelineNode | undefined) {
+  if (!node) return { startMs: null, endMs: null, durationMs: 0 };
+  const start = parseTimeMs(node.started_at);
+  const completed = parseTimeMs(node.completed_at);
+  const duration = Math.max(node.duration_ms ?? 0, 0);
+  if (start === null && completed === null) return { startMs: null, endMs: null, durationMs: duration };
+  const startMs = start ?? Math.max((completed as number) - Math.max(duration, 60_000), 0);
+  const endMs = Math.max(completed ?? startMs + Math.max(duration, 60_000), startMs + Math.max(duration, 60_000));
+  return { startMs, endMs, durationMs: Math.max(duration, endMs - startMs) };
+}
+
+function parseTimeMs(value: string | undefined) {
+  if (!value) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatTimeTick(value: number) {
+  return new Intl.DateTimeFormat("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(value));
 }
 
 function buildStageRows(nodes: IssueTimelineNode[]) {

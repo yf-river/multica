@@ -33,13 +33,16 @@ test("settings repositories page shows the added Gongfeng repository inventory",
     { project: "gateway", repo: "ChainWeaver/ida/gateway" },
     { project: "ida-deployment", repo: "ChainWeaver/ida/ida-deployment" },
   ];
-  await expect.poll(async () => inventory.getByTestId("settings-gongfeng-repository-row").count(), { timeout: 5000 }).toBeGreaterThanOrEqual(requiredRepos.length);
+  await expect.poll(async () => inventory.getByTestId("settings-gongfeng-repository-row").count(), { timeout: 5000 }).toBe(requiredRepos.length);
+  await expect(inventory).not.toContainText("curl usercenter");
+  await expect(inventory).not.toContainText("curl gateway");
+  await expect(inventory).not.toContainText("curl ida-deployment");
   await expect.poll(async () => inventory.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   for (const { project, repo } of requiredRepos) {
     const matchingRows = inventory.getByTestId("settings-gongfeng-repository-row").filter({ hasText: repo });
-    await expect.poll(async () => matchingRows.count(), { timeout: 5000 }).toBeGreaterThanOrEqual(1);
+    await expect.poll(async () => matchingRows.count(), { timeout: 5000 }).toBe(1);
     const projectRows = matchingRows.filter({ has: page.getByRole("link", { name: project, exact: true }) });
-    await expect.poll(async () => projectRows.count(), { timeout: 5000 }).toBeGreaterThanOrEqual(1);
+    await expect.poll(async () => projectRows.count(), { timeout: 5000 }).toBe(1);
     const row = projectRows.first();
     await expect(row.getByText(repo)).toBeVisible();
     await expect(row.getByRole("link", { name: project, exact: true })).toBeVisible();
