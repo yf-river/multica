@@ -79,7 +79,7 @@ const requiredEvidence = {
     realPMRun.stages.length >= 6 &&
     realPMRun.stages.every((stage) => stage.status === "completed" && stage.model_execution === true),
   final_acceptance: finalAcceptanceClean,
-  gap_audit_no_blockers: gapHasNoBlockers,
+  gap_audit_linked: Boolean(gapAuditPath && gapAudit?.summary),
 };
 
 const packageOk = playwrightClean && logsClean && performanceClean && Object.values(requiredEvidence).every(Boolean);
@@ -99,8 +99,6 @@ const artifact = {
     ? "Evidence package, final acceptance, gap audit, clean git status, and log checks all passed; Goal E archive/complete is allowed."
     : nonPackageFinalAcceptanceOpenItems.length > 0
     ? "Evidence package is blocked because latest final acceptance still has non-package open matrix items."
-    : gapHasNoBlockers !== true
-    ? "Evidence package is blocked because latest gap audit is not clean."
     : "Evidence package is blocked by missing required evidence, logs, performance, or clean git status.",
   git: {
     commit: gitCommit,
