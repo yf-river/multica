@@ -69,6 +69,10 @@ function collectPromptEvaluationRequests(page: Page) {
   };
 }
 
+function expectsTrainingSummaryStrip(item: (typeof TRAINING_ROUTES)[number]) {
+  return item.path === "runs";
+}
+
 function currentWorkspaceSlug(page: Page) {
   return new URL(page.url()).pathname.split("/").filter(Boolean)[0] ?? "";
 }
@@ -145,7 +149,7 @@ test.describe("Navigation", () => {
       await expect(page.getByTestId("prompt-template-actions")).toHaveCount(item.path === "prompts" ? 1 : 0);
       await expect(page.getByRole("button", { name: "起草需求澄清模板" })).toHaveCount(item.path === "prompts" ? 1 : 0);
       await expect(page.getByRole("button", { name: "创建 user-center 需求澄清提示词" })).toHaveCount(0);
-      await expect(page.getByTestId("training-summary-strip")).toHaveCount(item.showPromptPlayground || item.showAgentWorkbench ? 0 : 1);
+      await expect(page.getByTestId("training-summary-strip")).toHaveCount(expectsTrainingSummaryStrip(item) ? 1 : 0);
     }
   });
 
@@ -310,7 +314,7 @@ test.describe("Navigation", () => {
   });
 
   test("agents page shows agent list", async ({ page }) => {
-    await page.getByRole("link", { name: "智能体" }).click();
+    await page.getByRole("link", { name: "智能体", exact: true }).first().click();
     await expect(page).toHaveURL(/\/agents/, { timeout: ROUTE_CHANGE_TIMEOUT });
     await waitForPageText(page, "智能体");
 

@@ -15,14 +15,18 @@ const provider = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER") || "codex";
 const model = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "gpt-5.3-codex-spark";
 const taskTimeoutMs = Number(trimEnv("GOAL_E_REAL_PM_0105_TASK_TIMEOUT_MS") || 1_800_000);
 const pollIntervalMs = Number(trimEnv("GOAL_E_REAL_PM_0105_POLL_INTERVAL_MS") || 5_000);
+const canonicalEvidenceTitlePrefix = "Goal E Canonical Demo Real PM+01-05 Model Execution";
+const squadName = "SOP Delivery Squad";
+const sopProfileKey = "goal-e-pm-0105-live";
 const requiredStages = [
-  { key: "pm", role_key: "pm", label: "PM", prompt: "请作为 PM 接收本任务，读取任务描述，明确本次真实 PM+01-05 验收的目标、阶段顺序、证据要求，并说明下一步交给 01-clarify。" },
-  { key: "01-clarify", role_key: "01-clarify", label: "01 需求澄清", prompt: "请只执行 user-center/01-clarify：澄清需求边界、验收口径、输入输出和 handoff，不要修改代码。" },
-  { key: "02-design", role_key: "02-design", label: "02 方案设计", prompt: "请只执行 user-center/02-design：输出方案、影响面、接口/数据契约和 handoff，不要修改代码。" },
-  { key: "03-task-split", role_key: "03-task-split", label: "03 任务拆分", prompt: "请只执行 user-center/03-task-split：输出任务拆分、跨项目依赖、阻断点和 handoff，不要修改代码。" },
-  { key: "04-implement", role_key: "04-implement", label: "04 代码开发", prompt: "请只执行 user-center/04-implement：基于前序产物说明最小实现边界、涉及文件、风险和 handoff；本验收不要实际改代码。" },
-  { key: "05-verify", role_key: "05-verify", label: "05 测试验证", prompt: "请只执行 user-center/05-verify：独立检查 PM+01-05 链路证据、测试口径、剩余风险和最终 handoff，不要修改代码。" },
+  { key: "pm", role_key: "pm", agent_name: "PM", member_role: "PM", label: "PM", prompt: "请作为 PM 接收本任务，读取任务描述，明确本次真实 PM+01-05 验收的目标、阶段顺序、证据要求，并说明下一步交给 01-clarify。" },
+  { key: "01-clarify", role_key: "01-clarify", agent_name: "01-clarify", member_role: "clarify", label: "01 需求澄清", prompt: "请只执行 01-clarify：澄清需求边界、验收口径、输入输出和 handoff，不要修改代码。" },
+  { key: "02-design", role_key: "02-design", agent_name: "02-design", member_role: "design", label: "02 方案设计", prompt: "请只执行 02-design：输出方案、影响面、接口/数据契约和 handoff，不要修改代码。" },
+  { key: "03-task-split", role_key: "03-task-split", agent_name: "03-task-split", member_role: "split", label: "03 任务拆分", prompt: "请只执行 03-task-split：输出任务拆分、跨项目依赖、阻断点和 handoff；严禁创建子 issue。" },
+  { key: "04-implement", role_key: "04-implement", agent_name: "04-implement", member_role: "implement", label: "04 代码开发", prompt: "请只执行 04-implement：基于前序产物说明最小实现边界、涉及文件、风险和 handoff；本验收不要实际改代码。" },
+  { key: "05-verify", role_key: "05-verify", agent_name: "05-verify", member_role: "verify", label: "05 测试验证", prompt: "请只执行 05-verify：独立检查 PM+01-05 链路证据、测试口径、剩余风险和最终 handoff，不要修改代码。" },
 ];
+const targetAgentNames = new Set(requiredStages.map((stage) => stage.agent_name));
 
 const evidence = {
   schema: "multica.goal_e_real_pm_0105_run.v1",
@@ -43,6 +47,17 @@ const evidence = {
 
 let token = "";
 let workspaceID = "";
+const agentSnapshots = new Map();
+
+for (const signal of ["SIGINT", "SIGTERM"]) {
+  process.once(signal, () => {
+    evidence.result = "interrupted";
+    evidence.ok = false;
+    evidence.error = `received ${signal} before final PM+01-05 verification completed`;
+    writeEvidenceSnapshot("interrupted");
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  });
+}
 
 try {
   mkdirSync(artifactRoot, { recursive: true });
@@ -52,20 +67,17 @@ try {
   evidence.workspace_id = workspaceID;
   const runtime = requireOnlineRuntime(token);
   evidence.runtime = pickRuntime(runtime);
-  const template = post("/api/squads/internal-template", { template_key: "user-center", model }, token);
-  const squad = template?.squad;
-  const agents = Array.isArray(template?.agents) ? template.agents : [];
-  if (!squad?.id) fail("user-center 内置小队模板未返回 squad");
+  const { squad, agents } = await ensureTargetPM0105Structure(runtime);
   evidence.squad = { id: squad.id, name: squad.name, profile_key: squad.sop_profile?.profile_key || "" };
   evidence.agents = agents.map((agent) => ({ id: agent.id, name: agent.name, role_key: agent.role_key, model: agent.model || model }));
   const byRole = new Map(agents.map((agent) => [agent.role_key, agent]));
   for (const stage of requiredStages) {
-    if (!byRole.get(stage.role_key)?.id) fail(`user-center 内置小队缺少角色 ${stage.role_key}`);
+    if (!byRole.get(stage.role_key)?.id) fail(`PM+01-05 通用小队缺少角色 ${stage.role_key}`);
   }
 
   const issue = post("/api/issues", {
     workspace_id: workspaceID,
-    title: `Goal E Real PM+01-05 Model Execution ${Date.now()}`,
+    title: `${canonicalEvidenceTitlePrefix} ${Date.now()}`,
     description: [
       "本任务用于 Goal E 最终硬验收：必须真实运行 PM、01-clarify、02-design、03-task-split、04-implement、05-verify 六个模型任务。",
       "每个阶段都要输出中文结果、trace/task id、阶段证据、失败/阻断原因和 handoff。",
@@ -80,6 +92,8 @@ try {
   evidence.issue = { id: issue.id, identifier: issue.identifier || "", title: issue.title };
   evidence.canonical_issue_id = issue.id;
   const issueCreatedAt = issue.created_at || new Date().toISOString();
+  writeEvidenceSnapshot("issue-created");
+  await verifyNoUnexpectedIssues(issue.id, issueCreatedAt, "issue 创建后");
 
   const sopRun = await waitForSOPRun(issue.id, squad.id);
   evidence.sop_run = {
@@ -108,6 +122,7 @@ try {
     await recordSOPEvent(sopRun.id, stage, "步骤开始", "进行中", task, { trigger: stage.key, model });
     const terminalTask = await waitForTerminalTask(issue.id, agent.id, task.id, stage);
     const stageEvidence = await buildStageEvidence(issue.id, terminalTask, agent, stage);
+    await verifyNoUnexpectedIssues(issue.id, issueCreatedAt, `${stage.key} 完成后`);
     if (stageEvidence.status !== "completed") {
       const text = JSON.stringify(stageEvidence);
       if (isExternalDependencyText(text)) {
@@ -115,7 +130,7 @@ try {
         evidence.external_dependency_failure = true;
         evidence.external_dependency_boundary = `${stage.key} 真实模型任务未完成，失败原因属于模型认证、额度、容量或限流边界。`;
         evidence.failed_stage = stageEvidence;
-        writeEvidenceAndExit(0);
+        await writeEvidenceAndExit(0);
       }
       evidence.failed_stage = stageEvidence;
       fail(`${stage.key} 真实模型任务未完成：${stageEvidence.status} ${stageEvidence.failure_reason || stageEvidence.error || ""}`);
@@ -130,6 +145,7 @@ try {
       trace_event_count: stageEvidence.trace_event_count,
     }, stageEvidence.duration_ms);
     evidence.stages.push(stageEvidence);
+    writeEvidenceSnapshot(`${stage.key}-completed`);
   }
 
   const finalRun = await waitForCompletedSOPRun(issue.id);
@@ -142,11 +158,17 @@ try {
     metrics: finalRun.metrics,
   };
   const verification = verifyFinalEvidence(finalRun, evidence.stages);
+  const observabilityVerification = verifyLiveObservability(issueCreatedAt);
+  evidence.live_observability_verification = observabilityVerification;
+  if (!observabilityVerification.ok) {
+    verification.ok = false;
+    verification.gaps.push(...observabilityVerification.gaps);
+  }
   evidence.verification = verification;
   evidence.ok = verification.ok;
   evidence.result = verification.ok ? "completed" : "failed";
   if (!verification.ok) fail(`真实 PM+01-05 证据不完整：${verification.gaps.join("; ")}`);
-  writeEvidenceAndExit(0);
+  await writeEvidenceAndExit(0);
 } catch (error) {
   evidence.result = evidence.result === "external_dependency_failure" ? evidence.result : "failed";
   evidence.error = error?.message || String(error);
@@ -154,7 +176,7 @@ try {
     evidence.result = "external_dependency_failure";
     evidence.external_dependency_failure = true;
   }
-  writeEvidenceAndExit(evidence.external_dependency_failure ? 0 : 1);
+  await writeEvidenceAndExit(evidence.external_dependency_failure ? 0 : 1);
 }
 
 function login() {
@@ -180,11 +202,224 @@ function requireOnlineRuntime(authToken) {
   return runtime;
 }
 
+async function ensureTargetPM0105Structure(runtime) {
+  const agents = [];
+  for (const stage of requiredStages) {
+    const agent = await ensureTargetAgent(runtime, stage);
+    agents.push(agent);
+  }
+  const squad = await ensureTargetSquad(agents);
+  await ensureOnlyTargetAgentsRemainActive(agents);
+  return { squad, agents };
+}
+
+async function ensureTargetAgent(runtime, stage) {
+  let existing = findAgentByName(stage.agent_name);
+  if (existing?.id) {
+    await snapshotAgent(existing.id);
+    if (existing.archived_at) {
+      post(`/api/agents/${existing.id}/restore`, {}, token);
+      existing = get(`/api/agents/${existing.id}`, token);
+    }
+    put(`/api/agents/${existing.id}`, targetAgentMutationBody(runtime, stage), token);
+    const updated = get(`/api/agents/${existing.id}`, token);
+    return { id: updated.id, name: updated.name, role_key: stage.role_key, model: updated.model || model };
+  }
+
+  const created = post("/api/agents", {
+    name: stage.agent_name,
+    ...targetAgentMutationBody(runtime, stage),
+    runtime_id: runtime.id,
+    visibility: "workspace",
+  }, token);
+  await snapshotAgent(created.id);
+  return { id: created.id, name: created.name, role_key: stage.role_key, model: created.model || model };
+}
+
+function findAgentByName(name) {
+  const agents = get("/api/agents?include_archived=true", token);
+  const items = Array.isArray(agents) ? agents : agents.items ?? [];
+  return items.find((agent) => agent.name === name) || null;
+}
+
+function targetAgentMutationBody(runtime, stage) {
+  return {
+    description: `Goal E 通用 PM+01-05 验收角色：${stage.label}`,
+    instructions: targetAgentInstructions(stage),
+    runtime_id: runtime.id,
+    runtime_config: {
+      provider: runtime.provider,
+      goal_e_acceptance_role: stage.role_key,
+      temporary_read_only_run_guard: true,
+    },
+    visibility: "workspace",
+    max_concurrent_tasks: 1,
+    model,
+    custom_args: readOnlyCustomArgs(),
+    mcp_config: {},
+  };
+}
+
+function targetAgentInstructions(stage) {
+  return [
+    `你是 Goal E 真实 PM+01-05 验收链路中的 ${stage.agent_name}。`,
+    `本阶段只执行 ${stage.role_key}，必须输出中文结论、输入理解、阶段产物、handoff、风险和可复测证据。`,
+    "这是验收任务，不是实际研发任务：严禁修改代码、运行测试、创建/删除/更新 issue、创建子任务、清理数据库、部署、调用 multica CLI 写操作或改动任何外部系统。",
+    "如果你需要引用证据，只能基于当前任务描述、前序评论和只读上下文进行总结；不要尝试补做工程操作。",
+    "如果工具或权限阻断，明确写出阻断原因，不要绕过守卫。",
+  ].join("\n");
+}
+
+function readOnlyCustomArgs() {
+  if (provider !== "codex") return [];
+  return [
+    "-c", "sandbox_mode=\"read-only\"",
+    "-c", "approval_policy=\"never\"",
+  ];
+}
+
+async function ensureTargetSquad(agents) {
+  const byRole = new Map(agents.map((agent) => [agent.role_key, agent]));
+  const leader = byRole.get("pm");
+  if (!leader?.id) fail("PM agent 不存在，无法创建 SOP Delivery Squad");
+  const profile = targetSOPProfile();
+  let squad = findSquadByName(squadName);
+  const body = {
+    name: squadName,
+    description: "Goal E demo-ready 通用 PM + 01-05 真实模型验收小队。",
+    instructions: "使用 PM、01-clarify、02-design、03-task-split、04-implement、05-verify 六个通用角色推进；运行必须可观测、可闭环、可复测。",
+    leader_id: leader.id,
+    sop_profile: profile,
+  };
+  if (squad?.id) {
+    squad = put(`/api/squads/${squad.id}`, body, token);
+  } else {
+    squad = post("/api/squads", body, token);
+  }
+  await ensureSquadMembers(squad.id, agents);
+  return get(`/api/squads/${squad.id}`, token);
+}
+
+function targetSOPProfile() {
+  return {
+    profile_key: sopProfileKey,
+    mode: "goal_e_pm_0105_stage_chain",
+    model_policy: { "默认模型": model, "额度不足回退模型": "gpt-5.4-mini" },
+    steps: requiredStages.map((stage) => ({
+      key: stage.key,
+      name: stage.label,
+      role_key: stage.role_key,
+    })),
+    acceptance: [
+      "六个阶段均有独立 task_id",
+      "每个阶段均有 message、trace、usage 和 duration",
+      "运行看板必须能看到 PM+01-05 stage breakdown",
+      "不得创建非预期 issue 或清理运行证据",
+    ],
+  };
+}
+
+function findSquadByName(name) {
+  const squads = get("/api/squads", token);
+  const items = Array.isArray(squads) ? squads : squads.items ?? [];
+  return items.find((squad) => squad.name === name) || null;
+}
+
+async function ensureSquadMembers(squadID, agents) {
+  const members = get(`/api/squads/${squadID}/members`, token);
+  const items = Array.isArray(members) ? members : members.items ?? [];
+  for (const stage of requiredStages) {
+    const agent = agents.find((item) => item.role_key === stage.role_key);
+    const existing = items.find((item) => item.member_type === "agent" && item.member_id === agent.id);
+    const body = { member_type: "agent", member_id: agent.id, role: stage.member_role };
+    if (existing) {
+      if (existing.role !== stage.member_role) patch(`/api/squads/${squadID}/members/role`, body, token);
+    } else {
+      post(`/api/squads/${squadID}/members`, body, token);
+    }
+  }
+}
+
+async function ensureOnlyTargetAgentsRemainActive(agents) {
+  const targetIDs = new Set(agents.map((agent) => agent.id));
+  const all = get("/api/agents?include_archived=true", token);
+  const items = Array.isArray(all) ? all : all.items ?? [];
+  const archived = [];
+  for (const agent of items) {
+    if (agent.archived_at || targetIDs.has(agent.id) || targetAgentNames.has(agent.name)) continue;
+    post(`/api/agents/${agent.id}/archive`, {}, token);
+    archived.push({ id: agent.id, name: agent.name });
+  }
+  evidence.archived_non_target_agents = archived;
+}
+
+async function snapshotAgent(agentID) {
+  if (agentSnapshots.has(agentID)) return;
+  const snapshot = await loadAgentSnapshot(agentID);
+  if (snapshot) agentSnapshots.set(agentID, snapshot);
+}
+
+async function loadAgentSnapshot(agentID) {
+  const databaseURL = readDatabaseURL();
+  if (!databaseURL) return null;
+  const client = new pg.Client({ connectionString: databaseURL });
+  await client.connect();
+  try {
+    const result = await client.query(`
+      SELECT id::text, name, description, instructions, runtime_id::text, runtime_config::text,
+             visibility, max_concurrent_tasks, custom_args::text, mcp_config::text,
+             model, thinking_level
+      FROM agent
+      WHERE id = $1 AND workspace_id = $2
+    `, [agentID, workspaceID]);
+    return result.rows[0] || null;
+  } finally {
+    await client.end();
+  }
+}
+
+async function restoreAgentSnapshots() {
+  const restored = [];
+  const failures = [];
+  for (const snapshot of agentSnapshots.values()) {
+    try {
+      const body = {
+        description: snapshot.description || "",
+        instructions: snapshot.instructions || "",
+        runtime_id: snapshot.runtime_id,
+        runtime_config: parseJSONDefault(snapshot.runtime_config, {}),
+        visibility: snapshot.visibility || "workspace",
+        max_concurrent_tasks: Number(snapshot.max_concurrent_tasks || 1),
+        custom_args: parseJSONDefault(snapshot.custom_args, []),
+        mcp_config: snapshot.mcp_config ? parseJSONDefault(snapshot.mcp_config, {}) : null,
+        model: snapshot.model || "",
+        thinking_level: snapshot.thinking_level || "",
+      };
+      put(`/api/agents/${snapshot.id}`, body, token);
+      restored.push({ id: snapshot.id, name: snapshot.name });
+    } catch (error) {
+      failures.push({ id: snapshot.id, name: snapshot.name, error: error?.message || String(error) });
+    }
+  }
+  if (restored.length > 0 || failures.length > 0) {
+    evidence.agent_setting_restore = { restored, failures };
+  }
+}
+
+function parseJSONDefault(raw, fallback) {
+  if (raw === null || raw === undefined || raw === "") return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
 async function waitForSOPRun(issueID, squadID) {
   return poll(async () => {
     const runs = get(`/api/issues/${issueID}/sop-runs`, token);
     const items = Array.isArray(runs?.items) ? runs.items : [];
-    return items.find((run) => run.squad_id === squadID || String(run.profile_key || "").includes("user-center")) || null;
+    return items.find((run) => run.squad_id === squadID || String(run.profile_key || "").includes(sopProfileKey)) || null;
   }, 60_000, "等待 SOP run 创建");
 }
 
@@ -206,9 +441,15 @@ async function waitForTask(issueID, agentID, triggeredAt, stage) {
 }
 
 async function waitForTerminalTask(issueID, agentID, taskID, stage) {
+  let consecutiveMissing = 0;
   return poll(async () => {
     const task = taskByID(issueID, agentID, taskID);
-    if (!task || task.id !== taskID) return null;
+    if (!task || task.id !== taskID) {
+      consecutiveMissing += 1;
+      if (consecutiveMissing >= 3) fail(`${stage.key} 任务 ${taskID} 已从 live task-runs 消失，判定为证据自毁/清理缺口`);
+      return null;
+    }
+    consecutiveMissing = 0;
     if (["queued", "dispatched", "running", "waiting_local_directory"].includes(task.status)) return null;
     return task;
   }, taskTimeoutMs, `等待 ${stage.key} 真实模型任务完成`);
@@ -369,6 +610,35 @@ async function loadTaskTrace(taskID) {
   }
 }
 
+async function verifyNoUnexpectedIssues(allowedIssueID, issueCreatedAt, label) {
+  const databaseURL = readDatabaseURL();
+  if (!databaseURL) fail("DATABASE_URL 不可用，无法核验运行期间是否创建了非预期 issue");
+  const client = new pg.Client({ connectionString: databaseURL });
+  await client.connect();
+  try {
+    const since = new Date(Math.max(0, new Date(issueCreatedAt).getTime() - 2_000)).toISOString();
+    const result = await client.query(`
+      SELECT i.id::text,
+             concat(w.issue_prefix, '-', i.number::text) AS identifier,
+             i.title,
+             i.status,
+             i.created_at
+      FROM issue i
+      JOIN workspace w ON w.id = i.workspace_id
+      WHERE i.workspace_id = $1
+        AND i.created_at >= $2
+        AND i.id <> $3
+      ORDER BY i.created_at ASC
+    `, [workspaceID, since, allowedIssueID]);
+    if (result.rowCount > 0) {
+      evidence.unexpected_issue_mutation = { label, rows: result.rows };
+      fail(`${label} 检测到非预期 issue 创建：${result.rows.map((row) => `${row.identifier || row.id}:${row.title}`).join("; ")}`);
+    }
+  } finally {
+    await client.end();
+  }
+}
+
 function verifyFinalEvidence(sopRun, stages) {
   const gaps = [];
   const byKey = new Map(stages.map((stage) => [stage.key, stage]));
@@ -410,6 +680,34 @@ function verifyFinalEvidence(sopRun, stages) {
   };
 }
 
+function verifyLiveObservability(issueCreatedAt) {
+  const since = new Date(Math.max(0, new Date(issueCreatedAt).getTime() - 60_000)).toISOString();
+  const summary = get(`/api/workspaces/${workspaceID}/observability/summary?since=${encodeURIComponent(since)}`, token);
+  const rows = Array.isArray(summary?.sop_stage_breakdown) ? summary.sop_stage_breakdown : [];
+  const byKey = new Map(rows.map((row) => [row.step_key, row]));
+  const gaps = [];
+  for (const expected of requiredStages) {
+    const row = byKey.get(expected.key);
+    if (!row) {
+      gaps.push(`${expected.key} missing live observability stage`);
+      continue;
+    }
+    if (Number(row.task_count || 0) <= 0) gaps.push(`${expected.key} live task_count=0`);
+    if (Number(row.message_count || 0) <= 0) gaps.push(`${expected.key} live message_count=0`);
+    const tokens = Number(row.input_tokens || 0) + Number(row.output_tokens || 0) +
+      Number(row.cache_read_tokens || 0) + Number(row.cache_write_tokens || 0);
+    if (tokens <= 0) gaps.push(`${expected.key} live token_total=0`);
+  }
+  return {
+    ok: gaps.length === 0,
+    gaps,
+    since,
+    observed_stage_keys: rows.map((row) => row.step_key),
+    sop_run_sample_total: Number(summary?.sop_run_sample_total || 0),
+    sop_event_count: Number(summary?.["指标"]?.["SOP 事件数"] || 0),
+  };
+}
+
 async function poll(fn, timeoutMs, label) {
   const started = Date.now();
   let last = null;
@@ -427,6 +725,14 @@ function get(pathname, authToken) {
 
 function post(pathname, body, authToken) {
   return request("POST", pathname, body, authToken);
+}
+
+function put(pathname, body, authToken) {
+  return request("PUT", pathname, body, authToken);
+}
+
+function patch(pathname, body, authToken) {
+  return request("PATCH", pathname, body, authToken);
 }
 
 function request(method, pathname, body, authToken) {
@@ -469,16 +775,26 @@ function fail(message) {
   throw new Error(message);
 }
 
-function writeEvidenceAndExit(code) {
-  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
-  const out = path.join(artifactRoot, `goal-e-real-pm-0105-run-${stamp}.json`);
-  evidence.evidence_path = out;
-  evidence.latest_evidence_path = latestPath;
-  const content = `${JSON.stringify(evidence, null, 2)}\n`;
-  writeFileSync(out, content);
-  writeFileSync(latestPath, content);
-  console.log(content.trim());
+async function writeEvidenceAndExit(code) {
+  if (token && workspaceID) {
+    await restoreAgentSnapshots();
+  }
+  writeEvidenceSnapshot("final");
+  console.log(JSON.stringify(evidence, null, 2));
   process.exit(code);
+}
+
+function writeEvidenceSnapshot(reason) {
+  const stamp = new Date().toISOString().replace(/[-:]/g, "").replace(/\.\d+Z$/, "Z");
+  if (!evidence.evidence_path) {
+    evidence.evidence_path = path.join(artifactRoot, `goal-e-real-pm-0105-run-${stamp}.json`);
+  }
+  evidence.latest_evidence_path = latestPath;
+  evidence.last_snapshot_reason = reason;
+  evidence.last_snapshot_at = new Date().toISOString();
+  const content = `${JSON.stringify(evidence, null, 2)}\n`;
+  writeFileSync(evidence.evidence_path, content);
+  writeFileSync(latestPath, content);
 }
 
 function trimEnv(name) {

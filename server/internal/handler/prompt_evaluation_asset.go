@@ -7729,6 +7729,9 @@ func (h *Handler) ensurePromptEvaluationAgent(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "failed to list agents for training evaluation")
 		return db.Agent{}, db.AgentRuntime{}, false
 	}
+	if agentRow, runtimeRow, ok := h.findSOPPromptEvaluationAgent(r.Context(), workspaceID, member, agents); ok {
+		return agentRow, runtimeRow, true
+	}
 	instructions := promptEvaluationAgentInstructions()
 	for _, existing := range agents {
 		if existing.Name != promptEvaluationAgentName && existing.Name != legacyPromptEvaluationAgentName {
@@ -7776,6 +7779,45 @@ func (h *Handler) ensurePromptEvaluationAgent(w http.ResponseWriter, r *http.Req
 		return db.Agent{}, db.AgentRuntime{}, false
 	}
 	return created, runtime, true
+}
+
+func (h *Handler) findSOPPromptEvaluationAgent(ctx context.Context, workspaceID pgtype.UUID, member db.Member, agents []db.Agent) (db.Agent, db.AgentRuntime, bool) {
+	required := map[string]bool{
+		"PM":            false,
+		"01-clarify":    false,
+		"02-design":     false,
+		"03-task-split": false,
+		"04-implement":  false,
+		"05-verify":     false,
+	}
+	var verifier *db.Agent
+	for i := range agents {
+		if _, ok := required[agents[i].Name]; ok {
+			required[agents[i].Name] = true
+		}
+		if agents[i].Name == "05-verify" {
+			verifier = &agents[i]
+		}
+	}
+	for _, present := range required {
+		if !present {
+			return db.Agent{}, db.AgentRuntime{}, false
+		}
+	}
+	if verifier == nil {
+		return db.Agent{}, db.AgentRuntime{}, false
+	}
+	runtime, err := h.Queries.GetAgentRuntimeForWorkspace(ctx, db.GetAgentRuntimeForWorkspaceParams{
+		ID:          verifier.RuntimeID,
+		WorkspaceID: workspaceID,
+	})
+	if err != nil || runtime.Status != "online" || !canUseRuntimeForAgent(member, runtime) {
+		return db.Agent{}, db.AgentRuntime{}, false
+	}
+	if !runtime.LastSeenAt.Valid || time.Since(runtime.LastSeenAt.Time) > promptEvaluationRuntimeFreshTTL {
+		return db.Agent{}, db.AgentRuntime{}, false
+	}
+	return *verifier, runtime, true
 }
 
 func (h *Handler) selectPromptEvaluationExecutionAgent(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, ownerID pgtype.UUID, member db.Member, payload map[string]any) (db.Agent, db.AgentRuntime, bool) {
