@@ -125,7 +125,7 @@ function deployEnvironment(item, build) {
     run("pnpm", ["--filter", "@multica/web", "build"], env);
   }
   run("bash", ["-lc", "cd server && ./bin/migrate up"], env);
-  if (item.name !== "prod") seedDemoIdentity(env.DATABASE_URL);
+  seedDemoIdentity(env.DATABASE_URL);
   const daemonProfilePath = ensureDaemonProfile(item, env);
   stopPid(pidPath(item, "server"));
   stopPid(pidPath(item, "web"));
@@ -140,7 +140,7 @@ function deployEnvironment(item, build) {
   let serverPID = startDetached("./server/bin/server", [], env, logPath(item, "server"));
   waitForHTTP(`http://127.0.0.1:${item.backendPort}/health`, 60_000);
   serverPID = listeningPID(item.backendPort) || serverPID;
-  if (item.name !== "prod") refreshDaemonProfileToken(item);
+  refreshDaemonProfileToken(item);
   const webArgs = item.frontendMode === "next-start"
     ? ["--dir", "apps/web", "exec", "next", "start", "-p", item.frontendPort, "-H", "0.0.0.0"]
     : ["--dir", "apps/web", "dev"];
