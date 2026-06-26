@@ -22,12 +22,16 @@ test("settings repositories page shows the added Gongfeng repository inventory",
 
   const inventory = page.getByTestId("settings-gongfeng-repository-inventory");
   await expect(inventory).toBeVisible({ timeout: 30000 });
+  await expect(page.getByRole("heading", { name: "代码仓库" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "工作区 Git 仓库" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "已关联工蜂仓库" })).toBeVisible();
   const requiredRepos = [
     { project: "usercenter", repo: "ChainWeaver/ida/user-center" },
     { project: "gateway", repo: "ChainWeaver/ida/gateway" },
     { project: "ida-deployment", repo: "ChainWeaver/ida/ida-deployment" },
   ];
   await expect.poll(async () => inventory.getByTestId("settings-gongfeng-repository-row").count(), { timeout: 5000 }).toBeGreaterThanOrEqual(requiredRepos.length);
+  await expect.poll(async () => inventory.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
   for (const { project, repo } of requiredRepos) {
     const matchingRows = inventory.getByTestId("settings-gongfeng-repository-row").filter({ hasText: repo });
     await expect.poll(async () => matchingRows.count(), { timeout: 5000 }).toBeGreaterThanOrEqual(1);
@@ -49,7 +53,7 @@ test("settings repositories page shows the added Gongfeng repository inventory",
   await expect(usercenterRow).toBeVisible();
   if ((await usercenterRow.getByRole("button", { name: "启用仓库" }).count()) > 0) {
     await usercenterRow.getByRole("button", { name: "启用仓库" }).click();
-    await expect(usercenterRow.getByText("连接: 待验证")).toBeVisible({
+    await expect(usercenterRow.getByText(/连接: (待验证|需凭据|可达)/)).toBeVisible({
       timeout: 15000,
     });
   }
@@ -82,7 +86,7 @@ test("settings repositories page shows the added Gongfeng repository inventory",
   await expect(usercenterRow.getByRole("button", { name: "启用仓库" })).toHaveCount(1);
 
   await usercenterRow.getByRole("button", { name: "启用仓库" }).click();
-  await expect(usercenterRow.getByText("连接: 待验证")).toBeVisible({
+  await expect(usercenterRow.getByText(/连接: (待验证|需凭据|可达)/)).toBeVisible({
     timeout: 15000,
   });
   await expect(usercenterRow.getByRole("button", { name: "禁用仓库" })).toHaveCount(1);

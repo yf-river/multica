@@ -62,28 +62,31 @@ export function ProjectGongfengRepositories() {
 
   return (
     <section className="space-y-2" data-testid="settings-gongfeng-repository-inventory">
-      <div className="flex items-center gap-2">
-        <FolderGit className="size-4 text-muted-foreground" />
-        <h3 className="text-sm font-semibold">工蜂仓库</h3>
-        <span className="font-mono text-xs tabular-nums text-muted-foreground">
-          {rows.length}
-        </span>
+      <div>
+        <div className="flex items-center gap-2">
+          <FolderGit className="size-4 text-muted-foreground" />
+          <h3 className="text-sm font-medium">已关联工蜂仓库</h3>
+          <span className="font-mono text-xs tabular-nums text-muted-foreground">
+            {rows.length}
+          </span>
+        </div>
+        <p className="text-xs text-muted-foreground">
+          项目资源中的 Gongfeng 仓库会作为智能体任务、训练评估和证据链的代码来源。
+        </p>
       </div>
       {rows.length === 0 ? (
         <div className="rounded-md border border-dashed px-3 py-6 text-center text-xs text-muted-foreground">
           暂无已关联的项目工蜂仓库。
         </div>
       ) : (
-        <div className="overflow-x-auto rounded-md border">
-          <div className="min-w-[760px] divide-y bg-background">
-            {rows.map((row) => (
-              <GongfengRepositoryRow
-                key={row.id}
-                row={row}
-                projectHref={wsPaths.projectDetail(row.project.id)}
-              />
-            ))}
-          </div>
+        <div className="divide-y rounded-md border bg-background">
+          {rows.map((row) => (
+            <GongfengRepositoryRow
+              key={row.id}
+              row={row}
+              projectHref={wsPaths.projectDetail(row.project.id)}
+            />
+          ))}
         </div>
       )}
     </section>
@@ -117,108 +120,114 @@ function GongfengRepositoryRow({
   return (
     <>
       <div
-        className="grid grid-cols-[minmax(220px,1.3fr)_minmax(120px,0.8fr)_minmax(180px,1fr)_minmax(120px,0.7fr)_10rem] items-center gap-3 px-3 py-2 text-xs"
+        className="flex flex-col gap-3 px-3 py-3 text-xs sm:flex-row sm:items-center sm:justify-between"
         data-testid="settings-gongfeng-repository-row"
       >
-        <div className="min-w-0">
-          <a
-            href={ref.url}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="block truncate font-medium hover:underline"
-          >
-            {title}
-          </a>
-          <div className="mt-0.5 truncate font-mono text-[11px] text-muted-foreground">
+        <div className="min-w-0 flex-1 space-y-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+            <a
+              href={ref.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="min-w-0 max-w-full truncate font-medium hover:underline"
+            >
+              {title}
+            </a>
+            <span className="rounded border px-1.5 py-0.5 font-mono text-[11px] leading-none">
+              {ref.resource_kind}
+            </span>
+          </div>
+          <div className="min-w-0 break-all font-mono text-[11px] text-muted-foreground sm:break-normal sm:truncate">
             {ref.project_path}
           </div>
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5 text-[11px] text-muted-foreground">
+            <span>项目</span>
+            <AppLink href={projectHref} className="font-medium text-foreground hover:underline">
+              {row.project.title}
+            </AppLink>
+            {branch && <MetaBadge>{branch}</MetaBadge>}
+            {commit && <MetaBadge>{shortCommit(commit)}</MetaBadge>}
+          </div>
         </div>
-        <AppLink href={projectHref} className="min-w-0 truncate text-muted-foreground hover:text-foreground hover:underline">
-          {row.project.title}
-        </AppLink>
-        <div className="flex min-w-0 flex-wrap gap-1">
-          {branch && <span className="rounded border px-1 font-mono text-[11px]">{branch}</span>}
-          {commit && <span className="rounded border px-1 font-mono text-[11px]">{shortCommit(commit)}</span>}
-          <span className="rounded border px-1 text-[11px]">{ref.resource_kind}</span>
-        </div>
-        <div className="flex min-w-0 flex-wrap gap-1">
-          {statusItems.length === 0 ? (
-            <span className="text-[11px] text-muted-foreground">状态未采集</span>
-          ) : (
-            statusItems.map((item) => (
-              <span key={item.label} className="rounded border px-1 text-[11px]">
-                {item.label}: {statusLabel(item.value)}
-              </span>
-            ))
-          )}
-        </div>
-        <div className="flex items-center justify-end gap-1">
-          <IconButton label="查看仓库详情" onClick={() => setDetailOpen(true)}>
-            <Info className="size-3.5" />
-          </IconButton>
-          <IconButton
-            label="测试连接"
-            disabled={testResource.isPending || Boolean(ref.disabled)}
-            onClick={() => {
-              testResource.mutate(row.id, {
-                onSuccess: () => toast.success("工蜂仓库连接测试已更新"),
-                onError: (err) => toast.error(err instanceof Error ? err.message : "连接测试失败"),
-              });
-            }}
-          >
-            <CheckCircle2 className="size-3.5" />
-          </IconButton>
-          <IconButton
-            label="刷新同步状态"
-            disabled={syncResource.isPending || Boolean(ref.disabled)}
-            onClick={() => {
-              syncResource.mutate(row.id, {
-                onSuccess: () => toast.success("工蜂仓库同步状态已更新"),
-                onError: (err) => toast.error(err instanceof Error ? err.message : "同步失败"),
-              });
-            }}
-          >
-            <RefreshCw className="size-3.5" />
-          </IconButton>
-          {ref.disabled ? (
+
+        <div className="flex shrink-0 flex-wrap items-center gap-2 sm:justify-end">
+          <div className="flex flex-wrap gap-1">
+            {statusItems.length === 0 ? (
+              <span className="text-[11px] text-muted-foreground">状态未采集</span>
+            ) : (
+              statusItems.map((item) => (
+                <StatusBadge key={item.label} label={item.label} value={item.value} />
+              ))
+            )}
+          </div>
+          <div className="flex items-center gap-1 rounded-md border bg-muted/20 p-0.5">
+            <IconButton label="查看仓库详情" onClick={() => setDetailOpen(true)}>
+              <Info className="size-3.5" />
+            </IconButton>
             <IconButton
-              label="启用仓库"
-              disabled={enableResource.isPending}
+              label="测试连接"
+              disabled={testResource.isPending || Boolean(ref.disabled)}
               onClick={() => {
-                enableResource.mutate(row.id, {
-                  onSuccess: () => toast.success("已启用工蜂仓库"),
-                  onError: (err) => toast.error(err instanceof Error ? err.message : "启用失败"),
+                testResource.mutate(row.id, {
+                  onSuccess: () => toast.success("工蜂仓库连接测试已更新"),
+                  onError: (err) => toast.error(err instanceof Error ? err.message : "连接测试失败"),
                 });
               }}
             >
-              <Power className="size-3.5" />
+              <CheckCircle2 className="size-3.5" />
             </IconButton>
-          ) : (
             <IconButton
-              label="禁用仓库"
-              disabled={disableResource.isPending}
+              label="刷新同步状态"
+              disabled={syncResource.isPending || Boolean(ref.disabled)}
               onClick={() => {
-                disableResource.mutate(row.id, {
-                  onSuccess: () => toast.success("已禁用工蜂仓库"),
-                  onError: (err) => toast.error(err instanceof Error ? err.message : "禁用失败"),
+                syncResource.mutate(row.id, {
+                  onSuccess: () => toast.success("工蜂仓库同步状态已更新"),
+                  onError: (err) => toast.error(err instanceof Error ? err.message : "同步失败"),
                 });
               }}
             >
-              <Ban className="size-3.5" />
+              <RefreshCw className="size-3.5" />
             </IconButton>
-          )}
-          <IconButton
-            label="删除仓库关联"
-            danger
-            onClick={() => {
-              deleteResource.mutate(row.id, {
-                onSuccess: () => toast.success("已删除工蜂仓库关联"),
-                onError: (err) => toast.error(err instanceof Error ? err.message : "删除失败"),
-              });
-            }}
-          >
-            <Trash2 className="size-3.5" />
-          </IconButton>
+            {ref.disabled ? (
+              <IconButton
+                label="启用仓库"
+                disabled={enableResource.isPending}
+                onClick={() => {
+                  enableResource.mutate(row.id, {
+                    onSuccess: () => toast.success("已启用工蜂仓库"),
+                    onError: (err) => toast.error(err instanceof Error ? err.message : "启用失败"),
+                  });
+                }}
+              >
+                <Power className="size-3.5" />
+              </IconButton>
+            ) : (
+              <IconButton
+                label="禁用仓库"
+                disabled={disableResource.isPending}
+                onClick={() => {
+                  disableResource.mutate(row.id, {
+                    onSuccess: () => toast.success("已禁用工蜂仓库"),
+                    onError: (err) => toast.error(err instanceof Error ? err.message : "禁用失败"),
+                  });
+                }}
+              >
+                <Ban className="size-3.5" />
+              </IconButton>
+            )}
+            <IconButton
+              label="删除仓库关联"
+              danger
+              onClick={() => {
+                deleteResource.mutate(row.id, {
+                  onSuccess: () => toast.success("已删除工蜂仓库关联"),
+                  onError: (err) => toast.error(err instanceof Error ? err.message : "删除失败"),
+                });
+              }}
+            >
+              <Trash2 className="size-3.5" />
+            </IconButton>
+          </div>
         </div>
       </div>
       <Dialog open={detailOpen} onOpenChange={setDetailOpen}>
@@ -231,6 +240,22 @@ function GongfengRepositoryRow({
         </DialogContent>
       </Dialog>
     </>
+  );
+}
+
+function MetaBadge({ children }: { children: ReactNode }) {
+  return (
+    <span className="rounded border px-1.5 py-0.5 font-mono text-[11px] leading-none text-foreground">
+      {children}
+    </span>
+  );
+}
+
+function StatusBadge({ label, value }: { label: string; value: string }) {
+  return (
+    <span className="rounded border bg-muted/40 px-1.5 py-0.5 text-[11px] leading-none">
+      {label}: {statusLabel(value)}
+    </span>
   );
 }
 

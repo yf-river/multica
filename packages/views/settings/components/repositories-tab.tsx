@@ -104,142 +104,140 @@ export function RepositoriesTab() {
   if (!workspace) return null;
 
   return (
-    <div className="space-y-8">
-      <ProjectGongfengRepositories />
+    <section className="space-y-4">
+      <h2 className="text-sm font-semibold">{t(($) => $.repositories.section_title)}</h2>
 
-      <section className="space-y-4">
-        <h2 className="text-sm font-semibold">{t(($) => $.repositories.section_title)}</h2>
-
-        <Card>
-          <CardContent className="space-y-3">
+      <div className="space-y-5">
+        <section className="space-y-2">
+          <div>
+            <h3 className="text-sm font-medium">工作区 Git 仓库</h3>
             <p className="text-xs text-muted-foreground">
               {t(($) => $.repositories.description)}
             </p>
+          </div>
 
-            {repos.length === 0 && (
-              <p className="text-xs text-muted-foreground italic">
-                {t(($) => $.repositories.empty)}
-              </p>
-            )}
+          <Card>
+            <CardContent className="space-y-3">
+              {repos.length === 0 && (
+                <p className="text-xs text-muted-foreground italic">
+                  {t(($) => $.repositories.empty)}
+                </p>
+              )}
 
-            {repos.map((repo, index) => {
-              const isEditing = editingIndices.has(index);
-              return (
-                <div
-                  key={index}
-                  className="group flex items-start gap-2"
-                >
-                  {isEditing ? (
-                    <div className="flex-1 min-w-0 space-y-1.5">
-                      <Input
-                        type="text"
-                        value={repo.url}
-                        onChange={(e) => handleRepoChange(index, "url", e.target.value)}
-                        disabled={!canManageWorkspace}
-                        placeholder={t(($) => $.repositories.url_placeholder)}
-                        className="text-sm"
-                      />
-                      <Input
-                        type="text"
-                        value={repo.description ?? ""}
-                        onChange={(e) => handleRepoChange(index, "description", e.target.value)}
-                        disabled={!canManageWorkspace}
-                        placeholder={t(($) => $.repositories.description_placeholder)}
-                        className="text-sm"
-                      />
-                    </div>
-                  ) : (
-                    <div className="flex-1 min-w-0 rounded-md border bg-muted/50 px-3 py-2">
-                      <div
-                        className="truncate font-mono text-xs text-muted-foreground"
-                        title={repo.url}
-                      >
-                        {repo.url || t(($) => $.repositories.url_empty)}
+              {repos.map((repo, index) => {
+                const isEditing = editingIndices.has(index);
+                return (
+                  <div key={index} className="group flex items-start gap-2">
+                    {isEditing ? (
+                      <div className="flex-1 min-w-0 space-y-1.5">
+                        <Input
+                          type="text"
+                          value={repo.url}
+                          onChange={(e) => handleRepoChange(index, "url", e.target.value)}
+                          disabled={!canManageWorkspace}
+                          placeholder={t(($) => $.repositories.url_placeholder)}
+                          className="text-sm"
+                        />
+                        <Input
+                          type="text"
+                          value={repo.description ?? ""}
+                          onChange={(e) => handleRepoChange(index, "description", e.target.value)}
+                          disabled={!canManageWorkspace}
+                          placeholder={t(($) => $.repositories.description_placeholder)}
+                          className="text-sm"
+                        />
                       </div>
-                      {repo.description && (
-                        <div className="mt-0.5 truncate text-xs text-muted-foreground/70" title={repo.description}>
-                          {repo.description}
+                    ) : (
+                      <div className="flex-1 min-w-0 rounded-md border bg-muted/50 px-3 py-2">
+                        <div
+                          className="truncate font-mono text-xs text-muted-foreground"
+                          title={repo.url}
+                        >
+                          {repo.url || t(($) => $.repositories.url_empty)}
                         </div>
-                      )}
-                    </div>
-                  )}
-                  {canManageWorkspace && (
-                    <div
-                      className={
-                        isEditing
-                          ? "flex shrink-0 items-center gap-0.5 pt-1.5"
-                          : "flex shrink-0 items-center gap-0.5 pt-1.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
-                      }
-                    >
-                      {!isEditing && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label={t(($) => $.repositories.edit_aria)}
-                          className="text-muted-foreground hover:text-foreground"
-                          onClick={() => handleEditRepo(index)}
-                        >
-                          <Pencil className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                      {isEditing && (
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          aria-label={t(($) => $.repositories.cancel_aria)}
-                          className="text-muted-foreground hover:text-foreground"
-                          onClick={() => handleCancelEdit(index)}
-                        >
-                          <X className="h-3.5 w-3.5" />
-                        </Button>
-                      )}
-                      <Button
-                        variant="ghost"
-                        size="icon"
-                        aria-label={t(($) => $.repositories.delete_aria)}
-                        className="text-muted-foreground hover:text-destructive"
-                        onClick={() => handleRemoveRepo(index)}
+                        {repo.description && (
+                          <div className="mt-0.5 truncate text-xs text-muted-foreground/70" title={repo.description}>
+                            {repo.description}
+                          </div>
+                        )}
+                      </div>
+                    )}
+                    {canManageWorkspace && (
+                      <div
+                        className={
+                          isEditing
+                            ? "flex shrink-0 items-center gap-0.5 pt-1.5"
+                            : "flex shrink-0 items-center gap-0.5 pt-1.5 opacity-0 transition-opacity group-hover:opacity-100 group-focus-within:opacity-100 [@media(hover:none)]:opacity-100"
+                        }
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </Button>
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                        {!isEditing && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={t(($) => $.repositories.edit_aria)}
+                            className="text-muted-foreground hover:text-foreground"
+                            onClick={() => handleEditRepo(index)}
+                          >
+                            <Pencil className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        {isEditing && (
+                          <Button
+                            variant="ghost"
+                            size="icon"
+                            aria-label={t(($) => $.repositories.cancel_aria)}
+                            className="text-muted-foreground hover:text-foreground"
+                            onClick={() => handleCancelEdit(index)}
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </Button>
+                        )}
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          aria-label={t(($) => $.repositories.delete_aria)}
+                          className="text-muted-foreground hover:text-destructive"
+                          onClick={() => handleRemoveRepo(index)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </Button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
 
-            {canManageWorkspace && (
-              <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
-                <Button variant="outline" size="sm" onClick={handleAddRepo}>
-                  <Plus className="h-3 w-3" />
-                  {t(($) => $.repositories.add)}
-                </Button>
-                <div className="flex items-center gap-3">
-                  {!dirty && repos.length > 0 && (
-                    <span className="text-xs text-muted-foreground">
-                      {t(($) => $.repositories.saved_hint)}
-                    </span>
-                  )}
-                  <Button
-                    size="sm"
-                    onClick={handleSave}
-                    disabled={saving || !dirty}
-                  >
+              {canManageWorkspace && (
+                <div className="flex flex-wrap items-center justify-between gap-2 pt-1">
+                  <Button variant="outline" size="sm" onClick={handleAddRepo}>
+                    <Plus className="h-3 w-3" />
+                    {t(($) => $.repositories.add)}
+                  </Button>
+                  <div className="flex items-center gap-3">
+                    {!dirty && repos.length > 0 && (
+                      <span className="text-xs text-muted-foreground">
+                        {t(($) => $.repositories.saved_hint)}
+                      </span>
+                    )}
+                    <Button size="sm" onClick={handleSave} disabled={saving || !dirty}>
                     <Save className="h-3 w-3" />
                     {saving ? t(($) => $.repositories.saving) : t(($) => $.repositories.save)}
-                  </Button>
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {!canManageWorkspace && (
-              <p className="text-xs text-muted-foreground">
-                {t(($) => $.repositories.manage_hint)}
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      </section>
-    </div>
+              {!canManageWorkspace && (
+                <p className="text-xs text-muted-foreground">
+                  {t(($) => $.repositories.manage_hint)}
+                </p>
+              )}
+            </CardContent>
+          </Card>
+        </section>
+
+        <ProjectGongfengRepositories />
+      </div>
+    </section>
   );
 }
