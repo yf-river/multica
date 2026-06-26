@@ -60,13 +60,26 @@ const requiredEvidence = {
 const packageOk = playwrightClean && logsClean && performanceClean && Object.values(requiredEvidence).every(Boolean);
 const finalAcceptanceOpenItems = finalAcceptance?.blocking_open_items || [];
 const gapSummary = gapAudit?.summary || null;
+const gapHasNoBlockers =
+  gapAudit?.ok === true &&
+  Number(gapSummary?.blockers || 0) === 0 &&
+  Number(gapSummary?.goal_e_blockers || 0) === 0 &&
+  Number(gapSummary?.production_blockers || 0) === 0;
+const archiveCompleteAllowed =
+  packageOk &&
+  finalAcceptance?.ok === true &&
+  finalAcceptanceOpenItems.length === 0 &&
+  gapHasNoBlockers &&
+  gitStatus.length === 0;
 
 const artifact = {
   schema: "multica.goal_e.final_evidence_package.v1",
   generated_at: now,
   ok: packageOk,
-  archive_complete_allowed: false,
-  proof_boundary: finalAcceptanceOpenItems.length > 0
+  archive_complete_allowed: archiveCompleteAllowed,
+  proof_boundary: archiveCompleteAllowed
+    ? "Evidence package, final acceptance, gap audit, clean git status, and log checks all passed; Goal E archive/complete is allowed."
+    : finalAcceptanceOpenItems.length > 0
     ? "Evidence package is complete for logs/performance/package requirements, but final Goal E acceptance remains blocked by open matrix items."
     : "Evidence package is complete and no final acceptance blockers were present when this package was generated.",
   git: {
