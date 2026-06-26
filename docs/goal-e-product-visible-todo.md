@@ -7,7 +7,7 @@ Generated: 2026-06-26T15:24:30+08:00
 - Status: `demo-ready`
 - Deployed environment: int
 - Deployed URL: `http://9.134.129.162:13682`
-- Deployed commit: `765d623c17ab`
+- Deployed commit: recorded by `.run/deployment-int.json` and the final evidence package for the current deployment
 - Final evidence package: `artifacts/acceptance/goal-e-final-evidence-package-latest.json`
 - Final acceptance: `artifacts/acceptance/tapd-gongfeng-sop-final-acceptance-latest.json`
 - Gap audit: `artifacts/acceptance/tapd-gongfeng-sop-gap-audit-2026-06-26T07-24-06-401Z.json`
