@@ -235,15 +235,15 @@ func TestBuildSquadLeaderBriefing_FullSquad(t *testing.T) {
 		"阶段产物完整；测试证据完整；交接说明明确",
 		"归档口径：06-archive 不作为必跑阶段",
 		"先按 SOP 阶段链推进",
-			"跨项目子任务规则",
-			"--parent <当前 issue id>",
-			"--project <目标项目 id>",
-			"明确给出目标小队 UUID",
-			"--assignee-id <目标小队 UUID>",
-			"逐项核对“目标项目 UUID + 目标小队 UUID”映射",
-			"自动交给项目负责人",
-			"目标项目=gateway",
-			"目标项目=ida-deployment",
+		"跨项目子任务规则",
+		"--parent <当前 issue id>",
+		"--project <目标项目 id>",
+		"明确给出目标小队 UUID",
+		"--assignee-id <目标小队 UUID>",
+		"逐项核对“目标项目 UUID + 目标小队 UUID”映射",
+		"自动交给项目负责人",
+		"目标项目=gateway",
+		"目标项目=ida-deployment",
 		"## 小队说明 (Full Squad)",
 		"Always write tests.",
 		"`[@Helper One](mention://agent/" + helper1 + ")`",
@@ -344,19 +344,19 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 	out := buildSquadSOPProfile(raw)
 	for _, want := range []string{
 		"模板：user-center-sop-flow",
-		"SOP 步骤链：PM 调度 → 01 需求澄清 → 02 方案设计 → 03 任务拆分 → 04 代码开发 → 05 测试验证",
+		"SOP 步骤链：pm → 01 → 02 → 03 → 04 → 05",
 		"SOP 阶段链：user-center/01-clarify → user-center/02-design → user-center/03-task-split → user-center/04-implement → user-center/05-verify",
 		"跨项目子任务规则",
 		"目标项目=gateway",
 		"目标项目=ida-deployment",
-			"--parent <当前 issue id>",
-			"--project <目标项目 id>",
-			"multica project list --output json",
-			"明确给出目标小队 UUID",
-			"--assignee-id <目标小队 UUID>",
-			"逐项核对“目标项目 UUID + 目标小队 UUID”映射",
-			"自动交给项目负责人",
-			"不要再为同一项工作 @mention 同一个负责人",
+		"--parent <当前 issue id>",
+		"--project <目标项目 id>",
+		"multica project list --output json",
+		"明确给出目标小队 UUID",
+		"--assignee-id <目标小队 UUID>",
+		"逐项核对“目标项目 UUID + 目标小队 UUID”映射",
+		"自动交给项目负责人",
+		"不要再为同一项工作 @mention 同一个负责人",
 		"归档口径：06-archive 不作为必跑阶段",
 	} {
 		if !strings.Contains(out, want) {
@@ -374,8 +374,8 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 	}
 	ctx := context.Background()
 	cleanup := func() {
-		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name = 'user-center 小队'`, testWorkspaceID)
-		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND name LIKE 'user-center 小队 · %'`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name IN ('pm', 'user-center 小队')`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND (name IN ('pm', '01', '02', '03', '04', '05') OR name LIKE 'user-center 小队 · %')`, testWorkspaceID)
 		_, _ = testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE workspace_id = $1 AND name LIKE 'internal-user-center-codex-test-%'`, testWorkspaceID)
 	}
 	cleanup()
@@ -399,7 +399,7 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 	rows, err := testPool.Query(ctx, `
 		SELECT name, mcp_config
 		FROM agent
-		WHERE workspace_id = $1 AND name LIKE 'user-center 小队 · %'
+		WHERE workspace_id = $1 AND name IN ('pm', '01', '02', '03', '04', '05')
 		ORDER BY name
 	`, testWorkspaceID)
 	if err != nil {
@@ -440,7 +440,7 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 	if _, err := testPool.Exec(ctx, `
 		UPDATE agent
 		SET model = 'stale-model-before-template-resync'
-		WHERE workspace_id = $1 AND name LIKE 'user-center 小队 · %'
+		WHERE workspace_id = $1 AND name IN ('pm', '01', '02', '03', '04', '05')
 	`, testWorkspaceID); err != nil {
 		t.Fatalf("stale user-center agent models: %v", err)
 	}
@@ -459,7 +459,7 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 		SELECT count(*)::int
 		FROM agent
 		WHERE workspace_id = $1
-		  AND name LIKE 'user-center 小队 · %'
+		  AND name IN ('pm', '01', '02', '03', '04', '05')
 		  AND model IS DISTINCT FROM $2
 	`, testWorkspaceID, overrideModel).Scan(&staleModelCount); err != nil {
 		t.Fatalf("count stale user-center agent models: %v", err)
@@ -477,8 +477,8 @@ func TestUserCenterSquadAssignmentCreatesStageTasks(t *testing.T) {
 	cleanup := func() {
 		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id IN (SELECT id FROM issue WHERE workspace_id = $1 AND title LIKE 'user-center stage task test%')`, testWorkspaceID)
 		_, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE workspace_id = $1 AND title LIKE 'user-center stage task test%'`, testWorkspaceID)
-		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name = 'user-center 小队'`, testWorkspaceID)
-		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND name LIKE 'user-center 小队 · %'`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name IN ('pm', 'user-center 小队')`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND (name IN ('pm', '01', '02', '03', '04', '05') OR name LIKE 'user-center 小队 · %')`, testWorkspaceID)
 		_, _ = testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE workspace_id = $1 AND name LIKE 'internal-user-center-stage-test-%'`, testWorkspaceID)
 	}
 	cleanup()

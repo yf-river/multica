@@ -2120,7 +2120,7 @@ export class TestApiClient {
           `
             DELETE FROM squad
             WHERE workspace_id = $1
-              AND name IN ('user-center 小队', 'Multica 编码小队')
+              AND name IN ('pm', 'user-center 小队', 'Multica 编码小队')
           `,
           [this.workspaceId],
         );
@@ -2129,7 +2129,8 @@ export class TestApiClient {
             DELETE FROM agent
             WHERE workspace_id = $1
               AND (
-                name LIKE 'user-center 小队 · %'
+                name IN ('pm', '01', '02', '03', '04', '05')
+                OR name LIKE 'user-center 小队 · %'
                 OR name LIKE 'Multica 编码小队 · %'
               )
           `,

@@ -87,6 +87,7 @@ type internalSquadTemplate struct {
 type internalSquadRole struct {
 	Key         string
 	Name        string
+	AgentName   string
 	Instruction string
 	MemberRole  string
 	MCPConfig   []byte
@@ -98,38 +99,38 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 		mcpConfig := userCenterSOPMCPConfig()
 		return internalSquadTemplate{
 			Key:          "user-center-sop-flow",
-			Name:         "user-center 小队",
-			Description:  "面向 user-center 项目的内部 SOP 小队，由 PM 按 pm -> 01 -> 02 -> 03 -> 04 -> 05 阶段链推进。",
-			Instructions: "PM 按 user-center SOP 分阶段推进；每个阶段都要记录输入、输出、失败原因、耗时和验收证据；不得跳过验收。遇到明确跨项目依赖时，PM 必须先直接创建 gateway/ida-deployment 待规划子 issue，并确认父子关系、项目和目标小队指派正确；不得只评论或委派 03 代替创建。06-archive 不属于必跑阶段。",
+			Name:         "pm",
+			Description:  "唯一 SOP 流程执行小队，围绕 usercenter、gateway、ida-deployment 三个项目，由 pm 按 pm -> 01 -> 02 -> 03 -> 04 -> 05 阶段链推进。",
+			Instructions: "pm 按 SOP 分阶段推进；每个阶段都要记录输入、输出、失败原因、耗时和验收证据；不得跳过验收。遇到明确跨项目依赖时，pm 必须先直接创建 gateway/ida-deployment 待规划子 issue，并确认父子关系、项目和目标小队指派正确；不得只评论或委派 03 代替创建。06-archive 不属于必跑阶段。",
 			Model:        promptEvaluationAgentModel(),
 			Roles: []internalSquadRole{
-				{Key: "pm", Name: "PM", Instruction: "接收 issue 和 TAPD 输入，必须先根据 source_context 使用 mcp-server-tapd 读取 TAPD 正文；遇到 git.code.tencent.com 链接或项目资源时使用 gongfeng MCP 解析。检查当前阶段产物，处理阻断，推进 pm -> 01 -> 02 -> 03 -> 04 -> 05。若父任务或 profile 要求创建跨项目子 issue，PM 必须本人先创建 gateway/ida-deployment backlog 子 issue，并确认 parent、project、assignee 都正确；不得只写评论、不得等待或委派 03 创建。", MemberRole: "PM", MCPConfig: mcpConfig},
-				{Key: "01-clarify", Name: "01 需求澄清", Instruction: "只执行 user-center/01-clarify；先读取 source_context 中的 TAPD 正文，产出需求边界、验收口径和 handoff。", MemberRole: "01 需求澄清", MCPConfig: mcpConfig},
-				{Key: "02-design", Name: "02 方案设计", Instruction: "只执行 user-center/02-design；需要仓库上下文时使用 gongfeng MCP 或本地仓库，产出方案、影响面、接口/数据契约和 handoff。", MemberRole: "02 方案设计", MCPConfig: mcpConfig},
-				{Key: "03-task-split", Name: "03 任务拆分", Instruction: "只执行 user-center/03-task-split；用 TAPD/Gongfeng 上下文识别跨项目依赖，产出任务拆分、跨项目依赖和 handoff。", MemberRole: "03 任务拆分", MCPConfig: mcpConfig},
-				{Key: "04-implement", Name: "04 代码开发", Instruction: "只执行 user-center/04-implement，按既定边界实现，不越权修改无关模块；需要工蜂上下文时使用 gongfeng MCP。", MemberRole: "04 代码开发", MCPConfig: mcpConfig},
-				{Key: "05-verify", Name: "05 测试验证", Instruction: "只执行 user-center/05-verify，独立检查实现、测试结果、回写记录和最终 handoff；核对 TAPD/Gongfeng/source_context 证据。", MemberRole: "05 测试验证", MCPConfig: mcpConfig},
+				{Key: "pm", Name: "pm", AgentName: "pm", Instruction: "接收 issue 和 TAPD 输入，必须先根据 source_context 使用 mcp-server-tapd 读取 TAPD 正文；遇到 git.code.tencent.com 链接或项目资源时使用 gongfeng MCP 解析。检查当前阶段产物，处理阻断，推进 pm -> 01 -> 02 -> 03 -> 04 -> 05。若父任务或 profile 要求创建跨项目子 issue，pm 必须本人先创建 gateway/ida-deployment backlog 子 issue，并确认 parent、project、assignee 都正确；不得只写评论、不得等待或委派 03 创建。", MemberRole: "pm", MCPConfig: mcpConfig},
+				{Key: "01-clarify", Name: "01", AgentName: "01", Instruction: "只执行 user-center/01-clarify；先读取 source_context 中的 TAPD 正文，产出需求边界、验收口径和 handoff。", MemberRole: "01", MCPConfig: mcpConfig},
+				{Key: "02-design", Name: "02", AgentName: "02", Instruction: "只执行 user-center/02-design；需要仓库上下文时使用 gongfeng MCP 或本地仓库，产出方案、影响面、接口/数据契约和 handoff。", MemberRole: "02", MCPConfig: mcpConfig},
+				{Key: "03-task-split", Name: "03", AgentName: "03", Instruction: "只执行 user-center/03-task-split；用 TAPD/Gongfeng 上下文识别跨项目依赖，产出任务拆分、跨项目依赖和 handoff。", MemberRole: "03", MCPConfig: mcpConfig},
+				{Key: "04-implement", Name: "04", AgentName: "04", Instruction: "只执行 user-center/04-implement，按既定边界实现，不越权修改无关模块；需要工蜂上下文时使用 gongfeng MCP。", MemberRole: "04", MCPConfig: mcpConfig},
+				{Key: "05-verify", Name: "05", AgentName: "05", Instruction: "只执行 user-center/05-verify，独立检查实现、测试结果、回写记录和最终 handoff；核对 TAPD/Gongfeng/source_context 证据。", MemberRole: "05", MCPConfig: mcpConfig},
 			},
 			Profile: map[string]any{
 				"profile_key": "user-center-sop-flow",
-				"project":     "user-center",
+				"project":     "usercenter",
 				"repo":        "/data/ida/user-center",
 				"mode":        "stage_chain",
 				"roles": []map[string]any{
-					{"key": "pm", "name": "PM", "responsibility": "接收 issue/TAPD 输入，检查阶段产物，处理阻断，推进 pm -> 01 -> 02 -> 03 -> 04 -> 05；遇到固定跨项目映射时，必须先直接创建 gateway/ida-deployment backlog 子 issue，并确认父子关系、项目和目标小队指派正确，不能只委派 03 或写评论。"},
-					{"key": "01-clarify", "name": "01 需求澄清", "responsibility": "执行 user-center/01-clarify，明确需求边界、验收口径和 handoff。"},
-					{"key": "02-design", "name": "02 方案设计", "responsibility": "执行 user-center/02-design，输出方案、影响面、接口/数据契约和 handoff。"},
-					{"key": "03-task-split", "name": "03 任务拆分", "responsibility": "执行 user-center/03-task-split，输出任务拆分、跨项目依赖和 handoff。"},
-					{"key": "04-implement", "name": "04 代码开发", "responsibility": "执行 user-center/04-implement，按边界实现并保留证据。"},
-					{"key": "05-verify", "name": "05 测试验证", "responsibility": "执行 user-center/05-verify，独立验证、总结证据和最终 handoff。"},
+					{"key": "pm", "name": "pm", "responsibility": "接收 issue/TAPD 输入，检查阶段产物，处理阻断，推进 pm -> 01 -> 02 -> 03 -> 04 -> 05；遇到固定跨项目映射时，必须先直接创建 gateway/ida-deployment backlog 子 issue，并确认父子关系、项目和目标小队指派正确，不能只委派 03 或写评论。"},
+					{"key": "01-clarify", "name": "01", "responsibility": "执行 user-center/01-clarify，明确需求边界、验收口径和 handoff。"},
+					{"key": "02-design", "name": "02", "responsibility": "执行 user-center/02-design，输出方案、影响面、接口/数据契约和 handoff。"},
+					{"key": "03-task-split", "name": "03", "responsibility": "执行 user-center/03-task-split，输出任务拆分、跨项目依赖和 handoff。"},
+					{"key": "04-implement", "name": "04", "responsibility": "执行 user-center/04-implement，按边界实现并保留证据。"},
+					{"key": "05-verify", "name": "05", "responsibility": "执行 user-center/05-verify，独立验证、总结证据和最终 handoff。"},
 				},
 				"steps": []map[string]any{
-					{"key": "pm", "name": "PM 调度", "role_key": "pm"},
-					{"key": "01-clarify", "name": "01 需求澄清", "role_key": "01-clarify", "skill": "user-center/01-clarify"},
-					{"key": "02-design", "name": "02 方案设计", "role_key": "02-design", "skill": "user-center/02-design"},
-					{"key": "03-task-split", "name": "03 任务拆分", "role_key": "03-task-split", "skill": "user-center/03-task-split"},
-					{"key": "04-implement", "name": "04 代码开发", "role_key": "04-implement", "skill": "user-center/04-implement"},
-					{"key": "05-verify", "name": "05 测试验证", "role_key": "05-verify", "skill": "user-center/05-verify"},
+					{"key": "pm", "name": "pm", "role_key": "pm"},
+					{"key": "01-clarify", "name": "01", "role_key": "01-clarify", "skill": "user-center/01-clarify"},
+					{"key": "02-design", "name": "02", "role_key": "02-design", "skill": "user-center/02-design"},
+					{"key": "03-task-split", "name": "03", "role_key": "03-task-split", "skill": "user-center/03-task-split"},
+					{"key": "04-implement", "name": "04", "role_key": "04-implement", "skill": "user-center/04-implement"},
+					{"key": "05-verify", "name": "05", "role_key": "05-verify", "skill": "user-center/05-verify"},
 				},
 				"stage_skills":     []string{"user-center/01-clarify", "user-center/02-design", "user-center/03-task-split", "user-center/04-implement", "user-center/05-verify"},
 				"operation_skills": []string{"user-center/add-api"},
@@ -586,14 +587,17 @@ func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgt
 	}
 	result := make([]InternalSquadAgent, 0, len(template.Roles))
 	for _, role := range template.Roles {
-		name := template.Name + " · " + role.Name
+		name := strings.TrimSpace(role.AgentName)
+		if name == "" {
+			name = template.Name + " · " + role.Name
+		}
 		runtimeConfig := mustJSONBytes(map[string]any{
 			"provider": runtime.Provider,
 			"用途":       template.Name,
 			"角色":       role.Name,
 			"模板":       template.Key,
 		})
-		instructions := "你是" + template.Name + "的" + role.Name + "。" + role.Instruction + "所有输出必须使用中文，并保留可验收证据。"
+		instructions := "你是" + template.Name + "小队的" + role.Name + "。" + role.Instruction + "所有输出必须使用中文，并保留可验收证据。"
 		model := pgtype.Text{String: template.Model, Valid: template.Model != ""}
 		agentRow, ok := byName[name]
 		if !ok {
@@ -697,13 +701,17 @@ func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UU
 		}
 	} else {
 		profileBytes := mustJSONBytes(template.Profile)
-		if !bytes.Equal(bytes.TrimSpace(squad.SopProfile), bytes.TrimSpace(profileBytes)) || squad.Instructions != template.Instructions {
-			squad, err = h.Queries.UpdateSquad(ctx, db.UpdateSquadParams{
+		leaderID := parseUUID(agents[0].ID)
+		if itemNeedsInternalSquadSync(squad, template, profileBytes, leaderID) {
+			params := db.UpdateSquadParams{
 				ID:           squad.ID,
+				Name:         pgtype.Text{String: template.Name, Valid: squad.Name != template.Name},
 				Description:  pgtype.Text{String: template.Description, Valid: true},
+				LeaderID:     leaderID,
 				Instructions: pgtype.Text{String: template.Instructions, Valid: true},
 				SopProfile:   profileBytes,
-			})
+			}
+			squad, err = h.Queries.UpdateSquad(ctx, params)
 			if err != nil {
 				return db.Squad{}, err
 			}
@@ -713,9 +721,26 @@ func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UU
 	if err != nil {
 		return db.Squad{}, err
 	}
+	desiredAgentMembers := map[string]struct{}{}
+	for _, agent := range agents {
+		desiredAgentMembers[agent.ID] = struct{}{}
+	}
 	existingMemberRoles := map[string]string{}
 	for _, member := range existingMembers {
-		existingMemberRoles[member.MemberType+":"+uuidToString(member.MemberID)] = member.Role
+		memberID := uuidToString(member.MemberID)
+		if member.MemberType == "agent" {
+			if _, keep := desiredAgentMembers[memberID]; !keep {
+				if _, err := h.Queries.RemoveSquadMember(ctx, db.RemoveSquadMemberParams{
+					SquadID:    squad.ID,
+					MemberType: member.MemberType,
+					MemberID:   member.MemberID,
+				}); err != nil {
+					return db.Squad{}, err
+				}
+				continue
+			}
+		}
+		existingMemberRoles[member.MemberType+":"+memberID] = member.Role
 	}
 	for _, agent := range agents {
 		role := "member"
@@ -751,6 +776,14 @@ func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UU
 		existingMemberRoles[memberKey] = role
 	}
 	return squad, nil
+}
+
+func itemNeedsInternalSquadSync(squad db.Squad, template internalSquadTemplate, profileBytes []byte, leaderID pgtype.UUID) bool {
+	return squad.Name != template.Name ||
+		squad.Description != template.Description ||
+		uuidToString(squad.LeaderID) != uuidToString(leaderID) ||
+		!bytes.Equal(bytes.TrimSpace(squad.SopProfile), bytes.TrimSpace(profileBytes)) ||
+		squad.Instructions != template.Instructions
 }
 
 func (h *Handler) GetSquad(w http.ResponseWriter, r *http.Request) {

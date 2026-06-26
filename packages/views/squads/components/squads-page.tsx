@@ -915,30 +915,17 @@ export function SquadsPage() {
             reserved for the empty state. */}
         <div className="flex items-center gap-2">
           {isWorkspaceAdmin && (
-            <>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-8 gap-1 px-2.5"
-                data-testid="ensure-user-center-squad"
-                disabled={ensureInternalSquad.isPending}
-                onClick={() => ensureInternalSquad.mutate("user-center")}
-              >
-                {ensureInternalSquad.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Users className="h-3.5 w-3.5" />}
-                <span className="hidden lg:inline">用户中心小队</span>
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                className="h-8 gap-1 px-2.5"
-                data-testid="ensure-multica-coding-squad"
-                disabled={ensureInternalSquad.isPending}
-                onClick={() => ensureInternalSquad.mutate("multica-coding")}
-              >
-                {ensureInternalSquad.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Users className="h-3.5 w-3.5" />}
-                <span className="hidden lg:inline">Multica 编码小队</span>
-              </Button>
-            </>
+            <Button
+              size="sm"
+              variant="outline"
+              className="h-8 gap-1 px-2.5"
+              data-testid="ensure-pm-squad"
+              disabled={ensureInternalSquad.isPending}
+              onClick={() => ensureInternalSquad.mutate("user-center")}
+            >
+              {ensureInternalSquad.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Users className="h-3.5 w-3.5" />}
+              <span className="hidden lg:inline">pm</span>
+            </Button>
           )}
           <Button
             size="sm"
@@ -968,26 +955,18 @@ export function SquadsPage() {
             <Plus className="size-3.5" />
             {t(($) => $.page.new_button)}
           </Button>
-          {isWorkspaceAdmin && (
-            <div className="flex flex-wrap justify-center gap-2">
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={ensureInternalSquad.isPending}
-                onClick={() => ensureInternalSquad.mutate("user-center")}
-              >
-                用户中心小队
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                disabled={ensureInternalSquad.isPending}
-                onClick={() => ensureInternalSquad.mutate("multica-coding")}
-              >
-                Multica 编码小队
-              </Button>
-            </div>
-          )}
+	          {isWorkspaceAdmin && (
+	            <div className="flex flex-wrap justify-center gap-2">
+	              <Button
+	                size="sm"
+	                variant="outline"
+	                disabled={ensureInternalSquad.isPending}
+	                onClick={() => ensureInternalSquad.mutate("user-center")}
+	              >
+	                pm
+	              </Button>
+	            </div>
+	          )}
         </div>
       ) : (
         <>

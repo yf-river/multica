@@ -16,15 +16,15 @@ const model = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "gpt-5.3-codex
 const taskTimeoutMs = Number(trimEnv("GOAL_E_REAL_PM_0105_TASK_TIMEOUT_MS") || 1_800_000);
 const pollIntervalMs = Number(trimEnv("GOAL_E_REAL_PM_0105_POLL_INTERVAL_MS") || 5_000);
 const canonicalEvidenceTitlePrefix = "Goal E Canonical Demo Real PM+01-05 Model Execution";
-const squadName = "SOP Delivery Squad";
+const squadName = "pm";
 const sopProfileKey = "goal-e-pm-0105-live";
 const requiredStages = [
-  { key: "pm", role_key: "pm", agent_name: "PM", member_role: "PM", label: "PM", prompt: "请作为 PM 接收本任务，读取任务描述，明确本次真实 PM+01-05 验收的目标、阶段顺序、证据要求，并说明下一步交给 01-clarify。" },
-  { key: "01-clarify", role_key: "01-clarify", agent_name: "01-clarify", member_role: "clarify", label: "01 需求澄清", prompt: "请只执行 01-clarify：澄清需求边界、验收口径、输入输出和 handoff，不要修改代码。" },
-  { key: "02-design", role_key: "02-design", agent_name: "02-design", member_role: "design", label: "02 方案设计", prompt: "请只执行 02-design：输出方案、影响面、接口/数据契约和 handoff，不要修改代码。" },
-  { key: "03-task-split", role_key: "03-task-split", agent_name: "03-task-split", member_role: "split", label: "03 任务拆分", prompt: "请只执行 03-task-split：输出任务拆分、跨项目依赖、阻断点和 handoff；严禁创建子 issue。" },
-  { key: "04-implement", role_key: "04-implement", agent_name: "04-implement", member_role: "implement", label: "04 代码开发", prompt: "请只执行 04-implement：基于前序产物说明最小实现边界、涉及文件、风险和 handoff；本验收不要实际改代码。" },
-  { key: "05-verify", role_key: "05-verify", agent_name: "05-verify", member_role: "verify", label: "05 测试验证", prompt: "请只执行 05-verify：独立检查 PM+01-05 链路证据、测试口径、剩余风险和最终 handoff，不要修改代码。" },
+  { key: "pm", role_key: "pm", agent_name: "pm", member_role: "pm", label: "PM", prompt: "请作为 pm 接收本任务，读取任务描述，明确本次真实 PM+01-05 验收的目标、阶段顺序、证据要求，并说明下一步交给 01-clarify。" },
+  { key: "01-clarify", role_key: "01-clarify", agent_name: "01", member_role: "01", label: "01 需求澄清", prompt: "请只执行 01-clarify：澄清需求边界、验收口径、输入输出和 handoff，不要修改代码。" },
+  { key: "02-design", role_key: "02-design", agent_name: "02", member_role: "02", label: "02 方案设计", prompt: "请只执行 02-design：输出方案、影响面、接口/数据契约和 handoff，不要修改代码。" },
+  { key: "03-task-split", role_key: "03-task-split", agent_name: "03", member_role: "03", label: "03 任务拆分", prompt: "请只执行 03-task-split：输出任务拆分、跨项目依赖、阻断点和 handoff；严禁创建子 issue。" },
+  { key: "04-implement", role_key: "04-implement", agent_name: "04", member_role: "04", label: "04 代码开发", prompt: "请只执行 04-implement：基于前序产物说明最小实现边界、涉及文件、风险和 handoff；本验收不要实际改代码。" },
+  { key: "05-verify", role_key: "05-verify", agent_name: "05", member_role: "05", label: "05 测试验证", prompt: "请只执行 05-verify：独立检查 PM+01-05 链路证据、测试口径、剩余风险和最终 handoff，不要修改代码。" },
 ];
 const targetAgentNames = new Set(requiredStages.map((stage) => stage.agent_name));
 
@@ -281,12 +281,12 @@ function readOnlyCustomArgs() {
 async function ensureTargetSquad(agents) {
   const byRole = new Map(agents.map((agent) => [agent.role_key, agent]));
   const leader = byRole.get("pm");
-  if (!leader?.id) fail("PM agent 不存在，无法创建 SOP Delivery Squad");
+  if (!leader?.id) fail("pm agent 不存在，无法创建 pm 小队");
   const profile = targetSOPProfile();
   let squad = findSquadByName(squadName);
   const body = {
     name: squadName,
-    description: "Goal E demo-ready 通用 PM + 01-05 真实模型验收小队。",
+    description: "唯一 SOP 流程执行小队：围绕 usercenter、gateway、ida-deployment 三个项目运行 PM + 01-05。",
     instructions: "使用 PM、01-clarify、02-design、03-task-split、04-implement、05-verify 六个通用角色推进；运行必须可观测、可闭环、可复测。",
     leader_id: leader.id,
     sop_profile: profile,

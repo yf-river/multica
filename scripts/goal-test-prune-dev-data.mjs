@@ -14,15 +14,19 @@ const password = env.GOAL_TEST_PASSWORD || env.E2E_PASSWORD || "e2e-password";
 const workspaceSlug = env.GOAL_TEST_WORKSPACE_SLUG || env.E2E_WORKSPACE || "goal-test-daemon";
 const artifactRoot = path.resolve(env.GOAL_TEST_PRUNE_DEV_DATA_DIR || path.join(repoRoot, "artifacts/acceptance"));
 const apply = process.argv.includes("--apply");
+const canonicalSOPOnly = process.argv.includes("--canonical-sop-only") || env.GOAL_TEST_CANONICAL_SOP_ONLY === "1";
 const keep = positiveInt(readArg("keep") ?? env.GOAL_TEST_PRUNE_DEV_DATA_KEEP, 5);
 const generatedAt = new Date().toISOString();
 const stamp = generatedAt.replace(/[:.]/g, "-");
 
+const CANONICAL_PROJECT_TITLES = new Set(["usercenter", "gateway", "ida-deployment"]);
+const CANONICAL_AGENT_NAMES = new Set(["pm", "01", "02", "03", "04", "05"]);
+const CANONICAL_SQUAD_NAMES = new Set(["pm"]);
+
 const PROTECTED_NAMES = new Set([
-  "user-center 小队",
-  "用户中心小队",
-  "Multica 编码小队",
-  "Multica 训练评估智能体",
+  ...CANONICAL_PROJECT_TITLES,
+  ...CANONICAL_AGENT_NAMES,
+  ...CANONICAL_SQUAD_NAMES,
   "用户中心需求澄清提示词",
   "goal-test 联调工作区",
 ]);
@@ -48,6 +52,10 @@ const DEV_PATTERNS = [
   /验收\s*Agent/i,
   /Codex\s*验收/i,
   /数据集版本治理/,
+  /user-center 小队/,
+  /Multica 编码小队/,
+  /SOP Delivery Squad/,
+  /柳贵测试开发/,
 ];
 
 mkdirSync(artifactRoot, { recursive: true });
@@ -73,6 +81,7 @@ const categories = [
     items: (data) => arrayFrom(data, "items", "projects"),
     text: (item) => [item.title, item.description],
     date: (item) => item.updated_at || item.created_at,
+    forcePrune: (item) => canonicalSOPOnly && !CANONICAL_PROJECT_TITLES.has(String(item.title || "").trim()),
     action: (item) => del(token, `/api/projects/${item.id}`),
   },
   {
@@ -83,6 +92,7 @@ const categories = [
     text: (item) => [item.name, item.description, item.instructions, item.metadata],
     date: (item) => item.updated_at || item.created_at || item.last_seen_at,
     skip: (item) => Boolean(item.archived_at),
+    forcePrune: (item) => canonicalSOPOnly && !CANONICAL_AGENT_NAMES.has(String(item.name || "").trim()),
     action: (item) => postJSON(token, `/api/agents/${item.id}/archive`, {}),
   },
   {
@@ -92,7 +102,7 @@ const categories = [
     items: (data) => arrayFrom(data),
     text: (item) => [item.name, item.description, item.sop_profile],
     date: (item) => item.updated_at || item.created_at,
-    forcePrune: (item) => runtimeBlockingSquadIds.has(item.id),
+    forcePrune: (item) => runtimeBlockingSquadIds.has(item.id) || (canonicalSOPOnly && !CANONICAL_SQUAD_NAMES.has(String(item.name || "").trim())),
     action: (item) => del(token, `/api/squads/${item.id}`),
   },
   {
@@ -144,6 +154,7 @@ const evidence = {
   workspace_id: workspace.id,
   account,
   keep_per_category: keep,
+  canonical_sop_only: canonicalSOPOnly,
   categories: [],
   summary: {
     candidate_count: 0,
@@ -160,7 +171,7 @@ for (const category of categories) {
   const candidates = allItems
     .filter((item) => !isProtectedSeed(item))
     .filter((item) => !category.skip?.(item))
-    .filter((item) => isDevelopmentRecord(category.text(item)))
+    .filter((item) => category.forcePrune?.(item) || isDevelopmentRecord(category.text(item)))
     .sort((a, b) => Date.parse(category.date(b) || "") - Date.parse(category.date(a) || ""));
   const forced = candidates.filter((item) => category.forcePrune?.(item));
   const eligibleForKeep = candidates.filter((item) => !category.forcePrune?.(item));
@@ -332,11 +343,13 @@ function trimSlash(value) {
 
 function positiveInt(value, fallback) {
   const parsed = Number.parseInt(String(value || ""), 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : fallback;
 }
 
 function readArg(name) {
   const prefix = `--${name}=`;
   const found = process.argv.find((arg) => arg.startsWith(prefix));
-  return found ? found.slice(prefix.length) : null;
+  if (found) return found.slice(prefix.length);
+  const index = process.argv.indexOf(`--${name}`);
+  return index >= 0 ? process.argv[index + 1] : null;
 }

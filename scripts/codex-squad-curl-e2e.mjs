@@ -86,7 +86,7 @@ if (squadTemplateKey) {
     fail("ACCEPTANCE_SQUAD_TEMPLATE_KEY 只能是 user-center 或 multica-coding");
   }
   if (verifyCrossProjectChildren && squadTemplateKey !== "user-center") {
-    fail("ACCEPTANCE_VERIFY_CROSS_PROJECT_CHILDREN=1 只支持 user-center 小队");
+    fail("ACCEPTANCE_VERIFY_CROSS_PROJECT_CHILDREN=1 只支持 pm SOP 小队");
   }
   const template = post("/api/squads/internal-template", { template_key: squadTemplateKey, model }, token);
   squad = template?.squad;
@@ -102,7 +102,7 @@ if (squadTemplateKey) {
   evidence.agent = { id: agent.id, name: agent.name, role_key: agent.role_key, role: agent.role, provider, model };
   evidence.squad = { id: squad.id, name: squad.name, profile_key: squad?.sop_profile?.profile_key || "" };
   if (verifyCrossProjectChildren) {
-    crossProjectSetup = createCrossProjectSetup(token, suffix, runtime.id, currentUser);
+    crossProjectSetup = ensureCanonicalCrossProjectSetup(token, currentUser, { squad, leader: agent });
     evidence.cross_project_setup = crossProjectSetup;
   }
 } else {
@@ -277,32 +277,15 @@ if (terminalTask.status === "completed") {
   evidence.repair_hint = "检查 daemon 运行环境是否能让 Codex app-server 复用有效 ChatGPT auth，或为 daemon 配置可用的 OpenAI API 认证后重跑本脚本。";
 }
 
-function createCrossProjectSetup(token, value, runtimeID, ownerUser) {
-  const gatewayLeader = createTargetSquadLeaderAgent(token, {
-    name: `curl gateway SOP 队长 ${value}`,
-    role: "gateway SOP 队长",
-    runtimeID,
-  });
-  const deploymentLeader = createTargetSquadLeaderAgent(token, {
-    name: `curl ida-deployment SOP 队长 ${value}`,
-    role: "ida-deployment SOP 队长",
-    runtimeID,
-  });
-  const gatewaySquad = createTargetSOPSquad(token, {
-    name: `curl gateway SOP 小队 ${value}`,
-    leader: gatewayLeader,
-    projectKey: "gateway",
-  });
-  const deploymentSquad = createTargetSOPSquad(token, {
-    name: `curl ida-deployment SOP 小队 ${value}`,
-    leader: deploymentLeader,
-    projectKey: "ida-deployment",
-  });
-  const usercenter = post("/api/projects", {
-    workspace_id: activeWorkspaceId,
-    title: `curl usercenter ${value}`,
-    description: "curl 验收创建的 user-center 父项目，用于验证队长跨项目拆子任务。",
-    status: "in_progress",
+function ensureCanonicalCrossProjectSetup(token, ownerUser, pmSetup) {
+  if (pmSetup?.squad?.name !== "pm") {
+    fail(`跨项目验收必须复用唯一 pm 小队，当前模板返回小队=${pmSetup?.squad?.name || "null"}`);
+  }
+  if (!pmSetup?.leader?.id) fail("跨项目验收缺少 pm Agent，不能继续");
+  const usercenter = ensureCanonicalProject(token, {
+    title: "usercenter",
+    description: "canonical usercenter 项目：真实任务父项目。",
+    ownerUser,
     resources: [
       {
         resource_type: "gongfeng_repo",
@@ -313,31 +296,40 @@ function createCrossProjectSetup(token, value, runtimeID, ownerUser) {
         },
       },
     ],
-  }, token);
-  const gateway = post("/api/projects", {
-    workspace_id: activeWorkspaceId,
-    title: `curl gateway ${value}`,
-    description: "curl 验收创建的 gateway 子项目，用于验证子任务先进入待规划、通知项目负责人，再由目标 SOP 小队执行。",
-    status: "in_progress",
-    lead_type: "member",
-    lead_id: ownerUser.id,
-  }, token);
-  const deployment = post("/api/projects", {
-    workspace_id: activeWorkspaceId,
-    title: `curl ida-deployment ${value}`,
-    description: "curl 验收创建的 ida-deployment 子项目，用于验证子任务先进入待规划、通知项目负责人，再由目标 SOP 小队执行。",
-    status: "in_progress",
-    lead_type: "member",
-    lead_id: ownerUser.id,
-  }, token);
-  for (const project of [usercenter, gateway, deployment]) {
-    if (!project?.id) fail(`创建跨项目验收项目失败：${JSON.stringify(project)}`);
-  }
+  });
+  const gateway = ensureCanonicalProject(token, {
+    title: "gateway",
+    description: "canonical gateway 项目：接收 usercenter 跨项目子任务。",
+    ownerUser,
+  });
+  const deployment = ensureCanonicalProject(token, {
+    title: "ida-deployment",
+    description: "canonical ida-deployment 项目：接收部署配置类跨项目子任务。",
+    ownerUser,
+  });
   return {
     usercenter: { ...pickProject(usercenter), resources: Array.isArray(usercenter.resources) ? usercenter.resources : [] },
-    gateway: { ...pickProject(gateway), owner: pickUser(ownerUser), squad: pickSquad(gatewaySquad), leader: gatewayLeader },
-    deployment: { ...pickProject(deployment), owner: pickUser(ownerUser), squad: pickSquad(deploymentSquad), leader: deploymentLeader },
+    gateway: { ...pickProject(gateway), owner: pickUser(ownerUser), squad: pickSquad(pmSetup.squad), leader: pickAgent(pmSetup.leader) },
+    deployment: { ...pickProject(deployment), owner: pickUser(ownerUser), squad: pickSquad(pmSetup.squad), leader: pickAgent(pmSetup.leader) },
   };
+}
+
+function ensureCanonicalProject(token, { title, description, ownerUser, resources = [] }) {
+  const projectsData = get("/api/projects", token);
+  const projects = Array.isArray(projectsData) ? projectsData : projectsData.items ?? [];
+  const existing = projects.find((item) => item.title === title);
+  const body = {
+    workspace_id: activeWorkspaceId,
+    title,
+    description,
+    status: "in_progress",
+    lead_type: "member",
+    lead_id: ownerUser.id,
+  };
+  if (resources.length > 0) body.resources = resources;
+  const project = existing?.id ? put(`/api/projects/${existing.id}`, body, token) : post("/api/projects", body, token);
+  if (!project?.id) fail(`确保 canonical 项目 ${title} 失败：${JSON.stringify(project)}`);
+  return project;
 }
 
 function ensureExternalCredentialProfiles(token) {
@@ -410,49 +402,6 @@ function profileEvidence(profile) {
     secret_binding: profile.secret_binding,
     capabilities: profile.capabilities,
   };
-}
-
-function createTargetSquadLeaderAgent(token, { name, role, runtimeID }) {
-  const agent = post("/api/agents", {
-    name,
-    description: `curl 验收创建的${role}，用于证明项目负责人审批后目标 SOP 小队会真实执行。`,
-    instructions: [
-      `你是${role}。`,
-      "收到任务后只做验收回复，不修改代码。",
-      "不要调用 shell、multica CLI 或任何 issue status 命令；本验收只需要你用文字说明项目配合已完成。",
-      "必须用中文输出：执行结论、当前 issue 标识、项目配合结果、给父任务的下一步建议。",
-      "如果任务来自跨项目子 issue，请说明你已完成对应项目的配合事项。",
-    ].join("\n"),
-    runtime_id: runtimeID,
-    workspace_id: activeWorkspaceId,
-    visibility: "private",
-    max_concurrent_tasks: 1,
-    model,
-  }, token);
-  if (!agent?.id) fail(`创建${role}响应缺少 id`);
-  return pickAgent(agent);
-}
-
-function createTargetSOPSquad(token, { name, leader, projectKey }) {
-  const squad = post("/api/squads", {
-    workspace_id: activeWorkspaceId,
-    name,
-    description: `curl 验收创建的 ${projectKey} 目标 SOP 小队，用于接收审批后的跨项目子任务。`,
-    leader_id: leader.id,
-    sop_profile: {
-      profile_key: `${projectKey}-curl-target-sop`,
-      project: projectKey,
-      mode: "cross_project_acceptance",
-      roles: [{ key: "pm", name: "PM", responsibility: "确认依赖任务并输出协作结果。" }],
-      steps: [
-        { key: "pm", name: "接收与确认", role_key: "pm" },
-        { key: "verify", name: "配合验收", role_key: "pm" },
-      ],
-      acceptance: ["子任务从 backlog 经项目负责人审批进入 todo", "目标 SOP 小队被唤醒并完成一次真实回复"],
-    },
-  }, token);
-  if (!squad?.id) fail(`创建${projectKey} SOP 小队响应缺少 id`);
-  return squad;
 }
 
 function pickProject(project) {
@@ -619,7 +568,9 @@ async function cleanupStaleAcceptanceTasks(token, workspaceID) {
         AND (
           i.title LIKE 'curl user-center 小队真实端到端验收 %'
           OR parent.title LIKE 'curl user-center 小队真实端到端验收 %'
-          OR i.title LIKE 'curl Codex 小队真实端到端验收 %'
+          OR i.title LIKE 'pm SOP 真实端到端验收 %'
+          OR parent.title LIKE 'pm SOP 真实端到端验收 %'
+          OR i.title LIKE 'curl Codex 小队端到端验收 %'
         )
       ORDER BY atq.created_at ASC
       LIMIT 100
@@ -955,7 +906,7 @@ async function poll(fn, timeoutMs, label, timeoutDetail = null) {
 function issueTitle(templateKey, value) {
   switch (templateKey) {
     case "user-center":
-      return `curl user-center 小队真实端到端验收 ${value}`;
+      return `pm SOP 真实端到端验收 ${value}`;
     case "multica-coding":
       return `curl Multica 编码小队真实端到端验收 ${value}`;
     default:
@@ -968,7 +919,7 @@ function issueDescription(templateKey, crossProjectSetup = null) {
     case "user-center":
       if (crossProjectSetup) {
         return [
-          "请作为 user-center 小队队长完成一次真实跨项目 SOP 验收。不要修改代码。",
+          "请作为 pm 小队完成一次真实跨项目 SOP 验收。不要修改代码。",
           "",
           "业务场景：user-center 要新增一个内部用户查询 API，需要 gateway 补路由/鉴权/转发信息，需要 ida-deployment 补部署配置项/灰度参数。",
           "",
@@ -978,20 +929,20 @@ function issueDescription(templateKey, crossProjectSetup = null) {
           "3. 再运行 `multica project list --output json` 做存在性核对，但不要按列表输出顺序推断 UUID；必须以下面固定映射为准：",
           `   - gateway: project_id=${crossProjectSetup.gateway.id}; project_title=${crossProjectSetup.gateway.title}; target_squad_id=${crossProjectSetup.gateway.squad.id}; target_squad_name=${crossProjectSetup.gateway.squad.name}`,
           `   - ida-deployment: project_id=${crossProjectSetup.deployment.id}; project_title=${crossProjectSetup.deployment.title}; target_squad_id=${crossProjectSetup.deployment.squad.id}; target_squad_name=${crossProjectSetup.deployment.squad.name}`,
-          "4. PM/队长本人必须直接创建两个 `backlog` 子 issue；每个命令都必须带 `--parent <当前 issue id>`、对应的固定 `--project <project_id>`，并且用同一行映射里的固定 `--assignee-id <target_squad_id>` 指派给对应小队。",
+          "4. pm 本人必须直接创建两个 `backlog` 子 issue；每个命令都必须带 `--parent <当前 issue id>`、对应的固定 `--project <project_id>`，并且用同一行映射里的固定 `--assignee-id <target_squad_id>` 指派给 pm 小队。",
           `   - gateway 创建命令必须使用：--project ${crossProjectSetup.gateway.id} --assignee-id ${crossProjectSetup.gateway.squad.id}`,
           `   - ida-deployment 创建命令必须使用：--project ${crossProjectSetup.deployment.id} --assignee-id ${crossProjectSetup.deployment.squad.id}`,
           "   - gateway 子 issue：标题包含 gateway，描述说明 API 路径、方法、鉴权和转发要求。",
           "   - ida-deployment 子 issue：标题包含 ida-deployment，描述说明部署配置键、默认值、环境差异和回滚方式。",
           "5. 不要把子 issue 指派给项目负责人；项目负责人只负责把 backlog 子任务审批到 todo。创建后必须确认返回 JSON 里 project_id 与 assignee_id 分别等于第 3 步固定映射。",
           "6. 创建后调用 `multica squad activity <当前 issue id> action --reason \"已创建待规划跨项目子任务\"`。",
-          "7. 输出验收证据：父 issue id、两个 backlog 子 issue id、两个项目 UUID、两个目标 SOP 小队 UUID、下一步等待项目负责人审批。",
+          "7. 输出验收证据：父 issue id、两个 backlog 子 issue id、两个项目 UUID、pm 小队 UUID、下一步等待项目负责人审批。",
           "",
-          "硬门禁：不要把创建子 issue 委派给 03，不要只写评论要求 03 创建，不要等待 03。若 PM/队长本人没有直接创建两个 child issue，本次验收失败。",
+          "硬门禁：不要把创建子 issue 委派给 03，不要只写评论要求 03 创建，不要等待 03。若 pm 本人没有直接创建两个 child issue，本次验收失败。",
           "命令边界：只运行上面列出的 `multica issue get`、`multica issue source-fetch`、`multica project list`、`multica issue create` 和 `multica squad activity`。不要读取评论，不要运行 `metadata list`、`comment list`、`issue comment list`、`issue status`、`issue comment add` 或其他探索性命令。",
         ].join("\n");
       }
-      return "请作为 user-center 小队队长完成一次最小 SOP 验收：澄清需求、说明阶段、输出 trace/任务标识、验收证据和下一步。不要修改代码。";
+      return "请作为 pm 小队完成一次最小 SOP 验收：澄清需求、说明阶段、输出 trace/任务标识、验收证据和下一步。不要修改代码。";
     case "multica-coding":
       return [
         "请作为 Multica 编码小队队长完成一次最小 SOP 验收。",
