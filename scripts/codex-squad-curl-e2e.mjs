@@ -1035,7 +1035,7 @@ function inspectLeaderCrossProjectBehavior(messages) {
       /\bmultica\s+project\s+list\b/.test(command) ||
       /\bmultica\s+issue\s+create\b/.test(command) ||
       /\bmultica\s+squad\s+activity\b/.test(command) ||
-      /\brm\s+-f\s+/.test(command);
+      /\brm\s+/.test(command);
     return !safe;
   });
   const warningCommands = toolUseCommands.filter((command) =>
@@ -1043,7 +1043,7 @@ function inspectLeaderCrossProjectBehavior(messages) {
     /\bmultica\s+issue\s+comment\s+list\b/.test(command) ||
     /\bmultica\s+issue\s+comment\s+add\b/.test(command) ||
     /\bmultica\s+issue\s+status\b/.test(command) ||
-    /\brm\s+-f\s+/.test(command)
+    /\brm\s+/.test(command)
   );
   const textMessages = items
     .filter((item) => item?.type === "text" && item?.content)
