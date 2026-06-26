@@ -250,7 +250,12 @@ if (terminalTask.status === "completed") {
   let leaderCreatedChild = null;
   let crossProjectChildList = [];
   if (verifyCrossProjectChildren) {
-    const crossProjectChildren = await verifyLeaderCreatedCrossProjectChildren({ issue, setup: crossProjectSetup, token });
+    const commandGate = inspectLeaderCrossProjectBehavior(messages);
+    evidence.leader_cross_project_command_gate = commandGate;
+    if (!commandGate.ok) {
+      fail(`队长跨项目创建命令边界失败：${commandGate.reason}`);
+    }
+    const crossProjectChildren = await verifyLeaderCreatedCrossProjectChildren({ issue, setup: crossProjectSetup, token, leaderTask: terminalTask });
     crossProjectChildList = crossProjectChildren.children;
     leaderCreatedChild = crossProjectChildren.children[0] || null;
     await verifyProjectOwnerApprovalAndSquadExecution({ children: crossProjectChildren.children, setup: crossProjectSetup, token });
@@ -667,14 +672,33 @@ function readEnvFile(file) {
   return env;
 }
 
-async function verifyLeaderCreatedCrossProjectChildren({ issue, setup, token }) {
+async function verifyLeaderCreatedCrossProjectChildren({ issue, setup, token, leaderTask = null }) {
   const children = await poll(async () => {
     const items = get(`/api/issues/${issue.id}/children`, token);
     const list = Array.isArray(items?.issues) ? items.issues : Array.isArray(items) ? items : [];
     const byProject = new Map(list.map((item) => [item.project_id, item]));
     if (byProject.has(setup.gateway.id) && byProject.has(setup.deployment.id)) return list;
     return null;
-  }, 60_000, "等待队长创建 gateway/ida-deployment 跨项目子任务");
+  }, 60_000, "等待队长创建 gateway/ida-deployment 跨项目子任务", () => {
+    const taskMessages = leaderTask?.id ? get(`/api/tasks/${leaderTask.id}/messages`, token) : [];
+    const commandGate = inspectLeaderCrossProjectBehavior(taskMessages);
+    evidence.leader_cross_project_command_gate = commandGate;
+    const childSnapshot = get(`/api/issues/${issue.id}/children`, token);
+    const childList = Array.isArray(childSnapshot?.issues) ? childSnapshot.issues : Array.isArray(childSnapshot) ? childSnapshot : [];
+    evidence.cross_project_child_timeout_snapshot = {
+      child_count: childList.length,
+      children: childList.map(issueSummary),
+      leader_task_id: leaderTask?.id || null,
+      command_gate: commandGate,
+    };
+    if (commandGate.delegated_to_03) {
+      return "队长把 gateway/ida-deployment 子 issue 创建委派给 03 或评论处理，没有直接创建两个 child issue";
+    }
+    if (commandGate.issue_create_command_count < 2) {
+      return `队长只执行了 ${commandGate.issue_create_command_count} 条 issue create 命令，期望至少 2 条`;
+    }
+    return `公开 API 只回读到 ${childList.length} 个 child issue，期望 gateway + ida-deployment 两个`;
+  });
 
   const gatewayChild = children.find((item) => item.project_id === setup.gateway.id);
   const deploymentChild = children.find((item) => item.project_id === setup.deployment.id);
@@ -916,7 +940,7 @@ function issueSummary(issue) {
   };
 }
 
-async function poll(fn, timeoutMs, label) {
+async function poll(fn, timeoutMs, label, timeoutDetail = null) {
   const started = Date.now();
   let last = null;
   while (Date.now() - started < timeoutMs) {
@@ -924,7 +948,8 @@ async function poll(fn, timeoutMs, label) {
     if (last) return last;
     await new Promise((resolve) => setTimeout(resolve, 5000));
   }
-  fail(`${label}超时，最后结果：${JSON.stringify(last)}`);
+  const detail = typeof timeoutDetail === "function" ? timeoutDetail() : timeoutDetail;
+  fail(`${label}超时${detail ? `：${detail}` : ""}，最后结果：${JSON.stringify(last)}`);
 }
 
 function issueTitle(templateKey, value) {
@@ -949,19 +974,21 @@ function issueDescription(templateKey, crossProjectSetup = null) {
           "",
           "必须按以下方式执行：",
           "1. 先运行 `multica issue get <当前 issue id> --output json` 理解父任务。",
-          "2. 再运行 `multica project list --output json` 做存在性核对，但不要按列表输出顺序推断 UUID；必须以下面固定映射为准：",
+          "2. 运行 `multica issue source-fetch <当前 issue id> --provider tapd --output json` 拉取 TAPD 正文并让 trace 记录 source.fetch 证据。",
+          "3. 再运行 `multica project list --output json` 做存在性核对，但不要按列表输出顺序推断 UUID；必须以下面固定映射为准：",
           `   - gateway: project_id=${crossProjectSetup.gateway.id}; project_title=${crossProjectSetup.gateway.title}; target_squad_id=${crossProjectSetup.gateway.squad.id}; target_squad_name=${crossProjectSetup.gateway.squad.name}`,
           `   - ida-deployment: project_id=${crossProjectSetup.deployment.id}; project_title=${crossProjectSetup.deployment.title}; target_squad_id=${crossProjectSetup.deployment.squad.id}; target_squad_name=${crossProjectSetup.deployment.squad.name}`,
-          "3. 创建两个 `backlog` 子 issue；每个命令都必须带 `--parent <当前 issue id>`、对应的固定 `--project <project_id>`，并且用同一行映射里的固定 `--assignee-id <target_squad_id>` 指派给对应小队。",
+          "4. PM/队长本人必须直接创建两个 `backlog` 子 issue；每个命令都必须带 `--parent <当前 issue id>`、对应的固定 `--project <project_id>`，并且用同一行映射里的固定 `--assignee-id <target_squad_id>` 指派给对应小队。",
           `   - gateway 创建命令必须使用：--project ${crossProjectSetup.gateway.id} --assignee-id ${crossProjectSetup.gateway.squad.id}`,
           `   - ida-deployment 创建命令必须使用：--project ${crossProjectSetup.deployment.id} --assignee-id ${crossProjectSetup.deployment.squad.id}`,
           "   - gateway 子 issue：标题包含 gateway，描述说明 API 路径、方法、鉴权和转发要求。",
           "   - ida-deployment 子 issue：标题包含 ida-deployment，描述说明部署配置键、默认值、环境差异和回滚方式。",
-          "4. 不要把子 issue 指派给项目负责人；项目负责人只负责把 backlog 子任务审批到 todo。创建后必须确认返回 JSON 里 project_id 与 assignee_id 分别等于第 2 步固定映射。",
-          "5. 创建后调用 `multica squad activity <当前 issue id> action --reason \"已创建待规划跨项目子任务\"`。",
-          "6. 输出验收证据：父 issue id、两个 backlog 子 issue id、两个项目 UUID、两个目标 SOP 小队 UUID、下一步等待项目负责人审批。",
+          "5. 不要把子 issue 指派给项目负责人；项目负责人只负责把 backlog 子任务审批到 todo。创建后必须确认返回 JSON 里 project_id 与 assignee_id 分别等于第 3 步固定映射。",
+          "6. 创建后调用 `multica squad activity <当前 issue id> action --reason \"已创建待规划跨项目子任务\"`。",
+          "7. 输出验收证据：父 issue id、两个 backlog 子 issue id、两个项目 UUID、两个目标 SOP 小队 UUID、下一步等待项目负责人审批。",
           "",
-          "命令边界：只运行上面列出的 `multica issue get`、`multica project list`、`multica issue create` 和 `multica squad activity`。不要读取评论，不要运行 `comment list`、`issue comment list` 或其他探索性命令。",
+          "硬门禁：不要把创建子 issue 委派给 03，不要只写评论要求 03 创建，不要等待 03。若 PM/队长本人没有直接创建两个 child issue，本次验收失败。",
+          "命令边界：只运行上面列出的 `multica issue get`、`multica issue source-fetch`、`multica project list`、`multica issue create` 和 `multica squad activity`。不要读取评论，不要运行 `metadata list`、`comment list`、`issue comment list`、`issue status`、`issue comment add` 或其他探索性命令。",
         ].join("\n");
       }
       return "请作为 user-center 小队队长完成一次最小 SOP 验收：澄清需求、说明阶段、输出 trace/任务标识、验收证据和下一步。不要修改代码。";
@@ -990,6 +1017,49 @@ function buildTAPDSourceMetadata(rawURL) {
   const resourceID = url.hash.match(/\d{6,}/)?.[0] || [...url.pathname.matchAll(/\d{6,}/g)].at(-1)?.[0] || url.searchParams.get("id") || "";
   if (resourceID) metadata.tapd_resource_id = resourceID;
   return metadata;
+}
+
+function inspectLeaderCrossProjectBehavior(messages) {
+  const items = Array.isArray(messages) ? messages : messages?.items ?? [];
+  const toolUseCommands = items
+    .filter((item) => item?.type === "tool_use" && item?.input?.command)
+    .map((item) => String(item.input.command));
+  const forbiddenCommands = toolUseCommands.filter((command) => {
+    const allowed =
+      /\bmultica\s+issue\s+get\b/.test(command) ||
+      /\bmultica\s+issue\s+source-fetch\b/.test(command) ||
+      /\bmultica\s+project\s+list\b/.test(command) ||
+      /\bmultica\s+issue\s+create\b/.test(command) ||
+      /\bmultica\s+squad\s+activity\b/.test(command);
+    return !allowed;
+  });
+  const textMessages = items
+    .filter((item) => item?.type === "text" && item?.content)
+    .map((item) => String(item.content));
+  const delegationEvidence = textMessages.filter((content) =>
+    /(委派|交给|请.{0,20}03|等待.{0,20}03|03[- ]?task|03\s*任务拆分|任务拆分.{0,30}创建)/i.test(content)
+  );
+  const issueCreateCommandCount = toolUseCommands.filter((command) => /\bmultica\s+issue\s+create\b/.test(command)).length;
+  const ok = forbiddenCommands.length === 0 && delegationEvidence.length === 0;
+  return {
+    ok,
+    reason: ok
+      ? "队长未执行禁用命令，也未用文本委派 03 代替创建子 issue。"
+      : [
+          forbiddenCommands.length > 0 ? `存在禁用命令：${forbiddenCommands.map(redactCommandForEvidence).join("; ")}` : "",
+          delegationEvidence.length > 0 ? `存在委派 03 文本：${delegationEvidence.map((item) => item.slice(0, 160)).join(" / ")}` : "",
+        ].filter(Boolean).join("；"),
+    allowed_commands: ["issue get", "issue source-fetch", "project list", "issue create", "squad activity"],
+    forbidden_commands: forbiddenCommands.map(redactCommandForEvidence),
+    delegated_to_03: delegationEvidence.length > 0,
+    delegation_evidence: delegationEvidence.map((item) => item.slice(0, 500)),
+    issue_create_command_count: issueCreateCommandCount,
+    tool_use_command_count: toolUseCommands.length,
+  };
+}
+
+function redactCommandForEvidence(command) {
+  return String(command).replace(/Bearer\s+[A-Za-z0-9._-]+/g, "Bearer ***");
 }
 
 function tapdResourceTypeFromPath(pathname) {

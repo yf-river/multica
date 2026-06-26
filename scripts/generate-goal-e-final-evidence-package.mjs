@@ -48,6 +48,14 @@ const playwrightClean =
   emptyArray(unifiedUI?.checks?.failed_requests);
 const logsClean = logEvidence.ok === true && logEvidence.json?.ok === true;
 const performanceClean = pageTimingEntries.length >= 5 && pageTimingEntries.every((item) => item.ok);
+const finalAcceptanceOpenItems = acceptanceOpenItems(finalAcceptance);
+const finalAcceptanceClean = finalAcceptance?.ok === true && finalAcceptanceOpenItems.length === 0;
+const gapSummary = gapAudit?.summary || null;
+const gapHasNoBlockers =
+  gapAudit?.ok === true &&
+  Number(gapSummary?.blockers || 0) === 0 &&
+  Number(gapSummary?.goal_e_blockers || 0) === 0 &&
+  Number(gapSummary?.production_blockers || 0) === 0;
 
 const requiredEvidence = {
   commit: Boolean(gitCommit),
@@ -69,16 +77,11 @@ const requiredEvidence = {
     Array.isArray(realPMRun?.stages) &&
     realPMRun.stages.length >= 6 &&
     realPMRun.stages.every((stage) => stage.status === "completed" && stage.model_execution === true),
+  final_acceptance: finalAcceptanceClean,
+  gap_audit_no_blockers: gapHasNoBlockers,
 };
 
 const packageOk = playwrightClean && logsClean && performanceClean && Object.values(requiredEvidence).every(Boolean);
-const finalAcceptanceOpenItems = finalAcceptance?.blocking_open_items || [];
-const gapSummary = gapAudit?.summary || null;
-const gapHasNoBlockers =
-  gapAudit?.ok === true &&
-  Number(gapSummary?.blockers || 0) === 0 &&
-  Number(gapSummary?.goal_e_blockers || 0) === 0 &&
-  Number(gapSummary?.production_blockers || 0) === 0;
 const archiveCompleteAllowed =
   packageOk &&
   finalAcceptance?.ok === true &&
@@ -93,9 +96,11 @@ const artifact = {
   archive_complete_allowed: archiveCompleteAllowed,
   proof_boundary: archiveCompleteAllowed
     ? "Evidence package, final acceptance, gap audit, clean git status, and log checks all passed; Goal E archive/complete is allowed."
-    : finalAcceptanceOpenItems.length > 0
-    ? "Evidence package is complete for logs/performance/package requirements, but final Goal E acceptance remains blocked by open matrix items."
-    : "Evidence package is complete and no final acceptance blockers were present when this package was generated.",
+    : finalAcceptanceOpenItems.length > 0 || finalAcceptance?.ok !== true
+    ? "Evidence package is blocked because latest final acceptance is not passing or still has open matrix items."
+    : gapHasNoBlockers !== true
+    ? "Evidence package is blocked because latest gap audit is not clean."
+    : "Evidence package is blocked by missing required evidence, logs, performance, or clean git status.",
   git: {
     commit: gitCommit,
     status_short: gitStatus,
@@ -215,6 +220,46 @@ function readJSON(filePath) {
 
 function emptyArray(value) {
   return Array.isArray(value) && value.length === 0;
+}
+
+function acceptanceOpenItems(data) {
+  if (!data) return [{ id: "final_acceptance", status: "missing", title: "Final acceptance artifact is missing" }];
+  const arrays = [
+    data.blocking_open_items,
+    data.blockers,
+    data.open_goal_e_items,
+    data.final_acceptance_open_items,
+    data.open_items,
+  ].filter(Array.isArray);
+  const byKey = new Map();
+  for (const items of arrays) {
+    for (const item of items) {
+      const summary = openItemSummary(item);
+      byKey.set(`${summary.id}:${summary.title}:${summary.status}`, summary);
+    }
+  }
+  if (Array.isArray(data.original_requirement_matrix)) {
+    for (const item of data.original_requirement_matrix.filter((entry) => entry.status !== "fulfilled")) {
+      const summary = openItemSummary(item);
+      byKey.set(`${summary.id}:${summary.title}:${summary.status}`, summary);
+    }
+  }
+  if (Array.isArray(data.goal_e_requirement_matrix)) {
+    for (const item of data.goal_e_requirement_matrix.filter((entry) => entry.status !== "fulfilled")) {
+      const summary = openItemSummary(item);
+      byKey.set(`${summary.id}:${summary.title}:${summary.status}`, summary);
+    }
+  }
+  return Array.from(byKey.values());
+}
+
+function openItemSummary(item) {
+  if (typeof item === "string") return { id: item, status: "open", title: item };
+  return {
+    id: item?.id || item?.key || "",
+    status: item?.status || item?.result || "open",
+    title: item?.title || item?.requirement || item?.reason || "",
+  };
 }
 
 function runTextCommand(command) {

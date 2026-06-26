@@ -100,10 +100,10 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 			Key:          "user-center-sop-flow",
 			Name:         "user-center 小队",
 			Description:  "面向 user-center 项目的内部 SOP 小队，由 PM 按 pm -> 01 -> 02 -> 03 -> 04 -> 05 阶段链推进。",
-			Instructions: "PM 按 user-center SOP 分阶段推进；每个阶段都要记录输入、输出、失败原因、耗时和验收证据；不得跳过验收。06-archive 不属于必跑阶段。",
+			Instructions: "PM 按 user-center SOP 分阶段推进；每个阶段都要记录输入、输出、失败原因、耗时和验收证据；不得跳过验收。遇到明确跨项目依赖时，PM 必须先直接创建 gateway/ida-deployment 待规划子 issue，并确认父子关系、项目和目标小队指派正确；不得只评论或委派 03 代替创建。06-archive 不属于必跑阶段。",
 			Model:        promptEvaluationAgentModel(),
 			Roles: []internalSquadRole{
-				{Key: "pm", Name: "PM", Instruction: "接收 issue 和 TAPD 输入，必须先根据 source_context 使用 mcp-server-tapd 读取 TAPD 正文；遇到 git.code.tencent.com 链接或项目资源时使用 gongfeng MCP 解析。检查当前阶段产物，处理阻断，推进 pm -> 01 -> 02 -> 03 -> 04 -> 05。", MemberRole: "PM", MCPConfig: mcpConfig},
+				{Key: "pm", Name: "PM", Instruction: "接收 issue 和 TAPD 输入，必须先根据 source_context 使用 mcp-server-tapd 读取 TAPD 正文；遇到 git.code.tencent.com 链接或项目资源时使用 gongfeng MCP 解析。检查当前阶段产物，处理阻断，推进 pm -> 01 -> 02 -> 03 -> 04 -> 05。若父任务或 profile 要求创建跨项目子 issue，PM 必须本人先创建 gateway/ida-deployment backlog 子 issue，并确认 parent、project、assignee 都正确；不得只写评论、不得等待或委派 03 创建。", MemberRole: "PM", MCPConfig: mcpConfig},
 				{Key: "01-clarify", Name: "01 需求澄清", Instruction: "只执行 user-center/01-clarify；先读取 source_context 中的 TAPD 正文，产出需求边界、验收口径和 handoff。", MemberRole: "01 需求澄清", MCPConfig: mcpConfig},
 				{Key: "02-design", Name: "02 方案设计", Instruction: "只执行 user-center/02-design；需要仓库上下文时使用 gongfeng MCP 或本地仓库，产出方案、影响面、接口/数据契约和 handoff。", MemberRole: "02 方案设计", MCPConfig: mcpConfig},
 				{Key: "03-task-split", Name: "03 任务拆分", Instruction: "只执行 user-center/03-task-split；用 TAPD/Gongfeng 上下文识别跨项目依赖，产出任务拆分、跨项目依赖和 handoff。", MemberRole: "03 任务拆分", MCPConfig: mcpConfig},
@@ -116,7 +116,7 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 				"repo":        "/data/ida/user-center",
 				"mode":        "stage_chain",
 				"roles": []map[string]any{
-					{"key": "pm", "name": "PM", "responsibility": "接收 issue/TAPD 输入，检查阶段产物，处理阻断，推进 pm -> 01 -> 02 -> 03 -> 04 -> 05。"},
+					{"key": "pm", "name": "PM", "responsibility": "接收 issue/TAPD 输入，检查阶段产物，处理阻断，推进 pm -> 01 -> 02 -> 03 -> 04 -> 05；遇到固定跨项目映射时，必须先直接创建 gateway/ida-deployment backlog 子 issue，并确认父子关系、项目和目标小队指派正确，不能只委派 03 或写评论。"},
 					{"key": "01-clarify", "name": "01 需求澄清", "responsibility": "执行 user-center/01-clarify，明确需求边界、验收口径和 handoff。"},
 					{"key": "02-design", "name": "02 方案设计", "responsibility": "执行 user-center/02-design，输出方案、影响面、接口/数据契约和 handoff。"},
 					{"key": "03-task-split", "name": "03 任务拆分", "responsibility": "执行 user-center/03-task-split，输出任务拆分、跨项目依赖和 handoff。"},
@@ -138,7 +138,14 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 					"tapd":     "从 task.source_context.tapd 获取 workspace_id/resource_type/resource_id/fetch_status；状态为 blocked_missing_profile 时必须阻断并要求用户配置账号级 TAPD profile。",
 					"gongfeng": "从 project_resources.gongfeng_repo 或 git.code.tencent.com 链接解析项目、分支、提交和文件上下文；需要账号级 Gongfeng profile。",
 				},
-				"acceptance": []string{"阶段产物完整", "测试证据完整", "交接说明明确"},
+				"acceptance": []string{"阶段产物完整", "测试证据完整", "交接说明明确", "跨项目子 issue 由 PM 直接创建并可回读"},
+				"cross_project_policy": map[string]any{
+					"creation_owner":          "pm",
+					"required_initial_status": "backlog",
+					"required_assignee_type":  "squad",
+					"delegation_rule":         "03-task-split 只能在 child issue 已存在后细化拆分和 handoff；PM 不得用评论或等待 03 代替创建 child issue。",
+					"completion_gate":         "PM 完成前必须通过公开 issue children 回读确认 gateway 与 ida-deployment 子 issue 都存在，且 parent_issue_id、project_id、assignee_id 与固定映射一致。",
+				},
 				"cross_project_child_issues": []map[string]any{
 					{
 						"target_project": "gateway",
@@ -156,7 +163,7 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 					},
 				},
 				"archive_policy":    "06-archive 不作为必跑阶段；最终结论、证据摘要和 handoff 状态由 05-verify 输出。",
-				"forbidden_actions": []string{"跳过验收直接完成", "缺少测试证据时宣称完成", "越过 user-center skill 边界修改无关仓库", "把 06-archive 当作必跑验收阶段"},
+				"forbidden_actions": []string{"跳过验收直接完成", "缺少测试证据时宣称完成", "越过 user-center skill 边界修改无关仓库", "把 06-archive 当作必跑验收阶段", "只评论或委派 03 代替 PM 创建跨项目子 issue"},
 			},
 		}, true
 	case "multica-coding":

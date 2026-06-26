@@ -15,6 +15,7 @@ const now = new Date().toISOString();
 
 const artifact = readJSON(artifactPath);
 const e2e = artifact.clean_acceptance?.e2e || artifact.e2e || {};
+const topLevelOpenItems = acceptanceOpenItems(artifact);
 const goalERequirements = Array.isArray(artifact.goal_e_requirement_matrix) && artifact.goal_e_requirement_matrix.length > 0
   ? artifact.goal_e_requirement_matrix
   : [{
@@ -26,6 +27,15 @@ const goalERequirements = Array.isArray(artifact.goal_e_requirement_matrix) && a
     }];
 
 const requirements = [
+  check("P0-00", "latest final acceptance artifact is passing before gap audit can pass", () => {
+    if (artifact.ok === true && topLevelOpenItems.length === 0) {
+      return fulfilled({ artifact_ok: true, open_items: [] });
+    }
+    return missing("Latest final acceptance artifact is not passing; gap audit cannot override or mask failed acceptance.", {
+      artifact_ok: artifact.ok === true,
+      open_items: topLevelOpenItems.map(openItemSummary),
+    });
+  }),
   check("P0-01", "TAPD document content is fetched through MCP and used by PM", () => {
     const source = e2e.tapd_source || artifact.tapd_source || {};
     const hasMetadata = Boolean(source.persisted || source.metadata?.source_provider === "tapd");
@@ -176,7 +186,11 @@ const requirements = [
         open_blocking_items: openBeforeGuard.map((item) => ({ id: item.id, status: item.status })),
       });
     }
-    return fulfilled({ artifact_ok: false, open_blocking_items: openBeforeGuard.map((item) => item.id) });
+    return missing("Final acceptance artifact is already failed, so archive/complete must remain blocked.", {
+      artifact_ok: false,
+      open_blocking_items: topLevelOpenItems.map(openItemSummary),
+      source_matrix_open_items: openBeforeGuard.map((item) => ({ id: item.id, status: item.status })),
+    });
   }),
 ];
 
@@ -288,6 +302,45 @@ function readJSON(filePath) {
     throw new Error(`Artifact not found: ${filePath}`);
   }
   return JSON.parse(fs.readFileSync(filePath, "utf8"));
+}
+
+function acceptanceOpenItems(data) {
+  const arrays = [
+    data.blocking_open_items,
+    data.blockers,
+    data.open_goal_e_items,
+    data.final_acceptance_open_items,
+    data.open_items,
+  ].filter(Array.isArray);
+  const byKey = new Map();
+  for (const items of arrays) {
+    for (const item of items) {
+      const summary = openItemSummary(item);
+      byKey.set(`${summary.id}:${summary.title}:${summary.status}`, summary);
+    }
+  }
+  if (Array.isArray(data.original_requirement_matrix)) {
+    for (const item of data.original_requirement_matrix.filter((entry) => entry.status !== "fulfilled")) {
+      const summary = openItemSummary(item);
+      byKey.set(`${summary.id}:${summary.title}:${summary.status}`, summary);
+    }
+  }
+  if (Array.isArray(data.goal_e_requirement_matrix)) {
+    for (const item of data.goal_e_requirement_matrix.filter((entry) => entry.status !== "fulfilled")) {
+      const summary = openItemSummary(item);
+      byKey.set(`${summary.id}:${summary.title}:${summary.status}`, summary);
+    }
+  }
+  return Array.from(byKey.values());
+}
+
+function openItemSummary(item) {
+  if (typeof item === "string") return { id: item, status: "open", title: item };
+  return {
+    id: item?.id || item?.key || "",
+    status: item?.status || item?.result || "open",
+    title: item?.title || item?.requirement || item?.reason || "",
+  };
 }
 
 function parseArgs(argv) {
