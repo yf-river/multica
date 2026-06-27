@@ -154,12 +154,12 @@ func mergeMCPServerEnv(config map[string]any, serverName string, env map[string]
 		entry = map[string]any{}
 		servers[serverName] = entry
 	}
+	changed := ensureDefaultMCPServerEntry(serverName, entry)
 	entryEnv, _ := entry["env"].(map[string]any)
 	if entryEnv == nil {
 		entryEnv = map[string]any{}
 		entry["env"] = entryEnv
 	}
-	changed := false
 	for key, value := range env {
 		key = strings.TrimSpace(key)
 		value = strings.TrimSpace(value)
@@ -173,6 +173,30 @@ func mergeMCPServerEnv(config map[string]any, serverName string, env map[string]
 		changed = true
 	}
 	return changed
+}
+
+func ensureDefaultMCPServerEntry(serverName string, entry map[string]any) bool {
+	if strings.TrimSpace(mcpStringValue(entry["command"])) != "" || strings.TrimSpace(mcpStringValue(entry["url"])) != "" {
+		return false
+	}
+	switch serverName {
+	case tapdMCPServerName:
+		entry["command"] = "uvx"
+		entry["args"] = []any{
+			"mcp-server-tapd",
+			"--api-base-url=https://api.tapd.cn",
+			"--tapd-base-url=https://www.tapd.cn",
+			"--keep-links=true",
+			"--tools-set=lookup_tapd_tool",
+		}
+		return true
+	case gongfengMCPServerName:
+		entry["command"] = "node"
+		entry["args"] = []any{firstNonEmpty(os.Getenv("GONGFENG_MCP_SERVER_ENTRYPOINT"), "/data/ida/gongfeng-mcp-server/dist/index.js")}
+		return true
+	default:
+		return false
+	}
 }
 
 func (h *Handler) externalCredentialProfileEnv(profile db.ExternalCredentialProfile) map[string]string {
@@ -246,6 +270,15 @@ func metadataStringValue(metadata map[string]any, key string) string {
 	switch value := metadata[key].(type) {
 	case string:
 		return strings.TrimSpace(value)
+	default:
+		return ""
+	}
+}
+
+func mcpStringValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		return typed
 	default:
 		return ""
 	}

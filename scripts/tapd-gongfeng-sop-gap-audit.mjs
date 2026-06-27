@@ -217,6 +217,7 @@ const productionGaps = [
   prodGap("gongfeng_mr_merged", "Gongfeng MR is approved and merged into the target branch", productionStatus("gongfeng_mr_merged", false)),
   prodGap("rollback_drill", "Prod rollback drill is executed and restored to the release commit", productionStatus("rollback_drill", false)),
   prodGap("credentials", "TAPD/Gongfeng profile redaction, rotation, failure status, and per-user ownership", productionStatus("credentials", requirements[2].status === "fulfilled")),
+  prodGap("new_account_mcp_onboarding", "A new account can configure TAPD/Gongfeng credentials and use MCP in Agent runtime", productionStatus("new_account_mcp_onboarding", false)),
   prodGap("observability", "MCP fetch, SOP stage, parent/child, approval, and curl traces are debuggable", productionStatus("observability", false)),
   prodGap("operations", "Retry, blocked recovery, parent wait timeout, and duplicate wake dedupe are documented/tested", productionStatus("operations", false)),
   prodGap("data_governance", "Fixtures are unique, marked, and do not pollute real TAPD/Gongfeng/team data", productionStatus("data_governance", false)),

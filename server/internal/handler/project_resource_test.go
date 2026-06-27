@@ -360,6 +360,33 @@ func TestGongfengResourceCredentialBackedProbeKeepsSecretsRedacted(t *testing.T)
 	}
 }
 
+func TestGongfengResourceCredentialBackedProbeSurvivesAnonymousUnreachable(t *testing.T) {
+	var profileID pgtype.UUID
+	if err := profileID.Scan("11111111-1111-1111-1111-111111111112"); err != nil {
+		t.Fatalf("scan profile uuid: %v", err)
+	}
+	ref := applyGongfengCredentialProbeResult(
+		gongfengRepoRef{URL: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev"},
+		gongfengProbeResult{ConnectionStatus: "unreachable", TestStatus: "failed"},
+		gongfengCredentialProbeResult{ConnectionStatus: "credential_backed", TestStatus: "passed", HTTPStatus: "200", Target: "https://git.code.tencent.com/api/v3/projects/ChainWeaver%2Fida%2Fuser-center"},
+		db.ExternalCredentialProfile{
+			ID:           profileID,
+			Provider:     externalCredentialProviderGongfeng,
+			SecretHint:   "****du-w",
+			Status:       "unverified",
+			SecretRef:    "",
+			Capabilities: []byte(`{}`),
+		},
+		true,
+	)
+	if ref.ConnectionStatus != "credential_backed" || ref.TestStatus != "passed" {
+		t.Fatalf("credential-backed probe should win over anonymous unreachable: %+v", ref)
+	}
+	if ref.UnauthenticatedConnectionStatus != "unreachable" {
+		t.Fatalf("UnauthenticatedConnectionStatus = %q, want unreachable", ref.UnauthenticatedConnectionStatus)
+	}
+}
+
 func TestGongfengResourceProbeWithoutProfileStaysAuthRequired(t *testing.T) {
 	ref := applyGongfengCredentialProbeResult(
 		gongfengRepoRef{URL: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev"},

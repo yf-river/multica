@@ -1,13 +1,20 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"net/url"
+	"os"
+	"regexp"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -28,6 +35,7 @@ type RecordIssueSourceFetchRequest struct {
 	Version       string `json:"version"`
 	Error         string `json:"error"`
 	DurationMs    int64  `json:"duration_ms"`
+	AutoFetch     bool   `json:"auto_fetch"`
 }
 
 func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request) {
@@ -44,6 +52,23 @@ func (h *Handler) RecordIssueSourceFetch(w http.ResponseWriter, r *http.Request)
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
+	}
+	if req.AutoFetch {
+		fetched, err := h.autoFetchIssueSource(r.Context(), userID, issue, req)
+		if err != nil {
+			req.Status = "fetch_failed"
+			req.Error = err.Error()
+			if req.Provider == "" {
+				req.Provider = "tapd"
+			}
+			metadata := parseIssueMetadata(issue.Metadata)
+			req.WorkspaceID = firstNonEmpty(req.WorkspaceID, stringFromMetadata(metadata, "tapd_workspace_id"), stringFromMetadata(metadata, "tapd_workspace"))
+			req.ResourceType = firstNonEmpty(req.ResourceType, stringFromMetadata(metadata, "tapd_resource_type"))
+			req.ResourceID = firstNonEmpty(req.ResourceID, stringFromMetadata(metadata, "tapd_resource_id"), stringFromMetadata(metadata, "tapd_wiki_id"))
+			req.URL = firstNonEmpty(req.URL, stringFromMetadata(metadata, "source_url"))
+		} else {
+			req = fetched
+		}
 	}
 	normalized, ok := normalizeSourceFetchRequest(w, req)
 	if !ok {
@@ -250,6 +275,202 @@ func normalizeSourceFetchRequest(w http.ResponseWriter, req RecordIssueSourceFet
 		return req, false
 	}
 	return req, true
+}
+
+func (h *Handler) autoFetchIssueSource(ctx context.Context, userID string, issue db.Issue, req RecordIssueSourceFetchRequest) (RecordIssueSourceFetchRequest, error) {
+	provider := strings.ToLower(strings.TrimSpace(firstNonEmpty(req.Provider, "tapd")))
+	if provider != externalCredentialProviderTAPD {
+		return req, fmt.Errorf("auto_fetch currently supports tapd only")
+	}
+	metadata := parseIssueMetadata(issue.Metadata)
+	workspaceID := firstNonEmpty(req.WorkspaceID, stringFromMetadata(metadata, "tapd_workspace_id"), stringFromMetadata(metadata, "tapd_workspace"))
+	resourceType := firstNonEmpty(req.ResourceType, stringFromMetadata(metadata, "tapd_resource_type"))
+	resourceID := firstNonEmpty(req.ResourceID, stringFromMetadata(metadata, "tapd_resource_id"), stringFromMetadata(metadata, "tapd_wiki_id"))
+	sourceURL := firstNonEmpty(req.URL, stringFromMetadata(metadata, "source_url"))
+	if (resourceType == "" || resourceType == "tapd_resource") && strings.Contains(sourceURL, "/markdown_wikis/") {
+		resourceType = "markdown_wiki"
+	}
+	if workspaceID == "" || resourceID == "" {
+		return req, fmt.Errorf("tapd auto_fetch requires workspace_id and resource_id")
+	}
+
+	profile, err := h.Queries.GetDefaultExternalCredentialProfileForUser(ctx, db.GetDefaultExternalCredentialProfileForUserParams{
+		UserID:   parseUUID(userID),
+		Provider: externalCredentialProviderTAPD,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return req, fmt.Errorf("no account-level TAPD credential profile for current user")
+	}
+	if err != nil {
+		return req, fmt.Errorf("load TAPD credential profile: %w", err)
+	}
+	if strings.EqualFold(profile.Status, "disabled") {
+		return req, fmt.Errorf("TAPD credential profile is disabled")
+	}
+	token := h.resolveExternalCredentialToken(profile)
+	if token == "" {
+		return req, fmt.Errorf("TAPD credential profile has no resolvable token")
+	}
+
+	started := time.Now()
+	doc, err := fetchTAPDSourceDocument(ctx, token, workspaceID, resourceType, resourceID)
+	durationMs := time.Since(started).Milliseconds()
+	if err != nil {
+		return req, err
+	}
+	req.Provider = externalCredentialProviderTAPD
+	req.FetchProvider = "tapd_mcp"
+	req.Status = "fetched"
+	req.URL = sourceURL
+	req.WorkspaceID = workspaceID
+	req.ResourceType = firstNonEmpty(resourceType, "markdown_wiki")
+	req.ResourceID = resourceID
+	req.Title = doc.Title
+	req.Summary = doc.Summary
+	req.BodyExcerpt = doc.BodyExcerpt
+	req.Version = doc.Version
+	req.DurationMs = durationMs
+	return req, nil
+}
+
+type tapdSourceDocument struct {
+	Title       string
+	Summary     string
+	BodyExcerpt string
+	Version     string
+}
+
+func fetchTAPDSourceDocument(ctx context.Context, token, workspaceID, resourceType, resourceID string) (tapdSourceDocument, error) {
+	endpoint, ok := tapdSourceEndpoint(resourceType)
+	if !ok {
+		return tapdSourceDocument{}, fmt.Errorf("unsupported TAPD resource_type for auto_fetch: %s", resourceType)
+	}
+	base := strings.TrimRight(firstNonEmpty(os.Getenv("TAPD_API_BASE_URL"), "https://api.tapd.cn"), "/")
+	u, err := url.Parse(base + "/" + endpoint)
+	if err != nil {
+		return tapdSourceDocument{}, fmt.Errorf("invalid TAPD API base URL")
+	}
+	q := u.Query()
+	q.Set("workspace_id", workspaceID)
+	q.Set("id", resourceID)
+	q.Set("page", "1")
+	q.Set("limit", "1")
+	q.Set("s", "mcp")
+	if endpoint == "stories" || endpoint == "tasks" {
+		q.Set("fields", "id,name,description,modified")
+	}
+	u.RawQuery = q.Encode()
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodGet, u.String(), nil)
+	if err != nil {
+		return tapdSourceDocument{}, fmt.Errorf("build TAPD request: %w", err)
+	}
+	httpReq.Header.Set("Authorization", "Bearer "+token)
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Via", "mcp")
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(httpReq)
+	if err != nil {
+		return tapdSourceDocument{}, fmt.Errorf("TAPD auto_fetch request failed: %w", err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return tapdSourceDocument{}, fmt.Errorf("TAPD auto_fetch HTTP %d", resp.StatusCode)
+	}
+	var payload any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		return tapdSourceDocument{}, fmt.Errorf("decode TAPD auto_fetch response: %w", err)
+	}
+	doc := tapdDocumentFromPayload(payload)
+	if doc.Title == "" {
+		return tapdSourceDocument{}, fmt.Errorf("TAPD auto_fetch response did not contain a title")
+	}
+	if doc.BodyExcerpt == "" {
+		return tapdSourceDocument{}, fmt.Errorf("TAPD auto_fetch response did not contain body content")
+	}
+	return doc, nil
+}
+
+func tapdSourceEndpoint(resourceType string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(resourceType)) {
+	case "", "markdown_wiki", "wiki", "tapd_wiki":
+		return "tapd_wikis", true
+	case "story", "stories":
+		return "stories", true
+	case "task", "tasks":
+		return "tasks", true
+	default:
+		return "", false
+	}
+}
+
+func tapdDocumentFromPayload(payload any) tapdSourceDocument {
+	if root, ok := payload.(map[string]any); ok {
+		payload = root["data"]
+	}
+	if items, ok := payload.([]any); ok && len(items) > 0 {
+		payload = items[0]
+	}
+	fields := flattenJSONStrings(payload)
+	body := firstNonEmpty(fields["markdown_description"], fields["description"], fields["content"], fields["body"])
+	body = compactPlainText(body)
+	return tapdSourceDocument{
+		Title:       firstNonEmpty(fields["name"], fields["title"]),
+		Summary:     truncateRunes(body, 500),
+		BodyExcerpt: truncateRunes(body, 2000),
+		Version:     firstNonEmpty(fields["modified"], fields["modified_date"], fields["updated"], fields["updated_at"], fields["version"]),
+	}
+}
+
+func flattenJSONStrings(value any) map[string]string {
+	out := map[string]string{}
+	var walk func(any)
+	walk = func(v any) {
+		switch typed := v.(type) {
+		case map[string]any:
+			for key, child := range typed {
+				if text, ok := child.(string); ok && strings.TrimSpace(text) != "" {
+					out[strings.ToLower(key)] = strings.TrimSpace(text)
+				}
+				walk(child)
+			}
+		case []any:
+			for _, child := range typed {
+				walk(child)
+			}
+		}
+	}
+	walk(value)
+	return out
+}
+
+var htmlTagPattern = regexp.MustCompile(`<[^>]+>`)
+
+func compactPlainText(value string) string {
+	value = htmlTagPattern.ReplaceAllString(value, " ")
+	value = strings.NewReplacer("&nbsp;", " ", "&amp;", "&", "&lt;", "<", "&gt;", ">").Replace(value)
+	return strings.Join(strings.Fields(value), " ")
+}
+
+func truncateRunes(value string, limit int) string {
+	if limit <= 0 {
+		return ""
+	}
+	runes := []rune(strings.TrimSpace(value))
+	if len(runes) <= limit {
+		return string(runes)
+	}
+	return string(runes[:limit])
+}
+
+func stringFromMetadata(metadata map[string]any, key string) string {
+	if metadata == nil {
+		return ""
+	}
+	if value, ok := metadata[key].(string); ok {
+		return strings.TrimSpace(value)
+	}
+	return ""
 }
 
 func sourceFetchMetadata(req RecordIssueSourceFetchRequest) map[string]any {

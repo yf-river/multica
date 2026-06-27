@@ -48,6 +48,8 @@ async function buildReleaseEvidence() {
   const trainingCurl = readOptionalJSON(path.join(artifactRoot, "prompt-evaluation-curl-e2e-latest.json"));
   const remoteMR = latestJSON(/^remediation-gongfeng-remote-mr-.*\.json$/);
   const rollback = readOptionalJSON(path.join(artifactRoot, "goal-test-prod-rollback-drill-latest.json"));
+  const newAccountMCP = readOptionalJSON(path.join(artifactRoot, "goal-test-new-account-mcp-onboarding-latest.json"));
+  const fixtureGovernance = readOptionalJSON(path.join(artifactRoot, "goal-test-acceptance-fixture-governance-latest.json"));
 
   const checks = [
     check("deploy_int_current_commit", "int deployment is on current release commit",
@@ -105,6 +107,16 @@ async function buildReleaseEvidence() {
         prod_deployed_at: prodDeployment?.deployed_at || null,
         prod_api_url: prodEnv.REMOTE_API_URL || null,
       }),
+    check("new_account_mcp_onboarding", "new account can configure TAPD/Gongfeng credentials and use MCP in Agent runtime",
+      newAccountMCP?.ok === true && newAccountMCP?.environment === "prod" && newAccountMCP?.release_commit === currentCommit,
+      summarizeNewAccountMCP(newAccountMCP, currentCommit)),
+    check("acceptance_fixture_governance", "acceptance-created fixture data is traceable and governed",
+      fixtureGovernance?.ok === true,
+      fixtureGovernance ? {
+        generated_at: fixtureGovernance.generated_at,
+        database_checked: fixtureGovernance.database_checked,
+        blockers: fixtureGovernance.blockers || [],
+      } : null),
     check("gongfeng_mr_merged", "Gongfeng MR is approved and merged into the target branch",
       remoteMRMerged(remoteMR?.json),
       summarizeRemoteMR(remoteMR)),
@@ -137,6 +149,8 @@ async function buildReleaseEvidence() {
       e2e: path.join(artifactRoot, "codex-squad-curl-e2e-latest.json"),
       business_training_seed: path.join(artifactRoot, "business-training-seed-latest.json"),
       training_curl_e2e: path.join(artifactRoot, "prompt-evaluation-curl-e2e-latest.json"),
+      new_account_mcp_onboarding: path.join(artifactRoot, "goal-test-new-account-mcp-onboarding-latest.json"),
+      fixture_governance: path.join(artifactRoot, "goal-test-acceptance-fixture-governance-latest.json"),
       remote_mr: remoteMR?.path || null,
       rollback_drill: path.join(artifactRoot, "goal-test-prod-rollback-drill-latest.json"),
     },
@@ -430,6 +444,34 @@ function summarizeTrainingArtifact(artifact) {
     api_url: artifact?.api_url || null,
     dataset_row_count: artifact?.dataset?.dataset_row_count || null,
   };
+}
+
+function summarizeNewAccountMCP(artifact, currentCommit) {
+  return artifact ? {
+    generated_at: artifact.generated_at,
+    ok: artifact.ok,
+    status: artifact.status,
+    environment: artifact.environment,
+    release_commit: artifact.release_commit,
+    expected_commit: currentCommit,
+    account: artifact.account,
+    workspace_slug: artifact.workspace_slug,
+    credential_profiles: artifact.credential_profiles ? {
+      tapd: {
+        scope: artifact.credential_profiles.tapd?.scope,
+        status: artifact.credential_profiles.tapd?.status,
+        configured: artifact.credential_profiles.tapd?.secret_binding?.configured,
+      },
+      gongfeng: {
+        scope: artifact.credential_profiles.gongfeng?.scope,
+        status: artifact.credential_profiles.gongfeng?.status,
+        configured: artifact.credential_profiles.gongfeng?.secret_binding?.configured,
+      },
+      redaction_verified: artifact.credential_profiles.redaction_verified,
+    } : null,
+    gongfeng_resource: artifact.gongfeng_resource || null,
+    blockers: artifact.blockers || [],
+  } : null;
 }
 
 function summarizeRemoteMR(remoteMR) {

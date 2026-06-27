@@ -323,6 +323,7 @@ func init() {
 	issueSourceFetchCmd.Flags().String("version", "", "External source version, revision, or modified timestamp")
 	issueSourceFetchCmd.Flags().String("error", "", "Fetch failure reason, required for fetch_failed")
 	issueSourceFetchCmd.Flags().Int64("duration-ms", 0, "Fetch duration in milliseconds")
+	issueSourceFetchCmd.Flags().Bool("auto-fetch", false, "Fetch the source through the server-side account credential profile before recording evidence")
 	issueSourceFetchCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// issue create

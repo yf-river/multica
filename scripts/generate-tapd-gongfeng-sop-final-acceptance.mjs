@@ -22,6 +22,8 @@ const realPMRunEvidence = buildRealPMRunEvidence();
 const gongfengTouchpointEvidence = buildGoalEGongfengTouchpointEvidence();
 const finalEvidencePackage = buildGoalEFinalEvidencePackage();
 const prodReleaseEvidence = buildProdReleaseEvidence();
+const newAccountMCPEvidence = buildNewAccountMCPEvidence();
+const fixtureGovernanceEvidence = buildFixtureGovernanceEvidence();
 
 const databaseStageEvidence = databaseURL && e2e.issue?.id
   ? await loadStageEvidence(databaseURL, e2e.issue.id)
@@ -33,7 +35,7 @@ const uiApiEvidence = buildUIAPIEvidence();
 const topologyGeneralizationEvidence = buildTopologyGeneralizationEvidence();
 
 const originalRequirements = buildOriginalRequirementMatrix({ e2e, stageEvidence, crossServiceEvidence });
-const productionReadiness = buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEvidence, handoffEvidence, uiApiEvidence, prodReleaseEvidence, topologyGeneralizationEvidence });
+const productionReadiness = buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEvidence, handoffEvidence, uiApiEvidence, prodReleaseEvidence, topologyGeneralizationEvidence, newAccountMCPEvidence, fixtureGovernanceEvidence });
 const goalERequirements = buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, canonicalDemoEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, finalEvidencePackage, prodReleaseEvidence, topologyGeneralizationEvidence });
 const blockingOpen = [
   ...originalRequirements.filter((item) => ["missing", "partial", "false_claimed", "blocked"].includes(item.status)),
@@ -55,6 +57,8 @@ const artifact = {
     deployment_log_window: e2e.deployment_log_window || null,
     prod_release: prodReleaseEvidence.latest_json_path || null,
     topology_generalization: topologyGeneralizationEvidence.latest_json_path || null,
+    new_account_mcp_onboarding: newAccountMCPEvidence.latest_json_path || null,
+    fixture_governance: fixtureGovernanceEvidence.latest_json_path || null,
   },
   e2e,
   topology: e2e.topology || null,
@@ -84,6 +88,8 @@ const artifact = {
   goal_e_real_pm_0105_run: realPMRunEvidence,
   goal_e_final_evidence_package: finalEvidencePackage,
   prod_release: prodReleaseEvidence,
+  new_account_mcp_onboarding: newAccountMCPEvidence,
+  fixture_governance: fixtureGovernanceEvidence,
   project_owner_notifications: e2e.project_owner_notifications || null,
   project_owner_approval: e2e.project_owner_approval || null,
   child_done_wake: e2e.child_done_wake || null,
@@ -217,13 +223,16 @@ function buildOriginalRequirementMatrix({ e2e, stageEvidence, crossServiceEviden
   ];
 }
 
-function buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEvidence, handoffEvidence, uiApiEvidence, prodReleaseEvidence, topologyGeneralizationEvidence }) {
+function buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEvidence, handoffEvidence, uiApiEvidence, prodReleaseEvidence, topologyGeneralizationEvidence, newAccountMCPEvidence, fixtureGovernanceEvidence }) {
   const allStagesCompleted = (stageEvidence.stages || []).filter((item) => item.key).every((item) => item.status === "completed");
   const releaseChecks = prodReleaseChecks(prodReleaseEvidence.latest_json);
   const topologyAudit = topologyGeneralizationEvidence.latest_json || {};
+  const newAccountMCP = newAccountMCPEvidence.latest_json || {};
+  const fixtureGovernance = fixtureGovernanceEvidence.latest_json || {};
   return [
     prodItem("prod_release", "Prod release audit is passing for the current commit", prodReleaseEvidence.latest_json?.ok === true, "No passing full prod release audit artifact."),
-    prodItem("credentials", "TAPD/Gongfeng account profiles, redaction, inheritance", true),
+    prodItem("credentials", "TAPD/Gongfeng account profiles, redaction, inheritance", Boolean(e2e.credential_profiles?.redaction_verified === true), "Latest E2E does not prove account credential profile redaction and inheritance."),
+    prodItem("new_account_mcp_onboarding", "A new account can configure TAPD/Gongfeng credentials and use MCP in Agent runtime", newAccountMCP.ok === true, newAccountMCP.status === "blocked" ? (newAccountMCP.error || "New account MCP onboarding is blocked.") : "No passing new-account MCP onboarding artifact."),
     prodItem("gongfeng_credentials", "Prod Gongfeng project resources are credential-backed, synced, and tested", releaseChecks.prod_gongfeng_resources === true, "Prod Gongfeng resources are missing, untested, or still auth_required."),
     prodItem("prod_data", "Prod canonical projects, agents, squad, and training dataset are present", releaseChecks.prod_canonical_projects === true && releaseChecks.prod_canonical_agents === true && releaseChecks.prod_canonical_squad === true && releaseChecks.prod_training_dataset === true, "Prod canonical business data or dataset evidence is incomplete."),
     prodItem("prod_e2e", "Prod user-center squad curl E2E is fresh for the release commit", releaseChecks.prod_e2e_fresh === true && releaseChecks.prod_e2e_canonical_child_projects === true, "Latest squad curl E2E is not current prod evidence or references non-canonical project ids."),
@@ -231,7 +240,7 @@ function buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEviden
     prodItem("rollback_drill", "Prod rollback drill is executed and restored to the release commit", releaseChecks.rollback_drill === true, "No verified prod rollback drill evidence."),
     prodItem("observability", "MCP fetch, SOP stage, parent/child, approval traces are debuggable", Boolean(e2e.tapd_source?.fetch) && (stageEvidence.stages || []).length >= 6 && Boolean(e2e.project_owner_approval)),
     prodItem("operations", "Retry, recovery, duplicate wake, and long-running E2E guardrails", true),
-    prodItem("data_governance", "Acceptance fixtures are unique and identifiable", true),
+    prodItem("data_governance", "Acceptance fixtures are unique and identifiable", fixtureGovernance.ok === true, "No passing fixture governance artifact proving acceptance-created data is traceable."),
     prodItem("team_handoff", "Runbook and recovery instructions are sufficient for a teammate", handoffEvidence.ok === true, "No final handoff runbook proving independent teammate operation."),
     prodItem("security", "Artifacts and ledgers do not contain raw credentials", true),
     prodItem("cost", "Expensive E2E/MCP/trace collection has guardrails", true),
@@ -610,6 +619,46 @@ function buildTopologyGeneralizationEvidence() {
     proof_boundary: latestJSON?.ok === true
       ? "Topology generalization audit passed."
       : "Generic topology remains a blocker until dynamic topology, variable-project fixture, and variable-agent fixture evidence pass.",
+  };
+}
+
+function buildNewAccountMCPEvidence() {
+  const latestPath = fileIfExists(path.join(artifactRoot, "goal-test-new-account-mcp-onboarding-latest.json"));
+  let latestJSON = null;
+  if (latestPath) {
+    try {
+      latestJSON = readJSON(latestPath);
+    } catch {
+      latestJSON = null;
+    }
+  }
+  return {
+    latest_json_path: latestPath,
+    latest_json: latestJSON,
+    ok: latestJSON?.ok === true,
+    proof_boundary: latestJSON?.ok === true
+      ? "New account configured TAPD/Gongfeng profiles and used MCP through Agent runtime."
+      : "New-account MCP onboarding remains a blocker until a fresh passing artifact exists.",
+  };
+}
+
+function buildFixtureGovernanceEvidence() {
+  const latestPath = fileIfExists(path.join(artifactRoot, "goal-test-acceptance-fixture-governance-latest.json"));
+  let latestJSON = null;
+  if (latestPath) {
+    try {
+      latestJSON = readJSON(latestPath);
+    } catch {
+      latestJSON = null;
+    }
+  }
+  return {
+    latest_json_path: latestPath,
+    latest_json: latestJSON,
+    ok: latestJSON?.ok === true,
+    proof_boundary: latestJSON?.ok === true
+      ? "Acceptance fixture governance audit passed."
+      : "Acceptance fixture governance remains a blocker until fixture rows are traceable and audit passes.",
   };
 }
 

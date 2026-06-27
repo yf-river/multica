@@ -1063,7 +1063,7 @@ function issueDescription(templateKey, crossProjectSetup = null) {
           "",
           "必须按以下方式执行：",
           "1. 先运行 `multica issue get <当前 issue id> --output json` 理解父任务。",
-          "2. 运行 `multica issue source-fetch <当前 issue id> --provider tapd --output json` 拉取 TAPD 正文并让 trace 记录 source.fetch 证据。",
+          "2. 运行 `multica issue source-fetch <当前 issue id> --provider tapd --auto-fetch --output json` 拉取 TAPD 正文并让 trace 记录 source.fetch 证据。",
           "3. 再运行 `multica project list --output json` 做存在性核对，但不要按列表输出顺序推断 UUID；必须以下面映射为准：",
           ...targetLines,
           `4. pm 本人必须直接创建 ${targets.length} 个 \`backlog\` 子 issue；每个命令都必须带 \`--parent <当前 issue id>\`、对应的 \`--project <project_id>\`，并且用同一行映射里的 \`--assignee-id <target_squad_id>\` 指派给目标小队。`,

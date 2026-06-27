@@ -12,7 +12,8 @@ import (
 
 func runIssueSourceFetch(cmd *cobra.Command, args []string) error {
 	status, _ := cmd.Flags().GetString("status")
-	if status == "" {
+	autoFetch, _ := cmd.Flags().GetBool("auto-fetch")
+	if status == "" && !autoFetch {
 		return fmt.Errorf("--status is required")
 	}
 	provider, _ := cmd.Flags().GetString("provider")
@@ -54,6 +55,7 @@ func runIssueSourceFetch(cmd *cobra.Command, args []string) error {
 		"version":        version,
 		"error":          fetchErr,
 		"duration_ms":    durationMs,
+		"auto_fetch":     autoFetch,
 	}
 	var result map[string]any
 	if err := client.PostJSON(ctx, "/api/issues/"+issueRef.ID+"/source-fetch", body, &result); err != nil {

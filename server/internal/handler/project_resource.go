@@ -802,7 +802,7 @@ func applyGongfengCredentialProbeResult(ref gongfengRepoRef, result gongfengProb
 	ref.CredentialProbeStatus = credentialProbe.ConnectionStatus
 	ref.CredentialProbeHTTPStatus = credentialProbe.HTTPStatus
 	ref.CredentialProbeTarget = credentialProbe.Target
-	if result.ConnectionStatus == "auth_required" && credentialProbe.ConnectionStatus == "credential_backed" && credentialProbe.TestStatus == "passed" {
+	if credentialProbe.ConnectionStatus == "credential_backed" && credentialProbe.TestStatus == "passed" {
 		ref.UnauthenticatedConnectionStatus = result.ConnectionStatus
 		ref.ConnectionStatus = "credential_backed"
 		ref.TestStatus = "passed"

@@ -24,6 +24,7 @@ func newIssueSourceFetchTestCmd() *cobra.Command {
 	c.Flags().String("version", "", "")
 	c.Flags().String("error", "", "")
 	c.Flags().Int64("duration-ms", 0, "")
+	c.Flags().Bool("auto-fetch", false, "")
 	c.Flags().String("output", "json", "")
 	return c
 }
@@ -98,5 +99,47 @@ func TestRunIssueSourceFetchRequiresStatus(t *testing.T) {
 	cmd := newIssueSourceFetchTestCmd()
 	if err := runIssueSourceFetch(cmd, []string{testIssueUUID}); err == nil {
 		t.Fatal("runIssueSourceFetch returned nil without --status")
+	}
+}
+
+func TestRunIssueSourceFetchAllowsAutoFetchWithoutStatus(t *testing.T) {
+	var posted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/issues/"+testIssueUUID:
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"id":         testIssueUUID,
+				"identifier": "MUL-1",
+				"title":      "test issue",
+			})
+		case r.Method == http.MethodPost && r.URL.Path == "/api/issues/"+testIssueUUID+"/source-fetch":
+			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+				t.Fatalf("decode posted body: %v", err)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"metadata": map[string]any{"source_fetch_status": "fetched"},
+			})
+		default:
+			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_TOKEN", "test-token")
+	t.Setenv("MULTICA_WORKSPACE_ID", "workspace-1")
+
+	cmd := newIssueSourceFetchTestCmd()
+	_ = cmd.Flags().Set("auto-fetch", "true")
+	if _, err := captureStdout(t, func() error {
+		return runIssueSourceFetch(cmd, []string{testIssueUUID})
+	}); err != nil {
+		t.Fatalf("runIssueSourceFetch: %v", err)
+	}
+	if posted["auto_fetch"] != true {
+		t.Fatalf("auto_fetch = %v, want true", posted["auto_fetch"])
+	}
+	if posted["status"] != "" {
+		t.Fatalf("status = %v, want empty under auto-fetch", posted["status"])
 	}
 }

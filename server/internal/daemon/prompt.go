@@ -216,8 +216,8 @@ func writeSourceContextPrompt(b *strings.Builder, task Task) {
 			if cred, ok := source.ExternalCredentials["tapd"]; ok && cred.MCPServer != "" {
 				serverName = cred.MCPServer
 			}
-			fmt.Fprintf(b, "- TAPD action: before design or implementation, use MCP server `%s` to fetch the referenced TAPD document, then record it with `multica issue source-fetch %s --provider tapd --status fetched --source-workspace-id %s --resource-type %s --resource-id %s --title \"<fetched title>\" --summary \"<short factual summary>\" --body-excerpt \"<short excerpt from fetched markdown/body>\" --version \"<modified/revision if available>\" --duration-ms <milliseconds> --output json`. If the MCP call fails, run the same command with `--status fetch_failed --error \"<reason>\"` instead of guessing.\n",
-				serverName, task.IssueID, tapd.WorkspaceID, tapd.ResourceType, tapd.ResourceID)
+			fmt.Fprintf(b, "- TAPD action: before design or implementation, run `multica issue source-fetch %s --provider tapd --auto-fetch --output json`. The platform will use the current account's `%s` credential profile to fetch the referenced TAPD document and record source.fetch trace evidence. Do not run `which %s` or call the MCP server binary directly; if auto-fetch fails, report the recorded fetch_failed error instead of guessing.\n",
+				task.IssueID, serverName, serverName)
 		}
 	}
 	if len(source.ExternalCredentials) > 0 {

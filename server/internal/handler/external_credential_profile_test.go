@@ -95,6 +95,27 @@ func TestExternalCredentialProfileRawTokenRequiresEncryption(t *testing.T) {
 	}
 }
 
+func TestMergeMCPServerEnvCreatesDefaultServerEntry(t *testing.T) {
+	config := normalizeMCPConfigForInjection(nil)
+	changed := mergeMCPServerEnv(config, tapdMCPServerName, map[string]string{"TAPD_ACCESS_TOKEN": "tapd-secret"})
+	if !changed {
+		t.Fatal("mergeMCPServerEnv should report a change")
+	}
+	servers := config["mcpServers"].(map[string]any)
+	entry := servers[tapdMCPServerName].(map[string]any)
+	if entry["command"] != "uvx" {
+		t.Fatalf("command = %v, want uvx", entry["command"])
+	}
+	args, ok := entry["args"].([]any)
+	if !ok || len(args) == 0 || args[0] != "mcp-server-tapd" {
+		t.Fatalf("args = %#v, want mcp-server-tapd command args", entry["args"])
+	}
+	env := entry["env"].(map[string]any)
+	if env["TAPD_ACCESS_TOKEN"] != "tapd-secret" {
+		t.Fatalf("TAPD_ACCESS_TOKEN = %v, want injected token", env["TAPD_ACCESS_TOKEN"])
+	}
+}
+
 func TestExternalCredentialProfileSupportsGongfengProvider(t *testing.T) {
 	name := fmt.Sprintf("gongfeng-profile-%d", time.Now().UnixNano())
 
