@@ -1064,7 +1064,7 @@ function issueDescription(templateKey, crossProjectSetup = null) {
           "必须按以下方式执行：",
           "1. 先运行 `multica issue get <当前 issue id> --output json` 理解父任务。",
           "2. 运行 `multica issue source-fetch <当前 issue id> --provider tapd --auto-fetch --output json` 拉取 TAPD 正文并让 trace 记录 source.fetch 证据。",
-          "3. 再运行 `multica project list --output json` 做存在性核对，但不要按列表输出顺序推断 UUID；必须以下面映射为准：",
+          "3. 再运行 `multica issue children <当前 issue id> --output json` 确认本轮还没有同目标项目/同工作意图的 child issue；随后运行 `multica project list --output json` 做存在性核对，但不要按列表输出顺序推断 UUID；必须以下面映射为准：",
           ...targetLines,
           `4. pm 本人必须直接创建 ${targets.length} 个 \`backlog\` 子 issue；每个命令都必须带 \`--parent <当前 issue id>\`、对应的 \`--project <project_id>\`，并且用同一行映射里的 \`--assignee-id <target_squad_id>\` 指派给目标小队。`,
           ...commandLines,
@@ -1074,7 +1074,7 @@ function issueDescription(templateKey, crossProjectSetup = null) {
           "7. 输出验收证据：父 issue id、每个 backlog 子 issue id、每个项目 UUID、目标小队 UUID、下一步等待项目负责人审批。",
           "",
           "硬门禁：不要把创建子 issue 委派给 03，不要只写评论要求 03 创建，不要等待 03。若 pm 本人没有直接创建全部目标 child issue，本次验收失败。",
-          "命令边界：只运行上面列出的 `multica issue get`、`multica issue source-fetch`、`multica project list`、`multica issue create` 和 `multica squad activity`。不要读取评论，不要运行 `metadata list`、`comment list`、`issue comment list`、`issue status`、`issue comment add` 或其他探索性命令。",
+          "命令边界：只运行上面列出的 `multica issue get`、`multica issue source-fetch`、`multica issue children`、`multica project list`、`multica issue create` 和 `multica squad activity`。不要读取评论，不要运行 `metadata list`、`comment list`、`issue comment list`、`issue status`、`issue comment add` 或其他探索性命令。",
         ].join("\n");
       }
       return "请作为 pm 小队完成一次最小 SOP 验收：澄清需求、说明阶段、输出 trace/任务标识、验收证据和下一步。不要修改代码。";
@@ -1115,6 +1115,7 @@ function inspectLeaderCrossProjectBehavior(messages) {
       isReadonlyPwdProbe(command) ||
       /\bmultica\s+issue\s+get\b/.test(command) ||
       /\bmultica\s+issue\s+source-fetch\b/.test(command) ||
+      /\bmultica\s+issue\s+children\b/.test(command) ||
       /\bmultica\s+issue\s+metadata\s+list\b/.test(command) ||
       /\bmultica\s+issue\s+comment\s+list\b/.test(command) ||
       /\bmultica\s+issue\s+comment\s+add\b/.test(command) ||
@@ -1152,7 +1153,7 @@ function inspectLeaderCrossProjectBehavior(messages) {
           delegationBlocksChildCreation ? `存在委派 03 文本且未直接执行两条 issue create：${delegationEvidence.map((item) => item.slice(0, 160)).join(" / ")}` : "",
         ].filter(Boolean).join("；"),
     blocking,
-    allowed_commands: ["issue get", "issue source-fetch", "project list", "issue create", "squad activity"],
+    allowed_commands: ["issue get", "issue source-fetch", "issue children", "project list", "issue create", "squad activity"],
     tolerated_warning_commands: ["readonly pwd probe", "issue metadata list", "issue comment list", "issue comment add", "issue status", "rm -f"],
     blocking_commands: blockingCommands.map(redactCommandForEvidence),
     warning_commands: warningCommands.map(redactCommandForEvidence),
