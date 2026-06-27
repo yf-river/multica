@@ -330,7 +330,7 @@ func TestGongfengResourceCredentialBackedProbeKeepsSecretsRedacted(t *testing.T)
 	ref := applyGongfengCredentialProbeResult(
 		gongfengRepoRef{URL: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev"},
 		gongfengProbeResult{ConnectionStatus: "auth_required", TestStatus: "passed"},
-		gongfengCredentialProbeResult{ConnectionStatus: "credential_backed", TestStatus: "passed", HTTPStatus: "200", Target: "https://git.code.tencent.com/api/v4/projects/ChainWeaver%2Fida%2Fuser-center"},
+		gongfengCredentialProbeResult{ConnectionStatus: "credential_backed", TestStatus: "passed", HTTPStatus: "200", Target: "https://git.code.tencent.com/api/v3/projects/ChainWeaver%2Fida%2Fuser-center"},
 		db.ExternalCredentialProfile{
 			ID:        profileID,
 			Provider:  externalCredentialProviderGongfeng,

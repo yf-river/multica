@@ -901,7 +901,7 @@ func gongfengAPIProjectURL(projectPath string) string {
 	if projectPath == "" {
 		return ""
 	}
-	return "https://git.code.tencent.com/api/v4/projects/" + url.PathEscape(projectPath)
+	return "https://git.code.tencent.com/api/v3/projects/" + url.PathEscape(projectPath)
 }
 
 func mustMarshalRaw(v any) json.RawMessage {
