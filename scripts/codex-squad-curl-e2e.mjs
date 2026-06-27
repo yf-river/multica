@@ -1112,6 +1112,7 @@ function inspectLeaderCrossProjectBehavior(messages) {
     .map((item) => String(item.input.command));
   const blockingCommands = toolUseCommands.filter((command) => {
     const safe =
+      isReadonlyPwdProbe(command) ||
       /\bmultica\s+issue\s+get\b/.test(command) ||
       /\bmultica\s+issue\s+source-fetch\b/.test(command) ||
       /\bmultica\s+issue\s+metadata\s+list\b/.test(command) ||
@@ -1125,6 +1126,7 @@ function inspectLeaderCrossProjectBehavior(messages) {
     return !safe;
   });
   const warningCommands = toolUseCommands.filter((command) =>
+    isReadonlyPwdProbe(command) ||
     /\bmultica\s+issue\s+metadata\s+list\b/.test(command) ||
     /\bmultica\s+issue\s+comment\s+list\b/.test(command) ||
     /\bmultica\s+issue\s+comment\s+add\b/.test(command) ||
@@ -1151,7 +1153,7 @@ function inspectLeaderCrossProjectBehavior(messages) {
         ].filter(Boolean).join("；"),
     blocking,
     allowed_commands: ["issue get", "issue source-fetch", "project list", "issue create", "squad activity"],
-    tolerated_warning_commands: ["issue metadata list", "issue comment list", "issue comment add", "issue status", "rm -f"],
+    tolerated_warning_commands: ["readonly pwd probe", "issue metadata list", "issue comment list", "issue comment add", "issue status", "rm -f"],
     blocking_commands: blockingCommands.map(redactCommandForEvidence),
     warning_commands: warningCommands.map(redactCommandForEvidence),
     delegated_to_03: delegationEvidence.length > 0,
@@ -1160,6 +1162,15 @@ function inspectLeaderCrossProjectBehavior(messages) {
     issue_create_command_count: issueCreateCommandCount,
     tool_use_command_count: toolUseCommands.length,
   };
+}
+
+function isReadonlyPwdProbe(command) {
+  const value = String(command || "").trim();
+  return (
+    value === "pwd" ||
+    /^(?:\/usr\/bin\/|\/bin\/)?(?:zsh|bash|sh)\s+-lc\s+(['"])pwd\1$/.test(value) ||
+    /^(?:\/usr\/bin\/|\/bin\/)?(?:zsh|bash|sh)\s+-lc\s+pwd$/.test(value)
+  );
 }
 
 function redactCommandForEvidence(command) {
