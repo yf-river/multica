@@ -76,12 +76,13 @@ async function buildReleaseEvidence() {
       prodState.active_squad_names.length === 1 && prodState.active_squad_names[0] === "pm",
       { active_squad_names: prodState.active_squad_names }),
     check("prod_gongfeng_resources", "prod has three credential-backed Gongfeng project resources",
-      prodState.gongfeng_resources.length === 3 &&
-        prodState.gongfeng_resources.every((item) =>
+      requiredGongfengProjectPaths().every((projectPath) =>
+        prodState.gongfeng_resources.some((item) =>
+          item.project_path === projectPath &&
           item.sync_status === "synced" &&
           item.test_status === "passed" &&
           item.connection_status &&
-          item.connection_status !== "auth_required"),
+          item.connection_status !== "auth_required")),
       prodState.gongfeng_resources),
     check("prod_training_dataset", "prod has current dataset assets and dataset rows",
       prodState.dataset_asset_count > 0 && prodState.dataset_row_count > 0,
@@ -289,6 +290,14 @@ function remoteMRMerged(json) {
   return mr.state === "merged" &&
     Boolean(mr.merge_commit || mr.merge_commit_sha || json.target?.head_after_merge) &&
     (approvals.approved === true || Number(approvals.approved_by_count || 0) > 0 || json.approved === true);
+}
+
+function requiredGongfengProjectPaths() {
+  return [
+    "ChainWeaver/ida/user-center",
+    "ChainWeaver/ida/gateway",
+    "ChainWeaver/ida/ida-deployment",
+  ];
 }
 
 function summarizeE2E(e2e, prodDeployment, currentCommit, prodEnv) {
