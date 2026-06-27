@@ -59,6 +59,7 @@ try {
   artifact.user = { id: currentUser.id, account: currentUser.account, name: currentUser.name };
   const userWorkspace = findWorkspace(userToken, workspaceSlug);
   check("new_account_can_access_workspace", userWorkspace.id === workspace.id, { workspace: pickWorkspace(userWorkspace) });
+  artifact.preflight_fixture_cleanup = cleanupOnboardingFixtures(workspace.id, userToken);
 
   const profiles = {
     inheritance: "task_creator_or_trigger_user",
@@ -193,6 +194,8 @@ try {
     trace: artifact.trace,
     messages: artifact.messages,
   });
+  artifact.fixture_cleanup = cleanupOnboardingFixtures(workspace.id, userToken, { agentID: agent.id, squadID: squad.id });
+  check("onboarding_fixture_archived", artifact.fixture_cleanup.ok === true, artifact.fixture_cleanup);
   check("artifact_contains_no_secret_material", !containsSecretMaterial(artifact), { redaction: "passed" });
 
   const failed = artifact.checks.filter((item) => item.status !== "fulfilled");
@@ -390,6 +393,10 @@ function put(route, body, token) {
   return request("PUT", route, body, token);
 }
 
+function del(route, token) {
+  return request("DELETE", route, undefined, token);
+}
+
 function request(method, route, body, token) {
   const response = requestRaw(method, route, body, token);
   if (!response.ok) fail(`${method} ${route} failed: ${response.status} ${response.text}`);
@@ -415,6 +422,47 @@ function parseJSON(text) {
   } catch (error) {
     fail(`invalid JSON response: ${error.message}: ${text.slice(0, 500)}`);
   }
+}
+
+function cleanupOnboardingFixtures(workspaceID, token, current = {}) {
+  const cleanup = {
+    ok: true,
+    archived_agents: [],
+    deleted_squads: [],
+    errors: [],
+  };
+  try {
+    const squads = asArray(get(workspaceRoute("/api/squads", workspaceID), token), "squads");
+    for (const squad of squads) {
+      if (!squad?.id || !String(squad.name || "").startsWith("mcp onboarding squad ")) continue;
+      try {
+        del(workspaceRoute(`/api/squads/${squad.id}`, workspaceID), token);
+        cleanup.deleted_squads.push({ id: squad.id, name: squad.name });
+      } catch (error) {
+        cleanup.errors.push({ type: "squad", id: squad.id, error: error.message });
+      }
+    }
+    const agents = asArray(get(workspaceRoute("/api/agents", workspaceID), token), "agents");
+    for (const agent of agents) {
+      if (!agent?.id || !String(agent.name || "").startsWith("mcp onboarding agent ")) continue;
+      try {
+        post(workspaceRoute(`/api/agents/${agent.id}/archive`, workspaceID), {}, token);
+        cleanup.archived_agents.push({ id: agent.id, name: agent.name });
+      } catch (error) {
+        cleanup.errors.push({ type: "agent", id: agent.id, error: error.message });
+      }
+    }
+  } catch (error) {
+    cleanup.errors.push({ type: "cleanup", error: error.message });
+  }
+  cleanup.ok = cleanup.errors.length === 0;
+  return cleanup;
+}
+
+function asArray(value, key) {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.[key])) return value[key];
+  return [];
 }
 
 function resolveTapdAccessTokenFromCodexMCP() {
