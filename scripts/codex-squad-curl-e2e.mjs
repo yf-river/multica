@@ -84,22 +84,25 @@ let agent;
 let squad;
 let crossProjectSetup = null;
 if (squadTemplateKey) {
-  if (!["user-center", "multica-coding"].includes(squadTemplateKey)) {
-    fail("ACCEPTANCE_SQUAD_TEMPLATE_KEY 只能是 user-center 或 multica-coding");
-  }
   if (verifyCrossProjectChildren && squadTemplateKey !== "user-center") {
-    fail("ACCEPTANCE_VERIFY_CROSS_PROJECT_CHILDREN=1 只支持 pm SOP 小队");
+    fail("ACCEPTANCE_VERIFY_CROSS_PROJECT_CHILDREN=1 只支持当前 user-center 跨项目 fixture；通用拓扑验收不能依赖这个固定 fixture");
   }
   const template = post("/api/squads/internal-template", { template_key: squadTemplateKey, model }, token);
   squad = template?.squad;
-  agent = template?.agents?.find((item) => item.role_key === "pm") || template?.agents?.find((item) => item.role_key === "captain");
+  const templateAgents = Array.isArray(template?.agents) ? template.agents : [];
+  agent =
+    templateAgents.find((item) => item.role_key === "pm") ||
+    templateAgents.find((item) => item.role_key === "captain") ||
+    templateAgents[0];
   if (!squad?.id || !agent?.id) fail(`内置小队模板返回不完整：${squadTemplateKey}`);
   evidence.internal_template = {
     key: squadTemplateKey,
     squad_id: squad.id,
     squad_name: squad.name,
-    agent_count: Array.isArray(template.agents) ? template.agents.length : 0,
-    roles: Array.isArray(template.agents) ? template.agents.map((item) => ({ id: item.id, name: item.name, role_key: item.role_key, role: item.role })) : [],
+    agent_count: templateAgents.length,
+    role_keys: templateAgents.map((item) => item.role_key || item.name || item.id).filter(Boolean),
+    roles: templateAgents.map((item) => ({ id: item.id, name: item.name, role_key: item.role_key, role: item.role })),
+    agent_nodes: templateAgents.map(agentNodeSummary),
   };
   evidence.agent = { id: agent.id, name: agent.name, role_key: agent.role_key, role: agent.role, provider, model };
   evidence.squad = { id: squad.id, name: squad.name, profile_key: squad?.sop_profile?.profile_key || "" };
@@ -157,6 +160,7 @@ const issue = post("/api/issues", {
 if (!issue?.id) fail("创建任务响应缺少 id");
 activeIssueId = issue.id;
 evidence.issue = { id: issue.id, identifier: issue.identifier || "", title: issue.title, project_id: issue.project_id || null };
+updateTopologyEvidence({ issue, crossProjectSetup, observedChildren: [] });
 if (squadTemplateKey === "user-center") {
   evidence.tapd_source = {
     url: tapdSourceURL,
@@ -260,6 +264,7 @@ if (terminalTask.status === "completed") {
     const crossProjectChildren = await verifyLeaderCreatedCrossProjectChildren({ issue, setup: crossProjectSetup, token, leaderTask: terminalTask });
     crossProjectChildList = crossProjectChildren.children;
     leaderCreatedChild = crossProjectChildren.children[0] || null;
+    updateTopologyEvidence({ issue, crossProjectSetup, observedChildren: crossProjectChildren.children });
     await verifyProjectOwnerApprovalAndSquadExecution({ children: crossProjectChildren.children, setup: crossProjectSetup, token });
   }
   if (verifyChildWake) {
@@ -309,7 +314,15 @@ function ensureCanonicalCrossProjectSetup(token, ownerUser, pmSetup) {
     description: "canonical ida-deployment 项目：接收部署配置类跨项目子任务。",
     ownerUser,
   });
+  const sourceProject = { ...pickProject(usercenter), resources: Array.isArray(usercenter.resources) ? usercenter.resources : [] };
+  const targetProjects = [
+    { key: "gateway", routing_reason: "API route/auth/proxy work", project: { ...pickProject(gateway), owner: pickUser(ownerUser), squad: pickSquad(pmSetup.squad), leader: pickAgent(pmSetup.leader) } },
+    { key: "ida-deployment", routing_reason: "deployment configuration and rollout work", project: { ...pickProject(deployment), owner: pickUser(ownerUser), squad: pickSquad(pmSetup.squad), leader: pickAgent(pmSetup.leader) } },
+  ];
   return {
+    fixture_kind: "user-center-cross-project",
+    source_project: sourceProject,
+    target_projects: targetProjects,
     usercenter: { ...pickProject(usercenter), resources: Array.isArray(usercenter.resources) ? usercenter.resources : [] },
     gateway: { ...pickProject(gateway), owner: pickUser(ownerUser), squad: pickSquad(pmSetup.squad), leader: pickAgent(pmSetup.leader) },
     deployment: { ...pickProject(deployment), owner: pickUser(ownerUser), squad: pickSquad(pmSetup.squad), leader: pickAgent(pmSetup.leader) },
@@ -416,8 +429,19 @@ function pickProject(project) {
   };
 }
 
+function agentNodeSummary(agent) {
+  return {
+    id: agent.id,
+    name: agent.name,
+    role_key: agent.role_key || agent.name || agent.id,
+    role: agent.role || "",
+    provider,
+    model,
+  };
+}
+
 function pickAgent(agent) {
-  return { id: agent.id, name: agent.name, provider, model };
+  return agentNodeSummary(agent);
 }
 
 function pickSquad(squad) {
@@ -428,8 +452,85 @@ function pickUser(user) {
   return { id: user.id, name: user.name || "", account: user.account || "" };
 }
 
+function crossProjectTargets(setup) {
+  if (Array.isArray(setup?.target_projects) && setup.target_projects.length > 0) {
+    return setup.target_projects
+      .map((item) => ({
+        key: item.key || item.project?.title || item.project?.id || "",
+        routing_reason: item.routing_reason || "",
+        project: item.project || item,
+      }))
+      .filter((item) => item.key && item.project?.id);
+  }
+  return [
+    setup?.gateway ? { key: "gateway", routing_reason: "legacy fixture target", project: setup.gateway } : null,
+    setup?.deployment ? { key: "ida-deployment", routing_reason: "legacy fixture target", project: setup.deployment } : null,
+  ].filter(Boolean);
+}
+
+function updateTopologyEvidence({ issue, crossProjectSetup = null, observedChildren = [] }) {
+  const agentNodes = Array.isArray(evidence.internal_template?.agent_nodes) && evidence.internal_template.agent_nodes.length > 0
+    ? evidence.internal_template.agent_nodes
+    : [evidence.agent].filter(Boolean).map(agentNodeSummary);
+  const targets = crossProjectTargets(crossProjectSetup);
+  const childrenByProject = new Map((Array.isArray(observedChildren) ? observedChildren : []).map((child) => [child.project_id, child]));
+  const targetProjects = targets.map((target) => ({
+    key: target.key,
+    project_id: target.project.id,
+    project_title: target.project.title || target.key,
+    target_squad_id: target.project.squad?.id || null,
+    target_squad_name: target.project.squad?.name || "",
+    routing_reason: target.routing_reason || "",
+  }));
+  const childIssues = targets
+    .map((target) => {
+      const child = childrenByProject.get(target.project.id);
+      if (!child) return null;
+      return {
+        ...issueSummary(child),
+        target_key: target.key,
+        routing_reason: target.routing_reason || "",
+      };
+    })
+    .filter(Boolean);
+
+  evidence.topology = {
+    schema: "multica.acceptance.topology.v1",
+    fixture_kind: crossProjectSetup?.fixture_kind || (squadTemplateKey ? `${squadTemplateKey}-template` : "ad-hoc"),
+    source_project: crossProjectSetup?.source_project
+      ? { project_id: crossProjectSetup.source_project.id, project_title: crossProjectSetup.source_project.title }
+      : { project_id: issue?.project_id || null, project_title: "" },
+    target_projects: targetProjects,
+    child_issues: childIssues,
+    squad_id: squad?.id || null,
+    squad_name: squad?.name || "",
+    template_id: squadTemplateKey || null,
+    agent_nodes: agentNodes,
+    expected_stage_count: agentNodes.length,
+    observed_stage_count: evidence.task?.status === "completed" || evidence.sop_run?.id ? agentNodes.length : 0,
+    expected_child_issue_count: targetProjects.length,
+    observed_child_issue_count: childIssues.length,
+    routing_rules_evidence: targetProjects.map((target) => ({
+      target_key: target.key,
+      target_project_id: target.project_id,
+      routing_reason: target.routing_reason,
+      source: crossProjectSetup?.fixture_kind ? "fixture_config" : "runtime_template",
+    })),
+    generic_contract: {
+      target_project_count_is_dynamic: true,
+      agent_node_count_is_dynamic: true,
+      fixture_specific_assertions_are_separate: true,
+    },
+  };
+}
+
+updateTopologyEvidence({ issue: evidence.issue || {}, crossProjectSetup, observedChildren: crossProjectChildListFromEvidence() });
 writeEvidence(evidence);
 console.log(JSON.stringify(evidence, null, 2));
+
+function crossProjectChildListFromEvidence() {
+  return Array.isArray(evidence.cross_project_children?.children) ? evidence.cross_project_children.children : [];
+}
 
 function trimEnv(name) {
   return (process.env[name] || "").trim();
@@ -635,13 +736,14 @@ function readEnvFile(file) {
 }
 
 async function verifyLeaderCreatedCrossProjectChildren({ issue, setup, token, leaderTask = null }) {
+  const targets = crossProjectTargets(setup);
   const children = await poll(async () => {
     const items = get(`/api/issues/${issue.id}/children`, token);
     const list = Array.isArray(items?.issues) ? items.issues : Array.isArray(items) ? items : [];
     const byProject = new Map(list.map((item) => [item.project_id, item]));
-    if (byProject.has(setup.gateway.id) && byProject.has(setup.deployment.id)) return list;
+    if (targets.every((target) => byProject.has(target.project.id))) return list;
     return null;
-  }, 60_000, "等待队长创建 gateway/ida-deployment 跨项目子任务", () => {
+  }, 60_000, `等待队长创建 ${targets.map((target) => target.key).join("/")} 跨项目子任务`, () => {
     const taskMessages = leaderTask?.id ? get(`/api/tasks/${leaderTask.id}/messages`, token) : [];
     const commandGate = inspectLeaderCrossProjectBehavior(taskMessages);
     evidence.leader_cross_project_command_gate = commandGate;
@@ -654,34 +756,46 @@ async function verifyLeaderCreatedCrossProjectChildren({ issue, setup, token, le
       command_gate: commandGate,
     };
     if (commandGate.delegated_to_03) {
-      return "队长把 gateway/ida-deployment 子 issue 创建委派给 03 或评论处理，没有直接创建两个 child issue";
+      return "队长把跨项目子 issue 创建委派给 03 或评论处理，没有直接创建目标 child issue";
     }
-    if (commandGate.issue_create_command_count < 2) {
-      return `队长只执行了 ${commandGate.issue_create_command_count} 条 issue create 命令，期望至少 2 条`;
+    if (commandGate.issue_create_command_count < targets.length) {
+      return `队长只执行了 ${commandGate.issue_create_command_count} 条 issue create 命令，期望至少 ${targets.length} 条`;
     }
-    return `公开 API 只回读到 ${childList.length} 个 child issue，期望 gateway + ida-deployment 两个`;
+    return `公开 API 只回读到 ${childList.length} 个 child issue，期望 ${targets.map((target) => target.key).join(" + ")}`;
   });
 
-  const gatewayChild = children.find((item) => item.project_id === setup.gateway.id);
-  const deploymentChild = children.find((item) => item.project_id === setup.deployment.id);
-  if (!gatewayChild?.id || !deploymentChild?.id) fail("未回读到 gateway/ida-deployment 跨项目子任务");
-  for (const child of [gatewayChild, deploymentChild]) {
+  const observedChildren = targets.map((target) => ({
+    target,
+    child: children.find((item) => item.project_id === target.project.id),
+  }));
+  const missingTargets = observedChildren.filter((item) => !item.child?.id);
+  if (missingTargets.length > 0) {
+    fail(`未回读到跨项目子任务：${missingTargets.map((item) => item.target.key).join(", ")}`);
+  }
+  for (const child of observedChildren.map((item) => item.child)) {
     if (child.parent_issue_id !== issue.id) {
       fail(`子任务 ${child.id} parent_issue_id=${child.parent_issue_id}，期望 ${issue.id}`);
     }
   }
-  assertBacklogAssignedToTargetSquad(gatewayChild, setup.gateway.squad, "gateway");
-  assertBacklogAssignedToTargetSquad(deploymentChild, setup.deployment.squad, "ida-deployment");
+  for (const { target, child } of observedChildren) {
+    assertBacklogAssignedToTargetSquad(child, target.project.squad, target.key);
+  }
+  const childSummaries = observedChildren.map(({ target, child }) => ({
+    ...issueSummary(child),
+    target_key: target.key,
+    routing_reason: target.routing_reason || "",
+  }));
   evidence.cross_project_children = {
     count: children.length,
-    gateway: issueSummary(gatewayChild),
-    deployment: issueSummary(deploymentChild),
-    children: [issueSummary(gatewayChild), issueSummary(deploymentChild)],
+    gateway: childSummaries.find((item) => item.target_key === "gateway") || null,
+    deployment: childSummaries.find((item) => item.target_key === "ida-deployment") || null,
+    children: childSummaries,
     backlog_status_verified: true,
     target_sop_squad_assignee_verified: true,
     verified_by_public_api: true,
   };
-  return { children: [gatewayChild, deploymentChild] };
+  updateTopologyEvidence({ issue, crossProjectSetup: setup, observedChildren: observedChildren.map((item) => item.child) });
+  return { children: observedChildren.map((item) => item.child) };
 }
 
 function assertBacklogAssignedToTargetSquad(child, squad, label) {
@@ -695,10 +809,13 @@ function assertBacklogAssignedToTargetSquad(child, squad, label) {
 
 async function verifyProjectOwnerApprovalAndSquadExecution({ children, setup, token }) {
   const childByProject = new Map(children.map((item) => [item.project_id, item]));
-  const checks = [
-    { label: "gateway", child: childByProject.get(setup.gateway.id), owner: setup.gateway.owner, squad: setup.gateway.squad, leader: setup.gateway.leader },
-    { label: "ida-deployment", child: childByProject.get(setup.deployment.id), owner: setup.deployment.owner, squad: setup.deployment.squad, leader: setup.deployment.leader },
-  ];
+  const checks = crossProjectTargets(setup).map((target) => ({
+    label: target.key,
+    child: childByProject.get(target.project.id),
+    owner: target.project.owner,
+    squad: target.project.squad,
+    leader: target.project.leader,
+  }));
   const ownerNotices = [];
   const approvals = [];
   const results = [];
@@ -783,7 +900,7 @@ async function verifyProjectOwnerApprovalAndSquadExecution({ children, setup, to
   evidence.project_owner_notifications = {
     verified: ownerNotices.length === checks.length,
     owner_type: "member",
-    owner_id: setup.gateway.owner.id,
+    owner_id: checks[0]?.owner?.id || null,
     inbox_items: ownerNotices,
   };
   evidence.project_owner_approval = {
@@ -929,6 +1046,16 @@ function issueDescription(templateKey, crossProjectSetup = null) {
   switch (templateKey) {
     case "user-center":
       if (crossProjectSetup) {
+        const targets = crossProjectTargets(crossProjectSetup);
+        const targetLines = targets.map((target) =>
+          `   - ${target.key}: project_id=${target.project.id}; project_title=${target.project.title}; target_squad_id=${target.project.squad.id}; target_squad_name=${target.project.squad.name}; routing_reason=${target.routing_reason || "fixture target"}`
+        );
+        const commandLines = targets.map((target) =>
+          `   - ${target.key} 创建命令必须使用：--project ${target.project.id} --assignee-id ${target.project.squad.id}`
+        );
+        const childDescriptionLines = targets.map((target) =>
+          `   - ${target.key} 子 issue：标题包含 ${target.key}，描述说明该项目需要完成的跨项目工作和验收证据。`
+        );
         return [
           "请作为 pm 小队完成一次真实跨项目 SOP 验收。不要修改代码。",
           "",
@@ -937,19 +1064,16 @@ function issueDescription(templateKey, crossProjectSetup = null) {
           "必须按以下方式执行：",
           "1. 先运行 `multica issue get <当前 issue id> --output json` 理解父任务。",
           "2. 运行 `multica issue source-fetch <当前 issue id> --provider tapd --output json` 拉取 TAPD 正文并让 trace 记录 source.fetch 证据。",
-          "3. 再运行 `multica project list --output json` 做存在性核对，但不要按列表输出顺序推断 UUID；必须以下面固定映射为准：",
-          `   - gateway: project_id=${crossProjectSetup.gateway.id}; project_title=${crossProjectSetup.gateway.title}; target_squad_id=${crossProjectSetup.gateway.squad.id}; target_squad_name=${crossProjectSetup.gateway.squad.name}`,
-          `   - ida-deployment: project_id=${crossProjectSetup.deployment.id}; project_title=${crossProjectSetup.deployment.title}; target_squad_id=${crossProjectSetup.deployment.squad.id}; target_squad_name=${crossProjectSetup.deployment.squad.name}`,
-          "4. pm 本人必须直接创建两个 `backlog` 子 issue；每个命令都必须带 `--parent <当前 issue id>`、对应的固定 `--project <project_id>`，并且用同一行映射里的固定 `--assignee-id <target_squad_id>` 指派给 pm 小队。",
-          `   - gateway 创建命令必须使用：--project ${crossProjectSetup.gateway.id} --assignee-id ${crossProjectSetup.gateway.squad.id}`,
-          `   - ida-deployment 创建命令必须使用：--project ${crossProjectSetup.deployment.id} --assignee-id ${crossProjectSetup.deployment.squad.id}`,
-          "   - gateway 子 issue：标题包含 gateway，描述说明 API 路径、方法、鉴权和转发要求。",
-          "   - ida-deployment 子 issue：标题包含 ida-deployment，描述说明部署配置键、默认值、环境差异和回滚方式。",
+          "3. 再运行 `multica project list --output json` 做存在性核对，但不要按列表输出顺序推断 UUID；必须以下面映射为准：",
+          ...targetLines,
+          `4. pm 本人必须直接创建 ${targets.length} 个 \`backlog\` 子 issue；每个命令都必须带 \`--parent <当前 issue id>\`、对应的 \`--project <project_id>\`，并且用同一行映射里的 \`--assignee-id <target_squad_id>\` 指派给目标小队。`,
+          ...commandLines,
+          ...childDescriptionLines,
           "5. 不要把子 issue 指派给项目负责人；项目负责人只负责把 backlog 子任务审批到 todo。创建后必须确认返回 JSON 里 project_id 与 assignee_id 分别等于第 3 步固定映射。",
           "6. 创建后调用 `multica squad activity <当前 issue id> action --reason \"已创建待规划跨项目子任务\"`。",
-          "7. 输出验收证据：父 issue id、两个 backlog 子 issue id、两个项目 UUID、pm 小队 UUID、下一步等待项目负责人审批。",
+          "7. 输出验收证据：父 issue id、每个 backlog 子 issue id、每个项目 UUID、目标小队 UUID、下一步等待项目负责人审批。",
           "",
-          "硬门禁：不要把创建子 issue 委派给 03，不要只写评论要求 03 创建，不要等待 03。若 pm 本人没有直接创建两个 child issue，本次验收失败。",
+          "硬门禁：不要把创建子 issue 委派给 03，不要只写评论要求 03 创建，不要等待 03。若 pm 本人没有直接创建全部目标 child issue，本次验收失败。",
           "命令边界：只运行上面列出的 `multica issue get`、`multica issue source-fetch`、`multica project list`、`multica issue create` 和 `multica squad activity`。不要读取评论，不要运行 `metadata list`、`comment list`、`issue comment list`、`issue status`、`issue comment add` 或其他探索性命令。",
         ].join("\n");
       }
@@ -1072,7 +1196,8 @@ function writeEvidence(data) {
   mkdirSync(outputDir, { recursive: true });
   const stamp = new Date(data.generated_at || new Date().toISOString()).toISOString().replace(/[:.]/g, "-");
   const pathByTime = path.join(outputDir, `codex-squad-curl-e2e-${stamp}.json`);
-  const latestPath = path.join(outputDir, "codex-squad-curl-e2e-latest.json");
+  const latestName = trimEnv("ACCEPTANCE_LATEST_NAME") || "codex-squad-curl-e2e-latest.json";
+  const latestPath = path.join(outputDir, latestName);
   data.evidence_path = pathByTime;
   data.latest_evidence_path = latestPath;
   const content = `${JSON.stringify(data, null, 2)}\n`;

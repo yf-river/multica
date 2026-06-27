@@ -5,7 +5,11 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+
+	"github.com/jackc/pgx/v5/pgtype"
+	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
 func TestProjectResourceLifecycle(t *testing.T) {
@@ -315,6 +319,85 @@ func TestProjectResourceGongfengLifecycle(t *testing.T) {
 	}
 	if ref.ProjectPath != "ChainWeaver/ida/user-center" || ref.ResourceKind != "branch" || ref.Ref != "release" {
 		t.Fatalf("updated gongfeng ref = %+v", ref)
+	}
+}
+
+func TestGongfengResourceCredentialBackedProbeKeepsSecretsRedacted(t *testing.T) {
+	var profileID pgtype.UUID
+	if err := profileID.Scan("11111111-1111-1111-1111-111111111111"); err != nil {
+		t.Fatalf("scan profile uuid: %v", err)
+	}
+	ref := applyGongfengCredentialProbeResult(
+		gongfengRepoRef{URL: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev"},
+		gongfengProbeResult{ConnectionStatus: "auth_required", TestStatus: "passed"},
+		gongfengCredentialProbeResult{ConnectionStatus: "credential_backed", TestStatus: "passed", HTTPStatus: "200", Target: "https://git.code.tencent.com/api/v4/projects/ChainWeaver%2Fida%2Fuser-center"},
+		db.ExternalCredentialProfile{
+			ID:        profileID,
+			Provider:  externalCredentialProviderGongfeng,
+			SecretRef: "env:GONGFENG_ACCESS_TOKEN",
+			Status:    "unverified",
+		},
+		true,
+	)
+	if ref.ConnectionStatus != "credential_backed" {
+		t.Fatalf("ConnectionStatus = %q, want credential_backed", ref.ConnectionStatus)
+	}
+	if ref.UnauthenticatedConnectionStatus != "auth_required" {
+		t.Fatalf("UnauthenticatedConnectionStatus = %q, want auth_required", ref.UnauthenticatedConnectionStatus)
+	}
+	if ref.CredentialStatus != "account_profile_configured" || ref.CredentialProfileStatus != "unverified" {
+		t.Fatalf("credential proof not recorded: %+v", ref)
+	}
+	if ref.CredentialProbeStatus != "credential_backed" || ref.CredentialProbeHTTPStatus != "200" {
+		t.Fatalf("credential probe proof not recorded: %+v", ref)
+	}
+	raw := string(mustMarshalRaw(ref))
+	if strings.Contains(raw, "GONGFENG_ACCESS_TOKEN") {
+		t.Fatalf("resource_ref leaked secret ref name: %s", raw)
+	}
+	if !strings.Contains(raw, "secret_ref") {
+		t.Fatalf("resource_ref did not retain a redacted credential binding mode: %s", raw)
+	}
+}
+
+func TestGongfengResourceProbeWithoutProfileStaysAuthRequired(t *testing.T) {
+	ref := applyGongfengCredentialProbeResult(
+		gongfengRepoRef{URL: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev"},
+		gongfengProbeResult{ConnectionStatus: "auth_required", TestStatus: "passed"},
+		gongfengCredentialProbeResult{},
+		db.ExternalCredentialProfile{},
+		false,
+	)
+	if ref.ConnectionStatus != "auth_required" {
+		t.Fatalf("ConnectionStatus = %q, want auth_required", ref.ConnectionStatus)
+	}
+	if ref.CredentialStatus != "not_configured" {
+		t.Fatalf("CredentialStatus = %q, want not_configured", ref.CredentialStatus)
+	}
+}
+
+func TestGongfengResourceProfileWithoutSuccessfulCredentialProbeStaysAuthRequired(t *testing.T) {
+	var profileID pgtype.UUID
+	if err := profileID.Scan("11111111-1111-1111-1111-111111111111"); err != nil {
+		t.Fatalf("scan profile uuid: %v", err)
+	}
+	ref := applyGongfengCredentialProbeResult(
+		gongfengRepoRef{URL: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev"},
+		gongfengProbeResult{ConnectionStatus: "auth_required", TestStatus: "passed"},
+		gongfengCredentialProbeResult{ConnectionStatus: "credential_token_unavailable", TestStatus: "failed"},
+		db.ExternalCredentialProfile{
+			ID:        profileID,
+			Provider:  externalCredentialProviderGongfeng,
+			SecretRef: "env:GONGFENG_ACCESS_TOKEN",
+			Status:    "unverified",
+		},
+		true,
+	)
+	if ref.ConnectionStatus != "auth_required" {
+		t.Fatalf("ConnectionStatus = %q, want auth_required", ref.ConnectionStatus)
+	}
+	if ref.CredentialStatus != "account_profile_configured" || ref.CredentialProbeStatus != "credential_token_unavailable" {
+		t.Fatalf("credential boundary not recorded: %+v", ref)
 	}
 }
 

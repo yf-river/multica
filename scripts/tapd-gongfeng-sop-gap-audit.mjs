@@ -15,6 +15,7 @@ const now = new Date().toISOString();
 
 const artifact = readJSON(artifactPath);
 const e2e = artifact.clean_acceptance?.e2e || artifact.e2e || {};
+const topologyGeneralization = artifact.topology_generalization?.latest_json || artifact.topology_generalization || {};
 const topLevelOpenItems = acceptanceOpenItems(artifact);
 const goalERequirements = Array.isArray(artifact.goal_e_requirement_matrix) && artifact.goal_e_requirement_matrix.length > 0
   ? artifact.goal_e_requirement_matrix
@@ -192,6 +193,19 @@ const requirements = [
       source_matrix_open_items: openBeforeGuard.map((item) => ({ id: item.id, status: item.status })),
     });
   }),
+  check("P0-14", "generic cross-project and Agent topology gates are dynamic and fixture-specific assertions are separated", () => {
+    if (topologyGeneralization.ok === true) return fulfilled(topologyGeneralization);
+    const currentTopology = artifact.topology || e2e.topology || null;
+    if (currentTopology?.generic_contract?.fixture_specific_assertions_are_separate === true) {
+      return partial(topologyGeneralization.blocking_reason || "Current E2E topology exists, but variable-project and variable-agent fixture evidence is not yet passing.", {
+        current_topology: currentTopology,
+        topology_generalization: topologyGeneralization,
+      });
+    }
+    return missing("No topology generalization evidence proving dynamic target_projects, variable Agent nodes, and fixture-specific separation.", {
+      topology_generalization: topologyGeneralization,
+    });
+  }),
 ];
 
 const productionMatrix = Array.isArray(artifact.production_readiness_matrix) ? artifact.production_readiness_matrix : [];
@@ -210,6 +224,7 @@ const productionGaps = [
   prodGap("security", "Artifacts and ledgers contain no secrets or Authorization/private tokens", productionStatus("security", true)),
   prodGap("cost", "Expensive E2E/MCP/trace collection has timing/cost guardrails", productionStatus("cost", false)),
   prodGap("ui_api_usability", "A team member can create TAPD/Gongfeng tasks and inspect source/children/inbox/trace through UI/API", productionStatus("ui_api_usability", false)),
+  prodGap("generic_topology", "Cross-project and Agent topology are generic rather than fixed to the current fixture", productionStatus("generic_topology", topologyGeneralization.ok === true)),
   prodGap("cross_service_curl", "Real cross-service API change passes sandbox curl", productionStatus("cross_service_curl", false)),
 ];
 

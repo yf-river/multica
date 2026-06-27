@@ -30,10 +30,11 @@ const stageEvidence = resolveStageEvidence(databaseStageEvidence, realPMRunEvide
 const crossServiceEvidence = buildCrossServiceEvidence();
 const handoffEvidence = buildHandoffEvidence();
 const uiApiEvidence = buildUIAPIEvidence();
+const topologyGeneralizationEvidence = buildTopologyGeneralizationEvidence();
 
 const originalRequirements = buildOriginalRequirementMatrix({ e2e, stageEvidence, crossServiceEvidence });
-const productionReadiness = buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEvidence, handoffEvidence, uiApiEvidence, prodReleaseEvidence });
-const goalERequirements = buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, canonicalDemoEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, finalEvidencePackage, prodReleaseEvidence });
+const productionReadiness = buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEvidence, handoffEvidence, uiApiEvidence, prodReleaseEvidence, topologyGeneralizationEvidence });
+const goalERequirements = buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, canonicalDemoEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, finalEvidencePackage, prodReleaseEvidence, topologyGeneralizationEvidence });
 const blockingOpen = [
   ...originalRequirements.filter((item) => ["missing", "partial", "false_claimed", "blocked"].includes(item.status)),
   ...goalERequirements.filter((item) => ["missing", "partial", "false_claimed", "blocked"].includes(item.status)),
@@ -53,8 +54,11 @@ const artifact = {
     real_pm_0105_run: realPMRunEvidence.latest_json_path || null,
     deployment_log_window: e2e.deployment_log_window || null,
     prod_release: prodReleaseEvidence.latest_json_path || null,
+    topology_generalization: topologyGeneralizationEvidence.latest_json_path || null,
   },
   e2e,
+  topology: e2e.topology || null,
+  topology_generalization: topologyGeneralizationEvidence,
   credential_profiles: e2e.credential_profiles || null,
   tapd_source: e2e.tapd_source || null,
   gongfeng_mcp: {
@@ -213,9 +217,10 @@ function buildOriginalRequirementMatrix({ e2e, stageEvidence, crossServiceEviden
   ];
 }
 
-function buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEvidence, handoffEvidence, uiApiEvidence, prodReleaseEvidence }) {
+function buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEvidence, handoffEvidence, uiApiEvidence, prodReleaseEvidence, topologyGeneralizationEvidence }) {
   const allStagesCompleted = (stageEvidence.stages || []).filter((item) => item.key).every((item) => item.status === "completed");
   const releaseChecks = prodReleaseChecks(prodReleaseEvidence.latest_json);
+  const topologyAudit = topologyGeneralizationEvidence.latest_json || {};
   return [
     prodItem("prod_release", "Prod release audit is passing for the current commit", prodReleaseEvidence.latest_json?.ok === true, "No passing full prod release audit artifact."),
     prodItem("credentials", "TAPD/Gongfeng account profiles, redaction, inheritance", true),
@@ -231,12 +236,13 @@ function buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEviden
     prodItem("security", "Artifacts and ledgers do not contain raw credentials", true),
     prodItem("cost", "Expensive E2E/MCP/trace collection has guardrails", true),
     prodItem("ui_api_usability", "Team member can create TAPD/Gongfeng tasks and inspect source/children/inbox/trace through UI/API", uiApiEvidence.ok === true, "No authenticated UI/API evidence for issue, task-runs, trace, and inbox inspection."),
+    prodItem("generic_topology", "Cross-project and Agent topology gates are dynamic rather than fixed to current fixture", topologyAudit.ok === true, topologyAudit.blocking_reason || "No passing generic topology audit."),
     prodItem("stage_success", "All user-center PM/01-05 stages complete successfully", allStagesCompleted, "One or more PM/01-05 stages failed in latest evidence."),
     prodItem("cross_service_curl", "Real cross-service API change passes sandbox curl", crossServiceEvidence.cross_service_curl.ok === true, "Minimal code/config and handler curl evidence exist, but no full usercenter/gateway/ida-deployment runtime curl evidence."),
   ];
 }
 
-function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, canonicalDemoEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, finalEvidencePackage, prodReleaseEvidence }) {
+function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, canonicalDemoEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, finalEvidencePackage, prodReleaseEvidence, topologyGeneralizationEvidence }) {
   const stageKeys = new Set((stageEvidence.stages || []).map((stage) => stage.key));
   const requiredStageKeys = ["pm", "01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"];
   const allStagesPresent = requiredStageKeys.every((key) => stageKeys.has(key));
@@ -426,6 +432,7 @@ function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence,
     finalPackageEvidence.screenshots === true &&
     finalPackageEvidence.logs === true &&
     finalPackageEvidence.gap_audit === true;
+  const topologyAudit = topologyGeneralizationEvidence.latest_json || {};
   const canonicalDemoPassed =
     canonicalDemoEvidence.latest_json?.ok === true &&
     canonicalDemoEvidence.latest_json?.final_real_pm_0105_required === true &&
@@ -478,6 +485,11 @@ function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence,
         stage_count: (stageEvidence.stages || []).length,
       },
       allStagesPresent ? "partial" : "missing"),
+    matrixItem("E-03G", "Generic topology supports dynamic target_projects and variable Agent nodes, with current fixture separated from generic gates",
+      topologyAudit.ok === true,
+      topologyAudit.blocking_reason || "No passing topology generalization audit proving variable-project and variable-agent fixtures.",
+      topologyGeneralizationEvidence,
+      topologyGeneralizationEvidence.latest_json_path ? "partial" : "missing"),
     matrixItem("E-04", "Issue timeline and run detail show timeline, node table, token/duration/turn metrics, evidence anchors, and issue summary/deep link",
       issueTimelinePassed,
       hasIssueTimelineSlice
@@ -578,6 +590,26 @@ function buildProdReleaseEvidence() {
     proof_boundary: latestJSON?.ok === true
       ? "Full prod release evidence passed for the current release."
       : "missing or failed full prod release evidence",
+  };
+}
+
+function buildTopologyGeneralizationEvidence() {
+  const latestPath = fileIfExists(path.join(artifactRoot, "goal-test-topology-generalization-audit-latest.json"));
+  let latestJSON = null;
+  if (latestPath) {
+    try {
+      latestJSON = readJSON(latestPath);
+    } catch {
+      latestJSON = null;
+    }
+  }
+  return {
+    latest_json_path: latestPath,
+    latest_json: latestJSON,
+    ok: latestJSON?.ok === true,
+    proof_boundary: latestJSON?.ok === true
+      ? "Topology generalization audit passed."
+      : "Generic topology remains a blocker until dynamic topology, variable-project fixture, and variable-agent fixture evidence pass.",
   };
 }
 

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
@@ -90,22 +91,31 @@ type githubRepoRef struct {
 }
 
 type gongfengRepoRef struct {
-	Provider         string `json:"provider"`
-	URL              string `json:"url"`
-	ProjectPath      string `json:"project_path"`
-	ResourceKind     string `json:"resource_kind"`
-	Ref              string `json:"ref,omitempty"`
-	HeadCommit       string `json:"head_commit,omitempty"`
-	Branch           string `json:"branch,omitempty"`
-	CommitSHA        string `json:"commit_sha,omitempty"`
-	ConnectionStatus string `json:"connection_status,omitempty"`
-	SyncStatus       string `json:"sync_status,omitempty"`
-	TestStatus       string `json:"test_status,omitempty"`
-	LastTestedAt     string `json:"last_tested_at,omitempty"`
-	LastSyncedAt     string `json:"last_synced_at,omitempty"`
-	Disabled         bool   `json:"disabled,omitempty"`
-	DisabledAt       string `json:"disabled_at,omitempty"`
-	Title            string `json:"title,omitempty"`
+	Provider                        string `json:"provider"`
+	URL                             string `json:"url"`
+	ProjectPath                     string `json:"project_path"`
+	ResourceKind                    string `json:"resource_kind"`
+	Ref                             string `json:"ref,omitempty"`
+	HeadCommit                      string `json:"head_commit,omitempty"`
+	Branch                          string `json:"branch,omitempty"`
+	CommitSHA                       string `json:"commit_sha,omitempty"`
+	ConnectionStatus                string `json:"connection_status,omitempty"`
+	SyncStatus                      string `json:"sync_status,omitempty"`
+	TestStatus                      string `json:"test_status,omitempty"`
+	LastTestedAt                    string `json:"last_tested_at,omitempty"`
+	LastSyncedAt                    string `json:"last_synced_at,omitempty"`
+	CredentialStatus                string `json:"credential_status,omitempty"`
+	CredentialProfileID             string `json:"credential_profile_id,omitempty"`
+	CredentialProfileStatus         string `json:"credential_profile_status,omitempty"`
+	CredentialSecretHint            string `json:"credential_secret_hint,omitempty"`
+	CredentialLastVerifiedAt        string `json:"credential_last_verified_at,omitempty"`
+	CredentialProbeStatus           string `json:"credential_probe_status,omitempty"`
+	CredentialProbeHTTPStatus       string `json:"credential_probe_http_status,omitempty"`
+	CredentialProbeTarget           string `json:"credential_probe_target,omitempty"`
+	UnauthenticatedConnectionStatus string `json:"unauthenticated_connection_status,omitempty"`
+	Disabled                        bool   `json:"disabled,omitempty"`
+	DisabledAt                      string `json:"disabled_at,omitempty"`
+	Title                           string `json:"title,omitempty"`
 }
 
 func validateGithubRepoRef(ref json.RawMessage) (json.RawMessage, error) {
@@ -168,6 +178,15 @@ func validateGongfengRepoRef(ref json.RawMessage) (json.RawMessage, error) {
 	payload.TestStatus = strings.TrimSpace(payload.TestStatus)
 	payload.LastTestedAt = strings.TrimSpace(payload.LastTestedAt)
 	payload.LastSyncedAt = strings.TrimSpace(payload.LastSyncedAt)
+	payload.CredentialStatus = strings.TrimSpace(payload.CredentialStatus)
+	payload.CredentialProfileID = strings.TrimSpace(payload.CredentialProfileID)
+	payload.CredentialProfileStatus = strings.TrimSpace(payload.CredentialProfileStatus)
+	payload.CredentialSecretHint = strings.TrimSpace(payload.CredentialSecretHint)
+	payload.CredentialLastVerifiedAt = strings.TrimSpace(payload.CredentialLastVerifiedAt)
+	payload.CredentialProbeStatus = strings.TrimSpace(payload.CredentialProbeStatus)
+	payload.CredentialProbeHTTPStatus = strings.TrimSpace(payload.CredentialProbeHTTPStatus)
+	payload.CredentialProbeTarget = strings.TrimSpace(payload.CredentialProbeTarget)
+	payload.UnauthenticatedConnectionStatus = strings.TrimSpace(payload.UnauthenticatedConnectionStatus)
 	payload.DisabledAt = strings.TrimSpace(payload.DisabledAt)
 	payload.Title = strings.TrimSpace(payload.Title)
 	out, err := json.Marshal(payload)
@@ -658,8 +677,16 @@ func (h *Handler) updateGongfengResourceState(w http.ResponseWriter, r *http.Req
 	switch action {
 	case "test":
 		result := probeGongfengURL(r.Context(), ref.URL)
-		ref.ConnectionStatus = result.ConnectionStatus
-		ref.TestStatus = result.TestStatus
+		profile, hasProfile, err := h.loadUsableGongfengCredentialProfile(r.Context(), userID)
+		if err != nil {
+			writeError(w, http.StatusInternalServerError, "failed to load gongfeng credential profile")
+			return
+		}
+		credentialProbe := gongfengCredentialProbeResult{ConnectionStatus: "not_configured", TestStatus: "failed"}
+		if hasProfile {
+			credentialProbe = probeGongfengWithCredential(r.Context(), ref, h.resolveExternalCredentialToken(profile))
+		}
+		ref = applyGongfengCredentialProbeResult(ref, result, credentialProbe, profile, hasProfile)
 		ref.LastTestedAt = now
 	case "sync":
 		if ref.Disabled {
@@ -716,9 +743,83 @@ func (h *Handler) updateGongfengResourceState(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, resp)
 }
 
+func (h *Handler) loadUsableGongfengCredentialProfile(ctx context.Context, userID string) (db.ExternalCredentialProfile, bool, error) {
+	userUUID, ok := h.parseUserUUIDOrZero(userID)
+	if !ok {
+		return db.ExternalCredentialProfile{}, false, nil
+	}
+	profile, err := h.Queries.GetDefaultExternalCredentialProfileForUser(ctx, db.GetDefaultExternalCredentialProfileForUserParams{
+		UserID:   userUUID,
+		Provider: externalCredentialProviderGongfeng,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return db.ExternalCredentialProfile{}, false, nil
+	}
+	if err != nil {
+		return db.ExternalCredentialProfile{}, false, err
+	}
+	if !isUsableGongfengCredentialProfile(profile) {
+		return db.ExternalCredentialProfile{}, false, nil
+	}
+	return profile, true, nil
+}
+
+func isUsableGongfengCredentialProfile(profile db.ExternalCredentialProfile) bool {
+	if profile.Provider != externalCredentialProviderGongfeng {
+		return false
+	}
+	if profile.Status == "disabled" || profile.Status == "failed" {
+		return false
+	}
+	return profile.SecretRef != "" || len(profile.EncryptedSecret) > 0
+}
+
+func applyGongfengCredentialProbeResult(ref gongfengRepoRef, result gongfengProbeResult, credentialProbe gongfengCredentialProbeResult, profile db.ExternalCredentialProfile, hasProfile bool) gongfengRepoRef {
+	ref.ConnectionStatus = result.ConnectionStatus
+	ref.TestStatus = result.TestStatus
+	ref.CredentialStatus = "not_configured"
+	ref.CredentialProfileID = ""
+	ref.CredentialProfileStatus = ""
+	ref.CredentialSecretHint = ""
+	ref.CredentialLastVerifiedAt = ""
+	ref.CredentialProbeStatus = ""
+	ref.CredentialProbeHTTPStatus = ""
+	ref.CredentialProbeTarget = ""
+	ref.UnauthenticatedConnectionStatus = ""
+	if !hasProfile {
+		return ref
+	}
+
+	ref.CredentialStatus = "account_profile_configured"
+	ref.CredentialProfileID = uuidToString(profile.ID)
+	ref.CredentialProfileStatus = profile.Status
+	if profile.SecretRef != "" {
+		ref.CredentialSecretHint = "secret_ref"
+	} else {
+		ref.CredentialSecretHint = profile.SecretHint
+	}
+	ref.CredentialLastVerifiedAt = timestampToString(profile.LastVerifiedAt)
+	ref.CredentialProbeStatus = credentialProbe.ConnectionStatus
+	ref.CredentialProbeHTTPStatus = credentialProbe.HTTPStatus
+	ref.CredentialProbeTarget = credentialProbe.Target
+	if result.ConnectionStatus == "auth_required" && credentialProbe.ConnectionStatus == "credential_backed" && credentialProbe.TestStatus == "passed" {
+		ref.UnauthenticatedConnectionStatus = result.ConnectionStatus
+		ref.ConnectionStatus = "credential_backed"
+		ref.TestStatus = "passed"
+	}
+	return ref
+}
+
 type gongfengProbeResult struct {
 	ConnectionStatus string
 	TestStatus       string
+}
+
+type gongfengCredentialProbeResult struct {
+	ConnectionStatus string
+	TestStatus       string
+	HTTPStatus       string
+	Target           string
 }
 
 func probeGongfengURL(ctx context.Context, rawURL string) gongfengProbeResult {
@@ -746,6 +847,61 @@ func probeGongfengURL(ctx context.Context, rawURL string) gongfengProbeResult {
 		return gongfengProbeResult{ConnectionStatus: "reachable", TestStatus: "passed"}
 	}
 	return gongfengProbeResult{ConnectionStatus: fmt.Sprintf("http_%d", resp.StatusCode), TestStatus: "failed"}
+}
+
+func probeGongfengWithCredential(ctx context.Context, ref gongfengRepoRef, token string) gongfengCredentialProbeResult {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return gongfengCredentialProbeResult{ConnectionStatus: "credential_token_unavailable", TestStatus: "failed"}
+	}
+	target := gongfengAPIProjectURL(ref.ProjectPath)
+	if target == "" {
+		target = ref.URL
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return gongfengCredentialProbeResult{ConnectionStatus: "invalid_url", TestStatus: "failed", Target: target}
+	}
+	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Private-Token", token)
+	req.Header.Set("Authorization", "Bearer "+token)
+	client := &http.Client{
+		Timeout: 8 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return gongfengCredentialProbeResult{ConnectionStatus: "credential_probe_unreachable", TestStatus: "failed", Target: target}
+	}
+	defer resp.Body.Close()
+	status := fmt.Sprintf("%d", resp.StatusCode)
+	location := resp.Header.Get("Location")
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return gongfengCredentialProbeResult{ConnectionStatus: "credential_backed", TestStatus: "passed", HTTPStatus: status, Target: target}
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return gongfengCredentialProbeResult{ConnectionStatus: "credential_unauthorized", TestStatus: "failed", HTTPStatus: status, Target: target}
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return gongfengCredentialProbeResult{ConnectionStatus: "credential_forbidden", TestStatus: "failed", HTTPStatus: status, Target: target}
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return gongfengCredentialProbeResult{ConnectionStatus: "credential_not_found_or_no_access", TestStatus: "failed", HTTPStatus: status, Target: target}
+	}
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 && strings.Contains(location, "/users/sign_in") {
+		return gongfengCredentialProbeResult{ConnectionStatus: "credential_redirected_to_login", TestStatus: "failed", HTTPStatus: status, Target: target}
+	}
+	return gongfengCredentialProbeResult{ConnectionStatus: fmt.Sprintf("credential_http_%d", resp.StatusCode), TestStatus: "failed", HTTPStatus: status, Target: target}
+}
+
+func gongfengAPIProjectURL(projectPath string) string {
+	projectPath = strings.Trim(strings.TrimSpace(projectPath), "/")
+	if projectPath == "" {
+		return ""
+	}
+	return "https://git.code.tencent.com/api/v4/projects/" + url.PathEscape(projectPath)
 }
 
 func mustMarshalRaw(v any) json.RawMessage {

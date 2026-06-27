@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-training-browser-e2e goal-test-training-curl-e2e goal-test-seed-business-training goal-test-prod-seed-business-training goal-test-prod-training-curl-e2e goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e goal-test-prod-user-center-squad-curl-e2e goal-test-quick-entry-cross-service goal-test-squad-curl-e2e goal-test-tapd-gongfeng-sop-gap-audit goal-test-prod-release-audit goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-final-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-dataset-stream-audit goal-test-prune-dev-data goal-test-playground-difference-audit goal-test-session-retro goal-test-token-audit
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-training-browser-e2e goal-test-training-curl-e2e goal-test-seed-business-training goal-test-prod-seed-business-training goal-test-prod-training-curl-e2e goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e goal-test-prod-user-center-squad-curl-e2e goal-test-quick-entry-cross-service goal-test-squad-curl-e2e goal-test-variable-project-topology-fixture goal-test-variable-agent-squad-curl-e2e goal-test-variable-agent-topology-fixture goal-test-topology-generalization-audit goal-test-tapd-gongfeng-sop-gap-audit goal-test-prod-release-audit goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-final-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-dataset-stream-audit goal-test-prune-dev-data goal-test-playground-difference-audit goal-test-session-retro goal-test-token-audit
 
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
@@ -328,7 +328,38 @@ goal-test-squad-curl-e2e: goal-test-coding-squad-curl-e2e goal-test-user-center-
 goal-test-quick-entry-cross-service: ## Verify user-center/gateway/ida-deployment quick-entry cross-service sandbox
 	node scripts/verify-quick-entry-cross-service.mjs
 
+goal-test-variable-project-topology-fixture: goal-test-verify-env ## Create an int public-API fixture with one source project and three target projects
+	ACCEPTANCE_API_URL="$(GOAL_TEST_INT_API_URL)" \
+	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
+	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
+	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
+	MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER="$(GOAL_TEST_REAL_AGENT_PROVIDER)" \
+	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
+	node scripts/goal-test-variable-project-topology-fixture.mjs
+
+goal-test-variable-agent-squad-curl-e2e: goal-test-smoke ## Run a fresh ad-hoc single-Agent curl/API E2E for variable Agent topology
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	ACCEPTANCE_API_URL="$(GOAL_TEST_INT_API_URL)" \
+	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
+	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
+	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
+	MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER="$(GOAL_TEST_REAL_AGENT_PROVIDER)" \
+	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
+	MULTICA_PROMPT_EVALUATION_AGENT_FALLBACK_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
+	ACCEPTANCE_TASK_TIMEOUT_MS=300000 \
+	ACCEPTANCE_MODEL_ATTEMPT_TIMEOUT_MS=720000 \
+	ACCEPTANCE_LATEST_NAME=codex-squad-curl-e2e-variable-agent-latest.json \
+	TMPDIR="$(GOAL_TEST_TMPDIR)" \
+	node scripts/run-model-fallback-e2e.mjs scripts/codex-squad-curl-e2e.mjs
+
+goal-test-variable-agent-topology-fixture: goal-test-variable-agent-squad-curl-e2e ## Derive a variable-agent topology artifact from a fresh completed ad-hoc E2E
+	node scripts/goal-test-variable-agent-topology-from-e2e.mjs
+
+goal-test-topology-generalization-audit: ## Audit generic cross-project and variable Agent topology evidence
+	node scripts/goal-test-topology-generalization-audit.mjs
+
 goal-test-tapd-gongfeng-sop-gap-audit: ## Audit TAPD/Gongfeng/SOP final artifact against original P0 matrix
+	-node scripts/goal-test-topology-generalization-audit.mjs
 	node scripts/generate-tapd-gongfeng-sop-final-acceptance.mjs
 	node scripts/tapd-gongfeng-sop-gap-audit.mjs
 
@@ -394,8 +425,11 @@ goal-test-ui-acceptance: goal-test-smoke ## Run fixed browser/UI/performance/log
 goal-test-final-acceptance: goal-test-ui-acceptance ## Run full goal-test acceptance, including real curl/API + daemon squad SOP E2E
 	$(MAKE) goal-test-training-browser-e2e
 	$(MAKE) goal-test-training-curl-e2e
+	$(MAKE) goal-test-variable-project-topology-fixture
+	$(MAKE) goal-test-variable-agent-topology-fixture
 	$(MAKE) goal-test-squad-curl-e2e
 	$(MAKE) goal-test-quick-entry-cross-service
+	-$(MAKE) goal-test-topology-generalization-audit
 	node scripts/generate-tapd-gongfeng-sop-final-acceptance.mjs
 	node scripts/tapd-gongfeng-sop-gap-audit.mjs
 	node scripts/goal-test-environments.mjs verify-logs int
