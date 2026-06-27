@@ -437,8 +437,10 @@ function isAllowedLogNoise(service, line) {
   }
   return line.includes("[codex:stderr]")
     && line.includes("ERROR codex_core::tools::router")
-    && line.includes("exec_command failed")
-    && line.includes("Rejected(");
+    && (
+      (line.includes("exec_command failed") && line.includes("Rejected("))
+      || line.includes("apply_patch verification failed")
+    );
 }
 
 function readEnvFile(file) {

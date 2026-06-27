@@ -21,7 +21,7 @@ if (!["audit", "rollback-drill"].includes(command)) {
 fs.mkdirSync(artifactRoot, { recursive: true });
 
 if (command === "rollback-drill") {
-  writeRollbackDrillPlaceholder();
+  await runRollbackDrill();
 } else {
   const evidence = await buildReleaseEvidence();
   writeArtifact("goal-test-prod-release", evidence);
@@ -154,6 +154,84 @@ async function buildReleaseEvidence() {
   return artifact;
 }
 
+async function runRollbackDrill() {
+  if (process.env.GOAL_TEST_ROLLBACK_DRILL_EXECUTE !== "1") {
+    writeRollbackDrillPlaceholder();
+    return;
+  }
+  const releaseCommit = git(["rev-parse", "--short=12", "HEAD"]);
+  const releaseCommitFull = git(["rev-parse", "HEAD"]);
+  const originalBranch = git(["branch", "--show-current"]);
+  const previousCommit = process.env.GOAL_TEST_ROLLBACK_PREVIOUS_COMMIT || git(["rev-parse", "--short=12", "HEAD~1"]);
+  const previousCommitFull = git(["rev-parse", previousCommit]);
+  const steps = [];
+  let ok = false;
+  let rollbackVerified = false;
+  let restoreVerified = false;
+  let failure = null;
+
+  const status = git(["status", "--porcelain"]);
+  if (status) {
+    fail(`rollback drill requires a clean worktree; current status:\n${status}`);
+  }
+
+  try {
+    runStep(steps, "baseline_prod_verify", "node", ["scripts/goal-test-environments.mjs", "verify", "prod"]);
+    runStep(steps, "baseline_prod_log_verify", "node", ["scripts/goal-test-environments.mjs", "verify-logs", "prod"]);
+    runStep(steps, "checkout_previous_commit", "git", ["switch", "--detach", previousCommitFull]);
+    runStep(steps, "rollback_deploy_prod", "make", ["goal-test-deploy-prod"], { GOWORK: "off" });
+    runStep(steps, "rollback_prod_verify", "node", ["scripts/goal-test-environments.mjs", "verify", "prod"]);
+    runStep(steps, "rollback_prod_log_verify", "node", ["scripts/goal-test-environments.mjs", "verify-logs", "prod"]);
+    rollbackVerified = true;
+  } catch (error) {
+    failure = {
+      stage: "rollback",
+      message: error.message,
+    };
+  } finally {
+    try {
+      if (originalBranch) {
+        runStep(steps, "checkout_release_branch", "git", ["switch", originalBranch]);
+      } else {
+        runStep(steps, "checkout_release_commit", "git", ["switch", "--detach", releaseCommitFull]);
+      }
+      const restoredCommit = git(["rev-parse", "HEAD"]);
+      if (restoredCommit !== releaseCommitFull) {
+        throw new Error(`release restore checkout mismatch: got ${restoredCommit}, want ${releaseCommitFull}`);
+      }
+      runStep(steps, "restore_deploy_all", "make", ["goal-test-deploy-all"], { GOWORK: "off" });
+      runStep(steps, "restore_verify_all", "node", ["scripts/goal-test-environments.mjs", "verify", "all"]);
+      runStep(steps, "restore_prod_log_verify", "node", ["scripts/goal-test-environments.mjs", "verify-logs", "prod"]);
+      restoreVerified = true;
+    } catch (error) {
+      failure = failure || { stage: "restore", message: error.message };
+    }
+  }
+
+  ok = rollbackVerified && restoreVerified && !failure;
+  const prodDeployment = readOptionalJSON(path.join(deploymentDir, "goal-test-prod.json"));
+  const intDeployment = readOptionalJSON(path.join(deploymentDir, "goal-test-int.json"));
+  const evidence = {
+    schema: "multica.goal_test.prod_rollback_drill.v1",
+    generated_at: generatedAt,
+    ok,
+    release_commit: releaseCommit,
+    release_commit_full: releaseCommitFull,
+    previous_commit: previousCommit,
+    previous_commit_full: previousCommitFull,
+    original_branch: originalBranch || null,
+    prod_deployment: pickDeployment(prodDeployment),
+    int_deployment: pickDeployment(intDeployment),
+    rollback_verified: rollbackVerified,
+    restore_verified: restoreVerified,
+    failure,
+    steps,
+  };
+  writeArtifact("goal-test-prod-rollback-drill", evidence);
+  console.log(JSON.stringify({ ok: evidence.ok, artifact: evidence.evidence_path, latest: evidence.latest_evidence_path, failure: evidence.failure }, null, 2));
+  if (!evidence.ok) process.exitCode = 1;
+}
+
 function writeRollbackDrillPlaceholder() {
   const currentCommit = git(["rev-parse", "--short=12", "HEAD"]);
   const prodDeployment = readOptionalJSON(path.join(deploymentDir, "goal-test-prod.json"));
@@ -179,6 +257,39 @@ function writeRollbackDrillPlaceholder() {
   writeArtifact("goal-test-prod-rollback-drill", evidence);
   console.log(JSON.stringify({ ok: evidence.ok, artifact: evidence.evidence_path, latest: evidence.latest_evidence_path }, null, 2));
   if (!evidence.ok) process.exitCode = 1;
+}
+
+function runStep(steps, name, commandName, args, extraEnv = {}) {
+  const startedAt = new Date().toISOString();
+  const startedMs = Date.now();
+  const result = spawnSync(commandName, args, {
+    cwd: repoRoot,
+    env: { ...process.env, ...extraEnv },
+    encoding: "utf8",
+    maxBuffer: 20 * 1024 * 1024,
+  });
+  const endedAt = new Date().toISOString();
+  const step = {
+    name,
+    command: [commandName, ...args].join(" "),
+    started_at: startedAt,
+    ended_at: endedAt,
+    duration_ms: Date.now() - startedMs,
+    exit_code: result.status,
+    signal: result.signal || null,
+    stdout_tail: tail(result.stdout || "", 4000),
+    stderr_tail: tail(result.stderr || "", 4000),
+  };
+  steps.push(step);
+  if (result.status !== 0) {
+    throw new Error(`${step.command} failed with exit ${result.status}: ${step.stderr_tail || step.stdout_tail}`);
+  }
+  return step;
+}
+
+function tail(value, maxChars) {
+  const text = String(value || "");
+  return text.length <= maxChars ? text : text.slice(-maxChars);
 }
 
 async function inspectDatabase(name, databaseURL) {
