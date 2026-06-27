@@ -7741,7 +7741,7 @@ func (h *Handler) ensurePromptEvaluationAgent(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return db.Agent{}, db.AgentRuntime{}, false
 	}
-	agents, err := h.Queries.ListAgents(r.Context(), workspaceID)
+	agents, err := h.Queries.ListAllAgents(r.Context(), workspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list agents for training evaluation")
 		return db.Agent{}, db.AgentRuntime{}, false
@@ -7758,6 +7758,14 @@ func (h *Handler) ensurePromptEvaluationAgent(w http.ResponseWriter, r *http.Req
 			existing.Model.String == promptEvaluationAgentModel() &&
 			existing.Instructions == instructions &&
 			existing.Name == promptEvaluationAgentName {
+			if existing.ArchivedAt.Valid {
+				restored, err := h.Queries.RestoreAgent(r.Context(), existing.ID)
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "failed to restore training evaluation agent")
+					return db.Agent{}, db.AgentRuntime{}, false
+				}
+				return restored, runtime, true
+			}
 			return existing, runtime, true
 		}
 		updated, err := h.Queries.UpdateAgent(r.Context(), db.UpdateAgentParams{
@@ -7772,6 +7780,13 @@ func (h *Handler) ensurePromptEvaluationAgent(w http.ResponseWriter, r *http.Req
 		if err != nil {
 			writeError(w, http.StatusInternalServerError, "failed to update training evaluation agent")
 			return db.Agent{}, db.AgentRuntime{}, false
+		}
+		if updated.ArchivedAt.Valid {
+			updated, err = h.Queries.RestoreAgent(r.Context(), updated.ID)
+			if err != nil {
+				writeError(w, http.StatusInternalServerError, "failed to restore training evaluation agent")
+				return db.Agent{}, db.AgentRuntime{}, false
+			}
 		}
 		return updated, runtime, true
 	}

@@ -1703,6 +1703,83 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	}
 }
 
+func TestRunPromptEvaluationAssetAgentRestoresArchivedTrainingAgent(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	cleanupPromptEvaluationAgentRunTest(t)
+	var runtimeID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 测试运行时', '{}'::jsonb, $4, 'private', now())
+		RETURNING id
+	`, testWorkspaceID, "prompt-eval-codex-restore-"+randomID()[:8], "prompt-eval-codex-restore-"+randomID()[:8], testUserID).Scan(&runtimeID); err != nil {
+		t.Fatalf("create codex runtime: %v", err)
+	}
+	archived, err := testHandler.Queries.CreateAgent(context.Background(), db.CreateAgentParams{
+		WorkspaceID:        parseUUID(testWorkspaceID),
+		Name:               promptEvaluationAgentName,
+		Description:        "archived prompt evaluation agent",
+		RuntimeMode:        "local",
+		RuntimeConfig:      []byte("{}"),
+		RuntimeID:          parseUUID(runtimeID),
+		Visibility:         "workspace",
+		MaxConcurrentTasks: 1,
+		OwnerID:            parseUUID(testUserID),
+		Instructions:       promptEvaluationAgentInstructions(),
+		CustomEnv:          []byte("{}"),
+		CustomArgs:         []byte("[]"),
+		Model:              pgtype.Text{String: promptEvaluationAgentModel(), Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("create archived training agent fixture: %v", err)
+	}
+	if _, err := testHandler.Queries.ArchiveAgent(context.Background(), db.ArchiveAgentParams{
+		ID:         archived.ID,
+		ArchivedBy: parseUUID(testUserID),
+	}); err != nil {
+		t.Fatalf("archive training agent fixture: %v", err)
+	}
+
+	promptID := createPromptEvaluationTestPromptWithContent(t, testWorkspaceID, "恢复归档训练智能体提示词", "请评估 {{issue_title}}。", `[]`)
+	createW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+		"prompt_id":  promptID,
+		"name":       "恢复归档训练智能体实验",
+		"asset_type": "实验",
+		"payload": map[string]any{
+			"cases": []map[string]any{{"名称": "恢复归档", "变量": map[string]any{"issue_title": "恢复归档"}, "期望包含": []string{"恢复"}}},
+		},
+	}))
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
+	}
+	var created PromptEvaluationAssetResponse
+	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+
+	runW := httptest.NewRecorder()
+	testHandler.RunPromptEvaluationAssetAgent(runW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-assets/"+created.ID+"/agent-run", nil), "id", created.ID))
+	if runW.Code != http.StatusAccepted {
+		t.Fatalf("agent run status = %d, body = %s", runW.Code, runW.Body.String())
+	}
+	var resp PromptEvaluationAgentRunResponse
+	if err := json.Unmarshal(runW.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode agent run response: %v", err)
+	}
+	if resp.AgentID != uuidToString(archived.ID) {
+		t.Fatalf("expected archived agent to be restored and reused, got agent_id=%s want=%s", resp.AgentID, uuidToString(archived.ID))
+	}
+	var archivedAt *time.Time
+	if err := testPool.QueryRow(context.Background(), `SELECT archived_at FROM agent WHERE id = $1`, resp.AgentID).Scan(&archivedAt); err != nil {
+		t.Fatalf("load restored agent archive state: %v", err)
+	}
+	if archivedAt != nil {
+		t.Fatalf("expected restored training agent archived_at nil, got %v", archivedAt)
+	}
+}
+
 func TestPromptEvaluationAgentModelCanBeConfigured(t *testing.T) {
 	t.Setenv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL", "")
 	if got := promptEvaluationAgentModel(); got != "gpt-5.3-codex-spark" {
