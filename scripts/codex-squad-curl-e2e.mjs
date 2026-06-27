@@ -24,6 +24,8 @@ const evidence = {
   schema: "multica.codex_squad_curl_e2e.v1",
   generated_at: new Date().toISOString(),
   api_url: apiURL,
+  release_commit: gitText(["rev-parse", "--short=12", "HEAD"]),
+  branch: gitText(["branch", "--show-current"]),
   account,
   workspace_slug: workspaceSlug,
   provider,
@@ -433,6 +435,14 @@ function trimEnv(name) {
   return (process.env[name] || "").trim();
 }
 
+function gitText(args) {
+  try {
+    return execFileSync("git", args, { cwd: repoRoot, encoding: "utf8" }).trim();
+  } catch {
+    return "";
+  }
+}
+
 function get(path, token) {
   return request("GET", path, null, token);
 }
@@ -549,7 +559,7 @@ async function cleanupStaleAcceptanceTasks(token, workspaceID) {
   };
   evidence.preflight_acceptance_cleanup = cleanup;
   if (!cleanupActiveTasks) return;
-  const databaseURL = trimEnv("DATABASE_URL") || readGoalTestIntDatabaseURL();
+  const databaseURL = trimEnv("DATABASE_URL") || readGoalTestDatabaseURLForAPI(apiURL);
   if (!databaseURL) {
     cleanup.failures.push({ reason: "database_url_unavailable" });
     fail("preflight 验收任务清理失败：DATABASE_URL 不可用，不能保证队列干净");
@@ -605,8 +615,9 @@ async function cleanupStaleAcceptanceTasks(token, workspaceID) {
   }
 }
 
-function readGoalTestIntDatabaseURL() {
-  const envFile = path.join(repoRoot, ".run", "env", "goal-test-int.env");
+function readGoalTestDatabaseURLForAPI(apiBase) {
+  const environment = String(apiBase || "").includes(":18760") ? "prod" : "int";
+  const envFile = path.join(repoRoot, ".run", "env", `goal-test-${environment}.env`);
   if (!existsSync(envFile)) return "";
   const env = readEnvFile(envFile);
   return env.DATABASE_URL || "";

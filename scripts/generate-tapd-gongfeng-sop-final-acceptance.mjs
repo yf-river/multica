@@ -12,7 +12,7 @@ const stamp = now.replace(/[:.]/g, "-");
 
 const e2ePath = path.join(artifactRoot, "codex-squad-curl-e2e-latest.json");
 const e2e = readJSON(e2ePath);
-const databaseURL = process.env.DATABASE_URL || readGoalTestIntDatabaseURL();
+const databaseURL = process.env.DATABASE_URL || readGoalTestDatabaseURL("prod") || readGoalTestDatabaseURL("int");
 const goalCEvidence = buildGoalCEvidence();
 const goalDSkillEvidence = buildGoalDSkillEvidence();
 const goalEGongfengSkillWritebackEvidence = buildGoalEGongfengSkillWritebackEvidence();
@@ -21,6 +21,7 @@ const canonicalDemoEvidence = buildCanonicalDemoEvidence();
 const realPMRunEvidence = buildRealPMRunEvidence();
 const gongfengTouchpointEvidence = buildGoalEGongfengTouchpointEvidence();
 const finalEvidencePackage = buildGoalEFinalEvidencePackage();
+const prodReleaseEvidence = buildProdReleaseEvidence();
 
 const databaseStageEvidence = databaseURL && e2e.issue?.id
   ? await loadStageEvidence(databaseURL, e2e.issue.id)
@@ -31,8 +32,8 @@ const handoffEvidence = buildHandoffEvidence();
 const uiApiEvidence = buildUIAPIEvidence();
 
 const originalRequirements = buildOriginalRequirementMatrix({ e2e, stageEvidence, crossServiceEvidence });
-const productionReadiness = buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEvidence, handoffEvidence, uiApiEvidence });
-const goalERequirements = buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, canonicalDemoEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, finalEvidencePackage });
+const productionReadiness = buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEvidence, handoffEvidence, uiApiEvidence, prodReleaseEvidence });
+const goalERequirements = buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, canonicalDemoEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, finalEvidencePackage, prodReleaseEvidence });
 const blockingOpen = [
   ...originalRequirements.filter((item) => ["missing", "partial", "false_claimed", "blocked"].includes(item.status)),
   ...goalERequirements.filter((item) => ["missing", "partial", "false_claimed", "blocked"].includes(item.status)),
@@ -44,13 +45,14 @@ const artifact = {
   generated_at: now,
   ok: blockingOpen.length === 0,
   archive_complete_allowed: blockingOpen.length === 0,
-  environment: "int",
-  acceptance_scope: "goal-test int production-grade; real prod release is out of scope for this artifact",
+  environment: "prod",
+  acceptance_scope: "goal-test full prod release",
   source_artifacts: {
     e2e: e2ePath,
     sop_stage_evidence: stageEvidence.source_artifact || null,
     real_pm_0105_run: realPMRunEvidence.latest_json_path || null,
     deployment_log_window: e2e.deployment_log_window || null,
+    prod_release: prodReleaseEvidence.latest_json_path || null,
   },
   e2e,
   credential_profiles: e2e.credential_profiles || null,
@@ -77,6 +79,7 @@ const artifact = {
   goal_e_canonical_demo: canonicalDemoEvidence,
   goal_e_real_pm_0105_run: realPMRunEvidence,
   goal_e_final_evidence_package: finalEvidencePackage,
+  prod_release: prodReleaseEvidence,
   project_owner_notifications: e2e.project_owner_notifications || null,
   project_owner_approval: e2e.project_owner_approval || null,
   child_done_wake: e2e.child_done_wake || null,
@@ -150,9 +153,9 @@ function buildOriginalRequirementMatrix({ e2e, stageEvidence, crossServiceEviden
       "Credential profile evidence is missing account scope, inheritance, or redaction proof.",
       e2e.credential_profiles || null),
     matrixItem("P0-04", "Gongfeng repository links are resolved through Gongfeng MCP and injected into Agent context",
-      true,
-      "",
-      { project_path: "ChainWeaver/ida/user-center", ref: "v5.0.0_dev", head_commit: "eb2291dfd3c670fc70b5f94231babd8d53db3837" }),
+      prodReleaseChecks(prodReleaseEvidence.latest_json).prod_gongfeng_resources === true,
+      "Prod Gongfeng resources must be credential-backed, synced, tested, and not auth_required.",
+      prodReleaseEvidence.latest_json?.database_state?.prod?.gongfeng_resources || null),
     matrixItem("P0-05", "PM runs real 01-05 SOP stages as separate completed tasks/traces",
       allStageTasksExist && allStageTasksCompleted,
       allStageTasksExist ? "PM/01-05 tasks exist, but one or more stages did not complete successfully." : "Missing PM/01-05 stage task evidence.",
@@ -210,10 +213,17 @@ function buildOriginalRequirementMatrix({ e2e, stageEvidence, crossServiceEviden
   ];
 }
 
-function buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEvidence, handoffEvidence, uiApiEvidence }) {
+function buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEvidence, handoffEvidence, uiApiEvidence, prodReleaseEvidence }) {
   const allStagesCompleted = (stageEvidence.stages || []).filter((item) => item.key).every((item) => item.status === "completed");
+  const releaseChecks = prodReleaseChecks(prodReleaseEvidence.latest_json);
   return [
+    prodItem("prod_release", "Prod release audit is passing for the current commit", prodReleaseEvidence.latest_json?.ok === true, "No passing full prod release audit artifact."),
     prodItem("credentials", "TAPD/Gongfeng account profiles, redaction, inheritance", true),
+    prodItem("gongfeng_credentials", "Prod Gongfeng project resources are credential-backed, synced, and tested", releaseChecks.prod_gongfeng_resources === true, "Prod Gongfeng resources are missing, untested, or still auth_required."),
+    prodItem("prod_data", "Prod canonical projects, agents, squad, and training dataset are present", releaseChecks.prod_canonical_projects === true && releaseChecks.prod_canonical_agents === true && releaseChecks.prod_canonical_squad === true && releaseChecks.prod_training_dataset === true, "Prod canonical business data or dataset evidence is incomplete."),
+    prodItem("prod_e2e", "Prod user-center squad curl E2E is fresh for the release commit", releaseChecks.prod_e2e_fresh === true && releaseChecks.prod_e2e_canonical_child_projects === true, "Latest squad curl E2E is not current prod evidence or references non-canonical project ids."),
+    prodItem("gongfeng_mr_merged", "Gongfeng MR is approved and merged into the target branch", releaseChecks.gongfeng_mr_merged === true, "No approved+merged Gongfeng MR evidence."),
+    prodItem("rollback_drill", "Prod rollback drill is executed and restored to the release commit", releaseChecks.rollback_drill === true, "No verified prod rollback drill evidence."),
     prodItem("observability", "MCP fetch, SOP stage, parent/child, approval traces are debuggable", Boolean(e2e.tapd_source?.fetch) && (stageEvidence.stages || []).length >= 6 && Boolean(e2e.project_owner_approval)),
     prodItem("operations", "Retry, recovery, duplicate wake, and long-running E2E guardrails", true),
     prodItem("data_governance", "Acceptance fixtures are unique and identifiable", true),
@@ -226,7 +236,7 @@ function buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEviden
   ];
 }
 
-function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, canonicalDemoEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, finalEvidencePackage }) {
+function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, canonicalDemoEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, finalEvidencePackage, prodReleaseEvidence }) {
   const stageKeys = new Set((stageEvidence.stages || []).map((stage) => stage.key));
   const requiredStageKeys = ["pm", "01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"];
   const allStagesPresent = requiredStageKeys.every((key) => stageKeys.has(key));
@@ -541,15 +551,42 @@ function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence,
         : { latest_ui_audit: uiPlaywrightEvidence.ui_audit_latest, training_performance_latest: uiPlaywrightEvidence.training_performance_latest },
       finalPackageExists ? "partial" : "missing"),
     matrixItem("E-11", "Final evidence package contains commit, environment, commands, issue IDs, run URLs/API, Trace/Eval/Optimizer evidence, screenshots, logs, and gap audit",
-      finalPackageComplete,
+      finalPackageComplete && prodReleaseEvidence.latest_json?.ok === true,
       finalPackageExists
-        ? "Goal E final evidence package exists, but one or more required evidence fields are missing."
+        ? "Goal E final evidence package exists, but one or more required evidence fields or full prod release gates are missing."
         : "No final evidence package exists.",
       finalPackageExists
-        ? finalEvidencePackage
+        ? { final_evidence_package: finalEvidencePackage, prod_release: prodReleaseEvidence }
         : { runbook: handoffEvidence, goal_d: goalDSkillEvidence, goal_c: goalCEvidence },
       finalPackageExists ? "partial" : "missing"),
   ];
+}
+
+function buildProdReleaseEvidence() {
+  const latestPath = fileIfExists(path.join(artifactRoot, "goal-test-prod-release-latest.json"));
+  let latestJSON = null;
+  if (latestPath) {
+    try {
+      latestJSON = readJSON(latestPath);
+    } catch {
+      latestJSON = null;
+    }
+  }
+  return {
+    latest_json_path: latestPath,
+    latest_json: latestJSON,
+    proof_boundary: latestJSON?.ok === true
+      ? "Full prod release evidence passed for the current release."
+      : "missing or failed full prod release evidence",
+  };
+}
+
+function prodReleaseChecks(release) {
+  const checks = {};
+  for (const item of release?.checks || []) {
+    checks[item.id] = item.status === "fulfilled";
+  }
+  return checks;
 }
 
 function buildGoalCEvidence() {
@@ -979,8 +1016,8 @@ function durationMs(startedAt, completedAt) {
   return Math.max(0, new Date(completedAt).getTime() - new Date(startedAt).getTime());
 }
 
-function readGoalTestIntDatabaseURL() {
-  const envFile = path.join(repoRoot, ".run", "env", "goal-test-int.env");
+function readGoalTestDatabaseURL(environment) {
+  const envFile = path.join(repoRoot, ".run", "env", `goal-test-${environment}.env`);
   if (!fs.existsSync(envFile)) return "";
   const env = {};
   for (const raw of fs.readFileSync(envFile, "utf8").split(/\r?\n/)) {

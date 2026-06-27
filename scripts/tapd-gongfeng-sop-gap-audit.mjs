@@ -196,6 +196,12 @@ const requirements = [
 
 const productionMatrix = Array.isArray(artifact.production_readiness_matrix) ? artifact.production_readiness_matrix : [];
 const productionGaps = [
+  prodGap("prod_release", "Prod release audit passes on the current release commit", productionStatus("prod_release", false)),
+  prodGap("prod_data", "Prod canonical business data and training dataset are present", productionStatus("prod_data", false)),
+  prodGap("prod_e2e", "Prod user-center squad curl E2E is fresh and canonical", productionStatus("prod_e2e", false)),
+  prodGap("gongfeng_credentials", "Prod Gongfeng resources are credential-backed, synced, and tested", productionStatus("gongfeng_credentials", false)),
+  prodGap("gongfeng_mr_merged", "Gongfeng MR is approved and merged into the target branch", productionStatus("gongfeng_mr_merged", false)),
+  prodGap("rollback_drill", "Prod rollback drill is executed and restored to the release commit", productionStatus("rollback_drill", false)),
   prodGap("credentials", "TAPD/Gongfeng profile redaction, rotation, failure status, and per-user ownership", productionStatus("credentials", requirements[2].status === "fulfilled")),
   prodGap("observability", "MCP fetch, SOP stage, parent/child, approval, and curl traces are debuggable", productionStatus("observability", false)),
   prodGap("operations", "Retry, blocked recovery, parent wait timeout, and duplicate wake dedupe are documented/tested", productionStatus("operations", false)),

@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-training-browser-e2e goal-test-training-curl-e2e goal-test-seed-business-training goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e goal-test-quick-entry-cross-service goal-test-squad-curl-e2e goal-test-tapd-gongfeng-sop-gap-audit goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-final-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-dataset-stream-audit goal-test-prune-dev-data goal-test-playground-difference-audit goal-test-session-retro goal-test-token-audit
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-training-browser-e2e goal-test-training-curl-e2e goal-test-seed-business-training goal-test-prod-seed-business-training goal-test-prod-training-curl-e2e goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e goal-test-prod-user-center-squad-curl-e2e goal-test-quick-entry-cross-service goal-test-squad-curl-e2e goal-test-tapd-gongfeng-sop-gap-audit goal-test-prod-release-audit goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-final-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-dataset-stream-audit goal-test-prune-dev-data goal-test-playground-difference-audit goal-test-session-retro goal-test-token-audit
 
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
@@ -331,6 +331,45 @@ goal-test-quick-entry-cross-service: ## Verify user-center/gateway/ida-deploymen
 goal-test-tapd-gongfeng-sop-gap-audit: ## Audit TAPD/Gongfeng/SOP final artifact against original P0 matrix
 	node scripts/generate-tapd-gongfeng-sop-final-acceptance.mjs
 	node scripts/tapd-gongfeng-sop-gap-audit.mjs
+
+goal-test-prod-seed-business-training: goal-test-verify-env ## Seed stable business training assets into goal-test prod through the public API
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	ACCEPTANCE_API_URL="http://127.0.0.1:18760" \
+	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
+	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
+	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
+	BUSINESS_TRAINING_SEED_DIR="$(CURDIR)/artifacts/acceptance" \
+	TMPDIR="$(GOAL_TEST_TMPDIR)" \
+	node scripts/seed-business-training-assets.mjs
+
+goal-test-prod-training-curl-e2e: goal-test-verify-env ## Run public API training/evaluation curl E2E against goal-test prod
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	ACCEPTANCE_API_URL="http://127.0.0.1:18760" \
+	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
+	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
+	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
+	PROMPT_EVALUATION_CURL_E2E_DIR="$(CURDIR)/artifacts/acceptance" \
+	TMPDIR="$(GOAL_TEST_TMPDIR)" \
+	node scripts/prompt-evaluation-curl-e2e.mjs
+
+goal-test-prod-user-center-squad-curl-e2e: goal-test-verify-env ## Run real user-center squad curl/API + daemon E2E against goal-test prod
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	ACCEPTANCE_API_URL="http://127.0.0.1:18760" \
+	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
+	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
+	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
+	ACCEPTANCE_SQUAD_TEMPLATE_KEY=user-center \
+	ACCEPTANCE_VERIFY_CROSS_PROJECT_CHILDREN=1 \
+	MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER="$(GOAL_TEST_REAL_AGENT_PROVIDER)" \
+	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
+	MULTICA_PROMPT_EVALUATION_AGENT_FALLBACK_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
+	ACCEPTANCE_TASK_TIMEOUT_MS=2700000 \
+	ACCEPTANCE_MODEL_ATTEMPT_TIMEOUT_MS=7200000 \
+	TMPDIR="$(GOAL_TEST_TMPDIR)" \
+	node scripts/run-model-fallback-e2e.mjs scripts/codex-squad-curl-e2e.mjs
+
+goal-test-prod-release-audit: ## Generate full prod release evidence and fail if prod is not release-complete
+	node scripts/goal-test-prod-release.mjs audit
 
 goal-test-smoke: ## Fast goal-test gate: E2E preflight, environment verify, and current log window verify
 	$(MAKE) goal-test-e2e-preflight
