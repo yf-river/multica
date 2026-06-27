@@ -4267,12 +4267,19 @@ function SkillCandidateWorkflowPanel({
   const verificationPlan = stringFromUnknown(skillPatch["verification_plan"]);
   const patchHash = stringFromUnknown(skillPatch["patch_hash"]);
   const publicationStatus = stringFromUnknown(skillPatch["publication_status"]);
+  const candidateIntent = stringFromUnknown(skillPatch["candidate_intent"]) || "update_existing_skill";
+  const operationSkillKey = stringFromUnknown(skillPatch["operation_skill_key"]);
+  const operationSkillPath = stringFromUnknown(skillPatch["operation_skill_path"]);
+  const operationSkillReason = stringFromUnknown(skillPatch["operation_skill_reason"]);
   return (
     <section className="mt-3 grid gap-2 rounded-sm border border-border/70 bg-muted/10 px-2 py-2 text-xs" data-testid={`skill-candidate-workflow-${candidate.id}`}>
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="font-medium">Skill 发布链路</div>
         <div className="flex flex-wrap gap-1">
           <Badge variant={snapshotHash ? "secondary" : "outline"}>snapshot {shortId(snapshotHash) || "missing"}</Badge>
+          <Badge variant={candidateIntent === "create_operation_skill" ? "secondary" : "outline"}>
+            {candidateIntent === "create_operation_skill" ? "新建 operation skill" : "更新已有 skill"}
+          </Badge>
           <Badge variant={freshnessStatus === "conflict" || freshnessStatus === "stale" ? "destructive" : "outline"}>{freshnessStatus}</Badge>
           <Badge variant={applyStatus === "applied" ? "secondary" : applyStatus === "conflict" || applyStatus === "blocked" ? "destructive" : "outline"}>{applyStatus}</Badge>
           {reEvalRunId && <Badge variant="secondary">re-eval {shortId(reEvalRunId)}</Badge>}
@@ -4399,12 +4406,24 @@ function SkillCandidateWorkflowPanel({
         <div>base {shortId(stringFromUnknown(evidence.snapshot["base_commit"])) || "missing"} · path {draft.skillPath || stringFromUnknown(evidence.snapshot["skill_path"]) || "missing"}</div>
         <div>re-eval asset {shortId(reEvalAssetId) || "missing"} · run {shortId(reEvalRunId) || "not run"}</div>
       </div>
-      {(patchText || expectedImprovement || risk || verificationPlan || patchHash || publicationStatus) && (
+      {(patchText || expectedImprovement || risk || verificationPlan || patchHash || publicationStatus || operationSkillKey || operationSkillPath || operationSkillReason) && (
         <div className="grid gap-1 rounded border bg-background px-2 py-2 text-[11px] leading-5" data-testid={`skill-candidate-diff-risk-${candidate.id}`}>
           <div className="flex flex-wrap items-center gap-1.5">
             <Badge variant={patchHash ? "secondary" : "outline"}>patch {shortId(patchHash) || "draft"}</Badge>
             <Badge variant="outline">发布 {publicationStatus || "draft"}</Badge>
+            <Badge variant={candidateIntent === "create_operation_skill" ? "secondary" : "outline"}>
+              {candidateIntent === "create_operation_skill" ? "create_operation_skill" : "update_existing_skill"}
+            </Badge>
           </div>
+          {(operationSkillKey || operationSkillPath || operationSkillReason) && (
+            <div className="grid gap-1 rounded bg-muted/20 px-2 py-1.5">
+              <div className="font-medium text-foreground">Operation Skill 候选</div>
+              <div className="text-muted-foreground">
+                key {operationSkillKey || "未记录"} · path {operationSkillPath || draft.skillPath || "未记录"}
+              </div>
+              {operationSkillReason && <div className="text-muted-foreground">{operationSkillReason}</div>}
+            </div>
+          )}
           <div className="grid gap-1 md:grid-cols-3">
             <div className="min-w-0">
               <div className="font-medium text-foreground">预期改善</div>

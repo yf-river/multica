@@ -361,6 +361,9 @@ func TestPromptEvaluationSkillPatchDefaultsRequests(t *testing.T) {
 	if skillPatch.PatchHash == "" || skillPatch.PatchBytes == 0 {
 		t.Fatalf("skill patch hash/bytes should be present after decode = %+v", skillPatch)
 	}
+	if skillPatch.CandidateIntent != "update_existing_skill" {
+		t.Fatalf("legacy skill patch should default to update_existing_skill, got %+v", skillPatch)
+	}
 	freshnessReq := CheckPromptEvaluationSkillFreshnessRequest{}
 	applySkillPatchFreshnessDefaults(&freshnessReq, skillPatch)
 	if freshnessReq.CandidatePatch != patchText || freshnessReq.SourceResourceID != "resource-1" || freshnessReq.SkillPath != snapshot.SkillPath {
@@ -375,6 +378,21 @@ func TestPromptEvaluationSkillPatchDefaultsRequests(t *testing.T) {
 	applySkillPatchReEvalDefaults(&reEvalReq, skillPatch)
 	if reEvalReq.SourceResourceID != "resource-1" || reEvalReq.RepoPath == "" || reEvalReq.TargetBranch != "HEAD" || reEvalReq.SkillPath != snapshot.SkillPath {
 		t.Fatalf("re-eval defaults = %+v", reEvalReq)
+	}
+
+	operationPatch, err := normalizePromptEvaluationSkillPatch(PromptEvaluationSkillPatch{
+		Patch:                patchText,
+		SourceSnapshot:       &snapshot,
+		CandidateIntent:      "create_operation_skill",
+		OperationSkillKey:    "user-center/add-api",
+		OperationSkillPath:   ".codebuddy/skills/add-api/SKILL.md",
+		OperationSkillReason: "Repeated benchmark failures show this project action needs a dedicated operation skill.",
+	}, db.PromptEvaluationOptimizationCandidate{}, time.Date(2026, 6, 28, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("normalize operation skill patch: %v", err)
+	}
+	if operationPatch.CandidateIntent != "create_operation_skill" || operationPatch.OperationSkillKey != "user-center/add-api" || operationPatch.OperationSkillPath == "" || operationPatch.OperationSkillReason == "" {
+		t.Fatalf("operation skill patch fields not preserved: %+v", operationPatch)
 	}
 }
 

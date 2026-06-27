@@ -100,22 +100,26 @@ type PromptEvaluationSkillSnapshotResult struct {
 }
 
 type PromptEvaluationSkillPatch struct {
-	SchemaVersion       string                                 `json:"schema_version"`
-	Patch               string                                 `json:"patch"`
-	PatchHash           string                                 `json:"patch_hash"`
-	PatchBytes          int                                    `json:"patch_bytes"`
-	SourceSnapshot      *PromptEvaluationSkillSnapshotResponse `json:"source_snapshot,omitempty"`
-	SourceResourceID    string                                 `json:"source_resource_id,omitempty"`
-	RepoPath            string                                 `json:"repo_path,omitempty"`
-	TargetBranch        string                                 `json:"target_branch,omitempty"`
-	SkillPath           string                                 `json:"skill_path,omitempty"`
-	ChangelogPath       string                                 `json:"changelog_path,omitempty"`
-	ExpectedImprovement string                                 `json:"expected_improvement,omitempty"`
-	Risk                string                                 `json:"risk,omitempty"`
-	VerificationPlan    string                                 `json:"verification_plan,omitempty"`
-	PublicationStatus   string                                 `json:"publication_status"`
-	CreatedAt           string                                 `json:"created_at,omitempty"`
-	UpdatedAt           string                                 `json:"updated_at,omitempty"`
+	SchemaVersion        string                                 `json:"schema_version"`
+	Patch                string                                 `json:"patch"`
+	PatchHash            string                                 `json:"patch_hash"`
+	PatchBytes           int                                    `json:"patch_bytes"`
+	CandidateIntent      string                                 `json:"candidate_intent,omitempty"`
+	OperationSkillKey    string                                 `json:"operation_skill_key,omitempty"`
+	OperationSkillPath   string                                 `json:"operation_skill_path,omitempty"`
+	OperationSkillReason string                                 `json:"operation_skill_reason,omitempty"`
+	SourceSnapshot       *PromptEvaluationSkillSnapshotResponse `json:"source_snapshot,omitempty"`
+	SourceResourceID     string                                 `json:"source_resource_id,omitempty"`
+	RepoPath             string                                 `json:"repo_path,omitempty"`
+	TargetBranch         string                                 `json:"target_branch,omitempty"`
+	SkillPath            string                                 `json:"skill_path,omitempty"`
+	ChangelogPath        string                                 `json:"changelog_path,omitempty"`
+	ExpectedImprovement  string                                 `json:"expected_improvement,omitempty"`
+	Risk                 string                                 `json:"risk,omitempty"`
+	VerificationPlan     string                                 `json:"verification_plan,omitempty"`
+	PublicationStatus    string                                 `json:"publication_status"`
+	CreatedAt            string                                 `json:"created_at,omitempty"`
+	UpdatedAt            string                                 `json:"updated_at,omitempty"`
 }
 
 type CreatePromptEvaluationSkillCaseDraftsRequest struct {
@@ -1409,28 +1413,36 @@ func normalizePromptEvaluationSkillPatch(raw PromptEvaluationSkillPatch, candida
 	if sourceSnapshot == nil {
 		return PromptEvaluationSkillPatch{}, errors.New("skill_patch.source_snapshot is required")
 	}
+	candidateIntent := firstNonEmpty(raw.CandidateIntent, "update_existing_skill")
+	if candidateIntent != "update_existing_skill" && candidateIntent != "create_operation_skill" {
+		return PromptEvaluationSkillPatch{}, errors.New("skill_patch.candidate_intent must be update_existing_skill or create_operation_skill")
+	}
 	createdAt := strings.TrimSpace(raw.CreatedAt)
 	if createdAt == "" {
 		createdAt = now.Format(time.RFC3339Nano)
 	}
 	patch := raw.Patch
 	normalized := PromptEvaluationSkillPatch{
-		SchemaVersion:       promptEvaluationSkillPatchSchema,
-		Patch:               patch,
-		PatchHash:           sha256Hex([]byte(patch)),
-		PatchBytes:          len([]byte(patch)),
-		SourceSnapshot:      sourceSnapshot,
-		SourceResourceID:    firstNonEmpty(raw.SourceResourceID, sourceSnapshot.SourceResourceID),
-		RepoPath:            firstNonEmpty(raw.RepoPath, sourceSnapshot.RepoPath),
-		TargetBranch:        firstNonEmpty(raw.TargetBranch, sourceSnapshot.Branch, "HEAD"),
-		SkillPath:           firstNonEmpty(raw.SkillPath, sourceSnapshot.SkillPath),
-		ChangelogPath:       strings.TrimSpace(raw.ChangelogPath),
-		ExpectedImprovement: strings.TrimSpace(raw.ExpectedImprovement),
-		Risk:                strings.TrimSpace(raw.Risk),
-		VerificationPlan:    strings.TrimSpace(raw.VerificationPlan),
-		PublicationStatus:   firstNonEmpty(raw.PublicationStatus, "draft"),
-		CreatedAt:           createdAt,
-		UpdatedAt:           now.Format(time.RFC3339Nano),
+		SchemaVersion:        promptEvaluationSkillPatchSchema,
+		Patch:                patch,
+		PatchHash:            sha256Hex([]byte(patch)),
+		PatchBytes:           len([]byte(patch)),
+		CandidateIntent:      candidateIntent,
+		OperationSkillKey:    strings.TrimSpace(raw.OperationSkillKey),
+		OperationSkillPath:   strings.TrimSpace(raw.OperationSkillPath),
+		OperationSkillReason: strings.TrimSpace(raw.OperationSkillReason),
+		SourceSnapshot:       sourceSnapshot,
+		SourceResourceID:     firstNonEmpty(raw.SourceResourceID, sourceSnapshot.SourceResourceID),
+		RepoPath:             firstNonEmpty(raw.RepoPath, sourceSnapshot.RepoPath),
+		TargetBranch:         firstNonEmpty(raw.TargetBranch, sourceSnapshot.Branch, "HEAD"),
+		SkillPath:            firstNonEmpty(raw.SkillPath, sourceSnapshot.SkillPath),
+		ChangelogPath:        strings.TrimSpace(raw.ChangelogPath),
+		ExpectedImprovement:  strings.TrimSpace(raw.ExpectedImprovement),
+		Risk:                 strings.TrimSpace(raw.Risk),
+		VerificationPlan:     strings.TrimSpace(raw.VerificationPlan),
+		PublicationStatus:    firstNonEmpty(raw.PublicationStatus, "draft"),
+		CreatedAt:            createdAt,
+		UpdatedAt:            now.Format(time.RFC3339Nano),
 	}
 	return normalized, nil
 }
@@ -1457,6 +1469,9 @@ func skillPatchFromCandidate(candidate db.PromptEvaluationOptimizationCandidate)
 	}
 	if patch.PatchBytes == 0 {
 		patch.PatchBytes = len([]byte(patch.Patch))
+	}
+	if strings.TrimSpace(patch.CandidateIntent) == "" {
+		patch.CandidateIntent = "update_existing_skill"
 	}
 	return &patch
 }

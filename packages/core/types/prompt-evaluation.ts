@@ -534,6 +534,10 @@ export interface PromptEvaluationSkillPatch {
   patch: string;
   patch_hash: string;
   patch_bytes: number;
+  candidate_intent?: "update_existing_skill" | "create_operation_skill" | string;
+  operation_skill_key?: string;
+  operation_skill_path?: string;
+  operation_skill_reason?: string;
   source_snapshot?: PromptEvaluationSkillSnapshot;
   source_resource_id?: string;
   repo_path?: string;
