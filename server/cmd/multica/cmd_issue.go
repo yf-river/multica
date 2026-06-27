@@ -101,6 +101,13 @@ var issueGetCmd = &cobra.Command{
 	RunE:  runIssueGet,
 }
 
+var issueChildrenCmd = &cobra.Command{
+	Use:   "children <id>",
+	Short: "List child issues for an issue",
+	Args:  exactArgs(1),
+	RunE:  runIssueChildren,
+}
+
 var issuePullRequestsCmd = &cobra.Command{
 	Use:     "pull-requests <id>",
 	Aliases: []string{"prs"},
@@ -269,6 +276,7 @@ func validateIssueEnum(field, value string, allowed []string) error {
 func init() {
 	issueCmd.AddCommand(issueListCmd)
 	issueCmd.AddCommand(issueGetCmd)
+	issueCmd.AddCommand(issueChildrenCmd)
 	issueCmd.AddCommand(issuePullRequestsCmd)
 	issueCmd.AddCommand(issueSourceFetchCmd)
 	issueCmd.AddCommand(issueCreateCmd)
@@ -305,6 +313,9 @@ func init() {
 
 	// issue get
 	issueGetCmd.Flags().String("output", "json", "Output format: table or json")
+
+	// issue children
+	issueChildrenCmd.Flags().String("output", "table", "Output format: table or json")
 
 	// issue pull-requests
 	issuePullRequestsCmd.Flags().String("output", "table", "Output format: table or json")
@@ -660,6 +671,50 @@ func runIssueGet(cmd *cobra.Command, args []string) error {
 	}
 
 	return cli.PrintJSON(os.Stdout, issue)
+}
+
+func runIssueChildren(cmd *cobra.Command, args []string) error {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return err
+	}
+
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	issueRef, err := resolveIssueRef(ctx, client, args[0])
+	if err != nil {
+		return fmt.Errorf("resolve issue: %w", err)
+	}
+
+	var children []map[string]any
+	if err := client.GetJSON(ctx, "/api/issues/"+url.PathEscape(issueRef.ID)+"/children", &children); err != nil {
+		return fmt.Errorf("list child issues: %w", err)
+	}
+
+	output, _ := cmd.Flags().GetString("output")
+	if output == "json" {
+		return cli.PrintJSON(os.Stdout, map[string]any{
+			"parent_issue_id": issueRef.ID,
+			"children":        children,
+			"total":           len(children),
+		})
+	}
+
+	actors := loadActorDisplayLookup(ctx, client)
+	headers := []string{"KEY", "TITLE", "STATUS", "PROJECT", "ASSIGNEE"}
+	rows := make([][]string, 0, len(children))
+	for _, child := range children {
+		rows = append(rows, []string{
+			issueDisplayKey(child),
+			strVal(child, "title"),
+			strVal(child, "status"),
+			strVal(child, "project_title"),
+			formatAssignee(child, actors),
+		})
+	}
+	cli.PrintTable(os.Stdout, headers, rows)
+	return nil
 }
 
 // isHTTPURL reports whether path is an http:// or https:// URL.
