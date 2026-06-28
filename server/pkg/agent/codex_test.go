@@ -1757,7 +1757,7 @@ func TestBuildCodexArgsExtraArgsBeforeCustomArgsAndFiltersBoth(t *testing.T) {
 	args := buildCodexArgs(ExecOptions{
 		ExtraArgs:  []string{"--listen", "tcp://evil", "--sandbox", "read-only"},
 		CustomArgs: []string{"--sandbox", "workspace-write", "--listen=bad"},
-	}, slog.Default())
+	}, slog.Default(), false)
 	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "tcp://evil") || strings.Contains(joined, "--listen=bad") {
 		t.Fatalf("blocked args should be filtered from both layers: %v", args)
@@ -1776,39 +1776,102 @@ func TestBuildCodexArgsExtraArgsBeforeCustomArgsAndFiltersBoth(t *testing.T) {
 	}
 }
 
-func TestBuildCodexArgsDisablesImageGenerationForSparkModel(t *testing.T) {
+func TestBuildCodexArgsDisablesImageGenerationWhenRequested(t *testing.T) {
 	t.Parallel()
 
 	args := buildCodexArgs(ExecOptions{
-		Model: "gpt-5.3-codex-spark",
-	}, slog.Default())
+		Model: "some-model",
+	}, slog.Default(), true)
 
 	if !containsArgPair(args, "--disable", "image_generation") {
-		t.Fatalf("expected image_generation to be disabled for codex-spark, got %v", args)
+		t.Fatalf("expected image_generation to be disabled, got %v", args)
 	}
 }
 
-func TestBuildCodexArgsDisablesImageGenerationForSparkConfigModel(t *testing.T) {
+func TestBuildCodexArgsLeavesImageGenerationWhenAllowed(t *testing.T) {
 	t.Parallel()
 
 	args := buildCodexArgs(ExecOptions{
-		CustomArgs: []string{"-c", `model="gpt-5.3-codex-spark"`},
-	}, slog.Default())
-
-	if !containsArgPair(args, "--disable", "image_generation") {
-		t.Fatalf("expected image_generation to be disabled for codex-spark config model, got %v", args)
-	}
-}
-
-func TestBuildCodexArgsLeavesImageGenerationForNonSparkModel(t *testing.T) {
-	t.Parallel()
-
-	args := buildCodexArgs(ExecOptions{
-		Model: "gpt-5.5",
-	}, slog.Default())
+		Model: "some-model",
+	}, slog.Default(), false)
 
 	if containsArgPair(args, "--disable", "image_generation") {
-		t.Fatalf("did not expect image_generation to be disabled for non-spark model, got %v", args)
+		t.Fatalf("did not expect image_generation to be disabled, got %v", args)
+	}
+}
+
+func TestShouldDisableCodexImageGenerationForCatalog(t *testing.T) {
+	t.Parallel()
+
+	catalog := map[string]codexModelCapability{
+		"text-only": {
+			InputModalities: []string{"text"},
+		},
+		"text-image": {
+			InputModalities: []string{"text", "image"},
+		},
+		"tool-explicit": {
+			ExperimentalSupportedTools: []string{"image_generation"},
+		},
+	}
+	tests := []struct {
+		name      string
+		policy    codexImageGenerationPolicy
+		model     string
+		catalogOK bool
+		want      bool
+	}{
+		{name: "off disables regardless of catalog", policy: codexImageGenerationOff, model: "text-image", catalogOK: true, want: true},
+		{name: "on allows regardless of catalog", policy: codexImageGenerationOn, model: "text-only", catalogOK: true, want: false},
+		{name: "text only disables", policy: codexImageGenerationAuto, model: "text-only", catalogOK: true, want: true},
+		{name: "text image allows", policy: codexImageGenerationAuto, model: "text-image", catalogOK: true, want: false},
+		{name: "explicit tool allows", policy: codexImageGenerationAuto, model: "tool-explicit", catalogOK: true, want: false},
+		{name: "unknown model disables", policy: codexImageGenerationAuto, model: "unknown-model", catalogOK: true, want: true},
+		{name: "catalog failure disables", policy: codexImageGenerationAuto, model: "text-image", catalogOK: false, want: true},
+		{name: "empty model disables", policy: codexImageGenerationAuto, model: "", catalogOK: true, want: true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			got := shouldDisableCodexImageGenerationForCatalog(tc.policy, tc.model, catalog, tc.catalogOK)
+			if got != tc.want {
+				t.Fatalf("disable image_generation = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestParseCodexModelCapabilities(t *testing.T) {
+	t.Parallel()
+
+	raw := []byte(`{
+		"models": [
+			{
+				"slug": "gpt-5.5",
+				"input_modalities": ["text", "image"],
+				"experimental_supported_tools": [],
+				"supports_image_detail_original": true
+			},
+			{
+				"slug": "gpt-5.3-codex-spark",
+				"input_modalities": ["text"]
+			},
+			{
+				"slug": "image-tool",
+				"experimental_supported_tools": ["image_generation"]
+			}
+		]
+	}`)
+	got := parseCodexModelCapabilities(raw)
+
+	if !codexModelCapabilitySupportsImageGeneration(got["gpt-5.5"]) {
+		t.Fatalf("expected gpt-5.5 fixture to support image_generation: %+v", got["gpt-5.5"])
+	}
+	if codexModelCapabilitySupportsImageGeneration(got["gpt-5.3-codex-spark"]) {
+		t.Fatalf("expected spark fixture to disable image_generation: %+v", got["gpt-5.3-codex-spark"])
+	}
+	if !codexModelCapabilitySupportsImageGeneration(got["image-tool"]) {
+		t.Fatalf("expected explicit tool fixture to support image_generation: %+v", got["image-tool"])
 	}
 }
 
@@ -1833,7 +1896,7 @@ func TestBuildCodexArgsDoesNotLeakMcpToArgv(t *testing.T) {
 	args := buildCodexArgs(ExecOptions{
 		McpConfig:  raw,
 		CustomArgs: []string{"-c", `model="o3"`},
-	}, slog.Default())
+	}, slog.Default(), false)
 
 	joined := strings.Join(args, " ")
 	if strings.Contains(joined, "mcp_servers") {
@@ -1941,7 +2004,7 @@ func TestBuildCodexArgsPreservesCustomMcpOverridesWhenUnmanaged(t *testing.T) {
 	// namespace once an admin opts in via the MCP Tab.
 	args := buildCodexArgs(ExecOptions{
 		CustomArgs: []string{"-c", `mcp_servers.fetch={ command = "uvx" }`, "-c", `model="o3"`},
-	}, slog.Default())
+	}, slog.Default(), false)
 	foundMcp := false
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == "-c" && strings.HasPrefix(args[i+1], "mcp_servers.") {
@@ -1964,7 +2027,7 @@ func TestBuildCodexArgsDropsCustomMcpOverridesWhenManaged(t *testing.T) {
 	args := buildCodexArgs(ExecOptions{
 		McpConfig:  raw,
 		CustomArgs: []string{"-c", `mcp_servers.fetch={ command = "evil" }`, "-c", `model="o3"`},
-	}, slog.Default())
+	}, slog.Default(), false)
 	for i := 0; i+1 < len(args); i++ {
 		if args[i] == "-c" && strings.HasPrefix(args[i+1], "mcp_servers.") {
 			t.Fatalf("custom_args mcp_servers must be filtered when managed mcp_config is present, got %v", args)

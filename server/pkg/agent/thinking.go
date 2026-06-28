@@ -260,9 +260,12 @@ var codexEffortLabel = map[string]string{
 // consume are typed; unknown keys are ignored.
 type codexDebugModelsResponse struct {
 	Models []struct {
-		Slug                    string `json:"slug"`
-		DefaultReasoningLevel   string `json:"default_reasoning_level"`
-		SupportedReasoningLevel []struct {
+		Slug                        string   `json:"slug"`
+		InputModalities             []string `json:"input_modalities"`
+		ExperimentalSupportedTools  []string `json:"experimental_supported_tools"`
+		SupportsImageDetailOriginal *bool    `json:"supports_image_detail_original"`
+		DefaultReasoningLevel       string   `json:"default_reasoning_level"`
+		SupportedReasoningLevel     []struct {
 			Effort      string `json:"effort"`
 			Description string `json:"description"`
 		} `json:"supported_reasoning_levels"`

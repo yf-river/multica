@@ -39,6 +39,7 @@ const (
 	defaultCodexSemanticInactivityTimeout  = 10 * time.Minute
 	defaultCodexFirstTurnNoProgressTimeout = 30 * time.Second
 	codexVersionDiagnosticTimeout          = 2 * time.Second
+	codexModelCapabilityTimeout            = 3 * time.Second
 	// codexGracefulShutdownTimeout bounds how long the lifecycle goroutine
 	// waits for codex to exit on its own after stdin is closed, before forcing
 	// a context-cancel kill. A clean exit lets codex run its shutdown path and
@@ -59,6 +60,32 @@ const CodexFirstTurnNoProgressMarker = "codex app-server no progress timeout"
 const codexModelCatalogRefreshTimeoutSignal = "failed to refresh available models: timeout waiting for child process to exit"
 
 var errCodexProcessExited = errors.New("codex process exited")
+
+type codexImageGenerationPolicy string
+
+const (
+	codexImageGenerationAuto codexImageGenerationPolicy = "auto"
+	codexImageGenerationOn   codexImageGenerationPolicy = "on"
+	codexImageGenerationOff  codexImageGenerationPolicy = "off"
+)
+
+type codexModelCapability struct {
+	InputModalities                []string
+	ExperimentalSupportedTools     []string
+	SupportsImageDetailOriginalSet bool
+	SupportsImageDetailOriginal    bool
+}
+
+type codexModelCapabilityCacheEntry struct {
+	models    map[string]codexModelCapability
+	ok        bool
+	expiresAt time.Time
+}
+
+var (
+	codexModelCapabilityCacheMu sync.Mutex
+	codexModelCapabilityCache   = map[string]codexModelCapabilityCacheEntry{}
+)
 
 type codexTimeoutKind int
 
@@ -84,7 +111,7 @@ type codexBackend struct {
 	cfg Config
 }
 
-func buildCodexArgs(opts ExecOptions, logger *slog.Logger) []string {
+func buildCodexArgs(opts ExecOptions, logger *slog.Logger, disableImageGeneration bool) []string {
 	args := []string{"app-server", "--listen", "stdio://"}
 	extra := filterCustomArgs(opts.ExtraArgs, codexBlockedArgs, logger)
 	custom := filterCustomArgs(opts.CustomArgs, codexBlockedArgs, logger)
@@ -101,7 +128,7 @@ func buildCodexArgs(opts ExecOptions, logger *slog.Logger) []string {
 	}
 	args = append(args, extra...)
 	args = append(args, custom...)
-	if codexModelDisablesImageGeneration(effectiveCodexModelForToolGuard(opts, extra, custom)) {
+	if disableImageGeneration {
 		args = append(args, "--disable", "image_generation")
 	}
 	return args
@@ -118,14 +145,6 @@ func effectiveCodexModelForToolGuard(opts ExecOptions, extraArgs, customArgs []s
 		}
 	}
 	return model
-}
-
-func codexModelDisablesImageGeneration(model string) bool {
-	normalized := strings.ToLower(strings.TrimSpace(model))
-	if normalized == "" {
-		return false
-	}
-	return strings.Contains(normalized, "codex-spark")
 }
 
 func lastCodexConfigModelArg(args []string) string {
@@ -174,6 +193,146 @@ func parseCodexModelConfigValue(value string) string {
 		}
 	}
 	return strings.TrimSpace(model)
+}
+
+func shouldDisableCodexImageGeneration(ctx context.Context, executablePath string, opts ExecOptions, env map[string]string, logger *slog.Logger) bool {
+	policy := resolveCodexImageGenerationPolicy(env, logger)
+	model := effectiveCodexModelForToolGuard(opts, opts.ExtraArgs, opts.CustomArgs)
+	if policy == codexImageGenerationOn {
+		return false
+	}
+	if policy == codexImageGenerationOff {
+		return true
+	}
+	if strings.TrimSpace(model) == "" {
+		return true
+	}
+	models, ok := loadCodexModelCapabilities(ctx, executablePath, env, logger)
+	return shouldDisableCodexImageGenerationForCatalog(policy, model, models, ok)
+}
+
+func shouldDisableCodexImageGenerationForCatalog(policy codexImageGenerationPolicy, model string, models map[string]codexModelCapability, catalogOK bool) bool {
+	if policy == codexImageGenerationOn {
+		return false
+	}
+	if policy == codexImageGenerationOff {
+		return true
+	}
+	model = strings.TrimSpace(model)
+	if model == "" || !catalogOK {
+		return true
+	}
+	capability, ok := models[model]
+	if !ok {
+		return true
+	}
+	return !codexModelCapabilitySupportsImageGeneration(capability)
+}
+
+func resolveCodexImageGenerationPolicy(env map[string]string, logger *slog.Logger) codexImageGenerationPolicy {
+	raw := strings.TrimSpace(env["MULTICA_CODEX_IMAGE_GENERATION"])
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("MULTICA_CODEX_IMAGE_GENERATION"))
+	}
+	switch strings.ToLower(raw) {
+	case "", "auto":
+		return codexImageGenerationAuto
+	case "on", "true", "1", "enabled", "enable":
+		return codexImageGenerationOn
+	case "off", "false", "0", "disabled", "disable":
+		return codexImageGenerationOff
+	default:
+		if logger != nil {
+			logger.Warn("codex: invalid MULTICA_CODEX_IMAGE_GENERATION value; using auto", "value", raw)
+		}
+		return codexImageGenerationAuto
+	}
+}
+
+func codexModelCapabilitySupportsImageGeneration(capability codexModelCapability) bool {
+	if containsCaseInsensitive(capability.ExperimentalSupportedTools, "image_generation") {
+		return true
+	}
+	if len(capability.InputModalities) > 0 {
+		return containsCaseInsensitive(capability.InputModalities, "image")
+	}
+	if capability.SupportsImageDetailOriginalSet {
+		return capability.SupportsImageDetailOriginal
+	}
+	return false
+}
+
+func containsCaseInsensitive(values []string, want string) bool {
+	for _, value := range values {
+		if strings.EqualFold(strings.TrimSpace(value), want) {
+			return true
+		}
+	}
+	return false
+}
+
+func loadCodexModelCapabilities(ctx context.Context, executablePath string, env map[string]string, logger *slog.Logger) (map[string]codexModelCapability, bool) {
+	if executablePath == "" {
+		executablePath = "codex"
+	}
+	version, _ := DetectVersion(ctx, executablePath)
+	cacheKey := executablePath + "\x00" + version
+	now := time.Now()
+
+	codexModelCapabilityCacheMu.Lock()
+	if entry, ok := codexModelCapabilityCache[cacheKey]; ok && now.Before(entry.expiresAt) {
+		codexModelCapabilityCacheMu.Unlock()
+		return entry.models, entry.ok
+	}
+	codexModelCapabilityCacheMu.Unlock()
+
+	runCtx, cancel := context.WithTimeout(ctx, codexModelCapabilityTimeout)
+	defer cancel()
+	raw, err := runCodexDebugModelsLive(runCtx, executablePath, env)
+	if err != nil {
+		if logger != nil {
+			logger.Warn("codex: failed to load live model capability catalog; disabling image_generation by default", "error", err)
+		}
+		codexModelCapabilityCacheMu.Lock()
+		codexModelCapabilityCache[cacheKey] = codexModelCapabilityCacheEntry{models: nil, ok: false, expiresAt: now.Add(modelCacheTTL)}
+		codexModelCapabilityCacheMu.Unlock()
+		return nil, false
+	}
+	models := parseCodexModelCapabilities(raw)
+	codexModelCapabilityCacheMu.Lock()
+	codexModelCapabilityCache[cacheKey] = codexModelCapabilityCacheEntry{models: models, ok: true, expiresAt: now.Add(modelCacheTTL)}
+	codexModelCapabilityCacheMu.Unlock()
+	return models, true
+}
+
+func runCodexDebugModelsLive(ctx context.Context, executablePath string, env map[string]string) ([]byte, error) {
+	cmd := exec.CommandContext(ctx, executablePath, "debug", "models")
+	hideAgentWindow(cmd)
+	cmd.Env = buildEnv(env)
+	return cmd.Output()
+}
+
+func parseCodexModelCapabilities(raw []byte) map[string]codexModelCapability {
+	out := map[string]codexModelCapability{}
+	var resp codexDebugModelsResponse
+	if err := json.Unmarshal(raw, &resp); err != nil {
+		return out
+	}
+	for _, m := range resp.Models {
+		if m.Slug == "" {
+			continue
+		}
+		capability := codexModelCapability{
+			InputModalities:            append([]string(nil), m.InputModalities...),
+			ExperimentalSupportedTools: append([]string(nil), m.ExperimentalSupportedTools...),
+		}
+		if m.SupportsImageDetailOriginal != nil {
+			capability.SupportsImageDetailOriginalSet = true
+			capability.SupportsImageDetailOriginal = *m.SupportsImageDetailOriginal
+		}
+		out[m.Slug] = capability
+	}
+	return out
 }
 
 // hasManagedCodexMcpConfig reports whether the agent's mcp_config field is
@@ -616,7 +775,8 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		return nil, fmt.Errorf("codex: mcp_config is set but CODEX_HOME env var is not configured; cannot apply managed MCP")
 	}
 
-	codexArgs := buildCodexArgs(opts, b.cfg.Logger)
+	disableImageGeneration := shouldDisableCodexImageGeneration(runCtx, execPath, opts, b.cfg.Env, b.cfg.Logger)
+	codexArgs := buildCodexArgs(opts, b.cfg.Logger, disableImageGeneration)
 	cmd := exec.CommandContext(runCtx, execPath, codexArgs...)
 	hideAgentWindow(cmd)
 	// Bound the wait after the context is cancelled so a stuck child (or an
