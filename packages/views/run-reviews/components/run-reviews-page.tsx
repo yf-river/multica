@@ -146,6 +146,10 @@ function RunReviewDetail({
   const timelineNodes = tree?.timeline_nodes ?? [];
   const stageRows = buildStageRows(timelineNodes);
   const childLanes = buildChildLanes(tree);
+  const visibleStageRows = stageRows.filter((stage) => stage.node);
+  const visibleChildLanes = childLanes.filter((lane) => lane.issue);
+  const missingStageRows = stageRows.filter((stage) => !stage.node);
+  const missingChildLanes = childLanes.filter((lane) => !lane.issue);
   const eventRows = timelineNodes.slice(0, 12);
   const queryClient = useQueryClient();
   const createDraftMut = useMutation({
@@ -211,27 +215,41 @@ function RunReviewDetail({
       {loading ? <DetailSkeleton /> : null}
 
       <section className="rounded-md border bg-card">
-        <SectionTitle title="横向时序图" subtitle="按真实开始/结束时间绘制 PM+01-05 与跨项目子任务泳道；缺时间或缺节点会明确标记。" />
-        <TimelineLaneChart stageRows={stageRows} childLanes={childLanes} timelineNodes={timelineNodes} />
+        <SectionTitle title="横向时序图" subtitle="按真实出现的执行节点绘制；节点存在但缺少开始/结束时间时会单独标记。" />
+        <TimelineLaneChart stageRows={visibleStageRows} childLanes={visibleChildLanes} timelineNodes={timelineNodes} />
       </section>
 
       <section className="rounded-md border bg-card">
-        <SectionTitle title="子任务泳道" subtitle="父 issue 只展示 gateway / ida-deployment 子 issue 引用和等待状态。" />
+        <SectionTitle title="子任务泳道" subtitle="只展示执行树中真实关联的跨项目子 issue。" />
         <div className="space-y-2 px-4 pb-4">
-          {childLanes.map((lane) => (
-            <div key={lane.key} className={cn("flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm", lane.issue ? "bg-background" : "border-dashed bg-muted/20")}>
+          {visibleChildLanes.length > 0 ? visibleChildLanes.map((lane) => (
+            <div key={lane.key} className="flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2 text-sm">
               <div className="min-w-0">
                 <div className="font-medium">{lane.label}</div>
-                <div className="truncate text-xs text-muted-foreground">{lane.issue ? `${lane.issue.identifier} ${lane.issue.title}` : "尚未创建或未在执行树中关联"}</div>
+                <div className="truncate text-xs text-muted-foreground">{lane.issue ? `${lane.issue.identifier} ${lane.issue.title}` : ""}</div>
               </div>
-              <span className="shrink-0 rounded border px-2 py-1 text-xs text-muted-foreground">{lane.issue ? statusLabel(lane.issue.status) : "缺失"}</span>
+              <span className="shrink-0 rounded border px-2 py-1 text-xs text-muted-foreground">{statusLabel(lane.issue?.status ?? "")}</span>
             </div>
-          ))}
+          )) : (
+            <div className="rounded-md border border-dashed bg-muted/20 px-3 py-4 text-sm text-muted-foreground">
+              当前执行树暂无跨项目子 issue。
+            </div>
+          )}
         </div>
       </section>
 
+      {(missingStageRows.length > 0 || missingChildLanes.length > 0) && (
+        <section className="rounded-md border bg-card">
+          <SectionTitle title="缺失诊断" subtitle="这里展示预期链路中未出现的阶段或子任务，不作为已发生执行节点绘制。" />
+          <div className="grid gap-3 px-4 pb-4 text-sm md:grid-cols-2">
+            <MissingItems title="未出现的 SOP 阶段" items={missingStageRows.map((stage) => stage.label)} emptyText="SOP 阶段完整" />
+            <MissingItems title="未关联的跨项目子任务" items={missingChildLanes.map((lane) => lane.label)} emptyText="跨项目子任务完整" />
+          </div>
+        </section>
+      )}
+
       <section className="rounded-md border bg-card">
-        <SectionTitle title="节点表" subtitle="字段固定：节点、Agent、状态、耗时、Token、轮次、证据。" />
+        <SectionTitle title="节点表" subtitle="只展示执行树中真实匹配到的 SOP 节点；缺失项见诊断区。" />
         <div className="hidden md:block">
           <table className="w-full table-fixed text-sm">
             <thead className="border-y bg-muted/40 text-left text-xs text-muted-foreground">
@@ -246,7 +264,7 @@ function RunReviewDetail({
               </tr>
             </thead>
             <tbody className="divide-y">
-              {stageRows.map((stage) => (
+              {visibleStageRows.length > 0 ? visibleStageRows.map((stage) => (
                 <tr key={stage.key}>
                   <td className="truncate px-3 py-2">{stage.label}</td>
                   <td className="truncate px-3 py-2 text-muted-foreground">{stage.node?.agent_name ?? stage.key}</td>
@@ -256,12 +274,16 @@ function RunReviewDetail({
                   <td className="truncate px-3 py-2">{formatNumber(stage.node?.agent_turn_count ?? 0)}</td>
                   <td className="truncate px-3 py-2">{stage.node?.evidence_refs?.length ? `${stage.node.evidence_refs.length} 条` : "待补齐"}</td>
                 </tr>
-              ))}
+              )) : (
+                <tr>
+                  <td className="px-3 py-5 text-sm text-muted-foreground" colSpan={7}>暂无真实 SOP 节点。</td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
         <div className="divide-y md:hidden">
-          {stageRows.map((stage) => (
+          {visibleStageRows.length > 0 ? visibleStageRows.map((stage) => (
             <div key={stage.key} className="px-4 py-3 text-sm">
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0 truncate font-medium">{stage.label}</div>
@@ -277,15 +299,17 @@ function RunReviewDetail({
                 <NodeFact label="证据" value={stage.node?.evidence_refs?.length ? `${stage.node.evidence_refs.length} 条` : "待补齐"} />
               </div>
             </div>
-          ))}
+          )) : (
+            <div className="px-4 py-5 text-sm text-muted-foreground">暂无真实 SOP 节点。</div>
+          )}
         </div>
       </section>
 
       <section className="rounded-md border bg-card">
         <SectionTitle title="事件流" subtitle="按执行树 timeline 展示最近事件。" />
         <div className="divide-y">
-          {eventRows.length > 0 ? eventRows.map((node) => (
-            <div key={node.node_id} className="flex gap-3 px-4 py-3 text-sm">
+          {eventRows.length > 0 ? eventRows.map((node, index) => (
+            <div key={`${node.node_id}-${node.node_type}-${index}`} className="flex gap-3 px-4 py-3 text-sm">
               <GitBranch className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
               <div className="min-w-0">
                 <div className="truncate font-medium">{node.summary || node.node_type}</div>
@@ -303,6 +327,25 @@ function RunReviewDetail({
           )}
         </div>
       </section>
+    </div>
+  );
+}
+
+function MissingItems({ title, items, emptyText }: { title: string; items: string[]; emptyText: string }) {
+  return (
+    <div className="rounded-md border bg-muted/10 px-3 py-3">
+      <div className="text-xs font-medium text-muted-foreground">{title}</div>
+      {items.length > 0 ? (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {items.map((item) => (
+            <span key={item} className="rounded border bg-background px-2 py-1 text-xs text-muted-foreground">
+              {item}
+            </span>
+          ))}
+        </div>
+      ) : (
+        <div className="mt-2 text-xs text-muted-foreground">{emptyText}</div>
+      )}
     </div>
   );
 }
@@ -384,7 +427,7 @@ function TimelineLaneChart({
         </div>
       </div>
       <div className="mt-2 space-y-1.5">
-        {rows.map((row) => (
+        {rows.length > 0 ? rows.map((row) => (
           <div key={row.key} className="grid grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-x-3">
             <div className="min-w-0">
               <div className="truncate text-xs font-medium">{row.label}</div>
@@ -417,7 +460,11 @@ function TimelineLaneChart({
               )}
             </div>
           </div>
-        ))}
+        )) : (
+          <div className="rounded-md border border-dashed bg-muted/20 px-3 py-4 text-sm text-muted-foreground">
+            暂无可绘制的真实执行节点。
+          </div>
+        )}
       </div>
     </div>
   );
@@ -428,7 +475,7 @@ function buildTimelineBarRows(
   childLanes: ChildLane[],
   timelineNodes: IssueTimelineNode[],
 ): TimelineBarRow[] {
-  const stageBars = stageRows.map((stage) => {
+  const stageBars = stageRows.filter((stage) => stage.node).map((stage) => {
     const timing = timelineTiming(stage.node);
     return {
       key: stage.key,
@@ -442,7 +489,7 @@ function buildTimelineBarRows(
       missing: !stage.node,
     };
   });
-  const childBars = childLanes.map((lane) => {
+  const childBars = childLanes.filter((lane) => lane.issue).map((lane) => {
     const node = timelineNodes.find((item) => item.node_type === "child_issue_ref" && item.child_issue_id === lane.issue?.id);
     const timing = timelineTiming(node);
     return {
