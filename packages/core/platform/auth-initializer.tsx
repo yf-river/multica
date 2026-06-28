@@ -2,7 +2,7 @@
 
 import { useEffect, type ReactNode } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { getApi } from "../api";
+import { ApiError, getApi } from "../api";
 import { useAuthStore } from "../auth";
 import {
   identify as identifyAnalytics,
@@ -100,7 +100,11 @@ export function AuthInitializer({
           qc.setQueryData(workspaceKeys.list(), wsList);
         })
         .catch((err) => {
-          logger.error("cookie auth init failed", err);
+          if (isExpectedCookieAuthMiss(err)) {
+            logger.debug("cookie auth session unavailable", err);
+          } else {
+            logger.error("cookie auth init failed", err);
+          }
           onAuthFailure();
         });
       return;
@@ -134,4 +138,9 @@ export function AuthInitializer({
   }, []);
 
   return <>{children}</>;
+}
+
+function isExpectedCookieAuthMiss(err: unknown): boolean {
+  if (!(err instanceof ApiError)) return false;
+  return err.status === 401 || err.status === 403;
 }
