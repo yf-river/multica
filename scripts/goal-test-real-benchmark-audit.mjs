@@ -169,6 +169,8 @@ function buildP0Matrix(data) {
       "service-level-container",
       "service-process",
     ].includes(data.existing_artifacts.quick_entry?.sandbox_mode);
+  const historicalServiceSandboxReady = data.existing_artifacts.historical_service_sandbox?.ok === true
+    && data.existing_artifacts.historical_service_sandbox?.sandbox_mode === "service-process";
   const operationIntentReady = data.training_loop.has_operation_skill_intent_fields;
   return [
     {
@@ -183,15 +185,30 @@ function buildP0Matrix(data) {
           status: item.status,
           missing: item.missing,
         })) || null,
+        historical_service_sandbox_cases: data.existing_artifacts.historical_service_sandbox?.cases?.map((item) => ({
+          id: item.id,
+          status: item.status,
+          ok: item.ok,
+        })) || null,
       },
-      missing: ["五条尚未全部形成服务级 sandbox run、curl verifier、trace/eval verdict 和复跑命令"],
+      missing: serviceSandboxReady && historicalServiceSandboxReady
+        ? ["五条尚未全部形成 trace/eval verdict 和训练闭环复跑命令"]
+        : ["五条尚未全部形成服务级 sandbox run、curl verifier、trace/eval verdict 和复跑命令"],
     },
     {
       id: "P0-2",
       requirement: "服务级 sandbox 必须真实启动相关服务，curl 从 gateway HTTP 进入并触达 usercenter gRPC 与 ida-deployment 权限/apiData/render。",
-      status: serviceSandboxReady ? "partial" : "missing",
-      evidence: data.existing_artifacts.quick_entry || null,
-      missing: serviceSandboxReady ? ["历史四条尚无服务级 sandbox artifact"] : ["当前 quick-entry latest 仍不是 service-level container/process 口径", "历史四条尚无服务级 sandbox artifact"],
+      status: serviceSandboxReady && historicalServiceSandboxReady ? "fulfilled" : (serviceSandboxReady || historicalServiceSandboxReady ? "partial" : "missing"),
+      evidence: {
+        quick_entry: data.existing_artifacts.quick_entry || null,
+        historical_service_sandbox: data.existing_artifacts.historical_service_sandbox || null,
+      },
+      missing: serviceSandboxReady && historicalServiceSandboxReady
+        ? []
+        : [
+            ...(serviceSandboxReady ? [] : ["当前 quick-entry latest 仍不是 service-level container/process 口径"]),
+            ...(historicalServiceSandboxReady ? [] : ["历史四条尚无服务级 sandbox artifact"]),
+          ],
     },
     {
       id: "P0-3",
@@ -225,6 +242,10 @@ function buildP0Matrix(data) {
 }
 
 function buildGapMatrix(data) {
+  const quickEntryServiceReady = data.existing_artifacts.quick_entry?.ok === true
+    && ["service-container", "service-level-container", "service-process"].includes(data.existing_artifacts.quick_entry?.sandbox_mode);
+  const historicalServiceReady = data.existing_artifacts.historical_service_sandbox?.ok === true
+    && data.existing_artifacts.historical_service_sandbox?.sandbox_mode === "service-process";
   return [
     {
       id: "GAP-1",
@@ -237,11 +258,8 @@ function buildGapMatrix(data) {
       id: "GAP-2",
       gap: "sandbox 不是服务级，curl 未穿过 gateway -> usercenter -> ida-deployment",
       blocking: true,
-      status: data.existing_artifacts.quick_entry?.ok === true
-        && ["service-container", "service-level-container", "service-process"].includes(data.existing_artifacts.quick_entry?.sandbox_mode)
-        ? "partial"
-        : "missing",
-      verification: "future service-level benchmark runner artifacts",
+      status: quickEntryServiceReady && historicalServiceReady ? "fulfilled" : (quickEntryServiceReady || historicalServiceReady ? "partial" : "missing"),
+      verification: "quick-entry-cross-service-latest.json and historical-service-sandbox-latest.json",
     },
     {
       id: "GAP-3",
@@ -286,12 +304,14 @@ function decisionEvidence() {
 function existingArtifacts() {
   const quickEntryPath = path.join(artifactRoot, "quick-entry-cross-service-latest.json");
   const historicalReadinessPath = path.join(artifactRoot, "historical-benchmark-readiness-latest.json");
+  const historicalServiceSandboxPath = path.join(artifactRoot, "historical-service-sandbox-latest.json");
   const promptCurlPath = path.join(artifactRoot, "prompt-evaluation-curl-e2e-latest.json");
   const optimizerPath = path.join(artifactRoot, "optimizer-workbench-latest.json");
   const gapPath = path.join(artifactRoot, "tapd-gongfeng-sop-gap-audit-latest.json");
   return {
     quick_entry: readJSONArtifact(quickEntryPath),
     historical_readiness: readJSONArtifact(historicalReadinessPath),
+    historical_service_sandbox: readJSONArtifact(historicalServiceSandboxPath),
     prompt_evaluation_curl: readJSONArtifact(promptCurlPath),
     optimizer_workbench: readJSONArtifact(optimizerPath),
     final_gap_audit: readJSONArtifact(gapPath),
