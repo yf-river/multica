@@ -27,6 +27,9 @@ func TestSquadOperatingProtocolWarnsAgainstDualTrigger(t *testing.T) {
 	for _, want := range []string{
 		"--status todo` 创建并指派给 agent 的子 issue 已经会自动触发该 agent",
 		"不要对同一项工作两者都做。",
+		"子 issue 不是 SOP 阶段节点",
+		"不得为了“继续推进下一阶段”创建同项目 child issue",
+		"只有用户明确要求同项目子任务",
 		"--parent <当前 issue id>",
 		"--project <目标 project UUID>",
 		"只带 `--parent` 会继承父 issue 的项目",
@@ -238,6 +241,8 @@ func TestBuildSquadLeaderBriefing_FullSquad(t *testing.T) {
 		"跨项目子任务规则",
 		"multica issue children <当前 issue id> --output json",
 		"禁止再创建新的重复 child",
+		"单项目需求、TAPD/Gongfeng/source_context 抓取后的真实需求、以及 01-05 阶段推进不是跨项目子任务触发条件",
+		"如果候选目标项目等于当前 issue 项目，且用户没有明确要求同项目子任务，就必须继续在当前 issue 推进",
 		"SOP 后续阶段看到 PM/队长已经拆出的跨项目 child 时，不要二次拆分",
 		"--parent <当前 issue id>",
 		"--project <目标项目 id>",
@@ -353,6 +358,8 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 		"目标项目=<target-project>",
 		"multica issue children <当前 issue id> --output json",
 		"禁止重复创建",
+		"单项目需求、TAPD/Gongfeng/source_context 抓取后的真实需求、以及 01-05 阶段推进不是跨项目子任务触发条件",
+		"用户没有明确要求同项目子任务，就必须继续在当前 issue 推进",
 		"不要二次拆分",
 		"--parent <当前 issue id>",
 		"--project <目标项目 id>",
@@ -363,10 +370,36 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 		"自动交给项目负责人",
 		"不要再为同一项工作 @mention 同一个负责人",
 		"归档口径：06-archive 不作为必跑阶段",
+		"禁止事项：",
+		"把 TAPD 正文抓取后的真实需求复制成同项目 child issue",
+		"为了进入 01-clarify/02-design/03-task-split/04-implement/05-verify 创建 child issue",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected user-center SOP briefing to contain %q\n--- output ---\n%s", want, out)
 		}
+	}
+	if !strings.Contains(template.Instructions, "不得为了进入下一阶段创建同项目 child issue") {
+		t.Fatalf("user-center template instructions must forbid same-project stage child issues:\n%s", template.Instructions)
+	}
+	pmRoleFound := false
+	for _, role := range template.Roles {
+		if role.Key != "pm" {
+			continue
+		}
+		pmRoleFound = true
+		for _, want := range []string{
+			"TAPD 正文抓取后得到的真实需求仍属于当前 issue",
+			"不得复制成同项目 child issue",
+			"不得为了进入 01-clarify、02-design、03-task-split、04-implement 或 05-verify 创建 child issue",
+			"只有跨项目协作才创建必要 child issue",
+		} {
+			if !strings.Contains(role.Instruction+role.Description, want) {
+				t.Fatalf("pm role must contain %q\n--- role ---\n%+v", want, role)
+			}
+		}
+	}
+	if !pmRoleFound {
+		t.Fatal("user-center template missing pm role")
 	}
 	if strings.Contains(out, "user-center/06-archive") {
 		t.Fatalf("user-center SOP briefing must not include 06-archive in required stage skills\n--- output ---\n%s", out)

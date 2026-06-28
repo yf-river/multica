@@ -44,6 +44,12 @@ func TestSubIssueCreationSectionPresentForIssueRuns(t *testing.T) {
 				t.Fatalf("expected Sub-issue Creation section in %s brief", tc.name)
 			}
 			for _, want := range []string{
+				"**Child issues are not SOP stage nodes.**",
+				"TAPD/Gongfeng/source_context fetch results and 01-clarify/02-design/03-task-split/04-implement/05-verify stage progression must stay on the current issue",
+				"Do not create a same-project child issue just to continue to the next SOP stage.",
+				"Create a same-project child only when the user explicitly asks for a subtask or the work is an independent deliverable",
+				"`multica issue children <current> --output json`",
+				"at most one backlog child per target project/work intent",
 				"**Choosing `--status` when creating sub-issues.**",
 				"`--status todo` = **start now**",
 				"`--status backlog` = **wait**",

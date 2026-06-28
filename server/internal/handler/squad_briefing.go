@@ -50,6 +50,7 @@ const squadOperatingProtocol = `## 小队负责人操作协议
 - 结束本轮前始终调用 ` + "`" + `multica squad activity` + "`" + `，即使 outcome 是 no_action。
 - 你用 ` + "`" + `--status todo` + "`" + ` 创建并指派给 agent 的子 issue 已经会自动触发该 agent；这个指派本身就是触发器。如果你又在父 issue 上为同一项工作 @mention 同一个 agent，这个 agent 会并行运行两次（一次来自 mention，一次来自指派）。只能选择一条路径：要么在这个 issue 上通过 @mention 委派，要么创建一个指派给他们的 ` + "`" + `todo` + "`" + ` 子 issue。不要对同一项工作两者都做。
 - 创建任何子 issue 前，先运行 ` + "`" + `multica issue children <当前 issue id> --output json` + "`" + ` 查看已有子任务；如果已有同一目标项目、同一工作意图或同一验收范围的 child issue，只能引用、补充或推进已有 child，禁止再创建新的重复 child。SOP 后续阶段看到 PM/队长已经拆出的跨项目 child 时，不要二次拆分。
+- 子 issue 不是 SOP 阶段节点。单项目需求、TAPD/Gongfeng/source_context 抓取后的真实需求、以及 01-clarify/02-design/03-task-split/04-implement/05-verify 阶段推进，默认都必须留在当前 issue 的评论、mention、任务轨迹和阶段流中；不得为了“继续推进下一阶段”创建同项目 child issue。只有用户明确要求同项目子任务，或确有独立交付物需要并行跟踪时，才允许同项目 child issue。
 - 创建子 issue 时，必须显式带上 ` + "`" + `--parent <当前 issue id>` + "`" + `，否则新 issue 会变成独立任务。跨项目子 issue 还必须显式带上 ` + "`" + `--project <目标 project UUID>` + "`" + `；只带 ` + "`" + `--parent` + "`" + ` 会继承父 issue 的项目，不能表达 gateway/config 等其它项目协作。先用 ` + "`" + `multica project list --output json` + "`" + ` 查目标 project UUID，不要用项目名、issue identifier 或猜测值替代 UUID。`
 
 // buildSquadLeaderBriefing composes the full system briefing appended to a
@@ -162,7 +163,7 @@ func buildSquadSOPProfile(raw []byte) string {
 		sb.WriteString("\n")
 	}
 	if len(profile.CrossProjectChildIssues) > 0 {
-		sb.WriteString("- 跨项目子任务规则：如果当前 issue 需要其它项目配合，不要只在父 issue 上描述依赖；先运行 `multica issue children <当前 issue id> --output json` 查看已有 child，再运行 `multica project list --output json` 找到目标项目 UUID。只有确认没有同一目标项目、同一工作意图或同一验收范围的 child issue 时，才创建新的子 issue；如果已有 child，只能引用、补充或推进已有 child，禁止重复创建。命令形态必须包含 `--parent <当前 issue id>` 和 `--project <目标项目 id>`，例如 `multica issue create --title \"...\" --description-file ./child.md --status backlog --parent <当前 issue id> --project <目标项目 id> --output json`。如果父 issue 或任务说明明确给出目标小队 UUID，必须在同一条创建命令中传 `--assignee-id <目标小队 UUID>`，并逐项核对“目标项目 UUID + 目标小队 UUID”映射，不能按 project list 的输出顺序猜测；如果没有明确目标小队 UUID，才不要额外传 `--assignee` 或 `--assignee-id`，平台会把未指派的项目 issue 自动交给项目负责人。创建子 issue 后，不要再为同一项工作 @mention 同一个负责人，避免双触发。SOP 后续阶段看到 PM/队长已经拆出的跨项目 child 时，不要二次拆分。\n")
+		sb.WriteString("- 跨项目子任务规则：如果当前 issue 需要其它项目配合，不要只在父 issue 上描述依赖；先运行 `multica issue children <当前 issue id> --output json` 查看已有 child，再运行 `multica project list --output json` 找到目标项目 UUID。只有确认没有同一目标项目、同一工作意图或同一验收范围的 child issue 时，才创建新的子 issue；如果已有 child，只能引用、补充或推进已有 child，禁止重复创建。单项目需求、TAPD/Gongfeng/source_context 抓取后的真实需求、以及 01-05 阶段推进不是跨项目子任务触发条件；如果候选目标项目等于当前 issue 项目，且用户没有明确要求同项目子任务，就必须继续在当前 issue 推进。命令形态必须包含 `--parent <当前 issue id>` 和 `--project <目标项目 id>`，例如 `multica issue create --title \"...\" --description-file ./child.md --status backlog --parent <当前 issue id> --project <目标项目 id> --output json`。如果父 issue 或任务说明明确给出目标小队 UUID，必须在同一条创建命令中传 `--assignee-id <目标小队 UUID>`，并逐项核对“目标项目 UUID + 目标小队 UUID”映射，不能按 project list 的输出顺序猜测；如果没有明确目标小队 UUID，才不要额外传 `--assignee` 或 `--assignee-id`，平台会把未指派的项目 issue 自动交给项目负责人。创建子 issue 后，不要再为同一项工作 @mention 同一个负责人，避免双触发。SOP 后续阶段看到 PM/队长已经拆出的跨项目 child 时，不要二次拆分。\n")
 		for _, child := range profile.CrossProjectChildIssues {
 			target := sopStringField(child, "target_project", "project", "name")
 			trigger := sopStringField(child, "trigger", "when")

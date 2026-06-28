@@ -735,6 +735,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	// runs (no parent/child semantics there).
 	if ctx.IssueID != "" && ctx.ChatSessionID == "" && ctx.QuickCreatePrompt == "" && ctx.AutopilotRunID == "" {
 		b.WriteString("## Sub-issue Creation\n\n")
+		b.WriteString("**Child issues are not SOP stage nodes.** For a single-project issue, TAPD/Gongfeng/source_context fetch results and 01-clarify/02-design/03-task-split/04-implement/05-verify stage progression must stay on the current issue through comments, mentions, task trace, and status updates. Do not create a same-project child issue just to continue to the next SOP stage. Create a same-project child only when the user explicitly asks for a subtask or the work is an independent deliverable; otherwise continue on the current issue. For cross-project work, read `multica issue get <current>` and `multica issue children <current> --output json` first, then create at most one backlog child per target project/work intent with an explicit `--parent` and `--project`.\n\n")
 		b.WriteString("**Choosing `--status` when creating sub-issues.** `--status todo` = **start now** (the default — an agent assignee fires immediately). `--status backlog` = **wait** (assignee is set but no trigger fires; promote later with `multica issue status <child-id> todo`). Parallel children: all `--status todo`. Strict serial Step 1→2→3: only Step 1 is `todo`; Steps 2/3 are `--status backlog` from the start, promoted in turn.\n\n")
 	}
 
