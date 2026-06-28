@@ -664,6 +664,54 @@ func TestDaemonHeartbeat_HTTPRuntimeGoneReturns404(t *testing.T) {
 	}
 }
 
+func TestDaemonHeartbeat_MergesRuntimeMetadata(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	runtimeID := createRuntimeLocalSkillTestRuntime(t, testUserID)
+	if _, err := testPool.Exec(context.Background(),
+		`UPDATE agent_runtime SET metadata = '{"version":"1.2.3","cli_version":"dev"}'::jsonb WHERE id = $1`,
+		runtimeID,
+	); err != nil {
+		t.Fatalf("seed runtime metadata: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest(http.MethodPost, "/api/daemon/heartbeat", map[string]any{
+		"runtime_id": runtimeID,
+		"metadata": map[string]any{
+			"network": map[string]any{
+				"status":   "unavailable",
+				"provider": "codex",
+			},
+		},
+	}, testWorkspaceID, "runtime-network-daemon")
+
+	testHandler.DaemonHeartbeat(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("DaemonHeartbeat: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var raw []byte
+	if err := testPool.QueryRow(context.Background(),
+		`SELECT metadata FROM agent_runtime WHERE id = $1`, runtimeID,
+	).Scan(&raw); err != nil {
+		t.Fatalf("read metadata: %v", err)
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(raw, &metadata); err != nil {
+		t.Fatalf("decode metadata: %v", err)
+	}
+	if metadata["version"] != "1.2.3" || metadata["cli_version"] != "dev" {
+		t.Fatalf("registration metadata was not preserved: %#v", metadata)
+	}
+	network, ok := metadata["network"].(map[string]any)
+	if !ok || network["status"] != "unavailable" || network["provider"] != "codex" {
+		t.Fatalf("network metadata was not merged: %#v", metadata["network"])
+	}
+}
+
 // TestDaemonHeartbeat_SlowProbeDoesNotWedge pins the invariant that a stalled
 // HasPending probe cannot wedge the heartbeat endpoint past the per-probe
 // timeout. The probe is the only bounded call; PopPending is ack-safe-

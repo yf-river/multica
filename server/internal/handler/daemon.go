@@ -177,10 +177,11 @@ type DaemonRegisterRequest struct {
 	CLIVersion      string   `json:"cli_version"` // multica CLI version
 	LaunchedBy      string   `json:"launched_by"` // "desktop" when spawned by the Electron app
 	Runtimes        []struct {
-		Name    string `json:"name"`
-		Type    string `json:"type"`
-		Version string `json:"version"` // agent CLI version (claude/codex)
-		Status  string `json:"status"`
+		Name     string          `json:"name"`
+		Type     string          `json:"type"`
+		Version  string          `json:"version"` // agent CLI version (claude/codex)
+		Status   string          `json:"status"`
+		Metadata json.RawMessage `json:"metadata,omitempty"`
 		// ProfileID, when non-empty, marks this as an instance of a custom
 		// runtime_profile (MUL-3284). Empty = built-in runtime (legacy path).
 		// Type carries the protocol family for both built-in and custom rows
@@ -339,11 +340,22 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 		if runtime.Status == "offline" {
 			status = "offline"
 		}
-		metadata, _ := json.Marshal(map[string]any{
+		metadataMap := map[string]any{
 			"version":     runtime.Version,
 			"cli_version": req.CLIVersion,
 			"launched_by": req.LaunchedBy,
-		})
+		}
+		if len(runtime.Metadata) > 0 {
+			var incoming map[string]any
+			if err := json.Unmarshal(runtime.Metadata, &incoming); err != nil {
+				writeError(w, http.StatusBadRequest, "invalid runtime metadata")
+				return
+			}
+			for k, v := range incoming {
+				metadataMap[k] = v
+			}
+		}
+		metadata, _ := json.Marshal(metadataMap)
 
 		var registered db.AgentRuntime
 		var inserted bool
@@ -679,8 +691,9 @@ func (h *Handler) DaemonDeregister(w http.ResponseWriter, r *http.Request) {
 }
 
 type DaemonHeartbeatRequest struct {
-	RuntimeID           string `json:"runtime_id"`
-	SupportsBatchImport bool   `json:"supports_batch_import,omitempty"`
+	RuntimeID           string          `json:"runtime_id"`
+	SupportsBatchImport bool            `json:"supports_batch_import,omitempty"`
+	Metadata            json.RawMessage `json:"metadata,omitempty"`
 }
 
 // heartbeatHasPendingTimeout bounds the cheap HasPending probe on the
@@ -810,6 +823,24 @@ func (h *Handler) DaemonHeartbeat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	authMs = time.Since(start).Milliseconds()
+
+	if len(req.Metadata) > 0 {
+		var metadata map[string]any
+		if err := json.Unmarshal(req.Metadata, &metadata); err != nil || metadata == nil {
+			outcome = "bad_metadata"
+			writeError(w, http.StatusBadRequest, "invalid heartbeat metadata")
+			return
+		}
+		if err := h.Queries.MergeAgentRuntimeMetadata(r.Context(), db.MergeAgentRuntimeMetadataParams{
+			ID:       rt.ID,
+			Metadata: req.Metadata,
+		}); err != nil {
+			outcome = "metadata_update_error"
+			slog.Warn("merge runtime metadata failed", "runtime_id", req.RuntimeID, "error", err)
+			writeError(w, http.StatusInternalServerError, "heartbeat failed")
+			return
+		}
+	}
 
 	ack, m, err := h.processHeartbeat(r.Context(), rt, req.SupportsBatchImport)
 	updateMs = m.UpdateMs

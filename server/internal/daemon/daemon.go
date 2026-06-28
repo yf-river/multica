@@ -209,6 +209,13 @@ type Daemon struct {
 	// waits. See MUL-2663.
 	localPathLocks *LocalPathLocker
 
+	// runtimeNetworkByID stores this daemon's local provider-network health
+	// by server runtime_id. It is machine-local state: the server receives a
+	// redacted snapshot in runtime metadata, while claim gating remains here
+	// so one bad host does not affect other daemons on the same service.
+	runtimeNetworkByID    map[string]runtimeNetworkHealth
+	runtimeNetworkDirtyID map[string]struct{}
+
 	// bgSyncs tracks background goroutines started by registerTaskRepos so
 	// callers (notably tests using t.TempDir-backed cache roots) can wait for
 	// them to drain before tearing the daemon down. Without this the bg
@@ -244,6 +251,8 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		wsHBLastAck:               make(map[string]time.Time),
 		activeEnvRoots:            make(map[string]int),
 		localPathLocks:            NewLocalPathLocker(),
+		runtimeNetworkByID:        make(map[string]runtimeNetworkHealth),
+		runtimeNetworkDirtyID:     make(map[string]struct{}),
 		runtimeGoneInflight:       make(map[string]struct{}),
 		reregisterNextAttempt:     make(map[string]time.Time),
 		reregisterLastCompletedAt: make(map[string]time.Time),
@@ -891,7 +900,8 @@ func (d *Daemon) customCommandPathForRuntime(runtimeID string) (string, bool) {
 
 func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID string) (*RegisterResponse, string, error) {
 	d.logger.Debug("registering runtimes for workspace", "workspace_id", workspaceID, "agent_count", len(d.cfg.Agents))
-	var runtimes []map[string]string
+	var runtimes []map[string]any
+	networkByKey := map[string]runtimeNetworkHealth{}
 	for name, entry := range d.cfg.Agents {
 		version, err := detectAgentVersion(ctx, entry.Path)
 		if err != nil {
@@ -908,11 +918,18 @@ func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID s
 		if d.cfg.DeviceName != "" {
 			displayName = fmt.Sprintf("%s (%s)", displayName, d.cfg.DeviceName)
 		}
-		runtimes = append(runtimes, map[string]string{
-			"name":    displayName,
-			"type":    name,
-			"version": version,
-			"status":  "online",
+		network := checkRuntimeNetwork(d, ctx, name, entry)
+		networkByKey[runtimeNetworkKey(name, "")] = network
+		status := "online"
+		if runtimeNetworkStatusBlocksClaims(network.Status) {
+			status = "offline"
+		}
+		runtimes = append(runtimes, map[string]any{
+			"name":     displayName,
+			"type":     name,
+			"version":  version,
+			"status":   status,
+			"metadata": runtimeNetworkMetadata(network),
 		})
 	}
 
@@ -927,7 +944,7 @@ func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID s
 	// between sync ticks without making an extra round trip on every tick
 	// (MUL-3332). An empty string means the fetch failed and the caller must
 	// keep whatever signature was previously cached on the workspaceState.
-	profileSig := d.appendProfileRuntimes(ctx, workspaceID, &runtimes)
+	profileSig := d.appendProfileRuntimes(ctx, workspaceID, &runtimes, networkByKey)
 
 	if len(runtimes) == 0 {
 		// profileSig is still meaningful even when nothing resolves: the
@@ -954,6 +971,11 @@ func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID s
 	}
 	if len(resp.Runtimes) == 0 {
 		return nil, "", fmt.Errorf("register runtimes: empty response")
+	}
+	for _, rt := range resp.Runtimes {
+		if health, ok := networkByKey[runtimeNetworkKey(rt.Provider, rt.ProfileID)]; ok {
+			d.recordRuntimeNetworkHealth(rt.ID, health)
+		}
 	}
 	d.logger.Debug("register response", "workspace_id", workspaceID, "runtimes", len(resp.Runtimes), "repos", len(resp.Repos), "repos_version", resp.ReposVersion)
 	return resp, profileSig, nil
@@ -983,7 +1005,7 @@ func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID s
 // treat that as "unknown, do not overwrite a previously-stored signature"
 // (otherwise a transient 5xx would silently flip the daemon into thinking the
 // workspace has zero profiles).
-func (d *Daemon) appendProfileRuntimes(ctx context.Context, workspaceID string, runtimes *[]map[string]string) string {
+func (d *Daemon) appendProfileRuntimes(ctx context.Context, workspaceID string, runtimes *[]map[string]any, networkByKey map[string]runtimeNetworkHealth) string {
 	resp, err := d.client.GetRuntimeProfiles(ctx, workspaceID)
 	if err != nil {
 		// Best-effort: never fail registration because profiles couldn't be
@@ -1058,12 +1080,19 @@ func (d *Daemon) appendProfileRuntimes(ctx context.Context, workspaceID string, 
 		// done here — it's an optional, best-effort enhancement (see MUL-3284
 		// PR2 task notes). TODO(MUL-3284): plumb FixedArgs into the agent
 		// launch command if/when the agent backend exposes a hook for it.
-		*runtimes = append(*runtimes, map[string]string{
+		network := checkRuntimeNetwork(d, ctx, profile.ProtocolFamily, AgentEntry{Path: resolved})
+		networkByKey[runtimeNetworkKey(profile.ProtocolFamily, profile.ID)] = network
+		status := "online"
+		if runtimeNetworkStatusBlocksClaims(network.Status) {
+			status = "offline"
+		}
+		*runtimes = append(*runtimes, map[string]any{
 			"name":       displayName,
 			"type":       profile.ProtocolFamily,
 			"version":    version,
-			"status":     "online",
+			"status":     status,
 			"profile_id": profile.ID,
+			"metadata":   runtimeNetworkMetadata(network),
 		})
 	}
 	return profileSetSignature(resp.RuntimeProfiles)
@@ -1844,18 +1873,21 @@ func (d *Daemon) runRuntimeHeartbeat(ctx context.Context, rid string) {
 }
 
 func (d *Daemon) runHeartbeatTick(ctx context.Context, rid string) {
+	networkMetadata, hasNetworkMetadata := d.runtimeNetworkHeartbeatMetadata(rid)
 	// Skip HTTP heartbeat for runtimes that successfully acked a recent
 	// WebSocket heartbeat. The WS path keeps last_seen_at fresh and delivers
 	// actions, so the HTTP write would be a duplicate DB update. If the WS
 	// heartbeat goes silent the freshness window expires and HTTP resumes
 	// automatically on the next tick — that is the fallback the WS path
-	// relies on.
-	if d.wsHeartbeatRecentlyAcked(rid) {
+	// relies on. Dirty runtime-network metadata intentionally forces one HTTP
+	// beat so the server metadata catches up even while WS heartbeats are
+	// otherwise healthy.
+	if !hasNetworkMetadata && d.wsHeartbeatRecentlyAcked(rid) {
 		d.logger.Debug("heartbeat: skipping HTTP tick, WS recently acked", "runtime_id", rid)
 		return
 	}
 	d.logger.Debug("heartbeat: HTTP tick", "runtime_id", rid)
-	resp, err := d.client.SendHeartbeat(ctx, rid)
+	resp, err := d.client.SendHeartbeat(ctx, rid, networkMetadata)
 	if err != nil {
 		if ctx.Err() == nil {
 			if isRuntimeNotFoundError(err) {
@@ -1870,6 +1902,9 @@ func (d *Daemon) runHeartbeatTick(ctx context.Context, rid string) {
 			d.logger.Warn("heartbeat failed", "runtime_id", rid, "error", err)
 		}
 		return
+	}
+	if hasNetworkMetadata {
+		d.clearRuntimeNetworkHeartbeatMetadata(rid)
 	}
 	if resp != nil && resp.RuntimeGone {
 		// The WS path returns a successful ack with RuntimeGone=true for the
@@ -2491,6 +2526,18 @@ func (d *Daemon) runRuntimePoller(
 		if pollerCtx.Err() != nil {
 			return
 		}
+		if health, blocked := d.runtimeNetworkBlocksClaims(rid); blocked {
+			d.logger.Warn("poll: runtime network unavailable; skipping claim",
+				"runtime_id", rid,
+				"provider", health.Provider,
+				"status", health.Status,
+				"hint", health.FailureHint,
+			)
+			if err := sleepWithContextOrWakeup(pollerCtx, d.cfg.PollInterval, wakeup); err != nil {
+				return
+			}
+			continue
+		}
 
 		// Acquire an execution slot before claiming. If at capacity, sleep
 		// without claiming so we don't push a task into `dispatched` and
@@ -2811,7 +2858,9 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		// classifier so the failure_reason column reflects the actual
 		// shape of the failure (provider 5xx, network, process crash,
 		// …) rather than the coarse legacy "agent_error" bucket.
-		if failErr := d.client.FailTask(ctx, task.ID, err.Error(), "", "", taskfailure.Classify(err.Error()).String()); failErr != nil {
+		reason := taskfailure.Classify(err.Error())
+		d.markRuntimeNetworkFailure(task.RuntimeID, reason, err.Error())
+		if failErr := d.client.FailTask(ctx, task.ID, err.Error(), "", "", reason.String()); failErr != nil {
 			taskLog.Error("fail task callback failed", "error", failErr)
 		}
 		return
@@ -2829,6 +2878,13 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		return
 	}
 
+	if result.Status != "completed" {
+		reason := taskfailure.Classify(result.Comment)
+		if result.FailureReason != "" {
+			reason = taskfailure.Reason(result.FailureReason)
+		}
+		d.markRuntimeNetworkFailure(task.RuntimeID, reason, result.Comment)
+	}
 	d.reportTaskResult(ctx, task.ID, result, taskLog)
 
 	// Write GC metadata after the task finishes so the periodic GC loop
@@ -3412,6 +3468,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if rootsValue, ok := composeOpenclawIncludeRoots(env.OpenclawIncludeRoot, os.Getenv("OPENCLAW_INCLUDE_ROOTS")); ok {
 		agentEnv["OPENCLAW_INCLUDE_ROOTS"] = rootsValue
 	}
+	// Runtime-level proxy configuration is local to this daemon host. The
+	// service stores only redacted health metadata; the actual proxy env is
+	// injected here so different machines can use different network paths.
+	mergeRuntimeProxyEnv(agentEnv, provider)
 	// Inject user-configured custom environment variables (e.g. ANTHROPIC_API_KEY,
 	// ANTHROPIC_BASE_URL for router/proxy mode, or CLAUDE_CODE_USE_BEDROCK for
 	// Bedrock). These are set per-agent via the agent settings UI.

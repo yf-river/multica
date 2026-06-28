@@ -678,6 +678,25 @@ func (q *Queries) MarkRuntimesOfflineByIDs(ctx context.Context, arg MarkRuntimes
 	return items, nil
 }
 
+const mergeAgentRuntimeMetadata = `-- name: MergeAgentRuntimeMetadata :exec
+UPDATE agent_runtime
+SET metadata = COALESCE(metadata, '{}'::jsonb) || $1::jsonb,
+    updated_at = now()
+WHERE id = $2
+`
+
+type MergeAgentRuntimeMetadataParams struct {
+	Metadata []byte      `json:"metadata"`
+	ID       pgtype.UUID `json:"id"`
+}
+
+// Merges a top-level runtime metadata patch without overwriting unrelated
+// keys such as registration version, cli_version, or launched_by.
+func (q *Queries) MergeAgentRuntimeMetadata(ctx context.Context, arg MergeAgentRuntimeMetadataParams) error {
+	_, err := q.db.Exec(ctx, mergeAgentRuntimeMetadata, arg.Metadata, arg.ID)
+	return err
+}
+
 const pauseAutopilotsByAgentAssignees = `-- name: PauseAutopilotsByAgentAssignees :exec
 UPDATE autopilot
 SET status = 'paused', updated_at = now()
