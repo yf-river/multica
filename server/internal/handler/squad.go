@@ -94,7 +94,7 @@ type internalSquadRole struct {
 	MCPConfig   []byte
 }
 
-const sopPMRoutingRule = "调度规则：只有 pm 可以 @mention 下一阶段 Agent；每次只 @mention 一个下一阶段；收到阶段 handoff 后先判断通过、返工、推进或收口，再由 pm 发出唯一调度评论；不要先发无 mention 的重复调度评论。"
+const sopPMRoutingRule = "调度规则：只有 pm 可以 @mention 下一阶段 Agent；每次只 @mention 一个下一阶段；收到阶段 handoff 后先判断通过、返工、推进或收口，再由 pm 发出唯一调度评论；不要先发无 mention 的重复调度评论。05-verify 通过且无阻断时，pm 必须在最终收口中把 issue 状态更新为 done，并说明运行复盘数据是否完整。"
 const sopWorkerRoutingRule = "阶段路由规则：本角色不得 @mention 任何 Agent、Squad、Member 或 all，不得直接触发下一阶段；只输出本阶段结论、证据、阻断和 handoff 给 pm，由 pm 判断通过、返工、推进或收口。"
 
 func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
@@ -121,7 +121,7 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 				"repo":        "<target-repo-from-project-resource>",
 				"mode":        "stage_chain",
 				"roles": []map[string]any{
-					{"key": "pm", "name": "pm", "responsibility": "接收 issue/TAPD 输入，读取项目资源和 source_context，检查阶段产物，处理阻断，推进 pm -> 01-clarify -> 02-design -> 03-task-split -> 04-implement -> 05-verify；只有 pm 可以 @mention 下一阶段 Agent；单项目阶段推进必须留在当前 issue，遇到跨项目依赖时才直接创建对应目标项目的 backlog 子 issue，并确认父子关系、项目和目标小队指派正确，不能只委派 03 或写评论。"},
+					{"key": "pm", "name": "pm", "responsibility": "接收 issue/TAPD 输入，读取项目资源和 source_context，检查阶段产物，处理阻断，推进 pm -> 01-clarify -> 02-design -> 03-task-split -> 04-implement -> 05-verify；只有 pm 可以 @mention 下一阶段 Agent；05-verify 通过后必须把 issue 状态更新为 done；单项目阶段推进必须留在当前 issue，遇到跨项目依赖时才直接创建对应目标项目的 backlog 子 issue，并确认父子关系、项目和目标小队指派正确，不能只委派 03 或写评论。"},
 					{"key": "01-clarify", "name": "01-clarify", "responsibility": "执行目标项目的 01-clarify，明确需求边界、验收口径、目标仓库、可用/缺失 operation skill 和 handoff；不得 @mention 下一阶段或任何负责人。"},
 					{"key": "02-design", "name": "02-design", "responsibility": "执行目标项目的 02-design，输出方案、影响面、接口/数据契约、项目 skill 调用计划和 handoff；不得 @mention 下一阶段或任何负责人。"},
 					{"key": "03-task-split", "name": "03-task-split", "responsibility": "执行目标项目的 03-task-split，输出任务拆分、跨项目依赖、operation graph 和 handoff；不得 @mention 下一阶段或任何负责人。"},
@@ -144,7 +144,7 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 					"gongfeng": "从 project_resources.gongfeng_repo 或 git.code.tencent.com 链接解析项目、仓库、分支、提交和文件上下文；需要账号级 Gongfeng profile。",
 					"project":  "目标项目必须来自 issue.project、project_resources、source_context 或用户明确输入；不得假设固定三仓。",
 				},
-				"acceptance": []string{"阶段产物完整", "测试证据完整", "交接说明明确", "跨项目子 issue 由 PM 直接创建并可回读"},
+				"acceptance": []string{"阶段产物完整", "测试证据完整", "交接说明明确", "跨项目子 issue 由 PM 直接创建并可回读", "05-verify 通过后 issue 状态为 done"},
 				"cross_project_policy": map[string]any{
 					"creation_owner":          "pm",
 					"required_initial_status": "backlog",
@@ -162,7 +162,7 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 					},
 				},
 				"archive_policy":    "06-archive 不作为必跑阶段；最终结论、证据摘要和 handoff 状态由 05-verify 输出。",
-				"forbidden_actions": []string{"跳过验收直接完成", "缺少测试证据时宣称完成", "未确认目标项目就调用项目 skill", "把 06-archive 当作必跑验收阶段", "只评论或委派 03 代替 PM 创建跨项目子 issue", "把 TAPD 正文抓取后的真实需求复制成同项目 child issue", "为了进入 01-clarify/02-design/03-task-split/04-implement/05-verify 创建 child issue", "01-05 阶段 Agent @mention 下一阶段或任何负责人", "PM 一次评论 @mention 多个下一阶段"},
+				"forbidden_actions": []string{"跳过验收直接完成", "缺少测试证据时宣称完成", "未确认目标项目就调用项目 skill", "把 06-archive 当作必跑验收阶段", "只评论或委派 03 代替 PM 创建跨项目子 issue", "把 TAPD 正文抓取后的真实需求复制成同项目 child issue", "为了进入 01-clarify/02-design/03-task-split/04-implement/05-verify 创建 child issue", "01-05 阶段 Agent @mention 下一阶段或任何负责人", "PM 一次评论 @mention 多个下一阶段", "05-verify 通过后只写验收通过但不更新 issue 状态为 done"},
 			},
 		}, true
 	case "multica-coding":

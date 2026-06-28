@@ -373,6 +373,8 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 		"为了进入 01-clarify/02-design/03-task-split/04-implement/05-verify 创建 child issue",
 		"只有 pm 可以 @mention 下一阶段 Agent",
 		"01-05 阶段 Agent @mention 下一阶段或任何负责人",
+		"05-verify 通过后 issue 状态为 done",
+		"05-verify 通过后只写验收通过但不更新 issue 状态为 done",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected user-center SOP briefing to contain %q\n--- output ---\n%s", want, out)
@@ -384,6 +386,9 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 	if !strings.Contains(template.Instructions, "只有 pm 可以 @mention 下一阶段 Agent") {
 		t.Fatalf("user-center template instructions must reserve stage routing to pm:\n%s", template.Instructions)
 	}
+	if !strings.Contains(template.Instructions, "必须在最终收口中把 issue 状态更新为 done") {
+		t.Fatalf("user-center template instructions must require final done status:\n%s", template.Instructions)
+	}
 	pmRoleFound := false
 	for _, role := range template.Roles {
 		if role.Key == "pm" {
@@ -394,6 +399,7 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 				"不得为了进入 01-clarify、02-design、03-task-split、04-implement 或 05-verify 创建 child issue",
 				"只有跨项目协作才创建必要 child issue",
 				"只有 pm 可以 @mention 下一阶段 Agent",
+				"05-verify 通过且无阻断时",
 			} {
 				if !strings.Contains(role.Instruction+role.Description, want) {
 					t.Fatalf("pm role must contain %q\n--- role ---\n%+v", want, role)
