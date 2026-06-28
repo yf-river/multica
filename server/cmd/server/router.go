@@ -601,6 +601,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
 					r.Put("/", h.UpdateWorkspace)
 					r.Patch("/", h.UpdateWorkspace)
+					r.Post("/repos/resolve", h.ResolveWorkspaceRepo)
 					r.Post("/members", h.CreateMember)
 					r.Route("/members/{memberId}", func(r chi.Router) {
 						r.Patch("/", h.UpdateMember)
@@ -666,6 +667,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Route("/api/external-credential-profiles", func(r chi.Router) {
 			r.Get("/", h.ListExternalCredentialProfiles)
 			r.Post("/", h.CreateExternalCredentialProfile)
+			r.Post("/test", h.TestExternalCredentialProfile)
 			r.Get("/{id}", h.GetExternalCredentialProfile)
 			r.Patch("/{id}", h.UpdateExternalCredentialProfile)
 			r.Put("/{id}", h.UpdateExternalCredentialProfile)

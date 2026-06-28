@@ -34,6 +34,7 @@ import type {
   GongfengRepoResourceRef,
   LocalDirectoryResourceRef,
   ProjectResource,
+  WorkspaceRepo,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -134,11 +135,11 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
       ?.filter((repo) => isGongfengURL(repo.url))
       .filter((repo) => repo.url.toLowerCase().includes(repoQuery)) ?? [];
 
-  const handleAttachGongfeng = async (url: string) => {
+  const handleAttachGongfeng = async (url: string, repo?: WorkspaceRepo) => {
     try {
       await createResource.mutateAsync({
         resource_type: "gongfeng_repo",
-        resource_ref: { url },
+        resource_ref: buildGongfengResourceRefFromWorkspaceRepo(url, repo),
       });
       toast.success(t(($) => $.resources.toast_gongfeng_attached));
     } catch (err) {
@@ -404,7 +405,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                           aria-disabled={isDisabled}
                           onClick={async () => {
                             if (isDisabled) return;
-                            await handleAttachGongfeng(repo.url);
+                            await handleAttachGongfeng(repo.url, repo);
                             setAddOpen(false);
                           }}
                           className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-left hover:bg-accent transition-colors aria-disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:hover:bg-transparent"
@@ -418,6 +419,11 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                             />
                             <TooltipContent side="top">{repo.url}</TooltipContent>
                           </Tooltip>
+                          {repo.default_branch && (
+                            <span className="rounded border px-1 font-mono text-[10px] text-muted-foreground">
+                              {repo.default_branch}
+                            </span>
+                          )}
                           {isAttached && (
                             <span className="text-[10px] text-muted-foreground">
                               {t(($) => $.resources.attached_badge)}
@@ -472,6 +478,22 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
       )}
     </div>
   );
+}
+
+function buildGongfengResourceRefFromWorkspaceRepo(
+  url: string,
+  repo: WorkspaceRepo | undefined,
+): Partial<GongfengRepoResourceRef> & { url: string } {
+  const branch = repo?.default_branch?.trim();
+  if (!branch) return { url };
+  return {
+    url,
+    provider: "gongfeng",
+    ...(repo?.project_path ? { project_path: repo.project_path } : {}),
+    resource_kind: "branch",
+    ref: branch,
+    branch,
+  };
 }
 
 interface ResourceRowProps {

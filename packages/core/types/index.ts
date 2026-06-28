@@ -80,6 +80,8 @@ export type {
   ListExternalCredentialProfilesResponse,
   CreateExternalCredentialProfileRequest,
   UpdateExternalCredentialProfileRequest,
+  TestExternalCredentialProfileRequest,
+  TestExternalCredentialProfileResponse,
 } from "./external-credential";
 export type { InboxItem, InboxSeverity, InboxItemType } from "./inbox";
 export type { NotificationGroupKey, NotificationGroupValue, NotificationPreferences, NotificationPreferenceResponse } from "./notification-preference";

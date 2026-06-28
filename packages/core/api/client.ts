@@ -210,6 +210,8 @@ import type {
   ListExternalCredentialProfilesResponse,
   CreateExternalCredentialProfileRequest,
   UpdateExternalCredentialProfileRequest,
+  TestExternalCredentialProfileRequest,
+  TestExternalCredentialProfileResponse,
 } from "../types";
 import type { OnboardingCompletionPath } from "../onboarding/types";
 import { type Logger, noopLogger } from "../logger";
@@ -1519,6 +1521,13 @@ export class ApiClient {
     });
   }
 
+  async resolveWorkspaceRepo(workspaceId: string, data: { url: string; default_branch?: string }): Promise<WorkspaceRepo> {
+    return this.fetch(`/api/workspaces/${workspaceId}/repos/resolve`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
   // Members
   async listMembers(workspaceId: string): Promise<MemberWithUser[]> {
     return this.fetch(`/api/workspaces/${workspaceId}/members`);
@@ -2596,6 +2605,15 @@ export class ApiClient {
   ): Promise<ExternalCredentialProfile> {
     return this.fetch(`/api/external-credential-profiles/${id}`, {
       method: "PUT",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async testExternalCredentialProfile(
+    data: TestExternalCredentialProfileRequest,
+  ): Promise<TestExternalCredentialProfileResponse> {
+    return this.fetch("/api/external-credential-profiles/test", {
+      method: "POST",
       body: JSON.stringify(data),
     });
   }

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
@@ -250,8 +251,21 @@ type UpdateWorkspaceRequest struct {
 }
 
 type workspaceRepoRef struct {
-	URL         string `json:"url"`
-	Description string `json:"description,omitempty"`
+	URL              string `json:"url"`
+	Description      string `json:"description,omitempty"`
+	Provider         string `json:"provider,omitempty"`
+	ProjectPath      string `json:"project_path,omitempty"`
+	DefaultBranch    string `json:"default_branch,omitempty"`
+	HeadCommit       string `json:"head_commit,omitempty"`
+	CommitSHA        string `json:"commit_sha,omitempty"`
+	ConnectionStatus string `json:"connection_status,omitempty"`
+	SyncStatus       string `json:"sync_status,omitempty"`
+	TestStatus       string `json:"test_status,omitempty"`
+	LastTestedAt     string `json:"last_tested_at,omitempty"`
+	LastSyncedAt     string `json:"last_synced_at,omitempty"`
+	ResolveStatus    string `json:"resolve_status,omitempty"`
+	ResolveError     string `json:"resolve_error,omitempty"`
+	LastResolvedAt   string `json:"last_resolved_at,omitempty"`
 }
 
 func validateAndNormalizeWorkspaceRepos(value any) ([]byte, error) {
@@ -270,6 +284,19 @@ func validateAndNormalizeWorkspaceRepos(value any) ([]byte, error) {
 	for i, repo := range repos {
 		repo.URL = strings.TrimSpace(repo.URL)
 		repo.Description = strings.TrimSpace(repo.Description)
+		repo.Provider = strings.TrimSpace(repo.Provider)
+		repo.ProjectPath = strings.Trim(strings.TrimSpace(repo.ProjectPath), "/")
+		repo.DefaultBranch = strings.TrimSpace(repo.DefaultBranch)
+		repo.HeadCommit = strings.TrimSpace(repo.HeadCommit)
+		repo.CommitSHA = strings.TrimSpace(repo.CommitSHA)
+		repo.ConnectionStatus = strings.TrimSpace(repo.ConnectionStatus)
+		repo.SyncStatus = strings.TrimSpace(repo.SyncStatus)
+		repo.TestStatus = strings.TrimSpace(repo.TestStatus)
+		repo.LastTestedAt = strings.TrimSpace(repo.LastTestedAt)
+		repo.LastSyncedAt = strings.TrimSpace(repo.LastSyncedAt)
+		repo.ResolveStatus = strings.TrimSpace(repo.ResolveStatus)
+		repo.ResolveError = strings.TrimSpace(repo.ResolveError)
+		repo.LastResolvedAt = strings.TrimSpace(repo.LastResolvedAt)
 		if repo.URL == "" {
 			return nil, fmt.Errorf("repos[%d]: url is required", i)
 		}
@@ -288,6 +315,108 @@ func validateAndNormalizeWorkspaceRepos(value any) ([]byte, error) {
 		return nil, err
 	}
 	return out, nil
+}
+
+type resolveWorkspaceRepoRequest struct {
+	URL           string `json:"url"`
+	DefaultBranch string `json:"default_branch"`
+}
+
+func (h *Handler) ResolveWorkspaceRepo(w http.ResponseWriter, r *http.Request) {
+	id := workspaceIDFromURL(r, "id")
+	if _, ok := parseUUIDOrBadRequest(w, id, "workspace id"); !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	var req resolveWorkspaceRepoRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	rawURL := strings.TrimSpace(req.URL)
+	requestedBranch := strings.TrimSpace(req.DefaultBranch)
+	if rawURL == "" {
+		writeError(w, http.StatusBadRequest, "url is required")
+		return
+	}
+	if !isValidGitRepoURL(rawURL) {
+		writeError(w, http.StatusBadRequest, "url must be a valid http(s) or ssh git URL")
+		return
+	}
+	if !strings.Contains(rawURL, "git.code.tencent.com") {
+		writeError(w, http.StatusBadRequest, "only Gongfeng repository URLs are supported")
+		return
+	}
+	parsed, err := parseGongfengURL(rawURL)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	profile, hasProfile, err := h.loadUsableGongfengCredentialProfile(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load gongfeng credential profile")
+		return
+	}
+	if !hasProfile {
+		writeError(w, http.StatusBadRequest, "gongfeng credential is required to resolve default branch")
+		return
+	}
+	token := h.resolveExternalCredentialToken(profile)
+	branch := requestedBranch
+	if branch == "" {
+		branch = parsedGongfengWorkspaceRepoBranch(parsed)
+	}
+	if branch == "" {
+		branch, err = fetchGongfengDefaultBranch(r.Context(), parsed.ProjectPath, token)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	}
+	commit, err := fetchGongfengBranchHeadCommit(r.Context(), parsed.ProjectPath, branch, token)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	credentialProbe := probeGongfengWithCredential(r.Context(), gongfengRepoRef{
+		URL:         rawURL,
+		ProjectPath: parsed.ProjectPath,
+	}, token)
+	ref := applyGongfengCredentialProbeResult(
+		gongfengRepoRef{URL: rawURL, ProjectPath: parsed.ProjectPath},
+		probeGongfengURL(r.Context(), rawURL),
+		credentialProbe,
+		profile,
+		true,
+	)
+	writeJSON(w, http.StatusOK, workspaceRepoRef{
+		URL:              rawURL,
+		Provider:         "gongfeng",
+		ProjectPath:      parsed.ProjectPath,
+		DefaultBranch:    branch,
+		HeadCommit:       commit,
+		CommitSHA:        commit,
+		ConnectionStatus: ref.ConnectionStatus,
+		SyncStatus:       "synced",
+		TestStatus:       ref.TestStatus,
+		LastTestedAt:     now,
+		LastSyncedAt:     now,
+		ResolveStatus:    "resolved",
+		LastResolvedAt:   now,
+	})
+}
+
+func parsedGongfengWorkspaceRepoBranch(parsed parsedGongfengURL) string {
+	switch parsed.ResourceKind {
+	case "branch", "commits":
+		return strings.TrimSpace(parsed.Ref)
+	default:
+		return ""
+	}
 }
 
 func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {

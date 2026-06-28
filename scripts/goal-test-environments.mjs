@@ -33,7 +33,7 @@ const profiles = {
     daemonProfile: "goal-test-int",
     daemonID: "goal-test-codex-int",
     runtimeName: "Goal Test Codex Int",
-    frontendMode: "next-start",
+    frontendMode: "next-dev",
   },
 };
 
@@ -47,6 +47,14 @@ if (command === "ensure") {
   console.log(JSON.stringify(describeEnvironment(profile), null, 2));
 } else if (command === "deploy") {
   deployEnvironment(profile, process.argv.includes("--build"));
+} else if (command === "dev-ui") {
+  startDevUI(profile);
+} else if (command === "dev-server") {
+  restartDevServer(profile);
+} else if (command === "dev-daemon") {
+  restartDevDaemon(profile);
+} else if (command === "dev-check") {
+  runDevCheck(profile);
 } else if (command === "verify") {
   const evidence = profileName === "all" ? verifyAll() : verifyTarget(profile);
   console.log(JSON.stringify(evidence, null, 2));
@@ -108,16 +116,9 @@ function ensureStableSecretKey(item, name) {
 }
 
 function deployEnvironment(item, build) {
-  const envFile = ensureEnvironment(item);
+  const { envFile, env } = buildEnvironmentRuntime(item);
   const deploymentStartedAt = new Date().toISOString();
   const deploymentCommit = gitText(["rev-parse", "--short=12", "HEAD"]);
-  const env = {
-    ...process.env,
-    ...readEnvFile(envFile),
-    HOSTNAME: "0.0.0.0",
-    NEXT_PUBLIC_APP_VERSION: deploymentCommit,
-    GOAL_TEST_REMOTE_API_URL: `http://127.0.0.1:${item.backendPort}`,
-  };
   mkdirSync(runDir, { recursive: true });
   ensureDatabase(env.DATABASE_URL, item.databaseName);
   if (build) {
@@ -143,7 +144,7 @@ function deployEnvironment(item, build) {
   refreshDaemonProfileToken(item);
   const webArgs = item.frontendMode === "next-start"
     ? ["--dir", "apps/web", "exec", "next", "start", "-p", item.frontendPort, "-H", "0.0.0.0"]
-    : ["--dir", "apps/web", "dev"];
+    : ["--dir", "apps/web", "exec", "next", "dev", "--webpack", "-p", item.frontendPort, "-H", "0.0.0.0"];
   let webPID = startDetached("pnpm", webArgs, env, logPath(item, "web"));
   waitForHTTP(`http://127.0.0.1:${item.frontendPort}/login`, 90_000);
   webPID = listeningPID(item.frontendPort) || webPID;
@@ -205,6 +206,229 @@ function deployEnvironment(item, build) {
   };
   writeFileSync(deploymentPath(item), `${JSON.stringify(metadata, null, 2)}\n`);
   console.log(JSON.stringify(metadata, null, 2));
+}
+
+function startDevUI(item) {
+  if (item.frontendMode !== "next-dev") fail(`${item.name} frontend mode is ${item.frontendMode}; dev-ui only supports next-dev environments`);
+  const { env } = buildEnvironmentRuntime(item);
+  mkdirSync(runDir, { recursive: true });
+  const existingPID = listeningPID(item.frontendPort);
+  const existing = inspectPID(existingPID);
+  if (existing.running && isExpectedWebProcess(existing, item)) {
+    updateFastDeploymentMetadata(item, env, { web: existingPID }, "dev-ui");
+    console.log(JSON.stringify({
+      environment: item.name,
+      action: "dev-ui",
+      status: "already_running",
+      frontend_url: `http://${publicHost}:${item.frontendPort}`,
+      pid: existingPID,
+    }, null, 2));
+    return;
+  }
+  stopPid(pidPath(item, "web"));
+  killPort(item.frontendPort);
+  waitForPortFree(item.frontendPort, 15_000);
+  const webPID = startWebProcess(item, env);
+  updateFastDeploymentMetadata(item, env, { web: webPID }, "dev-ui");
+  console.log(JSON.stringify({
+    environment: item.name,
+    action: "dev-ui",
+    status: "started",
+    frontend_url: `http://${publicHost}:${item.frontendPort}`,
+    pid: webPID,
+  }, null, 2));
+}
+
+function restartDevServer(item) {
+  const { env } = buildEnvironmentRuntime(item);
+  mkdirSync(runDir, { recursive: true });
+  ensureDatabase(env.DATABASE_URL, item.databaseName);
+  buildServerBinary(env);
+  stopPid(pidPath(item, "server"));
+  killPort(item.backendPort);
+  waitForPortFree(item.backendPort, 15_000);
+  let serverPID = startDetached("./server/bin/server", [], env, logPath(item, "server"));
+  waitForHTTP(`http://127.0.0.1:${item.backendPort}/health`, 60_000);
+  serverPID = listeningPID(item.backendPort) || serverPID;
+  refreshDaemonProfileToken(item);
+  updateFastDeploymentMetadata(item, env, { server: serverPID }, "dev-server");
+  console.log(JSON.stringify({
+    environment: item.name,
+    action: "dev-server",
+    status: "restarted",
+    backend_url: `http://127.0.0.1:${item.backendPort}`,
+    pid: serverPID,
+  }, null, 2));
+}
+
+function restartDevDaemon(item) {
+  const { env } = buildEnvironmentRuntime(item);
+  mkdirSync(runDir, { recursive: true });
+  buildMulticaBinary(env);
+  waitForHTTP(`http://127.0.0.1:${item.backendPort}/health`, 10_000);
+  refreshDaemonProfileToken(item);
+  stopPid(pidPath(item, "daemon"));
+  const daemonPID = startDaemonProcess(item, env);
+  updateFastDeploymentMetadata(item, env, { daemon: daemonPID }, "dev-daemon");
+  console.log(JSON.stringify({
+    environment: item.name,
+    action: "dev-daemon",
+    status: "restarted",
+    daemon_profile: item.daemonProfile,
+    pid: daemonPID,
+  }, null, 2));
+}
+
+function runDevCheck(item) {
+  const results = [];
+  const checks = [
+    ["pnpm", ["--filter", "@multica/views", "exec", "vitest", "run", "settings/components/tokens-tab.test.tsx"]],
+    ["pnpm", ["--filter", "@multica/views", "typecheck"]],
+  ];
+  for (const [cmd, args] of checks) {
+    const started = Date.now();
+    const res = spawnSync(cmd, args, { cwd: repoRoot, env: process.env, encoding: "utf8" });
+    results.push({
+      command: [cmd, ...args].join(" "),
+      status: res.status === 0 ? "passed" : "failed",
+      duration_ms: Date.now() - started,
+      stdout: (res.stdout || "").slice(-4000),
+      stderr: (res.stderr || "").slice(-4000),
+    });
+    if (res.status !== 0) {
+      console.log(JSON.stringify({
+        schema: "multica.goal_test.dev_check.v1",
+        environment: item.name,
+        generated_at: new Date().toISOString(),
+        results,
+        ok: false,
+      }, null, 2));
+      process.exit(res.status || 1);
+    }
+  }
+  console.log(JSON.stringify({
+    schema: "multica.goal_test.dev_check.v1",
+    environment: item.name,
+    generated_at: new Date().toISOString(),
+    results,
+    ok: true,
+  }, null, 2));
+}
+
+function buildEnvironmentRuntime(item) {
+  const envFile = ensureEnvironment(item);
+  const deploymentCommit = gitText(["rev-parse", "--short=12", "HEAD"]);
+  const env = {
+    ...process.env,
+    ...readEnvFile(envFile),
+    HOSTNAME: "0.0.0.0",
+    NEXT_PUBLIC_APP_VERSION: deploymentCommit,
+    GOAL_TEST_REMOTE_API_URL: `http://127.0.0.1:${item.backendPort}`,
+  };
+  return { envFile, env };
+}
+
+function startWebProcess(item, env) {
+  const webArgs = item.frontendMode === "next-start"
+    ? ["--dir", "apps/web", "exec", "next", "start", "-p", item.frontendPort, "-H", "0.0.0.0"]
+    : ["--dir", "apps/web", "exec", "next", "dev", "--webpack", "-p", item.frontendPort, "-H", "0.0.0.0"];
+  let webPID = startDetached("pnpm", webArgs, env, logPath(item, "web"));
+  waitForHTTP(`http://127.0.0.1:${item.frontendPort}/login`, 90_000);
+  webPID = listeningPID(item.frontendPort) || webPID;
+  writeFileSync(pidPath(item, "web"), `${webPID}\n`);
+  return webPID;
+}
+
+function startDaemonProcess(item, env) {
+  const daemonPID = startDetached("./server/bin/multica", [
+    "daemon",
+    "start",
+    "--foreground",
+    "--daemon-id",
+    item.daemonID,
+    "--runtime-name",
+    item.runtimeName,
+    "--agent-timeout",
+    "0",
+    "--max-concurrent-tasks",
+    "1",
+    "--no-auto-update",
+    "--server-url",
+    `http://127.0.0.1:${item.backendPort}`,
+    "--profile",
+    item.daemonProfile,
+  ], env, logPath(item, "daemon"));
+  writeFileSync(pidPath(item, "daemon"), `${daemonPID}\n`);
+  return daemonPID;
+}
+
+function updateFastDeploymentMetadata(item, env, pidsPatch, action) {
+  const current = existsSync(deploymentPath(item)) ? JSON.parse(readFileSync(deploymentPath(item), "utf8")) : {};
+  const pids = { ...(current.pids || {}), ...pidsPatch };
+  const metadata = {
+    schema: "multica.goal_test.deployment.v1",
+    ...current,
+    environment: item.name,
+    label: item.label,
+    commit: gitText(["rev-parse", "--short=12", "HEAD"]),
+    branch: gitText(["branch", "--show-current"]),
+    frontend_url: `http://${publicHost}:${item.frontendPort}`,
+    backend_url: `http://127.0.0.1:${item.backendPort}`,
+    frontend_port: item.frontendPort,
+    backend_port: item.backendPort,
+    database_name: item.databaseName,
+    daemon_profile: item.daemonProfile,
+    daemon_id: item.daemonID,
+    daemon_workspaces_root: env.MULTICA_WORKSPACES_ROOT,
+    frontend_mode: item.frontendMode,
+    env_file: envPath(item),
+    log_paths: {
+      server: logPath(item, "server"),
+      web: logPath(item, "web"),
+      daemon: logPath(item, "daemon"),
+    },
+    pids,
+    last_fast_action: action,
+    last_fast_action_at: new Date().toISOString(),
+  };
+  writeFileSync(deploymentPath(item), `${JSON.stringify(metadata, null, 2)}\n`);
+}
+
+function buildServerBinary(env) {
+  run("go", [
+    "build",
+    "-ldflags",
+    `-X main.version=${buildVersion()} -X main.commit=${buildCommit()}`,
+    "-o",
+    "bin/server",
+    "./cmd/server",
+  ], { ...env, GOWORK: "off", PWD: path.join(repoRoot, "server") }, path.join(repoRoot, "server"));
+}
+
+function buildMulticaBinary(env) {
+  run("go", [
+    "build",
+    "-ldflags",
+    `-X main.version=${buildVersion()} -X main.commit=${buildCommit()} -X main.date=${new Date().toISOString()}`,
+    "-o",
+    "bin/multica",
+    "./cmd/multica",
+  ], { ...env, GOWORK: "off", PWD: path.join(repoRoot, "server") }, path.join(repoRoot, "server"));
+}
+
+function buildVersion() {
+  return process.env.VERSION || gitText(["describe", "--tags", "--always", "--dirty"]) || "dev";
+}
+
+function buildCommit() {
+  return process.env.COMMIT || gitText(["rev-parse", "--short", "HEAD"]) || "unknown";
+}
+
+function isExpectedWebProcess(processInfo, item) {
+  if (!processInfo.running) return false;
+  if (!processInfo.cwd.endsWith("/apps/web")) return false;
+  if (item.frontendMode === "next-dev") return processInfo.command.includes("next");
+  return processInfo.command.includes("next") && !processInfo.command.includes("next dev");
 }
 
 function verifyAll() {
@@ -619,8 +843,8 @@ function binaryVersion(command, args, env) {
   return `${res.stdout || ""}${res.stderr || ""}`.trim().split(/\r?\n/).slice(0, 3).join(" | ");
 }
 
-function run(command, args, env) {
-  const res = spawnSync(command, args, { cwd: repoRoot, env, stdio: "inherit", shell: false });
+function run(command, args, env, cwd = repoRoot) {
+  const res = spawnSync(command, args, { cwd, env, stdio: "inherit", shell: false });
   if (res.status !== 0) fail(`${command} ${args.join(" ")} failed with ${res.status}`);
 }
 

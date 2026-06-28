@@ -2,7 +2,6 @@
 
 import { LarkTab } from "./lark-tab";
 import { useT } from "../../i18n";
-import { IntegrationHealthCheck } from "./integration-health-check";
 
 // Integrations is the umbrella tab for third-party platform connections.
 // GitHub has its own top-level tab (see github-tab.tsx); everything else
@@ -13,8 +12,7 @@ import { IntegrationHealthCheck } from "./integration-health-check";
 export function IntegrationsTab() {
   const { t } = useT("settings");
   return (
-    <div className="space-y-10">
-      <IntegrationHealthCheck />
+    <div className="space-y-4">
       <section className="space-y-4">
         <h2 className="text-sm font-semibold">{t(($) => $.lark.section_title)}</h2>
         <LarkTab />

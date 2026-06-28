@@ -7,26 +7,85 @@ import enCommon from "../../locales/zh-Hans/common.json";
 import enSettings from "../../locales/zh-Hans/settings.json";
 
 const mockUpdateWorkspace = vi.hoisted(() => vi.fn());
+const mockResolveWorkspaceRepo = vi.hoisted(() => vi.fn());
 const workspaceRef = vi.hoisted(() => ({
   current: {
     id: "workspace-1",
     name: "Test Workspace",
     slug: "test-workspace",
-    repos: [{ url: "https://github.com/multica-ai/multica" }] as { url: string; description?: string }[],
-  },
+    repos: [
+      {
+        url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+        provider: "gongfeng",
+        project_path: "ChainWeaver/ida/user-center",
+        default_branch: "v5.0.0_dev",
+        head_commit: "abc1234",
+        commit_sha: "abc1234",
+        connection_status: "credential_backed",
+        sync_status: "synced",
+        test_status: "passed",
+        resolve_status: "resolved",
+      },
+    ],
+  } as any,
 }));
-const membersRef = vi.hoisted(() => ({
-  current: [{ user_id: "user-1", role: "owner" as const }],
+const projectsRef = vi.hoisted(() => ({
+  current: [
+    {
+      id: "project-1",
+      workspace_id: "workspace-1",
+      title: "usercenter",
+      description: null,
+      icon: null,
+      status: "in_progress",
+      priority: "none",
+      lead_type: null,
+      lead_id: null,
+      created_at: "2026-06-28T00:00:00Z",
+      updated_at: "2026-06-28T00:00:00Z",
+      issue_count: 0,
+      done_count: 0,
+      resource_count: 0,
+    },
+  ],
+}));
+const resourcesRef = vi.hoisted(() => ({
+  current: [
+    [
+      {
+        id: "resource-1",
+        project_id: "project-1",
+        workspace_id: "workspace-1",
+        resource_type: "gongfeng_repo",
+        label: null,
+        position: 0,
+        created_at: "2026-06-28T00:00:00Z",
+        created_by: null,
+        resource_ref: {
+          provider: "gongfeng",
+          url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+          project_path: "ChainWeaver/ida/user-center",
+          resource_kind: "commits",
+          ref: "v5.0.0_dev",
+          head_commit: "abc1234",
+          commit_sha: "abc1234",
+          connection_status: "credential_backed",
+          sync_status: "synced",
+          test_status: "passed",
+        },
+      },
+    ],
+  ],
 }));
 
 vi.mock("@tanstack/react-query", () => ({
   queryOptions: (options: unknown) => options,
   useQuery: (options?: { queryKey?: readonly unknown[] }) =>
     options?.queryKey?.[0] === "projects"
-      ? { data: [] }
-      : { data: membersRef.current },
-  useQueries: () => [],
-  useMutation: () => ({ mutate: vi.fn(), isPending: false }),
+      ? { data: projectsRef.current }
+      : { data: [] },
+  useQueries: () => resourcesRef.current.map((data) => ({ data })),
+  useMutation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
   useQueryClient: () => ({ setQueryData: vi.fn(), invalidateQueries: vi.fn() }),
 }));
 
@@ -42,25 +101,37 @@ vi.mock("@multica/core/paths", () => ({
 }));
 
 vi.mock("@multica/core/workspace/queries", () => ({
-  memberListOptions: () => ({ queryKey: ["members"], queryFn: vi.fn() }),
   workspaceKeys: { list: () => ["workspaces"] },
 }));
 
 vi.mock("@multica/core/api", () => ({
-  api: { updateWorkspace: mockUpdateWorkspace },
+  api: {
+    updateWorkspace: mockUpdateWorkspace,
+    resolveWorkspaceRepo: mockResolveWorkspaceRepo,
+  },
 }));
 
-vi.mock("@multica/core/auth", () => {
-  const useAuthStore = Object.assign(
-    (sel?: (s: { user: { id: string } }) => unknown) =>
-      sel ? sel({ user: { id: "user-1" } }) : { user: { id: "user-1" } },
-    { getState: () => ({ user: { id: "user-1" } }) },
-  );
-  return { useAuthStore };
-});
+vi.mock("@multica/core/projects", () => ({
+  projectListOptions: () => ({ queryKey: ["projects"], queryFn: vi.fn() }),
+  projectResourcesOptions: (_wsId: string, projectId: string) => ({
+    queryKey: ["project-resources", projectId],
+    queryFn: vi.fn(),
+  }),
+  useSyncProjectResource: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useTestProjectResource: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDeleteProjectResource: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useDisableProjectResource: () => ({ mutateAsync: vi.fn(), isPending: false }),
+  useEnableProjectResource: () => ({ mutateAsync: vi.fn(), isPending: false }),
+}));
 
 vi.mock("sonner", () => ({
   toast: { success: vi.fn(), error: vi.fn() },
+}));
+
+vi.mock("../../navigation", () => ({
+  AppLink: ({ children, href, className }: { children: ReactNode; href: string; className?: string }) => (
+    <a href={href} className={className}>{children}</a>
+  ),
 }));
 
 import { RepositoriesTab } from "./repositories-tab";
@@ -77,220 +148,354 @@ function I18nWrapper({ children }: { children: ReactNode }) {
   );
 }
 
-describe("RepositoriesTab — view/edit toggle", () => {
+describe("RepositoriesTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     workspaceRef.current = {
       id: "workspace-1",
       name: "Test Workspace",
       slug: "test-workspace",
-      repos: [{ url: "https://github.com/multica-ai/multica" }],
+      repos: [
+        {
+          url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+          provider: "gongfeng",
+          project_path: "ChainWeaver/ida/user-center",
+          default_branch: "v5.0.0_dev",
+          head_commit: "abc1234",
+          commit_sha: "abc1234",
+          connection_status: "credential_backed",
+          sync_status: "synced",
+          test_status: "passed",
+          resolve_status: "resolved",
+        },
+      ],
     };
-    membersRef.current = [{ user_id: "user-1", role: "owner" }];
-  });
-
-  it("展示模式渲染已保存仓库且没有输入框", () => {
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
-    expect(screen.queryByRole("textbox")).toBeNull();
-    expect(screen.getByText("https://github.com/multica-ai/multica")).toBeTruthy();
-  });
-
-  it("无改动时保存按钮禁用", () => {
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
-    expect(screen.getByRole("button", { name: /^保存$/ })).toBeDisabled();
-  });
-
-  it("点击编辑后显示预填 URL 的输入框", async () => {
-    const user = userEvent.setup();
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
-
-    await user.click(screen.getByRole("button", { name: "编辑仓库" }));
-
-    const inputs = screen.getAllByRole("textbox") as HTMLInputElement[];
-    expect(inputs[0]!.value).toBe("https://github.com/multica-ai/multica");
-  });
-
-  it("编辑后重新启用保存，成功后回到展示模式并禁用", async () => {
-    const user = userEvent.setup();
-    mockUpdateWorkspace.mockImplementation(async (_id: string, payload: { repos: { url: string; description?: string }[] }) => ({
-      ...workspaceRef.current,
-      repos: payload.repos,
-    }));
-
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
-
-    await user.click(screen.getByRole("button", { name: "编辑仓库" }));
-    const input = screen.getAllByRole("textbox")[0]!;
-    await user.clear(input);
-    await user.type(input, "https://github.com/multica-ai/edited");
-
-    const saveBtn = screen.getByRole("button", { name: /^保存$/ });
-    expect(saveBtn).not.toBeDisabled();
-
-    // Simulate the workspace cache resync that the parent provider does
-    // after a successful save — `setQueryData` updates the cache and the
-    // useCurrentWorkspace hook would yield the new value on the next render.
-    mockUpdateWorkspace.mockImplementationOnce(async (_id: string, payload: { repos: { url: string; description?: string }[] }) => {
+    resourcesRef.current = [
+      [
+        {
+          id: "resource-1",
+          project_id: "project-1",
+          workspace_id: "workspace-1",
+          resource_type: "gongfeng_repo",
+          label: null,
+          position: 0,
+          created_at: "2026-06-28T00:00:00Z",
+          created_by: null,
+          resource_ref: {
+            provider: "gongfeng",
+            url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+            project_path: "ChainWeaver/ida/user-center",
+            resource_kind: "commits",
+            ref: "v5.0.0_dev",
+            head_commit: "abc1234",
+            commit_sha: "abc1234",
+            connection_status: "credential_backed",
+            sync_status: "synced",
+            test_status: "passed",
+          },
+        },
+      ],
+    ];
+    mockUpdateWorkspace.mockImplementation(async (_id: string, payload: { repos: { url: string }[] }) => {
       workspaceRef.current = { ...workspaceRef.current, repos: payload.repos };
       return workspaceRef.current;
     });
-
-    await user.click(saveBtn);
-
-    await waitFor(() => {
-      expect(mockUpdateWorkspace).toHaveBeenCalled();
-    });
-
-    // After successful save, edit mode is cleared — input gone, Save disabled.
-    await waitFor(() => {
-      expect(screen.queryByRole("textbox")).toBeNull();
-    });
-    expect(screen.getByRole("button", { name: /^保存$/ })).toBeDisabled();
+    mockResolveWorkspaceRepo.mockImplementation(async (_id: string, payload: { url: string }) => ({
+      url: payload.url,
+      provider: "gongfeng",
+      project_path: payload.url.includes("gateway") ? "ChainWeaver/ida/gateway" : "ChainWeaver/ida/user-center",
+      default_branch: "v5.0.0_dev",
+      head_commit: "def5678",
+      commit_sha: "def5678",
+      connection_status: "credential_backed",
+      sync_status: "synced",
+      test_status: "passed",
+      last_tested_at: "2026-06-28T00:00:00Z",
+      last_synced_at: "2026-06-28T00:00:00Z",
+      resolve_status: "resolved",
+      last_resolved_at: "2026-06-28T00:00:00Z",
+    }));
   });
 
-  it("新增行默认进入编辑模式", async () => {
+  it("展示工蜂仓库资源库和项目使用情况", () => {
+    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+
+    expect(screen.getByRole("heading", { name: "代码仓库" })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "工蜂仓库资源库" })).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "工作区 Git 仓库" })).toBeNull();
+    expect(screen.getByText("资源库")).toBeTruthy();
+    expect(screen.getByText("默认分支：v5.0.0_dev")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "详情" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "删除" })).toBeTruthy();
+    expect(screen.getByRole("link", { name: "user-center" })).toHaveAttribute(
+      "href",
+      "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+    );
+    expect(screen.getByRole("button", { name: /测试并同步工蜂仓库/ })).toBeTruthy();
+    expect(screen.queryByText("项目已使用")).toBeNull();
+
+    const rowText = screen.getByTestId("settings-gongfeng-repository-row").textContent ?? "";
+    expect(rowText.indexOf("user-center")).toBeLessThan(
+      rowText.indexOf("https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev"),
+    );
+    expect(rowText.indexOf("https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev")).toBeLessThan(
+      rowText.indexOf("默认分支：v5.0.0_dev"),
+    );
+  });
+
+  it("添加工蜂仓库时不需要选择目标项目，解析默认分支后更新 workspace.repos", async () => {
     const user = userEvent.setup();
     render(<RepositoriesTab />, { wrapper: I18nWrapper });
 
-    expect(screen.queryByRole("textbox")).toBeNull();
-    await user.click(screen.getByRole("button", { name: /添加仓库/ }));
+    await user.click(screen.getByRole("button", { name: "添加仓库" }));
+    expect(screen.getByRole("dialog")).toBeTruthy();
+    expect(screen.queryByRole("combobox")).toBeNull();
+    expect(screen.getByLabelText("默认分支")).toBeTruthy();
 
-    expect(screen.getAllByRole("textbox").length).toBe(2); // url + description
-    expect(screen.getByRole("button", { name: /^保存$/ })).not.toBeDisabled();
+    await user.type(
+      screen.getByPlaceholderText(/git.code.tencent.com/),
+      "https://git.code.tencent.com/ChainWeaver/ida/gateway/commits/v5.0.0_dev",
+    );
+    await user.type(screen.getByLabelText("默认分支"), "v5.0.0_dev");
+    await user.click(screen.getByRole("button", { name: "添加" }));
+
+    await waitFor(() => {
+      expect(mockResolveWorkspaceRepo).toHaveBeenCalledWith("workspace-1", {
+        url: "https://git.code.tencent.com/ChainWeaver/ida/gateway/commits/v5.0.0_dev",
+        default_branch: "v5.0.0_dev",
+      });
+      expect(mockUpdateWorkspace).toHaveBeenCalledWith("workspace-1", {
+        repos: [
+          {
+            url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+            provider: "gongfeng",
+            project_path: "ChainWeaver/ida/user-center",
+            default_branch: "v5.0.0_dev",
+            head_commit: "abc1234",
+            commit_sha: "abc1234",
+            connection_status: "credential_backed",
+            sync_status: "synced",
+            test_status: "passed",
+            resolve_status: "resolved",
+          },
+          {
+            url: "https://git.code.tencent.com/ChainWeaver/ida/gateway/commits/v5.0.0_dev",
+            provider: "gongfeng",
+            project_path: "ChainWeaver/ida/gateway",
+            default_branch: "v5.0.0_dev",
+            head_commit: "def5678",
+            commit_sha: "def5678",
+            connection_status: "credential_backed",
+            sync_status: "synced",
+            test_status: "passed",
+            last_tested_at: "2026-06-28T00:00:00Z",
+            last_synced_at: "2026-06-28T00:00:00Z",
+            resolve_status: "resolved",
+            last_resolved_at: "2026-06-28T00:00:00Z",
+          },
+        ],
+      });
+    });
   });
 
-  it("编辑未改动行后取消，会回到展示模式且不改变 URL 或置脏保存", async () => {
+  it("详情中区分资源库信息和项目关联删除", async () => {
     const user = userEvent.setup();
     render(<RepositoriesTab />, { wrapper: I18nWrapper });
 
-    await user.click(screen.getByRole("button", { name: "编辑仓库" }));
-    expect(screen.getAllByRole("textbox").length).toBe(2);
-
-    await user.click(screen.getByRole("button", { name: "取消编辑" }));
-
-    expect(screen.queryByRole("textbox")).toBeNull();
-    expect(screen.getByText("https://github.com/multica-ai/multica")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /^保存$/ })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "删除" }));
     expect(mockUpdateWorkspace).not.toHaveBeenCalled();
+    await user.click(screen.getByRole("button", { name: "详情" }));
+
+    expect(screen.getByRole("dialog", { name: "工蜂仓库详情" })).toBeTruthy();
+    expect(screen.getByText("默认分支")).toBeTruthy();
+    expect(screen.getAllByText("v5.0.0_dev").length).toBeGreaterThan(0);
+    expect(screen.getByText("Commit ID")).toBeTruthy();
+    expect(screen.getByText("abc1234")).toBeTruthy();
+    expect(screen.getByText("项目关联")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "删除项目关联" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "测试并同步项目关联" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "停用项目关联" })).toBeNull();
   });
 
-  it("取消已修改编辑行会还原 URL 并退出编辑模式", async () => {
+  it("旧资源库数据详情用项目关联字段兜底展示默认分支和工蜂项目", async () => {
     const user = userEvent.setup();
+    workspaceRef.current = {
+      ...workspaceRef.current,
+      repos: [
+        {
+          url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+        },
+      ],
+    };
     render(<RepositoriesTab />, { wrapper: I18nWrapper });
 
-    await user.click(screen.getByRole("button", { name: "编辑仓库" }));
-    const input = screen.getAllByRole("textbox")[0] as HTMLInputElement;
-    await user.clear(input);
-    await user.type(input, "https://github.com/multica-ai/changed");
-    expect(screen.getByRole("button", { name: /^保存$/ })).not.toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "详情" }));
 
-    await user.click(screen.getByRole("button", { name: "取消编辑" }));
-
-    expect(screen.queryByRole("textbox")).toBeNull();
-    expect(screen.getByText("https://github.com/multica-ai/multica")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /^保存$/ })).toBeDisabled();
+    expect(screen.getByRole("dialog", { name: "工蜂仓库详情" })).toBeTruthy();
+    expect(screen.getAllByText("v5.0.0_dev").length).toBeGreaterThan(0);
+    expect(screen.getByText("ChainWeaver/ida/user-center")).toBeTruthy();
+    expect(screen.getByText("Commit ID")).toBeTruthy();
+    expect(screen.getByText("这条仓库是旧记录，缺少工蜂项目和默认分支等元信息。可以重新解析后补全。")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "补全信息" })).toBeTruthy();
   });
 
-  it("取消新增且未保存的行会直接移除该行", async () => {
+  it("旧资源库数据可以重新解析并回写 workspace.repos", async () => {
     const user = userEvent.setup();
+    workspaceRef.current = {
+      ...workspaceRef.current,
+      repos: [
+        {
+          url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+        },
+      ],
+    };
     render(<RepositoriesTab />, { wrapper: I18nWrapper });
 
-    await user.click(screen.getByRole("button", { name: /添加仓库/ }));
-    expect(screen.getAllByRole("textbox").length).toBe(2);
-
-    await user.click(screen.getByRole("button", { name: "取消编辑" }));
-
-    expect(screen.queryByRole("textbox")).toBeNull();
-    // Original persisted row is still there; the new empty row is gone.
-    expect(screen.getByText("https://github.com/multica-ai/multica")).toBeTruthy();
-    expect(screen.getByRole("button", { name: /^保存$/ })).toBeDisabled();
-  });
-
-  it("接受 scp 风格简写，且不被浏览器 URL 校验阻止提交", async () => {
-    const user = userEvent.setup();
-    mockUpdateWorkspace.mockImplementation(
-      async (_id: string, payload: { repos: { url: string; description?: string }[] }) => {
-        workspaceRef.current = { ...workspaceRef.current, repos: payload.repos };
-        return workspaceRef.current;
-      },
-    );
-
-    render(<RepositoriesTab />, { wrapper: I18nWrapper });
-
-    await user.click(screen.getByRole("button", { name: "编辑仓库" }));
-    const input = screen.getAllByRole("textbox")[0] as HTMLInputElement;
-    await user.clear(input);
-    await user.type(input, "git@github.com:multica-ai/multica.git");
-
-    // type="text" (not "url") so the browser does not run native URL
-    // validation; the value reaches the server which has the real check.
-    expect(input.type).toBe("text");
-    expect(input.validity.valid).toBe(true);
-
-    await user.click(screen.getByRole("button", { name: /^保存$/ }));
+    await user.click(screen.getByRole("button", { name: "详情" }));
+    await user.click(screen.getByRole("button", { name: "补全信息" }));
 
     await waitFor(() => {
+      expect(mockResolveWorkspaceRepo).toHaveBeenCalledWith("workspace-1", {
+        url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+      });
       expect(mockUpdateWorkspace).toHaveBeenCalledWith("workspace-1", {
-        repos: [{ url: "git@github.com:multica-ai/multica.git" }],
+        repos: [
+          {
+            url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+            provider: "gongfeng",
+            project_path: "ChainWeaver/ida/user-center",
+            default_branch: "v5.0.0_dev",
+            head_commit: "def5678",
+            commit_sha: "def5678",
+            connection_status: "credential_backed",
+            sync_status: "synced",
+            test_status: "passed",
+            last_tested_at: "2026-06-28T00:00:00Z",
+            last_synced_at: "2026-06-28T00:00:00Z",
+            resolve_status: "resolved",
+            last_resolved_at: "2026-06-28T00:00:00Z",
+          },
+        ],
       });
     });
   });
 
-  it("删除行后平移跟踪中的编辑索引，避免打开错误行", async () => {
-    workspaceRef.current = {
-      ...workspaceRef.current,
-      repos: [{ url: "https://a.example/repo.git" }, { url: "https://b.example/repo.git" }],
-    };
+  it("已有项目绑定仓库即使不在资源库中也会显示项目标签", async () => {
     const user = userEvent.setup();
+    workspaceRef.current = { ...workspaceRef.current, repos: [] };
     render(<RepositoriesTab />, { wrapper: I18nWrapper });
 
-    // Edit the second row.
-    const editButtons = screen.getAllByRole("button", { name: "编辑仓库" });
-    await user.click(editButtons[1]!);
-    expect((screen.getAllByRole("textbox")[0] as HTMLInputElement).value).toBe(
-      "https://b.example/repo.git",
+    expect(screen.queryByText("项目已使用")).toBeNull();
+    expect(screen.getByRole("link", { name: "user-center" })).toHaveAttribute(
+      "href",
+      "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
     );
+    expect(screen.getByRole("button", { name: "删除" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: /测试并同步工蜂仓库/ })).toBeTruthy();
 
-    // Delete the first row. The remaining row should remain in edit mode
-    // (its index dropped from 1 → 0).
-    const deleteButtons = screen.getAllByRole("button", { name: "删除仓库" });
-    await user.click(deleteButtons[0]!);
-
-    const input = screen.getAllByRole("textbox")[0] as HTMLInputElement;
-    expect(input.value).toBe("https://b.example/repo.git");
+    await user.click(screen.getByRole("button", { name: "详情" }));
+    expect(screen.getByText("Commit ID")).toBeTruthy();
+    expect(screen.getByText("abc1234")).toBeTruthy();
+    expect(screen.queryByText("仓库信息待补全")).toBeNull();
+    expect(screen.queryByRole("button", { name: "补全信息" })).toBeNull();
   });
 
-  it("描述字段可编辑并包含在保存 payload 中", async () => {
-    workspaceRef.current = {
-      ...workspaceRef.current,
-      repos: [{ url: "https://github.com/multica-ai/multica", description: "Main app" }],
-    };
+  it("未绑定项目的资源库仓库主行仍显示仓库身份，详情中不提供绑定入口", async () => {
     const user = userEvent.setup();
-    mockUpdateWorkspace.mockImplementation(
-      async (_id: string, payload: { repos: { url: string; description?: string }[] }) => {
-        workspaceRef.current = { ...workspaceRef.current, repos: payload.repos };
-        return workspaceRef.current;
-      },
-    );
-
+    resourcesRef.current = [[]];
     render(<RepositoriesTab />, { wrapper: I18nWrapper });
 
-    // Description is shown in display mode.
-    expect(screen.getByText("Main app")).toBeTruthy();
+    expect(screen.queryByText("尚未被项目使用")).toBeNull();
+    expect(screen.getByRole("link", { name: "user-center" })).toHaveAttribute(
+      "href",
+      "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+    );
+    expect(screen.getByRole("button", { name: /测试并同步工蜂仓库/ })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "删除" })).toBeTruthy();
 
-    await user.click(screen.getByRole("button", { name: "编辑仓库" }));
-    const inputs = screen.getAllByRole("textbox") as HTMLInputElement[];
-    expect(inputs[1]!.value).toBe("Main app");
+    await user.click(screen.getByRole("button", { name: "详情" }));
+    expect(screen.getByText("暂无项目关联")).toBeTruthy();
+    expect(screen.queryByRole("combobox")).toBeNull();
+    expect(screen.queryByRole("button", { name: "绑定项目" })).toBeNull();
+  });
 
-    await user.clear(inputs[1]!);
-    await user.type(inputs[1]!, "Updated description");
+  it("主行健康按钮按仓库资源同步，不依赖项目绑定", async () => {
+    const user = userEvent.setup();
+    resourcesRef.current = [[]];
+    render(<RepositoriesTab />, { wrapper: I18nWrapper });
 
-    await user.click(screen.getByRole("button", { name: /^保存$/ }));
+    await user.click(screen.getByRole("button", { name: /测试并同步工蜂仓库/ }));
 
     await waitFor(() => {
+      expect(mockResolveWorkspaceRepo).toHaveBeenCalledWith("workspace-1", {
+        url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+        default_branch: "v5.0.0_dev",
+      });
       expect(mockUpdateWorkspace).toHaveBeenCalledWith("workspace-1", {
-        repos: [{ url: "https://github.com/multica-ai/multica", description: "Updated description" }],
+        repos: [
+          {
+            url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+            provider: "gongfeng",
+            project_path: "ChainWeaver/ida/user-center",
+            default_branch: "v5.0.0_dev",
+            head_commit: "def5678",
+            commit_sha: "def5678",
+            connection_status: "credential_backed",
+            sync_status: "synced",
+            test_status: "passed",
+            last_tested_at: "2026-06-28T00:00:00Z",
+            last_synced_at: "2026-06-28T00:00:00Z",
+            resolve_status: "resolved",
+            last_resolved_at: "2026-06-28T00:00:00Z",
+          },
+        ],
       });
     });
+  });
+
+  it("项目关联兜底行同步后立即在详情显示 commit id", async () => {
+    const user = userEvent.setup();
+    workspaceRef.current = { ...workspaceRef.current, repos: [] };
+    resourcesRef.current = [
+      [
+        {
+          id: "resource-gateway",
+          project_id: "project-1",
+          workspace_id: "workspace-1",
+          resource_type: "gongfeng_repo",
+          label: null,
+          position: 0,
+          created_at: "2026-06-28T00:00:00Z",
+          created_by: null,
+          resource_ref: {
+            provider: "gongfeng",
+            url: "https://git.code.tencent.com/ChainWeaver/ida/gateway/commits/v5.0.0_dev",
+            project_path: "ChainWeaver/ida/gateway",
+            resource_kind: "commits",
+            ref: "v5.0.0_dev",
+            head_commit: "",
+            commit_sha: "",
+            connection_status: "credential_backed",
+            sync_status: "synced",
+            test_status: "passed",
+          },
+        },
+      ],
+    ];
+    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+
+    await user.click(screen.getByRole("button", { name: /测试并同步工蜂仓库/ }));
+
+    await waitFor(() => {
+      expect(mockResolveWorkspaceRepo).toHaveBeenCalledWith("workspace-1", {
+        url: "https://git.code.tencent.com/ChainWeaver/ida/gateway/commits/v5.0.0_dev",
+        default_branch: "v5.0.0_dev",
+      });
+    });
+    await user.click(screen.getByRole("button", { name: "详情" }));
+
+    expect(screen.getByText("Commit ID")).toBeTruthy();
+    expect(screen.getByText("def5678")).toBeTruthy();
+    expect(screen.getByText("资源库")).toBeTruthy();
   });
 });

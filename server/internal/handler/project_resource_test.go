@@ -428,6 +428,14 @@ func TestGongfengResourceProfileWithoutSuccessfulCredentialProbeStaysAuthRequire
 	}
 }
 
+func TestGongfengAPIBaseNormalizesTencentGitRoot(t *testing.T) {
+	t.Setenv("GONGFENG_API_BASE", "https://git.code.tencent.com")
+
+	if got, want := gongfengAPIBase(), "https://git.code.tencent.com/api/v3"; got != want {
+		t.Fatalf("gongfengAPIBase() = %q, want %q", got, want)
+	}
+}
+
 func TestProjectResourceGongfengValidation(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
@@ -507,6 +515,41 @@ func TestParseGongfengURL(t *testing.T) {
 		if got.ProjectPath != tc.projectPath || got.ResourceKind != tc.kind || got.Ref != tc.ref {
 			t.Fatalf("parseGongfengURL(%q) = %+v", tc.raw, got)
 		}
+	}
+}
+
+func TestParsedGongfengWorkspaceRepoBranch(t *testing.T) {
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "commits branch page",
+			raw:  "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+			want: "v5.0.0_dev",
+		},
+		{
+			name: "tree branch page",
+			raw:  "https://git.code.tencent.com/ChainWeaver/ida/user-center/-/tree/v5.0.0_dev",
+			want: "v5.0.0_dev",
+		},
+		{
+			name: "project page falls back to api default branch",
+			raw:  "https://git.code.tencent.com/ChainWeaver/ida/user-center",
+			want: "",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			parsed, err := parseGongfengURL(tc.raw)
+			if err != nil {
+				t.Fatalf("parseGongfengURL(%q): %v", tc.raw, err)
+			}
+			if got := parsedGongfengWorkspaceRepoBranch(parsed); got != tc.want {
+				t.Fatalf("parsedGongfengWorkspaceRepoBranch(%q) = %q, want %q", tc.raw, got, tc.want)
+			}
+		})
 	}
 }
 

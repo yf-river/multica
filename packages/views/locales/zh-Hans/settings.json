@@ -21,7 +21,7 @@
       "profile": "个人资料",
       "preferences": "偏好设置",
       "notifications": "通知",
-      "tokens": "访问令牌",
+      "tokens": "外部凭据",
       "general": "通用",
       "repositories": "代码仓库",
       "github": "GitHub",
@@ -87,38 +87,27 @@
     }
   },
   "tokens": {
-    "title": "访问令牌",
-    "description": "个人访问令牌让 CLI 和外部集成可以代表你的账号进行身份验证。",
-    "name_placeholder": "令牌名称（例如：我的 CLI）",
-    "expiry": {
-      "30": "30 天",
-      "90": "90 天",
-      "365": "1 年",
-      "never": "永不过期"
+    "external_credentials_title": "外部服务凭据",
+    "external_credentials_description": "管理智能体访问工蜂、TAPD 等外部服务时需要注入的账号级凭据。",
+    "external_credential": {
+      "change": "更换凭据",
+      "remove": "移除凭据",
+      "mode_token": "访问令牌",
+      "mode_secret_ref": "环境变量",
+      "test": "测试连接",
+      "testing": "测试中...",
+      "save": "保存凭据",
+      "status_unset": "未设置",
+      "status_configured": "已设置",
+      "status_failed": "校验失败"
     },
-    "create": "创建",
-    "creating": "创建中...",
-    "toast_load_failed": "加载令牌失败",
-    "toast_create_failed": "创建令牌失败",
-    "toast_revoked": "已吊销令牌",
-    "toast_revoke_failed": "吊销令牌失败",
-    "metadata_prefix": "{{prefix}}... · 创建于 {{created}} · {{lastUsed}}",
-    "last_used_with_date": "最后使用 {{date}}",
-    "last_used_never": "未使用",
-    "expires_with_date": " · {{date}} 过期",
-    "revoke_aria": "吊销 {{name}}",
-    "revoke_tooltip": "吊销",
-    "revoke_dialog": {
-      "title": "吊销令牌",
-      "description": "该令牌将被永久吊销且不再可用。此操作不可撤销。",
-      "cancel": "取消",
-      "confirm": "吊销"
+    "gongfeng_credential": {
+      "title": "工蜂访问凭据",
+      "description": "配置账号级工蜂 token 后，智能体运行时会注入 GONGFENG_ACCESS_TOKEN / GONGFENG_PRIVATE_TOKEN，用于读取私有工蜂仓库和执行工蜂 MCP 操作。"
     },
-    "created_dialog": {
-      "title": "令牌已创建",
-      "description": "立即复制你的个人访问令牌——它不会再次显示。",
-      "copy_tooltip": "复制令牌",
-      "done": "完成"
+    "tapd_credential": {
+      "title": "TAPD 访问凭据",
+      "description": "配置账号级 TAPD token 后，智能体运行时会注入 TAPD_ACCESS_TOKEN，用于读取 TAPD 需求来源并记录 source-fetch 轨迹。"
     }
   },
   "workspace": {
@@ -294,21 +283,51 @@
   },
   "repositories": {
     "section_title": "代码仓库",
-    "description": "与该工作区关联的 Git 仓库。智能体会从这里 clone 代码并完成工作。",
-    "url_placeholder": "https://git.example.com/org/repo.git 或 git@git.example.com:org/repo.git",
-    "url_empty": "（空 URL）",
-    "description_placeholder": "描述（例如：Go 后端 + Next.js 前端）",
-    "add": "添加仓库",
-    "save": "保存",
-    "saving": "保存中...",
-    "saved_hint": "所有改动已保存",
-    "empty": "暂无仓库。",
-    "edit_aria": "编辑仓库",
-    "cancel_aria": "取消编辑",
-    "delete_aria": "删除仓库",
-    "manage_hint": "只有管理员和所有者可以管理代码仓库。",
-    "toast_saved": "已保存代码仓库",
-    "toast_save_failed": "保存代码仓库失败"
+    "gongfeng_inventory": {
+      "title": "工蜂仓库资源库",
+      "description": "这里维护工作区可选的 Gongfeng 仓库。创建项目或编辑项目资源时，可以从资源库中选择仓库作为智能体任务、训练评估和证据链的代码来源。",
+      "empty": "暂无工蜂仓库。",
+      "add": "添加仓库",
+      "add_title": "添加工蜂仓库",
+      "add_description": "粘贴 git.code.tencent.com 仓库、分支、提交或 MR 链接。添加后可在创建项目或项目资源中选择。",
+      "url_field": "工蜂仓库链接",
+      "url_placeholder": "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+      "default_branch_field": "默认分支",
+      "default_branch_placeholder": "例如：v5.0.0_dev；留空时按链接或仓库默认分支解析",
+      "cancel": "取消",
+      "create": "添加",
+      "creating": "添加中...",
+      "create_success": "已添加工蜂仓库",
+      "create_failed": "添加工蜂仓库失败",
+      "duplicate_error": "该工蜂仓库已在资源库中。",
+      "library_badge": "资源库",
+      "project_only_badge": "项目已使用",
+      "default_branch_badge": "默认分支：{{branch}}",
+      "unused": "尚未被项目使用",
+      "details": "详情",
+      "details_title": "工蜂仓库详情",
+      "default_branch_label": "默认分支",
+      "project_path_label": "工蜂项目",
+      "commit_id_label": "Commit ID",
+      "legacy_resolve_status": "仓库信息待补全",
+      "resolve_hint": "这条仓库是旧记录，缺少工蜂项目和默认分支等元信息。可以重新解析后补全。",
+      "resolve": "补全信息",
+      "resolving": "补全中...",
+      "resolve_success": "仓库信息已补全",
+      "resolve_failed": "补全仓库信息失败",
+      "repo_sync_success": "工蜂仓库已测试并同步",
+      "repo_sync_failed": "测试或同步工蜂仓库失败",
+      "usages_title": "项目关联",
+      "usages_empty": "暂无项目关联",
+      "detach": "删除项目关联",
+      "detach_success": "项目关联已删除",
+      "detach_failed": "删除项目关联失败",
+      "remove": "删除",
+      "remove_aria": "删除工蜂仓库资源",
+      "remove_blocked": "请先删除所有项目关联，再删除仓库资源",
+      "remove_success": "已从资源库移除工蜂仓库",
+      "remove_failed": "移除工蜂仓库失败"
+    }
   },
   "desktop": {
     "tabs": {

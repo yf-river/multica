@@ -14,7 +14,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
 import { useActorName } from "@multica/core/workspace/hooks";
-import type { ProjectStatus, ProjectPriority } from "@multica/core/types";
+import type { GongfengRepoResourceRef, ProjectStatus, ProjectPriority, WorkspaceRepo } from "@multica/core/types";
 import { cn } from "@multica/ui/lib/utils";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/dialog";
@@ -227,10 +227,13 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
       | Array<{ resource_type: "gongfeng_repo" | "local_directory"; resource_ref: Record<string, unknown> }>
       | undefined;
     if (sourceMode === "repos" && selectedRepos.length > 0) {
-      resources = selectedRepos.map((url) => ({
-        resource_type: "gongfeng_repo" as const,
-        resource_ref: { url },
-      }));
+      resources = selectedRepos.map((url) => {
+        const repo = workspaceRepos.find((item) => item.url === url);
+        return {
+          resource_type: "gongfeng_repo" as const,
+          resource_ref: buildGongfengResourceRefFromWorkspaceRepo(url, repo),
+        };
+      });
     } else if (
       sourceMode === "local" &&
       selectedLocalPath &&
@@ -639,6 +642,11 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
                               />
                               <FolderGit className="size-3.5" />
                               <RepoUrlText url={repo.url} />
+                              {repo.default_branch && (
+                                <span className="shrink-0 rounded border px-1 font-mono text-[10px] text-muted-foreground">
+                                  {repo.default_branch}
+                                </span>
+                              )}
                             </button>
                           );
                         })}
@@ -685,6 +693,11 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
                         >
                           <FolderGit className="size-3 text-muted-foreground" />
                           <RepoUrlText url={url} />
+                          {workspaceRepos.find((repo) => repo.url === url)?.default_branch && (
+                            <span className="shrink-0 rounded border px-1 font-mono text-[10px] text-muted-foreground">
+                              {workspaceRepos.find((repo) => repo.url === url)?.default_branch}
+                            </span>
+                          )}
                           <button
                             type="button"
                             onClick={() => toggleRepo(url)}
@@ -791,4 +804,20 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
       </DialogContent>
     </Dialog>
   );
+}
+
+function buildGongfengResourceRefFromWorkspaceRepo(
+  url: string,
+  repo: WorkspaceRepo | undefined,
+): Partial<GongfengRepoResourceRef> & { url: string } {
+  const branch = repo?.default_branch?.trim();
+  if (!branch) return { url };
+  return {
+    url,
+    provider: "gongfeng",
+    ...(repo?.project_path ? { project_path: repo.project_path } : {}),
+    resource_kind: "branch",
+    ref: branch,
+    branch,
+  };
 }

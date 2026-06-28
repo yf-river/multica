@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -52,6 +53,20 @@ type UpdateExternalCredentialProfileRequest struct {
 	Status       *string         `json:"status"`
 	LastError    *string         `json:"last_error"`
 	VerifyNow    bool            `json:"verify_now"`
+}
+
+type TestExternalCredentialProfileRequest struct {
+	Provider  string `json:"provider"`
+	SecretRef string `json:"secret_ref"`
+	Token     string `json:"token"`
+}
+
+type TestExternalCredentialProfileResponse struct {
+	Provider       string         `json:"provider"`
+	SecretBinding  map[string]any `json:"secret_binding"`
+	Status         string         `json:"status"`
+	LastVerifiedAt *string        `json:"last_verified_at"`
+	LastError      string         `json:"last_error,omitempty"`
 }
 
 func externalCredentialProfileToResponse(profile db.ExternalCredentialProfile) ExternalCredentialProfileResponse {
@@ -261,6 +276,95 @@ func (h *Handler) UpdateExternalCredentialProfile(w http.ResponseWriter, r *http
 		return
 	}
 	writeJSON(w, http.StatusOK, externalCredentialProfileToResponse(profile))
+}
+
+func (h *Handler) TestExternalCredentialProfile(w http.ResponseWriter, r *http.Request) {
+	if _, ok := requireUserID(w, r); !ok {
+		return
+	}
+	var req TestExternalCredentialProfileRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	provider := strings.TrimSpace(strings.ToLower(req.Provider))
+	if !isSupportedExternalCredentialProvider(provider) {
+		writeError(w, http.StatusBadRequest, "provider must be tapd or gongfeng")
+		return
+	}
+	secretRef, encrypted, hint, statusCode, msg := h.prepareExternalCredentialSecret(req.SecretRef, req.Token)
+	if statusCode != 0 {
+		writeError(w, statusCode, msg)
+		return
+	}
+	status, lastVerified, lastError := verifyExternalCredentialProfile(provider, secretRef, encrypted)
+	lastErrorString := lastError.String
+	if status == "unverified" && strings.Contains(lastErrorString, "凭据绑定已保存") {
+		lastErrorString = "凭据绑定格式有效；实时工蜂/TAPD API 校验尚未接入。"
+	}
+	if provider == externalCredentialProviderGongfeng && status != "failed" {
+		status, lastVerified, lastError = h.verifyGongfengCredentialConnection(r.Context(), secretRef, encrypted)
+		lastErrorString = lastError.String
+	}
+	binding := map[string]any{
+		"configured": true,
+		"redacted":   true,
+	}
+	if secretRef != "" {
+		binding["mode"] = "secret_ref"
+		binding["hint"] = secretRefHint(secretRef)
+	} else {
+		binding["mode"] = "encrypted_secret"
+		binding["hint"] = hint
+	}
+	writeJSON(w, http.StatusOK, TestExternalCredentialProfileResponse{
+		Provider:       provider,
+		SecretBinding:  binding,
+		Status:         status,
+		LastVerifiedAt: timestampToPtr(lastVerified),
+		LastError:      lastErrorString,
+	})
+}
+
+func (h *Handler) verifyGongfengCredentialConnection(ctx context.Context, secretRef string, encrypted []byte) (string, pgtype.Timestamptz, pgtype.Text) {
+	now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	token := h.resolveExternalCredentialToken(db.ExternalCredentialProfile{
+		Provider:        externalCredentialProviderGongfeng,
+		SecretRef:       secretRef,
+		EncryptedSecret: encrypted,
+	})
+	if strings.TrimSpace(token) == "" {
+		return "failed", now, pgtype.Text{String: "工蜂 token 不可用；请检查输入或服务端环境变量。", Valid: true}
+	}
+	target := gongfengAPIBase() + "/user"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return "failed", now, pgtype.Text{String: "工蜂连接测试地址无效。", Valid: true}
+	}
+	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Private-Token", token)
+	req.Header.Set("Authorization", "Bearer "+token)
+	client := &http.Client{
+		Timeout: 8 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "failed", now, pgtype.Text{String: "无法连接工蜂 API；请检查网络或 GONGFENG_API_BASE。", Valid: true}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return "verified", now, pgtype.Text{}
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return "failed", now, pgtype.Text{String: "工蜂 token 无效或已过期。", Valid: true}
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return "failed", now, pgtype.Text{String: "工蜂 token 权限不足。", Valid: true}
+	}
+	return "failed", now, pgtype.Text{String: "工蜂连接测试失败，HTTP " + resp.Status, Valid: true}
 }
 
 func (h *Handler) DeleteExternalCredentialProfile(w http.ResponseWriter, r *http.Request) {

@@ -50,3 +50,17 @@ export interface UpdateExternalCredentialProfileRequest {
   last_error?: string;
   verify_now?: boolean;
 }
+
+export interface TestExternalCredentialProfileRequest {
+  provider: ExternalCredentialProvider;
+  secret_ref?: string;
+  token?: string;
+}
+
+export interface TestExternalCredentialProfileResponse {
+  provider: ExternalCredentialProvider | (string & {});
+  secret_binding: ExternalCredentialSecretBinding;
+  status: ExternalCredentialStatus | (string & {});
+  last_verified_at: string | null;
+  last_error?: string;
+}

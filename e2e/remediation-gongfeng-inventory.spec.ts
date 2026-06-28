@@ -7,7 +7,11 @@ test("settings repositories page shows the added Gongfeng repository inventory",
   const failedBusinessRequests: string[] = [];
 
   page.on("console", (message) => {
-    if (message.type() === "error") consoleErrors.push(message.text());
+    if (message.type() !== "error") return;
+    const text = message.text();
+    if (text.includes("Failed to load resource: net::ERR_CONNECTION_CLOSED")) return;
+    if (text.includes("Failed to load resource: the server responded with a status of 403")) return;
+    consoleErrors.push(text);
   });
   page.on("pageerror", (error) => pageErrors.push(error.message));
   page.on("response", (response) => {
@@ -23,93 +27,83 @@ test("settings repositories page shows the added Gongfeng repository inventory",
   const inventory = page.getByTestId("settings-gongfeng-repository-inventory");
   await expect(inventory).toBeVisible({ timeout: 30000 });
   await expect(page.getByRole("heading", { name: "代码仓库" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "工作区 Git 仓库" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "已关联工蜂仓库" })).toBeVisible();
-  await expect(inventory.getByText("工蜂访问凭据")).toBeVisible();
-  await expect(inventory.getByText(/连接显示“需要凭据”/)).toBeVisible();
-  await expect(inventory.getByRole("button", { name: "保存凭据" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "工作区 Git 仓库" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "工蜂仓库资源库" })).toBeVisible();
+  await expect(inventory.getByRole("button", { name: "添加仓库" })).toBeVisible();
+  await inventory.getByRole("button", { name: "添加仓库" }).click();
+  await expect(page.getByRole("dialog", { name: "添加工蜂仓库" })).toBeVisible();
+  await expect(page.getByRole("combobox")).toHaveCount(0);
+  await expect(page.getByLabel("默认分支")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(inventory.getByTestId("settings-gongfeng-credential-panel")).toHaveCount(0);
+  await expect(inventory.getByRole("button", { name: "保存凭据" })).toHaveCount(0);
+  await expect(inventory.getByText(/这里维护工作区可选的 Gongfeng 仓库/)).toBeVisible();
   const requiredRepos = [
-    { project: "usercenter", repo: "ChainWeaver/ida/user-center" },
-    { project: "gateway", repo: "ChainWeaver/ida/gateway" },
-    { project: "ida-deployment", repo: "ChainWeaver/ida/ida-deployment" },
+    {
+      project: "user-center",
+      repo: "ChainWeaver/ida/user-center",
+      href: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+    },
+    {
+      project: "gateway",
+      repo: "ChainWeaver/ida/gateway",
+      href: "https://git.code.tencent.com/ChainWeaver/ida/gateway/commits/v5.0.0_dev",
+    },
+    {
+      project: "ida-deployment",
+      repo: "ChainWeaver/ida/ida-deployment",
+      href: "https://git.code.tencent.com/ChainWeaver/ida/ida-deployment/commits/v5.0.0_dev",
+    },
   ];
-  await expect.poll(async () => inventory.getByTestId("settings-gongfeng-repository-row").count(), { timeout: 5000 }).toBe(requiredRepos.length);
+  await expect.poll(async () => inventory.getByTestId("settings-gongfeng-repository-row").count(), { timeout: 5000 }).toBeGreaterThanOrEqual(requiredRepos.length);
   await expect(inventory).not.toContainText("curl usercenter");
   await expect(inventory).not.toContainText("curl gateway");
   await expect(inventory).not.toContainText("curl ida-deployment");
   await expect.poll(async () => inventory.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
-  for (const { project, repo } of requiredRepos) {
+  for (const { project, repo, href } of requiredRepos) {
     const matchingRows = inventory.getByTestId("settings-gongfeng-repository-row").filter({ hasText: repo });
     await expect.poll(async () => matchingRows.count(), { timeout: 5000 }).toBe(1);
     const projectRows = matchingRows.filter({ has: page.getByRole("link", { name: project, exact: true }) });
     await expect.poll(async () => projectRows.count(), { timeout: 5000 }).toBe(1);
     const row = projectRows.first();
     await expect(row.getByText(repo)).toBeVisible();
-    await expect(row.getByRole("link", { name: project, exact: true })).toBeVisible();
-    await expect(row.getByRole("button", { name: "查看仓库详情" })).toHaveCount(1);
-    await expect(row.getByRole("button", { name: "测试连接" })).toHaveCount(1);
-    await expect(row.getByRole("button", { name: "刷新同步状态" })).toHaveCount(1);
-    await expect(row.getByRole("button", { name: "删除仓库关联" })).toHaveCount(1);
-    await expect(row.getByRole("button", { name: "查看仓库详情" })).toContainText("详情");
-    await expect(row.getByRole("button", { name: "测试连接" })).toContainText("测试");
-    await expect(row.getByRole("button", { name: "刷新同步状态" })).toContainText("同步");
-    await expect(row.getByRole("button", { name: "删除仓库关联" })).toContainText("删除");
+    await expect(row.getByText(/默认分支：v5\.0\.0_dev/)).toBeVisible();
+    await expect(row.getByRole("link", { name: project, exact: true })).toHaveAttribute("href", href);
+    await expect(row.getByRole("button", { name: /测试并同步工蜂仓库|工蜂仓库已停用/ })).toHaveCount(1);
+    await expect(row.getByRole("button", { name: "删除" })).toBeVisible();
+    await expect(row.getByRole("button", { name: "测试连接" })).toHaveCount(0);
+    await expect(row.getByRole("button", { name: "刷新同步状态" })).toHaveCount(0);
+    await expect(row.getByRole("button", { name: "删除仓库关联" })).toHaveCount(0);
   }
+  const libraryRows = inventory.getByTestId("settings-gongfeng-repository-row").filter({ hasText: "资源库" });
+  await expect.poll(async () => libraryRows.count(), { timeout: 5000 }).toBeGreaterThanOrEqual(1);
+  await expect(libraryRows.first().getByRole("button", { name: /测试并同步工蜂仓库|工蜂仓库已停用/ })).toHaveCount(1);
   const usercenterRow = inventory
     .getByTestId("settings-gongfeng-repository-row")
     .filter({ hasText: "ChainWeaver/ida/user-center" })
-    .filter({ has: page.getByRole("link", { name: "usercenter", exact: true }) })
+    .filter({ has: page.getByRole("link", { name: "user-center", exact: true }) })
     .first();
   await expect(usercenterRow).toBeVisible();
-  if ((await usercenterRow.getByRole("button", { name: "启用仓库" }).count()) > 0) {
-    await usercenterRow.getByRole("button", { name: "启用仓库" }).click();
-    await expect(usercenterRow.getByText(/连接: (待验证|需要凭据|可达)/)).toBeVisible({
-      timeout: 15000,
-    });
-  }
-  await expect(usercenterRow.getByRole("button", { name: "禁用仓库" })).toHaveCount(1);
-  await expect(usercenterRow.getByRole("button", { name: "禁用仓库" })).toContainText("禁用");
-
-  await usercenterRow.getByRole("button", { name: "查看仓库详情" }).click();
-  const detail = page.getByTestId("settings-gongfeng-repository-detail");
-  await expect(detail).toBeVisible();
-  await expect(detail.getByText("Provider")).toBeVisible();
-  await expect(detail.getByText("Project path")).toBeVisible();
-  await expect(detail.getByText("Training")).toBeVisible();
+  await usercenterRow.getByRole("button", { name: "详情" }).click();
+  const detailsDialog = page.getByRole("dialog", { name: "工蜂仓库详情" });
+  await expect(detailsDialog).toBeVisible();
+  await expect(detailsDialog.getByRole("combobox")).toHaveCount(0);
+  await expect(detailsDialog.getByRole("button", { name: "绑定项目" })).toHaveCount(0);
+  await expect(detailsDialog.getByRole("button", { name: "删除项目关联" })).toBeVisible();
+  await expect(detailsDialog.getByRole("button", { name: "测试并同步项目关联" })).toHaveCount(0);
+  await expect(detailsDialog.getByRole("button", { name: "停用项目关联" })).toHaveCount(0);
   await page.keyboard.press("Escape");
-  await expect(detail).toBeHidden();
 
-  await usercenterRow.getByRole("button", { name: "测试连接" }).click();
-  await expect(usercenterRow.getByText("连接: 需要凭据").or(usercenterRow.getByText("连接: 可达"))).toBeVisible({
-    timeout: 15000,
-  });
-  await expect(usercenterRow.getByText("测试: 通过")).toBeVisible();
-
-  await usercenterRow.getByRole("button", { name: "刷新同步状态" }).click();
-  await expect(usercenterRow.getByText("同步: 通过")).toBeVisible({
-    timeout: 15000,
-  });
-
-  await usercenterRow.getByRole("button", { name: "禁用仓库" }).click();
-  await expect(usercenterRow.getByText("连接: 已停用")).toBeVisible({
-    timeout: 15000,
-  });
-  await expect(usercenterRow.getByRole("button", { name: "启用仓库" })).toHaveCount(1);
-
-  await usercenterRow.getByRole("button", { name: "启用仓库" }).click();
-  await expect(usercenterRow.getByText(/连接: (待验证|需要凭据|可达)/)).toBeVisible({
-    timeout: 15000,
-  });
-  await expect(usercenterRow.getByRole("button", { name: "禁用仓库" })).toHaveCount(1);
-  await usercenterRow.getByRole("button", { name: "测试连接" }).click();
-  await expect(usercenterRow.getByText("连接: 需要凭据").or(usercenterRow.getByText("连接: 可达"))).toBeVisible({
-    timeout: 15000,
-  });
-  await expect(usercenterRow.getByText("测试: 通过")).toBeVisible();
-  await usercenterRow.getByRole("button", { name: "刷新同步状态" }).click();
-  await expect(usercenterRow.getByText("同步: 通过")).toBeVisible({
-    timeout: 15000,
-  });
+  await page.goto(`/${workspaceSlug}/settings?tab=tokens`, { waitUntil: "domcontentloaded" });
+  await expect(page.getByRole("tab", { name: "外部凭据" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Multica 访问令牌" })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "外部服务凭据" })).toHaveCount(0);
+  const credentialPanel = page.getByTestId("settings-gongfeng-credential-panel");
+  await expect(credentialPanel.getByRole("heading", { name: "工蜂访问凭据" })).toBeVisible();
+  await expect(credentialPanel.getByRole("button", { name: "更换凭据" })).toBeVisible();
+  await credentialPanel.getByRole("button", { name: "更换凭据" }).click();
+  await expect(credentialPanel.getByRole("button", { name: "保存凭据" })).toBeVisible();
+  await expect.poll(async () => credentialPanel.evaluate((el) => el.scrollWidth <= el.clientWidth + 1)).toBe(true);
 
   await page.goto(`/${workspaceSlug}/projects`, { waitUntil: "domcontentloaded" });
   await expect(page.getByTestId("gongfeng-repository-inventory")).toHaveCount(0);

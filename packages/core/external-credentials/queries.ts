@@ -5,6 +5,8 @@ import type {
   ExternalCredentialProvider,
   ExternalCredentialProfile,
   ListExternalCredentialProfilesResponse,
+  TestExternalCredentialProfileRequest,
+  TestExternalCredentialProfileResponse,
   UpdateExternalCredentialProfileRequest,
 } from "../types";
 
@@ -94,5 +96,11 @@ export function useDeleteExternalCredentialProfile(provider?: ExternalCredential
     onSettled: () => {
       qc.invalidateQueries({ queryKey: externalCredentialProfileKeys.all });
     },
+  });
+}
+
+export function useTestExternalCredentialProfile() {
+  return useMutation<TestExternalCredentialProfileResponse, Error, TestExternalCredentialProfileRequest>({
+    mutationFn: (data) => api.testExternalCredentialProfile(data),
   });
 }

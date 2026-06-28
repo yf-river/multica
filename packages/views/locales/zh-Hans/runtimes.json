@@ -165,7 +165,7 @@
     "troubleshooting": "那台电脑打不开浏览器？",
     "trouble_intro": "改用访问令牌登录替代第 2 步，适用于任何有终端的环境。",
     "trouble_token_hint_prefix": "在 ",
-    "trouble_token_hint_destination": "设置 → 访问令牌",
+    "trouble_token_hint_destination": "设置 → 访问令牌与凭据",
     "trouble_token_hint_suffix": " 中创建令牌。守护进程只使用出站连接 —— 无需开放入站端口。",
     "trouble_check_status": "检查状态",
     "trouble_view_logs": "查看日志",

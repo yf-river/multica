@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"time"
 
@@ -828,7 +829,7 @@ func probeGongfengURL(ctx context.Context, rawURL string) gongfengProbeResult {
 		return gongfengProbeResult{ConnectionStatus: "invalid_url", TestStatus: "failed"}
 	}
 	client := &http.Client{
-		Timeout: 8 * time.Second,
+		Timeout: 20 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -866,7 +867,7 @@ func probeGongfengWithCredential(ctx context.Context, ref gongfengRepoRef, token
 	req.Header.Set("Private-Token", token)
 	req.Header.Set("Authorization", "Bearer "+token)
 	client := &http.Client{
-		Timeout: 8 * time.Second,
+		Timeout: 20 * time.Second,
 		CheckRedirect: func(*http.Request, []*http.Request) error {
 			return http.ErrUseLastResponse
 		},
@@ -901,7 +902,124 @@ func gongfengAPIProjectURL(projectPath string) string {
 	if projectPath == "" {
 		return ""
 	}
-	return "https://git.code.tencent.com/api/v3/projects/" + url.PathEscape(projectPath)
+	return gongfengAPIBase() + "/projects/" + url.PathEscape(projectPath)
+}
+
+func gongfengAPIBase() string {
+	base := strings.TrimRight(strings.TrimSpace(os.Getenv("GONGFENG_API_BASE")), "/")
+	if base == "" {
+		return "https://git.code.tencent.com/api/v3"
+	}
+	parsed, err := url.Parse(base)
+	if err == nil && strings.EqualFold(parsed.Host, "git.code.tencent.com") && strings.Trim(parsed.Path, "/") == "" {
+		return base + "/api/v3"
+	}
+	return base
+}
+
+func fetchGongfengDefaultBranch(ctx context.Context, projectPath string, token string) (string, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", errors.New("gongfeng credential token is unavailable")
+	}
+	target := gongfengAPIProjectURL(projectPath)
+	if target == "" {
+		return "", errors.New("gongfeng project_path is required")
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Private-Token", token)
+	req.Header.Set("Authorization", "Bearer "+token)
+	client := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("gongfeng default branch lookup failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return "", errors.New("gongfeng credential cannot access this repository")
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return "", errors.New("gongfeng repository not found or no access")
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("gongfeng default branch lookup returned HTTP %d", resp.StatusCode)
+	}
+	var payload struct {
+		DefaultBranch string `json:"default_branch"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", fmt.Errorf("invalid gongfeng project response: %w", err)
+	}
+	branch := strings.TrimSpace(payload.DefaultBranch)
+	if branch == "" {
+		return "", errors.New("gongfeng project response did not include default_branch")
+	}
+	return branch, nil
+}
+
+func fetchGongfengBranchHeadCommit(ctx context.Context, projectPath string, branch string, token string) (string, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return "", errors.New("gongfeng credential token is unavailable")
+	}
+	projectPath = strings.Trim(strings.TrimSpace(projectPath), "/")
+	branch = strings.TrimSpace(branch)
+	if projectPath == "" {
+		return "", errors.New("gongfeng project_path is required")
+	}
+	if branch == "" {
+		return "", errors.New("gongfeng branch is required")
+	}
+	target := gongfengAPIBase() + "/projects/" + url.PathEscape(projectPath) + "/repository/branches/" + url.PathEscape(branch)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("PRIVATE-TOKEN", token)
+	req.Header.Set("Private-Token", token)
+	req.Header.Set("Authorization", "Bearer "+token)
+	client := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("gongfeng branch head lookup failed: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+		return "", errors.New("gongfeng credential cannot access this branch")
+	}
+	if resp.StatusCode == http.StatusNotFound {
+		return "", errors.New("gongfeng branch not found or no access")
+	}
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return "", fmt.Errorf("gongfeng branch head lookup returned HTTP %d", resp.StatusCode)
+	}
+	var payload struct {
+		Commit struct {
+			ID string `json:"id"`
+		} `json:"commit"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+		return "", fmt.Errorf("invalid gongfeng branch response: %w", err)
+	}
+	commit := strings.TrimSpace(payload.Commit.ID)
+	if commit == "" {
+		return "", errors.New("gongfeng branch response did not include commit id")
+	}
+	return commit, nil
 }
 
 func mustMarshalRaw(v any) json.RawMessage {

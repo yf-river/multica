@@ -3,6 +3,19 @@ export type MemberRole = "owner" | "admin" | "member";
 export interface WorkspaceRepo {
   url: string;
   description?: string;
+  provider?: "gongfeng" | string;
+  project_path?: string;
+  default_branch?: string;
+  head_commit?: string;
+  commit_sha?: string;
+  connection_status?: string;
+  sync_status?: string;
+  test_status?: string;
+  last_tested_at?: string;
+  last_synced_at?: string;
+  resolve_status?: string;
+  resolve_error?: string;
+  last_resolved_at?: string;
 }
 
 export interface Workspace {
