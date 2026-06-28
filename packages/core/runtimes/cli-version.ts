@@ -31,6 +31,7 @@ const SEMVER_RE = /v?(\d+)\.(\d+)\.(\d+)/;
 // is what keeps `pnpm dev:desktop` + `make daemon` unblocked without weakening
 // the gate for staging or production users running stale stable releases.
 const DEV_DESCRIBE_RE = /^v?\d+\.\d+\.\d+-\d+-g[0-9a-fA-F]+/;
+const DEV_COMMIT_RE = /^[0-9a-fA-F]{7,40}(-dirty)?$/;
 
 function parseSemver(raw: string): [number, number, number] | null {
   const m = SEMVER_RE.exec(raw.trim());
@@ -53,7 +54,7 @@ function lessThan(a: [number, number, number], b: [number, number, number]) {
  */
 export function checkQuickCreateCliVersion(detected: string | undefined | null): CliVersionCheck {
   const current = (detected ?? "").trim();
-  if (DEV_DESCRIBE_RE.test(current)) {
+  if (DEV_DESCRIBE_RE.test(current) || DEV_COMMIT_RE.test(current)) {
     return { state: "ok", current, min: MIN_QUICK_CREATE_CLI_VERSION };
   }
   const parsed = current ? parseSemver(current) : null;

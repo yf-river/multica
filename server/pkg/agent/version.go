@@ -40,6 +40,7 @@ var (
 // described daemons as OK keeps `make daemon` unblocked without weakening the
 // gate for staging or production users running stale stable releases.
 var devDescribeRe = regexp.MustCompile(`^v?\d+\.\d+\.\d+-\d+-g[0-9a-fA-F]+`)
+var devCommitRe = regexp.MustCompile(`^[0-9a-fA-F]{7,40}(-dirty)?$`)
 
 // CheckMinCLIVersion returns nil when `detected` parses as ≥ minimum. Returns
 // ErrCLIVersionMissing for empty or unparsable input, and ErrCLIVersionTooOld
@@ -54,7 +55,7 @@ func CheckMinCLIVersion(detected string) error {
 	if d == "" {
 		return ErrCLIVersionMissing
 	}
-	if devDescribeRe.MatchString(d) {
+	if devDescribeRe.MatchString(d) || devCommitRe.MatchString(d) {
 		return nil
 	}
 	parsed, err := parseSemver(d)
