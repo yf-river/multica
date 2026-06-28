@@ -163,8 +163,12 @@ function auditCase(item) {
 
 function buildP0Matrix(data) {
   const allSourcesReady = data.benchmark_cases.every((item) => item.source_status === "fulfilled");
-  const serviceSandboxReady = data.existing_artifacts.quick_entry?.sandbox_mode === "service-container"
-    || data.existing_artifacts.quick_entry?.sandbox_mode === "service-level-container";
+  const serviceSandboxReady = data.existing_artifacts.quick_entry?.ok === true
+    && [
+      "service-container",
+      "service-level-container",
+      "service-process",
+    ].includes(data.existing_artifacts.quick_entry?.sandbox_mode);
   const operationIntentReady = data.training_loop.has_operation_skill_intent_fields;
   return [
     {
@@ -177,9 +181,9 @@ function buildP0Matrix(data) {
     {
       id: "P0-2",
       requirement: "服务级 sandbox 必须真实启动相关服务，curl 从 gateway HTTP 进入并触达 usercenter gRPC 与 ida-deployment 权限/apiData/render。",
-      status: serviceSandboxReady ? "fulfilled" : "missing",
+      status: serviceSandboxReady ? "partial" : "missing",
       evidence: data.existing_artifacts.quick_entry || null,
-      missing: serviceSandboxReady ? [] : ["当前 quick-entry latest 仍不是 service-container 口径", "历史四条尚无服务级 sandbox artifact"],
+      missing: serviceSandboxReady ? ["历史四条尚无服务级 sandbox artifact"] : ["当前 quick-entry latest 仍不是 service-level container/process 口径", "历史四条尚无服务级 sandbox artifact"],
     },
     {
       id: "P0-3",
@@ -225,7 +229,10 @@ function buildGapMatrix(data) {
       id: "GAP-2",
       gap: "sandbox 不是服务级，curl 未穿过 gateway -> usercenter -> ida-deployment",
       blocking: true,
-      status: "missing",
+      status: data.existing_artifacts.quick_entry?.ok === true
+        && ["service-container", "service-level-container", "service-process"].includes(data.existing_artifacts.quick_entry?.sandbox_mode)
+        ? "partial"
+        : "missing",
       verification: "future service-level benchmark runner artifacts",
     },
     {
