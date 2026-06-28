@@ -65,27 +65,33 @@ function PillButton({
   );
 }
 
-function RepoUrlText({
-  url,
+function RepoDisplayText({
+  repo,
   className,
 }: {
-  url: string;
+  repo: WorkspaceRepo;
   className?: string;
 }) {
+  const name = workspaceRepoDisplayName(repo);
+  const projectPath = workspaceRepoProjectPath(repo);
+  const detail = projectPath && projectPath !== name ? projectPath : repo.url;
   return (
     <Tooltip>
       <TooltipTrigger
         render={
           <span
-            title={url}
-            className={cn("truncate flex-1 text-left", className)}
+            title={`${name} · ${repo.url}`}
+            className={cn("min-w-0 flex-1 text-left", className)}
           >
-            {url}
+            <span className="block truncate font-medium text-foreground">{name}</span>
+            <span className="block truncate text-[10px] leading-3 text-muted-foreground">
+              {detail}
+            </span>
           </span>
         }
       />
       <TooltipContent side="top" align="start" className="max-w-sm break-all">
-        {url}
+        {repo.url}
       </TooltipContent>
     </Tooltip>
   );
@@ -136,9 +142,12 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
     isGongfengRepoURL(repo.url),
   );
   const repoQuery = repoSearch.trim().toLowerCase();
-  const filteredWorkspaceRepos = workspaceRepos.filter((repo) =>
-    repo.url.toLowerCase().includes(repoQuery),
-  );
+  const normalizedRepoQuery = normalizeRepoSearch(repoSearch);
+  const filteredWorkspaceRepos = workspaceRepos.filter((repo) => {
+    if (!repoQuery) return true;
+    const searchText = workspaceRepoSearchText(repo);
+    return searchText.includes(repoQuery) || normalizeRepoSearch(searchText).includes(normalizedRepoQuery);
+  });
 
   // A project's source is binary: either a set of Gongfeng repos OR a local
   // working directory — never both. Mode is the source of truth for what
@@ -632,8 +641,8 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
                                 readOnly
                                 className="size-3.5"
                               />
-                              <FolderGit className="size-3.5" />
-                              <RepoUrlText url={repo.url} />
+                              <FolderGit className="size-3.5 shrink-0 text-muted-foreground" />
+                              <RepoDisplayText repo={repo} />
                               {repo.default_branch && (
                                 <span className="shrink-0 rounded border px-1 font-mono text-[10px] text-muted-foreground">
                                   {repo.default_branch}
@@ -654,27 +663,31 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
                       <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
                         {t(($) => $.create_project.repos_selected)}
                       </div>
-                      {selectedRepos.map((url) => (
-                        <div
-                          key={url}
-                          className="flex items-center gap-2 text-xs"
-                        >
-                          <FolderGit className="size-3 text-muted-foreground" />
-                          <RepoUrlText url={url} />
-                          {workspaceRepos.find((repo) => repo.url === url)?.default_branch && (
-                            <span className="shrink-0 rounded border px-1 font-mono text-[10px] text-muted-foreground">
-                              {workspaceRepos.find((repo) => repo.url === url)?.default_branch}
-                            </span>
-                          )}
-                          <button
-                            type="button"
-                            onClick={() => toggleRepo(url)}
-                            className="text-muted-foreground hover:text-foreground"
+                      {selectedRepos.map((url) => {
+                        const repo = workspaceRepos.find((item) => item.url === url);
+                        if (!repo) return null;
+                        return (
+                          <div
+                            key={url}
+                            className="flex items-center gap-2 text-xs"
                           >
-                            <XIcon className="size-3" />
-                          </button>
-                        </div>
-                      ))}
+                            <FolderGit className="size-3 text-muted-foreground" />
+                            <RepoDisplayText repo={repo} />
+                            {repo.default_branch && (
+                              <span className="shrink-0 rounded border px-1 font-mono text-[10px] text-muted-foreground">
+                                {repo.default_branch}
+                              </span>
+                            )}
+                            <button
+                              type="button"
+                              onClick={() => toggleRepo(url)}
+                              className="text-muted-foreground hover:text-foreground"
+                            >
+                              <XIcon className="size-3" />
+                            </button>
+                          </div>
+                        );
+                      })}
                     </div>
                   )}
                 </>
@@ -772,6 +785,53 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
       </DialogContent>
     </Dialog>
   );
+}
+
+function workspaceRepoDisplayName(repo: WorkspaceRepo): string {
+  const projectPath = workspaceRepoProjectPath(repo);
+  if (projectPath) return projectPath.split("/").filter(Boolean).pop() || projectPath;
+  return inferRepoNameFromURL(repo.url) || repo.url;
+}
+
+function workspaceRepoProjectPath(repo: WorkspaceRepo): string {
+  const projectPath = repo.project_path?.trim();
+  if (projectPath) return projectPath;
+  return inferProjectPathFromGongfengURL(repo.url);
+}
+
+function workspaceRepoSearchText(repo: WorkspaceRepo): string {
+  return [
+    workspaceRepoDisplayName(repo),
+    workspaceRepoProjectPath(repo),
+    repo.url,
+    repo.default_branch,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function normalizeRepoSearch(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "");
+}
+
+function inferProjectPathFromGongfengURL(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    const boundary = parts.findIndex((part) =>
+      ["commits", "commit", "tree", "blob", "merge_requests"].includes(part),
+    );
+    return (boundary > 0 ? parts.slice(0, boundary) : parts).join("/");
+  } catch {
+    return "";
+  }
+}
+
+function inferRepoNameFromURL(url: string): string {
+  const projectPath = inferProjectPathFromGongfengURL(url);
+  if (projectPath) return projectPath.split("/").filter(Boolean).pop() || "";
+  return "";
 }
 
 function buildGongfengResourceRefFromWorkspaceRepo(

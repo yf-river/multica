@@ -6,8 +6,8 @@ import { renderWithI18n } from "../test/i18n";
 
 const longRepoUrl =
   "https://git.code.tencent.com/ChainWeaver/ida/a-very-long-repository-name-that-needs-a-tooltip/commits/v5.0.0_dev";
-const apiRepoUrl = "https://git.code.tencent.com/ChainWeaver/ida/api/commits/v5.0.0_dev";
-const webRepoUrl = "https://git.code.tencent.com/ChainWeaver/ida/web/commits/v5.0.0_dev";
+const userCenterRepoUrl = "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev";
+const gatewayRepoUrl = "https://git.code.tencent.com/ChainWeaver/ida/gateway/commits/v5.0.0_dev";
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: () => ({ data: [] }),
@@ -43,7 +43,22 @@ vi.mock("@multica/core/paths", () => ({
     id: "workspace-1",
     name: "Test Workspace",
     slug: "test-workspace",
-    repos: [{ url: longRepoUrl }, { url: apiRepoUrl }, { url: webRepoUrl }],
+    repos: [
+      {
+        url: longRepoUrl,
+        project_path: "ChainWeaver/ida/a-very-long-repository-name-that-needs-a-tooltip",
+      },
+      {
+        url: userCenterRepoUrl,
+        project_path: "ChainWeaver/ida/user-center",
+        default_branch: "v5.0.0_dev",
+      },
+      {
+        url: gatewayRepoUrl,
+        project_path: "ChainWeaver/ida/gateway",
+        default_branch: "v5.0.0_dev",
+      },
+    ],
   }),
   useWorkspacePaths: () => ({
     projectDetail: (id: string) => `/test-workspace/projects/${id}`,
@@ -163,10 +178,11 @@ vi.mock("sonner", () => ({
 import { CreateProjectModal } from "./create-project";
 
 describe("CreateProjectModal", () => {
-  it("exposes full repository URLs in the repository picker", () => {
+  it("shows repository names in the picker and keeps full URLs in the tooltip", () => {
     render(<CreateProjectModal onClose={vi.fn()} />);
 
-    expect(screen.getByTitle(longRepoUrl)).toHaveTextContent(longRepoUrl);
+    expect(screen.getByTitle(`user-center · ${userCenterRepoUrl}`)).toHaveTextContent("user-center");
+    expect(screen.getByTitle(`gateway · ${gatewayRepoUrl}`)).toHaveTextContent("gateway");
     expect(screen.getByRole("tooltip", { name: longRepoUrl })).toBeInTheDocument();
   });
 
@@ -177,13 +193,13 @@ describe("CreateProjectModal", () => {
 
     const repoSearchInput = screen.getByRole("textbox", { name: "搜索仓库..." });
 
-    await user.type(repoSearchInput, "api");
+    await user.type(repoSearchInput, "usercenter");
 
     expect(
-      screen.getByRole("button", { name: (name) => name.includes(apiRepoUrl) }),
+      screen.getByRole("button", { name: (name) => name.includes("user-center") }),
     ).toBeInTheDocument();
     expect(
-      screen.queryByRole("button", { name: (name) => name.includes(webRepoUrl) }),
+      screen.queryByRole("button", { name: (name) => name.includes("gateway") }),
     ).not.toBeInTheDocument();
     expect(
       screen.queryByRole("button", { name: (name) => name.includes(longRepoUrl) }),
