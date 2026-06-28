@@ -687,10 +687,13 @@ func runIssueChildren(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("resolve issue: %w", err)
 	}
 
-	var children []map[string]any
-	if err := client.GetJSON(ctx, "/api/issues/"+url.PathEscape(issueRef.ID)+"/children", &children); err != nil {
+	var resp struct {
+		Issues []map[string]any `json:"issues"`
+	}
+	if err := client.GetJSON(ctx, "/api/issues/"+url.PathEscape(issueRef.ID)+"/children", &resp); err != nil {
 		return fmt.Errorf("list child issues: %w", err)
 	}
+	children := resp.Issues
 
 	output, _ := cmd.Flags().GetString("output")
 	if output == "json" {

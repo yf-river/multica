@@ -458,6 +458,58 @@ func TestRunIssuePullRequestsTableIncludesCoreFields(t *testing.T) {
 	}
 }
 
+func TestRunIssueChildrenParsesEnvelopeResponse(t *testing.T) {
+	var gotPaths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPaths = append(gotPaths, r.URL.Path)
+		switch r.URL.Path {
+		case "/api/issues/GOA-520":
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":         "issue-uuid",
+				"identifier": "GOA-520",
+				"title":      "Parent",
+				"status":     "done",
+			})
+		case "/api/issues/issue-uuid/children":
+			json.NewEncoder(w).Encode(map[string]any{
+				"issues": []map[string]any{},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	cmd := &cobra.Command{Use: "children"}
+	cmd.Flags().String("output", "json", "")
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err := runIssueChildren(cmd, []string{"GOA-520"})
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("runIssueChildren: %v", err)
+	}
+
+	if want := []string{"/api/issues/GOA-520", "/api/issues/issue-uuid/children"}; fmt.Sprint(gotPaths) != fmt.Sprint(want) {
+		t.Fatalf("paths = %v, want %v", gotPaths, want)
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("decode JSON output: %v\n%s", err, string(out))
+	}
+	if payload["parent_issue_id"] != "issue-uuid" || payload["total"] != float64(0) {
+		t.Fatalf("unexpected payload: %#v", payload)
+	}
+}
+
 func TestTruncateID(t *testing.T) {
 	tests := []struct {
 		name string
