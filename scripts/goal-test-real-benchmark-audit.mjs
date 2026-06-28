@@ -175,7 +175,15 @@ function buildP0Matrix(data) {
       id: "P0-1",
       requirement: "五条 benchmark 全部具备真实来源、case contract、sandbox run、curl verifier、trace、eval verdict、evidence 和复跑命令。",
       status: allSourcesReady ? "partial" : "missing",
-      evidence: data.benchmark_cases.map((item) => ({ id: item.id, source_status: item.source_status, current_verdict: item.current_verdict })),
+      evidence: {
+        sources: data.benchmark_cases.map((item) => ({ id: item.id, source_status: item.source_status, current_verdict: item.current_verdict })),
+        historical_readiness_summary: data.existing_artifacts.historical_readiness?.summary || null,
+        historical_readiness_cases: data.existing_artifacts.historical_readiness?.cases?.map((item) => ({
+          id: item.id,
+          status: item.status,
+          missing: item.missing,
+        })) || null,
+      },
       missing: ["五条尚未全部形成服务级 sandbox run、curl verifier、trace/eval verdict 和复跑命令"],
     },
     {
@@ -223,7 +231,7 @@ function buildGapMatrix(data) {
       gap: "datasets/cases 为空或不可复跑",
       blocking: true,
       status: data.benchmark_cases.every((item) => item.source_status === "fulfilled") ? "partial" : "missing",
-      verification: "real-benchmark-audit plus future active eval cases",
+      verification: "real-benchmark-audit, historical-benchmark-readiness, plus future active eval cases",
     },
     {
       id: "GAP-2",
@@ -277,11 +285,13 @@ function decisionEvidence() {
 
 function existingArtifacts() {
   const quickEntryPath = path.join(artifactRoot, "quick-entry-cross-service-latest.json");
+  const historicalReadinessPath = path.join(artifactRoot, "historical-benchmark-readiness-latest.json");
   const promptCurlPath = path.join(artifactRoot, "prompt-evaluation-curl-e2e-latest.json");
   const optimizerPath = path.join(artifactRoot, "optimizer-workbench-latest.json");
   const gapPath = path.join(artifactRoot, "tapd-gongfeng-sop-gap-audit-latest.json");
   return {
     quick_entry: readJSONArtifact(quickEntryPath),
+    historical_readiness: readJSONArtifact(historicalReadinessPath),
     prompt_evaluation_curl: readJSONArtifact(promptCurlPath),
     optimizer_workbench: readJSONArtifact(optimizerPath),
     final_gap_audit: readJSONArtifact(gapPath),
