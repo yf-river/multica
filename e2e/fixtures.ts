@@ -2129,7 +2129,7 @@ export class TestApiClient {
             DELETE FROM agent
             WHERE workspace_id = $1
               AND (
-                name IN ('pm', '01', '02', '03', '04', '05')
+                name IN ('pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify')
                 OR name LIKE 'user-center 小队 · %'
                 OR name LIKE 'Multica 编码小队 · %'
               )

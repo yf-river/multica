@@ -346,12 +346,11 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 	}
 	out := buildSquadSOPProfile(raw)
 	for _, want := range []string{
-		"模板：user-center-sop-flow",
-		"SOP 步骤链：pm → 01 → 02 → 03 → 04 → 05",
-		"SOP 阶段链：user-center/01-clarify → user-center/02-design → user-center/03-task-split → user-center/04-implement → user-center/05-verify",
+		"模板：generic-project-sop-flow",
+		"SOP 步骤链：pm → 01-clarify → 02-design → 03-task-split → 04-implement → 05-verify",
+		"SOP 阶段链：<target-project>/01-clarify → <target-project>/02-design → <target-project>/03-task-split → <target-project>/04-implement → <target-project>/05-verify",
 		"跨项目子任务规则",
-		"目标项目=gateway",
-		"目标项目=ida-deployment",
+		"目标项目=<target-project>",
 		"multica issue children <当前 issue id> --output json",
 		"禁止重复创建",
 		"不要二次拆分",
@@ -381,7 +380,7 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 	ctx := context.Background()
 	cleanup := func() {
 		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name IN ('pm', 'user-center 小队')`, testWorkspaceID)
-		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND (name IN ('pm', '01', '02', '03', '04', '05') OR name LIKE 'user-center 小队 · %')`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND (name IN ('pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify') OR name LIKE 'user-center 小队 · %')`, testWorkspaceID)
 		_, _ = testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE workspace_id = $1 AND name LIKE 'internal-user-center-codex-test-%'`, testWorkspaceID)
 	}
 	cleanup()
@@ -405,7 +404,7 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 	rows, err := testPool.Query(ctx, `
 		SELECT name, mcp_config
 		FROM agent
-		WHERE workspace_id = $1 AND name IN ('pm', '01', '02', '03', '04', '05')
+		WHERE workspace_id = $1 AND name IN ('pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify')
 		ORDER BY name
 	`, testWorkspaceID)
 	if err != nil {
@@ -446,7 +445,7 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 	if _, err := testPool.Exec(ctx, `
 		UPDATE agent
 		SET model = 'stale-model-before-template-resync'
-		WHERE workspace_id = $1 AND name IN ('pm', '01', '02', '03', '04', '05')
+		WHERE workspace_id = $1 AND name IN ('pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify')
 	`, testWorkspaceID); err != nil {
 		t.Fatalf("stale user-center agent models: %v", err)
 	}
@@ -465,7 +464,7 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 		SELECT count(*)::int
 		FROM agent
 		WHERE workspace_id = $1
-		  AND name IN ('pm', '01', '02', '03', '04', '05')
+		  AND name IN ('pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify')
 		  AND model IS DISTINCT FROM $2
 	`, testWorkspaceID, overrideModel).Scan(&staleModelCount); err != nil {
 		t.Fatalf("count stale user-center agent models: %v", err)
@@ -484,7 +483,7 @@ func TestUserCenterSquadAssignmentCreatesStageTasks(t *testing.T) {
 		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id IN (SELECT id FROM issue WHERE workspace_id = $1 AND title LIKE 'user-center stage task test%')`, testWorkspaceID)
 		_, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE workspace_id = $1 AND title LIKE 'user-center stage task test%'`, testWorkspaceID)
 		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name IN ('pm', 'user-center 小队')`, testWorkspaceID)
-		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND (name IN ('pm', '01', '02', '03', '04', '05') OR name LIKE 'user-center 小队 · %')`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND (name IN ('pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify') OR name LIKE 'user-center 小队 · %')`, testWorkspaceID)
 		_, _ = testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE workspace_id = $1 AND name LIKE 'internal-user-center-stage-test-%'`, testWorkspaceID)
 	}
 	cleanup()

@@ -3,8 +3,11 @@ import path from "node:path";
 import process from "node:process";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
+const pruneTargetEnv = normalizePruneEnv(readArg("env") || process.env.GOAL_TEST_PRUNE_ENV || "int");
+const pruneEnvFileName = pruneTargetEnv === "prod" ? "goal-test-prod.env" : "goal-test-int.env";
+const pruneEnvFilePath = path.join(repoRoot, ".run/env", pruneEnvFileName);
 const env = {
-  ...readEnvFile(path.join(repoRoot, ".run/env/goal-test-int.env")),
+  ...readEnvFile(pruneEnvFilePath),
   ...process.env,
 };
 
@@ -149,6 +152,8 @@ const evidence = {
   schema: "multica.goal_test.dev_data_prune.v1",
   generated_at: generatedAt,
   mode: apply ? "apply" : "dry-run",
+  target_environment: pruneTargetEnv,
+  env_file: path.relative(repoRoot, pruneEnvFilePath),
   backend_url: apiBase,
   workspace_slug: workspaceSlug,
   workspace_id: workspace.id,
@@ -209,8 +214,9 @@ for (const category of categories) {
   evidence.summary.failed_count += result.failed_count;
 }
 
-const artifactPath = path.join(artifactRoot, `dev-data-prune-${stamp}.json`);
-const latestPath = path.join(artifactRoot, "dev-data-prune-latest.json");
+const artifactPrefix = pruneTargetEnv === "prod" ? "prod-data-prune" : "dev-data-prune";
+const artifactPath = path.join(artifactRoot, `${artifactPrefix}-${stamp}.json`);
+const latestPath = path.join(artifactRoot, `${artifactPrefix}-latest.json`);
 writeFileSync(artifactPath, JSON.stringify(evidence, null, 2) + "\n");
 writeFileSync(latestPath, JSON.stringify(evidence, null, 2) + "\n");
 console.log(JSON.stringify({ ok: evidence.summary.failed_count === 0, artifact: artifactPath, latest: latestPath, summary: evidence.summary }, null, 2));
@@ -335,6 +341,12 @@ function readEnvFile(file) {
   } catch {
     return {};
   }
+}
+
+function normalizePruneEnv(value) {
+  const normalized = String(value || "").trim().toLowerCase();
+  if (normalized === "int" || normalized === "prod") return normalized;
+  throw new Error(`Unsupported prune environment: ${value}. Use int or prod.`);
 }
 
 function trimSlash(value) {
