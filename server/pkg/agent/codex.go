@@ -101,7 +101,79 @@ func buildCodexArgs(opts ExecOptions, logger *slog.Logger) []string {
 	}
 	args = append(args, extra...)
 	args = append(args, custom...)
+	if codexModelDisablesImageGeneration(effectiveCodexModelForToolGuard(opts, extra, custom)) {
+		args = append(args, "--disable", "image_generation")
+	}
 	return args
+}
+
+func effectiveCodexModelForToolGuard(opts ExecOptions, extraArgs, customArgs []string) string {
+	if strings.TrimSpace(opts.Model) != "" {
+		return opts.Model
+	}
+	model := ""
+	for _, args := range [][]string{extraArgs, customArgs} {
+		if parsed := lastCodexConfigModelArg(args); parsed != "" {
+			model = parsed
+		}
+	}
+	return model
+}
+
+func codexModelDisablesImageGeneration(model string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(model))
+	if normalized == "" {
+		return false
+	}
+	return strings.Contains(normalized, "codex-spark")
+}
+
+func lastCodexConfigModelArg(args []string) string {
+	model := ""
+	for i := 0; i < len(args); i++ {
+		arg := strings.TrimSpace(args[i])
+		flag, value, hasInlineValue := splitCodexConfigArg(arg)
+		if flag != "-c" && flag != "--config" {
+			continue
+		}
+		if !hasInlineValue {
+			if i+1 >= len(args) {
+				continue
+			}
+			value = args[i+1]
+			i++
+		}
+		if parsed := parseCodexModelConfigValue(value); parsed != "" {
+			model = parsed
+		}
+	}
+	return model
+}
+
+func splitCodexConfigArg(arg string) (flag, value string, hasInlineValue bool) {
+	if idx := strings.Index(arg, "="); idx > 0 {
+		return arg[:idx], arg[idx+1:], true
+	}
+	return arg, "", false
+}
+
+func parseCodexModelConfigValue(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if !strings.HasPrefix(trimmed, "model") {
+		return ""
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(trimmed, "model"))
+	if rest == "" || rest[0] != '=' {
+		return ""
+	}
+	model := strings.TrimSpace(rest[1:])
+	if len(model) >= 2 {
+		if (model[0] == '"' && model[len(model)-1] == '"') ||
+			(model[0] == '\'' && model[len(model)-1] == '\'') {
+			model = model[1 : len(model)-1]
+		}
+	}
+	return strings.TrimSpace(model)
 }
 
 // hasManagedCodexMcpConfig reports whether the agent's mcp_config field is

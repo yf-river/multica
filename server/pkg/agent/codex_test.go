@@ -1776,6 +1776,51 @@ func TestBuildCodexArgsExtraArgsBeforeCustomArgsAndFiltersBoth(t *testing.T) {
 	}
 }
 
+func TestBuildCodexArgsDisablesImageGenerationForSparkModel(t *testing.T) {
+	t.Parallel()
+
+	args := buildCodexArgs(ExecOptions{
+		Model: "gpt-5.3-codex-spark",
+	}, slog.Default())
+
+	if !containsArgPair(args, "--disable", "image_generation") {
+		t.Fatalf("expected image_generation to be disabled for codex-spark, got %v", args)
+	}
+}
+
+func TestBuildCodexArgsDisablesImageGenerationForSparkConfigModel(t *testing.T) {
+	t.Parallel()
+
+	args := buildCodexArgs(ExecOptions{
+		CustomArgs: []string{"-c", `model="gpt-5.3-codex-spark"`},
+	}, slog.Default())
+
+	if !containsArgPair(args, "--disable", "image_generation") {
+		t.Fatalf("expected image_generation to be disabled for codex-spark config model, got %v", args)
+	}
+}
+
+func TestBuildCodexArgsLeavesImageGenerationForNonSparkModel(t *testing.T) {
+	t.Parallel()
+
+	args := buildCodexArgs(ExecOptions{
+		Model: "gpt-5.5",
+	}, slog.Default())
+
+	if containsArgPair(args, "--disable", "image_generation") {
+		t.Fatalf("did not expect image_generation to be disabled for non-spark model, got %v", args)
+	}
+}
+
+func containsArgPair(args []string, first, second string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == first && args[i+1] == second {
+			return true
+		}
+	}
+	return false
+}
+
 func TestBuildCodexArgsDoesNotLeakMcpToArgv(t *testing.T) {
 	t.Parallel()
 
