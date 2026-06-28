@@ -5,9 +5,9 @@ import userEvent from "@testing-library/user-event";
 import { renderWithI18n } from "../test/i18n";
 
 const longRepoUrl =
-  "https://github.com/multica-ai/a-very-long-repository-name-that-needs-a-tooltip";
-const apiRepoUrl = "https://github.com/multica-ai/api";
-const webRepoUrl = "https://github.com/multica-ai/web";
+  "https://git.code.tencent.com/ChainWeaver/ida/a-very-long-repository-name-that-needs-a-tooltip/commits/v5.0.0_dev";
+const apiRepoUrl = "https://git.code.tencent.com/ChainWeaver/ida/api/commits/v5.0.0_dev";
+const webRepoUrl = "https://git.code.tencent.com/ChainWeaver/ida/web/commits/v5.0.0_dev";
 
 vi.mock("@tanstack/react-query", () => ({
   useQuery: () => ({ data: [] }),
@@ -193,5 +193,14 @@ describe("CreateProjectModal", () => {
     await user.type(repoSearchInput, "no-match");
 
     expect(screen.getByText("没有匹配的仓库。")).toBeInTheDocument();
+  });
+
+  it("does not expose a custom Gongfeng URL input in the repository picker", () => {
+    renderWithI18n(<CreateProjectModal onClose={vi.fn()} />);
+
+    expect(
+      screen.queryByPlaceholderText("https://git.code.tencent.com/group/project"),
+    ).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "添加" })).not.toBeInTheDocument();
   });
 });

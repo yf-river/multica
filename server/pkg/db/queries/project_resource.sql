@@ -8,6 +8,12 @@ SELECT * FROM project_resource
 WHERE project_id = ANY(sqlc.arg('project_ids')::uuid[])
 ORDER BY project_id, position ASC, created_at ASC;
 
+-- name: ListGongfengProjectResourcesInWorkspace :many
+SELECT * FROM project_resource
+WHERE workspace_id = $1
+  AND resource_type = 'gongfeng_repo'
+ORDER BY project_id, position ASC, created_at ASC;
+
 -- name: GetProjectResource :one
 SELECT * FROM project_resource
 WHERE id = $1;

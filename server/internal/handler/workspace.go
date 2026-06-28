@@ -459,6 +459,10 @@ func (h *Handler) UpdateWorkspace(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
+		if err := h.ensureWorkspaceReposKeepGongfengProjectResources(r.Context(), idUUID, reposJSON); err != nil {
+			writeError(w, http.StatusConflict, err.Error())
+			return
+		}
 		params.Repos = reposJSON
 	}
 	if req.IssuePrefix != nil {

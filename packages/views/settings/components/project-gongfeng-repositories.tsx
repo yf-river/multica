@@ -84,28 +84,27 @@ export function ProjectGongfengRepositories() {
   }, [projects, resourceQueries]);
 
   const rows = useMemo<RepositoryLibraryRow[]>(() => {
-    const byURL = new Map<string, RepositoryLibraryRow>();
+    const usagesByProjectPath = new Map<string, GongfengResourceUsage[]>();
+    for (const usage of usages) {
+      const projectPath = gongfengResourceProjectPath(usage.resource_ref);
+      if (!projectPath) continue;
+      usagesByProjectPath.set(projectPath, [...(usagesByProjectPath.get(projectPath) ?? []), usage]);
+    }
+
+    const rows: RepositoryLibraryRow[] = [];
     for (const repo of workspace?.repos ?? []) {
       if (!isGongfengURL(repo.url)) continue;
-      byURL.set(repo.url, { url: repo.url, repo, inLibrary: true, usages: [] });
-    }
-    for (const usage of usages) {
-      const url = usage.resource_ref.url;
-      if (!isGongfengURL(url)) continue;
-      const row = byURL.get(url) ?? { url, inLibrary: false, usages: [] };
-      row.usages.push(usage);
-      byURL.set(url, row);
-    }
-    for (const repo of Object.values(resolvedReposByURL)) {
-      if (!isGongfengURL(repo.url)) continue;
-      const row = byURL.get(repo.url) ?? { url: repo.url, inLibrary: true, usages: [] };
-      byURL.set(repo.url, {
-        ...row,
-        repo: { ...row.repo, ...repo },
+      const resolved = resolvedReposByURL[repo.url];
+      const merged = resolved ? { ...repo, ...resolved } : repo;
+      const projectPath = gongfengWorkspaceRepoProjectPath(merged);
+      rows.push({
+        url: repo.url,
+        repo: merged,
         inLibrary: true,
+        usages: projectPath ? usagesByProjectPath.get(projectPath) ?? [] : [],
       });
     }
-    return Array.from(byURL.values()).sort((a, b) => a.url.localeCompare(b.url));
+    return rows.sort((a, b) => a.url.localeCompare(b.url));
   }, [resolvedReposByURL, usages, workspace?.repos]);
 
   if (!workspace) return null;
@@ -584,9 +583,19 @@ function repositoryDefaultBranch(row: RepositoryLibraryRow): string {
 }
 
 function repositoryProjectPath(row: RepositoryLibraryRow): string {
-  const fromLibrary = row.repo?.project_path?.trim();
+  return gongfengWorkspaceRepoProjectPath(row.repo) || inferProjectPathFromGongfengURL(row.url);
+}
+
+function gongfengWorkspaceRepoProjectPath(repo: WorkspaceRepo | undefined): string {
+  const fromLibrary = repo?.project_path?.trim();
   if (fromLibrary) return fromLibrary;
-  return firstNonEmpty(row.usages.map((usage) => usage.resource_ref.project_path)) || inferProjectPathFromGongfengURL(row.url);
+  return repo?.url ? inferProjectPathFromGongfengURL(repo.url) : "";
+}
+
+function gongfengResourceProjectPath(ref: GongfengRepoResourceRef): string {
+  const fromRef = ref.project_path?.trim();
+  if (fromRef) return fromRef;
+  return inferProjectPathFromGongfengURL(ref.url);
 }
 
 function repositoryDisplayName(row: RepositoryLibraryRow): string {

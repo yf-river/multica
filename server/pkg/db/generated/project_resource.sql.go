@@ -155,6 +155,43 @@ func (q *Queries) GetProjectResourceInWorkspace(ctx context.Context, arg GetProj
 	return i, err
 }
 
+const listGongfengProjectResourcesInWorkspace = `-- name: ListGongfengProjectResourcesInWorkspace :many
+SELECT id, project_id, workspace_id, resource_type, resource_ref, label, position, created_at, created_by FROM project_resource
+WHERE workspace_id = $1
+  AND resource_type = 'gongfeng_repo'
+ORDER BY project_id, position ASC, created_at ASC
+`
+
+func (q *Queries) ListGongfengProjectResourcesInWorkspace(ctx context.Context, workspaceID pgtype.UUID) ([]ProjectResource, error) {
+	rows, err := q.db.Query(ctx, listGongfengProjectResourcesInWorkspace, workspaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ProjectResource{}
+	for rows.Next() {
+		var i ProjectResource
+		if err := rows.Scan(
+			&i.ID,
+			&i.ProjectID,
+			&i.WorkspaceID,
+			&i.ResourceType,
+			&i.ResourceRef,
+			&i.Label,
+			&i.Position,
+			&i.CreatedAt,
+			&i.CreatedBy,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listProjectResources = `-- name: ListProjectResources :many
 SELECT id, project_id, workspace_id, resource_type, resource_ref, label, position, created_at, created_by FROM project_resource
 WHERE project_id = $1

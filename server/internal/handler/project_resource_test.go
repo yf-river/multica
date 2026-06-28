@@ -237,6 +237,15 @@ func TestIsValidGitRepoURL(t *testing.T) {
 }
 
 func TestProjectResourceGongfengLifecycle(t *testing.T) {
+	setHandlerTestWorkspaceRepos(t, []map[string]string{
+		{
+			"url":            "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+			"provider":       "gongfeng",
+			"project_path":   "ChainWeaver/ida/user-center",
+			"default_branch": "v5.0.0_dev",
+		},
+	})
+
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
 		"title": "Gongfeng resource project",
@@ -320,6 +329,114 @@ func TestProjectResourceGongfengLifecycle(t *testing.T) {
 	if ref.ProjectPath != "ChainWeaver/ida/user-center" || ref.ResourceKind != "branch" || ref.Ref != "release" {
 		t.Fatalf("updated gongfeng ref = %+v", ref)
 	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("PUT", "/api/projects/"+project.ID+"/resources/"+created.ID, map[string]any{
+		"resource_ref": map[string]any{
+			"url": "https://git.code.tencent.com/ChainWeaver/ida/gateway/commits/v5.0.0_dev",
+		},
+	})
+	req = withURLParams(req, "id", project.ID, "resourceId", created.ID)
+	testHandler.UpdateProjectResource(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("UpdateProjectResource unregistered project_path: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestProjectResourceGongfengRequiresWorkspaceInventory(t *testing.T) {
+	setHandlerTestWorkspaceRepos(t, []map[string]string{})
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Gongfeng inventory enforcement",
+	})
+	testHandler.CreateProject(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateProject: %d %s", w.Code, w.Body.String())
+	}
+	var project ProjectResponse
+	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
+		t.Fatalf("decode CreateProject: %v", err)
+	}
+	defer func() {
+		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
+		r = withURLParam(r, "id", project.ID)
+		testHandler.DeleteProject(httptest.NewRecorder(), r)
+	}()
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+		"resource_type": "gongfeng_repo",
+		"resource_ref": map[string]any{
+			"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+		},
+	})
+	req = withURLParam(req, "id", project.ID)
+	testHandler.CreateProjectResource(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateProjectResource unregistered project_path: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestCreateProjectGongfengResourceRequiresWorkspaceInventory(t *testing.T) {
+	setHandlerTestWorkspaceRepos(t, []map[string]string{})
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Inline Gongfeng inventory enforcement",
+		"resources": []map[string]any{
+			{
+				"resource_type": "gongfeng_repo",
+				"resource_ref": map[string]any{
+					"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+				},
+			},
+		},
+	})
+	testHandler.CreateProject(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("CreateProject inline unregistered project_path: expected 400, got %d: %s", w.Code, w.Body.String())
+	}
+
+	setHandlerTestWorkspaceRepos(t, []map[string]string{
+		{
+			"url":            "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+			"provider":       "gongfeng",
+			"project_path":   "ChainWeaver/ida/user-center",
+			"default_branch": "v5.0.0_dev",
+		},
+	})
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Inline Gongfeng inventory success",
+		"resources": []map[string]any{
+			{
+				"resource_type": "gongfeng_repo",
+				"resource_ref": map[string]any{
+					"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/-/tree/release",
+				},
+			},
+		},
+	})
+	testHandler.CreateProject(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateProject inline registered project_path: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var project struct {
+		ProjectResponse
+		Resources []ProjectResourceResponse `json:"resources"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
+		t.Fatalf("decode CreateProject inline: %v", err)
+	}
+	if len(project.Resources) != 1 {
+		t.Fatalf("inline resources len = %d, want 1", len(project.Resources))
+	}
+	defer func() {
+		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
+		r = withURLParam(r, "id", project.ID)
+		testHandler.DeleteProject(httptest.NewRecorder(), r)
+	}()
 }
 
 func TestGongfengResourceCredentialBackedProbeKeepsSecretsRedacted(t *testing.T) {

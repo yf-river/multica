@@ -132,7 +132,6 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
   const [selectedRepos, setSelectedRepos] = useState<string[]>([]);
   const [repoPopoverOpen, setRepoPopoverOpen] = useState(false);
   const [repoSearch, setRepoSearch] = useState("");
-  const [customRepoUrl, setCustomRepoUrl] = useState("");
   const workspaceRepos = (workspace?.repos ?? []).filter((repo) =>
     isGongfengRepoURL(repo.url),
   );
@@ -282,13 +281,6 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
     setSelectedRepos((prev) =>
       prev.includes(url) ? prev.filter((u) => u !== url) : [...prev, url],
     );
-  };
-
-  const addCustomRepo = () => {
-    const url = customRepoUrl.trim();
-    if (!url) return;
-    setSelectedRepos((prev) => (prev.includes(url) ? prev : [...prev, url]));
-    setCustomRepoUrl("");
   };
 
   return (
@@ -657,30 +649,6 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
                       {t(($) => $.create_project.repos_empty)}
                     </p>
                   )}
-                  <form
-                    onSubmit={(e) => {
-                      e.preventDefault();
-                      addCustomRepo();
-                    }}
-                    className="flex items-center gap-1.5 pt-1 border-t"
-                  >
-                    <input
-                      type="text"
-                      value={customRepoUrl}
-                      onChange={(e) => setCustomRepoUrl(e.target.value)}
-                      placeholder={t(($) => $.create_project.repos_url_placeholder)}
-                      className="flex-1 bg-transparent text-xs px-2 py-1 outline-none placeholder:text-muted-foreground"
-                    />
-                    <Button
-                      type="submit"
-                      size="sm"
-                      variant="ghost"
-                      className="h-6 px-2 text-xs"
-                      disabled={!customRepoUrl.trim()}
-                    >
-                      {t(($) => $.create_project.repos_add)}
-                    </Button>
-                  </form>
                   {selectedRepos.length > 0 && (
                     <div className="space-y-1 pt-1 border-t">
                       <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">

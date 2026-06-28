@@ -148,14 +148,6 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
     }
   };
 
-  const handleAttachURL = async (url: string) => {
-    if (!isGongfengURL(url)) {
-      toast.error(t(($) => $.resources.toast_gongfeng_url_required));
-      return;
-    }
-    await handleAttachGongfeng(url);
-  };
-
   const handleAttachLocalDirectory = async () => {
     if (picking) return;
     setPicking(true);
@@ -435,12 +427,6 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                   </div>
                 </>
               )}
-              <CustomRepoForm
-                onSubmit={async (url) => {
-                  await handleAttachURL(url);
-                  setAddOpen(false);
-                }}
-              />
             </PopoverContent>
           </Popover>
           {desktopMode && (
@@ -828,48 +814,6 @@ function LocalDirectoryRow({
         <Trash2 className="size-3 text-muted-foreground" />
       </button>
     </div>
-  );
-}
-
-function CustomRepoForm({
-  onSubmit,
-}: {
-  onSubmit: (url: string) => Promise<void> | void;
-}) {
-  const { t } = useT("projects");
-  const [url, setUrl] = useState("");
-  const [submitting, setSubmitting] = useState(false);
-  const handle = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const trimmed = url.trim();
-    if (!trimmed) return;
-    setSubmitting(true);
-    try {
-      await onSubmit(trimmed);
-      setUrl("");
-    } finally {
-      setSubmitting(false);
-    }
-  };
-  return (
-    <form onSubmit={handle} className="flex items-center gap-1.5 pt-1 border-t">
-      <input
-        type="text"
-        value={url}
-        onChange={(e) => setUrl(e.target.value)}
-        placeholder={t(($) => $.resources.url_placeholder)}
-        className="flex-1 bg-transparent text-xs px-2 py-1 outline-none placeholder:text-muted-foreground"
-      />
-      <Button
-        type="submit"
-        size="sm"
-        variant="ghost"
-        className="h-6 px-2 text-xs"
-        disabled={!url.trim() || submitting}
-      >
-        {t(($) => $.resources.url_submit)}
-      </Button>
-    </form>
   );
 }
 

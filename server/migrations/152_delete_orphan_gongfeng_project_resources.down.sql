@@ -1,0 +1,1 @@
+-- No-op: deleted orphan project resources cannot be reconstructed safely.

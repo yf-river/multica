@@ -142,7 +142,7 @@ function buildCommands(mode, info) {
     add("core-training-test", "pnpm --filter @multica/core test -- training/index.test.ts", "Core changed; run the focused training/core tests used by goal-test slices.");
   }
   if (info.server_changed) {
-    add("server-focused-test", "cd server && go test ./internal/handler ./internal/service", "Server changed; run focused backend service and handler tests.");
+    add("server-focused-test", "cd server && GOWORK=off go test ./internal/handler ./internal/service", "Server changed; run focused backend service and handler tests.");
   }
 
   if (info.e2e_specs.length > 0) {

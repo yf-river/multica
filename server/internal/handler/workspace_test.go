@@ -408,6 +408,88 @@ VALUES ($1, $2, 'owner')
 			t.Fatalf("second repo not preserved: %+v", repos[1])
 		}
 	})
+
+	t.Run("keeps gongfeng project resources backed by project_path", func(t *testing.T) {
+		w := httptest.NewRecorder()
+		req := newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
+			"repos": []map[string]any{
+				{
+					"url":          "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+					"provider":     "gongfeng",
+					"project_path": "ChainWeaver/ida/user-center",
+				},
+				{
+					"url":          "https://git.code.tencent.com/ChainWeaver/ida/user-center/-/tree/release",
+					"provider":     "gongfeng",
+					"project_path": "ChainWeaver/ida/user-center",
+				},
+			},
+		})
+		req = withURLParam(req, "id", wsID)
+		testHandler.UpdateWorkspace(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("seed repos: expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		w = httptest.NewRecorder()
+		req = newRequest("POST", "/api/projects?workspace_id="+wsID, map[string]any{
+			"title": "Workspace repo removal guard",
+		})
+		req.Header.Set("X-Workspace-ID", wsID)
+		testHandler.CreateProject(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
+		}
+		var project ProjectResponse
+		if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
+			t.Fatalf("decode CreateProject: %v", err)
+		}
+		t.Cleanup(func() {
+			r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
+			r = withURLParam(r, "id", project.ID)
+			testHandler.DeleteProject(httptest.NewRecorder(), r)
+		})
+
+		w = httptest.NewRecorder()
+		req = newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+			"resource_type": "gongfeng_repo",
+			"resource_ref": map[string]any{
+				"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+			},
+		})
+		req.Header.Set("X-Workspace-ID", wsID)
+		req = withURLParam(req, "id", project.ID)
+		testHandler.CreateProjectResource(w, req)
+		if w.Code != http.StatusCreated {
+			t.Fatalf("CreateProjectResource: expected 201, got %d: %s", w.Code, w.Body.String())
+		}
+
+		w = httptest.NewRecorder()
+		req = newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
+			"repos": []map[string]any{
+				{
+					"url":          "https://git.code.tencent.com/ChainWeaver/ida/user-center/-/tree/release",
+					"provider":     "gongfeng",
+					"project_path": "ChainWeaver/ida/user-center",
+				},
+			},
+		})
+		req = withURLParam(req, "id", wsID)
+		testHandler.UpdateWorkspace(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("remove one duplicate project_path repo: expected 200, got %d: %s", w.Code, w.Body.String())
+		}
+
+		w = httptest.NewRecorder()
+		req = newRequest("PATCH", "/api/workspaces/"+wsID, map[string]any{
+			"repos": []map[string]any{},
+		})
+		req = withURLParam(req, "id", wsID)
+		testHandler.UpdateWorkspace(w, req)
+		if w.Code != http.StatusConflict {
+			t.Fatalf("remove last project_path repo: expected 409, got %d: %s", w.Code, w.Body.String())
+		}
+	})
 }
 
 // revocationFixture is a minimal (workspace, member-to-revoke, runtime,

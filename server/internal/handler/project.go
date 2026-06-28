@@ -288,6 +288,10 @@ func (h *Handler) CreateProject(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "resources["+strconv.Itoa(i)+"]: "+err.Error())
 			return
 		}
+		if err := h.ensureGongfengProjectPathRegistered(r.Context(), wsUUID, res.ResourceType, ref); err != nil {
+			writeError(w, http.StatusBadRequest, "resources["+strconv.Itoa(i)+"]: "+err.Error())
+			return
+		}
 		normalizedRefs[i] = ref
 		if res.ResourceType == "local_directory" {
 			var ld localDirectoryRef

@@ -380,24 +380,14 @@ describe("RepositoriesTab", () => {
     });
   });
 
-  it("已有项目绑定仓库即使不在资源库中也会显示项目标签", async () => {
-    const user = userEvent.setup();
+  it("不再把仅项目侧存在的 Gongfeng 资源展示成资源库行", () => {
     workspaceRef.current = { ...workspaceRef.current, repos: [] };
     render(<RepositoriesTab />, { wrapper: I18nWrapper });
 
-    expect(screen.queryByText("项目已使用")).toBeNull();
-    expect(screen.getByRole("link", { name: "user-center" })).toHaveAttribute(
-      "href",
-      "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
-    );
-    expect(screen.getByRole("button", { name: "删除" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: /测试并同步工蜂仓库/ })).toBeTruthy();
-
-    await user.click(screen.getByRole("button", { name: "详情" }));
-    expect(screen.getByText("Commit ID")).toBeTruthy();
-    expect(screen.getByText("abc1234")).toBeTruthy();
-    expect(screen.queryByText("仓库信息待补全")).toBeNull();
-    expect(screen.queryByRole("button", { name: "补全信息" })).toBeNull();
+    expect(screen.getByText("暂无工蜂仓库。")).toBeTruthy();
+    expect(screen.queryByRole("link", { name: "user-center" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "删除" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /测试并同步工蜂仓库/ })).toBeNull();
   });
 
   it("未绑定项目的资源库仓库主行仍显示仓库身份，详情中不提供绑定入口", async () => {
@@ -453,49 +443,23 @@ describe("RepositoriesTab", () => {
     });
   });
 
-  it("项目关联兜底行同步后立即在详情显示 commit id", async () => {
+  it("删除阻塞按 project_path 判断，而不是精确 URL", async () => {
     const user = userEvent.setup();
-    workspaceRef.current = { ...workspaceRef.current, repos: [] };
-    resourcesRef.current = [
-      [
+    workspaceRef.current = {
+      ...workspaceRef.current,
+      repos: [
         {
-          id: "resource-gateway",
-          project_id: "project-1",
-          workspace_id: "workspace-1",
-          resource_type: "gongfeng_repo",
-          label: null,
-          position: 0,
-          created_at: "2026-06-28T00:00:00Z",
-          created_by: null,
-          resource_ref: {
-            provider: "gongfeng",
-            url: "https://git.code.tencent.com/ChainWeaver/ida/gateway/commits/v5.0.0_dev",
-            project_path: "ChainWeaver/ida/gateway",
-            resource_kind: "commits",
-            ref: "v5.0.0_dev",
-            head_commit: "",
-            commit_sha: "",
-            connection_status: "credential_backed",
-            sync_status: "synced",
-            test_status: "passed",
-          },
+          url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/-/tree/release",
+          provider: "gongfeng",
+          project_path: "ChainWeaver/ida/user-center",
+          default_branch: "release",
         },
       ],
-    ];
+    };
     render(<RepositoriesTab />, { wrapper: I18nWrapper });
 
-    await user.click(screen.getByRole("button", { name: /测试并同步工蜂仓库/ }));
+    await user.click(screen.getByRole("button", { name: "删除" }));
 
-    await waitFor(() => {
-      expect(mockResolveWorkspaceRepo).toHaveBeenCalledWith("workspace-1", {
-        url: "https://git.code.tencent.com/ChainWeaver/ida/gateway/commits/v5.0.0_dev",
-        default_branch: "v5.0.0_dev",
-      });
-    });
-    await user.click(screen.getByRole("button", { name: "详情" }));
-
-    expect(screen.getByText("Commit ID")).toBeTruthy();
-    expect(screen.getByText("def5678")).toBeTruthy();
-    expect(screen.getByText("资源库")).toBeTruthy();
+    expect(mockUpdateWorkspace).not.toHaveBeenCalled();
   });
 });

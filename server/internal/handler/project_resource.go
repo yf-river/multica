@@ -197,6 +197,91 @@ func validateGongfengRepoRef(ref json.RawMessage) (json.RawMessage, error) {
 	return out, nil
 }
 
+func normalizeGongfengProjectPath(value string) string {
+	return strings.Trim(strings.TrimSpace(value), "/")
+}
+
+func gongfengProjectPathFromResourceRef(ref json.RawMessage) string {
+	var payload gongfengRepoRef
+	if err := json.Unmarshal(ref, &payload); err != nil {
+		return ""
+	}
+	if projectPath := normalizeGongfengProjectPath(payload.ProjectPath); projectPath != "" {
+		return projectPath
+	}
+	parsed, err := parseGongfengURL(payload.URL)
+	if err != nil {
+		return ""
+	}
+	return normalizeGongfengProjectPath(parsed.ProjectPath)
+}
+
+func gongfengProjectPathFromWorkspaceRepo(repo workspaceRepoRef) string {
+	if projectPath := normalizeGongfengProjectPath(repo.ProjectPath); projectPath != "" {
+		return projectPath
+	}
+	parsed, err := parseGongfengURL(repo.URL)
+	if err != nil {
+		return ""
+	}
+	return normalizeGongfengProjectPath(parsed.ProjectPath)
+}
+
+func workspaceGongfengProjectPathCounts(raw []byte) map[string]int {
+	counts := map[string]int{}
+	if len(raw) == 0 {
+		return counts
+	}
+	var repos []workspaceRepoRef
+	if err := json.Unmarshal(raw, &repos); err != nil {
+		return counts
+	}
+	for _, repo := range repos {
+		projectPath := gongfengProjectPathFromWorkspaceRepo(repo)
+		if projectPath == "" {
+			continue
+		}
+		counts[projectPath]++
+	}
+	return counts
+}
+
+func (h *Handler) ensureGongfengProjectPathRegistered(ctx context.Context, workspaceID pgtype.UUID, resourceType string, ref json.RawMessage) error {
+	if resourceType != "gongfeng_repo" {
+		return nil
+	}
+	projectPath := gongfengProjectPathFromResourceRef(ref)
+	if projectPath == "" {
+		return errors.New("gongfeng_repo: project_path is required")
+	}
+	workspace, err := h.Queries.GetWorkspace(ctx, workspaceID)
+	if err != nil {
+		return fmt.Errorf("load workspace repos: %w", err)
+	}
+	if workspaceGongfengProjectPathCounts(workspace.Repos)[projectPath] <= 0 {
+		return fmt.Errorf("gongfeng_repo: project_path %q is not registered in workspace repository inventory", projectPath)
+	}
+	return nil
+}
+
+func (h *Handler) ensureWorkspaceReposKeepGongfengProjectResources(ctx context.Context, workspaceID pgtype.UUID, nextRepos []byte) error {
+	nextCounts := workspaceGongfengProjectPathCounts(nextRepos)
+	resources, err := h.Queries.ListGongfengProjectResourcesInWorkspace(ctx, workspaceID)
+	if err != nil {
+		return fmt.Errorf("load gongfeng project resources: %w", err)
+	}
+	for _, resource := range resources {
+		projectPath := gongfengProjectPathFromResourceRef(json.RawMessage(resource.ResourceRef))
+		if projectPath == "" {
+			continue
+		}
+		if nextCounts[projectPath] <= 0 {
+			return fmt.Errorf("workspace repos cannot remove the last Gongfeng repository for project_path %q while project resources still use it", projectPath)
+		}
+	}
+	return nil
+}
+
 type parsedGongfengURL struct {
 	ProjectPath  string
 	ResourceKind string
@@ -455,6 +540,10 @@ func (h *Handler) CreateProjectResource(w http.ResponseWriter, r *http.Request) 
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	if err := h.ensureGongfengProjectPathRegistered(r.Context(), project.WorkspaceID, req.ResourceType, normalizedRef); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
 
 	if conflict, err := h.findLocalDirectoryConflict(r.Context(), project.ID, req.ResourceType, normalizedRef, pgtype.UUID{}); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to check existing resources")
@@ -552,6 +641,10 @@ func (h *Handler) UpdateProjectResource(w http.ResponseWriter, r *http.Request) 
 	if rawRef, ok := raw["resource_ref"]; ok {
 		normalized, err := validateAndNormalizeResourceRef(existing.ResourceType, rawRef)
 		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		if err := h.ensureGongfengProjectPathRegistered(r.Context(), project.WorkspaceID, existing.ResourceType, normalized); err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
