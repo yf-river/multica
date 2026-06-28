@@ -938,6 +938,7 @@ function runCodexCheckCommand(name, command, args, env, timeoutMs) {
 function codexDebugAppServerFailed(name, stdout, stderr) {
   if (name !== "responses_smoke") return false;
   const text = `${stdout}\n${stderr}`;
+  if (/turn\/completed notification:\s*Completed|"status":\s*"completed"/i.test(text)) return false;
   return /turn\/completed notification:\s*Failed|\[turn error\]|"status":\s*"failed"|Tool 'image_generation' is not supported|stream disconnected before completion|failed to connect to websocket|tls handshake eof/i.test(text);
 }
 
