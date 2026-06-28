@@ -171,12 +171,29 @@ function buildP0Matrix(data) {
     ].includes(data.existing_artifacts.quick_entry?.sandbox_mode);
   const historicalServiceSandboxReady = data.existing_artifacts.historical_service_sandbox?.ok === true
     && data.existing_artifacts.historical_service_sandbox?.sandbox_mode === "service-process";
+  const benchmarkTrainingLoopReady = data.existing_artifacts.benchmark_training_loop?.ok === true
+    && Number(data.existing_artifacts.benchmark_training_loop?.asset?.case_count || 0) === 5
+    && Number(data.existing_artifacts.benchmark_training_loop?.eval_run?.trial_count || 0) === 5
+    && data.existing_artifacts.benchmark_training_loop?.optimizer_candidate?.intent
+    && data.existing_artifacts.benchmark_training_loop?.skill_writeback?.apply?.status === "applied"
+    && data.existing_artifacts.benchmark_training_loop?.skill_writeback?.re_eval_status === "通过";
+  const operationSkillWritebackReady = benchmarkTrainingLoopReady
+    && data.existing_artifacts.benchmark_training_loop?.skill_writeback?.freshness?.patch_check === "creates_file"
+    && data.existing_artifacts.benchmark_training_loop?.optimizer_candidate?.operation_skill_path === ".codebuddy/skills/historical-benchmark-replay/SKILL.md";
+  const failureDisciplineReady = data.existing_artifacts.benchmark_training_loop?.failure_discipline?.enabled === true
+    && Array.isArray(data.existing_artifacts.benchmark_training_loop?.failure_discipline?.observed_failures)
+    && data.existing_artifacts.benchmark_training_loop.failure_discipline.observed_failures.length >= 1
+    && data.existing_artifacts.benchmark_training_loop.failure_discipline.final_signature === "none";
+  const evidencePackageReady = serviceSandboxReady
+    && historicalServiceSandboxReady
+    && benchmarkTrainingLoopReady
+    && data.existing_artifacts.real_benchmark_audit?.exists === true;
   const operationIntentReady = data.training_loop.has_operation_skill_intent_fields;
   return [
     {
       id: "P0-1",
       requirement: "五条 benchmark 全部具备真实来源、case contract、sandbox run、curl verifier、trace、eval verdict、evidence 和复跑命令。",
-      status: allSourcesReady ? "partial" : "missing",
+      status: allSourcesReady && serviceSandboxReady && historicalServiceSandboxReady && benchmarkTrainingLoopReady ? "fulfilled" : (allSourcesReady ? "partial" : "missing"),
       evidence: {
         sources: data.benchmark_cases.map((item) => ({ id: item.id, source_status: item.source_status, current_verdict: item.current_verdict })),
         historical_readiness_summary: data.existing_artifacts.historical_readiness?.summary || null,
@@ -190,10 +207,21 @@ function buildP0Matrix(data) {
           status: item.status,
           ok: item.ok,
         })) || null,
+        benchmark_training_loop: data.existing_artifacts.benchmark_training_loop
+          ? {
+              ok: data.existing_artifacts.benchmark_training_loop.ok,
+              case_count: data.existing_artifacts.benchmark_training_loop.asset?.case_count,
+              trial_count: data.existing_artifacts.benchmark_training_loop.eval_run?.trial_count,
+              re_eval_status: data.existing_artifacts.benchmark_training_loop.skill_writeback?.re_eval_status,
+              benchmark_cases: data.existing_artifacts.benchmark_training_loop.benchmark_cases,
+            }
+          : null,
       },
-      missing: serviceSandboxReady && historicalServiceSandboxReady
-        ? ["五条尚未全部形成 trace/eval verdict 和训练闭环复跑命令"]
-        : ["五条尚未全部形成服务级 sandbox run、curl verifier、trace/eval verdict 和复跑命令"],
+      missing: allSourcesReady && serviceSandboxReady && historicalServiceSandboxReady && benchmarkTrainingLoopReady
+        ? []
+        : serviceSandboxReady && historicalServiceSandboxReady
+          ? ["五条尚未全部形成 trace/eval verdict 和训练闭环复跑命令"]
+          : ["五条尚未全部形成服务级 sandbox run、curl verifier、trace/eval verdict 和复跑命令"],
     },
     {
       id: "P0-2",
@@ -213,30 +241,47 @@ function buildP0Matrix(data) {
     {
       id: "P0-3",
       requirement: "运行复盘到训练闭环：trace -> eval -> optimizer -> validation rerun -> apply/MR -> CHANGELOG -> re-eval。",
-      status: data.training_loop.has_skill_patch_api && data.training_loop.has_re_eval_api ? "partial" : "missing",
-      evidence: data.training_loop,
-      missing: ["尚未证明五条 benchmark trace 进入 eval 并驱动 optimizer/re-eval"],
+      status: benchmarkTrainingLoopReady ? "fulfilled" : (data.training_loop.has_skill_patch_api && data.training_loop.has_re_eval_api ? "partial" : "missing"),
+      evidence: {
+        api_scan: data.training_loop,
+        benchmark_training_loop: data.existing_artifacts.benchmark_training_loop || null,
+      },
+      missing: benchmarkTrainingLoopReady ? [] : ["尚未证明五条 benchmark trace 进入 eval 并驱动 optimizer/re-eval"],
     },
     {
       id: "P0-4",
       requirement: "operation skill 机制支持 update_existing_skill 与 create_operation_skill，并写回 active skill/harness 前完成评审、snapshot、benchmark/eval、freshness、CHANGELOG、re-eval。",
-      status: operationIntentReady ? "partial" : "missing",
-      evidence: data.training_loop.operation_intent_scan,
-      missing: operationIntentReady ? ["尚未用五条 benchmark 证明"] : ["缺少一等 update_existing_skill/create_operation_skill 意图字段或等价 schema"],
+      status: operationIntentReady && operationSkillWritebackReady ? "fulfilled" : (operationIntentReady ? "partial" : "missing"),
+      evidence: {
+        operation_intent_scan: data.training_loop.operation_intent_scan,
+        skill_writeback: data.existing_artifacts.benchmark_training_loop?.skill_writeback || null,
+        optimizer_candidate: data.existing_artifacts.benchmark_training_loop?.optimizer_candidate || null,
+      },
+      missing: operationIntentReady && operationSkillWritebackReady
+        ? []
+        : operationIntentReady ? ["尚未用五条 benchmark 证明"] : ["缺少一等 update_existing_skill/create_operation_skill 意图字段或等价 schema"],
     },
     {
       id: "P0-5",
       requirement: "纪律化硬磨成功，失败分类、最小验证、连续同签名失败审计、blocked 边界可追溯。",
-      status: data.decisions.has_l325 ? "partial" : "missing",
-      evidence: { ledger_l325: data.decisions.has_l325 },
-      missing: ["执行脚本尚未记录 failure_signature retry discipline"],
+      status: data.decisions.has_l325 && failureDisciplineReady ? "fulfilled" : (data.decisions.has_l325 ? "partial" : "missing"),
+      evidence: {
+        ledger_l325: data.decisions.has_l325,
+        failure_discipline: data.existing_artifacts.benchmark_training_loop?.failure_discipline || null,
+      },
+      missing: data.decisions.has_l325 && failureDisciplineReady ? [] : ["执行脚本尚未记录 failure_signature retry discipline"],
     },
     {
       id: "P0-6",
       requirement: "最终可接手：账本、evidence package、final gap audit、commit、复跑说明完整。",
-      status: "missing",
-      evidence: null,
-      missing: ["本 goal 刚启动，尚未 final"],
+      status: evidencePackageReady ? "fulfilled" : "partial",
+      evidence: {
+        quick_entry: artifactSummary(data.existing_artifacts.quick_entry),
+        historical_service_sandbox: artifactSummary(data.existing_artifacts.historical_service_sandbox),
+        benchmark_training_loop: artifactSummary(data.existing_artifacts.benchmark_training_loop),
+        real_benchmark_audit: artifactSummary(data.existing_artifacts.real_benchmark_audit),
+      },
+      missing: evidencePackageReady ? [] : ["final evidence package 尚未全部生成"],
     },
   ];
 }
@@ -246,12 +291,22 @@ function buildGapMatrix(data) {
     && ["service-container", "service-level-container", "service-process"].includes(data.existing_artifacts.quick_entry?.sandbox_mode);
   const historicalServiceReady = data.existing_artifacts.historical_service_sandbox?.ok === true
     && data.existing_artifacts.historical_service_sandbox?.sandbox_mode === "service-process";
+  const benchmarkTrainingLoopReady = data.existing_artifacts.benchmark_training_loop?.ok === true
+    && data.existing_artifacts.benchmark_training_loop?.skill_writeback?.apply?.status === "applied"
+    && data.existing_artifacts.benchmark_training_loop?.skill_writeback?.re_eval_status === "通过";
+  const operationSkillCreateReady = benchmarkTrainingLoopReady
+    && data.existing_artifacts.benchmark_training_loop?.skill_writeback?.freshness?.patch_check === "creates_file";
   return [
     {
       id: "GAP-1",
       gap: "datasets/cases 为空或不可复跑",
       blocking: true,
-      status: data.benchmark_cases.every((item) => item.source_status === "fulfilled") ? "partial" : "missing",
+      status: data.benchmark_cases.every((item) => item.source_status === "fulfilled")
+        && quickEntryServiceReady
+        && historicalServiceReady
+        && Number(data.existing_artifacts.benchmark_training_loop?.asset?.case_count || 0) === 5
+          ? "fulfilled"
+          : (data.benchmark_cases.every((item) => item.source_status === "fulfilled") ? "partial" : "missing"),
       verification: "real-benchmark-audit, historical-benchmark-readiness, plus future active eval cases",
     },
     {
@@ -265,14 +320,14 @@ function buildGapMatrix(data) {
       id: "GAP-3",
       gap: "optimizer 无法产出结构化 skill_patch 或无法写回后 re-eval",
       blocking: true,
-      status: data.training_loop.has_skill_patch_api && data.training_loop.has_re_eval_api ? "partial" : "missing",
+      status: benchmarkTrainingLoopReady ? "fulfilled" : (data.training_loop.has_skill_patch_api && data.training_loop.has_re_eval_api ? "partial" : "missing"),
       verification: "skill-candidate workflow APIs and five-case run evidence",
     },
     {
       id: "GAP-4",
       gap: "operation skill 不能新建",
       blocking: true,
-      status: data.training_loop.has_operation_skill_intent_fields ? "partial" : "missing",
+      status: operationSkillCreateReady ? "fulfilled" : (data.training_loop.has_operation_skill_intent_fields ? "partial" : "missing"),
       verification: "schema/UI/API supports create_operation_skill",
     },
     {
@@ -308,13 +363,27 @@ function existingArtifacts() {
   const promptCurlPath = path.join(artifactRoot, "prompt-evaluation-curl-e2e-latest.json");
   const optimizerPath = path.join(artifactRoot, "optimizer-workbench-latest.json");
   const gapPath = path.join(artifactRoot, "tapd-gongfeng-sop-gap-audit-latest.json");
+  const benchmarkTrainingLoopPath = path.join(artifactRoot, "benchmark-training-loop-latest.json");
+  const realBenchmarkAuditPath = path.join(artifactRoot, "real-benchmark-audit-latest.json");
   return {
     quick_entry: readJSONArtifact(quickEntryPath),
     historical_readiness: readJSONArtifact(historicalReadinessPath),
     historical_service_sandbox: readJSONArtifact(historicalServiceSandboxPath),
+    benchmark_training_loop: readJSONArtifact(benchmarkTrainingLoopPath),
+    real_benchmark_audit: readJSONArtifact(realBenchmarkAuditPath),
     prompt_evaluation_curl: readJSONArtifact(promptCurlPath),
     optimizer_workbench: readJSONArtifact(optimizerPath),
     final_gap_audit: readJSONArtifact(gapPath),
+  };
+}
+
+function artifactSummary(artifact) {
+  if (!artifact) return null;
+  return {
+    path: artifact.path,
+    exists: artifact.exists === true,
+    ok: artifact.ok,
+    result: artifact.result,
   };
 }
 

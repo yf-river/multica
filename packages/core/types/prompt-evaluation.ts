@@ -661,6 +661,7 @@ export interface CheckPromptEvaluationSkillFreshnessRequest {
   target_branch?: string;
   skill_path?: string;
   candidate_patch?: string;
+  candidate_intent?: "update_existing_skill" | "create_operation_skill" | string;
   snapshot?: PromptEvaluationSkillSnapshot;
 }
 
@@ -674,7 +675,7 @@ export interface PromptEvaluationSkillFreshnessResult {
   skill_path: string;
   base_skill_hash: string;
   current_skill_hash: string;
-  patch_check: "not_needed" | "missing_patch" | "conflict" | "applies" | string;
+  patch_check: "not_needed" | "missing_patch" | "conflict" | "applies" | "creates_file" | "target_exists" | string;
   checked_at: string;
   snapshot: PromptEvaluationSkillSnapshot;
 }
@@ -687,6 +688,7 @@ export interface ApplyPromptEvaluationSkillCandidateRequest {
   target_branch?: string;
   skill_path?: string;
   candidate_patch?: string;
+  candidate_intent?: "update_existing_skill" | "create_operation_skill" | string;
   changelog_path?: string;
   change_reason?: string;
   verification_result?: string;

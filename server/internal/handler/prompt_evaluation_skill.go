@@ -157,6 +157,7 @@ type CheckPromptEvaluationSkillFreshnessRequest struct {
 	TargetBranch     string                                 `json:"target_branch"`
 	SkillPath        string                                 `json:"skill_path"`
 	CandidatePatch   string                                 `json:"candidate_patch"`
+	CandidateIntent  string                                 `json:"candidate_intent"`
 	Snapshot         *PromptEvaluationSkillSnapshotResponse `json:"snapshot"`
 }
 
@@ -181,6 +182,7 @@ type ApplyPromptEvaluationSkillCandidateRequest struct {
 	TargetBranch       string                                 `json:"target_branch"`
 	SkillPath          string                                 `json:"skill_path"`
 	CandidatePatch     string                                 `json:"candidate_patch"`
+	CandidateIntent    string                                 `json:"candidate_intent"`
 	ChangelogPath      string                                 `json:"changelog_path"`
 	ChangeReason       string                                 `json:"change_reason"`
 	VerificationResult string                                 `json:"verification_result"`
@@ -586,19 +588,9 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 	if req.SourceResourceID != "" && sourceSnapshot.SourceResourceID == "" {
 		sourceSnapshot.SourceResourceID = req.SourceResourceID
 	}
-	reEvalSnapshot, err := buildPromptEvaluationSkillSnapshot(CreatePromptEvaluationSkillSnapshotRequest{
-		Provider:         sourceSnapshot.Provider,
-		Repo:             sourceSnapshot.Repo,
-		RepoPath:         firstNonEmpty(req.RepoPath, sourceSnapshot.RepoPath),
-		Branch:           firstNonEmpty(req.TargetBranch, sourceSnapshot.Branch, "HEAD"),
-		SkillPath:        firstNonEmpty(req.SkillPath, sourceSnapshot.SkillPath),
-		SourceResourceID: firstNonEmpty(req.SourceResourceID, sourceSnapshot.SourceResourceID),
-	}, time.Now().UTC())
-	if err != nil {
-		writeError(w, http.StatusBadRequest, err.Error())
-		return
-	}
+	var reEvalSnapshot PromptEvaluationSkillSnapshotResponse
 	if applyEvidence := skillApplyFromCandidate(candidate); applyEvidence != nil && applyEvidence.Status == "applied" {
+		var err error
 		reEvalSnapshot, err = buildPromptEvaluationSkillAppliedWorktreeSnapshot(CreatePromptEvaluationSkillSnapshotRequest{
 			Provider:         sourceSnapshot.Provider,
 			Repo:             sourceSnapshot.Repo,
@@ -607,6 +599,20 @@ func (h *Handler) PreparePromptEvaluationSkillReEvalAsset(w http.ResponseWriter,
 			SkillPath:        firstNonEmpty(req.SkillPath, applyEvidence.SkillPath, sourceSnapshot.SkillPath),
 			SourceResourceID: firstNonEmpty(req.SourceResourceID, sourceSnapshot.SourceResourceID),
 		}, *applyEvidence, time.Now().UTC())
+		if err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+	} else {
+		var err error
+		reEvalSnapshot, err = buildPromptEvaluationSkillSnapshot(CreatePromptEvaluationSkillSnapshotRequest{
+			Provider:         sourceSnapshot.Provider,
+			Repo:             sourceSnapshot.Repo,
+			RepoPath:         firstNonEmpty(req.RepoPath, sourceSnapshot.RepoPath),
+			Branch:           firstNonEmpty(req.TargetBranch, sourceSnapshot.Branch, "HEAD"),
+			SkillPath:        firstNonEmpty(req.SkillPath, sourceSnapshot.SkillPath),
+			SourceResourceID: firstNonEmpty(req.SourceResourceID, sourceSnapshot.SourceResourceID),
+		}, time.Now().UTC())
 		if err != nil {
 			writeError(w, http.StatusBadRequest, err.Error())
 			return
@@ -1237,6 +1243,7 @@ func checkPromptEvaluationSkillFreshness(req CheckPromptEvaluationSkillFreshness
 	if err != nil {
 		return PromptEvaluationSkillFreshnessResult{}, err
 	}
+	createOperationSkill := req.CandidateIntent == "create_operation_skill"
 	targetBranch := firstNonEmpty(req.TargetBranch, snapshot.Branch, "HEAD")
 	headCommit, err := gitOutput(repoPath, "rev-parse", targetBranch)
 	if err != nil {
@@ -1244,7 +1251,10 @@ func checkPromptEvaluationSkillFreshness(req CheckPromptEvaluationSkillFreshness
 	}
 	content, err := gitBlobContent(repoPath, headCommit, skillPath)
 	if err != nil {
-		return PromptEvaluationSkillFreshnessResult{}, fmt.Errorf("failed to read current skill file from target branch: %w", err)
+		if !createOperationSkill {
+			return PromptEvaluationSkillFreshnessResult{}, fmt.Errorf("failed to read current skill file from target branch: %w", err)
+		}
+		content = nil
 	}
 	currentHash := sha256Hex(content)
 	result := PromptEvaluationSkillFreshnessResult{
@@ -1260,6 +1270,29 @@ func checkPromptEvaluationSkillFreshness(req CheckPromptEvaluationSkillFreshness
 		PatchCheck:       "not_needed",
 		CheckedAt:        now.Format(time.RFC3339Nano),
 		Snapshot:         snapshot,
+	}
+	if createOperationSkill {
+		if len(content) > 0 {
+			result.Status = "conflict"
+			result.Reason = "operation skill target already exists on target branch"
+			result.PatchCheck = "target_exists"
+			return result, nil
+		}
+		if strings.TrimSpace(req.CandidatePatch) == "" {
+			result.Status = "stale"
+			result.Reason = "create_operation_skill candidate requires a patch that creates the target skill"
+			result.PatchCheck = "missing_patch"
+			return result, nil
+		}
+		if err := gitApplyCheck(repoPath, req.CandidatePatch); err != nil {
+			result.Status = "conflict"
+			result.Reason = "create_operation_skill patch does not apply cleanly"
+			result.PatchCheck = "conflict"
+			return result, nil
+		}
+		result.Reason = "operation skill target does not exist and candidate patch creates it cleanly"
+		result.PatchCheck = "creates_file"
+		return result, nil
 	}
 	if headCommit == snapshot.BaseCommit {
 		return result, nil
@@ -1300,10 +1333,11 @@ func applyPromptEvaluationSkillCandidate(req ApplyPromptEvaluationSkillCandidate
 		return PromptEvaluationSkillApplyResult{}, errors.New("candidate_patch is required")
 	}
 	freshness, err := checkPromptEvaluationSkillFreshness(CheckPromptEvaluationSkillFreshnessRequest{
-		RepoPath:       repoPath,
-		TargetBranch:   req.TargetBranch,
-		SkillPath:      skillPath,
-		CandidatePatch: req.CandidatePatch,
+		RepoPath:        repoPath,
+		TargetBranch:    req.TargetBranch,
+		SkillPath:       skillPath,
+		CandidatePatch:  req.CandidatePatch,
+		CandidateIntent: req.CandidateIntent,
 	}, snapshot, now)
 	if err != nil {
 		return PromptEvaluationSkillApplyResult{}, err
@@ -1480,6 +1514,9 @@ func applySkillPatchFreshnessDefaults(req *CheckPromptEvaluationSkillFreshnessRe
 	if patch == nil {
 		return
 	}
+	if req.CandidateIntent == "" {
+		req.CandidateIntent = patch.CandidateIntent
+	}
 	if req.CandidatePatch == "" {
 		req.CandidatePatch = patch.Patch
 	}
@@ -1500,6 +1537,9 @@ func applySkillPatchFreshnessDefaults(req *CheckPromptEvaluationSkillFreshnessRe
 func applySkillPatchApplyDefaults(req *ApplyPromptEvaluationSkillCandidateRequest, patch *PromptEvaluationSkillPatch) {
 	if patch == nil {
 		return
+	}
+	if req.CandidateIntent == "" {
+		req.CandidateIntent = patch.CandidateIntent
 	}
 	if req.CandidatePatch == "" {
 		req.CandidatePatch = patch.Patch

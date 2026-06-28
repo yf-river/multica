@@ -323,6 +323,97 @@ func TestPromptEvaluationSkillApplyWritesChangelogAndRequiresReEval(t *testing.T
 	}
 }
 
+func TestPromptEvaluationSkillApplyCreatesOperationSkill(t *testing.T) {
+	repoPath := t.TempDir()
+	runSkillTestGit(t, repoPath, "init")
+	runSkillTestGit(t, repoPath, "config", "user.email", "test@example.com")
+	runSkillTestGit(t, repoPath, "config", "user.name", "Test User")
+
+	writeSkillTestFile(t, repoPath, ".codebuddy/skills/05-verify/SKILL.md", "# Verify\n\n- Run focused checks.\n")
+	runSkillTestGit(t, repoPath, "add", ".codebuddy/skills/05-verify/SKILL.md")
+	runSkillTestGit(t, repoPath, "commit", "-m", "add verify skill")
+	baseCommit := runSkillTestGit(t, repoPath, "rev-parse", "HEAD")
+
+	newSkillPath := ".codebuddy/skills/historical-benchmark-replay/SKILL.md"
+	newSkill := "# Historical Benchmark Replay\n\n- Run service sandbox curl before changing skills.\n- Preserve trace/eval evidence.\n"
+	writeSkillTestFile(t, repoPath, newSkillPath, newSkill)
+	runSkillTestGit(t, repoPath, "add", "-N", newSkillPath)
+	patch := runSkillTestGit(t, repoPath, "diff", "--", newSkillPath)
+	runSkillTestGit(t, repoPath, "reset", "--", newSkillPath)
+	if err := os.Remove(filepath.Join(repoPath, filepath.FromSlash(newSkillPath))); err != nil {
+		t.Fatalf("remove draft new skill: %v", err)
+	}
+
+	now := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
+	snapshot := PromptEvaluationSkillSnapshotResponse{
+		SchemaVersion: promptEvaluationSkillSnapshotSchema,
+		Provider:      "local_directory",
+		Repo:          "user-center",
+		RepoPath:      repoPath,
+		Branch:        "HEAD",
+		BaseCommit:    baseCommit,
+		SkillPath:     newSkillPath,
+		SkillHash:     "",
+		SnapshotTime:  now.Format(time.RFC3339Nano),
+	}
+	freshness, err := checkPromptEvaluationSkillFreshness(CheckPromptEvaluationSkillFreshnessRequest{
+		RepoPath:        repoPath,
+		SkillPath:       newSkillPath,
+		CandidatePatch:  patch,
+		CandidateIntent: "create_operation_skill",
+	}, snapshot, now.Add(time.Minute))
+	if err != nil {
+		t.Fatalf("check create operation skill freshness: %v", err)
+	}
+	if freshness.Status != "fresh" || freshness.PatchCheck != "creates_file" {
+		t.Fatalf("freshness = %+v", freshness)
+	}
+
+	result, err := applyPromptEvaluationSkillCandidate(ApplyPromptEvaluationSkillCandidateRequest{
+		RepoPath:           repoPath,
+		SkillPath:          newSkillPath,
+		CandidatePatch:     patch,
+		CandidateIntent:    "create_operation_skill",
+		ChangeReason:       "Historical benchmark replay is a repeated user-center operation.",
+		VerificationResult: "Service sandbox curl and eval candidate chain passed.",
+		RollbackPlan:       "Remove the new operation skill directory and CHANGELOG entry.",
+	}, snapshot, map[string]any{"candidate_id": "candidate-create-operation"}, now.Add(2*time.Minute))
+	if err != nil {
+		t.Fatalf("apply create operation skill: %v", err)
+	}
+	if result.Status != "applied" || result.PatchCheck != "applies" {
+		t.Fatalf("apply result = %+v", result)
+	}
+	if result.SkillHashAfter != sha256Hex([]byte(newSkill)) {
+		t.Fatalf("skill hash after = %q, want %q", result.SkillHashAfter, sha256Hex([]byte(newSkill)))
+	}
+	appliedSkill, err := os.ReadFile(filepath.Join(repoPath, filepath.FromSlash(newSkillPath)))
+	if err != nil {
+		t.Fatalf("read created skill: %v", err)
+	}
+	if string(appliedSkill) != newSkill {
+		t.Fatalf("created skill = %q, want %q", string(appliedSkill), newSkill)
+	}
+	changelog, err := os.ReadFile(filepath.Join(repoPath, ".codebuddy/skills/historical-benchmark-replay/CHANGELOG.md"))
+	if err != nil {
+		t.Fatalf("read created operation changelog: %v", err)
+	}
+	if !strings.Contains(string(changelog), "Historical benchmark replay is a repeated user-center operation.") {
+		t.Fatalf("changelog missing reason:\n%s", string(changelog))
+	}
+	appliedSnapshot, err := buildPromptEvaluationSkillAppliedWorktreeSnapshot(CreatePromptEvaluationSkillSnapshotRequest{
+		RepoPath:  repoPath,
+		Branch:    "HEAD",
+		SkillPath: newSkillPath,
+	}, result, now.Add(3*time.Minute))
+	if err != nil {
+		t.Fatalf("build applied create-operation snapshot: %v", err)
+	}
+	if appliedSnapshot.SkillHash != result.SkillHashAfter {
+		t.Fatalf("applied snapshot hash = %q, want %q", appliedSnapshot.SkillHash, result.SkillHashAfter)
+	}
+}
+
 func TestPromptEvaluationSkillPatchDefaultsRequests(t *testing.T) {
 	snapshot := PromptEvaluationSkillSnapshotResponse{
 		SchemaVersion:    promptEvaluationSkillSnapshotSchema,
