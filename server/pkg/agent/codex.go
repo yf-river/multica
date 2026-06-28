@@ -912,7 +912,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		if err != nil {
 			drainAndWait() // flush os/exec stderr goroutine before sampling Tail
 			finalStatus = "failed"
-			finalError = withAgentStderr(fmt.Sprintf("codex initialize failed: %v", err), "codex", stderrBuf.Tail())
+			finalError = codexFailureError(fmt.Sprintf("codex initialize failed: %v", err), stderrBuf.Tail())
 			resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds()}
 			return
 		}
@@ -925,7 +925,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		if err != nil {
 			drainAndWait() // flush os/exec stderr goroutine before sampling Tail
 			finalStatus = "failed"
-			finalError = withAgentStderr(err.Error(), "codex", stderrBuf.Tail())
+			finalError = codexFailureError(err.Error(), stderrBuf.Tail())
 			resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds()}
 			return
 		}
@@ -953,7 +953,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		if err != nil {
 			drainAndWait() // flush os/exec stderr goroutine before sampling Tail
 			finalStatus = "failed"
-			finalError = withAgentStderr(fmt.Sprintf("codex turn/start failed: %v", err), "codex", stderrBuf.Tail())
+			finalError = codexFailureError(fmt.Sprintf("codex turn/start failed: %v", err), stderrBuf.Tail())
 			resCh <- Result{Status: finalStatus, Error: finalError, DurationMs: time.Since(startTime).Milliseconds()}
 			return
 		}
@@ -1102,7 +1102,7 @@ func (b *codexBackend) Execute(ctx context.Context, prompt string, opts ExecOpti
 		drainAndWait()
 
 		if processExitErr != nil {
-			finalError = withAgentStderr(processExitErr.Error(), "codex", stderrBuf.Tail())
+			finalError = codexFailureError(processExitErr.Error(), stderrBuf.Tail())
 		}
 		if timeoutDiagnostic.Kind != codexTimeoutNone {
 			timeoutDiagnostic.CodexVersion = detectCodexVersionForDiagnostics(context.Background(), execPath, cmd.Env, b.cfg.Logger)
@@ -1327,8 +1327,7 @@ func buildCodexTimeoutDiagnosticError(diag codexTimeoutDiagnostic, stderrTail st
 	default:
 		msg = "codex timed out"
 	}
-	msg = appendCodexKnownStderrHint(msg, stderrTail)
-	return withAgentStderr(msg, "codex", stderrTail)
+	return codexFailureError(msg, stderrTail)
 }
 
 func formatCodexDiagnosticFields(diag codexTimeoutDiagnostic) string {
@@ -1355,10 +1354,33 @@ func formatCodexDiagnosticModel(model string) string {
 }
 
 func appendCodexKnownStderrHint(msg, stderrTail string) string {
+	lower := strings.ToLower(msg + "\n" + stderrTail)
 	if strings.Contains(stderrTail, codexModelCatalogRefreshTimeoutSignal) {
 		return msg + "; diagnosis: Codex stderr shows the model catalog refresh timed out. Try setting an explicit model, switching Codex CLI versions, or using another runtime while Codex app-server recovers"
 	}
+	if containsAnyCodexDiagnostic(lower,
+		"backend-api/codex/responses",
+		"responses_websocket",
+		"failed to connect to websocket",
+		"tls handshake eof",
+		"stream disconnected before completion",
+	) {
+		return msg + "; diagnosis: Codex Responses network failed. Check this runner's proxy profile and websocket/TLS support, switch to a healthy proxy node if needed, restart the daemon, then retry"
+	}
 	return msg
+}
+
+func codexFailureError(msg, stderrTail string) string {
+	return withAgentStderr(appendCodexKnownStderrHint(msg, stderrTail), "codex", stderrTail)
+}
+
+func containsAnyCodexDiagnostic(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if strings.Contains(s, sub) {
+			return true
+		}
+	}
+	return false
 }
 
 func detectCodexVersionForDiagnostics(ctx context.Context, execPath string, env []string, logger *slog.Logger) string {

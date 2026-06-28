@@ -153,6 +153,10 @@ func Classify(rawError string) Reason {
 		"connectionrefused",
 		"dns",
 		"i/o timeout",
+		"tls handshake eof",
+		"failed to connect to websocket",
+		"responses_websocket",
+		"backend-api/codex/responses",
 	):
 		return ReasonAgentProviderNetwork
 

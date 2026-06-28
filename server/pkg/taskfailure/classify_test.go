@@ -101,6 +101,9 @@ func TestClassifyRules(t *testing.T) {
 		{"connectionrefused single", "ConnectionRefused", ReasonAgentProviderNetwork},
 		{"dns", "dns lookup failed", ReasonAgentProviderNetwork},
 		{"i/o timeout", "read tcp 1.2.3.4:443: i/o timeout", ReasonAgentProviderNetwork},
+		{"codex tls handshake eof", "failed to connect to websocket: IO error: tls handshake eof", ReasonAgentProviderNetwork},
+		{"codex responses websocket", "ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket", ReasonAgentProviderNetwork},
+		{"codex responses endpoint", "error sending request for url (https://chatgpt.com/backend-api/codex/responses)", ReasonAgentProviderNetwork},
 
 		// 8. Model not found / unavailable.
 		{"model not found", "Error: model claude-3-opus-99 not found", ReasonAgentModelNotFoundOrUnavailable},
