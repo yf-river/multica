@@ -736,6 +736,9 @@ describe("IssueDetail (shared)", () => {
       expect(screen.getByText("详情")).toBeInTheDocument();
     });
 
+    expect(screen.queryByText("创建者")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByText("详情"));
+
     expect(screen.getByText("创建者")).toBeInTheDocument();
     expect(screen.getByText("创建时间")).toBeInTheDocument();
     expect(screen.getByText("更新时间")).toBeInTheDocument();

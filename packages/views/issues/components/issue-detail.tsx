@@ -66,7 +66,7 @@ import { useWorkspacePaths } from "@multica/core/paths";
 import { useActorName } from "@multica/core/workspace/hooks";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useRecentContextStore } from "@multica/core/chat";
-import { flattenIssueBuckets, issueDetailOptions, issueKeys, childIssuesOptions, issueUsageOptions, issueAttachmentsOptions } from "@multica/core/issues/queries";
+import { flattenIssueBuckets, issueDetailOptions, issueKeys, childIssuesOptions, issueAttachmentsOptions } from "@multica/core/issues/queries";
 import { projectDetailOptions } from "@multica/core/projects/queries";
 import { ProjectIcon } from "../../projects/components/project-icon";
 import { issueLabelsOptions } from "@multica/core/labels";
@@ -274,12 +274,6 @@ function formatActivity(
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function formatTokenCount(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
-  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}k`;
-  return String(n);
-}
 
 // Stable reference for threads with no replies. Inline `[]` would create a
 // new array on every render and bust React.memo on CommentCard / ResolvedThreadBar.
@@ -717,11 +711,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   }, [isMobile]);
   const sidebarOpen = isMobile ? mobileSidebarOpen : desktopSidebarOpen;
   const [propertiesOpen, setPropertiesOpen] = useState(true);
-  const [detailsOpen, setDetailsOpen] = useState(true);
+  const [detailsOpen, setDetailsOpen] = useState(false);
   const [parentIssueOpen, setParentIssueOpen] = useState(true);
   const [pullRequestsOpen, setPullRequestsOpen] = useState(true);
   const [metadataOpen, setMetadataOpen] = useState(false);
-  const [tokenUsageOpen, setTokenUsageOpen] = useState(true);
   const githubSettings = useGitHubSettings();
 
   // Per-issue, per-session set of optional properties currently visible in
@@ -1044,9 +1037,6 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
   const {
     subscribers, isSubscribed, toggleSubscribe: handleToggleSubscribe, toggleSubscriber,
   } = useIssueSubscribers(id, user?.id);
-
-  // Token usage
-  const { data: usage } = useQuery(issueUsageOptions(id));
 
   // Attachments uploaded against this issue. Drives the description
   // editor's click-time fresh-sign download: NodeViews match
@@ -1585,45 +1575,10 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
         </div>}
       </div>
 
-      {/* Execution log — active runs + collapsed past runs. Self-contained;
-          owns its own collapse state and WS subscriptions. Hides itself
-          when there are no runs to show. */}
+      {/* Execution log — active run status plus compact run-review entry.
+          Full timelines, execution trees, SOP details and token breakdowns
+          live on the run review page. */}
       <ExecutionLogSection issueId={id} />
-
-      {/* Token usage */}
-      {usage && usage.task_count > 0 && (
-        <div>
-          <button
-            type="button"
-            className={`flex w-full items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors mb-2 hover:bg-accent/70 ${tokenUsageOpen ? "" : "text-muted-foreground hover:text-foreground"}`}
-            onClick={() => setTokenUsageOpen(!tokenUsageOpen)}
-          >
-            {t(($) => $.detail.section_token_usage)}
-            <ChevronRight className={`!size-3 shrink-0 stroke-[2.5] text-muted-foreground transition-transform ${tokenUsageOpen ? "rotate-90" : ""}`} />
-          </button>
-          {tokenUsageOpen && <div className="grid grid-cols-[auto_1fr] gap-x-2 gap-y-0.5 pl-2">
-            <PropRow label={t(($) => $.detail.prop_input)}>
-              <span className="text-muted-foreground">{formatTokenCount(usage.total_input_tokens)}</span>
-            </PropRow>
-            <PropRow label={t(($) => $.detail.prop_output)}>
-              <span className="text-muted-foreground">{formatTokenCount(usage.total_output_tokens)}</span>
-            </PropRow>
-            {(usage.total_cache_read_tokens > 0 || usage.total_cache_write_tokens > 0) && (
-              <PropRow label={t(($) => $.detail.prop_cache)}>
-                <span className="text-muted-foreground">
-                  {t(($) => $.detail.prop_cache_value, {
-                    read: formatTokenCount(usage.total_cache_read_tokens),
-                    write: formatTokenCount(usage.total_cache_write_tokens),
-                  })}
-                </span>
-              </PropRow>
-            )}
-            <PropRow label={t(($) => $.detail.prop_runs)}>
-              <span className="text-muted-foreground">{usage.task_count}</span>
-            </PropRow>
-          </div>}
-        </div>
-      )}
 
       {/* Metadata — agent-facing free-form KV bag. The values almost
           never mean anything to humans, so the trigger row matches the

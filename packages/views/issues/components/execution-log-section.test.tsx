@@ -12,6 +12,7 @@ const mockState = vi.hoisted(() => ({
   listTasksByIssue: vi.fn(),
   listIssueTaskTraceEvents: vi.fn(),
   getIssueExecutionTree: vi.fn(),
+  listIssueSOPRuns: vi.fn(),
   cancelTask: vi.fn(),
 }));
 
@@ -20,6 +21,7 @@ vi.mock("@multica/core/api", () => ({
     listTasksByIssue: mockState.listTasksByIssue,
     listIssueTaskTraceEvents: mockState.listIssueTaskTraceEvents,
     getIssueExecutionTree: mockState.getIssueExecutionTree,
+    listIssueSOPRuns: mockState.listIssueSOPRuns,
     cancelTask: mockState.cancelTask,
   },
 }));
@@ -76,7 +78,8 @@ beforeEach(() => {
   vi.setSystemTime(new Date("2026-06-08T08:05:04Z"));
   mockState.listTasksByIssue.mockResolvedValue([]);
   mockState.listIssueTaskTraceEvents.mockResolvedValue({ events: [] });
-  mockState.getIssueExecutionTree.mockResolvedValue(undefined);
+  mockState.getIssueExecutionTree.mockResolvedValue(null);
+  mockState.listIssueSOPRuns.mockResolvedValue({ items: [] });
 });
 
 afterEach(() => {
@@ -164,13 +167,13 @@ describe("ExecutionLogSection trace", () => {
 
     renderWithQuery(<ExecutionLogSection issueId="issue-1" />);
 
-    expect(await screen.findByText("观测事件")).toBeInTheDocument();
-    expect(screen.getByText("任务事件树")).toBeInTheDocument();
-    expect(screen.getByText("根任务 task-1")).toBeInTheDocument();
-    expect(screen.getByText("用量事件 1")).toBeInTheDocument();
+    expect(await screen.findByText("最近事件")).toBeInTheDocument();
+    expect(screen.getByText("当前阶段")).toBeInTheDocument();
     expect(screen.getByText("模型用量")).toBeInTheDocument();
     expect(screen.getByText("模型用量已上报")).toBeInTheDocument();
     expect(screen.getAllByText(/150 tokens/).length).toBeGreaterThan(0);
+    expect(screen.queryByText("观测事件")).not.toBeInTheDocument();
+    expect(screen.queryByText("任务事件树")).not.toBeInTheDocument();
   });
 
   it("renders the collaboration execution tree across parent and child issues", async () => {
@@ -188,6 +191,22 @@ describe("ExecutionLogSection trace", () => {
         完成任务数: 1,
         失败任务数: 0,
         取消任务数: 0,
+      },
+      issue_summary: {
+        issue_id: "issue-parent",
+        node_count: 12,
+        total_duration_ms: 65000,
+        total_input_tokens: 100,
+        total_output_tokens: 40,
+        total_cache_read_tokens: 20,
+        total_cache_write_tokens: 10,
+        message_count: 8,
+        agent_turn_count: 4,
+        trace_event_count: 6,
+        usage_unavailable: false,
+        failure_summary: "验收失败：缺少执行级结论",
+        acceptance_status: "failed",
+        full_analysis_deep_link: "/test/run-reviews?issue=issue-parent",
       },
       root: {
         issue: {
@@ -299,25 +318,21 @@ describe("ExecutionLogSection trace", () => {
 
     renderWithQuery(<ExecutionLogSection issueId="issue-parent" />);
 
-    expect(await screen.findByText("协作执行树")).toBeInTheDocument();
-    expect(screen.getByText("完整链路复盘")).toBeInTheDocument();
-    expect(screen.getByText(/已捕获运行时间流、SOP 阶段、token 和证据/)).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: "完整链路" })).toHaveAttribute(
+    expect(await screen.findByText("运行复盘")).toBeInTheDocument();
+    expect(screen.getByText("验收：failed")).toBeInTheDocument();
+    expect(screen.getByText("总耗时：1m 5s")).toBeInTheDocument();
+    expect(screen.getByText("任务数：2")).toBeInTheDocument();
+    expect(screen.getByText("异常数：1")).toBeInTheDocument();
+    expect(screen.getByText("Token：170")).toBeInTheDocument();
+    expect(screen.getByText("验收失败：缺少执行级结论")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "查看完整复盘" })).toHaveAttribute(
       "href",
       "/test/run-reviews?issue=issue-parent",
     );
-    expect(screen.getByText("1 个子任务")).toBeInTheDocument();
-    expect(screen.getByText("根任务 GTD-1")).toBeInTheDocument();
-    expect(screen.getByText("任务 2 / 完成 1")).toBeInTheDocument();
-    expect(screen.getByText("SOP 1 / 事件 2")).toBeInTheDocument();
-    expect(screen.getByText("观测 3 / 唤醒 1")).toBeInTheDocument();
-    expect(screen.getAllByText("工具 2 / 异常 1").length).toBeGreaterThan(0);
-    expect(screen.getByText(/父任务 GTD-1/)).toBeInTheDocument();
-    expect(screen.getByText(/子任务 GTD-2/)).toBeInTheDocument();
-    expect(screen.getByText(/工具 curl-check：调用 2，异常线索 1，最慢 1s/)).toBeInTheDocument();
-    expect(screen.getByText("工具链明细")).toBeInTheDocument();
-    expect(screen.getByText(/curl-check · 异常线索 · 1s · 异常线索/)).toBeInTheDocument();
-    expect(screen.getByText(/调用 #1 \/ 结果 #2 · 工具结果包含 HTTP 状态码 500/)).toBeInTheDocument();
-    expect(screen.getByText(/最近唤醒：子任务 \[GTD-2\]/)).toBeInTheDocument();
+    expect(screen.queryByText("协作执行树")).not.toBeInTheDocument();
+    expect(screen.queryByText("Issue 运行时间流")).not.toBeInTheDocument();
+    expect(screen.queryByText("工具链明细")).not.toBeInTheDocument();
+    expect(screen.queryByText(/父任务 GTD-1/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/子任务 GTD-2/)).not.toBeInTheDocument();
   });
 });
