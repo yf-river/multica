@@ -83,6 +83,7 @@ function ensureEnvironment(item) {
   const databaseURL = deriveDatabaseURL(base.DATABASE_URL, item.databaseName);
   const frontendURL = `http://${publicHost}:${item.frontendPort}`;
   const codexRunner = resolveCodexRunnerProfile(item, base);
+  ensureCodexRunnerProfile(codexRunner);
   const lines = [
     `GOAL_TEST_ENV=${item.name}`,
     `GOAL_TEST_ENV_LABEL=${item.label}`,
@@ -743,6 +744,15 @@ function resolveCodexRunnerProfile(item, base) {
   const rawProxy = explicitProxy || ambientProxy;
   const proxyMode = isDirectProxyValue(rawProxy) ? "direct" : rawProxy ? "proxy" : "direct";
   const proxyURL = proxyMode === "proxy" ? rawProxy : "";
+  const sourceHome = firstNonEmpty(
+    process.env.GOAL_TEST_CODEX_SOURCE_HOME,
+    base.GOAL_TEST_CODEX_SOURCE_HOME,
+    process.env.MULTICA_CODEX_SOURCE_HOME,
+    base.MULTICA_CODEX_SOURCE_HOME,
+    process.env.CODEX_HOME,
+    base.CODEX_HOME,
+  );
+  const defaultHome = defaultGoalTestCodexHome(item, sourceHome);
   return {
     runnerID: firstNonEmpty(process.env.GOAL_TEST_CODEX_RUNNER_ID, base.GOAL_TEST_CODEX_RUNNER_ID, item.daemonID),
     proxyMode,
@@ -756,11 +766,13 @@ function resolveCodexRunnerProfile(item, base) {
       base.no_proxy,
       "localhost,127.0.0.1,.local,.tencent.com,.oa.com,.svc,.svc.cluster.local",
     ),
-    codexHome: firstNonEmpty(process.env.GOAL_TEST_CODEX_HOME, base.GOAL_TEST_CODEX_HOME, process.env.CODEX_HOME, base.CODEX_HOME),
+    codexHome: firstNonEmpty(process.env.GOAL_TEST_CODEX_HOME, base.GOAL_TEST_CODEX_HOME, process.env.MULTICA_CODEX_HOME, base.MULTICA_CODEX_HOME, defaultHome),
+    sourceHome,
     codexPath: firstNonEmpty(process.env.GOAL_TEST_CODEX_PATH, base.GOAL_TEST_CODEX_PATH, process.env.MULTICA_CODEX_PATH, base.MULTICA_CODEX_PATH, "codex"),
     codexModel: firstNonEmpty(process.env.GOAL_TEST_CODEX_MODEL, base.GOAL_TEST_CODEX_MODEL, process.env.MULTICA_CODEX_MODEL, base.MULTICA_CODEX_MODEL),
+    codexSmokeModel: firstNonEmpty(process.env.GOAL_TEST_CODEX_SMOKE_MODEL, base.GOAL_TEST_CODEX_SMOKE_MODEL, process.env.GOAL_TEST_REAL_AGENT_FALLBACK_MODEL, "gpt-5.4-mini"),
     imageGeneration: firstNonEmpty(process.env.MULTICA_CODEX_IMAGE_GENERATION, base.MULTICA_CODEX_IMAGE_GENERATION, "auto"),
-    responsesSmoke: firstNonEmpty(process.env.GOAL_TEST_CODEX_RESPONSES_SMOKE, base.GOAL_TEST_CODEX_RESPONSES_SMOKE),
+    responsesSmoke: firstNonEmpty(process.env.GOAL_TEST_CODEX_RESPONSES_SMOKE, base.GOAL_TEST_CODEX_RESPONSES_SMOKE, "1"),
   };
 }
 
@@ -776,24 +788,44 @@ function codexRunnerEnvLines(runner) {
   ];
   if (runner.codexHome) {
     lines.push(`GOAL_TEST_CODEX_HOME=${runner.codexHome}`);
+    lines.push(`MULTICA_CODEX_HOME=${runner.codexHome}`);
     lines.push(`CODEX_HOME=${runner.codexHome}`);
+  }
+  if (runner.sourceHome) {
+    lines.push(`GOAL_TEST_CODEX_SOURCE_HOME=${runner.sourceHome}`);
+    lines.push(`MULTICA_CODEX_SOURCE_HOME=${runner.sourceHome}`);
   }
   if (runner.codexModel) {
     lines.push(`GOAL_TEST_CODEX_MODEL=${runner.codexModel}`);
     lines.push(`MULTICA_CODEX_MODEL=${runner.codexModel}`);
   }
+  if (runner.codexSmokeModel) {
+    lines.push(`GOAL_TEST_CODEX_SMOKE_MODEL=${runner.codexSmokeModel}`);
+    lines.push(`MULTICA_CODEX_SMOKE_MODEL=${runner.codexSmokeModel}`);
+  }
   if (runner.responsesSmoke) lines.push(`GOAL_TEST_CODEX_RESPONSES_SMOKE=${runner.responsesSmoke}`);
+  if (runner.responsesSmoke) lines.push(`MULTICA_CODEX_RESPONSES_SMOKE=${runner.responsesSmoke}`);
   if (runner.proxyMode === "proxy") {
+    lines.push(`MULTICA_CODEX_PROXY_MODE=proxy`);
+    lines.push(`MULTICA_CODEX_PROXY_URL=${runner.proxyURL}`);
+    lines.push(`MULTICA_CODEX_NO_PROXY=${runner.noProxy}`);
     for (const key of proxyEnvKeys) lines.push(`${key}=${runner.proxyURL}`);
     for (const key of noProxyEnvKeys) lines.push(`${key}=${runner.noProxy}`);
+  } else {
+    lines.push(`MULTICA_CODEX_PROXY_MODE=${runner.proxyMode}`);
+    lines.push(`MULTICA_CODEX_PROXY_URL=`);
+    lines.push(`MULTICA_CODEX_NO_PROXY=${runner.noProxy}`);
   }
   return lines;
 }
 
 function applyCodexRunnerRuntimeEnv(env) {
   if (env.GOAL_TEST_CODEX_HOME) env.CODEX_HOME = env.GOAL_TEST_CODEX_HOME;
+  if (env.GOAL_TEST_CODEX_HOME) env.MULTICA_CODEX_HOME = env.GOAL_TEST_CODEX_HOME;
+  if (env.GOAL_TEST_CODEX_SOURCE_HOME) env.MULTICA_CODEX_SOURCE_HOME = env.GOAL_TEST_CODEX_SOURCE_HOME;
   if (env.GOAL_TEST_CODEX_PATH) env.MULTICA_CODEX_PATH = env.GOAL_TEST_CODEX_PATH;
   if (env.GOAL_TEST_CODEX_MODEL) env.MULTICA_CODEX_MODEL = env.GOAL_TEST_CODEX_MODEL;
+  if (env.GOAL_TEST_CODEX_SMOKE_MODEL) env.MULTICA_CODEX_SMOKE_MODEL = env.GOAL_TEST_CODEX_SMOKE_MODEL;
   if (!env.MULTICA_CODEX_IMAGE_GENERATION) env.MULTICA_CODEX_IMAGE_GENERATION = "auto";
 
   const mode = String(env.GOAL_TEST_CODEX_PROXY_MODE || "").trim().toLowerCase();
@@ -805,8 +837,32 @@ function applyCodexRunnerRuntimeEnv(env) {
   }
   if (!proxyURL) return;
   for (const key of proxyEnvKeys) env[key] = proxyURL;
+  env.MULTICA_CODEX_PROXY_MODE = "proxy";
+  env.MULTICA_CODEX_PROXY_URL = proxyURL;
   const noProxy = env.GOAL_TEST_CODEX_NO_PROXY || env.NO_PROXY || env.no_proxy || "localhost,127.0.0.1";
+  env.MULTICA_CODEX_NO_PROXY = noProxy;
   for (const key of noProxyEnvKeys) env[key] = noProxy;
+}
+
+function defaultGoalTestCodexHome(item, sourceHome) {
+  const source = String(sourceHome || "").trim();
+  if (source) return path.join(path.dirname(source), `.codex-goal-test-${item.name}`);
+  const home = process.env.HOME || process.env.USERPROFILE || "/tmp";
+  return path.join(home, ".multica", "runtimes", item.daemonID, "codex", "CODEX_HOME");
+}
+
+function ensureCodexRunnerProfile(runner) {
+  const target = String(runner.codexHome || "").trim();
+  if (!target) return;
+  mkdirSync(target, { recursive: true, mode: 0o700 });
+  const source = String(runner.sourceHome || "").trim();
+  if (!source || path.resolve(source) === path.resolve(target)) return;
+  for (const name of ["auth.json", "config.json", "config.toml", "instructions.md"]) {
+    const dst = path.join(target, name);
+    const src = path.join(source, name);
+    if (existsSync(dst) || !existsSync(src)) continue;
+    copyFileSync(src, dst);
+  }
 }
 
 function runCodexNetworkCheck(item, options = {}) {
@@ -853,10 +909,11 @@ function runCodexCheckCommand(name, command, args, env, timeoutMs) {
   const stdout = res.stdout || "";
   const stderr = res.stderr || "";
   const timedOut = res.error?.code === "ETIMEDOUT";
+  const logicalFailure = codexDebugAppServerFailed(name, stdout, stderr);
   const check = {
     name,
     command: [command, ...args].join(" "),
-    status: res.status === 0 ? "passed" : "failed",
+    status: res.status === 0 && !logicalFailure ? "passed" : "failed",
     exit_code: res.status,
     duration_ms: Date.now() - started,
     timeout_ms: timeoutMs,
@@ -864,6 +921,7 @@ function runCodexCheckCommand(name, command, args, env, timeoutMs) {
     stdout_tail: stdout.slice(-1200),
     stderr_tail: stderr.slice(-1200),
   };
+  if (logicalFailure) check.error = "codex debug app-server completed with a failed turn";
   if (name === "model_catalog" && res.status === 0) {
     try {
       const parsed = JSON.parse(stdout);
@@ -877,6 +935,12 @@ function runCodexCheckCommand(name, command, args, env, timeoutMs) {
   return check;
 }
 
+function codexDebugAppServerFailed(name, stdout, stderr) {
+  if (name !== "responses_smoke") return false;
+  const text = `${stdout}\n${stderr}`;
+  return /turn\/completed notification:\s*Failed|\[turn error\]|"status":\s*"failed"|Tool 'image_generation' is not supported|stream disconnected before completion|failed to connect to websocket|tls handshake eof/i.test(text);
+}
+
 function summarizeCodexRunnerEnv(item, env, strong) {
   const proxyMode = String(env.GOAL_TEST_CODEX_PROXY_MODE || "").trim() || (env.GOAL_TEST_CODEX_PROXY_URL ? "proxy" : "direct");
   return {
@@ -888,6 +952,7 @@ function summarizeCodexRunnerEnv(item, env, strong) {
     proxy_url: redactProxyURL(env.GOAL_TEST_CODEX_PROXY_URL || env.HTTPS_PROXY || env.HTTP_PROXY || env.ALL_PROXY || ""),
     no_proxy: env.GOAL_TEST_CODEX_NO_PROXY || env.NO_PROXY || env.no_proxy || "",
     model: env.MULTICA_CODEX_MODEL || "",
+    smoke_model: env.GOAL_TEST_CODEX_SMOKE_MODEL || env.MULTICA_CODEX_SMOKE_MODEL || "",
     image_generation: env.MULTICA_CODEX_IMAGE_GENERATION || "auto",
     responses_smoke: strong,
   };

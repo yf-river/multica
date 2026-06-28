@@ -215,6 +215,7 @@ type Daemon struct {
 	// so one bad host does not affect other daemons on the same service.
 	runtimeNetworkByID    map[string]runtimeNetworkHealth
 	runtimeNetworkDirtyID map[string]struct{}
+	runtimeLastTaskStart  map[string]time.Time
 
 	// bgSyncs tracks background goroutines started by registerTaskRepos so
 	// callers (notably tests using t.TempDir-backed cache roots) can wait for
@@ -253,6 +254,7 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		localPathLocks:            NewLocalPathLocker(),
 		runtimeNetworkByID:        make(map[string]runtimeNetworkHealth),
 		runtimeNetworkDirtyID:     make(map[string]struct{}),
+		runtimeLastTaskStart:      make(map[string]time.Time),
 		runtimeGoneInflight:       make(map[string]struct{}),
 		reregisterNextAttempt:     make(map[string]time.Time),
 		reregisterLastCompletedAt: make(map[string]time.Time),
@@ -896,6 +898,26 @@ func (d *Daemon) customCommandPathForRuntime(runtimeID string) (string, bool) {
 		return "", false
 	}
 	return path, true
+}
+
+func (d *Daemon) agentEntryForRuntime(runtimeID string) (AgentEntry, bool) {
+	d.mu.Lock()
+	rt, ok := d.runtimeIndex[runtimeID]
+	if !ok {
+		d.mu.Unlock()
+		return AgentEntry{}, false
+	}
+	if rt.ProfileID != "" {
+		path := d.profileCommandPaths[rt.ProfileID]
+		d.mu.Unlock()
+		if path == "" {
+			return AgentEntry{}, false
+		}
+		return AgentEntry{Path: path}, true
+	}
+	entry, ok := d.cfg.Agents[rt.Provider]
+	d.mu.Unlock()
+	return entry, ok
 }
 
 func (d *Daemon) registerRuntimesForWorkspace(ctx context.Context, workspaceID string) (*RegisterResponse, string, error) {
@@ -2527,15 +2549,30 @@ func (d *Daemon) runRuntimePoller(
 			return
 		}
 		if health, blocked := d.runtimeNetworkBlocksClaims(rid); blocked {
-			d.logger.Warn("poll: runtime network unavailable; skipping claim",
-				"runtime_id", rid,
-				"provider", health.Provider,
-				"status", health.Status,
-				"hint", health.FailureHint,
-			)
-			if err := sleepWithContextOrWakeup(pollerCtx, d.cfg.PollInterval, wakeup); err != nil {
-				return
+			if recovered, ok := d.tryRecoverRuntimeNetwork(pollerCtx, rid, health); ok {
+				d.logger.Info("poll: runtime network recovered",
+					"runtime_id", rid,
+					"provider", recovered.Provider,
+					"status", recovered.Status,
+					"check", recovered.Check,
+				)
+			} else {
+				d.logger.Warn("poll: runtime network unavailable; skipping claim",
+					"runtime_id", rid,
+					"provider", health.Provider,
+					"status", health.Status,
+					"hint", health.FailureHint,
+				)
+				if err := sleepWithContextOrWakeup(pollerCtx, d.cfg.PollInterval, wakeup); err != nil {
+					return
+				}
+				continue
 			}
+		}
+
+		if delayed, err := d.waitForRuntimeTaskSpacing(pollerCtx, rid, wakeup); err != nil {
+			return
+		} else if delayed {
 			continue
 		}
 
@@ -2599,6 +2636,7 @@ func (d *Daemon) runRuntimePoller(
 			}
 			continue
 		}
+		d.recordRuntimeTaskStart(rid)
 
 		taskTarget := task.IssueID
 		if taskTarget == "" && task.ChatSessionID != "" {
@@ -2616,6 +2654,40 @@ func (d *Daemon) runRuntimePoller(
 		}(*task, slot)
 		// Loop immediately: more tasks may already be queued for this runtime.
 	}
+}
+
+func (d *Daemon) waitForRuntimeTaskSpacing(ctx context.Context, runtimeID string, wakeup <-chan struct{}) (bool, error) {
+	if d.cfg.CodexMinTaskInterval <= 0 {
+		return false, nil
+	}
+	d.mu.Lock()
+	rt := d.runtimeIndex[runtimeID]
+	last := d.runtimeLastTaskStart[runtimeID]
+	d.mu.Unlock()
+	if rt.Provider != "codex" || last.IsZero() {
+		return false, nil
+	}
+	wait := d.cfg.CodexMinTaskInterval - time.Since(last)
+	if wait <= 0 {
+		return false, nil
+	}
+	d.logger.Debug("poll: codex runtime spacing active", "runtime_id", runtimeID, "wait", wait)
+	if err := sleepWithContextOrWakeup(ctx, wait, wakeup); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func (d *Daemon) recordRuntimeTaskStart(runtimeID string) {
+	if d.cfg.CodexMinTaskInterval <= 0 || runtimeID == "" {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.runtimeLastTaskStart == nil {
+		d.runtimeLastTaskStart = make(map[string]time.Time)
+	}
+	d.runtimeLastTaskStart[runtimeID] = time.Now()
 }
 
 func runtimePollOffset(runtimeID string, interval time.Duration) time.Duration {

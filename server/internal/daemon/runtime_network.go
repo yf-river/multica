@@ -6,6 +6,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"strconv"
 	"strings"
 	"time"
 
@@ -18,7 +19,9 @@ const (
 	runtimeNetworkUnavailable = "unavailable"
 	runtimeNetworkNotChecked  = "not_checked"
 
-	runtimeNetworkCheckTimeout = 20 * time.Second
+	runtimeNetworkCheckTimeout          = 20 * time.Second
+	runtimeNetworkResponsesSmokeTimeout = 90 * time.Second
+	runtimeNetworkUnavailableRetryAfter = 2 * time.Minute
 )
 
 var checkRuntimeNetwork = func(d *Daemon, ctx context.Context, provider string, entry AgentEntry) runtimeNetworkHealth {
@@ -35,6 +38,7 @@ type runtimeNetworkHealth struct {
 	FailureHint      string `json:"failure_hint,omitempty"`
 	Error            string `json:"error,omitempty"`
 	Check            string `json:"check,omitempty"`
+	RetryAfter       string `json:"retry_after,omitempty"`
 }
 
 func runtimeNetworkKey(provider, profileID string) string {
@@ -80,6 +84,28 @@ func (d *Daemon) checkProviderNetwork(ctx context.Context, provider string, entr
 		health.FailureHint = "Codex model catalog check failed. Check this runner's local proxy, CODEX_HOME login state, and whether the proxy supports TLS/WebSocket traffic."
 		return health
 	}
+	if codexResponsesSmokeEnabled() {
+		runCtx, cancel := context.WithTimeout(ctx, runtimeNetworkResponsesSmokeTimeout)
+		defer cancel()
+		args := []string{"debug", "app-server", "send-message-v2", "--disable", "image_generation"}
+		if model := firstEnv("MULTICA_CODEX_SMOKE_MODEL", "MULTICA_CODEX_MODEL"); model != "" {
+			args = append(args, "-c", "model="+strconv.Quote(model))
+		}
+		args = append(args, "Reply with exactly: ok")
+		cmd := exec.CommandContext(runCtx, execPath, args...)
+		cmd.Env = applyRuntimeProxyEnv(os.Environ(), provider)
+		out, err := cmd.CombinedOutput()
+		health.Check = "codex debug models + responses smoke"
+		if err != nil {
+			health.Status = runtimeNetworkUnavailable
+			health.Error = strings.TrimSpace(string(out))
+			if health.Error == "" {
+				health.Error = err.Error()
+			}
+			health.FailureHint = "Codex responses smoke failed. Check this runner's proxy, CODEX_HOME login state, and whether the proxy supports ChatGPT responses WebSocket traffic."
+			return health
+		}
+	}
 	health.Status = runtimeNetworkHealthy
 	return health
 }
@@ -102,7 +128,8 @@ func (d *Daemon) markRuntimeNetworkFailure(runtimeID string, reason taskfailure.
 		Status:      runtimeNetworkUnavailable,
 		CheckedAt:   time.Now().UTC().Format(time.RFC3339),
 		Provider:    provider,
-		FailureHint: "Provider network failed during task execution. Check this runner's local proxy and restart or re-register the daemon after fixing it.",
+		RetryAfter:  time.Now().Add(runtimeNetworkUnavailableRetryAfter).UTC().Format(time.RFC3339),
+		FailureHint: "Provider network failed during task execution. The daemon will recheck after a cooldown; check this runner's local proxy and CODEX_HOME login state if it remains unavailable.",
 		Error:       truncateRuntimeNetworkError(errText),
 	}
 	proxy := runtimeProxyConfigForProvider(provider)
@@ -123,6 +150,45 @@ func (d *Daemon) runtimeNetworkBlocksClaims(runtimeID string) (runtimeNetworkHea
 	return health, runtimeNetworkStatusBlocksClaims(health.Status)
 }
 
+func (d *Daemon) runtimeNetworkRecheckDue(health runtimeNetworkHealth) bool {
+	if health.Status != runtimeNetworkUnavailable {
+		return false
+	}
+	if health.RetryAfter != "" {
+		if t, err := time.Parse(time.RFC3339, health.RetryAfter); err == nil {
+			return !time.Now().Before(t)
+		}
+	}
+	if health.CheckedAt != "" {
+		if t, err := time.Parse(time.RFC3339, health.CheckedAt); err == nil {
+			return time.Since(t) >= runtimeNetworkUnavailableRetryAfter
+		}
+	}
+	return true
+}
+
+func (d *Daemon) tryRecoverRuntimeNetwork(ctx context.Context, runtimeID string, health runtimeNetworkHealth) (runtimeNetworkHealth, bool) {
+	if !d.runtimeNetworkRecheckDue(health) {
+		return health, false
+	}
+	entry, ok := d.agentEntryForRuntime(runtimeID)
+	if !ok {
+		return health, false
+	}
+	rechecked := checkRuntimeNetwork(d, ctx, health.Provider, entry)
+	if rechecked.Status == runtimeNetworkHealthy || rechecked.Status == runtimeNetworkDegraded || rechecked.Status == runtimeNetworkNotChecked {
+		d.recordRuntimeNetworkHealth(runtimeID, rechecked)
+		d.markRuntimeNetworkDirty(runtimeID)
+		return rechecked, true
+	}
+	if rechecked.Status == runtimeNetworkUnavailable && rechecked.RetryAfter == "" {
+		rechecked.RetryAfter = time.Now().Add(runtimeNetworkUnavailableRetryAfter).UTC().Format(time.RFC3339)
+	}
+	d.recordRuntimeNetworkHealth(runtimeID, rechecked)
+	d.markRuntimeNetworkDirty(runtimeID)
+	return rechecked, false
+}
+
 func (d *Daemon) recordRuntimeNetworkHealth(runtimeID string, health runtimeNetworkHealth) {
 	if runtimeID == "" {
 		return
@@ -133,6 +199,18 @@ func (d *Daemon) recordRuntimeNetworkHealth(runtimeID string, health runtimeNetw
 		d.runtimeNetworkByID = make(map[string]runtimeNetworkHealth)
 	}
 	d.runtimeNetworkByID[runtimeID] = health
+}
+
+func (d *Daemon) markRuntimeNetworkDirty(runtimeID string) {
+	if runtimeID == "" {
+		return
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.runtimeNetworkDirtyID == nil {
+		d.runtimeNetworkDirtyID = make(map[string]struct{})
+	}
+	d.runtimeNetworkDirtyID[runtimeID] = struct{}{}
 }
 
 func (d *Daemon) runtimeNetworkHeartbeatMetadata(runtimeID string) (json.RawMessage, bool) {
@@ -244,6 +322,16 @@ func firstEnv(keys ...string) string {
 		}
 	}
 	return ""
+}
+
+func codexResponsesSmokeEnabled() bool {
+	for _, key := range []string{"MULTICA_CODEX_RESPONSES_SMOKE", "MULTICA_RUNTIME_RESPONSES_SMOKE"} {
+		switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+		case "1", "true", "yes", "on":
+			return true
+		}
+	}
+	return false
 }
 
 func isDirectProxyValue(value string) bool {

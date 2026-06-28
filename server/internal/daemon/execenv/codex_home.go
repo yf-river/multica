@@ -10,15 +10,11 @@ import (
 	"strings"
 )
 
-// Directories to symlink from the shared ~/.codex/ into the per-task CODEX_HOME.
-// The shared directory is created if it doesn't exist, ensuring Codex session
-// logs are always written to the global home where users can find them.
-var codexSymlinkedDirs = []string{
-	"sessions",
-}
-
 // Files to symlink from the shared ~/.codex/ into the per-task CODEX_HOME.
-// Symlinks share state (e.g. auth tokens) so changes propagate automatically.
+// The daemon points CODEX_HOME at a runtime profile before tasks are prepared,
+// so this links to the runtime profile, not the user's interactive Codex home.
+// Auth stays shared at the runtime level so token refreshes propagate across
+// task-local homes without pushing session/log/state writes into the user home.
 var codexSymlinkedFiles = []string{
 	"auth.json",
 }
@@ -58,23 +54,15 @@ func prepareCodexHome(codexHome string, logger *slog.Logger) error {
 }
 
 // prepareCodexHomeWithOpts creates a per-task CODEX_HOME directory and seeds
-// it with config from the shared ~/.codex/ home. Auth is symlinked (shared),
-// config files are copied (isolated). The per-task config.toml gets a
-// daemon-managed sandbox block picked by codexSandboxPolicyFor.
+// it from the daemon's shared runtime Codex home. Auth is symlinked to the
+// runtime profile; config files are copied; session/log/state files stay local
+// to the task home. The per-task config.toml gets a daemon-managed sandbox
+// block picked by codexSandboxPolicyFor.
 func prepareCodexHomeWithOpts(codexHome string, opts CodexHomeOptions, logger *slog.Logger) error {
 	sharedHome := resolveSharedCodexHome()
 
 	if err := os.MkdirAll(codexHome, 0o755); err != nil {
 		return fmt.Errorf("create codex-home dir: %w", err)
-	}
-
-	// Symlink shared directories (sessions) so logs stay in the global home.
-	for _, name := range codexSymlinkedDirs {
-		src := filepath.Join(sharedHome, name)
-		dst := filepath.Join(codexHome, name)
-		if err := ensureDirSymlink(src, dst); err != nil {
-			logger.Warn("execenv: codex-home dir symlink failed", "dir", name, "error", err)
-		}
 	}
 
 	// Symlink shared files (auth).

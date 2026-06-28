@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-training-browser-e2e goal-test-training-curl-e2e goal-test-seed-business-training goal-test-prod-seed-business-training goal-test-prod-training-curl-e2e goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e goal-test-prod-user-center-squad-curl-e2e goal-test-new-account-mcp-onboarding-e2e goal-test-prod-new-account-mcp-onboarding-e2e goal-test-acceptance-fixture-governance goal-test-real-benchmark-audit goal-test-historical-benchmark-readiness goal-test-quick-entry-cross-service goal-test-squad-curl-e2e goal-test-variable-project-topology-fixture goal-test-variable-agent-squad-curl-e2e goal-test-variable-agent-topology-fixture goal-test-topology-generalization-audit goal-test-tapd-gongfeng-sop-gap-audit goal-test-prod-release-audit goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-final-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-dataset-stream-audit goal-test-prune-dev-data goal-test-prune-prod-data goal-test-playground-difference-audit goal-test-session-retro goal-test-token-audit
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-training-browser-e2e goal-test-training-curl-e2e goal-test-seed-business-training goal-test-prod-seed-business-training goal-test-prod-training-curl-e2e goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e goal-test-sop-customer-comment-e2e goal-test-prod-user-center-squad-curl-e2e goal-test-new-account-mcp-onboarding-e2e goal-test-prod-new-account-mcp-onboarding-e2e goal-test-acceptance-fixture-governance goal-test-real-benchmark-audit goal-test-historical-benchmark-readiness goal-test-quick-entry-cross-service goal-test-squad-curl-e2e goal-test-variable-project-topology-fixture goal-test-variable-agent-squad-curl-e2e goal-test-variable-agent-topology-fixture goal-test-topology-generalization-audit goal-test-tapd-gongfeng-sop-gap-audit goal-test-prod-release-audit goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-final-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-dataset-stream-audit goal-test-prune-dev-data goal-test-prune-prod-data goal-test-playground-difference-audit goal-test-session-retro goal-test-token-audit
 .PHONY: goal-test-dev-ui goal-test-dev-server goal-test-dev-daemon goal-test-dev-check goal-test-codex-network-check
 .PHONY: goal-test-historical-service-sandbox
 .PHONY: goal-test-benchmark-training-loop
@@ -342,6 +342,22 @@ goal-test-user-center-squad-curl-e2e: goal-test-smoke ## Run real curl/API + dae
 	ACCEPTANCE_MODEL_ATTEMPT_TIMEOUT_MS=7200000 \
 	TMPDIR="$(GOAL_TEST_TMPDIR)" \
 	node scripts/run-model-fallback-e2e.mjs scripts/codex-squad-curl-e2e.mjs
+
+goal-test-sop-customer-comment-e2e: goal-test-e2e-preflight ## Run real customer-comment SOP E2E for usercenter/gateway/ida-deployment
+	@mkdir -p "$(GOAL_TEST_TMPDIR)"
+	RESPONSES_SMOKE=1 $(MAKE) goal-test-codex-network-check
+	ACCEPTANCE_API_URL="$(GOAL_TEST_INT_API_URL)" \
+	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
+	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
+	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
+	ACCEPTANCE_REPO_REF=v5.0.0_dev_sop \
+	MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER="$(GOAL_TEST_REAL_AGENT_PROVIDER)" \
+	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
+	MULTICA_PROMPT_EVALUATION_AGENT_FALLBACK_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
+	ACCEPTANCE_TASK_TIMEOUT_MS=2700000 \
+	ACCEPTANCE_MODEL_ATTEMPT_TIMEOUT_MS=7200000 \
+	TMPDIR="$(GOAL_TEST_TMPDIR)" \
+	node scripts/run-model-fallback-e2e.mjs scripts/run-sop-customer-comment-e2e.mjs
 
 goal-test-squad-curl-e2e: goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e ## Run both real curl/API squad SOP E2E suites
 

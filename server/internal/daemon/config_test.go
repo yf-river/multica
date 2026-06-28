@@ -88,6 +88,60 @@ func TestIsSafeAgentName(t *testing.T) {
 	}
 }
 
+func TestEnsureCodexRuntimeProfileSeedsFromUserHome(t *testing.T) {
+	source := t.TempDir()
+	target := filepath.Join(t.TempDir(), "runtime-codex-home")
+	if err := os.WriteFile(filepath.Join(source, "auth.json"), []byte(`{"token":"user"}`), 0o600); err != nil {
+		t.Fatalf("write source auth: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(source, "config.toml"), []byte(`model = "gpt-5"`), 0o600); err != nil {
+		t.Fatalf("write source config: %v", err)
+	}
+	t.Setenv("CODEX_HOME", source)
+	t.Setenv("MULTICA_CODEX_HOME", target)
+
+	if err := ensureCodexRuntimeProfile("daemon/test"); err != nil {
+		t.Fatalf("ensureCodexRuntimeProfile: %v", err)
+	}
+	if got := os.Getenv("CODEX_HOME"); got != target {
+		t.Fatalf("CODEX_HOME = %q, want runtime profile %q", got, target)
+	}
+	if got := os.Getenv("MULTICA_CODEX_HOME"); got != target {
+		t.Fatalf("MULTICA_CODEX_HOME = %q, want %q", got, target)
+	}
+	data, err := os.ReadFile(filepath.Join(target, "auth.json"))
+	if err != nil {
+		t.Fatalf("read target auth: %v", err)
+	}
+	if string(data) != `{"token":"user"}` {
+		t.Fatalf("target auth = %q", data)
+	}
+}
+
+func TestEnsureCodexRuntimeProfileDoesNotOverwriteExistingAuth(t *testing.T) {
+	source := t.TempDir()
+	target := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "auth.json"), []byte(`{"token":"user"}`), 0o600); err != nil {
+		t.Fatalf("write source auth: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(target, "auth.json"), []byte(`{"token":"runtime"}`), 0o600); err != nil {
+		t.Fatalf("write target auth: %v", err)
+	}
+	t.Setenv("CODEX_HOME", source)
+	t.Setenv("MULTICA_CODEX_HOME", target)
+
+	if err := ensureCodexRuntimeProfile("daemon/test"); err != nil {
+		t.Fatalf("ensureCodexRuntimeProfile: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join(target, "auth.json"))
+	if err != nil {
+		t.Fatalf("read target auth: %v", err)
+	}
+	if string(data) != `{"token":"runtime"}` {
+		t.Fatalf("target auth was overwritten: %q", data)
+	}
+}
+
 func TestBuildLoginShellResolveScript_ShapeAndContent(t *testing.T) {
 	got := buildLoginShellResolveScript([]string{"claude", "cursor-agent"})
 	// Must list exactly the names we asked for, in order.

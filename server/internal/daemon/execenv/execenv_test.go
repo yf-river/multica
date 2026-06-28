@@ -1920,30 +1920,16 @@ func TestPrepareCodexHomeSeedsFromShared(t *testing.T) {
 		t.Fatalf("prepareCodexHome failed: %v", err)
 	}
 
-	// sessions should be a symlink to the shared sessions dir.
+	// sessions should not be shared with the runtime profile; Codex creates
+	// task-local session logs when the app-server runs.
 	sessionsPath := filepath.Join(codexHome, "sessions")
-	fi, err := os.Lstat(sessionsPath)
-	if err != nil {
-		t.Fatalf("sessions not found: %v", err)
-	}
-	sessionsIsLink := fi.Mode()&os.ModeSymlink != 0
-	if !sessionsIsLink && runtime.GOOS != "windows" {
-		t.Error("sessions should be a symlink")
-	}
-	if sessionsIsLink {
-		sessTarget, _ := os.Readlink(sessionsPath)
-		if sessTarget != filepath.Join(sharedHome, "sessions") {
-			t.Errorf("sessions symlink target = %q, want %q", sessTarget, filepath.Join(sharedHome, "sessions"))
-		}
-	} else if fi.IsDir() {
-		if _, err := os.Stat(sessionsPath); err != nil {
-			t.Fatalf("sessions link target should be accessible: %v", err)
-		}
+	if _, err := os.Lstat(sessionsPath); !os.IsNotExist(err) {
+		t.Fatalf("sessions should not be pre-linked into task codex-home, err=%v", err)
 	}
 
 	// auth.json should be a symlink.
 	authPath := filepath.Join(codexHome, "auth.json")
-	fi, err = os.Lstat(authPath)
+	fi, err := os.Lstat(authPath)
 	if err != nil {
 		t.Fatalf("auth.json not found: %v", err)
 	}
@@ -2067,7 +2053,8 @@ func TestPrepareCodexHomeSkipsMissingFiles(t *testing.T) {
 		t.Fatalf("prepareCodexHome failed: %v", err)
 	}
 
-	// Directory should contain sessions symlink + auto-generated config.toml.
+	// Directory should contain auto-generated config.toml and plugin cache
+	// exposure. Sessions are task-local and are created by Codex at runtime.
 	entries, err := os.ReadDir(codexHome)
 	if err != nil {
 		t.Fatalf("failed to read codex-home: %v", err)
@@ -2076,9 +2063,6 @@ func TestPrepareCodexHomeSkipsMissingFiles(t *testing.T) {
 	for _, e := range entries {
 		entryNames[e.Name()] = true
 	}
-	if !entryNames["sessions"] {
-		t.Error("expected sessions symlink")
-	}
 	if !entryNames["config.toml"] {
 		t.Error("expected config.toml (auto-generated for network access)")
 	}
@@ -2086,18 +2070,13 @@ func TestPrepareCodexHomeSkipsMissingFiles(t *testing.T) {
 		t.Error("expected plugins directory for plugin cache exposure")
 	}
 	for name := range entryNames {
-		if name != "sessions" && name != "config.toml" && name != "plugins" {
+		if name != "config.toml" && name != "plugins" {
 			t.Errorf("unexpected entry: %s", name)
 		}
 	}
-	// sessions should be a symlink to the shared sessions dir.
 	sessionsPath := filepath.Join(codexHome, "sessions")
-	fi, err := os.Lstat(sessionsPath)
-	if err != nil {
-		t.Fatalf("sessions not found: %v", err)
-	}
-	if fi.Mode()&os.ModeSymlink == 0 && runtime.GOOS != "windows" {
-		t.Error("sessions should be a symlink")
+	if _, err := os.Lstat(sessionsPath); !os.IsNotExist(err) {
+		t.Fatalf("sessions should not be pre-linked into task codex-home, err=%v", err)
 	}
 	if _, err := os.Stat(filepath.Join(codexHome, "plugins", "cache")); err != nil {
 		t.Fatalf("missing shared plugin cache exposure should still be tolerated and created: %v", err)

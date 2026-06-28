@@ -55,6 +55,7 @@ const (
 	DefaultWorkspaceSyncInterval   = 30 * time.Second
 	DefaultHealthPort              = 19514
 	DefaultMaxConcurrentTasks      = 20
+	DefaultCodexMinTaskInterval    = 10 * time.Second
 	DefaultGCInterval              = 1 * time.Hour
 	DefaultGCTTL                   = 24 * time.Hour // 1 day — AI-coding issues rarely stay open long
 	DefaultGCOrphanTTL             = 72 * time.Hour // 3 days — orphans with no meta (crashes, pre-GC leftovers)
@@ -97,6 +98,7 @@ type Config struct {
 	HeartbeatInterval              time.Duration
 	AgentTimeout                   time.Duration
 	CodexSemanticInactivityTimeout time.Duration
+	CodexMinTaskInterval           time.Duration // minimum spacing between Codex task starts on the same runtime (0 = disabled)
 	AgentIdleWatchdog              time.Duration // force-stop a run when the backend goes silent this long with an empty queue (0 = disabled)
 	AgentToolWatchdog              time.Duration // force-stop a run when a single tool call stays in flight (silent) this long (0 = disabled); backstop for hung tools now that there is no wall-clock cap
 	ClaudeArgs                     []string
@@ -357,6 +359,11 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		codexSemanticInactivityTimeout = overrides.CodexSemanticInactivityTimeout
 	}
 
+	codexMinTaskInterval, err := durationFromEnv("MULTICA_CODEX_MIN_TASK_INTERVAL", DefaultCodexMinTaskInterval)
+	if err != nil {
+		return Config{}, err
+	}
+
 	// MULTICA_AGENT_IDLE_WATCHDOG=0 disables the per-task idle watchdog. We
 	// route 0 through durationFromEnv so the operator can opt out without
 	// patching the binary; any positive duration overrides DefaultAgentIdleWatchdog.
@@ -432,6 +439,11 @@ func LoadConfig(overrides Overrides) (Config, error) {
 	workspacesRoot, err := ResolveWorkspacesRoot(profile, overrides.WorkspacesRoot)
 	if err != nil {
 		return Config{}, err
+	}
+	if _, ok := agents["codex"]; ok {
+		if err := ensureCodexRuntimeProfile(daemonID); err != nil {
+			return Config{}, fmt.Errorf("ensure codex runtime profile: %w", err)
+		}
 	}
 
 	// Health port: override > default
@@ -519,6 +531,7 @@ func LoadConfig(overrides Overrides) (Config, error) {
 		HeartbeatInterval:              heartbeatInterval,
 		AgentTimeout:                   agentTimeout,
 		CodexSemanticInactivityTimeout: codexSemanticInactivityTimeout,
+		CodexMinTaskInterval:           codexMinTaskInterval,
 		AgentIdleWatchdog:              agentIdleWatchdog,
 		AgentToolWatchdog:              agentToolWatchdog,
 		ClaudeArgs:                     claudeArgs,
