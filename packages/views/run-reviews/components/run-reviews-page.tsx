@@ -1,14 +1,14 @@
 "use client";
 
 import { useMemo, type ReactNode } from "react";
-import { Activity, AlertTriangle, CheckCircle2, GitBranch, ListChecks, Timer } from "lucide-react";
+import { Activity, AlertTriangle, CheckCircle2, GitBranch, ListChecks, Loader2, RotateCcw, Timer, WifiOff } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
-import { issueExecutionTreeOptions, issueListOptions } from "@multica/core/issues/queries";
+import { issueExecutionTreeOptions, issueKeys, issueListOptions } from "@multica/core/issues/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
-import type { Issue, IssueTimelineNode, IssueExecutionTreeResponse } from "@multica/core/types";
+import type { AgentTask, Issue, IssueTimelineNode, IssueExecutionTreeResponse } from "@multica/core/types";
 import { cn } from "@multica/ui/lib/utils";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { PageHeader } from "../../layout/page-header";
@@ -142,6 +142,7 @@ function RunReviewDetail({
   evalDraftHref: string;
   optimizerHref: string;
 }) {
+  const wsId = useWorkspaceId();
   const summary = tree?.issue_summary;
   const timelineNodes = tree?.timeline_nodes ?? [];
   const stageRows = buildStageRows(timelineNodes);
@@ -152,6 +153,24 @@ function RunReviewDetail({
   const missingChildLanes = childLanes.filter((lane) => !lane.issue);
   const eventRows = timelineNodes.slice(0, 12);
   const queryClient = useQueryClient();
+  const { data: tasks = [] } = useQuery({
+    queryKey: issueKeys.tasks(issue.id),
+    queryFn: () => api.listTasksByIssue(issue.id),
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  });
+  const activeTasks = useMemo(() => tasks.filter(isActiveTask), [tasks]);
+  const latestTerminalTask = useMemo(() => latestTerminalAgentTask(tasks), [tasks]);
+  const latestFailedTask = activeTasks.length === 0 && latestTerminalTask && isRetryableTask(latestTerminalTask)
+    ? latestTerminalTask
+    : null;
+  const taskStatusLabel = activeTasks.length > 0
+    ? `运行中 ${activeTasks.length}`
+    : latestFailedTask
+      ? "任务失败，待重试"
+      : latestTerminalTask
+        ? statusLabel(latestTerminalTask.status)
+        : "无运行任务";
   const createDraftMut = useMutation({
     mutationFn: () => createIssueReviewDraftCase(issue, tree, stageRows, childLanes),
     onSuccess: (created) => {
@@ -160,6 +179,19 @@ function RunReviewDetail({
     },
     onError: (error) => {
       toast.error(error instanceof Error ? error.message : "生成评测 Draft 失败");
+    },
+  });
+  const retryTaskMut = useMutation({
+    mutationFn: (taskId: string) => api.rerunIssue(issue.id, taskId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: issueKeys.tasks(issue.id) });
+      queryClient.invalidateQueries({ queryKey: issueKeys.executionTree(issue.id) });
+      queryClient.invalidateQueries({ queryKey: issueKeys.list(wsId) });
+      queryClient.invalidateQueries({ queryKey: issueKeys.detail(wsId, issue.id) });
+      toast.success("已重新入队最新失败任务");
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "重试失败任务失败");
     },
   });
   const createdDraft = createDraftMut.data;
@@ -177,6 +209,7 @@ function RunReviewDetail({
             <div className="mt-1 flex flex-wrap gap-2 text-xs text-muted-foreground">
               <span>项目：{issue.project?.title ?? "未绑定"}</span>
               <span>状态：{statusLabel(issue.status)}</span>
+              <span>任务：{taskStatusLabel}</span>
               <span>验收：{summary?.acceptance_status ?? "待运行"}</span>
             </div>
           </div>
@@ -202,6 +235,14 @@ function RunReviewDetail({
               查看 Draft
             </AppLink>
           </div>
+        )}
+
+        {latestFailedTask && (
+          <RunFailureBanner
+            task={latestFailedTask}
+            retrying={retryTaskMut.isPending}
+            onRetry={() => retryTaskMut.mutate(latestFailedTask.id)}
+          />
         )}
 
         <div className="grid gap-0 divide-y text-sm md:grid-cols-4 md:divide-x md:divide-y-0">
@@ -327,6 +368,46 @@ function RunReviewDetail({
           )}
         </div>
       </section>
+    </div>
+  );
+}
+
+function RunFailureBanner({
+  task,
+  retrying,
+  onRetry,
+}: {
+  task: AgentTask;
+  retrying: boolean;
+  onRetry: () => void;
+}) {
+  const failureReason = String(task.failure_reason ?? "");
+  const providerNetwork = failureReason === "agent_error.provider_network";
+  return (
+    <div className="flex flex-col gap-3 border-b bg-destructive/5 px-4 py-3 text-sm md:flex-row md:items-center md:justify-between">
+      <div className="flex min-w-0 gap-3">
+        <div className="mt-0.5 rounded-md border bg-background p-2 text-destructive">
+          {providerNetwork ? <WifiOff className="size-4" /> : <AlertTriangle className="size-4" />}
+        </div>
+        <div className="min-w-0">
+          <div className="font-medium text-destructive">
+            {providerNetwork ? "模型网络连接中断，网络恢复后可重试" : "最新任务失败，等待重试"}
+          </div>
+          <div className="mt-0.5 line-clamp-2 text-xs text-muted-foreground">
+            {task.error || failureReason || "未记录失败详情"}
+          </div>
+        </div>
+      </div>
+      <button
+        type="button"
+        className="inline-flex shrink-0 items-center justify-center gap-1.5 rounded border border-destructive/30 bg-background px-2.5 py-1.5 text-xs text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-60"
+        onClick={onRetry}
+        disabled={retrying}
+        data-testid="run-review-retry-latest-failed-task"
+      >
+        {retrying ? <Loader2 className="size-3.5 animate-spin" /> : <RotateCcw className="size-3.5" />}
+        重试最新失败任务
+      </button>
     </div>
   );
 }
@@ -536,10 +617,20 @@ function buildStageRows(nodes: IssueTimelineNode[]) {
   return STAGES.map((stage) => ({
     ...stage,
     node: nodes.filter((node) => {
-      const haystack = `${node.agent_name ?? ""} ${node.summary ?? ""} ${node.node_id ?? ""}`.toLowerCase();
-      return stage.names.some((name) => haystack.includes(name));
+      if (node.node_type !== "agent_task") return false;
+      const agentName = normalizeStageName(node.agent_name);
+      if (!agentName) return false;
+      return stage.names.some((name) => agentName === normalizeStageName(name));
     }).sort(compareStageNodeCandidates)[0],
   }));
+}
+
+function normalizeStageName(value: string | undefined) {
+  return (value ?? "")
+    .toLowerCase()
+    .replace(/[_\s]+/g, "-")
+    .replace(/^0([1-5])$/, "0$1")
+    .trim();
 }
 
 function compareStageNodeCandidates(left: IssueTimelineNode, right: IssueTimelineNode) {
@@ -565,6 +656,27 @@ function buildChildLanes(tree: IssueExecutionTreeResponse | undefined) {
     });
     return { key, label: key === "gateway" ? "gateway 子任务" : "ida-deployment 子任务", issue: child?.issue };
   });
+}
+
+function isActiveTask(task: AgentTask) {
+  return task.status === "queued" ||
+    task.status === "dispatched" ||
+    task.status === "waiting_local_directory" ||
+    task.status === "running";
+}
+
+function isRetryableTask(task: AgentTask) {
+  return task.status === "failed" || task.status === "cancelled";
+}
+
+function latestTerminalAgentTask(tasks: AgentTask[]) {
+  return tasks
+    .filter((task) => task.status === "completed" || task.status === "failed" || task.status === "cancelled")
+    .toSorted((a, b) => taskTimeMs(b) - taskTimeMs(a))[0];
+}
+
+function taskTimeMs(task: AgentTask) {
+  return parseTimeMs(task.completed_at ?? undefined) ?? parseTimeMs(task.started_at ?? undefined) ?? parseTimeMs(task.created_at) ?? 0;
 }
 
 async function createIssueReviewDraftCase(
