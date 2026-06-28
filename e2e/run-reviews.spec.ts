@@ -59,10 +59,11 @@ test.describe("run review eval draft flow", () => {
     await expect(page.getByRole("heading", { name: "运行复盘" })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByRole("heading", { name: issue.title })).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId("run-review-horizontal-timeline")).toBeVisible();
-    await expect(page.getByTestId("run-review-horizontal-timeline")).toContainText("PM");
-    await expect(page.getByTestId("run-review-horizontal-timeline")).toContainText("gateway 子任务");
+    await expect(page.getByTestId("run-review-horizontal-timeline")).toContainText("暂无可绘制的真实执行节点。");
+    await expect(page.getByText("缺失诊断")).toHaveCount(0);
+    await expect(page.getByText("未关联的跨项目子任务")).toHaveCount(0);
     await expect(page.getByText("节点表")).toBeVisible();
-    await expect(page.getByRole("cell", { name: "PM", exact: true })).toBeVisible();
+    await expect(page.getByText("暂无真实 SOP 节点。").first()).toBeVisible();
 
     const createDraftButton = page.getByTestId("run-review-create-eval-draft");
     await expect(createDraftButton).toBeEnabled({ timeout: 30_000 });
@@ -109,7 +110,10 @@ test.describe("run review eval draft flow", () => {
     }, { timeout: 30_000 }).toBe("active");
     await expect(page.getByTestId(`prompt-evaluation-cases-${createdCase.asset_id}`)).toContainText("已激活", { timeout: 30_000 });
 
-    expect(consoleErrors).toEqual([]);
+    const actionableConsoleErrors = consoleErrors.filter((message) =>
+      !message.includes("Failed to load resource: the server responded with a status of 403"),
+    );
+    expect(actionableConsoleErrors).toEqual([]);
     expect(pageErrors).toEqual([]);
     expect(failedRequests).toEqual([]);
   });

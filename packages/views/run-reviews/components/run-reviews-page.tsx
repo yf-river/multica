@@ -23,7 +23,6 @@ const STAGES = [
   { key: "05", label: "05 验证", names: ["05", "05-verify", "verify"] },
 ] as const;
 
-const TARGET_CHILD_PROJECTS = ["gateway", "ida-deployment"] as const;
 const ISSUE_REVIEW_DRAFT_DATASET_NAME = "Issue 复盘评测 Draft";
 
 export function RunReviewsPage() {
@@ -148,9 +147,7 @@ function RunReviewDetail({
   const stageRows = buildStageRows(timelineNodes);
   const childLanes = buildChildLanes(tree);
   const visibleStageRows = stageRows.filter((stage) => stage.node);
-  const visibleChildLanes = childLanes.filter((lane) => lane.issue);
-  const missingStageRows = stageRows.filter((stage) => !stage.node);
-  const missingChildLanes = childLanes.filter((lane) => !lane.issue);
+  const visibleChildLanes = childLanes;
   const eventRows = timelineNodes.slice(0, 12);
   const queryClient = useQueryClient();
   const { data: tasks = [] } = useQuery({
@@ -279,18 +276,8 @@ function RunReviewDetail({
         </div>
       </section>
 
-      {(missingStageRows.length > 0 || missingChildLanes.length > 0) && (
-        <section className="rounded-md border bg-card">
-          <SectionTitle title="缺失诊断" subtitle="这里展示预期链路中未出现的阶段或子任务，不作为已发生执行节点绘制。" />
-          <div className="grid gap-3 px-4 pb-4 text-sm md:grid-cols-2">
-            <MissingItems title="未出现的 SOP 阶段" items={missingStageRows.map((stage) => stage.label)} emptyText="SOP 阶段完整" />
-            <MissingItems title="未关联的跨项目子任务" items={missingChildLanes.map((lane) => lane.label)} emptyText="跨项目子任务完整" />
-          </div>
-        </section>
-      )}
-
       <section className="rounded-md border bg-card">
-        <SectionTitle title="节点表" subtitle="只展示执行树中真实匹配到的 SOP 节点；缺失项见诊断区。" />
+        <SectionTitle title="节点表" subtitle="只展示执行树中真实匹配到的 SOP 节点。" />
         <div className="hidden md:block">
           <table className="w-full table-fixed text-sm">
             <thead className="border-y bg-muted/40 text-left text-xs text-muted-foreground">
@@ -408,25 +395,6 @@ function RunFailureBanner({
         {retrying ? <Loader2 className="size-3.5 animate-spin" /> : <RotateCcw className="size-3.5" />}
         重试最新失败任务
       </button>
-    </div>
-  );
-}
-
-function MissingItems({ title, items, emptyText }: { title: string; items: string[]; emptyText: string }) {
-  return (
-    <div className="rounded-md border bg-muted/10 px-3 py-3">
-      <div className="text-xs font-medium text-muted-foreground">{title}</div>
-      {items.length > 0 ? (
-        <div className="mt-2 flex flex-wrap gap-1.5">
-          {items.map((item) => (
-            <span key={item} className="rounded border bg-background px-2 py-1 text-xs text-muted-foreground">
-              {item}
-            </span>
-          ))}
-        </div>
-      ) : (
-        <div className="mt-2 text-xs text-muted-foreground">{emptyText}</div>
-      )}
     </div>
   );
 }
@@ -649,13 +617,11 @@ function stageNodeScore(node: IssueTimelineNode) {
 }
 
 function buildChildLanes(tree: IssueExecutionTreeResponse | undefined) {
-  return TARGET_CHILD_PROJECTS.map((key) => {
-    const child = tree?.root?.children?.find((node) => {
-      const text = `${node.issue.project?.title ?? ""} ${node.issue.title} ${node.issue.identifier}`.toLowerCase();
-      return text.includes(key);
-    });
-    return { key, label: key === "gateway" ? "gateway 子任务" : "ida-deployment 子任务", issue: child?.issue };
-  });
+  return (tree?.root?.children ?? []).map((child) => ({
+    key: child.issue.id,
+    label: child.issue.project?.title || child.issue.title || child.issue.identifier || "子任务",
+    issue: child.issue,
+  }));
 }
 
 function isActiveTask(task: AgentTask) {
@@ -717,10 +683,10 @@ async function createIssueReviewDraftCase(
   }));
   const childFacts = childLanes.map((lane) => ({
     lane: lane.key,
-    issue_id: lane.issue?.id ?? null,
-    identifier: lane.issue?.identifier ?? null,
-    title: lane.issue?.title ?? null,
-    status: lane.issue?.status ?? "missing",
+    issue_id: lane.issue.id,
+    identifier: lane.issue.identifier,
+    title: lane.issue.title,
+    status: lane.issue.status,
   }));
   const caseName = `${issue.identifier ? `${issue.identifier} ` : ""}${issue.title}`.trim() || `issue ${issue.id}`;
   return api.createPromptEvaluationCase({
@@ -735,7 +701,7 @@ async function createIssueReviewDraftCase(
       current_status: issue.status,
       source: "run-review",
     },
-    expected_contains: ["PM", "01", "02", "03", "04", "05", "gateway", "ida-deployment", "evidence"],
+    expected_contains: ["PM", "01", "02", "03", "04", "05", "evidence"],
     input: {
       source: "run-review",
       issue: {
@@ -753,8 +719,8 @@ async function createIssueReviewDraftCase(
       },
     },
     expected: {
-      expected_behavior: "能复现该 issue 的 PM+01-05 执行链路，识别跨项目子任务，并保留可追溯证据。",
-      validation: "检查 DAG/子任务、阶段节点、token/耗时/轮次、gateway/ida-deployment child lane 和 evidence refs。",
+      expected_behavior: "能复现该 issue 的 PM+01-05 执行链路，识别实际关联的跨项目子任务，并保留可追溯证据。",
+      validation: "检查 DAG/子任务、阶段节点、token/耗时/轮次、实际 child lane 和 evidence refs。",
       approval_required: true,
       review_flow: "draft -> approved -> active",
     },
