@@ -620,3 +620,62 @@ func TestCreateComment_SquadMentionTriggersLeader(t *testing.T) {
 		t.Fatalf("after @squad mention: expected 1 leader task, got %d", got)
 	}
 }
+
+func TestCreateComment_MentionAssignedSquadLeaderCreatesLeaderRoleTask(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+
+	leaderID := createHandlerTestAgent(t, "Assigned Squad Mention Leader", nil)
+	var squadID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
+		VALUES ($1, $2, '', $3, $4)
+		RETURNING id
+	`, testWorkspaceID, "Assigned Leader Mention Squad "+randomID()[:8], leaderID, testUserID).Scan(&squadID); err != nil {
+		t.Fatalf("create squad: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+	})
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, status, creator_type, creator_id, assignee_type, assignee_id)
+		VALUES ($1, $2, 'todo', 'member', $3, 'squad', $4)
+		RETURNING id
+	`, testWorkspaceID, "assigned squad leader mention dedupe "+randomID()[:8], testUserID, squadID).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		testPool.Exec(context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+
+	w := httptest.NewRecorder()
+	r := newRequest("POST", "/api/issues/"+issueID+"/comments", map[string]any{
+		"content": "[@Leader](mention://agent/" + leaderID + ") please close this",
+	})
+	r = withURLParam(r, "id", issueID)
+	testHandler.CreateComment(w, r)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateComment: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var taskCount, leaderTaskCount, mentionTaskCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT
+			count(*)::int,
+			count(*) FILTER (WHERE is_leader_task IS TRUE)::int,
+			count(*) FILTER (WHERE COALESCE(is_leader_task, false) IS FALSE)::int
+		FROM agent_task_queue
+		WHERE issue_id = $1 AND agent_id = $2
+	`, issueID, leaderID).Scan(&taskCount, &leaderTaskCount, &mentionTaskCount); err != nil {
+		t.Fatalf("count leader mention tasks: %v", err)
+	}
+	if taskCount != 1 || leaderTaskCount != 1 || mentionTaskCount != 0 {
+		t.Fatalf("after @leader on assigned squad issue: task=%d leader=%d mention=%d, want 1/1/0", taskCount, leaderTaskCount, mentionTaskCount)
+	}
+}

@@ -12,7 +12,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/events"
@@ -896,135 +895,6 @@ func (s *TaskService) ensureSquadSOPRunForLeaderTask(ctx context.Context, issue 
 			"task_id", util.UUIDToString(task.ID),
 			"error", err)
 	}
-	if util.UUIDToString(run.LeaderTaskID) == util.UUIDToString(task.ID) && !task.TriggerCommentID.Valid {
-		s.enqueueSquadStageTasks(ctx, issue, squad, run, profile, task.ID)
-	}
-}
-
-type squadSOPStageStep struct {
-	Key     string
-	Name    string
-	RoleKey string
-}
-
-func (s *TaskService) enqueueSquadStageTasks(ctx context.Context, issue db.Issue, squad db.Squad, run db.SquadSopRun, profile []byte, leaderTaskID pgtype.UUID) {
-	steps := squadSOPProfileSteps(profile)
-	if len(steps) <= 1 {
-		return
-	}
-	members, err := s.Queries.ListSquadMembers(ctx, squad.ID)
-	if err != nil {
-		slog.Warn("squad SOP stage task planning skipped: list members failed",
-			"issue_id", util.UUIDToString(issue.ID),
-			"squad_id", util.UUIDToString(squad.ID),
-			"error", err)
-		return
-	}
-	for index, step := range steps {
-		if index == 0 {
-			continue
-		}
-		agentID, ok := squadStageAgentForStep(members, step)
-		if !ok {
-			slog.Warn("squad SOP stage task planning skipped: no agent for step",
-				"issue_id", util.UUIDToString(issue.ID),
-				"squad_id", util.UUIDToString(squad.ID),
-				"step_key", step.Key,
-				"role_key", step.RoleKey)
-			continue
-		}
-		agent, err := s.Queries.GetAgent(ctx, agentID)
-		if err != nil || agent.ArchivedAt.Valid || !agent.RuntimeID.Valid {
-			slog.Warn("squad SOP stage task planning skipped: agent unavailable",
-				"issue_id", util.UUIDToString(issue.ID),
-				"squad_id", util.UUIDToString(squad.ID),
-				"step_key", step.Key,
-				"agent_id", util.UUIDToString(agentID),
-				"error", err)
-			continue
-		}
-		summary := fmt.Sprintf("SOP stage %s: %s", step.Key, step.Name)
-		task, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
-			AgentID:           agentID,
-			RuntimeID:         agent.RuntimeID,
-			IssueID:           issue.ID,
-			Priority:          priorityToInt(issue.Priority),
-			TriggerSummary:    pgtype.Text{String: summary, Valid: true},
-			ParentTaskID:      leaderTaskID,
-			ForceFreshSession: pgtype.Bool{Bool: true, Valid: true},
-		})
-		if err != nil {
-			if isServiceUniqueViolation(err, "idx_one_pending_task_per_issue_agent") {
-				slog.Debug("squad SOP stage task planning skipped: stage task already pending",
-					"issue_id", util.UUIDToString(issue.ID),
-					"squad_id", util.UUIDToString(squad.ID),
-					"step_key", step.Key,
-					"agent_id", util.UUIDToString(agentID))
-				continue
-			}
-			slog.Warn("squad SOP stage task planning failed: create task",
-				"issue_id", util.UUIDToString(issue.ID),
-				"squad_id", util.UUIDToString(squad.ID),
-				"step_key", step.Key,
-				"agent_id", util.UUIDToString(agentID),
-				"error", err)
-			continue
-		}
-		if _, err := s.Queries.CreateSquadSOPStepEvent(ctx, db.CreateSquadSOPStepEventParams{
-			RunID:         run.ID,
-			WorkspaceID:   issue.WorkspaceID,
-			IssueID:       issue.ID,
-			SquadID:       squad.ID,
-			StepKey:       step.Key,
-			StepName:      step.Name,
-			RoleKey:       step.RoleKey,
-			EventType:     "步骤开始",
-			Status:        "待开始",
-			Reason:        "SOP 阶段任务已自动入队，等待对应 Agent 执行并回写阶段证据。",
-			CreatedByType: "system",
-			TaskID:        task.ID,
-		}); err != nil {
-			slog.Warn("squad SOP stage task planning failed: create event",
-				"run_id", util.UUIDToString(run.ID),
-				"task_id", util.UUIDToString(task.ID),
-				"step_key", step.Key,
-				"error", err)
-		}
-		s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
-		s.NotifyTaskEnqueued(ctx, task)
-	}
-}
-
-func isServiceUniqueViolation(err error, constraintName string) bool {
-	var pgErr *pgconn.PgError
-	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
-		return false
-	}
-	return constraintName == "" || pgErr.ConstraintName == constraintName
-}
-
-func squadSOPProfileSteps(profile []byte) []squadSOPStageStep {
-	var obj map[string]any
-	if json.Unmarshal(profile, &obj) != nil || obj == nil {
-		return nil
-	}
-	rawSteps, _ := obj["steps"].([]any)
-	steps := make([]squadSOPStageStep, 0, len(rawSteps))
-	for _, raw := range rawSteps {
-		step, _ := raw.(map[string]any)
-		if step == nil {
-			continue
-		}
-		out := squadSOPStageStep{
-			Key:     firstSOPStringField(step, "key", "step_key", "id"),
-			Name:    firstSOPStringField(step, "name", "title", "label"),
-			RoleKey: firstSOPStringField(step, "role_key", "role"),
-		}
-		if out.Key != "" {
-			steps = append(steps, out)
-		}
-	}
-	return steps
 }
 
 func firstSOPStringField(obj map[string]any, keys ...string) string {
@@ -1034,36 +904,6 @@ func firstSOPStringField(obj map[string]any, keys ...string) string {
 		}
 	}
 	return ""
-}
-
-func squadStageAgentForStep(members []db.SquadMember, step squadSOPStageStep) (pgtype.UUID, bool) {
-	for _, member := range members {
-		if member.MemberType != "agent" {
-			continue
-		}
-		if squadMemberRoleMatchesStep(member.Role, step) {
-			return member.MemberID, true
-		}
-	}
-	return pgtype.UUID{}, false
-}
-
-func squadMemberRoleMatchesStep(role string, step squadSOPStageStep) bool {
-	normalizedRole := normalizeSOPRoleForMatch(role)
-	for _, candidate := range []string{step.RoleKey, step.Key, step.Name} {
-		if normalizedRole == normalizeSOPRoleForMatch(candidate) {
-			return true
-		}
-	}
-	return false
-}
-
-func normalizeSOPRoleForMatch(value string) string {
-	value = strings.ToLower(strings.TrimSpace(value))
-	value = strings.ReplaceAll(value, " ", "")
-	value = strings.ReplaceAll(value, "-", "")
-	value = strings.ReplaceAll(value, "_", "")
-	return value
 }
 
 func normalizeSquadSOPProfile(raw []byte) []byte {

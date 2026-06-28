@@ -87,19 +87,20 @@ func (q *Queries) CountSquadMembers(ctx context.Context, squadID pgtype.UUID) (i
 }
 
 const createSquad = `-- name: CreateSquad :one
-INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, avatar_url, sop_profile)
-VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7::jsonb, '{}'::jsonb))
+INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, avatar_url, instructions, sop_profile)
+VALUES ($1, $2, $3, $4, $5, $6, COALESCE($7, ''), COALESCE($8::jsonb, '{}'::jsonb))
 RETURNING id, workspace_id, name, description, leader_id, creator_id, created_at, updated_at, archived_at, archived_by, avatar_url, instructions, sop_profile
 `
 
 type CreateSquadParams struct {
-	WorkspaceID pgtype.UUID `json:"workspace_id"`
-	Name        string      `json:"name"`
-	Description string      `json:"description"`
-	LeaderID    pgtype.UUID `json:"leader_id"`
-	CreatorID   pgtype.UUID `json:"creator_id"`
-	AvatarUrl   pgtype.Text `json:"avatar_url"`
-	SopProfile  []byte      `json:"sop_profile"`
+	WorkspaceID  pgtype.UUID `json:"workspace_id"`
+	Name         string      `json:"name"`
+	Description  string      `json:"description"`
+	LeaderID     pgtype.UUID `json:"leader_id"`
+	CreatorID    pgtype.UUID `json:"creator_id"`
+	AvatarUrl    pgtype.Text `json:"avatar_url"`
+	Instructions interface{} `json:"instructions"`
+	SopProfile   []byte      `json:"sop_profile"`
 }
 
 func (q *Queries) CreateSquad(ctx context.Context, arg CreateSquadParams) (Squad, error) {
@@ -110,6 +111,7 @@ func (q *Queries) CreateSquad(ctx context.Context, arg CreateSquadParams) (Squad
 		arg.LeaderID,
 		arg.CreatorID,
 		arg.AvatarUrl,
+		arg.Instructions,
 		arg.SopProfile,
 	)
 	var i Squad

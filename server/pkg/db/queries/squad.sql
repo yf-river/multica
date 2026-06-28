@@ -1,6 +1,6 @@
 -- name: CreateSquad :one
-INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, avatar_url, sop_profile)
-VALUES ($1, $2, $3, $4, $5, $6, COALESCE(sqlc.narg('sop_profile')::jsonb, '{}'::jsonb))
+INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, avatar_url, instructions, sop_profile)
+VALUES ($1, $2, $3, $4, $5, $6, COALESCE(sqlc.narg('instructions'), ''), COALESCE(sqlc.narg('sop_profile')::jsonb, '{}'::jsonb))
 RETURNING *;
 
 -- name: GetSquad :one

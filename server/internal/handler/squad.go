@@ -94,6 +94,9 @@ type internalSquadRole struct {
 	MCPConfig   []byte
 }
 
+const sopPMRoutingRule = "调度规则：只有 pm 可以 @mention 下一阶段 Agent；每次只 @mention 一个下一阶段；收到阶段 handoff 后先判断通过、返工、推进或收口，再由 pm 发出唯一调度评论；不要先发无 mention 的重复调度评论。"
+const sopWorkerRoutingRule = "阶段路由规则：本角色不得 @mention 任何 Agent、Squad、Member 或 all，不得直接触发下一阶段；只输出本阶段结论、证据、阻断和 handoff 给 pm，由 pm 判断通过、返工、推进或收口。"
+
 func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 	switch strings.TrimSpace(key) {
 	case "user-center":
@@ -102,15 +105,15 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 			Key:          "user-center-sop-flow",
 			Name:         "pm",
 			Description:  "唯一 SOP 流程执行小队，由 pm 按 pm -> 01-clarify -> 02-design -> 03-task-split -> 04-implement -> 05-verify 阶段链推进，并根据 issue 指定的项目、仓库和 source_context 选择对应项目 skill。",
-			Instructions: "pm 按 SOP 分阶段推进；每个阶段都要记录输入、输出、失败原因、耗时和验收证据；不得跳过验收。目标项目、仓库、分支、TAPD/Gongfeng 真源和可用 operation skill 必须来自 issue、项目资源或 source_context，不能写死为某几个仓库。单项目需求、TAPD 正文抓取后的真实需求、以及 01-05 阶段推进，默认都在当前 issue 的评论、任务轨迹和阶段流中继续，不得为了进入下一阶段创建同项目 child issue。只有遇到明确跨项目依赖时，pm 才能先创建对应目标项目的待规划子 issue，并确认父子关系、项目和目标小队指派正确；不得只评论或委派 03 代替创建。06-archive 不属于必跑阶段。",
+			Instructions: "pm 按 SOP 分阶段推进；每个阶段都要记录输入、输出、失败原因、耗时和验收证据；不得跳过验收。" + sopPMRoutingRule + "目标项目、仓库、分支、TAPD/Gongfeng 真源和可用 operation skill 必须来自 issue、项目资源或 source_context，不能写死为某几个仓库。单项目需求、TAPD 正文抓取后的真实需求、以及 01-05 阶段推进，默认都在当前 issue 的评论、任务轨迹和阶段流中继续，不得为了进入下一阶段创建同项目 child issue。只有遇到明确跨项目依赖时，pm 才能先创建对应目标项目的待规划子 issue，并确认父子关系、项目和目标小队指派正确；不得只评论或委派 03 代替创建。06-archive 不属于必跑阶段。",
 			Model:        promptEvaluationAgentModel(),
 			Roles: []internalSquadRole{
-				{Key: "pm", Name: "pm", AgentName: "pm", Description: "SOP 队长：读取 issue、项目资源和 source_context，识别目标项目与跨项目依赖，调度 01-05 阶段；只有跨项目协作才创建必要 child issue。", Instruction: "接收 issue 和 TAPD 输入，必须先根据 source_context 使用 mcp-server-tapd 读取 TAPD 正文；遇到 git.code.tencent.com 链接或项目资源时使用 gongfeng MCP 解析。根据 issue 指定项目、项目资源、仓库路径和可用 operation skill 决定本轮目标项目，推进 pm -> 01-clarify -> 02-design -> 03-task-split -> 04-implement -> 05-verify。TAPD 正文抓取后得到的真实需求仍属于当前 issue，不得复制成同项目 child issue；不得为了进入 01-clarify、02-design、03-task-split、04-implement 或 05-verify 创建 child issue。若父任务或 profile 要求创建跨项目子 issue，pm 必须本人先创建对应目标项目的 backlog 子 issue，并确认 parent、project、assignee 都正确；不得只写评论、不得等待或委派 03 创建。", MemberRole: "pm", MCPConfig: mcpConfig},
-				{Key: "01-clarify", Name: "01-clarify", AgentName: "01-clarify", Description: "需求澄清：读取 TAPD/source_context 和项目资源，明确需求边界、验收口径、目标仓库与可用/缺失 operation skill。", Instruction: "执行目标项目的 01-clarify；先读取 source_context 中的 TAPD 正文和项目资源，产出需求边界、验收口径、适用仓库、可用/缺失 operation skill 和 handoff。", MemberRole: "01-clarify", MCPConfig: mcpConfig},
-				{Key: "02-design", Name: "02-design", AgentName: "02-design", Description: "方案设计：结合目标仓库上下文输出方案、影响面、接口/数据契约和项目 skill 调用计划。", Instruction: "执行目标项目的 02-design；需要仓库上下文时使用 gongfeng MCP 或本地仓库，产出方案、影响面、接口/数据契约、项目 skill 调用计划和 handoff。", MemberRole: "02-design", MCPConfig: mcpConfig},
-				{Key: "03-task-split", Name: "03-task-split", AgentName: "03-task-split", Description: "任务拆分：识别跨项目依赖，产出目标项目列表、operation graph、缺失 skill 和 handoff。", Instruction: "执行目标项目的 03-task-split；用 TAPD/Gongfeng/项目资源上下文识别跨项目依赖，产出任务拆分、目标项目列表、operation graph、缺失 skill 和 handoff。", MemberRole: "03-task-split", MCPConfig: mcpConfig},
-				{Key: "04-implement", Name: "04-implement", AgentName: "04-implement", Description: "代码实现：按既定边界和目标项目 operation skill 执行修改，保留实现证据，不越权扩散。", Instruction: "执行目标项目的 04-implement，按既定边界和对应项目 operation skill 实现，不越权修改无关模块；需要工蜂上下文时使用 gongfeng MCP。", MemberRole: "04-implement", MCPConfig: mcpConfig},
-				{Key: "05-verify", Name: "05-verify", AgentName: "05-verify", Description: "测试验证：独立检查实现、测试结果、回写记录和最终 handoff，确认可验收证据。", Instruction: "执行目标项目的 05-verify，独立检查实现、测试结果、回写记录和最终 handoff；核对 TAPD/Gongfeng/source_context 证据。", MemberRole: "05-verify", MCPConfig: mcpConfig},
+				{Key: "pm", Name: "pm", AgentName: "pm", Description: "SOP 队长：读取 issue、项目资源和 source_context，识别目标项目与跨项目依赖，调度 01-05 阶段；只有跨项目协作才创建必要 child issue。", Instruction: "接收 issue 和 TAPD 输入，必须先根据 source_context 使用 mcp-server-tapd 读取 TAPD 正文；遇到 git.code.tencent.com 链接或项目资源时使用 gongfeng MCP 解析。根据 issue 指定项目、项目资源、仓库路径和可用 operation skill 决定本轮目标项目，推进 pm -> 01-clarify -> 02-design -> 03-task-split -> 04-implement -> 05-verify。" + sopPMRoutingRule + "TAPD 正文抓取后得到的真实需求仍属于当前 issue，不得复制成同项目 child issue；不得为了进入 01-clarify、02-design、03-task-split、04-implement 或 05-verify 创建 child issue。若父任务或 profile 要求创建跨项目子 issue，pm 必须本人先创建对应目标项目的 backlog 子 issue，并确认 parent、project、assignee 都正确；不得只写评论、不得等待或委派 03 创建。", MemberRole: "pm", MCPConfig: mcpConfig},
+				{Key: "01-clarify", Name: "01-clarify", AgentName: "01-clarify", Description: "需求澄清：读取 TAPD/source_context 和项目资源，明确需求边界、验收口径、目标仓库与可用/缺失 operation skill。", Instruction: "执行目标项目的 01-clarify；先读取 source_context 中的 TAPD 正文和项目资源，产出需求边界、验收口径、适用仓库、可用/缺失 operation skill 和 handoff。" + sopWorkerRoutingRule, MemberRole: "01-clarify", MCPConfig: mcpConfig},
+				{Key: "02-design", Name: "02-design", AgentName: "02-design", Description: "方案设计：结合目标仓库上下文输出方案、影响面、接口/数据契约和项目 skill 调用计划。", Instruction: "执行目标项目的 02-design；需要仓库上下文时使用 gongfeng MCP 或本地仓库，产出方案、影响面、接口/数据契约、项目 skill 调用计划和 handoff。" + sopWorkerRoutingRule, MemberRole: "02-design", MCPConfig: mcpConfig},
+				{Key: "03-task-split", Name: "03-task-split", AgentName: "03-task-split", Description: "任务拆分：识别跨项目依赖，产出目标项目列表、operation graph、缺失 skill 和 handoff。", Instruction: "执行目标项目的 03-task-split；用 TAPD/Gongfeng/项目资源上下文识别跨项目依赖，产出任务拆分、目标项目列表、operation graph、缺失 skill 和 handoff。" + sopWorkerRoutingRule, MemberRole: "03-task-split", MCPConfig: mcpConfig},
+				{Key: "04-implement", Name: "04-implement", AgentName: "04-implement", Description: "代码实现：按既定边界和目标项目 operation skill 执行修改，保留实现证据，不越权扩散。", Instruction: "执行目标项目的 04-implement，按既定边界和对应项目 operation skill 实现，不越权修改无关模块；需要工蜂上下文时使用 gongfeng MCP。" + sopWorkerRoutingRule, MemberRole: "04-implement", MCPConfig: mcpConfig},
+				{Key: "05-verify", Name: "05-verify", AgentName: "05-verify", Description: "测试验证：独立检查实现、测试结果、回写记录和最终 handoff，确认可验收证据。", Instruction: "执行目标项目的 05-verify，独立检查实现、测试结果和最终 handoff；核对 TAPD/Gongfeng/source_context 证据。" + sopWorkerRoutingRule, MemberRole: "05-verify", MCPConfig: mcpConfig},
 			},
 			Profile: map[string]any{
 				"profile_key": "generic-project-sop-flow",
@@ -118,12 +121,12 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 				"repo":        "<target-repo-from-project-resource>",
 				"mode":        "stage_chain",
 				"roles": []map[string]any{
-					{"key": "pm", "name": "pm", "responsibility": "接收 issue/TAPD 输入，读取项目资源和 source_context，检查阶段产物，处理阻断，推进 pm -> 01-clarify -> 02-design -> 03-task-split -> 04-implement -> 05-verify；单项目阶段推进必须留在当前 issue，遇到跨项目依赖时才直接创建对应目标项目的 backlog 子 issue，并确认父子关系、项目和目标小队指派正确，不能只委派 03 或写评论。"},
-					{"key": "01-clarify", "name": "01-clarify", "responsibility": "执行目标项目的 01-clarify，明确需求边界、验收口径、目标仓库、可用/缺失 operation skill 和 handoff。"},
-					{"key": "02-design", "name": "02-design", "responsibility": "执行目标项目的 02-design，输出方案、影响面、接口/数据契约、项目 skill 调用计划和 handoff。"},
-					{"key": "03-task-split", "name": "03-task-split", "responsibility": "执行目标项目的 03-task-split，输出任务拆分、跨项目依赖、operation graph 和 handoff。"},
-					{"key": "04-implement", "name": "04-implement", "responsibility": "执行目标项目的 04-implement，按边界和对应项目 operation skill 实现并保留证据。"},
-					{"key": "05-verify", "name": "05-verify", "responsibility": "执行目标项目的 05-verify，独立验证、总结证据和最终 handoff。"},
+					{"key": "pm", "name": "pm", "responsibility": "接收 issue/TAPD 输入，读取项目资源和 source_context，检查阶段产物，处理阻断，推进 pm -> 01-clarify -> 02-design -> 03-task-split -> 04-implement -> 05-verify；只有 pm 可以 @mention 下一阶段 Agent；单项目阶段推进必须留在当前 issue，遇到跨项目依赖时才直接创建对应目标项目的 backlog 子 issue，并确认父子关系、项目和目标小队指派正确，不能只委派 03 或写评论。"},
+					{"key": "01-clarify", "name": "01-clarify", "responsibility": "执行目标项目的 01-clarify，明确需求边界、验收口径、目标仓库、可用/缺失 operation skill 和 handoff；不得 @mention 下一阶段或任何负责人。"},
+					{"key": "02-design", "name": "02-design", "responsibility": "执行目标项目的 02-design，输出方案、影响面、接口/数据契约、项目 skill 调用计划和 handoff；不得 @mention 下一阶段或任何负责人。"},
+					{"key": "03-task-split", "name": "03-task-split", "responsibility": "执行目标项目的 03-task-split，输出任务拆分、跨项目依赖、operation graph 和 handoff；不得 @mention 下一阶段或任何负责人。"},
+					{"key": "04-implement", "name": "04-implement", "responsibility": "执行目标项目的 04-implement，按边界和对应项目 operation skill 实现并保留证据；不得 @mention 下一阶段或任何负责人。"},
+					{"key": "05-verify", "name": "05-verify", "responsibility": "执行目标项目的 05-verify，独立验证、总结证据和最终 handoff；不得 @mention 下一阶段或任何负责人。"},
 				},
 				"steps": []map[string]any{
 					{"key": "pm", "name": "pm", "role_key": "pm"},
@@ -159,7 +162,7 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 					},
 				},
 				"archive_policy":    "06-archive 不作为必跑阶段；最终结论、证据摘要和 handoff 状态由 05-verify 输出。",
-				"forbidden_actions": []string{"跳过验收直接完成", "缺少测试证据时宣称完成", "未确认目标项目就调用项目 skill", "把 06-archive 当作必跑验收阶段", "只评论或委派 03 代替 PM 创建跨项目子 issue", "把 TAPD 正文抓取后的真实需求复制成同项目 child issue", "为了进入 01-clarify/02-design/03-task-split/04-implement/05-verify 创建 child issue"},
+				"forbidden_actions": []string{"跳过验收直接完成", "缺少测试证据时宣称完成", "未确认目标项目就调用项目 skill", "把 06-archive 当作必跑验收阶段", "只评论或委派 03 代替 PM 创建跨项目子 issue", "把 TAPD 正文抓取后的真实需求复制成同项目 child issue", "为了进入 01-clarify/02-design/03-task-split/04-implement/05-verify 创建 child issue", "01-05 阶段 Agent @mention 下一阶段或任何负责人", "PM 一次评论 @mention 多个下一阶段"},
 			},
 		}, true
 	case "multica-coding":
@@ -450,13 +453,14 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 	}
 
 	squad, err := h.Queries.CreateSquad(r.Context(), db.CreateSquadParams{
-		WorkspaceID: wsUUID,
-		Name:        req.Name,
-		Description: req.Description,
-		LeaderID:    leaderUUID,
-		CreatorID:   member.UserID,
-		AvatarUrl:   avatarURL,
-		SopProfile:  sopProfile,
+		WorkspaceID:  wsUUID,
+		Name:         req.Name,
+		Description:  req.Description,
+		LeaderID:     leaderUUID,
+		CreatorID:    member.UserID,
+		AvatarUrl:    avatarURL,
+		Instructions: pgtype.Text{},
+		SopProfile:   sopProfile,
 	})
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create squad")
@@ -692,12 +696,13 @@ func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UU
 		}
 		sopProfile := mustJSONBytes(template.Profile)
 		squad, err = h.Queries.CreateSquad(ctx, db.CreateSquadParams{
-			WorkspaceID: workspaceID,
-			Name:        template.Name,
-			Description: template.Description,
-			LeaderID:    parseUUID(agents[0].ID),
-			CreatorID:   creatorID,
-			SopProfile:  sopProfile,
+			WorkspaceID:  workspaceID,
+			Name:         template.Name,
+			Description:  template.Description,
+			LeaderID:     parseUUID(agents[0].ID),
+			CreatorID:    creatorID,
+			Instructions: pgtype.Text{String: template.Instructions, Valid: true},
+			SopProfile:   sopProfile,
 		})
 		if err != nil {
 			return db.Squad{}, err

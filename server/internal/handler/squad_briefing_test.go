@@ -1,10 +1,8 @@
 package handler
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
@@ -373,6 +371,8 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 		"禁止事项：",
 		"把 TAPD 正文抓取后的真实需求复制成同项目 child issue",
 		"为了进入 01-clarify/02-design/03-task-split/04-implement/05-verify 创建 child issue",
+		"只有 pm 可以 @mention 下一阶段 Agent",
+		"01-05 阶段 Agent @mention 下一阶段或任何负责人",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("expected user-center SOP briefing to contain %q\n--- output ---\n%s", want, out)
@@ -381,20 +381,33 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 	if !strings.Contains(template.Instructions, "不得为了进入下一阶段创建同项目 child issue") {
 		t.Fatalf("user-center template instructions must forbid same-project stage child issues:\n%s", template.Instructions)
 	}
+	if !strings.Contains(template.Instructions, "只有 pm 可以 @mention 下一阶段 Agent") {
+		t.Fatalf("user-center template instructions must reserve stage routing to pm:\n%s", template.Instructions)
+	}
 	pmRoleFound := false
 	for _, role := range template.Roles {
-		if role.Key != "pm" {
+		if role.Key == "pm" {
+			pmRoleFound = true
+			for _, want := range []string{
+				"TAPD 正文抓取后得到的真实需求仍属于当前 issue",
+				"不得复制成同项目 child issue",
+				"不得为了进入 01-clarify、02-design、03-task-split、04-implement 或 05-verify 创建 child issue",
+				"只有跨项目协作才创建必要 child issue",
+				"只有 pm 可以 @mention 下一阶段 Agent",
+			} {
+				if !strings.Contains(role.Instruction+role.Description, want) {
+					t.Fatalf("pm role must contain %q\n--- role ---\n%+v", want, role)
+				}
+			}
 			continue
 		}
-		pmRoleFound = true
 		for _, want := range []string{
-			"TAPD 正文抓取后得到的真实需求仍属于当前 issue",
-			"不得复制成同项目 child issue",
-			"不得为了进入 01-clarify、02-design、03-task-split、04-implement 或 05-verify 创建 child issue",
-			"只有跨项目协作才创建必要 child issue",
+			"不得 @mention 任何 Agent、Squad、Member 或 all",
+			"不得直接触发下一阶段",
+			"由 pm 判断通过、返工、推进或收口",
 		} {
-			if !strings.Contains(role.Instruction+role.Description, want) {
-				t.Fatalf("pm role must contain %q\n--- role ---\n%+v", want, role)
+			if !strings.Contains(role.Instruction, want) {
+				t.Fatalf("%s role must contain %q\n--- role ---\n%+v", role.Key, want, role)
 			}
 		}
 	}
@@ -433,9 +446,16 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 	if w.Code != http.StatusOK {
 		t.Fatalf("ensure user-center internal squad status = %d, body = %s", w.Code, w.Body.String())
 	}
+	var ensured InternalSquadTemplateResponse
+	if err := json.NewDecoder(w.Body).Decode(&ensured); err != nil {
+		t.Fatalf("decode ensured internal squad response: %v", err)
+	}
+	if !strings.Contains(ensured.Squad.Instructions, "只有 pm 可以 @mention 下一阶段 Agent") {
+		t.Fatalf("first-created internal squad must persist routing instructions:\n%s", ensured.Squad.Instructions)
+	}
 
 	rows, err := testPool.Query(ctx, `
-		SELECT name, mcp_config
+		SELECT name, instructions, mcp_config
 		FROM agent
 		WHERE workspace_id = $1 AND name IN ('pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify')
 		ORDER BY name
@@ -447,11 +467,18 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 	count := 0
 	for rows.Next() {
 		var name string
+		var instructions string
 		var raw []byte
-		if err := rows.Scan(&name, &raw); err != nil {
+		if err := rows.Scan(&name, &instructions, &raw); err != nil {
 			t.Fatalf("scan user-center agent: %v", err)
 		}
 		count++
+		if name == "pm" && !strings.Contains(instructions, "只有 pm 可以 @mention 下一阶段 Agent") {
+			t.Fatalf("pm instructions must reserve stage routing to pm:\n%s", instructions)
+		}
+		if name != "pm" && !strings.Contains(instructions, "不得 @mention 任何 Agent、Squad、Member 或 all") {
+			t.Fatalf("%s instructions must forbid worker mentions:\n%s", name, instructions)
+		}
 		var mcp struct {
 			MCPServers map[string]json.RawMessage `json:"mcpServers"`
 		}
@@ -507,7 +534,7 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 	}
 }
 
-func TestUserCenterSquadAssignmentCreatesStageTasks(t *testing.T) {
+func TestUserCenterSquadAssignmentDoesNotPrecreateStageTasks(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")
 	}
@@ -585,16 +612,19 @@ func TestUserCenterSquadAssignmentCreatesStageTasks(t *testing.T) {
 	if err := rows.Err(); err != nil {
 		t.Fatalf("iterate stage evidence: %v", err)
 	}
-	for _, stepKey := range []string{"pm", "01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"} {
-		got, ok := seen[stepKey]
-		if !ok {
-			t.Fatalf("missing SOP stage start event for %s; seen=%+v", stepKey, seen)
-		}
-		if strings.TrimSpace(got.TaskID) == "" {
-			t.Fatalf("stage %s missing task_id", stepKey)
-		}
-		if got.TraceCount == 0 {
-			t.Fatalf("stage %s task %s missing trace event", stepKey, got.TaskID)
+	pm, ok := seen["pm"]
+	if !ok {
+		t.Fatalf("missing SOP leader start event for pm; seen=%+v", seen)
+	}
+	if strings.TrimSpace(pm.TaskID) == "" {
+		t.Fatalf("pm stage missing task_id")
+	}
+	if pm.TraceCount == 0 {
+		t.Fatalf("pm stage task %s missing trace event", pm.TaskID)
+	}
+	for _, stepKey := range []string{"01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"} {
+		if _, ok := seen[stepKey]; ok {
+			t.Fatalf("SOP assignment pre-created %s stage event; seen=%+v", stepKey, seen)
 		}
 	}
 
@@ -614,9 +644,11 @@ func TestUserCenterSquadAssignmentCreatesStageTasks(t *testing.T) {
 		FROM agent_task_queue
 		WHERE issue_id = $1
 		  AND COALESCE(is_leader_task, false) IS FALSE
-		  AND status IN ('queued', 'dispatched')
 	`, created.ID).Scan(&workerTaskCountBefore); err != nil {
-		t.Fatalf("count worker tasks before duplicate planning: %v", err)
+		t.Fatalf("count worker tasks after squad assignment: %v", err)
+	}
+	if workerTaskCountBefore != 0 {
+		t.Fatalf("squad assignment pre-created %d worker stage tasks; want 0", workerTaskCountBefore)
 	}
 	if _, err := testPool.Exec(ctx, `
 		UPDATE agent_task_queue
@@ -624,55 +656,6 @@ func TestUserCenterSquadAssignmentCreatesStageTasks(t *testing.T) {
 		WHERE id = $1
 	`, leaderTaskID); err != nil {
 		t.Fatalf("complete leader task: %v", err)
-	}
-	var stageOneTaskID, stageOneAgentID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT id::text, agent_id::text
-		FROM agent_task_queue
-		WHERE issue_id = $1 AND trigger_summary LIKE 'SOP stage 01-clarify:%'
-		ORDER BY created_at ASC
-		LIMIT 1
-	`, created.ID).Scan(&stageOneTaskID, &stageOneAgentID); err != nil {
-		t.Fatalf("query stage 01 task: %v", err)
-	}
-	var activeLeaderBeforeComment int
-	if err := testPool.QueryRow(ctx, `
-		SELECT count(*)::int
-		FROM agent_task_queue
-		WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
-	`, created.ID, ensured.Squad.LeaderID).Scan(&activeLeaderBeforeComment); err != nil {
-		t.Fatalf("count active leader before stage comment: %v", err)
-	}
-	if activeLeaderBeforeComment != 0 {
-		t.Fatalf("precondition: expected no active leader task before stage comment, got %d", activeLeaderBeforeComment)
-	}
-	w = httptest.NewRecorder()
-	req = newRequest(http.MethodPost, "/api/issues/"+created.ID+"/comments", map[string]any{
-		"content": "01 阶段已完成澄清，回写阶段证据。",
-	})
-	req.Header.Set("X-Agent-ID", stageOneAgentID)
-	req.Header.Set("X-Task-ID", stageOneTaskID)
-	testHandler.CreateComment(w, withURLParam(req, "id", created.ID))
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateComment from SOP worker stage: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var stageComment CommentResponse
-	if err := json.NewDecoder(w.Body).Decode(&stageComment); err != nil {
-		t.Fatalf("decode stage comment: %v", err)
-	}
-	if stageComment.SourceTaskID == nil || *stageComment.SourceTaskID != stageOneTaskID {
-		t.Fatalf("stage comment source_task_id = %v, want %s", stageComment.SourceTaskID, stageOneTaskID)
-	}
-	var activeLeaderAfterComment int
-	if err := testPool.QueryRow(ctx, `
-		SELECT count(*)::int
-		FROM agent_task_queue
-		WHERE issue_id = $1 AND agent_id = $2 AND status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
-	`, created.ID, ensured.Squad.LeaderID).Scan(&activeLeaderAfterComment); err != nil {
-		t.Fatalf("count active leader after stage comment: %v", err)
-	}
-	if activeLeaderAfterComment != 0 {
-		t.Fatalf("SOP worker stage comment re-enqueued leader task; active leader tasks = %d", activeLeaderAfterComment)
 	}
 	if _, err := testPool.Exec(ctx, `
 		UPDATE squad_sop_run
@@ -685,17 +668,9 @@ func TestUserCenterSquadAssignmentCreatesStageTasks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load created issue: %v", err)
 	}
-	var logs bytes.Buffer
-	prevLogger := slog.Default()
-	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
-	defer slog.SetDefault(prevLogger)
 	_, err = testHandler.TaskService.EnqueueTaskForSquadLeader(ctx, issue, parseUUID(ensured.Squad.LeaderID), pgtype.UUID{})
-	slog.SetDefault(prevLogger)
 	if err != nil {
 		t.Fatalf("second leader enqueue: %v", err)
-	}
-	if strings.Contains(logs.String(), "squad SOP stage task planning failed: create task") {
-		t.Fatalf("duplicate stage planning should be idempotent, got logs:\n%s", logs.String())
 	}
 	var workerTaskCountAfter int
 	if err := testPool.QueryRow(ctx, `
@@ -703,12 +678,11 @@ func TestUserCenterSquadAssignmentCreatesStageTasks(t *testing.T) {
 		FROM agent_task_queue
 		WHERE issue_id = $1
 		  AND COALESCE(is_leader_task, false) IS FALSE
-		  AND status IN ('queued', 'dispatched')
 	`, created.ID).Scan(&workerTaskCountAfter); err != nil {
-		t.Fatalf("count worker tasks after duplicate planning: %v", err)
+		t.Fatalf("count worker tasks after second leader enqueue: %v", err)
 	}
-	if workerTaskCountAfter != workerTaskCountBefore {
-		t.Fatalf("duplicate planning changed worker task count: before=%d after=%d", workerTaskCountBefore, workerTaskCountAfter)
+	if workerTaskCountAfter != 0 {
+		t.Fatalf("second leader enqueue pre-created %d worker stage tasks; want 0", workerTaskCountAfter)
 	}
 }
 

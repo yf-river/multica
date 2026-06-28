@@ -1495,6 +1495,16 @@ func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issu
 		if err != nil || hasPending {
 			continue
 		}
+		if issue.AssigneeType.Valid && issue.AssigneeType.String == "squad" && issue.AssigneeID.Valid {
+			squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
+				ID:          issue.AssigneeID,
+				WorkspaceID: issue.WorkspaceID,
+			})
+			if err == nil && uuidToString(squad.LeaderID) == uuidToString(agentUUID) {
+				add(commentAgentTrigger{Agent: agent, Source: commentTriggerSourceMentionSquadLeader, Squad: &squad})
+				continue
+			}
+		}
 		add(commentAgentTrigger{Agent: agent, Source: commentTriggerSourceMentionAgent})
 	}
 	return triggers
