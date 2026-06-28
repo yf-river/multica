@@ -712,6 +712,87 @@ func TestUserCenterSquadAssignmentCreatesStageTasks(t *testing.T) {
 	}
 }
 
+func TestSquadLeaderCommentTriggerDoesNotCreateStageTasks(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	ctx := context.Background()
+	cleanup := func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id IN (SELECT id FROM issue WHERE workspace_id = $1 AND title LIKE 'comment-trigger stage task test%')`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE workspace_id = $1 AND title LIKE 'comment-trigger stage task test%')`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name IN ('pm', 'user-center 小队')`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND (name IN ('pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify') OR name LIKE 'user-center 小队 · %')`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE workspace_id = $1 AND name LIKE 'internal-user-center-comment-trigger-test-%'`, testWorkspaceID)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex user-center comment trigger 测试运行时', '{}'::jsonb, $4, 'private', now())
+	`, testWorkspaceID, "internal-user-center-comment-trigger-daemon-"+randomID()[:8], "internal-user-center-comment-trigger-test-"+randomID()[:8], testUserID); err != nil {
+		t.Fatalf("create codex runtime: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/squads/internal-template", map[string]any{
+		"template_key": "user-center",
+	})
+	testHandler.EnsureInternalSquadTemplate(w, withURLParam(req, "workspaceId", testWorkspaceID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("ensure user-center internal squad status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var ensured InternalSquadTemplateResponse
+	if err := json.NewDecoder(w.Body).Decode(&ensured); err != nil {
+		t.Fatalf("decode ensure response: %v", err)
+	}
+
+	var issueID, commentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, assignee_type, assignee_id)
+		VALUES ($1, 'member', $2, 'comment-trigger stage task test', 'squad', $3)
+		RETURNING id
+	`, testWorkspaceID, testUserID, ensured.Squad.ID).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content, type)
+		VALUES ($1, $2, 'member', $3, '验收通过，请 PM 收口，不要重跑阶段。', 'comment')
+		RETURNING id
+	`, testWorkspaceID, issueID, testUserID).Scan(&commentID); err != nil {
+		t.Fatalf("create trigger comment: %v", err)
+	}
+	issue, err := testHandler.Queries.GetIssue(ctx, parseUUID(issueID))
+	if err != nil {
+		t.Fatalf("load issue: %v", err)
+	}
+	leaderTask, err := testHandler.TaskService.EnqueueTaskForSquadLeader(ctx, issue, parseUUID(ensured.Squad.LeaderID), parseUUID(commentID))
+	if err != nil {
+		t.Fatalf("enqueue comment-trigger leader task: %v", err)
+	}
+	var childTaskCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)::int
+		FROM agent_task_queue
+		WHERE parent_task_id = $1
+	`, leaderTask.ID).Scan(&childTaskCount); err != nil {
+		t.Fatalf("count comment-trigger child tasks: %v", err)
+	}
+	if childTaskCount != 0 {
+		t.Fatalf("comment-trigger leader task created %d stage child tasks; want 0", childTaskCount)
+	}
+	var stageStartCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)::int
+		FROM squad_sop_step_event
+		WHERE task_id IN (SELECT id FROM agent_task_queue WHERE parent_task_id = $1)
+	`, leaderTask.ID).Scan(&stageStartCount); err != nil {
+		t.Fatalf("count comment-trigger stage events: %v", err)
+	}
+	if stageStartCount != 0 {
+		t.Fatalf("comment-trigger leader task created %d child stage events; want 0", stageStartCount)
+	}
+}
+
 func TestBuildSquadLeaderBriefing_OnlyLeader(t *testing.T) {
 	ctx := context.Background()
 	leaderID, _ := seededLeaderAgent(t)

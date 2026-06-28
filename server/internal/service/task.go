@@ -896,7 +896,7 @@ func (s *TaskService) ensureSquadSOPRunForLeaderTask(ctx context.Context, issue 
 			"task_id", util.UUIDToString(task.ID),
 			"error", err)
 	}
-	if util.UUIDToString(run.LeaderTaskID) == util.UUIDToString(task.ID) {
+	if util.UUIDToString(run.LeaderTaskID) == util.UUIDToString(task.ID) && !task.TriggerCommentID.Valid {
 		s.enqueueSquadStageTasks(ctx, issue, squad, run, profile, task.ID)
 	}
 }
@@ -2096,13 +2096,13 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 // same user-facing shape as runtime/network flakiness and are bounded by the
 // task's max_attempts budget.
 var retryableReasons = map[string]bool{
-	taskfailure.ReasonRuntimeOffline.String():                    true,
-	taskfailure.ReasonRuntimeRecovery.String():                   true,
-	taskfailure.ReasonTimeout.String():                           true,
-	"codex_semantic_inactivity":                                  true,
-	taskfailure.ReasonAgentProviderCapacityOrRateLimit.String():  true,
-	taskfailure.ReasonAgentProviderServerError.String():          true,
-	taskfailure.ReasonAgentProviderNetwork.String():              true,
+	taskfailure.ReasonRuntimeOffline.String():                   true,
+	taskfailure.ReasonRuntimeRecovery.String():                  true,
+	taskfailure.ReasonTimeout.String():                          true,
+	"codex_semantic_inactivity":                                 true,
+	taskfailure.ReasonAgentProviderCapacityOrRateLimit.String(): true,
+	taskfailure.ReasonAgentProviderServerError.String():         true,
+	taskfailure.ReasonAgentProviderNetwork.String():             true,
 }
 
 func resumeUnsafeFailureReason(reason string) bool {
