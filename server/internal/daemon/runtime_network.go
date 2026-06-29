@@ -87,10 +87,11 @@ func (d *Daemon) checkProviderNetwork(ctx context.Context, provider string, entr
 	if codexResponsesSmokeEnabled() {
 		runCtx, cancel := context.WithTimeout(ctx, runtimeNetworkResponsesSmokeTimeout)
 		defer cancel()
-		args := []string{"debug", "app-server", "send-message-v2", "--disable", "image_generation"}
+		args := []string{"debug", "app-server", "--disable", "image_generation"}
 		if model := firstEnv("MULTICA_CODEX_SMOKE_MODEL", "MULTICA_CODEX_MODEL"); model != "" {
 			args = append(args, "-c", "model="+strconv.Quote(model))
 		}
+		args = append(args, "send-message-v2")
 		args = append(args, "Reply with exactly: ok")
 		cmd := exec.CommandContext(runCtx, execPath, args...)
 		cmd.Env = applyRuntimeProxyEnv(os.Environ(), provider)

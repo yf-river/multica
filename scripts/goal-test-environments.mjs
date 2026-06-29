@@ -906,9 +906,10 @@ function runCodexNetworkCheckWithEnv(item, env, options = {}) {
   const checks = [];
   checks.push(runCodexCheckCommand("model_catalog", runner.codex_path, ["debug", "models"], env, 20_000));
   if (strong) {
-    const args = ["debug", "app-server", "send-message-v2", "--disable", "image_generation"];
+    const args = ["debug", "app-server", "--disable", "image_generation"];
     const model = env.GOAL_TEST_CODEX_SMOKE_MODEL || env.MULTICA_CODEX_MODEL || "";
     if (model) args.push("-c", `model=${JSON.stringify(model)}`);
+    args.push("send-message-v2");
     args.push("Reply with exactly: ok");
     checks.push(runCodexCheckCommand("responses_smoke", runner.codex_path, args, env, 90_000));
   }
