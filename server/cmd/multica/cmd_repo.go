@@ -342,14 +342,14 @@ func runRepoCheckout(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	daemonPort := os.Getenv("MULTICA_DAEMON_PORT")
+	daemonPort := envOrTaskContext("MULTICA_DAEMON_PORT")
 	if daemonPort == "" {
 		return fmt.Errorf("MULTICA_DAEMON_PORT not set (this command is intended to be run by an agent inside a daemon task)")
 	}
 
-	workspaceID := os.Getenv("MULTICA_WORKSPACE_ID")
-	agentName := os.Getenv("MULTICA_AGENT_NAME")
-	taskID := os.Getenv("MULTICA_TASK_ID")
+	workspaceID := envOrTaskContext("MULTICA_WORKSPACE_ID")
+	agentName := envOrTaskContext("MULTICA_AGENT_NAME")
+	taskID := envOrTaskContext("MULTICA_TASK_ID")
 
 	// Use current working directory as the checkout target.
 	workDir, err := os.Getwd()

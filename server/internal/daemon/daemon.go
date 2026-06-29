@@ -226,6 +226,7 @@ type Daemon struct {
 
 	runner             taskRunner    // executes agent tasks; set to d.runTask by New(), overridable in tests
 	cancelPollInterval time.Duration // how often handleTask polls for server-side cancellation; overridable in tests
+	codexBrokers       map[string]*agent.CodexBrokerBackend
 	// runUpdateFn executes the brew-or-download upgrade. Set to d.runUpdate by
 	// New() and overridable in tests so the auto-update poller can be exercised
 	// without touching the real network or the brew CLI.
@@ -259,10 +260,27 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		reregisterNextAttempt:     make(map[string]time.Time),
 		reregisterLastCompletedAt: make(map[string]time.Time),
 		cancelPollInterval:        5 * time.Second,
+		codexBrokers:              make(map[string]*agent.CodexBrokerBackend),
 	}
 	d.runner = taskRunnerFunc(d.runTask)
 	d.runUpdateFn = d.runUpdate
 	return d
+}
+
+func (d *Daemon) codexBrokerBackend(runtimeID string, cfg agent.Config) agent.Backend {
+	key := strings.TrimSpace(runtimeID)
+	if key == "" {
+		key = "default"
+	}
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if backend := d.codexBrokers[key]; backend != nil {
+		backend.UpdateConfig(cfg)
+		return backend
+	}
+	backend := agent.NewCodexBrokerBackend(cfg)
+	d.codexBrokers[key] = backend
+	return backend
 }
 
 // setAgentVersion records the detected CLI version for an agent provider so
@@ -3558,13 +3576,31 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			agentEnv[k] = v
 		}
 	}
-	backend, err := agent.New(provider, agent.Config{
+	if provider == "codex" {
+		cleanupTaskEnv, err := writeTaskContextEnv(env.WorkDir, agentEnv)
+		if err != nil {
+			return TaskResult{}, fmt.Errorf("write codex task context env: %w", err)
+		}
+		defer cleanupTaskEnv()
+		agentEnv, err = prepareCodexBrokerProcessEnv(agentEnv, env.CodexHome, d.logger)
+		if err != nil {
+			return TaskResult{}, err
+		}
+	}
+	agentCfg := agent.Config{
 		ExecutablePath: entry.Path,
 		Env:            agentEnv,
 		Logger:         d.logger,
-	})
-	if err != nil {
-		return TaskResult{}, fmt.Errorf("create agent backend: %w", err)
+	}
+	var backend agent.Backend
+	if provider == "codex" {
+		backend = d.codexBrokerBackend(task.RuntimeID, agentCfg)
+	} else {
+		var err error
+		backend, err = agent.New(provider, agentCfg)
+		if err != nil {
+			return TaskResult{}, fmt.Errorf("create agent backend: %w", err)
+		}
 	}
 
 	taskLog.Info("starting agent",

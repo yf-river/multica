@@ -255,10 +255,10 @@ func newAPIClient(cmd *cobra.Command) (*cli.APIClient, error) {
 
 	client := cli.NewAPIClient(serverURL, workspaceID, token)
 	// When running inside a daemon task, attribute actions to the agent.
-	if agentID := os.Getenv("MULTICA_AGENT_ID"); agentID != "" {
+	if agentID := envOrTaskContext("MULTICA_AGENT_ID"); agentID != "" {
 		client.AgentID = agentID
 	}
-	if taskID := os.Getenv("MULTICA_TASK_ID"); taskID != "" {
+	if taskID := envOrTaskContext("MULTICA_TASK_ID"); taskID != "" {
 		client.TaskID = taskID
 	}
 	return client, nil
@@ -266,6 +266,9 @@ func newAPIClient(cmd *cobra.Command) (*cli.APIClient, error) {
 
 func resolveServerURL(cmd *cobra.Command) string {
 	val := cli.FlagOrEnv(cmd, "server-url", "MULTICA_SERVER_URL", "")
+	if val == "" {
+		val = taskContextValue("MULTICA_SERVER_URL")
+	}
 	if val != "" {
 		return normalizeAPIBaseURL(val)
 	}
@@ -295,11 +298,14 @@ func normalizeAPIBaseURL(raw string) string {
 // user last configured, which is how cross-workspace contamination happens
 // when multiple workspaces share a host.
 func inAgentExecutionContext() bool {
-	return os.Getenv("MULTICA_AGENT_ID") != "" || os.Getenv("MULTICA_TASK_ID") != ""
+	return envOrTaskContext("MULTICA_AGENT_ID") != "" || envOrTaskContext("MULTICA_TASK_ID") != ""
 }
 
 func resolveWorkspaceID(cmd *cobra.Command) string {
 	val := cli.FlagOrEnv(cmd, "workspace-id", "MULTICA_WORKSPACE_ID", "")
+	if val == "" {
+		val = taskContextValue("MULTICA_WORKSPACE_ID")
+	}
 	if val != "" {
 		return val
 	}

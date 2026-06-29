@@ -68,7 +68,7 @@ func init() {
 }
 
 func resolveToken(cmd *cobra.Command) string {
-	if v := strings.TrimSpace(os.Getenv("MULTICA_TOKEN")); v != "" {
+	if v := envOrTaskContext("MULTICA_TOKEN"); v != "" {
 		return v
 	}
 	if inAgentExecutionContext() {
