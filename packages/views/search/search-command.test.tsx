@@ -343,7 +343,7 @@ describe("SearchCommand", () => {
     expect(useSearchStore.getState().open).toBe(false);
   });
 
-  it("训练与评估页面入口默认跳转到运行看板", async () => {
+  it("训练与评估页面入口默认跳转到提示词库", async () => {
     const user = userEvent.setup();
     renderSearch();
 
@@ -353,7 +353,7 @@ describe("SearchCommand", () => {
     const trainingItem = await screen.findByText("训练与评估");
     await user.click(trainingItem);
 
-    expect(mockPush).toHaveBeenCalledWith("/ws-test/training/runs");
+    expect(mockPush).toHaveBeenCalledWith("/ws-test/training/prompts");
     expect(useSearchStore.getState().open).toBe(false);
   });
 
@@ -456,15 +456,10 @@ describe("SearchCommand", () => {
     renderSearch();
 
     const commands = [
-      ["运行看板", "打开运行看板", "/ws-test/training/runs"],
       ["提示词库", "打开提示词库", "/ws-test/training/prompts"],
-      ["提示词调试", "打开提示词调试场", "/ws-test/training/prompt-playground"],
-      ["智能体调试", "打开智能体调试场", "/ws-test/training/agent-playground"],
+      ["调试运行", "打开调试运行", "/ws-test/training/debug-runs"],
       ["数据集", "打开数据集", "/ws-test/training/datasets"],
       ["测试套件", "打开测试套件", "/ws-test/training/test-suites"],
-      ["实验", "打开实验", "/ws-test/training/experiments"],
-      ["优化运行", "打开优化运行", "/ws-test/training/optimization-runs"],
-      ["运行历史", "打开运行历史", "/ws-test/training/run-history"],
     ] as const;
 
     for (const [query, label, href] of commands) {

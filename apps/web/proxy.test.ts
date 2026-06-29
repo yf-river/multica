@@ -25,23 +25,41 @@ describe("web proxy legacy route compatibility", () => {
     ).toBe("http://localhost/team-a/training/prompts?source=old-bookmark");
   });
 
-  it("redirects old top-level training deep links into the last workspace", () => {
+  it("redirects old top-level training run history links to evaluation run records", () => {
     expect(
-      redirectLocation("/training?view=run-history", {
+      redirectLocation("/training?view=run-history&run=run-123", {
         multica_logged_in: "1",
         last_workspace_slug: "team-a",
       }),
-    ).toBe("http://localhost/team-a/training/run-history");
+    ).toBe("http://localhost/team-a/training/evaluation-runs?run=run-123");
   });
 
-  it("redirects evaluation aliases to the Chinese training dashboard", () => {
+  it("redirects old top-level optimization links to test suites with issue context", () => {
+    expect(
+      redirectLocation("/training?view=optimization-runs&issue=issue-1", {
+        multica_logged_in: "1",
+        last_workspace_slug: "team-a",
+      }),
+    ).toBe("http://localhost/team-a/training/test-suites?issue=issue-1&mode=optimize");
+  });
+
+  it("redirects old top-level training debug links to the combined debug route", () => {
+    expect(
+      redirectLocation("/training?view=agent-playground", {
+        multica_logged_in: "1",
+        last_workspace_slug: "team-a",
+      }),
+    ).toBe("http://localhost/team-a/training/debug-runs");
+  });
+
+  it("redirects evaluation aliases to run reviews", () => {
     for (const path of ["/evaluation", "/eval"]) {
       expect(
         redirectLocation(path, {
           multica_logged_in: "1",
           last_workspace_slug: "team-a",
         }),
-      ).toBe("http://localhost/team-a/training/runs");
+      ).toBe("http://localhost/team-a/run-reviews");
     }
   });
 
@@ -60,7 +78,7 @@ describe("web proxy legacy route compatibility", () => {
 
   it("does not redirect canonical workspace-scoped training URLs", () => {
     const res = proxy(
-      makeRequest("/team-a/training/experiments", {
+      makeRequest("/team-a/training/debug-runs", {
         multica_logged_in: "1",
         last_workspace_slug: "team-a",
       }),

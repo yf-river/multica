@@ -8,7 +8,7 @@ import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { runtimeListOptions } from "@multica/core/runtimes/queries";
-import { TRAINING_WORKBENCH_VIEW_BY_TAB, trainingWorkbenchPath } from "@multica/core/training";
+import { TRAINING_WORKBENCH_VIEW_BY_TAB, buildDefaultSkillScenarioPayload, trainingWorkbenchPath } from "@multica/core/training";
 import type {
   Agent,
   PromptEvaluationOptimizationCandidate,
@@ -16,7 +16,11 @@ import type {
   PromptLibraryItem,
 } from "@multica/core/types";
 import { Badge } from "@multica/ui/components/ui/badge";
+import { Button } from "@multica/ui/components/ui/button";
+import { Input } from "@multica/ui/components/ui/input";
+import { Textarea } from "@multica/ui/components/ui/textarea";
 import { PageHeader } from "../../layout/page-header";
+import { AppLink } from "../../navigation";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import { AgentPlaygroundPromptList, PromptPlaygroundPromptList } from "./playground-prompt-lists";
 import { AgentPlaygroundWorkbench, PromptPlaygroundWorkbench } from "./playground-workbenches";
@@ -35,6 +39,75 @@ const DEFAULT_AGENT_RUNTIME_READINESS: PromptEvaluationRuntimeReadiness = {
   checked_at: "",
 };
 
+type DebugRunMode = "prompt" | "agent" | "skill";
+
+export function buildRunEvidenceHref(runRecordsPath: string, runId: string): string {
+  return `${runRecordsPath}?run=${encodeURIComponent(runId)}`;
+}
+
+export function DebugRunsContainer() {
+  const [mode, setMode] = useState<DebugRunMode>("prompt");
+
+  useEffect(() => {
+    document.title = "训练与评估 · 调试运行";
+  }, []);
+
+  return (
+    <div className="flex h-full min-h-0 flex-col bg-background" data-testid="debug-runs-page-shell">
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-b px-4 py-2">
+        <div className="min-w-0">
+          <h1 className="truncate text-sm font-semibold">调试运行</h1>
+          <div className="mt-0.5 truncate text-xs text-muted-foreground">本地提示词渲染和真实智能体执行共用一个调试入口。</div>
+        </div>
+        <div className="flex rounded-md border bg-muted/20 p-0.5" role="tablist" aria-label="调试运行模式">
+          <Button
+            type="button"
+            size="sm"
+            variant={mode === "prompt" ? "secondary" : "ghost"}
+            className="h-7 px-2 text-xs"
+            onClick={() => setMode("prompt")}
+            role="tab"
+            aria-selected={mode === "prompt"}
+          >
+            提示词调试
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={mode === "agent" ? "secondary" : "ghost"}
+            className="h-7 px-2 text-xs"
+            onClick={() => setMode("agent")}
+            role="tab"
+            aria-selected={mode === "agent"}
+          >
+            智能体调试
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant={mode === "skill" ? "secondary" : "ghost"}
+            className="h-7 px-2 text-xs"
+            onClick={() => setMode("skill")}
+            role="tab"
+            aria-selected={mode === "skill"}
+          >
+            Skill 场景
+          </Button>
+        </div>
+      </div>
+      <div className="min-h-0 flex-1">
+        {mode === "prompt" ? (
+          <PromptPlaygroundContainer embedded />
+        ) : mode === "agent" ? (
+          <AgentPlaygroundContainer embedded />
+        ) : (
+          <SkillScenarioDebugContainer />
+        )}
+      </div>
+    </div>
+  );
+}
+
 const promptPlaygroundKeys = {
   list: (workspaceId: string) => ["prompt-playground", workspaceId, "prompt-list"] as const,
   assets: (workspaceId: string) => ["prompt-playground", workspaceId, "evaluation-assets"] as const,
@@ -51,7 +124,122 @@ const agentPlaygroundKeys = {
   agents: (workspaceId: string) => ["agent-playground", workspaceId, "agents"] as const,
 };
 
-export function PromptPlaygroundContainer() {
+function SkillScenarioDebugContainer() {
+  const workspacePaths = useWorkspacePaths();
+  const queryClient = useQueryClient();
+  const runRecordsPath = trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["评测记录"]);
+  const [project, setProject] = useState("user-center");
+  const [taskType, setTaskType] = useState("add-api");
+  const [repoPath, setRepoPath] = useState("/data/ida/user-center");
+  const [branch, setBranch] = useState("current-checkout");
+  const [skillPath, setSkillPath] = useState(".codebuddy/skills/add-api/SKILL.md");
+  const [skillRole, setSkillRole] = useState<"sop" | "operation">("operation");
+  const [taskInput, setTaskInput] = useState("新增或修改 user-center API，并按项目 harness 完成实现、测试和证据记录。");
+  const [latestEvidenceHref, setLatestEvidenceHref] = useState<string | null>(null);
+
+  const runMut = useMutation({
+    mutationFn: async () => {
+      const payload = buildDefaultSkillScenarioPayload({
+        target: {
+          kind: "repo_skill",
+          repo_path: repoPath,
+          branch,
+          skill_path: skillPath,
+          skill_role: skillRole,
+        },
+        scenario: {
+          project,
+          task_type: taskType,
+          task_input: taskInput,
+        },
+      });
+      const asset = await api.createPromptEvaluationAsset({
+        prompt_id: null,
+        name: `${project} ${taskType} Skill 场景调试 ${new Date().toLocaleString("zh-CN")} #${Date.now()}`,
+        description: `调试 ${skillPath} 在 ${project}/${taskType} 场景里的执行表现。`,
+        asset_type: "测试套件",
+        payload,
+        status: "启用",
+      });
+      return api.runPromptEvaluationAssetAgent(asset.id);
+    },
+    onSuccess: (result) => {
+      queryClient.invalidateQueries({ queryKey: ["prompt-library"] });
+      setLatestEvidenceHref(buildRunEvidenceHref(runRecordsPath, result.run.id));
+      toast.success(`Skill 场景运行已入队：${result.task_id}`);
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : "Skill 场景运行失败");
+    },
+  });
+
+  return (
+    <div className="min-h-0 overflow-y-auto p-4 md:p-6" data-testid="skill-scenario-debug-panel">
+      <section className="mx-auto grid max-w-5xl gap-4">
+        <div className="grid gap-3 rounded-md border bg-background p-4">
+          <div className="flex flex-col gap-1">
+            <h2 className="text-sm font-semibold">Skill 场景调试</h2>
+            <p className="text-xs text-muted-foreground">按项目 checkout、skill 路径和任务场景创建测试套件，并发起真实智能体评测。</p>
+          </div>
+          <div className="grid gap-3 md:grid-cols-2">
+            <label className="grid gap-1 text-xs">
+              <span className="text-muted-foreground">项目</span>
+              <Input value={project} onChange={(event) => setProject(event.target.value)} className="h-8 text-xs" />
+            </label>
+            <label className="grid gap-1 text-xs">
+              <span className="text-muted-foreground">任务类型</span>
+              <Input value={taskType} onChange={(event) => setTaskType(event.target.value)} className="h-8 text-xs" />
+            </label>
+            <label className="grid gap-1 text-xs">
+              <span className="text-muted-foreground">本地 checkout</span>
+              <Input value={repoPath} onChange={(event) => setRepoPath(event.target.value)} className="h-8 text-xs" />
+            </label>
+            <label className="grid gap-1 text-xs">
+              <span className="text-muted-foreground">分支</span>
+              <Input value={branch} onChange={(event) => setBranch(event.target.value)} className="h-8 text-xs" />
+            </label>
+            <label className="grid gap-1 text-xs">
+              <span className="text-muted-foreground">Skill 路径</span>
+              <Input value={skillPath} onChange={(event) => setSkillPath(event.target.value)} className="h-8 text-xs" />
+            </label>
+            <label className="grid gap-1 text-xs">
+              <span className="text-muted-foreground">Skill 类型</span>
+              <select
+                value={skillRole}
+                onChange={(event) => setSkillRole(event.target.value === "sop" ? "sop" : "operation")}
+                className="h-8 rounded-md border border-input bg-background px-2 text-xs"
+              >
+                <option value="operation">operation</option>
+                <option value="sop">sop</option>
+              </select>
+            </label>
+          </div>
+          <label className="grid gap-1 text-xs">
+            <span className="text-muted-foreground">任务输入</span>
+            <Textarea value={taskInput} onChange={(event) => setTaskInput(event.target.value)} className="min-h-24 text-xs" />
+          </label>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button
+              size="sm"
+              onClick={() => runMut.mutate()}
+              disabled={runMut.isPending || !project.trim() || !repoPath.trim() || !skillPath.trim() || !taskInput.trim()}
+              data-testid="run-skill-scenario-debug"
+            >
+              {runMut.isPending ? "运行中..." : "运行 Skill 场景"}
+            </Button>
+            {latestEvidenceHref && (
+              <Button size="sm" variant="secondary" render={<AppLink href={latestEvidenceHref} />}>
+                查看评测记录
+              </Button>
+            )}
+          </div>
+        </div>
+      </section>
+    </div>
+  );
+}
+
+export function PromptPlaygroundContainer({ embedded = false }: { embedded?: boolean } = {}) {
   const workspaceId = useWorkspaceId();
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
@@ -108,6 +296,7 @@ export function PromptPlaygroundContainer() {
       countLabel="提示词"
       contract="本地渲染 · 不启动智能体"
       contractVariant="outline"
+      embedded={embedded}
     >
       <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[280px_minmax(0,1fr)]" data-testid="prompt-playground-workbench">
         <PromptPlaygroundPromptList
@@ -136,14 +325,14 @@ export function PromptPlaygroundContainer() {
   );
 }
 
-export function AgentPlaygroundContainer() {
+export function AgentPlaygroundContainer({ embedded = false }: { embedded?: boolean } = {}) {
   const workspaceId = useWorkspaceId();
   const workspacePaths = useWorkspacePaths();
   const queryClient = useQueryClient();
   const [query, setQuery] = useState("");
   const [selectedExecutionAgentId, setSelectedExecutionAgentId] = useState("__auto__");
   const selection = usePlaygroundPromptSelection("agent-playground", workspaceId);
-  const runHistoryPath = trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["运行历史"]);
+  const runHistoryPath = trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["评测记录"]);
 
   useEffect(() => {
     document.title = "训练与评估 · 智能体调试场";
@@ -244,6 +433,7 @@ export function AgentPlaygroundContainer() {
       countLabel="执行目标"
       contract="真实任务 · 写回观测证据"
       contractVariant="secondary"
+      embedded={embedded}
     >
       <div className="flex min-h-0 flex-1 flex-col xl:grid xl:grid-cols-[minmax(0,1fr)_360px]" data-testid="agent-playground-workbench">
         <main className="min-h-0 overflow-y-auto p-4 md:p-6" data-testid="agent-playground-execution-stage">
@@ -274,7 +464,7 @@ export function AgentPlaygroundContainer() {
             generatingCandidateRunId={createCandidateMut.isPending ? createCandidateMut.variables ?? null : null}
             onRunOptimizationAgent={(runId) => runOptimizationAgentMut.mutate(runId)}
             runningOptimizationAgentRunId={runOptimizationAgentMut.isPending ? runOptimizationAgentMut.variables ?? null : null}
-            runHistoryHrefForRun={(runId) => `${runHistoryPath}?run=${encodeURIComponent(runId)}`}
+            runHistoryHrefForRun={(runId) => buildRunEvidenceHref(runHistoryPath, runId)}
           />
         </main>
         <AgentPlaygroundPromptList
@@ -303,6 +493,7 @@ function PlaygroundPageShell({
   countLabel,
   contract,
   contractVariant,
+  embedded,
   children,
 }: {
   testId: string;
@@ -313,35 +504,38 @@ function PlaygroundPageShell({
   countLabel: string;
   contract: string;
   contractVariant: "outline" | "secondary";
+  embedded?: boolean;
   children: ReactNode;
 }) {
   const Icon = icon === "agent" ? TerminalSquare : BookOpenText;
   return (
     <div className="flex h-full min-h-0 flex-col bg-background" data-testid={testId}>
-      <PageHeader>
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          <div className={`flex size-8 shrink-0 items-center justify-center rounded-md border ${
-            icon === "agent" ? "bg-emerald-500/10 text-emerald-700" : "bg-sky-500/10 text-sky-700"
-          }`}>
-            <Icon className="size-4" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <div className="flex min-w-0 items-center gap-2">
-              <h1 className="truncate text-sm font-semibold">{title}</h1>
-              <Badge variant={contractVariant} data-testid="playground-page-contract" className="hidden shrink-0 text-[11px] sm:inline-flex">
-                {contract}
-              </Badge>
+      {!embedded && (
+        <PageHeader>
+          <div className="flex min-w-0 flex-1 items-center gap-3">
+            <div className={`flex size-8 shrink-0 items-center justify-center rounded-md border ${
+              icon === "agent" ? "bg-emerald-500/10 text-emerald-700" : "bg-sky-500/10 text-sky-700"
+            }`}>
+              <Icon className="size-4" />
             </div>
-            <div className="mt-0.5 truncate text-xs text-muted-foreground" data-testid="playground-page-subtitle">
-              {subtitle}
+            <div className="min-w-0 flex-1">
+              <div className="flex min-w-0 items-center gap-2">
+                <h1 className="truncate text-sm font-semibold">{title}</h1>
+                <Badge variant={contractVariant} data-testid="playground-page-contract" className="hidden shrink-0 text-[11px] sm:inline-flex">
+                  {contract}
+                </Badge>
+              </div>
+              <div className="mt-0.5 truncate text-xs text-muted-foreground" data-testid="playground-page-subtitle">
+                {subtitle}
+              </div>
+            </div>
+            <div className="hidden shrink-0 rounded-md border bg-muted/30 px-2.5 py-1 text-right sm:block" data-testid="playground-page-count">
+              <div className="font-mono text-sm font-semibold leading-4">{count}</div>
+              <div className="text-[10px] leading-4 text-muted-foreground">{countLabel}</div>
             </div>
           </div>
-          <div className="hidden shrink-0 rounded-md border bg-muted/30 px-2.5 py-1 text-right sm:block" data-testid="playground-page-count">
-            <div className="font-mono text-sm font-semibold leading-4">{count}</div>
-            <div className="text-[10px] leading-4 text-muted-foreground">{countLabel}</div>
-          </div>
-        </div>
-      </PageHeader>
+        </PageHeader>
+      )}
       {children}
     </div>
   );

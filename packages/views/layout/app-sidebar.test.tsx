@@ -246,8 +246,8 @@ describe("AppSidebar workspace nav", () => {
   it("renders the 训练与评估 nav item and links to the canonical training route", () => {
     render(<AppSidebar />);
 
-    const item = document.querySelector('[data-href="/acme/training/runs"]');
-    expect(item).toHaveAttribute("data-href", "/acme/training/runs");
+    const item = document.querySelector('[data-href="/acme/training/prompts"]');
+    expect(item).toHaveAttribute("data-href", "/acme/training/prompts");
   });
 
   it("renders 运行复盘 as the canonical workspace run review entry", () => {
@@ -264,19 +264,21 @@ describe("AppSidebar workspace nav", () => {
 
     render(<AppSidebar />);
 
-    expect(document.querySelector('[data-href="/acme/training/runs"]')).toBeInTheDocument();
-    expect(document.querySelector('[data-href="/acme/training/run-history"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-href="/acme/training/prompts"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-href="/acme/training/debug-runs"]')).toBeInTheDocument();
     expect(document.querySelector('[data-href="/acme/training/datasets"]')).toHaveAttribute("data-active", "true");
+    expect(document.querySelector('[data-href="/acme/training/runs"]')).not.toBeInTheDocument();
+    expect(document.querySelector('[data-href="/acme/training/run-history"]')).not.toBeInTheDocument();
   });
 
   it("does not preserve legacy training data scope across training submodule links", () => {
-    navigation.current.pathname = "/acme/training/run-history";
+    navigation.current.pathname = "/acme/training/debug-runs";
     navigation.current.searchParams = new URLSearchParams("training_data=acceptance");
 
     render(<AppSidebar />);
 
-    expect(document.querySelector('[data-href="/acme/training/runs"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-href="/acme/training/prompts"]')).toBeInTheDocument();
     expect(document.querySelector('[data-href="/acme/training/datasets"]')).toBeInTheDocument();
-    expect(document.querySelector('[data-href="/acme/training/run-history"]')).toHaveAttribute("data-active", "true");
+    expect(document.querySelector('[data-href="/acme/training/debug-runs"]')).toHaveAttribute("data-active", "true");
   });
 });

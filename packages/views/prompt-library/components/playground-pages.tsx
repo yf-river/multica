@@ -1,4 +1,4 @@
-import { AgentPlaygroundContainer, PromptPlaygroundContainer } from "./playground-containers";
+import { AgentPlaygroundContainer, DebugRunsContainer, PromptPlaygroundContainer } from "./playground-containers";
 
 export function PromptPlaygroundPage() {
   return <PromptPlaygroundContainer />;
@@ -6,4 +6,8 @@ export function PromptPlaygroundPage() {
 
 export function AgentPlaygroundPage() {
   return <AgentPlaygroundContainer />;
+}
+
+export function DebugRunsPage() {
+  return <DebugRunsContainer />;
 }

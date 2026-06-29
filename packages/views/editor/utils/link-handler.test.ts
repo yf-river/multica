@@ -5,8 +5,8 @@ import { openLink } from "./link-handler";
 describe("openLink", () => {
   it.each([
     ["/prompt-library", "/acme/training/prompts"],
-    ["/evaluation", "/acme/training/runs"],
-    ["/eval", "/acme/training/runs"],
+    ["/evaluation", "/acme/run-reviews"],
+    ["/eval", "/acme/run-reviews"],
   ])(
     "canonicalizes legacy training link %s to a semantic training route",
     (href, path) => {

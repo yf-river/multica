@@ -1,4 +1,5 @@
 import type { AgentTask, TaskTraceEvent } from "./agent";
+import type { TaskMessagePayload } from "./events";
 import type { Issue } from "./issue";
 import type { PromptEvaluationToolCallChain, PromptEvaluationToolCallSummary } from "./prompt-evaluation";
 import type { SquadSOPRun } from "./sop";
@@ -17,6 +18,7 @@ export interface IssueExecutionNode {
   issue: Issue;
   tasks: AgentTask[];
   sop_runs: SquadSOPRun[];
+  task_messages: TaskMessagePayload[];
   trace_events: TaskTraceEvent[];
   tool_call_chains: PromptEvaluationToolCallChain[];
   tool_call_summary: PromptEvaluationToolCallSummary[];

@@ -1,29 +1,30 @@
 "use client";
 
 import { useMemo, type ReactNode } from "react";
-import { Activity, AlertTriangle, CheckCircle2, GitBranch, ListChecks, Loader2, RotateCcw, Timer, WifiOff } from "lucide-react";
+import { Activity, AlertTriangle, GitBranch, ListChecks, Loader2, RotateCcw, Timer, WifiOff } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { issueExecutionTreeOptions, issueKeys, issueListOptions } from "@multica/core/issues/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
-import type { AgentTask, Issue, IssueTimelineNode, IssueExecutionTreeResponse } from "@multica/core/types";
+import type { AgentTask, CreatePromptEvaluationCaseRequest, Issue, IssueTimelineNode, IssueExecutionNode, IssueExecutionTreeResponse, TaskTraceEvent } from "@multica/core/types";
+import type { TaskMessagePayload } from "@multica/core/types/events";
+import type { PromptEvaluationToolCallChain } from "@multica/core/types/prompt-evaluation";
 import { cn } from "@multica/ui/lib/utils";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { PageHeader } from "../../layout/page-header";
 import { AppLink, useNavigation } from "../../navigation";
+import { TranscriptButton } from "../../common/task-transcript";
+import { SOP_STAGE_DEFINITIONS, normalizeSopStageName } from "../../common/sop-stage-labels";
 
-const STAGES = [
-  { key: "pm", label: "PM", names: ["pm"] },
-  { key: "01", label: "01 澄清", names: ["01", "01-clarify", "clarify"] },
-  { key: "02", label: "02 设计", names: ["02", "02-design", "design"] },
-  { key: "03", label: "03 拆分", names: ["03", "03-task-split", "split"] },
-  { key: "04", label: "04 开发", names: ["04", "04-implement", "implement"] },
-  { key: "05", label: "05 验证", names: ["05", "05-verify", "verify"] },
-] as const;
+const STAGES = SOP_STAGE_DEFINITIONS;
 
 const ISSUE_REVIEW_DRAFT_DATASET_NAME = "Issue 复盘评测 Draft";
+
+export function buildRunReviewOptimizerHref(trainingView: (view: string) => string, issueId: string): string {
+  return `${trainingView("test-suites")}?issue=${encodeURIComponent(issueId)}&mode=optimize`;
+}
 
 export function RunReviewsPage() {
   const wsId = useWorkspaceId();
@@ -46,9 +47,6 @@ export function RunReviewsPage() {
       <PageHeader>
         <div className="min-w-0">
           <h1 className="truncate text-sm font-semibold">运行复盘</h1>
-          <p className="truncate text-xs text-muted-foreground">
-            按 issue 回放 PM+01-05、子任务、token、耗时、轮次和证据。
-          </p>
         </div>
       </PageHeader>
 
@@ -86,7 +84,7 @@ export function RunReviewsPage() {
               loading={treeQuery.isLoading}
               issueHref={paths.issueDetail(selectedIssue.id)}
               evalDraftHref={`${paths.trainingView("datasets")}?issue=${encodeURIComponent(selectedIssue.id)}&mode=draft`}
-              optimizerHref={`${paths.trainingView("optimization-runs")}?issue=${encodeURIComponent(selectedIssue.id)}`}
+              optimizerHref={buildRunReviewOptimizerHref(paths.trainingView, selectedIssue.id)}
             />
           ) : (
             <div className="px-6 py-10 text-sm text-muted-foreground">选择一条 issue 查看完整链路。</div>
@@ -98,9 +96,7 @@ export function RunReviewsPage() {
 }
 
 function IssueRunRow({ issue, active, href }: { issue: Issue; active: boolean; href: string }) {
-  const childTotal = issue.child_progress?.total ?? 0;
-  const running = issue.agent_activity?.running_count ?? 0;
-  const queued = issue.agent_activity?.queued_count ?? 0;
+  const activityLabel = issueRunRowActivityLabel(issue);
   return (
     <AppLink
       href={href}
@@ -113,17 +109,38 @@ function IssueRunRow({ issue, active, href }: { issue: Issue; active: boolean; h
         <div className="min-w-0">
           <div className="truncate font-medium">{issue.identifier ? `${issue.identifier} ` : ""}{issue.title}</div>
           <div className="mt-1 flex flex-wrap gap-1 text-[11px] text-muted-foreground">
-            <span>{issue.project?.title ?? "未绑定项目"}</span>
-            <span>状态 {statusLabel(issue.status)}</span>
-            <span>子任务 {issue.child_progress?.done ?? 0}/{childTotal}</span>
+            {issueRunRowMetaLabels(issue).map((label) => (
+              <span key={label}>{label}</span>
+            ))}
           </div>
         </div>
-        <span className={cn("shrink-0 rounded border px-1.5 py-0.5 text-[11px]", running > 0 ? "border-info/40 text-info" : "text-muted-foreground")}>
-          {running > 0 ? `运行 ${running}` : queued > 0 ? `排队 ${queued}` : "复盘"}
-        </span>
+        {activityLabel && (
+          <span className={cn("shrink-0 rounded border px-1.5 py-0.5 text-[11px]", activityLabel.tone === "running" ? "border-info/40 text-info" : "text-muted-foreground")}>
+            {activityLabel.label}
+          </span>
+        )}
       </div>
     </AppLink>
   );
+}
+
+export function issueRunRowMetaLabels(issue: Pick<Issue, "project" | "status" | "child_progress">): string[] {
+  const childTotal = issue.child_progress?.total ?? 0;
+  return [
+    issue.project?.title ?? "未绑定项目",
+    `状态 ${statusLabel(issue.status)}`,
+    ...(childTotal > 0 ? [`子任务 ${issue.child_progress?.done ?? 0}/${childTotal}`] : []),
+  ];
+}
+
+export function issueRunRowActivityLabel(
+  issue: Pick<Issue, "agent_activity">,
+): { label: string; tone: "running" | "queued" } | null {
+  const running = issue.agent_activity?.running_count ?? 0;
+  const queued = issue.agent_activity?.queued_count ?? 0;
+  if (running > 0) return { label: `运行 ${running}`, tone: "running" };
+  if (queued > 0) return { label: `排队 ${queued}`, tone: "queued" };
+  return null;
 }
 
 function RunReviewDetail({
@@ -148,7 +165,7 @@ function RunReviewDetail({
   const childLanes = buildChildLanes(tree);
   const visibleStageRows = stageRows.filter((stage) => stage.node);
   const visibleChildLanes = childLanes;
-  const eventRows = timelineNodes.slice(0, 12);
+  const eventRows = buildRunReviewEventRows(tree, timelineNodes);
   const queryClient = useQueryClient();
   const { data: tasks = [] } = useQuery({
     queryKey: issueKeys.tasks(issue.id),
@@ -157,6 +174,13 @@ function RunReviewDetail({
     refetchOnWindowFocus: true,
   });
   const activeTasks = useMemo(() => tasks.filter(isActiveTask), [tasks]);
+  const taskById = useMemo(() => {
+    const result = new Map<string, AgentTask>();
+    for (const task of [...flattenExecutionTasks(tree), ...tasks]) {
+      result.set(task.id, task);
+    }
+    return result;
+  }, [tasks, tree]);
   const latestTerminalTask = useMemo(() => latestTerminalAgentTask(tasks), [tasks]);
   const latestFailedTask = activeTasks.length === 0 && latestTerminalTask && isRetryableTask(latestTerminalTask)
     ? latestTerminalTask
@@ -172,10 +196,10 @@ function RunReviewDetail({
     mutationFn: () => createIssueReviewDraftCase(issue, tree, stageRows, childLanes),
     onSuccess: (created) => {
       queryClient.invalidateQueries({ queryKey: ["prompt-library"] });
-      toast.success(`评测 Draft 已生成：${created.case_name || created.id}`);
+      toast.success(`评测用例已生成：${created.case_name || created.id}`);
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "生成评测 Draft 失败");
+      toast.error(error instanceof Error ? error.message : "生成评测用例失败");
     },
   });
   const retryTaskMut = useMutation({
@@ -219,9 +243,9 @@ function RunReviewDetail({
               disabled={createDraftMut.isPending || !tree}
               data-testid="run-review-create-eval-draft"
             >
-              {createDraftMut.isPending ? "生成中..." : "生成评测 Draft"}
+              {createDraftMut.isPending ? "生成中..." : "生成评测用例"}
             </button>
-            <AppLink className="rounded border px-2.5 py-1.5 text-xs hover:bg-accent" href={optimizerHref}>优化 Skill</AppLink>
+            <AppLink className="rounded border px-2.5 py-1.5 text-xs hover:bg-accent" href={optimizerHref}>进入评测资产</AppLink>
           </div>
         </div>
 
@@ -242,11 +266,10 @@ function RunReviewDetail({
           />
         )}
 
-        <div className="grid gap-0 divide-y text-sm md:grid-cols-4 md:divide-x md:divide-y-0">
+        <div className="grid gap-0 divide-y text-sm md:grid-cols-3 md:divide-x md:divide-y-0">
           <Metric label="总耗时" value={formatDuration(summary?.total_duration_ms ?? 0)} icon={<Timer className="size-3.5" />} />
           <Metric label="Token" value={formatNumber((summary?.total_input_tokens ?? 0) + (summary?.total_output_tokens ?? 0))} icon={<Activity className="size-3.5" />} />
           <Metric label="轮次" value={formatNumber(summary?.agent_turn_count ?? 0)} icon={<ListChecks className="size-3.5" />} />
-          <Metric label="证据节点" value={formatNumber(summary?.node_count ?? 0)} icon={<CheckCircle2 className="size-3.5" />} />
         </div>
       </section>
 
@@ -288,7 +311,6 @@ function RunReviewDetail({
                 <th className="w-[14%] px-3 py-2 font-medium">耗时</th>
                 <th className="w-[14%] px-3 py-2 font-medium">Token</th>
                 <th className="w-[10%] px-3 py-2 font-medium">轮次</th>
-                <th className="w-[12%] px-3 py-2 font-medium">证据</th>
               </tr>
             </thead>
             <tbody className="divide-y">
@@ -300,11 +322,10 @@ function RunReviewDetail({
                   <td className="truncate px-3 py-2">{formatDuration(stage.node?.duration_ms ?? 0)}</td>
                   <td className="truncate px-3 py-2">{formatNumber((stage.node?.input_tokens ?? 0) + (stage.node?.output_tokens ?? 0))}</td>
                   <td className="truncate px-3 py-2">{formatNumber(stage.node?.agent_turn_count ?? 0)}</td>
-                  <td className="truncate px-3 py-2">{stage.node?.evidence_refs?.length ? `${stage.node.evidence_refs.length} 条` : "待补齐"}</td>
                 </tr>
               )) : (
                 <tr>
-                  <td className="px-3 py-5 text-sm text-muted-foreground" colSpan={7}>暂无真实 SOP 节点。</td>
+                  <td className="px-3 py-5 text-sm text-muted-foreground" colSpan={6}>暂无真实 SOP 节点。</td>
                 </tr>
               )}
             </tbody>
@@ -324,7 +345,6 @@ function RunReviewDetail({
                 <NodeFact label="耗时" value={formatDuration(stage.node?.duration_ms ?? 0)} />
                 <NodeFact label="Token" value={formatNumber((stage.node?.input_tokens ?? 0) + (stage.node?.output_tokens ?? 0))} />
                 <NodeFact label="轮次" value={formatNumber(stage.node?.agent_turn_count ?? 0)} />
-                <NodeFact label="证据" value={stage.node?.evidence_refs?.length ? `${stage.node.evidence_refs.length} 条` : "待补齐"} />
               </div>
             </div>
           )) : (
@@ -334,19 +354,10 @@ function RunReviewDetail({
       </section>
 
       <section className="rounded-md border bg-card">
-        <SectionTitle title="事件流" subtitle="按执行树 timeline 展示最近事件。" />
+        <SectionTitle title="事件流" subtitle="按 task message、trace、工具链和执行节点展示最近 50 条可诊断证据。" />
         <div className="divide-y">
           {eventRows.length > 0 ? eventRows.map((node, index) => (
-            <div key={`${node.node_id}-${node.node_type}-${index}`} className="flex gap-3 px-4 py-3 text-sm">
-              <GitBranch className="mt-0.5 size-4 shrink-0 text-muted-foreground" />
-              <div className="min-w-0">
-                <div className="truncate font-medium">{node.summary || node.node_type}</div>
-                <div className="mt-0.5 text-xs text-muted-foreground">
-                  {node.agent_name || node.node_type} · {statusLabel(node.status)} · {formatDuration(node.duration_ms)}
-                  {node.usage_unavailable_trace ? " · usage unavailable" : ""}
-                </div>
-              </div>
-            </div>
+            <RunReviewEventRow key={`${node.id}-${index}`} event={node} task={node.taskId ? taskById.get(node.taskId) : undefined} />
           )) : (
             <div className="flex gap-2 px-4 py-6 text-sm text-muted-foreground">
               <AlertTriangle className="size-4" />
@@ -357,6 +368,76 @@ function RunReviewDetail({
       </section>
     </div>
   );
+}
+
+function RunReviewEventRow({ event, task }: { event: RunReviewEventRowData; task: AgentTask | undefined }) {
+  const hasDetails = event.detail || event.metadataDetail;
+  return (
+    <div className="flex gap-3 px-4 py-3 text-sm" data-testid={`run-review-event-${event.kind}`}>
+      <div className={cn("mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md border", eventToneClasses(event.severity).icon)}>
+        <GitBranch className="size-3.5" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="shrink-0 rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground">{event.category}</span>
+          <span className={cn("shrink-0 rounded border px-1.5 py-0.5 text-[11px]", eventToneClasses(event.severity).chip)}>
+            {event.outcome}
+          </span>
+          <span className="min-w-0 truncate font-medium">{event.title}</span>
+        </div>
+        <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          {event.timeLabel && <span>{event.timeLabel}</span>}
+          {event.sourceLabel && <span>{event.sourceLabel}</span>}
+          {event.object && <span>{event.object}</span>}
+          {event.durationMs > 0 && <span>耗时 {formatDuration(event.durationMs)}</span>}
+          {event.tokenTotal > 0 && <span>Token {formatNumber(event.tokenTotal)}</span>}
+          {event.taskId && <span className="font-mono">task {shortId(event.taskId)}</span>}
+        </div>
+        {event.summary && (
+          <div className={cn("mt-1 rounded border px-2 py-1 text-xs leading-5", eventToneClasses(event.severity).summary)}>
+            {event.summary}
+          </div>
+        )}
+        {hasDetails && (
+          <details className="mt-1 rounded border border-border/70 bg-muted/20 px-2 py-1 text-xs">
+            <summary className="cursor-pointer text-muted-foreground">原始证据</summary>
+            <div className="mt-1 grid gap-1 whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-muted-foreground">
+              {event.detail && <div>{event.detail}</div>}
+              {event.metadataDetail && <div>{event.metadataDetail}</div>}
+            </div>
+          </details>
+        )}
+      </div>
+      {task && (
+        <div className="shrink-0">
+          <TranscriptButton task={task} agentName="" title="查看完整转录" />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function eventToneClasses(severity: RunReviewEventRowData["severity"]) {
+  switch (severity) {
+    case "error":
+      return {
+        icon: "border-destructive/30 bg-destructive/10 text-destructive",
+        chip: "border-destructive/30 bg-destructive/10 text-destructive",
+        summary: "border-destructive/25 bg-destructive/5 text-destructive",
+      };
+    case "warning":
+      return {
+        icon: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+        chip: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+        summary: "border-amber-500/25 bg-amber-500/5 text-foreground",
+      };
+    default:
+      return {
+        icon: "border-border bg-background text-muted-foreground",
+        chip: "border-border bg-muted/30 text-muted-foreground",
+        summary: "border-border/70 bg-muted/20 text-foreground",
+      };
+  }
 }
 
 function RunFailureBanner({
@@ -586,19 +667,11 @@ function buildStageRows(nodes: IssueTimelineNode[]) {
     ...stage,
     node: nodes.filter((node) => {
       if (node.node_type !== "agent_task") return false;
-      const agentName = normalizeStageName(node.agent_name);
+      const agentName = normalizeSopStageName(node.agent_name);
       if (!agentName) return false;
-      return stage.names.some((name) => agentName === normalizeStageName(name));
+      return stage.names.some((name) => agentName === normalizeSopStageName(name));
     }).sort(compareStageNodeCandidates)[0],
   }));
-}
-
-function normalizeStageName(value: string | undefined) {
-  return (value ?? "")
-    .toLowerCase()
-    .replace(/[_\s]+/g, "-")
-    .replace(/^0([1-5])$/, "0$1")
-    .trim();
 }
 
 function compareStageNodeCandidates(left: IssueTimelineNode, right: IssueTimelineNode) {
@@ -622,6 +695,682 @@ function buildChildLanes(tree: IssueExecutionTreeResponse | undefined) {
     label: child.issue.project?.title || child.issue.title || child.issue.identifier || "子任务",
     issue: child.issue,
   }));
+}
+
+export interface RunReviewEventRowData {
+  id: string;
+  kind: "message" | "trace" | "tool" | "node";
+  category: string;
+  timestampMs: number;
+  timeLabel: string;
+  taskId?: string;
+  sourceLabel: string;
+  object: string;
+  title: string;
+  outcome: string;
+  summary: string;
+  detail: string;
+  metadataDetail: string;
+  durationMs: number;
+  tokenTotal: number;
+  severity: "normal" | "warning" | "error";
+}
+
+export function buildRunReviewEventRows(
+  tree: IssueExecutionTreeResponse | undefined,
+  timelineNodes: IssueTimelineNode[],
+): RunReviewEventRowData[] {
+  const nodes = flattenExecutionNodes(tree);
+  const rows: RunReviewEventRowData[] = [];
+  for (const node of nodes) {
+    const coveredToolMessageKeys = new Set<string>();
+    for (const chain of node.tool_call_chains ?? []) {
+      if (chain.task_id && chain.use_seq) coveredToolMessageKeys.add(toolMessageKey(chain.task_id, chain.use_seq));
+      if (chain.task_id && chain.result_seq) coveredToolMessageKeys.add(toolMessageKey(chain.task_id, chain.result_seq));
+    }
+    for (const message of node.task_messages ?? []) {
+      if ((message.type === "tool_use" || message.type === "tool_result") && coveredToolMessageKeys.has(toolMessageKey(message.task_id, message.seq))) {
+        continue;
+      }
+      rows.push(message.type === "tool_use" || message.type === "tool_result"
+        ? runReviewToolMessageEvent(message)
+        : runReviewMessageEvent(message));
+    }
+    for (const event of node.trace_events ?? []) {
+      rows.push(runReviewTraceEvent(event));
+    }
+    for (const chain of node.tool_call_chains ?? []) {
+      rows.push(runReviewToolEvent(chain));
+    }
+  }
+  for (const node of timelineNodes) {
+    if (node.node_type === "tool_call" || node.node_type === "status_change") continue;
+    rows.push(runReviewTimelineNodeEvent(node));
+  }
+  return rows
+    .toSorted((a, b) => {
+      if (a.timestampMs !== b.timestampMs) return b.timestampMs - a.timestampMs;
+      return a.id.localeCompare(b.id);
+    })
+    .slice(0, 50);
+}
+
+function toolMessageKey(taskId: string, seq: number) {
+  return `${taskId}:${seq}`;
+}
+
+function flattenExecutionNodes(tree: IssueExecutionTreeResponse | undefined): IssueExecutionNode[] {
+  if (!tree) return [];
+  const result: IssueExecutionNode[] = [];
+  const walk = (node: IssueExecutionNode) => {
+    result.push(node);
+    for (const child of node.children ?? []) walk(child);
+  };
+  walk(tree.root);
+  return result;
+}
+
+function flattenExecutionTasks(tree: IssueExecutionTreeResponse | undefined): AgentTask[] {
+  return flattenExecutionNodes(tree).flatMap((node) => node.tasks ?? []);
+}
+
+function runReviewMessageEvent(message: TaskMessagePayload): RunReviewEventRowData {
+  const detailParts = [
+    message.content ? `content:\n${message.content}` : "",
+    message.input ? `input:\n${formatJSON(message.input)}` : "",
+    message.output ? `output:\n${message.output}` : "",
+  ].filter(Boolean);
+  const summary = firstNonEmpty(
+    taskMessageText(message),
+    message.input ? formatJSON(message.input) : "",
+    "任务消息未记录正文",
+  );
+  return {
+    id: `message:${message.task_id}:${message.seq}`,
+    kind: "message",
+    category: taskMessageKindLabel(message.type),
+    timestampMs: parseTimeMs(message.created_at) ?? 0,
+    timeLabel: formatEventTime(message.created_at),
+    taskId: message.task_id,
+    sourceLabel: "模型输出",
+    object: `消息 #${message.seq}`,
+    title: taskMessageKindLabel(message.type),
+    outcome: message.type === "error" ? "异常" : "已记录",
+    summary: conciseEventSummary(summary, message.type === "error"),
+    detail: detailParts.join("\n\n"),
+    metadataDetail: "",
+    durationMs: 0,
+    tokenTotal: 0,
+    severity: message.type === "error" || hasFailureSignal(summary) ? "error" : "normal",
+  };
+}
+
+function runReviewToolMessageEvent(message: TaskMessagePayload): RunReviewEventRowData {
+  const semantic = semanticToolAction(message.tool, message.input, message.output);
+  const detailParts = [
+    message.tool ? `raw_tool: ${message.tool}` : "",
+    message.input ? `input:\n${formatJSON(message.input)}` : "",
+    message.output ? `output:\n${message.output}` : "",
+  ].filter(Boolean);
+  return {
+    id: `message:${message.task_id}:${message.seq}`,
+    kind: "tool",
+    category: semantic.category,
+    timestampMs: parseTimeMs(message.created_at) ?? 0,
+    timeLabel: formatEventTime(message.created_at),
+    taskId: message.task_id,
+    sourceLabel: semantic.sourceLabel,
+    object: semantic.object,
+    title: semantic.title,
+    outcome: semantic.outcome,
+    summary: semantic.summary,
+    detail: detailParts.join("\n\n"),
+    metadataDetail: "",
+    durationMs: 0,
+    tokenTotal: 0,
+    severity: semantic.severity,
+  };
+}
+
+function runReviewTraceEvent(event: TaskTraceEvent): RunReviewEventRowData {
+  const tokenTotal = event.input_tokens + event.output_tokens + event.cache_read_tokens + event.cache_write_tokens;
+  const durationMs = event.run_ms ?? event.duration_ms ?? event.total_ms ?? event.queue_wait_ms ?? 0;
+  const failure = [event.failure_reason, event.error_type].filter(Boolean).join(" · ");
+  return {
+    id: `trace:${event.id}`,
+    kind: "trace",
+    category: "Trace",
+    timestampMs: parseTimeMs(event.created_at) ?? 0,
+    timeLabel: formatEventTime(event.created_at),
+    taskId: event.task_id,
+    sourceLabel: [event.source, event.provider, event.model].filter(Boolean).join(" / ") || event.event_type,
+    object: event.event_type,
+    title: event.event_name || traceEventStageLabel(event.event_type),
+    outcome: failure || event.event_type === "task.failed" ? "异常" : statusLabel(event.status),
+    summary: failure ? conciseEventSummary(failure, true) : "",
+    detail: "",
+    metadataDetail: Object.keys(event.metadata ?? {}).length > 0 ? `metadata:\n${formatJSON(event.metadata)}` : "",
+    durationMs,
+    tokenTotal,
+    severity: event.event_type === "task.failed" || Boolean(failure) ? "error" : "normal",
+  };
+}
+
+function runReviewToolEvent(chain: PromptEvaluationToolCallChain): RunReviewEventRowData {
+  const semantic = semanticToolAction(chain.tool, chain.input, chain.output);
+  const detailParts = [
+    chain.tool ? `raw_tool: ${chain.tool}` : "",
+    chain.input ? `input:\n${formatJSON(chain.input)}` : "",
+    chain.output ? `output:\n${chain.output}` : "",
+    chain.failure_reason ? `failure:\n${chain.failure_reason}` : "",
+  ].filter(Boolean);
+  return {
+    id: `tool:${chain.id}`,
+    kind: "tool",
+    category: semantic.category,
+    timestampMs: parseTimeMs(chain.completed_at) ?? parseTimeMs(chain.created_at) ?? 0,
+    timeLabel: formatEventTime(chain.completed_at || chain.created_at),
+    taskId: chain.task_id,
+    sourceLabel: semantic.sourceLabel,
+    object: semantic.object,
+    title: semantic.title,
+    outcome: semantic.outcome,
+    summary: conciseEventSummary(firstNonEmpty(chain.failure_reason, semantic.summary), chain.failure_signal),
+    detail: detailParts.join("\n\n"),
+    metadataDetail: "",
+    durationMs: chain.duration_ms ?? 0,
+    tokenTotal: 0,
+    severity: chain.failure_signal ? "error" : chain.status === "缺少结果" || chain.status === "孤立结果" ? "warning" : semantic.severity,
+  };
+}
+
+interface SemanticToolAction {
+  category: string;
+  sourceLabel: string;
+  object: string;
+  title: string;
+  outcome: string;
+  summary: string;
+  severity: RunReviewEventRowData["severity"];
+}
+
+function semanticToolAction(tool: string | undefined, input: Record<string, unknown> | undefined, output: string | undefined): SemanticToolAction {
+  const command = stringFromUnknown(input?.command);
+  if (command) return semanticCommandAction(command, output);
+
+  const path = firstNonEmpty(
+    stringFromUnknown(input?.file_path),
+    stringFromUnknown(input?.path),
+    stringFromUnknown(input?.target_file),
+  );
+  if (path) {
+    const action = semanticFileToolAction(tool);
+    return {
+      category: action.category,
+      sourceLabel: action.sourceLabel,
+      object: shortPath(path),
+      title: `${action.titlePrefix}：${shortPath(path)}`,
+      outcome: "已记录",
+      summary: "",
+      severity: "normal",
+    };
+  }
+
+  const query = firstNonEmpty(stringFromUnknown(input?.query), stringFromUnknown(input?.pattern));
+  if (query) {
+    return {
+      category: "搜索",
+      sourceLabel: "搜索",
+      object: truncateText(query, 96),
+      title: `搜索：${truncateText(query, 96)}`,
+      outcome: "已记录",
+      summary: "",
+      severity: "normal",
+    };
+  }
+
+  const outputSignal = output ? outputOutcome(output) : null;
+  if (tool === "patch_apply") {
+    return {
+      category: "修改",
+      sourceLabel: "代码修改",
+      object: "",
+      title: "应用代码修改",
+      outcome: outputSignal?.outcome ?? "已记录",
+      summary: outputSignal?.summary ?? "",
+      severity: outputSignal?.severity ?? "normal",
+    };
+  }
+
+  const fallback = readableToolName(tool);
+  return {
+    category: fallback === "工具调用" ? "工具" : fallback,
+    sourceLabel: fallback,
+    object: "",
+    title: fallback,
+    outcome: outputSignal?.outcome ?? "已记录",
+    summary: outputSignal?.summary ?? "",
+    severity: outputSignal?.severity ?? "normal",
+  };
+}
+
+function semanticCommandAction(command: string, output: string | undefined): SemanticToolAction {
+  const normalized = command.trim();
+  const segment = meaningfulCommandSegment(normalized);
+  const executable = commandExecutable(segment);
+
+  if (executable === "rg" || executable === "grep" || executable === "find" || isGitSubcommand(segment, "grep")) {
+    return {
+      category: "搜索",
+      sourceLabel: "代码搜索",
+      object: searchQueryFromCommand(segment) || truncateText(segment, 96),
+      title: `搜索代码：${searchQueryFromCommand(segment) || truncateText(segment, 96)}`,
+      ...semanticOutputState(output),
+    };
+  }
+
+  if (["sed", "cat", "nl", "ls", "head", "tail"].includes(executable) || isGitReadCommand(segment)) {
+    return {
+      category: "查看",
+      sourceLabel: "读取上下文",
+      object: readTargetFromCommand(segment) || truncateText(segment, 96),
+      title: `${readCommandTitlePrefix(segment, executable)}：${readTargetFromCommand(segment) || truncateText(segment, 96)}`,
+      ...semanticOutputState(output),
+    };
+  }
+
+  if (isPnpmTypecheck(segment)) {
+    return {
+      category: "验证",
+      sourceLabel: "类型检查",
+      object: pnpmFilterFromCommand(segment) || "TypeScript",
+      title: `运行类型检查：${pnpmFilterFromCommand(segment) || "TypeScript"}`,
+      ...semanticOutputState(output),
+    };
+  }
+
+  if (isPnpmTest(segment)) {
+    return {
+      category: "验证",
+      sourceLabel: "前端测试",
+      object: testTargetFromCommand(segment) || pnpmFilterFromCommand(segment) || "Vitest",
+      title: `运行前端单测：${testTargetFromCommand(segment) || pnpmFilterFromCommand(segment) || "Vitest"}`,
+      ...semanticOutputState(output),
+    };
+  }
+
+  if (isGoTest(segment)) {
+    const target = goTestTargetFromCommand(segment);
+    return {
+      category: "验证",
+      sourceLabel: "后端测试",
+      object: target,
+      title: `运行后端单测：${target}`,
+      ...semanticOutputState(output),
+    };
+  }
+
+  if (isBuildCommand(segment)) {
+    return {
+      category: "构建",
+      sourceLabel: "构建",
+      object: truncateText(segment, 96),
+      title: `运行构建：${truncateText(segment, 96)}`,
+      ...semanticOutputState(output),
+    };
+  }
+
+  if (executable === "curl" || executable === "http" || executable === "wget") {
+    return {
+      category: "接口",
+      sourceLabel: "接口检查",
+      object: httpTargetFromCommand(segment) || truncateText(segment, 96),
+      title: `检查接口：${httpTargetFromCommand(segment) || truncateText(segment, 96)}`,
+      ...semanticOutputState(output),
+    };
+  }
+
+  if (executable === "make" && (segment.includes("dev") || segment.includes("start") || segment.includes("server"))) {
+    return {
+      category: "服务",
+      sourceLabel: "运行服务",
+      object: truncateText(segment, 96),
+      title: `运行服务：${truncateText(segment, 96)}`,
+      ...semanticOutputState(output),
+    };
+  }
+
+  if (executable === "make" && (segment.includes("check") || segment.includes("verify") || segment.includes("test"))) {
+    return {
+      category: "验证",
+      sourceLabel: "验证",
+      object: truncateText(segment, 96),
+      title: `运行验证：${truncateText(segment, 96)}`,
+      ...semanticOutputState(output),
+    };
+  }
+
+  return {
+    category: "命令",
+    sourceLabel: "命令执行",
+    object: truncateText(segment || normalized, 96),
+    title: `执行命令：${truncateText(segment || normalized, 96)}`,
+    ...semanticOutputState(output),
+  };
+}
+
+function semanticOutputState(output: string | undefined): Pick<SemanticToolAction, "outcome" | "summary" | "severity"> {
+  if (!output) return { outcome: "已记录", summary: "", severity: "normal" };
+  return outputOutcome(output);
+}
+
+function outputOutcome(output: string): Pick<SemanticToolAction, "outcome" | "summary" | "severity"> {
+  const errorLine = extractErrorLine(output);
+  if (errorLine) {
+    return { outcome: "异常线索", summary: conciseEventSummary(errorLine, true), severity: "error" };
+  }
+  return { outcome: "已返回", summary: conciseEventSummary(summarizeToolOutput(output), false), severity: "normal" };
+}
+
+function extractErrorLine(output: string) {
+  const patterns = [
+    /\bError:\s*.+/i,
+    /\bFAIL\b.+/i,
+    /\bfailed\b.+/i,
+    /\bpanic:\s*.+/i,
+    /\bFATAL\b.+/i,
+    /\bHTTP\s+[45]\d\d\b.*/i,
+    /\bexit status\s+\d+.*/i,
+    /\bprovider timeout\b.*/i,
+    /\btimeout\b.*/i,
+  ];
+  const lines = output.split("\n").map((line) => line.trim()).filter(Boolean);
+  for (const pattern of patterns) {
+    const line = lines.find((item) => pattern.test(item));
+    if (line) return line;
+  }
+  return "";
+}
+
+function conciseEventSummary(value: string, isFailure: boolean) {
+  const text = truncateText(value, 220);
+  if (!text) return "";
+  return isFailure ? `异常摘要：${text}` : text;
+}
+
+function meaningfulCommandSegment(command: string) {
+  const segments = command
+    .split(/\s+(?:&&|\|\|)\s+|;\s*/g)
+    .map((item) => item.trim())
+    .filter(Boolean);
+  const candidate = segments.find((segment) => {
+    const executable = commandExecutable(segment);
+    return executable !== "cd" && executable !== "export" && executable !== "";
+  });
+  return candidate ?? command.trim();
+}
+
+function commandExecutable(command: string) {
+  const tokens = shellWords(command);
+  const executable = tokens.find((token) => {
+    if (!token) return false;
+    if (/^[A-Z_][A-Z0-9_]*=/.test(token)) return false;
+    return true;
+  });
+  return stripCommandPath(executable ?? "").toLowerCase();
+}
+
+function shellWords(command: string) {
+  return command.match(/"[^"]*"|'[^']*'|\S+/g)?.map((token) => token.replace(/^["']|["']$/g, "")) ?? [];
+}
+
+function stripCommandPath(value: string) {
+  const parts = value.split("/");
+  return parts[parts.length - 1] ?? value;
+}
+
+function isGitSubcommand(command: string, subcommand: string) {
+  const tokens = shellWords(command);
+  const gitIndex = tokens.findIndex((token) => stripCommandPath(token).toLowerCase() === "git");
+  return gitIndex >= 0 && tokens[gitIndex + 1] === subcommand;
+}
+
+function isGitReadCommand(command: string) {
+  const tokens = shellWords(command);
+  const gitIndex = tokens.findIndex((token) => stripCommandPath(token).toLowerCase() === "git");
+  const subcommand = gitIndex >= 0 ? tokens[gitIndex + 1] : "";
+  return ["show", "diff", "status", "log"].includes(subcommand ?? "");
+}
+
+function searchQueryFromCommand(command: string) {
+  const tokens = shellWords(command);
+  const executable = commandExecutable(command);
+  if (executable === "find") return tokens.find((token) => token !== "find" && !token.startsWith("-")) ?? "";
+  const startIndex = isGitSubcommand(command, "grep") ? tokens.findIndex((token) => token === "grep") + 1 : 1;
+  return tokens.slice(startIndex).find((token) => !token.startsWith("-") && !token.includes("=")) ?? "";
+}
+
+function readCommandTitlePrefix(command: string, executable: string) {
+  if (isGitReadCommand(command)) return "查看 Git 信息";
+  if (executable === "ls") return "查看目录";
+  return "查看文件";
+}
+
+function readTargetFromCommand(command: string) {
+  const tokens = shellWords(command);
+  const candidates = tokens.filter((token) => !token.startsWith("-") && !/^\d/.test(token) && !token.includes("="));
+  const target = candidates[candidates.length - 1];
+  if (!target || target === commandExecutable(command)) return "";
+  return shortPath(target);
+}
+
+function isPnpmTypecheck(command: string) {
+  return commandExecutable(command) === "pnpm" && /\btypecheck\b/.test(command);
+}
+
+function isPnpmTest(command: string) {
+  return commandExecutable(command) === "pnpm" && (/\btest\b/.test(command) || /\bvitest\b/.test(command));
+}
+
+function isGoTest(command: string) {
+  return commandExecutable(command) === "go" && /\btest\b/.test(command);
+}
+
+function isBuildCommand(command: string) {
+  const executable = commandExecutable(command);
+  return (executable === "pnpm" || executable === "go" || executable === "make") && /\bbuild\b/.test(command);
+}
+
+function pnpmFilterFromCommand(command: string) {
+  const tokens = shellWords(command);
+  const index = tokens.indexOf("--filter");
+  return index >= 0 ? tokens[index + 1] ?? "" : "";
+}
+
+function testTargetFromCommand(command: string) {
+  const tokens = shellWords(command);
+  const runIndex = tokens.indexOf("run");
+  const runTarget = runIndex >= 0 ? tokens[runIndex + 1] : undefined;
+  if (runTarget) return shortPath(runTarget);
+  const testIndex = tokens.indexOf("test");
+  const testTarget = testIndex >= 0 ? tokens[testIndex + 1] : undefined;
+  if (testTarget) return shortPath(testTarget);
+  return "";
+}
+
+function goTestTargetFromCommand(command: string) {
+  const tokens = shellWords(command);
+  const runIndex = tokens.indexOf("-run");
+  const runTarget = runIndex >= 0 ? tokens[runIndex + 1] : undefined;
+  if (runTarget) return runTarget;
+  const testIndex = tokens.indexOf("test");
+  const testTarget = testIndex >= 0 ? tokens[testIndex + 1] : undefined;
+  if (testTarget) return testTarget;
+  return "go test";
+}
+
+function httpTargetFromCommand(command: string) {
+  return shellWords(command).find((token) => /^https?:\/\//.test(token) || token.startsWith("/api/")) ?? "";
+}
+
+function semanticFileToolAction(tool: string | undefined) {
+  const normalized = (tool ?? "").toLowerCase();
+  if (normalized.includes("edit") || normalized.includes("write") || normalized.includes("patch")) {
+    return { category: "修改", sourceLabel: "文件修改", titlePrefix: "修改文件" };
+  }
+  return { category: "查看", sourceLabel: "读取上下文", titlePrefix: "查看文件" };
+}
+
+function readableToolName(tool: string | undefined) {
+  const normalized = (tool ?? "").toLowerCase();
+  if (!normalized) return "工具调用";
+  if (normalized === "exec_command") return "命令执行";
+  if (normalized === "patch_apply") return "代码修改";
+  return tool ?? "工具调用";
+}
+
+function summarizeToolOutput(output: string) {
+  const firstLine = output.split("\n").find((line) => line.trim().length > 0) ?? "";
+  return truncateText(firstLine, 220);
+}
+
+function stringFromUnknown(value: unknown) {
+  return typeof value === "string" ? value : "";
+}
+
+function shortPath(path: string) {
+  const normalized = path.replace(/^["']|["']$/g, "");
+  const parts = normalized.split("/").filter(Boolean);
+  if (parts.length <= 2) return normalized;
+  return `.../${parts.slice(-2).join("/")}`;
+}
+
+function runReviewTimelineNodeEvent(node: IssueTimelineNode): RunReviewEventRowData {
+  const tokenTotal = node.input_tokens + node.output_tokens + node.cache_read_tokens + node.cache_write_tokens;
+  return {
+    id: `node:${node.node_id}`,
+    kind: "node",
+    category: timelineNodeKindLabel(node.node_type),
+    timestampMs: parseTimeMs(node.completed_at) ?? parseTimeMs(node.started_at) ?? 0,
+    timeLabel: formatEventTime(node.completed_at || node.started_at),
+    taskId: node.node_type === "agent_task" ? node.node_id.replace(/^task:/, "") : node.root_task_id,
+    sourceLabel: node.agent_name || node.node_type,
+    object: node.node_type,
+    title: node.summary || timelineNodeKindLabel(node.node_type),
+    outcome: statusLabel(node.status),
+    summary: node.usage_unavailable_trace ? "模型用量未返回" : "",
+    detail: node.evidence_refs.length > 0 ? `evidence_refs:\n${formatJSON(node.evidence_refs)}` : "",
+    metadataDetail: "",
+    durationMs: node.duration_ms,
+    tokenTotal,
+    severity: node.status === "failed" || node.status === "blocked" ? "error" : "normal",
+  };
+}
+
+function taskMessageKindLabel(type: TaskMessagePayload["type"]): string {
+  switch (type) {
+    case "tool_use":
+      return "工具调用";
+    case "tool_result":
+      return "工具结果";
+    case "thinking":
+      return "思考";
+    case "error":
+      return "错误";
+    case "text":
+    default:
+      return "文本";
+  }
+}
+
+function taskMessageText(message: TaskMessagePayload): string {
+  return message.content || message.output || "";
+}
+
+function traceEventStageLabel(eventType: string): string {
+  switch (eventType) {
+    case "task.queued":
+      return "任务入队";
+    case "task.dispatched":
+      return "任务领取";
+    case "task.started":
+      return "任务开始";
+    case "task.waiting_local_directory":
+      return "等待本地目录";
+    case "task.completed":
+      return "任务完成";
+    case "task.failed":
+      return "任务失败";
+    case "task.cancelled":
+      return "任务取消";
+    case "llm.usage_reported":
+      return "模型用量";
+    case "llm.usage_unavailable":
+      return "模型用量未返回";
+    default:
+      return eventType || "未分类事件";
+  }
+}
+
+function timelineNodeKindLabel(type: IssueTimelineNode["node_type"]): string {
+  switch (type) {
+    case "agent_task":
+      return "任务";
+    case "squad_step":
+      return "SOP";
+    case "child_issue_ref":
+      return "子任务";
+    case "source_fetch":
+      return "来源";
+    case "approval":
+      return "唤醒";
+    case "tool_call":
+      return "工具";
+    case "status_change":
+      return "状态";
+    case "evidence":
+    default:
+      return "证据";
+  }
+}
+
+function formatEventTime(value: string | undefined) {
+  if (!value) return "";
+  const ms = parseTimeMs(value);
+  if (ms === null) return "";
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  }).format(new Date(ms));
+}
+
+function formatJSON(value: unknown) {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function truncateText(value: string, max: number) {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  return normalized.length > max ? `${normalized.slice(0, max - 3)}...` : normalized;
+}
+
+function firstNonEmpty(...values: Array<string | undefined | null>) {
+  return values.find((value) => typeof value === "string" && value.trim() !== "")?.trim() ?? "";
+}
+
+function hasFailureSignal(value: string) {
+  const lower = value.toLowerCase();
+  return lower.includes("error") || lower.includes("failed") || lower.includes("panic") || lower.includes("fatal");
+}
+
+function shortId(value: string) {
+  return value.length > 8 ? value.slice(0, 8) : value;
 }
 
 function isActiveTask(task: AgentTask) {
@@ -651,7 +1400,7 @@ async function createIssueReviewDraftCase(
   stageRows: ReturnType<typeof buildStageRows>,
   childLanes: ReturnType<typeof buildChildLanes>,
 ) {
-  if (!tree) throw new Error("执行树尚未加载，不能生成评测 Draft");
+  if (!tree) throw new Error("执行树尚未加载，不能生成评测用例");
   const assets = await api.listPromptEvaluationAssets({ asset_type: "数据集", status: "启用" });
   let asset = assets.items.find((item) => item.name === ISSUE_REVIEW_DRAFT_DATASET_NAME);
   if (!asset) {
@@ -672,6 +1421,31 @@ async function createIssueReviewDraftCase(
       },
     });
   }
+  return api.createPromptEvaluationCase(buildIssueReviewDraftCaseRequest({
+    issue,
+    tree,
+    stageRows,
+    childLanes,
+    assetId: asset.id,
+    promptId: asset.prompt_id,
+  }));
+}
+
+export function buildIssueReviewDraftCaseRequest({
+  issue,
+  tree,
+  stageRows,
+  childLanes,
+  assetId,
+  promptId,
+}: {
+  issue: Issue;
+  tree: IssueExecutionTreeResponse;
+  stageRows: ReturnType<typeof buildStageRows>;
+  childLanes: ReturnType<typeof buildChildLanes>;
+  assetId: string;
+  promptId?: string | null;
+}): CreatePromptEvaluationCaseRequest {
   const stageFacts = stageRows.map((stage) => ({
     stage: stage.label,
     status: stage.node ? stage.node.status : "missing",
@@ -689,9 +1463,10 @@ async function createIssueReviewDraftCase(
     status: lane.issue.status,
   }));
   const caseName = `${issue.identifier ? `${issue.identifier} ` : ""}${issue.title}`.trim() || `issue ${issue.id}`;
-  return api.createPromptEvaluationCase({
-    asset_id: asset.id,
-    prompt_id: asset.prompt_id,
+  const runSnapshot = buildIssueReviewRunSnapshot(issue, tree, stageRows, stageFacts, childFacts);
+  return {
+    asset_id: assetId,
+    prompt_id: promptId ?? null,
     case_name: `Draft: ${caseName}`,
     variables: {
       issue_id: issue.id,
@@ -701,7 +1476,7 @@ async function createIssueReviewDraftCase(
       current_status: issue.status,
       source: "run-review",
     },
-    expected_contains: ["PM", "01", "02", "03", "04", "05", "evidence"],
+    expected_contains: ["PM", "01-需求澄清", "02-方案设计", "03-任务拆分", "04-开发", "05-测试", "证据"],
     input: {
       source: "run-review",
       issue: {
@@ -717,16 +1492,276 @@ async function createIssueReviewDraftCase(
         child_lanes: childFacts,
         timeline_node_count: tree.timeline_nodes?.length ?? 0,
       },
+      run_snapshot: runSnapshot,
     },
     expected: {
       expected_behavior: "能复现该 issue 的 PM+01-05 执行链路，识别实际关联的跨项目子任务，并保留可追溯证据。",
-      validation: "检查 DAG/子任务、阶段节点、token/耗时/轮次、实际 child lane 和 evidence refs。",
+      validation: "检查 DAG/子任务、阶段节点、token/耗时/轮次、实际 child lane、evidence refs 和结构化断言。",
+      assertions: buildIssueReviewAssertions(issue, stageRows, childLanes, tree),
       approval_required: true,
       review_flow: "draft -> approved -> active",
     },
-    tags: ["issue-review", "draft", `issue:${issue.id}`, issue.project?.title ?? "unknown-project"],
+    tags: [
+      "issue-review",
+      "draft",
+      "run-snapshot",
+      "prompt-snapshot",
+      "skill-snapshot",
+      `issue:${issue.id}`,
+      issue.project?.title ?? "unknown-project",
+    ],
     status: "draft",
+  };
+}
+
+function buildIssueReviewRunSnapshot(
+  issue: Issue,
+  tree: IssueExecutionTreeResponse,
+  stageRows: ReturnType<typeof buildStageRows>,
+  stageFacts: Array<Record<string, unknown>>,
+  childFacts: Array<Record<string, unknown>>,
+) {
+  const nodes = flattenExecutionNodes(tree);
+  const nodeByTaskId = new Map<string, IssueExecutionNode>();
+  for (const node of nodes) {
+    for (const task of node.tasks ?? []) nodeByTaskId.set(task.id, node);
+  }
+  const stages = stageRows.map((stage) => buildRunSnapshotStage(stage, nodeByTaskId));
+  const promptSkillSnapshots = stages.map((stage) => buildPromptSkillSnapshot(stage));
+  return {
+    schema_version: 1,
+    schema: "multica.run_review.snapshot.v1",
+    source: "run-review",
+    captured_at: new Date().toISOString(),
+    issue: {
+      id: issue.id,
+      identifier: issue.identifier,
+      title: issue.title,
+      project: issue.project?.title ?? null,
+      status: issue.status,
+    },
+    summary: tree.issue_summary ?? null,
+    stage_facts: stageFacts,
+    child_lanes: childFacts,
+    stages,
+    tool_evidence: buildRunSnapshotToolEvidence(nodes),
+    prompt_skill_snapshots: promptSkillSnapshots,
+    evidence_refs: buildRunSnapshotEvidenceRefs(tree, stages, promptSkillSnapshots),
+    timeline_node_count: tree.timeline_nodes?.length ?? 0,
+    source_limits: {
+      prompt_capture: "best_effort_task_trace_snapshot",
+      content_truncation_chars: 1200,
+      raw_tool_output_truncation_chars: 1200,
+      formal_prompt_library_write: false,
+    },
+    review_flow: "draft -> approved -> active",
+  };
+}
+
+type StageRowForSnapshot = ReturnType<typeof buildStageRows>[number];
+
+function buildRunSnapshotStage(stage: StageRowForSnapshot, nodeByTaskId: Map<string, IssueExecutionNode>) {
+  const taskId = stage.node?.node_type === "agent_task" ? stage.node.node_id.replace(/^task:/, "") : "";
+  const node = taskId ? nodeByTaskId.get(taskId) : undefined;
+  const task = node?.tasks?.find((item) => item.id === taskId);
+  const messages = (node?.task_messages ?? []).filter((message) => !taskId || message.task_id === taskId);
+  const traceEvents = (node?.trace_events ?? []).filter((event) => !taskId || event.task_id === taskId);
+  const toolChains = (node?.tool_call_chains ?? []).filter((chain) => !taskId || chain.task_id === taskId);
+  const outputText = firstNonEmpty(
+    stringFromUnknown(task?.result),
+    task?.error ?? "",
+    latestMessageText(messages),
+    traceEvents.find((event) => event.failure_reason)?.failure_reason ?? "",
+  );
+  const inputText = firstNonEmpty(
+    task?.trigger_summary ?? "",
+    messages.find((message) => message.type === "tool_use")?.input ? formatJSON(messages.find((message) => message.type === "tool_use")?.input) : "",
+    messages.find((message) => message.content)?.content ?? "",
+  );
+  const handoffText = messages
+    .map((message) => taskMessageText(message))
+    .find((text) => /handoff|交接|结论|阻断|验收|完成/i.test(text));
+  return {
+    stage: stage.label,
+    stage_key: stage.key,
+    status: stage.node ? stage.node.status : "missing",
+    agent: stage.node?.agent_name ?? stage.key,
+    task_id: taskId || null,
+    agent_id: stage.node?.agent_id ?? task?.agent_id ?? null,
+    runtime_id: task?.runtime_id ?? traceEvents.find((event) => event.runtime_id)?.runtime_id ?? null,
+    started_at: stage.node?.started_at ?? task?.started_at ?? null,
+    completed_at: stage.node?.completed_at ?? task?.completed_at ?? null,
+    duration_ms: stage.node?.duration_ms ?? 0,
+    token_total: (stage.node?.input_tokens ?? 0) + (stage.node?.output_tokens ?? 0),
+    turns: stage.node?.agent_turn_count ?? 0,
+    input_summary: truncateText(inputText, 420),
+    output_summary: truncateText(outputText, 420),
+    handoff_summary: truncateText(handoffText ?? "", 420),
+    failure_reason: task?.error ?? traceEvents.find((event) => event.failure_reason)?.failure_reason ?? "",
+    message_refs: messages.slice(0, 20).map((message) => ({ type: "task_message", task_id: message.task_id, seq: message.seq })),
+    trace_refs: traceEvents.slice(0, 20).map((event) => ({ type: "trace_event", id: event.id, task_id: event.task_id })),
+    tool_refs: toolChains.slice(0, 20).map((chain) => ({ type: "tool_call_chain", id: chain.id, task_id: chain.task_id })),
+    evidence_refs: stage.node?.evidence_refs ?? [],
+    prompt_capture_text: truncateText(firstNonEmpty(inputText, task?.trigger_summary ?? "", latestMessageText(messages)), 1200),
+    runtime: {
+      provider: firstNonEmpty(traceEvents.find((event) => event.provider)?.provider ?? ""),
+      model: firstNonEmpty(traceEvents.find((event) => event.model)?.model ?? ""),
+    },
+  };
+}
+
+function buildRunSnapshotToolEvidence(nodes: IssueExecutionNode[]) {
+  const chains = nodes.flatMap((node) => node.tool_call_chains ?? []);
+  const messages = nodes.flatMap((node) => node.task_messages ?? []).filter((message) => message.type === "tool_use" || message.type === "tool_result");
+  const chainRows = chains.map((chain) => {
+    const semantic = semanticToolAction(chain.tool, chain.input, chain.output);
+    return {
+      id: chain.id,
+      task_id: chain.task_id,
+      source: "tool_call_chain",
+      tool: chain.tool,
+      category: semantic.category,
+      action: semantic.title,
+      object: semantic.object,
+      status: chain.status,
+      outcome: semantic.outcome,
+      failure_signal: chain.failure_signal || semantic.severity === "error",
+      failure_reason: firstNonEmpty(chain.failure_reason, extractErrorLine(chain.output ?? "")),
+      input_summary: truncateText(chain.input ? formatJSON(chain.input) : "", 420),
+      output_summary: truncateText(firstNonEmpty(semantic.summary, summarizeToolOutput(chain.output ?? "")), 420),
+      raw_output_excerpt: truncateText(chain.output ?? "", 1200),
+      duration_ms: chain.duration_ms ?? 0,
+      created_at: chain.created_at,
+      completed_at: chain.completed_at,
+      evidence_ref: { type: "tool_call_chain", id: chain.id, task_id: chain.task_id },
+    };
   });
+  const chainMessageKeys = new Set<string>();
+  for (const chain of chains) {
+    if (chain.task_id && chain.use_seq) chainMessageKeys.add(toolMessageKey(chain.task_id, chain.use_seq));
+    if (chain.task_id && chain.result_seq) chainMessageKeys.add(toolMessageKey(chain.task_id, chain.result_seq));
+  }
+  const orphanRows = messages
+    .filter((message) => !chainMessageKeys.has(toolMessageKey(message.task_id, message.seq)))
+    .map((message) => {
+      const semantic = semanticToolAction(message.tool, message.input, message.output);
+      return {
+        id: `${message.task_id}:${message.seq}`,
+        task_id: message.task_id,
+        source: "task_message",
+        tool: message.tool ?? "",
+        category: semantic.category,
+        action: semantic.title,
+        object: semantic.object,
+        status: message.type,
+        outcome: semantic.outcome,
+        failure_signal: semantic.severity === "error",
+        failure_reason: extractErrorLine(message.output ?? ""),
+        input_summary: truncateText(message.input ? formatJSON(message.input) : "", 420),
+        output_summary: truncateText(firstNonEmpty(semantic.summary, summarizeToolOutput(message.output ?? "")), 420),
+        raw_output_excerpt: truncateText(message.output ?? "", 1200),
+        duration_ms: 0,
+        created_at: message.created_at ?? "",
+        completed_at: message.created_at ?? "",
+        evidence_ref: { type: "task_message", task_id: message.task_id, seq: message.seq },
+      };
+    });
+  return [...chainRows, ...orphanRows].slice(0, 80);
+}
+
+function buildPromptSkillSnapshot(stage: ReturnType<typeof buildRunSnapshotStage>) {
+  const promptText = stage.prompt_capture_text;
+  const agentName = typeof stage.agent === "string" ? stage.agent : "";
+  const skillPath = sopSkillPathForAgent(agentName);
+  const captureStatus = promptText ? "captured_excerpt" : skillPath ? "ref_only" : "missing";
+  return {
+    role: stage.stage,
+    stage_key: stage.stage_key,
+    task_id: stage.task_id,
+    agent: stage.agent,
+    source: promptText ? "task_trace" : skillPath ? "skill_ref" : "missing",
+    capture_status: captureStatus,
+    content_summary: truncateText(promptText, 420),
+    content_excerpt: promptText,
+    content_hash: promptText ? stableContentHash(promptText) : "",
+    skill_path: skillPath,
+    skill_hash: "",
+    runtime_provider: stage.runtime.provider,
+    model: stage.runtime.model,
+    evidence_refs: [
+      ...(stage.message_refs as Array<Record<string, unknown>>).slice(0, 5),
+      ...(stage.trace_refs as Array<Record<string, unknown>>).slice(0, 5),
+    ],
+  };
+}
+
+function sopSkillPathForAgent(agentName: string) {
+  const normalized = normalizeSopStageName(agentName);
+  const stage = SOP_STAGE_DEFINITIONS.find((item) => item.names.some((name) => normalizeSopStageName(name) === normalized));
+  if (!stage || stage.key === "pm") return "";
+  const canonical = stage.names.find((name) => /^[0-5]{2}-[a-z-]+$/.test(name)) ?? "";
+  return canonical ? `.codebuddy/skills/${canonical}/SKILL.md` : "";
+}
+
+function buildRunSnapshotEvidenceRefs(
+  tree: IssueExecutionTreeResponse,
+  stages: Array<ReturnType<typeof buildRunSnapshotStage>>,
+  promptSkillSnapshots: Array<ReturnType<typeof buildPromptSkillSnapshot>>,
+) {
+  const timelineRefs = (tree.timeline_nodes ?? []).slice(0, 80).map((node) => ({ type: "timeline_node", id: node.node_id, node_type: node.node_type }));
+  const stageRefs = stages.flatMap((stage) => [
+    ...(stage.message_refs as Array<Record<string, unknown>>),
+    ...(stage.trace_refs as Array<Record<string, unknown>>),
+    ...(stage.tool_refs as Array<Record<string, unknown>>),
+  ]);
+  const promptRefs = promptSkillSnapshots.map((snapshot) => ({
+    type: "prompt_skill_snapshot",
+    role: snapshot.role,
+    task_id: snapshot.task_id,
+    content_hash: snapshot.content_hash,
+    capture_status: snapshot.capture_status,
+  }));
+  return [...stageRefs, ...timelineRefs, ...promptRefs].slice(0, 200);
+}
+
+function buildIssueReviewAssertions(
+  issue: Issue,
+  stageRows: ReturnType<typeof buildStageRows>,
+  childLanes: ReturnType<typeof buildChildLanes>,
+  tree: IssueExecutionTreeResponse,
+) {
+  const requiredStages = STAGES.map((stage) => stage.label);
+  const missingStages = stageRows.filter((stage) => !stage.node).map((stage) => stage.label);
+  const terminalStatus = issue.status === "done" ? "done" : tree.issue_summary?.acceptance_status ?? issue.status;
+  return {
+    required_stages: requiredStages,
+    missing_required_stages: missingStages,
+    disallow_missing_required_stage: true,
+    must_identify_child_issues: childLanes.length > 0,
+    expected_child_issue_count: childLanes.length,
+    must_keep_evidence: true,
+    must_report_blocker_on_failure: true,
+    must_update_done_when_verified: stageRows.some((stage) => stage.key === "05" && stage.node?.status === "completed"),
+    expected_terminal_status: terminalStatus,
+    require_prompt_skill_snapshot_refs: true,
+    require_tool_evidence_on_tool_use: true,
+  };
+}
+
+function latestMessageText(messages: TaskMessagePayload[]) {
+  const message = messages
+    .filter((item) => item.type === "text" || item.type === "error")
+    .toSorted((a, b) => (b.seq ?? 0) - (a.seq ?? 0))[0];
+  return taskMessageText(message ?? ({} as TaskMessagePayload));
+}
+
+function stableContentHash(value: string) {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return `fnv1a:${(hash >>> 0).toString(16).padStart(8, "0")}`;
 }
 
 function IssueListSkeleton() {

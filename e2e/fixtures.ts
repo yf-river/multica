@@ -221,6 +221,9 @@ interface PromptEvaluationCase {
   case_index: number;
   variables: Record<string, unknown>;
   expected_contains: unknown[];
+  assertions?: unknown[];
+  input: Record<string, unknown>;
+  expected: Record<string, unknown>;
   tags: unknown[];
   status: string;
   source: string;
@@ -939,6 +942,32 @@ export class TestApiClient {
       throw new Error(`get issue failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
+  }
+
+  async listIssues(params?: {
+    limit?: number;
+    offset?: number;
+    workspace_id?: string;
+    status?: string;
+    sort_by?: string;
+    sort_direction?: string;
+  }): Promise<{ issues: Array<Record<string, unknown>>; total: number }> {
+    const search = new URLSearchParams();
+    if (params?.limit) search.set("limit", String(params.limit));
+    if (params?.offset) search.set("offset", String(params.offset));
+    if (params?.workspace_id) search.set("workspace_id", params.workspace_id);
+    if (params?.status) search.set("status", params.status);
+    if (params?.sort_by) search.set("sort", params.sort_by);
+    if (params?.sort_direction) search.set("direction", params.sort_direction);
+    const res = await this.authedFetch(`/api/issues${search.toString() ? `?${search}` : ""}`);
+    if (!res.ok) {
+      throw new Error(`list issues failed: ${res.status} ${await res.text()}`);
+    }
+    const data = await res.json();
+    return {
+      issues: Array.isArray(data.issues) ? data.issues : [],
+      total: Number(data.total ?? 0),
+    };
   }
 
   async listChildIssues(issueId: string) {
@@ -2033,6 +2062,10 @@ export class TestApiClient {
       throw new Error(`update prompt evaluation case failed: ${res.status}`);
     }
     return res.json();
+  }
+
+  async deletePromptEvaluationCase(id: string) {
+    await this.authedFetch(`/api/prompt-evaluation-cases/${id}`, { method: "DELETE" });
   }
 
   async cleanupPromptArtifactsByPrefix(prefix: string) {

@@ -147,6 +147,15 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 	if resp.Summary["工具调用数"] != 1 || resp.Summary["异常工具数"] != 1 {
 		t.Fatalf("tool summary = %+v, want one tool call with attention", resp.Summary)
 	}
+	if len(resp.Root.TaskMessages) != 2 {
+		t.Fatalf("root task messages = %+v, want persisted task messages", resp.Root.TaskMessages)
+	}
+	if resp.Root.TaskMessages[0].Type != "tool_use" || resp.Root.TaskMessages[0].Tool != "curl-check" {
+		t.Fatalf("first task message = %+v, want curl-check tool_use", resp.Root.TaskMessages[0])
+	}
+	if resp.Root.TaskMessages[1].Type != "tool_result" || !strings.Contains(resp.Root.TaskMessages[1].Output, "HTTP 500") {
+		t.Fatalf("second task message = %+v, want HTTP 500 tool_result", resp.Root.TaskMessages[1])
+	}
 	if len(resp.Root.ToolCallSummary) != 1 {
 		t.Fatalf("root tool summary = %+v, want one row", resp.Root.ToolCallSummary)
 	}

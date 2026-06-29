@@ -1,5 +1,10 @@
-import { AgentPlaygroundPage } from "@multica/views/prompt-library";
+import { redirect } from "next/navigation";
 
-export default function TrainingAgentPlaygroundPage() {
-  return <AgentPlaygroundPage />;
+export default async function TrainingAgentPlaygroundPage({
+  params,
+}: {
+  params: Promise<{ workspaceSlug: string }>;
+}) {
+  const { workspaceSlug } = await params;
+  redirect(`/${encodeURIComponent(workspaceSlug)}/training/debug-runs`);
 }

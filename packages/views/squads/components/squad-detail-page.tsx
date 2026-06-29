@@ -64,6 +64,7 @@ import { toast } from "sonner";
 import type { Squad, SquadMember, SquadMemberStatus, SquadMemberStatusValue, Agent, CreateAgentRequest, MemberWithUser } from "@multica/core/types";
 import { useT } from "../../i18n";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
+import { sopStageDisplayName } from "../../common/sop-stage-labels";
 
 type SquadSOPProfile = {
   profile_key?: string;
@@ -87,19 +88,19 @@ const USER_CENTER_SOP_PROFILE: SquadSOPProfile = {
   mode: "stage_chain",
   roles: [
     { key: "pm", name: "PM", responsibility: "接收 issue/TAPD 输入，读取项目资源和 source_context，检查阶段产物，处理阻断，推进 pm -> 01-clarify -> 02-design -> 03-task-split -> 04-implement -> 05-verify。" },
-    { key: "01-clarify", name: "01-clarify", responsibility: "执行目标项目的 01-clarify，明确需求边界、验收口径、目标仓库、可用/缺失 operation skill 和 handoff。" },
-    { key: "02-design", name: "02-design", responsibility: "执行目标项目的 02-design，输出方案、影响面、接口/数据契约、项目 skill 调用计划和 handoff。" },
-    { key: "03-task-split", name: "03-task-split", responsibility: "执行目标项目的 03-task-split，输出任务拆分、跨项目依赖、operation graph 和 handoff。" },
-    { key: "04-implement", name: "04-implement", responsibility: "执行目标项目的 04-implement，按边界和对应项目 operation skill 实现并保留证据。" },
-    { key: "05-verify", name: "05-verify", responsibility: "执行目标项目的 05-verify，独立验证、总结证据和最终 handoff。" },
+    { key: "01-clarify", name: "01-需求澄清", responsibility: "执行目标项目的 01-clarify，明确需求边界、验收口径、目标仓库、可用/缺失 operation skill 和 handoff。" },
+    { key: "02-design", name: "02-方案设计", responsibility: "执行目标项目的 02-design，输出方案、影响面、接口/数据契约、项目 skill 调用计划和 handoff。" },
+    { key: "03-task-split", name: "03-任务拆分", responsibility: "执行目标项目的 03-task-split，输出任务拆分、跨项目依赖、operation graph 和 handoff。" },
+    { key: "04-implement", name: "04-开发", responsibility: "执行目标项目的 04-implement，按边界和对应项目 operation skill 实现并保留证据。" },
+    { key: "05-verify", name: "05-测试", responsibility: "执行目标项目的 05-verify，独立验证、总结证据和最终 handoff。" },
   ],
   steps: [
     { key: "pm", name: "PM 调度", role_key: "pm" },
-    { key: "01-clarify", name: "01-clarify", role_key: "01-clarify", skill: "<target-project>/01-clarify" },
-    { key: "02-design", name: "02-design", role_key: "02-design", skill: "<target-project>/02-design" },
-    { key: "03-task-split", name: "03-task-split", role_key: "03-task-split", skill: "<target-project>/03-task-split" },
-    { key: "04-implement", name: "04-implement", role_key: "04-implement", skill: "<target-project>/04-implement" },
-    { key: "05-verify", name: "05-verify", role_key: "05-verify", skill: "<target-project>/05-verify" },
+    { key: "01-clarify", name: "01-需求澄清", role_key: "01-clarify", skill: "<target-project>/01-clarify" },
+    { key: "02-design", name: "02-方案设计", role_key: "02-design", skill: "<target-project>/02-design" },
+    { key: "03-task-split", name: "03-任务拆分", role_key: "03-task-split", skill: "<target-project>/03-task-split" },
+    { key: "04-implement", name: "04-开发", role_key: "04-implement", skill: "<target-project>/04-implement" },
+    { key: "05-verify", name: "05-测试", role_key: "05-verify", skill: "<target-project>/05-verify" },
   ],
   stage_skills: [
     "<target-project>/01-clarify",
@@ -332,7 +333,10 @@ export function SquadDetailPage() {
   };
 
   const getEntityName = (type: string, id: string) => {
-    if (type === "agent") return agents.find((a: Agent) => a.id === id)?.name ?? id.slice(0, 8);
+    if (type === "agent") {
+      const agentName = agents.find((a: Agent) => a.id === id)?.name;
+      return sopStageDisplayName(agentName) || id.slice(0, 8);
+    }
     return wsMembers.find((m) => m.user_id === id)?.name ?? id.slice(0, 8);
   };
 

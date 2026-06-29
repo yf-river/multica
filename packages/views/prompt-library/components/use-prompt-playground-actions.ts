@@ -5,6 +5,7 @@ import { useMutation } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { renderPromptTemplate } from "@multica/core/prompt-library";
+import { buildSkillScenarioAssetRequest } from "@multica/core/training";
 import type {
   Agent,
   CreatePromptEvaluationAssetRequest,
@@ -149,6 +150,10 @@ export function usePromptPlaygroundActions({
     });
   };
 
+  const createSkillScenarioAsset = (assetType: Extract<PromptEvaluationAssetType, "数据集" | "测试套件">) => {
+    createAssetMut.mutate(buildSkillScenarioAssetRequest(assetType));
+  };
+
   return {
     debugValuesText,
     setDebugValuesText,
@@ -157,6 +162,7 @@ export function usePromptPlaygroundActions({
     creatingAsset: createAssetMut.isPending,
     runDebug,
     createWorkbenchAsset,
+    createSkillScenarioAsset,
   };
 }
 

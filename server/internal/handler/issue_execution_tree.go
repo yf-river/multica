@@ -73,6 +73,7 @@ type IssueExecutionNodeResponse struct {
 	Issue           IssueResponse                             `json:"issue"`
 	Tasks           []AgentTaskResponse                       `json:"tasks"`
 	SOPRuns         []SquadSOPRunResponse                     `json:"sop_runs"`
+	TaskMessages    []protocol.TaskMessagePayload             `json:"task_messages"`
 	TraceEvents     []TaskTraceEventResponse                  `json:"trace_events"`
 	ToolCallChains  []PromptEvaluationToolCallChainResponse   `json:"tool_call_chains"`
 	ToolCallSummary []PromptEvaluationToolCallSummaryResponse `json:"tool_call_summary"`
@@ -225,6 +226,7 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 		Issue:           issueToResponse(issue, prefix),
 		Tasks:           taskResp,
 		SOPRuns:         runResp,
+		TaskMessages:    taskMessages,
 		TraceEvents:     traceResp,
 		ToolCallChains:  toolCallChains,
 		ToolCallSummary: toolCallSummary,

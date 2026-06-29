@@ -27,6 +27,7 @@
     "new_project": "新建项目",
     "open_demo_dashboard": "打开运行看板",
     "open_prompt_library": "打开提示词库",
+    "open_debug_runs": "打开调试运行",
     "open_prompt_playground": "打开提示词调试场",
     "open_agent_playground": "打开智能体调试场",
     "open_datasets": "打开数据集",

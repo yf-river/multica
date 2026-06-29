@@ -48,14 +48,27 @@ export function proxy(req: NextRequest) {
         return NextResponse.redirect(url);
       }
       if (firstSegment === "evaluation" || firstSegment === "eval") {
-        url.pathname = `/${lastSlug}/training/runs`;
+        url.pathname = `/${lastSlug}/run-reviews`;
         url.searchParams.delete("view");
         return NextResponse.redirect(url);
       }
       if (firstSegment === "training") {
         const view = url.searchParams.get("view");
         if (view) {
-          url.pathname = `/${lastSlug}/training/${view === "demo-dashboard" ? "runs" : view}`;
+          if (view === "run-history") {
+            url.pathname = `/${lastSlug}/training/evaluation-runs`;
+          } else if (view === "runs" || view === "demo-dashboard") {
+            url.pathname = `/${lastSlug}/run-reviews`;
+          } else if (view === "prompt-playground" || view === "agent-playground") {
+            url.pathname = `/${lastSlug}/training/debug-runs`;
+          } else if (view === "experiments" || view === "optimization-runs") {
+            url.pathname = `/${lastSlug}/training/test-suites`;
+            if (view === "optimization-runs" && !url.searchParams.has("mode")) {
+              url.searchParams.set("mode", "optimize");
+            }
+          } else {
+            url.pathname = `/${lastSlug}/training/${view}`;
+          }
           url.searchParams.delete("view");
         } else {
           url.pathname = `/${lastSlug}${pathname}`;

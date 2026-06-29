@@ -11,6 +11,8 @@ import { useWorkspacePaths } from "@multica/core/paths";
 import { projectListOptions, projectResourcesOptions } from "@multica/core/projects";
 import {
   TRAINING_WORKBENCH_VIEW_BY_TAB,
+  isSkillScenarioPayload,
+  summarizeSkillScenarioTarget,
   trainingWorkbenchPath,
   trainingWorkbenchShowsPromptEditor,
   trainingWorkbenchTabFromView,
@@ -99,6 +101,11 @@ const promptLibraryKeys = {
 
 const PROMPT_TYPES = ["全部", "需求澄清", "系统提示词", "评测提示词", "小队 SOP", "通用"];
 type WorkbenchTab = TrainingWorkbenchTab;
+
+function isEvaluationRunRecordsTab(tab: WorkbenchTab): boolean {
+  return tab === "评测记录" || tab === "运行历史";
+}
+
 type RunStatusFilter = "全部" | PromptEvaluationRun["status"];
 type EvidenceFocus = {
   traceSeq: string | null;
@@ -283,7 +290,8 @@ export function PromptLibraryPage({
 
   const isDashboardTab = activeTab === "运行看板";
   const activeViewId = TRAINING_WORKBENCH_VIEW_BY_TAB[activeTab];
-  const effectiveRunStatusFilter = activeTab === "运行历史" ? runStatusFilter : "全部";
+  const isEvaluationRunRecords = isEvaluationRunRecordsTab(activeTab);
+  const effectiveRunStatusFilter = isEvaluationRunRecords ? runStatusFilter : "全部";
   const shouldShowPromptHeaderActions = activeTab === "提示词库";
   const isEvaluationAssetTab =
     activeTab === "数据集" ||
@@ -299,7 +307,7 @@ export function PromptLibraryPage({
     activeTab === "数据集" ||
     activeTab === "测试套件" ||
     activeTab === "实验" ||
-    activeTab === "运行历史" ||
+    isEvaluationRunRecords ||
     activeTab === "优化运行";
   const needsExperimentDimensions = activeTab === "实验";
   const needsDimensionScoreSummaries = isDashboardTab || activeTab === "实验";
@@ -307,9 +315,9 @@ export function PromptLibraryPage({
   const needsRuns =
     isDashboardTab ||
     activeTab === "实验" ||
-    activeTab === "运行历史" ||
+    isEvaluationRunRecords ||
     activeTab === "优化运行";
-  const needsCandidates = isDashboardTab || activeTab === "运行历史" || activeTab === "优化运行";
+  const needsCandidates = isDashboardTab || isEvaluationRunRecords || activeTab === "优化运行";
   const needsSkillResources = activeTab === "优化运行";
   const needsRuntimeReadiness = isDashboardTab;
 
@@ -801,8 +809,8 @@ export function PromptLibraryPage({
       invalidateDimensionScoreTrends();
       invalidateSummary();
       toast.success(`真实智能体优化任务已入队：${result.task_id}`);
-      setActiveTab("运行历史");
-      navigation.push(trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["运行历史"]));
+      setActiveTab("评测记录");
+      navigation.push(trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["评测记录"]));
     },
   });
 
@@ -876,6 +884,7 @@ export function PromptLibraryPage({
     creatingAsset,
     runDebug,
     createWorkbenchAsset,
+    createSkillScenarioAsset,
   } = promptPlaygroundActions;
   const savingAsset = creatingAsset || updateAssetMut.isPending || deleteAssetMut.isPending || importDatasetFromTracesMut.isPending || exportDatasetProtocolMut.isPending || importDatasetCopyMut.isPending || createDatasetVersionMut.isPending;
 
@@ -1072,13 +1081,13 @@ export function PromptLibraryPage({
 
   const openManualReviewQueue = () => {
     setRunStatusFilter("需人工复核");
-    setActiveTab("运行历史");
-    navigation.push(trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["运行历史"]));
+    setActiveTab("评测记录");
+    navigation.push(trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["评测记录"]));
   };
   const openRunHistory = () => {
     setRunStatusFilter("全部");
-    setActiveTab("运行历史");
-    navigation.push(trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["运行历史"]));
+    setActiveTab("评测记录");
+    navigation.push(trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["评测记录"]));
   };
   const openOptimizationRuns = () => {
     setActiveTab("优化运行");
@@ -1359,6 +1368,7 @@ export function PromptLibraryPage({
                 loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || dimensionScoreSummaryQuery.isLoading || dimensionScoreTrendQuery.isLoading || experimentVersionsLoading || runQuery.isLoading || candidateQuery.isLoading}
                 saving={savingAsset}
                 onCreateAsset={createWorkbenchAsset}
+                onCreateSkillScenarioAsset={createSkillScenarioAsset}
                 onToggleAssetStatus={toggleAssetStatus}
                 onUpdateAsset={(assetId, data) => updateAssetMut.mutateAsync({ id: assetId, data })}
                 onDeleteAsset={deleteAsset}
@@ -1432,6 +1442,7 @@ export function PromptLibraryPage({
               loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || dimensionScoreSummaryQuery.isLoading || dimensionScoreTrendQuery.isLoading || experimentVersionsLoading || runQuery.isLoading || candidateQuery.isLoading}
               saving={savingAsset}
               onCreateAsset={createWorkbenchAsset}
+              onCreateSkillScenarioAsset={createSkillScenarioAsset}
               onToggleAssetStatus={toggleAssetStatus}
               onUpdateAsset={(assetId, data) => updateAssetMut.mutateAsync({ id: assetId, data })}
               onDeleteAsset={deleteAsset}
@@ -2162,6 +2173,7 @@ function WorkbenchPanel({
   loading,
   saving,
   onCreateAsset,
+  onCreateSkillScenarioAsset,
   onToggleAssetStatus,
   onUpdateAsset,
   onDeleteAsset,
@@ -2228,6 +2240,7 @@ function WorkbenchPanel({
   loading: boolean;
   saving: boolean;
   onCreateAsset: (assetType: PromptEvaluationAssetType) => void;
+  onCreateSkillScenarioAsset: (assetType: Extract<PromptEvaluationAssetType, "数据集" | "测试套件">) => void;
   onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
   onUpdateAsset: (assetId: string, data: UpdatePromptEvaluationAssetRequest) => Promise<unknown>;
   onDeleteAsset: (asset: PromptEvaluationAsset) => void;
@@ -2299,10 +2312,24 @@ function WorkbenchPanel({
         facts={routeIntro.facts}
         evidence={routeIntro.evidence}
         action={tabAssetType ? (
-          <Button size="sm" onClick={() => onCreateAsset(tabAssetType)} disabled={saving}>
-            {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-            新建{tabAssetType}
-          </Button>
+          <div className="flex flex-wrap gap-2">
+            {(activeTab === "数据集" || activeTab === "测试套件") && (
+              <Button
+                size="sm"
+                variant="secondary"
+                data-testid={`create-skill-scenario-${routeIntro.route}`}
+                onClick={() => onCreateSkillScenarioAsset(tabAssetType as Extract<PromptEvaluationAssetType, "数据集" | "测试套件">)}
+                disabled={saving}
+              >
+                {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+                新建 Skill 场景
+              </Button>
+            )}
+            <Button size="sm" onClick={() => onCreateAsset(tabAssetType)} disabled={saving}>
+              {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+              新建{tabAssetType}
+            </Button>
+          </div>
         ) : null}
       />
 
@@ -2324,7 +2351,7 @@ function WorkbenchPanel({
         candidates={visibleCandidates}
         runStatusFilter={runStatusFilter}
       />
-      {activeTab === "运行历史" && (
+      {isEvaluationRunRecordsTab(activeTab) && (
         <RunHistoryPanel
           workspaceId={workspaceId}
           runs={runs}
@@ -2350,7 +2377,7 @@ function WorkbenchPanel({
         />
       )}
 
-      {activeTab !== "运行历史" && (
+      {!isEvaluationRunRecordsTab(activeTab) && (
         <TrainingAssetPanel
           activeTab={activeTab}
           route={routeIntro.route}
@@ -2908,6 +2935,11 @@ function TrainingAssetPanel({
                 <div className="mt-1 text-[11px] text-muted-foreground">
                   更新于 {asset.updated_at} · {summarizeAssetPayload(asset, caseSummaries.get(asset.id))}
                 </div>
+                {summarizeSkillScenarioTarget(asset) && (
+                  <div className="mt-1 text-[11px] text-muted-foreground" data-testid={`skill-scenario-target-${asset.id}`}>
+                    Skill 场景：{summarizeSkillScenarioTarget(asset)}
+                  </div>
+                )}
                 {summarizeAgentRun(asset) && (
                   <div className="mt-1 text-[11px] text-muted-foreground">
                     {summarizeAgentRun(asset)}
@@ -3306,7 +3338,7 @@ function trainingRouteIntro(
           ["套件用例", formatNumber(suiteCases)],
           ["结构化用例", formatNumber(context.cases.length)],
         ],
-        evidence: "页面可创建套件资产、维护手工用例，并通过运行历史回读每次套件执行结果。",
+        evidence: "页面可创建套件资产、维护手工用例，并通过评测记录回读每次套件执行结果。",
       };
     }
     case "实验": {
@@ -3320,7 +3352,7 @@ function trainingRouteIntro(
           ["维度事实", formatNumber(context.experimentDimensions.length)],
           ["结构化用例", formatNumber(context.cases.length)],
         ],
-        evidence: "页面展示实验维度事实，并与运行历史、证据快照和优化候选形成可复盘链路。",
+        evidence: "页面展示实验维度事实，并与评测记录、证据快照和优化候选形成可复盘链路。",
       };
     }
     case "优化运行": {
@@ -3338,11 +3370,12 @@ function trainingRouteIntro(
         evidence: "作业台可展开运行证据、取消活动运行，并查看候选的确认、发布或拒绝结果。",
       };
     }
+    case "评测记录":
     case "运行历史": {
       const reviewRuns = context.runs.filter((run) => run.status === "需人工复核").length;
       return {
-        route: "run-history",
-        title: context.runStatusFilter === "需人工复核" ? "人工复核队列" : "运行历史与证据",
+        route: activeTab === "评测记录" ? "evaluation-runs" : "run-history",
+        title: context.runStatusFilter === "需人工复核" ? "人工复核队列" : "评测记录与证据",
         subtitle: "按运行记录回看任务、模型、耗时、评估结论和服务端证据快照，支持同步、取消和人工复核。",
         facts: [
           ["当前筛选", context.runStatusFilter === "全部" ? "全部运行" : context.runStatusFilter],
@@ -3525,7 +3558,7 @@ function trainingRouteOperatingModel(
         className: "border-violet-500/30 bg-violet-500/5",
         steps: [
           { label: "组织", title: "用例组成套件", detail: `${formatNumber(suiteCases)} 条套件用例，${formatNumber(context.cases.length)} 条结构化用例` },
-          { label: "执行", title: "反复运行同一试卷", detail: "运行历史会记录通过率、失败原因、耗时和 token" },
+          { label: "执行", title: "反复运行同一试卷", detail: "评测记录会记录通过率、失败原因、耗时和 token" },
           { label: "定位", title: "断言级复盘", detail: "失败后可跳到运行证据、生成候选或进入人工复核" },
         ],
       };
@@ -3560,13 +3593,14 @@ function trainingRouteOperatingModel(
         ],
       };
     }
+    case "评测记录":
     case "运行历史": {
       const taskRuns = context.runs.filter((run) => Boolean(run.task_id)).length;
       const reviewRuns = context.runs.filter((run) => run.status === "需人工复核").length;
       return {
-        kicker: "运行历史工作台",
+        kicker: "评测记录工作台",
         title: "运行检索、证据展开、人工复核",
-        description: "运行历史页面关注证据检索：按状态筛选运行，展开 task、message、trace、usage、span 和服务端快照。",
+        description: "评测记录页面关注证据检索：按状态筛选运行，展开 task、message、trace、usage、span 和服务端快照。",
         badge: context.runStatusFilter === "全部" ? "证据检索" : context.runStatusFilter,
         className: "border-emerald-500/30 bg-emerald-500/5",
         steps: [
@@ -7638,19 +7672,31 @@ function emptyManualCaseDraft(): ManualCaseDraft {
 }
 
 function buildManualCaseRequest(asset: PromptEvaluationAsset, draft: ManualCaseDraft, existingCount: number): CreatePromptEvaluationCaseRequest {
+  const variables = parseDebugValues(draft.variablesText);
+  const expectedContains = splitList(draft.expectedText);
+  const skillScenario = isSkillScenarioPayload(asset.payload) ? asset.payload : null;
   return {
     asset_id: asset.id,
     prompt_id: asset.prompt_id,
     case_index: existingCount,
     case_name: draft.caseName.trim(),
-    variables: parseDebugValues(draft.variablesText),
-    expected_contains: splitList(draft.expectedText),
+    variables,
+    expected_contains: expectedContains,
     input: {
-      变量: parseDebugValues(draft.variablesText),
+      变量: variables,
       来源: "训练与评估手工用例",
+      ...(skillScenario ? { skill_scenario: {
+        target: skillScenario.target,
+        scenario: skillScenario.scenario,
+        rubric: skillScenario.rubric,
+      } } : {}),
     },
     expected: {
-      期望包含: splitList(draft.expectedText),
+      期望包含: expectedContains,
+      ...(skillScenario ? { skill_scenario: {
+        rubric_keys: skillScenario.rubric.map((item) => item.key),
+        target_skill_path: skillScenario.target.skill_path,
+      } } : {}),
     },
     tags: splitList(draft.tagsText),
     status: "启用",
@@ -7660,6 +7706,7 @@ function buildManualCaseRequest(asset: PromptEvaluationAsset, draft: ManualCaseD
 function buildManualCaseUpdateRequest(asset: PromptEvaluationAsset, item: PromptEvaluationStructuredCase, draft: ManualCaseDraft): UpdatePromptEvaluationCaseRequest {
   const variables = parseDebugValues(draft.variablesText);
   const expectedContains = splitList(draft.expectedText);
+  const skillScenario = isSkillScenarioPayload(asset.payload) ? asset.payload : null;
   return {
     asset_id: asset.id,
     prompt_id: asset.prompt_id,
@@ -7671,9 +7718,18 @@ function buildManualCaseUpdateRequest(asset: PromptEvaluationAsset, item: Prompt
       变量: variables,
       来源: "训练与评估手工用例",
       最近人工维护: new Date().toISOString(),
+      ...(skillScenario ? { skill_scenario: {
+        target: skillScenario.target,
+        scenario: skillScenario.scenario,
+        rubric: skillScenario.rubric,
+      } } : {}),
     },
     expected: {
       期望包含: expectedContains,
+      ...(skillScenario ? { skill_scenario: {
+        rubric_keys: skillScenario.rubric.map((entry) => entry.key),
+        target_skill_path: skillScenario.target.skill_path,
+      } } : {}),
     },
     tags: splitList(draft.tagsText),
     status: item.status,
@@ -8084,6 +8140,8 @@ function canReviewPromptEvaluationRun(run: PromptEvaluationRun): boolean {
 function summarizeAssetPayload(asset: PromptEvaluationAsset, caseSummary?: CaseSummary): string {
   const payload = asset.payload ?? {};
   const cases = Array.isArray(payload.cases) ? payload.cases.length : Array.isArray(payload["数据集"]) ? payload["数据集"].length : 0;
+  const skillTarget = summarizeSkillScenarioTarget(asset);
+  if (skillTarget) return `Skill 场景评测 · ${skillTarget}`;
   if (caseSummary && caseSummary.total > 0) {
     const sourceParts = [];
     if (caseSummary.manual > 0) sourceParts.push(`手工 ${caseSummary.manual}`);

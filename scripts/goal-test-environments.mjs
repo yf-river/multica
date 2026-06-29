@@ -13,8 +13,6 @@ const workspacesDir = path.join(runDir, "workspaces");
 const publicHost = process.env.GOAL_TEST_PUBLIC_HOST || "9.134.129.162";
 const proxyEnvKeys = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"];
 const noProxyEnvKeys = ["NO_PROXY", "no_proxy"];
-const defaultCodexSourceHome = "/data/ida/claude/.codex";
-const defaultCodexProxyURL = "http://127.0.0.1:7890";
 
 const profiles = {
   prod: {
@@ -770,7 +768,7 @@ function resolveCodexRunnerProfile(item, base) {
     base.http_proxy,
     base.all_proxy,
   );
-  const rawProxy = normalizeCodexProxyURL(explicitProxy || ambientProxy || defaultCodexProxyURL);
+  const rawProxy = String(explicitProxy || ambientProxy || "").trim();
   const proxyMode = isDirectProxyValue(rawProxy) ? "direct" : rawProxy ? "proxy" : "direct";
   const proxyURL = proxyMode === "proxy" ? rawProxy : "";
   const sourceHome = firstNonEmpty(
@@ -780,7 +778,6 @@ function resolveCodexRunnerProfile(item, base) {
     base.MULTICA_CODEX_SOURCE_HOME,
     process.env.CODEX_HOME,
     base.CODEX_HOME,
-    existsSync(defaultCodexSourceHome) ? defaultCodexSourceHome : "",
   );
   const defaultHome = defaultGoalTestCodexHome(item, sourceHome);
   return {
@@ -859,7 +856,7 @@ function applyCodexRunnerRuntimeEnv(env) {
   if (!env.MULTICA_CODEX_IMAGE_GENERATION) env.MULTICA_CODEX_IMAGE_GENERATION = "auto";
 
   const mode = String(env.GOAL_TEST_CODEX_PROXY_MODE || "").trim().toLowerCase();
-  const proxyURL = normalizeCodexProxyURL(env.GOAL_TEST_CODEX_PROXY_URL || "");
+  const proxyURL = String(env.GOAL_TEST_CODEX_PROXY_URL || "").trim();
   if (mode === "direct" || isDirectProxyValue(proxyURL)) {
     for (const key of proxyEnvKeys) delete env[key];
     for (const key of noProxyEnvKeys) delete env[key];
@@ -881,11 +878,6 @@ function defaultGoalTestCodexHome(item, sourceHome) {
   return path.join(home, ".multica", "runtimes", item.daemonID, "codex", "CODEX_HOME");
 }
 
-function normalizeCodexProxyURL(value) {
-  const trimmed = String(value || "").trim();
-  if (/^socks5h?:\/\/127\.0\.0\.1:7890\/?$/i.test(trimmed)) return defaultCodexProxyURL;
-  return trimmed;
-}
 
 function ensureCodexRunnerProfile(runner) {
   const target = String(runner.codexHome || "").trim();
