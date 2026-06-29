@@ -1945,6 +1945,15 @@ var retryableReasons = map[string]bool{
 	taskfailure.ReasonAgentProviderNetwork.String():             true,
 }
 
+const providerNetworkExtraRetryBudget int32 = 3
+
+func taskRetryBudget(reason string, maxAttempts int32) int32 {
+	if reason == taskfailure.ReasonAgentProviderNetwork.String() {
+		return maxAttempts + providerNetworkExtraRetryBudget
+	}
+	return maxAttempts
+}
+
 func resumeUnsafeFailureReason(reason string) bool {
 	switch reason {
 	// Keep in sync with GetLastTaskSession / GetLastChatTaskSession and
@@ -1977,11 +1986,14 @@ func (s *TaskService) MaybeRetryFailedTask(ctx context.Context, parent db.AgentT
 	if !retryableReasons[reason] {
 		return nil, nil
 	}
-	if parent.Attempt >= parent.MaxAttempts {
+	retryBudget := taskRetryBudget(reason, parent.MaxAttempts)
+	if parent.Attempt >= retryBudget {
 		slog.Info("task auto-retry skipped: budget exhausted",
 			"task_id", util.UUIDToString(parent.ID),
 			"attempt", parent.Attempt,
 			"max_attempts", parent.MaxAttempts,
+			"retry_budget", retryBudget,
+			"reason", reason,
 		)
 		return nil, nil
 	}

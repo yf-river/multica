@@ -38,7 +38,7 @@ await check("DATABASE_URL is available", async () => {
 });
 
 await check("frontend login page responds", async () => {
-  const response = await fetchWithTimeout(`${frontendURL}/login`, { timeoutMs: 2_000 });
+  const response = await fetchWithRetry(`${frontendURL}/login`, { timeoutMs: 5_000, attempts: 3, delayMs: 1_000 });
   if (!response.ok) throw new Error(`GET /login returned ${response.status}`);
   return { status: response.status };
 });
@@ -141,6 +141,20 @@ async function fetchWithTimeout(url, init = {}) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+async function fetchWithRetry(url, init = {}) {
+  const { attempts = 3, delayMs = 500, ...requestInit } = init;
+  let lastError;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      return await fetchWithTimeout(url, requestInit);
+    } catch (error) {
+      lastError = error;
+      if (attempt < attempts) await new Promise((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastError;
 }
 
 function readEnvFile(file) {

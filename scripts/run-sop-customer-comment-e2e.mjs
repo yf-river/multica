@@ -24,19 +24,19 @@ const repoSpecs = [
     key: "usercenter",
     title: "usercenter",
     projectPath: "ChainWeaver/ida/user-center",
-    url: `https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/${repoRef}`,
+    url: "https://git.code.tencent.com/ChainWeaver/ida/user-center",
   },
   {
     key: "gateway",
     title: "gateway",
     projectPath: "ChainWeaver/ida/gateway",
-    url: `https://git.code.tencent.com/ChainWeaver/ida/gateway/commits/${repoRef}`,
+    url: "https://git.code.tencent.com/ChainWeaver/ida/gateway",
   },
   {
     key: "ida-deployment",
     title: "ida-deployment",
     projectPath: "ChainWeaver/ida/ida-deployment",
-    url: `https://git.code.tencent.com/ChainWeaver/ida/ida-deployment/commits/${repoRef}`,
+    url: "https://git.code.tencent.com/ChainWeaver/ida/ida-deployment",
   },
 ];
 
@@ -333,8 +333,8 @@ async function approveAndWaitChildren(children, projects, token) {
   const results = [];
   for (const child of children) {
     const target = byProject.get(child.project_id) || child.project_id;
-    const approved = await put(`/api/issues/${child.id}`, { status: "todo" }, token);
     const tasksBefore = await listIssueTasks(child.id, token);
+    const approved = await put(`/api/issues/${child.id}`, { status: "todo" }, token);
     const terminal = await waitAnyTerminalTask(child.id, new Set(tasksBefore.map((item) => item.id)), token, `等待 ${target} 子任务运行完成`);
     requireCompletedTask(terminal, `${target} 子任务`);
     const trace = await get(`/api/issues/${child.id}/trace`, token);
@@ -444,6 +444,7 @@ async function waitNextTerminalTask(issueID, agentID, knownIDs, token, label) {
       latest: tasks.slice(0, 5).map(pickTask),
     };
     if (isActiveTask(task)) return null;
+    if (shouldWaitForRetry(task, tasks)) return null;
     evidence.task_rounds.push({ label, task: pickTask(task) });
     return task;
   }, taskTimeoutMs, label);
@@ -452,8 +453,13 @@ async function waitNextTerminalTask(issueID, agentID, knownIDs, token, label) {
 async function waitAnyTerminalTask(issueID, knownIDs, token, label) {
   return poll(async () => {
     const tasks = sortTasks(await listIssueTasks(issueID, token));
-    const task = tasks.find((item) => !knownIDs.has(item.id));
-    if (!task || isActiveTask(task)) return null;
+    const candidates = tasks
+      .filter((item) => !knownIDs.has(item.id))
+      .sort((a, b) => new Date(a.created_at || a.started_at || 0).getTime() - new Date(b.created_at || b.started_at || 0).getTime());
+    const task =
+      candidates.find((item) => item.status === "completed") ||
+      candidates.find((item) => !isActiveTask(item) && !shouldWaitForRetry(item, tasks));
+    if (!task) return null;
     evidence.task_rounds.push({ label, task: pickTask(task) });
     return task;
   }, taskTimeoutMs, label);
@@ -468,11 +474,27 @@ function requireCompletedTask(task, label) {
   if (!task?.id) fail(`${label} 缺少 task`);
   if (task.status === "completed") return;
   const text = JSON.stringify(task);
-  if (/401|Unauthorized|Missing bearer|auth|authentication|invalid_request|not supported with|image_generation|agent_error\.provider_auth_or_access|额度|容量|quota|capacity|rate.?limit|agent_error\.provider_capacity_or_rate_limit/i.test(text)) {
+  if (/401|Unauthorized|Missing bearer|auth|authentication|invalid_request|not supported with|image_generation|agent_error\.provider_auth_or_access|额度|容量|quota|capacity|rate.?limit|agent_error\.provider_capacity_or_rate_limit|agent_error\.provider_network|stream disconnected|tls handshake eof|responses/i.test(text)) {
     evidence.external_dependency_failure = true;
     evidence.external_dependency_boundary = `${label} 失败发生在外部模型/认证/容量边界`;
   }
   fail(`${label} 未完成：status=${task.status} error=${task.error || ""} failure_reason=${task.failure_reason || ""}`);
+}
+
+function shouldWaitForRetry(task, tasks) {
+  if (task.status !== "failed") return false;
+  if (!isRetryableTaskFailure(task)) return false;
+  if (Number(task.attempt || 0) < Number(task.max_attempts || 0)) return true;
+  return tasks.some((item) =>
+    item.parent_task_id === task.id &&
+    (isActiveTask(item) || item.status === "completed")
+  );
+}
+
+function isRetryableTaskFailure(task) {
+  return /agent_error\.provider_network|agent_error\.provider_server_error|agent_error\.provider_capacity_or_rate_limit|runtime_offline|runtime_recovery|timeout|stream disconnected|tls handshake eof|request timed out/i.test(
+    JSON.stringify(task),
+  );
 }
 
 function isActiveTask(task) {
@@ -630,6 +652,9 @@ function pickTask(task) {
     created_at: task.created_at,
     started_at: task.started_at,
     completed_at: task.completed_at,
+    parent_task_id: task.parent_task_id || "",
+    attempt: task.attempt ?? null,
+    max_attempts: task.max_attempts ?? null,
     error: task.error || "",
     failure_reason: task.failure_reason || "",
   };

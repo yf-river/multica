@@ -186,7 +186,13 @@ SELECT
     'queued', p.priority, p.trigger_comment_id, p.trigger_summary, p.context,
     CASE WHEN p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity' THEN NULL ELSE p.session_id END,
     CASE WHEN p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity' THEN NULL ELSE p.work_dir END,
-    p.attempt + 1, p.max_attempts, p.id,
+    p.attempt + 1,
+    CASE
+      WHEN p.failure_reason IS NOT DISTINCT FROM 'agent_error.provider_network'
+        THEN GREATEST(p.max_attempts, p.attempt + 1)
+      ELSE p.max_attempts
+    END,
+    p.id,
     p.failure_reason IS NOT DISTINCT FROM 'codex_semantic_inactivity',
     p.is_leader_task
 FROM agent_task_queue p
