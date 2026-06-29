@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, type ReactNode } from "react";
-import { Activity, AlertTriangle, GitBranch, ListChecks, Loader2, RotateCcw, Timer, WifiOff } from "lucide-react";
+import { Activity, AlertTriangle, Download, GitBranch, HelpCircle, ListChecks, Loader2, RotateCcw, Timer, WifiOff } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
@@ -13,6 +13,7 @@ import type { TaskMessagePayload } from "@multica/core/types/events";
 import type { PromptEvaluationToolCallChain } from "@multica/core/types/prompt-evaluation";
 import { cn } from "@multica/ui/lib/utils";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@multica/ui/components/ui/tooltip";
 import { PageHeader } from "../../layout/page-header";
 import { AppLink, useNavigation } from "../../navigation";
 import { TranscriptButton } from "../../common/task-transcript";
@@ -166,6 +167,12 @@ function RunReviewDetail({
   const visibleStageRows = stageRows.filter((stage) => stage.node);
   const visibleChildLanes = childLanes;
   const eventRows = buildRunReviewEventRows(tree, timelineNodes);
+  const tokenTotal = (summary?.total_input_tokens ?? 0) +
+    (summary?.total_output_tokens ?? 0) +
+    (summary?.total_cache_read_tokens ?? 0) +
+    (summary?.total_cache_write_tokens ?? 0);
+  const nodeCsv = buildRunReviewNodeCsv(issue, summary, visibleStageRows, visibleChildLanes);
+  const rawEventsCsv = buildRunReviewRawEventsCsv(eventRows);
   const queryClient = useQueryClient();
   const { data: tasks = [] } = useQuery({
     queryKey: issueKeys.tasks(issue.id),
@@ -267,9 +274,36 @@ function RunReviewDetail({
         )}
 
         <div className="grid gap-0 divide-y text-sm md:grid-cols-3 md:divide-x md:divide-y-0">
-          <Metric label="总耗时" value={formatDuration(summary?.total_duration_ms ?? 0)} icon={<Timer className="size-3.5" />} />
-          <Metric label="Token" value={formatNumber((summary?.total_input_tokens ?? 0) + (summary?.total_output_tokens ?? 0))} icon={<Activity className="size-3.5" />} />
-          <Metric label="轮次" value={formatNumber(summary?.agent_turn_count ?? 0)} icon={<ListChecks className="size-3.5" />} />
+          <Metric
+            label="总耗时"
+            value={formatDuration(summary?.total_duration_ms ?? 0)}
+            icon={<Timer className="size-3.5" />}
+            tooltip={
+              <MetricTooltip
+                rows={[
+                  ["Agent 执行耗时", formatDuration(summary?.total_duration_ms ?? 0)],
+                  ["人工确认耗时", "暂未记录"],
+                ]}
+              />
+            }
+          />
+          <Metric
+            label="Token"
+            value={formatNumber(tokenTotal)}
+            icon={<Activity className="size-3.5" />}
+            tooltip={
+              <MetricTooltip
+                rows={[
+                  ["输入", formatNumber(summary?.total_input_tokens ?? 0)],
+                  ["输出", formatNumber(summary?.total_output_tokens ?? 0)],
+                  ["缓存读", formatNumber(summary?.total_cache_read_tokens ?? 0)],
+                  ["缓存写", formatNumber(summary?.total_cache_write_tokens ?? 0)],
+                  ["缓存命中率", formatPercent(cacheHitRate(summary?.total_input_tokens ?? 0, summary?.total_cache_read_tokens ?? 0))],
+                ]}
+              />
+            }
+          />
+          <Metric label="思考轮次" value={formatNumber(summary?.agent_turn_count ?? 0)} icon={<ListChecks className="size-3.5" />} />
         </div>
       </section>
 
@@ -300,7 +334,16 @@ function RunReviewDetail({
       </section>
 
       <section className="rounded-md border bg-card">
-        <SectionTitle title="节点表" subtitle="只展示执行树中真实匹配到的 SOP 节点。" />
+        <SectionTitle
+          title="节点表"
+          subtitle="只展示执行树中真实匹配到的 SOP 节点。"
+          action={
+            <ExportButton
+              label="导出节点数据"
+              onClick={() => downloadCsv(`run-review-nodes-${issue.identifier || issue.id}.csv`, nodeCsv)}
+            />
+          }
+        />
         <div className="hidden md:block">
           <table className="w-full table-fixed text-sm">
             <thead className="border-y bg-muted/40 text-left text-xs text-muted-foreground">
@@ -319,8 +362,12 @@ function RunReviewDetail({
                   <td className="truncate px-3 py-2">{stage.label}</td>
                   <td className="truncate px-3 py-2 text-muted-foreground">{stage.node?.agent_name ?? stage.key}</td>
                   <td className="truncate px-3 py-2">{stage.node ? statusLabel(stage.node.status) : "缺失"}</td>
-                  <td className="truncate px-3 py-2">{formatDuration(stage.node?.duration_ms ?? 0)}</td>
-                  <td className="truncate px-3 py-2">{formatNumber((stage.node?.input_tokens ?? 0) + (stage.node?.output_tokens ?? 0))}</td>
+                  <td className="truncate px-3 py-2">
+                    <NodeMetric value={formatDuration(stage.node?.duration_ms ?? 0)} tooltip={nodeDurationTooltip(stage.node)} />
+                  </td>
+                  <td className="truncate px-3 py-2">
+                    <NodeMetric value={formatNumber(nodeTokenTotal(stage.node))} tooltip={nodeTokenTooltip(stage.node)} />
+                  </td>
                   <td className="truncate px-3 py-2">{formatNumber(stage.node?.agent_turn_count ?? 0)}</td>
                 </tr>
               )) : (
@@ -343,8 +390,8 @@ function RunReviewDetail({
               <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground">
                 <NodeFact label="Agent" value={stage.node?.agent_name ?? stage.key} />
                 <NodeFact label="耗时" value={formatDuration(stage.node?.duration_ms ?? 0)} />
-                <NodeFact label="Token" value={formatNumber((stage.node?.input_tokens ?? 0) + (stage.node?.output_tokens ?? 0))} />
-                <NodeFact label="轮次" value={formatNumber(stage.node?.agent_turn_count ?? 0)} />
+                <NodeFact label="Token" value={formatNumber(nodeTokenTotal(stage.node))} />
+                <NodeFact label="思考轮次" value={formatNumber(stage.node?.agent_turn_count ?? 0)} />
               </div>
             </div>
           )) : (
@@ -354,7 +401,16 @@ function RunReviewDetail({
       </section>
 
       <section className="rounded-md border bg-card">
-        <SectionTitle title="事件流" subtitle="按 task message、trace、工具链和执行节点展示最近 50 条可诊断证据。" />
+        <SectionTitle
+          title="事件流"
+          subtitle="按 task message、trace、工具链和执行节点展示最近 50 条可诊断证据。"
+          action={
+            <ExportButton
+              label="导出 RAW 交互信息"
+              onClick={() => downloadCsv(`run-review-events-${issue.identifier || issue.id}.csv`, rawEventsCsv)}
+            />
+          }
+        />
         <div className="divide-y">
           {eventRows.length > 0 ? eventRows.map((node, index) => (
             <RunReviewEventRow key={`${node.id}-${index}`} event={node} task={node.taskId ? taskById.get(node.taskId) : undefined} />
@@ -480,24 +536,89 @@ function RunFailureBanner({
   );
 }
 
-function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) {
+function SectionTitle({ title, subtitle, action }: { title: string; subtitle: string; action?: ReactNode }) {
   return (
-    <div className="px-4 py-3">
-      <div className="text-sm font-semibold">{title}</div>
-      <div className="mt-0.5 text-xs text-muted-foreground">{subtitle}</div>
+    <div className="flex flex-col gap-2 px-4 py-3 sm:flex-row sm:items-start sm:justify-between">
+      <div className="min-w-0">
+        <div className="text-sm font-semibold">{title}</div>
+        <div className="mt-0.5 text-xs text-muted-foreground">{subtitle}</div>
+      </div>
+      {action && <div className="shrink-0">{action}</div>}
     </div>
   );
 }
 
-function Metric({ label, value, icon }: { label: string; value: string; icon: ReactNode }) {
+function Metric({ label, value, icon, tooltip }: { label: string; value: string; icon: ReactNode; tooltip?: ReactNode }) {
   return (
     <div className="flex items-center gap-3 px-4 py-3">
       <div className="rounded-md border bg-background p-2 text-muted-foreground">{icon}</div>
       <div>
-        <div className="text-xs text-muted-foreground">{label}</div>
+        <div className="flex items-center gap-1 text-xs text-muted-foreground">
+          <span>{label}</span>
+          {tooltip && (
+            <Tooltip>
+              <TooltipTrigger
+                render={
+                  <button type="button" className="text-muted-foreground hover:text-foreground" aria-label={`${label}说明`}>
+                    <HelpCircle className="size-3" />
+                  </button>
+                }
+              />
+              <TooltipContent side="top" className="max-w-72">
+                {tooltip}
+              </TooltipContent>
+            </Tooltip>
+          )}
+        </div>
         <div className="text-sm font-semibold">{value}</div>
       </div>
     </div>
+  );
+}
+
+function MetricTooltip({ rows }: { rows: Array<[string, string]> }) {
+  return (
+    <div className="grid gap-1 text-xs">
+      {rows.map(([label, value]) => (
+        <div key={label} className="flex items-center justify-between gap-4">
+          <span className="text-muted-foreground">{label}</span>
+          <span className="font-medium text-foreground">{value}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ExportButton({ label, onClick }: { label: string; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      className="inline-flex items-center gap-1.5 rounded border bg-background px-2.5 py-1.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+      onClick={onClick}
+    >
+      <Download className="size-3.5" />
+      {label}
+    </button>
+  );
+}
+
+function NodeMetric({ value, tooltip }: { value: string; tooltip: ReactNode }) {
+  return (
+    <span className="inline-flex min-w-0 items-center gap-1">
+      <span className="truncate">{value}</span>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <button type="button" className="shrink-0 text-muted-foreground hover:text-foreground" aria-label="节点指标说明">
+              <HelpCircle className="size-3" />
+            </button>
+          }
+        />
+        <TooltipContent side="top" className="max-w-72">
+          {tooltip}
+        </TooltipContent>
+      </Tooltip>
+    </span>
   );
 }
 
@@ -581,7 +702,14 @@ function TimelineLaneChart({
                     left: `${Math.max(0, ((row.startMs - min) / span) * 100)}%`,
                     width: `${Math.max(6, ((row.endMs - row.startMs) / span) * 100)}%`,
                   }}
-                  title={`${row.label} · ${formatDuration(row.durationMs)} · Token ${formatNumber(row.tokenTotal)} · 轮次 ${formatNumber(row.turns)}`}
+                  title={[
+                    row.label,
+                    `开始 ${formatDateTime(row.startMs)}`,
+                    `结束 ${formatDateTime(row.endMs)}`,
+                    `耗时 ${formatDuration(row.durationMs)}`,
+                    `Token ${formatNumber(row.tokenTotal)}`,
+                    `思考轮次 ${formatNumber(row.turns)}`,
+                  ].join(" · ")}
                 >
                   <span className="block truncate">
                     {formatDuration(row.durationMs)} · {formatNumber(row.tokenTotal)} token
@@ -753,6 +881,157 @@ export function buildRunReviewEventRows(
       return a.id.localeCompare(b.id);
     })
     .slice(0, 50);
+}
+
+export function buildRunReviewNodeCsv(
+  issue: Issue,
+  summary: IssueExecutionTreeResponse["issue_summary"] | undefined,
+  stageRows: ReturnType<typeof buildStageRows>,
+  childLanes: ReturnType<typeof buildChildLanes>,
+): string {
+  const headers = [
+    "row_type",
+    "issue_id",
+    "issue_identifier",
+    "issue_title",
+    "total_duration_ms",
+    "total_token",
+    "total_thinking_rounds",
+    "node_key",
+    "node_label",
+    "node_status",
+    "node_agent",
+    "node_started_at",
+    "node_completed_at",
+    "node_duration_ms",
+    "node_input_tokens",
+    "node_output_tokens",
+    "node_cache_read_tokens",
+    "node_cache_write_tokens",
+    "node_token_total",
+    "node_thinking_rounds",
+  ];
+  const totalToken = (summary?.total_input_tokens ?? 0) +
+    (summary?.total_output_tokens ?? 0) +
+    (summary?.total_cache_read_tokens ?? 0) +
+    (summary?.total_cache_write_tokens ?? 0);
+  const rows: Array<Array<string | number>> = [[
+    "summary",
+    issue.id,
+    issue.identifier,
+    issue.title,
+    summary?.total_duration_ms ?? 0,
+    totalToken,
+    summary?.agent_turn_count ?? 0,
+    "",
+    "",
+    summary?.acceptance_status ?? "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+    "",
+  ]];
+
+  for (const stage of stageRows) {
+    const node = stage.node;
+    rows.push([
+      "sop_node",
+      issue.id,
+      issue.identifier,
+      issue.title,
+      summary?.total_duration_ms ?? 0,
+      totalToken,
+      summary?.agent_turn_count ?? 0,
+      stage.key,
+      stage.label,
+      node?.status ?? "missing",
+      node?.agent_name ?? stage.key,
+      node?.started_at ?? "",
+      node?.completed_at ?? "",
+      node?.duration_ms ?? 0,
+      node?.input_tokens ?? 0,
+      node?.output_tokens ?? 0,
+      node?.cache_read_tokens ?? 0,
+      node?.cache_write_tokens ?? 0,
+      nodeTokenTotal(node),
+      node?.agent_turn_count ?? 0,
+    ]);
+  }
+
+  for (const lane of childLanes) {
+    rows.push([
+      "child_issue",
+      issue.id,
+      issue.identifier,
+      issue.title,
+      summary?.total_duration_ms ?? 0,
+      totalToken,
+      summary?.agent_turn_count ?? 0,
+      lane.key,
+      lane.label,
+      lane.issue?.status ?? "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+      "",
+    ]);
+  }
+
+  return toCsv([headers, ...rows]);
+}
+
+export function buildRunReviewRawEventsCsv(eventRows: RunReviewEventRowData[]): string {
+  const headers = [
+    "id",
+    "kind",
+    "category",
+    "time",
+    "timestamp_ms",
+    "task_id",
+    "source",
+    "object",
+    "title",
+    "outcome",
+    "severity",
+    "duration_ms",
+    "token_total",
+    "summary",
+    "detail",
+    "metadata_detail",
+  ];
+  return toCsv([
+    headers,
+    ...eventRows.map((event) => [
+      event.id,
+      event.kind,
+      event.category,
+      event.timeLabel,
+      event.timestampMs,
+      event.taskId ?? "",
+      event.sourceLabel,
+      event.object,
+      event.title,
+      event.outcome,
+      event.severity,
+      event.durationMs,
+      event.tokenTotal,
+      event.summary,
+      event.detail,
+      event.metadataDetail,
+    ]),
+  ]);
 }
 
 function toolMessageKey(taskId: string, seq: number) {
@@ -1789,6 +2068,89 @@ function formatDuration(ms: number) {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 }).format(value || 0);
+}
+
+function formatPercent(value: number | null) {
+  if (value === null) return "暂无";
+  return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1, style: "percent" }).format(value);
+}
+
+function cacheHitRate(inputTokens: number, cacheReadTokens: number) {
+  const denominator = inputTokens + cacheReadTokens;
+  if (denominator <= 0) return null;
+  return cacheReadTokens / denominator;
+}
+
+function nodeTokenTotal(node: IssueTimelineNode | undefined) {
+  if (!node) return 0;
+  return node.input_tokens + node.output_tokens + node.cache_read_tokens + node.cache_write_tokens;
+}
+
+function nodeDurationTooltip(node: IssueTimelineNode | undefined) {
+  return (
+    <MetricTooltip
+      rows={[
+        ["开始时间", formatDateTime(node?.started_at)],
+        ["结束时间", formatDateTime(node?.completed_at)],
+        ["执行耗时", formatDuration(node?.duration_ms ?? 0)],
+        ["人工等待", "暂未记录"],
+      ]}
+    />
+  );
+}
+
+function nodeTokenTooltip(node: IssueTimelineNode | undefined) {
+  return (
+    <MetricTooltip
+      rows={[
+        ["输入", formatNumber(node?.input_tokens ?? 0)],
+        ["输出", formatNumber(node?.output_tokens ?? 0)],
+        ["缓存读", formatNumber(node?.cache_read_tokens ?? 0)],
+        ["缓存写", formatNumber(node?.cache_write_tokens ?? 0)],
+        ["缓存命中率", formatPercent(cacheHitRate(node?.input_tokens ?? 0, node?.cache_read_tokens ?? 0))],
+      ]}
+    />
+  );
+}
+
+function formatDateTime(value: string | number | null | undefined) {
+  if (value === null || value === undefined || value === "") return "暂无";
+  const ms = typeof value === "number" ? value : parseTimeMs(value);
+  if (ms === null) return "暂无";
+  return new Intl.DateTimeFormat("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  }).format(new Date(ms));
+}
+
+function toCsv(rows: Array<Array<string | number | boolean | null | undefined>>) {
+  return `${rows.map((row) => row.map(csvCell).join(",")).join("\n")}\n`;
+}
+
+function csvCell(value: string | number | boolean | null | undefined) {
+  const text = value === null || value === undefined ? "" : String(value);
+  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+function downloadCsv(filename: string, csv: string) {
+  if (typeof window === "undefined" || typeof document === "undefined") return;
+  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const url = window.URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = sanitizeFilename(filename);
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.URL.revokeObjectURL(url);
+}
+
+function sanitizeFilename(filename: string) {
+  return filename.replace(/[^\w.\-]+/g, "_");
 }
 
 function statusLabel(status: string) {

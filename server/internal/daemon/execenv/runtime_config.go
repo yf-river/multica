@@ -571,6 +571,12 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("Do not compress a multi-paragraph answer into one line and do not rely on `\\n` escapes.\n\n")
 	}
 
+	b.WriteString("## Stage Markdown Artifacts\n\n")
+	b.WriteString("When this run produces a durable stage artifact (for example a 01-clarify requirement note, 02-design proposal, 03-task-split handoff, 04-implement change summary, or 05-verify report), save it as a UTF-8 `.md` file and attach it to the same issue comment that summarizes the stage. Use repeated `--attachment <path>` flags on `multica issue comment add`; do not merely mention a local path in prose. The platform renders those attachments near the comment so users can download or preview them later. Temporary scratch files that are not useful to a future reader should not be attached.\n\n")
+
+	b.WriteString("## MR and Human CodeReview Handoff\n\n")
+	b.WriteString("For code-changing issue work, after verification passes and before the final delivery comment, open or update the provider MR unless the user explicitly requested local-only work or no MR. Use a routable issue key in the MR title, body, or branch so the platform can link it back to this issue; for Gongfeng resources, use the `gongfeng` MCP server or repository-native tooling available in the runtime. If MR creation is blocked by auth, failing tests, or missing remote state, report that blocker instead of marking the work complete. After opening or updating an MR, run `multica issue pull-requests <issue-id> --output json` when possible to confirm the platform sees the association, then include the MR URL in the final issue comment for the human CodeReview step.\n\n")
+
 	// Inject available repositories section.
 	if len(ctx.Repos) > 0 {
 		b.WriteString("## Repositories\n\n")

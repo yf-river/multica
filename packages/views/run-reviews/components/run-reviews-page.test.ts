@@ -4,8 +4,10 @@ import type { TaskMessagePayload } from "@multica/core/types/events";
 import type { PromptEvaluationToolCallChain } from "@multica/core/types/prompt-evaluation";
 import {
   buildIssueReviewDraftCaseRequest,
+  buildRunReviewNodeCsv,
   buildRunReviewEventRows,
   buildRunReviewOptimizerHref,
+  buildRunReviewRawEventsCsv,
   issueRunRowActivityLabel,
   issueRunRowMetaLabels,
 } from "./run-reviews-page";
@@ -325,6 +327,91 @@ describe("buildRunReviewEventRows", () => {
     expect(row?.title).toBe("custom_runtime_probe");
     expect(row?.outcome).toBe("已返回");
     expect(row?.detail).toContain("raw_tool: custom_runtime_probe");
+  });
+
+  it("exports node CSV with summary metrics and per-node token breakdown", () => {
+    const issue = {
+      id: "issue-1",
+      identifier: "ISS-1",
+      title: "优化,运行复盘",
+      status: "done",
+    } as Issue;
+    const summary = {
+      issue_id: "issue-1",
+      node_count: 1,
+      total_duration_ms: 120000,
+      total_input_tokens: 10,
+      total_output_tokens: 20,
+      total_cache_read_tokens: 30,
+      total_cache_write_tokens: 4,
+      message_count: 2,
+      agent_turn_count: 3,
+      trace_event_count: 1,
+      usage_unavailable: false,
+      acceptance_status: "done",
+      full_analysis_deep_link: "",
+    };
+    const node = {
+      issue_id: "issue-1",
+      node_id: "task:task-1",
+      node_type: "agent_task",
+      agent_name: "01-clarify",
+      status: "completed",
+      started_at: "2026-06-09T10:00:00.000Z",
+      completed_at: "2026-06-09T10:01:00.000Z",
+      duration_ms: 60000,
+      input_tokens: 1,
+      output_tokens: 2,
+      cache_read_tokens: 3,
+      cache_write_tokens: 4,
+      message_count: 1,
+      agent_turn_count: 5,
+      trace_event_count: 1,
+      usage_unavailable_trace: false,
+      summary: "done",
+      evidence_refs: [],
+    } as IssueTimelineNode;
+
+    const csv = buildRunReviewNodeCsv(
+      issue,
+      summary,
+      [{ key: "01", label: "01-需求澄清", names: ["01", "01-clarify", "clarify", "01-需求澄清", "需求澄清"], node }],
+      [],
+    );
+
+    expect(csv).toContain("total_duration_ms,total_token,total_thinking_rounds");
+    expect(csv).toContain('summary,issue-1,ISS-1,"优化,运行复盘",120000,64,3');
+    expect(csv).toContain('sop_node,issue-1,ISS-1,"优化,运行复盘",120000,64,3,01,01-需求澄清,completed,01-clarify');
+    expect(csv).toContain(",60000,1,2,3,4,10,5");
+  });
+
+  it("exports raw event CSV with escaped detail and metadata evidence", () => {
+    const rows = [
+      {
+        id: "event-1",
+        kind: "trace",
+        category: "Trace",
+        timestampMs: 100,
+        timeLabel: "06/09 10:00",
+        taskId: "task-1",
+        sourceLabel: "codex",
+        object: "task.failed",
+        title: "任务失败",
+        outcome: "异常",
+        summary: "异常摘要：timeout",
+        detail: "line 1\nline 2, with comma",
+        metadataDetail: 'metadata:\n{"quote":"yes"}',
+        durationMs: 1200,
+        tokenTotal: 30,
+        severity: "error",
+      },
+    ] satisfies ReturnType<typeof buildRunReviewEventRows>;
+
+    const csv = buildRunReviewRawEventsCsv(rows);
+
+    expect(csv).toContain("id,kind,category,time,timestamp_ms");
+    expect(csv).toContain('"line 1\nline 2, with comma"');
+    expect(csv).toContain('"metadata:\n{""quote"":""yes""}"');
   });
 
   it("creates a draft evaluation case with run snapshot, prompt snapshots, tools, and assertions", () => {

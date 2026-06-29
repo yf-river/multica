@@ -65,6 +65,45 @@ func TestSubIssueCreationSectionPresentForIssueRuns(t *testing.T) {
 	}
 }
 
+func TestStageMarkdownArtifactsSectionUsesCommentAttachments(t *testing.T) {
+	t.Parallel()
+
+	out := buildMetaSkillContent("claude", TaskContextForEnv{IssueID: "11111111-2222-3333-4444-555555555555"})
+
+	for _, want := range []string{
+		"## Stage Markdown Artifacts",
+		"01-clarify requirement note",
+		"05-verify report",
+		"save it as a UTF-8 `.md` file",
+		"repeated `--attachment <path>` flags on `multica issue comment add`",
+		"download or preview them later",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("stage artifact guidance missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
+func TestMRAndHumanCodeReviewHandoffSectionRequiresLinkedMR(t *testing.T) {
+	t.Parallel()
+
+	out := buildMetaSkillContent("claude", TaskContextForEnv{IssueID: "11111111-2222-3333-4444-555555555555"})
+
+	for _, want := range []string{
+		"## MR and Human CodeReview Handoff",
+		"after verification passes and before the final delivery comment",
+		"open or update the provider MR",
+		"Use a routable issue key in the MR title, body, or branch",
+		"for Gongfeng resources, use the `gongfeng` MCP server",
+		"multica issue pull-requests <issue-id> --output json",
+		"include the MR URL in the final issue comment",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("MR handoff guidance missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
 // The brief must no longer carry any parent-notification guidance. PR
 // #2918 added a "Tell the parent when you finish a child" rule that
 // turned into noise (self-mention loops, planner ack ping-pong,

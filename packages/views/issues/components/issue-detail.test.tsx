@@ -1,6 +1,6 @@
 import { forwardRef, useRef, useState, useImperativeHandle } from "react";
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Issue, TimelineEntry } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
@@ -686,6 +686,34 @@ describe("IssueDetail (shared)", () => {
     // Key names are not rendered in the sidebar prior to opening the dialog.
     expect(screen.queryByText("pr_url")).not.toBeInTheDocument();
     expect(screen.queryByText("pipeline_status")).not.toBeInTheDocument();
+  });
+
+  it("renders TAPD source metadata as a lightweight issue reference", async () => {
+    const tapdURL = "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154";
+    mockApiObj.getIssue.mockResolvedValue({
+      ...mockIssue,
+      metadata: {
+        source_provider: "tapd",
+        source_url: tapdURL,
+        tapd_workspace_id: "47654106",
+        tapd_resource_type: "markdown_wiki",
+        tapd_resource_id: "1147654106001004154",
+        source_fetch_status: "fetched",
+        source_fetch_title: "用户快捷入口需求",
+        source_fetch_summary: "支持用户管理个人快捷入口，并由 SOP 流程推进实现。",
+      },
+    });
+
+    renderIssueDetail();
+
+    const card = await screen.findByTestId("tapd-source-card");
+    expect(within(card).getByText("TAPD 来源")).toBeInTheDocument();
+    expect(within(card).getByText("TAPD Wiki")).toBeInTheDocument();
+    expect(within(card).getByText("ID 1147654106001004154")).toBeInTheDocument();
+    expect(within(card).getByText("已抓取")).toBeInTheDocument();
+    expect(within(card).getByTestId("tapd-source-title")).toHaveTextContent("用户快捷入口需求");
+    expect(within(card).getByText(/支持用户管理个人快捷入口/)).toBeInTheDocument();
+    expect(within(card).getByRole("link", { name: /用户快捷入口需求/ })).toHaveAttribute("href", tapdURL);
   });
 
   it("opens a dialog with formatted JSON when the Metadata button is clicked", async () => {

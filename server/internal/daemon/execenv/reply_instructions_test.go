@@ -36,6 +36,7 @@ func TestBuildCommentReplyInstructionsCodexLinux(t *testing.T) {
 		"rm ./reply.md",
 		"Do NOT write literal `\\n` escapes to simulate line breaks",
 		"do NOT reuse --parent values from previous turns",
+		"append one --attachment <path> flag for each file",
 	} {
 		if !strings.Contains(got, want) {
 			t.Fatalf("codex/linux reply instructions missing %q\n---\n%s", want, got)
@@ -92,6 +93,7 @@ func TestBuildCommentReplyInstructionsNonCodexLinux(t *testing.T) {
 					"rm ./reply.md",
 					"do NOT reuse --parent values from previous turns",
 					"If you decide to reply",
+					"append one --attachment <path> flag for each file",
 				} {
 					if !strings.Contains(got, want) {
 						t.Errorf("%s reply instructions missing %q\n---\n%s", name, want, got)
@@ -142,6 +144,7 @@ func TestBuildCommentReplyInstructionsWindowsUsesContentFile(t *testing.T) {
 				"Do NOT pipe via `--content-stdin`",
 				"silently drops non-ASCII",
 				"$OutputEncoding",
+				"append one --attachment <path> flag for each file",
 			} {
 				if !strings.Contains(got, want) {
 					t.Errorf("%s reply instructions missing %q\n---\n%s", provider, want, got)
