@@ -14,6 +14,7 @@ const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || "goal-test-daemon"
 const provider = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER") || "codex";
 const model = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "gpt-5.3-codex-spark";
 const repoRef = trimEnv("ACCEPTANCE_REPO_REF") || "v5.0.0_dev_sop";
+const tapdSourceURL = trimEnv("ACCEPTANCE_TAPD_SOURCE_URL") || "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154";
 const taskTimeoutMs = Number(trimEnv("ACCEPTANCE_TASK_TIMEOUT_MS") || 2_700_000);
 const pollIntervalMs = Number(trimEnv("ACCEPTANCE_POLL_INTERVAL_MS") || 5_000);
 const runSandbox = trimEnv("ACCEPTANCE_RUN_SERVICE_SANDBOX") !== "0";
@@ -49,6 +50,7 @@ const evidence = {
   provider,
   model,
   repo_ref: repoRef,
+  tapd_source_url: tapdSourceURL,
   release_commit: gitText(["rev-parse", "--short=12", "HEAD"]),
   branch: gitText(["branch", "--show-current"]),
   commands: [],
@@ -110,6 +112,7 @@ try {
     assignee_type: "squad",
     assignee_id: squad.id,
     project_id: projects.usercenter.id,
+    metadata: buildTAPDSourceMetadata(tapdSourceURL),
     allow_duplicate: true,
   }, token);
   if (!issue?.id) fail("创建父任务响应缺少 id");
@@ -170,6 +173,9 @@ try {
   requireCompletedTask(verifyTask, "评论 3 最终 verify 任务");
 
   const finalIssue = await get(`/api/issues/${issue.id}`, token);
+  if (finalIssue.metadata?.source_provider !== "tapd" || finalIssue.metadata?.source_url !== tapdSourceURL) {
+    fail("父任务缺少 TAPD source metadata");
+  }
   const finalTree = await get(`/api/issues/${issue.id}/execution-tree`, token);
   const finalTrace = await get(`/api/issues/${issue.id}/trace`, token);
   const finalUsage = await get(`/api/issues/${issue.id}/usage`, token);
@@ -686,6 +692,24 @@ function gitText(args) {
 
 function trimEnv(name) {
   return String(process.env[name] || "").trim();
+}
+
+function buildTAPDSourceMetadata(rawURL) {
+  const metadata = {
+    source_provider: "tapd",
+    source_url: rawURL,
+  };
+  try {
+    const url = new URL(rawURL);
+    const workspaceID = url.pathname.match(/\/(\d+)\//)?.[1] || "";
+    const resourceID = url.hash.match(/(\d{10,})/)?.[1] || url.pathname.match(/(\d{10,})/)?.[1] || "";
+    if (workspaceID) metadata.tapd_workspace_id = workspaceID;
+    metadata.tapd_resource_type = url.pathname.includes("/markdown_wikis/") ? "markdown_wiki" : "tapd_resource";
+    if (resourceID) metadata.tapd_resource_id = resourceID;
+  } catch {
+    metadata.tapd_resource_type = "tapd_resource";
+  }
+  return metadata;
 }
 
 function writeEvidence(data) {
