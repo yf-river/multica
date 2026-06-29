@@ -306,6 +306,114 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 	}
 }
 
+func TestCompleteTaskClosesSquadSOPRun(t *testing.T) {
+	ctx := context.Background()
+
+	var agentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent (
+			workspace_id, name, description, runtime_mode, runtime_config,
+			runtime_id, visibility, max_concurrent_tasks, owner_id, instructions
+		)
+		VALUES ($1, 'pm', 'sop sync fixture', 'local', '{}'::jsonb, $2, 'private', 1, $3, '')
+		RETURNING id
+	`, testWorkspaceID, testRuntimeID, testUserID).Scan(&agentID); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID) })
+
+	var squadID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, sop_profile)
+		VALUES ($1, $2, '', $3, $4, '{"profile_key":"sop-sync-test","steps":[{"key":"pm","name":"pm","role_key":"pm"},{"key":"05-verify","name":"05-测试","role_key":"05-verify"}]}'::jsonb)
+		RETURNING id
+	`, testWorkspaceID, "SOP Sync Squad", agentID, testUserID).Scan(&squadID); err != nil {
+		t.Fatalf("create squad: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":         "SOP run closes on leader complete",
+		"status":        "todo",
+		"assignee_type": "squad",
+		"assignee_id":   squadID,
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode issue: %v", err)
+	}
+	t.Cleanup(func() {
+		cleanupReq := newRequest("DELETE", "/api/issues/"+created.ID, nil)
+		cleanupReq = withURLParam(cleanupReq, "id", created.ID)
+		testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
+	})
+
+	var taskID, runID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT atq.id::text, ssr.id::text
+		FROM agent_task_queue atq
+		JOIN squad_sop_run ssr ON ssr.issue_id = atq.issue_id
+		WHERE atq.issue_id = $1 AND atq.agent_id = $2
+		ORDER BY atq.created_at DESC
+		LIMIT 1
+	`, created.ID, agentID).Scan(&taskID, &runID); err != nil {
+		t.Fatalf("load task/run: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET status = 'dispatched' WHERE id = $1`, taskID); err != nil {
+		t.Fatalf("mark task dispatched: %v", err)
+	}
+
+	startW := httptest.NewRecorder()
+	startReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/start", nil, testWorkspaceID, "sop-sync-daemon")
+	startReq = withURLParam(startReq, "taskId", taskID)
+	testHandler.StartTask(startW, startReq)
+	if startW.Code != http.StatusOK {
+		t.Fatalf("StartTask: expected 200, got %d: %s", startW.Code, startW.Body.String())
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE issue SET status = 'done' WHERE id = $1`, created.ID); err != nil {
+		t.Fatalf("mark issue done: %v", err)
+	}
+
+	completeW := httptest.NewRecorder()
+	completeReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/complete", map[string]any{
+		"output": "verify passed",
+	}, testWorkspaceID, "sop-sync-daemon")
+	completeReq = withURLParam(completeReq, "taskId", taskID)
+	testHandler.CompleteTask(completeW, completeReq)
+	if completeW.Code != http.StatusOK {
+		t.Fatalf("CompleteTask: expected 200, got %d: %s", completeW.Code, completeW.Body.String())
+	}
+
+	var status, currentStep string
+	var completedAt *time.Time
+	if err := testPool.QueryRow(ctx, `
+		SELECT status, current_step_key, completed_at
+		FROM squad_sop_run
+		WHERE id = $1
+	`, runID).Scan(&status, &currentStep, &completedAt); err != nil {
+		t.Fatalf("load SOP run: %v", err)
+	}
+	if status != "已完成" || currentStep != "pm" || completedAt == nil {
+		t.Fatalf("SOP run = status %s step %s completed_at %v, want 已完成/pm/non-nil", status, currentStep, completedAt)
+	}
+	var completedEvents int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM squad_sop_step_event
+		WHERE run_id = $1 AND task_id = $2 AND step_key = 'pm' AND event_type = '步骤完成'
+	`, runID, taskID).Scan(&completedEvents); err != nil {
+		t.Fatalf("count completed events: %v", err)
+	}
+	if completedEvents != 1 {
+		t.Fatalf("completed event count = %d, want 1", completedEvents)
+	}
+}
+
 func TestWorkspaceObservabilitySummaryFiltersSOPByProject(t *testing.T) {
 	ctx := context.Background()
 

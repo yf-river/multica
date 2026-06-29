@@ -1561,6 +1561,7 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 
 	slog.Info("task started", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskStarted(ctx, task)
+	s.syncSquadSOPTaskStep(ctx, task, "步骤开始", "进行中")
 	// Tell every connected workspace WS client that this task transitioned
 	// (dispatched | waiting_local_directory) → running. Without this, the
 	// workspace-wide `agentTaskSnapshot` query only refreshes on the 30s
@@ -1569,6 +1570,168 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 	// on the transition users care about most.
 	s.broadcastTaskEvent(ctx, protocol.EventTaskRunning, task)
 	return &task, nil
+}
+
+type squadSOPProfileStep struct {
+	Key     string `json:"key"`
+	Name    string `json:"name"`
+	RoleKey string `json:"role_key"`
+}
+
+type squadSOPProfile struct {
+	Steps []squadSOPProfileStep `json:"steps"`
+}
+
+func (s *TaskService) syncSquadSOPTaskStep(ctx context.Context, task db.AgentTaskQueue, eventType, eventStatus string) {
+	if !task.IssueID.Valid {
+		return
+	}
+	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
+	if err != nil || !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
+		return
+	}
+	run, err := s.Queries.GetOpenSquadSOPRunByIssue(ctx, task.IssueID)
+	if err != nil {
+		return
+	}
+	agent, err := s.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+		ID:          task.AgentID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("sync squad SOP task step skipped: agent not found",
+			"task_id", util.UUIDToString(task.ID),
+			"issue_id", util.UUIDToString(task.IssueID),
+			"agent_id", util.UUIDToString(task.AgentID),
+			"error", err,
+		)
+		return
+	}
+	steps := parseSquadSOPProfileSteps(run.Profile)
+	step, index, ok := matchSquadSOPStepForAgent(steps, agent.Name)
+	if !ok {
+		return
+	}
+	events, err := s.Queries.ListSquadSOPStepEventsByRun(ctx, run.ID)
+	if err != nil {
+		slog.Warn("sync squad SOP task step skipped: list existing events failed",
+			"run_id", util.UUIDToString(run.ID),
+			"task_id", util.UUIDToString(task.ID),
+			"error", err,
+		)
+		return
+	}
+	for _, existing := range events {
+		if existing.TaskID.Valid && existing.TaskID == task.ID && existing.EventType == eventType {
+			return
+		}
+	}
+
+	var duration pgtype.Int8
+	if eventType != "步骤开始" && task.StartedAt.Valid && task.CompletedAt.Valid {
+		duration = pgtype.Int8{Int64: task.CompletedAt.Time.Sub(task.StartedAt.Time).Milliseconds(), Valid: true}
+	}
+	reason := "Agent task 状态自动同步到 SOP 阶段。"
+	switch eventType {
+	case "步骤开始":
+		reason = "Agent task 已开始，自动记录 SOP 阶段开始。"
+	case "步骤完成":
+		reason = "Agent task 已完成，自动记录 SOP 阶段完成。"
+	case "步骤失败":
+		reason = "Agent task 已失败，自动记录 SOP 阶段失败。"
+	}
+	if _, err := s.Queries.CreateSquadSOPStepEvent(ctx, db.CreateSquadSOPStepEventParams{
+		RunID:         run.ID,
+		WorkspaceID:   run.WorkspaceID,
+		IssueID:       run.IssueID,
+		SquadID:       run.SquadID,
+		StepKey:       step.Key,
+		StepName:      step.Name,
+		RoleKey:       step.RoleKey,
+		EventType:     eventType,
+		Status:        eventStatus,
+		Reason:        reason,
+		DurationMs:    duration,
+		CreatedByType: "system",
+		TaskID:        task.ID,
+	}); err != nil {
+		slog.Warn("sync squad SOP task step event failed",
+			"run_id", util.UUIDToString(run.ID),
+			"task_id", util.UUIDToString(task.ID),
+			"step_key", step.Key,
+			"event_type", eventType,
+			"error", err,
+		)
+		return
+	}
+
+	nextStatus, nextStepKey, shouldUpdate := nextSquadSOPStateForTaskEvent(issue, steps, index, step.Key, eventType)
+	if !shouldUpdate {
+		return
+	}
+	if _, err := s.Queries.UpdateSquadSOPRunStatus(ctx, db.UpdateSquadSOPRunStatusParams{
+		ID:             run.ID,
+		WorkspaceID:    run.WorkspaceID,
+		Status:         nextStatus,
+		CurrentStepKey: pgtype.Text{String: nextStepKey, Valid: nextStepKey != ""},
+	}); err != nil {
+		slog.Warn("sync squad SOP run status failed",
+			"run_id", util.UUIDToString(run.ID),
+			"task_id", util.UUIDToString(task.ID),
+			"step_key", step.Key,
+			"event_type", eventType,
+			"error", err,
+		)
+	}
+}
+
+func parseSquadSOPProfileSteps(raw []byte) []squadSOPProfileStep {
+	var profile squadSOPProfile
+	if len(raw) == 0 || json.Unmarshal(raw, &profile) != nil {
+		return nil
+	}
+	return profile.Steps
+}
+
+func matchSquadSOPStepForAgent(steps []squadSOPProfileStep, agentName string) (squadSOPProfileStep, int, bool) {
+	agentKey := normalizeSOPMatchKey(agentName)
+	if agentKey == "" {
+		return squadSOPProfileStep{}, -1, false
+	}
+	for i, step := range steps {
+		if agentKey == normalizeSOPMatchKey(step.RoleKey) ||
+			agentKey == normalizeSOPMatchKey(step.Key) ||
+			agentKey == normalizeSOPMatchKey(step.Name) {
+			return step, i, true
+		}
+	}
+	return squadSOPProfileStep{}, -1, false
+}
+
+func normalizeSOPMatchKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, "_", "-")
+	return strings.Trim(value, "-")
+}
+
+func nextSquadSOPStateForTaskEvent(issue db.Issue, steps []squadSOPProfileStep, stepIndex int, stepKey string, eventType string) (status, currentStepKey string, ok bool) {
+	switch eventType {
+	case "步骤开始":
+		return "进行中", stepKey, true
+	case "步骤失败":
+		return "已失败", stepKey, true
+	case "步骤完成":
+		if issue.Status == "done" {
+			return "已完成", stepKey, true
+		}
+		if len(steps) > 0 && stepIndex >= 0 && stepIndex < len(steps)-1 {
+			return "进行中", steps[stepIndex+1].Key, true
+		}
+		if len(steps) == 0 || stepIndex == len(steps)-1 {
+			return "已完成", stepKey, true
+		}
+	}
+	return "", "", false
 }
 
 // MarkTaskWaitingLocalDirectory parks a dispatched task in the
@@ -1677,6 +1840,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 
 	slog.Info("task completed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskCompleted(ctx, task)
+	s.syncSquadSOPTaskStep(ctx, task, "步骤完成", "已完成")
 
 	// Invariant: every completed issue task must have at least one agent
 	// comment on the issue, so the user always sees something when a run
@@ -1867,6 +2031,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 
 	slog.Warn("task failed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID), "error", errMsg, "failure_reason", failureReason)
 	s.captureTaskFailed(ctx, task)
+	s.syncSquadSOPTaskStep(ctx, task, "步骤失败", "已失败")
 
 	// Auto-retry eligible failures (orphan, timeout, runtime_offline,
 	// runtime_recovery). The helper itself enforces attempt < max_attempts

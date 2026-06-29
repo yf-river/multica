@@ -502,6 +502,31 @@ func TestCreateWorktree(t *testing.T) {
 	}
 }
 
+func TestCreateWorktreeEmptyTaskIDUsesValidManualBranch(t *testing.T) {
+	t.Parallel()
+	sourceRepo := createTestRepo(t)
+	cacheRoot := t.TempDir()
+
+	cache := New(cacheRoot, testLogger())
+	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+
+	result, err := cache.CreateWorktree(WorktreeParams{
+		WorkspaceID: "ws-1",
+		RepoURL:     sourceRepo,
+		WorkDir:     t.TempDir(),
+		AgentName:   "agent",
+		TaskID:      "",
+	})
+	if err != nil {
+		t.Fatalf("CreateWorktree failed: %v", err)
+	}
+	if result.BranchName != "agent/agent/manual" {
+		t.Fatalf("branch name = %q, want agent/agent/manual", result.BranchName)
+	}
+}
+
 func TestCreateWorktreeExcludesOpenCodeSkills(t *testing.T) {
 	t.Parallel()
 	sourceRepo := createTestRepo(t)

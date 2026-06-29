@@ -179,8 +179,10 @@ try {
   const finalTree = await get(`/api/issues/${issue.id}/execution-tree`, token);
   const finalTrace = await get(`/api/issues/${issue.id}/trace`, token);
   const finalUsage = await get(`/api/issues/${issue.id}/usage`, token);
+  const finalSOPRun = await waitForSOPRunStatus(issue.id, squad.id, token, "已完成", "等待最终 SOP run 闭合");
   evidence.final = {
     issue: pickIssue(finalIssue),
+    sop_run: pickSOPRun(finalSOPRun),
     execution_tree: summarizeExecutionTree(finalTree),
     trace_event_count: countItems(finalTrace?.events, finalTrace?.total),
     usage: finalUsage,
@@ -189,6 +191,11 @@ try {
   if (finalIssue.status !== "done") {
     fail(`父任务最终状态=${finalIssue.status}，期望 done`);
   }
+  if (finalSOPRun.status !== "已完成" || !finalSOPRun.completed_at) {
+    fail(`最终 SOP run 未闭合：status=${finalSOPRun.status} completed_at=${finalSOPRun.completed_at || ""}`);
+  }
+  const hasCompletedStepEvent = Array.isArray(finalSOPRun.events) && finalSOPRun.events.some((item) => item.event_type === "步骤完成");
+  if (!hasCompletedStepEvent) fail("最终 SOP run 缺少步骤完成事件");
   if (evidence.final.trace_event_count <= 0) fail("父任务缺少 trace 事件");
   if ((Number(finalUsage?.total_input_tokens || 0) + Number(finalUsage?.total_output_tokens || 0) + Number(finalUsage?.total_cache_read_tokens || 0) + Number(finalUsage?.total_cache_write_tokens || 0)) <= 0) {
     fail("父任务 usage token 总量为 0");
@@ -436,6 +443,16 @@ async function waitForSOPRun(issueID, squadID, token, label) {
   return run;
 }
 
+async function waitForSOPRunStatus(issueID, squadID, token, status, label) {
+  return poll(async () => {
+    const data = await get(`/api/issues/${issueID}/sop-runs`, token);
+    const items = Array.isArray(data?.items) ? data.items : [];
+    const run = items.find((item) => item.squad_id === squadID || item.profile_key === "generic-project-sop-flow" || item.profile_key === "user-center-sop-flow");
+    if (!run || run.status !== status || !run.completed_at) return null;
+    return run;
+  }, 120_000, label);
+}
+
 async function waitNextTerminalTask(issueID, agentID, knownIDs, token, label) {
   return poll(async () => {
     const tasks = sortTasks(await listIssueTasks(issueID, token));
@@ -644,6 +661,19 @@ function pickIssue(issue) {
     parent_issue_id: issue.parent_issue_id || null,
     assignee_type: issue.assignee_type || null,
     assignee_id: issue.assignee_id || null,
+  };
+}
+
+function pickSOPRun(run) {
+  return {
+    id: run.id,
+    profile_key: run.profile_key,
+    current_step_key: run.current_step_key,
+    status: run.status,
+    started_at: run.started_at,
+    completed_at: run.completed_at || "",
+    total_duration_ms: run.total_duration_ms ?? null,
+    event_count: Array.isArray(run.events) ? run.events.length : 0,
   };
 }
 

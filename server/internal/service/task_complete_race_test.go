@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -11,6 +12,35 @@ import (
 	"github.com/multica-ai/multica/server/internal/events"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+func TestSquadSOPTaskStepMatchingAndState(t *testing.T) {
+	raw, err := json.Marshal(map[string]any{
+		"steps": []map[string]string{
+			{"key": "pm", "name": "pm", "role_key": "pm"},
+			{"key": "02-design", "name": "02-方案设计", "role_key": "02-design"},
+			{"key": "05-verify", "name": "05-测试", "role_key": "05-verify"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	steps := parseSquadSOPProfileSteps(raw)
+	step, index, ok := matchSquadSOPStepForAgent(steps, "02-design")
+	if !ok {
+		t.Fatal("expected 02-design agent to match profile step")
+	}
+	if step.Key != "02-design" || index != 1 {
+		t.Fatalf("matched step=%+v index=%d, want 02-design/1", step, index)
+	}
+	status, nextStep, ok := nextSquadSOPStateForTaskEvent(db.Issue{Status: "in_progress"}, steps, index, step.Key, "步骤完成")
+	if !ok || status != "进行中" || nextStep != "05-verify" {
+		t.Fatalf("next state = %s/%s/%v, want 进行中/05-verify/true", status, nextStep, ok)
+	}
+	status, nextStep, ok = nextSquadSOPStateForTaskEvent(db.Issue{Status: "done"}, steps, index, step.Key, "步骤完成")
+	if !ok || status != "已完成" || nextStep != "02-design" {
+		t.Fatalf("done state = %s/%s/%v, want 已完成/02-design/true", status, nextStep, ok)
+	}
+}
 
 // mockRow implements pgx.Row, returning either a scanned task or pgx.ErrNoRows.
 type mockRow struct {
