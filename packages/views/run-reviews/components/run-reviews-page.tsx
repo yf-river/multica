@@ -353,7 +353,7 @@ function RunReviewDetail({
                 <th className="w-[14%] px-3 py-2 font-medium">状态</th>
                 <th className="w-[14%] px-3 py-2 font-medium">耗时</th>
                 <th className="w-[14%] px-3 py-2 font-medium">Token</th>
-                <th className="w-[10%] px-3 py-2 font-medium">轮次</th>
+                <th className="w-[10%] px-3 py-2 font-medium">思考轮次</th>
               </tr>
             </thead>
             <tbody className="divide-y">

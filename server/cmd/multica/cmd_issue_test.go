@@ -373,6 +373,29 @@ func newIssuePullRequestsTestCmd() *cobra.Command {
 	return cmd
 }
 
+func newIssuePullRequestLinkTestCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "pull-request link"}
+	cmd.Flags().String("provider", "gongfeng", "")
+	cmd.Flags().String("project-path", "", "")
+	cmd.Flags().String("repo-url", "", "")
+	cmd.Flags().Int32("number", 0, "")
+	cmd.Flags().Int32("iid", 0, "")
+	cmd.Flags().String("title", "", "")
+	cmd.Flags().String("state", "open", "")
+	cmd.Flags().String("html-url", "", "")
+	cmd.Flags().String("source-branch", "", "")
+	cmd.Flags().String("target-branch", "", "")
+	cmd.Flags().String("author-login", "", "")
+	cmd.Flags().String("head-sha", "", "")
+	cmd.Flags().String("mergeable-state", "", "")
+	cmd.Flags().Int32("additions", 0, "")
+	cmd.Flags().Int32("deletions", 0, "")
+	cmd.Flags().Int32("changed-files", 0, "")
+	cmd.Flags().Bool("close-intent", false, "")
+	cmd.Flags().String("output", "table", "")
+	return cmd
+}
+
 func TestRunIssuePullRequestsListsLinkedPRsAsJSON(t *testing.T) {
 	var gotPaths []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -455,6 +478,88 @@ func TestRunIssuePullRequestsTableIncludesCoreFields(t *testing.T) {
 		if !strings.Contains(text, want) {
 			t.Fatalf("table output missing %q:\n%s", want, text)
 		}
+	}
+}
+
+func TestRunIssuePullRequestLinkPostsGongfengMR(t *testing.T) {
+	var gotPaths []string
+	var posted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPaths = append(gotPaths, r.URL.Path)
+		switch r.URL.Path {
+		case "/api/issues/GOA-61234":
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":         "issue-uuid",
+				"identifier": "GOA-61234",
+				"title":      "CLI MR link",
+			})
+		case "/api/issues/issue-uuid/pull-requests":
+			if r.Method != http.MethodPost {
+				t.Fatalf("method = %s, want POST", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+				t.Fatalf("decode posted body: %v", err)
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"pull_request": map[string]any{
+					"html_url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234",
+					"number":   float64(61234),
+					"state":    "open",
+					"title":    "GOA-61234 user-center add quick entry API",
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	cmd := newIssuePullRequestLinkTestCmd()
+	_ = cmd.Flags().Set("html-url", "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234")
+	_ = cmd.Flags().Set("title", "GOA-61234 user-center add quick entry API")
+	_ = cmd.Flags().Set("source-branch", "goa-61234-usercenter-api")
+	_ = cmd.Flags().Set("target-branch", "dev_sop")
+	_ = cmd.Flags().Set("author-login", "codex")
+	_ = cmd.Flags().Set("head-sha", "abc123")
+	_ = cmd.Flags().Set("output", "json")
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err := runIssuePullRequestLink(cmd, []string{"GOA-61234"})
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("runIssuePullRequestLink: %v", err)
+	}
+
+	if want := []string{"/api/issues/GOA-61234", "/api/issues/issue-uuid/pull-requests"}; fmt.Sprint(gotPaths) != fmt.Sprint(want) {
+		t.Fatalf("paths = %v, want %v", gotPaths, want)
+	}
+	for key, want := range map[string]any{
+		"provider":      "gongfeng",
+		"html_url":      "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234",
+		"title":         "GOA-61234 user-center add quick entry API",
+		"source_branch": "goa-61234-usercenter-api",
+		"target_branch": "dev_sop",
+		"author_login":  "codex",
+		"head_sha":      "abc123",
+	} {
+		if posted[key] != want {
+			t.Fatalf("posted[%s] = %#v, want %#v; full body=%#v", key, posted[key], want, posted)
+		}
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("decode JSON output: %v\n%s", err, string(out))
+	}
+	if payload["pull_request"] == nil {
+		t.Fatalf("missing pull_request output: %s", string(out))
 	}
 }
 

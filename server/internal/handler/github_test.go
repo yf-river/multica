@@ -141,6 +141,115 @@ func TestExtractClosingIdentifiers(t *testing.T) {
 	}
 }
 
+func TestLinkPullRequestToIssue_GongfengURL(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler test fixture not initialized (no DB?)")
+	}
+	ctx := context.Background()
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Gongfeng MR link",
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: %d %s", w.Code, w.Body.String())
+	}
+	var created IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
+		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1 AND repo_owner = $2 AND repo_name = $3 AND pr_number = $4`, testWorkspaceID, "ChainWeaver/ida", "user-center", 61234)
+		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
+	})
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/issues/"+created.ID+"/pull-requests", map[string]any{
+		"provider":      "gongfeng",
+		"html_url":      "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234",
+		"title":         "GOA-61234 user-center add quick entry API",
+		"state":         "opened",
+		"source_branch": "goa-61234-usercenter-api",
+		"target_branch": "dev_sop",
+		"author_login":  "codex",
+		"head_sha":      "abc123",
+	})
+	req = withURLParam(req, "id", created.ID)
+	testHandler.LinkPullRequestToIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("LinkPullRequestToIssue: %d %s", w.Code, w.Body.String())
+	}
+	var linked struct {
+		PullRequest GitHubPullRequestResponse `json:"pull_request"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&linked); err != nil {
+		t.Fatalf("decode link response: %v", err)
+	}
+	if linked.PullRequest.RepoOwner != "ChainWeaver/ida" || linked.PullRequest.RepoName != "user-center" || linked.PullRequest.Number != 61234 {
+		t.Fatalf("unexpected linked PR repository/number: %#v", linked.PullRequest)
+	}
+	if linked.PullRequest.Branch == nil || *linked.PullRequest.Branch != "goa-61234-usercenter-api" {
+		t.Fatalf("branch = %#v, want goa-61234-usercenter-api", linked.PullRequest.Branch)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("GET", "/api/issues/"+created.ID+"/pull-requests", nil)
+	req = withURLParam(req, "id", created.ID)
+	testHandler.ListPullRequestsForIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListPullRequestsForIssue: %d %s", w.Code, w.Body.String())
+	}
+	var listed struct {
+		PullRequests []GitHubPullRequestResponse `json:"pull_requests"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&listed); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if len(listed.PullRequests) != 1 || listed.PullRequests[0].Number != 61234 {
+		t.Fatalf("listed pull requests = %#v, want MR 61234", listed.PullRequests)
+	}
+}
+
+func TestLinkPullRequestToIssue_RequiresRepositoryAndNumber(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler test fixture not initialized (no DB?)")
+	}
+	ctx := context.Background()
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Invalid MR link",
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: %d %s", w.Code, w.Body.String())
+	}
+	var created IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
+		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
+	})
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/issues/"+created.ID+"/pull-requests", map[string]any{
+		"provider": "gongfeng",
+		"html_url": "https://example.com/not-a-gongfeng-mr",
+	})
+	req = withURLParam(req, "id", created.ID)
+	testHandler.LinkPullRequestToIssue(w, req)
+	if w.Code != http.StatusBadRequest {
+		t.Fatalf("LinkPullRequestToIssue: got %d %s, want 400", w.Code, w.Body.String())
+	}
+	if !strings.Contains(w.Body.String(), "project_path is required") {
+		t.Fatalf("error body = %s, want project_path guidance", w.Body.String())
+	}
+}
+
 func TestDerivePRState(t *testing.T) {
 	cases := []struct {
 		state  string

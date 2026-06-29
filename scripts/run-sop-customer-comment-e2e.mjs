@@ -118,6 +118,7 @@ try {
   if (!issue?.id) fail("创建父任务响应缺少 id");
   activeIssueId = issue.id;
   evidence.issue = pickIssue(issue);
+  evidence.source_fetch = await recordTAPDSourceFetch(issue.id, token);
 
   await waitForSOPRun(issue.id, squad.id, token, "等待父任务 SOP Run 生成");
   const initialTask = await waitNextTerminalTask(issue.id, pm.id, new Set(), token, "等待父任务初始接收任务完成");
@@ -200,6 +201,8 @@ try {
   if ((Number(finalUsage?.total_input_tokens || 0) + Number(finalUsage?.total_output_tokens || 0) + Number(finalUsage?.total_cache_read_tokens || 0) + Number(finalUsage?.total_cache_write_tokens || 0)) <= 0) {
     fail("父任务 usage token 总量为 0");
   }
+
+  evidence.mr_handoff = await linkSyntheticGongfengMR(finalIssue, token);
 
   evidence.result = "completed";
   writeEvidence(evidence);
@@ -302,6 +305,70 @@ async function postCustomerComment(issueID, token, content) {
     content_excerpt: content.slice(0, 240),
   });
   return comment;
+}
+
+async function recordTAPDSourceFetch(issueID, token) {
+  const fetched = await post(`/api/issues/${issueID}/source-fetch`, {
+    provider: "tapd",
+    fetch_provider: "tapd_mcp",
+    status: "fetched",
+    url: tapdSourceURL,
+    workspace_id: "47654106",
+    resource_type: "markdown_wiki",
+    resource_id: "1147654106001004154",
+    title: "用户快捷入口需求",
+    summary: "用户可以把常用页面保存为个人快捷入口；快捷入口属于当前登录用户；用户只能管理自己的快捷入口。",
+    body_excerpt: [
+      "用户可以把常用页面保存为个人快捷入口，首页或工作台可展示这些入口。",
+      "快捷入口属于当前登录用户。",
+      "用户只能管理自己的快捷入口，不能通过请求参数替别人创建、更新或删除。",
+    ].join("\n"),
+    version: "2026-06-18 07:39:03",
+    duration_ms: 1,
+  }, token);
+  const metadata = fetched?.metadata || {};
+  if (metadata.source_fetch_title !== "用户快捷入口需求") {
+    fail("TAPD source-fetch 未写入 source_fetch_title");
+  }
+  return {
+    title: metadata.source_fetch_title,
+    status: metadata.source_fetch_status,
+    provider: metadata.source_fetch_provider,
+    url: metadata.source_fetch_url,
+    resource_type: metadata.source_fetch_resource_type || metadata.tapd_resource_type,
+    resource_id: metadata.source_fetch_resource_id || metadata.tapd_resource_id,
+    trace_event_id: fetched?.trace_event?.id || "",
+  };
+}
+
+async function linkSyntheticGongfengMR(issue, token) {
+  const iid = Number((suffix % 1_000_000) + 700_000);
+  const identifier = issue.identifier || `GOA-${iid}`;
+  const mrURL = `https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/${iid}`;
+  const linked = await post(`/api/issues/${issue.id}/pull-requests`, {
+    provider: "gongfeng",
+    html_url: mrURL,
+    title: `${identifier} usercenter 个人快捷入口 API`,
+    state: "open",
+    source_branch: `${identifier.toLowerCase()}-usercenter-quick-entry`,
+    target_branch: repoRef,
+    author_login: "codex",
+    head_sha: gitText(["rev-parse", "--short=12", "HEAD"]) || "synthetic",
+  }, token);
+  const list = await get(`/api/issues/${issue.id}/pull-requests`, token);
+  const prs = Array.isArray(list?.pull_requests) ? list.pull_requests : [];
+  const matched = prs.find((item) => item.html_url === mrURL || item.number === iid);
+  if (!matched) {
+    fail("MR 关联回写后，issue pull-requests 列表未读到该 MR");
+  }
+  return {
+    linked: Boolean(linked?.pull_request?.id),
+    url: mrURL,
+    number: iid,
+    title: matched.title,
+    state: matched.state,
+    source_branch: matched.branch || "",
+  };
 }
 
 async function verifyCrossProjectChildren(issue, projects, squad, token) {

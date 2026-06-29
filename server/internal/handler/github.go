@@ -93,6 +93,26 @@ type GitHubPullRequestResponse struct {
 	ChangedFiles int32 `json:"changed_files"`
 }
 
+type LinkPullRequestRequest struct {
+	Provider       string  `json:"provider"`
+	ProjectPath    string  `json:"project_path"`
+	RepoURL        string  `json:"repo_url"`
+	Number         int32   `json:"number"`
+	IID            int32   `json:"iid"`
+	Title          string  `json:"title"`
+	State          string  `json:"state"`
+	HtmlURL        string  `json:"html_url"`
+	SourceBranch   string  `json:"source_branch"`
+	TargetBranch   string  `json:"target_branch"`
+	AuthorLogin    string  `json:"author_login"`
+	HeadSHA        string  `json:"head_sha"`
+	MergeableState *string `json:"mergeable_state"`
+	Additions      int32   `json:"additions"`
+	Deletions      int32   `json:"deletions"`
+	ChangedFiles   int32   `json:"changed_files"`
+	CloseIntent    bool    `json:"close_intent"`
+}
+
 type GitHubConnectResponse struct {
 	URL        string `json:"url"`
 	Configured bool   `json:"configured"`
@@ -572,6 +592,204 @@ func (h *Handler) ListPullRequestsForIssue(w http.ResponseWriter, r *http.Reques
 		out = append(out, issuePullRequestRowToResponse(row))
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"pull_requests": out})
+}
+
+func (h *Handler) LinkPullRequestToIssue(w http.ResponseWriter, r *http.Request) {
+	issue, ok := h.loadIssueForUser(w, r, chi.URLParam(r, "id"))
+	if !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	var req LinkPullRequestRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	normalized, ok := normalizeIssuePullRequestLinkRequest(w, req)
+	if !ok {
+		return
+	}
+	repoOwner, repoName := splitRepositoryPath(normalized.ProjectPath)
+	now := time.Now().UTC()
+	pr, err := h.Queries.UpsertGitHubPullRequest(r.Context(), db.UpsertGitHubPullRequestParams{
+		WorkspaceID:         issue.WorkspaceID,
+		InstallationID:      0,
+		RepoOwner:           repoOwner,
+		RepoName:            repoName,
+		PrNumber:            normalized.Number,
+		Title:               normalized.Title,
+		State:               normalized.State,
+		HtmlUrl:             normalized.HtmlURL,
+		PrCreatedAt:         pgtype.Timestamptz{Time: now, Valid: true},
+		PrUpdatedAt:         pgtype.Timestamptz{Time: now, Valid: true},
+		HeadSha:             normalized.HeadSHA,
+		Additions:           normalized.Additions,
+		Deletions:           normalized.Deletions,
+		ChangedFiles:        normalized.ChangedFiles,
+		Branch:              textFromNonEmpty(normalized.SourceBranch),
+		AuthorLogin:         textFromNonEmpty(normalized.AuthorLogin),
+		AuthorAvatarUrl:     pgtype.Text{},
+		MergedAt:            pgtype.Timestamptz{},
+		ClosedAt:            pgtype.Timestamptz{},
+		MergeableState:      textFromOptional(normalized.MergeableState),
+		ClearMergeableState: pgtype.Bool{},
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record pull request")
+		return
+	}
+	if err := h.Queries.LinkIssueToPullRequest(r.Context(), db.LinkIssueToPullRequestParams{
+		IssueID:             issue.ID,
+		PullRequestID:       pr.ID,
+		CloseIntent:         normalized.CloseIntent,
+		LinkedByType:        pgtype.Text{String: "member", Valid: true},
+		LinkedByID:          parseUUID(userID),
+		PreserveCloseIntent: false,
+	}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to link pull request")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"pull_request": githubPullRequestToResponse(pr),
+	})
+}
+
+func normalizeIssuePullRequestLinkRequest(w http.ResponseWriter, req LinkPullRequestRequest) (LinkPullRequestRequest, bool) {
+	req.Provider = strings.ToLower(strings.TrimSpace(req.Provider))
+	if req.Provider == "" {
+		req.Provider = "gongfeng"
+	}
+	if req.Provider != "gongfeng" && req.Provider != "github" {
+		writeError(w, http.StatusBadRequest, "provider must be gongfeng or github")
+		return req, false
+	}
+	req.ProjectPath = strings.Trim(strings.TrimSpace(req.ProjectPath), "/")
+	req.RepoURL = strings.TrimSpace(req.RepoURL)
+	req.HtmlURL = strings.TrimSpace(req.HtmlURL)
+	if req.ProjectPath == "" {
+		req.ProjectPath = gongfengProjectPathFromURL(firstNonEmpty(req.HtmlURL, req.RepoURL))
+	}
+	if req.ProjectPath == "" {
+		writeError(w, http.StatusBadRequest, "project_path is required")
+		return req, false
+	}
+	if req.HtmlURL == "" {
+		writeError(w, http.StatusBadRequest, "html_url is required")
+		return req, false
+	}
+	if req.Number == 0 {
+		req.Number = req.IID
+	}
+	if req.Number <= 0 {
+		req.Number = int32(gongfengMergeRequestIIDFromURL(req.HtmlURL))
+	}
+	if req.Number <= 0 {
+		writeError(w, http.StatusBadRequest, "number or iid is required")
+		return req, false
+	}
+	req.Title = strings.TrimSpace(req.Title)
+	if req.Title == "" {
+		req.Title = fmt.Sprintf("MR !%d", req.Number)
+	}
+	req.State = normalizePullRequestState(req.State)
+	req.SourceBranch = strings.TrimSpace(req.SourceBranch)
+	req.TargetBranch = strings.TrimSpace(req.TargetBranch)
+	req.AuthorLogin = strings.TrimSpace(req.AuthorLogin)
+	req.HeadSHA = strings.TrimSpace(req.HeadSHA)
+	for label, value := range map[string]string{
+		"project_path":  req.ProjectPath,
+		"html_url":      req.HtmlURL,
+		"title":         req.Title,
+		"source_branch": req.SourceBranch,
+		"target_branch": req.TargetBranch,
+		"author_login":  req.AuthorLogin,
+		"head_sha":      req.HeadSHA,
+	} {
+		if len(value) > 2048 {
+			writeError(w, http.StatusBadRequest, label+" is too long")
+			return req, false
+		}
+	}
+	return req, true
+}
+
+func normalizePullRequestState(state string) string {
+	switch strings.ToLower(strings.TrimSpace(state)) {
+	case "draft":
+		return "draft"
+	case "closed", "close":
+		return "closed"
+	case "merged", "merge":
+		return "merged"
+	default:
+		return "open"
+	}
+}
+
+func splitRepositoryPath(projectPath string) (string, string) {
+	parts := strings.Split(strings.Trim(projectPath, "/"), "/")
+	if len(parts) <= 1 {
+		return "", projectPath
+	}
+	return strings.Join(parts[:len(parts)-1], "/"), parts[len(parts)-1]
+}
+
+func gongfengProjectPathFromURL(rawURL string) string {
+	if rawURL == "" {
+		return ""
+	}
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return ""
+	}
+	if !strings.Contains(strings.ToLower(parsed.Host), "git.code.tencent.com") {
+		return ""
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	stop := len(parts)
+	for i, part := range parts {
+		switch part {
+		case "-", "tree", "commits", "commit", "tags", "merge_requests", "blob":
+			stop = i
+		}
+		if stop != len(parts) {
+			break
+		}
+	}
+	if stop <= 0 {
+		return ""
+	}
+	return strings.Join(parts[:stop], "/")
+}
+
+func gongfengMergeRequestIIDFromURL(rawURL string) int {
+	parsed, err := url.Parse(rawURL)
+	if err != nil {
+		return 0
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	for i, part := range parts {
+		if part == "merge_requests" && i+1 < len(parts) {
+			n, _ := strconv.Atoi(parts[i+1])
+			return n
+		}
+	}
+	return 0
+}
+
+func textFromNonEmpty(value string) pgtype.Text {
+	value = strings.TrimSpace(value)
+	return pgtype.Text{String: value, Valid: value != ""}
+}
+
+func textFromOptional(value *string) pgtype.Text {
+	if value == nil {
+		return pgtype.Text{}
+	}
+	return textFromNonEmpty(*value)
 }
 
 // ── Webhook ─────────────────────────────────────────────────────────────────
