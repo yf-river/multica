@@ -1114,6 +1114,9 @@ func (h *Handler) isSquadSOPWorkerStageComment(ctx context.Context, issue db.Iss
 	if task.IsLeaderTask {
 		return false
 	}
+	if isActiveTaskStatus(task.Status) {
+		return true
+	}
 	events, err := h.Queries.ListIssueSquadSOPStepEvents(ctx, db.ListIssueSquadSOPStepEventsParams{
 		IssueID:     issue.ID,
 		WorkspaceID: issue.WorkspaceID,
@@ -1127,6 +1130,15 @@ func (h *Handler) isSquadSOPWorkerStageComment(ctx context.Context, issue db.Iss
 		}
 	}
 	return false
+}
+
+func isActiveTaskStatus(status string) bool {
+	switch status {
+	case "queued", "dispatched", "running", "waiting_local_directory":
+		return true
+	default:
+		return false
+	}
 }
 
 func filterSuppressedCommentAgentTriggers(triggers []commentAgentTrigger, suppressAgentIDs []pgtype.UUID) []commentAgentTrigger {

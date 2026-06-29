@@ -357,18 +357,17 @@ func TestCreateComment_SquadLeaderSkipOnlyInspectsCurrentMention(t *testing.T) {
 	}
 }
 
-// TestCreateComment_DualRoleAgentWorkerCommentWakesLeader is the full-stack
-// regression test for MUL-2218. Scenario:
+// TestCreateComment_ActiveWorkerCommentDoesNotWakeLeader is the full-stack
+// regression test for comment-trigger concurrency. Scenario:
 //
 //   - Agent L is the leader of squad S and also a worker assigned tasks on
 //     issues belonging to S.
-//   - L is woken in its worker role (is_leader_task=false) and posts a comment.
-//   - The squad-leader self-trigger guard MUST still wake L in its leader role
-//     so it can react to the worker output (e.g. delegate the next step).
-//
-// Before the fix the role-blind authorID == leaderID check skipped the
-// leader, leaving the issue stalled.
-func TestCreateComment_DualRoleAgentWorkerCommentWakesLeader(t *testing.T) {
+//   - L is still running in its worker role (is_leader_task=false) and posts a
+//     progress/result comment.
+//   - The comment MUST NOT enqueue a concurrent leader task while the worker
+//     task is still active. The task completion or explicit handoff owns the
+//     next wakeup.
+func TestCreateComment_ActiveWorkerCommentDoesNotWakeLeader(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
@@ -413,8 +412,9 @@ func TestCreateComment_DualRoleAgentWorkerCommentWakesLeader(t *testing.T) {
 		t.Fatalf("CreateComment: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// A NEW leader-role task must be enqueued for L on this issue so the
-	// leader role can react to its own worker output.
+	// No leader-role task should be enqueued while the worker task is still
+	// active. Otherwise a normal result comment can race the current task's
+	// completion and create two simultaneous executions on the same issue.
 	var leaderTasks int
 	if err := testPool.QueryRow(ctx, `
 		SELECT count(*) FROM agent_task_queue
@@ -422,8 +422,8 @@ func TestCreateComment_DualRoleAgentWorkerCommentWakesLeader(t *testing.T) {
 	`, issueID, fx.LeaderID).Scan(&leaderTasks); err != nil {
 		t.Fatalf("count leader tasks: %v", err)
 	}
-	if leaderTasks != 1 {
-		t.Fatalf("after worker comment from dual-role agent: expected 1 queued leader task, got %d", leaderTasks)
+	if leaderTasks != 0 {
+		t.Fatalf("after active worker comment from dual-role agent: expected 0 queued leader tasks, got %d", leaderTasks)
 	}
 }
 
