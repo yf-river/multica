@@ -798,7 +798,7 @@ function resolveCodexRunnerProfile(item, base) {
     codexPath: firstNonEmpty(process.env.GOAL_TEST_CODEX_PATH, base.GOAL_TEST_CODEX_PATH, process.env.MULTICA_CODEX_PATH, base.MULTICA_CODEX_PATH, "codex"),
     codexModel: firstNonEmpty(process.env.GOAL_TEST_CODEX_MODEL, base.GOAL_TEST_CODEX_MODEL, process.env.MULTICA_CODEX_MODEL, base.MULTICA_CODEX_MODEL),
     codexSmokeModel: firstNonEmpty(process.env.GOAL_TEST_CODEX_SMOKE_MODEL, base.GOAL_TEST_CODEX_SMOKE_MODEL, process.env.GOAL_TEST_REAL_AGENT_FALLBACK_MODEL, "gpt-5.4-mini"),
-    imageGeneration: firstNonEmpty(process.env.MULTICA_CODEX_IMAGE_GENERATION, base.MULTICA_CODEX_IMAGE_GENERATION, "auto"),
+    imageGeneration: firstNonEmpty(process.env.MULTICA_CODEX_IMAGE_GENERATION, base.MULTICA_CODEX_IMAGE_GENERATION, "disabled"),
     responsesSmoke: firstNonEmpty(process.env.GOAL_TEST_CODEX_RESPONSES_SMOKE, base.GOAL_TEST_CODEX_RESPONSES_SMOKE, "1"),
   };
 }
@@ -853,7 +853,7 @@ function applyCodexRunnerRuntimeEnv(env) {
   if (env.GOAL_TEST_CODEX_PATH) env.MULTICA_CODEX_PATH = env.GOAL_TEST_CODEX_PATH;
   if (env.GOAL_TEST_CODEX_MODEL) env.MULTICA_CODEX_MODEL = env.GOAL_TEST_CODEX_MODEL;
   if (env.GOAL_TEST_CODEX_SMOKE_MODEL) env.MULTICA_CODEX_SMOKE_MODEL = env.GOAL_TEST_CODEX_SMOKE_MODEL;
-  if (!env.MULTICA_CODEX_IMAGE_GENERATION) env.MULTICA_CODEX_IMAGE_GENERATION = "auto";
+  if (!env.MULTICA_CODEX_IMAGE_GENERATION) env.MULTICA_CODEX_IMAGE_GENERATION = "disabled";
 
   const mode = String(env.GOAL_TEST_CODEX_PROXY_MODE || "").trim().toLowerCase();
   const proxyURL = String(env.GOAL_TEST_CODEX_PROXY_URL || "").trim();
