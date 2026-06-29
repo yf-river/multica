@@ -1,5 +1,5 @@
 .PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-training-browser-e2e goal-test-training-curl-e2e goal-test-seed-business-training goal-test-prod-seed-business-training goal-test-prod-training-curl-e2e goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e goal-test-sop-customer-comment-e2e goal-test-prod-user-center-squad-curl-e2e goal-test-new-account-mcp-onboarding-e2e goal-test-prod-new-account-mcp-onboarding-e2e goal-test-acceptance-fixture-governance goal-test-real-benchmark-audit goal-test-historical-benchmark-readiness goal-test-quick-entry-cross-service goal-test-squad-curl-e2e goal-test-variable-project-topology-fixture goal-test-variable-agent-squad-curl-e2e goal-test-variable-agent-topology-fixture goal-test-topology-generalization-audit goal-test-tapd-gongfeng-sop-gap-audit goal-test-prod-release-audit goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-final-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-dataset-stream-audit goal-test-prune-dev-data goal-test-prune-prod-data goal-test-playground-difference-audit goal-test-session-retro goal-test-token-audit
-.PHONY: goal-test-dev-ui goal-test-dev-server goal-test-dev-daemon goal-test-dev-check goal-test-codex-network-check
+.PHONY: goal-test-deploy-dev-hot goal-test-dev-ui goal-test-dev-ui-start goal-test-dev-server goal-test-dev-daemon goal-test-dev-check goal-test-codex-network-check
 .PHONY: goal-test-historical-service-sandbox
 .PHONY: goal-test-benchmark-training-loop
 
@@ -222,20 +222,29 @@ goal-test-build: ## Build backend/CLI binaries and the web production bundle for
 
 goal-test-deploy-dev: ## Build once, deploy goal-test integration development environment, then verify it
 	@mkdir -p "$(GOAL_TEST_TMPDIR)" "$(GOAL_TEST_GOCACHE)"
-	TMPDIR="$(GOAL_TEST_TMPDIR)" GOCACHE="$(GOAL_TEST_GOCACHE)" node scripts/goal-test-environments.mjs deploy int --build
-	node scripts/goal-test-environments.mjs verify int
-	node scripts/goal-test-environments.mjs verify-logs int
+	GOWORK=off TMPDIR="$(GOAL_TEST_TMPDIR)" GOCACHE="$(GOAL_TEST_GOCACHE)" node scripts/goal-test-environments.mjs deploy int --build --frontend-mode next-start
+	GOWORK=off node scripts/goal-test-environments.mjs verify int
+	GOWORK=off node scripts/goal-test-environments.mjs verify-logs int
+
+goal-test-deploy-dev-hot: ## Build once, deploy goal-test integration development environment with web hot reload
+	@mkdir -p "$(GOAL_TEST_TMPDIR)" "$(GOAL_TEST_GOCACHE)"
+	GOWORK=off TMPDIR="$(GOAL_TEST_TMPDIR)" GOCACHE="$(GOAL_TEST_GOCACHE)" node scripts/goal-test-environments.mjs deploy int --build --frontend-mode next-dev
+	GOWORK=off node scripts/goal-test-environments.mjs verify int
+	GOWORK=off node scripts/goal-test-environments.mjs verify-logs int
 
 goal-test-dev-ui: ## Ensure goal-test integration web hot reload is running without rebuilding backend or daemon
 	node scripts/goal-test-environments.mjs dev-ui int
 
+goal-test-dev-ui-start: ## Ensure goal-test integration web production start is running without rebuilding backend or daemon
+	node scripts/goal-test-environments.mjs dev-ui-start int
+
 goal-test-dev-server: ## Rebuild and restart only the goal-test integration backend server
 	@mkdir -p "$(GOAL_TEST_TMPDIR)" "$(GOAL_TEST_GOCACHE)"
-	TMPDIR="$(GOAL_TEST_TMPDIR)" GOCACHE="$(GOAL_TEST_GOCACHE)" node scripts/goal-test-environments.mjs dev-server int
+	GOWORK=off TMPDIR="$(GOAL_TEST_TMPDIR)" GOCACHE="$(GOAL_TEST_GOCACHE)" node scripts/goal-test-environments.mjs dev-server int
 
 goal-test-dev-daemon: ## Rebuild and restart only the goal-test integration daemon
 	@mkdir -p "$(GOAL_TEST_TMPDIR)" "$(GOAL_TEST_GOCACHE)"
-	TMPDIR="$(GOAL_TEST_TMPDIR)" GOCACHE="$(GOAL_TEST_GOCACHE)" node scripts/goal-test-environments.mjs dev-daemon int
+	GOWORK=off TMPDIR="$(GOAL_TEST_TMPDIR)" GOCACHE="$(GOAL_TEST_GOCACHE)" node scripts/goal-test-environments.mjs dev-daemon int
 
 goal-test-codex-network-check: ## Verify the goal-test Codex runner network profile; set RESPONSES_SMOKE=1 for a real Responses request
 	node scripts/goal-test-environments.mjs codex-network-check int $${RESPONSES_SMOKE:+--responses-smoke}

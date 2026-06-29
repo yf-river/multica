@@ -13,6 +13,8 @@ const workspacesDir = path.join(runDir, "workspaces");
 const publicHost = process.env.GOAL_TEST_PUBLIC_HOST || "9.134.129.162";
 const proxyEnvKeys = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"];
 const noProxyEnvKeys = ["NO_PROXY", "no_proxy"];
+const defaultCodexSourceHome = "/data/ida/claude/.codex";
+const defaultCodexProxyURL = "http://127.0.0.1:7890";
 
 const profiles = {
   prod: {
@@ -48,9 +50,11 @@ if (command === "ensure") {
   ensureEnvironment(profile);
   console.log(JSON.stringify(describeEnvironment(profile), null, 2));
 } else if (command === "deploy") {
-  deployEnvironment(profile, process.argv.includes("--build"));
+  deployEnvironment(withFrontendMode(profile, parseFrontendModeFlag(profile.frontendMode)), process.argv.includes("--build"));
 } else if (command === "dev-ui") {
-  startDevUI(profile);
+  startDevWeb(withFrontendMode(profile, "next-dev"), "dev-ui");
+} else if (command === "dev-ui-start") {
+  startDevWeb(withFrontendMode(profile, "next-start"), "dev-ui-start");
 } else if (command === "dev-server") {
   restartDevServer(profile);
 } else if (command === "dev-daemon") {
@@ -71,6 +75,19 @@ if (command === "ensure") {
   if (!evidence.ok) process.exit(2);
 } else {
   fail(`unknown command ${command}`);
+}
+
+function parseFrontendModeFlag(defaultMode) {
+  const index = process.argv.findIndex((arg) => arg === "--frontend-mode");
+  const inline = process.argv.find((arg) => arg.startsWith("--frontend-mode="));
+  const value = inline ? inline.slice("--frontend-mode=".length) : index >= 0 ? process.argv[index + 1] : "";
+  if (!value) return defaultMode;
+  if (value !== "next-dev" && value !== "next-start") fail(`--frontend-mode must be next-dev or next-start, got ${value}`);
+  return value;
+}
+
+function withFrontendMode(item, frontendMode) {
+  return { ...item, frontendMode };
 }
 
 function ensureEnvironment(item) {
@@ -225,18 +242,18 @@ function deployEnvironment(item, build) {
   console.log(JSON.stringify(metadata, null, 2));
 }
 
-function startDevUI(item) {
-  if (item.frontendMode !== "next-dev") fail(`${item.name} frontend mode is ${item.frontendMode}; dev-ui only supports next-dev environments`);
+function startDevWeb(item, action) {
   const { env } = buildEnvironmentRuntime(item);
   mkdirSync(runDir, { recursive: true });
   const existingPID = listeningPID(item.frontendPort);
   const existing = inspectPID(existingPID);
   if (existing.running && isExpectedWebProcess(existing, item)) {
-    updateFastDeploymentMetadata(item, env, { web: existingPID }, "dev-ui");
+    updateFastDeploymentMetadata(item, env, { web: existingPID }, action);
     console.log(JSON.stringify({
       environment: item.name,
-      action: "dev-ui",
+      action,
       status: "already_running",
+      frontend_mode: item.frontendMode,
       frontend_url: `http://${publicHost}:${item.frontendPort}`,
       pid: existingPID,
     }, null, 2));
@@ -246,11 +263,12 @@ function startDevUI(item) {
   killPort(item.frontendPort);
   waitForPortFree(item.frontendPort, 15_000);
   const webPID = startWebProcess(item, env);
-  updateFastDeploymentMetadata(item, env, { web: webPID }, "dev-ui");
+  updateFastDeploymentMetadata(item, env, { web: webPID }, action);
   console.log(JSON.stringify({
     environment: item.name,
-    action: "dev-ui",
+    action,
     status: "started",
+    frontend_mode: item.frontendMode,
     frontend_url: `http://${publicHost}:${item.frontendPort}`,
     pid: webPID,
   }, null, 2));
@@ -486,7 +504,7 @@ function verifyAll() {
   ensureEnvironment(profiles.prod);
   ensureEnvironment(profiles.int);
   const prod = verifyEnvironment(profiles.prod, true);
-  const intEnv = verifyEnvironment(profiles.int, true);
+  const intEnv = verifyEnvironment(withFrontendMode(profiles.int, deployedFrontendMode(profiles.int)), true);
   const isolation = {
     status: prod.ok && intEnv.ok && intEnv.frontend_port !== prod.frontend_port && intEnv.backend_port !== prod.backend_port && intEnv.database_name !== prod.database_name ? "通过" : "失败",
     prod_environment: "prod",
@@ -511,7 +529,7 @@ function verifyAll() {
 
 function verifyTarget(item) {
   ensureEnvironment(item);
-  const result = verifyEnvironment(item, true);
+  const result = verifyEnvironment(withFrontendMode(item, deployedFrontendMode(item)), true);
   return {
     schema: "multica.goal_test.environment_evidence.v1",
     generated_at: new Date().toISOString(),
@@ -520,6 +538,17 @@ function verifyTarget(item) {
     [item.name === "prod" ? "prod" : "integration"]: result,
     ok: result.ok,
   };
+}
+
+function deployedFrontendMode(item) {
+  if (!existsSync(deploymentPath(item))) return item.frontendMode;
+  try {
+    const metadata = JSON.parse(readFileSync(deploymentPath(item), "utf8"));
+    const mode = metadata?.frontend_mode;
+    return mode === "next-start" || mode === "next-dev" ? mode : item.frontendMode;
+  } catch {
+    return item.frontendMode;
+  }
 }
 
 function verifyAllLogs() {
@@ -741,7 +770,7 @@ function resolveCodexRunnerProfile(item, base) {
     base.http_proxy,
     base.all_proxy,
   );
-  const rawProxy = explicitProxy || ambientProxy;
+  const rawProxy = normalizeCodexProxyURL(explicitProxy || ambientProxy || defaultCodexProxyURL);
   const proxyMode = isDirectProxyValue(rawProxy) ? "direct" : rawProxy ? "proxy" : "direct";
   const proxyURL = proxyMode === "proxy" ? rawProxy : "";
   const sourceHome = firstNonEmpty(
@@ -751,6 +780,7 @@ function resolveCodexRunnerProfile(item, base) {
     base.MULTICA_CODEX_SOURCE_HOME,
     process.env.CODEX_HOME,
     base.CODEX_HOME,
+    existsSync(defaultCodexSourceHome) ? defaultCodexSourceHome : "",
   );
   const defaultHome = defaultGoalTestCodexHome(item, sourceHome);
   return {
@@ -829,7 +859,7 @@ function applyCodexRunnerRuntimeEnv(env) {
   if (!env.MULTICA_CODEX_IMAGE_GENERATION) env.MULTICA_CODEX_IMAGE_GENERATION = "auto";
 
   const mode = String(env.GOAL_TEST_CODEX_PROXY_MODE || "").trim().toLowerCase();
-  const proxyURL = String(env.GOAL_TEST_CODEX_PROXY_URL || "").trim();
+  const proxyURL = normalizeCodexProxyURL(env.GOAL_TEST_CODEX_PROXY_URL || "");
   if (mode === "direct" || isDirectProxyValue(proxyURL)) {
     for (const key of proxyEnvKeys) delete env[key];
     for (const key of noProxyEnvKeys) delete env[key];
@@ -849,6 +879,12 @@ function defaultGoalTestCodexHome(item, sourceHome) {
   if (source) return path.join(path.dirname(source), `.codex-goal-test-${item.name}`);
   const home = process.env.HOME || process.env.USERPROFILE || "/tmp";
   return path.join(home, ".multica", "runtimes", item.daemonID, "codex", "CODEX_HOME");
+}
+
+function normalizeCodexProxyURL(value) {
+  const trimmed = String(value || "").trim();
+  if (/^socks5h?:\/\/127\.0\.0\.1:7890\/?$/i.test(trimmed)) return defaultCodexProxyURL;
+  return trimmed;
 }
 
 function ensureCodexRunnerProfile(runner) {
@@ -913,7 +949,7 @@ function runCodexCheckCommand(name, command, args, env, timeoutMs) {
   const check = {
     name,
     command: [command, ...args].join(" "),
-    status: res.status === 0 && !logicalFailure ? "passed" : "failed",
+    status: res.status === 0 && !timedOut && !logicalFailure ? "passed" : "failed",
     exit_code: res.status,
     duration_ms: Date.now() - started,
     timeout_ms: timeoutMs,
