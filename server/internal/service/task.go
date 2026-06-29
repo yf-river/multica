@@ -2031,7 +2031,6 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 
 	slog.Warn("task failed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID), "error", errMsg, "failure_reason", failureReason)
 	s.captureTaskFailed(ctx, task)
-	s.syncSquadSOPTaskStep(ctx, task, "步骤失败", "已失败")
 
 	// Auto-retry eligible failures (orphan, timeout, runtime_offline,
 	// runtime_recovery). The helper itself enforces attempt < max_attempts
@@ -2041,6 +2040,9 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		s.reassignPromptEvaluationRunToRetry(ctx, task, *retried)
 	} else {
 		s.syncPromptEvaluationRunForTask(ctx, task, "task_failed")
+	}
+	if s.shouldSyncSquadSOPTaskFailure(ctx, task, retried) {
+		s.syncSquadSOPTaskStep(ctx, task, "步骤失败", "已失败")
 	}
 
 	// Skip the per-failure system comment when we'll immediately retry —
@@ -2092,6 +2094,32 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	s.broadcastTaskEvent(ctx, protocol.EventTaskFailed, task)
 
 	return &task, nil
+}
+
+func (s *TaskService) shouldSyncSquadSOPTaskFailure(ctx context.Context, task db.AgentTaskQueue, retried *db.AgentTaskQueue) bool {
+	if retried != nil {
+		return false
+	}
+	if !task.IssueID.Valid {
+		return true
+	}
+	hasActive, err := s.Queries.HasActiveTaskForIssue(ctx, task.IssueID)
+	if err != nil {
+		slog.Warn("failed to check active issue tasks before failing squad SOP run",
+			"issue_id", util.UUIDToString(task.IssueID),
+			"task_id", util.UUIDToString(task.ID),
+			"error", err,
+		)
+		return true
+	}
+	if hasActive {
+		slog.Info("squad SOP task failure did not close run because issue still has active tasks",
+			"issue_id", util.UUIDToString(task.IssueID),
+			"task_id", util.UUIDToString(task.ID),
+		)
+		return false
+	}
+	return true
 }
 
 // retryableReasons enumerates failure reasons that the auto-retry path is
