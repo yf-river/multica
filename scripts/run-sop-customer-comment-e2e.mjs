@@ -693,7 +693,13 @@ async function createAndLinkRealGongfengMR(issue, token) {
   if (!matched) {
     fail("真实 Gongfeng MR 关联回写后，issue pull-requests 列表未读到该 MR");
   }
-  const verifiedMR = await gongfengRequest("GET", `projects/${encodeGongfengProjectID(projectPath)}/merge_requests/${encodeURIComponent(String(iid))}`);
+  const verifiedMR = await findGongfengMRByList(projectPath, {
+    id: Number(mr.id || 0),
+    iid,
+    sourceBranch,
+    targetBranch,
+    title: mr.title || title,
+  });
 
   return {
     synthetic: false,
@@ -708,6 +714,7 @@ async function createAndLinkRealGongfengMR(issue, token) {
     evidence_file_path: filePath,
     head_sha: headSha,
     verified_by_gongfeng_api: Boolean(verifiedMR?.iid || verifiedMR?.id),
+    gongfeng_id: Number(verifiedMR?.id || mr.id || 0),
   };
 }
 
@@ -733,6 +740,48 @@ async function gongfengRequest(method, apiPath, body) {
   }
   if (!text.trim()) return null;
   return JSON.parse(text);
+}
+
+async function findGongfengMRByList(projectPath, expected) {
+  const project = encodeGongfengProjectID(projectPath);
+  const queries = [
+    new URLSearchParams({
+      state: "opened",
+      source_branch: expected.sourceBranch,
+      per_page: "100",
+    }),
+    new URLSearchParams({
+      state: "all",
+      per_page: "100",
+    }),
+  ];
+
+  const errors = [];
+  for (const query of queries) {
+    try {
+      const list = await gongfengRequest("GET", `projects/${project}/merge_requests?${query.toString()}`);
+      const items = Array.isArray(list) ? list : [];
+      const matched = items.find((item) => {
+        const sameID = expected.id > 0 && Number(item.id || 0) === expected.id;
+        const sameIID = expected.iid > 0 && Number(item.iid || item.number || 0) === expected.iid;
+        const sameBranch = String(item.source_branch || "") === expected.sourceBranch;
+        const sameTarget = !expected.targetBranch || String(item.target_branch || "") === expected.targetBranch;
+        const sameTitle = !expected.title || String(item.title || "") === expected.title;
+        return sameID || (sameIID && sameBranch) || (sameBranch && sameTarget && sameTitle);
+      });
+      if (matched) return matched;
+    } catch (error) {
+      errors.push(error?.message || String(error));
+    }
+  }
+
+  fail(`真实 Gongfeng MR 创建后，列表接口未回查到匹配 MR：${JSON.stringify({
+    id: expected.id,
+    iid: expected.iid,
+    source_branch: expected.sourceBranch,
+    target_branch: expected.targetBranch,
+    errors: errors.map((item) => redactSecretText(item)).slice(0, 3),
+  })}`);
 }
 
 function loadGongfengEnv() {
