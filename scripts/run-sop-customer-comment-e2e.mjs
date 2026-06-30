@@ -834,8 +834,8 @@ async function approveAndWaitChildren(children, projects, token) {
     const target = byProject.get(child.project_id) || child.project_id;
     const tasksBefore = await listIssueTasks(child.id, token);
     const approved = await put(`/api/issues/${child.id}`, { status: "todo" }, token);
-    const terminal = await waitAnyTerminalTask(child.id, new Set(tasksBefore.map((item) => item.id)), token, `等待 ${target} 子任务运行完成`);
-    requireCompletedTask(terminal, `${target} 子任务`);
+    const childExecution = await waitChildExecutionComplete(child.id, new Set(tasksBefore.map((item) => item.id)), token, `等待 ${target} 子任务运行完成`);
+    const terminal = childExecution.task;
     const trace = await get(`/api/issues/${child.id}/trace`, token);
     const usage = await get(`/api/issues/${child.id}/usage`, token);
     const messages = await get(`/api/tasks/${terminal.id}/messages`, token);
@@ -849,6 +849,7 @@ async function approveAndWaitChildren(children, projects, token) {
       target,
       approved: pickIssue(approved),
       task: pickTask(terminal),
+      rerun_count: childExecution.rerun_count,
       trace_event_count: countItems(trace?.events, trace?.total),
       message_count: countItems(messages?.items || messages),
       total_tokens: totalTokens,
@@ -981,6 +982,63 @@ async function waitAnyTerminalTask(issueID, knownIDs, token, label) {
     if (!task) return null;
     evidence.task_rounds.push({ label, task: pickTask(task) });
     return task;
+  }, taskTimeoutMs, label);
+}
+
+async function waitChildExecutionComplete(issueID, knownIDs, token, label) {
+  let rerunCount = 0;
+  const maxEmptyReruns = Number(trimEnv("ACCEPTANCE_CHILD_EMPTY_RERUNS") || 2);
+  const seenEmptyTaskIDs = new Set();
+  return poll(async () => {
+    const tasks = sortTasks(await listIssueTasks(issueID, token));
+    const newTasks = tasks.filter((item) => !knownIDs.has(item.id));
+    if (newTasks.length === 0) return null;
+    const active = newTasks.filter(isActiveTask);
+    if (active.length > 0) return null;
+
+    // Avoid racing a leader task that has just completed and is about to enqueue
+    // a worker handoff on the same issue.
+    await new Promise((resolve) => setTimeout(resolve, 2_000));
+    const settledTasks = sortTasks(await listIssueTasks(issueID, token));
+    const settledNewTasks = settledTasks.filter((item) => !knownIDs.has(item.id));
+    if (settledNewTasks.some(isActiveTask)) return null;
+
+    const issue = await get(`/api/issues/${issueID}`, token);
+    if (issue.status === "blocked" || issue.status === "cancelled") {
+      const last = settledNewTasks[0] || newTasks[0];
+      fail(`${label} 后 issue 状态=${issue.status}，最后任务=${last?.id || ""} error=${last?.error || ""} failure_reason=${last?.failure_reason || ""}`);
+    }
+
+    const terminalTasks = settledNewTasks.filter((item) => !isActiveTask(item) && !shouldWaitForRetry(item, settledTasks));
+    const completedTasks = terminalTasks.filter((item) => item.status === "completed");
+    for (const task of completedTasks) {
+      const messages = await get(`/api/tasks/${task.id}/messages`, token);
+      if (countItems(messages?.items || messages) > 0 || String(task.result?.output || "").trim() !== "") {
+        evidence.task_rounds.push({ label, task: pickTask(task) });
+        return { task, rerun_count: rerunCount };
+      }
+    }
+
+    const emptyCompleted = completedTasks[0];
+    if (emptyCompleted && !seenEmptyTaskIDs.has(emptyCompleted.id) && rerunCount < maxEmptyReruns) {
+      seenEmptyTaskIDs.add(emptyCompleted.id);
+      rerunCount += 1;
+      evidence.task_rounds.push({
+        label: `${label} 空完成自动重试 ${rerunCount}`,
+        task: pickTask(emptyCompleted),
+      });
+      await post(`/api/issues/${issueID}/rerun`, { task_id: emptyCompleted.id }, token);
+      return null;
+    }
+
+    const failed = terminalTasks.find((item) => item.status !== "completed");
+    if (failed) {
+      requireCompletedTask(failed, label);
+    }
+    if (emptyCompleted) {
+      fail(`${label} 空完成且超过自动重试次数：task=${emptyCompleted.id}`);
+    }
+    return null;
   }, taskTimeoutMs, label);
 }
 
