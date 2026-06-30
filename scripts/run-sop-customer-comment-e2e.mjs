@@ -155,6 +155,7 @@ try {
   requireCompletedTask(childTask, "评论 2 跨项目子任务创建任务");
 
   const children = await verifyCrossProjectChildren(issue, projects, squad, token);
+  evidence.child_protocol_handoff = await postChildProtocolHandoffs(children, projects, agents, token);
   await approveAndWaitChildren(children, projects, token);
 
   const sandboxEvidence = runSandbox ? await runHistoricalServiceSandbox() : { skipped: true };
@@ -826,6 +827,61 @@ async function verifyCrossProjectChildren(issue, projects, squad, token) {
     verified_by_public_api: true,
   };
   return children;
+}
+
+async function postChildProtocolHandoffs(children, projects, agents, token) {
+  const suppressAgentIDs = agents.map((item) => item.id);
+  const results = [];
+  for (const child of children) {
+    const target = child.project_id === projects.gateway.id
+      ? "gateway"
+      : child.project_id === projects["ida-deployment"].id
+        ? "ida-deployment"
+        : "unknown";
+    const content = target === "gateway"
+      ? [
+        "客户补充：usercenter 正式 API 协议已确认，本 child issue 不应再以“缺少正式协议”为阻塞。",
+        "",
+        "## usercenter 快捷入口 API 合同",
+        "- `GET /v1/usercenter/quick-entries`：查询当前登录用户的快捷入口列表，只返回当前用户数据。",
+        "- `POST /v1/usercenter/quick-entries`：创建当前登录用户快捷入口；body: `title`, `url`, `icon`, `sort_order`, `enabled`。",
+        "- `DELETE /v1/usercenter/quick-entries/{id}`：删除当前登录用户自己的快捷入口。",
+        "- 不接受 `user_id` / `tenant_id` / `owner_id` 这类由调用方覆盖归属的参数；归属只能来自认证上下文。",
+        "",
+        "## gateway 交付边界",
+        "- 对外 HTTP path 按上述 `/v1/usercenter/quick-entries*` 暴露。",
+        "- 上游映射到 usercenter 的 QuickEntry service；本轮可用 harness/mock 证明转发与鉴权上下文传递，不要求接入 live 集群。",
+        "- 请求必须保留/生成 `X-Request-ID`，并透传 `Authorization` 或平台认证上下文。",
+        "- 验收至少包含：带 `X-Request-ID` 成功、缺少 request id 返回明确 4xx、尝试传入他人归属字段被忽略或拒绝。",
+        "- 允许基于当前 sandbox/harness 输出验证结论；不要因为没有额外产品口径阻塞 02-design。",
+      ].join("\n")
+      : [
+        "客户补充：usercenter 正式 API 协议已确认，本 child issue 不应再以“缺少正式协议”为阻塞。",
+        "",
+        "## usercenter 快捷入口 API 合同",
+        "- `GET /v1/usercenter/quick-entries`",
+        "- `POST /v1/usercenter/quick-entries`",
+        "- `DELETE /v1/usercenter/quick-entries/{id}`",
+        "- 权限归属来自认证上下文，禁止通过请求参数替别人创建、查询或删除。",
+        "",
+        "## ida-deployment 交付边界",
+        "- 补齐/核验 apiData 与权限配置，使 gateway 暴露的快捷入口 API 能被权限、apiData、render 配置识别。",
+        "- 权限建议分组：`usercenter.quickEntry.list`、`usercenter.quickEntry.create`、`usercenter.quickEntry.delete`。",
+        "- middleware 覆盖当前 sandbox 的 mode1/mode2/mode3 或项目既有 mode 组合；不要手改 generated 文件，按仓库既有生成/校验方式处理。",
+        "- Helm/render 验收只要求 sandbox 级 render/config 校验，不涉及客户生产发布、正式回滚或 live 集群 curl。",
+        "- 允许基于当前 sandbox/harness 输出验证结论；不要因为没有额外产品口径阻塞 02-design。",
+      ].join("\n");
+    const comment = await postCustomerCommentWithOptions(child.id, token, content, {
+      suppress_agent_ids: suppressAgentIDs,
+    });
+    results.push({
+      target,
+      issue_id: child.id,
+      identifier: child.identifier || "",
+      comment_id: comment.id || comment.comment_id,
+    });
+  }
+  return results;
 }
 
 async function approveAndWaitChildren(children, projects, token) {
