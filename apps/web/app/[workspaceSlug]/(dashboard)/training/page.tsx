@@ -44,7 +44,7 @@ export default async function TrainingPage({
   if (view === "experiments" || view === "optimization-runs") {
     redirect(`${baseTrainingPath}/test-suites${searchSuffix(
       resolvedSearchParams,
-      view === "optimization-runs" ? { mode: "optimize" } : {},
+      view === "optimization-runs" ? { mode: "optimize" } : { mode: "experiment" },
     )}`);
   }
   redirect(`${trainingWorkbenchPath(baseTrainingPath, trainingWorkbenchViewFromRoute(view ?? null))}${searchSuffix(resolvedSearchParams)}`);

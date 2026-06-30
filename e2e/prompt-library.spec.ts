@@ -68,11 +68,8 @@ test.describe("训练与评估工作台", () => {
     await refreshExpectedAgentModel();
 
     await page.getByRole("link", { name: "训练与评估" }).click();
-    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/runs$`), { timeout: 30000 });
-    await waitForPageText(page, "训练与评估");
-    await expect(page.getByTestId("training-demo-dashboard")).toContainText("训练运行看板", { timeout: 10000 });
-    await page.getByRole("link", { name: "提示词库", exact: true }).last().click();
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/prompts$`), { timeout: 30000 });
+    await waitForPageText(page, "训练与评估");
 
     await page.getByRole("button", { name: "起草需求澄清模板" }).click();
     await page.getByLabel("名称").fill(`${artifactPrefix} 账号系统 澄清`);
@@ -89,8 +86,8 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("prompt-version-history")).toContainText("手动创建", { timeout: 10000 });
     await expect(page.getByTestId("prompt-version-history")).toContainText("当前版本 1");
 
-    await page.getByRole("link", { name: "提示词调试场", exact: true }).last().click();
-    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/prompt-playground$`), { timeout: 30000 });
+    await page.goto(`/${workspaceSlug}/training/debug-runs`, { waitUntil: "domcontentloaded" });
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/debug-runs$`), { timeout: 30000 });
     await expect(page.getByTestId("prompt-playground-workbench")).toBeVisible({ timeout: 10000 });
     await page.getByRole("button", { name: new RegExp(escapeRegExp(`${artifactPrefix} 账号系统 澄清`)) }).click();
     await expect(page.getByTestId("prompt-playground-workbench")).toContainText(`${artifactPrefix} 账号系统 澄清`, { timeout: 10000 });
@@ -146,8 +143,7 @@ test.describe("训练与评估工作台", () => {
         .toMatchObject({ asset_type: assetType });
     }
 
-    await page.getByRole("link", { name: "智能体调试场", exact: true }).last().click();
-    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/agent-playground$`), { timeout: 30000 });
+    await page.getByRole("tab", { name: "智能体调试" }).click();
     await expect(page.getByTestId("agent-playground-workbench")).toBeVisible({ timeout: 10000 });
     await expect(page.getByTestId("agent-playground-workbench")).toContainText(`${artifactPrefix} 账号系统 澄清`, { timeout: 10000 });
     await expect(page.getByTestId("agent-playground-execution-stage")).toBeVisible();
@@ -1123,9 +1119,10 @@ test.describe("训练与评估工作台", () => {
   });
 
   test("提示词调试场和智能体调试场首屏职责不同", async ({ page }) => {
-    await page.goto(`/${workspaceSlug}/training/prompt-playground`, { waitUntil: "domcontentloaded" });
+    await page.goto(`/${workspaceSlug}/training/debug-runs`, { waitUntil: "domcontentloaded" });
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/debug-runs$`), { timeout: 10000 });
+    await expect(page.getByTestId("debug-runs-page-shell")).toBeVisible({ timeout: 10000 });
     await expect(page.getByTestId("prompt-playground-page-shell")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByTestId("playground-page-contract")).toContainText("本地渲染 · 不启动智能体");
     await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("本地模板目录");
     await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("质检工作单");
     await expect(page.getByTestId("prompt-playground-inspection-board")).toBeVisible();
@@ -1146,9 +1143,8 @@ test.describe("训练与评估工作台", () => {
     await expect(page.getByTestId("agent-playground-run-console")).toHaveCount(0);
     await expect(page.getByRole("button", { name: "创建真实智能体任务" })).toHaveCount(0);
 
-    await page.goto(`/${workspaceSlug}/training/agent-playground`, { waitUntil: "domcontentloaded" });
+    await page.getByRole("tab", { name: "智能体调试" }).click();
     await expect(page.getByTestId("agent-playground-page-shell")).toBeVisible({ timeout: 10000 });
-    await expect(page.getByTestId("playground-page-contract")).toContainText("真实任务 · 写回观测证据");
     await expect(page.getByTestId("agent-playground-selector-summary")).toContainText("执行目标池");
     await expect(page.getByTestId("agent-playground-target-queue")).toBeVisible();
     await expect(page.getByTestId("agent-playground-target-queue-item").first()).toContainText("入队目标");

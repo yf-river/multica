@@ -55,7 +55,7 @@ export default async function TrainingViewPage({
   if (TEST_SUITE_ROUTES.has(trainingView)) {
     redirect(`${baseTrainingPath}/test-suites${searchSuffix(
       resolvedSearchParams,
-      trainingView === "optimization-runs" ? { mode: "optimize" } : {},
+      trainingView === "optimization-runs" ? { mode: "optimize" } : { mode: "experiment" },
     )}`);
   }
 

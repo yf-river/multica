@@ -182,7 +182,13 @@ const USER_CENTER_TEMPLATE: CreatePromptLibraryItemRequest = {
 
 function trainingViewFromLocation(pathname: string, searchParams: URLSearchParams) {
   const match = pathname.match(/\/training\/([^/?#]+)/);
-  return match?.[1] ? decodeURIComponent(match[1]) : searchParams.get("view");
+  const route = match?.[1] ? decodeURIComponent(match[1]) : searchParams.get("view");
+  if (route === "test-suites") {
+    const mode = searchParams.get("mode");
+    if (mode === "experiment") return "experiments";
+    if (mode === "optimize") return "optimization-runs";
+  }
+  return route;
 }
 
 function collectIssueExecutionTaskIds(tree: IssueExecutionTreeResponse | undefined): string[] {
