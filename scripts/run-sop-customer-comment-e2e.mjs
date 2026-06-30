@@ -522,10 +522,20 @@ async function runSimpleAutopilotIssue(token, workspace, project, squad, pm) {
   }, token);
   const task = await waitNextTerminalTask(simple.id, pm.id, new Set(), token, "等待简单任务直通完成");
   requireCompletedTask(task, "简单任务直通");
-  const finalIssue = await get(`/api/issues/${simple.id}`, token);
+  const finalIssue = await waitIssueStatus(simple.id, "done", token, "等待简单任务 issue 自动闭环到 done");
+  const finalSOPRun = await waitForSOPRunStatus(simple.id, squad.id, token, "已完成", "等待简单任务 SOP run 自动闭合");
+  const allTasks = sortTasks(await listIssueTasks(simple.id, token));
   return {
     issue: pickIssue(finalIssue),
     task: pickTask(task),
+    task_count: allTasks.length,
+    final_sop_run: {
+      id: finalSOPRun.id,
+      profile_key: finalSOPRun.profile_key,
+      status: finalSOPRun.status,
+      current_step_key: finalSOPRun.current_step_key,
+      completed_at: finalSOPRun.completed_at,
+    },
   };
 }
 
@@ -740,6 +750,16 @@ async function waitForSOPRunStatus(issueID, squadID, token, status, label) {
     if (!run || run.status !== status || !run.completed_at) return null;
     return run;
   }, 120_000, label);
+}
+
+async function waitIssueStatus(issueID, status, token, label) {
+  return poll(async () => {
+    const issue = await get(`/api/issues/${issueID}`, token);
+    if (issue?.status !== status) return null;
+    const tasks = await listIssueTasks(issueID, token);
+    if (tasks.some(isActiveTask)) return null;
+    return issue;
+  }, taskTimeoutMs, label);
 }
 
 async function waitNextTerminalTask(issueID, agentID, knownIDs, token, label) {

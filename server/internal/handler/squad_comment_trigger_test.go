@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -278,6 +279,206 @@ func TestShouldEnqueueSquadLeaderOnComment_LeaderSelfTriggerByRole(t *testing.T)
 			t.Fatalf("latest task is worker: expected leader to be enqueued, got skip")
 		}
 	})
+}
+
+func TestCompleteTask_WorkerStageCompletionEnqueuesSquadLeader(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	leaderID := createHandlerTestAgent(t, "SOP Auto Continue Leader", nil)
+	workerID := createHandlerTestAgent(t, "01-clarify", nil)
+
+	var leaderRuntimeID, workerRuntimeID string
+	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, leaderID).Scan(&leaderRuntimeID); err != nil {
+		t.Fatalf("load leader runtime: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, workerID).Scan(&workerRuntimeID); err != nil {
+		t.Fatalf("load worker runtime: %v", err)
+	}
+
+	profile := `{
+		"profile_key":"test-sop",
+		"steps":[
+			{"key":"pm","name":"pm","role_key":"pm"},
+			{"key":"01-clarify","name":"01-需求澄清","role_key":"01-clarify"},
+			{"key":"02-design","name":"02-方案设计","role_key":"02-design"}
+		]
+	}`
+	var squadID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, sop_profile)
+		VALUES ($1, $2, '', $3, $4, $5)
+		RETURNING id
+	`, testWorkspaceID, "SOP Auto Continue Squad", leaderID, testUserID, profile).Scan(&squadID); err != nil {
+		t.Fatalf("create squad: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+	})
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, assignee_type, assignee_id)
+		VALUES ($1, 'member', $2, $3, 'in_progress', 'squad', $4)
+		RETURNING id
+	`, testWorkspaceID, testUserID, "sop auto continue worker completion", squadID).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+
+	if _, err := testHandler.Queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
+		WorkspaceID:    util.MustParseUUID(testWorkspaceID),
+		IssueID:        util.MustParseUUID(issueID),
+		SquadID:        util.MustParseUUID(squadID),
+		ProfileKey:     "test-sop",
+		Profile:        []byte(profile),
+		Status:         "进行中",
+		CurrentStepKey: "01-clarify",
+	}); err != nil {
+		t.Fatalf("create sop run: %v", err)
+	}
+
+	insertRunningTask := func(agentID, runtimeID string, isLeader bool) string {
+		t.Helper()
+		var taskID string
+		if err := testPool.QueryRow(ctx, `
+			INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, dispatched_at, started_at, is_leader_task)
+			VALUES ($1, $2, $3, 'running', 2, now(), now(), $4)
+			RETURNING id
+		`, agentID, runtimeID, issueID, isLeader).Scan(&taskID); err != nil {
+			t.Fatalf("insert running task: %v", err)
+		}
+		return taskID
+	}
+	countQueuedLeaders := func() int {
+		t.Helper()
+		var count int
+		if err := testPool.QueryRow(ctx, `
+			SELECT count(*) FROM agent_task_queue
+			WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued' AND is_leader_task = TRUE
+		`, issueID, leaderID).Scan(&count); err != nil {
+			t.Fatalf("count queued leaders: %v", err)
+		}
+		return count
+	}
+
+	workerTaskID := insertRunningTask(workerID, workerRuntimeID, false)
+	if _, err := testHandler.TaskService.CompleteTask(ctx, util.MustParseUUID(workerTaskID), []byte(`{}`), "", ""); err != nil {
+		t.Fatalf("complete worker task: %v", err)
+	}
+	if got := countQueuedLeaders(); got != 1 {
+		t.Fatalf("queued leader tasks after worker completion = %d, want 1", got)
+	}
+
+	secondWorkerTaskID := insertRunningTask(workerID, workerRuntimeID, false)
+	if _, err := testHandler.TaskService.CompleteTask(ctx, util.MustParseUUID(secondWorkerTaskID), []byte(`{}`), "", ""); err != nil {
+		t.Fatalf("complete second worker task: %v", err)
+	}
+	if got := countQueuedLeaders(); got != 1 {
+		t.Fatalf("queued leader tasks after duplicate worker completion = %d, want still 1", got)
+	}
+
+	leaderTaskID := insertRunningTask(leaderID, leaderRuntimeID, true)
+	if _, err := testHandler.TaskService.CompleteTask(ctx, util.MustParseUUID(leaderTaskID), []byte(`{}`), "", ""); err != nil {
+		t.Fatalf("complete leader task: %v", err)
+	}
+	if got := countQueuedLeaders(); got != 1 {
+		t.Fatalf("queued leader tasks after leader completion = %d, want still 1", got)
+	}
+}
+
+func TestCompleteTask_FinalSOPStepAutoClosesIssueWithoutPullRequest(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	leaderID := createHandlerTestAgent(t, "SOP Final Auto Close Leader", nil)
+	verifyID := createHandlerTestAgent(t, "05-verify", nil)
+
+	var verifyRuntimeID string
+	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, verifyID).Scan(&verifyRuntimeID); err != nil {
+		t.Fatalf("load verify runtime: %v", err)
+	}
+
+	profile := `{
+		"profile_key":"test-final-sop",
+		"steps":[
+			{"key":"pm","name":"pm","role_key":"pm"},
+			{"key":"05-verify","name":"05-测试","role_key":"05-verify"}
+		]
+	}`
+	var squadID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, sop_profile)
+		VALUES ($1, $2, '', $3, $4, $5)
+		RETURNING id
+	`, testWorkspaceID, "SOP Final Auto Close Squad", leaderID, testUserID, profile).Scan(&squadID); err != nil {
+		t.Fatalf("create squad: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+	})
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, assignee_type, assignee_id)
+		VALUES ($1, 'member', $2, $3, 'in_progress', 'squad', $4)
+		RETURNING id
+	`, testWorkspaceID, testUserID, "sop final auto close", squadID).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+
+	if _, err := testHandler.Queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
+		WorkspaceID:    util.MustParseUUID(testWorkspaceID),
+		IssueID:        util.MustParseUUID(issueID),
+		SquadID:        util.MustParseUUID(squadID),
+		ProfileKey:     "test-final-sop",
+		Profile:        []byte(profile),
+		Status:         "进行中",
+		CurrentStepKey: "05-verify",
+	}); err != nil {
+		t.Fatalf("create sop run: %v", err)
+	}
+
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, dispatched_at, started_at)
+		VALUES ($1, $2, $3, 'running', 2, now(), now())
+		RETURNING id
+	`, verifyID, verifyRuntimeID, issueID).Scan(&taskID); err != nil {
+		t.Fatalf("insert verify task: %v", err)
+	}
+	if _, err := testHandler.TaskService.CompleteTask(ctx, util.MustParseUUID(taskID), []byte(`{}`), "", ""); err != nil {
+		t.Fatalf("complete verify task: %v", err)
+	}
+
+	issue, err := testHandler.Queries.GetIssue(ctx, util.MustParseUUID(issueID))
+	if err != nil {
+		t.Fatalf("load issue: %v", err)
+	}
+	if issue.Status != "done" {
+		t.Fatalf("issue status = %q, want done", issue.Status)
+	}
+	run, err := testHandler.Queries.GetSquadSOPRunInWorkspace(ctx, db.GetSquadSOPRunInWorkspaceParams{
+		ID: func() pgtype.UUID {
+			var id string
+			_ = testPool.QueryRow(ctx, `SELECT id FROM squad_sop_run WHERE issue_id = $1 ORDER BY created_at DESC LIMIT 1`, issueID).Scan(&id)
+			return util.MustParseUUID(id)
+		}(),
+		WorkspaceID: util.MustParseUUID(testWorkspaceID),
+	})
+	if err != nil {
+		t.Fatalf("load sop run: %v", err)
+	}
+	if run.Status != "已完成" {
+		t.Fatalf("sop run status = %q, want 已完成", run.Status)
+	}
 }
 
 // TestCreateComment_SquadLeaderSkipOnlyInspectsCurrentMention drives the

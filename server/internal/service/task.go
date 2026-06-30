@@ -1669,12 +1669,13 @@ func (s *TaskService) syncSquadSOPTaskStep(ctx context.Context, task db.AgentTas
 	if !shouldUpdate {
 		return
 	}
-	if _, err := s.Queries.UpdateSquadSOPRunStatus(ctx, db.UpdateSquadSOPRunStatusParams{
+	updatedRun, err := s.Queries.UpdateSquadSOPRunStatus(ctx, db.UpdateSquadSOPRunStatusParams{
 		ID:             run.ID,
 		WorkspaceID:    run.WorkspaceID,
 		Status:         nextStatus,
 		CurrentStepKey: pgtype.Text{String: nextStepKey, Valid: nextStepKey != ""},
-	}); err != nil {
+	})
+	if err != nil {
 		slog.Warn("sync squad SOP run status failed",
 			"run_id", util.UUIDToString(run.ID),
 			"task_id", util.UUIDToString(task.ID),
@@ -1682,7 +1683,43 @@ func (s *TaskService) syncSquadSOPTaskStep(ctx context.Context, task db.AgentTas
 			"event_type", eventType,
 			"error", err,
 		)
+		return
 	}
+	if eventType == "步骤完成" && updatedRun.Status == "已完成" {
+		s.closeIssueAfterCompletedSOPRun(ctx, issue)
+	}
+}
+
+func (s *TaskService) closeIssueAfterCompletedSOPRun(ctx context.Context, issue db.Issue) {
+	switch issue.Status {
+	case "done", "cancelled", "in_review":
+		return
+	}
+	pullRequests, err := s.Queries.ListPullRequestsByIssue(ctx, issue.ID)
+	if err != nil {
+		slog.Warn("auto-close issue after completed SOP skipped: pull request lookup failed",
+			"issue_id", util.UUIDToString(issue.ID),
+			"error", err,
+		)
+		return
+	}
+	if len(pullRequests) > 0 {
+		return
+	}
+	updated, err := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+		ID:          issue.ID,
+		Status:      "done",
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("auto-close issue after completed SOP failed",
+			"issue_id", util.UUIDToString(issue.ID),
+			"error", err,
+		)
+		return
+	}
+	slog.Info("issue auto-closed after completed SOP run", "issue_id", util.UUIDToString(issue.ID))
+	s.broadcastIssueUpdated(updated)
 }
 
 func parseSquadSOPProfileSteps(raw []byte) []squadSOPProfileStep {
@@ -1841,6 +1878,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	slog.Info("task completed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskCompleted(ctx, task)
 	s.syncSquadSOPTaskStep(ctx, task, "步骤完成", "已完成")
+	s.enqueueSquadLeaderAfterWorkerStageCompletion(ctx, task)
 
 	// Invariant: every completed issue task must have at least one agent
 	// comment on the issue, so the user always sees something when a run
@@ -1938,6 +1976,68 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	s.broadcastTaskEvent(ctx, protocol.EventTaskCompleted, task)
 
 	return &task, nil
+}
+
+func (s *TaskService) enqueueSquadLeaderAfterWorkerStageCompletion(ctx context.Context, task db.AgentTaskQueue) {
+	if !task.IssueID.Valid || task.IsLeaderTask {
+		return
+	}
+	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
+	if err != nil || !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
+		return
+	}
+	if issue.Status == "done" || issue.Status == "cancelled" {
+		return
+	}
+	if _, err := s.Queries.GetOpenSquadSOPRunByIssue(ctx, task.IssueID); err != nil {
+		return
+	}
+	squad, err := s.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
+		ID:          issue.AssigneeID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		return
+	}
+	leader, err := s.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+		ID:          squad.LeaderID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil || !leader.RuntimeID.Valid || leader.ArchivedAt.Valid {
+		return
+	}
+	hasPending, err := s.Queries.HasPendingTaskForIssueAndAgent(ctx, db.HasPendingTaskForIssueAndAgentParams{
+		IssueID: issue.ID,
+		AgentID: squad.LeaderID,
+	})
+	if err != nil || hasPending {
+		return
+	}
+	nextTask, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
+		AgentID:        squad.LeaderID,
+		RuntimeID:      leader.RuntimeID,
+		IssueID:        issue.ID,
+		Priority:       priorityToInt(issue.Priority),
+		TriggerSummary: pgtype.Text{String: "SOP 阶段任务已完成，继续协调下一阶段。", Valid: true},
+		IsLeaderTask:   pgtype.Bool{Bool: true, Valid: true},
+	})
+	if err != nil {
+		slog.Warn("enqueue squad leader after worker stage completion failed",
+			"issue_id", util.UUIDToString(issue.ID),
+			"worker_task_id", util.UUIDToString(task.ID),
+			"leader_id", util.UUIDToString(squad.LeaderID),
+			"error", err,
+		)
+		return
+	}
+	slog.Info("squad leader enqueued after worker stage completion",
+		"task_id", util.UUIDToString(nextTask.ID),
+		"issue_id", util.UUIDToString(issue.ID),
+		"worker_task_id", util.UUIDToString(task.ID),
+		"leader_id", util.UUIDToString(squad.LeaderID),
+	)
+	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, nextTask)
+	s.NotifyTaskEnqueued(ctx, nextTask)
 }
 
 // FailTask marks a task as failed.

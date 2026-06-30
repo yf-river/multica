@@ -288,14 +288,14 @@ function RunReviewDetail({
             }
           />
           <Metric
-            label="Token"
+            label="总 Token"
             value={formatNumber(tokenTotal)}
             icon={<Activity className="size-3.5" />}
             tooltip={
               <MetricTooltip
                 rows={[
-                  ["输入", formatNumber(summary?.total_input_tokens ?? 0)],
-                  ["输出", formatNumber(summary?.total_output_tokens ?? 0)],
+                  ["输入 Token", formatNumber(summary?.total_input_tokens ?? 0)],
+                  ["输出 Token", formatNumber(summary?.total_output_tokens ?? 0)],
                   ["缓存读", formatNumber(summary?.total_cache_read_tokens ?? 0)],
                   ["缓存写", formatNumber(summary?.total_cache_write_tokens ?? 0)],
                   ["缓存命中率", formatPercent(cacheHitRate(summary?.total_input_tokens ?? 0, summary?.total_cache_read_tokens ?? 0))],

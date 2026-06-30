@@ -26,6 +26,7 @@ if (!issue.id) throw new Error(`evidence missing issue.id: ${evidencePath}`);
 mkdirSync(screenshotDir, { recursive: true });
 
 const token = await login();
+const workspaceID = await resolveWorkspaceID(token);
 const browser = await chromium.launch({ headless: true, args: ["--no-proxy-server"] });
 const context = await browser.newContext({
   viewport: { width: 1440, height: 1000 },
@@ -94,9 +95,15 @@ async function auditIssueDetail(page) {
   if (attachments.length > 0) {
     const first = attachments[0];
     const filename = first.filename;
-    await page.getByText(filename, { exact: true }).first().waitFor({ timeout: 30_000 });
-    result.checks.stage_attachment_visible = await page.getByText(filename, { exact: true }).first().isVisible();
-    await page.getByLabel("预览").first().click();
+    const attachmentComment = await findAttachmentComment(first.id, filename);
+    result.checks.stage_attachment_comment_api = Boolean(attachmentComment?.id);
+    if (attachmentComment?.id) result.stage_attachment_comment_id = attachmentComment.id;
+    const filenameLocator = page.getByText(filename, { exact: true }).first();
+    await scrollUntilVisible(page, filenameLocator, `附件 ${filename}`);
+    result.checks.stage_attachment_visible = await filenameLocator.isVisible();
+    await filenameLocator
+      .locator("xpath=ancestor::div[contains(@class,'rounded-md')][.//button[@aria-label='预览']][1]//button[@aria-label='预览']")
+      .click();
     await page.getByRole("dialog", { name: filename }).waitFor({ timeout: 30_000 });
     result.checks.stage_attachment_preview = await page.getByRole("dialog", { name: filename }).isVisible();
     await page.screenshot({ path: path.join(screenshotDir, `issue-${issue.id}-attachment-preview.png`), fullPage: false });
@@ -124,20 +131,16 @@ async function auditRunReview(page) {
   result.checks.thinking_rounds_label = await page.getByText("思考轮次").count() > 0;
   result.checks.horizontal_timeline = await page.getByTestId("run-review-horizontal-timeline").isVisible();
 
-  await page.getByLabel("总耗时说明").click();
-  result.checks.duration_tooltip = await page.getByText("Agent 执行耗时").count() > 0 && await page.getByText("人工确认耗时").count() > 0;
-  await page.keyboard.press("Escape");
-
-  await page.getByLabel("总 Token说明").click();
-  result.checks.token_tooltip = await page.getByText("输入").count() > 0 && await page.getByText("缓存命中率").count() > 0;
-  await page.keyboard.press("Escape");
+  result.checks.duration_tooltip = await hoverAndCheckText(page, "总耗时说明", ["Agent 执行耗时", "人工确认耗时"]);
+  result.checks.token_tooltip = await hoverAndCheckText(page, "总 Token说明", ["输入 Token", "缓存命中率"]);
 
   result.checks.node_metric_tooltip = false;
   const nodeMetricHelp = page.getByLabel("节点指标说明").first();
   if (await nodeMetricHelp.count()) {
-    await nodeMetricHelp.click();
+    await nodeMetricHelp.hover();
+    await page.waitForTimeout(300);
     result.checks.node_metric_tooltip = await page.getByText("耗时").count() > 0 || await page.getByText("Token").count() > 0;
-    await page.keyboard.press("Escape");
+    await page.mouse.move(0, 0);
   }
 
   const nodeDownload = await clickAndRecordDownload(page, "导出节点数据");
@@ -165,6 +168,18 @@ async function clickAndRecordDownload(page, label) {
   return item;
 }
 
+async function hoverAndCheckText(page, label, texts) {
+  const target = page.getByLabel(label).first();
+  await target.hover();
+  await page.waitForTimeout(800);
+  const ok = (await Promise.all(texts.map(async (text) => {
+    await page.getByText(text).first().waitFor({ timeout: 2_000 });
+    return page.getByText(text).count();
+  }).map((check) => check.catch(() => 0)))).every((count) => count > 0);
+  await page.mouse.move(0, 0);
+  return ok;
+}
+
 async function login() {
   const response = await fetch(`${backendURL}/auth/login`, {
     method: "POST",
@@ -177,6 +192,50 @@ async function login() {
   const data = await response.json();
   if (!data.token) throw new Error("login response did not include token");
   return data.token;
+}
+
+async function resolveWorkspaceID(authToken) {
+  const response = await fetch(`${backendURL}/api/workspaces`, {
+    headers: { authorization: `Bearer ${authToken}` },
+  });
+  if (!response.ok) throw new Error(`workspace list failed: ${response.status} ${await response.text()}`);
+  const workspaces = await response.json();
+  const workspace = Array.isArray(workspaces) ? workspaces.find((item) => item.slug === workspaceSlug) : null;
+  if (!workspace?.id) throw new Error(`workspace not found: ${workspaceSlug}`);
+  return workspace.id;
+}
+
+async function findAttachmentComment(attachmentID, filename) {
+  const response = await fetch(`${backendURL}/api/issues/${issue.id}/comments?summary=false&limit=2000`, {
+    headers: {
+      authorization: `Bearer ${token}`,
+      "x-workspace-id": workspaceID,
+    },
+  });
+  if (!response.ok) throw new Error(`comments lookup failed: ${response.status} ${await response.text()}`);
+  const payload = await response.json();
+  const comments = Array.isArray(payload) ? payload : payload.items ?? payload.comments ?? [];
+  return comments.find((comment) =>
+    Array.isArray(comment.attachments) &&
+    comment.attachments.some((attachment) => attachment.id === attachmentID || attachment.filename === filename),
+  ) || null;
+}
+
+async function scrollUntilVisible(page, locator, label) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (await locator.isVisible().catch(() => false)) return;
+    await page.evaluate((ratio) => {
+      const candidates = Array.from(document.querySelectorAll("main, section, div"))
+        .filter((el) => el instanceof HTMLElement && el.scrollHeight > el.clientHeight + 200)
+        .sort((a, b) => (b.scrollHeight - b.clientHeight) - (a.scrollHeight - a.clientHeight));
+      const scroller = candidates[0] || document.scrollingElement || document.documentElement;
+      scroller.scrollTop = Math.min(scroller.scrollHeight, scroller.scrollTop + Math.max(600, scroller.clientHeight * ratio));
+    }, attempt < 8 ? 0.75 : 1.2);
+    await page.waitForTimeout(250);
+  }
+  await locator.waitFor({ timeout: 1_000 }).catch((error) => {
+    throw new Error(`${label} 未在 issue 页面滚动范围内出现: ${error.message}`);
+  });
 }
 
 function collectBrowserFailures(page, failures) {
