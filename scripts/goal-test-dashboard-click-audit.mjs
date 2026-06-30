@@ -107,9 +107,22 @@ async function openStartPage(page) {
 async function auditClicks(page) {
   const results = [];
   for (const item of dashboardClicks) {
+    await resetNavigationBaseline(page, item);
     results.push(await measureClick(page, item));
   }
   return results;
+}
+
+async function resetNavigationBaseline(page, item) {
+  const trainingRootPath = `/${workspaceSlug}/training/prompts`;
+  const useTrainingRoot = item.path.startsWith(`/${workspaceSlug}/training/`) && item.path !== trainingRootPath;
+  const baselinePath = useTrainingRoot ? trainingRootPath : `/${workspaceSlug}/issues`;
+  const baselineReady = useTrainingRoot ? { testId: "training-route-prompts" } : { heading: "任务" };
+  if (new URL(page.url(), browserURL).pathname !== baselinePath) {
+    await page.goto(`${browserURL}${baselinePath}`, { waitUntil: "domcontentloaded", timeout: 15_000 });
+  }
+  await waitForReadySignal(page, baselineReady, 10_000);
+  await page.waitForLoadState("networkidle", { timeout: 3_000 }).catch(() => {});
 }
 
 async function measureClick(page, item) {
