@@ -32,18 +32,13 @@ const dashboardClicks = [
   { id: "projects", label: "项目", link: "项目", path: `/${workspaceSlug}/projects`, ready: { heading: "项目" } },
   { id: "agents", label: "智能体", link: "智能体", path: `/${workspaceSlug}/agents`, ready: { heading: "智能体" } },
   { id: "squads", label: "小队", link: "小队", path: `/${workspaceSlug}/squads`, ready: { heading: "小队" } },
-  { id: "usage", label: "用量", link: "用量", path: `/${workspaceSlug}/usage`, ready: { heading: "用量" } },
+  { id: "run-reviews", label: "运行复盘", link: "运行复盘", path: `/${workspaceSlug}/run-reviews`, ready: { heading: "运行复盘" } },
   { id: "runtimes", label: "运行时", link: "运行时", path: `/${workspaceSlug}/runtimes`, ready: { heading: "运行时" } },
   { id: "settings", label: "设置", link: "设置", path: `/${workspaceSlug}/settings`, ready: { heading: "设置" } },
-  { id: "training-runs", label: "训练与评估/运行看板", link: "训练与评估", path: `/${workspaceSlug}/training/runs`, ready: { testId: "training-route-runs" } },
   { id: "training-prompts", label: "训练与评估/提示词库", link: "提示词库", path: `/${workspaceSlug}/training/prompts`, ready: { testId: "training-route-prompts" } },
-  { id: "training-prompt-playground", label: "训练与评估/提示词调试场", link: "提示词调试场", path: `/${workspaceSlug}/training/prompt-playground`, ready: { testId: "prompt-playground-page-shell" } },
-  { id: "training-agent-playground", label: "训练与评估/智能体调试场", link: "智能体调试场", path: `/${workspaceSlug}/training/agent-playground`, ready: { testId: "agent-playground-page-shell" } },
+  { id: "training-debug-runs", label: "训练与评估/调试运行", link: "调试运行", path: `/${workspaceSlug}/training/debug-runs`, ready: { testId: "debug-runs-page-shell" } },
   { id: "training-datasets", label: "训练与评估/数据集", link: "数据集", path: `/${workspaceSlug}/training/datasets`, ready: { testId: "training-route-datasets" } },
   { id: "training-test-suites", label: "训练与评估/测试套件", link: "测试套件", path: `/${workspaceSlug}/training/test-suites`, ready: { testId: "training-route-test-suites" } },
-  { id: "training-experiments", label: "训练与评估/实验", link: "实验", path: `/${workspaceSlug}/training/experiments`, ready: { testId: "training-route-experiments" } },
-  { id: "training-optimization-runs", label: "训练与评估/优化运行", link: "优化运行", path: `/${workspaceSlug}/training/optimization-runs`, ready: { testId: "training-route-optimization-runs" } },
-  { id: "training-run-history", label: "训练与评估/运行历史", link: "运行历史", path: `/${workspaceSlug}/training/run-history`, ready: { testId: "training-route-run-history" } },
 ];
 
 const token = await login();
