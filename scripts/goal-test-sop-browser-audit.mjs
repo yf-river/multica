@@ -7,6 +7,7 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 const runEnv = readEnvFile(path.join(repoRoot, ".run/env/goal-test-int.env"));
 const artifactRoot = path.resolve(process.env.GOAL_TEST_SOP_BROWSER_AUDIT_DIR || path.join(repoRoot, "artifacts/acceptance"));
 const screenshotDir = path.join(artifactRoot, "sop-browser-audit-screenshots");
+const downloadDir = path.join(artifactRoot, "sop-browser-audit-downloads");
 const evidencePath = path.resolve(process.env.SOP_E2E_EVIDENCE || path.join(artifactRoot, "sop-customer-comment-e2e-latest.json"));
 const evidence = JSON.parse(readFileSync(evidencePath, "utf8"));
 const generatedAt = new Date().toISOString();
@@ -24,6 +25,7 @@ const mr = evidence.mr_handoff || {};
 if (!issue.id) throw new Error(`evidence missing issue.id: ${evidencePath}`);
 
 mkdirSync(screenshotDir, { recursive: true });
+mkdirSync(downloadDir, { recursive: true });
 
 const token = await login();
 const workspaceID = await resolveWorkspaceID(token);
@@ -147,6 +149,8 @@ async function auditRunReview(page) {
   const rawDownload = await clickAndRecordDownload(page, "导出 RAW 交互信息");
   result.checks.node_csv_export = Boolean(nodeDownload);
   result.checks.raw_event_csv_export = Boolean(rawDownload);
+  result.checks.node_csv_content = Boolean(nodeDownload?.content_checks?.summary_row && nodeDownload?.content_checks?.node_headers);
+  result.checks.raw_event_csv_content = Boolean(rawDownload?.content_checks?.raw_headers && rawDownload?.content_checks?.event_rows);
 
   await page.screenshot({ path: path.join(screenshotDir, `issue-${issue.id}-run-review.png`), fullPage: true });
   result.screenshots.run_review = path.join(screenshotDir, `issue-${issue.id}-run-review.png`);
@@ -164,8 +168,46 @@ async function clickAndRecordDownload(page, label) {
   });
   if (!download) return null;
   const item = { label, suggested_filename: download.suggestedFilename() };
+  const savePath = path.join(downloadDir, item.suggested_filename);
+  await download.saveAs(savePath);
+  item.path = savePath;
+  const content = readFileSync(savePath, "utf8");
+  item.content_checks = inspectDownloadedCsv(label, content);
   result.downloads.push(item);
   return item;
+}
+
+function inspectDownloadedCsv(label, content) {
+  const firstLine = content.split(/\r?\n/)[0] || "";
+  if (label.includes("节点")) {
+    return {
+      node_headers: [
+        "row_type",
+        "total_duration_ms",
+        "total_token",
+        "total_thinking_rounds",
+        "node_key",
+        "node_duration_ms",
+        "node_token_total",
+        "node_thinking_rounds",
+      ].every((header) => firstLine.includes(header)),
+      summary_row: /^summary,/.test(content) || /\nsummary,/.test(content),
+      sop_node_rows: /\nsop_node,/.test(content),
+    };
+  }
+  return {
+    raw_headers: [
+      "id",
+      "kind",
+      "category",
+      "time",
+      "task_id",
+      "duration_ms",
+      "token_total",
+      "metadata_detail",
+    ].every((header) => firstLine.includes(header)),
+    event_rows: content.trim().split(/\r?\n/).length > 1,
+  };
 }
 
 async function hoverAndCheckText(page, label, texts) {

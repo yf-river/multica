@@ -21,6 +21,7 @@ const runSandbox = trimEnv("ACCEPTANCE_RUN_SERVICE_SANDBOX") !== "0";
 const runReviewLoop = trimEnv("ACCEPTANCE_RUN_CODE_REVIEW_LOOP") !== "0";
 const runIncrementalLoop = trimEnv("ACCEPTANCE_RUN_INCREMENTAL_LOOP") !== "0";
 const runSimpleAutopilot = trimEnv("ACCEPTANCE_RUN_SIMPLE_AUTOPILOT") !== "0";
+const createRealGongfengMR = trimEnv("ACCEPTANCE_CREATE_REAL_GONGFENG_MR") !== "0";
 const suffix = Date.now();
 
 const repoSpecs = [
@@ -206,7 +207,13 @@ try {
     fail("父任务 usage token 总量为 0");
   }
 
-  evidence.mr_handoff = await linkSyntheticGongfengMR(finalIssue, token);
+  evidence.source_fetch_trace = summarizeSourceFetchTrace(finalTrace);
+  evidence.mr_handoff = createRealGongfengMR
+    ? await createAndLinkRealGongfengMR(finalIssue, token)
+    : await linkSyntheticGongfengMR(finalIssue, token);
+  if (createRealGongfengMR && evidence.mr_handoff.synthetic) {
+    fail("真实 Gongfeng MR 创建开启时，不允许回退到 synthetic MR");
+  }
   evidence.stage_artifacts = await attachStageMarkdownArtifacts(issue.id, token);
 
   if (runReviewLoop) {
@@ -542,25 +549,17 @@ async function runSimpleAutopilotIssue(token, workspace, project, squad, pm) {
 async function recordTAPDSourceFetch(issueID, token) {
   const fetched = await post(`/api/issues/${issueID}/source-fetch`, {
     provider: "tapd",
-    fetch_provider: "tapd_mcp",
-    status: "fetched",
-    url: tapdSourceURL,
-    workspace_id: "47654106",
-    resource_type: "markdown_wiki",
-    resource_id: "1147654106001004154",
-    title: "用户快捷入口需求",
-    summary: "用户可以把常用页面保存为个人快捷入口；快捷入口属于当前登录用户；用户只能管理自己的快捷入口。",
-    body_excerpt: [
-      "用户可以把常用页面保存为个人快捷入口，首页或工作台可展示这些入口。",
-      "快捷入口属于当前登录用户。",
-      "用户只能管理自己的快捷入口，不能通过请求参数替别人创建、更新或删除。",
-    ].join("\n"),
-    version: "2026-06-18 07:39:03",
-    duration_ms: 1,
+    auto_fetch: true,
   }, token);
   const metadata = fetched?.metadata || {};
   if (metadata.source_fetch_title !== "用户快捷入口需求") {
     fail("TAPD source-fetch 未写入 source_fetch_title");
+  }
+  if (metadata.source_fetch_status !== "fetched" || metadata.source_fetch_provider !== "tapd_mcp") {
+    fail(`TAPD source-fetch 未真实 fetched：${JSON.stringify(metadata)}`);
+  }
+  if (!metadata.source_fetch_body_excerpt || !String(metadata.source_fetch_body_excerpt).includes("快捷入口")) {
+    fail("TAPD source-fetch 未返回真实正文摘录");
   }
   return {
     title: metadata.source_fetch_title,
@@ -569,7 +568,19 @@ async function recordTAPDSourceFetch(issueID, token) {
     url: metadata.source_fetch_url,
     resource_type: metadata.source_fetch_resource_type || metadata.tapd_resource_type,
     resource_id: metadata.source_fetch_resource_id || metadata.tapd_resource_id,
+    workspace_id: metadata.source_fetch_workspace_id || metadata.tapd_workspace_id,
+    version: metadata.source_fetch_version || "",
+    duration_ms: metadata.source_fetch_duration_ms || 0,
+    body_excerpt: metadata.source_fetch_body_excerpt || "",
+    credential_profile: {
+      scope: metadata.source_credential_scope || "",
+      inheritance: metadata.source_credential_inheritance || "",
+      profile_id: metadata.source_credential_profile_id || "",
+      profile_name: metadata.source_credential_profile_name || "",
+      status: metadata.source_credential_profile_status || "",
+    },
     trace_event_id: fetched?.trace_event?.id || "",
+    api_auto_fetch_verified: true,
   };
 }
 
@@ -594,12 +605,188 @@ async function linkSyntheticGongfengMR(issue, token) {
     fail("MR 关联回写后，issue pull-requests 列表未读到该 MR");
   }
   return {
+    synthetic: true,
     linked: Boolean(linked?.pull_request?.id),
     url: mrURL,
     number: iid,
     title: matched.title,
     state: matched.state,
     source_branch: matched.branch || "",
+  };
+}
+
+async function createAndLinkRealGongfengMR(issue, token) {
+  const identifier = issue.identifier || `GOA-${suffix}`;
+  const projectPath = "ChainWeaver/ida/user-center";
+  const targetBranch = repoRef;
+  const sourceBranch = `goal-test/${identifier.toLowerCase()}-${suffix}`;
+  const filePath = `docs/goal-test-acceptance/${identifier}-${suffix}.md`;
+  const title = `${identifier}: goal-test TAPD SOP acceptance evidence`;
+  const content = [
+    `# ${identifier} goal-test TAPD SOP acceptance`,
+    "",
+    "This file is created by the goal-test acceptance harness to prove a real Gongfeng MR handoff.",
+    "",
+    `- TAPD source: ${tapdSourceURL}`,
+    `- Multica issue: ${identifier}`,
+    `- Created at: ${new Date().toISOString()}`,
+    `- Target branch: ${targetBranch}`,
+    "",
+    "No product code is changed by this acceptance fixture.",
+  ].join("\n");
+
+  const branch = await gongfengRequest("POST", `projects/${encodeGongfengProjectID(projectPath)}/repository/branches`, {
+    branch: sourceBranch,
+    ref: targetBranch,
+  });
+  const createdFile = await gongfengRequest("POST", `projects/${encodeGongfengProjectID(projectPath)}/repository/files`, {
+    file_path: filePath,
+    branch: sourceBranch,
+    content,
+    commit_message: `${identifier}: add goal-test acceptance evidence`,
+  });
+  const mr = await gongfengRequest("POST", `projects/${encodeGongfengProjectID(projectPath)}/merge_requests`, {
+    source_branch: sourceBranch,
+    target_branch: targetBranch,
+    title,
+    description: [
+      `Multica issue: ${identifier}`,
+      "",
+      `TAPD source: ${tapdSourceURL}`,
+      "",
+      "Created by the goal-test customer-comment SOP acceptance harness after 05-verify.",
+      "This is a non-product acceptance evidence file and is intended for human CodeReview handoff validation.",
+    ].join("\n"),
+    remove_source_branch: false,
+    squash: false,
+  });
+  const iid = Number(mr.iid || mr.number || 0);
+  const mrURL = mr.web_url || mr.html_url || `https://git.code.tencent.com/${projectPath}/merge_requests/${iid || ""}`;
+  if (!iid || !mrURL) {
+    fail(`Gongfeng MR 创建成功但响应缺少 iid/web_url：${JSON.stringify(safeGongfengResponse(mr))}`);
+  }
+
+  const headSha = createdFile.commit_id || branch?.commit?.id || "";
+  const linked = await post(`/api/issues/${issue.id}/pull-requests`, {
+    provider: "gongfeng",
+    project_path: projectPath,
+    html_url: mrURL,
+    number: iid,
+    iid,
+    title: mr.title || title,
+    state: normalizeGongfengMRState(mr),
+    source_branch: sourceBranch,
+    target_branch: targetBranch,
+    author_login: mr.author?.username || mr.author?.name || "gongfeng",
+    head_sha: headSha,
+    changed_files: 1,
+  }, token);
+  const list = await get(`/api/issues/${issue.id}/pull-requests`, token);
+  const prs = Array.isArray(list?.pull_requests) ? list.pull_requests : [];
+  const matched = prs.find((item) => item.html_url === mrURL || Number(item.number) === iid);
+  if (!matched) {
+    fail("真实 Gongfeng MR 关联回写后，issue pull-requests 列表未读到该 MR");
+  }
+  const verifiedMR = await gongfengRequest("GET", `projects/${encodeGongfengProjectID(projectPath)}/merge_requests/${encodeURIComponent(String(iid))}`);
+
+  return {
+    synthetic: false,
+    linked: Boolean(linked?.pull_request?.id),
+    url: mrURL,
+    number: iid,
+    title: matched.title,
+    state: matched.state,
+    source_branch: matched.branch || sourceBranch,
+    target_branch: matched.base_branch || targetBranch,
+    project_path: projectPath,
+    evidence_file_path: filePath,
+    head_sha: headSha,
+    verified_by_gongfeng_api: Boolean(verifiedMR?.iid || verifiedMR?.id),
+  };
+}
+
+async function gongfengRequest(method, apiPath, body) {
+  const env = loadGongfengEnv();
+  const token = env.GONGFENG_PRIVATE_TOKEN || env.GONGFENG_ACCESS_TOKEN;
+  if (!token) {
+    fail("缺少 GONGFENG_PRIVATE_TOKEN/GONGFENG_ACCESS_TOKEN，无法创建真实 Gongfeng MR");
+  }
+  const base = normalizeGongfengAPIBase(env.GONGFENG_API_BASE || env.GONGFENG_API_URL || "https://git.code.tencent.com/api/v3");
+  const res = await fetch(`${base}/${apiPath.replace(/^\/+/, "")}`, {
+    method,
+    headers: {
+      "PRIVATE-TOKEN": token,
+      "content-type": "application/json",
+      accept: "application/json",
+    },
+    body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`Gongfeng ${method} ${apiPath} 返回 ${res.status}: ${redactSecretText(text).slice(0, 1000)}`);
+  }
+  if (!text.trim()) return null;
+  return JSON.parse(text);
+}
+
+function loadGongfengEnv() {
+  const env = { ...process.env };
+  const envFile = trimEnv("GONGFENG_MCP_ENV_FILE") || "/root/.config/gongfeng-mcp/env";
+  if (existsSync(envFile)) {
+    const raw = readFileSync(envFile, "utf8");
+    for (const line of raw.split(/\r?\n/)) {
+      const trimmed = line.trim();
+      if (!trimmed || trimmed.startsWith("#")) continue;
+      const match = trimmed.match(/^(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+      if (!match) continue;
+      const key = match[1];
+      let value = match[2].trim();
+      if ((value.startsWith('"') && value.endsWith('"')) || (value.startsWith("'") && value.endsWith("'"))) {
+        value = value.slice(1, -1);
+      }
+      if (!(key in env)) env[key] = value;
+    }
+  }
+  return env;
+}
+
+function normalizeGongfengAPIBase(raw) {
+  const value = String(raw || "").replace(/\/+$/, "");
+  return value.endsWith("/api/v3") ? value : `${value}/api/v3`;
+}
+
+function encodeGongfengProjectID(projectPath) {
+  return encodeURIComponent(projectPath);
+}
+
+function normalizeGongfengMRState(mr) {
+  const state = String(mr.state || mr.status || "").toLowerCase();
+  if (mr.merged_at || state === "merged") return "merged";
+  if (state === "closed") return "closed";
+  if (mr.work_in_progress || mr.draft || state === "draft") return "draft";
+  return "open";
+}
+
+function safeGongfengResponse(value) {
+  return JSON.parse(redactSecretText(JSON.stringify(value || {})));
+}
+
+function redactSecretText(text) {
+  return String(text || "").replace(/(PRIVATE-TOKEN|GONGFENG_(?:PRIVATE_)?TOKEN|access_token|private_token)["':=\s]+[A-Za-z0-9._-]+/gi, "$1=<redacted>");
+}
+
+function summarizeSourceFetchTrace(trace) {
+  const events = Array.isArray(trace?.events) ? trace.events : [];
+  const matched = events.filter((event) => event?.event_type === "source.fetch");
+  return {
+    event_count: matched.length,
+    events: matched.slice(0, 5).map((event) => ({
+      id: event.id,
+      status: event.status,
+      task_id: event.task_id,
+      agent_id: event.agent_id,
+      duration_ms: event.duration_ms,
+    })),
   };
 }
 
