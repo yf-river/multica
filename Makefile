@@ -274,6 +274,9 @@ goal-test-deploy-all: ## Build and deploy dev first, then sync the same artifact
 goal-test-verify-env: ## Verify goal-test production and integration environments
 	node scripts/goal-test-environments.mjs verify all
 
+goal-test-verify-int-env: ## Verify the goal-test integration environment only
+	node scripts/goal-test-environments.mjs verify int
+
 goal-test-verify-logs: ## Verify current-deployment goal-test logs without scanning old appended history
 	node scripts/goal-test-environments.mjs verify-logs int
 
@@ -392,7 +395,7 @@ goal-test-historical-service-sandbox: ## Run service-level process sandbox for t
 goal-test-benchmark-training-loop: ## Run real benchmark eval/candidate/operation-skill writeback/re-eval loop
 	node scripts/goal-test-benchmark-training-loop.mjs
 
-goal-test-variable-project-topology-fixture: goal-test-verify-env ## Create an int public-API fixture with one source project and three target projects
+goal-test-variable-project-topology-fixture: goal-test-verify-int-env ## Create an int public-API fixture with one source project and three target projects
 	ACCEPTANCE_API_URL="$(GOAL_TEST_INT_API_URL)" \
 	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
 	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
@@ -422,7 +425,7 @@ goal-test-variable-agent-topology-fixture: goal-test-variable-agent-squad-curl-e
 goal-test-topology-generalization-audit: ## Audit generic cross-project and variable Agent topology evidence
 	node scripts/goal-test-topology-generalization-audit.mjs
 
-goal-test-new-account-mcp-onboarding-e2e: goal-test-verify-env ## Verify a newly-created member can configure TAPD/Gongfeng profiles and use MCP in int Agent runtime
+goal-test-new-account-mcp-onboarding-e2e: goal-test-verify-int-env ## Verify a newly-created member can configure TAPD/Gongfeng profiles and use MCP in int Agent runtime
 	@mkdir -p "$(GOAL_TEST_TMPDIR)"
 	ACCEPTANCE_API_URL="$(GOAL_TEST_INT_API_URL)" \
 	GOAL_TEST_ONBOARDING_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
