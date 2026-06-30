@@ -753,6 +753,7 @@ function isAllowedLogNoise(service, line) {
 }
 
 function resolveCodexRunnerProfile(item, base) {
+  const explicitMode = firstNonEmpty(process.env.GOAL_TEST_CODEX_PROXY_MODE, base.GOAL_TEST_CODEX_PROXY_MODE);
   const explicitProxy = firstNonEmpty(process.env.GOAL_TEST_CODEX_PROXY_URL, base.GOAL_TEST_CODEX_PROXY_URL);
   const ambientProxy = firstNonEmpty(
     process.env.HTTPS_PROXY,
@@ -769,7 +770,8 @@ function resolveCodexRunnerProfile(item, base) {
     base.all_proxy,
   );
   const rawProxy = String(explicitProxy || ambientProxy || "").trim();
-  const proxyMode = isDirectProxyValue(rawProxy) ? "direct" : rawProxy ? "proxy" : "direct";
+  const requestedMode = String(explicitMode || "").trim().toLowerCase();
+  const proxyMode = requestedMode === "direct" || isDirectProxyValue(rawProxy) ? "direct" : rawProxy ? "proxy" : "direct";
   const proxyURL = proxyMode === "proxy" ? rawProxy : "";
   const sourceHome = firstNonEmpty(
     process.env.GOAL_TEST_CODEX_SOURCE_HOME,

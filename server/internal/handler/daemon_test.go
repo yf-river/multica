@@ -984,6 +984,80 @@ func TestListTaskMessagesByUser_InvalidTaskIDReturnsBadRequest(t *testing.T) {
 	}
 }
 
+func TestReportTaskMessagesSanitizesNullBytesBeforePersisting(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	runtimeID := createClaimReclaimRuntime(t, ctx, "Task message nul runtime")
+	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Task message nul agent")
+	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "1 second", true)
+	t.Cleanup(func() {
+		_ = testHandler.Queries.DeleteTaskMessages(context.Background(), parseUUID(taskID))
+	})
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/messages", map[string]any{
+		"messages": []map[string]any{
+			{
+				"seq":     21,
+				"type":    "tool_result\x00",
+				"tool":    "exec_command\x00",
+				"content": "content-before\x00content-after",
+				"output":  "output-before\x00output-after",
+				"input": map[string]any{
+					"bad\x00key": "bad\x00value",
+					"nested": map[string]any{
+						"child": "child\x00value",
+					},
+					"items": []any{"first\x00item", 2, map[string]any{"deep\x00key": "deep\x00value"}},
+				},
+			},
+		},
+	}, testWorkspaceID, "task-message-nul-daemon")
+	req = withURLParam(req, "taskId", taskID)
+
+	testHandler.ReportTaskMessages(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ReportTaskMessages status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	messages, err := testHandler.Queries.ListTaskMessages(ctx, parseUUID(taskID))
+	if err != nil {
+		t.Fatalf("list task messages: %v", err)
+	}
+	if len(messages) != 1 {
+		t.Fatalf("messages = %d, want 1", len(messages))
+	}
+	msg := messages[0]
+	for name, value := range map[string]string{
+		"type":    msg.Type,
+		"tool":    msg.Tool.String,
+		"content": msg.Content.String,
+		"output":  msg.Output.String,
+	} {
+		if strings.Contains(value, "\x00") {
+			t.Fatalf("%s still contains nul: %q", name, value)
+		}
+	}
+
+	var input map[string]any
+	if err := json.Unmarshal(msg.Input, &input); err != nil {
+		t.Fatalf("decode persisted input: %v", err)
+	}
+	encodedInput, err := json.Marshal(input)
+	if err != nil {
+		t.Fatalf("re-encode persisted input: %v", err)
+	}
+	if bytes.Contains(encodedInput, []byte(`\u0000`)) || bytes.Contains(encodedInput, []byte{0}) {
+		t.Fatalf("persisted input still contains nul escapes: %s", string(encodedInput))
+	}
+	if _, ok := input["badkey"]; !ok {
+		t.Fatalf("expected sanitized input key, got %#v", input)
+	}
+}
+
 // setupForeignWorkspaceFixture creates an isolated workspace (not reachable
 // from testUserID) with its own agent, runtime, issue, and queued task.
 // Returns (issueID, taskID). All rows are cleaned up when the test ends.

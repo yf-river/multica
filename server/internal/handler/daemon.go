@@ -2310,9 +2310,11 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 
 	for _, msg := range req.Messages {
 		// Redact sensitive information before persisting or broadcasting.
-		msg.Content = redact.Text(msg.Content)
-		msg.Output = redact.Text(msg.Output)
-		msg.Input = redact.InputMap(msg.Input)
+		msg.Type = sanitizeTaskMessageText(msg.Type)
+		msg.Tool = sanitizeTaskMessageText(msg.Tool)
+		msg.Content = sanitizeTaskMessageText(redact.Text(msg.Content))
+		msg.Output = sanitizeTaskMessageText(redact.Text(msg.Output))
+		msg.Input = sanitizeTaskMessageInput(redact.InputMap(msg.Input))
 
 		var inputJSON []byte
 		if msg.Input != nil {
@@ -2340,6 +2342,39 @@ func (h *Handler) ReportTaskMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func sanitizeTaskMessageText(value string) string {
+	return sanitizeNullBytes(value)
+}
+
+func sanitizeTaskMessageInput(input map[string]any) map[string]any {
+	if input == nil {
+		return nil
+	}
+	sanitized, _ := sanitizeTaskMessageValue(input).(map[string]any)
+	return sanitized
+}
+
+func sanitizeTaskMessageValue(value any) any {
+	switch typed := value.(type) {
+	case string:
+		return sanitizeTaskMessageText(typed)
+	case map[string]any:
+		out := make(map[string]any, len(typed))
+		for key, item := range typed {
+			out[sanitizeTaskMessageText(key)] = sanitizeTaskMessageValue(item)
+		}
+		return out
+	case []any:
+		out := make([]any, len(typed))
+		for i, item := range typed {
+			out[i] = sanitizeTaskMessageValue(item)
+		}
+		return out
+	default:
+		return value
+	}
 }
 
 func taskMessageToPayload(m db.TaskMessage, taskID, issueID string) protocol.TaskMessagePayload {
