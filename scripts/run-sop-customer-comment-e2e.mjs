@@ -22,6 +22,7 @@ const runReviewLoop = trimEnv("ACCEPTANCE_RUN_CODE_REVIEW_LOOP") !== "0";
 const runIncrementalLoop = trimEnv("ACCEPTANCE_RUN_INCREMENTAL_LOOP") !== "0";
 const runSimpleAutopilot = trimEnv("ACCEPTANCE_RUN_SIMPLE_AUTOPILOT") !== "0";
 const createRealGongfengMR = trimEnv("ACCEPTANCE_CREATE_REAL_GONGFENG_MR") !== "0";
+const childWaitMode = trimEnv("ACCEPTANCE_CHILD_WAIT_MODE") || "handoff";
 const suffix = Date.now();
 
 const repoSpecs = [
@@ -854,6 +855,12 @@ async function postChildProtocolHandoffs(children, projects, agents, token) {
         "- 请求必须保留/生成 `X-Request-ID`，并透传 `Authorization` 或平台认证上下文。",
         "- 验收至少包含：带 `X-Request-ID` 成功、缺少 request id 返回明确 4xx、尝试传入他人归属字段被忽略或拒绝。",
         "- 允许基于当前 sandbox/harness 输出验证结论；不要因为没有额外产品口径阻塞 02-design。",
+        "",
+        "## 本轮 E2E 约束",
+        "- 这个 child issue 用于验证跨项目交付物创建、触发、trace/usage 和 handoff 闭包，不在 child 内完整开发产品代码。",
+        "- 请不要展开完整 01-05 阶段链，不要继续 @mention 下一阶段 Agent，不要检出/修改仓库。",
+        "- 请由当前处理者直接输出 gateway 侧交付闭包摘要：确认合同、列出应由父任务 service sandbox 验证的 curl case，并保持 issue 可由父任务统一关闭。",
+        "- 如发现合同矛盾，只在本 issue 留下阻断说明；不要尝试真实落改。",
       ].join("\n")
       : [
         "客户补充：usercenter 正式 API 协议已确认，本 child issue 不应再以“缺少正式协议”为阻塞。",
@@ -870,6 +877,12 @@ async function postChildProtocolHandoffs(children, projects, agents, token) {
         "- middleware 覆盖当前 sandbox 的 mode1/mode2/mode3 或项目既有 mode 组合；不要手改 generated 文件，按仓库既有生成/校验方式处理。",
         "- Helm/render 验收只要求 sandbox 级 render/config 校验，不涉及客户生产发布、正式回滚或 live 集群 curl。",
         "- 允许基于当前 sandbox/harness 输出验证结论；不要因为没有额外产品口径阻塞 02-design。",
+        "",
+        "## 本轮 E2E 约束",
+        "- 这个 child issue 用于验证跨项目交付物创建、触发、trace/usage 和 handoff 闭包，不在 child 内完整开发产品配置。",
+        "- 请不要展开完整 01-05 阶段链，不要继续 @mention 下一阶段 Agent，不要检出/修改仓库。",
+        "- 请由当前处理者直接输出 ida-deployment 侧交付闭包摘要：确认 apiData/权限/render 的期望检查点，并保持 issue 可由父任务统一关闭。",
+        "- 如发现合同矛盾，只在本 issue 留下阻断说明；不要尝试真实落改。",
       ].join("\n");
     const comment = await postCustomerCommentWithOptions(child.id, token, content, {
       suppress_agent_ids: suppressAgentIDs,
@@ -910,6 +923,8 @@ async function approveAndWaitChildren(children, projects, token) {
       approved: pickIssue(approved),
       task: pickTask(terminal),
       rerun_count: childExecution.rerun_count,
+      wait_mode: childExecution.wait_mode || "full",
+      cancelled_followups: childExecution.cancelled_followups || [],
       trace_event_count: countItems(trace?.events, trace?.total),
       message_count: countItems(messages?.items || messages),
       total_tokens: totalTokens,
@@ -1154,6 +1169,21 @@ async function waitChildExecutionComplete(issueID, knownIDs, token, label) {
     const tasks = sortTasks(await listIssueTasks(issueID, token));
     const newTasks = tasks.filter((item) => !knownIDs.has(item.id));
     if (newTasks.length === 0) return null;
+    const completedNow = newTasks.filter((item) => item.status === "completed");
+    if (childWaitMode === "handoff" && completedNow.length > 0) {
+      for (const task of completedNow) {
+        const messages = await get(`/api/tasks/${task.id}/messages`, token);
+        if (countItems(messages?.items || messages) > 0 || String(task.result?.output || "").trim() !== "") {
+          const active = newTasks.filter(isActiveTask);
+          for (const activeTask of active) {
+            await cancelTask(activeTask.id, token);
+          }
+          evidence.task_rounds.push({ label: `${label} handoff`, task: pickTask(task) });
+          return { task, rerun_count: rerunCount, wait_mode: childWaitMode, cancelled_followups: active.map((item) => item.id) };
+        }
+      }
+    }
+
     const active = newTasks.filter(isActiveTask);
     if (active.length > 0) return null;
 
@@ -1201,6 +1231,24 @@ async function waitChildExecutionComplete(issueID, knownIDs, token, label) {
     }
     return null;
   }, taskTimeoutMs, label);
+}
+
+async function cancelTask(taskID, token) {
+  const headers = {};
+  if (activeWorkspaceId) headers["X-Workspace-ID"] = activeWorkspaceId;
+  const res = await fetch(`${apiURL}/api/tasks/${taskID}/cancel`, {
+    method: "POST",
+    headers: {
+      ...headers,
+      Authorization: `Bearer ${token}`,
+      "content-type": "application/json",
+    },
+  });
+  const text = await res.text();
+  if (!res.ok && res.status !== 404) {
+    throw new Error(`POST /api/tasks/${taskID}/cancel 返回 ${res.status}: ${text.slice(0, 500)}`);
+  }
+  return text ? JSON.parse(text) : null;
 }
 
 async function listIssueTasks(issueID, token) {
