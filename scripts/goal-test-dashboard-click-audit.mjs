@@ -160,10 +160,9 @@ async function measureClick(page, item) {
   let totalMs = 0;
   let errorText = "";
   let bodyText = "";
+  let navigationClick = null;
   try {
-    const navLink = await locateNavigationLink(page, item);
-    await navLink.click({ timeout: 10_000 });
-    await page.waitForURL(`**${item.path}`, { timeout: 15_000 });
+    navigationClick = await clickNavigationLink(page, item);
     await waitForReadySignal(page, item.ready, 10_000);
     readyMs = Date.now() - startedAt;
     await page.waitForLoadState("networkidle", { timeout: 5_000 }).catch(() => {});
@@ -222,9 +221,54 @@ async function measureClick(page, item) {
     failed_requests: failedRequests,
     console_errors: consoleErrors,
     page_errors: pageErrors,
+    navigation_click: navigationClick,
     loading_residue: loadingResidue,
     body_excerpt: bodyText.split("\n").filter(Boolean).slice(0, 24),
   };
+}
+
+async function clickNavigationLink(page, item) {
+  const attempts = [];
+  const targetPattern = `**${item.path}`;
+  const nativeTimeoutMs = 1_200;
+  const retryTimeoutMs = 2_500;
+  try {
+    const link = await locateNavigationLink(page, item);
+    const descriptor = await describeNavigationLink(link);
+    await link.scrollIntoViewIfNeeded({ timeout: 2_000 }).catch(() => {});
+    await Promise.all([
+      page.waitForURL(targetPattern, { timeout: nativeTimeoutMs }),
+      link.click({ timeout: 10_000 }),
+    ]);
+    attempts.push({ method: "native", ok: true, ...descriptor });
+    return { ok: true, attempts };
+  } catch (error) {
+    attempts.push({
+      method: "native",
+      ok: false,
+      error: error instanceof Error ? error.message.split("\n")[0] : String(error),
+      final_url: page.url(),
+    });
+  }
+
+  try {
+    const link = await locateNavigationLink(page, item);
+    const descriptor = await describeNavigationLink(link);
+    await link.scrollIntoViewIfNeeded({ timeout: 2_000 }).catch(() => {});
+    await link.evaluate((node) => node.click());
+    await page.waitForURL(targetPattern, { timeout: retryTimeoutMs });
+    attempts.push({ method: "dom-click", ok: true, ...descriptor });
+    return { ok: true, attempts };
+  } catch (error) {
+    attempts.push({
+      method: "dom-click",
+      ok: false,
+      error: error instanceof Error ? error.message.split("\n")[0] : String(error),
+      final_url: page.url(),
+    });
+  }
+
+  throw new Error(`navigation click did not reach ${item.path}: ${attempts.map((attempt) => `${attempt.method}=${attempt.ok ? "ok" : attempt.error}`).join("; ")}`);
 }
 
 async function locateNavigationLink(page, item) {
@@ -244,7 +288,20 @@ async function locateNavigationLink(page, item) {
     const box = await link.boundingBox().catch(() => null);
     if (box && box.width > 0 && box.height > 0) return link;
   }
-  return page.getByRole("link", { name: item.link }).first();
+  throw new Error(`visible navigation link not found for ${item.path}`);
+}
+
+async function describeNavigationLink(link) {
+  const [href, text, box] = await Promise.all([
+    link.getAttribute("href").catch(() => null),
+    link.innerText({ timeout: 1_000 }).catch(() => ""),
+    link.boundingBox().catch(() => null),
+  ]);
+  return {
+    href,
+    text: text.replace(/\s+/g, " ").trim().slice(0, 120),
+    box: box ? { x: Math.round(box.x), y: Math.round(box.y), width: Math.round(box.width), height: Math.round(box.height) } : null,
+  };
 }
 
 async function waitForReadySignal(page, ready, timeout) {
