@@ -18,6 +18,9 @@ const tapdSourceURL = trimEnv("ACCEPTANCE_TAPD_SOURCE_URL") || "https://www.tapd
 const taskTimeoutMs = Number(trimEnv("ACCEPTANCE_TASK_TIMEOUT_MS") || 2_700_000);
 const pollIntervalMs = Number(trimEnv("ACCEPTANCE_POLL_INTERVAL_MS") || 5_000);
 const runSandbox = trimEnv("ACCEPTANCE_RUN_SERVICE_SANDBOX") !== "0";
+const runReviewLoop = trimEnv("ACCEPTANCE_RUN_CODE_REVIEW_LOOP") !== "0";
+const runIncrementalLoop = trimEnv("ACCEPTANCE_RUN_INCREMENTAL_LOOP") !== "0";
+const runSimpleAutopilot = trimEnv("ACCEPTANCE_RUN_SIMPLE_AUTOPILOT") !== "0";
 const suffix = Date.now();
 
 const repoSpecs = [
@@ -55,6 +58,7 @@ const evidence = {
   branch: gitText(["branch", "--show-current"]),
   commands: [],
   comments: [],
+  attachments: [],
   task_rounds: [],
   result: "unknown",
 };
@@ -203,6 +207,25 @@ try {
   }
 
   evidence.mr_handoff = await linkSyntheticGongfengMR(finalIssue, token);
+  evidence.stage_artifacts = await attachStageMarkdownArtifacts(issue.id, token);
+
+  if (runReviewLoop) {
+    evidence.code_review_loop = await runHumanCodeReviewLoop(issue.id, pm.id, token);
+  } else {
+    evidence.code_review_loop = { skipped: true };
+  }
+
+  if (runIncrementalLoop) {
+    evidence.incremental_requirement_loop = await runIncrementalRequirementLoop(issue.id, pm.id, token);
+  } else {
+    evidence.incremental_requirement_loop = { skipped: true };
+  }
+
+  if (runSimpleAutopilot) {
+    evidence.simple_autopilot = await runSimpleAutopilotIssue(token, workspace, projects.usercenter, squad, pm);
+  } else {
+    evidence.simple_autopilot = { skipped: true };
+  }
 
   evidence.result = "completed";
   writeEvidence(evidence);
@@ -305,6 +328,205 @@ async function postCustomerComment(issueID, token, content) {
     content_excerpt: content.slice(0, 240),
   });
   return comment;
+}
+
+async function postCustomerCommentWithOptions(issueID, token, content, options = {}) {
+  const body = {
+    content,
+    type: options.type || "comment",
+  };
+  if (Array.isArray(options.attachment_ids) && options.attachment_ids.length > 0) {
+    body.attachment_ids = options.attachment_ids;
+  }
+  if (Array.isArray(options.suppress_agent_ids) && options.suppress_agent_ids.length > 0) {
+    body.suppress_agent_ids = options.suppress_agent_ids;
+  }
+  const comment = await post(`/api/issues/${issueID}/comments`, body, token);
+  evidence.comments.push({
+    id: comment.id || comment.comment_id,
+    author_type: comment.author_type,
+    content_excerpt: content.slice(0, 240),
+    attachment_count: Array.isArray(comment.attachments) ? comment.attachments.length : 0,
+  });
+  return comment;
+}
+
+async function attachStageMarkdownArtifacts(issueID, token) {
+  const stages = [
+    ["01-clarify", "需求澄清", "TAPD 来源已抓取；确认 usercenter API 会产生 gateway 路由与 ida-deployment 权限/apiData 依赖。"],
+    ["02-design", "方案设计", "采用 usercenter gRPC/API -> gateway HTTP -> ida-deployment 配置的端到端链路；以 service sandbox curl 验收。"],
+    ["03-task-split", "任务拆分", "跨项目子任务按 gateway 与 ida-deployment 两个交付物创建，挂到父 issue。"],
+    ["04-implement", "开发执行", "子任务完成后父任务被 child-done 系统评论唤醒；历史 sandbox 四条用例执行通过。"],
+    ["05-verify", "测试验收", "父任务读取子任务 closure、trace、usage 与 sandbox 证据后关闭。"],
+  ];
+  const attachments = [];
+  for (const [stage, title, summary] of stages) {
+    const filename = `${stage}-${suffix}.md`;
+    const body = [
+      `# ${stage} ${title}`,
+      "",
+      `- Issue: ${activeIssueId}`,
+      `- TAPD: ${tapdSourceURL}`,
+      `- 生成时间: ${new Date().toISOString()}`,
+      "",
+      "## 摘要",
+      summary,
+      "",
+      "## 验收记录",
+      "- 本文件由客户评论式 SOP E2E 上传并绑定到 issue 评论，用于验证阶段 markdown 产物可被平台感知、下载和预览。",
+    ].join("\n");
+    attachments.push(await uploadTextAttachment(issueID, token, filename, body));
+  }
+
+  const comment = await postCustomerCommentWithOptions(issueID, token, [
+    "/note 阶段产物归档：01-05 markdown 已生成并作为评论附件绑定。",
+    "",
+    "请在 issue 评论附近查看附件；附件应能下载，并可在网页中以 markdown 预览方式阅读。",
+  ].join("\n"), {
+    attachment_ids: attachments.map((item) => item.id),
+  });
+
+  const previewChecks = [];
+  for (const attachment of attachments) {
+    const text = await getText(`/api/attachments/${attachment.id}/content`, token);
+    previewChecks.push({
+      id: attachment.id,
+      filename: attachment.filename,
+      content_ok: text.includes("# ") && text.includes("阶段 markdown 产物"),
+    });
+  }
+
+  const commentAttachments = Array.isArray(comment.attachments) ? comment.attachments : [];
+  if (commentAttachments.length !== attachments.length) {
+    fail(`阶段产物评论附件数=${commentAttachments.length}，期望 ${attachments.length}`);
+  }
+  if (previewChecks.some((item) => !item.content_ok)) {
+    fail("阶段产物 markdown 预览内容校验失败");
+  }
+
+  return {
+    comment_id: comment.id || comment.comment_id,
+    attachment_count: attachments.length,
+    attachments,
+    preview_checks: previewChecks,
+  };
+}
+
+async function uploadTextAttachment(issueID, token, filename, content) {
+  if (typeof FormData === "undefined" || typeof Blob === "undefined") {
+    fail("当前 Node 运行时缺少 FormData/Blob，无法执行附件上传验收");
+  }
+  const form = new FormData();
+  form.append("file", new Blob([content], { type: "text/markdown; charset=utf-8" }), filename);
+  form.append("issue_id", issueID);
+  const headers = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (activeWorkspaceId) headers["X-Workspace-ID"] = activeWorkspaceId;
+  evidence.commands.push(`POST /api/upload-file filename=${filename}`);
+  const res = await fetch(`${apiURL}/api/upload-file`, {
+    method: "POST",
+    headers,
+    body: form,
+  });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`POST /api/upload-file 返回 ${res.status}: ${text.slice(0, 1000)}`);
+  }
+  const attachment = JSON.parse(text);
+  if (!attachment?.id) fail(`附件上传 ${filename} 未返回 id`);
+  const picked = {
+    id: attachment.id,
+    filename: attachment.filename,
+    content_type: attachment.content_type,
+    size_bytes: attachment.size_bytes,
+    download_url: attachment.download_url || "",
+    markdown_url: attachment.markdown_url || "",
+  };
+  evidence.attachments.push(picked);
+  return picked;
+}
+
+async function runHumanCodeReviewLoop(issueID, pmID, token) {
+  const before = new Set((await listIssueTasks(issueID, token)).map((item) => item.id));
+  await put(`/api/issues/${issueID}`, { status: "in_review" }, token);
+  await postCustomerComment(issueID, token, [
+    "人工 CodeReview：MR 已打开，review 发现需要补充默认分支说明和一条 curl 验收证据。",
+    "",
+    "请从 05 之后的 CodeReview 流程转回 04-implement，先只根据评论判断下一步并留下处理摘要；不要创建新的跨项目子任务。",
+  ].join("\n"));
+  const fixTask = await waitNextTerminalTask(issueID, pmID, before, token, "等待 CodeReview 评论触发转回开发任务");
+  requireCompletedTask(fixTask, "CodeReview 转回开发任务");
+
+  const afterFix = new Set((await listIssueTasks(issueID, token)).map((item) => item.id));
+  await postCustomerComment(issueID, token, [
+    "人工 CodeReview：补充材料已经确认，MR review 通过。",
+    "",
+    "请继续完成本轮闭环：确认 MR 链接仍在 issue 关联区，确认运行复盘和附件产物可追溯，然后把任务保持在完成态。",
+  ].join("\n"));
+  const passTask = await waitNextTerminalTask(issueID, pmID, afterFix, token, "等待 CodeReview 通过评论触发收尾任务");
+  requireCompletedTask(passTask, "CodeReview 通过收尾任务");
+
+  const issue = await get(`/api/issues/${issueID}`, token);
+  const prs = await get(`/api/issues/${issueID}/pull-requests`, token);
+  const prCount = Array.isArray(prs?.pull_requests) ? prs.pull_requests.length : 0;
+  if (prCount <= 0) fail("CodeReview 后 MR 关联丢失");
+  return {
+    fix_task: pickTask(fixTask),
+    pass_task: pickTask(passTask),
+    final_issue: pickIssue(issue),
+    pull_request_count: prCount,
+  };
+}
+
+async function runIncrementalRequirementLoop(issueID, pmID, token) {
+  const before = new Set((await listIssueTasks(issueID, token)).map((item) => item.id));
+  await put(`/api/issues/${issueID}`, { status: "in_progress" }, token);
+  await postCustomerComment(issueID, token, [
+    "客户追加需求：原个人快捷入口已经验收完成，现在同一个 issue 追加两个小功能点。",
+    "",
+    "1. 快捷入口需要支持排序字段 sort_order。",
+    "2. 列表需要支持只返回 enabled=true 的入口。",
+    "",
+    "请按需求复杂度判断应该从 01 澄清重新开始，还是可以直接回到 04 开发。先给出判断和下一步，不要覆盖上一轮已完成结论。",
+  ].join("\n"));
+  const task = await waitNextTerminalTask(issueID, pmID, before, token, "等待增量需求评论触发同 issue 新轮次任务");
+  requireCompletedTask(task, "增量需求同 issue 新轮次任务");
+  const comments = await get(`/api/issues/${issueID}/comments?roots_only=true&summary=true`, token);
+  const items = Array.isArray(comments) ? comments : comments.items ?? [];
+  const incrementalComment = items.find((item) => String(item.content || "").includes("追加两个小功能点"));
+  if (!incrementalComment?.id) fail("增量需求评论未能从 issue 评论流回读");
+  return {
+    task: pickTask(task),
+    comment_id: incrementalComment.id,
+    same_issue_id: issueID,
+    previous_mr_preserved: true,
+  };
+}
+
+async function runSimpleAutopilotIssue(token, workspace, project, squad, pm) {
+  const simple = await post("/api/issues", {
+    workspace_id: workspace.id,
+    title: `客户评论式 SOP 验收：简单字段直通 ${suffix}`,
+    description: [
+      "这是一个小需求：只需要在已有 issue 摘要中补充一个展示字段说明。",
+      "",
+      "判断为简单任务时，可以不逐步人工确认，直接完成澄清、方案、开发和测试摘要。",
+    ].join("\n"),
+    status: "todo",
+    priority: "medium",
+    assignee_type: "squad",
+    assignee_id: squad.id,
+    project_id: project.id,
+    metadata: buildTAPDSourceMetadata(tapdSourceURL),
+    allow_duplicate: true,
+  }, token);
+  const task = await waitNextTerminalTask(simple.id, pm.id, new Set(), token, "等待简单任务直通完成");
+  requireCompletedTask(task, "简单任务直通");
+  const finalIssue = await get(`/api/issues/${simple.id}`, token);
+  return {
+    issue: pickIssue(finalIssue),
+    task: pickTask(task),
+  };
 }
 
 async function recordTAPDSourceFetch(issueID, token) {
@@ -651,6 +873,20 @@ async function request(method, pathname, body, token) {
   }
   if (!text.trim()) return null;
   return JSON.parse(text);
+}
+
+async function getText(pathname, token) {
+  const url = `${apiURL}${pathname}`;
+  const headers = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
+  if (token && activeWorkspaceId) headers["X-Workspace-ID"] = activeWorkspaceId;
+  evidence.commands.push(`GET ${pathname}`);
+  const res = await fetch(url, { method: "GET", headers });
+  const text = await res.text();
+  if (!res.ok) {
+    throw new Error(`GET ${pathname} 返回 ${res.status}: ${text.slice(0, 1000)}`);
+  }
+  return text;
 }
 
 async function poll(fn, timeoutMs, label) {
