@@ -1,6 +1,6 @@
 .PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-training-browser-e2e goal-test-training-curl-e2e goal-test-seed-business-training goal-test-prod-seed-business-training goal-test-prod-training-curl-e2e goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e goal-test-sop-customer-comment-e2e goal-test-sop-browser-audit goal-test-prod-user-center-squad-curl-e2e goal-test-new-account-mcp-onboarding-e2e goal-test-prod-new-account-mcp-onboarding-e2e goal-test-acceptance-fixture-governance goal-test-real-benchmark-audit goal-test-historical-benchmark-readiness goal-test-quick-entry-cross-service goal-test-squad-curl-e2e goal-test-variable-project-topology-fixture goal-test-variable-agent-squad-curl-e2e goal-test-variable-agent-topology-fixture goal-test-topology-generalization-audit goal-test-tapd-gongfeng-sop-gap-audit goal-test-prod-release-audit goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-final-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-dataset-stream-audit goal-test-prune-dev-data goal-test-prune-prod-data goal-test-playground-difference-audit goal-test-session-retro goal-test-token-audit
 .PHONY: goal-test-deploy-dev-hot goal-test-dev-ui goal-test-dev-ui-start goal-test-dev-server goal-test-dev-daemon goal-test-dev-check goal-test-codex-network-check
-.PHONY: goal-test-historical-service-sandbox
+.PHONY: goal-test-historical-service-sandbox goal-test-quick-entries-service-sandbox
 .PHONY: goal-test-benchmark-training-loop
 
 MAIN_ENV_FILE ?= .env
@@ -377,6 +377,9 @@ goal-test-squad-curl-e2e: goal-test-coding-squad-curl-e2e goal-test-user-center-
 goal-test-quick-entry-cross-service: ## Verify user-center/gateway/ida-deployment quick-entry cross-service sandbox
 	node scripts/verify-quick-entry-cross-service.mjs
 
+goal-test-quick-entries-service-sandbox: ## Run TAPD quick-entries requirement service-level process sandbox
+	node scripts/goal-test-quick-entries-service-sandbox.mjs
+
 goal-test-real-benchmark-audit: ## Audit the five real benchmark contracts and training/operation-skill closure
 	node scripts/goal-test-real-benchmark-audit.mjs
 
@@ -518,6 +521,7 @@ goal-test-final-acceptance: goal-test-ui-acceptance ## Run full goal-test accept
 	$(MAKE) goal-test-acceptance-fixture-governance
 	$(MAKE) goal-test-squad-curl-e2e
 	$(MAKE) goal-test-quick-entry-cross-service
+	$(MAKE) goal-test-quick-entries-service-sandbox
 	-$(MAKE) goal-test-topology-generalization-audit
 	node scripts/generate-tapd-gongfeng-sop-final-acceptance.mjs
 	node scripts/tapd-gongfeng-sop-gap-audit.mjs

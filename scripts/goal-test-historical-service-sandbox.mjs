@@ -63,8 +63,11 @@ async function runHistoricalServiceSandbox() {
   const gatewayPort = await getFreePort();
   const usercenterAddr = `127.0.0.1:${usercenterPort}`;
   const gatewayAddr = `127.0.0.1:${gatewayPort}`;
-  const usercenterSandboxDir = path.join(repos.usercenter, ".goal-test-sandbox", "historical-usercenter");
-  const gatewaySandboxDir = path.join(repos.gateway, ".goal-test-sandbox", "historical-gateway");
+  const sandboxName = `historical-${process.pid}-${stamp}`;
+  const usercenterSandboxRoot = path.join(repos.usercenter, ".goal-test-sandbox", sandboxName);
+  const gatewaySandboxRoot = path.join(repos.gateway, ".goal-test-sandbox", sandboxName);
+  const usercenterSandboxDir = path.join(usercenterSandboxRoot, "usercenter");
+  const gatewaySandboxDir = path.join(gatewaySandboxRoot, "gateway");
   const processes = [];
   const result = {
     usercenter_addr: usercenterAddr,
@@ -75,8 +78,6 @@ async function runHistoricalServiceSandbox() {
   };
 
   try {
-    fs.rmSync(path.join(repos.usercenter, ".goal-test-sandbox"), { recursive: true, force: true });
-    fs.rmSync(path.join(repos.gateway, ".goal-test-sandbox"), { recursive: true, force: true });
     fs.mkdirSync(usercenterSandboxDir, { recursive: true });
     fs.mkdirSync(gatewaySandboxDir, { recursive: true });
     fs.writeFileSync(path.join(usercenterSandboxDir, "main.go"), historicalUserCenterMainSource());
@@ -85,14 +86,14 @@ async function runHistoricalServiceSandbox() {
     fs.copyFileSync(path.join(repos.gateway, "go.mod"), gatewayModFile);
 
     const usercenterProcess = startProcess("historical-usercenter", repos.usercenter, [
-      "go", "run", "./.goal-test-sandbox/historical-usercenter", "-listen", usercenterAddr,
+      "go", "run", `./.goal-test-sandbox/${sandboxName}/usercenter`, "-listen", usercenterAddr,
     ]);
     processes.push(usercenterProcess);
     result.usercenter_process = usercenterProcess.info;
     await waitForTcp(usercenterAddr, 120000, usercenterProcess);
 
     const gatewayProcess = startProcess("historical-gateway", repos.gateway, [
-      "go", "run", "./.goal-test-sandbox/historical-gateway",
+      "go", "run", `./.goal-test-sandbox/${sandboxName}/gateway`,
       "-listen", gatewayAddr,
       "-usercenter", usercenterAddr,
       "-apidata", path.join(repos.deployment, "helm/front/charts/gateway/apiData/permissions_file/generated_apiData_mode1.json"),
@@ -110,8 +111,8 @@ async function runHistoricalServiceSandbox() {
     }
     result.usercenter_logs = collectLogs(processes.find((item) => item.name === "historical-usercenter"));
     result.gateway_logs = collectLogs(processes.find((item) => item.name === "historical-gateway"));
-    fs.rmSync(path.join(repos.usercenter, ".goal-test-sandbox"), { recursive: true, force: true });
-    fs.rmSync(path.join(repos.gateway, ".goal-test-sandbox"), { recursive: true, force: true });
+    fs.rmSync(usercenterSandboxRoot, { recursive: true, force: true });
+    fs.rmSync(gatewaySandboxRoot, { recursive: true, force: true });
   }
 
   enrichHistoricalCaseEvidence(report.cases, result);

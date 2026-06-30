@@ -158,9 +158,9 @@ try {
   evidence.child_protocol_handoff = await postChildProtocolHandoffs(children, projects, agents, token);
   await approveAndWaitChildren(children, projects, token);
 
-  const sandboxEvidence = runSandbox ? await runHistoricalServiceSandbox() : { skipped: true };
+  const sandboxEvidence = runSandbox ? await runServiceSandboxEvidence() : { skipped: true };
   evidence.service_sandbox = sandboxEvidence;
-  if (runSandbox && !sandboxEvidence.ok) fail("历史 service sandbox curl 验收失败");
+  if (runSandbox && !sandboxEvidence.ok) fail("service sandbox curl 验收失败");
   if (runSandbox) {
     evidence.service_sandbox_issue_comment = await postServiceSandboxEvidenceComment(issue.id, token, sandboxEvidence, agents);
   }
@@ -368,8 +368,8 @@ async function attachStageMarkdownArtifacts(issueID, token) {
     ["01-clarify", "需求澄清", "TAPD 来源已抓取；确认 usercenter API 会产生 gateway 路由与 ida-deployment 权限/apiData 依赖。"],
     ["02-design", "方案设计", "采用 usercenter gRPC/API -> gateway HTTP -> ida-deployment 配置的端到端链路；以 service sandbox curl 验收。"],
     ["03-task-split", "任务拆分", "跨项目子任务按 gateway 与 ida-deployment 两个交付物创建，挂到父 issue。"],
-    ["04-implement", "开发执行", "子任务完成后父任务被 child-done 系统评论唤醒；历史 sandbox 四条用例执行通过。"],
-    ["05-verify", "测试验收", "父任务读取子任务 closure、trace、usage 与 sandbox 证据后关闭。"],
+    ["04-implement", "开发执行", "子任务完成后父任务被 child-done 系统评论唤醒；quick-entries 需求级 sandbox 与 v1 historical sandbox 均执行通过。"],
+    ["05-verify", "测试验收", "父任务读取子任务 closure、trace、usage、quick-entries GET/POST/DELETE/X-Request-ID/越权拒绝证据与 historical sandbox 证据后关闭。"],
   ];
   const attachments = [];
   for (const [stage, title, summary] of stages) {
@@ -947,6 +947,44 @@ async function verifyParentWakeAfterChildrenDone(issue, squad, pm, knownParentTa
   };
 }
 
+async function runServiceSandboxEvidence() {
+  const quickEntries = await runQuickEntriesServiceSandbox();
+  const historical = await runHistoricalServiceSandbox();
+  return {
+    ok: quickEntries.ok && historical.ok,
+    duration_ms: Number(quickEntries.duration_ms || 0) + Number(historical.duration_ms || 0),
+    quick_entries: quickEntries,
+    historical,
+  };
+}
+
+async function runQuickEntriesServiceSandbox() {
+  const started = Date.now();
+  try {
+    const stdout = execFileSync("node", ["scripts/goal-test-quick-entries-service-sandbox.mjs"], {
+      cwd: repoRoot,
+      encoding: "utf8",
+      maxBuffer: 1024 * 1024 * 24,
+      env: { ...process.env },
+    });
+    const parsed = parseLastJSONObject(stdout);
+    return {
+      ok: parsed?.ok === true,
+      duration_ms: Date.now() - started,
+      stdout_tail: tail(stdout, 40),
+      report: parsed || null,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      duration_ms: Date.now() - started,
+      error: error?.message || String(error),
+      stdout_tail: tail(error?.stdout || "", 40),
+      stderr_tail: tail(error?.stderr || "", 40),
+    };
+  }
+}
+
 async function runHistoricalServiceSandbox() {
   const started = Date.now();
   try {
@@ -975,15 +1013,21 @@ async function runHistoricalServiceSandbox() {
 }
 
 async function postServiceSandboxEvidenceComment(issueID, token, sandboxEvidence, agents) {
-  const report = sandboxEvidence.report || {};
-  const caseLines = Array.isArray(report.cases) && report.cases.length > 0
-    ? report.cases.map((item) => `- ${item.id}: ${item.ok ? "通过" : "失败"} (${item.status || "unknown"})`)
+  const quickReport = sandboxEvidence.quick_entries?.report || {};
+  const historicalReport = sandboxEvidence.historical?.report || sandboxEvidence.report || {};
+  const quickCaseLines = Array.isArray(quickReport.cases) && quickReport.cases.length > 0
+    ? quickReport.cases.map((item) => `- ${item.id}: ${item.ok ? "通过" : "失败"} (${item.status || "unknown"})`)
+    : ["- 未读取到 quick-entries case 明细"];
+  const historicalCaseLines = Array.isArray(historicalReport.cases) && historicalReport.cases.length > 0
+    ? historicalReport.cases.map((item) => `- ${item.id}: ${item.ok ? "通过" : "失败"} (${item.status || "unknown"})`)
     : ["- 未读取到 case 明细"];
   const attachmentIDs = [];
-  if (report.markdown && existsSync(report.markdown)) {
-    const markdown = readFileSync(report.markdown, "utf8");
-    const attachment = await uploadTextAttachment(issueID, token, `service-sandbox-${suffix}.md`, markdown);
-    attachmentIDs.push(attachment.id);
+  for (const [label, report] of [["quick-entries", quickReport], ["historical", historicalReport]]) {
+    if (report.markdown && existsSync(report.markdown)) {
+      const markdown = readFileSync(report.markdown, "utf8");
+      const attachment = await uploadTextAttachment(issueID, token, `${label}-service-sandbox-${suffix}.md`, markdown);
+      attachmentIDs.push(attachment.id);
+    }
   }
   const childLines = Array.isArray(evidence.child_task_execution)
     ? evidence.child_task_execution.map((item) => `- ${item.target}: trace=${item.trace_event_count}, messages=${item.message_count}, tokens=${item.total_tokens}, rerun=${item.rerun_count}`)
@@ -991,14 +1035,28 @@ async function postServiceSandboxEvidenceComment(issueID, token, sandboxEvidence
   const comment = await postCustomerCommentWithOptions(issueID, token, [
     "证据补充：service sandbox curl 与子任务运行复盘已完成，供 05-verify 核对。",
     "",
-    "## service sandbox curl",
-    `- 结论：${sandboxEvidence.ok ? "通过" : "失败"}`,
-    `- 耗时：${sandboxEvidence.duration_ms || 0} ms`,
-    report.json ? `- JSON 报告：${report.json}` : "- JSON 报告：无",
-    report.markdown ? `- Markdown 报告：${report.markdown}` : "- Markdown 报告：无",
+    "## quick-entries 需求级 service sandbox curl",
+    `- 结论：${sandboxEvidence.quick_entries?.ok ? "通过" : "失败"}`,
+    `- 耗时：${sandboxEvidence.quick_entries?.duration_ms || 0} ms`,
+    quickReport.json ? `- JSON 报告：${quickReport.json}` : "- JSON 报告：无",
+    quickReport.markdown ? `- Markdown 报告：${quickReport.markdown}` : "- Markdown 报告：无",
+    "- 已覆盖：`GET /v1/usercenter/quick-entries` 列表成功且不泄露他人数据。",
+    "- 已覆盖：`POST /v1/usercenter/quick-entries` 创建成功，`user_id` / `tenant_id` / `owner_id` 调用方归属字段被忽略。",
+    "- 已覆盖：`DELETE /v1/usercenter/quick-entries/{id}` 删除本人入口成功。",
+    "- 已覆盖：缺少 `X-Request-ID` 返回明确 400。",
+    "- 已覆盖：删除他人入口返回 403 owner mismatch。",
     "",
-    "## case 结果",
-    ...caseLines,
+    "## quick-entries case 结果",
+    ...quickCaseLines,
+    "",
+    "## historical benchmark service sandbox curl",
+    `- 结论：${sandboxEvidence.historical?.ok ? "通过" : "失败"}`,
+    `- 耗时：${sandboxEvidence.historical?.duration_ms || 0} ms`,
+    historicalReport.json ? `- JSON 报告：${historicalReport.json}` : "- JSON 报告：无",
+    historicalReport.markdown ? `- Markdown 报告：${historicalReport.markdown}` : "- Markdown 报告：无",
+    "",
+    "## historical case 结果",
+    ...historicalCaseLines,
     "",
     "## 子任务 trace / usage 摘要",
     ...childLines,
