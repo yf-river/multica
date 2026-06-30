@@ -646,7 +646,7 @@ async function createAndLinkRealGongfengMR(issue, token) {
   });
   const createdFile = await gongfengRequest("POST", `projects/${encodeGongfengProjectID(projectPath)}/repository/files`, {
     file_path: filePath,
-    branch: sourceBranch,
+    branch_name: sourceBranch,
     content,
     commit_message: `${identifier}: add goal-test acceptance evidence`,
   });
