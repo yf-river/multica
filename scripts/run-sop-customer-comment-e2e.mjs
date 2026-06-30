@@ -160,6 +160,9 @@ try {
   const sandboxEvidence = runSandbox ? await runHistoricalServiceSandbox() : { skipped: true };
   evidence.service_sandbox = sandboxEvidence;
   if (runSandbox && !sandboxEvidence.ok) fail("历史 service sandbox curl 验收失败");
+  if (runSandbox) {
+    evidence.service_sandbox_issue_comment = await postServiceSandboxEvidenceComment(issue.id, token, sandboxEvidence, agents);
+  }
 
   await completeChildren(children, token);
 
@@ -172,7 +175,8 @@ try {
     "验收要求：",
     "- 读取 gateway 和 ida-deployment 子任务 closure。",
     "- 核对父子任务关系、trace、usage、运行复盘数据。",
-    "- 核对 service sandbox curl 验收证据。",
+    "- 核对上一条证据补充评论中的 service sandbox curl 验收证据和附件报告。",
+    "- MR 属于 05-verify 通过后的人工 CodeReview 阶段；本阶段不要因为 MR 为空阻断。",
     "- 如果满足验收，请把父任务状态更新为 done。",
   ].join("\n"));
   const verifyTask = await waitNextTerminalTask(issue.id, pm.id, new Set([initialTask.id, clarifyTask.id, childTask.id, wake.requeued_task_id]), token, "等待评论 3 触发的最终 verify 任务完成");
@@ -912,6 +916,49 @@ async function runHistoricalServiceSandbox() {
       stderr_tail: tail(error?.stderr || "", 40),
     };
   }
+}
+
+async function postServiceSandboxEvidenceComment(issueID, token, sandboxEvidence, agents) {
+  const report = sandboxEvidence.report || {};
+  const caseLines = Array.isArray(report.cases) && report.cases.length > 0
+    ? report.cases.map((item) => `- ${item.id}: ${item.ok ? "通过" : "失败"} (${item.status || "unknown"})`)
+    : ["- 未读取到 case 明细"];
+  const attachmentIDs = [];
+  if (report.markdown && existsSync(report.markdown)) {
+    const markdown = readFileSync(report.markdown, "utf8");
+    const attachment = await uploadTextAttachment(issueID, token, `service-sandbox-${suffix}.md`, markdown);
+    attachmentIDs.push(attachment.id);
+  }
+  const childLines = Array.isArray(evidence.child_task_execution)
+    ? evidence.child_task_execution.map((item) => `- ${item.target}: trace=${item.trace_event_count}, messages=${item.message_count}, tokens=${item.total_tokens}, rerun=${item.rerun_count}`)
+    : ["- 子任务 trace/usage 摘要尚未生成"];
+  const comment = await postCustomerCommentWithOptions(issueID, token, [
+    "证据补充：service sandbox curl 与子任务运行复盘已完成，供 05-verify 核对。",
+    "",
+    "## service sandbox curl",
+    `- 结论：${sandboxEvidence.ok ? "通过" : "失败"}`,
+    `- 耗时：${sandboxEvidence.duration_ms || 0} ms`,
+    report.json ? `- JSON 报告：${report.json}` : "- JSON 报告：无",
+    report.markdown ? `- Markdown 报告：${report.markdown}` : "- Markdown 报告：无",
+    "",
+    "## case 结果",
+    ...caseLines,
+    "",
+    "## 子任务 trace / usage 摘要",
+    ...childLines,
+    "",
+    "## 阶段边界",
+    "- 这条评论只提供 05-verify 所需验收证据，不触发新阶段。",
+    "- MR 会在 05-verify 通过后进入人工 CodeReview 阶段再创建和关联。",
+  ].join("\n"), {
+    attachment_ids: attachmentIDs,
+    suppress_agent_ids: agents.map((item) => item.id),
+  });
+  return {
+    comment_id: comment.id || comment.comment_id,
+    attachment_count: attachmentIDs.length,
+    suppress_agent_count: agents.length,
+  };
 }
 
 async function waitForSOPRun(issueID, squadID, token, label) {
