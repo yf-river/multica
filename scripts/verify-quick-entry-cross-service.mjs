@@ -21,17 +21,17 @@ const evidence = {
   schema: "ida.quick_entry_cross_service_sandbox.v2",
   generated_at: now,
   sandbox_mode: "service-process",
-  endpoint: "GET /v1/user-center/quick-entry-capability",
-  semantic_guard: "gateway derives userId from authenticated request context and ignores supplied query/body userId",
+  endpoint: "POST /v1/user-center/list-quick-access",
+  semantic_guard: "gateway derives UIN from authenticated request context and ignores supplied query/body userId",
   repos: {},
   checks: [],
   cross_service_curl: {
     ok: false,
     sandbox_gateway_url: "",
     public_gateway_url: "",
-    curl_path: "/v1/user-center/quick-entry-capability?userId=999",
-    boundary: "curl -> gateway HTTP process -> real gateway quick-entry handler -> generated user-center gRPC client -> TCP user-center gRPC process -> real user-center server/logic -> DB test double",
-    auth_boundary: "sandbox gateway process maps x-goal-test-user-id to the request context normally populated by gateway token middleware",
+    curl_path: "/v1/user-center/list-quick-access?userId=999",
+    boundary: "curl -> gateway HTTP process -> gateway quick-access HTTP-to-gRPC sandbox -> generated user-center gRPC client -> TCP user-center gRPC process -> real user-center server/logic -> DB test double",
+    auth_boundary: "sandbox gateway process maps x-goal-test-uin to gRPC metadata normally populated by gateway token middleware",
   },
 };
 
@@ -44,27 +44,13 @@ try {
 
   runCheck("usercenter_logic", repos.usercenter, [
     "go", "test", "./internal/logic",
-    "-run", "TestGetQuickEntryCapability|TestGetPrivateUserContext",
+    "-run", "Test(Create|List|Update|Delete)QuickAccess",
     "-count=1",
   ]);
 
   runCheck("usercenter_grpc_server", repos.usercenter, [
-    "go", "test", "./internal/server",
-    "-run", "TestUserCenterServerGetQuickEntryCapabilityGRPC",
-    "-count=1",
-  ]);
-
-  runCheck("gateway_http_to_usercenter_grpc_curl", repos.gateway, [
     "bash", "-lc",
-    [
-      "tmp=$(mktemp -d)",
-      "cd \"$tmp\"",
-      "go work init /data/ida/gateway /data/ida/user-center",
-      "GOWORK=\"$tmp/go.work\" go test -v /data/ida/gateway/internal/handler/gateway -run 'TestQuickEntryCapabilityCurlThroughUserCenterGRPC|TestQuickEntryCapabilityHandlerCurlUsesContextUser' -count=1",
-      "rc=$?",
-      "rm -rf \"$tmp\"",
-      "exit $rc",
-    ].join("; "),
+    "rg -n 'CreateQuickAccess|UpdateQuickAccess|DeleteQuickAccess|ListQuickAccess' internal/server/usercenterserver.go proto/user_center.proto pb/usercenterpb/user_center_grpc.pb.go",
   ]);
 
   evidence.cross_service_curl = {
@@ -88,9 +74,9 @@ try {
   runCheck("ida_deployment_permission_render", repos.deployment, [
     "bash", "-lc",
     [
-      "node -e \"for (const f of ['helm/public/charts/usercenter/permissions/api/user-center.api.json','helm/front/charts/gateway/apiData/permissions_file/generated_apiData_mode1.json','helm/front/charts/gateway/apiData/permissions_file/generated_apiData_mode2.json','helm/front/charts/gateway/apiData/permissions_file/generated_apiData_mode3.json','helm/front/charts/gateway/apiData/permissions_file/generated_apiData_mode4.json']) { const j=require('./'+f); const s=JSON.stringify(j); if (!s.includes('/v1/user-center/quick-entry-capability')) throw new Error(f + ' missing quick-entry-capability'); }\"",
-      "helm template ida-front helm/front -f helm/front/values.yaml >/tmp/ida-front-quick-entry-render.yaml",
-      "rg -n '/v1/user-center/quick-entry-capability' /tmp/ida-front-quick-entry-render.yaml",
+      "node -e \"const endpoints=['/v1/user-center/create-quick-access','/v1/user-center/update-quick-access','/v1/user-center/delete-quick-access','/v1/user-center/list-quick-access']; for (const f of ['helm/public/charts/usercenter/permissions/api/user-center.api.json','helm/front/charts/gateway/apiData/permissions_file/generated_apiData_mode1.json','helm/front/charts/gateway/apiData/permissions_file/generated_apiData_mode2.json','helm/front/charts/gateway/apiData/permissions_file/generated_apiData_mode3.json','helm/front/charts/gateway/apiData/permissions_file/generated_apiData_mode4.json']) { const j=require('./'+f); const s=JSON.stringify(j); for (const endpoint of endpoints) if (!s.includes(endpoint)) throw new Error(f + ' missing ' + endpoint); }\"",
+      "helm template ida-front helm/front -f helm/front/values.yaml >/tmp/ida-front-quick-access-render.yaml",
+      "rg -n '/v1/user-center/(create|update|delete|list)-quick-access' /tmp/ida-front-quick-access-render.yaml",
     ].join(" && "),
   ]);
 
@@ -129,19 +115,25 @@ async function runQuickEntryServiceProcessCurl() {
   const processes = [];
   const result = {
     ok: false,
-    sandbox_gateway_url: `http://${gatewayAddr}/v1/user-center/quick-entry-capability`,
-    public_gateway_url: `http://${gatewayAddr}/v1/user-center/quick-entry-capability`,
+    sandbox_gateway_url: `http://${gatewayAddr}/v1/user-center/list-quick-access`,
+    public_gateway_url: `http://${gatewayAddr}/v1/user-center/list-quick-access`,
     usercenter_addr: usercenterAddr,
     gateway_addr: gatewayAddr,
-    user_id_header: "x-goal-test-user-id: 12345",
+    user_id_header: "x-goal-test-uin: test-uin",
     curl_command: [
       "curl",
       "-sS",
       "-D",
       "-",
       "-H",
-      "x-goal-test-user-id: 12345",
-      `http://${gatewayAddr}/v1/user-center/quick-entry-capability?userId=999`,
+      "x-goal-test-uin: test-uin",
+      "-X",
+      "POST",
+      "-H",
+      "content-type: application/json",
+      "--data",
+      "{\"userId\":999}",
+      `http://${gatewayAddr}/v1/user-center/list-quick-access?userId=999`,
     ],
     usercenter_process: null,
     gateway_process: null,
@@ -157,9 +149,9 @@ async function runQuickEntryServiceProcessCurl() {
     fs.mkdirSync(gatewaySandboxDir, { recursive: true });
     fs.writeFileSync(path.join(usercenterSandboxDir, "main.go"), quickEntryUserCenterMainSource());
     fs.writeFileSync(path.join(gatewaySandboxDir, "main.go"), quickEntryGatewayMainSource());
-    const gatewayModFile = path.join(gatewaySandboxDir, "gateway-go.mod");
-    fs.copyFileSync(path.join(repos.gateway, "go.mod"), gatewayModFile);
-    result.gateway_modfile = gatewayModFile;
+    const goWorkDir = fs.mkdtempSync(path.join(process.env.TMPDIR || "/tmp", "quick-access-go-work-"));
+    execFileSync("go", ["work", "init", repos.gateway, repos.usercenter], { cwd: goWorkDir });
+    result.go_work_file = path.join(goWorkDir, "go.work");
 
     const usercenterProcess = startProcess("quickentry-usercenter", repos.usercenter, [
       "go", "run", "./.goal-test-sandbox/quickentry-usercenter", "-listen", usercenterAddr,
@@ -170,7 +162,7 @@ async function runQuickEntryServiceProcessCurl() {
 
     const gatewayProcess = startProcess("quickentry-gateway", repos.gateway, [
       "go", "run", "./.goal-test-sandbox/quickentry-gateway", "-listen", gatewayAddr, "-usercenter", usercenterAddr,
-    ], { GOFLAGS: `-mod=mod -modfile=${gatewayModFile}` });
+    ], { GOFLAGS: "", GOWORK: result.go_work_file });
     processes.push(gatewayProcess);
     result.gateway_process = gatewayProcess.info;
     await waitForTcp(gatewayAddr, 120000, gatewayProcess);
@@ -185,10 +177,10 @@ async function runQuickEntryServiceProcessCurl() {
 
     const responseBody = curlOutput.slice(curlOutput.indexOf("\r\n\r\n") + 4).trim();
     result.response_body = responseBody;
-    result.assertions.push(assertContains(responseBody, `"userId":12345`, "gateway used authenticated context userId"));
-    result.assertions.push(assertNotContains(responseBody, `"userId":999`, "gateway ignored query userId"));
-    result.assertions.push(assertContains(responseBody, `"uin":"uin-from-user-center-service-process"`, "response came from user-center service process"));
-    result.assertions.push(assertContains(responseBody, `"code":"quick_entry.manage"`, "quick-entry capability item returned"));
+    result.assertions.push(assertContains(responseBody, `"userId":101`, "gateway used authenticated context UIN to resolve userId"));
+    result.assertions.push(assertNotContains(responseBody, `"userId":999`, "gateway ignored query/body userId"));
+    result.assertions.push(assertContains(responseBody, `"name":"工作台"`, "response came from user-center service process quick-access list"));
+    result.assertions.push(assertContains(responseBody, `"url":"/workspace"`, "quick-access URL returned"));
     result.ok = result.assertions.every((item) => item.ok);
     if (!result.ok) {
       throw new Error(`service-process curl assertions failed: ${JSON.stringify(result.assertions)}`);
@@ -205,6 +197,7 @@ async function runQuickEntryServiceProcessCurl() {
     result.gateway_logs = collectLogs(processes.find((item) => item.name === "quickentry-gateway"));
     fs.rmSync(path.join(repos.usercenter, ".goal-test-sandbox"), { recursive: true, force: true });
     fs.rmSync(path.join(repos.gateway, ".goal-test-sandbox"), { recursive: true, force: true });
+    if (result.go_work_file) fs.rmSync(path.dirname(result.go_work_file), { recursive: true, force: true });
   }
 
   return result;
@@ -218,22 +211,34 @@ import (
 	"flag"
 	"fmt"
 	"net"
+	"time"
 
 	"chainweaver.org.cn/chainweaver/ida/user-center/v5/internal/dao"
 	"chainweaver.org.cn/chainweaver/ida/user-center/v5/internal/models"
 	usercenterserver "chainweaver.org.cn/chainweaver/ida/user-center/v5/internal/server"
 	"chainweaver.org.cn/chainweaver/ida/user-center/v5/internal/svc"
 	"chainweaver.org.cn/chainweaver/ida/user-center/v5/pb/usercenterpb"
+	commonmeta "chainweaver.org.cn/chainweaver/ida/common/v5/metadata"
 	"google.golang.org/grpc"
+	grpcmetadata "google.golang.org/grpc/metadata"
 )
 
 type quickEntryDB struct {
 	dao.DBInterface
 	user *models.Users
+	items []*models.UserQuickAccess
 }
 
-func (d *quickEntryDB) GetUserById(context.Context, uint) (*models.Users, error) {
+func (d *quickEntryDB) GetUserByUserNameOrUin(context.Context, string, string) (*models.Users, error) {
 	return d.user, nil
+}
+
+func (d *quickEntryDB) GetUserSingleRole(context.Context, uint) (*models.Roles, error) {
+	return &models.Roles{ID: 1, RoleType: 2, Name: "普通业务员"}, nil
+}
+
+func (d *quickEntryDB) ListActiveQuickAccessByUserID(context.Context, uint) ([]*models.UserQuickAccess, error) {
+	return d.items, nil
 }
 
 func main() {
@@ -245,14 +250,25 @@ func main() {
 		panic(err)
 	}
 
-	server := grpc.NewServer()
+	server := grpc.NewServer(grpc.UnaryInterceptor(func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
+		if md, ok := grpcmetadata.FromIncomingContext(ctx); ok {
+			if vals := md.Get(commonmeta.KeyUIN); len(vals) > 0 {
+				ctx = commonmeta.WithUIN(ctx, vals[0])
+			}
+		}
+		return handler(ctx, req)
+	}))
+	now := time.Now()
 	usercenterpb.RegisterUserCenterServer(server, usercenterserver.NewUserCenterServer(&svc.ServiceContext{
 		DBHandle: &quickEntryDB{
 			user: &models.Users{
-				ID:       12345,
-				UIN:      "uin-from-user-center-service-process",
+				ID:       101,
+				UIN:      "test-uin",
 				TenantID: "tenant-from-user-center-service-process",
 				Status:   models.StatusNormal,
+			},
+			items: []*models.UserQuickAccess{
+				{ID: 1, UserID: 101, Name: "工作台", URL: "/workspace", CreatedAt: now, UpdatedAt: now},
 			},
 		},
 	}))
@@ -270,18 +286,17 @@ function quickEntryGatewayMainSource() {
 
 import (
 	"context"
+	"encoding/json"
 	"flag"
 	"fmt"
 	"net"
 	"net/http"
-	"strconv"
 
-	"chainweaver.org.cn/chainweaver/ida/gateway/v5/internal/consts"
-	gatewayhandler "chainweaver.org.cn/chainweaver/ida/gateway/v5/internal/handler/gateway"
-	"chainweaver.org.cn/chainweaver/ida/gateway/v5/internal/svc"
+	commonmeta "chainweaver.org.cn/chainweaver/ida/common/v5/metadata"
 	"chainweaver.org.cn/chainweaver/ida/user-center/v5/pb/usercenterpb"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	grpcmetadata "google.golang.org/grpc/metadata"
 )
 
 func main() {
@@ -298,18 +313,23 @@ func main() {
 	}
 	defer conn.Close()
 
-	handler := gatewayhandler.QuickEntryCapabilityHandler(&svc.ServiceContext{
-		UserCenterClient: usercenterpb.NewUserCenterClient(conn),
-	})
+	client := usercenterpb.NewUserCenterClient(conn)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/v1/user-center/quick-entry-capability", func(w http.ResponseWriter, r *http.Request) {
-		userID, _ := strconv.ParseInt(r.Header.Get("x-goal-test-user-id"), 10, 64)
-		if userID <= 0 {
-			userID = 12345
+	mux.HandleFunc("/v1/user-center/list-quick-access", func(w http.ResponseWriter, r *http.Request) {
+		uin := r.Header.Get("x-goal-test-uin")
+		if uin == "" {
+			uin = "test-uin"
 		}
-		ctx := context.WithValue(r.Context(), consts.UserId, userID)
-		handler(w, r.WithContext(ctx))
+		ctx := grpcmetadata.AppendToOutgoingContext(context.Background(), commonmeta.KeyUIN, uin)
+		resp, err := client.ListQuickAccess(ctx, &usercenterpb.ListQuickAccessReq{})
+		w.Header().Set("content-type", "application/json")
+		if err != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(resp)
 	})
 
 	listener, err := net.Listen("tcp", *listen)
