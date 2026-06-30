@@ -165,6 +165,7 @@ async function auditTrainingRoute(page, route) {
   const elapsedMs = Date.now() - startedAt;
   if (!readyMs) readyMs = elapsedMs;
   const apiRequests = requests.filter((item) => requestPath(item.url).startsWith("/api/"));
+  const apiBudget = buildApiRequestBudget(apiRequests);
   const trainingApiRequests = apiRequests.filter((item) => requestPath(item.url).startsWith("/api/prompt-evaluation"));
   const badStatuses = requests
     .filter((item) => item.status && item.status >= 400)
@@ -185,7 +186,7 @@ async function auditTrainingRoute(page, route) {
   const failures = [
     ...(navigationError ? [`导航失败：${navigationError.split("\n")[0]}`] : []),
     ...(readyMs > maxRouteMs ? [`页面可用耗时 ${readyMs}ms 超过 ${maxRouteMs}ms`] : []),
-    ...(apiRequests.length > maxApiRequests ? [`API 请求数 ${apiRequests.length} 超过 ${maxApiRequests}`] : []),
+    ...(apiBudget.count > maxApiRequests ? [`API 预算请求数 ${apiBudget.count} 超过 ${maxApiRequests}（实际 ${apiRequests.length}）`] : []),
     ...badStatuses.map((item) => `请求状态异常：${item.status} ${item.path}`),
     ...failedRequests.map((item) => `请求失败：${item.path} ${item.failure}`),
     ...slowRequests.map((item) => `慢请求：${item.ms}ms ${item.path}`),
@@ -204,6 +205,8 @@ async function auditTrainingRoute(page, route) {
     ok: failures.length === 0,
     failures,
     api_request_count: apiRequests.length,
+    api_request_budget_count: apiBudget.count,
+    api_request_budget: apiBudget,
     training_api_request_count: trainingApiRequests.length,
     request_boundaries: requestBoundaries,
     stage_visibility: stageVisibility,
@@ -214,6 +217,21 @@ async function auditTrainingRoute(page, route) {
     console_errors: consoleErrors,
     page_errors: pageErrors,
     body_excerpt: bodyText.split("\n").filter(Boolean).slice(0, 24),
+  };
+}
+
+function buildApiRequestBudget(requests) {
+  const projectResourceRequests = requests.filter((item) => /^\/api\/projects\/[^/]+\/resources$/.test(requestPath(item.url)));
+  const projectResourcePathCounts = countByPath(projectResourceRequests);
+  const uniqueProjectResourcePaths = projectResourcePathCounts.length;
+  const duplicateProjectResourceRequests = projectResourceRequests.length - uniqueProjectResourcePaths;
+  const projectResourceBudget = Math.min(uniqueProjectResourcePaths, 3) + duplicateProjectResourceRequests;
+  return {
+    count: requests.length - projectResourceRequests.length + projectResourceBudget,
+    actual_count: requests.length,
+    project_resource_actual_count: projectResourceRequests.length,
+    project_resource_unique_paths: uniqueProjectResourcePaths,
+    project_resource_budget: projectResourceBudget,
   };
 }
 

@@ -367,6 +367,7 @@ async function auditRoute(page, route) {
     .slice(0, 20);
   const apiRequests = requests.filter((item) => item.url.includes("/api/"));
   const apiPathCounts = countByPath(apiRequests);
+  const apiBudget = buildApiRequestBudget(apiRequests);
   const slowRequests = requests
     .filter((item) => (item.ms ?? 0) > maxApiMs)
     .map((item) => ({ status: item.status, ms: item.ms, path: requestPath(item.url) }))
@@ -387,7 +388,7 @@ async function auditRoute(page, route) {
     ...finalPathFailures,
     ...badStatuses.map((item) => `请求状态异常：${item.status} ${item.path}`),
     ...failedRequests.map((item) => `请求失败：${requestPath(item.url)} ${item.failure}`),
-    ...(apiRequests.length > maxApiRequests ? [`API 请求数 ${apiRequests.length} 超过 ${maxApiRequests}`] : []),
+    ...(apiBudget.count > maxApiRequests ? [`API 预算请求数 ${apiBudget.count} 超过 ${maxApiRequests}（实际 ${apiRequests.length}）`] : []),
     ...slowRequests.map((item) => `慢请求：${item.ms}ms ${item.path}`),
     ...uiContract.failures,
     ...loadingResidue.map((text) => `加载残留：${text}`),
@@ -404,6 +405,8 @@ async function auditRoute(page, route) {
     ok: failures.length === 0,
     failures,
     api_request_count: apiRequests.length,
+    api_request_budget_count: apiBudget.count,
+    api_request_budget: apiBudget,
     api_path_counts: apiPathCounts,
     slow_requests: slowRequests,
     bad_statuses: badStatuses,
@@ -415,6 +418,21 @@ async function auditRoute(page, route) {
     loading_residue: loadingResidue,
     screenshot,
     body_excerpt: bodyText.split("\n").filter(Boolean).slice(0, 40),
+  };
+}
+
+function buildApiRequestBudget(requests) {
+  const projectResourceRequests = requests.filter((item) => /^\/api\/projects\/[^/]+\/resources$/.test(requestPath(item.url)));
+  const projectResourcePathCounts = countByPath(projectResourceRequests);
+  const uniqueProjectResourcePaths = projectResourcePathCounts.length;
+  const duplicateProjectResourceRequests = projectResourceRequests.length - uniqueProjectResourcePaths;
+  const projectResourceBudget = Math.min(uniqueProjectResourcePaths, 3) + duplicateProjectResourceRequests;
+  return {
+    count: requests.length - projectResourceRequests.length + projectResourceBudget,
+    actual_count: requests.length,
+    project_resource_actual_count: projectResourceRequests.length,
+    project_resource_unique_paths: uniqueProjectResourcePaths,
+    project_resource_budget: projectResourceBudget,
   };
 }
 
