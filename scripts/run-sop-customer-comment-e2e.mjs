@@ -641,7 +641,7 @@ async function createAndLinkRealGongfengMR(issue, token) {
   ].join("\n");
 
   const branch = await gongfengRequest("POST", `projects/${encodeGongfengProjectID(projectPath)}/repository/branches`, {
-    branch: sourceBranch,
+    branch_name: sourceBranch,
     ref: targetBranch,
   });
   const createdFile = await gongfengRequest("POST", `projects/${encodeGongfengProjectID(projectPath)}/repository/files`, {
