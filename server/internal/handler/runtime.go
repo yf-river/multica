@@ -32,7 +32,7 @@ type AgentRuntimeResponse struct {
 	// Visibility is "private" (default — only the owner / workspace admins
 	// can bind agents) or "public" (any workspace member can). See migration
 	// 083 and canUseRuntimeForAgent.
-	Visibility string  `json:"visibility"`
+	Visibility string `json:"visibility"`
 	// ProfileID is set when this runtime is an instance of a custom
 	// runtime_profile (MUL-3284); null for built-in runtimes.
 	ProfileID  *string `json:"profile_id"`
@@ -522,6 +522,9 @@ func (h *Handler) ListAgentRuntimes(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if err != nil {
+		if writeClientClosedIfCanceled(w, err) {
+			return
+		}
 		writeError(w, http.StatusInternalServerError, "failed to list runtimes")
 		return
 	}

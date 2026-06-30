@@ -76,6 +76,23 @@ func TestRuntimeHandlersRejectMalformedRuntimeID(t *testing.T) {
 	}
 }
 
+func TestListAgentRuntimesClientCanceledReturns499(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodGet, "/api/runtimes?workspace_id="+testWorkspaceID, nil).WithContext(ctx)
+
+	testHandler.ListAgentRuntimes(w, req)
+
+	if w.Code != 499 {
+		t.Fatalf("expected 499 for canceled runtime list request, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 // TestGetRuntimeUsage_BucketsByUsageTime ensures a task that was enqueued on
 // one calendar day but whose tokens were reported the next day (e.g. execution
 // crossed midnight, or the task sat in the queue) is attributed to the day
