@@ -1824,7 +1824,7 @@ func TestShouldDisableCodexImageGenerationForCatalog(t *testing.T) {
 		{name: "off disables regardless of catalog", policy: codexImageGenerationOff, model: "text-image", catalogOK: true, want: true},
 		{name: "on allows regardless of catalog", policy: codexImageGenerationOn, model: "text-only", catalogOK: true, want: false},
 		{name: "text only disables", policy: codexImageGenerationAuto, model: "text-only", catalogOK: true, want: true},
-		{name: "text image allows", policy: codexImageGenerationAuto, model: "text-image", catalogOK: true, want: false},
+		{name: "text image input still disables generation tool", policy: codexImageGenerationAuto, model: "text-image", catalogOK: true, want: true},
 		{name: "explicit tool allows", policy: codexImageGenerationAuto, model: "tool-explicit", catalogOK: true, want: false},
 		{name: "unknown model disables", policy: codexImageGenerationAuto, model: "unknown-model", catalogOK: true, want: true},
 		{name: "catalog failure disables", policy: codexImageGenerationAuto, model: "text-image", catalogOK: false, want: true},
@@ -1864,8 +1864,8 @@ func TestParseCodexModelCapabilities(t *testing.T) {
 	}`)
 	got := parseCodexModelCapabilities(raw)
 
-	if !codexModelCapabilitySupportsImageGeneration(got["gpt-5.5"]) {
-		t.Fatalf("expected gpt-5.5 fixture to support image_generation: %+v", got["gpt-5.5"])
+	if codexModelCapabilitySupportsImageGeneration(got["gpt-5.5"]) {
+		t.Fatalf("expected image input alone not to support image_generation: %+v", got["gpt-5.5"])
 	}
 	if codexModelCapabilitySupportsImageGeneration(got["gpt-5.3-codex-spark"]) {
 		t.Fatalf("expected spark fixture to disable image_generation: %+v", got["gpt-5.3-codex-spark"])

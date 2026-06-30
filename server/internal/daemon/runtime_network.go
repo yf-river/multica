@@ -87,21 +87,24 @@ func (d *Daemon) checkProviderNetwork(ctx context.Context, provider string, entr
 	if codexResponsesSmokeEnabled() {
 		runCtx, cancel := context.WithTimeout(ctx, runtimeNetworkResponsesSmokeTimeout)
 		defer cancel()
-		args := []string{"debug", "app-server", "--disable", "image_generation"}
+		args := []string{"exec"}
 		if model := firstEnv("MULTICA_CODEX_SMOKE_MODEL", "MULTICA_CODEX_MODEL"); model != "" {
 			args = append(args, "-c", "model="+strconv.Quote(model))
 		}
-		args = append(args, "send-message-v2")
 		args = append(args, "Reply with exactly: ok")
 		cmd := exec.CommandContext(runCtx, execPath, args...)
 		cmd.Env = applyRuntimeProxyEnv(os.Environ(), provider)
 		out, err := cmd.CombinedOutput()
-		health.Check = "codex debug models + responses smoke"
-		if err != nil {
+		health.Check = "codex debug models + codex exec responses smoke"
+		output := strings.TrimSpace(string(out))
+		if err != nil || !codexResponsesSmokeReturnedOK(output) {
 			health.Status = runtimeNetworkUnavailable
-			health.Error = strings.TrimSpace(string(out))
-			if health.Error == "" {
+			health.Error = output
+			if health.Error == "" && err != nil {
 				health.Error = err.Error()
+			}
+			if health.Error == "" {
+				health.Error = "codex responses smoke did not return ok"
 			}
 			health.FailureHint = "Codex responses smoke failed. Check this runner's proxy, CODEX_HOME login state, and whether the proxy supports ChatGPT responses WebSocket traffic."
 			return health
@@ -109,6 +112,15 @@ func (d *Daemon) checkProviderNetwork(ctx context.Context, provider string, entr
 	}
 	health.Status = runtimeNetworkHealthy
 	return health
+}
+
+func codexResponsesSmokeReturnedOK(output string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.EqualFold(strings.TrimSpace(line), "ok") {
+			return true
+		}
+	}
+	return false
 }
 
 func (d *Daemon) markRuntimeNetworkFailure(runtimeID string, reason taskfailure.Reason, errText string) {

@@ -250,16 +250,7 @@ func resolveCodexImageGenerationPolicy(env map[string]string, logger *slog.Logge
 }
 
 func codexModelCapabilitySupportsImageGeneration(capability codexModelCapability) bool {
-	if containsCaseInsensitive(capability.ExperimentalSupportedTools, "image_generation") {
-		return true
-	}
-	if len(capability.InputModalities) > 0 {
-		return containsCaseInsensitive(capability.InputModalities, "image")
-	}
-	if capability.SupportsImageDetailOriginalSet {
-		return capability.SupportsImageDetailOriginal
-	}
-	return false
+	return containsCaseInsensitive(capability.ExperimentalSupportedTools, "image_generation")
 }
 
 func containsCaseInsensitive(values []string, want string) bool {

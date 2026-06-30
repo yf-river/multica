@@ -906,10 +906,9 @@ function runCodexNetworkCheckWithEnv(item, env, options = {}) {
   const checks = [];
   checks.push(runCodexCheckCommand("model_catalog", runner.codex_path, ["debug", "models"], env, 20_000));
   if (strong) {
-    const args = ["debug", "app-server", "--disable", "image_generation"];
+    const args = ["exec"];
     const model = env.GOAL_TEST_CODEX_SMOKE_MODEL || env.MULTICA_CODEX_MODEL || "";
     if (model) args.push("-c", `model=${JSON.stringify(model)}`);
-    args.push("send-message-v2");
     args.push("Reply with exactly: ok");
     checks.push(runCodexCheckCommand("responses_smoke", runner.codex_path, args, env, 90_000));
   }
@@ -938,7 +937,7 @@ function runCodexCheckCommand(name, command, args, env, timeoutMs) {
   const stdout = res.stdout || "";
   const stderr = res.stderr || "";
   const timedOut = res.error?.code === "ETIMEDOUT";
-  const logicalFailure = codexDebugAppServerFailed(name, stdout, stderr);
+  const logicalFailure = codexResponsesSmokeFailed(name, stdout, stderr);
   const check = {
     name,
     command: [command, ...args].join(" "),
@@ -950,7 +949,7 @@ function runCodexCheckCommand(name, command, args, env, timeoutMs) {
     stdout_tail: stdout.slice(-1200),
     stderr_tail: stderr.slice(-1200),
   };
-  if (logicalFailure) check.error = "codex debug app-server completed with a failed turn";
+  if (logicalFailure) check.error = "codex responses smoke did not return ok";
   if (name === "model_catalog" && res.status === 0) {
     try {
       const parsed = JSON.parse(stdout);
@@ -964,11 +963,10 @@ function runCodexCheckCommand(name, command, args, env, timeoutMs) {
   return check;
 }
 
-function codexDebugAppServerFailed(name, stdout, stderr) {
+function codexResponsesSmokeFailed(name, stdout, stderr) {
   if (name !== "responses_smoke") return false;
-  const text = `${stdout}\n${stderr}`;
-  if (/turn\/completed notification:\s*Completed|"status":\s*"completed"/i.test(text)) return false;
-  return /turn\/completed notification:\s*Failed|\[turn error\]|"status":\s*"failed"|Tool 'image_generation' is not supported|stream disconnected before completion|failed to connect to websocket|tls handshake eof/i.test(text);
+  if (/(^|\r?\n)ok(\r?\n|$)/i.test(stdout)) return false;
+  return true;
 }
 
 function summarizeCodexRunnerEnv(item, env, strong) {
