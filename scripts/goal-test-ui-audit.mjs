@@ -68,16 +68,21 @@ const routes = [
     expect: ["小队"],
     uiContract: { forbiddenText: ["GOAL_TEST_ACCEPTANCE"] },
   },
-  { id: "usage", label: "用量", path: `/${workspaceSlug}/usage`, expect: ["用量"] },
+  {
+    id: "run-reviews",
+    label: "运行复盘",
+    path: `/${workspaceSlug}/run-reviews`,
+    expect: ["运行复盘"],
+  },
+  {
+    id: "usage-legacy",
+    label: "用量旧入口",
+    path: `/${workspaceSlug}/usage`,
+    expect: ["运行复盘"],
+    finalPathIncludes: `/${workspaceSlug}/run-reviews`,
+  },
   { id: "runtimes", label: "运行时", path: `/${workspaceSlug}/runtimes`, expect: ["运行时"] },
   { id: "settings", label: "设置", path: `/${workspaceSlug}/settings`, expect: ["设置"] },
-  {
-    id: "training-runs",
-    label: "训练与评估/运行看板",
-    path: `/${workspaceSlug}/training/runs`,
-    expect: ["运行看板"],
-    uiContract: { requiredTestIds: ["training-route-runs"], forbiddenTestIds: ["training-tab-strip"] },
-  },
   {
     id: "training-prompts",
     label: "训练与评估/提示词库",
@@ -90,80 +95,39 @@ const routes = [
     },
   },
   {
-    id: "training-prompt-playground",
-    label: "训练与评估/提示词调试场",
-    path: `/${workspaceSlug}/training/prompt-playground`,
-    expect: ["提示词调试场"],
+    id: "training-debug-runs",
+    label: "训练与评估/调试运行",
+    path: `/${workspaceSlug}/training/debug-runs`,
+    expect: ["调试运行"],
     uiContract: {
-      requiredText: ["本地模板目录", "模板质检台", "质检工作单", "不启动智能体", "不创建任务、不消耗模型", "保存质检记录", "质检结论"],
-      forbiddenText: ["执行目标池", "真实任务发射台", "真实执行准备度", "观测回写契约", "写入真实任务队列"],
+      requiredText: ["提示词调试", "智能体调试", "Skill 场景", "本地模板目录", "模板质检台", "不启动智能体"],
       requiredTestIds: [
-        "prompt-playground-page-shell",
+        "debug-runs-page-shell",
         "prompt-playground-workbench",
         "prompt-playground-inspection-board",
-        "prompt-playground-template-card",
+        "prompt-playground-prompt-list",
+        "prompt-playground-template-boundary",
         "prompt-playground-purpose-map",
         "prompt-playground-template-lab",
         "prompt-playground-local-pipeline",
         "prompt-playground-quality-gate",
       ],
-      forbiddenTestIds: [
-        "training-tab-strip",
-        "training-summary-strip",
-        "agent-playground-page-shell",
-        "agent-playground-workbench",
-        "agent-playground-run-console",
-        "agent-playground-launch-brief",
-        "agent-playground-execution-topology",
-        "agent-playground-execution-bus",
-        "agent-playground-agent-selector",
-        "agent-playground-runtime-selector",
-        "agent-playground-queue-contract",
-        "agent-playground-evidence-strip",
-        "agent-playground-task-payload",
-        "agent-playground-task-pipeline",
-        "agent-playground-observability-contract",
-      ],
+      forbiddenTestIds: ["training-tab-strip", "training-summary-strip"],
     },
   },
   {
-    id: "training-agent-playground",
-    label: "训练与评估/智能体调试场",
+    id: "training-prompt-playground-legacy",
+    label: "训练与评估/提示词调试场旧入口",
+    path: `/${workspaceSlug}/training/prompt-playground`,
+    expect: ["调试运行"],
+    finalPathIncludes: `/${workspaceSlug}/training/debug-runs`,
+  },
+  {
+    id: "training-agent-playground-legacy",
+    label: "训练与评估/智能体调试场旧入口",
     path: `/${workspaceSlug}/training/agent-playground`,
-    expect: ["智能体调试场"],
-    uiContract: {
-      requiredText: ["执行目标池", "入队目标", "真实任务发射台", "执行对象", "执行智能体", "自动选择训练评估智能体", "真实运行时", "入队链路", "写入真实任务队列", "执行节点", "Trace", "用量", "真实执行准备度", "观测回写契约", "真实运行"],
-      forbiddenText: ["本地模板目录", "不启动智能体", "保存质检记录", "质检结论"],
-      requiredTestIds: [
-        "agent-playground-page-shell",
-        "agent-playground-workbench",
-        "agent-playground-target-queue",
-        "agent-playground-target-queue-item",
-        "agent-playground-execution-stage",
-        "agent-playground-run-console",
-        "agent-playground-launch-brief",
-        "agent-playground-execution-topology",
-        "agent-playground-execution-bus",
-        "agent-playground-agent-selector",
-        "agent-playground-runtime-selector",
-        "agent-playground-queue-contract",
-        "agent-playground-readiness-lane",
-        "agent-playground-evidence-strip",
-        "agent-playground-task-payload",
-        "agent-playground-task-pipeline",
-        "agent-playground-observability-contract",
-      ],
-      forbiddenTestIds: [
-        "training-tab-strip",
-        "training-summary-strip",
-        "prompt-playground-page-shell",
-        "prompt-playground-workbench",
-        "prompt-playground-purpose-map",
-        "prompt-playground-template-lab",
-        "prompt-playground-local-pipeline",
-        "prompt-playground-quality-gate",
-      ],
-    },
+    expect: ["调试运行"],
+    finalPathIncludes: `/${workspaceSlug}/training/debug-runs`,
   },
   {
     id: "training-datasets",
@@ -190,40 +154,47 @@ const routes = [
     },
   },
   {
-    id: "training-experiments",
-    label: "训练与评估/实验",
+    id: "training-experiments-legacy",
+    label: "训练与评估/实验旧入口",
     path: `/${workspaceSlug}/training/experiments`,
-    expect: ["实验"],
+    expect: ["测试套件"],
+    finalPathIncludes: `/${workspaceSlug}/training/test-suites`,
+  },
+  {
+    id: "training-test-suites-optimize",
+    label: "训练与评估/优化运行模式",
+    path: `/${workspaceSlug}/training/test-suites?mode=optimize`,
+    expect: ["测试套件"],
     uiContract: {
-      requiredText: ["实验工作台", "变量矩阵、版本绑定、横向排行", "实验维度事实", "质量和成本横向比较"],
-      forbiddenText: ["数据集工作台", "测试套件工作台", "优化运行工作台", "页面验收实验"],
-      requiredTestIds: ["training-route-experiments", "training-route-operating-model-experiments", "training-route-operating-step-experiments-1", "training-route-operating-step-experiments-2", "training-route-operating-step-experiments-3"],
-      forbiddenTestIds: ["training-tab-strip", "training-route-operating-model-datasets", "training-route-operating-model-test-suites", "training-route-operating-model-optimization-runs"],
+      requiredText: ["测试套件工作台", "固定试卷、断言回归、失败定位"],
+      requiredTestIds: ["training-route-intro-test-suites", "training-route-operating-model-test-suites", "training-route-operating-step-test-suites-1", "training-route-operating-step-test-suites-2", "training-route-operating-step-test-suites-3"],
+      forbiddenTestIds: ["training-tab-strip", "training-route-operating-model-datasets"],
     },
   },
   {
-    id: "training-optimization-runs",
-    label: "训练与评估/优化运行",
+    id: "training-optimization-runs-legacy",
+    label: "训练与评估/优化运行旧入口",
     path: `/${workspaceSlug}/training/optimization-runs`,
-    expect: ["优化运行"],
+    expect: ["测试套件"],
+    finalPathIncludes: `/${workspaceSlug}/training/test-suites?mode=optimize`,
+  },
+  {
+    id: "training-evaluation-runs",
+    label: "训练与评估/评测记录",
+    path: `/${workspaceSlug}/training/evaluation-runs`,
+    expect: ["评测记录"],
     uiContract: {
-      requiredText: ["优化运行工作台", "失败样本、候选生成、人工发布", "待确认优化候选", "人工把关新版本"],
-      forbiddenText: ["数据集工作台", "测试套件工作台", "实验工作台", "页面验收优化运行"],
-      requiredTestIds: ["training-route-optimization-runs", "training-route-operating-model-optimization-runs", "training-route-operating-step-optimization-runs-1", "training-route-operating-step-optimization-runs-2", "training-route-operating-step-optimization-runs-3"],
-      forbiddenTestIds: ["training-tab-strip", "training-route-operating-model-datasets", "training-route-operating-model-test-suites", "training-route-operating-model-experiments"],
+      requiredText: ["评测记录工作台", "运行检索、证据展开、人工复核", "按运行状态定位", "任务和 Trace 展开"],
+      requiredTestIds: ["training-route-intro-evaluation-runs", "training-route-operating-model-evaluation-runs", "training-route-operating-step-evaluation-runs-1", "training-route-operating-step-evaluation-runs-2", "training-route-operating-step-evaluation-runs-3"],
+      forbiddenTestIds: ["training-tab-strip", "training-route-operating-model-datasets", "training-route-operating-model-test-suites"],
     },
   },
   {
-    id: "training-run-history",
-    label: "训练与评估/运行历史",
+    id: "training-run-history-legacy",
+    label: "训练与评估/运行历史旧入口",
     path: `/${workspaceSlug}/training/run-history`,
-    expect: ["运行历史"],
-    uiContract: {
-      requiredText: ["运行历史工作台", "运行检索、证据展开、人工复核", "按运行状态定位", "任务和 Trace 展开"],
-      forbiddenText: ["数据集工作台", "测试套件工作台", "实验工作台", "优化运行工作台"],
-      requiredTestIds: ["training-route-run-history", "training-route-operating-model-run-history", "training-route-operating-step-run-history-1", "training-route-operating-step-run-history-2", "training-route-operating-step-run-history-3"],
-      forbiddenTestIds: ["training-tab-strip", "training-route-operating-model-datasets", "training-route-operating-model-test-suites", "training-route-operating-model-experiments", "training-route-operating-model-optimization-runs"],
-    },
+    expect: ["评测记录"],
+    finalPathIncludes: `/${workspaceSlug}/training/evaluation-runs`,
   },
 ];
 
@@ -371,6 +342,9 @@ async function auditRoute(page, route) {
         localStorage.setItem("multica:chat:isOpen", "false");
       }, token);
     }
+    if (route.finalPathIncludes) {
+      await page.waitForURL((url) => url.href.includes(route.finalPathIncludes), { timeout: 8_000 }).catch(() => {});
+    }
     await waitForRouteText(page, route.expect);
     bodyText = await page.locator("body").innerText({ timeout: 5_000 }).catch(() => "");
     title = await page.title().catch(() => "");
@@ -398,6 +372,10 @@ async function auditRoute(page, route) {
     .map((item) => ({ status: item.status, ms: item.ms, path: requestPath(item.url) }))
     .slice(0, 20);
   const missingExpectedText = route.expect.filter((text) => !bodyText.includes(text));
+  const finalURL = page.url();
+  const finalPathFailures = route.finalPathIncludes && !finalURL.includes(route.finalPathIncludes)
+    ? [`最终路径不符合预期：期望包含 ${route.finalPathIncludes}，实际 ${finalURL}`]
+    : [];
   const forbiddenMatches = forbiddenText.filter((text) => bodyText.includes(text));
   const uiContract = await auditRouteUiContract(page, route, bodyText);
   const loadingResidue = ["Rendering", "Compiling", "Loading", "加载中", "渲染中"].filter((text) => bodyText.includes(text));
@@ -406,6 +384,7 @@ async function auditRoute(page, route) {
     ...(elapsedMs > maxRouteMs ? [`页面耗时 ${elapsedMs}ms 超过 ${maxRouteMs}ms`] : []),
     ...(bodyText.trim().length === 0 ? ["页面 body 为空"] : []),
     ...missingExpectedText.map((text) => `缺少期望文本：${text}`),
+    ...finalPathFailures,
     ...badStatuses.map((item) => `请求状态异常：${item.status} ${item.path}`),
     ...failedRequests.map((item) => `请求失败：${requestPath(item.url)} ${item.failure}`),
     ...(apiRequests.length > maxApiRequests ? [`API 请求数 ${apiRequests.length} 超过 ${maxApiRequests}`] : []),
@@ -419,7 +398,7 @@ async function auditRoute(page, route) {
     id: route.id,
     label: route.label,
     url: `${browserURL}${route.path}`,
-    final_url: page.url(),
+    final_url: finalURL,
     title,
     elapsed_ms: elapsedMs,
     ok: failures.length === 0,
@@ -619,12 +598,12 @@ function readEnvFile(file) {
 }
 
 async function waitForRouteText(page, expectedTexts) {
+  if (!expectedTexts || expectedTexts.length === 0) return;
   await page
     .waitForFunction(
       (expected) => {
         const text = document.body?.innerText || "";
-        if (expected.some((item) => text.includes(item))) return true;
-        return text.trim().length > 50;
+        return expected.every((item) => text.includes(item));
       },
       expectedTexts,
       { timeout: 8_000 },

@@ -388,6 +388,17 @@ func TestCompleteTask_WorkerStageCompletionEnqueuesSquadLeader(t *testing.T) {
 	if got := countQueuedLeaders(); got != 1 {
 		t.Fatalf("queued leader tasks after leader completion = %d, want still 1", got)
 	}
+
+	if _, err := testPool.Exec(ctx, `UPDATE issue SET status = 'done' WHERE id = $1`, issueID); err != nil {
+		t.Fatalf("mark issue done: %v", err)
+	}
+	lateWorkerTaskID := insertRunningTask(workerID, workerRuntimeID, false)
+	if _, err := testHandler.TaskService.CompleteTask(ctx, util.MustParseUUID(lateWorkerTaskID), []byte(`{}`), "", ""); err != nil {
+		t.Fatalf("complete late worker task after issue done: %v", err)
+	}
+	if got := countQueuedLeaders(); got != 1 {
+		t.Fatalf("queued leader tasks after issue done and late worker completion = %d, want still 1", got)
+	}
 }
 
 func TestCompleteTask_FinalSOPStepAutoClosesIssueWithoutPullRequest(t *testing.T) {
