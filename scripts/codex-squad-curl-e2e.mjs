@@ -289,30 +289,24 @@ function ensureCanonicalCrossProjectSetup(token, ownerUser, pmSetup) {
     fail(`跨项目验收必须复用唯一 pm 小队，当前模板返回小队=${pmSetup?.squad?.name || "null"}`);
   }
   if (!pmSetup?.leader?.id) fail("跨项目验收缺少 pm Agent，不能继续");
+  const branch = "v5.0.0_dev_sop";
   const usercenter = ensureCanonicalProject(token, {
     title: "usercenter",
     description: "canonical usercenter 项目：真实任务父项目。",
     ownerUser,
-    resources: [
-      {
-        resource_type: "gongfeng_repo",
-        label: "user-center v5.0.0_dev",
-        resource_ref: {
-          url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
-          ref: "v5.0.0_dev",
-        },
-      },
-    ],
+    resources: [gongfengResource("user-center", "ChainWeaver/ida/user-center", branch)],
   });
   const gateway = ensureCanonicalProject(token, {
     title: "gateway",
     description: "canonical gateway 项目：接收 usercenter 跨项目子任务。",
     ownerUser,
+    resources: [gongfengResource("gateway", "ChainWeaver/ida/gateway", branch)],
   });
   const deployment = ensureCanonicalProject(token, {
     title: "ida-deployment",
     description: "canonical ida-deployment 项目：接收部署配置类跨项目子任务。",
     ownerUser,
+    resources: [gongfengResource("ida-deployment", "ChainWeaver/ida/ida-deployment", branch)],
   });
   const sourceProject = { ...pickProject(usercenter), resources: Array.isArray(usercenter.resources) ? usercenter.resources : [] };
   const targetProjects = [
@@ -326,6 +320,20 @@ function ensureCanonicalCrossProjectSetup(token, ownerUser, pmSetup) {
     usercenter: { ...pickProject(usercenter), resources: Array.isArray(usercenter.resources) ? usercenter.resources : [] },
     gateway: { ...pickProject(gateway), owner: pickUser(ownerUser), squad: pickSquad(pmSetup.squad), leader: pickAgent(pmSetup.leader) },
     deployment: { ...pickProject(deployment), owner: pickUser(ownerUser), squad: pickSquad(pmSetup.squad), leader: pickAgent(pmSetup.leader) },
+  };
+}
+
+function gongfengResource(label, projectPath, ref) {
+  return {
+    resource_type: "gongfeng_repo",
+    label: `${label} ${ref}`,
+    resource_ref: {
+      provider: "gongfeng",
+      project_path: projectPath,
+      resource_kind: "commits",
+      url: `https://git.code.tencent.com/${projectPath}/commits/${ref}`,
+      ref,
+    },
   };
 }
 
@@ -344,7 +352,22 @@ function ensureCanonicalProject(token, { title, description, ownerUser, resource
   if (resources.length > 0) body.resources = resources;
   const project = existing?.id ? put(`/api/projects/${existing.id}`, body, token) : post("/api/projects", body, token);
   if (!project?.id) fail(`确保 canonical 项目 ${title} 失败：${JSON.stringify(project)}`);
+  if (resources.length > 0) ensureProjectResources(token, project.id, resources);
   return project;
+}
+
+function ensureProjectResources(token, projectID, resources) {
+  const current = get(`/api/projects/${projectID}/resources`, token);
+  const existing = Array.isArray(current?.resources) ? current.resources : [];
+  for (const resource of resources) {
+    const expectedPath = String(resource.resource_ref?.project_path || "").trim();
+    const alreadyAttached = existing.some((item) => (
+      item.resource_type === resource.resource_type &&
+      String(item.resource_ref?.project_path || "").trim() === expectedPath
+    ));
+    if (alreadyAttached) continue;
+    post(`/api/projects/${projectID}/resources`, resource, token);
+  }
 }
 
 function ensureExternalCredentialProfiles(token) {
