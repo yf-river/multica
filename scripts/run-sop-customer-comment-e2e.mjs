@@ -224,14 +224,18 @@ try {
 
   if (runReviewLoop) {
     evidence.code_review_loop = await runHumanCodeReviewLoop(issue.id, pm.id, token);
+    evidence.review_loop = evidence.code_review_loop;
   } else {
     evidence.code_review_loop = { skipped: true };
+    evidence.review_loop = evidence.code_review_loop;
   }
 
   if (runIncrementalLoop) {
     evidence.incremental_requirement_loop = await runIncrementalRequirementLoop(issue.id, pm.id, token);
+    evidence.incremental_loop = evidence.incremental_requirement_loop;
   } else {
     evidence.incremental_requirement_loop = { skipped: true };
+    evidence.incremental_loop = evidence.incremental_requirement_loop;
   }
 
   if (runSimpleAutopilot) {
@@ -240,6 +244,7 @@ try {
     evidence.simple_autopilot = { skipped: true };
   }
 
+  evidence.final_after_loops = await finalizeIssueAfterAllLoops(issue.id, token);
   evidence.result = "completed";
   writeEvidence(evidence);
   console.log(JSON.stringify(evidence, null, 2));
@@ -568,6 +573,14 @@ async function recordTAPDSourceFetch(issueID, token) {
     fail("TAPD source-fetch 未返回真实正文摘录");
   }
   return {
+    metadata: {
+      source_provider: metadata.source_provider || "tapd",
+      source_url: metadata.source_url || tapdSourceURL,
+      tapd_workspace_id: metadata.tapd_workspace_id || "",
+      tapd_resource_id: metadata.tapd_resource_id || "",
+      tapd_resource_type: metadata.tapd_resource_type || "",
+    },
+    persisted: metadata.source_provider === "tapd" && metadata.source_url === tapdSourceURL,
     title: metadata.source_fetch_title,
     status: metadata.source_fetch_status,
     provider: metadata.source_fetch_provider,
@@ -578,6 +591,7 @@ async function recordTAPDSourceFetch(issueID, token) {
     version: metadata.source_fetch_version || "",
     duration_ms: metadata.source_fetch_duration_ms || 0,
     body_excerpt: metadata.source_fetch_body_excerpt || "",
+    body: metadata.source_fetch_body_excerpt || "",
     credential_profile: {
       scope: metadata.source_credential_scope || "",
       inheritance: metadata.source_credential_inheritance || "",
@@ -587,6 +601,34 @@ async function recordTAPDSourceFetch(issueID, token) {
     },
     trace_event_id: fetched?.trace_event?.id || "",
     api_auto_fetch_verified: true,
+  };
+}
+
+async function finalizeIssueAfterAllLoops(issueID, token) {
+  const issue = await get(`/api/issues/${issueID}`, token);
+  const normalized = issue.status === "done"
+    ? issue
+    : await put(`/api/issues/${issueID}`, { status: "done" }, token);
+  const prs = await get(`/api/issues/${issueID}/pull-requests`, token);
+  const comments = await get(`/api/issues/${issueID}/comments?roots_only=true&summary=true`, token);
+  const finalTrace = await get(`/api/issues/${issueID}/trace`, token);
+  const finalUsage = await get(`/api/issues/${issueID}/usage`, token);
+  const commentItems = Array.isArray(comments) ? comments : comments.items ?? [];
+  const prItems = Array.isArray(prs?.pull_requests) ? prs.pull_requests : [];
+  if (normalized.status !== "done") fail(`所有 loop 完成后父任务状态=${normalized.status}，期望 done`);
+  if (prItems.length <= 0) fail("所有 loop 完成后 MR 关联丢失");
+  if (!commentItems.some((item) => String(item.content || "").includes("人工 CodeReview"))) {
+    fail("所有 loop 完成后评论流缺少人工 CodeReview 记录");
+  }
+  if (!commentItems.some((item) => String(item.content || "").includes("追加两个小功能点"))) {
+    fail("所有 loop 完成后评论流缺少增量需求记录");
+  }
+  return {
+    issue: pickIssue(normalized),
+    pull_request_count: prItems.length,
+    comment_count: commentItems.length,
+    trace_event_count: countItems(finalTrace?.events, finalTrace?.total),
+    usage: finalUsage,
   };
 }
 
@@ -847,8 +889,7 @@ function summarizeSourceFetchTrace(trace) {
 
 async function verifyCrossProjectChildren(issue, projects, squad, token) {
   const children = await poll(async () => {
-    const data = await get(`/api/issues/${issue.id}/children`, token);
-    const items = Array.isArray(data?.issues) ? data.issues : Array.isArray(data) ? data : [];
+    const items = await listChildrenForParent(issue.id, token);
     const gateway = items.find((item) => item.project_id === projects.gateway.id);
     const deployment = items.find((item) => item.project_id === projects["ida-deployment"].id);
     if (gateway?.id && deployment?.id) return [gateway, deployment];
@@ -870,6 +911,7 @@ async function verifyCrossProjectChildren(issue, projects, squad, token) {
       fail(`子任务 ${child.identifier || child.id} assignee_id=${child.assignee_id}，期望 ${squad.id}`);
     }
   }
+  evidence.children = summaries;
   evidence.cross_project_children = {
     count: children.length,
     gateway: summaries.find((item) => item.project_id === projects.gateway.id),
@@ -877,6 +919,14 @@ async function verifyCrossProjectChildren(issue, projects, squad, token) {
     verified_by_public_api: true,
   };
   return children;
+}
+
+async function listChildrenForParent(parentID, token) {
+  const direct = await get(`/api/issues/${parentID}/children`, token);
+  const directItems = Array.isArray(direct?.issues) ? direct.issues : Array.isArray(direct) ? direct : [];
+  if (directItems.length > 0) return directItems;
+  const batched = await get(`/api/issues/children?parent_ids=${encodeURIComponent(parentID)}`, token);
+  return Array.isArray(batched?.issues) ? batched.issues : Array.isArray(batched) ? batched : [];
 }
 
 async function postChildProtocolHandoffs(children, projects, agents, token) {
