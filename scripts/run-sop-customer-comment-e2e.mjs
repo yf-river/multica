@@ -499,7 +499,7 @@ async function runHumanCodeReviewLoop(issueID, pmID, token) {
 async function runIncrementalRequirementLoop(issueID, pmID, token) {
   const before = new Set((await listIssueTasks(issueID, token)).map((item) => item.id));
   await put(`/api/issues/${issueID}`, { status: "in_progress" }, token);
-  await postCustomerComment(issueID, token, [
+  const comment = await postCustomerComment(issueID, token, [
     "客户追加需求：原个人快捷入口已经验收完成，现在同一个 issue 追加两个小功能点。",
     "",
     "1. 快捷入口需要支持排序字段 sort_order。",
@@ -507,15 +507,20 @@ async function runIncrementalRequirementLoop(issueID, pmID, token) {
     "",
     "请按需求复杂度判断应该从 01 澄清重新开始，还是可以直接回到 04 开发。先给出判断和下一步，不要覆盖上一轮已完成结论。",
   ].join("\n"));
-  const task = await waitNextTerminalTask(issueID, pmID, before, token, "等待增量需求评论触发同 issue 新轮次任务");
+  const commentID = comment.id || comment.comment_id;
+  const commentCreatedAt = comment.created_at || new Date().toISOString();
+  const task = await waitNextTerminalTask(issueID, pmID, before, token, "等待增量需求评论触发同 issue 新轮次任务", {
+    createdAfter: commentCreatedAt,
+    requireNonEmptyMessage: true,
+  });
   requireCompletedTask(task, "增量需求同 issue 新轮次任务");
   const comments = await get(`/api/issues/${issueID}/comments?roots_only=true&summary=true`, token);
   const items = Array.isArray(comments) ? comments : comments.items ?? [];
   const incrementalComment = items.find((item) => String(item.content || "").includes("追加两个小功能点"));
-  if (!incrementalComment?.id) fail("增量需求评论未能从 issue 评论流回读");
+  if (!incrementalComment?.id || incrementalComment.id !== commentID) fail("增量需求评论未能从 issue 评论流回读");
   return {
     task: pickTask(task),
-    comment_id: incrementalComment.id,
+    comment_id: commentID,
     same_issue_id: issueID,
     previous_mr_preserved: true,
   };
@@ -1225,12 +1230,14 @@ async function waitIssueStatus(issueID, status, token, label) {
   }, taskTimeoutMs, label);
 }
 
-async function waitNextTerminalTask(issueID, agentID, knownIDs, token, label) {
+async function waitNextTerminalTask(issueID, agentID, knownIDs, token, label, options = {}) {
+  const createdAfterMs = options.createdAfter ? new Date(options.createdAfter).getTime() : 0;
   return poll(async () => {
     const tasks = sortTasks(await listIssueTasks(issueID, token));
     const task = tasks.find((item) =>
       !knownIDs.has(item.id) &&
-      (item.agent_id === agentID || item.assignee_id === agentID)
+      (item.agent_id === agentID || item.assignee_id === agentID) &&
+      taskCreatedAtMs(item) >= createdAfterMs
     );
     if (!task) return null;
     evidence.task_poll_snapshot = {
@@ -1240,6 +1247,14 @@ async function waitNextTerminalTask(issueID, agentID, knownIDs, token, label) {
     };
     if (isActiveTask(task)) return null;
     if (shouldWaitForRetry(task, tasks)) return null;
+    if (options.requireNonEmptyMessage) {
+      const messages = await get(`/api/tasks/${task.id}/messages`, token);
+      const hasMessage = countItems(messages?.items || messages) > 0;
+      const hasOutput = String(task.result?.output || "").trim() !== "";
+      if (!hasMessage && !hasOutput) {
+        fail(`${label} 捕获到空任务 ${task.id}，不是有效评论触发执行`);
+      }
+    }
     evidence.task_rounds.push({ label, task: pickTask(task) });
     return task;
   }, taskTimeoutMs, label);
@@ -1384,6 +1399,10 @@ function isRetryableTaskFailure(task) {
 
 function isActiveTask(task) {
   return ["queued", "dispatched", "running", "waiting_local_directory"].includes(task.status);
+}
+
+function taskCreatedAtMs(task) {
+  return new Date(task.created_at || task.dispatched_at || task.started_at || 0).getTime();
 }
 
 function sortTasks(tasks) {
