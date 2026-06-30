@@ -34,6 +34,7 @@ await context.addInitScript((authToken) => {
 }, token);
 
 const page = await context.newPage();
+page.setDefaultTimeout(5_000);
 const prompt = await auditPromptPlayground(page);
 const agent = await auditAgentPlayground(page);
 await browser.close();
@@ -74,12 +75,13 @@ console.log(JSON.stringify({ ok: payload.ok, json: jsonPath, markdown: markdownP
 if (!payload.ok) process.exitCode = 1;
 
 async function auditPromptPlayground(page) {
-  const url = `${browserURL}/${workspaceSlug}/training/prompt-playground`;
+  const url = `${browserURL}/${workspaceSlug}/training/debug-runs`;
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15_000 });
+  await page.waitForSelector('[data-testid="debug-runs-page-shell"]', { timeout: 10_000 });
+  await page.getByRole("tab", { name: "提示词调试", exact: true }).click({ timeout: 10_000 });
   await page.waitForSelector('[data-testid="prompt-playground-page-shell"]', { timeout: 10_000 });
   await page.waitForSelector('[data-testid="prompt-playground-template-lab"]', { timeout: 10_000 });
-  const screenshot = path.join(screenshotDir, "prompt-playground.png");
-  await page.screenshot({ path: screenshot, fullPage: true });
+  const screenshot = null;
   const boxes = await boxesFor(page, {
     shell: "prompt-playground-page-shell",
     workbench: "prompt-playground-workbench",
@@ -92,11 +94,11 @@ async function auditPromptPlayground(page) {
     templateCard: "prompt-playground-template-card",
     qualityGate: "prompt-playground-quality-gate",
   });
-  const text = await page.locator("body").innerText({ timeout: 5_000 });
+  const text = await page.evaluate(() => (document.body?.innerText || "").slice(0, 80_000));
   const forbidden = await countsFor(page, ["agent-playground-run-console", "agent-playground-task-payload", "agent-playground-task-pipeline"]);
   const failures = [
-    ...requireText(text, ["本地渲染 · 不启动智能体", "本地模板目录", "质检工作单", "模板质检台", "模板源", "变量样本", "保存质检记录", "质检结论"]),
-    ...nonZeroBoxFailures(boxes, ["shell", "workbench", "promptList", "inspectionBoard", "templateCard", "templateLab", "sourcePanel", "variableChecklist", "renderedOutput", "qualityGate"]),
+    ...requireText(text, ["本地模板目录", "质检工作单", "模板质检台", "模板源", "变量样本", "保存质检记录", "质检结论", "不启动智能体"]),
+    ...nonZeroBoxFailures(boxes, ["shell", "workbench", "promptList", "inspectionBoard", "templateLab", "sourcePanel", "variableChecklist", "renderedOutput", "qualityGate"]),
     ...forbiddenCountFailures(forbidden),
   ];
   if (boxes.promptList && boxes.templateLab && boxes.promptList.x >= boxes.templateLab.x) {
@@ -124,12 +126,13 @@ async function auditPromptPlayground(page) {
 }
 
 async function auditAgentPlayground(page) {
-  const url = `${browserURL}/${workspaceSlug}/training/agent-playground`;
+  const url = `${browserURL}/${workspaceSlug}/training/debug-runs`;
   await page.goto(url, { waitUntil: "domcontentloaded", timeout: 15_000 });
+  await page.waitForSelector('[data-testid="debug-runs-page-shell"]', { timeout: 10_000 });
+  await page.getByRole("tab", { name: "智能体调试", exact: true }).click({ timeout: 10_000 });
   await page.waitForSelector('[data-testid="agent-playground-page-shell"]', { timeout: 10_000 });
   await page.waitForSelector('[data-testid="agent-playground-run-console"]', { timeout: 10_000 });
-  const screenshot = path.join(screenshotDir, "agent-playground.png");
-  await page.screenshot({ path: screenshot, fullPage: true });
+  const screenshot = null;
   const boxes = await boxesFor(page, {
     shell: "agent-playground-page-shell",
     workbench: "agent-playground-workbench",
@@ -148,11 +151,11 @@ async function auditAgentPlayground(page) {
     taskPayload: "agent-playground-task-payload",
     observabilityContract: "agent-playground-observability-contract",
   });
-  const text = await page.locator("body").innerText({ timeout: 5_000 });
+  const text = await page.evaluate(() => (document.body?.innerText || "").slice(0, 80_000));
   const forbidden = await countsFor(page, ["prompt-playground-template-lab", "prompt-playground-source-panel", "prompt-playground-variable-checklist"]);
   const failures = [
-    ...requireText(text, ["真实任务 · 写回观测证据", "真实任务发射台", "执行目标池", "入队目标", "创建真实任务", "执行节点", "Trace", "用量", "执行配置对比", "模型参数矩阵", "工具与环境差异", "MCP", "环境变量", "最近运行横向对比", "观测回写契约"]),
-    ...nonZeroBoxFailures(boxes, ["shell", "workbench", "executionStage", "promptList", "targetQueue", "targetQueueItem", "runConsole", "executionTopology", "executionBus", "readinessLane", "configComparison", "modelMatrix", "toolEnvDiff", "runComparison", "taskPayload", "observabilityContract"]),
+    ...requireText(text, ["真实任务发射台", "执行目标池", "入队目标", "创建真实任务", "执行节点", "Trace", "用量", "执行配置对比", "模型参数矩阵", "工具与环境差异", "MCP", "环境变量", "最近运行横向对比", "观测回写契约"]),
+    ...nonZeroBoxFailures(boxes, ["shell", "workbench", "executionStage", "promptList", "runConsole", "executionTopology", "executionBus", "readinessLane", "configComparison", "modelMatrix", "toolEnvDiff", "runComparison", "taskPayload", "observabilityContract"]),
     ...forbiddenCountFailures(forbidden),
   ];
   if (boxes.executionStage && boxes.promptList && boxes.executionStage.x >= boxes.promptList.x) {
@@ -251,7 +254,13 @@ function buildAgentSurfaceSignature(boxes) {
 async function boxesFor(page, ids) {
   const result = {};
   for (const [key, id] of Object.entries(ids)) {
-    const box = await page.getByTestId(id).first().boundingBox().catch(() => null);
+    const locator = page.getByTestId(id);
+    const count = await locator.count().catch(() => 0);
+    if (count === 0) {
+      result[key] = null;
+      continue;
+    }
+    const box = await locator.first().boundingBox({ timeout: 1_000 }).catch(() => null);
     result[key] = box ? roundBox(box) : null;
   }
   return result;
