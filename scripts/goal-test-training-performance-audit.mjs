@@ -30,15 +30,12 @@ const stamp = generatedAt.replace(/[:.]/g, "-");
 mkdirSync(artifactRoot, { recursive: true });
 
 const routes = [
-  { id: "runs", label: "运行看板", path: `/${workspaceSlug}/training/runs`, expect: "训练运行看板" },
-  { id: "prompts", label: "提示词库", path: `/${workspaceSlug}/training/prompts`, expect: "提示词库" },
-  { id: "prompt-playground", label: "提示词调试场", path: `/${workspaceSlug}/training/prompt-playground`, expect: "提示词调试场" },
-  { id: "agent-playground", label: "智能体调试场", path: `/${workspaceSlug}/training/agent-playground`, expect: "智能体调试场" },
-  { id: "datasets", label: "数据集", path: `/${workspaceSlug}/training/datasets`, expect: "数据集" },
-  { id: "test-suites", label: "测试套件", path: `/${workspaceSlug}/training/test-suites`, expect: "测试套件" },
-  { id: "experiments", label: "实验", path: `/${workspaceSlug}/training/experiments`, expect: "实验" },
-  { id: "optimization-runs", label: "优化运行", path: `/${workspaceSlug}/training/optimization-runs`, expect: "优化运行" },
-  { id: "run-history", label: "运行历史", path: `/${workspaceSlug}/training/run-history`, expect: "运行历史" },
+  { id: "prompts", label: "提示词库", path: `/${workspaceSlug}/training/prompts`, expect: "提示词库", nav: true },
+  { id: "debug-runs", label: "调试运行", path: `/${workspaceSlug}/training/debug-runs`, expect: "调试运行", nav: true },
+  { id: "datasets", label: "数据集", path: `/${workspaceSlug}/training/datasets`, expect: "数据集", nav: true },
+  { id: "test-suites", label: "测试套件", path: `/${workspaceSlug}/training/test-suites`, expect: "测试套件", nav: true },
+  { id: "test-suites-optimize", label: "优化运行模式", path: `/${workspaceSlug}/training/test-suites?mode=optimize`, expect: "测试套件", nav: false },
+  { id: "evaluation-runs", label: "评测记录", path: `/${workspaceSlug}/training/evaluation-runs`, expect: "评测记录", nav: false },
 ];
 
 const token = await login();
@@ -152,14 +149,6 @@ async function auditTrainingRoute(page, route) {
     readyMs = Date.now() - startedAt;
     await page.waitForLoadState("networkidle", { timeout: 8_000 }).catch(() => {});
     bodyText = await page.locator("body").innerText({ timeout: 5_000 }).catch(() => "");
-    if (route.id === "runs") {
-      const requiredStages = ["pm", "01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"];
-      stageVisibility = {
-        panel_visible: bodyText.includes("SOP 阶段指标"),
-        required_stages: requiredStages,
-        visible_stages: requiredStages.filter((stage) => bodyText.includes(stage)),
-      };
-    }
   } catch (error) {
     navigationError = error instanceof Error ? error.message : String(error);
   } finally {
@@ -190,14 +179,6 @@ async function auditTrainingRoute(page, route) {
     candidates: hasPath(trainingApiRequests, "optimization-candidates"),
   };
   const boundaryFailures = expectedBoundaryFailures(route.id, requestBoundaries);
-  const stageVisibilityFailures = route.id === "runs" && stageVisibility
-    ? [
-        ...(stageVisibility.panel_visible ? [] : ["训练运行看板缺少 SOP 阶段指标面板"]),
-        ...(stageVisibility.visible_stages.length === stageVisibility.required_stages.length
-          ? []
-          : [`训练运行看板缺少阶段 key：${stageVisibility.required_stages.filter((stage) => !stageVisibility.visible_stages.includes(stage)).join(", ")}`]),
-      ]
-    : [];
   const failures = [
     ...(navigationError ? [`导航失败：${navigationError.split("\n")[0]}`] : []),
     ...(readyMs > maxRouteMs ? [`页面可用耗时 ${readyMs}ms 超过 ${maxRouteMs}ms`] : []),
@@ -208,7 +189,6 @@ async function auditTrainingRoute(page, route) {
     ...consoleErrors.map((item) => `console error：${item}`),
     ...pageErrors.map((item) => `pageerror：${item}`),
     ...boundaryFailures,
-    ...stageVisibilityFailures,
   ];
 
   return {
@@ -251,10 +231,11 @@ async function auditTrainingRouteClicks(page) {
   const clicks = [];
   let setupError = "";
   try {
-    await page.goto(`${browserURL}/${workspaceSlug}/training/runs`, { waitUntil: "domcontentloaded", timeout: 15_000 });
+    const visibleRoutes = routes.filter((route) => route.nav !== false);
+    await page.goto(`${browserURL}${visibleRoutes[0].path}`, { waitUntil: "domcontentloaded", timeout: 15_000 });
     await page.waitForFunction(
       (expected) => document.body?.innerText.includes(expected),
-      routes[0].expect,
+      visibleRoutes[0].expect,
       { timeout: 10_000 },
     );
     await page.waitForLoadState("networkidle", { timeout: 8_000 }).catch(() => {});
@@ -263,7 +244,7 @@ async function auditTrainingRouteClicks(page) {
   }
 
   if (!setupError) {
-    for (const route of routes) {
+    for (const route of routes.filter((item) => item.nav !== false)) {
       const startedAt = Date.now();
       let errorText = "";
       try {
@@ -318,13 +299,13 @@ async function auditTrainingRouteClicks(page) {
 function expectedBoundaryFailures(routeId, boundaries) {
   const failures = [];
   const contracts = {
-    runs: {
-      required: ["prompt_evaluation_summary", "runtime_readiness", "runs", "candidates"],
-      forbidden: ["cases", "assets"],
-    },
     prompts: {
       required: [],
       forbidden: ["runtime_readiness", "cases", "assets", "runs", "candidates"],
+    },
+    "debug-runs": {
+      required: ["assets", "runs"],
+      forbidden: ["prompt_evaluation_summary", "runtime_readiness", "cases", "candidates"],
     },
     datasets: {
       required: ["cases", "assets"],
@@ -334,17 +315,13 @@ function expectedBoundaryFailures(routeId, boundaries) {
       required: ["cases", "assets"],
       forbidden: ["runtime_readiness", "runs", "candidates"],
     },
-    experiments: {
-      required: ["cases", "assets", "runs"],
-      forbidden: ["runtime_readiness", "candidates"],
+    "test-suites-optimize": {
+      required: ["cases", "assets"],
+      forbidden: ["runtime_readiness"],
     },
-    "optimization-runs": {
-      required: ["assets", "runs", "candidates"],
-      forbidden: ["runtime_readiness", "cases"],
-    },
-    "run-history": {
-      required: ["cases", "runs", "candidates"],
-      forbidden: ["runtime_readiness", "assets"],
+    "evaluation-runs": {
+      required: ["runs"],
+      forbidden: ["runtime_readiness"],
     },
   };
   const contract = contracts[routeId];
@@ -355,18 +332,6 @@ function expectedBoundaryFailures(routeId, boundaries) {
     for (const key of contract.forbidden) {
       if (boundaries[key]) failures.push(`${routeId} 不应请求 ${formatBoundaryName(key)}`);
     }
-  }
-  if (routeId === "prompt-playground") {
-    if (boundaries.prompt_evaluation_summary) failures.push("提示词调试场不应请求 summary");
-    if (boundaries.runtime_readiness) failures.push("提示词调试场不应请求 runtime readiness");
-    if (boundaries.cases) failures.push("提示词调试场不应请求 structured cases");
-    if (!boundaries.assets) failures.push("提示词调试场缺少 assets 请求");
-    if (!boundaries.runs) failures.push("提示词调试场缺少 runs 请求");
-  }
-  if (routeId === "agent-playground") {
-    if (boundaries.prompt_evaluation_summary) failures.push("智能体调试场不应请求 summary");
-    if (!boundaries.runtime_readiness) failures.push("智能体调试场缺少 runtime readiness 请求");
-    if (!boundaries.cases) failures.push("智能体调试场缺少 structured cases 请求");
   }
   return failures;
 }
