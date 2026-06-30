@@ -25,15 +25,15 @@ function escapeRegExp(value: string) {
 }
 
 async function expectTrainingPageShell(page, item: (typeof TRAINING_ROUTES)[number]) {
-  const isPromptPlayground = item.path === "prompt-playground";
-  const isAgentPlayground = item.path === "agent-playground";
+  const isDebugRuns = item.path === "debug-runs";
   const routeIntroTitle = ROUTE_INTRO_TITLES[item.path];
   const hasRouteIntro = Boolean(routeIntroTitle);
-  await expect(page.getByTestId("prompt-playground-page-shell")).toHaveCount(isPromptPlayground ? 1 : 0);
-  await expect(page.getByTestId("agent-playground-page-shell")).toHaveCount(isAgentPlayground ? 1 : 0);
-  await expect(page.getByTestId("training-page-shell")).toHaveCount(isPromptPlayground || isAgentPlayground ? 0 : 1);
+  await expect(page.getByTestId("debug-runs-page-shell")).toHaveCount(isDebugRuns ? 1 : 0);
+  await expect(page.getByTestId("prompt-playground-page-shell")).toHaveCount(isDebugRuns ? 1 : 0);
+  await expect(page.getByTestId("agent-playground-page-shell")).toHaveCount(0);
+  await expect(page.getByTestId("training-page-shell")).toHaveCount(isDebugRuns ? 0 : 1);
   await expect(page.getByTestId("training-tab-strip")).toHaveCount(0);
-  if (!isPromptPlayground && !isAgentPlayground) {
+  if (!isDebugRuns) {
     await expect(page.getByTestId(`training-route-${item.path}`)).toHaveCount(1);
   }
   await expect(page.getByTestId(`training-route-intro-${item.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
@@ -70,28 +70,26 @@ function collectPromptEvaluationRequests(page: Page) {
 }
 
 function expectsTrainingSummaryStrip(item: (typeof TRAINING_ROUTES)[number]) {
-  return item.path === "runs";
+  return false;
 }
 
 function currentWorkspaceSlug(page: Page) {
   return new URL(page.url()).pathname.split("/").filter(Boolean)[0] ?? "";
 }
 
-test("training playground route modules stay dedicated", async () => {
+test("training legacy routes redirect to current modules", async () => {
   const repoRoot = process.cwd();
   const webPromptRoute = readFileSync(join(repoRoot, "apps/web/app/[workspaceSlug]/(dashboard)/training/prompt-playground/page.tsx"), "utf8");
   const webAgentRoute = readFileSync(join(repoRoot, "apps/web/app/[workspaceSlug]/(dashboard)/training/agent-playground/page.tsx"), "utf8");
   const webDynamicRoute = readFileSync(join(repoRoot, "apps/web/app/[workspaceSlug]/(dashboard)/training/[trainingView]/page.tsx"), "utf8");
   const desktopRoutes = readFileSync(join(repoRoot, "apps/desktop/src/renderer/src/routes.tsx"), "utf8");
 
-  expect(webPromptRoute).toContain("PromptPlaygroundPage");
-  expect(webPromptRoute).not.toContain("PromptLibraryPage");
-  expect(webAgentRoute).toContain("AgentPlaygroundPage");
-  expect(webAgentRoute).not.toContain("PromptLibraryPage");
-  expect(webDynamicRoute).toContain('if (view === "prompt-playground") return <PromptPlaygroundPage />;');
-  expect(webDynamicRoute).toContain('if (view === "agent-playground") return <AgentPlaygroundPage />;');
-  expect(desktopRoutes).toContain('path: "prompt-playground", element: <PromptPlaygroundPage />');
-  expect(desktopRoutes).toContain('path: "agent-playground", element: <AgentPlaygroundPage />');
+  expect(webPromptRoute).toContain("/training/debug-runs");
+  expect(webAgentRoute).toContain("/training/debug-runs");
+  expect(webDynamicRoute).toContain('const DEBUG_RUN_ROUTES = new Set(["prompt-playground", "agent-playground"])');
+  expect(webDynamicRoute).toContain('redirect(`${baseTrainingPath}/debug-runs${searchSuffix(resolvedSearchParams)}`)');
+  expect(desktopRoutes).toContain('{ path: "prompt-playground", element: <TrainingLegacyRedirect to="../debug-runs" />');
+  expect(desktopRoutes).toContain('{ path: "agent-playground", element: <TrainingLegacyRedirect to="../debug-runs" />');
 });
 
 test.describe("Navigation", () => {
@@ -180,9 +178,10 @@ test.describe("Navigation", () => {
 
     const promptRequests = collectPromptEvaluationRequests(page);
     await page.goto(trainingRoutePath(workspaceSlug, "prompt-playground"), { waitUntil: "domcontentloaded" });
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/debug-runs$`), { timeout: ROUTE_CHANGE_TIMEOUT });
+    await expect(page.getByTestId("debug-runs-page-shell")).toBeVisible({ timeout: 30000 });
     await expect(page.getByTestId("prompt-playground-page-shell")).toBeVisible({ timeout: 30000 });
     await expect(page.getByTestId("training-summary-strip")).toHaveCount(0);
-    await expect(page.getByTestId("playground-page-contract")).toContainText("本地渲染 · 不启动智能体");
     await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("本地模板目录");
     await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("质检工作单");
     await expect(page.getByTestId("prompt-playground-inspection-board")).toBeVisible();
@@ -206,9 +205,10 @@ test.describe("Navigation", () => {
 
     const agentRequests = collectPromptEvaluationRequests(page);
     await page.goto(trainingRoutePath(workspaceSlug, "agent-playground"), { waitUntil: "domcontentloaded" });
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/debug-runs$`), { timeout: ROUTE_CHANGE_TIMEOUT });
+    await page.getByRole("tab", { name: "智能体调试" }).click();
     await expect(page.getByTestId("agent-playground-page-shell")).toBeVisible({ timeout: 30000 });
     await expect(page.getByTestId("training-summary-strip")).toHaveCount(0);
-    await expect(page.getByTestId("playground-page-contract")).toContainText("真实任务 · 写回观测证据");
     await expect(page.getByTestId("agent-playground-execution-stage")).toBeVisible();
     await expect(page.getByTestId("agent-playground-selector-summary")).toContainText("执行目标池");
     await expect(page.getByTestId("agent-playground-execution-boundary")).toContainText("任务变量、期望输出、运行时准备度");
@@ -264,7 +264,7 @@ test.describe("Navigation", () => {
     });
 
     try {
-      await page.goto(trainingRoutePath(workspaceSlug, "prompt-playground"), { waitUntil: "domcontentloaded" });
+      await page.goto(trainingRoutePath(workspaceSlug, "debug-runs"), { waitUntil: "domcontentloaded" });
       await expect(page.getByTestId("prompt-playground-page-shell")).toBeVisible({ timeout: 30000 });
       await page.getByTestId("prompt-playground-prompt-list").getByRole("button", { name: new RegExp(escapeRegExp(promptPlaygroundName)) }).click();
       await expect(page.getByTestId("prompt-playground-rendered-output")).toContainText("提示词调试专用");
@@ -278,7 +278,7 @@ test.describe("Navigation", () => {
         )
         .toBe(true);
 
-      await page.goto(trainingRoutePath(workspaceSlug, "agent-playground"), { waitUntil: "domcontentloaded" });
+      await page.getByRole("tab", { name: "智能体调试" }).click();
       await expect(page.getByTestId("agent-playground-page-shell")).toBeVisible({ timeout: 30000 });
       await page.getByTestId("agent-playground-prompt-list").getByRole("button", { name: new RegExp(escapeRegExp(agentPlaygroundName)) }).click();
       await expect(page.getByTestId("agent-playground-task-payload")).toContainText(agentPlaygroundName);
@@ -304,7 +304,7 @@ test.describe("Navigation", () => {
       expect(Object.entries(selectedPromptState).some(([key, value]) => key.startsWith("multica:training:agent-playground:selected-prompt:") && value === agentPlaygroundPrompt.id)).toBe(true);
       expect(Object.keys(selectedPromptState).some((key) => /^multica:training:selected-prompt:/.test(key))).toBe(false);
 
-      await page.goto(trainingRoutePath(workspaceSlug, "prompt-playground"), { waitUntil: "domcontentloaded" });
+      await page.getByRole("tab", { name: "提示词调试" }).click();
       await expect(page.getByTestId("prompt-playground-rendered-output")).toContainText("提示词调试专用", { timeout: 10000 });
       await expect(page.getByTestId("prompt-playground-rendered-output")).not.toContainText("智能体调试专用");
     } finally {
