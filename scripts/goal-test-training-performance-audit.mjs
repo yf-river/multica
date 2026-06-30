@@ -22,7 +22,10 @@ const password = process.env.GOAL_TEST_PASSWORD || "e2e-password";
 const maxRouteMs = Number(process.env.GOAL_TEST_TRAINING_AUDIT_MAX_ROUTE_MS || "3500");
 const maxClickMs = Number(process.env.GOAL_TEST_TRAINING_AUDIT_MAX_CLICK_MS || "3500");
 const maxApiMs = Number(process.env.GOAL_TEST_TRAINING_AUDIT_MAX_API_MS || "1200");
-const maxApiRequests = Number(process.env.GOAL_TEST_TRAINING_AUDIT_MAX_API_REQUESTS || "18");
+// Optimization mode also loads project resource context for skill candidates.
+// Keep the budget tight, but allow a small number of workspace/project resource
+// calls so the audit is not coupled to having exactly three demo projects.
+const maxApiRequests = Number(process.env.GOAL_TEST_TRAINING_AUDIT_MAX_API_REQUESTS || "20");
 const artifactRoot = path.resolve(process.env.GOAL_TEST_TRAINING_AUDIT_DIR || path.join(repoRoot, "artifacts/acceptance"));
 const generatedAt = new Date().toISOString();
 const stamp = generatedAt.replace(/[:.]/g, "-");
