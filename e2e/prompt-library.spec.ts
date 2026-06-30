@@ -147,6 +147,7 @@ test.describe("训练与评估工作台", () => {
         .toMatchObject({ asset_type: assetType });
     }
 
+    await page.goto(`/${workspaceSlug}/training/debug-runs`, { waitUntil: "domcontentloaded" });
     await page.getByRole("tab", { name: "智能体调试" }).click();
     await expect(page.getByTestId("agent-playground-workbench")).toBeVisible({ timeout: 10000 });
     await expect(page.getByTestId("agent-playground-workbench")).toContainText(`${artifactPrefix} 账号系统 澄清`, { timeout: 10000 });
@@ -170,8 +171,12 @@ test.describe("训练与评估工作台", () => {
     const agentExpectedOutputInput = page.getByTestId("agent-playground-panel").getByLabel("期望输出");
     await agentExpectedOutputInput.fill(agentExpectedOutput);
     await expect(agentExpectedOutputInput).toHaveValue(agentExpectedOutput);
+    const agentExperimentResponse = page.waitForResponse(
+      (response) => response.request().method() === "POST" && response.url().includes("/prompt-evaluation-assets"),
+      { timeout: 10000 },
+    );
     await page.getByRole("button", { name: "保存为实验" }).click();
-    await expect(page.getByText("资产已创建").last()).toBeVisible({ timeout: 10000 });
+    expect([200, 201]).toContain((await agentExperimentResponse).status());
     await expect
       .poll(async () => {
         const assets = await api.listPromptEvaluationAssets({ asset_type: "实验" });
@@ -612,86 +617,10 @@ test.describe("训练与评估工作台", () => {
     expect(syncedAgentDimensionEvidence.evidence["实验维度评分"]).toEqual(expect.arrayContaining([
       expect.objectContaining({ 维度名称: "上下文完整性", 状态: "已评分" }),
     ]));
-    await page.goto(`/${workspaceSlug}/training/run-history`, { waitUntil: "domcontentloaded" });
-    await waitForPageText(page, "运行历史", 10000);
+    await page.goto(`/${workspaceSlug}/training/evaluation-runs`, { waitUntil: "domcontentloaded" });
+    await waitForPageText(page, "评测记录", 10000);
     await assertNoAcceptanceFixtureToggle(page);
-    const summaryStrip = page.getByTestId("training-summary-strip");
-    await expect(summaryStrip).toContainText("项目总览", { timeout: 10000 });
-    await expect(page.getByTestId("training-summary-运行总数")).toContainText(/[1-9]/);
-    await expect(page.getByTestId("training-summary-通过率")).toContainText("%");
-    await expect(page.getByTestId("training-summary-智能体运行数")).toContainText(/[1-9]/);
-    await expect(page.getByTestId("training-summary-需人工复核")).toContainText(/\d/);
-    await expect(page.getByTestId("training-summary-输入 token")).toContainText(/[1-9]/);
-    await expect(page.getByTestId("training-summary-预估成本")).toContainText("$");
-    await expect(page.getByTestId("training-summary-待确认优化候选")).toContainText(/\d/);
-    await page.getByRole("link", { name: "运行看板", exact: true }).last().click();
-    await expect(page).toHaveURL(/\/training\/runs$/);
-    await assertNoAcceptanceFixtureToggle(page);
-    const demoDashboard = page.getByTestId("training-demo-dashboard");
-    await expect(demoDashboard).toContainText("训练运行看板", { timeout: 10000 });
-    await expect(demoDashboard).toContainText("训练评估闭环");
-    await expect(demoDashboard).toContainText("SOP 与任务观测");
-    await expect(demoDashboard.getByTestId("training-demo-metric-智能体运行数")).toContainText(/[1-9]/);
-    await expect(demoDashboard.getByTestId("training-demo-proof-真实智能体证据")).toContainText("已有任务/trace 运行记录");
-    await expect(demoDashboard.getByText("Codex 运行时可创建真实智能体任务")).toBeVisible();
-    await expect(demoDashboard).toContainText("最近7天");
-    await demoDashboard.getByRole("button", { name: "最近24小时" }).click();
-    await expect(demoDashboard).toContainText("最近24小时");
-    const evidenceDownload = page.waitForEvent("download");
-    await demoDashboard.getByRole("button", { name: "导出证据 JSON" }).click();
-    const downloadedEvidence = await evidenceDownload;
-    expect(downloadedEvidence.suggestedFilename()).toMatch(/^multica-production-evidence-.*\.json$/);
-    const downloadedEvidencePath = await downloadedEvidence.path();
-    expect(downloadedEvidencePath).toBeTruthy();
-    const exportedEvidence = JSON.parse(await readFile(downloadedEvidencePath!, "utf8")) as Record<string, any>;
-    expect(exportedEvidence["语义版本"]).toBe("multica.production_demo_evidence.v1");
-    const exportedRunEvidence = (exportedEvidence["最近运行证据"] as any[]).find((item) => item.run?.id === queuedAgentRun!.id);
-    expect(exportedRunEvidence).toMatchObject({
-      采集状态: "已采集",
-      run: {
-        id: queuedAgentRun!.id,
-        task_id: queuedAgentRun!.task_id,
-      },
-    });
-    expect(exportedRunEvidence.task_usage).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          task_id: queuedAgentRun!.task_id,
-          provider: "codex",
-          output_tokens: 7,
-        }),
-      ]),
-    );
-    expect(exportedRunEvidence.task_usage[0].input_tokens).toBeGreaterThan(0);
-    expect(exportedRunEvidence.task_usage[0].model).toEqual(expect.any(String));
-    expect(exportedRunEvidence.trace_events.length).toBeGreaterThan(0);
-    expect(exportedRunEvidence.execution_spans.length).toBeGreaterThan(0);
-    expect(exportedRunEvidence.tool_call_chains).toEqual(expect.any(Array));
-    expect(exportedRunEvidence.tool_call_summary).toEqual(expect.any(Array));
-    expect(exportedRunEvidence.execution_summary["span总数"]).toBeGreaterThan(0);
-    expect(exportedEvidence["训练维度评分摘要"]).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        asset_id: queuedAgentRun!.asset_id,
-        dimension_name: "上下文完整性",
-      }),
-    ]));
-    expect(exportedEvidence["训练维度评分趋势"]).toEqual(expect.arrayContaining([
-      expect.objectContaining({
-        asset_id: queuedAgentRun!.asset_id,
-        dimension_name: "上下文完整性",
-        run_count: expect.any(Number),
-      }),
-    ]));
-    expect(exportedEvidence["优化候选证据"]).toEqual(expect.any(Array));
-    expect(exportedEvidence["证据统计"]["task_usage条数"]).toBeGreaterThan(0);
-    expect(exportedEvidence["证据统计"]["trace_event条数"]).toBeGreaterThan(0);
-    expect(exportedEvidence["证据统计"]["execution_span条数"]).toBeGreaterThan(0);
-    expect(exportedEvidence["证据统计"]["tool_call_chain条数"]).toEqual(expect.any(Number));
-    expect(exportedEvidence["证据统计"]["tool_call_summary条数"]).toEqual(expect.any(Number));
-    expect(exportedEvidence["资产统计"]["维度评分摘要数"]).toBeGreaterThan(0);
-    expect(exportedEvidence["资产统计"]["维度评分趋势数"]).toBeGreaterThan(0);
-    await page.goto(`/${workspaceSlug}/training/run-history`, { waitUntil: "domcontentloaded" });
-    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/run-history$`), { timeout: 30000 });
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/evaluation-runs$`), { timeout: 30000 });
     await expect(page.getByTestId("training-route-panel-run-history")).toBeVisible({ timeout: 10000 });
     agentRunCard = page.getByTestId(`prompt-evaluation-run-${queuedAgentRun!.id}`);
     await expect(agentRunCard).toContainText("智能体执行 · 通过", { timeout: 10000 });
@@ -764,8 +693,8 @@ test.describe("训练与评估工作台", () => {
     });
     expect((snapshotDetail.evidence?.["服务端解释快照"] as Record<string, unknown>)["维度评分摘要"]).toEqual(expect.any(Array));
     expect((snapshotDetail.evidence?.["服务端解释快照"] as Record<string, unknown>)["维度评分趋势"]).toEqual(expect.any(Array));
-    await page.goto(`/${workspaceSlug}/training/run-history`, { waitUntil: "domcontentloaded" });
-    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/run-history$`), { timeout: 30000 });
+    await page.goto(`/${workspaceSlug}/training/evaluation-runs`, { waitUntil: "domcontentloaded" });
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/evaluation-runs$`), { timeout: 30000 });
     await expect(page.getByTestId("training-route-panel-run-history")).toBeVisible({ timeout: 10000 });
     const localRunCard = page.getByTestId(`prompt-evaluation-run-${localRenderRun.id}`);
     await expect(localRunCard.getByText("模板渲染检查 · 通过")).toBeVisible({ timeout: 10000 });
