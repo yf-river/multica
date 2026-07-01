@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -1074,7 +1075,17 @@ func fetchGongfengBranches(ctx context.Context, projectPath string, token string
 			return http.ErrUseLastResponse
 		},
 	}
-	branches := []string{}
+	type gongfengBranchListItem struct {
+		Name   string `json:"name"`
+		Commit struct {
+			CommittedDate string `json:"committed_date"`
+			AuthoredDate  string `json:"authored_date"`
+			CreatedAt     string `json:"created_at"`
+		} `json:"commit"`
+		index     int
+		updatedAt time.Time
+	}
+	branches := []gongfengBranchListItem{}
 	seen := map[string]struct{}{}
 	for page := 1; page <= 50; page++ {
 		target := fmt.Sprintf("%s/projects/%s/repository/branches?per_page=100&page=%d", gongfengAPIBase(), url.PathEscape(projectPath), page)
@@ -1102,9 +1113,7 @@ func fetchGongfengBranches(ctx context.Context, projectPath string, token string
 			resp.Body.Close()
 			return nil, fmt.Errorf("gongfeng branch list lookup returned HTTP %d", status)
 		}
-		var payload []struct {
-			Name string `json:"name"`
-		}
+		var payload []gongfengBranchListItem
 		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 			resp.Body.Close()
 			return nil, fmt.Errorf("invalid gongfeng branch list response: %w", err)
@@ -1120,7 +1129,10 @@ func fetchGongfengBranches(ctx context.Context, projectPath string, token string
 				continue
 			}
 			seen[name] = struct{}{}
-			branches = append(branches, name)
+			item.Name = name
+			item.index = len(branches)
+			item.updatedAt = firstParsedTime(item.Commit.CommittedDate, item.Commit.AuthoredDate, item.Commit.CreatedAt)
+			branches = append(branches, item)
 		}
 		if nextPage == "" {
 			break
@@ -1129,7 +1141,44 @@ func fetchGongfengBranches(ctx context.Context, projectPath string, token string
 	if len(branches) == 0 {
 		return nil, errors.New("gongfeng branch list response did not include branches")
 	}
-	return branches, nil
+	sort.SliceStable(branches, func(i, j int) bool {
+		left := branches[i]
+		right := branches[j]
+		if !left.updatedAt.IsZero() && !right.updatedAt.IsZero() && !left.updatedAt.Equal(right.updatedAt) {
+			return left.updatedAt.After(right.updatedAt)
+		}
+		if !left.updatedAt.IsZero() && right.updatedAt.IsZero() {
+			return true
+		}
+		if left.updatedAt.IsZero() && !right.updatedAt.IsZero() {
+			return false
+		}
+		return left.index < right.index
+	})
+	out := make([]string, 0, len(branches))
+	for _, branch := range branches {
+		out = append(out, branch.Name)
+	}
+	return out, nil
+}
+
+func firstParsedTime(values ...string) time.Time {
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			continue
+		}
+		if parsed, err := time.Parse(time.RFC3339, value); err == nil {
+			return parsed
+		}
+		if parsed, err := time.Parse("2006-01-02T15:04:05.000Z", value); err == nil {
+			return parsed
+		}
+		if parsed, err := time.Parse("2006-01-02 15:04:05", value); err == nil {
+			return parsed
+		}
+	}
+	return time.Time{}
 }
 
 func fetchGongfengBranchHeadCommit(ctx context.Context, projectPath string, branch string, token string) (string, error) {

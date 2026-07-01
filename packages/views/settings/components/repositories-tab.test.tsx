@@ -212,7 +212,7 @@ describe("RepositoriesTab", () => {
       provider: "gongfeng",
       project_path: projectPathForURL(payload.url),
       default_branch: "main",
-      branches: ["main", "v5.0.0_dev", "dev_sop"],
+      branches: ["dev_sop", "v5.0.0_dev", "main"],
       connection_status: "credential_backed",
       test_status: "passed",
     }));
@@ -283,7 +283,7 @@ describe("RepositoriesTab", () => {
       });
       expect(screen.getByLabelText("默认分支")).not.toHaveAttribute("disabled");
     });
-    expect(screen.getByLabelText("默认分支")).toHaveValue("main");
+    expect(screen.getByLabelText("默认分支")).toHaveValue("dev_sop");
     expect(screen.getByText("已连接 ChainWeaver/ida/gateway，可选分支 3 个。")).toBeTruthy();
 
     await user.click(screen.getByRole("button", { name: "添加" }));
@@ -291,7 +291,7 @@ describe("RepositoriesTab", () => {
     await waitFor(() => {
       expect(mockResolveWorkspaceRepo).toHaveBeenCalledWith("workspace-1", {
         url: "https://git.code.tencent.com/ChainWeaver/ida/gateway",
-        default_branch: "main",
+        default_branch: "dev_sop",
       });
       expect(mockUpdateWorkspace).toHaveBeenCalledWith("workspace-1", {
         repos: [
@@ -311,7 +311,7 @@ describe("RepositoriesTab", () => {
             url: "https://git.code.tencent.com/ChainWeaver/ida/gateway",
             provider: "gongfeng",
             project_path: "ChainWeaver/ida/gateway",
-            default_branch: "main",
+            default_branch: "dev_sop",
             head_commit: "def5678",
             commit_sha: "def5678",
             connection_status: "credential_backed",
@@ -334,7 +334,7 @@ describe("RepositoriesTab", () => {
     await user.click(screen.getByRole("button", { name: "添加仓库" }));
     await user.click(screen.getByRole("button", { name: "gateway" }));
     await user.click(screen.getByRole("button", { name: "检测" }));
-    await waitFor(() => expect(screen.getByLabelText("默认分支")).toHaveValue("main"));
+    await waitFor(() => expect(screen.getByLabelText("默认分支")).toHaveValue("dev_sop"));
 
     await user.clear(screen.getByPlaceholderText(/git.code.tencent.com/));
     await user.type(screen.getByPlaceholderText(/git.code.tencent.com/), "https://git.code.tencent.com/ChainWeaver/ida/ida-deployment");

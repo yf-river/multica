@@ -222,7 +222,7 @@ function AddGongfengRepositoryDialog({
     try {
       const result = await api.probeWorkspaceRepo(workspace.id, { url: trimmedURL });
       setProbe(result);
-      setSelectedBranch(result.default_branch || result.branches[0] || "");
+      setSelectedBranch(result.branches[0] || result.default_branch || "");
     } catch (err) {
       setProbe(null);
       setSelectedBranch("");

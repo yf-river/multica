@@ -559,10 +559,16 @@ func TestFetchGongfengBranchesHandlesPagination(t *testing.T) {
 		seenTokens = append(seenTokens, r.Header.Get("PRIVATE-TOKEN"))
 		if r.URL.Query().Get("page") == "1" {
 			w.Header().Set("X-Next-Page", "2")
-			_, _ = w.Write([]byte(`[{"name":"main"},{"name":"v5.0.0_dev"}]`))
+			_, _ = w.Write([]byte(`[
+				{"name":"main","commit":{"committed_date":"2026-06-01T01:00:00Z"}},
+				{"name":"v5.0.0_dev","commit":{"committed_date":"2026-06-20T01:00:00Z"}}
+			]`))
 			return
 		}
-		_, _ = w.Write([]byte(`[{"name":"v5.0.0_dev"},{"name":"dev_sop"}]`))
+		_, _ = w.Write([]byte(`[
+			{"name":"v5.0.0_dev","commit":{"committed_date":"2026-06-21T01:00:00Z"}},
+			{"name":"dev_sop","commit":{"committed_date":"2026-06-30T01:00:00Z"}}
+		]`))
 	}))
 	defer server.Close()
 	t.Setenv("GONGFENG_API_BASE", server.URL)
@@ -571,7 +577,7 @@ func TestFetchGongfengBranchesHandlesPagination(t *testing.T) {
 	if err != nil {
 		t.Fatalf("fetchGongfengBranches: %v", err)
 	}
-	if got, want := strings.Join(branches, ","), "main,v5.0.0_dev,dev_sop"; got != want {
+	if got, want := strings.Join(branches, ","), "dev_sop,v5.0.0_dev,main"; got != want {
 		t.Fatalf("branches = %q, want %q", got, want)
 	}
 	if len(seenTokens) != 2 || seenTokens[0] != "token-1" || seenTokens[1] != "token-1" {
