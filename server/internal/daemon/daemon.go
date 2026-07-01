@@ -1914,18 +1914,13 @@ func (d *Daemon) runRuntimeHeartbeat(ctx context.Context, rid string) {
 
 func (d *Daemon) runHeartbeatTick(ctx context.Context, rid string) {
 	networkMetadata, hasNetworkMetadata := d.runtimeNetworkHeartbeatMetadata(rid)
-	// Skip HTTP heartbeat for runtimes that successfully acked a recent
-	// WebSocket heartbeat. The WS path keeps last_seen_at fresh and delivers
-	// actions, so the HTTP write would be a duplicate DB update. If the WS
-	// heartbeat goes silent the freshness window expires and HTTP resumes
-	// automatically on the next tick — that is the fallback the WS path
-	// relies on. Dirty runtime-network metadata intentionally forces one HTTP
-	// beat so the server metadata catches up even while WS heartbeats are
-	// otherwise healthy.
-	if !hasNetworkMetadata && d.wsHeartbeatRecentlyAcked(rid) {
-		d.logger.Debug("heartbeat: skipping HTTP tick, WS recently acked", "runtime_id", rid)
-		return
-	}
+	// Keep the HTTP heartbeat even when the WebSocket heartbeat is healthy.
+	// The heartbeat response is also the delivery lane for async runtime
+	// actions such as model-list and local-skill discovery. Suppressing HTTP
+	// after a WS ack made those UI-triggered requests dependent on the next WS
+	// heartbeat and, when the wakeup stream missed a pending action, left them
+	// pending until the frontend timed out. Duplicate liveness writes are less
+	// costly than wedging those request/response flows.
 	d.logger.Debug("heartbeat: HTTP tick", "runtime_id", rid)
 	resp, err := d.client.SendHeartbeat(ctx, rid, networkMetadata)
 	if err != nil {

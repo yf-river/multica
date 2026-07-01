@@ -374,11 +374,11 @@ Options:
 	}
 	checks := map[string]string{
 		"gpt-5.5":                "openai",
-		"gemini-3.1-pro":        "google",
-		"glm-5.1-ioa":           "zhipu",
-		"minimax-m2.7-ioa":      "minimax",
-		"kimi-k2.6-ioa":         "kimi",
-		"hy3-preview-ioa":       "hunyuan",
+		"gemini-3.1-pro":         "google",
+		"glm-5.1-ioa":            "zhipu",
+		"minimax-m2.7-ioa":       "minimax",
+		"kimi-k2.6-ioa":          "kimi",
+		"hy3-preview-ioa":        "hunyuan",
 		"deepseek-v3-2-volc-ioa": "deepseek",
 	}
 	for id, want := range checks {
@@ -393,6 +393,122 @@ func TestParseCodebuddyModels_Malformed(t *testing.T) {
 	models := parseCodebuddyModels("totally unrelated output\nno model line here")
 	if len(models) != 0 {
 		t.Fatalf("expected 0 models from malformed output, got %d", len(models))
+	}
+}
+
+func TestDiscoverCodebuddyModels_UsesACPModelCatalog(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("shell-script fixture is POSIX-only")
+	}
+
+	fakePath := filepath.Join(t.TempDir(), "codebuddy")
+	script := `#!/bin/sh
+cat >/dev/null &
+printf '%s\n' '{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1}}'
+printf '%s\n' '{"jsonrpc":"2.0","id":2,"result":{"sessionId":"s","models":{"availableModels":[{"modelId":"glm-5.2-ioa","name":"GLM-5.2"},{"modelId":"deepseek-v4-pro-ioa","name":"Deepseek-V4-Pro"},{"modelId":"echo","name":"Echo"}],"currentModelId":"deepseek-v4-pro-ioa"}}}'
+sleep 1
+`
+	writeTestExecutable(t, fakePath, []byte(script))
+
+	models, err := discoverCodebuddyModels(context.Background(), fakePath)
+	if err != nil {
+		t.Fatalf("discoverCodebuddyModels: %v", err)
+	}
+	if len(models) != 3 {
+		t.Fatalf("expected 3 ACP models, got %d: %+v", len(models), models)
+	}
+	byID := map[string]Model{}
+	for _, m := range models {
+		byID[m.ID] = m
+	}
+	if byID["glm-5.2-ioa"].Provider != "zhipu" {
+		t.Fatalf("glm provider = %q, want zhipu", byID["glm-5.2-ioa"].Provider)
+	}
+	if got := byID["deepseek-v4-pro-ioa"]; got.Provider != "deepseek" || !got.Default {
+		t.Fatalf("deepseek model = %+v, want provider=deepseek default=true", got)
+	}
+	if byID["echo"].Provider != "" {
+		t.Fatalf("echo provider = %q, want empty", byID["echo"].Provider)
+	}
+}
+
+func TestParseCodebuddyModels_CurrentHelpWithoutCatalog(t *testing.T) {
+	t.Parallel()
+	helpOutput := `Usage: codebuddy|cbc [options] [command] [prompt]
+
+Options:
+  --model <model>                                  Model for the current session. Please provide the model ID.
+  --effort <level>                                 Reasoning effort level (minimal, low, medium, high, xhigh, max)
+`
+	models := parseCodebuddyModels(helpOutput)
+	if len(models) != 0 {
+		t.Fatalf("expected 0 models from current help without catalog, got %d: %+v", len(models), models)
+	}
+}
+
+func TestParseCodebuddyModelList_DedupesAndGroups(t *testing.T) {
+	t.Parallel()
+	models := parseCodebuddyModelList("gpt-5.5, gpt-5.5\nkimi-k2.6-ioa hy3-preview-ioa")
+	if len(models) != 3 {
+		t.Fatalf("expected 3 unique models, got %d: %+v", len(models), models)
+	}
+	if !models[0].Default {
+		t.Fatal("first parsed model should be default")
+	}
+	if models[1].Provider != "kimi" {
+		t.Fatalf("second provider = %q, want kimi", models[1].Provider)
+	}
+	if models[2].Provider != "hunyuan" {
+		t.Fatalf("third provider = %q, want hunyuan", models[2].Provider)
+	}
+}
+
+func TestCodebuddyModelsFromEnv_Priority(t *testing.T) {
+	t.Setenv("CODEBUDDY_MODELS", "deepseek-v3-2-volc-ioa")
+	t.Setenv("MULTICA_CODEBUDDY_MODELS", "glm-5.1-ioa, minimax-m2.7-ioa")
+
+	models := codebuddyModelsFromEnv()
+	if len(models) != 2 {
+		t.Fatalf("expected 2 models from MULTICA_CODEBUDDY_MODELS, got %d: %+v", len(models), models)
+	}
+	if models[0].ID != "glm-5.1-ioa" || models[0].Provider != "zhipu" || !models[0].Default {
+		t.Fatalf("unexpected first env model: %+v", models[0])
+	}
+	if models[1].ID != "minimax-m2.7-ioa" || models[1].Provider != "minimax" {
+		t.Fatalf("unexpected second env model: %+v", models[1])
+	}
+}
+
+func TestCodebuddyHelpDiscoveryEnabled(t *testing.T) {
+	if codebuddyHelpDiscoveryEnabled() {
+		t.Fatal("help discovery should be disabled by default")
+	}
+
+	t.Setenv("MULTICA_CODEBUDDY_HELP_DISCOVERY", "true")
+	if !codebuddyHelpDiscoveryEnabled() {
+		t.Fatal("help discovery should be enabled by explicit env flag")
+	}
+}
+
+func TestCodebuddyStaticModels_ExpandedFallback(t *testing.T) {
+	t.Parallel()
+	models := codebuddyStaticModels()
+	providers := map[string]bool{}
+	ids := map[string]bool{}
+	for _, m := range models {
+		providers[m.Provider] = true
+		ids[m.ID] = true
+	}
+	for _, provider := range []string{"anthropic", "google", "openai", "zhipu", "minimax", "kimi", "hunyuan", "deepseek"} {
+		if !providers[provider] {
+			t.Fatalf("fallback missing provider %q: %+v", provider, models)
+		}
+	}
+	for _, id := range []string{"glm-5.2-ioa", "deepseek-v4-pro-ioa", "minimax-m3-ioa", "claude-opus-4.8"} {
+		if !ids[id] {
+			t.Fatalf("fallback missing model %q: %+v", id, models)
+		}
 	}
 }
 

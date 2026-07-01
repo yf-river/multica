@@ -46,10 +46,10 @@ func TestTaskWakeupURL(t *testing.T) {
 	}
 }
 
-// TestWSHeartbeatFreshnessSuppressesHTTP pins the WS-vs-HTTP coordination:
-// once a runtime acked over WS within the freshness window the HTTP
-// heartbeat loop must skip it to avoid duplicate DB writes.
-func TestWSHeartbeatFreshnessSuppressesHTTP(t *testing.T) {
+// TestWSHeartbeatFreshnessTracksAckWindow pins the WS freshness bookkeeping.
+// HTTP heartbeats are no longer suppressed by this marker because heartbeat
+// responses also deliver UI-triggered async actions such as model discovery.
+func TestWSHeartbeatFreshnessTracksAckWindow(t *testing.T) {
 	d := New(Config{HeartbeatInterval: 15 * time.Second}, slog.Default())
 
 	if d.wsHeartbeatRecentlyAcked("runtime-1") {
@@ -66,7 +66,7 @@ func TestWSHeartbeatFreshnessSuppressesHTTP(t *testing.T) {
 	d.wsHBLastAck["runtime-1"] = time.Now().Add(-d.wsHeartbeatFreshness() - time.Second)
 	d.wsHBMu.Unlock()
 	if d.wsHeartbeatRecentlyAcked("runtime-1") {
-		t.Fatalf("expected aged runtime to be stale (HTTP heartbeat must resume)")
+		t.Fatalf("expected aged runtime to be stale")
 	}
 
 	d.recordWSHeartbeatAck("runtime-2")

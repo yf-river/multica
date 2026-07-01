@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"os"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -380,8 +381,7 @@ var codebuddyEffortLabel = map[string]string{
 var codebuddyStaticEffortFallback = []string{"low", "medium", "high", "xhigh"}
 
 // codebuddyHelpCache caches the raw --help output so both model discovery
-// (models.go) and effort discovery avoid redundant slow CLI invocations.
-// CodeBuddy's --help takes ~30s; calling it twice on cold start wastes ~30s.
+// (models.go) and effort discovery avoid redundant CLI invocations.
 var (
 	codebuddyHelpMu    sync.Mutex
 	codebuddyHelpStore = map[string]codebuddyHelpEntry{}
@@ -409,7 +409,7 @@ func codebuddyHelpOutput(ctx context.Context, executablePath string) string {
 	}
 	codebuddyHelpMu.Unlock()
 
-	runCtx, cancel := context.WithTimeout(ctx, 35*time.Second)
+	runCtx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(runCtx, executablePath, "--help")
 	hideAgentWindow(cmd)
@@ -422,6 +422,11 @@ func codebuddyHelpOutput(ctx context.Context, executablePath string) string {
 		codebuddyHelpMu.Unlock()
 	}
 	return result
+}
+
+func codebuddyHelpDiscoveryEnabled() bool {
+	value := strings.ToLower(strings.TrimSpace(os.Getenv("MULTICA_CODEBUDDY_HELP_DISCOVERY")))
+	return value == "1" || value == "true" || value == "yes" || value == "on"
 }
 
 func annotateCodebuddyThinking(ctx context.Context, models []Model, executablePath string) {
@@ -469,6 +474,9 @@ func annotateCodebuddyThinking(ctx context.Context, models []Model, executablePa
 }
 
 func codebuddyEffortSuperset(ctx context.Context, executablePath string) []string {
+	if !codebuddyHelpDiscoveryEnabled() {
+		return append([]string(nil), codebuddyStaticEffortFallback...)
+	}
 	helpOut := codebuddyHelpOutput(ctx, executablePath)
 	if helpOut == "" {
 		return append([]string(nil), codebuddyStaticEffortFallback...)

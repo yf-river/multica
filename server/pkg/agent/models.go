@@ -1387,25 +1387,61 @@ func isOpenclawIdentifier(s string) bool {
 // line in `codebuddy --help` output.
 var codebuddyModelRe = regexp.MustCompile(`--model\s*<[^>]+>\s*.*?Currently supported:\s*\(([^)]+)\)`)
 
-// discoverCodebuddyModels runs `codebuddy --help` and extracts the
-// supported model list from its output. Falls back to a static list
-// when the binary is missing or the output cannot be parsed.
+// discoverCodebuddyModels returns the CodeBuddy model catalog. Recent
+// CodeBuddy builds no longer print a supported-model list in --help, so an
+// operator-provided catalog takes precedence; the legacy --help parser is
+// retained for older builds and the static catalog is the final fallback.
 func discoverCodebuddyModels(ctx context.Context, executablePath string) ([]Model, error) {
+	if models := codebuddyModelsFromEnv(); len(models) > 0 {
+		return models, nil
+	}
 	if executablePath == "" {
 		executablePath = "codebuddy"
 	}
 	if _, err := exec.LookPath(executablePath); err != nil {
 		return codebuddyStaticModels(), nil
 	}
-	helpOut := codebuddyHelpOutput(ctx, executablePath)
-	if helpOut == "" {
-		return codebuddyStaticModels(), nil
+	models, err := discoverCodebuddyACPModels(ctx, executablePath)
+	if err == nil && len(models) > 0 {
+		return models, nil
 	}
-	models := parseCodebuddyModels(helpOut)
-	if len(models) == 0 {
-		return codebuddyStaticModels(), nil
+	if codebuddyHelpDiscoveryEnabled() {
+		helpOut := codebuddyHelpOutput(ctx, executablePath)
+		if helpOut != "" {
+			models := parseCodebuddyModels(helpOut)
+			if len(models) > 0 {
+				return models, nil
+			}
+		}
+	}
+	return codebuddyStaticModels(), nil
+}
+
+func discoverCodebuddyACPModels(ctx context.Context, executablePath string) ([]Model, error) {
+	models, err := discoverACPModels(ctx, executablePath, acpDiscoveryProvider{
+		defaultBin:   "codebuddy",
+		clientName:   "multica-model-discovery",
+		tmpdirPrefix: "multica-codebuddy-discovery-",
+		acpArgs:      []string{"--acp"},
+	})
+	if err != nil || len(models) == 0 {
+		return models, err
+	}
+	for i := range models {
+		if models[i].Provider == "" {
+			models[i].Provider = codebuddyModelProvider(models[i].ID)
+		}
 	}
 	return models, nil
+}
+
+func codebuddyModelsFromEnv() []Model {
+	for _, name := range []string{"MULTICA_CODEBUDDY_MODELS", "CODEBUDDY_MODELS"} {
+		if models := parseCodebuddyModelList(os.Getenv(name)); len(models) > 0 {
+			return models
+		}
+	}
+	return nil
 }
 
 // parseCodebuddyModels extracts model IDs from codebuddy --help output.
@@ -1419,13 +1455,21 @@ func parseCodebuddyModels(helpOutput string) []Model {
 	if len(match) < 2 {
 		return nil
 	}
-	raw := strings.Split(match[1], ",")
+	return parseCodebuddyModelList(match[1])
+}
+
+func parseCodebuddyModelList(rawList string) []Model {
+	raw := strings.FieldsFunc(rawList, func(r rune) bool {
+		return r == ',' || r == '\n' || r == '\r' || r == '\t' || r == ' '
+	})
 	var models []Model
+	seen := map[string]bool{}
 	for _, s := range raw {
 		id := strings.TrimSpace(s)
-		if id == "" {
+		if id == "" || seen[id] {
 			continue
 		}
+		seen[id] = true
 		models = append(models, Model{
 			ID:       id,
 			Label:    codebuddyModelLabel(id),
@@ -1480,11 +1524,36 @@ func codebuddyModelLabel(id string) string {
 // codebuddyStaticModels is the fallback catalog when dynamic discovery
 // fails (binary missing, parse error, timeout).
 func codebuddyStaticModels() []Model {
-	return []Model{
-		{ID: "claude-sonnet-4.6", Label: "Claude Sonnet 4.6", Provider: "anthropic", Default: true},
-		{ID: "claude-opus-4.7", Label: "Claude Opus 4.7", Provider: "anthropic"},
-		{ID: "gemini-3.1-pro", Label: "Gemini 3.1 Pro", Provider: "google"},
-		{ID: "gpt-5.5", Label: "GPT 5.5", Provider: "openai"},
-		{ID: "deepseek-v3-2-volc-ioa", Label: "Deepseek V3 2 Volc IOA", Provider: "deepseek"},
-	}
+	return parseCodebuddyModelList(strings.Join([]string{
+		"claude-sonnet-4.6",
+		"claude-sonnet-4.6-1m",
+		"claude-opus-4.8",
+		"claude-opus-4.8-1m",
+		"claude-opus-4.7",
+		"claude-opus-4.7-1m",
+		"claude-opus-4.6",
+		"claude-opus-4.6-1m",
+		"claude-haiku-4.5",
+		"gemini-3.1-pro",
+		"gemini-3.5-flash",
+		"gemini-2.5-pro",
+		"gpt-5.5",
+		"gpt-5.4",
+		"gpt-5.3-codex",
+		"gpt-5.1-codex",
+		"gpt-5.1-codex-mini",
+		"glm-5.2-ioa",
+		"glm-5v-turbo-ioa",
+		"glm-5.0-ioa",
+		"glm-4.7-ioa",
+		"minimax-m3-ioa",
+		"minimax-m2.7-ioa",
+		"minimax-m2.5-ioa",
+		"kimi-k2.6-ioa",
+		"hy3-preview-agent-ioa",
+		"echo",
+		"deepseek-v4-pro-ioa",
+		"deepseek-v4-flash-ioa",
+		"deepseek-v3-2-volc-ioa",
+	}, ","))
 }
