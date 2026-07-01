@@ -1,4 +1,4 @@
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import path from "node:path";
@@ -48,13 +48,15 @@ if (command === "ensure") {
   ensureEnvironment(profile);
   console.log(JSON.stringify(describeEnvironment(profile), null, 2));
 } else if (command === "deploy") {
-  deployEnvironment(withFrontendMode(profile, parseFrontendModeFlag(profile.frontendMode)), process.argv.includes("--build"));
+  await deployEnvironment(withFrontendMode(profile, parseFrontendModeFlag(profile.frontendMode)), process.argv.includes("--build"));
 } else if (command === "dev-ui") {
-  startDevWeb(withFrontendMode(profile, "next-dev"), "dev-ui");
+  await startDevWeb(withFrontendMode(profile, "next-dev"), "dev-ui");
+} else if (command === "dev-ui-prewarm") {
+  await prewarmDevWebOnly(withFrontendMode(profile, "next-dev"));
 } else if (command === "dev-ui-start") {
-  startDevWeb(withFrontendMode(profile, "next-start"), "dev-ui-start");
+  await startDevWeb(withFrontendMode(profile, "next-start"), "dev-ui-start");
 } else if (command === "dev-server") {
-  restartDevServer(profile);
+  await restartDevServer(profile);
 } else if (command === "dev-daemon") {
   restartDevDaemon(profile);
 } else if (command === "dev-check") {
@@ -139,7 +141,7 @@ function ensureStableSecretKey(item, name) {
   return value;
 }
 
-function deployEnvironment(item, build) {
+async function deployEnvironment(item, build) {
   const { envFile, env } = buildEnvironmentRuntime(item);
   const deploymentStartedAt = new Date().toISOString();
   const deploymentCommit = gitText(["rev-parse", "--short=12", "HEAD"]);
@@ -172,7 +174,7 @@ function deployEnvironment(item, build) {
   let webPID = startDetached("pnpm", webArgs, env, logPath(item, "web"));
   waitForHTTP(`http://127.0.0.1:${item.frontendPort}/login`, 90_000);
   webPID = listeningPID(item.frontendPort) || webPID;
-  const webPrewarm = prewarmDevWebRoutes(item);
+  const webPrewarm = await prewarmDevWebRoutes(item);
   const codexPreflight = runCodexNetworkCheckWithEnv(item, env, {
     strong: isTruthy(env.GOAL_TEST_CODEX_RESPONSES_SMOKE),
   });
@@ -242,13 +244,13 @@ function deployEnvironment(item, build) {
   console.log(JSON.stringify(metadata, null, 2));
 }
 
-function startDevWeb(item, action) {
+async function startDevWeb(item, action) {
   const { env } = buildEnvironmentRuntime(item);
   mkdirSync(runDir, { recursive: true });
   const existingPID = listeningPID(item.frontendPort);
   const existing = inspectPID(existingPID);
   if (existing.running && isExpectedWebProcess(existing, item)) {
-    const webPrewarm = prewarmDevWebRoutes(item);
+    const webPrewarm = await prewarmDevWebRoutes(item);
     updateFastDeploymentMetadata(item, env, { web: existingPID }, action, { web_prewarm: webPrewarm });
     console.log(JSON.stringify({
       environment: item.name,
@@ -265,7 +267,7 @@ function startDevWeb(item, action) {
   killPort(item.frontendPort);
   waitForPortFree(item.frontendPort, 15_000);
   const webPID = startWebProcess(item, env);
-  const webPrewarm = prewarmDevWebRoutes(item);
+  const webPrewarm = await prewarmDevWebRoutes(item);
   updateFastDeploymentMetadata(item, env, { web: webPID }, action, { web_prewarm: webPrewarm });
   console.log(JSON.stringify({
     environment: item.name,
@@ -278,7 +280,7 @@ function startDevWeb(item, action) {
   }, null, 2));
 }
 
-function restartDevServer(item) {
+async function restartDevServer(item) {
   const { env } = buildEnvironmentRuntime(item);
   mkdirSync(runDir, { recursive: true });
   ensureDatabase(env.DATABASE_URL, item.databaseName);
@@ -290,7 +292,8 @@ function restartDevServer(item) {
   waitForHTTP(`http://127.0.0.1:${item.backendPort}/health`, 60_000);
   serverPID = listeningPID(item.backendPort) || serverPID;
   refreshDaemonProfileToken(item);
-  updateFastDeploymentMetadata(item, env, { server: serverPID }, "dev-server");
+  const webPrewarm = await prewarmDevWebRoutes(withFrontendMode(item, "next-dev"));
+  updateFastDeploymentMetadata(item, env, { server: serverPID }, "dev-server", { web_prewarm: webPrewarm });
   console.log(JSON.stringify({
     environment: item.name,
     action: "dev-server",
@@ -298,6 +301,21 @@ function restartDevServer(item) {
     backend_url: `http://127.0.0.1:${item.backendPort}`,
     pid: serverPID,
   }, null, 2));
+}
+
+async function prewarmDevWebOnly(item) {
+  const { env } = buildEnvironmentRuntime(item);
+  const webPrewarm = await prewarmDevWebRoutes(item);
+  updateFastDeploymentMetadata(item, env, {}, "dev-ui-prewarm", { web_prewarm: webPrewarm });
+  console.log(JSON.stringify({
+    environment: item.name,
+    action: "dev-ui-prewarm",
+    status: webPrewarm.ok ? "passed" : "completed_with_failures",
+    frontend_mode: item.frontendMode,
+    frontend_url: `http://${publicHost}:${item.frontendPort}`,
+    web_prewarm: webPrewarm,
+  }, null, 2));
+  if (!webPrewarm.ok && process.env.GOAL_TEST_WEB_PREWARM_STRICT === "1") process.exit(2);
 }
 
 function restartDevDaemon(item) {
@@ -390,30 +408,87 @@ function startWebProcess(item, env) {
   return webPID;
 }
 
-function prewarmDevWebRoutes(item) {
+async function prewarmDevWebRoutes(item) {
   if (item.frontendMode !== "next-dev") {
     return { enabled: false, reason: "frontend mode is not next-dev", routes: [] };
   }
   const base = `http://127.0.0.1:${item.frontendPort}`;
   const slug = process.env.GOAL_TEST_WORKSPACE_SLUG || "goal-test-daemon";
-  const routes = [
+  const scope = prewarmScope();
+  const concurrency = boundedInt(process.env.GOAL_TEST_WEB_PREWARM_CONCURRENCY, 2, 1, 8);
+  const timeoutSec = boundedInt(process.env.GOAL_TEST_WEB_PREWARM_TIMEOUT_SEC, 90, 5, 240);
+  const coreRoutes = [
     "/login",
     `/${slug}/issues`,
     `/${slug}/projects`,
     `/${slug}/agents`,
     `/${slug}/squads`,
+    `/${slug}/skills`,
+    `/${slug}/runtimes`,
     `/${slug}/settings?tab=repositories`,
     `/${slug}/settings?tab=tokens`,
+    `/${slug}/training/runs`,
     `/${slug}/training/debug-runs`,
-    `/${slug}/training/evaluation-runs`,
-    `/${slug}/training/prompts`,
     `/${slug}/training/datasets`,
   ];
+  const fullRoutes = [
+    "/",
+    "/onboarding",
+    "/workspaces/new",
+    `/${slug}/my-issues`,
+    `/${slug}/inbox`,
+    `/${slug}/run-reviews`,
+    `/${slug}/autopilots`,
+    `/${slug}/usage`,
+    `/${slug}/prompt-library`,
+    `/${slug}/eval`,
+    `/${slug}/evaluation`,
+    `/${slug}/settings`,
+    `/${slug}/settings?tab=workspace`,
+    `/${slug}/settings?tab=integrations`,
+    `/${slug}/settings?tab=members`,
+    `/${slug}/settings?tab=profile`,
+    `/${slug}/settings?tab=labs`,
+    `/${slug}/training`,
+    `/${slug}/training/runs`,
+    `/${slug}/training/run-history`,
+    `/${slug}/training/agent-playground`,
+    `/${slug}/training/prompt-playground`,
+    `/${slug}/training/debug-runs`,
+    `/${slug}/training/evaluation-runs`,
+    `/${slug}/training/experiments`,
+    `/${slug}/training/optimization-runs`,
+    `/${slug}/training/prompts`,
+    `/${slug}/training/test-suites`,
+  ];
+  const routes = scope === "full" ? uniqueRoutes([...coreRoutes, ...fullRoutes]) : coreRoutes;
   const cookie = `multica_logged_in=1; last_workspace_slug=${slug}`;
-  const results = [];
-  for (const route of routes) {
-    const started = Date.now();
-    const res = spawnSync("curl", [
+  const results = await runConcurrent(routes, concurrency, (route) =>
+    prewarmDevWebRoute({ base, route, cookie, timeoutSec }),
+  );
+  return {
+    enabled: true,
+    scope,
+    concurrency,
+    timeout_sec: timeoutSec,
+    ok: results.every((result) => result.status === "passed" && result.http_status !== "000"),
+    routes: results,
+  };
+}
+
+function prewarmScope() {
+  const raw = String(process.env.GOAL_TEST_WEB_PREWARM_SCOPE || "core").trim().toLowerCase();
+  return raw === "full" ? "full" : "core";
+}
+
+function uniqueRoutes(routes) {
+  return Array.from(new Set(routes));
+}
+
+function prewarmDevWebRoute({ base, route, cookie, timeoutSec }) {
+  const started = Date.now();
+  return new Promise((resolve) => {
+    const child = spawn("curl", [
       "--noproxy",
       "*",
       "-sS",
@@ -425,24 +500,58 @@ function prewarmDevWebRoutes(item) {
       "--connect-timeout",
       "5",
       "--max-time",
-      "45",
+      String(timeoutSec),
       "-H",
       `Cookie: ${cookie}`,
       `${base}${route}`,
-    ], { encoding: "utf8" });
-    results.push({
-      route,
-      status: res.status === 0 ? "passed" : "failed",
-      http_status: res.stdout.trim(),
-      duration_ms: Date.now() - started,
-      error: res.status === 0 ? "" : (res.stderr || "").trim().slice(0, 400),
+    ], { cwd: repoRoot, env: { ...process.env, NO_PROXY: "*", no_proxy: "*" } });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      stdout += String(chunk);
     });
+    child.stderr.on("data", (chunk) => {
+      stderr += String(chunk);
+    });
+    child.on("error", (error) => {
+      resolve({
+        route,
+        status: "failed",
+        http_status: "000",
+        duration_ms: Date.now() - started,
+        error: error.message.slice(0, 400),
+      });
+    });
+    child.on("close", (code, signal) => {
+      const httpStatus = stdout.trim() || "000";
+      resolve({
+        route,
+        status: code === 0 ? "passed" : "failed",
+        http_status: httpStatus,
+        duration_ms: Date.now() - started,
+        error: code === 0 ? "" : (stderr || signal || `exit ${code}`).trim().slice(0, 400),
+      });
+    });
+  });
+}
+
+async function runConcurrent(items, concurrency, worker) {
+  const results = new Array(items.length);
+  let cursor = 0;
+  async function runWorker() {
+    while (cursor < items.length) {
+      const index = cursor++;
+      results[index] = await worker(items[index], index);
+    }
   }
-  return {
-    enabled: true,
-    ok: results.every((result) => result.status === "passed" && result.http_status !== "000"),
-    routes: results,
-  };
+  await Promise.all(Array.from({ length: Math.min(concurrency, items.length) }, () => runWorker()));
+  return results;
+}
+
+function boundedInt(value, fallback, min, max) {
+  const parsed = Number.parseInt(String(value || ""), 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(min, Math.min(max, parsed));
 }
 
 function startDaemonProcess(item, env) {
