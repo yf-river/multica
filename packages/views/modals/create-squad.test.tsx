@@ -238,6 +238,7 @@ function makeSquad(overrides: Partial<Squad> = {}): Squad {
     instructions: "",
     sop_profile: {},
     avatar_url: null,
+    visibility: "workspace",
     leader_id: "agent-mine-1",
     creator_id: ME,
     created_at: "2026-01-01T00:00:00Z",
@@ -390,6 +391,7 @@ describe("CreateSquadModal", () => {
         description: undefined,
         leader_id: "agent-mine-1",
         avatar_url: undefined,
+        visibility: "workspace",
       });
     });
     expect(mocks.addSquadMember).not.toHaveBeenCalled();
@@ -413,6 +415,7 @@ describe("CreateSquadModal", () => {
         description: undefined,
         leader_id: "agent-mine-1",
         avatar_url: undefined,
+        visibility: "workspace",
       });
     });
     await waitFor(() => {
@@ -453,6 +456,28 @@ describe("CreateSquadModal", () => {
     });
     expect(mocks.toastWarning).toHaveBeenCalledTimes(1);
     expect(mocks.navigationPush).toHaveBeenCalledWith("/test-ws/squads/sq-2");
+  });
+
+  it("submits personal visibility when selected", async () => {
+    renderModal();
+    fireEvent.change(screen.getByPlaceholderText(/例如 前端团队/i), {
+      target: { value: "Personal Squad" },
+    });
+    fireEvent.click(screen.getByText("个人"));
+    fireEvent.click(firstMatch("MineAgentOne"));
+    mocks.createSquad.mockResolvedValue(makeSquad({ id: "sq-personal", visibility: "personal" }));
+
+    fireEvent.click(getSubmitButton());
+
+    await waitFor(() => {
+      expect(mocks.createSquad).toHaveBeenCalledWith({
+        name: "Personal Squad",
+        description: undefined,
+        leader_id: "agent-mine-1",
+        avatar_url: undefined,
+        visibility: "personal",
+      });
+    });
   });
 
   it("on createSquad failure shows an error toast, does not navigate, and re-enables submit", async () => {

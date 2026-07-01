@@ -47,10 +47,16 @@ export function agentListOptions(wsId: string) {
   });
 }
 
-export function squadListOptions(wsId: string) {
+export function squadListOptions(
+  wsId: string,
+  params?: { includeArchived?: boolean },
+) {
   return queryOptions<Squad[]>({
-    queryKey: workspaceKeys.squads(wsId),
-    queryFn: () => api.listSquads(),
+    queryKey: params?.includeArchived
+      ? [...workspaceKeys.squads(wsId), { includeArchived: true }]
+      : workspaceKeys.squads(wsId),
+    queryFn: () =>
+      api.listSquads({ include_archived: params?.includeArchived }),
     enabled: !!wsId,
   });
 }

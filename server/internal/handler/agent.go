@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -14,7 +13,6 @@ import (
 	"unicode/utf8"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/logger"
@@ -852,10 +850,9 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		ThinkingLevel:      pgtype.Text{String: req.ThinkingLevel, Valid: req.ThinkingLevel != ""},
 	})
 	if err != nil {
-		// Unique constraint on (workspace_id, name) — return a clear conflict error
-		// so the UI can show the right message instead of a generic 500.
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "agent_workspace_name_unique" {
+		// Unique constraint on agent name within its visibility/owner scope.
+		// Return a clear conflict error so the UI can show the right message.
+		if isAgentNameUniqueViolation(err) {
 			writeError(w, http.StatusConflict, fmt.Sprintf("an agent named %q already exists in this workspace", req.Name))
 			return
 		}

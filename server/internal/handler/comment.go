@@ -1251,6 +1251,9 @@ func (h *Handler) computeAssignedSquadLeaderCommentTrigger(ctx context.Context, 
 	if err != nil {
 		return commentAgentTrigger{}, false
 	}
+	if !h.canUseSquad(ctx, squad, authorType, authorID, uuidToString(issue.WorkspaceID)) {
+		return commentAgentTrigger{}, false
+	}
 	if authorType == "agent" && authorID == uuidToString(squad.LeaderID) &&
 		h.lastTaskWasLeader(ctx, issue.ID, squad.LeaderID) {
 		return commentAgentTrigger{}, false
@@ -1449,6 +1452,9 @@ func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issu
 				WorkspaceID: issue.WorkspaceID,
 			})
 			if err != nil {
+				continue
+			}
+			if !h.canUseSquad(ctx, squad, authorType, authorID, wsID) {
 				continue
 			}
 			leaderID := squad.LeaderID

@@ -7,7 +7,7 @@ const E2E_RUN_ID = process.env.E2E_RUN_ID ?? `${Date.now().toString(36)}-${proce
 const DEFAULT_E2E_ACCOUNT = process.env.E2E_ACCOUNT ?? `e2e-${E2E_WORKER}-${E2E_RUN_ID}`;
 const DEFAULT_E2E_WORKSPACE = process.env.E2E_WORKSPACE ?? `e2e-workspace-${E2E_WORKER}-${E2E_RUN_ID}`;
 const DEFAULT_E2E_WORKSPACE_NAME = process.env.E2E_WORKSPACE_NAME ?? `E2E Workspace ${E2E_WORKER}`;
-const E2E_PASSWORD = process.env.E2E_PASSWORD ?? "e2e-password";
+const E2E_PASSWORD = process.env.E2E_PASSWORD ?? "develop123";
 
 async function waitForIssuesPage(page: Page) {
   await waitForPageText(page, "新建任务", 60000);

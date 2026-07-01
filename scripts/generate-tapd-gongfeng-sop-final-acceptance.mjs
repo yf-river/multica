@@ -456,7 +456,7 @@ function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence,
     canonicalDemoEvidence.latest_json?.prompt_evaluation?.apply_status === "applied" &&
     canonicalDemoEvidence.latest_json?.prompt_evaluation?.re_eval_status === "通过";
   return [
-    matrixItem("E-00", "Current goal-test-daemon Web/API state retains a visible canonical demo chain instead of empty archived-only evidence",
+    matrixItem("E-00", "Current ai-studio Web/API state retains a visible canonical demo chain instead of empty archived-only evidence",
       canonicalDemoPassed,
       canonicalDemoEvidence.latest_json_path
         ? "Canonical demo artifact exists, but current issue/task/eval/candidate/re-eval evidence is incomplete. This artifact is a demo fixture and still does not replace final real PM+01-05 model execution."

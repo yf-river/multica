@@ -43,11 +43,11 @@ const childEnv = {
   NEXT_PUBLIC_API_URL: apiBase,
   REMOTE_API_URL: apiBase,
   DATABASE_URL: databaseURL,
-  E2E_ACCOUNT: process.env.E2E_ACCOUNT || process.env.GOAL_TEST_ACCOUNT || "goal-test-daemon",
-  E2E_PASSWORD: process.env.E2E_PASSWORD || process.env.GOAL_TEST_PASSWORD || "e2e-password",
-  E2E_NAME: process.env.E2E_NAME || "goal-test 验收账号",
-  E2E_WORKSPACE: process.env.E2E_WORKSPACE || process.env.GOAL_TEST_WORKSPACE_SLUG || "goal-test-daemon",
-  E2E_WORKSPACE_NAME: process.env.E2E_WORKSPACE_NAME || "goal-test 验收工作区",
+  E2E_ACCOUNT: process.env.E2E_ACCOUNT || process.env.GOAL_TEST_ACCOUNT || "develop",
+  E2E_PASSWORD: process.env.E2E_PASSWORD || process.env.GOAL_TEST_PASSWORD || "develop123",
+  E2E_NAME: process.env.E2E_NAME || "AI Studio 开发账号",
+  E2E_WORKSPACE: process.env.E2E_WORKSPACE || process.env.GOAL_TEST_WORKSPACE_SLUG || "ai-studio",
+  E2E_WORKSPACE_NAME: process.env.E2E_WORKSPACE_NAME || "AI Studio 工作区",
   NO_PROXY: mergeNoProxy(process.env.NO_PROXY || process.env.no_proxy || "", [frontendURL, apiBase]),
 };
 childEnv.no_proxy = childEnv.NO_PROXY;

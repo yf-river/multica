@@ -13,9 +13,9 @@ const frontendURL = trimSlash(process.env.PLAYWRIGHT_BASE_URL || runEnv.PLAYWRIG
 const expectedFrontendURL = trimSlash(runEnv.FRONTEND_ORIGIN || "http://9.134.129.162:13682");
 const apiBase = trimSlash(process.env.GOAL_TEST_BACKEND_URL || runEnv.NEXT_PUBLIC_API_URL || runEnv.REMOTE_API_URL || `http://127.0.0.1:${runEnv.PORT || "18762"}`);
 const databaseURL = process.env.GOAL_TEST_DATABASE_URL || runEnv.DATABASE_URL || "";
-const account = process.env.E2E_ACCOUNT || process.env.GOAL_TEST_ACCOUNT || "goal-test-daemon";
-const password = process.env.E2E_PASSWORD || process.env.GOAL_TEST_PASSWORD || "e2e-password";
-const workspaceSlug = process.env.E2E_WORKSPACE || process.env.GOAL_TEST_WORKSPACE_SLUG || "goal-test-daemon";
+const account = process.env.E2E_ACCOUNT || process.env.GOAL_TEST_ACCOUNT || "develop";
+const password = process.env.E2E_PASSWORD || process.env.GOAL_TEST_PASSWORD || "develop123";
+const workspaceSlug = process.env.E2E_WORKSPACE || process.env.GOAL_TEST_WORKSPACE_SLUG || "ai-studio";
 const artifactRoot = acceptanceDir(repoRoot);
 
 const checks = [];

@@ -9,10 +9,10 @@ const E2E_NAME = process.env.E2E_NAME ?? "Run Review E2E User";
 const E2E_WORKSPACE = process.env.E2E_WORKSPACE ?? `e2e-run-review-workspace-${E2E_WORKER}-${E2E_RUN_ID}`;
 const E2E_WORKSPACE_NAME = process.env.E2E_WORKSPACE_NAME ?? `Run Review Workspace ${E2E_WORKER}`;
 const ISSUE_REVIEW_DRAFT_DATASET_NAME = "Issue 复盘评测 Draft";
-const EXISTING_ISSUE_E2E_ACCOUNT = process.env.E2E_ACCOUNT ?? "goal-test-daemon";
-const EXISTING_ISSUE_E2E_NAME = process.env.E2E_NAME ?? "Goal Test Daemon";
-const EXISTING_ISSUE_E2E_WORKSPACE = process.env.E2E_WORKSPACE ?? "goal-test-daemon";
-const EXISTING_ISSUE_E2E_WORKSPACE_NAME = process.env.E2E_WORKSPACE_NAME ?? "goal-test-daemon";
+const EXISTING_ISSUE_E2E_ACCOUNT = process.env.E2E_ACCOUNT ?? "develop";
+const EXISTING_ISSUE_E2E_NAME = process.env.E2E_NAME ?? "AI Studio Developer";
+const EXISTING_ISSUE_E2E_WORKSPACE = process.env.E2E_WORKSPACE ?? "ai-studio";
+const EXISTING_ISSUE_E2E_WORKSPACE_NAME = process.env.E2E_WORKSPACE_NAME ?? "AI Studio 工作区";
 
 test.describe("run review eval draft flow", () => {
   test.describe.configure({ timeout: 120_000 });

@@ -1,6 +1,6 @@
 -- name: CreateSquad :one
-INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, avatar_url, instructions, sop_profile)
-VALUES ($1, $2, $3, $4, $5, $6, COALESCE(sqlc.narg('instructions'), ''), COALESCE(sqlc.narg('sop_profile')::jsonb, '{}'::jsonb))
+INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, avatar_url, visibility, instructions, sop_profile)
+VALUES ($1, $2, $3, $4, $5, $6, COALESCE(sqlc.narg('visibility'), 'workspace'), COALESCE(sqlc.narg('instructions'), ''), COALESCE(sqlc.narg('sop_profile')::jsonb, '{}'::jsonb))
 RETURNING *;
 
 -- name: GetSquad :one
@@ -29,6 +29,20 @@ ORDER BY
     (sm.member_type = 'agent' AND sm.member_id = s.leader_id) DESC,
     sm.created_at ASC;
 
+-- name: ListAllSquadMemberPreviewRows :many
+SELECT
+    sm.squad_id,
+    sm.member_type,
+    sm.member_id,
+    sm.role
+FROM squad_member sm
+JOIN squad s ON s.id = sm.squad_id
+WHERE s.workspace_id = $1
+ORDER BY
+    sm.squad_id ASC,
+    (sm.member_type = 'agent' AND sm.member_id = s.leader_id) DESC,
+    sm.created_at ASC;
+
 -- name: ListSquadMemberPreviewRowsBySquad :many
 SELECT
     sm.squad_id,
@@ -51,6 +65,7 @@ UPDATE squad SET
     description = COALESCE(sqlc.narg('description'), description),
     leader_id = COALESCE(sqlc.narg('leader_id'), leader_id),
     avatar_url = COALESCE(sqlc.narg('avatar_url'), avatar_url),
+    visibility = COALESCE(sqlc.narg('visibility'), visibility),
     instructions = COALESCE(sqlc.narg('instructions'), instructions),
     sop_profile = COALESCE(sqlc.narg('sop_profile')::jsonb, sop_profile),
     updated_at = now()
@@ -59,6 +74,11 @@ RETURNING *;
 
 -- name: ArchiveSquad :one
 UPDATE squad SET archived_at = now(), archived_by = $2, updated_at = now()
+WHERE id = $1
+RETURNING *;
+
+-- name: RestoreSquad :one
+UPDATE squad SET archived_at = NULL, archived_by = NULL, updated_at = now()
 WHERE id = $1
 RETURNING *;
 

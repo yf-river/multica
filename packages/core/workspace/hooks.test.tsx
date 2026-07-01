@@ -13,7 +13,7 @@ import { useActorName } from "./hooks";
 const WORKSPACE: Workspace = {
   id: "ws-1",
   name: "测试工作区",
-  slug: "goal-test-daemon",
+  slug: "ai-studio",
   description: null,
   context: null,
   settings: {},

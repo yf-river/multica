@@ -311,8 +311,8 @@ async function inspectDatabase(name, databaseURL) {
   const client = new pg.Client({ connectionString: databaseURL });
   await client.connect();
   try {
-    const workspace = await one(client, `select id::text, slug, name from workspace where slug='goal-test-daemon' order by created_at desc limit 1`);
-    if (!workspace) return missingDBState(name, "goal-test-daemon workspace missing");
+    const workspace = await one(client, `select id::text, slug, name from workspace where slug='ai-studio' order by created_at desc limit 1`);
+    if (!workspace) return missingDBState(name, "ai-studio workspace missing");
     const workspaceID = workspace.id;
     const projects = await rows(client, `
       select id::text, title

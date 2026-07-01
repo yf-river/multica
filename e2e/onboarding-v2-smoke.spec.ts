@@ -6,7 +6,7 @@ const ACCOUNT_PREFIX = `onboarding_disabled_${Date.now()}`;
 const SLUG_PREFIX = `onboarding-disabled-${Date.now()}`;
 async function loginInBrowser(page: Page, account: string) {
   const res = await page.request.post("/auth/login", {
-    data: { account, password: "e2e-password" },
+    data: { account, password: "develop123" },
   });
   expect(res.ok()).toBe(true);
   const data = await res.json();

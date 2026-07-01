@@ -7,9 +7,9 @@ import process from "node:process";
 import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const apiURL = trimEnv("ACCEPTANCE_API_URL") || trimEnv("GOAL_TEST_INT_API_URL") || "http://127.0.0.1:18762";
-const account = trimEnv("ACCEPTANCE_DEMO_ACCOUNT") || "goal-test-daemon";
-const password = trimEnv("ACCEPTANCE_DEMO_PASSWORD") || "e2e-password";
-const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || "goal-test-daemon";
+const account = trimEnv("ACCEPTANCE_DEMO_ACCOUNT") || "develop";
+const password = trimEnv("ACCEPTANCE_DEMO_PASSWORD") || "develop123";
+const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || "ai-studio";
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const artifactRoot = acceptanceDir(repoRoot);
 const generatedAt = new Date().toISOString();

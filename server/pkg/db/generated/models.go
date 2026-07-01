@@ -932,6 +932,7 @@ type Squad struct {
 	AvatarUrl    pgtype.Text        `json:"avatar_url"`
 	Instructions string             `json:"instructions"`
 	SopProfile   []byte             `json:"sop_profile"`
+	Visibility   string             `json:"visibility"`
 }
 
 type SquadMember struct {

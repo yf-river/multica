@@ -23,7 +23,7 @@ const profiles = {
     databaseName: "multica_goal_test_680",
     daemonProfile: "goal-test-prod",
     daemonID: "goal-test-codex-prod",
-    runtimeName: "Goal Test Codex Prod",
+    runtimeName: "AI Studio Codex Prod",
     frontendMode: "next-start",
   },
   int: {
@@ -34,7 +34,7 @@ const profiles = {
     databaseName: "multica_goal_test_int",
     daemonProfile: "goal-test-int",
     daemonID: "goal-test-codex-int",
-    runtimeName: "Goal Test Codex Int",
+    runtimeName: "AI Studio Codex Int",
     frontendMode: "next-dev",
   },
 };
@@ -123,7 +123,7 @@ function ensureEnvironment(item) {
     `NEXT_PUBLIC_WS_URL=`,
     `CORS_ALLOWED_ORIGINS=${frontendURL},http://127.0.0.1:${item.frontendPort},http://localhost:${item.frontendPort}`,
     `ALLOW_SIGNUP=false`,
-    `ALLOWED_ACCOUNTS=goal-test-daemon`,
+    `ALLOWED_ACCOUNTS=develop`,
     ...codexRunnerEnvLines(codexRunner),
   ];
   writeFileSync(file, `${lines.join("\n")}\n`);
@@ -413,7 +413,7 @@ async function prewarmDevWebRoutes(item) {
     return { enabled: false, reason: "frontend mode is not next-dev", routes: [] };
   }
   const base = `http://127.0.0.1:${item.frontendPort}`;
-  const slug = process.env.GOAL_TEST_WORKSPACE_SLUG || "goal-test-daemon";
+  const slug = process.env.GOAL_TEST_WORKSPACE_SLUG || "ai-studio";
   const scope = prewarmScope();
   const concurrency = boundedInt(process.env.GOAL_TEST_WEB_PREWARM_CONCURRENCY, 2, 1, 8);
   const timeoutSec = boundedInt(process.env.GOAL_TEST_WEB_PREWARM_TIMEOUT_SEC, 90, 5, 240);
@@ -665,8 +665,11 @@ function buildCommit() {
 function isExpectedWebProcess(processInfo, item) {
   if (!processInfo.running) return false;
   if (!processInfo.cwd.endsWith("/apps/web")) return false;
-  if (item.frontendMode === "next-dev") return processInfo.command.includes("next");
-  return processInfo.command.includes("next") && !processInfo.command.includes("next dev");
+  const groupCommand = processGroupCommand(processInfo.pid);
+  if (item.frontendMode === "next-dev") {
+    return /next .*dev|next\/dist\/bin\/next dev/.test(groupCommand);
+  }
+  return /next .*start|next\/dist\/bin\/next start/.test(groupCommand) && !/next .*dev|next\/dist\/bin\/next dev/.test(groupCommand);
 }
 
 function verifyAll() {
@@ -778,9 +781,7 @@ function verifyEnvironment(item, requireRunning) {
     server_running: server.running,
     web_running: web.running,
     daemon_running: daemon.running,
-    web_is_production_start: item.frontendMode === "next-start"
-      ? (/next .*start|next\/dist\/bin\/next start|next-server/.test(web.command) && web.cwd.endsWith("/apps/web") && !web.command.includes("next dev"))
-      : true,
+    web_process_matches_frontend_mode: isExpectedWebProcess(web, item),
     server_binary: server.command.includes("server/bin/server"),
     daemon_profile: daemon.command.includes(`--profile ${item.daemonProfile}`),
     frontend_mode_matches: metadata?.frontend_mode === item.frontendMode,
@@ -1253,8 +1254,8 @@ const crypto = require('crypto');
 const pg = require('pg');
 const sourceUrl = ${JSON.stringify(sourceDatabaseURL)};
 const targetUrl = ${JSON.stringify(targetDatabaseURL)};
-const account = 'goal-test-daemon';
-const workspaceSlug = 'goal-test-daemon';
+const account = 'develop';
+const workspaceSlug = 'ai-studio';
 
 async function copyTableRow(source, target, table, whereSql, params) {
   const src = await source.query('SELECT * FROM ' + table + ' WHERE ' + whereSql + ' LIMIT 1', params);
@@ -1287,11 +1288,11 @@ function passwordHash(password) {
 async function seedFromScratch(target) {
   const user = await target.query(
     'INSERT INTO "user" (name, account, onboarded_at, starter_content_state, password_hash, created_at, updated_at) VALUES ($1, $2, now(), $3, $4, now(), now()) ON CONFLICT (account) DO UPDATE SET name = EXCLUDED.name, password_hash = EXCLUDED.password_hash, onboarded_at = COALESCE("user".onboarded_at, now()), updated_at = now() RETURNING id',
-    ['goal-test 验收账号', account, 'imported', passwordHash('e2e-password')],
+    ['AI Studio 开发账号', account, 'imported', passwordHash('develop123')],
   );
   const workspace = await target.query(
     'INSERT INTO workspace (name, slug, description, context, issue_prefix, repos) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, context = EXCLUDED.context, repos = EXCLUDED.repos, updated_at = now() RETURNING id',
-    ['goal-test 联调工作区', workspaceSlug, 'goal-test 联调开发工作区', '用于 Multica goal-test 联调、验收和性能调试。', 'GTD', '[]'],
+    ['AI Studio 工作区', workspaceSlug, 'AI Studio 开发工作区', '用于 AI Studio 开发联调、验收和性能调试。', 'AIS', '[]'],
   );
   await target.query(
     'INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = EXCLUDED.role',
@@ -1366,7 +1367,7 @@ function ensureDaemonProfile(item, env) {
 
 function refreshDaemonProfileToken(item) {
   const profilePath = path.join(process.env.HOME || "/root", ".multica", "profiles", item.daemonProfile, "config.json");
-  const res = spawnSync("bash", ["-lc", `node - <<'NODE'\nconst fs = require('fs');\nconst url = 'http://127.0.0.1:${item.backendPort}';\nconst profilePath = ${JSON.stringify(profilePath)};\n(async () => {\n  const loginRes = await fetch(url + '/auth/login', {\n    method: 'POST',\n    headers: { 'content-type': 'application/json' },\n    body: JSON.stringify({ account: 'goal-test-daemon', password: 'e2e-password' }),\n  });\n  if (!loginRes.ok) throw new Error('login failed ' + loginRes.status + ': ' + await loginRes.text());\n  const login = await loginRes.json();\n  const wsRes = await fetch(url + '/api/workspaces', { headers: { authorization: 'Bearer ' + login.token } });\n  if (!wsRes.ok) throw new Error('workspaces failed ' + wsRes.status + ': ' + await wsRes.text());\n  const workspaces = await wsRes.json();\n  const workspace = (Array.isArray(workspaces) ? workspaces : workspaces.items || []).find((item) => item.slug === 'goal-test-daemon');\n  if (!workspace?.id) throw new Error('goal-test-daemon workspace missing');\n  const cfg = fs.existsSync(profilePath) ? JSON.parse(fs.readFileSync(profilePath, 'utf8')) : {};\n  cfg.server_url = url;\n  cfg.app_url = 'http://${publicHost}:${item.frontendPort}';\n  cfg.workspace_id = workspace.id;\n  cfg.token = login.token;\n  fs.writeFileSync(profilePath, JSON.stringify(cfg, null, 2) + '\\n', { mode: 0o600 });\n})().catch((error) => {\n  console.error(error.stack || error.message || String(error));\n  process.exit(1);\n});\nNODE`], { cwd: repoRoot, encoding: "utf8" });
+  const res = spawnSync("bash", ["-lc", `node - <<'NODE'\nconst fs = require('fs');\nconst url = 'http://127.0.0.1:${item.backendPort}';\nconst profilePath = ${JSON.stringify(profilePath)};\n(async () => {\n  const loginRes = await fetch(url + '/auth/login', {\n    method: 'POST',\n    headers: { 'content-type': 'application/json' },\n    body: JSON.stringify({ account: 'develop', password: 'develop123' }),\n  });\n  if (!loginRes.ok) throw new Error('login failed ' + loginRes.status + ': ' + await loginRes.text());\n  const login = await loginRes.json();\n  const wsRes = await fetch(url + '/api/workspaces', { headers: { authorization: 'Bearer ' + login.token } });\n  if (!wsRes.ok) throw new Error('workspaces failed ' + wsRes.status + ': ' + await wsRes.text());\n  const workspaces = await wsRes.json();\n  const workspace = (Array.isArray(workspaces) ? workspaces : workspaces.items || []).find((item) => item.slug === 'ai-studio');\n  if (!workspace?.id) throw new Error('ai-studio workspace missing');\n  const cfg = fs.existsSync(profilePath) ? JSON.parse(fs.readFileSync(profilePath, 'utf8')) : {};\n  cfg.server_url = url;\n  cfg.app_url = 'http://${publicHost}:${item.frontendPort}';\n  cfg.workspace_id = workspace.id;\n  cfg.token = login.token;\n  fs.writeFileSync(profilePath, JSON.stringify(cfg, null, 2) + '\\n', { mode: 0o600 });\n})().catch((error) => {\n  console.error(error.stack || error.message || String(error));\n  process.exit(1);\n});\nNODE`], { cwd: repoRoot, encoding: "utf8" });
   if (res.status !== 0) fail(`refresh daemon profile token failed\n${res.stderr || res.stdout}`);
 }
 
@@ -1455,6 +1456,14 @@ function inspectPID(pid) {
   const res = spawnSync("ps", ["-p", String(pid), "-o", "args="], { encoding: "utf8" });
   const cwd = spawnSync("readlink", [`/proc/${pid}/cwd`], { encoding: "utf8" });
   return { pid, running: res.status === 0 && Boolean(res.stdout.trim()), command: res.stdout.trim(), cwd: cwd.stdout.trim() };
+}
+
+function processGroupCommand(pid) {
+  if (!pid) return "";
+  const pgid = spawnSync("ps", ["-p", String(pid), "-o", "pgid="], { encoding: "utf8" }).stdout.trim();
+  if (!pgid) return "";
+  const res = spawnSync("bash", ["-lc", `ps -eo pgid=,args= | awk '$1 == ${Number(pgid)} { sub(/^[[:space:]]*[0-9]+[[:space:]]+/, ""); print }'`], { encoding: "utf8" });
+  return res.stdout;
 }
 
 function gitText(args) {

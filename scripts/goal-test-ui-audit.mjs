@@ -14,9 +14,9 @@ const env = {
 const frontendURL = trimSlash(process.env.GOAL_TEST_FRONTEND_URL || env.FRONTEND_ORIGIN || "http://9.134.129.162:13682");
 const browserURL = trimSlash(process.env.GOAL_TEST_BROWSER_URL || `http://127.0.0.1:${env.FRONTEND_PORT || "13682"}`);
 const backendURL = trimSlash(process.env.GOAL_TEST_BACKEND_URL || env.REMOTE_API_URL || "http://127.0.0.1:18762");
-const workspaceSlug = process.env.GOAL_TEST_WORKSPACE_SLUG || "goal-test-daemon";
-const account = process.env.GOAL_TEST_ACCOUNT || "goal-test-daemon";
-const password = process.env.GOAL_TEST_PASSWORD || "e2e-password";
+const workspaceSlug = process.env.GOAL_TEST_WORKSPACE_SLUG || "ai-studio";
+const account = process.env.GOAL_TEST_ACCOUNT || "develop";
+const password = process.env.GOAL_TEST_PASSWORD || "develop123";
 const warmupEnabled = process.env.GOAL_TEST_UI_AUDIT_WARMUP !== "0";
 const maxRouteMs = Number(process.env.GOAL_TEST_UI_AUDIT_MAX_ROUTE_MS || "3000");
 const maxApiMs = Number(process.env.GOAL_TEST_UI_AUDIT_MAX_API_MS || "1000");
@@ -200,7 +200,7 @@ const routes = [
 ];
 
 const forbiddenText = [
-  "Goal Test Daemon",
+  "AI Studio Developer",
   "Issues",
   "Sign up",
   "Sign in",

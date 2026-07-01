@@ -10,14 +10,14 @@ loadEnvFile(path.join(repoRoot, ".env.local"));
 const apiURL = trimEnv("ACCEPTANCE_API_URL")
   || trimEnv("NEXT_PUBLIC_API_URL")
   || `http://127.0.0.1:${trimEnv("PORT") || "8080"}`;
-const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || trimEnv("REAL_AGENT_E2E_WORKSPACE") || "goal-test-daemon";
-const demoAccount = trimEnv("ACCEPTANCE_DEMO_ACCOUNT") || trimEnv("REAL_AGENT_E2E_ACCOUNT") || "goal-test-daemon";
-const demoPassword = trimEnv("ACCEPTANCE_DEMO_PASSWORD") || trimEnv("REAL_AGENT_E2E_PASSWORD") || "e2e-password";
+const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || trimEnv("REAL_AGENT_E2E_WORKSPACE") || "ai-studio";
+const demoAccount = trimEnv("ACCEPTANCE_DEMO_ACCOUNT") || trimEnv("REAL_AGENT_E2E_ACCOUNT") || "develop";
+const demoPassword = trimEnv("ACCEPTANCE_DEMO_PASSWORD") || trimEnv("REAL_AGENT_E2E_PASSWORD") || "develop123";
 const waitMs = Number(trimEnv("ACCEPTANCE_DEMO_WAIT_MS") || 180_000);
 const forceNewDemoEvidence = trimEnv("ACCEPTANCE_DEMO_FORCE_NEW") === "1";
 
 const token = await login();
-const workspace = await ensureWorkspace(token, "goal-test 联调工作区", workspaceSlug);
+const workspace = await ensureWorkspace(token, "AI Studio 工作区", workspaceSlug);
 await markUserOnboarded(demoAccount);
 
 const readiness = await authedJSON(token, workspace, "/api/prompt-evaluation-runtime-readiness");

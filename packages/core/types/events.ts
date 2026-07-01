@@ -63,6 +63,7 @@ export type WSEventType =
   | "squad:created"
   | "squad:updated"
   | "squad:deleted"
+  | "squad:restored"
   | "label:created"
   | "label:updated"
   | "label:deleted"
@@ -424,6 +425,7 @@ export interface WSEventPayloadMap {
   "squad:created": unknown;
   "squad:updated": unknown;
   "squad:deleted": unknown;
+  "squad:restored": unknown;
   "label:created": unknown;
   "label:updated": unknown;
   "label:deleted": unknown;

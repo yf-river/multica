@@ -33,11 +33,11 @@ Use this profile when generating or running long Codex goals for this repository
 - Decision ledger: `/data/ida/docs/tapd/20260605-ai设计/全流程sop设计-v4`
 - Integration environment: `http://9.134.129.162:13682`
 - Integration login page: `http://9.134.129.162:13682/login`
-- Default acceptance account: `goal-test-daemon`
-- Default acceptance password for local E2E scripts: `e2e-password`; prefer the relevant environment variable when one is set.
+- Default acceptance account: `develop`
+- Default acceptance password for local E2E scripts: `develop123`; prefer the relevant environment variable when one is set.
 - Default scope: validate the integration environment first. Touch production only when the user explicitly requests it.
-- Goal-test environment files: `.run/env/goal-test-int.env`, `.run/env/goal-test-prod.env`
-- Goal-test logs: `.run/int-server.log`, `.run/int-web.log`, `.run/int-daemon.log`, `.run/prod-server.log`, `.run/prod-web.log`, `.run/prod-daemon.log`
+- AI Studio environment files: `.run/env/goal-test-int.env`, `.run/env/goal-test-prod.env`
+- AI Studio logs: `.run/int-server.log`, `.run/int-web.log`, `.run/int-daemon.log`, `.run/prod-server.log`, `.run/prod-web.log`, `.run/prod-daemon.log`
 - Evidence directories: `artifacts/acceptance/` and `artifacts/acceptance/ui-audit-screenshots/`
 
 Useful goal-test commands:
@@ -74,7 +74,7 @@ node scripts/codex-squad-curl-e2e.mjs
 
 For complex goal-test delivery, prefer `gpt-5.5 high` as the main controller. Simple local slices or generating the goal prompt itself can use `gpt-5.5 medium`. Read-only exploration and repeated verification can use lower-cost models when available. Local runtime should prefer Codex unless the user explicitly chooses another runtime.
 
-Goal-test acceptance must include real browser UI checks, E2E/API data closure, performance evidence, current-deployment `.run` log window scans, decision ledger updates, and a commit or explicit reason for not committing. For integration Playwright runs, first run `make goal-test-e2e-preflight`, then use the project variables from `.run/env/goal-test-int.env` plus `PLAYWRIGHT_BASE_URL=http://9.134.129.162:13682`; do not rely on `E2E_BASE_URL` alone. E2E tests may reuse the default account/workspace, but must create their own business data through public API/UI instead of depending on existing prompts, issues, or assets. Prefer `TestApiClient.createPromptForE2E` and `TestApiClient.createIssueForE2E` for unique named fixtures.
+AI Studio acceptance must include real browser UI checks, E2E/API data closure, performance evidence, current-deployment `.run` log window scans, decision ledger updates, and a commit or explicit reason for not committing. For integration Playwright runs, first run `make goal-test-e2e-preflight`, then use the project variables from `.run/env/goal-test-int.env` plus `PLAYWRIGHT_BASE_URL=http://9.134.129.162:13682`; do not rely on `E2E_BASE_URL` alone. E2E tests may reuse the default account/workspace, but must create their own business data through public API/UI instead of depending on existing prompts, issues, or assets. Prefer `TestApiClient.createPromptForE2E` and `TestApiClient.createIssueForE2E` for unique named fixtures.
 
 For broad goal-test UI or training audits, run `make goal-test-smoke` first. `make goal-test-ui-audit` and `make goal-test-training-performance-audit` already include smoke plus the current deployment marker log scan in their JSON evidence. Deployments archive previous `.run/*-{server,web,daemon}.log` files under `.run/log-archive/` before writing the new marker window. For long-session retrospectives, use `make goal-test-session-retro SESSION=/path/to/session.jsonl` instead of hand-writing the session index and root-cause table.
 
@@ -100,7 +100,7 @@ Continuous goal-test governance for long sessions:
 - Acceptance data must be created through public UI/API/CLI with unique names. Prefer archive, hide, disable, or test marking over deleting evidence; delete only when the test contract explicitly allows it. Reused evidence must state why it is still valid and what would invalidate it.
 - Separate `demo-ready` from `production-complete`. A flow can be demo-ready when the integration UI/API/E2E evidence is solid enough to show, but it is not production-complete while deep Opik features, permissions, security, migrations, stability, cost controls, or full final acceptance remain open.
 
-Goal-test gate applicability:
+AI Studio gate applicability:
 
 - Dev gate: `make goal-test-fast-check` or `make goal-test-smart-verify MODE=dev`; use while editing and before broad validation.
 - Precommit gate: `make goal-test-smart-verify MODE=precommit`; use before committing focused code changes.

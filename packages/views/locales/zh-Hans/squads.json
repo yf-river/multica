@@ -11,21 +11,28 @@
       "creator": "创建者",
       "created": "创建时间"
     },
+    "visibility_workspace": "工作区",
+    "visibility_personal": "个人",
     "no_matches": "没有匹配的小队",
     "row_menu": "小队操作",
-    "archive_action": "归档"
+    "archive_action": "归档",
+    "restore_action": "恢复"
   },
   "inspector": {
     "details_section": "详情",
-    "archive_button": "归档"
+    "archive_button": "归档",
+    "restore_button": "恢复",
+    "archived_banner": "该小队已归档，无法被分配或提及。"
   },
   "archive_dialog": {
     "title": "归档这个小队？",
-    "description": "“{{name}}” 将被归档，该小队当前承接的任务 会转交给小队负责人。此操作无法撤销，如需恢复路由请新建小队。",
+    "description": "“{{name}}” 将被归档，无法被分配或提及；该小队当前承接的任务会转交给小队负责人。小队中的智能体不会被归档，所有历史会保留，可以稍后恢复。",
     "cancel": "取消",
     "confirm": "归档",
     "archiving": "归档中…",
-    "success": "已归档小队"
+    "success": "已归档小队",
+    "restore_success": "已恢复小队",
+    "restore_failed": "恢复小队失败"
   },
   "name_editor": {
     "cancel": "取消"
@@ -86,7 +93,8 @@
   },
   "scope": {
     "mine": "我的",
-    "all": "全部"
+    "all": "全部",
+    "archived": "已归档"
   },
   "toolbar": {
     "display": "显示",

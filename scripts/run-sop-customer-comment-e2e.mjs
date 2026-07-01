@@ -9,9 +9,9 @@ import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const outputDir = acceptanceDir(repoRoot);
 const apiURL = trimEnv("ACCEPTANCE_API_URL") || trimEnv("GOAL_TEST_INT_API_URL") || "http://127.0.0.1:18762";
-const account = trimEnv("ACCEPTANCE_DEMO_ACCOUNT") || "goal-test-daemon";
-const password = trimEnv("ACCEPTANCE_DEMO_PASSWORD") || "e2e-password";
-const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || "goal-test-daemon";
+const account = trimEnv("ACCEPTANCE_DEMO_ACCOUNT") || "develop";
+const password = trimEnv("ACCEPTANCE_DEMO_PASSWORD") || "develop123";
+const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || "ai-studio";
 const provider = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER") || "codex";
 const model = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "gpt-5.3-codex-spark";
 const repoRef = trimEnv("ACCEPTANCE_REPO_REF") || "v5.0.0_dev_sop";
@@ -87,7 +87,11 @@ try {
   const runtime = await resolveOnlineRuntime(token, workspace.id);
   evidence.runtime = pickRuntime(runtime);
 
-  const template = await post("/api/squads/internal-template", { template_key: "user-center", model }, token);
+  const template = await post("/api/squads/internal-template", {
+    template_key: "user-center",
+    runtime_provider: provider,
+    model,
+  }, token);
   const squad = template?.squad;
   const agents = Array.isArray(template?.agents) ? template.agents : [];
   const pm = agents.find((item) => item.role_key === "pm" || item.name === "pm") || agents[0];

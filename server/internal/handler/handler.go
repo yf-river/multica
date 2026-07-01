@@ -326,6 +326,22 @@ func isUniqueViolation(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "23505"
 }
 
+func isAgentNameUniqueViolation(err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || pgErr.Code != "23505" {
+		return false
+	}
+	switch pgErr.ConstraintName {
+	case "agent_workspace_name_unique",
+		"agent_workspace_name_active_unique",
+		"agent_private_owner_name_active_unique",
+		"agent_private_no_owner_name_active_unique":
+		return true
+	default:
+		return false
+	}
+}
+
 // isCheckViolation reports whether err is a PostgreSQL CHECK constraint
 // violation (SQLSTATE 23514). Used to translate column-level CHECK failures
 // into a 4xx instead of a generic 500.

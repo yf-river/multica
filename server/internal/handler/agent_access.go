@@ -2,11 +2,28 @@ package handler
 
 import (
 	"context"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
+
+const (
+	squadVisibilityWorkspace = "workspace"
+	squadVisibilityPersonal  = "personal"
+)
+
+func normalizeSquadVisibility(value string) (string, bool) {
+	switch strings.TrimSpace(value) {
+	case "", squadVisibilityWorkspace:
+		return squadVisibilityWorkspace, true
+	case squadVisibilityPersonal:
+		return squadVisibilityPersonal, true
+	default:
+		return "", false
+	}
+}
 
 // canAccessPrivateAgent gates the four protected surfaces for private
 // agents: chat / @-mention dispatch, viewing the agent's history, editing
@@ -47,6 +64,34 @@ func memberAllowedForPrivateAgent(agent db.Agent, userID, role string) bool {
 		return true
 	}
 	return uuidToString(agent.OwnerID) == userID
+}
+
+func memberCanManageSquad(squad db.Squad, member db.Member) bool {
+	if roleAllowed(member.Role, "owner", "admin") {
+		return true
+	}
+	return uuidToString(squad.CreatorID) == uuidToString(member.UserID)
+}
+
+func memberCanUseSquad(squad db.Squad, member db.Member) bool {
+	if squad.Visibility != squadVisibilityPersonal {
+		return true
+	}
+	return memberCanManageSquad(squad, member)
+}
+
+func (h *Handler) canUseSquad(ctx context.Context, squad db.Squad, actorType, actorID, workspaceID string) bool {
+	if squad.Visibility != squadVisibilityPersonal {
+		return true
+	}
+	if actorType != "member" {
+		return false
+	}
+	member, err := h.getWorkspaceMember(ctx, actorID, workspaceID)
+	if err != nil {
+		return false
+	}
+	return memberCanManageSquad(squad, member)
 }
 
 // accessibleAgentIDs returns the set of agent IDs in the workspace the actor

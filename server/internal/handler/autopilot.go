@@ -1085,6 +1085,11 @@ func (h *Handler) validateAutopilotAssignee(w http.ResponseWriter, r *http.Reque
 			writeError(w, http.StatusUnprocessableEntity, "squad is archived; pick a different squad")
 			return false
 		}
+		actorType, actorID := h.resolveActor(r, requestUserID(r), util.UUIDToString(workspaceID))
+		if !h.canUseSquad(r.Context(), squad, actorType, actorID, util.UUIDToString(workspaceID)) {
+			writeError(w, http.StatusForbidden, "cannot assign autopilot to personal squad")
+			return false
+		}
 		leader, err := h.Queries.GetAgent(r.Context(), squad.LeaderID)
 		if err != nil {
 			writeError(w, http.StatusBadRequest, "squad leader agent not found")
@@ -1096,7 +1101,6 @@ func (h *Handler) validateAutopilotAssignee(w http.ResponseWriter, r *http.Reque
 		}
 		// Private-leader gate: the member configuring the autopilot must have
 		// access to the private leader, same as validateAssigneePair.
-		actorType, actorID := h.resolveActor(r, requestUserID(r), util.UUIDToString(workspaceID))
 		if !h.canAccessPrivateAgent(r.Context(), leader, actorType, actorID, util.UUIDToString(workspaceID)) {
 			writeError(w, http.StatusForbidden, "cannot assign autopilot to squad with private leader")
 			return false

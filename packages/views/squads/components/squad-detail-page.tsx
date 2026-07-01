@@ -17,7 +17,7 @@ import { useNavigation } from "../../navigation";
 import { AppLink } from "../../navigation";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
 import { PageHeader } from "../../layout/page-header";
-import { Users, Plus, Trash2, ArrowUpRight, Crown, Camera, Loader2, Pencil, FileText, Save } from "lucide-react";
+import { AlertCircle, Archive, ArchiveRestore, Users, Plus, Trash2, ArrowUpRight, Crown, Camera, Loader2, Pencil, FileText, Save } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
@@ -308,9 +308,21 @@ export function SquadDetailPage() {
 
   const deleteMut = useMutation({
     mutationFn: () => api.deleteSquad(squadId),
-    onSuccess: () => { queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) }); push(p.squads()); toast.success("Squad archived"); },
+    onSuccess: () => { queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) }); push(p.squads()); toast.success(t(($) => $.archive_dialog.success)); },
     onError: (err) =>
-      toast.error(err instanceof Error && err.message ? err.message : "Failed to archive squad"),
+      toast.error(err instanceof Error && err.message ? err.message : "归档小队失败"),
+  });
+
+  const restoreMut = useMutation({
+    mutationFn: () => api.restoreSquad(squadId),
+    onSuccess: () => {
+      refetchSquad();
+      refetchMembers();
+      queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
+      toast.success(t(($) => $.archive_dialog.restore_success));
+    },
+    onError: (err) =>
+      toast.error(err instanceof Error && err.message ? err.message : t(($) => $.archive_dialog.restore_failed)),
   });
 
   // CreateAgentDialog's onCreate contract: hit POST /api/agents and
@@ -349,6 +361,9 @@ export function SquadDetailPage() {
   const isLeader = (m: SquadMember) => m.member_type === "agent" && squad.leader_id === m.member_id;
   const isArchived = (m: SquadMember) =>
     m.member_type === "agent" && !!agents.find((a: Agent) => a.id === m.member_id)?.archived_at;
+  const canManageSquad = isWorkspaceAdmin || squad.creator_id === currentUser?.id;
+  const isSquadArchived = !!squad.archived_at;
+  const canEditSquad = canManageSquad && !isSquadArchived;
 
   const initials = squad.name
     .split(" ")
@@ -367,13 +382,44 @@ export function SquadDetailPage() {
             <h1 className="truncate text-sm font-medium text-foreground">{squad.name}</h1>
           </>
         }
-        actions={
-          <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => setConfirmArchive(true)}>
-            <Trash2 className="size-3.5 mr-1" />
-            {t(($) => $.inspector.archive_button)}
-          </Button>
-        }
+        actions={canManageSquad ? (
+          isSquadArchived ? (
+            <Button size="sm" variant="outline" disabled={restoreMut.isPending} onClick={() => restoreMut.mutate()}>
+              {restoreMut.isPending ? (
+                <Loader2 className="size-3.5 animate-spin" />
+              ) : (
+                <ArchiveRestore className="size-3.5" />
+              )}
+              {t(($) => $.inspector.restore_button)}
+            </Button>
+          ) : (
+            <Button size="sm" variant="ghost" className="text-destructive hover:text-destructive" onClick={() => setConfirmArchive(true)}>
+              <Archive className="size-3.5 mr-1" />
+              {t(($) => $.inspector.archive_button)}
+            </Button>
+          )
+        ) : null}
       />
+
+      {isSquadArchived && (
+        <div className="flex shrink-0 items-center gap-2 border-b bg-muted/50 px-6 py-2 text-xs text-muted-foreground">
+          <AlertCircle className="h-3.5 w-3.5 shrink-0" />
+          <span className="flex-1">
+            {t(($) => $.inspector.archived_banner)}
+          </span>
+          {canManageSquad && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-6 text-xs"
+              disabled={restoreMut.isPending}
+              onClick={() => restoreMut.mutate()}
+            >
+              {t(($) => $.inspector.restore_button)}
+            </Button>
+          )}
+        </div>
+      )}
 
       {/* Two-column grid mirrors agent-detail-page: left inspector (identity +
           properties + leader), right pane with tabs (Members | Instructions).
@@ -384,6 +430,7 @@ export function SquadDetailPage() {
           memberCount={members.length}
           leaderName={getEntityName("agent", squad.leader_id)}
           creatorName={getEntityName("member", squad.creator_id)}
+          canManage={canEditSquad}
           uploadingAvatar={updateSquadMut.isPending}
           onUploadAvatar={(url) => updateSquadMut.mutateAsync({ avatar_url: url })}
           onRename={async (next) => { await updateSquadMut.mutateAsync({ name: next.trim() }); }}
@@ -396,9 +443,10 @@ export function SquadDetailPage() {
           memberStatusById={memberStatusById}
           isLeader={isLeader}
           isArchived={isArchived}
+          canManage={canEditSquad}
           getEntityName={getEntityName}
           onAddMemberClick={() => setShowAddMember(true)}
-          onCreateAgentClick={isWorkspaceAdmin ? () => setShowCreateAgent(true) : undefined}
+          onCreateAgentClick={canEditSquad ? () => setShowCreateAgent(true) : undefined}
           onSetLeader={(id) => setLeaderMut.mutate(id)}
           onRemoveMember={(m) => removeMemberMut.mutate(m)}
           onUpdateRole={async (m, role) => { await updateRoleMut.mutateAsync({ member: m, role }); }}
@@ -409,7 +457,7 @@ export function SquadDetailPage() {
         />
       </div>
 
-      {showAddMember && (
+      {showAddMember && canEditSquad && (
         <AddMemberDialog
           availableMembers={availableMembers}
           availableAgents={availableAgents}
@@ -424,7 +472,7 @@ export function SquadDetailPage() {
           mounted for workspace owner/admin since AddSquadMember is
           owner/admin-gated server-side; for everyone else the trigger
           never renders. */}
-      {showCreateAgent && isWorkspaceAdmin && (
+      {showCreateAgent && canEditSquad && (
         <CreateAgentDialog
           runtimes={runtimes}
           runtimesLoading={runtimesLoading}
@@ -939,6 +987,7 @@ function SquadDetailInspector({
   memberCount,
   leaderName,
   creatorName,
+  canManage,
   uploadingAvatar,
   onUploadAvatar,
   onRename,
@@ -948,6 +997,7 @@ function SquadDetailInspector({
   memberCount: number;
   leaderName: string;
   creatorName: string;
+  canManage: boolean;
   uploadingAvatar: boolean;
   onUploadAvatar: (url: string) => Promise<unknown>;
   onRename: (next: string) => Promise<void>;
@@ -973,11 +1023,22 @@ function SquadDetailInspector({
           onUpload={onUploadAvatar}
         />
         <div className="flex flex-col gap-1">
-          <SquadNameEditor value={squad.name} onSave={onRename} />
-          <SquadDescriptionEditor
-            value={squad.description ?? ""}
-            onSave={onUpdateDescription}
-          />
+          {canManage ? (
+            <>
+              <SquadNameEditor value={squad.name} onSave={onRename} />
+              <SquadDescriptionEditor
+                value={squad.description ?? ""}
+                onSave={onUpdateDescription}
+              />
+            </>
+          ) : (
+            <>
+              <div className="text-sm font-medium">{squad.name}</div>
+              {squad.description ? (
+                <div className="text-xs text-muted-foreground">{squad.description}</div>
+              ) : null}
+            </>
+          )}
         </div>
       </div>
 
@@ -996,6 +1057,13 @@ function SquadDetailInspector({
           <InspectorRow label="成员">
             <span className="text-muted-foreground tabular-nums">{memberCount}</span>
           </InspectorRow>
+          <InspectorRow label="可见性">
+            <span className="text-muted-foreground">
+              {squad.visibility === "personal"
+                ? t(($) => $.page.visibility_personal)
+                : t(($) => $.page.visibility_workspace)}
+            </span>
+          </InspectorRow>
           <InspectorRow label="创建者">
             <span className="flex min-w-0 items-center gap-1.5">
               <ActorAvatar actorType="member" actorId={squad.creator_id} size={14} />
@@ -1010,7 +1078,7 @@ function SquadDetailInspector({
           </InspectorRow>
         </div>
       </div>
-    </aside>
+  </aside>
   );
 }
 
@@ -1142,6 +1210,7 @@ function SquadOverviewPane({
   memberStatusById,
   isLeader,
   isArchived,
+  canManage,
   getEntityName,
   onAddMemberClick,
   onCreateAgentClick,
@@ -1158,6 +1227,7 @@ function SquadOverviewPane({
   memberStatusById: Map<string, SquadMemberStatus>;
   isLeader: (m: SquadMember) => boolean;
   isArchived: (m: SquadMember) => boolean;
+  canManage: boolean;
   getEntityName: (type: string, id: string) => string;
   onAddMemberClick: () => void;
   // Optional — only passed when the current user can manage the squad
@@ -1219,6 +1289,7 @@ function SquadOverviewPane({
               memberStatusById={memberStatusById}
               isLeader={isLeader}
               isArchived={isArchived}
+              canManage={canManage}
               getEntityName={getEntityName}
               onAddMemberClick={onAddMemberClick}
               onCreateAgentClick={onCreateAgentClick}
@@ -1233,9 +1304,9 @@ function SquadOverviewPane({
           <div className="flex h-full flex-col p-4 md:p-6">
             <SquadInstructionsTab
               squad={squad}
-              onSave={onSaveInstructions}
-              onApplyUserCenterSOP={onApplyUserCenterSOP}
-              onApplyMulticaCodingSOP={onApplyMulticaCodingSOP}
+              onSave={canManage ? onSaveInstructions : undefined}
+              onApplyUserCenterSOP={canManage ? onApplyUserCenterSOP : undefined}
+              onApplyMulticaCodingSOP={canManage ? onApplyMulticaCodingSOP : undefined}
               onDirtyChange={setActiveDirty}
             />
           </div>
@@ -1284,6 +1355,7 @@ function SquadMembersTab({
   memberStatusById,
   isLeader,
   isArchived,
+  canManage,
   getEntityName,
   onAddMemberClick,
   onCreateAgentClick,
@@ -1296,6 +1368,7 @@ function SquadMembersTab({
   memberStatusById: Map<string, SquadMemberStatus>;
   isLeader: (m: SquadMember) => boolean;
   isArchived: (m: SquadMember) => boolean;
+  canManage: boolean;
   getEntityName: (type: string, id: string) => string;
   onAddMemberClick: () => void;
   // Hidden for non-admins — see SquadOverviewPane.
@@ -1317,18 +1390,20 @@ function SquadMembersTab({
             {t(($) => $.members_tab.section_count, { count: members.length })}
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          {onCreateAgentClick && (
-            <Button size="sm" variant="outline" onClick={onCreateAgentClick}>
+        {canManage && (
+          <div className="flex items-center gap-2">
+            {onCreateAgentClick && (
+              <Button size="sm" variant="outline" onClick={onCreateAgentClick}>
+                <Plus className="size-3.5 mr-1.5" />
+                {t(($) => $.members_tab.create_agent_button)}
+              </Button>
+            )}
+            <Button size="sm" variant="outline" onClick={onAddMemberClick}>
               <Plus className="size-3.5 mr-1.5" />
-              {t(($) => $.members_tab.create_agent_button)}
+              {t(($) => $.members_tab.add_member_button)}
             </Button>
-          )}
-          <Button size="sm" variant="outline" onClick={onAddMemberClick}>
-            <Plus className="size-3.5 mr-1.5" />
-            {t(($) => $.members_tab.add_member_button)}
-          </Button>
-        </div>
+          </div>
+        )}
       </div>
 
       <div className="space-y-2">
@@ -1381,10 +1456,14 @@ function SquadMembersTab({
                     </span>
                   )}
                 </div>
-                <RoleEditor
-                  value={m.role ?? ""}
-                  onSave={async (next) => { await onUpdateRole(m, next); }}
-                />
+                {canManage ? (
+                  <RoleEditor
+                    value={m.role ?? ""}
+                    onSave={async (next) => { await onUpdateRole(m, next); }}
+                  />
+                ) : m.role ? (
+                  <div className="mt-0.5 text-xs text-muted-foreground">{m.role}</div>
+                ) : null}
                 {primaryIssue && (
                   <div className="mt-1 flex items-center gap-1 text-xs text-muted-foreground min-w-0">
                     <AppLink
@@ -1414,68 +1493,68 @@ function SquadMembersTab({
                   </div>
                 )}
               </div>
-            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
-              {m.member_type === "agent" && (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <AppLink
-                        href={p.agentDetail(m.member_id)}
-                        className="inline-flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
-                        aria-label={t(($) => $.members_tab.view_agent_tooltip)}
-                      >
-                        <ArrowUpRight className="size-3.5" />
-                      </AppLink>
-                    }
-                  />
-                  <TooltipContent>
-                    {t(($) => $.members_tab.view_agent_tooltip)}
-                  </TooltipContent>
-                </Tooltip>
-              )}
-              {m.member_type === "agent" && !isLeader(m) && !isArchived(m) && (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-muted-foreground hover:text-amber-600 h-8 w-8 p-0"
-                        onClick={() => onSetLeader(m.member_id)}
-                        disabled={setLeaderPending}
-                        aria-label={t(($) => $.members_tab.make_leader_tooltip)}
-                      >
-                        <Crown className="size-3.5" />
-                      </Button>
-                    }
-                  />
-                  <TooltipContent>
-                    {t(($) => $.members_tab.make_leader_tooltip)}
-                  </TooltipContent>
-                </Tooltip>
-              )}
-              {!isLeader(m) && (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-muted-foreground hover:text-destructive h-8 w-8 p-0"
-                        onClick={() => onRemoveMember(m)}
-                        aria-label={t(($) => $.members_tab.remove_member_tooltip)}
-                      >
-                        <Trash2 className="size-3.5" />
-                      </Button>
-                    }
-                  />
-                  <TooltipContent>
-                    {t(($) => $.members_tab.remove_member_tooltip)}
-                  </TooltipContent>
-                </Tooltip>
-              )}
+              <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 transition-opacity">
+                {m.member_type === "agent" && (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <AppLink
+                          href={p.agentDetail(m.member_id)}
+                          className="inline-flex items-center justify-center h-8 w-8 rounded-md text-muted-foreground hover:text-foreground hover:bg-accent transition-colors"
+                          aria-label={t(($) => $.members_tab.view_agent_tooltip)}
+                        >
+                          <ArrowUpRight className="size-3.5" />
+                        </AppLink>
+                      }
+                    />
+                    <TooltipContent>
+                      {t(($) => $.members_tab.view_agent_tooltip)}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+                {canManage && m.member_type === "agent" && !isLeader(m) && !isArchived(m) && (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-muted-foreground hover:text-amber-600 h-8 w-8 p-0"
+                          onClick={() => onSetLeader(m.member_id)}
+                          disabled={setLeaderPending}
+                          aria-label={t(($) => $.members_tab.make_leader_tooltip)}
+                        >
+                          <Crown className="size-3.5" />
+                        </Button>
+                      }
+                    />
+                    <TooltipContent>
+                      {t(($) => $.members_tab.make_leader_tooltip)}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+                {canManage && !isLeader(m) && (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <Button
+                          size="sm"
+                          variant="ghost"
+                          className="text-muted-foreground hover:text-destructive h-8 w-8 p-0"
+                          onClick={() => onRemoveMember(m)}
+                          aria-label={t(($) => $.members_tab.remove_member_tooltip)}
+                        >
+                          <Trash2 className="size-3.5" />
+                        </Button>
+                      }
+                    />
+                    <TooltipContent>
+                      {t(($) => $.members_tab.remove_member_tooltip)}
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
             </div>
-          </div>
           );
         })}
       </div>
@@ -1494,9 +1573,9 @@ function SquadInstructionsTab({
   onDirtyChange,
 }: {
   squad: Squad;
-  onSave: (instructions: string) => Promise<void>;
-  onApplyUserCenterSOP: () => Promise<void>;
-  onApplyMulticaCodingSOP: () => Promise<void>;
+  onSave?: (instructions: string) => Promise<void>;
+  onApplyUserCenterSOP?: () => Promise<void>;
+  onApplyMulticaCodingSOP?: () => Promise<void>;
   onDirtyChange?: (dirty: boolean) => void;
 }) {
   const { t } = useT("squads");
@@ -1508,6 +1587,7 @@ function SquadInstructionsTab({
   const sopProfile = normalizeSOPProfile(squad.sop_profile);
   const hasUserCenterProfile = sopProfile?.profile_key === USER_CENTER_SOP_PROFILE.profile_key || sopProfile?.project === USER_CENTER_SOP_PROFILE.project;
   const hasMulticaCodingProfile = sopProfile?.profile_key === MULTICA_CODING_SOP_PROFILE.profile_key;
+  const canEdit = !!onSave;
 
   useEffect(() => {
     setValue(squad.instructions ?? "");
@@ -1518,6 +1598,7 @@ function SquadInstructionsTab({
   }, [isDirty, onDirtyChange]);
 
   const handleSave = async () => {
+    if (!onSave) return;
     setSaving(true);
     try {
       await onSave(value);
@@ -1529,6 +1610,7 @@ function SquadInstructionsTab({
   };
 
   const handleApplyUserCenterSOP = async () => {
+    if (!onApplyUserCenterSOP) return;
     setApplyingSOP(true);
     try {
       await onApplyUserCenterSOP();
@@ -1540,6 +1622,7 @@ function SquadInstructionsTab({
   };
 
   const handleApplyMulticaCodingSOP = async () => {
+    if (!onApplyMulticaCodingSOP) return;
     setApplyingMulticaSOP(true);
     try {
       await onApplyMulticaCodingSOP();
@@ -1564,36 +1647,38 @@ function SquadInstructionsTab({
               issue 指派给小队后，队长会先按阶段链推进，再把实现工作委派给对应 skill 或成员。
             </div>
           </div>
-          <div className="flex shrink-0 flex-wrap gap-2">
-            <Button
-              type="button"
-              size="sm"
-              variant={hasUserCenterProfile ? "secondary" : "default"}
-              onClick={handleApplyUserCenterSOP}
-              disabled={applyingSOP}
-            >
-              {applyingSOP ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <FileText className="h-3.5 w-3.5" />
-              )}
-              {hasUserCenterProfile ? "重新应用用户中心 SOP" : "应用用户中心 SOP"}
-            </Button>
-            <Button
-              type="button"
-              size="sm"
-              variant={hasMulticaCodingProfile ? "secondary" : "outline"}
-              onClick={handleApplyMulticaCodingSOP}
-              disabled={applyingMulticaSOP}
-            >
-              {applyingMulticaSOP ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                <Users className="h-3.5 w-3.5" />
-              )}
-              {hasMulticaCodingProfile ? "重新应用 Multica 编码小队" : "应用 Multica 编码小队"}
-            </Button>
-          </div>
+          {canEdit && (
+            <div className="flex shrink-0 flex-wrap gap-2">
+              <Button
+                type="button"
+                size="sm"
+                variant={hasUserCenterProfile ? "secondary" : "default"}
+                onClick={handleApplyUserCenterSOP}
+                disabled={applyingSOP}
+              >
+                {applyingSOP ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <FileText className="h-3.5 w-3.5" />
+                )}
+                {hasUserCenterProfile ? "重新应用用户中心 SOP" : "应用用户中心 SOP"}
+              </Button>
+              <Button
+                type="button"
+                size="sm"
+                variant={hasMulticaCodingProfile ? "secondary" : "outline"}
+                onClick={handleApplyMulticaCodingSOP}
+                disabled={applyingMulticaSOP}
+              >
+                {applyingMulticaSOP ? (
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Users className="h-3.5 w-3.5" />
+                )}
+                {hasMulticaCodingProfile ? "重新应用 Multica 编码小队" : "应用 Multica 编码小队"}
+              </Button>
+            </div>
+          )}
         </div>
 
         {sopProfile ? (
@@ -1658,30 +1743,38 @@ function SquadInstructionsTab({
       />
 
       <div className="flex-1 min-h-0 overflow-y-auto rounded-md border bg-background px-4 py-3 transition-colors focus-within:border-input">
-        <ContentEditor
-          key={squad.id}
-          defaultValue={value}
-          onUpdate={setValue}
-          placeholder="例如：先澄清需求和验收口径，再拆分任务；实现后必须补齐测试证据和交接记录。"
-          debounceMs={150}
-          disableMentions
-          className="min-h-full"
-        />
+        {canEdit ? (
+          <ContentEditor
+            key={squad.id}
+            defaultValue={value}
+            onUpdate={setValue}
+            placeholder="例如：先澄清需求和验收口径，再拆分任务；实现后必须补齐测试证据和交接记录。"
+            debounceMs={150}
+            disableMentions
+            className="min-h-full"
+          />
+        ) : (
+          <div className="whitespace-pre-wrap text-sm text-muted-foreground">
+            {value || "暂无小队指令。"}
+          </div>
+        )}
       </div>
 
-      <div className="flex items-center justify-end gap-3">
-        {isDirty && (
-          <span className="text-xs text-muted-foreground">{t(($) => $.instructions_tab.unsaved_changes)}</span>
-        )}
-        <Button size="sm" onClick={handleSave} disabled={!isDirty || saving}>
-          {saving ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Save className="h-3.5 w-3.5" />
+      {canEdit && (
+        <div className="flex items-center justify-end gap-3">
+          {isDirty && (
+            <span className="text-xs text-muted-foreground">{t(($) => $.instructions_tab.unsaved_changes)}</span>
           )}
-          {t(($) => $.instructions_tab.save_button)}
-        </Button>
-      </div>
+          <Button size="sm" onClick={handleSave} disabled={!isDirty || saving}>
+            {saving ? (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+            ) : (
+              <Save className="h-3.5 w-3.5" />
+            )}
+            {t(($) => $.instructions_tab.save_button)}
+          </Button>
+        </div>
+      )}
     </div>
   );
 }

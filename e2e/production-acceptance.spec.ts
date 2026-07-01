@@ -4,18 +4,18 @@ import { TestApiClient } from "./fixtures";
 
 const workspaceSlug = process.env.ACCEPTANCE_WORKSPACE_SLUG
   || process.env.REAL_AGENT_E2E_WORKSPACE
-  || "goal-test-daemon";
+  || "ai-studio";
 const account = process.env.ACCEPTANCE_DEMO_ACCOUNT
   || process.env.REAL_AGENT_E2E_ACCOUNT
-  || "goal-test-daemon";
+  || "develop";
 const password = process.env.ACCEPTANCE_DEMO_PASSWORD
   || process.env.REAL_AGENT_E2E_PASSWORD
-  || "e2e-password";
+  || "develop123";
 const frontendURL = process.env.ACCEPTANCE_FRONTEND_URL
   || process.env.PLAYWRIGHT_BASE_URL
   || process.env.FRONTEND_ORIGIN
   || "http://localhost:3000";
-const workspaceName = process.env.E2E_WORKSPACE_NAME || "goal-test 联调工作区";
+const workspaceName = process.env.E2E_WORKSPACE_NAME || "AI Studio 工作区";
 const evidencePrefix = "生产验收训练证据";
 const ROUTE_INTRO_TITLES: Record<string, string> = {
   datasets: "数据集题库",
@@ -43,7 +43,7 @@ const TEST_SUITES_ROUTE = routeByPath("test-suites");
 
 async function prepareTrainingDashboardEvidence() {
   const api = new TestApiClient();
-  await api.login(account, "goal-test 验收账号");
+  await api.login(account, "AI Studio 开发账号");
   await api.ensureWorkspace(workspaceName, workspaceSlug);
   await api.markUserOnboarded();
   await api.cleanupPromptArtifactsByPrefix(evidencePrefix);

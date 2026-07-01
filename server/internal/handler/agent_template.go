@@ -11,7 +11,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/agenttmpl"
@@ -453,8 +452,7 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 		// agent name UNIQUE in this workspace, return 409 with a clear
 		// message instead of leaking the raw PG error as 500. Frontend
 		// already knows how to render 409 from the manual create path.
-		var pgErr *pgconn.PgError
-		if errors.As(err, &pgErr) && pgErr.Code == "23505" && pgErr.ConstraintName == "agent_workspace_name_unique" {
+		if isAgentNameUniqueViolation(err) {
 			slog.Info("agent-template create: agent name conflict",
 				append(logger.RequestAttrs(r),
 					"agent_name", req.Name,

@@ -8,7 +8,7 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 const artifactDir = acceptanceDir(repoRoot);
 const runEnvPath = path.join(repoRoot, ".run", "env", "goal-test-int.env");
 
-const TARGET_WORKSPACE_SLUG = process.env.REMEDIATION_WORKSPACE_SLUG || "goal-test-daemon";
+const TARGET_WORKSPACE_SLUG = process.env.REMEDIATION_WORKSPACE_SLUG || "ai-studio";
 const TARGET_DATABASE = process.env.REMEDIATION_DATABASE_NAME || "multica_goal_test_int";
 const apply = process.argv.includes("--apply");
 const canonicalDemoPrefix = "Goal E Canonical Demo";
@@ -591,7 +591,7 @@ async function main() {
       mode: apply ? "apply" : "dry-run",
       database: dbName,
       workspace,
-      destructive_guard: "This script refuses non-multica_goal_test_int databases and the non-goal-test-daemon workspace. Apply mode writes a backup artifact before mutating data.",
+      destructive_guard: "This script refuses non-multica_goal_test_int databases and the non-ai-studio workspace. Apply mode writes a backup artifact before mutating data.",
       target_state: {
         projects: targetProjects,
         agents: targetAgents,

@@ -123,6 +123,7 @@ import type {
   SquadMember,
   SquadMemberStatusListResponse,
   InternalSquadTemplateKey,
+  EnsureInternalSquadTemplateRequest,
   InternalSquadTemplateResponse,
   CreateSquadRequest,
   UpdateSquadRequest,
@@ -2700,8 +2701,11 @@ export class ApiClient {
   }
 
   // Squads
-  async listSquads(): Promise<Squad[]> {
-    const raw = await this.fetch<unknown>(`/api/squads`);
+  async listSquads(paramsInput?: { include_archived?: boolean }): Promise<Squad[]> {
+    const params = new URLSearchParams();
+    if (paramsInput?.include_archived) params.set("include_archived", "true");
+    const qs = params.toString();
+    const raw = await this.fetch<unknown>(`/api/squads${qs ? `?${qs}` : ""}`);
     return parseWithFallback(raw, SquadListSchema, EMPTY_SQUAD_LIST, {
       endpoint: "GET /api/squads",
     }) as Squad[];
@@ -2721,10 +2725,12 @@ export class ApiClient {
     }) as Squad;
   }
 
-  async ensureInternalSquadTemplate(templateKey: InternalSquadTemplateKey): Promise<InternalSquadTemplateResponse> {
+  async ensureInternalSquadTemplate(template: InternalSquadTemplateKey | EnsureInternalSquadTemplateRequest): Promise<InternalSquadTemplateResponse> {
+    const body =
+      typeof template === "string" ? { template_key: template } : template;
     return this.fetch("/api/squads/internal-template", {
       method: "POST",
-      body: JSON.stringify({ template_key: templateKey }),
+      body: JSON.stringify(body),
     });
   }
 
@@ -2737,6 +2743,13 @@ export class ApiClient {
 
   async deleteSquad(id: string): Promise<void> {
     await this.fetch(`/api/squads/${id}`, { method: "DELETE" });
+  }
+
+  async restoreSquad(id: string): Promise<Squad> {
+    const raw = await this.fetch<unknown>(`/api/squads/${id}/restore`, { method: "POST" });
+    return parseWithFallback(raw, SquadSchema, EMPTY_SQUAD, {
+      endpoint: "POST /api/squads/:id/restore",
+    }) as Squad;
   }
 
   async listSquadMembers(squadId: string): Promise<SquadMember[]> {

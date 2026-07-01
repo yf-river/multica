@@ -16,9 +16,9 @@ const stamp = generatedAt.replace(/[:.]/g, "-");
 
 const backendURL = trimSlash(process.env.GOAL_TEST_BACKEND_URL || runEnv.REMOTE_API_URL || evidence.api_url || "http://127.0.0.1:18762");
 const browserURL = trimSlash(process.env.GOAL_TEST_BROWSER_URL || `http://127.0.0.1:${runEnv.FRONTEND_PORT || "13682"}`);
-const workspaceSlug = process.env.GOAL_TEST_WORKSPACE_SLUG || evidence.workspace_slug || "goal-test-daemon";
-const account = process.env.GOAL_TEST_ACCOUNT || evidence.account || "goal-test-daemon";
-const password = process.env.GOAL_TEST_PASSWORD || "e2e-password";
+const workspaceSlug = process.env.GOAL_TEST_WORKSPACE_SLUG || evidence.workspace_slug || "ai-studio";
+const account = process.env.GOAL_TEST_ACCOUNT || evidence.account || "develop";
+const password = process.env.GOAL_TEST_PASSWORD || "develop123";
 const issue = evidence.issue || {};
 const stageArtifacts = evidence.stage_artifacts || {};
 const mr = evidence.mr_handoff || {};

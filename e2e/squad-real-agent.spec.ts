@@ -4,8 +4,8 @@ import { TestApiClient } from "./fixtures";
 import { authenticateBrowserSession, waitForPageText } from "./helpers";
 
 const RUN_REAL_AGENT_E2E = process.env.RUN_REAL_AGENT_E2E === "1";
-const REAL_AGENT_ACCOUNT = process.env.REAL_AGENT_E2E_ACCOUNT || "goal-test-daemon";
-const REAL_AGENT_WORKSPACE = process.env.REAL_AGENT_E2E_WORKSPACE || "goal-test-daemon";
+const REAL_AGENT_ACCOUNT = process.env.REAL_AGENT_E2E_ACCOUNT || "develop";
+const REAL_AGENT_WORKSPACE = process.env.REAL_AGENT_E2E_WORKSPACE || "ai-studio";
 const EXPECTED_AGENT_PROVIDER = process.env.MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER || "codex";
 const EXPECTED_AGENT_MODEL = process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL || "gpt-5.3-codex-spark";
 
@@ -17,8 +17,8 @@ test.describe("小队真实 Agent 闭环", () => {
 
     const api = new TestApiClient();
     const suffix = Date.now();
-    await api.login(REAL_AGENT_ACCOUNT, "goal-test 验收账号");
-    const workspace = await api.ensureWorkspace("goal-test 联调工作区", REAL_AGENT_WORKSPACE);
+    await api.login(REAL_AGENT_ACCOUNT, "AI Studio 开发账号");
+    const workspace = await api.ensureWorkspace("AI Studio 工作区", REAL_AGENT_WORKSPACE);
     await api.markUserOnboarded();
 
     try {

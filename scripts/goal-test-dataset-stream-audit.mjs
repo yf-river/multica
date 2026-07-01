@@ -11,9 +11,9 @@ const env = {
 };
 
 const apiBase = trimSlash(process.env.GOAL_TEST_BACKEND_URL || runEnv.REMOTE_API_URL || runEnv.NEXT_PUBLIC_API_URL || "http://127.0.0.1:18762");
-const account = env.GOAL_TEST_ACCOUNT || env.E2E_ACCOUNT || "goal-test-daemon";
-const password = env.GOAL_TEST_PASSWORD || env.E2E_PASSWORD || "e2e-password";
-const workspaceSlug = env.GOAL_TEST_WORKSPACE_SLUG || env.E2E_WORKSPACE || "goal-test-daemon";
+const account = env.GOAL_TEST_ACCOUNT || env.E2E_ACCOUNT || "develop";
+const password = env.GOAL_TEST_PASSWORD || env.E2E_PASSWORD || "develop123";
+const workspaceSlug = env.GOAL_TEST_WORKSPACE_SLUG || env.E2E_WORKSPACE || "ai-studio";
 const caseCount = positiveInt(env.GOAL_TEST_DATASET_STREAM_CASES, 360);
 const pageSize = positiveInt(env.GOAL_TEST_DATASET_STREAM_PAGE_SIZE, 50);
 const maxPageMs = positiveInt(env.GOAL_TEST_DATASET_STREAM_MAX_PAGE_MS, 1500);

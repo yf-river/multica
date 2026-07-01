@@ -773,6 +773,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/", h.GetSquad)
 					r.Put("/", h.UpdateSquad)
 					r.Delete("/", h.DeleteSquad)
+					r.Post("/restore", h.RestoreSquad)
 					r.Get("/members", h.ListSquadMembers)
 					r.Get("/members/status", h.ListSquadMemberStatus)
 					r.Post("/members", h.AddSquadMember)

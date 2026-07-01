@@ -15,9 +15,9 @@ const env = {
 };
 
 const apiBase = trimSlash(env.GOAL_TEST_BACKEND_URL || env.REMOTE_API_URL || env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:18762");
-const account = env.GOAL_TEST_ACCOUNT || env.E2E_ACCOUNT || "goal-test-daemon";
-const password = env.GOAL_TEST_PASSWORD || env.E2E_PASSWORD || "e2e-password";
-const workspaceSlug = env.GOAL_TEST_WORKSPACE_SLUG || env.E2E_WORKSPACE || "goal-test-daemon";
+const account = env.GOAL_TEST_ACCOUNT || env.E2E_ACCOUNT || "develop";
+const password = env.GOAL_TEST_PASSWORD || env.E2E_PASSWORD || "develop123";
+const workspaceSlug = env.GOAL_TEST_WORKSPACE_SLUG || env.E2E_WORKSPACE || "ai-studio";
 const generatedAt = new Date().toISOString();
 const stamp = generatedAt.replace(/[:.]/g, "-");
 const canonicalPrefix = "Goal E Canonical Demo";

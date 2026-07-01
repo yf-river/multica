@@ -8,9 +8,9 @@ import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const outputDir = acceptanceDir(repoRoot);
 const apiURL = trimEnv("ACCEPTANCE_API_URL") || trimEnv("NEXT_PUBLIC_API_URL") || "http://127.0.0.1:8080";
-const account = trimEnv("ACCEPTANCE_DEMO_ACCOUNT") || trimEnv("REAL_AGENT_E2E_ACCOUNT") || "goal-test-daemon";
-const password = trimEnv("ACCEPTANCE_DEMO_PASSWORD") || trimEnv("REAL_AGENT_E2E_PASSWORD") || "e2e-password";
-const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || trimEnv("REAL_AGENT_E2E_WORKSPACE") || "goal-test-daemon";
+const account = trimEnv("ACCEPTANCE_DEMO_ACCOUNT") || trimEnv("REAL_AGENT_E2E_ACCOUNT") || "develop";
+const password = trimEnv("ACCEPTANCE_DEMO_PASSWORD") || trimEnv("REAL_AGENT_E2E_PASSWORD") || "develop123";
+const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || trimEnv("REAL_AGENT_E2E_WORKSPACE") || "ai-studio";
 const provider = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER") || "codex";
 const model = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "gpt-5.3-codex-spark";
 const squadTemplateKey = trimEnv("ACCEPTANCE_SQUAD_TEMPLATE_KEY") || trimEnv("REAL_AGENT_E2E_SQUAD_TEMPLATE_KEY");
@@ -88,7 +88,11 @@ if (squadTemplateKey) {
   if (verifyCrossProjectChildren && squadTemplateKey !== "user-center") {
     fail("ACCEPTANCE_VERIFY_CROSS_PROJECT_CHILDREN=1 只支持当前 user-center 跨项目 fixture；通用拓扑验收不能依赖这个固定 fixture");
   }
-  const template = post("/api/squads/internal-template", { template_key: squadTemplateKey, model }, token);
+  const template = post("/api/squads/internal-template", {
+    template_key: squadTemplateKey,
+    runtime_provider: provider,
+    model,
+  }, token);
   squad = template?.squad;
   const templateAgents = Array.isArray(template?.agents) ? template.agents : [];
   agent =

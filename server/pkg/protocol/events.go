@@ -102,9 +102,10 @@ const (
 	EventAutopilotRunDone  = "autopilot:run_done"
 
 	// Squad events
-	EventSquadCreated = "squad:created"
-	EventSquadUpdated = "squad:updated"
-	EventSquadDeleted = "squad:deleted"
+	EventSquadCreated  = "squad:created"
+	EventSquadUpdated  = "squad:updated"
+	EventSquadDeleted  = "squad:deleted"
+	EventSquadRestored = "squad:restored"
 
 	// Daemon events
 	EventDaemonHeartbeat              = "daemon:heartbeat"

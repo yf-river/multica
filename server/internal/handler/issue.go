@@ -3191,11 +3191,14 @@ func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, wor
 		if squad.ArchivedAt.Valid {
 			return http.StatusBadRequest, "cannot assign to an archived squad"
 		}
+		actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
+		if !h.canUseSquad(ctx, squad, actorType, actorID, workspaceID) {
+			return http.StatusForbidden, "cannot assign to personal squad"
+		}
 		leader, err := h.Queries.GetAgent(ctx, squad.LeaderID)
 		if err != nil || leader.ArchivedAt.Valid {
 			return http.StatusBadRequest, "squad leader is archived; cannot assign to this squad"
 		}
-		actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
 		if !h.canAccessPrivateAgent(ctx, leader, actorType, actorID, workspaceID) {
 			return http.StatusForbidden, "cannot assign to squad with private leader"
 		}

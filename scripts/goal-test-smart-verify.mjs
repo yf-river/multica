@@ -213,11 +213,11 @@ function goalTestPlaywrightCommand(args) {
     [
       "PLAYWRIGHT_BASE_URL=http://9.134.129.162:13682",
       "NEXT_PUBLIC_API_URL=${GOAL_TEST_BACKEND_URL:-http://9.134.129.162:${PORT:-18762}}",
-      "E2E_ACCOUNT=goal-test-daemon",
-      "E2E_NAME='goal-test 验收账号'",
-      "E2E_WORKSPACE=goal-test-daemon",
-      "E2E_WORKSPACE_NAME='goal-test 联调工作区'",
-      "E2E_PASSWORD=e2e-password",
+      "E2E_ACCOUNT=develop",
+      "E2E_NAME='AI Studio 开发账号'",
+      "E2E_WORKSPACE=ai-studio",
+      "E2E_WORKSPACE_NAME='AI Studio 工作区'",
+      "E2E_PASSWORD=develop123",
       `pnpm exec playwright test ${args}`,
     ].join(" "),
   ].join("; ");

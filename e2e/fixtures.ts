@@ -461,7 +461,7 @@ export class TestApiClient {
     const res = await fetch(`${API_BASE}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ account, password: "e2e-password" }),
+      body: JSON.stringify({ account, password: "develop123" }),
     });
     if (!res.ok) {
       throw new Error(`login failed: ${res.status}`);

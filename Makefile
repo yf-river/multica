@@ -36,9 +36,9 @@ GOAL_TEST_REAL_AGENT_PROVIDER ?= codex
 GOAL_TEST_REAL_AGENT_MODEL ?= gpt-5.3-codex-spark
 GOAL_TEST_REAL_AGENT_FALLBACK_MODEL ?= gpt-5.4-mini
 GOAL_TEST_INT_API_URL ?= http://127.0.0.1:18762
-GOAL_TEST_INT_WORKSPACE ?= goal-test-daemon
-GOAL_TEST_INT_ACCOUNT ?= goal-test-daemon
-GOAL_TEST_INT_PASSWORD ?= e2e-password
+GOAL_TEST_INT_WORKSPACE ?= ai-studio
+GOAL_TEST_INT_ACCOUNT ?= develop
+GOAL_TEST_INT_PASSWORD ?= develop123
 
 define REQUIRE_ENV
 	@if [ ! -f "$(ENV_FILE)" ]; then \

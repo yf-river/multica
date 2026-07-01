@@ -277,7 +277,7 @@ func TestBuildSquadSOPProfile_MulticaCodingFields(t *testing.T) {
 		"mode":"coding_squad",
 		"roles":[{"key":"captain","name":"队长","responsibility":"接需求、判断流程、拆任务。"}],
 		"steps":[{"key":"receive","name":"接收需求","role_key":"captain"},{"key":"design_review","name":"方案设计与确认","role_key":"designer"}],
-		"model_policy":{"默认提供方":"codex","默认模型":"gpt-5.3-codex-spark","降级模型":"gpt-5.4-mini","代码测试复杂审查":"Codex/gpt 类模型"},
+		"model_policy":{"默认提供方":"codebuddy","默认模型":"deepseek-v4-pro","降级模型":"gpt-5.4-mini","代码测试复杂审查":"CodeBuddy/deepseek 类模型"},
 		"acceptance":["验收者独立给结论"],
 		"forbidden_actions":["泄露密钥","未独立验收就完成"]
 	}`))
@@ -288,10 +288,10 @@ func TestBuildSquadSOPProfile_MulticaCodingFields(t *testing.T) {
 		"SOP 步骤链：接收需求 → 方案设计与确认",
 		"当前默认阶段：接收需求",
 		"角色分工：队长：接需求、判断流程、拆任务。",
-		"默认提供方=codex",
-		"默认模型=gpt-5.3-codex-spark",
+		"默认提供方=codebuddy",
+		"默认模型=deepseek-v4-pro",
 		"降级模型=gpt-5.4-mini",
-		"代码测试复杂审查=Codex/gpt 类模型",
+		"代码测试复杂审查=CodeBuddy/deepseek 类模型",
 		"禁止事项：泄露密钥；未独立验收就完成",
 	} {
 		if !strings.Contains(out, want) {
@@ -350,8 +350,11 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 	out := buildSquadSOPProfile(raw)
 	for _, want := range []string{
 		"模板：generic-project-sop-flow",
-		"SOP 步骤链：pm → 01-clarify → 02-design → 03-task-split → 04-implement → 05-verify",
+		"SOP 步骤链：pm → 01-需求澄清 → 02-方案设计 → 03-任务拆分 → 04-开发 → 05-测试",
 		"SOP 阶段链：<target-project>/01-clarify → <target-project>/02-design → <target-project>/03-task-split → <target-project>/04-implement → <target-project>/05-verify",
+		"模型策略：",
+		"默认提供方=codebuddy",
+		"默认模型=deepseek-v4-pro",
 		"跨项目子任务规则",
 		"目标项目=<target-project>",
 		"multica issue children <当前 issue id> --output json",
@@ -434,9 +437,16 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name IN ('pm', 'user-center 小队')`, testWorkspaceID)
 		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND (name IN ('pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify') OR name LIKE 'user-center 小队 · %')`, testWorkspaceID)
 		_, _ = testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE workspace_id = $1 AND name LIKE 'internal-user-center-codex-test-%'`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE workspace_id = $1 AND name LIKE 'internal-user-center-codebuddy-test-%'`, testWorkspaceID)
 	}
 	cleanup()
 	t.Cleanup(cleanup)
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codebuddy', 'online', 'CodeBuddy user-center 小队测试运行时', '{}'::jsonb, $4, 'private', now())
+	`, testWorkspaceID, "internal-user-center-codebuddy-daemon-"+randomID()[:8], "internal-user-center-codebuddy-test-"+randomID()[:8], testUserID); err != nil {
+		t.Fatalf("create codebuddy runtime: %v", err)
+	}
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
 		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex user-center 小队测试运行时', '{}'::jsonb, $4, 'private', now())
@@ -507,6 +517,20 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 	if count != 6 {
 		t.Fatalf("user-center agent count = %d, want 6", count)
 	}
+	var nonDefaultCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)::int
+		FROM agent a
+		JOIN agent_runtime ar ON ar.id = a.runtime_id
+		WHERE a.workspace_id = $1
+		  AND a.name IN ('pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify')
+		  AND (ar.provider IS DISTINCT FROM 'codebuddy' OR a.model IS DISTINCT FROM 'deepseek-v4-pro')
+	`, testWorkspaceID).Scan(&nonDefaultCount); err != nil {
+		t.Fatalf("count non-default user-center agents: %v", err)
+	}
+	if nonDefaultCount != 0 {
+		t.Fatalf("default ensure left %d user-center agents outside codebuddy/deepseek-v4-pro", nonDefaultCount)
+	}
 
 	if _, err := testPool.Exec(ctx, `
 		UPDATE agent
@@ -537,6 +561,344 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 	}
 	if staleModelCount != 0 {
 		t.Fatalf("re-ensure left %d user-center agents on stale model", staleModelCount)
+	}
+
+	codexModel := "codex-template-provider-test"
+	w = httptest.NewRecorder()
+	req = newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/squads/internal-template", map[string]any{
+		"template_key":     "user-center",
+		"runtime_provider": "codex",
+		"model":            codexModel,
+	})
+	testHandler.EnsureInternalSquadTemplate(w, withURLParam(req, "workspaceId", testWorkspaceID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("re-ensure user-center internal squad with codex status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var nonCodexCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)::int
+		FROM agent a
+		JOIN agent_runtime ar ON ar.id = a.runtime_id
+		WHERE a.workspace_id = $1
+		  AND a.name IN ('pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify')
+		  AND (ar.provider IS DISTINCT FROM 'codex' OR a.model IS DISTINCT FROM $2)
+	`, testWorkspaceID, codexModel).Scan(&nonCodexCount); err != nil {
+		t.Fatalf("count non-codex user-center agents: %v", err)
+	}
+	if nonCodexCount != 0 {
+		t.Fatalf("re-ensure left %d user-center agents outside codex/%s", nonCodexCount, codexModel)
+	}
+}
+
+func TestEnsureUserCenterInternalSquadPersonalCreatesPrivateAgents(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	ctx := context.Background()
+	cleanup := func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name IN ('pm', 'user-center 小队')`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND (name IN ('pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify') OR name LIKE 'user-center 小队 · %')`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE workspace_id = $1 AND name LIKE 'internal-user-center-private-test-%'`, testWorkspaceID)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codebuddy', 'online', 'CodeBuddy user-center 私有小队测试运行时', '{}'::jsonb, $4, 'private', now())
+	`, testWorkspaceID, "internal-user-center-private-daemon-"+randomID()[:8], "internal-user-center-private-test-"+randomID()[:8], testUserID); err != nil {
+		t.Fatalf("create codebuddy runtime: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/squads/internal-template", map[string]any{
+		"template_key": "user-center",
+		"visibility":   "personal",
+	})
+	testHandler.EnsureInternalSquadTemplate(w, withURLParam(req, "workspaceId", testWorkspaceID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("ensure personal user-center internal squad status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var resp InternalSquadTemplateResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode ensure response: %v", err)
+	}
+	if resp.Squad.Visibility != squadVisibilityPersonal {
+		t.Fatalf("squad visibility = %q, want %q", resp.Squad.Visibility, squadVisibilityPersonal)
+	}
+	if resp.Squad.Name != "pm" || resp.Squad.MemberCount != 6 || len(resp.Agents) != 6 {
+		t.Fatalf("ensure response = %+v", resp)
+	}
+
+	var nonPrivateAgentCount, nonOwnerAgentCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (WHERE visibility IS DISTINCT FROM 'private')::int,
+			count(*) FILTER (WHERE owner_id IS DISTINCT FROM $2)::int
+		FROM agent
+		WHERE workspace_id = $1
+		  AND name IN ('pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify')
+	`, testWorkspaceID, testUserID).Scan(&nonPrivateAgentCount, &nonOwnerAgentCount); err != nil {
+		t.Fatalf("count private user-center agents: %v", err)
+	}
+	if nonPrivateAgentCount != 0 {
+		t.Fatalf("personal squad created %d non-private agents", nonPrivateAgentCount)
+	}
+	if nonOwnerAgentCount != 0 {
+		t.Fatalf("personal squad created %d agents not owned by creator", nonOwnerAgentCount)
+	}
+}
+
+func TestEnsureUserCenterInternalSquadWorkspaceAndPersonalAgentsAreScoped(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	ctx := context.Background()
+	cleanup := func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name IN ('pm', 'user-center 小队')`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND (name IN ('pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify') OR name LIKE 'user-center 小队 · %')`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE workspace_id = $1 AND name LIKE 'internal-user-center-scope-test-%'`, testWorkspaceID)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codebuddy', 'online', 'CodeBuddy user-center scope 测试运行时', '{}'::jsonb, $4, 'private', now())
+	`, testWorkspaceID, "internal-user-center-scope-daemon-"+randomID()[:8], "internal-user-center-scope-test-"+randomID()[:8], testUserID); err != nil {
+		t.Fatalf("create codebuddy runtime: %v", err)
+	}
+
+	ensure := func(visibility string) InternalSquadTemplateResponse {
+		t.Helper()
+		body := map[string]any{"template_key": "user-center"}
+		if visibility != "" {
+			body["visibility"] = visibility
+		}
+		w := httptest.NewRecorder()
+		req := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/squads/internal-template", body)
+		testHandler.EnsureInternalSquadTemplate(w, withURLParam(req, "workspaceId", testWorkspaceID))
+		if w.Code != http.StatusOK {
+			t.Fatalf("ensure %s user-center internal squad status = %d, body = %s", visibility, w.Code, w.Body.String())
+		}
+		var resp InternalSquadTemplateResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode ensure response: %v", err)
+		}
+		return resp
+	}
+
+	workspaceResp := ensure(squadVisibilityWorkspace)
+	personalResp := ensure(squadVisibilityPersonal)
+	if workspaceResp.Squad.ID == personalResp.Squad.ID {
+		t.Fatalf("workspace and personal squads reused the same squad: %s", workspaceResp.Squad.ID)
+	}
+	if workspaceResp.Squad.Visibility != squadVisibilityWorkspace || personalResp.Squad.Visibility != squadVisibilityPersonal {
+		t.Fatalf("unexpected squad visibilities: workspace=%q personal=%q", workspaceResp.Squad.Visibility, personalResp.Squad.Visibility)
+	}
+
+	workspaceAgents := map[string]string{}
+	for _, agent := range workspaceResp.Agents {
+		workspaceAgents[agent.Name] = agent.ID
+	}
+	for _, agent := range personalResp.Agents {
+		if workspaceAgents[agent.Name] == "" {
+			t.Fatalf("personal agent %q did not match a workspace role name", agent.Name)
+		}
+		if workspaceAgents[agent.Name] == agent.ID {
+			t.Fatalf("personal agent %q reused workspace agent id %s", agent.Name, agent.ID)
+		}
+	}
+
+	var workspaceCount, privateCount, wrongOwnerCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (WHERE visibility = 'workspace')::int,
+			count(*) FILTER (WHERE visibility = 'private' AND owner_id = $2)::int,
+			count(*) FILTER (WHERE visibility = 'private' AND owner_id IS DISTINCT FROM $2)::int
+		FROM agent
+		WHERE workspace_id = $1
+		  AND archived_at IS NULL
+		  AND name IN ('pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify')
+	`, testWorkspaceID, testUserID).Scan(&workspaceCount, &privateCount, &wrongOwnerCount); err != nil {
+		t.Fatalf("count scoped user-center agents: %v", err)
+	}
+	if workspaceCount != 6 || privateCount != 6 || wrongOwnerCount != 0 {
+		t.Fatalf("scoped agent counts workspace=%d private=%d wrongOwner=%d, want 6/6/0", workspaceCount, privateCount, wrongOwnerCount)
+	}
+
+	workspaceAgain := ensure(squadVisibilityWorkspace)
+	for _, agent := range workspaceAgain.Agents {
+		if workspaceAgents[agent.Name] != agent.ID {
+			t.Fatalf("workspace re-ensure changed agent %q from %s to %s", agent.Name, workspaceAgents[agent.Name], agent.ID)
+		}
+	}
+}
+
+func TestEnsureUserCenterInternalSquadRestoresArchivedSquadWithoutArchivingAgents(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	ctx := context.Background()
+	cleanup := func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name IN ('pm', 'user-center 小队')`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND (name IN ('pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify') OR name LIKE 'user-center 小队 · %')`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE workspace_id = $1 AND name LIKE 'internal-user-center-restore-test-%'`, testWorkspaceID)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codebuddy', 'online', 'CodeBuddy user-center 归档恢复测试运行时', '{}'::jsonb, $4, 'private', now())
+	`, testWorkspaceID, "internal-user-center-restore-daemon-"+randomID()[:8], "internal-user-center-restore-test-"+randomID()[:8], testUserID); err != nil {
+		t.Fatalf("create codebuddy runtime: %v", err)
+	}
+
+	ensure := func() InternalSquadTemplateResponse {
+		t.Helper()
+		w := httptest.NewRecorder()
+		req := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/squads/internal-template", map[string]any{
+			"template_key": "user-center",
+		})
+		testHandler.EnsureInternalSquadTemplate(w, withURLParam(req, "workspaceId", testWorkspaceID))
+		if w.Code != http.StatusOK {
+			t.Fatalf("ensure user-center internal squad status = %d, body = %s", w.Code, w.Body.String())
+		}
+		var resp InternalSquadTemplateResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode ensure response: %v", err)
+		}
+		return resp
+	}
+
+	first := ensure()
+	if first.Squad.Name != "pm" || first.Squad.MemberCount != 6 || len(first.Agents) != 6 {
+		t.Fatalf("first ensure response = %+v", first)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodDelete, "/api/workspaces/"+testWorkspaceID+"/squads/"+first.Squad.ID, nil)
+	testHandler.DeleteSquad(w, withURLParams(req, "workspaceId", testWorkspaceID, "id", first.Squad.ID))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("archive pm squad status = %d, body = %s", w.Code, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest(http.MethodGet, "/api/workspaces/"+testWorkspaceID+"/squads", nil)
+	testHandler.ListSquads(w, withURLParam(req, "workspaceId", testWorkspaceID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("list active squads status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var activeList []SquadResponse
+	if err := json.NewDecoder(w.Body).Decode(&activeList); err != nil {
+		t.Fatalf("decode active squad list: %v", err)
+	}
+	for _, item := range activeList {
+		if item.ID == first.Squad.ID {
+			t.Fatalf("archived pm squad appeared in default active list: %+v", item)
+		}
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest(http.MethodGet, "/api/workspaces/"+testWorkspaceID+"/squads?include_archived=true", nil)
+	testHandler.ListSquads(w, withURLParam(req, "workspaceId", testWorkspaceID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("list all squads status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var allList []SquadResponse
+	if err := json.NewDecoder(w.Body).Decode(&allList); err != nil {
+		t.Fatalf("decode all squad list: %v", err)
+	}
+	foundArchived := false
+	for _, item := range allList {
+		if item.ID == first.Squad.ID {
+			foundArchived = item.ArchivedAt != nil
+			break
+		}
+	}
+	if !foundArchived {
+		t.Fatalf("include_archived list did not expose archived pm squad")
+	}
+
+	var archivedAgentCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)::int
+		FROM agent
+		WHERE workspace_id = $1
+		  AND name IN ('pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify')
+		  AND archived_at IS NOT NULL
+	`, testWorkspaceID).Scan(&archivedAgentCount); err != nil {
+		t.Fatalf("count archived user-center agents: %v", err)
+	}
+	if archivedAgentCount != 0 {
+		t.Fatalf("archive squad archived %d user-center agents; want 0", archivedAgentCount)
+	}
+
+	second := ensure()
+	if second.Squad.ID != first.Squad.ID {
+		t.Fatalf("archived pm squad was recreated instead of restored: first=%s second=%s", first.Squad.ID, second.Squad.ID)
+	}
+	if second.Squad.ArchivedAt != nil {
+		t.Fatalf("restored pm squad still archived: %+v", second.Squad)
+	}
+	if second.Squad.Name != "pm" || second.Squad.MemberCount != 6 || len(second.Agents) != 6 {
+		t.Fatalf("second ensure response = %+v", second)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest(http.MethodDelete, "/api/workspaces/"+testWorkspaceID+"/squads/"+second.Squad.ID, nil)
+	testHandler.DeleteSquad(w, withURLParams(req, "workspaceId", testWorkspaceID, "id", second.Squad.ID))
+	if w.Code != http.StatusNoContent {
+		t.Fatalf("archive restored pm squad status = %d, body = %s", w.Code, w.Body.String())
+	}
+	w = httptest.NewRecorder()
+	req = newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/squads/"+second.Squad.ID+"/restore", nil)
+	testHandler.RestoreSquad(w, withURLParams(req, "workspaceId", testWorkspaceID, "id", second.Squad.ID))
+	if w.Code != http.StatusOK {
+		t.Fatalf("restore pm squad status = %d, body = %s", w.Code, w.Body.String())
+	}
+	var restored SquadResponse
+	if err := json.NewDecoder(w.Body).Decode(&restored); err != nil {
+		t.Fatalf("decode restored squad: %v", err)
+	}
+	if restored.ID != second.Squad.ID || restored.ArchivedAt != nil {
+		t.Fatalf("restore response = %+v, want same active squad id %s", restored, second.Squad.ID)
+	}
+
+	var activePM, archivedPM, userCenterAgentCount, nonDefaultAgentCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT
+			count(*) FILTER (WHERE archived_at IS NULL)::int,
+			count(*) FILTER (WHERE archived_at IS NOT NULL)::int
+		FROM squad
+		WHERE workspace_id = $1 AND name = 'pm'
+	`, testWorkspaceID).Scan(&activePM, &archivedPM); err != nil {
+		t.Fatalf("count pm squads: %v", err)
+	}
+	if activePM != 1 || archivedPM != 0 {
+		t.Fatalf("pm squad counts active=%d archived=%d, want active=1 archived=0", activePM, archivedPM)
+	}
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)::int
+		FROM agent
+		WHERE workspace_id = $1
+		  AND name IN ('pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify')
+	`, testWorkspaceID).Scan(&userCenterAgentCount); err != nil {
+		t.Fatalf("count user-center agents: %v", err)
+	}
+	if userCenterAgentCount != 6 {
+		t.Fatalf("user-center agent count = %d, want 6", userCenterAgentCount)
+	}
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)::int
+		FROM agent a
+		JOIN agent_runtime ar ON ar.id = a.runtime_id
+		WHERE a.workspace_id = $1
+		  AND a.name IN ('pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify')
+		  AND (ar.provider IS DISTINCT FROM 'codebuddy' OR a.model IS DISTINCT FROM 'deepseek-v4-pro')
+	`, testWorkspaceID).Scan(&nonDefaultAgentCount); err != nil {
+		t.Fatalf("count non-default user-center agents: %v", err)
+	}
+	if nonDefaultAgentCount != 0 {
+		t.Fatalf("restored pm squad left %d agents outside codebuddy/deepseek-v4-pro", nonDefaultAgentCount)
 	}
 }
 

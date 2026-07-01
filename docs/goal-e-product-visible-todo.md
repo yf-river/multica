@@ -18,7 +18,7 @@ Generated: 2026-06-26T15:24:30+08:00
 - Active agents are limited to `PM`, `01-clarify`, `02-design`, `03-task-split`, `04-implement`, and `05-verify`.
 - The default training/evaluation agent path now reuses `05-verify` when the PM+01-05 squad exists, so the training loop stays closed without creating a seventh active agent.
 - The Gongfeng resource list/actions are visible from project resources, and the Gongfeng touchpoint audit has no blockers.
-- Real PM+01-05 model execution completed on `goal-test-daemon`:
+- Real PM+01-05 model execution completed on `develop`:
   - issue: `1d1fa4ec-d7b7-4f41-b82a-b717e9b6740b` / `GOA-456`
   - model: `gpt-5.3-codex-spark`
   - fallback used: `false`
