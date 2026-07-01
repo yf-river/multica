@@ -9,6 +9,9 @@ import enSettings from "../../locales/zh-Hans/settings.json";
 const mockUpdateWorkspace = vi.hoisted(() => vi.fn());
 const mockResolveWorkspaceRepo = vi.hoisted(() => vi.fn());
 const mockProbeWorkspaceRepo = vi.hoisted(() => vi.fn());
+const mockUpdateProjectResource = vi.hoisted(() => vi.fn());
+const mockSetQueryData = vi.hoisted(() => vi.fn());
+const mockInvalidateQueries = vi.hoisted(() => vi.fn());
 const workspaceRef = vi.hoisted(() => ({
   current: {
     id: "workspace-1",
@@ -87,7 +90,7 @@ vi.mock("@tanstack/react-query", () => ({
       : { data: [] },
   useQueries: () => resourcesRef.current.map((data) => ({ data })),
   useMutation: () => ({ mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false }),
-  useQueryClient: () => ({ setQueryData: vi.fn(), invalidateQueries: vi.fn() }),
+  useQueryClient: () => ({ setQueryData: mockSetQueryData, invalidateQueries: mockInvalidateQueries }),
 }));
 
 vi.mock("@multica/core/hooks", () => ({
@@ -110,11 +113,15 @@ vi.mock("@multica/core/api", () => ({
     updateWorkspace: mockUpdateWorkspace,
     resolveWorkspaceRepo: mockResolveWorkspaceRepo,
     probeWorkspaceRepo: mockProbeWorkspaceRepo,
+    updateProjectResource: mockUpdateProjectResource,
   },
 }));
 
 vi.mock("@multica/core/projects", () => ({
   projectListOptions: () => ({ queryKey: ["projects"], queryFn: vi.fn() }),
+  projectResourceKeys: {
+    list: (_wsId: string, projectId: string) => ["project-resources", projectId],
+  },
   projectResourcesOptions: (_wsId: string, projectId: string) => ({
     queryKey: ["project-resources", projectId],
     queryFn: vi.fn(),
@@ -173,6 +180,24 @@ describe("RepositoriesTab", () => {
         },
       ],
     };
+    projectsRef.current = [
+      {
+        id: "project-1",
+        workspace_id: "workspace-1",
+        title: "usercenter",
+        description: null,
+        icon: null,
+        status: "in_progress",
+        priority: "none",
+        lead_type: null,
+        lead_id: null,
+        created_at: "2026-06-28T00:00:00Z",
+        updated_at: "2026-06-28T00:00:00Z",
+        issue_count: 0,
+        done_count: 0,
+        resource_count: 0,
+      },
+    ] as any;
     resourcesRef.current = [
       [
         {
@@ -231,6 +256,10 @@ describe("RepositoriesTab", () => {
       last_synced_at: "2026-06-28T00:00:00Z",
       resolve_status: "resolved",
       last_resolved_at: "2026-06-28T00:00:00Z",
+    }));
+    mockUpdateProjectResource.mockImplementation(async (_projectId: string, resourceId: string, data: any) => ({
+      id: resourceId,
+      ...data,
     }));
   });
 
@@ -500,6 +529,173 @@ describe("RepositoriesTab", () => {
         ],
       });
     });
+  });
+
+  it("修改默认分支时确认后同步同一工蜂项目的全部项目关联", async () => {
+    const user = userEvent.setup();
+    projectsRef.current = [
+      ...(projectsRef.current as any[]),
+      {
+        id: "project-2",
+        workspace_id: "workspace-1",
+        title: "usercenter staging",
+        description: null,
+        icon: null,
+        status: "in_progress",
+        priority: "none",
+        lead_type: null,
+        lead_id: null,
+        created_at: "2026-06-28T00:00:00Z",
+        updated_at: "2026-06-28T00:00:00Z",
+        issue_count: 0,
+        done_count: 0,
+        resource_count: 0,
+      },
+      {
+        id: "project-3",
+        workspace_id: "workspace-1",
+        title: "gateway",
+        description: null,
+        icon: null,
+        status: "in_progress",
+        priority: "none",
+        lead_type: null,
+        lead_id: null,
+        created_at: "2026-06-28T00:00:00Z",
+        updated_at: "2026-06-28T00:00:00Z",
+        issue_count: 0,
+        done_count: 0,
+        resource_count: 0,
+      },
+    ] as any;
+    resourcesRef.current = [
+      resourcesRef.current[0],
+      [
+        {
+          id: "resource-2",
+          project_id: "project-2",
+          workspace_id: "workspace-1",
+          resource_type: "gongfeng_repo",
+          label: null,
+          position: 0,
+          created_at: "2026-06-28T00:00:00Z",
+          created_by: null,
+          resource_ref: {
+            provider: "gongfeng",
+            url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/-/tree/release",
+            project_path: "ChainWeaver/ida/user-center",
+            resource_kind: "branch",
+            ref: "release",
+            branch: "release",
+            head_commit: "old222",
+            commit_sha: "old222",
+            connection_status: "credential_backed",
+            sync_status: "synced",
+            test_status: "passed",
+          },
+        },
+      ],
+      [
+        {
+          id: "resource-3",
+          project_id: "project-3",
+          workspace_id: "workspace-1",
+          resource_type: "gongfeng_repo",
+          label: null,
+          position: 0,
+          created_at: "2026-06-28T00:00:00Z",
+          created_by: null,
+          resource_ref: {
+            provider: "gongfeng",
+            url: "https://git.code.tencent.com/ChainWeaver/ida/gateway",
+            project_path: "ChainWeaver/ida/gateway",
+            resource_kind: "branch",
+            ref: "main",
+            branch: "main",
+            head_commit: "old333",
+            commit_sha: "old333",
+            connection_status: "credential_backed",
+            sync_status: "synced",
+            test_status: "passed",
+          },
+        },
+      ],
+    ] as any;
+
+    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+
+    await user.click(screen.getByRole("button", { name: "详情" }));
+    await user.click(screen.getByRole("button", { name: "修改默认分支" }));
+    await waitFor(() => {
+      expect(mockProbeWorkspaceRepo).toHaveBeenCalledWith("workspace-1", {
+        url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+      });
+    });
+    await user.click(screen.getByRole("button", { name: "v5.0.0_dev" }));
+    await user.click(screen.getByRole("option", { name: "dev_sop" }));
+
+    expect(screen.getByText("确认切换到 dev_sop？将同步 2 个项目关联。")).toBeTruthy();
+    expect(screen.getAllByText("usercenter").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("usercenter staging").length).toBeGreaterThan(0);
+    expect(screen.queryByText("gateway")).toBeNull();
+
+    await user.click(screen.getByRole("button", { name: "确认同步" }));
+
+    await waitFor(() => {
+      expect(mockResolveWorkspaceRepo).toHaveBeenCalledWith("workspace-1", {
+        url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+        default_branch: "dev_sop",
+      });
+      expect(mockUpdateWorkspace).toHaveBeenCalledWith("workspace-1", {
+        repos: [
+          expect.objectContaining({
+            url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+            default_branch: "dev_sop",
+            head_commit: "def5678",
+            commit_sha: "def5678",
+          }),
+        ],
+      });
+      expect(mockUpdateProjectResource).toHaveBeenCalledTimes(2);
+      expect(mockUpdateProjectResource).toHaveBeenCalledWith("project-1", "resource-1", {
+        resource_ref: expect.objectContaining({
+          project_path: "ChainWeaver/ida/user-center",
+          resource_kind: "branch",
+          ref: "dev_sop",
+          branch: "dev_sop",
+          head_commit: "def5678",
+          commit_sha: "def5678",
+        }),
+      });
+      expect(mockUpdateProjectResource).toHaveBeenCalledWith("project-2", "resource-2", {
+        resource_ref: expect.objectContaining({
+          project_path: "ChainWeaver/ida/user-center",
+          resource_kind: "branch",
+          ref: "dev_sop",
+          branch: "dev_sop",
+          head_commit: "def5678",
+          commit_sha: "def5678",
+        }),
+      });
+    });
+  });
+
+  it("修改默认分支解析失败时不更新资源库和项目关联", async () => {
+    const user = userEvent.setup();
+    mockResolveWorkspaceRepo.mockRejectedValueOnce(new Error("branch missing"));
+    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+
+    await user.click(screen.getByRole("button", { name: "详情" }));
+    await user.click(screen.getByRole("button", { name: "修改默认分支" }));
+    await user.click(screen.getByRole("button", { name: "v5.0.0_dev" }));
+    await user.click(screen.getByRole("option", { name: "dev_sop" }));
+    await user.click(screen.getByRole("button", { name: "确认同步" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("branch missing")).toBeTruthy();
+    });
+    expect(mockUpdateWorkspace).not.toHaveBeenCalled();
+    expect(mockUpdateProjectResource).not.toHaveBeenCalled();
   });
 
   it("删除阻塞按 project_path 判断，而不是精确 URL", async () => {

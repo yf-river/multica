@@ -17,6 +17,7 @@ import {
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import {
+  projectResourceKeys,
   projectListOptions,
   projectResourcesOptions,
   useDeleteProjectResource,
@@ -593,10 +594,18 @@ function RepositoryDetailsDialog({
   const { t } = useT("settings");
   const qc = useQueryClient();
   const [resolving, setResolving] = useState(false);
+  const [editingBranch, setEditingBranch] = useState(false);
+  const [loadingBranches, setLoadingBranches] = useState(false);
+  const [savingBranch, setSavingBranch] = useState(false);
+  const [branchOptions, setBranchOptions] = useState<string[]>([]);
+  const [selectedBranch, setSelectedBranch] = useState("");
+  const [branchError, setBranchError] = useState("");
   const defaultBranch = repositoryDefaultBranch(row);
   const projectPath = repositoryProjectPath(row);
   const commitID = repositoryCommitID(row);
   const needsResolve = row.inLibrary && !row.repo?.resolve_status;
+  const branchChanged = Boolean(selectedBranch && selectedBranch !== defaultBranch);
+  const canEditBranch = row.inLibrary;
 
   const handleResolve = async () => {
     if (!row.inLibrary || resolving) return;
@@ -619,6 +628,82 @@ function RepositoryDetailsDialog({
     }
   };
 
+  const invalidateUsageQueries = (usages: GongfengResourceUsage[]) => {
+    const projectIds = new Set(usages.map((usage) => usage.project.id));
+    for (const projectId of projectIds) {
+      qc.invalidateQueries({
+        queryKey: projectResourceKeys.list(workspace.id, projectId),
+      });
+    }
+  };
+
+  const handleStartBranchEdit = async () => {
+    if (!canEditBranch || loadingBranches || savingBranch) return;
+    setEditingBranch(true);
+    setSelectedBranch(defaultBranch);
+    setBranchError("");
+    if (branchOptions.length > 0) return;
+    setLoadingBranches(true);
+    try {
+      const result = await api.probeWorkspaceRepo(workspace.id, { url: row.url });
+      const branches = uniqueNonEmpty([defaultBranch, result.default_branch, ...result.branches]);
+      setBranchOptions(branches);
+      if (!defaultBranch && branches[0]) setSelectedBranch(branches[0]);
+    } catch (err) {
+      setBranchError(err instanceof Error ? err.message : t(($) => $.repositories.gongfeng_inventory.branch_load_failed));
+    } finally {
+      setLoadingBranches(false);
+    }
+  };
+
+  const handleCancelBranchEdit = () => {
+    setEditingBranch(false);
+    setSelectedBranch("");
+    setBranchError("");
+  };
+
+  const handleSaveBranch = async () => {
+    if (!canEditBranch || !branchChanged || savingBranch) return;
+    setSavingBranch(true);
+    setBranchError("");
+    try {
+      const resolved = await api.resolveWorkspaceRepo(workspace.id, {
+        url: row.url,
+        default_branch: selectedBranch,
+      });
+      const repos = workspaceRepoList(workspace).map((repo) =>
+        repo.url === row.url ? { ...repo, ...resolved } : repo,
+      );
+      onRepoResolved(resolved);
+      const updated = await api.updateWorkspace(workspace.id, { repos });
+      qc.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) =>
+        old?.map((ws) => (ws.id === updated.id ? updated : ws)),
+      );
+
+      const updates = await Promise.allSettled(
+        row.usages.map((usage) =>
+          api.updateProjectResource(usage.project.id, usage.id, {
+            resource_ref: buildBranchSyncedResourceRef(usage.resource_ref, resolved),
+          }),
+        ),
+      );
+      invalidateUsageQueries(row.usages);
+      if (updates.some((result) => result.status === "rejected")) {
+        toast.error(t(($) => $.repositories.gongfeng_inventory.branch_sync_partial_failed));
+      } else {
+        toast.success(t(($) => $.repositories.gongfeng_inventory.branch_sync_success, {
+          branch: selectedBranch,
+          count: row.usages.length,
+        }));
+        setEditingBranch(false);
+      }
+    } catch (err) {
+      setBranchError(err instanceof Error ? err.message : t(($) => $.repositories.gongfeng_inventory.branch_sync_failed));
+    } finally {
+      setSavingBranch(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-2xl">
@@ -638,6 +723,100 @@ function RepositoryDetailsDialog({
               {commitID || "-"}
             </DetailItem>
           </div>
+          {canEditBranch && (
+            <div className="space-y-2 rounded-md border p-3">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <div>
+                  <div className="font-medium">{t(($) => $.repositories.gongfeng_inventory.change_branch_title)}</div>
+                  <div className="mt-0.5 text-[11px] text-muted-foreground">
+                    {t(($) => $.repositories.gongfeng_inventory.change_branch_description)}
+                  </div>
+                </div>
+                {!editingBranch ? (
+                  <Button
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    onClick={() => void handleStartBranchEdit()}
+                  >
+                    {t(($) => $.repositories.gongfeng_inventory.change_branch)}
+                  </Button>
+                ) : (
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={handleCancelBranchEdit}
+                    disabled={savingBranch}
+                  >
+                    {t(($) => $.repositories.gongfeng_inventory.cancel)}
+                  </Button>
+                )}
+              </div>
+              {editingBranch && (
+                <div className="space-y-2">
+                  <BranchPicker
+                    branches={branchOptions}
+                    value={selectedBranch}
+                    onChange={setSelectedBranch}
+                    disabled={loadingBranches || savingBranch}
+                  />
+                  {loadingBranches && (
+                    <div className="text-[11px] text-muted-foreground">
+                      {t(($) => $.repositories.gongfeng_inventory.branch_loading)}
+                    </div>
+                  )}
+                  {branchError && (
+                    <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+                      {branchError}
+                    </div>
+                  )}
+                  {branchChanged && (
+                    <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-950">
+                      <div className="font-medium">
+                        {t(($) => $.repositories.gongfeng_inventory.branch_confirm_title, {
+                          branch: selectedBranch,
+                          count: row.usages.length,
+                        })}
+                      </div>
+                      {row.usages.length > 0 ? (
+                        <div className="flex flex-wrap gap-1">
+                          {row.usages.map((usage) => (
+                            <span key={usage.id} className="rounded border border-amber-300 bg-background/80 px-1.5 py-0.5">
+                              {usage.project.title}
+                            </span>
+                          ))}
+                        </div>
+                      ) : (
+                        <div>{t(($) => $.repositories.gongfeng_inventory.branch_confirm_no_usages)}</div>
+                      )}
+                      <div className="flex justify-end gap-2">
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          onClick={handleCancelBranchEdit}
+                          disabled={savingBranch}
+                        >
+                          {t(($) => $.repositories.gongfeng_inventory.cancel)}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          onClick={() => void handleSaveBranch()}
+                          disabled={savingBranch}
+                        >
+                          {savingBranch
+                            ? t(($) => $.repositories.gongfeng_inventory.branch_saving)
+                            : t(($) => $.repositories.gongfeng_inventory.branch_confirm_action)}
+                        </Button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          )}
           {needsResolve && (
             <div className="flex flex-wrap items-center justify-between gap-2 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-[11px] text-amber-900">
               <span>{t(($) => $.repositories.gongfeng_inventory.resolve_hint)}</span>
@@ -823,6 +1002,40 @@ function repositoryCommitID(row: RepositoryLibraryRow): string {
     row.repo?.commit_sha,
     ...row.usages.flatMap((usage) => [usage.resource_ref.head_commit, usage.resource_ref.commit_sha]),
   ]);
+}
+
+function buildBranchSyncedResourceRef(
+  current: GongfengRepoResourceRef,
+  resolved: WorkspaceRepo,
+): GongfengRepoResourceRef {
+  const branch = resolved.default_branch?.trim() || current.branch || current.ref || "";
+  const commit = resolved.commit_sha || resolved.head_commit || "";
+  return {
+    ...current,
+    provider: "gongfeng",
+    project_path: resolved.project_path || current.project_path,
+    resource_kind: "branch",
+    ref: branch,
+    branch,
+    ...(commit ? { head_commit: commit, commit_sha: commit } : {}),
+    connection_status: resolved.connection_status || current.connection_status,
+    sync_status: resolved.sync_status || current.sync_status,
+    test_status: resolved.test_status || current.test_status,
+    last_tested_at: resolved.last_tested_at || current.last_tested_at,
+    last_synced_at: resolved.last_synced_at || current.last_synced_at,
+  };
+}
+
+function uniqueNonEmpty(values: Array<string | undefined>): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (!trimmed || seen.has(trimmed)) continue;
+    seen.add(trimmed);
+    out.push(trimmed);
+  }
+  return out;
 }
 
 function inferProjectPathFromGongfengURL(url: string): string {
