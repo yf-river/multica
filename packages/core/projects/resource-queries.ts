@@ -93,49 +93,11 @@ function replaceProjectResource(
     : old;
 }
 
-function useProjectResourceAction(
-  wsId: string,
-  projectId: string,
-  action: "test" | "sync" | "disable",
-) {
-  const qc = useQueryClient();
-  return useMutation({
-    mutationFn: (resourceId: string) => {
-      if (action === "test") return api.testProjectResource(projectId, resourceId);
-      if (action === "sync") return api.syncProjectResource(projectId, resourceId);
-      return api.disableProjectResource(projectId, resourceId);
-    },
-    onSuccess: (updated) => {
-      qc.setQueryData<ListProjectResourcesResponse>(
-        projectResourceKeys.list(wsId, projectId),
-        (old) => replaceProjectResource(old, updated),
-      );
-    },
-    onSettled: () => {
-      qc.invalidateQueries({
-        queryKey: projectResourceKeys.list(wsId, projectId),
-      });
-    },
-  });
-}
-
-export function useTestProjectResource(wsId: string, projectId: string) {
-  return useProjectResourceAction(wsId, projectId, "test");
-}
-
 export function useSyncProjectResource(wsId: string, projectId: string) {
-  return useProjectResourceAction(wsId, projectId, "sync");
-}
-
-export function useDisableProjectResource(wsId: string, projectId: string) {
-  return useProjectResourceAction(wsId, projectId, "disable");
-}
-
-export function useEnableProjectResource(wsId: string, projectId: string) {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (resourceId: string) =>
-      api.enableProjectResource(projectId, resourceId),
+      api.syncProjectResource(projectId, resourceId),
     onSuccess: (updated) => {
       qc.setQueryData<ListProjectResourcesResponse>(
         projectResourceKeys.list(wsId, projectId),

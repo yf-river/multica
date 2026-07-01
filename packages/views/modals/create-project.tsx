@@ -840,6 +840,13 @@ function buildGongfengResourceRefFromWorkspaceRepo(
 ): Partial<GongfengRepoResourceRef> & { url: string } {
   const branch = repo?.default_branch?.trim();
   if (!branch) return { url };
+  const headCommit = repo?.head_commit?.trim();
+  const commitSHA = repo?.commit_sha?.trim() || headCommit;
+  const connectionStatus = repo?.connection_status?.trim();
+  const syncStatus = repo?.sync_status?.trim();
+  const testStatus = repo?.test_status?.trim();
+  const lastTestedAt = repo?.last_tested_at?.trim();
+  const lastSyncedAt = repo?.last_synced_at?.trim();
   return {
     url,
     provider: "gongfeng",
@@ -847,5 +854,12 @@ function buildGongfengResourceRefFromWorkspaceRepo(
     resource_kind: "branch",
     ref: branch,
     branch,
+    ...(headCommit ? { head_commit: headCommit } : {}),
+    ...(commitSHA ? { commit_sha: commitSHA } : {}),
+    ...(connectionStatus ? { connection_status: connectionStatus } : {}),
+    ...(syncStatus ? { sync_status: syncStatus } : {}),
+    ...(testStatus ? { test_status: testStatus } : {}),
+    ...(lastTestedAt ? { last_tested_at: lastTestedAt } : {}),
+    ...(lastSyncedAt ? { last_synced_at: lastSyncedAt } : {}),
   };
 }

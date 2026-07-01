@@ -2545,38 +2545,11 @@ export class ApiClient {
     });
   }
 
-  async testProjectResource(
-    projectId: string,
-    resourceId: string,
-  ): Promise<ProjectResource> {
-    return this.fetch(`/api/projects/${projectId}/resources/${resourceId}/test`, {
-      method: "POST",
-    });
-  }
-
   async syncProjectResource(
     projectId: string,
     resourceId: string,
   ): Promise<ProjectResource> {
     return this.fetch(`/api/projects/${projectId}/resources/${resourceId}/sync`, {
-      method: "POST",
-    });
-  }
-
-  async disableProjectResource(
-    projectId: string,
-    resourceId: string,
-  ): Promise<ProjectResource> {
-    return this.fetch(`/api/projects/${projectId}/resources/${resourceId}/disable`, {
-      method: "POST",
-    });
-  }
-
-  async enableProjectResource(
-    projectId: string,
-    resourceId: string,
-  ): Promise<ProjectResource> {
-    return this.fetch(`/api/projects/${projectId}/resources/${resourceId}/enable`, {
       method: "POST",
     });
   }

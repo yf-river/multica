@@ -127,10 +127,7 @@ vi.mock("@multica/core/projects", () => ({
     queryFn: vi.fn(),
   }),
   useSyncProjectResource: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useTestProjectResource: () => ({ mutateAsync: vi.fn(), isPending: false }),
   useDeleteProjectResource: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useDisableProjectResource: () => ({ mutateAsync: vi.fn(), isPending: false }),
-  useEnableProjectResource: () => ({ mutateAsync: vi.fn(), isPending: false }),
 }));
 
 vi.mock("sonner", () => ({

@@ -1068,26 +1068,24 @@ type RepositoryHealth = {
 };
 
 function RepositoryHealthButton({
-  disabled,
   health,
   isPending,
   onClick,
 }: {
-  disabled?: boolean;
   health: RepositoryHealth;
   isPending: boolean;
   onClick: () => void;
 }) {
   const tone = healthTone(health.tone);
   const Icon = isPending ? RefreshCw : healthIcon(health.tone);
-  const label = disabled ? `工蜂仓库已停用，${health.summary}` : `测试并同步工蜂仓库，${health.summary}`;
+  const label = `测试并同步工蜂仓库，${health.summary}`;
   return (
     <button
       type="button"
       className={`inline-flex size-4 items-center justify-center rounded-full border transition-colors ${tone} disabled:cursor-not-allowed disabled:opacity-60`}
       aria-label={label}
       title={label}
-      disabled={disabled || isPending}
+      disabled={isPending}
       onClick={onClick}
     >
       <Icon className={`size-3 ${isPending ? "animate-spin" : ""}`} />
@@ -1100,13 +1098,12 @@ type RepositoryHealthSource = {
   connection_status?: string;
   sync_status?: string;
   test_status?: string;
-  disabled?: boolean;
 };
 
 function deriveRepositoryHealth(ref?: RepositoryHealthSource): RepositoryHealth {
-  const connection = ref?.disabled ? "disabled" : ref?.connection_status;
-  const sync = ref?.disabled ? "disabled" : ref?.sync_status;
-  const test = ref?.disabled ? "disabled" : ref?.test_status;
+  const connection = ref?.connection_status;
+  const sync = ref?.sync_status;
+  const test = ref?.test_status;
   const statuses = [connection, sync, test].filter((value): value is string => Boolean(value));
   const summary = [
     `连接: ${statusLabel(connection || "pending_verification")}`,
@@ -1114,9 +1111,6 @@ function deriveRepositoryHealth(ref?: RepositoryHealthSource): RepositoryHealth 
     `测试: ${statusLabel(test || "pending_verification")}`,
   ].join(" · ");
 
-  if (ref?.disabled || statuses.includes("disabled")) {
-    return { label: "已停用", summary, tone: "muted" };
-  }
   if (statuses.some((value) => ["failed", "error", "unreachable", "invalid_url"].includes(value))) {
     return { label: "测试失败", summary, tone: "danger" };
   }
@@ -1179,8 +1173,6 @@ function statusLabel(value: string): string {
     case "failed":
     case "error":
       return "失败";
-    case "disabled":
-      return "已停用";
     case "pending_verification":
       return "待验证";
     case "seeded_for_remediation":

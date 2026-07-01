@@ -4678,7 +4678,6 @@ function buildSkillResourceOptions(projects: Project[], resourceGroups: ProjectR
   return resourceGroups
     .flat()
     .filter((resource) => resource.resource_type === "gongfeng_repo" || resource.resource_type === "local_directory")
-    .filter((resource) => !isRecord(resource.resource_ref) || resource.resource_ref["disabled"] !== true)
     .map((resource) => skillResourceOptionFromProjectResource(resource, projectTitles.get(resource.project_id) || "未命名项目"))
     .filter((resource): resource is SkillResourceOption => resource !== null)
     .sort((a, b) => `${a.projectTitle}:${a.label}`.localeCompare(`${b.projectTitle}:${b.label}`, "zh-Hans"));

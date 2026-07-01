@@ -88,8 +88,6 @@ export interface GongfengRepoResourceRef {
   test_status?: string;
   last_tested_at?: string;
   last_synced_at?: string;
-  disabled?: boolean;
-  disabled_at?: string;
   title?: string;
 }
 

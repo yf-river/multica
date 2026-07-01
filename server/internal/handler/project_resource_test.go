@@ -344,6 +344,103 @@ func TestProjectResourceGongfengLifecycle(t *testing.T) {
 	}
 }
 
+func TestProjectResourceGongfengSyncDropsLegacyDisabledState(t *testing.T) {
+	setHandlerTestWorkspaceRepos(t, []map[string]string{
+		{
+			"url":            "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+			"provider":       "gongfeng",
+			"project_path":   "ChainWeaver/ida/user-center",
+			"default_branch": "v5.0.0_dev",
+		},
+	})
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Legacy disabled Gongfeng resource",
+	})
+	testHandler.CreateProject(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateProject: %d %s", w.Code, w.Body.String())
+	}
+	var project ProjectResponse
+	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
+		t.Fatalf("decode CreateProject: %v", err)
+	}
+	defer func() {
+		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
+		r = withURLParam(r, "id", project.ID)
+		testHandler.DeleteProject(httptest.NewRecorder(), r)
+	}()
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+		"resource_type": "gongfeng_repo",
+		"resource_ref": map[string]any{
+			"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+		},
+	})
+	req = withURLParam(req, "id", project.ID)
+	testHandler.CreateProjectResource(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateProjectResource: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created ProjectResourceResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode CreateProjectResource: %v", err)
+	}
+
+	legacyRef := map[string]any{
+		"provider":          "gongfeng",
+		"url":               "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
+		"project_path":      "ChainWeaver/ida/user-center",
+		"resource_kind":     "commits",
+		"ref":               "v5.0.0_dev",
+		"branch":            "v5.0.0_dev",
+		"disabled":          true,
+		"disabled_at":       "2026-07-01T00:00:00Z",
+		"connection_status": "disabled",
+		"sync_status":       "disabled",
+		"test_status":       "disabled",
+	}
+	legacyRaw, err := json.Marshal(legacyRef)
+	if err != nil {
+		t.Fatalf("marshal legacy ref: %v", err)
+	}
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE project_resource SET resource_ref = $1::jsonb WHERE id = $2
+	`, legacyRaw, created.ID); err != nil {
+		t.Fatalf("seed legacy disabled resource_ref: %v", err)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/projects/"+project.ID+"/resources/"+created.ID+"/sync", nil)
+	req = withURLParams(req, "id", project.ID, "resourceId", created.ID)
+	testHandler.SyncProjectResource(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("SyncProjectResource: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var synced ProjectResourceResponse
+	if err := json.NewDecoder(w.Body).Decode(&synced); err != nil {
+		t.Fatalf("decode SyncProjectResource: %v", err)
+	}
+	var syncedRef map[string]any
+	if err := json.Unmarshal(synced.ResourceRef, &syncedRef); err != nil {
+		t.Fatalf("decode synced resource_ref: %v", err)
+	}
+	if _, ok := syncedRef["disabled"]; ok {
+		t.Fatalf("synced resource_ref retained disabled: %s", string(synced.ResourceRef))
+	}
+	if _, ok := syncedRef["disabled_at"]; ok {
+		t.Fatalf("synced resource_ref retained disabled_at: %s", string(synced.ResourceRef))
+	}
+	if syncedRef["connection_status"] == "disabled" || syncedRef["test_status"] == "disabled" {
+		t.Fatalf("synced resource_ref retained disabled statuses: %s", string(synced.ResourceRef))
+	}
+	if syncedRef["sync_status"] != "synced" {
+		t.Fatalf("sync_status = %v, want synced (ref=%s)", syncedRef["sync_status"], string(synced.ResourceRef))
+	}
+}
+
 func TestProjectResourceGongfengRequiresWorkspaceInventory(t *testing.T) {
 	setHandlerTestWorkspaceRepos(t, []map[string]string{})
 

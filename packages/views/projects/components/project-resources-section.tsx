@@ -10,8 +10,6 @@ import {
   Loader2,
   Pencil,
   Plus,
-  Power,
-  PowerOff,
   RefreshCw,
   Search,
   Trash2,
@@ -22,10 +20,7 @@ import {
   projectResourcesOptions,
   useCreateProjectResource,
   useDeleteProjectResource,
-  useDisableProjectResource,
-  useEnableProjectResource,
   useSyncProjectResource,
-  useTestProjectResource,
   useUpdateProjectResource,
 } from "@multica/core/projects";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -98,10 +93,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const createResource = useCreateProjectResource(wsId, projectId);
   const updateResource = useUpdateProjectResource(wsId, projectId);
   const deleteResource = useDeleteProjectResource(wsId, projectId);
-  const testResource = useTestProjectResource(wsId, projectId);
   const syncResource = useSyncProjectResource(wsId, projectId);
-  const disableResource = useDisableProjectResource(wsId, projectId);
-  const enableResource = useEnableProjectResource(wsId, projectId);
 
   // Desktop-only entry points. We hide (not just disable) on web so users
   // there don't see an action they can never complete — the spec calls for
@@ -130,10 +122,18 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
     localDaemonId !== null && attachedLocalPaths.size > 0;
 
   const repoQuery = repoSearch.trim().toLowerCase();
+  const normalizedRepoQuery = normalizeRepoSearch(repoSearch);
   const filteredRepos =
     workspace?.repos
       ?.filter((repo) => isGongfengURL(repo.url))
-      .filter((repo) => repo.url.toLowerCase().includes(repoQuery)) ?? [];
+      .filter((repo) => {
+        if (!repoQuery) return true;
+        const searchText = workspaceRepoSearchText(repo);
+        return (
+          searchText.includes(repoQuery) ||
+          normalizeRepoSearch(searchText).includes(normalizedRepoQuery)
+        );
+      }) ?? [];
 
   const handleAttachGongfeng = async (url: string, repo?: WorkspaceRepo) => {
     try {
@@ -227,19 +227,6 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
     }
   };
 
-  const handleTest = async (resource: ProjectResource) => {
-    try {
-      await testResource.mutateAsync(resource.id);
-      toast.success(t(($) => $.resources.toast_tested));
-    } catch (err) {
-      toast.error(
-        err instanceof Error && err.message
-          ? err.message
-          : t(($) => $.resources.toast_test_failed),
-      );
-    }
-  };
-
   const handleSync = async (resource: ProjectResource) => {
     try {
       await syncResource.mutateAsync(resource.id);
@@ -249,26 +236,6 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
         err instanceof Error && err.message
           ? err.message
           : t(($) => $.resources.toast_sync_failed),
-      );
-    }
-  };
-
-  const handleToggle = async (resource: ProjectResource) => {
-    if (!isGongfengRef(resource)) return;
-    const disabled = Boolean(resource.resource_ref.disabled);
-    try {
-      if (disabled) {
-        await enableResource.mutateAsync(resource.id);
-        toast.success(t(($) => $.resources.toast_enabled));
-      } else {
-        await disableResource.mutateAsync(resource.id);
-        toast.success(t(($) => $.resources.toast_disabled));
-      }
-    } catch (err) {
-      toast.error(
-        err instanceof Error && err.message
-          ? err.message
-          : t(($) => $.resources.toast_toggle_failed),
       );
     }
   };
@@ -328,14 +295,10 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                   localDaemonId={localDaemonId}
                   canEdit={desktopMode}
                   onRemove={() => handleRemove(resource)}
-                  onTest={() => handleTest(resource)}
                   onSync={() => handleSync(resource)}
-                  onToggle={() => handleToggle(resource)}
                   pendingAction={
-                    testResource.isPending ||
                     syncResource.isPending ||
-                    disableResource.isPending ||
-                    enableResource.isPending
+                    deleteResource.isPending
                   }
                   onRenameLocalDirectory={handleRenameLocalDirectory}
                 />
@@ -387,6 +350,12 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                     {filteredRepos.map((repo) => {
                       const isAttached = attachedUrls.has(repo.url);
                       const isDisabled = isAttached || createResource.isPending;
+                      const displayName = workspaceRepoDisplayName(repo);
+                      const projectPath = workspaceRepoProjectPath(repo);
+                      const detail =
+                        projectPath && projectPath !== displayName
+                          ? projectPath
+                          : repo.url;
                       return (
                         // Use aria-disabled instead of the native `disabled` attribute so
                         // hover events still reach the tooltip trigger on attached rows
@@ -402,22 +371,31 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                           }}
                           className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-left hover:bg-accent transition-colors aria-disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:hover:bg-transparent"
                         >
-                          <FolderGit className="size-3.5" />
+                          <FolderGit className="size-3.5 shrink-0 text-muted-foreground" />
                           <Tooltip>
                             <TooltipTrigger
                               render={
-                                <span className="truncate flex-1">{repo.url}</span>
+                                <span className="min-w-0 flex-1 text-left" title={`${displayName} · ${repo.url}`}>
+                                  <span className="block truncate font-medium text-foreground">
+                                    {displayName}
+                                  </span>
+                                  <span className="block truncate text-[10px] leading-3 text-muted-foreground">
+                                    {detail}
+                                  </span>
+                                </span>
                               }
                             />
-                            <TooltipContent side="top">{repo.url}</TooltipContent>
+                            <TooltipContent side="top" align="start" className="max-w-sm break-all">
+                              {repo.url}
+                            </TooltipContent>
                           </Tooltip>
                           {repo.default_branch && (
-                            <span className="rounded border px-1 font-mono text-[10px] text-muted-foreground">
+                            <span className="shrink-0 rounded border px-1 font-mono text-[10px] text-muted-foreground">
                               {repo.default_branch}
                             </span>
                           )}
                           {isAttached && (
-                            <span className="text-[10px] text-muted-foreground">
+                            <span className="shrink-0 text-[10px] text-muted-foreground">
                               {t(($) => $.resources.attached_badge)}
                             </span>
                           )}
@@ -466,12 +444,66 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   );
 }
 
+function workspaceRepoDisplayName(repo: WorkspaceRepo): string {
+  const projectPath = workspaceRepoProjectPath(repo);
+  if (projectPath) return projectPath.split("/").filter(Boolean).pop() || projectPath;
+  return inferRepoNameFromURL(repo.url) || repo.url;
+}
+
+function workspaceRepoProjectPath(repo: WorkspaceRepo): string {
+  const projectPath = repo.project_path?.trim();
+  if (projectPath) return projectPath;
+  return inferProjectPathFromGongfengURL(repo.url);
+}
+
+function workspaceRepoSearchText(repo: WorkspaceRepo): string {
+  return [
+    workspaceRepoDisplayName(repo),
+    workspaceRepoProjectPath(repo),
+    repo.url,
+    repo.default_branch,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+}
+
+function normalizeRepoSearch(value: string): string {
+  return value.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "");
+}
+
+function inferProjectPathFromGongfengURL(url: string): string {
+  try {
+    const parsed = new URL(url);
+    const parts = parsed.pathname.split("/").filter(Boolean);
+    const boundary = parts.findIndex((part) =>
+      ["commits", "commit", "tree", "blob", "merge_requests"].includes(part),
+    );
+    return (boundary > 0 ? parts.slice(0, boundary) : parts).join("/");
+  } catch {
+    return "";
+  }
+}
+
+function inferRepoNameFromURL(url: string): string {
+  const projectPath = inferProjectPathFromGongfengURL(url);
+  if (projectPath) return projectPath.split("/").filter(Boolean).pop() || "";
+  return "";
+}
+
 function buildGongfengResourceRefFromWorkspaceRepo(
   url: string,
   repo: WorkspaceRepo | undefined,
 ): Partial<GongfengRepoResourceRef> & { url: string } {
   const branch = repo?.default_branch?.trim();
   if (!branch) return { url };
+  const headCommit = repo?.head_commit?.trim();
+  const commitSHA = repo?.commit_sha?.trim() || headCommit;
+  const connectionStatus = repo?.connection_status?.trim();
+  const syncStatus = repo?.sync_status?.trim();
+  const testStatus = repo?.test_status?.trim();
+  const lastTestedAt = repo?.last_tested_at?.trim();
+  const lastSyncedAt = repo?.last_synced_at?.trim();
   return {
     url,
     provider: "gongfeng",
@@ -479,6 +511,13 @@ function buildGongfengResourceRefFromWorkspaceRepo(
     resource_kind: "branch",
     ref: branch,
     branch,
+    ...(headCommit ? { head_commit: headCommit } : {}),
+    ...(commitSHA ? { commit_sha: commitSHA } : {}),
+    ...(connectionStatus ? { connection_status: connectionStatus } : {}),
+    ...(syncStatus ? { sync_status: syncStatus } : {}),
+    ...(testStatus ? { test_status: testStatus } : {}),
+    ...(lastTestedAt ? { last_tested_at: lastTestedAt } : {}),
+    ...(lastSyncedAt ? { last_synced_at: lastSyncedAt } : {}),
   };
 }
 
@@ -487,9 +526,7 @@ interface ResourceRowProps {
   localDaemonId: string | null;
   canEdit: boolean;
   onRemove: () => void;
-  onTest: () => void;
   onSync: () => void;
-  onToggle: () => void;
   pendingAction: boolean;
   onRenameLocalDirectory: (
     resource: ProjectResource & { resource_ref: LocalDirectoryResourceRef },
@@ -502,9 +539,7 @@ function ResourceRow({
   localDaemonId,
   canEdit,
   onRemove,
-  onTest,
   onSync,
-  onToggle,
   pendingAction,
   onRenameLocalDirectory,
 }: ResourceRowProps) {
@@ -536,7 +571,6 @@ function ResourceRow({
       { label: "同步", value: ref.sync_status },
       { label: "测试", value: ref.test_status },
     ].filter((item): item is { label: string; value: string } => Boolean(item.value));
-    const disabled = Boolean(ref.disabled);
     return (
       <div className="flex items-start gap-2 rounded-md px-1.5 py-1 text-xs group hover:bg-accent/40">
         <GitBranch className="mt-0.5 size-3.5 text-muted-foreground shrink-0" />
@@ -585,23 +619,11 @@ function ResourceRow({
         </Tooltip>
         <div className="flex shrink-0 items-center gap-0.5 opacity-0 transition-opacity group-hover:opacity-100 focus-within:opacity-100">
           <IconAction
-            title={t(($) => $.resources.test_tooltip)}
-            disabled={pendingAction || disabled}
-            onClick={onTest}
+            title={t(($) => $.resources.sync_tooltip)}
+            disabled={pendingAction}
+            onClick={onSync}
             icon={pendingAction ? Loader2 : RefreshCw}
             spin={pendingAction}
-          />
-          <IconAction
-            title={t(($) => $.resources.sync_tooltip)}
-            disabled={pendingAction || disabled}
-            onClick={onSync}
-            icon={RefreshCw}
-          />
-          <IconAction
-            title={disabled ? t(($) => $.resources.enable_tooltip) : t(($) => $.resources.disable_tooltip)}
-            disabled={pendingAction}
-            onClick={onToggle}
-            icon={disabled ? Power : PowerOff}
           />
           <IconAction
             title={t(($) => $.resources.remove_tooltip)}
@@ -680,8 +702,6 @@ function statusLabel(value: string): string {
     case "failed":
     case "error":
       return "失败";
-    case "disabled":
-      return "已停用";
     case "pending_verification":
       return "待验证";
     case "needs_test":

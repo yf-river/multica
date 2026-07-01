@@ -115,8 +115,6 @@ type gongfengRepoRef struct {
 	CredentialProbeHTTPStatus       string `json:"credential_probe_http_status,omitempty"`
 	CredentialProbeTarget           string `json:"credential_probe_target,omitempty"`
 	UnauthenticatedConnectionStatus string `json:"unauthenticated_connection_status,omitempty"`
-	Disabled                        bool   `json:"disabled,omitempty"`
-	DisabledAt                      string `json:"disabled_at,omitempty"`
 	Title                           string `json:"title,omitempty"`
 }
 
@@ -175,9 +173,9 @@ func validateGongfengRepoRef(ref json.RawMessage) (json.RawMessage, error) {
 	payload.HeadCommit = strings.TrimSpace(payload.HeadCommit)
 	payload.Branch = strings.TrimSpace(payload.Branch)
 	payload.CommitSHA = strings.TrimSpace(payload.CommitSHA)
-	payload.ConnectionStatus = strings.TrimSpace(payload.ConnectionStatus)
-	payload.SyncStatus = strings.TrimSpace(payload.SyncStatus)
-	payload.TestStatus = strings.TrimSpace(payload.TestStatus)
+	payload.ConnectionStatus = normalizeRemovedProjectResourceDisabledStatus(payload.ConnectionStatus)
+	payload.SyncStatus = normalizeRemovedProjectResourceDisabledStatus(payload.SyncStatus)
+	payload.TestStatus = normalizeRemovedProjectResourceDisabledStatus(payload.TestStatus)
 	payload.LastTestedAt = strings.TrimSpace(payload.LastTestedAt)
 	payload.LastSyncedAt = strings.TrimSpace(payload.LastSyncedAt)
 	payload.CredentialStatus = strings.TrimSpace(payload.CredentialStatus)
@@ -189,13 +187,20 @@ func validateGongfengRepoRef(ref json.RawMessage) (json.RawMessage, error) {
 	payload.CredentialProbeHTTPStatus = strings.TrimSpace(payload.CredentialProbeHTTPStatus)
 	payload.CredentialProbeTarget = strings.TrimSpace(payload.CredentialProbeTarget)
 	payload.UnauthenticatedConnectionStatus = strings.TrimSpace(payload.UnauthenticatedConnectionStatus)
-	payload.DisabledAt = strings.TrimSpace(payload.DisabledAt)
 	payload.Title = strings.TrimSpace(payload.Title)
 	out, err := json.Marshal(payload)
 	if err != nil {
 		return nil, err
 	}
 	return out, nil
+}
+
+func normalizeRemovedProjectResourceDisabledStatus(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "disabled" {
+		return ""
+	}
+	return value
 }
 
 func normalizeGongfengProjectPath(value string) string {
@@ -712,34 +717,10 @@ func (h *Handler) UpdateProjectResource(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, http.StatusOK, resp)
 }
 
-// TestProjectResource performs a real reachability probe for a Gongfeng
-// project resource and records the result in resource_ref. A 302 to the
-// sign-in page is deliberately stored as auth_required instead of pretending
-// repository content was readable.
-func (h *Handler) TestProjectResource(w http.ResponseWriter, r *http.Request) {
-	h.updateGongfengResourceState(w, r, "test")
-}
-
 // SyncProjectResource refreshes locally known branch/sync metadata. Full
 // commit discovery requires a bound Gongfeng profile; until then this action
 // records that the resource was refreshed without inventing a commit SHA.
 func (h *Handler) SyncProjectResource(w http.ResponseWriter, r *http.Request) {
-	h.updateGongfengResourceState(w, r, "sync")
-}
-
-// DisableProjectResource keeps the resource row for audit/history but removes
-// it from training selection paths that filter disabled resources.
-func (h *Handler) DisableProjectResource(w http.ResponseWriter, r *http.Request) {
-	h.updateGongfengResourceState(w, r, "disable")
-}
-
-// EnableProjectResource re-activates a disabled Gongfeng project resource. The
-// next test/sync is intentionally left pending instead of reusing stale status.
-func (h *Handler) EnableProjectResource(w http.ResponseWriter, r *http.Request) {
-	h.updateGongfengResourceState(w, r, "enable")
-}
-
-func (h *Handler) updateGongfengResourceState(w http.ResponseWriter, r *http.Request, action string) {
 	project, ok := h.loadProjectForResource(w, r, chi.URLParam(r, "id"))
 	if !ok {
 		return
@@ -769,49 +750,14 @@ func (h *Handler) updateGongfengResourceState(w http.ResponseWriter, r *http.Req
 		return
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	switch action {
-	case "test":
-		result := probeGongfengURL(r.Context(), ref.URL)
-		profile, hasProfile, err := h.loadUsableGongfengCredentialProfile(r.Context(), userID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to load gongfeng credential profile")
-			return
-		}
-		credentialProbe := gongfengCredentialProbeResult{ConnectionStatus: "not_configured", TestStatus: "failed"}
-		if hasProfile {
-			credentialProbe = probeGongfengWithCredential(r.Context(), ref, h.resolveExternalCredentialToken(profile))
-		}
-		ref = applyGongfengCredentialProbeResult(ref, result, credentialProbe, profile, hasProfile)
-		ref.LastTestedAt = now
-	case "sync":
-		if ref.Disabled {
-			writeError(w, http.StatusConflict, "disabled gongfeng_repo cannot be synced")
-			return
-		}
-		if ref.Branch == "" {
-			ref.Branch = ref.Ref
-		}
-		if ref.CommitSHA == "" {
-			ref.CommitSHA = ref.HeadCommit
-		}
-		ref.SyncStatus = "synced"
-		ref.LastSyncedAt = now
-	case "disable":
-		ref.Disabled = true
-		ref.DisabledAt = now
-		ref.ConnectionStatus = "disabled"
-		ref.SyncStatus = "disabled"
-		ref.TestStatus = "disabled"
-	case "enable":
-		ref.Disabled = false
-		ref.DisabledAt = ""
-		ref.ConnectionStatus = "pending_verification"
-		ref.SyncStatus = "pending_verification"
-		ref.TestStatus = "pending_verification"
-	default:
-		writeError(w, http.StatusBadRequest, "unknown project resource action")
-		return
+	if ref.Branch == "" {
+		ref.Branch = ref.Ref
 	}
+	if ref.CommitSHA == "" {
+		ref.CommitSHA = ref.HeadCommit
+	}
+	ref.SyncStatus = "synced"
+	ref.LastSyncedAt = now
 	nextRef, err := validateAndNormalizeResourceRef(existing.ResourceType, mustMarshalRaw(ref))
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -833,7 +779,7 @@ func (h *Handler) updateGongfengResourceState(w http.ResponseWriter, r *http.Req
 		uuidToString(project.WorkspaceID),
 		"member",
 		userID,
-		map[string]any{"resource": resp, "project_id": uuidToString(project.ID), "action": action},
+		map[string]any{"resource": resp, "project_id": uuidToString(project.ID), "action": "sync"},
 	)
 	writeJSON(w, http.StatusOK, resp)
 }
