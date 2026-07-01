@@ -39,9 +39,11 @@ func TestBuildPromptIncludesTapdSourceContext(t *testing.T) {
 		"resource_type=markdown_wiki",
 		"resource_id=1147654106001004154",
 		"fetch_status=pending_mcp_fetch",
-		"current account's `mcp-server-tapd` credential profile",
-		"multica issue source-fetch issue-1 --provider tapd --auto-fetch --output json",
-		"recorded fetch_failed error",
+		"configured `mcp-server-tapd` MCP tool",
+		"using `get_wiki` with workspace_id=47654106 and resource_id=1147654106001004154",
+		"Do not open the TAPD web page directly",
+		"multica issue source-fetch issue-1 --provider tapd --status fetched --source-workspace-id 47654106 --resource-type markdown_wiki --resource-id 1147654106001004154",
+		"Use `--auto-fetch` only as a fallback",
 		"profile_id=profile-1",
 		"inheritance=task_creator_or_trigger_user",
 	} {
@@ -85,7 +87,7 @@ func TestBuildPromptBlocksTapdWhenProfileMissing(t *testing.T) {
 			t.Fatalf("BuildPrompt missing %q\n--- output ---\n%s", want, out)
 		}
 	}
-	if strings.Contains(out, "current account's `mcp-server-tapd` credential profile") {
+	if strings.Contains(out, "configured `mcp-server-tapd` MCP tool") {
 		t.Fatalf("blocked prompt must not tell the agent to fetch anyway\n--- output ---\n%s", out)
 	}
 }

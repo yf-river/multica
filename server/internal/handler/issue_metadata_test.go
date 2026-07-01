@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -8,6 +9,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 )
 
 // Round-trip: set primitives of each type, list, get them back, delete, confirm gone.
@@ -314,6 +316,109 @@ func TestCreateIssueWithMetadata(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("created TAPD issue missing from metadata filter result")
+	}
+}
+
+func TestCreateIssueAutoDetectsTapdWikiSourceURL(t *testing.T) {
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, `DELETE FROM external_credential_profile WHERE user_id = $1 AND provider = 'tapd'`, testUserID); err != nil {
+		t.Fatalf("clear tapd profiles: %v", err)
+	}
+	t.Setenv("TAPD_METADATA_TEST_TOKEN", "tapd-test-token")
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/external-credential-profiles", map[string]any{
+		"provider":   "tapd",
+		"name":       fmt.Sprintf("tapd-metadata-%d", time.Now().UnixNano()),
+		"secret_ref": "env:TAPD_METADATA_TEST_TOKEN",
+	})
+	testHandler.CreateExternalCredentialProfile(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateExternalCredentialProfile: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	tapdURL := "https://www.tapd.cn/47654106/markdown_wikis/show/\n  #1147654106001004223"
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":           "增强密码强度",
+		"description":     "TAPD wiki URL: " + tapdURL,
+		"status":          "todo",
+		"priority":        "medium",
+		"allow_duplicate": true,
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var created IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	want := map[string]any{
+		"source_provider":                  "tapd",
+		"source_url":                       "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004223",
+		"tapd_workspace_id":                "47654106",
+		"tapd_resource_type":               "markdown_wiki",
+		"tapd_resource_id":                 "1147654106001004223",
+		"tapd_wiki_id":                     "1147654106001004223",
+		"source_fetch_provider":            "tapd_mcp",
+		"source_credential_scope":          "account",
+		"source_credential_inheritance":    "task_creator_or_trigger_user",
+		"source_credential_profile_status": "unverified",
+		"source_fetch_status":              "pending_mcp_fetch",
+	}
+	for key, value := range want {
+		if got := created.Metadata[key]; got != value {
+			t.Fatalf("%s = %T %v, want %v; metadata=%+v", key, got, got, value, created.Metadata)
+		}
+	}
+	if created.Metadata["source_credential_profile_id"] == "" {
+		t.Fatalf("source_credential_profile_id missing: %+v", created.Metadata)
+	}
+	if strings.Contains(w.Body.String(), "tapd-test-token") {
+		t.Fatalf("create issue response leaked token: %s", w.Body.String())
+	}
+}
+
+func TestUpdateIssueAutoDetectsTapdWikiSourceURL(t *testing.T) {
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, `DELETE FROM external_credential_profile WHERE user_id = $1 AND provider = 'tapd'`, testUserID); err != nil {
+		t.Fatalf("clear tapd profiles: %v", err)
+	}
+	t.Setenv("TAPD_METADATA_UPDATE_TEST_TOKEN", "tapd-test-token")
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/external-credential-profiles", map[string]any{
+		"provider":   "tapd",
+		"name":       fmt.Sprintf("tapd-metadata-update-%d", time.Now().UnixNano()),
+		"secret_ref": "env:TAPD_METADATA_UPDATE_TEST_TOKEN",
+	})
+	testHandler.CreateExternalCredentialProfile(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateExternalCredentialProfile: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	issueID := createMetadataTestIssue(t, "TAPD URL added later")
+	tapdURL := "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004223"
+	w = httptest.NewRecorder()
+	req = newRequest("PATCH", "/api/issues/"+issueID, map[string]any{
+		"description": "TAPD wiki URL: " + tapdURL,
+	})
+	req = withURLParam(req, "id", issueID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateIssue: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var updated IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&updated); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if updated.Metadata["source_provider"] != "tapd" ||
+		updated.Metadata["source_url"] != tapdURL ||
+		updated.Metadata["tapd_workspace_id"] != "47654106" ||
+		updated.Metadata["tapd_resource_id"] != "1147654106001004223" ||
+		updated.Metadata["source_fetch_status"] != "pending_mcp_fetch" {
+		t.Fatalf("metadata = %+v", updated.Metadata)
 	}
 }
 

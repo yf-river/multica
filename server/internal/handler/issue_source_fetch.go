@@ -287,6 +287,14 @@ func (h *Handler) autoFetchIssueSource(ctx context.Context, userID string, issue
 	resourceType := firstNonEmpty(req.ResourceType, stringFromMetadata(metadata, "tapd_resource_type"))
 	resourceID := firstNonEmpty(req.ResourceID, stringFromMetadata(metadata, "tapd_resource_id"), stringFromMetadata(metadata, "tapd_wiki_id"))
 	sourceURL := firstNonEmpty(req.URL, stringFromMetadata(metadata, "source_url"))
+	if ref, ok := parseTAPDMarkdownWikiURL(sourceURL); ok {
+		sourceURL = ref.URL
+		workspaceID = firstNonEmpty(workspaceID, ref.WorkspaceID)
+		resourceID = firstNonEmpty(resourceID, ref.WikiID)
+		if resourceType == "" || resourceType == "tapd_resource" {
+			resourceType = "markdown_wiki"
+		}
+	}
 	if (resourceType == "" || resourceType == "tapd_resource") && strings.Contains(sourceURL, "/markdown_wikis/") {
 		resourceType = "markdown_wiki"
 	}

@@ -198,6 +198,97 @@ func TestRecordIssueSourceFetchAutoFetchesTapdWikiWithAccountProfile(t *testing.
 	}
 }
 
+func TestRecordIssueSourceFetchAutoFetchParsesTapdWikiSourceURL(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	if _, err := testPool.Exec(ctx, `DELETE FROM external_credential_profile WHERE user_id = $1 AND provider = 'tapd'`, testUserID); err != nil {
+		t.Fatalf("clear tapd profiles: %v", err)
+	}
+	t.Setenv("TAPD_AUTO_FETCH_URL_TEST_TOKEN", "tapd-test-token")
+
+	var sawAuth bool
+	var sawWorkspaceID string
+	var sawWikiID string
+	tapdAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/tapd_wikis" {
+			t.Fatalf("unexpected TAPD path: %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") == "Bearer tapd-test-token" && r.Header.Get("Via") == "mcp" {
+			sawAuth = true
+		}
+		sawWorkspaceID = r.URL.Query().Get("workspace_id")
+		sawWikiID = r.URL.Query().Get("id")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": 1,
+			"data": []any{map[string]any{
+				"TWiki": map[string]any{
+					"id":                   "1147654106001004223",
+					"name":                 "增强密码强度",
+					"markdown_description": "密码长度限制在8-32位，必须包含大小写字母、数字、特殊字符中的至少三种。",
+					"modified":             "2026-07-02 10:00:00",
+				},
+			}},
+		})
+	}))
+	defer tapdAPI.Close()
+	t.Setenv("TAPD_API_BASE_URL", tapdAPI.URL)
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/external-credential-profiles", map[string]any{
+		"provider":   "tapd",
+		"name":       fmt.Sprintf("tapd-auto-fetch-url-%d", time.Now().UnixNano()),
+		"secret_ref": "env:TAPD_AUTO_FETCH_URL_TEST_TOKEN",
+	})
+	testHandler.CreateExternalCredentialProfile(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateExternalCredentialProfile: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	runtimeID := createClaimReclaimRuntime(t, ctx, "Source fetch URL parse runtime")
+	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Source fetch URL parse agent")
+	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "1 second", true)
+	rawMetadata, _ := json.Marshal(map[string]any{
+		"source_url": "https://www.tapd.cn/47654106/markdown_wikis/show/\n  #1147654106001004223",
+	})
+	if _, err := testPool.Exec(ctx, `UPDATE issue SET metadata = $2 WHERE id = $1`, issueID, rawMetadata); err != nil {
+		t.Fatalf("set issue metadata: %v", err)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/issues/"+issueID+"/source-fetch", map[string]any{
+		"provider":   "tapd",
+		"auto_fetch": true,
+	})
+	req.Header.Set("X-Agent-ID", agentID)
+	req.Header.Set("X-Task-ID", taskID)
+	req = withURLParam(req, "id", issueID)
+	testHandler.RecordIssueSourceFetch(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("RecordIssueSourceFetch auto_fetch: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !sawAuth {
+		t.Fatal("TAPD auto_fetch did not send credential-backed MCP authorization headers")
+	}
+	if sawWorkspaceID != "47654106" || sawWikiID != "1147654106001004223" {
+		t.Fatalf("TAPD request query workspace_id=%q id=%q", sawWorkspaceID, sawWikiID)
+	}
+	var resp struct {
+		Metadata map[string]any `json:"metadata"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Metadata["source_fetch_status"] != "fetched" ||
+		resp.Metadata["source_fetch_resource_type"] != "markdown_wiki" ||
+		resp.Metadata["source_fetch_resource_id"] != "1147654106001004223" ||
+		resp.Metadata["source_fetch_url"] != "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004223" {
+		t.Fatalf("metadata = %+v", resp.Metadata)
+	}
+}
+
 func TestRecordIssueSourceFetchAutoFetchRecordsMissingTapdProfile(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")

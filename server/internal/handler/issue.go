@@ -106,6 +106,14 @@ type IssueAgentActivitySummaryResponse struct {
 var validIssueStatuses = []string{"backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"}
 var validIssuePriorities = []string{"urgent", "high", "medium", "low", "none"}
 
+var tapdMarkdownWikiURLRE = regexp.MustCompile(`https?://www\.tapd\.cn/([0-9]+)/markdown_wikis/show/\s*#\s*([0-9]+)`)
+
+type tapdWikiSourceRef struct {
+	WorkspaceID string
+	WikiID      string
+	URL         string
+}
+
 func validateIssueEnum(w http.ResponseWriter, field, value string, allowed []string) bool {
 	for _, a := range allowed {
 		if value == a {
@@ -2683,7 +2691,11 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	if !validateIssueEnum(w, "priority", priority, validIssuePriorities) {
 		return
 	}
-	req.Metadata = h.enrichSourceCredentialMetadata(r.Context(), req.Metadata, creatorID)
+	descriptionText := ""
+	if req.Description != nil {
+		descriptionText = *req.Description
+	}
+	req.Metadata = h.enrichIssueSourceMetadata(r.Context(), req.Metadata, creatorID, req.Title, descriptionText)
 	metadata, err := validateIssueMetadataObject(req.Metadata)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
@@ -2873,6 +2885,110 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	resp := issueToResponse(issue, prefix)
 	resp.Attachments = buildAttachmentResponses(res.Attachments)
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+func (h *Handler) enrichIssueSourceMetadata(ctx context.Context, metadata map[string]json.RawMessage, creatorUserID string, texts ...string) map[string]json.RawMessage {
+	metadata = enrichTAPDSourceMetadataFromText(metadata, texts...)
+	return h.enrichSourceCredentialMetadata(ctx, metadata, creatorUserID)
+}
+
+func enrichTAPDSourceMetadataFromText(metadata map[string]json.RawMessage, texts ...string) map[string]json.RawMessage {
+	sourceURL := metadataStringPreserve(metadata, "source_url")
+	ref, ok := parseTAPDMarkdownWikiURL(sourceURL)
+	if !ok && sourceURL != "" {
+		return metadata
+	}
+	if !ok {
+		for _, text := range texts {
+			ref, ok = parseTAPDMarkdownWikiURL(text)
+			if ok {
+				break
+			}
+		}
+	}
+	if !ok {
+		return metadata
+	}
+	provider, hasProvider := metadataStringPreserve(metadata, "source_provider"), false
+	if provider != "" {
+		hasProvider = true
+	}
+	if hasProvider && !strings.EqualFold(provider, externalCredentialProviderTAPD) {
+		return metadata
+	}
+	out := make(map[string]json.RawMessage, len(metadata)+6)
+	for key, value := range metadata {
+		out[key] = value
+	}
+	setIfMissing := func(key, value string) {
+		if strings.TrimSpace(value) == "" || metadataStringPreserve(out, key) != "" {
+			return
+		}
+		raw, _ := json.Marshal(value)
+		out[key] = raw
+	}
+	setIfMissing("source_provider", externalCredentialProviderTAPD)
+	setIfMissing("source_url", ref.URL)
+	setIfMissing("tapd_workspace_id", ref.WorkspaceID)
+	setIfMissing("tapd_resource_type", "markdown_wiki")
+	setIfMissing("tapd_resource_id", ref.WikiID)
+	setIfMissing("tapd_wiki_id", ref.WikiID)
+	return out
+}
+
+func parseTAPDMarkdownWikiURL(value string) (tapdWikiSourceRef, bool) {
+	match := tapdMarkdownWikiURLRE.FindStringSubmatch(value)
+	if len(match) != 3 {
+		return tapdWikiSourceRef{}, false
+	}
+	workspaceID := strings.TrimSpace(match[1])
+	wikiID := strings.TrimSpace(match[2])
+	if workspaceID == "" || wikiID == "" {
+		return tapdWikiSourceRef{}, false
+	}
+	return tapdWikiSourceRef{
+		WorkspaceID: workspaceID,
+		WikiID:      wikiID,
+		URL:         fmt.Sprintf("https://www.tapd.cn/%s/markdown_wikis/show/#%s", workspaceID, wikiID),
+	}, true
+}
+
+func metadataStringPreserve(metadata map[string]json.RawMessage, key string) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	raw, ok := metadata[key]
+	if !ok {
+		return ""
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
+func decodeIssueMetadataRaw(raw []byte) map[string]json.RawMessage {
+	if len(raw) == 0 {
+		return map[string]json.RawMessage{}
+	}
+	var metadata map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &metadata); err != nil || metadata == nil {
+		return map[string]json.RawMessage{}
+	}
+	return metadata
+}
+
+func changedIssueMetadataKeys(before, after map[string]json.RawMessage) map[string]json.RawMessage {
+	out := map[string]json.RawMessage{}
+	for key, next := range after {
+		prev, ok := before[key]
+		if ok && string(prev) == string(next) {
+			continue
+		}
+		out[key] = next
+	}
+	return out
 }
 
 func (h *Handler) enrichSourceCredentialMetadata(ctx context.Context, metadata map[string]json.RawMessage, creatorUserID string) map[string]json.RawMessage {
@@ -3105,6 +3221,41 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		h.linkAttachmentsByIssueIDs(r.Context(), issue.ID, issue.WorkspaceID, attachmentIDs)
 	}
 
+	// Determine actor identity: agent (via X-Agent-ID header) or member.
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+
+	if req.Title != nil || req.Description != nil {
+		nextDescription := ""
+		if issue.Description.Valid {
+			nextDescription = issue.Description.String
+		}
+		metadataBefore := decodeIssueMetadataRaw(issue.Metadata)
+		metadataAfter := h.enrichIssueSourceMetadata(r.Context(), metadataBefore, userID, issue.Title, nextDescription)
+		if _, err := validateIssueMetadataObject(metadataAfter); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
+		metadataChanges := changedIssueMetadataKeys(metadataBefore, metadataAfter)
+		if len(metadataChanges) > 0 {
+			for key, value := range metadataChanges {
+				issue, err = h.Queries.SetIssueMetadataKey(r.Context(), db.SetIssueMetadataKeyParams{
+					ID:          issue.ID,
+					WorkspaceID: issue.WorkspaceID,
+					Key:         key,
+					Value:       value,
+				})
+				if err != nil {
+					writeError(w, http.StatusInternalServerError, "failed to update issue source metadata")
+					return
+				}
+			}
+			h.publish(protocol.EventIssueMetadataChanged, workspaceID, actorType, actorID, map[string]any{
+				"issue_id": uuidToString(issue.ID),
+				"metadata": parseIssueMetadata(issue.Metadata),
+			})
+		}
+	}
+
 	prefix := h.getIssuePrefix(r.Context(), issue.WorkspaceID)
 	resp := issueToResponse(issue, prefix)
 	slog.Info("issue updated", append(logger.RequestAttrs(r), "issue_id", id, "workspace_id", workspaceID)...)
@@ -3121,9 +3272,6 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	prevDueDate := dateToPtr(prevIssue.DueDate)
 	dueDateChanged := prevDueDate != resp.DueDate && (prevDueDate == nil) != (resp.DueDate == nil) ||
 		(prevDueDate != nil && resp.DueDate != nil && *prevDueDate != *resp.DueDate)
-
-	// Determine actor identity: agent (via X-Agent-ID header) or member.
-	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 
 	h.publish(protocol.EventIssueUpdated, workspaceID, actorType, actorID, map[string]any{
 		"issue":               resp,
