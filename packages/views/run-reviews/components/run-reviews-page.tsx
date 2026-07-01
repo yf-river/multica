@@ -8,7 +8,7 @@ import { api } from "@multica/core/api";
 import { issueExecutionTreeOptions, issueKeys, issueListOptions } from "@multica/core/issues/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
-import type { AgentTask, CreatePromptEvaluationCaseRequest, Issue, IssueTimelineNode, IssueExecutionNode, IssueExecutionTreeResponse, TaskTraceEvent } from "@multica/core/types";
+import type { AgentTask, AgentTaskArtifact, CreatePromptEvaluationCaseRequest, Issue, IssueTimelineNode, IssueExecutionNode, IssueExecutionTreeResponse, TaskTraceEvent } from "@multica/core/types";
 import type { TaskMessagePayload } from "@multica/core/types/events";
 import type { PromptEvaluationToolCallChain } from "@multica/core/types/prompt-evaluation";
 import { cn } from "@multica/ui/lib/utils";
@@ -17,7 +17,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@multica/ui/components/
 import { PageHeader } from "../../layout/page-header";
 import { AppLink, useNavigation } from "../../navigation";
 import { TranscriptButton } from "../../common/task-transcript";
-import { SOP_STAGE_DEFINITIONS, normalizeSopStageName } from "../../common/sop-stage-labels";
+import { SOP_STAGE_DEFINITIONS, normalizeSopStageName, sopStageDisplayName } from "../../common/sop-stage-labels";
 
 const STAGES = SOP_STAGE_DEFINITIONS;
 
@@ -165,13 +165,14 @@ function RunReviewDetail({
   const stageRows = buildStageRows(timelineNodes);
   const childLanes = buildChildLanes(tree);
   const visibleStageRows = stageRows.filter((stage) => stage.node);
+  const agentNodeRows = buildAgentNodeRows(timelineNodes);
   const visibleChildLanes = childLanes;
   const eventRows = buildRunReviewEventRows(tree, timelineNodes);
   const tokenTotal = (summary?.total_input_tokens ?? 0) +
     (summary?.total_output_tokens ?? 0) +
     (summary?.total_cache_read_tokens ?? 0) +
     (summary?.total_cache_write_tokens ?? 0);
-  const nodeCsv = buildRunReviewNodeCsv(issue, summary, visibleStageRows, visibleChildLanes);
+  const nodeCsv = buildRunReviewNodeCsv(issue, summary, agentNodeRows, visibleChildLanes);
   const rawEventsCsv = buildRunReviewRawEventsCsv(eventRows);
   const queryClient = useQueryClient();
   const { data: tasks = [] } = useQuery({
@@ -336,7 +337,7 @@ function RunReviewDetail({
       <section className="rounded-md border bg-card">
         <SectionTitle
           title="节点表"
-          subtitle="只展示执行树中真实匹配到的 SOP 节点。"
+          subtitle="按 Agent 运行节点展示耗时、token、轮次和产物。"
           action={
             <ExportButton
               label="导出节点数据"
@@ -349,53 +350,58 @@ function RunReviewDetail({
             <thead className="border-y bg-muted/40 text-left text-xs text-muted-foreground">
               <tr>
                 <th className="w-[18%] px-3 py-2 font-medium">节点</th>
-                <th className="w-[18%] px-3 py-2 font-medium">Agent</th>
-                <th className="w-[14%] px-3 py-2 font-medium">状态</th>
-                <th className="w-[14%] px-3 py-2 font-medium">耗时</th>
-                <th className="w-[14%] px-3 py-2 font-medium">Token</th>
+                <th className="w-[16%] px-3 py-2 font-medium">Agent</th>
+                <th className="w-[12%] px-3 py-2 font-medium">状态</th>
+                <th className="w-[12%] px-3 py-2 font-medium">耗时</th>
+                <th className="w-[12%] px-3 py-2 font-medium">Token</th>
                 <th className="w-[10%] px-3 py-2 font-medium">思考轮次</th>
+                <th className="w-[20%] px-3 py-2 font-medium">产物</th>
               </tr>
             </thead>
             <tbody className="divide-y">
-              {visibleStageRows.length > 0 ? visibleStageRows.map((stage) => (
-                <tr key={stage.key}>
-                  <td className="truncate px-3 py-2">{stage.label}</td>
-                  <td className="truncate px-3 py-2 text-muted-foreground">{stage.node?.agent_name ?? stage.key}</td>
-                  <td className="truncate px-3 py-2">{stage.node ? statusLabel(stage.node.status) : "缺失"}</td>
+              {agentNodeRows.length > 0 ? agentNodeRows.map((row) => (
+                <tr key={row.key}>
+                  <td className="truncate px-3 py-2">{row.label}</td>
+                  <td className="truncate px-3 py-2 text-muted-foreground">{row.node.agent_name ?? row.key}</td>
+                  <td className="truncate px-3 py-2">{statusLabel(row.node.status)}</td>
                   <td className="truncate px-3 py-2">
-                    <NodeMetric value={formatDuration(stage.node?.duration_ms ?? 0)} tooltip={nodeDurationTooltip(stage.node)} />
+                    <NodeMetric value={formatDuration(row.node.duration_ms ?? 0)} tooltip={nodeDurationTooltip(row.node)} />
                   </td>
                   <td className="truncate px-3 py-2">
-                    <NodeMetric value={formatNumber(nodeTokenTotal(stage.node))} tooltip={nodeTokenTooltip(stage.node)} />
+                    <NodeMetric value={formatNumber(nodeTokenTotal(row.node))} tooltip={nodeTokenTooltip(row.node)} />
                   </td>
-                  <td className="truncate px-3 py-2">{formatNumber(stage.node?.agent_turn_count ?? 0)}</td>
+                  <td className="truncate px-3 py-2">{formatNumber(row.node.agent_turn_count ?? 0)}</td>
+                  <td className="px-3 py-2"><ArtifactLinks artifacts={row.node.artifacts ?? []} /></td>
                 </tr>
               )) : (
                 <tr>
-                  <td className="px-3 py-5 text-sm text-muted-foreground" colSpan={6}>暂无真实 SOP 节点。</td>
+                  <td className="px-3 py-5 text-sm text-muted-foreground" colSpan={7}>暂无真实 Agent 节点。</td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
         <div className="divide-y md:hidden">
-          {visibleStageRows.length > 0 ? visibleStageRows.map((stage) => (
-            <div key={stage.key} className="px-4 py-3 text-sm">
+          {agentNodeRows.length > 0 ? agentNodeRows.map((row) => (
+            <div key={row.key} className="px-4 py-3 text-sm">
               <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0 truncate font-medium">{stage.label}</div>
+                <div className="min-w-0 truncate font-medium">{row.label}</div>
                 <span className="shrink-0 rounded border px-2 py-0.5 text-xs text-muted-foreground">
-                  {stage.node ? statusLabel(stage.node.status) : "缺失"}
+                  {statusLabel(row.node.status)}
                 </span>
               </div>
               <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                <NodeFact label="Agent" value={stage.node?.agent_name ?? stage.key} />
-                <NodeFact label="耗时" value={formatDuration(stage.node?.duration_ms ?? 0)} />
-                <NodeFact label="Token" value={formatNumber(nodeTokenTotal(stage.node))} />
-                <NodeFact label="思考轮次" value={formatNumber(stage.node?.agent_turn_count ?? 0)} />
+                <NodeFact label="Agent" value={row.node.agent_name ?? row.key} />
+                <NodeFact label="耗时" value={formatDuration(row.node.duration_ms ?? 0)} />
+                <NodeFact label="Token" value={formatNumber(nodeTokenTotal(row.node))} />
+                <NodeFact label="思考轮次" value={formatNumber(row.node.agent_turn_count ?? 0)} />
+              </div>
+              <div className="mt-2 text-xs">
+                <ArtifactLinks artifacts={row.node.artifacts ?? []} />
               </div>
             </div>
           )) : (
-            <div className="px-4 py-5 text-sm text-muted-foreground">暂无真实 SOP 节点。</div>
+            <div className="px-4 py-5 text-sm text-muted-foreground">暂无真实 Agent 节点。</div>
           )}
         </div>
       </section>
@@ -627,6 +633,31 @@ function NodeFact({ label, value }: { label: string; value: string }) {
     <div className="min-w-0">
       <span className="text-muted-foreground/80">{label}：</span>
       <span className="break-words">{value}</span>
+    </div>
+  );
+}
+
+function ArtifactLinks({ artifacts }: { artifacts: AgentTaskArtifact[] }) {
+  if (!artifacts.length) return <span className="text-muted-foreground">-</span>;
+  return (
+    <div className="flex min-w-0 flex-wrap gap-1.5">
+      {artifacts.slice(0, 3).map((artifact) => (
+        <a
+          key={artifact.id}
+          href={artifact.markdown_url || artifact.download_url}
+          target="_blank"
+          rel="noreferrer"
+          className="inline-flex max-w-full items-center rounded border bg-background px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
+          title={artifact.filename}
+        >
+          <span className="truncate">{artifact.title || artifact.filename}</span>
+        </a>
+      ))}
+      {artifacts.length > 3 ? (
+        <span className="inline-flex items-center rounded border px-2 py-0.5 text-xs text-muted-foreground">
+          +{artifacts.length - 3}
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -886,7 +917,7 @@ export function buildRunReviewEventRows(
 export function buildRunReviewNodeCsv(
   issue: Issue,
   summary: IssueExecutionTreeResponse["issue_summary"] | undefined,
-  stageRows: ReturnType<typeof buildStageRows>,
+  agentRows: ReturnType<typeof buildAgentNodeRows>,
   childLanes: ReturnType<typeof buildChildLanes>,
 ): string {
   const headers = [
@@ -910,6 +941,8 @@ export function buildRunReviewNodeCsv(
     "node_cache_write_tokens",
     "node_token_total",
     "node_thinking_rounds",
+    "artifact_count",
+    "artifacts",
   ];
   const totalToken = (summary?.total_input_tokens ?? 0) +
     (summary?.total_output_tokens ?? 0) +
@@ -936,31 +969,35 @@ export function buildRunReviewNodeCsv(
     "",
     "",
     "",
+    "",
+    "",
   ]];
 
-  for (const stage of stageRows) {
-    const node = stage.node;
+  for (const row of agentRows) {
+    const node = row.node;
     rows.push([
-      "sop_node",
+      "agent_node",
       issue.id,
       issue.identifier,
       issue.title,
       summary?.total_duration_ms ?? 0,
       totalToken,
       summary?.agent_turn_count ?? 0,
-      stage.key,
-      stage.label,
-      node?.status ?? "missing",
-      node?.agent_name ?? stage.key,
-      node?.started_at ?? "",
-      node?.completed_at ?? "",
-      node?.duration_ms ?? 0,
-      node?.input_tokens ?? 0,
-      node?.output_tokens ?? 0,
-      node?.cache_read_tokens ?? 0,
-      node?.cache_write_tokens ?? 0,
+      row.key,
+      row.label,
+      node.status,
+      node.agent_name ?? row.key,
+      node.started_at ?? "",
+      node.completed_at ?? "",
+      node.duration_ms ?? 0,
+      node.input_tokens ?? 0,
+      node.output_tokens ?? 0,
+      node.cache_read_tokens ?? 0,
+      node.cache_write_tokens ?? 0,
       nodeTokenTotal(node),
-      node?.agent_turn_count ?? 0,
+      node.agent_turn_count ?? 0,
+      node.artifacts?.length ?? 0,
+      formatArtifactsForCsv(node.artifacts ?? []),
     ]);
   }
 
@@ -976,6 +1013,8 @@ export function buildRunReviewNodeCsv(
       lane.key,
       lane.label,
       lane.issue?.status ?? "",
+      "",
+      "",
       "",
       "",
       "",
@@ -1038,6 +1077,13 @@ function toolMessageKey(taskId: string, seq: number) {
   return `${taskId}:${seq}`;
 }
 
+function formatArtifactsForCsv(artifacts: AgentTaskArtifact[]) {
+  return artifacts.map((artifact) => {
+    const href = artifact.markdown_url || artifact.download_url;
+    return href ? `${artifact.filename} <${href}>` : artifact.filename;
+  }).join("\n");
+}
+
 function flattenExecutionNodes(tree: IssueExecutionTreeResponse | undefined): IssueExecutionNode[] {
   if (!tree) return [];
   const result: IssueExecutionNode[] = [];
@@ -1047,6 +1093,17 @@ function flattenExecutionNodes(tree: IssueExecutionTreeResponse | undefined): Is
   };
   walk(tree.root);
   return result;
+}
+
+function buildAgentNodeRows(nodes: IssueTimelineNode[]) {
+  return nodes
+    .filter((node) => node.node_type === "agent_task")
+    .map((node, index) => {
+      const key = node.node_id.replace(/^task:/, "") || `agent-node-${index + 1}`;
+      const agentName = node.agent_name || key;
+      const label = sopStageDisplayName(agentName) || node.summary || key;
+      return { key, label, node };
+    });
 }
 
 function flattenExecutionTasks(tree: IssueExecutionTreeResponse | undefined): AgentTask[] {
@@ -1732,6 +1789,7 @@ export function buildIssueReviewDraftCaseRequest({
     duration_ms: stage.node?.duration_ms ?? 0,
     token_total: (stage.node?.input_tokens ?? 0) + (stage.node?.output_tokens ?? 0),
     turns: stage.node?.agent_turn_count ?? 0,
+    artifacts: stage.node?.artifacts ?? [],
     evidence_refs: stage.node?.evidence_refs ?? [],
   }));
   const childFacts = childLanes.map((lane) => ({
@@ -1880,6 +1938,7 @@ function buildRunSnapshotStage(stage: StageRowForSnapshot, nodeByTaskId: Map<str
     message_refs: messages.slice(0, 20).map((message) => ({ type: "task_message", task_id: message.task_id, seq: message.seq })),
     trace_refs: traceEvents.slice(0, 20).map((event) => ({ type: "trace_event", id: event.id, task_id: event.task_id })),
     tool_refs: toolChains.slice(0, 20).map((chain) => ({ type: "tool_call_chain", id: chain.id, task_id: chain.task_id })),
+    artifacts: stage.node?.artifacts ?? [],
     evidence_refs: stage.node?.evidence_refs ?? [],
     prompt_capture_text: truncateText(firstNonEmpty(inputText, task?.trigger_summary ?? "", latestMessageText(messages)), 1200),
     runtime: {

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/jackc/pgx/v5/pgtype"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -20,30 +21,31 @@ type IssueExecutionTreeResponse struct {
 }
 
 type IssueTimelineNodeResponse struct {
-	IssueID               string                     `json:"issue_id"`
-	RootTaskID            string                     `json:"root_task_id,omitempty"`
-	NodeID                string                     `json:"node_id"`
-	ParentNodeID          string                     `json:"parent_node_id,omitempty"`
-	NodeType              string                     `json:"node_type"`
-	AgentID               string                     `json:"agent_id,omitempty"`
-	AgentName             string                     `json:"agent_name,omitempty"`
-	SquadID               string                     `json:"squad_id,omitempty"`
-	ProjectID             string                     `json:"project_id,omitempty"`
-	ChildIssueID          string                     `json:"child_issue_id,omitempty"`
-	Status                string                     `json:"status"`
-	StartedAt             string                     `json:"started_at,omitempty"`
-	CompletedAt           string                     `json:"completed_at,omitempty"`
-	DurationMs            int64                      `json:"duration_ms"`
-	InputTokens           int64                      `json:"input_tokens"`
-	OutputTokens          int64                      `json:"output_tokens"`
-	CacheReadTokens       int64                      `json:"cache_read_tokens"`
-	CacheWriteTokens      int64                      `json:"cache_write_tokens"`
-	MessageCount          int                        `json:"message_count"`
-	AgentTurnCount        int                        `json:"agent_turn_count"`
-	TraceEventCount       int                        `json:"trace_event_count"`
-	UsageUnavailableTrace bool                       `json:"usage_unavailable_trace"`
-	Summary               string                     `json:"summary"`
-	EvidenceRefs          []IssueTimelineEvidenceRef `json:"evidence_refs"`
+	IssueID               string                      `json:"issue_id"`
+	RootTaskID            string                      `json:"root_task_id,omitempty"`
+	NodeID                string                      `json:"node_id"`
+	ParentNodeID          string                      `json:"parent_node_id,omitempty"`
+	NodeType              string                      `json:"node_type"`
+	AgentID               string                      `json:"agent_id,omitempty"`
+	AgentName             string                      `json:"agent_name,omitempty"`
+	SquadID               string                      `json:"squad_id,omitempty"`
+	ProjectID             string                      `json:"project_id,omitempty"`
+	ChildIssueID          string                      `json:"child_issue_id,omitempty"`
+	Status                string                      `json:"status"`
+	StartedAt             string                      `json:"started_at,omitempty"`
+	CompletedAt           string                      `json:"completed_at,omitempty"`
+	DurationMs            int64                       `json:"duration_ms"`
+	InputTokens           int64                       `json:"input_tokens"`
+	OutputTokens          int64                       `json:"output_tokens"`
+	CacheReadTokens       int64                       `json:"cache_read_tokens"`
+	CacheWriteTokens      int64                       `json:"cache_write_tokens"`
+	MessageCount          int                         `json:"message_count"`
+	AgentTurnCount        int                         `json:"agent_turn_count"`
+	TraceEventCount       int                         `json:"trace_event_count"`
+	UsageUnavailableTrace bool                        `json:"usage_unavailable_trace"`
+	Summary               string                      `json:"summary"`
+	EvidenceRefs          []IssueTimelineEvidenceRef  `json:"evidence_refs"`
+	Artifacts             []AgentTaskArtifactResponse `json:"artifacts"`
 }
 
 type IssueTimelineEvidenceRef struct {
@@ -77,8 +79,24 @@ type IssueExecutionNodeResponse struct {
 	TraceEvents     []TaskTraceEventResponse                  `json:"trace_events"`
 	ToolCallChains  []PromptEvaluationToolCallChainResponse   `json:"tool_call_chains"`
 	ToolCallSummary []PromptEvaluationToolCallSummaryResponse `json:"tool_call_summary"`
+	Artifacts       []AgentTaskArtifactResponse               `json:"artifacts"`
 	WakeupComments  []IssueWakeupCommentBrief                 `json:"wakeup_comments"`
 	Children        []IssueExecutionNodeResponse              `json:"children"`
+}
+
+type AgentTaskArtifactResponse struct {
+	ID          string `json:"id"`
+	TaskID      string `json:"task_id"`
+	CommentID   string `json:"comment_id"`
+	IssueID     string `json:"issue_id"`
+	Filename    string `json:"filename"`
+	Title       string `json:"title"`
+	Kind        string `json:"kind"`
+	ContentType string `json:"content_type"`
+	SizeBytes   int64  `json:"size_bytes"`
+	DownloadURL string `json:"download_url"`
+	MarkdownURL string `json:"markdown_url"`
+	CreatedAt   string `json:"created_at"`
 }
 
 type IssueWakeupCommentBrief struct {
@@ -191,6 +209,31 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 	if err != nil {
 		return IssueExecutionNodeResponse{}, err
 	}
+	commentIDs := make([]pgtype.UUID, 0, len(comments))
+	commentByID := make(map[string]db.Comment, len(comments))
+	for _, comment := range comments {
+		if comment.SourceTaskID.Valid {
+			commentIDs = append(commentIDs, comment.ID)
+			commentByID[uuidToString(comment.ID)] = comment
+		}
+	}
+	artifacts := make([]AgentTaskArtifactResponse, 0)
+	if len(commentIDs) > 0 {
+		attachments, err := h.Queries.ListAttachmentsByCommentIDs(ctx, db.ListAttachmentsByCommentIDsParams{
+			Column1:     commentIDs,
+			WorkspaceID: issue.WorkspaceID,
+		})
+		if err != nil {
+			return IssueExecutionNodeResponse{}, err
+		}
+		for _, attachment := range attachments {
+			comment, ok := commentByID[uuidToString(attachment.CommentID)]
+			if !ok || !comment.SourceTaskID.Valid {
+				continue
+			}
+			artifacts = append(artifacts, h.agentTaskArtifactToResponse(attachment, comment.SourceTaskID, issue.ID))
+		}
+	}
 	wakeupComments := make([]IssueWakeupCommentBrief, 0)
 	for _, comment := range comments {
 		if comment.AuthorType == "system" && comment.Type == "system" && strings.Contains(comment.Content, "子任务") && strings.Contains(comment.Content, "已完成") {
@@ -230,9 +273,28 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 		TraceEvents:     traceResp,
 		ToolCallChains:  toolCallChains,
 		ToolCallSummary: toolCallSummary,
+		Artifacts:       artifacts,
 		WakeupComments:  wakeupComments,
 		Children:        childrenResp,
 	}, nil
+}
+
+func (h *Handler) agentTaskArtifactToResponse(attachment db.Attachment, taskID, issueID pgtype.UUID) AgentTaskArtifactResponse {
+	att := h.attachmentToResponse(attachment)
+	return AgentTaskArtifactResponse{
+		ID:          att.ID,
+		TaskID:      uuidToString(taskID),
+		CommentID:   uuidToString(attachment.CommentID),
+		IssueID:     uuidToString(issueID),
+		Filename:    att.Filename,
+		Title:       artifactTitle(att.Filename),
+		Kind:        artifactKind(att.Filename, att.ContentType),
+		ContentType: att.ContentType,
+		SizeBytes:   att.SizeBytes,
+		DownloadURL: att.DownloadURL,
+		MarkdownURL: att.MarkdownURL,
+		CreatedAt:   att.CreatedAt,
+	}
 }
 
 func summarizeIssueExecutionTree(root IssueExecutionNodeResponse) map[string]int {
@@ -302,8 +364,13 @@ func buildIssueTimelineNodes(root IssueExecutionNodeResponse) []IssueTimelineNod
 	for _, event := range root.TraceEvents {
 		traceByTask[event.TaskID] = append(traceByTask[event.TaskID], event)
 	}
+	artifactsByTask := map[string][]AgentTaskArtifactResponse{}
+	for _, artifact := range root.Artifacts {
+		artifactsByTask[artifact.TaskID] = append(artifactsByTask[artifact.TaskID], artifact)
+	}
 	for _, task := range root.Tasks {
 		taskTraces := traceByTask[task.ID]
+		taskArtifacts := artifactsByTask[task.ID]
 		node := IssueTimelineNodeResponse{
 			IssueID:               root.Issue.ID,
 			RootTaskID:            rootTaskID,
@@ -320,6 +387,14 @@ func buildIssueTimelineNodes(root IssueExecutionNodeResponse) []IssueTimelineNod
 			UsageUnavailableTrace: hasUsageUnavailableTrace(taskTraces),
 			Summary:               timelineTaskSummary(task),
 			EvidenceRefs:          []IssueTimelineEvidenceRef{{Type: "agent_task", ID: task.ID}},
+			Artifacts:             taskArtifacts,
+		}
+		for _, artifact := range taskArtifacts {
+			node.EvidenceRefs = append(node.EvidenceRefs, IssueTimelineEvidenceRef{
+				Type: "attachment",
+				ID:   artifact.ID,
+				Href: artifact.DownloadURL,
+			})
 		}
 		if task.Agent != nil {
 			node.AgentName = task.Agent.Name
@@ -510,6 +585,26 @@ func summarizeIssueTimeline(issueID string, nodes []IssueTimelineNodeResponse) I
 		}
 	}
 	return summary
+}
+
+func artifactTitle(filename string) string {
+	base := strings.TrimSpace(filename)
+	if base == "" {
+		return "产物"
+	}
+	if dot := strings.LastIndex(base, "."); dot > 0 {
+		return base[:dot]
+	}
+	return base
+}
+
+func artifactKind(filename, contentType string) string {
+	lowerName := strings.ToLower(strings.TrimSpace(filename))
+	lowerType := strings.ToLower(strings.TrimSpace(contentType))
+	if strings.HasSuffix(lowerName, ".md") || strings.Contains(lowerType, "markdown") {
+		return "stage_markdown"
+	}
+	return "agent_attachment"
 }
 
 func durationFromTraceOrTask(events []TaskTraceEventResponse, task AgentTaskResponse) int64 {

@@ -1,5 +1,6 @@
 export type { Issue, IssueStatus, IssuePriority, IssueAssigneeType, IssueMetadata, IssueMetadataValue, IssueReaction } from "./issue";
 export type {
+  AgentTaskArtifact,
   IssueExecutionNode,
   IssueExecutionTreeResponse,
   IssueTimelineEvidenceRef,

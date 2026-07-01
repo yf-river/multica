@@ -14,6 +14,21 @@ export interface IssueWakeupCommentBrief {
   created_at: string;
 }
 
+export interface AgentTaskArtifact {
+  id: string;
+  task_id: string;
+  comment_id: string;
+  issue_id: string;
+  filename: string;
+  title: string;
+  kind: string;
+  content_type: string;
+  size_bytes: number;
+  download_url: string;
+  markdown_url: string;
+  created_at: string;
+}
+
 export interface IssueExecutionNode {
   issue: Issue;
   tasks: AgentTask[];
@@ -22,6 +37,7 @@ export interface IssueExecutionNode {
   trace_events: TaskTraceEvent[];
   tool_call_chains: PromptEvaluationToolCallChain[];
   tool_call_summary: PromptEvaluationToolCallSummary[];
+  artifacts?: AgentTaskArtifact[];
   wakeup_comments: IssueWakeupCommentBrief[];
   children: IssueExecutionNode[];
 }
@@ -67,6 +83,7 @@ export interface IssueTimelineNode {
   usage_unavailable_trace: boolean;
   summary: string;
   evidence_refs: IssueTimelineEvidenceRef[];
+  artifacts?: AgentTaskArtifact[];
 }
 
 export interface IssueTimelineSummary {

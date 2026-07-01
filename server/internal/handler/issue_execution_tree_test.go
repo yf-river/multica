@@ -61,6 +61,25 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 	`, taskID); err != nil {
 		t.Fatalf("create task messages: %v", err)
 	}
+	var commentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type, source_task_id)
+		VALUES ($1, $2, 'agent', $3, '阶段产物已上传', 'comment', $4)
+		RETURNING id::text
+	`, fx.parent.ID, testWorkspaceID, agentID, taskID).Scan(&commentID); err != nil {
+		t.Fatalf("create artifact comment: %v", err)
+	}
+	var attachmentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO attachment (
+			workspace_id, issue_id, comment_id, uploader_type, uploader_id,
+			filename, url, content_type, size_bytes
+		)
+		VALUES ($1, $2, $3, 'agent', $4, '01-需求澄清.md', '/uploads/clarify.md', 'text/markdown', 128)
+		RETURNING id::text
+	`, testWorkspaceID, fx.parent.ID, commentID, agentID).Scan(&attachmentID); err != nil {
+		t.Fatalf("create artifact attachment: %v", err)
+	}
 
 	run, err := testHandler.Queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
 		WorkspaceID:    parseUUID(testWorkspaceID),
@@ -150,6 +169,15 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 	if len(resp.Root.TaskMessages) != 2 {
 		t.Fatalf("root task messages = %+v, want persisted task messages", resp.Root.TaskMessages)
 	}
+	if len(resp.Root.Artifacts) != 1 {
+		t.Fatalf("root artifacts = %+v, want one artifact", resp.Root.Artifacts)
+	}
+	if resp.Root.Artifacts[0].ID != attachmentID || resp.Root.Artifacts[0].TaskID != taskID || resp.Root.Artifacts[0].CommentID != commentID {
+		t.Fatalf("root artifact = %+v, want attachment/task/comment linkage", resp.Root.Artifacts[0])
+	}
+	if resp.Root.Artifacts[0].Title != "01-需求澄清" || resp.Root.Artifacts[0].Kind != "stage_markdown" {
+		t.Fatalf("root artifact title/kind = %+v", resp.Root.Artifacts[0])
+	}
 	if resp.Root.TaskMessages[0].Type != "tool_use" || resp.Root.TaskMessages[0].Tool != "curl-check" {
 		t.Fatalf("first task message = %+v, want curl-check tool_use", resp.Root.TaskMessages[0])
 	}
@@ -199,6 +227,26 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 			childRef = node
 			break
 		}
+	}
+	var taskNode IssueTimelineNodeResponse
+	for _, node := range resp.TimelineNodes {
+		if node.NodeID == "task:"+taskID {
+			taskNode = node
+			break
+		}
+	}
+	if len(taskNode.Artifacts) != 1 || taskNode.Artifacts[0].ID != attachmentID {
+		t.Fatalf("task node artifacts = %+v, want uploaded attachment", taskNode.Artifacts)
+	}
+	hasAttachmentRef := false
+	for _, ref := range taskNode.EvidenceRefs {
+		if ref.Type == "attachment" && ref.ID == attachmentID && ref.Href != "" {
+			hasAttachmentRef = true
+			break
+		}
+	}
+	if !hasAttachmentRef {
+		t.Fatalf("task node evidence refs = %+v, want attachment ref", taskNode.EvidenceRefs)
 	}
 	if childRef.ChildIssueID != fx.child.ID {
 		t.Fatalf("child_issue_ref = %+v, want child %s", childRef, fx.child.ID)

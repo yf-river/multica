@@ -369,20 +369,35 @@ describe("buildRunReviewEventRows", () => {
       trace_event_count: 1,
       usage_unavailable_trace: false,
       summary: "done",
-      evidence_refs: [],
+      evidence_refs: [{ type: "attachment", id: "att-1", href: "/api/attachments/att-1/download" }],
+      artifacts: [{
+        id: "att-1",
+        task_id: "task-1",
+        comment_id: "comment-1",
+        issue_id: "issue-1",
+        filename: "01-需求澄清.md",
+        title: "01-需求澄清",
+        kind: "stage_markdown",
+        content_type: "text/markdown",
+        size_bytes: 128,
+        download_url: "/api/attachments/att-1/download",
+        markdown_url: "/api/attachments/att-1/download",
+        created_at: "2026-06-09T10:01:00.000Z",
+      }],
     } as IssueTimelineNode;
 
     const csv = buildRunReviewNodeCsv(
       issue,
       summary,
-      [{ key: "01", label: "01-需求澄清", names: ["01", "01-clarify", "clarify", "01-需求澄清", "需求澄清"], node }],
+      [{ key: "task-1", label: "01-需求澄清", node }] as never,
       [],
     );
 
     expect(csv).toContain("total_duration_ms,total_token,total_thinking_rounds");
     expect(csv).toContain('summary,issue-1,ISS-1,"优化,运行复盘",120000,64,3');
-    expect(csv).toContain('sop_node,issue-1,ISS-1,"优化,运行复盘",120000,64,3,01,01-需求澄清,completed,01-clarify');
-    expect(csv).toContain(",60000,1,2,3,4,10,5");
+    expect(csv).toContain('agent_node,issue-1,ISS-1,"优化,运行复盘",120000,64,3,task-1,01-需求澄清,completed,01-clarify');
+    expect(csv).toContain(",60000,1,2,3,4,10,5,1");
+    expect(csv).toContain("01-需求澄清.md </api/attachments/att-1/download>");
   });
 
   it("exports raw event CSV with escaped detail and metadata evidence", () => {

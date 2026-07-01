@@ -38,7 +38,6 @@ import { filterIssues } from "../../issues/utils/filter";
 import { getProjectIssueMetrics } from "./project-issue-metrics";
 import { filterRunningAssigneeGroups } from "./project-issue-filters";
 import { ActorAvatar } from "../../common/actor-avatar";
-import { ObservabilitySummaryCard } from "../../common/observability-summary-card";
 import { useNavigation } from "../../navigation";
 import { TitleEditor, ContentEditor, type ContentEditorRef } from "../../editor";
 import { PriorityIcon } from "../../issues/components/priority-icon";
@@ -761,12 +760,6 @@ export function ProjectDetail({ projectId }: { projectId: string }) {
 
       {/* Resources */}
       <ProjectResourcesSection projectId={projectId} />
-
-      <ObservabilitySummaryCard
-        title="项目观测摘要"
-        scopeLabel="按当前项目聚合任务观测、SOP 事件和证据"
-        projectId={projectId}
-      />
     </div>
   );
 
