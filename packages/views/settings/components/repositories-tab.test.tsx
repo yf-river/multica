@@ -8,6 +8,7 @@ import enSettings from "../../locales/zh-Hans/settings.json";
 
 const mockUpdateWorkspace = vi.hoisted(() => vi.fn());
 const mockResolveWorkspaceRepo = vi.hoisted(() => vi.fn());
+const mockProbeWorkspaceRepo = vi.hoisted(() => vi.fn());
 const workspaceRef = vi.hoisted(() => ({
   current: {
     id: "workspace-1",
@@ -108,6 +109,7 @@ vi.mock("@multica/core/api", () => ({
   api: {
     updateWorkspace: mockUpdateWorkspace,
     resolveWorkspaceRepo: mockResolveWorkspaceRepo,
+    probeWorkspaceRepo: mockProbeWorkspaceRepo,
   },
 }));
 
@@ -200,11 +202,25 @@ describe("RepositoriesTab", () => {
       workspaceRef.current = { ...workspaceRef.current, repos: payload.repos };
       return workspaceRef.current;
     });
-    mockResolveWorkspaceRepo.mockImplementation(async (_id: string, payload: { url: string }) => ({
+    const projectPathForURL = (url: string) => {
+      if (url.includes("ida-deployment")) return "ChainWeaver/ida/ida-deployment";
+      if (url.includes("gateway")) return "ChainWeaver/ida/gateway";
+      return "ChainWeaver/ida/user-center";
+    };
+    mockProbeWorkspaceRepo.mockImplementation(async (_id: string, payload: { url: string }) => ({
       url: payload.url,
       provider: "gongfeng",
-      project_path: payload.url.includes("gateway") ? "ChainWeaver/ida/gateway" : "ChainWeaver/ida/user-center",
-      default_branch: "v5.0.0_dev",
+      project_path: projectPathForURL(payload.url),
+      default_branch: "main",
+      branches: ["main", "v5.0.0_dev", "dev_sop"],
+      connection_status: "credential_backed",
+      test_status: "passed",
+    }));
+    mockResolveWorkspaceRepo.mockImplementation(async (_id: string, payload: { url: string; default_branch?: string }) => ({
+      url: payload.url,
+      provider: "gongfeng",
+      project_path: projectPathForURL(payload.url),
+      default_branch: payload.default_branch || "v5.0.0_dev",
       head_commit: "def5678",
       commit_sha: "def5678",
       connection_status: "credential_backed",
@@ -243,26 +259,39 @@ describe("RepositoriesTab", () => {
     );
   });
 
-  it("添加工蜂仓库时不需要选择目标项目，解析默认分支后更新 workspace.repos", async () => {
+  it("添加工蜂仓库时先快捷填充并检测分支，再按选中默认分支更新 workspace.repos", async () => {
     const user = userEvent.setup();
     render(<RepositoriesTab />, { wrapper: I18nWrapper });
 
     await user.click(screen.getByRole("button", { name: "添加仓库" }));
     expect(screen.getByRole("dialog")).toBeTruthy();
-    expect(screen.queryByRole("combobox")).toBeNull();
-    expect(screen.getByLabelText("默认分支")).toBeTruthy();
+    const branchSelect = screen.getByLabelText("默认分支");
+    expect(branchSelect).toHaveAttribute("disabled");
+    expect(screen.getByRole("button", { name: "usercenter" })).toHaveAttribute("disabled");
 
-    await user.type(
-      screen.getByPlaceholderText(/git.code.tencent.com/),
-      "https://git.code.tencent.com/ChainWeaver/ida/gateway/commits/v5.0.0_dev",
+    await user.click(screen.getByRole("button", { name: "gateway" }));
+    expect(screen.getByPlaceholderText(/git.code.tencent.com/)).toHaveValue(
+      "https://git.code.tencent.com/ChainWeaver/ida/gateway",
     );
-    await user.type(screen.getByLabelText("默认分支"), "v5.0.0_dev");
+    expect(branchSelect).toHaveAttribute("disabled");
+    expect(screen.getByRole("button", { name: "添加" })).toHaveAttribute("disabled");
+
+    await user.click(screen.getByRole("button", { name: "检测" }));
+    await waitFor(() => {
+      expect(mockProbeWorkspaceRepo).toHaveBeenCalledWith("workspace-1", {
+        url: "https://git.code.tencent.com/ChainWeaver/ida/gateway",
+      });
+      expect(screen.getByLabelText("默认分支")).not.toHaveAttribute("disabled");
+    });
+    expect(screen.getByLabelText("默认分支")).toHaveValue("main");
+    expect(screen.getByText("已连接 ChainWeaver/ida/gateway，可选分支 3 个。")).toBeTruthy();
+
     await user.click(screen.getByRole("button", { name: "添加" }));
 
     await waitFor(() => {
       expect(mockResolveWorkspaceRepo).toHaveBeenCalledWith("workspace-1", {
-        url: "https://git.code.tencent.com/ChainWeaver/ida/gateway/commits/v5.0.0_dev",
-        default_branch: "v5.0.0_dev",
+        url: "https://git.code.tencent.com/ChainWeaver/ida/gateway",
+        default_branch: "main",
       });
       expect(mockUpdateWorkspace).toHaveBeenCalledWith("workspace-1", {
         repos: [
@@ -279,10 +308,10 @@ describe("RepositoriesTab", () => {
             resolve_status: "resolved",
           },
           {
-            url: "https://git.code.tencent.com/ChainWeaver/ida/gateway/commits/v5.0.0_dev",
+            url: "https://git.code.tencent.com/ChainWeaver/ida/gateway",
             provider: "gongfeng",
             project_path: "ChainWeaver/ida/gateway",
-            default_branch: "v5.0.0_dev",
+            default_branch: "main",
             head_commit: "def5678",
             commit_sha: "def5678",
             connection_status: "credential_backed",
@@ -296,6 +325,23 @@ describe("RepositoriesTab", () => {
         ],
       });
     });
+  });
+
+  it("工蜂仓库链接改动后会清空检测结果并禁止直接添加", async () => {
+    const user = userEvent.setup();
+    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+
+    await user.click(screen.getByRole("button", { name: "添加仓库" }));
+    await user.click(screen.getByRole("button", { name: "gateway" }));
+    await user.click(screen.getByRole("button", { name: "检测" }));
+    await waitFor(() => expect(screen.getByLabelText("默认分支")).toHaveValue("main"));
+
+    await user.clear(screen.getByPlaceholderText(/git.code.tencent.com/));
+    await user.type(screen.getByPlaceholderText(/git.code.tencent.com/), "https://git.code.tencent.com/ChainWeaver/ida/ida-deployment");
+
+    expect(screen.getByLabelText("默认分支")).toHaveAttribute("disabled");
+    expect(screen.getByRole("button", { name: "添加" })).toHaveAttribute("disabled");
+    expect(screen.queryByText((content) => content.includes("已连接 ChainWeaver/ida/gateway"))).toBeNull();
   });
 
   it("详情中区分资源库信息和项目关联删除", async () => {

@@ -71,7 +71,7 @@ export type {
   IssueTaskTraceResponse,
 } from "./agent";
 export { RUNTIME_PROFILE_PROTOCOL_FAMILIES } from "./agent";
-export type { Workspace, WorkspaceRepo, Member, MemberRole, User, MemberWithUser } from "./workspace";
+export type { Workspace, WorkspaceRepo, WorkspaceRepoProbeResponse, Member, MemberRole, User, MemberWithUser } from "./workspace";
 export type {
   ExternalCredentialProvider,
   ExternalCredentialStatus,

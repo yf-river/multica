@@ -37,6 +37,7 @@ import type {
   IssueReaction,
   Workspace,
   WorkspaceRepo,
+  WorkspaceRepoProbeResponse,
   MemberWithUser,
   User,
   Skill,
@@ -1523,6 +1524,13 @@ export class ApiClient {
 
   async resolveWorkspaceRepo(workspaceId: string, data: { url: string; default_branch?: string }): Promise<WorkspaceRepo> {
     return this.fetch(`/api/workspaces/${workspaceId}/repos/resolve`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+  }
+
+  async probeWorkspaceRepo(workspaceId: string, data: { url: string }): Promise<WorkspaceRepoProbeResponse> {
+    return this.fetch(`/api/workspaces/${workspaceId}/repos/probe`, {
       method: "POST",
       body: JSON.stringify(data),
     });

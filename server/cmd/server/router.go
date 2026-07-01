@@ -601,6 +601,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Use(middleware.RequireWorkspaceRoleFromURL(queries, "id", "owner", "admin"))
 					r.Put("/", h.UpdateWorkspace)
 					r.Patch("/", h.UpdateWorkspace)
+					r.Post("/repos/probe", h.ProbeWorkspaceRepo)
 					r.Post("/repos/resolve", h.ResolveWorkspaceRepo)
 					r.Post("/members", h.CreateMember)
 					r.Route("/members/{memberId}", func(r chi.Router) {

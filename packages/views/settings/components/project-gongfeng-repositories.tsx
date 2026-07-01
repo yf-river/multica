@@ -29,6 +29,7 @@ import type {
   ProjectResource,
   Workspace,
   WorkspaceRepo,
+  WorkspaceRepoProbeResponse,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@multica/ui/components/ui/dialog";
@@ -60,6 +61,12 @@ type RepositoryLibraryRow = {
   inLibrary: boolean;
   usages: GongfengResourceUsage[];
 };
+
+const GONGFENG_REPO_PRESETS = [
+  { key: "usercenter", label: "usercenter", url: "https://git.code.tencent.com/ChainWeaver/ida/user-center" },
+  { key: "gateway", label: "gateway", url: "https://git.code.tencent.com/ChainWeaver/ida/gateway" },
+  { key: "ida-deployment", label: "ida-deployment", url: "https://git.code.tencent.com/ChainWeaver/ida/ida-deployment" },
+];
 
 function workspaceRepoList(workspace: Workspace | null | undefined): WorkspaceRepo[] {
   return Array.isArray(workspace?.repos) ? workspace.repos : [];
@@ -178,24 +185,66 @@ function AddGongfengRepositoryDialog({
   const { t } = useT("settings");
   const qc = useQueryClient();
   const [url, setUrl] = useState("");
-  const [defaultBranch, setDefaultBranch] = useState("");
+  const [selectedBranch, setSelectedBranch] = useState("");
+  const [probe, setProbe] = useState<WorkspaceRepoProbeResponse | null>(null);
+  const [probeError, setProbeError] = useState("");
+  const [probing, setProbing] = useState(false);
   const [saving, setSaving] = useState(false);
-  const canSubmit = Boolean(url.trim()) && !saving;
+  const trimmedURL = url.trim();
+  const probeMatches = Boolean(probe && probe.url === trimmedURL);
+  const canSubmit = Boolean(trimmedURL && selectedBranch && probeMatches) && !saving && !probing;
+  const existingProjectPaths = new Set(
+    workspaceRepoList(workspace)
+      .map((repo) => gongfengWorkspaceRepoProjectPath(repo))
+      .filter(Boolean),
+  );
+
+  const resetProbeState = () => {
+    setProbe(null);
+    setProbeError("");
+    setSelectedBranch("");
+  };
+
+  const handleURLChange = (value: string) => {
+    setUrl(value);
+    resetProbeState();
+  };
+
+  const handlePreset = (presetURL: string) => {
+    setUrl(presetURL);
+    resetProbeState();
+  };
+
+  const handleProbe = async () => {
+    if (!trimmedURL || probing || saving) return;
+    setProbing(true);
+    setProbeError("");
+    try {
+      const result = await api.probeWorkspaceRepo(workspace.id, { url: trimmedURL });
+      setProbe(result);
+      setSelectedBranch(result.default_branch || result.branches[0] || "");
+    } catch (err) {
+      setProbe(null);
+      setSelectedBranch("");
+      setProbeError(err instanceof Error ? err.message : t(($) => $.repositories.gongfeng_inventory.probe_failed));
+    } finally {
+      setProbing(false);
+    }
+  };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const trimmed = url.trim();
-    if (!trimmed) return;
-    if (workspaceRepoList(workspace).some((repo) => repo.url === trimmed)) {
+    if (!canSubmit || !probe) return;
+    const projectPath = probe.project_path || inferProjectPathFromGongfengURL(trimmedURL);
+    if (projectPath && existingProjectPaths.has(projectPath)) {
       toast.error(t(($) => $.repositories.gongfeng_inventory.duplicate_error));
       return;
     }
-    const branch = defaultBranch.trim();
     setSaving(true);
     try {
       const resolved = await api.resolveWorkspaceRepo(workspace.id, {
-        url: trimmed,
-        ...(branch ? { default_branch: branch } : {}),
+        url: trimmedURL,
+        default_branch: selectedBranch,
       });
       const repos = [...workspaceRepoList(workspace), resolved];
       const updated = await api.updateWorkspace(workspace.id, { repos });
@@ -204,7 +253,7 @@ function AddGongfengRepositoryDialog({
       );
       toast.success(t(($) => $.repositories.gongfeng_inventory.create_success));
       setUrl("");
-      setDefaultBranch("");
+      resetProbeState();
       onOpenChange(false);
     } catch (err) {
       toast.error(err instanceof Error ? err.message : t(($) => $.repositories.gongfeng_inventory.create_failed));
@@ -225,26 +274,93 @@ function AddGongfengRepositoryDialog({
             <span className="font-medium text-muted-foreground">
               {t(($) => $.repositories.gongfeng_inventory.url_field)}
             </span>
-            <input
-              type="text"
-              value={url}
-              onChange={(event) => setUrl(event.target.value)}
-              placeholder={t(($) => $.repositories.gongfeng_inventory.url_placeholder)}
-              className="h-9 w-full rounded-md border bg-background px-2 font-mono text-sm outline-none focus:ring-2 focus:ring-ring"
-            />
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={url}
+                onChange={(event) => handleURLChange(event.target.value)}
+                placeholder={t(($) => $.repositories.gongfeng_inventory.url_placeholder)}
+                className="h-9 min-w-0 flex-1 rounded-md border bg-background px-2 font-mono text-sm outline-none focus:ring-2 focus:ring-ring"
+              />
+              <Button
+                type="button"
+                variant={probeMatches ? "secondary" : "outline"}
+                size="sm"
+                className="h-9 shrink-0"
+                disabled={!trimmedURL || probing || saving}
+                onClick={() => void handleProbe()}
+              >
+                {probing ? (
+                  <RefreshCw className="size-3 animate-spin" />
+                ) : probeMatches ? (
+                  <CheckCircle2 className="size-3 text-emerald-600" />
+                ) : (
+                  <KeyRound className="size-3" />
+                )}
+                {probeMatches
+                  ? t(($) => $.repositories.gongfeng_inventory.probe_done)
+                  : t(($) => $.repositories.gongfeng_inventory.probe)}
+              </Button>
+            </div>
           </label>
+          <div className="space-y-1.5 text-xs">
+            <div className="font-medium text-muted-foreground">
+              {t(($) => $.repositories.gongfeng_inventory.quick_fill)}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {GONGFENG_REPO_PRESETS.map((preset) => {
+                const presetProjectPath = inferProjectPathFromGongfengURL(preset.url);
+                const exists = existingProjectPaths.has(presetProjectPath);
+                return (
+                  <Button
+                    key={preset.key}
+                    type="button"
+                    variant="outline"
+                    size="sm"
+                    className="h-7 px-2 text-[11px]"
+                    disabled={exists || saving || probing}
+                    title={exists ? t(($) => $.repositories.gongfeng_inventory.duplicate_error) : preset.url}
+                    onClick={() => handlePreset(preset.url)}
+                  >
+                    {preset.label}
+                  </Button>
+                );
+              })}
+            </div>
+          </div>
           <label className="block space-y-1.5 text-xs">
             <span className="font-medium text-muted-foreground">
               {t(($) => $.repositories.gongfeng_inventory.default_branch_field)}
             </span>
-            <input
-              type="text"
-              value={defaultBranch}
-              onChange={(event) => setDefaultBranch(event.target.value)}
-              placeholder={t(($) => $.repositories.gongfeng_inventory.default_branch_placeholder)}
-              className="h-9 w-full rounded-md border bg-background px-2 font-mono text-sm outline-none focus:ring-2 focus:ring-ring"
-            />
+            <select
+              value={selectedBranch}
+              onChange={(event) => setSelectedBranch(event.target.value)}
+              disabled={!probeMatches || probing || saving}
+              className="h-9 w-full rounded-md border bg-background px-2 font-mono text-sm outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
+            >
+              {!probeMatches && (
+                <option value="">{t(($) => $.repositories.gongfeng_inventory.default_branch_probe_required)}</option>
+              )}
+              {probeMatches && probe?.branches.map((branch) => (
+                <option key={branch} value={branch}>
+                  {branch}
+                </option>
+              ))}
+            </select>
           </label>
+          {probeError && (
+            <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+              {probeError}
+            </div>
+          )}
+          {probeMatches && (
+            <div className="rounded-md border bg-muted/20 px-3 py-2 text-[11px] text-muted-foreground">
+              {t(($) => $.repositories.gongfeng_inventory.probe_success, {
+                project: probe?.project_path ?? "",
+                count: probe?.branches.length ?? 0,
+              })}
+            </div>
+          )}
           <div className="flex justify-end gap-2 pt-1">
             <Button type="button" variant="outline" size="sm" onClick={() => onOpenChange(false)}>
               {t(($) => $.repositories.gongfeng_inventory.cancel)}

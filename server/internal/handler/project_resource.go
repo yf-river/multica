@@ -1059,6 +1059,79 @@ func fetchGongfengDefaultBranch(ctx context.Context, projectPath string, token s
 	return branch, nil
 }
 
+func fetchGongfengBranches(ctx context.Context, projectPath string, token string) ([]string, error) {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return nil, errors.New("gongfeng credential token is unavailable")
+	}
+	projectPath = strings.Trim(strings.TrimSpace(projectPath), "/")
+	if projectPath == "" {
+		return nil, errors.New("gongfeng project_path is required")
+	}
+	client := &http.Client{
+		Timeout: 20 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	branches := []string{}
+	seen := map[string]struct{}{}
+	for page := 1; page <= 50; page++ {
+		target := fmt.Sprintf("%s/projects/%s/repository/branches?per_page=100&page=%d", gongfengAPIBase(), url.PathEscape(projectPath), page)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("PRIVATE-TOKEN", token)
+		req.Header.Set("Private-Token", token)
+		req.Header.Set("Authorization", "Bearer "+token)
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("gongfeng branch list lookup failed: %w", err)
+		}
+		if resp.StatusCode == http.StatusUnauthorized || resp.StatusCode == http.StatusForbidden {
+			resp.Body.Close()
+			return nil, errors.New("gongfeng credential cannot access this repository")
+		}
+		if resp.StatusCode == http.StatusNotFound {
+			resp.Body.Close()
+			return nil, errors.New("gongfeng repository not found or no access")
+		}
+		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+			status := resp.StatusCode
+			resp.Body.Close()
+			return nil, fmt.Errorf("gongfeng branch list lookup returned HTTP %d", status)
+		}
+		var payload []struct {
+			Name string `json:"name"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+			resp.Body.Close()
+			return nil, fmt.Errorf("invalid gongfeng branch list response: %w", err)
+		}
+		nextPage := strings.TrimSpace(resp.Header.Get("X-Next-Page"))
+		resp.Body.Close()
+		for _, item := range payload {
+			name := strings.TrimSpace(item.Name)
+			if name == "" {
+				continue
+			}
+			if _, ok := seen[name]; ok {
+				continue
+			}
+			seen[name] = struct{}{}
+			branches = append(branches, name)
+		}
+		if nextPage == "" {
+			break
+		}
+	}
+	if len(branches) == 0 {
+		return nil, errors.New("gongfeng branch list response did not include branches")
+	}
+	return branches, nil
+}
+
 func fetchGongfengBranchHeadCommit(ctx context.Context, projectPath string, branch string, token string) (string, error) {
 	token = strings.TrimSpace(token)
 	if token == "" {

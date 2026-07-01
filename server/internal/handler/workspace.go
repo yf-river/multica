@@ -330,6 +330,94 @@ type resolveWorkspaceRepoRequest struct {
 	DefaultBranch string `json:"default_branch"`
 }
 
+type probeWorkspaceRepoRequest struct {
+	URL string `json:"url"`
+}
+
+type probeWorkspaceRepoResponse struct {
+	URL              string   `json:"url"`
+	Provider         string   `json:"provider"`
+	ProjectPath      string   `json:"project_path"`
+	DefaultBranch    string   `json:"default_branch"`
+	Branches         []string `json:"branches"`
+	ConnectionStatus string   `json:"connection_status"`
+	TestStatus       string   `json:"test_status"`
+}
+
+func (h *Handler) ProbeWorkspaceRepo(w http.ResponseWriter, r *http.Request) {
+	id := workspaceIDFromURL(r, "id")
+	if _, ok := parseUUIDOrBadRequest(w, id, "workspace id"); !ok {
+		return
+	}
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	var req probeWorkspaceRepoRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	rawURL := strings.TrimSpace(req.URL)
+	if rawURL == "" {
+		writeError(w, http.StatusBadRequest, "url is required")
+		return
+	}
+	if !isValidGitRepoURL(rawURL) {
+		writeError(w, http.StatusBadRequest, "url must be a valid http(s) or ssh git URL")
+		return
+	}
+	if !strings.Contains(rawURL, "git.code.tencent.com") {
+		writeError(w, http.StatusBadRequest, "only Gongfeng repository URLs are supported")
+		return
+	}
+	parsed, err := parseGongfengURL(rawURL)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	profile, hasProfile, err := h.loadUsableGongfengCredentialProfile(r.Context(), userID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to load gongfeng credential profile")
+		return
+	}
+	if !hasProfile {
+		writeError(w, http.StatusBadRequest, "gongfeng credential is required to inspect branches")
+		return
+	}
+	token := h.resolveExternalCredentialToken(profile)
+	defaultBranch, err := fetchGongfengDefaultBranch(r.Context(), parsed.ProjectPath, token)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	branches, err := fetchGongfengBranches(r.Context(), parsed.ProjectPath, token)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	credentialProbe := probeGongfengWithCredential(r.Context(), gongfengRepoRef{
+		URL:         rawURL,
+		ProjectPath: parsed.ProjectPath,
+	}, token)
+	ref := applyGongfengCredentialProbeResult(
+		gongfengRepoRef{URL: rawURL, ProjectPath: parsed.ProjectPath},
+		probeGongfengURL(r.Context(), rawURL),
+		credentialProbe,
+		profile,
+		true,
+	)
+	writeJSON(w, http.StatusOK, probeWorkspaceRepoResponse{
+		URL:              rawURL,
+		Provider:         "gongfeng",
+		ProjectPath:      parsed.ProjectPath,
+		DefaultBranch:    defaultBranch,
+		Branches:         branches,
+		ConnectionStatus: ref.ConnectionStatus,
+		TestStatus:       ref.TestStatus,
+	})
+}
+
 func (h *Handler) ResolveWorkspaceRepo(w http.ResponseWriter, r *http.Request) {
 	id := workspaceIDFromURL(r, "id")
 	if _, ok := parseUUIDOrBadRequest(w, id, "workspace id"); !ok {

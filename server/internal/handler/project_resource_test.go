@@ -553,6 +553,32 @@ func TestGongfengAPIBaseNormalizesTencentGitRoot(t *testing.T) {
 	}
 }
 
+func TestFetchGongfengBranchesHandlesPagination(t *testing.T) {
+	var seenTokens []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		seenTokens = append(seenTokens, r.Header.Get("PRIVATE-TOKEN"))
+		if r.URL.Query().Get("page") == "1" {
+			w.Header().Set("X-Next-Page", "2")
+			_, _ = w.Write([]byte(`[{"name":"main"},{"name":"v5.0.0_dev"}]`))
+			return
+		}
+		_, _ = w.Write([]byte(`[{"name":"v5.0.0_dev"},{"name":"dev_sop"}]`))
+	}))
+	defer server.Close()
+	t.Setenv("GONGFENG_API_BASE", server.URL)
+
+	branches, err := fetchGongfengBranches(context.Background(), "ChainWeaver/ida/gateway", "token-1")
+	if err != nil {
+		t.Fatalf("fetchGongfengBranches: %v", err)
+	}
+	if got, want := strings.Join(branches, ","), "main,v5.0.0_dev,dev_sop"; got != want {
+		t.Fatalf("branches = %q, want %q", got, want)
+	}
+	if len(seenTokens) != 2 || seenTokens[0] != "token-1" || seenTokens[1] != "token-1" {
+		t.Fatalf("token headers = %#v", seenTokens)
+	}
+}
+
 func TestProjectResourceGongfengValidation(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{

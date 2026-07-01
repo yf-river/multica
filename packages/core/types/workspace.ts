@@ -18,6 +18,16 @@ export interface WorkspaceRepo {
   last_resolved_at?: string;
 }
 
+export interface WorkspaceRepoProbeResponse {
+  url: string;
+  provider: "gongfeng" | string;
+  project_path: string;
+  default_branch: string;
+  branches: string[];
+  connection_status: string;
+  test_status: string;
+}
+
 export interface Workspace {
   id: string;
   name: string;
