@@ -61,6 +61,10 @@ type RepositoryLibraryRow = {
   usages: GongfengResourceUsage[];
 };
 
+function workspaceRepoList(workspace: Workspace | null | undefined): WorkspaceRepo[] {
+  return Array.isArray(workspace?.repos) ? workspace.repos : [];
+}
+
 export function ProjectGongfengRepositories() {
   const { t } = useT("settings");
   const workspace = useCurrentWorkspace();
@@ -92,7 +96,7 @@ export function ProjectGongfengRepositories() {
     }
 
     const rows: RepositoryLibraryRow[] = [];
-    for (const repo of workspace?.repos ?? []) {
+    for (const repo of workspaceRepoList(workspace)) {
       if (!isGongfengURL(repo.url)) continue;
       const resolved = resolvedReposByURL[repo.url];
       const merged = resolved ? { ...repo, ...resolved } : repo;
@@ -182,7 +186,7 @@ function AddGongfengRepositoryDialog({
     event.preventDefault();
     const trimmed = url.trim();
     if (!trimmed) return;
-    if ((workspace.repos ?? []).some((repo) => repo.url === trimmed)) {
+    if (workspaceRepoList(workspace).some((repo) => repo.url === trimmed)) {
       toast.error(t(($) => $.repositories.gongfeng_inventory.duplicate_error));
       return;
     }
@@ -193,7 +197,7 @@ function AddGongfengRepositoryDialog({
         url: trimmed,
         ...(branch ? { default_branch: branch } : {}),
       });
-      const repos = [...(workspace.repos ?? []), resolved];
+      const repos = [...workspaceRepoList(workspace), resolved];
       const updated = await api.updateWorkspace(workspace.id, { repos });
       qc.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) =>
         old?.map((ws) => (ws.id === updated.id ? updated : ws)),
@@ -281,7 +285,7 @@ function GongfengRepositoryLibraryRow({
       toast.error(t(($) => $.repositories.gongfeng_inventory.remove_blocked));
       return;
     }
-    const repos = (workspace.repos ?? []).filter((repo) => repo.url !== row.url);
+    const repos = workspaceRepoList(workspace).filter((repo) => repo.url !== row.url);
     try {
       const updated = await api.updateWorkspace(workspace.id, { repos });
       qc.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) =>
@@ -390,7 +394,7 @@ function RepositoryDetailsDialog({
     setResolving(true);
     try {
       const resolved = await api.resolveWorkspaceRepo(workspace.id, { url: row.url });
-      const repos = (workspace.repos ?? []).map((repo) =>
+      const repos = workspaceRepoList(workspace).map((repo) =>
         repo.url === row.url ? { ...repo, ...resolved } : repo,
       );
       onRepoResolved(resolved);
@@ -498,10 +502,10 @@ function RepositoryPrimaryHealthButton({
         url: row.url,
         ...(branch ? { default_branch: branch } : {}),
       });
-      const exists = (workspace.repos ?? []).some((repo) => repo.url === row.url);
+      const exists = workspaceRepoList(workspace).some((repo) => repo.url === row.url);
       const repos = exists
-        ? (workspace.repos ?? []).map((repo) => (repo.url === row.url ? { ...repo, ...resolved } : repo))
-        : [...(workspace.repos ?? []), resolved];
+        ? workspaceRepoList(workspace).map((repo) => (repo.url === row.url ? { ...repo, ...resolved } : repo))
+        : [...workspaceRepoList(workspace), resolved];
       onRepoResolved(resolved);
       const updated = await api.updateWorkspace(workspace.id, { repos });
       qc.setQueryData(workspaceKeys.list(), (old: Workspace[] | undefined) =>

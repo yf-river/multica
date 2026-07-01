@@ -172,6 +172,7 @@ function deployEnvironment(item, build) {
   let webPID = startDetached("pnpm", webArgs, env, logPath(item, "web"));
   waitForHTTP(`http://127.0.0.1:${item.frontendPort}/login`, 90_000);
   webPID = listeningPID(item.frontendPort) || webPID;
+  const webPrewarm = prewarmDevWebRoutes(item);
   const codexPreflight = runCodexNetworkCheckWithEnv(item, env, {
     strong: isTruthy(env.GOAL_TEST_CODEX_RESPONSES_SMOKE),
   });
@@ -223,6 +224,7 @@ function deployEnvironment(item, build) {
     },
     build_version: env.NEXT_PUBLIC_APP_VERSION,
     env_file: envFile,
+    web_prewarm: webPrewarm,
     log_window: {
       started_at: deploymentStartedAt,
       marker: deploymentLogMarker(item, deploymentStartedAt, deploymentCommit),
@@ -246,13 +248,15 @@ function startDevWeb(item, action) {
   const existingPID = listeningPID(item.frontendPort);
   const existing = inspectPID(existingPID);
   if (existing.running && isExpectedWebProcess(existing, item)) {
-    updateFastDeploymentMetadata(item, env, { web: existingPID }, action);
+    const webPrewarm = prewarmDevWebRoutes(item);
+    updateFastDeploymentMetadata(item, env, { web: existingPID }, action, { web_prewarm: webPrewarm });
     console.log(JSON.stringify({
       environment: item.name,
       action,
       status: "already_running",
       frontend_mode: item.frontendMode,
       frontend_url: `http://${publicHost}:${item.frontendPort}`,
+      web_prewarm: webPrewarm,
       pid: existingPID,
     }, null, 2));
     return;
@@ -261,13 +265,15 @@ function startDevWeb(item, action) {
   killPort(item.frontendPort);
   waitForPortFree(item.frontendPort, 15_000);
   const webPID = startWebProcess(item, env);
-  updateFastDeploymentMetadata(item, env, { web: webPID }, action);
+  const webPrewarm = prewarmDevWebRoutes(item);
+  updateFastDeploymentMetadata(item, env, { web: webPID }, action, { web_prewarm: webPrewarm });
   console.log(JSON.stringify({
     environment: item.name,
     action,
     status: "started",
     frontend_mode: item.frontendMode,
     frontend_url: `http://${publicHost}:${item.frontendPort}`,
+    web_prewarm: webPrewarm,
     pid: webPID,
   }, null, 2));
 }
@@ -384,6 +390,61 @@ function startWebProcess(item, env) {
   return webPID;
 }
 
+function prewarmDevWebRoutes(item) {
+  if (item.frontendMode !== "next-dev") {
+    return { enabled: false, reason: "frontend mode is not next-dev", routes: [] };
+  }
+  const base = `http://127.0.0.1:${item.frontendPort}`;
+  const slug = process.env.GOAL_TEST_WORKSPACE_SLUG || "goal-test-daemon";
+  const routes = [
+    "/login",
+    `/${slug}/issues`,
+    `/${slug}/projects`,
+    `/${slug}/agents`,
+    `/${slug}/squads`,
+    `/${slug}/settings?tab=repositories`,
+    `/${slug}/settings?tab=tokens`,
+    `/${slug}/training/debug-runs`,
+    `/${slug}/training/evaluation-runs`,
+    `/${slug}/training/prompts`,
+    `/${slug}/training/datasets`,
+  ];
+  const cookie = `multica_logged_in=1; last_workspace_slug=${slug}`;
+  const results = [];
+  for (const route of routes) {
+    const started = Date.now();
+    const res = spawnSync("curl", [
+      "--noproxy",
+      "*",
+      "-sS",
+      "-L",
+      "-o",
+      "/dev/null",
+      "-w",
+      "%{http_code}",
+      "--connect-timeout",
+      "5",
+      "--max-time",
+      "45",
+      "-H",
+      `Cookie: ${cookie}`,
+      `${base}${route}`,
+    ], { encoding: "utf8" });
+    results.push({
+      route,
+      status: res.status === 0 ? "passed" : "failed",
+      http_status: res.stdout.trim(),
+      duration_ms: Date.now() - started,
+      error: res.status === 0 ? "" : (res.stderr || "").trim().slice(0, 400),
+    });
+  }
+  return {
+    enabled: true,
+    ok: results.every((result) => result.status === "passed" && result.http_status !== "000"),
+    routes: results,
+  };
+}
+
 function startDaemonProcess(item, env) {
   const daemonPID = startDetached("./server/bin/multica", [
     "daemon",
@@ -431,6 +492,7 @@ function updateFastDeploymentMetadata(item, env, pidsPatch, action, extra = {}) 
     daemon_workspaces_root: env.MULTICA_WORKSPACES_ROOT,
     frontend_mode: item.frontendMode,
     env_file: envPath(item),
+    web_prewarm: extra.web_prewarm ?? current.web_prewarm,
     log_window: {
       started_at: actionStartedAt,
       marker,
@@ -1119,8 +1181,8 @@ async function seedFromScratch(target) {
     ['goal-test 验收账号', account, 'imported', passwordHash('e2e-password')],
   );
   const workspace = await target.query(
-    'INSERT INTO workspace (name, slug, description, context, issue_prefix) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, context = EXCLUDED.context, updated_at = now() RETURNING id',
-    ['goal-test 联调工作区', workspaceSlug, 'goal-test 联调开发工作区', '用于 Multica goal-test 联调、验收和性能调试。', 'GTD'],
+    'INSERT INTO workspace (name, slug, description, context, issue_prefix, repos) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, context = EXCLUDED.context, repos = EXCLUDED.repos, updated_at = now() RETURNING id',
+    ['goal-test 联调工作区', workspaceSlug, 'goal-test 联调开发工作区', '用于 Multica goal-test 联调、验收和性能调试。', 'GTD', '[]'],
   );
   await target.query(
     'INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = EXCLUDED.role',

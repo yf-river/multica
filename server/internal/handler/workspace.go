@@ -57,13 +57,7 @@ func workspaceToResponse(w db.Workspace) WorkspaceResponse {
 	if settings == nil {
 		settings = map[string]any{}
 	}
-	var repos any
-	if w.Repos != nil {
-		json.Unmarshal(w.Repos, &repos)
-	}
-	if repos == nil {
-		repos = []any{}
-	}
+	repos := workspaceReposForResponse(w.Repos)
 	return WorkspaceResponse{
 		ID:          uuidToString(w.ID),
 		Name:        w.Name,
@@ -77,6 +71,20 @@ func workspaceToResponse(w db.Workspace) WorkspaceResponse {
 		CreatedAt:   timestampToString(w.CreatedAt),
 		UpdatedAt:   timestampToString(w.UpdatedAt),
 	}
+}
+
+func workspaceReposForResponse(raw []byte) []any {
+	if raw == nil {
+		return []any{}
+	}
+	var repos []any
+	if err := json.Unmarshal(raw, &repos); err != nil {
+		return []any{}
+	}
+	if repos == nil {
+		return []any{}
+	}
+	return repos
 }
 
 type MemberResponse struct {

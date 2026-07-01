@@ -390,6 +390,16 @@ describe("RepositoriesTab", () => {
     expect(screen.queryByRole("button", { name: /测试并同步工蜂仓库/ })).toBeNull();
   });
 
+  it("兼容旧库中 workspace.repos 为对象的脏数据", () => {
+    workspaceRef.current = { ...workspaceRef.current, repos: {} as any };
+    resourcesRef.current = [[]];
+
+    render(<RepositoriesTab />, { wrapper: I18nWrapper });
+
+    expect(screen.getByText("暂无工蜂仓库。")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "添加仓库" })).toBeTruthy();
+  });
+
   it("未绑定项目的资源库仓库主行仍显示仓库身份，详情中不提供绑定入口", async () => {
     const user = userEvent.setup();
     resourcesRef.current = [[]];

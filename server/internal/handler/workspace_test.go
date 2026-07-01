@@ -37,6 +37,28 @@ func TestCreateWorkspace_RejectsReservedSlug(t *testing.T) {
 	}
 }
 
+func TestWorkspaceReposForResponse_NormalizesNonArray(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  []byte
+		want int
+	}{
+		{name: "nil", raw: nil, want: 0},
+		{name: "object", raw: []byte(`{}`), want: 0},
+		{name: "invalid", raw: []byte(`not-json`), want: 0},
+		{name: "array", raw: []byte(`[{"url":"https://git.example.com/repo.git"}]`), want: 1},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := workspaceReposForResponse(tc.raw)
+			if len(got) != tc.want {
+				t.Fatalf("workspaceReposForResponse(%s) len = %d, want %d", tc.raw, len(got), tc.want)
+			}
+		})
+	}
+}
+
 // TestCreateWorkspace_DoesNotMarkOnboarded guards the onboarding
 // contract: creating a workspace MUST leave user.onboarded_at NULL so
 // the route guard in apps/web/app/[workspaceSlug]/layout.tsx (and the
