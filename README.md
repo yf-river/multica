@@ -170,6 +170,10 @@ make start
 
 完整的开发流程、worktree 支持、测试和问题排查请参阅 [CONTRIBUTING.md](CONTRIBUTING.md)。
 
+### 验收产物
+
+本仓库的验收脚本默认把运行证据写入 `artifacts/acceptance/`。整个 `artifacts/` 目录已被 git 忽略，截图、CSV、日志和 JSON 证据可留在本机回看，但不会进入提交。需要临时改输出目录时，设置 `GOAL_TEST_ACCEPTANCE_DIR=/path/to/dir`。
+
 ## 开源协议
 
 [Modified Apache 2.0 (with commercial restrictions)](LICENSE)

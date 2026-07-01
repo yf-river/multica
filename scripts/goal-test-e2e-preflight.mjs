@@ -2,6 +2,7 @@ import pg from "pg";
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const envName = process.env.GOAL_TEST_ENV || "int";
@@ -15,7 +16,7 @@ const databaseURL = process.env.GOAL_TEST_DATABASE_URL || runEnv.DATABASE_URL ||
 const account = process.env.E2E_ACCOUNT || process.env.GOAL_TEST_ACCOUNT || "goal-test-daemon";
 const password = process.env.E2E_PASSWORD || process.env.GOAL_TEST_PASSWORD || "e2e-password";
 const workspaceSlug = process.env.E2E_WORKSPACE || process.env.GOAL_TEST_WORKSPACE_SLUG || "goal-test-daemon";
-const artifactRoot = path.join(repoRoot, "artifacts/acceptance");
+const artifactRoot = acceptanceDir(repoRoot);
 
 const checks = [];
 const state = { token: "", user: null, workspaces: [] };

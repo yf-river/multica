@@ -310,7 +310,7 @@ goal-test-training-curl-e2e: goal-test-smoke ## Run public API curl E2E for trai
 	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
 	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
 	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
-	PROMPT_EVALUATION_CURL_E2E_DIR="$(CURDIR)/artifacts/acceptance" \
+	GOAL_TEST_ACCEPTANCE_DIR="$(CURDIR)/artifacts/acceptance" \
 	TMPDIR="$(GOAL_TEST_TMPDIR)" \
 	node scripts/prompt-evaluation-curl-e2e.mjs
 
@@ -320,7 +320,7 @@ goal-test-seed-business-training: goal-test-smoke ## Seed stable non-acceptance 
 	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
 	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
 	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
-	BUSINESS_TRAINING_SEED_DIR="$(CURDIR)/artifacts/acceptance" \
+	GOAL_TEST_ACCEPTANCE_DIR="$(CURDIR)/artifacts/acceptance" \
 	TMPDIR="$(GOAL_TEST_TMPDIR)" \
 	node scripts/seed-business-training-assets.mjs
 
@@ -462,7 +462,7 @@ goal-test-prod-seed-business-training: goal-test-verify-env ## Seed stable busin
 	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
 	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
 	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
-	BUSINESS_TRAINING_SEED_DIR="$(CURDIR)/artifacts/acceptance" \
+	GOAL_TEST_ACCEPTANCE_DIR="$(CURDIR)/artifacts/acceptance" \
 	TMPDIR="$(GOAL_TEST_TMPDIR)" \
 	node scripts/seed-business-training-assets.mjs
 
@@ -472,7 +472,7 @@ goal-test-prod-training-curl-e2e: goal-test-verify-env ## Run public API trainin
 	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
 	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
 	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
-	PROMPT_EVALUATION_CURL_E2E_DIR="$(CURDIR)/artifacts/acceptance" \
+	GOAL_TEST_ACCEPTANCE_DIR="$(CURDIR)/artifacts/acceptance" \
 	TMPDIR="$(GOAL_TEST_TMPDIR)" \
 	node scripts/prompt-evaluation-curl-e2e.mjs
 

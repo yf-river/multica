@@ -5,9 +5,10 @@ import path from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
 import pg from "pg";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const artifactRoot = path.join(repoRoot, "artifacts", "acceptance");
+const artifactRoot = acceptanceDir(repoRoot);
 const deploymentDir = path.join(repoRoot, ".run", "deployments");
 const envDir = path.join(repoRoot, ".run", "env");
 const generatedAt = new Date().toISOString();

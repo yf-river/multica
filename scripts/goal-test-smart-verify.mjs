@@ -2,9 +2,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { spawnSync } from "node:child_process";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const artifactRoot = path.join(repoRoot, "artifacts/acceptance");
+const artifactRoot = acceptanceDir(repoRoot);
 const timingPath = path.join(artifactRoot, "command-timings.jsonl");
 const validModes = new Set(["dev", "precommit", "final"]);
 

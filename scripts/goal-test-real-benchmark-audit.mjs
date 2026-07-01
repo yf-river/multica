@@ -4,9 +4,10 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const artifactRoot = path.join(repoRoot, "artifacts", "acceptance");
+const artifactRoot = acceptanceDir(repoRoot);
 const generatedAt = new Date().toISOString();
 const stamp = generatedAt.replace(/[:.]/g, "-");
 const strict = process.argv.includes("--strict");

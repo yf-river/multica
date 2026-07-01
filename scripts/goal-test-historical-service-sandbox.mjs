@@ -5,9 +5,10 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import process from "node:process";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const artifactRoot = path.join(repoRoot, "artifacts", "acceptance");
+const artifactRoot = acceptanceDir(repoRoot);
 const generatedAt = new Date().toISOString();
 const stamp = generatedAt.replace(/[:.]/g, "-");
 

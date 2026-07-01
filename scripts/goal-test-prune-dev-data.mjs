@@ -1,6 +1,7 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const pruneTargetEnv = normalizePruneEnv(readArg("env") || process.env.GOAL_TEST_PRUNE_ENV || "int");
@@ -15,7 +16,7 @@ const apiBase = trimSlash(env.GOAL_TEST_BACKEND_URL || env.REMOTE_API_URL || env
 const account = env.GOAL_TEST_ACCOUNT || env.E2E_ACCOUNT || "goal-test-daemon";
 const password = env.GOAL_TEST_PASSWORD || env.E2E_PASSWORD || "e2e-password";
 const workspaceSlug = env.GOAL_TEST_WORKSPACE_SLUG || env.E2E_WORKSPACE || "goal-test-daemon";
-const artifactRoot = path.resolve(env.GOAL_TEST_PRUNE_DEV_DATA_DIR || path.join(repoRoot, "artifacts/acceptance"));
+const artifactRoot = acceptanceDir(repoRoot, env.GOAL_TEST_PRUNE_DEV_DATA_DIR);
 const apply = process.argv.includes("--apply");
 const canonicalSOPOnly = process.argv.includes("--canonical-sop-only") || env.GOAL_TEST_CANONICAL_SOP_ONLY === "1";
 const keep = positiveInt(readArg("keep") ?? env.GOAL_TEST_PRUNE_DEV_DATA_KEEP, 5);

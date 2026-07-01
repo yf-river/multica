@@ -1,9 +1,10 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const artifactRoot = path.join(repoRoot, "artifacts/acceptance");
+const artifactRoot = acceptanceDir(repoRoot);
 const sessionSummaryPath = path.join(artifactRoot, "session-retro/session-retro-summary.json");
 const timingPath = path.join(artifactRoot, "command-timings.jsonl");
 const outputJSON = path.join(artifactRoot, "token-audit-latest.json");

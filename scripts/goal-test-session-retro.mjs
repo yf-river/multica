@@ -1,10 +1,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const sessionPath = process.argv[2] || process.env.GOAL_TEST_SESSION_PATH || "";
-const outputDir = path.resolve(process.env.GOAL_TEST_SESSION_RETRO_DIR || path.join(repoRoot, "artifacts/acceptance/session-retro"));
+const outputDir = path.resolve(process.env.GOAL_TEST_SESSION_RETRO_DIR || path.join(acceptanceDir(repoRoot), "session-retro"));
 
 if (!sessionPath) fail("usage: node scripts/goal-test-session-retro.mjs <codex-session.jsonl>");
 if (!existsSync(sessionPath)) fail(`session file not found: ${sessionPath}`);

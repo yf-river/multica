@@ -2,6 +2,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const args = new Set(process.argv.slice(2));
@@ -11,7 +12,7 @@ const includeFullE2E = args.has("--include-full-e2e") || process.env.ACCEPTANCE_
 const acceptanceTarget = parseTarget();
 const timestamp = new Date().toISOString();
 const safeTimestamp = timestamp.replace(/[:.]/g, "-");
-const outputDir = path.join(repoRoot, "artifacts", "acceptance");
+const outputDir = acceptanceDir(repoRoot);
 
 loadEnvFile(path.join(repoRoot, ".env.worktree"));
 loadEnvFile(path.join(repoRoot, ".env.local"));

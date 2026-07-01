@@ -4,9 +4,10 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { execFileSync } from "node:child_process";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const artifactRoot = path.join(repoRoot, "artifacts", "acceptance");
+const artifactRoot = acceptanceDir(repoRoot);
 const sourcePath = path.resolve(process.env.VARIABLE_AGENT_E2E_ARTIFACT || path.join(artifactRoot, "codex-squad-curl-e2e-variable-agent-latest.json"));
 const e2e = readJSON(sourcePath);
 const now = new Date().toISOString();

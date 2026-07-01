@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const env = {
@@ -26,7 +27,7 @@ const maxApiMs = Number(process.env.GOAL_TEST_TRAINING_AUDIT_MAX_API_MS || "1200
 // Keep the budget tight, but allow a small number of workspace/project resource
 // calls so the audit is not coupled to having exactly three demo projects.
 const maxApiRequests = Number(process.env.GOAL_TEST_TRAINING_AUDIT_MAX_API_REQUESTS || "20");
-const artifactRoot = path.resolve(process.env.GOAL_TEST_TRAINING_AUDIT_DIR || path.join(repoRoot, "artifacts/acceptance"));
+const artifactRoot = acceptanceDir(repoRoot, process.env.GOAL_TEST_TRAINING_AUDIT_DIR);
 const generatedAt = new Date().toISOString();
 const stamp = generatedAt.replace(/[:.]/g, "-");
 

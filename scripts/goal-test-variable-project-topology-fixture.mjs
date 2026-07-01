@@ -4,9 +4,10 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const artifactRoot = path.join(repoRoot, "artifacts", "acceptance");
+const artifactRoot = acceptanceDir(repoRoot);
 const apiURL = trimEnv("ACCEPTANCE_API_URL") || trimEnv("GOAL_TEST_INT_API_URL") || "http://127.0.0.1:18762";
 const account = trimEnv("ACCEPTANCE_DEMO_ACCOUNT") || "goal-test-daemon";
 const password = trimEnv("ACCEPTANCE_DEMO_PASSWORD") || "e2e-password";

@@ -2,9 +2,10 @@ import { createWriteStream, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { spawn, spawnSync } from "node:child_process";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const artifactRoot = path.join(repoRoot, "artifacts/acceptance");
+const artifactRoot = acceptanceDir(repoRoot);
 const rawLogDir = path.join(artifactRoot, "raw-command-logs");
 const metaDir = path.join(artifactRoot, "command-metadata");
 const importantPattern = /\b(error|fatal|panic|fail(?:ed|ure)?|timeout|trace|screenshot|expected|received|assert|exception|not ok|ECONNREFUSED|EADDRINUSE)\b|--- FAIL|AssertionError|TypeError|ReferenceError/i;

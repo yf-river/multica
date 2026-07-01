@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const env = {
@@ -20,7 +21,7 @@ const warmupEnabled = process.env.GOAL_TEST_UI_AUDIT_WARMUP !== "0";
 const maxRouteMs = Number(process.env.GOAL_TEST_UI_AUDIT_MAX_ROUTE_MS || "3000");
 const maxApiMs = Number(process.env.GOAL_TEST_UI_AUDIT_MAX_API_MS || "1000");
 const maxApiRequests = Number(process.env.GOAL_TEST_UI_AUDIT_MAX_API_REQUESTS || "20");
-const artifactRoot = path.resolve(process.env.GOAL_TEST_UI_AUDIT_DIR || path.join(repoRoot, "artifacts/acceptance"));
+const artifactRoot = acceptanceDir(repoRoot, process.env.GOAL_TEST_UI_AUDIT_DIR);
 const screenshotDir = path.join(artifactRoot, "ui-audit-screenshots");
 const generatedAt = new Date().toISOString();
 const stamp = generatedAt.replace(/[:.]/g, "-");

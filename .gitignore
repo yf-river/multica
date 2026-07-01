@@ -37,7 +37,7 @@ server/multica
 # Test artifacts
 test-results/
 apps/web/test-results/
-artifacts/acceptance/
+artifacts/
 
 # context (agent workspace)
 .context

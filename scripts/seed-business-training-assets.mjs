@@ -2,13 +2,14 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const apiURL = trimEnv("ACCEPTANCE_API_URL") || trimEnv("NEXT_PUBLIC_API_URL") || "http://127.0.0.1:8080";
 const account = trimEnv("ACCEPTANCE_DEMO_ACCOUNT") || trimEnv("REAL_AGENT_E2E_ACCOUNT") || "goal-test-daemon";
 const password = trimEnv("ACCEPTANCE_DEMO_PASSWORD") || trimEnv("REAL_AGENT_E2E_PASSWORD") || "e2e-password";
 const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || trimEnv("REAL_AGENT_E2E_WORKSPACE") || "goal-test-daemon";
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const artifactRoot = path.resolve(trimEnv("BUSINESS_TRAINING_SEED_DIR") || path.join(repoRoot, "artifacts/acceptance"));
+const artifactRoot = acceptanceDir(repoRoot, trimEnv("BUSINESS_TRAINING_SEED_DIR"));
 const generatedAt = new Date().toISOString();
 const stamp = generatedAt.replace(/[:.]/g, "-");
 const evidencePath = path.join(artifactRoot, `business-training-seed-${stamp}.json`);

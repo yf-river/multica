@@ -3,6 +3,7 @@ import { spawnSync } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const env = {
@@ -20,7 +21,7 @@ const maxClickMs = Number(process.env.GOAL_TEST_DASHBOARD_CLICK_MAX_MS || "3500"
 const maxTotalMs = Number(process.env.GOAL_TEST_DASHBOARD_CLICK_MAX_TOTAL_MS || "6000");
 const maxApiMs = Number(process.env.GOAL_TEST_DASHBOARD_CLICK_MAX_API_MS || "1200");
 const maxApiRequests = Number(process.env.GOAL_TEST_DASHBOARD_CLICK_MAX_API_REQUESTS || "20");
-const artifactRoot = path.resolve(process.env.GOAL_TEST_DASHBOARD_CLICK_AUDIT_DIR || path.join(repoRoot, "artifacts/acceptance"));
+const artifactRoot = acceptanceDir(repoRoot, process.env.GOAL_TEST_DASHBOARD_CLICK_AUDIT_DIR);
 const generatedAt = new Date().toISOString();
 const stamp = generatedAt.replace(/[:.]/g, "-");
 

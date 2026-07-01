@@ -4,10 +4,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 import { promisify } from "node:util";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const execFileAsync = promisify(execFile);
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const artifactRoot = path.join(repoRoot, "artifacts", "acceptance");
+const artifactRoot = acceptanceDir(repoRoot);
 const env = {
   ...readEnvFile(path.join(repoRoot, ".run/env/goal-test-int.env")),
   ...process.env,

@@ -2,9 +2,10 @@ import fs from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import pg from "pg";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const artifactDir = path.join(repoRoot, "artifacts", "acceptance");
+const artifactDir = acceptanceDir(repoRoot);
 const runEnvPath = path.join(repoRoot, ".run", "env", "goal-test-int.env");
 
 const TARGET_WORKSPACE_SLUG = process.env.REMEDIATION_WORKSPACE_SLUG || "goal-test-daemon";

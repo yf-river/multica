@@ -2,6 +2,7 @@ import { chromium } from "@playwright/test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const env = {
@@ -15,7 +16,7 @@ const backendURL = trimSlash(process.env.GOAL_TEST_BACKEND_URL || env.REMOTE_API
 const workspaceSlug = process.env.GOAL_TEST_WORKSPACE_SLUG || "goal-test-daemon";
 const account = process.env.GOAL_TEST_ACCOUNT || "goal-test-daemon";
 const password = process.env.GOAL_TEST_PASSWORD || "e2e-password";
-const artifactRoot = path.resolve(process.env.GOAL_TEST_PLAYGROUND_AUDIT_DIR || path.join(repoRoot, "artifacts/acceptance"));
+const artifactRoot = acceptanceDir(repoRoot, process.env.GOAL_TEST_PLAYGROUND_AUDIT_DIR);
 const generatedAt = new Date().toISOString();
 const stamp = generatedAt.replace(/[:.]/g, "-");
 const screenshotDir = path.join(artifactRoot, `playground-difference-audit-${stamp}`);

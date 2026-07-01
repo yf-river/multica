@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const apiURL = trimEnv("ACCEPTANCE_API_URL") || trimEnv("NEXT_PUBLIC_API_URL") || "http://127.0.0.1:8080";
 const account = trimEnv("ACCEPTANCE_DEMO_ACCOUNT") || trimEnv("REAL_AGENT_E2E_ACCOUNT") || "goal-test-daemon";
@@ -10,7 +11,7 @@ const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || trimEnv("REAL_AGEN
 const suffix = Date.now();
 const maxRecordedCommands = Number(trimEnv("PROMPT_EVALUATION_CURL_E2E_MAX_COMMANDS") || 40);
 const repoRoot = path.resolve(import.meta.dirname, "..");
-const artifactRoot = path.resolve(trimEnv("PROMPT_EVALUATION_CURL_E2E_DIR") || path.join(repoRoot, "artifacts/acceptance"));
+const artifactRoot = acceptanceDir(repoRoot, trimEnv("PROMPT_EVALUATION_CURL_E2E_DIR"));
 const generatedAt = new Date().toISOString();
 const stamp = generatedAt.replace(/[:.]/g, "-");
 const evidencePath = path.join(artifactRoot, `prompt-evaluation-curl-e2e-${stamp}.json`);

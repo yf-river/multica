@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const runEnv = readEnvFile(path.join(repoRoot, ".run/env/goal-test-int.env"));
@@ -17,7 +18,7 @@ const caseCount = positiveInt(env.GOAL_TEST_DATASET_STREAM_CASES, 360);
 const pageSize = positiveInt(env.GOAL_TEST_DATASET_STREAM_PAGE_SIZE, 50);
 const maxPageMs = positiveInt(env.GOAL_TEST_DATASET_STREAM_MAX_PAGE_MS, 1500);
 const maxTotalMs = positiveInt(env.GOAL_TEST_DATASET_STREAM_MAX_TOTAL_MS, 15000);
-const artifactRoot = path.resolve(env.GOAL_TEST_DATASET_STREAM_AUDIT_DIR || path.join(repoRoot, "artifacts/acceptance"));
+const artifactRoot = acceptanceDir(repoRoot, env.GOAL_TEST_DATASET_STREAM_AUDIT_DIR);
 const generatedAt = new Date().toISOString();
 const stamp = generatedAt.replace(/[:.]/g, "-");
 const suffix = Date.now();

@@ -2,10 +2,11 @@ import { chromium } from "@playwright/test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
+import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const runEnv = readEnvFile(path.join(repoRoot, ".run/env/goal-test-int.env"));
-const artifactRoot = path.resolve(process.env.GOAL_TEST_SOP_BROWSER_AUDIT_DIR || path.join(repoRoot, "artifacts/acceptance"));
+const artifactRoot = acceptanceDir(repoRoot, process.env.GOAL_TEST_SOP_BROWSER_AUDIT_DIR);
 const screenshotDir = path.join(artifactRoot, "sop-browser-audit-screenshots");
 const downloadDir = path.join(artifactRoot, "sop-browser-audit-downloads");
 const evidencePath = path.resolve(process.env.SOP_E2E_EVIDENCE || path.join(artifactRoot, "sop-customer-comment-e2e-latest.json"));
