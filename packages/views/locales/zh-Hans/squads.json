@@ -11,8 +11,8 @@
       "creator": "创建者",
       "created": "创建时间"
     },
-    "visibility_workspace": "工作区",
-    "visibility_personal": "个人",
+    "scope_workspace": "工作区",
+    "scope_personal": "个人",
     "no_matches": "没有匹配的小队",
     "row_menu": "小队操作",
     "archive_action": "归档",

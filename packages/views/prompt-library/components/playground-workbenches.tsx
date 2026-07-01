@@ -417,7 +417,7 @@ export function AgentPlaygroundWorkbench({
             </Select>
             <div className="mt-1 truncate text-xs text-muted-foreground">
               {selectedExecutionAgent
-                ? `状态 ${formatAgentStatus(selectedExecutionAgent.status)} · 可见性 ${formatAgentVisibility(selectedExecutionAgent.visibility)}`
+                ? `状态 ${formatAgentStatus(selectedExecutionAgent.status)} · 可见性 ${formatAgentScope(selectedExecutionAgent.scope)}`
                 : evaluationAgent
                   ? `自动选择训练评估智能体：自动模式会使用 ${formatAgentDisplayName(evaluationAgent)}，也可指定其它工作区智能体。`
                   : "自动选择训练评估智能体：真实运行前会确保训练评估执行智能体存在。"}
@@ -1015,7 +1015,7 @@ function buildToolEnvironmentRow({
     customArgs: agent ? `参数 ${agent.custom_args?.length ?? 0}` : "未绑定",
     customEnv: agent ? (hasCustomEnv ? `已配置 ${customEnvCount} 个` : "未配置") : "未绑定",
     mcp: summarizeMcpConfig(agent),
-    runtimeSecurity: runtime ? `${runtime.runtime_mode === "local" ? "本地" : "云端"} · ${runtime.visibility === "public" ? "工作区可绑定" : "私有绑定"}` : "未绑定",
+    runtimeSecurity: runtime ? `${runtime.runtime_mode === "local" ? "本地" : "云端"} · ${runtime.scope === "workspace" ? "工作区可绑定" : "个人可绑定"}` : "未绑定",
     evidence,
   };
 }
@@ -1229,12 +1229,12 @@ function formatAgentDisplayName(agent: Agent | null): string | null {
   return agent.name;
 }
 
-function formatAgentVisibility(visibility: Agent["visibility"]): string {
-  const labels: Record<Agent["visibility"], string> = {
+function formatAgentScope(scope: Agent["scope"]): string {
+  const labels: Record<Agent["scope"], string> = {
     workspace: "工作区可见",
-    private: "私有",
+    personal: "个人可见",
   };
-  return labels[visibility] ?? visibility;
+  return labels[scope] ?? scope;
 }
 
 function formatRuntimeProvider(provider: string | undefined): string {

@@ -205,7 +205,7 @@ func seedBackfillTaskUsageFixture(t *testing.T, ctx context.Context, pool *pgxpo
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO agent (
 			workspace_id, name, description, runtime_mode, runtime_config,
-			runtime_id, visibility, max_concurrent_tasks
+			runtime_id, scope, max_concurrent_tasks
 		)
 		VALUES ($1, $2, '', 'cloud', '{}'::jsonb, $3, 'workspace', 1)
 		RETURNING id

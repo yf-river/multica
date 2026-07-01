@@ -1268,7 +1268,7 @@ func (h *Handler) computeAssignedSquadLeaderCommentTrigger(ctx context.Context, 
 	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
 		return commentAgentTrigger{}, false
 	}
-	if !h.canAccessPrivateAgent(ctx, agent, authorType, authorID, uuidToString(issue.WorkspaceID)) {
+	if !h.canAccessPersonalAgent(ctx, agent, authorType, authorID, uuidToString(issue.WorkspaceID)) {
 		return commentAgentTrigger{}, false
 	}
 	hasPending, err := h.hasPendingTaskForIssueAndAgent(ctx, issue.ID, squad.LeaderID, opts)
@@ -1418,9 +1418,9 @@ func shouldInheritParentMentions(parentComment *db.Comment, replyMentions []util
 // are re-triggered by subsequent replies in the same thread — unless the reply
 // explicitly @mentions only non-agent entities (members, issues), which
 // signals the user is talking to other people and not the agent.
-// Skips agents with on_mention trigger disabled, and private agents mentioned
+// Skips agents with on_mention trigger disabled, and personal agents mentioned
 // by non-owner members (only the agent owner or workspace admin/owner can
-// mention a private agent). Self-mentions are intentionally allowed so an
+// mention a personal agent). Self-mentions are intentionally allowed so an
 // agent running in one issue can explicitly enqueue itself on another (e.g.
 // a child-issue run notifying the parent issue whose assignee is the same
 // agent); runaway loops are prevented by HasPendingTaskForIssueAndAgent
@@ -1474,8 +1474,8 @@ func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issu
 			if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
 				continue
 			}
-			// Private-agent gate: prevent triggering a private leader via squad mention.
-			if !h.canAccessPrivateAgent(ctx, agent, authorType, authorID, wsID) {
+			// Private-agent gate: prevent triggering a personal leader via squad mention.
+			if !h.canAccessPersonalAgent(ctx, agent, authorType, authorID, wsID) {
 				continue
 			}
 			// Dedup: skip if leader already has a pending task for this issue.
@@ -1494,7 +1494,7 @@ func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issu
 		// bare GetAgent here would let a mention resolve to an agent in a
 		// different workspace, and the visibility check below would then be
 		// applied against the wrong workspace's roles (a workspace owner in
-		// THIS workspace would pass the gate for a private agent that lives
+		// THIS workspace would pass the gate for a personal agent that lives
 		// in someone else's workspace).
 		agent, err := h.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
 			ID:          agentUUID,
@@ -1505,7 +1505,7 @@ func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issu
 		}
 		// Private-agent gate (member→private requires allowed_principals;
 		// agent→agent always passes).
-		if !h.canAccessPrivateAgent(ctx, agent, authorType, authorID, wsID) {
+		if !h.canAccessPersonalAgent(ctx, agent, authorType, authorID, wsID) {
 			continue
 		}
 		// Dedup: skip if this agent already has a pending task for this issue.

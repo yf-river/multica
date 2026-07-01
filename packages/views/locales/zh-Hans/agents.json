@@ -14,7 +14,15 @@
   "scope": {
     "mine": "我的",
     "all": "全部",
-    "archived": "已归档"
+    "archived": "已归档",
+    "personal": {
+      "label": "个人",
+      "tooltip": "个人 · 仅你和工作区管理员可以使用该智能体"
+    },
+    "workspace": {
+      "label": "工作区",
+      "tooltip": "工作区 · 工作区内所有人都可以使用该智能体"
+    }
   },
   "sort": {
     "label_recent": "最近活跃",
@@ -122,7 +130,7 @@
     "not_found_title": "未找到该智能体",
     "not_found_default": "该智能体可能已被归档或删除。",
     "no_access_title": "你没有访问该智能体的权限",
-    "no_access_hint": "只有该私密智能体的拥有者或工作区管理员可以查看。",
+    "no_access_hint": "只有该个人智能体的拥有者或工作区管理员可以查看。",
     "try_again": "重试",
     "archived_banner": "该智能体已归档，无法被分配或提及。",
     "restore": "恢复",
@@ -146,7 +154,7 @@
     "prop_runtime": "运行时",
     "prop_model": "模型",
     "prop_thinking": "思考",
-    "prop_visibility": "可见性",
+    "prop_visibility": "使用范围",
     "prop_concurrency": "并发",
     "prop_owner": "所有者",
     "prop_created": "创建时间",
@@ -227,15 +235,15 @@
     "name_placeholder": "例如：深度研究智能体",
     "description_label": "描述",
     "description_placeholder": "这个智能体做什么？",
-    "visibility_label": "可见性",
+    "scope_label": "使用范围",
     "runtime_label": "运行时",
     "runtime_filter_mine": "我的",
     "runtime_filter_all": "全部",
     "runtime_loading": "加载运行时...",
     "runtime_none": "暂无可用运行时",
     "runtime_cloud_badge": "云端",
-    "runtime_private_badge": "私有",
-    "runtime_private_locked_tooltip": "私有运行时——只有 runtime 所有者或工作区管理员可在其上创建智能体。如果需要共享，请联系所有者切换为「公开」。",
+    "runtime_personal_badge": "个人",
+    "runtime_personal_locked_tooltip": "个人运行时——只有运行时所有者或工作区管理员可在其上创建智能体。如果需要共享，请联系所有者切换为「工作区」。",
     "duplicate_copy_suffix": "（副本）",
     "create": "创建",
     "creating": "创建中...",
@@ -410,8 +418,8 @@
   "presence": {
     "queue_badge": "+{{count}} 排队"
   },
-  "visibility": {
-    "private": {
+  "resource_scope": {
+    "personal": {
       "label": "个人",
       "tooltip": "个人 · 仅你和工作区管理员可以使用该智能体"
     },

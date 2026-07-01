@@ -4123,7 +4123,7 @@ func (h *Handler) canCancelPromptEvaluationTask(w http.ResponseWriter, r *http.R
 		return false
 	}
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+	if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, workspaceID) {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return false
 	}
@@ -7798,8 +7798,8 @@ func (h *Handler) ensurePromptEvaluationAgent(w http.ResponseWriter, r *http.Req
 		RuntimeMode:        runtime.RuntimeMode,
 		RuntimeConfig:      []byte("{}"),
 		RuntimeID:          runtime.ID,
-		Visibility:         "workspace",
-		MaxConcurrentTasks: 1,
+		Scope:              "workspace",
+		MaxConcurrentTasks: defaultAgentMaxConcurrentTasks,
 		OwnerID:            ownerID,
 		Instructions:       instructions,
 		CustomEnv:          []byte("{}"),
@@ -7822,12 +7822,26 @@ func (h *Handler) findSOPPromptEvaluationAgent(ctx context.Context, workspaceID 
 		"04-implement":  false,
 		"05-verify":     false,
 	}
+	aliases := map[string]string{
+		"PM-项目经理": "PM",
+		"pm":      "PM",
+		"01-需求澄清": "01-clarify",
+		"02-方案设计": "02-design",
+		"03-任务拆分": "03-task-split",
+		"04-开发":   "04-implement",
+		"05-验证测试": "05-verify",
+		"05-测试":   "05-verify",
+	}
 	var verifier *db.Agent
 	for i := range agents {
-		if _, ok := required[agents[i].Name]; ok {
-			required[agents[i].Name] = true
+		key := agents[i].Name
+		if alias, ok := aliases[key]; ok {
+			key = alias
 		}
-		if agents[i].Name == "05-verify" {
+		if _, ok := required[key]; ok {
+			required[key] = true
+		}
+		if key == "05-verify" {
 			verifier = &agents[i]
 		}
 	}

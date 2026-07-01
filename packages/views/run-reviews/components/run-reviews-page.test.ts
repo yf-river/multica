@@ -154,7 +154,7 @@ describe("buildRunReviewEventRows", () => {
     expect(sopStageDisplayName("02-design")).toBe("02-方案设计");
     expect(sopStageDisplayName("03-task-split")).toBe("03-任务拆分");
     expect(sopStageDisplayName("04-implement")).toBe("04-开发");
-    expect(sopStageDisplayName("05-verify")).toBe("05-测试");
+    expect(sopStageDisplayName("05-verify")).toBe("05-验证测试");
     expect(sopStageDisplayName("custom-agent")).toBe("custom-agent");
   });
 
@@ -537,6 +537,6 @@ describe("buildRunReviewEventRows", () => {
     expect(assertions.disallow_missing_required_stage).toBe(true);
     expect(assertions.must_keep_evidence).toBe(true);
     expect(assertions.must_report_blocker_on_failure).toBe(true);
-    expect(request.expected_contains).toContain("05-测试");
+    expect(request.expected_contains).toContain("05-验证测试");
   });
 });

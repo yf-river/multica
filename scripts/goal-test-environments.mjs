@@ -1256,6 +1256,7 @@ const sourceUrl = ${JSON.stringify(sourceDatabaseURL)};
 const targetUrl = ${JSON.stringify(targetDatabaseURL)};
 const account = 'develop';
 const workspaceSlug = 'ai-studio';
+const resetWorkspaceRepos = process.env.GOAL_TEST_RESET_WORKSPACE_REPOS === '1';
 
 async function copyTableRow(source, target, table, whereSql, params) {
   const src = await source.query('SELECT * FROM ' + table + ' WHERE ' + whereSql + ' LIMIT 1', params);
@@ -1291,8 +1292,8 @@ async function seedFromScratch(target) {
     ['AI Studio 开发账号', account, 'imported', passwordHash('develop123')],
   );
   const workspace = await target.query(
-    'INSERT INTO workspace (name, slug, description, context, issue_prefix, repos) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, context = EXCLUDED.context, repos = EXCLUDED.repos, updated_at = now() RETURNING id',
-    ['AI Studio 工作区', workspaceSlug, 'AI Studio 开发工作区', '用于 AI Studio 开发联调、验收和性能调试。', 'AIS', '[]'],
+    'INSERT INTO workspace (name, slug, description, context, issue_prefix, repos) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, context = EXCLUDED.context, repos = CASE WHEN $7::boolean THEN EXCLUDED.repos ELSE workspace.repos END, updated_at = now() RETURNING id',
+    ['AI Studio 工作区', workspaceSlug, 'AI Studio 开发工作区', '用于 AI Studio 开发联调、验收和性能调试。', 'AIS', '[]', resetWorkspaceRepos],
   );
   await target.query(
     'INSERT INTO member (workspace_id, user_id, role) VALUES ($1, $2, $3) ON CONFLICT (workspace_id, user_id) DO UPDATE SET role = EXCLUDED.role',

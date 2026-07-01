@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"encoding/json"
 	"strings"
 
 	"github.com/multica-ai/multica/server/internal/util"
@@ -71,10 +70,6 @@ func buildSquadLeaderBriefing(ctx context.Context, q *db.Queries, squad db.Squad
 	sb.WriteString(squadOperatingProtocol)
 	sb.WriteString("\n\n")
 	sb.WriteString(buildSquadRoster(ctx, q, squad))
-	if profile := buildSquadSOPProfile(squad.SopProfile); profile != "" {
-		sb.WriteString("\n\n")
-		sb.WriteString(profile)
-	}
 
 	if trimmed := strings.TrimSpace(squad.Instructions); trimmed != "" {
 		sb.WriteString("\n\n## 小队说明 (")
@@ -83,182 +78,6 @@ func buildSquadLeaderBriefing(ctx context.Context, q *db.Queries, squad db.Squad
 		sb.WriteString(trimmed)
 	}
 	return sb.String()
-}
-
-type squadSOPProfile struct {
-	ProfileKey              string           `json:"profile_key"`
-	Project                 string           `json:"project"`
-	Repo                    string           `json:"repo"`
-	Mode                    string           `json:"mode"`
-	Roles                   []map[string]any `json:"roles"`
-	Steps                   []map[string]any `json:"steps"`
-	ModelPolicy             map[string]any   `json:"model_policy"`
-	StageSkills             []string         `json:"stage_skills"`
-	OperationSkills         []string         `json:"operation_skills"`
-	CrossProjectChildIssues []map[string]any `json:"cross_project_child_issues"`
-	Acceptance              []string         `json:"acceptance"`
-	ArchivePolicy           string           `json:"archive_policy"`
-	ForbiddenActions        []string         `json:"forbidden_actions"`
-}
-
-func buildSquadSOPProfile(raw []byte) string {
-	if len(raw) == 0 || string(raw) == "{}" {
-		return ""
-	}
-	var profile squadSOPProfile
-	if err := json.Unmarshal(raw, &profile); err != nil {
-		return ""
-	}
-	if profile.Project == "" && profile.ProfileKey == "" && len(profile.Steps) == 0 && len(profile.StageSkills) == 0 && len(profile.OperationSkills) == 0 {
-		return ""
-	}
-
-	var sb strings.Builder
-	sb.WriteString("## 项目 SOP 配置\n\n")
-	if profile.ProfileKey != "" {
-		sb.WriteString("- 模板：")
-		sb.WriteString(profile.ProfileKey)
-		sb.WriteString("\n")
-	}
-	if profile.Project != "" {
-		sb.WriteString("- 项目：")
-		sb.WriteString(profile.Project)
-		sb.WriteString("\n")
-	}
-	if profile.Repo != "" {
-		sb.WriteString("- 仓库：`")
-		sb.WriteString(profile.Repo)
-		sb.WriteString("`\n")
-	}
-	if profile.Mode != "" {
-		sb.WriteString("- 执行方式：")
-		sb.WriteString(profile.Mode)
-		sb.WriteString("\n")
-	}
-	if len(profile.StageSkills) > 0 {
-		sb.WriteString("- SOP 阶段链：")
-		sb.WriteString(strings.Join(profile.StageSkills, " → "))
-		sb.WriteString("\n")
-	}
-	if len(profile.Steps) > 0 {
-		stepNames := make([]string, 0, len(profile.Steps))
-		for _, step := range profile.Steps {
-			name := sopStringField(step, "name", "key", "step_key")
-			if name != "" {
-				stepNames = append(stepNames, name)
-			}
-		}
-		if len(stepNames) > 0 {
-			sb.WriteString("- SOP 步骤链：")
-			sb.WriteString(strings.Join(stepNames, " → "))
-			sb.WriteString("\n")
-			sb.WriteString("- 当前默认阶段：")
-			sb.WriteString(stepNames[0])
-			sb.WriteString("\n")
-		}
-	}
-	if len(profile.OperationSkills) > 0 {
-		sb.WriteString("- 可调用操作技能：")
-		sb.WriteString(strings.Join(profile.OperationSkills, "、"))
-		sb.WriteString("\n")
-	}
-	if len(profile.CrossProjectChildIssues) > 0 {
-		sb.WriteString("- 跨项目子任务规则：如果当前 issue 需要其它项目配合，不要只在父 issue 上描述依赖；先运行 `multica issue children <当前 issue id> --output json` 查看已有 child，再运行 `multica project list --output json` 找到目标项目 UUID。只有确认没有同一目标项目、同一工作意图或同一验收范围的 child issue 时，才创建新的子 issue；如果已有 child，只能引用、补充或推进已有 child，禁止重复创建。单项目需求、TAPD/Gongfeng/source_context 抓取后的真实需求、以及 01-05 阶段推进不是跨项目子任务触发条件；如果候选目标项目等于当前 issue 项目，且用户没有明确要求同项目子任务，就必须继续在当前 issue 推进。命令形态必须包含 `--parent <当前 issue id>` 和 `--project <目标项目 id>`，例如 `multica issue create --title \"...\" --description-file ./child.md --status backlog --parent <当前 issue id> --project <目标项目 id> --output json`。如果父 issue 或任务说明明确给出目标小队 UUID，必须在同一条创建命令中传 `--assignee-id <目标小队 UUID>`，并逐项核对“目标项目 UUID + 目标小队 UUID”映射，不能按 project list 的输出顺序猜测；如果没有明确目标小队 UUID，才不要额外传 `--assignee` 或 `--assignee-id`，平台会把未指派的项目 issue 自动交给项目负责人。创建子 issue 后，不要再为同一项工作 @mention 同一个负责人，避免双触发。SOP 后续阶段看到 PM/队长已经拆出的跨项目 child 时，不要二次拆分。\n")
-		for _, child := range profile.CrossProjectChildIssues {
-			target := sopStringField(child, "target_project", "project", "name")
-			trigger := sopStringField(child, "trigger", "when")
-			assignee := sopStringField(child, "assignee", "owner")
-			title := sopStringField(child, "title", "title_template")
-			body := sopStringField(child, "body", "description", "instruction")
-			parts := make([]string, 0, 5)
-			if target != "" {
-				parts = append(parts, "目标项目="+target)
-			}
-			if trigger != "" {
-				parts = append(parts, "触发条件="+trigger)
-			}
-			if assignee != "" {
-				parts = append(parts, "指派建议="+assignee)
-			}
-			if title != "" {
-				parts = append(parts, "标题="+title)
-			}
-			if body != "" {
-				parts = append(parts, "描述要点="+body)
-			}
-			if len(parts) > 0 {
-				sb.WriteString("  - ")
-				sb.WriteString(strings.Join(parts, "；"))
-				sb.WriteString("\n")
-			}
-		}
-	}
-	if len(profile.Acceptance) > 0 {
-		sb.WriteString("- 验收要求：")
-		sb.WriteString(strings.Join(profile.Acceptance, "；"))
-		sb.WriteString("\n")
-	}
-	if strings.TrimSpace(profile.ArchivePolicy) != "" {
-		sb.WriteString("- 归档口径：")
-		sb.WriteString(strings.TrimSpace(profile.ArchivePolicy))
-		sb.WriteString("\n")
-	}
-	if len(profile.Roles) > 0 {
-		sb.WriteString("- 角色分工：")
-		roleParts := make([]string, 0, len(profile.Roles))
-		for _, role := range profile.Roles {
-			name := sopStringField(role, "name", "key")
-			responsibility := sopStringField(role, "responsibility", "boundary")
-			if name == "" {
-				continue
-			}
-			if responsibility != "" {
-				roleParts = append(roleParts, name+"："+responsibility)
-			} else {
-				roleParts = append(roleParts, name)
-			}
-		}
-		sb.WriteString(strings.Join(roleParts, "；"))
-		sb.WriteString("\n")
-	}
-	if len(profile.ModelPolicy) > 0 {
-		sb.WriteString("- 模型策略：")
-		parts := make([]string, 0, len(profile.ModelPolicy))
-		for key, value := range profile.ModelPolicy {
-			parts = append(parts, key+"="+sopAnyString(value))
-		}
-		sb.WriteString(strings.Join(parts, "；"))
-		sb.WriteString("\n")
-	}
-	if len(profile.ForbiddenActions) > 0 {
-		sb.WriteString("- 禁止事项：")
-		sb.WriteString(strings.Join(profile.ForbiddenActions, "；"))
-		sb.WriteString("\n")
-	}
-	sb.WriteString("\n当 issue 指派给这个小队时，先按 SOP 阶段链推进；记录当前阶段、验收要求和证据后，再把具体工作委派给对应操作技能或小队成员。")
-	return sb.String()
-}
-
-func sopStringField(obj map[string]any, keys ...string) string {
-	for _, key := range keys {
-		if value, ok := obj[key].(string); ok && strings.TrimSpace(value) != "" {
-			return strings.TrimSpace(value)
-		}
-	}
-	return ""
-}
-
-func sopAnyString(value any) string {
-	switch v := value.(type) {
-	case string:
-		return v
-	default:
-		raw, err := json.Marshal(v)
-		if err != nil {
-			return ""
-		}
-		return string(raw)
-	}
 }
 
 // buildSquadRoster renders the squad roster section: a leader self-row

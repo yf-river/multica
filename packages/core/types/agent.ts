@@ -2,15 +2,13 @@ export type AgentStatus = "idle" | "working" | "blocked" | "error" | "offline";
 
 export type AgentRuntimeMode = "local" | "cloud";
 
-export type AgentVisibility = "workspace" | "private";
+export type ResourceScope = "personal" | "workspace";
+export type AgentScope = ResourceScope;
 
-// Runtime visibility is a separate axis from agent visibility — different
-// vocabulary because it gates a different action. "private" (default) means
-// only the runtime owner and workspace admins can bind agents to it;
-// "public" opens binding to any workspace member. Older backends that
-// haven't shipped MUL-2062 omit the field; the consumer must default to
-// "private" so the strictest behavior is the fallback.
-export type RuntimeVisibility = "private" | "public";
+// Runtime scope uses the same product vocabulary as agents and squads.
+// "personal" means same-owner personal agents only; "workspace" opens the
+// runtime for workspace-scoped agents.
+export type RuntimeScope = ResourceScope;
 
 export interface RuntimeDevice {
   id: string;
@@ -24,8 +22,8 @@ export interface RuntimeDevice {
   device_info: string;
   metadata: Record<string, unknown>;
   owner_id: string | null;
-  /** Defaults to "private" when the backend predates the visibility flag. */
-  visibility: RuntimeVisibility;
+  /** Defaults to "personal" when omitted. */
+  scope: RuntimeScope;
   /**
    * The custom runtime profile this registered runtime was launched from,
    * or `null` for a built-in protocol family. The UI uses this to stamp a
@@ -74,7 +72,7 @@ export const RUNTIME_PROFILE_PROTOCOL_FAMILIES = [
 export type RuntimeProtocolFamily =
   (typeof RUNTIME_PROFILE_PROTOCOL_FAMILIES)[number];
 
-// Profile visibility mirrors RuntimeVisibility's vocabulary but uses the
+// Profile visibility mirrors RuntimeScope's vocabulary but uses the
 // workspace/private axis the server documents for profiles.
 export type RuntimeProfileVisibility = "workspace" | "private";
 
@@ -277,7 +275,7 @@ export interface Agent {
    * Older backends omit this field; treat `undefined` as false.
    */
   mcp_config_redacted?: boolean;
-  visibility: AgentVisibility;
+  scope: AgentScope;
   status: AgentStatus;
   max_concurrent_tasks: number;
   model: string;
@@ -322,7 +320,7 @@ export interface CreateAgentRequest {
   runtime_config?: Record<string, unknown>;
   custom_env?: Record<string, string>;
   custom_args?: string[];
-  visibility?: AgentVisibility;
+  scope?: AgentScope;
   max_concurrent_tasks?: number;
   model?: string;
   /** Optional runtime-native reasoning/effort token. See `Agent.thinking_level`. */
@@ -372,7 +370,7 @@ export interface CreateAgentFromTemplateRequest {
   name: string;
   runtime_id: string;
   model?: string;
-  visibility?: AgentVisibility;
+  scope?: AgentScope;
   max_concurrent_tasks?: number;
   /** Optional overrides applied to the template before creation. nil/omit
    *  uses the template's own value. */
@@ -428,7 +426,7 @@ export interface UpdateAgentRequest {
    *     validate / translate it according to their own MCP integration
    */
   mcp_config?: unknown | null;
-  visibility?: AgentVisibility;
+  scope?: AgentScope;
   status?: AgentStatus;
   max_concurrent_tasks?: number;
   model?: string;

@@ -111,7 +111,7 @@ Contracts:
 - backlog assignment does not immediately enqueue (squad.go:991-993);
 - moving out of backlog can enqueue leader (squad.go:990-994 → isSquadLeaderReady);
 - assignee change cancels existing issue tasks first;
-- private leader access is checked at assign-time (issue.go:2629-2632) and at
+- personal leader access is checked at assign-time (issue.go:2629-2632) and at
   enqueue-time via `canEnqueueSquadLeader` (squad.go:1037);
 - archived squad / archived leader rejected at assign-time (issue.go:2622-2627);
 - pending task dedup is applied (squad.go:1042-1048).
@@ -187,21 +187,21 @@ Contracts:
 Source:
 
 ```text
-server/internal/handler/agent_access.go           # canAccessPrivateAgent ~25-40, canEnqueueSquadLeader ~82-91
+server/internal/handler/agent_access.go           # canAccessPersonalAgent ~25-40, canEnqueueSquadLeader ~82-91
 server/internal/handler/squad.go                   # enqueueSquadLeaderTask gate ~1037
 ```
 
 Contracts:
 
-- public leaders pass — `canAccessPrivateAgent` returns true when
-  `agent.Visibility != "private"` (agent_access.go:26-28);
+- workspace leaders pass — `canAccessPersonalAgent` returns true when
+  `agent.Scope != "personal"` (agent_access.go:26-28);
 - agent-to-agent traffic is allowed — `actorType == "agent"` short-circuits
   (agent_access.go:29-31);
-- private leader access for members is limited to owner/admin or agent owner
+- personal leader access for members is limited to owner/admin or agent owner
   (agent_access.go:32-39);
 - system triggers are treated like agent triggers for squad leader enqueue:
   `canEnqueueSquadLeader` remaps `actorType == "system"` to `"agent"` before
-  delegating to `canAccessPrivateAgent` (agent_access.go:87-90). This is wired
+  delegating to `canAccessPersonalAgent` (agent_access.go:87-90). This is wired
   into `enqueueSquadLeaderTask`, which denies the enqueue when the actor cannot
   access the leader (squad.go:1037).
 

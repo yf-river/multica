@@ -1755,7 +1755,7 @@ export function buildIssueReviewDraftCaseRequest({
       current_status: issue.status,
       source: "run-review",
     },
-    expected_contains: ["PM", "01-需求澄清", "02-方案设计", "03-任务拆分", "04-开发", "05-测试", "证据"],
+    expected_contains: ["PM-项目经理", "01-需求澄清", "02-方案设计", "03-任务拆分", "04-开发", "05-验证测试", "证据"],
     input: {
       source: "run-review",
       issue: {

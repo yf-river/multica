@@ -2,40 +2,37 @@
 
 import { useState } from "react";
 import { Globe, Lock } from "lucide-react";
-import {
-  VISIBILITY_DESCRIPTION,
-  VISIBILITY_LABEL,
-  VISIBILITY_TOOLTIP,
-} from "@multica/core/agents";
-import type { AgentVisibility } from "@multica/core/types";
+import type { AgentScope } from "@multica/core/types";
 import {
   PickerItem,
   PropertyPicker,
 } from "../../../issues/components/pickers";
-import { VisibilityBadge } from "../visibility-badge";
+import { ScopeBadge } from "../scope-badge";
 import { CHIP_CLASS } from "./chip";
+import { useT } from "../../../i18n";
 
-export function VisibilityPicker({
+export function ScopePicker({
   value,
   canEdit = true,
   onChange,
 }: {
-  value: AgentVisibility;
-  /** When false, render a read-only `<VisibilityBadge>` and skip the popover. */
+  value: AgentScope;
+  /** When false, render a read-only `<ScopeBadge>` and skip the popover. */
   canEdit?: boolean;
-  onChange: (next: AgentVisibility) => Promise<void> | void;
+  onChange: (next: AgentScope) => Promise<void> | void;
 }) {
   const [open, setOpen] = useState(false);
+  const { t } = useT("agents");
 
   if (!canEdit) {
-    return <VisibilityBadge value={value} />;
+    return <ScopeBadge value={value} />;
   }
 
-  const Icon = value === "private" ? Lock : Globe;
-  const label = VISIBILITY_LABEL[value];
-  const tooltip = `Visibility · ${VISIBILITY_TOOLTIP[value]}`;
+  const Icon = value === "personal" ? Lock : Globe;
+  const label = t(($) => $.scope[value].label);
+  const tooltip = t(($) => $.scope[value].tooltip);
 
-  const select = async (next: AgentVisibility) => {
+  const select = async (next: AgentScope) => {
     setOpen(false);
     if (next !== value) await onChange(next);
   };
@@ -63,21 +60,21 @@ export function VisibilityPicker({
       >
         <Globe className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <div className="text-left">
-          <div className="font-medium">{VISIBILITY_LABEL.workspace}</div>
+          <div className="font-medium">{t(($) => $.resource_scope.workspace.label)}</div>
           <div className="text-xs text-muted-foreground">
-            {VISIBILITY_DESCRIPTION.workspace}
+            {t(($) => $.resource_scope.workspace.tooltip)}
           </div>
         </div>
       </PickerItem>
       <PickerItem
-        selected={value === "private"}
-        onClick={() => select("private")}
+        selected={value === "personal"}
+        onClick={() => select("personal")}
       >
         <Lock className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
         <div className="text-left">
-          <div className="font-medium">{VISIBILITY_LABEL.private}</div>
+          <div className="font-medium">{t(($) => $.resource_scope.personal.label)}</div>
           <div className="text-xs text-muted-foreground">
-            {VISIBILITY_DESCRIPTION.private}
+            {t(($) => $.resource_scope.personal.tooltip)}
           </div>
         </div>
       </PickerItem>

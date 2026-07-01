@@ -29,10 +29,7 @@ type AgentRuntimeResponse struct {
 	DeviceInfo   string  `json:"device_info"`
 	Metadata     any     `json:"metadata"`
 	OwnerID      *string `json:"owner_id"`
-	// Visibility is "private" (default — only the owner / workspace admins
-	// can bind agents) or "public" (any workspace member can). See migration
-	// 083 and canUseRuntimeForAgent.
-	Visibility string `json:"visibility"`
+	Scope string `json:"scope"`
 	// ProfileID is set when this runtime is an instance of a custom
 	// runtime_profile (MUL-3284); null for built-in runtimes.
 	ProfileID  *string `json:"profile_id"`
@@ -62,7 +59,7 @@ func runtimeToResponse(rt db.AgentRuntime) AgentRuntimeResponse {
 		DeviceInfo:   rt.DeviceInfo,
 		Metadata:     metadata,
 		OwnerID:      uuidToPtr(rt.OwnerID),
-		Visibility:   rt.Visibility,
+		Scope:        rt.Scope,
 		ProfileID:    uuidToPtr(rt.ProfileID),
 		LastSeenAt:   timestampToPtr(rt.LastSeenAt),
 		CreatedAt:    timestampToString(rt.CreatedAt),
@@ -402,13 +399,10 @@ func (h *Handler) resolveViewingTZ(r *http.Request) string {
 // Only fields users may legitimately edit are listed; other runtime metadata
 // (provider, daemon_id, status…) flows in from the daemon and is read-only here.
 type UpdateAgentRuntimeRequest struct {
-	// Visibility flips a runtime between "private" (default — only the owner
-	// or workspace admins can bind agents) and "public" (any workspace
-	// member can). Owner / workspace admin only, gated by canEditRuntime.
-	Visibility *string `json:"visibility,omitempty"`
+	Scope *string `json:"scope,omitempty"`
 }
 
-// UpdateAgentRuntime handles PATCH /api/runtimes/:id. Currently visibility
+// UpdateAgentRuntime handles PATCH /api/runtimes/:id. Currently scope
 // is editable; the request shape is open-ended so future fields (display
 // name, description) can be added without a route change.
 // Workspace-membership-checked; write access is gated by canEditRuntime.
@@ -440,33 +434,53 @@ func (h *Handler) UpdateAgentRuntime(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var (
-		newVisibility  string
-		needVisibility bool
-	)
-	if req.Visibility != nil {
-		v := *req.Visibility
-		if v != "private" && v != "public" {
-			writeError(w, http.StatusBadRequest, "visibility must be 'private' or 'public'")
+	var newScope string
+	needScope := false
+	if req.Scope != nil {
+		v, valid := normalizeScope(*req.Scope, "")
+		if !valid {
+			writeError(w, http.StatusBadRequest, "scope must be 'personal' or 'workspace'")
 			return
 		}
-		if v != rt.Visibility {
-			newVisibility = v
-			needVisibility = true
+		if v != rt.Scope {
+			newScope = v
+			needScope = true
 		}
 	}
 
-	if needVisibility {
-		updated, err := h.Queries.UpdateAgentRuntimeVisibility(r.Context(), db.UpdateAgentRuntimeVisibilityParams{
-			ID:         runtimeUUID,
-			Visibility: newVisibility,
+	if needScope {
+		if newScope == scopePersonal {
+			count, err := h.Queries.CountWorkspaceAgentsByRuntime(r.Context(), runtimeUUID)
+			if err != nil {
+				slog.Error("CountWorkspaceAgentsByRuntime failed", "error", err, "runtime_id", runtimeID)
+				writeError(w, http.StatusInternalServerError, "failed to inspect runtime dependencies")
+				return
+			}
+			if count > 0 {
+				writeError(w, http.StatusConflict, "workspace agents still depend on this runtime; move or archive them before changing it to personal")
+				return
+			}
+		}
+		updated, err := h.Queries.UpdateAgentRuntimeScope(r.Context(), db.UpdateAgentRuntimeScopeParams{
+			ID:    runtimeUUID,
+			Scope: newScope,
 		})
 		if err != nil {
-			slog.Error("UpdateAgentRuntimeVisibility failed", "error", err, "runtime_id", runtimeID)
+			slog.Error("UpdateAgentRuntimeScope failed", "error", err, "runtime_id", runtimeID)
 			writeError(w, http.StatusInternalServerError, "failed to update runtime")
 			return
 		}
 		rt = updated
+		if newScope == scopeWorkspace && rt.OwnerID.Valid {
+			if _, err := h.Queries.OpenPersonalAgentsByRuntimeOwner(r.Context(), db.OpenPersonalAgentsByRuntimeOwnerParams{
+				RuntimeID: runtimeUUID,
+				OwnerID:   rt.OwnerID,
+			}); err != nil {
+				slog.Error("OpenPersonalAgentsByRuntimeOwner failed", "error", err, "runtime_id", runtimeID)
+				writeError(w, http.StatusInternalServerError, "failed to open dependent agents")
+				return
+			}
+		}
 		// Notify connected clients that runtime metadata changed so the
 		// list/detail pages refresh — matches the pattern used by
 		// DeleteAgentRuntime.
@@ -485,18 +499,14 @@ func canEditRuntime(member db.Member, rt db.AgentRuntime) bool {
 	return rt.OwnerID.Valid && uuidToString(rt.OwnerID) == uuidToString(member.UserID)
 }
 
-// canUseRuntimeForAgent reports whether a workspace member is allowed to
-// bind a new agent to — or move an existing agent onto — the given runtime.
-// Mirrors canEditRuntime but layers on the runtime's visibility flag so a
-// `public` runtime is usable by anyone in the workspace while a `private`
-// runtime stays bound to its owner. Workspace owners/admins keep an
-// administrative override for both. See migration 083 for the visibility
-// column.
+// canUseRuntimeForAgent reports whether a workspace member can see/use the
+// runtime at all. Agent-specific scope compatibility is checked separately by
+// validateAgentRuntimeScope.
 func canUseRuntimeForAgent(member db.Member, rt db.AgentRuntime) bool {
 	if roleAllowed(member.Role, "owner", "admin") {
 		return true
 	}
-	if rt.Visibility == "public" {
+	if rt.Scope == scopeWorkspace {
 		return true
 	}
 	return rt.OwnerID.Valid && uuidToString(rt.OwnerID) == uuidToString(member.UserID)

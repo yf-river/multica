@@ -14,7 +14,7 @@ import {
 } from "@multica/core/workspace/queries";
 import { AGENT_DESCRIPTION_MAX_LENGTH } from "@multica/core/agents";
 import { isImeComposing } from "@multica/core/utils";
-import type { Agent, MemberWithUser, SquadVisibility } from "@multica/core/types";
+import type { Agent, MemberWithUser, SquadScope } from "@multica/core/types";
 import {
   Dialog,
   DialogContent,
@@ -34,6 +34,7 @@ import { toast } from "sonner";
 
 import { useNavigation } from "../navigation";
 import { ActorAvatar } from "../common/actor-avatar";
+import { resourceSegmentedOptionClass } from "../common/resource-scope";
 import { AvatarPicker } from "../agents/components/avatar-picker";
 import { CharCounter } from "../agents/components/char-counter";
 import {
@@ -73,7 +74,7 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
   const [avatarUrl, setAvatarUrl] = useState<string | null>(null);
-  const [visibility, setVisibility] = useState<SquadVisibility>("workspace");
+  const [scope, setScope] = useState<SquadScope>("workspace");
   const [leaderId, setLeaderId] = useState("");
   const [selectedMembers, setSelectedMembers] = useState<SelectedMember[]>([]);
   const [creating, setCreating] = useState(false);
@@ -101,7 +102,7 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
         description: description.trim() || undefined,
         leader_id: leaderId,
         avatar_url: avatarUrl ?? undefined,
-        visibility,
+        scope,
       });
       queryClient.invalidateQueries({ queryKey: workspaceKeys.squads(wsId) });
 
@@ -201,7 +202,7 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
               </div>
             </div>
 
-            <SquadVisibilityPicker value={visibility} onChange={setVisibility} />
+            <SquadScopePicker value={scope} onChange={setScope} />
 
             <LeaderPicker
               agents={activeAgents}
@@ -239,42 +240,38 @@ export function CreateSquadModal({ onClose }: { onClose: () => void }) {
   );
 }
 
-function SquadVisibilityPicker({
+function SquadScopePicker({
   value,
   onChange,
 }: {
-  value: SquadVisibility;
-  onChange: (value: SquadVisibility) => void;
+  value: SquadScope;
+  onChange: (value: SquadScope) => void;
 }) {
   const { t } = useT("modals");
-  const options: Array<{ value: SquadVisibility; label: string; hint: string }> = [
+  const options: Array<{ value: SquadScope; label: string; hint: string }> = [
     {
       value: "workspace",
-      label: t(($) => $.create_squad.visibility_workspace_label),
-      hint: t(($) => $.create_squad.visibility_workspace_hint),
+      label: t(($) => $.create_squad.scope_workspace_label),
+      hint: t(($) => $.create_squad.scope_workspace_hint),
     },
     {
       value: "personal",
-      label: t(($) => $.create_squad.visibility_personal_label),
-      hint: t(($) => $.create_squad.visibility_personal_hint),
+      label: t(($) => $.create_squad.scope_personal_label),
+      hint: t(($) => $.create_squad.scope_personal_hint),
     },
   ];
   return (
     <div>
       <Label className="text-xs text-muted-foreground">
-        {t(($) => $.create_squad.visibility_label)}
+        {t(($) => $.create_squad.scope_label)}
       </Label>
-      <div className="mt-1.5 grid grid-cols-2 gap-2">
+      <div className="mt-1.5 grid grid-cols-2 gap-1 rounded-lg border bg-muted/30 p-1">
         {options.map((option) => (
           <button
             key={option.value}
             type="button"
             onClick={() => onChange(option.value)}
-            className={
-              value === option.value
-                ? "rounded-lg border border-primary bg-primary/5 px-3 py-2 text-left"
-                : "rounded-lg border border-border bg-background px-3 py-2 text-left hover:bg-muted"
-            }
+            className={`${resourceSegmentedOptionClass(value === option.value)} text-left`}
           >
             <span className="block text-sm font-medium">{option.label}</span>
             <span className="mt-0.5 block text-xs text-muted-foreground">

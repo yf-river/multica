@@ -14,12 +14,12 @@ func TestSquadPersonalVisibility_IsCreatorOnlyForPlainMembers(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	_, _, otherMemberID := privateAgentTestFixture(t)
+	_, _, otherMemberID := personalAgentTestFixture(t)
 
 	var leaderID string
 	if err := testPool.QueryRow(ctx, `
 		SELECT id FROM agent
-		WHERE workspace_id = $1 AND visibility = 'workspace' AND archived_at IS NULL
+		WHERE workspace_id = $1 AND scope = 'workspace' AND archived_at IS NULL
 		ORDER BY created_at ASC
 		LIMIT 1
 	`, testWorkspaceID).Scan(&leaderID); err != nil {
@@ -28,8 +28,8 @@ func TestSquadPersonalVisibility_IsCreatorOnlyForPlainMembers(t *testing.T) {
 
 	var squadID string
 	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, visibility)
-		VALUES ($1, 'Personal Visibility Test', '', $2, $3, 'personal')
+		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, scope)
+		VALUES ($1, 'Personal Scope Test', '', $2, $3, 'personal')
 		RETURNING id
 	`, testWorkspaceID, leaderID, testUserID).Scan(&squadID); err != nil {
 		t.Fatalf("create personal squad: %v", err)
@@ -80,12 +80,12 @@ func TestCreateSquad_MemberCanCreatePersonalSquad(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	_, _, memberID := privateAgentTestFixture(t)
+	_, _, memberID := personalAgentTestFixture(t)
 
 	var leaderID string
 	if err := testPool.QueryRow(ctx, `
 		SELECT id FROM agent
-		WHERE workspace_id = $1 AND visibility = 'workspace' AND archived_at IS NULL
+		WHERE workspace_id = $1 AND scope = 'workspace' AND archived_at IS NULL
 		ORDER BY created_at ASC
 		LIMIT 1
 	`, testWorkspaceID).Scan(&leaderID); err != nil {
@@ -96,7 +96,7 @@ func TestCreateSquad_MemberCanCreatePersonalSquad(t *testing.T) {
 	req := newRequestAs(memberID, http.MethodPost, "/api/squads?workspace_id="+testWorkspaceID, map[string]any{
 		"name":        "Member Personal Squad",
 		"leader_id":   leaderID,
-		"visibility":  "personal",
+		"scope":  "personal",
 		"description": "created by plain member",
 	})
 	testHandler.CreateSquad(w, req)
@@ -107,8 +107,8 @@ func TestCreateSquad_MemberCanCreatePersonalSquad(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
 		t.Fatalf("decode created squad: %v", err)
 	}
-	if created.Visibility != "personal" {
-		t.Fatalf("created visibility = %q, want personal", created.Visibility)
+	if created.Scope != "personal" {
+		t.Fatalf("created scope = %q, want personal", created.Scope)
 	}
 	t.Cleanup(func() {
 		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, created.ID)

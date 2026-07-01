@@ -3,7 +3,6 @@
 import { useMemo, useState } from "react";
 import {
   AlertTriangle,
-  Globe,
   Loader2,
   MoreHorizontal,
   Trash2,
@@ -41,13 +40,12 @@ import {
   ListGridHeaderCell,
   ListGridRow,
 } from "@multica/ui/components/ui/list-grid";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@multica/ui/components/ui/tooltip";
 import { useRowLink } from "../../navigation";
 import { ActorAvatar } from "../../common/actor-avatar";
+import {
+  runtimeResourceScope,
+  ResourceScopeBadge,
+} from "../../common/resource-scope";
 import { useViewingTimezone } from "../../common/use-viewing-timezone";
 import { ProviderLogo } from "./provider-logo";
 import { HealthIcon, useHealthLabel } from "./shared";
@@ -228,25 +226,15 @@ function PendingRuntimeBadge({ runtime }: { runtime: AgentRuntime }) {
   );
 }
 
-// Only public is worth a badge — private is the default and rendering a
-// `🔒 Private` chip on every row turns the whole column into noise.
 function VisibilityBadge({ runtime }: { runtime: AgentRuntime }) {
   const { t } = useT("runtimes");
-  if (runtime.visibility !== "public") return null;
+  const scope = runtime.scope === "workspace" ? "workspace" : "personal";
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span className="inline-flex shrink-0 items-center gap-0.5 rounded bg-info/10 px-1 text-[10px] font-medium text-info">
-            <Globe className="h-2.5 w-2.5" />
-            {t(($) => $.detail.visibility_label.public)}
-          </span>
-        }
-      />
-      <TooltipContent>
-        {t(($) => $.detail.visibility_hint.public)}
-      </TooltipContent>
-    </Tooltip>
+    <ResourceScopeBadge
+      scope={runtimeResourceScope(scope)}
+      label={t(($) => $.detail.visibility_label[scope])}
+      tooltip={t(($) => $.detail.visibility_hint[scope])}
+    />
   );
 }
 

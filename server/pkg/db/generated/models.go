@@ -26,7 +26,7 @@ type Agent struct {
 	AvatarUrl          pgtype.Text        `json:"avatar_url"`
 	RuntimeMode        string             `json:"runtime_mode"`
 	RuntimeConfig      []byte             `json:"runtime_config"`
-	Visibility         string             `json:"visibility"`
+	Scope              string             `json:"scope"`
 	Status             string             `json:"status"`
 	MaxConcurrentTasks int32              `json:"max_concurrent_tasks"`
 	OwnerID            pgtype.UUID        `json:"owner_id"`
@@ -59,7 +59,7 @@ type AgentRuntime struct {
 	UpdatedAt      pgtype.Timestamptz `json:"updated_at"`
 	OwnerID        pgtype.UUID        `json:"owner_id"`
 	LegacyDaemonID pgtype.Text        `json:"legacy_daemon_id"`
-	Visibility     string             `json:"visibility"`
+	Scope          string             `json:"scope"`
 	ProfileID      pgtype.UUID        `json:"profile_id"`
 }
 
@@ -388,6 +388,8 @@ type Issue struct {
 	FirstExecutedAt    pgtype.Timestamptz `json:"first_executed_at"`
 	StartDate          pgtype.Date        `json:"start_date"`
 	Metadata           []byte             `json:"metadata"`
+	Scope              string             `json:"scope"`
+	OwnerID            pgtype.UUID        `json:"owner_id"`
 }
 
 type IssueDependency struct {
@@ -566,6 +568,8 @@ type Project struct {
 	CreatedAt   pgtype.Timestamptz `json:"created_at"`
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 	Priority    string             `json:"priority"`
+	Scope       string             `json:"scope"`
+	OwnerID     pgtype.UUID        `json:"owner_id"`
 }
 
 type ProjectResource struct {
@@ -932,7 +936,7 @@ type Squad struct {
 	AvatarUrl    pgtype.Text        `json:"avatar_url"`
 	Instructions string             `json:"instructions"`
 	SopProfile   []byte             `json:"sop_profile"`
-	Visibility   string             `json:"visibility"`
+	Scope        string             `json:"scope"`
 }
 
 type SquadMember struct {

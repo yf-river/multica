@@ -313,9 +313,9 @@ func TestCompleteTaskClosesSquadSOPRun(t *testing.T) {
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent (
 			workspace_id, name, description, runtime_mode, runtime_config,
-			runtime_id, visibility, max_concurrent_tasks, owner_id, instructions
+			runtime_id, scope, max_concurrent_tasks, owner_id, instructions
 		)
-		VALUES ($1, 'pm', 'sop sync fixture', 'local', '{}'::jsonb, $2, 'private', 1, $3, '')
+		VALUES ($1, 'pm', 'sop sync fixture', 'local', '{}'::jsonb, $2, 'personal', 1, $3, '')
 		RETURNING id
 	`, testWorkspaceID, testRuntimeID, testUserID).Scan(&agentID); err != nil {
 		t.Fatalf("create agent: %v", err)
@@ -421,9 +421,9 @@ func TestFailTaskDoesNotCloseSquadSOPRunWhenIssueHasActiveContinuation(t *testin
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent (
 			workspace_id, name, description, runtime_mode, runtime_config,
-			runtime_id, visibility, max_concurrent_tasks, owner_id, instructions
+			runtime_id, scope, max_concurrent_tasks, owner_id, instructions
 		)
-		VALUES ($1, 'pm', 'sop failure continuation fixture', 'local', '{}'::jsonb, $2, 'private', 1, $3, '')
+		VALUES ($1, 'pm', 'sop failure continuation fixture', 'local', '{}'::jsonb, $2, 'personal', 1, $3, '')
 		RETURNING id
 	`, testWorkspaceID, testRuntimeID, testUserID).Scan(&agentID); err != nil {
 		t.Fatalf("create agent: %v", err)

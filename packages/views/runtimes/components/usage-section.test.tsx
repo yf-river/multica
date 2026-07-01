@@ -109,7 +109,7 @@ const RUNTIME: AgentRuntime = {
   device_info: "",
   metadata: {},
   owner_id: null,
-  visibility: "private",
+  scope: "personal",
   last_seen_at: null,
   created_at: "2026-05-01T00:00:00Z",
   updated_at: "2026-05-01T00:00:00Z",

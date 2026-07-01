@@ -164,7 +164,7 @@ async function findOrCreateHelper(
     const found = agents.find(
       (a) =>
         a.name === HELPER_AGENT_NAME &&
-        a.visibility === "workspace" &&
+        a.scope === "workspace" &&
         !a.archived_at,
     );
     if (found) return found;
@@ -175,8 +175,7 @@ async function findOrCreateHelper(
       instructions: HELPER_INSTRUCTIONS[lang],
       avatar_url: HELPER_AVATAR_URL,
       runtime_id: runtimeId,
-      visibility: "workspace",
-      max_concurrent_tasks: 6,
+      scope: "workspace",
       template: "multica_helper",
     });
   })();

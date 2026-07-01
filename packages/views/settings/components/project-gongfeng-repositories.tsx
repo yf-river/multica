@@ -4,7 +4,9 @@ import { useMemo, useState, type FormEvent, type ReactNode } from "react";
 import {
   AlertCircle,
   Ban,
+  Check,
   CheckCircle2,
+  ChevronDown,
   FolderGit,
   Info,
   KeyRound,
@@ -32,7 +34,16 @@ import type {
   WorkspaceRepoProbeResponse,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
+import {
+  Command,
+  CommandEmpty,
+  CommandGroup,
+  CommandInput,
+  CommandItem,
+  CommandList,
+} from "@multica/ui/components/ui/command";
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@multica/ui/components/ui/dialog";
+import { Popover, PopoverContent, PopoverTrigger } from "@multica/ui/components/ui/popover";
 import { AppLink } from "../../navigation";
 import { useT } from "../../i18n";
 
@@ -67,6 +78,7 @@ const GONGFENG_REPO_PRESETS = [
   { key: "gateway", label: "gateway", url: "https://git.code.tencent.com/ChainWeaver/ida/gateway" },
   { key: "ida-deployment", label: "ida-deployment", url: "https://git.code.tencent.com/ChainWeaver/ida/ida-deployment" },
 ];
+const BRANCH_PICKER_RENDER_LIMIT = 100;
 
 function workspaceRepoList(workspace: Workspace | null | undefined): WorkspaceRepo[] {
   return Array.isArray(workspace?.repos) ? workspace.repos : [];
@@ -328,26 +340,17 @@ function AddGongfengRepositoryDialog({
               })}
             </div>
           </div>
-          <label className="block space-y-1.5 text-xs">
+          <div className="block space-y-1.5 text-xs">
             <span className="font-medium text-muted-foreground">
               {t(($) => $.repositories.gongfeng_inventory.default_branch_field)}
             </span>
-            <select
+            <BranchPicker
+              branches={probe?.branches ?? []}
               value={selectedBranch}
-              onChange={(event) => setSelectedBranch(event.target.value)}
+              onChange={setSelectedBranch}
               disabled={!probeMatches || probing || saving}
-              className="h-9 w-full rounded-md border bg-background px-2 font-mono text-sm outline-none focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground"
-            >
-              {!probeMatches && (
-                <option value="">{t(($) => $.repositories.gongfeng_inventory.default_branch_probe_required)}</option>
-              )}
-              {probeMatches && probe?.branches.map((branch) => (
-                <option key={branch} value={branch}>
-                  {branch}
-                </option>
-              ))}
-            </select>
-          </label>
+            />
+          </div>
           {probeError && (
             <div className="rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
               {probeError}
@@ -374,6 +377,96 @@ function AddGongfengRepositoryDialog({
         </form>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function BranchPicker({
+  branches,
+  value,
+  onChange,
+  disabled,
+}: {
+  branches: string[];
+  value: string;
+  onChange: (value: string) => void;
+  disabled: boolean;
+}) {
+  const { t } = useT("settings");
+  const [open, setOpen] = useState(false);
+  const [search, setSearch] = useState("");
+  const query = search.trim().toLowerCase();
+  const filtered = useMemo(
+    () =>
+      query
+        ? branches.filter((branch) => branch.toLowerCase().includes(query))
+        : branches,
+    [branches, query],
+  );
+  const visibleBranches = filtered.slice(0, BRANCH_PICKER_RENDER_LIMIT);
+  const hiddenMatchCount = Math.max(0, filtered.length - visibleBranches.length);
+  const triggerLabel =
+    value ||
+    t(($) => $.repositories.gongfeng_inventory.default_branch_probe_required);
+
+  const selectBranch = (branch: string) => {
+    onChange(branch);
+    setOpen(false);
+    setSearch("");
+  };
+
+  return (
+    <Popover
+      open={open}
+      onOpenChange={(nextOpen) => {
+        setOpen(nextOpen);
+        if (!nextOpen) setSearch("");
+      }}
+    >
+      <PopoverTrigger
+        type="button"
+        disabled={disabled}
+        className="flex h-9 w-full min-w-0 items-center gap-2 rounded-md border bg-background px-2 text-left font-mono text-sm outline-none transition-colors hover:bg-muted focus:ring-2 focus:ring-ring disabled:cursor-not-allowed disabled:bg-muted disabled:text-muted-foreground disabled:opacity-70"
+      >
+        <span className="min-w-0 flex-1 truncate">{triggerLabel}</span>
+        <ChevronDown className={`size-4 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-180" : ""}`} />
+      </PopoverTrigger>
+      <PopoverContent align="start" className="w-[var(--anchor-width)] p-0">
+        <Command shouldFilter={false}>
+          <CommandInput
+            placeholder={t(($) => $.repositories.gongfeng_inventory.branch_search_placeholder)}
+            value={search}
+            onValueChange={setSearch}
+          />
+          <CommandList className="max-h-72">
+            {visibleBranches.length === 0 && (
+              <CommandEmpty>{t(($) => $.repositories.gongfeng_inventory.branch_search_empty)}</CommandEmpty>
+            )}
+            {visibleBranches.length > 0 && (
+              <CommandGroup>
+                {visibleBranches.map((branch) => (
+                  <CommandItem
+                    key={branch}
+                    value={branch}
+                    onSelect={() => selectBranch(branch)}
+                    className="font-mono"
+                  >
+                    <span className="min-w-0 flex-1 truncate">{branch}</span>
+                    {branch === value && <Check className="size-4 shrink-0 text-primary" />}
+                  </CommandItem>
+                ))}
+              </CommandGroup>
+            )}
+            {hiddenMatchCount > 0 && (
+              <div className="border-t px-3 py-2 text-xs text-muted-foreground">
+                {t(($) => $.repositories.gongfeng_inventory.branch_search_more, {
+                  count: hiddenMatchCount,
+                })}
+              </div>
+            )}
+          </CommandList>
+        </Command>
+      </PopoverContent>
+    </Popover>
   );
 }
 

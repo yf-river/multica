@@ -697,8 +697,8 @@ func TestCreateRetryTask_InheritsIsLeaderTask(t *testing.T) {
 // TestCreateComment_SquadMentionPrivateLeaderBlocksPlainMember verifies that
 // a plain workspace member cannot trigger a private squad leader via @squad
 // mention. This is the regression test for the P1 finding: without the
-// canAccessPrivateAgent gate in the squad mention branch, a member could
-// bypass the private-agent restriction by mentioning the squad instead of
+// canAccessPersonalAgent gate in the squad mention branch, a member could
+// bypass the personal-agent restriction by mentioning the squad instead of
 // the agent directly.
 func TestCreateComment_SquadMentionPrivateLeaderBlocksPlainMember(t *testing.T) {
 	if testHandler == nil || testPool == nil {
@@ -706,10 +706,10 @@ func TestCreateComment_SquadMentionPrivateLeaderBlocksPlainMember(t *testing.T) 
 	}
 	ctx := context.Background()
 
-	// Use privateAgentTestFixture to get a private agent + plain member.
-	agentID, _, memberID := privateAgentTestFixture(t)
+	// Use personalAgentTestFixture to get a personal agent + plain member.
+	agentID, _, memberID := personalAgentTestFixture(t)
 
-	// Create a squad with the private agent as leader.
+	// Create a squad with the personal agent as leader.
 	var squadID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
@@ -726,7 +726,7 @@ func TestCreateComment_SquadMentionPrivateLeaderBlocksPlainMember(t *testing.T) 
 	var issueID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (workspace_id, creator_type, creator_id, title)
-		VALUES ($1, 'member', $2, 'private leader squad mention test')
+		VALUES ($1, 'member', $2, 'personal leader squad mention test')
 		RETURNING id
 	`, testWorkspaceID, memberID).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
@@ -748,7 +748,7 @@ func TestCreateComment_SquadMentionPrivateLeaderBlocksPlainMember(t *testing.T) 
 		t.Fatalf("CreateComment: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 
-	// The private leader must NOT have a queued task — plain member lacks access.
+	// The personal leader must NOT have a queued task — plain member lacks access.
 	var count int
 	if err := testPool.QueryRow(ctx,
 		`SELECT count(*) FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'`,
@@ -757,7 +757,7 @@ func TestCreateComment_SquadMentionPrivateLeaderBlocksPlainMember(t *testing.T) 
 		t.Fatalf("count tasks: %v", err)
 	}
 	if count != 0 {
-		t.Fatalf("private leader got %d queued tasks from plain member squad mention; want 0 (access denied)", count)
+		t.Fatalf("personal leader got %d queued tasks from plain member squad mention; want 0 (access denied)", count)
 	}
 }
 

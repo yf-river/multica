@@ -62,7 +62,7 @@ function fakeQc(data: {
     id: string;
     name: string;
     archived_at: string | null;
-    visibility?: "workspace" | "private";
+    scope?: "workspace" | "personal";
     owner_id?: string | null;
   }>;
   squads?: Array<{
@@ -116,7 +116,7 @@ describe("createMentionSuggestion", () => {
           id: "a1",
           name: "Aegis",
           archived_at: null,
-          visibility: "workspace",
+          scope: "workspace",
           owner_id: null,
         },
       ],
@@ -221,7 +221,7 @@ describe("createMentionSuggestion", () => {
           id: "a-personal-bob",
           name: "Atlas",
           archived_at: null,
-          visibility: "private",
+          scope: "personal",
           owner_id: "u2",
         },
         // Alice's own personal agent — should be visible.
@@ -229,7 +229,7 @@ describe("createMentionSuggestion", () => {
           id: "a-personal-alice",
           name: "Athena",
           archived_at: null,
-          visibility: "private",
+          scope: "personal",
           owner_id: "u1",
         },
         // Workspace agent — visible to everyone.
@@ -237,7 +237,7 @@ describe("createMentionSuggestion", () => {
           id: "a-shared",
           name: "Aether",
           archived_at: null,
-          visibility: "workspace",
+          scope: "workspace",
           owner_id: "u2",
         },
       ],
@@ -267,7 +267,7 @@ describe("createMentionSuggestion", () => {
           id: "a-personal-bob",
           name: "Atlas",
           archived_at: null,
-          visibility: "private",
+          scope: "personal",
           owner_id: "u2",
         },
       ],
@@ -316,7 +316,7 @@ describe("createMentionSuggestion", () => {
   it("shows only current/recent chat context before the user types a query", () => {
     const qc = fakeQc({
       members: [{ user_id: "u1", name: "Alice", role: "member" }],
-      agents: [{ id: "a1", name: "Aegis", archived_at: null, visibility: "workspace", owner_id: null }],
+      agents: [{ id: "a1", name: "Aegis", archived_at: null, scope: "workspace", owner_id: null }],
       issues: [{ id: "i-cache", identifier: "MUL-9", title: "Cached", status: "todo" }],
     });
     searchIssuesMock.mockReturnValue(new Promise(() => {}));
@@ -337,7 +337,7 @@ describe("createMentionSuggestion", () => {
   it("prepends current/recent chat context without removing normal mention targets after the user types", () => {
     const qc = fakeQc({
       members: [{ user_id: "u1", name: "Alice", role: "member" }],
-      agents: [{ id: "a1", name: "Aegis", archived_at: null, visibility: "workspace", owner_id: null }],
+      agents: [{ id: "a1", name: "Aegis", archived_at: null, scope: "workspace", owner_id: null }],
       issues: [{ id: "i-cache", identifier: "MUL-9", title: "Cached", status: "todo" }],
     });
     searchIssuesMock.mockReturnValue(new Promise(() => {}));
@@ -450,7 +450,7 @@ describe("createMentionSuggestion", () => {
     const qc = fakeQc({
       members: [{ user_id: "u1", name: "Alice", role: "member" }],
       agents: [
-        { id: "a1", name: "魏和尚", archived_at: null, visibility: "workspace", owner_id: null },
+        { id: "a1", name: "魏和尚", archived_at: null, scope: "workspace", owner_id: null },
       ],
     });
     searchIssuesMock.mockReturnValue(new Promise(() => {}));

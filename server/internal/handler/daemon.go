@@ -424,7 +424,7 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 				UpdatedAt:      prow.UpdatedAt,
 				OwnerID:        prow.OwnerID,
 				LegacyDaemonID: prow.LegacyDaemonID,
-				Visibility:     prow.Visibility,
+				Scope:          prow.Scope,
 				ProfileID:      prow.ProfileID,
 			}
 		} else {
@@ -468,7 +468,7 @@ func (h *Handler) DaemonRegister(w http.ResponseWriter, r *http.Request) {
 				UpdatedAt:      row.UpdatedAt,
 				OwnerID:        row.OwnerID,
 				LegacyDaemonID: row.LegacyDaemonID,
-				Visibility:     row.Visibility,
+				Scope:          row.Scope,
 				ProfileID:      row.ProfileID,
 			}
 		}

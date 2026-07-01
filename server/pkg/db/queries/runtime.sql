@@ -95,14 +95,27 @@ DO UPDATE SET
     updated_at = now()
 RETURNING *, (xmax = 0) AS inserted;
 
--- name: UpdateAgentRuntimeVisibility :one
--- Toggles a runtime between 'private' (only owner can bind agents) and
--- 'public' (any workspace member can). Default for new rows is 'private'
--- (see migration 083). Gated at the handler layer to owner / workspace
--- admin only.
+-- name: UpdateAgentRuntimeScope :one
+-- Toggles a runtime between 'personal' (only owner can bind same-owner
+-- personal agents) and 'workspace' (workspace agents can bind it).
 UPDATE agent_runtime
-SET visibility = @visibility, updated_at = now()
+SET scope = @scope, updated_at = now()
 WHERE id = @id
+RETURNING *;
+
+-- name: CountWorkspaceAgentsByRuntime :one
+SELECT count(*) FROM agent
+WHERE runtime_id = $1
+  AND archived_at IS NULL
+  AND scope = 'workspace';
+
+-- name: OpenPersonalAgentsByRuntimeOwner :many
+UPDATE agent
+SET scope = 'workspace', updated_at = now()
+WHERE runtime_id = $1
+  AND owner_id = $2
+  AND archived_at IS NULL
+  AND scope = 'personal'
 RETURNING *;
 
 -- name: MergeAgentRuntimeMetadata :exec

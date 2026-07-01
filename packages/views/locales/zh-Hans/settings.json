@@ -26,7 +26,6 @@
       "repositories": "代码仓库",
       "github": "GitHub",
       "integrations": "集成",
-      "labs": "实验室",
       "members": "成员"
     }
   },
@@ -99,7 +98,12 @@
       "save": "保存凭据",
       "status_unset": "未设置",
       "status_configured": "已设置",
-      "status_failed": "校验失败"
+      "status_failed": "校验失败",
+      "info_injected_vars": "注入变量",
+      "info_binding": "当前绑定",
+      "info_binding_empty": "未配置",
+      "info_mode": "凭据方式",
+      "test_passed": "连接测试通过"
     },
     "gongfeng_credential": {
       "title": "工蜂访问凭据",
@@ -157,11 +161,6 @@
     "cancel": "取消",
     "confirm": "删除工作区",
     "deleting": "删除中..."
-  },
-  "labs": {
-    "section_placeholder_title": "暂无实验",
-    "section_placeholder_description": "实验性功能上线后会出现在这里。当前实验室页面是空的。",
-    "toast_failed": "更新设置失败"
   },
   "github": {
     "page_description": "连接 GitHub App、控制 Pull Request 如何出现在 Multica 中，并决定智能体在 commit 记录里留下哪些痕迹。",
@@ -300,6 +299,9 @@
       "default_branch_field": "默认分支",
       "default_branch_placeholder": "检测仓库后选择默认分支",
       "default_branch_probe_required": "请先检测仓库链接",
+      "branch_search_placeholder": "搜索分支",
+      "branch_search_empty": "没有匹配的分支",
+      "branch_search_more": "还有 {{count}} 个匹配分支，请继续输入缩小范围。",
       "cancel": "取消",
       "create": "添加",
       "creating": "添加中...",

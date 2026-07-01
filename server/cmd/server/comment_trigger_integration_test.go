@@ -143,7 +143,7 @@ func createSecondAgent(t *testing.T) string {
 	resp = authRequest(t, "POST", "/api/agents?workspace_id="+testWorkspaceID, map[string]any{
 		"name":       "Second Test Agent",
 		"runtime_id": runtimeID,
-		"visibility": "workspace",
+		"scope": "workspace",
 	})
 	if resp.StatusCode != 201 {
 		body, _ := io.ReadAll(resp.Body)

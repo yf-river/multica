@@ -114,7 +114,7 @@ function makeAgent(overrides: Record<string, unknown> = {}) {
     runtime_mode: "local" as const,
     runtime_config: {},
     custom_args: [],
-    visibility: "private" as const,
+    scope: "personal" as const,
     status: "idle" as const,
     max_concurrent_tasks: 1,
     model: "",

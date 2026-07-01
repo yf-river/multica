@@ -28,6 +28,11 @@ import {
   TooltipTrigger,
 } from "@multica/ui/components/ui/tooltip";
 import { ActorAvatar } from "../../common/actor-avatar";
+import {
+  runtimeResourceScope,
+  ResourceScopeBadge,
+  resourceSegmentedOptionClass,
+} from "../../common/resource-scope";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
 import { AppLink, useNavigation } from "../../navigation";
 import { availabilityConfig, workloadConfig } from "../../agents/presence";
@@ -506,36 +511,22 @@ function DiagnosticsCard({
   );
 }
 
-// VisibilityReadout renders a static "Private" / "Public" pill for users
-// who can't edit the runtime. The description used to sit under the chip;
-// it now lives in the hover tooltip so the Diagnostics column stays compact
-// and matches the surrounding sections. Older backends that omit the field
-// render as "Private" to match the strict default.
+// VisibilityReadout renders a static "Personal" / "Workspace" pill for users
+// who can't edit the runtime.
 function VisibilityReadout({ runtime }: { runtime: AgentRuntime }) {
   const { t } = useT("runtimes");
-  const visibility = runtime.visibility === "public" ? "public" : "private";
-  const Icon = visibility === "public" ? Globe : Lock;
+  const scope = runtime.scope === "workspace" ? "workspace" : "personal";
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span className="inline-flex items-center gap-1.5 rounded-md border bg-muted/30 px-2 py-1.5 text-xs">
-            <Icon className="h-3 w-3 text-muted-foreground" />
-            <span className="font-medium">
-              {t(($) => $.detail.visibility_label[visibility])}
-            </span>
-          </span>
-        }
-      />
-      <TooltipContent>
-        {t(($) => $.detail.visibility_hint[visibility])}
-      </TooltipContent>
-    </Tooltip>
+    <ResourceScopeBadge
+      scope={runtimeResourceScope(scope)}
+      label={t(($) => $.detail.visibility_label[scope])}
+      tooltip={t(($) => $.detail.visibility_hint[scope])}
+    />
   );
 }
 
 // VisibilityEditor lets the runtime owner (or workspace admin) flip
-// public↔private. The PATCH endpoint also re-checks; this is a UI gate, not
+// personal↔workspace. The PATCH endpoint also re-checks; this is a UI gate, not
 // a security boundary. Per-choice description text lives in the hover
 // tooltip so the two buttons stay a tight icon+label pair instead of the
 // previous two-line block that competed with the surrounding cards.
@@ -543,17 +534,17 @@ function VisibilityEditor({ runtime }: { runtime: AgentRuntime }) {
   const { t } = useT("runtimes");
   const wsId = useWorkspaceId();
   const updateRuntime = useUpdateRuntime(wsId);
-  const current = runtime.visibility === "public" ? "public" : "private";
+  const current = runtime.scope === "workspace" ? "workspace" : "personal";
 
-  const flip = (next: "private" | "public") => {
+  const flip = (next: "personal" | "workspace") => {
     if (next === current) return;
     updateRuntime.mutate(
-      { runtimeId: runtime.id, patch: { visibility: next } },
+      { runtimeId: runtime.id, patch: { scope: next } },
       {
         onSuccess: () =>
           toast.success(
             t(($) => $.detail.visibility_toast_updated, {
-              visibility: t(($) => $.detail.visibility_label[next]),
+              scope: t(($) => $.detail.visibility_label[next]),
             }),
           ),
         onError: (err) =>
@@ -567,22 +558,22 @@ function VisibilityEditor({ runtime }: { runtime: AgentRuntime }) {
   };
 
   return (
-    <div className="inline-flex items-center gap-0.5 rounded-md bg-muted p-0.5">
+    <div className="grid grid-cols-2 gap-1 rounded-lg border bg-muted/30 p-1">
       <VisibilityChoice
-        active={current === "private"}
+        active={current === "personal"}
         icon={<Lock className="h-3 w-3" />}
-        label={t(($) => $.detail.visibility_label.private)}
-        tooltip={t(($) => $.detail.visibility_hint.private)}
+        label={t(($) => $.detail.visibility_label.personal)}
+        tooltip={t(($) => $.detail.visibility_hint.personal)}
         disabled={updateRuntime.isPending}
-        onClick={() => flip("private")}
+        onClick={() => flip("personal")}
       />
       <VisibilityChoice
-        active={current === "public"}
+        active={current === "workspace"}
         icon={<Globe className="h-3 w-3" />}
-        label={t(($) => $.detail.visibility_label.public)}
-        tooltip={t(($) => $.detail.visibility_hint.public)}
+        label={t(($) => $.detail.visibility_label.workspace)}
+        tooltip={t(($) => $.detail.visibility_hint.workspace)}
         disabled={updateRuntime.isPending}
-        onClick={() => flip("public")}
+        onClick={() => flip("workspace")}
       />
     </div>
   );
@@ -611,11 +602,9 @@ function VisibilityChoice({
             type="button"
             onClick={onClick}
             disabled={disabled}
-            className={`inline-flex items-center gap-1.5 rounded px-2 py-1 text-xs font-medium transition-colors ${
-              active
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            } ${disabled ? "cursor-not-allowed opacity-60" : ""}`}
+            className={`inline-flex items-center justify-center gap-1.5 ${resourceSegmentedOptionClass(active)} ${
+              disabled ? "cursor-not-allowed opacity-60" : ""
+            }`}
           >
             <span className="shrink-0">{icon}</span>
             <span>{label}</span>

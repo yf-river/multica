@@ -13,7 +13,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { workspaceKeys } from "@multica/core/workspace/queries";
 import type {
   Agent,
-  AgentVisibility,
+  AgentScope,
   RuntimeDevice,
   MemberWithUser,
   CreateAgentRequest,
@@ -32,8 +32,6 @@ import { Label } from "@multica/ui/components/ui/label";
 import { toast } from "sonner";
 import {
   AGENT_DESCRIPTION_MAX_LENGTH,
-  VISIBILITY_DESCRIPTION,
-  VISIBILITY_LABEL,
 } from "@multica/core/agents";
 import { CharCounter } from "./char-counter";
 import { useT } from "../../i18n";
@@ -53,7 +51,7 @@ export function CreateAgentDialog({
   members: MemberWithUser[];
   currentUserId: string | null;
   // When provided, the dialog opens in "Duplicate" mode: the visible
-  // fields (name / description / runtime / visibility / model) are
+  // fields (name / description / runtime / scope / model) are
   // pre-populated from this agent, and the hidden fields
   // (instructions / custom_args / custom_env / max_concurrent_tasks)
   // are forwarded to the create call so the new agent is a true clone.
@@ -83,8 +81,8 @@ export function CreateAgentDialog({
     template ? `${template.name}${t(($) => $.create_dialog.duplicate_copy_suffix)}` : "",
   );
   const [description, setDescription] = useState(template?.description ?? "");
-  const [visibility, setVisibility] = useState<AgentVisibility>(
-    template?.visibility ?? "workspace",
+  const [scope, setScope] = useState<AgentScope>(
+    template?.scope ?? "personal",
   );
   const [model, setModel] = useState(template?.model ?? "");
   const [instructions, setInstructions] = useState(template?.instructions ?? "");
@@ -103,7 +101,14 @@ export function CreateAgentDialog({
     const templateRuntime = template?.runtime_id
       ? runtimes.find((r) => r.id === template.runtime_id)
       : undefined;
-    if (templateRuntime && isRuntimeUsableForUser(templateRuntime, currentUserId)) {
+    if (
+      templateRuntime &&
+      isRuntimeUsableForUser(
+        templateRuntime,
+        currentUserId,
+        template?.scope ?? "personal",
+      )
+    ) {
       return templateRuntime.id;
     }
     return "";
@@ -116,7 +121,7 @@ export function CreateAgentDialog({
   // submit a request the backend will reject with 403.
   const selectedRuntimeLocked =
     selectedRuntime != null &&
-    !isRuntimeUsableForUser(selectedRuntime, currentUserId);
+    !isRuntimeUsableForUser(selectedRuntime, currentUserId, scope);
 
   // Shared squad-join follow-up. Returns nothing — the caller has
   // already shown its create-success toast; we only need to surface a
@@ -158,7 +163,7 @@ export function CreateAgentDialog({
         name: name.trim(),
         description: description.trim(),
         runtime_id: selectedRuntime.id,
-        visibility,
+        scope,
         model: model.trim() || undefined,
         instructions: trimmedInstructions || undefined,
         avatar_url: avatarUrl ?? undefined,
@@ -286,39 +291,39 @@ export function CreateAgentDialog({
             </div>
 
             <div>
-              <Label className="text-xs text-muted-foreground">{t(($) => $.create_dialog.visibility_label)}</Label>
+              <Label className="text-xs text-muted-foreground">{t(($) => $.create_dialog.scope_label)}</Label>
               <div className="mt-1.5 flex gap-2">
                 <button
                   type="button"
-                  onClick={() => setVisibility("workspace")}
+                  onClick={() => setScope("workspace")}
                   className={`flex flex-1 items-center gap-2 rounded-lg border px-3 py-2.5 text-sm transition-colors ${
-                    visibility === "workspace"
+                    scope === "workspace"
                       ? "border-primary bg-primary/5"
                       : "border-border hover:bg-muted"
                   }`}
                 >
                   <Globe className="h-4 w-4 shrink-0 text-muted-foreground" />
                   <div className="text-left">
-                    <div className="font-medium">{VISIBILITY_LABEL.workspace}</div>
+                    <div className="font-medium">{t(($) => $.resource_scope.workspace.label)}</div>
                     <div className="text-xs text-muted-foreground">
-                      {VISIBILITY_DESCRIPTION.workspace}
+                      {t(($) => $.resource_scope.workspace.tooltip)}
                     </div>
                   </div>
                 </button>
                 <button
                   type="button"
-                  onClick={() => setVisibility("private")}
+                  onClick={() => setScope("personal")}
                   className={`flex flex-1 items-center gap-2 rounded-lg border px-3 py-2.5 text-sm transition-colors ${
-                    visibility === "private"
+                    scope === "personal"
                       ? "border-primary bg-primary/5"
                       : "border-border hover:bg-muted"
                   }`}
                 >
                   <Lock className="h-4 w-4 shrink-0 text-muted-foreground" />
                   <div className="text-left">
-                    <div className="font-medium">{VISIBILITY_LABEL.private}</div>
+                    <div className="font-medium">{t(($) => $.resource_scope.personal.label)}</div>
                     <div className="text-xs text-muted-foreground">
-                      {VISIBILITY_DESCRIPTION.private}
+                      {t(($) => $.resource_scope.personal.tooltip)}
                     </div>
                   </div>
                 </button>
@@ -330,6 +335,7 @@ export function CreateAgentDialog({
               runtimesLoading={runtimesLoading}
               members={members}
               currentUserId={currentUserId}
+              targetScope={scope}
               selectedRuntimeId={selectedRuntimeId}
               onSelect={setSelectedRuntimeId}
             />
@@ -379,7 +385,7 @@ export function CreateAgentDialog({
             }
             title={
               selectedRuntimeLocked
-                ? t(($) => $.create_dialog.runtime_private_locked_tooltip)
+                ? t(($) => $.create_dialog.runtime_personal_locked_tooltip)
                 : undefined
             }
           >

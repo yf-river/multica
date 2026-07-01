@@ -2354,12 +2354,12 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Reuse the same workspace-membership / archived / private-agent
+	// Reuse the same workspace-membership / archived / personal-agent
 	// ownership rules as `validateAssigneePair` so a user can't POST a
-	// private agent_id they shouldn't be able to dispatch (the frontend
+	// personal agent_id they shouldn't be able to dispatch (the frontend
 	// filters them out, but the handler is the trust boundary). Squad
 	// picks reach this with the resolved leader agent; the same rules
-	// apply — a private leader behind a squad the user can't reach
+	// apply — a personal leader behind a squad the user can't reach
 	// should still be rejected.
 	if status, msg := h.validateAssigneePair(
 		r.Context(), r, workspaceID,
@@ -3134,10 +3134,10 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 
 // validateAssigneePair verifies the (assignee_type, assignee_id) pair refers
 // to an existing entity in the workspace. For agent assignees it also rejects
-// archived agents and runs the private-agent gate via canAccessPrivateAgent
+// archived agents and runs the personal-agent gate via canAccessPersonalAgent
 // — assigning an issue is a task-producing surface, so it must use the same
 // predicate as chat / @-mention / history. Agent callers (X-Agent-ID) bypass
-// the gate so A2A flows can still hand work off to private agents.
+// the gate so A2A flows can still hand work off to personal agents.
 //
 // Returns (statusCode, errorMessage). statusCode == 0 means the pair is valid;
 // callers should treat any non-zero status as a rejection and surface it back
@@ -3176,8 +3176,8 @@ func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, wor
 			return http.StatusBadRequest, "cannot assign to archived agent"
 		}
 		actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-		if !h.canAccessPrivateAgent(ctx, agent, actorType, actorID, workspaceID) {
-			return http.StatusForbidden, "cannot assign to private agent"
+		if !h.canAccessPersonalAgent(ctx, agent, actorType, actorID, workspaceID) {
+			return http.StatusForbidden, "cannot assign to personal agent"
 		}
 		return 0, ""
 	case "squad":
@@ -3199,8 +3199,8 @@ func (h *Handler) validateAssigneePair(ctx context.Context, r *http.Request, wor
 		if err != nil || leader.ArchivedAt.Valid {
 			return http.StatusBadRequest, "squad leader is archived; cannot assign to this squad"
 		}
-		if !h.canAccessPrivateAgent(ctx, leader, actorType, actorID, workspaceID) {
-			return http.StatusForbidden, "cannot assign to squad with private leader"
+		if !h.canAccessPersonalAgent(ctx, leader, actorType, actorID, workspaceID) {
+			return http.StatusForbidden, "cannot assign to squad with personal leader"
 		}
 		return 0, ""
 	default:
@@ -3225,11 +3225,11 @@ func (h *Handler) shouldEnqueueAgentTask(ctx context.Context, issue db.Issue) bo
 // conversational and can happen at any stage, including after completion
 // (e.g. follow-up questions on a done issue).
 //
-// Mirrors the private-agent gate that computeMentionedAgentCommentTriggers applies on the
-// @mention path: once an owner/admin assigns a private agent to an issue, the
+// Mirrors the personal-agent gate that computeMentionedAgentCommentTriggers applies on the
+// @mention path: once an owner/admin assigns a personal agent to an issue, the
 // agent's UUID is "welded" onto the issue and remains visible to every member
 // who can view it. Without this check any of those members could dispatch a new
-// task to the private agent simply by commenting (#3300).
+// task to the personal agent simply by commenting (#3300).
 func (h *Handler) shouldEnqueueOnComment(ctx context.Context, issue db.Issue, actorType, actorID string, opts commentTriggerComputeOptions) bool {
 	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "agent" || !issue.AssigneeID.Valid {
 		return false
@@ -3238,7 +3238,7 @@ func (h *Handler) shouldEnqueueOnComment(ctx context.Context, issue db.Issue, ac
 	if err != nil || !agent.RuntimeID.Valid || agent.ArchivedAt.Valid {
 		return false
 	}
-	if !h.canAccessPrivateAgent(ctx, agent, actorType, actorID, uuidToString(issue.WorkspaceID)) {
+	if !h.canAccessPersonalAgent(ctx, agent, actorType, actorID, uuidToString(issue.WorkspaceID)) {
 		return false
 	}
 	// Coalescing queue: allow enqueue when a task is running (so the agent

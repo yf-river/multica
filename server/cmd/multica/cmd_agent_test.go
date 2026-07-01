@@ -291,7 +291,7 @@ func TestAgentUpdateNoFieldsErrorPointsAtEnvCommand(t *testing.T) {
 	cmd.Flags().String("runtime-config", "", "")
 	cmd.Flags().String("model", "", "")
 	cmd.Flags().String("custom-args", "", "")
-	cmd.Flags().String("visibility", "", "")
+	cmd.Flags().String("scope", "", "")
 	cmd.Flags().String("status", "", "")
 	cmd.Flags().Int32("max-concurrent-tasks", 0, "")
 	cmd.Flags().String("output", "json", "")
@@ -1248,7 +1248,7 @@ func TestAgentGetTableIncludesAvatarURL(t *testing.T) {
 			"name":         "TestAgent",
 			"status":       "active",
 			"runtime_mode": "cloud",
-			"visibility":   "workspace",
+			"scope": "workspace",
 			"avatar_url":   "https://cdn.example.com/avatar.png",
 			"description":  "A test agent",
 		})

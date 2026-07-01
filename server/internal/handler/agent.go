@@ -51,7 +51,7 @@ type AgentResponse struct {
 	HasCustomEnv       bool   `json:"has_custom_env"`
 	CustomEnvKeyCount  int    `json:"custom_env_key_count"`
 	McpConfigRedacted  bool   `json:"mcp_config_redacted"`
-	Visibility         string `json:"visibility"`
+	Scope              string `json:"scope"`
 	Status             string `json:"status"`
 	MaxConcurrentTasks int32  `json:"max_concurrent_tasks"`
 	Model              string `json:"model"`
@@ -129,7 +129,7 @@ func agentToResponse(a db.Agent) AgentResponse {
 		McpConfig:          mcpConfig,
 		HasCustomEnv:       envKeyCount > 0,
 		CustomEnvKeyCount:  envKeyCount,
-		Visibility:         a.Visibility,
+		Scope:              a.Scope,
 		Status:             a.Status,
 		MaxConcurrentTasks: a.MaxConcurrentTasks,
 		Model:              a.Model.String,
@@ -607,14 +607,14 @@ func (h *Handler) ListAgents(w http.ResponseWriter, r *http.Request) {
 	}
 	alwaysRedact := workspaceAlwaysRedactSecrets(ws.Settings)
 
-	// Resolve the request actor once. Agents bypass the private-agent gate
+	// Resolve the request actor once. Agents bypass the personal-agent gate
 	// to preserve A2A collaboration; members must be in allowed_principals
-	// (agent owner or workspace owner/admin) to see private agents.
+	// (agent owner or workspace owner/admin) to see personal agents.
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
 	visible := make([]AgentResponse, 0, len(agents))
 	for _, a := range agents {
-		if a.Visibility == "private" && actorType == "member" {
-			if !memberAllowedForPrivateAgent(a, actorID, member.Role) {
+		if a.Scope == scopePersonal && actorType == "member" {
+			if !memberAllowedForPersonalAgent(a, actorID, member.Role) {
 				continue
 			}
 		}
@@ -643,12 +643,12 @@ func (h *Handler) GetAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Private-agent gate: members must be in allowed_principals to view
-	// (and therefore navigate to) a private agent. The 403 lets the front-end
+	// (and therefore navigate to) a personal agent. The 403 lets the front-end
 	// render an explicit "no access" placeholder instead of a 404 — see
 	// agent-detail-page.tsx.
 	workspaceID := uuidToString(agent.WorkspaceID)
 	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+	if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, workspaceID) {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return
 	}
@@ -694,7 +694,7 @@ type CreateAgentRequest struct {
 	CustomEnv          map[string]string `json:"custom_env"`
 	CustomArgs         []string          `json:"custom_args"`
 	McpConfig          json.RawMessage   `json:"mcp_config"`
-	Visibility         string            `json:"visibility"`
+	Scope              string            `json:"scope"`
 	MaxConcurrentTasks int32             `json:"max_concurrent_tasks"`
 	Model              string            `json:"model"`
 	ThinkingLevel      string            `json:"thinking_level"`
@@ -754,11 +754,14 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "runtime_id is required")
 		return
 	}
-	if req.Visibility == "" {
-		req.Visibility = "private"
+	scope, validScope := normalizeScope(req.Scope, scopePersonal)
+	if !validScope {
+		writeError(w, http.StatusBadRequest, "scope must be 'personal' or 'workspace'")
+		return
 	}
+	req.Scope = scope
 	if req.MaxConcurrentTasks == 0 {
-		req.MaxConcurrentTasks = 6
+		req.MaxConcurrentTasks = defaultAgentMaxConcurrentTasks
 	}
 
 	runtimeUUID, ok := parseUUIDOrBadRequest(w, req.RuntimeID, "runtime_id")
@@ -784,7 +787,11 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !canUseRuntimeForAgent(member, runtime) {
-		writeError(w, http.StatusForbidden, "this runtime is private; only its owner or a workspace admin can create agents on it")
+		writeError(w, http.StatusForbidden, "this runtime is personal; only its owner or a workspace admin can create agents on it")
+		return
+	}
+	if err := validateAgentRuntimeScope(req.Scope, parseUUID(ownerID), runtime); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -840,7 +847,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		RuntimeMode:        runtime.RuntimeMode,
 		RuntimeConfig:      rc,
 		RuntimeID:          runtime.ID,
-		Visibility:         req.Visibility,
+		Scope:              req.Scope,
 		MaxConcurrentTasks: req.MaxConcurrentTasks,
 		OwnerID:            parseUUID(ownerID),
 		CustomEnv:          ce,
@@ -850,7 +857,7 @@ func (h *Handler) CreateAgent(w http.ResponseWriter, r *http.Request) {
 		ThinkingLevel:      pgtype.Text{String: req.ThinkingLevel, Valid: req.ThinkingLevel != ""},
 	})
 	if err != nil {
-		// Unique constraint on agent name within its visibility/owner scope.
+		// Unique constraint on agent name within its scope/owner scope.
 		// Return a clear conflict error so the UI can show the right message.
 		if isAgentNameUniqueViolation(err) {
 			writeError(w, http.StatusConflict, fmt.Sprintf("an agent named %q already exists in this workspace", req.Name))
@@ -903,7 +910,7 @@ type UpdateAgentRequest struct {
 	// secret values with literal `****`. See MUL-2600.
 	CustomArgs         *[]string        `json:"custom_args"`
 	McpConfig          *json.RawMessage `json:"mcp_config"`
-	Visibility         *string          `json:"visibility"`
+	Scope              *string          `json:"scope"`
 	Status             *string          `json:"status"`
 	MaxConcurrentTasks *int32           `json:"max_concurrent_tasks"`
 	Model              *string          `json:"model"`
@@ -1088,6 +1095,8 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 	// runtime to validate a thinking_level change. Resolve once and reuse.
 	targetRuntimeID := existing.RuntimeID
 	targetProvider := ""
+	targetRuntime := db.AgentRuntime{}
+	haveTargetRuntime := false
 	if req.RuntimeID != nil {
 		runtimeUUID, ok := parseUUIDOrBadRequest(w, *req.RuntimeID, "runtime_id")
 		if !ok {
@@ -1102,23 +1111,51 @@ func (h *Handler) UpdateAgent(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		// Same gate as CreateAgent — prevents UpdateAgent from being used to
-		// re-bind an agent onto someone else's private runtime, which would
+		// re-bind an agent onto someone else's personal runtime, which would
 		// otherwise be a quiet end-run around the CreateAgent check.
 		member, ok := h.workspaceMember(w, r, uuidToString(existing.WorkspaceID))
 		if !ok {
 			return
 		}
 		if !canUseRuntimeForAgent(member, runtime) {
-			writeError(w, http.StatusForbidden, "this runtime is private; only its owner or a workspace admin can move agents onto it")
+			writeError(w, http.StatusForbidden, "this runtime is personal; only its owner or a workspace admin can move agents onto it")
 			return
 		}
 		params.RuntimeID = runtime.ID
 		params.RuntimeMode = pgtype.Text{String: runtime.RuntimeMode, Valid: true}
 		targetRuntimeID = runtime.ID
 		targetProvider = runtime.Provider
+		targetRuntime = runtime
+		haveTargetRuntime = true
 	}
-	if req.Visibility != nil {
-		params.Visibility = pgtype.Text{String: *req.Visibility, Valid: true}
+	if req.Scope != nil {
+		scope, valid := normalizeScope(*req.Scope, "")
+		if !valid {
+			writeError(w, http.StatusBadRequest, "scope must be 'personal' or 'workspace'")
+			return
+		}
+		params.Scope = pgtype.Text{String: scope, Valid: true}
+	}
+	if req.Scope != nil || req.RuntimeID != nil {
+		nextScope := existing.Scope
+		if req.Scope != nil {
+			nextScope = params.Scope.String
+		}
+		if !haveTargetRuntime {
+			runtime, err := h.Queries.GetAgentRuntimeForWorkspace(r.Context(), db.GetAgentRuntimeForWorkspaceParams{
+				ID:          targetRuntimeID,
+				WorkspaceID: existing.WorkspaceID,
+			})
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "invalid runtime_id")
+				return
+			}
+			targetRuntime = runtime
+		}
+		if err := validateAgentRuntimeScope(nextScope, existing.OwnerID, targetRuntime); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 	if req.Status != nil {
 		params.Status = pgtype.Text{String: *req.Status, Valid: true}
@@ -1413,11 +1450,11 @@ func (h *Handler) ListAgentTasks(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	// Run history is part of the private-agent gate ("查看历史会话"). Same
+	// Run history is part of the personal-agent gate ("查看历史会话"). Same
 	// 403 semantics as GetAgent.
 	workspaceID := uuidToString(agent.WorkspaceID)
 	actorType, actorID := h.resolveActor(r, requestUserID(r), workspaceID)
-	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+	if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, workspaceID) {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return
 	}

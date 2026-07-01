@@ -1,6 +1,6 @@
 -- name: CreateSquad :one
-INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, avatar_url, visibility, instructions, sop_profile)
-VALUES ($1, $2, $3, $4, $5, $6, COALESCE(sqlc.narg('visibility'), 'workspace'), COALESCE(sqlc.narg('instructions'), ''), COALESCE(sqlc.narg('sop_profile')::jsonb, '{}'::jsonb))
+INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, avatar_url, scope, instructions, sop_profile)
+VALUES ($1, $2, $3, $4, $5, $6, COALESCE(sqlc.narg('scope'), 'workspace'), COALESCE(sqlc.narg('instructions'), ''), COALESCE(sqlc.narg('sop_profile')::jsonb, '{}'::jsonb))
 RETURNING *;
 
 -- name: GetSquad :one
@@ -65,7 +65,7 @@ UPDATE squad SET
     description = COALESCE(sqlc.narg('description'), description),
     leader_id = COALESCE(sqlc.narg('leader_id'), leader_id),
     avatar_url = COALESCE(sqlc.narg('avatar_url'), avatar_url),
-    visibility = COALESCE(sqlc.narg('visibility'), visibility),
+    scope = COALESCE(sqlc.narg('scope'), scope),
     instructions = COALESCE(sqlc.narg('instructions'), instructions),
     sop_profile = COALESCE(sqlc.narg('sop_profile')::jsonb, sop_profile),
     updated_at = now()

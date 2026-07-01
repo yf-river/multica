@@ -3194,7 +3194,7 @@ func agentToMap(a db.Agent) map[string]any {
 		"avatar_url":           util.TextToPtr(a.AvatarUrl),
 		"runtime_mode":         a.RuntimeMode,
 		"runtime_config":       rc,
-		"visibility":           a.Visibility,
+		"scope":                a.Scope,
 		"status":               a.Status,
 		"max_concurrent_tasks": a.MaxConcurrentTasks,
 		"owner_id":             util.UUIDToPtr(a.OwnerID),

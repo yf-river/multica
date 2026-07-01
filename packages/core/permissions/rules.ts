@@ -42,8 +42,8 @@ export function canEditAgent(agent: Agent, ctx: PermissionContext): Decision {
 }
 
 /**
- * Assign an agent to an issue. Workspace-visibility agents are assignable by
- * any workspace member; private agents are restricted to their owner plus
+ * Assign an agent to an issue. Workspace-scope agents are assignable by
+ * any workspace member; personal agents are restricted to their owner plus
  * workspace admins/owners. Mirrors `issue.go:1471-1490`.
  */
 export function canAssignAgentToIssue(
@@ -53,13 +53,13 @@ export function canAssignAgentToIssue(
   if (ctx.userId === null) {
     return deny("not_authenticated", "请先登录后再分配智能体。");
   }
-  if (agent.visibility === "workspace") {
+  if (agent.scope === "workspace") {
     if (ctx.role === null) {
       return deny("not_member", "加入这个工作区后才能分配智能体。");
     }
     return ALLOW;
   }
-  // visibility === "private"
+  // scope === "personal"
   if (isAdminLike(ctx.role)) return ALLOW;
   if (agent.owner_id !== null && agent.owner_id === ctx.userId) return ALLOW;
   return deny(

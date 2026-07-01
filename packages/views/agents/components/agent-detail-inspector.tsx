@@ -45,7 +45,7 @@ import { ModelPicker } from "./inspector/model-picker";
 import { RuntimePicker } from "./inspector/runtime-picker";
 import { SkillAttach } from "./inspector/skill-attach";
 import { ThinkingPropRow } from "./inspector/thinking-prop-row";
-import { VisibilityPicker } from "./inspector/visibility-picker";
+import { ScopePicker } from "./inspector/scope-picker";
 import { LarkAgentBindButton } from "../../settings/components/lark-tab";
 
 interface InspectorProps {
@@ -128,6 +128,7 @@ export function AgentDetailInspector({
             runtimes={runtimes}
             members={members}
             currentUserId={currentUserId}
+            targetScope={agent.scope}
             canEdit={canEdit}
             onChange={(id) => update({ runtime_id: id })}
           />
@@ -150,10 +151,10 @@ export function AgentDetailInspector({
           onChange={(v) => update({ thinking_level: v })}
         />
         <PropRow label={t(($) => $.inspector.prop_visibility)} interactive={false}>
-          <VisibilityPicker
-            value={agent.visibility}
+          <ScopePicker
+            value={agent.scope}
             canEdit={canEdit}
-            onChange={(v) => update({ visibility: v })}
+            onChange={(v) => update({ scope: v })}
           />
         </PropRow>
         <PropRow label={t(($) => $.inspector.prop_concurrency)} interactive={false}>

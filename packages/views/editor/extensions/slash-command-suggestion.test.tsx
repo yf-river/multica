@@ -58,7 +58,7 @@ function agent(overrides: Partial<Agent>): Agent {
     runtime_mode: "local",
     runtime_config: {},
     custom_args: [],
-    visibility: "workspace",
+    scope: "workspace",
     status: "idle",
     max_concurrent_tasks: 1,
     model: "",
@@ -217,7 +217,7 @@ describe("slash command suggestion items", () => {
     expect(items(qc)).toEqual([]);
   });
 
-  it("excludes skills from private agents the user cannot access", () => {
+  it("excludes skills from personal agents the user cannot access", () => {
     chatState.selectedAgentId = "private-agent";
     const qc = fakeQc({
       members: [
@@ -227,7 +227,7 @@ describe("slash command suggestion items", () => {
       agents: [
         agent({
           id: "private-agent",
-          visibility: "private",
+          scope: "personal",
           owner_id: "u2",
           skills: [{ id: "private-skill", name: "secret", description: "" }],
         }),

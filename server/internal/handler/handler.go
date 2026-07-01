@@ -369,7 +369,7 @@ func requestUserID(r *http.Request) string {
 //
 // X-Agent-ID alone is not trusted: any workspace member can guess or observe
 // an agent's UUID, and a member-supplied X-Agent-ID would otherwise let that
-// member impersonate the agent and bypass the private-agent gate (#2359
+// member impersonate the agent and bypass the personal-agent gate (#2359
 // review). The daemon always pairs the two headers, so requiring both has
 // no effect on legitimate agent callers but closes the impersonation path.
 //

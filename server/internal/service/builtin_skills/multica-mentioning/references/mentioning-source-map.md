@@ -82,12 +82,12 @@ a pointer.
 | --- | --- |
 | agent archived / no runtime → `continue` (`RuntimeID` invalid or `ArchivedAt` set) | `server/internal/handler/comment.go:1451-1452` |
 | squad leader archived / no runtime → `continue` | `server/internal/handler/comment.go:1417-1423` |
-| private agent the actor cannot access → `continue` (`canAccessPrivateAgent`) | `server/internal/handler/comment.go:1454-1458` |
-| private squad leader the actor cannot trigger → `continue` (`canAccessPrivateAgent`) | `server/internal/handler/comment.go:1425-1428` |
+| personal agent the actor cannot access → `continue` (`canAccessPersonalAgent`) | `server/internal/handler/comment.go:1454-1458` |
+| personal squad leader the actor cannot trigger → `continue` (`canAccessPersonalAgent`) | `server/internal/handler/comment.go:1425-1428` |
 | already-pending dedup (agent) → shared pending-task helper → `continue` | `server/internal/handler/comment.go:1459-1463` |
 | already-pending dedup (squad leader) → shared pending-task helper → `continue` | `server/internal/handler/comment.go:1429-1433` |
-| `canAccessPrivateAgent` definition | `server/internal/handler/agent_access.go` (search `func (h *Handler) canAccessPrivateAgent`) |
-| `canEnqueueSquadLeader` (loads leader, delegates to `canAccessPrivateAgent`) | `server/internal/handler/agent_access.go:82-91` |
+| `canAccessPersonalAgent` definition | `server/internal/handler/agent_access.go` (search `func (h *Handler) canAccessPersonalAgent`) |
+| `canEnqueueSquadLeader` (loads leader, delegates to `canAccessPersonalAgent`) | `server/internal/handler/agent_access.go:82-91` |
 
 ## @all broadcast and assignee-trigger suppression
 

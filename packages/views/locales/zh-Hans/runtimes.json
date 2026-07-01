@@ -92,19 +92,19 @@
     "serving_title": "服务中",
     "serving_count_other": "{{count}} 个智能体",
     "no_agents": "还没有智能体绑定到这个运行时。",
-    "diagnostics_title": "诊断",
+    "diagnostics_title": "运行时设置",
     "diagnostics_cli": "CLI",
-    "diagnostics_visibility": "可见性",
+    "diagnostics_visibility": "使用范围",
     "visibility_label": {
-      "private": "私有",
-      "public": "公开"
+      "personal": "个人",
+      "workspace": "工作区"
     },
     "visibility_hint": {
-      "private": "仅你和工作区管理员可以在此运行时上创建智能体。",
-      "public": "工作区内任何成员都可以在此运行时上创建智能体。"
+      "personal": "个人 · 仅你可以在此运行时上创建个人智能体。",
+      "workspace": "工作区 · 工作区成员可以在此运行时上创建工作区智能体。"
     },
-    "visibility_toast_updated": "可见性已设为「{{visibility}}」",
-    "visibility_toast_failed": "更新可见性失败",
+    "visibility_toast_updated": "使用范围已设为「{{scope}}」",
+    "visibility_toast_failed": "更新使用范围失败",
     "delete_dialog": {
       "self_heal_notice": "该运行时由正在运行的本地守护进程托管。删除会成功，但守护进程会在数秒内重新注册一个新的运行时——若想彻底移除，请先停止守护进程。",
       "light": {
@@ -139,7 +139,7 @@
           "workload_working": "运行中",
           "workload_queued": "排队中",
           "visibility_workspace": "工作区",
-          "visibility_private": "私有"
+          "visibility_private": "个人"
         }
       }
     },

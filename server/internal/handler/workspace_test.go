@@ -592,7 +592,7 @@ RETURNING id
 	if err := testPool.QueryRow(ctx, `
 INSERT INTO agent (
     workspace_id, name, description, runtime_mode, runtime_config,
-    runtime_id, visibility, max_concurrent_tasks, owner_id
+    runtime_id, scope, max_concurrent_tasks, owner_id
 )
 VALUES ($1, 'Target Agent', '', 'local', '{}'::jsonb, $2, 'workspace', 1, $3)
 RETURNING id

@@ -7,7 +7,6 @@ import {
   ArchiveRestore,
   Bot,
   Loader2,
-  Lock,
   Plus,
   X,
 } from "lucide-react";
@@ -25,7 +24,6 @@ import {
   agentRunCounts30dOptions,
   useWorkspaceActivityMap,
   useWorkspacePresenceMap,
-  VISIBILITY_TOOLTIP,
   type AgentPresenceDetail,
 } from "@multica/core/agents";
 import {
@@ -67,11 +65,6 @@ import {
   type ListGridSortDirection,
 } from "@multica/ui/components/ui/list-grid";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@multica/ui/components/ui/tooltip";
 import { useNavigation, useRowLink } from "../../navigation";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { PageHeader } from "../../layout/page-header";
@@ -79,6 +72,7 @@ import { availabilityConfig } from "../presence";
 import { CreateAgentDialog } from "./create-agent-dialog";
 import { AgentRowActions } from "./agent-row-actions";
 import { AgentListToolbar } from "./agent-list-toolbar";
+import { ScopeBadge } from "./scope-badge";
 import { useT } from "../../i18n";
 
 // Column template — single source of truth for header, rows, and skeletons.
@@ -317,10 +311,8 @@ function CheckboxCell({
 // identity-rich, so this is the "team roster" form (GitHub org members,
 // Slack member list).
 function NameCell({ row }: { row: AgentListRow }) {
-  const { t } = useT("agents");
-  const { agent, isOwnedByMe } = row;
+  const { agent } = row;
   const isArchived = !!agent.archived_at;
-  const isPrivate = agent.visibility === "private";
   return (
     <ListGridCell className="gap-3">
       <ActorAvatar
@@ -339,20 +331,8 @@ function NameCell({ row }: { row: AgentListRow }) {
           >
             {agent.name}
           </span>
-          {isPrivate && !isArchived && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Lock className="h-3 w-3 shrink-0 text-muted-foreground/60" />
-                }
-              />
-              <TooltipContent>{VISIBILITY_TOOLTIP.private}</TooltipContent>
-            </Tooltip>
-          )}
-          {isOwnedByMe && (
-            <span className="shrink-0 rounded bg-muted px-1 text-[10px] font-medium text-muted-foreground">
-              {t(($) => $.row.you)}
-            </span>
+          {!isArchived && (
+            <ScopeBadge value={agent.scope} />
           )}
         </div>
         {agent.description ? (

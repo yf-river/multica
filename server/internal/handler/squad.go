@@ -32,7 +32,7 @@ type SquadResponse struct {
 	Instructions  string                       `json:"instructions"`
 	SOPProfile    any                          `json:"sop_profile"`
 	AvatarURL     *string                      `json:"avatar_url"`
-	Visibility    string                       `json:"visibility"`
+	Scope         string                       `json:"scope"`
 	LeaderID      string                       `json:"leader_id"`
 	CreatorID     string                       `json:"creator_id"`
 	CreatedAt     string                       `json:"created_at"`
@@ -95,10 +95,119 @@ type internalSquadRole struct {
 	MCPConfig   []byte
 }
 
-const sopPMRoutingRule = "调度规则：只有 pm 可以 @mention 下一阶段 Agent；每次只 @mention 一个下一阶段；收到阶段 handoff 后先判断通过、返工、推进或收口，再由 pm 发出唯一调度评论；不要先发无 mention 的重复调度评论。05-verify 通过且无阻断时，pm 必须在最终收口中把 issue 状态更新为 done，并说明运行复盘数据是否完整。"
-const sopWorkerRoutingRule = "阶段路由规则：本角色不得 @mention 任何 Agent、Squad、Member 或 all，不得直接触发下一阶段；只输出本阶段结论、证据、阻断和 handoff 给 pm，由 pm 判断通过、返工、推进或收口。"
+const sopPMRoutingRule = "调度规则：只有 PM 可以 @mention 下一阶段 Agent；每次只 @mention 一个下一阶段；收到阶段 handoff 后先判断通过、返工、推进或收口，再由 PM 发出唯一调度评论；不要先发无 mention 的重复调度评论。05-verify 通过且无阻断时，PM 必须在最终收口中把 issue 状态更新为 done，并说明运行复盘数据是否完整。"
+const sopWorkerRoutingRule = "阶段路由规则：本角色不得 @mention 任何 Agent、Squad、Member 或 all，不得直接触发下一阶段；只输出本阶段结论、证据、阻断和 handoff 给 PM，由 PM 判断通过、返工、推进或收口。"
 const internalSquadDefaultProvider = "codebuddy"
-const internalSquadDefaultModel = "deepseek-v4-pro"
+const internalSquadDefaultModel = ""
+
+const (
+	projectSOPAgentPM = "PM-项目经理"
+	projectSOPAgent01 = "01-需求澄清"
+	projectSOPAgent02 = "02-方案设计"
+	projectSOPAgent03 = "03-任务拆分"
+	projectSOPAgent04 = "04-开发"
+	projectSOPAgent05 = "05-验证测试"
+
+	projectSOPRolePM = "编排流程、分派阶段、跟踪风险、最终收口"
+	projectSOPRole01 = "补齐需求背景、边界和验收口径"
+	projectSOPRole02 = "输出技术方案、影响面和测试方案"
+	projectSOPRole03 = "拆分开发任务、明确依赖和交付边界"
+	projectSOPRole04 = "按方案实现代码并完成局部验证"
+	projectSOPRole05 = "独立验收、补齐测试证据、判断是否通过"
+)
+
+func projectSOPInstructions() string {
+	return strings.TrimSpace(`你是项目 SOP 小队的 PM-项目经理。你的核心工作是读懂 issue、识别目标项目和跨项目依赖，按 PM -> 01-需求澄清 -> 02-方案设计 -> 03-任务拆分 -> 04-开发 -> 05-验证测试 推进，并在证据完整后收口。
+
+## PM 工作方式
+
+- 职责：接收 issue/TAPD/source_context，识别目标项目、仓库和跨项目依赖，调度 01-05 阶段，检查每阶段 handoff，决定推进、返工、阻断或收口。
+- 输入：issue 标题/正文/评论、TAPD 来源、项目资源、代码仓库信息、上一阶段 handoff、运行复盘/trace。
+- 交付物：阶段调度评论、跨项目 child issue、返工说明、最终验收摘要、issue done 状态。
+- 边界：PM 负责调度和判断，不代替 01-05 完成专业阶段；单项目需求留在当前 issue；只有真实跨项目依赖才创建 child issue。
+- 禁止：不得跳过阶段；不得一次 @mention 多个下一阶段；不得让阶段 Agent 自己调下一阶段；不得为了推进阶段创建同项目 child issue；05 未通过不得 done。
+
+## 角色矩阵
+
+### PM-项目经理
+- 职责：接需求、判断流程、拆任务、分派给不同 AI、跟踪进度。
+- 输入：宏观目标、上下文、约束、验收要求。
+- 交付物：任务拆分、角色分派、进度和风险记录、最终收口结论。
+- 边界：只做调度和最终汇总，不代替验收者宣布通过。
+- 禁止：不泄露密钥，不跳过方案确认，不绕过 05 验证。
+
+### 01-需求澄清
+- 职责：读懂需求来源，确认用户要什么、不做什么、验收标准是什么。
+- 输入：issue、TAPD 正文、评论、项目背景、已有约束。
+- 交付物：需求边界、未定问题、验收口径、目标项目/仓库初判、handoff。
+- 边界：只澄清需求，不写实现方案，不改代码。
+- 禁止：不得直接进入开发；不得自行 @mention 下一阶段。
+
+### 02-方案设计
+- 职责：编写技术方案、影响面、任务拆解、测试方案。
+- 输入：01 handoff、项目资源、代码/接口背景、历史文档。
+- 交付物：中文技术方案、影响面、接口/数据变更、验收清单、风险点、handoff。
+- 边界：方案先给人看，确认后再开发；负责方案，不直接落大范围代码。
+- 禁止：不直接落大范围代码；不得绕过澄清结论；不得自行 @mention 下一阶段。
+
+### 03-任务拆分
+- 职责：把方案拆成可执行任务，识别跨项目依赖和执行顺序。
+- 输入：02 handoff、项目列表、仓库资源、依赖关系。
+- 交付物：任务拆分、目标项目列表、跨项目 child issue 建议、依赖顺序、handoff。
+- 边界：负责拆分和依赖判断；跨项目 child issue 由 PM 创建或确认。
+- 禁止：不得重复创建 child issue；不得把单项目阶段推进拆成同项目 child issue。
+
+### 04-开发
+- 职责：按分配范围改代码，包括前端、后端、测试或部署中的一块。
+- 输入：03 handoff、已确认方案、任务边界、相关测试、相关 skill/operation 指引。
+- 交付物：代码改动、局部验证结果、实现说明、风险说明、handoff。
+- 边界：只改自己负责的文件和模块，只改本任务范围内内容。
+- 禁止：不能随手改别人负责的范围；不得缺测试就宣称完成；不得自行 @mention 下一阶段。
+
+### 05-验证测试
+- 职责：独立检查代码、测试结果、漏改和回归风险。
+- 输入：04 handoff、diff、测试日志、验收条件、运行复盘/trace。
+- 交付物：验收记录、缺陷清单、放行或退回结论、通过证据、最终 handoff。
+- 边界：不参与原实现的自证，独立给结论；最终收口交给 PM。
+- 禁止：开发者不能自己说通过；不得在证据不足时通过；不得直接 done issue。
+
+## 阶段推进规则
+
+- 按 PM -> 01-需求澄清 -> 02-方案设计 -> 03-任务拆分 -> 04-开发 -> 05-验证测试 推进。
+- ` + sopPMRoutingRule + `
+- 01-05 阶段 Agent 只输出本阶段结论、证据、阻断和 handoff 给 PM，不得 @mention 下一阶段或任何负责人。
+- 目标项目、仓库、分支、TAPD/Gongfeng 真源和可用 operation skill 必须来自 issue、项目资源或 source_context，不能写死为某几个仓库。
+- 接收 TAPD 输入时，必须先根据 source_context 读取 TAPD 正文；遇到 git.code.tencent.com 链接或项目资源时使用 Gongfeng 上下文解析。
+
+## 跨项目 child issue 规则
+
+- 单项目需求、TAPD 正文抓取后的真实需求、以及 01-05 阶段推进，默认都在当前 issue 的评论、任务轨迹和阶段流中继续。
+- 不得为了进入下一阶段创建同项目 child issue。
+- 只有遇到明确跨项目依赖时，PM 才能先创建对应目标项目的待规划 child issue，并确认 parent、project、assignee 都正确。
+- 创建跨项目 child issue 前，先回读已有 children，避免同一目标项目、同一工作意图或同一验收范围重复创建。
+- 不得只评论或委派 03 代替 PM 创建跨项目 child issue。
+
+## 验收要求
+
+- 阶段产物完整。
+- 测试证据完整。
+- 交接说明明确。
+- 跨项目 child issue 由 PM 直接创建并可回读。
+- 05-验证测试通过且无阻断后，PM 必须在最终收口中把 issue 状态更新为 done。
+
+## 禁止事项
+
+- 跳过验收直接完成。
+- 缺少测试证据时宣称完成。
+- 未确认目标项目就调用项目 skill。
+- 把 06-archive 当作必跑验收阶段。
+- 只评论或委派 03 代替 PM 创建跨项目 child issue。
+- 把 TAPD 正文抓取后的真实需求复制成同项目 child issue。
+- 为了进入 01-clarify/02-design/03-task-split/04-implement/05-verify 创建 child issue。
+- 01-05 阶段 Agent @mention 下一阶段或任何负责人。
+- PM 一次评论 @mention 多个下一阶段。
+- 05-验证测试通过后只写验收通过但不更新 issue 状态为 done。`)
+}
 
 func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 	switch strings.TrimSpace(key) {
@@ -107,16 +216,16 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 		return internalSquadTemplate{
 			Key:          "user-center-sop-flow",
 			Name:         "pm",
-			Description:  "唯一 SOP 流程执行小队，由 pm 按 pm -> 01-clarify -> 02-design -> 03-task-split -> 04-implement -> 05-verify 阶段链推进，并根据 issue 指定的项目、仓库和 source_context 选择对应项目 skill。",
-			Instructions: "pm 按 SOP 分阶段推进；每个阶段都要记录输入、输出、失败原因、耗时和验收证据；不得跳过验收。" + sopPMRoutingRule + "目标项目、仓库、分支、TAPD/Gongfeng 真源和可用 operation skill 必须来自 issue、项目资源或 source_context，不能写死为某几个仓库。单项目需求、TAPD 正文抓取后的真实需求、以及 01-05 阶段推进，默认都在当前 issue 的评论、任务轨迹和阶段流中继续，不得为了进入下一阶段创建同项目 child issue。只有遇到明确跨项目依赖时，pm 才能先创建对应目标项目的待规划子 issue，并确认父子关系、项目和目标小队指派正确；不得只评论或委派 03 代替创建。06-archive 不属于必跑阶段。",
+			Description:  "SOP 小队，由 PM-项目经理按 PM -> 01-需求澄清 -> 02-方案设计 -> 03-任务拆分 -> 04-开发 -> 05-验证测试阶段链推进，并根据 issue 指定的项目、仓库和 source_context 选择对应项目 skill。",
+			Instructions: projectSOPInstructions(),
 			Model:        internalSquadDefaultModel,
 			Roles: []internalSquadRole{
-				{Key: "pm", Name: "pm", AgentName: "pm", Description: "SOP 队长：读取 issue、项目资源和 source_context，识别目标项目与跨项目依赖，调度 01-05 阶段；只有跨项目协作才创建必要 child issue。", Instruction: "接收 issue 和 TAPD 输入，必须先根据 source_context 使用 mcp-server-tapd 读取 TAPD 正文；遇到 git.code.tencent.com 链接或项目资源时使用 gongfeng MCP 解析。根据 issue 指定项目、项目资源、仓库路径和可用 operation skill 决定本轮目标项目，推进 pm -> 01-clarify -> 02-design -> 03-task-split -> 04-implement -> 05-verify。" + sopPMRoutingRule + "TAPD 正文抓取后得到的真实需求仍属于当前 issue，不得复制成同项目 child issue；不得为了进入 01-clarify、02-design、03-task-split、04-implement 或 05-verify 创建 child issue。若父任务或 profile 要求创建跨项目子 issue，pm 必须本人先创建对应目标项目的 backlog 子 issue，并确认 parent、project、assignee 都正确；不得只写评论、不得等待或委派 03 创建。", MemberRole: "pm", MCPConfig: mcpConfig},
-				{Key: "01-clarify", Name: "01-需求澄清", AgentName: "01-clarify", Description: "需求澄清：读取 TAPD/source_context 和项目资源，明确需求边界、验收口径、目标仓库与可用/缺失 operation skill。", Instruction: "执行目标项目的 01-clarify；先读取 source_context 中的 TAPD 正文和项目资源，产出需求边界、验收口径、适用仓库、可用/缺失 operation skill 和 handoff。" + sopWorkerRoutingRule, MemberRole: "01-clarify", MCPConfig: mcpConfig},
-				{Key: "02-design", Name: "02-方案设计", AgentName: "02-design", Description: "方案设计：结合目标仓库上下文输出方案、影响面、接口/数据契约和项目 skill 调用计划。", Instruction: "执行目标项目的 02-design；需要仓库上下文时使用 gongfeng MCP 或本地仓库，产出方案、影响面、接口/数据契约、项目 skill 调用计划和 handoff。" + sopWorkerRoutingRule, MemberRole: "02-design", MCPConfig: mcpConfig},
-				{Key: "03-task-split", Name: "03-任务拆分", AgentName: "03-task-split", Description: "任务拆分：识别跨项目依赖，产出目标项目列表、operation graph、缺失 skill 和 handoff。", Instruction: "执行目标项目的 03-task-split；用 TAPD/Gongfeng/项目资源上下文识别跨项目依赖，产出任务拆分、目标项目列表、operation graph、缺失 skill 和 handoff。" + sopWorkerRoutingRule, MemberRole: "03-task-split", MCPConfig: mcpConfig},
-				{Key: "04-implement", Name: "04-开发", AgentName: "04-implement", Description: "代码实现：按既定边界和目标项目 operation skill 执行修改，保留实现证据，不越权扩散。", Instruction: "执行目标项目的 04-implement，按既定边界和对应项目 operation skill 实现，不越权修改无关模块；需要工蜂上下文时使用 gongfeng MCP。" + sopWorkerRoutingRule, MemberRole: "04-implement", MCPConfig: mcpConfig},
-				{Key: "05-verify", Name: "05-测试", AgentName: "05-verify", Description: "测试验证：独立检查实现、测试结果、回写记录和最终 handoff，确认可验收证据。", Instruction: "执行目标项目的 05-verify，独立检查实现、测试结果和最终 handoff；核对 TAPD/Gongfeng/source_context 证据。" + sopWorkerRoutingRule, MemberRole: "05-verify", MCPConfig: mcpConfig},
+				{Key: "pm", Name: projectSOPAgentPM, AgentName: projectSOPAgentPM, Description: "SOP PM：读取 issue、项目资源和 source_context，识别目标项目与跨项目依赖，调度 01-05 阶段并最终收口。", Instruction: "职责：接收 issue/TAPD/source_context，识别目标项目、仓库和跨项目依赖，调度 01-05 阶段，检查每阶段 handoff，决定推进、返工、阻断或收口。输入：issue 标题/正文/评论、TAPD 来源、项目资源、代码仓库信息、上一阶段 handoff、运行复盘/trace。交付物：阶段调度评论、跨项目 child issue、返工说明、最终验收摘要、issue done 状态。边界：PM 负责调度和判断，不代替 01-05 完成专业阶段；单项目需求留在当前 issue；只有真实跨项目依赖才创建 child issue。禁止：不得跳过阶段；不得一次 @mention 多个下一阶段；不得让阶段 Agent 自己调下一阶段；不得为了推进阶段创建同项目 child issue；05 未通过不得 done。接收 issue 和 TAPD 输入时，必须先根据 source_context 使用 mcp-server-tapd 读取 TAPD 正文；遇到 git.code.tencent.com 链接或项目资源时使用 gongfeng MCP 解析。根据 issue 指定项目、项目资源、仓库路径和可用 operation skill 决定本轮目标项目，推进 PM -> 01-需求澄清 -> 02-方案设计 -> 03-任务拆分 -> 04-开发 -> 05-验证测试。" + sopPMRoutingRule + "TAPD 正文抓取后得到的真实需求仍属于当前 issue，不得复制成同项目 child issue；不得为了进入 01-clarify、02-design、03-task-split、04-implement 或 05-verify 创建 child issue。若父任务或 profile 要求创建跨项目子 issue，PM 必须本人先创建对应目标项目的 backlog 子 issue，并确认 parent、project、assignee 都正确；不得只写评论、不得等待或委派 03 创建。", MemberRole: projectSOPRolePM, MCPConfig: mcpConfig},
+				{Key: "01-clarify", Name: projectSOPAgent01, AgentName: projectSOPAgent01, Description: "需求澄清：读取 TAPD/source_context 和项目资源，明确需求边界、验收口径、目标仓库与可用/缺失 operation skill。", Instruction: "职责：读懂需求来源，确认用户要什么、不做什么、验收标准是什么。输入：issue、TAPD 正文、评论、项目背景、已有约束。交付物：需求边界、未定问题、验收口径、目标项目/仓库初判、handoff。边界：只澄清需求，不写实现方案，不改代码。禁止：不得直接进入开发；不得自行 @mention 下一阶段。执行目标项目的 01-clarify；先读取 source_context 中的 TAPD 正文和项目资源，产出需求边界、验收口径、适用仓库、可用/缺失 operation skill 和 handoff。" + sopWorkerRoutingRule, MemberRole: projectSOPRole01, MCPConfig: mcpConfig},
+				{Key: "02-design", Name: projectSOPAgent02, AgentName: projectSOPAgent02, Description: "方案设计：结合目标仓库上下文输出方案、影响面、接口/数据契约和项目 skill 调用计划。", Instruction: "职责：基于需求和项目上下文设计技术方案、影响面、接口/数据契约和测试策略。输入：01 handoff、项目资源、代码/接口背景、历史文档。交付物：技术方案、影响面、接口/数据变更、风险点、测试建议、handoff。边界：负责方案，不直接落大范围代码。禁止：不得绕过澄清结论；不得自行 @mention 下一阶段。执行目标项目的 02-design；需要仓库上下文时使用 gongfeng MCP 或本地仓库，产出方案、影响面、接口/数据契约、项目 skill 调用计划和 handoff。" + sopWorkerRoutingRule, MemberRole: projectSOPRole02, MCPConfig: mcpConfig},
+				{Key: "03-task-split", Name: projectSOPAgent03, AgentName: projectSOPAgent03, Description: "任务拆分：识别跨项目依赖，产出目标项目列表、operation graph、缺失 skill 和 handoff。", Instruction: "职责：把方案拆成可执行任务，识别跨项目依赖和执行顺序。输入：02 handoff、项目列表、仓库资源、依赖关系。交付物：任务拆分、目标项目列表、跨项目 child issue 建议、依赖顺序、handoff。边界：负责拆分和依赖判断；跨项目 child issue 由 PM 创建或确认。禁止：不得重复创建 child issue；不得把单项目阶段推进拆成同项目 child issue。执行目标项目的 03-task-split；用 TAPD/Gongfeng/项目资源上下文识别跨项目依赖，产出任务拆分、目标项目列表、operation graph、缺失 skill 和 handoff。" + sopWorkerRoutingRule, MemberRole: projectSOPRole03, MCPConfig: mcpConfig},
+				{Key: "04-implement", Name: projectSOPAgent04, AgentName: projectSOPAgent04, Description: "代码实现：按既定边界和目标项目 operation skill 执行修改，保留实现证据，不越权扩散。", Instruction: "职责：按确认范围实现代码、配置、测试或文档变更。输入：03 handoff、目标仓库、任务边界、相关 skill/operation 指引。交付物：代码变更、测试结果、实现说明、风险说明、handoff。边界：只改本任务范围内内容。禁止：不得越权改无关模块；不得缺测试就宣称完成；不得自行 @mention 下一阶段。执行目标项目的 04-implement，按既定边界和对应项目 operation skill 实现，不越权修改无关模块；需要工蜂上下文时使用 gongfeng MCP。" + sopWorkerRoutingRule, MemberRole: projectSOPRole04, MCPConfig: mcpConfig},
+				{Key: "05-verify", Name: projectSOPAgent05, AgentName: projectSOPAgent05, Description: "验证测试：独立检查实现、测试结果、回写记录和最终 handoff，确认可验收证据。", Instruction: "职责：独立检查实现、测试结果、回归风险、证据完整性。输入：04 handoff、diff、测试日志、验收标准、运行复盘/trace。交付物：验证结论、缺陷/返工清单、通过证据、最终 handoff。边界：负责独立验收，不替开发自证。禁止：不得在证据不足时通过；不得直接 done issue，最终收口交给 PM。执行目标项目的 05-verify，独立检查实现、测试结果和最终 handoff；核对 TAPD/Gongfeng/source_context 证据。" + sopWorkerRoutingRule, MemberRole: projectSOPRole05, MCPConfig: mcpConfig},
 			},
 			Profile: map[string]any{
 				"profile_key": "generic-project-sop-flow",
@@ -124,30 +233,24 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 				"repo":        "<target-repo-from-project-resource>",
 				"mode":        "stage_chain",
 				"roles": []map[string]any{
-					{"key": "pm", "name": "pm", "responsibility": "接收 issue/TAPD 输入，读取项目资源和 source_context，检查阶段产物，处理阻断，推进 pm -> 01-clarify -> 02-design -> 03-task-split -> 04-implement -> 05-verify；只有 pm 可以 @mention 下一阶段 Agent；05-verify 通过后必须把 issue 状态更新为 done；单项目阶段推进必须留在当前 issue，遇到跨项目依赖时才直接创建对应目标项目的 backlog 子 issue，并确认父子关系、项目和目标小队指派正确，不能只委派 03 或写评论。"},
-					{"key": "01-clarify", "name": "01-需求澄清", "responsibility": "执行目标项目的 01-clarify，明确需求边界、验收口径、目标仓库、可用/缺失 operation skill 和 handoff；不得 @mention 下一阶段或任何负责人。"},
-					{"key": "02-design", "name": "02-方案设计", "responsibility": "执行目标项目的 02-design，输出方案、影响面、接口/数据契约、项目 skill 调用计划和 handoff；不得 @mention 下一阶段或任何负责人。"},
-					{"key": "03-task-split", "name": "03-任务拆分", "responsibility": "执行目标项目的 03-task-split，输出任务拆分、跨项目依赖、operation graph 和 handoff；不得 @mention 下一阶段或任何负责人。"},
-					{"key": "04-implement", "name": "04-开发", "responsibility": "执行目标项目的 04-implement，按边界和对应项目 operation skill 实现并保留证据；不得 @mention 下一阶段或任何负责人。"},
-					{"key": "05-verify", "name": "05-测试", "responsibility": "执行目标项目的 05-verify，独立验证、总结证据和最终 handoff；不得 @mention 下一阶段或任何负责人。"},
+					{"key": "pm", "name": projectSOPAgentPM, "responsibility": "接收 issue/TAPD/source_context，识别目标项目、仓库和跨项目依赖，调度 01-05 阶段，检查每阶段 handoff，决定推进、返工、阻断或收口。", "input": "issue 标题/正文/评论、TAPD 来源、项目资源、代码仓库信息、上一阶段 handoff、运行复盘/trace。", "output": "阶段调度评论、跨项目 child issue、返工说明、最终验收摘要、issue done 状态。", "boundary": "PM 负责调度和判断，不代替 01-05 完成专业阶段；单项目需求留在当前 issue；只有真实跨项目依赖才创建 child issue。", "forbidden": "不得跳过阶段；不得一次 @mention 多个下一阶段；不得让阶段 Agent 自己调下一阶段；不得为了推进阶段创建同项目 child issue；05 未通过不得 done。"},
+					{"key": "01-clarify", "name": projectSOPAgent01, "responsibility": "读懂需求来源，确认用户要什么、不做什么、验收标准是什么。", "input": "issue、TAPD 正文、评论、项目背景、已有约束。", "output": "需求边界、未定问题、验收口径、目标项目/仓库初判、handoff。", "boundary": "只澄清需求，不写实现方案，不改代码。", "forbidden": "不得直接进入开发；不得自行 @mention 下一阶段。"},
+					{"key": "02-design", "name": projectSOPAgent02, "responsibility": "基于需求和项目上下文设计技术方案、影响面、接口/数据契约和测试策略。", "input": "01 handoff、项目资源、代码/接口背景、历史文档。", "output": "技术方案、影响面、接口/数据变更、风险点、测试建议、handoff。", "boundary": "负责方案，不直接落大范围代码。", "forbidden": "不得绕过澄清结论；不得自行 @mention 下一阶段。"},
+					{"key": "03-task-split", "name": projectSOPAgent03, "responsibility": "把方案拆成可执行任务，识别跨项目依赖和执行顺序。", "input": "02 handoff、项目列表、仓库资源、依赖关系。", "output": "任务拆分、目标项目列表、跨项目 child issue 建议、依赖顺序、handoff。", "boundary": "负责拆分和依赖判断；跨项目 child issue 由 PM 创建或确认。", "forbidden": "不得重复创建 child issue；不得把单项目阶段推进拆成同项目 child issue。"},
+					{"key": "04-implement", "name": projectSOPAgent04, "responsibility": "按确认范围实现代码、配置、测试或文档变更。", "input": "03 handoff、目标仓库、任务边界、相关 skill/operation 指引。", "output": "代码变更、测试结果、实现说明、风险说明、handoff。", "boundary": "只改本任务范围内内容。", "forbidden": "不得越权改无关模块；不得缺测试就宣称完成；不得自行 @mention 下一阶段。"},
+					{"key": "05-verify", "name": projectSOPAgent05, "responsibility": "独立检查实现、测试结果、回归风险、证据完整性。", "input": "04 handoff、diff、测试日志、验收标准、运行复盘/trace。", "output": "验证结论、缺陷/返工清单、通过证据、最终 handoff。", "boundary": "负责独立验收，不替开发自证。", "forbidden": "不得在证据不足时通过；不得直接 done issue，最终收口交给 PM。"},
 				},
 				"steps": []map[string]any{
-					{"key": "pm", "name": "pm", "role_key": "pm"},
-					{"key": "01-clarify", "name": "01-需求澄清", "role_key": "01-clarify", "skill": "<target-project>/01-clarify"},
-					{"key": "02-design", "name": "02-方案设计", "role_key": "02-design", "skill": "<target-project>/02-design"},
-					{"key": "03-task-split", "name": "03-任务拆分", "role_key": "03-task-split", "skill": "<target-project>/03-task-split"},
-					{"key": "04-implement", "name": "04-开发", "role_key": "04-implement", "skill": "<target-project>/04-implement"},
-					{"key": "05-verify", "name": "05-测试", "role_key": "05-verify", "skill": "<target-project>/05-verify"},
+					{"key": "pm", "name": projectSOPAgentPM, "role_key": "pm"},
+					{"key": "01-clarify", "name": projectSOPAgent01, "role_key": "01-clarify", "skill": "<target-project>/01-clarify"},
+					{"key": "02-design", "name": projectSOPAgent02, "role_key": "02-design", "skill": "<target-project>/02-design"},
+					{"key": "03-task-split", "name": projectSOPAgent03, "role_key": "03-task-split", "skill": "<target-project>/03-task-split"},
+					{"key": "04-implement", "name": projectSOPAgent04, "role_key": "04-implement", "skill": "<target-project>/04-implement"},
+					{"key": "05-verify", "name": projectSOPAgent05, "role_key": "05-verify", "skill": "<target-project>/05-verify"},
 				},
 				"stage_skills":     []string{"<target-project>/01-clarify", "<target-project>/02-design", "<target-project>/03-task-split", "<target-project>/04-implement", "<target-project>/05-verify"},
 				"operation_skills": []string{"<target-project>/<operation-skill>"},
 				"mcp_servers":      []string{"mcp-server-tapd", "gongfeng"},
-				"model_policy": map[string]any{
-					"默认提供方": internalSquadDefaultProvider,
-					"默认模型":  internalSquadDefaultModel,
-					"降级模型":  fallbackPromptEvaluationAgentModel,
-					"策略说明":  "创建 pm 内置小队时可指定默认 Agent provider 和模型；留空时使用 CodeBuddy / deepseek-v4-pro。",
-				},
 				"source_context": map[string]any{
 					"tapd":     "从 task.source_context.tapd 获取 workspace_id/resource_type/resource_id/fetch_status；状态为 blocked_missing_profile 时必须阻断并要求用户配置账号级 TAPD profile。",
 					"gongfeng": "从 project_resources.gongfeng_repo 或 git.code.tencent.com 链接解析项目、仓库、分支、提交和文件上下文；需要账号级 Gongfeng profile。",
@@ -212,13 +315,6 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 					{"key": "deploy_verify", "name": "部署运行验证", "role_key": "operator"},
 					{"key": "final_report", "name": "证据汇总", "role_key": "captain"},
 				},
-				"model_policy": map[string]any{
-					"默认提供方":    internalSquadDefaultProvider,
-					"默认模型":     internalSquadDefaultModel,
-					"降级模型":     fallbackPromptEvaluationAgentModel,
-					"代码测试复杂审查": "Codex/gpt 类模型",
-					"策略说明":     "内置小队默认使用 CodeBuddy / deepseek-v4-pro；创建时可指定当前机器已探测到的其它 Agent provider 和模型。",
-				},
 				"stage_skills":      []string{},
 				"operation_skills":  []string{},
 				"acceptance":        []string{"方案经确认", "代码范围清晰", "验收者独立给结论", "测试证据完整", "规约同步或说明无需同步", "运行验证完成"},
@@ -265,7 +361,7 @@ func squadToResponse(s db.Squad) SquadResponse {
 		Instructions:  s.Instructions,
 		SOPProfile:    decodeSquadSOPProfile(s.SopProfile),
 		AvatarURL:     textToPtr(s.AvatarUrl),
-		Visibility:    s.Visibility,
+		Scope:         s.Scope,
 		LeaderID:      uuidToString(s.LeaderID),
 		CreatorID:     uuidToString(s.CreatorID),
 		CreatedAt:     timestampToString(s.CreatedAt),
@@ -468,7 +564,7 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		Description string          `json:"description"`
 		LeaderID    string          `json:"leader_id"`
 		AvatarURL   *string         `json:"avatar_url"`
-		Visibility  string          `json:"visibility"`
+		Scope       string          `json:"scope"`
 		SOPProfile  json.RawMessage `json:"sop_profile"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -483,9 +579,9 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "leader_id is required")
 		return
 	}
-	visibility, validVisibility := normalizeSquadVisibility(req.Visibility)
-	if !validVisibility {
-		writeError(w, http.StatusBadRequest, "visibility must be 'workspace' or 'personal'")
+	scope, validScope := normalizeSquadScope(req.Scope)
+	if !validScope {
+		writeError(w, http.StatusBadRequest, "scope must be 'workspace' or 'personal'")
 		return
 	}
 
@@ -507,8 +603,12 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "leader must be a valid agent in this workspace")
 		return
 	}
-	if !h.canAccessPrivateAgent(r.Context(), leader, "member", uuidToString(member.UserID), workspaceID) {
-		writeError(w, http.StatusForbidden, "cannot use private leader agent")
+	if !h.canAccessPersonalAgent(r.Context(), leader, "member", uuidToString(member.UserID), workspaceID) {
+		writeError(w, http.StatusForbidden, "cannot use personal leader agent")
+		return
+	}
+	if err := validateSquadLeaderScope(scope, member.UserID, leader); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -532,7 +632,7 @@ func (h *Handler) CreateSquad(w http.ResponseWriter, r *http.Request) {
 		LeaderID:     leaderUUID,
 		CreatorID:    member.UserID,
 		AvatarUrl:    avatarURL,
-		Visibility:   pgtype.Text{String: visibility, Valid: true},
+		Scope:        pgtype.Text{String: scope, Valid: true},
 		Instructions: pgtype.Text{},
 		SopProfile:   sopProfile,
 	})
@@ -579,7 +679,7 @@ func (h *Handler) EnsureInternalSquadTemplate(w http.ResponseWriter, r *http.Req
 		TemplateKey     string `json:"template_key"`
 		RuntimeProvider string `json:"runtime_provider"`
 		Model           string `json:"model"`
-		Visibility      string `json:"visibility"`
+		Scope           string `json:"scope"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -592,20 +692,14 @@ func (h *Handler) EnsureInternalSquadTemplate(w http.ResponseWriter, r *http.Req
 	}
 	if model := strings.TrimSpace(req.Model); model != "" {
 		template.Model = model
-		if policy, ok := template.Profile["model_policy"].(map[string]any); ok {
-			policy["默认模型"] = model
-		}
 	}
 	provider := normalizeProvider(req.RuntimeProvider)
 	if provider == "" {
 		provider = internalSquadDefaultProvider
 	}
-	if policy, ok := template.Profile["model_policy"].(map[string]any); ok {
-		policy["默认提供方"] = provider
-	}
-	visibility, validVisibility := normalizeSquadVisibility(req.Visibility)
-	if !validVisibility {
-		writeError(w, http.StatusBadRequest, "visibility must be 'workspace' or 'personal'")
+	scope, validScope := normalizeSquadScope(req.Scope)
+	if !validScope {
+		writeError(w, http.StatusBadRequest, "scope must be 'workspace' or 'personal'")
 		return
 	}
 
@@ -613,13 +707,17 @@ func (h *Handler) EnsureInternalSquadTemplate(w http.ResponseWriter, r *http.Req
 	if !ok {
 		return
 	}
-	agents, err := h.ensureInternalSquadAgents(r.Context(), wsUUID, member.UserID, runtime, template, visibility)
+	if err := validateAgentRuntimeScope(internalSquadAgentScope(scope), member.UserID, runtime); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	agents, err := h.ensureInternalSquadAgents(r.Context(), wsUUID, member.UserID, runtime, template, scope)
 	if err != nil {
 		slog.Warn("ensure internal squad agents failed", append(logger.RequestAttrs(r), "error", err, "template", template.Key)...)
 		writeError(w, http.StatusInternalServerError, "failed to create internal squad agents")
 		return
 	}
-	squad, err := h.ensureInternalSquad(r.Context(), wsUUID, member.UserID, template, visibility, agents)
+	squad, err := h.ensureInternalSquad(r.Context(), wsUUID, member.UserID, template, scope, agents)
 	if err != nil {
 		slog.Warn("ensure internal squad failed", append(logger.RequestAttrs(r), "error", err, "template", template.Key)...)
 		writeError(w, http.StatusInternalServerError, "failed to create internal squad")
@@ -669,23 +767,23 @@ func (h *Handler) selectInternalSquadRuntime(w http.ResponseWriter, r *http.Requ
 	return *best, true
 }
 
-func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgtype.UUID, ownerID pgtype.UUID, runtime db.AgentRuntime, template internalSquadTemplate, squadVisibility string) ([]InternalSquadAgent, error) {
+func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgtype.UUID, ownerID pgtype.UUID, runtime db.AgentRuntime, template internalSquadTemplate, squadScope string) ([]InternalSquadAgent, error) {
 	existing, err := h.Queries.ListAllAgents(ctx, workspaceID)
 	if err != nil {
 		return nil, err
 	}
 	result := make([]InternalSquadAgent, 0, len(template.Roles))
-	agentVisibility := internalSquadAgentVisibility(squadVisibility)
+	agentScope := internalSquadAgentScope(squadScope)
 	for _, role := range template.Roles {
 		name := strings.TrimSpace(role.AgentName)
 		if name == "" {
 			name = template.Name + " · " + role.Name
 		}
-		runtimeConfig := internalSquadAgentRuntimeConfig(runtime, template, role, squadVisibility, agentVisibility, ownerID)
+		runtimeConfig := internalSquadAgentRuntimeConfig(runtime, template, role, squadScope, agentScope, ownerID)
 		instructions := "你是" + template.Name + "小队的" + role.Name + "。" + role.Instruction + "所有输出必须使用中文，并保留可验收证据。"
 		description := internalSquadRoleDescription(template, role)
-		model := pgtype.Text{String: template.Model, Valid: template.Model != ""}
-		agentRow, ok := findInternalSquadAgent(existing, name, template, role, squadVisibility, agentVisibility, ownerID)
+		model := pgtype.Text{String: template.Model, Valid: true}
+		agentRow, ok := findInternalSquadAgent(existing, name, template, role, squadScope, agentScope, ownerID)
 		if !ok {
 			agentRow, err = h.Queries.CreateAgent(ctx, db.CreateAgentParams{
 				WorkspaceID:        workspaceID,
@@ -695,8 +793,8 @@ func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgt
 				RuntimeMode:        runtime.RuntimeMode,
 				RuntimeConfig:      runtimeConfig,
 				RuntimeID:          runtime.ID,
-				Visibility:         agentVisibility,
-				MaxConcurrentTasks: 2,
+				Scope:              agentScope,
+				MaxConcurrentTasks: defaultAgentMaxConcurrentTasks,
 				OwnerID:            ownerID,
 				CustomEnv:          []byte("{}"),
 				CustomArgs:         []byte("[]"),
@@ -713,15 +811,15 @@ func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgt
 					return nil, err
 				}
 			}
-			if internalSquadAgentNeedsSync(agentRow, runtime, template, role, runtimeConfig, instructions, description, model, agentVisibility) {
+			if internalSquadAgentNeedsSync(agentRow, runtime, template, role, runtimeConfig, instructions, description, model, agentScope) {
 				agentRow, err = h.Queries.UpdateAgent(ctx, db.UpdateAgentParams{
 					ID:                 agentRow.ID,
 					Description:        pgtype.Text{String: description, Valid: true},
 					RuntimeConfig:      runtimeConfig,
 					RuntimeMode:        pgtype.Text{String: runtime.RuntimeMode, Valid: true},
 					RuntimeID:          runtime.ID,
-					Visibility:         pgtype.Text{String: agentVisibility, Valid: true},
-					MaxConcurrentTasks: pgtype.Int4{Int32: 2, Valid: true},
+					Scope:              pgtype.Text{String: agentScope, Valid: true},
+					MaxConcurrentTasks: pgtype.Int4{Int32: defaultAgentMaxConcurrentTasks, Valid: true},
 					Instructions:       pgtype.Text{String: instructions, Valid: true},
 					CustomArgs:         []byte("[]"),
 					McpConfig:          role.MCPConfig,
@@ -742,16 +840,16 @@ func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgt
 	return result, nil
 }
 
-func internalSquadAgentVisibility(squadVisibility string) string {
-	if squadVisibility == squadVisibilityPersonal {
-		return "private"
+func internalSquadAgentScope(squadScope string) string {
+	if squadScope == squadScopePersonal {
+		return scopePersonal
 	}
-	return "workspace"
+	return scopeWorkspace
 }
 
-func internalSquadAgentRuntimeConfig(runtime db.AgentRuntime, template internalSquadTemplate, role internalSquadRole, squadVisibility string, agentVisibility string, ownerID pgtype.UUID) []byte {
+func internalSquadAgentRuntimeConfig(runtime db.AgentRuntime, template internalSquadTemplate, role internalSquadRole, squadScope string, agentScope string, ownerID pgtype.UUID) []byte {
 	scopeOwnerID := ""
-	if squadVisibility == squadVisibilityPersonal {
+	if squadScope == squadScopePersonal {
 		scopeOwnerID = uuidToString(ownerID)
 	}
 	return mustJSONBytes(map[string]any{
@@ -760,19 +858,19 @@ func internalSquadAgentRuntimeConfig(runtime db.AgentRuntime, template internalS
 		"角色":       role.Name,
 		"模板":       template.Key,
 		"internal_squad": map[string]any{
-			"template_key":     template.Key,
-			"role_key":         role.Key,
-			"squad_visibility": squadVisibility,
-			"agent_visibility": agentVisibility,
-			"owner_id":         scopeOwnerID,
+			"template_key": template.Key,
+			"role_key":     role.Key,
+			"squad_scope":  squadScope,
+			"agent_scope":  agentScope,
+			"owner_id":     scopeOwnerID,
 		},
 	})
 }
 
-func findInternalSquadAgent(agents []db.Agent, name string, template internalSquadTemplate, role internalSquadRole, squadVisibility string, agentVisibility string, ownerID pgtype.UUID) (db.Agent, bool) {
+func findInternalSquadAgent(agents []db.Agent, name string, template internalSquadTemplate, role internalSquadRole, squadScope string, agentScope string, ownerID pgtype.UUID) (db.Agent, bool) {
 	var archivedMatch db.Agent
 	for _, agent := range agents {
-		if !matchesInternalSquadAgent(agent, name, template, role, squadVisibility, agentVisibility, ownerID) {
+		if !matchesInternalSquadAgent(agent, name, template, role, squadScope, agentScope, ownerID) {
 			continue
 		}
 		if !agent.ArchivedAt.Valid {
@@ -788,11 +886,11 @@ func findInternalSquadAgent(agents []db.Agent, name string, template internalSqu
 	return db.Agent{}, false
 }
 
-func matchesInternalSquadAgent(agent db.Agent, name string, template internalSquadTemplate, role internalSquadRole, squadVisibility string, agentVisibility string, ownerID pgtype.UUID) bool {
-	if agent.Name != name || agent.Visibility != agentVisibility {
+func matchesInternalSquadAgent(agent db.Agent, name string, template internalSquadTemplate, role internalSquadRole, squadScope string, agentScope string, ownerID pgtype.UUID) bool {
+	if agent.Name != name || agent.Scope != agentScope {
 		return false
 	}
-	if squadVisibility == squadVisibilityPersonal && uuidToString(agent.OwnerID) != uuidToString(ownerID) {
+	if squadScope == squadScopePersonal && uuidToString(agent.OwnerID) != uuidToString(ownerID) {
 		return false
 	}
 	var runtimeConfig map[string]any
@@ -802,11 +900,11 @@ func matchesInternalSquadAgent(agent db.Agent, name string, template internalSqu
 	if scope, ok := runtimeConfig["internal_squad"].(map[string]any); ok {
 		if stringFromAny(scope["template_key"]) != template.Key ||
 			stringFromAny(scope["role_key"]) != role.Key ||
-			stringFromAny(scope["squad_visibility"]) != squadVisibility ||
-			stringFromAny(scope["agent_visibility"]) != agentVisibility {
+			stringFromAny(scope["squad_scope"]) != squadScope ||
+			stringFromAny(scope["agent_scope"]) != agentScope {
 			return false
 		}
-		if squadVisibility == squadVisibilityPersonal && stringFromAny(scope["owner_id"]) != uuidToString(ownerID) {
+		if squadScope == squadScopePersonal && stringFromAny(scope["owner_id"]) != uuidToString(ownerID) {
 			return false
 		}
 		return true
@@ -814,12 +912,12 @@ func matchesInternalSquadAgent(agent db.Agent, name string, template internalSqu
 	return stringFromAny(runtimeConfig["模板"]) == template.Key && stringFromAny(runtimeConfig["角色"]) == role.Name
 }
 
-func internalSquadAgentNeedsSync(agent db.Agent, runtime db.AgentRuntime, template internalSquadTemplate, role internalSquadRole, runtimeConfig []byte, instructions string, description string, model pgtype.Text, visibility string) bool {
+func internalSquadAgentNeedsSync(agent db.Agent, runtime db.AgentRuntime, template internalSquadTemplate, role internalSquadRole, runtimeConfig []byte, instructions string, description string, model pgtype.Text, scope string) bool {
 	if agent.Description != description ||
 		agent.RuntimeMode != runtime.RuntimeMode ||
 		uuidToString(agent.RuntimeID) != uuidToString(runtime.ID) ||
-		agent.Visibility != visibility ||
-		agent.MaxConcurrentTasks != 2 ||
+		agent.Scope != scope ||
+		agent.MaxConcurrentTasks != defaultAgentMaxConcurrentTasks ||
 		agent.Instructions != instructions ||
 		!bytes.Equal(bytes.TrimSpace(agent.RuntimeConfig), bytes.TrimSpace(runtimeConfig)) ||
 		!bytes.Equal(bytes.TrimSpace(agent.CustomArgs), []byte("[]")) ||
@@ -842,7 +940,7 @@ func internalSquadRoleDescription(template internalSquadTemplate, role internalS
 	return template.Description
 }
 
-func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UUID, creatorID pgtype.UUID, template internalSquadTemplate, visibility string, agents []InternalSquadAgent) (db.Squad, error) {
+func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UUID, creatorID pgtype.UUID, template internalSquadTemplate, scope string, agents []InternalSquadAgent) (db.Squad, error) {
 	if len(agents) == 0 {
 		return db.Squad{}, pgx.ErrNoRows
 	}
@@ -853,7 +951,7 @@ func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UU
 	var squad db.Squad
 	var archivedMatch db.Squad
 	for _, item := range squads {
-		if !matchesInternalSquadTemplate(item, template, visibility, creatorID) {
+		if !matchesInternalSquadTemplate(item, template, scope, creatorID) {
 			continue
 		}
 		if !item.ArchivedAt.Valid {
@@ -878,7 +976,7 @@ func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UU
 				Description:  template.Description,
 				LeaderID:     parseUUID(agents[0].ID),
 				CreatorID:    creatorID,
-				Visibility:   pgtype.Text{String: visibility, Valid: true},
+				Scope:        pgtype.Text{String: scope, Valid: true},
 				Instructions: pgtype.Text{String: template.Instructions, Valid: true},
 				SopProfile:   sopProfile,
 			})
@@ -890,13 +988,13 @@ func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UU
 	if uuidToString(squad.ID) != "" {
 		profileBytes := mustJSONBytes(template.Profile)
 		leaderID := parseUUID(agents[0].ID)
-		if itemNeedsInternalSquadSync(squad, template, profileBytes, leaderID, visibility) {
+		if itemNeedsInternalSquadSync(squad, template, profileBytes, leaderID, scope) {
 			params := db.UpdateSquadParams{
 				ID:           squad.ID,
 				Name:         pgtype.Text{String: template.Name, Valid: squad.Name != template.Name},
 				Description:  pgtype.Text{String: template.Description, Valid: true},
 				LeaderID:     leaderID,
-				Visibility:   pgtype.Text{String: visibility, Valid: true},
+				Scope:        pgtype.Text{String: scope, Valid: true},
 				Instructions: pgtype.Text{String: template.Instructions, Valid: true},
 				SopProfile:   profileBytes,
 			}
@@ -967,20 +1065,20 @@ func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UU
 	return squad, nil
 }
 
-func matchesInternalSquadTemplate(squad db.Squad, template internalSquadTemplate, visibility string, creatorID pgtype.UUID) bool {
+func matchesInternalSquadTemplate(squad db.Squad, template internalSquadTemplate, scope string, creatorID pgtype.UUID) bool {
 	profile := decodeJSONDefault(squad.SopProfile, map[string]any{})
 	profileMap, _ := profile.(map[string]any)
 	sameTemplate := squad.Name == template.Name || stringFromAny(profileMap["profile_key"]) == template.Key
-	sameVisibility := squad.Visibility == visibility
-	sameCreator := visibility != squadVisibilityPersonal || uuidToString(squad.CreatorID) == uuidToString(creatorID)
-	return sameTemplate && sameVisibility && sameCreator
+	sameScope := squad.Scope == scope
+	sameCreator := scope != squadScopePersonal || uuidToString(squad.CreatorID) == uuidToString(creatorID)
+	return sameTemplate && sameScope && sameCreator
 }
 
-func itemNeedsInternalSquadSync(squad db.Squad, template internalSquadTemplate, profileBytes []byte, leaderID pgtype.UUID, visibility string) bool {
+func itemNeedsInternalSquadSync(squad db.Squad, template internalSquadTemplate, profileBytes []byte, leaderID pgtype.UUID, scope string) bool {
 	return squad.Name != template.Name ||
 		squad.Description != template.Description ||
 		uuidToString(squad.LeaderID) != uuidToString(leaderID) ||
-		squad.Visibility != visibility ||
+		squad.Scope != scope ||
 		!bytes.Equal(bytes.TrimSpace(squad.SopProfile), bytes.TrimSpace(profileBytes)) ||
 		squad.Instructions != template.Instructions
 }
@@ -1022,7 +1120,7 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 		Instructions *string         `json:"instructions"`
 		LeaderID     *string         `json:"leader_id"`
 		AvatarURL    *string         `json:"avatar_url"`
-		Visibility   *string         `json:"visibility"`
+		Scope        *string         `json:"scope"`
 		SOPProfile   json.RawMessage `json:"sop_profile"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -1043,13 +1141,15 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 	if req.AvatarURL != nil {
 		params.AvatarUrl = pgtype.Text{String: *req.AvatarURL, Valid: true}
 	}
-	if req.Visibility != nil {
-		visibility, validVisibility := normalizeSquadVisibility(*req.Visibility)
-		if !validVisibility {
-			writeError(w, http.StatusBadRequest, "visibility must be 'workspace' or 'personal'")
+	nextScope := squad.Scope
+	if req.Scope != nil {
+		scope, validScope := normalizeSquadScope(*req.Scope)
+		if !validScope {
+			writeError(w, http.StatusBadRequest, "scope must be 'workspace' or 'personal'")
 			return
 		}
-		params.Visibility = pgtype.Text{String: visibility, Valid: true}
+		nextScope = scope
+		params.Scope = pgtype.Text{String: scope, Valid: true}
 	}
 	if len(req.SOPProfile) > 0 {
 		if !json.Valid(req.SOPProfile) {
@@ -1058,6 +1158,9 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 		}
 		params.SopProfile = req.SOPProfile
 	}
+	nextLeaderID := squad.LeaderID
+	var nextLeader db.Agent
+	haveNextLeader := false
 	if req.LeaderID != nil {
 		lid, ok := parseUUIDOrBadRequest(w, *req.LeaderID, "leader_id")
 		if !ok {
@@ -1071,10 +1174,12 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "leader must be a valid agent in this workspace")
 			return
 		}
-		if !h.canAccessPrivateAgent(r.Context(), leader, "member", uuidToString(member.UserID), workspaceID) {
-			writeError(w, http.StatusForbidden, "cannot use private leader agent")
+		if !h.canAccessPersonalAgent(r.Context(), leader, "member", uuidToString(member.UserID), workspaceID) {
+			writeError(w, http.StatusForbidden, "cannot use personal leader agent")
 			return
 		}
+		nextLeader = leader
+		haveNextLeader = true
 		// Ensure new leader is a squad member; auto-add if not.
 		isMember, _ := h.Queries.IsSquadMember(r.Context(), db.IsSquadMemberParams{
 			SquadID: squad.ID, MemberType: "agent", MemberID: lid,
@@ -1085,6 +1190,23 @@ func (h *Handler) UpdateSquad(w http.ResponseWriter, r *http.Request) {
 			})
 		}
 		params.LeaderID = lid
+		nextLeaderID = lid
+	}
+	if req.Scope != nil || req.LeaderID != nil {
+		if !haveNextLeader {
+			leader, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+				ID: nextLeaderID, WorkspaceID: wsUUID,
+			})
+			if err != nil {
+				writeError(w, http.StatusBadRequest, "leader must be a valid agent in this workspace")
+				return
+			}
+			nextLeader = leader
+		}
+		if err := validateSquadLeaderScope(nextScope, squad.CreatorID, nextLeader); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 
 	updated, err := h.Queries.UpdateSquad(r.Context(), params)
@@ -1446,8 +1568,12 @@ func (h *Handler) AddSquadMember(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "agent not found in this workspace")
 			return
 		}
-		if !h.canAccessPrivateAgent(r.Context(), agent, "member", uuidToString(member.UserID), workspaceID) {
-			writeError(w, http.StatusForbidden, "cannot add private agent")
+		if !h.canAccessPersonalAgent(r.Context(), agent, "member", uuidToString(member.UserID), workspaceID) {
+			writeError(w, http.StatusForbidden, "cannot add personal agent")
+			return
+		}
+		if err := validateSquadLeaderScope(squad.Scope, squad.CreatorID, agent); err != nil {
+			writeError(w, http.StatusBadRequest, err.Error())
 			return
 		}
 	} else {

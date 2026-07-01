@@ -161,7 +161,7 @@ func TestCreateAgent_RejectsDuplicateName(t *testing.T) {
 		"name":                 "duplicate-name-test-agent",
 		"description":          "first description",
 		"runtime_id":           testRuntimeID,
-		"visibility":           "private",
+		"scope": "personal",
 		"max_concurrent_tasks": 1,
 	}
 
@@ -187,6 +187,40 @@ func TestCreateAgent_RejectsDuplicateName(t *testing.T) {
 	testHandler.CreateAgent(w2, newRequest(http.MethodPost, "/api/agents", body))
 	if w2.Code != http.StatusConflict {
 		t.Fatalf("second CreateAgent with duplicate name: expected 409, got %d: %s", w2.Code, w2.Body.String())
+	}
+}
+
+func TestCreateAgent_DefaultsMaxConcurrentTasksToFive(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	const agentName = "default-concurrency-test-agent"
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(),
+			`DELETE FROM agent WHERE workspace_id = $1 AND name = $2`,
+			testWorkspaceID, agentName,
+		)
+	})
+
+	body := map[string]any{
+		"name":        agentName,
+		"description": "no explicit concurrency",
+		"runtime_id":  testRuntimeID,
+		"scope": "personal",
+	}
+
+	w := httptest.NewRecorder()
+	testHandler.CreateAgent(w, newRequest(http.MethodPost, "/api/agents", body))
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateAgent: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp AgentResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.MaxConcurrentTasks != defaultAgentMaxConcurrentTasks {
+		t.Fatalf("max_concurrent_tasks = %d, want %d", resp.MaxConcurrentTasks, defaultAgentMaxConcurrentTasks)
 	}
 }
 

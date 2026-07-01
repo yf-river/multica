@@ -3,6 +3,7 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -583,6 +584,68 @@ func TestFetchGongfengBranchesHandlesPagination(t *testing.T) {
 	if len(seenTokens) != 2 || seenTokens[0] != "token-1" || seenTokens[1] != "token-1" {
 		t.Fatalf("token headers = %#v", seenTokens)
 	}
+}
+
+func TestFetchGongfengBranchesContinuesWhenNextPageHeaderMissing(t *testing.T) {
+	var seenPages []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		page := r.URL.Query().Get("page")
+		seenPages = append(seenPages, page)
+		if page == "1" {
+			_, _ = w.Write([]byte(gongfengBranchPayload("branch", 0, 100, "2026-06-01T01:00:00Z")))
+			return
+		}
+		_, _ = w.Write([]byte(`[
+			{"name":"release/after-headerless-page","commit":{"committed_date":"2026-06-30T01:00:00Z"}}
+		]`))
+	}))
+	defer server.Close()
+	t.Setenv("GONGFENG_API_BASE", server.URL)
+
+	branches, err := fetchGongfengBranches(context.Background(), "ChainWeaver/ida/gateway", "token-1")
+	if err != nil {
+		t.Fatalf("fetchGongfengBranches: %v", err)
+	}
+	if len(branches) != 101 {
+		t.Fatalf("branch count = %d, want 101", len(branches))
+	}
+	if branches[0] != "release/after-headerless-page" {
+		t.Fatalf("first branch = %q, want release/after-headerless-page", branches[0])
+	}
+	if got, want := strings.Join(seenPages, ","), "1,2"; got != want {
+		t.Fatalf("seen pages = %q, want %q", got, want)
+	}
+}
+
+func TestFetchGongfengBranchesStopsAtSafetyLimit(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_, _ = w.Write([]byte(gongfengBranchPayload(fmt.Sprintf("page-%s-branch", r.URL.Query().Get("page")), 0, 100, "2026-06-01T01:00:00Z")))
+	}))
+	defer server.Close()
+	t.Setenv("GONGFENG_API_BASE", server.URL)
+
+	_, err := fetchGongfengBranches(context.Background(), "ChainWeaver/ida/gateway", "token-1")
+	if err == nil || !strings.Contains(err.Error(), "exceeded 50 pages") {
+		t.Fatalf("error = %v, want safety limit", err)
+	}
+	if requests != 50 {
+		t.Fatalf("requests = %d, want 50", requests)
+	}
+}
+
+func gongfengBranchPayload(prefix string, start int, count int, committedDate string) string {
+	var b strings.Builder
+	b.WriteString("[")
+	for i := 0; i < count; i++ {
+		if i > 0 {
+			b.WriteString(",")
+		}
+		_, _ = fmt.Fprintf(&b, `{"name":"%s-%03d","commit":{"committed_date":"%s"}}`, prefix, start+i, committedDate)
+	}
+	b.WriteString("]")
+	return b.String()
 }
 
 func TestProjectResourceGongfengValidation(t *testing.T) {

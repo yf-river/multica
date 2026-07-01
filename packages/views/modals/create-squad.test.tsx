@@ -203,7 +203,7 @@ function makeAgent(overrides: Partial<Agent> & { id: string; name: string; owner
     runtime_mode: "local",
     runtime_config: {},
     custom_args: [],
-    visibility: "private",
+    scope: "personal",
     status: "idle",
     max_concurrent_tasks: 1,
     model: "",
@@ -238,7 +238,7 @@ function makeSquad(overrides: Partial<Squad> = {}): Squad {
     instructions: "",
     sop_profile: {},
     avatar_url: null,
-    visibility: "workspace",
+    scope: "workspace",
     leader_id: "agent-mine-1",
     creator_id: ME,
     created_at: "2026-01-01T00:00:00Z",
@@ -391,7 +391,7 @@ describe("CreateSquadModal", () => {
         description: undefined,
         leader_id: "agent-mine-1",
         avatar_url: undefined,
-        visibility: "workspace",
+        scope: "workspace",
       });
     });
     expect(mocks.addSquadMember).not.toHaveBeenCalled();
@@ -415,7 +415,7 @@ describe("CreateSquadModal", () => {
         description: undefined,
         leader_id: "agent-mine-1",
         avatar_url: undefined,
-        visibility: "workspace",
+        scope: "workspace",
       });
     });
     await waitFor(() => {
@@ -458,14 +458,14 @@ describe("CreateSquadModal", () => {
     expect(mocks.navigationPush).toHaveBeenCalledWith("/test-ws/squads/sq-2");
   });
 
-  it("submits personal visibility when selected", async () => {
+  it("submits personal scope when selected", async () => {
     renderModal();
     fireEvent.change(screen.getByPlaceholderText(/例如 前端团队/i), {
       target: { value: "Personal Squad" },
     });
     fireEvent.click(screen.getByText("个人"));
     fireEvent.click(firstMatch("MineAgentOne"));
-    mocks.createSquad.mockResolvedValue(makeSquad({ id: "sq-personal", visibility: "personal" }));
+    mocks.createSquad.mockResolvedValue(makeSquad({ id: "sq-personal", scope: "personal" }));
 
     fireEvent.click(getSubmitButton());
 
@@ -475,7 +475,7 @@ describe("CreateSquadModal", () => {
         description: undefined,
         leader_id: "agent-mine-1",
         avatar_url: undefined,
-        visibility: "personal",
+        scope: "personal",
       });
     });
   });

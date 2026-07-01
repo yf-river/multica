@@ -1061,6 +1061,10 @@ func fetchGongfengDefaultBranch(ctx context.Context, projectPath string, token s
 }
 
 func fetchGongfengBranches(ctx context.Context, projectPath string, token string) ([]string, error) {
+	const (
+		gongfengBranchesPageSize = 100
+		gongfengBranchesMaxPages = 50
+	)
 	token = strings.TrimSpace(token)
 	if token == "" {
 		return nil, errors.New("gongfeng credential token is unavailable")
@@ -1087,8 +1091,8 @@ func fetchGongfengBranches(ctx context.Context, projectPath string, token string
 	}
 	branches := []gongfengBranchListItem{}
 	seen := map[string]struct{}{}
-	for page := 1; page <= 50; page++ {
-		target := fmt.Sprintf("%s/projects/%s/repository/branches?per_page=100&page=%d", gongfengAPIBase(), url.PathEscape(projectPath), page)
+	for page := 1; page <= gongfengBranchesMaxPages; page++ {
+		target := fmt.Sprintf("%s/projects/%s/repository/branches?per_page=%d&page=%d", gongfengAPIBase(), url.PathEscape(projectPath), gongfengBranchesPageSize, page)
 		req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
 		if err != nil {
 			return nil, err
@@ -1134,8 +1138,11 @@ func fetchGongfengBranches(ctx context.Context, projectPath string, token string
 			item.updatedAt = firstParsedTime(item.Commit.CommittedDate, item.Commit.AuthoredDate, item.Commit.CreatedAt)
 			branches = append(branches, item)
 		}
-		if nextPage == "" {
+		if nextPage == "" && len(payload) < gongfengBranchesPageSize {
 			break
+		}
+		if page == gongfengBranchesMaxPages {
+			return nil, fmt.Errorf("gongfeng branch list exceeded %d pages; narrow the repository branch list or increase the server safety limit", gongfengBranchesMaxPages)
 		}
 	}
 	if len(branches) == 0 {

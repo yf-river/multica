@@ -1,5 +1,5 @@
 export type SquadMemberType = "agent" | "member";
-export type SquadVisibility = "workspace" | "personal";
+export type SquadScope = "workspace" | "personal";
 
 export type SquadActivityOutcome = "action" | "no_action" | "failed";
 
@@ -17,7 +17,7 @@ export interface Squad {
   instructions: string;
   sop_profile: Record<string, unknown>;
   avatar_url: string | null;
-  visibility: SquadVisibility;
+  scope: SquadScope;
   leader_id: string;
   creator_id: string;
   created_at: string;
@@ -53,7 +53,7 @@ export interface CreateSquadRequest {
   description?: string;
   leader_id: string;
   avatar_url?: string;
-  visibility?: SquadVisibility;
+  scope?: SquadScope;
   sop_profile?: Record<string, unknown>;
 }
 
@@ -63,7 +63,7 @@ export interface EnsureInternalSquadTemplateRequest {
   template_key: InternalSquadTemplateKey;
   runtime_provider?: string;
   model?: string;
-  visibility?: SquadVisibility;
+  scope?: SquadScope;
 }
 
 export interface InternalSquadTemplateAgent {
@@ -85,7 +85,7 @@ export interface UpdateSquadRequest {
   sop_profile?: Record<string, unknown>;
   leader_id?: string;
   avatar_url?: string;
-  visibility?: SquadVisibility;
+  scope?: SquadScope;
 }
 
 export interface AddSquadMemberRequest {

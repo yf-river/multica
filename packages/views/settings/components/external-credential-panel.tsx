@@ -1,9 +1,12 @@
 "use client";
 
 import { useState, type FormEvent } from "react";
-import { KeyRound, Save } from "lucide-react";
+import { CheckCircle2, CircleAlert, KeyRound, Save, ShieldCheck } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
+import { Button } from "@multica/ui/components/ui/button";
+import { Card, CardContent } from "@multica/ui/components/ui/card";
+import { cn } from "@multica/ui/lib/utils";
 import {
   externalCredentialProfilesOptions,
   useCreateExternalCredentialProfile,
@@ -119,129 +122,201 @@ export function ExternalCredentialPanel({ config }: { config: ExternalCredential
     );
   };
 
-  return (
-    <section className="space-y-4" data-testid={config.testId}>
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0 space-y-1">
-          <div className="flex flex-wrap items-center gap-2 text-sm font-semibold">
-            <KeyRound className="size-4 text-muted-foreground" />
-            <h2>{config.title}</h2>
-            <CredentialStatus profile={profile} configured={configured} />
-          </div>
-          <p className="max-w-3xl text-xs text-muted-foreground">{config.description}</p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          {savedCredential && !editing && (
-            <button
-              type="button"
-              className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-md border px-2 text-xs text-foreground hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={pending}
-              onClick={() => setEditing(true)}
-            >
-              {t(($) => $.tokens.external_credential.change)}
-            </button>
-          )}
-          {profile && (
-            <button
-              type="button"
-              className="inline-flex h-8 shrink-0 items-center justify-center whitespace-nowrap rounded-md border px-2 text-xs text-destructive hover:bg-destructive/10 disabled:cursor-not-allowed disabled:opacity-50"
-              disabled={pending}
-              onClick={() => {
-                deleteProfile.mutate(profile, {
-                  onSuccess: () => toast.success(config.removedToast),
-                  onError: (err) => toast.error(err instanceof Error ? err.message : config.removeErrorToast),
-                });
-              }}
-            >
-              {t(($) => $.tokens.external_credential.remove)}
-            </button>
-          )}
-        </div>
-      </div>
+  const handleVerifySavedCredential = () => {
+    if (!profile || pending) return;
+    setTestResult(null);
+    updateProfile.mutate(
+      { id: profile.id, data: { verify_now: true } },
+      {
+        onSuccess: (saved) => {
+          if (saved.status === "failed") {
+            toast.error(saved.last_error || config.testErrorToast);
+          } else {
+            toast.success(config.testSuccessToast);
+          }
+        },
+        onError: (err) => toast.error(err instanceof Error ? err.message : config.testErrorToast),
+      },
+    );
+  };
 
-      {showForm && (
-        <form className="space-y-3" onSubmit={handleSubmit}>
-          <div className="inline-flex w-fit rounded-md border bg-background p-0.5">
-            <button
-              type="button"
-              className={`h-8 whitespace-nowrap rounded px-2 text-xs ${mode === "token" ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted"}`}
-              onClick={() => {
-                setMode("token");
-                setTestResult(null);
-              }}
-            >
-              {t(($) => $.tokens.external_credential.mode_token)}
-            </button>
-            <button
-              type="button"
-              className={`h-8 whitespace-nowrap rounded px-2 text-xs ${mode === "secret_ref" ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted"}`}
-              onClick={() => {
-                setMode("secret_ref");
-                setTestResult(null);
-              }}
-            >
-              {t(($) => $.tokens.external_credential.mode_secret_ref)}
-            </button>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-[minmax(220px,1fr)_auto]">
-            {mode === "token" ? (
-              <input
-                type="password"
-                value={token}
-                onChange={(event) => {
-                  setToken(event.target.value);
-                  setTestResult(null);
-                }}
-                placeholder={configured ? config.replaceTokenPlaceholder : config.tokenPlaceholder}
-                className="h-10 min-w-0 rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
-                autoComplete="off"
+  const bindingHint = profile?.secret_binding?.hint;
+  const bindingMode = profile?.secret_binding?.mode;
+  const profileError = profile?.last_error;
+
+  return (
+    <Card data-testid={config.testId}>
+      <CardContent className="space-y-4">
+        <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_11rem]">
+          <div className="min-w-0 space-y-3">
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 rounded-md border bg-muted/50 p-2 text-muted-foreground">
+                <KeyRound className="size-4" />
+              </div>
+              <div className="min-w-0 space-y-1">
+                <div className="flex flex-wrap items-center gap-2">
+                  <h2 className="text-sm font-semibold">{config.title}</h2>
+                  <CredentialStatus profile={profile} configured={configured} />
+                </div>
+                <p className="max-w-3xl text-sm text-muted-foreground">{config.description}</p>
+              </div>
+            </div>
+            <div className="grid gap-2 rounded-md border bg-muted/20 p-3 text-xs sm:grid-cols-3">
+              <CredentialInfoItem
+                label={t(($) => $.tokens.external_credential.info_injected_vars)}
+                value={config.defaultEnvName}
               />
-            ) : (
-              <input
-                type="text"
-                value={secretRef}
-                onChange={(event) => {
-                  setSecretRef(event.target.value);
-                  setTestResult(null);
-                }}
-                placeholder={config.defaultEnvName}
-                className="h-10 min-w-0 rounded-md border bg-background px-3 font-mono text-sm outline-none focus:ring-2 focus:ring-ring"
+              <CredentialInfoItem
+                label={t(($) => $.tokens.external_credential.info_binding)}
+                value={bindingHint || t(($) => $.tokens.external_credential.info_binding_empty)}
+                mono={Boolean(bindingHint)}
               />
-            )}
-            <div className="flex flex-wrap gap-2">
-              <button
-                type="button"
-                className="inline-flex h-10 items-center justify-center whitespace-nowrap rounded-md border px-3 text-sm hover:bg-muted disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={pending}
-                onClick={handleTestConnection}
-              >
-                {testProfile.isPending
-                  ? t(($) => $.tokens.external_credential.testing)
-                  : t(($) => $.tokens.external_credential.test)}
-              </button>
-              <button
-                type="submit"
-                className="inline-flex h-10 items-center justify-center gap-1 whitespace-nowrap rounded-md bg-foreground px-3 text-sm text-background hover:bg-foreground/90 disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={pending}
-              >
-                <Save className="size-3.5" />
-                {t(($) => $.tokens.external_credential.save)}
-              </button>
+              <CredentialInfoItem
+                label={t(($) => $.tokens.external_credential.info_mode)}
+                value={
+                  bindingMode === "secret_ref"
+                    ? t(($) => $.tokens.external_credential.mode_secret_ref)
+                    : bindingMode === "encrypted_secret"
+                      ? t(($) => $.tokens.external_credential.mode_token)
+                      : t(($) => $.tokens.external_credential.status_unset)
+                }
+              />
             </div>
           </div>
-          {testResult && (
-            <p className={testResult.status === "failed" ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>
-              {testResult.last_error || "连接测试通过"}
-            </p>
-          )}
-          {profile?.last_error && (
-            <p className={profile.status === "failed" ? "text-xs text-destructive" : "text-xs text-muted-foreground"}>
-              {profile.last_error}
-            </p>
-          )}
-        </form>
-      )}
-    </section>
+
+          <div className="flex flex-col gap-2 lg:items-stretch" data-testid={`${config.testId}-actions`}>
+            {savedCredential && !editing && (
+              <>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-full whitespace-nowrap"
+                  disabled={pending}
+                  onClick={handleVerifySavedCredential}
+                >
+                  {updateProfile.isPending
+                    ? t(($) => $.tokens.external_credential.testing)
+                    : t(($) => $.tokens.external_credential.test)}
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  className="w-full whitespace-nowrap"
+                  disabled={pending}
+                  onClick={() => setEditing(true)}
+                >
+                  {t(($) => $.tokens.external_credential.change)}
+                </Button>
+              </>
+            )}
+            {profile && (
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="w-full whitespace-nowrap text-destructive hover:text-destructive"
+                disabled={pending}
+                onClick={() => {
+                  deleteProfile.mutate(profile, {
+                    onSuccess: () => toast.success(config.removedToast),
+                    onError: (err) => toast.error(err instanceof Error ? err.message : config.removeErrorToast),
+                  });
+                }}
+              >
+                {t(($) => $.tokens.external_credential.remove)}
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {showForm && (
+          <form className="space-y-3 rounded-md border bg-background p-3" onSubmit={handleSubmit}>
+            <div className="inline-flex w-fit rounded-md border bg-background p-0.5">
+              <button
+                type="button"
+                className={`h-8 whitespace-nowrap rounded px-2 text-xs ${mode === "token" ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted"}`}
+                onClick={() => {
+                  setMode("token");
+                  setTestResult(null);
+                }}
+              >
+                {t(($) => $.tokens.external_credential.mode_token)}
+              </button>
+              <button
+                type="button"
+                className={`h-8 whitespace-nowrap rounded px-2 text-xs ${mode === "secret_ref" ? "bg-foreground text-background" : "text-muted-foreground hover:bg-muted"}`}
+                onClick={() => {
+                  setMode("secret_ref");
+                  setTestResult(null);
+                }}
+              >
+                {t(($) => $.tokens.external_credential.mode_secret_ref)}
+              </button>
+            </div>
+            <div className="grid gap-2 sm:grid-cols-[minmax(220px,1fr)_auto]">
+              {mode === "token" ? (
+                <input
+                  type="password"
+                  value={token}
+                  onChange={(event) => {
+                    setToken(event.target.value);
+                    setTestResult(null);
+                  }}
+                  placeholder={configured ? config.replaceTokenPlaceholder : config.tokenPlaceholder}
+                  className="h-10 min-w-0 rounded-md border bg-background px-3 text-sm outline-none focus:ring-2 focus:ring-ring"
+                  autoComplete="off"
+                />
+              ) : (
+                <input
+                  type="text"
+                  value={secretRef}
+                  onChange={(event) => {
+                    setSecretRef(event.target.value);
+                    setTestResult(null);
+                  }}
+                  placeholder={config.defaultEnvName}
+                  className="h-10 min-w-0 rounded-md border bg-background px-3 font-mono text-sm outline-none focus:ring-2 focus:ring-ring"
+                />
+              )}
+              <div className="grid grid-cols-2 gap-2 sm:flex">
+                <Button
+                  type="button"
+                  variant="outline"
+                  className="h-10 whitespace-nowrap"
+                  disabled={pending}
+                  onClick={handleTestConnection}
+                >
+                  {testProfile.isPending
+                    ? t(($) => $.tokens.external_credential.testing)
+                    : t(($) => $.tokens.external_credential.test)}
+                </Button>
+                <Button
+                  type="submit"
+                  className="h-10 gap-1 whitespace-nowrap"
+                  disabled={pending}
+                >
+                  <Save className="size-3.5" />
+                  {t(($) => $.tokens.external_credential.save)}
+                </Button>
+              </div>
+            </div>
+          </form>
+        )}
+
+        {testResult && (
+          <CredentialMessage failed={testResult.status === "failed"}>
+            {testResult.last_error || t(($) => $.tokens.external_credential.test_passed)}
+          </CredentialMessage>
+        )}
+        {profileError && (
+          <CredentialMessage failed={profile?.status === "failed"}>
+            {profileError}
+          </CredentialMessage>
+        )}
+      </CardContent>
+    </Card>
   );
 }
 
@@ -274,11 +349,55 @@ function CredentialStatus({
   const tone =
     profile.status === "failed"
       ? "border-red-200 bg-red-50 text-red-700"
-      : "border bg-background text-muted-foreground";
+      : configured
+        ? "border-emerald-200 bg-emerald-50 text-emerald-700"
+        : "border bg-background text-muted-foreground";
+  const Icon = profile.status === "failed" ? CircleAlert : configured ? CheckCircle2 : ShieldCheck;
   return (
-    <span className={`rounded px-1.5 py-0.5 text-[11px] font-normal ${tone}`}>
+    <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[11px] font-normal ${tone}`}>
+      <Icon className="size-3" />
       {label}
       {hint ? ` · ${hint}` : ""}
     </span>
+  );
+}
+
+function CredentialInfoItem({
+  label,
+  value,
+  mono = false,
+}: {
+  label: string;
+  value: string;
+  mono?: boolean;
+}) {
+  return (
+    <div className="min-w-0 space-y-1">
+      <div className="text-[11px] text-muted-foreground">{label}</div>
+      <div className={cn("truncate text-xs text-foreground", mono && "font-mono")}>
+        {value}
+      </div>
+    </div>
+  );
+}
+
+function CredentialMessage({
+  failed,
+  children,
+}: {
+  failed?: boolean;
+  children: string;
+}) {
+  return (
+    <div
+      className={cn(
+        "rounded-md border px-3 py-2 text-xs",
+        failed
+          ? "border-red-200 bg-red-50 text-red-700"
+          : "bg-muted/20 text-muted-foreground",
+      )}
+    >
+      {children}
+    </div>
   );
 }

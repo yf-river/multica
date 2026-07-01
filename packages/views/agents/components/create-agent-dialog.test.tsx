@@ -2,7 +2,7 @@
 
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, fireEvent, cleanup } from "@testing-library/react";
+import { render, screen, fireEvent, cleanup, waitFor } from "@testing-library/react";
 import type { Agent, MemberWithUser, RuntimeDevice } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { WorkspaceSlugProvider } from "@multica/core/paths";
@@ -86,7 +86,7 @@ function makeRuntime(overrides: Partial<RuntimeDevice>): RuntimeDevice {
     device_info: "host.local",
     metadata: {},
     owner_id: ME,
-    visibility: "private",
+    scope: "personal",
     last_seen_at: "2026-04-27T11:59:50Z",
     created_at: "2026-04-01T00:00:00Z",
     updated_at: "2026-04-01T00:00:00Z",
@@ -106,7 +106,7 @@ function makeTemplate(runtimeId: string): Agent {
     runtime_mode: "local",
     runtime_config: {},
     custom_args: [],
-    visibility: "private",
+    scope: "personal",
     status: "idle",
     max_concurrent_tasks: 1,
     model: "",
@@ -146,7 +146,7 @@ function renderDialog(runtimes: RuntimeDevice[], template?: Agent) {
   return { onCreate, onClose };
 }
 
-describe("CreateAgentDialog runtime visibility gate", () => {
+describe("CreateAgentDialog runtime scope gate", () => {
   beforeEach(() => vi.clearAllMocks());
   // Base UI Dialog renders into a portal on document.body and leaves
   // focus-guard / inert wrapper divs around after the React tree unmounts.
@@ -158,13 +158,13 @@ describe("CreateAgentDialog runtime visibility gate", () => {
     document.body.innerHTML = "";
   });
 
-  it("disables another member's private runtime in the picker", () => {
-    const mine = makeRuntime({ id: "rt-mine", name: "My Runtime", owner_id: ME, visibility: "private" });
+  it("disables another member's personal runtime in the picker", () => {
+    const mine = makeRuntime({ id: "rt-mine", name: "My Runtime", owner_id: ME, scope: "personal" });
     const othersPrivate = makeRuntime({
       id: "rt-others-private",
       name: "Others Private",
       owner_id: OTHER,
-      visibility: "private",
+      scope: "personal",
     });
     renderDialog([mine, othersPrivate]);
 
@@ -180,55 +180,84 @@ describe("CreateAgentDialog runtime visibility gate", () => {
       .closest("button") as HTMLButtonElement;
     expect(disabledRow).not.toBeNull();
     expect(disabledRow.disabled).toBe(true);
-    expect(disabledRow.title).toMatch(/私有运行时/i);
+    expect(disabledRow.title).toMatch(/个人运行时/i);
   });
 
-  it("lets a plain member pick another member's public runtime", () => {
-    const mine = makeRuntime({ id: "rt-mine", name: "My Runtime", owner_id: ME, visibility: "private" });
-    const othersPublic = makeRuntime({
-      id: "rt-others-public",
-      name: "Others Public",
+  it("does not let a personal agent use a workspace runtime", () => {
+    const mine = makeRuntime({ id: "rt-mine", name: "My Runtime", owner_id: ME, scope: "personal" });
+    const workspaceRuntime = makeRuntime({
+      id: "rt-workspace",
+      name: "Workspace Runtime",
       owner_id: OTHER,
-      visibility: "public",
+      scope: "workspace",
     });
-    renderDialog([mine, othersPublic]);
+    renderDialog([mine, workspaceRuntime]);
 
     fireEvent.click(screen.getByText("全部"));
     fireEvent.click(
       screen.getByText("My Runtime", { selector: "span.truncate" }),
     );
 
-    const publicRow = screen
-      .getByText("Others Public")
+    const workspaceRow = screen
+      .getByText("Workspace Runtime")
       .closest("button") as HTMLButtonElement;
-    expect(publicRow).not.toBeNull();
-    expect(publicRow.disabled).toBe(false);
+    expect(workspaceRow).not.toBeNull();
+    expect(workspaceRow.disabled).toBe(true);
   });
 
-  it("defaults the selected runtime to a usable one, not a locked private", () => {
+  it("lets a workspace agent use a workspace runtime", async () => {
+    const mine = makeRuntime({ id: "rt-mine", name: "My Runtime", owner_id: ME, scope: "personal" });
+    const workspaceRuntime = makeRuntime({
+      id: "rt-workspace",
+      name: "Workspace Runtime",
+      owner_id: OTHER,
+      scope: "workspace",
+    });
+    renderDialog([mine, workspaceRuntime]);
+
+    fireEvent.click(screen.getByText("全部"));
+    fireEvent.click(screen.getByText("工作区"));
+    await waitFor(() =>
+      expect(
+        screen.getByText("Workspace Runtime", { selector: "span.truncate" }),
+      ).toBeInTheDocument(),
+    );
+    fireEvent.click(
+      screen.getByText("Workspace Runtime", { selector: "span.truncate" }),
+    );
+
+    const workspaceButtons = screen
+      .getAllByText("Workspace Runtime")
+      .map((node) => node.closest("button") as HTMLButtonElement | null)
+      .filter((button): button is HTMLButtonElement => button != null);
+    expect(workspaceButtons.length).toBeGreaterThan(0);
+    expect(workspaceButtons.every((button) => !button.disabled)).toBe(true);
+  });
+
+  it("defaults the selected runtime to a usable one, not a locked personal runtime", () => {
     const othersPrivate = makeRuntime({
       id: "rt-others-private",
       name: "Others Private",
       owner_id: OTHER,
-      visibility: "private",
+      scope: "personal",
     });
     const mine = makeRuntime({
       id: "rt-mine",
       name: "My Runtime",
       owner_id: ME,
-      visibility: "private",
+      scope: "personal",
     });
     renderDialog([othersPrivate, mine]);
 
     // The trigger label shows the selected runtime name. The picker must
-    // not seed with the other-owned private runtime even if it sorted
+    // not seed with the other-owned personal runtime even if it sorted
     // first in the input list.
     expect(screen.queryByText("Others Private", { selector: "span.truncate" })).toBeNull();
     expect(screen.getByText("My Runtime", { selector: "span.truncate" })).toBeInTheDocument();
   });
 
   it("in duplicate mode, does not pre-fill the template's runtime when it's now locked", async () => {
-    // Template runtime is owned by someone else and now private — the
+    // Template runtime is owned by someone else and now personal — the
     // duplicate flow used to seed with it anyway, leaving the user with
     // a 创建 button that 403s server-side. Now we fall back to the
     // first usable runtime instead.
@@ -236,13 +265,13 @@ describe("CreateAgentDialog runtime visibility gate", () => {
       id: "rt-others-private",
       name: "Others Private",
       owner_id: OTHER,
-      visibility: "private",
+      scope: "personal",
     });
     const mine = makeRuntime({
       id: "rt-mine",
       name: "My Runtime",
       owner_id: ME,
-      visibility: "private",
+      scope: "personal",
     });
     const template = makeTemplate("rt-others-private");
     const { onCreate } = renderDialog([othersPrivate, mine], template);
@@ -269,7 +298,7 @@ describe("CreateAgentDialog runtime visibility gate", () => {
       id: "rt-only-others-private",
       name: "Only Others Private",
       owner_id: OTHER,
-      visibility: "private",
+      scope: "personal",
     });
     // Flip the picker to "全部" so the locked runtime is at least
     // visible — that's the scope where the selected-but-locked state

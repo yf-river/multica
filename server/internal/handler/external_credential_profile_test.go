@@ -369,9 +369,9 @@ func TestClaimTaskIncludesTapdSourceContextWithAccountCredential(t *testing.T) {
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent (
 			workspace_id, name, description, runtime_mode, runtime_config,
-			runtime_id, visibility, max_concurrent_tasks, owner_id, mcp_config
+			runtime_id, scope, max_concurrent_tasks, owner_id, mcp_config
 		)
-		VALUES ($1, $2, '', 'cloud', '{}'::jsonb, $3, 'private', 1, $4, $5::jsonb)
+		VALUES ($1, $2, '', 'cloud', '{}'::jsonb, $3, 'personal', 1, $4, $5::jsonb)
 		RETURNING id
 	`, testWorkspaceID, "tapd source context agent", runtimeID, testUserID, `{
 		"mcpServers": {

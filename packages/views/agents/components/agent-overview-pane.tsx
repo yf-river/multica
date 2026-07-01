@@ -100,7 +100,7 @@ interface AgentOverviewPaneProps {
  *
  * The previous Settings tab was deleted because every field on it is now
  * inline-editable in the inspector (left column) — runtime / model /
- * visibility / concurrency via PropRow + Picker, and avatar / name /
+ * scope / concurrency via PropRow + Picker, and avatar / name /
  * description via popover. Two entry points for the same writes was just
  * extra concept count without extra capability.
  *

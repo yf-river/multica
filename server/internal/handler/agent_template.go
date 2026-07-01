@@ -121,7 +121,7 @@ type CreateAgentFromTemplateRequest struct {
 	Name               string `json:"name"`
 	RuntimeID          string `json:"runtime_id"`
 	Model              string `json:"model,omitempty"`
-	Visibility         string `json:"visibility,omitempty"`
+	Scope              string `json:"scope,omitempty"`
 	MaxConcurrentTasks int32  `json:"max_concurrent_tasks,omitempty"`
 	// Optional overrides — let the picker UI customise the template before
 	// creation without forcing a second round-trip to the detail page.
@@ -168,11 +168,14 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "runtime_id is required")
 		return
 	}
-	if req.Visibility == "" {
-		req.Visibility = "private"
+	scope, validScope := normalizeScope(req.Scope, scopePersonal)
+	if !validScope {
+		writeError(w, http.StatusBadRequest, "scope must be 'personal' or 'workspace'")
+		return
 	}
+	req.Scope = scope
 	if req.MaxConcurrentTasks == 0 {
-		req.MaxConcurrentTasks = 6
+		req.MaxConcurrentTasks = defaultAgentMaxConcurrentTasks
 	}
 
 	tmpl, found := agentTemplates.Get(req.TemplateSlug)
@@ -206,7 +209,11 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 		return
 	}
 	if !canUseRuntimeForAgent(member, runtime) {
-		writeError(w, http.StatusForbidden, "this runtime is private; only its owner or a workspace admin can create agents on it")
+		writeError(w, http.StatusForbidden, "this runtime is personal; only its owner or a workspace admin can create agents on it")
+		return
+	}
+	if err := validateAgentRuntimeScope(req.Scope, parseUUID(ownerID), runtime); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -439,7 +446,7 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 		RuntimeMode:        runtime.RuntimeMode,
 		RuntimeConfig:      rc,
 		RuntimeID:          runtime.ID,
-		Visibility:         req.Visibility,
+		Scope:              req.Scope,
 		MaxConcurrentTasks: req.MaxConcurrentTasks,
 		OwnerID:            creatorUUID,
 		CustomEnv:          ce,

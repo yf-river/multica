@@ -153,7 +153,7 @@ Current behavior:
   new assignee path.
 
 Assignment validation rejects a missing type/id pair, non-existent squad,
-archived squad, archived leader, and private leader when the actor cannot access
+archived squad, archived leader, and personal leader when the actor cannot access
 it.
 
 ## Comment and mention behavior

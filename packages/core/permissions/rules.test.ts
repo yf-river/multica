@@ -29,7 +29,7 @@ function makeAgent(overrides: Partial<Agent> = {}): Agent {
     runtime_mode: "local",
     runtime_config: {},
     custom_args: [],
-    visibility: "workspace",
+    scope: "workspace",
     status: "idle",
     max_concurrent_tasks: 1,
     model: "default",
@@ -91,7 +91,7 @@ function makeRuntime(ownerId: string | null): RuntimeDevice {
     device_info: "",
     metadata: {},
     owner_id: ownerId,
-    visibility: "private",
+    scope: "personal",
     last_seen_at: null,
     created_at: "2026-04-01T00:00:00Z",
     updated_at: "2026-04-01T00:00:00Z",
@@ -142,37 +142,37 @@ describe("canEditAgent", () => {
 
 describe("canAssignAgentToIssue", () => {
   it("allows any member to assign workspace-visibility agents", () => {
-    const a = makeAgent({ visibility: "workspace", owner_id: ALICE });
+    const a = makeAgent({ scope: "workspace", owner_id: ALICE });
     expect(
       canAssignAgentToIssue(a, { userId: BOB, role: "member" }).allowed,
     ).toBe(true);
   });
   it("denies non-members from assigning workspace agents", () => {
-    const a = makeAgent({ visibility: "workspace", owner_id: ALICE });
+    const a = makeAgent({ scope: "workspace", owner_id: ALICE });
     const d = canAssignAgentToIssue(a, { userId: BOB, role: null });
     expect(d.allowed).toBe(false);
     expect(d.reason).toBe("not_member");
   });
-  it("allows the owner to assign their private agent", () => {
-    const a = makeAgent({ visibility: "private", owner_id: ALICE });
+  it("allows the owner to assign their personal agent", () => {
+    const a = makeAgent({ scope: "personal", owner_id: ALICE });
     expect(
       canAssignAgentToIssue(a, { userId: ALICE, role: "member" }).allowed,
     ).toBe(true);
   });
-  it("allows workspace admin to assign someone else's private agent", () => {
-    const a = makeAgent({ visibility: "private", owner_id: ALICE });
+  it("allows workspace admin to assign someone else's personal agent", () => {
+    const a = makeAgent({ scope: "personal", owner_id: ALICE });
     expect(
       canAssignAgentToIssue(a, { userId: BOB, role: "admin" }).allowed,
     ).toBe(true);
   });
-  it("denies a plain member from assigning someone else's private agent", () => {
-    const a = makeAgent({ visibility: "private", owner_id: ALICE });
+  it("denies a plain member from assigning someone else's personal agent", () => {
+    const a = makeAgent({ scope: "personal", owner_id: ALICE });
     const d = canAssignAgentToIssue(a, { userId: BOB, role: "member" });
     expect(d.allowed).toBe(false);
     expect(d.reason).toBe("private_visibility");
   });
   it("denies logged-out users", () => {
-    const a = makeAgent({ visibility: "workspace" });
+    const a = makeAgent({ scope: "workspace" });
     const d = canAssignAgentToIssue(a, { userId: null, role: null });
     expect(d.allowed).toBe(false);
     expect(d.reason).toBe("not_authenticated");

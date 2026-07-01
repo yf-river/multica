@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { AlertTriangle, Globe, Info, Lock } from "lucide-react";
+import { AlertTriangle, Info } from "lucide-react";
 import { toast } from "sonner";
 import { useQuery } from "@tanstack/react-query";
 import { ApiError } from "@multica/core/api";
@@ -26,6 +26,7 @@ import {
 import { Button } from "@multica/ui/components/ui/button";
 import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { ResourceScopeBadge } from "../../common/resource-scope";
 import { availabilityConfig, workloadConfig } from "../../agents/presence";
 import { useT } from "../../i18n";
 import { isSelfHealingRuntime } from "../utils";
@@ -495,7 +496,7 @@ function AgentPlanTable({
                 </span>
               </span>
               <PresenceCell presence={presence} />
-              <VisibilityCell visibility={agent.visibility} />
+              <VisibilityCell scope={agent.scope} />
               <span className="truncate text-muted-foreground">
                 {agent.model ||
                   t(($) => $.detail.delete_dialog.cascade.table.model_unset)}
@@ -554,25 +555,21 @@ function PresenceCell({ presence }: { presence: AgentPresenceDetail | undefined 
   );
 }
 
-function VisibilityCell({ visibility }: { visibility: string }) {
+function VisibilityCell({ scope }: { scope: string }) {
   const { t } = useT("runtimes");
-  if (visibility === "public" || visibility === "workspace") {
+  if (scope === "workspace") {
     return (
-      <span className="inline-flex items-center gap-1 text-muted-foreground">
-        <Globe className="size-3" />
-        <span>
-          {t(($) => $.detail.delete_dialog.cascade.table.visibility_workspace)}
-        </span>
-      </span>
+      <ResourceScopeBadge
+        scope="workspace"
+        label={t(($) => $.detail.delete_dialog.cascade.table.visibility_workspace)}
+      />
     );
   }
   return (
-    <span className="inline-flex items-center gap-1 text-muted-foreground">
-      <Lock className="size-3" />
-      <span>
-        {t(($) => $.detail.delete_dialog.cascade.table.visibility_private)}
-      </span>
-    </span>
+    <ResourceScopeBadge
+      scope="personal"
+      label={t(($) => $.detail.delete_dialog.cascade.table.visibility_private)}
+    />
   );
 }
 

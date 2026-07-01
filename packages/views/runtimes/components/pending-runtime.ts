@@ -80,7 +80,7 @@ export function pendingRuntimeFromProfile({
     device_info: machineName,
     metadata,
     owner_id: ownerId ?? null,
-    visibility: "private",
+    scope: "personal",
     profile_id: profile.id,
     last_seen_at: pendingSince,
     created_at: pendingSince,

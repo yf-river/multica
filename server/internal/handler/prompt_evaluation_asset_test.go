@@ -1710,8 +1710,8 @@ func TestRunPromptEvaluationAssetAgentRestoresArchivedTrainingAgent(t *testing.T
 	cleanupPromptEvaluationAgentRunTest(t)
 	var runtimeID string
 	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
-		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 测试运行时', '{}'::jsonb, $4, 'private', now())
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 测试运行时', '{}'::jsonb, $4, 'personal', now())
 		RETURNING id
 	`, testWorkspaceID, "prompt-eval-codex-restore-"+randomID()[:8], "prompt-eval-codex-restore-"+randomID()[:8], testUserID).Scan(&runtimeID); err != nil {
 		t.Fatalf("create codex runtime: %v", err)
@@ -1723,7 +1723,7 @@ func TestRunPromptEvaluationAssetAgentRestoresArchivedTrainingAgent(t *testing.T
 		RuntimeMode:        "local",
 		RuntimeConfig:      []byte("{}"),
 		RuntimeID:          parseUUID(runtimeID),
-		Visibility:         "workspace",
+		Scope:         "workspace",
 		MaxConcurrentTasks: 1,
 		OwnerID:            parseUUID(testUserID),
 		Instructions:       promptEvaluationAgentInstructions(),
@@ -1800,8 +1800,8 @@ func TestPromptEvaluationRuntimeReadinessRejectsStaleRuntime(t *testing.T) {
 		t.Fatalf("cleanup codex runtime: %v", err)
 	}
 	if _, err := testPool.Exec(context.Background(), `
-		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
-		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 过期测试运行时', '{}'::jsonb, $4, 'private', now() - interval '5 minutes')
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 过期测试运行时', '{}'::jsonb, $4, 'personal', now() - interval '5 minutes')
 	`, testWorkspaceID, "prompt-eval-codex-stale-"+randomID()[:8], "prompt-eval-codex-stale-"+randomID()[:8], testUserID); err != nil {
 		t.Fatalf("create stale codex runtime: %v", err)
 	}
@@ -1926,8 +1926,8 @@ func TestPromptEvaluationRuntimeReadinessReportsUnavailableStates(t *testing.T) 
 
 	var offlineRuntimeID string
 	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
-		VALUES ($1, $2, $3, 'local', 'codex', 'offline', 'Codex 离线测试运行时', '{}'::jsonb, $4, 'private', now())
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codex', 'offline', 'Codex 离线测试运行时', '{}'::jsonb, $4, 'personal', now())
 		RETURNING id
 	`, testWorkspaceID, "prompt-eval-codex-offline-"+randomID()[:8], "prompt-eval-codex-offline-"+randomID()[:8], testUserID).Scan(&offlineRuntimeID); err != nil {
 		t.Fatalf("create offline codex runtime: %v", err)
@@ -2001,8 +2001,8 @@ func TestPromptEvaluationRuntimeReadinessReportsUnavailableStates(t *testing.T) 
 		t.Fatalf("add runtime readiness members: %v", err)
 	}
 	if _, err := testPool.Exec(context.Background(), `
-		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
-		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 私有测试运行时', '{}'::jsonb, $4, 'private', now())
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 私有测试运行时', '{}'::jsonb, $4, 'personal', now())
 	`, testWorkspaceID, "prompt-eval-codex-private-"+randomID()[:8], "prompt-eval-codex-private-"+randomID()[:8], runtimeOwnerID); err != nil {
 		t.Fatalf("create private codex runtime: %v", err)
 	}
@@ -2793,8 +2793,8 @@ func TestRunPromptEvaluationAssetAgentDefaultsExperimentDimensions(t *testing.T)
 	cleanupPromptEvaluationAgentRunTest(t)
 	var runtimeID string
 	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
-		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 默认维度运行时', '{}'::jsonb, $4, 'private', now())
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 默认维度运行时', '{}'::jsonb, $4, 'personal', now())
 		RETURNING id
 	`, testWorkspaceID, "prompt-eval-default-dimension-daemon-"+randomID()[:8], "prompt-eval-default-dimension-"+randomID()[:8], testUserID).Scan(&runtimeID); err != nil {
 		t.Fatalf("create codex runtime: %v", err)
@@ -2850,8 +2850,8 @@ func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
 	cleanupPromptEvaluationAgentRunTest(t)
 	var runtimeID string
 	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
-		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 指定运行时', '{}'::jsonb, $4, 'private', now())
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 指定运行时', '{}'::jsonb, $4, 'personal', now())
 		RETURNING id
 	`, testWorkspaceID, "prompt-eval-selected-daemon-"+randomID()[:8], "prompt-eval-selected-"+randomID()[:8], testUserID).Scan(&runtimeID); err != nil {
 		t.Fatalf("create codex runtime: %v", err)
@@ -2863,7 +2863,7 @@ func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
 		RuntimeMode:        "local",
 		RuntimeConfig:      []byte("{}"),
 		RuntimeID:          parseUUID(runtimeID),
-		Visibility:         "workspace",
+		Scope:         "workspace",
 		MaxConcurrentTasks: 1,
 		OwnerID:            parseUUID(testUserID),
 		Instructions:       "只输出结构化评估结论。",
@@ -2934,8 +2934,8 @@ func createPromptEvaluationAgentRunFixture(t *testing.T, assetName string, caseN
 	t.Helper()
 	var runtimeID string
 	if err := testPool.QueryRow(context.Background(), `
-		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, visibility, last_seen_at)
-		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 测试运行时', '{}'::jsonb, $4, 'private', now())
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 测试运行时', '{}'::jsonb, $4, 'personal', now())
 		RETURNING id
 	`, testWorkspaceID, "prompt-eval-codex-daemon-"+randomID()[:8], "prompt-eval-codex-"+randomID()[:8], testUserID).Scan(&runtimeID); err != nil {
 		t.Fatalf("create codex runtime: %v", err)

@@ -43,7 +43,7 @@ const agent: Agent = {
   runtime_mode: "local",
   runtime_config: {},
   custom_args: [],
-  visibility: "workspace",
+  scope: "workspace",
   status: "idle",
   max_concurrent_tasks: 1,
   model: "",

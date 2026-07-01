@@ -72,10 +72,10 @@ func (h *Handler) CreateChatSession(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Private-agent gate: members must be in allowed_principals to start
-	// a chat with a private agent. Agent-to-agent chat sessions bypass
+	// a chat with a personal agent. Agent-to-agent chat sessions bypass
 	// the gate so A2A collaboration still works.
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+	if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, workspaceID) {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return
 	}
@@ -104,7 +104,7 @@ func (h *Handler) ListChatSessions(w http.ResponseWriter, r *http.Request) {
 	// Compute the accessible-agents set once and use it to drop sessions
 	// whose target agent the caller no longer has access to — without this,
 	// a member whose role was downgraded would still see the session list
-	// (and transcripts via ListChatMessages) for any private agent they
+	// (and transcripts via ListChatMessages) for any personal agent they
 	// previously had access to. Falls back to the user's role from the
 	// workspace member context.
 	member, ok := h.workspaceMember(w, r, workspaceID)
@@ -207,7 +207,7 @@ func (h *Handler) loadChatSessionForUser(w http.ResponseWriter, r *http.Request,
 }
 
 // gateChatSessionForUser combines the session ownership check with the
-// private-agent access gate so a member who has lost access to the target
+// personal-agent access gate so a member who has lost access to the target
 // agent (role downgrade, ownership transfer, agent flipped to private)
 // cannot continue reading the chat transcript even though they remain the
 // session creator. Returns ok=false after writing the error response.
@@ -222,7 +222,7 @@ func (h *Handler) gateChatSessionForUser(w http.ResponseWriter, r *http.Request,
 		return db.ChatSession{}, false
 	}
 	actorType, actorID := h.resolveActor(r, userID, workspaceID)
-	if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+	if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, workspaceID) {
 		writeError(w, http.StatusForbidden, "you do not have access to this agent")
 		return db.ChatSession{}, false
 	}
@@ -433,10 +433,10 @@ func (h *Handler) SendChatMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Load chat session and re-check the private-agent gate on every send.
+	// Load chat session and re-check the personal-agent gate on every send.
 	// The session's creator passed the gate at create time, but their
 	// workspace role (or the agent's owner) may have changed since — keep
-	// stale sessions from being a back-door into a private agent the user
+	// stale sessions from being a back-door into a personal agent the user
 	// can no longer reach. Agent senders bypass to preserve A2A collaboration.
 	session, ok := h.gateChatSessionForUser(w, r, userID, workspaceID, sessionID)
 	if !ok {
@@ -754,7 +754,7 @@ type CancelTaskByUserResponse struct {
 // ListPendingChatTasks returns every in-flight chat task owned by the current
 // user in this workspace. Drives the FAB's "running" indicator when the chat
 // window is closed (no per-session query is subscribed). Tasks belonging to
-// private agents the caller has lost access to are dropped from the response.
+// personal agents the caller has lost access to are dropped from the response.
 func (h *Handler) ListPendingChatTasks(w http.ResponseWriter, r *http.Request) {
 	userID, ok := requireUserID(w, r)
 	if !ok {
@@ -870,8 +870,8 @@ func (h *Handler) GetPendingChatTask(w http.ResponseWriter, r *http.Request) {
 //   - a chat task is private to the member who started the conversation, so
 //     only that creator may cancel it;
 //   - every other task surfaces on the agent Activity tab and the workspace
-//     task snapshot, both of which hide private agents from members without
-//     access. Cancellation mirrors that gate via canAccessPrivateAgent so the
+//     task snapshot, both of which hide personal agents from members without
+//     access. Cancellation mirrors that gate via canAccessPersonalAgent so the
 //     id-only endpoint is never more permissive than the surface that exposes
 //     the task.
 func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
@@ -927,7 +927,7 @@ func (h *Handler) CancelTaskByUser(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		actorType, actorID := h.resolveActor(r, userID, workspaceID)
-		if !h.canAccessPrivateAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+		if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, workspaceID) {
 			writeError(w, http.StatusForbidden, "you do not have access to this agent")
 			return
 		}

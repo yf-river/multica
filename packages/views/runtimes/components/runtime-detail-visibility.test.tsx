@@ -122,7 +122,7 @@ function makeRuntime(overrides: Partial<AgentRuntime>): AgentRuntime {
     device_info: "host.local",
     metadata: {},
     owner_id: "user-me",
-    visibility: "private",
+    scope: "personal",
     last_seen_at: "2026-04-27T11:59:50Z",
     created_at: "2026-04-01T00:00:00Z",
     updated_at: "2026-04-01T00:00:00Z",
@@ -146,24 +146,24 @@ describe("RuntimeDetail visibility section", () => {
 
   it("shows owner-editable visibility choices when the caller owns the runtime", () => {
     renderDetail(makeRuntime({ owner_id: "user-me" }));
-    expect(screen.getByText("可见性")).toBeInTheDocument();
-    expect(screen.getByText("私有")).toBeInTheDocument();
-    expect(screen.getByText("公开")).toBeInTheDocument();
+    expect(screen.getByText("使用范围")).toBeInTheDocument();
+    expect(screen.getByText("个人")).toBeInTheDocument();
+    expect(screen.getByText("工作区")).toBeInTheDocument();
   });
 
-  it("flips visibility to public when the owner clicks the Public choice", async () => {
-    renderDetail(makeRuntime({ owner_id: "user-me", visibility: "private" }));
-    fireEvent.click(screen.getByText("公开"));
+  it("flips scope to workspace when the owner clicks the workspace choice", async () => {
+    renderDetail(makeRuntime({ owner_id: "user-me", scope: "personal" }));
+    fireEvent.click(screen.getByText("工作区"));
     await waitFor(() =>
-      expect(mockUpdateRuntime).toHaveBeenCalledWith("rt-1", { visibility: "public" }),
+      expect(mockUpdateRuntime).toHaveBeenCalledWith("rt-1", { scope: "workspace" }),
     );
   });
 
   it("renders a read-only visibility chip when the caller cannot edit", () => {
-    renderDetail(makeRuntime({ owner_id: "someone-else", visibility: "public" }));
-    expect(screen.getByText("公开")).toBeInTheDocument();
-    // The editor's "私有" choice button must not render in read-only mode.
-    expect(screen.queryByText("私有")).not.toBeInTheDocument();
+    renderDetail(makeRuntime({ owner_id: "someone-else", scope: "workspace" }));
+    expect(screen.getByText("工作区")).toBeInTheDocument();
+    // The editor's "个人" choice button must not render in read-only mode.
+    expect(screen.queryByText("个人")).not.toBeInTheDocument();
   });
 
   // MUL-3352: an owner viewing an online local (self-healing) runtime

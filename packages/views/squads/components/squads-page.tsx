@@ -23,7 +23,7 @@ import {
   squadListOptions,
   workspaceKeys,
 } from "@multica/core/workspace/queries";
-import { runtimeListOptions } from "@multica/core/runtimes";
+import { runtimeListOptions, runtimeModelsOptions } from "@multica/core/runtimes";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { useAuthStore } from "@multica/core/auth";
 import { api } from "@multica/core/api";
@@ -43,7 +43,7 @@ import type {
   MemberWithUser,
   RuntimeDevice,
   Squad,
-  SquadVisibility,
+  SquadScope,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import {
@@ -98,9 +98,15 @@ import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/ac
 import { ActorAvatar } from "../../common/actor-avatar";
 import { ModelDropdown } from "../../agents/components/model-dropdown";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
+import {
+  squadResourceScope,
+  ResourceScopeBadge,
+  resourceSegmentedOptionClass,
+} from "../../common/resource-scope";
 import { useNavigation, useRowLink } from "../../navigation";
 import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
+import { preferredPMModel } from "./pm-model-default";
 
 // Column template — the simplest member of the ListGrid family (squads are
 // the fewest entity, 1-5 rows): subgrid template + var tracks + two-zone
@@ -120,7 +126,6 @@ const COLUMN_WIDTHS: Record<SquadColumnKey, number> = {
   created: 104,
 };
 const DEFAULT_PM_PROVIDER = "codebuddy";
-const DEFAULT_PM_MODEL = "deepseek-v4-pro";
 
 // Fixed tracks (edges 12+12, name min 200, leader 160) plus the 7 gap-x-3
 // gaps between the wide template's 8 tracks (zero-width tracks still carry
@@ -156,7 +161,7 @@ function canUseRuntime(
   isWorkspaceAdmin: boolean,
 ) {
   if (isWorkspaceAdmin) return true;
-  if (runtime.visibility === "public") return true;
+  if (runtime.scope === "workspace") return true;
   return !!currentUserId && runtime.owner_id === currentUserId;
 }
 
@@ -234,11 +239,14 @@ function NameCell({ squad }: { squad: Squad }) {
           <span className="min-w-0 truncate text-sm font-medium">
             {squad.name}
           </span>
-          <span className="shrink-0 rounded border bg-muted/40 px-1 py-0 text-[10px] leading-4 text-muted-foreground">
-            {squad.visibility === "personal"
-              ? t(($) => $.page.visibility_personal)
-              : t(($) => $.page.visibility_workspace)}
-          </span>
+          <ResourceScopeBadge
+            scope={squadResourceScope(squad.scope)}
+            label={
+              squad.scope === "personal"
+                ? t(($) => $.page.scope_personal)
+                : t(($) => $.page.scope_workspace)
+            }
+          />
           {squad.archived_at ? (
             <span className="shrink-0 rounded border bg-muted/40 px-1 py-0 text-[10px] leading-4 text-muted-foreground">
               {t(($) => $.profile_card.archived)}
@@ -446,15 +454,15 @@ function SquadRowActions({ squad }: { squad: Squad }) {
   );
 }
 
-function SquadVisibilityToggle({
+function SquadScopeToggle({
   value,
   onChange,
 }: {
-  value: SquadVisibility;
-  onChange: (value: SquadVisibility) => void;
+  value: SquadScope;
+  onChange: (value: SquadScope) => void;
 }) {
   const { t } = useT("squads");
-  const options: SquadVisibility[] = ["workspace", "personal"];
+  const options: SquadScope[] = ["workspace", "personal"];
   return (
     <div className="grid grid-cols-2 gap-1 rounded-lg border bg-muted/30 p-1">
       {options.map((option) => (
@@ -463,14 +471,12 @@ function SquadVisibilityToggle({
           type="button"
           onClick={() => onChange(option)}
           className={
-            value === option
-              ? "rounded-md bg-background px-2 py-1.5 text-xs font-medium shadow-xs"
-              : "rounded-md px-2 py-1.5 text-xs text-muted-foreground hover:bg-background/60"
+            resourceSegmentedOptionClass(value === option)
           }
         >
           {option === "personal"
-            ? t(($) => $.page.visibility_personal)
-            : t(($) => $.page.visibility_workspace)}
+            ? t(($) => $.page.scope_personal)
+            : t(($) => $.page.scope_workspace)}
         </button>
       ))}
     </div>
@@ -916,8 +922,9 @@ export function SquadsPage() {
   }, [members, currentUser]);
   const [pmDialogOpen, setPmDialogOpen] = useState(false);
   const [pmProvider, setPmProvider] = useState(DEFAULT_PM_PROVIDER);
-  const [pmModel, setPmModel] = useState(DEFAULT_PM_MODEL);
-  const [pmVisibility, setPmVisibility] = useState<SquadVisibility>("workspace");
+  const [pmModel, setPmModel] = useState("");
+  const [pmModelTouched, setPmModelTouched] = useState(false);
+  const [pmScope, setPmScope] = useState<SquadScope>("workspace");
   const usableRuntimes = useMemo(
     () =>
       runtimes.filter(
@@ -956,11 +963,40 @@ export function SquadsPage() {
         ? DEFAULT_PM_PROVIDER
         : providerChoices[0]!,
     );
+    setPmModel("");
+    setPmModelTouched(false);
   }, [providerChoices, pmProvider]);
   const selectedPmRuntime = useMemo(
     () => bestRuntimeForProvider(usableRuntimes, pmProvider),
     [usableRuntimes, pmProvider],
   );
+  const selectedPmRuntimeModelsRuntimeId =
+    pmDialogOpen && selectedPmRuntime?.status === "online"
+      ? selectedPmRuntime.id
+      : null;
+  const pmRuntimeModelsQuery = useQuery(
+    runtimeModelsOptions(selectedPmRuntimeModelsRuntimeId),
+  );
+  const suggestedPmModel = useMemo(
+    () => preferredPMModel(pmRuntimeModelsQuery.data?.models ?? []),
+    [pmRuntimeModelsQuery.data],
+  );
+  const pmModelDiscoveryPending =
+    Boolean(selectedPmRuntime) && pmRuntimeModelsQuery.isLoading;
+  useEffect(() => {
+    if (!pmDialogOpen || pmModelTouched) return;
+    if (pmRuntimeModelsQuery.isLoading) return;
+    if (!suggestedPmModel) return;
+    if (pmModel !== suggestedPmModel) {
+      setPmModel(suggestedPmModel);
+    }
+  }, [
+    pmDialogOpen,
+    pmModel,
+    pmModelTouched,
+    pmRuntimeModelsQuery.isLoading,
+    suggestedPmModel,
+  ]);
   const ensureInternalSquad = useMutation({
     mutationFn: (payload: EnsureInternalSquadTemplateRequest) =>
       api.ensureInternalSquadTemplate(payload),
@@ -981,14 +1017,15 @@ export function SquadsPage() {
     if (!providerChoices.includes(pmProvider)) {
       setPmProvider(defaultProvider ?? DEFAULT_PM_PROVIDER);
     }
-    if (!pmModel.trim()) setPmModel(DEFAULT_PM_MODEL);
+    setPmModel("");
+    setPmModelTouched(false);
     setPmDialogOpen(true);
   };
   const ensurePmSquad = () => {
     ensureInternalSquad.mutate({
       template_key: "user-center",
       runtime_provider: pmProvider,
-      visibility: pmVisibility,
+      scope: pmScope,
       ...(pmModel.trim() ? { model: pmModel.trim() } : {}),
     });
   };
@@ -1110,17 +1147,17 @@ export function SquadsPage() {
           <DialogHeader>
             <DialogTitle>创建 pm 小队</DialogTitle>
             <DialogDescription>
-              选择这组内置 SOP Agent 使用的默认运行时和模型。模型留空时使用运行时默认配置。
+              选择这组 SOP Agent 初始化时使用的运行时和模型。模型留空时，每个 Agent 使用运行时默认配置。
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
               <div className="mb-1.5 text-xs text-muted-foreground">
-                可见性
+                范围
               </div>
-              <SquadVisibilityToggle
-                value={pmVisibility}
-                onChange={setPmVisibility}
+              <SquadScopeToggle
+                value={pmScope}
+                onChange={setPmScope}
               />
             </div>
             <div>
@@ -1132,7 +1169,8 @@ export function SquadsPage() {
                 onValueChange={(value) => {
                   if (!value) return;
                   setPmProvider(value);
-                  setPmModel(DEFAULT_PM_MODEL);
+                  setPmModel("");
+                  setPmModelTouched(false);
                 }}
               >
                 <SelectTrigger className="w-full" disabled={providerChoices.length === 0}>
@@ -1163,7 +1201,10 @@ export function SquadsPage() {
               runtimeId={selectedPmRuntime?.id ?? null}
               runtimeOnline={selectedPmRuntime?.status === "online"}
               value={pmModel}
-              onChange={setPmModel}
+              onChange={(value) => {
+                setPmModel(value);
+                setPmModelTouched(true);
+              }}
               disabled={!selectedPmRuntime}
             />
           </div>
@@ -1177,7 +1218,11 @@ export function SquadsPage() {
             </Button>
             <Button
               onClick={ensurePmSquad}
-              disabled={ensureInternalSquad.isPending || providerChoices.length === 0}
+              disabled={
+                ensureInternalSquad.isPending ||
+                providerChoices.length === 0 ||
+                pmModelDiscoveryPending
+              }
             >
               {ensureInternalSquad.isPending && (
                 <Loader2 className="h-4 w-4 animate-spin" />

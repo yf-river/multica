@@ -4,7 +4,11 @@ import { useEffect, useMemo, useState } from "react";
 import { ChevronDown, Cloud, Loader2, Lock } from "lucide-react";
 import { ProviderLogo } from "../../runtimes/components/provider-logo";
 import { ActorAvatar } from "../../common/actor-avatar";
-import type { MemberWithUser, RuntimeDevice } from "@multica/core/types";
+import type {
+  AgentScope,
+  MemberWithUser,
+  RuntimeDevice,
+} from "@multica/core/types";
 import {
   Popover,
   PopoverTrigger,
@@ -20,6 +24,7 @@ export function RuntimePicker({
   runtimesLoading,
   members,
   currentUserId,
+  targetScope,
   selectedRuntimeId,
   onSelect,
 }: {
@@ -27,6 +32,7 @@ export function RuntimePicker({
   runtimesLoading?: boolean;
   members: MemberWithUser[];
   currentUserId: string | null;
+  targetScope: AgentScope;
   selectedRuntimeId: string;
   onSelect: (id: string) => void;
 }) {
@@ -42,8 +48,8 @@ export function RuntimePicker({
   const hasOtherRuntimes = runtimes.some((r) => r.owner_id !== currentUserId);
 
   const filteredRuntimes = useMemo(
-    () => computeFilteredRuntimes(runtimes, filter, currentUserId),
-    [runtimes, filter, currentUserId],
+    () => computeFilteredRuntimes(runtimes, filter, currentUserId, targetScope),
+    [runtimes, filter, currentUserId, targetScope],
   );
 
   const selectedRuntime =
@@ -57,10 +63,22 @@ export function RuntimePicker({
   useEffect(() => {
     if (selectedRuntimeId !== "") return;
     const firstUsable = filteredRuntimes.find((r) =>
-      isRuntimeUsableForUser(r, currentUserId),
+      isRuntimeUsableForUser(r, currentUserId, targetScope),
     );
     if (firstUsable) onSelect(firstUsable.id);
-  }, [filteredRuntimes, selectedRuntimeId, currentUserId, onSelect]);
+  }, [filteredRuntimes, selectedRuntimeId, currentUserId, targetScope, onSelect]);
+
+  useEffect(() => {
+    if (selectedRuntimeId === "") return;
+    const selected = runtimes.find((r) => r.id === selectedRuntimeId);
+    if (selected && isRuntimeUsableForUser(selected, currentUserId, targetScope)) {
+      return;
+    }
+    const firstUsable = filteredRuntimes.find((r) =>
+      isRuntimeUsableForUser(r, currentUserId, targetScope),
+    );
+    onSelect(firstUsable?.id ?? "");
+  }, [filteredRuntimes, runtimes, selectedRuntimeId, currentUserId, targetScope, onSelect]);
 
   // On filter toggle, recompute the picker's selection to a usable item
   // in the new filter set. Pushes `""` when nothing matches; the seeding
@@ -68,9 +86,9 @@ export function RuntimePicker({
   const handleFilterChange = (next: RuntimeFilter) => {
     if (next === filter) return;
     setFilter(next);
-    const nextList = computeFilteredRuntimes(runtimes, next, currentUserId);
+    const nextList = computeFilteredRuntimes(runtimes, next, currentUserId, targetScope);
     const firstUsable = nextList.find((r) =>
-      isRuntimeUsableForUser(r, currentUserId),
+      isRuntimeUsableForUser(r, currentUserId, targetScope),
     );
     onSelect(firstUsable?.id ?? "");
   };
@@ -156,9 +174,9 @@ export function RuntimePicker({
         >
           {filteredRuntimes.map((device) => {
             const ownerMember = getOwnerMember(device.owner_id);
-            const disabled = !isRuntimeUsableForUser(device, currentUserId);
+            const disabled = !isRuntimeUsableForUser(device, currentUserId, targetScope);
             const disabledTitle = disabled
-              ? t(($) => $.create_dialog.runtime_private_locked_tooltip)
+              ? t(($) => $.create_dialog.runtime_personal_locked_tooltip)
               : undefined;
             return (
               <button
@@ -194,7 +212,7 @@ export function RuntimePicker({
                     {disabled && (
                       <span className="shrink-0 inline-flex items-center gap-1 rounded bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
                         <Lock className="h-3 w-3" />
-                        {t(($) => $.create_dialog.runtime_private_badge)}
+                        {t(($) => $.create_dialog.runtime_personal_badge)}
                       </span>
                     )}
                   </div>
@@ -234,16 +252,24 @@ export function RuntimePicker({
 export function isRuntimeUsableForUser(
   r: RuntimeDevice,
   currentUserId: string | null,
+  targetScope?: AgentScope,
 ): boolean {
+  if (targetScope === "workspace") return r.scope === "workspace";
+  if (targetScope === "personal") {
+    if (r.scope !== "personal") return false;
+    if (!currentUserId) return true;
+    return r.owner_id === currentUserId;
+  }
   if (!currentUserId) return true;
   if (r.owner_id === currentUserId) return true;
-  return r.visibility === "public";
+  return r.scope === "workspace";
 }
 
 function computeFilteredRuntimes(
   runtimes: RuntimeDevice[],
   filter: RuntimeFilter,
   currentUserId: string | null,
+  targetScope: AgentScope,
 ): RuntimeDevice[] {
   const filtered =
     filter === "mine" && currentUserId
@@ -254,8 +280,8 @@ function computeFilteredRuntimes(
     const bMine = b.owner_id === currentUserId;
     if (aMine && !bMine) return -1;
     if (!aMine && bMine) return 1;
-    const aUsable = isRuntimeUsableForUser(a, currentUserId);
-    const bUsable = isRuntimeUsableForUser(b, currentUserId);
+    const aUsable = isRuntimeUsableForUser(a, currentUserId, targetScope);
+    const bUsable = isRuntimeUsableForUser(b, currentUserId, targetScope);
     if (aUsable && !bUsable) return -1;
     if (!aUsable && bUsable) return 1;
     return 0;

@@ -193,7 +193,11 @@ func (h *Handler) BootstrapOnboardingRuntime(w http.ResponseWriter, r *http.Requ
 		return
 	}
 	if !canUseRuntimeForAgent(member, runtime) {
-		writeError(w, http.StatusForbidden, "this runtime is private; only its owner or a workspace admin can create agents on it")
+		writeError(w, http.StatusForbidden, "this runtime is personal; only its owner or a workspace admin can create agents on it")
+		return
+	}
+	if err := validateAgentRuntimeScope(scopeWorkspace, parseUUID(userID), runtime); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -207,7 +211,7 @@ func (h *Handler) BootstrapOnboardingRuntime(w http.ResponseWriter, r *http.Requ
 	var assistant db.Agent
 	assistantCreated := false
 	for _, existing := range agents {
-		if existing.Name == onboardingAssistantName && existing.Visibility == "workspace" {
+		if existing.Name == onboardingAssistantName && existing.Scope == scopeWorkspace {
 			assistant = existing
 			break
 		}
@@ -221,8 +225,8 @@ func (h *Handler) BootstrapOnboardingRuntime(w http.ResponseWriter, r *http.Requ
 			RuntimeMode:        runtime.RuntimeMode,
 			RuntimeConfig:      []byte("{}"),
 			RuntimeID:          runtime.ID,
-			Visibility:         "workspace",
-			MaxConcurrentTasks: 6,
+			Scope:              scopeWorkspace,
+			MaxConcurrentTasks: defaultAgentMaxConcurrentTasks,
 			OwnerID:            parseUUID(userID),
 			Instructions:       onboardingAssistantInstructions,
 			CustomEnv:          []byte("{}"),

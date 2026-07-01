@@ -211,7 +211,7 @@ export function AssigneePicker({
               >
                 <ActorAvatar actorType="agent" actorId={a.id} size={18} showStatusDot />
                 <span className={`truncate ${allowed ? "" : "text-muted-foreground"}`}>{a.name}</span>
-                {a.visibility === "private" && (
+                {a.scope === "personal" && (
                   <Lock className="ml-auto h-3 w-3 text-muted-foreground" />
                 )}
               </PickerItem>
