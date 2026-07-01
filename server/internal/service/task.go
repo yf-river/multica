@@ -982,6 +982,12 @@ type QuickCreateContext struct {
 	WorkspaceID   string   `json:"workspace_id"`
 	ProjectID     string   `json:"project_id,omitempty"`
 	SquadID       string   `json:"squad_id,omitempty"`
+	Status        string   `json:"status,omitempty"`
+	Priority      string   `json:"priority,omitempty"`
+	AssigneeType  string   `json:"assignee_type,omitempty"`
+	AssigneeID    string   `json:"assignee_id,omitempty"`
+	StartDate     string   `json:"start_date,omitempty"`
+	DueDate       string   `json:"due_date,omitempty"`
 	AttachmentIDs []string `json:"attachment_ids,omitempty"`
 	// ParentIssueID is the optional UUID of the parent issue the new issue
 	// should be filed under. Set when the user opens the modal from "Add
@@ -994,6 +1000,23 @@ type QuickCreateContext struct {
 
 // QuickCreateContextType marks a task as a quick-create job.
 const QuickCreateContextType = "quick_create"
+
+type EnqueueQuickCreateTaskParams struct {
+	WorkspaceID   pgtype.UUID
+	RequesterID   pgtype.UUID
+	AgentID       pgtype.UUID
+	SquadID       pgtype.UUID
+	Prompt        string
+	ProjectID     pgtype.UUID
+	ParentIssueID pgtype.UUID
+	AttachmentIDs []pgtype.UUID
+	Status        string
+	Priority      string
+	AssigneeType  string
+	AssigneeID    pgtype.UUID
+	StartDate     string
+	DueDate       string
+}
 
 // EnqueueQuickCreateTask creates a queued task that has no issue / chat /
 // autopilot link — the user's natural-language prompt is stored in the
@@ -1014,8 +1037,8 @@ const QuickCreateContextType = "quick_create"
 // parentIssueID is optional (zero-valued pgtype.UUID when the user didn't
 // open the modal from "Add sub issue"). The handler is responsible for
 // validating it belongs to the same workspace before passing it in.
-func (s *TaskService) EnqueueQuickCreateTask(ctx context.Context, workspaceID, requesterID pgtype.UUID, agentID, squadID pgtype.UUID, prompt string, projectID, parentIssueID pgtype.UUID, attachmentIDs []pgtype.UUID) (db.AgentTaskQueue, error) {
-	agent, err := s.Queries.GetAgent(ctx, agentID)
+func (s *TaskService) EnqueueQuickCreateTask(ctx context.Context, p EnqueueQuickCreateTaskParams) (db.AgentTaskQueue, error) {
+	agent, err := s.Queries.GetAgent(ctx, p.AgentID)
 	if err != nil {
 		return db.AgentTaskQueue{}, fmt.Errorf("load agent: %w", err)
 	}
@@ -1028,22 +1051,38 @@ func (s *TaskService) EnqueueQuickCreateTask(ctx context.Context, workspaceID, r
 
 	payload := QuickCreateContext{
 		Type:        QuickCreateContextType,
-		Prompt:      prompt,
-		RequesterID: util.UUIDToString(requesterID),
-		WorkspaceID: util.UUIDToString(workspaceID),
+		Prompt:      p.Prompt,
+		RequesterID: util.UUIDToString(p.RequesterID),
+		WorkspaceID: util.UUIDToString(p.WorkspaceID),
 	}
-	if projectID.Valid {
-		payload.ProjectID = util.UUIDToString(projectID)
+	if p.ProjectID.Valid {
+		payload.ProjectID = util.UUIDToString(p.ProjectID)
 	}
-	if squadID.Valid {
-		payload.SquadID = util.UUIDToString(squadID)
+	if p.SquadID.Valid {
+		payload.SquadID = util.UUIDToString(p.SquadID)
 	}
-	if parentIssueID.Valid {
-		payload.ParentIssueID = util.UUIDToString(parentIssueID)
+	if p.ParentIssueID.Valid {
+		payload.ParentIssueID = util.UUIDToString(p.ParentIssueID)
 	}
-	if len(attachmentIDs) > 0 {
-		payload.AttachmentIDs = make([]string, 0, len(attachmentIDs))
-		for _, id := range attachmentIDs {
+	if p.Status != "" {
+		payload.Status = p.Status
+	}
+	if p.Priority != "" {
+		payload.Priority = p.Priority
+	}
+	if p.AssigneeType != "" && p.AssigneeID.Valid {
+		payload.AssigneeType = p.AssigneeType
+		payload.AssigneeID = util.UUIDToString(p.AssigneeID)
+	}
+	if p.StartDate != "" {
+		payload.StartDate = p.StartDate
+	}
+	if p.DueDate != "" {
+		payload.DueDate = p.DueDate
+	}
+	if len(p.AttachmentIDs) > 0 {
+		payload.AttachmentIDs = make([]string, 0, len(p.AttachmentIDs))
+		for _, id := range p.AttachmentIDs {
 			if id.Valid {
 				payload.AttachmentIDs = append(payload.AttachmentIDs, util.UUIDToString(id))
 			}
@@ -1055,7 +1094,7 @@ func (s *TaskService) EnqueueQuickCreateTask(ctx context.Context, workspaceID, r
 	}
 
 	task, err := s.Queries.CreateQuickCreateTask(ctx, db.CreateQuickCreateTaskParams{
-		AgentID:   agentID,
+		AgentID:   p.AgentID,
 		RuntimeID: agent.RuntimeID,
 		Priority:  priorityToInt("high"),
 		Context:   contextJSON,
@@ -1066,10 +1105,10 @@ func (s *TaskService) EnqueueQuickCreateTask(ctx context.Context, workspaceID, r
 
 	slog.Info("quick-create task enqueued",
 		"task_id", util.UUIDToString(task.ID),
-		"agent_id", util.UUIDToString(agentID),
+		"agent_id", util.UUIDToString(p.AgentID),
 		"squad_id", payload.SquadID,
-		"requester_id", util.UUIDToString(requesterID),
-		"workspace_id", util.UUIDToString(workspaceID),
+		"requester_id", util.UUIDToString(p.RequesterID),
+		"workspace_id", util.UUIDToString(p.WorkspaceID),
 		"project_id", payload.ProjectID,
 		"parent_issue_id", payload.ParentIssueID,
 	)

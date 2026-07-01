@@ -285,10 +285,16 @@ type AgentTaskResponse struct {
 	AutopilotTriggerPayload  json.RawMessage      `json:"autopilot_trigger_payload,omitempty"`   // optional trigger payload for webhook/api runs
 	QuickCreatePrompt        string               `json:"quick_create_prompt,omitempty"`         // user's natural-language input for quick-create tasks
 	QuickCreateAttachmentIDs []string             `json:"quick_create_attachment_ids,omitempty"` // attachment ids uploaded in the quick-create prompt and bound on issue create
-	SquadID                  string               `json:"squad_id,omitempty"`                    // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
-	SquadName                string               `json:"squad_name,omitempty"`                  // display name for the picker squad
-	ParentIssueID            string               `json:"parent_issue_id,omitempty"`             // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
-	ParentIssueIdentifier    string               `json:"parent_issue_identifier,omitempty"`     // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
+	QuickCreateStatus        string               `json:"quick_create_status,omitempty"`
+	QuickCreatePriority      string               `json:"quick_create_priority,omitempty"`
+	QuickCreateAssigneeType  string               `json:"quick_create_assignee_type,omitempty"`
+	QuickCreateAssigneeID    string               `json:"quick_create_assignee_id,omitempty"`
+	QuickCreateStartDate     string               `json:"quick_create_start_date,omitempty"`
+	QuickCreateDueDate       string               `json:"quick_create_due_date,omitempty"`
+	SquadID                  string               `json:"squad_id,omitempty"`                // for quick-create tasks where the picker was a squad; Agent is still the resolved leader
+	SquadName                string               `json:"squad_name,omitempty"`              // display name for the picker squad
+	ParentIssueID            string               `json:"parent_issue_id,omitempty"`         // for quick-create tasks opened from "Add sub issue" — UUID of the parent issue the new issue should be filed under
+	ParentIssueIdentifier    string               `json:"parent_issue_identifier,omitempty"` // human-readable identifier (e.g. MUL-123) of the quick-create parent issue, resolved on claim for prompt context
 	// RequestingUserName + RequestingUserProfileDescription mirror the user
 	// the agent is acting on behalf of (see daemon/types.go). v1 sources them
 	// from the runtime owner so they're populated for daemon runtimes and

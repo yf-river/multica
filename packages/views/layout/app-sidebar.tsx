@@ -432,10 +432,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
     [localPinned, reorderPins],
   );
 
-  // Global "C" shortcut: opens whichever create mode the user landed on last
-  // (agent vs manual), persisted in useCreateModeStore. The mode switch lives
-  // inside both modal footers so users can flip without remembering which
-  // shortcut goes where — `c` always means "open the create flow I prefer".
+  // Global "C" shortcut: opens the single agent-create issue flow.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key !== "c" && e.key !== "C") return;

@@ -72,12 +72,20 @@ func buildQuickCreatePrompt(task Task) string {
 	b.WriteString("  Hard rules: never invent requirements, implementation details, or acceptance criteria the user did not express; never reduce multi-sentence input to a single vague sentence; never echo the title.\n\n")
 
 	// priority
-	b.WriteString("- **priority**: one of `urgent`, `high`, `medium`, `low`, or omit. Map P0/P1 → urgent/high; \"asap\" → urgent. If unspecified, omit.\n\n")
+	if task.QuickCreatePriority != "" {
+		fmt.Fprintf(&b, "- **priority**: required for this run. Pass `--priority %q`; this value was selected in the create modal and is authoritative.\n\n", task.QuickCreatePriority)
+	} else {
+		b.WriteString("- **priority**: one of `urgent`, `high`, `medium`, `low`, or omit. Map P0/P1 → urgent/high; \"asap\" → urgent. If unspecified, omit.\n\n")
+	}
 
 	// assignee
 	b.WriteString("- **assignee**:\n")
-	b.WriteString("    - When the user names someone (\"assign to X\" / \"@X\"), call `multica workspace member list --output json`, `multica agent list --output json`, and `multica squad list --output json` and find the matching entity by display name. Squads are first-class assignees too — a squad name (e.g. \"Super Human\") routes work to the squad leader, who then delegates. On a clean unambiguous match, prefer `--assignee-id <uuid>` using the `user_id` (member) or `id` (agent or squad) from that JSON — UUID matching is exact and robust to name collisions in workspaces with overlapping names. `--assignee <name>` (fuzzy) is acceptable as a fallback when names are unambiguous. On no match or ambiguous match, do NOT pass either flag — instead append a final line to the description: `Unrecognized assignee: X`.\n")
-	b.WriteString("    - Treat bare @-routing as an assignee directive even when the user did not write the English word \"assign\". This includes Chinese imperatives like `让 @独立团 review 这个 PR`, `给 @X 处理`, or `交给 @X`; strip the leading `@`/`＠` before matching display names. Do not keep that routing wrapper or `@Name` in the description unless it is a true CC-style notification rather than ownership. If the matched entity is a squad, pass the squad's `id` as `--assignee-id`, not the leader agent's id.\n")
+	if task.QuickCreateAssigneeID != "" {
+		fmt.Fprintf(&b, "    - Required for this run. Pass `--assignee-id %q`; this assignee was selected in the create modal and is authoritative. Do not infer or replace it from names in the user input.\n", task.QuickCreateAssigneeID)
+	} else {
+		b.WriteString("    - When the user names someone (\"assign to X\" / \"@X\"), call `multica workspace member list --output json`, `multica agent list --output json`, and `multica squad list --output json` and find the matching entity by display name. Squads are first-class assignees too — a squad name (e.g. \"Super Human\") routes work to the squad leader, who then delegates. On a clean unambiguous match, prefer `--assignee-id <uuid>` using the `user_id` (member) or `id` (agent or squad) from that JSON — UUID matching is exact and robust to name collisions in workspaces with overlapping names. `--assignee <name>` (fuzzy) is acceptable as a fallback when names are unambiguous. On no match or ambiguous match, do NOT pass either flag — instead append a final line to the description: `Unrecognized assignee: X`.\n")
+		b.WriteString("    - Treat bare @-routing as an assignee directive even when the user did not write the English word \"assign\". This includes Chinese imperatives like `让 @独立团 review 这个 PR`, `给 @X 处理`, or `交给 @X`; strip the leading `@`/`＠` before matching display names. Do not keep that routing wrapper or `@Name` in the description unless it is a true CC-style notification rather than ownership. If the matched entity is a squad, pass the squad's `id` as `--assignee-id`, not the leader agent's id.\n")
+	}
 	agentID := ""
 	agentName := ""
 	if task.Agent != nil {
@@ -85,6 +93,8 @@ func buildQuickCreatePrompt(task Task) string {
 		agentName = task.Agent.Name
 	}
 	switch {
+	case task.QuickCreateAssigneeID != "":
+		b.WriteString("\n")
 	case task.SquadID != "":
 		// The user opened quick-create with a SQUAD selected. The task
 		// runs on the squad's leader agent, but the squad is the expected
@@ -128,7 +138,17 @@ func buildQuickCreatePrompt(task Task) string {
 			fmt.Fprintf(&b, "- **parent**: required for this run. Pass `--parent %q` so the new issue is filed as a sub-issue of the parent the user picked in the quick-create modal. Do not infer a different parent from the prompt text — the modal entry point is authoritative.\n", task.ParentIssueID)
 		}
 	}
-	b.WriteString("- **status**: omit (defaults to `todo`).\n")
+	if task.QuickCreateStatus != "" {
+		fmt.Fprintf(&b, "- **status**: required for this run. Pass `--status %q`; this value was selected in the create modal and is authoritative.\n", task.QuickCreateStatus)
+	} else {
+		b.WriteString("- **status**: omit (defaults to `todo`).\n")
+	}
+	if task.QuickCreateStartDate != "" {
+		fmt.Fprintf(&b, "- **start date**: required for this run. Pass `--start-date %q`; this value was selected in the create modal.\n", task.QuickCreateStartDate)
+	}
+	if task.QuickCreateDueDate != "" {
+		fmt.Fprintf(&b, "- **due date**: required for this run. Pass `--due-date %q`; this value was selected in the create modal.\n", task.QuickCreateDueDate)
+	}
 	b.WriteString("- **attachments**: do NOT pass `--attachment`. The flag only accepts LOCAL file paths. Any image URL in the user input is already markdown — keep it inline in `--description` instead.\n\n")
 
 	// output format

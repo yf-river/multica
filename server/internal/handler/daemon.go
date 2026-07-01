@@ -1644,6 +1644,12 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			hasQuickCreate = true
 			resp.QuickCreatePrompt = qc.Prompt
 			resp.QuickCreateAttachmentIDs = append([]string(nil), qc.AttachmentIDs...)
+			resp.QuickCreateStatus = qc.Status
+			resp.QuickCreatePriority = qc.Priority
+			resp.QuickCreateAssigneeType = qc.AssigneeType
+			resp.QuickCreateAssigneeID = qc.AssigneeID
+			resp.QuickCreateStartDate = qc.StartDate
+			resp.QuickCreateDueDate = qc.DueDate
 			resp.ThreadName = qc.Prompt
 			resp.WorkspaceID = qc.WorkspaceID
 

@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/service"
 )
 
 func TestQuickCreateSquadTaskTraceCarriesSquadAndProject(t *testing.T) {
@@ -47,17 +47,14 @@ func TestQuickCreateSquadTaskTraceCarriesSquadAndProject(t *testing.T) {
 		testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, projectID)
 	})
 
-	task, err := testHandler.TaskService.EnqueueQuickCreateTask(
-		ctx,
-		parseUUID(testWorkspaceID),
-		parseUUID(testUserID),
-		parseUUID(agentID),
-		parseUUID(squadID),
-		"用中文创建一个用于验证小队 trace 归属的 issue",
-		parseUUID(projectID),
-		pgtype.UUID{},
-		nil,
-	)
+	task, err := testHandler.TaskService.EnqueueQuickCreateTask(ctx, service.EnqueueQuickCreateTaskParams{
+		WorkspaceID: parseUUID(testWorkspaceID),
+		RequesterID: parseUUID(testUserID),
+		AgentID:     parseUUID(agentID),
+		SquadID:     parseUUID(squadID),
+		Prompt:      "用中文创建一个用于验证小队 trace 归属的 issue",
+		ProjectID:   parseUUID(projectID),
+	})
 	if err != nil {
 		t.Fatalf("enqueue quick-create task: %v", err)
 	}

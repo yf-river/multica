@@ -19,10 +19,10 @@ export function ModalRegistry() {
   switch (modal) {
     case "create-workspace":
       return <CreateWorkspaceModal onClose={close} />;
-    // Both modal types open the same shell so the in-modal mode switch is
-    // instant — only the inner panel swaps, the Dialog Root stays mounted.
+    // Legacy "create-issue" callers now enter the single agent-create flow.
+    // The manual create mode is no longer exposed as a product surface.
     case "create-issue":
-      return <CreateIssueDialog onClose={close} initialMode="manual" data={data} />;
+      return <CreateIssueDialog onClose={close} initialMode="agent" data={data} />;
     case "quick-create-issue":
       return <CreateIssueDialog onClose={close} initialMode="agent" data={data} />;
     case "create-project":

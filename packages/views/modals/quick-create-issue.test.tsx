@@ -9,7 +9,6 @@ const mockSetLastProjectId = vi.hoisted(() => vi.fn());
 const mockSetPrompt = vi.hoisted(() => vi.fn());
 const mockClearPrompt = vi.hoisted(() => vi.fn());
 const mockSetKeepOpen = vi.hoisted(() => vi.fn());
-const mockSetLastMode = vi.hoisted(() => vi.fn());
 const mockToastSuccess = vi.hoisted(() => vi.fn());
 const mockUploadWithToast = vi.hoisted(() => vi.fn());
 
@@ -85,6 +84,7 @@ vi.mock("@multica/core/paths", () => ({
 vi.mock("@multica/core/workspace/queries", () => ({
   agentListOptions: () => ({ queryKey: ["agents"] }),
   memberListOptions: () => ({ queryKey: ["members"] }),
+  assigneeFrequencyOptions: () => ({ queryKey: ["assignee-frequency"] }),
   squadListOptions: (wsId: string) => ({
     queryKey: ["workspaces", wsId, "squads"],
   }),
@@ -97,11 +97,6 @@ vi.mock("@multica/core/projects/queries", () => ({
 vi.mock("@multica/core/issues/stores/quick-create-store", () => ({
   useQuickCreateStore: (selector?: (state: typeof mockQuickCreateStore) => unknown) =>
     (selector ? selector(mockQuickCreateStore) : mockQuickCreateStore),
-}));
-
-vi.mock("@multica/core/issues/stores/create-mode-store", () => ({
-  useCreateModeStore: (selector?: (state: { setLastMode: typeof mockSetLastMode }) => unknown) =>
-    (selector ? selector({ setLastMode: mockSetLastMode }) : { setLastMode: mockSetLastMode }),
 }));
 
 vi.mock("@multica/core/auth", () => ({
@@ -129,6 +124,7 @@ vi.mock("../common/actor-avatar", () => ({
 }));
 
 vi.mock("../issues/components", () => ({
+  StatusPicker: () => <div data-testid="status-picker" />,
   PriorityPicker: () => <div data-testid="priority-picker" />,
   DueDatePicker: () => <div data-testid="due-date-picker" />,
 }));
@@ -349,6 +345,8 @@ describe("AgentCreatePanel", () => {
         agent_id: "agent-1",
         prompt: "New agent prompt",
         project_id: undefined,
+        status: "todo",
+        priority: "none",
       });
     });
 
@@ -357,7 +355,6 @@ describe("AgentCreatePanel", () => {
     // store stays in sync with the actual outgoing request.
     expect(mockSetLastProjectId).toHaveBeenCalledWith(null);
     expect(mockClearPrompt).toHaveBeenCalled();
-    expect(mockSetLastMode).toHaveBeenCalledWith("agent");
     expect(onClose).toHaveBeenCalled();
   });
 
@@ -387,7 +384,8 @@ describe("AgentCreatePanel", () => {
         agent_id: "agent-1",
         prompt: "Create issue with ![image](/api/attachments/019ec09d-6222-722b-bdfa-427b105d80be/download)",
         project_id: undefined,
-        parent_issue_id: undefined,
+        status: "todo",
+        priority: "none",
         attachment_ids: ["019ec09d-6222-722b-bdfa-427b105d80be"],
       });
     });
@@ -423,6 +421,8 @@ describe("AgentCreatePanel", () => {
         squad_id: "squad-1",
         prompt: "Investigate the regression",
         project_id: undefined,
+        status: "todo",
+        priority: "none",
       });
     });
     expect(mockSetLastActor).toHaveBeenCalledWith("squad", "squad-1");
@@ -508,7 +508,43 @@ describe("AgentCreatePanel", () => {
         agent_id: "agent-1",
         prompt: "Investigate the regression",
         project_id: undefined,
+        status: "todo",
+        priority: "none",
         parent_issue_id: "parent-uuid-1",
+      });
+    });
+  });
+
+  it("forwards seeded pinned fields without a separate assignee", async () => {
+    const user = userEvent.setup();
+
+    renderPanel({
+      onClose: vi.fn(),
+      isExpanded: false,
+      setIsExpanded: vi.fn(),
+      data: {
+        status: "in_progress",
+        priority: "high",
+        due_date: "2026-07-10",
+      },
+    });
+
+    const editor = screen.getByPlaceholderText(
+      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
+    );
+    await user.clear(editor);
+    await user.type(editor, "Investigate the regression");
+
+    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
+
+    await waitFor(() => {
+      expect(mockQuickCreateIssue).toHaveBeenCalledWith({
+        agent_id: "agent-1",
+        prompt: "Investigate the regression",
+        project_id: undefined,
+        status: "in_progress",
+        priority: "high",
+        due_date: "2026-07-10",
       });
     });
   });

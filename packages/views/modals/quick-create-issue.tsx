@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowLeftRight, Check, ChevronRight, Maximize2, Minimize2, X as XIcon } from "lucide-react";
+import { Check, ChevronRight, Maximize2, Minimize2, X as XIcon } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { DialogTitle } from "@multica/ui/components/ui/dialog";
@@ -16,8 +16,6 @@ import {
   useQuickCreateStore,
   type QuickCreateActorType,
 } from "@multica/core/issues/stores/quick-create-store";
-import { useIssueDraftStore } from "@multica/core/issues/stores/draft-store";
-import { useCreateModeStore } from "@multica/core/issues/stores/create-mode-store";
 import {
   runtimeListOptions,
   checkQuickCreateCliVersion,
@@ -26,11 +24,19 @@ import {
 } from "@multica/core/runtimes";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { formatShortcut, modKey, enterKey } from "@multica/core/platform";
-import { contentReferencesAttachment, type Agent, type Attachment, type Squad } from "@multica/core/types";
+import {
+  contentReferencesAttachment,
+  type Agent,
+  type Attachment,
+  type IssuePriority,
+  type IssueStatus,
+  type Squad,
+} from "@multica/core/types";
 import { ActorAvatar } from "../common/actor-avatar";
 import { PillButton } from "../common/pill-button";
 import { ProjectPicker } from "../projects/components/project-picker";
 import { canAssignAgent } from "../issues/components/pickers/assignee-picker";
+import { DueDatePicker, PriorityPicker, StatusPicker } from "../issues/components";
 import {
   PropertyPicker,
   PickerItem,
@@ -60,20 +66,13 @@ type ActorSelection =
 // animation flash — Base UI replays Popup enter/exit when DialogContent is
 // remounted, even inside a still-open Dialog Root.
 //
-// `onSwitchMode` is wired by the shell — the panel calls it with an optional
-// carry payload (currently `project_id`). The shared draft store carries the
-// description + agent across the agent→manual flip; project_id rides through
-// the same carry channel manual→agent uses, so the manual panel reads it
-// from `data?.project_id` without a parallel store.
 export function AgentCreatePanel({
   onClose,
-  onSwitchMode,
   data,
   isExpanded,
   setIsExpanded,
 }: {
   onClose: () => void;
-  onSwitchMode?: (carry?: Record<string, unknown> | null) => void;
   data?: Record<string, unknown> | null;
   /** Lifted to the shell so DialogContent's mode-aware className can react —
    *  same pattern as ManualCreatePanel. Shared across modes so the user's
@@ -133,7 +132,6 @@ export function AgentCreatePanel({
   const clearPrompt = useQuickCreateStore((s) => s.clearPrompt);
   const keepOpen = useQuickCreateStore((s) => s.keepOpen);
   const setKeepOpen = useQuickCreateStore((s) => s.setKeepOpen);
-  const setLastMode = useCreateModeStore((s) => s.setLastMode);
 
   // Resolve a candidate actor against the currently-visible agents / squads.
   // Returns null when the candidate doesn't exist in this workspace right
@@ -200,6 +198,15 @@ export function AgentCreatePanel({
     const seed = (data?.project_id as string | undefined) ?? lastProjectId;
     return seed ?? null;
   });
+  const [status, setStatus] = useState<IssueStatus>(
+    (data?.status as IssueStatus | undefined) ?? "todo",
+  );
+  const [priority, setPriority] = useState<IssuePriority>(
+    (data?.priority as IssuePriority | undefined) ?? "none",
+  );
+  const [dueDate, setDueDate] = useState<string | null>(
+    (data?.due_date as string | null | undefined) ?? null,
+  );
 
   // Parent-issue context — seeded by `openCreateSubIssue` when the modal is
   // opened from the "Add sub issue" entry on an existing issue. We carry it
@@ -299,13 +306,15 @@ export function AgentCreatePanel({
           : { squad_id: actor.id }),
         prompt: md,
         project_id: projectId ?? undefined,
-        parent_issue_id: parentIssueId,
+        status,
+        priority,
+        ...(parentIssueId ? { parent_issue_id: parentIssueId } : {}),
+        ...(dueDate ? { due_date: dueDate } : {}),
         ...(activeAttachmentIds.length > 0 ? { attachment_ids: activeAttachmentIds } : {}),
       });
       setLastActor(actor.type, actor.id);
       setLastProjectId(projectId);
       clearPrompt();
-      setLastMode("agent");
       toast.success(t(($) => $.create_issue.agent.toast_sent), {
         duration: 4000,
       });
@@ -363,34 +372,6 @@ export function AgentCreatePanel({
     } finally {
       setSubmitting(false);
     }
-  };
-
-  // Switch to the manual form, carrying what the user typed over as the
-  // description (markdown, including any pasted images) so they don't lose
-  // their work. The picked actor (agent or squad) becomes the default
-  // assignee candidate (still editable). We seed the shared issue-draft
-  // store directly because the manual panel reads its initial values from
-  // there. Persist the mode flip so the next `c` lands in manual.
-  const switchToManual = () => {
-    const md = editorRef.current?.getMarkdown() ?? "";
-    useIssueDraftStore.getState().setDraft({
-      description: md,
-      ...(actor
-        ? { assigneeType: actor.type, assigneeId: actor.id }
-        : {}),
-    });
-    setLastMode("manual");
-    // Hand the picked project and the parent-issue context to the manual
-    // panel through the same `data` channel that already carries agent_id /
-    // parent_issue_id. The manual panel reads these on mount; this preserves
-    // the user's selection (and the sub-issue intent seeded by
-    // openCreateSubIssue) across the mode flip without piping a third store
-    // through.
-    const carry: Record<string, unknown> = {};
-    if (projectId) carry.project_id = projectId;
-    if (parentIssueId) carry.parent_issue_id = parentIssueId;
-    if (parentIssueIdentifier) carry.parent_issue_identifier = parentIssueIdentifier;
-    onSwitchMode?.(Object.keys(carry).length > 0 ? carry : null);
   };
 
   return (
@@ -460,16 +441,6 @@ export function AgentCreatePanel({
           </div>
         )}
 
-        {selectedSquad && (
-          <div className="mx-5 mb-2 shrink-0 rounded-md border border-info/30 bg-info/5 px-3 py-2 text-xs text-info">
-            <div className="font-medium">SOP 小队任务</div>
-            <div className="mt-0.5 text-muted-foreground">
-              粘贴 TAPD 链接和目标仓库/分支，选择项目后创建。系统会使用账号级 TAPD / 工蜂凭据读取需求和仓库资源；
-              如果涉及 gateway、ida-deployment 等跨项目依赖，小队会在运行复盘里记录拆分、等待和验收证据。
-            </div>
-          </div>
-        )}
-
         {/* Prompt — same rich editor Advanced uses, so paste/drop images,
             mentions, and formatting all work. The dropZone wrapper enables
             drag-and-drop file uploads alongside paste. */}
@@ -501,12 +472,11 @@ export function AgentCreatePanel({
           <div className="px-5 pb-2 text-xs text-destructive">{error}</div>
         )}
 
-        {/* Property toolbar — mirrors the manual panel's pill row so the
-            project pill sits in the same place across both modes. Agent mode
-            owns only the project (status / priority / assignee / due-date are
-            inferred from the prompt), so it's a single pill. The pick is
-            persisted per-workspace via useQuickCreateStore.lastProjectId so
-            users targeting one project skip retyping "in project X".
+        {/* Property toolbar. These are pinned constraints for the agent's
+            eventual `multica issue create` call, not a separate manual-create
+            mode. The project pick is persisted per-workspace via
+            useQuickCreateStore.lastProjectId so users targeting one project
+            skip retyping "in project X".
             When the modal was opened from "Add sub issue" on an existing
             issue, a read-only chip on the same row tells the user that the
             new issue will be filed as a sub-issue of that parent — the agent
@@ -515,6 +485,24 @@ export function AgentCreatePanel({
             it non-editable: changing the parent is a `Set parent` action on
             the parent itself, not a knob in the quick-create flow. */}
         <div className="flex items-center gap-1.5 px-4 pb-2 shrink-0 flex-wrap">
+          <StatusPicker
+            status={status}
+            onUpdate={(u) => { if (u.status) setStatus(u.status); }}
+            triggerRender={<PillButton />}
+            align="start"
+          />
+          <PriorityPicker
+            priority={priority}
+            onUpdate={(u) => { if (u.priority) setPriority(u.priority); }}
+            triggerRender={<PillButton />}
+            align="start"
+          />
+          <DueDatePicker
+            dueDate={dueDate}
+            onUpdate={(u) => setDueDate(u.due_date ?? null)}
+            triggerRender={<PillButton />}
+            align="start"
+          />
           <ProjectPicker
             projectId={projectId}
             onUpdate={(u) => setProjectId(u.project_id ?? null)}
@@ -551,15 +539,6 @@ export function AgentCreatePanel({
             )}
           </div>
           <div className="flex flex-wrap items-center justify-end gap-2">
-            <button
-              type="button"
-              onClick={switchToManual}
-              title={t(($) => $.create_issue.switch_to_manual_tooltip)}
-              className="flex shrink-0 items-center gap-1.5 text-xs px-2 py-1 rounded-sm text-muted-foreground hover:text-foreground hover:bg-accent/60 transition-colors cursor-pointer"
-            >
-              <ArrowLeftRight className="size-3.5" />
-              {t(($) => $.create_issue.switch_to_manual)}
-            </button>
             <label className="flex shrink-0 items-center gap-1.5 text-xs text-muted-foreground cursor-pointer select-none">
               <Switch
                 size="sm"

@@ -30,16 +30,12 @@ func TestQuickCreateCompletion_SubscribesRequester(t *testing.T) {
 		t.Fatalf("load fixture agent: %v", err)
 	}
 
-	task, err := taskSvc.EnqueueQuickCreateTask(ctx,
-		parseUUID(testWorkspaceID),
-		parseUUID(testUserID),
-		parseUUID(agentID),
-		pgtype.UUID{},
-		"please file a bug",
-		pgtype.UUID{},
-		pgtype.UUID{},
-		nil,
-	)
+	task, err := taskSvc.EnqueueQuickCreateTask(ctx, service.EnqueueQuickCreateTaskParams{
+		WorkspaceID: parseUUID(testWorkspaceID),
+		RequesterID: parseUUID(testUserID),
+		AgentID:     parseUUID(agentID),
+		Prompt:      "please file a bug",
+	})
 	if err != nil {
 		t.Fatalf("EnqueueQuickCreateTask: %v", err)
 	}
@@ -105,16 +101,12 @@ func TestQuickCreateFailure_DoesNotSubscribeRequester(t *testing.T) {
 		t.Fatalf("load fixture agent: %v", err)
 	}
 
-	task, err := taskSvc.EnqueueQuickCreateTask(ctx,
-		parseUUID(testWorkspaceID),
-		parseUUID(testUserID),
-		parseUUID(agentID),
-		pgtype.UUID{},
-		"another bug",
-		pgtype.UUID{},
-		pgtype.UUID{},
-		nil,
-	)
+	task, err := taskSvc.EnqueueQuickCreateTask(ctx, service.EnqueueQuickCreateTaskParams{
+		WorkspaceID: parseUUID(testWorkspaceID),
+		RequesterID: parseUUID(testUserID),
+		AgentID:     parseUUID(agentID),
+		Prompt:      "another bug",
+	})
 	if err != nil {
 		t.Fatalf("EnqueueQuickCreateTask: %v", err)
 	}

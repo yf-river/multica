@@ -288,6 +288,33 @@ func TestBuildQuickCreatePromptParentPinning(t *testing.T) {
 	}
 }
 
+func TestBuildQuickCreatePromptPinnedFields(t *testing.T) {
+	const assigneeID = "44444444-2222-1111-3333-555555555555"
+	out := buildQuickCreatePrompt(Task{
+		QuickCreatePrompt:       "fix the login button color and assign it to someone else",
+		QuickCreateStatus:       "in_progress",
+		QuickCreatePriority:     "high",
+		QuickCreateAssigneeType: "agent",
+		QuickCreateAssigneeID:   assigneeID,
+		QuickCreateStartDate:    "2026-07-02",
+		QuickCreateDueDate:      "2026-07-10",
+	})
+	mustContain := []string{
+		"--status \"in_progress\"",
+		"--priority \"high\"",
+		"--assignee-id \"" + assigneeID + "\"",
+		"--start-date \"2026-07-02\"",
+		"--due-date \"2026-07-10\"",
+		"selected in the create modal and is authoritative",
+		"Do not infer or replace it from names in the user input",
+	}
+	for _, s := range mustContain {
+		if !strings.Contains(out, s) {
+			t.Errorf("buildQuickCreatePrompt with pinned fields missing %q\n--- output ---\n%s", s, out)
+		}
+	}
+}
+
 // TestBuildPromptSquadLeaderNoActionForMemberTrigger verifies that the
 // squad leader no_action prohibition is injected in the per-turn prompt
 // regardless of whether the triggering comment was posted by an agent or

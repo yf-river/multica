@@ -2276,6 +2276,12 @@ type QuickCreateIssueRequest struct {
 	Prompt        string   `json:"prompt"`
 	ProjectID     string   `json:"project_id,omitempty"`
 	ParentIssueID string   `json:"parent_issue_id,omitempty"`
+	Status        string   `json:"status,omitempty"`
+	Priority      string   `json:"priority,omitempty"`
+	AssigneeType  string   `json:"assignee_type,omitempty"`
+	AssigneeID    string   `json:"assignee_id,omitempty"`
+	StartDate     string   `json:"start_date,omitempty"`
+	DueDate       string   `json:"due_date,omitempty"`
 	AttachmentIDs []string `json:"attachment_ids,omitempty"`
 }
 
@@ -2450,7 +2456,65 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		parentIssueUUID = pid
 	}
 
-	task, err := h.TaskService.EnqueueQuickCreateTask(r.Context(), wsUUID, requesterUUID, agentUUID, squadUUID, prompt, projectUUID, parentIssueUUID, attachmentIDs)
+	status := strings.TrimSpace(req.Status)
+	if status != "" && !slices.Contains(validIssueStatuses, status) {
+		writeError(w, http.StatusBadRequest, "invalid status")
+		return
+	}
+	priority := strings.TrimSpace(req.Priority)
+	if priority != "" && !slices.Contains(validIssuePriorities, priority) {
+		writeError(w, http.StatusBadRequest, "invalid priority")
+		return
+	}
+	assigneeType := strings.TrimSpace(req.AssigneeType)
+	assigneeID := strings.TrimSpace(req.AssigneeID)
+	var assigneeUUID pgtype.UUID
+	if assigneeType != "" || assigneeID != "" {
+		if assigneeType == "" || assigneeID == "" {
+			writeError(w, http.StatusBadRequest, "assignee_type and assignee_id must be provided together")
+			return
+		}
+		if !slices.Contains([]string{"member", "agent", "squad"}, assigneeType) {
+			writeError(w, http.StatusBadRequest, "invalid assignee_type")
+			return
+		}
+		parsed, ok := parseUUIDOrBadRequest(w, assigneeID, "assignee_id")
+		if !ok {
+			return
+		}
+		if statusCode, msg := h.validateAssigneePair(r.Context(), r, workspaceID, pgtype.Text{String: assigneeType, Valid: true}, parsed); statusCode != 0 {
+			writeError(w, statusCode, msg)
+			return
+		}
+		assigneeUUID = parsed
+	}
+	startDate := strings.TrimSpace(req.StartDate)
+	if startDate != "" && !isDateOnly(startDate) {
+		writeError(w, http.StatusBadRequest, "invalid start_date")
+		return
+	}
+	dueDate := strings.TrimSpace(req.DueDate)
+	if dueDate != "" && !isDateOnly(dueDate) {
+		writeError(w, http.StatusBadRequest, "invalid due_date")
+		return
+	}
+
+	task, err := h.TaskService.EnqueueQuickCreateTask(r.Context(), service.EnqueueQuickCreateTaskParams{
+		WorkspaceID:   wsUUID,
+		RequesterID:   requesterUUID,
+		AgentID:       agentUUID,
+		SquadID:       squadUUID,
+		Prompt:        prompt,
+		ProjectID:     projectUUID,
+		ParentIssueID: parentIssueUUID,
+		AttachmentIDs: attachmentIDs,
+		Status:        status,
+		Priority:      priority,
+		AssigneeType:  assigneeType,
+		AssigneeID:    assigneeUUID,
+		StartDate:     startDate,
+		DueDate:       dueDate,
+	})
 	if err != nil {
 		slog.Warn("quick-create enqueue failed", append(logger.RequestAttrs(r), "error", err)...)
 		writeError(w, http.StatusInternalServerError, "failed to enqueue quick-create task")
@@ -2469,6 +2533,11 @@ func writeAgentUnavailable(w http.ResponseWriter, reason string) {
 		"code":   "agent_unavailable",
 		"reason": reason,
 	})
+}
+
+func isDateOnly(value string) bool {
+	_, err := time.Parse("2006-01-02", value)
+	return err == nil
 }
 
 // isRuntimeOnline returns true when the given runtime is currently

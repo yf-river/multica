@@ -724,6 +724,10 @@ export class ApiClient {
     prompt: string;
     project_id?: string | null;
     parent_issue_id?: string | null;
+    status?: string;
+    priority?: string;
+    start_date?: string | null;
+    due_date?: string | null;
     attachment_ids?: string[];
   }): Promise<{ task_id: string }> {
     return this.fetch("/api/issues/quick-create", {
