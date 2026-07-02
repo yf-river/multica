@@ -121,6 +121,22 @@ function urlTransform(url: string): string {
 const FILE_PATH_REGEX =
   /^(?:\/|~\/|\.\/)[\w\-./@]+\.(?:ts|tsx|js|jsx|mjs|cjs|md|json|yaml|yml|py|go|rs|css|scss|less|html|htm|txt|log|sh|bash|zsh|swift|kt|java|c|cpp|h|hpp|rb|php|xml|toml|ini|cfg|conf|env|sql|graphql|vue|svelte|astro|prisma)$/i
 
+const richCodeComponents: Partial<Components> = {
+  code: ({ className, children, ...props }) => {
+    const match = /language-(\w+)/.exec(className || '')
+    const isBlock =
+      'node' in props && props.node?.position?.start.line !== props.node?.position?.end.line
+
+    if (match || isBlock) {
+      const code = String(children).replace(/\n$/, '')
+      return <CodeBlock code={code} language={match?.[1]} mode="full" className="my-1" />
+    }
+
+    return <InlineCode>{children}</InlineCode>
+  },
+  pre: ({ children }) => <>{children}</>,
+}
+
 /**
  * Create custom components based on render mode
  */
@@ -271,22 +287,7 @@ function createComponents(
   if (mode === 'minimal') {
     return {
       ...baseComponents,
-      // Inline code
-      code: ({ className, children, ...props }) => {
-        const match = /language-(\w+)/.exec(className || '')
-        const isBlock =
-          'node' in props && props.node?.position?.start.line !== props.node?.position?.end.line
-
-        // Block code - use CodeBlock with full mode
-        if (match || isBlock) {
-          const code = String(children).replace(/\n$/, '')
-          return <CodeBlock code={code} language={match?.[1]} mode="full" className="my-1" />
-        }
-
-        // Inline code
-        return <InlineCode>{children}</InlineCode>
-      },
-      pre: ({ children }) => <>{children}</>,
+      ...richCodeComponents,
       // Comfortable paragraph spacing
       p: ({ children }) => <p className="my-2 leading-relaxed">{children}</p>,
       // Styled lists
@@ -333,20 +334,7 @@ function createComponents(
   // Full mode: rich styling
   return {
     ...baseComponents,
-    // Full code blocks with copy button
-    code: ({ className, children, ...props }) => {
-      const match = /language-(\w+)/.exec(className || '')
-      const isBlock =
-        'node' in props && props.node?.position?.start.line !== props.node?.position?.end.line
-
-      if (match || isBlock) {
-        const code = String(children).replace(/\n$/, '')
-        return <CodeBlock code={code} language={match?.[1]} mode="full" className="my-1" />
-      }
-
-      return <InlineCode>{children}</InlineCode>
-    },
-    pre: ({ children }) => <>{children}</>,
+    ...richCodeComponents,
     // Rich paragraph spacing
     p: ({ children }) => <p className="my-3 leading-relaxed">{children}</p>,
     // Styled lists
