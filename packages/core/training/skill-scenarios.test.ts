@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
   SKILL_SCENARIO_EVALUATION_SCHEMA,
+  WRITING_MODEL_BENCHMARK_SCHEMA,
   buildDefaultSkillScenarioPayload,
   buildSkillScenarioAssetRequest,
+  buildWritingModelBenchmarkAssetRequest,
+  buildWritingModelBenchmarkPayload,
   isSkillScenarioPayload,
+  isWritingModelBenchmarkPayload,
   summarizeSkillScenarioTarget,
+  summarizeWritingModelBenchmark,
 } from "./skill-scenarios";
 import type { PromptEvaluationAsset } from "../types";
 
@@ -53,5 +58,31 @@ describe("skill scenario evaluation payload", () => {
       "user-center/add-api · operation · .codebuddy/skills/add-api/SKILL.md",
     );
     expect(summarizeSkillScenarioTarget(normal)).toBeNull();
+  });
+
+  it("builds a multi-model writing benchmark test suite", () => {
+    const payload = buildWritingModelBenchmarkPayload();
+    const request = buildWritingModelBenchmarkAssetRequest();
+    const asset = { payload } as unknown as PromptEvaluationAsset;
+
+    expect(payload.schema).toBe(WRITING_MODEL_BENCHMARK_SCHEMA);
+    expect(payload.target_models).toContain("codebuddy/kimi-k2.6-ioa");
+    expect(payload.target_models).toContain("codebuddy/deepseek-v4-pro");
+    expect(payload.cases.map((item) => item.scenario_key)).toEqual([
+      "emotional_support",
+      "daily_communication",
+      "creative_writing",
+    ]);
+    expect(payload.rubric.map((item) => item.key)).toEqual([
+      "empathy",
+      "naturalness",
+      "style_control",
+      "usefulness",
+      "safety",
+    ]);
+    expect(request.asset_type).toBe("测试套件");
+    expect(request.prompt_id).toBeNull();
+    expect(isWritingModelBenchmarkPayload(request.payload)).toBe(true);
+    expect(summarizeWritingModelBenchmark(asset)).toBe("3 个模型 · 3 个写作用例 · 5 个评分维度");
   });
 });

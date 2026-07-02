@@ -50,7 +50,7 @@ func gitEnv() []string {
 	)
 }
 
-var agentGitExcludePatterns = []string{".agent_context", "CLAUDE.md", "AGENTS.md", ".claude", ".opencode"}
+var agentGitExcludePatterns = []string{".agent_context", "CLAUDE.md", "AGENTS.md", ".claude", ".opencode", "artifacts"}
 
 // RepoInfo describes a repository to cache.
 type RepoInfo struct {
@@ -380,6 +380,8 @@ type WorktreeParams struct {
 	Ref                 string // optional branch, tag, or commit to base the worktree on
 	AgentName           string // for branch naming
 	TaskID              string // for branch naming uniqueness
+	BranchNameOverride  string // optional exact branch name for issue-scoped worktrees
+	PreserveExisting    bool   // when true, reuse an existing worktree without reset/checkout
 	CoAuthoredByEnabled bool   // install prepare-commit-msg hook for Co-authored-by trailer
 }
 
@@ -442,8 +444,12 @@ func (c *Cache) CreateWorktree(params WorktreeParams) (*WorktreeResult, error) {
 		return nil, fmt.Errorf("cannot resolve default branch for %s: bare cache at %s has no usable refs (origin/* is empty or ambiguous and bare HEAD has no match). The cache may be corrupted; delete it and retry", params.RepoURL, barePath)
 	}
 
-	// Build branch name: agent/{sanitized-name}/{short-task-id}
-	branchName := fmt.Sprintf("agent/%s/%s", sanitizeName(params.AgentName), shortID(params.TaskID))
+	// Build branch name: agent/{sanitized-name}/{short-task-id}, unless the
+	// caller owns a stable issue-scoped branch name.
+	branchName := strings.TrimSpace(params.BranchNameOverride)
+	if branchName == "" {
+		branchName = fmt.Sprintf("agent/%s/%s", sanitizeName(params.AgentName), shortID(params.TaskID))
+	}
 
 	// Derive directory name from repo URL.
 	dirName := repoNameFromURL(params.RepoURL)
@@ -452,6 +458,34 @@ func (c *Cache) CreateWorktree(params WorktreeParams) (*WorktreeResult, error) {
 	// If worktree already exists (reused environment from a prior task),
 	// update it to the latest remote code instead of creating a new one.
 	if isGitWorktree(worktreePath) {
+		if params.PreserveExisting {
+			actualBranch := currentBranch(worktreePath)
+			if actualBranch == "" {
+				actualBranch = branchName
+			}
+			for _, pattern := range agentGitExcludePatterns {
+				_ = excludeFromGit(worktreePath, pattern)
+			}
+			if params.CoAuthoredByEnabled {
+				if err := installCoAuthoredByHook(worktreePath); err != nil {
+					c.logger.Warn("repo checkout: install co-authored-by hook failed (non-fatal)", "error", err)
+				}
+			} else {
+				if err := removeCoAuthoredByHook(worktreePath); err != nil {
+					c.logger.Warn("repo checkout: remove co-authored-by hook failed (non-fatal)", "error", err)
+				}
+			}
+			c.logger.Info("repo checkout: existing worktree preserved",
+				"url", params.RepoURL,
+				"path", worktreePath,
+				"branch", actualBranch,
+				"base", baseRef,
+			)
+			return &WorktreeResult{
+				Path:       worktreePath,
+				BranchName: actualBranch,
+			}, nil
+		}
 		actualBranch, err := updateExistingWorktree(worktreePath, branchName, baseRef)
 		if err != nil {
 			return nil, fmt.Errorf("update existing worktree: %w", err)
@@ -607,6 +641,15 @@ func isBranchCollisionError(err error) bool {
 func isGitWorktree(path string) bool {
 	info, err := os.Stat(filepath.Join(path, ".git"))
 	return err == nil && !info.IsDir()
+}
+
+func currentBranch(worktreePath string) string {
+	cmd := exec.Command("git", "-C", worktreePath, "branch", "--show-current")
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 // updateExistingWorktree resets the worktree to a clean state and checks out a

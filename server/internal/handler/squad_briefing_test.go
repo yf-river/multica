@@ -731,6 +731,77 @@ func TestEnsureUserCenterInternalSquadWorkspaceAndPersonalAgentsAreScoped(t *tes
 	}
 }
 
+func TestEnsureUserCenterInternalSquadSelectsRuntimeByScope(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	ctx := context.Background()
+	provider := "scope-mix-" + randomID()[:8]
+	cleanup := func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name IN ('pm', 'user-center 小队')`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND (name IN ('PM-项目经理', '01-需求澄清', '02-方案设计', '03-任务拆分', '04-开发', '05-验证测试', 'pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify') OR name LIKE 'user-center 小队 · %')`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE workspace_id = $1 AND provider = $2`, testWorkspaceID, provider)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+
+	var workspaceRuntimeID, personalRuntimeID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at)
+		VALUES ($1, $2, $3, 'local', $4, 'online', 'Workspace scoped PM runtime', '{}'::jsonb, $5, 'workspace', now() - interval '1 minute')
+		RETURNING id
+	`, testWorkspaceID, "scope-mix-workspace-"+randomID()[:8], "internal-user-center-scope-compatible-workspace-"+randomID()[:8], provider, testUserID).Scan(&workspaceRuntimeID); err != nil {
+		t.Fatalf("create workspace runtime: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at)
+		VALUES ($1, $2, $3, 'local', $4, 'online', 'Personal scoped PM runtime', '{}'::jsonb, $5, 'personal', now())
+		RETURNING id
+	`, testWorkspaceID, "scope-mix-personal-"+randomID()[:8], "internal-user-center-scope-compatible-personal-"+randomID()[:8], provider, testUserID).Scan(&personalRuntimeID); err != nil {
+		t.Fatalf("create personal runtime: %v", err)
+	}
+
+	ensure := func(scope string) InternalSquadTemplateResponse {
+		t.Helper()
+		w := httptest.NewRecorder()
+		req := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/squads/internal-template", map[string]any{
+			"template_key":     "user-center",
+			"runtime_provider": provider,
+			"scope":            scope,
+		})
+		testHandler.EnsureInternalSquadTemplate(w, withURLParam(req, "workspaceId", testWorkspaceID))
+		if w.Code != http.StatusOK {
+			t.Fatalf("ensure %s user-center internal squad status = %d, body = %s", scope, w.Code, w.Body.String())
+		}
+		var resp InternalSquadTemplateResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode ensure response: %v", err)
+		}
+		return resp
+	}
+
+	workspaceResp := ensure(squadScopeWorkspace)
+	personalResp := ensure(squadScopePersonal)
+	for _, agent := range workspaceResp.Agents {
+		var runtimeID string
+		if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, agent.ID).Scan(&runtimeID); err != nil {
+			t.Fatalf("read workspace agent runtime: %v", err)
+		}
+		if runtimeID != workspaceRuntimeID {
+			t.Fatalf("workspace agent %q used runtime %s, want workspace runtime %s", agent.Name, runtimeID, workspaceRuntimeID)
+		}
+	}
+	for _, agent := range personalResp.Agents {
+		var runtimeID string
+		if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, agent.ID).Scan(&runtimeID); err != nil {
+			t.Fatalf("read personal agent runtime: %v", err)
+		}
+		if runtimeID != personalRuntimeID {
+			t.Fatalf("personal agent %q used runtime %s, want personal runtime %s", agent.Name, runtimeID, personalRuntimeID)
+		}
+	}
+}
+
 func TestEnsureUserCenterInternalSquadRestoresArchivedSquadWithoutArchivingAgents(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")

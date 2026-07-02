@@ -38,14 +38,14 @@ export default async function TrainingPage({
   if (view === "runs" || view === "demo-dashboard") {
     redirect(`${workspaceBase}/run-reviews${searchSuffix(resolvedSearchParams)}`);
   }
-  if (view === "prompt-playground" || view === "agent-playground") {
-    redirect(`${baseTrainingPath}/debug-runs${searchSuffix(resolvedSearchParams)}`);
+  if (view === "debug-runs" || view === "prompt-playground" || view === "agent-playground") {
+    redirect(`${baseTrainingPath}/prompts${searchSuffix(resolvedSearchParams)}`);
   }
-  if (view === "experiments" || view === "optimization-runs") {
-    redirect(`${baseTrainingPath}/test-suites${searchSuffix(
-      resolvedSearchParams,
-      view === "optimization-runs" ? { mode: "optimize" } : { mode: "experiment" },
-    )}`);
+  if (view === "experiments") {
+    redirect(`${baseTrainingPath}/test-suites${searchSuffix(resolvedSearchParams)}`);
+  }
+  if (view === "optimization-runs") {
+    redirect(`${baseTrainingPath}/evaluation-runs${searchSuffix(resolvedSearchParams)}`);
   }
   redirect(`${trainingWorkbenchPath(baseTrainingPath, trainingWorkbenchViewFromRoute(view ?? null))}${searchSuffix(resolvedSearchParams)}`);
 }

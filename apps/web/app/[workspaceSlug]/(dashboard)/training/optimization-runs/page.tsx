@@ -1,5 +1,10 @@
-import { TrainingWorkbenchPage } from "@multica/views/prompt-library";
+import { redirect } from "next/navigation";
 
-export default function TrainingOptimizationRunsPage() {
-  return <TrainingWorkbenchPage activeView="optimization-runs" />;
+export default async function TrainingOptimizationRunsPage({
+  params,
+}: {
+  params: Promise<{ workspaceSlug: string }>;
+}) {
+  const { workspaceSlug } = await params;
+  redirect(`/${encodeURIComponent(workspaceSlug)}/training/evaluation-runs`);
 }

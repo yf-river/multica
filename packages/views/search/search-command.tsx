@@ -116,27 +116,13 @@ function matchesMember(member: MemberWithUser, query: string) {
 
 function trainingCommandLabel(t: ReturnType<typeof useT<"search">>["t"], view: TrainingWorkbenchViewId): string {
   switch (view) {
-    case "runs":
-      return t(($) => $.commands.open_demo_dashboard);
     case "prompts":
       return t(($) => $.commands.open_prompt_library);
-    case "debug-runs":
-      return t(($) => $.commands.open_debug_runs);
-    case "prompt-playground":
-      return t(($) => $.commands.open_prompt_playground);
-    case "agent-playground":
-      return t(($) => $.commands.open_agent_playground);
     case "datasets":
       return t(($) => $.commands.open_datasets);
     case "test-suites":
       return t(($) => $.commands.open_test_suites);
-    case "experiments":
-      return t(($) => $.commands.open_experiments);
-    case "optimization-runs":
-      return t(($) => $.commands.open_optimization_runs);
     case "evaluation-runs":
-      return t(($) => $.commands.open_run_history);
-    case "run-history":
       return t(($) => $.commands.open_run_history);
   }
 }

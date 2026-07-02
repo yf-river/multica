@@ -1,5 +1,5 @@
 import { redirect } from "next/navigation";
-import { DebugRunsPage, PromptLibraryPage, TrainingWorkbenchPage } from "@multica/views/prompt-library";
+import { PromptLibraryPage, TrainingWorkbenchPage } from "@multica/views/prompt-library";
 import {
   TRAINING_WORKBENCH_ROUTE_BY_VIEW,
   trainingWorkbenchPath,
@@ -8,6 +8,9 @@ import {
 
 const RUN_REVIEW_ROUTES = new Set(["runs", "run-history", "demo-dashboard"]);
 const DEBUG_RUN_ROUTES = new Set(["prompt-playground", "agent-playground"]);
+const PROMPT_ROUTES = new Set(["debug-runs"]);
+const TEST_SUITE_ROUTES = new Set(["experiments"]);
+const EVALUATION_RUN_ROUTES = new Set(["optimization-runs"]);
 type TrainingSearchParams = Record<string, string | string[] | undefined>;
 
 function searchSuffix(
@@ -49,7 +52,16 @@ export default async function TrainingViewPage({
     redirect(`${workspaceBase}/run-reviews${searchSuffix(resolvedSearchParams)}`);
   }
   if (DEBUG_RUN_ROUTES.has(trainingView)) {
-    redirect(`${baseTrainingPath}/debug-runs${searchSuffix(resolvedSearchParams)}`);
+    redirect(`${baseTrainingPath}/prompts${searchSuffix(resolvedSearchParams)}`);
+  }
+  if (PROMPT_ROUTES.has(trainingView)) {
+    redirect(`${baseTrainingPath}/prompts${searchSuffix(resolvedSearchParams)}`);
+  }
+  if (TEST_SUITE_ROUTES.has(trainingView)) {
+    redirect(`${baseTrainingPath}/test-suites${searchSuffix(resolvedSearchParams)}`);
+  }
+  if (EVALUATION_RUN_ROUTES.has(trainingView)) {
+    redirect(`${baseTrainingPath}/evaluation-runs${searchSuffix(resolvedSearchParams)}`);
   }
   const view = trainingWorkbenchViewFromRoute(trainingView);
   const canonicalRoute = TRAINING_WORKBENCH_ROUTE_BY_VIEW[view];
@@ -58,7 +70,6 @@ export default async function TrainingViewPage({
     redirect(`${trainingWorkbenchPath(baseTrainingPath, view)}${searchSuffix(resolvedSearchParams)}`);
   }
 
-  if (view === "debug-runs") return <DebugRunsPage />;
   if (view === "prompts") return <PromptLibraryPage activeView={view} showPromptEditor />;
 
   return <TrainingWorkbenchPage activeView={view} />;

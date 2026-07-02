@@ -300,8 +300,8 @@ describe("PromptEvaluationAssetSchema", () => {
     expect(parsed.total).toBe(0);
   });
 
-  it("accepts optimization run assets", () => {
-    const parsed = PromptEvaluationAssetSchema.parse({
+  it("rejects removed optimization run assets", () => {
+    expect(() => PromptEvaluationAssetSchema.parse({
       id: "asset-2",
       workspace_id: "ws-1",
       prompt_id: "prompt-1",
@@ -311,9 +311,7 @@ describe("PromptEvaluationAssetSchema", () => {
       status: "启用",
       created_at: "2026-06-21T00:00:00Z",
       updated_at: "2026-06-21T00:00:00Z",
-    });
-
-    expect(parsed.asset_type).toBe("优化运行");
+    })).toThrow();
   });
 });
 

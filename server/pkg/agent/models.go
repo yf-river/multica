@@ -1550,6 +1550,7 @@ func codebuddyStaticModels() []Model {
 		"minimax-m2.7-ioa",
 		"minimax-m2.5-ioa",
 		"kimi-k2.6-ioa",
+		"kimi-k2.7-ioa",
 		"hy3-preview-agent-ioa",
 		"echo",
 		"deepseek-v4-pro-ioa",

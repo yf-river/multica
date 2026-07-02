@@ -1,16 +1,11 @@
 import type { Dispatch, SetStateAction } from "react";
 import type {
-  Agent,
-  CreatePromptEvaluationAssetRequest,
   CreatePromptLibraryItemRequest,
   PromptEvaluationAssetType,
-  PromptEvaluationRuntimeReadiness,
   PromptLibraryItem,
   PromptLibraryStatus,
   PromptLibraryVariable,
 } from "@multica/core/types";
-
-export const DEFAULT_AGENT_MODEL = "gpt-5.3-codex-spark";
 
 export type PromptDraft = {
   name: string;
@@ -114,7 +109,7 @@ export function buildAssetPayload(
       ...basePayload,
       数据集: [casePayload],
       字段说明: ["名称", "变量", "期望包含"],
-      中文语义: "用于提示词调试和实验复现的基准样本。",
+      中文语义: "用于训练与评估的数据集样本。",
     };
   }
   if (assetType === "测试套件") {
@@ -123,74 +118,10 @@ export function buildAssetPayload(
       通过标准: ["变量完整", "渲染内容包含期望关键词", "输出保持中文"],
     };
   }
-  if (assetType === "实验") {
-    return {
-      ...basePayload,
-      实验对象: prompt.name,
-      对比维度: ["命中率", "缺失变量", "中文一致性"],
-      基线输出: rendered,
-    };
-  }
   return {
     ...basePayload,
+    通过标准: ["变量完整", "渲染内容包含期望关键词", "输出保持中文"],
     调试输出: rendered,
-    运行结果: {
-      状态: "已记录",
-      运行时间: new Date().toISOString(),
-    },
-  };
-}
-
-export function buildAgentDebugPackageRequest(
-  prompt: PromptLibraryItem,
-  values: Record<string, string>,
-  rendered: string,
-  expectedOutput: string,
-  readiness: PromptEvaluationRuntimeReadiness,
-  executionAgent?: Agent | null,
-): CreatePromptEvaluationAssetRequest {
-  const executionAgentPayload = executionAgent ? {
-    agent_id: executionAgent.id,
-    名称: executionAgent.name,
-    模型: executionAgent.model,
-    运行时标识: executionAgent.runtime_id,
-  } : null;
-  return {
-    prompt_id: prompt.id,
-    name: `${prompt.name} 智能体调试包 ${new Date().toLocaleString("zh-CN")} #${Date.now()}`,
-    description: `智能体调试场记录：${buildAgentExecutionStatus(readiness)}`,
-    asset_type: "实验",
-    payload: {
-      schema_version: 1,
-      语义版本: "multica.training_evaluation.v1",
-      cases: [
-        {
-          名称: "智能体调试场用例",
-          变量: values,
-          期望包含: splitList(expectedOutput),
-        },
-      ],
-      调试包: {
-        提示词: prompt.name,
-        变量: values,
-        上下文: rendered,
-        期望输出: expectedOutput,
-        执行智能体: executionAgentPayload,
-        执行方式: buildAgentExecutionStatus(readiness),
-      },
-      运行环境: {
-        目标智能体: executionAgent?.name ?? "自动选择训练评估智能体",
-        目标智能体标识: executionAgent?.id ?? null,
-        目标运行时: "Codex",
-        目标模型: executionAgent?.model || readiness.model || DEFAULT_AGENT_MODEL,
-        状态: readiness.status,
-        说明: readiness.detail,
-        修复路径: readiness.fix,
-        运行时标识: readiness.runtime?.id ?? null,
-      },
-      对比维度: ["上下文完整性", "期望输出覆盖", "中文语义一致性"],
-    },
-    status: "启用",
   };
 }
 
@@ -229,12 +160,4 @@ export function parseDebugValues(value: string): Record<string, string> {
     result[key] = valueParts.join("=").trim();
   }
   return result;
-}
-
-function buildAgentExecutionStatus(readiness: PromptEvaluationRuntimeReadiness): string {
-  const model = readiness.model || DEFAULT_AGENT_MODEL;
-  if (readiness.status === "就绪") {
-    return `Codex 运行时已在线，目标模型 ${model}；此记录是实验包快照，点击“创建真实智能体任务”后会入队并采集链路追踪、令牌、成本和输出`;
-  }
-  return `${readiness.label}，目标模型 ${model}；未创建真实智能体任务`;
 }

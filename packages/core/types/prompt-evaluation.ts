@@ -1,8 +1,8 @@
 import type { PromptLibraryItem } from "./prompt-library";
 import type { TaskMessagePayload } from "./events";
-import type { AgentRuntime, TaskTraceEvent } from "./agent";
+import type { TaskTraceEvent } from "./agent";
 
-export type PromptEvaluationAssetType = "数据集" | "测试套件" | "实验" | "优化运行";
+export type PromptEvaluationAssetType = "数据集" | "测试套件";
 export type PromptEvaluationAssetStatus = "启用" | "归档";
 export type PromptEvaluationCaseStatus = PromptEvaluationAssetStatus | "draft" | "approved" | "active";
 export type PromptEvaluationCaseSortBy = "case_index" | "case_name" | "source" | "created_at" | "updated_at";
@@ -328,29 +328,6 @@ export interface PromptEvaluationAssetEvidenceArchivePackage {
   中文摘要: Record<string, unknown>;
 }
 
-export interface PromptEvaluationSummary {
-  workspace_id: string;
-  generated_at: string;
-  last_run_at: string;
-  指标: Record<string, number>;
-  资产统计: Record<string, number>;
-  运行状态: Record<string, number>;
-  优化候选: Record<string, number>;
-}
-
-export type PromptEvaluationRuntimeReadinessStatus = "就绪" | "离线" | "过期" | "缺失" | "无权限" | "容量受限";
-
-export interface PromptEvaluationRuntimeReadiness {
-  status: PromptEvaluationRuntimeReadinessStatus;
-  label: string;
-  detail: string;
-  fix: string;
-  model: string;
-  runtime: AgentRuntime | null;
-  last_seen_age_seconds: number;
-  checked_at: string;
-}
-
 export interface PromptEvaluationStructuredCase {
   id: string;
   workspace_id: string;
@@ -401,22 +378,6 @@ export interface PromptEvaluationCaseAssertion {
   status: PromptEvaluationCaseStatus;
   source: string;
   created_at: string;
-}
-
-export interface PromptEvaluationExperimentDimension {
-  id: string;
-  workspace_id: string;
-  experiment_asset_id: string;
-  dimension_index: number;
-  dimension_name: string;
-  experiment_target: string;
-  baseline_output: string;
-  comparison_payload: Record<string, unknown>;
-  status: PromptEvaluationAssetStatus;
-  source: string;
-  created_by: string | null;
-  created_at: string;
-  updated_at: string;
 }
 
 export type PromptEvaluationDimensionScoreStatus = "待执行" | "已评分" | "无用例";
@@ -869,11 +830,6 @@ export interface BulkUpdatePromptEvaluationCaseTagsResponse {
   skipped_count: number;
 }
 
-export interface ListPromptEvaluationExperimentDimensionsResponse {
-  items: PromptEvaluationExperimentDimension[];
-  total: number;
-}
-
 export interface ListPromptEvaluationDimensionScoresResponse {
   items: PromptEvaluationDimensionScore[];
   total: number;
@@ -950,11 +906,6 @@ export interface ListPromptEvaluationDatasetVersionTagTrendsParams {
   limit?: number;
 }
 
-export interface ListPromptEvaluationExperimentDimensionsParams {
-  asset_id?: string;
-  status?: PromptEvaluationCaseStatus;
-}
-
 export interface ListPromptEvaluationDimensionScoresParams {
   run_id?: string;
   asset_id?: string;
@@ -973,11 +924,6 @@ export interface ListPromptEvaluationDimensionScoreTrendsParams {
   prompt_id?: string;
   status?: PromptEvaluationDimensionScoreStatus;
   since?: string | null;
-}
-
-export interface PromptEvaluationSummaryParams {
-  since?: string | null;
-  include_acceptance_fixtures?: boolean;
 }
 
 export interface CreatePromptEvaluationCaseRequest {

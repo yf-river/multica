@@ -2,10 +2,12 @@ package service
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"regexp"
 	"strconv"
 	"strings"
 	"sync"
@@ -66,6 +68,8 @@ type TaskWakeupNotifier interface {
 // transmit (it ends up in every task list response). 200 is enough for a
 // recognisable preview of a one-paragraph comment.
 const triggerSummaryMaxLen = 200
+
+const userInputSnapshotMaxLen = 20000
 
 // truncateForSummary returns s shortened to maxRunes, with a trailing
 // `…` when truncated. Operates on runes (not bytes) so multibyte characters
@@ -154,6 +158,360 @@ func (s *TaskService) captureTaskQueued(ctx context.Context, task db.AgentTaskQu
 		source, runtimeMode, _ := s.taskMetricsContext(ctx, task)
 		s.Metrics.RecordTaskEnqueued(source, runtimeMode)
 	}
+}
+
+func (s *TaskService) captureTaskUserInput(ctx context.Context, task db.AgentTaskQueue) {
+	events, err := s.Queries.ListTaskTraceEventsByTask(ctx, task.ID)
+	if err != nil {
+		slog.Warn("list task trace events before user input trace failed",
+			"task_id", util.UUIDToString(task.ID),
+			"error", err,
+		)
+	} else {
+		for _, event := range events {
+			if event.EventType == "user_input.received" {
+				return
+			}
+		}
+	}
+
+	metadata := s.buildTaskUserInputMetadata(ctx, task)
+	if len(metadata) == 0 {
+		return
+	}
+	raw, err := json.Marshal(metadata)
+	if err != nil {
+		slog.Warn("marshal task user input trace metadata failed",
+			"task_id", util.UUIDToString(task.ID),
+			"error", err,
+		)
+		return
+	}
+	s.recordTaskTraceEvent(ctx, task, "user_input.received", "用户输入已接收", taskTraceOptions{Metadata: raw})
+}
+
+func (s *TaskService) buildTaskUserInputMetadata(ctx context.Context, task db.AgentTaskQueue) map[string]any {
+	switch {
+	case task.TriggerCommentID.Valid:
+		return s.buildCommentUserInputMetadata(ctx, task)
+	case task.ChatSessionID.Valid:
+		return s.buildChatUserInputMetadata(ctx, task)
+	case task.AutopilotRunID.Valid:
+		return s.buildAutopilotUserInputMetadata(ctx, task, task.AutopilotRunID)
+	default:
+		if qc, ok := s.parseQuickCreateContext(task); ok {
+			return s.buildQuickCreateUserInputMetadata(task, qc)
+		}
+		if task.IssueID.Valid {
+			return s.buildIssueUserInputMetadata(ctx, task)
+		}
+		return s.buildDirectUserInputMetadata(task)
+	}
+}
+
+func (s *TaskService) buildIssueUserInputMetadata(ctx context.Context, task db.AgentTaskQueue) map[string]any {
+	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
+	if err != nil {
+		slog.Warn("build issue user input trace metadata failed",
+			"task_id", util.UUIDToString(task.ID),
+			"issue_id", util.UUIDToString(task.IssueID),
+			"error", err,
+		)
+		return s.buildDirectUserInputMetadata(task)
+	}
+
+	inputKind := "issue"
+	extra := map[string]any{}
+	if issue.OriginType.Valid && issue.OriginType.String == "autopilot" {
+		inputKind = "autopilot"
+		extra["origin_type"] = issue.OriginType.String
+		extra["origin_id"] = util.UUIDToString(issue.OriginID)
+		if run, err := s.Queries.GetAutopilotRunByIssue(ctx, issue.ID); err == nil {
+			extra["autopilot_run_id"] = util.UUIDToString(run.ID)
+			extra["trigger_payload_summary"], extra["trigger_payload_truncated"] = summarizeRawJSON(run.TriggerPayload, triggerSummaryMaxLen)
+		}
+	}
+
+	content := textWithTitle(issue.Title, issue.Description.String)
+	metadata := baseUserInputMetadata(inputKind, issue.CreatorType, issue.CreatorID, "issue", issue.ID, issue.Title, content)
+	metadata["source_url"] = "/issues/" + util.UUIDToString(issue.ID)
+	metadata["issue_id"] = util.UUIDToString(issue.ID)
+	for key, value := range extra {
+		if value != "" {
+			metadata[key] = value
+		}
+	}
+	if attachments, err := s.Queries.ListAttachmentsByIssue(ctx, db.ListAttachmentsByIssueParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+	}); err == nil {
+		metadata["attachments"] = attachmentMetadataList(attachments)
+	} else {
+		slog.Warn("list issue attachments for user input trace failed",
+			"task_id", util.UUIDToString(task.ID),
+			"issue_id", util.UUIDToString(issue.ID),
+			"error", err,
+		)
+	}
+	return metadata
+}
+
+func (s *TaskService) buildCommentUserInputMetadata(ctx context.Context, task db.AgentTaskQueue) map[string]any {
+	comment, err := s.Queries.GetComment(ctx, task.TriggerCommentID)
+	if err != nil {
+		slog.Warn("build comment user input trace metadata failed",
+			"task_id", util.UUIDToString(task.ID),
+			"comment_id", util.UUIDToString(task.TriggerCommentID),
+			"error", err,
+		)
+		return s.buildIssueUserInputMetadata(ctx, task)
+	}
+
+	title := "Issue 评论"
+	if issue, err := s.Queries.GetIssue(ctx, comment.IssueID); err == nil && issue.Title != "" {
+		title = issue.Title
+	}
+	metadata := baseUserInputMetadata("comment", comment.AuthorType, comment.AuthorID, "comment", comment.ID, title, comment.Content)
+	metadata["issue_id"] = util.UUIDToString(comment.IssueID)
+	metadata["comment_id"] = util.UUIDToString(comment.ID)
+	metadata["source_url"] = "/issues/" + util.UUIDToString(comment.IssueID) + "#comment-" + util.UUIDToString(comment.ID)
+	if attachments, err := s.Queries.ListAttachmentsByComment(ctx, db.ListAttachmentsByCommentParams{
+		CommentID:   comment.ID,
+		WorkspaceID: comment.WorkspaceID,
+	}); err == nil {
+		metadata["attachments"] = attachmentMetadataList(attachments)
+	} else {
+		slog.Warn("list comment attachments for user input trace failed",
+			"task_id", util.UUIDToString(task.ID),
+			"comment_id", util.UUIDToString(comment.ID),
+			"error", err,
+		)
+	}
+	return metadata
+}
+
+func (s *TaskService) buildChatUserInputMetadata(ctx context.Context, task db.AgentTaskQueue) map[string]any {
+	session, err := s.Queries.GetChatSession(ctx, task.ChatSessionID)
+	if err != nil {
+		slog.Warn("build chat user input trace metadata failed",
+			"task_id", util.UUIDToString(task.ID),
+			"chat_session_id", util.UUIDToString(task.ChatSessionID),
+			"error", err,
+		)
+		return s.buildDirectUserInputMetadata(task)
+	}
+
+	message, err := s.Queries.GetMostRecentUserChatMessage(ctx, task.ChatSessionID)
+	content := session.Title
+	sourceID := session.ID
+	messageID := ""
+	if err == nil {
+		content = message.Content
+		sourceID = message.ID
+		messageID = util.UUIDToString(message.ID)
+	} else {
+		slog.Warn("load latest chat message for user input trace failed",
+			"task_id", util.UUIDToString(task.ID),
+			"chat_session_id", util.UUIDToString(task.ChatSessionID),
+			"error", err,
+		)
+	}
+
+	actorID := session.CreatorID
+	if task.InitiatorUserID.Valid {
+		actorID = task.InitiatorUserID
+	}
+	title := firstNonEmpty(session.Title, "Chat 消息")
+	metadata := baseUserInputMetadata("chat", "member", actorID, "chat_message", sourceID, title, content)
+	metadata["chat_session_id"] = util.UUIDToString(session.ID)
+	metadata["source_url"] = "/chats/" + util.UUIDToString(session.ID)
+	if messageID != "" {
+		metadata["chat_message_id"] = messageID
+		metadata["source_url"] = metadata["source_url"].(string) + "#message-" + messageID
+		if attachments, err := s.Queries.ListAttachmentsByChatMessage(ctx, db.ListAttachmentsByChatMessageParams{
+			ChatMessageID: message.ID,
+			WorkspaceID:   session.WorkspaceID,
+		}); err == nil {
+			metadata["attachments"] = attachmentMetadataList(attachments)
+		} else {
+			slog.Warn("list chat attachments for user input trace failed",
+				"task_id", util.UUIDToString(task.ID),
+				"chat_message_id", messageID,
+				"error", err,
+			)
+		}
+	}
+	return metadata
+}
+
+func (s *TaskService) buildQuickCreateUserInputMetadata(task db.AgentTaskQueue, qc QuickCreateContext) map[string]any {
+	requesterID := pgtype.UUID{}
+	if parsed, err := util.ParseUUID(qc.RequesterID); err == nil {
+		requesterID = parsed
+	}
+	metadata := baseUserInputMetadata("quick_create", "member", requesterID, "quick_create", task.ID, "快速创建任务", qc.Prompt)
+	metadata["task_id"] = util.UUIDToString(task.ID)
+	metadata["workspace_id"] = qc.WorkspaceID
+	putStringIfPresent(metadata, "project_id", qc.ProjectID)
+	putStringIfPresent(metadata, "squad_id", qc.SquadID)
+	putStringIfPresent(metadata, "parent_issue_id", qc.ParentIssueID)
+	putStringIfPresent(metadata, "status", qc.Status)
+	putStringIfPresent(metadata, "priority", qc.Priority)
+	putStringIfPresent(metadata, "assignee_type", qc.AssigneeType)
+	putStringIfPresent(metadata, "assignee_id", qc.AssigneeID)
+	putStringIfPresent(metadata, "start_date", qc.StartDate)
+	putStringIfPresent(metadata, "due_date", qc.DueDate)
+	if len(qc.AttachmentIDs) > 0 {
+		attachments := make([]map[string]any, 0, len(qc.AttachmentIDs))
+		for _, id := range qc.AttachmentIDs {
+			if id != "" {
+				attachments = append(attachments, map[string]any{"id": id})
+			}
+		}
+		metadata["attachments"] = attachments
+	}
+	return metadata
+}
+
+func (s *TaskService) buildAutopilotUserInputMetadata(ctx context.Context, task db.AgentTaskQueue, runID pgtype.UUID) map[string]any {
+	run, err := s.Queries.GetAutopilotRun(ctx, runID)
+	if err != nil {
+		slog.Warn("build autopilot user input trace metadata failed",
+			"task_id", util.UUIDToString(task.ID),
+			"autopilot_run_id", util.UUIDToString(runID),
+			"error", err,
+		)
+		return s.buildDirectUserInputMetadata(task)
+	}
+	ap, err := s.Queries.GetAutopilot(ctx, run.AutopilotID)
+	if err != nil {
+		slog.Warn("build autopilot user input trace metadata failed",
+			"task_id", util.UUIDToString(task.ID),
+			"autopilot_id", util.UUIDToString(run.AutopilotID),
+			"error", err,
+		)
+		return s.buildDirectUserInputMetadata(task)
+	}
+
+	contentParts := []string{ap.Title}
+	if ap.Description.Valid {
+		contentParts = append(contentParts, ap.Description.String)
+	}
+	payloadSummary, payloadTruncated := summarizeRawJSON(run.TriggerPayload, triggerSummaryMaxLen)
+	if payloadSummary != "" {
+		contentParts = append(contentParts, payloadSummary)
+	}
+	content := strings.Join(contentParts, "\n\n")
+	metadata := baseUserInputMetadata("autopilot", ap.CreatedByType, ap.CreatedByID, "autopilot_run", run.ID, ap.Title, content)
+	metadata["autopilot_id"] = util.UUIDToString(ap.ID)
+	metadata["autopilot_run_id"] = util.UUIDToString(run.ID)
+	metadata["autopilot_source"] = run.Source
+	metadata["trigger_payload_summary"] = payloadSummary
+	metadata["trigger_payload_truncated"] = payloadTruncated
+	if run.IssueID.Valid {
+		metadata["issue_id"] = util.UUIDToString(run.IssueID)
+		metadata["source_url"] = "/issues/" + util.UUIDToString(run.IssueID)
+	}
+	return metadata
+}
+
+func (s *TaskService) buildDirectUserInputMetadata(task db.AgentTaskQueue) map[string]any {
+	content := "系统任务入队"
+	if task.TriggerSummary.Valid && strings.TrimSpace(task.TriggerSummary.String) != "" {
+		content = task.TriggerSummary.String
+	}
+	metadata := baseUserInputMetadata("direct", "system", pgtype.UUID{}, "task", task.ID, "直接任务", content)
+	metadata["task_id"] = util.UUIDToString(task.ID)
+	if task.ParentTaskID.Valid {
+		metadata["parent_task_id"] = util.UUIDToString(task.ParentTaskID)
+	}
+	return metadata
+}
+
+func baseUserInputMetadata(inputKind, actorType string, actorID pgtype.UUID, sourceType string, sourceID pgtype.UUID, title, content string) map[string]any {
+	snapshot, truncated := truncateSnapshot(content, userInputSnapshotMaxLen)
+	metadata := map[string]any{
+		"input_kind":        inputKind,
+		"actor_type":        actorType,
+		"actor_id":          util.UUIDToString(actorID),
+		"source_type":       sourceType,
+		"source_id":         util.UUIDToString(sourceID),
+		"title":             strings.TrimSpace(title),
+		"summary":           truncateForSummary(firstNonEmpty(content, title), triggerSummaryMaxLen),
+		"content_snapshot":  snapshot,
+		"content_truncated": truncated,
+		"content_sha256":    userInputContentSHA256(content),
+		"attachments":       []map[string]any{},
+	}
+	return metadata
+}
+
+func textWithTitle(title, body string) string {
+	title = strings.TrimSpace(title)
+	body = strings.TrimSpace(body)
+	switch {
+	case title == "":
+		return body
+	case body == "":
+		return title
+	default:
+		return title + "\n\n" + body
+	}
+}
+
+func truncateSnapshot(s string, maxRunes int) (string, bool) {
+	rs := []rune(strings.TrimSpace(s))
+	if len(rs) <= maxRunes {
+		return string(rs), false
+	}
+	return string(rs[:maxRunes]), true
+}
+
+func userInputContentSHA256(s string) string {
+	sum := sha256.Sum256([]byte(s))
+	return fmt.Sprintf("%x", sum[:])
+}
+
+func summarizeRawJSON(raw []byte, maxRunes int) (string, bool) {
+	if len(raw) == 0 {
+		return "", false
+	}
+	var decoded any
+	content := strings.TrimSpace(string(raw))
+	if json.Unmarshal(raw, &decoded) == nil {
+		if compact, err := json.Marshal(decoded); err == nil {
+			content = string(compact)
+		}
+	}
+	return truncateSnapshot(content, maxRunes)
+}
+
+func attachmentMetadataList(attachments []db.Attachment) []map[string]any {
+	out := make([]map[string]any, 0, len(attachments))
+	for _, attachment := range attachments {
+		out = append(out, map[string]any{
+			"id":           util.UUIDToString(attachment.ID),
+			"filename":     attachment.Filename,
+			"content_type": attachment.ContentType,
+			"size_bytes":   attachment.SizeBytes,
+		})
+	}
+	return out
+}
+
+func putStringIfPresent(metadata map[string]any, key, value string) {
+	if strings.TrimSpace(value) != "" {
+		metadata[key] = value
+	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func (s *TaskService) captureTaskDispatched(ctx context.Context, task db.AgentTaskQueue) {
@@ -1731,7 +2089,7 @@ func (s *TaskService) syncSquadSOPTaskStep(ctx context.Context, task db.AgentTas
 
 func (s *TaskService) closeIssueAfterCompletedSOPRun(ctx context.Context, issue db.Issue) {
 	switch issue.Status {
-	case "done", "cancelled", "in_review":
+	case "done", "cancelled", "in_review", "blocked":
 		return
 	}
 	pullRequests, err := s.Queries.ListPullRequestsByIssue(ctx, issue.ID)
@@ -1740,6 +2098,41 @@ func (s *TaskService) closeIssueAfterCompletedSOPRun(ctx context.Context, issue 
 			"issue_id", util.UUIDToString(issue.ID),
 			"error", err,
 		)
+		return
+	}
+	if s.issueRequiresGongfengMR(ctx, issue) {
+		if len(pullRequests) > 0 {
+			updated, err := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+				ID:          issue.ID,
+				Status:      "in_review",
+				WorkspaceID: issue.WorkspaceID,
+			})
+			if err != nil {
+				slog.Warn("move issue to review after completed SOP failed",
+					"issue_id", util.UUIDToString(issue.ID),
+					"error", err,
+				)
+				return
+			}
+			slog.Info("issue moved to review after completed SOP run with linked MR", "issue_id", util.UUIDToString(issue.ID))
+			s.broadcastIssueUpdated(updated)
+			return
+		}
+		updated, err := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+			ID:          issue.ID,
+			Status:      "blocked",
+			WorkspaceID: issue.WorkspaceID,
+		})
+		if err != nil {
+			slog.Warn("block issue after completed SOP without MR failed",
+				"issue_id", util.UUIDToString(issue.ID),
+				"error", err,
+			)
+			return
+		}
+		s.recordMissingMRGateComment(ctx, issue)
+		slog.Info("issue blocked after completed SOP run without linked MR", "issue_id", util.UUIDToString(issue.ID))
+		s.broadcastIssueUpdated(updated)
 		return
 	}
 	if len(pullRequests) > 0 {
@@ -1759,6 +2152,69 @@ func (s *TaskService) closeIssueAfterCompletedSOPRun(ctx context.Context, issue 
 	}
 	slog.Info("issue auto-closed after completed SOP run", "issue_id", util.UUIDToString(issue.ID))
 	s.broadcastIssueUpdated(updated)
+}
+
+func (s *TaskService) issueRequiresGongfengMR(ctx context.Context, issue db.Issue) bool {
+	if !issue.ProjectID.Valid {
+		return false
+	}
+	resources, err := s.Queries.ListProjectResources(ctx, issue.ProjectID)
+	if err != nil {
+		slog.Warn("detect issue gongfeng MR requirement failed",
+			"issue_id", util.UUIDToString(issue.ID),
+			"project_id", util.UUIDToString(issue.ProjectID),
+			"error", err,
+		)
+		return false
+	}
+	for _, resource := range resources {
+		if resource.ResourceType == "gongfeng_repo" {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *TaskService) recordMissingMRGateComment(ctx context.Context, issue db.Issue) {
+	content := strings.TrimSpace(`05 验证已完成，但平台还没有关联 MR。请通过平台创建并关联 MR 后再进入人工 CodeReview：
+
+multica issue mr create <issue-id> --provider gongfeng --project-path <project-path> --source-branch <branch> --target-branch <target-branch> --title "<title>" --output json
+
+创建成功后，平台会把 MR 写入任务的关联 MR 区域。`)
+	comment, err := s.Queries.CreateComment(ctx, db.CreateCommentParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+		AuthorType:  "system",
+		AuthorID:    pgtype.UUID{},
+		Content:     content,
+		Type:        "comment",
+	})
+	if err != nil {
+		slog.Warn("create missing MR gate comment failed",
+			"issue_id", util.UUIDToString(issue.ID),
+			"error", err,
+		)
+		return
+	}
+	s.Bus.Publish(events.Event{
+		Type:        protocol.EventCommentCreated,
+		WorkspaceID: util.UUIDToString(issue.WorkspaceID),
+		ActorType:   "system",
+		ActorID:     "",
+		Payload: map[string]any{
+			"comment": map[string]any{
+				"id":          util.UUIDToString(comment.ID),
+				"issue_id":    util.UUIDToString(comment.IssueID),
+				"author_type": comment.AuthorType,
+				"author_id":   util.UUIDToString(comment.AuthorID),
+				"content":     comment.Content,
+				"type":        comment.Type,
+				"created_at":  comment.CreatedAt.Time.Format("2006-01-02T15:04:05Z"),
+			},
+			"issue_title":  issue.Title,
+			"issue_status": "blocked",
+		},
+	})
 }
 
 func parseSquadSOPProfileSteps(raw []byte) []squadSOPProfileStep {
@@ -1916,6 +2372,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 
 	slog.Info("task completed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskCompleted(ctx, task)
+	s.linkGongfengMRsFromTaskComments(ctx, task)
 	s.syncSquadSOPTaskStep(ctx, task, "步骤完成", "已完成")
 	s.enqueueSquadLeaderAfterWorkerStageCompletion(ctx, task)
 
@@ -2015,6 +2472,173 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	s.broadcastTaskEvent(ctx, protocol.EventTaskCompleted, task)
 
 	return &task, nil
+}
+
+var (
+	gongfengMRURLRe     = regexp.MustCompile(`https://git\.code\.tencent\.com/([A-Za-z0-9_.~%+/\-]+)/merge_requests/([0-9]+)`)
+	gongfengMRBranchRe  = regexp.MustCompile(`(?m)(?:源分支|source\s+branch|source_branch)\s*[：:]\s*` + "`?" + `([A-Za-z0-9._/\-]+)` + "`?")
+	gongfengMRTitleLine = regexp.MustCompile(`(?m)(?:MR\s*(?:已创建|created)?|merge\s+request)\s*[：:]\s*(.+)$`)
+)
+
+type gongfengMRCommentRef struct {
+	ProjectPath  string
+	Number       int32
+	HTMLURL      string
+	SourceBranch string
+	Title        string
+}
+
+func (s *TaskService) linkGongfengMRsFromTaskComments(ctx context.Context, task db.AgentTaskQueue) {
+	if !task.IssueID.Valid {
+		return
+	}
+	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
+	if err != nil {
+		slog.Warn("task comment MR collection skipped: issue lookup failed",
+			"task_id", util.UUIDToString(task.ID),
+			"issue_id", util.UUIDToString(task.IssueID),
+			"error", err,
+		)
+		return
+	}
+	comments, err := s.Queries.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+		Limit:       2000,
+	})
+	if err != nil {
+		slog.Warn("task comment MR collection skipped: comments lookup failed",
+			"task_id", util.UUIDToString(task.ID),
+			"issue_id", util.UUIDToString(task.IssueID),
+			"error", err,
+		)
+		return
+	}
+	refsByURL := map[string]gongfengMRCommentRef{}
+	for _, comment := range comments {
+		if !comment.SourceTaskID.Valid || comment.SourceTaskID != task.ID {
+			continue
+		}
+		for _, ref := range parseGongfengMRRefsFromComment(comment.Content) {
+			refsByURL[ref.HTMLURL] = ref
+		}
+	}
+	for _, ref := range refsByURL {
+		if err := s.linkGongfengMRCommentRef(ctx, issue, task, ref); err != nil {
+			slog.Warn("task comment MR collection failed to link MR",
+				"task_id", util.UUIDToString(task.ID),
+				"issue_id", util.UUIDToString(issue.ID),
+				"html_url", ref.HTMLURL,
+				"error", err,
+			)
+		}
+	}
+}
+
+func (s *TaskService) linkGongfengMRCommentRef(ctx context.Context, issue db.Issue, task db.AgentTaskQueue, ref gongfengMRCommentRef) error {
+	repoOwner, repoName := splitGongfengProjectPath(ref.ProjectPath)
+	if repoOwner == "" || repoName == "" || ref.Number <= 0 || ref.HTMLURL == "" {
+		return nil
+	}
+	now := time.Now().UTC()
+	title := strings.TrimSpace(ref.Title)
+	if title == "" {
+		title = fmt.Sprintf("MR !%d", ref.Number)
+	}
+	pr, err := s.Queries.UpsertGitHubPullRequest(ctx, db.UpsertGitHubPullRequestParams{
+		WorkspaceID:         issue.WorkspaceID,
+		InstallationID:      0,
+		RepoOwner:           repoOwner,
+		RepoName:            repoName,
+		PrNumber:            ref.Number,
+		Title:               title,
+		State:               "open",
+		HtmlUrl:             ref.HTMLURL,
+		Branch:              pgtype.Text{String: ref.SourceBranch, Valid: ref.SourceBranch != ""},
+		AuthorLogin:         pgtype.Text{},
+		AuthorAvatarUrl:     pgtype.Text{},
+		MergedAt:            pgtype.Timestamptz{},
+		ClosedAt:            pgtype.Timestamptz{},
+		PrCreatedAt:         pgtype.Timestamptz{Time: now, Valid: true},
+		PrUpdatedAt:         pgtype.Timestamptz{Time: now, Valid: true},
+		HeadSha:             "",
+		MergeableState:      pgtype.Text{},
+		ClearMergeableState: pgtype.Bool{},
+		Additions:           0,
+		Deletions:           0,
+		ChangedFiles:        0,
+	})
+	if err != nil {
+		return fmt.Errorf("upsert pull request: %w", err)
+	}
+	if err := s.Queries.LinkIssueToPullRequest(ctx, db.LinkIssueToPullRequestParams{
+		IssueID:             issue.ID,
+		PullRequestID:       pr.ID,
+		CloseIntent:         false,
+		LinkedByType:        pgtype.Text{String: "agent", Valid: true},
+		LinkedByID:          task.AgentID,
+		PreserveCloseIntent: true,
+	}); err != nil {
+		return fmt.Errorf("link issue pull request: %w", err)
+	}
+	slog.Info("linked Gongfeng MR reported by task comment",
+		"task_id", util.UUIDToString(task.ID),
+		"issue_id", util.UUIDToString(issue.ID),
+		"mr_url", ref.HTMLURL,
+		"mr_number", ref.Number,
+	)
+	return nil
+}
+
+func parseGongfengMRRefsFromComment(content string) []gongfengMRCommentRef {
+	content = strings.TrimSpace(content)
+	if content == "" {
+		return nil
+	}
+	matches := gongfengMRURLRe.FindAllStringSubmatch(content, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	branch := ""
+	if branchMatch := gongfengMRBranchRe.FindStringSubmatch(content); len(branchMatch) == 2 {
+		branch = strings.TrimSpace(branchMatch[1])
+	}
+	title := ""
+	if titleMatch := gongfengMRTitleLine.FindStringSubmatch(content); len(titleMatch) == 2 {
+		title = strings.TrimSpace(titleMatch[1])
+	}
+	refs := make([]gongfengMRCommentRef, 0, len(matches))
+	seen := map[string]struct{}{}
+	for _, match := range matches {
+		if len(match) != 3 {
+			continue
+		}
+		number64, err := strconv.ParseInt(match[2], 10, 32)
+		if err != nil || number64 <= 0 {
+			continue
+		}
+		htmlURL := match[0]
+		if _, ok := seen[htmlURL]; ok {
+			continue
+		}
+		seen[htmlURL] = struct{}{}
+		refs = append(refs, gongfengMRCommentRef{
+			ProjectPath:  strings.Trim(match[1], "/"),
+			Number:       int32(number64),
+			HTMLURL:      htmlURL,
+			SourceBranch: branch,
+			Title:        title,
+		})
+	}
+	return refs
+}
+
+func splitGongfengProjectPath(projectPath string) (string, string) {
+	parts := strings.Split(strings.Trim(projectPath, "/"), "/")
+	if len(parts) < 2 {
+		return "", ""
+	}
+	return strings.Join(parts[:len(parts)-1], "/"), parts[len(parts)-1]
 }
 
 func (s *TaskService) enqueueSquadLeaderAfterWorkerStageCompletion(ctx context.Context, task db.AgentTaskQueue) {
@@ -2726,6 +3350,7 @@ func priorityToInt(p string) int32 {
 // cache and kicks the daemon WS so the new task is claimed without
 // waiting for the next poll.
 func (s *TaskService) NotifyTaskEnqueued(ctx context.Context, task db.AgentTaskQueue) {
+	s.captureTaskUserInput(ctx, task)
 	s.captureTaskQueued(ctx, task)
 	s.notifyTaskAvailable(task)
 }

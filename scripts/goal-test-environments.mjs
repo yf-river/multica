@@ -181,24 +181,7 @@ async function deployEnvironment(item, build) {
   if (!codexPreflight.ok) {
     fail(`codex runner network preflight failed\n${JSON.stringify(codexPreflight, null, 2)}`);
   }
-  const daemonPID = startDetached("./server/bin/multica", [
-    "daemon",
-    "start",
-    "--foreground",
-    "--daemon-id",
-    item.daemonID,
-    "--runtime-name",
-    item.runtimeName,
-    "--agent-timeout",
-    "0",
-    "--max-concurrent-tasks",
-    "1",
-    "--no-auto-update",
-    "--server-url",
-    `http://127.0.0.1:${item.backendPort}`,
-    "--profile",
-    item.daemonProfile,
-  ], env, logPath(item, "daemon"));
+  const daemonPID = startDetached("./server/bin/multica", daemonStartArgs(item), env, logPath(item, "daemon"));
 
   writeFileSync(pidPath(item, "server"), `${serverPID}\n`);
   writeFileSync(pidPath(item, "web"), `${webPID}\n`);
@@ -218,6 +201,7 @@ async function deployEnvironment(item, build) {
     daemon_profile_path: daemonProfilePath,
     daemon_id: item.daemonID,
     daemon_workspaces_root: env.MULTICA_WORKSPACES_ROOT,
+    daemon_max_concurrent_tasks: daemonConcurrencyMetadata(env),
     codex_runner: codexPreflight.runner,
     codex_network_preflight: codexPreflight,
     frontend_mode: item.frontendMode,
@@ -408,6 +392,37 @@ function startWebProcess(item, env) {
   return webPID;
 }
 
+function daemonStartArgs(item) {
+  return [
+    "daemon",
+    "start",
+    "--foreground",
+    "--daemon-id",
+    item.daemonID,
+    "--runtime-name",
+    item.runtimeName,
+    "--agent-timeout",
+    "0",
+    "--no-auto-update",
+    "--server-url",
+    `http://127.0.0.1:${item.backendPort}`,
+    "--profile",
+    item.daemonProfile,
+  ];
+}
+
+function daemonConcurrencyMetadata(env) {
+  const raw = String(env.MULTICA_DAEMON_MAX_CONCURRENT_TASKS || "").trim();
+  if (!raw) {
+    return { source: "daemon_default", value: null };
+  }
+  const parsed = Number.parseInt(raw, 10);
+  return {
+    source: "env_override",
+    value: Number.isFinite(parsed) && parsed > 0 ? parsed : raw,
+  };
+}
+
 async function prewarmDevWebRoutes(item) {
   if (item.frontendMode !== "next-dev") {
     return { enabled: false, reason: "frontend mode is not next-dev", routes: [] };
@@ -555,24 +570,7 @@ function boundedInt(value, fallback, min, max) {
 }
 
 function startDaemonProcess(item, env) {
-  const daemonPID = startDetached("./server/bin/multica", [
-    "daemon",
-    "start",
-    "--foreground",
-    "--daemon-id",
-    item.daemonID,
-    "--runtime-name",
-    item.runtimeName,
-    "--agent-timeout",
-    "0",
-    "--max-concurrent-tasks",
-    "1",
-    "--no-auto-update",
-    "--server-url",
-    `http://127.0.0.1:${item.backendPort}`,
-    "--profile",
-    item.daemonProfile,
-  ], env, logPath(item, "daemon"));
+  const daemonPID = startDetached("./server/bin/multica", daemonStartArgs(item), env, logPath(item, "daemon"));
   writeFileSync(pidPath(item, "daemon"), `${daemonPID}\n`);
   return daemonPID;
 }
@@ -599,6 +597,7 @@ function updateFastDeploymentMetadata(item, env, pidsPatch, action, extra = {}) 
     daemon_profile: item.daemonProfile,
     daemon_id: item.daemonID,
     daemon_workspaces_root: env.MULTICA_WORKSPACES_ROOT,
+    daemon_max_concurrent_tasks: daemonConcurrencyMetadata(env),
     frontend_mode: item.frontendMode,
     env_file: envPath(item),
     web_prewarm: extra.web_prewarm ?? current.web_prewarm,

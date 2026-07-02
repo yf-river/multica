@@ -202,11 +202,9 @@ type Daemon struct {
 	activeEnvRootsMu sync.Mutex
 	activeEnvRoots   map[string]int // env root path -> reference count (handles reuse paths marked twice)
 
-	// localPathLocks serialises agent tasks whose project resource is a
-	// local_directory pinned to this daemon. Two tasks targeting the same
-	// on-disk path run sequentially; the second blocks on the lock and is
-	// surfaced via the server-side waiting_local_directory status while it
-	// waits. See MUL-2663.
+	// localPathLocks is kept for legacy local_directory compatibility paths.
+	// Normal issue tasks use issue-scoped managed worktrees, so project
+	// local_directory resources no longer override the task workdir.
 	localPathLocks *LocalPathLocker
 
 	// runtimeNetworkByID stores this daemon's local provider-network health
@@ -2847,25 +2845,6 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		"reuse_workdir", task.PriorWorkDir != "",
 	)
 
-	// If the task targets a project_resource of type local_directory that
-	// is pinned to this daemon, acquire the path mutex before runner.run
-	// so the server-side state machine is dispatched →
-	// waiting_local_directory → running rather than backwards-transitioning
-	// from running into the wait state. The release is deferred so a panic
-	// or early return always frees the lock for the next waiter.
-	//
-	// StartTask itself now lives in runTask (see issue #3999 race A) and
-	// fires only after execenv.Prepare/Reuse has put env.WorkDir on disk,
-	// so consumers that read status==running can resolve the workdir path
-	// without racing the daemon's os.MkdirAll.
-	localRelease, abort := d.acquireLocalDirectoryLockIfNeeded(ctx, task, taskLog)
-	if abort {
-		return
-	}
-	if localRelease != nil {
-		defer localRelease()
-	}
-
 	// Hold a process-wide active-root guard for the rest of this task so
 	// the GC loop never sees a window where the env root has neither the
 	// in-process guard nor .gc_meta.json (issue #3999 race B). runTask
@@ -2963,7 +2942,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		return
 	}
 
-	d.collectAndPostTaskArtifacts(ctx, task, result.WorkDir, taskLog)
+	d.collectAndPostTaskArtifacts(ctx, task, result.WorkDir, result.ArtifactDir, taskLog)
 
 	if result.Status != "completed" {
 		reason := taskfailure.Classify(result.Comment)
@@ -2980,15 +2959,6 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	// crash leaves the directory as an orphan (cleaned up by GCOrphanTTL).
 	if result.EnvRoot != "" {
 		if meta, ok := gcMetaForTask(task); ok {
-			// A local_directory project_resource matched this daemon
-			// means the agent ran in the user's own tree. Stamp the
-			// meta so the GC loop never tries to RemoveAll envRoot's
-			// sibling workdir (which is the user's path) or the envRoot
-			// itself (we want output/ and logs/ to linger for forensic
-			// access).
-			if assignment, _ := findLocalDirectoryAssignment(task.ProjectResources, d.cfg.DaemonID); assignment != nil {
-				meta.LocalDirectory = true
-			}
 			if err := execenv.WriteGCMeta(result.EnvRoot, meta, taskLog); err != nil {
 				taskLog.Warn("write gc meta failed (non-fatal)", "error", err)
 			}
@@ -2996,7 +2966,11 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 	}
 }
 
-// acquireLocalDirectoryLockIfNeeded inspects the task's project resources for
+// acquireLocalDirectoryLockIfNeeded is a legacy compatibility helper. Normal
+// issue tasks now run in issue-scoped managed worktrees and do not call this
+// path.
+//
+// The helper inspects the task's project resources for
 // a local_directory pinned to this daemon, validates the path, and takes the
 // path mutex. Returns a release callback (nil when no local_directory
 // resource applies) and abort=true when the caller must bail without
@@ -3250,6 +3224,94 @@ func gateResumeToReusedWorkdir(task *Task, taskCtx *execenv.TaskContextForEnv, e
 	return reused
 }
 
+type preparedIssueExecutionSpace struct {
+	RootDir        string
+	ReposDir       string
+	PrimaryRepoDir string
+	ArtifactDir    string
+	BranchName     string
+}
+
+func issueExecutionSpaceEnabled(task Task) bool {
+	return task.IssueExecutionSpace != nil &&
+		task.IssueExecutionSpace.Enabled &&
+		strings.TrimSpace(task.IssueExecutionSpace.IssueID) != "" &&
+		strings.TrimSpace(task.IssueExecutionSpace.PrimaryRepoURL) != ""
+}
+
+func (d *Daemon) prepareIssueExecutionSpace(ctx context.Context, task Task, agentName string) (*preparedIssueExecutionSpace, error) {
+	if !issueExecutionSpaceEnabled(task) {
+		return nil, nil
+	}
+	if d.repoCache == nil {
+		return nil, fmt.Errorf("issue execution space requires repo cache")
+	}
+	space := task.IssueExecutionSpace
+	issueID := strings.TrimSpace(space.IssueID)
+	repoURL := strings.TrimSpace(space.PrimaryRepoURL)
+	rootDir := filepath.Join(d.cfg.WorkspacesRoot, task.WorkspaceID, "issues", shortID(issueID))
+	reposDir := filepath.Join(rootDir, "repos")
+	artifactDir := filepath.Join(rootDir, "artifacts", "multica")
+	if err := os.MkdirAll(reposDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create issue repos dir: %w", err)
+	}
+	if err := os.MkdirAll(artifactDir, 0o755); err != nil {
+		return nil, fmt.Errorf("create issue artifact dir: %w", err)
+	}
+
+	if err := d.repoCache.Sync(task.WorkspaceID, []repocache.RepoInfo{{URL: repoURL}}); err != nil {
+		return nil, fmt.Errorf("sync issue repo: %w", err)
+	}
+
+	branchName := fmt.Sprintf("agent/issue/%s", shortID(issueID))
+	result, err := d.repoCache.CreateWorktree(repocache.WorktreeParams{
+		WorkspaceID:         task.WorkspaceID,
+		RepoURL:             repoURL,
+		WorkDir:             reposDir,
+		Ref:                 space.Ref,
+		AgentName:           agentName,
+		TaskID:              task.ID,
+		BranchNameOverride:  branchName,
+		PreserveExisting:    true,
+		CoAuthoredByEnabled: d.workspaceCoAuthoredByEnabled(task.WorkspaceID),
+	})
+	if err != nil {
+		return nil, fmt.Errorf("checkout issue worktree: %w", err)
+	}
+	if err := linkIssueArtifactDir(result.Path, artifactDir); err != nil {
+		d.logger.Warn("issue execution space: link artifact dir failed", "error", err, "workdir", result.Path, "artifact_dir", artifactDir)
+	}
+	return &preparedIssueExecutionSpace{
+		RootDir:        rootDir,
+		ReposDir:       reposDir,
+		PrimaryRepoDir: result.Path,
+		ArtifactDir:    artifactDir,
+		BranchName:     result.BranchName,
+	}, nil
+}
+
+func linkIssueArtifactDir(repoDir, artifactDir string) error {
+	parent := filepath.Join(repoDir, "artifacts")
+	if err := os.MkdirAll(parent, 0o755); err != nil {
+		return err
+	}
+	linkPath := filepath.Join(parent, "multica")
+	if st, err := os.Lstat(linkPath); err == nil {
+		if st.Mode()&os.ModeSymlink != 0 {
+			target, readErr := os.Readlink(linkPath)
+			if readErr == nil && target == artifactDir {
+				return nil
+			}
+			_ = os.Remove(linkPath)
+		} else {
+			return nil
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	return os.Symlink(artifactDir, linkPath)
+}
+
 func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot int, taskLog *slog.Logger) (TaskResult, error) {
 	// Refuse to spawn an agent without a workspace. An empty workspace_id
 	// here would make MULTICA_WORKSPACE_ID empty in the agent env, and the
@@ -3356,14 +3418,6 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if provider == "openclaw" {
 		openclawBin = entry.Path
 	}
-	// Resolve any local_directory assignment again here so runTask can plumb
-	// LocalWorkDir into execenv. handleTask already validated + locked the
-	// path; this call is a pure JSON parse over the same task payload.
-	localAssignment, _ := findLocalDirectoryAssignment(task.ProjectResources, d.cfg.DaemonID)
-	// Reuse intentionally skipped for local_directory tasks: the prior
-	// WorkDir is the user's own path (always present) but the reuse path
-	// loses the envRoot association the GC loop needs, and re-running
-	// Prepare against a stable user path is cheap (no clone, no copy).
 	var agentMcpConfig json.RawMessage
 	if task.Agent != nil {
 		agentMcpConfig = task.Agent.McpConfig
@@ -3377,7 +3431,15 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if task.Agent != nil && provider == "openclaw" {
 		openclawMode, openclawGateway = decodeOpenclawRuntimeConfig(task.Agent.RuntimeConfig, d.logger)
 	}
-	if task.PriorWorkDir != "" && localAssignment == nil {
+	var issueSpace *preparedIssueExecutionSpace
+	if issueExecutionSpaceEnabled(task) {
+		var err error
+		issueSpace, err = d.prepareIssueExecutionSpace(ctx, task, agentName)
+		if err != nil {
+			return TaskResult{}, fmt.Errorf("prepare issue execution space: %w", err)
+		}
+	}
+	if task.PriorWorkDir != "" && issueSpace == nil {
 		env = execenv.Reuse(execenv.ReuseParams{
 			WorkDir:         task.PriorWorkDir,
 			Provider:        provider,
@@ -3402,8 +3464,8 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			OpenclawGateway: openclawGateway,
 			Task:            taskCtx,
 		}
-		if localAssignment != nil {
-			prepParams.LocalWorkDir = localAssignment.AbsPath
+		if issueSpace != nil {
+			prepParams.ManagedWorkDir = issueSpace.PrimaryRepoDir
 		}
 		env, err = execenv.Prepare(prepParams, d.logger)
 		if err != nil {
@@ -3415,6 +3477,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if env.RootDir != predictedRoot && env.RootDir != "" {
 		d.markActiveEnvRoot(env.RootDir)
 		defer d.unmarkActiveEnvRoot(env.RootDir)
+	}
+	if issueSpace != nil {
+		d.markActiveEnvRoot(issueSpace.RootDir)
+		defer d.unmarkActiveEnvRoot(issueSpace.RootDir)
 	}
 
 	// Issue #3999 race A: now that env.WorkDir is on disk, transition the
@@ -3443,19 +3509,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if err != nil {
 		d.logger.Warn("execenv: inject runtime config failed (non-fatal)", "error", err)
 	}
-	// Workdir is preserved for reuse by future tasks on the same (agent,
-	// issue) pair in cloud mode; the work_dir path is stored in DB on task
-	// completion and passed back via PriorWorkDir on the next claim, so
-	// rewriting the marker block in place is the right behavior.
+	// Workdir is preserved for reuse by future cloud tasks on the same
+	// (agent, issue) pair only when the server does not provide an
+	// issue-scoped managed worktree. The work_dir path is stored in DB on
+	// task completion and passed back via PriorWorkDir on the next claim.
 	//
-	// In local_directory mode the workdir is the user's own repo, reuse is
-	// already disabled above (see localAssignment == nil), and the brief
-	// would otherwise live on inside the user's repository — a subsequent
-	// manual `claude` / `codex` / `gemini` run in that directory would pick
-	// up stale Multica instructions (issue id, trigger comment id, reply
-	// rules) and start acting on the previous task's context. Excise the
-	// marker block on the way out instead.
-	if env.LocalDirectory {
+	// Managed worktrees and legacy local_directory paths are cleaned on exit
+	// so the runtime config marker does not leak into repository files.
+	if env.LocalDirectory || env.ManagedWorktree {
 		defer func() {
 			if cerr := execenv.CleanupRuntimeConfig(env.WorkDir, provider); cerr != nil {
 				d.logger.Warn("execenv: cleanup runtime config failed (non-fatal)", "error", cerr)
@@ -3498,6 +3559,11 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		"MULTICA_AGENT_ID":     task.AgentID,
 		"MULTICA_TASK_ID":      task.ID,
 		"MULTICA_TASK_SLOT":    strconv.Itoa(slot),
+	}
+	if issueSpace != nil {
+		agentEnv["MULTICA_ISSUE_SPACE_ROOT"] = issueSpace.RootDir
+		agentEnv["MULTICA_PRIMARY_REPO_DIR"] = issueSpace.PrimaryRepoDir
+		agentEnv["MULTICA_ARTIFACT_DIR"] = issueSpace.ArtifactDir
 	}
 	if task.AutopilotRunID != "" {
 		agentEnv["MULTICA_AUTOPILOT_RUN_ID"] = task.AutopilotRunID
@@ -3769,6 +3835,13 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		})
 	}
 
+	resultBranchName := ""
+	resultArtifactDir := ""
+	if issueSpace != nil {
+		resultBranchName = issueSpace.BranchName
+		resultArtifactDir = issueSpace.ArtifactDir
+	}
+
 	switch result.Status {
 	case "completed":
 		if result.Output == "" {
@@ -3778,12 +3851,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			// a normal completion so the task is not incorrectly marked as
 			// blocked.
 			return TaskResult{
-				Status:    "completed",
-				Comment:   "",
-				SessionID: result.SessionID,
-				WorkDir:   env.WorkDir,
-				EnvRoot:   env.RootDir,
-				Usage:     usageEntries,
+				Status:      "completed",
+				Comment:     "",
+				BranchName:  resultBranchName,
+				SessionID:   result.SessionID,
+				WorkDir:     env.WorkDir,
+				ArtifactDir: resultArtifactDir,
+				EnvRoot:     env.RootDir,
+				Usage:       usageEntries,
 			}, nil
 		}
 		// Detect "poisoned" terminal output: the agent didn't reach a real
@@ -3800,20 +3875,24 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			return TaskResult{
 				Status:        "blocked",
 				Comment:       result.Output,
+				BranchName:    resultBranchName,
 				SessionID:     result.SessionID,
 				WorkDir:       env.WorkDir,
+				ArtifactDir:   resultArtifactDir,
 				EnvRoot:       env.RootDir,
 				Usage:         usageEntries,
 				FailureReason: reason,
 			}, nil
 		}
 		return TaskResult{
-			Status:    "completed",
-			Comment:   result.Output,
-			SessionID: result.SessionID,
-			WorkDir:   env.WorkDir,
-			EnvRoot:   env.RootDir,
-			Usage:     usageEntries,
+			Status:      "completed",
+			Comment:     result.Output,
+			BranchName:  resultBranchName,
+			SessionID:   result.SessionID,
+			WorkDir:     env.WorkDir,
+			ArtifactDir: resultArtifactDir,
+			EnvRoot:     env.RootDir,
+			Usage:       usageEntries,
 		}, nil
 	case "timeout":
 		// Surface session_id/work_dir so the chat resume pointer is kept
@@ -3834,8 +3913,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{
 			Status:        "blocked",
 			Comment:       comment,
+			BranchName:    resultBranchName,
 			SessionID:     result.SessionID,
 			WorkDir:       env.WorkDir,
+			ArtifactDir:   resultArtifactDir,
 			EnvRoot:       env.RootDir,
 			FailureReason: failureReason,
 			Usage:         usageEntries,
@@ -3853,8 +3934,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{
 			Status:        "blocked",
 			Comment:       comment,
+			BranchName:    resultBranchName,
 			SessionID:     result.SessionID,
 			WorkDir:       env.WorkDir,
+			ArtifactDir:   resultArtifactDir,
 			EnvRoot:       env.RootDir,
 			FailureReason: "idle_watchdog",
 			Usage:         usageEntries,
@@ -3866,12 +3949,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		// status string for the "agent finished" log line so operators can
 		// distinguish "task cancelled by server" from a real timeout.
 		return TaskResult{
-			Status:    "cancelled",
-			Comment:   "task cancelled by server",
-			SessionID: result.SessionID,
-			WorkDir:   env.WorkDir,
-			EnvRoot:   env.RootDir,
-			Usage:     usageEntries,
+			Status:      "cancelled",
+			Comment:     "task cancelled by server",
+			BranchName:  resultBranchName,
+			SessionID:   result.SessionID,
+			WorkDir:     env.WorkDir,
+			ArtifactDir: resultArtifactDir,
+			EnvRoot:     env.RootDir,
+			Usage:       usageEntries,
 		}, nil
 	default:
 		errMsg := agentFailureMessage(provider, result)
@@ -3908,8 +3993,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		return TaskResult{
 			Status:        "blocked",
 			Comment:       errMsg,
+			BranchName:    resultBranchName,
 			SessionID:     result.SessionID,
 			WorkDir:       env.WorkDir,
+			ArtifactDir:   resultArtifactDir,
 			EnvRoot:       env.RootDir,
 			Usage:         usageEntries,
 			FailureReason: failureReason,

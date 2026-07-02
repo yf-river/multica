@@ -386,12 +386,12 @@ type Issue struct {
 	OriginType         pgtype.Text        `json:"origin_type"`
 	OriginID           pgtype.UUID        `json:"origin_id"`
 	FirstExecutedAt    pgtype.Timestamptz `json:"first_executed_at"`
-	WorkStartedAt      pgtype.Timestamptz `json:"work_started_at"`
-	WorkCompletedAt    pgtype.Timestamptz `json:"work_completed_at"`
 	StartDate          pgtype.Date        `json:"start_date"`
 	Metadata           []byte             `json:"metadata"`
 	Scope              string             `json:"scope"`
 	OwnerID            pgtype.UUID        `json:"owner_id"`
+	WorkStartedAt      pgtype.Timestamptz `json:"work_started_at"`
+	WorkCompletedAt    pgtype.Timestamptz `json:"work_completed_at"`
 }
 
 type IssueDependency struct {
@@ -738,22 +738,6 @@ type PromptEvaluationEvidenceSnapshot struct {
 	Evidence      []byte             `json:"evidence"`
 	CreatedBy     pgtype.UUID        `json:"created_by"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-}
-
-type PromptEvaluationExperimentDimension struct {
-	ID                pgtype.UUID        `json:"id"`
-	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
-	ExperimentAssetID pgtype.UUID        `json:"experiment_asset_id"`
-	DimensionIndex    int32              `json:"dimension_index"`
-	DimensionName     string             `json:"dimension_name"`
-	ExperimentTarget  string             `json:"experiment_target"`
-	BaselineOutput    string             `json:"baseline_output"`
-	ComparisonPayload []byte             `json:"comparison_payload"`
-	Status            string             `json:"status"`
-	Source            string             `json:"source"`
-	CreatedBy         pgtype.UUID        `json:"created_by"`
-	CreatedAt         pgtype.Timestamptz `json:"created_at"`
-	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
 }
 
 type PromptEvaluationOptimizationCandidate struct {

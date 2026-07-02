@@ -503,6 +503,51 @@ func TestDaemonRegister_WithDaemonToken(t *testing.T) {
 	testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
 }
 
+func TestDaemonRegister_DefaultsRuntimeScopeToWorkspace(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	daemonID := "test-daemon-runtime-default-" + randomID()[:8]
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/register", map[string]any{
+		"workspace_id": testWorkspaceID,
+		"daemon_id":    daemonID,
+		"device_name":  "test-device",
+		"runtimes": []map[string]any{
+			{"name": "test-runtime-default-workspace", "type": "scope_default_test", "version": "1.0.0", "status": "online"},
+		},
+	}, testWorkspaceID, daemonID)
+
+	testHandler.DaemonRegister(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("DaemonRegister: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Runtimes []AgentRuntimeResponse `json:"runtimes"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(resp.Runtimes) != 1 {
+		t.Fatalf("expected 1 runtime, got %+v", resp.Runtimes)
+	}
+	runtimeID := resp.Runtimes[0].ID
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID) })
+	if resp.Runtimes[0].Scope != scopeWorkspace {
+		t.Fatalf("response scope = %q, want %q", resp.Runtimes[0].Scope, scopeWorkspace)
+	}
+
+	var storedScope string
+	if err := testPool.QueryRow(context.Background(), `SELECT scope FROM agent_runtime WHERE id = $1`, runtimeID).Scan(&storedScope); err != nil {
+		t.Fatalf("read runtime scope: %v", err)
+	}
+	if storedScope != scopeWorkspace {
+		t.Fatalf("stored scope = %q, want %q", storedScope, scopeWorkspace)
+	}
+}
+
 func TestDaemonRegister_WithDaemonToken_WorkspaceMismatch(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -2186,13 +2231,6 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 	`, projectID, testWorkspaceID, `{"url":"`+projectRepoURL+`","default_branch_hint":"main"}`); err != nil {
 		t.Fatalf("create github_repo project_resource: %v", err)
 	}
-	if _, err := testPool.Exec(ctx, `
-		INSERT INTO project_resource (
-			project_id, workspace_id, resource_type, resource_ref, label, position
-		) VALUES ($1, $2, 'local_directory', $3::jsonb, 'server checkout', 1)
-	`, projectID, testWorkspaceID, `{"local_path":"/srv/multica/project-only-repo","daemon_id":"claim-daemon","label":"server checkout"}`); err != nil {
-		t.Fatalf("create local_directory project_resource: %v", err)
-	}
 
 	// Agent + runtime + queued task in this project.
 	var agentID, runtimeID string
@@ -2201,6 +2239,20 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 		testWorkspaceID,
 	).Scan(&agentID, &runtimeID); err != nil {
 		t.Fatalf("get agent: %v", err)
+	}
+	var runtimeDaemonID string
+	if err := testPool.QueryRow(ctx,
+		`SELECT daemon_id FROM agent_runtime WHERE id = $1`,
+		runtimeID,
+	).Scan(&runtimeDaemonID); err != nil {
+		t.Fatalf("get runtime daemon_id: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO project_resource (
+			project_id, workspace_id, resource_type, resource_ref, label, position
+		) VALUES ($1, $2, 'local_directory', $3::jsonb, 'server checkout', 1)
+	`, projectID, testWorkspaceID, fmt.Sprintf(`{"local_path":"/srv/multica/project-only-repo","daemon_id":%q,"label":"server checkout"}`, runtimeDaemonID)); err != nil {
+		t.Fatalf("create local_directory project_resource: %v", err)
 	}
 
 	var issueID string
@@ -2235,9 +2287,10 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 
 	var resp struct {
 		Task *struct {
-			Repos            []RepoData            `json:"repos"`
-			ProjectID        string                `json:"project_id"`
-			ProjectResources []ProjectResourceData `json:"project_resources"`
+			Repos               []RepoData               `json:"repos"`
+			ProjectID           string                   `json:"project_id"`
+			ProjectResources    []ProjectResourceData    `json:"project_resources"`
+			IssueExecutionSpace *IssueExecutionSpaceData `json:"issue_execution_space"`
 		} `json:"task"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
@@ -2251,6 +2304,12 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 	}
 	if len(resp.Task.Repos) != 1 || resp.Task.Repos[0].URL != projectRepoURL {
 		t.Fatalf("expected resp.Repos to contain only the project repo URL, got %+v", resp.Task.Repos)
+	}
+	if resp.Task.IssueExecutionSpace == nil || !resp.Task.IssueExecutionSpace.Enabled {
+		t.Fatalf("expected issue_execution_space to be enabled, got %+v", resp.Task.IssueExecutionSpace)
+	}
+	if resp.Task.IssueExecutionSpace.PrimaryRepoURL != projectRepoURL || resp.Task.IssueExecutionSpace.Ref != "main" || resp.Task.IssueExecutionSpace.IssueID != issueID {
+		t.Fatalf("issue_execution_space = %+v, want repo=%q ref=main issue=%s", resp.Task.IssueExecutionSpace, projectRepoURL, issueID)
 	}
 	for _, r := range resp.Task.Repos {
 		if strings.HasSuffix(r.URL, "workspace-repo-a") || strings.HasSuffix(r.URL, "workspace-repo-b") {
@@ -2296,7 +2355,7 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 	if err := json.Unmarshal(localResource.ResourceRef, &localRef); err != nil {
 		t.Fatalf("decode local_directory resource_ref: %v", err)
 	}
-	if localRef.LocalPath != "/srv/multica/project-only-repo" || localRef.DaemonID != "claim-daemon" || localRef.Label != "server checkout" {
+	if localRef.LocalPath != "/srv/multica/project-only-repo" || localRef.DaemonID != runtimeDaemonID || localRef.Label != "server checkout" {
 		t.Fatalf("local_directory ref = %+v", localRef)
 	}
 }
@@ -2370,8 +2429,9 @@ func TestClaimTask_ProjectGongfengRepoIsCheckoutRepo(t *testing.T) {
 
 	var resp struct {
 		Task *struct {
-			Repos            []RepoData            `json:"repos"`
-			ProjectResources []ProjectResourceData `json:"project_resources"`
+			Repos               []RepoData               `json:"repos"`
+			ProjectResources    []ProjectResourceData    `json:"project_resources"`
+			IssueExecutionSpace *IssueExecutionSpaceData `json:"issue_execution_space"`
 		} `json:"task"`
 	}
 	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
@@ -2382,6 +2442,12 @@ func TestClaimTask_ProjectGongfengRepoIsCheckoutRepo(t *testing.T) {
 	}
 	if len(resp.Task.Repos) != 1 || resp.Task.Repos[0].URL != cloneURL {
 		t.Fatalf("expected canonical gongfeng clone URL in repos, got %+v", resp.Task.Repos)
+	}
+	if resp.Task.IssueExecutionSpace == nil || !resp.Task.IssueExecutionSpace.Enabled {
+		t.Fatalf("expected issue_execution_space to be enabled, got %+v", resp.Task.IssueExecutionSpace)
+	}
+	if resp.Task.IssueExecutionSpace.PrimaryRepoURL != cloneURL || resp.Task.IssueExecutionSpace.Ref != "v5.0.0_dev" || resp.Task.IssueExecutionSpace.IssueID != issueID {
+		t.Fatalf("issue_execution_space = %+v, want repo=%q ref=v5.0.0_dev issue=%s", resp.Task.IssueExecutionSpace, cloneURL, issueID)
 	}
 	if len(resp.Task.ProjectResources) != 1 || resp.Task.ProjectResources[0].ResourceType != "gongfeng_repo" {
 		t.Fatalf("expected gongfeng project resource to remain visible, got %+v", resp.Task.ProjectResources)

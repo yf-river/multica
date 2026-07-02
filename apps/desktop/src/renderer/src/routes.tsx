@@ -20,7 +20,7 @@ import { ProjectsPage } from "@multica/views/projects/components";
 import { DashboardPage } from "@multica/views/dashboard";
 import { AutopilotsPage } from "@multica/views/autopilots/components";
 import { MyIssuesPage } from "@multica/views/my-issues";
-import { DebugRunsPage, PromptLibraryPage } from "@multica/views/prompt-library";
+import { PromptLibraryPage } from "@multica/views/prompt-library";
 import { RunReviewsPage } from "@multica/views/run-reviews";
 import { SkillsPage } from "@multica/views/skills";
 import { DesktopRuntimesPage } from "./components/desktop-runtimes-page";
@@ -182,14 +182,14 @@ export const appRoutes: RouteObject[] = [
               { index: true, element: <Navigate to="prompts" replace /> },
               { path: "runs", element: <Navigate to="../../run-reviews" replace />, handle: { title: "运行复盘" } },
               { path: "prompts", element: <PromptLibraryPage activeView="prompts" />, handle: { title: "训练与评估" } },
-              { path: "debug-runs", element: <DebugRunsPage />, handle: { title: "调试运行" } },
-              { path: "prompt-playground", element: <TrainingLegacyRedirect to="../debug-runs" />, handle: { title: "调试运行" } },
-              { path: "agent-playground", element: <TrainingLegacyRedirect to="../debug-runs" />, handle: { title: "调试运行" } },
+              { path: "debug-runs", element: <TrainingLegacyRedirect to="../prompts" />, handle: { title: "训练与评估" } },
+              { path: "prompt-playground", element: <TrainingLegacyRedirect to="../prompts" />, handle: { title: "训练与评估" } },
+              { path: "agent-playground", element: <TrainingLegacyRedirect to="../prompts" />, handle: { title: "训练与评估" } },
               { path: "datasets", element: <PromptLibraryPage activeView="datasets" />, handle: { title: "训练与评估" } },
               { path: "test-suites", element: <PromptLibraryPage activeView="test-suites" />, handle: { title: "训练与评估" } },
               { path: "evaluation-runs", element: <PromptLibraryPage activeView="evaluation-runs" />, handle: { title: "训练与评估" } },
               { path: "experiments", element: <TrainingLegacyRedirect to="../test-suites" />, handle: { title: "训练与评估" } },
-              { path: "optimization-runs", element: <TrainingLegacyRedirect to="../test-suites" mode="optimize" />, handle: { title: "训练与评估" } },
+              { path: "optimization-runs", element: <TrainingLegacyRedirect to="../evaluation-runs" />, handle: { title: "训练与评估" } },
               { path: "run-history", element: <TrainingLegacyRedirect to="../evaluation-runs" />, handle: { title: "训练与评估" } },
             ],
           },

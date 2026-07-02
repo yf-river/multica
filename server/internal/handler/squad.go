@@ -707,11 +707,12 @@ func (h *Handler) EnsureInternalSquadTemplate(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	runtime, ok := h.selectInternalSquadRuntime(w, r, wsUUID, member, provider)
+	agentScope := internalSquadAgentScope(scope)
+	runtime, ok := h.selectInternalSquadRuntime(w, r, wsUUID, member, provider, agentScope)
 	if !ok {
 		return
 	}
-	if err := validateAgentRuntimeScope(internalSquadAgentScope(scope), member.UserID, runtime); err != nil {
+	if err := validateAgentRuntimeScope(agentScope, member.UserID, runtime); err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -735,7 +736,7 @@ func (h *Handler) EnsureInternalSquadTemplate(w http.ResponseWriter, r *http.Req
 	writeJSON(w, http.StatusOK, InternalSquadTemplateResponse{Squad: resp, Agents: agents})
 }
 
-func (h *Handler) selectInternalSquadRuntime(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, member db.Member, provider string) (db.AgentRuntime, bool) {
+func (h *Handler) selectInternalSquadRuntime(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, member db.Member, provider string, agentScope string) (db.AgentRuntime, bool) {
 	runtimes, err := h.Queries.ListAgentRuntimes(r.Context(), workspaceID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list runtimes")
@@ -756,12 +757,15 @@ func (h *Handler) selectInternalSquadRuntime(w http.ResponseWriter, r *http.Requ
 		if !strings.EqualFold(runtime.Provider, provider) || !canUseRuntimeForAgent(member, runtime) {
 			continue
 		}
+		if !agentRuntimeScopeCompatible(agentScope, member.UserID, runtime) {
+			continue
+		}
 		if best == nil || runtimeReadinessRank(runtime, checkedAt) > runtimeReadinessRank(*best, checkedAt) {
 			best = &runtime
 		}
 	}
 	if best == nil {
-		writeError(w, http.StatusServiceUnavailable, "当前 workspace 没有可用的 "+providerName+" runtime，无法创建真实可执行的内部小队。请先启动 multica daemon 并确认 /api/runtimes 出现 provider="+provider+" 的在线 runtime。")
+		writeError(w, http.StatusServiceUnavailable, "当前 workspace 没有可用于"+internalSquadRuntimeScopeLabel(agentScope)+"小队的 "+providerName+" runtime，无法创建真实可执行的内部小队。请先启动 multica daemon，并确认 /api/runtimes 出现 provider="+provider+" 且范围匹配的在线 runtime。")
 		return db.AgentRuntime{}, false
 	}
 	if best.Status != "online" || !best.LastSeenAt.Valid || checkedAt.Sub(best.LastSeenAt.Time) > promptEvaluationRuntimeFreshTTL {
@@ -769,6 +773,13 @@ func (h *Handler) selectInternalSquadRuntime(w http.ResponseWriter, r *http.Requ
 		return db.AgentRuntime{}, false
 	}
 	return *best, true
+}
+
+func internalSquadRuntimeScopeLabel(agentScope string) string {
+	if agentScope == scopePersonal {
+		return "个人"
+	}
+	return "工作区"
 }
 
 func (h *Handler) ensureInternalSquadAgents(ctx context.Context, workspaceID pgtype.UUID, ownerID pgtype.UUID, runtime db.AgentRuntime, template internalSquadTemplate, squadScope string) ([]InternalSquadAgent, error) {

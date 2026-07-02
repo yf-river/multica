@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef } from "react";
-import { ChevronRight, FolderGit, FolderOpen, Maximize2, Minimize2, Search, X as XIcon, UserMinus } from "lucide-react";
+import { ChevronRight, FolderGit, Maximize2, Minimize2, Search, X as XIcon, UserMinus } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { useCreateProject } from "@multica/core/projects/mutations";
 import { useProjectDraftStore } from "@multica/core/projects";
@@ -38,12 +38,6 @@ import {
   useProjectStatusLabels,
   useProjectPriorityLabels,
 } from "../projects/components/labels";
-import {
-  isDesktopShell,
-  pickDirectory,
-  validateLocalDirectory,
-} from "../platform/local-directory";
-import { useLocalDaemonStatus } from "../platform/use-local-daemon-status";
 
 function PillButton({
   children,
@@ -149,59 +143,6 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
     return searchText.includes(repoQuery) || normalizeRepoSearch(searchText).includes(normalizedRepoQuery);
   });
 
-  // A project's source is binary: either a set of Gongfeng repos OR a local
-  // working directory — never both. Mode is the source of truth for what
-  // gets persisted on submit; switching mode does NOT clear the other
-  // side's stash, so toggling back and forth restores the user's prior
-  // selection. Only the mode-matching side is sent to the API. Local mode
-  // is hidden entirely on web (no daemon to bind the path to).
-  const desktop = isDesktopShell();
-  const daemonStatus = useLocalDaemonStatus();
-  const [sourceMode, setSourceMode] = useState<"repos" | "local">("repos");
-  const [selectedLocalPath, setSelectedLocalPath] = useState<string | null>(null);
-  const [selectedLocalLabel, setSelectedLocalLabel] = useState<string | null>(null);
-  const [localPickError, setLocalPickError] = useState<string | null>(null);
-  const [localPicking, setLocalPicking] = useState(false);
-
-  const handleSourceModeChange = (mode: "repos" | "local") => {
-    setSourceMode(mode);
-    setLocalPickError(null);
-  };
-
-  const handlePickLocalDirectory = async () => {
-    if (localPicking) return;
-    setLocalPickError(null);
-    setLocalPicking(true);
-    try {
-      const picked = await pickDirectory(selectedLocalPath ?? undefined);
-      if (!picked.ok || !picked.path) {
-        if (picked.reason && picked.reason !== "cancelled") {
-          setLocalPickError(
-            picked.error ?? t(($) => $.create_project.local_pick_failed),
-          );
-        }
-        return;
-      }
-      const validation = await validateLocalDirectory(picked.path);
-      if (!validation.ok) {
-        setLocalPickError(
-          validation.error ?? t(($) => $.create_project.local_invalid_dir),
-        );
-        return;
-      }
-      setSelectedLocalPath(picked.path);
-      setSelectedLocalLabel(picked.basename ?? null);
-    } finally {
-      setLocalPicking(false);
-    }
-  };
-
-  const clearLocalDirectory = () => {
-    setSelectedLocalPath(null);
-    setSelectedLocalLabel(null);
-    setLocalPickError(null);
-  };
-
   // Sync field changes to draft store
   const updateTitle = (v: string) => { setTitle(v); setDraft({ title: v }); };
   const updateStatus = (v: ProjectStatus) => { setStatus(v); setDraft({ status: v }); };
@@ -228,13 +169,10 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
 
   const handleSubmit = async () => {
     if (!title.trim() || submitting) return;
-    // `sourceMode` decides which side's stash gets persisted — the other
-    // side is silently dropped, so repos picked then abandoned for local
-    // mode don't leak into the project.
     let resources:
-      | Array<{ resource_type: "gongfeng_repo" | "local_directory"; resource_ref: Record<string, unknown> }>
+      | Array<{ resource_type: "gongfeng_repo"; resource_ref: Record<string, unknown> }>
       | undefined;
-    if (sourceMode === "repos" && selectedRepos.length > 0) {
+    if (selectedRepos.length > 0) {
       resources = selectedRepos.map((url) => {
         const repo = workspaceRepos.find((item) => item.url === url);
         return {
@@ -242,21 +180,6 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
           resource_ref: buildGongfengResourceRefFromWorkspaceRepo(url, repo),
         };
       });
-    } else if (
-      sourceMode === "local" &&
-      selectedLocalPath &&
-      daemonStatus.daemonId
-    ) {
-      resources = [
-        {
-          resource_type: "local_directory" as const,
-          resource_ref: {
-            local_path: selectedLocalPath,
-            daemon_id: daemonStatus.daemonId,
-            ...(selectedLocalLabel ? { label: selectedLocalLabel } : {}),
-          },
-        },
-      ];
     }
     setSubmitting(true);
     try {
@@ -543,231 +466,104 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
             <PopoverTrigger
               render={
                 <PillButton>
-                  {sourceMode === "local" ? (
-                    <>
-                      <FolderOpen className="size-3" />
-                      <span className="max-w-[12rem] truncate">
-                        {selectedLocalPath
-                          ? selectedLocalLabel ?? selectedLocalPath
-                          : t(($) => $.create_project.source_pill_local)}
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <FolderGit className="size-3" />
-                      <span>
-                        {selectedRepos.length === 0
-                          ? t(($) => $.create_project.repos_pill)
-                          : t(($) => $.create_project.repos_pill_count, { count: selectedRepos.length })}
-                      </span>
-                    </>
-                  )}
+                  <FolderGit className="size-3" />
+                  <span>
+                    {selectedRepos.length === 0
+                      ? t(($) => $.create_project.repos_pill)
+                      : t(($) => $.create_project.repos_pill_count, { count: selectedRepos.length })}
+                  </span>
                 </PillButton>
               }
             />
             <PopoverContent side="top" align="start" className="w-72 p-2 space-y-2">
-              {/* Source mode is binary — repo OR local directory, never both.
-                  Local option is desktop-only because a local_directory
-                  resource has to be pinned to a daemon_id, which doesn't
-                  exist on the web. */}
-              {desktop && (
-                <div className="grid grid-cols-2 gap-1 rounded-md bg-muted/60 p-0.5">
-                  <button
-                    type="button"
-                    onClick={() => handleSourceModeChange("repos")}
-                    className={cn(
-                      "rounded px-2 py-1 text-xs transition-colors",
-                      sourceMode === "repos"
-                        ? "bg-background shadow-sm font-medium"
-                        : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {t(($) => $.create_project.source_tab_repos)}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => handleSourceModeChange("local")}
-                    className={cn(
-                      "rounded px-2 py-1 text-xs transition-colors",
-                      sourceMode === "local"
-                        ? "bg-background shadow-sm font-medium"
-                        : "text-muted-foreground hover:text-foreground",
-                    )}
-                  >
-                    {t(($) => $.create_project.source_tab_local)}
-                  </button>
-                </div>
-              )}
-
-              {sourceMode === "repos" ? (
+              <div className="text-xs font-medium text-muted-foreground">
+                {t(($) => $.create_project.repos_heading)}
+              </div>
+              {workspaceRepos.length > 0 ? (
                 <>
-                  <div className="text-xs font-medium text-muted-foreground">
-                    {t(($) => $.create_project.repos_heading)}
+                  <div className="relative">
+                    <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
+                    <input
+                      type="text"
+                      value={repoSearch}
+                      onChange={(e) => setRepoSearch(e.target.value)}
+                      aria-label={t(($) => $.create_project.repos_search_placeholder)}
+                      placeholder={t(($) => $.create_project.repos_search_placeholder)}
+                      className="h-8 w-full rounded-md border bg-transparent pl-7 pr-2 text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
+                    />
                   </div>
-                  {workspaceRepos.length > 0 ? (
-                    <>
-                      <div className="relative">
-                        <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
-                        <input
-                          type="text"
-                          value={repoSearch}
-                          onChange={(e) => setRepoSearch(e.target.value)}
-                          aria-label={t(($) => $.create_project.repos_search_placeholder)}
-                          placeholder={t(($) => $.create_project.repos_search_placeholder)}
-                          className="h-8 w-full rounded-md border bg-transparent pl-7 pr-2 text-xs outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
-                        />
-                      </div>
-                      <div className="max-h-48 space-y-1 overflow-y-auto">
-                        {filteredWorkspaceRepos.length === 0 && repoQuery && (
-                          <p className="py-2 text-center text-xs text-muted-foreground">
-                            {t(($) => $.create_project.repos_search_empty)}
-                          </p>
-                        )}
-                        {filteredWorkspaceRepos.map((repo) => {
-                          const checked = selectedRepos.includes(repo.url);
-                          return (
-                            <button
-                              type="button"
-                              key={repo.url}
-                              onClick={() => toggleRepo(repo.url)}
-                              className={cn(
-                                "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-accent transition-colors",
-                                checked && "bg-accent",
-                              )}
-                            >
-                              <input
-                                type="checkbox"
-                                checked={checked}
-                                readOnly
-                                className="size-3.5"
-                              />
-                              <FolderGit className="size-3.5 shrink-0 text-muted-foreground" />
-                              <RepoDisplayText repo={repo} />
-                              {repo.default_branch && (
-                                <span className="shrink-0 rounded border px-1 font-mono text-[10px] text-muted-foreground">
-                                  {repo.default_branch}
-                                </span>
-                              )}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </>
-                  ) : (
-                    <p className="text-xs text-muted-foreground">
-                      {t(($) => $.create_project.repos_empty)}
-                    </p>
-                  )}
-                  {selectedRepos.length > 0 && (
-                    <div className="space-y-1 pt-1 border-t">
-                      <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                        {t(($) => $.create_project.repos_selected)}
-                      </div>
-                      {selectedRepos.map((url) => {
-                        const repo = workspaceRepos.find((item) => item.url === url);
-                        if (!repo) return null;
-                        return (
-                          <div
-                            key={url}
-                            className="flex items-center gap-2 text-xs"
-                          >
-                            <FolderGit className="size-3 text-muted-foreground" />
-                            <RepoDisplayText repo={repo} />
-                            {repo.default_branch && (
-                              <span className="shrink-0 rounded border px-1 font-mono text-[10px] text-muted-foreground">
-                                {repo.default_branch}
-                              </span>
-                            )}
-                            <button
-                              type="button"
-                              onClick={() => toggleRepo(url)}
-                              className="text-muted-foreground hover:text-foreground"
-                            >
-                              <XIcon className="size-3" />
-                            </button>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </>
-              ) : (
-                <>
-                  <div className="text-xs font-medium text-muted-foreground">
-                    {t(($) => $.create_project.local_heading)}
-                  </div>
-                  {/* Daemon must be online — daemon_id is required to bind
-                      the resource. If it's offline, surface why and disable
-                      the picker; once it boots we re-render automatically
-                      via useLocalDaemonStatus. */}
-                  {daemonStatus.daemonId && daemonStatus.running ? (
-                    <p className="text-[11px] text-muted-foreground">
-                      {t(($) => $.create_project.local_on_device, {
-                        device: daemonStatus.deviceName ?? t(($) => $.create_project.local_this_machine),
-                      })}
-                    </p>
-                  ) : (
-                    <p className="text-[11px] text-amber-600 dark:text-amber-400">
-                      {t(($) => $.create_project.local_daemon_offline)}
-                    </p>
-                  )}
-
-                  {selectedLocalPath ? (
-                    <div className="rounded-md border px-2 py-2 space-y-1">
-                      <div className="flex items-start gap-2 text-xs">
-                        <FolderOpen className="mt-0.5 size-3.5 shrink-0 text-muted-foreground" />
-                        <div className="min-w-0 flex-1">
-                          {selectedLocalLabel && (
-                            <div className="font-medium truncate">{selectedLocalLabel}</div>
-                          )}
-                          <div className="font-mono text-[10px] text-muted-foreground break-all">
-                            {selectedLocalPath}
-                          </div>
-                        </div>
+                  <div className="max-h-48 space-y-1 overflow-y-auto">
+                    {filteredWorkspaceRepos.length === 0 && repoQuery && (
+                      <p className="py-2 text-center text-xs text-muted-foreground">
+                        {t(($) => $.create_project.repos_search_empty)}
+                      </p>
+                    )}
+                    {filteredWorkspaceRepos.map((repo) => {
+                      const checked = selectedRepos.includes(repo.url);
+                      return (
                         <button
                           type="button"
-                          onClick={clearLocalDirectory}
+                          key={repo.url}
+                          onClick={() => toggleRepo(repo.url)}
+                          className={cn(
+                            "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-accent transition-colors",
+                            checked && "bg-accent",
+                          )}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={checked}
+                            readOnly
+                            className="size-3.5"
+                          />
+                          <FolderGit className="size-3.5 shrink-0 text-muted-foreground" />
+                          <RepoDisplayText repo={repo} />
+                          {repo.default_branch && (
+                            <span className="shrink-0 rounded border px-1 font-mono text-[10px] text-muted-foreground">
+                              {repo.default_branch}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </>
+              ) : (
+                <p className="text-xs text-muted-foreground">
+                  {t(($) => $.create_project.repos_empty)}
+                </p>
+              )}
+              {selectedRepos.length > 0 && (
+                <div className="space-y-1 pt-1 border-t">
+                  <div className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                    {t(($) => $.create_project.repos_selected)}
+                  </div>
+                  {selectedRepos.map((url) => {
+                    const repo = workspaceRepos.find((item) => item.url === url);
+                    if (!repo) return null;
+                    return (
+                      <div
+                        key={url}
+                        className="flex items-center gap-2 text-xs"
+                      >
+                        <FolderGit className="size-3 text-muted-foreground" />
+                        <RepoDisplayText repo={repo} />
+                        {repo.default_branch && (
+                          <span className="shrink-0 rounded border px-1 font-mono text-[10px] text-muted-foreground">
+                            {repo.default_branch}
+                          </span>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => toggleRepo(url)}
                           className="text-muted-foreground hover:text-foreground"
-                          aria-label={t(($) => $.create_project.local_clear)}
                         >
                           <XIcon className="size-3" />
                         </button>
                       </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="ghost"
-                        className="h-6 w-full text-xs"
-                        onClick={handlePickLocalDirectory}
-                        disabled={localPicking || !daemonStatus.running}
-                      >
-                        {t(($) => $.create_project.local_change)}
-                      </Button>
-                    </div>
-                  ) : (
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      className="w-full text-xs"
-                      onClick={handlePickLocalDirectory}
-                      disabled={localPicking || !daemonStatus.running}
-                    >
-                      <FolderOpen className="size-3" />
-                      {localPicking
-                        ? t(($) => $.create_project.local_picking)
-                        : t(($) => $.create_project.local_pick)}
-                    </Button>
-                  )}
-
-                  {localPickError && (
-                    <p className="text-[11px] text-destructive">{localPickError}</p>
-                  )}
-
-                  <p className="text-[10px] text-muted-foreground leading-snug">
-                    {t(($) => $.create_project.local_hint)}
-                  </p>
-                </>
+                    );
+                  })}
+                </div>
               )}
             </PopoverContent>
           </Popover>

@@ -172,6 +172,36 @@ describe("estimateCost", () => {
     expect(estimateCost(usage)).toBeCloseTo(0.14 + 0.28 + 0.0028 + 0.14, 6);
   });
 
+  it("prices CodeBuddy's Kimi K2.6 IOA alias at the official Kimi rate", () => {
+    const usage = {
+      ...zeroUsage,
+      provider: "codebuddy",
+      model: "kimi-k2.6-ioa",
+      input_tokens: 1_000_000,
+      output_tokens: 1_000_000,
+      cache_read_tokens: 1_000_000,
+      cache_write_tokens: 1_000_000,
+    };
+
+    expect(collectUnmappedModels([usage])).toEqual([]);
+    expect(estimateCost(usage)).toBeCloseTo(0.95 + 4.0 + 0.16 + 0.95, 6);
+  });
+
+  it("prices CodeBuddy's Kimi K2.7 IOA alias at the official standard K2.7 Code rate", () => {
+    const usage = {
+      ...zeroUsage,
+      provider: "codebuddy",
+      model: "kimi-k2.7-ioa",
+      input_tokens: 1_000_000,
+      output_tokens: 1_000_000,
+      cache_read_tokens: 1_000_000,
+      cache_write_tokens: 1_000_000,
+    };
+
+    expect(collectUnmappedModels([usage])).toEqual([]);
+    expect(estimateCost(usage)).toBeCloseTo(0.95 + 4.0 + 0.19 + 0.95, 6);
+  });
+
   it("prices the dated dotted Anthropic form (claude-haiku-4.5-20251001)", () => {
     // Belt-and-braces: combine all three tolerances (provider prefix not
     // present, but dot→dash + date strip both apply).
@@ -391,6 +421,17 @@ describe("estimateCost", () => {
       estimateCost({
         ...zeroUsage,
         model: "kimi-k2.6",
+        input_tokens: 1_000_000,
+        output_tokens: 1_000_000,
+      }),
+    ).toBeCloseTo(4.95, 5);
+  });
+
+  it("prices kimi-k2.7-code at the official standard $0.95 / $4.00 tier", () => {
+    expect(
+      estimateCost({
+        ...zeroUsage,
+        model: "kimi-k2.7-code",
         input_tokens: 1_000_000,
         output_tokens: 1_000_000,
       }),

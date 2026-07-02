@@ -265,20 +265,20 @@ describe("AppSidebar workspace nav", () => {
     render(<AppSidebar />);
 
     expect(document.querySelector('[data-href="/acme/training/prompts"]')).toBeInTheDocument();
-    expect(document.querySelector('[data-href="/acme/training/debug-runs"]')).toBeInTheDocument();
     expect(document.querySelector('[data-href="/acme/training/datasets"]')).toHaveAttribute("data-active", "true");
+    expect(document.querySelector('[data-href="/acme/training/evaluation-runs"]')).toBeInTheDocument();
     expect(document.querySelector('[data-href="/acme/training/runs"]')).not.toBeInTheDocument();
     expect(document.querySelector('[data-href="/acme/training/run-history"]')).not.toBeInTheDocument();
   });
 
   it("does not preserve legacy training data scope across training submodule links", () => {
-    navigation.current.pathname = "/acme/training/debug-runs";
+    navigation.current.pathname = "/acme/training/evaluation-runs";
     navigation.current.searchParams = new URLSearchParams("training_data=acceptance");
 
     render(<AppSidebar />);
 
     expect(document.querySelector('[data-href="/acme/training/prompts"]')).toBeInTheDocument();
     expect(document.querySelector('[data-href="/acme/training/datasets"]')).toBeInTheDocument();
-    expect(document.querySelector('[data-href="/acme/training/debug-runs"]')).toHaveAttribute("data-active", "true");
+    expect(document.querySelector('[data-href="/acme/training/evaluation-runs"]')).toHaveAttribute("data-active", "true");
   });
 });

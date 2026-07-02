@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { Navigate } from "react-router-dom";
-import { DebugRunsPage, PromptLibraryPage } from "@multica/views/prompt-library";
+import { PromptLibraryPage } from "@multica/views/prompt-library";
 import { appRoutes, TrainingLegacyRedirect } from "./routes";
 
 describe("desktop training routes", () => {
@@ -32,7 +32,6 @@ describe("desktop training routes", () => {
 
   it.each([
     ["prompts", "训练与评估", PromptLibraryPage, { activeView: "prompts" }],
-    ["debug-runs", "调试运行", DebugRunsPage, {}],
     ["datasets", "训练与评估", PromptLibraryPage, { activeView: "datasets" }],
     ["test-suites", "训练与评估", PromptLibraryPage, { activeView: "test-suites" }],
     ["evaluation-runs", "训练与评估", PromptLibraryPage, { activeView: "evaluation-runs" }],
@@ -49,10 +48,11 @@ describe("desktop training routes", () => {
   it.each([
     ["runs", Navigate, { to: "../../run-reviews", replace: true }],
     ["run-history", TrainingLegacyRedirect, { to: "../evaluation-runs" }],
-    ["prompt-playground", TrainingLegacyRedirect, { to: "../debug-runs" }],
-    ["agent-playground", TrainingLegacyRedirect, { to: "../debug-runs" }],
+    ["debug-runs", TrainingLegacyRedirect, { to: "../prompts" }],
+    ["prompt-playground", TrainingLegacyRedirect, { to: "../prompts" }],
+    ["agent-playground", TrainingLegacyRedirect, { to: "../prompts" }],
     ["experiments", TrainingLegacyRedirect, { to: "../test-suites" }],
-    ["optimization-runs", TrainingLegacyRedirect, { to: "../test-suites", mode: "optimize" }],
+    ["optimization-runs", TrainingLegacyRedirect, { to: "../evaluation-runs" }],
   ])("redirects legacy training/%s routes", (routePath, component, props) => {
     const trainingRoute = childRoutes.find((route) => route.path === "training");
     const childRoute = trainingRoute?.children?.find((route) => route.path === routePath);

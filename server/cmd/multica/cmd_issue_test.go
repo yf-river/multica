@@ -322,6 +322,22 @@ func newIssuePullRequestLinkTestCmd() *cobra.Command {
 	return cmd
 }
 
+func newIssueMRCreateTestCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "mr create"}
+	cmd.Flags().String("provider", "gongfeng", "")
+	cmd.Flags().String("project-path", "", "")
+	cmd.Flags().String("source-branch", "", "")
+	cmd.Flags().String("target-branch", "", "")
+	cmd.Flags().String("title", "", "")
+	cmd.Flags().String("description", "", "")
+	cmd.Flags().String("description-file", "", "")
+	cmd.Flags().Bool("close-intent", false, "")
+	cmd.Flags().Bool("remove-source-branch", false, "")
+	cmd.Flags().Bool("squash", false, "")
+	cmd.Flags().String("output", "table", "")
+	return cmd
+}
+
 func TestRunIssuePullRequestsListsLinkedPRsAsJSON(t *testing.T) {
 	var gotPaths []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -486,6 +502,95 @@ func TestRunIssuePullRequestLinkPostsGongfengMR(t *testing.T) {
 	}
 	if payload["pull_request"] == nil {
 		t.Fatalf("missing pull_request output: %s", string(out))
+	}
+}
+
+func TestRunIssueMRCreatePostsPlatformCreate(t *testing.T) {
+	var gotPaths []string
+	var posted map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPaths = append(gotPaths, r.URL.Path)
+		switch r.URL.Path {
+		case "/api/issues/GOA-61235":
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":         "issue-uuid",
+				"identifier": "GOA-61235",
+				"title":      "CLI MR create",
+			})
+		case "/api/issues/issue-uuid/merge-requests/create":
+			if r.Method != http.MethodPost {
+				t.Fatalf("method = %s, want POST", r.Method)
+			}
+			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+				t.Fatalf("decode posted body: %v", err)
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"linked": true,
+				"pull_request": map[string]any{
+					"html_url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61235",
+					"number":   float64(61235),
+					"state":    "open",
+					"title":    "GOA-61235 user-center password policy",
+				},
+			})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+
+	descFile := t.TempDir() + "/mr.md"
+	if err := os.WriteFile(descFile, []byte("验证通过，提交人工 CodeReview。\n"), 0o600); err != nil {
+		t.Fatalf("write description file: %v", err)
+	}
+	cmd := newIssueMRCreateTestCmd()
+	_ = cmd.Flags().Set("project-path", "ChainWeaver/ida/user-center")
+	_ = cmd.Flags().Set("source-branch", "agent/goa-61235")
+	_ = cmd.Flags().Set("target-branch", "v5.0.0_dev_sop")
+	_ = cmd.Flags().Set("title", "GOA-61235 user-center password policy")
+	_ = cmd.Flags().Set("description-file", descFile)
+	_ = cmd.Flags().Set("close-intent", "true")
+	_ = cmd.Flags().Set("remove-source-branch", "true")
+	_ = cmd.Flags().Set("output", "json")
+
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	err := runIssueMRCreate(cmd, []string{"GOA-61235"})
+	_ = w.Close()
+	os.Stdout = old
+	out, _ := io.ReadAll(r)
+	if err != nil {
+		t.Fatalf("runIssueMRCreate: %v", err)
+	}
+
+	if want := []string{"/api/issues/GOA-61235", "/api/issues/issue-uuid/merge-requests/create"}; fmt.Sprint(gotPaths) != fmt.Sprint(want) {
+		t.Fatalf("paths = %v, want %v", gotPaths, want)
+	}
+	for key, want := range map[string]any{
+		"provider":             "gongfeng",
+		"project_path":         "ChainWeaver/ida/user-center",
+		"source_branch":        "agent/goa-61235",
+		"target_branch":        "v5.0.0_dev_sop",
+		"title":                "GOA-61235 user-center password policy",
+		"description":          "验证通过，提交人工 CodeReview。\n",
+		"close_intent":         true,
+		"remove_source_branch": true,
+	} {
+		if posted[key] != want {
+			t.Fatalf("posted[%s] = %#v, want %#v; full body=%#v", key, posted[key], want, posted)
+		}
+	}
+	var payload map[string]any
+	if err := json.Unmarshal(out, &payload); err != nil {
+		t.Fatalf("decode JSON output: %v\n%s", err, string(out))
+	}
+	if payload["linked"] != true || payload["pull_request"] == nil {
+		t.Fatalf("unexpected MR create output: %s", string(out))
 	}
 }
 

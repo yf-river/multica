@@ -57,7 +57,12 @@ type PrepareParams struct {
 	// substituted. Used by the local_directory project_resource flow
 	// (MUL-2663). When set, the envRoot/workdir directory is not created.
 	LocalWorkDir string
-	Task         TaskContextForEnv // context data for writing files
+	// ManagedWorkDir, when non-empty, redirects the agent's working directory
+	// to a daemon-owned persistent path, such as an issue-scoped git worktree.
+	// Unlike LocalWorkDir, this is not a user-supplied directory, but it still
+	// must not be removed as task scratch.
+	ManagedWorkDir string
+	Task           TaskContextForEnv // context data for writing files
 }
 
 // TaskContextForEnv is the subset of task context used for writing context files.
@@ -137,6 +142,10 @@ type Environment struct {
 	// on "may I remove WorkDir as scratch?" must check this — for example
 	// the GC loop never deletes the user's directory.
 	LocalDirectory bool
+	// ManagedWorktree is true when WorkDir points at a daemon-owned persistent
+	// worktree outside RootDir. It gets sidecar cleanup like local_directory,
+	// but is conceptually platform-managed.
+	ManagedWorktree bool
 	// CodexHome is the path to the per-task CODEX_HOME directory (set only for codex provider).
 	CodexHome string
 	// OpenclawConfigPath is the path to the per-task synthesized OpenClaw
@@ -195,15 +204,19 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	}
 
 	// Create directory tree. For the standard flow the agent's workdir is
-	// envRoot/workdir; for local_directory tasks the user's path takes its
-	// place and we only need to create the scratch directories under
-	// envRoot.
+	// envRoot/workdir; for local_directory or managed-worktree tasks an
+	// external path takes its place and we only need to create the scratch
+	// directories under envRoot.
 	workDir := filepath.Join(envRoot, "workdir")
 	scratchDirs := []string{filepath.Join(envRoot, "output"), filepath.Join(envRoot, "logs")}
-	if params.LocalWorkDir == "" {
-		scratchDirs = append(scratchDirs, workDir)
-	} else {
+	switch {
+	case params.LocalWorkDir != "":
 		workDir = params.LocalWorkDir
+	case params.ManagedWorkDir != "":
+		workDir = params.ManagedWorkDir
+	}
+	if params.LocalWorkDir == "" && params.ManagedWorkDir == "" {
+		scratchDirs = append(scratchDirs, workDir)
 	}
 	for _, dir := range scratchDirs {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
@@ -212,10 +225,11 @@ func Prepare(params PrepareParams, logger *slog.Logger) (*Environment, error) {
 	}
 
 	env := &Environment{
-		RootDir:        envRoot,
-		WorkDir:        workDir,
-		LocalDirectory: params.LocalWorkDir != "",
-		logger:         logger,
+		RootDir:         envRoot,
+		WorkDir:         workDir,
+		LocalDirectory:  params.LocalWorkDir != "",
+		ManagedWorktree: params.ManagedWorkDir != "",
+		logger:          logger,
 	}
 
 	// Write context files into workdir (skills go to provider-native paths).

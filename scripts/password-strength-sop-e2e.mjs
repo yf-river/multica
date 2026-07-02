@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import pg from "pg";
@@ -9,7 +9,7 @@ import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const outputDir = acceptanceDir(repoRoot);
 const apiURL = trimEnv("ACCEPTANCE_API_URL") || trimEnv("GOAL_TEST_INT_API_URL") || "http://127.0.0.1:18762";
-const databaseURL = trimEnv("DATABASE_URL") || "postgres://multica:multica@9.134.129.162:5432/multica_goal_test_int?sslmode=disable";
+const databaseURL = trimEnv("GOAL_TEST_DATABASE_URL") || readGoalTestDatabaseURLForAPI(apiURL) || trimEnv("DATABASE_URL") || "postgres://multica:multica@9.134.129.162:5432/multica_goal_test_int?sslmode=disable";
 const account = trimEnv("ACCEPTANCE_DEMO_ACCOUNT") || "develop";
 const password = trimEnv("ACCEPTANCE_DEMO_PASSWORD") || "develop123";
 const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || "ai-studio";
@@ -18,10 +18,18 @@ const model = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "deepseek-v4-p
 const sopAgentCustomArgs = [];
 const taskTimeoutMs = Number(trimEnv("PASSWORD_SOP_TASK_TIMEOUT_MS") || "600000");
 const pollIntervalMs = Number(trimEnv("PASSWORD_SOP_POLL_INTERVAL_MS") || "5000");
+const httpRetries = Number(trimEnv("PASSWORD_SOP_HTTP_RETRIES") || "5");
 const maxSOPTasks = Number(trimEnv("PASSWORD_SOP_MAX_TASKS") || "14");
 const runID = trimEnv("PASSWORD_SOP_RUN_ID") || `password-strength-${Date.now()}`;
 const tapdURL = "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004223";
 const tapdBody = '修改密码时，密码强度 8-32 位，至少包含3种字符类型（大写字母、小写字母、数字、特殊字符），特殊字符只包含："!@#$%^&*()_+|~=`{}[]:";\'<>?,./"。';
+const gongfengProjectPath = trimEnv("PASSWORD_SOP_GONGFENG_PROJECT_PATH") || "ChainWeaver/ida/user-center";
+const gongfengTargetBranch = trimEnv("PASSWORD_SOP_GONGFENG_TARGET_BRANCH") || "v5.0.0_dev_sop";
+const safeRunID = runID.replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 80);
+const gongfengSourceBranch = trimEnv("PASSWORD_SOP_GONGFENG_SOURCE_BRANCH") || `agent/password-strength-${safeRunID}`;
+const gongfengEvidenceDir = `docs/ai-studio-sop-acceptance/${safeRunID}`;
+const gongfengEvidenceFile = `${gongfengEvidenceDir}/acceptance.md`;
+const legacyFlatEvidenceFile = `docs/ai-studio-sop-acceptance/${safeRunID}.md`;
 
 const evidence = {
   schema: "multica.password_strength_sop_e2e.v1",
@@ -39,7 +47,16 @@ const evidence = {
     title: "增强密码强度",
     version: "2026-07-02 01:07:27",
   },
+  repository: {
+    provider: "gongfeng",
+    project_path: gongfengProjectPath,
+    target_branch: gongfengTargetBranch,
+    source_branch: gongfengSourceBranch,
+    evidence_dir: gongfengEvidenceDir,
+    evidence_file: gongfengEvidenceFile,
+  },
   checks: [],
+  pm_route_recoveries: [],
   stages: [],
   ok: false,
 };
@@ -107,43 +124,78 @@ try {
   check("manual_recovery_comment_created", Boolean(recovery?.id), evidence.manual_recovery_comment);
 
   const knownTasks = new Set();
-  for (const task of await listIssueTasks(issue.id)) knownTasks.add(task.id);
   await updateIssue(issue.id, { status: "todo", assignee_type: "squad", assignee_id: squad.id });
   await runNaturalSOPFlow(agents, knownTasks);
 
   const finalIssue = await get(`/api/issues/${issue.id}`);
   evidence.final_issue = pickIssue(finalIssue);
-  check("issue_done", finalIssue.status === "done", evidence.final_issue);
+  check("issue_in_review", finalIssue.status === "in_review", evidence.final_issue);
+
+  const linkedMRs = await get(`/api/issues/${issue.id}/pull-requests`);
+  evidence.linked_pull_requests = normalizePullRequests(linkedMRs).map(pickPullRequest);
+  check("platform_mr_linked", evidence.linked_pull_requests.some((item) =>
+    item.html_url &&
+    item.html_url.includes("/merge_requests/") &&
+    item.number > 0
+  ), {
+    expected_branch: gongfengSourceBranch,
+    linked_pull_requests: evidence.linked_pull_requests,
+  });
 
   const comments = normalizeList(await get(`/api/issues/${issue.id}/comments`));
   evidence.comment_summary = summarizeComments(comments);
-  const artifactComments = comments.filter((item) => String(item.content || "").includes("Agent 产物已自动收拢到平台"));
+  const artifactComments = comments.filter((item) => Array.isArray(item.attachments) && item.attachments.length > 0);
   evidence.artifact_comments = artifactComments.map(pickComment);
-  check("auto_artifact_comments_present", artifactComments.length >= 6, { count: artifactComments.length });
+  check("auto_artifact_comments_present", artifactComments.length >= 5, { count: artifactComments.length });
 
-  const attachmentRefs = artifactComments.flatMap((comment) => (Array.isArray(comment.attachments) ? comment.attachments : [])
+  const attachmentRefs = comments.flatMap((comment) => (Array.isArray(comment.attachments) ? comment.attachments : [])
     .filter((att) => att.id)
-    .map((att) => ({ id: att.id, filename: att.filename || "" })));
+    .map((att) => ({ id: att.id, filename: att.filename || "", source_task_id: comment.source_task_id || "" })));
   evidence.attachments = [];
-  for (const { id, filename } of attachmentRefs) {
+  const attachmentTexts = [];
+  for (const { id, filename, source_task_id } of attachmentRefs) {
     const text = await getText(`/api/attachments/${id}/content`);
-    evidence.attachments.push({ id, filename, preview_ok: text.includes("增强密码强度"), excerpt: text.slice(0, 180) });
+    attachmentTexts.push(text);
+    evidence.attachments.push({ id, filename, source_task_id, preview_ok: text.includes("增强密码强度"), excerpt: text.slice(0, 180) });
   }
-  const requiredArtifactFiles = [
-    "pm-password-strength.md",
-    "01-clarify-password-strength.md",
-    "02-design-password-strength.md",
-    "03-tasks-password-strength.md",
-    "04-develop-password-strength.md",
-    "05-verify-password-strength.md",
-  ];
+  const repositoryEvidenceText = [
+    JSON.stringify(evidence.linked_pull_requests),
+    comments.map((comment) => String(comment.content || "")).join("\n"),
+    attachmentTexts.join("\n"),
+  ].join("\n");
+  evidence.repository_acceptance_file = {
+    expected_file: gongfengEvidenceFile,
+    expected_dir: gongfengEvidenceDir,
+    forbidden_legacy_file: legacyFlatEvidenceFile,
+    expected_file_mentioned: repositoryEvidenceText.includes(gongfengEvidenceFile),
+    forbidden_legacy_file_mentioned: repositoryEvidenceText.includes(legacyFlatEvidenceFile),
+  };
+  check(
+    "repository_acceptance_file_run_scoped",
+    evidence.repository_acceptance_file.expected_file_mentioned &&
+      !evidence.repository_acceptance_file.forbidden_legacy_file_mentioned,
+    evidence.repository_acceptance_file,
+  );
   const presentFilenames = new Set(evidence.attachments.map((item) => item.filename).filter(Boolean));
+  const requiredStageTaskIDs = evidence.stages
+    .filter((item) => ["01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"].includes(item.stage))
+    .map((item) => item.task?.id)
+    .filter(Boolean);
+  const attachmentTaskIDs = new Set(evidence.attachments.map((item) => item.source_task_id).filter(Boolean));
+  const visibleMarkdownTaskIDs = new Set(comments
+    .filter((comment) => isVisibleStageMarkdownComment(comment))
+    .map((comment) => comment.source_task_id)
+    .filter(Boolean));
+  const missingStageArtifactTaskIDs = requiredStageTaskIDs.filter((taskID) => !attachmentTaskIDs.has(taskID) && !visibleMarkdownTaskIDs.has(taskID));
   check("artifact_previews_available", evidence.attachments.length >= 6 &&
     evidence.attachments.every((item) => item.preview_ok) &&
-    requiredArtifactFiles.every((filename) => presentFilenames.has(filename)), {
+    missingStageArtifactTaskIDs.length === 0, {
     count: evidence.attachments.length,
     filenames: [...presentFilenames],
-    required: requiredArtifactFiles,
+    required_stage_task_ids: requiredStageTaskIDs,
+    attachment_stage_task_ids: [...attachmentTaskIDs],
+    visible_markdown_stage_task_ids: [...visibleMarkdownTaskIDs],
+    missing_stage_artifact_task_ids: missingStageArtifactTaskIDs,
     failed: evidence.attachments.filter((item) => !item.preview_ok).map((item) => item.id),
   });
 
@@ -172,6 +224,28 @@ try {
   evidence.usage = usage;
   const tokenTotal = Number(usage?.total_input_tokens || 0) + Number(usage?.total_output_tokens || 0) + Number(usage?.total_cache_read_tokens || 0) + Number(usage?.total_cache_write_tokens || 0);
   check("usage_tokens_recorded", tokenTotal > 0, { token_total: tokenTotal });
+
+  const finalTasks = await listIssueTasks(issue.id);
+  const issueWorktreeNeedle = `/${workspace.id}/issues/${issue.id.slice(0, 8)}/repos/`;
+  const requiredWorktreeTaskIDs = new Set(["pm", "01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"]
+    .flatMap((stage) => evidence.stages.filter((item) => item.stage === stage).map((item) => item.task?.id).filter(Boolean)));
+  const workdirRows = finalTasks
+    .filter((task) => requiredWorktreeTaskIDs.has(task.id))
+    .map((task) => ({
+      id: task.id,
+      agent_id: task.agent_id,
+      status: task.status,
+      work_dir: task.work_dir || "",
+      issue_worktree: String(task.work_dir || "").includes(issueWorktreeNeedle),
+      forbidden_local_checkout: String(task.work_dir || "").startsWith("/data/ida/user-center"),
+    }));
+  evidence.issue_worktree = {
+    expected_path_fragment: issueWorktreeNeedle,
+    required_task_ids: [...requiredWorktreeTaskIDs],
+    rows: workdirRows,
+  };
+  check("issue_scoped_worktree_used", workdirRows.length >= requiredWorktreeTaskIDs.size &&
+    workdirRows.every((row) => row.issue_worktree && !row.forbidden_local_checkout), evidence.issue_worktree);
 
   await assertNoActiveTasks("post-run");
   evidence.self_evaluation = selfEvaluate(evidence);
@@ -238,12 +312,14 @@ function buildAgentInstruction(stageKey, role, routingTable = "") {
   if (stageKey === "pm") {
     return [
       "硬性执行规则：你已经处于 PM 首轮或 PM 收口任务中，不需要也不得向用户确认从哪个阶段开始。",
+      "当前任务就是 PM 阶段本身；禁止说“接下来进入 PM 阶段”、禁止询问“是否需要开始”、禁止等待任何人工确认。",
+      "首轮最终输出如果不是调度 01 的评论，本次验收会失败。",
       "如果 01-05 还没有阶段完成，必须立刻评论 @01-需求澄清；禁止提问，禁止等待确认。",
       "如果某个阶段刚完成，必须立刻评论 @唯一的下一阶段；禁止提问，禁止等待确认。",
-      "只有 05-验证测试已完成且结论通过时，才允许把 issue 状态改为 done 并发表最终收口评论。",
+      "只有 05-验证测试已完成、平台已关联 MR 且结论通过时，才允许把 issue 状态改为 in_review 并发表最终收口评论。",
       `你是 PM-项目经理阶段 Agent。${role}`,
       "这是验收运行，但必须走真实 Multica issue/comment/task/attachment 链路。",
-      "这是平台链路验收，不是业务代码实现任务。",
+      "这是平台链路验收，04/05 必须完成一个受控仓库变更、验证和 MR 提交流程。",
       "每次运行必须先读取 issue、metadata、完整评论历史和 SOP run 状态。",
       "TAPD source-fetch 如果是 fetch_failed，必须从评论中的“人工恢复 TAPD 需求内容”提取真实需求。",
       "PM 只负责协调和收口，不得代替 01/02/03/04/05 写它们的专业阶段产物。",
@@ -258,7 +334,7 @@ function buildAgentInstruction(stageKey, role, routingTable = "") {
       "首轮：只确认 TAPD 人工恢复来源和阶段链，写入 `artifacts/multica/pm-password-strength.md`，然后只 @01-需求澄清。",
       "首轮调度评论必须直接包含 01 路由表里的 mention；不要写“需要确认”“请确认”“希望从哪个阶段开始”等任何询问句。",
       "01 完成后：只 @02-方案设计。02 完成后：只 @03-任务拆分。03 完成后：只 @04-开发。04 完成后：只 @05-验证测试。",
-      "05 完成且结论通过后：写入 `artifacts/multica/pm-final-password-strength.md`，运行 `multica issue status <issue> done`，并发表最终收口评论；此时不得 @任何 Agent。",
+      "05 完成且结论通过后：先运行 `multica issue mr list <issue> --output json` 确认已有平台关联 MR；如果没有 MR，评论说明阻塞并停止；如果已有 MR，写入 `artifacts/multica/pm-final-password-strength.md`，运行 `multica issue status <issue> in_review`，并发表最终收口评论；此时不得 @任何 Agent。",
       "PM 产物必须包含：阶段名、TAPD 标题“增强密码强度”、人工恢复来源说明、密码规则、当前推进判断、下一步或收口结论。",
       "不要把 TAPD 登录页当需求；不要输出密钥；不要创建 child issue；不要一次 @mention 多个阶段。",
       "调度评论必须简短中文，且必须包含且只包含一个下一阶段 Agent mention；最终收口评论不得包含 mention://。",
@@ -267,13 +343,32 @@ function buildAgentInstruction(stageKey, role, routingTable = "") {
   const artifactPath = `artifacts/multica/${stageKey}-password-strength.md`;
   return [
     `硬性执行规则：本阶段唯一合法产物路径是 \`${artifactPath}\`，必须用 Write 写到这个路径。`,
-    "禁止把阶段产物写到工作目录根目录、artifacts/acceptance、docs、tmp 或其它目录。",
+    "禁止把阶段产物写到工作目录根目录、artifacts/acceptance、tmp 或其它目录。",
     "完成评论只写阶段结论，禁止使用 `--attachment`；daemon 会自动把 artifacts/multica 下的 markdown 收拢到平台评论附件。",
     "禁止询问用户是否继续；本阶段收到任务后必须直接完成本阶段产物和简短评论。",
     `你是 ${stageKey} 阶段 Agent。${role}`,
     "这是验收运行，但必须走真实 Multica issue/comment/task/attachment 链路。",
-    "这是平台链路验收，不是业务代码实现任务。",
-    "禁止读取、搜索、测试或修改业务仓库代码；禁止运行 go test、pnpm test、构建命令或启动服务。",
+    "这是平台链路验收。只有 04-开发 可以做受控仓库变更；只有 05-验证测试 可以创建 MR。",
+    stageKey === "04-implement"
+      ? [
+          `04 必须在当前 git worktree 中创建或更新受控验收文件 \`${gongfengEvidenceFile}\`，内容写明 TAPD 标题、密码规则、run_id 和验证用途。`,
+          `04 还必须单独写阶段产物 \`${artifactPath}\`；仓库里的 \`${gongfengEvidenceFile}\` 不是平台阶段产物，不能替代 \`${artifactPath}\`。`,
+          `04 必须切到并推送源分支 \`${gongfengSourceBranch}\`，目标分支是 \`${gongfengTargetBranch}\`。`,
+          "04 只允许修改这一个 docs 验收文件和本阶段 markdown 产物，不得改业务代码或其它文件。",
+          "04 必须运行 `git status --short`、`git diff --stat`、`git log -1 --oneline` 并把结果写入阶段产物。",
+        ].join("\n")
+      : "非 04 阶段不得修改业务仓库；非 05 阶段不得创建 MR。",
+    stageKey === "05-verify"
+      ? [
+          `05 必须验证源分支 \`${gongfengSourceBranch}\` 已推送且包含 \`${gongfengEvidenceFile}\`。`,
+          `05 必须确认没有把本次验收文件写成旧平铺路径 \`${legacyFlatEvidenceFile}\`。`,
+          `05 必须单独写阶段产物 \`${artifactPath}\`；MR 描述文件可以使用该阶段产物。`,
+          "05 必须运行 `git status --short` 和 `git log -1 --oneline`，并把结果写入阶段产物。",
+          `05 验证通过后必须运行平台命令创建 MR：\`multica issue mr create <issue> --provider gongfeng --project-path ${gongfengProjectPath} --source-branch ${gongfengSourceBranch} --target-branch ${gongfengTargetBranch} --title "<identifier>: 增强密码强度 SOP 验收" --description-file artifacts/multica/05-verify-password-strength.md --output json\`。`,
+          "05 创建 MR 后必须运行 `multica issue mr list <issue> --output json` 确认平台能读到关联 MR，再将 issue 状态改为 `in_review`。",
+          "如果 MR 创建失败，必须把 issue 状态改为 `blocked` 并在评论中说明阻塞原因，不能宣称验收通过。",
+        ].join("\n")
+      : "非 05 阶段不得创建 MR 或修改 issue 为 in_review。",
     "禁止使用子 Agent 做代码检索；不要读取 artifacts/acceptance 历史证据文件。",
     "CodeBuddy 的 TaskCreate / TaskUpdate / todo 工具只是本地内部待办，不是 Multica 平台任务；本验收严禁使用这些内部待办工具。",
     "读取 issue 必须通过 Bash 运行 `multica issue get`、`multica issue comment list` 等平台 CLI 命令。",
@@ -282,8 +377,9 @@ function buildAgentInstruction(stageKey, role, routingTable = "") {
     "TAPD source-fetch 如果是 fetch_failed，必须从评论中的“人工恢复 TAPD 需求内容”提取真实需求。",
     `必须创建 markdown 产物文件，路径固定为 \`${artifactPath}\`。`,
     "只有 artifacts/multica 会被平台自动收拢。",
+    `仓库受控验收文件必须放在本次 run 专属目录 \`${gongfengEvidenceDir}\` 下，禁止写成 \`${legacyFlatEvidenceFile}\`。`,
     "markdown 产物必须包含：阶段名、TAPD 标题“增强密码强度”、人工恢复来源说明、密码规则、验收证据、handoff。",
-    "不要把 TAPD 登录页当需求；不要输出密钥；不要创建 child issue；不要改业务代码。",
+    "不要把 TAPD 登录页当需求；不要输出密钥；不要创建 child issue；不要超出本阶段允许的仓库动作。",
     "阶段评论不得包含 mention://，不得 @任何 Agent、小队或成员；阶段推进交给 PM 和平台调度。",
     "完成时用 `multica issue comment add` 发表简短中文阶段结论；附件由 daemon 自动收拢，不需要也不得手动加 --attachment。",
     "不得 @mention 下一阶段，交给 PM 或平台自动拉起的队长任务推进。",
@@ -295,6 +391,14 @@ async function createSOPSquad(agents) {
     profile_key: "password-strength-comment-sop-e2e",
     project: "usercenter",
     mode: "comment_driven_stage_chain",
+    repository: {
+      provider: "gongfeng",
+      project_path: gongfengProjectPath,
+      target_branch: gongfengTargetBranch,
+      source_branch: gongfengSourceBranch,
+      evidence_dir: gongfengEvidenceDir,
+      evidence_file: gongfengEvidenceFile,
+    },
     steps: [
       { key: "pm", name: agents.pm.name, role_key: "pm" },
       { key: "01-clarify", name: agents["01-clarify"].name, role_key: "01-clarify" },
@@ -303,7 +407,7 @@ async function createSOPSquad(agents) {
       { key: "04-implement", name: agents["04-implement"].name, role_key: "04-implement" },
       { key: "05-verify", name: agents["05-verify"].name, role_key: "05-verify" },
     ],
-    acceptance: ["TAPD fetch_failed 可人工恢复", "01-05 阶段完成", "markdown 产物自动进入评论附件", "复盘能审计附件和 token"],
+    acceptance: ["TAPD fetch_failed 可人工恢复", "01-05 阶段完成", "markdown 产物自动进入评论附件", "05 后平台创建并关联 MR", "复盘能审计附件和 token"],
   };
   const squad = await post(`/api/squads?workspace_id=${encodeURIComponent(workspace.id)}`, {
     name: `密码强度 SOP 验收小队 ${runID}`,
@@ -336,14 +440,18 @@ async function createPasswordIssue(project, squad, currentUser) {
     description: [
       "根据 TAPD Wiki 文档创建需求。",
       "",
-      "这是 ai-studio / Multica 平台链路验收任务，不是业务仓库代码修复任务。",
-      "本任务只验证：TAPD fetch_failed 后人工恢复、SOP 阶段评论推进、阶段 markdown 产物自动收拢为平台附件、复盘证据可审计。",
-      "禁止读取、搜索、测试或修改业务仓库代码；禁止运行 go test、pnpm test 或任何真实构建命令。",
-      "每个阶段只需要读取 issue、metadata、评论历史，生成本阶段 markdown 产物，并发表简短阶段评论。",
+      "这是 ai-studio / Multica 平台链路验收任务，要求验证 SOP 阶段、产物收拢、复盘证据、05 后 MR 创建与平台关联。",
+      "04 阶段只允许在目标仓库写入受控 docs 验收文件，不得修改业务代码。",
+      "05 阶段必须验证 04 变更并通过平台命令创建 Gongfeng MR，MR 必须自动关联回本 issue。",
+      `目标仓库：${gongfengProjectPath}`,
+      `目标分支：${gongfengTargetBranch}`,
+      `源分支：${gongfengSourceBranch}`,
+      `受控验收文件：${gongfengEvidenceFile}`,
+      "每个阶段必须读取 issue、metadata、评论历史，生成本阶段 markdown 产物，并发表简短阶段评论。",
       "",
       `TAPD 链接：${tapdURL}`,
       "",
-      "预期流程：先记录 TAPD fetch_failed，再由人工评论恢复需求正文，随后按 PM -> 01 -> 02 -> 03 -> 04 -> 05 评论推进。",
+      "预期流程：先记录 TAPD fetch_failed，再由人工评论恢复需求正文，随后按 PM -> 01 -> 02 -> 03 -> 04 -> 05 评论推进，05 后进入 in_review。",
     ].join("\n"),
     status: "backlog",
     priority: "high",
@@ -364,12 +472,20 @@ async function runNaturalSOPFlow(agents, knownTasks) {
     knownTasks.add(task.id);
     const stage = agentToStage[task.agent_id] || "unknown";
     if (task.status !== "completed") {
+      if (task.failure_reason === "runtime_recovery") {
+        evidence.pm_route_recoveries.push({
+          stage,
+          task: pickTask(task),
+          reason: "daemon/runtime recovery; waiting for platform retry",
+        });
+        continue;
+      }
       const messages = await safeGet(`/api/tasks/${task.id}/messages`);
       fail(`${stage} task status=${task.status}: ${task.error || task.failure_reason || ""}`, { task, messages });
     }
     if (stage === "pm") {
       pmRuns++;
-      await assertPMRoutedOrClosed(task);
+      await assertPMRoutedOrClosed(task, agents, completedWorkers);
     } else {
       completedWorkers.add(stage);
     }
@@ -380,31 +496,64 @@ async function runNaturalSOPFlow(agents, knownTasks) {
     });
 
     const current = await get(`/api/issues/${issue.id}`);
-    if (current.status === "done" && ["01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"].every((key) => completedWorkers.has(key))) {
+    if (current.status === "blocked") {
+      fail("SOP flow reached blocked before MR/in_review handoff", {
+        completed_workers: [...completedWorkers],
+        pm_runs: pmRuns,
+        issue: pickIssue(current),
+      });
+    }
+    if (current.status === "in_review" && ["01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"].every((key) => completedWorkers.has(key))) {
       return;
     }
   }
-  fail(`SOP flow exceeded ${maxSOPTasks} tasks without reaching done`, {
+  fail(`SOP flow exceeded ${maxSOPTasks} tasks without reaching in_review`, {
     completed_workers: [...completedWorkers],
     pm_runs: pmRuns,
     issue: pickIssue(await get(`/api/issues/${issue.id}`)),
   });
 }
 
-async function assertPMRoutedOrClosed(task) {
+async function assertPMRoutedOrClosed(task, agents, completedWorkers) {
   const current = await get(`/api/issues/${issue.id}`);
-  if (current.status === "done") return;
+  if (current.status === "in_review") return;
   const comments = normalizeList(await get(`/api/issues/${issue.id}/comments`));
   const taskComments = comments.filter((comment) => isTaskComment(comment, task));
   const mentionCount = taskComments.reduce((sum, comment) => sum + countMentions(comment.content), 0);
-  if (mentionCount !== 1) {
-    fail("PM completed without exactly one platform agent mention", {
+  if (mentionCount === 1) {
+    return;
+  }
+  const next = nextStageAfterCompletedWorkers(agents, completedWorkers);
+  if (!next) {
+    fail("PM completed without exactly one platform agent mention and no next stage could be inferred", {
       task: pickTask(task),
       issue: pickIssue(current),
       mention_count: mentionCount,
       task_comments: taskComments.map(pickComment),
     });
   }
+  const recovery = await postComment([
+    `验收脚本检测到 PM 本轮没有发出唯一阶段 mention，作为人工评论恢复推进到 ${next.stage}。`,
+    "",
+    `[@${next.agent.name}](mention://agent/${next.agent.id})`,
+  ].join("\n"));
+  const recoveryEvidence = {
+    pm_task: pickTask(task),
+    recovered_to_stage: next.stage,
+    recovered_to_agent: pick(next.agent, ["id", "name"]),
+    recovery_comment: pickComment(recovery),
+    mention_count: mentionCount,
+    task_comments: taskComments.map(pickComment),
+  };
+  evidence.pm_route_recoveries.push(recoveryEvidence);
+  check(`pm_route_recovered_${evidence.pm_route_recoveries.length}`, true, recoveryEvidence);
+}
+
+function nextStageAfterCompletedWorkers(agents, completedWorkers) {
+  const order = ["01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"];
+  const stage = order.find((key) => !completedWorkers.has(key));
+  if (!stage || !agents[stage]?.id) return null;
+  return { stage, agent: agents[stage] };
 }
 
 function isTaskComment(comment, task) {
@@ -435,6 +584,9 @@ async function assertNoActiveTasks(label) {
   try {
     const res = await client.query("SELECT status, count(*)::int FROM agent_task_queue WHERE status IN ('queued','dispatched','running','waiting_local_directory') GROUP BY status ORDER BY status");
     check(`${label}_no_active_tasks`, res.rows.length === 0, { active_tasks: res.rows });
+    if (res.rows.length > 0) {
+      fail(`${label}: active tasks exist; full SOP acceptance must run one task at a time`, { active_tasks: res.rows });
+    }
   } finally {
     await client.end();
   }
@@ -453,13 +605,13 @@ async function ensureProject(currentUser) {
     lead_id: currentUser.id,
     resources: [{
       resource_type: "gongfeng_repo",
-      label: "user-center v5.0.0_dev_sop",
+      label: `${gongfengProjectPath} ${gongfengTargetBranch}`,
       resource_ref: {
         provider: "gongfeng",
-        project_path: "ChainWeaver/ida/user-center",
+        project_path: gongfengProjectPath,
         resource_kind: "commits",
-        url: "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev_sop",
-        ref: "v5.0.0_dev_sop",
+        url: `https://git.code.tencent.com/${gongfengProjectPath}/commits/${gongfengTargetBranch}`,
+        ref: gongfengTargetBranch,
       },
     }],
   });
@@ -537,9 +689,24 @@ async function safeGet(pathname) {
 }
 
 async function getText(pathname) {
-  const res = await fetch(apiURL + pathname, { headers: headers() });
-  if (!res.ok) throw new Error(`GET ${pathname} ${res.status}: ${(await res.text()).slice(0, 500)}`);
-  return res.text();
+  for (let attempt = 0; attempt <= httpRetries; attempt++) {
+    try {
+      const res = await fetch(apiURL + pathname, { headers: headers() });
+      if (!res.ok) {
+        const body = (await res.text()).slice(0, 500);
+        if (res.status >= 500 && attempt < httpRetries) {
+          await sleep(backoffMs(attempt));
+          continue;
+        }
+        throw new Error(`GET ${pathname} ${res.status}: ${body}`);
+      }
+      return res.text();
+    } catch (error) {
+      if (attempt >= httpRetries) throw error;
+      await sleep(backoffMs(attempt));
+    }
+  }
+  throw new Error(`GET ${pathname} failed after retries`);
 }
 
 async function post(pathname, body, authToken = token) {
@@ -551,15 +718,37 @@ async function put(pathname, body) {
 }
 
 async function request(method, pathname, body, authToken = token) {
-  const res = await fetch(apiURL + pathname, {
-    method,
-    headers: headers(authToken),
-    body: body === undefined ? undefined : JSON.stringify(body),
-  });
-  const text = await res.text();
-  if (!res.ok) throw new Error(`${method} ${pathname} ${res.status}: ${text.slice(0, 1000)}`);
-  if (!text) return null;
-  return JSON.parse(text);
+  for (let attempt = 0; attempt <= httpRetries; attempt++) {
+    try {
+      const res = await fetch(apiURL + pathname, {
+        method,
+        headers: headers(authToken),
+        body: body === undefined ? undefined : JSON.stringify(body),
+      });
+      const text = await res.text();
+      if (!res.ok) {
+        if (res.status >= 500 && attempt < httpRetries) {
+          await sleep(backoffMs(attempt));
+          continue;
+        }
+        throw new Error(`${method} ${pathname} ${res.status}: ${text.slice(0, 1000)}`);
+      }
+      if (!text) return null;
+      return JSON.parse(text);
+    } catch (error) {
+      if (attempt >= httpRetries) throw error;
+      await sleep(backoffMs(attempt));
+    }
+  }
+  throw new Error(`${method} ${pathname} failed after retries`);
+}
+
+function backoffMs(attempt) {
+  return Math.min(5000, 500 * 2 ** attempt);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function headers(authToken = token) {
@@ -617,13 +806,16 @@ function selfEvaluate(data) {
   const required = [
     "source_fetch_failed_recorded",
     "manual_recovery_comment_created",
-    "issue_done",
+    "issue_in_review",
+    "platform_mr_linked",
+    "repository_acceptance_file_run_scoped",
     "auto_artifact_comments_present",
     "artifact_previews_available",
     "sop_steps_completed",
     "execution_tree_has_artifact_refs",
     "trace_contains_source_fetch",
     "usage_tokens_recorded",
+    "issue_scoped_worktree_used",
     "post-run_no_active_tasks",
   ];
   const passed = new Set(data.checks.filter((item) => item.ok).map((item) => item.name));
@@ -632,7 +824,7 @@ function selfEvaluate(data) {
     score: missing.length === 0 ? 9.6 : Math.max(0, 9.6 - missing.length * 0.8),
     passed: missing.length === 0,
     missing,
-    note: missing.length === 0 ? "密码强度 SOP 评论推进、人工恢复、附件预览、复盘证据和 token 统计均有当前运行证据。" : "仍有硬证据缺口，不能标记 goal complete。",
+    note: missing.length === 0 ? "密码强度 SOP 评论推进、人工恢复、附件预览、05 后 MR 关联、复盘证据和 token 统计均有当前运行证据。" : "仍有硬证据缺口，不能标记 goal complete。",
   };
 }
 
@@ -708,6 +900,31 @@ function pickComment(item) {
   };
 }
 
+function isVisibleStageMarkdownComment(comment) {
+  const content = String(comment?.content || "");
+  if (comment?.author_type !== "agent" || !comment?.source_task_id) return false;
+  if (!/^##\s+0[1-5]-/m.test(content) && !/^##\s+0[1-5][\s-]/m.test(content)) return false;
+  return content.length >= 300;
+}
+
+function normalizePullRequests(value) {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.pull_requests)) return value.pull_requests;
+  if (Array.isArray(value?.items)) return value.items;
+  return [];
+}
+
+function pickPullRequest(item) {
+  return {
+    id: item?.id || "",
+    number: Number(item?.number || 0),
+    title: item?.title || "",
+    state: item?.state || "",
+    html_url: item?.html_url || "",
+    branch: item?.branch || "",
+  };
+}
+
 function pick(obj, keys) {
   const out = {};
   for (const key of keys) out[key] = obj?.[key] ?? null;
@@ -745,4 +962,22 @@ function countItems(items, total) {
 
 function trimEnv(name) {
   return String(process.env[name] || "").trim();
+}
+
+function readGoalTestDatabaseURLForAPI(apiBase) {
+  const environment = String(apiBase || "").includes(":18760") ? "prod" : "int";
+  const envFile = path.join(repoRoot, ".run", "env", `goal-test-${environment}.env`);
+  if (!existsSync(envFile)) return "";
+  return readEnvFile(envFile).DATABASE_URL || "";
+}
+
+function readEnvFile(file) {
+  const env = {};
+  for (const raw of readFileSync(file, "utf8").split(/\r?\n/)) {
+    const line = raw.trim();
+    if (!line || line.startsWith("#")) continue;
+    const match = line.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
+    if (match) env[match[1]] = match[2].replace(/^['"]|['"]$/g, "");
+  }
+  return env;
 }

@@ -39,6 +39,28 @@ func TestCollectTaskMarkdownArtifactsScansArtifactsTree(t *testing.T) {
 	}
 }
 
+func TestCollectTaskMarkdownArtifactsFromDirsIncludesIssueArtifactDir(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	artifactDir := t.TempDir()
+	writeArtifactTestFile(t, filepath.Join(workDir, "artifacts", "multica", "02-design.md"), "# design")
+	writeArtifactTestFile(t, filepath.Join(artifactDir, "05-verify.md"), "# verify")
+
+	got, err := collectTaskMarkdownArtifactsFromDirs(workDir, artifactDir)
+	if err != nil {
+		t.Fatalf("collectTaskMarkdownArtifactsFromDirs: %v", err)
+	}
+	names := make([]string, 0, len(got))
+	for _, artifact := range got {
+		names = append(names, artifact.DisplayName)
+	}
+	want := []string{"05-verify.md", "multica/02-design.md"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("artifact names = %#v, want %#v", names, want)
+	}
+}
+
 func TestCollectAndPostTaskArtifactsUploadsAndLinksCommentAsTask(t *testing.T) {
 	t.Parallel()
 
@@ -122,7 +144,7 @@ func TestCollectAndPostTaskArtifactsUploadsAndLinksCommentAsTask(t *testing.T) {
 		WorkspaceID:      "ws-1",
 		TriggerCommentID: "comment-1",
 		AuthToken:        "mat_task-token",
-	}, workDir, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}, workDir, "", slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if !uploaded || !commented {
 		t.Fatalf("uploaded=%v commented=%v, want both true", uploaded, commented)

@@ -177,4 +177,31 @@ describe("ProjectResourcesSection", () => {
     expect(screen.queryByRole("button", { name: "停用" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "启用" })).not.toBeInTheDocument();
   });
+
+  it("keeps existing local directories as compatibility resources without an add entry", () => {
+    mockProjectResources.mockReturnValue([
+      {
+        id: "local-resource-1",
+        project_id: "project-1",
+        workspace_id: "workspace-1",
+        resource_type: "local_directory",
+        resource_ref: {
+          local_path: "/data/ida/user-center",
+          daemon_id: "daemon-1",
+          label: "user-center 本地目录",
+        },
+        label: "user-center 本地目录",
+        position: 0,
+        created_at: "2026-07-01T10:00:00Z",
+        updated_at: "2026-07-01T10:00:00Z",
+      },
+    ]);
+
+    renderSection();
+
+    expect(screen.getByText("user-center 本地目录")).toBeInTheDocument();
+    expect(screen.getByText("兼容保留")).toBeInTheDocument();
+    expect(screen.getByText("历史本地目录资源。标准任务默认使用平台 worktree，不再自动进入这个目录。")).toBeInTheDocument();
+    expect(screen.queryByText("添加本地目录")).not.toBeInTheDocument();
+  });
 });

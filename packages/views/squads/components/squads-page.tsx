@@ -41,7 +41,6 @@ import type {
   Agent,
   EnsureInternalSquadTemplateRequest,
   MemberWithUser,
-  RuntimeDevice,
   Squad,
   SquadScope,
 } from "@multica/core/types";
@@ -107,6 +106,10 @@ import { useNavigation, useRowLink } from "../../navigation";
 import { PageHeader } from "../../layout/page-header";
 import { useT } from "../../i18n";
 import { preferredPMModel } from "./pm-model-default";
+import {
+  bestRuntimeForPMProvider,
+  pmProviderChoices,
+} from "./pm-runtime-selection";
 
 // Column template — the simplest member of the ListGrid family (squads are
 // the fewest entity, 1-5 rows): subgrid template + var tracks + two-zone
@@ -155,16 +158,6 @@ function columnTrackVars(
   } as React.CSSProperties;
 }
 
-function canUseRuntime(
-  runtime: RuntimeDevice,
-  currentUserId: string | null,
-  isWorkspaceAdmin: boolean,
-) {
-  if (isWorkspaceAdmin) return true;
-  if (runtime.scope === "workspace") return true;
-  return !!currentUserId && runtime.owner_id === currentUserId;
-}
-
 function providerLabel(provider: string) {
   const labels: Record<string, string> = {
     codex: "Codex",
@@ -174,26 +167,6 @@ function providerLabel(provider: string) {
     kimi: "Kimi",
   };
   return labels[provider.toLowerCase()] ?? provider;
-}
-
-function providerSortRank(provider: string) {
-  const p = provider.toLowerCase();
-  if (p === DEFAULT_PM_PROVIDER) return 0;
-  if (p === "codex") return 1;
-  return 2;
-}
-
-function bestRuntimeForProvider(runtimes: RuntimeDevice[], provider: string) {
-  const candidates = runtimes.filter(
-    (runtime) =>
-      runtime.status === "online" &&
-      runtime.provider.toLowerCase() === provider.toLowerCase(),
-  );
-  candidates.sort(
-    (a, b) =>
-      Date.parse(b.last_seen_at ?? "") - Date.parse(a.last_seen_at ?? ""),
-  );
-  return candidates[0] ?? null;
 }
 
 // ---------------------------------------------------------------------------
@@ -925,38 +898,15 @@ export function SquadsPage() {
   const [pmModel, setPmModel] = useState("");
   const [pmModelTouched, setPmModelTouched] = useState(false);
   const [pmScope, setPmScope] = useState<SquadScope>("workspace");
-  const usableRuntimes = useMemo(
-    () =>
-      runtimes.filter(
-        (runtime) =>
-          canUseRuntime(runtime, currentUser?.id ?? null, isWorkspaceAdmin),
-      ),
-    [runtimes, currentUser, isWorkspaceAdmin],
-  );
-  const providerOptions = useMemo(() => {
-    const providers = Array.from(
-      new Set(
-        usableRuntimes
-          .map((runtime) => runtime.provider.trim().toLowerCase())
-          .filter(Boolean),
-      ),
-    );
-    providers.sort((a, b) => {
-      const rank = providerSortRank(a) - providerSortRank(b);
-      return rank || a.localeCompare(b);
-    });
-    return providers;
-  }, [usableRuntimes]);
   const providerChoices = useMemo(() => {
-    const providers = [...providerOptions];
-    providers.sort((a, b) => {
-      const rank = providerSortRank(a) - providerSortRank(b);
-      return rank || a.localeCompare(b);
-    });
-    return providers;
-  }, [providerOptions]);
+    return pmProviderChoices(runtimes, pmScope, currentUser?.id ?? null);
+  }, [runtimes, pmScope, currentUser]);
   useEffect(() => {
-    if (providerChoices.length === 0) return;
+    if (providerChoices.length === 0) {
+      setPmModel("");
+      setPmModelTouched(false);
+      return;
+    }
     if (providerChoices.includes(pmProvider)) return;
     setPmProvider(
       providerChoices.includes(DEFAULT_PM_PROVIDER)
@@ -967,8 +917,14 @@ export function SquadsPage() {
     setPmModelTouched(false);
   }, [providerChoices, pmProvider]);
   const selectedPmRuntime = useMemo(
-    () => bestRuntimeForProvider(usableRuntimes, pmProvider),
-    [usableRuntimes, pmProvider],
+    () =>
+      bestRuntimeForPMProvider(
+        runtimes,
+        pmProvider,
+        pmScope,
+        currentUser?.id ?? null,
+      ),
+    [runtimes, pmProvider, pmScope, currentUser],
   );
   const selectedPmRuntimeModelsRuntimeId =
     pmDialogOpen && selectedPmRuntime?.status === "online"
@@ -1020,6 +976,12 @@ export function SquadsPage() {
     setPmModel("");
     setPmModelTouched(false);
     setPmDialogOpen(true);
+  };
+  const handlePmScopeChange = (nextScope: SquadScope) => {
+    if (nextScope === pmScope) return;
+    setPmScope(nextScope);
+    setPmModel("");
+    setPmModelTouched(false);
   };
   const ensurePmSquad = () => {
     ensureInternalSquad.mutate({
@@ -1157,7 +1119,7 @@ export function SquadsPage() {
               </div>
               <SquadScopeToggle
                 value={pmScope}
-                onChange={setPmScope}
+                onChange={handlePmScopeChange}
               />
             </div>
             <div>
@@ -1192,7 +1154,9 @@ export function SquadsPage() {
                 {selectedPmRuntime
                   ? `将使用在线运行时：${selectedPmRuntime.name}`
                   : providerChoices.length === 0
-                    ? "当前 workspace 还没有探测到可用 Agent runtime。"
+                    ? pmScope === "workspace"
+                      ? "当前 workspace 还没有可用于工作区小队的 Agent runtime。"
+                      : "当前 workspace 还没有你自己的个人 Agent runtime。"
                     : `当前没有在线可用的 ${providerLabel(pmProvider)} runtime，创建时会提示你先启动 daemon。`}
               </p>
             </div>
@@ -1221,6 +1185,7 @@ export function SquadsPage() {
               disabled={
                 ensureInternalSquad.isPending ||
                 providerChoices.length === 0 ||
+                !selectedPmRuntime ||
                 pmModelDiscoveryPending
               }
             >

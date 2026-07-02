@@ -1357,6 +1357,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			}
 
 			var projectRepos []RepoData
+			projectRepoRef := ""
 			if issue.ProjectID.Valid {
 				resp.ProjectID = uuidToString(issue.ProjectID)
 				if proj, err := h.Queries.GetProject(r.Context(), issue.ProjectID); err == nil {
@@ -1384,19 +1385,28 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 						// them as the issue's repos.
 						if row.ResourceType == "github_repo" {
 							var payload struct {
-								URL string `json:"url"`
+								URL               string `json:"url"`
+								DefaultBranchHint string `json:"default_branch_hint"`
 							}
 							if json.Unmarshal(row.ResourceRef, &payload) == nil && payload.URL != "" {
 								projectRepos = append(projectRepos, RepoData{URL: payload.URL})
+								if projectRepoRef == "" {
+									projectRepoRef = strings.TrimSpace(payload.DefaultBranchHint)
+								}
 							}
 						} else if row.ResourceType == "gongfeng_repo" {
 							var payload struct {
 								URL         string `json:"url"`
 								ProjectPath string `json:"project_path"`
+								Ref         string `json:"ref"`
+								Branch      string `json:"branch"`
 							}
 							if json.Unmarshal(row.ResourceRef, &payload) == nil {
 								if cloneURL := canonicalGongfengCloneURL(payload.URL, payload.ProjectPath); cloneURL != "" {
 									projectRepos = append(projectRepos, RepoData{URL: cloneURL})
+									if projectRepoRef == "" {
+										projectRepoRef = firstNonEmpty(strings.TrimSpace(payload.Branch), strings.TrimSpace(payload.Ref))
+									}
 								}
 							}
 						}
@@ -1411,6 +1421,14 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				var repos []RepoData
 				if json.Unmarshal(ws.Repos, &repos) == nil && len(repos) > 0 {
 					resp.Repos = repos
+				}
+			}
+			if len(projectRepos) > 0 {
+				resp.IssueExecutionSpace = &IssueExecutionSpaceData{
+					Enabled:        true,
+					IssueID:        uuidToString(issue.ID),
+					PrimaryRepoURL: projectRepos[0].URL,
+					Ref:            projectRepoRef,
 				}
 			}
 		}
@@ -1965,8 +1983,8 @@ func (h *Handler) StartTask(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, taskToResponse(*task, workspaceID))
 }
 
-// TaskWaitLocalDirectoryRequest is the body the daemon POSTs when it parks
-// a freshly-dispatched task on a busy local_directory path.
+// TaskWaitLocalDirectoryRequest is the legacy compatibility body the daemon
+// POSTs when it parks a task on a busy local_directory path.
 type TaskWaitLocalDirectoryRequest struct {
 	// Reason is a short hint surfaced by the UI alongside the status —
 	// typically "<path>" or "<path> (holder: <task short id>)". Small
@@ -1976,9 +1994,8 @@ type TaskWaitLocalDirectoryRequest struct {
 }
 
 // MarkTaskWaitingLocalDirectory transitions a dispatched task to
-// waiting_local_directory. Called by the daemon when, after claiming a task
-// whose project carries a local_directory resource, it discovers another
-// in-flight task already holds the path's mutex.
+// waiting_local_directory for legacy local_directory compatibility paths.
+// Standard issue tasks use issue-scoped managed worktrees instead.
 func (h *Handler) MarkTaskWaitingLocalDirectory(w http.ResponseWriter, r *http.Request) {
 	taskID := chi.URLParam(r, "taskId")
 

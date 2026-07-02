@@ -1026,24 +1026,6 @@ func promptEvaluationAssertionTexts(raw []byte) []string {
 	return result
 }
 
-func promptEvaluationExperimentDimensionToResponse(item db.PromptEvaluationExperimentDimension) PromptEvaluationExperimentDimensionResponse {
-	return PromptEvaluationExperimentDimensionResponse{
-		ID:                uuidToString(item.ID),
-		WorkspaceID:       uuidToString(item.WorkspaceID),
-		ExperimentAssetID: uuidToString(item.ExperimentAssetID),
-		DimensionIndex:    item.DimensionIndex,
-		DimensionName:     item.DimensionName,
-		ExperimentTarget:  item.ExperimentTarget,
-		BaselineOutput:    item.BaselineOutput,
-		ComparisonPayload: decodeJSONDefault(item.ComparisonPayload, map[string]any{}),
-		Status:            item.Status,
-		Source:            item.Source,
-		CreatedBy:         uuidToPtr(item.CreatedBy),
-		CreatedAt:         timestampToString(item.CreatedAt),
-		UpdatedAt:         timestampToString(item.UpdatedAt),
-	}
-}
-
 func promptEvaluationDimensionScoreToResponse(item db.PromptEvaluationDimensionScore) PromptEvaluationDimensionScoreResponse {
 	return PromptEvaluationDimensionScoreResponse{
 		ID:             uuidToString(item.ID),
@@ -1222,33 +1204,7 @@ func syncPromptEvaluationTestSuiteCase(ctx context.Context, qtx *db.Queries, ass
 }
 
 func syncPromptEvaluationExperimentDimensions(ctx context.Context, qtx *db.Queries, asset db.PromptEvaluationAsset, createdBy pgtype.UUID) error {
-	if err := qtx.DeletePromptEvaluationExperimentDimensionsByAsset(ctx, db.DeletePromptEvaluationExperimentDimensionsByAssetParams{
-		WorkspaceID:       asset.WorkspaceID,
-		ExperimentAssetID: asset.ID,
-	}); err != nil {
-		return err
-	}
-	if asset.AssetType != promptEvaluationAssetExperiment {
-		return refreshPromptEvaluationExperimentDimensionCount(ctx, qtx, asset.WorkspaceID, asset.ID)
-	}
-	dimensions := promptEvaluationExperimentDimensionsForAsset(asset.AssetType, decodePayloadObject(asset.Payload))
-	for idx, item := range dimensions {
-		if _, err := qtx.CreatePromptEvaluationExperimentDimension(ctx, db.CreatePromptEvaluationExperimentDimensionParams{
-			WorkspaceID:       asset.WorkspaceID,
-			ExperimentAssetID: asset.ID,
-			DimensionIndex:    int32(idx),
-			DimensionName:     pgtype.Text{String: item.Name, Valid: true},
-			ExperimentTarget:  pgtype.Text{String: item.ExperimentTarget, Valid: true},
-			BaselineOutput:    pgtype.Text{String: item.BaselineOutput, Valid: true},
-			ComparisonPayload: mustJSONBytes(item.ComparisonPayload),
-			Status:            pgtype.Text{String: asset.Status, Valid: true},
-			Source:            pgtype.Text{String: "payload", Valid: true},
-			CreatedBy:         createdBy,
-		}); err != nil {
-			return err
-		}
-	}
-	return refreshPromptEvaluationExperimentDimensionCount(ctx, qtx, asset.WorkspaceID, asset.ID)
+	return nil
 }
 
 func deletePromptEvaluationDatasetRowsForCase(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID, caseID pgtype.UUID) error {
@@ -1298,10 +1254,7 @@ func refreshPromptEvaluationTestSuiteCaseCount(ctx context.Context, qtx *db.Quer
 }
 
 func refreshPromptEvaluationExperimentDimensionCount(ctx context.Context, qtx *db.Queries, workspaceID pgtype.UUID, assetID pgtype.UUID) error {
-	return qtx.RefreshPromptEvaluationExperimentDimensionCount(ctx, db.RefreshPromptEvaluationExperimentDimensionCountParams{
-		WorkspaceID:       workspaceID,
-		ExperimentAssetID: assetID,
-	})
+	return nil
 }
 
 func promptEvaluationOptimizationCandidateToResponse(item db.PromptEvaluationOptimizationCandidate) PromptEvaluationOptimizationCandidateResponse {
@@ -1400,7 +1353,6 @@ func promptEvaluationSummaryToResponse(workspaceID pgtype.UUID, row db.GetPrompt
 			"评估维度数":   row.AssetProfileDimensions,
 			"数据集行":    row.DatasetRows,
 			"测试套件用例":  row.TestSuiteCases,
-			"实验维度事实":  row.ExperimentDimensions,
 			"服务端证据快照": row.EvidenceSnapshots,
 			"验收归档快照":  row.AcceptanceSnapshots,
 		},
@@ -1427,9 +1379,7 @@ func promptEvaluationSummaryToResponse(workspaceID pgtype.UUID, row db.GetPrompt
 
 func validPromptEvaluationAssetType(assetType string) bool {
 	return assetType == promptEvaluationAssetDataset ||
-		assetType == promptEvaluationAssetTestSuite ||
-		assetType == promptEvaluationAssetExperiment ||
-		assetType == promptEvaluationAssetOptimize
+		assetType == promptEvaluationAssetTestSuite
 }
 
 func jsonObjectField(w http.ResponseWriter, raw json.RawMessage, field string) ([]byte, bool) {
@@ -1688,7 +1638,7 @@ func (h *Handler) ListPromptEvaluationAssets(w http.ResponseWriter, r *http.Requ
 	var assetType pgtype.Text
 	if value := r.URL.Query().Get("asset_type"); value != "" {
 		if !validPromptEvaluationAssetType(value) {
-			writeError(w, http.StatusBadRequest, "asset_type must be 数据集, 测试套件, 实验 or 优化运行")
+			writeError(w, http.StatusBadRequest, "asset_type must be 数据集 or 测试套件")
 			return
 		}
 		assetType = pgtype.Text{String: value, Valid: true}
@@ -2441,41 +2391,7 @@ func (h *Handler) executePromptEvaluationCaseBulkTags(ctx context.Context, job p
 }
 
 func (h *Handler) ListPromptEvaluationExperimentDimensions(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
-	if !ok {
-		return
-	}
-	var assetID pgtype.UUID
-	if value := r.URL.Query().Get("asset_id"); value != "" {
-		parsed, ok := parseUUIDOrBadRequest(w, value, "asset_id")
-		if !ok {
-			return
-		}
-		assetID = parsed
-	}
-	var status pgtype.Text
-	if value := r.URL.Query().Get("status"); value != "" {
-		if !validPromptLibraryStatus(value) {
-			writeError(w, http.StatusBadRequest, "status must be 启用 or 归档")
-			return
-		}
-		status = pgtype.Text{String: value, Valid: true}
-	}
-	items, err := h.Queries.ListPromptEvaluationExperimentDimensions(r.Context(), db.ListPromptEvaluationExperimentDimensionsParams{
-		WorkspaceID:       workspaceUUID,
-		ExperimentAssetID: assetID,
-		Status:            status,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to list prompt evaluation experiment dimensions")
-		return
-	}
-	resp := make([]PromptEvaluationExperimentDimensionResponse, len(items))
-	for i, item := range items {
-		resp[i] = promptEvaluationExperimentDimensionToResponse(item)
-	}
-	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
+	writeError(w, http.StatusGone, "prompt evaluation experiments have been removed; use test suites and evaluation runs")
 }
 
 func (h *Handler) ListPromptEvaluationDimensionScores(w http.ResponseWriter, r *http.Request) {
@@ -5613,177 +5529,7 @@ func (h *Handler) CreatePromptEvaluationOptimizationCandidate(w http.ResponseWri
 }
 
 func (h *Handler) RunPromptEvaluationOptimizationAgent(w http.ResponseWriter, r *http.Request) {
-	workspaceID := h.resolveWorkspaceID(r)
-	workspaceUUID, ok := parseUUIDOrBadRequest(w, workspaceID, "workspace_id")
-	if !ok {
-		return
-	}
-	userID, ok := requireUserID(w, r)
-	if !ok {
-		return
-	}
-	runID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "id"), "prompt evaluation run id")
-	if !ok {
-		return
-	}
-	sourceRun, err := h.Queries.GetPromptEvaluationRunInWorkspace(r.Context(), db.GetPromptEvaluationRunInWorkspaceParams{ID: runID, WorkspaceID: workspaceUUID})
-	if err != nil {
-		if errors.Is(err, pgx.ErrNoRows) {
-			writeError(w, http.StatusNotFound, "prompt evaluation run not found")
-			return
-		}
-		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation run")
-		return
-	}
-	if !sourceRun.PromptID.Valid {
-		writeError(w, http.StatusBadRequest, "prompt_id is required to create an optimization agent run")
-		return
-	}
-	if !promptEvaluationRunHasFailure(sourceRun) {
-		writeError(w, http.StatusBadRequest, "only failed or not-passed runs can create an optimization agent run")
-		return
-	}
-	prompt, err := h.Queries.GetPromptLibraryItemInWorkspace(r.Context(), db.GetPromptLibraryItemInWorkspaceParams{ID: sourceRun.PromptID, WorkspaceID: workspaceUUID})
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "prompt_id does not belong to this workspace")
-		return
-	}
-	trials, err := h.Queries.ListPromptEvaluationTrialsByRun(r.Context(), db.ListPromptEvaluationTrialsByRunParams{RunID: sourceRun.ID, WorkspaceID: workspaceUUID})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load failed prompt evaluation trials")
-		return
-	}
-	sourceSummary := buildPromptEvaluationCandidateFailureSummary(sourceRun, trials)
-	runtimeEvidence, err := h.promptEvaluationCandidateRuntimeEvidence(r.Context(), sourceRun)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to load prompt evaluation runtime evidence")
-		return
-	}
-	if runtimeEvidence != nil {
-		sourceSummary["真实Agent运行证据"] = runtimeEvidence
-		sourceSummary["生成说明"] = "基于结构化运行记录、失败用例和真实智能体 task 证据创建智能体优化任务；输出不会自动替换生产提示词。"
-	}
-	member, ok := h.workspaceMember(w, r, uuidToString(workspaceUUID))
-	if !ok {
-		return
-	}
-	agentRow, runtimeRow, ok := h.ensurePromptEvaluationAgent(w, r, workspaceUUID, parseUUID(userID), member)
-	if !ok {
-		return
-	}
-	payload := buildPromptEvaluationOptimizationAgentPayload(prompt, sourceRun, sourceSummary)
-	payloadBytes, err := json.Marshal(payload)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to encode optimization agent payload")
-		return
-	}
-	tx, err := h.TxStarter.Begin(r.Context())
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to start optimization agent transaction")
-		return
-	}
-	defer tx.Rollback(r.Context())
-	qtx := h.Queries.WithTx(tx)
-	asset, err := qtx.CreatePromptEvaluationAsset(r.Context(), db.CreatePromptEvaluationAssetParams{
-		WorkspaceID: workspaceUUID,
-		PromptID:    sourceRun.PromptID,
-		Name:        buildPromptEvaluationOptimizationAgentAssetName(prompt, sourceRun),
-		Description: "由失败运行创建的真实智能体优化任务，输出用于人工确认后的提示词候选。",
-		AssetType:   promptEvaluationAssetOptimize,
-		Payload:     payloadBytes,
-		Status:      "启用",
-		CreatedBy:   parseUUID(userID),
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create optimization agent asset")
-		return
-	}
-	if ok := h.syncPromptEvaluationCasesFromPayload(w, r, qtx, asset, parseUUID(userID)); !ok {
-		return
-	}
-	if err := tx.Commit(r.Context()); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to commit optimization agent asset")
-		return
-	}
-
-	session, err := h.Queries.CreateChatSession(r.Context(), db.CreateChatSessionParams{
-		WorkspaceID: asset.WorkspaceID,
-		AgentID:     agentRow.ID,
-		CreatorID:   parseUUID(userID),
-		Title:       "训练评估优化：" + prompt.Name,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create optimization agent chat session")
-		return
-	}
-	cases, ok := h.promptEvaluationCasesForAsset(w, r, asset)
-	if !ok {
-		return
-	}
-	messageText := buildPromptEvaluationAgentMessage(asset, prompt, promptEvaluationPayloadWithCases(payload, cases))
-	msg, err := h.Queries.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
-		ChatSessionID: session.ID,
-		Role:          "user",
-		Content:       messageText,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to create optimization agent chat message")
-		return
-	}
-	task, err := h.TaskService.EnqueueChatTask(r.Context(), session, parseUUID(userID))
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to enqueue optimization agent task: "+err.Error())
-		return
-	}
-	if err := h.Queries.LinkChatMessageToTask(r.Context(), db.LinkChatMessageToTaskParams{ID: msg.ID, TaskID: task.ID}); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to link optimization agent message to task")
-		return
-	}
-	run, ok := h.persistPromptEvaluationQueuedAgentRun(w, r, asset, prompt, agentRow, runtimeRow, task.ID, session.ID, parseUUID(userID), "优化运行", payload, cases)
-	if !ok {
-		return
-	}
-	runIndex := map[string]any{
-		"运行时间":            time.Now().UTC().Format(time.RFC3339),
-		"run_id":          uuidToString(run.ID),
-		"source_run_id":   uuidToString(sourceRun.ID),
-		"轮次":              1,
-		"重试序号":            0,
-		"状态":              "已入队",
-		"执行Agent":         agentRow.Name,
-		"agent_id":        uuidToString(agentRow.ID),
-		"模型":              promptEvaluationAgentModel(),
-		"runtime":         runtimeRow.Provider,
-		"runtime_id":      uuidToString(runtimeRow.ID),
-		"trace/task id":   uuidToString(task.ID),
-		"chat_session_id": uuidToString(session.ID),
-		"失败原因":            "无",
-		"评估结论":            "等待智能体生成优化建议，人工确认后才能发布新提示词版本",
-	}
-	payload["最近Agent运行"] = runIndex
-	payload["Agent运行记录"] = appendPromptEvaluationAgentRunHistory(payload["Agent运行记录"], runIndex)
-	applyPromptEvaluationOptimizationRunContract(payload, uuidToString(asset.ID), uuidToString(sourceRun.ID), runIndex, "创建优化运行")
-	updated, err := h.Queries.UpdatePromptEvaluationAsset(r.Context(), db.UpdatePromptEvaluationAssetParams{
-		ID:          asset.ID,
-		WorkspaceID: asset.WorkspaceID,
-		PromptID:    asset.PromptID,
-		Payload:     mustJSONBytes(payload),
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to save optimization agent run")
-		return
-	}
-	writeJSON(w, http.StatusAccepted, PromptEvaluationAgentRunResponse{
-		Asset:         promptEvaluationAssetToResponse(updated),
-		Run:           promptEvaluationRunToResponse(run),
-		TaskID:        uuidToString(task.ID),
-		ChatSessionID: uuidToString(session.ID),
-		AgentID:       uuidToString(agentRow.ID),
-		RuntimeID:     uuidToString(runtimeRow.ID),
-		Model:         promptEvaluationAgentModel(),
-		Status:        "已入队",
-		Message:       "真实智能体优化任务已入队；完成后可在运行历史查看证据，再生成人工确认候选。",
-	})
+	writeError(w, http.StatusGone, "optimization run assets have been removed; create optimization candidates from failed evaluation runs")
 }
 
 func (h *Handler) promptEvaluationCandidateRuntimeEvidence(ctx context.Context, run db.PromptEvaluationRun) (map[string]any, error) {
@@ -6563,7 +6309,7 @@ func (h *Handler) CreatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if !validPromptEvaluationAssetType(req.AssetType) {
-		writeError(w, http.StatusBadRequest, "asset_type must be 数据集, 测试套件, 实验 or 优化运行")
+		writeError(w, http.StatusBadRequest, "asset_type must be 数据集 or 测试套件")
 		return
 	}
 	status := normalizePromptLibraryStatus(req.Status)
@@ -6651,7 +6397,7 @@ func (h *Handler) UpdatePromptEvaluationAsset(w http.ResponseWriter, r *http.Req
 		return
 	}
 	if req.AssetType != nil && !validPromptEvaluationAssetType(*req.AssetType) {
-		writeError(w, http.StatusBadRequest, "asset_type must be 数据集, 测试套件, 实验 or 优化运行")
+		writeError(w, http.StatusBadRequest, "asset_type must be 数据集 or 测试套件")
 		return
 	}
 	if req.Status != nil && !validPromptLibraryStatus(*req.Status) {
@@ -6859,7 +6605,7 @@ func (h *Handler) RunPromptEvaluationAssetAgent(w http.ResponseWriter, r *http.R
 		return
 	}
 
-	triggerSource := "智能体调试场"
+	triggerSource := "评测运行"
 	if asset.AssetType == promptEvaluationAssetOptimize {
 		if promptEvaluationOptimizationRoundCount(payload) > 0 {
 			triggerSource = "优化运行重试"
@@ -7942,7 +7688,7 @@ func promptEvaluationRequestedAgentID(payload map[string]any) string {
 		payload["执行智能体"],
 		firstValue(payload, "agent_id", "execution_agent_id", "target_agent_id", "执行智能体标识", "目标智能体标识"),
 		firstValue(payload, "execution_agent", "target_agent"),
-		firstValue(asMap(payload["调试包"]), "执行智能体", "execution_agent", "agent_id", "execution_agent_id", "target_agent_id", "执行智能体标识", "目标智能体标识"),
+		firstValue(asMap(payload["历史调试载荷"]), "执行智能体", "execution_agent", "agent_id", "execution_agent_id", "target_agent_id", "执行智能体标识", "目标智能体标识"),
 		firstValue(asMap(payload["运行环境"]), "执行智能体", "execution_agent", "agent_id", "execution_agent_id", "target_agent_id", "执行智能体标识", "目标智能体标识"),
 	} {
 		if id := promptEvaluationAgentIDFromAny(raw); id != "" {
@@ -7997,7 +7743,7 @@ func (h *Handler) promptEvaluationRuntimeReadiness(ctx context.Context, workspac
 		if inaccessibleRuntime > 0 {
 			return promptEvaluationRuntimeReadinessResponse("无权限", providerName+" 无权限", "当前工作区存在 "+providerName+" 运行时，但你没有绑定或使用权限。", "请让运行时所有者将 "+providerName+" 运行时设为公开，或由工作区管理员为训练评估智能体绑定可用运行时。", nil, checkedAt), nil
 		}
-		return promptEvaluationRuntimeReadinessResponse("缺失", providerName+" 缺失", "当前工作区未发现 "+providerName+" 运行时，智能体调试场不能执行 "+promptEvaluationAgentModel()+"。", "安装并配置 "+provider+"，启动 multica 守护进程，等待 /api/runtimes 出现 provider="+provider+" 且 status=online 的运行时。", nil, checkedAt), nil
+		return promptEvaluationRuntimeReadinessResponse("缺失", providerName+" 缺失", "当前工作区未发现 "+providerName+" 运行时，评测运行不能执行 "+promptEvaluationAgentModel()+"。", "安装并配置 "+provider+"，启动 multica 守护进程，等待 /api/runtimes 出现 provider="+provider+" 且 status=online 的运行时。", nil, checkedAt), nil
 	}
 	ageSeconds := promptEvaluationRuntimeAgeSeconds(*best, checkedAt)
 	respRuntime := runtimeToResponse(*best)

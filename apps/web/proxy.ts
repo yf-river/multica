@@ -59,8 +59,12 @@ export function proxy(req: NextRequest) {
             url.pathname = `/${lastSlug}/training/evaluation-runs`;
           } else if (view === "runs" || view === "demo-dashboard") {
             url.pathname = `/${lastSlug}/run-reviews`;
-          } else if (view === "prompt-playground" || view === "agent-playground") {
-            url.pathname = `/${lastSlug}/training/debug-runs`;
+          } else if (view === "debug-runs" || view === "prompt-playground" || view === "agent-playground") {
+            url.pathname = `/${lastSlug}/training/prompts`;
+          } else if (view === "experiments") {
+            url.pathname = `/${lastSlug}/training/test-suites`;
+          } else if (view === "optimization-runs") {
+            url.pathname = `/${lastSlug}/training/evaluation-runs`;
           } else {
             url.pathname = `/${lastSlug}/training/${view}`;
           }

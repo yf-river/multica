@@ -220,13 +220,14 @@ func TestWorkingOnIssuesSkillCoversIssueLoopContracts(t *testing.T) {
 	// references/source-map.md, not here, so a downstream main merge that
 	// shifts a line cannot rot this test into pinning a stale lie.
 	mustContain := []string{
-		"multica issue pull-requests <issue-id> --output json",
+		"multica issue mr create <issue-id>",
+		"multica issue mr list <issue-id> --output json",
 		"Default for code-changing issue work",
-		"open or update an MR before posting the final Multica issue comment",
+		"create the MR through the Multica platform before posting the final issue",
 		"This is a default, not",
-		"Use a routable issue key in the MR title, body, or branch",
+		"Do not rely on MR title, body, or branch identifiers as the primary",
 		"include the MR URL when an MR exists",
-		"Closes MUL-2759",
+		"multica issue mr link",
 		"--status backlog",
 		"mr_url",
 		"references/working-on-issues-source-map.md",

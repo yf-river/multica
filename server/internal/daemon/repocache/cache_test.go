@@ -502,6 +502,50 @@ func TestCreateWorktree(t *testing.T) {
 	}
 }
 
+func TestCreateWorktreePreserveExistingKeepsIssueWorktreeChanges(t *testing.T) {
+	t.Parallel()
+	sourceRepo := createTestRepo(t)
+	cacheRoot := t.TempDir()
+
+	cache := New(cacheRoot, testLogger())
+	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+
+	workDir := t.TempDir()
+	params := WorktreeParams{
+		WorkspaceID:        "ws-1",
+		RepoURL:            sourceRepo,
+		WorkDir:            workDir,
+		AgentName:          "PM",
+		TaskID:             "task-1",
+		BranchNameOverride: "agent/issue/issue123",
+		PreserveExisting:   true,
+	}
+	result, err := cache.CreateWorktree(params)
+	if err != nil {
+		t.Fatalf("CreateWorktree first call failed: %v", err)
+	}
+	if result.BranchName != "agent/issue/issue123" {
+		t.Fatalf("branch name = %q, want stable issue branch", result.BranchName)
+	}
+	changedPath := filepath.Join(result.Path, "stage-change.txt")
+	if err := os.WriteFile(changedPath, []byte("kept\n"), 0o644); err != nil {
+		t.Fatalf("write change: %v", err)
+	}
+
+	second, err := cache.CreateWorktree(params)
+	if err != nil {
+		t.Fatalf("CreateWorktree preserve call failed: %v", err)
+	}
+	if second.Path != result.Path {
+		t.Fatalf("preserved worktree path = %q, want %q", second.Path, result.Path)
+	}
+	if data, err := os.ReadFile(changedPath); err != nil || string(data) != "kept\n" {
+		t.Fatalf("preserved change = %q, %v; want kept", string(data), err)
+	}
+}
+
 func TestCreateWorktreeEmptyTaskIDUsesValidManualBranch(t *testing.T) {
 	t.Parallel()
 	sourceRepo := createTestRepo(t)

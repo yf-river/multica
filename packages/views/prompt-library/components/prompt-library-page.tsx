@@ -9,11 +9,14 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { issueExecutionTreeOptions } from "@multica/core/issues/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { projectListOptions, projectResourcesOptions } from "@multica/core/projects";
+import { renderPromptTemplate } from "@multica/core/prompt-library";
 import {
   TRAINING_WORKBENCH_VIEW_BY_TAB,
+  buildSkillScenarioAssetRequest,
+  buildWritingModelBenchmarkAssetRequest,
   isSkillScenarioPayload,
   summarizeSkillScenarioTarget,
-  trainingWorkbenchPath,
+  summarizeWritingModelBenchmark,
   trainingWorkbenchShowsPromptEditor,
   trainingWorkbenchTabFromView,
   trainingWorkbenchTitleFromView,
@@ -22,13 +25,11 @@ import {
 } from "@multica/core/training";
 import type {
   CreatePromptLibraryItemRequest,
+  CreatePromptEvaluationAssetRequest,
   CreatePromptEvaluationCaseRequest,
   UpdatePromptEvaluationCaseRequest,
   PromptEvaluationAsset,
-  PromptEvaluationDimensionScoreSummary,
-  PromptEvaluationDimensionScoreTrend,
   PromptEvaluationEvidenceSnapshot,
-  PromptEvaluationExperimentDimension,
   PromptEvaluationOptimizationCandidate,
   PromptEvaluationStructuredCase,
   PromptEvaluationCaseOperation,
@@ -37,17 +38,12 @@ import type {
   PromptEvaluationCaseSortBy,
   PromptEvaluationRun,
   PromptEvaluationRunEvidence,
-  PromptEvaluationTrial,
   PromptEvaluationAssetEvidenceArchivePackage,
-  PromptEvaluationRuntimeReadiness,
-  PromptEvaluationSummary,
   PromptEvaluationAssetType,
   PromptEvaluationDatasetVersionDiff,
   PromptEvaluationDatasetVersionRow,
   PromptEvaluationDatasetVersionTagTrend,
-  ObservabilitySummary,
   IssueExecutionTreeResponse,
-  IssueTimelineNode,
   Project,
   ProjectResource,
   PromptLibraryItem,
@@ -66,19 +62,19 @@ import { AppLink } from "../../navigation";
 import { useNavigation } from "../../navigation";
 import { matchesPinyin } from "../../editor/extensions/pinyin-match";
 import {
-  DEFAULT_AGENT_MODEL,
+  buildAssetPayload,
   draftToRequest,
   emptyDraft,
   itemToDraft,
   parseDebugValues,
+  parseVariables,
   requestToDraft,
   setDraftField,
   splitList,
   valuesToDebugText,
   type PromptDraft,
 } from "./prompt-library-request-builders";
-import { legacyTrainingSelectedPromptStorageKeys, trainingSelectedPromptStorageKey } from "./prompt-selection-storage";
-import { usePromptPlaygroundActions } from "./use-prompt-playground-actions";
+import { trainingSelectedPromptStorageKey } from "./prompt-selection-storage";
 
 const promptLibraryKeys = {
   list: (workspaceId: string) => ["prompt-library", workspaceId, "list"] as const,
@@ -89,21 +85,17 @@ const promptLibraryKeys = {
   datasetVersionTagTrends: (workspaceId: string, assetId: string) => ["prompt-library", workspaceId, "evaluation-dataset-version-tag-trends", assetId] as const,
   cases: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-cases"] as const,
   caseTagDatasetSummaries: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-case-tag-dataset-summaries"] as const,
-  experimentDimensions: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-experiment-dimensions"] as const,
-  dimensionScoreSummaries: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-dimension-score-summaries"] as const,
-  dimensionScoreTrends: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-dimension-score-trends"] as const,
   runs: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-runs"] as const,
   runEvidence: (workspaceId: string, runId: string | null) => ["prompt-library", workspaceId, "run-evidence", runId ?? ""] as const,
   runEvidenceSnapshots: (workspaceId: string, runId: string | null) => ["prompt-library", workspaceId, "run-evidence-snapshots", runId ?? ""] as const,
   candidates: (workspaceId: string) => ["prompt-library", workspaceId, "optimization-candidates"] as const,
-  summary: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-summary"] as const,
 };
 
 const PROMPT_TYPES = ["全部", "需求澄清", "系统提示词", "评测提示词", "小队 SOP", "通用"];
 type WorkbenchTab = TrainingWorkbenchTab;
 
 function isEvaluationRunRecordsTab(tab: WorkbenchTab): boolean {
-  return tab === "评测记录" || tab === "运行历史";
+  return tab === "评测记录";
 }
 
 type RunStatusFilter = "全部" | PromptEvaluationRun["status"];
@@ -118,55 +110,6 @@ type EvidenceFocus = {
 };
 
 const RUN_STATUS_FILTERS: RunStatusFilter[] = ["全部", "已入队", "运行中", "通过", "未通过", "失败", "已取消", "需人工复核"];
-type DemoTimeRange = "24h" | "7d" | "30d" | "all";
-type TrainingOperationalLoopSummary = {
-  latestRun: PromptEvaluationRun | null;
-  failedRun: PromptEvaluationRun | null;
-  latestCandidate: PromptEvaluationOptimizationCandidate | null;
-  failedRunCount: number;
-  candidateCounts: {
-    pending: number;
-    published: number;
-    rejected: number;
-  };
-  issueAnchor: string;
-  usageBoundary: string;
-  skillState: {
-    label: string;
-    detail: string;
-    ok: boolean;
-  };
-  nextStep: string;
-};
-
-const DEMO_TIME_RANGES: Array<{ value: DemoTimeRange; label: string; sinceMs: number | null }> = [
-  { value: "24h", label: "最近24小时", sinceMs: 24 * 60 * 60 * 1000 },
-  { value: "7d", label: "最近7天", sinceMs: 7 * 24 * 60 * 60 * 1000 },
-  { value: "30d", label: "最近30天", sinceMs: 30 * 24 * 60 * 60 * 1000 },
-  { value: "all", label: "全部", sinceMs: null },
-];
-const DEFAULT_DEMO_TIME_RANGE = DEMO_TIME_RANGES[1]!;
-const EMPTY_EVIDENCE_FOCUS: EvidenceFocus = {
-  traceSeq: null,
-  toolChainId: null,
-  trialAnchor: null,
-  assertionAnchor: null,
-  messageSeq: null,
-  spanAnchor: null,
-  failureAnchor: null,
-};
-
-const DEFAULT_AGENT_RUNTIME_READINESS: PromptEvaluationRuntimeReadiness = {
-  status: "缺失",
-  label: "Codex 检查中",
-  detail: "正在检查当前工作区的 Codex 运行时就绪状态。",
-  fix: "等待检查完成；如果持续缺失，请安装并配置 Codex，启动 Multica 守护进程。",
-  model: DEFAULT_AGENT_MODEL,
-  runtime: null,
-  last_seen_age_seconds: -1,
-  checked_at: "",
-};
-
 const USER_CENTER_TEMPLATE: CreatePromptLibraryItemRequest = {
   name: "用户中心需求澄清提示词",
   description: "用户中心小队队长使用",
@@ -243,20 +186,8 @@ export function PromptLibraryPage({
   };
   const [activeTab, setActiveTab] = useState<WorkbenchTab>(() => trainingWorkbenchTabFromView(resolvedView));
   const [runStatusFilter, setRunStatusFilter] = useState<RunStatusFilter>("全部");
-  const [demoTimeRange, setDemoTimeRange] = useState<DemoTimeRange>("7d");
-  const [demoTimeAnchor, setDemoTimeAnchor] = useState(() => Date.now());
-  const [exportingDemoEvidence, setExportingDemoEvidence] = useState(false);
   const [exportingAssetEvidencePackageAssetId, setExportingAssetEvidencePackageAssetId] = useState<string | null>(null);
   const shouldShowPromptEditor = showPromptEditor ?? trainingWorkbenchShowsPromptEditor(resolvedView);
-  const demoSince = useMemo(() => {
-    const option = DEMO_TIME_RANGES.find((item) => item.value === demoTimeRange);
-    if (!option?.sinceMs) return null;
-    return new Date(demoTimeAnchor - option.sinceMs).toISOString();
-  }, [demoTimeAnchor, demoTimeRange]);
-  const handleDemoTimeRangeChange = useCallback((value: DemoTimeRange) => {
-    setDemoTimeRange(value);
-    setDemoTimeAnchor(Date.now());
-  }, []);
 
   useEffect(() => {
     setActiveTab(trainingWorkbenchTabFromView(resolvedView));
@@ -294,16 +225,13 @@ export function PromptLibraryPage({
     }
   }, [caseDrafts, caseDraftStorageKey]);
 
-  const isDashboardTab = activeTab === "运行看板";
   const activeViewId = TRAINING_WORKBENCH_VIEW_BY_TAB[activeTab];
   const isEvaluationRunRecords = isEvaluationRunRecordsTab(activeTab);
   const effectiveRunStatusFilter = isEvaluationRunRecords ? runStatusFilter : "全部";
   const shouldShowPromptHeaderActions = activeTab === "提示词库";
   const isEvaluationAssetTab =
     activeTab === "数据集" ||
-    activeTab === "测试套件" ||
-    activeTab === "实验" ||
-    activeTab === "优化运行";
+    activeTab === "测试套件";
   const needsPromptItems =
     (shouldShowPromptEditor && activeTab === "提示词库") ||
     isEvaluationAssetTab;
@@ -312,20 +240,10 @@ export function PromptLibraryPage({
   const needsStructuredCases =
     activeTab === "数据集" ||
     activeTab === "测试套件" ||
-    activeTab === "实验" ||
-    isEvaluationRunRecords ||
-    activeTab === "优化运行";
-  const needsExperimentDimensions = activeTab === "实验";
-  const needsDimensionScoreSummaries = isDashboardTab || activeTab === "实验";
-  const needsDimensionScoreTrends = isDashboardTab || activeTab === "实验";
-  const needsRuns =
-    isDashboardTab ||
-    activeTab === "实验" ||
-    isEvaluationRunRecords ||
-    activeTab === "优化运行";
-  const needsCandidates = isDashboardTab || isEvaluationRunRecords || activeTab === "优化运行";
-  const needsSkillResources = activeTab === "优化运行";
-  const needsRuntimeReadiness = isDashboardTab;
+    isEvaluationRunRecords;
+  const needsRuns = isEvaluationRunRecords;
+  const needsCandidates = isEvaluationRunRecords;
+  const needsSkillResources = isEvaluationRunRecords;
 
   const listQuery = useQuery({
     queryKey: promptLibraryKeys.list(workspaceId ?? ""),
@@ -352,26 +270,10 @@ export function PromptLibraryPage({
     }, 0);
     return () => window.clearTimeout(timer);
   }, [activeTab, focusedCaseId, caseQuery.data?.items.length]);
-  const experimentDimensionQuery = useQuery({
-    queryKey: promptLibraryKeys.experimentDimensions(workspaceId ?? ""),
-    queryFn: () => api.listPromptEvaluationExperimentDimensions(),
-    enabled: !!workspaceId && needsExperimentDimensions,
-  });
-  const dimensionScoreSummaryQuery = useQuery({
-    queryKey: promptLibraryKeys.dimensionScoreSummaries(workspaceId ?? ""),
-    queryFn: () => api.listPromptEvaluationDimensionScoreSummaries(),
-    enabled: !!workspaceId && needsDimensionScoreSummaries,
-  });
-  const dimensionScoreTrendQuery = useQuery({
-    queryKey: [...promptLibraryKeys.dimensionScoreTrends(workspaceId ?? ""), demoSince ?? "all"] as const,
-    queryFn: () => api.listPromptEvaluationDimensionScoreTrends({ since: demoSince }),
-    enabled: !!workspaceId && needsDimensionScoreTrends,
-  });
   const runQuery = useQuery({
-    queryKey: [...promptLibraryKeys.runs(workspaceId ?? ""), demoSince ?? "all", effectiveRunStatusFilter] as const,
+    queryKey: [...promptLibraryKeys.runs(workspaceId ?? ""), effectiveRunStatusFilter] as const,
     queryFn: () => api.listPromptEvaluationRuns({
       limit: 100,
-      since: demoSince,
       status: effectiveRunStatusFilter === "全部" ? undefined : effectiveRunStatusFilter,
     }),
     enabled: !!workspaceId && needsRuns,
@@ -401,41 +303,17 @@ export function PromptLibraryPage({
         enabled: !!workspaceId && needsSkillResources,
       })),
   });
-  const summaryQuery = useQuery({
-    queryKey: [...promptLibraryKeys.summary(workspaceId ?? ""), demoSince ?? "all"] as const,
-    queryFn: () => api.getPromptEvaluationSummary({
-      ...(demoSince ? { since: demoSince } : {}),
-    }),
-    enabled: !!workspaceId && isDashboardTab,
-  });
-  const runtimeReadinessQuery = useQuery({
-    queryKey: ["training-evaluation", workspaceId ?? "", "runtime-readiness"],
-    queryFn: () => api.getPromptEvaluationRuntimeReadiness(),
-    enabled: !!workspaceId && needsRuntimeReadiness,
-  });
-  const observabilitySummaryQuery = useQuery({
-    queryKey: ["training-evaluation", workspaceId ?? "", "workspace-observability-summary", demoSince ?? "all"],
-    queryFn: () => api.getWorkspaceObservabilitySummary(workspaceId ?? "", demoSince ? { since: demoSince } : undefined),
-    enabled: !!workspaceId && isDashboardTab,
-    staleTime: 30_000,
-  });
-
   const items = listQuery.data?.items ?? [];
   const assets = assetQuery.data?.items ?? [];
   const cases = caseQuery.data?.items ?? [];
-  const experimentDimensions = experimentDimensionQuery.data?.items ?? [];
-  const dimensionScoreSummaries = dimensionScoreSummaryQuery.data?.items ?? [];
-  const dimensionScoreTrends = dimensionScoreTrendQuery.data?.items ?? [];
   const runs = runQuery.data?.items ?? [];
   const candidates = candidateQuery.data?.items ?? [];
   const skillResourceOptions = useMemo(
     () => buildSkillResourceOptions(projectQuery.data ?? [], projectResourceQueries.map((query) => query.data ?? [])),
     [projectQuery.data, projectResourceQueries],
   );
-  const summary = summaryQuery.data ?? null;
   const visiblePromptItems = items;
   const selectedFromList = selectedId ? items.find((item) => item.id === selectedId) ?? null : null;
-  const visibleCandidatesForDashboard = candidates;
   const selected = selectedFromList ?? (isDraftingNew ? null : visiblePromptItems[0] ?? null);
   const versionQuery = useQuery({
     queryKey: promptLibraryKeys.versions(workspaceId ?? "", selectedFromList?.id ?? null),
@@ -443,58 +321,37 @@ export function PromptLibraryPage({
     enabled: !!workspaceId && needsPromptVersions && !!selectedFromList,
   });
   const promptVersions = versionQuery.data?.items ?? [];
-  const experimentPromptIds = useMemo(() => {
-    if (activeTab !== "实验") return [];
-    return uniqueSortedStrings(
-      assets
-        .filter((asset) => asset.asset_type === "实验" && !!asset.prompt_id)
-        .map((asset) => asset.prompt_id ?? ""),
-    );
-  }, [activeTab, assets]);
-  const experimentVersionQueries = useQueries({
-    queries: experimentPromptIds.map((promptId) => ({
-      queryKey: promptLibraryKeys.versions(workspaceId ?? "", promptId),
-      queryFn: () => api.listPromptLibraryVersions(promptId),
-      enabled: !!workspaceId && activeTab === "实验" && !!promptId,
-    })),
-  });
-  const experimentVersionsByPromptId = useMemo(() => {
-    const result = new Map<string, PromptLibraryVersion[]>();
-    experimentPromptIds.forEach((promptId, index) => {
-      result.set(promptId, experimentVersionQueries[index]?.data?.items ?? []);
-    });
-    return result;
-  }, [experimentPromptIds, experimentVersionQueries]);
-  const experimentVersionsLoading = experimentVersionQueries.some((query) => query.isLoading || query.isFetching);
-  const agentRuntimeReadiness = runtimeReadinessQuery.data ?? DEFAULT_AGENT_RUNTIME_READINESS;
   const selectedPromptStorageKey = trainingSelectedPromptStorageKey(workspaceId);
-  const selectedPromptLegacyStorageKeys = useMemo(() => legacyTrainingSelectedPromptStorageKeys(workspaceId), [workspaceId]);
+  const [debugValuesText, setDebugValuesText] = useState("");
+  const debugResult = useMemo(
+    () => renderPromptTemplate({
+      content: draft.content,
+      variables: parseVariables(draft.variablesText),
+      values: parseDebugValues(debugValuesText),
+    }),
+    [debugValuesText, draft.content, draft.variablesText],
+  );
 
   useEffect(() => {
     if (!selectedPromptStorageKey || isDraftingNew) return;
     try {
-      const storedId = [selectedPromptStorageKey, ...selectedPromptLegacyStorageKeys]
-        .map((key) => window.localStorage.getItem(key))
-        .find(Boolean);
+      const storedId = window.localStorage.getItem(selectedPromptStorageKey);
       if (storedId && storedId !== selectedId && items.some((item) => item.id === storedId)) {
         setSelectedId(storedId);
       }
     } catch {
       // localStorage is best-effort; route usability must not depend on it.
     }
-  }, [isDraftingNew, items, selectedId, selectedPromptLegacyStorageKeys, selectedPromptStorageKey]);
+  }, [isDraftingNew, items, selectedId, selectedPromptStorageKey]);
 
   useEffect(() => {
     if (!selectedPromptStorageKey || !selectedId) return;
     try {
       window.localStorage.setItem(selectedPromptStorageKey, selectedId);
-      for (const key of selectedPromptLegacyStorageKeys) {
-        window.localStorage.setItem(key, selectedId);
-      }
     } catch {
       // Ignore storage failures in private or restricted browser contexts.
     }
-  }, [selectedId, selectedPromptLegacyStorageKeys, selectedPromptStorageKey]);
+  }, [selectedId, selectedPromptStorageKey]);
 
   useEffect(() => {
     if (isDraftingNew) return;
@@ -521,23 +378,17 @@ export function PromptLibraryPage({
   const invalidateVersions = (promptId: string | null) => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.versions(workspaceId ?? "", promptId) });
   const invalidateAssets = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId ?? "") });
   const invalidateCases = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId ?? "") });
-  const invalidateExperimentDimensions = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.experimentDimensions(workspaceId ?? "") });
-  const invalidateDimensionScoreSummaries = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.dimensionScoreSummaries(workspaceId ?? "") });
-  const invalidateDimensionScoreTrends = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.dimensionScoreTrends(workspaceId ?? "") });
   const invalidateRuns = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId ?? "") });
   const invalidateCandidates = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.candidates(workspaceId ?? "") });
-  const invalidateSummary = () => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId ?? "") });
   const invalidateRunEvidenceSnapshots = (runId: string) => queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidenceSnapshots(workspaceId ?? "", runId) });
   const rememberSelectedPrompt = (promptId: string | null) => {
     setSelectedId(promptId);
     if (!selectedPromptStorageKey) return;
     try {
-      for (const key of [selectedPromptStorageKey, ...selectedPromptLegacyStorageKeys]) {
-        if (promptId) {
-          window.localStorage.setItem(key, promptId);
-        } else {
-          window.localStorage.removeItem(key);
-        }
+      if (promptId) {
+        window.localStorage.setItem(selectedPromptStorageKey, promptId);
+      } else {
+        window.localStorage.removeItem(selectedPromptStorageKey);
       }
     } catch {
       // localStorage persistence is best-effort; in-memory selection is still updated.
@@ -587,11 +438,7 @@ export function PromptLibraryPage({
     onSuccess: () => {
       invalidateAssets();
       invalidateCases();
-      invalidateExperimentDimensions();
-      invalidateDimensionScoreSummaries();
-      invalidateDimensionScoreTrends();
       invalidateRuns();
-      invalidateSummary();
       toast.success("资产已更新");
     },
   });
@@ -601,11 +448,7 @@ export function PromptLibraryPage({
     onSuccess: () => {
       invalidateAssets();
       invalidateCases();
-      invalidateExperimentDimensions();
-      invalidateDimensionScoreSummaries();
-      invalidateDimensionScoreTrends();
       invalidateRuns();
-      invalidateSummary();
       toast.success("资产已删除");
     },
   });
@@ -623,7 +466,6 @@ export function PromptLibraryPage({
     onSuccess: (result) => {
       invalidateAssets();
       invalidateCases();
-      invalidateSummary();
       toast.success(`已从 trace 导入 ${result.created_count} 条数据集样本`);
     },
     onError: (error) => {
@@ -660,7 +502,6 @@ export function PromptLibraryPage({
     onSuccess: (result) => {
       invalidateAssets();
       invalidateCases();
-      invalidateSummary();
       toast.success(`数据集副本已导入：${result.case_count} 条`);
     },
     onError: (error) => {
@@ -679,7 +520,6 @@ export function PromptLibraryPage({
     }),
     onSuccess: (version, assetId) => {
       invalidateAssets();
-      invalidateSummary();
       queryClient.invalidateQueries({ queryKey: promptLibraryKeys.datasetVersions(workspaceId ?? "", assetId) });
       toast.success(`数据集版本 v${version.version} 已生成`);
     },
@@ -692,7 +532,6 @@ export function PromptLibraryPage({
     mutationFn: (data: CreatePromptEvaluationCaseRequest) => api.createPromptEvaluationCase(data),
     onSuccess: () => {
       invalidateCases();
-      invalidateSummary();
       toast.success("手工评测用例已创建");
     },
   });
@@ -701,7 +540,6 @@ export function PromptLibraryPage({
     mutationFn: ({ caseId, data }: { caseId: string; data: UpdatePromptEvaluationCaseRequest }) => api.updatePromptEvaluationCase(caseId, data),
     onSuccess: () => {
       invalidateCases();
-      invalidateSummary();
       toast.success("手工评测用例已保存");
     },
   });
@@ -710,7 +548,6 @@ export function PromptLibraryPage({
     mutationFn: (id: string) => api.deletePromptEvaluationCase(id),
     onSuccess: () => {
       invalidateCases();
-      invalidateSummary();
       toast.success("手工评测用例已删除");
     },
   });
@@ -719,12 +556,9 @@ export function PromptLibraryPage({
     mutationFn: (runId: string) => api.syncPromptEvaluationRun(runId),
     onSuccess: (_run, runId) => {
       invalidateRuns();
-      invalidateDimensionScoreSummaries();
-      invalidateDimensionScoreTrends();
       invalidateCandidates();
       queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", runId) });
       invalidateRunEvidenceSnapshots(runId);
-      invalidateSummary();
       toast.success("运行记录已同步");
     },
   });
@@ -733,12 +567,9 @@ export function PromptLibraryPage({
     mutationFn: (runId: string) => api.cancelPromptEvaluationRun(runId),
     onSuccess: (run) => {
       invalidateRuns();
-      invalidateDimensionScoreSummaries();
-      invalidateDimensionScoreTrends();
       invalidateCandidates();
       queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", run.id) });
       invalidateRunEvidenceSnapshots(run.id);
-      invalidateSummary();
       toast.success("训练评估运行已取消");
     },
   });
@@ -748,12 +579,9 @@ export function PromptLibraryPage({
       api.reviewPromptEvaluationRun(runId, { decision, note }),
     onSuccess: (run) => {
       invalidateRuns();
-      invalidateDimensionScoreSummaries();
-      invalidateDimensionScoreTrends();
       invalidateCandidates();
       queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", run.id) });
       invalidateRunEvidenceSnapshots(run.id);
-      invalidateSummary();
       toast.success(`人工复核已处理：${run.review_decision || run.status}`);
     },
   });
@@ -762,7 +590,6 @@ export function PromptLibraryPage({
     mutationFn: (runId: string) => api.createPromptEvaluationEvidenceSnapshot(runId, "验收归档"),
     onSuccess: (snapshot) => {
       invalidateRunEvidenceSnapshots(snapshot.run_id);
-      invalidateSummary();
       toast.success("服务端证据快照已归档");
     },
   });
@@ -771,7 +598,6 @@ export function PromptLibraryPage({
     mutationFn: (assetId: string) => api.createPromptEvaluationAssetEvidenceSnapshots(assetId, "验收归档", 20),
     onSuccess: (result) => {
       invalidateRuns();
-      invalidateSummary();
       for (const snapshot of result.items) {
         invalidateRunEvidenceSnapshots(snapshot.run_id);
       }
@@ -800,40 +626,7 @@ export function PromptLibraryPage({
     mutationFn: (runId: string) => api.createPromptEvaluationOptimizationCandidate(runId),
     onSuccess: () => {
       invalidateCandidates();
-      invalidateSummary();
       toast.success("优化候选已生成，等待人工确认");
-    },
-  });
-
-  const runOptimizationAgentMut = useMutation({
-    mutationFn: (runId: string) => api.runPromptEvaluationOptimizationAgent(runId),
-    onSuccess: (result) => {
-      invalidateAssets();
-      invalidateCases();
-      invalidateRuns();
-      invalidateDimensionScoreSummaries();
-      invalidateDimensionScoreTrends();
-      invalidateSummary();
-      toast.success(`真实智能体优化任务已入队：${result.task_id}`);
-      setActiveTab("评测记录");
-      navigation.push(trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["评测记录"]));
-    },
-  });
-
-  const retryOptimizationAssetMut = useMutation({
-    mutationFn: (assetId: string) => api.runPromptEvaluationAssetAgent(assetId),
-    onSuccess: (result) => {
-      invalidateAssets();
-      invalidateCases();
-      invalidateRuns();
-      invalidateDimensionScoreSummaries();
-      invalidateDimensionScoreTrends();
-      invalidateSummary();
-      queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId ?? "", result.run.id) });
-      toast.success(`优化运行重试已入队：${result.task_id}`);
-    },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "优化运行重试失败，请检查 Codex 运行时状态");
     },
   });
 
@@ -843,7 +636,6 @@ export function PromptLibraryPage({
       invalidate();
       invalidateVersions(result.prompt.id);
       invalidateCandidates();
-      invalidateSummary();
       rememberSelectedPrompt(result.prompt.id);
       toast.success(`已发布新提示词版本：${result.prompt.name}`);
     },
@@ -854,7 +646,6 @@ export function PromptLibraryPage({
       api.updatePromptEvaluationOptimizationCandidate(candidateId, data),
     onSuccess: (candidate) => {
       invalidateCandidates();
-      invalidateSummary();
       toast.success(`优化候选已保存：${candidate.candidate_name}`);
     },
   });
@@ -864,34 +655,84 @@ export function PromptLibraryPage({
       api.rejectPromptEvaluationOptimizationCandidate(candidateId, reason),
     onSuccess: (candidate) => {
       invalidateCandidates();
-      invalidateSummary();
       toast.success(`已暂不采纳优化候选：${candidate.candidate_name}`);
     },
   });
 
   const saving = createMut.isPending || updateMut.isPending;
   const deleting = deleteMut.isPending;
-  const promptPlaygroundActions = usePromptPlaygroundActions({
-    draft,
-    selected,
-    items: visiblePromptItems,
-    selectedPromptStorageKey,
-    onAssetsChanged: invalidateAssets,
-    onCasesChanged: invalidateCases,
-    onExperimentDimensionsChanged: invalidateExperimentDimensions,
-    onRunsChanged: invalidateRuns,
-    onSummaryChanged: invalidateSummary,
+
+  const createAssetMut = useMutation({
+    mutationFn: (data: CreatePromptEvaluationAssetRequest) => api.createPromptEvaluationAsset(data),
+    onSuccess: () => {
+      invalidateAssets();
+      invalidateCases();
+      toast.success("资产已创建");
+    },
   });
-  const {
-    debugValuesText,
-    setDebugValuesText,
-    debugResult,
-    runningDebug,
-    creatingAsset,
-    runDebug,
-    createWorkbenchAsset,
-    createSkillScenarioAsset,
-  } = promptPlaygroundActions;
+
+  const runDebugMut = useMutation({
+    mutationFn: async (data: CreatePromptEvaluationAssetRequest) => {
+      const asset = await api.createPromptEvaluationAsset(data);
+      return api.runPromptEvaluationAsset(asset.id);
+    },
+    onSuccess: () => {
+      invalidateAssets();
+      invalidateCases();
+      invalidateRuns();
+      toast.success("本地渲染检查已记录");
+    },
+  });
+
+  const createWorkbenchAsset = (assetType: PromptEvaluationAssetType) => {
+    const prompt = selected ?? visiblePromptItems[0] ?? null;
+    if (!prompt) {
+      toast.error("请先保存提示词");
+      return;
+    }
+    createAssetMut.mutate({
+      prompt_id: prompt.id,
+      name: `${prompt.name} ${assetType} ${new Date().toLocaleString("zh-CN")}`,
+      description: `从训练工作台创建的${assetType}`,
+      asset_type: assetType,
+      payload: buildAssetPayload(assetType, prompt, parseDebugValues(debugValuesText), debugResult.rendered),
+      status: "启用",
+    });
+  };
+
+  const createSkillScenarioAsset = (assetType: Extract<PromptEvaluationAssetType, "数据集" | "测试套件">) => {
+    createAssetMut.mutate(buildSkillScenarioAssetRequest(assetType));
+  };
+
+  const createWritingBenchmarkAsset = () => {
+    createAssetMut.mutate(buildWritingModelBenchmarkAssetRequest());
+  };
+
+  const runDebug = () => {
+    if (!selected) {
+      toast.error("请先保存提示词");
+      return;
+    }
+    const values = parseDebugValues(debugValuesText);
+    runDebugMut.mutate({
+      prompt_id: selected.id,
+      name: `${selected.name} 渲染检查 ${new Date().toLocaleString("zh-CN")}`,
+      description: "从提示词库保存的本地渲染检查",
+      asset_type: "测试套件",
+      payload: {
+        cases: [{
+          名称: "本地渲染检查",
+          变量: values,
+          期望包含: debugResult.missingVariables.length === 0 ? debugResult.usedVariables.map((key) => values[key]).filter(Boolean) : [],
+        }],
+        调试输出: debugResult.rendered,
+      },
+      status: "启用",
+    });
+  };
+
+  const creatingAsset = createAssetMut.isPending;
+  const runningDebug = runDebugMut.isPending;
   const savingAsset = creatingAsset || updateAssetMut.isPending || deleteAssetMut.isPending || importDatasetFromTracesMut.isPending || exportDatasetProtocolMut.isPending || importDatasetCopyMut.isPending || createDatasetVersionMut.isPending;
 
   useEffect(() => {
@@ -970,145 +811,6 @@ export function PromptLibraryPage({
     reviewRunMut.mutate({ runId: run.id, decision, note: note.trim() || defaultNote });
   };
 
-  const listAllPromptEvaluationRunsForExport = async (since: string | null) => {
-    const limit = 200;
-    const all: PromptEvaluationRun[] = [];
-    for (let offset = 0; ; offset += limit) {
-      const response = await api.listPromptEvaluationRuns({ limit, offset, since });
-      all.push(...response.items);
-      if (response.items.length < limit) return all;
-    }
-  };
-
-  const exportDemoEvidence = async () => {
-    const range = DEMO_TIME_RANGES.find((item) => item.value === demoTimeRange);
-    setExportingDemoEvidence(true);
-    try {
-      const allRuns = await listAllPromptEvaluationRunsForExport(demoSince);
-      const runEvidence = await Promise.all(
-        allRuns.map(async (run) => {
-          try {
-            const evidence = await api.getPromptEvaluationRunEvidence(run.id);
-            return {
-              采集状态: "已采集",
-              ...evidence,
-            };
-          } catch (error) {
-            return {
-              采集状态: "采集失败",
-              run,
-              trials: [],
-              task_usage: [],
-              task_messages: [],
-              trace_events: [],
-              execution_spans: [],
-              tool_call_chains: [],
-              tool_call_summary: [],
-              execution_summary: {},
-              evidence: {},
-              错误: error instanceof Error ? error.message : "未知错误",
-            };
-          }
-        }),
-      );
-      const evidenceStats = runEvidence.reduce(
-        (acc, evidence) => {
-          acc.运行数 += 1;
-          if (evidence.采集状态 === "已采集") acc.已采集 += 1;
-          if (evidence.采集状态 !== "已采集") acc.采集失败 += 1;
-          acc.trial条数 += evidence.trials.length;
-          acc.task_usage条数 += evidence.task_usage.length;
-          acc.task_message条数 += evidence.task_messages.length;
-          acc.trace_event条数 += evidence.trace_events.length;
-          acc.execution_span条数 += evidence.execution_spans.length;
-          acc.tool_call_chain条数 += evidence.tool_call_chains.length;
-          acc.tool_call_summary条数 += evidence.tool_call_summary.length;
-          return acc;
-        },
-        {
-          运行数: 0,
-          已采集: 0,
-          采集失败: 0,
-          trial条数: 0,
-          task_usage条数: 0,
-          task_message条数: 0,
-          trace_event条数: 0,
-          execution_span条数: 0,
-          tool_call_chain条数: 0,
-          tool_call_summary条数: 0,
-        },
-      );
-      const optimizationCandidateEvidence = candidates.map((candidate) => {
-        const metrics = candidate.metrics as Record<string, unknown>;
-        return {
-          id: candidate.id,
-          run_id: candidate.run_id,
-          prompt_id: candidate.prompt_id,
-          状态: candidate.status,
-          失败用例数: candidate.failed_case_count,
-          候选优先级: stringFromRecord(metrics, "候选优先级") || "未标记",
-          失败维度: Array.isArray(metrics["失败维度"]) ? metrics["失败维度"] : [],
-          候选优先级依据: stringFromRecord(metrics, "候选优先级依据"),
-          rationale: candidate.rationale,
-        };
-      });
-      const payload = {
-        语义版本: "multica.production_demo_evidence.v1",
-        导出时间: new Date().toISOString(),
-        观测范围: {
-          标签: range?.label ?? demoTimeRange,
-          since: demoSince,
-          说明: "训练评估摘要、运行证据与 SOP/任务观测摘要使用同一 since 时间窗口；资产统计保留当前工作区库存。",
-        },
-        workspace_id: workspaceId,
-        训练评估摘要: summary,
-        观测摘要: observabilitySummaryQuery.data ?? null,
-        真实执行准备度: agentRuntimeReadiness,
-        运行: allRuns,
-        运行证据: runEvidence,
-        训练维度评分摘要: dimensionScoreSummaries,
-        训练维度评分趋势: dimensionScoreTrends,
-        优化候选证据: optimizationCandidateEvidence,
-        证据统计: evidenceStats,
-        资产统计: {
-          提示词数: items.length,
-          评测资产数: assets.length,
-          结构化用例数: cases.length,
-          优化候选数: candidates.length,
-          维度评分摘要数: dimensionScoreSummaries.length,
-          维度评分趋势数: dimensionScoreTrends.length,
-        },
-      };
-      const blob = new Blob([JSON.stringify(payload, null, 2)], { type: "application/json;charset=utf-8" });
-      const url = URL.createObjectURL(blob);
-      const anchor = document.createElement("a");
-      anchor.href = url;
-      anchor.download = `multica-production-evidence-${new Date().toISOString().replace(/[:.]/g, "-")}.json`;
-      document.body.append(anchor);
-      anchor.click();
-      anchor.remove();
-      URL.revokeObjectURL(url);
-      toast.success("演示证据 JSON 已导出");
-    } finally {
-      setExportingDemoEvidence(false);
-    }
-  };
-
-  const openManualReviewQueue = () => {
-    setRunStatusFilter("需人工复核");
-    setActiveTab("评测记录");
-    navigation.push(trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["评测记录"]));
-  };
-  const openRunHistory = () => {
-    setRunStatusFilter("全部");
-    setActiveTab("评测记录");
-    navigation.push(trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["评测记录"]));
-  };
-  const openOptimizationRuns = () => {
-    setActiveTab("优化运行");
-    navigation.push(trainingWorkbenchPath(workspacePaths.training(), TRAINING_WORKBENCH_VIEW_BY_TAB["优化运行"]));
-  };
-
   return (
     <div className="flex h-full min-h-0 flex-col bg-background" data-testid="training-page-shell" data-training-view={activeViewId}>
       <div className="sr-only" data-testid={`training-route-${activeViewId}`}>
@@ -1130,37 +832,7 @@ export function PromptLibraryPage({
         )}
       </PageHeader>
 
-      {isDashboardTab && (
-        <TrainingSummaryStrip
-          summary={summary}
-          loading={summaryQuery.isLoading}
-          onOpenManualReviewQueue={openManualReviewQueue}
-        />
-      )}
-
-      {activeTab === "运行看板" ? (
-        <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
-          <DemoDashboardPanel
-            trainingSummary={summary}
-            trainingLoading={summaryQuery.isLoading}
-            observabilitySummary={observabilitySummaryQuery.data ?? null}
-            observabilityLoading={observabilitySummaryQuery.isLoading}
-            timeRange={demoTimeRange}
-            onTimeRangeChange={handleDemoTimeRangeChange}
-            onExportEvidence={exportDemoEvidence}
-            exportingEvidence={exportingDemoEvidence}
-            runtimeReadiness={agentRuntimeReadiness}
-            runtimeLoading={runtimeReadinessQuery.isLoading}
-            runs={runs}
-            assets={assets}
-            cases={cases}
-            candidates={visibleCandidatesForDashboard}
-            onOpenManualReviewQueue={openManualReviewQueue}
-            onOpenRunHistory={openRunHistory}
-            onOpenOptimizationRuns={openOptimizationRuns}
-          />
-        </main>
-      ) : shouldShowPromptEditor ? (
+      {shouldShowPromptEditor ? (
         <div className="flex min-h-0 flex-1 flex-col md:grid md:grid-cols-[360px_minmax(0,1fr)]" data-testid="prompt-library-editor">
           <aside className="flex min-h-0 flex-col border-b md:border-b-0 md:border-r">
             <div className="space-y-3 border-b p-3">
@@ -1365,10 +1037,6 @@ export function PromptLibraryPage({
                 workspaceId={workspaceId ?? ""}
                 assets={assets}
                 cases={cases}
-                experimentDimensions={experimentDimensions}
-                dimensionScoreSummaries={dimensionScoreSummaries}
-                dimensionScoreTrends={dimensionScoreTrends}
-                experimentVersionsByPromptId={experimentVersionsByPromptId}
                 runs={runs}
                 focusedRunId={focusedRunId}
                 evidenceFocus={evidenceFocus}
@@ -1380,10 +1048,11 @@ export function PromptLibraryPage({
                 onRunStatusFilterChange={setRunStatusFilter}
                 candidates={candidates}
                 skillResources={skillResourceOptions}
-                loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || dimensionScoreSummaryQuery.isLoading || dimensionScoreTrendQuery.isLoading || experimentVersionsLoading || runQuery.isLoading || candidateQuery.isLoading}
+                loading={assetQuery.isLoading || caseQuery.isLoading || runQuery.isLoading || candidateQuery.isLoading}
                 saving={savingAsset}
                 onCreateAsset={createWorkbenchAsset}
                 onCreateSkillScenarioAsset={createSkillScenarioAsset}
+                onCreateWritingBenchmarkAsset={createWritingBenchmarkAsset}
                 onToggleAssetStatus={toggleAssetStatus}
                 onUpdateAsset={(assetId, data) => updateAssetMut.mutateAsync({ id: assetId, data })}
                 onDeleteAsset={deleteAsset}
@@ -1417,10 +1086,6 @@ export function PromptLibraryPage({
                 exportingAssetEvidencePackageAssetId={exportingAssetEvidencePackageAssetId}
                 onGenerateCandidate={(runId) => createCandidateMut.mutate(runId)}
                 generatingCandidateRunId={createCandidateMut.isPending ? createCandidateMut.variables ?? null : null}
-                onRunOptimizationAgent={(runId) => runOptimizationAgentMut.mutate(runId)}
-                runningOptimizationAgentRunId={runOptimizationAgentMut.isPending ? runOptimizationAgentMut.variables ?? null : null}
-                onRetryOptimizationAsset={(assetId) => retryOptimizationAssetMut.mutate(assetId)}
-                retryingOptimizationAssetId={retryOptimizationAssetMut.isPending ? retryOptimizationAssetMut.variables ?? null : null}
                 onUpdateCandidate={(candidateId, data) => updateCandidateMut.mutate({ candidateId, data })}
                 updatingCandidateId={updateCandidateMut.isPending ? updateCandidateMut.variables?.candidateId ?? null : null}
                 onPublishCandidate={(candidateId) => publishCandidateMut.mutate(candidateId)}
@@ -1439,10 +1104,6 @@ export function PromptLibraryPage({
               workspaceId={workspaceId ?? ""}
               assets={assets}
               cases={cases}
-              experimentDimensions={experimentDimensions}
-              dimensionScoreSummaries={dimensionScoreSummaries}
-              dimensionScoreTrends={dimensionScoreTrends}
-              experimentVersionsByPromptId={experimentVersionsByPromptId}
               runs={runs}
               focusedRunId={focusedRunId}
               evidenceFocus={evidenceFocus}
@@ -1454,10 +1115,11 @@ export function PromptLibraryPage({
               onRunStatusFilterChange={setRunStatusFilter}
               candidates={candidates}
               skillResources={skillResourceOptions}
-              loading={assetQuery.isLoading || caseQuery.isLoading || experimentDimensionQuery.isLoading || dimensionScoreSummaryQuery.isLoading || dimensionScoreTrendQuery.isLoading || experimentVersionsLoading || runQuery.isLoading || candidateQuery.isLoading}
+              loading={assetQuery.isLoading || caseQuery.isLoading || runQuery.isLoading || candidateQuery.isLoading}
               saving={savingAsset}
               onCreateAsset={createWorkbenchAsset}
               onCreateSkillScenarioAsset={createSkillScenarioAsset}
+              onCreateWritingBenchmarkAsset={createWritingBenchmarkAsset}
               onToggleAssetStatus={toggleAssetStatus}
               onUpdateAsset={(assetId, data) => updateAssetMut.mutateAsync({ id: assetId, data })}
               onDeleteAsset={deleteAsset}
@@ -1491,10 +1153,6 @@ export function PromptLibraryPage({
               exportingAssetEvidencePackageAssetId={exportingAssetEvidencePackageAssetId}
               onGenerateCandidate={(runId) => createCandidateMut.mutate(runId)}
               generatingCandidateRunId={createCandidateMut.isPending ? createCandidateMut.variables ?? null : null}
-              onRunOptimizationAgent={(runId) => runOptimizationAgentMut.mutate(runId)}
-              runningOptimizationAgentRunId={runOptimizationAgentMut.isPending ? runOptimizationAgentMut.variables ?? null : null}
-              onRetryOptimizationAsset={(assetId) => retryOptimizationAssetMut.mutate(assetId)}
-              retryingOptimizationAssetId={retryOptimizationAssetMut.isPending ? retryOptimizationAssetMut.variables ?? null : null}
               onUpdateCandidate={(candidateId, data) => updateCandidateMut.mutate({ candidateId, data })}
               updatingCandidateId={updateCandidateMut.isPending ? updateCandidateMut.variables?.candidateId ?? null : null}
               onPublishCandidate={(candidateId) => publishCandidateMut.mutate(candidateId)}
@@ -1506,527 +1164,6 @@ export function PromptLibraryPage({
         </main>
       )}
     </div>
-  );
-}
-
-function DemoDashboardPanel({
-  trainingSummary,
-  trainingLoading,
-  observabilitySummary,
-  observabilityLoading,
-  timeRange,
-  onTimeRangeChange,
-  onExportEvidence,
-  exportingEvidence,
-  runtimeReadiness,
-  runtimeLoading,
-  runs,
-  assets,
-  cases,
-  candidates,
-  onOpenManualReviewQueue,
-  onOpenRunHistory,
-  onOpenOptimizationRuns,
-}: {
-  trainingSummary: PromptEvaluationSummary | null;
-  trainingLoading: boolean;
-  observabilitySummary: ObservabilitySummary | null;
-  observabilityLoading: boolean;
-  timeRange: DemoTimeRange;
-  onTimeRangeChange: (value: DemoTimeRange) => void;
-  onExportEvidence: () => void | Promise<void>;
-  exportingEvidence: boolean;
-  runtimeReadiness: PromptEvaluationRuntimeReadiness;
-  runtimeLoading: boolean;
-  runs: PromptEvaluationRun[];
-  assets: PromptEvaluationAsset[];
-  cases: PromptEvaluationStructuredCase[];
-  candidates: PromptEvaluationOptimizationCandidate[];
-  onOpenManualReviewQueue: () => void;
-  onOpenRunHistory: () => void;
-  onOpenOptimizationRuns: () => void;
-}) {
-  const trainingMetrics = trainingSummary?.指标 ?? {};
-  const trainingAssets = trainingSummary?.资产统计 ?? {};
-  const runStatus = trainingSummary?.运行状态 ?? {};
-  const observabilityMetrics = observabilitySummary?.指标 ?? {};
-  const completeness = observabilitySummary?.summary_completeness;
-  const completenessStatus = String(completeness?.["状态"] ?? observabilityMetrics["汇总完整性"] ?? "完整");
-  const latestRun = runs[0] ?? null;
-  const pendingCandidates = candidates.filter((candidate) => candidate.status === "待确认").length;
-  const publishedCandidates = candidates.filter((candidate) => candidate.status === "已发布").length;
-  const rejectedCandidates = candidates.filter((candidate) => candidate.status === "已拒绝").length;
-  const hasAgentEvidence = runs.some((run) => isAgentEvaluationRun(run) && Boolean(run.task_id));
-  const hasOptimizationLoop = publishedCandidates > 0 || pendingCandidates > 0 || rejectedCandidates > 0;
-  const readinessLabel = runtimeLoading ? "检查中" : runtimeReadiness.label;
-  const activeRange = DEMO_TIME_RANGES.find((item) => item.value === timeRange) ?? DEFAULT_DEMO_TIME_RANGE;
-  const sopStageRows = observabilitySummary?.sop_stage_breakdown ?? [];
-  const operationalLoop = buildTrainingOperationalLoopSummary(runs, candidates, cases);
-
-  const trainingItems: Array<[string, string]> = [
-    ["运行总数", formatNumber(runStatus["运行总数"])],
-    ["通过率", formatPercent(trainingMetrics["通过率"])],
-    ["失败数", formatNumber(trainingMetrics["失败数"])],
-    ["智能体运行数", formatNumber(trainingMetrics["智能体运行数"] ?? trainingMetrics["Agent运行数"])],
-    ["需人工复核", formatNumber(trainingMetrics["需人工复核"])],
-    ["输入 token", formatNumber(trainingMetrics["输入token"])],
-    ["输出 token", formatNumber(trainingMetrics["输出token"])],
-    ["预估成本", formatMoney(trainingMetrics["预估成本"])],
-  ];
-  const observabilityItems: Array<[string, string]> = [
-    ["SOP 执行数", formatNumber(observabilityMetrics["SOP 执行数"])],
-    ["SOP 事件数", formatNumber(observabilityMetrics["SOP 事件数"])],
-    ["任务观测", formatNumber(observabilitySummary?.task_trace_sample_total ?? observabilitySummary?.task_trace_total)],
-    ["队列等待", formatDuration(observabilityMetrics["队列等待"])],
-    ["执行耗时", formatDuration(observabilityMetrics["执行耗时"])],
-    ["总耗时", formatDuration(observabilityMetrics["总耗时"])],
-    ["观测输入 token", formatNumber(observabilityMetrics["输入 token"])],
-    ["观测预估成本", formatMoney(observabilityMetrics["预估成本"])],
-  ];
-  const proofItems: Array<[string, string]> = [
-    ["提示词库", formatNumber(assets.length)],
-    ["资产总数", formatNumber(trainingAssets["资产总数"] ?? assets.length)],
-    ["数据集行", formatNumber(trainingAssets["数据集行"] ?? assets.reduce((sum, asset) => sum + (asset.asset_type === "数据集" ? asset.dataset_row_count : 0), 0))],
-    ["测试套件用例", formatNumber(trainingAssets["测试套件用例"] ?? assets.reduce((sum, asset) => sum + (asset.asset_type === "测试套件" ? asset.test_suite_case_count : 0), 0))],
-    ["实验维度事实", formatNumber(trainingAssets["实验维度事实"] ?? assets.reduce((sum, asset) => sum + (asset.asset_type === "实验" ? asset.experiment_dimension_count : 0), 0))],
-    ["结构化用例", formatNumber(trainingAssets["结构化用例"] ?? cases.length)],
-    ["结构化画像", `${formatNumber(trainingAssets["画像用例数"] ?? cases.length)} 用例 · ${formatNumber(trainingAssets["画像变量数"])} 变量 · ${formatNumber(trainingAssets["画像断言数"])} 断言 · ${formatNumber(trainingAssets["评估维度数"])} 维度`],
-    ["优化候选", `${pendingCandidates} 待确认 · ${publishedCandidates} 已发布 · ${rejectedCandidates} 已拒绝`],
-    ["服务端证据快照", `${formatNumber(trainingAssets["服务端证据快照"] ?? trainingMetrics["服务端证据快照"])} 条 · 验收归档 ${formatNumber(trainingAssets["验收归档快照"] ?? trainingMetrics["验收归档快照"])}`],
-    ["真实智能体证据", hasAgentEvidence ? "已有任务/trace 运行记录" : "暂无真实智能体运行记录"],
-    ["最近运行", latestRun ? summarizeLatestRunForDemo(latestRun) : "暂无运行"],
-  ];
-
-  return (
-    <section className="mx-auto flex max-w-7xl flex-col gap-4" data-testid="training-demo-dashboard">
-      <div className="flex flex-col gap-2 border-b pb-3 md:flex-row md:items-end md:justify-between">
-        <div>
-          <h2 className="text-base font-semibold">训练运行看板</h2>
-          <p className="mt-1 text-xs text-muted-foreground">
-            汇总训练评估、真实智能体、SOP 观测和验收证据；团队级 token、成本和任务耗时在左侧「用量」查看。当前观测范围：{activeRange.label}。
-          </p>
-        </div>
-        <div className="flex flex-col gap-2 md:items-end">
-          <div className="flex flex-wrap gap-1.5">
-            {DEMO_TIME_RANGES.map((range) => (
-              <FilterButton key={range.value} active={timeRange === range.value} onClick={() => onTimeRangeChange(range.value)}>
-                {range.label}
-              </FilterButton>
-            ))}
-          </div>
-          <div className="flex flex-wrap gap-2 text-xs">
-            <Badge variant={runtimeReadiness.status === "就绪" ? "secondary" : "outline"}>真实智能体：{readinessLabel}</Badge>
-            <Badge variant="outline">训练摘要：全部数据</Badge>
-            <Badge variant="secondary">观测完整性：{completenessStatus}</Badge>
-            <Badge variant={hasOptimizationLoop ? "secondary" : "outline"}>优化闭环：{hasOptimizationLoop ? "已有证据" : "待补齐"}</Badge>
-            <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={onExportEvidence} disabled={exportingEvidence}>
-              {exportingEvidence ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
-              {exportingEvidence ? "导出中" : "导出证据 JSON"}
-            </Button>
-            <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={onOpenManualReviewQueue}>
-              打开人工复核队列
-            </Button>
-          </div>
-        </div>
-      </div>
-
-      <TrainingOperationalLoopPanel
-        summary={operationalLoop}
-        onOpenRunHistory={onOpenRunHistory}
-        onOpenOptimizationRuns={onOpenOptimizationRuns}
-        onOpenManualReviewQueue={onOpenManualReviewQueue}
-      />
-
-      <div className="grid gap-3 lg:grid-cols-2">
-        <DemoMetricSection
-          title="训练评估闭环"
-          subtitle={trainingLoading ? "正在刷新训练评估摘要" : trainingSummary?.last_run_at ? `最近运行 ${trainingSummary.last_run_at}` : "暂无运行记录"}
-          items={trainingItems}
-        />
-        <DemoMetricSection
-          title="SOP 与任务观测"
-          subtitle={
-            observabilityLoading
-              ? `正在刷新${activeRange.label}观测摘要`
-              : `${activeRange.label} · ${String(completeness?.["说明"] ?? "当前筛选条件下的 SOP 执行和任务观测已按全量汇总。")}`
-          }
-          items={observabilityItems}
-        />
-      </div>
-
-      <SOPStageBreakdownPanel rows={sopStageRows} loading={observabilityLoading} />
-
-      <div className="grid gap-3 lg:grid-cols-[minmax(0,1fr)_360px]">
-        <section className="rounded-md border border-border/70 bg-muted/10 p-3">
-          <div className="mb-3 flex items-center justify-between gap-2">
-            <div>
-              <h3 className="text-sm font-semibold">验收证据</h3>
-              <p className="mt-1 text-xs text-muted-foreground">这些数据来自后端摘要、运行记录、任务 trace 和结构化评测用例。</p>
-            </div>
-            <Badge variant="outline">证据链</Badge>
-          </div>
-          <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-            {proofItems.map(([label, value]) => (
-              <div key={label} className="min-w-0 rounded-md border bg-background px-3 py-2" data-testid={`training-demo-proof-${label}`}>
-                <div className="truncate text-[11px] text-muted-foreground">{label}</div>
-                <div className="mt-1 truncate text-sm font-semibold">{value}</div>
-              </div>
-            ))}
-          </div>
-        </section>
-
-        <section className="rounded-md border border-border/70 bg-muted/10 p-3">
-          <h3 className="text-sm font-semibold">演示状态</h3>
-          <div className="mt-3 grid gap-2 text-xs">
-            <DemoChecklistItem ok={runtimeReadiness.status === "就绪"} label="Codex 运行时可创建真实智能体任务" detail={runtimeReadiness.detail} />
-            <DemoChecklistItem ok={hasAgentEvidence} label="运行历史已有任务/trace 证据" detail={latestRun?.task_id ? `最近任务 ${latestRun.task_id}` : "需要执行一次真实智能体评估"} />
-            <DemoChecklistItem ok={cases.length > 0} label="数据集/测试套件已有结构化用例" detail={`${cases.length} 条结构化用例`} />
-            <DemoChecklistItem ok={Number(trainingAssets["服务端证据快照"] ?? trainingMetrics["服务端证据快照"] ?? 0) > 0} label="运行证据已服务端归档" detail={`${formatNumber(trainingAssets["服务端证据快照"] ?? trainingMetrics["服务端证据快照"])} 条快照，验收归档 ${formatNumber(trainingAssets["验收归档快照"] ?? trainingMetrics["验收归档快照"])}`} />
-            <DemoChecklistItem ok={hasOptimizationLoop} label="失败用例可进入优化候选人工确认" detail={`${pendingCandidates} 待确认，${publishedCandidates} 已发布`} />
-            <DemoChecklistItem ok label="观测摘要可直接用于汇报" detail={String(completeness?.["说明"] ?? "当前筛选范围已全量汇总")} />
-          </div>
-        </section>
-      </div>
-
-      <div className="grid gap-3 lg:grid-cols-2">
-        <UsageList title="模型用量明细" rows={observabilitySummary?.model_breakdown ?? []} />
-        <UsageList title="运行时用量明细" rows={observabilitySummary?.runtime_breakdown ?? []} />
-      </div>
-    </section>
-  );
-}
-
-function TrainingOperationalLoopPanel({
-  summary,
-  onOpenRunHistory,
-  onOpenOptimizationRuns,
-  onOpenManualReviewQueue,
-}: {
-  summary: TrainingOperationalLoopSummary;
-  onOpenRunHistory: () => void;
-  onOpenOptimizationRuns: () => void;
-  onOpenManualReviewQueue: () => void;
-}) {
-  const latestRunLabel = summary.latestRun
-    ? `${displayRunKind(summary.latestRun.run_kind)} · ${summary.latestRun.status} · ${shortId(summary.latestRun.id)}`
-    : "暂无运行";
-  const failureLabel = summary.failedRun
-    ? `${summary.failedRunCount} 个失败运行 · 最近 ${shortId(summary.failedRun.id)}`
-    : summary.failedRunCount > 0
-      ? `${summary.failedRunCount} 个失败运行`
-      : "暂无失败运行";
-  const candidateLabel = summary.latestCandidate
-    ? `${summary.candidateCounts.pending} 待确认 · ${summary.candidateCounts.published} 已发布 · ${summary.candidateCounts.rejected} 已拒绝 · 最近 ${shortId(summary.latestCandidate.id)}`
-    : "暂无优化候选";
-
-  return (
-    <section className="rounded-md border border-border/70 bg-background p-3" data-testid="training-operational-loop-panel">
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div className="min-w-0">
-          <div className="flex flex-wrap items-center gap-2">
-            <h3 className="text-sm font-semibold">运行闭环</h3>
-            <Badge variant={summary.skillState.ok ? "secondary" : "outline"}>{summary.skillState.label}</Badge>
-          </div>
-          <p className="mt-1 text-xs text-muted-foreground">
-            最近运行、失败复盘、优化候选、Skill 发布、复测和用量边界使用同一批运行证据。
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={onOpenRunHistory}>
-            运行历史
-          </Button>
-          <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={onOpenOptimizationRuns}>
-            优化运行
-          </Button>
-          <Button size="sm" variant="outline" className="h-7 text-xs" onClick={onOpenManualReviewQueue}>
-            人工复核
-          </Button>
-        </div>
-      </div>
-
-      <div className="mt-3 grid gap-2 md:grid-cols-2 xl:grid-cols-5">
-        <OperationalLoopFact
-          testId="training-operational-loop-run"
-          label="最近运行"
-          value={latestRunLabel}
-          detail={summary.latestRun ? summarizeLatestRunForDemo(summary.latestRun) : "需要先执行一次评估运行"}
-        />
-        <OperationalLoopFact
-          testId="training-operational-loop-failure"
-          label="失败复盘"
-          value={failureLabel}
-          detail={summary.failedRun?.failure_reason && summary.failedRun.failure_reason !== "无" ? truncateText(summary.failedRun.failure_reason, 64) : summary.issueAnchor}
-        />
-        <OperationalLoopFact
-          testId="training-operational-loop-candidate"
-          label="优化候选"
-          value={candidateLabel}
-          detail={summary.latestCandidate?.rationale ? truncateText(summary.latestCandidate.rationale, 72) : "失败运行还未生成候选"}
-        />
-        <OperationalLoopFact
-          testId="training-operational-loop-skill"
-          label="Skill 发布"
-          value={summary.skillState.label}
-          detail={summary.skillState.detail}
-        />
-        <OperationalLoopFact
-          testId="training-operational-loop-usage-boundary"
-          label="用量边界"
-          value={summary.usageBoundary}
-          detail="缺少真实 usage 时显式标记 unavailable"
-        />
-      </div>
-
-      <div className="mt-3 rounded-md border bg-muted/20 px-3 py-2 text-xs" data-testid="training-operational-loop-next-step">
-        <span className="font-medium text-foreground">下一步：</span>
-        <span className="text-muted-foreground">{summary.nextStep}</span>
-      </div>
-    </section>
-  );
-}
-
-function OperationalLoopFact({ testId, label, value, detail }: { testId: string; label: string; value: string; detail: string }) {
-  return (
-    <div className="min-w-0 rounded-md border bg-muted/10 px-3 py-2" data-testid={testId}>
-      <div className="truncate text-[11px] text-muted-foreground">{label}</div>
-      <div className="mt-1 truncate text-sm font-semibold">{value}</div>
-      <div className="mt-1 line-clamp-2 text-[11px] text-muted-foreground">{detail}</div>
-    </div>
-  );
-}
-
-function buildTrainingOperationalLoopSummary(
-  runs: PromptEvaluationRun[],
-  candidates: PromptEvaluationOptimizationCandidate[],
-  cases: PromptEvaluationStructuredCase[],
-): TrainingOperationalLoopSummary {
-  const sortedRuns = [...runs].sort((a, b) => timestampOfRun(b) - timestampOfRun(a));
-  const sortedCandidates = [...candidates].sort((a, b) => timestampOfCandidate(b) - timestampOfCandidate(a));
-  const latestRun = sortedRuns[0] ?? null;
-  const failedRuns = sortedRuns.filter((run) => run.status === "未通过" || run.status === "失败" || run.failed_cases > 0);
-  const failedRun = failedRuns[0] ?? null;
-  const skillCandidate = sortedCandidates.find((candidate) => Boolean(candidate.skill_patch)) ?? sortedCandidates[0] ?? null;
-  const candidateCounts = {
-    pending: candidates.filter((candidate) => candidate.status === "待确认").length,
-    published: candidates.filter((candidate) => candidate.status === "已发布").length,
-    rejected: candidates.filter((candidate) => candidate.status === "已拒绝").length,
-  };
-  const skillEvidence = skillCandidate ? candidateSkillWorkflowEvidence(skillCandidate) : null;
-  const applyStatus = skillEvidence ? stringFromUnknown(skillEvidence.apply["status"]) : "";
-  const reEvalRunId = skillEvidence ? stringFromUnknown(skillEvidence.reEvalRun["run_id"]) || stringFromUnknown(skillEvidence.reEvalRun["id"]) : "";
-  const reEvalStatus = skillEvidence ? stringFromUnknown(skillEvidence.reEvalRun["status"]) || stringFromUnknown(skillEvidence.reEvalRun["run_status"]) : "";
-  const hasSkillPatch = Boolean(skillCandidate?.skill_patch);
-  const hasAppliedSkill = applyStatus === "applied";
-  const hasReEvalRun = Boolean(reEvalRunId || reEvalStatus);
-  const skillState = !skillCandidate
-    ? { label: "待生成候选", detail: `${cases.length} 个结构化用例可用于生成候选`, ok: false }
-    : !hasSkillPatch
-      ? { label: "候选待补丁", detail: `候选 ${shortId(skillCandidate.id)} 尚未绑定 skill_patch`, ok: false }
-      : !hasAppliedSkill
-        ? { label: "待 Apply", detail: `候选 ${shortId(skillCandidate.id)} 已有 diff/risk/validation`, ok: false }
-        : hasReEvalRun
-          ? { label: "已复测", detail: `apply ${applyStatus} · re-eval ${reEvalStatus || shortId(reEvalRunId)}`, ok: true }
-          : { label: "待复测", detail: `apply ${applyStatus}，尚未生成 re-eval run`, ok: false };
-  const issueAnchor = extractOperationalIssueAnchor(latestRun, failedRun);
-  const usageBoundary = summarizeRunUsageBoundary(latestRun);
-  const nextStep = nextTrainingOperationalStep({ latestRun, failedRun, skillCandidate, hasSkillPatch, hasAppliedSkill, hasReEvalRun });
-
-  return {
-    latestRun,
-    failedRun,
-    latestCandidate: skillCandidate,
-    failedRunCount: failedRuns.length,
-    candidateCounts,
-    issueAnchor,
-    usageBoundary,
-    skillState,
-    nextStep,
-  };
-}
-
-function nextTrainingOperationalStep({
-  latestRun,
-  failedRun,
-  skillCandidate,
-  hasSkillPatch,
-  hasAppliedSkill,
-  hasReEvalRun,
-}: {
-  latestRun: PromptEvaluationRun | null;
-  failedRun: PromptEvaluationRun | null;
-  skillCandidate: PromptEvaluationOptimizationCandidate | null;
-  hasSkillPatch: boolean;
-  hasAppliedSkill: boolean;
-  hasReEvalRun: boolean;
-}): string {
-  if (!latestRun) return "创建评估资产并执行一次运行，形成 run/trial/usage/evidence 基线。";
-  if (failedRun && !skillCandidate) return `打开运行历史复盘 ${shortId(failedRun.id)}，从失败用例生成优化候选。`;
-  if (skillCandidate && !hasSkillPatch) return `在优化运行中补齐候选 ${shortId(skillCandidate.id)} 的 diff、risk 和 validation plan。`;
-  if (skillCandidate && hasSkillPatch && !hasAppliedSkill) return `对候选 ${shortId(skillCandidate.id)} 执行 freshness、apply 和 CHANGELOG 写回。`;
-  if (skillCandidate && hasAppliedSkill && !hasReEvalRun) return `为候选 ${shortId(skillCandidate.id)} 准备 re-eval 资产并运行复测。`;
-  if (failedRun) return `复查失败运行 ${shortId(failedRun.id)} 与复测结果，确认是否发布或回滚。`;
-  return "当前闭环可复测，继续用新 issue/run 扩充样本。";
-}
-
-function summarizeRunUsageBoundary(run: PromptEvaluationRun | null): string {
-  if (!run) return "usage unavailable: 无运行";
-  const totalTokens = Number(run.input_tokens ?? 0) + Number(run.output_tokens ?? 0);
-  if (totalTokens > 0) return `${formatNumber(totalTokens)} token · ${formatMoney(run.estimated_cost)}`;
-  if (run.task_id) return "usage unavailable: task usage 未采集";
-  return "usage unavailable: 未绑定 task";
-}
-
-function extractOperationalIssueAnchor(...runs: Array<PromptEvaluationRun | null>): string {
-  for (const run of runs) {
-    if (!run) continue;
-    const evidence = isRecord(run.evidence) ? run.evidence : {};
-    const metrics = isRecord(run.metrics) ? run.metrics : {};
-    const direct = stringFromUnknown(evidence["issue_id"]) || stringFromUnknown(metrics["issue_id"]);
-    if (direct) return `Issue ${shortId(direct)}`;
-    const text = JSON.stringify({ evidence, metrics });
-    const match = text.match(/[0-9a-f]{8}-[0-9a-f-]{27,}/i);
-    if (match?.[0]) return `Issue ${shortId(match[0])}`;
-  }
-  return "未发现 issue 锚点";
-}
-
-function timestampOfRun(run: PromptEvaluationRun): number {
-  return Date.parse(run.completed_at || run.started_at || run.updated_at || run.created_at || "") || 0;
-}
-
-function timestampOfCandidate(candidate: PromptEvaluationOptimizationCandidate): number {
-  return Date.parse(candidate.updated_at || candidate.created_at || "") || 0;
-}
-
-function SOPStageBreakdownPanel({
-  rows,
-  loading,
-}: {
-  rows: ObservabilitySummary["sop_stage_breakdown"];
-  loading: boolean;
-}) {
-  const visibleRows = rows.slice(0, 8);
-  const totalTokens = (row: ObservabilitySummary["sop_stage_breakdown"][number]) =>
-    Number(row.input_tokens ?? 0) +
-    Number(row.output_tokens ?? 0) +
-    Number(row.cache_read_tokens ?? 0) +
-    Number(row.cache_write_tokens ?? 0);
-
-  return (
-    <section className="rounded-md border border-border/70 bg-muted/10 p-3" data-testid="training-sop-stage-breakdown">
-      <div className="mb-3 flex items-center justify-between gap-2">
-        <div>
-          <h3 className="text-sm font-semibold">SOP 阶段指标</h3>
-          <p className="mt-1 text-xs text-muted-foreground">按 pm、01-05 等阶段汇总耗时、任务、消息、agent 轮次和 token。</p>
-        </div>
-        <Badge variant={rows.length > 0 ? "secondary" : "outline"}>{loading ? "刷新中" : `${rows.length} 阶段`}</Badge>
-      </div>
-      {rows.length === 0 ? (
-        <div className="rounded-md border border-dashed bg-background px-3 py-4 text-sm text-muted-foreground">
-          {loading ? "正在读取阶段指标" : "暂无 SOP 阶段指标"}
-        </div>
-      ) : (
-        <div className="grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-          {visibleRows.map((row) => {
-            const label = row.step_key || row.step_name || "unknown";
-            return (
-              <div key={label} className="min-w-0 rounded-md border bg-background px-3 py-2" data-testid={`training-sop-stage-${label}`}>
-                <div className="flex min-w-0 items-center justify-between gap-2">
-                  <div className="min-w-0 truncate text-xs font-semibold text-foreground">
-                    {label}
-                    {row.step_name ? <span className="ml-1 font-normal text-muted-foreground">{row.step_name}</span> : null}
-                  </div>
-                  <Badge variant={row.status ? "secondary" : "outline"}>{row.status || row.role_key || "未开始"}</Badge>
-                </div>
-                <div className="mt-2 grid gap-1 text-[11px] leading-5 text-muted-foreground">
-                  <div className="flex justify-between gap-2">
-                    <span>耗时</span>
-                    <span className="font-mono tabular-nums">{formatDuration(row.duration_ms)}</span>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <span>任务/消息/轮次</span>
-                    <span className="font-mono tabular-nums">{formatNumber(row.task_count)} / {formatNumber(row.message_count)} / {formatNumber(row.agent_turn_count)}</span>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <span>token</span>
-                    <span className="font-mono tabular-nums">{formatNumber(totalTokens(row))}</span>
-                  </div>
-                  <div className="flex justify-between gap-2">
-                    <span>事件/证据</span>
-                    <span className="font-mono tabular-nums">{formatNumber(row.event_count)} / {formatNumber(row.evidence_count)}</span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function DemoMetricSection({ title, subtitle, items }: { title: string; subtitle: string; items: Array<[string, string]> }) {
-  return (
-    <section className="rounded-md border border-border/70 bg-muted/10 p-3">
-      <div className="mb-3">
-        <h3 className="text-sm font-semibold">{title}</h3>
-        <p className="mt-1 text-xs text-muted-foreground">{subtitle}</p>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
-        {items.map(([label, value]) => (
-          <div key={label} className="min-w-0 rounded-md border bg-background px-3 py-2" data-testid={`training-demo-metric-${label}`}>
-            <div className="truncate text-[11px] text-muted-foreground">{label}</div>
-            <div className="mt-1 truncate text-sm font-semibold">{value}</div>
-          </div>
-        ))}
-      </div>
-    </section>
-  );
-}
-
-function DemoChecklistItem({ ok, label, detail }: { ok: boolean; label: string; detail: string }) {
-  return (
-    <div className="rounded-md border bg-background px-3 py-2">
-      <div className="flex items-center justify-between gap-2">
-        <span className="font-medium text-foreground">{label}</span>
-        <Badge variant={ok ? "secondary" : "outline"}>{ok ? "已具备" : "待补齐"}</Badge>
-      </div>
-      <div className="mt-1 text-[11px] text-muted-foreground">{detail}</div>
-    </div>
-  );
-}
-
-function UsageList({ title, rows }: { title: string; rows: ObservabilitySummary["model_breakdown"] }) {
-  return (
-    <section className="rounded-md border border-border/70 bg-muted/10 p-3">
-      <h3 className="text-sm font-semibold">{title}</h3>
-      {rows.length === 0 ? (
-        <div className="mt-3 rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">暂无用量数据</div>
-      ) : (
-        <div className="mt-3 divide-y rounded-md border bg-background">
-          {rows.slice(0, 5).map((row) => {
-            const name = String(row["名称"] || row.model || row.runtime || "未记录");
-            const tokenTotal =
-              Number(row["输入 token"] ?? 0) +
-              Number(row["输出 token"] ?? 0) +
-              Number(row["缓存读 token"] ?? 0) +
-              Number(row["缓存写 token"] ?? 0);
-            return (
-              <div key={`${title}-${name}`} className="grid gap-1 px-3 py-2 text-xs md:grid-cols-[minmax(0,1fr)_auto]">
-                <div className="min-w-0">
-                  <div className="truncate font-medium text-foreground">{name}</div>
-                  <div className="mt-1 text-[11px] text-muted-foreground">{row.provider || "未记录提供方"} · {row.runtime || row.model || "未记录运行时/模型"}</div>
-                </div>
-                <div className="text-muted-foreground md:text-right">
-                  <div>{tokenTotal.toLocaleString("zh-CN")} token</div>
-                  <div>{formatMoney(row["预估成本"])}{row["价格已知"] ? "" : " · 缺少价格"}</div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </section>
   );
 }
 
@@ -2085,84 +1222,11 @@ function PromptVersionHistory({
   );
 }
 
-function TrainingSummaryStrip({
-  summary,
-  loading,
-  onOpenManualReviewQueue,
-}: {
-  summary: PromptEvaluationSummary | null;
-  loading: boolean;
-  onOpenManualReviewQueue: () => void;
-}) {
-  const metrics = summary?.指标 ?? {};
-  const assets = summary?.资产统计 ?? {};
-  const runStatus = summary?.运行状态 ?? {};
-  const candidates = summary?.优化候选 ?? {};
-  const items = [
-    { label: "运行总数", value: formatNumber(runStatus["运行总数"]) },
-    { label: "通过率", value: formatPercent(metrics["通过率"]) },
-    { label: "失败数", value: formatNumber(metrics["失败数"]) },
-    { label: "智能体运行数", value: formatNumber(metrics["智能体运行数"] ?? metrics["Agent运行数"]) },
-    { label: "需人工复核", value: formatNumber(metrics["需人工复核"]) },
-    { label: "输入 token", value: formatNumber(metrics["输入token"]) },
-    { label: "输出 token", value: formatNumber(metrics["输出token"]) },
-    { label: "预估成本", value: formatMoney(metrics["预估成本"]) },
-    { label: "待确认优化候选", value: formatNumber(candidates["待确认"]) },
-    { label: "已发布优化候选", value: formatNumber(candidates["已发布"]) },
-    { label: "资产总数", value: formatNumber(assets["资产总数"]) },
-    { label: "数据集行", value: formatNumber(assets["数据集行"]) },
-    { label: "测试套件用例", value: formatNumber(assets["测试套件用例"]) },
-    { label: "实验维度事实", value: formatNumber(assets["实验维度事实"]) },
-    { label: "结构化用例", value: formatNumber(assets["结构化用例"]) },
-  ];
-
-  return (
-    <section className="shrink-0 border-b bg-muted/20 px-3 py-3" data-testid="training-summary-strip">
-      <div className="mb-2 flex min-w-0 items-center justify-between gap-3">
-        <div className="min-w-0">
-          <h2 className="truncate text-sm font-semibold">项目总览</h2>
-          <p className="mt-0.5 truncate text-xs text-muted-foreground">
-            {summary?.last_run_at ? `最近运行 ${summary.last_run_at}` : "暂无运行记录"}
-          </p>
-        </div>
-        <Badge variant="outline" className="shrink-0">
-          {loading ? "刷新中" : "全部数据"}
-        </Badge>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
-        {items.map((item) => (
-          item.label === "需人工复核" ? (
-            <button
-              key={item.label}
-              type="button"
-              className="min-w-0 rounded-md border bg-background px-3 py-2 text-left transition-colors hover:bg-muted/60"
-              data-testid={`training-summary-${item.label}`}
-              onClick={onOpenManualReviewQueue}
-            >
-              <div className="truncate text-[11px] text-muted-foreground">{item.label}</div>
-              <div className="mt-1 truncate text-sm font-semibold">{item.value}</div>
-            </button>
-          ) : (
-            <div key={item.label} className="min-w-0 rounded-md border bg-background px-3 py-2" data-testid={`training-summary-${item.label}`}>
-              <div className="truncate text-[11px] text-muted-foreground">{item.label}</div>
-              <div className="mt-1 truncate text-sm font-semibold">{item.value}</div>
-            </div>
-          )
-        ))}
-      </div>
-    </section>
-  );
-}
-
 function WorkbenchPanel({
   activeTab,
   workspaceId,
   assets,
   cases,
-  experimentDimensions,
-  dimensionScoreSummaries,
-  dimensionScoreTrends,
-  experimentVersionsByPromptId,
   runs,
   focusedRunId,
   evidenceFocus,
@@ -2178,6 +1242,7 @@ function WorkbenchPanel({
   saving,
   onCreateAsset,
   onCreateSkillScenarioAsset,
+  onCreateWritingBenchmarkAsset,
   onToggleAssetStatus,
   onUpdateAsset,
   onDeleteAsset,
@@ -2211,10 +1276,6 @@ function WorkbenchPanel({
   exportingAssetEvidencePackageAssetId,
   onGenerateCandidate,
   generatingCandidateRunId,
-  onRunOptimizationAgent,
-  runningOptimizationAgentRunId,
-  onRetryOptimizationAsset,
-  retryingOptimizationAssetId,
   onUpdateCandidate,
   updatingCandidateId,
   onPublishCandidate,
@@ -2226,10 +1287,6 @@ function WorkbenchPanel({
   workspaceId: string;
   assets: PromptEvaluationAsset[];
   cases: PromptEvaluationStructuredCase[];
-  experimentDimensions: PromptEvaluationExperimentDimension[];
-  dimensionScoreSummaries: PromptEvaluationDimensionScoreSummary[];
-  dimensionScoreTrends: PromptEvaluationDimensionScoreTrend[];
-  experimentVersionsByPromptId: Map<string, PromptLibraryVersion[]>;
   runs: PromptEvaluationRun[];
   focusedRunId: string | null;
   evidenceFocus: EvidenceFocus;
@@ -2245,6 +1302,7 @@ function WorkbenchPanel({
   saving: boolean;
   onCreateAsset: (assetType: PromptEvaluationAssetType) => void;
   onCreateSkillScenarioAsset: (assetType: Extract<PromptEvaluationAssetType, "数据集" | "测试套件">) => void;
+  onCreateWritingBenchmarkAsset: () => void;
   onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
   onUpdateAsset: (assetId: string, data: UpdatePromptEvaluationAssetRequest) => Promise<unknown>;
   onDeleteAsset: (asset: PromptEvaluationAsset) => void;
@@ -2278,10 +1336,6 @@ function WorkbenchPanel({
   exportingAssetEvidencePackageAssetId: string | null;
   onGenerateCandidate: (runId: string) => void;
   generatingCandidateRunId: string | null;
-  onRunOptimizationAgent: (runId: string) => void;
-  runningOptimizationAgentRunId: string | null;
-  onRetryOptimizationAsset: (assetId: string) => void;
-  retryingOptimizationAssetId: string | null;
   onUpdateCandidate: (candidateId: string, data: UpdatePromptEvaluationOptimizationCandidateRequest) => void;
   updatingCandidateId: string | null;
   onPublishCandidate: (candidateId: string) => void;
@@ -2293,15 +1347,20 @@ function WorkbenchPanel({
   const tabAssets = tabAssetType ? assets.filter((asset) => asset.asset_type === tabAssetType) : assets;
   const visibleAssets = tabAssets;
   const visibleCandidates = candidates;
+  void onUpdateCandidate;
+  void updatingCandidateId;
+  void onPublishCandidate;
+  void publishingCandidateId;
+  void onRejectCandidate;
+  void rejectingCandidateId;
 
-  if (activeTab === "提示词库" || activeTab === "提示词调试场" || activeTab === "智能体调试场") {
+  if (activeTab === "提示词库") {
     return null;
   }
 
   const routeIntro = trainingRouteIntro(activeTab, {
     visibleAssets,
     cases,
-    experimentDimensions,
     runs,
     candidates: visibleCandidates,
     runStatusFilter,
@@ -2333,6 +1392,18 @@ function WorkbenchPanel({
               {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
               新建{tabAssetType}
             </Button>
+            {activeTab === "测试套件" && (
+              <Button
+                size="sm"
+                variant="secondary"
+                data-testid="create-writing-model-benchmark"
+                onClick={onCreateWritingBenchmarkAsset}
+                disabled={saving}
+              >
+                {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+                新建写作模型评测
+              </Button>
+            )}
           </div>
         ) : null}
       />
@@ -2350,7 +1421,6 @@ function WorkbenchPanel({
         route={routeIntro.route}
         visibleAssets={visibleAssets}
         cases={cases}
-        experimentDimensions={experimentDimensions}
         runs={runs}
         candidates={visibleCandidates}
         runStatusFilter={runStatusFilter}
@@ -2376,8 +1446,6 @@ function WorkbenchPanel({
           creatingEvidenceSnapshotRunId={creatingEvidenceSnapshotRunId}
           onGenerateCandidate={onGenerateCandidate}
           generatingCandidateRunId={generatingCandidateRunId}
-          onRunOptimizationAgent={onRunOptimizationAgent}
-          runningOptimizationAgentRunId={runningOptimizationAgentRunId}
         />
       )}
 
@@ -2389,7 +1457,6 @@ function WorkbenchPanel({
           assets={visibleAssets}
           runs={runs}
           cases={cases}
-          experimentDimensions={experimentDimensions}
           loading={loading}
           saving={saving}
           onToggleAssetStatus={onToggleAssetStatus}
@@ -2420,47 +1487,6 @@ function WorkbenchPanel({
           exportingAssetEvidencePackageAssetId={exportingAssetEvidencePackageAssetId}
           beforeAssetList={activeTab === "数据集" ? (
             <DatasetTagDatasetSummaryPanel workspaceId={workspaceId} />
-          ) : activeTab === "实验" ? (
-            <ExperimentComparisonPanel
-              experiments={visibleAssets}
-              dimensions={experimentDimensions}
-              dimensionScoreSummaries={dimensionScoreSummaries}
-              dimensionScoreTrends={dimensionScoreTrends}
-              versionsByPromptId={experimentVersionsByPromptId}
-              runs={runs}
-            />
-          ) : activeTab === "优化运行" ? (
-            <>
-              <OptimizationStudioPanel
-                workspaceId={workspaceId}
-                assets={visibleAssets}
-                runs={runs}
-                candidates={visibleCandidates}
-                onCancelRun={onCancelRun}
-                cancellingRunId={cancellingRunId}
-                onCreateEvidenceSnapshot={onCreateEvidenceSnapshot}
-                creatingEvidenceSnapshotRunId={creatingEvidenceSnapshotRunId}
-                onRetryOptimizationAsset={onRetryOptimizationAsset}
-                retryingOptimizationAssetId={retryingOptimizationAssetId}
-              />
-              <OptimizerCaseWorkbench
-                candidates={visibleCandidates}
-                runs={runs}
-                cases={cases}
-                assets={assets}
-                skillResources={skillResources}
-              />
-              <OptimizationCandidateList
-                candidates={visibleCandidates}
-                skillResources={skillResources}
-                onUpdateCandidate={onUpdateCandidate}
-                updatingCandidateId={updatingCandidateId}
-                onPublishCandidate={onPublishCandidate}
-                publishingCandidateId={publishingCandidateId}
-                onRejectCandidate={onRejectCandidate}
-                rejectingCandidateId={rejectingCandidateId}
-              />
-            </>
           ) : null}
         />
       )}
@@ -2519,316 +1545,6 @@ function DatasetTagDatasetSummaryPanel({ workspaceId }: { workspaceId: string })
   );
 }
 
-type ExperimentComparisonRow = {
-  asset: PromptEvaluationAsset;
-  dimensions: PromptEvaluationExperimentDimension[];
-  dimensionScoreRows: ExperimentDimensionScoreRow[];
-  dimensionTrendRows: ExperimentDimensionScoreTrendRow[];
-  promptVersions: PromptLibraryVersion[];
-  versionRows: ExperimentPromptVersionRow[];
-  promptVersionRunCount: number;
-  qualityExplanation: ExperimentQualityExplanation;
-  runs: PromptEvaluationRun[];
-  totalCases: number;
-  passedCases: number;
-  failedCases: number;
-  passRate: number;
-  totalDurationMs: number;
-  inputTokens: number;
-  outputTokens: number;
-  estimatedCost: number;
-  latestRun: PromptEvaluationRun | null;
-};
-
-type ExperimentQualityExplanation = {
-  qualityLabel: string;
-  costPerPassedCase: number;
-  costConclusion: string;
-  durationConclusion: string;
-  failureConclusion: string;
-  recommendation: string;
-};
-
-type ExperimentDimensionScoreRow = {
-  dimensionIndex: number;
-  dimensionName: string;
-  score: number;
-  passedCases: number;
-  totalCases: number;
-  runCount: number;
-  scoredRunCount: number;
-  status: string;
-  rule: string;
-  evidence: string;
-};
-
-type ExperimentDimensionScoreTrendRow = {
-  dimensionIndex: number;
-  dimensionName: string;
-  period: string;
-  promptVersion: number;
-  score: number;
-  passedCases: number;
-  totalCases: number;
-  runCount: number;
-  scoredRunCount: number;
-  status: string;
-};
-
-type ExperimentPromptVersionRow = {
-  version: PromptLibraryVersion;
-  previousVersion: PromptLibraryVersion | null;
-  runCount: number;
-  passRate: number;
-  estimatedCost: number;
-  contentDelta: number;
-};
-
-function ExperimentComparisonPanel({
-  experiments,
-  dimensions,
-  dimensionScoreSummaries,
-  dimensionScoreTrends,
-  versionsByPromptId,
-  runs,
-}: {
-  experiments: PromptEvaluationAsset[];
-  dimensions: PromptEvaluationExperimentDimension[];
-  dimensionScoreSummaries: PromptEvaluationDimensionScoreSummary[];
-  dimensionScoreTrends: PromptEvaluationDimensionScoreTrend[];
-  versionsByPromptId: Map<string, PromptLibraryVersion[]>;
-  runs: PromptEvaluationRun[];
-}) {
-  const dimensionsByAsset = useMemo(() => buildExperimentDimensionsByAsset(dimensions), [dimensions]);
-  const dimensionScoreSummariesByAsset = useMemo(() => buildDimensionScoreSummariesByAsset(dimensionScoreSummaries), [dimensionScoreSummaries]);
-  const dimensionScoreTrendsByAsset = useMemo(() => buildDimensionScoreTrendsByAsset(dimensionScoreTrends), [dimensionScoreTrends]);
-  const rows = useMemo(
-    () => buildExperimentComparisonRows(experiments, dimensionsByAsset, dimensionScoreSummariesByAsset, dimensionScoreTrendsByAsset, versionsByPromptId, runs),
-    [experiments, dimensionsByAsset, dimensionScoreSummariesByAsset, dimensionScoreTrendsByAsset, versionsByPromptId, runs],
-  );
-  const totalRuns = rows.reduce((sum, row) => sum + row.runs.length, 0);
-  const totalCost = rows.reduce((sum, row) => sum + row.estimatedCost, 0);
-  const bestRow = rows.find((row) => row.runs.length > 0);
-
-  return (
-    <section className="grid gap-3 rounded-md border border-border/70 bg-muted/10 p-3" data-testid="experiment-comparison-panel">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <h3 className="text-sm font-semibold">实验对比排行</h3>
-          <p className="mt-1 text-xs text-muted-foreground">
-            按实验资产聚合最近运行，直接对比通过率、失败数、耗时、令牌和预估成本。
-          </p>
-        </div>
-        <div className="grid grid-cols-3 gap-2 text-right text-xs">
-          <div className="rounded border bg-background px-2 py-1">
-            <div className="text-muted-foreground">实验</div>
-            <div className="font-semibold">{formatNumber(experiments.length)}</div>
-          </div>
-          <div className="rounded border bg-background px-2 py-1">
-            <div className="text-muted-foreground">运行</div>
-            <div className="font-semibold">{formatNumber(totalRuns)}</div>
-          </div>
-          <div className="rounded border bg-background px-2 py-1">
-            <div className="text-muted-foreground">成本</div>
-            <div className="font-semibold">{formatMoney(totalCost)}</div>
-          </div>
-        </div>
-      </div>
-
-      {bestRow ? (
-        <div className="rounded-md border bg-background px-3 py-2 text-xs" data-testid="experiment-comparison-best">
-          当前最优：<span className="font-medium">{bestRow.asset.name}</span>，
-          通过率 {formatPercent(bestRow.passRate)}，失败 {formatNumber(bestRow.failedCases)}，成本 {formatMoney(bestRow.estimatedCost)}。
-        </div>
-      ) : (
-        <div className="rounded-md border border-dashed px-3 py-3 text-xs text-muted-foreground" data-testid="experiment-comparison-empty">
-          暂无实验运行。先运行实验后，这里会按质量、耗时和成本形成排行。
-        </div>
-      )}
-
-      {rows.length > 0 && (
-        <div className="grid gap-2">
-          {rows.map((row, index) => (
-            <div
-              key={row.asset.id}
-              className="grid gap-2 rounded-md border bg-background px-3 py-2 text-xs lg:grid-cols-[minmax(0,1.2fr)_repeat(5,minmax(90px,auto))]"
-              data-testid={`experiment-comparison-row-${row.asset.id}`}
-            >
-              <div className="min-w-0">
-                <div className="flex items-center gap-2">
-                  <Badge variant={index === 0 && row.runs.length > 0 ? "secondary" : "outline"}>第 {index + 1}</Badge>
-                  <span className="truncate font-medium">{row.asset.name}</span>
-                </div>
-                <div className="mt-1 text-muted-foreground">
-                  {row.dimensions.length} 个维度 · {summarizeLinkedDatasetVersions(row.asset) || "未绑定数据集版本"}
-                </div>
-                {row.latestRun && (
-                  <div className="mt-1 text-muted-foreground">
-                    最近运行：{row.latestRun.status} · {displayRunKind(row.latestRun.run_kind)} · {row.latestRun.model || "未记录模型"}
-                  </div>
-                )}
-              </div>
-              <MetricCell label="通过率" value={formatPercent(row.passRate)} />
-              <MetricCell label="失败数" value={formatNumber(row.failedCases)} />
-              <MetricCell label="平均耗时" value={formatDuration(row.runs.length > 0 ? row.totalDurationMs / row.runs.length : 0)} />
-              <MetricCell label="令牌" value={`${formatNumber(row.inputTokens)} / ${formatNumber(row.outputTokens)}`} />
-              <MetricCell label="预估成本" value={formatMoney(row.estimatedCost)} />
-              <ExperimentQualityExplanationPanel row={row} />
-              <ExperimentDimensionScoreComparison row={row} />
-              <ExperimentPromptVersionComparison row={row} />
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function ExperimentQualityExplanationPanel({ row }: { row: ExperimentComparisonRow }) {
-  const explanation = row.qualityExplanation;
-  return (
-    <div className="grid gap-2 rounded border border-border/70 bg-muted/10 px-2 py-2 text-xs lg:col-span-6" data-testid={`experiment-quality-explanation-${row.asset.id}`}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div className="font-medium text-foreground">成本质量解释</div>
-          <div className="mt-0.5 text-muted-foreground">
-            解释本实验的质量状态、单位通过成本、耗时和失败主因，便于复盘是否值得继续优化。
-          </div>
-        </div>
-        <Badge variant={row.passRate >= 0.8 ? "secondary" : "outline"}>{explanation.qualityLabel}</Badge>
-      </div>
-      <div className="grid gap-1.5 md:grid-cols-4">
-        <MetricCell label="单位通过成本" value={row.passedCases > 0 ? formatMoney(explanation.costPerPassedCase) : "暂无通过"} />
-        <MetricCell label="成本判断" value={explanation.costConclusion} />
-        <MetricCell label="耗时判断" value={explanation.durationConclusion} />
-        <MetricCell label="失败主因" value={explanation.failureConclusion} />
-      </div>
-      <div className="rounded border bg-background px-2 py-1.5 text-muted-foreground">
-        建议动作：<span className="text-foreground">{explanation.recommendation}</span>
-      </div>
-    </div>
-  );
-}
-
-function ExperimentDimensionScoreComparison({ row }: { row: ExperimentComparisonRow }) {
-  return (
-    <div className="grid gap-2 rounded border border-border/70 bg-muted/10 px-2 py-2 text-xs lg:col-span-6" data-testid={`experiment-dimension-score-comparison-${row.asset.id}`}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div className="font-medium text-foreground">实验维度评分</div>
-          <div className="mt-0.5 text-muted-foreground">
-            按服务端中文评分事实聚合，区分已评分维度和待执行维度。
-          </div>
-        </div>
-        <Badge variant="outline">{formatNumber(row.dimensionScoreRows.length)} 个评分维度</Badge>
-      </div>
-      {row.dimensionScoreRows.length === 0 ? (
-        <div className="rounded border border-dashed px-2 py-2 text-muted-foreground">暂无维度评分。运行实验后会根据维度事实生成评分。</div>
-      ) : (
-        <div className="grid gap-1.5 md:grid-cols-3">
-          {row.dimensionScoreRows.map((item) => (
-            <div key={`${item.dimensionIndex}:${item.dimensionName}`} className="grid gap-1 rounded border bg-background px-2 py-1.5">
-              <div className="flex items-center justify-between gap-2">
-                <span className="truncate font-medium text-foreground">{item.dimensionName}</span>
-                <Badge variant={item.status === "已评分" ? "secondary" : "outline"}>{item.status}</Badge>
-              </div>
-              <div className="text-lg font-semibold leading-6">{item.scoredRunCount > 0 ? formatPercent(item.score) : "待评分"}</div>
-              <div className="text-muted-foreground">
-                {formatNumber(item.passedCases)}/{formatNumber(item.totalCases)} 用例 · {formatNumber(item.scoredRunCount)}/{formatNumber(item.runCount)} 次运行
-              </div>
-              <div className="truncate text-muted-foreground" title={item.rule}>{item.rule}</div>
-              <div className="truncate text-muted-foreground" title={item.evidence}>{item.evidence}</div>
-            </div>
-          ))}
-        </div>
-      )}
-      <ExperimentDimensionScoreTrend row={row} />
-    </div>
-  );
-}
-
-function ExperimentDimensionScoreTrend({ row }: { row: ExperimentComparisonRow }) {
-  const visibleTrends = row.dimensionTrendRows.slice(0, 6);
-  return (
-    <div className="grid gap-1.5 rounded border bg-background px-2 py-1.5" data-testid={`experiment-dimension-score-trend-${row.asset.id}`}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="font-medium text-foreground">维度趋势</div>
-        <Badge variant="outline">{formatNumber(row.dimensionTrendRows.length)} 条日版本趋势</Badge>
-      </div>
-      {visibleTrends.length === 0 ? (
-        <div className="text-muted-foreground">暂无趋势。运行实验后会按日期和提示词版本生成趋势。</div>
-      ) : (
-        <div className="grid gap-1 md:grid-cols-2">
-          {visibleTrends.map((item) => (
-            <div key={`${item.period}:${item.promptVersion}:${item.dimensionIndex}:${item.dimensionName}`} className="flex min-w-0 items-center justify-between gap-2 rounded border px-2 py-1">
-              <div className="min-w-0">
-                <div className="truncate font-medium">{item.dimensionName}</div>
-                <div className="text-muted-foreground">
-                  {item.period} · v{item.promptVersion || "未记录"} · {formatNumber(item.scoredRunCount)}/{formatNumber(item.runCount)} 次运行
-                </div>
-              </div>
-              <div className="shrink-0 text-right">
-                <div className="font-semibold">{item.scoredRunCount > 0 ? formatPercent(item.score) : "待评分"}</div>
-                <div className="text-muted-foreground">{formatNumber(item.passedCases)}/{formatNumber(item.totalCases)}</div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ExperimentPromptVersionComparison({ row }: { row: ExperimentComparisonRow }) {
-  if (!row.asset.prompt_id) {
-    return (
-      <div className="rounded border border-dashed px-2 py-2 text-xs text-muted-foreground lg:col-span-6" data-testid={`experiment-prompt-version-comparison-${row.asset.id}`}>
-        该实验未绑定提示词，暂不能做提示词版本对比。
-      </div>
-    );
-  }
-  return (
-    <div className="grid gap-2 rounded border border-border/70 bg-muted/10 px-2 py-2 text-xs lg:col-span-6" data-testid={`experiment-prompt-version-comparison-${row.asset.id}`}>
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div className="font-medium text-foreground">提示词版本对比</div>
-          <div className="mt-0.5 text-muted-foreground">
-            对比同一提示词最近版本的来源、内容变化和已记录的版本级运行归因。
-          </div>
-        </div>
-        <Badge variant="outline">已加载 {formatNumber(row.promptVersions.length)} 个版本</Badge>
-      </div>
-      {row.promptVersions.length === 0 ? (
-        <div className="rounded border border-dashed px-2 py-2 text-muted-foreground">暂无提示词版本历史。</div>
-      ) : (
-        <div className="grid gap-1.5">
-          {row.versionRows.slice(0, 4).map((item) => (
-            <div key={item.version.id} className="grid gap-1 rounded border bg-background px-2 py-1.5 md:grid-cols-[minmax(0,1fr)_repeat(4,minmax(78px,auto))]">
-              <div className="min-w-0">
-                <div className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium text-foreground">v{item.version.version}</span>
-                  <Badge variant={item.version.source === "优化候选发布" ? "secondary" : "outline"}>{item.version.source}</Badge>
-                  {item.previousVersion ? <span className="text-muted-foreground">相对 v{item.previousVersion.version}</span> : <span className="text-muted-foreground">基线版本</span>}
-                </div>
-                <div className="mt-1 truncate text-muted-foreground">{item.version.content}</div>
-              </div>
-              <MetricCell label="内容变化" value={formatSignedNumber(item.contentDelta)} />
-              <MetricCell label="版本运行" value={formatNumber(item.runCount)} />
-              <MetricCell label="通过率" value={item.runCount > 0 ? formatPercent(item.passRate) : "未记录"} />
-              <MetricCell label="成本" value={formatMoney(item.estimatedCost)} />
-            </div>
-          ))}
-          {row.runs.length > row.promptVersionRunCount && (
-            <div className="rounded border border-dashed px-2 py-2 text-muted-foreground" data-testid={`experiment-prompt-version-unattributed-${row.asset.id}`}>
-              {formatNumber(row.runs.length - row.promptVersionRunCount)} 次运行未记录提示词版本；旧运行会按实验归属保留，但不能冒充版本级对比证据。
-            </div>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function TrainingAssetPanel({
   activeTab,
   route,
@@ -2836,7 +1552,6 @@ function TrainingAssetPanel({
   assets,
   runs,
   cases,
-  experimentDimensions,
   loading,
   saving,
   onToggleAssetStatus,
@@ -2873,7 +1588,6 @@ function TrainingAssetPanel({
   assets: PromptEvaluationAsset[];
   runs: PromptEvaluationRun[];
   cases: PromptEvaluationStructuredCase[];
-  experimentDimensions: PromptEvaluationExperimentDimension[];
   loading: boolean;
   saving: boolean;
   onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
@@ -2906,7 +1620,6 @@ function TrainingAssetPanel({
 }) {
   const caseSummaries = useMemo(() => buildCaseSummaries(cases), [cases]);
   const casesByAsset = useMemo(() => buildCasesByAsset(cases), [cases]);
-  const experimentDimensionsByAsset = useMemo(() => buildExperimentDimensionsByAsset(experimentDimensions), [experimentDimensions]);
   const runCountByAsset = useMemo(() => {
     const counts = new Map<string, number>();
     for (const run of runs) {
@@ -3063,9 +1776,6 @@ function TrainingAssetPanel({
                   deletingCaseId={deletingCaseId}
                 />
               )}
-              {asset.asset_type === "实验" && (
-                <ExperimentDimensionPanel asset={asset} dimensions={experimentDimensionsByAsset.get(asset.id) ?? []} />
-              )}
             </div>
           ))}
         </div>
@@ -3121,8 +1831,6 @@ function RunHistoryPanel({
   creatingEvidenceSnapshotRunId,
   onGenerateCandidate,
   generatingCandidateRunId,
-  onRunOptimizationAgent,
-  runningOptimizationAgentRunId,
 }: {
   workspaceId: string;
   runs: PromptEvaluationRun[];
@@ -3143,8 +1851,6 @@ function RunHistoryPanel({
   creatingEvidenceSnapshotRunId: string | null;
   onGenerateCandidate: (runId: string) => void;
   generatingCandidateRunId: string | null;
-  onRunOptimizationAgent: (runId: string) => void;
-  runningOptimizationAgentRunId: string | null;
 }) {
   const candidatesByRun = useMemo(() => buildCandidatesByRun(candidates), [candidates]);
   const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
@@ -3253,26 +1959,15 @@ function RunHistoryPanel({
                       </>
                     )}
                     {canGenerateOptimizationCandidate(run) && (
-                      <>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => onRunOptimizationAgent(run.id)}
-                          disabled={runningOptimizationAgentRunId === run.id || run.status === "已入队" || run.status === "运行中"}
-                        >
-                          {runningOptimizationAgentRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                          智能体优化任务
-                        </Button>
-                        <Button
-                          size="sm"
-                          variant="secondary"
-                          onClick={() => onGenerateCandidate(run.id)}
-                          disabled={generatingCandidateRunId === run.id || hasPendingCandidate}
-                        >
-                          {generatingCandidateRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-                          {hasPendingCandidate ? "已有候选" : "生成优化候选"}
-                        </Button>
-                      </>
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => onGenerateCandidate(run.id)}
+                        disabled={generatingCandidateRunId === run.id || hasPendingCandidate}
+                      >
+                        {generatingCandidateRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+                        {hasPendingCandidate ? "已有候选" : "生成优化候选"}
+                      </Button>
                     )}
                   </div>
                   {expandedRunId === run.id && (
@@ -3288,9 +1983,7 @@ function RunHistoryPanel({
                         canGenerate: canGenerateOptimizationCandidate(run),
                         hasPendingCandidate,
                         generatingCandidate: generatingCandidateRunId === run.id,
-                        runningOptimizationAgent: runningOptimizationAgentRunId === run.id,
                         onGenerateCandidate: () => onGenerateCandidate(run.id),
-                        onRunOptimizationAgent: () => onRunOptimizationAgent(run.id),
                       }}
                       creatingSnapshot={creatingEvidenceSnapshotRunId === run.id}
                       onCreateSnapshot={() => onCreateEvidenceSnapshot(run.id)}
@@ -3306,16 +1999,223 @@ function RunHistoryPanel({
   );
 }
 
+function RunEvidencePanel({
+  evidence,
+  snapshots,
+  snapshotsLoading,
+  loading,
+  error,
+  skillResources,
+  evidenceFocus,
+  optimizationActions,
+  creatingSnapshot,
+  onCreateSnapshot,
+}: {
+  evidence: PromptEvaluationRunEvidence | null;
+  snapshots: PromptEvaluationEvidenceSnapshot[];
+  snapshotsLoading: boolean;
+  loading: boolean;
+  error: boolean;
+  skillResources: SkillResourceOption[];
+  evidenceFocus?: EvidenceFocus;
+  optimizationActions?: {
+    canGenerate: boolean;
+    hasPendingCandidate: boolean;
+    generatingCandidate: boolean;
+    onGenerateCandidate: () => void;
+  };
+  creatingSnapshot: boolean;
+  onCreateSnapshot: () => void;
+}) {
+  const workspaceId = useWorkspaceId();
+  const queryClient = useQueryClient();
+  const run = evidence?.run ?? null;
+  const runId = run?.id ?? "";
+  const [skillDrafts, setSkillDrafts] = useState<Record<string, SkillCandidateWorkflowDraft>>({});
+  const [skillAction, setSkillAction] = useState<{ candidateId: string; action: SkillCandidateWorkflowAction } | null>(null);
+  const candidatesQuery = useQuery({
+    queryKey: ["prompt-library", workspaceId ?? "", "optimization-candidates", "run", runId],
+    queryFn: () => api.listPromptEvaluationOptimizationCandidates({ run_id: runId, limit: 5 }),
+    enabled: Boolean(workspaceId && runId),
+  });
+  const candidates = candidatesQuery.data?.items ?? [];
+  const candidate = candidates[0] ?? null;
+  const invalidateRunCandidates = useCallback(() => {
+    if (!workspaceId || !runId) return;
+    queryClient.invalidateQueries({ queryKey: ["prompt-library", workspaceId, "optimization-candidates", "run", runId] });
+    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.candidates(workspaceId) });
+    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId) });
+    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId) });
+  }, [queryClient, runId, workspaceId]);
+  const runSkillWorkflowAction = useCallback(async (
+    item: PromptEvaluationOptimizationCandidate,
+    action: SkillCandidateWorkflowAction,
+  ) => {
+    const draft = skillDrafts[item.id] ?? defaultSkillCandidateWorkflowDraft(item);
+    setSkillAction({ candidateId: item.id, action });
+    try {
+      if (action === "freshness") {
+        const result = await api.checkPromptEvaluationSkillCandidateFreshness(item.id, {
+          source_resource_id: draft.sourceResourceId || undefined,
+          repo_path: draft.repoPath.trim() || undefined,
+          target_branch: draft.targetBranch.trim() || undefined,
+          skill_path: draft.skillPath.trim() || undefined,
+        });
+        toast.success(`Skill freshness: ${result.status} / ${result.patch_check}`);
+      } else if (action === "apply") {
+        const result = await api.applyPromptEvaluationSkillCandidate(item.id, {
+          source_resource_id: draft.sourceResourceId || undefined,
+          repo_path: draft.repoPath.trim() || undefined,
+          target_branch: draft.targetBranch.trim() || undefined,
+          skill_path: draft.skillPath.trim() || undefined,
+          changelog_path: draft.changelogPath.trim() || undefined,
+          allow_dirty: draft.allowDirty,
+          skip_changelog: draft.skipChangelog,
+        });
+        toast.success(`Skill apply: ${result.apply.status}`);
+      } else if (action === "prepare-re-eval") {
+        const result = await api.preparePromptEvaluationSkillReEvalAsset(item.id, {
+          source_resource_id: draft.sourceResourceId || undefined,
+          repo_path: draft.repoPath.trim() || undefined,
+          target_branch: draft.targetBranch.trim() || undefined,
+          skill_path: draft.skillPath.trim() || undefined,
+          include_draft: draft.includeDraft,
+        });
+        setSkillDrafts((prev) => ({ ...prev, [item.id]: { ...draft, reEvalAssetId: result.asset.id } }));
+        toast.success(`Skill re-eval asset ready: ${result.case_count} cases`);
+      } else {
+        const result = await api.runPromptEvaluationSkillReEval(item.id, {
+          asset_id: draft.reEvalAssetId.trim() || undefined,
+        });
+        toast.success(`Skill re-eval run: ${result.run.status}`);
+      }
+      invalidateRunCandidates();
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : "Skill workflow action failed");
+    } finally {
+      setSkillAction(null);
+    }
+  }, [invalidateRunCandidates, skillDrafts]);
+
+  if (loading) {
+    return <div className="rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground md:col-span-2">正在读取运行证据...</div>;
+  }
+  if (error || !evidence || !run) {
+    return <div className="rounded-md border border-destructive/40 bg-destructive/5 px-3 py-4 text-sm text-destructive md:col-span-2">运行证据读取失败。</div>;
+  }
+
+  const totalTokens = Number(run.input_tokens ?? 0) + Number(run.output_tokens ?? 0);
+  const focusLabels = [
+    evidenceFocus?.traceSeq ? `trace ${evidenceFocus.traceSeq}` : "",
+    evidenceFocus?.toolChainId ? `tool ${evidenceFocus.toolChainId}` : "",
+    evidenceFocus?.messageSeq ? `message ${evidenceFocus.messageSeq}` : "",
+    evidenceFocus?.failureAnchor ? `failure ${evidenceFocus.failureAnchor}` : "",
+  ].filter(Boolean);
+  const rawPayload = {
+    run: evidence.run,
+    trials: evidence.trials,
+    task_usage: evidence.task_usage,
+    task_messages: evidence.task_messages,
+    trace_events: evidence.trace_events,
+    execution_spans: evidence.execution_spans,
+    tool_call_chains: evidence.tool_call_chains,
+    tool_call_summary: evidence.tool_call_summary,
+    execution_summary: evidence.execution_summary,
+    evidence: evidence.evidence,
+    context: evidence.上下文,
+  };
+
+  return (
+    <section className="grid gap-3 rounded-md border bg-muted/10 p-3 md:col-span-2" data-testid="run-evidence-panel">
+      <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]">
+        <div className="min-w-0">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium text-foreground">运行证据摘要</span>
+            <Badge variant={run.status === "通过" ? "secondary" : run.failed_cases > 0 ? "destructive" : "outline"}>{run.status}</Badge>
+            <Badge variant={totalTokens > 0 ? "secondary" : "outline"}>{formatNumber(totalTokens)} token</Badge>
+            <Badge variant={snapshots.length > 0 ? "secondary" : "outline"}>{snapshotsLoading ? "快照读取中" : `${snapshots.length} 个快照`}</Badge>
+            {focusLabels.map((label) => <Badge key={label} variant="outline">{label}</Badge>)}
+          </div>
+          <div className="mt-1 break-all text-[11px] leading-5 text-muted-foreground">
+            run {run.id} · task {run.task_id || "未绑定"} · model {run.model || "未记录"} · runtime {run.runtime_provider || "未记录"}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center gap-2 md:justify-end">
+          {optimizationActions?.canGenerate && (
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={optimizationActions.onGenerateCandidate}
+              disabled={optimizationActions.generatingCandidate || optimizationActions.hasPendingCandidate}
+            >
+              {optimizationActions.generatingCandidate ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
+              {optimizationActions.hasPendingCandidate ? "已有候选" : "生成候选"}
+            </Button>
+          )}
+          <Button size="sm" variant="secondary" onClick={() => candidatesQuery.refetch()} disabled={candidatesQuery.isFetching}>
+            {candidatesQuery.isFetching ? <Loader2 className="size-3.5 animate-spin" /> : <RefreshCw className="size-3.5" />}
+            刷新候选
+          </Button>
+          <Button size="sm" variant="secondary" onClick={onCreateSnapshot} disabled={creatingSnapshot}>
+            {creatingSnapshot ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
+            归档快照
+          </Button>
+        </div>
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
+        <EvidenceMetric label="用例" value={`${formatNumber(run.passed_cases)}/${formatNumber(run.total_cases)}`} />
+        <EvidenceMetric label="耗时" value={formatDuration(run.total_duration_ms)} />
+        <EvidenceMetric label="成本" value={formatMoney(run.estimated_cost)} />
+        <EvidenceMetric label="证据" value={`${evidence.trials.length} trial · ${evidence.task_messages.length} message · ${evidence.trace_events.length} trace`} />
+      </div>
+
+      {candidate && (
+        <div className="grid gap-2 rounded border bg-background px-2 py-2 text-xs" data-testid="run-evidence-candidate">
+          <div className="flex flex-wrap items-center gap-2">
+            <span className="font-medium">{candidate.candidate_name}</span>
+            <Badge variant={candidate.status === "待确认" ? "secondary" : "outline"}>{candidate.status}</Badge>
+            <Badge variant="outline">失败 {candidate.failed_case_count}</Badge>
+          </div>
+          <div className="text-muted-foreground">{candidate.rationale || "基于失败运行生成，等待人工确认。"}</div>
+          <SkillCandidateWorkflowPanel
+            candidate={candidate}
+            draft={skillDrafts[candidate.id] ?? defaultSkillCandidateWorkflowDraft(candidate)}
+            evidence={candidateSkillWorkflowEvidence(candidate)}
+            resources={skillResources}
+            pendingAction={skillAction?.candidateId === candidate.id ? skillAction.action : null}
+            disabled={candidate.status !== "待确认"}
+            onDraftChange={(next) => setSkillDrafts((prev) => ({ ...prev, [candidate.id]: next }))}
+            onRunAction={(action) => void runSkillWorkflowAction(candidate, action)}
+          />
+        </div>
+      )}
+
+      <details className="rounded border bg-background px-3 py-2 text-xs" open={focusLabels.length > 0}>
+        <summary className="cursor-pointer font-medium text-muted-foreground">完整原始 evidence JSON</summary>
+        <pre className="mt-2 max-h-96 overflow-auto whitespace-pre-wrap font-mono text-[11px] leading-5">
+          {JSON.stringify(rawPayload, null, 2)}
+        </pre>
+      </details>
+    </section>
+  );
+}
+
+function EvidenceMetric({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="min-w-0 rounded border bg-background px-2 py-1.5 text-xs">
+      <div className="truncate text-[11px] text-muted-foreground">{label}</div>
+      <div className="mt-0.5 truncate font-semibold">{value}</div>
+    </div>
+  );
+}
+
 function emptyTrainingRouteText(activeTab: WorkbenchTab) {
   switch (activeTab) {
     case "数据集":
       return "暂无数据集题库，先新建数据集或从 trace 导入样本";
     case "测试套件":
       return "暂无测试套件，先把稳定用例组织成可回归的套件";
-    case "实验":
-      return "暂无实验，先创建实验来对比提示词、变量和执行方式";
-    case "优化运行":
-      return "暂无优化运行作业，先创建优化运行资产并从失败结果生成候选";
     default:
       return "暂无训练与评估资产";
   }
@@ -3334,7 +2234,6 @@ function trainingRouteIntro(
   context: {
     visibleAssets: PromptEvaluationAsset[];
     cases: PromptEvaluationStructuredCase[];
-    experimentDimensions: PromptEvaluationExperimentDimension[];
     runs: PromptEvaluationRun[];
     candidates: PromptEvaluationOptimizationCandidate[];
     runStatusFilter: RunStatusFilter;
@@ -3373,40 +2272,10 @@ function trainingRouteIntro(
         evidence: "页面可创建套件资产、维护手工用例，并通过评测记录回读每次套件执行结果。",
       };
     }
-    case "实验": {
-      return {
-        route: "experiments",
-        title: "实验对比",
-        subtitle: "对比不同提示词、变量、数据集或执行方式，沉淀质量、成本和中文一致性的实验事实。",
-        facts: [
-          ["实验资产", String(context.visibleAssets.length)],
-          ["启用", String(enabledAssets)],
-          ["维度事实", formatNumber(context.experimentDimensions.length)],
-          ["结构化用例", formatNumber(context.cases.length)],
-        ],
-        evidence: "页面展示实验维度事实，并与评测记录、证据快照和优化候选形成可复盘链路。",
-      };
-    }
-    case "优化运行": {
-      const activeRuns = context.runs.filter((run) => run.status === "已入队" || run.status === "运行中").length;
-      return {
-        route: "optimization-runs",
-        title: "优化运行作业台",
-        subtitle: "按优化运行资产聚合作业、运行、候选和证据，用失败结果推动下一版提示词改进。",
-        facts: [
-          ["优化作业", String(context.visibleAssets.length)],
-          ["活动运行", formatNumber(activeRuns)],
-          ["优化候选", formatNumber(context.candidates.length)],
-          ["已发布", formatNumber(context.candidates.filter((candidate) => candidate.status === "已发布").length)],
-        ],
-        evidence: "作业台可展开运行证据、取消活动运行，并查看候选的确认、发布或拒绝结果。",
-      };
-    }
-    case "评测记录":
-    case "运行历史": {
+    case "评测记录": {
       const reviewRuns = context.runs.filter((run) => run.status === "需人工复核").length;
       return {
-        route: activeTab === "评测记录" ? "evaluation-runs" : "run-history",
+        route: "evaluation-runs",
         title: context.runStatusFilter === "需人工复核" ? "人工复核队列" : "评测记录与证据",
         subtitle: "按运行记录回看任务、模型、耗时、评估结论和服务端证据快照，支持同步、取消和人工复核。",
         facts: [
@@ -3440,9 +2309,7 @@ function TrainingFocusedIssueCallout({
 }) {
   const actionLabel = activeTab === "数据集"
     ? "点击数据集里的“从 trace 导入样本”会优先使用该 issue 的任务 trace。"
-    : activeTab === "优化运行"
-      ? "优先从该 issue 的失败样本和评测用例进入候选确认、发布或拒绝。"
-      : "当前页面带有 issue 复盘上下文，可回到 issue 查看完整链路。";
+    : "当前页面带有 issue 复盘上下文，可回到 issue 查看完整链路。";
   return (
     <section className="rounded-md border border-info/30 bg-info/5 px-3 py-2 text-xs" data-testid="training-focused-issue-callout">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
@@ -3497,7 +2364,6 @@ function TrainingRouteWorkspaceBand({
   route,
   visibleAssets,
   cases,
-  experimentDimensions,
   runs,
   candidates,
   runStatusFilter,
@@ -3506,7 +2372,6 @@ function TrainingRouteWorkspaceBand({
   route: string;
   visibleAssets: PromptEvaluationAsset[];
   cases: PromptEvaluationStructuredCase[];
-  experimentDimensions: PromptEvaluationExperimentDimension[];
   runs: PromptEvaluationRun[];
   candidates: PromptEvaluationOptimizationCandidate[];
   runStatusFilter: RunStatusFilter;
@@ -3514,7 +2379,6 @@ function TrainingRouteWorkspaceBand({
   const config = trainingRouteOperatingModel(activeTab, {
     visibleAssets,
     cases,
-    experimentDimensions,
     runs,
     candidates,
     runStatusFilter,
@@ -3557,7 +2421,6 @@ function trainingRouteOperatingModel(
   context: {
     visibleAssets: PromptEvaluationAsset[];
     cases: PromptEvaluationStructuredCase[];
-    experimentDimensions: PromptEvaluationExperimentDimension[];
     runs: PromptEvaluationRun[];
     candidates: PromptEvaluationOptimizationCandidate[];
     runStatusFilter: RunStatusFilter;
@@ -3595,38 +2458,7 @@ function trainingRouteOperatingModel(
         ],
       };
     }
-    case "实验": {
-      return {
-        kicker: "实验工作台",
-        title: "变量矩阵、版本绑定、横向排行",
-        description: "实验页面关注对比：同一数据集版本下比较不同提示词、变量、执行方式和模型策略，沉淀质量、耗时和成本事实。",
-        badge: "对比矩阵",
-        className: "border-amber-500/30 bg-amber-500/5",
-        steps: [
-          { label: "维度", title: "实验维度事实", detail: `${formatNumber(context.experimentDimensions.length)} 个维度用于说明比较对象` },
-          { label: "绑定", title: "明确数据集版本", detail: "实验应引用固定版本，避免输入样本变化污染对比结论" },
-          { label: "排行", title: "质量和成本横向比较", detail: `${formatNumber(context.runs.length)} 条运行可用于通过率、失败数和成本排行` },
-        ],
-      };
-    }
-    case "优化运行": {
-      const pending = context.candidates.filter((candidate) => candidate.status === "待确认").length;
-      const published = context.candidates.filter((candidate) => candidate.status === "已发布").length;
-      return {
-        kicker: "优化运行工作台",
-        title: "失败样本、候选生成、人工发布",
-        description: "优化运行页面关注闭环作业：从失败运行提取证据，生成候选提示词，由人确认、编辑、发布或拒绝。",
-        badge: "优化闭环",
-        className: "border-rose-500/30 bg-rose-500/5",
-        steps: [
-          { label: "来源", title: "失败运行和复盘证据", detail: `${formatNumber(context.runs.filter((run) => run.status === "未通过" || run.status === "失败").length)} 条失败/异常运行可作为优化来源` },
-          { label: "候选", title: "待确认优化候选", detail: `${formatNumber(pending)} 个待确认，${formatNumber(published)} 个已发布` },
-          { label: "发布", title: "人工把关新版本", detail: "候选发布后进入提示词版本链，拒绝原因也会留下处理证据" },
-        ],
-      };
-    }
-    case "评测记录":
-    case "运行历史": {
+    case "评测记录": {
       const taskRuns = context.runs.filter((run) => Boolean(run.task_id)).length;
       const reviewRuns = context.runs.filter((run) => run.status === "需人工复核").length;
       return {
@@ -3662,606 +2494,6 @@ function RunStatusFilterBar({
           {status === "需人工复核" ? "人工复核队列" : status}
         </FilterButton>
       ))}
-    </div>
-  );
-}
-
-function OptimizationStudioPanel({
-  workspaceId,
-  assets,
-  runs,
-  candidates,
-  onCancelRun,
-  cancellingRunId,
-  onCreateEvidenceSnapshot,
-  creatingEvidenceSnapshotRunId,
-  onRetryOptimizationAsset,
-  retryingOptimizationAssetId,
-}: {
-  workspaceId: string;
-  assets: PromptEvaluationAsset[];
-  runs: PromptEvaluationRun[];
-  candidates: PromptEvaluationOptimizationCandidate[];
-  onCancelRun: (runId: string) => void;
-  cancellingRunId: string | null;
-  onCreateEvidenceSnapshot: (runId: string) => void;
-  creatingEvidenceSnapshotRunId: string | null;
-  onRetryOptimizationAsset: (assetId: string) => void;
-  retryingOptimizationAssetId: string | null;
-}) {
-  const [expandedRunId, setExpandedRunId] = useState<string | null>(null);
-  const runsByAsset = useMemo(() => {
-    const result = new Map<string, PromptEvaluationRun[]>();
-    for (const run of runs) {
-      const bucket = result.get(run.asset_id) ?? [];
-      bucket.push(run);
-      result.set(run.asset_id, bucket);
-    }
-    for (const bucket of result.values()) {
-      bucket.sort((a, b) => b.created_at.localeCompare(a.created_at));
-    }
-    return result;
-  }, [runs]);
-  const candidatesByRun = useMemo(() => buildCandidatesByRun(candidates), [candidates]);
-  const activeRuns = runs.filter(canCancelPromptEvaluationRun);
-  const publishedCandidates = candidates.filter((candidate) => candidate.status === "已发布").length;
-  const evidenceQuery = useQuery({
-    queryKey: promptLibraryKeys.runEvidence(workspaceId, expandedRunId),
-    queryFn: () => api.getPromptEvaluationRunEvidence(expandedRunId ?? ""),
-    enabled: !!workspaceId && !!expandedRunId,
-  });
-  const evidenceSnapshotQuery = useQuery({
-    queryKey: promptLibraryKeys.runEvidenceSnapshots(workspaceId, expandedRunId),
-    queryFn: () => api.listPromptEvaluationEvidenceSnapshots(expandedRunId ?? "", 5),
-    enabled: !!workspaceId && !!expandedRunId,
-  });
-
-  return (
-    <section className="grid gap-3 rounded-md border border-border/70 bg-muted/10 p-3" data-testid="optimization-studio-panel">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <h4 className="text-sm font-semibold">优化运行作业台</h4>
-          <p className="mt-1 text-xs text-muted-foreground">
-            汇总优化运行资产、真实运行、候选版本和取消入口，避免优化运行只是一组分散候选。
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Badge variant="outline">资产 {assets.length}</Badge>
-          <Badge variant="outline">运行 {runs.length}</Badge>
-          <Badge variant={activeRuns.length > 0 ? "secondary" : "outline"}>活动 {activeRuns.length}</Badge>
-          <Badge variant="outline">候选 {candidates.length}</Badge>
-          <Badge variant="outline">已发布 {publishedCandidates}</Badge>
-        </div>
-      </div>
-
-      {assets.length === 0 ? (
-        <div className="rounded-md border border-dashed px-3 py-5 text-center text-sm text-muted-foreground">
-          暂无优化运行资产。可以先从提示词调试场记录一次优化运行，或在运行历史里对失败运行创建智能体优化任务。
-        </div>
-      ) : (
-        <div className="grid gap-2">
-          {assets.map((asset) => {
-            const assetRuns = runsByAsset.get(asset.id) ?? [];
-            const latestRun = assetRuns[0] ?? null;
-            const candidateCount = assetRuns.reduce((total, run) => total + (candidatesByRun.get(run.id)?.length ?? 0), 0);
-            const optimizationContract = buildOptimizationContractSummary(asset);
-            const optimizationRounds = optimizationRunRounds(asset);
-            const optimizationLogs = optimizationRunLogs(asset);
-            return (
-              <div key={asset.id} className="grid gap-2 rounded-md border bg-background px-3 py-3" data-testid={`optimization-studio-job-${asset.id}`}>
-                <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
-                  <div className="min-w-0">
-                    <div className="flex min-w-0 items-center gap-2">
-                      <span className="truncate text-sm font-medium">{asset.name}</span>
-                      <Badge variant={asset.status === "启用" ? "secondary" : "outline"} className="shrink-0">{asset.status}</Badge>
-                    </div>
-                    <div className="mt-1 text-xs text-muted-foreground">
-                      {asset.description || "未记录优化说明"}
-                    </div>
-                    <div className="mt-1 text-[11px] text-muted-foreground">
-                      配置摘要：{summarizeJSONValue(asset.payload)} · 最近运行 {latestRun ? `${displayRunKind(latestRun.run_kind)} / ${latestRun.status}` : "暂无"}
-                    </div>
-                  </div>
-                  <div className="flex flex-wrap justify-start gap-2 md:justify-end">
-                    <Badge variant="outline">运行 {assetRuns.length}</Badge>
-                    <Badge variant="outline">轮次 {optimizationRounds.length}</Badge>
-                    <Badge variant="outline">候选 {candidateCount}</Badge>
-                    <Badge variant="outline">用例 {asset.structured_case_count}</Badge>
-                    <Button
-                      size="sm"
-                      variant="secondary"
-                      data-testid={`retry-optimization-run-${asset.id}`}
-                      onClick={() => onRetryOptimizationAsset(asset.id)}
-                      disabled={!asset.prompt_id || retryingOptimizationAssetId === asset.id}
-                    >
-                      {retryingOptimizationAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-                      重试优化运行
-                    </Button>
-                  </div>
-                </div>
-
-                <div className="grid gap-2 md:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
-                  <OptimizationRoundPanel assetId={asset.id} contract={optimizationContract} rounds={optimizationRounds} />
-                  <OptimizationLogStreamPanel assetId={asset.id} logs={optimizationLogs} />
-                </div>
-
-                {assetRuns.length > 0 && (
-                  <div className="grid gap-1.5">
-                    {assetRuns.slice(0, 3).map((run) => (
-                      <div key={run.id} className="grid gap-2 rounded-sm border bg-muted/20 px-2 py-2 text-xs md:grid-cols-[minmax(0,1fr)_auto] md:items-center" data-testid={`optimization-studio-run-${run.id}`}>
-                        <div className="min-w-0">
-                          <div className="truncate font-medium text-foreground">{displayRunKind(run.run_kind)} · {run.status}</div>
-                          <div className="mt-1 truncate text-muted-foreground">
-                            运行 {run.id} · 任务 {run.task_id ?? "未绑定"} · 模型 {run.model || "未记录"} · {run.total_duration_ms} ms
-                          </div>
-                        </div>
-                        <div className="flex shrink-0 items-center gap-2">
-                          <Badge variant="outline">候选 {candidatesByRun.get(run.id)?.length ?? 0}</Badge>
-                          <Button size="sm" variant="secondary" onClick={() => setExpandedRunId(expandedRunId === run.id ? null : run.id)}>
-                            {expandedRunId === run.id ? "收起证据" : "查看证据"}
-                          </Button>
-                          {canCancelPromptEvaluationRun(run) && (
-                            <Button size="sm" variant="destructive" onClick={() => onCancelRun(run.id)} disabled={cancellingRunId === run.id}>
-                              {cancellingRunId === run.id ? <Loader2 className="size-3.5 animate-spin" /> : <XCircle className="size-3.5" />}
-                              取消运行
-                            </Button>
-                          )}
-                        </div>
-                        {expandedRunId === run.id && (
-                          <div className="md:col-span-2">
-                            <RunEvidencePanel
-                              evidence={evidenceQuery.data ?? null}
-                              snapshots={evidenceSnapshotQuery.data?.items ?? []}
-                              snapshotsLoading={evidenceSnapshotQuery.isLoading || evidenceSnapshotQuery.isFetching}
-                              loading={evidenceQuery.isLoading || evidenceQuery.isFetching}
-                              error={evidenceQuery.isError}
-                              skillResources={[]}
-                              creatingSnapshot={creatingEvidenceSnapshotRunId === run.id}
-                              onCreateSnapshot={() => onCreateEvidenceSnapshot(run.id)}
-                            />
-                          </div>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function OptimizerCaseWorkbench({
-  candidates,
-  runs,
-  cases,
-  assets,
-  skillResources,
-}: {
-  candidates: PromptEvaluationOptimizationCandidate[];
-  runs: PromptEvaluationRun[];
-  cases: PromptEvaluationStructuredCase[];
-  assets: PromptEvaluationAsset[];
-  skillResources: SkillResourceOption[];
-}) {
-  const candidate = useMemo(() => {
-    return candidates.find((item) => item.status === "待确认" && Boolean(item.skill_patch)) ??
-      candidates.find((item) => item.status === "待确认") ??
-      candidates[0] ??
-      null;
-  }, [candidates]);
-
-  if (!candidate) {
-    return (
-      <section className="rounded-md border border-dashed bg-muted/10 px-3 py-5 text-sm text-muted-foreground" data-testid="optimizer-case-workbench">
-        暂无可复盘的优化候选。先从失败评测运行生成候选后，这里会按 case 展示来源、失败原因、目标 Skill、patch 和复测证据。
-      </section>
-    );
-  }
-
-  const sourceRun = runs.find((run) => run.id === candidate.run_id) ?? null;
-  const sourceAsset = sourceRun ? assets.find((asset) => asset.id === sourceRun.asset_id) ?? null : null;
-  const sourceCases = sourceRun ? cases.filter((item) => item.asset_id === sourceRun.asset_id) : [];
-  const primaryCase = preferredOptimizerSourceCase(sourceCases);
-  const metrics = candidate.metrics as Record<string, unknown>;
-  const skillPatch = asRecord(candidate.skill_patch);
-  const evidence = candidateSkillWorkflowEvidence(candidate);
-  const weakDimensions = promptEvaluationCandidateWeakDimensions(metrics["失败维度"]);
-  const failureReason = firstNonEmptyString(
-    candidate.rationale,
-    metrics["失败原因"],
-    metrics["failure_reason"],
-    sourceRun?.review_note,
-    sourceRun?.status === "失败" ? "评测运行失败，需查看 run evidence。" : "",
-  );
-  const targetSkill = firstNonEmptyString(
-    skillPatch["skill_path"],
-    evidence.snapshot["skill_path"],
-    skillResources[0]?.detail,
-    "待选择目标 Skill",
-  );
-  const targetBranch = firstNonEmptyString(skillPatch["target_branch"], evidence.snapshot["branch"], sourceRun?.model, "待确认");
-  const patchText = stringFromUnknown(skillPatch["patch"]);
-  const expectedImprovement = stringFromUnknown(skillPatch["expected_improvement"]);
-  const risk = stringFromUnknown(skillPatch["risk"]);
-  const verificationPlan = stringFromUnknown(skillPatch["verification_plan"]);
-  const freshnessStatus = stringFromUnknown(evidence.freshness["status"]) || "未检查";
-  const applyStatus = stringFromUnknown(evidence.apply["status"]) || "未应用";
-  const reEvalAssetId = stringFromUnknown(evidence.reEval["asset_id"]);
-  const reEvalRunId = stringFromUnknown(evidence.reEvalRun["run_id"]);
-
-  return (
-    <section className="grid gap-3 rounded-md border bg-background p-3 text-xs" data-testid="optimizer-case-workbench">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <h3 className="text-sm font-semibold">优化 Skill 工作台</h3>
-          <p className="mt-1 text-muted-foreground">
-            围绕同一个 eval case / run 展示失败原因、目标 Skill、候选 patch、freshness、写回、re-eval 和证据包。
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-1">
-          <Badge variant={candidate.status === "待确认" ? "secondary" : "outline"}>{candidate.status}</Badge>
-          <Badge variant="outline">失败 {candidate.failed_case_count}</Badge>
-        </div>
-      </div>
-
-      <div className="grid gap-2 lg:grid-cols-3">
-        <WorkbenchFact
-          testId="optimizer-workbench-source-case"
-          title="来源 eval case"
-          value={primaryCase?.case_name || sourceAsset?.name || `run ${shortId(candidate.run_id)}`}
-          detail={[
-            sourceAsset ? `${sourceAsset.asset_type} · ${sourceAsset.name}` : "未找到来源资产",
-            primaryCase ? `${caseReviewStatusLabel(primaryCase.status)} · ${primaryCase.tags.map((tag) => stringFromUnknown(tag)).filter(Boolean).slice(0, 3).join(" / ") || "无标签"}` : `${sourceCases.length} 条来源用例`,
-          ].join("；")}
-        />
-        <WorkbenchFact
-          testId="optimizer-workbench-failure"
-          title="失败原因"
-          value={failureReason || "未记录"}
-          detail={weakDimensions.length > 0 ? weakDimensions.map((item) => `${item.name}:${item.priority}`).join(" / ") : `source run ${shortId(candidate.run_id)}`}
-        />
-        <WorkbenchFact
-          testId="optimizer-workbench-target-skill"
-          title="目标 Skill"
-          value={targetSkill}
-          detail={`分支 ${targetBranch} · snapshot ${shortId(stringFromUnknown(evidence.snapshot["skill_hash"])) || "missing"}`}
-        />
-      </div>
-
-      <div className="grid gap-2 lg:grid-cols-[minmax(0,1.4fr)_minmax(0,1fr)]">
-        <div className="grid gap-2 rounded-md border bg-muted/10 px-3 py-2" data-testid="optimizer-workbench-candidate-patch">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <div className="font-medium">候选 patch</div>
-            <Badge variant={patchText ? "secondary" : "outline"}>patch {shortId(stringFromUnknown(skillPatch["patch_hash"])) || "draft"}</Badge>
-          </div>
-          <div className="grid gap-2 md:grid-cols-3">
-            <MiniFact label="预期改善" value={expectedImprovement || candidate.candidate_name} />
-            <MiniFact label="风险" value={risk || "未记录"} />
-            <MiniFact label="验证方式" value={verificationPlan || "待补充验证计划"} />
-          </div>
-          <pre className="max-h-40 overflow-auto whitespace-pre-wrap rounded border bg-background px-2 py-1.5 font-mono text-[11px] leading-5 text-foreground">
-            {patchText || candidate.candidate_content || "候选未包含 skill_patch.patch。"}
-          </pre>
-        </div>
-        <div className="grid gap-2">
-          <WorkbenchFact
-            testId="optimizer-workbench-freshness"
-            title="freshness check"
-            value={freshnessStatus}
-            detail={firstNonEmptyString(evidence.freshness["reason"], evidence.freshness["patch_check"], "尚未执行或等待候选行操作")}
-          />
-          <WorkbenchFact
-            testId="optimizer-workbench-apply"
-            title="应用到工蜂分支"
-            value={applyStatus}
-            detail={firstNonEmptyString(evidence.apply["reason"], evidence.apply["changelog_path"], "从下方候选行执行 Apply + CHANGELOG")}
-          />
-          <WorkbenchFact
-            testId="optimizer-workbench-re-eval"
-            title="自动复测"
-            value={reEvalRunId ? `run ${shortId(reEvalRunId)}` : reEvalAssetId ? "待运行" : "未准备"}
-            detail={reEvalAssetId ? `asset ${shortId(reEvalAssetId)} · status ${stringFromUnknown(evidence.reEvalRun["status"]) || "not run"}` : "从候选行准备 re-eval asset"}
-          />
-        </div>
-      </div>
-
-      <div className="grid gap-1 rounded-md border bg-muted/10 px-3 py-2 text-[11px] text-muted-foreground" data-testid="optimizer-workbench-evidence">
-        <div className="font-medium text-foreground">证据包索引</div>
-        <div className="break-all">candidate {candidate.id} · run {candidate.run_id} · source asset {sourceAsset?.id || "missing"} · cases {sourceCases.length}</div>
-        <div>后续 final artifact 必须把此 candidate 的 patch、freshness、apply、CHANGELOG、re-eval run 和 Gongfeng 写回证据归档。</div>
-      </div>
-    </section>
-  );
-}
-
-function WorkbenchFact({
-  testId,
-  title,
-  value,
-  detail,
-}: {
-  testId: string;
-  title: string;
-  value: string;
-  detail: string;
-}) {
-  return (
-    <div className="grid gap-1 rounded-md border bg-muted/10 px-3 py-2" data-testid={testId}>
-      <div className="text-muted-foreground">{title}</div>
-      <div className="break-words text-sm font-medium text-foreground">{value}</div>
-      <div className="break-words text-[11px] text-muted-foreground">{detail}</div>
-    </div>
-  );
-}
-
-function MiniFact({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0 rounded border bg-background px-2 py-1">
-      <div className="text-[11px] text-muted-foreground">{label}</div>
-      <div className="mt-0.5 break-words text-[11px] text-foreground">{value}</div>
-    </div>
-  );
-}
-
-function preferredOptimizerSourceCase(cases: PromptEvaluationStructuredCase[]): PromptEvaluationStructuredCase | null {
-  return cases.find((item) => issueIdFromStructuredCase(item)) ??
-    cases.find((item) => item.tags.length > 0) ??
-    cases.find((item) => item.case_name && item.case_name !== "默认用例") ??
-    cases[0] ??
-    null;
-}
-
-function OptimizationCandidateList({
-  candidates,
-  skillResources,
-  onUpdateCandidate,
-  updatingCandidateId,
-  onPublishCandidate,
-  publishingCandidateId,
-  onRejectCandidate,
-  rejectingCandidateId,
-}: {
-  candidates: PromptEvaluationOptimizationCandidate[];
-  skillResources: SkillResourceOption[];
-  onUpdateCandidate: (candidateId: string, data: UpdatePromptEvaluationOptimizationCandidateRequest) => void;
-  updatingCandidateId: string | null;
-  onPublishCandidate: (candidateId: string) => void;
-  publishingCandidateId: string | null;
-  onRejectCandidate: (candidateId: string, reason: string) => void;
-  rejectingCandidateId: string | null;
-}) {
-  const workspaceId = useWorkspaceId();
-  const queryClient = useQueryClient();
-  const [editingCandidateId, setEditingCandidateId] = useState<string | null>(null);
-  const [rejectingDraftCandidateId, setRejectingDraftCandidateId] = useState<string | null>(null);
-  const [drafts, setDrafts] = useState<Record<string, UpdatePromptEvaluationOptimizationCandidateRequest>>({});
-  const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({});
-  const [skillDrafts, setSkillDrafts] = useState<Record<string, SkillCandidateWorkflowDraft>>({});
-  const [skillAction, setSkillAction] = useState<{ candidateId: string; action: SkillCandidateWorkflowAction } | null>(null);
-  const invalidateSkillWorkflow = useCallback(() => {
-    if (!workspaceId) return;
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.candidates(workspaceId) });
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId) });
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId) });
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId) });
-  }, [queryClient, workspaceId]);
-  const runSkillWorkflowAction = useCallback(async (
-    candidate: PromptEvaluationOptimizationCandidate,
-    action: SkillCandidateWorkflowAction,
-  ) => {
-    const draft = skillDrafts[candidate.id] ?? defaultSkillCandidateWorkflowDraft(candidate);
-    setSkillAction({ candidateId: candidate.id, action });
-    try {
-      if (action === "freshness") {
-        const result = await api.checkPromptEvaluationSkillCandidateFreshness(candidate.id, {
-          source_resource_id: draft.sourceResourceId || undefined,
-          repo_path: draft.repoPath.trim() || undefined,
-          target_branch: draft.targetBranch.trim() || undefined,
-          skill_path: draft.skillPath.trim() || undefined,
-        });
-        toast.success(`Skill freshness: ${result.status} / ${result.patch_check}`);
-      } else if (action === "apply") {
-        const result = await api.applyPromptEvaluationSkillCandidate(candidate.id, {
-          source_resource_id: draft.sourceResourceId || undefined,
-          repo_path: draft.repoPath.trim() || undefined,
-          target_branch: draft.targetBranch.trim() || undefined,
-          skill_path: draft.skillPath.trim() || undefined,
-          changelog_path: draft.changelogPath.trim() || undefined,
-          allow_dirty: draft.allowDirty,
-          skip_changelog: draft.skipChangelog,
-        });
-        toast.success(`Skill apply: ${result.apply.status}，re-eval ${result.apply.re_eval_required ? "required" : "not required"}`);
-      } else if (action === "prepare-re-eval") {
-        const result = await api.preparePromptEvaluationSkillReEvalAsset(candidate.id, {
-          source_resource_id: draft.sourceResourceId || undefined,
-          repo_path: draft.repoPath.trim() || undefined,
-          target_branch: draft.targetBranch.trim() || undefined,
-          skill_path: draft.skillPath.trim() || undefined,
-          include_draft: draft.includeDraft,
-        });
-        setSkillDrafts((prev) => ({ ...prev, [candidate.id]: { ...draft, reEvalAssetId: result.asset.id } }));
-        toast.success(`Skill re-eval asset ready: ${result.case_count} cases`);
-      } else {
-        const result = await api.runPromptEvaluationSkillReEval(candidate.id, {
-          asset_id: draft.reEvalAssetId.trim() || undefined,
-        });
-        toast.success(`Skill re-eval run: ${result.run.status}，${result.case_count} cases`);
-      }
-      invalidateSkillWorkflow();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Skill workflow action failed");
-    } finally {
-      setSkillAction(null);
-    }
-  }, [invalidateSkillWorkflow, skillDrafts]);
-  if (candidates.length === 0) {
-    return (
-      <div className="rounded-md border border-dashed px-3 py-5 text-center text-sm text-muted-foreground">
-        暂无优化候选。先在运行历史里对失败运行生成候选。
-      </div>
-    );
-  }
-  return (
-    <div className="divide-y rounded-md border">
-      {candidates.map((candidate) => {
-        const editing = editingCandidateId === candidate.id;
-        const writingRejectReason = rejectingDraftCandidateId === candidate.id;
-        const draft = drafts[candidate.id] ?? candidateToDraft(candidate);
-        const rejectReason = rejectReasons[candidate.id] ?? "候选未覆盖验收要求，暂不采纳。";
-        const canHandle = candidate.status === "待确认";
-        const candidateMetrics = candidate.metrics as Record<string, unknown>;
-        const hasManualEdit = Boolean(candidateMetrics["人工编辑"]);
-        const candidatePriority = stringFromRecord(candidateMetrics, "候选优先级");
-        const weakDimensions = promptEvaluationCandidateWeakDimensions(candidateMetrics["失败维度"]);
-        const skillDraft = skillDrafts[candidate.id] ?? defaultSkillCandidateWorkflowDraft(candidate);
-        const skillEvidence = candidateSkillWorkflowEvidence(candidate);
-        return (
-          <div key={candidate.id} data-testid={`prompt-evaluation-candidate-${candidate.id}`} className="grid gap-2 px-3 py-3 md:grid-cols-[minmax(0,1fr)_auto]">
-            <div className="min-w-0">
-              <div className="flex min-w-0 items-center gap-2">
-                <span className="truncate text-sm font-medium">{candidate.candidate_name}</span>
-                <Badge variant={canHandle ? "secondary" : "outline"} className="shrink-0">
-                  {candidate.status} · 失败 {candidate.failed_case_count}
-                </Badge>
-                {candidatePriority && <Badge variant={candidatePriority === "高" ? "destructive" : "outline"} className="shrink-0">优先级 {candidatePriority}</Badge>}
-                {hasManualEdit && <Badge variant="outline" className="shrink-0">已人工编辑</Badge>}
-              </div>
-              <div className="mt-1 text-xs text-muted-foreground">{candidate.rationale || "基于失败用例生成，等待人工确认。"}</div>
-              {weakDimensions.length > 0 && (
-                <div className="mt-2 flex flex-wrap gap-1" data-testid={`optimization-candidate-weak-dimensions-${candidate.id}`}>
-                  {weakDimensions.slice(0, 4).map((item) => (
-                    <Badge key={`${item.name}:${item.priority}`} variant="outline" className="max-w-full truncate">
-                      {item.name} · {item.priority} · {item.score}
-                    </Badge>
-                  ))}
-                </div>
-              )}
-              <div className="mt-2 max-h-28 overflow-auto whitespace-pre-wrap rounded-sm border bg-muted/30 px-2 py-1.5 text-[11px] text-foreground">
-                {candidate.candidate_content}
-              </div>
-              <div className="mt-1 break-all text-[11px] text-muted-foreground">
-                来源运行 {candidate.run_id}{candidate.published_prompt_id ? ` · 已发布 ${candidate.published_prompt_id}` : ""}
-              </div>
-              <SkillCandidateWorkflowPanel
-                candidate={candidate}
-                draft={skillDraft}
-                evidence={skillEvidence}
-                resources={skillResources}
-                pendingAction={skillAction?.candidateId === candidate.id ? skillAction.action : null}
-                disabled={!canHandle}
-                onDraftChange={(next) => setSkillDrafts((prev) => ({ ...prev, [candidate.id]: next }))}
-                onRunAction={(action) => void runSkillWorkflowAction(candidate, action)}
-              />
-              {editing && (
-                <div className="mt-3 grid gap-2 rounded-sm border border-border/70 bg-background px-2 py-2">
-                  <label className="grid gap-1 text-xs">
-                    <span className="text-muted-foreground">候选名称</span>
-                    <Input
-                      value={draft.candidate_name}
-                      onChange={(event) => setDrafts((prev) => ({ ...prev, [candidate.id]: { ...draft, candidate_name: event.target.value } }))}
-                    />
-                  </label>
-                  <label className="grid gap-1 text-xs">
-                    <span className="text-muted-foreground">候选提示词正文</span>
-                    <Textarea
-                      value={draft.candidate_content}
-                      onChange={(event) => setDrafts((prev) => ({ ...prev, [candidate.id]: { ...draft, candidate_content: event.target.value } }))}
-                      className="min-h-36 font-mono text-xs"
-                    />
-                  </label>
-                  <label className="grid gap-1 text-xs">
-                    <span className="text-muted-foreground">优化依据</span>
-                    <Textarea
-                      value={draft.rationale ?? ""}
-                      onChange={(event) => setDrafts((prev) => ({ ...prev, [candidate.id]: { ...draft, rationale: event.target.value } }))}
-                      className="min-h-16 text-xs"
-                    />
-                  </label>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        onUpdateCandidate(candidate.id, {
-                          ...draft,
-                          edit_note: "人工复核后调整候选名称、正文或优化依据。",
-                        });
-                      }}
-                      disabled={updatingCandidateId === candidate.id}
-                    >
-                      {updatingCandidateId === candidate.id ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                      保存候选
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => setEditingCandidateId(null)}>
-                      取消编辑
-                    </Button>
-                  </div>
-                </div>
-              )}
-              {writingRejectReason && (
-                <div className="mt-3 grid gap-2 rounded-sm border border-destructive/30 bg-destructive/5 px-2 py-2">
-                  <label className="grid gap-1 text-xs">
-                    <span className="text-muted-foreground">暂不采纳原因</span>
-                    <Textarea
-                      value={rejectReason}
-                      onChange={(event) => setRejectReasons((prev) => ({ ...prev, [candidate.id]: event.target.value }))}
-                      className="min-h-20 text-xs"
-                    />
-                  </label>
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Button
-                      size="sm"
-                      variant="destructive"
-                      onClick={() => onRejectCandidate(candidate.id, rejectReason)}
-                      disabled={rejectingCandidateId === candidate.id || rejectReason.trim() === ""}
-                    >
-                      {rejectingCandidateId === candidate.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-                      确认暂不采纳
-                    </Button>
-                    <Button size="sm" variant="ghost" onClick={() => setRejectingDraftCandidateId(null)}>
-                      取消
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
-            <div className="flex flex-wrap items-center gap-2 md:justify-end">
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => {
-                  setDrafts((prev) => ({ ...prev, [candidate.id]: candidateToDraft(candidate) }));
-                  setEditingCandidateId(editing ? null : candidate.id);
-                }}
-                disabled={!canHandle}
-              >
-                <BookOpenText className="size-3.5" />
-                {editing ? "收起编辑" : "编辑候选"}
-              </Button>
-              <Button
-                size="sm"
-                variant="outline"
-                onClick={() => setRejectingDraftCandidateId(writingRejectReason ? null : candidate.id)}
-                disabled={!canHandle || rejectingCandidateId === candidate.id}
-              >
-                {rejectingCandidateId === candidate.id ? <Loader2 className="size-3.5 animate-spin" /> : <Trash2 className="size-3.5" />}
-                {writingRejectReason ? "收起原因" : "暂不采纳"}
-              </Button>
-              <Button
-                size="sm"
-                onClick={() => onPublishCandidate(candidate.id)}
-                disabled={!canHandle || publishingCandidateId === candidate.id}
-              >
-                {publishingCandidateId === candidate.id ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                发布新版本
-              </Button>
-            </div>
-          </div>
-        );
-      })}
     </div>
   );
 }
@@ -4535,154 +2767,6 @@ function SkillWorkflowButton({
   );
 }
 
-type OptimizationContractSummary = {
-  schema: string;
-  retryEntry: string;
-  humanReview: string;
-  sourceRun: string;
-};
-
-type OptimizationRoundSummary = {
-  round: string;
-  retry: string;
-  status: string;
-  runId: string;
-  taskId: string;
-  model: string;
-  createdAt: string;
-};
-
-type OptimizationLogSummary = {
-  seq: string;
-  event: string;
-  status: string;
-  round: string;
-  message: string;
-  createdAt: string;
-};
-
-function OptimizationRoundPanel({
-  assetId,
-  contract,
-  rounds,
-}: {
-  assetId: string;
-  contract: OptimizationContractSummary;
-  rounds: OptimizationRoundSummary[];
-}) {
-  return (
-    <section className="rounded-md border border-border/70 bg-muted/15 p-2 text-xs" data-testid={`optimization-studio-rounds-${assetId}`}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="font-medium text-muted-foreground">优化轮次</div>
-        <Badge variant={contract.schema ? "secondary" : "outline"}>{contract.schema || "未声明契约"}</Badge>
-      </div>
-      <div className="mt-1 text-[11px] leading-5 text-muted-foreground">
-        重试入口：{contract.retryEntry || "未记录"} · 人工确认：{contract.humanReview || "未记录"}
-      </div>
-      {rounds.length === 0 ? (
-        <div className="mt-2 rounded border border-dashed px-2 py-2 text-muted-foreground">暂无轮次记录；创建或重试优化运行后会写入。</div>
-      ) : (
-        <div className="mt-2 grid gap-1.5">
-          {rounds.slice(0, 4).map((round) => (
-            <div key={`${round.runId}-${round.round}-${round.retry}`} className="rounded border bg-background px-2 py-1.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-medium text-foreground">轮次 {round.round}</span>
-                <Badge variant={round.status === "已入队" || round.status === "运行中" ? "outline" : "secondary"}>重试 {round.retry}</Badge>
-                <span className="text-muted-foreground">{round.status || "未知状态"}</span>
-              </div>
-              <div className="mt-1 break-all text-[11px] leading-5 text-muted-foreground">
-                运行 {round.runId || "未记录"} · 任务 {round.taskId || "未记录"} · 模型 {round.model || "未记录"} · {round.createdAt || "未记录时间"}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function OptimizationLogStreamPanel({ assetId, logs }: { assetId: string; logs: OptimizationLogSummary[] }) {
-  return (
-    <section className="rounded-md border border-border/70 bg-muted/15 p-2 text-xs" data-testid={`optimization-studio-log-stream-${assetId}`}>
-      <div className="flex items-center justify-between gap-2">
-        <div className="font-medium text-muted-foreground">日志流</div>
-        <Badge variant="outline">{logs.length} 条</Badge>
-      </div>
-      {logs.length === 0 ? (
-        <div className="mt-2 rounded border border-dashed px-2 py-2 text-muted-foreground">暂无日志流；优化运行入队、重试和同步会继续追加。</div>
-      ) : (
-        <div className="mt-2 grid gap-1.5">
-          {logs.slice(-5).reverse().map((log) => (
-            <div key={`${log.seq}-${log.createdAt}-${log.event}`} className="rounded border bg-background px-2 py-1.5">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-medium text-foreground">#{log.seq || "?"} {log.event || "未命名事件"}</span>
-                <Badge variant="outline">轮次 {log.round || "?"}</Badge>
-                <span className="text-muted-foreground">{log.status || "未知状态"}</span>
-              </div>
-              <div className="mt-1 text-[11px] leading-5 text-muted-foreground">{log.message || "未记录消息"} · {log.createdAt || "未记录时间"}</div>
-            </div>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function buildOptimizationContractSummary(asset: PromptEvaluationAsset): OptimizationContractSummary {
-  const payload = asset.payload ?? {};
-  const contract = isRecord(payload["优化运行契约"]) ? payload["优化运行契约"] : {};
-  return {
-    schema: stringFromUnknown(contract["schema"]) || stringFromUnknown(payload["schema"]) || stringFromUnknown(payload["语义版本"]),
-    retryEntry: stringFromUnknown(contract["重试入口"]) || stringFromUnknown((isRecord(payload["重试策略"]) ? payload["重试策略"] : {})["重试入口"]),
-    humanReview: stringFromUnknown(contract["人工确认要求"]),
-    sourceRun: stringFromUnknown(contract["来源运行"]) || stringFromUnknown(payload["来源运行"]),
-  };
-}
-
-function optimizationRunRounds(asset: PromptEvaluationAsset): OptimizationRoundSummary[] {
-  const payload = asset.payload ?? {};
-  const rawRounds = Array.isArray(payload["优化轮次"]) ? payload["优化轮次"] : [];
-  if (rawRounds.length === 0) {
-    const latest = payload["最近Agent运行"];
-    if (!isRecord(latest)) return [];
-    return [optimizationRoundFromRecord(latest, 1)];
-  }
-  return rawRounds.filter(isRecord).map((item, index) => optimizationRoundFromRecord(item, index + 1));
-}
-
-function optimizationRoundFromRecord(record: Record<string, unknown>, fallbackRound: number): OptimizationRoundSummary {
-  return {
-    round: stringFromUnknown(record["轮次"]) || String(fallbackRound),
-    retry: stringFromUnknown(record["重试序号"]) || "0",
-    status: stringFromUnknown(record["状态"]),
-    runId: stringFromUnknown(record["运行ID"]) || stringFromUnknown(record["run_id"]),
-    taskId: stringFromUnknown(record["任务ID"]) || stringFromUnknown(record["trace/task id"]) || stringFromUnknown(record["trace/任务标识"]),
-    model: stringFromUnknown(record["模型"]),
-    createdAt: stringFromUnknown(record["创建时间"]) || stringFromUnknown(record["运行时间"]),
-  };
-}
-
-function optimizationRunLogs(asset: PromptEvaluationAsset): OptimizationLogSummary[] {
-  const payload = asset.payload ?? {};
-  const rawLogs = Array.isArray(payload["日志流"]) ? payload["日志流"] : [];
-  return rawLogs.filter(isRecord).map((item, index) => ({
-    seq: stringFromUnknown(item["seq"]) || String(index + 1),
-    event: stringFromUnknown(item["事件"]) || stringFromUnknown(item["event"]),
-    status: stringFromUnknown(item["状态"]) || stringFromUnknown(item["status"]),
-    round: stringFromUnknown(item["轮次"]),
-    message: stringFromUnknown(item["消息"]) || stringFromUnknown(item["message"]),
-    createdAt: stringFromUnknown(item["记录时间"]) || stringFromUnknown(item["created_at"]),
-  }));
-}
-
-function candidateToDraft(candidate: PromptEvaluationOptimizationCandidate): UpdatePromptEvaluationOptimizationCandidateRequest {
-  return {
-    candidate_name: candidate.candidate_name,
-    candidate_content: candidate.candidate_content,
-    rationale: candidate.rationale,
-  };
-}
-
 function defaultSkillCandidateWorkflowDraft(candidate: PromptEvaluationOptimizationCandidate): SkillCandidateWorkflowDraft {
   const evidence = candidateSkillWorkflowEvidence(candidate);
   const skillPatch = asRecord(candidate.skill_patch);
@@ -4788,14 +2872,6 @@ function shortId(value: string): string {
   return value.length > 10 ? value.slice(0, 10) : value;
 }
 
-function firstNonEmptyString(...values: unknown[]): string {
-  for (const value of values) {
-    const text = stringFromUnknown(value).trim();
-    if (text) return text;
-  }
-  return "";
-}
-
 function issueIdFromStructuredCase(item: PromptEvaluationStructuredCase): string | null {
   const variableIssueId = stringFromUnknown(item.variables["issue_id"]);
   if (variableIssueId) return variableIssueId;
@@ -4824,1659 +2900,6 @@ function caseEvidenceSummary(item: PromptEvaluationStructuredCase): string {
     stageFacts > 0 ? `${stageFacts} 个阶段` : "",
     childLanes > 0 ? `${childLanes} 条子任务 lane` : "",
     timelineNodeCount > 0 ? `${timelineNodeCount} 个事件` : "",
-  ].filter(Boolean);
-  return pieces.join(" · ");
-}
-
-function promptEvaluationCandidateWeakDimensions(value: unknown): Array<{ name: string; priority: string; score: string }> {
-  if (!Array.isArray(value)) return [];
-  return value
-    .map((item) => {
-      if (!item || typeof item !== "object" || Array.isArray(item)) return null;
-      const record = item as Record<string, unknown>;
-      const name = stringFromRecord(record, "维度名称");
-      if (!name) return null;
-      return {
-        name,
-        priority: stringFromRecord(record, "优先级") || "中",
-        score: stringFromRecord(record, "得分") || "未评分",
-      };
-    })
-    .filter((item): item is { name: string; priority: string; score: string } => item !== null);
-}
-
-function RunEvidencePanel({
-  evidence,
-  snapshots,
-  snapshotsLoading,
-  loading,
-  error,
-  skillResources = [],
-  evidenceFocus = EMPTY_EVIDENCE_FOCUS,
-  optimizationActions,
-  creatingSnapshot,
-  onCreateSnapshot,
-}: {
-  evidence: PromptEvaluationRunEvidence | null;
-  snapshots: PromptEvaluationEvidenceSnapshot[];
-  snapshotsLoading: boolean;
-  loading: boolean;
-  error: boolean;
-  skillResources?: SkillResourceOption[];
-  evidenceFocus?: EvidenceFocus;
-  optimizationActions?: FailureReviewActions;
-  creatingSnapshot: boolean;
-  onCreateSnapshot: () => void;
-}) {
-  useEffect(() => {
-    if (!evidence || loading) return;
-    const selector = evidenceFocusSelector(evidenceFocus);
-    if (!selector) return;
-    window.requestAnimationFrame(() => {
-      document.querySelector(selector)?.scrollIntoView({ block: "center" });
-    });
-  }, [evidence, evidenceFocus, loading]);
-
-  if (loading) {
-    return <div className="md:col-span-2 rounded-md border bg-muted/30 px-3 py-4 text-sm text-muted-foreground">正在加载运行证据...</div>;
-  }
-  if (error || !evidence) {
-    return <div className="md:col-span-2 rounded-md border border-dashed px-3 py-4 text-sm text-muted-foreground">运行证据暂不可用</div>;
-  }
-  const externalFailure = buildExternalDependencyFailureNotice(evidence);
-  return (
-    <div className="md:col-span-2 grid gap-3 rounded-md border bg-muted/20 p-3" data-testid={`run-evidence-${evidence.run.id}`}>
-      {externalFailure && (
-        <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs" data-testid="run-evidence-external-failure">
-          <div className="font-medium text-destructive">{externalFailure.title}</div>
-          <div className="mt-1 text-muted-foreground">{externalFailure.detail}</div>
-        </div>
-      )}
-      <EvidenceSnapshotBar
-        snapshots={snapshots}
-        loading={snapshotsLoading}
-        creating={creatingSnapshot}
-        onCreate={onCreateSnapshot}
-      />
-      <div className="grid gap-2 text-xs sm:grid-cols-2 lg:grid-cols-4">
-        <MetricChip label="运行类型" value={displayRunKind(evidence.run.run_kind)} />
-        <MetricChip label="运行状态" value={evidence.run.status} />
-        <MetricChip label="模型" value={evidence.run.model || "未记录"} />
-        <MetricChip label="运行时" value={evidence.run.runtime_provider || "未记录"} />
-        <MetricChip label="触发来源" value={evidence.run.trigger_source || "未记录"} />
-        <MetricChip label="创建者" value={evidence.run.created_by ?? "未记录"} />
-        <MetricChip label="智能体标识" value={evidence.run.agent_id ?? "未记录"} />
-        <MetricChip label="运行时标识" value={evidence.run.runtime_id ?? "未记录"} />
-        <MetricChip label="会话标识" value={evidence.run.chat_session_id ?? "未记录"} />
-        <MetricChip label="总用例数" value={String(evidence.run.total_cases)} />
-        <MetricChip label="通过数" value={String(evidence.run.passed_cases)} />
-        <MetricChip label="失败数" value={String(evidence.run.failed_cases)} />
-        <MetricChip label="总耗时" value={`${evidence.run.total_duration_ms} ms`} />
-        <MetricChip label="平均耗时" value={`${evidence.run.average_duration_ms} ms`} />
-        <MetricChip label="输入 token" value={String(evidence.run.input_tokens)} />
-        <MetricChip label="输出 token" value={String(evidence.run.output_tokens)} />
-        <MetricChip label="预估成本" value={formatMoney(evidence.run.estimated_cost)} />
-        <MetricChip label="trace/任务标识" value={evidence.run.task_id ?? evidence.run.id} />
-        <MetricChip label="开始时间" value={evidence.run.started_at || "未记录"} />
-        <MetricChip label="结束时间" value={evidence.run.completed_at || "未完成"} />
-        <MetricChip label="创建时间" value={evidence.run.created_at || "未记录"} />
-        <MetricChip label="更新时间" value={evidence.run.updated_at || "未记录"} />
-        <MetricChip label="失败原因" value={evidence.run.failure_reason || "无"} />
-        <MetricChip label="评估结论" value={evidence.run.conclusion || "未记录"} />
-      </div>
-
-      <EvidenceContextPanel context={evidence.上下文} />
-      <EvidenceAnchorSummary evidence={evidence} evidenceFocus={evidenceFocus} />
-      <IssueRunReviewPanel evidence={evidence} />
-      <IssueRunEvaluationPanel evidence={evidence} skillResources={skillResources} />
-      <FailureReviewPanel evidence={evidence} evidenceFocus={evidenceFocus} actions={optimizationActions} />
-      <ExecutionSpanTreePanel evidence={evidence} evidenceFocus={evidenceFocus} />
-      <TraceEventTreePanel evidence={evidence} focusedTraceSeq={evidenceFocus.traceSeq} />
-
-      <div className="grid gap-2">
-        <div className="text-xs font-medium text-muted-foreground">用例明细</div>
-        {evidence.trials.length === 0 ? (
-          <div className="rounded-md border border-dashed px-3 py-3 text-xs text-muted-foreground">暂无单次执行记录</div>
-        ) : (
-          <div className="divide-y rounded-md border bg-background">
-            {evidence.trials.map((trial) => {
-              const assertionRows = buildTrialAssertionRows(trial);
-              return (
-                <div
-                  key={trial.id}
-                  className={`grid gap-1 px-3 py-2 text-xs ${isFocusedTrial(evidenceFocus.trialAnchor, trial) ? "bg-emerald-500/10 ring-2 ring-inset ring-emerald-500/30" : ""}`}
-                  data-testid={`run-evidence-trial-${trial.id}`}
-                  data-evidence-anchor={`trial:${trial.id}`}
-                  data-evidence-anchor-alias={`trial:${trial.case_index + 1}`}
-                >
-                  <div className="flex min-w-0 items-center gap-2">
-                    <span className="truncate font-medium">{trial.case_name || `用例 ${trial.case_index + 1}`}</span>
-                    <Badge variant={trial.status === "通过" ? "secondary" : trial.status === "待执行" ? "outline" : "destructive"}>{trial.status}</Badge>
-                    <span className="ml-auto text-muted-foreground">{trial.duration_ms} ms</span>
-                  </div>
-                  {trial.failure_reason && trial.failure_reason !== "无" && <div className="text-muted-foreground">失败原因：{trial.failure_reason}</div>}
-                  {assertionRows.length > 0 && (
-                    <div className="grid gap-1" data-testid={`run-evidence-trial-assertions-${trial.id}`}>
-                      {assertionRows.map((assertion) => {
-                        const focused = isFocusedAssertion(evidenceFocus.assertionAnchor, trial, assertion.index);
-                        return (
-                          <div
-                            key={`${trial.id}-${assertion.index}`}
-                            className={`flex min-w-0 flex-wrap items-center gap-2 rounded border px-2 py-1 text-[11px] leading-5 ${
-                              focused ? "border-emerald-500 bg-emerald-500/10 ring-2 ring-emerald-500/30" : "bg-muted/20"
-                            }`}
-                            data-testid={`run-evidence-assertion-${trial.id}-${assertion.index}`}
-                            data-evidence-anchor={`assertion:${trial.id}:${assertion.index}`}
-                            data-evidence-anchor-alias={`assertion:${trial.case_index + 1}.${assertion.index}`}
-                          >
-                            <Badge variant={assertion.matched ? "secondary" : "destructive"}>{assertion.matched ? "已命中" : "未命中"}</Badge>
-                            <span className="min-w-0 break-words">断言 #{assertion.index}：包含 {assertion.expectedText}</span>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                  {trial.rendered_prompt && <pre className="max-h-32 overflow-auto whitespace-pre-wrap rounded bg-muted/30 p-2 text-[11px] leading-5">{trial.rendered_prompt}</pre>}
-                </div>
-              );
-            })}
-          </div>
-        )}
-      </div>
-
-      <div className="grid gap-2 md:grid-cols-3">
-        <EvidenceList
-          title="任务用量"
-          empty="暂无 token 用量"
-          items={evidence.task_usage.map((usage) => `${usage.provider}/${usage.model} · 输入 ${usage.input_tokens} · 输出 ${usage.output_tokens} · 预估成本 ${formatMoney(usage.estimated_cost ?? 0)} · 缓存读 ${usage.cache_read_tokens} · 缓存写 ${usage.cache_write_tokens}${usage.priced === false ? " · 缺少价格" : ""}`)}
-        />
-        <EvidenceList
-          title="任务消息"
-          empty="暂无任务消息"
-          items={evidence.task_messages.map((message) => `#${message.seq} ${message.type}${message.tool ? ` · ${message.tool}` : ""}：${truncateText(message.content || message.output || "", 160)}`)}
-          anchors={evidence.task_messages.map((message) => `message:${message.seq}`)}
-          focusedAnchor={evidenceFocus.messageSeq ? `message:${evidenceFocus.messageSeq}` : null}
-        />
-        <EvidenceList
-          title="trace 事件"
-          empty="暂无 trace 事件"
-          items={evidence.trace_events.map(formatTraceEventEvidence)}
-        />
-      </div>
-
-      <details className="rounded-md border bg-background px-3 py-2 text-xs">
-        <summary className="cursor-pointer font-medium text-muted-foreground">完整运行证据 JSON</summary>
-        <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap text-[11px] leading-5">{truncateText(JSON.stringify(evidence, null, 2), 5000)}</pre>
-      </details>
-    </div>
-  );
-}
-
-function IssueRunReviewPanel({ evidence }: { evidence: PromptEvaluationRunEvidence }) {
-  const issueId = extractEvidenceIssueId(evidence);
-  const paths = useWorkspacePaths();
-  const treeQuery = useQuery({
-    ...issueExecutionTreeOptions(issueId ?? ""),
-    enabled: Boolean(issueId),
-  });
-  if (!issueId) return null;
-  if (treeQuery.isLoading || treeQuery.isFetching) {
-    return (
-      <section className="rounded-md border bg-background p-2 text-xs text-muted-foreground" data-testid="run-evidence-issue-review-loading">
-        正在加载关联 issue 运行复盘...
-      </section>
-    );
-  }
-  if (treeQuery.isError || !treeQuery.data) {
-    return (
-      <section className="rounded-md border border-dashed bg-background p-2 text-xs text-muted-foreground" data-testid="run-evidence-issue-review-unavailable">
-        关联 issue 运行复盘暂不可用：{issueId}
-      </section>
-    );
-  }
-  return <IssueRunReviewTree tree={treeQuery.data} issueId={issueId} issueHref={paths.issueDetail(issueId)} />;
-}
-
-function IssueRunEvaluationPanel({ evidence, skillResources }: { evidence: PromptEvaluationRunEvidence; skillResources: SkillResourceOption[] }) {
-  const workspaceId = useWorkspaceId();
-  const queryClient = useQueryClient();
-  const [createdCaseId, setCreatedCaseId] = useState<string | null>(null);
-  const [evalRun, setEvalRun] = useState<PromptEvaluationRun | null>(null);
-  const issueId = extractEvidenceIssueId(evidence);
-  const sourceTrial = selectIssueRunEvaluationTrial(evidence);
-  const canCreate = Boolean(issueId && sourceTrial);
-  const evalRunEvidenceQuery = useQuery({
-    queryKey: evalRun && workspaceId ? promptLibraryKeys.runEvidence(workspaceId, evalRun.id) : ["prompt-evaluation", "run-evidence", "disabled"],
-    queryFn: () => api.getPromptEvaluationRunEvidence(evalRun?.id ?? ""),
-    enabled: Boolean(evalRun?.id),
-  });
-  const createCaseMut = useMutation({
-    mutationFn: () => api.createPromptEvaluationCase(buildIssueRunEvaluationCaseRequest(evidence, issueId ?? "", sourceTrial)),
-    onSuccess: (item) => {
-      setCreatedCaseId(item.id);
-      if (workspaceId) {
-        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId) });
-        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId) });
-        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId) });
-      }
-      toast.success("已从运行复盘加入评测用例");
-    },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "加入评测失败");
-    },
-  });
-  const runEvalMut = useMutation({
-    mutationFn: async () => {
-      await api.runPromptEvaluationAsset(evidence.run.asset_id);
-      const runs = (await api.listPromptEvaluationRuns({ asset_id: evidence.run.asset_id, limit: 10 })).items;
-      return runs.find((run) => run.id !== evidence.run.id) ?? runs[0] ?? null;
-    },
-    onSuccess: (run) => {
-      if (run) {
-        setEvalRun(run);
-        if (workspaceId) {
-          queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runEvidence(workspaceId, run.id) });
-        }
-      }
-      if (workspaceId) {
-        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId) });
-        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId) });
-        queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId) });
-      }
-      toast.success(run ? `评测运行已生成：${run.status}` : "评测运行已生成");
-    },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "运行评测失败");
-    },
-  });
-  if (!issueId) return null;
-  const canRunEval = Boolean(createdCaseId);
-  return (
-    <section className="grid gap-2 rounded-md border bg-background p-2 text-xs" data-testid="run-evidence-eval-link">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="font-medium text-muted-foreground">复盘加入评测</div>
-          <div className="mt-1 break-all text-[11px] leading-5 text-muted-foreground">
-            issue {issueId} · run {evidence.run.id} · asset {evidence.run.asset_id}
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Badge variant={sourceTrial ? "secondary" : "outline"}>{sourceTrial ? `来源用例 ${sourceTrial.case_index + 1}` : "缺少 trial"}</Badge>
-          {createdCaseId && <Badge variant="secondary">case {shortId(createdCaseId)}</Badge>}
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => createCaseMut.mutate()}
-            disabled={!canCreate || createCaseMut.isPending}
-            data-testid="run-evidence-create-eval-case"
-          >
-            {createCaseMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-            加入评测
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={() => runEvalMut.mutate()}
-            disabled={!canRunEval || runEvalMut.isPending}
-            data-testid="run-evidence-run-eval"
-          >
-            {runEvalMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-            运行评测
-          </Button>
-        </div>
-      </div>
-      <div className="grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-3">
-        <div className="truncate">case 来源 {sourceTrial?.case_name || "未选择"}</div>
-        <div className="truncate">运行状态 {evidence.run.status}</div>
-        <div className="truncate">失败原因 {sourceTrial?.failure_reason || evidence.run.failure_reason || "无"}</div>
-      </div>
-      {createdCaseId && (
-        <div className="rounded border border-info/30 bg-info/5 px-2 py-1 text-[11px] leading-5 text-muted-foreground" data-testid="run-evidence-created-eval-case">
-          已创建评测用例 {createdCaseId}，可在数据集/测试套件用例列表继续确认、运行 eval 和生成优化候选。
-        </div>
-      )}
-      {evalRun && (
-        <div className="rounded border border-emerald-500/30 bg-emerald-500/5 px-2 py-1 text-[11px] leading-5 text-muted-foreground" data-testid="run-evidence-created-eval-run">
-          已生成评测运行 {evalRun.id}，状态 {evalRun.status}，用例 {evalRun.total_cases}，失败 {evalRun.failed_cases}。
-        </div>
-      )}
-      {evalRun && (
-        <IssueRunEvaluationReview
-          run={evalRun}
-          evidence={evalRunEvidenceQuery.data ?? null}
-          loading={evalRunEvidenceQuery.isLoading || evalRunEvidenceQuery.isFetching}
-          createdCaseId={createdCaseId}
-          skillResources={skillResources}
-        />
-      )}
-    </section>
-  );
-}
-
-function IssueRunEvaluationReview({
-  run,
-  evidence,
-  loading,
-  createdCaseId,
-  skillResources,
-}: {
-  run: PromptEvaluationRun;
-  evidence: PromptEvaluationRunEvidence | null;
-  loading: boolean;
-  createdCaseId: string | null;
-  skillResources: SkillResourceOption[];
-}) {
-  const trials = evidence?.trials ?? [];
-  const failedTrials = trials.filter((trial) => trial.status === "未通过" || trial.status === "失败" || trial.failure_reason);
-  const score = Number.isFinite(run.pass_rate) ? Math.round(run.pass_rate * 100) : 0;
-  const evidenceCount = (evidence?.trace_events.length ?? 0) + (evidence?.execution_spans.length ?? 0) + (evidence?.tool_call_chains.length ?? 0);
-  const workspaceId = useWorkspaceId();
-  const queryClient = useQueryClient();
-  const [skillDrafts, setSkillDrafts] = useState<Record<string, SkillCandidateWorkflowDraft>>({});
-  const [skillAction, setSkillAction] = useState<{ candidateId: string; action: SkillCandidateWorkflowAction } | null>(null);
-  const runCandidatesQuery = useQuery({
-    queryKey: workspaceId ? ["prompt-library", workspaceId, "optimization-candidates", "run", run.id] as const : ["prompt-library", "no-workspace", "optimization-candidates", "run", run.id] as const,
-    queryFn: () => api.listPromptEvaluationOptimizationCandidates({ run_id: run.id, limit: 5 }),
-    enabled: Boolean(workspaceId && run.id),
-  });
-  const candidate = runCandidatesQuery.data?.items[0] ?? null;
-  const invalidateRunCandidates = useCallback(() => {
-    if (!workspaceId) return;
-    queryClient.invalidateQueries({ queryKey: ["prompt-library", workspaceId, "optimization-candidates", "run", run.id] });
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.candidates(workspaceId) });
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId) });
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.runs(workspaceId) });
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId) });
-  }, [queryClient, run.id, workspaceId]);
-  const generateCandidateMut = useMutation({
-    mutationFn: () => api.createPromptEvaluationOptimizationCandidate(run.id),
-    onSuccess: () => {
-      invalidateRunCandidates();
-      toast.success("已从失败评测生成优化候选");
-    },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : "生成优化候选失败");
-    },
-  });
-  const runSkillWorkflowAction = useCallback(async (
-    item: PromptEvaluationOptimizationCandidate,
-    action: SkillCandidateWorkflowAction,
-  ) => {
-    const draft = skillDrafts[item.id] ?? defaultSkillCandidateWorkflowDraft(item);
-    setSkillAction({ candidateId: item.id, action });
-    try {
-      if (action === "freshness") {
-        const result = await api.checkPromptEvaluationSkillCandidateFreshness(item.id, {
-          source_resource_id: draft.sourceResourceId || undefined,
-          repo_path: draft.repoPath.trim() || undefined,
-          target_branch: draft.targetBranch.trim() || undefined,
-          skill_path: draft.skillPath.trim() || undefined,
-        });
-        toast.success(`Skill freshness: ${result.status} / ${result.patch_check}`);
-      } else if (action === "apply") {
-        const result = await api.applyPromptEvaluationSkillCandidate(item.id, {
-          source_resource_id: draft.sourceResourceId || undefined,
-          repo_path: draft.repoPath.trim() || undefined,
-          target_branch: draft.targetBranch.trim() || undefined,
-          skill_path: draft.skillPath.trim() || undefined,
-          changelog_path: draft.changelogPath.trim() || undefined,
-          allow_dirty: draft.allowDirty,
-          skip_changelog: draft.skipChangelog,
-        });
-        toast.success(`Skill apply: ${result.apply.status}，re-eval ${result.apply.re_eval_required ? "required" : "not required"}`);
-      } else if (action === "prepare-re-eval") {
-        const result = await api.preparePromptEvaluationSkillReEvalAsset(item.id, {
-          source_resource_id: draft.sourceResourceId || undefined,
-          repo_path: draft.repoPath.trim() || undefined,
-          target_branch: draft.targetBranch.trim() || undefined,
-          skill_path: draft.skillPath.trim() || undefined,
-          include_draft: draft.includeDraft,
-        });
-        setSkillDrafts((prev) => ({ ...prev, [item.id]: { ...draft, reEvalAssetId: result.asset.id } }));
-        toast.success(`Skill re-eval asset ready: ${result.case_count} cases`);
-      } else {
-        const result = await api.runPromptEvaluationSkillReEval(item.id, {
-          asset_id: draft.reEvalAssetId.trim() || undefined,
-        });
-        toast.success(`Skill re-eval run: ${result.run.status}，${result.case_count} cases`);
-      }
-      invalidateRunCandidates();
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : "Skill workflow action failed");
-    } finally {
-      setSkillAction(null);
-    }
-  }, [invalidateRunCandidates, skillDrafts]);
-  return (
-    <div className="grid gap-2 rounded border border-border/70 bg-muted/10 px-2 py-2" data-testid="run-evidence-eval-run-review">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="font-medium text-muted-foreground">评测结果复盘</div>
-        <div className="flex flex-wrap items-center gap-1">
-          <Badge variant={run.status === "通过" ? "secondary" : run.failed_cases > 0 ? "destructive" : "outline"}>{run.status}</Badge>
-          <Badge variant="outline">评分 {score}%</Badge>
-          <Badge variant={failedTrials.length > 0 ? "destructive" : "outline"}>失败 {failedTrials.length}</Badge>
-          <Badge variant={evidenceCount > 0 ? "secondary" : "outline"}>证据 {evidenceCount}</Badge>
-          <Button
-            size="sm"
-            variant="secondary"
-            className="h-7 text-xs"
-            onClick={() => generateCandidateMut.mutate()}
-            disabled={run.failed_cases <= 0 || generateCandidateMut.isPending || candidate !== null}
-            data-testid="run-evidence-generate-candidate"
-          >
-            {generateCandidateMut.isPending ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-            生成候选
-          </Button>
-        </div>
-      </div>
-      <div className="grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-4">
-        <div className="truncate">eval run {shortId(run.id)}</div>
-        <div className="truncate">case {shortId(createdCaseId ?? "") || "未记录"}</div>
-        <div className="truncate">trial {loading ? "加载中" : trials.length}</div>
-        <div className="truncate">耗时 {formatEvidenceMilliseconds(run.total_duration_ms)}</div>
-      </div>
-      {loading ? (
-        <div className="rounded border border-dashed px-2 py-2 text-[11px] text-muted-foreground">正在加载 eval evidence...</div>
-      ) : trials.length === 0 ? (
-        <div className="rounded border border-dashed px-2 py-2 text-[11px] text-muted-foreground">暂无 eval trial 证据。</div>
-      ) : (
-        <div className="grid gap-1" data-testid="run-evidence-eval-trials">
-          {trials.slice(0, 4).map((trial) => (
-            <div key={trial.id} className="grid gap-1 rounded border bg-background px-2 py-1 text-[11px] leading-5 sm:grid-cols-[minmax(0,1fr)_80px_80px]">
-              <span className="truncate font-medium text-foreground" title={trial.case_name}>
-                {trial.case_name || `用例 ${trial.case_index + 1}`}
-              </span>
-              <span className="text-muted-foreground">{trial.status}</span>
-              <span className="text-right tabular-nums text-muted-foreground">{formatEvidenceMilliseconds(trial.duration_ms)}</span>
-              {(trial.failure_reason || trial.rendered_prompt) && (
-                <span className="min-w-0 truncate text-muted-foreground sm:col-span-3" title={trial.failure_reason || trial.rendered_prompt}>
-                  {trial.failure_reason || trial.rendered_prompt}
-                </span>
-              )}
-            </div>
-          ))}
-        </div>
-      )}
-      {candidate && (
-        <div className="grid gap-1 rounded border border-info/30 bg-info/5 px-2 py-2 text-[11px] leading-5" data-testid="run-evidence-generated-candidate">
-          <div className="flex flex-wrap items-center gap-1.5">
-            <Badge variant="secondary" className="break-all">candidate {candidate.id}</Badge>
-            <Badge variant="outline">{candidate.status}</Badge>
-            <Badge variant="outline" className="break-all">来源 {candidate.run_id}</Badge>
-            <Badge variant={candidate.failed_case_count > 0 ? "destructive" : "outline"}>失败 {candidate.failed_case_count}</Badge>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-6 px-2 text-[11px]"
-              onClick={() => runCandidatesQuery.refetch()}
-              disabled={runCandidatesQuery.isFetching}
-              data-testid="run-evidence-refresh-candidate"
-            >
-              {runCandidatesQuery.isFetching ? <Loader2 className="size-3 animate-spin" /> : <RefreshCw className="size-3" />}
-              刷新候选
-            </Button>
-          </div>
-          <div className="font-medium text-foreground">{candidate.candidate_name}</div>
-          <div className="text-muted-foreground">{candidate.rationale || "基于失败 eval run 生成，等待人工确认。"}</div>
-          <div className="max-h-20 overflow-auto whitespace-pre-wrap rounded bg-background px-2 py-1 text-muted-foreground">{candidate.candidate_content}</div>
-          <SkillCandidateWorkflowPanel
-            candidate={candidate}
-            draft={skillDrafts[candidate.id] ?? defaultSkillCandidateWorkflowDraft(candidate)}
-            evidence={candidateSkillWorkflowEvidence(candidate)}
-            resources={skillResources}
-            pendingAction={skillAction?.candidateId === candidate.id ? skillAction.action : null}
-            disabled={candidate.status !== "待确认"}
-            onDraftChange={(next) => setSkillDrafts((prev) => ({ ...prev, [candidate.id]: next }))}
-            onRunAction={(action) => void runSkillWorkflowAction(candidate, action)}
-          />
-        </div>
-      )}
-    </div>
-  );
-}
-
-function selectIssueRunEvaluationTrial(evidence: PromptEvaluationRunEvidence): PromptEvaluationTrial | null {
-  return evidence.trials.find((trial) => trial.status === "未通过" || trial.status === "失败" || trial.failure_reason) ?? evidence.trials[0] ?? null;
-}
-
-function buildIssueRunEvaluationCaseRequest(
-  evidence: PromptEvaluationRunEvidence,
-  issueId: string,
-  trial: PromptEvaluationTrial | null,
-): CreatePromptEvaluationCaseRequest {
-  const caseIndex = Math.floor(Date.now() / 1000);
-  const sourceName = trial?.case_name || evidence.run.conclusion || "运行复盘评测样本";
-  const failureReason = trial?.failure_reason || evidence.run.failure_reason || "运行复盘未记录失败原因";
-  const expectedContains = [
-    "issue",
-    "evidence",
-    evidence.run.failed_cases > 0 ? "failure" : "acceptance",
-  ];
-  return {
-    asset_id: evidence.run.asset_id,
-    prompt_id: evidence.run.prompt_id,
-    case_index: caseIndex,
-    case_name: `Issue ${shortId(issueId)} · ${sourceName}`.slice(0, 120),
-    variables: {
-      issue_id: issueId,
-      run_id: evidence.run.id,
-      trial_id: trial?.id ?? "",
-      failure_reason: failureReason,
-    },
-    expected_contains: expectedContains,
-    input: {
-      来源: "run_evidence_issue_review",
-      issue_id: issueId,
-      run_id: evidence.run.id,
-      trial_id: trial?.id ?? "",
-      trial_case_index: trial?.case_index ?? null,
-      rendered_prompt: trial?.rendered_prompt ?? "",
-      trial_input: trial?.input ?? {},
-      run_status: evidence.run.status,
-      evidence_summary: {
-        task_id: evidence.run.task_id,
-        trace_events: evidence.trace_events.length,
-        spans: evidence.execution_spans.length,
-        tool_chains: evidence.tool_call_chains.length,
-      },
-    },
-    expected: {
-      期望行为: "基于 issue/run 复盘证据复现失败或验收判断，并保留 trace/evidence 回链。",
-      原始失败原因: failureReason,
-      来源证据: {
-        issue_id: issueId,
-        run_id: evidence.run.id,
-        trial_id: trial?.id ?? "",
-      },
-    },
-    tags: ["issue-review", "run-evidence", issueId, evidence.run.status],
-    status: "启用",
-  };
-}
-
-function IssueRunReviewTree({
-  tree,
-  issueId,
-  issueHref,
-}: {
-  tree: IssueExecutionTreeResponse;
-  issueId: string;
-  issueHref: string;
-}) {
-  const summary = tree.issue_summary;
-  const nodes = tree.timeline_nodes ?? [];
-  const preview = nodes.slice(0, 8);
-  const tokenTotal = summary
-    ? summary.total_input_tokens + summary.total_output_tokens + summary.total_cache_read_tokens + summary.total_cache_write_tokens
-    : 0;
-  const summaryCounts = tree.summary ?? {};
-  return (
-    <section className="grid gap-2 rounded-md border bg-background p-2 text-xs" data-testid="run-evidence-issue-review">
-      <div className="flex flex-wrap items-start justify-between gap-2">
-        <div className="min-w-0">
-          <div className="font-medium text-muted-foreground">关联 Issue 运行复盘</div>
-          <div className="mt-1 break-all text-[11px] leading-5 text-muted-foreground">
-            issue {issueId} · 根任务 {tree.root.issue.identifier || tree.root.issue.id}
-          </div>
-        </div>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <Badge variant={nodes.length > 0 ? "secondary" : "outline"}>节点 {nodes.length}</Badge>
-          <Badge variant={tokenTotal > 0 ? "secondary" : "outline"}>token {tokenTotal.toLocaleString()}</Badge>
-          <Badge variant={summary?.usage_unavailable ? "destructive" : "outline"}>
-            {summary?.usage_unavailable ? "usage unavailable" : "usage checked"}
-          </Badge>
-          <AppLink
-            href={issueHref}
-            className="inline-flex h-7 items-center rounded-md bg-secondary px-2 text-xs font-medium text-secondary-foreground hover:bg-secondary/80"
-          >
-            打开 Issue
-          </AppLink>
-        </div>
-      </div>
-      <div className="grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
-        <div className="truncate">验收状态 {summary?.acceptance_status || "unknown"}</div>
-        <div className="truncate">总耗时 {formatEvidenceMilliseconds(summary?.total_duration_ms ?? 0)}</div>
-        <div className="truncate">消息 {summary?.message_count ?? 0} / 轮次 {summary?.agent_turn_count ?? 0}</div>
-        <div className="truncate">trace {summary?.trace_event_count ?? 0}</div>
-        <div className="truncate">子任务 {Number(summaryCounts["子任务数"] ?? 0)}</div>
-        <div className="truncate">SOP {Number(summaryCounts["SOP执行数"] ?? 0)} / 事件 {Number(summaryCounts["SOP事件数"] ?? 0)}</div>
-        <div className="truncate">工具 {Number(summaryCounts["工具调用数"] ?? 0)} / 异常 {Number(summaryCounts["异常工具数"] ?? 0)}</div>
-        <div className="truncate">证据锚点 {nodes.reduce((sum, node) => sum + node.evidence_refs.length, 0)}</div>
-      </div>
-      {summary?.failure_summary && (
-        <div className="rounded border border-destructive/30 bg-destructive/5 px-2 py-1 text-[11px] leading-5 text-destructive" data-testid="run-evidence-issue-review-failure">
-          失败摘要：{summary.failure_summary}
-        </div>
-      )}
-      <div className="overflow-hidden rounded border border-dashed border-border/70 bg-muted/10" data-testid="run-evidence-issue-review-nodes">
-        <div className="grid grid-cols-[92px_minmax(0,1fr)_76px_76px_80px] gap-2 border-b border-border/60 px-1.5 py-1 text-[11px] font-medium text-muted-foreground">
-          <span>节点</span>
-          <span>摘要</span>
-          <span className="text-right">耗时</span>
-          <span className="text-right">token</span>
-          <span className="text-right">证据</span>
-        </div>
-        {preview.length === 0 ? (
-          <div className="px-2 py-2 text-[11px] text-muted-foreground">暂无 issue timeline 节点。</div>
-        ) : (
-          preview.map((node) => <IssueRunReviewNodeRow key={node.node_id} node={node} />)
-        )}
-      </div>
-      {nodes.length > preview.length && (
-        <div className="text-[11px] leading-5 text-muted-foreground">还有 {nodes.length - preview.length} 个 issue timeline 节点未在预览中展示。</div>
-      )}
-    </section>
-  );
-}
-
-function IssueRunReviewNodeRow({ node }: { node: IssueTimelineNode }) {
-  const tokenTotal = node.input_tokens + node.output_tokens + node.cache_read_tokens + node.cache_write_tokens;
-  return (
-    <div className="grid grid-cols-[92px_minmax(0,1fr)_76px_76px_80px] gap-2 border-b border-border/40 px-1.5 py-1 text-[11px] leading-5 last:border-b-0">
-      <span className="truncate text-muted-foreground" title={node.node_type}>
-        {issueTimelineNodeTypeLabel(node.node_type)}
-      </span>
-      <span className="min-w-0 truncate text-foreground" title={node.summary}>
-        {node.summary || node.status}
-        {node.child_issue_id ? ` · child ${node.child_issue_id}` : ""}
-        {node.usage_unavailable_trace ? " · usage unavailable" : ""}
-      </span>
-      <span className="text-right tabular-nums text-muted-foreground">{formatEvidenceMilliseconds(node.duration_ms)}</span>
-      <span className="text-right tabular-nums text-muted-foreground">{tokenTotal > 0 ? tokenTotal.toLocaleString() : "-"}</span>
-      <span className="text-right tabular-nums text-muted-foreground">{node.evidence_refs.length}</span>
-    </div>
-  );
-}
-
-function issueTimelineNodeTypeLabel(type: IssueTimelineNode["node_type"]): string {
-  switch (type) {
-    case "agent_task":
-      return "Agent";
-    case "squad_step":
-      return "SOP";
-    case "tool_call":
-      return "工具";
-    case "evidence":
-      return "证据";
-    case "approval":
-      return "审批";
-    case "child_issue_ref":
-      return "子任务";
-    case "source_fetch":
-      return "来源";
-    case "status_change":
-      return "状态";
-  }
-}
-
-function extractEvidenceIssueId(evidence: PromptEvaluationRunEvidence): string | null {
-  const context = evidence.上下文 ?? {};
-  const candidates = [
-    context["issue"],
-    context["issue_id"],
-    evidence.evidence?.["issue_id"],
-    evidence.evidence?.["issue"],
-  ];
-  for (const candidate of candidates) {
-    const value = stringFromUnknown(candidate).trim();
-    if (value) return value;
-  }
-  for (const trial of evidence.trials ?? []) {
-    const trialCandidates = [
-      trial.input?.["issue_id"],
-      trial.input?.["issue"],
-      trial.evidence?.["issue_id"],
-      trial.evidence?.["issue"],
-      trial.rendered_prompt,
-      trial.case_name,
-    ];
-    for (const candidate of trialCandidates) {
-      const value = extractUuidFromUnknown(candidate);
-      if (value) return value;
-    }
-  }
-  return null;
-}
-
-function extractUuidFromUnknown(value: unknown): string {
-  const raw = stringFromUnknown(value);
-  const match = raw.match(/\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b/i);
-  return match?.[0] ?? "";
-}
-
-function EvidenceSnapshotBar({
-  snapshots,
-  loading,
-  creating,
-  onCreate,
-}: {
-  snapshots: PromptEvaluationEvidenceSnapshot[];
-  loading: boolean;
-  creating: boolean;
-  onCreate: () => void;
-}) {
-  const latest = snapshots[0] ?? null;
-  const latestSummary = latest?.summary ?? {};
-  const status = latest ? stringFromUnknown(latestSummary["运行状态"]) || "未记录" : "暂无服务端归档";
-  const taskId = latest ? stringFromUnknown(latestSummary["trace/task id"]) || "无任务标识" : "无任务标识";
-  return (
-    <div className="flex flex-col gap-2 rounded-md border bg-background px-3 py-2 text-xs sm:flex-row sm:items-center sm:justify-between" data-testid="run-evidence-snapshots">
-      <div className="min-w-0">
-        <div className="font-medium text-muted-foreground">服务端证据快照</div>
-        <div className="mt-1 truncate text-[11px] text-muted-foreground">
-          {loading
-            ? "正在读取归档状态..."
-            : latest
-              ? `${latest.snapshot_type} · ${latest.created_at || "未记录时间"} · ${status} · task ${taskId}`
-              : "暂无服务端归档；建议在演示前归档一份可复核证据。"}
-        </div>
-      </div>
-      <div className="flex shrink-0 items-center gap-2">
-        <Badge variant={latest ? "secondary" : "outline"} className="text-[11px]">
-          {latest ? `${snapshots.length} 条快照` : "未归档"}
-        </Badge>
-        <Button size="sm" variant="secondary" onClick={onCreate} disabled={creating}>
-          {creating ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
-          归档快照
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-function EvidenceContextPanel({ context }: { context: Record<string, unknown> }) {
-  const inputOutput = isRecord(context["输入输出摘要"]) ? context["输入输出摘要"] : {};
-  const completeness = isRecord(context["证据完整性"]) ? context["证据完整性"] : {};
-  const items = [
-    `工作区 ${stringFromUnknown(context["工作区"]) || "未记录"}`,
-    `提示词 ${stringFromUnknown(context["提示词名称"]) || stringFromUnknown(context["提示词"]) || "未绑定"}`,
-    `评测资产 ${stringFromUnknown(context["评测资产名称"]) || stringFromUnknown(context["评测资产"]) || "未记录"}`,
-    `智能体 ${stringFromUnknown(context["执行Agent名称"]) || stringFromUnknown(context["执行Agent"]) || "未记录"}`,
-    `运行时 ${stringFromUnknown(context["运行时名称"]) || stringFromUnknown(context["运行时标识"]) || stringFromUnknown(context["运行时"]) || "未记录"}`,
-    `issue ${stringFromUnknown(context["issue标题"]) || stringFromUnknown(context["issue"]) || "未绑定"}`,
-    `项目 ${stringFromUnknown(context["项目名称"]) || stringFromUnknown(context["项目"]) || "未绑定"}`,
-    `小队 ${stringFromUnknown(context["小队名称"]) || stringFromUnknown(context["小队"]) || "未绑定"}`,
-    `任务 ${stringFromUnknown(context["任务"]) || "未创建"}`,
-    `任务状态 ${stringFromUnknown(context["任务状态"]) || stringFromUnknown(context["状态"]) || "未记录"}`,
-    `执行模式 ${stringFromUnknown(context["任务执行模式"]) || "未记录"}`,
-  ];
-  const evidenceItems = [
-    `用例 ${stringFromUnknown(completeness["用例数"]) || "0"}`,
-    `用量证据 ${stringFromUnknown(completeness["任务用量条数"]) || "0"}`,
-    `任务消息 ${stringFromUnknown(completeness["任务消息条数"]) || "0"}`,
-    `trace 事件 ${stringFromUnknown(completeness["trace事件条数"]) || "0"}`,
-  ];
-  return (
-    <div className="grid gap-2 rounded-md border bg-background p-2 text-xs" data-testid="run-evidence-context">
-      <div className="font-medium text-muted-foreground">上下文摘要</div>
-      <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-4">
-        {items.map((item) => (
-          <div key={item} className="truncate rounded bg-muted/30 px-2 py-1 text-[11px] leading-5">
-            {item}
-          </div>
-        ))}
-      </div>
-      <div className="grid gap-1 sm:grid-cols-2 lg:grid-cols-4">
-        {evidenceItems.map((item) => (
-          <div key={item} className="truncate rounded bg-muted/30 px-2 py-1 text-[11px] leading-5">
-            {item}
-          </div>
-        ))}
-      </div>
-      <div className="grid gap-1 text-[11px] leading-5 text-muted-foreground">
-        <div>输入摘要：{truncateText(stringFromUnknown(inputOutput["用例输入摘要"]) || "未记录", 220)}</div>
-        <div>输出摘要：{truncateText(stringFromUnknown(inputOutput["用例输出摘要"]) || "未记录", 220)}</div>
-        <div>消息摘要：{truncateText(stringFromUnknown(inputOutput["消息摘要"]) || "未记录", 220)}</div>
-      </div>
-    </div>
-  );
-}
-
-function MetricChip({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0 rounded-md border bg-background px-2 py-1.5" data-testid={`run-evidence-metric-${label}`}>
-      <div className="text-[11px] text-muted-foreground">{label}</div>
-      <div className="truncate font-medium">{value || "未记录"}</div>
-    </div>
-  );
-}
-
-function EvidenceList({
-  title,
-  empty,
-  items,
-  anchors,
-  focusedAnchor,
-}: {
-  title: string;
-  empty: string;
-  items: string[];
-  anchors?: Array<string | null>;
-  focusedAnchor?: string | null;
-}) {
-  return (
-    <div className="grid gap-1.5 rounded-md border bg-background p-2 text-xs">
-      <div className="font-medium text-muted-foreground">{title}</div>
-      {items.length === 0 ? (
-        <div className="text-muted-foreground">{empty}</div>
-      ) : (
-        <div className="grid gap-1">
-          {items.slice(0, 6).map((item, index) => (
-            <div
-              key={`${title}-${index}`}
-              className={`break-words rounded px-2 py-1 text-[11px] leading-5 ${
-                focusedAnchor && anchors?.[index] === focusedAnchor ? "bg-emerald-500/10 ring-2 ring-emerald-500/30" : "bg-muted/30"
-              }`}
-              data-evidence-anchor={anchors?.[index] ?? undefined}
-            >
-              {item || "空消息"}
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-type FailureReviewActions = {
-  canGenerate: boolean;
-  hasPendingCandidate: boolean;
-  generatingCandidate: boolean;
-  runningOptimizationAgent: boolean;
-  onGenerateCandidate: () => void;
-  onRunOptimizationAgent: () => void;
-};
-
-function FailureReviewPanel({
-  evidence,
-  evidenceFocus,
-  actions,
-}: {
-  evidence: PromptEvaluationRunEvidence;
-  evidenceFocus: EvidenceFocus;
-  actions?: FailureReviewActions;
-}) {
-  const items = buildFailureReviewItems(evidence);
-  if (items.length === 0) return null;
-  const handleDownloadReport = () => {
-    const markdown = buildFailureReviewMarkdown(evidence, items, window.location.href);
-    downloadTextFile(
-      markdown,
-      `multica-failure-review-${evidence.run.id.slice(0, 8)}-${new Date().toISOString().replace(/[:.]/g, "-")}.md`,
-      "text/markdown;charset=utf-8",
-    );
-    toast.success("失败复盘报告已导出");
-  };
-  return (
-    <div className="grid gap-1.5 rounded-md border border-destructive/30 bg-destructive/5 p-2 text-xs" data-testid="run-evidence-failure-review">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="font-medium text-destructive">失败复盘入口</div>
-        <div className="flex flex-wrap items-center gap-2">
-          <Badge variant="destructive">{items.length} 条线索</Badge>
-          <Button size="sm" variant="outline" onClick={handleDownloadReport} data-testid="run-evidence-failure-download-report">
-            <Download className="size-3.5" />
-            导出复盘报告
-          </Button>
-        </div>
-      </div>
-      <div className="grid gap-1.5 md:grid-cols-2">
-        {items.map((item, index) => {
-          const focused = evidenceFocus.failureAnchor === item.kind;
-          return (
-            <div
-              key={`${item.kind}-${index}`}
-              className={`grid gap-1 rounded border px-2 py-1.5 text-[11px] leading-5 ${
-                focused ? "border-destructive bg-destructive/10 ring-2 ring-destructive/30" : "bg-background"
-              }`}
-              data-testid={`run-evidence-failure-${item.kind}`}
-              data-evidence-anchor={item.anchor}
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="outline">{item.label}</Badge>
-                <span className="font-medium text-foreground">{item.title}</span>
-              </div>
-              <div className="break-words text-muted-foreground">{truncateText(item.detail, 220)}</div>
-            </div>
-          );
-        })}
-      </div>
-      {actions?.canGenerate && (
-        <div className="flex flex-wrap items-center justify-end gap-2 border-t border-destructive/20 pt-2" data-testid="run-evidence-failure-review-actions">
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={actions.onRunOptimizationAgent}
-            disabled={actions.runningOptimizationAgent}
-            data-testid="run-evidence-failure-run-optimization-agent"
-          >
-            {actions.runningOptimizationAgent ? <Loader2 className="size-3.5 animate-spin" /> : <Play className="size-3.5" />}
-            智能体优化任务
-          </Button>
-          <Button
-            size="sm"
-            variant="secondary"
-            onClick={actions.onGenerateCandidate}
-            disabled={actions.generatingCandidate || actions.hasPendingCandidate}
-            data-testid="run-evidence-failure-generate-candidate"
-          >
-            {actions.generatingCandidate ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-            {actions.hasPendingCandidate ? "已有候选" : "生成优化候选"}
-          </Button>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function downloadTextFile(content: string, filename: string, type: string) {
-  const blob = new Blob([content], { type });
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement("a");
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.append(anchor);
-  anchor.click();
-  anchor.remove();
-  URL.revokeObjectURL(url);
-}
-
-function EvidenceAnchorSummary({
-  evidence,
-  evidenceFocus,
-}: {
-  evidence: PromptEvaluationRunEvidence;
-  evidenceFocus: EvidenceFocus;
-}) {
-  const traceCount = evidence.trace_events.length;
-  const toolCount = evidence.tool_call_chains.length;
-  const trialCount = evidence.trials.length;
-  const assertionCount = evidence.trials.reduce((sum, trial) => sum + buildTrialAssertionRows(trial).length, 0);
-  const messageCount = evidence.task_messages.length;
-  const spanCount = evidence.execution_spans.length;
-  const failureCount = buildFailureReviewItems(evidence).length;
-  if (traceCount === 0 && toolCount === 0 && trialCount === 0 && assertionCount === 0 && messageCount === 0 && spanCount === 0 && failureCount === 0) return null;
-  return (
-    <div className="grid gap-1.5 rounded-md border bg-background p-2 text-xs" data-testid="run-evidence-anchor-summary">
-      <div className="font-medium text-muted-foreground">证据锚点</div>
-      <div className="grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-2 lg:grid-cols-3">
-        <div>
-          trace 锚点：{traceCount > 0 ? `trace=1 到 trace=${traceCount}，或 trace=<事件id>` : "暂无 trace"}
-          {evidenceFocus.traceSeq ? ` · 当前定位 trace=${evidenceFocus.traceSeq}` : ""}
-        </div>
-        <div>
-          工具锚点：{toolCount > 0 ? "使用 tool=<工具链id>" : "暂无工具链"}
-          {evidenceFocus.toolChainId ? ` · 当前定位 tool=${evidenceFocus.toolChainId}` : ""}
-        </div>
-        <div>
-          用例锚点：{trialCount > 0 ? "使用 trial=<用例id或序号>" : "暂无用例"}
-          {evidenceFocus.trialAnchor ? ` · 当前定位 trial=${evidenceFocus.trialAnchor}` : ""}
-        </div>
-        <div>
-          断言锚点：{assertionCount > 0 ? "使用 assertion=<用例id>:<序号> 或 assertion=<用例序号>.<断言序号>" : "暂无断言"}
-          {evidenceFocus.assertionAnchor ? ` · 当前定位 assertion=${evidenceFocus.assertionAnchor}` : ""}
-        </div>
-        <div>
-          消息锚点：{messageCount > 0 ? "使用 message=<消息seq>" : "暂无消息"}
-          {evidenceFocus.messageSeq ? ` · 当前定位 message=${evidenceFocus.messageSeq}` : ""}
-        </div>
-        <div>
-          span 锚点：{spanCount > 0 ? "使用 span=<span seq或id>" : "暂无 span"}
-          {evidenceFocus.spanAnchor ? ` · 当前定位 span=${evidenceFocus.spanAnchor}` : ""}
-        </div>
-        <div>
-          失败锚点：{failureCount > 0 ? "使用 failure=run|trial|assertion|tool|trace" : "暂无失败线索"}
-          {evidenceFocus.failureAnchor ? ` · 当前定位 failure=${evidenceFocus.failureAnchor}` : ""}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ExecutionSpanTreePanel({ evidence, evidenceFocus }: { evidence: PromptEvaluationRunEvidence; evidenceFocus: EvidenceFocus }) {
-  const spans = evidence.execution_spans ?? [];
-  const toolCallChains = evidence.tool_call_chains ?? [];
-  const toolCallSummary = evidence.tool_call_summary ?? [];
-  const summary = evidence.execution_summary ?? {};
-  const tokenMarked = Number(summary["token标记合计"] ?? 0);
-  return (
-    <section className="grid gap-2 rounded-md border bg-background p-2 text-xs" data-testid="run-evidence-execution-spans">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <div className="font-medium text-muted-foreground">执行观测树</div>
-          <div className="mt-1 break-all text-[11px] leading-5 text-muted-foreground">
-            根任务 {String(summary["根任务"] ?? evidence.run.task_id ?? evidence.run.id)} · {evidence.run.status} · {evidence.run.trigger_source || "未记录触发来源"}
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          <Badge variant="outline">span {spans.length}</Badge>
-          <Badge variant="outline">生命周期 {String(summary["生命周期span数"] ?? 0)}</Badge>
-          <Badge variant="outline">工具 {String(summary["工具span数"] ?? 0)}</Badge>
-          <Badge variant={toolCallChains.length > 0 ? "secondary" : "outline"}>工具链 {String(summary["工具调用链数"] ?? toolCallChains.length)}</Badge>
-          <Badge variant="outline">消息 {String(summary["消息span数"] ?? 0)}</Badge>
-          <Badge variant={Number(summary["用量span数"] ?? 0) > 0 ? "secondary" : "outline"}>用量 {String(summary["用量span数"] ?? 0)}</Badge>
-          <Badge variant={summary["是否缺失用量"] ? "destructive" : "outline"}>{summary["是否缺失用量"] ? "缺失用量" : "用量正常"}</Badge>
-          <Badge variant={tokenMarked > 0 ? "secondary" : "outline"}>token标记 {tokenMarked}</Badge>
-        </div>
-      </div>
-      <ExecutionSpanTimeline spans={spans} runStartedAt={evidence.run.started_at || evidence.run.created_at} runDurationMs={evidence.run.total_duration_ms} />
-      <ToolCallSummaryPanel rows={toolCallSummary} />
-      <ToolCallChainPanel chains={toolCallChains} focusedToolChainId={evidenceFocus.toolChainId} />
-      {spans.length === 0 ? (
-        <div className="rounded-md border border-dashed px-3 py-3 text-muted-foreground">暂无执行 span；真实任务开始后会从 trace、消息和用量证据中生成观测树。</div>
-      ) : (
-        <div className="grid gap-1.5">
-          {spans.map((span) => (
-            <ExecutionSpanNode key={span.id} span={span} focused={isFocusedSpan(evidenceFocus.spanAnchor, span)} />
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function ExecutionSpanTimeline({
-  spans,
-  runStartedAt,
-  runDurationMs,
-}: {
-  spans: PromptEvaluationRunEvidence["execution_spans"];
-  runStartedAt: string;
-  runDurationMs: number;
-}) {
-  if (spans.length === 0) return null;
-  const base = Date.parse(runStartedAt);
-  const hasTimeBase = Number.isFinite(base);
-  const maxEnd = Math.max(
-    runDurationMs,
-    ...spans.map((span, index) => {
-      const startOffset = hasTimeBase && span.created_at ? Math.max(0, Date.parse(span.created_at) - base) : index * 1000;
-      return startOffset + Math.max(span.duration_ms, 120);
-    }),
-  );
-  const total = Math.max(maxEnd, 1000);
-  return (
-    <div className="grid gap-1.5 rounded-md border bg-muted/10 p-2" data-testid="run-evidence-horizontal-timeline">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="font-medium text-muted-foreground">横向时序图</div>
-        <Badge variant={hasTimeBase ? "secondary" : "outline"}>
-          {hasTimeBase ? `跨度 ${formatEvidenceMilliseconds(total)}` : "按顺序展示"}
-        </Badge>
-      </div>
-      <div className="grid gap-1.5">
-        {spans.slice(0, 12).map((span, index) => {
-          const rawStart = hasTimeBase && span.created_at ? Date.parse(span.created_at) - base : index * Math.max(total / spans.length, 1);
-          const left = Math.max(0, Math.min(96, (rawStart / total) * 100));
-          const width = Math.max(4, Math.min(100 - left, (Math.max(span.duration_ms, 120) / total) * 100));
-          return (
-            <div key={span.id} className="grid gap-1 text-[11px] leading-5 sm:grid-cols-[132px_minmax(0,1fr)_92px] sm:items-center">
-              <div className="truncate text-muted-foreground" title={span.span_name}>
-                #{span.seq} {span.span_kind}
-              </div>
-              <div className="relative h-6 rounded border bg-background">
-                <div
-                  className={`absolute top-1 h-4 rounded ${span.status === "失败" || span.status === "failed" ? "bg-destructive/70" : span.token_total > 0 ? "bg-emerald-500/70" : "bg-info/70"}`}
-                  style={{ left: `${left}%`, width: `${width}%` }}
-                  title={`${span.span_name} · ${formatEvidenceMilliseconds(span.duration_ms)} · token ${span.token_total}`}
-                />
-              </div>
-              <div className="truncate text-right tabular-nums text-muted-foreground">
-                {formatEvidenceMilliseconds(span.duration_ms)} · {span.token_total > 0 ? `${span.token_total.toLocaleString()} tok` : span.status}
-              </div>
-            </div>
-          );
-        })}
-      </div>
-      {spans.length > 12 && (
-        <div className="text-[11px] leading-5 text-muted-foreground">还有 {spans.length - 12} 个 span 未在时序图预览中展示</div>
-      )}
-    </div>
-  );
-}
-
-function formatEvidenceMilliseconds(ms: number): string {
-  if (!Number.isFinite(ms) || ms <= 0) return "0ms";
-  if (ms < 1000) return `${Math.round(ms)}ms`;
-  const seconds = Math.round(ms / 1000);
-  if (seconds < 60) return `${seconds}s`;
-  const minutes = Math.floor(seconds / 60);
-  const rest = seconds % 60;
-  return rest === 0 ? `${minutes}m` : `${minutes}m ${rest}s`;
-}
-
-function ToolCallSummaryPanel({ rows }: { rows: PromptEvaluationRunEvidence["tool_call_summary"] }) {
-  if (rows.length === 0) {
-    return null;
-  }
-  return (
-    <div className="grid gap-1.5 rounded-md border bg-muted/10 p-2" data-testid="run-evidence-tool-call-summary">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="font-medium text-muted-foreground">工具调用摘要</div>
-        <Badge variant="outline">{rows.length} 个工具</Badge>
-      </div>
-      <div className="grid gap-1.5">
-        {rows.map((row) => {
-          const categoryText = Object.entries(row.result_categories ?? {})
-            .map(([name, count]) => `${name} ${count}`)
-            .join(" · ");
-          return (
-            <div key={row.tool} className="grid gap-1 rounded border bg-background px-2 py-1.5 text-[11px] leading-5" data-testid={`run-evidence-tool-call-summary-${row.tool}`}>
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-medium text-foreground">{row.tool || "未记录工具"}</span>
-                <Badge variant={row.needs_attention ? "destructive" : "secondary"}>{row.needs_attention ? "需要关注" : "结果正常"}</Badge>
-                <span className="text-muted-foreground">
-                  调用 {row.total_calls} · 配对 {row.paired_calls} · 缺少 {row.missing_result_calls} · 孤立 {row.orphan_result_calls} · 异常线索 {row.failure_signal_calls}
-                </span>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
-                <span>平均耗时 {formatDuration(row.average_duration_ms ?? 0)}</span>
-                <span>最慢 {formatDuration(row.max_duration_ms ?? 0)}</span>
-                {row.slowest_tool_call_chain_id && <span>最慢链路 {row.slowest_tool_call_chain_id}</span>}
-              </div>
-              {categoryText && <div className="break-words text-muted-foreground">结果分类：{categoryText}</div>}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function ToolCallChainPanel({
-  chains,
-  focusedToolChainId,
-}: {
-  chains: PromptEvaluationRunEvidence["tool_call_chains"];
-  focusedToolChainId: string | null;
-}) {
-  const [query, setQuery] = useState("");
-  const [statusFilter, setStatusFilter] = useState("全部");
-  const visibleChains = useMemo(() => {
-    const normalizedQuery = query.trim().toLowerCase();
-    return chains.filter((chain) => {
-      if (statusFilter !== "全部" && chain.status !== statusFilter) return false;
-      if (!normalizedQuery) return true;
-      const haystack = [chain.tool, chain.status, chain.result_category, chain.summary, chain.output, chain.id, chain.use_seq, chain.result_seq]
-        .filter((value) => value != null)
-        .map((value) => String(value).toLowerCase())
-        .join(" ");
-      return haystack.includes(normalizedQuery);
-    });
-  }, [chains, query, statusFilter]);
-  const statuses = useMemo(() => ["全部", ...Array.from(new Set(chains.map((chain) => chain.status).filter(Boolean)))], [chains]);
-  if (chains.length === 0) {
-    return (
-      <div className="rounded-md border border-dashed px-3 py-2 text-[11px] text-muted-foreground" data-testid="run-evidence-tool-call-chains">
-        暂无工具调用链；当任务产生工具调用和工具结果时会自动配对展示。
-      </div>
-    );
-  }
-  return (
-    <div className="grid gap-1.5 rounded-md border bg-muted/10 p-2" data-testid="run-evidence-tool-call-chains">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="font-medium text-muted-foreground">工具调用链</div>
-        <Badge variant="outline">
-          {visibleChains.length}/{chains.length} 条
-        </Badge>
-      </div>
-      <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_160px]" data-testid="run-evidence-tool-call-chain-filters">
-        <Input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="搜索工具、结果、摘要" className="h-8 text-[11px]" aria-label="搜索工具调用链" />
-        <select
-          value={statusFilter}
-          onChange={(event) => setStatusFilter(event.target.value)}
-          className="h-8 rounded-md border border-input bg-background px-2 text-[11px]"
-          aria-label="筛选工具调用链状态"
-        >
-          {statuses.map((status) => (
-            <option key={status} value={status}>
-              {status}
-            </option>
-          ))}
-        </select>
-      </div>
-      <div className="grid gap-1.5">
-        {visibleChains.length === 0 ? (
-          <div className="rounded border border-dashed px-2 py-2 text-[11px] text-muted-foreground">没有匹配的工具调用链。</div>
-        ) : null}
-        {visibleChains.map((chain) => {
-          const focused = focusedToolChainId === chain.id;
-          return (
-            <div
-              key={chain.id}
-              className={`grid gap-1 rounded border px-2 py-1.5 text-[11px] leading-5 ${
-                focused ? "border-emerald-500 bg-emerald-500/10 ring-2 ring-emerald-500/30" : "bg-background"
-              }`}
-              data-testid={`run-evidence-tool-call-chain-${chain.id}`}
-              data-evidence-anchor={`tool:${chain.id}`}
-            >
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="font-medium text-foreground">{chain.tool || "未记录工具"}</span>
-                <Badge variant={chain.status === "已配对" ? "secondary" : chain.status === "缺少结果" ? "destructive" : "outline"}>{chain.status || "未记录"}</Badge>
-                {chain.result_category && <Badge variant="outline">{chain.result_category}</Badge>}
-                {chain.failure_signal && <Badge variant="destructive">异常线索</Badge>}
-                <span className="text-muted-foreground">
-                  调用 #{chain.use_seq ?? "-"} · 结果 #{chain.result_seq ?? "-"} · 耗时 {formatDuration(chain.duration_ms ?? 0)}
-                </span>
-              </div>
-              <div className="break-words text-muted-foreground">{chain.summary || "未记录摘要"}</div>
-              {chain.failure_reason && <div className="break-words text-muted-foreground">异常原因：{chain.failure_reason}</div>}
-              {chain.output && <div className="break-words text-muted-foreground">输出：{truncateText(chain.output, 180)}</div>}
-            </div>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function ExecutionSpanNode({ span, focused }: { span: PromptEvaluationRunEvidence["execution_spans"][number]; focused: boolean }) {
-  const tone = executionSpanTone(span.span_kind, span.status);
-  return (
-    <div
-      className={`grid gap-1 rounded-md border border-l-4 ${tone} px-3 py-2 ${
-        focused ? "border-emerald-500 bg-emerald-500/10 ring-2 ring-emerald-500/30" : "bg-muted/15"
-      }`}
-      data-testid={`run-evidence-execution-span-${span.seq}`}
-      data-evidence-anchor={`span:${span.seq}`}
-      data-evidence-anchor-alias={`span:${span.id}`}
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-mono text-[11px] text-muted-foreground">#{span.seq}</span>
-        <span className="font-medium text-foreground">{span.span_name || span.span_kind}</span>
-        <Badge variant={span.span_kind.includes("缺失") || span.status === "失败" ? "destructive" : span.span_kind.includes("用量") ? "secondary" : "outline"}>{span.span_kind}</Badge>
-        <span className="text-muted-foreground">{span.status || "未记录"}</span>
-      </div>
-      <div className="grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
-        <div className="truncate">时间 {span.created_at || "未记录"}</div>
-        <div className="truncate">耗时 {span.duration_ms ? `${span.duration_ms}ms` : "未记录"}</div>
-        <div className="truncate">模型 {span.provider || "未记录"}/{span.model || "未记录"}</div>
-        <div className="truncate">token {span.token_total}</div>
-      </div>
-      {span.tool && <div className="break-words text-[11px] leading-5 text-muted-foreground">工具：{span.tool}</div>}
-      {span.summary && <div className="break-words text-[11px] leading-5 text-muted-foreground">摘要：{span.summary}</div>}
-    </div>
-  );
-}
-
-function executionSpanTone(spanKind: string, status: string): string {
-  if (spanKind.includes("缺失") || status === "失败") return "border-l-destructive/70";
-  if (spanKind.includes("用量")) return "border-l-sky-500/70";
-  if (spanKind.includes("工具")) return "border-l-amber-500/70";
-  if (spanKind.includes("消息")) return "border-l-violet-500/70";
-  return "border-l-emerald-500/70";
-}
-
-function TraceEventTreePanel({ evidence, focusedTraceSeq }: { evidence: PromptEvaluationRunEvidence; focusedTraceSeq: string | null }) {
-  const events = evidence.trace_events;
-  const tokenTotal = events.reduce((sum, event) => sum + traceEventTokenTotal(event), 0);
-  const lifecycleCount = events.filter((event) => event.event_type.startsWith("task.")).length;
-  const usageCount = events.filter((event) => event.event_type === "llm.usage_reported" || traceEventTokenTotal(event) > 0).length;
-  const rootTaskId = evidence.run.task_id ?? events[0]?.task_id ?? evidence.run.id;
-  return (
-    <section className="grid gap-2 rounded-md border bg-background p-2 text-xs" data-testid="run-evidence-trace-tree">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
-        <div className="min-w-0">
-          <div className="font-medium text-muted-foreground">任务事件树</div>
-          <div className="mt-1 break-all text-[11px] leading-5 text-muted-foreground">
-            根任务 {rootTaskId} · {evidence.run.trigger_source || "未记录触发来源"} · {evidence.run.status}
-          </div>
-        </div>
-        <div className="flex flex-wrap gap-1.5">
-          <Badge variant="outline">事件 {events.length}</Badge>
-          <Badge variant="outline">生命周期 {lifecycleCount}</Badge>
-          <Badge variant={usageCount > 0 ? "secondary" : "outline"}>用量事件 {usageCount}</Badge>
-          <Badge variant={tokenTotal > 0 ? "secondary" : "outline"}>token {tokenTotal}</Badge>
-        </div>
-      </div>
-      {events.length === 0 ? (
-        <div className="rounded-md border border-dashed px-3 py-3 text-muted-foreground">暂无 trace 事件；真实任务开始后会按时间顺序追加生命周期、模型用量和失败原因。</div>
-      ) : (
-        <div className="grid gap-1.5">
-          {events.map((event, index) => (
-            <TraceEventTreeNode key={event.id} event={event} index={index} focused={isFocusedTraceEvent(focusedTraceSeq, event, index)} />
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function TraceEventTreeNode({
-  event,
-  index,
-  focused,
-}: {
-  event: PromptEvaluationRunEvidence["trace_events"][number];
-  index: number;
-  focused: boolean;
-}) {
-  const tokenTotal = traceEventTokenTotal(event);
-  const metadataSummary = traceMetadataSummary(event.metadata);
-  return (
-    <div
-      className={`grid gap-1 rounded-md border border-l-4 border-l-emerald-500/70 px-3 py-2 ${
-        focused ? "border-emerald-500 bg-emerald-500/10 ring-2 ring-emerald-500/30" : "bg-muted/15"
-      }`}
-      data-testid={`run-evidence-trace-node-${index + 1}`}
-      data-evidence-anchor={`trace:${index + 1}`}
-      data-evidence-anchor-alias={`trace:${event.id}`}
-    >
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="font-mono text-[11px] text-muted-foreground">#{index + 1}</span>
-        <span className="font-medium text-foreground">{event.event_name || traceEventStageLabel(event.event_type)}</span>
-        <Badge variant={event.status === "completed" || event.status === "success" ? "secondary" : event.status === "failed" ? "destructive" : "outline"}>
-          {traceEventStageLabel(event.event_type)}
-        </Badge>
-        <span className="text-muted-foreground">{event.status || "未知状态"}</span>
-      </div>
-      <div className="grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-2 lg:grid-cols-4">
-        <div className="truncate">时间 {event.created_at || "未记录"}</div>
-        <div className="truncate">耗时 {formatTraceEventDuration(event)}</div>
-        <div className="truncate">模型 {event.provider || "未记录"}/{event.model || "未记录"}</div>
-        <div className="truncate">token {tokenTotal}</div>
-      </div>
-      {(event.failure_reason && event.failure_reason !== "无") || event.error_type ? (
-        <div className="rounded bg-destructive/10 px-2 py-1 text-[11px] leading-5 text-destructive">
-          失败原因：{event.failure_reason || "未记录"}{event.error_type ? ` · 错误类型：${event.error_type}` : ""}
-        </div>
-      ) : null}
-      {metadataSummary && <div className="break-words text-[11px] leading-5 text-muted-foreground">元数据：{metadataSummary}</div>}
-    </div>
-  );
-}
-
-function traceEventStageLabel(eventType: string): string {
-  switch (eventType) {
-    case "task.queued":
-      return "任务入队";
-    case "task.dispatched":
-      return "任务领取";
-    case "task.started":
-      return "任务开始";
-    case "task.waiting_local_directory":
-      return "等待本地目录";
-    case "task.completed":
-      return "任务完成";
-    case "task.failed":
-      return "任务失败";
-    case "task.cancelled":
-      return "任务取消";
-    case "llm.usage_reported":
-      return "模型用量";
-    default:
-      return eventType || "未分类事件";
-  }
-}
-
-function traceEventTokenTotal(event: PromptEvaluationRunEvidence["trace_events"][number]): number {
-  return event.input_tokens + event.output_tokens + event.cache_read_tokens + event.cache_write_tokens;
-}
-
-function formatTraceEventDuration(event: PromptEvaluationRunEvidence["trace_events"][number]): string {
-  const parts = [
-    event.queue_wait_ms != null ? `排队 ${event.queue_wait_ms}ms` : "",
-    event.run_ms != null ? `执行 ${event.run_ms}ms` : "",
-    event.duration_ms != null ? `阶段 ${event.duration_ms}ms` : "",
-    event.total_ms != null ? `总计 ${event.total_ms}ms` : "",
-  ].filter(Boolean);
-  return parts.join(" / ") || "未记录";
-}
-
-function traceMetadataSummary(metadata: Record<string, unknown>): string {
-  return Object.entries(metadata)
-    .slice(0, 4)
-    .map(([key, value]) => `${key}=${truncateText(stringFromUnknown(value) || JSON.stringify(value) || "", 80)}`)
-    .join("，");
-}
-
-function buildExternalDependencyFailureNotice(evidence: PromptEvaluationRunEvidence): { title: string; detail: string } | null {
-  const failureText = [
-    evidence.run.failure_reason,
-    evidence.run.conclusion,
-    ...evidence.task_messages.map((message) => message.content || message.output || ""),
-    ...evidence.trace_events.map((event) => [event.failure_reason, event.error_type, event.event_name].filter(Boolean).join(" ")),
-  ].join("\n");
-  if (failureText.includes("模型额度不足") || failureText.includes("无可用Token额度") || failureText.includes("Token额度")) {
-    return {
-      title: "外部依赖失败：模型额度不足",
-      detail: "Codex 已领取并执行任务，但上游模型返回额度不足；本次不会产生 token 用量和成本，需补充 Codex/OpenAI 额度后重新运行。",
-    };
-  }
-  if (evidence.run.status === "失败" && evidence.run.task_id && evidence.task_usage.length === 0) {
-    return {
-      title: "外部依赖失败：未采集到模型用量",
-      detail: "智能体任务失败且没有任务用量记录，请结合任务消息和 trace 事件确认运行时、模型或网络依赖状态。",
-    };
-  }
-  return null;
-}
-
-function evidenceFocusSelector(focus: EvidenceFocus): string {
-  const selectors: string[] = [];
-  if (focus.toolChainId) selectors.push(evidenceAnchorSelector("data-evidence-anchor", `tool:${focus.toolChainId}`));
-  if (focus.traceSeq) {
-    selectors.push(evidenceAnchorSelector("data-evidence-anchor", `trace:${focus.traceSeq}`));
-    selectors.push(evidenceAnchorSelector("data-evidence-anchor-alias", `trace:${focus.traceSeq}`));
-  }
-  if (focus.trialAnchor) {
-    selectors.push(evidenceAnchorSelector("data-evidence-anchor", `trial:${focus.trialAnchor}`));
-    selectors.push(evidenceAnchorSelector("data-evidence-anchor-alias", `trial:${focus.trialAnchor}`));
-  }
-  if (focus.assertionAnchor) {
-    selectors.push(evidenceAnchorSelector("data-evidence-anchor", `assertion:${focus.assertionAnchor}`));
-    selectors.push(evidenceAnchorSelector("data-evidence-anchor-alias", `assertion:${focus.assertionAnchor}`));
-  }
-  if (focus.messageSeq) selectors.push(evidenceAnchorSelector("data-evidence-anchor", `message:${focus.messageSeq}`));
-  if (focus.spanAnchor) {
-    selectors.push(evidenceAnchorSelector("data-evidence-anchor", `span:${focus.spanAnchor}`));
-    selectors.push(evidenceAnchorSelector("data-evidence-anchor-alias", `span:${focus.spanAnchor}`));
-  }
-  if (focus.failureAnchor) selectors.push(evidenceAnchorSelector("data-evidence-anchor", `failure:${focus.failureAnchor}`));
-  return selectors.join(",");
-}
-
-function evidenceAnchorSelector(attribute: string, value: string): string {
-  return `[${attribute}="${cssEscape(value)}"]`;
-}
-
-function isFocusedTrial(focusedTrialAnchor: string | null, trial: PromptEvaluationRunEvidence["trials"][number]): boolean {
-  if (!focusedTrialAnchor) return false;
-  return focusedTrialAnchor === trial.id || focusedTrialAnchor === String(trial.case_index + 1);
-}
-
-function isFocusedSpan(focusedSpanAnchor: string | null, span: PromptEvaluationRunEvidence["execution_spans"][number]): boolean {
-  if (!focusedSpanAnchor) return false;
-  return focusedSpanAnchor === span.id || focusedSpanAnchor === String(span.seq);
-}
-
-function isFocusedTraceEvent(focusedTraceAnchor: string | null, event: PromptEvaluationRunEvidence["trace_events"][number], index: number): boolean {
-  if (!focusedTraceAnchor) return false;
-  return focusedTraceAnchor === event.id || focusedTraceAnchor === String(index + 1);
-}
-
-function isFocusedAssertion(focusedAssertionAnchor: string | null, trial: PromptEvaluationRunEvidence["trials"][number], assertionIndex: number): boolean {
-  if (!focusedAssertionAnchor) return false;
-  return focusedAssertionAnchor === `${trial.id}:${assertionIndex}` || focusedAssertionAnchor === `${trial.case_index + 1}.${assertionIndex}`;
-}
-
-function buildTrialAssertionRows(trial: PromptEvaluationRunEvidence["trials"][number]): Array<{ index: number; expectedText: string; matched: boolean }> {
-  const expected = stringListFromUnknownMap(trial.expected, "期望包含", "expected_contains");
-  const matched = new Set(stringListFromUnknownMap(trial.output, "已匹配", "matched_contains"));
-  return expected.map((expectedText, index) => ({
-    index: index + 1,
-    expectedText,
-    matched: matched.has(expectedText),
-  }));
-}
-
-function stringListFromUnknownMap(value: unknown, ...keys: string[]): string[] {
-  if (!value || typeof value !== "object") return [];
-  const record = value as Record<string, unknown>;
-  for (const key of keys) {
-    const raw = record[key];
-    if (Array.isArray(raw)) {
-      return raw.map((item) => String(item)).filter(Boolean);
-    }
-  }
-  return [];
-}
-
-type FailureReviewItem = {
-  kind: "run" | "trial" | "assertion" | "tool" | "trace";
-  label: string;
-  title: string;
-  detail: string;
-  anchor: string;
-};
-
-function buildFailureReviewItems(evidence: PromptEvaluationRunEvidence): FailureReviewItem[] {
-  const items: FailureReviewItem[] = [];
-  if (evidence.run.failure_reason && evidence.run.failure_reason !== "无") {
-    items.push({
-      kind: "run",
-      label: "运行",
-      title: "运行失败原因",
-      detail: evidence.run.failure_reason,
-      anchor: "failure:run",
-    });
-  }
-  for (const trial of evidence.trials) {
-    if ((trial.status === "未通过" || trial.status === "失败" || trial.status === "需人工复核") && trial.failure_reason && trial.failure_reason !== "无") {
-      items.push({
-        kind: "trial",
-        label: "用例",
-        title: trial.case_name || `用例 ${trial.case_index + 1}`,
-        detail: trial.failure_reason,
-        anchor: "failure:trial",
-      });
-    }
-    for (const assertion of buildTrialAssertionRows(trial)) {
-      if (!assertion.matched) {
-        items.push({
-          kind: "assertion",
-          label: "断言",
-          title: trial.case_name || `用例 ${trial.case_index + 1}`,
-          detail: `断言 #${assertion.index} 未命中：包含 ${assertion.expectedText}`,
-          anchor: "failure:assertion",
-        });
-      }
-    }
-  }
-  for (const chain of evidence.tool_call_chains) {
-    if (chain.failure_signal || (chain.failure_reason && chain.failure_reason !== "无")) {
-      items.push({
-        kind: "tool",
-        label: "工具",
-        title: chain.tool || "未记录工具",
-        detail: chain.failure_reason || chain.summary || "工具调用存在异常线索",
-        anchor: "failure:tool",
-      });
-    }
-  }
-  for (const event of evidence.trace_events) {
-    if ((event.failure_reason && event.failure_reason !== "无") || event.error_type) {
-      items.push({
-        kind: "trace",
-        label: "trace",
-        title: event.event_name || traceEventStageLabel(event.event_type),
-        detail: [event.failure_reason, event.error_type].filter(Boolean).join(" · "),
-        anchor: "failure:trace",
-      });
-    }
-  }
-  return items.slice(0, 8);
-}
-
-function buildFailureReviewMarkdown(evidence: PromptEvaluationRunEvidence, items: FailureReviewItem[], sourceUrl: string): string {
-  const run = evidence.run;
-  const context = evidence.上下文 ?? {};
-  const completeness = isRecord(context["证据完整性"]) ? context["证据完整性"] : {};
-  const firstTraceId = evidence.trace_events[0]?.id ?? "";
-  const failedTrials = evidence.trials.filter((trial) => trial.status === "未通过" || trial.status === "失败" || trial.status === "需人工复核");
-  const failedToolChains = evidence.tool_call_chains.filter((chain) => chain.failure_signal || (chain.failure_reason && chain.failure_reason !== "无"));
-  const failedTraceEvents = evidence.trace_events.filter((event) => (event.failure_reason && event.failure_reason !== "无") || event.error_type);
-  const lines = [
-    "# Multica 失败复盘报告",
-    "",
-    `- 语义版本：multica.failure_review_report.v1`,
-    `- 导出时间：${new Date().toISOString()}`,
-    `- 页面链接：${sourceUrl || "未记录"}`,
-    `- 运行 ID：${run.id}`,
-    `- 运行状态：${run.status}`,
-    `- 运行类型：${displayRunKind(run.run_kind)}`,
-    `- 触发来源：${run.trigger_source || "未记录"}`,
-    `- 任务 ID：${run.task_id || "未绑定"}`,
-    `- 模型：${run.model || "未记录"}`,
-    `- 运行时：${run.runtime_provider || "未记录"}`,
-    `- 总耗时：${formatDuration(run.total_duration_ms)}`,
-    `- token：输入 ${run.input_tokens}，输出 ${run.output_tokens}`,
-    `- 预估成本：${formatMoney(run.estimated_cost)}`,
-    `- 评估结论：${run.conclusion || "未记录"}`,
-    "",
-    "## 上下文",
-    "",
-    `- 工作区：${stringFromUnknown(context["工作区"]) || "未记录"}`,
-    `- 提示词：${stringFromUnknown(context["提示词名称"]) || stringFromUnknown(context["提示词"]) || "未绑定"}`,
-    `- 评测资产：${stringFromUnknown(context["评测资产名称"]) || stringFromUnknown(context["评测资产"]) || "未记录"}`,
-    `- 智能体：${stringFromUnknown(context["执行Agent名称"]) || stringFromUnknown(context["执行Agent"]) || "未记录"}`,
-    `- issue：${stringFromUnknown(context["issue标题"]) || stringFromUnknown(context["issue"]) || "未绑定"}`,
-    `- 项目：${stringFromUnknown(context["项目名称"]) || stringFromUnknown(context["项目"]) || "未绑定"}`,
-    `- 小队：${stringFromUnknown(context["小队名称"]) || stringFromUnknown(context["小队"]) || "未绑定"}`,
-    `- 证据完整性：用例 ${stringFromUnknown(completeness["用例数"]) || evidence.trials.length}，任务消息 ${stringFromUnknown(completeness["任务消息条数"]) || evidence.task_messages.length}，trace 事件 ${stringFromUnknown(completeness["trace事件条数"]) || evidence.trace_events.length}`,
-    "",
-    "## 可复核锚点",
-    "",
-    `- 运行：run=${run.id}`,
-    `- trace 序号：${evidence.trace_events.length > 0 ? `trace=1 到 trace=${evidence.trace_events.length}` : "暂无"}`,
-    `- trace 事件 ID：${firstTraceId ? `trace=${firstTraceId}` : "暂无"}`,
-    `- 工具链：${evidence.tool_call_chains.length > 0 ? "tool=<工具链id>" : "暂无"}`,
-    `- 用例：${evidence.trials.length > 0 ? "trial=<用例id或序号>" : "暂无"}`,
-    `- 断言：${evidence.trials.some((trial) => buildTrialAssertionRows(trial).length > 0) ? "assertion=<用例id>:<断言序号>" : "暂无"}`,
-    "",
-    "## 失败线索",
-    "",
-    ...items.map((item, index) => `${index + 1}. 【${item.label}】${item.title}：${item.detail}（锚点 ${item.anchor}）`),
-    "",
-    "## 失败用例",
-    "",
-    ...(failedTrials.length > 0
-      ? failedTrials.map((trial) => `- ${trial.case_name || `用例 ${trial.case_index + 1}`}：${trial.status}，${trial.failure_reason || "未记录失败原因"}`)
-      : ["- 暂无失败用例"]),
-    "",
-    "## 工具异常",
-    "",
-    ...(failedToolChains.length > 0
-      ? failedToolChains.map((chain) => `- ${chain.tool || "未记录工具"}：${chain.failure_reason || chain.summary || "存在异常线索"}；工具链 ${chain.id}`)
-      : ["- 暂无工具异常线索"]),
-    "",
-    "## trace 失败事件",
-    "",
-    ...(failedTraceEvents.length > 0
-      ? failedTraceEvents.map((event) => `- ${event.event_name || traceEventStageLabel(event.event_type)}：${event.failure_reason || "未记录失败原因"}${event.error_type ? `；错误类型 ${event.error_type}` : ""}；trace=${event.id}`)
-      : ["- 暂无 trace 失败事件"]),
-    "",
-    "## 建议动作",
-    "",
-    "- 若失败线索来自提示词输出或断言未命中，优先生成优化候选并进入人工确认。",
-    "- 若失败线索来自工具或运行时，先检查工具输入输出、运行时配置、环境变量和外部依赖。",
-    "- 复盘结论应回写到对应 issue、实验或优化运行，不只停留在本地下载文件。",
-  ];
-  return `${lines.join("\n")}\n`;
-}
-
-function formatTraceEventEvidence(event: PromptEvaluationRunEvidence["trace_events"][number]): string {
-  const pieces = [
-    event.event_name || event.event_type || "未命名事件",
-    event.status || "未知状态",
-    event.provider || event.model ? `${event.provider || "未知提供方"}/${event.model || "未知模型"}` : "",
-    `尝试次数 ${event.attempt}`,
-    event.duration_ms != null ? `耗时 ${event.duration_ms} ms` : "",
-    event.queue_wait_ms != null ? `排队 ${event.queue_wait_ms} ms` : "",
-    event.run_ms != null ? `执行 ${event.run_ms} ms` : "",
-    event.total_ms != null ? `总计 ${event.total_ms} ms` : "",
-    `输入 ${event.input_tokens}`,
-    `输出 ${event.output_tokens}`,
-    event.failure_reason && event.failure_reason !== "无" ? `失败原因：${event.failure_reason}` : "",
-    event.error_type ? `错误类型：${event.error_type}` : "",
   ].filter(Boolean);
   return pieces.join(" · ");
 }
@@ -6705,7 +3128,6 @@ function ManualCasePanel({
     await Promise.all([
       queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId ?? "") }),
       queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId ?? "") }),
-      queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId ?? "") }),
     ]);
   };
   const pollBulkOperation = async (operationId: string, label: string) => {
@@ -7623,44 +4045,6 @@ function datasetCaseSourceFilterFromUnknown(value: unknown): DatasetCaseSourceFi
   return "全部";
 }
 
-function ExperimentDimensionPanel({ asset, dimensions }: { asset: PromptEvaluationAsset; dimensions: PromptEvaluationExperimentDimension[] }) {
-  return (
-    <div data-testid={`prompt-evaluation-experiment-dimensions-${asset.id}`} className="md:col-span-2 grid gap-2 rounded-md border border-border/70 bg-muted/10 p-3">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div className="text-xs font-medium text-muted-foreground">实验维度事实</div>
-        <Badge variant="outline" className="text-[11px]">
-          {dimensions.length} 个维度 · {asset.experiment_dimension_count} 条事实
-        </Badge>
-      </div>
-      {dimensions.length > 0 ? (
-        <div className="grid gap-1.5">
-          {dimensions.map((item) => (
-            <div key={item.id} className="grid gap-1 rounded border bg-background px-2 py-1.5 text-xs md:grid-cols-[180px_minmax(0,1fr)_minmax(0,1fr)]">
-              <div className="min-w-0">
-                <div className="truncate font-medium text-foreground">{item.dimension_name || `维度 ${item.dimension_index + 1}`}</div>
-                <div className="truncate text-muted-foreground">{caseSourceLabel(item.source)} · {item.status}</div>
-              </div>
-              <div className="min-w-0 text-muted-foreground">
-                <span className="text-foreground">对象：</span>
-                <span className="truncate">{item.experiment_target || asset.name}</span>
-              </div>
-              <div className="min-w-0 text-muted-foreground">
-                <span className="text-foreground">基线：</span>
-                <span className="truncate">{item.baseline_output || "未记录"}</span>
-              </div>
-              <div className="min-w-0 text-muted-foreground md:col-span-3">
-                对比配置：{summarizeJSONValue(item.comparison_payload)}
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="rounded border border-dashed px-2 py-2 text-xs text-muted-foreground">暂无实验维度事实，请在资产载荷中补充对比维度。</div>
-      )}
-    </div>
-  );
-}
-
 function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="grid gap-1.5 text-sm">
@@ -7671,12 +4055,12 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 function tabToAssetType(tab: WorkbenchTab): PromptEvaluationAssetType | null {
-  if (tab === "数据集" || tab === "测试套件" || tab === "实验" || tab === "优化运行") return tab;
+  if (tab === "数据集" || tab === "测试套件") return tab;
   return null;
 }
 
 function canManageStructuredCases(asset: PromptEvaluationAsset): boolean {
-  return asset.asset_type === "数据集" || asset.asset_type === "测试套件" || asset.asset_type === "实验" || asset.asset_type === "优化运行";
+  return asset.asset_type === "数据集" || asset.asset_type === "测试套件";
 }
 
 function caseSourceLabel(source: string): string {
@@ -7828,303 +4212,6 @@ function uniqueSortedStrings(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean))).sort((a, b) => a.localeCompare(b, "zh-CN"));
 }
 
-function buildExperimentDimensionsByAsset(dimensions: PromptEvaluationExperimentDimension[]): Map<string, PromptEvaluationExperimentDimension[]> {
-  const result = new Map<string, PromptEvaluationExperimentDimension[]>();
-  for (const item of dimensions) {
-    const bucket = result.get(item.experiment_asset_id) ?? [];
-    bucket.push(item);
-    result.set(item.experiment_asset_id, bucket);
-  }
-  for (const bucket of result.values()) {
-    bucket.sort((a, b) => a.dimension_index - b.dimension_index || a.dimension_name.localeCompare(b.dimension_name, "zh-CN"));
-  }
-  return result;
-}
-
-function buildDimensionScoreSummariesByAsset(summaries: PromptEvaluationDimensionScoreSummary[]): Map<string, PromptEvaluationDimensionScoreSummary[]> {
-  const result = new Map<string, PromptEvaluationDimensionScoreSummary[]>();
-  for (const item of summaries) {
-    const bucket = result.get(item.asset_id) ?? [];
-    bucket.push(item);
-    result.set(item.asset_id, bucket);
-  }
-  for (const bucket of result.values()) {
-    bucket.sort((a, b) => {
-      return a.dimension_index - b.dimension_index || a.dimension_name.localeCompare(b.dimension_name, "zh-CN");
-    });
-  }
-  return result;
-}
-
-function buildDimensionScoreTrendsByAsset(trends: PromptEvaluationDimensionScoreTrend[]): Map<string, PromptEvaluationDimensionScoreTrend[]> {
-  const result = new Map<string, PromptEvaluationDimensionScoreTrend[]>();
-  for (const item of trends) {
-    const bucket = result.get(item.asset_id) ?? [];
-    bucket.push(item);
-    result.set(item.asset_id, bucket);
-  }
-  for (const bucket of result.values()) {
-    bucket.sort((a, b) => {
-      const periodDelta = b.period.localeCompare(a.period);
-      if (periodDelta !== 0) return periodDelta;
-      const versionDelta = b.prompt_version - a.prompt_version;
-      if (versionDelta !== 0) return versionDelta;
-      return a.dimension_index - b.dimension_index || a.dimension_name.localeCompare(b.dimension_name, "zh-CN");
-    });
-  }
-  return result;
-}
-
-function buildExperimentComparisonRows(
-  experiments: PromptEvaluationAsset[],
-  dimensionsByAsset: Map<string, PromptEvaluationExperimentDimension[]>,
-  dimensionScoreSummariesByAsset: Map<string, PromptEvaluationDimensionScoreSummary[]>,
-  dimensionScoreTrendsByAsset: Map<string, PromptEvaluationDimensionScoreTrend[]>,
-  versionsByPromptId: Map<string, PromptLibraryVersion[]>,
-  runs: PromptEvaluationRun[],
-): ExperimentComparisonRow[] {
-  const runsByAsset = buildRunsByAsset(runs);
-  return experiments
-    .map((asset) => {
-      const assetRuns = [...(runsByAsset.get(asset.id) ?? [])].sort(comparePromptEvaluationRunByRecent);
-      const assetDimensions = dimensionsByAsset.get(asset.id) ?? [];
-      const assetDimensionScoreSummaries = dimensionScoreSummariesByAsset.get(asset.id) ?? [];
-      const assetDimensionScoreTrends = dimensionScoreTrendsByAsset.get(asset.id) ?? [];
-      const promptVersions = asset.prompt_id ? [...(versionsByPromptId.get(asset.prompt_id) ?? [])].sort((a, b) => b.version - a.version) : [];
-      const versionRows = buildExperimentPromptVersionRows(promptVersions, assetRuns);
-      const dimensionScoreRows = buildExperimentDimensionScoreRows(assetDimensions, assetDimensionScoreSummaries);
-      const dimensionTrendRows = buildExperimentDimensionTrendRows(assetDimensionScoreTrends);
-      const totalCases = assetRuns.reduce((sum, run) => sum + run.total_cases, 0);
-      const passedCases = assetRuns.reduce((sum, run) => sum + run.passed_cases, 0);
-      const failedCases = assetRuns.reduce((sum, run) => sum + run.failed_cases, 0);
-      const totalDurationMs = assetRuns.reduce((sum, run) => sum + run.total_duration_ms, 0);
-      const inputTokens = assetRuns.reduce((sum, run) => sum + run.input_tokens, 0);
-      const outputTokens = assetRuns.reduce((sum, run) => sum + run.output_tokens, 0);
-      const estimatedCost = assetRuns.reduce((sum, run) => sum + run.estimated_cost, 0);
-      const passRate = totalCases > 0 ? passedCases / totalCases : 0;
-      return {
-        asset,
-        dimensions: assetDimensions,
-        dimensionScoreRows,
-        dimensionTrendRows,
-        promptVersions,
-        versionRows,
-        promptVersionRunCount: versionRows.reduce((sum, row) => sum + row.runCount, 0),
-        qualityExplanation: buildExperimentQualityExplanation(assetRuns, passedCases, failedCases, passRate, totalDurationMs, estimatedCost),
-        runs: assetRuns,
-        totalCases,
-        passedCases,
-        failedCases,
-        passRate,
-        totalDurationMs,
-        inputTokens,
-        outputTokens,
-        estimatedCost,
-        latestRun: assetRuns[0] ?? null,
-      };
-    })
-    .sort((a, b) => {
-      const runDelta = Number(b.runs.length > 0) - Number(a.runs.length > 0);
-      if (runDelta !== 0) return runDelta;
-      const passDelta = b.passRate - a.passRate;
-      if (passDelta !== 0) return passDelta;
-      const failureDelta = a.failedCases - b.failedCases;
-      if (failureDelta !== 0) return failureDelta;
-      const costDelta = a.estimatedCost - b.estimatedCost;
-      if (costDelta !== 0) return costDelta;
-      return comparePromptEvaluationAssetByRecent(a.asset, b.asset);
-    });
-}
-
-function buildExperimentQualityExplanation(
-  runs: PromptEvaluationRun[],
-  passedCases: number,
-  failedCases: number,
-  passRate: number,
-  totalDurationMs: number,
-  estimatedCost: number,
-): ExperimentQualityExplanation {
-  const costPerPassedCase = passedCases > 0 ? estimatedCost / passedCases : 0;
-  const averageRunMs = runs.length > 0 ? totalDurationMs / runs.length : 0;
-  const dominantFailure = dominantExperimentFailureReason(runs);
-  const qualityLabel = runs.length === 0 ? "暂无运行" : passRate >= 0.8 ? "质量稳定" : passRate >= 0.5 ? "质量待优化" : "质量风险高";
-  const costConclusion = runs.length === 0
-    ? "暂无成本"
-    : passedCases === 0
-      ? "成本未转化"
-      : costPerPassedCase <= 0.05
-        ? "单位成本低"
-        : costPerPassedCase <= 0.2
-          ? "单位成本可控"
-          : "单位成本偏高";
-  const durationConclusion = runs.length === 0
-    ? "暂无耗时"
-    : averageRunMs <= 1000
-      ? "响应很快"
-      : averageRunMs <= 5000
-        ? "耗时可控"
-        : "耗时偏高";
-  const failureConclusion = failedCases === 0 ? "暂无失败" : dominantFailure;
-  let recommendation = "先补一次真实运行，形成质量和成本基线。";
-  if (runs.length > 0 && failedCases === 0 && costPerPassedCase <= 0.2) {
-    recommendation = "当前质量和成本可作为回归基线，后续重点观察版本变化。";
-  } else if (failedCases > 0) {
-    recommendation = `优先复盘失败主因「${dominantFailure}」，再生成优化候选并回归同一数据集版本。`;
-  } else if (costPerPassedCase > 0.2) {
-    recommendation = "质量可用但单位通过成本偏高，优先压缩提示词上下文或改用更轻模型复测。";
-  }
-  return {
-    qualityLabel,
-    costPerPassedCase,
-    costConclusion,
-    durationConclusion,
-    failureConclusion,
-    recommendation,
-  };
-}
-
-function dominantExperimentFailureReason(runs: PromptEvaluationRun[]): string {
-  const counts = new Map<string, number>();
-  for (const run of runs) {
-    if (run.failed_cases <= 0 && run.status !== "未通过" && run.status !== "失败") continue;
-    const reason = (run.failure_reason && run.failure_reason !== "无" ? run.failure_reason : run.conclusion || "未记录失败原因").trim();
-    counts.set(reason, (counts.get(reason) ?? 0) + 1);
-  }
-  return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0], "zh-CN"))[0]?.[0] ?? "未记录失败原因";
-}
-
-function buildExperimentDimensionScoreRows(
-  dimensions: PromptEvaluationExperimentDimension[],
-  summaries: PromptEvaluationDimensionScoreSummary[],
-): ExperimentDimensionScoreRow[] {
-  const dimensionKeys = new Map<string, { index: number; name: string }>();
-  dimensions.forEach((dimension) => {
-    const name = dimension.dimension_name || `维度 ${dimension.dimension_index + 1}`;
-    dimensionKeys.set(experimentDimensionScoreKey(dimension.dimension_index, name), { index: dimension.dimension_index, name });
-  });
-  const rawScores = summaries.map((summary) => dimensionScoreSummaryToRow(summary));
-  rawScores.forEach((score) => {
-    dimensionKeys.set(experimentDimensionScoreKey(score.dimensionIndex, score.dimensionName), {
-      index: score.dimensionIndex,
-      name: score.dimensionName,
-    });
-  });
-  return Array.from(dimensionKeys.values())
-    .map((dimension) => {
-      const scores = rawScores.filter((score) => score.dimensionIndex === dimension.index || score.dimensionName === dimension.name);
-      const scored = scores.filter((score) => score.status === "已评分" && score.totalCases > 0);
-      const passedCases = scored.reduce((sum, score) => sum + score.passedCases, 0);
-      const totalCases = scored.reduce((sum, score) => sum + score.totalCases, 0);
-      const runCount = scores.reduce((sum, score) => sum + score.runCount, 0);
-      const scoredRunCount = scores.reduce((sum, score) => sum + score.scoredRunCount, 0);
-      const latest = scores[0] ?? null;
-      return {
-        dimensionIndex: dimension.index,
-        dimensionName: dimension.name,
-        score: totalCases > 0 ? passedCases / totalCases : 0,
-        passedCases,
-        totalCases,
-        runCount,
-        scoredRunCount,
-        status: scoredRunCount > 0 ? "已评分" : latest?.status ?? "待评分",
-        rule: latest?.rule ?? "等待运行生成评分规则",
-        evidence: latest?.evidence ?? "暂无运行评分证据",
-      };
-    })
-    .sort((a, b) => a.dimensionIndex - b.dimensionIndex || a.dimensionName.localeCompare(b.dimensionName, "zh-CN"));
-}
-
-function dimensionScoreSummaryToRow(summary: PromptEvaluationDimensionScoreSummary): ExperimentDimensionScoreRow {
-  return {
-    dimensionIndex: summary.dimension_index,
-    dimensionName: summary.dimension_name || `维度 ${summary.dimension_index + 1}`,
-    score: summary.score,
-    passedCases: summary.passed_cases,
-    totalCases: summary.total_cases,
-    runCount: summary.run_count,
-    scoredRunCount: summary.scored_run_count,
-    status: summary.scored_run_count > 0 ? "已评分" : summary.latest_status,
-    rule: summary.latest_rule || "未记录评分规则",
-    evidence: summary.latest_evidence || "暂无运行评分证据",
-  };
-}
-
-function buildExperimentDimensionTrendRows(trends: PromptEvaluationDimensionScoreTrend[]): ExperimentDimensionScoreTrendRow[] {
-  return trends
-    .map((trend) => ({
-      dimensionIndex: trend.dimension_index,
-      dimensionName: trend.dimension_name || `维度 ${trend.dimension_index + 1}`,
-      period: trend.period,
-      promptVersion: trend.prompt_version,
-      score: trend.score,
-      passedCases: trend.passed_cases,
-      totalCases: trend.total_cases,
-      runCount: trend.run_count,
-      scoredRunCount: trend.scored_run_count,
-      status: trend.scored_run_count > 0 ? "已评分" : trend.latest_status,
-    }))
-    .sort((a, b) => {
-      const periodDelta = b.period.localeCompare(a.period);
-      if (periodDelta !== 0) return periodDelta;
-      const versionDelta = b.promptVersion - a.promptVersion;
-      if (versionDelta !== 0) return versionDelta;
-      return a.dimensionIndex - b.dimensionIndex || a.dimensionName.localeCompare(b.dimensionName, "zh-CN");
-    });
-}
-
-function experimentDimensionScoreKey(index: number, name: string): string {
-  return `${index}:${name}`;
-}
-
-function buildExperimentPromptVersionRows(
-  versions: PromptLibraryVersion[],
-  runs: PromptEvaluationRun[],
-): ExperimentPromptVersionRow[] {
-  return versions.map((version, index) => {
-    const versionRuns = runs.filter((run) => promptVersionFromRun(run) === version.version);
-    const totalCases = versionRuns.reduce((sum, run) => sum + run.total_cases, 0);
-    const passedCases = versionRuns.reduce((sum, run) => sum + run.passed_cases, 0);
-    const previousVersion = versions[index + 1] ?? null;
-    return {
-      version,
-      previousVersion,
-      runCount: versionRuns.length,
-      passRate: totalCases > 0 ? passedCases / totalCases : 0,
-      estimatedCost: versionRuns.reduce((sum, run) => sum + run.estimated_cost, 0),
-      contentDelta: version.content.length - (previousVersion?.content.length ?? 0),
-    };
-  });
-}
-
-function promptVersionFromRun(run: PromptEvaluationRun): number | null {
-  const fromMetrics = numberFromRecord(run.metrics, "提示词版本") ?? numberFromRecord(run.metrics, "prompt_version");
-  if (fromMetrics !== null) return fromMetrics;
-  return numberFromRecord(run.evidence, "提示词版本") ?? numberFromRecord(run.evidence, "prompt_version");
-}
-
-function buildRunsByAsset(runs: PromptEvaluationRun[]): Map<string, PromptEvaluationRun[]> {
-  const result = new Map<string, PromptEvaluationRun[]>();
-  for (const run of runs) {
-    const bucket = result.get(run.asset_id) ?? [];
-    bucket.push(run);
-    result.set(run.asset_id, bucket);
-  }
-  return result;
-}
-
-function comparePromptEvaluationRunByRecent(a: PromptEvaluationRun, b: PromptEvaluationRun): number {
-  return timestampForSort(b.completed_at || b.updated_at || b.created_at) - timestampForSort(a.completed_at || a.updated_at || a.created_at);
-}
-
-function comparePromptEvaluationAssetByRecent(a: PromptEvaluationAsset, b: PromptEvaluationAsset): number {
-  return timestampForSort(b.updated_at || b.created_at) - timestampForSort(a.updated_at || a.created_at);
-}
-
-function timestampForSort(value: string): number {
-  const timestamp = Date.parse(value);
-  return Number.isFinite(timestamp) ? timestamp : 0;
-}
-
 function buildCandidatesByRun(candidates: PromptEvaluationOptimizationCandidate[]): Map<string, PromptEvaluationOptimizationCandidate[]> {
   const result = new Map<string, PromptEvaluationOptimizationCandidate[]>();
   for (const candidate of candidates) {
@@ -8133,15 +4220,6 @@ function buildCandidatesByRun(candidates: PromptEvaluationOptimizationCandidate[
     result.set(candidate.run_id, bucket);
   }
   return result;
-}
-
-function MetricCell({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="min-w-0 rounded border bg-muted/20 px-2 py-1">
-      <div className="truncate text-[11px] text-muted-foreground">{label}</div>
-      <div className="mt-0.5 truncate font-semibold text-foreground">{value}</div>
-    </div>
-  );
 }
 
 function summarizeJSONValue(value: unknown): string {
@@ -8173,6 +4251,8 @@ function summarizeAssetPayload(asset: PromptEvaluationAsset, caseSummary?: CaseS
   const cases = Array.isArray(payload.cases) ? payload.cases.length : Array.isArray(payload["数据集"]) ? payload["数据集"].length : 0;
   const skillTarget = summarizeSkillScenarioTarget(asset);
   if (skillTarget) return `Skill 场景评测 · ${skillTarget}`;
+  const writingBenchmark = summarizeWritingModelBenchmark(asset);
+  if (writingBenchmark) return `多模型写作评测 · ${writingBenchmark}`;
   if (caseSummary && caseSummary.total > 0) {
     const sourceParts = [];
     if (caseSummary.manual > 0) sourceParts.push(`手工 ${caseSummary.manual}`);
@@ -8181,9 +4261,7 @@ function summarizeAssetPayload(asset: PromptEvaluationAsset, caseSummary?: CaseS
     return `结构化用例 ${caseSummary.total} 个${sourceParts.length > 0 ? `（${sourceParts.join("，")}；运行优先使用）` : ""}`;
   }
   if (payload["最近Agent运行"]) return "包含真实智能体运行";
-  if (payload["调试包"]) return "包含 智能体调试包";
   if (payload["运行结果"]) return "包含运行结果";
-  if (asset.asset_type === "实验") return `实验维度事实 ${asset.experiment_dimension_count || (Array.isArray(payload["对比维度"]) ? payload["对比维度"].length : 0)} 个`;
   return cases > 0 ? `${cases} 个用例` : "未记录用例";
 }
 
@@ -8201,50 +4279,8 @@ type ModelComparisonJudgeSummary = {
   scores: ModelComparisonJudgeScore[];
 };
 
-function modelComparisonJudgeSummary(asset: PromptEvaluationAsset): ModelComparisonJudgeSummary | null {
-  if (asset.asset_type !== "实验") return null;
-  const payload = isRecord(asset.payload) ? asset.payload : {};
-  const judge = isRecord(payload["GPT评审"]) ? payload["GPT评审"] : isRecord(payload["judge"]) ? payload["judge"] : null;
-  if (!judge) return null;
-  const rawScores = Array.isArray(judge["scores"]) ? judge["scores"] : Array.isArray(judge["评分"]) ? judge["评分"] : [];
-  const scores = rawScores
-    .filter(isRecord)
-    .map((item) => {
-      const dimensions = isRecord(item["dimensions"]) ? item["dimensions"] : isRecord(item["分项评分"]) ? item["分项评分"] : {};
-      const dimensionSummary = Object.entries(dimensions)
-        .slice(0, 3)
-        .map(([key, value]) => `${key} ${scoreText(value)}`)
-        .join(" · ");
-      const recommendations = Array.isArray(item["recommendations"])
-        ? item["recommendations"]
-        : Array.isArray(item["改进建议"])
-          ? item["改进建议"]
-          : [];
-      return {
-        model: stringFromRecord(item, "model") || stringFromRecord(item, "模型") || "未记录模型",
-        totalScore: Math.round(numberFromRecord(item, "total_score") ?? numberFromRecord(item, "总分") ?? 0),
-        dimensionSummary,
-        recommendation: recommendations.map((value) => stringFromUnknown(value)).filter(Boolean)[0] ?? stringFromRecord(item, "recommendation") ?? "",
-      };
-    })
-    .filter((item) => item.model !== "未记录模型" || item.totalScore > 0);
-  if (scores.length === 0) return null;
-  const conclusion = isRecord(judge["conclusion"]) ? judge["conclusion"] : {};
-  return {
-    judgeModel: stringFromRecord(judge, "judge_model") || stringFromRecord(judge, "评审模型") || "GPT judge",
-    winner: stringFromRecord(conclusion, "winner") || stringFromRecord(conclusion, "推荐模型") || stringFromRecord(judge, "winner") || "",
-    conclusion: stringFromRecord(conclusion, "summary") || stringFromRecord(conclusion, "结论") || stringFromRecord(judge, "summary") || "",
-    scores,
-  };
-}
-
-function scoreText(value: unknown): string {
-  if (typeof value === "number" && Number.isFinite(value)) return String(Math.round(value));
-  if (isRecord(value)) {
-    const score = numberFromRecord(value, "score") ?? numberFromRecord(value, "得分");
-    return score === null ? stringFromRecord(value, "status") : String(Math.round(score));
-  }
-  return stringFromUnknown(value);
+function modelComparisonJudgeSummary(_asset: PromptEvaluationAsset): ModelComparisonJudgeSummary | null {
+  return null;
 }
 
 function summarizeStructuredCase(item: PromptEvaluationStructuredCase): string {
@@ -8283,7 +4319,6 @@ function DatasetVersionControls({ asset, saving }: { asset: PromptEvaluationAsse
     queryClient.invalidateQueries({ queryKey: promptLibraryKeys.datasetVersionTagTrends(workspaceId, asset.id) });
     queryClient.invalidateQueries({ queryKey: promptLibraryKeys.assets(workspaceId) });
     queryClient.invalidateQueries({ queryKey: promptLibraryKeys.cases(workspaceId) });
-    queryClient.invalidateQueries({ queryKey: promptLibraryKeys.summary(workspaceId) });
   };
   const diffMut = useMutation({
     mutationFn: () => {
@@ -8562,22 +4597,6 @@ function summarizeLinkedDatasetVersions(asset: PromptEvaluationAsset): string | 
   return parts.length > 0 ? `绑定数据集版本：${parts.join("；")}` : null;
 }
 
-function summarizeLatestRunForDemo(run: PromptEvaluationRun): string {
-  const parts = [`${displayRunKind(run.run_kind)} · ${run.status}`];
-  if (run.failure_reason && run.failure_reason !== "无") {
-    parts.push(`失败原因：${truncateText(run.failure_reason, 42)}`);
-  }
-  if (run.task_id) {
-    parts.push(`任务标识 ${truncateText(run.task_id, 8)}`);
-  }
-  return parts.join(" · ");
-}
-
-function isAgentEvaluationRun(run: PromptEvaluationRun): boolean {
-  const kind = String(run.run_kind);
-  return kind === "Agent执行" || kind === "智能体执行" || Boolean(run.task_id);
-}
-
 function displayRunKind(runKind: string): string {
   return runKind === "Agent执行" ? "智能体执行" : runKind;
 }
@@ -8602,27 +4621,8 @@ function stringFromRecord(record: Record<string, unknown>, key: string): string 
   return "";
 }
 
-function numberFromRecord(record: Record<string, unknown>, key: string): number | null {
-  const value = record[key];
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  if (typeof value === "string") {
-    const parsed = Number(value);
-    return Number.isFinite(parsed) ? parsed : null;
-  }
-  return null;
-}
-
-function truncateText(value: string, maxLength: number): string {
-  return value.length > maxLength ? `${value.slice(0, maxLength)}...` : value;
-}
-
 function formatNumber(value: unknown): string {
   return typeof value === "number" && Number.isFinite(value) ? value.toLocaleString("zh-CN") : "0";
-}
-
-function formatSignedNumber(value: number): string {
-  if (!Number.isFinite(value) || value === 0) return "0";
-  return `${value > 0 ? "+" : ""}${value.toLocaleString("zh-CN")}`;
 }
 
 function formatMoney(value: unknown): string {
@@ -8630,11 +4630,6 @@ function formatMoney(value: unknown): string {
   if (!Number.isFinite(n) || n <= 0) return "$0.00";
   if (n < 0.01) return `$${n.toFixed(6)}`;
   return `$${n.toFixed(2)}`;
-}
-
-function formatPercent(value: unknown): string {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "0%";
-  return `${Math.round(value * 1000) / 10}%`;
 }
 
 function formatDuration(value: unknown): string {
@@ -8645,4 +4640,16 @@ function formatDuration(value: unknown): string {
   if (seconds < 60) return `${Math.round(seconds * 10) / 10} 秒`;
   const minutes = seconds / 60;
   return `${Math.round(minutes * 10) / 10} 分钟`;
+}
+
+function downloadTextFile(content: string, filename: string, mimeType: string) {
+  const blob = new Blob([content], { type: mimeType });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = filename;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  URL.revokeObjectURL(url);
 }

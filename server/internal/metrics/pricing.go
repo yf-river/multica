@@ -7,10 +7,10 @@ import (
 )
 
 type ModelPrice struct {
-	Provider       string
-	Model          string
-	InputPerM      float64
-	CacheReadPerM  float64
+	Provider      string
+	Model         string
+	InputPerM     float64
+	CacheReadPerM float64
 	// CacheWritePerM is used when runtimes report cache creation/write tokens.
 	// For providers with only cache-hit/cache-miss input pricing, this is the
 	// cache-miss input rate, not a separate surcharge.
@@ -35,6 +35,8 @@ var modelPrices = map[string]ModelPrice{
 	"anthropic:claude-haiku-4.5":  {Provider: "anthropic", Model: "claude-haiku-4.5", InputPerM: 1.00, CacheReadPerM: 0.10, CacheWritePerM: 1.25, OutputPerM: 5.00},
 	"deepseek:v4-pro":             {Provider: "deepseek", Model: "v4-pro", InputPerM: 0.435, CacheReadPerM: 0.003625, CacheWritePerM: 0.435, OutputPerM: 0.87},
 	"deepseek:v4-flash":           {Provider: "deepseek", Model: "v4-flash", InputPerM: 0.14, CacheReadPerM: 0.0028, CacheWritePerM: 0.14, OutputPerM: 0.28},
+	"kimi:k2.6":                   {Provider: "kimi", Model: "k2.6", InputPerM: 0.95, CacheReadPerM: 0.16, CacheWritePerM: 0.95, OutputPerM: 4.00},
+	"kimi:k2.7-code":              {Provider: "kimi", Model: "k2.7-code", InputPerM: 0.95, CacheReadPerM: 0.19, CacheWritePerM: 0.95, OutputPerM: 4.00},
 	"minimax:m2.7":                {Provider: "minimax", Model: "m2.7", InputPerM: 0.30, CacheReadPerM: 0.06, CacheWritePerM: 0.375, OutputPerM: 1.20},
 	"minimax:m2.7-highspeed":      {Provider: "minimax", Model: "m2.7-highspeed", InputPerM: 0.60, CacheReadPerM: 0.06, CacheWritePerM: 0.375, OutputPerM: 2.40},
 	"google:gemini-3-flash":       {Provider: "google", Model: "gemini-3-flash", InputPerM: 0.50, CacheReadPerM: 0.05, CacheWritePerM: 0.50, OutputPerM: 3.00},
@@ -63,6 +65,8 @@ var modelAliasRules = []struct {
 	{regexp.MustCompile(`claude-haiku-4[-.]5`), "anthropic:claude-haiku-4.5"},
 	{regexp.MustCompile(`deepseek-v4-pro`), "deepseek:v4-pro"},
 	{regexp.MustCompile(`deepseek-v4-flash|^deepseek-chat$|^deepseek-reasoner$`), "deepseek:v4-flash"},
+	{regexp.MustCompile(`kimi-k2[.]7(-code)?(-ioa)?`), "kimi:k2.7-code"},
+	{regexp.MustCompile(`kimi-k2[.]6(-ioa)?`), "kimi:k2.6"},
 	{regexp.MustCompile(`minimax-m2[.]7.*highspeed|highspeed.*minimax-m2[.]7`), "minimax:m2.7-highspeed"},
 	{regexp.MustCompile(`minimax-m2[.]7`), "minimax:m2.7"},
 	{regexp.MustCompile(`gemini-3-flash`), "google:gemini-3-flash"},

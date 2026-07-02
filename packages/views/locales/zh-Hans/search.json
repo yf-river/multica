@@ -34,7 +34,7 @@
     "open_test_suites": "打开测试套件",
     "open_experiments": "打开实验",
     "open_optimization_runs": "打开优化运行",
-    "open_run_history": "打开运行历史",
+    "open_run_history": "打开评测记录",
     "copy_issue_link": "复制任务链接",
     "copy_identifier": "复制标识符 ({{identifier}})",
     "switch_to_light": "切换到浅色主题",

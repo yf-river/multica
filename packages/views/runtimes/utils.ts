@@ -219,10 +219,17 @@ const MODEL_PRICING: Record<
   "codebuddy/deepseek-v4-pro-ioa": { input: 0.435, output: 0.87, cacheRead: 0.003625, cacheWrite: 0.435 },
   "codebuddy/deepseek-v4-flash-ioa": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0.14 },
 
-  // -- Moonshot Kimi (kimi.com/resources/kimi-k2-6-pricing).
-  //    Only K2.6 is on the official price sheet today; earlier K2 variants
-  //    are intentionally omitted until Moonshot publishes their rates. --
+  // -- Moonshot Kimi (platform.kimi.ai, kimi.com/resources/kimi-k2-6-pricing,
+  //    kimi.com/resources/kimi-k2-7-code-pricing). CodeBuddy reports IOA
+  //    routed SKUs with a `-ioa` suffix; keep provider-qualified aliases so
+  //    private routed IDs do not accidentally price other providers. --
   "kimi-k2.6":          { input: 0.95, output: 4.00, cacheRead: 0.16,   cacheWrite: 0.95 },
+  "kimi-k2.6-ioa":      { input: 0.95, output: 4.00, cacheRead: 0.16,   cacheWrite: 0.95 },
+  "codebuddy/kimi-k2.6-ioa": { input: 0.95, output: 4.00, cacheRead: 0.16,   cacheWrite: 0.95 },
+  "kimi-k2.7":          { input: 0.95, output: 4.00, cacheRead: 0.19,   cacheWrite: 0.95 },
+  "kimi-k2.7-code":     { input: 0.95, output: 4.00, cacheRead: 0.19,   cacheWrite: 0.95 },
+  "kimi-k2.7-ioa":      { input: 0.95, output: 4.00, cacheRead: 0.19,   cacheWrite: 0.95 },
+  "codebuddy/kimi-k2.7-ioa": { input: 0.95, output: 4.00, cacheRead: 0.19,   cacheWrite: 0.95 },
 
   // -- Zhipu z.ai (docs.z.ai/guides/overview/pricing). Free flash tiers
   //    are priced at 0 so they resolve cleanly instead of falling through

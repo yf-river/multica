@@ -1,38 +1,10 @@
 const TRAINING_WORKBENCH_ALL_VIEWS = [
   {
-    tab: "运行看板",
-    view: "runs",
-    route: "runs",
-    keywords: ["运行看板", "验收", "运行", "demo", "dashboard", "observability"],
-    visible: false,
-  },
-  {
     tab: "提示词库",
     view: "prompts",
     route: "prompts",
     keywords: ["提示词库", "提示词管理", "prompt", "library", "prompts"],
     visible: true,
-  },
-  {
-    tab: "调试运行",
-    view: "debug-runs",
-    route: "debug-runs",
-    keywords: ["调试运行", "提示词调试", "智能体调试", "prompt", "agent", "playground", "debug"],
-    visible: true,
-  },
-  {
-    tab: "提示词调试场",
-    view: "prompt-playground",
-    route: "prompt-playground",
-    keywords: ["提示词调试", "prompt", "playground", "debug"],
-    visible: false,
-  },
-  {
-    tab: "智能体调试场",
-    view: "agent-playground",
-    route: "agent-playground",
-    keywords: ["智能体调试", "agent", "playground", "debug"],
-    visible: false,
   },
   {
     tab: "数据集",
@@ -49,31 +21,10 @@ const TRAINING_WORKBENCH_ALL_VIEWS = [
     visible: true,
   },
   {
-    tab: "实验",
-    view: "experiments",
-    route: "experiments",
-    keywords: ["实验", "experiment", "对比"],
-    visible: true,
-  },
-  {
-    tab: "优化运行",
-    view: "optimization-runs",
-    route: "optimization-runs",
-    keywords: ["优化运行", "optimization"],
-    visible: true,
-  },
-  {
     tab: "评测记录",
     view: "evaluation-runs",
     route: "evaluation-runs",
     keywords: ["评测记录", "运行证据", "evaluation", "runs", "evidence", "trace"],
-    visible: true,
-  },
-  {
-    tab: "运行历史",
-    view: "run-history",
-    route: "run-history",
-    keywords: ["运行历史", "history", "trace"],
     visible: true,
   },
 ] as const;
@@ -107,9 +58,16 @@ export const TRAINING_WORKBENCH_VIEW_BY_ROUTE = Object.fromEntries(
 ) as Record<TrainingWorkbenchRoute, TrainingWorkbenchViewId>;
 
 const LEGACY_TRAINING_WORKBENCH_VIEW_ALIASES: Record<string, TrainingWorkbenchViewId> = {
-  "demo-dashboard": "runs",
-  "prompt-debug": "debug-runs",
-  "agent-debug": "debug-runs",
+  "demo-dashboard": "evaluation-runs",
+  runs: "evaluation-runs",
+  "run-history": "evaluation-runs",
+  "optimization-runs": "evaluation-runs",
+  experiments: "test-suites",
+  "prompt-debug": "prompts",
+  "agent-debug": "prompts",
+  "debug-runs": "prompts",
+  "prompt-playground": "prompts",
+  "agent-playground": "prompts",
 };
 
 function normalizeTrainingWorkbenchView(view: string | null): TrainingWorkbenchViewId {

@@ -218,5 +218,6 @@ describe("CreateProjectModal", () => {
       screen.queryByPlaceholderText("https://git.code.tencent.com/group/project"),
     ).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "添加" })).not.toBeInTheDocument();
+    expect(screen.queryByText("本地目录")).not.toBeInTheDocument();
   });
 });

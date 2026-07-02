@@ -34,20 +34,31 @@ func sameUUID(a, b pgtype.UUID) bool {
 func validateAgentRuntimeScope(agentScope string, agentOwner pgtype.UUID, runtime db.AgentRuntime) error {
 	switch agentScope {
 	case scopeWorkspace:
-		if runtime.Scope != scopeWorkspace {
+		if !agentRuntimeScopeCompatible(agentScope, agentOwner, runtime) {
 			return fmt.Errorf("workspace agents can only use workspace runtimes")
 		}
 	case scopePersonal:
 		if runtime.Scope != scopePersonal {
 			return fmt.Errorf("personal agents can only use personal runtimes")
 		}
-		if !sameUUID(runtime.OwnerID, agentOwner) {
+		if !agentRuntimeScopeCompatible(agentScope, agentOwner, runtime) {
 			return fmt.Errorf("personal agents can only use personal runtimes owned by the same user")
 		}
 	default:
 		return fmt.Errorf("scope must be 'personal' or 'workspace'")
 	}
 	return nil
+}
+
+func agentRuntimeScopeCompatible(agentScope string, agentOwner pgtype.UUID, runtime db.AgentRuntime) bool {
+	switch agentScope {
+	case scopeWorkspace:
+		return runtime.Scope == scopeWorkspace
+	case scopePersonal:
+		return runtime.Scope == scopePersonal && sameUUID(runtime.OwnerID, agentOwner)
+	default:
+		return false
+	}
 }
 
 func validateSquadLeaderScope(squadScope string, squadOwner pgtype.UUID, leader db.Agent) error {

@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
-import { ExternalLink, GitCommitHorizontal, Link2, PanelRight } from "lucide-react";
+import { ExternalLink, GitCommitHorizontal, PanelRight } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
 import { Label } from "@multica/ui/components/ui/label";
@@ -35,8 +35,7 @@ import { GitHubMark } from "./github-mark";
 type SettingsKey =
   | "github_enabled"
   | "github_pr_sidebar_enabled"
-  | "co_authored_by_enabled"
-  | "github_auto_link_prs_enabled";
+  | "co_authored_by_enabled";
 
 export function GitHubTab() {
   const { t } = useT("settings");
@@ -188,12 +187,7 @@ export function GitHubTab() {
                     </>
                   ) : canManage ? (
                     <p className="text-xs text-muted-foreground">
-                      {t(($) => $.github.connection_description_prefix)}{" "}
-                      <code className="rounded bg-muted px-1 py-0.5 text-[10px]">
-                        {t(($) => $.github.connection_identifier_example)}
-                      </code>{" "}
-                      {t(($) => $.github.connection_description_suffix)}{" "}
-                      <strong>{t(($) => $.github.connection_description_done)}</strong>.
+                      {t(($) => $.github.connection_description)}
                     </p>
                   ) : (
                     <p className="text-xs text-muted-foreground">
@@ -287,20 +281,6 @@ export function GitHubTab() {
               checked={flags.coAuthor}
               disabled={!canManage || !flags.enabled || savingKey === "co_authored_by_enabled"}
               onCheckedChange={(v) => persistSetting("co_authored_by_enabled", v)}
-            />
-
-            <FeatureRow
-              id="github-auto-link"
-              icon={<Link2 className="h-4 w-4" />}
-              label={t(($) => $.github.feature_auto_link_label)}
-              description={
-                <p className="text-sm text-muted-foreground">
-                  {t(($) => $.github.feature_auto_link_description)}
-                </p>
-              }
-              checked={flags.autoLinkPRs}
-              disabled={!canManage || !flags.enabled || savingKey === "github_auto_link_prs_enabled"}
-              onCheckedChange={(v) => persistSetting("github_auto_link_prs_enabled", v)}
             />
           </CardContent>
         </Card>

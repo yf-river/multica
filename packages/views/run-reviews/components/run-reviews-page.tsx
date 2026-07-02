@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Activity, AlertTriangle, Download, GitBranch, HelpCircle, ListChecks, Loader2, RotateCcw, Timer, WifiOff } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -24,7 +24,7 @@ const STAGES = SOP_STAGE_DEFINITIONS;
 const ISSUE_REVIEW_DRAFT_DATASET_NAME = "Issue 复盘评测 Draft";
 
 export function buildRunReviewOptimizerHref(trainingView: (view: string) => string, issueId: string): string {
-  return `${trainingView("test-suites")}?issue=${encodeURIComponent(issueId)}&mode=optimize`;
+  return `${trainingView("evaluation-runs")}?issue=${encodeURIComponent(issueId)}`;
 }
 
 export function runReviewTotalDurationMs(summary: IssueTimelineSummary | undefined): number {
@@ -418,7 +418,7 @@ function RunReviewDetail({
       <section className="rounded-md border bg-card">
         <SectionTitle
           title="事件流"
-          subtitle="按 task message、trace、工具链和执行节点展示当前筛选范围内的全部可诊断证据。"
+          subtitle="展示去重后的事件摘要；点击每行查看详细信息和完整原始证据。"
           action={
             <ExportButton
               label="导出 RAW 交互信息"
@@ -426,9 +426,13 @@ function RunReviewDetail({
             />
           }
         />
-        <div className="divide-y">
-          {eventRows.length > 0 ? eventRows.map((node, index) => (
-            <RunReviewEventRow key={`${node.id}-${index}`} event={node} task={node.taskId ? taskById.get(node.taskId) : undefined} />
+        <div className="min-h-[24rem] divide-y">
+          {eventRows.length > 0 ? eventRows.map((node) => (
+            <RunReviewEventRow
+              key={node.id}
+              event={node}
+              task={node.taskId ? taskById.get(node.taskId) : undefined}
+            />
           )) : (
             <div className="flex gap-2 px-4 py-6 text-sm text-muted-foreground">
               <AlertTriangle className="size-4" />
@@ -441,49 +445,92 @@ function RunReviewDetail({
   );
 }
 
-function RunReviewEventRow({ event, task }: { event: RunReviewEventRowData; task: AgentTask | undefined }) {
-  const hasDetails = event.detail || event.metadataDetail;
+function RunReviewEventRow({
+  event,
+  task,
+}: {
+  event: RunReviewEventRowData;
+  task: AgentTask | undefined;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const hasDetails = runReviewEventHasDetails(event);
   return (
-    <div className="flex gap-3 px-4 py-3 text-sm" data-testid={`run-review-event-${event.kind}`}>
-      <div className={cn("mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md border", eventToneClasses(event.severity).icon)}>
-        <GitBranch className="size-3.5" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="shrink-0 rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground">{event.category}</span>
-          <span className={cn("shrink-0 rounded border px-1.5 py-0.5 text-[11px]", eventToneClasses(event.severity).chip)}>
-            {event.outcome}
-          </span>
-          <span className="min-w-0 truncate font-medium">{event.title}</span>
+    <div data-testid={`run-review-event-${event.kind}`}>
+      <button
+        type="button"
+        className={cn(
+          "flex w-full gap-3 px-4 py-3 text-left text-sm hover:bg-accent/50",
+          expanded && "bg-accent/40",
+          !hasDetails && "cursor-default hover:bg-transparent",
+        )}
+        onClick={() => {
+          if (hasDetails) setExpanded((value) => !value);
+        }}
+        aria-expanded={hasDetails ? expanded : undefined}
+      >
+        <div className={cn("mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md border", eventToneClasses(event.severity).icon)}>
+          <GitBranch className="size-3.5" />
         </div>
-        <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
-          {event.timeLabel && <span>{event.timeLabel}</span>}
-          {event.sourceLabel && <span>{event.sourceLabel}</span>}
-          {event.object && <span>{event.object}</span>}
-          {event.durationMs > 0 && <span>耗时 {formatDuration(event.durationMs)}</span>}
-          {event.tokenTotal > 0 && <span>Token {formatNumber(event.tokenTotal)}</span>}
-          {event.taskId && <span className="font-mono">task {shortId(event.taskId)}</span>}
-        </div>
-        {event.summary && (
-          <div className={cn("mt-1 rounded border px-2 py-1 text-xs leading-5", eventToneClasses(event.severity).summary)}>
-            {event.summary}
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="shrink-0 rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground">{event.category}</span>
+            <span className={cn("shrink-0 rounded border px-1.5 py-0.5 text-[11px]", eventToneClasses(event.severity).chip)}>
+              {event.outcome}
+            </span>
+            <span className="min-w-0 truncate font-medium">{event.title}</span>
           </div>
-        )}
-        {hasDetails && (
-          <details className="mt-1 rounded border border-border/70 bg-muted/20 px-2 py-1 text-xs">
-            <summary className="cursor-pointer text-muted-foreground">原始证据</summary>
-            <div className="mt-1 grid gap-1 whitespace-pre-wrap break-words font-mono text-[11px] leading-5 text-muted-foreground">
-              {event.detail && <div>{event.detail}</div>}
-              {event.metadataDetail && <div>{event.metadataDetail}</div>}
+          <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
+            {event.timeLabel && <span>{event.timeLabel}</span>}
+            {event.sourceLabel && <span>{event.sourceLabel}</span>}
+            {event.object && <span>{event.object}</span>}
+            {event.durationMs > 0 && <span>耗时 {formatDuration(event.durationMs)}</span>}
+            {event.tokenTotal > 0 && <span>Token {formatNumber(event.tokenTotal)}</span>}
+            {event.taskId && <span className="font-mono">task {shortId(event.taskId)}</span>}
+          </div>
+          {event.summary && (
+            <div className={cn("mt-1 rounded border px-2 py-1 text-xs leading-5", eventToneClasses(event.severity).summary)}>
+              {event.summary}
             </div>
-          </details>
-        )}
-      </div>
-      {task && (
-        <div className="shrink-0">
-          <TranscriptButton task={task} agentName="" title="查看完整转录" />
+          )}
+        </div>
+      </button>
+      {expanded && hasDetails && (
+        <div className="border-t bg-muted/10 px-4 py-3 text-sm" data-testid="run-review-event-inline-detail">
+          {task && (
+            <div className="mb-3 flex justify-end">
+              <TranscriptButton task={task} agentName="" title="完整转录" />
+            </div>
+          )}
+          <div className="grid gap-3">
+            {event.detail && <RawEvidenceBlock title="摘要详情" value={event.detail} />}
+            {event.metadataDetail && <RawEvidenceBlock title="Metadata" value={event.metadataDetail} />}
+            {event.rawPayload !== undefined && <RawEvidenceBlock title={event.rawSourceLabel ?? "原始记录"} value={formatJSON(event.rawPayload)} />}
+            {event.linkedRawPayloads?.map((item, index) => (
+              <RawEvidenceBlock key={`${item.label}-${index}`} title={item.label} value={formatJSON(item.payload)} />
+            ))}
+          </div>
         </div>
       )}
+    </div>
+  );
+}
+
+export function runReviewEventHasDetails(event: Pick<RunReviewEventRowData, "detail" | "metadataDetail" | "rawPayload" | "linkedRawPayloads">): boolean {
+  return Boolean(
+    event.detail ||
+    event.metadataDetail ||
+    event.rawPayload !== undefined ||
+    (event.linkedRawPayloads?.length ?? 0) > 0,
+  );
+}
+
+function RawEvidenceBlock({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="rounded-md border bg-background">
+      <div className="border-b px-2 py-1.5 text-xs font-medium text-muted-foreground">{title}</div>
+      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words px-2 py-2 font-mono text-[11px] leading-5 text-muted-foreground">
+        {value}
+      </pre>
     </div>
   );
 }
@@ -882,6 +929,9 @@ export interface RunReviewEventRowData {
   durationMs: number;
   tokenTotal: number;
   severity: "normal" | "warning" | "error";
+  rawSourceLabel?: string;
+  rawPayload?: unknown;
+  linkedRawPayloads?: Array<{ label: string; payload: unknown }>;
 }
 
 export function buildRunReviewEventRows(
@@ -890,7 +940,9 @@ export function buildRunReviewEventRows(
 ): RunReviewEventRowData[] {
   const nodes = flattenExecutionNodes(tree);
   const rows: RunReviewEventRowData[] = [];
+  const hasSourceFetchTrace = nodes.some((node) => (node.trace_events ?? []).some(isSourceFetchTrace));
   for (const node of nodes) {
+    const messageByKey = new Map((node.task_messages ?? []).map((message) => [toolMessageKey(message.task_id, message.seq), message]));
     const coveredToolMessageKeys = new Set<string>();
     for (const chain of node.tool_call_chains ?? []) {
       if (chain.task_id && chain.use_seq) coveredToolMessageKeys.add(toolMessageKey(chain.task_id, chain.use_seq));
@@ -908,19 +960,25 @@ export function buildRunReviewEventRows(
       rows.push(runReviewTraceEvent(event));
     }
     for (const chain of node.tool_call_chains ?? []) {
-      rows.push(runReviewToolEvent(chain));
+      const linkedMessages = chain.task_id
+        ? [
+            chain.use_seq ? messageByKey.get(toolMessageKey(chain.task_id, chain.use_seq)) : undefined,
+            chain.result_seq ? messageByKey.get(toolMessageKey(chain.task_id, chain.result_seq)) : undefined,
+          ].filter(Boolean) as TaskMessagePayload[]
+        : [];
+      rows.push(runReviewToolEvent(chain, linkedMessages));
     }
   }
   for (const node of timelineNodes) {
-    if (node.node_type === "tool_call" || node.node_type === "status_change") continue;
+    if (node.node_type === "agent_task" || node.node_type === "tool_call" || node.node_type === "status_change") continue;
+    if (node.node_type === "source_fetch" && hasSourceFetchTrace) continue;
     rows.push(runReviewTimelineNodeEvent(node));
   }
   return rows
     .toSorted((a, b) => {
       if (a.timestampMs !== b.timestampMs) return b.timestampMs - a.timestampMs;
       return a.id.localeCompare(b.id);
-    })
-    .slice(0, 50);
+    });
 }
 
 export function buildRunReviewNodeCsv(
@@ -1058,6 +1116,9 @@ export function buildRunReviewRawEventsCsv(eventRows: RunReviewEventRowData[]): 
     "summary",
     "detail",
     "metadata_detail",
+    "raw_source",
+    "raw_json",
+    "linked_raw_json",
   ];
   return toCsv([
     headers,
@@ -1078,6 +1139,9 @@ export function buildRunReviewRawEventsCsv(eventRows: RunReviewEventRowData[]): 
       event.summary,
       event.detail,
       event.metadataDetail,
+      event.rawSourceLabel ?? "",
+      event.rawPayload === undefined ? "" : formatJSON(event.rawPayload),
+      event.linkedRawPayloads?.length ? formatJSON(event.linkedRawPayloads) : "",
     ]),
   ]);
 }
@@ -1147,6 +1211,8 @@ function runReviewMessageEvent(message: TaskMessagePayload): RunReviewEventRowDa
     durationMs: 0,
     tokenTotal: 0,
     severity: message.type === "error" || hasFailureSignal(summary) ? "error" : "normal",
+    rawSourceLabel: "task_message",
+    rawPayload: message,
   };
 }
 
@@ -1174,34 +1240,51 @@ function runReviewToolMessageEvent(message: TaskMessagePayload): RunReviewEventR
     durationMs: 0,
     tokenTotal: 0,
     severity: semantic.severity,
+    rawSourceLabel: "task_message",
+    rawPayload: message,
   };
+}
+
+function isSourceFetchTrace(event: TaskTraceEvent): boolean {
+  const type = event.event_type.toLowerCase();
+  return type.includes("source") || type.includes("fetch");
 }
 
 function runReviewTraceEvent(event: TaskTraceEvent): RunReviewEventRowData {
   const tokenTotal = event.input_tokens + event.output_tokens + event.cache_read_tokens + event.cache_write_tokens;
   const durationMs = event.run_ms ?? event.duration_ms ?? event.total_ms ?? event.queue_wait_ms ?? 0;
   const failure = [event.failure_reason, event.error_type].filter(Boolean).join(" · ");
+  const metadata = event.metadata ?? {};
+  const isUserInput = event.event_type === "user_input.received";
+  const userInputKind = stringFromUnknown(metadata.input_kind);
+  const userInputSummary = stringFromUnknown(metadata.summary);
+  const userInputSnapshot = stringFromUnknown(metadata.content_snapshot);
+  const sourceLabel = isUserInput
+    ? [event.source, userInputKind].filter(Boolean).join(" / ") || event.event_type
+    : [event.source, event.provider, event.model].filter(Boolean).join(" / ") || event.event_type;
   return {
     id: `trace:${event.id}`,
     kind: "trace",
-    category: "Trace",
+    category: isUserInput ? "输入" : "Trace",
     timestampMs: parseTimeMs(event.created_at) ?? 0,
     timeLabel: formatEventTime(event.created_at),
     taskId: event.task_id,
-    sourceLabel: [event.source, event.provider, event.model].filter(Boolean).join(" / ") || event.event_type,
-    object: event.event_type,
-    title: event.event_name || traceEventStageLabel(event.event_type),
+    sourceLabel,
+    object: isUserInput ? userInputKind || event.event_type : event.event_type,
+    title: isUserInput ? "用户原始输入" : event.event_name || traceEventStageLabel(event.event_type),
     outcome: failure || event.event_type === "task.failed" ? "异常" : statusLabel(event.status),
-    summary: failure ? conciseEventSummary(failure, true) : "",
-    detail: "",
-    metadataDetail: Object.keys(event.metadata ?? {}).length > 0 ? `metadata:\n${formatJSON(event.metadata)}` : "",
+    summary: isUserInput ? conciseEventSummary(userInputSummary, false) : failure ? conciseEventSummary(failure, true) : "",
+    detail: isUserInput && userInputSnapshot ? `原文快照：\n${userInputSnapshot}` : "",
+    metadataDetail: Object.keys(metadata).length > 0 ? `metadata:\n${formatJSON(metadata)}` : "",
     durationMs,
     tokenTotal,
     severity: event.event_type === "task.failed" || Boolean(failure) ? "error" : "normal",
+    rawSourceLabel: "task_trace_event",
+    rawPayload: event,
   };
 }
 
-function runReviewToolEvent(chain: PromptEvaluationToolCallChain): RunReviewEventRowData {
+function runReviewToolEvent(chain: PromptEvaluationToolCallChain, linkedMessages: TaskMessagePayload[] = []): RunReviewEventRowData {
   const semantic = semanticToolAction(chain.tool, chain.input, chain.output);
   const detailParts = [
     chain.tool ? `raw_tool: ${chain.tool}` : "",
@@ -1226,6 +1309,12 @@ function runReviewToolEvent(chain: PromptEvaluationToolCallChain): RunReviewEven
     durationMs: chain.duration_ms ?? 0,
     tokenTotal: 0,
     severity: chain.failure_signal ? "error" : chain.status === "缺少结果" || chain.status === "孤立结果" ? "warning" : semantic.severity,
+    rawSourceLabel: "tool_call_chain",
+    rawPayload: chain,
+    linkedRawPayloads: linkedMessages.map((message) => ({
+      label: `关联 task_message #${message.seq} ${taskMessageKindLabel(message.type)}`,
+      payload: message,
+    })),
   };
 }
 
@@ -1609,6 +1698,8 @@ function runReviewTimelineNodeEvent(node: IssueTimelineNode): RunReviewEventRowD
     durationMs: node.duration_ms,
     tokenTotal,
     severity: node.status === "failed" || node.status === "blocked" ? "error" : "normal",
+    rawSourceLabel: "timeline_node",
+    rawPayload: node,
   };
 }
 

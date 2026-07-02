@@ -1,5 +1,10 @@
-import { TrainingWorkbenchPage } from "@multica/views/prompt-library";
+import { redirect } from "next/navigation";
 
-export default function TrainingExperimentsPage() {
-  return <TrainingWorkbenchPage activeView="experiments" />;
+export default async function TrainingExperimentsPage({
+  params,
+}: {
+  params: Promise<{ workspaceSlug: string }>;
+}) {
+  const { workspaceSlug } = await params;
+  redirect(`/${encodeURIComponent(workspaceSlug)}/training/test-suites`);
 }

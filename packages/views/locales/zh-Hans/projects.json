@@ -104,6 +104,8 @@
     "local_rename_label": "本地目录显示名",
     "local_no_daemon_tooltip": "尚未识别到本机守护进程，智能体暂时无法打开此目录。",
     "local_other_machine_tooltip": "此目录仅在最初注册它的电脑上可用。",
+    "local_compat_badge": "兼容保留",
+    "local_compat_tooltip": "历史本地目录资源。标准任务默认使用平台 worktree，不再自动进入这个目录。",
     "chat_hint_prefix": "智能体将在",
     "toast_local_attached": "已添加本地目录",
     "toast_local_renamed": "已重命名",

@@ -1951,8 +1951,6 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             </AppLink>
           )}
 
-          <TAPDSourceReference issue={issue} t={t} />
-
           <div {...descDropZoneProps} className="relative mt-5 rounded-lg">
             <ContentEditor
               ref={descEditorRef}
@@ -2006,6 +2004,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
             </div>
             {descDragOver && <FileDropOverlay />}
           </div>
+
+          <TAPDSourceReference issue={issue} t={t} />
 
           {/* Sub-issues — Linear-style */}
           {childIssues.length === 0 && (

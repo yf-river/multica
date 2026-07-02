@@ -710,6 +710,7 @@ describe("IssueDetail (shared)", () => {
     renderIssueDetail();
 
     const card = await screen.findByTestId("tapd-source-card");
+    const editor = screen.getByDisplayValue("Add JWT auth to the backend");
     expect(within(card).getByText("TAPD 来源")).toBeInTheDocument();
     expect(within(card).getByTestId("tapd-source-badge")).toBeInTheDocument();
     expect(within(card).getByText("TAPD Wiki")).toBeInTheDocument();
@@ -718,6 +719,7 @@ describe("IssueDetail (shared)", () => {
     expect(within(card).getByTestId("tapd-source-title")).toHaveTextContent("用户快捷入口需求");
     expect(within(card).getByText(/支持用户管理个人快捷入口/)).toBeInTheDocument();
     expect(within(card).getByRole("link", { name: /用户快捷入口需求/ })).toHaveAttribute("href", tapdURL);
+    expect(editor.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
   it("does not open a metadata JSON dialog from the sidebar", async () => {

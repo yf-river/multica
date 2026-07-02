@@ -22,50 +22,52 @@ The repository event sync runs two separate scans over an incoming MR. They are
 not the same gate and they read different fields.
 
 **Linking** scans the MR **title, body, OR branch** for a routable issue key
-(`PREFIX-NUMBER`, e.g. `MUL-2759`). Each match writes an issue ↔ MR link row.
-This is the link that `multica issue pull-requests` reads back. The command
-name is compatibility wording; product behavior should be described as MR.
+(`PREFIX-NUMBER`, e.g. `MUL-2759`). This scanning path is historical
+compatibility only and must not be treated as the primary issue ↔ MR link
+mechanism. Use `multica issue mr create` for new code-changing work, or
+`multica issue mr link` when registering an MR that already exists outside the
+platform. The link is what `multica issue mr list` reads back.
 
 ```text
 MUL-2759: add built-in issue working skill        # title prefix → links
 agent/matt/mul-2759-working-on-issues             # branch ref   → links
 ```
 
-**Close intent** is stricter and is a separate scan over **title or body only —
-never the branch**. It fires only for a key placed immediately after a closing
-keyword (`Closes` / `Fixes` / `Resolves`, optional `:` then whitespace). That
-adjacency is what sets the link row's close-intent flag, the gate that
-auto-advances the issue to `done` when the MR merges.
+**Close intent** is explicit platform state, normally supplied by
+`multica issue mr create --close-intent` or `multica issue mr link
+--close-intent`. Historical provider webhooks may still mirror MR state, but
+agents must not depend on title/body/branch text to create the issue link.
 
 ```text
-Closes MUL-2759                                    # links AND records close intent
+Closes MUL-2759                                    # human-readable only; do not rely on it for platform linking
 Fixes MUL-2759
 Resolves MUL-2759
-Fix login MUL-2759                                 # links only — keyword not adjacent
+Fix login MUL-2759
 ```
 
-Consequence: a bare title prefix or a branch reference links the MR but does not
-close the issue on merge. A closing keyword immediately adjacent to the issue key
-records close intent; on merge, that close intent can move the linked issue to
-`done`.
+Consequence: the reliable contract is the explicit platform MR record, not a
+provider webhook guessing from text.
 
 ### Default for code-changing issue work
 
 When an issue run changes code in a checked-out Gongfeng repo, the default handoff
-is to open or update an MR before posting the final Multica issue comment, unless
-the user explicitly asked for a local-only change or no MR. This is a default, not
-an unconditional command: if no code changed, say no MR is needed; if MR creation
-is blocked by auth, failing tests, or missing remote state, report that blocker
-instead of pretending the run is complete.
+is to create the MR through the Multica platform before posting the final issue
+comment, unless the user explicitly asked for a local-only change or no MR. This
+is a default, not an unconditional command: if no code changed, say no MR is
+needed; if MR creation is blocked by auth, failing tests, or missing remote
+branch state, report that blocker instead of pretending the run is complete.
 
-Use a routable issue key in the MR title, body, or branch so the sync can link
-the MR back to the issue. If the MR should close the issue on merge, put the key
-immediately after a closing keyword in the title or body, for example:
+Push the source branch first, write the MR description to a UTF-8 file, then run:
 
-```text
-MUL-2759: fix login redirect        # links only
-Closes MUL-2759                     # links and records close intent
+```sh
+multica issue mr create <issue-id> --provider gongfeng --project-path <project-path> --source-branch <branch> --target-branch <target-branch> --title "<title>" --description-file <path> --output json
+multica issue mr list <issue-id> --output json
 ```
+
+The `mr create` command creates the provider MR and synchronously records the MR
+on the issue. Do not rely on MR title, body, or branch identifiers as the primary
+linking mechanism. If an MR already exists because it was created outside the
+platform, register it explicitly with `multica issue mr link`.
 
 In the final issue comment, include the MR URL when an MR exists. If the task did
 not produce an MR because no code changed or the user asked not to create one, say
@@ -78,7 +80,7 @@ from branch names, memory, or `mr_url` metadata (which can be
 stale).
 
 ```bash
-multica issue pull-requests <issue-id> --output json
+multica issue mr list <issue-id> --output json
 ```
 
 Returns `{"pull_requests": [...]}` for compatibility. Each element exposes:

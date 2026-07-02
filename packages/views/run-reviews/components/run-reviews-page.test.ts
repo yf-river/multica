@@ -11,6 +11,7 @@ import {
   buildRunReviewRawEventsCsv,
   issueRunRowActivityLabel,
   issueRunRowMetaLabels,
+  runReviewEventHasDetails,
   runReviewTotalDurationMs,
 } from "./run-reviews-page";
 import { sopStageDisplayName } from "../../common/sop-stage-labels";
@@ -107,7 +108,7 @@ function task(overrides: Partial<AgentTask> = {}): AgentTask {
 describe("buildRunReviewOptimizerHref", () => {
   it("keeps issue context on the visible test suites route", () => {
     expect(buildRunReviewOptimizerHref((view) => `/acme/training/${view}`, "issue with space")).toBe(
-      "/acme/training/test-suites?issue=issue%20with%20space&mode=optimize",
+      "/acme/training/evaluation-runs?issue=issue%20with%20space",
     );
   });
 });
@@ -211,7 +212,7 @@ describe("buildRunReviewEventRows", () => {
     expect(sopStageDisplayName("custom-agent")).toBe("custom-agent");
   });
 
-  it("keeps diagnostic task messages, trace events, and tool chains before node summaries", () => {
+  it("keeps canonical diagnostic events while hiding duplicated node summaries", () => {
     const tree = {
       root: {
         tasks: [],
@@ -244,11 +245,91 @@ describe("buildRunReviewEventRows", () => {
 
     const rows = buildRunReviewEventRows(tree, timelineNodes);
 
-    expect(rows.map((row) => row.kind)).toEqual(["trace", "tool", "node"]);
+    expect(rows.map((row) => row.kind)).toEqual(["trace", "tool"]);
     expect(rows.find((row) => row.kind === "trace")?.metadataDetail).toContain("stderr");
     expect(rows.find((row) => row.kind === "tool")?.detail).toContain("\"url\": \"/health\"");
     expect(rows.find((row) => row.kind === "tool")?.detail).toContain("raw_tool: curl-check");
+    expect(rows.find((row) => row.kind === "tool")?.linkedRawPayloads).toEqual([
+      expect.objectContaining({
+        label: "关联 task_message #2 工具结果",
+        payload: expect.objectContaining({ seq: 2, type: "tool_result" }),
+      }),
+    ]);
     expect(rows.find((row) => row.kind === "trace")?.tokenTotal).toBe(30);
+  });
+
+  it("deduplicates source fetch timeline nodes when a source trace already exists", () => {
+    const tree = {
+      root: {
+        tasks: [],
+        task_messages: [],
+        trace_events: [
+          trace({
+            id: "source-trace",
+            event_type: "source.fetch",
+            event_name: "来源已拉取",
+            status: "completed",
+            metadata: { source_url: "https://www.tapd.cn/wiki/1" },
+          }),
+        ],
+        tool_call_chains: [],
+        children: [],
+      },
+    } as unknown as IssueExecutionTreeResponse;
+    const timelineNodes = [
+      {
+        node_id: "source:tapd",
+        node_type: "source_fetch",
+        status: "completed",
+        started_at: "2026-06-09T10:00:00.000Z",
+        completed_at: "2026-06-09T10:00:01.000Z",
+        duration_ms: 1000,
+        input_tokens: 0,
+        output_tokens: 0,
+        cache_read_tokens: 0,
+        cache_write_tokens: 0,
+        message_count: 0,
+        agent_turn_count: 0,
+        trace_event_count: 1,
+        usage_unavailable_trace: false,
+        summary: "来源已拉取",
+        evidence_refs: [{ type: "source", id: "tapd" }],
+      },
+    ] as IssueTimelineNode[];
+
+    const rows = buildRunReviewEventRows(tree, timelineNodes);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      kind: "trace",
+      rawSourceLabel: "task_trace_event",
+      object: "source.fetch",
+    });
+  });
+
+  it("keeps all canonical rows available for raw export instead of truncating at 50", () => {
+    const taskMessages = Array.from({ length: 55 }, (_, index) => message({
+      seq: index + 1,
+      type: "text",
+      content: `message ${index + 1}`,
+      created_at: `2026-06-09T10:${String(index).padStart(2, "0")}:00.000Z`,
+    }));
+    const tree = {
+      root: {
+        tasks: [],
+        task_messages: taskMessages,
+        trace_events: [],
+        tool_call_chains: [],
+        children: [],
+      },
+    } as unknown as IssueExecutionTreeResponse;
+
+    const rows = buildRunReviewEventRows(tree, []);
+    const csv = buildRunReviewRawEventsCsv(rows);
+
+    expect(rows).toHaveLength(55);
+    expect(csv).toContain("message:task-1:55");
+    expect(csv).toContain("message 55");
   });
 
   it("turns raw exec_command calls into semantic review actions", () => {
@@ -453,7 +534,7 @@ describe("buildRunReviewEventRows", () => {
     expect(csv).toContain("01-需求澄清.md </api/attachments/att-1/download>");
   });
 
-  it("exports raw event CSV with escaped detail and metadata evidence", () => {
+  it("exports raw event CSV with escaped detail, metadata, and raw evidence", () => {
     const rows = [
       {
         id: "event-1",
@@ -472,6 +553,9 @@ describe("buildRunReviewEventRows", () => {
         durationMs: 1200,
         tokenTotal: 30,
         severity: "error",
+        rawSourceLabel: "task_trace_event",
+        rawPayload: { id: "trace-1", event_type: "task.failed" },
+        linkedRawPayloads: [{ label: "关联 task_message #1 文本", payload: { seq: 1, content: "hello" } }],
       },
     ] satisfies ReturnType<typeof buildRunReviewEventRows>;
 
@@ -480,6 +564,30 @@ describe("buildRunReviewEventRows", () => {
     expect(csv).toContain("id,kind,category,time,timestamp_ms");
     expect(csv).toContain('"line 1\nline 2, with comma"');
     expect(csv).toContain('"metadata:\n{""quote"":""yes""}"');
+    expect(csv).toContain("task_trace_event");
+    expect(csv).toContain('"{\n  ""id"": ""trace-1"",\n  ""event_type"": ""task.failed""\n}"');
+    expect(csv).toContain("关联 task_message #1 文本");
+  });
+
+  it("only expands inline details when an event has evidence to show", () => {
+    expect(runReviewEventHasDetails({
+      detail: "",
+      metadataDetail: "",
+      rawPayload: undefined,
+      linkedRawPayloads: [],
+    })).toBe(false);
+    expect(runReviewEventHasDetails({
+      detail: "raw stdout",
+      metadataDetail: "",
+      rawPayload: undefined,
+      linkedRawPayloads: [],
+    })).toBe(true);
+    expect(runReviewEventHasDetails({
+      detail: "",
+      metadataDetail: "",
+      rawPayload: { id: "trace-1" },
+      linkedRawPayloads: [],
+    })).toBe(true);
   });
 
   it("creates a draft evaluation case with run snapshot, prompt snapshots, tools, and assertions", () => {

@@ -727,6 +727,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/source-fetch", h.RecordIssueSourceFetch)
 					r.Get("/pull-requests", h.ListPullRequestsForIssue)
 					r.Post("/pull-requests", h.LinkPullRequestToIssue)
+					r.Post("/merge-requests/create", h.CreateMergeRequestForIssue)
 				})
 			})
 
@@ -831,12 +832,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Delete("/", h.DeletePromptEvaluationCase)
 				})
 			})
-			r.Get("/api/prompt-evaluation-experiment-dimensions", h.ListPromptEvaluationExperimentDimensions)
 			r.Get("/api/prompt-evaluation-dimension-scores", h.ListPromptEvaluationDimensionScores)
 			r.Get("/api/prompt-evaluation-dimension-score-summaries", h.ListPromptEvaluationDimensionScoreSummaries)
 			r.Get("/api/prompt-evaluation-dimension-score-trends", h.ListPromptEvaluationDimensionScoreTrends)
-			r.Get("/api/prompt-evaluation-summary", h.GetPromptEvaluationSummary)
-			r.Get("/api/prompt-evaluation-runtime-readiness", h.GetPromptEvaluationRuntimeReadiness)
 			r.Route("/api/prompt-evaluation-runs", func(r chi.Router) {
 				r.Get("/", h.ListPromptEvaluationRuns)
 				r.Route("/{id}", func(r chi.Router) {
@@ -851,7 +849,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Post("/cancel", h.CancelPromptEvaluationRun)
 					r.Post("/review", h.ReviewPromptEvaluationRun)
 					r.Post("/optimization-candidates", h.CreatePromptEvaluationOptimizationCandidate)
-					r.Post("/optimization-agent-run", h.RunPromptEvaluationOptimizationAgent)
 				})
 			})
 			r.Route("/api/prompt-evaluation-optimization-candidates", func(r chi.Router) {

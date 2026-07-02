@@ -55,46 +55,26 @@ open     → otherwise
 returns. "Is it merged?" = `state == "merged"` (or `merged_at != null`); "is it a
 draft?" = `state == "draft"`. Combine with `checks_conclusion` for CI status.
 
-## Two distinct event-sync paths: link vs close-intent
+## Explicit platform MR record
 
-Both run inside the repository merge-request event handler, gated by the workspace
-auto-link flag.
+- API route: `server/cmd/server/router.go`
+  `POST /api/issues/{id}/merge-requests/create`
+- Handler: `server/internal/handler/github.go`
+  `CreateMergeRequestForIssue`
+- CLI: `server/cmd/multica/cmd_issue_pull_request.go`
+  `multica issue mr create`, `mr list`, and `mr link`
+- Completion gate: `server/internal/service/task.go`
+  `closeIssueAfterCompletedSOPRun`
 
-### Path 1 — link (title OR body OR branch)
-
-- `extractIdentifiers` regex helper: `server/internal/handler/github.go:1028`
-- driving regex `identifierRe` (`\b([a-z][a-z0-9]{1,9})-(\d+)\b`, case-insensitive):
-  `server/internal/handler/github.go:490`
-- call site: `server/internal/handler/github.go:727` —
-  `extractIdentifiers(p.PullRequest.Title, p.PullRequest.Body, p.PullRequest.Head.Ref)`
-
-Every `PREFIX-NUMBER` mention in **title, body, or branch** resolves to an issue
-in the workspace and writes a link row.
-This is what `multica issue pull-requests` later reads back.
-
-Drifted from the prior skill's handler citation, which pointed at the old
-call-site location for the link logic.
-
-### Path 2 — close intent (title OR body only, keyword-adjacent)
-
-- `extractClosingIdentifiers` regex helper: `server/internal/handler/github.go:1051`
-- driving regex `closingIdentifierRe`
-  (`\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[:\s]+([a-z][a-z0-9]{1,9})-(\d+)\b`):
-  `server/internal/handler/github.go:501`
-- call site: `server/internal/handler/github.go:736` —
-  `extractClosingIdentifiers(p.PullRequest.Title, p.PullRequest.Body)` (no branch arg)
-
-Only a `PREFIX-NUMBER` immediately after a closing keyword
-(`Closes`/`Fixes`/`Resolves`, optional `:` then whitespace) sets the link row's
-`close_intent` flag — the gate that auto-advances the issue to `done` on merge.
-`Fix MUL-1` closes; `Fix login MUL-1` does not (adjacency). Branch names are
-deliberately excluded (function doc, `github.go:1044-1050`): a branch like
-`mul-1/fix-login` links but must never declare close intent.
+Current product contract: provider webhooks mirror MR/PR state, but issue
+association is a synchronous platform action (`multica issue mr create` or
+explicit `multica issue mr link`). Agents must not depend on title/body/branch
+identifier scanning to create the issue link.
 
 Drifted from the prior skill's handler citation.
 
-Net: a bare title prefix (`MUL-2759: ...`) or a branch ref links only;
-`Closes MUL-2759` links **and** records close intent.
+Net: a readable issue key in an MR remains useful for humans, but the reliable
+platform record is the explicit linked MR row.
 
 ## Status side effects (enqueue contracts)
 

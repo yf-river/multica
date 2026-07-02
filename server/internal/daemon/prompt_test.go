@@ -5,6 +5,21 @@ import (
 	"testing"
 )
 
+func assertPromptOrder(t *testing.T, out, before, after string) {
+	t.Helper()
+	beforeIndex := strings.Index(out, before)
+	if beforeIndex < 0 {
+		t.Fatalf("BuildPrompt missing order anchor %q\n--- output ---\n%s", before, out)
+	}
+	afterIndex := strings.Index(out, after)
+	if afterIndex < 0 {
+		t.Fatalf("BuildPrompt missing order anchor %q\n--- output ---\n%s", after, out)
+	}
+	if beforeIndex >= afterIndex {
+		t.Fatalf("BuildPrompt should place %q before %q\n--- output ---\n%s", before, after, out)
+	}
+}
+
 func TestBuildPromptIncludesTapdSourceContext(t *testing.T) {
 	out := BuildPrompt(Task{
 		IssueID: "issue-1",
@@ -51,6 +66,31 @@ func TestBuildPromptIncludesTapdSourceContext(t *testing.T) {
 			t.Fatalf("BuildPrompt missing %q\n--- output ---\n%s", want, out)
 		}
 	}
+	assertPromptOrder(t, out, "Start by running `multica issue get issue-1 --output json`", "Source context:")
+}
+
+func TestBuildCommentPromptPlacesSourceContextAfterIssueRead(t *testing.T) {
+	out := BuildPrompt(Task{
+		IssueID:               "issue-comment-1",
+		TriggerCommentID:      "comment-1",
+		TriggerThreadID:       "thread-1",
+		TriggerAuthorType:     "member",
+		TriggerAuthorName:     "Alice",
+		TriggerCommentContent: "继续看 TAPD 来源",
+		SourceContext: &TaskSourceContext{
+			Provider: "tapd",
+			URL:      "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",
+			TAPD: &TAPDTaskSourceContext{
+				WorkspaceID:   "47654106",
+				ResourceType:  "markdown_wiki",
+				ResourceID:    "1147654106001004154",
+				FetchProvider: "tapd_mcp",
+				FetchStatus:   "pending_mcp_fetch",
+			},
+		},
+	}, "codex")
+
+	assertPromptOrder(t, out, "Start by running `multica issue get issue-comment-1 --output json`", "Source context:")
 }
 
 func TestBuildPromptBlocksTapdWhenProfileMissing(t *testing.T) {

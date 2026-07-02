@@ -247,12 +247,10 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 
 	updateW := httptest.NewRecorder()
 	testHandler.UpdatePromptEvaluationAsset(updateW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-assets/"+created.ID, map[string]any{
-		"asset_type": "实验",
+		"asset_type": "测试套件",
 		"payload": map[string]any{
-			"指标":   []string{"完整性", "可执行性"},
-			"实验对象": "评测提示词",
-			"对比维度": []string{"命中率", "缺失变量", "中文一致性"},
-			"基线输出": "待运行",
+			"cases": []map[string]any{{"名称": "套件用例", "变量": map[string]any{"输入": "登录失败"}, "期望包含": []string{"边界"}}},
+			"通过标准":  []string{"变量完整", "输出中文"},
 		},
 	}), "id", created.ID))
 	if updateW.Code != http.StatusOK {
@@ -262,18 +260,15 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	if err := json.Unmarshal(updateW.Body.Bytes(), &updated); err != nil {
 		t.Fatalf("decode update response: %v", err)
 	}
-	if updated.AssetType != "实验" || updated.PromptID == nil || *updated.PromptID != promptID {
+	if updated.AssetType != "测试套件" || updated.PromptID == nil || *updated.PromptID != promptID {
 		t.Fatalf("updated = %+v", updated)
 	}
 	if updated.StructuredCaseCount != 1 ||
-		updated.EvaluationDimensionCount != 2 ||
-		updated.ExperimentDimensionCount != 3 ||
 		updated.LinkedPromptCount != 1 ||
 		updated.DatasetRowCount != 0 {
 		t.Fatalf("updated asset profile = %+v", updated)
 	}
 	assertPromptEvaluationDatasetRows(t, created.ID, nil)
-	assertPromptEvaluationExperimentDimensions(t, created.ID, []string{"命中率", "缺失变量", "中文一致性"})
 	updatedPayload, ok := updated.Payload.(map[string]any)
 	if !ok || updatedPayload["schema_version"] != float64(1) || updatedPayload["payload_contract"] == nil {
 		t.Fatalf("updated payload missing contract: %#v", updated.Payload)
@@ -296,20 +291,12 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	if casesResp.Total != 1 || casesResp.Items[0].AssetID != created.ID || casesResp.Items[0].Status != "启用" {
 		t.Fatalf("cases response = %+v", casesResp)
 	}
-	dimensionsW := httptest.NewRecorder()
-	testHandler.ListPromptEvaluationExperimentDimensions(dimensionsW, newRequest(http.MethodGet, "/api/prompt-evaluation-experiment-dimensions?asset_id="+created.ID, nil))
-	if dimensionsW.Code != http.StatusOK {
-		t.Fatalf("list experiment dimensions status = %d, body = %s", dimensionsW.Code, dimensionsW.Body.String())
-	}
-	var dimensionsResp struct {
-		Items []PromptEvaluationExperimentDimensionResponse `json:"items"`
-		Total int                                           `json:"total"`
-	}
-	if err := json.Unmarshal(dimensionsW.Body.Bytes(), &dimensionsResp); err != nil {
-		t.Fatalf("decode experiment dimensions response: %v", err)
-	}
-	if dimensionsResp.Total != 3 || dimensionsResp.Items[0].ExperimentAssetID != created.ID || dimensionsResp.Items[0].ExperimentTarget != "评测提示词" {
-		t.Fatalf("experiment dimensions response = %+v", dimensionsResp)
+	rejectExperimentW := httptest.NewRecorder()
+	testHandler.UpdatePromptEvaluationAsset(rejectExperimentW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-assets/"+created.ID, map[string]any{
+		"asset_type": "测试套件",
+	}), "id", created.ID))
+	if rejectExperimentW.Code != http.StatusBadRequest {
+		t.Fatalf("experiment update status = %d, body = %s", rejectExperimentW.Code, rejectExperimentW.Body.String())
 	}
 }
 
@@ -1723,7 +1710,7 @@ func TestRunPromptEvaluationAssetAgentRestoresArchivedTrainingAgent(t *testing.T
 		RuntimeMode:        "local",
 		RuntimeConfig:      []byte("{}"),
 		RuntimeID:          parseUUID(runtimeID),
-		Scope:         "workspace",
+		Scope:              "workspace",
 		MaxConcurrentTasks: 1,
 		OwnerID:            parseUUID(testUserID),
 		Instructions:       promptEvaluationAgentInstructions(),
@@ -1746,7 +1733,7 @@ func TestRunPromptEvaluationAssetAgentRestoresArchivedTrainingAgent(t *testing.T
 	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
 		"prompt_id":  promptID,
 		"name":       "恢复归档训练智能体实验",
-		"asset_type": "实验",
+		"asset_type": "测试套件",
 		"payload": map[string]any{
 			"cases": []map[string]any{{"名称": "恢复归档", "变量": map[string]any{"issue_title": "恢复归档"}, "期望包含": []string{"恢复"}}},
 		},
@@ -1824,7 +1811,7 @@ func TestPromptEvaluationRuntimeReadinessRejectsStaleRuntime(t *testing.T) {
 	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
 		"prompt_id":  promptID,
 		"name":       "过期 runtime Agent 实验",
-		"asset_type": "实验",
+		"asset_type": "测试套件",
 		"payload": map[string]any{
 			"cases": []map[string]any{{"名称": "过期 runtime", "变量": map[string]any{"issue_title": "过期 runtime"}, "期望包含": []string{"过期"}}},
 		},
@@ -1882,7 +1869,7 @@ func TestPromptEvaluationRuntimeReadinessReportsRecentCapacityFailure(t *testing
 	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
 		"prompt_id":  promptID,
 		"name":       "容量受限 Agent 实验",
-		"asset_type": "实验",
+		"asset_type": "测试套件",
 		"payload": map[string]any{
 			"cases": []map[string]any{{"名称": "容量受限", "变量": map[string]any{"issue_title": "容量受限"}, "期望包含": []string{"容量"}}},
 		},
@@ -1951,7 +1938,7 @@ func TestPromptEvaluationRuntimeReadinessReportsUnavailableStates(t *testing.T) 
 	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
 		"prompt_id":  promptID,
 		"name":       "离线 runtime Agent 实验",
-		"asset_type": "实验",
+		"asset_type": "测试套件",
 		"payload": map[string]any{
 			"cases": []map[string]any{{"名称": "离线 runtime", "变量": map[string]any{"issue_title": "离线 runtime"}, "期望包含": []string{"离线"}}},
 		},
@@ -2394,181 +2381,17 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 	}
 }
 
-func TestRunPromptEvaluationOptimizationAgentQueuesRealTask(t *testing.T) {
+func TestRunPromptEvaluationOptimizationAgentIsRemoved(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")
 	}
 	cleanupPromptEvaluationAgentRunTest(t)
-	_, sourceResp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体优化任务来源实验", "输出缺少验收条件")
-	markPromptEvaluationTaskRunning(t, sourceResp.TaskID)
-
-	failW := httptest.NewRecorder()
-	failReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+sourceResp.TaskID+"/fail", map[string]any{
-		"error":          "输出缺少验收条件",
-		"failure_reason": "assertion_mismatch",
-		"session_id":     "prompt-eval-source-failed",
-		"work_dir":       "/tmp/prompt-eval",
-	}, testWorkspaceID, "prompt-eval-codex-daemon")
-	testHandler.FailTask(failW, withURLParam(failReq, "taskId", sourceResp.TaskID))
-	if failW.Code != http.StatusOK {
-		t.Fatalf("fail source status = %d, body = %s", failW.Code, failW.Body.String())
-	}
+	_, sourceResp, _ := createPromptEvaluationAgentRunFixture(t, "真实智能体优化候选来源套件", "输出缺少验收条件")
 
 	optW := httptest.NewRecorder()
 	testHandler.RunPromptEvaluationOptimizationAgent(optW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+sourceResp.Run.ID+"/optimization-agent-run", nil), "id", sourceResp.Run.ID))
-	if optW.Code != http.StatusAccepted {
+	if optW.Code != http.StatusGone || !strings.Contains(optW.Body.String(), "optimization run assets have been removed") {
 		t.Fatalf("optimization agent status = %d, body = %s", optW.Code, optW.Body.String())
-	}
-	var optResp PromptEvaluationAgentRunResponse
-	if err := json.Unmarshal(optW.Body.Bytes(), &optResp); err != nil {
-		t.Fatalf("decode optimization agent response: %v", err)
-	}
-	if optResp.TaskID == "" || optResp.TaskID == sourceResp.TaskID || optResp.Run.RunKind != "Agent执行" || optResp.Run.Status != "已入队" {
-		t.Fatalf("optimization agent response = %+v", optResp)
-	}
-	if optResp.Asset.AssetType != "优化运行" || optResp.Asset.PromptID == nil || *optResp.Asset.PromptID != *sourceResp.Run.PromptID {
-		t.Fatalf("optimization asset = %+v source=%+v", optResp.Asset, sourceResp.Run)
-	}
-	payload := optResp.Asset.Payload.(map[string]any)
-	if payload["任务类型"] != "智能体优化运行" || payload["来源运行"] != sourceResp.Run.ID {
-		t.Fatalf("optimization payload = %#v", payload)
-	}
-	if payload["schema"] != "multica.training_evaluation.optimization_run.v2" ||
-		payload["语义版本"] != "multica.training_evaluation.optimization_run.v2" {
-		t.Fatalf("optimization payload contract version = %#v", payload)
-	}
-	contract, ok := payload["优化运行契约"].(map[string]any)
-	if !ok || !strings.Contains(stringFromAny(contract["重试入口"]), "/agent-run") || stringFromAny(contract["人工确认要求"]) == "" {
-		t.Fatalf("optimization contract = %#v", payload["优化运行契约"])
-	}
-	rounds, ok := payload["优化轮次"].([]any)
-	if !ok || len(rounds) != 1 {
-		t.Fatalf("optimization rounds = %#v", payload["优化轮次"])
-	}
-	firstRound, ok := rounds[0].(map[string]any)
-	if !ok || intFromAny(firstRound["轮次"]) != 1 || intFromAny(firstRound["重试序号"]) != 0 || firstRound["运行ID"] != optResp.Run.ID || firstRound["trace/task id"] != optResp.TaskID {
-		t.Fatalf("first optimization round = %#v", firstRound)
-	}
-	logs, ok := payload["日志流"].([]any)
-	if !ok || len(logs) != 1 {
-		t.Fatalf("optimization log stream = %#v", payload["日志流"])
-	}
-	firstLog, ok := logs[0].(map[string]any)
-	if !ok || firstLog["事件"] != "创建优化运行" || intFromAny(firstLog["轮次"]) != 1 {
-		t.Fatalf("first optimization log = %#v", firstLog)
-	}
-	var caseCount int
-	if err := testPool.QueryRow(context.Background(), `
-		SELECT count(*)::int FROM prompt_evaluation_case
-		WHERE workspace_id = $1 AND asset_id = $2
-	`, testWorkspaceID, optResp.Asset.ID).Scan(&caseCount); err != nil {
-		t.Fatalf("load optimization cases: %v", err)
-	}
-	if caseCount == 0 {
-		t.Fatalf("expected optimization asset to sync structured cases")
-	}
-
-	markPromptEvaluationTaskRunning(t, optResp.TaskID)
-	if _, err := testPool.Exec(context.Background(), `
-		INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, updated_at)
-		VALUES ($1, 'codex', 'gpt-5.3-codex-spark', 21, 13, 1, 2, now())
-	`, optResp.TaskID); err != nil {
-		t.Fatalf("insert optimization task usage: %v", err)
-	}
-	optimizationOutput := `智能体优化输出：
-` + "```json" + `
-{
-  "用例结果":[{"case_index":0,"status":"通过","output":"已生成候选提示词正文","failure_reason":"无","evidence":{"命中":["优化候选","验收条件","trace/task id"]}}],
-  "评估结论":"Agent 已生成可人工确认的优化候选",
-  "优化候选名称":"Agent 自动优化候选",
-  "候选提示词正文":"请澄清 {{issue_title}}，输出必须使用中文，并明确验收条件、trace/task id、失败原因和下一步人工确认点。",
-  "逐条修改依据":"补充验收条件、trace/task id 和失败原因，保证领导演示可复盘。",
-  "可能影响的通过用例":"需要回归原有中文澄清用例。",
-  "人工验收清单":["确认中文输出","确认包含 trace/task id","确认原提示词未被自动替换"]
-}
-` + "```"
-	if _, err := testHandler.Queries.CreateTaskMessage(context.Background(), db.CreateTaskMessageParams{
-		TaskID:  parseUUID(optResp.TaskID),
-		Seq:     1,
-		Type:    "text",
-		Content: pgtype.Text{String: optimizationOutput, Valid: true},
-	}); err != nil {
-		t.Fatalf("insert optimization task message: %v", err)
-	}
-	if _, err := testHandler.Queries.CreateTaskTraceEvent(context.Background(), db.CreateTaskTraceEventParams{
-		WorkspaceID:   parseUUID(testWorkspaceID),
-		TaskID:        parseUUID(optResp.TaskID),
-		AgentID:       parseUUID(optResp.AgentID),
-		RuntimeID:     parseUUID(optResp.RuntimeID),
-		ChatSessionID: parseUUID(optResp.ChatSessionID),
-		Source:        "prompt_evaluation",
-		EventType:     "llm.usage_reported",
-		EventName:     "智能体优化候选已生成",
-		Status:        "completed",
-		Attempt:       1,
-		Provider:      "codex",
-		Model:         "gpt-5.3-codex-spark",
-		InputTokens:   21,
-		OutputTokens:  13,
-		FailureReason: "无",
-		ErrorType:     "",
-		Metadata:      []byte(`{"阶段":"智能体优化运行"}`),
-	}); err != nil {
-		t.Fatalf("insert optimization task trace event: %v", err)
-	}
-
-	completeW := httptest.NewRecorder()
-	completeReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+optResp.TaskID+"/complete", map[string]any{
-		"output":     optimizationOutput,
-		"session_id": "prompt-eval-optimization-session",
-		"work_dir":   "/tmp/prompt-eval",
-	}, testWorkspaceID, "prompt-eval-codex-daemon")
-	testHandler.CompleteTask(completeW, withURLParam(completeReq, "taskId", optResp.TaskID))
-	if completeW.Code != http.StatusOK {
-		t.Fatalf("complete optimization status = %d, body = %s", completeW.Code, completeW.Body.String())
-	}
-
-	syncW := httptest.NewRecorder()
-	testHandler.SyncPromptEvaluationRunFromTask(syncW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+optResp.Run.ID+"/sync", nil), "id", optResp.Run.ID))
-	if syncW.Code != http.StatusOK {
-		t.Fatalf("sync optimization status = %d, body = %s", syncW.Code, syncW.Body.String())
-	}
-	candidates, err := testHandler.Queries.ListPromptEvaluationOptimizationCandidates(context.Background(), db.ListPromptEvaluationOptimizationCandidatesParams{
-		WorkspaceID: parseUUID(testWorkspaceID),
-		RunID:       parseUUID(sourceResp.Run.ID),
-		PromptID:    parseUUID(*sourceResp.Run.PromptID),
-		Limit:       10,
-	})
-	if err != nil {
-		t.Fatalf("list optimization candidates: %v", err)
-	}
-	if len(candidates) != 1 {
-		t.Fatalf("expected one auto candidate, got %d", len(candidates))
-	}
-	candidate := promptEvaluationOptimizationCandidateToResponse(candidates[0])
-	if candidate.Status != "待确认" || candidate.FailedCaseCount != 1 || !strings.Contains(candidate.CandidateContent, "请澄清 {{issue_title}}") {
-		t.Fatalf("auto optimization candidate = %+v", candidate)
-	}
-	sourceSummary := candidate.SourceFailureSummary.(map[string]any)
-	if sourceSummary["来源Agent优化运行"] != optResp.Run.ID || sourceSummary["来源Agent优化资产"] != optResp.Asset.ID {
-		t.Fatalf("auto optimization source summary = %#v", sourceSummary)
-	}
-	syncAgainW := httptest.NewRecorder()
-	testHandler.SyncPromptEvaluationRunFromTask(syncAgainW, withURLParam(newRequest(http.MethodPost, "/api/prompt-evaluation-runs/"+optResp.Run.ID+"/sync", nil), "id", optResp.Run.ID))
-	if syncAgainW.Code != http.StatusOK {
-		t.Fatalf("sync optimization again status = %d, body = %s", syncAgainW.Code, syncAgainW.Body.String())
-	}
-	candidates, err = testHandler.Queries.ListPromptEvaluationOptimizationCandidates(context.Background(), db.ListPromptEvaluationOptimizationCandidatesParams{
-		WorkspaceID: parseUUID(testWorkspaceID),
-		RunID:       parseUUID(sourceResp.Run.ID),
-		PromptID:    parseUUID(*sourceResp.Run.PromptID),
-		Limit:       10,
-	})
-	if err != nil {
-		t.Fatalf("list optimization candidates after duplicate sync: %v", err)
-	}
-	if len(candidates) != 1 {
-		t.Fatalf("expected duplicate sync to keep one candidate, got %d", len(candidates))
 	}
 }
 
@@ -2787,6 +2610,7 @@ func markPromptEvaluationTaskRunning(t *testing.T, taskID string) {
 }
 
 func TestRunPromptEvaluationAssetAgentDefaultsExperimentDimensions(t *testing.T) {
+	t.Skip("experiment assets were removed from training evaluation")
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")
 	}
@@ -2810,7 +2634,7 @@ func TestRunPromptEvaluationAssetAgentDefaultsExperimentDimensions(t *testing.T)
 	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
 		"prompt_id":  promptID,
 		"name":       "默认维度实验",
-		"asset_type": "实验",
+		"asset_type": "测试套件",
 		"payload": map[string]any{
 			"cases": []map[string]any{{"名称": "默认维度用例", "变量": map[string]any{"issue_title": "默认维度"}, "期望包含": []string{"中文结论"}}},
 		},
@@ -2863,7 +2687,7 @@ func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
 		RuntimeMode:        "local",
 		RuntimeConfig:      []byte("{}"),
 		RuntimeID:          parseUUID(runtimeID),
-		Scope:         "workspace",
+		Scope:              "workspace",
 		MaxConcurrentTasks: 1,
 		OwnerID:            parseUUID(testUserID),
 		Instructions:       "只输出结构化评估结论。",
@@ -2894,7 +2718,7 @@ func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
 	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
 		"prompt_id":  promptID,
 		"name":       "指定执行智能体实验",
-		"asset_type": "实验",
+		"asset_type": "测试套件",
 		"payload": map[string]any{
 			"执行智能体": map[string]any{"agent_id": uuidToString(agent.ID)},
 			"cases": []map[string]any{{
@@ -2952,7 +2776,7 @@ func createPromptEvaluationAgentRunFixture(t *testing.T, assetName string, caseN
 	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
 		"prompt_id":  promptID,
 		"name":       assetName,
-		"asset_type": "实验",
+		"asset_type": "测试套件",
 		"payload": map[string]any{
 			"对比维度":  []string{"命中率", "缺失变量", "中文一致性"},
 			"cases": []map[string]any{{"名称": caseName, "变量": map[string]any{"issue_title": caseName}, "期望包含": []string{caseName}}},
@@ -2998,7 +2822,7 @@ func TestPromptEvaluationOptimizationCandidatePublishKeepsSourcePrompt(t *testin
 	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
 		"prompt_id":  promptID,
 		"name":       "失败用例优化运行",
-		"asset_type": "优化运行",
+		"asset_type": "测试套件",
 		"payload": map[string]any{
 			"cases": []map[string]any{
 				{
@@ -3146,7 +2970,7 @@ func TestPromptEvaluationOptimizationCandidateCanBeRejected(t *testing.T) {
 	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
 		"prompt_id":  promptID,
 		"name":       "拒绝优化候选运行",
-		"asset_type": "优化运行",
+		"asset_type": "测试套件",
 		"payload": map[string]any{
 			"cases": []map[string]any{
 				{

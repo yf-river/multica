@@ -457,9 +457,9 @@ describe("SearchCommand", () => {
 
     const commands = [
       ["提示词库", "打开提示词库", "/ws-test/training/prompts"],
-      ["调试运行", "打开调试运行", "/ws-test/training/debug-runs"],
       ["数据集", "打开数据集", "/ws-test/training/datasets"],
       ["测试套件", "打开测试套件", "/ws-test/training/test-suites"],
+      ["评测记录", "打开评测记录", "/ws-test/training/evaluation-runs"],
     ] as const;
 
     for (const [query, label, href] of commands) {

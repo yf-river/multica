@@ -22,7 +22,7 @@ export interface RuntimeDevice {
   device_info: string;
   metadata: Record<string, unknown>;
   owner_id: string | null;
-  /** Defaults to "personal" when omitted. */
+  /** Defaults to "workspace" when omitted. */
   scope: RuntimeScope;
   /**
    * The custom runtime profile this registered runtime was launched from,

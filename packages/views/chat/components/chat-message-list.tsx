@@ -27,7 +27,13 @@ import type { AgentAvailability } from "@multica/core/agents";
 import type { ChatMessage, ChatPendingTask, TaskFailureReason } from "@multica/core/types";
 import type { ChatTimelineItem } from "@multica/core/chat";
 import { failureReasonLabel } from "../../agents/components/tabs/task-failure";
-import { buildTimeline } from "../../common/task-transcript";
+import {
+  buildTimeline,
+  formatToolName,
+  localizeTranscriptOutput,
+  transcriptTruncatedSuffix,
+  truncateTranscriptText,
+} from "../../common/task-transcript";
 import { TaskStatusPill } from "./task-status-pill";
 import { formatElapsedMs } from "../lib/format";
 import { splitTimeline, extractCopyText } from "../lib/copy-text";
@@ -559,11 +565,11 @@ function getToolSummary(item: ChatTimelineItem): string {
   if (inp.description) return String(inp.description);
   if (inp.command) {
     const cmd = String(inp.command);
-    return cmd.length > 100 ? cmd.slice(0, 100) + "..." : cmd;
+    return truncateTranscriptText(cmd, 100);
   }
   if (inp.prompt) {
     const p = String(inp.prompt);
-    return p.length > 100 ? p.slice(0, 100) + "..." : p;
+    return truncateTranscriptText(p, 100);
   }
   if (inp.skill) return String(inp.skill);
   for (const v of Object.values(inp)) {
@@ -576,6 +582,7 @@ function ToolCallRow({ item }: { item: ChatTimelineItem }) {
   const [open, setOpen] = useState(false);
   const summary = getToolSummary(item);
   const hasInput = item.input && Object.keys(item.input).length > 0;
+  const toolLabel = formatToolName(item.tool) || "工具";
 
   return (
     <Collapsible open={open} onOpenChange={setOpen}>
@@ -587,7 +594,7 @@ function ToolCallRow({ item }: { item: ChatTimelineItem }) {
             !hasInput && "invisible",
           )}
         />
-        <span className="font-medium text-foreground shrink-0">{item.tool}</span>
+        <span className="font-medium text-foreground shrink-0">{toolLabel}</span>
         {summary && <span className="truncate text-muted-foreground">{summary}</span>}
       </CollapsibleTrigger>
       {hasInput && (
@@ -607,9 +614,11 @@ function ToolResultRow({ item }: { item: ChatTimelineItem }) {
   const output = item.output ?? "";
   if (!output) return null;
 
-  const preview = output.length > 120 ? output.slice(0, 120) + "..." : output;
+  const localizedOutput = localizeTranscriptOutput(output);
+  const preview = truncateTranscriptText(localizedOutput, 120);
+  const toolLabel = formatToolName(item.tool);
   const labelPrefix = item.tool
-    ? t(($) => $.message_list.tool_result_named, { tool: item.tool })
+    ? t(($) => $.message_list.tool_result_named, { tool: toolLabel || item.tool })
     : t(($) => $.message_list.tool_result_unnamed);
 
   return (
@@ -624,7 +633,9 @@ function ToolResultRow({ item }: { item: ChatTimelineItem }) {
       </CollapsibleTrigger>
       <CollapsibleContent>
         <pre className="ml-[18px] mt-0.5 max-h-40 overflow-auto rounded bg-muted/50 p-2 text-xs text-muted-foreground whitespace-pre-wrap break-all">
-          {output.length > 4000 ? output.slice(0, 4000) + "\n... (truncated)" : output}
+          {output.length > 4000
+            ? localizeTranscriptOutput(output.slice(0, 4000)) + transcriptTruncatedSuffix()
+            : localizedOutput}
         </pre>
       </CollapsibleContent>
     </Collapsible>

@@ -65,6 +65,23 @@ func TestSubIssueCreationSectionPresentForIssueRuns(t *testing.T) {
 	}
 }
 
+func TestMetaSkillContentDefaultsUserFacingLanguageToChinese(t *testing.T) {
+	t.Parallel()
+
+	out := buildMetaSkillContent("codex", TaskContextForEnv{IssueID: "11111111-2222-3333-4444-555555555555"})
+
+	for _, want := range []string{
+		"## Output Language",
+		"Default to Simplified Chinese for user-facing natural language",
+		"progress updates, stage summaries, issue comments, chat replies, and final delivery notes",
+		"Keep commands, code, file paths, API fields, repository names, product names, logs, and quoted error text in their original language",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("output language guidance missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
 func TestStageMarkdownArtifactsSectionUsesCommentAttachments(t *testing.T) {
 	t.Parallel()
 
@@ -77,7 +94,8 @@ func TestStageMarkdownArtifactsSectionUsesCommentAttachments(t *testing.T) {
 		"save it as a UTF-8 `.md` file",
 		"under `artifacts/multica/` when possible",
 		"scans markdown files under `artifacts/` and `.multica/artifacts/`",
-		"The daemon automatically uploads those markdown files to the issue",
+		"uploads them to the issue before marking the task terminal",
+		"links them to an agent-authored issue comment",
 		"download or preview",
 	} {
 		if !strings.Contains(out, want) {
@@ -94,10 +112,10 @@ func TestMRAndHumanCodeReviewHandoffSectionRequiresLinkedMR(t *testing.T) {
 	for _, want := range []string{
 		"## MR and Human CodeReview Handoff",
 		"after verification passes and before the final delivery comment",
-		"open or update the provider MR",
-		"Use a routable issue key in the MR title, body, or branch",
-		"for Gongfeng resources, use the `gongfeng` MCP server",
-		"multica issue pull-requests <issue-id> --output json",
+		"create the provider MR through the platform",
+		"push your source branch first",
+		"multica issue mr create <issue-id>",
+		"multica issue mr list <issue-id> --output json",
 		"Include the MR URL in the final issue comment",
 	} {
 		if !strings.Contains(out, want) {

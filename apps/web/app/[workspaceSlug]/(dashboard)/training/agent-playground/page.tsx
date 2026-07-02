@@ -6,5 +6,5 @@ export default async function TrainingAgentPlaygroundPage({
   params: Promise<{ workspaceSlug: string }>;
 }) {
   const { workspaceSlug } = await params;
-  redirect(`/${encodeURIComponent(workspaceSlug)}/training/debug-runs`);
+  redirect(`/${encodeURIComponent(workspaceSlug)}/training/prompts`);
 }

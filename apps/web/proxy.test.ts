@@ -34,22 +34,22 @@ describe("web proxy legacy route compatibility", () => {
     ).toBe("http://localhost/team-a/training/evaluation-runs?run=run-123");
   });
 
-  it("redirects old top-level optimization links to the optimization runs view with issue context", () => {
+  it("redirects old top-level optimization links to evaluation records with issue context", () => {
     expect(
       redirectLocation("/training?view=optimization-runs&issue=issue-1", {
         multica_logged_in: "1",
         last_workspace_slug: "team-a",
       }),
-    ).toBe("http://localhost/team-a/training/optimization-runs?issue=issue-1");
+    ).toBe("http://localhost/team-a/training/evaluation-runs?issue=issue-1");
   });
 
-  it("redirects old top-level training debug links to the combined debug route", () => {
+  it("redirects old top-level training debug links to the prompt library", () => {
     expect(
       redirectLocation("/training?view=agent-playground", {
         multica_logged_in: "1",
         last_workspace_slug: "team-a",
       }),
-    ).toBe("http://localhost/team-a/training/debug-runs");
+    ).toBe("http://localhost/team-a/training/prompts");
   });
 
   it("redirects evaluation aliases to run reviews", () => {

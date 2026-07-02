@@ -13,6 +13,8 @@ const stamp = now.replace(/[:.]/g, "-");
 
 const e2ePath = path.join(artifactRoot, "codex-squad-curl-e2e-latest.json");
 const e2e = readJSON(e2ePath);
+const passwordSOPPath = path.join(artifactRoot, "password-strength-sop-e2e-latest.json");
+const passwordSOPEvidence = fileIfExists(passwordSOPPath) ? readJSON(passwordSOPPath) : null;
 const databaseURL = process.env.DATABASE_URL || readGoalTestDatabaseURL("prod") || readGoalTestDatabaseURL("int");
 const goalCEvidence = buildGoalCEvidence();
 const goalDSkillEvidence = buildGoalDSkillEvidence();
@@ -37,7 +39,7 @@ const topologyGeneralizationEvidence = buildTopologyGeneralizationEvidence();
 
 const originalRequirements = buildOriginalRequirementMatrix({ e2e, stageEvidence, crossServiceEvidence });
 const productionReadiness = buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEvidence, handoffEvidence, uiApiEvidence, prodReleaseEvidence, topologyGeneralizationEvidence, newAccountMCPEvidence, fixtureGovernanceEvidence });
-const goalERequirements = buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, canonicalDemoEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, finalEvidencePackage, prodReleaseEvidence, topologyGeneralizationEvidence });
+const goalERequirements = buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, canonicalDemoEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, finalEvidencePackage, prodReleaseEvidence, topologyGeneralizationEvidence, passwordSOPEvidence });
 const blockingOpen = [
   ...originalRequirements.filter((item) => ["missing", "partial", "false_claimed", "blocked"].includes(item.status)),
   ...goalERequirements.filter((item) => ["missing", "partial", "false_claimed", "blocked"].includes(item.status)),
@@ -53,6 +55,7 @@ const artifact = {
   acceptance_scope: "goal-test full prod release",
   source_artifacts: {
     e2e: e2ePath,
+    password_strength_sop: fileIfExists(passwordSOPPath),
     sop_stage_evidence: stageEvidence.source_artifact || null,
     real_pm_0105_run: realPMRunEvidence.latest_json_path || null,
     deployment_log_window: e2e.deployment_log_window || null,
@@ -62,6 +65,7 @@ const artifact = {
     fixture_governance: fixtureGovernanceEvidence.latest_json_path || null,
   },
   e2e,
+  password_strength_sop: passwordSOPEvidence,
   topology: e2e.topology || null,
   topology_generalization: topologyGeneralizationEvidence,
   credential_profiles: e2e.credential_profiles || null,
@@ -252,7 +256,7 @@ function buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEviden
   ];
 }
 
-function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, canonicalDemoEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, finalEvidencePackage, prodReleaseEvidence, topologyGeneralizationEvidence }) {
+function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, canonicalDemoEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, finalEvidencePackage, prodReleaseEvidence, topologyGeneralizationEvidence, passwordSOPEvidence }) {
   const stageKeys = new Set((stageEvidence.stages || []).map((stage) => stage.key));
   const requiredStageKeys = ["pm", "01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"];
   const allStagesPresent = requiredStageKeys.every((key) => stageKeys.has(key));
@@ -455,6 +459,16 @@ function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence,
     canonicalDemoEvidence.latest_json?.prompt_evaluation?.candidate_id &&
     canonicalDemoEvidence.latest_json?.prompt_evaluation?.apply_status === "applied" &&
     canonicalDemoEvidence.latest_json?.prompt_evaluation?.re_eval_status === "通过";
+  const passwordSOPChecks = new Set((passwordSOPEvidence?.checks || []).filter((item) => item.ok).map((item) => item.name));
+  const passwordSOPPassed =
+    passwordSOPEvidence?.ok === true &&
+    passwordSOPEvidence?.final_issue?.status === "in_review" &&
+    passwordSOPChecks.has("issue_in_review") &&
+    passwordSOPChecks.has("platform_mr_linked") &&
+    passwordSOPChecks.has("artifact_previews_available") &&
+    passwordSOPChecks.has("sop_steps_completed") &&
+    Array.isArray(passwordSOPEvidence?.linked_pull_requests) &&
+    passwordSOPEvidence.linked_pull_requests.some((item) => item.html_url && Number(item.number || 0) > 0);
   return [
     matrixItem("E-00", "Current ai-studio Web/API state retains a visible canonical demo chain instead of empty archived-only evidence",
       canonicalDemoPassed,
@@ -500,6 +514,13 @@ function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence,
       topologyAudit.blocking_reason || "No passing topology generalization audit proving variable-project and variable-agent fixtures.",
       topologyGeneralizationEvidence,
       topologyGeneralizationEvidence.latest_json_path ? "partial" : "missing"),
+    matrixItem("E-03M", "Focused SOP path reaches PM/01-05 artifacts, platform-created linked MR, and in_review handoff",
+      passwordSOPPassed,
+      passwordSOPEvidence
+        ? "Focused password-strength SOP evidence exists, but PM/01-05 artifacts, linked MR, or in_review handoff is incomplete."
+        : "No focused password-strength SOP E2E artifact found.",
+      passwordSOPEvidence,
+      passwordSOPEvidence ? "partial" : "missing"),
     matrixItem("E-04", "Issue timeline and run detail show timeline, node table, token/duration/turn metrics, evidence anchors, and issue summary/deep link",
       issueTimelinePassed,
       hasIssueTimelineSlice

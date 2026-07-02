@@ -39,6 +39,13 @@ import { useTranscriptViewStore, type TranscriptSortDirection } from "@multica/c
 import type { AgentTask, Agent, AgentRuntime } from "@multica/core/types/agent";
 import { redactSecrets } from "./redact";
 import type { TimelineItem } from "./build-timeline";
+import {
+  formatEventLabel,
+  formatFilterLabel,
+  localizeTranscriptOutput,
+  transcriptTruncatedSuffix,
+  truncateTranscriptText,
+} from "./format";
 import { useT } from "../../i18n";
 
 interface AgentTranscriptDialogProps {
@@ -88,23 +95,6 @@ const colorClasses: Record<EventColor, { bg: string; bgActive: string; label: st
 
 // ─── Helpers ────────────────────────────────────────────────────────────────
 
-function getEventLabel(item: TimelineItem): string {
-  switch (item.type) {
-    case "text":
-      return "Agent";
-    case "thinking":
-      return "Thinking";
-    case "tool_use":
-      return item.tool ?? "Tool";
-    case "tool_result":
-      return item.tool ? `${item.tool}` : "Result";
-    case "error":
-      return "Error";
-    default:
-      return "Event";
-  }
-}
-
 function getEventSummary(item: TimelineItem): string {
   switch (item.type) {
     case "text":
@@ -121,11 +111,11 @@ function getEventSummary(item: TimelineItem): string {
       if (inp.description) return String(inp.description);
       if (inp.command) {
         const cmd = String(inp.command);
-        return cmd.length > 120 ? cmd.slice(0, 120) + "..." : cmd;
+        return truncateTranscriptText(cmd, 120);
       }
       if (inp.prompt) {
         const p = String(inp.prompt);
-        return p.length > 120 ? p.slice(0, 120) + "..." : p;
+        return truncateTranscriptText(p, 120);
       }
       if (inp.skill) return String(inp.skill);
       for (const v of Object.values(inp)) {
@@ -134,7 +124,7 @@ function getEventSummary(item: TimelineItem): string {
       return "";
     }
     case "tool_result":
-      return item.output?.slice(0, 200) ?? "";
+      return item.output ? truncateTranscriptText(localizeTranscriptOutput(item.output), 200) : "";
     case "error":
       return item.content ?? "";
     default:
@@ -165,6 +155,19 @@ function formatElapsedMs(ms: number): string {
   return `${minutes}m ${secs}s`;
 }
 
+function formatTaskStatus(status: string): string {
+  const map: Record<string, string> = {
+    queued: "排队中",
+    dispatched: "已派发",
+    running: "运行中",
+    completed: "已完成",
+    failed: "失败",
+    cancelled: "已取消",
+    timeout: "已超时",
+  };
+  return map[status] ?? status;
+}
+
 // ─── Main dialog ────────────────────────────────────────────────────────────
 
 export function AgentTranscriptDialog({
@@ -190,18 +193,18 @@ export function AgentTranscriptDialog({
   const scrollContainerRef = useRef<HTMLDivElement>(null);
 
   // Derive filter options from each item:
-  //   tool_use / tool_result → filter value = tool, display = "tool:Bash"
-  //   other types → display from getEventLabel
+  //   tool_use / tool_result → filter value = raw tool, display = localized label
+  //   other types → display from localized event label
   const filterOptions = useMemo(() => {
     const options = new Map<string, string>();
     for (const item of items) {
       if (item.tool && (item.type === "tool_use" || item.type === "tool_result")) {
         const key = `tool:${item.tool}`;
-        if (!options.has(key)) options.set(key, key);
+        if (!options.has(key)) options.set(key, formatFilterLabel(item));
       } else {
         const value = item.type;
         if (!options.has(value)) {
-          options.set(value, getEventLabel(item));
+          options.set(value, formatEventLabel(item));
         }
       }
     }
@@ -291,7 +294,7 @@ export function AgentTranscriptDialog({
   const handleCopyAll = useCallback(() => {
     const text = displayItems
       .map((item) => {
-        const label = getEventLabel(item);
+        const label = formatEventLabel(item);
         const summary = getEventSummary(item);
         return `[${label}] ${summary}`;
       })
@@ -344,8 +347,8 @@ export function AgentTranscriptDialog({
       {t(($) => $.transcript.status_failed)}
     </span>
   ) : (
-    <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground capitalize">
-      {task.status}
+    <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+      {formatTaskStatus(task.status)}
     </span>
   );
 
@@ -514,7 +517,7 @@ export function AgentTranscriptDialog({
             {/* Created time */}
             {task.created_at && (
               <MetadataChip>
-                {new Date(task.created_at).toLocaleString(undefined, {
+                {new Date(task.created_at).toLocaleString("zh-CN", {
                   month: "short",
                   day: "numeric",
                   hour: "2-digit",
@@ -681,7 +684,7 @@ function TimelineBar({
   }
 
   return (
-    <div className="flex gap-0.5 h-5 rounded overflow-hidden" role="navigation" aria-label="Timeline">
+    <div className="flex gap-0.5 h-5 rounded overflow-hidden" role="navigation" aria-label="执行时间线">
       {segments.map((seg) => {
         const isSelected = selectedSeq !== null && items.slice(seg.startIdx, seg.endIdx + 1).some((i) => i.seq === selectedSeq);
         const color = colorClasses[seg.color];
@@ -698,12 +701,12 @@ function TimelineBar({
             )}
             style={{ width: `${Math.max(widthPercent, 0.5)}%` }}
             onClick={() => onSegmentClick(items[seg.startIdx]!.seq)}
-            title={`${getEventLabel(items[seg.startIdx]!)}${seg.count > 1 ? ` (+${seg.count - 1} more)` : ""}`}
+            title={`${formatEventLabel(items[seg.startIdx]!)}${seg.count > 1 ? `（另 ${seg.count - 1} 条）` : ""}`}
           >
             <div className="absolute bottom-full left-1/2 -translate-x-1/2 mb-1 hidden group-hover:block z-10 pointer-events-none">
               <div className="rounded bg-popover border px-2 py-1 text-[10px] text-popover-foreground shadow-md whitespace-nowrap">
-                {getEventLabel(items[seg.startIdx]!)}
-                {seg.count > 1 && <span className="text-muted-foreground ml-1">+{seg.count - 1}</span>}
+                {formatEventLabel(items[seg.startIdx]!)}
+                {seg.count > 1 && <span className="text-muted-foreground ml-1">另 {seg.count - 1} 条</span>}
               </div>
             </div>
           </button>
@@ -727,7 +730,7 @@ const TranscriptEventRow = ({
 }: TranscriptEventRowProps & { ref?: React.Ref<HTMLDivElement> }) => {
   const [expanded, setExpanded] = useState(false);
   const color = getEventColor(item);
-  const label = getEventLabel(item);
+  const label = formatEventLabel(item);
   const summary = getEventSummary(item);
   const date = useMemo(
     () => (item.created_at ? new Date(item.created_at) : null),
@@ -781,7 +784,7 @@ const TranscriptEventRow = ({
                   )}
                 />
               )}
-              <span className="truncate">{summary || "(empty)"}</span>
+              <span className="truncate">{summary || "（空）"}</span>
             </div>
           </CollapsibleTrigger>
 
@@ -792,8 +795,8 @@ const TranscriptEventRow = ({
 
           {/* Timestamp */}
           {date && (
-            <span className="shrink-0 text-[10px] text-muted-foreground/50 tabular-nums mt-1" title={date.toLocaleString()}>
-              {date.toLocaleTimeString(undefined, {
+            <span className="shrink-0 text-[10px] text-muted-foreground/50 tabular-nums mt-1" title={date.toLocaleString("zh-CN")}>
+              {date.toLocaleTimeString("zh-CN", {
                 hour: "2-digit",
                 minute: "2-digit",
                 second: "2-digit",
@@ -832,8 +835,8 @@ function EventDetailContent({ item }: { item: TimelineItem }) {
         <pre className="max-h-60 overflow-auto p-3 text-[11px] text-muted-foreground whitespace-pre-wrap break-all">
           {item.output
             ? item.output.length > 4000
-              ? redactSecrets(item.output.slice(0, 4000)) + "\n... (truncated)"
-              : redactSecrets(item.output)
+              ? localizeTranscriptOutput(redactSecrets(item.output.slice(0, 4000))) + transcriptTruncatedSuffix()
+              : localizeTranscriptOutput(redactSecrets(item.output))
             : ""}
         </pre>
       );

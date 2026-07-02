@@ -32,6 +32,26 @@ func TestEstimateUsageCostUSDDeepSeekV4FlashIOA(t *testing.T) {
 	}
 }
 
+func TestEstimateUsageCostUSDKimiK26IOA(t *testing.T) {
+	cost, ok := EstimateUsageCostUSD("codebuddy/kimi-k2.6-ioa", 1_000_000, 1_000_000, 1_000_000, 1_000_000)
+	if !ok {
+		t.Fatalf("expected codebuddy/kimi-k2.6-ioa to resolve")
+	}
+	if cost != 6.06 {
+		t.Fatalf("cost = %v, want 6.06", cost)
+	}
+}
+
+func TestEstimateUsageCostUSDKimiK27IOA(t *testing.T) {
+	cost, ok := EstimateUsageCostUSD("codebuddy/kimi-k2.7-ioa", 1_000_000, 1_000_000, 1_000_000, 1_000_000)
+	if !ok {
+		t.Fatalf("expected codebuddy/kimi-k2.7-ioa to resolve")
+	}
+	if cost != 6.09 {
+		t.Fatalf("cost = %v, want 6.09", cost)
+	}
+}
+
 func TestEstimateUsageCostUSDUnknownModel(t *testing.T) {
 	cost, ok := EstimateUsageCostUSD("unknown-model", 1_000_000, 1_000_000, 0, 0)
 	if ok {
@@ -49,5 +69,15 @@ func TestCanonicalModelPriceKey(t *testing.T) {
 	}
 	if provider != "minimax" || model != "m2.7" {
 		t.Fatalf("key = %s/%s, want minimax/m2.7", provider, model)
+	}
+}
+
+func TestCanonicalModelPriceKeyKimiIOA(t *testing.T) {
+	provider, model, ok := CanonicalModelPriceKey("codebuddy/kimi-k2.7-ioa")
+	if !ok {
+		t.Fatalf("expected kimi alias to resolve")
+	}
+	if provider != "kimi" || model != "k2.7-code" {
+		t.Fatalf("key = %s/%s, want kimi/k2.7-code", provider, model)
 	}
 }

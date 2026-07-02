@@ -13,7 +13,6 @@ import type {
   ListPromptEvaluationDatasetVersionRowsResponse,
   ListPromptEvaluationDatasetVersionTagTrendsResponse,
   ListPromptEvaluationDatasetVersionsResponse,
-  ListPromptEvaluationExperimentDimensionsResponse,
   ListPromptEvaluationOptimizationCandidatesResponse,
   ListPromptEvaluationCaseTagSummariesResponse,
   ListPromptEvaluationCaseTagDatasetSummariesResponse,
@@ -29,15 +28,12 @@ import type {
   PromptEvaluationDatasetExportResponse,
   ImportPromptEvaluationDatasetResponse,
   PromptEvaluationRunEvidence,
-  PromptEvaluationRuntimeReadiness,
-  PromptEvaluationSummary,
   PromptEvaluationStructuredCase,
   PromptEvaluationCaseOperation,
   BulkUpdatePromptEvaluationCaseTagsResponse,
   PromptEvaluationDatasetFromTracesResponse,
   PromptEvaluationDatasetVersionDiff,
   RestorePromptEvaluationDatasetVersionResponse,
-  PromptEvaluationExperimentDimension,
   PromptEvaluationDimensionScore,
   ListPromptEvaluationDimensionScoresResponse,
   PromptEvaluationDimensionScoreSummary,
@@ -941,7 +937,7 @@ export const PromptEvaluationAssetSchema = z.object({
   prompt_id: z.string().nullable().optional().transform((v) => v ?? null),
   name: z.string(),
   description: z.string().default(""),
-  asset_type: z.enum(["数据集", "测试套件", "实验", "优化运行"]),
+  asset_type: z.enum(["数据集", "测试套件"]),
   payload: PromptEvaluationPayloadSchema,
   status: z.enum(["启用", "归档"]).default("启用"),
   created_by: z.string().nullable().optional().transform((v) => v ?? null),
@@ -1273,46 +1269,6 @@ export const PromptEvaluationAssetEvidenceArchivePackageSchema = z.object({
   中文摘要: z.record(z.string(), z.unknown()).default({}),
 }).loose();
 
-export const PromptEvaluationSummarySchema = z.object({
-  workspace_id: z.string().default(""),
-  generated_at: z.string().default(""),
-  last_run_at: z.string().default(""),
-  指标: z.record(z.string(), z.number()).default({}),
-  资产统计: z.record(z.string(), z.number()).default({}),
-  运行状态: z.record(z.string(), z.number()).default({}),
-  优化候选: z.record(z.string(), z.number()).default({}),
-}).loose();
-
-const PromptEvaluationRuntimeSchema = z.object({
-  id: z.string().default(""),
-  workspace_id: z.string().default(""),
-  daemon_id: z.string().nullable().optional().transform((v) => v ?? null),
-  name: z.string().default(""),
-  runtime_mode: z.enum(["local", "cloud"]).default("local"),
-  provider: z.string().default(""),
-  launch_header: z.string().default(""),
-  status: z.enum(["online", "offline"]).default("offline"),
-  device_info: z.string().default(""),
-  metadata: z.record(z.string(), z.unknown()).default({}),
-  owner_id: z.string().nullable().optional().transform((v) => v ?? null),
-  scope: z.enum(["personal", "workspace"]).default("personal"),
-  profile_id: z.string().nullable().optional().transform((v) => v ?? null),
-  last_seen_at: z.string().nullable().optional().transform((v) => v ?? null),
-  created_at: z.string().default(""),
-  updated_at: z.string().default(""),
-}).loose();
-
-export const PromptEvaluationRuntimeReadinessSchema = z.object({
-  status: z.enum(["就绪", "离线", "过期", "缺失", "无权限", "容量受限"]).default("缺失"),
-  label: z.string().default("Codex 缺失"),
-  detail: z.string().default("当前 workspace 未发现 Codex runtime。"),
-  fix: z.string().default("安装并配置 codex，启动 multica daemon。"),
-  model: z.string().default("gpt-5.3-codex-spark"),
-  runtime: PromptEvaluationRuntimeSchema.nullable().default(null),
-  last_seen_age_seconds: z.number().default(-1),
-  checked_at: z.string().default(""),
-}).loose();
-
 export const PromptEvaluationRunListResponseSchema = z.object({
   items: z.array(PromptEvaluationRunSchema).default([]),
   total: z.number().default(0),
@@ -1451,27 +1407,6 @@ export const PromptEvaluationDatasetFromTracesResponseSchema: z.ZodType<PromptEv
   created_count: z.number().default(0),
   skipped_count: z.number().default(0),
   source: z.literal("trace"),
-}).loose();
-
-export const PromptEvaluationExperimentDimensionSchema = z.object({
-  id: z.string(),
-  workspace_id: z.string(),
-  experiment_asset_id: z.string(),
-  dimension_index: z.number().default(0),
-  dimension_name: z.string().default(""),
-  experiment_target: z.string().default(""),
-  baseline_output: z.string().default(""),
-  comparison_payload: z.record(z.string(), z.unknown()).default({}),
-  status: z.enum(["启用", "归档"]).default("启用"),
-  source: z.string().default("payload"),
-  created_by: z.string().nullable().optional().transform((v) => v ?? null),
-  created_at: z.string().default(""),
-  updated_at: z.string().default(""),
-}).loose();
-
-export const PromptEvaluationExperimentDimensionListResponseSchema = z.object({
-  items: z.array(PromptEvaluationExperimentDimensionSchema).default([]),
-  total: z.number().default(0),
 }).loose();
 
 export const PromptEvaluationDimensionScoreSchema = z.object({
@@ -1879,28 +1814,6 @@ export const EMPTY_PROMPT_EVALUATION_EVIDENCE_SNAPSHOT_LIST_RESPONSE: ListPrompt
   items: [],
   total: 0,
 };
-
-export const EMPTY_PROMPT_EVALUATION_SUMMARY: PromptEvaluationSummary = {
-  workspace_id: "",
-  generated_at: "",
-  last_run_at: "",
-  指标: {},
-  资产统计: {},
-  运行状态: {},
-  优化候选: {},
-};
-
-export const EMPTY_PROMPT_EVALUATION_RUNTIME_READINESS: PromptEvaluationRuntimeReadiness = {
-  status: "缺失",
-  label: "Codex 缺失",
-  detail: "当前 workspace 未发现 Codex runtime。",
-  fix: "安装并配置 codex，启动 multica daemon。",
-  model: "gpt-5.3-codex-spark",
-  runtime: null,
-  last_seen_age_seconds: -1,
-  checked_at: "",
-};
-
 export const EMPTY_PROMPT_EVALUATION_CASE_LIST_RESPONSE = {
   items: [],
   total: 0,
@@ -1954,11 +1867,6 @@ export const EMPTY_BULK_PROMPT_EVALUATION_CASE_TAGS_RESPONSE: BulkUpdatePromptEv
   skipped_count: 0,
 };
 
-export const EMPTY_PROMPT_EVALUATION_EXPERIMENT_DIMENSION_LIST_RESPONSE: ListPromptEvaluationExperimentDimensionsResponse = {
-  items: [],
-  total: 0,
-};
-
 export const EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_LIST_RESPONSE: ListPromptEvaluationDimensionScoresResponse = {
   items: [],
   total: 0,
@@ -1972,22 +1880,6 @@ export const EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_SUMMARY_LIST_RESPONSE: List
 export const EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE_TREND_LIST_RESPONSE: ListPromptEvaluationDimensionScoreTrendsResponse = {
   items: [],
   total: 0,
-};
-
-export const EMPTY_PROMPT_EVALUATION_EXPERIMENT_DIMENSION: PromptEvaluationExperimentDimension = {
-  id: "",
-  workspace_id: "",
-  experiment_asset_id: "",
-  dimension_index: 0,
-  dimension_name: "",
-  experiment_target: "",
-  baseline_output: "",
-  comparison_payload: {},
-  status: "启用",
-  source: "payload",
-  created_by: null,
-  created_at: "",
-  updated_at: "",
 };
 
 export const EMPTY_PROMPT_EVALUATION_DIMENSION_SCORE: PromptEvaluationDimensionScore = {

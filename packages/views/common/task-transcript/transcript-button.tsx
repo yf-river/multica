@@ -45,7 +45,7 @@ export function TranscriptButton({
   items: providedItems,
   isLive = false,
   className,
-  title = "View transcript",
+  title = "查看执行记录",
   headerSlot,
 }: TranscriptButtonProps) {
   const [open, setOpen] = useState(false);
