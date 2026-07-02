@@ -621,6 +621,23 @@ func pullRequestURL(pr map[string]any) string {
 	return strVal(pr, "html_url")
 }
 
+func printIssueMutationResult(cmd *cobra.Command, result map[string]any) error {
+	output, _ := cmd.Flags().GetString("output")
+	if output == "table" {
+		headers := []string{"KEY", "TITLE", "STATUS", "PRIORITY"}
+		rows := [][]string{{
+			issueDisplayKey(result),
+			strVal(result, "title"),
+			strVal(result, "status"),
+			strVal(result, "priority"),
+		}}
+		cli.PrintTable(os.Stdout, headers, rows)
+		return nil
+	}
+
+	return cli.PrintJSON(os.Stdout, result)
+}
+
 func runIssueGet(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -900,20 +917,7 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 		fmt.Fprintf(os.Stderr, "Uploaded %s\n", att.path)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		headers := []string{"KEY", "TITLE", "STATUS", "PRIORITY"}
-		rows := [][]string{{
-			issueDisplayKey(result),
-			strVal(result, "title"),
-			strVal(result, "status"),
-			strVal(result, "priority"),
-		}}
-		cli.PrintTable(os.Stdout, headers, rows)
-		return nil
-	}
-
-	return cli.PrintJSON(os.Stdout, result)
+	return printIssueMutationResult(cmd, result)
 }
 
 func runIssueUpdate(cmd *cobra.Command, args []string) error {
@@ -1015,20 +1019,7 @@ func runIssueUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update issue: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		headers := []string{"KEY", "TITLE", "STATUS", "PRIORITY"}
-		rows := [][]string{{
-			issueDisplayKey(result),
-			strVal(result, "title"),
-			strVal(result, "status"),
-			strVal(result, "priority"),
-		}}
-		cli.PrintTable(os.Stdout, headers, rows)
-		return nil
-	}
-
-	return cli.PrintJSON(os.Stdout, result)
+	return printIssueMutationResult(cmd, result)
 }
 
 func runIssueAssign(cmd *cobra.Command, args []string) error {
