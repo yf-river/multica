@@ -386,38 +386,5 @@ func (b *kiroBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 }
 
 func kiroToolNameFromTitle(title string) string {
-	t := strings.TrimSpace(title)
-	if t == "" {
-		return ""
-	}
-
-	if idx := strings.Index(t, ":"); idx > 0 {
-		t = strings.TrimSpace(t[:idx])
-	}
-
-	lower := strings.ToLower(t)
-	switch lower {
-	case "read", "read file":
-		return "read_file"
-	case "write", "write file":
-		return "write_file"
-	case "edit", "patch":
-		return "edit_file"
-	case "shell", "bash", "terminal", "run command", "run shell command":
-		return "terminal"
-	case "grep", "search", "find":
-		return "search_files"
-	case "glob":
-		return "glob"
-	case "code":
-		return "code"
-	case "web search":
-		return "web_search"
-	case "fetch", "web fetch":
-		return "web_fetch"
-	case "todo", "todo write", "todo list", "todo_list":
-		return "todo_write"
-	}
-
-	return strings.ReplaceAll(lower, " ", "_")
+	return acpToolNameFromTitle(title, true)
 }

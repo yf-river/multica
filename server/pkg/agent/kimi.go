@@ -406,39 +406,5 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 // format — so we get called on the already-mapped name from hermes
 // and fix up anything that slipped through. Empty input returns "".
 func kimiToolNameFromTitle(title string) string {
-	t := strings.TrimSpace(title)
-	if t == "" {
-		return ""
-	}
-
-	// Strip everything after the first colon — ACP titles often look like
-	// "Tool Name: argument detail" and we want only the tool name.
-	if idx := strings.Index(t, ":"); idx > 0 {
-		t = strings.TrimSpace(t[:idx])
-	}
-
-	lower := strings.ToLower(t)
-	switch lower {
-	case "read", "read file":
-		return "read_file"
-	case "write", "write file":
-		return "write_file"
-	case "edit", "patch":
-		return "edit_file"
-	case "shell", "bash", "terminal", "run command", "run shell command":
-		return "terminal"
-	case "search", "grep", "find":
-		return "search_files"
-	case "glob":
-		return "glob"
-	case "web search":
-		return "web_search"
-	case "fetch", "web fetch":
-		return "web_fetch"
-	case "todo", "todo write":
-		return "todo_write"
-	}
-
-	// Fallback: snake_case the title so the UI gets a stable identifier.
-	return strings.ReplaceAll(lower, " ", "_")
+	return acpToolNameFromTitle(title, false)
 }
