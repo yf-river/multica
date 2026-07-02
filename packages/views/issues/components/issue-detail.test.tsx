@@ -208,6 +208,9 @@ const mockApiObj = vi.hoisted(() => ({
   unsubscribeFromIssue: vi.fn().mockResolvedValue(undefined),
   getActiveTasksForIssue: vi.fn().mockResolvedValue({ tasks: [] }),
   listTasksByIssue: vi.fn().mockResolvedValue([]),
+  listIssueTaskTraceEvents: vi.fn().mockResolvedValue({ events: [] }),
+  getIssueExecutionTree: vi.fn().mockResolvedValue(null),
+  listIssueSOPRuns: vi.fn().mockResolvedValue({ items: [] }),
   rerunIssue: vi.fn(),
   listTaskMessages: vi.fn().mockResolvedValue([]),
   listChildIssues: vi.fn().mockResolvedValue({ issues: [] }),
@@ -508,6 +511,9 @@ describe("IssueDetail (shared)", () => {
     mockApiObj.listIssues.mockResolvedValue({ issues: [], total: 0 });
     mockApiObj.getActiveTasksForIssue.mockResolvedValue({ tasks: [] });
     mockApiObj.listTasksByIssue.mockResolvedValue([]);
+    mockApiObj.listIssueTaskTraceEvents.mockResolvedValue({ events: [] });
+    mockApiObj.getIssueExecutionTree.mockResolvedValue(null);
+    mockApiObj.listIssueSOPRuns.mockResolvedValue({ items: [] });
     mockApiObj.rerunIssue.mockResolvedValue({ id: "task-rerun" });
     mockApiObj.listMembers.mockResolvedValue([
       { user_id: "user-1", name: "Test User", account: "test", role: "admin" },
@@ -664,9 +670,8 @@ describe("IssueDetail (shared)", () => {
     expect(screen.queryByText("属性")).not.toBeInTheDocument();
   });
 
-  it("hides metadata content from the sidebar and shows a button when the bag has keys", async () => {
-    // Metadata is agent-facing; the sidebar only exposes a button that opens
-    // the raw JSON on demand. Keys are NOT rendered inline anywhere.
+  it("does not render raw metadata controls when the bag has keys", async () => {
+    // Metadata is agent-facing; raw keys stay out of the human-facing sidebar.
     mockApiObj.getIssue.mockResolvedValue({
       ...mockIssue,
       metadata: {
@@ -678,12 +683,10 @@ describe("IssueDetail (shared)", () => {
     renderIssueDetail();
 
     await waitFor(() => {
-      // Trigger label includes a "· N" count so users can see payload size
-      // before clicking — accept any count via regex.
-      expect(screen.getByText("元数据").closest("button")).toBeInTheDocument();
+      expect(screen.getByText("详情")).toBeInTheDocument();
     });
 
-    // Key names are not rendered in the sidebar prior to opening the dialog.
+    expect(screen.queryByRole("button", { name: /^元数据\b/ })).not.toBeInTheDocument();
     expect(screen.queryByText("pr_url")).not.toBeInTheDocument();
     expect(screen.queryByText("pipeline_status")).not.toBeInTheDocument();
   });
@@ -717,7 +720,7 @@ describe("IssueDetail (shared)", () => {
     expect(within(card).getByRole("link", { name: /用户快捷入口需求/ })).toHaveAttribute("href", tapdURL);
   });
 
-  it("opens a dialog with formatted JSON when the Metadata button is clicked", async () => {
+  it("does not open a metadata JSON dialog from the sidebar", async () => {
     mockApiObj.getIssue.mockResolvedValue({
       ...mockIssue,
       metadata: {
@@ -728,23 +731,12 @@ describe("IssueDetail (shared)", () => {
 
     renderIssueDetail();
 
-    const label = await screen.findByText("元数据");
-    const button = label.closest("button");
-    expect(button).not.toBeNull();
-    fireEvent.click(button!);
-
-    // The dialog renders a <pre> containing the formatted JSON; checking the
-    // exact serialized payload also verifies the indent / structure.
-    const expected = JSON.stringify(
-      { pr_url: "https://example.com/pr/1", pipeline_status: "running" },
-      null,
-      2,
-    );
     await waitFor(() => {
-      const pre = document.querySelector("pre");
-      expect(pre).not.toBeNull();
-      expect(pre!.textContent).toBe(expected);
+      expect(screen.getByText("详情")).toBeInTheDocument();
     });
+
+    expect(screen.queryByRole("button", { name: /^元数据\b/ })).not.toBeInTheDocument();
+    expect(document.querySelector("pre")).toBeNull();
   });
 
   it("hides the Metadata button entirely when the bag is empty", async () => {
@@ -756,6 +748,35 @@ describe("IssueDetail (shared)", () => {
     });
 
     expect(screen.queryByRole("button", { name: /^元数据\b/ })).not.toBeInTheDocument();
+  });
+
+  it("renders the run review card above the execution log", async () => {
+    mockApiObj.listTasksByIssue.mockResolvedValue([
+      {
+        id: "task-1",
+        agent_id: "agent-1",
+        runtime_id: "runtime-1",
+        issue_id: "issue-1",
+        status: "completed",
+        priority: 0,
+        dispatched_at: "2026-06-08T08:01:00Z",
+        started_at: "2026-06-08T08:02:00Z",
+        completed_at: "2026-06-08T08:07:00Z",
+        result: null,
+        error: null,
+        created_at: "2026-06-08T08:00:00Z",
+        trigger_summary: "从评论启动",
+      },
+    ]);
+
+    renderIssueDetail();
+
+    const review = await screen.findByTestId("issue-run-review-summary-card");
+    const log = await screen.findByTestId("issue-execution-log-section");
+
+    expect(
+      review.compareDocumentPosition(log) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 
   it("renders Details section with Created by and dates", async () => {

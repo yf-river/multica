@@ -50,7 +50,7 @@ vi.mock("./terminate-task-confirm-dialog", () => ({
   TerminateTaskConfirmDialog: () => null,
 }));
 
-import { ActiveTaskRow, ExecutionLogSection } from "./execution-log-section";
+import { ActiveTaskRow, ExecutionLogSection, IssueRunReviewSummaryCard } from "./execution-log-section";
 
 function makeTask(overrides: Partial<AgentTask> = {}): AgentTask {
   return {
@@ -125,11 +125,43 @@ function renderWithQuery(ui: ReactElement) {
 }
 
 describe("ExecutionLogSection trace", () => {
-  it("renders durable trace evidence with Chinese labels", async () => {
+  it("renders durable macro trace evidence and filters detailed usage events", async () => {
     vi.useRealTimers();
     mockState.listTasksByIssue.mockResolvedValue([makeTask()]);
     mockState.listIssueTaskTraceEvents.mockResolvedValue({
       events: [
+        {
+          id: "trace-started",
+          workspace_id: "workspace-1",
+          task_id: "task-1",
+          issue_id: "issue-1",
+          agent_id: "agent-1",
+          runtime_id: "runtime-1",
+          squad_id: null,
+          project_id: null,
+          source: "issue",
+          event_type: "task.started",
+          event_name: "任务已开始",
+          status: "running",
+          attempt: 1,
+          duration_ms: null,
+          queue_wait_ms: null,
+          run_ms: null,
+          total_ms: null,
+          provider: "",
+          model: "",
+          input_tokens: 0,
+          output_tokens: 0,
+          cache_read_tokens: 0,
+          cache_write_tokens: 0,
+          failure_reason: "",
+          error_type: "",
+          trigger_comment_id: null,
+          autopilot_run_id: null,
+          chat_session_id: null,
+          metadata: {},
+          created_at: "2026-06-08T08:00:00Z",
+        },
         {
           id: "trace-1",
           workspace_id: "workspace-1",
@@ -164,16 +196,67 @@ describe("ExecutionLogSection trace", () => {
         },
       ],
     });
+    mockState.listIssueSOPRuns.mockResolvedValue({
+      items: [
+        {
+          id: "run-1",
+          workspace_id: "workspace-1",
+          issue_id: "issue-1",
+          squad_id: "squad-1",
+          leader_task_id: "task-1",
+          profile_key: "default",
+          profile: {},
+          status: "进行中",
+          current_step_key: "04-implement",
+          started_at: "2026-06-08T08:00:00Z",
+          completed_at: null,
+          total_duration_ms: null,
+          metrics: {},
+          events: [],
+          created_at: "2026-06-08T08:00:00Z",
+          updated_at: "2026-06-08T08:00:00Z",
+        },
+      ],
+    });
 
     renderWithQuery(<ExecutionLogSection issueId="issue-1" />);
 
     expect(await screen.findByText("最近事件")).toBeInTheDocument();
     expect(screen.getByText("当前阶段")).toBeInTheDocument();
-    expect(screen.getByText("模型用量")).toBeInTheDocument();
-    expect(screen.getByText("模型用量已上报")).toBeInTheDocument();
-    expect(screen.getAllByText(/150 tokens/).length).toBeGreaterThan(0);
+    expect(screen.getByText("04-implement")).toBeInTheDocument();
+    expect(screen.getByText("Agent：1")).toBeInTheDocument();
+    expect(screen.getByText("任务：1 进行中 1")).toBeInTheDocument();
+    expect(screen.getByText("首次开始：2026-06-08 08:00")).toBeInTheDocument();
+    expect(screen.getByText("任务已开始")).toBeInTheDocument();
+    expect(screen.queryByText("模型用量")).not.toBeInTheDocument();
+    expect(screen.queryByText("模型用量已上报")).not.toBeInTheDocument();
+    expect(screen.queryByText(/150 tokens/)).not.toBeInTheDocument();
     expect(screen.queryByText("观测事件")).not.toBeInTheDocument();
     expect(screen.queryByText("任务事件树")).not.toBeInTheDocument();
+    expect(screen.queryByText("运行复盘")).not.toBeInTheDocument();
+  });
+
+  it("keeps a completed task execution summary visible after active work ends", async () => {
+    vi.useRealTimers();
+    mockState.listTasksByIssue.mockResolvedValue([
+      makeTask({
+        status: "completed",
+        dispatched_at: "2026-06-08T08:01:00Z",
+        started_at: "2026-06-08T08:02:00Z",
+        completed_at: "2026-06-08T08:07:00Z",
+      }),
+    ]);
+
+    renderWithQuery(<ExecutionLogSection issueId="issue-1" />);
+
+    expect(await screen.findByTestId("issue-execution-log-section")).toBeInTheDocument();
+    expect(screen.getByText("Agent：1")).toBeInTheDocument();
+    expect(screen.getByText("任务：1")).toBeInTheDocument();
+    expect(screen.getByText("已完成：1")).toBeInTheDocument();
+    expect(screen.getByText("首次领取：2026-06-08 08:01")).toBeInTheDocument();
+    expect(screen.getByText("首次开始：2026-06-08 08:02")).toBeInTheDocument();
+    expect(screen.getByText("最后完成：2026-06-08 08:07")).toBeInTheDocument();
+    expect(screen.getByText("任务已完成")).toBeInTheDocument();
   });
 
   it("renders the collaboration execution tree across parent and child issues", async () => {
@@ -316,7 +399,7 @@ describe("ExecutionLogSection trace", () => {
       },
     });
 
-    renderWithQuery(<ExecutionLogSection issueId="issue-parent" />);
+    renderWithQuery(<IssueRunReviewSummaryCard issueId="issue-parent" />);
 
     expect(await screen.findByText("运行复盘")).toBeInTheDocument();
     expect(screen.getByText("验收：failed")).toBeInTheDocument();

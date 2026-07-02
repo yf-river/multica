@@ -67,6 +67,14 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
   const { data: sopData } = useQuery(issueSOPRunsOptions(issueId));
   const sopRuns = sopData?.items ?? [];
   const { data: executionTree } = useQuery(issueExecutionTreeOptions(issueId));
+  const allTasks = useMemo(
+    () => mergeTasks(tasks, collectExecutionTreeTasks(executionTree)),
+    [tasks, executionTree],
+  );
+  const allTraceEvents = useMemo(
+    () => mergeTraceEvents(traceEvents, collectExecutionTreeTraceEvents(executionTree)),
+    [traceEvents, executionTree],
+  );
 
   const activeTasks = useMemo(
     () =>
@@ -83,27 +91,25 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
     [tasks],
   );
 
-  const terminalTasks = useMemo(
-    () =>
-      tasks.filter(
-        (t) =>
-          t.status === "completed" ||
-          t.status === "failed" ||
-          t.status === "cancelled",
-      ),
-    [tasks],
-  );
-
   const hasExecutionTree = hasMeaningfulExecutionTree(executionTree);
   const latestSOPRun = useMemo(() => sopRuns[0] ?? null, [sopRuns]);
   const currentStage = latestSOPRun?.current_step_key || "";
-  const recentEvents = useMemo(() => traceEvents.slice(-5).toReversed(), [traceEvents]);
-  const shouldShowReviewCard =
+  const recentEvents = useMemo(
+    () => buildMacroEvents(allTraceEvents, allTasks).slice(0, 5),
+    [allTraceEvents, allTasks],
+  );
+  const executionSummary = useMemo(
+    () => buildExecutionSummary(allTasks, allTraceEvents, sopRuns),
+    [allTasks, allTraceEvents, sopRuns],
+  );
+  const shouldShowExecutionLog =
     hasExecutionTree ||
-    terminalTasks.length > 0 ||
-    (activeTasks.length === 0 && (traceEvents.length > 0 || sopRuns.length > 0));
+    activeTasks.length > 0 ||
+    allTasks.length > 0 ||
+    allTraceEvents.length > 0 ||
+    sopRuns.length > 0;
 
-  if (activeTasks.length === 0 && !shouldShowReviewCard) return null;
+  if (!shouldShowExecutionLog) return null;
 
   return (
     <div data-testid="issue-execution-log-section">
@@ -120,12 +126,16 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
             open ? "rotate-90" : ""
           }`}
         />
-        {activeTasks.length > 0 && (
+        {activeTasks.length > 0 ? (
           <span className="ml-auto inline-flex items-center gap-1 text-info">
             <span className="h-1.5 w-1.5 rounded-full bg-info animate-pulse" />
             <span className="font-mono tabular-nums">{activeTasks.length}</span>
           </span>
-        )}
+        ) : executionSummary.totalTasks > 0 ? (
+          <span className="ml-auto font-mono text-[11px] tabular-nums text-muted-foreground">
+            {executionSummary.totalTasks}
+          </span>
+        ) : null}
       </button>
       {open && (
         <div className="space-y-0.5 pl-2">
@@ -133,28 +143,60 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
             <ActiveTaskRow key={task.id} task={task} issueId={issueId} />
           ))}
 
-          {activeTasks.length > 0 && (
-            <>
-              <ActiveRunSignals currentStage={currentStage} events={recentEvents} />
-            </>
-          )}
-
-          {shouldShowReviewCard && (
-            <>
-              {activeTasks.length > 0 && (
-                <div className="my-1.5 border-t border-border/60" />
-              )}
-              <RunReviewSummaryCard
-                issueId={issueId}
-                tree={executionTree}
-                terminalTasks={terminalTasks}
-                traceEvents={traceEvents}
-              />
-            </>
-          )}
+          <ExecutionRunSummary
+            currentStage={currentStage}
+            summary={executionSummary}
+            events={recentEvents}
+          />
         </div>
       )}
     </div>
+  );
+}
+
+export function IssueRunReviewSummaryCard({ issueId }: ExecutionLogSectionProps) {
+  const { data: tasks = [] } = useQuery({
+    queryKey: issueKeys.tasks(issueId),
+    queryFn: () => api.listTasksByIssue(issueId),
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  });
+  const { data: traceData } = useQuery(issueTaskTraceOptions(issueId));
+  const traceEvents = traceData?.events ?? [];
+  const { data: executionTree } = useQuery(issueExecutionTreeOptions(issueId));
+  const treeTasks = useMemo(() => collectExecutionTreeTasks(executionTree), [executionTree]);
+  const terminalTasks = useMemo(
+    () =>
+      mergeTasks(tasks, treeTasks).filter(
+        (t) =>
+          t.status === "completed" ||
+          t.status === "failed" ||
+          t.status === "cancelled",
+      ),
+    [tasks, treeTasks],
+  );
+  const treeTraceEvents = useMemo(
+    () => collectExecutionTreeTraceEvents(executionTree),
+    [executionTree],
+  );
+  const reviewTraceEvents = useMemo(
+    () => mergeTraceEvents(traceEvents, treeTraceEvents),
+    [traceEvents, treeTraceEvents],
+  );
+  const shouldShowReviewCard =
+    hasMeaningfulExecutionTree(executionTree) ||
+    terminalTasks.length > 0 ||
+    (tasks.length === 0 && traceEvents.length > 0);
+
+  if (!shouldShowReviewCard) return null;
+
+  return (
+    <RunReviewSummaryCard
+      issueId={issueId}
+      tree={executionTree}
+      terminalTasks={terminalTasks}
+      traceEvents={reviewTraceEvents}
+    />
   );
 }
 
@@ -227,12 +269,26 @@ function hasMeaningfulExecutionTree(tree: IssueExecutionTreeResponse | undefined
   );
 }
 
-function ActiveRunSignals({
+interface ExecutionSummary {
+  totalTasks: number;
+  activeTasks: number;
+  completedTasks: number;
+  failedTasks: number;
+  cancelledTasks: number;
+  agentCount: number;
+  firstClaimedAt: string;
+  firstStartedAt: string;
+  lastCompletedAt: string;
+}
+
+function ExecutionRunSummary({
   currentStage,
+  summary,
   events,
 }: {
   currentStage: string;
-  events: TaskTraceEvent[];
+  summary: ExecutionSummary;
+  events: MacroEvent[];
 }) {
   return (
     <div className="rounded-md border border-border/70 bg-muted/25 px-2 py-1.5" data-testid="issue-active-run-signals">
@@ -241,11 +297,25 @@ function ActiveRunSignals({
           <span>当前阶段</span>
           <span className="min-w-0 truncate text-foreground">{currentStage || "未记录"}</span>
         </div>
+        <div className="grid gap-x-3 gap-y-0.5 text-[11px] leading-5 text-muted-foreground sm:grid-cols-2">
+          <span className="truncate">Agent：{summary.agentCount > 0 ? summary.agentCount : "未记录"}</span>
+          <span className="truncate">
+            任务：{summary.totalTasks}
+            {summary.activeTasks > 0 ? ` 进行中 ${summary.activeTasks}` : ""}
+          </span>
+          <span className="truncate">已完成：{summary.completedTasks}</span>
+          <span className="truncate">
+            异常：{summary.failedTasks + summary.cancelledTasks}
+          </span>
+          <span className="truncate">首次领取：{summary.firstClaimedAt || "未记录"}</span>
+          <span className="truncate">首次开始：{summary.firstStartedAt || "未记录"}</span>
+          <span className="truncate sm:col-span-2">最后完成：{summary.lastCompletedAt || "未记录"}</span>
+        </div>
         {events.length > 0 && (
           <div className="space-y-0.5">
             <div className="text-[11px] text-muted-foreground">最近事件</div>
             {events.map((event) => (
-              <RecentTraceEventRow key={event.id} event={event} />
+              <RecentMacroEventRow key={event.id} event={event} />
             ))}
           </div>
         )}
@@ -254,28 +324,246 @@ function ActiveRunSignals({
   );
 }
 
-function RecentTraceEventRow({ event }: { event: TaskTraceEvent }) {
-  const tokenTotal = traceEventTokenTotal(event);
-  const failure = traceFailureSummary(event);
+interface MacroEvent {
+  id: string;
+  eventType: string;
+  eventName: string;
+  status: string;
+  createdAt: string;
+  failureSummary: string;
+}
+
+function RecentMacroEventRow({ event }: { event: MacroEvent }) {
   return (
     <div className="grid gap-0.5 border-l-2 border-info/60 pl-2 text-[11px] leading-5">
       <div className="flex min-w-0 items-center gap-2">
         <span className="min-w-0 flex-1 truncate text-foreground">
-          {event.event_name || traceEventStageLabel(event.event_type)}
+          {event.eventName || traceEventStageLabel(event.eventType)}
         </span>
         <span className="shrink-0 text-muted-foreground">
-          {traceEventStageLabel(event.event_type)}
+          {traceEventStageLabel(event.eventType)}
         </span>
       </div>
       <div className="truncate text-muted-foreground">
-        {event.status || "未知"}
-        {tokenTotal > 0 ? ` · ${tokenTotal.toLocaleString()} tokens` : ""}
+        {[event.status || "未知", formatTimestamp(event.createdAt)].filter(Boolean).join(" · ")}
       </div>
-      {failure && (
-        <div className="line-clamp-2 text-destructive">{failure}</div>
+      {event.failureSummary && (
+        <div className="line-clamp-2 text-destructive">{event.failureSummary}</div>
       )}
     </div>
   );
+}
+
+function buildExecutionSummary(
+  tasks: AgentTask[],
+  traceEvents: TaskTraceEvent[],
+  sopRuns: { started_at?: string; completed_at?: string | null }[],
+): ExecutionSummary {
+  const agentIds = new Set<string>();
+  tasks.forEach((task) => {
+    if (task.agent_id) agentIds.add(task.agent_id);
+  });
+  traceEvents.forEach((event) => {
+    if (event.agent_id) agentIds.add(event.agent_id);
+  });
+
+  const activeTasks = tasks.filter((task) => isActiveStatus(task.status)).length;
+  const firstClaimedAt = earliest(
+    tasks.map((task) => task.dispatched_at),
+    traceEvents
+      .filter((event) => event.event_type === "task.dispatched")
+      .map((event) => event.created_at),
+  );
+  const firstStartedAt = earliest(
+    tasks.map((task) => task.started_at),
+    sopRuns.map((run) => run.started_at ?? null),
+    traceEvents
+      .filter((event) => event.event_type === "task.started")
+      .map((event) => event.created_at),
+  );
+  const lastCompletedAt = latest(
+    tasks.map((task) => task.completed_at),
+    sopRuns.map((run) => run.completed_at ?? null),
+    traceEvents
+      .filter((event) => event.event_type === "task.completed")
+      .map((event) => event.created_at),
+  );
+
+  return {
+    totalTasks: tasks.length,
+    activeTasks,
+    completedTasks: tasks.filter((task) => task.status === "completed").length,
+    failedTasks: tasks.filter((task) => task.status === "failed").length,
+    cancelledTasks: tasks.filter((task) => task.status === "cancelled").length,
+    agentCount: agentIds.size,
+    firstClaimedAt: formatTimestamp(firstClaimedAt),
+    firstStartedAt: formatTimestamp(firstStartedAt),
+    lastCompletedAt: formatTimestamp(lastCompletedAt),
+  };
+}
+
+function buildMacroEvents(traceEvents: TaskTraceEvent[], tasks: AgentTask[]): MacroEvent[] {
+  const fromTrace = traceEvents
+    .filter((event) => MACRO_TRACE_EVENT_TYPES.has(event.event_type))
+    .map((event) => ({
+      id: event.id,
+      eventType: event.event_type,
+      eventName: event.event_name,
+      status: event.status,
+      createdAt: event.created_at,
+      failureSummary: traceFailureSummary(event),
+    }));
+
+  if (fromTrace.length > 0) {
+    return fromTrace.sort((a, b) => compareTimestampDesc(a.createdAt, b.createdAt));
+  }
+
+  return tasks
+    .flatMap((task) => syntheticTaskEvents(task))
+    .sort((a, b) => compareTimestampDesc(a.createdAt, b.createdAt));
+}
+
+function syntheticTaskEvents(task: AgentTask): MacroEvent[] {
+  return [
+    task.created_at
+      ? {
+          id: `${task.id}:queued`,
+          eventType: "task.queued",
+          eventName: "任务已入队",
+          status: "queued",
+          createdAt: task.created_at,
+          failureSummary: "",
+        }
+      : null,
+    task.dispatched_at
+      ? {
+          id: `${task.id}:dispatched`,
+          eventType: "task.dispatched",
+          eventName: "任务已领取",
+          status: "dispatched",
+          createdAt: task.dispatched_at,
+          failureSummary: "",
+        }
+      : null,
+    task.started_at
+      ? {
+          id: `${task.id}:started`,
+          eventType: "task.started",
+          eventName: "任务已开始",
+          status: "running",
+          createdAt: task.started_at,
+          failureSummary: "",
+        }
+      : null,
+    task.completed_at
+      ? {
+          id: `${task.id}:${task.status}`,
+          eventType: terminalTaskEventType(task.status),
+          eventName: terminalTaskEventName(task.status),
+          status: task.status,
+          createdAt: task.completed_at,
+          failureSummary: latestTaskFailureSummary(task),
+        }
+      : null,
+  ].filter((event): event is MacroEvent => event !== null);
+}
+
+const MACRO_TRACE_EVENT_TYPES = new Set([
+  "task.queued",
+  "task.dispatched",
+  "task.started",
+  "task.waiting_local_directory",
+  "task.completed",
+  "task.failed",
+  "task.cancelled",
+  "user_input.received",
+]);
+
+function isActiveStatus(status: AgentTask["status"]): boolean {
+  return (
+    status === "queued" ||
+    status === "dispatched" ||
+    status === "waiting_local_directory" ||
+    status === "running"
+  );
+}
+
+function terminalTaskEventType(status: AgentTask["status"]): string {
+  if (status === "failed") return "task.failed";
+  if (status === "cancelled") return "task.cancelled";
+  return "task.completed";
+}
+
+function terminalTaskEventName(status: AgentTask["status"]): string {
+  if (status === "failed") return "任务已失败";
+  if (status === "cancelled") return "任务已取消";
+  return "任务已完成";
+}
+
+function collectExecutionTreeTasks(tree: IssueExecutionTreeResponse | undefined): AgentTask[] {
+  if (!tree?.root) return [];
+  const out: AgentTask[] = [];
+  walkExecutionTree(tree.root, (node) => out.push(...node.tasks));
+  return out;
+}
+
+function collectExecutionTreeTraceEvents(tree: IssueExecutionTreeResponse | undefined): TaskTraceEvent[] {
+  if (!tree?.root) return [];
+  const out: TaskTraceEvent[] = [];
+  walkExecutionTree(tree.root, (node) => out.push(...node.trace_events));
+  return out;
+}
+
+function walkExecutionTree(
+  node: IssueExecutionTreeResponse["root"],
+  visit: (node: IssueExecutionTreeResponse["root"]) => void,
+) {
+  visit(node);
+  node.children.forEach((child) => walkExecutionTree(child, visit));
+}
+
+function mergeTasks(...groups: AgentTask[][]): AgentTask[] {
+  const map = new Map<string, AgentTask>();
+  groups.flat().forEach((task) => map.set(task.id, task));
+  return [...map.values()];
+}
+
+function mergeTraceEvents(...groups: TaskTraceEvent[][]): TaskTraceEvent[] {
+  const map = new Map<string, TaskTraceEvent>();
+  groups.flat().forEach((event) => map.set(event.id, event));
+  return [...map.values()];
+}
+
+function earliest(...groups: (string | null | undefined)[][]): string {
+  const values: string[] = groups.flat().filter(isPresentString);
+  const sorted = values.sort(compareTimestampAsc);
+  return sorted[0] ?? "";
+}
+
+function latest(...groups: (string | null | undefined)[][]): string {
+  const values: string[] = groups.flat().filter(isPresentString);
+  const sorted = values.sort(compareTimestampDesc);
+  return sorted[0] ?? "";
+}
+
+function isPresentString(value: string | null | undefined): value is string {
+  return Boolean(value);
+}
+
+function compareTimestampAsc(a: string, b: string): number {
+  return Date.parse(a) - Date.parse(b);
+}
+
+function compareTimestampDesc(a: string, b: string): number {
+  return Date.parse(b) - Date.parse(a);
+}
+
+function formatTimestamp(value: string | null | undefined): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())} ${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}`;
 }
 
 function traceEventTokenTotal(event: TaskTraceEvent): number {
