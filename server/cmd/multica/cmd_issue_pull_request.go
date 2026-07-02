@@ -97,18 +97,11 @@ func addIssueMRCreateFlags(cmd *cobra.Command) {
 }
 
 func runIssuePullRequestLink(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newIssuePullRequestClientAndIssueRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
 
 	body := map[string]any{}
 	for _, name := range []string{
@@ -138,28 +131,15 @@ func runIssuePullRequestLink(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("link issue pull request: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
-		return cli.PrintJSON(os.Stdout, result)
-	}
-	pr, _ := result["pull_request"].(map[string]any)
-	printIssuePullRequestsTable(normalizePullRequestList([]any{pr}))
-	return nil
+	return printIssuePullRequestMutationResult(cmd, result)
 }
 
 func runIssueMRCreate(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newIssuePullRequestClientAndIssueRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
 
 	body := map[string]any{}
 	for _, name := range []string{"provider", "project-path", "source-branch", "target-branch", "title", "description"} {
@@ -187,6 +167,24 @@ func runIssueMRCreate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("create issue merge request: %w", err)
 	}
 
+	return printIssuePullRequestMutationResult(cmd, result)
+}
+
+func newIssuePullRequestClientAndIssueRef(cmd *cobra.Command, issueArg string) (*cli.APIClient, context.Context, context.CancelFunc, resolvedID, error) {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return nil, nil, nil, resolvedID{}, err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	issueRef, err := resolveIssueRef(ctx, client, issueArg)
+	if err != nil {
+		cancel()
+		return nil, nil, nil, resolvedID{}, fmt.Errorf("resolve issue: %w", err)
+	}
+	return client, ctx, cancel, issueRef, nil
+}
+
+func printIssuePullRequestMutationResult(cmd *cobra.Command, result map[string]any) error {
 	output, _ := cmd.Flags().GetString("output")
 	if output == "json" {
 		return cli.PrintJSON(os.Stdout, result)
