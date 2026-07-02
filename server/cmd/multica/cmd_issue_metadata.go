@@ -165,17 +165,11 @@ func parseMetadataValue(raw, forcedType string) (json.RawMessage, error) {
 }
 
 func runIssueMetadataList(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newIssueMetadataClientAndIssueRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
 
 	var result map[string]any
 	if err := client.GetJSON(ctx, "/api/issues/"+issueRef.ID+"/metadata", &result); err != nil {
@@ -191,23 +185,11 @@ func runIssueMetadataList(cmd *cobra.Command, args []string) error {
 		// went wrong.
 		var httpErr *cli.HTTPError
 		if errors.As(err, &httpErr) && httpErr.StatusCode == http.StatusNotFound {
-			output, _ := cmd.Flags().GetString("output")
-			empty := map[string]any{}
-			if output == "json" {
-				return cli.PrintJSON(os.Stdout, empty)
-			}
-			printMetadataTable(empty)
-			return nil
+			return printMetadataMapResult(cmd, map[string]any{})
 		}
 		return fmt.Errorf("list metadata: %w", err)
 	}
-	metadata, _ := result["metadata"].(map[string]any)
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
-		return cli.PrintJSON(os.Stdout, metadata)
-	}
-	printMetadataTable(metadata)
-	return nil
+	return printMetadataMapResult(cmd, resultMetadataMap(result))
 }
 
 func runIssueMetadataGet(cmd *cobra.Command, args []string) error {
@@ -216,17 +198,11 @@ func runIssueMetadataGet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--key is required")
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newIssueMetadataClientAndIssueRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
 
 	var result map[string]any
 	if err := client.GetJSON(ctx, "/api/issues/"+issueRef.ID+"/metadata", &result); err != nil {
@@ -263,17 +239,11 @@ func runIssueMetadataSet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newIssueMetadataClientAndIssueRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
 
 	body := map[string]any{"value": value}
 	var result map[string]any
@@ -281,14 +251,7 @@ func runIssueMetadataSet(cmd *cobra.Command, args []string) error {
 	if err := client.PutJSON(ctx, path, body, &result); err != nil {
 		return fmt.Errorf("set metadata: %w", err)
 	}
-	metadata, _ := result["metadata"].(map[string]any)
-
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
-		return cli.PrintJSON(os.Stdout, metadata)
-	}
-	printMetadataTable(metadata)
-	return nil
+	return printMetadataMapResult(cmd, resultMetadataMap(result))
 }
 
 func runIssueMetadataDelete(cmd *cobra.Command, args []string) error {
@@ -297,17 +260,11 @@ func runIssueMetadataDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--key is required")
 	}
 
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, issueRef, err := newIssueMetadataClientAndIssueRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	issueRef, err := resolveIssueRef(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve issue: %w", err)
-	}
 
 	path := "/api/issues/" + issueRef.ID + "/metadata/" + key
 	if err := client.DeleteJSON(ctx, path); err != nil {
@@ -324,7 +281,30 @@ func runIssueMetadataDelete(cmd *cobra.Command, args []string) error {
 		fmt.Fprintln(os.Stdout, "Key deleted.")
 		return nil
 	}
+	return printMetadataMapResult(cmd, resultMetadataMap(result))
+}
+
+func newIssueMetadataClientAndIssueRef(cmd *cobra.Command, issueArg string) (*cli.APIClient, context.Context, context.CancelFunc, resolvedID, error) {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return nil, nil, nil, resolvedID{}, err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	issueRef, err := resolveIssueRef(ctx, client, issueArg)
+	if err != nil {
+		cancel()
+		return nil, nil, nil, resolvedID{}, fmt.Errorf("resolve issue: %w", err)
+	}
+	return client, ctx, cancel, issueRef, nil
+}
+
+func resultMetadataMap(result map[string]any) map[string]any {
 	metadata, _ := result["metadata"].(map[string]any)
+	return metadata
+}
+
+func printMetadataMapResult(cmd *cobra.Command, metadata map[string]any) error {
+	output, _ := cmd.Flags().GetString("output")
 	if output == "json" {
 		return cli.PrintJSON(os.Stdout, metadata)
 	}
