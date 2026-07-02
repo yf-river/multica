@@ -805,6 +805,70 @@ export function PromptLibraryPage({
     reviewRunMut.mutate({ runId: run.id, decision, note: note.trim() || defaultNote });
   };
 
+  const workbenchPanel = (
+    <WorkbenchPanel
+      activeTab={activeTab}
+      workspaceId={workspaceId ?? ""}
+      assets={assets}
+      cases={cases}
+      runs={runs}
+      focusedRunId={focusedRunId}
+      evidenceFocus={evidenceFocus}
+      runStatusFilter={runStatusFilter}
+      focusedIssueId={focusedIssueId}
+      focusedCaseId={focusedCaseId}
+      focusedIssueRunReviewHref={focusedIssueRunReviewHref}
+      focusedIssueTaskIds={focusedIssueTaskIds}
+      onRunStatusFilterChange={setRunStatusFilter}
+      candidates={candidates}
+      skillResources={skillResourceOptions}
+      loading={assetQuery.isLoading || caseQuery.isLoading || runQuery.isLoading || candidateQuery.isLoading}
+      saving={savingAsset}
+      onCreateAsset={createWorkbenchAsset}
+      onCreateSkillScenarioAsset={createSkillScenarioAsset}
+      onCreateWritingBenchmarkAsset={createWritingBenchmarkAsset}
+      onToggleAssetStatus={toggleAssetStatus}
+      onUpdateAsset={(assetId, data) => updateAssetMut.mutateAsync({ id: assetId, data })}
+      onDeleteAsset={deleteAsset}
+      onImportDatasetFromTraces={importDatasetFromTraces}
+      importingTraceDatasetAssetId={importDatasetFromTracesMut.isPending ? importDatasetFromTracesMut.variables ?? null : null}
+      onExportDatasetProtocol={(asset) => exportDatasetProtocolMut.mutate(asset.id)}
+      exportingDatasetProtocolAssetId={exportDatasetProtocolMut.isPending ? exportDatasetProtocolMut.variables ?? null : null}
+      onImportDatasetCopy={(asset) => importDatasetCopyMut.mutate(asset)}
+      importingDatasetCopyAssetId={importDatasetCopyMut.isPending ? importDatasetCopyMut.variables?.id ?? null : null}
+      onCreateDatasetVersion={(asset) => createDatasetVersionMut.mutate(asset.id)}
+      creatingDatasetVersionAssetId={createDatasetVersionMut.isPending ? createDatasetVersionMut.variables ?? null : null}
+      onCreateCase={(data) => createCaseMut.mutate(data)}
+      creatingCaseAssetId={createCaseMut.isPending ? createCaseMut.variables?.asset_id ?? null : null}
+      caseDrafts={caseDrafts}
+      onCaseDraftsChange={setCaseDrafts}
+      onUpdateCase={(caseId, data) => updateCaseMut.mutateAsync({ caseId, data })}
+      updatingCaseId={updateCaseMut.isPending ? updateCaseMut.variables?.caseId ?? null : null}
+      onDeleteCase={(caseId) => deleteCaseMut.mutate(caseId)}
+      deletingCaseId={deleteCaseMut.isPending ? deleteCaseMut.variables ?? null : null}
+      onSyncRun={(runId) => syncRunMut.mutate(runId)}
+      syncingRunId={syncRunMut.isPending ? syncRunMut.variables ?? null : null}
+      onCancelRun={(runId) => cancelRunMut.mutate(runId)}
+      cancellingRunId={cancelRunMut.isPending ? cancelRunMut.variables ?? null : null}
+      onReviewRun={reviewRun}
+      reviewingRunId={reviewRunMut.isPending ? reviewRunMut.variables?.runId ?? null : null}
+      onCreateEvidenceSnapshot={(runId) => createEvidenceSnapshotMut.mutate(runId)}
+      creatingEvidenceSnapshotRunId={createEvidenceSnapshotMut.isPending ? createEvidenceSnapshotMut.variables ?? null : null}
+      onCreateAssetEvidenceSnapshots={(assetId) => createAssetEvidenceSnapshotsMut.mutate(assetId)}
+      creatingAssetEvidenceSnapshotsAssetId={createAssetEvidenceSnapshotsMut.isPending ? createAssetEvidenceSnapshotsMut.variables ?? null : null}
+      onDownloadAssetEvidencePackage={handleDownloadAssetEvidencePackage}
+      exportingAssetEvidencePackageAssetId={exportingAssetEvidencePackageAssetId}
+      onGenerateCandidate={(runId) => createCandidateMut.mutate(runId)}
+      generatingCandidateRunId={createCandidateMut.isPending ? createCandidateMut.variables ?? null : null}
+      onUpdateCandidate={(candidateId, data) => updateCandidateMut.mutate({ candidateId, data })}
+      updatingCandidateId={updateCandidateMut.isPending ? updateCandidateMut.variables?.candidateId ?? null : null}
+      onPublishCandidate={(candidateId) => publishCandidateMut.mutate(candidateId)}
+      publishingCandidateId={publishCandidateMut.isPending ? publishCandidateMut.variables ?? null : null}
+      onRejectCandidate={(candidateId, reason) => rejectCandidateMut.mutate({ candidateId, reason })}
+      rejectingCandidateId={rejectCandidateMut.isPending ? rejectCandidateMut.variables?.candidateId ?? null : null}
+    />
+  );
+
   return (
     <div className="flex h-full min-h-0 flex-col bg-background" data-testid="training-page-shell" data-training-view={activeViewId}>
       <div className="sr-only" data-testid={`training-route-${activeViewId}`}>
@@ -1026,134 +1090,14 @@ export function PromptLibraryPage({
                 </div>
               </section>
 
-              <WorkbenchPanel
-                activeTab={activeTab}
-                workspaceId={workspaceId ?? ""}
-                assets={assets}
-                cases={cases}
-                runs={runs}
-                focusedRunId={focusedRunId}
-                evidenceFocus={evidenceFocus}
-                runStatusFilter={runStatusFilter}
-                focusedIssueId={focusedIssueId}
-                focusedCaseId={focusedCaseId}
-                focusedIssueRunReviewHref={focusedIssueRunReviewHref}
-                focusedIssueTaskIds={focusedIssueTaskIds}
-                onRunStatusFilterChange={setRunStatusFilter}
-                candidates={candidates}
-                skillResources={skillResourceOptions}
-                loading={assetQuery.isLoading || caseQuery.isLoading || runQuery.isLoading || candidateQuery.isLoading}
-                saving={savingAsset}
-                onCreateAsset={createWorkbenchAsset}
-                onCreateSkillScenarioAsset={createSkillScenarioAsset}
-                onCreateWritingBenchmarkAsset={createWritingBenchmarkAsset}
-                onToggleAssetStatus={toggleAssetStatus}
-                onUpdateAsset={(assetId, data) => updateAssetMut.mutateAsync({ id: assetId, data })}
-                onDeleteAsset={deleteAsset}
-                onImportDatasetFromTraces={importDatasetFromTraces}
-                importingTraceDatasetAssetId={importDatasetFromTracesMut.isPending ? importDatasetFromTracesMut.variables ?? null : null}
-                onExportDatasetProtocol={(asset) => exportDatasetProtocolMut.mutate(asset.id)}
-                exportingDatasetProtocolAssetId={exportDatasetProtocolMut.isPending ? exportDatasetProtocolMut.variables ?? null : null}
-                onImportDatasetCopy={(asset) => importDatasetCopyMut.mutate(asset)}
-                importingDatasetCopyAssetId={importDatasetCopyMut.isPending ? importDatasetCopyMut.variables?.id ?? null : null}
-                onCreateDatasetVersion={(asset) => createDatasetVersionMut.mutate(asset.id)}
-                creatingDatasetVersionAssetId={createDatasetVersionMut.isPending ? createDatasetVersionMut.variables ?? null : null}
-                onCreateCase={(data) => createCaseMut.mutate(data)}
-                creatingCaseAssetId={createCaseMut.isPending ? createCaseMut.variables?.asset_id ?? null : null}
-                caseDrafts={caseDrafts}
-                onCaseDraftsChange={setCaseDrafts}
-                onUpdateCase={(caseId, data) => updateCaseMut.mutateAsync({ caseId, data })}
-                updatingCaseId={updateCaseMut.isPending ? updateCaseMut.variables?.caseId ?? null : null}
-                onDeleteCase={(caseId) => deleteCaseMut.mutate(caseId)}
-                deletingCaseId={deleteCaseMut.isPending ? deleteCaseMut.variables ?? null : null}
-                onSyncRun={(runId) => syncRunMut.mutate(runId)}
-                syncingRunId={syncRunMut.isPending ? syncRunMut.variables ?? null : null}
-                onCancelRun={(runId) => cancelRunMut.mutate(runId)}
-                cancellingRunId={cancelRunMut.isPending ? cancelRunMut.variables ?? null : null}
-                onReviewRun={reviewRun}
-                reviewingRunId={reviewRunMut.isPending ? reviewRunMut.variables?.runId ?? null : null}
-                onCreateEvidenceSnapshot={(runId) => createEvidenceSnapshotMut.mutate(runId)}
-                creatingEvidenceSnapshotRunId={createEvidenceSnapshotMut.isPending ? createEvidenceSnapshotMut.variables ?? null : null}
-                onCreateAssetEvidenceSnapshots={(assetId) => createAssetEvidenceSnapshotsMut.mutate(assetId)}
-                creatingAssetEvidenceSnapshotsAssetId={createAssetEvidenceSnapshotsMut.isPending ? createAssetEvidenceSnapshotsMut.variables ?? null : null}
-                onDownloadAssetEvidencePackage={handleDownloadAssetEvidencePackage}
-                exportingAssetEvidencePackageAssetId={exportingAssetEvidencePackageAssetId}
-                onGenerateCandidate={(runId) => createCandidateMut.mutate(runId)}
-                generatingCandidateRunId={createCandidateMut.isPending ? createCandidateMut.variables ?? null : null}
-                onUpdateCandidate={(candidateId, data) => updateCandidateMut.mutate({ candidateId, data })}
-                updatingCandidateId={updateCandidateMut.isPending ? updateCandidateMut.variables?.candidateId ?? null : null}
-                onPublishCandidate={(candidateId) => publishCandidateMut.mutate(candidateId)}
-                publishingCandidateId={publishCandidateMut.isPending ? publishCandidateMut.variables ?? null : null}
-                onRejectCandidate={(candidateId, reason) => rejectCandidateMut.mutate({ candidateId, reason })}
-                rejectingCandidateId={rejectCandidateMut.isPending ? rejectCandidateMut.variables?.candidateId ?? null : null}
-              />
+              {workbenchPanel}
             </div>
           </main>
         </div>
       ) : (
         <main className="min-h-0 flex-1 overflow-y-auto p-4 md:p-6">
           <div className="mx-auto flex max-w-5xl flex-col gap-4">
-            <WorkbenchPanel
-              activeTab={activeTab}
-              workspaceId={workspaceId ?? ""}
-              assets={assets}
-              cases={cases}
-              runs={runs}
-              focusedRunId={focusedRunId}
-              evidenceFocus={evidenceFocus}
-              runStatusFilter={runStatusFilter}
-              focusedIssueId={focusedIssueId}
-              focusedCaseId={focusedCaseId}
-              focusedIssueRunReviewHref={focusedIssueRunReviewHref}
-              focusedIssueTaskIds={focusedIssueTaskIds}
-              onRunStatusFilterChange={setRunStatusFilter}
-              candidates={candidates}
-              skillResources={skillResourceOptions}
-              loading={assetQuery.isLoading || caseQuery.isLoading || runQuery.isLoading || candidateQuery.isLoading}
-              saving={savingAsset}
-              onCreateAsset={createWorkbenchAsset}
-              onCreateSkillScenarioAsset={createSkillScenarioAsset}
-              onCreateWritingBenchmarkAsset={createWritingBenchmarkAsset}
-              onToggleAssetStatus={toggleAssetStatus}
-              onUpdateAsset={(assetId, data) => updateAssetMut.mutateAsync({ id: assetId, data })}
-              onDeleteAsset={deleteAsset}
-              onImportDatasetFromTraces={importDatasetFromTraces}
-              importingTraceDatasetAssetId={importDatasetFromTracesMut.isPending ? importDatasetFromTracesMut.variables ?? null : null}
-              onExportDatasetProtocol={(asset) => exportDatasetProtocolMut.mutate(asset.id)}
-              exportingDatasetProtocolAssetId={exportDatasetProtocolMut.isPending ? exportDatasetProtocolMut.variables ?? null : null}
-              onImportDatasetCopy={(asset) => importDatasetCopyMut.mutate(asset)}
-              importingDatasetCopyAssetId={importDatasetCopyMut.isPending ? importDatasetCopyMut.variables?.id ?? null : null}
-              onCreateDatasetVersion={(asset) => createDatasetVersionMut.mutate(asset.id)}
-              creatingDatasetVersionAssetId={createDatasetVersionMut.isPending ? createDatasetVersionMut.variables ?? null : null}
-              onCreateCase={(data) => createCaseMut.mutate(data)}
-              creatingCaseAssetId={createCaseMut.isPending ? createCaseMut.variables?.asset_id ?? null : null}
-              caseDrafts={caseDrafts}
-              onCaseDraftsChange={setCaseDrafts}
-              onUpdateCase={(caseId, data) => updateCaseMut.mutateAsync({ caseId, data })}
-              updatingCaseId={updateCaseMut.isPending ? updateCaseMut.variables?.caseId ?? null : null}
-              onDeleteCase={(caseId) => deleteCaseMut.mutate(caseId)}
-              deletingCaseId={deleteCaseMut.isPending ? deleteCaseMut.variables ?? null : null}
-              onSyncRun={(runId) => syncRunMut.mutate(runId)}
-              syncingRunId={syncRunMut.isPending ? syncRunMut.variables ?? null : null}
-              onCancelRun={(runId) => cancelRunMut.mutate(runId)}
-              cancellingRunId={cancelRunMut.isPending ? cancelRunMut.variables ?? null : null}
-              onReviewRun={reviewRun}
-              reviewingRunId={reviewRunMut.isPending ? reviewRunMut.variables?.runId ?? null : null}
-              onCreateEvidenceSnapshot={(runId) => createEvidenceSnapshotMut.mutate(runId)}
-              creatingEvidenceSnapshotRunId={createEvidenceSnapshotMut.isPending ? createEvidenceSnapshotMut.variables ?? null : null}
-              onCreateAssetEvidenceSnapshots={(assetId) => createAssetEvidenceSnapshotsMut.mutate(assetId)}
-              creatingAssetEvidenceSnapshotsAssetId={createAssetEvidenceSnapshotsMut.isPending ? createAssetEvidenceSnapshotsMut.variables ?? null : null}
-              onDownloadAssetEvidencePackage={handleDownloadAssetEvidencePackage}
-              exportingAssetEvidencePackageAssetId={exportingAssetEvidencePackageAssetId}
-              onGenerateCandidate={(runId) => createCandidateMut.mutate(runId)}
-              generatingCandidateRunId={createCandidateMut.isPending ? createCandidateMut.variables ?? null : null}
-              onUpdateCandidate={(candidateId, data) => updateCandidateMut.mutate({ candidateId, data })}
-              updatingCandidateId={updateCandidateMut.isPending ? updateCandidateMut.variables?.candidateId ?? null : null}
-              onPublishCandidate={(candidateId) => publishCandidateMut.mutate(candidateId)}
-              publishingCandidateId={publishCandidateMut.isPending ? publishCandidateMut.variables ?? null : null}
-              onRejectCandidate={(candidateId, reason) => rejectCandidateMut.mutate({ candidateId, reason })}
-              rejectingCandidateId={rejectCandidateMut.isPending ? rejectCandidateMut.variables?.candidateId ?? null : null}
-            />
+            {workbenchPanel}
           </div>
         </main>
       )}
