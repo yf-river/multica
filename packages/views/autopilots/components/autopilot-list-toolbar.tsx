@@ -1,12 +1,5 @@
 "use client";
 
-import {
-  ArrowDown,
-  ArrowUp,
-  ChevronDown,
-  Filter,
-  X,
-} from "lucide-react";
 import type { Autopilot } from "@multica/core/types";
 import {
   AUTOPILOT_SCOPES,
@@ -17,31 +10,24 @@ import {
   type AutopilotSortField,
 } from "@multica/core/autopilots/stores";
 import { useActorName } from "@multica/core/workspace/hooks";
-import { Button } from "@multica/ui/components/ui/button";
 import {
   DropdownMenu,
   DropdownMenuCheckboxItem,
   DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@multica/ui/components/ui/popover";
-import { Switch } from "@multica/ui/components/ui/switch";
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from "@multica/ui/components/ui/tooltip";
 import { ActorAvatar } from "../../common/actor-avatar";
 import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
+import {
+  ToolbarCountBadge,
+  ToolbarDisplaySettings,
+  ToolbarFilterButton,
+  ToolbarResultCount,
+  ToolbarScopeSelector,
+} from "../../common/list-toolbar";
 import { useT } from "../../i18n";
 
 // Composite "type:id" value for polymorphic actor filter dimensions, so the
@@ -184,11 +170,6 @@ export function AutopilotListToolbar({
     creator: t(($) => $.page.table.created_by),
     created: t(($) => $.page.table.created),
   };
-  const sortLabel = SORT_LABELS[sortField];
-
-  const countBadge = (n: number) => (
-    <span className="ml-auto pl-3 text-xs text-muted-foreground">{n}</span>
-  );
 
   return (
     <div className="flex h-12 shrink-0 items-center justify-between gap-2 px-5">
@@ -199,67 +180,20 @@ export function AutopilotListToolbar({
           narrow the list. Button styling and the <md dropdown collapse
           follow the issues header's scope buttons. */}
       <div className="flex min-w-0 items-center gap-2">
-        <div className="hidden shrink-0 items-center gap-1 md:flex">
-          {AUTOPILOT_SCOPES.map((s) => (
-            <Button
-              key={s}
-              variant="outline"
-              size="sm"
-              className={
-                scope === s
-                  ? "gap-1.5 bg-accent text-accent-foreground hover:bg-accent/80"
-                  : "gap-1.5 text-muted-foreground"
-              }
-              onClick={() => onScopeChange(s)}
-            >
-              {SCOPE_LABELS[s]}
-              <span className="tabular-nums text-xs text-muted-foreground/70">
-                {scopeCounts[s]}
-              </span>
-            </Button>
-          ))}
-        </div>
+        <ToolbarScopeSelector
+          scopes={AUTOPILOT_SCOPES}
+          scope={scope}
+          scopeCounts={scopeCounts}
+          scopeLabels={SCOPE_LABELS}
+          onScopeChange={onScopeChange}
+        />
 
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                variant="outline"
-                size="sm"
-                className="shrink-0 gap-1 text-muted-foreground md:hidden"
-              >
-                <span className="truncate">{SCOPE_LABELS[scope]}</span>
-                <ChevronDown className="size-3 text-muted-foreground" />
-              </Button>
-            }
-          />
-          <DropdownMenuContent align="start" className="w-auto">
-            <DropdownMenuRadioGroup
-              value={scope}
-              onValueChange={(value) =>
-                onScopeChange(value as AutopilotScope)
-              }
-            >
-              {AUTOPILOT_SCOPES.map((s) => (
-                <DropdownMenuRadioItem key={s} value={s}>
-                  {SCOPE_LABELS[s]}
-                  <span className="ml-2 tabular-nums text-xs text-muted-foreground/70">
-                    {scopeCounts[s]}
-                  </span>
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
-
-        {hasActiveFilters && (
-          <span
-            title={t(($) => $.toolbar.result_count_title)}
-            className="hidden shrink-0 text-xs tabular-nums text-muted-foreground md:inline"
-          >
-            {visibleCount} / {allRows.length}
-          </span>
-        )}
+        <ToolbarResultCount
+          active={hasActiveFilters}
+          title={t(($) => $.toolbar.result_count_title)}
+          visibleCount={visibleCount}
+          totalCount={allRows.length}
+        />
       </div>
 
       <div className="flex shrink-0 items-center gap-1">
@@ -267,49 +201,16 @@ export function AutopilotListToolbar({
         <DropdownMenu>
           <DropdownMenuTrigger
             render={
-              <Button
-                variant={hasActiveFilters ? "default" : "outline"}
-                size="sm"
-                className={
-                  hasActiveFilters
-                    ? "h-8 w-8 gap-1 bg-brand px-0 text-white hover:bg-brand/90 md:w-auto md:px-2.5"
-                    : "h-8 w-8 gap-1 px-0 text-muted-foreground md:w-auto md:px-2.5"
-                }
-              >
-                <Filter className="size-3.5" />
-                {hasActiveFilters ? (
-                  <>
-                    <span className="hidden md:inline">
-                      {t(($) => $.toolbar.filter_active_count, {
-                        count: activeCount,
-                      })}
-                    </span>
-                    <span className="tabular-nums md:hidden">
-                      {activeCount}
-                    </span>
-                  </>
-                ) : (
-                  <span className="hidden md:inline">
-                    {t(($) => $.toolbar.filter_label)}
-                  </span>
-                )}
-                {hasActiveFilters && (
-                  <span
-                    role="button"
-                    tabIndex={-1}
-                    aria-label={t(($) => $.toolbar.clear_filters)}
-                    className="-mr-1 ml-0.5 hidden rounded-sm p-0.5 hover:bg-white/20 md:inline-flex"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      e.stopPropagation();
-                      onClearFilters();
-                    }}
-                    onPointerDown={(e) => e.stopPropagation()}
-                  >
-                    <X className="size-3" />
-                  </span>
-                )}
-              </Button>
+              <ToolbarFilterButton
+                hasActiveFilters={hasActiveFilters}
+                activeCount={activeCount}
+                activeLabel={t(($) => $.toolbar.filter_active_count, {
+                  count: activeCount,
+                })}
+                filterLabel={t(($) => $.toolbar.filter_label)}
+                clearLabel={t(($) => $.toolbar.clear_filters)}
+                onClearFilters={onClearFilters}
+              />
             }
           />
           <DropdownMenuContent align="end" className="w-auto">
@@ -343,7 +244,7 @@ export function AutopilotListToolbar({
                       <span className="min-w-0 truncate">
                         {getActorName(type, id)}
                       </span>
-                      {countBadge(count)}
+                      <ToolbarCountBadge count={count} />
                     </DropdownMenuCheckboxItem>
                   ),
                 )}
@@ -378,7 +279,9 @@ export function AutopilotListToolbar({
                       checked={filters.triggerKinds.includes(kind)}
                     />
                     {t(($) => $.trigger_kind[kind])}
-                    {countBadge(triggerKindCounts.get(kind) ?? 0)}
+                    <ToolbarCountBadge
+                      count={triggerKindCounts.get(kind) ?? 0}
+                    />
                   </DropdownMenuCheckboxItem>
                 ))}
               </DropdownMenuSubContent>
@@ -406,7 +309,7 @@ export function AutopilotListToolbar({
                   >
                     <HoverCheck checked={filters.modes.includes(mode)} />
                     {t(($) => $.execution_mode[mode])}
-                    {countBadge(modeCounts.get(mode) ?? 0)}
+                    <ToolbarCountBadge count={modeCounts.get(mode) ?? 0} />
                   </DropdownMenuCheckboxItem>
                 ))}
               </DropdownMenuSubContent>
@@ -438,7 +341,7 @@ export function AutopilotListToolbar({
                       <span className="min-w-0 truncate">
                         {getActorName(type, id)}
                       </span>
-                      {countBadge(count)}
+                      <ToolbarCountBadge count={count} />
                     </DropdownMenuCheckboxItem>
                   ),
                 )}
@@ -447,114 +350,23 @@ export function AutopilotListToolbar({
           </DropdownMenuContent>
         </DropdownMenu>
 
-        {/* Display settings — same paradigm as skills: sort select +
-            direction toggle + column switches, mutating the same store the
-            list header sort buttons use. */}
-        <Popover>
-          <Tooltip>
-            <PopoverTrigger
-              render={
-                <TooltipTrigger
-                  render={
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="h-8 w-8 gap-1 px-0 text-muted-foreground md:w-auto md:px-2.5"
-                    >
-                      {sortDirection === "asc" ? (
-                        <ArrowUp className="size-3.5" />
-                      ) : (
-                        <ArrowDown className="size-3.5" />
-                      )}
-                      <span className="hidden md:inline">{sortLabel}</span>
-                    </Button>
-                  }
-                />
-              }
-            />
-            <TooltipContent side="bottom">
-              {t(($) => $.toolbar.display)}
-            </TooltipContent>
-          </Tooltip>
-          <PopoverContent align="end" className="w-64 p-0">
-            <div className="border-b px-3 py-2.5">
-              <span className="text-xs font-medium text-muted-foreground">
-                {t(($) => $.toolbar.sort_by)}
-              </span>
-              <div className="mt-2 flex items-center gap-1.5">
-                <DropdownMenu>
-                  <DropdownMenuTrigger
-                    render={
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="flex-1 justify-between text-xs"
-                      >
-                        {sortLabel}
-                        <ChevronDown className="size-3 text-muted-foreground" />
-                      </Button>
-                    }
-                  />
-                  <DropdownMenuContent align="start" className="w-auto">
-                    <DropdownMenuRadioGroup
-                      value={sortField}
-                      onValueChange={(v) =>
-                        onSortFieldChange(v as AutopilotSortField)
-                      }
-                    >
-                      {SORT_FIELDS.map((field) => (
-                        <DropdownMenuRadioItem key={field} value={field}>
-                          {SORT_LABELS[field]}
-                        </DropdownMenuRadioItem>
-                      ))}
-                    </DropdownMenuRadioGroup>
-                  </DropdownMenuContent>
-                </DropdownMenu>
-                <Button
-                  variant="outline"
-                  size="icon-sm"
-                  onClick={() =>
-                    onSortDirectionChange(
-                      sortDirection === "asc" ? "desc" : "asc",
-                    )
-                  }
-                  title={
-                    sortDirection === "asc"
-                      ? t(($) => $.toolbar.direction_asc)
-                      : t(($) => $.toolbar.direction_desc)
-                  }
-                >
-                  {sortDirection === "asc" ? (
-                    <ArrowUp className="size-3.5" />
-                  ) : (
-                    <ArrowDown className="size-3.5" />
-                  )}
-                </Button>
-              </div>
-            </div>
-
-            <div className="px-3 py-2.5">
-              <span className="text-xs font-medium text-muted-foreground">
-                {t(($) => $.toolbar.section_columns)}
-              </span>
-              <div className="mt-2 space-y-2">
-                {COLUMN_KEYS.map((key) => (
-                  <label
-                    key={key}
-                    className="flex cursor-pointer items-center justify-between"
-                  >
-                    <span className="text-sm">{COLUMN_LABELS[key]}</span>
-                    <Switch
-                      size="sm"
-                      checked={!hiddenColumns.includes(key)}
-                      onCheckedChange={() => onToggleColumn(key)}
-                    />
-                  </label>
-                ))}
-              </div>
-            </div>
-          </PopoverContent>
-        </Popover>
+        <ToolbarDisplaySettings
+          sortField={sortField}
+          sortDirection={sortDirection}
+          sortFields={SORT_FIELDS}
+          sortLabels={SORT_LABELS}
+          onSortFieldChange={onSortFieldChange}
+          onSortDirectionChange={onSortDirectionChange}
+          columnKeys={COLUMN_KEYS}
+          columnLabels={COLUMN_LABELS}
+          hiddenColumns={hiddenColumns}
+          onToggleColumn={onToggleColumn}
+          displayLabel={t(($) => $.toolbar.display)}
+          sortByLabel={t(($) => $.toolbar.sort_by)}
+          directionAscLabel={t(($) => $.toolbar.direction_asc)}
+          directionDescLabel={t(($) => $.toolbar.direction_desc)}
+          columnsLabel={t(($) => $.toolbar.section_columns)}
+        />
       </div>
     </div>
   );
