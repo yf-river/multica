@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -165,7 +164,7 @@ func parseMetadataValue(raw, forcedType string) (json.RawMessage, error) {
 }
 
 func runIssueMetadataList(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, issueRef, err := newIssueMetadataClientAndIssueRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
@@ -198,7 +197,7 @@ func runIssueMetadataGet(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--key is required")
 	}
 
-	client, ctx, cancel, issueRef, err := newIssueMetadataClientAndIssueRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
@@ -239,7 +238,7 @@ func runIssueMetadataSet(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	client, ctx, cancel, issueRef, err := newIssueMetadataClientAndIssueRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
@@ -260,7 +259,7 @@ func runIssueMetadataDelete(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--key is required")
 	}
 
-	client, ctx, cancel, issueRef, err := newIssueMetadataClientAndIssueRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
@@ -282,20 +281,6 @@ func runIssueMetadataDelete(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	return printMetadataMapResult(cmd, resultMetadataMap(result))
-}
-
-func newIssueMetadataClientAndIssueRef(cmd *cobra.Command, issueArg string) (*cli.APIClient, context.Context, context.CancelFunc, resolvedID, error) {
-	client, err := newAPIClient(cmd)
-	if err != nil {
-		return nil, nil, nil, resolvedID{}, err
-	}
-	ctx, cancel := cli.APIContext(context.Background())
-	issueRef, err := resolveIssueRef(ctx, client, issueArg)
-	if err != nil {
-		cancel()
-		return nil, nil, nil, resolvedID{}, fmt.Errorf("resolve issue: %w", err)
-	}
-	return client, ctx, cancel, issueRef, nil
 }
 
 func resultMetadataMap(result map[string]any) map[string]any {

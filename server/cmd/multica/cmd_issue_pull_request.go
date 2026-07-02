@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"net/url"
 	"os"
@@ -97,7 +96,7 @@ func addIssueMRCreateFlags(cmd *cobra.Command) {
 }
 
 func runIssuePullRequestLink(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, issueRef, err := newIssuePullRequestClientAndIssueRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
@@ -135,7 +134,7 @@ func runIssuePullRequestLink(cmd *cobra.Command, args []string) error {
 }
 
 func runIssueMRCreate(cmd *cobra.Command, args []string) error {
-	client, ctx, cancel, issueRef, err := newIssuePullRequestClientAndIssueRef(cmd, args[0])
+	client, ctx, cancel, issueRef, err := newIssueClientAndRef(cmd, args[0])
 	if err != nil {
 		return err
 	}
@@ -168,20 +167,6 @@ func runIssueMRCreate(cmd *cobra.Command, args []string) error {
 	}
 
 	return printIssuePullRequestMutationResult(cmd, result)
-}
-
-func newIssuePullRequestClientAndIssueRef(cmd *cobra.Command, issueArg string) (*cli.APIClient, context.Context, context.CancelFunc, resolvedID, error) {
-	client, err := newAPIClient(cmd)
-	if err != nil {
-		return nil, nil, nil, resolvedID{}, err
-	}
-	ctx, cancel := cli.APIContext(context.Background())
-	issueRef, err := resolveIssueRef(ctx, client, issueArg)
-	if err != nil {
-		cancel()
-		return nil, nil, nil, resolvedID{}, fmt.Errorf("resolve issue: %w", err)
-	}
-	return client, ctx, cancel, issueRef, nil
 }
 
 func printIssuePullRequestMutationResult(cmd *cobra.Command, result map[string]any) error {

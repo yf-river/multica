@@ -638,6 +638,20 @@ func printIssueMutationResult(cmd *cobra.Command, result map[string]any) error {
 	return cli.PrintJSON(os.Stdout, result)
 }
 
+func newIssueClientAndRef(cmd *cobra.Command, issueArg string) (*cli.APIClient, context.Context, context.CancelFunc, resolvedID, error) {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return nil, nil, nil, resolvedID{}, err
+	}
+	ctx, cancel := cli.APIContext(context.Background())
+	issueRef, err := resolveIssueRef(ctx, client, issueArg)
+	if err != nil {
+		cancel()
+		return nil, nil, nil, resolvedID{}, fmt.Errorf("resolve issue: %w", err)
+	}
+	return client, ctx, cancel, issueRef, nil
+}
+
 func runIssueGet(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
