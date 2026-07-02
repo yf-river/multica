@@ -114,8 +114,6 @@ ACCEPTANCE_INCLUDE_E2E=1 pnpm acceptance:verify
 | `ACCEPTANCE_DEMO_PASSWORD` | 演示账号密码；报告只记录“已配置”，不打印明文 |
 | `ACCEPTANCE_WORKSPACE_SLUG` | 领导演示工作区 slug |
 | `ACCEPTANCE_INCLUDE_E2E` | 设为 `1` 后额外执行导航和命令面板 E2E |
-| `ACCEPTANCE_DEMO_WAIT_MS` | `acceptance:prepare-demo` 等待真实 daemon 处理小队队长任务的最长时间，默认 180000 |
-| `ACCEPTANCE_DEMO_FORCE_NEW` | 设为 `1` 后不复用已有小队 SOP 证据，强制创建新 issue 和新队长任务 |
 | `DATABASE_URL` | 用于只读抽查演示工作区的训练、评估、任务、trace 和小队 SOP 数据；未配置时报告会明确标记跳过 |
 | `ACCEPTANCE_SERVER_LOG` | 覆盖服务日志路径；默认读取 `artifacts/logs/server-goal-test.log` 并抽查最近错误、健康检查和 daemon 心跳 |
 
