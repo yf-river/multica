@@ -1,10 +1,26 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Check, ChevronRight, Maximize2, Minimize2, X as XIcon } from "lucide-react";
+import {
+  ArrowUp,
+  CalendarClock,
+  CalendarDays,
+  Check,
+  ChevronRight,
+  Maximize2,
+  Minimize2,
+  MoreHorizontal,
+  X as XIcon,
+} from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { toast } from "sonner";
 import { DialogTitle } from "@multica/ui/components/ui/dialog";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@multica/ui/components/ui/dropdown-menu";
 import { Button } from "@multica/ui/components/ui/button";
 import { Switch } from "@multica/ui/components/ui/switch";
 import { api, ApiError } from "@multica/core/api";
@@ -23,6 +39,7 @@ import {
   MIN_QUICK_CREATE_CLI_VERSION,
 } from "@multica/core/runtimes";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
+import { issueDetailOptions } from "@multica/core/issues/queries";
 import { formatShortcut, modKey, enterKey } from "@multica/core/platform";
 import {
   contentReferencesAttachment,
@@ -36,7 +53,7 @@ import { ActorAvatar } from "../common/actor-avatar";
 import { PillButton } from "../common/pill-button";
 import { ProjectPicker } from "../projects/components/project-picker";
 import { canAssignAgent } from "../issues/components/pickers/assignee-picker";
-import { DueDatePicker, PriorityPicker, StatusPicker } from "../issues/components";
+import { DueDatePicker, PriorityPicker, StartDatePicker, StatusPicker } from "../issues/components";
 import {
   PropertyPicker,
   PickerItem,
@@ -52,6 +69,7 @@ import {
   FileDropOverlay,
 } from "../editor";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
+import { IssuePickerModal } from "./issue-picker-modal";
 import { useT } from "../i18n";
 import { matchesPinyin } from "../editor/extensions/pinyin-match";
 
@@ -204,9 +222,14 @@ export function AgentCreatePanel({
   const [priority, setPriority] = useState<IssuePriority>(
     (data?.priority as IssuePriority | undefined) ?? "none",
   );
+  const [startDate, setStartDate] = useState<string | null>(
+    (data?.start_date as string | null | undefined) ?? null,
+  );
+  const [startDatePickerOpen, setStartDatePickerOpen] = useState(false);
   const [dueDate, setDueDate] = useState<string | null>(
     (data?.due_date as string | null | undefined) ?? null,
   );
+  const [dueDatePickerOpen, setDueDatePickerOpen] = useState(false);
 
   // Parent-issue context — seeded by `openCreateSubIssue` when the modal is
   // opened from the "Add sub issue" entry on an existing issue. We carry it
@@ -214,9 +237,18 @@ export function AgentCreatePanel({
   // the sub-issue intent; the agent panel never exposes this as a picker.
   // Identifier is best-effort display context only — the UUID is the
   // authoritative reference the backend/agent uses for `--parent <uuid>`.
-  const parentIssueId = (data?.parent_issue_id as string | undefined) ?? undefined;
-  const parentIssueIdentifier =
-    (data?.parent_issue_identifier as string | undefined) ?? undefined;
+  const [parentIssueId, setParentIssueId] = useState<string | null>(
+    (data?.parent_issue_id as string | undefined) ?? null,
+  );
+  const [parentIssueIdentifier, setParentIssueIdentifier] = useState<string>(
+    (data?.parent_issue_identifier as string | undefined) ?? "",
+  );
+  const [parentPickerOpen, setParentPickerOpen] = useState(false);
+  const { data: parentIssue } = useQuery({
+    ...issueDetailOptions(wsId, parentIssueId ?? ""),
+    enabled: !!parentIssueId,
+  });
+  const parentLabel = parentIssue?.identifier ?? parentIssueIdentifier;
 
   // Stale-id sweep. Once the project list query has actually resolved
   // (`isSuccess` — distinct from "data is the empty default during loading"),
@@ -308,6 +340,7 @@ export function AgentCreatePanel({
         project_id: projectId ?? undefined,
         status,
         priority,
+        ...(startDate ? { start_date: startDate } : {}),
         ...(parentIssueId ? { parent_issue_id: parentIssueId } : {}),
         ...(dueDate ? { due_date: dueDate } : {}),
         ...(activeAttachmentIds.length > 0 ? { attachment_ids: activeAttachmentIds } : {}),
@@ -473,17 +506,9 @@ export function AgentCreatePanel({
         )}
 
         {/* Property toolbar. These are pinned constraints for the agent's
-            eventual `multica issue create` call, not a separate manual-create
-            mode. The project pick is persisted per-workspace via
-            useQuickCreateStore.lastProjectId so users targeting one project
-            skip retyping "in project X".
-            When the modal was opened from "Add sub issue" on an existing
-            issue, a read-only chip on the same row tells the user that the
-            new issue will be filed as a sub-issue of that parent — the agent
-            handles the wiring silently, but surfacing the relationship
-            avoids "where did this end up?" surprise. We deliberately keep
-            it non-editable: changing the parent is a `Set parent` action on
-            the parent itself, not a knob in the quick-create flow. */}
+            eventual `multica issue create` call. Keep common fields inline;
+            lower-frequency scheduling/relationship fields live behind more
+            options and surface as chips after selection. */}
         <div className="flex items-center gap-1.5 px-4 pb-2 shrink-0 flex-wrap">
           <StatusPicker
             status={status}
@@ -497,32 +522,111 @@ export function AgentCreatePanel({
             triggerRender={<PillButton />}
             align="start"
           />
-          <DueDatePicker
-            dueDate={dueDate}
-            onUpdate={(u) => setDueDate(u.due_date ?? null)}
-            triggerRender={<PillButton />}
-            align="start"
-          />
           <ProjectPicker
             projectId={projectId}
             onUpdate={(u) => setProjectId(u.project_id ?? null)}
             triggerRender={<PillButton />}
             align="start"
           />
+
+          {(startDate || startDatePickerOpen) && (
+            <StartDatePicker
+              startDate={startDate}
+              onUpdate={(u) => setStartDate(u.start_date ?? null)}
+              triggerRender={<PillButton />}
+              align="start"
+              open={startDatePickerOpen}
+              onOpenChange={setStartDatePickerOpen}
+            />
+          )}
+
+          {(dueDate || dueDatePickerOpen) && (
+            <DueDatePicker
+              dueDate={dueDate}
+              onUpdate={(u) => setDueDate(u.due_date ?? null)}
+              triggerRender={<PillButton />}
+              align="start"
+              open={dueDatePickerOpen}
+              onOpenChange={setDueDatePickerOpen}
+            />
+          )}
+
           {parentIssueId && (
             <span
               data-testid="agent-sub-issue-chip"
-              className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs text-muted-foreground"
+              className="inline-flex items-center rounded-full border text-xs transition-colors hover:bg-accent/60"
               title={t(($) => $.create_issue.agent.sub_issue_of, {
-                identifier: parentIssueIdentifier ?? "",
+                identifier: parentLabel,
               })}
             >
-              {t(($) => $.create_issue.agent.sub_issue_of, {
-                identifier: parentIssueIdentifier ?? "",
-              })}
+              <button
+                type="button"
+                onClick={() => setParentPickerOpen(true)}
+                className="flex items-center gap-1.5 py-1 pl-2.5 cursor-pointer"
+              >
+                <ArrowUp className="size-3 text-muted-foreground" />
+                <span>
+                  {t(($) => $.create_issue.agent.sub_issue_of, {
+                    identifier: parentLabel,
+                  })}
+                </span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setParentIssueId(null);
+                  setParentIssueIdentifier("");
+                }}
+                className="p-1 pr-2 text-muted-foreground hover:text-foreground cursor-pointer"
+                aria-label={t(($) => $.create_issue.remove_parent_aria)}
+              >
+                <XIcon className="size-3" />
+              </button>
             </span>
           )}
+
+          <DropdownMenu>
+            <DropdownMenuTrigger
+              render={
+                <PillButton aria-label={t(($) => $.create_issue.more_options_aria)}>
+                  <MoreHorizontal className="size-3.5" />
+                </PillButton>
+              }
+            />
+            <DropdownMenuContent align="start" className="w-auto">
+              {!startDate && (
+                <DropdownMenuItem onClick={() => setStartDatePickerOpen(true)}>
+                  <CalendarClock className="h-3.5 w-3.5" />
+                  {t(($) => $.create_issue.set_start_date)}
+                </DropdownMenuItem>
+              )}
+              {!dueDate && (
+                <DropdownMenuItem onClick={() => setDueDatePickerOpen(true)}>
+                  <CalendarDays className="h-3.5 w-3.5" />
+                  {t(($) => $.create_issue.set_due_date)}
+                </DropdownMenuItem>
+              )}
+              <DropdownMenuItem onClick={() => setParentPickerOpen(true)}>
+                <ArrowUp className="h-3.5 w-3.5" />
+                {parentIssueId
+                  ? t(($) => $.create_issue.parent_with_id, { identifier: parentLabel })
+                  : t(($) => $.create_issue.set_parent)}
+              </DropdownMenuItem>
+            </DropdownMenuContent>
+          </DropdownMenu>
         </div>
+
+        <IssuePickerModal
+          open={parentPickerOpen}
+          onOpenChange={setParentPickerOpen}
+          title={t(($) => $.create_issue.set_parent_picker.title)}
+          description={t(($) => $.create_issue.set_parent_picker.description)}
+          excludeIds={parentIssueId ? [parentIssueId] : []}
+          onSelect={(selected) => {
+            setParentIssueId(selected.id);
+            setParentIssueIdentifier(selected.identifier);
+          }}
+        />
 
         {/* Footer */}
         <div className="flex flex-col gap-2 border-t px-4 py-3 shrink-0 sm:flex-row sm:items-center sm:justify-between">

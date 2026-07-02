@@ -3,9 +3,12 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/pkg/agent"
@@ -221,4 +224,161 @@ func TestQuickCreateIssueParentTrustBoundary(t *testing.T) {
 			t.Fatalf("bogus attachment id must not enqueue a task: expected %d quick-create tasks, got %d", before, got)
 		}
 	})
+}
+
+func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+
+	var runtimeID, agentID string
+	if err := testPool.QueryRow(ctx,
+		`SELECT id FROM agent_runtime WHERE workspace_id = $1 LIMIT 1`,
+		testWorkspaceID,
+	).Scan(&runtimeID); err != nil {
+		t.Fatalf("fetch runtime: %v", err)
+	}
+	if err := testPool.QueryRow(ctx,
+		`SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`,
+		testWorkspaceID,
+	).Scan(&agentID); err != nil {
+		t.Fatalf("fetch agent: %v", err)
+	}
+	if _, err := testPool.Exec(ctx,
+		`UPDATE agent_runtime SET metadata = jsonb_build_object('cli_version', $1::text) WHERE id = $2`,
+		agent.MinQuickCreateCLIVersion, runtimeID,
+	); err != nil {
+		t.Fatalf("bump runtime cli_version: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(),
+			`UPDATE agent_runtime SET metadata = '{}'::jsonb WHERE id = $1`, runtimeID)
+	})
+
+	if _, err := testPool.Exec(ctx, `DELETE FROM external_credential_profile WHERE user_id = $1 AND provider = 'tapd'`, testUserID); err != nil {
+		t.Fatalf("clear tapd profiles: %v", err)
+	}
+	t.Setenv("TAPD_QUICK_CREATE_TEST_TOKEN", "tapd-quick-create-token")
+
+	title := fmt.Sprintf("TAPD 直建测试 %d", time.Now().UnixNano())
+	var sawAuth bool
+	tapdAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/tapd_wikis" {
+			t.Fatalf("unexpected TAPD path: %s", r.URL.Path)
+		}
+		if r.URL.Query().Get("workspace_id") != "47654106" || r.URL.Query().Get("id") != "1147654106001004223" {
+			t.Fatalf("unexpected TAPD query: %s", r.URL.RawQuery)
+		}
+		if r.Header.Get("Authorization") == "Bearer tapd-quick-create-token" && r.Header.Get("Via") == "mcp" {
+			sawAuth = true
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": []any{map[string]any{
+				"TWiki": map[string]any{
+					"id":                   "1147654106001004223",
+					"name":                 title,
+					"markdown_description": "这是从 TAPD Wiki 抓取的真实需求正文。需要进入 SOP 小队处理。",
+					"modified":             "2026-07-02 10:00:00",
+				},
+			}},
+		})
+	}))
+	defer tapdAPI.Close()
+	t.Setenv("TAPD_API_BASE_URL", tapdAPI.URL)
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/external-credential-profiles", map[string]any{
+		"provider":   "tapd",
+		"name":       fmt.Sprintf("tapd-quick-create-%d", time.Now().UnixNano()),
+		"secret_ref": "env:TAPD_QUICK_CREATE_TEST_TOKEN",
+	})
+	testHandler.CreateExternalCredentialProfile(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateExternalCredentialProfile: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var quickTasksBefore int
+	if err := testPool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM agent_task_queue WHERE context->>'type' = 'quick_create' AND agent_id = $1`,
+		agentID,
+	).Scan(&quickTasksBefore); err != nil {
+		t.Fatalf("count quick-create tasks before: %v", err)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/issues/quick-create", map[string]any{
+		"agent_id": agentID,
+		"prompt":   "根据 TAPD Wiki 文档创建需求：https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004223",
+	})
+	testHandler.QuickCreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("QuickCreateIssue TAPD: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	if !sawAuth {
+		t.Fatal("TAPD quick-create did not use credential-backed auto_fetch")
+	}
+	var resp QuickCreateIssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode quick-create response: %v", err)
+	}
+	if resp.TaskID != "" {
+		t.Fatalf("TAPD direct create must not return quick-create task_id, got %q", resp.TaskID)
+	}
+	if resp.IssueID == "" || resp.SourceFetchStatus != "fetched" {
+		t.Fatalf("unexpected response: %+v", resp)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, resp.IssueID)
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, resp.IssueID)
+	})
+
+	var quickTasksAfter int
+	if err := testPool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM agent_task_queue WHERE context->>'type' = 'quick_create' AND agent_id = $1`,
+		agentID,
+	).Scan(&quickTasksAfter); err != nil {
+		t.Fatalf("count quick-create tasks after: %v", err)
+	}
+	if quickTasksAfter != quickTasksBefore {
+		t.Fatalf("TAPD direct create enqueued quick-create task: before=%d after=%d", quickTasksBefore, quickTasksAfter)
+	}
+
+	issue, err := testHandler.Queries.GetIssue(ctx, parseUUID(resp.IssueID))
+	if err != nil {
+		t.Fatalf("load created issue: %v", err)
+	}
+	metadata := parseIssueMetadata(issue.Metadata)
+	if metadata["source_fetch_status"] != "fetched" || metadata["source_fetch_title"] != title {
+		t.Fatalf("metadata missing fetched TAPD source: %+v", metadata)
+	}
+	if !strings.Contains(issue.Description.String, "真实需求正文") {
+		t.Fatalf("description missing fetched TAPD body excerpt: %s", issue.Description.String)
+	}
+	for _, unexpected := range []string{
+		"## 用户请求",
+		"根据 TAPD Wiki 文档创建需求",
+		"## TAPD 来源",
+		"## TAPD 摘要",
+		"## TAPD 正文摘录",
+	} {
+		if strings.Contains(issue.Description.String, unexpected) {
+			t.Fatalf("description should not contain %q: %s", unexpected, issue.Description.String)
+		}
+	}
+	source := testHandler.buildIssueSourceContext(ctx, issue, parseUUID(testUserID))
+	if source == nil || source.TAPD == nil || source.TAPD.Title != title || !strings.Contains(source.TAPD.BodyExcerpt, "真实需求正文") {
+		t.Fatalf("source_context missing fetched fields: %+v", source)
+	}
+
+	var issueTaskCount int
+	if err := testPool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM agent_task_queue WHERE issue_id = $1`,
+		resp.IssueID,
+	).Scan(&issueTaskCount); err != nil {
+		t.Fatalf("count issue tasks: %v", err)
+	}
+	if issueTaskCount == 0 {
+		t.Fatal("TAPD direct create did not trigger the selected assignee after source fetch")
+	}
 }

@@ -132,6 +132,10 @@ type TAPDTaskSourceContext struct {
 	FetchProvider string `json:"fetch_provider,omitempty"`
 	FetchStatus   string `json:"fetch_status,omitempty"`
 	FetchError    string `json:"fetch_error,omitempty"`
+	Title         string `json:"title,omitempty"`
+	Summary       string `json:"summary,omitempty"`
+	BodyExcerpt   string `json:"body_excerpt,omitempty"`
+	Version       string `json:"version,omitempty"`
 }
 
 type TaskExternalCredentialContext struct {

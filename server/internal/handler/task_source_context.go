@@ -50,6 +50,10 @@ func (h *Handler) buildIssueSourceContext(ctx context.Context, issue db.Issue, c
 			FetchProvider: firstNonEmpty(metadataStringValue(metadata, "source_fetch_provider"), "tapd_mcp"),
 			FetchStatus:   fetchStatus,
 			FetchError:    fetchError,
+			Title:         metadataStringValue(metadata, "source_fetch_title"),
+			Summary:       metadataStringValue(metadata, "source_fetch_summary"),
+			BodyExcerpt:   metadataStringValue(metadata, "source_fetch_body_excerpt"),
+			Version:       metadataStringValue(metadata, "source_fetch_version"),
 		}
 	case externalCredentialProviderGongfeng:
 		source.ExternalCredentials[externalCredentialProviderGongfeng] = h.sourceCredentialContext(ctx, credentialUserID, externalCredentialProviderGongfeng, gongfengMCPServerName)

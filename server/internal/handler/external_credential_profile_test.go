@@ -95,6 +95,72 @@ func TestExternalCredentialProfileRawTokenRequiresEncryption(t *testing.T) {
 	}
 }
 
+func TestExternalCredentialProfileTestVerifiesTAPDConnection(t *testing.T) {
+	var sawAuth bool
+	tapdAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/workspaces" {
+			t.Fatalf("unexpected TAPD path: %s", r.URL.Path)
+		}
+		if r.Header.Get("Authorization") == "Bearer tapd-verified-token" && r.Header.Get("Via") == "mcp" {
+			sawAuth = true
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": []any{}})
+	}))
+	defer tapdAPI.Close()
+	t.Setenv("TAPD_API_BASE_URL", tapdAPI.URL)
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/external-credential-profiles/test", map[string]any{
+		"provider": "tapd",
+		"token":    "tapd-verified-token",
+	})
+	testHandler.TestExternalCredentialProfile(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("TestExternalCredentialProfile: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if !sawAuth {
+		t.Fatal("TAPD credential test did not send credential-backed authorization headers")
+	}
+	var resp TestExternalCredentialProfileResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Status != "verified" || resp.LastError != "" {
+		t.Fatalf("unexpected TAPD test response: %+v", resp)
+	}
+	if strings.Contains(w.Body.String(), "tapd-verified-token") {
+		t.Fatalf("response leaked raw token: %s", w.Body.String())
+	}
+}
+
+func TestExternalCredentialProfileTestReportsTAPDUnauthorized(t *testing.T) {
+	tapdAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+	}))
+	defer tapdAPI.Close()
+	t.Setenv("TAPD_API_BASE_URL", tapdAPI.URL)
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/external-credential-profiles/test", map[string]any{
+		"provider": "tapd",
+		"token":    "expired-token",
+	})
+	testHandler.TestExternalCredentialProfile(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("TestExternalCredentialProfile: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp TestExternalCredentialProfileResponse
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if resp.Status != "failed" || !strings.Contains(resp.LastError, "无效或已过期") {
+		t.Fatalf("unexpected TAPD unauthorized response: %+v", resp)
+	}
+	if strings.Contains(w.Body.String(), "expired-token") {
+		t.Fatalf("response leaked raw token: %s", w.Body.String())
+	}
+}
+
 func TestMergeMCPServerEnvCreatesDefaultServerEntry(t *testing.T) {
 	config := normalizeMCPConfigForInjection(nil)
 	changed := mergeMCPServerEnv(config, tapdMCPServerName, map[string]string{"TAPD_ACCESS_TOKEN": "tapd-secret"})
@@ -286,10 +352,9 @@ func TestCreateTapdIssueInheritsAccountCredentialProfile(t *testing.T) {
 
 	w = httptest.NewRecorder()
 	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title":           "TAPD profile inherited issue",
-		"status":          "todo",
-		"priority":        "medium",
-		"allow_duplicate": true,
+		"title":    "TAPD profile inherited issue",
+		"status":   "todo",
+		"priority": "medium",
 		"metadata": map[string]any{
 			"source_provider": "tapd",
 			"tapd_workspace":  "47654106",
@@ -334,10 +399,9 @@ func TestCreateTapdIssueMarksMissingAccountCredentialProfile(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title":           "TAPD missing profile issue",
-		"status":          "todo",
-		"priority":        "medium",
-		"allow_duplicate": true,
+		"title":    "TAPD missing profile issue",
+		"status":   "todo",
+		"priority": "medium",
 		"metadata": map[string]any{
 			"source_provider": "tapd",
 			"tapd_workspace":  "47654106",
@@ -406,12 +470,11 @@ func TestClaimTaskIncludesTapdSourceContextWithAccountCredential(t *testing.T) {
 
 	w = httptest.NewRecorder()
 	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title":           "TAPD source context claim issue",
-		"status":          "todo",
-		"priority":        "medium",
-		"assignee_type":   "agent",
-		"assignee_id":     agentID,
-		"allow_duplicate": true,
+		"title":         "TAPD source context claim issue",
+		"status":        "todo",
+		"priority":      "medium",
+		"assignee_type": "agent",
+		"assignee_id":   agentID,
 		"metadata": map[string]any{
 			"source_provider":    "tapd",
 			"source_url":         "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",

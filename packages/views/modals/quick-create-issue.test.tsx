@@ -94,6 +94,12 @@ vi.mock("@multica/core/projects/queries", () => ({
   projectListOptions: () => ({ queryKey: ["projects"] }),
 }));
 
+vi.mock("@multica/core/issues/queries", () => ({
+  issueDetailOptions: (_wsId: string, issueId: string) => ({
+    queryKey: ["issue-detail", issueId],
+  }),
+}));
+
 vi.mock("@multica/core/issues/stores/quick-create-store", () => ({
   useQuickCreateStore: (selector?: (state: typeof mockQuickCreateStore) => unknown) =>
     (selector ? selector(mockQuickCreateStore) : mockQuickCreateStore),
@@ -126,11 +132,17 @@ vi.mock("../common/actor-avatar", () => ({
 vi.mock("../issues/components", () => ({
   StatusPicker: () => <div data-testid="status-picker" />,
   PriorityPicker: () => <div data-testid="priority-picker" />,
+  StartDatePicker: () => <div data-testid="start-date-picker" />,
   DueDatePicker: () => <div data-testid="due-date-picker" />,
 }));
 
 vi.mock("../projects/components/project-picker", () => ({
   ProjectPicker: () => <div data-testid="project-picker" />,
+}));
+
+vi.mock("./issue-picker-modal", () => ({
+  IssuePickerModal: ({ open }: { open: boolean }) =>
+    open ? <div data-testid="issue-picker-modal" /> : null,
 }));
 
 vi.mock("../common/pill-button", () => ({
@@ -189,6 +201,15 @@ vi.mock("../editor", () => {
 vi.mock("@multica/ui/components/ui/dialog", () => ({
   DialogTitle: ({ children, className }: { children: ReactNode; className?: string }) => (
     <div className={className}>{children}</div>
+  ),
+}));
+
+vi.mock("@multica/ui/components/ui/dropdown-menu", () => ({
+  DropdownMenu: ({ children }: { children: ReactNode }) => <>{children}</>,
+  DropdownMenuTrigger: ({ render }: { render: ReactNode }) => <>{render}</>,
+  DropdownMenuContent: ({ children }: { children: ReactNode }) => <>{children}</>,
+  DropdownMenuItem: ({ children, onClick }: { children: ReactNode; onClick?: () => void }) => (
+    <button type="button" onClick={onClick}>{children}</button>
   ),
 }));
 
@@ -525,6 +546,7 @@ describe("AgentCreatePanel", () => {
       data: {
         status: "in_progress",
         priority: "high",
+        start_date: "2026-07-02",
         due_date: "2026-07-10",
       },
     });
@@ -544,6 +566,7 @@ describe("AgentCreatePanel", () => {
         project_id: undefined,
         status: "in_progress",
         priority: "high",
+        start_date: "2026-07-02",
         due_date: "2026-07-10",
       });
     });

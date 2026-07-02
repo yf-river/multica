@@ -648,7 +648,7 @@ func TestBuildObservabilitySummaryIncludesCostBreakdown(t *testing.T) {
 			OutputTokens: 5,
 		},
 	}
-	summary := buildObservabilitySummary(nil, nil, traces, nil, 0, observabilitySummarySampleLimit)
+	summary := buildObservabilitySummary(nil, nil, traces, nil, 0, 0)
 	metricsMap := summary["指标"].(map[string]any)
 	if cost, ok := metricsMap["预估成本"].(float64); !ok || cost <= 0 {
 		t.Fatalf("预估成本 = %v, want > 0", metricsMap["预估成本"])
@@ -697,7 +697,7 @@ func TestBuildObservabilitySummaryDedupesRepeatedUsageReports(t *testing.T) {
 			CreatedAt:        pgtype.Timestamptz{Time: base.Add(time.Minute), Valid: true},
 		},
 	}
-	summary := buildObservabilitySummary(nil, nil, traces, nil, 0, observabilitySummarySampleLimit)
+	summary := buildObservabilitySummary(nil, nil, traces, nil, 0, 0)
 	metricsMap := summary["指标"].(map[string]any)
 	if got := metricsMap["输入 token"]; got != int64(30) {
 		t.Fatalf("输入 token = %v, want latest usage report 30", got)
@@ -717,21 +717,21 @@ func TestBuildObservabilitySummaryDedupesRepeatedUsageReports(t *testing.T) {
 	}
 }
 
-func TestBuildObservabilitySummaryMarksPossibleTruncation(t *testing.T) {
-	traces := make([]db.TaskTraceEvent, observabilitySummarySampleLimit)
-	summary := buildObservabilitySummary(nil, nil, traces, nil, 12, observabilitySummarySampleLimit)
+func TestBuildObservabilitySummaryMarksFullCompleteness(t *testing.T) {
+	traces := make([]db.TaskTraceEvent, observabilitySummaryPageSize)
+	summary := buildObservabilitySummary(nil, nil, traces, nil, int64(len(traces)), 0)
 	metricsMap := summary["指标"].(map[string]any)
-	if got := summary["task_trace_maybe_truncated"]; got != true {
-		t.Fatalf("task_trace_maybe_truncated = %v, want true", got)
+	if got := summary["task_trace_maybe_truncated"]; got != false {
+		t.Fatalf("task_trace_maybe_truncated = %v, want false", got)
 	}
-	if got := summary["task_trace_sample_total"]; got != observabilitySummarySampleLimit {
-		t.Fatalf("task_trace_sample_total = %v, want %d", got, observabilitySummarySampleLimit)
+	if got := summary["task_trace_sample_total"]; got != observabilitySummaryPageSize {
+		t.Fatalf("task_trace_sample_total = %v, want %d", got, observabilitySummaryPageSize)
 	}
-	if got := metricsMap["汇总完整性"]; got != "可能截断" {
-		t.Fatalf("汇总完整性 = %v, want 可能截断", got)
+	if got := metricsMap["汇总完整性"]; got != "完整" {
+		t.Fatalf("汇总完整性 = %v, want 完整", got)
 	}
 	completeness := summary["summary_completeness"].(map[string]any)
-	if got := completeness["说明"]; !strings.Contains(got.(string), "最近样本") {
-		t.Fatalf("summary_completeness 说明 = %v, want 最近样本 warning", got)
+	if got := completeness["说明"]; !strings.Contains(got.(string), "全量汇总") {
+		t.Fatalf("summary_completeness 说明 = %v, want 全量汇总", got)
 	}
 }

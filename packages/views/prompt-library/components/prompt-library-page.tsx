@@ -970,14 +970,23 @@ export function PromptLibraryPage({
     reviewRunMut.mutate({ runId: run.id, decision, note: note.trim() || defaultNote });
   };
 
+  const listAllPromptEvaluationRunsForExport = async (since: string | null) => {
+    const limit = 200;
+    const all: PromptEvaluationRun[] = [];
+    for (let offset = 0; ; offset += limit) {
+      const response = await api.listPromptEvaluationRuns({ limit, offset, since });
+      all.push(...response.items);
+      if (response.items.length < limit) return all;
+    }
+  };
+
   const exportDemoEvidence = async () => {
     const range = DEMO_TIME_RANGES.find((item) => item.value === demoTimeRange);
     setExportingDemoEvidence(true);
     try {
-      const scopedRunResponse = await api.listPromptEvaluationRuns({ limit: 50, since: demoSince });
-      const recentRuns = scopedRunResponse.items;
-      const recentRunEvidence = await Promise.all(
-        recentRuns.map(async (run) => {
+      const allRuns = await listAllPromptEvaluationRunsForExport(demoSince);
+      const runEvidence = await Promise.all(
+        allRuns.map(async (run) => {
           try {
             const evidence = await api.getPromptEvaluationRunEvidence(run.id);
             return {
@@ -1002,7 +1011,7 @@ export function PromptLibraryPage({
           }
         }),
       );
-      const evidenceStats = recentRunEvidence.reduce(
+      const evidenceStats = runEvidence.reduce(
         (acc, evidence) => {
           acc.运行数 += 1;
           if (evidence.采集状态 === "已采集") acc.已采集 += 1;
@@ -1049,14 +1058,14 @@ export function PromptLibraryPage({
         观测范围: {
           标签: range?.label ?? demoTimeRange,
           since: demoSince,
-          说明: "训练评估摘要、最近运行、运行证据与 SOP/任务观测摘要使用同一 since 时间窗口；资产统计保留当前工作区库存。",
+          说明: "训练评估摘要、运行证据与 SOP/任务观测摘要使用同一 since 时间窗口；资产统计保留当前工作区库存。",
         },
         workspace_id: workspaceId,
         训练评估摘要: summary,
         观测摘要: observabilitySummaryQuery.data ?? null,
         真实执行准备度: agentRuntimeReadiness,
-        最近运行: recentRuns,
-        最近运行证据: recentRunEvidence,
+        运行: allRuns,
+        运行证据: runEvidence,
         训练维度评分摘要: dimensionScoreSummaries,
         训练维度评分趋势: dimensionScoreTrends,
         优化候选证据: optimizationCandidateEvidence,
@@ -1543,11 +1552,6 @@ function DemoDashboardPanel({
   const observabilityMetrics = observabilitySummary?.指标 ?? {};
   const completeness = observabilitySummary?.summary_completeness;
   const completenessStatus = String(completeness?.["状态"] ?? observabilityMetrics["汇总完整性"] ?? "完整");
-  const maybeTruncated = Boolean(
-    observabilitySummary?.sop_run_maybe_truncated ||
-      observabilitySummary?.task_trace_maybe_truncated ||
-      completenessStatus === "可能截断",
-  );
   const latestRun = runs[0] ?? null;
   const pendingCandidates = candidates.filter((candidate) => candidate.status === "待确认").length;
   const publishedCandidates = candidates.filter((candidate) => candidate.status === "已发布").length;
@@ -1613,7 +1617,7 @@ function DemoDashboardPanel({
           <div className="flex flex-wrap gap-2 text-xs">
             <Badge variant={runtimeReadiness.status === "就绪" ? "secondary" : "outline"}>真实智能体：{readinessLabel}</Badge>
             <Badge variant="outline">训练摘要：全部数据</Badge>
-            <Badge variant={maybeTruncated ? "outline" : "secondary"}>观测完整性：{completenessStatus}</Badge>
+            <Badge variant="secondary">观测完整性：{completenessStatus}</Badge>
             <Badge variant={hasOptimizationLoop ? "secondary" : "outline"}>优化闭环：{hasOptimizationLoop ? "已有证据" : "待补齐"}</Badge>
             <Button size="sm" variant="secondary" className="h-7 text-xs" onClick={onExportEvidence} disabled={exportingEvidence}>
               {exportingEvidence ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
@@ -1625,12 +1629,6 @@ function DemoDashboardPanel({
           </div>
         </div>
       </div>
-
-      {maybeTruncated && (
-        <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-800 dark:text-amber-200">
-          {String(completeness?.["说明"] ?? "当前观测摘要可能达到采样上限；用于汇报前请缩小时间、项目、小队或 Agent 范围。")}
-        </div>
-      )}
 
       <TrainingOperationalLoopPanel
         summary={operationalLoop}
@@ -1650,7 +1648,7 @@ function DemoDashboardPanel({
           subtitle={
             observabilityLoading
               ? `正在刷新${activeRange.label}观测摘要`
-              : `${activeRange.label} · ${String(completeness?.["说明"] ?? "当前筛选条件下的 SOP 执行和任务观测未达到采样上限。")}`
+              : `${activeRange.label} · ${String(completeness?.["说明"] ?? "当前筛选条件下的 SOP 执行和任务观测已按全量汇总。")}`
           }
           items={observabilityItems}
         />
@@ -1685,7 +1683,7 @@ function DemoDashboardPanel({
             <DemoChecklistItem ok={cases.length > 0} label="数据集/测试套件已有结构化用例" detail={`${cases.length} 条结构化用例`} />
             <DemoChecklistItem ok={Number(trainingAssets["服务端证据快照"] ?? trainingMetrics["服务端证据快照"] ?? 0) > 0} label="运行证据已服务端归档" detail={`${formatNumber(trainingAssets["服务端证据快照"] ?? trainingMetrics["服务端证据快照"])} 条快照，验收归档 ${formatNumber(trainingAssets["验收归档快照"] ?? trainingMetrics["验收归档快照"])}`} />
             <DemoChecklistItem ok={hasOptimizationLoop} label="失败用例可进入优化候选人工确认" detail={`${pendingCandidates} 待确认，${publishedCandidates} 已发布`} />
-            <DemoChecklistItem ok={!maybeTruncated} label="观测摘要可直接用于汇报" detail={String(completeness?.["说明"] ?? "当前摘要完整")} />
+            <DemoChecklistItem ok label="观测摘要可直接用于汇报" detail={String(completeness?.["说明"] ?? "当前筛选范围已全量汇总")} />
           </div>
         </section>
       </div>

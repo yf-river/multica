@@ -729,7 +729,12 @@ export class ApiClient {
     start_date?: string | null;
     due_date?: string | null;
     attachment_ids?: string[];
-  }): Promise<{ task_id: string }> {
+  }): Promise<{
+    task_id?: string;
+    issue_id?: string;
+    identifier?: string;
+    source_fetch_status?: string;
+  }> {
     return this.fetch("/api/issues/quick-create", {
       method: "POST",
       body: JSON.stringify(data),
@@ -2336,6 +2341,7 @@ export class ApiClient {
     if (params?.status) search.set("status", params.status);
     if (params?.since) search.set("since", params.since);
     if (params?.limit) search.set("limit", String(params.limit));
+    if (params?.offset) search.set("offset", String(params.offset));
     const query = search.toString();
     const raw = await this.fetch<unknown>(`/api/prompt-evaluation-runs${query ? `?${query}` : ""}`);
     return parseWithFallback(raw, PromptEvaluationRunListResponseSchema, EMPTY_PROMPT_EVALUATION_RUN_LIST_RESPONSE, {

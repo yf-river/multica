@@ -412,63 +412,6 @@ func (q *Queries) DeleteIssueMetadataKey(ctx context.Context, arg DeleteIssueMet
 	return i, err
 }
 
-const findActiveDuplicateIssue = `-- name: FindActiveDuplicateIssue :one
-SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, scope, owner_id FROM issue
-WHERE workspace_id = $1
-  AND status NOT IN ('done', 'cancelled')
-  AND project_id IS NOT DISTINCT FROM $2::uuid
-  AND parent_issue_id IS NOT DISTINCT FROM $3::uuid
-  AND lower(btrim(regexp_replace(title, '[[:space:]]+', ' ', 'g'))) = $4
-ORDER BY created_at ASC
-LIMIT 1
-`
-
-type FindActiveDuplicateIssueParams struct {
-	WorkspaceID     pgtype.UUID `json:"workspace_id"`
-	ProjectID       pgtype.UUID `json:"project_id"`
-	ParentIssueID   pgtype.UUID `json:"parent_issue_id"`
-	NormalizedTitle string      `json:"normalized_title"`
-}
-
-func (q *Queries) FindActiveDuplicateIssue(ctx context.Context, arg FindActiveDuplicateIssueParams) (Issue, error) {
-	row := q.db.QueryRow(ctx, findActiveDuplicateIssue,
-		arg.WorkspaceID,
-		arg.ProjectID,
-		arg.ParentIssueID,
-		arg.NormalizedTitle,
-	)
-	var i Issue
-	err := row.Scan(
-		&i.ID,
-		&i.WorkspaceID,
-		&i.Title,
-		&i.Description,
-		&i.Status,
-		&i.Priority,
-		&i.AssigneeType,
-		&i.AssigneeID,
-		&i.CreatorType,
-		&i.CreatorID,
-		&i.ParentIssueID,
-		&i.AcceptanceCriteria,
-		&i.ContextRefs,
-		&i.Position,
-		&i.DueDate,
-		&i.CreatedAt,
-		&i.UpdatedAt,
-		&i.Number,
-		&i.ProjectID,
-		&i.OriginType,
-		&i.OriginID,
-		&i.FirstExecutedAt,
-		&i.StartDate,
-		&i.Metadata,
-		&i.Scope,
-		&i.OwnerID,
-	)
-	return i, err
-}
-
 const getIssue = `-- name: GetIssue :one
 SELECT id, workspace_id, title, description, status, priority, assignee_type, assignee_id, creator_type, creator_id, parent_issue_id, acceptance_criteria, context_refs, position, due_date, created_at, updated_at, number, project_id, origin_type, origin_id, first_executed_at, start_date, metadata, scope, owner_id FROM issue
 WHERE id = $1
@@ -1060,15 +1003,6 @@ func (q *Queries) ListOpenIssues(ctx context.Context, arg ListOpenIssuesParams) 
 		return nil, err
 	}
 	return items, nil
-}
-
-const lockIssueDuplicateKey = `-- name: LockIssueDuplicateKey :exec
-SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))
-`
-
-func (q *Queries) LockIssueDuplicateKey(ctx context.Context, dollar_1 string) error {
-	_, err := q.db.Exec(ctx, lockIssueDuplicateKey, dollar_1)
-	return err
 }
 
 const markIssueFirstExecuted = `-- name: MarkIssueFirstExecuted :one

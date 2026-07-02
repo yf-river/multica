@@ -27,6 +27,7 @@ import { IssueActionsContextMenu } from "../actions";
 import { LabelChip } from "../../labels/label-chip";
 import { IssueAgentActivityIndicator } from "./issue-agent-activity-indicator";
 import { useT } from "../../i18n";
+import { TAPDSourceBadge } from "./tapd-source-badge";
 
 function formatDate(date: string): string {
   return formatDateOnly(date, { month: "short", day: "numeric" }, "zh-CN");
@@ -205,9 +206,12 @@ export const BoardCardContent = memo(function BoardCardContent({
       </div>
 
       {/* Row 2: Title */}
-      <p className="mt-1 text-sm font-medium leading-snug line-clamp-2">
-        {issue.title}
-      </p>
+      <div className="mt-1 flex min-w-0 items-start gap-1">
+        <p className="min-w-0 text-sm font-medium leading-snug line-clamp-2">
+          {issue.title}
+        </p>
+        <TAPDSourceBadge issue={issue} variant="inline" className="mt-[3px]" />
+      </div>
 
       {showDescription && (() => {
         const preview = descriptionPreview(issue.description!);

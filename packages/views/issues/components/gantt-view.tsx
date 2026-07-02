@@ -24,6 +24,7 @@ import { PriorityIcon } from "./priority-icon";
 import { IssueActionsContextMenu } from "../actions";
 import { sortIssues } from "../utils/sort";
 import { useT } from "../../i18n";
+import { TAPDSourceBadge } from "./tapd-source-badge";
 
 // ---------------------------------------------------------------------------
 // Date utilities — everything is UTC-day-aligned so a `due_date` ISO string
@@ -375,7 +376,10 @@ function ScheduledRow({
           <span className="w-14 shrink-0 text-xs text-muted-foreground tabular-nums truncate">
             {issue.identifier}
           </span>
-          <span className="truncate flex-1">{issue.title}</span>
+          <span className="min-w-0 flex flex-1 items-center gap-1.5">
+            <span className="truncate">{issue.title}</span>
+            <TAPDSourceBadge issue={issue} variant="inline" />
+          </span>
           {project && <ProjectIcon project={project} size="sm" />}
           {issue.assignee_type && issue.assignee_id && (
             <ActorAvatar

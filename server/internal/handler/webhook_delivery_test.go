@@ -525,7 +525,7 @@ func TestCreateAutopilotTrigger_AcceptsGitHubProvider(t *testing.T) {
 	}
 }
 
-// run_only autopilots have no issue-title duplicate guard, so dedupe via
+// run_only autopilots have no issue-title create guard, so dedupe via
 // the delivery layer is the only thing keeping a retried provider event
 // from re-running the agent. This regression test pins that path
 // explicitly — it's the largest concrete win over the v1 ingress flow.

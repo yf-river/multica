@@ -12,6 +12,26 @@ func TestEstimateUsageCostUSDMinimax(t *testing.T) {
 	}
 }
 
+func TestEstimateUsageCostUSDDeepSeekV4ProIOA(t *testing.T) {
+	cost, ok := EstimateUsageCostUSD("codebuddy/deepseek-v4-pro-ioa", 1_000_000, 1_000_000, 1_000_000, 1_000_000)
+	if !ok {
+		t.Fatalf("expected codebuddy/deepseek-v4-pro-ioa to resolve")
+	}
+	if cost != 1.743625 {
+		t.Fatalf("cost = %v, want 1.743625", cost)
+	}
+}
+
+func TestEstimateUsageCostUSDDeepSeekV4FlashIOA(t *testing.T) {
+	cost, ok := EstimateUsageCostUSD("codebuddy/deepseek-v4-flash-ioa", 1_000_000, 1_000_000, 1_000_000, 1_000_000)
+	if !ok {
+		t.Fatalf("expected codebuddy/deepseek-v4-flash-ioa to resolve")
+	}
+	if cost != 0.5628 {
+		t.Fatalf("cost = %v, want 0.5628", cost)
+	}
+}
+
 func TestEstimateUsageCostUSDUnknownModel(t *testing.T) {
 	cost, ok := EstimateUsageCostUSD("unknown-model", 1_000_000, 1_000_000, 0, 0)
 	if ok {

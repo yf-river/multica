@@ -3,10 +3,8 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"net/url"
 	"os"
 	"strings"
@@ -350,7 +348,6 @@ func init() {
 	issueCreateCmd.Flags().String("project", "", "Project ID")
 	issueCreateCmd.Flags().String("start-date", "", "Start date (calendar day, YYYY-MM-DD)")
 	issueCreateCmd.Flags().String("due-date", "", "Due date (calendar day, YYYY-MM-DD)")
-	issueCreateCmd.Flags().Bool("allow-duplicate", false, "Allow creating an issue even when an active duplicate exists")
 	issueCreateCmd.Flags().String("output", "json", "Output format: table or json")
 	issueCreateCmd.Flags().StringSlice("attachment", nil, "File path(s) to attach (can be specified multiple times)")
 	issueCreateCmd.Flags().StringSlice("attachment-id", nil, "Existing attachment UUID(s) to bind to the created issue (can be specified multiple times)")
@@ -824,9 +821,6 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	if v, _ := cmd.Flags().GetString("due-date"); v != "" {
 		body["due_date"] = v
 	}
-	if v, _ := cmd.Flags().GetBool("allow-duplicate"); v {
-		body["allow_duplicate"] = true
-	}
 	aType, aID, hasAssignee, resolveErr := pickAssigneeFromFlags(ctx, client, cmd, "assignee", "assignee-id", issueAssigneeKinds)
 	if resolveErr != nil {
 		return fmt.Errorf("resolve assignee: %w", resolveErr)
@@ -889,9 +883,6 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 
 	var result map[string]any
 	if err := client.PostJSON(ctx, "/api/issues", body, &result); err != nil {
-		if msg, ok := activeDuplicateIssueCreateMessage(err); ok {
-			return errors.New(msg)
-		}
 		return fmt.Errorf("create issue: %w", err)
 	}
 
@@ -923,24 +914,6 @@ func runIssueCreate(cmd *cobra.Command, _ []string) error {
 	}
 
 	return cli.PrintJSON(os.Stdout, result)
-}
-
-func activeDuplicateIssueCreateMessage(err error) (string, bool) {
-	var httpErr *cli.HTTPError
-	if !errors.As(err, &httpErr) || httpErr.StatusCode != http.StatusConflict {
-		return "", false
-	}
-	var payload struct {
-		Code  string `json:"code"`
-		Error string `json:"error"`
-	}
-	if json.Unmarshal([]byte(httpErr.Body), &payload) != nil {
-		return "", false
-	}
-	if payload.Code != "active_duplicate_issue" || payload.Error == "" {
-		return "", false
-	}
-	return payload.Error, true
 }
 
 func runIssueUpdate(cmd *cobra.Command, args []string) error {

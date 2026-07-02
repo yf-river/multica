@@ -306,6 +306,10 @@ func (h *Handler) TestExternalCredentialProfile(w http.ResponseWriter, r *http.R
 		status, lastVerified, lastError = h.verifyGongfengCredentialConnection(r.Context(), secretRef, encrypted)
 		lastErrorString = lastError.String
 	}
+	if provider == externalCredentialProviderTAPD && status != "failed" {
+		status, lastVerified, lastError = h.verifyTAPDCredentialConnection(r.Context(), secretRef, encrypted)
+		lastErrorString = lastError.String
+	}
 	binding := map[string]any{
 		"configured": true,
 		"redacted":   true,
@@ -365,6 +369,48 @@ func (h *Handler) verifyGongfengCredentialConnection(ctx context.Context, secret
 		return "failed", now, pgtype.Text{String: "工蜂 token 权限不足。", Valid: true}
 	}
 	return "failed", now, pgtype.Text{String: "工蜂连接测试失败，HTTP " + resp.Status, Valid: true}
+}
+
+func (h *Handler) verifyTAPDCredentialConnection(ctx context.Context, secretRef string, encrypted []byte) (string, pgtype.Timestamptz, pgtype.Text) {
+	now := pgtype.Timestamptz{Time: time.Now(), Valid: true}
+	token := h.resolveExternalCredentialToken(db.ExternalCredentialProfile{
+		Provider:        externalCredentialProviderTAPD,
+		SecretRef:       secretRef,
+		EncryptedSecret: encrypted,
+	})
+	if strings.TrimSpace(token) == "" {
+		return "failed", now, pgtype.Text{String: "TAPD token 不可用；请检查输入或服务端环境变量。", Valid: true}
+	}
+	base := strings.TrimRight(firstNonEmpty(os.Getenv("TAPD_API_BASE_URL"), "https://api.tapd.cn"), "/")
+	target := base + "/workspaces?page=1&limit=1&s=mcp"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, target, nil)
+	if err != nil {
+		return "failed", now, pgtype.Text{String: "TAPD 连接测试地址无效。", Valid: true}
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Via", "mcp")
+	client := &http.Client{
+		Timeout: 8 * time.Second,
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return "failed", now, pgtype.Text{String: "无法连接 TAPD API；请检查网络或 TAPD_API_BASE_URL。", Valid: true}
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return "verified", now, pgtype.Text{}
+	}
+	if resp.StatusCode == http.StatusUnauthorized {
+		return "failed", now, pgtype.Text{String: "TAPD token 无效或已过期。", Valid: true}
+	}
+	if resp.StatusCode == http.StatusForbidden {
+		return "failed", now, pgtype.Text{String: "TAPD token 权限不足。", Valid: true}
+	}
+	return "failed", now, pgtype.Text{String: "TAPD 连接测试失败，HTTP " + resp.Status, Valid: true}
 }
 
 func (h *Handler) DeleteExternalCredentialProfile(w http.ResponseWriter, r *http.Request) {

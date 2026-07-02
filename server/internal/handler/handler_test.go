@@ -1039,12 +1039,12 @@ func TestProjectLeadAgentBacklogIssueCreatesReviewTaskBeforeSquadRuns(t *testing
 	}
 }
 
-func TestCreateIssueRejectsActiveDuplicate(t *testing.T) {
+func TestCreateIssueAllowsActiveDuplicate(t *testing.T) {
 	ctx := context.Background()
 	suffix := fmt.Sprintf("%d", time.Now().UnixNano())
-	var projectID, parentID, issueID, duplicateID string
+	var projectID, parentID, issueID, duplicateID, thirdID string
 	defer func() {
-		for _, id := range []string{duplicateID, issueID, parentID} {
+		for _, id := range []string{thirdID, duplicateID, issueID, parentID} {
 			if id != "" {
 				testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, id)
 			}
@@ -1101,37 +1101,8 @@ func TestCreateIssueRejectsActiveDuplicate(t *testing.T) {
 		"project_id":      projectID,
 	})
 	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusConflict {
-		t.Fatalf("CreateIssue duplicate: expected 409, got %d: %s", w.Code, w.Body.String())
-	}
-	var conflict struct {
-		Code  string        `json:"code"`
-		Error string        `json:"error"`
-		Issue IssueResponse `json:"issue"`
-	}
-	if err := json.NewDecoder(w.Body).Decode(&conflict); err != nil {
-		t.Fatalf("decode conflict: %v", err)
-	}
-	if conflict.Code != "active_duplicate_issue" {
-		t.Fatalf("code = %q, want active_duplicate_issue", conflict.Code)
-	}
-	if conflict.Issue.ID != issueID || conflict.Issue.Status != "in_progress" {
-		t.Fatalf("conflict issue = %#v, want original %s in_progress", conflict.Issue, issueID)
-	}
-	if !strings.Contains(conflict.Error, original.Identifier+" "+title) || !strings.Contains(conflict.Error, "allow_duplicate=true") || !strings.Contains(conflict.Error, "--allow-duplicate") {
-		t.Fatalf("unexpected duplicate message: %q", conflict.Error)
-	}
-
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title":           title,
-		"parent_issue_id": parentID,
-		"project_id":      projectID,
-		"allow_duplicate": true,
-	})
-	testHandler.CreateIssue(w, req)
 	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue allow duplicate: expected 201, got %d: %s", w.Code, w.Body.String())
+		t.Fatalf("CreateIssue duplicate: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var duplicate IssueResponse
 	if err := json.NewDecoder(w.Body).Decode(&duplicate); err != nil {
@@ -1139,7 +1110,10 @@ func TestCreateIssueRejectsActiveDuplicate(t *testing.T) {
 	}
 	duplicateID = duplicate.ID
 	if duplicateID == issueID {
-		t.Fatalf("allow duplicate returned original issue id %s", duplicateID)
+		t.Fatalf("duplicate create reused original issue id %s", duplicateID)
+	}
+	if duplicate.Title == original.Title {
+		t.Fatalf("duplicate title was not preserved distinctly: %q", duplicate.Title)
 	}
 
 	w = httptest.NewRecorder()
@@ -1149,20 +1123,22 @@ func TestCreateIssueRejectsActiveDuplicate(t *testing.T) {
 		"project_id":      projectID,
 	})
 	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusConflict {
-		t.Fatalf("CreateIssue duplicate after allow-duplicate: expected 409, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue third duplicate: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	if err := json.NewDecoder(w.Body).Decode(&conflict); err != nil {
-		t.Fatalf("decode second conflict: %v", err)
+	var third IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&third); err != nil {
+		t.Fatalf("decode third duplicate: %v", err)
 	}
-	if conflict.Issue.ID != issueID {
-		t.Fatalf("conflict issue = %s, want oldest active issue %s", conflict.Issue.ID, issueID)
+	thirdID = third.ID
+	if thirdID == issueID || thirdID == duplicateID {
+		t.Fatalf("third duplicate reused existing issue id %s", thirdID)
 	}
 }
 
 func TestCreateIssueAllowsDuplicateAfterCancelled(t *testing.T) {
 	ctx := context.Background()
-	title := fmt.Sprintf("Cancelled duplicate guard %d", time.Now().UnixNano())
+	title := fmt.Sprintf("Cancelled duplicate title %d", time.Now().UnixNano())
 	var firstID, secondID string
 	defer func() {
 		for _, id := range []string{secondID, firstID} {
@@ -1207,7 +1183,7 @@ func TestCreateIssueAllowsDuplicateAfterCancelled(t *testing.T) {
 
 func TestCreateIssueAllowsDuplicateAfterDone(t *testing.T) {
 	ctx := context.Background()
-	title := fmt.Sprintf("Done duplicate guard %d", time.Now().UnixNano())
+	title := fmt.Sprintf("Done duplicate title %d", time.Now().UnixNano())
 	var firstID, secondID string
 	defer func() {
 		for _, id := range []string{secondID, firstID} {
@@ -1250,7 +1226,7 @@ func TestCreateIssueAllowsDuplicateAfterDone(t *testing.T) {
 	}
 }
 
-func TestTriggerAutopilotAllowsActiveDuplicateIssue(t *testing.T) {
+func TestTriggerAutopilotCreatesSameTitleIssue(t *testing.T) {
 	ctx := context.Background()
 	title := fmt.Sprintf("Autopilot duplicate issue %d", time.Now().UnixNano())
 	var autopilotID string
@@ -1330,7 +1306,7 @@ func TestTriggerAutopilotAllowsActiveDuplicateIssue(t *testing.T) {
 	}
 }
 
-func TestScheduledAutopilotAllowsActiveDuplicateIssue(t *testing.T) {
+func TestScheduledAutopilotCreatesSameTitleIssue(t *testing.T) {
 	ctx := context.Background()
 	title := fmt.Sprintf("Scheduled autopilot duplicate issue %d", time.Now().UnixNano())
 	var autopilotID string
@@ -2625,7 +2601,7 @@ func TestCreateWorkspaceInvalidSlugReturnsBadRequest(t *testing.T) {
 
 func TestAccountPasswordLogin(t *testing.T) {
 	const account = "account-login-test"
-	const password = "correct-password"
+	const password = "CorrectPass1!"
 	ctx := context.Background()
 
 	t.Cleanup(func() {
@@ -2666,7 +2642,7 @@ func TestAccountPasswordLogin(t *testing.T) {
 
 	w = httptest.NewRecorder()
 	buf.Reset()
-	json.NewEncoder(&buf).Encode(map[string]string{"account": account, "password": "wrong-password"})
+	json.NewEncoder(&buf).Encode(map[string]string{"account": account, "password": "WrongPass2@"})
 	req = httptest.NewRequest("POST", "/auth/login", &buf)
 	req.Header.Set("Content-Type", "application/json")
 	testHandler.AccountPasswordLogin(w, req)
@@ -2680,6 +2656,41 @@ func TestAccountPasswordLogin(t *testing.T) {
 	}
 	if len(workspaces) != 0 {
 		t.Fatalf("ListWorkspaces: expected 0 workspaces for new user, got %d", len(workspaces))
+	}
+}
+
+func TestAccountPasswordLoginAllowsExistingWeakPassword(t *testing.T) {
+	const account = "weak-existing-login-test"
+	const password = "develop123"
+	ctx := context.Background()
+
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM "user" WHERE account = $1`, account)
+	})
+
+	user, err := testHandler.Queries.CreateUser(ctx, db.CreateUserParams{
+		Name:    account,
+		Account: account,
+	})
+	if err != nil {
+		t.Fatalf("CreateUser: %v", err)
+	}
+	passwordHash, err := hashPassword(password)
+	if err != nil {
+		t.Fatalf("hashPassword: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `UPDATE "user" SET password_hash = $2 WHERE id = $1`, user.ID, passwordHash); err != nil {
+		t.Fatalf("update password hash: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	var buf bytes.Buffer
+	json.NewEncoder(&buf).Encode(map[string]string{"account": account, "password": password})
+	req := httptest.NewRequest("POST", "/auth/login", &buf)
+	req.Header.Set("Content-Type", "application/json")
+	testHandler.AccountPasswordLogin(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("AccountPasswordLogin: expected existing weak password login to pass, got %d: %s", w.Code, w.Body.String())
 	}
 }
 

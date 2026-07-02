@@ -231,6 +231,20 @@ func writeSourceContextPrompt(b *strings.Builder, task Task) {
 		}
 		if strings.HasPrefix(tapd.FetchStatus, "blocked") {
 			b.WriteString("- TAPD action: stop and report that the requester must configure an account-level TAPD credential profile. Do not claim the document was read.\n")
+		} else if tapd.FetchStatus == "fetched" {
+			b.WriteString("- TAPD action: the platform already fetched this source through TAPD MCP. Use the fetched evidence below as the requirement source; do not open the TAPD web page directly and do not repeat source-fetch unless you need to verify a stale or missing field.\n")
+			if tapd.Title != "" {
+				fmt.Fprintf(b, "- TAPD fetched title: %s\n", tapd.Title)
+			}
+			if tapd.Version != "" {
+				fmt.Fprintf(b, "- TAPD fetched version: %s\n", tapd.Version)
+			}
+			if tapd.Summary != "" {
+				fmt.Fprintf(b, "- TAPD fetched summary: %s\n", tapd.Summary)
+			}
+			if tapd.BodyExcerpt != "" {
+				fmt.Fprintf(b, "- TAPD fetched body excerpt: %s\n", tapd.BodyExcerpt)
+			}
 		} else {
 			serverName := "mcp-server-tapd"
 			if cred, ok := source.ExternalCredentials["tapd"]; ok && cred.MCPServer != "" {

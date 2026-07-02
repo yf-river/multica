@@ -716,8 +716,8 @@ func (h *Handler) CreateMember(w http.ResponseWriter, r *http.Request) {
 	user, err := h.Queries.GetUserByAccount(r.Context(), account)
 	if err != nil {
 		if isNotFound(err) {
-			if len(req.Password) < minPasswordLen {
-				writeError(w, http.StatusBadRequest, "password must be at least 8 characters")
+			if msg := validatePassword(req.Password); msg != "" {
+				writeError(w, http.StatusBadRequest, msg)
 				return
 			}
 			passwordHash, err := hashPassword(req.Password)

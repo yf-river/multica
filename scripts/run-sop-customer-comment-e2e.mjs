@@ -124,7 +124,6 @@ try {
     assignee_id: squad.id,
     project_id: projects.usercenter.id,
     metadata: buildTAPDSourceMetadata(tapdSourceURL),
-    allow_duplicate: true,
   }, token);
   if (!issue?.id) fail("创建父任务响应缺少 id");
   activeIssueId = issue.id;
@@ -546,7 +545,6 @@ async function runSimpleAutopilotIssue(token, workspace, project, squad, pm) {
     assignee_id: squad.id,
     project_id: project.id,
     metadata: buildTAPDSourceMetadata(tapdSourceURL),
-    allow_duplicate: true,
   }, token);
   const task = await waitNextTerminalTask(simple.id, pm.id, new Set(), token, "等待简单任务直通完成");
   requireCompletedTask(task, "简单任务直通");

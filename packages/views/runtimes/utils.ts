@@ -135,10 +135,10 @@ export function formatTokens(n: number): string {
 //
 // Anthropic's cacheWrite reflects the 5-minute cache TTL (1.25× input); the
 // daemon reports cache_creation_input_tokens without TTL metadata, so 5m is
-// the safest / cheapest assumption (matches the API default). OpenAI,
-// DeepSeek, Moonshot and Zhipu do not bill cache writes separately (cached
-// input is just discounted on subsequent reads), so cacheWrite mirrors
-// input there.
+// the safest / cheapest assumption (matches the API default). When a provider
+// price sheet only lists cache-hit vs cache-miss input (DeepSeek, Moonshot,
+// Zhipu), cacheWrite is the cache-miss input rate for runtimes that report
+// cache creation separately; it is not an additional provider fee category.
 //
 // The resolver matches exact keys after stripping a trailing date snapshot
 // (see `resolvePricing` below). It deliberately does NOT do startsWith
@@ -207,14 +207,17 @@ const MODEL_PRICING: Record<
   //    The official catalog lists exactly two current SKUs; `deepseek-chat`
   //    and `deepseek-reasoner` are aliases that route to `deepseek-v4-flash`
   //    (non-thinking and thinking mode respectively) per the same page.
-  //    `deepseek-v4-pro` is currently under a 75%-off promo that ends
-  //    2026-05-31 15:59 UTC; we price at the post-promo standard rate
-  //    ($1.74/$3.48) so the dashboard does not jump 4× on June 1 — accept
-  //    a brief over-estimate during the promo over a sudden cliff after it. --
+  //    CodeBuddy reports IOA routed SKUs with a `-ioa` suffix; keep those
+  //    provider-qualified so other providers' private aliases don't inherit
+  //    these prices by accident. DeepSeek has no separate cache write row:
+  //    cache_write/cache_creation tokens are priced as cache-miss input when
+  //    a runtime reports them separately. --
   "deepseek-v4-flash":  { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0.14 },
-  "deepseek-v4-pro":    { input: 1.74, output: 3.48, cacheRead: 0.0145, cacheWrite: 1.74 },
+  "deepseek-v4-pro":    { input: 0.435, output: 0.87, cacheRead: 0.003625, cacheWrite: 0.435 },
   "deepseek-chat":      { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0.14 },
   "deepseek-reasoner":  { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0.14 },
+  "codebuddy/deepseek-v4-pro-ioa": { input: 0.435, output: 0.87, cacheRead: 0.003625, cacheWrite: 0.435 },
+  "codebuddy/deepseek-v4-flash-ioa": { input: 0.14, output: 0.28, cacheRead: 0.0028, cacheWrite: 0.14 },
 
   // -- Moonshot Kimi (kimi.com/resources/kimi-k2-6-pricing).
   //    Only K2.6 is on the official price sheet today; earlier K2 variants
@@ -911,9 +914,9 @@ export function aggregateCostByModel(rows: RuntimeUsage[]): CostByKey[] {
   return Array.from(map.values()).toSorted((a, b) => b.cost - a.cost);
 }
 
-// Sum of estimated cost over the trailing window
-//   [today − offsetDays − daysBack, today − offsetDays).
-// `offsetDays = 0, daysBack = 7` → last 7 days.
+// Sum of estimated cost over the trailing window, including "today":
+//   [today − offsetDays − daysBack + 1, today − offsetDays + 1).
+// `offsetDays = 0, daysBack = 7` → today plus the previous 6 days.
 // `offsetDays = 7, daysBack = 7` → the 7 days *before* the last 7 (the
 // "previous" window for the runtime-list ↑/↓ delta).
 //
@@ -932,8 +935,8 @@ export function computeCostInWindow(
   offsetDays: number = 0,
 ): number {
   const today = todayIso(tz);
-  const isoEnd = addDaysIso(today, -offsetDays);
-  const isoStart = addDaysIso(today, -offsetDays - daysBack);
+  const isoEnd = addDaysIso(today, -offsetDays + 1);
+  const isoStart = addDaysIso(isoEnd, -daysBack);
   let total = 0;
   for (const r of rows) {
     if (r.date >= isoStart && r.date < isoEnd) total += estimateCost(r);

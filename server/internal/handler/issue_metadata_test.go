@@ -250,10 +250,9 @@ func TestNewIssueDefaultsToEmptyMetadata(t *testing.T) {
 func TestCreateIssueWithMetadata(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title":           "TAPD linked issue",
-		"status":          "todo",
-		"priority":        "medium",
-		"allow_duplicate": true,
+		"title":    "TAPD linked issue",
+		"status":   "todo",
+		"priority": "medium",
 		"metadata": map[string]any{
 			"source_provider": "tapd",
 			"tapd_workspace":  "47654106",
@@ -340,11 +339,10 @@ func TestCreateIssueAutoDetectsTapdWikiSourceURL(t *testing.T) {
 	tapdURL := "https://www.tapd.cn/47654106/markdown_wikis/show/\n  #1147654106001004223"
 	w = httptest.NewRecorder()
 	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title":           "增强密码强度",
-		"description":     "TAPD wiki URL: " + tapdURL,
-		"status":          "todo",
-		"priority":        "medium",
-		"allow_duplicate": true,
+		"title":       "增强密码强度",
+		"description": "TAPD wiki URL: " + tapdURL,
+		"status":      "todo",
+		"priority":    "medium",
 	})
 	testHandler.CreateIssue(w, req)
 	if w.Code != http.StatusCreated {

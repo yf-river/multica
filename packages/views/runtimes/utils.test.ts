@@ -140,6 +140,38 @@ describe("estimateCost", () => {
     expect(cost).toBeCloseTo(3 + 15, 5);
   });
 
+  it("prices CodeBuddy's DeepSeek V4 Pro IOA alias at the official DeepSeek rate", () => {
+    const usage = {
+      ...zeroUsage,
+      provider: "codebuddy",
+      model: "deepseek-v4-pro-ioa",
+      input_tokens: 1_000_000,
+      output_tokens: 1_000_000,
+      cache_read_tokens: 1_000_000,
+      cache_write_tokens: 1_000_000,
+    };
+
+    expect(collectUnmappedModels([usage])).toEqual([]);
+    // DeepSeek only publishes cache-hit and cache-miss input rates. CodeBuddy's
+    // cache creation bucket is charged as cache-miss input, not a fourth fee.
+    expect(estimateCost(usage)).toBeCloseTo(0.435 + 0.87 + 0.003625 + 0.435, 6);
+  });
+
+  it("prices CodeBuddy's DeepSeek V4 Flash IOA alias at the official DeepSeek rate", () => {
+    const usage = {
+      ...zeroUsage,
+      provider: "codebuddy",
+      model: "deepseek-v4-flash-ioa",
+      input_tokens: 1_000_000,
+      output_tokens: 1_000_000,
+      cache_read_tokens: 1_000_000,
+      cache_write_tokens: 1_000_000,
+    };
+
+    expect(collectUnmappedModels([usage])).toEqual([]);
+    expect(estimateCost(usage)).toBeCloseTo(0.14 + 0.28 + 0.0028 + 0.14, 6);
+  });
+
   it("prices the dated dotted Anthropic form (claude-haiku-4.5-20251001)", () => {
     // Belt-and-braces: combine all three tolerances (provider prefix not
     // present, but dot→dash + date strip both apply).
@@ -872,7 +904,7 @@ describe("aggregateByWeek", () => {
 // computeCostInWindow drives the runtime-list cost cell and its ↑/↓ delta.
 // The `tz` argument was inserted as the THIRD positional parameter (before
 // `offsetDays`) in the timezone-architecture RFC — a positional-arg slip
-// here is otherwise silent, so the window math, the end-exclusive boundary,
+// here is otherwise silent, so the window math, the inclusive-today boundary,
 // the offset shift, and the tz-of-"today" all need explicit coverage.
 describe("computeCostInWindow", () => {
   beforeEach(() => {
@@ -897,38 +929,40 @@ describe("computeCostInWindow", () => {
     };
   }
 
-  it("sums cost over the trailing daysBack window, end-exclusive of today", () => {
+  it("sums cost over the trailing daysBack window, including today", () => {
     // 2026-05-19 23:00 UTC is already 2026-05-20 in Asia/Shanghai, so
-    // "today" is 2026-05-20 and the 7-day window is [2026-05-13, 2026-05-20).
+    // "today" is 2026-05-20 and the 7-day window is [2026-05-14, 2026-05-21).
     vi.setSystemTime(new Date("2026-05-19T23:00:00Z"));
     const rows = [
-      priced("2026-05-12", 1_000_000), // before window — excluded
-      priced("2026-05-13", 1_000_000), // window start — included
+      priced("2026-05-13", 1_000_000), // before window — excluded
+      priced("2026-05-14", 1_000_000), // window start — included
       priced("2026-05-19", 1_000_000), // included
-      priced("2026-05-20", 1_000_000), // today — excluded (end-exclusive)
+      priced("2026-05-20", 1_000_000), // today — included
+      priced("2026-05-21", 1_000_000), // after today — excluded
     ];
-    expect(computeCostInWindow(rows, 7, "Asia/Shanghai")).toBeCloseTo(6, 5);
+    expect(computeCostInWindow(rows, 7, "Asia/Shanghai")).toBeCloseTo(9, 5);
   });
 
   it("offsetDays shifts the window back to the prior period", () => {
-    // today = 2026-05-20; offsetDays=7, daysBack=7 → window [05-06, 05-13).
+    // today = 2026-05-20; offsetDays=7, daysBack=7 → window [05-07, 05-14).
     vi.setSystemTime(new Date("2026-05-20T12:00:00Z"));
     const rows = [
-      priced("2026-05-05", 1_000_000), // before prior window — excluded
-      priced("2026-05-06", 1_000_000), // prior window start — included
+      priced("2026-05-06", 1_000_000), // before prior window — excluded
+      priced("2026-05-07", 1_000_000), // prior window start — included
       priced("2026-05-12", 1_000_000), // included
-      priced("2026-05-13", 1_000_000), // in the current window, not prior — excluded
+      priced("2026-05-13", 1_000_000), // included
+      priced("2026-05-14", 1_000_000), // in the current window, not prior — excluded
     ];
-    expect(computeCostInWindow(rows, 7, "UTC", 7)).toBeCloseTo(6, 5);
+    expect(computeCostInWindow(rows, 7, "UTC", 7)).toBeCloseTo(9, 5);
   });
 
   it("reads 'today' in the supplied tz, not the host clock", () => {
     // Host clock is 2026-05-19 in UTC but already 2026-05-20 in Shanghai.
-    // A row dated 2026-05-19 falls inside the 1-day window only when the
+    // A row dated 2026-05-20 falls inside the 1-day window only when the
     // tz pushes "today" forward to 2026-05-20.
     vi.setSystemTime(new Date("2026-05-19T20:00:00Z"));
-    const rows = [priced("2026-05-19", 1_000_000)];
-    expect(computeCostInWindow(rows, 1, "UTC")).toBe(0); // today=05-19, window [05-18,05-19)
+    const rows = [priced("2026-05-20", 1_000_000)];
+    expect(computeCostInWindow(rows, 1, "UTC")).toBe(0); // today=05-19, window [05-19,05-20)
     expect(computeCostInWindow(rows, 1, "Asia/Shanghai")).toBeCloseTo(3, 5);
   });
 

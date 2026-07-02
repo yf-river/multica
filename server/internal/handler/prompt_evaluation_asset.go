@@ -3794,12 +3794,22 @@ func (h *Handler) ListPromptEvaluationRuns(w http.ResponseWriter, r *http.Reques
 		}
 		limit = int32(parsed)
 	}
+	offset := int32(0)
+	if value := r.URL.Query().Get("offset"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil || parsed < 0 {
+			writeError(w, http.StatusBadRequest, "offset must be >= 0")
+			return
+		}
+		offset = int32(parsed)
+	}
 	runs, err := h.Queries.ListPromptEvaluationRuns(r.Context(), db.ListPromptEvaluationRunsParams{
 		WorkspaceID: workspaceUUID,
 		AssetID:     assetID,
 		Status:      status,
 		Since:       since,
 		Limit:       limit,
+		Offset:      offset,
 	})
 	if err != nil {
 		if writeClientClosedIfCanceled(w, err) {

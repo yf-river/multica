@@ -276,7 +276,7 @@ func TestConfigRouteIsPublic(t *testing.T) {
 
 func TestAccountPasswordLogin(t *testing.T) {
 	const account = "integration-login"
-	const password = "correct-password"
+	const password = "CorrectPass1!"
 	ctx := context.Background()
 
 	t.Cleanup(func() {
@@ -348,7 +348,7 @@ func TestAccountPasswordLoginNewUserHasNoWorkspace(t *testing.T) {
 
 	testPool.Exec(ctx, `DELETE FROM "user" WHERE account = $1`, account)
 
-	body, _ := json.Marshal(map[string]string{"account": account, "password": "correct-password"})
+	body, _ := json.Marshal(map[string]string{"account": account, "password": "CorrectPass1!"})
 	resp, err := http.Post(testServer.URL+"/auth/login", "application/json", bytes.NewReader(body))
 	if err != nil {
 		t.Fatalf("login failed: %v", err)

@@ -338,6 +338,24 @@ func TestAssignmentTriggeredProtocolHonorsAgentIdentity(t *testing.T) {
 	}
 }
 
+func TestAssignmentTriggeredSquadLeaderGuardrail(t *testing.T) {
+	t.Parallel()
+	const issueID = "77777777-8888-9999-aaaa-bbbbbbbbbbbb"
+	ctx := TaskContextForEnv{IssueID: issueID, IsSquadLeader: true}
+	out := buildMetaSkillContent("claude", ctx)
+
+	for _, want := range []string{
+		"Squad-leader / PM-style guardrail",
+		"If your Agent Identity says PM, coordinator, dispatcher, reviewer, or stage owner rather than developer",
+		"do not check out repositories, edit files, run implementation tests, or claim implementation is complete",
+		"ask for explicit confirmation from the issue creator or workspace owner/admin in an issue comment and stop until that confirmation exists",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("assignment-triggered squad leader brief missing guardrail text %q\n---\n%s", want, out)
+		}
+	}
+}
+
 func TestInstructionPrecedenceOnlyAppliesToAssignmentWorkflow(t *testing.T) {
 	t.Parallel()
 	cases := []struct {

@@ -23,7 +23,7 @@ const (
 	sopStatusFailed    = "已失败"
 	sopStatusBlocked   = "已阻塞"
 
-	observabilitySummarySampleLimit = 500
+	observabilitySummaryPageSize = 500
 )
 
 var validSOPStatuses = map[string]bool{
@@ -631,49 +631,17 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 	if !ok {
 		return
 	}
-	runs, err := h.Queries.ListWorkspaceSquadSOPRuns(r.Context(), db.ListWorkspaceSquadSOPRunsParams{
-		WorkspaceID: workspaceID,
-		Limit:       observabilitySummarySampleLimit,
-		Since:       since,
-		SquadID:     squadID,
-		ProjectID:   projectID,
-		AgentID:     agentID,
-	})
+	runs, err := h.listAllWorkspaceSquadSOPRuns(r.Context(), workspaceID, since, squadID, projectID, agentID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list SOP runs")
 		return
 	}
-	traces, err := h.Queries.ListWorkspaceTaskTraceEvents(r.Context(), db.ListWorkspaceTaskTraceEventsParams{
-		WorkspaceID: workspaceID,
-		Limit:       observabilitySummarySampleLimit,
-		Since:       since,
-		SquadID:     squadID,
-		ProjectID:   projectID,
-		AgentID:     agentID,
-	})
+	traces, err := h.listAllWorkspaceTaskTraceEvents(r.Context(), workspaceID, since, squadID, projectID, agentID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list task trace events")
 		return
 	}
-	eventCount, err := h.Queries.CountWorkspaceSquadSOPStepEvents(r.Context(), db.CountWorkspaceSquadSOPStepEventsParams{
-		WorkspaceID: workspaceID,
-		Since:       since,
-		SquadID:     squadID,
-		ProjectID:   projectID,
-		AgentID:     agentID,
-	})
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to count SOP events")
-		return
-	}
-	events, err := h.Queries.ListWorkspaceSquadSOPStepEvents(r.Context(), db.ListWorkspaceSquadSOPStepEventsParams{
-		WorkspaceID: workspaceID,
-		Limit:       observabilitySummarySampleLimit,
-		Since:       since,
-		SquadID:     squadID,
-		ProjectID:   projectID,
-		AgentID:     agentID,
-	})
+	events, err := h.listAllWorkspaceSquadSOPStepEvents(r.Context(), workspaceID, since, squadID, projectID, agentID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to list SOP step events")
 		return
@@ -683,8 +651,74 @@ func (h *Handler) GetWorkspaceObservabilitySummary(w http.ResponseWriter, r *htt
 		writeError(w, http.StatusInternalServerError, "failed to list task messages")
 		return
 	}
-	summary := buildObservabilitySummary(runs, events, traces, taskMessages, eventCount, observabilitySummarySampleLimit)
+	summary := buildObservabilitySummary(runs, events, traces, taskMessages, int64(len(events)), 0)
 	writeJSON(w, http.StatusOK, summary)
+}
+
+func (h *Handler) listAllWorkspaceSquadSOPRuns(ctx context.Context, workspaceID pgtype.UUID, since pgtype.Timestamptz, squadID, projectID, agentID pgtype.UUID) ([]db.SquadSopRun, error) {
+	var out []db.SquadSopRun
+	for offset := int32(0); ; offset += observabilitySummaryPageSize {
+		items, err := h.Queries.ListWorkspaceSquadSOPRuns(ctx, db.ListWorkspaceSquadSOPRunsParams{
+			WorkspaceID: workspaceID,
+			Limit:       observabilitySummaryPageSize,
+			Offset:      offset,
+			Since:       since,
+			SquadID:     squadID,
+			ProjectID:   projectID,
+			AgentID:     agentID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, items...)
+		if len(items) < observabilitySummaryPageSize {
+			return out, nil
+		}
+	}
+}
+
+func (h *Handler) listAllWorkspaceTaskTraceEvents(ctx context.Context, workspaceID pgtype.UUID, since pgtype.Timestamptz, squadID, projectID, agentID pgtype.UUID) ([]db.TaskTraceEvent, error) {
+	var out []db.TaskTraceEvent
+	for offset := int32(0); ; offset += observabilitySummaryPageSize {
+		items, err := h.Queries.ListWorkspaceTaskTraceEvents(ctx, db.ListWorkspaceTaskTraceEventsParams{
+			WorkspaceID: workspaceID,
+			Limit:       observabilitySummaryPageSize,
+			Offset:      offset,
+			Since:       since,
+			SquadID:     squadID,
+			ProjectID:   projectID,
+			AgentID:     agentID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, items...)
+		if len(items) < observabilitySummaryPageSize {
+			return out, nil
+		}
+	}
+}
+
+func (h *Handler) listAllWorkspaceSquadSOPStepEvents(ctx context.Context, workspaceID pgtype.UUID, since pgtype.Timestamptz, squadID, projectID, agentID pgtype.UUID) ([]db.SquadSopStepEvent, error) {
+	var out []db.SquadSopStepEvent
+	for offset := int32(0); ; offset += observabilitySummaryPageSize {
+		items, err := h.Queries.ListWorkspaceSquadSOPStepEvents(ctx, db.ListWorkspaceSquadSOPStepEventsParams{
+			WorkspaceID: workspaceID,
+			Limit:       observabilitySummaryPageSize,
+			Offset:      offset,
+			Since:       since,
+			SquadID:     squadID,
+			ProjectID:   projectID,
+			AgentID:     agentID,
+		})
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, items...)
+		if len(items) < observabilitySummaryPageSize {
+			return out, nil
+		}
+	}
 }
 
 func (h *Handler) loadObservabilityTaskMessages(ctx context.Context, events []db.SquadSopStepEvent) (map[string][]db.TaskMessage, error) {
@@ -907,17 +941,10 @@ func buildObservabilitySummary(
 	sopEventCount int64,
 	sampleLimit int32,
 ) map[string]any {
-	if sampleLimit <= 0 {
-		sampleLimit = observabilitySummarySampleLimit
-	}
-	runMaybeTruncated := len(runs) >= int(sampleLimit)
-	traceMaybeTruncated := len(traces) >= int(sampleLimit)
+	runMaybeTruncated := false
+	traceMaybeTruncated := false
 	completenessStatus := "完整"
-	completenessReason := "当前筛选条件下的 SOP 执行和任务观测未达到采样上限。"
-	if runMaybeTruncated || traceMaybeTruncated {
-		completenessStatus = "可能截断"
-		completenessReason = "当前筛选条件达到采样上限，页面指标只代表最近样本；请缩小时间、项目、小队或 Agent 范围后再用于汇报。"
-	}
+	completenessReason := "当前筛选条件下的 SOP 执行和任务观测已按全量汇总。"
 	statusCounts := map[string]int{}
 	squadCounts := map[string]int{}
 	issueCounts := map[string]int{}

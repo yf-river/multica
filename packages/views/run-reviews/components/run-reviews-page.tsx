@@ -409,7 +409,7 @@ function RunReviewDetail({
       <section className="rounded-md border bg-card">
         <SectionTitle
           title="事件流"
-          subtitle="按 task message、trace、工具链和执行节点展示最近 50 条可诊断证据。"
+          subtitle="按 task message、trace、工具链和执行节点展示当前筛选范围内的全部可诊断证据。"
           action={
             <ExportButton
               label="导出 RAW 交互信息"

@@ -59,6 +59,7 @@ import { ResolvedThreadBar } from "./resolved-thread-bar";
 import { collectThreadReplies, deriveThreadResolution } from "./thread-utils";
 import { IssueAgentHeaderChip } from "./issue-agent-header-chip";
 import { ExecutionLogSection } from "./execution-log-section";
+import { TAPDSourceBadge } from "./tapd-source-badge";
 import { PullRequestList } from "./pull-request-list";
 import { useGitHubSettings } from "@multica/core/github";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -283,9 +284,7 @@ function TAPDSourceReference({ issue, t }: { issue: Issue; t: ActivityT }) {
       className="mt-4 rounded-md border border-border/70 bg-muted/20 px-3 py-2.5"
     >
       <div className="flex min-w-0 items-start gap-2.5">
-        <div className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded bg-foreground text-[9px] font-semibold tracking-normal text-background">
-          TAPD
-        </div>
+        <TAPDSourceBadge issue={issue} className="mt-0.5" />
         <div className="min-w-0 flex-1">
           <div className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-[11px] text-muted-foreground">
             <span className="font-medium text-foreground/80">{t(($) => $.detail.tapd_source_label)}</span>

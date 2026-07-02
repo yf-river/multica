@@ -37,7 +37,7 @@ import {
 } from "@multica/ui/components/ui/dropdown-menu";
 import { toast } from "sonner";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useAuthStore } from "@multica/core/auth";
+import { useAuthStore, validatePassword } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { memberListOptions, workspaceKeys } from "@multica/core/workspace/queries";
@@ -210,6 +210,15 @@ export function MembersTab() {
 
   const handleCreateMember = async () => {
     if (!workspace) return;
+
+    if (newPassword) {
+      const pwValidation = validatePassword(newPassword);
+      if (!pwValidation.valid) {
+        toast.error(pwValidation.message);
+        return;
+      }
+    }
+
     setCreateLoading(true);
     try {
       await api.createMember(workspace.id, {

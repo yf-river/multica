@@ -278,11 +278,14 @@ func normalizeSourceFetchRequest(w http.ResponseWriter, req RecordIssueSourceFet
 }
 
 func (h *Handler) autoFetchIssueSource(ctx context.Context, userID string, issue db.Issue, req RecordIssueSourceFetchRequest) (RecordIssueSourceFetchRequest, error) {
+	return h.autoFetchTAPDSource(ctx, userID, req, parseIssueMetadata(issue.Metadata))
+}
+
+func (h *Handler) autoFetchTAPDSource(ctx context.Context, userID string, req RecordIssueSourceFetchRequest, metadata map[string]any) (RecordIssueSourceFetchRequest, error) {
 	provider := strings.ToLower(strings.TrimSpace(firstNonEmpty(req.Provider, "tapd")))
 	if provider != externalCredentialProviderTAPD {
 		return req, fmt.Errorf("auto_fetch currently supports tapd only")
 	}
-	metadata := parseIssueMetadata(issue.Metadata)
 	workspaceID := firstNonEmpty(req.WorkspaceID, stringFromMetadata(metadata, "tapd_workspace_id"), stringFromMetadata(metadata, "tapd_workspace"))
 	resourceType := firstNonEmpty(req.ResourceType, stringFromMetadata(metadata, "tapd_resource_type"))
 	resourceID := firstNonEmpty(req.ResourceID, stringFromMetadata(metadata, "tapd_resource_id"), stringFromMetadata(metadata, "tapd_wiki_id"))
@@ -383,6 +386,12 @@ func fetchTAPDSourceDocument(ctx context.Context, token, workspaceID, resourceTy
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 2<<20))
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		switch resp.StatusCode {
+		case http.StatusUnauthorized:
+			return tapdSourceDocument{}, fmt.Errorf("TAPD credential is invalid or expired (HTTP 401)")
+		case http.StatusForbidden:
+			return tapdSourceDocument{}, fmt.Errorf("TAPD credential does not have permission to read this source (HTTP 403)")
+		}
 		return tapdSourceDocument{}, fmt.Errorf("TAPD auto_fetch HTTP %d", resp.StatusCode)
 	}
 	var payload any

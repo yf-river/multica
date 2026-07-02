@@ -92,6 +92,42 @@ func TestBuildPromptBlocksTapdWhenProfileMissing(t *testing.T) {
 	}
 }
 
+func TestBuildPromptUsesFetchedTapdSourceContext(t *testing.T) {
+	out := BuildPrompt(Task{
+		IssueID: "issue-1",
+		SourceContext: &TaskSourceContext{
+			Provider: "tapd",
+			URL:      "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004223",
+			TAPD: &TAPDTaskSourceContext{
+				WorkspaceID:   "47654106",
+				ResourceType:  "markdown_wiki",
+				ResourceID:    "1147654106001004223",
+				FetchProvider: "tapd_mcp",
+				FetchStatus:   "fetched",
+				Title:         "用户快捷入口需求",
+				Summary:       "支持用户维护快捷入口。",
+				BodyExcerpt:   "快捷入口属于当前登录用户，不同用户之间互不影响。",
+				Version:       "2026-07-02 10:00:00",
+			},
+		},
+	}, "codex")
+
+	for _, want := range []string{
+		"fetch_status=fetched",
+		"platform already fetched this source through TAPD MCP",
+		"TAPD fetched title: 用户快捷入口需求",
+		"TAPD fetched summary: 支持用户维护快捷入口。",
+		"TAPD fetched body excerpt: 快捷入口属于当前登录用户",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("BuildPrompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "using `get_wiki`") || strings.Contains(out, "Use `--auto-fetch` only as a fallback") {
+		t.Fatalf("fetched prompt must not instruct a duplicate TAPD fetch\n--- output ---\n%s", out)
+	}
+}
+
 // TestBuildQuickCreatePromptRules locks in the rules that govern how the
 // quick-create agent is allowed to translate raw user input into the issue
 // description body. Each substring corresponds to a concrete failure mode

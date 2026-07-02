@@ -31,7 +31,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 
 	"github.com/multica-ai/multica/server/internal/analytics"
-	"github.com/multica-ai/multica/server/internal/issueguard"
 	"github.com/multica-ai/multica/server/internal/logger"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/middleware"
@@ -243,47 +242,36 @@ func (h *Handler) BootstrapOnboardingRuntime(w http.ResponseWriter, r *http.Requ
 	}
 
 	var emptyUUID pgtype.UUID
-	issue, foundIssue, err := issueguard.LockAndFindActiveDuplicate(
-		r.Context(), qtx, wsUUID, emptyUUID, emptyUUID, onboardingIssueTitle, false,
-	)
+	issueNumber, err := qtx.IncrementIssueCounter(r.Context(), wsUUID)
 	if err != nil {
-		slog.Warn("bootstrap onboarding (shim): duplicate issue check failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", req.WorkspaceID)...)
+		writeError(w, http.StatusInternalServerError, "failed to allocate issue number")
+		return
+	}
+	description := onboardingIssueDescription
+	if req.StarterPrompt != "" {
+		description = req.StarterPrompt
+	}
+	issue, err := qtx.CreateIssue(r.Context(), db.CreateIssueParams{
+		WorkspaceID:   wsUUID,
+		Title:         onboardingIssueTitle,
+		Description:   strOrNullText(description),
+		Status:        "todo",
+		Priority:      "high",
+		AssigneeType:  pgtype.Text{String: "agent", Valid: true},
+		AssigneeID:    assistant.ID,
+		CreatorType:   "member",
+		CreatorID:     parseUUID(userID),
+		ParentIssueID: emptyUUID,
+		Position:      0,
+		Number:        issueNumber,
+		ProjectID:     emptyUUID,
+	})
+	if err != nil {
+		slog.Warn("bootstrap onboarding (shim): create issue failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", req.WorkspaceID)...)
 		writeError(w, http.StatusInternalServerError, "failed to create onboarding issue")
 		return
 	}
-	issueCreated := false
-	if !foundIssue {
-		issueNumber, err := qtx.IncrementIssueCounter(r.Context(), wsUUID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to allocate issue number")
-			return
-		}
-		description := onboardingIssueDescription
-		if req.StarterPrompt != "" {
-			description = req.StarterPrompt
-		}
-		issue, err = qtx.CreateIssue(r.Context(), db.CreateIssueParams{
-			WorkspaceID:   wsUUID,
-			Title:         onboardingIssueTitle,
-			Description:   strOrNullText(description),
-			Status:        "todo",
-			Priority:      "high",
-			AssigneeType:  pgtype.Text{String: "agent", Valid: true},
-			AssigneeID:    assistant.ID,
-			CreatorType:   "member",
-			CreatorID:     parseUUID(userID),
-			ParentIssueID: emptyUUID,
-			Position:      0,
-			Number:        issueNumber,
-			ProjectID:     emptyUUID,
-		})
-		if err != nil {
-			slog.Warn("bootstrap onboarding (shim): create issue failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", req.WorkspaceID)...)
-			writeError(w, http.StatusInternalServerError, "failed to create onboarding issue")
-			return
-		}
-		issueCreated = true
-	}
+	issueCreated := true
 
 	// Mark onboarded. COALESCE in MarkUserOnboarded preserves the original
 	// timestamp on re-entries, so this is idempotent.
@@ -401,47 +389,33 @@ func (h *Handler) BootstrapOnboardingNoRuntime(w http.ResponseWriter, r *http.Re
 	}
 
 	var emptyUUID pgtype.UUID
-	existing, foundIssue, err := issueguard.LockAndFindActiveDuplicate(
-		r.Context(), qtx, wsUUID, emptyUUID, emptyUUID, noRuntimeIssueTitle, false,
-	)
+	issueNumber, err := qtx.IncrementIssueCounter(r.Context(), wsUUID)
 	if err != nil {
-		slog.Warn("bootstrap no-runtime onboarding (shim): duplicate issue check failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", req.WorkspaceID)...)
-		writeError(w, http.StatusInternalServerError, "failed to create onboarding issue")
+		writeError(w, http.StatusInternalServerError, "failed to allocate issue number")
 		return
 	}
 
-	var issue db.Issue
-	issueCreated := false
-	if foundIssue {
-		issue = existing
-	} else {
-		issueNumber, err := qtx.IncrementIssueCounter(r.Context(), wsUUID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to allocate issue number")
-			return
-		}
-		issue, err = qtx.CreateIssue(r.Context(), db.CreateIssueParams{
-			WorkspaceID:   wsUUID,
-			Title:         noRuntimeIssueTitle,
-			Description:   strOrNullText(noRuntimeIssueDescription()),
-			Status:        "todo",
-			Priority:      "high",
-			AssigneeType:  pgtype.Text{String: "member", Valid: true},
-			AssigneeID:    parseUUID(userID),
-			CreatorType:   "member",
-			CreatorID:     parseUUID(userID),
-			ParentIssueID: emptyUUID,
-			Position:      0,
-			Number:        issueNumber,
-			ProjectID:     emptyUUID,
-		})
-		if err != nil {
-			slog.Warn("bootstrap no-runtime onboarding (shim): create issue failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", req.WorkspaceID)...)
-			writeError(w, http.StatusInternalServerError, "failed to create onboarding issue")
-			return
-		}
-		issueCreated = true
+	issue, err := qtx.CreateIssue(r.Context(), db.CreateIssueParams{
+		WorkspaceID:   wsUUID,
+		Title:         noRuntimeIssueTitle,
+		Description:   strOrNullText(noRuntimeIssueDescription()),
+		Status:        "todo",
+		Priority:      "high",
+		AssigneeType:  pgtype.Text{String: "member", Valid: true},
+		AssigneeID:    parseUUID(userID),
+		CreatorType:   "member",
+		CreatorID:     parseUUID(userID),
+		ParentIssueID: emptyUUID,
+		Position:      0,
+		Number:        issueNumber,
+		ProjectID:     emptyUUID,
+	})
+	if err != nil {
+		slog.Warn("bootstrap no-runtime onboarding (shim): create issue failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", req.WorkspaceID)...)
+		writeError(w, http.StatusInternalServerError, "failed to create onboarding issue")
+		return
 	}
+	issueCreated := true
 
 	firstCompletion := !userBefore.OnboardedAt.Valid
 	updatedUser, err := qtx.MarkUserOnboarded(r.Context(), parseUUID(userID))

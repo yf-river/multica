@@ -4,7 +4,6 @@ import { useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { useNavigation } from "../navigation";
 import {
-  AlertTriangle,
   ArrowDown,
   ArrowLeftRight,
   ArrowUp,
@@ -47,13 +46,7 @@ import { useQuickCreateStore } from "@multica/core/issues/stores/quick-create-st
 import { issueDetailOptions } from "@multica/core/issues/queries";
 import { useCreateIssue, useUpdateIssue } from "@multica/core/issues/mutations";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
-import {
-  api,
-  ApiError,
-  DuplicateIssueErrorBodySchema,
-  type DuplicateIssueErrorBody,
-  parseWithFallback,
-} from "@multica/core/api";
+import { api } from "@multica/core/api";
 import { FileUploadButton } from "@multica/ui/components/common/file-upload-button";
 import { PillButton } from "../common/pill-button";
 import { IssuePickerModal } from "./issue-picker-modal";
@@ -374,49 +367,6 @@ export function ManualCreatePanel({
         ), { duration: 5000 });
       }
     } catch (err) {
-      // Duplicate-issue is the only structured 409 the create endpoint
-      // returns. We schema-guard the body (ApiError.body is `unknown`) so a
-      // future server-side rename / drop of `code` / `issue` degrades to the
-      // normal error toast instead of throwing inside the toast renderer.
-      if (err instanceof ApiError && err.status === 409) {
-        const dup = parseWithFallback<DuplicateIssueErrorBody | null>(
-          err.body,
-          DuplicateIssueErrorBodySchema,
-          null,
-          { endpoint: "POST /api/workspaces/:wsId/issues (active_duplicate_issue)" },
-        );
-        if (dup) {
-          toast.custom(
-            (toastId) => (
-              <div className="bg-popover text-popover-foreground border rounded-lg shadow-lg p-4 w-[360px]">
-                <div className="flex items-center gap-2 mb-2">
-                  <div className="flex items-center justify-center size-5 rounded-full bg-amber-500/15 text-amber-500">
-                    <AlertTriangle className="size-3" />
-                  </div>
-                  <span className="text-sm font-medium">
-                    {t(($) => $.create_issue.toast_duplicate_title)}
-                  </span>
-                </div>
-                <div className="flex items-center gap-2 text-sm text-muted-foreground ml-7">
-                  <span className="truncate">{dup.issue.identifier} – {dup.issue.title}</span>
-                </div>
-                <button
-                  type="button"
-                  className="ml-7 mt-2 text-sm text-primary hover:underline cursor-pointer"
-                  onClick={() => {
-                    router.push(p.issueDetail(dup.issue.id));
-                    toast.dismiss(toastId);
-                  }}
-                >
-                  {t(($) => $.create_issue.toast_duplicate_view)}
-                </button>
-              </div>
-            ),
-            { duration: 5000 },
-          );
-          return;
-        }
-      }
       toast.error(
         err instanceof Error && err.message
           ? err.message

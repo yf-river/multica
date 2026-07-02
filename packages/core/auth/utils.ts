@@ -19,3 +19,60 @@ export function sanitizeNextUrl(raw: string | null): string | null {
   if (/[\x00-\x1f\\]/.test(raw)) return null;
   return raw;
 }
+
+const PASSWORD_SPECIAL_CHARS = "!\"#$%&'()*+,-./:;<=>?@[]^_`{|}~";
+
+export interface PasswordValidation {
+  valid: boolean;
+  message: string;
+}
+
+/**
+ * Validate password strength:
+ * - 8-32 characters
+ * - at least 3 of 4 character types (uppercase, lowercase, digit, special)
+ * - special characters are restricted to: !"#$%&'()*+,-./:;<=>?@[]^_`{|}~
+ */
+export function validatePassword(password: string): PasswordValidation {
+  if (password.length < 8) {
+    return { valid: false, message: "Password must be at least 8 characters" };
+  }
+  if (password.length > 32) {
+    return { valid: false, message: "Password must be at most 32 characters" };
+  }
+
+  let hasUpper = false;
+  let hasLower = false;
+  let hasDigit = false;
+  let hasSpecial = false;
+
+  for (const ch of password) {
+    if (ch >= "A" && ch <= "Z") {
+      hasUpper = true;
+    } else if (ch >= "a" && ch <= "z") {
+      hasLower = true;
+    } else if (ch >= "0" && ch <= "9") {
+      hasDigit = true;
+    } else if (PASSWORD_SPECIAL_CHARS.includes(ch)) {
+      hasSpecial = true;
+    } else {
+      return { valid: false, message: "Password contains invalid characters" };
+    }
+  }
+
+  let types = 0;
+  if (hasUpper) types++;
+  if (hasLower) types++;
+  if (hasDigit) types++;
+  if (hasSpecial) types++;
+
+  if (types < 3) {
+    return {
+      valid: false,
+      message:
+        "Password must contain at least 3 of: uppercase, lowercase, digit, special character",
+    };
+  }
+
+  return { valid: true, message: "" };
+}

@@ -757,21 +757,21 @@ export const ObservabilitySummarySchema = z.object({
   task_trace_total: z.number().default(0),
   sop_run_sample_total: z.number().default(0),
   task_trace_sample_total: z.number().default(0),
-  sample_limit: z.number().default(500),
+  sample_limit: z.number().default(0),
   sop_run_maybe_truncated: z.boolean().default(false),
   task_trace_maybe_truncated: z.boolean().default(false),
   summary_completeness: z.object({
     状态: z.string().default("完整"),
-    说明: z.string().default("当前筛选条件下的 SOP 执行和任务观测未达到采样上限。"),
-    采样上限: z.number().default(500),
+    说明: z.string().default("当前筛选条件下的 SOP 执行和任务观测已按全量汇总。"),
+    采样上限: z.number().default(0),
     "SOP 执行样本数": z.number().default(0),
     "任务观测样本数": z.number().default(0),
     "SOP 执行可能截断": z.boolean().default(false),
     "任务观测可能截断": z.boolean().default(false),
   }).loose().default({
     状态: "完整",
-    说明: "当前筛选条件下的 SOP 执行和任务观测未达到采样上限。",
-    采样上限: 500,
+    说明: "当前筛选条件下的 SOP 执行和任务观测已按全量汇总。",
+    采样上限: 0,
     "SOP 执行样本数": 0,
     "任务观测样本数": 0,
     "SOP 执行可能截断": false,
@@ -791,13 +791,13 @@ export const EMPTY_OBSERVABILITY_SUMMARY: ObservabilitySummary = {
   task_trace_total: 0,
   sop_run_sample_total: 0,
   task_trace_sample_total: 0,
-  sample_limit: 500,
+  sample_limit: 0,
   sop_run_maybe_truncated: false,
   task_trace_maybe_truncated: false,
   summary_completeness: {
     状态: "完整",
-    说明: "当前筛选条件下的 SOP 执行和任务观测未达到采样上限。",
-    采样上限: 500,
+    说明: "当前筛选条件下的 SOP 执行和任务观测已按全量汇总。",
+    采样上限: 0,
     "SOP 执行样本数": 0,
     "任务观测样本数": 0,
     "SOP 执行可能截断": false,
@@ -2225,48 +2225,6 @@ export const SquadMemberStatusListResponseSchema = z.object({
 }).loose();
 
 export const EMPTY_SQUAD_MEMBER_STATUS_LIST = { members: [] };
-
-// ---------------------------------------------------------------------------
-// Structured error body — POST /api/workspaces/:wsId/issues 409 conflict.
-//
-// When the server detects an active issue with the same title in the same
-// workspace, it returns `{ code: "active_duplicate_issue", error, issue }`
-// instead of letting the create through. The UI uses the embedded issue ref
-// to offer "view existing" rather than dropping the user into a generic
-// "create failed" toast.
-//
-// Strict guarantees:
-//   - `code` is a literal so a future server rename (e.g. `duplicate_issue`)
-//     fails the parse and falls back to a normal error toast — drift never
-//     ships as a broken duplicate UI.
-//   - `issue` is required; without an id/identifier/title the "view existing"
-//     button has nothing to point at, so we'd rather fall back than guess.
-//   - `issue.status` is intentionally OMITTED: the duplicate toast doesn't
-//     render a StatusIcon (which has no fallback for unknown enum values),
-//     so a future server-side rename of `status` must not knock this branch
-//     out. `.loose()` lets the field pass through unchanged for any other
-//     consumer.
-// ---------------------------------------------------------------------------
-
-export const DuplicateIssueErrorBodySchema = z.object({
-  code: z.literal("active_duplicate_issue"),
-  error: z.string().optional(),
-  issue: z.object({
-    id: z.string(),
-    identifier: z.string(),
-    title: z.string(),
-  }).loose(),
-}).loose();
-
-export interface DuplicateIssueErrorBody {
-  code: "active_duplicate_issue";
-  error?: string;
-  issue: {
-    id: string;
-    identifier: string;
-    title: string;
-  };
-}
 
 // ---------------------------------------------------------------------------
 // Webhook delivery schemas — backing the Autopilot Deliveries section. Enums

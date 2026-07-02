@@ -342,6 +342,9 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 		"跨项目 child issue 由 PM 直接创建并可回读",
 		"05-验证测试通过且无阻断后",
 		"## 禁止事项",
+		"PM 首轮只能输出流程判断、下一阶段调度或跳步确认请求",
+		"不得 checkout、编辑代码、运行实现测试",
+		"等待任务创建者或 workspace owner/admin 明确同意",
 		"把 TAPD 正文抓取后的真实需求复制成同项目 child issue",
 		"为了进入 01-clarify/02-design/03-task-split/04-implement/05-verify 创建 child issue",
 		"01-05 阶段 Agent @mention 下一阶段或任何负责人",
@@ -457,8 +460,16 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 			t.Fatalf("scan user-center agent: %v", err)
 		}
 		count++
-		if name == projectSOPAgentPM && !strings.Contains(instructions, "只有 PM 可以 @mention 下一阶段 Agent") {
-			t.Fatalf("pm instructions must reserve stage routing to pm:\n%s", instructions)
+		if name == projectSOPAgentPM {
+			for _, want := range []string{
+				"只有 PM 可以 @mention 下一阶段 Agent",
+				"不得 checkout、编辑代码、运行实现测试",
+				"等待任务创建者或 workspace owner/admin 明确同意",
+			} {
+				if !strings.Contains(instructions, want) {
+					t.Fatalf("pm instructions must contain %q:\n%s", want, instructions)
+				}
+			}
 		}
 		if name != projectSOPAgentPM && !strings.Contains(instructions, "不得 @mention 任何 Agent、Squad、Member 或 all") {
 			t.Fatalf("%s instructions must forbid worker mentions:\n%s", name, instructions)

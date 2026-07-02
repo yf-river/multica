@@ -708,6 +708,7 @@ describe("IssueDetail (shared)", () => {
 
     const card = await screen.findByTestId("tapd-source-card");
     expect(within(card).getByText("TAPD 来源")).toBeInTheDocument();
+    expect(within(card).getByTestId("tapd-source-badge")).toBeInTheDocument();
     expect(within(card).getByText("TAPD Wiki")).toBeInTheDocument();
     expect(within(card).getByText("ID 1147654106001004154")).toBeInTheDocument();
     expect(within(card).getByText("已抓取")).toBeInTheDocument();

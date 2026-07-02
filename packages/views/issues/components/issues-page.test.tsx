@@ -713,6 +713,25 @@ describe("IssuesPage (shared)", () => {
     expect(screen.getByText("智能体")).toBeInTheDocument();
   });
 
+  it("marks TAPD-sourced issues in the list title", async () => {
+    mockViewState.viewMode = "list";
+    mockListIssueBuckets.mockResolvedValue(mockIssueBuckets([
+      {
+        ...mockIssues[0]!,
+        metadata: {
+          source_provider: "tapd",
+          source_url: "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004223",
+        },
+      },
+      mockIssues[1]!,
+    ]));
+
+    renderWithQuery(<IssuesPage />);
+
+    await screen.findByText("Implement auth");
+    expect(screen.getAllByTestId("tapd-source-badge")).toHaveLength(1);
+  });
+
   it("agents scope includes squad-assigned issues", async () => {
     mockScope = "agents";
     mockViewState.viewMode = "list";

@@ -905,6 +905,7 @@ export interface ListPromptEvaluationRunsParams {
   status?: PromptEvaluationRun["status"];
   since?: string | null;
   limit?: number;
+  offset?: number;
 }
 
 export interface ReviewPromptEvaluationRunRequest {

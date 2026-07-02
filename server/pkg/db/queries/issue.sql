@@ -124,19 +124,6 @@ INSERT INTO issue (
     COALESCE(sqlc.narg('scope'), 'workspace'), sqlc.narg('owner_id')
 ) RETURNING *;
 
--- name: LockIssueDuplicateKey :exec
-SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0));
-
--- name: FindActiveDuplicateIssue :one
-SELECT * FROM issue
-WHERE workspace_id = $1
-  AND status NOT IN ('done', 'cancelled')
-  AND project_id IS NOT DISTINCT FROM sqlc.arg('project_id')::uuid
-  AND parent_issue_id IS NOT DISTINCT FROM sqlc.arg('parent_issue_id')::uuid
-  AND lower(btrim(regexp_replace(title, '[[:space:]]+', ' ', 'g'))) = sqlc.arg('normalized_title')
-ORDER BY created_at ASC
-LIMIT 1;
-
 -- name: DeleteIssue :exec
 -- Defense-in-depth: the workspace_id predicate makes the tenant invariant a
 -- SQL-layer guarantee rather than a handler-layer one. Handler loaders

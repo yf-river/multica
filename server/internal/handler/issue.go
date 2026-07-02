@@ -18,7 +18,6 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
-	"github.com/multica-ai/multica/server/internal/issueguard"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -2293,10 +2292,14 @@ type QuickCreateIssueRequest struct {
 	AttachmentIDs []string `json:"attachment_ids,omitempty"`
 }
 
-// QuickCreateIssueResponse echoes the queued task id so the frontend can
-// correlate the eventual inbox item, even though completion is fully async.
+// QuickCreateIssueResponse returns either a queued quick-create task or a
+// directly-created source-backed issue when the server can materialize the
+// source before dispatch.
 type QuickCreateIssueResponse struct {
-	TaskID string `json:"task_id"`
+	TaskID            string `json:"task_id,omitempty"`
+	IssueID           string `json:"issue_id,omitempty"`
+	Identifier        string `json:"identifier,omitempty"`
+	SourceFetchStatus string `json:"source_fetch_status,omitempty"`
 }
 
 func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
@@ -2507,6 +2510,33 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if ref, ok := parseTAPDMarkdownWikiURL(prompt); ok {
+		resp, handled := h.quickCreateTAPDSourceIssue(r.Context(), w, quickCreateTAPDSourceIssueParams{
+			Prompt:         prompt,
+			Ref:            ref,
+			WorkspaceID:    wsUUID,
+			RequesterID:    requesterUUID,
+			RequesterIDRaw: requesterID,
+			HasSquad:       hasSquad,
+			AgentID:        agentUUID,
+			SquadID:        squadUUID,
+			ProjectID:      projectUUID,
+			ParentIssueID:  parentIssueUUID,
+			AttachmentIDs:  attachmentIDs,
+			Status:         status,
+			Priority:       priority,
+			AssigneeType:   assigneeType,
+			AssigneeID:     assigneeUUID,
+			StartDate:      startDate,
+			DueDate:        dueDate,
+		})
+		if !handled {
+			return
+		}
+		writeJSON(w, http.StatusCreated, resp)
+		return
+	}
+
 	task, err := h.TaskService.EnqueueQuickCreateTask(r.Context(), service.EnqueueQuickCreateTaskParams{
 		WorkspaceID:   wsUUID,
 		RequesterID:   requesterUUID,
@@ -2530,6 +2560,180 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusAccepted, QuickCreateIssueResponse{TaskID: uuidToString(task.ID)})
+}
+
+type quickCreateTAPDSourceIssueParams struct {
+	Prompt         string
+	Ref            tapdWikiSourceRef
+	WorkspaceID    pgtype.UUID
+	RequesterID    pgtype.UUID
+	RequesterIDRaw string
+	HasSquad       bool
+	AgentID        pgtype.UUID
+	SquadID        pgtype.UUID
+	ProjectID      pgtype.UUID
+	ParentIssueID  pgtype.UUID
+	AttachmentIDs  []pgtype.UUID
+	Status         string
+	Priority       string
+	AssigneeType   string
+	AssigneeID     pgtype.UUID
+	StartDate      string
+	DueDate        string
+}
+
+func (h *Handler) quickCreateTAPDSourceIssue(ctx context.Context, w http.ResponseWriter, p quickCreateTAPDSourceIssueParams) (QuickCreateIssueResponse, bool) {
+	fetchReq := RecordIssueSourceFetchRequest{
+		Provider:     externalCredentialProviderTAPD,
+		URL:          p.Ref.URL,
+		WorkspaceID:  p.Ref.WorkspaceID,
+		ResourceType: "markdown_wiki",
+		ResourceID:   p.Ref.WikiID,
+	}
+	fetched, fetchErr := h.autoFetchTAPDSource(ctx, p.RequesterIDRaw, fetchReq, nil)
+	if fetchErr != nil {
+		fetched = fetchReq
+		fetched.Provider = externalCredentialProviderTAPD
+		fetched.FetchProvider = "tapd_mcp"
+		fetched.Status = "fetch_failed"
+		fetched.Error = fetchErr.Error()
+	}
+
+	metadata := map[string]json.RawMessage{}
+	setRawMetadataString(metadata, "source_provider", externalCredentialProviderTAPD)
+	setRawMetadataString(metadata, "source_url", p.Ref.URL)
+	setRawMetadataString(metadata, "tapd_workspace_id", p.Ref.WorkspaceID)
+	setRawMetadataString(metadata, "tapd_resource_type", "markdown_wiki")
+	setRawMetadataString(metadata, "tapd_resource_id", p.Ref.WikiID)
+	setRawMetadataString(metadata, "tapd_wiki_id", p.Ref.WikiID)
+	metadata = h.enrichSourceCredentialMetadata(ctx, metadata, p.RequesterIDRaw)
+	for key, value := range sourceFetchMetadata(fetched) {
+		raw, _ := json.Marshal(value)
+		metadata[key] = raw
+	}
+	validatedMetadata, err := validateIssueMetadataObject(metadata)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return QuickCreateIssueResponse{}, false
+	}
+
+	issueStatus := firstNonEmpty(p.Status, "todo")
+	if fetchErr != nil {
+		issueStatus = "blocked"
+	}
+	priority := firstNonEmpty(p.Priority, "none")
+	title := firstNonEmpty(fetched.Title, "TAPD Wiki 读取失败："+p.Ref.WikiID)
+	description := buildQuickCreateTAPDDescription(fetched, fetchErr)
+
+	assigneeType := p.AssigneeType
+	assigneeID := p.AssigneeID
+	if assigneeType == "" || !assigneeID.Valid {
+		if p.HasSquad {
+			assigneeType = "squad"
+			assigneeID = p.SquadID
+		} else {
+			assigneeType = "agent"
+			assigneeID = p.AgentID
+		}
+	}
+
+	startDate := pgtype.Date{}
+	if p.StartDate != "" {
+		parsed, err := util.ParseCalendarDate(p.StartDate)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid start_date format, expected YYYY-MM-DD")
+			return QuickCreateIssueResponse{}, false
+		}
+		startDate = parsed
+	}
+	dueDate := pgtype.Date{}
+	if p.DueDate != "" {
+		parsed, err := util.ParseCalendarDate(p.DueDate)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid due_date format, expected YYYY-MM-DD")
+			return QuickCreateIssueResponse{}, false
+		}
+		dueDate = parsed
+	}
+
+	prefix := h.getIssuePrefix(ctx, p.WorkspaceID)
+	buildAttachmentResponses := func(atts []db.Attachment) []AttachmentResponse {
+		if len(atts) == 0 {
+			return nil
+		}
+		out := make([]AttachmentResponse, len(atts))
+		for i, a := range atts {
+			out[i] = h.attachmentToResponse(a)
+		}
+		return out
+	}
+	res, err := h.IssueService.Create(ctx, service.IssueCreateParams{
+		WorkspaceID:   p.WorkspaceID,
+		Title:         title,
+		Description:   pgtype.Text{String: description, Valid: true},
+		Status:        issueStatus,
+		Priority:      priority,
+		AssigneeType:  pgtype.Text{String: assigneeType, Valid: assigneeType != ""},
+		AssigneeID:    assigneeID,
+		CreatorType:   "member",
+		CreatorID:     p.RequesterID,
+		ParentIssueID: p.ParentIssueID,
+		ProjectID:     p.ProjectID,
+		StartDate:     startDate,
+		DueDate:       dueDate,
+		AttachmentIDs: p.AttachmentIDs,
+		Metadata:      validatedMetadata,
+	}, service.IssueCreateOpts{
+		ActorID:             p.RequesterIDRaw,
+		Platform:            "web",
+		SuppressAutoEnqueue: true,
+		BroadcastPayload: func(issue db.Issue, atts []db.Attachment) map[string]any {
+			payload := issueToResponse(issue, prefix)
+			payload.Attachments = buildAttachmentResponses(atts)
+			return map[string]any{"issue": payload}
+		},
+	})
+	if errors.Is(err, service.ErrParentIssueNotFound) {
+		writeError(w, http.StatusBadRequest, "parent issue not found in this workspace")
+		return QuickCreateIssueResponse{}, false
+	}
+	if errors.Is(err, service.ErrProjectNotFound) {
+		writeError(w, http.StatusBadRequest, "project not found in this workspace")
+		return QuickCreateIssueResponse{}, false
+	}
+	if err != nil {
+		slog.Warn("quick-create TAPD issue create failed", "error", err)
+		writeError(w, http.StatusInternalServerError, "failed to create TAPD issue: "+err.Error())
+		return QuickCreateIssueResponse{}, false
+	}
+	if fetchErr == nil {
+		h.IssueService.EnqueueOnAssignForIssue(ctx, res.Issue, "member", p.RequesterIDRaw)
+	}
+
+	return QuickCreateIssueResponse{
+		IssueID:           uuidToString(res.Issue.ID),
+		Identifier:        issueToResponse(res.Issue, prefix).Identifier,
+		SourceFetchStatus: fetched.Status,
+	}, true
+}
+
+func buildQuickCreateTAPDDescription(fetched RecordIssueSourceFetchRequest, fetchErr error) string {
+	if fetchErr != nil {
+		var b strings.Builder
+		b.WriteString("## 来源抓取失败\n")
+		b.WriteString(fetched.Error)
+		b.WriteString("\n")
+		return b.String()
+	}
+	if fetched.BodyExcerpt != "" {
+		return strings.TrimSpace(fetched.BodyExcerpt)
+	}
+	return strings.TrimSpace(fetched.Summary)
+}
+
+func setRawMetadataString(metadata map[string]json.RawMessage, key, value string) {
+	raw, _ := json.Marshal(value)
+	metadata[key] = raw
 }
 
 // writeAgentUnavailable returns 422 with a stable error code so the modal
@@ -2645,12 +2849,6 @@ type CreateIssueRequest struct {
 	// origin_id=agent_task_queue.id).
 	OriginType *string `json:"origin_type,omitempty"`
 	OriginID   *string `json:"origin_id,omitempty"`
-
-	AllowDuplicate bool `json:"allow_duplicate,omitempty"`
-}
-
-func duplicateIssueMessage(issue IssueResponse) string {
-	return issueguard.DuplicateMessage(issue.Identifier, issue.Title, issue.Status)
 }
 
 func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
@@ -2822,24 +3020,23 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	}
 
 	res, err := h.IssueService.Create(r.Context(), service.IssueCreateParams{
-		WorkspaceID:    wsUUID,
-		Title:          req.Title,
-		Description:    ptrToText(req.Description),
-		Status:         status,
-		Priority:       priority,
-		AssigneeType:   assigneeType,
-		AssigneeID:     assigneeID,
-		CreatorType:    creatorType,
-		CreatorID:      parseUUID(actualCreatorID),
-		ParentIssueID:  parentIssueID,
-		ProjectID:      projectID,
-		StartDate:      startDate,
-		DueDate:        dueDate,
-		OriginType:     originType,
-		OriginID:       originID,
-		AttachmentIDs:  attachmentIDs,
-		Metadata:       metadata,
-		AllowDuplicate: req.AllowDuplicate,
+		WorkspaceID:   wsUUID,
+		Title:         req.Title,
+		Description:   ptrToText(req.Description),
+		Status:        status,
+		Priority:      priority,
+		AssigneeType:  assigneeType,
+		AssigneeID:    assigneeID,
+		CreatorType:   creatorType,
+		CreatorID:     parseUUID(actualCreatorID),
+		ParentIssueID: parentIssueID,
+		ProjectID:     projectID,
+		StartDate:     startDate,
+		DueDate:       dueDate,
+		OriginType:    originType,
+		OriginID:      originID,
+		AttachmentIDs: attachmentIDs,
+		Metadata:      metadata,
 	}, service.IssueCreateOpts{
 		ActorID:          actualCreatorID,
 		AnalyticsAgentID: analyticsAgentID,
@@ -2851,16 +3048,6 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 		},
 	})
 
-	if errors.Is(err, service.ErrActiveDuplicate) {
-		dup := *res.DuplicateIssue
-		existing := issueToResponse(dup, h.getIssuePrefix(r.Context(), dup.WorkspaceID))
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"code":  "active_duplicate_issue",
-			"error": duplicateIssueMessage(existing),
-			"issue": existing,
-		})
-		return
-	}
 	if errors.Is(err, service.ErrParentIssueNotFound) {
 		writeError(w, http.StatusBadRequest, "parent issue not found in this workspace")
 		return

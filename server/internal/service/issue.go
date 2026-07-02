@@ -10,7 +10,6 @@ import (
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
 	"github.com/multica-ai/multica/server/internal/events"
-	"github.com/multica-ai/multica/server/internal/issueguard"
 	"github.com/multica-ai/multica/server/internal/issueposition"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -20,8 +19,8 @@ import (
 
 // IssueService is the single service-layer entry point for creating issues.
 // Both the HTTP `POST /issues` handler and the future Lark `/issue` command
-// call into Create so that duplicate guard, issue numbering, attachment
-// linking, broadcast, analytics, and agent/squad enqueue stay aligned. The
+// call into Create so that issue numbering, attachment linking, broadcast,
+// analytics, and agent/squad enqueue stay aligned. The
 // service deliberately does NOT depend on http.Request — callers parse
 // their own transport and pass a fully-resolved IssueCreateParams.
 type IssueService struct {
@@ -69,8 +68,7 @@ type IssueCreateParams struct {
 	AttachmentIDs []pgtype.UUID
 	// Metadata is a handler-validated flat KV map written in the same
 	// transaction as the issue row so broadcasts and HTTP responses agree.
-	Metadata       map[string][]byte
-	AllowDuplicate bool
+	Metadata map[string][]byte
 }
 
 // IssueCreateOpts groups optional knobs for IssueService.Create. Most
@@ -103,14 +101,13 @@ type IssueCreateOpts struct {
 	// daemon / lark / autopilot). Derived from middleware's client
 	// metadata at the handler layer.
 	Platform string
-}
 
-// ErrActiveDuplicate signals that the duplicate guard found an active
-// issue with the same (workspace, project, parent, title) tuple and
-// AllowDuplicate was false. The IssueCreateResult.DuplicateIssue field is
-// populated when this error is returned so callers can render the
-// conflict (HTTP 409, Lark card, etc.).
-var ErrActiveDuplicate = errors.New("active duplicate issue exists")
+	// SuppressAutoEnqueue lets callers create the issue and finish
+	// platform-side preparation before the assignee starts. TAPD quick-create
+	// uses this to fetch source content first so the squad PM sees a fetched
+	// source_context on its first task.
+	SuppressAutoEnqueue bool
+}
 
 // ErrParentIssueNotFound signals that the supplied ParentIssueID does
 // not exist in the issue's workspace. The service refuses to create
@@ -126,29 +123,22 @@ var ErrParentIssueNotFound = errors.New("parent issue not found in this workspac
 var ErrProjectNotFound = errors.New("project not found in this workspace")
 
 // IssueCreateResult is the typed return from IssueService.Create.
-//
-//   - On the happy path: Issue is the new row, Attachments lists the
-//     linked attachments (may be empty), DuplicateIssue is nil.
-//   - On ErrActiveDuplicate: DuplicateIssue is the row that blocked the
-//     create; Issue and Attachments are zero.
 type IssueCreateResult struct {
-	Issue          db.Issue
-	Attachments    []db.Attachment
-	DuplicateIssue *db.Issue
+	Issue       db.Issue
+	Attachments []db.Attachment
 }
 
 // Create runs the full issue-creation pipeline atomically end-to-end:
 //
 //  1. Begin transaction.
 //  2. Resolve & validate parent / project belong to the same workspace.
-//  3. Lock & check the duplicate guard.
-//  4. Increment the workspace issue counter.
-//  5. Insert the issue row (with optional origin stamping).
-//  6. Commit.
-//  7. Link any pre-uploaded attachments (post-commit, idempotent).
-//  8. Publish EventIssueCreated to the bus (payload via opts.BroadcastPayload).
-//  9. Capture the IssueCreated analytics event.
-//  10. Enqueue an agent task or trigger the squad leader when the issue is
+//  3. Increment the workspace issue counter.
+//  4. Insert the issue row (with optional origin stamping).
+//  5. Commit.
+//  6. Link any pre-uploaded attachments (post-commit, idempotent).
+//  7. Publish EventIssueCreated to the bus (payload via opts.BroadcastPayload).
+//  8. Capture the IssueCreated analytics event.
+//  9. Enqueue an agent task or trigger the squad leader when the issue is
 //     assigned and not in `backlog`.
 //
 // Validation that lives in the service (parent existence, project
@@ -166,11 +156,9 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	defer tx.Rollback(ctx)
 	qtx := s.Queries.WithTx(tx)
 
-	// Resolve and validate parent / project before reading from the
-	// duplicate guard so a forged parent or project ID is rejected
-	// before we touch the issue counter. Both checks scope by
-	// WorkspaceID — there is no path from this service to a row in a
-	// foreign workspace.
+	// Resolve and validate parent / project before touching the issue
+	// counter. Both checks scope by WorkspaceID — there is no path from
+	// this service to a row in a foreign workspace.
 	projectID := p.ProjectID
 	var project db.Project
 	var hasProject bool
@@ -221,15 +209,6 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 			setMetadataString(p.Metadata, "project_owner_reviewer_type", "agent")
 			setMetadataString(p.Metadata, "project_owner_reviewer_id", util.UUIDToString(project.LeadID))
 		}
-	}
-
-	duplicate, found, err := issueguard.LockAndFindActiveDuplicate(ctx, qtx, p.WorkspaceID, projectID, p.ParentIssueID, p.Title, p.AllowDuplicate)
-	if err != nil {
-		return IssueCreateResult{}, fmt.Errorf("duplicate guard: %w", err)
-	}
-	if found {
-		dup := duplicate
-		return IssueCreateResult{DuplicateIssue: &dup}, ErrActiveDuplicate
 	}
 
 	issueNumber, err := qtx.IncrementIssueCounter(ctx, p.WorkspaceID)
@@ -324,9 +303,17 @@ func (s *IssueService) Create(ctx context.Context, p IssueCreateParams, opts Iss
 	} else if requestedStatus == "backlog" && hasProject {
 		s.notifyProjectLeadApprovalRequested(ctx, project, issue, p.CreatorType, actorID)
 	}
-	s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID)
+	if !opts.SuppressAutoEnqueue {
+		s.maybeEnqueueOnAssign(ctx, issue, p.CreatorType, actorID)
+	}
 
 	return IssueCreateResult{Issue: issue, Attachments: attachments}, nil
+}
+
+// EnqueueOnAssignForIssue triggers the same create-time assignee behavior
+// after a caller deliberately suppressed auto-enqueue during Create.
+func (s *IssueService) EnqueueOnAssignForIssue(ctx context.Context, issue db.Issue, actorType, actorID string) {
+	s.maybeEnqueueOnAssign(ctx, issue, actorType, actorID)
 }
 
 func (s *IssueService) enqueueProjectOwnerApprovalTask(ctx context.Context, issue db.Issue, project db.Project) {

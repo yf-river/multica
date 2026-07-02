@@ -98,7 +98,66 @@ const (
 	passwordSaltBytes      = 16
 	passwordKeyBytes       = 32
 	minPasswordLen         = 8
+	maxPasswordLen         = 32
 )
+
+// validatePassword checks password strength:
+// - 8-32 characters
+// - at least 3 of 4 character types (uppercase, lowercase, digit, special)
+// - special characters are restricted to: !@#$%^&*()_+|~-=`{}[]:";'<>?,./
+func validatePassword(password string) string {
+	if len(password) < minPasswordLen {
+		return "password must be at least 8 characters"
+	}
+	if len(password) > maxPasswordLen {
+		return "password must be at most 32 characters"
+	}
+
+	var hasUpper, hasLower, hasDigit, hasSpecial bool
+	for _, ch := range password {
+		switch {
+		case ch >= 'A' && ch <= 'Z':
+			hasUpper = true
+		case ch >= 'a' && ch <= 'z':
+			hasLower = true
+		case ch >= '0' && ch <= '9':
+			hasDigit = true
+		case ch >= 0x20 && ch <= 0x7E:
+			// Check against the allowed special character set
+			// ! " # $ % & ' ( ) * + , - . / : ; < = > ? @ [ ] ^ _ ` { | } ~
+			for _, sc := range `!"#$%&'()*+,-./:;<=>?@[]^_\` + "`{|}~" {
+				if ch == sc {
+					hasSpecial = true
+					break
+				}
+			}
+			if !hasSpecial {
+				return "password contains invalid characters"
+			}
+		default:
+			return "password contains invalid characters"
+		}
+	}
+
+	types := 0
+	if hasUpper {
+		types++
+	}
+	if hasLower {
+		types++
+	}
+	if hasDigit {
+		types++
+	}
+	if hasSpecial {
+		types++
+	}
+	if types < 3 {
+		return "password must contain at least 3 of the following: uppercase letters, lowercase letters, digits, special characters"
+	}
+
+	return ""
+}
 
 func normalizeAccount(account string) (string, bool) {
 	account = strings.ToLower(strings.TrimSpace(account))
@@ -228,11 +287,6 @@ func (h *Handler) AccountPasswordLogin(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "account must be 3-64 characters using letters, numbers, dot, dash, or underscore")
 		return
 	}
-	if len(req.Password) < minPasswordLen {
-		writeError(w, http.StatusBadRequest, "password must be at least 8 characters")
-		return
-	}
-
 	user, err := h.Queries.GetUserByAccount(r.Context(), account)
 	isNew := isNotFound(err)
 	if err != nil && !isNew {
@@ -241,6 +295,10 @@ func (h *Handler) AccountPasswordLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if isNew {
+		if msg := validatePassword(req.Password); msg != "" {
+			writeError(w, http.StatusBadRequest, msg)
+			return
+		}
 		if err := h.checkSignupAllowed(account, true); err != nil {
 			var signupErr SignupError
 			if errors.As(err, &signupErr) {

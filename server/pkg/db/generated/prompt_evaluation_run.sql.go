@@ -679,16 +679,17 @@ func (q *Queries) GetPromptEvaluationSummary(ctx context.Context, arg GetPromptE
 const listPromptEvaluationRuns = `-- name: ListPromptEvaluationRuns :many
 SELECT id, workspace_id, asset_id, prompt_id, run_kind, status, trigger_source, agent_id, runtime_id, task_id, chat_session_id, model, runtime_provider, total_cases, passed_cases, failed_cases, pass_rate, total_duration_ms, average_duration_ms, input_tokens, output_tokens, estimated_cost, failure_reason, conclusion, metrics, evidence, started_at, completed_at, created_by, created_at, updated_at, review_decision, review_note, reviewed_by, reviewed_at FROM prompt_evaluation_run
 WHERE workspace_id = $1
-  AND ($3::uuid IS NULL OR asset_id = $3)
-  AND ($4::text IS NULL OR status = $4)
-  AND ($5::timestamptz IS NULL OR created_at >= $5)
-ORDER BY created_at DESC
-LIMIT $2
+  AND ($4::uuid IS NULL OR asset_id = $4)
+  AND ($5::text IS NULL OR status = $5)
+  AND ($6::timestamptz IS NULL OR created_at >= $6)
+ORDER BY created_at DESC, id DESC
+LIMIT $2 OFFSET $3
 `
 
 type ListPromptEvaluationRunsParams struct {
 	WorkspaceID pgtype.UUID        `json:"workspace_id"`
 	Limit       int32              `json:"limit"`
+	Offset      int32              `json:"offset"`
 	AssetID     pgtype.UUID        `json:"asset_id"`
 	Status      pgtype.Text        `json:"status"`
 	Since       pgtype.Timestamptz `json:"since"`
@@ -698,6 +699,7 @@ func (q *Queries) ListPromptEvaluationRuns(ctx context.Context, arg ListPromptEv
 	rows, err := q.db.Query(ctx, listPromptEvaluationRuns,
 		arg.WorkspaceID,
 		arg.Limit,
+		arg.Offset,
 		arg.AssetID,
 		arg.Status,
 		arg.Since,
