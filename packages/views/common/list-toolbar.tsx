@@ -1,13 +1,7 @@
 "use client";
 
 import type { ReactNode } from "react";
-import {
-  ArrowDown,
-  ArrowUp,
-  ChevronDown,
-  Filter,
-  X,
-} from "lucide-react";
+import { ArrowDown, ArrowUp, ChevronDown, Filter, X } from "lucide-react";
 import { Button } from "@multica/ui/components/ui/button";
 import {
   DropdownMenu,
@@ -32,9 +26,7 @@ type SortDirection = "asc" | "desc";
 
 export function ToolbarCountBadge({ count }: { count: number }) {
   return (
-    <span className="ml-auto pl-3 text-xs text-muted-foreground">
-      {count}
-    </span>
+    <span className="ml-auto pl-3 text-xs text-muted-foreground">{count}</span>
   );
 }
 
@@ -112,6 +104,44 @@ export function ToolbarFilterButton({
         </span>
       )}
     </Button>
+  );
+}
+
+export function ToolbarFilterDropdown({
+  hasActiveFilters,
+  activeCount,
+  activeLabel,
+  filterLabel,
+  clearLabel,
+  onClearFilters,
+  children,
+}: {
+  hasActiveFilters: boolean;
+  activeCount: number;
+  activeLabel: ReactNode;
+  filterLabel: ReactNode;
+  clearLabel: string;
+  onClearFilters: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <DropdownMenu>
+      <DropdownMenuTrigger
+        render={
+          <ToolbarFilterButton
+            hasActiveFilters={hasActiveFilters}
+            activeCount={activeCount}
+            activeLabel={activeLabel}
+            filterLabel={filterLabel}
+            clearLabel={clearLabel}
+            onClearFilters={onClearFilters}
+          />
+        }
+      />
+      <DropdownMenuContent align="end" className="w-auto">
+        {children}
+      </DropdownMenuContent>
+    </DropdownMenu>
   );
 }
 
@@ -285,14 +315,10 @@ export function ToolbarDisplaySettings<
               variant="outline"
               size="icon-sm"
               onClick={() =>
-                onSortDirectionChange(
-                  sortDirection === "asc" ? "desc" : "asc",
-                )
+                onSortDirectionChange(sortDirection === "asc" ? "desc" : "asc")
               }
               title={
-                sortDirection === "asc"
-                  ? directionAscLabel
-                  : directionDescLabel
+                sortDirection === "asc" ? directionAscLabel : directionDescLabel
               }
             >
               {sortDirection === "asc" ? (

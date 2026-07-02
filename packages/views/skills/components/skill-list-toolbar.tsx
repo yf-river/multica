@@ -1,21 +1,13 @@
 "use client";
 
-import {
-  Download,
-  HardDrive,
-  Pencil,
-  Search,
-} from "lucide-react";
+import { Download, HardDrive, Pencil, Search } from "lucide-react";
 import type { Agent, MemberWithUser } from "@multica/core/types";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import {
-  DropdownMenu,
   DropdownMenuCheckboxItem,
-  DropdownMenuContent,
   DropdownMenuSub,
   DropdownMenuSubContent,
   DropdownMenuSubTrigger,
-  DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { Input } from "@multica/ui/components/ui/input";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
@@ -23,7 +15,7 @@ import { FILTER_ITEM_CLASS, HoverCheck } from "../../common/hover-check";
 import {
   ToolbarCountBadge,
   ToolbarDisplaySettings,
-  ToolbarFilterButton,
+  ToolbarFilterDropdown,
   ToolbarResultCount,
 } from "../../common/list-toolbar";
 import {
@@ -48,9 +40,7 @@ const COLUMN_KEYS: SkillColumnKey[] = [
 
 const SORT_FIELDS: SkillSortField[] = ["name", "usedBy", "updated", "created"];
 
-function countActiveFilterDimensions(
-  filters: SkillListFilters,
-): number {
+function countActiveFilterDimensions(filters: SkillListFilters): number {
   let count = 0;
   if (filters.usage.length > 0) count++;
   if (filters.origins.length > 0) count++;
@@ -121,7 +111,10 @@ export function SkillListToolbar({
     { member: MemberWithUser; count: number }
   >();
   for (const row of allRows) {
-    originCounts.set(row.originType, (originCounts.get(row.originType) ?? 0) + 1);
+    originCounts.set(
+      row.originType,
+      (originCounts.get(row.originType) ?? 0) + 1,
+    );
     for (const agent of row.agents) {
       const entry = agentOptions.get(agent.id);
       if (entry) entry.count += 1;
@@ -130,7 +123,11 @@ export function SkillListToolbar({
     if (row.creator) {
       const entry = creatorOptions.get(row.creator.user_id);
       if (entry) entry.count += 1;
-      else creatorOptions.set(row.creator.user_id, { member: row.creator, count: 1 });
+      else
+        creatorOptions.set(row.creator.user_id, {
+          member: row.creator,
+          count: 1,
+        });
     }
   }
 
@@ -184,155 +181,146 @@ export function SkillListToolbar({
 
       <div className="flex shrink-0 items-center gap-1">
         {/* Filter */}
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <ToolbarFilterButton
-                hasActiveFilters={hasActiveFilters}
-                activeCount={activeCount}
-                activeLabel={t(($) => $.toolbar.filter_active_count, {
-                  count: activeCount,
-                })}
-                filterLabel={t(($) => $.toolbar.filter_label)}
-                clearLabel={t(($) => $.toolbar.clear_filters)}
-                onClearFilters={onClearFilters}
-              />
-            }
-          />
-          <DropdownMenuContent align="end" className="w-auto">
-            {/* Usage */}
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
-                <span className="flex-1">
-                  {t(($) => $.toolbar.section_usage)}
+        <ToolbarFilterDropdown
+          hasActiveFilters={hasActiveFilters}
+          activeCount={activeCount}
+          activeLabel={t(($) => $.toolbar.filter_active_count, {
+            count: activeCount,
+          })}
+          filterLabel={t(($) => $.toolbar.filter_label)}
+          clearLabel={t(($) => $.toolbar.clear_filters)}
+          onClearFilters={onClearFilters}
+        >
+          {/* Usage */}
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <span className="flex-1">
+                {t(($) => $.toolbar.section_usage)}
+              </span>
+              {filters.usage.length > 0 && (
+                <span className="text-xs font-medium text-primary">
+                  {filters.usage.length}
                 </span>
-                {filters.usage.length > 0 && (
-                  <span className="text-xs font-medium text-primary">
-                    {filters.usage.length}
-                  </span>
-                )}
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="w-auto min-w-44">
-                {(["used", "unused"] as const).map((value) => (
+              )}
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-auto min-w-44">
+              {(["used", "unused"] as const).map((value) => (
+                <DropdownMenuCheckboxItem
+                  key={value}
+                  checked={filters.usage.includes(value)}
+                  onCheckedChange={() => onToggleFilter("usage", value)}
+                  className={FILTER_ITEM_CLASS}
+                >
+                  <HoverCheck checked={filters.usage.includes(value)} />
+                  {value === "used"
+                    ? t(($) => $.page.scopes.used.label)
+                    : t(($) => $.page.scopes.unused.label)}
+                  <ToolbarCountBadge
+                    count={value === "used" ? usedCount : unusedCount}
+                  />
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+
+          {/* Source */}
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <span className="flex-1">{t(($) => $.table.source)}</span>
+              {filters.origins.length > 0 && (
+                <span className="text-xs font-medium text-primary">
+                  {filters.origins.length}
+                </span>
+              )}
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="w-auto min-w-48">
+              {ORIGIN_TYPES.filter((type) => originCounts.has(type)).map(
+                (type) => (
                   <DropdownMenuCheckboxItem
-                    key={value}
-                    checked={filters.usage.includes(value)}
-                    onCheckedChange={() => onToggleFilter("usage", value)}
+                    key={type}
+                    checked={filters.origins.includes(type)}
+                    onCheckedChange={() => onToggleFilter("origins", type)}
                     className={FILTER_ITEM_CLASS}
                   >
-                    <HoverCheck checked={filters.usage.includes(value)} />
-                    {value === "used"
-                      ? t(($) => $.page.scopes.used.label)
-                      : t(($) => $.page.scopes.unused.label)}
-                    <ToolbarCountBadge
-                      count={value === "used" ? usedCount : unusedCount}
-                    />
+                    <HoverCheck checked={filters.origins.includes(type)} />
+                    {originIcon(type)}
+                    {ORIGIN_LABELS[type]}
+                    <ToolbarCountBadge count={originCounts.get(type) ?? 0} />
                   </DropdownMenuCheckboxItem>
-                ))}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
+                ),
+              )}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
 
-            {/* Source */}
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
-                <span className="flex-1">{t(($) => $.table.source)}</span>
-                {filters.origins.length > 0 && (
-                  <span className="text-xs font-medium text-primary">
-                    {filters.origins.length}
-                  </span>
-                )}
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="w-auto min-w-48">
-                {ORIGIN_TYPES.filter((type) => originCounts.has(type)).map(
-                  (type) => (
-                    <DropdownMenuCheckboxItem
-                      key={type}
-                      checked={filters.origins.includes(type)}
-                      onCheckedChange={() => onToggleFilter("origins", type)}
-                      className={FILTER_ITEM_CLASS}
-                    >
-                      <HoverCheck checked={filters.origins.includes(type)} />
-                      {originIcon(type)}
-                      {ORIGIN_LABELS[type]}
-                      <ToolbarCountBadge
-                        count={originCounts.get(type) ?? 0}
-                      />
-                    </DropdownMenuCheckboxItem>
-                  ),
-                )}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
+          {/* Used by */}
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <span className="flex-1">{t(($) => $.table.used_by)}</span>
+              {filters.agents.length > 0 && (
+                <span className="text-xs font-medium text-primary">
+                  {filters.agents.length}
+                </span>
+              )}
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="max-h-72 w-auto min-w-48 overflow-y-auto">
+              {[...agentOptions.values()].map(({ agent, count }) => (
+                <DropdownMenuCheckboxItem
+                  key={agent.id}
+                  checked={filters.agents.includes(agent.id)}
+                  onCheckedChange={() => onToggleFilter("agents", agent.id)}
+                  className={FILTER_ITEM_CLASS}
+                >
+                  <HoverCheck checked={filters.agents.includes(agent.id)} />
+                  <ActorAvatar
+                    name={agent.name}
+                    initials={agent.name.slice(0, 2).toUpperCase()}
+                    avatarUrl={resolvePublicFileUrl(agent.avatar_url)}
+                    isAgent
+                    size={16}
+                  />
+                  <span className="min-w-0 truncate">{agent.name}</span>
+                  <ToolbarCountBadge count={count} />
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
 
-            {/* Used by */}
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
-                <span className="flex-1">{t(($) => $.table.used_by)}</span>
-                {filters.agents.length > 0 && (
-                  <span className="text-xs font-medium text-primary">
-                    {filters.agents.length}
-                  </span>
-                )}
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="max-h-72 w-auto min-w-48 overflow-y-auto">
-                {[...agentOptions.values()].map(({ agent, count }) => (
-                  <DropdownMenuCheckboxItem
-                    key={agent.id}
-                    checked={filters.agents.includes(agent.id)}
-                    onCheckedChange={() => onToggleFilter("agents", agent.id)}
-                    className={FILTER_ITEM_CLASS}
-                  >
-                    <HoverCheck checked={filters.agents.includes(agent.id)} />
-                    <ActorAvatar
-                      name={agent.name}
-                      initials={agent.name.slice(0, 2).toUpperCase()}
-                      avatarUrl={resolvePublicFileUrl(agent.avatar_url)}
-                      isAgent
-                      size={16}
-                    />
-                    <span className="min-w-0 truncate">{agent.name}</span>
-                    <ToolbarCountBadge count={count} />
-                  </DropdownMenuCheckboxItem>
-                ))}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-
-            {/* Creator */}
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
-                <span className="flex-1">{t(($) => $.table.created_by)}</span>
-                {filters.creators.length > 0 && (
-                  <span className="text-xs font-medium text-primary">
-                    {filters.creators.length}
-                  </span>
-                )}
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="max-h-72 w-auto min-w-48 overflow-y-auto">
-                {[...creatorOptions.values()].map(({ member, count }) => (
-                  <DropdownMenuCheckboxItem
-                    key={member.user_id}
+          {/* Creator */}
+          <DropdownMenuSub>
+            <DropdownMenuSubTrigger>
+              <span className="flex-1">{t(($) => $.table.created_by)}</span>
+              {filters.creators.length > 0 && (
+                <span className="text-xs font-medium text-primary">
+                  {filters.creators.length}
+                </span>
+              )}
+            </DropdownMenuSubTrigger>
+            <DropdownMenuSubContent className="max-h-72 w-auto min-w-48 overflow-y-auto">
+              {[...creatorOptions.values()].map(({ member, count }) => (
+                <DropdownMenuCheckboxItem
+                  key={member.user_id}
+                  checked={filters.creators.includes(member.user_id)}
+                  onCheckedChange={() =>
+                    onToggleFilter("creators", member.user_id)
+                  }
+                  className={FILTER_ITEM_CLASS}
+                >
+                  <HoverCheck
                     checked={filters.creators.includes(member.user_id)}
-                    onCheckedChange={() =>
-                      onToggleFilter("creators", member.user_id)
-                    }
-                    className={FILTER_ITEM_CLASS}
-                  >
-                    <HoverCheck
-                      checked={filters.creators.includes(member.user_id)}
-                    />
-                    <ActorAvatar
-                      name={member.name}
-                      initials={member.name.slice(0, 2).toUpperCase()}
-                      avatarUrl={resolvePublicFileUrl(member.avatar_url)}
-                      size={16}
-                    />
-                    <span className="min-w-0 truncate">{member.name}</span>
-                    <ToolbarCountBadge count={count} />
-                  </DropdownMenuCheckboxItem>
-                ))}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-          </DropdownMenuContent>
-        </DropdownMenu>
+                  />
+                  <ActorAvatar
+                    name={member.name}
+                    initials={member.name.slice(0, 2).toUpperCase()}
+                    avatarUrl={resolvePublicFileUrl(member.avatar_url)}
+                    size={16}
+                  />
+                  <span className="min-w-0 truncate">{member.name}</span>
+                  <ToolbarCountBadge count={count} />
+                </DropdownMenuCheckboxItem>
+              ))}
+            </DropdownMenuSubContent>
+          </DropdownMenuSub>
+        </ToolbarFilterDropdown>
 
         <ToolbarDisplaySettings
           sortField={sortField}
