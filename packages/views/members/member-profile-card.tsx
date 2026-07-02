@@ -1,7 +1,7 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
-import type { Agent, MemberRole } from "@multica/core/types";
+import type { Agent } from "@multica/core/types";
 import { useWorkspaceId } from "@multica/core";
 import { agentRunCounts30dOptions } from "@multica/core/agents";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
@@ -12,6 +12,7 @@ import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { ActorAvatar } from "../common/actor-avatar";
 import { AppLink } from "../navigation";
 import { useT } from "../i18n";
+import { RoleBadge } from "./role-badge";
 
 interface MemberProfileCardProps {
   // The User UUID — matches member.user_id and agent.owner_id. We accept user_id
@@ -99,19 +100,6 @@ export function MemberProfileCard({ userId }: MemberProfileCardProps) {
       {/* Owned agents */}
       {ownedAgents.length > 0 && <OwnedAgentsSection agents={ownedAgents} />}
     </div>
-  );
-}
-
-function RoleBadge({ role }: { role: MemberRole }) {
-  const { t } = useT("members");
-  return (
-    <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-      {role === "owner"
-        ? t(($) => $.role.owner)
-        : role === "admin"
-          ? t(($) => $.role.admin)
-          : t(($) => $.role.member)}
-    </span>
   );
 }
 

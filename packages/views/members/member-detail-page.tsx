@@ -2,7 +2,6 @@
 
 import { ChevronRight, UserRound } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
-import type { MemberRole } from "@multica/core/types";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace } from "@multica/core/paths";
 import { memberListOptions } from "@multica/core/workspace/queries";
@@ -13,6 +12,7 @@ import { PageHeader } from "../layout/page-header";
 import { WorkspaceAvatar } from "../workspace/workspace-avatar";
 import { ActorIssuesPanel } from "../common/actor-issues-panel";
 import { useT } from "../i18n";
+import { RoleBadge } from "./role-badge";
 
 export function MemberDetailPage({ userId }: { userId: string }) {
   const { t } = useT("members");
@@ -100,19 +100,6 @@ function MemberBreadcrumb({
       <ChevronRight className="h-3 w-3 text-muted-foreground" />
       <span className="truncate text-sm font-medium">{title}</span>
     </PageHeader>
-  );
-}
-
-function RoleBadge({ role }: { role: MemberRole }) {
-  const { t } = useT("members");
-  return (
-    <span className="rounded-md bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-      {role === "owner"
-        ? t(($) => $.role.owner)
-        : role === "admin"
-          ? t(($) => $.role.admin)
-          : t(($) => $.role.member)}
-    </span>
   );
 }
 
