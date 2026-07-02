@@ -529,13 +529,9 @@ func runAutopilotTriggerAdd(cmd *cobra.Command, args []string) error {
 	body := map[string]any{"kind": kind}
 	if kind == "schedule" {
 		body["cron_expression"] = cron
-		if v, _ := cmd.Flags().GetString("timezone"); v != "" {
-			body["timezone"] = v
-		}
+		copyAutopilotTriggerStringFlag(cmd, body, "timezone", "timezone", false)
 	}
-	if v, _ := cmd.Flags().GetString("label"); v != "" {
-		body["label"] = v
-	}
+	copyAutopilotTriggerStringFlag(cmd, body, "label", "label", false)
 
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
@@ -584,13 +580,9 @@ func runAutopilotTriggerRotateURL(cmd *cobra.Command, args []string) error {
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
-	autopilotRef, err := resolveAutopilotID(ctx, client, args[0])
+	autopilotRef, triggerRef, err := resolveAutopilotTriggerRefs(ctx, client, args[0], args[1])
 	if err != nil {
-		return fmt.Errorf("resolve autopilot: %w", err)
-	}
-	triggerRef, err := resolveAutopilotTriggerID(ctx, client, autopilotRef.ID, args[1])
-	if err != nil {
-		return fmt.Errorf("resolve trigger: %w", err)
+		return err
 	}
 
 	// Confirmation: rotation invalidates the current URL immediately. The UI
@@ -635,18 +627,9 @@ func runAutopilotTriggerUpdate(cmd *cobra.Command, args []string) error {
 		v, _ := cmd.Flags().GetBool("enabled")
 		body["enabled"] = v
 	}
-	if cmd.Flags().Changed("cron") {
-		v, _ := cmd.Flags().GetString("cron")
-		body["cron_expression"] = v
-	}
-	if cmd.Flags().Changed("timezone") {
-		v, _ := cmd.Flags().GetString("timezone")
-		body["timezone"] = v
-	}
-	if cmd.Flags().Changed("label") {
-		v, _ := cmd.Flags().GetString("label")
-		body["label"] = v
-	}
+	copyAutopilotTriggerStringFlag(cmd, body, "cron", "cron_expression", true)
+	copyAutopilotTriggerStringFlag(cmd, body, "timezone", "timezone", true)
+	copyAutopilotTriggerStringFlag(cmd, body, "label", "label", true)
 	if len(body) == 0 {
 		return fmt.Errorf("no fields to update; use --enabled, --cron, --timezone, or --label")
 	}
@@ -654,13 +637,9 @@ func runAutopilotTriggerUpdate(cmd *cobra.Command, args []string) error {
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
-	autopilotRef, err := resolveAutopilotID(ctx, client, args[0])
+	autopilotRef, triggerRef, err := resolveAutopilotTriggerRefs(ctx, client, args[0], args[1])
 	if err != nil {
-		return fmt.Errorf("resolve autopilot: %w", err)
-	}
-	triggerRef, err := resolveAutopilotTriggerID(ctx, client, autopilotRef.ID, args[1])
-	if err != nil {
-		return fmt.Errorf("resolve trigger: %w", err)
+		return err
 	}
 
 	var result map[string]any
@@ -677,6 +656,29 @@ func runAutopilotTriggerUpdate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func copyAutopilotTriggerStringFlag(cmd *cobra.Command, body map[string]any, flagName, bodyKey string, changedOnly bool) {
+	if changedOnly && !cmd.Flags().Changed(flagName) {
+		return
+	}
+	v, _ := cmd.Flags().GetString(flagName)
+	if !changedOnly && v == "" {
+		return
+	}
+	body[bodyKey] = v
+}
+
+func resolveAutopilotTriggerRefs(ctx context.Context, client *cli.APIClient, autopilotArg, triggerArg string) (resolvedID, resolvedID, error) {
+	autopilotRef, err := resolveAutopilotID(ctx, client, autopilotArg)
+	if err != nil {
+		return resolvedID{}, resolvedID{}, fmt.Errorf("resolve autopilot: %w", err)
+	}
+	triggerRef, err := resolveAutopilotTriggerID(ctx, client, autopilotRef.ID, triggerArg)
+	if err != nil {
+		return resolvedID{}, resolvedID{}, fmt.Errorf("resolve trigger: %w", err)
+	}
+	return autopilotRef, triggerRef, nil
+}
+
 func runAutopilotTriggerDelete(cmd *cobra.Command, args []string) error {
 	client, err := newAPIClient(cmd)
 	if err != nil {
@@ -686,13 +688,9 @@ func runAutopilotTriggerDelete(cmd *cobra.Command, args []string) error {
 	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
 
-	autopilotRef, err := resolveAutopilotID(ctx, client, args[0])
+	autopilotRef, triggerRef, err := resolveAutopilotTriggerRefs(ctx, client, args[0], args[1])
 	if err != nil {
-		return fmt.Errorf("resolve autopilot: %w", err)
-	}
-	triggerRef, err := resolveAutopilotTriggerID(ctx, client, autopilotRef.ID, args[1])
-	if err != nil {
-		return fmt.Errorf("resolve trigger: %w", err)
+		return err
 	}
 
 	path := "/api/autopilots/" + autopilotRef.ID + "/triggers/" + triggerRef.ID
