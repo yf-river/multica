@@ -14,7 +14,7 @@ import { useWorkspaceId } from "@multica/core/hooks";
 import { useCurrentWorkspace, useWorkspacePaths } from "@multica/core/paths";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
 import { useActorName } from "@multica/core/workspace/hooks";
-import type { GongfengRepoResourceRef, ProjectStatus, ProjectPriority, WorkspaceRepo } from "@multica/core/types";
+import type { ProjectStatus, ProjectPriority } from "@multica/core/types";
 import { cn } from "@multica/ui/lib/utils";
 import { toast } from "sonner";
 import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/dialog";
@@ -38,6 +38,13 @@ import {
   useProjectStatusLabels,
   useProjectPriorityLabels,
 } from "../projects/components/labels";
+import {
+  buildGongfengResourceRefFromWorkspaceRepo,
+  isGongfengRepoURL,
+  normalizeRepoSearch,
+  workspaceRepoSearchText,
+  WorkspaceRepoDisplayText,
+} from "../projects/components/workspace-repo-resource";
 
 function PillButton({
   children,
@@ -57,46 +64,6 @@ function PillButton({
       {children}
     </button>
   );
-}
-
-function RepoDisplayText({
-  repo,
-  className,
-}: {
-  repo: WorkspaceRepo;
-  className?: string;
-}) {
-  const name = workspaceRepoDisplayName(repo);
-  const projectPath = workspaceRepoProjectPath(repo);
-  const detail = projectPath && projectPath !== name ? projectPath : repo.url;
-  return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <span
-            title={`${name} · ${repo.url}`}
-            className={cn("min-w-0 flex-1 text-left", className)}
-          >
-            <span className="block truncate font-medium text-foreground">{name}</span>
-            <span className="block truncate text-[10px] leading-3 text-muted-foreground">
-              {detail}
-            </span>
-          </span>
-        }
-      />
-      <TooltipContent side="top" align="start" className="max-w-sm break-all">
-        {repo.url}
-      </TooltipContent>
-    </Tooltip>
-  );
-}
-
-function isGongfengRepoURL(url: string): boolean {
-  try {
-    return new URL(url).hostname.toLowerCase() === "git.code.tencent.com";
-  } catch {
-    return false;
-  }
 }
 
 export function CreateProjectModal({ onClose }: { onClose: () => void }) {
@@ -517,7 +484,7 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
                             className="size-3.5"
                           />
                           <FolderGit className="size-3.5 shrink-0 text-muted-foreground" />
-                          <RepoDisplayText repo={repo} />
+                          <WorkspaceRepoDisplayText repo={repo} />
                           {repo.default_branch && (
                             <span className="shrink-0 rounded border px-1 font-mono text-[10px] text-muted-foreground">
                               {repo.default_branch}
@@ -547,7 +514,7 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
                         className="flex items-center gap-2 text-xs"
                       >
                         <FolderGit className="size-3 text-muted-foreground" />
-                        <RepoDisplayText repo={repo} />
+                        <WorkspaceRepoDisplayText repo={repo} />
                         {repo.default_branch && (
                           <span className="shrink-0 rounded border px-1 font-mono text-[10px] text-muted-foreground">
                             {repo.default_branch}
@@ -581,81 +548,4 @@ export function CreateProjectModal({ onClose }: { onClose: () => void }) {
       </DialogContent>
     </Dialog>
   );
-}
-
-function workspaceRepoDisplayName(repo: WorkspaceRepo): string {
-  const projectPath = workspaceRepoProjectPath(repo);
-  if (projectPath) return projectPath.split("/").filter(Boolean).pop() || projectPath;
-  return inferRepoNameFromURL(repo.url) || repo.url;
-}
-
-function workspaceRepoProjectPath(repo: WorkspaceRepo): string {
-  const projectPath = repo.project_path?.trim();
-  if (projectPath) return projectPath;
-  return inferProjectPathFromGongfengURL(repo.url);
-}
-
-function workspaceRepoSearchText(repo: WorkspaceRepo): string {
-  return [
-    workspaceRepoDisplayName(repo),
-    workspaceRepoProjectPath(repo),
-    repo.url,
-    repo.default_branch,
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-}
-
-function normalizeRepoSearch(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "");
-}
-
-function inferProjectPathFromGongfengURL(url: string): string {
-  try {
-    const parsed = new URL(url);
-    const parts = parsed.pathname.split("/").filter(Boolean);
-    const boundary = parts.findIndex((part) =>
-      ["commits", "commit", "tree", "blob", "merge_requests"].includes(part),
-    );
-    return (boundary > 0 ? parts.slice(0, boundary) : parts).join("/");
-  } catch {
-    return "";
-  }
-}
-
-function inferRepoNameFromURL(url: string): string {
-  const projectPath = inferProjectPathFromGongfengURL(url);
-  if (projectPath) return projectPath.split("/").filter(Boolean).pop() || "";
-  return "";
-}
-
-function buildGongfengResourceRefFromWorkspaceRepo(
-  url: string,
-  repo: WorkspaceRepo | undefined,
-): Partial<GongfengRepoResourceRef> & { url: string } {
-  const branch = repo?.default_branch?.trim();
-  if (!branch) return { url };
-  const headCommit = repo?.head_commit?.trim();
-  const commitSHA = repo?.commit_sha?.trim() || headCommit;
-  const connectionStatus = repo?.connection_status?.trim();
-  const syncStatus = repo?.sync_status?.trim();
-  const testStatus = repo?.test_status?.trim();
-  const lastTestedAt = repo?.last_tested_at?.trim();
-  const lastSyncedAt = repo?.last_synced_at?.trim();
-  return {
-    url,
-    provider: "gongfeng",
-    ...(repo?.project_path ? { project_path: repo.project_path } : {}),
-    resource_kind: "branch",
-    ref: branch,
-    branch,
-    ...(headCommit ? { head_commit: headCommit } : {}),
-    ...(commitSHA ? { commit_sha: commitSHA } : {}),
-    ...(connectionStatus ? { connection_status: connectionStatus } : {}),
-    ...(syncStatus ? { sync_status: syncStatus } : {}),
-    ...(testStatus ? { test_status: testStatus } : {}),
-    ...(lastTestedAt ? { last_tested_at: lastTestedAt } : {}),
-    ...(lastSyncedAt ? { last_synced_at: lastSyncedAt } : {}),
-  };
 }

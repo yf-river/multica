@@ -46,6 +46,13 @@ import {
   useLocalDaemonStatus,
 } from "../../platform";
 import { useT } from "../../i18n";
+import {
+  buildGongfengResourceRefFromWorkspaceRepo,
+  isGongfengRepoURL,
+  normalizeRepoSearch,
+  workspaceRepoSearchText,
+  WorkspaceRepoDisplayText,
+} from "./workspace-repo-resource";
 
 // Project Resources sidebar section.
 //
@@ -63,14 +70,6 @@ function isLocalDirectoryRef(r: ProjectResource): r is ProjectResource & {
   resource_ref: LocalDirectoryResourceRef;
 } {
   return r.resource_type === "local_directory";
-}
-
-function isGongfengURL(url: string): boolean {
-  try {
-    return new URL(url).hostname.toLowerCase() === "git.code.tencent.com";
-  } catch {
-    return false;
-  }
 }
 
 export function ProjectResourcesSection({ projectId }: { projectId: string }) {
@@ -100,7 +99,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
   const normalizedRepoQuery = normalizeRepoSearch(repoSearch);
   const filteredRepos =
     workspace?.repos
-      ?.filter((repo) => isGongfengURL(repo.url))
+      ?.filter((repo) => isGongfengRepoURL(repo.url))
       .filter((repo) => {
         if (!repoQuery) return true;
         const searchText = workspaceRepoSearchText(repo);
@@ -259,12 +258,6 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                     {filteredRepos.map((repo) => {
                       const isAttached = attachedUrls.has(repo.url);
                       const isDisabled = isAttached || createResource.isPending;
-                      const displayName = workspaceRepoDisplayName(repo);
-                      const projectPath = workspaceRepoProjectPath(repo);
-                      const detail =
-                        projectPath && projectPath !== displayName
-                          ? projectPath
-                          : repo.url;
                       return (
                         // Use aria-disabled instead of the native `disabled` attribute so
                         // hover events still reach the tooltip trigger on attached rows
@@ -281,23 +274,7 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
                           className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs text-left hover:bg-accent transition-colors aria-disabled:opacity-50 aria-disabled:cursor-not-allowed aria-disabled:hover:bg-transparent"
                         >
                           <FolderGit className="size-3.5 shrink-0 text-muted-foreground" />
-                          <Tooltip>
-                            <TooltipTrigger
-                              render={
-                                <span className="min-w-0 flex-1 text-left" title={`${displayName} · ${repo.url}`}>
-                                  <span className="block truncate font-medium text-foreground">
-                                    {displayName}
-                                  </span>
-                                  <span className="block truncate text-[10px] leading-3 text-muted-foreground">
-                                    {detail}
-                                  </span>
-                                </span>
-                              }
-                            />
-                            <TooltipContent side="top" align="start" className="max-w-sm break-all">
-                              {repo.url}
-                            </TooltipContent>
-                          </Tooltip>
+                          <WorkspaceRepoDisplayText repo={repo} />
                           {repo.default_branch && (
                             <span className="shrink-0 rounded border px-1 font-mono text-[10px] text-muted-foreground">
                               {repo.default_branch}
@@ -320,83 +297,6 @@ export function ProjectResourcesSection({ projectId }: { projectId: string }) {
       )}
     </div>
   );
-}
-
-function workspaceRepoDisplayName(repo: WorkspaceRepo): string {
-  const projectPath = workspaceRepoProjectPath(repo);
-  if (projectPath) return projectPath.split("/").filter(Boolean).pop() || projectPath;
-  return inferRepoNameFromURL(repo.url) || repo.url;
-}
-
-function workspaceRepoProjectPath(repo: WorkspaceRepo): string {
-  const projectPath = repo.project_path?.trim();
-  if (projectPath) return projectPath;
-  return inferProjectPathFromGongfengURL(repo.url);
-}
-
-function workspaceRepoSearchText(repo: WorkspaceRepo): string {
-  return [
-    workspaceRepoDisplayName(repo),
-    workspaceRepoProjectPath(repo),
-    repo.url,
-    repo.default_branch,
-  ]
-    .filter(Boolean)
-    .join(" ")
-    .toLowerCase();
-}
-
-function normalizeRepoSearch(value: string): string {
-  return value.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "");
-}
-
-function inferProjectPathFromGongfengURL(url: string): string {
-  try {
-    const parsed = new URL(url);
-    const parts = parsed.pathname.split("/").filter(Boolean);
-    const boundary = parts.findIndex((part) =>
-      ["commits", "commit", "tree", "blob", "merge_requests"].includes(part),
-    );
-    return (boundary > 0 ? parts.slice(0, boundary) : parts).join("/");
-  } catch {
-    return "";
-  }
-}
-
-function inferRepoNameFromURL(url: string): string {
-  const projectPath = inferProjectPathFromGongfengURL(url);
-  if (projectPath) return projectPath.split("/").filter(Boolean).pop() || "";
-  return "";
-}
-
-function buildGongfengResourceRefFromWorkspaceRepo(
-  url: string,
-  repo: WorkspaceRepo | undefined,
-): Partial<GongfengRepoResourceRef> & { url: string } {
-  const branch = repo?.default_branch?.trim();
-  if (!branch) return { url };
-  const headCommit = repo?.head_commit?.trim();
-  const commitSHA = repo?.commit_sha?.trim() || headCommit;
-  const connectionStatus = repo?.connection_status?.trim();
-  const syncStatus = repo?.sync_status?.trim();
-  const testStatus = repo?.test_status?.trim();
-  const lastTestedAt = repo?.last_tested_at?.trim();
-  const lastSyncedAt = repo?.last_synced_at?.trim();
-  return {
-    url,
-    provider: "gongfeng",
-    ...(repo?.project_path ? { project_path: repo.project_path } : {}),
-    resource_kind: "branch",
-    ref: branch,
-    branch,
-    ...(headCommit ? { head_commit: headCommit } : {}),
-    ...(commitSHA ? { commit_sha: commitSHA } : {}),
-    ...(connectionStatus ? { connection_status: connectionStatus } : {}),
-    ...(syncStatus ? { sync_status: syncStatus } : {}),
-    ...(testStatus ? { test_status: testStatus } : {}),
-    ...(lastTestedAt ? { last_tested_at: lastTestedAt } : {}),
-    ...(lastSyncedAt ? { last_synced_at: lastSyncedAt } : {}),
-  };
 }
 
 interface ResourceRowProps {
