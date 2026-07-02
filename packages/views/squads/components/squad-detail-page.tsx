@@ -1078,6 +1078,27 @@ const squadDetailTabs: { id: SquadDetailTab; label: string; icon: typeof FileTex
   { id: "instructions", label: "指令", icon: FileText },
 ];
 
+type SquadMembersTabProps = {
+  members: SquadMember[];
+  memberStatusById: Map<string, SquadMemberStatus>;
+  isLeader: (m: SquadMember) => boolean;
+  isArchived: (m: SquadMember) => boolean;
+  canManage: boolean;
+  getEntityName: (type: string, id: string) => string;
+  onAddMemberClick: () => void;
+  // Optional: only passed when the current user can manage the squad.
+  onCreateAgentClick?: () => void;
+  onSetLeader: (agentId: string) => void;
+  onRemoveMember: (m: SquadMember) => void;
+  onUpdateRole: (m: SquadMember, role: string) => Promise<void>;
+  setLeaderPending: boolean;
+};
+
+type SquadOverviewPaneProps = SquadMembersTabProps & {
+  squad: Squad;
+  onSaveInstructions: (next: string) => Promise<void>;
+};
+
 function SquadOverviewPane({
   squad,
   members,
@@ -1093,25 +1114,7 @@ function SquadOverviewPane({
   onUpdateRole,
   onSaveInstructions,
   setLeaderPending,
-}: {
-  squad: Squad;
-  members: SquadMember[];
-  memberStatusById: Map<string, SquadMemberStatus>;
-  isLeader: (m: SquadMember) => boolean;
-  isArchived: (m: SquadMember) => boolean;
-  canManage: boolean;
-  getEntityName: (type: string, id: string) => string;
-  onAddMemberClick: () => void;
-  // Optional — only passed when the current user can manage the squad
-  // (workspace owner/admin). Hidden otherwise so plain members don't
-  // see a button they can't action.
-  onCreateAgentClick?: () => void;
-  onSetLeader: (agentId: string) => void;
-  onRemoveMember: (m: SquadMember) => void;
-  onUpdateRole: (m: SquadMember, role: string) => Promise<void>;
-  onSaveInstructions: (next: string) => Promise<void>;
-  setLeaderPending: boolean;
-}) {
+}: SquadOverviewPaneProps) {
   const { t } = useT("squads");
   const [activeTab, setActiveTab] = useState<SquadDetailTab>("members");
   const [activeDirty, setActiveDirty] = useState(false);
@@ -1239,21 +1242,7 @@ function SquadMembersTab({
   onRemoveMember,
   onUpdateRole,
   setLeaderPending,
-}: {
-  members: SquadMember[];
-  memberStatusById: Map<string, SquadMemberStatus>;
-  isLeader: (m: SquadMember) => boolean;
-  isArchived: (m: SquadMember) => boolean;
-  canManage: boolean;
-  getEntityName: (type: string, id: string) => string;
-  onAddMemberClick: () => void;
-  // Hidden for non-admins — see SquadOverviewPane.
-  onCreateAgentClick?: () => void;
-  onSetLeader: (agentId: string) => void;
-  onRemoveMember: (m: SquadMember) => void;
-  onUpdateRole: (m: SquadMember, role: string) => Promise<void>;
-  setLeaderPending: boolean;
-}) {
+}: SquadMembersTabProps) {
   const { t } = useT("squads");
   const timeAgo = useTimeAgo();
   const p = useWorkspacePaths();
