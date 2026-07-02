@@ -19,8 +19,7 @@ import (
 const taskArtifactMaxBytes = 100 << 20 // Keep aligned with handler maxUploadSize.
 
 var taskArtifactDirs = []string{
-	filepath.Join("artifacts", "multica"),
-	filepath.Join("artifacts", "ai-studio"),
+	"artifacts",
 	filepath.Join(".multica", "artifacts"),
 }
 

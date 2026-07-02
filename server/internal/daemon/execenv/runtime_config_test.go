@@ -75,7 +75,8 @@ func TestStageMarkdownArtifactsSectionUsesCommentAttachments(t *testing.T) {
 		"01-clarify requirement note",
 		"05-verify report",
 		"save it as a UTF-8 `.md` file",
-		"under `artifacts/multica/`",
+		"under `artifacts/multica/` when possible",
+		"scans markdown files under `artifacts/` and `.multica/artifacts/`",
 		"The daemon automatically uploads those markdown files to the issue",
 		"download or preview",
 	} {
