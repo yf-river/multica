@@ -34,13 +34,13 @@ describe("web proxy legacy route compatibility", () => {
     ).toBe("http://localhost/team-a/training/evaluation-runs?run=run-123");
   });
 
-  it("redirects old top-level optimization links to test suites with issue context", () => {
+  it("redirects old top-level optimization links to the optimization runs view with issue context", () => {
     expect(
       redirectLocation("/training?view=optimization-runs&issue=issue-1", {
         multica_logged_in: "1",
         last_workspace_slug: "team-a",
       }),
-    ).toBe("http://localhost/team-a/training/test-suites?issue=issue-1&mode=optimize");
+    ).toBe("http://localhost/team-a/training/optimization-runs?issue=issue-1");
   });
 
   it("redirects old top-level training debug links to the combined debug route", () => {

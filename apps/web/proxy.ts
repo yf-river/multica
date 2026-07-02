@@ -61,11 +61,6 @@ export function proxy(req: NextRequest) {
             url.pathname = `/${lastSlug}/run-reviews`;
           } else if (view === "prompt-playground" || view === "agent-playground") {
             url.pathname = `/${lastSlug}/training/debug-runs`;
-          } else if (view === "experiments" || view === "optimization-runs") {
-            url.pathname = `/${lastSlug}/training/test-suites`;
-            if (view === "optimization-runs" && !url.searchParams.has("mode")) {
-              url.searchParams.set("mode", "optimize");
-            }
           } else {
             url.pathname = `/${lastSlug}/training/${view}`;
           }

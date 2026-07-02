@@ -53,28 +53,28 @@ const TRAINING_WORKBENCH_ALL_VIEWS = [
     view: "experiments",
     route: "experiments",
     keywords: ["实验", "experiment", "对比"],
-    visible: false,
+    visible: true,
   },
   {
     tab: "优化运行",
     view: "optimization-runs",
     route: "optimization-runs",
     keywords: ["优化运行", "optimization"],
-    visible: false,
+    visible: true,
   },
   {
     tab: "评测记录",
     view: "evaluation-runs",
     route: "evaluation-runs",
     keywords: ["评测记录", "运行证据", "evaluation", "runs", "evidence", "trace"],
-    visible: false,
+    visible: true,
   },
   {
     tab: "运行历史",
     view: "run-history",
     route: "run-history",
     keywords: ["运行历史", "history", "trace"],
-    visible: false,
+    visible: true,
   },
 ] as const;
 

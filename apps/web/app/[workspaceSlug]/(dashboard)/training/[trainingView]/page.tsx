@@ -8,7 +8,6 @@ import {
 
 const RUN_REVIEW_ROUTES = new Set(["runs", "run-history", "demo-dashboard"]);
 const DEBUG_RUN_ROUTES = new Set(["prompt-playground", "agent-playground"]);
-const TEST_SUITE_ROUTES = new Set(["experiments", "optimization-runs"]);
 type TrainingSearchParams = Record<string, string | string[] | undefined>;
 
 function searchSuffix(
@@ -52,13 +51,6 @@ export default async function TrainingViewPage({
   if (DEBUG_RUN_ROUTES.has(trainingView)) {
     redirect(`${baseTrainingPath}/debug-runs${searchSuffix(resolvedSearchParams)}`);
   }
-  if (TEST_SUITE_ROUTES.has(trainingView)) {
-    redirect(`${baseTrainingPath}/test-suites${searchSuffix(
-      resolvedSearchParams,
-      trainingView === "optimization-runs" ? { mode: "optimize" } : { mode: "experiment" },
-    )}`);
-  }
-
   const view = trainingWorkbenchViewFromRoute(trainingView);
   const canonicalRoute = TRAINING_WORKBENCH_ROUTE_BY_VIEW[view];
 

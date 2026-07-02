@@ -2959,6 +2959,7 @@ function TrainingAssetPanel({
                     {summarizeLinkedDatasetVersions(asset)}
                   </div>
                 )}
+                <ModelComparisonJudgePanel asset={asset} />
                 {asset.asset_type === "数据集" && (
                   <DatasetVersionControls asset={asset} saving={saving} />
                 )}
@@ -3070,6 +3071,33 @@ function TrainingAssetPanel({
         </div>
       )}
     </section>
+  );
+}
+
+function ModelComparisonJudgePanel({ asset }: { asset: PromptEvaluationAsset }) {
+  const summary = modelComparisonJudgeSummary(asset);
+  if (!summary) return null;
+  return (
+    <div className="mt-2 grid gap-2 border-l pl-3 text-xs" data-testid={`model-comparison-judge-${asset.id}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="font-medium text-foreground">模型对比评分</span>
+        <Badge variant="secondary">Judge：{summary.judgeModel}</Badge>
+        {summary.winner && <Badge variant="outline">推荐：{summary.winner}</Badge>}
+      </div>
+      {summary.conclusion && <div className="text-muted-foreground">{summary.conclusion}</div>}
+      <div className="grid gap-1 md:grid-cols-2">
+        {summary.scores.map((score) => (
+          <div key={score.model} className="min-w-0">
+            <div className="flex items-center gap-2">
+              <span className="truncate font-medium text-foreground">{score.model}</span>
+              <Badge variant="outline">{score.totalScore}/100</Badge>
+            </div>
+            {score.dimensionSummary && <div className="mt-0.5 truncate text-muted-foreground">{score.dimensionSummary}</div>}
+            {score.recommendation && <div className="mt-0.5 line-clamp-2 text-muted-foreground">建议：{score.recommendation}</div>}
+          </div>
+        ))}
+      </div>
+    </div>
   );
 }
 
@@ -8157,6 +8185,66 @@ function summarizeAssetPayload(asset: PromptEvaluationAsset, caseSummary?: CaseS
   if (payload["运行结果"]) return "包含运行结果";
   if (asset.asset_type === "实验") return `实验维度事实 ${asset.experiment_dimension_count || (Array.isArray(payload["对比维度"]) ? payload["对比维度"].length : 0)} 个`;
   return cases > 0 ? `${cases} 个用例` : "未记录用例";
+}
+
+type ModelComparisonJudgeScore = {
+  model: string;
+  totalScore: number;
+  dimensionSummary: string;
+  recommendation: string;
+};
+
+type ModelComparisonJudgeSummary = {
+  judgeModel: string;
+  winner: string;
+  conclusion: string;
+  scores: ModelComparisonJudgeScore[];
+};
+
+function modelComparisonJudgeSummary(asset: PromptEvaluationAsset): ModelComparisonJudgeSummary | null {
+  if (asset.asset_type !== "实验") return null;
+  const payload = isRecord(asset.payload) ? asset.payload : {};
+  const judge = isRecord(payload["GPT评审"]) ? payload["GPT评审"] : isRecord(payload["judge"]) ? payload["judge"] : null;
+  if (!judge) return null;
+  const rawScores = Array.isArray(judge["scores"]) ? judge["scores"] : Array.isArray(judge["评分"]) ? judge["评分"] : [];
+  const scores = rawScores
+    .filter(isRecord)
+    .map((item) => {
+      const dimensions = isRecord(item["dimensions"]) ? item["dimensions"] : isRecord(item["分项评分"]) ? item["分项评分"] : {};
+      const dimensionSummary = Object.entries(dimensions)
+        .slice(0, 3)
+        .map(([key, value]) => `${key} ${scoreText(value)}`)
+        .join(" · ");
+      const recommendations = Array.isArray(item["recommendations"])
+        ? item["recommendations"]
+        : Array.isArray(item["改进建议"])
+          ? item["改进建议"]
+          : [];
+      return {
+        model: stringFromRecord(item, "model") || stringFromRecord(item, "模型") || "未记录模型",
+        totalScore: Math.round(numberFromRecord(item, "total_score") ?? numberFromRecord(item, "总分") ?? 0),
+        dimensionSummary,
+        recommendation: recommendations.map((value) => stringFromUnknown(value)).filter(Boolean)[0] ?? stringFromRecord(item, "recommendation") ?? "",
+      };
+    })
+    .filter((item) => item.model !== "未记录模型" || item.totalScore > 0);
+  if (scores.length === 0) return null;
+  const conclusion = isRecord(judge["conclusion"]) ? judge["conclusion"] : {};
+  return {
+    judgeModel: stringFromRecord(judge, "judge_model") || stringFromRecord(judge, "评审模型") || "GPT judge",
+    winner: stringFromRecord(conclusion, "winner") || stringFromRecord(conclusion, "推荐模型") || stringFromRecord(judge, "winner") || "",
+    conclusion: stringFromRecord(conclusion, "summary") || stringFromRecord(conclusion, "结论") || stringFromRecord(judge, "summary") || "",
+    scores,
+  };
+}
+
+function scoreText(value: unknown): string {
+  if (typeof value === "number" && Number.isFinite(value)) return String(Math.round(value));
+  if (isRecord(value)) {
+    const score = numberFromRecord(value, "score") ?? numberFromRecord(value, "得分");
+    return score === null ? stringFromRecord(value, "status") : String(Math.round(score));
+  }
+  return stringFromUnknown(value);
 }
 
 function summarizeStructuredCase(item: PromptEvaluationStructuredCase): string {

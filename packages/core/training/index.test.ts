@@ -17,12 +17,16 @@ describe("training workbench navigation", () => {
     expect(trainingWorkbenchTabFromView("demo-dashboard")).toBe("运行看板");
   });
 
-  it("only exposes the asset and debug workbench routes in navigation", () => {
+  it("exposes the core training loop routes in navigation", () => {
     expect(TRAINING_WORKBENCH_VIEWS.map((item) => item.view)).toEqual([
       "prompts",
       "debug-runs",
       "datasets",
       "test-suites",
+      "experiments",
+      "optimization-runs",
+      "evaluation-runs",
+      "run-history",
     ]);
   });
 
