@@ -153,12 +153,7 @@ func runSquadCreate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("create squad: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
-		return cli.PrintJSON(os.Stdout, result)
-	}
-	fmt.Printf("Squad created: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
-	return nil
+	return printNamedMutationResult(cmd, "Squad", "created", "name", result)
 }
 
 // ── Update ──────────────────────────────────────────────────────────────────
@@ -213,12 +208,7 @@ func runSquadUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update squad: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
-		return cli.PrintJSON(os.Stdout, result)
-	}
-	fmt.Printf("Squad updated: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
-	return nil
+	return printNamedMutationResult(cmd, "Squad", "updated", "name", result)
 }
 
 // ── Delete ──────────────────────────────────────────────────────────────────

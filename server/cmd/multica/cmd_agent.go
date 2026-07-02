@@ -502,13 +502,7 @@ func runAgentCreate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("create agent: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
-		return cli.PrintJSON(os.Stdout, result)
-	}
-
-	fmt.Printf("Agent created: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
-	return nil
+	return printNamedMutationResult(cmd, "Agent", "created", "name", result)
 }
 
 func runAgentUpdate(cmd *cobra.Command, args []string) error {
@@ -591,13 +585,7 @@ func runAgentUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update agent: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
-		return cli.PrintJSON(os.Stdout, result)
-	}
-
-	fmt.Printf("Agent updated: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
-	return nil
+	return printNamedMutationResult(cmd, "Agent", "updated", "name", result)
 }
 
 func runAgentArchive(cmd *cobra.Command, args []string) error {

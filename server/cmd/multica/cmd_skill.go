@@ -319,13 +319,7 @@ func runSkillCreate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("create skill: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
-		return cli.PrintJSON(os.Stdout, result)
-	}
-
-	fmt.Printf("Skill created: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
-	return nil
+	return printNamedMutationResult(cmd, "Skill", "created", "name", result)
 }
 
 func runSkillUpdate(cmd *cobra.Command, args []string) error {
@@ -371,13 +365,7 @@ func runSkillUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update skill: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
-		return cli.PrintJSON(os.Stdout, result)
-	}
-
-	fmt.Printf("Skill updated: %s (%s)\n", strVal(result, "name"), strVal(result, "id"))
-	return nil
+	return printNamedMutationResult(cmd, "Skill", "updated", "name", result)
 }
 
 func runSkillDelete(cmd *cobra.Command, args []string) error {

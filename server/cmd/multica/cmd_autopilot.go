@@ -319,12 +319,7 @@ func runAutopilotCreate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("create autopilot: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
-		return cli.PrintJSON(os.Stdout, result)
-	}
-	fmt.Printf("Autopilot created: %s (%s)\n", strVal(result, "title"), strVal(result, "id"))
-	return nil
+	return printNamedMutationResult(cmd, "Autopilot", "created", "title", result)
 }
 
 func runAutopilotUpdate(cmd *cobra.Command, args []string) error {
@@ -399,12 +394,7 @@ func runAutopilotUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update autopilot: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "json" {
-		return cli.PrintJSON(os.Stdout, result)
-	}
-	fmt.Printf("Autopilot updated: %s (%s)\n", strVal(result, "title"), strVal(result, "id"))
-	return nil
+	return printNamedMutationResult(cmd, "Autopilot", "updated", "title", result)
 }
 
 func runAutopilotDelete(cmd *cobra.Command, args []string) error {
