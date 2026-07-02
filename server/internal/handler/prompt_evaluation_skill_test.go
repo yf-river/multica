@@ -334,8 +334,8 @@ func TestPromptEvaluationSkillApplyCreatesOperationSkill(t *testing.T) {
 	runSkillTestGit(t, repoPath, "commit", "-m", "add verify skill")
 	baseCommit := runSkillTestGit(t, repoPath, "rev-parse", "HEAD")
 
-	newSkillPath := ".codebuddy/skills/historical-benchmark-replay/SKILL.md"
-	newSkill := "# Historical Benchmark Replay\n\n- Run service sandbox curl before changing skills.\n- Preserve trace/eval evidence.\n"
+	newSkillPath := ".codebuddy/skills/user-center-add-api/SKILL.md"
+	newSkill := "# User Center Add API\n\n- Run service sandbox curl before changing APIs.\n- Preserve trace/eval evidence.\n"
 	writeSkillTestFile(t, repoPath, newSkillPath, newSkill)
 	runSkillTestGit(t, repoPath, "add", "-N", newSkillPath)
 	patch := runSkillTestGit(t, repoPath, "diff", "--", newSkillPath)
@@ -374,7 +374,7 @@ func TestPromptEvaluationSkillApplyCreatesOperationSkill(t *testing.T) {
 		SkillPath:          newSkillPath,
 		CandidatePatch:     patch,
 		CandidateIntent:    "create_operation_skill",
-		ChangeReason:       "Historical benchmark replay is a repeated user-center operation.",
+		ChangeReason:       "Adding a user-center API is a repeated operation.",
 		VerificationResult: "Service sandbox curl and eval candidate chain passed.",
 		RollbackPlan:       "Remove the new operation skill directory and CHANGELOG entry.",
 	}, snapshot, map[string]any{"candidate_id": "candidate-create-operation"}, now.Add(2*time.Minute))
@@ -394,11 +394,11 @@ func TestPromptEvaluationSkillApplyCreatesOperationSkill(t *testing.T) {
 	if string(appliedSkill) != newSkill {
 		t.Fatalf("created skill = %q, want %q", string(appliedSkill), newSkill)
 	}
-	changelog, err := os.ReadFile(filepath.Join(repoPath, ".codebuddy/skills/historical-benchmark-replay/CHANGELOG.md"))
+	changelog, err := os.ReadFile(filepath.Join(repoPath, ".codebuddy/skills/user-center-add-api/CHANGELOG.md"))
 	if err != nil {
 		t.Fatalf("read created operation changelog: %v", err)
 	}
-	if !strings.Contains(string(changelog), "Historical benchmark replay is a repeated user-center operation.") {
+	if !strings.Contains(string(changelog), "Adding a user-center API is a repeated operation.") {
 		t.Fatalf("changelog missing reason:\n%s", string(changelog))
 	}
 	appliedSnapshot, err := buildPromptEvaluationSkillAppliedWorktreeSnapshot(CreatePromptEvaluationSkillSnapshotRequest{

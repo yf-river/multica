@@ -236,7 +236,7 @@ describe("ExecutionLogSection trace", () => {
     expect(screen.queryByText("运行复盘")).not.toBeInTheDocument();
   });
 
-  it("keeps a completed task execution summary visible after active work ends", async () => {
+  it("hides the execution log after active work ends", async () => {
     vi.useRealTimers();
     mockState.listTasksByIssue.mockResolvedValue([
       makeTask({
@@ -249,14 +249,45 @@ describe("ExecutionLogSection trace", () => {
 
     renderWithQuery(<ExecutionLogSection issueId="issue-1" />);
 
-    expect(await screen.findByTestId("issue-execution-log-section")).toBeInTheDocument();
-    expect(screen.getByText("Agent：1")).toBeInTheDocument();
-    expect(screen.getByText("任务：1")).toBeInTheDocument();
-    expect(screen.getByText("已完成：1")).toBeInTheDocument();
-    expect(screen.getByText("首次领取：2026-06-08 08:01")).toBeInTheDocument();
-    expect(screen.getByText("首次开始：2026-06-08 08:02")).toBeInTheDocument();
-    expect(screen.getByText("最后完成：2026-06-08 08:07")).toBeInTheDocument();
-    expect(screen.getByText("任务已完成")).toBeInTheDocument();
+    expect(screen.queryByTestId("issue-execution-log-section")).not.toBeInTheDocument();
+    expect(screen.queryByText("已完成：1")).not.toBeInTheDocument();
+    expect(screen.queryByText("任务已完成")).not.toBeInTheDocument();
+  });
+
+  it("hides historical execution tree evidence from the live execution log", async () => {
+    mockState.getIssueExecutionTree.mockResolvedValue({
+      summary: { 任务数: 1, 子任务数: 0, SOP执行数: 1, 观测事件数: 2, 工具调用数: 1, 唤醒评论数: 0 },
+      issue_summary: {
+        issue_id: "issue-1",
+        node_count: 2,
+        total_duration_ms: 60000,
+        total_input_tokens: 10,
+        total_output_tokens: 5,
+        total_cache_read_tokens: 0,
+        total_cache_write_tokens: 0,
+        message_count: 1,
+        agent_turn_count: 1,
+        trace_event_count: 2,
+        usage_unavailable: false,
+        acceptance_status: "completed",
+        full_analysis_deep_link: "/test/run-reviews?issue=issue-1",
+      },
+      root: {
+        issue: { id: "issue-1", title: "历史任务", status: "done" },
+        tasks: [makeTask({ status: "completed", completed_at: "2026-06-08T08:07:00Z" })],
+        sop_runs: [],
+        trace_events: [{ id: "trace-1" }],
+        tool_call_chains: [],
+        tool_call_summary: [],
+        wakeup_comments: [],
+        children: [],
+      },
+      timeline_nodes: [],
+    });
+
+    renderWithQuery(<ExecutionLogSection issueId="issue-1" />);
+
+    expect(screen.queryByTestId("issue-execution-log-section")).not.toBeInTheDocument();
   });
 
   it("renders the collaboration execution tree across parent and child issues", async () => {

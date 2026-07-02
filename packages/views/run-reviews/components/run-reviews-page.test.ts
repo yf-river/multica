@@ -5,14 +5,17 @@ import type { PromptEvaluationToolCallChain } from "@multica/core/types/prompt-e
 import {
   buildIssueReviewDraftCaseRequest,
   buildRunReviewDurationTooltipRows,
+  buildRunReviewLiveSummary,
+  buildRunReviewLiveTimelineNodes,
   buildRunReviewNodeCsv,
   buildRunReviewEventRows,
   buildRunReviewOptimizerHref,
   buildRunReviewRawEventsCsv,
   issueRunRowActivityLabel,
   issueRunRowMetaLabels,
-  runReviewEventHasDetails,
+  runReviewMessageRefreshDelayMs,
   runReviewTotalDurationMs,
+  shouldRefreshRunReviewForTaskEvent,
 } from "./run-reviews-page";
 import { sopStageDisplayName } from "../../common/sop-stage-labels";
 
@@ -161,6 +164,83 @@ describe("run review duration summary", () => {
     })).toContainEqual(["人工确认耗时", "0m"]);
 
     expect(buildRunReviewDurationTooltipRows(undefined)).toContainEqual(["人工确认耗时", "暂未记录"]);
+  });
+});
+
+describe("run review realtime helpers", () => {
+  it("only refreshes the selected issue for task events", () => {
+    expect(shouldRefreshRunReviewForTaskEvent("issue-1", { issue_id: "issue-1" })).toBe(true);
+    expect(shouldRefreshRunReviewForTaskEvent("issue-1", { issue_id: "issue-2" })).toBe(false);
+    expect(shouldRefreshRunReviewForTaskEvent("issue-1", null)).toBe(false);
+  });
+
+  it("debounces message refreshes while bounding long streaming waits", () => {
+    expect(runReviewMessageRefreshDelayMs(10_000, 0, 1_200, 4_000)).toBe(1_200);
+    expect(runReviewMessageRefreshDelayMs(10_000, 9_000, 1_200, 4_000)).toBe(1_200);
+    expect(runReviewMessageRefreshDelayMs(10_000, 6_500, 1_200, 4_000)).toBe(500);
+    expect(runReviewMessageRefreshDelayMs(10_000, 6_000, 1_200, 4_000)).toBe(0);
+  });
+
+  it("derives live running durations without changing completed nodes", () => {
+    const nowMs = Date.parse("2026-06-09T10:03:00.000Z");
+    const runningTask = task({
+      status: "running",
+      started_at: "2026-06-09T10:00:00.000Z",
+      completed_at: null,
+    });
+    const runningNode = {
+      issue_id: "issue-1",
+      node_id: "task:task-1",
+      node_type: "agent_task",
+      status: "running",
+      started_at: "2026-06-09T10:01:00.000Z",
+      completed_at: "",
+      duration_ms: 15_000,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      message_count: 0,
+      agent_turn_count: 0,
+      trace_event_count: 0,
+      usage_unavailable_trace: false,
+      summary: "running",
+      evidence_refs: [],
+    } as IssueTimelineNode;
+    const completedNode = {
+      ...runningNode,
+      node_id: "task:task-2",
+      status: "completed",
+      completed_at: "2026-06-09T10:02:00.000Z",
+      duration_ms: 60_000,
+    } as IssueTimelineNode;
+    const summary = {
+      issue_id: "issue-1",
+      node_count: 2,
+      total_duration_ms: 60_000,
+      agent_execution_duration_ms: 60_000,
+      wall_clock_duration_ms: 60_000,
+      total_input_tokens: 0,
+      total_output_tokens: 0,
+      total_cache_read_tokens: 0,
+      total_cache_write_tokens: 0,
+      message_count: 0,
+      agent_turn_count: 0,
+      trace_event_count: 0,
+      usage_unavailable: false,
+      acceptance_status: "running",
+      full_analysis_deep_link: "",
+    };
+
+    expect(buildRunReviewLiveSummary(summary, [runningTask], [runningNode, completedNode], nowMs)).toMatchObject({
+      total_duration_ms: 180_000,
+      agent_execution_duration_ms: 180_000,
+      wall_clock_duration_ms: 180_000,
+    });
+    expect(buildRunReviewLiveTimelineNodes([runningNode, completedNode], nowMs).map((node) => node.duration_ms)).toEqual([
+      120_000,
+      60_000,
+    ]);
   });
 });
 
@@ -567,27 +647,6 @@ describe("buildRunReviewEventRows", () => {
     expect(csv).toContain("task_trace_event");
     expect(csv).toContain('"{\n  ""id"": ""trace-1"",\n  ""event_type"": ""task.failed""\n}"');
     expect(csv).toContain("关联 task_message #1 文本");
-  });
-
-  it("only expands inline details when an event has evidence to show", () => {
-    expect(runReviewEventHasDetails({
-      detail: "",
-      metadataDetail: "",
-      rawPayload: undefined,
-      linkedRawPayloads: [],
-    })).toBe(false);
-    expect(runReviewEventHasDetails({
-      detail: "raw stdout",
-      metadataDetail: "",
-      rawPayload: undefined,
-      linkedRawPayloads: [],
-    })).toBe(true);
-    expect(runReviewEventHasDetails({
-      detail: "",
-      metadataDetail: "",
-      rawPayload: { id: "trace-1" },
-      linkedRawPayloads: [],
-    })).toBe(true);
   });
 
   it("creates a draft evaluation case with run snapshot, prompt snapshots, tools, and assertions", () => {

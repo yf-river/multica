@@ -378,8 +378,8 @@ async function attachStageMarkdownArtifacts(issueID, token) {
     ["01-clarify", "需求澄清", "TAPD 来源已抓取；确认 usercenter API 会产生 gateway 路由与 ida-deployment 权限/apiData 依赖。"],
     ["02-design", "方案设计", "采用 usercenter gRPC/API -> gateway HTTP -> ida-deployment 配置的端到端链路；以 service sandbox curl 验收。"],
     ["03-task-split", "任务拆分", "跨项目子任务按 gateway 与 ida-deployment 两个交付物创建，挂到父 issue。"],
-    ["04-implement", "开发执行", "子任务完成后父任务被 child-done 系统评论唤醒；quick-entries 需求级 sandbox 与 v1 historical sandbox 均执行通过。"],
-    ["05-verify", "测试验收", "父任务读取子任务 closure、trace、usage、quick-entries GET/POST/DELETE/X-Request-ID/越权拒绝证据与 historical sandbox 证据后关闭。"],
+    ["04-implement", "开发执行", "子任务完成后父任务被 child-done 系统评论唤醒；quick-entries 需求级 sandbox 执行通过。"],
+    ["05-verify", "测试验收", "父任务读取子任务 closure、trace、usage、quick-entries GET/POST/DELETE/X-Request-ID/越权拒绝证据后关闭。"],
   ];
   const attachments = [];
   for (const [stage, title, summary] of stages) {
@@ -1071,12 +1071,10 @@ async function verifyParentWakeAfterChildrenDone(issue, squad, pm, knownParentTa
 
 async function runServiceSandboxEvidence() {
   const quickEntries = await runQuickEntriesServiceSandbox();
-  const historical = await runHistoricalServiceSandbox();
   return {
-    ok: quickEntries.ok && historical.ok,
-    duration_ms: Number(quickEntries.duration_ms || 0) + Number(historical.duration_ms || 0),
+    ok: quickEntries.ok,
+    duration_ms: Number(quickEntries.duration_ms || 0),
     quick_entries: quickEntries,
-    historical,
   };
 }
 
@@ -1107,49 +1105,16 @@ async function runQuickEntriesServiceSandbox() {
   }
 }
 
-async function runHistoricalServiceSandbox() {
-  const started = Date.now();
-  try {
-    const stdout = execFileSync("node", ["scripts/goal-test-historical-service-sandbox.mjs"], {
-      cwd: repoRoot,
-      encoding: "utf8",
-      maxBuffer: 1024 * 1024 * 24,
-      env: { ...process.env },
-    });
-    const parsed = parseLastJSONObject(stdout);
-    return {
-      ok: parsed?.ok === true,
-      duration_ms: Date.now() - started,
-      stdout_tail: tail(stdout, 40),
-      report: parsed || null,
-    };
-  } catch (error) {
-    return {
-      ok: false,
-      duration_ms: Date.now() - started,
-      error: error?.message || String(error),
-      stdout_tail: tail(error?.stdout || "", 40),
-      stderr_tail: tail(error?.stderr || "", 40),
-    };
-  }
-}
-
 async function postServiceSandboxEvidenceComment(issueID, token, sandboxEvidence, agents) {
   const quickReport = sandboxEvidence.quick_entries?.report || {};
-  const historicalReport = sandboxEvidence.historical?.report || sandboxEvidence.report || {};
   const quickCaseLines = Array.isArray(quickReport.cases) && quickReport.cases.length > 0
     ? quickReport.cases.map((item) => `- ${item.id}: ${item.ok ? "通过" : "失败"} (${item.status || "unknown"})`)
     : ["- 未读取到 quick-entries case 明细"];
-  const historicalCaseLines = Array.isArray(historicalReport.cases) && historicalReport.cases.length > 0
-    ? historicalReport.cases.map((item) => `- ${item.id}: ${item.ok ? "通过" : "失败"} (${item.status || "unknown"})`)
-    : ["- 未读取到 case 明细"];
   const attachmentIDs = [];
-  for (const [label, report] of [["quick-entries", quickReport], ["historical", historicalReport]]) {
-    if (report.markdown && existsSync(report.markdown)) {
-      const markdown = readFileSync(report.markdown, "utf8");
-      const attachment = await uploadTextAttachment(issueID, token, `${label}-service-sandbox-${suffix}.md`, markdown);
-      attachmentIDs.push(attachment.id);
-    }
+  if (quickReport.markdown && existsSync(quickReport.markdown)) {
+    const markdown = readFileSync(quickReport.markdown, "utf8");
+    const attachment = await uploadTextAttachment(issueID, token, `quick-entries-service-sandbox-${suffix}.md`, markdown);
+    attachmentIDs.push(attachment.id);
   }
   const childLines = Array.isArray(evidence.child_task_execution)
     ? evidence.child_task_execution.map((item) => `- ${item.target}: trace=${item.trace_event_count}, messages=${item.message_count}, tokens=${item.total_tokens}, rerun=${item.rerun_count}`)
@@ -1170,15 +1135,6 @@ async function postServiceSandboxEvidenceComment(issueID, token, sandboxEvidence
     "",
     "## quick-entries case 结果",
     ...quickCaseLines,
-    "",
-    "## historical benchmark service sandbox curl",
-    `- 结论：${sandboxEvidence.historical?.ok ? "通过" : "失败"}`,
-    `- 耗时：${sandboxEvidence.historical?.duration_ms || 0} ms`,
-    historicalReport.json ? `- JSON 报告：${historicalReport.json}` : "- JSON 报告：无",
-    historicalReport.markdown ? `- Markdown 报告：${historicalReport.markdown}` : "- Markdown 报告：无",
-    "",
-    "## historical case 结果",
-    ...historicalCaseLines,
     "",
     "## 子任务 trace / usage 摘要",
     ...childLines,

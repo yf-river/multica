@@ -53,7 +53,7 @@ provider webhook guessing from text.
 When an issue run changes code in a checked-out Gongfeng repo, the default handoff
 is to create the MR through the Multica platform before posting the final issue
 comment, unless the user explicitly asked for a local-only change or no MR. This
-is a default, not an unconditional command: if no code changed, say no MR is
+This is a default, not an unconditional command: if no code changed, say no MR is
 needed; if MR creation is blocked by auth, failing tests, or missing remote
 branch state, report that blocker instead of pretending the run is complete.
 

@@ -72,14 +72,22 @@ function listChangedFiles() {
 
 function classifyChanges(files) {
   const normalized = files.map((file) => file.replace(/\\/g, "/"));
+  const existing = normalized.filter((file) => existsSync(path.join(repoRoot, file)));
   const has = (predicate) => normalized.some(predicate);
-  const scriptFiles = normalized.filter((file) => /^scripts\/.*\.(?:mjs|js)$/.test(file));
-  const e2eSpecs = normalized.filter((file) => /^e2e\/.*\.spec\.ts$/.test(file));
+  const scriptFiles = existing.filter((file) => /^scripts\/.*\.(?:mjs|js)$/.test(file));
+  const e2eSpecs = existing.filter((file) => /^e2e\/.*\.spec\.ts$/.test(file));
   const docsOnly = normalized.length > 0 && normalized.every(isDocsOnlyFile);
   const trainingRelated = has((file) =>
     file.includes("prompt-library") ||
     file.includes("training") ||
     file.includes("prompt-evaluation") ||
+    file.includes("goal-test-dashboard-click-audit") ||
+    file.includes("goal-test-training-performance") ||
+    file.includes("goal-test-playground-difference-audit"),
+  );
+  const trainingUiChanged = existing.some((file) =>
+    file.includes("prompt-library") ||
+    file.includes("training") ||
     file.includes("goal-test-dashboard-click-audit") ||
     file.includes("goal-test-training-performance") ||
     file.includes("goal-test-playground-difference-audit"),
@@ -107,6 +115,7 @@ function classifyChanges(files) {
       file === "scripts/goal-test-playground-difference-audit.mjs",
     ),
     training_related: trainingRelated,
+    training_ui_changed: trainingUiChanged,
   };
 }
 
@@ -143,7 +152,7 @@ function buildCommands(mode, info) {
     add("core-training-test", "pnpm --filter @multica/core test -- training/index.test.ts", "Core changed; run the focused training/core tests used by goal-test slices.");
   }
   if (info.server_changed) {
-    add("server-focused-test", "cd server && GOWORK=off go test ./internal/handler ./internal/service", "Server changed; run focused backend service and handler tests.");
+    add("server-focused-test", "cd server && env -u DATABASE_URL GOWORK=off go test ./internal/handler ./internal/service", "Server changed; run focused backend service and handler tests without the goal-test deployment database.");
   }
 
   if (info.e2e_specs.length > 0) {
@@ -185,8 +194,8 @@ function buildCommands(mode, info) {
 }
 
 function shouldRunFocusedTrainingE2E(mode, info) {
-  if (mode === "dev" && !info.training_related) return false;
-  return info.training_related && (info.views_changed || info.web_changed || info.core_changed);
+  if (mode === "dev" && !info.training_ui_changed) return false;
+  return info.training_ui_changed && (info.views_changed || info.web_changed || info.core_changed);
 }
 
 function shouldDeploy(info) {

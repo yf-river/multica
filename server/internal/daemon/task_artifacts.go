@@ -253,7 +253,6 @@ func (d *Daemon) collectAndPostTaskArtifacts(ctx context.Context, task Task, wor
 
 func taskArtifactCommentContent(attachments []uploadedTaskArtifact) string {
 	var b strings.Builder
-	b.WriteString("Agent 产物已自动收拢到平台。\n\n")
 	for _, att := range attachments {
 		label := escapeMarkdownLabel(firstNonEmptyString(att.Filename, att.ID))
 		href := firstNonEmptyString(att.MarkdownURL, att.DownloadURL, "/api/attachments/"+att.ID+"/download")

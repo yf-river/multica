@@ -473,11 +473,20 @@ async function runNaturalSOPFlow(agents, knownTasks) {
     const stage = agentToStage[task.agent_id] || "unknown";
     if (task.status !== "completed") {
       if (task.failure_reason === "runtime_recovery") {
+        const attemptsExhausted =
+          Number(task.max_attempts || 0) > 0 &&
+          Number(task.attempt || 0) >= Number(task.max_attempts || 0);
         evidence.pm_route_recoveries.push({
           stage,
           task: pickTask(task),
-          reason: "daemon/runtime recovery; waiting for platform retry",
+          reason: attemptsExhausted
+            ? "daemon/runtime recovery exhausted task retries"
+            : "daemon/runtime recovery; waiting for platform retry",
         });
+        if (attemptsExhausted) {
+          const messages = await safeGet(`/api/tasks/${task.id}/messages`);
+          fail(`${stage} task exhausted runtime recovery retries`, { task, messages });
+        }
         continue;
       }
       const messages = await safeGet(`/api/tasks/${task.id}/messages`);
@@ -889,7 +898,7 @@ function pickIssue(item) {
 }
 
 function pickTask(item) {
-  return pick(item, ["id", "agent_id", "status", "created_at", "started_at", "completed_at", "failure_reason", "error", "is_leader_task"]);
+  return pick(item, ["id", "agent_id", "status", "created_at", "started_at", "completed_at", "failure_reason", "error", "attempt", "max_attempts", "is_leader_task", "work_dir"]);
 }
 
 function pickComment(item) {

@@ -4735,7 +4735,7 @@ func buildPromptEvaluationToolCallChains(messages []protocol.TaskMessagePayload)
 				chains[index].Output = message.Output
 				chains[index].DurationMs = promptEvaluationDurationBetween(chains[index].CreatedAt, message.CreatedAt)
 				chains[index].ResultCategory = "已返回"
-				if failureSignal, failureReason := promptEvaluationToolFailureSignal(message.Output); failureSignal {
+				if failureSignal, failureReason := promptEvaluationToolFailureSignal(tool, message.Output); failureSignal {
 					chains[index].FailureSignal = true
 					chains[index].FailureReason = failureReason
 					chains[index].ResultCategory = "异常线索"
@@ -4875,16 +4875,22 @@ func promptEvaluationDurationBetween(start string, end string) int64 {
 	return endAt.Sub(startAt).Milliseconds()
 }
 
-func promptEvaluationToolFailureSignal(output string) (bool, string) {
+func promptEvaluationToolFailureSignal(tool string, output string) (bool, string) {
 	normalized := strings.ToLower(strings.TrimSpace(output))
 	if normalized == "" {
 		return false, ""
 	}
+	if exitCode, ok := promptEvaluationToolExitCode(normalized); ok {
+		if exitCode == 0 {
+			return false, ""
+		}
+		return true, fmt.Sprintf("工具结果包含非零退出码 %d", exitCode)
+	}
 	if statusCode := promptEvaluationToolHTTPStatusCode(normalized); statusCode >= 400 {
 		return true, fmt.Sprintf("工具结果包含 HTTP 状态码 %d", statusCode)
 	}
-	if exitCode, ok := promptEvaluationToolExitCode(normalized); ok && exitCode != 0 {
-		return true, fmt.Sprintf("工具结果包含非零退出码 %d", exitCode)
+	if promptEvaluationToolResultIsContentOnly(tool) {
+		return false, ""
 	}
 	patterns := []struct {
 		needle string
@@ -4916,6 +4922,15 @@ func promptEvaluationToolFailureSignal(output string) (bool, string) {
 		}
 	}
 	return false, ""
+}
+
+func promptEvaluationToolResultIsContentOnly(tool string) bool {
+	switch strings.ToLower(strings.TrimSpace(tool)) {
+	case "read", "grep", "glob":
+		return true
+	default:
+		return false
+	}
 }
 
 func promptEvaluationToolHTTPStatusCode(output string) int {

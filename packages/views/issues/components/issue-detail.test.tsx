@@ -752,7 +752,7 @@ describe("IssueDetail (shared)", () => {
     expect(screen.queryByRole("button", { name: /^元数据\b/ })).not.toBeInTheDocument();
   });
 
-  it("renders the run review card above the execution log", async () => {
+  it("renders the run review card without keeping the completed execution log", async () => {
     mockApiObj.listTasksByIssue.mockResolvedValue([
       {
         id: "task-1",
@@ -773,12 +773,8 @@ describe("IssueDetail (shared)", () => {
 
     renderIssueDetail();
 
-    const review = await screen.findByTestId("issue-run-review-summary-card");
-    const log = await screen.findByTestId("issue-execution-log-section");
-
-    expect(
-      review.compareDocumentPosition(log) & Node.DOCUMENT_POSITION_FOLLOWING,
-    ).toBeTruthy();
+    expect(await screen.findByTestId("issue-run-review-summary-card")).toBeInTheDocument();
+    expect(screen.queryByTestId("issue-execution-log-section")).not.toBeInTheDocument();
   });
 
   it("renders Details section with Created by and dates", async () => {

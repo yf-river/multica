@@ -121,7 +121,7 @@ func TestCollectAndPostTaskArtifactsUploadsAndLinksCommentAsTask(t *testing.T) {
 				t.Errorf("parent_id = %#v", got)
 			}
 			content, _ := body["content"].(string)
-			if !strings.Contains(content, "Agent 产物已自动收拢到平台") || !strings.Contains(content, "!file[05-verify.md](/api/attachments/att-1/download)") {
+			if strings.Contains(content, "Agent 产物已自动收拢到平台") || !strings.Contains(content, "!file[05-verify.md](/api/attachments/att-1/download)") {
 				t.Errorf("unexpected content: %q", content)
 			}
 			ids, ok := body["attachment_ids"].([]any)

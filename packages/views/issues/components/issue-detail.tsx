@@ -1720,7 +1720,7 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           breakdowns live on the run review page. */}
       <IssueRunReviewSummaryCard issueId={id} />
 
-      {/* Execution log — lightweight execution summary plus active run status. */}
+      {/* Execution log — active run status only; historical evidence lives in run review. */}
       <ExecutionLogSection issueId={id} />
     </div>
   );

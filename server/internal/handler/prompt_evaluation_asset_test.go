@@ -128,36 +128,107 @@ func TestBuildPromptEvaluationExecutionEvidencePairsToolCalls(t *testing.T) {
 func TestPromptEvaluationToolFailureSignalExtractsStructuredStatus(t *testing.T) {
 	tests := []struct {
 		name       string
+		tool       string
 		output     string
 		wantSignal bool
 		wantReason string
 	}{
 		{
 			name:       "http status",
+			tool:       "curl",
 			output:     "Error: HTTP 503 from upstream",
 			wantSignal: true,
 			wantReason: "工具结果包含 HTTP 状态码 503",
 		},
 		{
 			name:       "exit status",
+			tool:       "Bash",
 			output:     "command failed with exit status 2",
 			wantSignal: true,
 			wantReason: "工具结果包含非零退出码 2",
 		},
 		{
 			name:       "zero exit",
+			tool:       "Bash",
 			output:     "command exited with status 0",
 			wantSignal: false,
 			wantReason: "",
 		},
+		{
+			name: "read source with failure text",
+			tool: "Read",
+			output: `return biz_err.NewFromCodeWithErr(
+				consts.ErrDatabaseUpdateFailed,
+				err,
+			).WithMsg("密码修改失败").Log(l.Ctx)`,
+			wantSignal: false,
+			wantReason: "",
+		},
+		{
+			name: "successful bash output containing source failure text",
+			tool: "Bash",
+			output: `Stdout: consts.ErrDatabaseUpdateFailed
+return biz_err.NewFromCodeWithErrMsgDetails(consts.ErrDatabaseUpdateFailed, err, "密码修改失败", "changePWD UpdatesMapById err")
+
+Stderr: (empty)
+Exit Code: 0
+Signal: (none)`,
+			wantSignal: false,
+			wantReason: "",
+		},
+		{
+			name:       "nonzero bash exit still fails",
+			tool:       "Bash",
+			output:     "Stdout: ok\nStderr: command failed\nExit Code: 2\nSignal: (none)",
+			wantSignal: true,
+			wantReason: "工具结果包含非零退出码 2",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			gotSignal, gotReason := promptEvaluationToolFailureSignal(tt.output)
+			gotSignal, gotReason := promptEvaluationToolFailureSignal(tt.tool, tt.output)
 			if gotSignal != tt.wantSignal || gotReason != tt.wantReason {
 				t.Fatalf("promptEvaluationToolFailureSignal(%q) = (%v, %q), want (%v, %q)", tt.output, gotSignal, gotReason, tt.wantSignal, tt.wantReason)
 			}
 		})
+	}
+}
+
+func TestBuildPromptEvaluationToolCallChainsIgnoresReadSourceFailureText(t *testing.T) {
+	messages := []protocol.TaskMessagePayload{
+		{
+			TaskID:    "task-1",
+			Seq:       1,
+			Type:      "tool_use",
+			Tool:      "Read",
+			Input:     map[string]any{"file_path": "internal/logic/change_pwd_logic.go"},
+			CreatedAt: "2026-06-24T00:00:01Z",
+		},
+		{
+			TaskID: "task-1",
+			Seq:    2,
+			Type:   "tool_result",
+			Tool:   "Read",
+			Output: `consts.ErrDatabaseUpdateFailed
+return biz_err.NewFromCodeWithErrMsgDetails(consts.ErrDatabaseUpdateFailed, err, "密码修改失败", "changePWD UpdatesMapById err")`,
+			CreatedAt: "2026-06-24T00:00:02Z",
+		},
+	}
+
+	chains := buildPromptEvaluationToolCallChains(messages)
+	if len(chains) != 1 {
+		t.Fatalf("tool chains = %+v, want one chain", chains)
+	}
+	if chains[0].FailureSignal || chains[0].ResultCategory != "已返回" || chains[0].FailureReason != "" {
+		t.Fatalf("read source chain = %+v, want normal result", chains[0])
+	}
+
+	summary := buildPromptEvaluationToolCallSummary(chains)
+	if len(summary) != 1 {
+		t.Fatalf("tool summary = %+v, want one row", summary)
+	}
+	if summary[0].NeedsAttention || summary[0].FailureSignalCalls != 0 {
+		t.Fatalf("read source summary = %+v, want no attention", summary[0])
 	}
 }
 

@@ -91,7 +91,6 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
     [tasks],
   );
 
-  const hasExecutionTree = hasMeaningfulExecutionTree(executionTree);
   const latestSOPRun = useMemo(() => sopRuns[0] ?? null, [sopRuns]);
   const currentStage = latestSOPRun?.current_step_key || "";
   const recentEvents = useMemo(
@@ -102,12 +101,7 @@ export function ExecutionLogSection({ issueId }: ExecutionLogSectionProps) {
     () => buildExecutionSummary(allTasks, allTraceEvents, sopRuns),
     [allTasks, allTraceEvents, sopRuns],
   );
-  const shouldShowExecutionLog =
-    hasExecutionTree ||
-    activeTasks.length > 0 ||
-    allTasks.length > 0 ||
-    allTraceEvents.length > 0 ||
-    sopRuns.length > 0;
+  const shouldShowExecutionLog = activeTasks.length > 0;
 
   if (!shouldShowExecutionLog) return null;
 

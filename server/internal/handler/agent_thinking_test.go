@@ -33,7 +33,7 @@ func TestCreateAgent_ThinkingLevel_ValidationConsistency(t *testing.T) {
 		body := map[string]any{
 			"name":                 "thinking-test-empty",
 			"runtime_id":           claudeRuntimeID,
-			"scope": "personal",
+			"scope":                "personal",
 			"max_concurrent_tasks": 1,
 			"thinking_level":       "",
 		}
@@ -48,7 +48,7 @@ func TestCreateAgent_ThinkingLevel_ValidationConsistency(t *testing.T) {
 		body := map[string]any{
 			"name":                 "thinking-test-known",
 			"runtime_id":           claudeRuntimeID,
-			"scope": "personal",
+			"scope":                "personal",
 			"max_concurrent_tasks": 1,
 			"thinking_level":       "high",
 		}
@@ -71,7 +71,7 @@ func TestCreateAgent_ThinkingLevel_ValidationConsistency(t *testing.T) {
 		body := map[string]any{
 			"name":                 "thinking-test-codex-only",
 			"runtime_id":           claudeRuntimeID,
-			"scope": "personal",
+			"scope":                "personal",
 			"max_concurrent_tasks": 1,
 			"thinking_level":       "none",
 		}
@@ -86,7 +86,7 @@ func TestCreateAgent_ThinkingLevel_ValidationConsistency(t *testing.T) {
 		body := map[string]any{
 			"name":                 "thinking-test-garbage",
 			"runtime_id":           claudeRuntimeID,
-			"scope": "personal",
+			"scope":                "personal",
 			"max_concurrent_tasks": 1,
 			"thinking_level":       "supersonic",
 		}
@@ -415,9 +415,9 @@ func createCodexProviderRuntime(t *testing.T) string {
 	err := testPool.QueryRow(context.Background(), `
 		INSERT INTO agent_runtime (
 			workspace_id, daemon_id, name, runtime_mode, provider, status,
-			device_info, metadata, last_seen_at, owner_id
+			device_info, metadata, last_seen_at, owner_id, scope
 		)
-		VALUES ($1, NULL, $2, 'cloud', 'codex', 'online', $3, '{}'::jsonb, now(), $4)
+		VALUES ($1, NULL, $2, 'cloud', 'codex', 'online', $3, '{}'::jsonb, now(), $4, 'personal')
 		RETURNING id
 	`, testWorkspaceID, "Codex Thinking Runtime", "Codex thinking-level test runtime", testUserID).Scan(&runtimeID)
 	if err != nil {
@@ -439,9 +439,9 @@ func createClaudeProviderRuntime(t *testing.T) string {
 	err := testPool.QueryRow(context.Background(), `
 		INSERT INTO agent_runtime (
 			workspace_id, daemon_id, name, runtime_mode, provider, status,
-			device_info, metadata, last_seen_at, owner_id
+			device_info, metadata, last_seen_at, owner_id, scope
 		)
-		VALUES ($1, NULL, $2, 'cloud', 'claude', 'online', $3, '{}'::jsonb, now(), $4)
+		VALUES ($1, NULL, $2, 'cloud', 'claude', 'online', $3, '{}'::jsonb, now(), $4, 'personal')
 		RETURNING id
 	`, testWorkspaceID, "Claude Thinking Runtime", "Claude thinking-level test runtime", testUserID).Scan(&runtimeID)
 	if err != nil {

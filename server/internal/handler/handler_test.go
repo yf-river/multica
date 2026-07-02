@@ -119,9 +119,9 @@ func setupHandlerTestFixture(ctx context.Context, pool *pgxpool.Pool) (string, s
 	var runtimeID string
 	if err := pool.QueryRow(ctx, `
 		INSERT INTO agent_runtime (
-			workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, last_seen_at
+			workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at
 		)
-		VALUES ($1, NULL, $2, 'cloud', $3, 'online', $4, '{}'::jsonb, $5, now())
+		VALUES ($1, NULL, $2, 'cloud', $3, 'online', $4, '{}'::jsonb, $5, 'personal', now())
 		RETURNING id
 	`, workspaceID, "Handler Test Runtime", "handler_test_runtime", "Handler test runtime", userID).Scan(&runtimeID); err != nil {
 		return "", "", err
@@ -133,7 +133,7 @@ func setupHandlerTestFixture(ctx context.Context, pool *pgxpool.Pool) (string, s
 			workspace_id, name, description, runtime_mode, runtime_config,
 			runtime_id, scope, max_concurrent_tasks, owner_id
 		)
-		VALUES ($1, $2, '', 'cloud', '{}'::jsonb, $3, 'workspace', 1, $4)
+		VALUES ($1, $2, '', 'cloud', '{}'::jsonb, $3, 'personal', 1, $4)
 	`, workspaceID, "Handler Test Agent", runtimeID, userID); err != nil {
 		return "", "", err
 	}

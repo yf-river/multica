@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Activity, AlertTriangle, Download, GitBranch, HelpCircle, ListChecks, Loader2, RotateCcw, Timer, WifiOff } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -9,7 +9,17 @@ import { issueExecutionTreeOptions, issueKeys, issueListOptions } from "@multica
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type { AgentTask, AgentTaskArtifact, CreatePromptEvaluationCaseRequest, Issue, IssueTimelineNode, IssueTimelineSummary, IssueExecutionNode, IssueExecutionTreeResponse, TaskTraceEvent } from "@multica/core/types";
-import type { TaskMessagePayload } from "@multica/core/types/events";
+import { useWSEvent, useWSReconnect } from "@multica/core/realtime";
+import type {
+  TaskCancelledPayload,
+  TaskCompletedPayload,
+  TaskDispatchPayload,
+  TaskFailedPayload,
+  TaskMessagePayload,
+  TaskQueuedPayload,
+  TaskRunningPayload,
+  TaskWaitingLocalDirectoryPayload,
+} from "@multica/core/types/events";
 import type { PromptEvaluationToolCallChain } from "@multica/core/types/prompt-evaluation";
 import { cn } from "@multica/ui/lib/utils";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
@@ -22,6 +32,9 @@ import { SOP_STAGE_DEFINITIONS, normalizeSopStageName, sopStageDisplayName } fro
 const STAGES = SOP_STAGE_DEFINITIONS;
 
 const ISSUE_REVIEW_DRAFT_DATASET_NAME = "Issue 复盘评测 Draft";
+const RUN_REVIEW_MESSAGE_REFRESH_DEBOUNCE_MS = 1_200;
+const RUN_REVIEW_MESSAGE_REFRESH_MAX_WAIT_MS = 4_000;
+const RUN_REVIEW_LIVE_DURATION_TICK_MS = 1_000;
 
 export function buildRunReviewOptimizerHref(trainingView: (view: string) => string, issueId: string): string {
   return `${trainingView("evaluation-runs")}?issue=${encodeURIComponent(issueId)}`;
@@ -36,6 +49,65 @@ export function buildRunReviewDurationTooltipRows(summary: IssueTimelineSummary 
     ["Agent 执行耗时", formatDuration(summary?.agent_execution_duration_ms ?? summary?.total_duration_ms ?? 0)],
     ["人工确认耗时", formatOptionalDuration(summary?.human_confirmation_duration_ms)],
   ];
+}
+
+export function buildRunReviewLiveSummary(
+  summary: IssueTimelineSummary | undefined,
+  activeTasks: AgentTask[],
+  timelineNodes: IssueTimelineNode[],
+  nowMs: number,
+): IssueTimelineSummary | undefined {
+  if (!summary) return summary;
+  const liveDurationMs = Math.max(
+    0,
+    ...activeTasks.map((task) => liveElapsedMs(task.started_at ?? task.dispatched_at ?? task.created_at, nowMs)),
+    ...timelineNodes
+      .filter(isActiveTimelineNode)
+      .map((node) => liveElapsedMs(node.started_at, nowMs)),
+  );
+  if (liveDurationMs <= 0) return summary;
+  return {
+    ...summary,
+    total_duration_ms: Math.max(summary.total_duration_ms ?? 0, liveDurationMs),
+    agent_execution_duration_ms: Math.max(summary.agent_execution_duration_ms ?? summary.total_duration_ms ?? 0, liveDurationMs),
+    wall_clock_duration_ms: summary.wall_clock_duration_ms == null
+      ? summary.wall_clock_duration_ms
+      : Math.max(summary.wall_clock_duration_ms, liveDurationMs),
+  };
+}
+
+export function buildRunReviewLiveTimelineNodes(timelineNodes: IssueTimelineNode[], nowMs: number): IssueTimelineNode[] {
+  return timelineNodes.map((node) => {
+    if (!isActiveTimelineNode(node)) return node;
+    const durationMs = liveElapsedMs(node.started_at, nowMs);
+    if (durationMs <= (node.duration_ms ?? 0)) return node;
+    return { ...node, duration_ms: durationMs };
+  });
+}
+
+function useRunReviewLiveNow(active: boolean) {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return;
+    setNowMs(Date.now());
+    const timer = setInterval(() => setNowMs(Date.now()), RUN_REVIEW_LIVE_DURATION_TICK_MS);
+    return () => clearInterval(timer);
+  }, [active]);
+  return nowMs;
+}
+
+function liveElapsedMs(startedAt: string | null | undefined, nowMs: number) {
+  const startedMs = parseTimeMs(startedAt ?? undefined);
+  if (startedMs === null || startedMs > nowMs) return 0;
+  return nowMs - startedMs;
+}
+
+function hasActiveTimelineNode(timelineNodes: IssueTimelineNode[]) {
+  return timelineNodes.some(isActiveTimelineNode);
+}
+
+function isActiveTimelineNode(node: Pick<IssueTimelineNode, "status" | "started_at" | "completed_at">) {
+  return isActiveStatus(node.status) && Boolean(node.started_at) && !node.completed_at;
 }
 
 export function RunReviewsPage() {
@@ -155,6 +227,88 @@ export function issueRunRowActivityLabel(
   return null;
 }
 
+type RunReviewTaskEventPayload =
+  | TaskQueuedPayload
+  | TaskDispatchPayload
+  | TaskRunningPayload
+  | TaskWaitingLocalDirectoryPayload
+  | TaskCompletedPayload
+  | TaskFailedPayload
+  | TaskCancelledPayload
+  | TaskMessagePayload;
+
+export function shouldRefreshRunReviewForTaskEvent(issueId: string, payload: Pick<RunReviewTaskEventPayload, "issue_id"> | null | undefined): boolean {
+  return Boolean(issueId && payload?.issue_id === issueId);
+}
+
+export function runReviewMessageRefreshDelayMs(
+  nowMs: number,
+  lastRefreshAtMs: number,
+  debounceMs = RUN_REVIEW_MESSAGE_REFRESH_DEBOUNCE_MS,
+  maxWaitMs = RUN_REVIEW_MESSAGE_REFRESH_MAX_WAIT_MS,
+): number {
+  if (lastRefreshAtMs <= 0) return debounceMs;
+  const elapsedMs = Math.max(0, nowMs - lastRefreshAtMs);
+  if (elapsedMs >= maxWaitMs) return 0;
+  return Math.min(debounceMs, maxWaitMs - elapsedMs);
+}
+
+function useRunReviewRealtimeSync(issueId: string, wsId: string) {
+  const queryClient = useQueryClient();
+  const messageTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const lastMessageRefreshAtRef = useRef(0);
+
+  const clearMessageTimer = useCallback(() => {
+    if (messageTimerRef.current) {
+      clearTimeout(messageTimerRef.current);
+      messageTimerRef.current = null;
+    }
+  }, []);
+
+  const refreshSelectedIssue = useCallback((includeTasks: boolean) => {
+    if (!issueId) return;
+    clearMessageTimer();
+    lastMessageRefreshAtRef.current = Date.now();
+    queryClient.invalidateQueries({ queryKey: issueKeys.executionTree(issueId) });
+    if (includeTasks) {
+      queryClient.invalidateQueries({ queryKey: issueKeys.tasks(issueId) });
+      queryClient.invalidateQueries({ queryKey: issueKeys.list(wsId) });
+    }
+  }, [clearMessageTimer, issueId, queryClient, wsId]);
+
+  const handleLifecycleEvent = useCallback((payload: unknown) => {
+    if (!shouldRefreshRunReviewForTaskEvent(issueId, payload as RunReviewTaskEventPayload)) return;
+    refreshSelectedIssue(true);
+  }, [issueId, refreshSelectedIssue]);
+
+  const handleTaskMessage = useCallback((payload: unknown) => {
+    if (!shouldRefreshRunReviewForTaskEvent(issueId, payload as TaskMessagePayload)) return;
+    const nowMs = Date.now();
+    const delayMs = runReviewMessageRefreshDelayMs(nowMs, lastMessageRefreshAtRef.current);
+    clearMessageTimer();
+    messageTimerRef.current = setTimeout(() => {
+      messageTimerRef.current = null;
+      lastMessageRefreshAtRef.current = Date.now();
+      queryClient.invalidateQueries({ queryKey: issueKeys.executionTree(issueId) });
+    }, delayMs);
+  }, [clearMessageTimer, issueId, queryClient]);
+
+  useEffect(() => {
+    clearMessageTimer();
+    lastMessageRefreshAtRef.current = 0;
+    return clearMessageTimer;
+  }, [clearMessageTimer, issueId]);
+  useWSReconnect(() => refreshSelectedIssue(true));
+  useWSEvent("task:queued", handleLifecycleEvent);
+  useWSEvent("task:dispatch", handleLifecycleEvent);
+  useWSEvent("task:running", handleLifecycleEvent);
+  useWSEvent("task:waiting_local_directory", handleLifecycleEvent);
+  useWSEvent("task:completed", handleLifecycleEvent);
+  useWSEvent("task:failed", handleLifecycleEvent);
+  useWSEvent("task:cancelled", handleLifecycleEvent);
+  useWSEvent("task:message", handleTaskMessage);
+}
+
 function RunReviewDetail({
   issue,
   tree,
@@ -171,9 +325,26 @@ function RunReviewDetail({
   optimizerHref: string;
 }) {
   const wsId = useWorkspaceId();
-  const summary = tree?.issue_summary;
+  const queryClient = useQueryClient();
+  useRunReviewRealtimeSync(issue.id, wsId);
+  const { data: tasks = [] } = useQuery({
+    queryKey: issueKeys.tasks(issue.id),
+    queryFn: () => api.listTasksByIssue(issue.id),
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
+  });
+  const activeTasks = useMemo(() => tasks.filter(isActiveTask), [tasks]);
+  const baseTimelineNodes = tree?.timeline_nodes ?? [];
+  const liveNowMs = useRunReviewLiveNow(activeTasks.length > 0 || hasActiveTimelineNode(baseTimelineNodes));
+  const timelineNodes = useMemo(
+    () => buildRunReviewLiveTimelineNodes(baseTimelineNodes, liveNowMs),
+    [baseTimelineNodes, liveNowMs],
+  );
+  const summary = useMemo(
+    () => buildRunReviewLiveSummary(tree?.issue_summary, activeTasks, baseTimelineNodes, liveNowMs),
+    [activeTasks, baseTimelineNodes, liveNowMs, tree?.issue_summary],
+  );
   const wallClockDurationMs = runReviewTotalDurationMs(summary);
-  const timelineNodes = tree?.timeline_nodes ?? [];
   const stageRows = buildStageRows(timelineNodes);
   const childLanes = buildChildLanes(tree);
   const visibleStageRows = stageRows.filter((stage) => stage.node);
@@ -186,14 +357,6 @@ function RunReviewDetail({
     (summary?.total_cache_write_tokens ?? 0);
   const nodeCsv = buildRunReviewNodeCsv(issue, summary, agentNodeRows, visibleChildLanes);
   const rawEventsCsv = buildRunReviewRawEventsCsv(eventRows);
-  const queryClient = useQueryClient();
-  const { data: tasks = [] } = useQuery({
-    queryKey: issueKeys.tasks(issue.id),
-    queryFn: () => api.listTasksByIssue(issue.id),
-    staleTime: 30_000,
-    refetchOnWindowFocus: true,
-  });
-  const activeTasks = useMemo(() => tasks.filter(isActiveTask), [tasks]);
   const taskById = useMemo(() => {
     const result = new Map<string, AgentTask>();
     for (const task of [...flattenExecutionTasks(tree), ...tasks]) {
@@ -418,7 +581,7 @@ function RunReviewDetail({
       <section className="rounded-md border bg-card">
         <SectionTitle
           title="事件流"
-          subtitle="展示去重后的事件摘要；点击每行查看详细信息和完整原始证据。"
+          subtitle="展示去重后的事件摘要；通过每行右侧详细信息查看完整转录。"
           action={
             <ExportButton
               label="导出 RAW 交互信息"
@@ -452,85 +615,38 @@ function RunReviewEventRow({
   event: RunReviewEventRowData;
   task: AgentTask | undefined;
 }) {
-  const [expanded, setExpanded] = useState(false);
-  const hasDetails = runReviewEventHasDetails(event);
   return (
-    <div data-testid={`run-review-event-${event.kind}`}>
-      <button
-        type="button"
-        className={cn(
-          "flex w-full gap-3 px-4 py-3 text-left text-sm hover:bg-accent/50",
-          expanded && "bg-accent/40",
-          !hasDetails && "cursor-default hover:bg-transparent",
+    <div className="flex gap-3 px-4 py-3 text-sm" data-testid={`run-review-event-${event.kind}`}>
+      <div className={cn("mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md border", eventToneClasses(event.severity).icon)}>
+        <GitBranch className="size-3.5" />
+      </div>
+      <div className="min-w-0 flex-1">
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className="shrink-0 rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground">{event.category}</span>
+          <span className={cn("shrink-0 rounded border px-1.5 py-0.5 text-[11px]", eventToneClasses(event.severity).chip)}>
+            {event.outcome}
+          </span>
+          <span className="min-w-0 truncate font-medium">{event.title}</span>
+        </div>
+        <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
+          {event.timeLabel && <span>{event.timeLabel}</span>}
+          {event.sourceLabel && <span>{event.sourceLabel}</span>}
+          {event.object && <span>{event.object}</span>}
+          {event.durationMs > 0 && <span>耗时 {formatDuration(event.durationMs)}</span>}
+          {event.tokenTotal > 0 && <span>Token {formatNumber(event.tokenTotal)}</span>}
+          {event.taskId && <span className="font-mono">task {shortId(event.taskId)}</span>}
+        </div>
+        {event.summary && (
+          <div className={cn("mt-1 rounded border px-2 py-1 text-xs leading-5", eventToneClasses(event.severity).summary)}>
+            {event.summary}
+          </div>
         )}
-        onClick={() => {
-          if (hasDetails) setExpanded((value) => !value);
-        }}
-        aria-expanded={hasDetails ? expanded : undefined}
-      >
-        <div className={cn("mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md border", eventToneClasses(event.severity).icon)}>
-          <GitBranch className="size-3.5" />
-        </div>
-        <div className="min-w-0 flex-1">
-          <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <span className="shrink-0 rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground">{event.category}</span>
-            <span className={cn("shrink-0 rounded border px-1.5 py-0.5 text-[11px]", eventToneClasses(event.severity).chip)}>
-              {event.outcome}
-            </span>
-            <span className="min-w-0 truncate font-medium">{event.title}</span>
-          </div>
-          <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
-            {event.timeLabel && <span>{event.timeLabel}</span>}
-            {event.sourceLabel && <span>{event.sourceLabel}</span>}
-            {event.object && <span>{event.object}</span>}
-            {event.durationMs > 0 && <span>耗时 {formatDuration(event.durationMs)}</span>}
-            {event.tokenTotal > 0 && <span>Token {formatNumber(event.tokenTotal)}</span>}
-            {event.taskId && <span className="font-mono">task {shortId(event.taskId)}</span>}
-          </div>
-          {event.summary && (
-            <div className={cn("mt-1 rounded border px-2 py-1 text-xs leading-5", eventToneClasses(event.severity).summary)}>
-              {event.summary}
-            </div>
-          )}
-        </div>
-      </button>
-      {expanded && hasDetails && (
-        <div className="border-t bg-muted/10 px-4 py-3 text-sm" data-testid="run-review-event-inline-detail">
-          {task && (
-            <div className="mb-3 flex justify-end">
-              <TranscriptButton task={task} agentName="" title="完整转录" />
-            </div>
-          )}
-          <div className="grid gap-3">
-            {event.detail && <RawEvidenceBlock title="摘要详情" value={event.detail} />}
-            {event.metadataDetail && <RawEvidenceBlock title="Metadata" value={event.metadataDetail} />}
-            {event.rawPayload !== undefined && <RawEvidenceBlock title={event.rawSourceLabel ?? "原始记录"} value={formatJSON(event.rawPayload)} />}
-            {event.linkedRawPayloads?.map((item, index) => (
-              <RawEvidenceBlock key={`${item.label}-${index}`} title={item.label} value={formatJSON(item.payload)} />
-            ))}
-          </div>
+      </div>
+      {task && (
+        <div className="shrink-0">
+          <TranscriptButton task={task} agentName="" title="详细信息" />
         </div>
       )}
-    </div>
-  );
-}
-
-export function runReviewEventHasDetails(event: Pick<RunReviewEventRowData, "detail" | "metadataDetail" | "rawPayload" | "linkedRawPayloads">): boolean {
-  return Boolean(
-    event.detail ||
-    event.metadataDetail ||
-    event.rawPayload !== undefined ||
-    (event.linkedRawPayloads?.length ?? 0) > 0,
-  );
-}
-
-function RawEvidenceBlock({ title, value }: { title: string; value: string }) {
-  return (
-    <div className="rounded-md border bg-background">
-      <div className="border-b px-2 py-1.5 text-xs font-medium text-muted-foreground">{title}</div>
-      <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words px-2 py-2 font-mono text-[11px] leading-5 text-muted-foreground">
-        {value}
-      </pre>
     </div>
   );
 }
@@ -1809,11 +1925,15 @@ function shortId(value: string) {
   return value.length > 8 ? value.slice(0, 8) : value;
 }
 
+function isActiveStatus(status: string | undefined) {
+  return status === "queued" ||
+    status === "dispatched" ||
+    status === "waiting_local_directory" ||
+    status === "running";
+}
+
 function isActiveTask(task: AgentTask) {
-  return task.status === "queued" ||
-    task.status === "dispatched" ||
-    task.status === "waiting_local_directory" ||
-    task.status === "running";
+  return isActiveStatus(task.status);
 }
 
 function isRetryableTask(task: AgentTask) {
