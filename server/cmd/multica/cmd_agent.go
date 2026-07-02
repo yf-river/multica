@@ -742,16 +742,7 @@ func runAgentSkillsList(cmd *cobra.Command, args []string) error {
 		return cli.PrintJSON(os.Stdout, skills)
 	}
 
-	headers := []string{"ID", "NAME", "DESCRIPTION"}
-	rows := make([][]string, 0, len(skills))
-	for _, s := range skills {
-		rows = append(rows, []string{
-			strVal(s, "id"),
-			strVal(s, "name"),
-			strVal(s, "description"),
-		})
-	}
-	cli.PrintTable(os.Stdout, headers, rows)
+	printAgentSkillsTable(skills)
 	return nil
 }
 
@@ -836,6 +827,11 @@ func printAgentSkillsMutationResult(cmd *cobra.Command, agentID string, result j
 		fmt.Printf("No skills assigned to agent %s\n", agentID)
 		return nil
 	}
+	printAgentSkillsTable(skills)
+	return nil
+}
+
+func printAgentSkillsTable(skills []map[string]any) {
 	headers := []string{"ID", "NAME", "DESCRIPTION"}
 	rows := make([][]string, 0, len(skills))
 	for _, s := range skills {
@@ -846,7 +842,6 @@ func printAgentSkillsMutationResult(cmd *cobra.Command, agentID string, result j
 		})
 	}
 	cli.PrintTable(os.Stdout, headers, rows)
-	return nil
 }
 
 // ---------------------------------------------------------------------------
