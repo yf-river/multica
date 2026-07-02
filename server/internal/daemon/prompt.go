@@ -245,6 +245,8 @@ func writeSourceContextPrompt(b *strings.Builder, task Task) {
 			if tapd.BodyExcerpt != "" {
 				fmt.Fprintf(b, "- TAPD fetched body excerpt: %s\n", tapd.BodyExcerpt)
 			}
+		} else if tapd.FetchStatus == "fetch_failed" {
+			b.WriteString("- TAPD action: the platform attempted TAPD source-fetch and it failed. Do not invent or copy the login page as the requirement. First read the issue description and full comment history for human-supplied TAPD title, summary, or body. If a human has supplied the missing TAPD content, treat that comment as manual source recovery, continue from it, and cite it in your stage comment and markdown artifacts. If the content is still missing, ask for the missing requirement details and keep the issue blocked. Retry source-fetch only after credentials or environment have changed.\n")
 		} else {
 			serverName := "mcp-server-tapd"
 			if cred, ok := source.ExternalCredentials["tapd"]; ok && cred.MCPServer != "" {

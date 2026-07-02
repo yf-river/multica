@@ -2963,6 +2963,8 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		return
 	}
 
+	d.collectAndPostTaskArtifacts(ctx, task, result.WorkDir, taskLog)
+
 	if result.Status != "completed" {
 		reason := taskfailure.Classify(result.Comment)
 		if result.FailureReason != "" {

@@ -75,8 +75,9 @@ func TestStageMarkdownArtifactsSectionUsesCommentAttachments(t *testing.T) {
 		"01-clarify requirement note",
 		"05-verify report",
 		"save it as a UTF-8 `.md` file",
-		"repeated `--attachment <path>` flags on `multica issue comment add`",
-		"download or preview them later",
+		"under `artifacts/multica/`",
+		"The daemon automatically uploads those markdown files to the issue",
+		"download or preview",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("stage artifact guidance missing %q\n---\n%s", want, out)
@@ -96,7 +97,7 @@ func TestMRAndHumanCodeReviewHandoffSectionRequiresLinkedMR(t *testing.T) {
 		"Use a routable issue key in the MR title, body, or branch",
 		"for Gongfeng resources, use the `gongfeng` MCP server",
 		"multica issue pull-requests <issue-id> --output json",
-		"include the MR URL in the final issue comment",
+		"Include the MR URL in the final issue comment",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("MR handoff guidance missing %q\n---\n%s", want, out)

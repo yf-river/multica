@@ -128,6 +128,41 @@ func TestBuildPromptUsesFetchedTapdSourceContext(t *testing.T) {
 	}
 }
 
+func TestBuildPromptUsesHumanRecoveryWhenTapdFetchFailed(t *testing.T) {
+	out := BuildPrompt(Task{
+		IssueID: "issue-1",
+		SourceContext: &TaskSourceContext{
+			Provider: "tapd",
+			URL:      "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004223",
+			TAPD: &TAPDTaskSourceContext{
+				WorkspaceID:   "47654106",
+				ResourceType:  "markdown_wiki",
+				ResourceID:    "1147654106001004223",
+				FetchProvider: "tapd_mcp",
+				FetchStatus:   "fetch_failed",
+				FetchError:    "TAPD MCP returned 401 unauthorized",
+			},
+		},
+	}, "codex")
+
+	for _, want := range []string{
+		"fetch_status=fetch_failed",
+		"TAPD fetch error: TAPD MCP returned 401 unauthorized",
+		"Do not invent or copy the login page as the requirement",
+		"read the issue description and full comment history for human-supplied TAPD title, summary, or body",
+		"treat that comment as manual source recovery",
+		"cite it in your stage comment and markdown artifacts",
+		"Retry source-fetch only after credentials or environment have changed",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("BuildPrompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "using `get_wiki`") || strings.Contains(out, "Use `--auto-fetch` only as a fallback") {
+		t.Fatalf("fetch_failed prompt must not blindly retry TAPD fetch\n--- output ---\n%s", out)
+	}
+}
+
 // TestBuildQuickCreatePromptRules locks in the rules that govern how the
 // quick-create agent is allowed to translate raw user input into the issue
 // description body. Each substring corresponds to a concrete failure mode
