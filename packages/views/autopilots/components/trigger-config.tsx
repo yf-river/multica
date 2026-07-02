@@ -172,35 +172,9 @@ export function parseCronExpression(cron: string, timezone: string): TriggerConf
 // Hooks (i18n-aware)
 // ---------------------------------------------------------------------------
 
-// Hook returning a function that produces the compact "Hourly · :15 / Daily 09:00"
-// summary. Was a pure module-level function before i18n; converted to a hook so
-// the strings can flow through useT.
-export function useSummarizeTrigger(): (cfg: TriggerConfig) => string {
-  const { t } = useT("autopilots");
-  return (cfg) => {
-    switch (cfg.frequency) {
-      case "hourly": {
-        const min = cfg.time.split(":")[1] ?? "00";
-        return t(($) => $.trigger_config.summary.hourly, { min });
-      }
-      case "daily":
-        return t(($) => $.trigger_config.summary.daily, { time: cfg.time });
-      case "weekdays":
-        return t(($) => $.trigger_config.summary.weekdays, { time: cfg.time });
-      case "weekly":
-        return t(($) => $.trigger_config.summary.weekly, {
-          days: formatDayList(cfg.daysOfWeek, t),
-          time: cfg.time,
-        });
-      case "custom":
-        return t(($) => $.trigger_config.summary.custom);
-    }
-  };
-}
-
 // Hook returning a function that produces the longer "Runs daily at 9:00 AM PDT"
-// description. Same rationale as useSummarizeTrigger.
-export function useDescribeTrigger(): (cfg: TriggerConfig) => string {
+// description with localized strings.
+function useDescribeTrigger(): (cfg: TriggerConfig) => string {
   const { t } = useT("autopilots");
   return (cfg) => {
     const offset = getTimezoneOffset(cfg.timezone);

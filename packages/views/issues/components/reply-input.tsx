@@ -231,4 +231,4 @@ function ReplyInput({
   );
 }
 
-export { ReplyInput, type ReplyInputProps };
+export { ReplyInput };

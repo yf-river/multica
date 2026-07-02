@@ -1062,4 +1062,4 @@ function CommentCardImpl({
 // every callback is stabilized via useCallback in use-issue-timeline.ts.
 const CommentCard = memo(CommentCardImpl);
 
-export { CommentCard, type CommentCardProps };
+export { CommentCard };

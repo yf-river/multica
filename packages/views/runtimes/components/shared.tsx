@@ -1,32 +1,8 @@
-import { Cloud, Monitor, Wifi, WifiHigh, WifiOff } from "lucide-react";
+import { Wifi, WifiHigh, WifiOff } from "lucide-react";
 import { Badge } from "@multica/ui/components/ui/badge";
 import type { RuntimeHealth } from "@multica/core/runtimes";
-import { ProviderLogo } from "./provider-logo";
 import { useT } from "../../i18n";
 
-export function RuntimeModeIcon({ mode }: { mode: string }) {
-  return mode === "cloud" ? (
-    <Cloud className="h-3.5 w-3.5" />
-  ) : (
-    <Monitor className="h-3.5 w-3.5" />
-  );
-}
-
-// Compact provider tag: small logo square + provider name. Used in dense
-// list rows to identify which CLI / model provider a runtime is wired to.
-export function ProviderChip({ provider }: { provider: string }) {
-  return (
-    <span className="inline-flex items-center gap-1 rounded-md border bg-muted/40 px-1.5 py-0.5 text-xs font-medium text-muted-foreground">
-      <ProviderLogo provider={provider} className="h-3 w-3" />
-      <span className="capitalize">{provider}</span>
-    </span>
-  );
-}
-
-// Maps each derived 4-state runtime health to a semantic colour class.
-// The mapping intentionally reuses our existing tokens (success/warning/
-// muted-foreground/destructive) instead of introducing runtime-specific
-// colours — keeps the palette small and consistent with Skills.
 // Maps each derived 4-state runtime health to a semantic colour class.
 // Labels flow through useT — see useHealthLabel below.
 const HEALTH_VISUAL: Record<RuntimeHealth, { dot: string; tone: string }> = {
@@ -90,21 +66,6 @@ export function HealthIcon({
   return <Icon className={`${className} ${tone}`} />;
 }
 
-// English-only fallback. Pure function form for non-component callers
-// (e.g. column factory builders). Translated call sites should use the
-// `useHealthLabel` hook below instead.
-const HEALTH_LABEL_EN: Record<RuntimeHealth, string> = {
-  online: "Online",
-  recently_lost: "Recently lost",
-  offline: "Offline",
-  about_to_gc: "About to GC",
-};
-
-export function healthLabel(health: RuntimeHealth | "loading"): string {
-  if (health === "loading") return "—";
-  return HEALTH_LABEL_EN[health];
-}
-
 // Hook form: usable inside React components (preferred for new call sites
 // that aren't running in non-component contexts).
 export function useHealthLabel(): (health: RuntimeHealth | "loading") => string {
@@ -134,36 +95,6 @@ export function HealthBadge({
       <span className={`h-1.5 w-1.5 rounded-full ${v.dot}`} />
       {labelOf(health)}
     </Badge>
-  );
-}
-
-export function InfoField({
-  label,
-  value,
-  mono,
-}: {
-  label: string;
-  value: string;
-  mono?: boolean;
-}) {
-  return (
-    <div>
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div
-        className={`mt-0.5 text-sm truncate ${mono ? "font-mono text-xs" : ""}`}
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
-
-export function TokenCard({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-lg border px-3 py-2">
-      <div className="text-xs text-muted-foreground">{label}</div>
-      <div className="mt-0.5 text-sm font-semibold tabular-nums">{value}</div>
-    </div>
   );
 }
 

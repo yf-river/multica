@@ -21,13 +21,6 @@ export function runtimeResourceScope(value: "workspace" | "personal" | null | un
   return value === "workspace" ? "workspace" : "personal";
 }
 
-export function resourceScopeLabel(
-  scope: ResourceScope,
-  labels: { workspace: string; personal: string },
-) {
-  return scope === "personal" ? labels.personal : labels.workspace;
-}
-
 export function resourceSegmentedOptionClass(active: boolean) {
   return active
     ? "rounded-md bg-background px-2 py-1.5 text-xs font-medium shadow-xs"

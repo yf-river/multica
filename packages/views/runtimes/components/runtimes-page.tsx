@@ -83,7 +83,7 @@ function useNowTick(intervalMs = 30_000): number {
   return now;
 }
 
-export function RuntimesPage({
+function RuntimesPage({
   localDaemonId,
   localMachineName,
   localMachineActions,
@@ -844,4 +844,3 @@ function RuntimesPageSkeleton() {
 }
 
 export default RuntimesPage;
-export type { RuntimesPageProps };

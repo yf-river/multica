@@ -37,7 +37,7 @@ import { useT } from "../../i18n";
 // Delete dialog — single row (kebab) and batch share one implementation.
 // ---------------------------------------------------------------------------
 
-export function DeleteAutopilotsDialog({
+function DeleteAutopilotsDialog({
   rows,
   open,
   onOpenChange,

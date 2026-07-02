@@ -6,8 +6,8 @@ import { join } from "node:path";
 // Canonical production origin and basePath for the docs app. Used by the
 // sitemap and per-page hreflang metadata — anywhere we need to construct
 // absolute URLs for search engines.
-export const SITE_ORIGIN = "https://www.multica.ai";
-export const DOCS_BASE_PATH = "/docs";
+const SITE_ORIGIN = "https://www.multica.ai";
+const DOCS_BASE_PATH = "/docs";
 
 /**
  * Build an absolute URL for a docs page from its Fumadocs-relative url

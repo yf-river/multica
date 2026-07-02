@@ -77,7 +77,7 @@ import type { WebhookEventFilter } from "@multica/core/types";
 // Types
 // ---------------------------------------------------------------------------
 
-export interface AutopilotInitial {
+interface AutopilotInitial {
   title: string;
   description: string;
   project_id: string | null;

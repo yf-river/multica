@@ -158,7 +158,7 @@ function lastActiveDaysAgo(activity: AgentActivity | null): number | null {
   return null;
 }
 
-export interface AgentsPageProps {
+interface AgentsPageProps {
   /** Desktop-only daemon wiring, currently unused by the list (kept for
    *  platform-layer compatibility; the runtime filter lists runtimes by
    *  name rather than grouped machines). */

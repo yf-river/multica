@@ -36,5 +36,3 @@ export function renderWithI18n(
   }
   return render(ui, { wrapper: Wrapper, ...rest });
 }
-
-export { RESOURCES };

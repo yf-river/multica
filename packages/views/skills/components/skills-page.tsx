@@ -142,8 +142,8 @@ function columnTrackVars(
 
 // Sort/filter/column types and defaults live in the core view store
 // (@multica/core/skills/stores/view-store) so the persisted state and the
-// UI share one definition. Re-exported here for the toolbar's convenience.
-export type SortField = SkillSortField;
+// UI share one definition.
+type SortField = SkillSortField;
 
 export interface SkillRow {
   skill: SkillSummary;

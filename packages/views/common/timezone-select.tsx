@@ -1,17 +1,5 @@
-"use client";
-
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@multica/ui/components/ui/select";
-
 // Curated fallback list used when the runtime lacks `Intl.supportedValuesOf`.
-// Exported so every timezone picker draws from one source instead of
-// drifting copies.
-export const COMMON_TIMEZONES = [
+const COMMON_TIMEZONES = [
   "UTC",
   "America/Los_Angeles",
   "America/Denver",
@@ -54,16 +42,6 @@ export function isValidTimeZone(value: string): boolean {
   }
 }
 
-// Clears the module-level browserTimezone() cache. Browser code never
-// needs this — the tz is stable for a session — but the cache survives
-// across Vitest files in the same worker, so any test that stubs
-// `Intl.DateTimeFormat` (directly or via a fake timezone) MUST call this
-// in `beforeEach`, otherwise a value cached by an earlier suite leaks in.
-// Tests that mock the whole `./timezone-select` module are unaffected.
-export function resetBrowserTimezoneCache(): void {
-  cachedBrowserTZ = null;
-}
-
 type IntlWithSupportedValues = typeof Intl & {
   supportedValuesOf?: (key: "timeZone") => string[];
 };
@@ -84,47 +62,4 @@ export function timezoneOptions(current: string): string[] {
   return Array.from(
     new Set([current, browser, ...COMMON_TIMEZONES, ...supportedTimezones()]),
   ).filter(Boolean);
-}
-
-export function TimezoneSelect({
-  value,
-  onValueChange,
-  browserSuffix,
-  disabled,
-  triggerClassName,
-}: {
-  value: string;
-  onValueChange: (next: string) => void;
-  browserSuffix: string;
-  disabled?: boolean;
-  triggerClassName?: string;
-}) {
-  const browser = browserTimezone();
-  const options = timezoneOptions(value);
-  const render = (tz: string) =>
-    tz === browser ? `${tz}${browserSuffix}` : tz;
-
-  return (
-    <Select
-      value={value}
-      disabled={disabled}
-      onValueChange={(next) => {
-        if (next) onValueChange(next);
-      }}
-    >
-      <SelectTrigger
-        size="sm"
-        className={triggerClassName ?? "w-full rounded-md font-mono text-xs"}
-      >
-        <SelectValue>{render(value)}</SelectValue>
-      </SelectTrigger>
-      <SelectContent align="start" className="max-h-72">
-        {options.map((tz) => (
-          <SelectItem key={tz} value={tz} className="font-mono text-xs">
-            {render(tz)}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  );
 }

@@ -91,6 +91,3 @@ export function validateProfileForm(
 }
 
 // Returns true when the entry should be treated as a built-in (read-only).
-export function isBuiltinEntry(entry: RuntimeCatalogEntry): boolean {
-  return entry.kind === "builtin";
-}

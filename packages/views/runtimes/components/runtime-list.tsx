@@ -309,7 +309,7 @@ function HealthCell({
 // page are large.
 const COST_CELL_DAYS = 14;
 
-export function CostCell({ runtimeId }: { runtimeId: string }) {
+function CostCell({ runtimeId }: { runtimeId: string }) {
   const { t } = useT("runtimes");
   const tz = useViewingTimezone();
   const { data: usage = [] } = useQuery(

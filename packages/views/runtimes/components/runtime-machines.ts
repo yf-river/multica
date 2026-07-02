@@ -5,7 +5,7 @@ import { formatDeviceInfo } from "../utils";
 export type RuntimeMachineSection = "local" | "remote" | "cloud";
 export type RuntimeMachineFilter = "all" | "online" | "issues";
 
-export interface RuntimeWorkloadSummary {
+interface RuntimeWorkloadSummary {
   runningCount: number;
   queuedCount: number;
 }
