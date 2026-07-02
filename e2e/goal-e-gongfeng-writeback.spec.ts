@@ -67,7 +67,7 @@ test.describe("Goal E Gongfeng controlled skill writeback", () => {
         prompt_id: prompt.id,
         name: `${artifactPrefix} asset`,
         description: "Goal E controlled Gongfeng checkout writeback fixture",
-        asset_type: "优化运行",
+        asset_type: "测试套件",
         payload: {
           cases: [{
             名称: "force controlled writeback optimizer candidate",

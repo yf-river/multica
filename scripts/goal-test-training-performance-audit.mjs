@@ -35,7 +35,6 @@ mkdirSync(artifactRoot, { recursive: true });
 
 const routes = [
   { id: "prompts", label: "提示词库", path: `/${workspaceSlug}/training/prompts`, expect: "提示词库", nav: true },
-  { id: "debug-runs", label: "调试运行", path: `/${workspaceSlug}/training/debug-runs`, expect: "调试运行", nav: true },
   { id: "datasets", label: "数据集", path: `/${workspaceSlug}/training/datasets`, expect: "数据集", nav: true },
   { id: "test-suites", label: "测试套件", path: `/${workspaceSlug}/training/test-suites`, expect: "测试套件", nav: true },
   { id: "test-suites-optimize", label: "优化运行模式", path: `/${workspaceSlug}/training/test-suites?mode=optimize`, expect: "测试套件", nav: false },

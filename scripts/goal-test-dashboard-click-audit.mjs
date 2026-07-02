@@ -37,7 +37,6 @@ const dashboardClicks = [
   { id: "runtimes", label: "运行时", link: "运行时", path: `/${workspaceSlug}/runtimes`, ready: { heading: "运行时" } },
   { id: "settings", label: "设置", link: "设置", path: `/${workspaceSlug}/settings`, ready: { heading: "设置" } },
   { id: "training-prompts", label: "训练与评估/提示词库", link: "提示词库", path: `/${workspaceSlug}/training/prompts`, ready: { testId: "training-route-prompts" } },
-  { id: "training-debug-runs", label: "训练与评估/调试运行", link: "调试运行", path: `/${workspaceSlug}/training/debug-runs`, ready: { testId: "debug-runs-page-shell" } },
   { id: "training-datasets", label: "训练与评估/数据集", link: "数据集", path: `/${workspaceSlug}/training/datasets`, ready: { testId: "training-route-datasets" } },
   { id: "training-test-suites", label: "训练与评估/测试套件", link: "测试套件", path: `/${workspaceSlug}/training/test-suites`, ready: { testId: "training-route-test-suites" } },
 ];

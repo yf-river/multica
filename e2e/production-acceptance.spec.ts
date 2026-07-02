@@ -20,16 +20,12 @@ const evidencePrefix = "生产验收训练证据";
 const ROUTE_INTRO_TITLES: Record<string, string> = {
   datasets: "数据集题库",
   "test-suites": "测试套件回归",
-  experiments: "实验对比",
-  "optimization-runs": "优化运行作业台",
-  "run-history": "运行历史与证据",
+  "evaluation-runs": "评测记录",
 };
 const ROUTE_OPERATING_TEXT: Record<string, string> = {
   datasets: "样本入库、版本快照、下游复用",
   "test-suites": "固定试卷、断言回归、失败定位",
-  experiments: "变量矩阵、版本绑定、横向排行",
-  "optimization-runs": "失败样本、候选生成、人工发布",
-  "run-history": "运行检索、证据展开、人工复核",
+  "evaluation-runs": "运行检索、证据展开、人工复核",
 };
 const routeByPath = (path: (typeof TRAINING_ROUTES)[number]["path"]) => {
   const route = TRAINING_ROUTES.find((item) => item.path === path);
@@ -37,7 +33,6 @@ const routeByPath = (path: (typeof TRAINING_ROUTES)[number]["path"]) => {
   return route;
 };
 const PROMPTS_ROUTE = routeByPath("prompts");
-const DEBUG_RUNS_ROUTE = routeByPath("debug-runs");
 const DATASETS_ROUTE = routeByPath("datasets");
 const TEST_SUITES_ROUTE = routeByPath("test-suites");
 
@@ -96,31 +91,11 @@ async function prepareTrainingDashboardEvidence() {
     },
     status: "启用",
   });
-  const experiment = await api.createPromptEvaluationAsset({
-    prompt_id: prompt.id,
-    name: `${evidencePrefix} 实验 ${suffix}`,
-    description: "生产验收实验。",
-    asset_type: "实验",
-    payload: {
-      schema: "multica.training_evaluation.payload.v1",
-      schema_version: 1,
-      语义版本: "multica.training_evaluation.v1",
-      实验对象: prompt.name,
-      对比维度: ["命中率", "缺失变量", "中文一致性"],
-      cases: [{
-        case_name: "实验对比样本",
-        variables: { issue_title: "user-center 登录失败" },
-        expected_contains: ["目标", "验收条件"],
-        tags: ["生产验收", "实验"],
-      }],
-    },
-    status: "启用",
-  });
   const optimizationAsset = await api.createPromptEvaluationAsset({
     prompt_id: prompt.id,
-    name: `${evidencePrefix} 优化运行 ${suffix}`,
-    description: "生产验收优化运行。",
-    asset_type: "优化运行",
+    name: `${evidencePrefix} 候选生成套件 ${suffix}`,
+    description: "生产验收失败测试套件，用于生成优化候选。",
+    asset_type: "测试套件",
     payload: {
       schema: "multica.training_evaluation.payload.v1",
       schema_version: 1,
@@ -129,7 +104,7 @@ async function prepareTrainingDashboardEvidence() {
         case_name: "缺失 trace 的优化样本",
         variables: { issue_title: "user-center 登录失败" },
         expected_contains: ["这个断言用于制造失败候选", "trace/task id"],
-        tags: ["生产验收", "优化运行"],
+        tags: ["生产验收", "优化候选"],
       }],
     },
     status: "启用",
@@ -153,7 +128,6 @@ async function prepareTrainingDashboardEvidence() {
     prompt,
     dataset,
     suite,
-    experiment,
     optimizationAsset,
     syncedRun,
     snapshot,
@@ -163,17 +137,11 @@ async function prepareTrainingDashboardEvidence() {
 }
 
 async function expectTrainingRouteShell(page, route: (typeof TRAINING_ROUTES)[number]) {
-  const isDebugRuns = route.path === "debug-runs";
   const routeIntroTitle = ROUTE_INTRO_TITLES[route.path];
   const hasRouteIntro = Boolean(routeIntroTitle);
-  await expect(page.getByTestId("debug-runs-page-shell")).toHaveCount(isDebugRuns ? 1 : 0);
-  await expect(page.getByTestId("prompt-playground-page-shell")).toHaveCount(isDebugRuns ? 1 : 0);
-  await expect(page.getByTestId("agent-playground-page-shell")).toHaveCount(0);
-  await expect(page.getByTestId("training-page-shell")).toHaveCount(isDebugRuns ? 0 : 1);
+  await expect(page.getByTestId("training-page-shell")).toHaveCount(1);
   await expect(page.getByTestId("training-tab-strip")).toHaveCount(0);
-  if (!isDebugRuns) {
-    await expect(page.getByTestId(`training-route-${route.path}`)).toHaveCount(1);
-  }
+  await expect(page.getByTestId(`training-route-${route.path}`)).toHaveCount(1);
   await expect(page.getByTestId(`training-route-intro-${route.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
   await expect(page.getByTestId(`training-route-panel-${route.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
   await expect(page.getByTestId(`training-route-operating-model-${route.path}`)).toHaveCount(hasRouteIntro ? 1 : 0);
@@ -238,63 +206,6 @@ test.describe("生产部署验收", () => {
     await expect(page.getByTestId("prompt-version-history")).toContainText("版本历史", { timeout: 15000 });
     await expect(page.getByRole("button", { name: "需求澄清", exact: true })).toBeVisible({ timeout: 15000 });
     await expectTrainingRouteSurvivesReload(page, PROMPTS_ROUTE);
-
-    await page.goto(`${frontendURL}/${workspaceSlug}/training/debug-runs`, { waitUntil: "domcontentloaded" });
-    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/debug-runs$`));
-    await expectTrainingRouteShell(page, DEBUG_RUNS_ROUTE);
-    await expect(page.getByTestId("prompt-playground-workbench")).toBeVisible({ timeout: 15000 });
-    await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("本地模板目录");
-    await expect(page.getByTestId("prompt-playground-selector-summary")).toContainText("质检工作单");
-    await expect(page.getByLabel("模板变量")).toBeVisible();
-    await expect(page.getByTestId("prompt-playground-rendered-output")).toBeVisible();
-    await expect(page.getByTestId("prompt-playground-template-lab")).toBeVisible();
-    await expect(page.getByTestId("prompt-playground-inspection-board")).toBeVisible();
-    await expect(page.getByTestId("prompt-playground-source-panel")).toContainText("模板源");
-    await expect(page.getByTestId("prompt-playground-variable-checklist")).toContainText("变量样本");
-    await expect(page.getByTestId("prompt-playground-purpose-map")).toContainText("不创建任务、不消耗模型");
-    await expect(page.getByText("调试边界")).toBeVisible();
-    await expect(page.getByTestId("prompt-playground-contract")).toContainText("不启动智能体");
-    await expect(page.getByTestId("prompt-playground-local-pipeline")).toContainText("保存质检记录");
-    await expect(page.getByTestId("prompt-playground-quality-gate")).toContainText("质检结论");
-    await expect(page.getByTestId("agent-playground-task-pipeline")).toHaveCount(0);
-    await expect(page.getByTestId("agent-playground-launch-brief")).toHaveCount(0);
-    await expect(page.getByTestId("agent-playground-run-console")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "保存本地渲染检查" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "创建真实智能体任务" })).toHaveCount(0);
-    await expect(page.getByText("真实执行准备度")).toHaveCount(0);
-    await expectTrainingRouteSurvivesReload(page, DEBUG_RUNS_ROUTE);
-    await expect(page.getByTestId("prompt-playground-template-lab")).toBeVisible({ timeout: 15000 });
-    await expect(page.getByTestId("agent-playground-run-console")).toHaveCount(0);
-
-    await page.getByRole("tab", { name: "智能体调试" }).click();
-    await expect(page.getByTestId("agent-playground-run-console")).toContainText("真实任务发射台", { timeout: 15000 });
-    await expect(page.getByTestId("agent-playground-launch-brief")).toContainText("写入真实任务队列");
-    await expect(page.getByTestId("agent-playground-execution-stage")).toBeVisible();
-    await expect(page.getByTestId("agent-playground-selector-summary")).toContainText("执行目标池");
-    await expect(page.getByTestId("agent-playground-selector-summary")).toContainText("链路追踪");
-    await expect(page.getByTestId("agent-playground-task-payload")).toBeVisible();
-    await expect(page.getByTestId("agent-playground-observability-contract")).toContainText("观测回写契约");
-    await expect(page.getByTestId("agent-playground-evidence-strip")).toContainText("真实运行");
-    await expect(page.getByText("真实执行准备度")).toBeVisible({ timeout: 15000 });
-    await expect(page.getByText("将入队的任务正文")).toBeVisible();
-    await expect(page.getByText("最近智能体运行")).toBeVisible();
-    await expect(page.getByTestId("agent-playground-task-pipeline")).toContainText("创建真实任务");
-    await expect(page.getByTestId("agent-playground-readiness-lane")).toHaveCount(3);
-    await expect(page.getByTestId("agent-playground-execution-bus")).toContainText("Trace");
-    await expect(page.getByTestId("agent-playground-execution-bus")).toContainText("用量");
-    await expect(page.getByTestId("agent-playground-task-pipeline")).toContainText("回写观测证据");
-    await expect(page.getByTestId("prompt-playground-local-pipeline")).toHaveCount(0);
-    await expect(page.getByTestId("prompt-playground-purpose-map")).toHaveCount(0);
-    await expect(page.getByTestId("prompt-playground-source-panel")).toHaveCount(0);
-    await expect(page.getByTestId("prompt-playground-variable-checklist")).toHaveCount(0);
-    await expect(page.getByTestId("prompt-playground-template-lab")).toHaveCount(0);
-    await expect(page.getByRole("button", { name: "创建真实智能体任务" })).toBeVisible();
-    await expect(page.getByTestId("prompt-playground-workbench")).toHaveCount(0);
-    await expect(page.getByText("不启动智能体")).toHaveCount(0);
-    await expectTrainingRouteSurvivesReload(page, DEBUG_RUNS_ROUTE);
-    await page.getByRole("tab", { name: "智能体调试" }).click();
-    await expect(page.getByTestId("agent-playground-run-console")).toBeVisible({ timeout: 15000 });
-    await expect(page.getByTestId("prompt-playground-template-lab")).toHaveCount(0);
 
     await page.goto(`${frontendURL}/${workspaceSlug}/training/datasets`, { waitUntil: "domcontentloaded" });
     await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/datasets$`), { timeout: 30000 });

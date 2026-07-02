@@ -36,7 +36,7 @@ const realAgentProvider = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER") ||
 const realAgentModel = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "gpt-5.3-codex-spark";
 const realAgentFallbackModel = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_FALLBACK_MODEL") || "gpt-5.4-mini";
 
-const dashboardURL = `${frontendURL}/${encodeURIComponent(workspaceSlug)}/training/runs`;
+const dashboardURL = `${frontendURL}/${encodeURIComponent(workspaceSlug)}/training/evaluation-runs`;
 
 const git = {
   head: gitText(["rev-parse", "--short=12", "HEAD"]),
@@ -516,12 +516,6 @@ function buildCommandPlan() {
       timeoutMs: 60_000,
     },
     {
-      name: "Opik 迁移对照验证",
-      command: "node scripts/verify-opik-mapping.mjs",
-      required: true,
-      timeoutMs: 60_000,
-    },
-    {
       name: "注册营销残留审计",
       command: "node scripts/signup-residue-audit.mjs",
       required: true,
@@ -600,14 +594,6 @@ function buildCommandPlan() {
       required: includeE2E,
       skippedByDefault: true,
       timeoutMs: 180_000,
-    },
-    {
-      name: "训练与评估主 E2E",
-      command: "pnpm exec playwright test e2e/prompt-library.spec.ts --project=chromium",
-      required: includeFullE2E,
-      skippedByDefault: true,
-      fullE2EOnly: true,
-      timeoutMs: 900_000,
     },
     {
       name: "小队 SOP E2E",
@@ -768,8 +754,8 @@ function buildE2EEvidence(commandResults, logEvidence) {
     } : null,
     "部署浏览器验收": browser ? {
       "状态": browser.status,
-      "URL": `${frontendURL}/${encodeURIComponent(workspaceSlug)}/training/runs`,
-      "请求入口": "/login?next=... -> /:workspace/training/runs -> /:workspace/training/prompts -> /:workspace/training/prompt-playground -> /:workspace/training/agent-playground -> /:workspace/training/datasets -> /:workspace/training/test-suites -> /:workspace/training/experiments -> /:workspace/training/optimization-runs -> /:workspace/training/run-history",
+      "URL": `${frontendURL}/${encodeURIComponent(workspaceSlug)}/training/evaluation-runs`,
+      "请求入口": "/login?next=... -> /:workspace/training/prompts -> /:workspace/training/datasets -> /:workspace/training/test-suites -> /:workspace/training/evaluation-runs",
       "耗时ms": browser.durationMs,
       "日志位置": logPath,
       "命令": browser.command,

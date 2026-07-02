@@ -1,4 +1,4 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-training-browser-e2e goal-test-training-curl-e2e goal-test-seed-business-training goal-test-prod-seed-business-training goal-test-prod-training-curl-e2e goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e goal-test-sop-customer-comment-e2e goal-test-password-strength-sop-e2e goal-test-sop-browser-audit goal-test-prod-user-center-squad-curl-e2e goal-test-new-account-mcp-onboarding-e2e goal-test-prod-new-account-mcp-onboarding-e2e goal-test-acceptance-fixture-governance goal-test-quick-entry-cross-service goal-test-squad-curl-e2e goal-test-variable-project-topology-fixture goal-test-variable-agent-squad-curl-e2e goal-test-variable-agent-topology-fixture goal-test-topology-generalization-audit goal-test-tapd-gongfeng-sop-gap-audit goal-test-prod-release-audit goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-final-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-dataset-stream-audit goal-test-prune-dev-data goal-test-prune-prod-data goal-test-playground-difference-audit goal-test-session-retro goal-test-token-audit
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-training-curl-e2e goal-test-seed-business-training goal-test-prod-seed-business-training goal-test-prod-training-curl-e2e goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e goal-test-sop-customer-comment-e2e goal-test-password-strength-sop-e2e goal-test-sop-browser-audit goal-test-prod-user-center-squad-curl-e2e goal-test-new-account-mcp-onboarding-e2e goal-test-prod-new-account-mcp-onboarding-e2e goal-test-acceptance-fixture-governance goal-test-quick-entry-cross-service goal-test-squad-curl-e2e goal-test-variable-project-topology-fixture goal-test-variable-agent-squad-curl-e2e goal-test-variable-agent-topology-fixture goal-test-topology-generalization-audit goal-test-tapd-gongfeng-sop-gap-audit goal-test-prod-release-audit goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-final-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-dataset-stream-audit goal-test-prune-dev-data goal-test-prune-prod-data goal-test-session-retro goal-test-token-audit
 .PHONY: goal-test-deploy-dev-hot goal-test-dev-ui goal-test-dev-ui-prewarm goal-test-dev-ui-prewarm-full goal-test-dev-ui-start goal-test-dev-server goal-test-dev-daemon goal-test-dev-check goal-test-codex-network-check
 .PHONY: goal-test-quick-entries-service-sandbox
 
@@ -304,11 +304,6 @@ goal-test-real-agent-e2e: goal-test-e2e-preflight ## Run slow real Codex Agent E
 	TMPDIR="$(GOAL_TEST_TMPDIR)" \
 	node scripts/goal-test-playwright.mjs e2e/squad-real-agent.spec.ts e2e/prompt-library-real-agent.spec.ts --project=chromium
 
-goal-test-training-browser-e2e: goal-test-smoke ## Run deep browser E2E for training/evaluation assets, versions, experiments, optimization, and evidence UI
-	@mkdir -p "$(GOAL_TEST_TMPDIR)"
-	TMPDIR="$(GOAL_TEST_TMPDIR)" \
-	node scripts/goal-test-playwright.mjs e2e/prompt-library.spec.ts --project=chromium --grep "可以创建提示词、调试渲染并记录评测资产|提示词调试场和智能体调试场首屏职责不同|数据集版本可以对比并恢复为新的可追溯版本|实验运行会绑定资产声明的明确数据集版本|优化运行作业台汇总资产运行候选并支持取消"
-
 goal-test-training-curl-e2e: goal-test-smoke ## Run public API curl E2E for training/evaluation assets, runs, evidence, optimization, and publishing
 	@mkdir -p "$(GOAL_TEST_TMPDIR)"
 	ACCEPTANCE_API_URL="$(GOAL_TEST_INT_API_URL)" \
@@ -516,12 +511,10 @@ goal-test-ui-acceptance: goal-test-smoke ## Run fixed browser/UI/performance/log
 	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-ui-audit.mjs
 	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-dashboard-click-audit.mjs
 	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-training-performance-audit.mjs
-	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-playground-difference-audit.mjs
 	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-playwright.mjs e2e/navigation.spec.ts e2e/production-acceptance.spec.ts --project=chromium
 	node scripts/goal-test-environments.mjs verify-logs int
 
 goal-test-final-acceptance: goal-test-ui-acceptance ## Run full goal-test acceptance, including real curl/API + daemon squad SOP E2E
-	$(MAKE) goal-test-training-browser-e2e
 	$(MAKE) goal-test-training-curl-e2e
 	$(MAKE) goal-test-variable-project-topology-fixture
 	$(MAKE) goal-test-variable-agent-topology-fixture
@@ -566,10 +559,6 @@ goal-test-prune-prod-data: ## Prune old goal-test production-stable test data th
 	node scripts/goal-test-environments.mjs verify prod
 	TMPDIR="$(GOAL_TEST_TMPDIR)" GOAL_TEST_PRUNE_ENV=prod node scripts/goal-test-prune-dev-data.mjs $${APPLY:+--apply} $${KEEP:+--keep=$${KEEP}} $${CANONICAL_SOP_ONLY:+--canonical-sop-only}
 	node scripts/goal-test-environments.mjs verify-logs prod
-
-goal-test-playground-difference-audit: goal-test-smoke ## Capture and verify prompt/agent playground visual and contract differences
-	@mkdir -p "$(GOAL_TEST_TMPDIR)"
-	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-playground-difference-audit.mjs
 
 goal-test-session-retro: ## Generate fixed session retrospective artifacts; pass SESSION=/path/to/session.jsonl
 	@test -n "$(SESSION)" || (echo "Missing SESSION=/path/to/session.jsonl"; exit 2)

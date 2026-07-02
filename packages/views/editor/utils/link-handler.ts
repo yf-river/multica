@@ -38,19 +38,14 @@ const WORKSPACE_ROUTE_SEGMENTS = new Set([
  *
  * If `currentSlug` is provided and `href` is a workspace-scoped path lacking a
  * slug (e.g. "/issues/abc" instead of "/{slug}/issues/abc"), the slug is
- * prepended. This is for legacy markdown content authored before the URL
- * refactor, or future content where users forget the slug when pasting.
+ * prepended.
  */
 export function openLink(href: string, currentSlug?: string | null): void {
   if (href.startsWith("/")) {
     let path = href;
     if (currentSlug && !isGlobalPath(path)) {
       const firstSegment = (path.split("/")[1] ?? "").split(/[?#]/)[0];
-      if (firstSegment === "prompt-library") {
-        path = `/${currentSlug}/training/prompts`;
-      } else if (firstSegment === "evaluation" || firstSegment === "eval") {
-        path = `/${currentSlug}/run-reviews`;
-      } else if (firstSegment && WORKSPACE_ROUTE_SEGMENTS.has(firstSegment)) {
+      if (firstSegment && WORKSPACE_ROUTE_SEGMENTS.has(firstSegment)) {
         // Path looks like /issues/abc (no slug) — prepend current slug.
         path = `/${currentSlug}${path}`;
       }

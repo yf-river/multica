@@ -54,13 +54,11 @@ make goal-test-ui-audit
 make goal-test-ui-acceptance
 make goal-test-final-acceptance
 make goal-test-dashboard-click-audit
-make goal-test-training-browser-e2e
 make goal-test-training-curl-e2e
 make goal-test-squad-curl-e2e
 make goal-test-coding-squad-curl-e2e
 make goal-test-user-center-squad-curl-e2e
 make goal-test-real-agent-e2e
-make goal-test-playground-difference-audit
 make goal-test-seed-business-training
 make goal-test-session-retro SESSION=/path/to/codex-session.jsonl
 make goal-test-token-audit
@@ -107,10 +105,10 @@ AI Studio gate applicability:
 - Deployment/log gate: `make goal-test-deploy-dev`, then `make goal-test-verify-env` and `make goal-test-verify-logs`; use when code needs integration-environment proof.
 - UI acceptance gate: `make goal-test-ui-acceptance`; use for broad deployed UI behavior without forcing every long daemon path.
 - Final gate: `make goal-test-final-acceptance`; use for wave or milestone closure when training, squads, observability, and deployed behavior must be demonstrated together.
-- Training UI gate: `make goal-test-training-browser-e2e` and `make goal-test-training-performance-audit`; use for training pages, route panels, run history, datasets, test suites, experiments, optimization runs, or performance-sensitive training navigation.
+- Training UI gate: `make goal-test-training-performance-audit`; use for current training pages, route panels, datasets, test suites, evaluation records, or performance-sensitive training navigation.
 - Training API/agent gate: `make goal-test-training-curl-e2e`; use for training API, prompt-evaluation, optimizer, or agent-run semantics that can be validated without a full browser path.
 - Squad/SOP gate: `make goal-test-squad-curl-e2e`, `make goal-test-coding-squad-curl-e2e`, `make goal-test-user-center-squad-curl-e2e`, or `make goal-test-real-agent-e2e`; use when squad orchestration, SOP execution, real-agent dispatch, or cross-project runtime behavior changed.
-- Performance/playground gates: `make goal-test-dashboard-click-audit`, `make goal-test-playground-difference-audit`, and `make goal-test-public-training-performance-audit`; use only when the affected surface or milestone requires that evidence.
+- Performance gates: `make goal-test-dashboard-click-audit` and `make goal-test-public-training-performance-audit`; use only when the affected surface or milestone requires that evidence.
 - Fixture seed gate: `make goal-test-seed-business-training`; use only when the test needs fresh business training fixtures rather than historical artifacts.
 
 ## Architecture

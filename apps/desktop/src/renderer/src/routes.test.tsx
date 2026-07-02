@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Navigate } from "react-router-dom";
 import { PromptLibraryPage } from "@multica/views/prompt-library";
-import { appRoutes, TrainingLegacyRedirect } from "./routes";
+import { appRoutes } from "./routes";
 
 describe("desktop training routes", () => {
   const workspaceRoute = appRoutes[0]?.children?.find((route) => route.path === ":workspaceSlug");
@@ -14,19 +14,6 @@ describe("desktop training routes", () => {
     expect(indexRoute?.element).toMatchObject({
       type: Navigate,
       props: expect.objectContaining({ to: "prompts", replace: true }),
-    });
-  });
-
-  it.each([
-    ["prompt-library", "../training/prompts", "训练与评估"],
-    ["evaluation", "../run-reviews", "运行复盘"],
-    ["eval", "../run-reviews", "运行复盘"],
-  ])("redirects legacy %s route into training", (routePath, target, title) => {
-    const route = childRoutes.find((item) => item.path === routePath);
-    expect(route?.handle).toMatchObject({ title });
-    expect(route?.element).toMatchObject({
-      type: Navigate,
-      props: expect.objectContaining({ to: target, replace: true }),
     });
   });
 
@@ -45,20 +32,11 @@ describe("desktop training routes", () => {
     });
   });
 
-  it.each([
-    ["runs", Navigate, { to: "../../run-reviews", replace: true }],
-    ["run-history", TrainingLegacyRedirect, { to: "../evaluation-runs" }],
-    ["debug-runs", TrainingLegacyRedirect, { to: "../prompts" }],
-    ["prompt-playground", TrainingLegacyRedirect, { to: "../prompts" }],
-    ["agent-playground", TrainingLegacyRedirect, { to: "../prompts" }],
-    ["experiments", TrainingLegacyRedirect, { to: "../test-suites" }],
-    ["optimization-runs", TrainingLegacyRedirect, { to: "../evaluation-runs" }],
-  ])("redirects legacy training/%s routes", (routePath, component, props) => {
+  it("does not keep legacy training aliases", () => {
     const trainingRoute = childRoutes.find((route) => route.path === "training");
-    const childRoute = trainingRoute?.children?.find((route) => route.path === routePath);
-    expect(childRoute?.element).toMatchObject({
-      type: component,
-      props: expect.objectContaining(props),
-    });
+    const paths = new Set((trainingRoute?.children ?? []).map((route) => route.path));
+    for (const removed of ["runs", "run-history", "debug-runs", "prompt-playground", "agent-playground", "experiments", "optimization-runs"]) {
+      expect(paths.has(removed)).toBe(false);
+    }
   });
 });

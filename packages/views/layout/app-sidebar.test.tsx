@@ -267,8 +267,6 @@ describe("AppSidebar workspace nav", () => {
     expect(document.querySelector('[data-href="/acme/training/prompts"]')).toBeInTheDocument();
     expect(document.querySelector('[data-href="/acme/training/datasets"]')).toHaveAttribute("data-active", "true");
     expect(document.querySelector('[data-href="/acme/training/evaluation-runs"]')).toBeInTheDocument();
-    expect(document.querySelector('[data-href="/acme/training/runs"]')).not.toBeInTheDocument();
-    expect(document.querySelector('[data-href="/acme/training/run-history"]')).not.toBeInTheDocument();
   });
 
   it("does not preserve legacy training data scope across training submodule links", () => {

@@ -95,20 +95,18 @@ const suite = await upsertAsset(token, "测试套件", SUITE_NAME, {
   status: "启用",
 });
 
-const experiment = await upsertAsset(token, "实验", EXPERIMENT_NAME, {
+const reviewSuite = await upsertAsset(token, "测试套件", EXPERIMENT_NAME, {
   prompt_id: prompt.id,
   name: EXPERIMENT_NAME,
-  description: "比较用户中心需求澄清提示词的结构完整性和中文一致性。",
-  asset_type: "实验",
+  description: "补充验证用户中心需求澄清提示词的结构完整性和中文一致性。",
+  asset_type: "测试套件",
   payload: {
     schema: "multica.training_evaluation.payload.v1",
     schema_version: 1,
     语义版本: "multica.training_evaluation.v1",
-    实验对象: PROMPT_NAME,
-    对比维度: ["结构完整性", "边界清晰度", "中文一致性"],
     cases: [
       {
-        case_name: "资料接口实验样例",
+        case_name: "资料接口复核样例",
         variables: { issue_title: "为 usercenter 增加用户资料查询接口" },
         expected_contains: ["目标", "验收条件"],
         tags: ["usercenter", "业务样例"],
@@ -131,7 +129,7 @@ Object.assign(evidence, {
   prompt: pick(prompt, ["id", "name", "version", "status"]),
   dataset: pick(dataset, ["id", "name", "asset_type", "dataset_row_count", "structured_case_count"]),
   test_suite: pick(suite, ["id", "name", "asset_type", "test_suite_case_count", "structured_case_count"]),
-  experiment: pick(experiment, ["id", "name", "asset_type", "experiment_dimension_count", "structured_case_count"]),
+  review_suite: pick(reviewSuite, ["id", "name", "asset_type", "test_suite_case_count", "structured_case_count"]),
   run_asset: pick(runAsset, ["id", "name", "asset_type", "payload"]),
   business_summary: {
     运行总数: runTotal,

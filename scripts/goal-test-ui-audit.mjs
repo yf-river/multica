@@ -75,13 +75,6 @@ const routes = [
     path: `/${workspaceSlug}/run-reviews`,
     expect: ["运行复盘"],
   },
-  {
-    id: "usage-legacy",
-    label: "用量旧入口",
-    path: `/${workspaceSlug}/usage`,
-    expect: ["运行复盘"],
-    finalPathIncludes: `/${workspaceSlug}/run-reviews`,
-  },
   { id: "runtimes", label: "运行时", path: `/${workspaceSlug}/runtimes`, expect: ["运行时"] },
   { id: "settings", label: "设置", path: `/${workspaceSlug}/settings`, expect: ["设置"] },
   {
@@ -94,41 +87,6 @@ const routes = [
       forbiddenText: ["浏览器验收提示词"],
       forbiddenTestIds: ["training-tab-strip"],
     },
-  },
-  {
-    id: "training-debug-runs",
-    label: "训练与评估/调试运行",
-    path: `/${workspaceSlug}/training/debug-runs`,
-    expect: ["调试运行"],
-    uiContract: {
-      requiredText: ["提示词调试", "智能体调试", "Skill 场景", "本地模板目录", "模板质检台", "不启动智能体"],
-      requiredTestIds: [
-        "debug-runs-page-shell",
-        "prompt-playground-workbench",
-        "prompt-playground-inspection-board",
-        "prompt-playground-prompt-list",
-        "prompt-playground-template-boundary",
-        "prompt-playground-purpose-map",
-        "prompt-playground-template-lab",
-        "prompt-playground-local-pipeline",
-        "prompt-playground-quality-gate",
-      ],
-      forbiddenTestIds: ["training-tab-strip", "training-summary-strip"],
-    },
-  },
-  {
-    id: "training-prompt-playground-legacy",
-    label: "训练与评估/提示词调试场旧入口",
-    path: `/${workspaceSlug}/training/prompt-playground`,
-    expect: ["调试运行"],
-    finalPathIncludes: `/${workspaceSlug}/training/debug-runs`,
-  },
-  {
-    id: "training-agent-playground-legacy",
-    label: "训练与评估/智能体调试场旧入口",
-    path: `/${workspaceSlug}/training/agent-playground`,
-    expect: ["调试运行"],
-    finalPathIncludes: `/${workspaceSlug}/training/debug-runs`,
   },
   {
     id: "training-datasets",
@@ -155,13 +113,6 @@ const routes = [
     },
   },
   {
-    id: "training-experiments-legacy",
-    label: "训练与评估/实验旧入口",
-    path: `/${workspaceSlug}/training/experiments`,
-    expect: ["测试套件"],
-    finalPathIncludes: `/${workspaceSlug}/training/test-suites`,
-  },
-  {
     id: "training-test-suites-optimize",
     label: "训练与评估/优化运行模式",
     path: `/${workspaceSlug}/training/test-suites?mode=optimize`,
@@ -173,13 +124,6 @@ const routes = [
     },
   },
   {
-    id: "training-optimization-runs-legacy",
-    label: "训练与评估/优化运行旧入口",
-    path: `/${workspaceSlug}/training/optimization-runs`,
-    expect: ["测试套件"],
-    finalPathIncludes: `/${workspaceSlug}/training/test-suites?mode=optimize`,
-  },
-  {
     id: "training-evaluation-runs",
     label: "训练与评估/评测记录",
     path: `/${workspaceSlug}/training/evaluation-runs`,
@@ -189,13 +133,6 @@ const routes = [
       requiredTestIds: ["training-route-intro-evaluation-runs", "training-route-operating-model-evaluation-runs", "training-route-operating-step-evaluation-runs-1", "training-route-operating-step-evaluation-runs-2", "training-route-operating-step-evaluation-runs-3"],
       forbiddenTestIds: ["training-tab-strip", "training-route-operating-model-datasets", "training-route-operating-model-test-suites"],
     },
-  },
-  {
-    id: "training-run-history-legacy",
-    label: "训练与评估/运行历史旧入口",
-    path: `/${workspaceSlug}/training/run-history`,
-    expect: ["评测记录"],
-    finalPathIncludes: `/${workspaceSlug}/training/evaluation-runs`,
   },
 ];
 

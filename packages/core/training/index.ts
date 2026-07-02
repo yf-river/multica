@@ -57,24 +57,10 @@ export const TRAINING_WORKBENCH_VIEW_BY_ROUTE = Object.fromEntries(
   TRAINING_WORKBENCH_ALL_VIEWS.map((item) => [item.route, item.view]),
 ) as Record<TrainingWorkbenchRoute, TrainingWorkbenchViewId>;
 
-const LEGACY_TRAINING_WORKBENCH_VIEW_ALIASES: Record<string, TrainingWorkbenchViewId> = {
-  "demo-dashboard": "evaluation-runs",
-  runs: "evaluation-runs",
-  "run-history": "evaluation-runs",
-  "optimization-runs": "evaluation-runs",
-  experiments: "test-suites",
-  "prompt-debug": "prompts",
-  "agent-debug": "prompts",
-  "debug-runs": "prompts",
-  "prompt-playground": "prompts",
-  "agent-playground": "prompts",
-};
-
 function normalizeTrainingWorkbenchView(view: string | null): TrainingWorkbenchViewId {
   if (!view) return DEFAULT_TRAINING_WORKBENCH_VIEW;
-  const aliased = LEGACY_TRAINING_WORKBENCH_VIEW_ALIASES[view] ?? view;
-  return TRAINING_WORKBENCH_TAB_BY_VIEW[aliased as TrainingWorkbenchViewId]
-    ? (aliased as TrainingWorkbenchViewId)
+  return TRAINING_WORKBENCH_TAB_BY_VIEW[view as TrainingWorkbenchViewId]
+    ? (view as TrainingWorkbenchViewId)
     : DEFAULT_TRAINING_WORKBENCH_VIEW;
 }
 

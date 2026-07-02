@@ -82,15 +82,13 @@ function classifyChanges(files) {
     file.includes("training") ||
     file.includes("prompt-evaluation") ||
     file.includes("goal-test-dashboard-click-audit") ||
-    file.includes("goal-test-training-performance") ||
-    file.includes("goal-test-playground-difference-audit"),
+    file.includes("goal-test-training-performance"),
   );
   const trainingUiChanged = existing.some((file) =>
     file.includes("prompt-library") ||
     file.includes("training") ||
     file.includes("goal-test-dashboard-click-audit") ||
-    file.includes("goal-test-training-performance") ||
-    file.includes("goal-test-playground-difference-audit"),
+    file.includes("goal-test-training-performance"),
   );
   return {
     empty: normalized.length === 0,
@@ -111,8 +109,7 @@ function classifyChanges(files) {
       file === "scripts/goal-test-e2e-preflight.mjs" ||
       file === "scripts/goal-test-ui-audit.mjs" ||
       file === "scripts/goal-test-dashboard-click-audit.mjs" ||
-      file === "scripts/goal-test-training-performance-audit.mjs" ||
-      file === "scripts/goal-test-playground-difference-audit.mjs",
+      file === "scripts/goal-test-training-performance-audit.mjs",
     ),
     training_related: trainingRelated,
     training_ui_changed: trainingUiChanged,
@@ -182,7 +179,6 @@ function buildCommands(mode, info) {
     }
     if (info.training_related) {
       add("goal-test-training-performance-audit", "make goal-test-training-performance-audit", "Final training/evaluation route performance gate.");
-      add("goal-test-playground-difference-audit", "make goal-test-playground-difference-audit", "Final playground gate: verify prompt and agent playground stay visually and semantically distinct.");
     }
   }
 

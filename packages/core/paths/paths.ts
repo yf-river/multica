@@ -36,19 +36,7 @@ function workspaceScoped(slug: string) {
     runtimes: () => `${ws}/runtimes`,
     runtimeDetail: (id: string) => `${ws}/runtimes/${encode(id)}`,
     training: () => `${ws}/training`,
-    trainingView: (view: string) => {
-      const canonical =
-        view === "demo-dashboard" || view === "runs"
-          ? "runs"
-          : view === "debug-runs" || view === "prompt-playground" || view === "agent-playground"
-            ? "prompts"
-            : view === "experiments"
-              ? "test-suites"
-              : view === "optimization-runs" || view === "run-history"
-                ? "evaluation-runs"
-                : view;
-      return `${ws}/training/${encode(canonical)}`;
-    },
+    trainingView: (view: string) => `${ws}/training/${encode(view)}`,
     skills: () => `${ws}/skills`,
     skillDetail: (id: string) => `${ws}/skills/${encode(id)}`,
     settings: () => `${ws}/settings`,

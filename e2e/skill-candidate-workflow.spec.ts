@@ -71,7 +71,7 @@ test.describe("Skill candidate workflow", () => {
       prompt_id: prompt.id,
       name: `${artifactPrefix} failing optimization asset`,
       description: "Goal D Skill workflow Playwright fixture",
-      asset_type: "优化运行",
+      asset_type: "测试套件",
       payload: {
         cases: [
           {
@@ -93,12 +93,10 @@ test.describe("Skill candidate workflow", () => {
       .then(async () => (await api.listPromptEvaluationRuns({ asset_id: asset.id })).find((run) => run.status === "未通过")!);
     const candidate = await api.createPromptEvaluationOptimizationCandidate(failedRun.id);
 
-    await page.goto(`/${workspaceSlug}/training/optimization-runs`, { waitUntil: "domcontentloaded" });
-    const candidateRow = page.getByTestId(`prompt-evaluation-candidate-${candidate.id}`);
-    await expect(candidateRow).toBeVisible({ timeout: 15_000 });
-    await expect(candidateRow).toContainText("待确认", { timeout: 15_000 });
-
-    const skillWorkflow = page.getByTestId(`skill-candidate-workflow-${candidate.id}`);
+    await page.goto(`/${workspaceSlug}/training/evaluation-runs?run=${failedRun.id}`, { waitUntil: "domcontentloaded" });
+    const runRow = page.getByTestId(`prompt-evaluation-run-${failedRun.id}`);
+    await expect(runRow).toBeVisible({ timeout: 15_000 });
+    const skillWorkflow = runRow.getByTestId(`skill-candidate-workflow-${candidate.id}`);
     await expect(skillWorkflow).toBeVisible({ timeout: 15_000 });
     await expect(skillWorkflow).toContainText("Skill 发布链路");
     await expect(skillWorkflow).toContainText("本地工蜂 checkout");
@@ -157,7 +155,7 @@ test.describe("Skill candidate workflow", () => {
       prompt_id: prompt.id,
       name: `${artifactPrefix} full skill chain asset`,
       description: "Goal D full local checkout skill chain fixture",
-      asset_type: "优化运行",
+      asset_type: "测试套件",
       payload: {
         cases: [
           {

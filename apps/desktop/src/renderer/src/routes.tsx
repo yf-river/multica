@@ -3,7 +3,6 @@ import {
   createMemoryRouter,
   Navigate,
   Outlet,
-  useLocation,
   useMatches,
 } from "react-router-dom";
 import type { RouteObject } from "react-router-dom";
@@ -60,16 +59,6 @@ function DesktopSettingsRoute() {
       ]}
     />
   );
-}
-
-export function TrainingLegacyRedirect({ to, mode }: { to: string; mode?: string }) {
-  const location = useLocation();
-  const search = new URLSearchParams(location.search);
-  if (mode && !search.has("mode")) {
-    search.set("mode", mode);
-  }
-  const query = search.toString();
-  return <Navigate to={`${to}${query ? `?${query}` : ""}`} replace />;
 }
 
 /**
@@ -180,33 +169,11 @@ export const appRoutes: RouteObject[] = [
             handle: { title: "训练与评估" },
             children: [
               { index: true, element: <Navigate to="prompts" replace /> },
-              { path: "runs", element: <Navigate to="../../run-reviews" replace />, handle: { title: "运行复盘" } },
               { path: "prompts", element: <PromptLibraryPage activeView="prompts" />, handle: { title: "训练与评估" } },
-              { path: "debug-runs", element: <TrainingLegacyRedirect to="../prompts" />, handle: { title: "训练与评估" } },
-              { path: "prompt-playground", element: <TrainingLegacyRedirect to="../prompts" />, handle: { title: "训练与评估" } },
-              { path: "agent-playground", element: <TrainingLegacyRedirect to="../prompts" />, handle: { title: "训练与评估" } },
               { path: "datasets", element: <PromptLibraryPage activeView="datasets" />, handle: { title: "训练与评估" } },
               { path: "test-suites", element: <PromptLibraryPage activeView="test-suites" />, handle: { title: "训练与评估" } },
               { path: "evaluation-runs", element: <PromptLibraryPage activeView="evaluation-runs" />, handle: { title: "训练与评估" } },
-              { path: "experiments", element: <TrainingLegacyRedirect to="../test-suites" />, handle: { title: "训练与评估" } },
-              { path: "optimization-runs", element: <TrainingLegacyRedirect to="../evaluation-runs" />, handle: { title: "训练与评估" } },
-              { path: "run-history", element: <TrainingLegacyRedirect to="../evaluation-runs" />, handle: { title: "训练与评估" } },
             ],
-          },
-          {
-            path: "prompt-library",
-            element: <Navigate to="../training/prompts" replace />,
-            handle: { title: "训练与评估" },
-          },
-          {
-            path: "evaluation",
-            element: <Navigate to="../run-reviews" replace />,
-            handle: { title: "运行复盘" },
-          },
-          {
-            path: "eval",
-            element: <Navigate to="../run-reviews" replace />,
-            handle: { title: "运行复盘" },
           },
           { path: "skills", element: <SkillsPage />, handle: { title: "技能" } },
           {
