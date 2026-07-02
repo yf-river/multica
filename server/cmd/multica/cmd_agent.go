@@ -441,57 +441,8 @@ func runAgentCreate(cmd *cobra.Command, _ []string) error {
 		"name":       name,
 		"runtime_id": runtimeID,
 	}
-	if v, _ := cmd.Flags().GetString("description"); v != "" {
-		body["description"] = v
-	}
-	if v, _ := cmd.Flags().GetString("instructions"); v != "" {
-		body["instructions"] = v
-	}
-	if cmd.Flags().Changed("runtime-config") {
-		v, _ := cmd.Flags().GetString("runtime-config")
-		var rc any
-		if err := json.Unmarshal([]byte(v), &rc); err != nil {
-			return fmt.Errorf("--runtime-config must be valid JSON: %w", err)
-		}
-		body["runtime_config"] = rc
-	}
-	if cmd.Flags().Changed("custom-args") {
-		v, _ := cmd.Flags().GetString("custom-args")
-		ca, err := parseCustomArgs(v)
-		if err != nil {
-			return err
-		}
-		body["custom_args"] = ca
-	}
-	if ce, ok, err := resolveCustomEnv(cmd); err != nil {
+	if err := applyAgentBodyFlags(cmd, body, agentBodyCreate); err != nil {
 		return err
-	} else if ok {
-		body["custom_env"] = ce
-	}
-	if mc, ok, err := resolveMcpConfig(cmd); err != nil {
-		return err
-	} else if ok {
-		body["mcp_config"] = mc
-	}
-	if cmd.Flags().Changed("model") {
-		v, _ := cmd.Flags().GetString("model")
-		body["model"] = v
-	}
-	// thinking_level mirrors model: a thin pass-through to the top-level agent
-	// field the server already accepts and validates (IsKnownThinkingValue).
-	// The CLI deliberately does not enumerate valid levels — they are
-	// runtime/model-specific and the server owns the catalog (MUL-2339).
-	if cmd.Flags().Changed("thinking-level") {
-		v, _ := cmd.Flags().GetString("thinking-level")
-		body["thinking_level"] = v
-	}
-	if cmd.Flags().Changed("scope") {
-		v, _ := cmd.Flags().GetString("scope")
-		body["scope"] = v
-	}
-	if cmd.Flags().Changed("max-concurrent-tasks") {
-		v, _ := cmd.Flags().GetInt32("max-concurrent-tasks")
-		body["max_concurrent_tasks"] = v
 	}
 
 	ctx, cancel := cli.APIContext(context.Background())
@@ -512,22 +463,41 @@ func runAgentUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	body := map[string]any{}
-	if cmd.Flags().Changed("name") {
-		v, _ := cmd.Flags().GetString("name")
-		body["name"] = v
+	if err := applyAgentBodyFlags(cmd, body, agentBodyUpdate); err != nil {
+		return err
 	}
-	if cmd.Flags().Changed("description") {
-		v, _ := cmd.Flags().GetString("description")
-		body["description"] = v
+
+	if len(body) == 0 {
+		return fmt.Errorf("no fields to update; use --name, --description, --instructions, --runtime-id, --runtime-config, --model, --thinking-level, --custom-args, --mcp-config, --scope, --status, or --max-concurrent-tasks (env vars now live behind `multica agent env set <id>`)")
 	}
-	if cmd.Flags().Changed("instructions") {
-		v, _ := cmd.Flags().GetString("instructions")
-		body["instructions"] = v
+
+	ctx, cancel := cli.APIContext(context.Background())
+	defer cancel()
+
+	var result map[string]any
+	if err := client.PutJSON(ctx, "/api/agents/"+args[0], body, &result); err != nil {
+		return fmt.Errorf("update agent: %w", err)
 	}
-	if cmd.Flags().Changed("runtime-id") {
-		v, _ := cmd.Flags().GetString("runtime-id")
-		body["runtime_id"] = v
+
+	return printNamedMutationResult(cmd, "Agent", "updated", "name", result)
+}
+
+type agentBodyMode int
+
+const (
+	agentBodyCreate agentBodyMode = iota
+	agentBodyUpdate
+)
+
+func applyAgentBodyFlags(cmd *cobra.Command, body map[string]any, mode agentBodyMode) error {
+	if mode == agentBodyUpdate {
+		applyChangedStringFlag(cmd, body, "name", "name")
+		applyChangedStringFlag(cmd, body, "runtime-id", "runtime_id")
 	}
+
+	applyAgentTextFlag(cmd, body, mode, "description", "description")
+	applyAgentTextFlag(cmd, body, mode, "instructions", "instructions")
+
 	if cmd.Flags().Changed("runtime-config") {
 		v, _ := cmd.Flags().GetString("runtime-config")
 		var rc any
@@ -544,28 +514,12 @@ func runAgentUpdate(cmd *cobra.Command, args []string) error {
 		}
 		body["custom_args"] = ca
 	}
-	if cmd.Flags().Changed("model") {
-		v, _ := cmd.Flags().GetString("model")
-		body["model"] = v
-	}
-	// thinking_level is a tri-state on the server (omitted = no change, "" =
-	// clear to runtime default, value = set). Sending the key only when the
-	// flag was provided produces exactly that, the same way --model behaves.
-	if cmd.Flags().Changed("thinking-level") {
-		v, _ := cmd.Flags().GetString("thinking-level")
-		body["thinking_level"] = v
-	}
-	if cmd.Flags().Changed("scope") {
-		v, _ := cmd.Flags().GetString("scope")
-		body["scope"] = v
-	}
-	if cmd.Flags().Changed("status") {
-		v, _ := cmd.Flags().GetString("status")
-		body["status"] = v
-	}
-	if cmd.Flags().Changed("max-concurrent-tasks") {
-		v, _ := cmd.Flags().GetInt32("max-concurrent-tasks")
-		body["max_concurrent_tasks"] = v
+	if mode == agentBodyCreate {
+		if ce, ok, err := resolveCustomEnv(cmd); err != nil {
+			return err
+		} else if ok {
+			body["custom_env"] = ce
+		}
 	}
 	if mc, ok, err := resolveMcpConfig(cmd); err != nil {
 		return err
@@ -573,19 +527,37 @@ func runAgentUpdate(cmd *cobra.Command, args []string) error {
 		body["mcp_config"] = mc
 	}
 
-	if len(body) == 0 {
-		return fmt.Errorf("no fields to update; use --name, --description, --instructions, --runtime-id, --runtime-config, --model, --thinking-level, --custom-args, --mcp-config, --scope, --status, or --max-concurrent-tasks (env vars now live behind `multica agent env set <id>`)")
+	applyChangedStringFlag(cmd, body, "model", "model")
+	// The server owns runtime/model-specific thinking-level validation. The CLI
+	// only preserves the tri-state contract: omitted, clear with "", or set.
+	applyChangedStringFlag(cmd, body, "thinking-level", "thinking_level")
+	applyChangedStringFlag(cmd, body, "scope", "scope")
+	if mode == agentBodyUpdate {
+		applyChangedStringFlag(cmd, body, "status", "status")
+	}
+	if cmd.Flags().Changed("max-concurrent-tasks") {
+		v, _ := cmd.Flags().GetInt32("max-concurrent-tasks")
+		body["max_concurrent_tasks"] = v
 	}
 
-	ctx, cancel := cli.APIContext(context.Background())
-	defer cancel()
+	return nil
+}
 
-	var result map[string]any
-	if err := client.PutJSON(ctx, "/api/agents/"+args[0], body, &result); err != nil {
-		return fmt.Errorf("update agent: %w", err)
+func applyAgentTextFlag(cmd *cobra.Command, body map[string]any, mode agentBodyMode, flag, key string) {
+	if mode == agentBodyCreate {
+		if v, _ := cmd.Flags().GetString(flag); v != "" {
+			body[key] = v
+		}
+		return
 	}
+	applyChangedStringFlag(cmd, body, flag, key)
+}
 
-	return printNamedMutationResult(cmd, "Agent", "updated", "name", result)
+func applyChangedStringFlag(cmd *cobra.Command, body map[string]any, flag, key string) {
+	if cmd.Flags().Changed(flag) {
+		v, _ := cmd.Flags().GetString(flag)
+		body[key] = v
+	}
 }
 
 func runAgentArchive(cmd *cobra.Command, args []string) error {
