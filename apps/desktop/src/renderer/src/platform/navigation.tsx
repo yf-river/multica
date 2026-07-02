@@ -200,24 +200,14 @@ export function DesktopNavigationProvider({
       openInNewTab: (
         path: string,
         title?: string,
-        opts?: { activate?: boolean },
+        opts?: OpenInNewTabOptions,
       ) => {
         // Cross-workspace "open in new tab" switches workspace and opens
         // the path there (focus follows the user); same-workspace defaults
         // to background tab (browser cmd+click semantics). Callers that
         // represent an explicit "Open in new tab" CTA pass `activate: true`
         // to bring the new tab to the foreground.
-        const slug = extractWorkspaceSlug(path);
-        const store = useTabStore.getState();
-        if (slug && slug !== store.activeWorkspaceSlug) {
-          store.switchWorkspace(slug, path);
-          return;
-        }
-        const icon = resolveRouteIcon(path);
-        const newId = store.openTab(path, title ?? path, icon);
-        if (opts?.activate && newId) {
-          store.setActiveTab(newId);
-        }
+        openWorkspacePathInNewTab(path, title, opts);
       },
       getShareableUrl: (path: string) => `${appUrl}${path}`,
     }),
@@ -229,6 +219,26 @@ export function DesktopNavigationProvider({
 
 function currentActiveTab() {
   return getActiveTab(useTabStore.getState());
+}
+
+type OpenInNewTabOptions = { activate?: boolean };
+
+function openWorkspacePathInNewTab(
+  path: string,
+  title?: string,
+  opts?: OpenInNewTabOptions,
+) {
+  const slug = extractWorkspaceSlug(path);
+  const store = useTabStore.getState();
+  if (slug && slug !== store.activeWorkspaceSlug) {
+    store.switchWorkspace(slug, path);
+    return;
+  }
+  const icon = resolveRouteIcon(path);
+  const newId = store.openTab(path, title ?? path, icon);
+  if (opts?.activate && newId) {
+    store.setActiveTab(newId);
+  }
 }
 
 /**
@@ -274,20 +284,8 @@ export function TabNavigationProvider({
       openInNewTab: (
         path: string,
         title?: string,
-        opts?: { activate?: boolean },
-      ) => {
-        const slug = extractWorkspaceSlug(path);
-        const store = useTabStore.getState();
-        if (slug && slug !== store.activeWorkspaceSlug) {
-          store.switchWorkspace(slug, path);
-          return;
-        }
-        const icon = resolveRouteIcon(path);
-        const newId = store.openTab(path, title ?? path, icon);
-        if (opts?.activate && newId) {
-          store.setActiveTab(newId);
-        }
-      },
+        opts?: OpenInNewTabOptions,
+      ) => openWorkspacePathInNewTab(path, title, opts),
       getShareableUrl: (path: string) => `${appUrl}${path}`,
     }),
     [appUrl, router, location],
