@@ -46,6 +46,10 @@ import {
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { Popover, PopoverContent, PopoverTrigger } from "@multica/ui/components/ui/popover";
 import { AppLink } from "../../navigation";
+import {
+  inferProjectPathFromGongfengURL,
+  inferRepoNameFromURL,
+} from "../../projects/components/workspace-repo-resource";
 import { useT } from "../../i18n";
 
 function isGongfengResource(resource: ProjectResource): resource is ProjectResource & {
@@ -1036,25 +1040,6 @@ function uniqueNonEmpty(values: Array<string | undefined>): string[] {
     out.push(trimmed);
   }
   return out;
-}
-
-function inferProjectPathFromGongfengURL(url: string): string {
-  try {
-    const parsed = new URL(url);
-    const parts = parsed.pathname.split("/").filter(Boolean);
-    const boundary = parts.findIndex((part) =>
-      ["commits", "commit", "tree", "blob", "merge_requests"].includes(part),
-    );
-    return (boundary > 0 ? parts.slice(0, boundary) : parts).join("/");
-  } catch {
-    return "";
-  }
-}
-
-function inferRepoNameFromURL(url: string): string {
-  const projectPath = inferProjectPathFromGongfengURL(url);
-  if (projectPath) return projectPath.split("/").filter(Boolean).pop() || "";
-  return "";
 }
 
 function firstNonEmpty(values: Array<string | undefined>): string {

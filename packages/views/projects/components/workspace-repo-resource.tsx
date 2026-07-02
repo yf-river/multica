@@ -49,7 +49,7 @@ export function normalizeRepoSearch(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "");
 }
 
-function inferProjectPathFromGongfengURL(url: string): string {
+export function inferProjectPathFromGongfengURL(url: string): string {
   try {
     const parsed = new URL(url);
     const parts = parsed.pathname.split("/").filter(Boolean);
@@ -62,7 +62,7 @@ function inferProjectPathFromGongfengURL(url: string): string {
   }
 }
 
-function inferRepoNameFromURL(url: string): string {
+export function inferRepoNameFromURL(url: string): string {
   const projectPath = inferProjectPathFromGongfengURL(url);
   if (projectPath) return projectPath.split("/").filter(Boolean).pop() || "";
   return "";
