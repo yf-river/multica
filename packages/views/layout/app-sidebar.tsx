@@ -107,6 +107,8 @@ const EMPTY_PINS: PinnedItem[] = [];
 const EMPTY_WORKSPACES: Awaited<ReturnType<typeof api.listWorkspaces>> = [];
 const EMPTY_INBOX: Awaited<ReturnType<typeof api.listInbox>> = [];
 const SIDEBAR_RUNTIME_UPDATE_DELAY_MS = 5_000;
+const SIDEBAR_NAV_BUTTON_CLASS =
+  "text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground";
 
 // Nav items reference WorkspacePaths method names so they can be resolved
 // against the current workspace slug at render time (see AppSidebar body).
@@ -162,6 +164,32 @@ const configureNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[]
   { key: "skills", labelKey: "skills", icon: BookOpenText },
   { key: "settings", labelKey: "settings", icon: Settings },
 ];
+
+function SidebarNavButton({
+  icon: Icon,
+  href,
+  isActive,
+  label,
+  children,
+}: {
+  icon: typeof Inbox;
+  href: string;
+  isActive: boolean;
+  label: string;
+  children?: React.ReactNode;
+}) {
+  return (
+    <SidebarMenuButton
+      isActive={isActive}
+      render={<AppLink href={href} />}
+      className={SIDEBAR_NAV_BUTTON_CLASS}
+    >
+      <Icon />
+      <span>{label}</span>
+      {children}
+    </SidebarMenuButton>
+  );
+}
 
 function DraftDot() {
   const hasDraft = useIssueDraftStore((s) => !!(s.draft.title || s.draft.description));
@@ -575,19 +603,18 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                   const isActive = isNavActive(pathname, href);
                   return (
                     <SidebarMenuItem key={item.key}>
-                      <SidebarMenuButton
+                      <SidebarNavButton
+                        icon={item.icon}
+                        href={href}
                         isActive={isActive}
-                        render={<AppLink href={href} />}
-                        className="text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
+                        label={t(($) => $.nav[item.labelKey])}
                       >
-                        <item.icon />
-                        <span>{t(($) => $.nav[item.labelKey])}</span>
                         {item.key === "inbox" && unreadCount > 0 && (
                           <span className="ml-auto text-xs">
                             {unreadCount > 99 ? "99+" : unreadCount}
                           </span>
                         )}
-                      </SidebarMenuButton>
+                      </SidebarNavButton>
                     </SidebarMenuItem>
                   );
                 })}
@@ -646,14 +673,12 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                     : "";
                   return (
                     <SidebarMenuItem key={item.key}>
-                      <SidebarMenuButton
+                      <SidebarNavButton
+                        icon={item.icon}
+                        href={href}
                         isActive={isActive}
-                        render={<AppLink href={href} />}
-                        className="text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
-                      >
-                        <item.icon />
-                        <span>{t(($) => $.nav[item.labelKey])}</span>
-                      </SidebarMenuButton>
+                        label={t(($) => $.nav[item.labelKey])}
+                      />
                       {item.key === "training" && isActive && (
                         <SidebarMenu className="ml-6 mt-1 gap-0.5 border-l border-sidebar-border pl-2">
                           {TRAINING_WORKBENCH_VIEWS.map((view) => {
@@ -689,17 +714,16 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                   const isActive = isNavActive(pathname, href);
                   return (
                     <SidebarMenuItem key={item.key}>
-                      <SidebarMenuButton
+                      <SidebarNavButton
+                        icon={item.icon}
+                        href={href}
                         isActive={isActive}
-                        render={<AppLink href={href} />}
-                        className="text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
+                        label={t(($) => $.nav[item.labelKey])}
                       >
-                        <item.icon />
-                        <span>{t(($) => $.nav[item.labelKey])}</span>
                         {item.key === "runtimes" && hasRuntimeUpdates && (
                           <span className="ml-auto size-1.5 rounded-full bg-destructive" />
                         )}
-                      </SidebarMenuButton>
+                      </SidebarNavButton>
                     </SidebarMenuItem>
                   );
                 })}
