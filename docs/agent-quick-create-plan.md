@@ -67,7 +67,7 @@ Skill 是一个**按需加载的能力包**,本质是 SKILL.md 文件 + 可选�
 
 ### 2.2 Multica 的 Skill 数据模型
 
-3 张表(migration `008_structured_skills.up.sql`):
+3 张表(当前 schema baseline):
 
 | 表 | 关键字段 |
 |---|---|
@@ -527,7 +527,7 @@ Multica 只有**单体 skill**(SKILL.md + skill_file),没有 plugin / bundle 概
 
 | 主题 | 位置 |
 |---|---|
-| Skill DB 模型 | `server/migrations/008_structured_skills.up.sql:4-32` |
+| Skill DB 模型 | `server/migrations/001_current_schema.up.sql` |
 | Skill 创建 handler + 事务 | `server/internal/handler/skill.go:143-162` + `skill_create.go:21-71` |
 | Skill import 入口(支持 3 个 source) | `server/internal/handler/skill.go:1538` |
 | Skill import source 分发 | `server/internal/handler/skill.go:586-617` (`detectImportSource`) |

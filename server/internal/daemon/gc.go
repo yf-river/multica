@@ -388,8 +388,8 @@ func (d *Daemon) gcDecisionAutopilotRun(ctx context.Context, taskDir string, met
 	return gcActionSkip
 }
 
-// isAutopilotRunTerminal mirrors the run.status CHECK in
-// migrations/042_autopilot.up.sql. Non-terminal states are pending/running;
+// isAutopilotRunTerminal mirrors the autopilot_run.status CHECK in the
+// current schema. Non-terminal states are pending/running;
 // every other value the schema allows is a final resting state from the
 // daemon's POV (the run is no longer producing work in this workdir).
 func isAutopilotRunTerminal(status string) bool {

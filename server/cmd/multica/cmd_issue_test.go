@@ -1180,7 +1180,7 @@ func TestNormalizeAssigneeLookupInput(t *testing.T) {
 
 // TestResolveAssigneeRespectsKinds covers the MUL-2165 follow-up: callers
 // whose target schema is member-or-agent-only (project.lead_type DB CHECK
-// at server/migrations/034_projects.up.sql:10, and the subscriber handler's
+// in the current schema baseline, and the subscriber handler's
 // isWorkspaceEntity switch at server/internal/handler/handler.go:414) must
 // be able to opt out of squad resolution. Without this, "--lead <SquadName>"
 // would return (squad, ...) and the request would 500/403 server-side
@@ -1636,7 +1636,7 @@ func TestPickAssigneeFromFlags(t *testing.T) {
 // for the MUL-2165 follow-up. Subscriber add/remove and project lead pass
 // memberOrAgentKinds because their target schema rejects squads
 // (subscriber: server/internal/handler/handler.go:414;
-// project: server/migrations/034_projects.up.sql:10). Without this gating,
+// project: current schema project.lead_type CHECK). Without this gating,
 // `multica issue subscriber add --user "<SquadName>"` or
 // `multica project create --lead "<SquadName>"` would resolve to
 // (squad, ...) and surface as a 500/403 server-side instead of a clean

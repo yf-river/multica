@@ -140,40 +140,6 @@ SELECT plan_time, status, attempt, runner_id,
  LIMIT 20;
 ```
 
-<Callout>
-**从 `v0.3.4` 升级到 `v0.3.5+`？** `migrate up` 会在 migration `103` 前自动运行幂等回填。若使用更旧二进制或自动 hook 因环境问题失败，请对同一数据库运行 `backfill_task_usage_hourly` 后重试升级。
-</Callout>
-
-### 兼容路径（仅已有部署）
-
-旧部署可能通过数据库 `pg_cron`、外部 cron、systemd timer 或 Kubernetes `CronJob` 调用 `SELECT rollup_task_usage_hourly()`。这仍可兼容，但新部署应使用后端进程内调度。SQL 函数内部持有 advisory lock 4246，因此两种方式短期共存不会重复写入。
-
-如果已有 `pg_cron` 任务，建议按以下顺序下线：
-
-1. 确认至少一个后端副本的进程内调度健康，`sys_cron_executions` 中持续出现 `SUCCESS`：
-
-   ```sql
-   SELECT plan_time, status, runner_id, finished_at
-     FROM sys_cron_executions
-    WHERE job_name = 'rollup_task_usage_hourly'
-      AND status = 'SUCCESS'
-    ORDER BY plan_time DESC
-    LIMIT 5;
-   ```
-
-2. 确认稳定后，移除冗余 `pg_cron` 任务：
-
-   ```sql
-   SELECT cron.unschedule('rollup_task_usage_hourly')
-     FROM cron.job WHERE jobname = 'rollup_task_usage_hourly';
-   ```
-
-3. 除非确认没有其他业务依赖，否则不要贸然卸载 `pg_cron` 扩展。Multica 默认镜像不需要它。
-
-外部 cron、systemd timer 或 Kubernetes `CronJob` 也按同样方式下线：先确认进程内调度稳定，再删除外部任务。
-
-更完整的审计表语义、advisory lock、回填命令和迁移 hook 说明见 `SELF_HOSTING_ADVANCED.md`。
-
 ## 停止服务
 
 ```bash

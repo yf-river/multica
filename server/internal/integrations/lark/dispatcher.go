@@ -177,8 +177,8 @@ type ChatTaskEnqueuer interface {
 //   - AppendUserMessage invokes the Mark INSIDE its chat_message tx
 //     when a claim token is supplied, so the durable write and the
 //     Mark commit atomically. That closes the "crashed between
-//     commit and Mark" window. See lark_inbound_message_dedup comment
-//     in 109_lark_integration.up.sql for the full invariant set.
+//     commit and Mark" window. See the lark_inbound_message_dedup
+//     schema comment for the full invariant set.
 type DispatcherQueries interface {
 	GetLarkInstallationByAppID(ctx context.Context, appID string) (db.LarkInstallation, error)
 	GetLarkUserBindingByOpenID(ctx context.Context, arg db.GetLarkUserBindingByOpenIDParams) (db.LarkUserBinding, error)

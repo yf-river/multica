@@ -1,6 +1,5 @@
--- Lark (飞书) Bot integration queries. The migration that defines these
--- tables lives at server/migrations/109_lark_integration.up.sql; the
--- architectural boundaries the package enforces on top of them are
+-- Lark (飞书) Bot integration queries. The current schema baseline defines
+-- these tables; the architectural boundaries the package enforces on top are
 -- documented in server/internal/integrations/lark/doc.go.
 --
 -- Scoping convention: every public-facing read goes through a

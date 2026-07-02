@@ -124,15 +124,6 @@ Usage / Runtime 看板读的是派生表 `task_usage_hourly`，由 `rollup_task_
 
 进程内调度器每 30 秒 tick 一次，通过 `sys_cron_executions` 表认领 5 分钟一档的 UTC plan。多 backend 副本同时跑也安全 —— 唯一键 `(job_name, scope_kind, scope_id, plan_time)` 保证每个 plan 只有一个赢家。新部署不需要任何额外配置。
 
-**兼容性 —— 已注册的 `pg_cron` 任务。** 如果你之前用 `pg_cron` 注册过 rollup（`SELECT cron.schedule('rollup_task_usage_hourly', '*/5 * * * *', …)`），不删也行 —— SQL 函数内部持有 advisory lock 4246，应用调度器和 `pg_cron` 不会并发双写。要清掉冗余项可以执行：
-
-```sql
-SELECT cron.unschedule('rollup_task_usage_hourly')
-  FROM cron.job WHERE jobname = 'rollup_task_usage_hourly';
-```
-
-**从 `v0.3.4 → v0.3.5+` 升级。** 上一版要求运维在应用 migration 103 之前手动跑 `cmd/backfill_task_usage_hourly`，否则 fail-closed 守卫会中止 `migrate up`。从 MUL-2957 起这一步是自动的：migrate 命令会在应用 migration 103 之前（advisory lock 4246 保护下）运行幂等的按月切片 backfill，然后继续。在繁忙的数据库上你仍可以用 `--sleep-between-slices=2s` 跑独立 backfill 来限制读压力，但已不是必需。
-
 完整参考（含运维注意事项和 Kubernetes 部署形态）见仓库的 [`SELF_HOSTING_ADVANCED.md → Usage Dashboard Rollup`](https://github.com/multica-ai/multica/blob/main/SELF_HOSTING_ADVANCED.md#usage-dashboard-rollup)。
 
 ## Kubernetes 部署（替代方案）
@@ -196,7 +187,6 @@ multica setup self-host \
 - **后端起不来**：看容器日志 `docker compose -f docker-compose.selfhost.yml logs backend`；常见是 `.env` 里 `DATABASE_URL` 或 `JWT_SECRET` 有问题
 - **WebSocket 连不上**：公网部署必须设 `FRONTEND_ORIGIN` 成你真实的前端域名；见 [故障排查 → WebSocket 连不上](/troubleshooting#websocket-连不上)
 - **Usage / Runtime 看板一直是 0**：没人调度 `rollup_task_usage_hourly()` —— 见上面的 [第 7 步](#7-usage-rollup-no-operator-action-required) 和 [故障排查 → Usage 看板一直是 0](/troubleshooting#usage-看板一直是-0)
-- **`migrate up` 报 `refusing to drop legacy daily rollups`**：`v0.3.4 → v0.3.5+` 升级路径的 fail-closed guard。从 MUL-2957 起 migrate 命令在应用 migration 103 之前会自动跑 backfill —— 见 [第 7 步](#7-usage-rollup-no-operator-action-required)
 
 ## 下一步
 

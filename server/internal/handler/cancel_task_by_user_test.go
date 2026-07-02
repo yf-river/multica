@@ -444,7 +444,7 @@ func TestCancelTaskByUser_ChatTaskWithoutTranscript_RestoresUserDraft(t *testing
 // TestCancelTaskByUser_ChatTaskWithBoundAttachment_SurvivesCancelAndRebinds
 // guards the data-loss path on the empty-chat cancel: the user message bound to
 // an attachment is deleted, and attachment.chat_message_id is ON DELETE CASCADE
-// (server/migrations/083_attachment_chat_columns.up.sql), so without the
+// in the current schema, so without the
 // detach-before-delete step the cancel would silently destroy the user's
 // attachment. The detach (chat_message_id -> NULL, chat_session_id retained) is
 // load-bearing, not an optimization; nothing else covered it. This pins:

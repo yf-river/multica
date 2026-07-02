@@ -1126,30 +1126,10 @@ func textFromOptional(value *string) pgtype.Text {
 
 // ── Webhook ─────────────────────────────────────────────────────────────────
 
-// identifierRe extracts identifiers like "MUL-1510" from text. Case-insensitive
-// because branch names are conventionally lowercase but issue prefixes are
-// uppercase. Word boundary on the left prevents matching inside account-style
-// strings (e.g. "abc@MUL-1") and the digit anchor on the right rules out
-// version numbers like "v1.2-3".
-var identifierRe = regexp.MustCompile(`(?i)\b([a-z][a-z0-9]{1,9})-(\d+)\b`)
-
-// closingIdentifierRe extracts identifiers that appear immediately after a
-// GitHub-style closing keyword ("close[sd]?", "fix(e[sd])?", "resolve[sd]?"),
-// optionally separated by a colon and whitespace. Matching is intentionally
-// strict on adjacency — "Fix MUL-1" closes MUL-1, but "Fix login MUL-1"
-// does not. This mirrors GitHub's own closing-keyword grammar and is the
-// gate the webhook uses to decide whether to auto-advance an issue to
-// `done` after a PR merges. References like "Follow up in MUL-2" and bare
-// title prefixes like "MUL-1: ..." link the PR (via identifierRe) but
-// never auto-close.
-var closingIdentifierRe = regexp.MustCompile(
-	`(?i)\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)[:\s]+([a-z][a-z0-9]{1,9})-(\d+)\b`,
-)
-
 // HandleGitHubWebhook (POST /api/webhooks/github) is GitHub's destination for
 // every event from a connected installation. We verify HMAC signature, route
-// on X-GitHub-Event, and either upsert PR rows + auto-link to issues or
-// remove the installation on uninstall.
+// on X-GitHub-Event, and either mirror PR/check-suite rows or remove the
+// installation on uninstall.
 func (h *Handler) HandleGitHubWebhook(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 10<<20)) // 10 MiB cap
 	if err != nil {
@@ -1681,132 +1661,6 @@ func parseGHTimeRequired(s string) pgtype.Timestamptz {
 	}
 	return t
 }
-
-// extractIdentifiers pulls every "PREFIX-NUMBER" match across the supplied
-// fields, deduplicating in input order.
-func extractIdentifiers(parts ...string) []string {
-	seen := map[string]struct{}{}
-	out := []string{}
-	for _, src := range parts {
-		for _, m := range identifierRe.FindAllStringSubmatch(src, -1) {
-			ident := strings.ToUpper(m[1]) + "-" + m[2]
-			if _, dup := seen[ident]; dup {
-				continue
-			}
-			seen[ident] = struct{}{}
-			out = append(out, ident)
-		}
-	}
-	return out
-}
-
-// extractClosingIdentifiers pulls every "PREFIX-NUMBER" identifier that
-// appears immediately after a GitHub-style closing keyword in the supplied
-// fields, deduplicating in input order. Identifiers in branch names are
-// intentionally excluded — callers should pass only title and body — because
-// branch names are not natural-language fields and treating "mul-1/fix-login"
-// as a close declaration would silently re-open the bug this gate is meant
-// to fix.
-func extractClosingIdentifiers(parts ...string) []string {
-	seen := map[string]struct{}{}
-	out := []string{}
-	for _, src := range parts {
-		for _, m := range closingIdentifierRe.FindAllStringSubmatch(src, -1) {
-			ident := strings.ToUpper(m[1]) + "-" + m[2]
-			if _, dup := seen[ident]; dup {
-				continue
-			}
-			seen[ident] = struct{}{}
-			out = append(out, ident)
-		}
-	}
-	return out
-}
-
-// lookupIssueByIdentifier looks up an issue in the given workspace by its
-// "PREFIX-NUMBER" identifier. Returns the row + true if the prefix matches
-// workspaceAutoLinkPRsEnabled reports whether the workspace allows the
-// GitHub webhook to create issue ↔ PR link rows. Defaults to true so that
-// workspaces predating RFC MUL-2414 keep the historical "auto-link on"
-// behavior, and short-circuits to false whenever the master GitHub switch
-// is explicitly off — mirroring the precedence used on the client side.
-func (h *Handler) workspaceAutoLinkPRsEnabled(ctx context.Context, workspaceID pgtype.UUID) bool {
-	ws, err := h.Queries.GetWorkspace(ctx, workspaceID)
-	if err != nil || len(ws.Settings) == 0 {
-		return true
-	}
-	var s struct {
-		GitHubEnabled            *bool `json:"github_enabled"`
-		GitHubAutoLinkPRsEnabled *bool `json:"github_auto_link_prs_enabled"`
-	}
-	if err := json.Unmarshal(ws.Settings, &s); err != nil {
-		return true
-	}
-	if s.GitHubEnabled != nil && !*s.GitHubEnabled {
-		return false
-	}
-	if s.GitHubAutoLinkPRsEnabled == nil {
-		return true
-	}
-	return *s.GitHubAutoLinkPRsEnabled
-}
-
-// the workspace's configured prefix and the number resolves to a real issue.
-func (h *Handler) lookupIssueByIdentifier(ctx context.Context, workspaceID pgtype.UUID, prefix, identifier string) (db.Issue, bool) {
-	idx := strings.LastIndex(identifier, "-")
-	if idx < 0 {
-		return db.Issue{}, false
-	}
-	gotPrefix, numStr := identifier[:idx], identifier[idx+1:]
-	if !strings.EqualFold(gotPrefix, prefix) {
-		return db.Issue{}, false
-	}
-	n, err := strconv.Atoi(numStr)
-	if err != nil {
-		return db.Issue{}, false
-	}
-	issue, err := h.Queries.GetIssueByNumber(ctx, db.GetIssueByNumberParams{
-		WorkspaceID: workspaceID,
-		Number:      int32(n),
-	})
-	if err != nil {
-		return db.Issue{}, false
-	}
-	return issue, true
-}
-
-func (h *Handler) advanceIssueToDone(ctx context.Context, issue db.Issue, workspaceID string) {
-	updated, err := h.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
-		ID:          issue.ID,
-		Status:      "done",
-		WorkspaceID: issue.WorkspaceID,
-	})
-	if err != nil {
-		slog.Warn("github: advance issue to done failed", "err", err)
-		return
-	}
-
-	// Fire the platform parent-notification path on the same transition the
-	// HTTP UpdateIssue / BatchUpdateIssues paths use. A merged PR is one of
-	// the most common ways a sub-issue actually reaches `done`, and skipping
-	// it here would leave the parent silent for the dominant completion path.
-	// notifyParentOfChildDone re-checks every guard (prev != done, parent
-	// exists, parent not terminal), so calling it unconditionally is safe.
-	h.notifyParentOfChildDone(ctx, issue, updated, "system", "")
-
-	prefix := h.getIssuePrefix(ctx, issue.WorkspaceID)
-	resp := issueToResponse(updated, prefix)
-	h.publish(protocol.EventIssueUpdated, workspaceID, "system", "", map[string]any{
-		"issue":          resp,
-		"status_changed": true,
-		"prev_status":    issue.Status,
-		"creator_type":   issue.CreatorType,
-		"creator_id":     uuidToString(issue.CreatorID),
-		"source":         "github_pr_merged",
-	})
-}
-
-// ── Helpers ─────────────────────────────────────────────────────────────────
 
 func parseStrictUUID(s string) (pgtype.UUID, error) {
 	var u pgtype.UUID

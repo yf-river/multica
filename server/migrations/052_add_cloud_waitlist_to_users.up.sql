@@ -1,2 +1,0 @@
--- Deprecated before account-model cleanup. Kept as a no-op so fresh database
--- replays do not create removed onboarding-interest fields.

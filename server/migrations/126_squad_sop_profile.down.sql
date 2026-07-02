@@ -1,2 +1,0 @@
-ALTER TABLE squad
-  DROP COLUMN IF EXISTS sop_profile;

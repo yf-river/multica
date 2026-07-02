@@ -261,7 +261,7 @@ ORDER BY agent_id, model;
 
 ### 4.4 Rollup worker 改造
 
-现有两张 rollup 表的写入逻辑合并成一条管线，实现见 migration `102_task_usage_hourly_pipeline`（触发器 + 窗口函数 + 失效队列 TTL + pg_cron 调度）：
+现有两张 rollup 表的写入逻辑合并成一条管线，并已折叠进当前 schema baseline：
 
 - 源数据扫描不变（仍然扫 `task_usage` 增量 + 失效队列）。`bucket_hour` 用 `task_usage_hour_bucket(tu.created_at)`（UTC 整点截断）。
 - Upsert 目标从两张 daily 表改为一张 `task_usage_hourly`。
@@ -319,19 +319,19 @@ ORDER BY agent_id, model;
 
 > 产品尚未上线，无存量用户需保护，全部变更作为一组迁移一次性交付——旧的 daily 管线在同一分支里直接拆除，不保留共存期。
 
-整套变更落在分支 `feat/timezone-architecture`，migration 100–104：
+整套变更已折叠进 `server/migrations/001_current_schema.up.sql`：
 
-| Migration | 内容 |
+| Current schema area | 内容 |
 |---|---|
-| `100_user_timezone` | 加 `"user".timezone` 列（nullable） |
-| `101_task_usage_hourly_schema` | 建 `task_usage_hourly` + `task_usage_hourly_rollup_state` + `task_usage_hourly_dirty` + 索引 |
-| `102_task_usage_hourly_pipeline` | 失效触发器、`rollup_task_usage_hourly_window` 窗口函数、`prune_task_usage_hourly_dirty()` 失效队列 TTL、带单日 cap 与 prune 的 `rollup_task_usage_hourly()` cron 入口、pg_cron 调度 |
-| `103_drop_legacy_daily_rollups` | 拆掉 `task_usage_daily` / `task_usage_dashboard_daily` 两条旧管线（表、函数、触发器、pg_cron 任务） |
-| `104_drop_runtime_timezone` | 删除 `agent_runtime.timezone` 列（Operational 层移除，见 §2.1） |
+| `"user".timezone` | 用户 viewing timezone（nullable） |
+| `task_usage_hourly` | UTC hourly grain 用量汇总表 |
+| hourly rollup pipeline | 失效触发器、`rollup_task_usage_hourly_window` 窗口函数、`prune_task_usage_hourly_dirty()` 失效队列 TTL、带单日 cap 与 prune 的 `rollup_task_usage_hourly()` 入口 |
+| legacy daily rollups | 已删除 `task_usage_daily` / `task_usage_dashboard_daily` 两条旧管线 |
+| `agent_runtime.timezone` | 已删除，Operational 层移除（见 §2.1） |
 
 配套的代码侧改动：
 
-- **数据回填**：一次性命令 `cmd/backfill_task_usage_hourly`，按 workspace 切片把历史 `task_usage` 灌进新表。旧的 `cmd/backfill_task_usage_daily` / `cmd/backfill_task_usage_dashboard_daily` 已删除。
+- **数据回填**：当前开发基线只保证空库初始化，不再保留历史 daily rollup 回填命令。
 - **查询切换**：后端所有报表查询迁到 `task_usage_hourly`（或 Time/Tasks 的 `agent_task_queue` 查询），统一接受 `@tz`；`UseDailyRollupForDashboard` / `UseDailyRollupForRuntimeUsage` 等 feature flag 与旧的 raw-scan / daily-rollup 双查询路径一并删除。
 - **前端打通**：`useViewingTimezone()` hook 解析 viewer tz，报表组件随请求带 `?tz=`；`dashboard-page.tsx` 的 `WEEK_TZ = "UTC"` 改为 `useViewingTimezone()`，原 UTC-lock 解释性注释删除。
 - **UI 文案**：Preferences 新增 Timezone setting。Runtime Detail 页的 timezone editor 整体删除。

@@ -1,1 +1,0 @@
--- Deprecated no-op. The removed public lead table is permanent.

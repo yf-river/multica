@@ -11,9 +11,7 @@ Use this when the task requires exact source paths, edge-case behavior, tests, o
 Source:
 
 ```text
-server/migrations/084_squad.up.sql                # base table: name, description, leader_id, creator_id
-server/migrations/085_squad_archive.up.sql        # archived_at, archived_by columns
-server/migrations/088_squad_instructions.up.sql   # instructions column
+server/migrations/001_current_schema.up.sql       # current squad table shape
 server/pkg/db/queries/squad.sql
 packages/core/types/squad.ts
 ```

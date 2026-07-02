@@ -1,2 +1,0 @@
--- Irreversible cleanup: the removed public lead table and onboarding-interest
--- fields are not restored on downgrade.
