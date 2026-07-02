@@ -2,26 +2,20 @@
 
 import { useMemo } from "react";
 import { useStore } from "zustand";
-import { ChevronDown } from "lucide-react";
-import { Button } from "@multica/ui/components/ui/button";
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuRadioGroup,
-  DropdownMenuRadioItem,
-  DropdownMenuTrigger,
-} from "@multica/ui/components/ui/dropdown-menu";
-import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
 import type { Issue } from "@multica/core/types";
 import { myIssuesViewStore, type MyIssuesScope } from "@multica/core/issues/stores/my-issues-view-store";
 import { useT } from "../../i18n";
 import { WorkspaceAgentWorkingChip } from "../../issues/components/workspace-agent-working-chip";
-import { IssueDisplayControls } from "../../issues/components/issues-header";
+import {
+  IssueDisplayControls,
+  IssueScopeSelector,
+  type IssueScopeOption,
+} from "../../issues/components/issues-header";
 
 export function MyIssuesHeader({ allIssues }: { allIssues: Issue[] }) {
   const { t } = useT("my-issues");
   const { t: tIssues } = useT("issues");
-  const SCOPES: { value: MyIssuesScope; label: string; description: string }[] = [
+  const SCOPES: IssueScopeOption<MyIssuesScope>[] = [
     { value: "all", label: t(($) => $.header.scope.all_label), description: t(($) => $.header.scope.all_description) },
     { value: "assigned", label: t(($) => $.header.scope.assigned_label), description: t(($) => $.header.scope.assigned_description) },
     { value: "created", label: t(($) => $.header.scope.created_label), description: t(($) => $.header.scope.created_description) },
@@ -34,61 +28,18 @@ export function MyIssuesHeader({ allIssues }: { allIssues: Issue[] }) {
     () => new Set(allIssues.map((i) => i.id)),
     [allIssues],
   );
-  const scopeLabel = SCOPES.find((s) => s.value === scope)?.label ?? SCOPES[0]?.label;
+  const scopeLabel =
+    SCOPES.find((s) => s.value === scope)?.label ?? SCOPES[0]?.label ?? "";
 
   return (
     <div className="h-12 shrink-0 overflow-x-auto px-4 [-webkit-overflow-scrolling:touch]">
       <div className="flex h-full w-max min-w-full items-center justify-between gap-2">
-        <div className="hidden shrink-0 items-center gap-1 md:flex">
-          {SCOPES.map((s) => (
-            <Tooltip key={s.value}>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className={
-                      scope === s.value
-                        ? "bg-accent text-accent-foreground hover:bg-accent/80"
-                        : "text-muted-foreground"
-                    }
-                    onClick={() => act.setScope(s.value)}
-                  >
-                    {s.label}
-                  </Button>
-                }
-              />
-              <TooltipContent side="bottom">{s.description}</TooltipContent>
-            </Tooltip>
-          ))}
-        </div>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                variant="outline"
-                size="sm"
-                className="shrink-0 gap-1 text-muted-foreground md:hidden"
-              >
-                <span className="truncate">{scopeLabel}</span>
-                <ChevronDown className="size-3 text-muted-foreground" />
-              </Button>
-            }
-          />
-          <DropdownMenuContent align="start" className="w-auto">
-            <DropdownMenuRadioGroup
-              value={scope}
-              onValueChange={(value) => act.setScope(value as MyIssuesScope)}
-            >
-              {SCOPES.map((s) => (
-                <DropdownMenuRadioItem key={s.value} value={s.value}>
-                  {s.label}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <IssueScopeSelector
+          options={SCOPES}
+          value={scope}
+          activeLabel={scopeLabel}
+          onChange={act.setScope}
+        />
 
         <div className="flex shrink-0 items-center gap-1">
           {agentRunningFilter && (

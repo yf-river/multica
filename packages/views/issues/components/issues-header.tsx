@@ -176,6 +176,79 @@ function useIssueCounts(allIssues: Issue[]) {
 
 const SCOPE_VALUES: IssuesScope[] = ["all", "members", "agents"];
 
+export type IssueScopeOption<T extends string> = {
+  value: T;
+  label: string;
+  description: string;
+};
+
+export function IssueScopeSelector<T extends string>({
+  options,
+  value,
+  activeLabel,
+  onChange,
+}: {
+  options: IssueScopeOption<T>[];
+  value: T;
+  activeLabel: string;
+  onChange: (value: T) => void;
+}) {
+  return (
+    <>
+      <div className="hidden shrink-0 items-center gap-1 md:flex">
+        {options.map((option) => (
+          <Tooltip key={option.value}>
+            <TooltipTrigger
+              render={
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className={
+                    value === option.value
+                      ? "bg-accent text-accent-foreground hover:bg-accent/80"
+                      : "text-muted-foreground"
+                  }
+                  onClick={() => onChange(option.value)}
+                >
+                  {option.label}
+                </Button>
+              }
+            />
+            <TooltipContent side="bottom">{option.description}</TooltipContent>
+          </Tooltip>
+        ))}
+      </div>
+
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="outline"
+              size="sm"
+              className="shrink-0 gap-1 text-muted-foreground md:hidden"
+            >
+              <span className="truncate">{activeLabel}</span>
+              <ChevronDown className="size-3 text-muted-foreground" />
+            </Button>
+          }
+        />
+        <DropdownMenuContent align="start" className="w-auto">
+          <DropdownMenuRadioGroup
+            value={value}
+            onValueChange={(next) => onChange(next as T)}
+          >
+            {options.map((option) => (
+              <DropdownMenuRadioItem key={option.value} value={option.value}>
+                {option.label}
+              </DropdownMenuRadioItem>
+            ))}
+          </DropdownMenuRadioGroup>
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </>
+  );
+}
+
 // ---------------------------------------------------------------------------
 // Actor sub-menu content (shared between Assignee and Creator)
 // ---------------------------------------------------------------------------
@@ -683,59 +756,25 @@ export function IssuesHeader({
     agents: "agents_description",
   };
 
-  const scopeLabel = t(($) => $.scope[SCOPE_LABEL_KEY[scope]]);
+  const scopeOptions: IssueScopeOption<IssuesScope>[] = SCOPE_VALUES.map((s) => ({
+    value: s,
+    label: t(($) => $.scope[SCOPE_LABEL_KEY[s]]),
+    description: t(($) => $.scope[SCOPE_DESC_KEY[s]]),
+  }));
+  const scopeLabel =
+    scopeOptions.find((option) => option.value === scope)?.label ??
+    scopeOptions[0]?.label ??
+    "";
 
   return (
     <div className="h-12 shrink-0 overflow-x-auto px-4 [-webkit-overflow-scrolling:touch]">
       <div className="flex h-full w-max min-w-full items-center justify-between gap-2">
-        {/* Left: scope buttons */}
-        <div className="hidden shrink-0 items-center gap-1 md:flex">
-          {SCOPE_VALUES.map((s) => (
-            <Tooltip key={s}>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className={
-                      scope === s
-                        ? "bg-accent text-accent-foreground hover:bg-accent/80"
-                        : "text-muted-foreground"
-                    }
-                    onClick={() => setScope(s)}
-                  >
-                    {t(($) => $.scope[SCOPE_LABEL_KEY[s]])}
-                  </Button>
-                }
-              />
-              <TooltipContent side="bottom">{t(($) => $.scope[SCOPE_DESC_KEY[s]])}</TooltipContent>
-            </Tooltip>
-          ))}
-        </div>
-
-        <DropdownMenu>
-          <DropdownMenuTrigger
-            render={
-              <Button
-                variant="outline"
-                size="sm"
-                className="shrink-0 gap-1 text-muted-foreground md:hidden"
-              >
-                <span className="truncate">{scopeLabel}</span>
-                <ChevronDown className="size-3 text-muted-foreground" />
-              </Button>
-            }
-          />
-          <DropdownMenuContent align="start" className="w-auto">
-            <DropdownMenuRadioGroup value={scope} onValueChange={(value) => setScope(value as IssuesScope)}>
-              {SCOPE_VALUES.map((s) => (
-                <DropdownMenuRadioItem key={s} value={s}>
-                  {t(($) => $.scope[SCOPE_LABEL_KEY[s]])}
-                </DropdownMenuRadioItem>
-              ))}
-            </DropdownMenuRadioGroup>
-          </DropdownMenuContent>
-        </DropdownMenu>
+        <IssueScopeSelector
+          options={scopeOptions}
+          value={scope}
+          activeLabel={scopeLabel}
+          onChange={setScope}
+        />
 
         <div className="flex shrink-0 items-center gap-1">
           {agentRunningFilter && (
