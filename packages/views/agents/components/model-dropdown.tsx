@@ -1,9 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { ChevronDown, Cpu, Loader2, Plus, Check, Info } from "lucide-react";
-import { runtimeModelsOptions } from "@multica/core/runtimes";
 import type { RuntimeModel } from "@multica/core/types";
 import {
   Popover,
@@ -13,6 +11,7 @@ import {
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
 import { useT } from "../../i18n";
+import { useRuntimeModelPickerState } from "./model-picker-state";
 
 // ModelDropdown renders a searchable, creatable model picker for an agent.
 // It fetches the supported-model catalog from the selected runtime — the
@@ -37,19 +36,15 @@ export function ModelDropdown({
 }) {
   const { t } = useT("agents");
   const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
-
-  const modelsQuery = useQuery(
-    runtimeModelsOptions(runtimeOnline ? runtimeId : null),
-  );
-
-  const supported = modelsQuery.data?.supported ?? true;
-  // Stable reference for the model list — `?? []` would mint a fresh
-  // array each render and force every downstream useMemo to invalidate.
-  const models = useMemo(
-    () => modelsQuery.data?.models ?? [],
-    [modelsQuery.data],
-  );
+  const {
+    canCreate,
+    models,
+    modelsQuery,
+    search,
+    setSearch,
+    supported,
+    trimmedSearch,
+  } = useRuntimeModelPickerState({ runtimeId, runtimeOnline });
   const grouped = useMemo(() => groupByProvider(models), [models]);
 
   // When the selected runtime reports it doesn't support per-agent
@@ -75,12 +70,6 @@ export function ModelDropdown({
     }
     return out;
   }, [grouped, search]);
-
-  const trimmedSearch = search.trim();
-  const exactMatch = models.some(
-    (m) => m.id === trimmedSearch || m.label === trimmedSearch,
-  );
-  const canCreate = trimmedSearch.length > 0 && !exactMatch;
 
   const select = (id: string) => {
     onChange(id);

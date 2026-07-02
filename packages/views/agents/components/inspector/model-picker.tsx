@@ -1,9 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
 import { Loader2, Plus } from "lucide-react";
-import { runtimeModelsOptions } from "@multica/core/runtimes";
 import { Input } from "@multica/ui/components/ui/input";
 import {
   PickerItem,
@@ -11,6 +9,7 @@ import {
 } from "../../../issues/components/pickers";
 import { CHIP_CLASS } from "./chip";
 import { useT } from "../../../i18n";
+import { useRuntimeModelPickerState } from "../model-picker-state";
 
 /**
  * Inline model picker for the agent inspector. Lighter cousin of
@@ -41,19 +40,15 @@ export function ModelPicker({
 }) {
   const { t } = useT("agents");
   const [open, setOpen] = useState(false);
-  const [search, setSearch] = useState("");
-
-  const modelsQuery = useQuery(
-    runtimeModelsOptions(runtimeOnline ? runtimeId : null),
-  );
-  const supported = modelsQuery.data?.supported ?? true;
-  // Memoise the model list so every downstream useMemo gets a stable
-  // reference; `?? []` would mint a fresh array on every render and
-  // invalidate filters needlessly.
-  const models = useMemo(
-    () => modelsQuery.data?.models ?? [],
-    [modelsQuery.data],
-  );
+  const {
+    canCreate,
+    models,
+    modelsQuery,
+    search,
+    setSearch,
+    supported,
+    trimmedSearch,
+  } = useRuntimeModelPickerState({ runtimeId, runtimeOnline });
 
   const filtered = useMemo(() => {
     const s = search.trim().toLowerCase();
@@ -63,12 +58,6 @@ export function ModelPicker({
         m.id.toLowerCase().includes(s) || m.label.toLowerCase().includes(s),
     );
   }, [models, search]);
-
-  const trimmedSearch = search.trim();
-  const exactMatch = models.some(
-    (m) => m.id === trimmedSearch || m.label === trimmedSearch,
-  );
-  const canCreate = trimmedSearch.length > 0 && !exactMatch;
 
   const triggerLabel = value || t(($) => $.pickers.model_default);
   const triggerTitle = t(($) => $.pickers.model_tooltip, { value: triggerLabel });
