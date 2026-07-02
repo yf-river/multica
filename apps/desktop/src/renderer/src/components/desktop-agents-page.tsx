@@ -1,6 +1,5 @@
-import { useEffect, useState } from "react";
 import { AgentsPage } from "@multica/views/agents";
-import type { DaemonStatus } from "../../../shared/daemon-types";
+import { useLocalDaemonIdentity } from "./use-local-daemon-identity";
 
 /**
  * Desktop wrapper around the shared `AgentsPage`. Bridges the Electron
@@ -18,32 +17,12 @@ import type { DaemonStatus } from "../../../shared/daemon-types";
  * even when the app doesn't manage the running daemon (WSL2 etc.).
  */
 export function DesktopAgentsPage() {
-  const [status, setStatus] = useState<DaemonStatus>({ state: "stopped" });
-  const [lastIdentity, setLastIdentity] = useState<{
-    daemonId: string | null;
-    deviceName: string | null;
-  }>({ daemonId: null, deviceName: null });
-  const [hostName, setHostName] = useState<string | null>(null);
-
-  useEffect(() => {
-    const apply = (s: DaemonStatus) => {
-      setStatus(s);
-      if (s.daemonId) {
-        setLastIdentity({
-          daemonId: s.daemonId,
-          deviceName: s.deviceName ?? null,
-        });
-      }
-    };
-    window.daemonAPI.getStatus().then(apply);
-    window.daemonAPI.getHostName().then((name) => setHostName(name || null));
-    return window.daemonAPI.onStatusChange(apply);
-  }, []);
+  const { localDaemonId, localMachineName } = useLocalDaemonIdentity();
 
   return (
     <AgentsPage
-      localDaemonId={status.daemonId ?? lastIdentity.daemonId}
-      localMachineName={status.deviceName ?? lastIdentity.deviceName ?? hostName}
+      localDaemonId={localDaemonId}
+      localMachineName={localMachineName}
       // Desktop owns a local machine for the lifetime of the app, even
       // while the daemon is stopped or hasn't registered yet. The shared
       // page synthesizes a placeholder local row so the filter dropdown

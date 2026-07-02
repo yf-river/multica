@@ -1,7 +1,6 @@
-import { useEffect, useState } from "react";
 import { RuntimesPage } from "@multica/views/runtimes";
 import { DaemonRuntimeActions } from "./daemon-runtime-card";
-import type { DaemonStatus } from "../../../shared/daemon-types";
+import { useLocalDaemonIdentity } from "./use-local-daemon-identity";
 
 /**
  * Desktop wrapper around the shared `RuntimesPage`. Bridges the Electron
@@ -18,36 +17,7 @@ import type { DaemonStatus } from "../../../shared/daemon-types";
  * has no visible effect.
  */
 export function DesktopRuntimesPage() {
-  const [status, setStatus] = useState<DaemonStatus>({ state: "stopped" });
-  // Remember the last known daemonId/deviceName. After the daemon is
-  // stopped, `status.daemonId` goes back to undefined — without this
-  // sticky cache the local row would either disappear or get reclassified
-  // as a remote machine (since `isCurrent` requires a daemonId match),
-  // taking the Start button with it.
-  const [lastIdentity, setLastIdentity] = useState<{
-    daemonId: string | null;
-    deviceName: string | null;
-  }>({ daemonId: null, deviceName: null });
-  // The host's OS hostname, independent of any daemon. Used as the last
-  // fallback for the local machine name so consolidation still works when
-  // the app doesn't manage the running daemon (e.g. it lives in WSL2) and
-  // thus never reports a device name.
-  const [hostName, setHostName] = useState<string | null>(null);
-
-  useEffect(() => {
-    const apply = (s: DaemonStatus) => {
-      setStatus(s);
-      if (s.daemonId) {
-        setLastIdentity({
-          daemonId: s.daemonId,
-          deviceName: s.deviceName ?? null,
-        });
-      }
-    };
-    window.daemonAPI.getStatus().then(apply);
-    window.daemonAPI.getHostName().then((name) => setHostName(name || null));
-    return window.daemonAPI.onStatusChange(apply);
-  }, []);
+  const { status, localDaemonId, localMachineName } = useLocalDaemonIdentity();
 
   const bootstrapping =
     status.state === "installing_cli" ||
@@ -56,8 +26,8 @@ export function DesktopRuntimesPage() {
 
   return (
     <RuntimesPage
-      localDaemonId={status.daemonId ?? lastIdentity.daemonId}
-      localMachineName={status.deviceName ?? lastIdentity.deviceName ?? hostName}
+      localDaemonId={localDaemonId}
+      localMachineName={localMachineName}
       localMachineActions={<DaemonRuntimeActions />}
       // Desktop owns a local machine for the lifetime of the app, even
       // while the daemon is stopped or hasn't registered yet. The shared
