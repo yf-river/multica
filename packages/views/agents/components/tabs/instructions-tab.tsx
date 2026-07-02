@@ -1,11 +1,10 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, Save } from "lucide-react";
 import type { Agent } from "@multica/core/types";
-import { Button } from "@multica/ui/components/ui/button";
 import { ContentEditor } from "../../../editor/content-editor";
 import { useT } from "../../../i18n";
+import { AgentTabSaveBar } from "./agent-tab-save-bar";
 
 export function InstructionsTab({
   agent,
@@ -77,23 +76,12 @@ export function InstructionsTab({
         />
       </div>
 
-      <div className="flex items-center justify-end gap-3">
-        {isDirty && (
-          <span className="text-xs text-muted-foreground">{t(($) => $.tab_body.common.unsaved_changes)}</span>
-        )}
-        <Button
-          size="sm"
-          onClick={handleSave}
-          disabled={!isDirty || saving}
-        >
-          {saving ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Save className="h-3.5 w-3.5" />
-          )}
-          {t(($) => $.tab_body.common.save)}
-        </Button>
-      </div>
+      <AgentTabSaveBar
+        dirty={isDirty}
+        saving={saving}
+        disabled={!isDirty || saving}
+        onSave={handleSave}
+      />
     </div>
   );
 }

@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Loader2, Save } from "lucide-react";
 import type { Agent } from "@multica/core/types";
 import {
   OPENCLAW_GATEWAY_TOKEN_MASK,
@@ -11,12 +10,12 @@ import {
   parseOpenclawRuntimeConfig,
   serializeOpenclawRuntimeConfig,
 } from "@multica/core/agents";
-import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
 import { Switch } from "@multica/ui/components/ui/switch";
 import { toast } from "sonner";
 import { useT } from "../../../i18n";
+import { AgentTabSaveBar } from "./agent-tab-save-bar";
 
 // Form state mirrors OpenclawRuntimeConfig, but always carries a defined
 // mode value so the radio group is fully controlled. Empty-string mode
@@ -276,21 +275,13 @@ export function RuntimeConfigTab({
         </div>
       </fieldset>
 
-      <div className="flex items-center justify-end gap-3 pt-2">
-        {dirty && (
-          <span className="text-xs text-muted-foreground">
-            {t(($) => $.tab_body.common.unsaved_changes)}
-          </span>
-        )}
-        <Button onClick={handleSave} disabled={!dirty || !canSave} size="sm">
-          {saving ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Save className="h-3.5 w-3.5" />
-          )}
-          {t(($) => $.tab_body.common.save)}
-        </Button>
-      </div>
+      <AgentTabSaveBar
+        dirty={dirty}
+        saving={saving}
+        disabled={!dirty || !canSave}
+        onSave={handleSave}
+        className="pt-2"
+      />
     </div>
   );
 }

@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Eraser, Loader2, Lock, Save } from "lucide-react";
+import { Eraser, Lock } from "lucide-react";
 import type { Agent } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Textarea } from "@multica/ui/components/ui/textarea";
 import { toast } from "sonner";
 import { useT } from "../../../i18n";
+import { AgentTabSaveBar } from "./agent-tab-save-bar";
 
 // `null` and the empty string are the two ways the user can mean "no
 // config" — the server stores either as a NULL column and the daemon
@@ -163,25 +164,12 @@ export function McpConfigTab({
         <p className="text-xs text-destructive">{invalidMessage}</p>
       )}
 
-      <div className="flex items-center justify-end gap-3">
-        {dirty && (
-          <span className="text-xs text-muted-foreground">
-            {t(($) => $.tab_body.common.unsaved_changes)}
-          </span>
-        )}
-        <Button
-          onClick={handleSave}
-          disabled={!dirty || !parseResult.ok || saving}
-          size="sm"
-        >
-          {saving ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Save className="h-3.5 w-3.5" />
-          )}
-          {t(($) => $.tab_body.common.save)}
-        </Button>
-      </div>
+      <AgentTabSaveBar
+        dirty={dirty}
+        saving={saving}
+        disabled={!dirty || !parseResult.ok || saving}
+        onSave={handleSave}
+      />
     </div>
   );
 }
