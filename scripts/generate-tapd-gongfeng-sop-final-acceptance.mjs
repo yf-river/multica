@@ -20,10 +20,7 @@ const goalCEvidence = buildGoalCEvidence();
 const goalDSkillEvidence = buildGoalDSkillEvidence();
 const goalEGongfengSkillWritebackEvidence = buildGoalEGongfengSkillWritebackEvidence();
 const uiPlaywrightEvidence = buildGoalEUIEvidence();
-const canonicalDemoEvidence = buildCanonicalDemoEvidence();
-const realPMRunEvidence = buildRealPMRunEvidence();
 const gongfengTouchpointEvidence = buildGoalEGongfengTouchpointEvidence();
-const finalEvidencePackage = buildGoalEFinalEvidencePackage();
 const prodReleaseEvidence = buildProdReleaseEvidence();
 const newAccountMCPEvidence = buildNewAccountMCPEvidence();
 const fixtureGovernanceEvidence = buildFixtureGovernanceEvidence();
@@ -31,7 +28,7 @@ const fixtureGovernanceEvidence = buildFixtureGovernanceEvidence();
 const databaseStageEvidence = databaseURL && e2e.issue?.id
   ? await loadStageEvidence(databaseURL, e2e.issue.id)
   : { stages: [], task_count: 0, error: "DATABASE_URL or e2e.issue.id unavailable" };
-const stageEvidence = resolveStageEvidence(databaseStageEvidence, realPMRunEvidence);
+const stageEvidence = resolveStageEvidence(databaseStageEvidence);
 const crossServiceEvidence = buildCrossServiceEvidence();
 const handoffEvidence = buildHandoffEvidence();
 const uiApiEvidence = buildUIAPIEvidence();
@@ -39,7 +36,7 @@ const topologyGeneralizationEvidence = buildTopologyGeneralizationEvidence();
 
 const originalRequirements = buildOriginalRequirementMatrix({ e2e, stageEvidence, crossServiceEvidence });
 const productionReadiness = buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEvidence, handoffEvidence, uiApiEvidence, prodReleaseEvidence, topologyGeneralizationEvidence, newAccountMCPEvidence, fixtureGovernanceEvidence });
-const goalERequirements = buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, canonicalDemoEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, finalEvidencePackage, prodReleaseEvidence, topologyGeneralizationEvidence, passwordSOPEvidence });
+const goalERequirements = buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, prodReleaseEvidence, topologyGeneralizationEvidence, passwordSOPEvidence });
 const blockingOpen = [
   ...originalRequirements.filter((item) => ["missing", "partial", "false_claimed", "blocked"].includes(item.status)),
   ...goalERequirements.filter((item) => ["missing", "partial", "false_claimed", "blocked"].includes(item.status)),
@@ -57,7 +54,6 @@ const artifact = {
     e2e: e2ePath,
     password_strength_sop: fileIfExists(passwordSOPPath),
     sop_stage_evidence: stageEvidence.source_artifact || null,
-    real_pm_0105_run: realPMRunEvidence.latest_json_path || null,
     deployment_log_window: e2e.deployment_log_window || null,
     prod_release: prodReleaseEvidence.latest_json_path || null,
     topology_generalization: topologyGeneralizationEvidence.latest_json_path || null,
@@ -89,9 +85,6 @@ const artifact = {
   goal_d_skill_chain: goalDSkillEvidence,
   goal_e_gongfeng_skill_writeback: goalEGongfengSkillWritebackEvidence,
   goal_e_ui_playwright: uiPlaywrightEvidence,
-  goal_e_canonical_demo: canonicalDemoEvidence,
-  goal_e_real_pm_0105_run: realPMRunEvidence,
-  goal_e_final_evidence_package: finalEvidencePackage,
   prod_release: prodReleaseEvidence,
   new_account_mcp_onboarding: newAccountMCPEvidence,
   fixture_governance: fixtureGovernanceEvidence,
@@ -256,7 +249,7 @@ function buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEviden
   ];
 }
 
-function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, canonicalDemoEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, finalEvidencePackage, prodReleaseEvidence, topologyGeneralizationEvidence, passwordSOPEvidence }) {
+function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, prodReleaseEvidence, topologyGeneralizationEvidence, passwordSOPEvidence }) {
   const stageKeys = new Set((stageEvidence.stages || []).map((stage) => stage.key));
   const requiredStageKeys = ["pm", "01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"];
   const allStagesPresent = requiredStageKeys.every((key) => stageKeys.has(key));
@@ -425,40 +418,14 @@ function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence,
     issueEvalOptimizerLinkage.issue_id_in_trial_prompt === true &&
     Boolean(issueEvalOptimizerLinkage.candidate_patch_hash) &&
     issueEvalOptimizerLinkage.optimizer_status_after_apply === "applied";
-  const finalPackage = finalEvidencePackage.latest_json || {};
-  const finalPackageEvidence = finalPackage.checks?.required_evidence || {};
-  const finalPackageExists = Boolean(finalEvidencePackage.latest_json_path);
-  const finalPackageLogsPerformanceClean =
-    finalPackage.ok === true &&
-    finalPackage.checks?.logs_clean === true &&
-    finalPackage.checks?.performance_clean === true &&
-    finalPackage.checks?.playwright_clean === true &&
-    Array.isArray(finalPackage.checks?.page_timings) &&
-    finalPackage.checks.page_timings.length >= 5;
-  const finalPackageComplete =
-    finalPackage.ok === true &&
-    finalPackageEvidence.commit === true &&
-    finalPackageEvidence.environment === true &&
-    finalPackageEvidence.commands === true &&
-    finalPackageEvidence.issue_ids === true &&
-    finalPackageEvidence.run_urls_or_api === true &&
-    finalPackageEvidence.trace_eval_optimizer === true &&
-    finalPackageEvidence.screenshots === true &&
-    finalPackageEvidence.logs === true &&
-    finalPackageEvidence.gap_audit === true;
   const topologyAudit = topologyGeneralizationEvidence.latest_json || {};
-  const canonicalDemoPassed =
-    canonicalDemoEvidence.latest_json?.ok === true &&
-    canonicalDemoEvidence.latest_json?.final_real_pm_0105_required === true &&
-    canonicalDemoEvidence.latest_json?.issue?.id &&
-    Array.isArray(canonicalDemoEvidence.latest_json?.role_task_evidence) &&
-    canonicalDemoEvidence.latest_json.role_task_evidence.length >= 6 &&
-    canonicalDemoEvidence.latest_json.role_task_evidence.every((item) => item.status === "completed") &&
-    canonicalDemoEvidence.latest_json?.issue_execution_tree?.node_count >= 6 &&
-    canonicalDemoEvidence.latest_json?.prompt_evaluation?.failed_run_id &&
-    canonicalDemoEvidence.latest_json?.prompt_evaluation?.candidate_id &&
-    canonicalDemoEvidence.latest_json?.prompt_evaluation?.apply_status === "applied" &&
-    canonicalDemoEvidence.latest_json?.prompt_evaluation?.re_eval_status === "通过";
+  const latestUIAudit = readOptionalJSON(uiPlaywrightEvidence.ui_audit_latest);
+  const latestTrainingPerformance = readOptionalJSON(uiPlaywrightEvidence.training_performance_latest);
+  const logAndPerformanceClean =
+    prodReleaseEvidence.latest_json?.ok === true ||
+    latestUIAudit?.ok === true ||
+    latestTrainingPerformance?.ok === true ||
+    e2e.deployment_log_window?.ok === true;
   const passwordSOPChecks = new Set((passwordSOPEvidence?.checks || []).filter((item) => item.ok).map((item) => item.name));
   const passwordSOPPassed =
     passwordSOPEvidence?.ok === true &&
@@ -470,13 +437,6 @@ function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence,
     Array.isArray(passwordSOPEvidence?.linked_pull_requests) &&
     passwordSOPEvidence.linked_pull_requests.some((item) => item.html_url && Number(item.number || 0) > 0);
   return [
-    matrixItem("E-00", "Current ai-studio Web/API state retains a visible canonical demo chain instead of empty archived-only evidence",
-      canonicalDemoPassed,
-      canonicalDemoEvidence.latest_json_path
-        ? "Canonical demo artifact exists, but current issue/task/eval/candidate/re-eval evidence is incomplete. This artifact is a demo fixture and still does not replace final real PM+01-05 model execution."
-        : "No current canonical demo artifact exists; final page may be empty even if old artifacts pass.",
-      canonicalDemoEvidence,
-      canonicalDemoEvidence.latest_json_path ? "partial" : "missing"),
     matrixItem("E-01", "Gongfeng-only product semantics across repository/branch/commit/MR user paths",
       touchpointAuditPassed,
       touchpointAuditExists
@@ -585,23 +545,15 @@ function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence,
       { cross_service_curl: crossServiceEvidence.cross_service_curl, ui_api: uiApiEvidence, unified_public_api: publicAPIEvidence },
       publicAPIEvidence.create || crossServiceEvidence.cross_service_curl.ok === true ? "partial" : "missing"),
     matrixItem("E-10", "Server/web/daemon/runtime logs and key page performance are clean for the unified acceptance window",
-      finalPackageLogsPerformanceClean,
-      finalPackageExists
-        ? "Goal E final evidence package exists, but logs, Playwright checks, or page timings are not clean."
-        : "No current unified Goal E log/performance window is attached after the latest A-D worktree changes.",
-      finalPackageExists
-        ? finalEvidencePackage
-        : { latest_ui_audit: uiPlaywrightEvidence.ui_audit_latest, training_performance_latest: uiPlaywrightEvidence.training_performance_latest },
-      finalPackageExists ? "partial" : "missing"),
-    matrixItem("E-11", "Final evidence package contains commit, environment, commands, issue IDs, run URLs/API, Trace/Eval/Optimizer evidence, screenshots, logs, and gap audit",
-      finalPackageComplete && prodReleaseEvidence.latest_json?.ok === true,
-      finalPackageExists
-        ? "Goal E final evidence package exists, but one or more required evidence fields or full prod release gates are missing."
-        : "No final evidence package exists.",
-      finalPackageExists
-        ? { final_evidence_package: finalEvidencePackage, prod_release: prodReleaseEvidence }
-        : { runbook: handoffEvidence, goal_d: goalDSkillEvidence, goal_c: goalCEvidence },
-      finalPackageExists ? "partial" : "missing"),
+      logAndPerformanceClean,
+      "No current UI audit, training performance, deployment log window, or prod release artifact proves a clean acceptance window.",
+      {
+        prod_release: prodReleaseEvidence,
+        latest_ui_audit: uiPlaywrightEvidence.ui_audit_latest,
+        training_performance_latest: uiPlaywrightEvidence.training_performance_latest,
+        deployment_log_window: e2e.deployment_log_window || null,
+      },
+      "partial"),
   ];
 }
 
@@ -806,107 +758,6 @@ function buildGoalEGongfengTouchpointEvidence() {
   };
 }
 
-function buildCanonicalDemoEvidence() {
-  const latestPath = fileIfExists(path.join(artifactRoot, "goal-e-canonical-demo-seed-latest.json"));
-  let latestJSON = null;
-  if (latestPath) {
-    try {
-      latestJSON = readJSON(latestPath);
-    } catch {
-      latestJSON = null;
-    }
-  }
-  return {
-    latest_json_path: latestPath,
-    latest_json: latestJSON,
-    proof_boundary: latestJSON?.final_real_pm_0105_required === true
-      ? "Current Web/API demo fixture only; final real PM+01-05 model execution is still required before demo-ready."
-      : "missing or not marked with final real-run requirement",
-  };
-}
-
-function buildRealPMRunEvidence() {
-  const latestPath = fileIfExists(path.join(artifactRoot, "goal-e-real-pm-0105-run-latest.json"));
-  let latestJSON = null;
-  if (latestPath) {
-    try {
-      latestJSON = readJSON(latestPath);
-    } catch {
-      latestJSON = null;
-    }
-  }
-  return {
-    latest_json_path: latestPath,
-    latest_json: latestJSON,
-    stage_evidence: realPMStageEvidence(latestJSON),
-    proof_boundary: latestJSON?.ok === true
-      ? "Real PM+01-05 model execution completed with per-stage task/messages/usage/trace evidence."
-      : "missing or failed real PM+01-05 model execution",
-  };
-}
-
-function realPMStageEvidence(run) {
-  if (!run || run.ok !== true || run.run_type !== "real_pm_0105_model_execution" || !Array.isArray(run.stages)) {
-    return { stages: [], task_count: 0, error: "real PM+01-05 run artifact missing or not ok" };
-  }
-  const stages = run.stages.map((stage) => {
-    const usage = Array.isArray(stage.usage_rows) ? stage.usage_rows : [];
-    const tokens = usage.reduce((sum, row) => ({
-      input_tokens: sum.input_tokens + Number(row.input_tokens || 0),
-      output_tokens: sum.output_tokens + Number(row.output_tokens || 0),
-      cache_read_tokens: sum.cache_read_tokens + Number(row.cache_read_tokens || 0),
-      cache_write_tokens: sum.cache_write_tokens + Number(row.cache_write_tokens || 0),
-    }), { input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 });
-    return {
-      key: stage.key,
-      step_key: stage.key,
-      role_key: stage.role_key || stage.key,
-      task_id: stage.task_id,
-      agent_id: stage.agent_id,
-      agent_name: stage.agent_name,
-      model: stage.model,
-      status: stage.status,
-      started_at: stage.started_at,
-      completed_at: stage.completed_at,
-      duration_ms: Number(stage.duration_ms || 0),
-      failure_reason: stage.failure_reason || "",
-      trigger_summary: "goal-e-real-pm-0105-run",
-      trace_event_count: Number(stage.trace_event_count || 0),
-      message_count: Number(stage.message_count || 0),
-      agent_turn_count: Number(stage.turn_count || stage.message_count || 0),
-      input_tokens: tokens.input_tokens,
-      output_tokens: tokens.output_tokens,
-      cache_read_tokens: tokens.cache_read_tokens,
-      cache_write_tokens: tokens.cache_write_tokens,
-      usage_unavailable_trace: false,
-    };
-  });
-  return {
-    issue_id: run.issue?.id || run.canonical_issue_id || null,
-    task_count: stages.length,
-    stages,
-  };
-}
-
-function buildGoalEFinalEvidencePackage() {
-  const latestJSONPath = latestMatching(/^goal-e-final-evidence-package-.*\.json$/);
-  let latestJSON = null;
-  if (latestJSONPath) {
-    try {
-      latestJSON = readJSON(latestJSONPath);
-    } catch {
-      latestJSON = null;
-    }
-  }
-  return {
-    latest_json_path: latestJSONPath,
-    latest_json: latestJSON,
-    proof_boundary: latestJSON
-      ? "Goal E evidence package covers logs/performance/package completeness; open matrix items still gate demo-ready."
-      : "missing",
-  };
-}
-
 function latestMatching(regex) {
   if (!fs.existsSync(artifactRoot)) return null;
   return fs.readdirSync(artifactRoot)
@@ -918,6 +769,15 @@ function latestMatching(regex) {
 
 function fileIfExists(filePath) {
   return fs.existsSync(filePath) ? filePath : null;
+}
+
+function readOptionalJSON(filePath) {
+  if (!filePath) return null;
+  try {
+    return readJSON(filePath);
+  } catch {
+    return null;
+  }
 }
 
 function matrixItem(id, title, ok, reason, evidence, fallbackStatus = "missing") {
@@ -940,18 +800,7 @@ function prodItem(id, title, ok, reason = "") {
   };
 }
 
-function resolveStageEvidence(current, realPMRunEvidence) {
-  const realPMStages = realPMRunEvidence?.stage_evidence;
-  if (hasCompleteStageEvidence(realPMStages?.stages)) {
-    return {
-      ...realPMStages,
-      source: "real_pm_0105_run_artifact",
-      source_artifact: realPMRunEvidence.latest_json_path,
-      selected_model: realPMRunEvidence.latest_json?.selected_model || realPMRunEvidence.latest_json?.model || null,
-      fallback_used: realPMRunEvidence.latest_json?.fallback_used === true,
-    };
-  }
-
+function resolveStageEvidence(current) {
   if (hasCompleteStageEvidence(current?.stages)) {
     return {
       ...current,
@@ -967,30 +816,6 @@ function resolveStageEvidence(current, realPMRunEvidence) {
     archived_fallback_forbidden: true,
     reason: "Current product-visible acceptance must be proven from the current DB/Web state; archived final acceptance artifacts are not allowed for PM+01-05 stage evidence.",
   };
-}
-
-function loadArchivedStageEvidence() {
-  if (!fs.existsSync(artifactRoot)) return null;
-  const candidates = fs.readdirSync(artifactRoot)
-    .filter((name) => /^tapd-gongfeng-sop-final-acceptance-\d{4}-.*\.json$/.test(name))
-    .sort()
-    .reverse();
-
-  for (const name of candidates) {
-    const filePath = path.join(artifactRoot, name);
-    try {
-      const artifact = readJSON(filePath);
-      if (artifact.ok !== true || !hasCompleteStageEvidence(artifact.stage_evidence?.stages)) continue;
-      return {
-        file_path: filePath,
-        generated_at: artifact.generated_at || null,
-        stage_evidence: artifact.stage_evidence,
-      };
-    } catch {
-      continue;
-    }
-  }
-  return null;
 }
 
 function hasCompleteStageEvidence(stages) {

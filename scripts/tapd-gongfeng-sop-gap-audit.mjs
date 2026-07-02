@@ -21,10 +21,10 @@ const topLevelOpenItems = acceptanceOpenItems(artifact);
 const goalERequirements = Array.isArray(artifact.goal_e_requirement_matrix) && artifact.goal_e_requirement_matrix.length > 0
   ? artifact.goal_e_requirement_matrix
   : [{
-      id: "E-00",
+      id: "E-MATRIX",
       title: "Goal E requirement matrix is present in final acceptance artifact",
       status: "missing",
-      reason: "Final acceptance artifact does not include goal_e_requirement_matrix; old artifacts cannot prove unified Goal E acceptance.",
+      reason: "Final acceptance artifact does not include goal_e_requirement_matrix; gap audit cannot infer Goal E status from unrelated artifacts.",
       evidence: { artifact_path: artifactPath },
     }];
 
