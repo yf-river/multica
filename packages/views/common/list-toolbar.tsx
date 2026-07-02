@@ -8,6 +8,9 @@ import {
   DropdownMenuContent,
   DropdownMenuRadioGroup,
   DropdownMenuRadioItem,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import {
@@ -50,6 +53,21 @@ export function ToolbarResultCount({
     >
       {visibleCount} / {totalCount}
     </span>
+  );
+}
+
+export function ToolbarFrame({
+  left,
+  children,
+}: {
+  left: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex h-12 shrink-0 items-center justify-between gap-2 px-5">
+      <div className="flex min-w-0 items-center gap-2">{left}</div>
+      <div className="flex shrink-0 items-center gap-1">{children}</div>
+    </div>
   );
 }
 
@@ -142,6 +160,34 @@ export function ToolbarFilterDropdown({
         {children}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+export function ToolbarFilterSubmenu({
+  label,
+  selectedCount,
+  contentClassName = "w-auto min-w-44",
+  children,
+}: {
+  label: ReactNode;
+  selectedCount: number;
+  contentClassName?: string;
+  children: ReactNode;
+}) {
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>
+        <span className="flex-1">{label}</span>
+        {selectedCount > 0 && (
+          <span className="text-xs font-medium text-primary">
+            {selectedCount}
+          </span>
+        )}
+      </DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className={contentClassName}>
+        {children}
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
   );
 }
 

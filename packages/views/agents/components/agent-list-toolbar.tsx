@@ -13,14 +13,13 @@ import {
 } from "@multica/core/agents/stores";
 import {
   DropdownMenuCheckboxItem,
-  DropdownMenuSub,
-  DropdownMenuSubContent,
-  DropdownMenuSubTrigger,
 } from "@multica/ui/components/ui/dropdown-menu";
 import {
   ToolbarCountBadge,
   ToolbarDisplaySettings,
   ToolbarFilterDropdown,
+  ToolbarFilterSubmenu,
+  ToolbarFrame,
   ToolbarResultCount,
   ToolbarScopeSelector,
 } from "../../common/list-toolbar";
@@ -153,198 +152,159 @@ export function AgentListToolbar({
   };
 
   return (
-    <div className="flex h-12 shrink-0 items-center justify-between gap-2 px-5">
-      {/* Left: scope buttons + result count. Scope mixes the ownership lens
+    <ToolbarFrame
+      left={
+        <>
+          {/* Scope mixes the ownership lens
           (mine/all) with the archived lifecycle stage; no search box (scope
           partitions the small set). Button styling and the <md dropdown
           collapse follow the issues header's scope buttons. */}
-      <div className="flex min-w-0 items-center gap-2">
-        <ToolbarScopeSelector
-          scopes={AGENT_SCOPES}
-          scope={scope}
-          scopeCounts={scopeCounts}
-          scopeLabels={SCOPE_LABELS}
-          onScopeChange={onScopeChange}
-        />
+          <ToolbarScopeSelector
+            scopes={AGENT_SCOPES}
+            scope={scope}
+            scopeCounts={scopeCounts}
+            scopeLabels={SCOPE_LABELS}
+            onScopeChange={onScopeChange}
+          />
 
-        <ToolbarResultCount
-          active={hasActiveFilters}
-          title={t(($) => $.toolbar.result_count_title)}
-          visibleCount={visibleCount}
-          totalCount={allRows.length}
-        />
-      </div>
-
-      <div className="flex shrink-0 items-center gap-1">
-        {/* Filter */}
-        <ToolbarFilterDropdown
-          hasActiveFilters={hasActiveFilters}
-          activeCount={activeCount}
-          activeLabel={t(($) => $.toolbar.filter_active_count, {
-            count: activeCount,
-          })}
-          filterLabel={t(($) => $.toolbar.filter_label)}
-          clearLabel={t(($) => $.toolbar.clear_filters)}
-          onClearFilters={onClearFilters}
+          <ToolbarResultCount
+            active={hasActiveFilters}
+            title={t(($) => $.toolbar.result_count_title)}
+            visibleCount={visibleCount}
+            totalCount={allRows.length}
+          />
+        </>
+      }
+    >
+      {/* Filter */}
+      <ToolbarFilterDropdown
+        hasActiveFilters={hasActiveFilters}
+        activeCount={activeCount}
+        activeLabel={t(($) => $.toolbar.filter_active_count, {
+          count: activeCount,
+        })}
+        filterLabel={t(($) => $.toolbar.filter_label)}
+        clearLabel={t(($) => $.toolbar.clear_filters)}
+        onClearFilters={onClearFilters}
+      >
+        {/* Availability */}
+        <ToolbarFilterSubmenu
+          label={t(($) => $.toolbar.section_availability)}
+          selectedCount={filters.availability.length}
         >
-          {/* Availability */}
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger>
-              <span className="flex-1">
-                {t(($) => $.toolbar.section_availability)}
-              </span>
-              {filters.availability.length > 0 && (
-                <span className="text-xs font-medium text-primary">
-                  {filters.availability.length}
-                </span>
-              )}
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="w-auto min-w-44">
-              {AVAILABILITY_VALUES.map((value) => {
-                const visual = availabilityConfig[value];
-                return (
-                  <DropdownMenuCheckboxItem
-                    key={value}
-                    checked={filters.availability.includes(value)}
-                    onCheckedChange={() =>
-                      onToggleFilter("availability", value)
-                    }
-                    className={FILTER_ITEM_CLASS}
-                  >
-                    <HoverCheck
-                      checked={filters.availability.includes(value)}
-                    />
-                    <span
-                      className={`size-1.5 shrink-0 rounded-full ${visual.dotClass}`}
-                    />
-                    {t(($) => $.availability[value])}
-                    <ToolbarCountBadge
-                      count={availabilityCounts.get(value) ?? 0}
-                    />
-                  </DropdownMenuCheckboxItem>
-                );
-              })}
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
+          {AVAILABILITY_VALUES.map((value) => {
+            const visual = availabilityConfig[value];
+            return (
+              <DropdownMenuCheckboxItem
+                key={value}
+                checked={filters.availability.includes(value)}
+                onCheckedChange={() => onToggleFilter("availability", value)}
+                className={FILTER_ITEM_CLASS}
+              >
+                <HoverCheck checked={filters.availability.includes(value)} />
+                <span
+                  className={`size-1.5 shrink-0 rounded-full ${visual.dotClass}`}
+                />
+                {t(($) => $.availability[value])}
+                <ToolbarCountBadge count={availabilityCounts.get(value) ?? 0} />
+              </DropdownMenuCheckboxItem>
+            );
+          })}
+        </ToolbarFilterSubmenu>
 
           {/* Runtime */}
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger>
-              <span className="flex-1">
-                {t(($) => $.toolbar.section_runtime)}
-              </span>
-              {filters.runtimes.length > 0 && (
-                <span className="text-xs font-medium text-primary">
-                  {filters.runtimes.length}
-                </span>
-              )}
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="max-h-72 w-auto min-w-48 overflow-y-auto">
-              {[...runtimeOptions.entries()].map(([id, { name, count }]) => (
-                <DropdownMenuCheckboxItem
-                  key={id}
-                  checked={filters.runtimes.includes(id)}
-                  onCheckedChange={() => onToggleFilter("runtimes", id)}
-                  className={FILTER_ITEM_CLASS}
-                >
-                  <HoverCheck checked={filters.runtimes.includes(id)} />
-                  <span className="min-w-0 truncate">{name}</span>
-                  <ToolbarCountBadge count={count} />
-                </DropdownMenuCheckboxItem>
-              ))}
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
+        <ToolbarFilterSubmenu
+          label={t(($) => $.toolbar.section_runtime)}
+          selectedCount={filters.runtimes.length}
+          contentClassName="max-h-72 w-auto min-w-48 overflow-y-auto"
+        >
+          {[...runtimeOptions.entries()].map(([id, { name, count }]) => (
+            <DropdownMenuCheckboxItem
+              key={id}
+              checked={filters.runtimes.includes(id)}
+              onCheckedChange={() => onToggleFilter("runtimes", id)}
+              className={FILTER_ITEM_CLASS}
+            >
+              <HoverCheck checked={filters.runtimes.includes(id)} />
+              <span className="min-w-0 truncate">{name}</span>
+              <ToolbarCountBadge count={count} />
+            </DropdownMenuCheckboxItem>
+          ))}
+        </ToolbarFilterSubmenu>
 
           {/* Owner — the same person-axis as the Mine scope. Picking an
                 owner here leaves the clean "mine" view for "all" (store
                 rule), so Mine + owner never coexist. */}
-          <DropdownMenuSub>
-            <DropdownMenuSubTrigger>
-              <span className="flex-1">
-                {t(($) => $.toolbar.section_owner)}
-              </span>
-              {filters.owners.length > 0 && (
-                <span className="text-xs font-medium text-primary">
-                  {filters.owners.length}
+        <ToolbarFilterSubmenu
+          label={t(($) => $.toolbar.section_owner)}
+          selectedCount={filters.owners.length}
+          contentClassName="max-h-72 w-auto min-w-48 overflow-y-auto"
+        >
+          {[...ownerCounts.entries()].map(([userId, count]) => {
+            const m = memberById.get(userId);
+            return (
+              <DropdownMenuCheckboxItem
+                key={userId}
+                checked={filters.owners.includes(userId)}
+                onCheckedChange={() => onToggleFilter("owners", userId)}
+                className={FILTER_ITEM_CLASS}
+              >
+                <HoverCheck checked={filters.owners.includes(userId)} />
+                <ActorAvatar
+                  name={m?.name ?? userId.slice(0, 8)}
+                  initials={(m?.name ?? "?").slice(0, 2).toUpperCase()}
+                  avatarUrl={resolvePublicFileUrl(m?.avatar_url ?? null)}
+                  size={16}
+                />
+                <span className="min-w-0 truncate">
+                  {m?.name ?? userId.slice(0, 8)}
                 </span>
-              )}
-            </DropdownMenuSubTrigger>
-            <DropdownMenuSubContent className="max-h-72 w-auto min-w-48 overflow-y-auto">
-              {[...ownerCounts.entries()].map(([userId, count]) => {
-                const m = memberById.get(userId);
-                return (
-                  <DropdownMenuCheckboxItem
-                    key={userId}
-                    checked={filters.owners.includes(userId)}
-                    onCheckedChange={() => onToggleFilter("owners", userId)}
-                    className={FILTER_ITEM_CLASS}
-                  >
-                    <HoverCheck checked={filters.owners.includes(userId)} />
-                    <ActorAvatar
-                      name={m?.name ?? userId.slice(0, 8)}
-                      initials={(m?.name ?? "?").slice(0, 2).toUpperCase()}
-                      avatarUrl={resolvePublicFileUrl(m?.avatar_url ?? null)}
-                      size={16}
-                    />
-                    <span className="min-w-0 truncate">
-                      {m?.name ?? userId.slice(0, 8)}
-                    </span>
-                    <ToolbarCountBadge count={count} />
-                  </DropdownMenuCheckboxItem>
-                );
-              })}
-            </DropdownMenuSubContent>
-          </DropdownMenuSub>
+                <ToolbarCountBadge count={count} />
+              </DropdownMenuCheckboxItem>
+            );
+          })}
+        </ToolbarFilterSubmenu>
 
           {/* Model — runtime-native model id (categorical column → filter) */}
           {modelCounts.size > 0 && (
-            <DropdownMenuSub>
-              <DropdownMenuSubTrigger>
-                <span className="flex-1">
-                  {t(($) => $.toolbar.section_model)}
-                </span>
-                {filters.models.length > 0 && (
-                  <span className="text-xs font-medium text-primary">
-                    {filters.models.length}
-                  </span>
-                )}
-              </DropdownMenuSubTrigger>
-              <DropdownMenuSubContent className="max-h-72 w-auto min-w-44 overflow-y-auto">
-                {[...modelCounts.entries()].map(([model, count]) => (
-                  <DropdownMenuCheckboxItem
-                    key={model}
-                    checked={filters.models.includes(model)}
-                    onCheckedChange={() => onToggleFilter("models", model)}
-                    className={FILTER_ITEM_CLASS}
-                  >
-                    <HoverCheck checked={filters.models.includes(model)} />
-                    <span className="min-w-0 truncate">{model}</span>
-                    <ToolbarCountBadge count={count} />
-                  </DropdownMenuCheckboxItem>
-                ))}
-              </DropdownMenuSubContent>
-            </DropdownMenuSub>
-          )}
-        </ToolbarFilterDropdown>
+          <ToolbarFilterSubmenu
+            label={t(($) => $.toolbar.section_model)}
+            selectedCount={filters.models.length}
+            contentClassName="max-h-72 w-auto min-w-44 overflow-y-auto"
+          >
+            {[...modelCounts.entries()].map(([model, count]) => (
+              <DropdownMenuCheckboxItem
+                key={model}
+                checked={filters.models.includes(model)}
+                onCheckedChange={() => onToggleFilter("models", model)}
+                className={FILTER_ITEM_CLASS}
+              >
+                <HoverCheck checked={filters.models.includes(model)} />
+                <span className="min-w-0 truncate">{model}</span>
+                <ToolbarCountBadge count={count} />
+              </DropdownMenuCheckboxItem>
+            ))}
+          </ToolbarFilterSubmenu>
+        )}
+      </ToolbarFilterDropdown>
 
-        <ToolbarDisplaySettings
-          sortField={sortField}
-          sortDirection={sortDirection}
-          sortFields={SORT_FIELDS}
-          sortLabels={SORT_LABELS}
-          onSortFieldChange={onSortFieldChange}
-          onSortDirectionChange={onSortDirectionChange}
-          columnKeys={COLUMN_KEYS}
-          columnLabels={COLUMN_LABELS}
-          hiddenColumns={hiddenColumns}
-          onToggleColumn={onToggleColumn}
-          displayLabel={t(($) => $.toolbar.display)}
-          sortByLabel={t(($) => $.toolbar.sort_by)}
-          directionAscLabel={t(($) => $.toolbar.direction_asc)}
-          directionDescLabel={t(($) => $.toolbar.direction_desc)}
-          columnsLabel={t(($) => $.toolbar.section_columns)}
-        />
-      </div>
-    </div>
+      <ToolbarDisplaySettings
+        sortField={sortField}
+        sortDirection={sortDirection}
+        sortFields={SORT_FIELDS}
+        sortLabels={SORT_LABELS}
+        onSortFieldChange={onSortFieldChange}
+        onSortDirectionChange={onSortDirectionChange}
+        columnKeys={COLUMN_KEYS}
+        columnLabels={COLUMN_LABELS}
+        hiddenColumns={hiddenColumns}
+        onToggleColumn={onToggleColumn}
+        displayLabel={t(($) => $.toolbar.display)}
+        sortByLabel={t(($) => $.toolbar.sort_by)}
+        directionAscLabel={t(($) => $.toolbar.direction_asc)}
+        directionDescLabel={t(($) => $.toolbar.direction_desc)}
+        columnsLabel={t(($) => $.toolbar.section_columns)}
+      />
+    </ToolbarFrame>
   );
 }
