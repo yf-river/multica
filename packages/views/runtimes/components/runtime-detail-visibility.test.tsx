@@ -96,7 +96,12 @@ vi.mock("@multica/core/runtimes/mutations", () => ({
 vi.mock("./provider-logo", () => ({ ProviderLogo: () => null }));
 vi.mock("./update-section", () => ({ UpdateSection: () => null }));
 vi.mock("./usage-section", () => ({ UsageSection: () => null }));
-vi.mock("./shared", () => ({ HealthBadge: () => null }));
+vi.mock("./shared", () => ({
+  HealthBadge: () => null,
+  RuntimeVisibilityBadge: ({ runtime }: { runtime: AgentRuntime }) => (
+    <span>{runtime.scope === "workspace" ? "工作区" : "个人"}</span>
+  ),
+}));
 vi.mock("../../agents/presence", () => ({
   availabilityConfig: { offline: { dotClass: "", textClass: "" } },
   workloadConfig: { idle: { icon: () => null, textClass: "" } },

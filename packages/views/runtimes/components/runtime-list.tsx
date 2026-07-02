@@ -42,13 +42,9 @@ import {
 } from "@multica/ui/components/ui/list-grid";
 import { useRowLink } from "../../navigation";
 import { ActorAvatar } from "../../common/actor-avatar";
-import {
-  runtimeResourceScope,
-  ResourceScopeBadge,
-} from "../../common/resource-scope";
 import { useViewingTimezone } from "../../common/use-viewing-timezone";
 import { ProviderLogo } from "./provider-logo";
-import { HealthIcon, useHealthLabel } from "./shared";
+import { HealthIcon, RuntimeVisibilityBadge, useHealthLabel } from "./shared";
 import { DeleteRuntimeDialog } from "./delete-runtime-dialog";
 import {
   computeCostInWindow,
@@ -188,7 +184,7 @@ function RuntimeNameCell({ runtime }: { runtime: AgentRuntime }) {
         </span>
         <RuntimeKindBadge runtime={runtime} />
         <PendingRuntimeBadge runtime={runtime} />
-        <VisibilityBadge runtime={runtime} />
+        <RuntimeVisibilityBadge runtime={runtime} />
       </div>
     </ListGridCell>
   );
@@ -223,18 +219,6 @@ function PendingRuntimeBadge({ runtime }: { runtime: AgentRuntime }) {
     <span className="inline-flex shrink-0 items-center rounded bg-warning/10 px-1 text-[10px] font-medium text-warning">
       {t(($) => $.list.badge_registering)}
     </span>
-  );
-}
-
-function VisibilityBadge({ runtime }: { runtime: AgentRuntime }) {
-  const { t } = useT("runtimes");
-  const scope = runtime.scope === "workspace" ? "workspace" : "personal";
-  return (
-    <ResourceScopeBadge
-      scope={runtimeResourceScope(scope)}
-      label={t(($) => $.detail.visibility_label[scope])}
-      tooltip={t(($) => $.detail.visibility_hint[scope])}
-    />
   );
 }
 

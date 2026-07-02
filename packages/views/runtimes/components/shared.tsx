@@ -1,6 +1,11 @@
 import { Wifi, WifiHigh, WifiOff } from "lucide-react";
 import { Badge } from "@multica/ui/components/ui/badge";
 import type { RuntimeHealth } from "@multica/core/runtimes";
+import type { AgentRuntime } from "@multica/core/types";
+import {
+  runtimeResourceScope,
+  ResourceScopeBadge,
+} from "../../common/resource-scope";
 import { useT } from "../../i18n";
 
 // Maps each derived 4-state runtime health to a semantic colour class.
@@ -95,6 +100,22 @@ export function HealthBadge({
       <span className={`h-1.5 w-1.5 rounded-full ${v.dot}`} />
       {labelOf(health)}
     </Badge>
+  );
+}
+
+export function RuntimeVisibilityBadge({
+  runtime,
+}: {
+  runtime: AgentRuntime;
+}) {
+  const { t } = useT("runtimes");
+  const scope = runtime.scope === "workspace" ? "workspace" : "personal";
+  return (
+    <ResourceScopeBadge
+      scope={runtimeResourceScope(scope)}
+      label={t(($) => $.detail.visibility_label[scope])}
+      tooltip={t(($) => $.detail.visibility_hint[scope])}
+    />
   );
 }
 

@@ -29,15 +29,13 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { ActorAvatar } from "../../common/actor-avatar";
 import {
-  runtimeResourceScope,
-  ResourceScopeBadge,
   resourceSegmentedOptionClass,
 } from "../../common/resource-scope";
 import { BreadcrumbHeader } from "../../layout/breadcrumb-header";
 import { AppLink, useNavigation } from "../../navigation";
 import { availabilityConfig, workloadConfig } from "../../agents/presence";
 import { formatLastSeen } from "../utils";
-import { HealthBadge } from "./shared";
+import { HealthBadge, RuntimeVisibilityBadge } from "./shared";
 import { ProviderLogo } from "./provider-logo";
 import { UpdateSection } from "./update-section";
 import { UsageSection } from "./usage-section";
@@ -471,7 +469,7 @@ function DiagnosticsCard({
           {canDelete ? (
             <VisibilityEditor runtime={runtime} />
           ) : (
-            <VisibilityReadout runtime={runtime} />
+            <RuntimeVisibilityBadge runtime={runtime} />
           )}
         </div>
         {isLocal && (
@@ -508,20 +506,6 @@ function DiagnosticsCard({
         )}
       </div>
     </div>
-  );
-}
-
-// VisibilityReadout renders a static "Personal" / "Workspace" pill for users
-// who can't edit the runtime.
-function VisibilityReadout({ runtime }: { runtime: AgentRuntime }) {
-  const { t } = useT("runtimes");
-  const scope = runtime.scope === "workspace" ? "workspace" : "personal";
-  return (
-    <ResourceScopeBadge
-      scope={runtimeResourceScope(scope)}
-      label={t(($) => $.detail.visibility_label[scope])}
-      tooltip={t(($) => $.detail.visibility_hint[scope])}
-    />
   );
 }
 
