@@ -330,35 +330,25 @@ func (h *Hub) DeliverDaemonRuntime(scopeID string, frame []byte, eventID string)
 func (h *Hub) notifyFrame(runtimeID string, data []byte, eventID string) (delivered bool, deduped bool) {
 	h.mu.RLock()
 	clients := h.byRuntime[runtimeID]
-	slow := make([]*client, 0)
-	for c := range clients {
-		if !c.markSeen(eventID) {
-			deduped = true
-			continue
-		}
-		select {
-		case c.send <- data:
-			delivered = true
-		default:
-			slow = append(slow, c)
-		}
-	}
+	delivered, deduped, slow := notifyClients(clients, data, eventID)
 	h.mu.RUnlock()
 
-	for _, c := range slow {
-		h.unregister(c)
-		c.conn.Close()
-	}
-	if len(slow) > 0 {
-		M.SlowEvictionsTotal.Add(int64(len(slow)))
-	}
+	h.evictSlowClients(slow)
 	return delivered, deduped
 }
 
 func (h *Hub) notifyWorkspaceFrame(workspaceID string, data []byte, eventID string) (delivered bool, deduped bool) {
 	h.mu.RLock()
 	clients := h.byWorkspace[workspaceID]
-	slow := make([]*client, 0)
+	delivered, deduped, slow := notifyClients(clients, data, eventID)
+	h.mu.RUnlock()
+
+	h.evictSlowClients(slow)
+	return delivered, deduped
+}
+
+func notifyClients(clients map[*client]bool, data []byte, eventID string) (delivered bool, deduped bool, slow []*client) {
+	slow = make([]*client, 0)
 	for c := range clients {
 		if !c.markSeen(eventID) {
 			deduped = true
@@ -371,8 +361,10 @@ func (h *Hub) notifyWorkspaceFrame(workspaceID string, data []byte, eventID stri
 			slow = append(slow, c)
 		}
 	}
-	h.mu.RUnlock()
+	return delivered, deduped, slow
+}
 
+func (h *Hub) evictSlowClients(slow []*client) {
 	for _, c := range slow {
 		h.unregister(c)
 		c.conn.Close()
@@ -380,7 +372,6 @@ func (h *Hub) notifyWorkspaceFrame(workspaceID string, data []byte, eventID stri
 	if len(slow) > 0 {
 		M.SlowEvictionsTotal.Add(int64(len(slow)))
 	}
-	return delivered, deduped
 }
 
 func taskAvailableFrame(runtimeID, taskID string) ([]byte, error) {
