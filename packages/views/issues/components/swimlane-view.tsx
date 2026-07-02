@@ -1085,6 +1085,48 @@ export function SwimLaneView({
     }) as const,
     [sortedStatuses.length, trackWidth],
   );
+  const pinnedLanes = useMemo(
+    () => laneGroups.filter((group) => group.isPinned),
+    [laneGroups],
+  );
+  const sortableLanes = useMemo(
+    () => laneGroups.filter((group) => !group.isPinned),
+    [laneGroups],
+  );
+  const sortableLaneIds = useMemo(
+    () => sortableLanes.map((group) => laneIdFor(swimlaneGrouping, group.rawId)),
+    [sortableLanes, swimlaneGrouping],
+  );
+  const renderLane = useCallback(
+    (lane: LaneGroup) => (
+      <DraggableSwimLane
+        key={lane.key}
+        lane={lane}
+        grouping={swimlaneGrouping}
+        isCollapsed={collapsedLanes.has(lane.key)}
+        onToggleCollapse={() => toggleLane(lane.key)}
+        localCells={localCells}
+        sortedStatuses={sortedStatuses}
+        issueMap={issueMapRef.current}
+        childProgressMap={childProgressMap}
+        gridStyle={gridStyle}
+        paths={paths}
+        projectId={projectId}
+      />
+    ),
+    [
+      childProgressMap,
+      collapsedLanes,
+      gridStyle,
+      issueMapRef,
+      localCells,
+      paths,
+      projectId,
+      sortedStatuses,
+      swimlaneGrouping,
+      toggleLane,
+    ],
+  );
 
   return (
     <DndContext
@@ -1142,48 +1184,12 @@ export function SwimLaneView({
             are wrapped in a SortableContext so users can reorder lanes by
             dragging the grip handle. */}
         <div className="flex flex-col gap-4">
-          {laneGroups
-            .filter((g) => g.isPinned)
-            .map((lane) => (
-              <DraggableSwimLane
-                key={lane.key}
-                lane={lane}
-                grouping={swimlaneGrouping}
-                isCollapsed={collapsedLanes.has(lane.key)}
-                onToggleCollapse={() => toggleLane(lane.key)}
-                localCells={localCells}
-                sortedStatuses={sortedStatuses}
-                issueMap={issueMapRef.current}
-                childProgressMap={childProgressMap}
-                gridStyle={gridStyle}
-                paths={paths}
-                projectId={projectId}
-              />
-            ))}
+          {pinnedLanes.map(renderLane)}
           <SortableContext
-            items={laneGroups
-              .filter((g) => !g.isPinned)
-              .map((g) => laneIdFor(swimlaneGrouping, g.rawId))}
+            items={sortableLaneIds}
             strategy={verticalListSortingStrategy}
           >
-            {laneGroups
-              .filter((g) => !g.isPinned)
-              .map((lane) => (
-                <DraggableSwimLane
-                  key={lane.key}
-                  lane={lane}
-                  grouping={swimlaneGrouping}
-                  isCollapsed={collapsedLanes.has(lane.key)}
-                  onToggleCollapse={() => toggleLane(lane.key)}
-                  localCells={localCells}
-                  sortedStatuses={sortedStatuses}
-                  issueMap={issueMapRef.current}
-                  childProgressMap={childProgressMap}
-                  gridStyle={gridStyle}
-                  paths={paths}
-                  projectId={projectId}
-                />
-              ))}
+            {sortableLanes.map(renderLane)}
           </SortableContext>
 
           {/* Per-status load-more sentinels — same bucketed cache as Board. */}
