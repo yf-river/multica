@@ -40,6 +40,7 @@
     "@types/node": "catalog:",
     "@types/pg": "^8.20.0",
     "@vitejs/plugin-react": "catalog:",
+    "dotenv": "^17.4.1",
     "jscpd": "^5.0.11",
     "knip": "^6.24.0",
     "pg": "^8.20.0",
