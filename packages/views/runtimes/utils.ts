@@ -85,28 +85,6 @@ const ARCH_LABEL: Record<string, string> = {
   arm: "arm",
 };
 
-// Strip leading "v" from version strings — GitHub releases ship `v0.2.17`,
-// daemon metadata reports `0.2.15`; normalising lets us compare both.
-function stripVersionPrefix(v: string): string {
-  return v.replace(/^v/, "");
-}
-
-// True iff `latest` is strictly newer than `current` by dotted-numeric
-// comparison. Non-numeric / missing segments compare as 0 ("0.2" < "0.2.1").
-// Used by the runtime-list CLI column to decide whether to surface the ↑
-// marker; same logic also lives inline in update-section.tsx for now.
-export function isVersionNewer(latest: string, current: string): boolean {
-  const l = stripVersionPrefix(latest).split(".").map(Number);
-  const c = stripVersionPrefix(current).split(".").map(Number);
-  for (let i = 0; i < Math.max(l.length, c.length); i++) {
-    const lv = l[i] ?? 0;
-    const cv = c[i] ?? 0;
-    if (lv > cv) return true;
-    if (lv < cv) return false;
-  }
-  return false;
-}
-
 export function formatTokens(n: number): string {
   if (n >= 1_000_000) {
     const m = n / 1_000_000;
@@ -347,7 +325,7 @@ function pricingCandidates(model: string, provider?: string): string[] {
 // overrides by them, so a user-entered rate for `cursor/auto` resolves only
 // for Cursor rows — not for another provider that also reports `auto`.
 // Provider is lowercased so lookups tolerate case drift in the stored value.
-export function pricingKey(model: string, provider?: string): string {
+function pricingKey(model: string, provider?: string): string {
   const p = normalizeProvider(provider);
   return p ? qualify(p, model) : model;
 }
@@ -359,7 +337,7 @@ export function pricingKey(model: string, provider?: string): string {
 // so two providers reporting the same bare id don't merge into one mislabelled
 // row, and the label matches what `collectUnmappedModels` / the pricing dialog
 // surface.
-export function modelGroupingKey(model: string, provider?: string): string {
+function modelGroupingKey(model: string, provider?: string): string {
   if (!model) return normalizeProvider(provider) || "unknown";
   return isSelfResolvingId(model) ? model : pricingKey(model, provider);
 }

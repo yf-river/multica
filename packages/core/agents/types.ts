@@ -32,9 +32,8 @@
 // (agent.archived_at is set), not its runtime. It is the top-priority state —
 // derived BEFORE runtime health in deriveAgentPresenceDetail — so a retired
 // agent with a leftover online runtime row never reads as live. Every dot /
-// label that maps from this union (availabilityConfig) renders it for free;
-// it is intentionally NOT in availabilityOrder (archived agents have their
-// own list view, not an availability filter chip).
+// label that maps from this union renders it for free; archived agents have
+// their own list view, not an availability filter chip.
 export type AgentAvailability =
   | "online" // 🟢 runtime online and reachable
   | "unstable" // 🟡 runtime recently_lost (< 5 min) — transient

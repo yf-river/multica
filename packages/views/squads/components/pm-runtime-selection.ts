@@ -17,7 +17,7 @@ export function isRuntimeCompatibleWithPMScope(
   );
 }
 
-export function providerSortRank(provider: string) {
+function providerSortRank(provider: string) {
   const p = provider.toLowerCase();
   if (p === DEFAULT_PM_PROVIDER) return 0;
   if (p === "codex") return 1;
