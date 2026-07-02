@@ -625,22 +625,11 @@ func runProjectResourceAdd(cmd *cobra.Command, args []string) error {
 }
 
 func runProjectResourceUpdate(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, projectRef, resourceRef, err := newProjectResourceClientAndRefs(cmd, args[0], args[1])
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	projectRef, err := resolveProjectID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve project: %w", err)
-	}
-	resourceRef, err := resolveProjectResourceID(ctx, client, projectRef.ID, args[1])
-	if err != nil {
-		return fmt.Errorf("resolve project resource: %w", err)
-	}
 
 	// Fetch the existing row so per-type shortcuts know which schema to
 	// emit and which fields to preserve. The server treats resource_ref as
@@ -722,6 +711,26 @@ func runProjectResourceUpdate(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 	return cli.PrintJSON(os.Stdout, result)
+}
+
+func newProjectResourceClientAndRefs(cmd *cobra.Command, projectArg, resourceArg string) (*cli.APIClient, context.Context, context.CancelFunc, resolvedID, resolvedID, error) {
+	client, err := newAPIClient(cmd)
+	if err != nil {
+		return nil, nil, nil, resolvedID{}, resolvedID{}, err
+	}
+
+	ctx, cancel := cli.APIContext(context.Background())
+	projectRef, err := resolveProjectID(ctx, client, projectArg)
+	if err != nil {
+		cancel()
+		return nil, nil, nil, resolvedID{}, resolvedID{}, fmt.Errorf("resolve project: %w", err)
+	}
+	resourceRef, err := resolveProjectResourceID(ctx, client, projectRef.ID, resourceArg)
+	if err != nil {
+		cancel()
+		return nil, nil, nil, resolvedID{}, resolvedID{}, fmt.Errorf("resolve project resource: %w", err)
+	}
+	return client, ctx, cancel, projectRef, resourceRef, nil
 }
 
 // buildResourceRefFromFlags collects the per-type shortcut flags into a
@@ -836,22 +845,11 @@ func mustString(cmd *cobra.Command, name string) string {
 }
 
 func runProjectResourceRemove(cmd *cobra.Command, args []string) error {
-	client, err := newAPIClient(cmd)
+	client, ctx, cancel, projectRef, resourceRef, err := newProjectResourceClientAndRefs(cmd, args[0], args[1])
 	if err != nil {
 		return err
 	}
-
-	ctx, cancel := cli.APIContext(context.Background())
 	defer cancel()
-
-	projectRef, err := resolveProjectID(ctx, client, args[0])
-	if err != nil {
-		return fmt.Errorf("resolve project: %w", err)
-	}
-	resourceRef, err := resolveProjectResourceID(ctx, client, projectRef.ID, args[1])
-	if err != nil {
-		return fmt.Errorf("resolve project resource: %w", err)
-	}
 
 	if err := client.DeleteJSON(ctx, "/api/projects/"+projectRef.ID+"/resources/"+resourceRef.ID); err != nil {
 		return fmt.Errorf("remove project resource: %w", err)
