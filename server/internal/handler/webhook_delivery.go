@@ -49,6 +49,31 @@ type WebhookDeliveryResponse struct {
 	ResponseBody    *string         `json:"response_body,omitempty"`
 }
 
+func setDeliveryOptionalFields(
+	resp *WebhookDeliveryResponse,
+	responseStatus pgtype.Int4,
+	autopilotRunID pgtype.UUID,
+	replayedFromDeliveryID pgtype.UUID,
+	deliveryError pgtype.Text,
+) {
+	if responseStatus.Valid {
+		v := responseStatus.Int32
+		resp.ResponseStatus = &v
+	}
+	if autopilotRunID.Valid {
+		v := uuidToString(autopilotRunID)
+		resp.AutopilotRunID = &v
+	}
+	if replayedFromDeliveryID.Valid {
+		v := uuidToString(replayedFromDeliveryID)
+		resp.ReplayedFromDeliveryID = &v
+	}
+	if deliveryError.Valid {
+		v := deliveryError.String
+		resp.Error = &v
+	}
+}
+
 // slimDeliveryToResponse maps the projected list row (no raw_body /
 // selected_headers / response_body) into the wire response shape.
 func slimDeliveryToResponse(d db.ListWebhookDeliveriesByAutopilotRow) WebhookDeliveryResponse {
@@ -69,22 +94,7 @@ func slimDeliveryToResponse(d db.ListWebhookDeliveriesByAutopilotRow) WebhookDel
 		LastAttemptAt:   timestampToString(d.LastAttemptAt),
 		CreatedAt:       timestampToString(d.CreatedAt),
 	}
-	if d.ResponseStatus.Valid {
-		v := d.ResponseStatus.Int32
-		resp.ResponseStatus = &v
-	}
-	if d.AutopilotRunID.Valid {
-		v := uuidToString(d.AutopilotRunID)
-		resp.AutopilotRunID = &v
-	}
-	if d.ReplayedFromDeliveryID.Valid {
-		v := uuidToString(d.ReplayedFromDeliveryID)
-		resp.ReplayedFromDeliveryID = &v
-	}
-	if d.Error.Valid {
-		v := d.Error.String
-		resp.Error = &v
-	}
+	setDeliveryOptionalFields(&resp, d.ResponseStatus, d.AutopilotRunID, d.ReplayedFromDeliveryID, d.Error)
 	return resp
 }
 
@@ -106,22 +116,7 @@ func deliveryToResponse(d db.WebhookDelivery, detail bool) WebhookDeliveryRespon
 		LastAttemptAt:   timestampToString(d.LastAttemptAt),
 		CreatedAt:       timestampToString(d.CreatedAt),
 	}
-	if d.ResponseStatus.Valid {
-		v := d.ResponseStatus.Int32
-		resp.ResponseStatus = &v
-	}
-	if d.AutopilotRunID.Valid {
-		v := uuidToString(d.AutopilotRunID)
-		resp.AutopilotRunID = &v
-	}
-	if d.ReplayedFromDeliveryID.Valid {
-		v := uuidToString(d.ReplayedFromDeliveryID)
-		resp.ReplayedFromDeliveryID = &v
-	}
-	if d.Error.Valid {
-		v := d.Error.String
-		resp.Error = &v
-	}
+	setDeliveryOptionalFields(&resp, d.ResponseStatus, d.AutopilotRunID, d.ReplayedFromDeliveryID, d.Error)
 	if detail {
 		if len(d.SelectedHeaders) > 0 {
 			resp.SelectedHeaders = json.RawMessage(d.SelectedHeaders)
