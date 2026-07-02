@@ -1,18 +1,17 @@
 import {
-  BarChart,
   Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
 } from "recharts";
 import {
-  ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
   type ChartConfig,
 } from "@multica/ui/components/ui/chart";
 import { formatTokens, type DailyTokenData } from "../../utils";
 import { useT } from "../../../i18n";
+import {
+  renderTooltipTotalFooter,
+  RuntimeBarChart,
+} from "./runtime-bar-chart";
 
 // Four-segment stack — input / output / cache read / cache write. Unlike the
 // cost chart, cache reads ARE visible here: a typical day on Claude shows
@@ -37,23 +36,12 @@ export function DailyTokensChart({ data }: { data: DailyTokenData[] }) {
   // No internal empty-state — same convention as DailyCostChart: the parent
   // decides what to render when there's nothing to show.
   return (
-    <ChartContainer config={tokenStackConfig} className="aspect-[3/1] w-full">
-      <BarChart data={data} margin={{ left: 0, right: 0, top: 4, bottom: 0 }}>
-        <CartesianGrid vertical={false} />
-        <XAxis
-          dataKey="label"
-          tickLine={false}
-          axisLine={false}
-          tickMargin={8}
-          interval="preserveStartEnd"
-        />
-        <YAxis
-          tickLine={false}
-          axisLine={false}
-          tickMargin={8}
-          tickFormatter={(v: number) => formatTokens(v)}
-          width={50}
-        />
+    <RuntimeBarChart
+      config={tokenStackConfig}
+      data={data}
+      yAxisWidth={50}
+      tickFormatter={(v: number) => formatTokens(v)}
+      tooltip={
         <ChartTooltip
           content={
             <ChartTooltipContent
@@ -62,25 +50,18 @@ export function DailyTokensChart({ data }: { data: DailyTokenData[] }) {
                   ? `${formatTokens(value)} ${name}`
                   : `${value} ${name}`
               }
-              footer={(payload) => {
-                const total = payload.reduce(
-                  (sum, item) =>
-                    sum +
-                    (typeof item.value === "number" ? item.value : 0),
-                  0,
-                );
-                return (
-                  <div className="flex items-center justify-between gap-2 font-medium">
-                    <span>{t(($) => $.charts.tooltip_total)}</span>
-                    <span className="font-mono tabular-nums">
-                      {total.toLocaleString()}
-                    </span>
-                  </div>
-                );
-              }}
+              footer={(payload) =>
+                renderTooltipTotalFooter(
+                  payload,
+                  t(($) => $.charts.tooltip_total),
+                  (total) => total.toLocaleString(),
+                )
+              }
             />
           }
         />
+      }
+    >
         {/* Legend is rendered by the parent in the chart card header. */}
         <Bar
           dataKey="input"
@@ -106,7 +87,6 @@ export function DailyTokensChart({ data }: { data: DailyTokenData[] }) {
           fill="var(--color-cacheWrite)"
           radius={[3, 3, 0, 0]}
         />
-      </BarChart>
-    </ChartContainer>
+    </RuntimeBarChart>
   );
 }

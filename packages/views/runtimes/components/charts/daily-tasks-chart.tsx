@@ -1,17 +1,16 @@
 import {
-  BarChart,
   Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
 } from "recharts";
 import {
-  ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
   type ChartConfig,
 } from "@multica/ui/components/ui/chart";
 import { useT } from "../../../i18n";
+import {
+  renderTooltipTotalFooter,
+  RuntimeBarChart,
+} from "./runtime-bar-chart";
 
 // Two-segment stack — completed runs at the bottom (chart-1, primary
 // brand), failed runs on top (chart-5 for distinct emphasis). Lets the
@@ -31,46 +30,28 @@ export interface DailyTasksData {
 export function DailyTasksChart({ data }: { data: DailyTasksData[] }) {
   const { t } = useT("runtimes");
   return (
-    <ChartContainer config={tasksChartConfig} className="aspect-[3/1] w-full">
-      <BarChart data={data} margin={{ left: 0, right: 0, top: 4, bottom: 0 }}>
-        <CartesianGrid vertical={false} />
-        <XAxis
-          dataKey="label"
-          tickLine={false}
-          axisLine={false}
-          tickMargin={8}
-          interval="preserveStartEnd"
-        />
-        <YAxis
-          tickLine={false}
-          axisLine={false}
-          tickMargin={8}
-          allowDecimals={false}
-          width={40}
-        />
+    <RuntimeBarChart
+      config={tasksChartConfig}
+      data={data}
+      yAxisWidth={40}
+      allowDecimals={false}
+      tooltip={
         <ChartTooltip
           content={
             <ChartTooltipContent
               formatter={(value, name) => `${value} ${name}`}
-              footer={(payload) => {
-                const total = payload.reduce(
-                  (sum, item) =>
-                    sum +
-                    (typeof item.value === "number" ? item.value : 0),
-                  0,
-                );
-                return (
-                  <div className="flex items-center justify-between gap-2 font-medium">
-                    <span>{t(($) => $.charts.tooltip_total)}</span>
-                    <span className="font-mono tabular-nums">
-                      {total.toLocaleString()}
-                    </span>
-                  </div>
-                );
-              }}
+              footer={(payload) =>
+                renderTooltipTotalFooter(
+                  payload,
+                  t(($) => $.charts.tooltip_total),
+                  (total) => total.toLocaleString(),
+                )
+              }
             />
           }
         />
+      }
+    >
         <Bar
           dataKey="completed"
           stackId="tasks"
@@ -83,7 +64,6 @@ export function DailyTasksChart({ data }: { data: DailyTasksData[] }) {
           fill="var(--color-failed)"
           radius={[3, 3, 0, 0]}
         />
-      </BarChart>
-    </ChartContainer>
+    </RuntimeBarChart>
   );
 }

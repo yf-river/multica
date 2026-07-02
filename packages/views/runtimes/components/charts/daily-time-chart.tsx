@@ -1,16 +1,12 @@
 import {
-  BarChart,
   Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
 } from "recharts";
 import {
-  ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
   type ChartConfig,
 } from "@multica/ui/components/ui/chart";
+import { RuntimeBarChart } from "./runtime-bar-chart";
 
 // Single-series bar — total daily run time in seconds. The y-axis tick
 // formatter and tooltip both use the same `formatDuration` so the user
@@ -37,23 +33,12 @@ export function DailyTimeChart({
   formatTooltip: (seconds: number) => string;
 }) {
   return (
-    <ChartContainer config={timeChartConfig} className="aspect-[3/1] w-full">
-      <BarChart data={data} margin={{ left: 0, right: 0, top: 4, bottom: 0 }}>
-        <CartesianGrid vertical={false} />
-        <XAxis
-          dataKey="label"
-          tickLine={false}
-          axisLine={false}
-          tickMargin={8}
-          interval="preserveStartEnd"
-        />
-        <YAxis
-          tickLine={false}
-          axisLine={false}
-          tickMargin={8}
-          tickFormatter={(v: number) => formatY(v)}
-          width={56}
-        />
+    <RuntimeBarChart
+      config={timeChartConfig}
+      data={data}
+      yAxisWidth={56}
+      tickFormatter={(v: number) => formatY(v)}
+      tooltip={
         <ChartTooltip
           content={
             <ChartTooltipContent
@@ -65,12 +50,13 @@ export function DailyTimeChart({
             />
           }
         />
+      }
+    >
         <Bar
           dataKey="totalSeconds"
           fill="var(--color-totalSeconds)"
           radius={[3, 3, 0, 0]}
         />
-      </BarChart>
-    </ChartContainer>
+    </RuntimeBarChart>
   );
 }

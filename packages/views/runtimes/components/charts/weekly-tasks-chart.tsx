@@ -1,18 +1,17 @@
 import {
-  BarChart,
   Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Cell,
 } from "recharts";
 import {
-  ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
   type ChartConfig,
 } from "@multica/ui/components/ui/chart";
 import { useT } from "../../../i18n";
+import {
+  PartialWeekCells,
+  renderTooltipTotalFooter,
+  RuntimeBarChart,
+} from "./runtime-bar-chart";
 
 // Weekly counterpart of DailyTasksChart — same completed/failed stacked
 // bar, but each bar groups a Mon–Sun calendar week. Partial-week bars at
@@ -38,26 +37,12 @@ export function WeeklyTasksChart({ data }: { data: WeeklyTasksData[] }) {
   const { t } = useT("usage");
   const { t: tRuntimes } = useT("runtimes");
   return (
-    <ChartContainer
+    <RuntimeBarChart
       config={weeklyTasksChartConfig}
-      className="aspect-[3/1] w-full"
-    >
-      <BarChart data={data} margin={{ left: 0, right: 0, top: 4, bottom: 0 }}>
-        <CartesianGrid vertical={false} />
-        <XAxis
-          dataKey="label"
-          tickLine={false}
-          axisLine={false}
-          tickMargin={8}
-          interval="preserveStartEnd"
-        />
-        <YAxis
-          tickLine={false}
-          axisLine={false}
-          tickMargin={8}
-          allowDecimals={false}
-          width={40}
-        />
+      data={data}
+      yAxisWidth={40}
+      allowDecimals={false}
+      tooltip={
         <ChartTooltip
           content={
             <ChartTooltipContent
@@ -73,34 +58,25 @@ export function WeeklyTasksChart({ data }: { data: WeeklyTasksData[] }) {
                   : row.rangeLabel;
               }}
               formatter={(value, name) => `${value} ${name}`}
-              footer={(payload) => {
-                const total = payload.reduce(
-                  (sum, item) =>
-                    sum +
-                    (typeof item.value === "number" ? item.value : 0),
-                  0,
-                );
-                return (
-                  <div className="flex items-center justify-between gap-2 font-medium">
-                    <span>{tRuntimes(($) => $.charts.tooltip_total)}</span>
-                    <span className="font-mono tabular-nums">
-                      {total.toLocaleString()}
-                    </span>
-                  </div>
-                );
-              }}
+              footer={(payload) =>
+                renderTooltipTotalFooter(
+                  payload,
+                  tRuntimes(($) => $.charts.tooltip_total),
+                  (total) => total.toLocaleString(),
+                )
+              }
             />
           }
         />
+      }
+    >
         <Bar
           dataKey="completed"
           stackId="tasks"
           fill="var(--color-completed)"
           radius={[0, 0, 0, 0]}
         >
-          {data.map((d) => (
-            <Cell key={`${d.weekStart}-c`} fillOpacity={d.partial ? 0.5 : 1} />
-          ))}
+          <PartialWeekCells data={data} keySuffix="-c" />
         </Bar>
         <Bar
           dataKey="failed"
@@ -108,11 +84,8 @@ export function WeeklyTasksChart({ data }: { data: WeeklyTasksData[] }) {
           fill="var(--color-failed)"
           radius={[3, 3, 0, 0]}
         >
-          {data.map((d) => (
-            <Cell key={`${d.weekStart}-f`} fillOpacity={d.partial ? 0.5 : 1} />
-          ))}
+          <PartialWeekCells data={data} keySuffix="-f" />
         </Bar>
-      </BarChart>
-    </ChartContainer>
+    </RuntimeBarChart>
   );
 }

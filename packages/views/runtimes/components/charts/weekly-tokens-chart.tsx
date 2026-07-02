@@ -1,19 +1,18 @@
 import {
-  BarChart,
   Bar,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Cell,
 } from "recharts";
 import {
-  ChartContainer,
   ChartTooltip,
   ChartTooltipContent,
   type ChartConfig,
 } from "@multica/ui/components/ui/chart";
 import { formatTokens, type WeeklyTokenData } from "../../utils";
 import { useT } from "../../../i18n";
+import {
+  PartialWeekCells,
+  renderTooltipTotalFooter,
+  RuntimeBarChart,
+} from "./runtime-bar-chart";
 
 // Mirror of DailyTokensChart's four-segment stack — same series and colours
 // keep the Weekly view legible as a coarser cut of the Daily one.
@@ -27,23 +26,12 @@ export const weeklyTokenStackConfig = {
 export function WeeklyTokensChart({ data }: { data: WeeklyTokenData[] }) {
   const { t } = useT("runtimes");
   return (
-    <ChartContainer config={weeklyTokenStackConfig} className="aspect-[3/1] w-full">
-      <BarChart data={data} margin={{ left: 0, right: 0, top: 4, bottom: 0 }}>
-        <CartesianGrid vertical={false} />
-        <XAxis
-          dataKey="label"
-          tickLine={false}
-          axisLine={false}
-          tickMargin={8}
-          interval="preserveStartEnd"
-        />
-        <YAxis
-          tickLine={false}
-          axisLine={false}
-          tickMargin={8}
-          tickFormatter={(v: number) => formatTokens(v)}
-          width={50}
-        />
+    <RuntimeBarChart
+      config={weeklyTokenStackConfig}
+      data={data}
+      yAxisWidth={50}
+      tickFormatter={(v: number) => formatTokens(v)}
+      tooltip={
         <ChartTooltip
           content={
             <ChartTooltipContent
@@ -63,38 +51,26 @@ export function WeeklyTokensChart({ data }: { data: WeeklyTokenData[] }) {
                   ? `${formatTokens(value)} ${name}`
                   : `${value} ${name}`
               }
-              footer={(payload) => {
-                const total = payload.reduce(
-                  (sum, item) =>
-                    sum + (typeof item.value === "number" ? item.value : 0),
-                  0,
-                );
-                return (
-                  <div className="flex items-center justify-between gap-2 font-medium">
-                    <span>{t(($) => $.charts.tooltip_total)}</span>
-                    <span className="font-mono tabular-nums">
-                      {total.toLocaleString()}
-                    </span>
-                  </div>
-                );
-              }}
+              footer={(payload) =>
+                renderTooltipTotalFooter(
+                  payload,
+                  t(($) => $.charts.tooltip_total),
+                  (total) => total.toLocaleString(),
+                )
+              }
             />
           }
         />
+      }
+    >
         <Bar dataKey="input" stackId="tokens" fill="var(--color-input)">
-          {data.map((d) => (
-            <Cell key={d.weekStart} fillOpacity={d.partial ? 0.5 : 1} />
-          ))}
+          <PartialWeekCells data={data} />
         </Bar>
         <Bar dataKey="output" stackId="tokens" fill="var(--color-output)">
-          {data.map((d) => (
-            <Cell key={d.weekStart} fillOpacity={d.partial ? 0.5 : 1} />
-          ))}
+          <PartialWeekCells data={data} />
         </Bar>
         <Bar dataKey="cacheRead" stackId="tokens" fill="var(--color-cacheRead)">
-          {data.map((d) => (
-            <Cell key={d.weekStart} fillOpacity={d.partial ? 0.5 : 1} />
-          ))}
+          <PartialWeekCells data={data} />
         </Bar>
         <Bar
           dataKey="cacheWrite"
@@ -102,11 +78,8 @@ export function WeeklyTokensChart({ data }: { data: WeeklyTokenData[] }) {
           fill="var(--color-cacheWrite)"
           radius={[3, 3, 0, 0]}
         >
-          {data.map((d) => (
-            <Cell key={d.weekStart} fillOpacity={d.partial ? 0.5 : 1} />
-          ))}
+          <PartialWeekCells data={data} />
         </Bar>
-      </BarChart>
-    </ChartContainer>
+    </RuntimeBarChart>
   );
 }
