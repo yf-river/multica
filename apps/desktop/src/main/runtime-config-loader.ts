@@ -5,7 +5,6 @@ import {
   DEFAULT_RUNTIME_CONFIG,
   parseRuntimeConfig,
   runtimeConfigFromDevEnv,
-  type RuntimeConfig,
   type RuntimeConfigEnv,
   type RuntimeConfigResult,
 } from "../shared/runtime-config";
@@ -40,7 +39,7 @@ export async function loadRuntimeConfig(options: {
   }
 }
 
-export function desktopConfigPath(): string {
+function desktopConfigPath(): string {
   return join(app.getPath("home"), ".multica", "desktop.json");
 }
 
@@ -57,4 +56,4 @@ function errorMessage(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-export type { RuntimeConfig, RuntimeConfigResult };
+export type { RuntimeConfigResult };

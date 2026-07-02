@@ -20,7 +20,7 @@ if (process.platform === "win32" && process.arch === "arm64") {
 const STARTUP_CHECK_DELAY_MS = 5_000;
 const PERIODIC_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
-export type ManualUpdateCheckResult =
+type ManualUpdateCheckResult =
   | {
       ok: true;
       currentVersion: string;

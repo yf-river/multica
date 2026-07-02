@@ -5,7 +5,7 @@ export interface RuntimeConfig {
   appUrl: string;
 }
 
-export interface RuntimeConfigError {
+interface RuntimeConfigError {
   message: string;
 }
 
@@ -99,7 +99,7 @@ export function deriveWsUrl(apiUrl: string): string {
 // shareable web URL. Hosts that don't match the convention (no leading
 // `api.` label, or short two-label hosts like `api.local`) fall through
 // untouched — those deployments must set `appUrl` explicitly.
-export function deriveAppUrl(apiUrl: string): string {
+function deriveAppUrl(apiUrl: string): string {
   const url = new URL(apiUrl);
   url.pathname = "";
   url.search = "";
@@ -116,7 +116,7 @@ export function deriveAppUrl(apiUrl: string): string {
 // in that case; for any non-local host (e.g. a remote test environment),
 // trust the production-style derivation so `apiUrl=https://api.test.x`
 // yields `appUrl=https://test.x` without a separate VITE_APP_URL.
-export function deriveDevAppUrl(apiUrl: string): string {
+function deriveDevAppUrl(apiUrl: string): string {
   const url = new URL(apiUrl);
   if (url.hostname === "localhost" || url.hostname === "127.0.0.1") {
     return LOCAL_DEV_RUNTIME_CONFIG.appUrl;

@@ -1,6 +1,6 @@
 export const RENDERER_ROUTE_CONTEXT_CHANNEL = "renderer:route-context";
 
-export type RendererRouteSurface = "login" | "overlay" | "tab";
+type RendererRouteSurface = "login" | "overlay" | "tab";
 
 export type RendererRouteContextInput = {
   surface: RendererRouteSurface;

@@ -751,7 +751,7 @@ async function clearToken(): Promise<void> {
 // Result of a user-initiated daemon re-authentication. The distinction matters:
 // only `session_invalid` justifies signing the user out of the whole app; a
 // `transient` failure must keep them logged in so they can retry.
-export type ReauthResult =
+type ReauthResult =
   | { ok: true }
   | { ok: false; reason: "session_invalid" }
   | { ok: false; reason: "transient"; message: string };

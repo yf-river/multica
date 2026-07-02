@@ -3,7 +3,7 @@ import { access, stat } from "fs/promises";
 import { constants as fsConstants } from "fs";
 import { basename, isAbsolute } from "path";
 
-export interface PickDirectoryResult {
+interface PickDirectoryResult {
   ok: boolean;
   path?: string;
   basename?: string;
@@ -12,7 +12,7 @@ export interface PickDirectoryResult {
   error?: string;
 }
 
-export interface ValidateLocalDirectoryResult {
+interface ValidateLocalDirectoryResult {
   ok: boolean;
   /** When ok=false, identifies which check failed so the renderer can render a
    *  specific message without parsing free-form text. */
