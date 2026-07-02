@@ -358,19 +358,7 @@ func runProjectCreate(cmd *cobra.Command, _ []string) error {
 		return fmt.Errorf("create project: %w", err)
 	}
 
-	output, _ := cmd.Flags().GetString("output")
-	if output == "table" {
-		headers := []string{"ID", "TITLE", "STATUS"}
-		rows := [][]string{{
-			strVal(result, "id"),
-			strVal(result, "title"),
-			strVal(result, "status"),
-		}}
-		cli.PrintTable(os.Stdout, headers, rows)
-		return nil
-	}
-
-	return cli.PrintJSON(os.Stdout, result)
+	return printProjectMutationResult(cmd, result)
 }
 
 func runProjectUpdate(cmd *cobra.Command, args []string) error {
@@ -426,6 +414,10 @@ func runProjectUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("update project: %w", err)
 	}
 
+	return printProjectMutationResult(cmd, result)
+}
+
+func printProjectMutationResult(cmd *cobra.Command, result map[string]any) error {
 	output, _ := cmd.Flags().GetString("output")
 	if output == "table" {
 		headers := []string{"ID", "TITLE", "STATUS"}
