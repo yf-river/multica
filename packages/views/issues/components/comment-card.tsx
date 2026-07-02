@@ -376,6 +376,14 @@ function useEditAttachmentState(
     retainedStandaloneIds?.has(a.id),
   );
 
+  const removeStandaloneAttachment = useCallback((attachmentId: string) => {
+    setRetainedStandaloneIds((ids) => {
+      const next = new Set(ids ?? []);
+      next.delete(attachmentId);
+      return next;
+    });
+  }, []);
+
   const resetState = () => {
     setEditing(false);
     setContent(entry.content ?? "");
@@ -450,8 +458,7 @@ function useEditAttachmentState(
     clearDraft,
     initialValue,
     standaloneEditAttachments,
-    retainedStandaloneIds,
-    setRetainedStandaloneIds,
+    removeStandaloneAttachment,
     startEdit,
     cancelEdit,
     saveEdit,
@@ -622,13 +629,7 @@ function CommentRow({
             <AttachmentList
               attachments={edit.standaloneEditAttachments}
               className="mt-2 max-w-full"
-              onRemove={(attachmentId) =>
-                edit.setRetainedStandaloneIds((ids) => {
-                  const next = new Set(ids ?? []);
-                  next.delete(attachmentId);
-                  return next;
-                })
-              }
+              onRemove={edit.removeStandaloneAttachment}
             />
           )}
           <div className="flex items-center justify-between gap-2 mt-2">
@@ -915,13 +916,7 @@ function CommentCardImpl({
                       <AttachmentList
                         attachments={edit.standaloneEditAttachments}
                         className="max-w-full"
-                        onRemove={(attachmentId) =>
-                          edit.setRetainedStandaloneIds((ids) => {
-                            const next = new Set(ids ?? []);
-                            next.delete(attachmentId);
-                            return next;
-                          })
-                        }
+                        onRemove={edit.removeStandaloneAttachment}
                         />
                       )}
                     <CommentTriggerChips
