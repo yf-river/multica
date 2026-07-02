@@ -125,7 +125,7 @@ export function buildAssetPayload(
   };
 }
 
-export function variablesToText(variables: PromptLibraryVariable[]): string {
+function variablesToText(variables: PromptLibraryVariable[]): string {
   return variables.map((variable) => `${variable.name}${variable.label ? `=${variable.label}` : ""}`).join(", ");
 }
 

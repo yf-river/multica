@@ -3,9 +3,9 @@
 import type { Issue } from "@multica/core/types";
 import { cn } from "@multica/ui/lib/utils";
 
-export const TAPD_LOGO_URL = "https://static-fe.tapd.cn/img/TAPD_Logo2_mini.f5e386a7.svg";
+const TAPD_LOGO_URL = "https://static-fe.tapd.cn/img/TAPD_Logo2_mini.f5e386a7.svg";
 
-export function isTAPDSourceIssue(issue: Pick<Issue, "metadata">): boolean {
+function isTAPDSourceIssue(issue: Pick<Issue, "metadata">): boolean {
   return String(issue.metadata?.source_provider ?? "").toLowerCase() === "tapd";
 }
 

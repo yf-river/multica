@@ -1,0 +1,113 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignore": [
+    "artifacts/**",
+    "server/bin/**",
+    "**/dist/**",
+    "**/.next/**",
+    "**/out/**",
+    "**/coverage/**",
+    "**/node_modules/**",
+    "packages/views/locales/**"
+  ],
+  "ignoreDependencies": [
+    "@types/*"
+  ],
+  "workspaces": {
+    ".": {
+      "entry": [
+        "package.json",
+        "playwright.config.ts",
+        "scripts/**/*.{js,mjs,cjs,ts}",
+        "e2e/**/*.{ts,tsx}"
+      ],
+      "project": [
+        "*.{js,mjs,cjs,ts}",
+        "scripts/**/*.{js,mjs,cjs,ts}",
+        "e2e/**/*.{ts,tsx}"
+      ]
+    },
+    "apps/web": {
+      "entry": [
+        "app/**/page.{ts,tsx}",
+        "app/**/layout.{ts,tsx}",
+        "app/**/route.{ts,tsx}",
+        "app/global-error.tsx",
+        "app/not-found.tsx",
+        "next.config.ts",
+        "eslint.config.mjs"
+      ],
+      "project": [
+        "**/*.{ts,tsx,mjs}"
+      ]
+    },
+    "apps/desktop": {
+      "entry": [
+        "src/main/index.ts",
+        "src/preload/index.ts",
+        "src/renderer/src/main.tsx",
+        "electron.vite.config.ts",
+        "eslint.config.mjs",
+        "scripts/**/*.mjs"
+      ],
+      "project": [
+        "src/**/*.{ts,tsx}",
+        "scripts/**/*.mjs",
+        "*.{ts,mjs}"
+      ]
+    },
+    "apps/docs": {
+      "entry": [
+        "app/**/*.{ts,tsx,mdx}",
+        "components/**/*.{ts,tsx}",
+        "source.config.ts",
+        "next.config.ts"
+      ],
+      "project": [
+        "**/*.{ts,tsx,mdx}"
+      ]
+    },
+    "packages/core": {
+      "entry": [
+        "index.ts",
+        "**/index.ts",
+        "**/*.test.{ts,tsx}",
+        "eslint.config.mjs"
+      ],
+      "project": [
+        "**/*.{ts,tsx}"
+      ]
+    },
+    "packages/views": {
+      "entry": [
+        "index.ts",
+        "**/index.ts",
+        "**/*.test.{ts,tsx}",
+        "eslint.config.mjs"
+      ],
+      "project": [
+        "**/*.{ts,tsx}"
+      ]
+    },
+    "packages/ui": {
+      "entry": [
+        "index.ts",
+        "components/**/*.{ts,tsx}",
+        "markdown/index.ts",
+        "styles/**/*.{ts,tsx,css}",
+        "eslint.config.mjs"
+      ],
+      "project": [
+        "**/*.{ts,tsx}"
+      ]
+    },
+    "packages/eslint-config": {
+      "entry": [
+        "*.js"
+      ],
+      "project": [
+        "*.js"
+      ]
+    }
+  }
+}

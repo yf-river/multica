@@ -130,5 +130,3 @@ export function IconOtherOptionCard({
     </div>
   );
 }
-
-export { OTHER_INPUT_MAX_LENGTH };

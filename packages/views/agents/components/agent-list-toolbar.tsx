@@ -70,7 +70,7 @@ const AVAILABILITY_VALUES: AgentAvailability[] = [
   "offline",
 ];
 
-export function countActiveFilterDimensions(
+function countActiveFilterDimensions(
   filters: AgentListFilters,
 ): number {
   let count = 0;

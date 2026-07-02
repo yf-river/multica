@@ -15,7 +15,6 @@ export {
   needsSourceBackfill,
   SOURCE_BACKFILL_MAX_DISMISSALS,
 } from "./needs-backfill";
-export { recommendTemplate, type AgentTemplateId } from "./recommend-template";
 export {
   useWelcomeStore,
   type WelcomeSignal,

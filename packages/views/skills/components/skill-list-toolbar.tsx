@@ -61,7 +61,7 @@ const COLUMN_KEYS: SkillColumnKey[] = [
 
 const SORT_FIELDS: SkillSortField[] = ["name", "usedBy", "updated", "created"];
 
-export function countActiveFilterDimensions(
+function countActiveFilterDimensions(
   filters: SkillListFilters,
 ): number {
   let count = 0;

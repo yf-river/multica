@@ -15,6 +15,10 @@
     "acceptance:prepare-demo": "node scripts/prepare-production-demo-evidence.mjs",
     "acceptance:evidence": "node scripts/generate-acceptance-evidence.mjs",
     "acceptance:verify": "node scripts/generate-acceptance-evidence.mjs --run-tests",
+    "code-health:audit": "mkdir -p artifacts/code-health/one-time-cleanup && pnpm code-health:knip && pnpm code-health:jscpd && pnpm code-health:go",
+    "code-health:go": "mkdir -p artifacts/code-health/one-time-cleanup && sh -c 'cd server && GOENV_VERSION=1.26.1 golangci-lint run ./... --timeout 5m || { echo \"golangci-lint failed; falling back to GOENV_VERSION=1.26.1 go test ./...\"; GOENV_VERSION=1.26.1 go test ./...; }' > artifacts/code-health/one-time-cleanup/go-audit.txt 2>&1 || true",
+    "code-health:jscpd": "mkdir -p artifacts/code-health/one-time-cleanup && jscpd apps packages server scripts --config .jscpd.json --exit-code 0",
+    "code-health:knip": "mkdir -p artifacts/code-health/one-time-cleanup && knip --config knip.json --reporter markdown --no-exit-code > artifacts/code-health/one-time-cleanup/knip-report.md",
     "clean": "turbo clean && rm -rf node_modules",
     "ui:add": "cd packages/ui && npx shadcn@latest add",
     "generate:reserved-slugs": "node scripts/generate-reserved-slugs.mjs"
@@ -35,8 +39,12 @@
     "@playwright/test": "^1.58.2",
     "@types/node": "catalog:",
     "@types/pg": "^8.20.0",
+    "@vitejs/plugin-react": "catalog:",
+    "jscpd": "^5.0.11",
+    "knip": "^6.24.0",
     "pg": "^8.20.0",
     "turbo": "^2.5.4",
-    "typescript": "catalog:"
+    "typescript": "catalog:",
+    "vitest": "catalog:"
   }
 }
