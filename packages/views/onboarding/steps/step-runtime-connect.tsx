@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
-import { ArrowLeft, ArrowRight, Loader2, RefreshCw } from "lucide-react";
+import { ArrowRight, Loader2, RefreshCw } from "lucide-react";
 import { captureEvent, setPersonProperties } from "@multica/core/analytics";
 import { Button } from "@multica/ui/components/ui/button";
 import { cn } from "@multica/ui/lib/utils";
@@ -10,7 +10,7 @@ import { useScrollFade } from "@multica/ui/hooks/use-scroll-fade";
 import { runtimeKeys } from "@multica/core/runtimes/queries";
 import type { AgentRuntime } from "@multica/core/types";
 import { DragStrip } from "@multica/views/platform";
-import { StepHeader } from "../components/step-header";
+import { RuntimeStepHeader } from "../components/runtime-step-header";
 import { RuntimeAsidePanel } from "../components/runtime-aside-panel";
 import { useRuntimePicker } from "../components/use-runtime-picker";
 import { ProviderLogo } from "../../runtimes/components/provider-logo";
@@ -224,26 +224,7 @@ function FancyView({
     <div className="animate-onboarding-enter grid h-full min-h-0 grid-cols-1 lg:grid-cols-[minmax(0,1fr)_480px]">
       {/* Left — DragStrip + 3-region app shell */}
       <div className="flex min-h-0 flex-col">
-        <DragStrip />
-
-        {/* Header — Back + horizontal step indicator */}
-        <header className="flex shrink-0 items-center gap-4 bg-background px-6 py-3 sm:px-10 md:px-14 lg:px-16">
-          {onBack ? (
-            <button
-              type="button"
-              onClick={onBack}
-              className="flex items-center gap-1.5 text-sm text-muted-foreground transition-colors hover:text-foreground"
-            >
-              <ArrowLeft className="h-3.5 w-3.5" />
-              {t(($) => $.common.back)}
-            </button>
-          ) : (
-            <span aria-hidden className="w-0" />
-          )}
-          <div className="flex-1">
-            <StepHeader currentStep="runtime" />
-          </div>
-        </header>
+        <RuntimeStepHeader onBack={onBack} />
 
         {/* Scrollable middle — content changes by phase but always wraps
             at max-w-[620px] so the 2-column runtime grid has room to
