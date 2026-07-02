@@ -1160,6 +1160,71 @@ function PromptVersionHistory({
   );
 }
 
+type TrainingAssetPanelBaseProps = {
+  assets: PromptEvaluationAsset[];
+  cases: PromptEvaluationStructuredCase[];
+  runs: PromptEvaluationRun[];
+  focusedIssueId: string | null;
+  focusedCaseId: string | null;
+  focusedIssueRunReviewHref: string | null;
+  loading: boolean;
+  saving: boolean;
+  onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
+  onUpdateAsset: (assetId: string, data: UpdatePromptEvaluationAssetRequest) => Promise<unknown>;
+  onDeleteAsset: (asset: PromptEvaluationAsset) => void;
+  onImportDatasetFromTraces: (asset: PromptEvaluationAsset) => void;
+  importingTraceDatasetAssetId: string | null;
+  onExportDatasetProtocol: (asset: PromptEvaluationAsset) => void;
+  exportingDatasetProtocolAssetId: string | null;
+  onImportDatasetCopy: (asset: PromptEvaluationAsset) => void;
+  importingDatasetCopyAssetId: string | null;
+  onCreateDatasetVersion: (asset: PromptEvaluationAsset) => void;
+  creatingDatasetVersionAssetId: string | null;
+  onCreateCase: (data: CreatePromptEvaluationCaseRequest) => void;
+  creatingCaseAssetId: string | null;
+  caseDrafts: Record<string, ManualCaseDraft>;
+  onCaseDraftsChange: Dispatch<SetStateAction<Record<string, ManualCaseDraft>>>;
+  onUpdateCase: (caseId: string, data: UpdatePromptEvaluationCaseRequest) => Promise<unknown>;
+  updatingCaseId: string | null;
+  onDeleteCase: (caseId: string) => void;
+  deletingCaseId: string | null;
+  onCreateAssetEvidenceSnapshots: (assetId: string) => void;
+  creatingAssetEvidenceSnapshotsAssetId: string | null;
+  onDownloadAssetEvidencePackage: (assetId: string) => void;
+  exportingAssetEvidencePackageAssetId: string | null;
+};
+
+type WorkbenchPanelProps = TrainingAssetPanelBaseProps & {
+  activeTab: WorkbenchTab;
+  workspaceId: string;
+  focusedRunId: string | null;
+  evidenceFocus: EvidenceFocus;
+  runStatusFilter: RunStatusFilter;
+  focusedIssueTaskIds: string[];
+  onRunStatusFilterChange: (status: RunStatusFilter) => void;
+  candidates: PromptEvaluationOptimizationCandidate[];
+  skillResources: SkillResourceOption[];
+  onCreateAsset: (assetType: PromptEvaluationAssetType) => void;
+  onCreateSkillScenarioAsset: (assetType: Extract<PromptEvaluationAssetType, "数据集" | "测试套件">) => void;
+  onCreateWritingBenchmarkAsset: () => void;
+  onSyncRun: (runId: string) => void;
+  syncingRunId: string | null;
+  onCancelRun: (runId: string) => void;
+  cancellingRunId: string | null;
+  onReviewRun: (run: PromptEvaluationRun, decision: "通过" | "未通过") => void;
+  reviewingRunId: string | null;
+  onCreateEvidenceSnapshot: (runId: string) => void;
+  creatingEvidenceSnapshotRunId: string | null;
+  onGenerateCandidate: (runId: string) => void;
+  generatingCandidateRunId: string | null;
+  onUpdateCandidate: (candidateId: string, data: UpdatePromptEvaluationOptimizationCandidateRequest) => void;
+  updatingCandidateId: string | null;
+  onPublishCandidate: (candidateId: string) => void;
+  publishingCandidateId: string | null;
+  onRejectCandidate: (candidateId: string, reason: string) => void;
+  rejectingCandidateId: string | null;
+};
+
 function WorkbenchPanel({
   activeTab,
   workspaceId,
@@ -1220,67 +1285,7 @@ function WorkbenchPanel({
   publishingCandidateId,
   onRejectCandidate,
   rejectingCandidateId,
-}: {
-  activeTab: WorkbenchTab;
-  workspaceId: string;
-  assets: PromptEvaluationAsset[];
-  cases: PromptEvaluationStructuredCase[];
-  runs: PromptEvaluationRun[];
-  focusedRunId: string | null;
-  evidenceFocus: EvidenceFocus;
-  runStatusFilter: RunStatusFilter;
-  focusedIssueId: string | null;
-  focusedCaseId: string | null;
-  focusedIssueRunReviewHref: string | null;
-  focusedIssueTaskIds: string[];
-  onRunStatusFilterChange: (status: RunStatusFilter) => void;
-  candidates: PromptEvaluationOptimizationCandidate[];
-  skillResources: SkillResourceOption[];
-  loading: boolean;
-  saving: boolean;
-  onCreateAsset: (assetType: PromptEvaluationAssetType) => void;
-  onCreateSkillScenarioAsset: (assetType: Extract<PromptEvaluationAssetType, "数据集" | "测试套件">) => void;
-  onCreateWritingBenchmarkAsset: () => void;
-  onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
-  onUpdateAsset: (assetId: string, data: UpdatePromptEvaluationAssetRequest) => Promise<unknown>;
-  onDeleteAsset: (asset: PromptEvaluationAsset) => void;
-  onImportDatasetFromTraces: (asset: PromptEvaluationAsset) => void;
-  importingTraceDatasetAssetId: string | null;
-  onExportDatasetProtocol: (asset: PromptEvaluationAsset) => void;
-  exportingDatasetProtocolAssetId: string | null;
-  onImportDatasetCopy: (asset: PromptEvaluationAsset) => void;
-  importingDatasetCopyAssetId: string | null;
-  onCreateDatasetVersion: (asset: PromptEvaluationAsset) => void;
-  creatingDatasetVersionAssetId: string | null;
-  onCreateCase: (data: CreatePromptEvaluationCaseRequest) => void;
-  creatingCaseAssetId: string | null;
-  caseDrafts: Record<string, ManualCaseDraft>;
-  onCaseDraftsChange: Dispatch<SetStateAction<Record<string, ManualCaseDraft>>>;
-  onUpdateCase: (caseId: string, data: UpdatePromptEvaluationCaseRequest) => Promise<unknown>;
-  updatingCaseId: string | null;
-  onDeleteCase: (caseId: string) => void;
-  deletingCaseId: string | null;
-  onSyncRun: (runId: string) => void;
-  syncingRunId: string | null;
-  onCancelRun: (runId: string) => void;
-  cancellingRunId: string | null;
-  onReviewRun: (run: PromptEvaluationRun, decision: "通过" | "未通过") => void;
-  reviewingRunId: string | null;
-  onCreateEvidenceSnapshot: (runId: string) => void;
-  creatingEvidenceSnapshotRunId: string | null;
-  onCreateAssetEvidenceSnapshots: (assetId: string) => void;
-  creatingAssetEvidenceSnapshotsAssetId: string | null;
-  onDownloadAssetEvidencePackage: (assetId: string) => void;
-  exportingAssetEvidencePackageAssetId: string | null;
-  onGenerateCandidate: (runId: string) => void;
-  generatingCandidateRunId: string | null;
-  onUpdateCandidate: (candidateId: string, data: UpdatePromptEvaluationOptimizationCandidateRequest) => void;
-  updatingCandidateId: string | null;
-  onPublishCandidate: (candidateId: string) => void;
-  publishingCandidateId: string | null;
-  onRejectCandidate: (candidateId: string, reason: string) => void;
-  rejectingCandidateId: string | null;
-}) {
+}: WorkbenchPanelProps) {
   const tabAssetType = tabToAssetType(activeTab);
   const tabAssets = tabAssetType ? assets.filter((asset) => asset.asset_type === tabAssetType) : assets;
   const visibleAssets = tabAssets;
@@ -1483,6 +1488,13 @@ function DatasetTagDatasetSummaryPanel({ workspaceId }: { workspaceId: string })
   );
 }
 
+type TrainingAssetPanelProps = TrainingAssetPanelBaseProps & {
+  activeTab: WorkbenchTab;
+  route: string;
+  title: string;
+  beforeAssetList?: ReactNode;
+};
+
 function TrainingAssetPanel({
   activeTab,
   route,
@@ -1519,43 +1531,7 @@ function TrainingAssetPanel({
   onDownloadAssetEvidencePackage,
   exportingAssetEvidencePackageAssetId,
   beforeAssetList,
-}: {
-  activeTab: WorkbenchTab;
-  route: string;
-  title: string;
-  assets: PromptEvaluationAsset[];
-  runs: PromptEvaluationRun[];
-  cases: PromptEvaluationStructuredCase[];
-  loading: boolean;
-  saving: boolean;
-  onToggleAssetStatus: (asset: PromptEvaluationAsset) => void;
-  onUpdateAsset: (assetId: string, data: UpdatePromptEvaluationAssetRequest) => Promise<unknown>;
-  onDeleteAsset: (asset: PromptEvaluationAsset) => void;
-  onImportDatasetFromTraces: (asset: PromptEvaluationAsset) => void;
-  importingTraceDatasetAssetId: string | null;
-  onExportDatasetProtocol: (asset: PromptEvaluationAsset) => void;
-  exportingDatasetProtocolAssetId: string | null;
-  onImportDatasetCopy: (asset: PromptEvaluationAsset) => void;
-  importingDatasetCopyAssetId: string | null;
-  onCreateDatasetVersion: (asset: PromptEvaluationAsset) => void;
-  creatingDatasetVersionAssetId: string | null;
-  onCreateCase: (data: CreatePromptEvaluationCaseRequest) => void;
-  creatingCaseAssetId: string | null;
-  caseDrafts: Record<string, ManualCaseDraft>;
-  onCaseDraftsChange: Dispatch<SetStateAction<Record<string, ManualCaseDraft>>>;
-  focusedCaseId: string | null;
-  focusedIssueId: string | null;
-  focusedIssueRunReviewHref: string | null;
-  onUpdateCase: (caseId: string, data: UpdatePromptEvaluationCaseRequest) => Promise<unknown>;
-  updatingCaseId: string | null;
-  onDeleteCase: (caseId: string) => void;
-  deletingCaseId: string | null;
-  onCreateAssetEvidenceSnapshots: (assetId: string) => void;
-  creatingAssetEvidenceSnapshotsAssetId: string | null;
-  onDownloadAssetEvidencePackage: (assetId: string) => void;
-  exportingAssetEvidencePackageAssetId: string | null;
-  beforeAssetList?: ReactNode;
-}) {
+}: TrainingAssetPanelProps) {
   const caseSummaries = useMemo(() => buildCaseSummaries(cases), [cases]);
   const casesByAsset = useMemo(() => buildCasesByAsset(cases), [cases]);
   const runCountByAsset = useMemo(() => {
