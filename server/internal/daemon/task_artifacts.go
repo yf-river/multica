@@ -56,56 +56,8 @@ func collectTaskMarkdownArtifacts(workDir string) ([]taskMarkdownArtifact, error
 	artifacts := make([]taskMarkdownArtifact, 0)
 	for _, relRoot := range taskArtifactDirs {
 		root := filepath.Join(workDirAbs, relRoot)
-		rootInfo, err := os.Stat(root)
+		artifacts, err = appendTaskMarkdownArtifactsFromRoot(artifacts, root, seen)
 		if err != nil {
-			if os.IsNotExist(err) {
-				continue
-			}
-			return nil, err
-		}
-		if !rootInfo.IsDir() {
-			continue
-		}
-		if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
-			if walkErr != nil {
-				return walkErr
-			}
-			if entry.IsDir() {
-				name := entry.Name()
-				if name == ".git" || name == "node_modules" {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if filepath.Ext(entry.Name()) != ".md" {
-				return nil
-			}
-			info, err := entry.Info()
-			if err != nil {
-				return err
-			}
-			if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > taskArtifactMaxBytes {
-				return nil
-			}
-			abs, err := filepath.Abs(path)
-			if err != nil {
-				return err
-			}
-			if _, ok := seen[abs]; ok {
-				return nil
-			}
-			seen[abs] = struct{}{}
-			displayName, err := filepath.Rel(root, abs)
-			if err != nil || strings.HasPrefix(displayName, "..") {
-				displayName = filepath.Base(abs)
-			}
-			artifacts = append(artifacts, taskMarkdownArtifact{
-				Path:        abs,
-				DisplayName: filepath.ToSlash(displayName),
-				SizeBytes:   info.Size(),
-			})
-			return nil
-		}); err != nil {
 			return nil, err
 		}
 	}
@@ -128,6 +80,23 @@ func collectTaskMarkdownArtifactsFromDirs(workDir, artifactDir string) ([]taskMa
 	if err != nil {
 		return nil, err
 	}
+	seen := make(map[string]struct{}, len(artifacts))
+	for _, artifact := range artifacts {
+		if abs, err := filepath.Abs(artifact.Path); err == nil {
+			seen[abs] = struct{}{}
+		}
+	}
+	artifacts, err = appendTaskMarkdownArtifactsFromRoot(artifacts, root, seen)
+	if err != nil {
+		return nil, err
+	}
+	sort.Slice(artifacts, func(i, j int) bool {
+		return artifacts[i].DisplayName < artifacts[j].DisplayName
+	})
+	return artifacts, nil
+}
+
+func appendTaskMarkdownArtifactsFromRoot(artifacts []taskMarkdownArtifact, root string, seen map[string]struct{}) ([]taskMarkdownArtifact, error) {
 	rootInfo, err := os.Stat(root)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -137,12 +106,6 @@ func collectTaskMarkdownArtifactsFromDirs(workDir, artifactDir string) ([]taskMa
 	}
 	if !rootInfo.IsDir() {
 		return artifacts, nil
-	}
-	seen := make(map[string]struct{}, len(artifacts))
-	for _, artifact := range artifacts {
-		if abs, err := filepath.Abs(artifact.Path); err == nil {
-			seen[abs] = struct{}{}
-		}
 	}
 	if err := filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -186,9 +149,6 @@ func collectTaskMarkdownArtifactsFromDirs(workDir, artifactDir string) ([]taskMa
 	}); err != nil {
 		return nil, err
 	}
-	sort.Slice(artifacts, func(i, j int) bool {
-		return artifacts[i].DisplayName < artifacts[j].DisplayName
-	})
 	return artifacts, nil
 }
 
