@@ -4,12 +4,14 @@ import type { TaskMessagePayload } from "@multica/core/types/events";
 import type { PromptEvaluationToolCallChain } from "@multica/core/types/prompt-evaluation";
 import {
   buildIssueReviewDraftCaseRequest,
+  buildRunReviewDurationTooltipRows,
   buildRunReviewNodeCsv,
   buildRunReviewEventRows,
   buildRunReviewOptimizerHref,
   buildRunReviewRawEventsCsv,
   issueRunRowActivityLabel,
   issueRunRowMetaLabels,
+  runReviewTotalDurationMs,
 } from "./run-reviews-page";
 import { sopStageDisplayName } from "../../common/sop-stage-labels";
 
@@ -107,6 +109,57 @@ describe("buildRunReviewOptimizerHref", () => {
     expect(buildRunReviewOptimizerHref((view) => `/acme/training/${view}`, "issue with space")).toBe(
       "/acme/training/test-suites?issue=issue%20with%20space&mode=optimize",
     );
+  });
+});
+
+describe("run review duration summary", () => {
+  it("uses work-cycle wall clock duration and reports human confirmation remainder", () => {
+    const summary = {
+      issue_id: "issue-1",
+      node_count: 1,
+      total_duration_ms: 120000,
+      wall_clock_duration_ms: 300000,
+      agent_execution_duration_ms: 120000,
+      human_confirmation_duration_ms: 180000,
+      total_input_tokens: 0,
+      total_output_tokens: 0,
+      total_cache_read_tokens: 0,
+      total_cache_write_tokens: 0,
+      message_count: 0,
+      agent_turn_count: 0,
+      trace_event_count: 0,
+      usage_unavailable: false,
+      acceptance_status: "done",
+      full_analysis_deep_link: "",
+    };
+
+    expect(runReviewTotalDurationMs(summary)).toBe(300000);
+    expect(buildRunReviewDurationTooltipRows(summary)).toEqual([
+      ["Agent 执行耗时", "2m"],
+      ["人工确认耗时", "3m"],
+    ]);
+  });
+
+  it("keeps zero human confirmation distinct from missing data", () => {
+    expect(buildRunReviewDurationTooltipRows({
+      issue_id: "issue-1",
+      node_count: 1,
+      total_duration_ms: 60000,
+      agent_execution_duration_ms: 60000,
+      human_confirmation_duration_ms: 0,
+      total_input_tokens: 0,
+      total_output_tokens: 0,
+      total_cache_read_tokens: 0,
+      total_cache_write_tokens: 0,
+      message_count: 0,
+      agent_turn_count: 0,
+      trace_event_count: 0,
+      usage_unavailable: false,
+      acceptance_status: "done",
+      full_analysis_deep_link: "",
+    })).toContainEqual(["人工确认耗时", "0m"]);
+
+    expect(buildRunReviewDurationTooltipRows(undefined)).toContainEqual(["人工确认耗时", "暂未记录"]);
   });
 });
 

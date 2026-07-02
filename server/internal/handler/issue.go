@@ -29,25 +29,27 @@ import (
 
 // IssueResponse is the JSON response for an issue.
 type IssueResponse struct {
-	ID            string  `json:"id"`
-	WorkspaceID   string  `json:"workspace_id"`
-	Number        int32   `json:"number"`
-	Identifier    string  `json:"identifier"`
-	Title         string  `json:"title"`
-	Description   *string `json:"description"`
-	Status        string  `json:"status"`
-	Priority      string  `json:"priority"`
-	AssigneeType  *string `json:"assignee_type"`
-	AssigneeID    *string `json:"assignee_id"`
-	CreatorType   string  `json:"creator_type"`
-	CreatorID     string  `json:"creator_id"`
-	ParentIssueID *string `json:"parent_issue_id"`
-	ProjectID     *string `json:"project_id"`
-	Position      float64 `json:"position"`
-	StartDate     *string `json:"start_date"`
-	DueDate       *string `json:"due_date"`
-	CreatedAt     string  `json:"created_at"`
-	UpdatedAt     string  `json:"updated_at"`
+	ID              string  `json:"id"`
+	WorkspaceID     string  `json:"workspace_id"`
+	Number          int32   `json:"number"`
+	Identifier      string  `json:"identifier"`
+	Title           string  `json:"title"`
+	Description     *string `json:"description"`
+	Status          string  `json:"status"`
+	Priority        string  `json:"priority"`
+	AssigneeType    *string `json:"assignee_type"`
+	AssigneeID      *string `json:"assignee_id"`
+	CreatorType     string  `json:"creator_type"`
+	CreatorID       string  `json:"creator_id"`
+	ParentIssueID   *string `json:"parent_issue_id"`
+	ProjectID       *string `json:"project_id"`
+	Position        float64 `json:"position"`
+	StartDate       *string `json:"start_date"`
+	DueDate         *string `json:"due_date"`
+	CreatedAt       string  `json:"created_at"`
+	UpdatedAt       string  `json:"updated_at"`
+	WorkStartedAt   *string `json:"work_started_at,omitempty"`
+	WorkCompletedAt *string `json:"work_completed_at,omitempty"`
 	// Metadata is the per-issue KV map (see issue_metadata.go). Always emitted
 	// (empty object when unset) so frontend code can `issue.metadata[key]`
 	// without nil-guarding the parent field.
@@ -167,26 +169,28 @@ func (h *Handler) validateProjectInWorkspace(ctx context.Context, workspaceID, p
 func issueToResponse(i db.Issue, issuePrefix string) IssueResponse {
 	identifier := issuePrefix + "-" + strconv.Itoa(int(i.Number))
 	return IssueResponse{
-		ID:            uuidToString(i.ID),
-		WorkspaceID:   uuidToString(i.WorkspaceID),
-		Number:        i.Number,
-		Identifier:    identifier,
-		Title:         i.Title,
-		Description:   textToPtr(i.Description),
-		Status:        i.Status,
-		Priority:      i.Priority,
-		AssigneeType:  textToPtr(i.AssigneeType),
-		AssigneeID:    uuidToPtr(i.AssigneeID),
-		CreatorType:   i.CreatorType,
-		CreatorID:     uuidToString(i.CreatorID),
-		ParentIssueID: uuidToPtr(i.ParentIssueID),
-		ProjectID:     uuidToPtr(i.ProjectID),
-		Position:      i.Position,
-		StartDate:     dateToPtr(i.StartDate),
-		DueDate:       dateToPtr(i.DueDate),
-		CreatedAt:     timestampToString(i.CreatedAt),
-		UpdatedAt:     timestampToString(i.UpdatedAt),
-		Metadata:      parseIssueMetadata(i.Metadata),
+		ID:              uuidToString(i.ID),
+		WorkspaceID:     uuidToString(i.WorkspaceID),
+		Number:          i.Number,
+		Identifier:      identifier,
+		Title:           i.Title,
+		Description:     textToPtr(i.Description),
+		Status:          i.Status,
+		Priority:        i.Priority,
+		AssigneeType:    textToPtr(i.AssigneeType),
+		AssigneeID:      uuidToPtr(i.AssigneeID),
+		CreatorType:     i.CreatorType,
+		CreatorID:       uuidToString(i.CreatorID),
+		ParentIssueID:   uuidToPtr(i.ParentIssueID),
+		ProjectID:       uuidToPtr(i.ProjectID),
+		Position:        i.Position,
+		StartDate:       dateToPtr(i.StartDate),
+		DueDate:         dateToPtr(i.DueDate),
+		CreatedAt:       timestampToString(i.CreatedAt),
+		UpdatedAt:       timestampToString(i.UpdatedAt),
+		WorkStartedAt:   timestampToPtr(i.WorkStartedAt),
+		WorkCompletedAt: timestampToPtr(i.WorkCompletedAt),
+		Metadata:        parseIssueMetadata(i.Metadata),
 	}
 }
 

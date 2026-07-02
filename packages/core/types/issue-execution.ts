@@ -90,6 +90,11 @@ export interface IssueTimelineSummary {
   issue_id: string;
   node_count: number;
   total_duration_ms: number;
+  work_started_at?: string;
+  work_completed_at?: string;
+  wall_clock_duration_ms?: number | null;
+  agent_execution_duration_ms?: number;
+  human_confirmation_duration_ms?: number | null;
   total_input_tokens: number;
   total_output_tokens: number;
   total_cache_read_tokens: number;

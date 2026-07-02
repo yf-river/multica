@@ -78,4 +78,6 @@ export interface Issue {
   labels?: Label[];
   created_at: string;
   updated_at: string;
+  work_started_at?: string | null;
+  work_completed_at?: string | null;
 }

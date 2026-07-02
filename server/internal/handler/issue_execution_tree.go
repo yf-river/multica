@@ -55,20 +55,25 @@ type IssueTimelineEvidenceRef struct {
 }
 
 type IssueTimelineSummaryResponse struct {
-	IssueID               string `json:"issue_id"`
-	NodeCount             int    `json:"node_count"`
-	TotalDurationMs       int64  `json:"total_duration_ms"`
-	TotalInputTokens      int64  `json:"total_input_tokens"`
-	TotalOutputTokens     int64  `json:"total_output_tokens"`
-	TotalCacheReadTokens  int64  `json:"total_cache_read_tokens"`
-	TotalCacheWriteTokens int64  `json:"total_cache_write_tokens"`
-	MessageCount          int    `json:"message_count"`
-	AgentTurnCount        int    `json:"agent_turn_count"`
-	TraceEventCount       int    `json:"trace_event_count"`
-	UsageUnavailable      bool   `json:"usage_unavailable"`
-	FailureSummary        string `json:"failure_summary,omitempty"`
-	AcceptanceStatus      string `json:"acceptance_status"`
-	FullAnalysisDeepLink  string `json:"full_analysis_deep_link"`
+	IssueID                     string `json:"issue_id"`
+	NodeCount                   int    `json:"node_count"`
+	TotalDurationMs             int64  `json:"total_duration_ms"`
+	WorkStartedAt               string `json:"work_started_at,omitempty"`
+	WorkCompletedAt             string `json:"work_completed_at,omitempty"`
+	WallClockDurationMs         *int64 `json:"wall_clock_duration_ms"`
+	AgentExecutionDurationMs    int64  `json:"agent_execution_duration_ms"`
+	HumanConfirmationDurationMs *int64 `json:"human_confirmation_duration_ms"`
+	TotalInputTokens            int64  `json:"total_input_tokens"`
+	TotalOutputTokens           int64  `json:"total_output_tokens"`
+	TotalCacheReadTokens        int64  `json:"total_cache_read_tokens"`
+	TotalCacheWriteTokens       int64  `json:"total_cache_write_tokens"`
+	MessageCount                int    `json:"message_count"`
+	AgentTurnCount              int    `json:"agent_turn_count"`
+	TraceEventCount             int    `json:"trace_event_count"`
+	UsageUnavailable            bool   `json:"usage_unavailable"`
+	FailureSummary              string `json:"failure_summary,omitempty"`
+	AcceptanceStatus            string `json:"acceptance_status"`
+	FullAnalysisDeepLink        string `json:"full_analysis_deep_link"`
 }
 
 type IssueExecutionNodeResponse struct {
@@ -130,7 +135,7 @@ func (h *Handler) GetIssueExecutionTree(w http.ResponseWriter, r *http.Request) 
 		Root:          root,
 		Summary:       summarizeIssueExecutionTree(root),
 		TimelineNodes: timelineNodes,
-		IssueSummary:  summarizeIssueTimeline(root.Issue.ID, timelineNodes),
+		IssueSummary:  summarizeIssueTimeline(root.Issue, timelineNodes),
 	})
 }
 
@@ -545,12 +550,18 @@ func buildIssueTimelineNodes(root IssueExecutionNodeResponse) []IssueTimelineNod
 	return nodes
 }
 
-func summarizeIssueTimeline(issueID string, nodes []IssueTimelineNodeResponse) IssueTimelineSummaryResponse {
+func summarizeIssueTimeline(issue IssueResponse, nodes []IssueTimelineNodeResponse) IssueTimelineSummaryResponse {
 	summary := IssueTimelineSummaryResponse{
-		IssueID:              issueID,
+		IssueID:              issue.ID,
 		NodeCount:            len(nodes),
 		AcceptanceStatus:     "unknown",
-		FullAnalysisDeepLink: "/issues/" + issueID + "?panel=execution",
+		FullAnalysisDeepLink: "/issues/" + issue.ID + "?panel=execution",
+	}
+	if issue.WorkStartedAt != nil {
+		summary.WorkStartedAt = *issue.WorkStartedAt
+	}
+	if issue.WorkCompletedAt != nil {
+		summary.WorkCompletedAt = *issue.WorkCompletedAt
 	}
 	hasTaskUsage := false
 	for _, node := range nodes {
@@ -584,7 +595,64 @@ func summarizeIssueTimeline(issueID string, nodes []IssueTimelineNodeResponse) I
 			summary.AcceptanceStatus = "completed"
 		}
 	}
+	summary.AgentExecutionDurationMs = mergedAgentExecutionDurationMs(nodes)
+	if issue.WorkStartedAt != nil && issue.WorkCompletedAt != nil {
+		if started, startErr := time.Parse(time.RFC3339, *issue.WorkStartedAt); startErr == nil {
+			if completed, completedErr := time.Parse(time.RFC3339, *issue.WorkCompletedAt); completedErr == nil && completed.After(started) {
+				wall := completed.Sub(started).Milliseconds()
+				summary.WallClockDurationMs = &wall
+				human := wall - summary.AgentExecutionDurationMs
+				if human < 0 {
+					human = 0
+				}
+				summary.HumanConfirmationDurationMs = &human
+			}
+		}
+	}
 	return summary
+}
+
+type timelineInterval struct {
+	start time.Time
+	end   time.Time
+}
+
+func mergedAgentExecutionDurationMs(nodes []IssueTimelineNodeResponse) int64 {
+	intervals := make([]timelineInterval, 0)
+	for _, node := range nodes {
+		if node.NodeType != "agent_task" || node.StartedAt == "" || node.CompletedAt == "" {
+			continue
+		}
+		start, startErr := time.Parse(time.RFC3339, node.StartedAt)
+		end, endErr := time.Parse(time.RFC3339, node.CompletedAt)
+		if startErr != nil || endErr != nil || !end.After(start) {
+			continue
+		}
+		intervals = append(intervals, timelineInterval{start: start, end: end})
+	}
+	if len(intervals) == 0 {
+		return 0
+	}
+	sort.Slice(intervals, func(i, j int) bool {
+		if intervals[i].start.Equal(intervals[j].start) {
+			return intervals[i].end.Before(intervals[j].end)
+		}
+		return intervals[i].start.Before(intervals[j].start)
+	})
+	var total int64
+	current := intervals[0]
+	for _, interval := range intervals[1:] {
+		if !interval.start.After(current.end) {
+			if interval.end.After(current.end) {
+				current.end = interval.end
+			}
+			continue
+		}
+		total += current.end.Sub(current.start).Milliseconds()
+		current = interval
+	}
+	total += current.end.Sub(current.start).Milliseconds()
+	return total
 }
 
 func artifactTitle(filename string) string {

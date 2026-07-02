@@ -287,6 +287,8 @@ export const IssueSchema = z.object({
   labels: z.array(z.unknown()).optional(),
   created_at: z.string(),
   updated_at: z.string(),
+  work_started_at: z.string().nullable().optional(),
+  work_completed_at: z.string().nullable().optional(),
 }).loose();
 
 export const ListIssuesResponseSchema = z.object({

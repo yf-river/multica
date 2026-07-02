@@ -386,6 +386,8 @@ type Issue struct {
 	OriginType         pgtype.Text        `json:"origin_type"`
 	OriginID           pgtype.UUID        `json:"origin_id"`
 	FirstExecutedAt    pgtype.Timestamptz `json:"first_executed_at"`
+	WorkStartedAt      pgtype.Timestamptz `json:"work_started_at"`
+	WorkCompletedAt    pgtype.Timestamptz `json:"work_completed_at"`
 	StartDate          pgtype.Date        `json:"start_date"`
 	Metadata           []byte             `json:"metadata"`
 	Scope              string             `json:"scope"`

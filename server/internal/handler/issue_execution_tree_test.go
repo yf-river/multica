@@ -12,6 +12,66 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
+func TestSummarizeIssueTimelineComputesHumanConfirmationRemainder(t *testing.T) {
+	workStartedAt := "2026-06-09T10:00:00Z"
+	workCompletedAt := "2026-06-09T10:10:00Z"
+	summary := summarizeIssueTimeline(IssueResponse{
+		ID:              "issue-1",
+		WorkStartedAt:   &workStartedAt,
+		WorkCompletedAt: &workCompletedAt,
+	}, []IssueTimelineNodeResponse{
+		{
+			NodeID:      "task:1",
+			NodeType:    "agent_task",
+			Status:      "completed",
+			StartedAt:   "2026-06-09T10:00:00Z",
+			CompletedAt: "2026-06-09T10:04:00Z",
+			DurationMs:  240000,
+		},
+		{
+			NodeID:      "task:2",
+			NodeType:    "agent_task",
+			Status:      "completed",
+			StartedAt:   "2026-06-09T10:03:00Z",
+			CompletedAt: "2026-06-09T10:06:00Z",
+			DurationMs:  180000,
+		},
+	})
+
+	if summary.WallClockDurationMs == nil || *summary.WallClockDurationMs != 600000 {
+		t.Fatalf("wall clock = %v, want 600000", summary.WallClockDurationMs)
+	}
+	if summary.AgentExecutionDurationMs != 360000 {
+		t.Fatalf("agent execution = %d, want merged 360000", summary.AgentExecutionDurationMs)
+	}
+	if summary.HumanConfirmationDurationMs == nil || *summary.HumanConfirmationDurationMs != 240000 {
+		t.Fatalf("human confirmation = %v, want 240000", summary.HumanConfirmationDurationMs)
+	}
+}
+
+func TestSummarizeIssueTimelineLeavesHumanConfirmationMissingWithoutWorkCycle(t *testing.T) {
+	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1"}, []IssueTimelineNodeResponse{
+		{
+			NodeID:      "task:1",
+			NodeType:    "agent_task",
+			Status:      "completed",
+			StartedAt:   "2026-06-09T10:00:00Z",
+			CompletedAt: "2026-06-09T10:01:00Z",
+			DurationMs:  60000,
+		},
+	})
+
+	if summary.WallClockDurationMs != nil {
+		t.Fatalf("wall clock = %v, want nil", summary.WallClockDurationMs)
+	}
+	if summary.AgentExecutionDurationMs != 60000 {
+		t.Fatalf("agent execution = %d, want 60000", summary.AgentExecutionDurationMs)
+	}
+	if summary.HumanConfirmationDurationMs != nil {
+		t.Fatalf("human confirmation = %v, want nil", summary.HumanConfirmationDurationMs)
+	}
+}
+
 func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")

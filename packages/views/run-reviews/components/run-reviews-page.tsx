@@ -8,7 +8,7 @@ import { api } from "@multica/core/api";
 import { issueExecutionTreeOptions, issueKeys, issueListOptions } from "@multica/core/issues/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
-import type { AgentTask, AgentTaskArtifact, CreatePromptEvaluationCaseRequest, Issue, IssueTimelineNode, IssueExecutionNode, IssueExecutionTreeResponse, TaskTraceEvent } from "@multica/core/types";
+import type { AgentTask, AgentTaskArtifact, CreatePromptEvaluationCaseRequest, Issue, IssueTimelineNode, IssueTimelineSummary, IssueExecutionNode, IssueExecutionTreeResponse, TaskTraceEvent } from "@multica/core/types";
 import type { TaskMessagePayload } from "@multica/core/types/events";
 import type { PromptEvaluationToolCallChain } from "@multica/core/types/prompt-evaluation";
 import { cn } from "@multica/ui/lib/utils";
@@ -25,6 +25,17 @@ const ISSUE_REVIEW_DRAFT_DATASET_NAME = "Issue 复盘评测 Draft";
 
 export function buildRunReviewOptimizerHref(trainingView: (view: string) => string, issueId: string): string {
   return `${trainingView("test-suites")}?issue=${encodeURIComponent(issueId)}&mode=optimize`;
+}
+
+export function runReviewTotalDurationMs(summary: IssueTimelineSummary | undefined): number {
+  return summary?.wall_clock_duration_ms ?? summary?.total_duration_ms ?? 0;
+}
+
+export function buildRunReviewDurationTooltipRows(summary: IssueTimelineSummary | undefined): Array<[string, string]> {
+  return [
+    ["Agent 执行耗时", formatDuration(summary?.agent_execution_duration_ms ?? summary?.total_duration_ms ?? 0)],
+    ["人工确认耗时", formatOptionalDuration(summary?.human_confirmation_duration_ms)],
+  ];
 }
 
 export function RunReviewsPage() {
@@ -161,6 +172,7 @@ function RunReviewDetail({
 }) {
   const wsId = useWorkspaceId();
   const summary = tree?.issue_summary;
+  const wallClockDurationMs = runReviewTotalDurationMs(summary);
   const timelineNodes = tree?.timeline_nodes ?? [];
   const stageRows = buildStageRows(timelineNodes);
   const childLanes = buildChildLanes(tree);
@@ -277,14 +289,11 @@ function RunReviewDetail({
         <div className="grid gap-0 divide-y text-sm md:grid-cols-3 md:divide-x md:divide-y-0">
           <Metric
             label="总耗时"
-            value={formatDuration(summary?.total_duration_ms ?? 0)}
+            value={formatDuration(wallClockDurationMs)}
             icon={<Timer className="size-3.5" />}
             tooltip={
               <MetricTooltip
-                rows={[
-                  ["Agent 执行耗时", formatDuration(summary?.total_duration_ms ?? 0)],
-                  ["人工确认耗时", "暂未记录"],
-                ]}
+                rows={buildRunReviewDurationTooltipRows(summary)}
               />
             }
           />
@@ -2123,6 +2132,11 @@ function formatDuration(ms: number) {
   const seconds = totalSeconds % 60;
   if (minutes <= 0) return `${seconds}s`;
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+}
+
+function formatOptionalDuration(ms: number | null | undefined) {
+  if (ms === null || ms === undefined) return "暂未记录";
+  return formatDuration(ms);
 }
 
 function formatNumber(value: number) {
