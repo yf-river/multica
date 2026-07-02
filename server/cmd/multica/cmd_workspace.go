@@ -311,29 +311,33 @@ func runWorkspaceGet(cmd *cobra.Command, args []string) error {
 
 	output, _ := cmd.Flags().GetString("output")
 	if output == "table" {
-		desc := strVal(ws, "description")
-		if utf8.RuneCountInString(desc) > 60 {
-			runes := []rune(desc)
-			desc = string(runes[:57]) + "..."
-		}
-		wsContext := strVal(ws, "context")
-		if utf8.RuneCountInString(wsContext) > 60 {
-			runes := []rune(wsContext)
-			wsContext = string(runes[:57]) + "..."
-		}
-		headers := []string{"ID", "NAME", "SLUG", "DESCRIPTION", "CONTEXT"}
-		rows := [][]string{{
-			strVal(ws, "id"),
-			strVal(ws, "name"),
-			strVal(ws, "slug"),
-			desc,
-			wsContext,
-		}}
-		cli.PrintTable(os.Stdout, headers, rows)
-		return nil
+		return printWorkspaceDetailsTable(ws)
 	}
 
 	return cli.PrintJSON(os.Stdout, ws)
+}
+
+func printWorkspaceDetailsTable(ws map[string]any) error {
+	desc := truncateWorkspaceDetail(strVal(ws, "description"))
+	wsContext := truncateWorkspaceDetail(strVal(ws, "context"))
+	headers := []string{"ID", "NAME", "SLUG", "DESCRIPTION", "CONTEXT"}
+	rows := [][]string{{
+		strVal(ws, "id"),
+		strVal(ws, "name"),
+		strVal(ws, "slug"),
+		desc,
+		wsContext,
+	}}
+	cli.PrintTable(os.Stdout, headers, rows)
+	return nil
+}
+
+func truncateWorkspaceDetail(value string) string {
+	if utf8.RuneCountInString(value) <= 60 {
+		return value
+	}
+	runes := []rune(value)
+	return string(runes[:57]) + "..."
 }
 
 // buildWorkspaceUpdateBody assembles the PATCH payload from the flags the
@@ -405,26 +409,7 @@ func runWorkspaceUpdate(cmd *cobra.Command, args []string) error {
 
 	output, _ := cmd.Flags().GetString("output")
 	if output == "table" {
-		desc := strVal(ws, "description")
-		if utf8.RuneCountInString(desc) > 60 {
-			runes := []rune(desc)
-			desc = string(runes[:57]) + "..."
-		}
-		wsContext := strVal(ws, "context")
-		if utf8.RuneCountInString(wsContext) > 60 {
-			runes := []rune(wsContext)
-			wsContext = string(runes[:57]) + "..."
-		}
-		headers := []string{"ID", "NAME", "SLUG", "DESCRIPTION", "CONTEXT"}
-		rows := [][]string{{
-			strVal(ws, "id"),
-			strVal(ws, "name"),
-			strVal(ws, "slug"),
-			desc,
-			wsContext,
-		}}
-		cli.PrintTable(os.Stdout, headers, rows)
-		return nil
+		return printWorkspaceDetailsTable(ws)
 	}
 
 	return cli.PrintJSON(os.Stdout, ws)
