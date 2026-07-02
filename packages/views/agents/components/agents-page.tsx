@@ -45,7 +45,6 @@ import {
 } from "@multica/core/workspace/queries";
 import { runtimeListOptions } from "@multica/core/runtimes";
 import { Button } from "@multica/ui/components/ui/button";
-import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import {
   Dialog,
   DialogContent,
@@ -67,6 +66,10 @@ import {
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { useNavigation, useRowLink } from "../../navigation";
 import { ActorAvatar } from "../../common/actor-avatar";
+import {
+  ListGridCheckboxCell,
+  ListGridSelectAllHeaderCell,
+} from "../../common/list-grid-selection";
 import { PageHeader } from "../../layout/page-header";
 import { availabilityConfig } from "../presence";
 import { CreateAgentDialog } from "./create-agent-dialog";
@@ -272,40 +275,6 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
   );
 }
 
-// ---------------------------------------------------------------------------
-// Cells
-// ---------------------------------------------------------------------------
-
-function CheckboxCell({
-  checked,
-  onToggle,
-}: {
-  checked: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <ListGridCell className="justify-center px-0">
-      <button
-        type="button"
-        aria-pressed={checked}
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggle();
-        }}
-        className={`-m-1.5 flex items-center p-1.5 ${
-          checked ? "" : "opacity-0 transition-opacity group-hover/row:opacity-100"
-        }`}
-      >
-        <Checkbox
-          checked={checked}
-          tabIndex={-1}
-          className="pointer-events-none"
-        />
-      </button>
-    </ListGridCell>
-  );
-}
-
 // Two-line identity cell: avatar left, name + description right. The
 // documented exception to the single-line rule — agents are few and
 // identity-rich, so this is the "team roster" form (GitHub org members,
@@ -465,28 +434,13 @@ function AgentListHeader({
   const { t } = useT("agents");
   const sorted = (field: AgentSortField) =>
     sortField === field ? sortDirection : false;
-  const anySelected = allSelected || someSelected;
   return (
     <ListGridHeader>
-      <div className="flex items-center justify-center">
-        <button
-          type="button"
-          aria-pressed={allSelected}
-          onClick={onToggleAll}
-          className={`-m-1.5 flex items-center p-1.5 ${
-            anySelected
-              ? ""
-              : "opacity-0 transition-opacity group-hover/header:opacity-100"
-          }`}
-        >
-          <Checkbox
-            checked={allSelected}
-            indeterminate={someSelected && !allSelected}
-            tabIndex={-1}
-            className="pointer-events-none"
-          />
-        </button>
-      </div>
+      <ListGridSelectAllHeaderCell
+        allSelected={allSelected}
+        someSelected={someSelected}
+        onToggleAll={onToggleAll}
+      />
       <ListGridHeaderCell sorted={sorted("name")} onSort={() => onSort("name")}>
         {t(($) => $.columns.agent)}
       </ListGridHeaderCell>
@@ -1112,7 +1066,7 @@ export function AgentsPage(_props: AgentsPageProps = {}) {
                       }`}
                       {...rowLink(paths.agentDetail(row.agent.id))}
                     >
-                      <CheckboxCell
+                      <ListGridCheckboxCell
                         checked={selectedIds.has(row.agent.id)}
                         onToggle={() => toggleSelected(row.agent.id)}
                       />

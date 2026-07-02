@@ -32,7 +32,6 @@ import {
 import { runtimeListOptions } from "@multica/core/runtimes";
 import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { Button } from "@multica/ui/components/ui/button";
-import { Checkbox } from "@multica/ui/components/ui/checkbox";
 import {
   LIST_GRID_BOTTOM_CLEARANCE,
   ListGrid,
@@ -51,6 +50,10 @@ import {
 } from "@multica/ui/components/ui/tooltip";
 import { ActorAvatar } from "@multica/ui/components/common/actor-avatar";
 import { useNavigation, useRowLink } from "../../navigation";
+import {
+  ListGridCheckboxCell,
+  ListGridSelectAllHeaderCell,
+} from "../../common/list-grid-selection";
 import { PageHeader } from "../../layout/page-header";
 import { canEditSkill } from "../hooks/use-can-edit-skill";
 import { readOrigin, type OriginInfo } from "../lib/origin";
@@ -203,46 +206,6 @@ function PageHeaderBar({
         <span className="hidden md:inline">{t(($) => $.page.new_skill)}</span>
       </Button>
     </PageHeader>
-  );
-}
-
-// ---------------------------------------------------------------------------
-// Cells
-// ---------------------------------------------------------------------------
-
-// Hover-revealed multi-select checkbox. Same pattern as SkillPickerList:
-// the shadcn Checkbox is presentational only (`pointer-events-none`, so the
-// Base UI button can never swallow the click) and the wrapping <button> owns
-// the toggle. It stops click propagation so toggling never triggers the
-// row's whole-row navigation (see `useRowLink`) — no preventDefault needed,
-// the row is a plain <div>, not an <a>.
-function CheckboxCell({
-  checked,
-  onToggle,
-}: {
-  checked: boolean;
-  onToggle: () => void;
-}) {
-  return (
-    <ListGridCell className="justify-center px-0">
-      <button
-        type="button"
-        aria-pressed={checked}
-        onClick={(e) => {
-          e.stopPropagation();
-          onToggle();
-        }}
-        className={`-m-1.5 flex items-center p-1.5 ${
-          checked ? "" : "opacity-0 transition-opacity group-hover/row:opacity-100"
-        }`}
-      >
-        <Checkbox
-          checked={checked}
-          tabIndex={-1}
-          className="pointer-events-none"
-        />
-      </button>
-    </ListGridCell>
   );
 }
 
@@ -437,31 +400,13 @@ function SkillListHeader({
   const { t } = useT("skills");
   const sorted = (field: SortField) =>
     sortField === field ? sortDirection : false;
-  const anySelected = allSelected || someSelected;
   return (
     <ListGridHeader>
-      {/* Tri-state select-all in the checkbox track. Same presentational
-          Checkbox + interactive wrapper pattern as the row cells; revealed
-          on header hover or whenever a selection exists. */}
-      <div className="flex items-center justify-center">
-        <button
-          type="button"
-          aria-pressed={allSelected}
-          onClick={onToggleAll}
-          className={`-m-1.5 flex items-center p-1.5 ${
-            anySelected
-              ? ""
-              : "opacity-0 transition-opacity group-hover/header:opacity-100"
-          }`}
-        >
-          <Checkbox
-            checked={allSelected}
-            indeterminate={someSelected && !allSelected}
-            tabIndex={-1}
-            className="pointer-events-none"
-          />
-        </button>
-      </div>
+      <ListGridSelectAllHeaderCell
+        allSelected={allSelected}
+        someSelected={someSelected}
+        onToggleAll={onToggleAll}
+      />
       <ListGridHeaderCell sorted={sorted("name")} onSort={() => onSort("name")}>
         {t(($) => $.table.name)}
       </ListGridHeaderCell>
@@ -890,7 +835,7 @@ export default function SkillsPage() {
                 }`}
                 {...rowLink(paths.skillDetail(row.skill.id))}
               >
-                <CheckboxCell
+                <ListGridCheckboxCell
                   checked={selectedIds.has(row.skill.id)}
                   onToggle={() => toggleSelected(row.skill.id)}
                 />
