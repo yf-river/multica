@@ -9,16 +9,19 @@ import {
   type RuntimeHealth,
 } from "@multica/core/runtimes";
 import { agentListOptions, memberListOptions } from "@multica/core/workspace/queries";
-import { resolvePublicFileUrl } from "@multica/core/workspace/avatar-url";
 import { runtimeListOptions } from "@multica/core/runtimes/queries";
 import { useWorkspacePaths } from "@multica/core/paths";
-import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { AppLink } from "../../navigation";
 import { HealthIcon } from "../../runtimes/components/shared";
 import { availabilityConfig } from "../presence";
 import { ScopeBadge } from "./scope-badge";
 import { useT } from "../../i18n";
+import {
+  AgentCardAvatar,
+  AgentCardLoadingState,
+  AgentCardUnavailable,
+} from "./agent-card-shared";
 
 interface AgentProfileCardProps {
   agentId: string;
@@ -35,20 +38,12 @@ export function AgentProfileCard({ agentId }: AgentProfileCardProps) {
   const agent = agents.find((a) => a.id === agentId);
 
   if (agentsLoading && !agent) {
-    return (
-      <div className="flex items-center gap-3">
-        <Skeleton className="h-10 w-10 rounded-full" />
-        <div className="flex-1 space-y-1.5">
-          <Skeleton className="h-4 w-28" />
-          <Skeleton className="h-3 w-20" />
-        </div>
-      </div>
-    );
+    return <AgentCardLoadingState />;
   }
 
   if (!agent) {
     return (
-      <div className="text-xs text-muted-foreground">{t(($) => $.profile_card.unavailable)}</div>
+      <AgentCardUnavailable label={t(($) => $.profile_card.unavailable)} />
     );
   }
 
@@ -57,12 +52,6 @@ export function AgentProfileCard({ agentId }: AgentProfileCardProps) {
     : null;
   const runtime = runtimes.find((r) => r.id === agent.runtime_id) ?? null;
   const isArchived = !!agent.archived_at;
-  const initials = agent.name
-    .split(" ")
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
 
   return (
     // `group` enables the hover-only Detail link on the top-right —
@@ -74,14 +63,7 @@ export function AgentProfileCard({ agentId }: AgentProfileCardProps) {
           availability dot is surfaced here; last-task state lives in the
           agents list and the agent detail page. */}
       <div className="flex items-start gap-3">
-        <ActorAvatarBase
-          name={agent.name}
-          initials={initials}
-          avatarUrl={resolvePublicFileUrl(agent.avatar_url)}
-          isAgent
-          size={40}
-          className="rounded-md"
-        />
+        <AgentCardAvatar name={agent.name} avatarUrl={agent.avatar_url} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5">
             <p className="truncate text-sm font-semibold">{agent.name}</p>
