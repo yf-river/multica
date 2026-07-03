@@ -1775,30 +1775,7 @@ func TestDaemonRegister_MergesLegacyDaemonIDRuntime(t *testing.T) {
 
 	// Register under the new stable UUID, declaring the prior hostname-derived
 	// id as legacy. The handler should merge the legacy row into the new one.
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/daemon/register", map[string]any{
-		"workspace_id":      testWorkspaceID,
-		"daemon_id":         newDaemonID,
-		"legacy_daemon_ids": []string{legacyDaemonID},
-		"device_name":       "TestMachine",
-		"runtimes": []map[string]any{
-			{"name": "test-runtime", "type": "claude", "version": "1.0.0", "status": "online"},
-		},
-	})
-	testHandler.DaemonRegister(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("DaemonRegister: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var resp map[string]any
-	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-	runtimes := resp["runtimes"].([]any)
-	newRuntimeID := runtimes[0].(map[string]any)["id"].(string)
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, newRuntimeID)
-	})
+	newRuntimeID := registerDaemonRuntimeForTest(t, newDaemonID, []string{legacyDaemonID}, "TestMachine", "test-runtime")
 
 	if newRuntimeID == legacyRuntimeID {
 		t.Fatalf("expected a new runtime row, got the legacy id back")
@@ -1842,6 +1819,54 @@ func TestDaemonRegister_MergesLegacyDaemonIDRuntime(t *testing.T) {
 	}
 }
 
+func registerDaemonRuntimeForTest(t *testing.T, daemonID string, legacyDaemonIDs []string, deviceName string, runtimeName string) string {
+	t.Helper()
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/daemon/register", map[string]any{
+		"workspace_id":      testWorkspaceID,
+		"daemon_id":         daemonID,
+		"legacy_daemon_ids": legacyDaemonIDs,
+		"device_name":       deviceName,
+		"runtimes": []map[string]any{
+			{"name": runtimeName, "type": "claude", "version": "1.0.0", "status": "online"},
+		},
+	})
+	testHandler.DaemonRegister(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("DaemonRegister: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp map[string]any
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	newRuntimeID := resp["runtimes"].([]any)[0].(map[string]any)["id"].(string)
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, newRuntimeID)
+	})
+
+	return newRuntimeID
+}
+
+func seedLegacyDaemonRuntimeForTest(t *testing.T, ctx context.Context, daemonID string, runtimeName string) string {
+	t.Helper()
+
+	var legacyRuntimeID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'claude', 'offline', '', '{}'::jsonb, $4, now())
+		RETURNING id
+	`, testWorkspaceID, daemonID, runtimeName, testUserID).Scan(&legacyRuntimeID); err != nil {
+		t.Fatalf("seed legacy runtime: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, legacyRuntimeID)
+	})
+
+	return legacyRuntimeID
+}
+
 // TestDaemonRegister_MergesLegacyDaemonIDRuntime_ReverseDotLocal covers the
 // direction missed by the initial implementation: the stored runtime row is
 // `host` (no `.local`) but the daemon's current `os.Hostname()` now returns
@@ -1857,39 +1882,8 @@ func TestDaemonRegister_MergesLegacyDaemonIDRuntime_ReverseDotLocal(t *testing.T
 	const emittedLegacyID = "ReverseDotLocalHost.local" // daemon now reports with .local
 	const newDaemonID = "0192a7b0-0011-7ee9-9c21-30a5bcf86aa2"
 
-	var legacyRuntimeID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, last_seen_at)
-		VALUES ($1, $2, 'legacy-runtime-reverse', 'local', 'claude', 'offline', '', '{}'::jsonb, $3, now())
-		RETURNING id
-	`, testWorkspaceID, legacyDaemonID, testUserID).Scan(&legacyRuntimeID); err != nil {
-		t.Fatalf("seed legacy runtime: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, legacyRuntimeID)
-	})
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/daemon/register", map[string]any{
-		"workspace_id":      testWorkspaceID,
-		"daemon_id":         newDaemonID,
-		"legacy_daemon_ids": []string{"ReverseDotLocalHost", emittedLegacyID},
-		"device_name":       "ReverseDotLocalHost",
-		"runtimes": []map[string]any{
-			{"name": "reverse-runtime", "type": "claude", "version": "1.0.0", "status": "online"},
-		},
-	})
-	testHandler.DaemonRegister(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("DaemonRegister: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var resp map[string]any
-	json.NewDecoder(w.Body).Decode(&resp)
-	newRuntimeID := resp["runtimes"].([]any)[0].(map[string]any)["id"].(string)
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, newRuntimeID)
-	})
+	legacyRuntimeID := seedLegacyDaemonRuntimeForTest(t, ctx, legacyDaemonID, "legacy-runtime-reverse")
+	registerDaemonRuntimeForTest(t, newDaemonID, []string{"ReverseDotLocalHost", emittedLegacyID}, "ReverseDotLocalHost", "reverse-runtime")
 
 	var legacyCount int
 	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_runtime WHERE id = $1`, legacyRuntimeID).Scan(&legacyCount); err != nil {
@@ -1915,39 +1909,8 @@ func TestDaemonRegister_MergesLegacyDaemonIDRuntime_CaseDrift(t *testing.T) {
 	const emittedLegacyID = "jiayuans-macbook-pro.local" // Daemon now reports lowercased
 	const newDaemonID = "0192a7b0-0022-7ee9-9c21-30a5bcf86aa3"
 
-	var legacyRuntimeID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, last_seen_at)
-		VALUES ($1, $2, 'legacy-runtime-case', 'local', 'claude', 'offline', '', '{}'::jsonb, $3, now())
-		RETURNING id
-	`, testWorkspaceID, storedDaemonID, testUserID).Scan(&legacyRuntimeID); err != nil {
-		t.Fatalf("seed legacy runtime: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, legacyRuntimeID)
-	})
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/daemon/register", map[string]any{
-		"workspace_id":      testWorkspaceID,
-		"daemon_id":         newDaemonID,
-		"legacy_daemon_ids": []string{emittedLegacyID},
-		"device_name":       "jiayuans-macbook-pro",
-		"runtimes": []map[string]any{
-			{"name": "case-drift-runtime", "type": "claude", "version": "1.0.0", "status": "online"},
-		},
-	})
-	testHandler.DaemonRegister(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("DaemonRegister: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var resp map[string]any
-	json.NewDecoder(w.Body).Decode(&resp)
-	newRuntimeID := resp["runtimes"].([]any)[0].(map[string]any)["id"].(string)
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, newRuntimeID)
-	})
+	legacyRuntimeID := seedLegacyDaemonRuntimeForTest(t, ctx, storedDaemonID, "legacy-runtime-case")
+	newRuntimeID := registerDaemonRuntimeForTest(t, newDaemonID, []string{emittedLegacyID}, "jiayuans-macbook-pro", "case-drift-runtime")
 
 	var legacyCount int
 	if err := testPool.QueryRow(ctx, `SELECT count(*) FROM agent_runtime WHERE id = $1`, legacyRuntimeID).Scan(&legacyCount); err != nil {
@@ -2080,27 +2043,13 @@ func TestDaemonRegister_LegacyIDNoMatchIsNoop(t *testing.T) {
 
 	ctx := context.Background()
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/daemon/register", map[string]any{
-		"workspace_id":      testWorkspaceID,
-		"daemon_id":         "0192a7a1-5e3c-7be9-9a7d-6e0f1cb3deab",
-		"legacy_daemon_ids": []string{"NeverSeenHost", "NeverSeenHost.local"},
-		"device_name":       "NeverSeenHost",
-		"runtimes": []map[string]any{
-			{"name": "fresh-runtime", "type": "claude", "version": "1.0.0", "status": "online"},
-		},
-	})
-	testHandler.DaemonRegister(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("DaemonRegister: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
-
-	var resp map[string]any
-	json.NewDecoder(w.Body).Decode(&resp)
-	runtimeID := resp["runtimes"].([]any)[0].(map[string]any)["id"].(string)
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
-	})
+	runtimeID := registerDaemonRuntimeForTest(
+		t,
+		"0192a7a1-5e3c-7be9-9a7d-6e0f1cb3deab",
+		[]string{"NeverSeenHost", "NeverSeenHost.local"},
+		"NeverSeenHost",
+		"fresh-runtime",
+	)
 
 	var legacy *string
 	if err := testPool.QueryRow(ctx, `SELECT legacy_daemon_id FROM agent_runtime WHERE id = $1`, runtimeID).Scan(&legacy); err != nil {
