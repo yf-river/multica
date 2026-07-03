@@ -138,6 +138,88 @@ function renderPanel(props: { onImported?: (skill: unknown) => void; onBulkDone?
   );
 }
 
+function mockTwoLocalSkills() {
+  mockRuntimeLocalSkillsOptions.mockReturnValue({
+    queryKey: ["runtimes", "local-skills", "runtime-1"],
+    queryFn: () =>
+      Promise.resolve({
+        supported: true,
+        skills: [MOCK_SKILL_A, MOCK_SKILL_B],
+      }),
+  });
+}
+
+function mockReviewHelperConflictThenUpdated() {
+  mockResolveRuntimeLocalSkillImport
+    .mockResolvedValueOnce({
+      status: "conflict",
+      conflict: {
+        existing_skill_id: "existing-skill-1",
+        existing_created_by: "user-1",
+        can_overwrite: true,
+      },
+    })
+    .mockResolvedValueOnce({
+      status: "updated",
+      skill: {
+        ...MOCK_IMPORTED_SKILL_A,
+        id: "existing-skill-1",
+      },
+    });
+}
+
+async function waitForReviewHelper() {
+  expect(
+    await screen.findByText("Review Helper", {}, { timeout: 5000 }),
+  ).toBeInTheDocument();
+}
+
+async function clickEnabledButton(name: RegExp) {
+  const button = screen.getByRole("button", { name });
+  await waitFor(() => expect(button).not.toBeDisabled(), { timeout: 5000 });
+  fireEvent.click(button);
+}
+
+async function selectReviewHelperAndImport() {
+  await waitForReviewHelper();
+  fireEvent.click(screen.getByRole("button", { name: /Review Helper/i }));
+  await clickEnabledButton(/导入到工作区/i);
+}
+
+async function selectAllLocalSkillsAndImport() {
+  await waitForReviewHelper();
+  const selectAllLabel = screen.getByText(/全选/i);
+  const selectAllCheckbox = selectAllLabel
+    .closest("label")!
+    .querySelector("input[type='checkbox']")!;
+  fireEvent.click(selectAllCheckbox);
+  await clickEnabledButton(/导入 2 个 skill/i);
+}
+
+async function waitForDoneButton() {
+  await waitFor(
+    () => {
+      expect(screen.getByRole("button", { name: /完成/i })).toBeInTheDocument();
+    },
+    { timeout: 10000 },
+  );
+  return screen.getByRole("button", { name: /完成/i });
+}
+
+function expectReviewHelperOverwriteRequest() {
+  expect(mockResolveRuntimeLocalSkillImport).toHaveBeenLastCalledWith(
+    "runtime-1",
+    {
+      skill_key: "review-helper",
+      name: "Review Helper",
+      description: "Review pull requests",
+      supports_conflict: true,
+      action: "overwrite",
+      target_skill_id: "existing-skill-1",
+    },
+  );
+}
+
 describe("RuntimeLocalSkillImportPanel", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -167,25 +249,7 @@ describe("RuntimeLocalSkillImportPanel", () => {
   it("imports a single skill when selected via checkbox", async () => {
     renderPanel();
 
-    // Wait for skill list to render
-    expect(
-      await screen.findByText("Review Helper", {}, { timeout: 5000 }),
-    ).toBeInTheDocument();
-
-    // Click the skill row to toggle its checkbox
-    const skillButton = screen.getByRole("button", { name: /Review Helper/i });
-    fireEvent.click(skillButton);
-
-    const importButton = screen.getByRole("button", {
-      name: /导入到工作区/i,
-    });
-    await waitFor(
-      () => {
-        expect(importButton).not.toBeDisabled();
-      },
-      { timeout: 5000 },
-    );
-    fireEvent.click(importButton);
+    await selectReviewHelperAndImport();
 
     await waitFor(
       () => {
@@ -204,52 +268,19 @@ describe("RuntimeLocalSkillImportPanel", () => {
   });
 
   it("imports multiple skills in sequence and shows summary", async () => {
-    mockRuntimeLocalSkillsOptions.mockReturnValue({
-      queryKey: ["runtimes", "local-skills", "runtime-1"],
-      queryFn: () =>
-        Promise.resolve({
-          supported: true,
-          skills: [MOCK_SKILL_A, MOCK_SKILL_B],
-        }),
-    });
+    mockTwoLocalSkills();
     mockResolveRuntimeLocalSkillImport
       .mockResolvedValueOnce({ status: "created", skill: MOCK_IMPORTED_SKILL_A })
       .mockResolvedValueOnce({ status: "created", skill: MOCK_IMPORTED_SKILL_B });
 
     renderPanel();
 
-    // Wait for skills to render
-    expect(
-      await screen.findByText("Review Helper", {}, { timeout: 5000 }),
-    ).toBeInTheDocument();
+    await waitForReviewHelper();
     expect(screen.getByText("Code Gen")).toBeInTheDocument();
 
-    // Click select all checkbox (the native one in the label)
-    const selectAllLabel = screen.getByText(/全选/i);
-    const selectAllCheckbox = selectAllLabel.closest("label")!.querySelector("input[type='checkbox']")!;
-    fireEvent.click(selectAllCheckbox);
+    await selectAllLocalSkillsAndImport();
 
-    // Button should now say "导入 2 个 skill"
-    const importButton = screen.getByRole("button", {
-      name: /导入 2 个 skill/i,
-    });
-    await waitFor(
-      () => {
-        expect(importButton).not.toBeDisabled();
-      },
-      { timeout: 5000 },
-    );
-    fireEvent.click(importButton);
-
-    // Wait for completion — summary should appear with "Done" button
-    await waitFor(
-      () => {
-        expect(
-          screen.getByRole("button", { name: /完成/i }),
-        ).toBeInTheDocument();
-      },
-      { timeout: 10000 },
-    );
+    await waitForDoneButton();
 
     expect(mockResolveRuntimeLocalSkillImport).toHaveBeenCalledTimes(2);
 
@@ -258,51 +289,15 @@ describe("RuntimeLocalSkillImportPanel", () => {
   });
 
   it("handles partial failures gracefully", async () => {
-    mockRuntimeLocalSkillsOptions.mockReturnValue({
-      queryKey: ["runtimes", "local-skills", "runtime-1"],
-      queryFn: () =>
-        Promise.resolve({
-          supported: true,
-          skills: [MOCK_SKILL_A, MOCK_SKILL_B],
-        }),
-    });
+    mockTwoLocalSkills();
     mockResolveRuntimeLocalSkillImport
       .mockResolvedValueOnce({ status: "created", skill: MOCK_IMPORTED_SKILL_A })
       .mockRejectedValueOnce(new Error("409 conflict: already exists"));
 
     renderPanel();
 
-    // Wait for skills
-    expect(
-      await screen.findByText("Review Helper", {}, { timeout: 5000 }),
-    ).toBeInTheDocument();
-
-    // 全选
-    const selectAllLabel2 = screen.getByText(/全选/i);
-    const selectAllCheckbox2 = selectAllLabel2.closest("label")!.querySelector("input[type='checkbox']")!;
-    fireEvent.click(selectAllCheckbox2);
-
-    // Import
-    const importButton = screen.getByRole("button", {
-      name: /导入 2 个 skill/i,
-    });
-    await waitFor(
-      () => {
-        expect(importButton).not.toBeDisabled();
-      },
-      { timeout: 5000 },
-    );
-    fireEvent.click(importButton);
-
-    // Wait for Done
-    await waitFor(
-      () => {
-        expect(
-          screen.getByRole("button", { name: /完成/i }),
-        ).toBeInTheDocument();
-      },
-      { timeout: 10000 },
-    );
+    await selectAllLocalSkillsAndImport();
+    await waitForDoneButton();
 
     // Summary should show created and skipped
     expect(screen.getByText("已创建")).toBeInTheDocument();
@@ -313,49 +308,16 @@ describe("RuntimeLocalSkillImportPanel", () => {
     const onImported = vi.fn();
     renderPanel({ onImported });
 
-    expect(
-      await screen.findByText("Review Helper", {}, { timeout: 5000 }),
-    ).toBeInTheDocument();
-
-    // Select the single skill
-    const skillButton = screen.getByRole("button", { name: /Review Helper/i });
-    fireEvent.click(skillButton);
-
-    const importButton = screen.getByRole("button", {
-      name: /导入到工作区/i,
-    });
-    await waitFor(
-      () => {
-        expect(importButton).not.toBeDisabled();
-      },
-      { timeout: 5000 },
-    );
-    fireEvent.click(importButton);
-
-    // Wait for Done button
-    await waitFor(
-      () => {
-        expect(
-          screen.getByRole("button", { name: /完成/i }),
-        ).toBeInTheDocument();
-      },
-      { timeout: 10000 },
-    );
+    await selectReviewHelperAndImport();
+    const doneButton = await waitForDoneButton();
 
     // Click Done — should call onImported with the single skill
-    fireEvent.click(screen.getByRole("button", { name: /完成/i }));
+    fireEvent.click(doneButton);
     expect(onImported).toHaveBeenCalledWith(MOCK_IMPORTED_SKILL_A);
   });
 
   it("calls onBulkDone when multiple skills succeed", async () => {
-    mockRuntimeLocalSkillsOptions.mockReturnValue({
-      queryKey: ["runtimes", "local-skills", "runtime-1"],
-      queryFn: () =>
-        Promise.resolve({
-          supported: true,
-          skills: [MOCK_SKILL_A, MOCK_SKILL_B],
-        }),
-    });
+    mockTwoLocalSkills();
     mockResolveRuntimeLocalSkillImport
       .mockResolvedValueOnce({ status: "created", skill: MOCK_IMPORTED_SKILL_A })
       .mockResolvedValueOnce({ status: "created", skill: MOCK_IMPORTED_SKILL_B });
@@ -364,140 +326,39 @@ describe("RuntimeLocalSkillImportPanel", () => {
     const onBulkDone = vi.fn();
     renderPanel({ onImported, onBulkDone });
 
-    expect(
-      await screen.findByText("Review Helper", {}, { timeout: 5000 }),
-    ).toBeInTheDocument();
-
-    // 全选
-    const selectAllLabel3 = screen.getByText(/全选/i);
-    const selectAllCheckbox3 = selectAllLabel3.closest("label")!.querySelector("input[type='checkbox']")!;
-    fireEvent.click(selectAllCheckbox3);
-
-    const importButton = screen.getByRole("button", {
-      name: /导入 2 个 skill/i,
-    });
-    await waitFor(
-      () => {
-        expect(importButton).not.toBeDisabled();
-      },
-      { timeout: 5000 },
-    );
-    fireEvent.click(importButton);
-
-    await waitFor(
-      () => {
-        expect(
-          screen.getByRole("button", { name: /完成/i }),
-        ).toBeInTheDocument();
-      },
-      { timeout: 10000 },
-    );
+    await selectAllLocalSkillsAndImport();
+    const doneButton = await waitForDoneButton();
 
     // Click Done — should call onBulkDone, NOT onImported
-    fireEvent.click(screen.getByRole("button", { name: /完成/i }));
+    fireEvent.click(doneButton);
     expect(onBulkDone).toHaveBeenCalledTimes(1);
     expect(onImported).not.toHaveBeenCalled();
   });
 
   it("resolves a creator conflict by overwriting the existing skill", async () => {
-    mockResolveRuntimeLocalSkillImport
-      .mockResolvedValueOnce({
-        status: "conflict",
-        conflict: {
-          existing_skill_id: "existing-skill-1",
-          existing_created_by: "user-1",
-          can_overwrite: true,
-        },
-      })
-      .mockResolvedValueOnce({
-        status: "updated",
-        skill: {
-          ...MOCK_IMPORTED_SKILL_A,
-          id: "existing-skill-1",
-        },
-      });
+    mockReviewHelperConflictThenUpdated();
 
     renderPanel();
 
-    expect(
-      await screen.findByText("Review Helper", {}, { timeout: 5000 }),
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /Review Helper/i }));
-
-    const importButton = screen.getByRole("button", {
-      name: /导入到工作区/i,
-    });
-    await waitFor(() => expect(importButton).not.toBeDisabled(), {
-      timeout: 5000,
-    });
-    fireEvent.click(importButton);
+    await selectReviewHelperAndImport();
 
     expect(
       await screen.findByText(/工作区里已存在同名 skill/i),
     ).toBeInTheDocument();
 
-    const applyButton = screen.getByRole("button", {
-      name: /应用决策/i,
-    });
-    await waitFor(() => expect(applyButton).not.toBeDisabled(), {
-      timeout: 5000,
-    });
-    fireEvent.click(applyButton);
+    await clickEnabledButton(/应用决策/i);
 
-    await waitFor(
-      () => {
-        expect(mockResolveRuntimeLocalSkillImport).toHaveBeenLastCalledWith(
-          "runtime-1",
-          {
-            skill_key: "review-helper",
-            name: "Review Helper",
-            description: "Review pull requests",
-            supports_conflict: true,
-            action: "overwrite",
-            target_skill_id: "existing-skill-1",
-          },
-        );
-      },
-      { timeout: 5000 },
-    );
+    await waitFor(expectReviewHelperOverwriteRequest, { timeout: 5000 });
 
     expect(await screen.findByText("已更新")).toBeInTheDocument();
   });
 
   it("applies a single creator conflict when clicking overwrite", async () => {
-    mockResolveRuntimeLocalSkillImport
-      .mockResolvedValueOnce({
-        status: "conflict",
-        conflict: {
-          existing_skill_id: "existing-skill-1",
-          existing_created_by: "user-1",
-          can_overwrite: true,
-        },
-      })
-      .mockResolvedValueOnce({
-        status: "updated",
-        skill: {
-          ...MOCK_IMPORTED_SKILL_A,
-          id: "existing-skill-1",
-        },
-      });
+    mockReviewHelperConflictThenUpdated();
 
     renderPanel();
 
-    expect(
-      await screen.findByText("Review Helper", {}, { timeout: 5000 }),
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /Review Helper/i }));
-
-    const importButton = screen.getByRole("button", {
-      name: /导入到工作区/i,
-    });
-    await waitFor(() => expect(importButton).not.toBeDisabled(), {
-      timeout: 5000,
-    });
-    fireEvent.click(importButton);
+    await selectReviewHelperAndImport();
 
     expect(
       await screen.findByText(/工作区里已存在同名 skill/i),
@@ -505,35 +366,13 @@ describe("RuntimeLocalSkillImportPanel", () => {
 
     fireEvent.click(screen.getByRole("button", { name: /^覆盖$/i }));
 
-    await waitFor(
-      () => {
-        expect(mockResolveRuntimeLocalSkillImport).toHaveBeenLastCalledWith(
-          "runtime-1",
-          {
-            skill_key: "review-helper",
-            name: "Review Helper",
-            description: "Review pull requests",
-            supports_conflict: true,
-            action: "overwrite",
-            target_skill_id: "existing-skill-1",
-          },
-        );
-      },
-      { timeout: 5000 },
-    );
+    await waitFor(expectReviewHelperOverwriteRequest, { timeout: 5000 });
 
     expect(await screen.findByText("已更新")).toBeInTheDocument();
   });
 
   it("keeps bulk completion behavior when conflict resolution leaves one success", async () => {
-    mockRuntimeLocalSkillsOptions.mockReturnValue({
-      queryKey: ["runtimes", "local-skills", "runtime-1"],
-      queryFn: () =>
-        Promise.resolve({
-          supported: true,
-          skills: [MOCK_SKILL_A, MOCK_SKILL_B],
-        }),
-    });
+    mockTwoLocalSkills();
     mockResolveRuntimeLocalSkillImport
       .mockResolvedValueOnce({
         status: "conflict",
@@ -556,46 +395,17 @@ describe("RuntimeLocalSkillImportPanel", () => {
     const onBulkDone = vi.fn();
     renderPanel({ onImported, onBulkDone });
 
-    expect(
-      await screen.findByText("Review Helper", {}, { timeout: 5000 }),
-    ).toBeInTheDocument();
-
-    const selectAllLabel = screen.getByText(/全选/i);
-    const selectAllCheckbox = selectAllLabel
-      .closest("label")!
-      .querySelector("input[type='checkbox']")!;
-    fireEvent.click(selectAllCheckbox);
-
-    const importButton = screen.getByRole("button", {
-      name: /导入 2 个 skill/i,
-    });
-    await waitFor(() => expect(importButton).not.toBeDisabled(), {
-      timeout: 5000,
-    });
-    fireEvent.click(importButton);
+    await selectAllLocalSkillsAndImport();
 
     expect(
       await screen.findByText(/工作区里已存在同名 skill/i),
     ).toBeInTheDocument();
 
-    const applyButton = screen.getByRole("button", {
-      name: /应用决策/i,
-    });
-    await waitFor(() => expect(applyButton).not.toBeDisabled(), {
-      timeout: 5000,
-    });
-    fireEvent.click(applyButton);
+    await clickEnabledButton(/应用决策/i);
 
-    await waitFor(
-      () => {
-        expect(
-          screen.getByRole("button", { name: /完成/i }),
-        ).toBeInTheDocument();
-      },
-      { timeout: 10000 },
-    );
+    const doneButton = await waitForDoneButton();
 
-    fireEvent.click(screen.getByRole("button", { name: /完成/i }));
+    fireEvent.click(doneButton);
     expect(onBulkDone).toHaveBeenCalledTimes(1);
     expect(onImported).not.toHaveBeenCalled();
   });
@@ -612,18 +422,7 @@ describe("RuntimeLocalSkillImportPanel", () => {
 
     renderPanel();
 
-    expect(
-      await screen.findByText("Review Helper", {}, { timeout: 5000 }),
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /Review Helper/i }));
-    const importButton = screen.getByRole("button", {
-      name: /导入到工作区/i,
-    });
-    await waitFor(() => expect(importButton).not.toBeDisabled(), {
-      timeout: 5000,
-    });
-    fireEvent.click(importButton);
+    await selectReviewHelperAndImport();
 
     // Bob is user-2 in the mocked member list. The locked message must show
     // the resolved name, never the raw UUID.
@@ -645,18 +444,7 @@ describe("RuntimeLocalSkillImportPanel", () => {
 
     renderPanel();
 
-    expect(
-      await screen.findByText("Review Helper", {}, { timeout: 5000 }),
-    ).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole("button", { name: /Review Helper/i }));
-    const importButton = screen.getByRole("button", {
-      name: /导入到工作区/i,
-    });
-    await waitFor(() => expect(importButton).not.toBeDisabled(), {
-      timeout: 5000,
-    });
-    fireEvent.click(importButton);
+    await selectReviewHelperAndImport();
 
     // user-gone is not in the workspace; the UI must not leak the UUID and
     // should render the no-creator variant of the message.
