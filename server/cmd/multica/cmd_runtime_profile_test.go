@@ -22,6 +22,29 @@ func addCommonProfileFlags(cmd *cobra.Command) {
 	cmd.Flags().String("token", "", "")
 }
 
+type runtimeProfileRequest struct {
+	method string
+	path   string
+	body   map[string]any
+}
+
+func setupRuntimeProfileAPITest(t *testing.T, handler func(http.ResponseWriter, *http.Request, *runtimeProfileRequest)) *runtimeProfileRequest {
+	t.Helper()
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MULTICA_TOKEN", "test-token")
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-123")
+
+	got := &runtimeProfileRequest{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got.method = r.Method
+		got.path = r.URL.Path
+		handler(w, r, got)
+	}))
+	t.Cleanup(srv.Close)
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	return got
+}
+
 func newProfileListTestCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "list"}
 	addCommonProfileFlags(cmd)
@@ -90,53 +113,34 @@ func TestRuntimeProfileCommandsRegistered(t *testing.T) {
 }
 
 func TestRunRuntimeProfileList(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("MULTICA_TOKEN", "test-token")
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-123")
-
-	var gotMethod, gotPath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		gotPath = r.URL.Path
+	got := setupRuntimeProfileAPITest(t, func(w http.ResponseWriter, r *http.Request, _ *runtimeProfileRequest) {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"runtime_profiles": []map[string]any{
 				{"id": "prof-1", "display_name": "Company Codex", "protocol_family": "codex", "command_name": "company-codex", "visibility": "workspace", "enabled": true},
 			},
 		})
-	}))
-	defer srv.Close()
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	})
 
 	cmd := newProfileListTestCmd()
 	_ = cmd.Flags().Set("output", "json")
 	if err := runRuntimeProfileList(cmd, nil); err != nil {
 		t.Fatalf("runRuntimeProfileList: %v", err)
 	}
-	if gotMethod != http.MethodGet {
-		t.Errorf("method = %s, want GET", gotMethod)
+	if got.method != http.MethodGet {
+		t.Errorf("method = %s, want GET", got.method)
 	}
-	if gotPath != "/api/workspaces/ws-123/runtime-profiles" {
-		t.Errorf("path = %q, want /api/workspaces/ws-123/runtime-profiles", gotPath)
+	if got.path != "/api/workspaces/ws-123/runtime-profiles" {
+		t.Errorf("path = %q, want /api/workspaces/ws-123/runtime-profiles", got.path)
 	}
 }
 
 func TestRunRuntimeProfileCreate(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("MULTICA_TOKEN", "test-token")
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-123")
-
-	var gotMethod, gotPath string
-	var gotBody map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		gotPath = r.URL.Path
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+	got := setupRuntimeProfileAPITest(t, func(w http.ResponseWriter, r *http.Request, got *runtimeProfileRequest) {
+		_ = json.NewDecoder(r.Body).Decode(&got.body)
 		w.WriteHeader(http.StatusCreated)
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": "prof-1", "display_name": "Company Codex"})
-	}))
-	defer srv.Close()
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	})
 
 	cmd := newProfileCreateTestCmd()
 	_ = cmd.Flags().Set("protocol-family", "codex")
@@ -146,24 +150,24 @@ func TestRunRuntimeProfileCreate(t *testing.T) {
 	if err := runRuntimeProfileCreate(cmd, nil); err != nil {
 		t.Fatalf("runRuntimeProfileCreate: %v", err)
 	}
-	if gotMethod != http.MethodPost {
-		t.Errorf("method = %s, want POST", gotMethod)
+	if got.method != http.MethodPost {
+		t.Errorf("method = %s, want POST", got.method)
 	}
-	if gotPath != "/api/workspaces/ws-123/runtime-profiles" {
-		t.Errorf("path = %q, want /api/workspaces/ws-123/runtime-profiles", gotPath)
+	if got.path != "/api/workspaces/ws-123/runtime-profiles" {
+		t.Errorf("path = %q, want /api/workspaces/ws-123/runtime-profiles", got.path)
 	}
-	if gotBody["protocol_family"] != "codex" || gotBody["command_name"] != "company-codex" || gotBody["display_name"] != "Company Codex" {
-		t.Errorf("unexpected body: %#v", gotBody)
+	if got.body["protocol_family"] != "codex" || got.body["command_name"] != "company-codex" || got.body["display_name"] != "Company Codex" {
+		t.Errorf("unexpected body: %#v", got.body)
 	}
 	// fixed_args is intentionally NOT exposed by the CLI in v1 (the daemon does
 	// not yet wire it into the launch command), so it must never be sent.
-	if _, present := gotBody["fixed_args"]; present {
-		t.Errorf("fixed_args must not be sent by the CLI, got %#v", gotBody["fixed_args"])
+	if _, present := got.body["fixed_args"]; present {
+		t.Errorf("fixed_args must not be sent by the CLI, got %#v", got.body["fixed_args"])
 	}
 	// visibility is intentionally NOT exposed by the CLI in v1 (server forces
 	// 'workspace'), so it must never be sent.
-	if _, present := gotBody["visibility"]; present {
-		t.Errorf("visibility must not be sent by the CLI, got %#v", gotBody["visibility"])
+	if _, present := got.body["visibility"]; present {
+		t.Errorf("visibility must not be sent by the CLI, got %#v", got.body["visibility"])
 	}
 }
 
@@ -186,21 +190,11 @@ func TestRunRuntimeProfileCreateRequiresFlags(t *testing.T) {
 }
 
 func TestRunRuntimeProfileUpdateOnlySendsChangedFlags(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("MULTICA_TOKEN", "test-token")
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-123")
-
-	var gotMethod, gotPath string
-	var gotBody map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		gotPath = r.URL.Path
-		_ = json.NewDecoder(r.Body).Decode(&gotBody)
+	got := setupRuntimeProfileAPITest(t, func(w http.ResponseWriter, r *http.Request, got *runtimeProfileRequest) {
+		_ = json.NewDecoder(r.Body).Decode(&got.body)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"id": "prof-1"})
-	}))
-	defer srv.Close()
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	})
 
 	cmd := newProfileUpdateTestCmd()
 	_ = cmd.Flags().Set("command-name", "new-codex")
@@ -209,24 +203,24 @@ func TestRunRuntimeProfileUpdateOnlySendsChangedFlags(t *testing.T) {
 	if err := runRuntimeProfileUpdate(cmd, []string{"prof-1"}); err != nil {
 		t.Fatalf("runRuntimeProfileUpdate: %v", err)
 	}
-	if gotMethod != http.MethodPatch {
-		t.Errorf("method = %s, want PATCH", gotMethod)
+	if got.method != http.MethodPatch {
+		t.Errorf("method = %s, want PATCH", got.method)
 	}
-	if gotPath != "/api/workspaces/ws-123/runtime-profiles/prof-1" {
-		t.Errorf("path = %q, want .../runtime-profiles/prof-1", gotPath)
+	if got.path != "/api/workspaces/ws-123/runtime-profiles/prof-1" {
+		t.Errorf("path = %q, want .../runtime-profiles/prof-1", got.path)
 	}
 	// Only the two changed flags must be present.
-	if gotBody["command_name"] != "new-codex" {
-		t.Errorf("command_name = %v, want new-codex", gotBody["command_name"])
+	if got.body["command_name"] != "new-codex" {
+		t.Errorf("command_name = %v, want new-codex", got.body["command_name"])
 	}
-	if gotBody["enabled"] != false {
-		t.Errorf("enabled = %v, want false", gotBody["enabled"])
+	if got.body["enabled"] != false {
+		t.Errorf("enabled = %v, want false", got.body["enabled"])
 	}
-	if _, ok := gotBody["display_name"]; ok {
-		t.Errorf("display_name should not be sent when unchanged: %#v", gotBody)
+	if _, ok := got.body["display_name"]; ok {
+		t.Errorf("display_name should not be sent when unchanged: %#v", got.body)
 	}
-	if _, ok := gotBody["visibility"]; ok {
-		t.Errorf("visibility should not be sent when unchanged: %#v", gotBody)
+	if _, ok := got.body["visibility"]; ok {
+		t.Errorf("visibility should not be sent when unchanged: %#v", got.body)
 	}
 }
 
@@ -243,42 +237,27 @@ func TestRunRuntimeProfileUpdateNoFieldsErrors(t *testing.T) {
 }
 
 func TestRunRuntimeProfileDeleteSuccess(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("MULTICA_TOKEN", "test-token")
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-123")
-
-	var gotMethod, gotPath string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotMethod = r.Method
-		gotPath = r.URL.Path
+	got := setupRuntimeProfileAPITest(t, func(w http.ResponseWriter, r *http.Request, _ *runtimeProfileRequest) {
 		w.WriteHeader(http.StatusNoContent)
-	}))
-	defer srv.Close()
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	})
 
 	cmd := newProfileDeleteTestCmd()
 	if err := runRuntimeProfileDelete(cmd, []string{"prof-1"}); err != nil {
 		t.Fatalf("runRuntimeProfileDelete: %v", err)
 	}
-	if gotMethod != http.MethodDelete {
-		t.Errorf("method = %s, want DELETE", gotMethod)
+	if got.method != http.MethodDelete {
+		t.Errorf("method = %s, want DELETE", got.method)
 	}
-	if gotPath != "/api/workspaces/ws-123/runtime-profiles/prof-1" {
-		t.Errorf("path = %q, want .../runtime-profiles/prof-1", gotPath)
+	if got.path != "/api/workspaces/ws-123/runtime-profiles/prof-1" {
+		t.Errorf("path = %q, want .../runtime-profiles/prof-1", got.path)
 	}
 }
 
 func TestRunRuntimeProfileDeleteConflictSurfacesServerMessage(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
-	t.Setenv("MULTICA_TOKEN", "test-token")
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-123")
-
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	setupRuntimeProfileAPITest(t, func(w http.ResponseWriter, r *http.Request, _ *runtimeProfileRequest) {
 		w.WriteHeader(http.StatusConflict)
 		_, _ = w.Write([]byte("2 active agents are bound to this profile"))
-	}))
-	defer srv.Close()
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+	})
 
 	cmd := newProfileDeleteTestCmd()
 	err := runRuntimeProfileDelete(cmd, []string{"prof-1"})
