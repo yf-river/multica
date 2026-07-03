@@ -624,11 +624,7 @@ func TestIsWorkspaceNotFoundError(t *testing.T) {
 func TestIsTaskNotFoundError(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
-		name string
-		err  error
-		want bool
-	}{
+	runRequestErrorMatcherCases(t, "isTaskNotFoundError", isTaskNotFoundError, []requestErrorMatcherCase{
 		{
 			name: "404 with task not found body",
 			err: &requestError{
@@ -673,12 +669,23 @@ func TestIsTaskNotFoundError(t *testing.T) {
 			err:  nil,
 			want: false,
 		},
-	}
+	})
+}
+
+type requestErrorMatcherCase struct {
+	name string
+	err  error
+	want bool
+}
+
+func runRequestErrorMatcherCases(t *testing.T, matcherName string, matcher func(error) bool, cases []requestErrorMatcherCase) {
+	t.Helper()
+
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			if got := isTaskNotFoundError(tc.err); got != tc.want {
-				t.Fatalf("isTaskNotFoundError(%v) = %v, want %v", tc.err, got, tc.want)
+			if got := matcher(tc.err); got != tc.want {
+				t.Fatalf("%s(%v) = %v, want %v", matcherName, tc.err, got, tc.want)
 			}
 		})
 	}
@@ -687,11 +694,7 @@ func TestIsTaskNotFoundError(t *testing.T) {
 func TestIsRuntimeNotFoundError(t *testing.T) {
 	t.Parallel()
 
-	cases := []struct {
-		name string
-		err  error
-		want bool
-	}{
+	runRequestErrorMatcherCases(t, "isRuntimeNotFoundError", isRuntimeNotFoundError, []requestErrorMatcherCase{
 		{
 			name: "404 with runtime not found body from heartbeat",
 			err: &requestError{
@@ -754,15 +757,7 @@ func TestIsRuntimeNotFoundError(t *testing.T) {
 			err:  nil,
 			want: false,
 		},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-			if got := isRuntimeNotFoundError(tc.err); got != tc.want {
-				t.Fatalf("isRuntimeNotFoundError(%v) = %v, want %v", tc.err, got, tc.want)
-			}
-		})
-	}
+	})
 }
 
 func TestShouldInterruptAgent(t *testing.T) {
