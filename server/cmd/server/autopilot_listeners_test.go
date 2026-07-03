@@ -11,7 +11,15 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func TestAutopilotRunOnlyTaskTerminalEventsUpdateRun(t *testing.T) {
+type autopilotListenerFixture struct {
+	queries      *db.Queries
+	taskSvc      *service.TaskService
+	autopilotSvc *service.AutopilotService
+	agentID      string
+}
+
+func setupAutopilotListenerFixture(t *testing.T) autopilotListenerFixture {
+	t.Helper()
 	ctx := context.Background()
 	queries := db.New(testPool)
 	bus := events.New()
@@ -27,6 +35,18 @@ func TestAutopilotRunOnlyTaskTerminalEventsUpdateRun(t *testing.T) {
 		t.Fatalf("load fixture agent: %v", err)
 	}
 
+	return autopilotListenerFixture{
+		queries:      queries,
+		taskSvc:      taskSvc,
+		autopilotSvc: autopilotSvc,
+		agentID:      agentID,
+	}
+}
+
+func TestAutopilotRunOnlyTaskTerminalEventsUpdateRun(t *testing.T) {
+	ctx := context.Background()
+	f := setupAutopilotListenerFixture(t)
+
 	tests := []struct {
 		name       string
 		finalize   func(task db.AgentTaskQueue)
@@ -37,7 +57,7 @@ func TestAutopilotRunOnlyTaskTerminalEventsUpdateRun(t *testing.T) {
 		{
 			name: "completed",
 			finalize: func(task db.AgentTaskQueue) {
-				if _, err := taskSvc.CompleteTask(ctx, task.ID, []byte(`{"output":"done"}`), "", ""); err != nil {
+				if _, err := f.taskSvc.CompleteTask(ctx, task.ID, []byte(`{"output":"done"}`), "", ""); err != nil {
 					t.Fatalf("CompleteTask: %v", err)
 				}
 			},
@@ -47,7 +67,7 @@ func TestAutopilotRunOnlyTaskTerminalEventsUpdateRun(t *testing.T) {
 		{
 			name: "failed",
 			finalize: func(task db.AgentTaskQueue) {
-				if _, err := taskSvc.FailTask(ctx, task.ID, "boom", "", "", "agent_error"); err != nil {
+				if _, err := f.taskSvc.FailTask(ctx, task.ID, "boom", "", "", "agent_error"); err != nil {
 					t.Fatalf("FailTask: %v", err)
 				}
 			},
@@ -58,12 +78,12 @@ func TestAutopilotRunOnlyTaskTerminalEventsUpdateRun(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			ap, err := queries.CreateAutopilot(ctx, db.CreateAutopilotParams{
+			ap, err := f.queries.CreateAutopilot(ctx, db.CreateAutopilotParams{
 				WorkspaceID:        parseUUID(testWorkspaceID),
 				Title:              "Run-only listener " + tc.name,
 				Description:        pgtype.Text{String: "Run listener regression test", Valid: true},
 				AssigneeType:       "agent",
-				AssigneeID:         parseUUID(agentID),
+				AssigneeID:         parseUUID(f.agentID),
 				Status:             "active",
 				ExecutionMode:      "run_only",
 				IssueTitleTemplate: pgtype.Text{},
@@ -79,7 +99,7 @@ func TestAutopilotRunOnlyTaskTerminalEventsUpdateRun(t *testing.T) {
 				}
 			})
 
-			run, err := autopilotSvc.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
+			run, err := f.autopilotSvc.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
 			if err != nil {
 				t.Fatalf("DispatchAutopilot: %v", err)
 			}
@@ -93,14 +113,14 @@ func TestAutopilotRunOnlyTaskTerminalEventsUpdateRun(t *testing.T) {
 			); err != nil {
 				t.Fatalf("mark task dispatched: %v", err)
 			}
-			task, err := queries.StartAgentTask(ctx, run.TaskID)
+			task, err := f.queries.StartAgentTask(ctx, run.TaskID)
 			if err != nil {
 				t.Fatalf("StartAgentTask: %v", err)
 			}
 
 			tc.finalize(task)
 
-			updatedRun, err := queries.GetAutopilotRun(ctx, run.ID)
+			updatedRun, err := f.queries.GetAutopilotRun(ctx, run.ID)
 			if err != nil {
 				t.Fatalf("GetAutopilotRun: %v", err)
 			}
@@ -139,26 +159,14 @@ type linkedIssueAutopilotFixture struct {
 func dispatchCreateIssueAutopilot(t *testing.T, title string) linkedIssueAutopilotFixture {
 	t.Helper()
 	ctx := context.Background()
-	queries := db.New(testPool)
-	bus := events.New()
-	taskSvc := service.NewTaskService(queries, testPool, nil, bus)
-	autopilotSvc := service.NewAutopilotService(queries, testPool, bus, taskSvc)
-	registerAutopilotListeners(bus, autopilotSvc)
+	f := setupAutopilotListenerFixture(t)
 
-	var agentID string
-	if err := testPool.QueryRow(ctx,
-		`SELECT id::text FROM agent WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1`,
-		testWorkspaceID,
-	).Scan(&agentID); err != nil {
-		t.Fatalf("load fixture agent: %v", err)
-	}
-
-	ap, err := queries.CreateAutopilot(ctx, db.CreateAutopilotParams{
+	ap, err := f.queries.CreateAutopilot(ctx, db.CreateAutopilotParams{
 		WorkspaceID:        parseUUID(testWorkspaceID),
 		Title:              title,
 		Description:        pgtype.Text{String: "VEN-661 / VEN-662 regression test", Valid: true},
 		AssigneeType:       "agent",
-		AssigneeID:         parseUUID(agentID),
+		AssigneeID:         parseUUID(f.agentID),
 		Status:             "active",
 		ExecutionMode:      "create_issue",
 		IssueTitleTemplate: pgtype.Text{String: "Linked issue", Valid: true},
@@ -172,7 +180,7 @@ func dispatchCreateIssueAutopilot(t *testing.T, title string) linkedIssueAutopil
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID)
 	})
 
-	run, err := autopilotSvc.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "schedule", nil)
+	run, err := f.autopilotSvc.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "schedule", nil)
 	if err != nil {
 		t.Fatalf("DispatchAutopilot: %v", err)
 	}
@@ -185,7 +193,7 @@ func dispatchCreateIssueAutopilot(t *testing.T, title string) linkedIssueAutopil
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, run.IssueID)
 	})
 
-	tasks, err := queries.ListTasksByIssue(ctx, run.IssueID)
+	tasks, err := f.queries.ListTasksByIssue(ctx, run.IssueID)
 	if err != nil {
 		t.Fatalf("ListTasksByIssue: %v", err)
 	}
@@ -199,7 +207,7 @@ func dispatchCreateIssueAutopilot(t *testing.T, title string) linkedIssueAutopil
 		t.Fatalf("expected pre-failure run status issue_created, got %q", run.Status)
 	}
 
-	return linkedIssueAutopilotFixture{taskSvc: taskSvc, queries: queries, run: run, taskID: tasks[0].ID}
+	return linkedIssueAutopilotFixture{taskSvc: f.taskSvc, queries: f.queries, run: run, taskID: tasks[0].ID}
 }
 
 // runTaskWithBudget marks the issue task dispatched with the given attempt
