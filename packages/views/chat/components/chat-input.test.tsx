@@ -202,6 +202,32 @@ function renderInput(props: Partial<React.ComponentProps<typeof ChatInput>> = {}
   return { onSend, onUploadFile };
 }
 
+async function dropFile(
+  file: File,
+  settle: "upload-started" | "upload-finished" = "upload-finished",
+) {
+  await act(async () => {
+    dropHandlers.onDrop?.([file]);
+    await Promise.resolve();
+    if (settle === "upload-finished") await Promise.resolve();
+  });
+}
+
+function getSendButton() {
+  const buttons = screen.getAllByRole("button");
+  return buttons[buttons.length - 1]!;
+}
+
+async function waitForSendButton(state: "enabled" | "disabled") {
+  let sendButton: HTMLElement;
+  await waitFor(() => {
+    sendButton = getSendButton();
+    if (state === "enabled") expect(sendButton).not.toBeDisabled();
+    else expect(sendButton).toBeDisabled();
+  });
+  return sendButton!;
+}
+
 describe("ChatInput @ context wiring", () => {
   it("configures chat @ with current/recent issue/project context", () => {
     const contextItems = [
@@ -220,12 +246,8 @@ describe("ChatInput attachment wiring", () => {
     const { onUploadFile } = renderInput();
     expect(dropHandlers.onDrop).not.toBeNull();
     const file = new File(["x"], "drop.png", { type: "image/png" });
-    await act(async () => {
-      dropHandlers.onDrop?.([file]);
-      // Microtask: the mock editor awaits onUploadFile before mutating its value.
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    // Microtask: the mock editor awaits onUploadFile before mutating its value.
+    await dropFile(file);
     expect(onUploadFile).toHaveBeenCalledWith(file);
   });
 
@@ -240,22 +262,12 @@ describe("ChatInput attachment wiring", () => {
     // mock editor appends the markdown link into its value and calls
     // onUpdate so the input flips out of the empty state.
     const file = new File(["x"], "drop.png", { type: "image/png" });
-    await act(async () => {
-      dropHandlers.onDrop?.([file]);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await dropFile(file);
 
     // Wait for the submit button to become enabled (onUpdate has fired and
     // React has re-rendered). SubmitButton has no aria-label, so we pick
     // the last action button on the bar (FileUploadButton, SubmitButton).
-    let sendButton: HTMLElement;
-    await waitFor(() => {
-      const buttons = screen.getAllByRole("button");
-      sendButton = buttons[buttons.length - 1]!;
-      expect(sendButton).not.toBeDisabled();
-    });
-    fireEvent.click(sendButton!);
+    fireEvent.click(await waitForSendButton("enabled"));
 
     expect(onSend).toHaveBeenCalledTimes(1);
     const [, ids] = onSend.mock.calls[0]!;
@@ -289,19 +301,9 @@ describe("ChatInput attachment wiring", () => {
     renderInput({ onSend, onUploadFile });
 
     const file = new File(["x"], "foo.png", { type: "image/png" });
-    await act(async () => {
-      dropHandlers.onDrop?.([file]);
-      await Promise.resolve();
-      await Promise.resolve();
-    });
+    await dropFile(file);
 
-    let sendButton: HTMLElement;
-    await waitFor(() => {
-      const buttons = screen.getAllByRole("button");
-      sendButton = buttons[buttons.length - 1]!;
-      expect(sendButton).not.toBeDisabled();
-    });
-    fireEvent.click(sendButton!);
+    fireEvent.click(await waitForSendButton("enabled"));
 
     expect(onSend).toHaveBeenCalledTimes(1);
     const [content, ids] = onSend.mock.calls[0]!;
@@ -330,32 +332,19 @@ describe("ChatInput attachment wiring", () => {
     fireEvent.change(screen.getByTestId("editor"), { target: { value: "preview text" } });
 
     const file = new File(["x"], "slow.png", { type: "image/png" });
-    await act(async () => {
-      dropHandlers.onDrop?.([file]);
-      await Promise.resolve();
-    });
+    await dropFile(file, "upload-started");
 
     // While the upload is pending the SubmitButton must be disabled.
     // Bypassing this would send the message with the attachment id
     // missing from the body.
-    await waitFor(() => {
-      const buttons = screen.getAllByRole("button");
-      const sendButton = buttons[buttons.length - 1]!;
-      expect(sendButton).toBeDisabled();
-    });
+    await waitForSendButton("disabled");
 
     await act(async () => {
       resolveUpload!(makeUpload({ id: "att-slow", link: "https://cdn.example/att-slow.png", filename: "slow.png" }));
       await Promise.resolve();
     });
 
-    let sendButton: HTMLElement;
-    await waitFor(() => {
-      const buttons = screen.getAllByRole("button");
-      sendButton = buttons[buttons.length - 1]!;
-      expect(sendButton).not.toBeDisabled();
-    });
-    fireEvent.click(sendButton!);
+    fireEvent.click(await waitForSendButton("enabled"));
     expect(onSend).toHaveBeenCalledTimes(1);
     const [, ids] = onSend.mock.calls[0]!;
     expect(ids).toEqual(["att-slow"]);
