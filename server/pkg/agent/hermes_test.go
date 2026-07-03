@@ -1327,37 +1327,7 @@ done
 
 func executeHermesScript(t *testing.T, script string, opts ExecOptions) Result {
 	t.Helper()
-
-	fakePath := filepath.Join(t.TempDir(), "hermes")
-	writeTestExecutable(t, fakePath, []byte(script))
-
-	backend, err := New("hermes", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new hermes backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	session, err := backend.Execute(ctx, "prompt-ignored", opts)
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
-
-	select {
-	case result, ok := <-session.Result:
-		if !ok {
-			t.Fatal("result channel closed without a value")
-		}
-		return result
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
-		return Result{}
-	}
+	return executeBackendScript(t, "hermes", "hermes", script, opts)
 }
 
 func executeRecordingHermesScript(t *testing.T, sessionID, caps string, opts ExecOptions) (string, Result) {

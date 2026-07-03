@@ -117,48 +117,22 @@ done
 func TestKiroBackendSetModelFailureFailsTask(t *testing.T) {
 	t.Parallel()
 
-	fakePath := filepath.Join(t.TempDir(), "kiro-cli")
-	writeTestExecutable(t, fakePath, []byte(fakeKiroACPScript()))
-
-	backend, err := New("kiro", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new kiro backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+	result := executeBackendScript(t, "kiro", "kiro-cli", fakeKiroACPScript(), ExecOptions{
 		Model:   "bogus-model",
 		Timeout: 5 * time.Second,
 	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
 
-	select {
-	case result, ok := <-session.Result:
-		if !ok {
-			t.Fatal("result channel closed without a value")
-		}
-		if result.Status != "failed" {
-			t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
-		}
-		if !strings.Contains(result.Error, `could not switch to model "bogus-model"`) {
-			t.Errorf("expected error to name the requested model, got %q", result.Error)
-		}
-		if !strings.Contains(result.Error, "model not available") {
-			t.Errorf("expected error to surface upstream message, got %q", result.Error)
-		}
-		if result.SessionID != "ses_new" {
-			t.Errorf("expected session id to be preserved on failure, got %q", result.SessionID)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
+	if result.Status != "failed" {
+		t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
+	}
+	if !strings.Contains(result.Error, `could not switch to model "bogus-model"`) {
+		t.Errorf("expected error to name the requested model, got %q", result.Error)
+	}
+	if !strings.Contains(result.Error, "model not available") {
+		t.Errorf("expected error to surface upstream message, got %q", result.Error)
+	}
+	if result.SessionID != "ses_new" {
+		t.Errorf("expected session id to be preserved on failure, got %q", result.SessionID)
 	}
 }
 
@@ -195,46 +169,20 @@ done
 func TestKiroBackendClearsSessionIDWhenSetModelSessionNotFound(t *testing.T) {
 	t.Parallel()
 
-	fakePath := filepath.Join(t.TempDir(), "kiro-cli")
-	writeTestExecutable(t, fakePath, []byte(fakeKiroACPStaleLoadSetModelScript()))
-
-	backend, err := New("kiro", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new kiro backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+	result := executeBackendScript(t, "kiro", "kiro-cli", fakeKiroACPStaleLoadSetModelScript(), ExecOptions{
 		Timeout:         5 * time.Second,
 		ResumeSessionID: "ses_stale",
 		Model:           "auto",
 	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
 
-	select {
-	case result, ok := <-session.Result:
-		if !ok {
-			t.Fatal("result channel closed without a value")
-		}
-		if result.Status != "failed" {
-			t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
-		}
-		if !strings.Contains(result.Error, `could not switch to model "auto"`) {
-			t.Errorf("expected error to name the requested model, got %q", result.Error)
-		}
-		if result.SessionID != "" {
-			t.Errorf("expected empty session id so the daemon's fresh-session retry fires, got %q", result.SessionID)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
+	if result.Status != "failed" {
+		t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
+	}
+	if !strings.Contains(result.Error, `could not switch to model "auto"`) {
+		t.Errorf("expected error to name the requested model, got %q", result.Error)
+	}
+	if result.SessionID != "" {
+		t.Errorf("expected empty session id so the daemon's fresh-session retry fires, got %q", result.SessionID)
 	}
 }
 
@@ -243,34 +191,14 @@ func TestKiroBackendInvokesACPWithTrustAllTools(t *testing.T) {
 
 	tempDir := t.TempDir()
 	argsFile := filepath.Join(tempDir, "argv.txt")
-	fakePath := filepath.Join(tempDir, "kiro-cli")
-	writeTestExecutable(t, fakePath, []byte(fakeKiroACPScript()))
 
-	backend, err := New("kiro", Config{
-		ExecutablePath: fakePath,
-		Logger:         slog.Default(),
-		Env:            map[string]string{"KIRO_ARGS_FILE": argsFile},
-	})
-	if err != nil {
-		t.Fatalf("new kiro backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+	executeBackendScript(t, "kiro", "kiro-cli", fakeKiroACPScript(), ExecOptions{
 		Model:      "bogus-model",
 		Timeout:    5 * time.Second,
 		CustomArgs: []string{"acp", "--trust-tools", "shell", "-a", "--agent", "multica"},
+	}, func(cfg *Config) {
+		cfg.Env = map[string]string{"KIRO_ARGS_FILE": argsFile}
 	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
-	<-session.Result
 
 	raw, err := os.ReadFile(argsFile)
 	if err != nil {
@@ -401,33 +329,11 @@ func TestKiroLoadIncludesMcpServersFromConfig(t *testing.T) {
 	t.Parallel()
 
 	recordPath := filepath.Join(t.TempDir(), "frames.jsonl")
-	fakePath := filepath.Join(t.TempDir(), "kiro-cli")
-	writeTestExecutable(t, fakePath, []byte(fakeACPRecordingScript(recordPath, "ses_load", `{}`)))
-
-	backend, err := New("kiro", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new kiro backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+	executeBackendScript(t, "kiro", "kiro-cli", fakeACPRecordingScript(recordPath, "ses_load", `{}`), ExecOptions{
 		Timeout:         5 * time.Second,
 		ResumeSessionID: "ses_load",
 		McpConfig:       json.RawMessage(`{"mcpServers":{"fetch":{"command":"uvx"}}}`),
 	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
-	select {
-	case <-session.Result:
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
-	}
 
 	frame := findRecordedFrame(t, recordPath, "session/load")
 	params := frame["params"].(map[string]any)

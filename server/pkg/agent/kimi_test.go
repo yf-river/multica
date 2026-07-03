@@ -1,9 +1,7 @@
 package agent
 
 import (
-	"context"
 	"encoding/json"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -104,49 +102,22 @@ done
 func TestKimiBackendSetModelFailureFailsTask(t *testing.T) {
 	t.Parallel()
 
-	fakePath := filepath.Join(t.TempDir(), "kimi")
-	writeTestExecutable(t, fakePath, []byte(fakeKimiACPScript()))
-
-	backend, err := New("kimi", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new kimi backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+	result := executeBackendScript(t, "kimi", "kimi", fakeKimiACPScript(), ExecOptions{
 		Model:   "bogus-model",
 		Timeout: 5 * time.Second,
 	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	// Drain message stream so the lifecycle goroutine can progress.
-	go func() {
-		for range session.Messages {
-		}
-	}()
 
-	select {
-	case result, ok := <-session.Result:
-		if !ok {
-			t.Fatal("result channel closed without a value")
-		}
-		if result.Status != "failed" {
-			t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
-		}
-		if !strings.Contains(result.Error, `could not switch to model "bogus-model"`) {
-			t.Errorf("expected error to name the requested model, got %q", result.Error)
-		}
-		if !strings.Contains(result.Error, "model not available") {
-			t.Errorf("expected error to surface upstream message, got %q", result.Error)
-		}
-		if result.SessionID != "ses_fake" {
-			t.Errorf("expected session id to be preserved on failure, got %q", result.SessionID)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
+	if result.Status != "failed" {
+		t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
+	}
+	if !strings.Contains(result.Error, `could not switch to model "bogus-model"`) {
+		t.Errorf("expected error to name the requested model, got %q", result.Error)
+	}
+	if !strings.Contains(result.Error, "model not available") {
+		t.Errorf("expected error to surface upstream message, got %q", result.Error)
+	}
+	if result.SessionID != "ses_fake" {
+		t.Errorf("expected session id to be preserved on failure, got %q", result.SessionID)
 	}
 }
 
@@ -186,46 +157,20 @@ done
 func TestKimiBackendClearsSessionIDWhenSetModelSessionNotFound(t *testing.T) {
 	t.Parallel()
 
-	fakePath := filepath.Join(t.TempDir(), "kimi")
-	writeTestExecutable(t, fakePath, []byte(fakeKimiACPStaleResumeSetModelScript()))
-
-	backend, err := New("kimi", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new kimi backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+	result := executeBackendScript(t, "kimi", "kimi", fakeKimiACPStaleResumeSetModelScript(), ExecOptions{
 		Timeout:         5 * time.Second,
 		ResumeSessionID: "ses_stale",
 		Model:           "kimi-for-coding",
 	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
 
-	select {
-	case result, ok := <-session.Result:
-		if !ok {
-			t.Fatal("result channel closed without a value")
-		}
-		if result.Status != "failed" {
-			t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
-		}
-		if !strings.Contains(result.Error, `could not switch to model "kimi-for-coding"`) {
-			t.Errorf("expected error to name the requested model, got %q", result.Error)
-		}
-		if result.SessionID != "" {
-			t.Errorf("expected empty session id so the daemon's fresh-session retry fires, got %q", result.SessionID)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
+	if result.Status != "failed" {
+		t.Fatalf("expected status=failed, got %q (error=%q)", result.Status, result.Error)
+	}
+	if !strings.Contains(result.Error, `could not switch to model "kimi-for-coding"`) {
+		t.Errorf("expected error to name the requested model, got %q", result.Error)
+	}
+	if result.SessionID != "" {
+		t.Errorf("expected empty session id so the daemon's fresh-session retry fires, got %q", result.SessionID)
 	}
 }
 
@@ -242,35 +187,15 @@ func TestKimiBackendInvokesACPSubcommand(t *testing.T) {
 
 	tempDir := t.TempDir()
 	argsFile := filepath.Join(tempDir, "argv.txt")
-	fakePath := filepath.Join(tempDir, "kimi")
-	writeTestExecutable(t, fakePath, []byte(fakeKimiACPScript()))
-
-	backend, err := New("kimi", Config{
-		ExecutablePath: fakePath,
-		Logger:         slog.Default(),
-		Env:            map[string]string{"KIMI_ARGS_FILE": argsFile},
-	})
-	if err != nil {
-		t.Fatalf("new kimi backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
 
 	// Set Model so the fake binary exits on set_model and we don't
 	// have to wait for the prompt branch. We only care about argv here.
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+	executeBackendScript(t, "kimi", "kimi", fakeKimiACPScript(), ExecOptions{
 		Model:   "bogus-model",
 		Timeout: 5 * time.Second,
+	}, func(cfg *Config) {
+		cfg.Env = map[string]string{"KIMI_ARGS_FILE": argsFile}
 	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
-	<-session.Result
 
 	raw, err := os.ReadFile(argsFile)
 	if err != nil {
@@ -298,33 +223,11 @@ func TestKimiResumeIncludesMcpServers(t *testing.T) {
 	t.Parallel()
 
 	recordPath := filepath.Join(t.TempDir(), "frames.jsonl")
-	fakePath := filepath.Join(t.TempDir(), "kimi")
-	writeTestExecutable(t, fakePath, []byte(fakeACPRecordingScript(recordPath, "ses_resume", `{}`)))
-
-	backend, err := New("kimi", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new kimi backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+	executeBackendScript(t, "kimi", "kimi", fakeACPRecordingScript(recordPath, "ses_resume", `{}`), ExecOptions{
 		Timeout:         5 * time.Second,
 		ResumeSessionID: "ses_resume",
 		McpConfig:       json.RawMessage(`{"mcpServers":{"fetch":{"command":"uvx"}}}`),
 	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
-	select {
-	case <-session.Result:
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
-	}
 
 	frame := findRecordedFrame(t, recordPath, "session/resume")
 	params := frame["params"].(map[string]any)
