@@ -1360,6 +1360,14 @@ func executeHermesScript(t *testing.T, script string, opts ExecOptions) Result {
 	}
 }
 
+func executeRecordingHermesScript(t *testing.T, sessionID, caps string, opts ExecOptions) (string, Result) {
+	t.Helper()
+
+	recordPath := filepath.Join(t.TempDir(), "frames.jsonl")
+	result := executeHermesScript(t, fakeACPRecordingScript(recordPath, sessionID, caps), opts)
+	return recordPath, result
+}
+
 func TestHermesBackendAttributesUsageToACPDefaultModel(t *testing.T) {
 	t.Parallel()
 
@@ -1996,35 +2004,12 @@ func findRecordedFrame(t *testing.T, recordPath, method string) map[string]any {
 func TestHermesSetModelPreservesCustomModelIDWithColon(t *testing.T) {
 	t.Parallel()
 
-	recordPath := filepath.Join(t.TempDir(), "frames.jsonl")
-	fakePath := filepath.Join(t.TempDir(), "hermes")
-	writeTestExecutable(t, fakePath, []byte(fakeACPRecordingScript(recordPath, "ses_new", `{}`)))
-
-	backend, err := New("hermes", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new hermes backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+	recordPath, result := executeRecordingHermesScript(t, "ses_new", `{}`, ExecOptions{
 		Timeout: 5 * time.Second,
 		Model:   "custom:lfm2.5:8b",
 	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
-	select {
-	case result := <-session.Result:
-		if result.Status != "completed" {
-			t.Fatalf("expected completed result, got %q: %s", result.Status, result.Error)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
+	if result.Status != "completed" {
+		t.Fatalf("expected completed result, got %q: %s", result.Status, result.Error)
 	}
 
 	frame := findRecordedFrame(t, recordPath, "session/set_model")
@@ -2047,34 +2032,11 @@ func TestHermesSetModelPreservesCustomModelIDWithColon(t *testing.T) {
 func TestHermesResumeIncludesMcpServers(t *testing.T) {
 	t.Parallel()
 
-	recordPath := filepath.Join(t.TempDir(), "frames.jsonl")
-	fakePath := filepath.Join(t.TempDir(), "hermes")
-	writeTestExecutable(t, fakePath, []byte(fakeACPRecordingScript(recordPath, "ses_resume", `{}`)))
-
-	backend, err := New("hermes", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new hermes backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+	recordPath, _ := executeRecordingHermesScript(t, "ses_resume", `{}`, ExecOptions{
 		Timeout:         5 * time.Second,
 		ResumeSessionID: "ses_resume",
 		McpConfig:       json.RawMessage(`{"mcpServers":{"fetch":{"command":"uvx"}}}`),
 	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
-	select {
-	case <-session.Result:
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
-	}
 
 	frame := findRecordedFrame(t, recordPath, "session/resume")
 	params, ok := frame["params"].(map[string]any)
@@ -2101,19 +2063,8 @@ func TestHermesResumeIncludesMcpServers(t *testing.T) {
 func TestHermesDropsRemoteMcpWhenCapabilityNotAdvertised(t *testing.T) {
 	t.Parallel()
 
-	recordPath := filepath.Join(t.TempDir(), "frames.jsonl")
-	fakePath := filepath.Join(t.TempDir(), "hermes")
 	// agentCapabilities = {} → neither http nor sse advertised.
-	writeTestExecutable(t, fakePath, []byte(fakeACPRecordingScript(recordPath, "ses_new", `{}`)))
-
-	backend, err := New("hermes", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new hermes backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+	recordPath, _ := executeRecordingHermesScript(t, "ses_new", `{}`, ExecOptions{
 		Timeout: 5 * time.Second,
 		McpConfig: json.RawMessage(`{"mcpServers":{
 			"local":{"command":"uvx"},
@@ -2121,18 +2072,6 @@ func TestHermesDropsRemoteMcpWhenCapabilityNotAdvertised(t *testing.T) {
 			"remote-sse":{"type":"sse","url":"https://x/sse"}
 		}}`),
 	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
-	select {
-	case <-session.Result:
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
-	}
 
 	frame := findRecordedFrame(t, recordPath, "session/new")
 	params := frame["params"].(map[string]any)
@@ -2154,18 +2093,7 @@ func TestHermesDropsRemoteMcpWhenCapabilityNotAdvertised(t *testing.T) {
 func TestHermesKeepsRemoteMcpWhenCapabilityAdvertised(t *testing.T) {
 	t.Parallel()
 
-	recordPath := filepath.Join(t.TempDir(), "frames.jsonl")
-	fakePath := filepath.Join(t.TempDir(), "hermes")
-	writeTestExecutable(t, fakePath, []byte(fakeACPRecordingScript(recordPath, "ses_new", `{"mcpCapabilities":{"http":true,"sse":true}}`)))
-
-	backend, err := New("hermes", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new hermes backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+	recordPath, _ := executeRecordingHermesScript(t, "ses_new", `{"mcpCapabilities":{"http":true,"sse":true}}`, ExecOptions{
 		Timeout: 5 * time.Second,
 		McpConfig: json.RawMessage(`{"mcpServers":{
 			"local":{"command":"uvx"},
@@ -2173,18 +2101,6 @@ func TestHermesKeepsRemoteMcpWhenCapabilityAdvertised(t *testing.T) {
 			"remote-sse":{"type":"sse","url":"https://x/sse"}
 		}}`),
 	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
-	select {
-	case <-session.Result:
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
-	}
 
 	frame := findRecordedFrame(t, recordPath, "session/new")
 	params := frame["params"].(map[string]any)
