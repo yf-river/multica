@@ -160,8 +160,12 @@ func cleanupIntegrationTestFixture(ctx context.Context, pool *pgxpool.Pool) erro
 	return nil
 }
 
-// Helper to make authenticated requests
 func authRequest(t *testing.T, method, path string, body any) *http.Response {
+	t.Helper()
+	return authRequestWithHeaders(t, method, path, body, nil)
+}
+
+func authRequestWithHeaders(t *testing.T, method, path string, body any, extraHeaders map[string]string) *http.Response {
 	t.Helper()
 	var bodyReader io.Reader
 	if body != nil {
@@ -175,6 +179,9 @@ func authRequest(t *testing.T, method, path string, body any) *http.Response {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+testToken)
 	req.Header.Set("X-Workspace-ID", testWorkspaceID)
+	for name, value := range extraHeaders {
+		req.Header.Set(name, value)
+	}
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {

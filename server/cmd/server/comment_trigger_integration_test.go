@@ -1,9 +1,7 @@
 package main
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,26 +16,10 @@ import (
 // X-Task-ID. The task is best-effort cleaned up via test teardown elsewhere.
 func authRequestWithAgent(t *testing.T, method, path string, body any, agentID string) *http.Response {
 	t.Helper()
-	var bodyReader io.Reader
-	if body != nil {
-		b, _ := json.Marshal(body)
-		bodyReader = bytes.NewReader(b)
-	}
-	req, err := http.NewRequest(method, testServer.URL+path, bodyReader)
-	if err != nil {
-		t.Fatalf("failed to create request: %v", err)
-	}
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+testToken)
-	req.Header.Set("X-Workspace-ID", testWorkspaceID)
-	req.Header.Set("X-Agent-ID", agentID)
-	req.Header.Set("X-Task-ID", ensureAgentTask(t, agentID))
-
-	r, err := http.DefaultClient.Do(req)
-	if err != nil {
-		t.Fatalf("request failed: %v", err)
-	}
-	return r
+	return authRequestWithHeaders(t, method, path, body, map[string]string{
+		"X-Agent-ID": agentID,
+		"X-Task-ID":  ensureAgentTask(t, agentID),
+	})
 }
 
 // ensureAgentTask returns a queued task UUID belonging to the given agent,
@@ -143,7 +125,7 @@ func createSecondAgent(t *testing.T) string {
 	resp = authRequest(t, "POST", "/api/agents?workspace_id="+testWorkspaceID, map[string]any{
 		"name":       "Second Test Agent",
 		"runtime_id": runtimeID,
-		"scope": "workspace",
+		"scope":      "workspace",
 	})
 	if resp.StatusCode != 201 {
 		body, _ := io.ReadAll(resp.Body)
