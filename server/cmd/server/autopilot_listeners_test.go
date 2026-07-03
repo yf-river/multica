@@ -227,6 +227,61 @@ func runTaskWithBudget(t *testing.T, queries *db.Queries, taskID pgtype.UUID, ma
 	}
 }
 
+func createOfflineLocalAgent(t *testing.T, ctx context.Context, runtimeName, provider, agentName string) string {
+	t.Helper()
+	var runtimeID, agentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_runtime (
+			workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at
+		)
+		VALUES ($1, NULL, $2, 'local', $3, 'offline', '{}'::jsonb, '{}'::jsonb, now())
+		RETURNING id::text
+	`, parseUUID(testWorkspaceID), runtimeName, provider).Scan(&runtimeID); err != nil {
+		t.Fatalf("create runtime: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
+	})
+
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent (
+			workspace_id, name, description, runtime_mode, runtime_config,
+			runtime_id, scope, max_concurrent_tasks, owner_id
+		)
+		VALUES ($1, $2, '', 'local', '{}'::jsonb, $3, 'workspace', 1, $4)
+		RETURNING id::text
+	`, parseUUID(testWorkspaceID), agentName, runtimeID, parseUUID(testUserID)).Scan(&agentID); err != nil {
+		t.Fatalf("create agent: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
+	})
+	return agentID
+}
+
+func createRunOnlyAutopilotForAgent(t *testing.T, ctx context.Context, queries *db.Queries, title, description, agentID string) db.Autopilot {
+	t.Helper()
+	ap, err := queries.CreateAutopilot(ctx, db.CreateAutopilotParams{
+		WorkspaceID:        parseUUID(testWorkspaceID),
+		Title:              title,
+		Description:        pgtype.Text{String: description, Valid: true},
+		AssigneeType:       "agent",
+		AssigneeID:         parseUUID(agentID),
+		Status:             "active",
+		ExecutionMode:      "run_only",
+		IssueTitleTemplate: pgtype.Text{},
+		CreatedByType:      "member",
+		CreatedByID:        parseUUID(testUserID),
+	})
+	if err != nil {
+		t.Fatalf("CreateAutopilot: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID)
+	})
+	return ap
+}
+
 // TestAutopilotCreateIssueTaskNoProgressFailureUpdatesRun is the original
 // VEN-661 regression: a Codex no-progress failure with no retries left fails
 // the linked run.
@@ -330,52 +385,8 @@ func TestAutopilotDispatchSkipsWhenRuntimeOffline(t *testing.T) {
 
 	// Spin up a dedicated runtime + agent so we can flip the runtime to
 	// offline without affecting the shared fixture used by other tests.
-	var runtimeID, agentID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_runtime (
-			workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at
-		)
-		VALUES ($1, NULL, 'Offline runtime', 'local', 'mul1899_offline_runtime', 'offline', '{}'::jsonb, '{}'::jsonb, now())
-		RETURNING id::text
-	`, parseUUID(testWorkspaceID)).Scan(&runtimeID); err != nil {
-		t.Fatalf("create offline runtime: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
-	})
-
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent (
-			workspace_id, name, description, runtime_mode, runtime_config,
-			runtime_id, scope, max_concurrent_tasks, owner_id
-		)
-		VALUES ($1, 'mul1899-offline-agent', '', 'local', '{}'::jsonb, $2, 'workspace', 1, $3)
-		RETURNING id::text
-	`, parseUUID(testWorkspaceID), runtimeID, parseUUID(testUserID)).Scan(&agentID); err != nil {
-		t.Fatalf("create offline agent: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
-	})
-
-	ap, err := queries.CreateAutopilot(ctx, db.CreateAutopilotParams{
-		WorkspaceID:        parseUUID(testWorkspaceID),
-		Title:              "Offline-runtime autopilot",
-		Description:        pgtype.Text{String: "MUL-1899 admission test", Valid: true},
-		AssigneeType:       "agent",
-		AssigneeID:         parseUUID(agentID),
-		Status:             "active",
-		ExecutionMode:      "run_only",
-		IssueTitleTemplate: pgtype.Text{},
-		CreatedByType:      "member",
-		CreatedByID:        parseUUID(testUserID),
-	})
-	if err != nil {
-		t.Fatalf("CreateAutopilot: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID)
-	})
+	agentID := createOfflineLocalAgent(t, ctx, "Offline runtime", "mul1899_offline_runtime", "mul1899-offline-agent")
+	ap := createRunOnlyAutopilotForAgent(t, ctx, queries, "Offline-runtime autopilot", "MUL-1899 admission test", agentID)
 
 	run, err := autopilotSvc.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "schedule", nil)
 	if err != nil {
@@ -435,52 +446,8 @@ func TestManualTriggerDoesNotErrorOnPostAdmissionSkip(t *testing.T) {
 	taskSvc := service.NewTaskService(queries, testPool, nil, bus)
 	autopilotSvc := service.NewAutopilotService(queries, testPool, bus, taskSvc)
 
-	var runtimeID, agentID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_runtime (
-			workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, last_seen_at
-		)
-		VALUES ($1, NULL, 'Manual-trigger skip runtime', 'local', 'mul2429_manual_skip_runtime', 'offline', '{}'::jsonb, '{}'::jsonb, now())
-		RETURNING id::text
-	`, parseUUID(testWorkspaceID)).Scan(&runtimeID); err != nil {
-		t.Fatalf("create runtime: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE id = $1`, runtimeID)
-	})
-
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent (
-			workspace_id, name, description, runtime_mode, runtime_config,
-			runtime_id, scope, max_concurrent_tasks, owner_id
-		)
-		VALUES ($1, 'mul2429-manual-skip-agent', '', 'local', '{}'::jsonb, $2, 'workspace', 1, $3)
-		RETURNING id::text
-	`, parseUUID(testWorkspaceID), runtimeID, parseUUID(testUserID)).Scan(&agentID); err != nil {
-		t.Fatalf("create agent: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
-	})
-
-	ap, err := queries.CreateAutopilot(ctx, db.CreateAutopilotParams{
-		WorkspaceID:        parseUUID(testWorkspaceID),
-		Title:              "Manual-trigger skip autopilot",
-		Description:        pgtype.Text{String: "PR #2888 review fix #2", Valid: true},
-		AssigneeType:       "agent",
-		AssigneeID:         parseUUID(agentID),
-		Status:             "active",
-		ExecutionMode:      "run_only",
-		IssueTitleTemplate: pgtype.Text{},
-		CreatedByType:      "member",
-		CreatedByID:        parseUUID(testUserID),
-	})
-	if err != nil {
-		t.Fatalf("CreateAutopilot: %v", err)
-	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, ap.ID)
-	})
+	agentID := createOfflineLocalAgent(t, ctx, "Manual-trigger skip runtime", "mul2429_manual_skip_runtime", "mul2429-manual-skip-agent")
+	ap := createRunOnlyAutopilotForAgent(t, ctx, queries, "Manual-trigger skip autopilot", "PR #2888 review fix #2", agentID)
 
 	run, err := autopilotSvc.DispatchAutopilot(ctx, ap, pgtype.UUID{}, "manual", nil)
 	if err != nil {
