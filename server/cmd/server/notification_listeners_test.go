@@ -85,16 +85,17 @@ func newNotificationBus(t *testing.T, queries *db.Queries) *events.Bus {
 	return bus
 }
 
-// TestNotification_IssueCreated_AssigneeNotified verifies that when an issue is
-// created with an assignee different from the creator, the assignee receives an
-// "issue_assigned" inbox notification and the creator receives nothing.
-func TestNotification_IssueCreated_AssigneeNotified(t *testing.T) {
+type notificationIssueTestFixture struct {
+	queries     *db.Queries
+	bus         *events.Bus
+	issueID     string
+	inboxEvents *[]events.Event
+}
+
+func setupNotificationIssueTest(t *testing.T) notificationIssueTestFixture {
+	t.Helper()
 	queries := db.New(testPool)
 	bus := newNotificationBus(t, queries)
-
-	assigneeAccount := "notif-assignee-created@multica"
-	assigneeID := createTestUser(t, assigneeAccount)
-	t.Cleanup(func() { cleanupTestUser(t, assigneeAccount) })
 
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() {
@@ -102,21 +103,42 @@ func TestNotification_IssueCreated_AssigneeNotified(t *testing.T) {
 		cleanupTestIssue(t, issueID)
 	})
 
-	// Track inbox:new events
 	var inboxEvents []events.Event
 	bus.Subscribe(protocol.EventInboxNew, func(e events.Event) {
 		inboxEvents = append(inboxEvents, e)
 	})
 
+	return notificationIssueTestFixture{
+		queries:     queries,
+		bus:         bus,
+		issueID:     issueID,
+		inboxEvents: &inboxEvents,
+	}
+}
+
+func (f notificationIssueTestFixture) inboxEventCount() int {
+	return len(*f.inboxEvents)
+}
+
+// TestNotification_IssueCreated_AssigneeNotified verifies that when an issue is
+// created with an assignee different from the creator, the assignee receives an
+// "issue_assigned" inbox notification and the creator receives nothing.
+func TestNotification_IssueCreated_AssigneeNotified(t *testing.T) {
+	f := setupNotificationIssueTest(t)
+
+	assigneeAccount := "notif-assignee-created@multica"
+	assigneeID := createTestUser(t, assigneeAccount)
+	t.Cleanup(func() { cleanupTestUser(t, assigneeAccount) })
+
 	assigneeType := "member"
-	bus.Publish(events.Event{
+	f.bus.Publish(events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
 			"issue": handler.IssueResponse{
-				ID:           issueID,
+				ID:           f.issueID,
 				WorkspaceID:  testWorkspaceID,
 				Title:        "notif test issue",
 				Status:       "todo",
@@ -130,7 +152,7 @@ func TestNotification_IssueCreated_AssigneeNotified(t *testing.T) {
 	})
 
 	// Assignee should have an inbox item
-	items := inboxItemsForRecipient(t, queries, assigneeID)
+	items := inboxItemsForRecipient(t, f.queries, assigneeID)
 	if len(items) != 1 {
 		t.Fatalf("expected 1 inbox item for assignee, got %d", len(items))
 	}
@@ -142,42 +164,30 @@ func TestNotification_IssueCreated_AssigneeNotified(t *testing.T) {
 	}
 
 	// Creator (actor) should NOT have any inbox items
-	creatorItems := inboxItemsForRecipient(t, queries, testUserID)
+	creatorItems := inboxItemsForRecipient(t, f.queries, testUserID)
 	if len(creatorItems) != 0 {
 		t.Fatalf("expected 0 inbox items for creator, got %d", len(creatorItems))
 	}
 
 	// At least one inbox:new event should have been published
-	if len(inboxEvents) < 1 {
+	if f.inboxEventCount() < 1 {
 		t.Fatal("expected at least 1 inbox:new event")
 	}
 }
 
 func TestNotification_IssueCreated_SkipsUnsupportedSquadAssigneeDirectInbox(t *testing.T) {
-	queries := db.New(testPool)
-	bus := newNotificationBus(t, queries)
-
-	issueID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, issueID)
-		cleanupTestIssue(t, issueID)
-	})
-
-	var inboxEvents []events.Event
-	bus.Subscribe(protocol.EventInboxNew, func(e events.Event) {
-		inboxEvents = append(inboxEvents, e)
-	})
+	f := setupNotificationIssueTest(t)
 
 	assigneeType := "squad"
 	assigneeID := "11111111-2222-3333-4444-555555555555"
-	bus.Publish(events.Event{
+	f.bus.Publish(events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
 			"issue": handler.IssueResponse{
-				ID:           issueID,
+				ID:           f.issueID,
 				WorkspaceID:  testWorkspaceID,
 				Title:        "test squad issue",
 				Status:       "todo",
@@ -190,41 +200,29 @@ func TestNotification_IssueCreated_SkipsUnsupportedSquadAssigneeDirectInbox(t *t
 		},
 	})
 
-	if count := inboxItemCountForIssue(t, issueID); count != 0 {
+	if count := inboxItemCountForIssue(t, f.issueID); count != 0 {
 		t.Fatalf("expected no inbox items for unsupported squad assignee, got %d", count)
 	}
-	if len(inboxEvents) != 0 {
-		t.Fatalf("expected no inbox:new events for unsupported squad assignee, got %d", len(inboxEvents))
+	if f.inboxEventCount() != 0 {
+		t.Fatalf("expected no inbox:new events for unsupported squad assignee, got %d", f.inboxEventCount())
 	}
 }
 
 // TestNotification_IssueCreated_SelfAssign verifies that when the creator
 // assigns the issue to themselves, no notification is generated.
 func TestNotification_IssueCreated_SelfAssign(t *testing.T) {
-	queries := db.New(testPool)
-	bus := newNotificationBus(t, queries)
-
-	issueID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, issueID)
-		cleanupTestIssue(t, issueID)
-	})
-
-	var inboxEvents []events.Event
-	bus.Subscribe(protocol.EventInboxNew, func(e events.Event) {
-		inboxEvents = append(inboxEvents, e)
-	})
+	f := setupNotificationIssueTest(t)
 
 	assigneeType := "member"
 	assigneeID := testUserID // self-assign
-	bus.Publish(events.Event{
+	f.bus.Publish(events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
 			"issue": handler.IssueResponse{
-				ID:           issueID,
+				ID:           f.issueID,
 				WorkspaceID:  testWorkspaceID,
 				Title:        "self-assign issue",
 				Status:       "todo",
@@ -237,40 +235,28 @@ func TestNotification_IssueCreated_SelfAssign(t *testing.T) {
 		},
 	})
 
-	items := inboxItemsForRecipient(t, queries, testUserID)
+	items := inboxItemsForRecipient(t, f.queries, testUserID)
 	if len(items) != 0 {
 		t.Fatalf("expected 0 inbox items for self-assign, got %d", len(items))
 	}
-	if len(inboxEvents) != 0 {
-		t.Fatalf("expected 0 inbox:new events for self-assign, got %d", len(inboxEvents))
+	if f.inboxEventCount() != 0 {
+		t.Fatalf("expected 0 inbox:new events for self-assign, got %d", f.inboxEventCount())
 	}
 }
 
 // TestNotification_IssueCreated_NoAssignee verifies that when an issue is
 // created without an assignee, no notifications are generated.
 func TestNotification_IssueCreated_NoAssignee(t *testing.T) {
-	queries := db.New(testPool)
-	bus := newNotificationBus(t, queries)
+	f := setupNotificationIssueTest(t)
 
-	issueID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, issueID)
-		cleanupTestIssue(t, issueID)
-	})
-
-	var inboxEvents []events.Event
-	bus.Subscribe(protocol.EventInboxNew, func(e events.Event) {
-		inboxEvents = append(inboxEvents, e)
-	})
-
-	bus.Publish(events.Event{
+	f.bus.Publish(events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
 			"issue": handler.IssueResponse{
-				ID:          issueID,
+				ID:          f.issueID,
 				WorkspaceID: testWorkspaceID,
 				Title:       "no assignee issue",
 				Status:      "todo",
@@ -281,12 +267,12 @@ func TestNotification_IssueCreated_NoAssignee(t *testing.T) {
 		},
 	})
 
-	items := inboxItemsForRecipient(t, queries, testUserID)
+	items := inboxItemsForRecipient(t, f.queries, testUserID)
 	if len(items) != 0 {
 		t.Fatalf("expected 0 inbox items for no-assignee issue, got %d", len(items))
 	}
-	if len(inboxEvents) != 0 {
-		t.Fatalf("expected 0 inbox:new events, got %d", len(inboxEvents))
+	if f.inboxEventCount() != 0 {
+		t.Fatalf("expected 0 inbox:new events, got %d", f.inboxEventCount())
 	}
 }
 
