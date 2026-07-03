@@ -40,6 +40,19 @@ func newGCTestDaemon(t *testing.T, handler http.Handler) *Daemon {
 	return d
 }
 
+func newGCTestDaemonWithIssueGCStatus(t *testing.T, issueID, status string, updatedAt time.Time) *Daemon {
+	t.Helper()
+	mux := http.NewServeMux()
+	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]any{
+			"status":     status,
+			"updated_at": updatedAt,
+		})
+	})
+	return newGCTestDaemon(t, mux)
+}
+
 // createTaskDir creates a task directory with optional GC metadata.
 func createTaskDir(t *testing.T, root, wsID, dirName string, meta *execenv.GCMeta) string {
 	t.Helper()
@@ -60,16 +73,7 @@ func TestShouldCleanTaskDir_DoneIssueOverTTL(t *testing.T) {
 	t.Parallel()
 	issueID := "11111111-1111-1111-1111-111111111111"
 
-	mux := http.NewServeMux()
-	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"status":     "done",
-			"updated_at": time.Now().Add(-10 * 24 * time.Hour), // 10 days ago
-		})
-	})
-
-	d := newGCTestDaemon(t, mux)
+	d := newGCTestDaemonWithIssueGCStatus(t, issueID, "done", time.Now().Add(-10*24*time.Hour))
 	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws1", "task1", &execenv.GCMeta{
 		IssueID:     issueID,
 		WorkspaceID: "ws1",
@@ -86,16 +90,7 @@ func TestShouldCleanTaskDir_CancelledIssueOverTTL(t *testing.T) {
 	t.Parallel()
 	issueID := "22222222-2222-2222-2222-222222222222"
 
-	mux := http.NewServeMux()
-	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"status":     "cancelled",
-			"updated_at": time.Now().Add(-6 * 24 * time.Hour),
-		})
-	})
-
-	d := newGCTestDaemon(t, mux)
+	d := newGCTestDaemonWithIssueGCStatus(t, issueID, "cancelled", time.Now().Add(-6*24*time.Hour))
 	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws1", "task2", &execenv.GCMeta{
 		IssueID:     issueID,
 		WorkspaceID: "ws1",
@@ -112,16 +107,7 @@ func TestShouldCleanTaskDir_OpenIssueSkipped(t *testing.T) {
 	t.Parallel()
 	issueID := "33333333-3333-3333-3333-333333333333"
 
-	mux := http.NewServeMux()
-	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"status":     "in_progress",
-			"updated_at": time.Now().Add(-30 * 24 * time.Hour),
-		})
-	})
-
-	d := newGCTestDaemon(t, mux)
+	d := newGCTestDaemonWithIssueGCStatus(t, issueID, "in_progress", time.Now().Add(-30*24*time.Hour))
 	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws1", "task3", &execenv.GCMeta{
 		IssueID:     issueID,
 		WorkspaceID: "ws1",
@@ -138,16 +124,7 @@ func TestShouldCleanTaskDir_DoneButRecentSkipped(t *testing.T) {
 	t.Parallel()
 	issueID := "44444444-4444-4444-4444-444444444444"
 
-	mux := http.NewServeMux()
-	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"status":     "done",
-			"updated_at": time.Now().Add(-1 * 24 * time.Hour), // 1 day ago, within TTL
-		})
-	})
-
-	d := newGCTestDaemon(t, mux)
+	d := newGCTestDaemonWithIssueGCStatus(t, issueID, "done", time.Now().Add(-1*24*time.Hour))
 	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws1", "task4", &execenv.GCMeta{
 		IssueID:     issueID,
 		WorkspaceID: "ws1",
@@ -280,16 +257,7 @@ func TestGcWorkspace_CleansEmptyWorkspaceDir(t *testing.T) {
 	t.Parallel()
 	issueID := "77777777-7777-7777-7777-777777777777"
 
-	mux := http.NewServeMux()
-	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"status":     "done",
-			"updated_at": time.Now().Add(-10 * 24 * time.Hour),
-		})
-	})
-
-	d := newGCTestDaemon(t, mux)
+	d := newGCTestDaemonWithIssueGCStatus(t, issueID, "done", time.Now().Add(-10*24*time.Hour))
 	wsDir := filepath.Join(d.cfg.WorkspacesRoot, "ws-empty")
 	createTaskDir(t, d.cfg.WorkspacesRoot, "ws-empty", "only-task", &execenv.GCMeta{
 		IssueID:     issueID,
@@ -308,16 +276,7 @@ func TestShouldCleanTaskDir_OpenIssueArtifactCleanup(t *testing.T) {
 	t.Parallel()
 	issueID := "88888888-8888-8888-8888-888888888888"
 
-	mux := http.NewServeMux()
-	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"status":     "in_progress",
-			"updated_at": time.Now(),
-		})
-	})
-
-	d := newGCTestDaemon(t, mux)
+	d := newGCTestDaemonWithIssueGCStatus(t, issueID, "in_progress", time.Now())
 	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws1", "open-task", &execenv.GCMeta{
 		IssueID:     issueID,
 		WorkspaceID: "ws1",
@@ -334,16 +293,7 @@ func TestShouldCleanTaskDir_OpenIssueRecentTaskSkipped(t *testing.T) {
 	t.Parallel()
 	issueID := "88888888-8888-8888-8888-888888888889"
 
-	mux := http.NewServeMux()
-	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"status":     "in_progress",
-			"updated_at": time.Now(),
-		})
-	})
-
-	d := newGCTestDaemon(t, mux)
+	d := newGCTestDaemonWithIssueGCStatus(t, issueID, "in_progress", time.Now())
 	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws1", "fresh-task", &execenv.GCMeta{
 		IssueID:     issueID,
 		WorkspaceID: "ws1",
@@ -359,16 +309,7 @@ func TestShouldCleanTaskDir_ActiveEnvRootSkipsArtifactCleanup(t *testing.T) {
 	t.Parallel()
 	issueID := "88888888-8888-8888-8888-88888888888a"
 
-	mux := http.NewServeMux()
-	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"status":     "in_progress",
-			"updated_at": time.Now(),
-		})
-	})
-
-	d := newGCTestDaemon(t, mux)
+	d := newGCTestDaemonWithIssueGCStatus(t, issueID, "in_progress", time.Now())
 	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws1", "active-task", &execenv.GCMeta{
 		IssueID:     issueID,
 		WorkspaceID: "ws1",
