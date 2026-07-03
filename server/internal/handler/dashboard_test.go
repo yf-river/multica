@@ -9,6 +9,19 @@ import (
 	"time"
 )
 
+func loadDashboardRuntimeAgent(t *testing.T, ctx context.Context) (string, string) {
+	t.Helper()
+
+	var runtimeID, agentID string
+	if err := testPool.QueryRow(ctx, `SELECT id FROM agent_runtime WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&runtimeID); err != nil {
+		t.Fatalf("fetch runtime: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatalf("fetch agent: %v", err)
+	}
+	return runtimeID, agentID
+}
+
 // TestDashboardEndpoints covers the workspace-dashboard rollups:
 //   - daily token usage with and without project filter
 //   - per-agent token usage with and without project filter
@@ -24,17 +37,7 @@ func TestDashboardEndpoints(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	var runtimeID, agentID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT id FROM agent_runtime WHERE workspace_id = $1 LIMIT 1
-	`, testWorkspaceID).Scan(&runtimeID); err != nil {
-		t.Fatalf("fetch runtime: %v", err)
-	}
-	if err := testPool.QueryRow(ctx, `
-		SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1
-	`, testWorkspaceID).Scan(&agentID); err != nil {
-		t.Fatalf("fetch agent: %v", err)
-	}
+	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
 
 	// Two issues: one bound to a project, one not.
 	var projectID string
@@ -257,13 +260,7 @@ func TestDashboardUsageDailyBucketsByViewerTimezone(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	var runtimeID, agentID string
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent_runtime WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&runtimeID); err != nil {
-		t.Fatalf("fetch runtime: %v", err)
-	}
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
-		t.Fatalf("fetch agent: %v", err)
-	}
+	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
 
 	t.Cleanup(func() {
 		testPool.Exec(ctx, `DELETE FROM task_usage_hourly WHERE runtime_id = $1 AND provider = 'tz-bucket-test'`, runtimeID)
@@ -340,13 +337,7 @@ func TestDashboardRunTimeDailyBucketsByViewerTimezone(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	var runtimeID, agentID string
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent_runtime WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&runtimeID); err != nil {
-		t.Fatalf("fetch runtime: %v", err)
-	}
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
-		t.Fatalf("fetch agent: %v", err)
-	}
+	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
 
 	// Issue tagged so we can clean up just this test's rows.
 	var issueID string
@@ -434,13 +425,7 @@ func TestRollupTaskUsageHourlyIdempotentAndWatermark(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	var runtimeID, agentID string
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent_runtime WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&runtimeID); err != nil {
-		t.Fatalf("fetch runtime: %v", err)
-	}
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
-		t.Fatalf("fetch agent: %v", err)
-	}
+	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
 
 	var issueID, taskID string
 	if err := testPool.QueryRow(ctx, `
@@ -740,13 +725,7 @@ func TestDashboardRollupReattributesOnProjectChange(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	var runtimeID, agentID string
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent_runtime WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&runtimeID); err != nil {
-		t.Fatalf("fetch runtime: %v", err)
-	}
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
-		t.Fatalf("fetch agent: %v", err)
-	}
+	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
 
 	mkProject := func(name string) string {
 		var id string
@@ -850,13 +829,7 @@ func TestDashboardRollupClearsOnIssueDelete(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	var runtimeID, agentID string
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent_runtime WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&runtimeID); err != nil {
-		t.Fatalf("fetch runtime: %v", err)
-	}
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
-		t.Fatalf("fetch agent: %v", err)
-	}
+	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
 
 	var projectID string
 	if err := testPool.QueryRow(ctx, `
@@ -945,13 +918,7 @@ func TestDashboardRollupReattributesOnLinkTaskToIssue(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	var runtimeID, agentID string
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent_runtime WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&runtimeID); err != nil {
-		t.Fatalf("fetch runtime: %v", err)
-	}
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
-		t.Fatalf("fetch agent: %v", err)
-	}
+	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
 
 	// Quick-create task: issue_id is NULL at creation time.
 	var taskID string
@@ -1206,13 +1173,7 @@ func TestDashboardUsageDailyCrossMidnightFullPipeline(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	var runtimeID, agentID string
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent_runtime WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&runtimeID); err != nil {
-		t.Fatalf("fetch runtime: %v", err)
-	}
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
-		t.Fatalf("fetch agent: %v", err)
-	}
+	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
 
 	var issueID string
 	if err := testPool.QueryRow(ctx, `
@@ -1317,13 +1278,7 @@ func TestRollupTaskUsageHourlyConvergesOnTaskUsageDelete(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	var runtimeID, agentID string
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent_runtime WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&runtimeID); err != nil {
-		t.Fatalf("fetch runtime: %v", err)
-	}
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
-		t.Fatalf("fetch agent: %v", err)
-	}
+	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
 
 	var issueID string
 	if err := testPool.QueryRow(ctx, `
