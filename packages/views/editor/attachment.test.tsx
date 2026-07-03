@@ -154,6 +154,45 @@ function renderWithQuery(ui: ReactElement) {
   return render(<QueryClientProvider client={qc}>{ui}</QueryClientProvider>);
 }
 
+function renderInlineImageURL(url: string) {
+  renderWithQuery(
+    <Attachment
+      attachment={{
+        kind: "url",
+        url,
+        filename: "shot.png",
+        forceKind: "image",
+      }}
+    />,
+  );
+}
+
+function setupTokenModeInlineMedia({
+  resolverRecord,
+}: {
+  resolverRecord: boolean;
+}) {
+  getBaseUrlMock.mockReturnValue("https://multica-api.copilothub.ai");
+  configStore.setState({ cdnDomain: "cdn.example.test", cdnSigned: true });
+  const id = "11111111-2222-3333-4444-555555555555";
+  const markdownUrl = `https://multica-api.copilothub.ai/api/attachments/${id}/download`;
+  const signed =
+    "https://cdn.example.test/uploads/ws/shot.png?Signature=fresh&Key-Pair-Id=K";
+  if (resolverRecord) {
+    resolverState.attachments = [
+      makeRecord({
+        id,
+        url: "https://cdn.example.test/uploads/ws/shot.png",
+        markdown_url: markdownUrl,
+        download_url: "",
+      }),
+    ];
+  }
+  getAttachmentMock.mockResolvedValue(makeRecord({ id, download_url: signed }));
+  renderInlineImageURL(markdownUrl);
+  return { id, signed };
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   resolverState.attachments = [];
@@ -334,31 +373,7 @@ describe("Attachment — image dispatch", () => {
     // native <img> fetch, so the renderer must swap in a freshly signed URL
     // from authenticated attachment metadata — the reopened-draft case where
     // the persisted record deliberately strips the expired download_url.
-    getBaseUrlMock.mockReturnValue("https://multica-api.copilothub.ai");
-    configStore.setState({ cdnDomain: "cdn.example.test", cdnSigned: true });
-    const id = "11111111-2222-3333-4444-555555555555";
-    const markdownUrl = `https://multica-api.copilothub.ai/api/attachments/${id}/download`;
-    const signed =
-      "https://cdn.example.test/uploads/ws/shot.png?Signature=fresh&Key-Pair-Id=K";
-    const att = makeRecord({
-      id,
-      url: "https://cdn.example.test/uploads/ws/shot.png",
-      markdown_url: markdownUrl,
-      download_url: "",
-    });
-    resolverState.attachments = [att];
-    getAttachmentMock.mockResolvedValue(makeRecord({ id, download_url: signed }));
-
-    renderWithQuery(
-      <Attachment
-        attachment={{
-          kind: "url",
-          url: markdownUrl,
-          filename: "shot.png",
-          forceKind: "image",
-        }}
-      />,
-    );
+    const { id, signed } = setupTokenModeInlineMedia({ resolverRecord: true });
 
     await waitFor(() => {
       expect(document.querySelector("img")?.getAttribute("src")).toBe(signed);
@@ -371,24 +386,7 @@ describe("Attachment — image dispatch", () => {
     // is still recoverable from the URL itself. Token-mode clients must not
     // depend on the context resolver having a hydrated record before they can
     // fetch fresh signed metadata.
-    getBaseUrlMock.mockReturnValue("https://multica-api.copilothub.ai");
-    configStore.setState({ cdnDomain: "cdn.example.test", cdnSigned: true });
-    const id = "11111111-2222-3333-4444-555555555555";
-    const markdownUrl = `https://multica-api.copilothub.ai/api/attachments/${id}/download`;
-    const signed =
-      "https://cdn.example.test/uploads/ws/shot.png?Signature=fresh&Key-Pair-Id=K";
-    getAttachmentMock.mockResolvedValue(makeRecord({ id, download_url: signed }));
-
-    renderWithQuery(
-      <Attachment
-        attachment={{
-          kind: "url",
-          url: markdownUrl,
-          filename: "shot.png",
-          forceKind: "image",
-        }}
-      />,
-    );
+    const { id, signed } = setupTokenModeInlineMedia({ resolverRecord: false });
 
     await waitFor(() => {
       expect(document.querySelector("img")?.getAttribute("src")).toBe(signed);
