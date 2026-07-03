@@ -55,43 +55,63 @@ func cleanupRerunFixture(t *testing.T, issueID string) {
 	testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
 }
 
+type rerunTestFixture struct {
+	ctx       context.Context
+	queries   *db.Queries
+	issueID   string
+	agentID   string
+	runtimeID string
+}
+
+func setupRerunSessionTest(t *testing.T) rerunTestFixture {
+	t.Helper()
+	if testPool == nil {
+		t.Skip("no database connection")
+	}
+	issueID, agentID, runtimeID := setupRerunTestFixture(t)
+	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
+	return rerunTestFixture{
+		ctx:       context.Background(),
+		queries:   db.New(testPool),
+		issueID:   issueID,
+		agentID:   agentID,
+		runtimeID: runtimeID,
+	}
+}
+
+func (f rerunTestFixture) getLastTaskSession() (db.GetLastTaskSessionRow, error) {
+	return f.queries.GetLastTaskSession(f.ctx, db.GetLastTaskSessionParams{
+		AgentID: pgtype.UUID{Bytes: parseUUIDBytes(f.agentID), Valid: true},
+		IssueID: pgtype.UUID{Bytes: parseUUIDBytes(f.issueID), Valid: true},
+	})
+}
+
 // TestGetLastTaskSessionExcludesPoisonedFailures asserts that the
 // (agent_id, issue_id) resume lookup skips failed tasks whose
 // failure_reason classifies them as poisoned terminal output. This is the
 // SQL-level half of the rerun-poisoned-session fix: without the filter, a
 // rerun would inherit the same session and replay the same bad output.
 func TestGetLastTaskSessionExcludesPoisonedFailures(t *testing.T) {
-	if testPool == nil {
-		t.Skip("no database connection")
-	}
-
-	issueID, agentID, runtimeID := setupRerunTestFixture(t)
-	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
-
-	ctx := context.Background()
+	f := setupRerunSessionTest(t)
 
 	// Insert an older failed task with a poisoned classifier and a session_id.
 	// The poisoned task is the *most recent* one, so without the filter the
 	// resume lookup would return its session_id.
-	if _, err := testPool.Exec(ctx, `
+	if _, err := testPool.Exec(f.ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason)
 		VALUES ($1, $2, $3, 'failed', 0, now() - interval '2 minutes', now() - interval '2 minutes', 'HEALTHY-SESSION', '/tmp/healthy', 'timeout')
-	`, agentID, runtimeID, issueID); err != nil {
+	`, f.agentID, f.runtimeID, f.issueID); err != nil {
 		t.Fatalf("insert healthy failed task: %v", err)
 	}
 
-	if _, err := testPool.Exec(ctx, `
+	if _, err := testPool.Exec(f.ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason)
 		VALUES ($1, $2, $3, 'failed', 0, now() - interval '1 minute', now() - interval '1 minute', 'POISONED-SESSION', '/tmp/poisoned', 'iteration_limit')
-	`, agentID, runtimeID, issueID); err != nil {
+	`, f.agentID, f.runtimeID, f.issueID); err != nil {
 		t.Fatalf("insert poisoned failed task: %v", err)
 	}
 
-	queries := db.New(testPool)
-	prior, err := queries.GetLastTaskSession(ctx, db.GetLastTaskSessionParams{
-		AgentID: pgtype.UUID{Bytes: parseUUIDBytes(agentID), Valid: true},
-		IssueID: pgtype.UUID{Bytes: parseUUIDBytes(issueID), Valid: true},
-	})
+	prior, err := f.getLastTaskSession()
 	if err != nil {
 		t.Fatalf("GetLastTaskSession failed: %v", err)
 	}
@@ -109,27 +129,16 @@ func TestGetLastTaskSessionExcludesPoisonedFailures(t *testing.T) {
 // TestGetLastTaskSessionFallbackPoisonedClassifier covers the second
 // poisoned classifier so adding a third doesn't silently break this rule.
 func TestGetLastTaskSessionFallbackPoisonedClassifier(t *testing.T) {
-	if testPool == nil {
-		t.Skip("no database connection")
-	}
+	f := setupRerunSessionTest(t)
 
-	issueID, agentID, runtimeID := setupRerunTestFixture(t)
-	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
-
-	ctx := context.Background()
-
-	if _, err := testPool.Exec(ctx, `
+	if _, err := testPool.Exec(f.ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason)
 		VALUES ($1, $2, $3, 'failed', 0, now() - interval '5 seconds', now() - interval '5 seconds', 'POISONED-FALLBACK', '/tmp/poisoned', 'agent_fallback_message')
-	`, agentID, runtimeID, issueID); err != nil {
+	`, f.agentID, f.runtimeID, f.issueID); err != nil {
 		t.Fatalf("insert poisoned failed task: %v", err)
 	}
 
-	queries := db.New(testPool)
-	prior, err := queries.GetLastTaskSession(ctx, db.GetLastTaskSessionParams{
-		AgentID: pgtype.UUID{Bytes: parseUUIDBytes(agentID), Valid: true},
-		IssueID: pgtype.UUID{Bytes: parseUUIDBytes(issueID), Valid: true},
-	})
+	prior, err := f.getLastTaskSession()
 	if err == nil && prior.SessionID.Valid {
 		t.Fatalf("expected no resumable session, got %q", prior.SessionID.String)
 	}
@@ -142,27 +151,16 @@ func TestGetLastTaskSessionFallbackPoisonedClassifier(t *testing.T) {
 // forever. The daemon classifies these as 'api_invalid_request' and the
 // SQL filter must skip them on the resume lookup.
 func TestGetLastTaskSessionExcludesAPIInvalidRequest(t *testing.T) {
-	if testPool == nil {
-		t.Skip("no database connection")
-	}
+	f := setupRerunSessionTest(t)
 
-	issueID, agentID, runtimeID := setupRerunTestFixture(t)
-	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
-
-	ctx := context.Background()
-
-	if _, err := testPool.Exec(ctx, `
+	if _, err := testPool.Exec(f.ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason)
 		VALUES ($1, $2, $3, 'failed', 0, now() - interval '5 seconds', now() - interval '5 seconds', 'POISONED-API400', '/tmp/poisoned', 'api_invalid_request')
-	`, agentID, runtimeID, issueID); err != nil {
+	`, f.agentID, f.runtimeID, f.issueID); err != nil {
 		t.Fatalf("insert poisoned failed task: %v", err)
 	}
 
-	queries := db.New(testPool)
-	prior, err := queries.GetLastTaskSession(ctx, db.GetLastTaskSessionParams{
-		AgentID: pgtype.UUID{Bytes: parseUUIDBytes(agentID), Valid: true},
-		IssueID: pgtype.UUID{Bytes: parseUUIDBytes(issueID), Valid: true},
-	})
+	prior, err := f.getLastTaskSession()
 	if err == nil && prior.SessionID.Valid {
 		t.Fatalf("expected no resumable session for api_invalid_request, got %q", prior.SessionID.String)
 	}
@@ -173,35 +171,24 @@ func TestGetLastTaskSessionExcludesAPIInvalidRequest(t *testing.T) {
 // resuming it can replay the same stuck Codex state. The resume lookup must
 // skip that session.
 func TestGetLastTaskSessionExcludesCodexSemanticInactivity(t *testing.T) {
-	if testPool == nil {
-		t.Skip("no database connection")
-	}
+	f := setupRerunSessionTest(t)
 
-	issueID, agentID, runtimeID := setupRerunTestFixture(t)
-	t.Cleanup(func() { cleanupRerunFixture(t, issueID) })
-
-	ctx := context.Background()
-
-	if _, err := testPool.Exec(ctx, `
+	if _, err := testPool.Exec(f.ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason)
 		VALUES ($1, $2, $3, 'failed', 0, now() - interval '2 minutes', now() - interval '2 minutes', 'HEALTHY-SESSION', '/tmp/healthy', 'timeout')
-	`, agentID, runtimeID, issueID); err != nil {
+	`, f.agentID, f.runtimeID, f.issueID); err != nil {
 		t.Fatalf("insert healthy failed task: %v", err)
 	}
 
-	if _, err := testPool.Exec(ctx, `
+	if _, err := testPool.Exec(f.ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, started_at, completed_at, session_id, work_dir, failure_reason, error)
 		VALUES ($1, $2, $3, 'failed', 0, now() - interval '1 minute', now() - interval '1 minute', 'CODEX-STUCK-SESSION', '/tmp/codex-stuck', 'codex_semantic_inactivity',
 		        'codex semantic inactivity timeout after 10m0s without agent progress (last activity: tool-result:exec_command)')
-	`, agentID, runtimeID, issueID); err != nil {
+	`, f.agentID, f.runtimeID, f.issueID); err != nil {
 		t.Fatalf("insert codex semantic inactivity task: %v", err)
 	}
 
-	queries := db.New(testPool)
-	prior, err := queries.GetLastTaskSession(ctx, db.GetLastTaskSessionParams{
-		AgentID: pgtype.UUID{Bytes: parseUUIDBytes(agentID), Valid: true},
-		IssueID: pgtype.UUID{Bytes: parseUUIDBytes(issueID), Valid: true},
-	})
+	prior, err := f.getLastTaskSession()
 	if err != nil {
 		t.Fatalf("GetLastTaskSession failed: %v", err)
 	}
