@@ -1,7 +1,10 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { renderHook, act, waitFor } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { Issue } from "@multica/core/types";
+import {
+  IssueActionsQueryProvider,
+  mockIssue,
+} from "./issue-actions-test-helpers";
 
 vi.mock("@multica/core/hooks", () => ({
   useWorkspaceId: () => "ws-1",
@@ -76,33 +79,7 @@ vi.mock("sonner", () => ({
 // Import AFTER mocks are registered.
 import { useIssueActions } from "../use-issue-actions";
 
-const mockIssue: Issue = {
-  id: "issue-1",
-  workspace_id: "ws-1",
-  number: 1,
-  identifier: "TES-1",
-  title: "Example",
-  description: null,
-  status: "todo",
-  priority: "medium",
-  assignee_type: null,
-  assignee_id: null,
-  creator_type: "member",
-  creator_id: "user-1",
-  parent_issue_id: null,
-  start_date: null,
-  due_date: null,
-  project_id: null,
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-} as Issue;
-
-function wrapper({ children }: { children: React.ReactNode }) {
-  const qc = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  return <QueryClientProvider client={qc}>{children}</QueryClientProvider>;
-}
+const hookOptions = { wrapper: IssueActionsQueryProvider };
 
 beforeEach(() => {
   mockOpenModal.mockReset();
@@ -119,7 +96,7 @@ beforeEach(() => {
 
 describe("useIssueActions", () => {
   it("updateField dispatches useUpdateIssue.mutate with the correct payload", () => {
-    const { result } = renderHook(() => useIssueActions(mockIssue), { wrapper });
+    const { result } = renderHook(() => useIssueActions(mockIssue), hookOptions);
 
     act(() => {
       result.current.updateField({ status: "done" });
@@ -133,7 +110,7 @@ describe("useIssueActions", () => {
 
   it("assigning an agent to a backlog issue opens the backlog-hint modal", () => {
     const backlogIssue = { ...mockIssue, status: "backlog" } as Issue;
-    const { result } = renderHook(() => useIssueActions(backlogIssue), { wrapper });
+    const { result } = renderHook(() => useIssueActions(backlogIssue), hookOptions);
 
     act(() => {
       result.current.updateField({
@@ -150,7 +127,7 @@ describe("useIssueActions", () => {
   it("does not re-open backlog-hint when the user has dismissed it", () => {
     localStorage.setItem("multica:backlog-agent-hint-dismissed", "true");
     const backlogIssue = { ...mockIssue, status: "backlog" } as Issue;
-    const { result } = renderHook(() => useIssueActions(backlogIssue), { wrapper });
+    const { result } = renderHook(() => useIssueActions(backlogIssue), hookOptions);
 
     act(() => {
       result.current.updateField({
@@ -163,7 +140,7 @@ describe("useIssueActions", () => {
   });
 
   it("copyLink writes the issue's shareable URL to the clipboard", async () => {
-    const { result } = renderHook(() => useIssueActions(mockIssue), { wrapper });
+    const { result } = renderHook(() => useIssueActions(mockIssue), hookOptions);
 
     await act(async () => {
       await result.current.copyLink();
@@ -175,7 +152,7 @@ describe("useIssueActions", () => {
   });
 
   it("openSetParent / openAddChild / openDeleteConfirm / openCreateSubIssue open the correct modal with payload", () => {
-    const { result } = renderHook(() => useIssueActions(mockIssue), { wrapper });
+    const { result } = renderHook(() => useIssueActions(mockIssue), hookOptions);
 
     act(() => {
       result.current.openSetParent();
@@ -211,7 +188,7 @@ describe("useIssueActions", () => {
 
   it("togglePin calls createPin when not pinned and deletePin when pinned", async () => {
     pinListRef.value = [];
-    const { result: r1 } = renderHook(() => useIssueActions(mockIssue), { wrapper });
+    const { result: r1 } = renderHook(() => useIssueActions(mockIssue), hookOptions);
     await waitFor(() => {
       expect(r1.current.isPinned).toBe(false);
     });
@@ -227,7 +204,7 @@ describe("useIssueActions", () => {
     mockCreatePinMutate.mockReset();
     mockDeletePinMutate.mockReset();
     pinListRef.value = [{ item_type: "issue", item_id: "issue-1" }];
-    const { result: r2 } = renderHook(() => useIssueActions(mockIssue), { wrapper });
+    const { result: r2 } = renderHook(() => useIssueActions(mockIssue), hookOptions);
     await waitFor(() => {
       expect(r2.current.isPinned).toBe(true);
     });
@@ -242,7 +219,7 @@ describe("useIssueActions", () => {
   });
 
   it("is a safe no-op when issue is null", () => {
-    const { result } = renderHook(() => useIssueActions(null), { wrapper });
+    const { result } = renderHook(() => useIssueActions(null), hookOptions);
 
     act(() => {
       result.current.updateField({ status: "done" });

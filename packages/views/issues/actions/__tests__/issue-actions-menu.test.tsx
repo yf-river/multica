@@ -1,12 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import { render, screen, fireEvent } from "@testing-library/react";
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import type { Issue } from "@multica/core/types";
-import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../../locales/zh-Hans/common.json";
-import enIssues from "../../../locales/zh-Hans/issues.json";
-
-const TEST_RESOURCES = { "zh-Hans": { common: enCommon, issues: enIssues } };
+import { mockIssue, wrapIssueActionsMenu } from "./issue-actions-test-helpers";
 
 // ---------------------------------------------------------------------------
 // Mocks — same pattern as the issue-detail test suite.
@@ -108,38 +102,6 @@ vi.mock("../../../common/actor-avatar", () => ({
 import { IssueActionsDropdown } from "../issue-actions-dropdown";
 import { IssueActionsContextMenu } from "../issue-actions-context-menu";
 
-const mockIssue: Issue = {
-  id: "issue-1",
-  workspace_id: "ws-1",
-  number: 1,
-  identifier: "TES-1",
-  title: "Example",
-  description: null,
-  status: "todo",
-  priority: "medium",
-  assignee_type: null,
-  assignee_id: null,
-  creator_type: "member",
-  creator_id: "user-1",
-  parent_issue_id: null,
-  start_date: null,
-  due_date: null,
-  project_id: null,
-  created_at: "2026-01-01T00:00:00Z",
-  updated_at: "2026-01-01T00:00:00Z",
-} as Issue;
-
-function wrap(ui: React.ReactNode) {
-  const qc = new QueryClient({
-    defaultOptions: { queries: { retry: false } },
-  });
-  return (
-    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
-      <QueryClientProvider client={qc}>{ui}</QueryClientProvider>
-    </I18nProvider>
-  );
-}
-
 beforeEach(() => {
   mockOpenModal.mockReset();
 });
@@ -147,7 +109,7 @@ beforeEach(() => {
 describe("IssueActionsDropdown", () => {
   it("renders the top-level items when the trigger is clicked", async () => {
     render(
-      wrap(
+      wrapIssueActionsMenu(
         <IssueActionsDropdown
           issue={mockIssue}
           trigger={<button data-testid="trigger">Menu</button>}
@@ -173,7 +135,7 @@ describe("IssueActionsDropdown", () => {
 
   it("clicking the Assignee item opens the shared AssigneePicker popover", async () => {
     render(
-      wrap(
+      wrapIssueActionsMenu(
         <IssueActionsDropdown
           issue={mockIssue}
           trigger={<button data-testid="trigger">Menu</button>}
@@ -196,7 +158,7 @@ describe("IssueActionsDropdown", () => {
 
   it("clicking Delete task opens the delete-confirm modal", async () => {
     render(
-      wrap(
+      wrapIssueActionsMenu(
         <IssueActionsDropdown
           issue={mockIssue}
           trigger={<button data-testid="trigger">Menu</button>}
@@ -220,7 +182,7 @@ describe("IssueActionsDropdown", () => {
 describe("IssueActionsContextMenu", () => {
   it("renders the menu when the wrapped element receives a contextmenu event", async () => {
     render(
-      wrap(
+      wrapIssueActionsMenu(
         <IssueActionsContextMenu issue={mockIssue}>
           <div data-testid="row">Row</div>
         </IssueActionsContextMenu>,
