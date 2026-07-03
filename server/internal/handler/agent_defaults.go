@@ -1,3 +1,3 @@
 package handler
 
-const defaultAgentMaxConcurrentTasks int32 = 5
+const defaultAgentMaxConcurrentTasks int32 = 20

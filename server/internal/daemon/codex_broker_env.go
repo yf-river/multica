@@ -5,7 +5,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
@@ -66,20 +65,15 @@ func runtimeCodexHomeForBroker() string {
 }
 
 func prepareCodexBrokerProcessEnv(agentEnv map[string]string, taskCodexHome string, logger *slog.Logger) (map[string]string, error) {
-	runtimeHome := runtimeCodexHomeForBroker()
+	runtimeHome := strings.TrimSpace(taskCodexHome)
 	if runtimeHome == "" {
-		runtimeHome = strings.TrimSpace(taskCodexHome)
+		runtimeHome = runtimeCodexHomeForBroker()
 	}
 	if runtimeHome == "" {
 		return nil, fmt.Errorf("codex broker requires MULTICA_CODEX_HOME or CODEX_HOME")
 	}
 	if err := os.MkdirAll(runtimeHome, 0o700); err != nil {
 		return nil, fmt.Errorf("create codex broker home: %w", err)
-	}
-	if taskCodexHome != "" {
-		if err := syncCodexBrokerSkills(runtimeHome, taskCodexHome); err != nil {
-			return nil, err
-		}
 	}
 	skillsHash, err := hashDir(filepath.Join(runtimeHome, "skills"))
 	if err != nil {
@@ -111,59 +105,6 @@ var codexBrokerTaskScopedEnvKeys = []string{
 	"MULTICA_AUTOPILOT_ID",
 	"MULTICA_QUICK_CREATE_TASK_ID",
 	"MULTICA_QUICK_CREATE_ATTACHMENT_IDS",
-}
-
-func syncCodexBrokerSkills(runtimeHome, taskCodexHome string) error {
-	src := filepath.Join(taskCodexHome, "skills")
-	dst := filepath.Join(runtimeHome, "skills")
-	if err := os.RemoveAll(dst); err != nil {
-		return fmt.Errorf("clear codex broker skills: %w", err)
-	}
-	if info, err := os.Stat(src); err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("stat task codex skills: %w", err)
-	} else if !info.IsDir() {
-		return nil
-	}
-	return copyDirForCodexBroker(src, dst)
-}
-
-func copyDirForCodexBroker(src, dst string) error {
-	return filepath.WalkDir(src, func(path string, d os.DirEntry, walkErr error) error {
-		if walkErr != nil {
-			return walkErr
-		}
-		rel, err := filepath.Rel(src, path)
-		if err != nil {
-			return err
-		}
-		target := filepath.Join(dst, rel)
-		if d.IsDir() {
-			return os.MkdirAll(target, 0o755)
-		}
-		if !d.Type().IsRegular() {
-			return nil
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
-		}
-		in, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		defer in.Close()
-		out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o644)
-		if err != nil {
-			return err
-		}
-		if _, err := io.Copy(out, in); err != nil {
-			_ = out.Close()
-			return err
-		}
-		return out.Close()
-	})
 }
 
 func hashDir(root string) (string, error) {

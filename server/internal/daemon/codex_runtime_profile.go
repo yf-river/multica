@@ -14,27 +14,25 @@ var codexRuntimeProfileFiles = []string{
 	"instructions.md",
 }
 
-// ensureCodexRuntimeProfile gives daemon-managed Codex tasks a shared profile
-// home that is separate from the user's interactive CODEX_HOME. On first use
-// it silently seeds the profile from the existing CODEX_HOME or ~/.codex so
-// users do not have to log in again.
-func ensureCodexRuntimeProfile(daemonID string) error {
+// ensureCodexRuntimeProfile resolves the shared Codex home used to seed
+// task-local CODEX_HOME directories. By default it uses the user's active
+// Codex home directly; an explicit MULTICA_CODEX_HOME remains supported for
+// operators who still want a separate runtime profile.
+func ensureCodexRuntimeProfile(_ string) error {
 	target := strings.TrimSpace(os.Getenv("MULTICA_CODEX_HOME"))
 	source := strings.TrimSpace(os.Getenv("MULTICA_CODEX_SOURCE_HOME"))
 	if source == "" {
 		source = strings.TrimSpace(os.Getenv("CODEX_HOME"))
 	}
-	if target == "" {
-		defaultTarget, err := defaultCodexRuntimeProfileHome(daemonID)
-		if err != nil {
-			return err
-		}
-		target = defaultTarget
-	}
 	if source == "" {
 		if home, err := os.UserHomeDir(); err == nil {
 			source = filepath.Join(home, ".codex")
+		} else {
+			return fmt.Errorf("resolve user home for codex runtime profile: %w", err)
 		}
+	}
+	if target == "" {
+		target = source
 	}
 	targetAbs, err := filepath.Abs(target)
 	if err != nil {
@@ -57,41 +55,6 @@ func ensureCodexRuntimeProfile(daemonID string) error {
 	_ = os.Setenv("MULTICA_CODEX_HOME", targetAbs)
 	_ = os.Setenv("CODEX_HOME", targetAbs)
 	return nil
-}
-
-func defaultCodexRuntimeProfileHome(daemonID string) (string, error) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("resolve user home for codex runtime profile: %w", err)
-	}
-	id := sanitizeRuntimeProfilePathPart(daemonID)
-	if id == "" {
-		id = "default"
-	}
-	return filepath.Join(home, ".multica", "runtimes", id, "codex", "CODEX_HOME"), nil
-}
-
-func sanitizeRuntimeProfilePathPart(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	var b strings.Builder
-	for _, r := range value {
-		switch {
-		case r >= 'a' && r <= 'z':
-			b.WriteRune(r)
-		case r >= 'A' && r <= 'Z':
-			b.WriteRune(r)
-		case r >= '0' && r <= '9':
-			b.WriteRune(r)
-		case r == '.', r == '_', r == '-':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('-')
-		}
-	}
-	return strings.Trim(b.String(), ".-")
 }
 
 func seedCodexRuntimeProfile(target, source string) error {

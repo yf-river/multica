@@ -59,7 +59,7 @@ only.
 | `thinking_level` provider-level validation | 673–676 | `!agent.IsKnownThinkingValue(runtime.Provider, req.ThinkingLevel)` → 400; per-model gaps deferred to daemon (comment 669–672, MUL-2339) |
 | Defaults: `{}` config/env, `[]` args | 688–701 | `RuntimeConfig`→`{}`, `CustomEnv`→`{}`, `CustomArgs`→`[]` when nil, before insert |
 | `scope` default + runtime compatibility | 635–636 | omitted `scope` defaults to `personal`; `personal` agents require same-owner personal runtimes, `workspace` agents require workspace runtimes — access-control field, not the runtime prompt |
-| `max_concurrent_tasks` default | 638–639 | `if req.MaxConcurrentTasks == 0 { req.MaxConcurrentTasks = 5 }` — scheduler cap |
+| `max_concurrent_tasks` default | 638–639 | `if req.MaxConcurrentTasks == 0 { req.MaxConcurrentTasks = 20 }` — scheduler cap |
 | `mcp_config` null-skip on create | 704–705 | raw JSON copied through unless the body value is the literal `null` |
 | `mcp_config` redacted on read | 54, 848–851 | `redactMcpConfig` sets `McpConfigRedacted=true`; a personal agent read by a member also redacts (494, 509) |
 | `CreateAgent` insert params | 708–722 | persists runtime_config, instructions, custom_env, custom_args, model, thinking_level, mcp_config, scope, max_concurrent_tasks |

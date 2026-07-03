@@ -1,6 +1,17 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import {
+  copyFileSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  readFileSync,
+  readlinkSync,
+  renameSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import path from "node:path";
 import process from "node:process";
 
@@ -11,9 +22,6 @@ const deploymentDir = path.join(runDir, "deployments");
 const logArchiveDir = path.join(runDir, "log-archive");
 const workspacesDir = path.join(runDir, "workspaces");
 const publicHost = process.env.GOAL_TEST_PUBLIC_HOST || "9.134.129.162";
-const proxyEnvKeys = ["HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy"];
-const noProxyEnvKeys = ["NO_PROXY", "no_proxy"];
-
 const profiles = {
   prod: {
     name: "prod",
@@ -61,10 +69,6 @@ if (command === "ensure") {
   restartDevDaemon(profile);
 } else if (command === "dev-check") {
   runDevCheck(profile);
-} else if (command === "codex-network-check") {
-  const evidence = runCodexNetworkCheck(profile, { strong: process.argv.includes("--responses-smoke") });
-  console.log(JSON.stringify(evidence, null, 2));
-  if (!evidence.ok) process.exit(2);
 } else if (command === "verify") {
   const evidence = profileName === "all" ? verifyAll() : verifyTarget(profile);
   console.log(JSON.stringify(evidence, null, 2));
@@ -175,12 +179,6 @@ async function deployEnvironment(item, build) {
   waitForHTTP(`http://127.0.0.1:${item.frontendPort}/login`, 90_000);
   webPID = listeningPID(item.frontendPort) || webPID;
   const webPrewarm = await prewarmDevWebRoutes(item);
-  const codexPreflight = runCodexNetworkCheckWithEnv(item, env, {
-    strong: isTruthy(env.GOAL_TEST_CODEX_RESPONSES_SMOKE),
-  });
-  if (!codexPreflight.ok) {
-    fail(`codex runner network preflight failed\n${JSON.stringify(codexPreflight, null, 2)}`);
-  }
   const daemonPID = startDetached("./server/bin/multica", daemonStartArgs(item), env, logPath(item, "daemon"));
 
   writeFileSync(pidPath(item, "server"), `${serverPID}\n`);
@@ -202,8 +200,7 @@ async function deployEnvironment(item, build) {
     daemon_id: item.daemonID,
     daemon_workspaces_root: env.MULTICA_WORKSPACES_ROOT,
     daemon_max_concurrent_tasks: daemonConcurrencyMetadata(env),
-    codex_runner: codexPreflight.runner,
-    codex_network_preflight: codexPreflight,
+    codex_runner: summarizeCodexRunnerEnv(item, applyEnvPreview(env)),
     frontend_mode: item.frontendMode,
     binary_versions: {
       multica: binaryVersion("./server/bin/multica", ["version"], env),
@@ -308,25 +305,17 @@ function restartDevDaemon(item) {
   buildMulticaBinary(env);
   waitForHTTP(`http://127.0.0.1:${item.backendPort}/health`, 10_000);
   refreshDaemonProfileToken(item);
-  const preflight = runCodexNetworkCheckWithEnv(item, env, {
-    strong: isTruthy(env.GOAL_TEST_CODEX_RESPONSES_SMOKE),
-  });
-  if (!preflight.ok) {
-    fail(`codex runner network preflight failed\n${JSON.stringify(preflight, null, 2)}`);
-  }
   stopPid(pidPath(item, "daemon"));
   const daemonPID = startDaemonProcess(item, env);
   updateFastDeploymentMetadata(item, env, { daemon: daemonPID }, "dev-daemon", {
-    codex_runner: preflight.runner,
-    codex_network_preflight: preflight,
+    codex_runner: summarizeCodexRunnerEnv(item, applyEnvPreview(env)),
   });
   console.log(JSON.stringify({
     environment: item.name,
     action: "dev-daemon",
     status: "restarted",
     daemon_profile: item.daemonProfile,
-    codex_runner: preflight.runner,
-    codex_network_preflight: preflight,
+    codex_runner: summarizeCodexRunnerEnv(item, applyEnvPreview(env)),
     pid: daemonPID,
   }, null, 2));
 }
@@ -414,7 +403,7 @@ function daemonStartArgs(item) {
 function daemonConcurrencyMetadata(env) {
   const raw = String(env.MULTICA_DAEMON_MAX_CONCURRENT_TASKS || "").trim();
   if (!raw) {
-    return { source: "daemon_default", value: null };
+    return { source: "daemon_default", value: 20 };
   }
   const parsed = Number.parseInt(raw, 10);
   return {
@@ -800,7 +789,7 @@ function describeEnvironment(item) {
     daemon_profile: item.daemonProfile,
     daemon_id: item.daemonID,
     daemon_workspaces_root: env.MULTICA_WORKSPACES_ROOT || "",
-    codex_runner: summarizeCodexRunnerEnv(item, applyEnvPreview(env), isTruthy(env.GOAL_TEST_CODEX_RESPONSES_SMOKE)),
+    codex_runner: summarizeCodexRunnerEnv(item, applyEnvPreview(env)),
     env_file: envPath(item),
     frontend_mode: item.frontendMode,
   };
@@ -911,26 +900,6 @@ function isAllowedLogNoise(service, line) {
 }
 
 function resolveCodexRunnerProfile(item, base) {
-  const explicitMode = firstNonEmpty(process.env.GOAL_TEST_CODEX_PROXY_MODE, base.GOAL_TEST_CODEX_PROXY_MODE);
-  const explicitProxy = firstNonEmpty(process.env.GOAL_TEST_CODEX_PROXY_URL, base.GOAL_TEST_CODEX_PROXY_URL);
-  const ambientProxy = firstNonEmpty(
-    process.env.HTTPS_PROXY,
-    process.env.HTTP_PROXY,
-    process.env.ALL_PROXY,
-    base.HTTPS_PROXY,
-    base.HTTP_PROXY,
-    base.ALL_PROXY,
-    process.env.https_proxy,
-    process.env.http_proxy,
-    process.env.all_proxy,
-    base.https_proxy,
-    base.http_proxy,
-    base.all_proxy,
-  );
-  const rawProxy = String(explicitProxy || ambientProxy || "").trim();
-  const requestedMode = String(explicitMode || "").trim().toLowerCase();
-  const proxyMode = requestedMode === "direct" || isDirectProxyValue(rawProxy) ? "direct" : rawProxy ? "proxy" : "direct";
-  const proxyURL = proxyMode === "proxy" ? rawProxy : "";
   const sourceHome = firstNonEmpty(
     process.env.GOAL_TEST_CODEX_SOURCE_HOME,
     base.GOAL_TEST_CODEX_SOURCE_HOME,
@@ -938,37 +907,21 @@ function resolveCodexRunnerProfile(item, base) {
     base.MULTICA_CODEX_SOURCE_HOME,
     process.env.CODEX_HOME,
     base.CODEX_HOME,
+    defaultGoalTestCodexHome(),
   );
-  const defaultHome = defaultGoalTestCodexHome(item, sourceHome);
   return {
     runnerID: firstNonEmpty(process.env.GOAL_TEST_CODEX_RUNNER_ID, base.GOAL_TEST_CODEX_RUNNER_ID, item.daemonID),
-    proxyMode,
-    proxyURL,
-    noProxy: firstNonEmpty(
-      process.env.GOAL_TEST_CODEX_NO_PROXY,
-      base.GOAL_TEST_CODEX_NO_PROXY,
-      process.env.NO_PROXY,
-      base.NO_PROXY,
-      process.env.no_proxy,
-      base.no_proxy,
-      "localhost,127.0.0.1,.local,.tencent.com,.oa.com,.svc,.svc.cluster.local",
-    ),
-    codexHome: firstNonEmpty(process.env.GOAL_TEST_CODEX_HOME, base.GOAL_TEST_CODEX_HOME, process.env.MULTICA_CODEX_HOME, base.MULTICA_CODEX_HOME, defaultHome),
+    codexHome: firstNonEmpty(process.env.GOAL_TEST_CODEX_HOME, base.GOAL_TEST_CODEX_HOME, process.env.MULTICA_CODEX_HOME, base.MULTICA_CODEX_HOME, sourceHome),
     sourceHome,
     codexPath: firstNonEmpty(process.env.GOAL_TEST_CODEX_PATH, base.GOAL_TEST_CODEX_PATH, process.env.MULTICA_CODEX_PATH, base.MULTICA_CODEX_PATH, "codex"),
     codexModel: firstNonEmpty(process.env.GOAL_TEST_CODEX_MODEL, base.GOAL_TEST_CODEX_MODEL, process.env.MULTICA_CODEX_MODEL, base.MULTICA_CODEX_MODEL),
-    codexSmokeModel: firstNonEmpty(process.env.GOAL_TEST_CODEX_SMOKE_MODEL, base.GOAL_TEST_CODEX_SMOKE_MODEL, process.env.GOAL_TEST_REAL_AGENT_FALLBACK_MODEL, "gpt-5.4-mini"),
     imageGeneration: firstNonEmpty(process.env.MULTICA_CODEX_IMAGE_GENERATION, base.MULTICA_CODEX_IMAGE_GENERATION, "disabled"),
-    responsesSmoke: firstNonEmpty(process.env.GOAL_TEST_CODEX_RESPONSES_SMOKE, base.GOAL_TEST_CODEX_RESPONSES_SMOKE, "1"),
   };
 }
 
 function codexRunnerEnvLines(runner) {
   const lines = [
     `GOAL_TEST_CODEX_RUNNER_ID=${runner.runnerID}`,
-    `GOAL_TEST_CODEX_PROXY_MODE=${runner.proxyMode}`,
-    `GOAL_TEST_CODEX_PROXY_URL=${runner.proxyURL}`,
-    `GOAL_TEST_CODEX_NO_PROXY=${runner.noProxy}`,
     `GOAL_TEST_CODEX_PATH=${runner.codexPath}`,
     `MULTICA_CODEX_PATH=${runner.codexPath}`,
     `MULTICA_CODEX_IMAGE_GENERATION=${runner.imageGeneration}`,
@@ -986,23 +939,6 @@ function codexRunnerEnvLines(runner) {
     lines.push(`GOAL_TEST_CODEX_MODEL=${runner.codexModel}`);
     lines.push(`MULTICA_CODEX_MODEL=${runner.codexModel}`);
   }
-  if (runner.codexSmokeModel) {
-    lines.push(`GOAL_TEST_CODEX_SMOKE_MODEL=${runner.codexSmokeModel}`);
-    lines.push(`MULTICA_CODEX_SMOKE_MODEL=${runner.codexSmokeModel}`);
-  }
-  if (runner.responsesSmoke) lines.push(`GOAL_TEST_CODEX_RESPONSES_SMOKE=${runner.responsesSmoke}`);
-  if (runner.responsesSmoke) lines.push(`MULTICA_CODEX_RESPONSES_SMOKE=${runner.responsesSmoke}`);
-  if (runner.proxyMode === "proxy") {
-    lines.push(`MULTICA_CODEX_PROXY_MODE=proxy`);
-    lines.push(`MULTICA_CODEX_PROXY_URL=${runner.proxyURL}`);
-    lines.push(`MULTICA_CODEX_NO_PROXY=${runner.noProxy}`);
-    for (const key of proxyEnvKeys) lines.push(`${key}=${runner.proxyURL}`);
-    for (const key of noProxyEnvKeys) lines.push(`${key}=${runner.noProxy}`);
-  } else {
-    lines.push(`MULTICA_CODEX_PROXY_MODE=${runner.proxyMode}`);
-    lines.push(`MULTICA_CODEX_PROXY_URL=`);
-    lines.push(`MULTICA_CODEX_NO_PROXY=${runner.noProxy}`);
-  }
   return lines;
 }
 
@@ -1012,30 +948,12 @@ function applyCodexRunnerRuntimeEnv(env) {
   if (env.GOAL_TEST_CODEX_SOURCE_HOME) env.MULTICA_CODEX_SOURCE_HOME = env.GOAL_TEST_CODEX_SOURCE_HOME;
   if (env.GOAL_TEST_CODEX_PATH) env.MULTICA_CODEX_PATH = env.GOAL_TEST_CODEX_PATH;
   if (env.GOAL_TEST_CODEX_MODEL) env.MULTICA_CODEX_MODEL = env.GOAL_TEST_CODEX_MODEL;
-  if (env.GOAL_TEST_CODEX_SMOKE_MODEL) env.MULTICA_CODEX_SMOKE_MODEL = env.GOAL_TEST_CODEX_SMOKE_MODEL;
   if (!env.MULTICA_CODEX_IMAGE_GENERATION) env.MULTICA_CODEX_IMAGE_GENERATION = "disabled";
-
-  const mode = String(env.GOAL_TEST_CODEX_PROXY_MODE || "").trim().toLowerCase();
-  const proxyURL = String(env.GOAL_TEST_CODEX_PROXY_URL || "").trim();
-  if (mode === "direct" || isDirectProxyValue(proxyURL)) {
-    for (const key of proxyEnvKeys) delete env[key];
-    for (const key of noProxyEnvKeys) delete env[key];
-    return;
-  }
-  if (!proxyURL) return;
-  for (const key of proxyEnvKeys) env[key] = proxyURL;
-  env.MULTICA_CODEX_PROXY_MODE = "proxy";
-  env.MULTICA_CODEX_PROXY_URL = proxyURL;
-  const noProxy = env.GOAL_TEST_CODEX_NO_PROXY || env.NO_PROXY || env.no_proxy || "localhost,127.0.0.1";
-  env.MULTICA_CODEX_NO_PROXY = noProxy;
-  for (const key of noProxyEnvKeys) env[key] = noProxy;
 }
 
-function defaultGoalTestCodexHome(item, sourceHome) {
-  const source = String(sourceHome || "").trim();
-  if (source) return path.join(path.dirname(source), `.codex-goal-test-${item.name}`);
+function defaultGoalTestCodexHome() {
   const home = process.env.HOME || process.env.USERPROFILE || "/tmp";
-  return path.join(home, ".multica", "runtimes", item.daemonID, "codex", "CODEX_HOME");
+  return path.join(home, ".codex");
 }
 
 
@@ -1045,7 +963,8 @@ function ensureCodexRunnerProfile(runner) {
   mkdirSync(target, { recursive: true, mode: 0o700 });
   const source = String(runner.sourceHome || "").trim();
   if (!source || path.resolve(source) === path.resolve(target)) return;
-  for (const name of ["auth.json", "config.json", "config.toml", "instructions.md"]) {
+  ensureCodexAuthSymlink(target, source);
+  for (const name of ["config.json", "config.toml", "instructions.md"]) {
     const dst = path.join(target, name);
     const src = path.join(source, name);
     if (existsSync(dst) || !existsSync(src)) continue;
@@ -1053,96 +972,52 @@ function ensureCodexRunnerProfile(runner) {
   }
 }
 
-function runCodexNetworkCheck(item, options = {}) {
-  const { envFile, env } = buildEnvironmentRuntime(item);
-  const evidence = runCodexNetworkCheckWithEnv(item, env, options);
-  evidence.env_file = envFile;
-  return evidence;
-}
-
-function runCodexNetworkCheckWithEnv(item, env, options = {}) {
-  const strong = Boolean(options.strong);
-  const runner = summarizeCodexRunnerEnv(item, env, strong);
-  const checks = [];
-  checks.push(runCodexCheckCommand("model_catalog", runner.codex_path, ["debug", "models"], env, 20_000));
-  if (strong) {
-    const args = ["exec"];
-    const model = env.GOAL_TEST_CODEX_SMOKE_MODEL || env.MULTICA_CODEX_MODEL || "";
-    if (model) args.push("-c", `model=${JSON.stringify(model)}`);
-    args.push("Reply with exactly: ok");
-    checks.push(runCodexCheckCommand("responses_smoke", runner.codex_path, args, env, 90_000));
+function ensureCodexAuthSymlink(targetHome, sourceHome) {
+  const sourceAuth = path.join(sourceHome, "auth.json");
+  if (!existsSync(sourceAuth)) {
+    fail(`Codex source auth missing: ${sourceAuth}. Run codex login with CODEX_HOME=${sourceHome} before deploying goal-test.`);
   }
-  const ok = checks.every((check) => check.status === "passed");
-  return {
-    schema: "multica.goal_test.codex_runner_preflight.v1",
-    environment: item.name,
-    generated_at: new Date().toISOString(),
-    runner,
-    checks,
-    ok,
-    status: ok ? "通过" : "失败",
-    failure_hint: ok ? "" : "Codex runner network is unavailable. Check this machine's proxy profile, switch to a websocket/TLS-stable proxy node, restart the daemon, then retry the task.",
-  };
-}
 
-function runCodexCheckCommand(name, command, args, env, timeoutMs) {
-  const started = Date.now();
-  const res = spawnSync(command, args, {
-    cwd: repoRoot,
-    env,
-    encoding: "utf8",
-    timeout: timeoutMs,
-    maxBuffer: 4 * 1024 * 1024,
-  });
-  const stdout = res.stdout || "";
-  const stderr = res.stderr || "";
-  const timedOut = res.error?.code === "ETIMEDOUT";
-  const logicalFailure = codexResponsesSmokeFailed(name, stdout, stderr);
-  const check = {
-    name,
-    command: [command, ...args].join(" "),
-    status: res.status === 0 && !timedOut && !logicalFailure ? "passed" : "failed",
-    exit_code: res.status,
-    duration_ms: Date.now() - started,
-    timeout_ms: timeoutMs,
-    timed_out: timedOut,
-    stdout_tail: stdout.slice(-1200),
-    stderr_tail: stderr.slice(-1200),
-  };
-  if (logicalFailure) check.error = "codex responses smoke did not return ok";
-  if (name === "model_catalog" && res.status === 0) {
-    try {
-      const parsed = JSON.parse(stdout);
-      check.model_count = Array.isArray(parsed.models) ? parsed.models.length : 0;
-      check.stdout_tail = "";
-    } catch {
-      // Keep the stdout tail when Codex changes the debug output shape.
+  const targetAuth = path.join(targetHome, "auth.json");
+  const existing = safeLstat(targetAuth);
+  if (existing) {
+    if (existing.isSymbolicLink()) {
+      const linkTarget = readlinkSync(targetAuth);
+      const resolvedLink = path.resolve(path.dirname(targetAuth), linkTarget);
+      if (resolvedLink === path.resolve(sourceAuth)) return;
     }
+    renameSync(targetAuth, nextBackupPath(targetAuth));
   }
-  if (res.error && !timedOut) check.error = res.error.message;
-  return check;
+  symlinkSync(sourceAuth, targetAuth);
 }
 
-function codexResponsesSmokeFailed(name, stdout, stderr) {
-  if (name !== "responses_smoke") return false;
-  if (/(^|\r?\n)ok(\r?\n|$)/i.test(stdout)) return false;
-  return true;
+function safeLstat(file) {
+  try {
+    return lstatSync(file);
+  } catch (error) {
+    if (error && error.code === "ENOENT") return null;
+    throw error;
+  }
 }
 
-function summarizeCodexRunnerEnv(item, env, strong) {
-  const proxyMode = String(env.GOAL_TEST_CODEX_PROXY_MODE || "").trim() || (env.GOAL_TEST_CODEX_PROXY_URL ? "proxy" : "direct");
+function nextBackupPath(file) {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  for (let index = 0; index < 100; index += 1) {
+    const suffix = index === 0 ? "" : `.${index}`;
+    const candidate = `${file}.bak.${stamp}${suffix}`;
+    if (!safeLstat(candidate)) return candidate;
+  }
+  fail(`cannot choose backup path for ${file}`);
+}
+
+function summarizeCodexRunnerEnv(item, env) {
   return {
     runner_id: env.GOAL_TEST_CODEX_RUNNER_ID || item.daemonID,
     daemon_id: item.daemonID,
     codex_path: env.MULTICA_CODEX_PATH || env.GOAL_TEST_CODEX_PATH || "codex",
     codex_home: env.CODEX_HOME || "",
-    proxy_mode: proxyMode,
-    proxy_url: redactProxyURL(env.GOAL_TEST_CODEX_PROXY_URL || env.HTTPS_PROXY || env.HTTP_PROXY || env.ALL_PROXY || ""),
-    no_proxy: env.GOAL_TEST_CODEX_NO_PROXY || env.NO_PROXY || env.no_proxy || "",
     model: env.MULTICA_CODEX_MODEL || "",
-    smoke_model: env.GOAL_TEST_CODEX_SMOKE_MODEL || env.MULTICA_CODEX_SMOKE_MODEL || "",
     image_generation: env.MULTICA_CODEX_IMAGE_GENERATION || "auto",
-    responses_smoke: strong,
   };
 }
 
@@ -1152,49 +1027,6 @@ function firstNonEmpty(...values) {
     if (trimmed) return trimmed;
   }
   return "";
-}
-
-function isDirectProxyValue(value) {
-  switch (String(value || "").trim().toLowerCase()) {
-    case "direct":
-    case "none":
-    case "no":
-    case "off":
-    case "false":
-    case "0":
-    case "disable":
-    case "disabled":
-      return true;
-    default:
-      return false;
-  }
-}
-
-function isTruthy(value) {
-  switch (String(value || "").trim().toLowerCase()) {
-    case "1":
-    case "true":
-    case "yes":
-    case "on":
-    case "enable":
-    case "enabled":
-      return true;
-    default:
-      return false;
-  }
-}
-
-function redactProxyURL(value) {
-  const trimmed = String(value || "").trim();
-  if (!trimmed) return "";
-  try {
-    const url = new URL(trimmed);
-    if (url.username) url.username = "<redacted>";
-    if (url.password) url.password = "<redacted>";
-    return url.toString();
-  } catch {
-    return trimmed.replace(/:\/\/([^:@]+):([^@]+)@/, "://<redacted>:<redacted>@");
-  }
 }
 
 function readEnvFile(file) {

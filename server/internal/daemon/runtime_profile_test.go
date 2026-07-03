@@ -9,9 +9,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-	"time"
-
-	"github.com/multica-ai/multica/server/pkg/taskfailure"
 )
 
 // stubLookPath swaps the package-level lookPath indirection used by
@@ -29,19 +26,6 @@ func stubLookPath(t *testing.T, resolved map[string]string) {
 		return "", &osExecNotFound{cmd: cmd}
 	}
 	t.Cleanup(func() { lookPath = orig })
-}
-
-func stubRuntimeNetworkHealthy(t *testing.T) {
-	t.Helper()
-	orig := checkRuntimeNetwork
-	checkRuntimeNetwork = func(_ *Daemon, _ context.Context, provider string, _ AgentEntry) runtimeNetworkHealth {
-		return runtimeNetworkHealth{
-			Status:    runtimeNetworkHealthy,
-			CheckedAt: "2026-01-01T00:00:00Z",
-			Provider:  provider,
-		}
-	}
-	t.Cleanup(func() { checkRuntimeNetwork = orig })
 }
 
 type osExecNotFound struct{ cmd string }
@@ -169,7 +153,6 @@ func newProfileRegisterFixture(t *testing.T, profiles []RuntimeProfile, profiles
 // registers.
 func TestRegisterRuntimes_AppendsProfileRuntime(t *testing.T) {
 	t.Cleanup(stubAgentVersion(t))
-	stubRuntimeNetworkHealthy(t)
 	stubLookPath(t, map[string]string{"company-codex": "/opt/bin/company-codex"})
 
 	profiles := []RuntimeProfile{{
@@ -224,7 +207,6 @@ func TestRegisterRuntimes_AppendsProfileRuntime(t *testing.T) {
 // convergence-to-zero branch instead of treating it as a hard error).
 func TestRegisterRuntimes_SkipsProfileNotOnPath(t *testing.T) {
 	t.Cleanup(stubAgentVersion(t))
-	stubRuntimeNetworkHealthy(t)
 	stubLookPath(t, map[string]string{}) // nothing resolves
 
 	profiles := []RuntimeProfile{{
@@ -255,7 +237,6 @@ func TestRegisterRuntimes_SkipsProfileNotOnPath(t *testing.T) {
 // profiles endpoint does not fail registration when a built-in agent exists.
 func TestRegisterRuntimes_ProfilesFetchErrorIsBestEffort(t *testing.T) {
 	t.Cleanup(stubAgentVersion(t))
-	stubRuntimeNetworkHealthy(t)
 	stubLookPath(t, map[string]string{})
 
 	fx := newProfileRegisterFixture(t, nil, http.StatusNotFound)
@@ -275,111 +256,12 @@ func TestRegisterRuntimes_ProfilesFetchErrorIsBestEffort(t *testing.T) {
 	}
 }
 
-func TestRegisterRuntimes_IncludesNetworkMetadata(t *testing.T) {
-	t.Cleanup(stubAgentVersion(t))
-	orig := checkRuntimeNetwork
-	checkRuntimeNetwork = func(_ *Daemon, _ context.Context, provider string, _ AgentEntry) runtimeNetworkHealth {
-		return runtimeNetworkHealth{
-			Status:           runtimeNetworkUnavailable,
-			CheckedAt:        "2026-01-01T00:00:00Z",
-			Provider:         provider,
-			ProxyMode:        "proxy",
-			ProxyURLRedacted: "http://<redacted>:<redacted>@127.0.0.1:7890",
-			FailureHint:      "check proxy",
-		}
-	}
-	t.Cleanup(func() { checkRuntimeNetwork = orig })
-	stubLookPath(t, map[string]string{})
-
-	fx := newProfileRegisterFixture(t, nil, http.StatusNotFound)
-	d := fx.daemon
-	d.cfg.Agents = map[string]AgentEntry{"codex": {Path: "/usr/bin/true"}}
-
-	if _, _, err := d.registerRuntimesForWorkspace(context.Background(), "ws-1"); err != nil {
-		t.Fatalf("registerRuntimesForWorkspace: %v", err)
-	}
-	if len(fx.sentRuntimes) != 1 {
-		t.Fatalf("sent runtimes = %d, want 1", len(fx.sentRuntimes))
-	}
-	if fx.sentRuntimes[0]["status"] != "offline" {
-		t.Fatalf("status = %v, want offline for unavailable network", fx.sentRuntimes[0]["status"])
-	}
-	metadata, ok := fx.sentRuntimes[0]["metadata"].(map[string]any)
-	if !ok {
-		t.Fatalf("metadata = %#v, want object", fx.sentRuntimes[0]["metadata"])
-	}
-	network, ok := metadata["network"].(map[string]any)
-	if !ok {
-		t.Fatalf("network metadata = %#v, want object", metadata["network"])
-	}
-	if network["status"] != runtimeNetworkUnavailable || network["proxy_url_redacted"] == "" {
-		t.Fatalf("network metadata wrong: %#v", network)
-	}
-}
-
-func TestRuntimeNetworkFailureBlocksClaims(t *testing.T) {
-	d := freshDaemon("")
-	d.runtimeIndex["rt-1"] = Runtime{ID: "rt-1", Provider: "codex"}
-	d.markRuntimeNetworkFailure("rt-1", taskfailure.ReasonAgentProviderNetwork, "stream disconnected before completion")
-
-	health, blocked := d.runtimeNetworkBlocksClaims("rt-1")
-	if !blocked {
-		t.Fatal("runtimeNetworkBlocksClaims = false, want true")
-	}
-	if health.Status != runtimeNetworkUnavailable || health.Provider != "codex" {
-		t.Fatalf("health = %+v, want unavailable codex", health)
-	}
-}
-
-func TestRuntimeNetworkDirtyMetadataForcesHTTPHeartbeat(t *testing.T) {
-	bodyCh := make(chan map[string]any, 1)
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var body map[string]any
-		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-			t.Errorf("decode heartbeat: %v", err)
-		}
-		bodyCh <- body
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status":"ok"}`))
-	}))
-	defer srv.Close()
-
-	d := freshDaemon(srv.URL)
-	d.runtimeIndex["rt-1"] = Runtime{ID: "rt-1", Provider: "codex"}
-	d.recordWSHeartbeatAck("rt-1")
-	d.markRuntimeNetworkFailure("rt-1", taskfailure.ReasonAgentProviderNetwork, "stream disconnected before completion")
-
-	d.runHeartbeatTick(context.Background(), "rt-1")
-
-	var body map[string]any
-	select {
-	case body = <-bodyCh:
-	case <-time.After(time.Second):
-		t.Fatal("expected dirty network metadata to force an HTTP heartbeat despite fresh WS ack")
-	}
-	metadata, ok := body["metadata"].(map[string]any)
-	if !ok {
-		t.Fatalf("metadata = %#v, want object", body["metadata"])
-	}
-	network, ok := metadata["network"].(map[string]any)
-	if !ok {
-		t.Fatalf("network metadata = %#v, want object", metadata["network"])
-	}
-	if network["status"] != runtimeNetworkUnavailable || network["provider"] != "codex" {
-		t.Fatalf("network = %#v, want unavailable codex", network)
-	}
-	if _, dirty := d.runtimeNetworkHeartbeatMetadata("rt-1"); dirty {
-		t.Fatal("dirty network metadata was not cleared after successful heartbeat")
-	}
-}
-
 // TestRegisterRuntimes_PrefersCommandPathOverride verifies that a per-machine
 // command path override (MUL-3284) is used in preference to the PATH lookup:
 // the resolved/recorded path is the override, even when lookPath would resolve
 // command_name to a different binary.
 func TestRegisterRuntimes_PrefersCommandPathOverride(t *testing.T) {
 	t.Cleanup(stubAgentVersion(t))
-	stubRuntimeNetworkHealthy(t)
 	// PATH would resolve to a *different* binary; the override must win.
 	stubLookPath(t, map[string]string{"company-codex": "/usr/bin/company-codex"})
 	stubProfilePathExecutable(t, map[string]bool{"/opt/custom/company-codex": true})
@@ -414,7 +296,6 @@ func TestRegisterRuntimes_PrefersCommandPathOverride(t *testing.T) {
 // daemon falls back to resolving command_name on PATH.
 func TestRegisterRuntimes_OverrideNotExecutableFallsBackToPath(t *testing.T) {
 	t.Cleanup(stubAgentVersion(t))
-	stubRuntimeNetworkHealthy(t)
 	stubLookPath(t, map[string]string{"company-codex": "/usr/bin/company-codex"})
 	// Override path reports NOT executable -> must fall back to PATH.
 	stubProfilePathExecutable(t, map[string]bool{})

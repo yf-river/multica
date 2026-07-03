@@ -171,7 +171,7 @@ func init() {
 	agentCreateCmd.Flags().Bool("mcp-config-stdin", false, "Read the --mcp-config JSON object from stdin. Keeps secrets out of shell history and 'ps'. Mutually exclusive with --mcp-config and --mcp-config-file.")
 	agentCreateCmd.Flags().String("mcp-config-file", "", "Read the --mcp-config JSON object from a file path (suggested mode: 0600). Mutually exclusive with --mcp-config and --mcp-config-stdin.")
 	agentCreateCmd.Flags().String("scope", "personal", "Scope: personal or workspace")
-	agentCreateCmd.Flags().Int32("max-concurrent-tasks", 6, "Maximum concurrent tasks")
+	agentCreateCmd.Flags().Int32("max-concurrent-tasks", 20, "Maximum concurrent tasks")
 	agentCreateCmd.Flags().String("output", "json", "Output format: table or json")
 
 	// agent update

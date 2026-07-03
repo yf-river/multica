@@ -1383,10 +1383,6 @@ async function resolveOnlineRuntime(token, workspaceID) {
     .filter((item) => item.provider === provider && item.status === "online")
     .sort((a, b) => new Date(b.last_seen_at || 0).getTime() - new Date(a.last_seen_at || 0).getTime())[0];
   if (!runtime?.id) fail(`未找到在线 ${provider} runtime`);
-  const network = runtime.metadata?.network;
-  if (network?.status === "unavailable") {
-    fail(`${provider} runtime 网络不可用：${network.failure_hint || network.error || "unknown"}`);
-  }
   return runtime;
 }
 

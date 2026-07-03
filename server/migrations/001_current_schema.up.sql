@@ -437,7 +437,7 @@ CREATE TABLE public.agent (
     runtime_config jsonb DEFAULT '{}'::jsonb NOT NULL,
     scope text DEFAULT 'personal'::text NOT NULL,
     status text DEFAULT 'offline'::text NOT NULL,
-    max_concurrent_tasks integer DEFAULT 5 NOT NULL,
+    max_concurrent_tasks integer DEFAULT 20 NOT NULL,
     owner_id uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     updated_at timestamp with time zone DEFAULT now() NOT NULL,

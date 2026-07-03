@@ -118,6 +118,24 @@ func TestEnsureCodexRuntimeProfileSeedsFromUserHome(t *testing.T) {
 	}
 }
 
+func TestEnsureCodexRuntimeProfileUsesCodexHomeByDefault(t *testing.T) {
+	source := t.TempDir()
+	if err := os.WriteFile(filepath.Join(source, "auth.json"), []byte(`{"token":"user"}`), 0o600); err != nil {
+		t.Fatalf("write source auth: %v", err)
+	}
+	t.Setenv("CODEX_HOME", source)
+
+	if err := ensureCodexRuntimeProfile("daemon/test"); err != nil {
+		t.Fatalf("ensureCodexRuntimeProfile: %v", err)
+	}
+	if got := os.Getenv("CODEX_HOME"); got != source {
+		t.Fatalf("CODEX_HOME = %q, want %q", got, source)
+	}
+	if got := os.Getenv("MULTICA_CODEX_HOME"); got != source {
+		t.Fatalf("MULTICA_CODEX_HOME = %q, want %q", got, source)
+	}
+}
+
 func TestEnsureCodexRuntimeProfileDoesNotOverwriteExistingAuth(t *testing.T) {
 	source := t.TempDir()
 	target := t.TempDir()

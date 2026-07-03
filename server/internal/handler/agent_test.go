@@ -190,7 +190,7 @@ func TestCreateAgent_RejectsDuplicateName(t *testing.T) {
 	}
 }
 
-func TestCreateAgent_DefaultsMaxConcurrentTasksToFive(t *testing.T) {
+func TestCreateAgent_DefaultsMaxConcurrentTasksToTwenty(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}

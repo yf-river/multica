@@ -1,5 +1,5 @@
 .PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-training-curl-e2e goal-test-seed-business-training goal-test-prod-seed-business-training goal-test-prod-training-curl-e2e goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e goal-test-sop-customer-comment-e2e goal-test-password-strength-sop-e2e goal-test-sop-browser-audit goal-test-prod-user-center-squad-curl-e2e goal-test-new-account-mcp-onboarding-e2e goal-test-prod-new-account-mcp-onboarding-e2e goal-test-acceptance-fixture-governance goal-test-quick-entry-cross-service goal-test-squad-curl-e2e goal-test-variable-project-topology-fixture goal-test-variable-agent-squad-curl-e2e goal-test-variable-agent-topology-fixture goal-test-topology-generalization-audit goal-test-tapd-gongfeng-sop-gap-audit goal-test-prod-release-audit goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-final-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-dataset-stream-audit goal-test-prune-dev-data goal-test-prune-prod-data goal-test-session-retro goal-test-token-audit
-.PHONY: goal-test-deploy-dev-hot goal-test-dev-ui goal-test-dev-ui-prewarm goal-test-dev-ui-prewarm-full goal-test-dev-ui-start goal-test-dev-server goal-test-dev-daemon goal-test-dev-check goal-test-codex-network-check
+.PHONY: goal-test-deploy-dev-hot goal-test-dev-ui goal-test-dev-ui-prewarm goal-test-dev-ui-prewarm-full goal-test-dev-ui-start goal-test-dev-server goal-test-dev-daemon goal-test-dev-check
 .PHONY: goal-test-quick-entries-service-sandbox
 
 MAIN_ENV_FILE ?= .env
@@ -251,9 +251,6 @@ goal-test-dev-daemon: ## Rebuild and restart only the goal-test integration daem
 	@mkdir -p "$(GOAL_TEST_TMPDIR)" "$(GOAL_TEST_GOCACHE)"
 	GOWORK=off TMPDIR="$(GOAL_TEST_TMPDIR)" GOCACHE="$(GOAL_TEST_GOCACHE)" node scripts/goal-test-environments.mjs dev-daemon int
 
-goal-test-codex-network-check: ## Verify the goal-test Codex runner network profile; set RESPONSES_SMOKE=1 for a real Responses request
-	node scripts/goal-test-environments.mjs codex-network-check int $${RESPONSES_SMOKE:+--responses-smoke}
-
 goal-test-dev-check: ## Run the minimal goal-test settings/UI checks for fast feedback
 	node scripts/goal-test-environments.mjs dev-check int
 
@@ -357,7 +354,6 @@ goal-test-user-center-squad-curl-e2e: goal-test-smoke ## Run real curl/API + dae
 
 goal-test-sop-customer-comment-e2e: goal-test-e2e-preflight ## Run real customer-comment SOP E2E for usercenter/gateway/ida-deployment
 	@mkdir -p "$(GOAL_TEST_TMPDIR)"
-	RESPONSES_SMOKE=1 $(MAKE) goal-test-codex-network-check
 	ACCEPTANCE_API_URL="$(GOAL_TEST_INT_API_URL)" \
 	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
 	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \

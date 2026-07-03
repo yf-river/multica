@@ -80,10 +80,10 @@ The HTTP body (`CreateAgentRequest`) accepts: `name`, `description`,
 | `custom_env` | `agent.custom_env` (JSON object) | — | daemon (process env); see Env & secrets |
 | `mcp_config` | `agent.mcp_config` (raw JSON) | CLI checks it is a JSON object or `null`; server stores as-is. At create, literal `null` is dropped (no-op); at update, `null` clears the column | daemon → provider (MCP servers) — **runtime-consumed**; redacted on read |
 | `scope` | `agent.scope` | must be `personal` or `workspace`; must match runtime scope | access control; defaults to `personal`; personal agents can only use same-owner personal runtimes; workspace agents can only use workspace runtimes — NOT the runtime prompt |
-| `max_concurrent_tasks` | `agent.max_concurrent_tasks` | — | scheduler task cap; defaults to `5` |
+| `max_concurrent_tasks` | `agent.max_concurrent_tasks` | — | scheduler task cap; defaults to `20` |
 
 Defaults when omitted: `runtime_config` → `{}`, `custom_env` → `{}`,
-`custom_args` → `[]`, `scope` → `personal`, `max_concurrent_tasks` → `5`
+`custom_args` → `[]`, `scope` → `personal`, `max_concurrent_tasks` → `20`
 (all materialized server-side before the insert). `custom_args`/`runtime_config`
 are typed `[]string`/`any` and marshaled as-is — the JSON-shape rejection
 happens in the CLI, not the create handler.
