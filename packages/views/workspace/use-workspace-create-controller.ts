@@ -11,7 +11,7 @@ import {
   nameToWorkspaceSlug,
 } from "./slug";
 
-export type WorkspaceCreateMessages = {
+type WorkspaceCreateMessages = {
   slugFormat: string;
   slugReserved: string;
   slugTaken: string;
@@ -19,7 +19,7 @@ export type WorkspaceCreateMessages = {
   createFailed: string;
 };
 
-export type WorkspaceCreateControllerOptions = {
+type WorkspaceCreateControllerOptions = {
   onSuccess: (workspace: Workspace) => void | Promise<void>;
   messages: WorkspaceCreateMessages;
   preventSubmitWhilePending?: boolean;
