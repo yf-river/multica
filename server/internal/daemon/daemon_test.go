@@ -977,6 +977,20 @@ func newRepoReadyTestDaemon(t *testing.T, handler http.HandlerFunc) *Daemon {
 	return d
 }
 
+func newRepoReadyResponseTestDaemon(t *testing.T, response WorkspaceReposResponse) (*Daemon, *atomic.Int32) {
+	t.Helper()
+	refreshCalls := &atomic.Int32{}
+	d := newRepoReadyTestDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/daemon/workspaces/ws-1/repos" {
+			http.NotFound(w, r)
+			return
+		}
+		refreshCalls.Add(1)
+		json.NewEncoder(w).Encode(response)
+	})
+	return d, refreshCalls
+}
+
 func TestGateResumeToReusedWorkdir(t *testing.T) {
 	t.Parallel()
 
@@ -1518,19 +1532,11 @@ func TestEnsureRepoReadyCachedRepoStillRefreshesSettings(t *testing.T) {
 	t.Parallel()
 
 	sourceRepo := createDaemonTestRepo(t)
-	var refreshCalls atomic.Int32
-	d := newRepoReadyTestDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/daemon/workspaces/ws-1/repos" {
-			http.NotFound(w, r)
-			return
-		}
-		refreshCalls.Add(1)
-		json.NewEncoder(w).Encode(WorkspaceReposResponse{
-			WorkspaceID:  "ws-1",
-			Repos:        []RepoData{{URL: sourceRepo}},
-			ReposVersion: "v2",
-			Settings:     json.RawMessage(`{"github_enabled":false,"co_authored_by_enabled":true}`),
-		})
+	d, refreshCalls := newRepoReadyResponseTestDaemon(t, WorkspaceReposResponse{
+		WorkspaceID:  "ws-1",
+		Repos:        []RepoData{{URL: sourceRepo}},
+		ReposVersion: "v2",
+		Settings:     json.RawMessage(`{"github_enabled":false,"co_authored_by_enabled":true}`),
 	})
 	if err := d.repoCache.Sync("ws-1", []repocache.RepoInfo{{URL: sourceRepo}}); err != nil {
 		t.Fatalf("seed repo cache: %v", err)
@@ -1564,18 +1570,10 @@ func TestEnsureRepoReadyTrimsURL(t *testing.T) {
 	t.Parallel()
 
 	sourceRepo := createDaemonTestRepo(t)
-	var refreshCalls atomic.Int32
-	d := newRepoReadyTestDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/daemon/workspaces/ws-1/repos" {
-			http.NotFound(w, r)
-			return
-		}
-		refreshCalls.Add(1)
-		json.NewEncoder(w).Encode(WorkspaceReposResponse{
-			WorkspaceID:  "ws-1",
-			Repos:        []RepoData{{URL: sourceRepo}},
-			ReposVersion: "v2",
-		})
+	d, refreshCalls := newRepoReadyResponseTestDaemon(t, WorkspaceReposResponse{
+		WorkspaceID:  "ws-1",
+		Repos:        []RepoData{{URL: sourceRepo}},
+		ReposVersion: "v2",
 	})
 	if err := d.repoCache.Sync("ws-1", []repocache.RepoInfo{{URL: sourceRepo}}); err != nil {
 		t.Fatalf("seed repo cache: %v", err)
@@ -1596,18 +1594,10 @@ func TestEnsureRepoReadyRefreshesOnMiss(t *testing.T) {
 	t.Parallel()
 
 	sourceRepo := createDaemonTestRepo(t)
-	var refreshCalls atomic.Int32
-	d := newRepoReadyTestDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/daemon/workspaces/ws-1/repos" {
-			http.NotFound(w, r)
-			return
-		}
-		refreshCalls.Add(1)
-		json.NewEncoder(w).Encode(WorkspaceReposResponse{
-			WorkspaceID:  "ws-1",
-			Repos:        []RepoData{{URL: sourceRepo}},
-			ReposVersion: "v2",
-		})
+	d, refreshCalls := newRepoReadyResponseTestDaemon(t, WorkspaceReposResponse{
+		WorkspaceID:  "ws-1",
+		Repos:        []RepoData{{URL: sourceRepo}},
+		ReposVersion: "v2",
 	})
 	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, "", nil, nil)
 
@@ -1753,18 +1743,10 @@ func TestEnsureRepoReadyConcurrentMissRefreshesOnce(t *testing.T) {
 	t.Parallel()
 
 	sourceRepo := createDaemonTestRepo(t)
-	var refreshCalls atomic.Int32
-	d := newRepoReadyTestDaemon(t, func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/api/daemon/workspaces/ws-1/repos" {
-			http.NotFound(w, r)
-			return
-		}
-		refreshCalls.Add(1)
-		json.NewEncoder(w).Encode(WorkspaceReposResponse{
-			WorkspaceID:  "ws-1",
-			Repos:        []RepoData{{URL: sourceRepo}},
-			ReposVersion: "v2",
-		})
+	d, refreshCalls := newRepoReadyResponseTestDaemon(t, WorkspaceReposResponse{
+		WorkspaceID:  "ws-1",
+		Repos:        []RepoData{{URL: sourceRepo}},
+		ReposVersion: "v2",
 	})
 	d.workspaces["ws-1"] = newWorkspaceState("ws-1", nil, "", nil, nil)
 
