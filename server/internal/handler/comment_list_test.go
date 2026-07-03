@@ -45,6 +45,47 @@ func nextThreadCursor(w *httptest.ResponseRecorder) (string, string) {
 	return w.Header().Get("X-Multica-Next-Before"), w.Header().Get("X-Multica-Next-Before-Id")
 }
 
+type seededCommentIssue struct {
+	IssueID string
+	Base    time.Time
+}
+
+func newSeededCommentIssue(t *testing.T, title string) seededCommentIssue {
+	t.Helper()
+
+	ctx := context.Background()
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title)
+		VALUES ($1, 'member', $2, $3)
+		RETURNING id
+	`, testWorkspaceID, testUserID, title).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+
+	return seededCommentIssue{
+		IssueID: issueID,
+		Base:    time.Now().UTC().Add(-1 * time.Hour).Truncate(time.Second),
+	}
+}
+
+func (fx seededCommentIssue) insertComment(t *testing.T, parent *string, offset time.Duration, body string) string {
+	t.Helper()
+
+	var id string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type, parent_id, created_at)
+		VALUES ($1, $2, 'member', $3, $4, 'comment', $5, $6)
+		RETURNING id
+	`, fx.IssueID, testWorkspaceID, testUserID, body, parent, fx.Base.Add(offset)).Scan(&id); err != nil {
+		t.Fatalf("insert comment %q: %v", body, err)
+	}
+	return id
+}
+
 // commentListFixture seeds an issue with a known comment graph for the
 // thread / recent / cursor tests. The shape:
 //
@@ -72,48 +113,21 @@ type commentListFixture struct {
 
 func newCommentListFixture(t *testing.T) commentListFixture {
 	t.Helper()
-	ctx := context.Background()
 
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title)
-		VALUES ($1, 'member', $2, $3)
-		RETURNING id
-	`, testWorkspaceID, testUserID, "comment list fixture").Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
-	})
-
-	base := time.Now().UTC().Add(-1 * time.Hour).Truncate(time.Second)
-
-	insert := func(parent *string, offset time.Duration, body string) string {
-		t.Helper()
-		var id string
-		if err := testPool.QueryRow(ctx, `
-			INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type, parent_id, created_at)
-			VALUES ($1, $2, 'member', $3, $4, 'comment', $5, $6)
-			RETURNING id
-		`, issueID, testWorkspaceID, testUserID, body, parent, base.Add(offset)).Scan(&id); err != nil {
-			t.Fatalf("insert comment %q: %v", body, err)
-		}
-		return id
-	}
-
-	root1 := insert(nil, 0, "root1")
-	r1a := insert(&root1, 1*time.Minute, "r1a")
-	r1b := insert(&root1, 2*time.Minute, "r1b")
-	r1b1 := insert(&r1b, 3*time.Minute, "r1b1") // nested reply: parent is a reply, not a root
-	root2 := insert(nil, 10*time.Minute, "root2")
-	r2a := insert(&root2, 11*time.Minute, "r2a")
-	r2b := insert(&root2, 12*time.Minute, "r2b")
+	seed := newSeededCommentIssue(t, "comment list fixture")
+	root1 := seed.insertComment(t, nil, 0, "root1")
+	r1a := seed.insertComment(t, &root1, 1*time.Minute, "r1a")
+	r1b := seed.insertComment(t, &root1, 2*time.Minute, "r1b")
+	r1b1 := seed.insertComment(t, &r1b, 3*time.Minute, "r1b1") // nested reply: parent is a reply, not a root
+	root2 := seed.insertComment(t, nil, 10*time.Minute, "root2")
+	r2a := seed.insertComment(t, &root2, 11*time.Minute, "r2a")
+	r2b := seed.insertComment(t, &root2, 12*time.Minute, "r2b")
 
 	return commentListFixture{
-		IssueID: issueID,
+		IssueID: seed.IssueID,
 		Root1:   root1, R1a: r1a, R1b: r1b, R1b1: r1b1,
 		Root2: root2, R2a: r2a, R2b: r2b,
-		Base: base,
+		Base: seed.Base,
 	}
 }
 

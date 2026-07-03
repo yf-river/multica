@@ -123,41 +123,15 @@ type resolveTestFixture struct {
 
 func newResolveTestFixture(t *testing.T) resolveTestFixture {
 	t.Helper()
-	ctx := context.Background()
 
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title)
-		VALUES ($1, 'member', $2, $3)
-		RETURNING id
-	`, testWorkspaceID, testUserID, "resolve fixture").Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
-	})
+	seed := newSeededCommentIssue(t, "resolve fixture")
+	root1 := seed.insertComment(t, nil, 0, "root1")
+	a1 := seed.insertComment(t, &root1, 1*time.Minute, "a1")
+	b1 := seed.insertComment(t, &root1, 2*time.Minute, "b1")
+	root2 := seed.insertComment(t, nil, 10*time.Minute, "root2")
+	a2 := seed.insertComment(t, &root2, 11*time.Minute, "a2")
 
-	base := time.Now().UTC().Add(-1 * time.Hour).Truncate(time.Second)
-	insert := func(parent *string, offset time.Duration, body string) string {
-		t.Helper()
-		var id string
-		if err := testPool.QueryRow(ctx, `
-			INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type, parent_id, created_at)
-			VALUES ($1, $2, 'member', $3, $4, 'comment', $5, $6)
-			RETURNING id
-		`, issueID, testWorkspaceID, testUserID, body, parent, base.Add(offset)).Scan(&id); err != nil {
-			t.Fatalf("insert comment %q: %v", body, err)
-		}
-		return id
-	}
-
-	root1 := insert(nil, 0, "root1")
-	a1 := insert(&root1, 1*time.Minute, "a1")
-	b1 := insert(&root1, 2*time.Minute, "b1")
-	root2 := insert(nil, 10*time.Minute, "root2")
-	a2 := insert(&root2, 11*time.Minute, "a2")
-
-	return resolveTestFixture{IssueID: issueID, Root1: root1, A1: a1, B1: b1, Root2: root2, A2: a2}
+	return resolveTestFixture{IssueID: seed.IssueID, Root1: root1, A1: a1, B1: b1, Root2: root2, A2: a2}
 }
 
 // TestResolveComment_ReplacesPriorThreadResolution is the core regression for
@@ -204,8 +178,8 @@ func TestResolveComment_ScopedToThread(t *testing.T) {
 	}
 	fx := newResolveTestFixture(t)
 
-	resolveCommentHTTP(t, fx.B1)   // thread 1 resolution
-	resolveCommentHTTP(t, fx.A2)   // thread 2 resolution — must NOT touch thread 1
+	resolveCommentHTTP(t, fx.B1) // thread 1 resolution
+	resolveCommentHTTP(t, fx.A2) // thread 2 resolution — must NOT touch thread 1
 	if !commentResolved(t, fx.B1) {
 		t.Fatalf("b1 (thread 1) must stay resolved when a separate thread is resolved")
 	}
