@@ -306,8 +306,25 @@ func TestCreateIssueAssignedToSquadEnqueuesLeader(t *testing.T) {
 	}
 }
 
-func TestCompleteTaskClosesSquadSOPRun(t *testing.T) {
-	ctx := context.Background()
+type startedSquadSOPRunFixture struct {
+	agentID    string
+	issueID    string
+	runID      string
+	taskID     string
+	daemonName string
+}
+
+type startedSquadSOPRunOptions struct {
+	agentDescription string
+	profileKey       string
+	squadName        string
+	issueTitle       string
+	issueStatus      string
+	daemonName       string
+}
+
+func createStartedSquadSOPRunFixture(t *testing.T, ctx context.Context, opts startedSquadSOPRunOptions) startedSquadSOPRunFixture {
+	t.Helper()
 
 	var agentID string
 	if err := testPool.QueryRow(ctx, `
@@ -315,27 +332,38 @@ func TestCompleteTaskClosesSquadSOPRun(t *testing.T) {
 			workspace_id, name, description, runtime_mode, runtime_config,
 			runtime_id, scope, max_concurrent_tasks, owner_id, instructions
 		)
-		VALUES ($1, 'pm', 'sop sync fixture', 'local', '{}'::jsonb, $2, 'personal', 1, $3, '')
+		VALUES ($1, 'pm', $2, 'local', '{}'::jsonb, $3, 'personal', 1, $4, '')
 		RETURNING id
-	`, testWorkspaceID, testRuntimeID, testUserID).Scan(&agentID); err != nil {
+	`, testWorkspaceID, opts.agentDescription, testRuntimeID, testUserID).Scan(&agentID); err != nil {
 		t.Fatalf("create agent: %v", err)
 	}
 	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID) })
 
+	profile, err := json.Marshal(map[string]any{
+		"profile_key": opts.profileKey,
+		"steps": []map[string]string{
+			{"key": "pm", "name": "pm", "role_key": "pm"},
+			{"key": "05-verify", "name": "05-测试", "role_key": "05-verify"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal sop profile: %v", err)
+	}
+
 	var squadID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, sop_profile)
-		VALUES ($1, $2, '', $3, $4, '{"profile_key":"sop-sync-test","steps":[{"key":"pm","name":"pm","role_key":"pm"},{"key":"05-verify","name":"05-测试","role_key":"05-verify"}]}'::jsonb)
+		VALUES ($1, $2, '', $3, $4, $5::jsonb)
 		RETURNING id
-	`, testWorkspaceID, "SOP Sync Squad", agentID, testUserID).Scan(&squadID); err != nil {
+	`, testWorkspaceID, opts.squadName, agentID, testUserID, string(profile)).Scan(&squadID); err != nil {
 		t.Fatalf("create squad: %v", err)
 	}
 	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
 
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title":         "SOP run closes on leader complete",
-		"status":        "todo",
+		"title":         opts.issueTitle,
+		"status":        opts.issueStatus,
 		"assignee_type": "squad",
 		"assignee_id":   squadID,
 	})
@@ -369,21 +397,42 @@ func TestCompleteTaskClosesSquadSOPRun(t *testing.T) {
 	}
 
 	startW := httptest.NewRecorder()
-	startReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/start", nil, testWorkspaceID, "sop-sync-daemon")
+	startReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/start", nil, testWorkspaceID, opts.daemonName)
 	startReq = withURLParam(startReq, "taskId", taskID)
 	testHandler.StartTask(startW, startReq)
 	if startW.Code != http.StatusOK {
 		t.Fatalf("StartTask: expected 200, got %d: %s", startW.Code, startW.Body.String())
 	}
-	if _, err := testPool.Exec(ctx, `UPDATE issue SET status = 'done' WHERE id = $1`, created.ID); err != nil {
+
+	return startedSquadSOPRunFixture{
+		agentID:    agentID,
+		issueID:    created.ID,
+		runID:      runID,
+		taskID:     taskID,
+		daemonName: opts.daemonName,
+	}
+}
+
+func TestCompleteTaskClosesSquadSOPRun(t *testing.T) {
+	ctx := context.Background()
+
+	fixture := createStartedSquadSOPRunFixture(t, ctx, startedSquadSOPRunOptions{
+		agentDescription: "sop sync fixture",
+		profileKey:       "sop-sync-test",
+		squadName:        "SOP Sync Squad",
+		issueTitle:       "SOP run closes on leader complete",
+		issueStatus:      "todo",
+		daemonName:       "sop-sync-daemon",
+	})
+	if _, err := testPool.Exec(ctx, `UPDATE issue SET status = 'done' WHERE id = $1`, fixture.issueID); err != nil {
 		t.Fatalf("mark issue done: %v", err)
 	}
 
 	completeW := httptest.NewRecorder()
-	completeReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/complete", map[string]any{
+	completeReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+fixture.taskID+"/complete", map[string]any{
 		"output": "verify passed",
-	}, testWorkspaceID, "sop-sync-daemon")
-	completeReq = withURLParam(completeReq, "taskId", taskID)
+	}, testWorkspaceID, fixture.daemonName)
+	completeReq = withURLParam(completeReq, "taskId", fixture.taskID)
 	testHandler.CompleteTask(completeW, completeReq)
 	if completeW.Code != http.StatusOK {
 		t.Fatalf("CompleteTask: expected 200, got %d: %s", completeW.Code, completeW.Body.String())
@@ -395,7 +444,7 @@ func TestCompleteTaskClosesSquadSOPRun(t *testing.T) {
 		SELECT status, current_step_key, completed_at
 		FROM squad_sop_run
 		WHERE id = $1
-	`, runID).Scan(&status, &currentStep, &completedAt); err != nil {
+	`, fixture.runID).Scan(&status, &currentStep, &completedAt); err != nil {
 		t.Fatalf("load SOP run: %v", err)
 	}
 	if status != "已完成" || currentStep != "pm" || completedAt == nil {
@@ -406,7 +455,7 @@ func TestCompleteTaskClosesSquadSOPRun(t *testing.T) {
 		SELECT count(*)
 		FROM squad_sop_step_event
 		WHERE run_id = $1 AND task_id = $2 AND step_key = 'pm' AND event_type = '步骤完成'
-	`, runID, taskID).Scan(&completedEvents); err != nil {
+	`, fixture.runID, fixture.taskID).Scan(&completedEvents); err != nil {
 		t.Fatalf("count completed events: %v", err)
 	}
 	if completedEvents != 1 {
@@ -417,78 +466,21 @@ func TestCompleteTaskClosesSquadSOPRun(t *testing.T) {
 func TestFailTaskDoesNotCloseSquadSOPRunWhenIssueHasActiveContinuation(t *testing.T) {
 	ctx := context.Background()
 
-	var agentID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent (
-			workspace_id, name, description, runtime_mode, runtime_config,
-			runtime_id, scope, max_concurrent_tasks, owner_id, instructions
-		)
-		VALUES ($1, 'pm', 'sop failure continuation fixture', 'local', '{}'::jsonb, $2, 'personal', 1, $3, '')
-		RETURNING id
-	`, testWorkspaceID, testRuntimeID, testUserID).Scan(&agentID); err != nil {
-		t.Fatalf("create agent: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID) })
-
-	var squadID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, sop_profile)
-		VALUES ($1, $2, '', $3, $4, '{"profile_key":"sop-failure-continuation-test","steps":[{"key":"pm","name":"pm","role_key":"pm"},{"key":"05-verify","name":"05-测试","role_key":"05-verify"}]}'::jsonb)
-		RETURNING id
-	`, testWorkspaceID, "SOP Failure Continuation Squad", agentID, testUserID).Scan(&squadID); err != nil {
-		t.Fatalf("create squad: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title":         "SOP run stays open when continuation exists",
-		"status":        "in_progress",
-		"assignee_type": "squad",
-		"assignee_id":   squadID,
+	fixture := createStartedSquadSOPRunFixture(t, ctx, startedSquadSOPRunOptions{
+		agentDescription: "sop failure continuation fixture",
+		profileKey:       "sop-failure-continuation-test",
+		squadName:        "SOP Failure Continuation Squad",
+		issueTitle:       "SOP run stays open when continuation exists",
+		issueStatus:      "in_progress",
+		daemonName:       "sop-failure-continuation-daemon",
 	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var created IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
-		t.Fatalf("decode issue: %v", err)
-	}
-	t.Cleanup(func() {
-		cleanupReq := newRequest("DELETE", "/api/issues/"+created.ID, nil)
-		cleanupReq = withURLParam(cleanupReq, "id", created.ID)
-		testHandler.DeleteIssue(httptest.NewRecorder(), cleanupReq)
-	})
-
-	var taskID, runID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT atq.id::text, ssr.id::text
-		FROM agent_task_queue atq
-		JOIN squad_sop_run ssr ON ssr.issue_id = atq.issue_id
-		WHERE atq.issue_id = $1 AND atq.agent_id = $2
-		ORDER BY atq.created_at DESC
-		LIMIT 1
-	`, created.ID, agentID).Scan(&taskID, &runID); err != nil {
-		t.Fatalf("load task/run: %v", err)
-	}
-	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET status = 'dispatched' WHERE id = $1`, taskID); err != nil {
-		t.Fatalf("mark task dispatched: %v", err)
-	}
-	startW := httptest.NewRecorder()
-	startReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/start", nil, testWorkspaceID, "sop-failure-continuation-daemon")
-	startReq = withURLParam(startReq, "taskId", taskID)
-	testHandler.StartTask(startW, startReq)
-	if startW.Code != http.StatusOK {
-		t.Fatalf("StartTask: expected 200, got %d: %s", startW.Code, startW.Body.String())
-	}
 
 	var continuationTaskID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority)
 		VALUES ($1, $2, $3, 'queued', 0)
 		RETURNING id
-	`, agentID, testRuntimeID, created.ID).Scan(&continuationTaskID); err != nil {
+	`, fixture.agentID, testRuntimeID, fixture.issueID).Scan(&continuationTaskID); err != nil {
 		t.Fatalf("create continuation task: %v", err)
 	}
 	t.Cleanup(func() {
@@ -496,11 +488,11 @@ func TestFailTaskDoesNotCloseSquadSOPRunWhenIssueHasActiveContinuation(t *testin
 	})
 
 	failW := httptest.NewRecorder()
-	failReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/fail", map[string]any{
+	failReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+fixture.taskID+"/fail", map[string]any{
 		"error":          "provider failed after queuing continuation",
 		"failure_reason": "api_invalid_request",
-	}, testWorkspaceID, "sop-failure-continuation-daemon")
-	failReq = withURLParam(failReq, "taskId", taskID)
+	}, testWorkspaceID, fixture.daemonName)
+	failReq = withURLParam(failReq, "taskId", fixture.taskID)
 	testHandler.FailTask(failW, failReq)
 	if failW.Code != http.StatusOK {
 		t.Fatalf("FailTask: expected 200, got %d: %s", failW.Code, failW.Body.String())
@@ -512,7 +504,7 @@ func TestFailTaskDoesNotCloseSquadSOPRunWhenIssueHasActiveContinuation(t *testin
 		SELECT status, current_step_key, completed_at
 		FROM squad_sop_run
 		WHERE id = $1
-	`, runID).Scan(&status, &currentStep, &completedAt); err != nil {
+	`, fixture.runID).Scan(&status, &currentStep, &completedAt); err != nil {
 		t.Fatalf("load SOP run: %v", err)
 	}
 	if status != "进行中" || currentStep != "pm" || completedAt != nil {
@@ -523,7 +515,7 @@ func TestFailTaskDoesNotCloseSquadSOPRunWhenIssueHasActiveContinuation(t *testin
 		SELECT count(*)
 		FROM squad_sop_step_event
 		WHERE run_id = $1 AND task_id = $2 AND event_type = '步骤失败'
-	`, runID, taskID).Scan(&failedEvents); err != nil {
+	`, fixture.runID, fixture.taskID).Scan(&failedEvents); err != nil {
 		t.Fatalf("count failed events: %v", err)
 	}
 	if failedEvents != 0 {
