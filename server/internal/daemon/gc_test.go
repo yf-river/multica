@@ -1275,16 +1275,7 @@ func TestShouldCleanTaskDir_LocalDirectoryNeverClean(t *testing.T) {
 	t.Parallel()
 	issueID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa1"
 
-	mux := http.NewServeMux()
-	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"status":     "done",
-			"updated_at": time.Now().Add(-30 * 24 * time.Hour),
-		})
-	})
-
-	d := newGCTestDaemon(t, mux)
+	d := newGCTestDaemonWithIssueGCStatus(t, issueID, "done", time.Now().Add(-30*24*time.Hour))
 	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws1", "local-task", &execenv.GCMeta{
 		Kind:           execenv.GCKindIssue,
 		IssueID:        issueID,
@@ -1338,16 +1329,7 @@ func TestShouldCleanTaskDir_LocalDirectoryFalsePreservesNormalClean(t *testing.T
 	t.Parallel()
 	issueID := "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaa3"
 
-	mux := http.NewServeMux()
-	mux.HandleFunc(fmt.Sprintf("/api/daemon/issues/%s/gc-check", issueID), func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
-			"status":     "done",
-			"updated_at": time.Now().Add(-30 * 24 * time.Hour),
-		})
-	})
-
-	d := newGCTestDaemon(t, mux)
+	d := newGCTestDaemonWithIssueGCStatus(t, issueID, "done", time.Now().Add(-30*24*time.Hour))
 	taskDir := createTaskDir(t, d.cfg.WorkspacesRoot, "ws1", "normal-task", &execenv.GCMeta{
 		Kind:        execenv.GCKindIssue,
 		IssueID:     issueID,
