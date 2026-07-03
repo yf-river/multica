@@ -121,6 +121,24 @@ func (f rerunTestFixture) taskService() *service.TaskService {
 	return service.NewTaskService(f.queries, nil, hub, events.New())
 }
 
+func (f rerunTestFixture) rerunSourceTask(t *testing.T, sourceTaskID string) *db.AgentTaskQueue {
+	t.Helper()
+
+	task, err := f.taskService().RerunIssue(
+		f.ctx,
+		pgtype.UUID{Bytes: parseUUIDBytes(f.issueID), Valid: true},
+		pgtype.UUID{Bytes: parseUUIDBytes(sourceTaskID), Valid: true},
+		pgtype.UUID{},
+	)
+	if err != nil {
+		t.Fatalf("RerunIssue failed: %v", err)
+	}
+	if task == nil {
+		t.Fatal("RerunIssue returned nil task")
+	}
+	return task
+}
+
 // TestGetLastTaskSessionExcludesPoisonedFailures asserts that the
 // (agent_id, issue_id) resume lookup skips failed tasks whose
 // failure_reason classifies them as poisoned terminal output. This is the
@@ -426,18 +444,7 @@ func TestRerunIssueTargetsSourceTaskAgent(t *testing.T) {
 		t.Fatalf("insert source task: %v", err)
 	}
 
-	task, err := f.taskService().RerunIssue(
-		f.ctx,
-		pgtype.UUID{Bytes: parseUUIDBytes(f.issueID), Valid: true},
-		pgtype.UUID{Bytes: parseUUIDBytes(sourceTaskID), Valid: true},
-		pgtype.UUID{},
-	)
-	if err != nil {
-		t.Fatalf("RerunIssue failed: %v", err)
-	}
-	if task == nil {
-		t.Fatal("RerunIssue returned nil task")
-	}
+	task := f.rerunSourceTask(t, sourceTaskID)
 
 	gotAgent := util.UUIDToString(task.AgentID)
 	if gotAgent != secondaryAgentID {
@@ -534,18 +541,7 @@ func TestRerunIssueInheritsTriggerCommentFromSourceTask(t *testing.T) {
 		t.Fatalf("insert source task: %v", err)
 	}
 
-	task, err := f.taskService().RerunIssue(
-		f.ctx,
-		pgtype.UUID{Bytes: parseUUIDBytes(f.issueID), Valid: true},
-		pgtype.UUID{Bytes: parseUUIDBytes(sourceTaskID), Valid: true},
-		pgtype.UUID{},
-	)
-	if err != nil {
-		t.Fatalf("RerunIssue failed: %v", err)
-	}
-	if task == nil {
-		t.Fatal("RerunIssue returned nil task")
-	}
+	task := f.rerunSourceTask(t, sourceTaskID)
 	if !task.TriggerCommentID.Valid {
 		t.Fatal("expected per-row rerun to inherit trigger_comment_id from source task, got NULL")
 	}
