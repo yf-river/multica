@@ -292,6 +292,27 @@ function renderModal(element: React.ReactElement) {
   );
 }
 
+function renderManualCreatePanel(
+  props: Omit<
+    Partial<React.ComponentProps<typeof ManualCreatePanel>>,
+    "onSwitchMode"
+  > = {},
+) {
+  const onSwitchMode = vi.fn();
+  renderModal(
+    <ManualCreatePanel
+      onClose={vi.fn()}
+      onSwitchMode={onSwitchMode}
+      isExpanded={false}
+      setIsExpanded={vi.fn()}
+      backlogHintIssueId={null}
+      setBacklogHintIssueId={vi.fn()}
+      {...props}
+    />,
+  );
+  return { onSwitchMode };
+}
+
 describe("CreateIssueModal", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -589,18 +610,8 @@ describe("CreateIssueModal", () => {
     mockDraftStore.draft.assigneeType = "squad";
     mockDraftStore.draft.assigneeId = "squad-1";
     const user = userEvent.setup();
-    const onSwitchMode = vi.fn();
 
-    renderModal(
-      <ManualCreatePanel
-        onClose={vi.fn()}
-        onSwitchMode={onSwitchMode}
-        isExpanded={false}
-        setIsExpanded={vi.fn()}
-        backlogHintIssueId={null}
-        setBacklogHintIssueId={vi.fn()}
-      />,
-    );
+    const { onSwitchMode } = renderManualCreatePanel();
 
     await user.type(screen.getByPlaceholderText("任务标题"), "Refactor auth");
     await user.click(screen.getByRole("button", { name: /切换到智能体/i }));
@@ -643,19 +654,10 @@ describe("CreateIssueModal", () => {
 
   it("forwards the picked project when switching to agent mode", async () => {
     const user = userEvent.setup();
-    const onSwitchMode = vi.fn();
 
-    renderModal(
-      <ManualCreatePanel
-        onClose={vi.fn()}
-        onSwitchMode={onSwitchMode}
-        data={{ project_id: "proj-1" }}
-        isExpanded={false}
-        setIsExpanded={vi.fn()}
-        backlogHintIssueId={null}
-        setBacklogHintIssueId={vi.fn()}
-      />,
-    );
+    const { onSwitchMode } = renderManualCreatePanel({
+      data: { project_id: "proj-1" },
+    });
 
     await user.type(screen.getByPlaceholderText("任务标题"), "Refactor auth");
 
@@ -684,22 +686,13 @@ describe("CreateIssueModal", () => {
   // sub-issue relationship correctly, but the visible affordance breaks.
   it("forwards parent_issue_id and falls back to seeded identifier when switching to agent mode", async () => {
     const user = userEvent.setup();
-    const onSwitchMode = vi.fn();
 
-    renderModal(
-      <ManualCreatePanel
-        onClose={vi.fn()}
-        onSwitchMode={onSwitchMode}
-        data={{
-          parent_issue_id: "parent-uuid-1",
-          parent_issue_identifier: "MUL-2534",
-        }}
-        isExpanded={false}
-        setIsExpanded={vi.fn()}
-        backlogHintIssueId={null}
-        setBacklogHintIssueId={vi.fn()}
-      />,
-    );
+    const { onSwitchMode } = renderManualCreatePanel({
+      data: {
+        parent_issue_id: "parent-uuid-1",
+        parent_issue_identifier: "MUL-2534",
+      },
+    });
 
     await user.type(screen.getByPlaceholderText("任务标题"), "Refactor auth");
     await user.click(screen.getByRole("button", { name: /切换到智能体/i }));
@@ -742,16 +735,7 @@ describe("CreateIssueModal", () => {
   it("clears the manual draft when packing title and description into the agent prompt", async () => {
     const user = userEvent.setup();
 
-    renderModal(
-      <ManualCreatePanel
-        onClose={vi.fn()}
-        onSwitchMode={vi.fn()}
-        isExpanded={false}
-        setIsExpanded={vi.fn()}
-        backlogHintIssueId={null}
-        setBacklogHintIssueId={vi.fn()}
-      />,
-    );
+    renderManualCreatePanel();
 
     await user.type(screen.getByPlaceholderText("任务标题"), "Update");
     await user.type(screen.getByPlaceholderText("添加描述..."), "Some body");
