@@ -31,6 +31,36 @@ func newTestHubConnection(t *testing.T, hub *Hub, identity ClientIdentity) *webs
 	return conn
 }
 
+func readHubMessageForTest(t *testing.T, conn *websocket.Conn, timeout time.Duration) protocol.Message {
+	t.Helper()
+
+	if err := conn.SetReadDeadline(time.Now().Add(timeout)); err != nil {
+		t.Fatalf("SetReadDeadline: %v", err)
+	}
+	_, raw, err := conn.ReadMessage()
+	if err != nil {
+		t.Fatalf("ReadMessage: %v", err)
+	}
+
+	var msg protocol.Message
+	if err := json.Unmarshal(raw, &msg); err != nil {
+		t.Fatalf("unmarshal message: %v", err)
+	}
+
+	return msg
+}
+
+func decodeHubMessagePayloadForTest[T any](t *testing.T, msg protocol.Message) T {
+	t.Helper()
+
+	var payload T
+	if err := json.Unmarshal(msg.Payload, &payload); err != nil {
+		t.Fatalf("unmarshal payload: %v", err)
+	}
+
+	return payload
+}
+
 func TestNotifyTaskAvailable(t *testing.T) {
 	M.Reset()
 	defer M.Reset()
@@ -48,26 +78,12 @@ func TestNotifyTaskAvailable(t *testing.T) {
 
 	hub.NotifyTaskAvailable("runtime-1", "task-1")
 
-	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
-		t.Fatalf("SetReadDeadline: %v", err)
-	}
-	_, raw, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatalf("ReadMessage: %v", err)
-	}
-
-	var msg protocol.Message
-	if err := json.Unmarshal(raw, &msg); err != nil {
-		t.Fatalf("unmarshal message: %v", err)
-	}
+	msg := readHubMessageForTest(t, conn, time.Second)
 	if msg.Type != protocol.EventDaemonTaskAvailable {
 		t.Fatalf("message type = %q, want %q", msg.Type, protocol.EventDaemonTaskAvailable)
 	}
 
-	var payload protocol.TaskAvailablePayload
-	if err := json.Unmarshal(msg.Payload, &payload); err != nil {
-		t.Fatalf("unmarshal payload: %v", err)
-	}
+	payload := decodeHubMessagePayloadForTest[protocol.TaskAvailablePayload](t, msg)
 	if payload.RuntimeID != "runtime-1" || payload.TaskID != "task-1" {
 		t.Fatalf("payload = %+v, want runtime/task IDs", payload)
 	}
@@ -93,26 +109,12 @@ func TestNotifyRuntimeProfilesChanged(t *testing.T) {
 
 	hub.NotifyRuntimeProfilesChanged("ws-1", "profile-1")
 
-	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
-		t.Fatalf("SetReadDeadline: %v", err)
-	}
-	_, raw, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatalf("ReadMessage: %v", err)
-	}
-
-	var msg protocol.Message
-	if err := json.Unmarshal(raw, &msg); err != nil {
-		t.Fatalf("unmarshal message: %v", err)
-	}
+	msg := readHubMessageForTest(t, conn, time.Second)
 	if msg.Type != protocol.EventDaemonRuntimeProfilesChanged {
 		t.Fatalf("message type = %q, want %q", msg.Type, protocol.EventDaemonRuntimeProfilesChanged)
 	}
 
-	var payload protocol.RuntimeProfilesChangedPayload
-	if err := json.Unmarshal(msg.Payload, &payload); err != nil {
-		t.Fatalf("unmarshal payload: %v", err)
-	}
+	payload := decodeHubMessagePayloadForTest[protocol.RuntimeProfilesChangedPayload](t, msg)
 	if payload.WorkspaceID != "ws-1" || payload.RuntimeProfileID != "profile-1" {
 		t.Fatalf("payload = %+v, want workspace/profile IDs", payload)
 	}
@@ -145,25 +147,12 @@ func TestNotifyRuntimeProfilesChangedIndexesAllAuthorizedWorkspaces(t *testing.T
 	hub.NotifyRuntimeProfilesChanged("ws-2", "profile-2")
 
 	got := map[string]string{}
-	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
-		t.Fatalf("SetReadDeadline: %v", err)
-	}
 	for len(got) < 2 {
-		_, raw, err := conn.ReadMessage()
-		if err != nil {
-			t.Fatalf("ReadMessage: %v", err)
-		}
-		var msg protocol.Message
-		if err := json.Unmarshal(raw, &msg); err != nil {
-			t.Fatalf("unmarshal message: %v", err)
-		}
+		msg := readHubMessageForTest(t, conn, time.Second)
 		if msg.Type != protocol.EventDaemonRuntimeProfilesChanged {
 			t.Fatalf("message type = %q, want %q", msg.Type, protocol.EventDaemonRuntimeProfilesChanged)
 		}
-		var payload protocol.RuntimeProfilesChangedPayload
-		if err := json.Unmarshal(msg.Payload, &payload); err != nil {
-			t.Fatalf("unmarshal payload: %v", err)
-		}
+		payload := decodeHubMessagePayloadForTest[protocol.RuntimeProfilesChangedPayload](t, msg)
 		got[payload.WorkspaceID] = payload.RuntimeProfileID
 	}
 	if got["ws-1"] != "profile-1" || got["ws-2"] != "profile-2" {
@@ -359,25 +348,11 @@ func TestHeartbeatRoundTrip(t *testing.T) {
 		t.Fatalf("WriteMessage: %v", err)
 	}
 
-	if err := conn.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
-		t.Fatalf("SetReadDeadline: %v", err)
-	}
-	_, raw, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatalf("ReadMessage: %v", err)
-	}
-
-	var msg protocol.Message
-	if err := json.Unmarshal(raw, &msg); err != nil {
-		t.Fatalf("unmarshal ack envelope: %v", err)
-	}
+	msg := readHubMessageForTest(t, conn, time.Second)
 	if msg.Type != protocol.EventDaemonHeartbeatAck {
 		t.Fatalf("ack type = %q, want %q", msg.Type, protocol.EventDaemonHeartbeatAck)
 	}
-	var ack protocol.DaemonHeartbeatAckPayload
-	if err := json.Unmarshal(msg.Payload, &ack); err != nil {
-		t.Fatalf("unmarshal ack payload: %v", err)
-	}
+	ack := decodeHubMessagePayloadForTest[protocol.DaemonHeartbeatAckPayload](t, msg)
 	if ack.RuntimeID != "runtime-1" {
 		t.Fatalf("ack runtime_id = %q, want runtime-1", ack.RuntimeID)
 	}
@@ -426,17 +401,7 @@ func TestHeartbeatHandlerCtxNotTimeBounded(t *testing.T) {
 		t.Fatalf("WriteMessage: %v", err)
 	}
 
-	if err := conn.SetReadDeadline(time.Now().Add(stall + 2*time.Second)); err != nil {
-		t.Fatalf("SetReadDeadline: %v", err)
-	}
-	_, raw, err := conn.ReadMessage()
-	if err != nil {
-		t.Fatalf("ReadMessage: %v", err)
-	}
-	var msg protocol.Message
-	if err := json.Unmarshal(raw, &msg); err != nil {
-		t.Fatalf("unmarshal ack: %v", err)
-	}
+	msg := readHubMessageForTest(t, conn, stall+2*time.Second)
 	if msg.Type != protocol.EventDaemonHeartbeatAck {
 		t.Fatalf("ack type = %q, want %q", msg.Type, protocol.EventDaemonHeartbeatAck)
 	}
