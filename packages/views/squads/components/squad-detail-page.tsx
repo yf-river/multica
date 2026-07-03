@@ -52,6 +52,7 @@ import {
 } from "@multica/ui/components/ui/alert-dialog";
 import { ActorAvatar as ActorAvatarBase } from "@multica/ui/components/common/actor-avatar";
 import { ActorAvatar } from "../../common/actor-avatar";
+import { InlineEditPopover } from "../../common/inline-edit-popover";
 import { ContentEditor } from "../../editor/content-editor";
 import {
   PickerItem,
@@ -523,13 +524,21 @@ function SquadNameEditor({
   value: string;
   onSave: (next: string) => Promise<void>;
 }) {
+  const { t } = useT("squads");
+
   return (
     <InlineEditPopover
       value={value}
       onSave={onSave}
       title="重命名小队"
       placeholder="小队名称"
+      cancelLabel={t(($) => $.name_editor.cancel)}
+      saveLabel="Save"
       validate={(v) => (v.trim().length > 0 ? null : "请输入名称")}
+      onSaveSuccess={() => toast.success("Saved")}
+      onSaveError={(error) => {
+        toast.error(error instanceof Error ? error.message : "Failed to save");
+      }}
     >
       {(triggerProps) => (
         <button
@@ -542,100 +551,6 @@ function SquadNameEditor({
         </button>
       )}
     </InlineEditPopover>
-  );
-}
-
-function InlineEditPopover({
-  value,
-  onSave,
-  title,
-  placeholder,
-  validate,
-  children,
-}: {
-  value: string;
-  onSave: (next: string) => Promise<void>;
-  title: string;
-  placeholder?: string;
-  validate?: (v: string) => string | null;
-  children: (triggerProps: { onClick: (e: React.MouseEvent) => void }) => ReactNode;
-}) {
-  const { t } = useT("squads");
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState(value);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (open) {
-      setDraft(value);
-      setError(null);
-    }
-  }, [open, value]);
-
-  const commit = async () => {
-    const err = validate?.(draft) ?? null;
-    if (err) {
-      setError(err);
-      return;
-    }
-    if (draft === value) {
-      setOpen(false);
-      return;
-    }
-    setSaving(true);
-    try {
-      await onSave(draft);
-      setOpen(false);
-      toast.success("Saved");
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : "Failed to save");
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={children({ onClick: () => setOpen(true) }) as React.ReactElement}
-      />
-      <PopoverContent align="start" className="w-72 p-3">
-        <div className="space-y-2">
-          <p className="text-xs font-medium">{title}</p>
-          <Input
-            autoFocus
-            value={draft}
-            onChange={(e) => {
-              setDraft(e.target.value);
-              if (error) setError(null);
-            }}
-            placeholder={placeholder}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                setOpen(false);
-                return;
-              }
-              if (isImeComposing(e)) return;
-              if (e.key === "Enter") {
-                e.preventDefault();
-                void commit();
-              }
-            }}
-            className="h-8"
-          />
-          {error && <p className="text-xs text-destructive">{error}</p>}
-          <div className="flex items-center justify-end gap-2">
-            <Button variant="ghost" size="sm" onClick={() => setOpen(false)} disabled={saving}>
-              {t(($) => $.name_editor.cancel)}
-            </Button>
-            <Button size="sm" onClick={() => void commit()} disabled={saving || draft === value}>
-              {saving ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : "Save"}
-            </Button>
-          </div>
-        </div>
-      </PopoverContent>
-    </Popover>
   );
 }
 

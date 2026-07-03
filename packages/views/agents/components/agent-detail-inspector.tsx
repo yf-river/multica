@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  useEffect,
-  useRef,
-  useState,
-  type ReactNode,
-} from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { Camera, Loader2, Pencil } from "lucide-react";
 import { toast } from "sonner";
 import type {
@@ -23,7 +18,6 @@ import { isImeComposing } from "@multica/core/utils";
 import { useTimeAgo } from "../../i18n";
 import { Button } from "@multica/ui/components/ui/button";
 import { ActorAvatar } from "../../common/actor-avatar";
-import { Input } from "@multica/ui/components/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -31,12 +25,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from "@multica/ui/components/ui/dialog";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@multica/ui/components/ui/popover";
 import { PropRow } from "../../common/prop-row";
+import { InlineEditPopover } from "../../common/inline-edit-popover";
 import { availabilityConfig } from "../presence";
 import { CharCounter } from "./char-counter";
 import { useT } from "../../i18n";
@@ -380,9 +370,10 @@ function NameAndDescription({
       <InlineEditPopover
         value={agent.name}
         onSave={(v) => onUpdate({ name: v.trim() })}
-        kind="input"
         title={t(($) => $.inspector.rename_title)}
         placeholder={t(($) => $.inspector.rename_placeholder)}
+        cancelLabel={t(($) => $.inspector.cancel)}
+        saveLabel={t(($) => $.inspector.save)}
         validate={(v) => (v.trim().length > 0 ? null : t(($) => $.inspector.rename_required))}
       >
         {(triggerProps) => (
@@ -535,144 +526,6 @@ function DescriptionEditorBody({
   );
 }
 
-
-// Generic single-field popover editor used for name / description. Keeps the
-// trigger styling fully in the caller's hands by using a render prop.
-function InlineEditPopover({
-  value,
-  onSave,
-  kind,
-  title,
-  placeholder,
-  validate,
-  children,
-}: {
-  value: string;
-  onSave: (next: string) => Promise<void>;
-  kind: "input" | "textarea";
-  title: string;
-  placeholder?: string;
-  validate?: (v: string) => string | null;
-  children: (triggerProps: {
-    onClick: (e: React.MouseEvent) => void;
-  }) => ReactNode;
-}) {
-  const { t } = useT("agents");
-  const [open, setOpen] = useState(false);
-  const [draft, setDraft] = useState(value);
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Reset draft when popover opens or upstream value changes between sessions.
-  useEffect(() => {
-    if (open) {
-      setDraft(value);
-      setError(null);
-    }
-  }, [open, value]);
-
-  const commit = async () => {
-    const err = validate?.(draft) ?? null;
-    if (err) {
-      setError(err);
-      return;
-    }
-    if (draft === value) {
-      setOpen(false);
-      return;
-    }
-    setSaving(true);
-    try {
-      await onSave(draft);
-      setOpen(false);
-    } catch {
-      // toast handled by parent's onUpdate
-    } finally {
-      setSaving(false);
-    }
-  };
-
-  return (
-    <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger
-        render={children({ onClick: () => setOpen(true) }) as React.ReactElement}
-      />
-      <PopoverContent align="start" className="w-72 p-3">
-        <div className="space-y-2">
-          <p className="text-xs font-medium">{title}</p>
-          {kind === "input" ? (
-            <Input
-              autoFocus
-              value={draft}
-              onChange={(e) => {
-                setDraft(e.target.value);
-                if (error) setError(null);
-              }}
-              placeholder={placeholder}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") {
-                  setOpen(false);
-                  return;
-                }
-                if (isImeComposing(e)) return;
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  void commit();
-                }
-              }}
-              className="h-8"
-            />
-          ) : (
-            <textarea
-              autoFocus
-              value={draft}
-              onChange={(e) => {
-                setDraft(e.target.value);
-                if (error) setError(null);
-              }}
-              placeholder={placeholder}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") {
-                  setOpen(false);
-                  return;
-                }
-                if (isImeComposing(e)) return;
-                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-                  e.preventDefault();
-                  void commit();
-                }
-              }}
-              rows={3}
-              className="w-full resize-none rounded-md border bg-transparent px-2 py-1.5 text-xs outline-none focus-visible:border-input"
-            />
-          )}
-          {error && <p className="text-xs text-destructive">{error}</p>}
-          <div className="flex items-center justify-end gap-2">
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => setOpen(false)}
-              disabled={saving}
-            >
-              {t(($) => $.inspector.cancel)}
-            </Button>
-            <Button
-              size="sm"
-              onClick={() => void commit()}
-              disabled={saving || draft === value}
-            >
-              {saving ? (
-                <Loader2 className="h-3.5 w-3.5 animate-spin" />
-              ) : (
-                t(($) => $.inspector.save)
-              )}
-            </Button>
-          </div>
-        </div>
-      </PopoverContent>
-    </Popover>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Presence badge — unchanged from the previous version
