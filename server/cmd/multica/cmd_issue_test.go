@@ -121,6 +121,51 @@ func newAssigneeResolverTestServer(
 	}))
 }
 
+type issueCommentListQueryTestServer struct {
+	server *httptest.Server
+	query  url.Values
+}
+
+func newIssueCommentListQueryTestServer(
+	t *testing.T,
+	onComments func(http.ResponseWriter, *http.Request),
+) *issueCommentListQueryTestServer {
+	t.Helper()
+	fixture := &issueCommentListQueryTestServer{}
+	fixture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/issues/") && !strings.Contains(r.URL.Path, "/comments") {
+			json.NewEncoder(w).Encode(map[string]any{
+				"id":         "issue-1",
+				"identifier": "MUL-1",
+			})
+			return
+		}
+		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments") {
+			fixture.query = r.URL.Query()
+			if onComments != nil {
+				onComments(w, r)
+				return
+			}
+			w.Write([]byte("[]"))
+			return
+		}
+		t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
+		http.Error(w, "unexpected", http.StatusInternalServerError)
+	}))
+	return fixture
+}
+
+func (s *issueCommentListQueryTestServer) close() {
+	s.server.Close()
+}
+
+func (s *issueCommentListQueryTestServer) setEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv("MULTICA_SERVER_URL", s.server.URL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+}
+
 func TestResolveTextFlag(t *testing.T) {
 	t.Run("inline value is unescaped", func(t *testing.T) {
 		c := newFlagTestCmd("description")
@@ -2018,28 +2063,10 @@ func TestRunIssueCommentListFlagGuards(t *testing.T) {
 // of #3164: the flag must be forwarded as the server's roots_only query param,
 // and it must still allow the existing --since incremental polling filter.
 func TestRunIssueCommentList_RootsOnlyPassesThroughWithSince(t *testing.T) {
-	var gotQuery url.Values
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/issues/") && !strings.Contains(r.URL.Path, "/comments") {
-			json.NewEncoder(w).Encode(map[string]any{
-				"id":         "issue-1",
-				"identifier": "MUL-1",
-			})
-			return
-		}
-		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments") {
-			gotQuery = r.URL.Query()
-			w.Write([]byte("[]"))
-			return
-		}
-		t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
-		http.Error(w, "unexpected", http.StatusInternalServerError)
-	}))
-	defer srv.Close()
+	srv := newIssueCommentListQueryTestServer(t, nil)
+	defer srv.close()
 
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
+	srv.setEnv(t)
 
 	cmd := newIssueCommentListTestCmd()
 	if err := cmd.Flags().Set("roots-only", "true"); err != nil {
@@ -2052,10 +2079,10 @@ func TestRunIssueCommentList_RootsOnlyPassesThroughWithSince(t *testing.T) {
 		t.Fatalf("runIssueCommentList: %v", err)
 	}
 
-	if got := gotQuery.Get("roots_only"); got != "true" {
+	if got := srv.query.Get("roots_only"); got != "true" {
 		t.Errorf("roots_only query = %q, want true", got)
 	}
-	if got := gotQuery.Get("since"); got != "2026-01-01T00:00:00Z" {
+	if got := srv.query.Get("since"); got != "2026-01-01T00:00:00Z" {
 		t.Errorf("since query = %q, want timestamp", got)
 	}
 }
@@ -2065,28 +2092,10 @@ func TestRunIssueCommentList_RootsOnlyPassesThroughWithSince(t *testing.T) {
 // --roots-only (the orientation read it pairs with most often) rather than
 // being rejected as an incompatible combination.
 func TestRunIssueCommentList_SummaryPassesThrough(t *testing.T) {
-	var gotQuery url.Values
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/issues/") && !strings.Contains(r.URL.Path, "/comments") {
-			json.NewEncoder(w).Encode(map[string]any{
-				"id":         "issue-1",
-				"identifier": "MUL-1",
-			})
-			return
-		}
-		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments") {
-			gotQuery = r.URL.Query()
-			w.Write([]byte("[]"))
-			return
-		}
-		t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
-		http.Error(w, "unexpected", http.StatusInternalServerError)
-	}))
-	defer srv.Close()
+	srv := newIssueCommentListQueryTestServer(t, nil)
+	defer srv.close()
 
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
+	srv.setEnv(t)
 
 	cmd := newIssueCommentListTestCmd()
 	if err := cmd.Flags().Set("summary", "true"); err != nil {
@@ -2099,10 +2108,10 @@ func TestRunIssueCommentList_SummaryPassesThrough(t *testing.T) {
 		t.Fatalf("runIssueCommentList: %v", err)
 	}
 
-	if got := gotQuery.Get("summary"); got != "true" {
+	if got := srv.query.Get("summary"); got != "true" {
 		t.Errorf("summary query = %q, want true", got)
 	}
-	if got := gotQuery.Get("roots_only"); got != "true" {
+	if got := srv.query.Get("roots_only"); got != "true" {
 		t.Errorf("roots_only query = %q, want true", got)
 	}
 }
@@ -2113,32 +2122,16 @@ func TestRunIssueCommentList_SummaryPassesThrough(t *testing.T) {
 // "Next thread cursor") so an operator can scroll older replies inside
 // the same thread without guessing which cursor model the server emitted.
 func TestRunIssueCommentList_ThreadTailPassesThroughAndPrintsReplyCursor(t *testing.T) {
-	var gotQuery url.Values
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, "/api/issues/") && !strings.Contains(r.URL.Path, "/comments") {
-			json.NewEncoder(w).Encode(map[string]any{
-				"id":         "issue-1",
-				"identifier": "MUL-1",
-			})
-			return
-		}
-		if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/comments") {
-			gotQuery = r.URL.Query()
-			// Emit a cursor so we can prove the CLI labels it "reply"
-			// when the call was a --thread + --tail combo.
-			w.Header().Set("X-Multica-Next-Before", "2026-01-01T00:00:00.000000001Z")
-			w.Header().Set("X-Multica-Next-Before-Id", "00000000-0000-0000-0000-000000000999")
-			w.Write([]byte("[]"))
-			return
-		}
-		t.Errorf("unexpected request: %s %s", r.Method, r.URL.String())
-		http.Error(w, "unexpected", http.StatusInternalServerError)
-	}))
-	defer srv.Close()
+	srv := newIssueCommentListQueryTestServer(t, func(w http.ResponseWriter, _ *http.Request) {
+		// Emit a cursor so we can prove the CLI labels it "reply"
+		// when the call was a --thread + --tail combo.
+		w.Header().Set("X-Multica-Next-Before", "2026-01-01T00:00:00.000000001Z")
+		w.Header().Set("X-Multica-Next-Before-Id", "00000000-0000-0000-0000-000000000999")
+		w.Write([]byte("[]"))
+	})
+	defer srv.close()
 
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
+	srv.setEnv(t)
 
 	// Redirect stderr so we can assert on the "Next reply cursor" line —
 	// that's the user-visible signal that the CLI knew it was paging
@@ -2157,10 +2150,10 @@ func TestRunIssueCommentList_ThreadTailPassesThroughAndPrintsReplyCursor(t *test
 		t.Fatalf("runIssueCommentList: %v", err)
 	}
 
-	if got := gotQuery.Get("thread"); got != "00000000-0000-0000-0000-000000000001" {
+	if got := srv.query.Get("thread"); got != "00000000-0000-0000-0000-000000000001" {
 		t.Errorf("thread query = %q, want the passed anchor", got)
 	}
-	if got := gotQuery.Get("tail"); got != "5" {
+	if got := srv.query.Get("tail"); got != "5" {
 		t.Errorf("tail query = %q, want %q", got, "5")
 	}
 	out := stderr.read()
