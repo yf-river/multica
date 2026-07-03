@@ -267,6 +267,121 @@ func createHandlerTestTaskForAgentOnIssue(t *testing.T, agentID, issueID string)
 	return taskID
 }
 
+type handlerCommentIssueFixture struct {
+	ID string
+}
+
+func createHandlerCommentIssueFixture(t *testing.T, title string) handlerCommentIssueFixture {
+	t.Helper()
+
+	ctx := context.Background()
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":  title,
+		"status": "todo",
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var issue IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+		t.Fatalf("decode issue response: %v", err)
+	}
+
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issue.ID)
+		testPool.Exec(ctx, `DELETE FROM comment WHERE issue_id = $1`, issue.ID)
+		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issue.ID)
+	})
+
+	return handlerCommentIssueFixture{ID: issue.ID}
+}
+
+func createHandlerAssignedCommentIssueFixture(t *testing.T, title, assigneeAgentID string) handlerCommentIssueFixture {
+	t.Helper()
+
+	ctx := context.Background()
+	var number int
+	if err := testPool.QueryRow(ctx, `
+		UPDATE workspace
+		SET issue_counter = GREATEST(issue_counter, (SELECT COALESCE(MAX(number), 0) FROM issue WHERE workspace_id = $1)) + 1
+		WHERE id = $1 RETURNING issue_counter
+	`, testWorkspaceID).Scan(&number); err != nil {
+		t.Fatalf("next issue number: %v", err)
+	}
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, assignee_type, assignee_id, number)
+		VALUES ($1, 'member', $2, $3, 'agent', $4, $5)
+		RETURNING id
+	`, testWorkspaceID, testUserID, title, assigneeAgentID, number).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		testPool.Exec(context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+
+	return handlerCommentIssueFixture{ID: issueID}
+}
+
+func (fx handlerCommentIssueFixture) countQueuedTasks(t *testing.T, agentID string) int {
+	t.Helper()
+
+	var n int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*) FROM agent_task_queue
+		WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'
+	`, fx.ID, agentID).Scan(&n); err != nil {
+		t.Fatalf("failed to count tasks: %v", err)
+	}
+	return n
+}
+
+func (fx handlerCommentIssueFixture) cancelQueuedTasks(t *testing.T, agentID string) {
+	t.Helper()
+
+	if _, err := testPool.Exec(context.Background(),
+		`UPDATE agent_task_queue SET status = 'cancelled' WHERE issue_id = $1 AND agent_id = $2`,
+		fx.ID, agentID,
+	); err != nil {
+		t.Fatalf("failed to cancel tasks: %v", err)
+	}
+}
+
+func (fx handlerCommentIssueFixture) cancelAllQueuedTasks(t *testing.T) {
+	t.Helper()
+
+	if _, err := testPool.Exec(context.Background(), `UPDATE agent_task_queue SET status = 'cancelled' WHERE issue_id = $1`, fx.ID); err != nil {
+		t.Fatalf("failed to cancel tasks: %v", err)
+	}
+}
+
+func (fx handlerCommentIssueFixture) postComment(t *testing.T, body map[string]any, headers map[string]string) (*httptest.ResponseRecorder, CommentResponse) {
+	t.Helper()
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues/"+fx.ID+"/comments", body)
+	req = withURLParam(req, "id", fx.ID)
+	for key, value := range headers {
+		req.Header.Set(key, value)
+	}
+	testHandler.CreateComment(w, req)
+
+	var resp CommentResponse
+	if w.Code == http.StatusCreated {
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode comment response: %v", err)
+		}
+	}
+	return w, resp
+}
+
 type sameTitleAutopilotFixture struct {
 	existingIssueID string
 	autopilotID     string
@@ -3246,83 +3361,28 @@ func TestAgentReplyDoesNotInheritParentMentions(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
-	ctx := context.Background()
 
 	// Create two agents.
 	agentA := createHandlerTestAgent(t, "Loop Agent A", nil)
 	agentB := createHandlerTestAgent(t, "Loop Agent B", nil)
 
 	// Create an unassigned issue so on_comment doesn't fire.
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title":  "Agent mention inheritance test",
-		"status": "todo",
-	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var issue IssueResponse
-	json.NewDecoder(w.Body).Decode(&issue)
-	issueID := issue.ID
-
-	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		testPool.Exec(ctx, `DELETE FROM comment WHERE issue_id = $1`, issueID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
-	})
-
-	// Helper: count queued tasks for a given agent on this issue.
-	countTasks := func(agentID string) int {
-		var n int
-		err := testPool.QueryRow(ctx,
-			`SELECT count(*) FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'`,
-			issueID, agentID,
-		).Scan(&n)
-		if err != nil {
-			t.Fatalf("failed to count tasks: %v", err)
-		}
-		return n
-	}
-
-	// Helper: cancel all tasks for an agent on this issue.
-	cancelTasks := func(agentID string) {
-		_, err := testPool.Exec(ctx,
-			`UPDATE agent_task_queue SET status = 'cancelled' WHERE issue_id = $1 AND agent_id = $2`,
-			issueID, agentID,
-		)
-		if err != nil {
-			t.Fatalf("failed to cancel tasks: %v", err)
-		}
-	}
-
-	postComment := func(issueID string, body map[string]any, headers map[string]string) *httptest.ResponseRecorder {
-		w := httptest.NewRecorder()
-		r := newRequest("POST", "/api/issues/"+issueID+"/comments", body)
-		r = withURLParam(r, "id", issueID)
-		for k, v := range headers {
-			r.Header.Set(k, v)
-		}
-		testHandler.CreateComment(w, r)
-		return w
-	}
+	fx := createHandlerCommentIssueFixture(t, "Agent mention inheritance test")
 
 	// 1. Member posts top-level comment mentioning Agent B.
 	mentionB := fmt.Sprintf("[@Agent B](mention://agent/%s) please review", agentB)
-	w = postComment(issueID, map[string]any{"content": mentionB}, nil)
+	w, parentComment := fx.postComment(t, map[string]any{"content": mentionB}, nil)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("member mention comment: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var parentComment CommentResponse
-	json.NewDecoder(w.Body).Decode(&parentComment)
-	if countTasks(agentB) != 1 {
-		t.Fatalf("expected 1 task for Agent B after member mention, got %d", countTasks(agentB))
+	if got := fx.countQueuedTasks(t, agentB); got != 1 {
+		t.Fatalf("expected 1 task for Agent B after member mention, got %d", got)
 	}
 
 	// 2. Cancel Agent B's task so it's free to be re-triggered.
-	cancelTasks(agentB)
-	if countTasks(agentB) != 0 {
-		t.Fatalf("expected 0 tasks for Agent B after cancel, got %d", countTasks(agentB))
+	fx.cancelQueuedTasks(t, agentB)
+	if got := fx.countQueuedTasks(t, agentB); got != 0 {
+		t.Fatalf("expected 0 tasks for Agent B after cancel, got %d", got)
 	}
 
 	// 3. Agent A posts a reply in the same thread with NO mentions.
@@ -3330,31 +3390,31 @@ func TestAgentReplyDoesNotInheritParentMentions(t *testing.T) {
 	// resolveActor requires X-Task-ID paired with X-Agent-ID to trust the
 	// agent identity, so we seed a task that belongs to agent A.
 	agentATask := createHandlerTestTaskForAgent(t, agentA)
-	w = postComment(issueID, map[string]any{
+	w, _ = fx.postComment(t, map[string]any{
 		"content":   "No reply needed — just an acknowledgment.",
 		"parent_id": parentComment.ID,
 	}, map[string]string{"X-Agent-ID": agentA, "X-Task-ID": agentATask})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("agent A reply: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	if countTasks(agentB) != 0 {
-		t.Fatalf("expected 0 tasks for Agent B after agent reply (no parent inheritance), got %d", countTasks(agentB))
+	if got := fx.countQueuedTasks(t, agentB); got != 0 {
+		t.Fatalf("expected 0 tasks for Agent B after agent reply (no parent inheritance), got %d", got)
 	}
 
 	// 4. Cancel any stray tasks.
-	cancelTasks(agentB)
+	fx.cancelQueuedTasks(t, agentB)
 
 	// 5. Member posts a reply in the same thread with NO mentions.
 	// This SHOULD inherit the parent mention and re-trigger Agent B.
-	w = postComment(issueID, map[string]any{
+	w, _ = fx.postComment(t, map[string]any{
 		"content":   "Thanks for the review.",
 		"parent_id": parentComment.ID,
 	}, nil)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("member reply: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	if countTasks(agentB) != 1 {
-		t.Fatalf("expected 1 task for Agent B after member reply (parent inheritance allowed), got %d", countTasks(agentB))
+	if got := fx.countQueuedTasks(t, agentB); got != 1 {
+		t.Fatalf("expected 1 task for Agent B after member reply (parent inheritance allowed), got %d", got)
 	}
 }
 
@@ -3368,88 +3428,42 @@ func TestMemberReplyToAgentRootDoesNotInheritParentMentions(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
-	ctx := context.Background()
 
 	jAgent := createHandlerTestAgent(t, "J", nil)
 	reviewerAgent := createHandlerTestAgent(t, "Reviewer", nil)
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title":  "PR review delegation no-leak test",
-		"status": "todo",
-	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var issue IssueResponse
-	json.NewDecoder(w.Body).Decode(&issue)
-	issueID := issue.ID
-
-	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		testPool.Exec(ctx, `DELETE FROM comment WHERE issue_id = $1`, issueID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
-	})
-
-	countTasks := func(agentID string) int {
-		var n int
-		err := testPool.QueryRow(ctx,
-			`SELECT count(*) FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'`,
-			issueID, agentID,
-		).Scan(&n)
-		if err != nil {
-			t.Fatalf("failed to count tasks: %v", err)
-		}
-		return n
-	}
+	fx := createHandlerCommentIssueFixture(t, "PR review delegation no-leak test")
 
 	// 1. Agent J posts a PR-completion comment that @mentions Reviewer for review.
 	// This is a deliberate handoff and must enqueue a task for Reviewer.
 	// X-Task-ID is required alongside X-Agent-ID for resolveActor to grant
 	// the "agent" actor identity (defense against header forgery).
 	jAgentTask := createHandlerTestTaskForAgent(t, jAgent)
-	w = httptest.NewRecorder()
-	r := newRequest("POST", "/api/issues/"+issueID+"/comments", map[string]any{
+	w, rootComment := fx.postComment(t, map[string]any{
 		"content": fmt.Sprintf("PR ready. [@Reviewer](mention://agent/%s) please review this.", reviewerAgent),
-	})
-	r = withURLParam(r, "id", issueID)
-	r.Header.Set("X-Agent-ID", jAgent)
-	r.Header.Set("X-Task-ID", jAgentTask)
-	testHandler.CreateComment(w, r)
+	}, map[string]string{"X-Agent-ID": jAgent, "X-Task-ID": jAgentTask})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("J PR completion: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	var rootComment CommentResponse
-	json.NewDecoder(w.Body).Decode(&rootComment)
-	if got := countTasks(reviewerAgent); got != 1 {
+	if got := fx.countQueuedTasks(t, reviewerAgent); got != 1 {
 		t.Fatalf("expected 1 task for Reviewer after explicit mention, got %d", got)
 	}
 
 	// Cancel reviewer's task so it's free to be re-triggered if the bug returns.
-	if _, err := testPool.Exec(ctx,
-		`UPDATE agent_task_queue SET status = 'cancelled' WHERE issue_id = $1 AND agent_id = $2`,
-		issueID, reviewerAgent,
-	); err != nil {
-		t.Fatalf("cancel reviewer task: %v", err)
-	}
+	fx.cancelQueuedTasks(t, reviewerAgent)
 
 	// 2. Member posts a plain follow-up reply under J's PR comment, with no
 	// explicit mentions. The pre-fix code path inherited mentions from the
 	// parent regardless of the parent author, which re-triggered Reviewer.
 	// With the fix, the reply must NOT inherit because the parent was
 	// authored by an agent.
-	w = httptest.NewRecorder()
-	r = newRequest("POST", "/api/issues/"+issueID+"/comments", map[string]any{
+	w, _ = fx.postComment(t, map[string]any{
 		"content":   "How do I test this after merging?",
 		"parent_id": rootComment.ID,
-	})
-	r = withURLParam(r, "id", issueID)
-	testHandler.CreateComment(w, r)
+	}, nil)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("member follow-up: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	if got := countTasks(reviewerAgent); got != 0 {
+	if got := fx.countQueuedTasks(t, reviewerAgent); got != 0 {
 		t.Fatalf("expected 0 tasks for Reviewer after plain member reply (no inheritance from agent root), got %d", got)
 	}
 }
@@ -3466,53 +3480,12 @@ func TestNestedMemberReplyUsesDirectParentForMentionInheritance(t *testing.T) {
 
 	assigneeAgent := createHandlerTestAgent(t, "Nested Mention Assignee", nil)
 	mentionedAgent := createHandlerTestAgent(t, "Nested Mention Target", nil)
-
-	var number int
-	if err := testPool.QueryRow(ctx, `
-		UPDATE workspace
-		SET issue_counter = GREATEST(issue_counter, (SELECT COALESCE(MAX(number), 0) FROM issue WHERE workspace_id = $1)) + 1
-		WHERE id = $1 RETURNING issue_counter
-	`, testWorkspaceID).Scan(&number); err != nil {
-		t.Fatalf("next issue number: %v", err)
-	}
-
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, assignee_type, assignee_id, number)
-		VALUES ($1, 'member', $2, $3, 'agent', $4, $5)
-		RETURNING id
-	`, testWorkspaceID, testUserID, "nested mention inheritance regression", assigneeAgent, number).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
-	})
-
-	countQueued := func(agentID string) int {
-		t.Helper()
-		var n int
-		if err := testPool.QueryRow(ctx, `
-			SELECT count(*) FROM agent_task_queue
-			WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'
-		`, issueID, agentID).Scan(&n); err != nil {
-			t.Fatalf("count queued tasks: %v", err)
-		}
-		return n
-	}
+	fx := createHandlerAssignedCommentIssueFixture(t, "nested mention inheritance regression", assigneeAgent)
 	postMemberComment := func(body map[string]any) CommentResponse {
 		t.Helper()
-		w := httptest.NewRecorder()
-		r := newRequest("POST", "/api/issues/"+issueID+"/comments", body)
-		r = withURLParam(r, "id", issueID)
-		testHandler.CreateComment(w, r)
+		w, resp := fx.postComment(t, body, nil)
 		if w.Code != http.StatusCreated {
 			t.Fatalf("CreateComment: expected 201, got %d: %s", w.Code, w.Body.String())
-		}
-		var resp CommentResponse
-		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-			t.Fatalf("decode comment response: %v", err)
 		}
 		return resp
 	}
@@ -3520,19 +3493,17 @@ func TestNestedMemberReplyUsesDirectParentForMentionInheritance(t *testing.T) {
 	root := postMemberComment(map[string]any{
 		"content": fmt.Sprintf("[@Mentioned](mention://agent/%s) please look", mentionedAgent),
 	})
-	if got := countQueued(mentionedAgent); got != 1 {
+	if got := fx.countQueuedTasks(t, mentionedAgent); got != 1 {
 		t.Fatalf("expected root mention to queue mentioned agent once, got %d", got)
 	}
-	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET status = 'cancelled' WHERE issue_id = $1`, issueID); err != nil {
-		t.Fatalf("cancel root mention task: %v", err)
-	}
+	fx.cancelAllQueuedTasks(t)
 
 	var directParentID string
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content, parent_id)
 		VALUES ($1, $2, 'agent', $3, $4, $5)
 		RETURNING id
-	`, testWorkspaceID, issueID, mentionedAgent, "looks like redirect config", root.ID).Scan(&directParentID); err != nil {
+	`, testWorkspaceID, fx.ID, mentionedAgent, "looks like redirect config", root.ID).Scan(&directParentID); err != nil {
 		t.Fatalf("insert direct parent reply: %v", err)
 	}
 
@@ -3543,7 +3514,7 @@ func TestNestedMemberReplyUsesDirectParentForMentionInheritance(t *testing.T) {
 	if nested.ParentID == nil || *nested.ParentID != directParentID {
 		t.Fatalf("stored nested reply parent_id should keep direct parent %s, got %v", directParentID, nested.ParentID)
 	}
-	if got := countQueued(mentionedAgent); got != 0 {
+	if got := fx.countQueuedTasks(t, mentionedAgent); got != 0 {
 		t.Fatalf("plain nested reply must not inherit root mention from non-direct parent; got %d queued tasks", got)
 	}
 }
@@ -3558,53 +3529,12 @@ func TestNestedMemberReplyUsesDirectParentForAssigneeParticipation(t *testing.T)
 	ctx := context.Background()
 
 	assigneeAgent := createHandlerTestAgent(t, "Nested Participation Assignee", nil)
-
-	var number int
-	if err := testPool.QueryRow(ctx, `
-		UPDATE workspace
-		SET issue_counter = GREATEST(issue_counter, (SELECT COALESCE(MAX(number), 0) FROM issue WHERE workspace_id = $1)) + 1
-		WHERE id = $1 RETURNING issue_counter
-	`, testWorkspaceID).Scan(&number); err != nil {
-		t.Fatalf("next issue number: %v", err)
-	}
-
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, creator_type, creator_id, title, assignee_type, assignee_id, number)
-		VALUES ($1, 'member', $2, $3, 'agent', $4, $5)
-		RETURNING id
-	`, testWorkspaceID, testUserID, "nested participation regression", assigneeAgent, number).Scan(&issueID); err != nil {
-		t.Fatalf("create issue: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
-		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
-	})
-
-	countAssigneeQueued := func() int {
-		t.Helper()
-		var n int
-		if err := testPool.QueryRow(ctx, `
-			SELECT count(*) FROM agent_task_queue
-			WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'
-		`, issueID, assigneeAgent).Scan(&n); err != nil {
-			t.Fatalf("count queued tasks: %v", err)
-		}
-		return n
-	}
+	fx := createHandlerAssignedCommentIssueFixture(t, "nested participation regression", assigneeAgent)
 	postMemberComment := func(body map[string]any) CommentResponse {
 		t.Helper()
-		w := httptest.NewRecorder()
-		r := newRequest("POST", "/api/issues/"+issueID+"/comments", body)
-		r = withURLParam(r, "id", issueID)
-		testHandler.CreateComment(w, r)
+		w, resp := fx.postComment(t, body, nil)
 		if w.Code != http.StatusCreated {
 			t.Fatalf("CreateComment: expected 201, got %d: %s", w.Code, w.Body.String())
-		}
-		var resp CommentResponse
-		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
-			t.Fatalf("decode comment response: %v", err)
 		}
 		return resp
 	}
@@ -3614,13 +3544,13 @@ func TestNestedMemberReplyUsesDirectParentForAssigneeParticipation(t *testing.T)
 		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content)
 		VALUES ($1, $2, 'member', $3, 'this cache question is for humans')
 		RETURNING id
-	`, testWorkspaceID, issueID, testUserID).Scan(&rootID); err != nil {
+	`, testWorkspaceID, fx.ID, testUserID).Scan(&rootID); err != nil {
 		t.Fatalf("insert root comment: %v", err)
 	}
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content, parent_id)
 		VALUES ($1, $2, 'agent', $3, 'expiration policy is the issue', $4)
-	`, testWorkspaceID, issueID, assigneeAgent, rootID); err != nil {
+	`, testWorkspaceID, fx.ID, assigneeAgent, rootID); err != nil {
 		t.Fatalf("insert assignee reply: %v", err)
 	}
 	var humanParentID string
@@ -3628,7 +3558,7 @@ func TestNestedMemberReplyUsesDirectParentForAssigneeParticipation(t *testing.T)
 		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content, parent_id)
 		VALUES ($1, $2, 'member', $3, 'I have seen this too', $4)
 		RETURNING id
-	`, testWorkspaceID, issueID, testUserID, rootID).Scan(&humanParentID); err != nil {
+	`, testWorkspaceID, fx.ID, testUserID, rootID).Scan(&humanParentID); err != nil {
 		t.Fatalf("insert human direct parent: %v", err)
 	}
 
@@ -3639,7 +3569,7 @@ func TestNestedMemberReplyUsesDirectParentForAssigneeParticipation(t *testing.T)
 	if nested.ParentID == nil || *nested.ParentID != humanParentID {
 		t.Fatalf("stored nested reply parent_id should keep direct parent %s, got %v", humanParentID, nested.ParentID)
 	}
-	if got := countAssigneeQueued(); got != 0 {
+	if got := fx.countQueuedTasks(t, assigneeAgent); got != 0 {
 		t.Fatalf("plain nested human reply must not wake assignee just because assignee replied elsewhere under root; got %d queued tasks", got)
 	}
 }
@@ -3653,41 +3583,10 @@ func TestAgentExplicitMentionStillTriggers(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
 	}
-	ctx := context.Background()
 
 	agentA := createHandlerTestAgent(t, "Handoff Agent A", nil)
 	agentB := createHandlerTestAgent(t, "Handoff Agent B", nil)
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title":  "Agent explicit handoff test",
-		"status": "todo",
-	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var issue IssueResponse
-	json.NewDecoder(w.Body).Decode(&issue)
-	issueID := issue.ID
-
-	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		testPool.Exec(ctx, `DELETE FROM comment WHERE issue_id = $1`, issueID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
-	})
-
-	countTasks := func(agentID string) int {
-		var n int
-		err := testPool.QueryRow(ctx,
-			`SELECT count(*) FROM agent_task_queue WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'`,
-			issueID, agentID,
-		).Scan(&n)
-		if err != nil {
-			t.Fatalf("failed to count tasks: %v", err)
-		}
-		return n
-	}
+	fx := createHandlerCommentIssueFixture(t, "Agent explicit handoff test")
 
 	// Agent A posts a top-level comment that explicitly @mentions Agent B —
 	// a deliberate handoff. This must enqueue a task for Agent B, and must
@@ -3696,21 +3595,16 @@ func TestAgentExplicitMentionStillTriggers(t *testing.T) {
 	// suppression (authorType=="agent") would not fire.
 	agentATask := createHandlerTestTaskForAgent(t, agentA)
 	explicitMention := fmt.Sprintf("[@Agent B](mention://agent/%s) please take it from here", agentB)
-	w = httptest.NewRecorder()
-	r := newRequest("POST", "/api/issues/"+issueID+"/comments", map[string]any{
+	w, _ := fx.postComment(t, map[string]any{
 		"content": explicitMention,
-	})
-	r = withURLParam(r, "id", issueID)
-	r.Header.Set("X-Agent-ID", agentA)
-	r.Header.Set("X-Task-ID", agentATask)
-	testHandler.CreateComment(w, r)
+	}, map[string]string{"X-Agent-ID": agentA, "X-Task-ID": agentATask})
 	if w.Code != http.StatusCreated {
 		t.Fatalf("agent A handoff: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
-	if got := countTasks(agentB); got != 1 {
+	if got := fx.countQueuedTasks(t, agentB); got != 1 {
 		t.Fatalf("expected 1 task for Agent B after explicit mention by Agent A, got %d", got)
 	}
-	if got := countTasks(agentA); got != 0 {
+	if got := fx.countQueuedTasks(t, agentA); got != 0 {
 		t.Fatalf("expected 0 tasks for Agent A (no self-trigger on own mention), got %d", got)
 	}
 }
