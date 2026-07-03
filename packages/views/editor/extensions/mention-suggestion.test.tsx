@@ -101,6 +101,27 @@ function fakeQc(data: {
   } as unknown as QueryClient;
 }
 
+const CONTEXT_MENTION_CACHE = {
+  members: [{ user_id: "u1", name: "Alice", role: "member" }],
+  agents: [
+    { id: "a1", name: "Aegis", archived_at: null, scope: "workspace" as const, owner_id: null },
+  ],
+  issues: [{ id: "i-cache", identifier: "MUL-9", title: "Cached", status: "todo" }],
+};
+
+const CONTEXT_MENTION_ITEMS: MentionItem[] = [
+  { id: "i1", label: "MUL-1", type: "issue", description: "Alpha issue", status: "todo", group: "current" },
+  { id: "p1", label: "Roadmap", type: "project", description: "Q3", group: "recent" },
+];
+
+function contextMentionItems(query: string): MentionItem[] {
+  const config = createMentionSuggestion(fakeQc(CONTEXT_MENTION_CACHE), {
+    mode: "context",
+    getContextItems: () => CONTEXT_MENTION_ITEMS,
+  });
+  return config.items!({ query, editor: {} as never }) as MentionItem[];
+}
+
 describe("createMentionSuggestion", () => {
   beforeEach(() => {
     searchIssuesMock.mockReset();
@@ -314,42 +335,18 @@ describe("createMentionSuggestion", () => {
 
 
   it("shows only current/recent chat context before the user types a query", () => {
-    const qc = fakeQc({
-      members: [{ user_id: "u1", name: "Alice", role: "member" }],
-      agents: [{ id: "a1", name: "Aegis", archived_at: null, scope: "workspace", owner_id: null }],
-      issues: [{ id: "i-cache", identifier: "MUL-9", title: "Cached", status: "todo" }],
-    });
     searchIssuesMock.mockReturnValue(new Promise(() => {}));
 
-    const config = createMentionSuggestion(qc, {
-      mode: "context",
-      getContextItems: () => [
-        { id: "i1", label: "MUL-1", type: "issue", description: "Alpha issue", status: "todo", group: "current" },
-        { id: "p1", label: "Roadmap", type: "project", description: "Q3", group: "recent" },
-      ],
-    });
-    const result = config.items!({ query: "", editor: {} as never }) as MentionItem[];
+    const result = contextMentionItems("");
 
     expect(result.map((item) => `${item.type}:${item.id}`)).toEqual(["issue:i1", "project:p1"]);
     expect(result.some((item) => item.type === "member" || item.type === "agent")).toBe(false);
   });
 
   it("prepends current/recent chat context without removing normal mention targets after the user types", () => {
-    const qc = fakeQc({
-      members: [{ user_id: "u1", name: "Alice", role: "member" }],
-      agents: [{ id: "a1", name: "Aegis", archived_at: null, scope: "workspace", owner_id: null }],
-      issues: [{ id: "i-cache", identifier: "MUL-9", title: "Cached", status: "todo" }],
-    });
     searchIssuesMock.mockReturnValue(new Promise(() => {}));
 
-    const config = createMentionSuggestion(qc, {
-      mode: "context",
-      getContextItems: () => [
-        { id: "i1", label: "MUL-1", type: "issue", description: "Alpha issue", status: "todo", group: "current" },
-        { id: "p1", label: "Roadmap", type: "project", description: "Q3", group: "recent" },
-      ],
-    });
-    const result = config.items!({ query: "a", editor: {} as never }) as MentionItem[];
+    const result = contextMentionItems("a");
 
     expect(result.map((item) => `${item.type}:${item.id}`).slice(0, 2)).toEqual(["issue:i1", "project:p1"]);
     expect(result.some((item) => item.type === "member" && item.label === "Alice")).toBe(true);
