@@ -267,6 +267,64 @@ func createHandlerTestTaskForAgentOnIssue(t *testing.T, agentID, issueID string)
 	return taskID
 }
 
+type sameTitleAutopilotFixture struct {
+	existingIssueID string
+	autopilotID     string
+}
+
+func createSameTitleAutopilotFixture(t *testing.T, ctx context.Context, issueTitle, autopilotTitle string) sameTitleAutopilotFixture {
+	t.Helper()
+
+	var autopilotID string
+	t.Cleanup(func() {
+		if autopilotID != "" {
+			testPool.Exec(context.Background(), `DELETE FROM autopilot WHERE id = $1`, autopilotID)
+		}
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, issueTitle)
+	})
+
+	var agentID string
+	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatalf("load test agent: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":  issueTitle,
+		"status": "todo",
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue existing: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var existing IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&existing); err != nil {
+		t.Fatalf("decode existing issue: %v", err)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
+		"title":                autopilotTitle,
+		"assignee_id":          agentID,
+		"execution_mode":       "create_issue",
+		"issue_title_template": issueTitle,
+	})
+	testHandler.CreateAutopilot(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateAutopilot: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var autopilot AutopilotResponse
+	if err := json.NewDecoder(w.Body).Decode(&autopilot); err != nil {
+		t.Fatalf("decode autopilot: %v", err)
+	}
+	autopilotID = autopilot.ID
+
+	return sameTitleAutopilotFixture{
+		existingIssueID: existing.ID,
+		autopilotID:     autopilotID,
+	}
+}
+
 func fetchAgentMcpConfig(t *testing.T, agentID string) []byte {
 	t.Helper()
 
@@ -1229,53 +1287,11 @@ func TestCreateIssueAllowsDuplicateAfterDone(t *testing.T) {
 func TestTriggerAutopilotCreatesSameTitleIssue(t *testing.T) {
 	ctx := context.Background()
 	title := fmt.Sprintf("Autopilot duplicate issue %d", time.Now().UnixNano())
-	var autopilotID string
-	defer func() {
-		if autopilotID != "" {
-			testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
-		}
-		testPool.Exec(ctx, `DELETE FROM issue WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title)
-	}()
-
-	var agentID string
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
-		t.Fatalf("load test agent: %v", err)
-	}
+	fixture := createSameTitleAutopilotFixture(t, ctx, title, "Duplicate title autopilot")
 
 	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title":  title,
-		"status": "todo",
-	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue existing: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var existing IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&existing); err != nil {
-		t.Fatalf("decode existing issue: %v", err)
-	}
-
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
-		"title":                "Duplicate title autopilot",
-		"assignee_id":          agentID,
-		"execution_mode":       "create_issue",
-		"issue_title_template": title,
-	})
-	testHandler.CreateAutopilot(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateAutopilot: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var autopilot AutopilotResponse
-	if err := json.NewDecoder(w.Body).Decode(&autopilot); err != nil {
-		t.Fatalf("decode autopilot: %v", err)
-	}
-	autopilotID = autopilot.ID
-
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/autopilots/"+autopilotID+"/trigger?workspace_id="+testWorkspaceID, nil)
-	req = withURLParam(req, "id", autopilotID)
+	req := newRequest("POST", "/api/autopilots/"+fixture.autopilotID+"/trigger?workspace_id="+testWorkspaceID, nil)
+	req = withURLParam(req, "id", fixture.autopilotID)
 	testHandler.TriggerAutopilot(w, req)
 	if w.Code != http.StatusOK {
 		t.Fatalf("TriggerAutopilot duplicate title: expected 200, got %d: %s", w.Code, w.Body.String())
@@ -1290,8 +1306,8 @@ func TestTriggerAutopilotCreatesSameTitleIssue(t *testing.T) {
 	if run.IssueID == nil {
 		t.Fatal("run issue_id is nil, want newly created issue")
 	}
-	if *run.IssueID == existing.ID {
-		t.Fatalf("run reused existing issue %s, want a new issue", existing.ID)
+	if *run.IssueID == fixture.existingIssueID {
+		t.Fatalf("run reused existing issue %s, want a new issue", fixture.existingIssueID)
 	}
 	if run.FailureReason != nil {
 		t.Fatalf("run failure_reason = %q, want nil", *run.FailureReason)
@@ -1309,52 +1325,10 @@ func TestTriggerAutopilotCreatesSameTitleIssue(t *testing.T) {
 func TestScheduledAutopilotCreatesSameTitleIssue(t *testing.T) {
 	ctx := context.Background()
 	title := fmt.Sprintf("Scheduled autopilot duplicate issue %d", time.Now().UnixNano())
-	var autopilotID string
-	defer func() {
-		if autopilotID != "" {
-			testPool.Exec(ctx, `DELETE FROM autopilot WHERE id = $1`, autopilotID)
-		}
-		testPool.Exec(ctx, `DELETE FROM issue WHERE workspace_id = $1 AND title = $2`, testWorkspaceID, title)
-	}()
-
-	var agentID string
-	if err := testPool.QueryRow(ctx, `SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
-		t.Fatalf("load test agent: %v", err)
-	}
-
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
-		"title":  title,
-		"status": "todo",
-	})
-	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateIssue existing: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var existing IssueResponse
-	if err := json.NewDecoder(w.Body).Decode(&existing); err != nil {
-		t.Fatalf("decode existing issue: %v", err)
-	}
-
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/autopilots?workspace_id="+testWorkspaceID, map[string]any{
-		"title":                "Scheduled duplicate title autopilot",
-		"assignee_id":          agentID,
-		"execution_mode":       "create_issue",
-		"issue_title_template": title,
-	})
-	testHandler.CreateAutopilot(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateAutopilot: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var autopilot AutopilotResponse
-	if err := json.NewDecoder(w.Body).Decode(&autopilot); err != nil {
-		t.Fatalf("decode autopilot: %v", err)
-	}
-	autopilotID = autopilot.ID
+	fixture := createSameTitleAutopilotFixture(t, ctx, title, "Scheduled duplicate title autopilot")
 
 	queries := db.New(testPool)
-	ap, err := queries.GetAutopilot(ctx, parseUUID(autopilotID))
+	ap, err := queries.GetAutopilot(ctx, parseUUID(fixture.autopilotID))
 	if err != nil {
 		t.Fatalf("GetAutopilot: %v", err)
 	}
@@ -1369,8 +1343,8 @@ func TestScheduledAutopilotCreatesSameTitleIssue(t *testing.T) {
 	if newIssueID == "" {
 		t.Fatal("run issue_id is empty, want newly created issue")
 	}
-	if newIssueID == existing.ID {
-		t.Fatalf("run reused existing issue %s, want a new issue", existing.ID)
+	if newIssueID == fixture.existingIssueID {
+		t.Fatalf("run reused existing issue %s, want a new issue", fixture.existingIssueID)
 	}
 	if run.FailureReason.Valid {
 		t.Fatalf("run failure_reason = %q, want empty", run.FailureReason.String)
