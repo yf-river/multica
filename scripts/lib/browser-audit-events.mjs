@@ -1,11 +1,21 @@
-export function attachBrowserAuditEvents(page, { isAuditedRequest, requestPath = browserRequestPath } = {}) {
+export function attachBrowserAuditEvents(
+  page,
+  {
+    isAuditedRequest,
+    requestPath = browserRequestPath,
+    formatFailedRequest = (request, failure) => ({ path: requestPath(request.url()), method: request.method(), failure }),
+    formatConsoleError,
+    formatPageError,
+    onAuditedResponse,
+  } = {},
+) {
   if (typeof isAuditedRequest !== "function") {
     throw new TypeError("attachBrowserAuditEvents requires isAuditedRequest");
   }
 
   const requests = [];
   const failedRequests = [];
-  const errors = attachBrowserErrorEvents(page);
+  const errors = attachBrowserErrorEvents(page, { formatConsoleError, formatPageError });
 
   const onRequest = (request) => {
     if (!isAuditedRequest(request.url())) return;
@@ -20,14 +30,16 @@ export function attachBrowserAuditEvents(page, { isAuditedRequest, requestPath =
     if (!isAuditedRequest(response.url())) return;
     const request = response.request();
     const item = [...requests].reverse().find((candidate) => candidate.url === response.url() && candidate.method === request.method() && !candidate.status);
-    if (!item) return;
-    item.status = response.status();
-    item.ms = Date.now() - item.start;
+    if (item) {
+      item.status = response.status();
+      item.ms = Date.now() - item.start;
+    }
+    onAuditedResponse?.(response, request);
   };
   const onRequestFailed = (request) => {
     const failure = request.failure()?.errorText || "unknown";
     if (isAuditedRequest(request.url()) && failure !== "net::ERR_ABORTED") {
-      failedRequests.push({ path: requestPath(request.url()), method: request.method(), failure });
+      failedRequests.push(formatFailedRequest(request, failure));
     }
   };
 
@@ -40,6 +52,7 @@ export function attachBrowserAuditEvents(page, { isAuditedRequest, requestPath =
     failedRequests,
     consoleErrors: errors.consoleErrors,
     pageErrors: errors.pageErrors,
+    errors: errors.errors,
     detach() {
       page.off("request", onRequest);
       page.off("response", onResponse);
@@ -49,16 +62,27 @@ export function attachBrowserAuditEvents(page, { isAuditedRequest, requestPath =
   };
 }
 
-export function attachBrowserErrorEvents(page) {
+export function attachBrowserErrorEvents(
+  page,
+  {
+    formatConsoleError = (text) => text.slice(0, 500),
+    formatPageError = (error) => error.message.slice(0, 500),
+  } = {},
+) {
   const consoleErrors = [];
   const pageErrors = [];
+  const errors = [];
   const onConsole = (message) => {
     if (message.type() === "error" && !message.text().startsWith("Failed to load resource:")) {
-      consoleErrors.push(message.text().slice(0, 500));
+      const error = formatConsoleError(message.text(), message);
+      consoleErrors.push(error);
+      errors.push(error);
     }
   };
   const onPageError = (error) => {
-    pageErrors.push(error.message.slice(0, 500));
+    const item = formatPageError(error);
+    pageErrors.push(item);
+    errors.push(item);
   };
 
   page.on("console", onConsole);
@@ -67,6 +91,7 @@ export function attachBrowserErrorEvents(page) {
   return {
     consoleErrors,
     pageErrors,
+    errors,
     detach() {
       page.off("console", onConsole);
       page.off("pageerror", onPageError);

@@ -1,19 +1,17 @@
 import { chromium } from "@playwright/test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
+import {
+  attachBrowserAuditEvents,
+  browserRequestPath as requestPath,
+} from "./lib/browser-audit-events.mjs";
+import { loadGoalTestIntEnv, repoRoot, resolveGoalTestAuditUrls } from "./lib/goal-test-audit-env.mjs";
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
-const env = {
-  ...process.env,
-  ...readEnvFile(path.join(repoRoot, ".run/env/goal-test-int.env")),
-};
-
-const frontendURL = trimSlash(process.env.GOAL_TEST_FRONTEND_URL || env.FRONTEND_ORIGIN || "http://9.134.129.162:13682");
-const browserURL = trimSlash(process.env.GOAL_TEST_BROWSER_URL || `http://127.0.0.1:${env.FRONTEND_PORT || "13682"}`);
-const backendURL = trimSlash(process.env.GOAL_TEST_BACKEND_URL || env.REMOTE_API_URL || "http://127.0.0.1:18762");
+const env = loadGoalTestIntEnv();
+const { frontendURL, browserURL, backendURL } = resolveGoalTestAuditUrls(env);
 const workspaceSlug = process.env.GOAL_TEST_WORKSPACE_SLUG || "ai-studio";
 const account = process.env.GOAL_TEST_ACCOUNT || "develop";
 const password = process.env.GOAL_TEST_PASSWORD || "develop123";
@@ -220,52 +218,22 @@ console.log(JSON.stringify({ ok: summary.ok, json: jsonPath, markdown: markdownP
 if (!summary.ok) process.exitCode = 1;
 
 async function auditRoute(page, route) {
-  const requests = [];
-  const failedRequests = [];
   const responses = [];
-  const routeEvents = [];
-  const onConsole = (message) => {
-    if (message.type() === "error") {
-      const text = message.text();
-      if (!isResourceLoadConsoleError(text)) {
-        routeEvents.push({ route: route.id, type: "console-error", text: text.slice(0, 500) });
-      }
-    }
-  };
-  const onPageError = (error) => {
-    routeEvents.push({ route: route.id, type: "pageerror", text: error.message.slice(0, 500) });
-  };
-  const onRequest = (request) => {
-    if (isAuditedRequest(request.url())) {
-      requests.push({ url: request.url(), method: request.method(), start: Date.now() });
-    }
-  };
-  const onRequestFailed = (request) => {
-    const failure = request.failure()?.errorText || "unknown";
-    if (isAuditedRequest(request.url()) && failure !== "net::ERR_ABORTED") {
-      failedRequests.push({ url: request.url(), method: request.method(), failure });
-    }
-  };
-  const onResponse = (response) => {
-    if (!isAuditedRequest(response.url())) return;
-    const request = response.request();
-    const item = [...requests].reverse().find((candidate) => candidate.url === response.url() && candidate.method === request.method() && !candidate.status);
-    if (item) {
-      item.status = response.status();
-      item.ms = Date.now() - item.start;
-    }
-    responses.push({
-      url: response.url(),
-      method: request.method(),
-      status: response.status(),
-      resource_type: request.resourceType(),
-    });
-  };
-  page.on("console", onConsole);
-  page.on("pageerror", onPageError);
-  page.on("request", onRequest);
-  page.on("requestfailed", onRequestFailed);
-  page.on("response", onResponse);
+  const auditEvents = attachBrowserAuditEvents(page, {
+    isAuditedRequest,
+    requestPath,
+    formatFailedRequest: (request, failure) => ({ url: request.url(), method: request.method(), failure }),
+    formatConsoleError: (text) => ({ route: route.id, type: "console-error", text: text.slice(0, 500) }),
+    formatPageError: (error) => ({ route: route.id, type: "pageerror", text: error.message.slice(0, 500) }),
+    onAuditedResponse: (response, request) => {
+      responses.push({
+        url: response.url(),
+        method: request.method(),
+        status: response.status(),
+        resource_type: request.resourceType(),
+      });
+    },
+  });
 
   const startedAt = Date.now();
   let navigationError = "";
@@ -291,14 +259,12 @@ async function auditRoute(page, route) {
   } catch (error) {
     navigationError = error instanceof Error ? error.message : String(error);
   } finally {
-    page.off("console", onConsole);
-    page.off("pageerror", onPageError);
-    page.off("request", onRequest);
-    page.off("requestfailed", onRequestFailed);
-    page.off("response", onResponse);
+    auditEvents.detach();
   }
 
   const elapsedMs = Date.now() - startedAt;
+  const { requests, failedRequests } = auditEvents;
+  const routeEvents = auditEvents.errors;
   const badStatuses = responses
     .filter((item) => item.status >= 400)
     .map((item) => ({ status: item.status, path: requestPath(item.url), resource_type: item.resource_type }))
@@ -536,23 +502,6 @@ function renderMarkdown(payload) {
   return `${lines.join("\n")}\n`;
 }
 
-function readEnvFile(file) {
-  try {
-    return Object.fromEntries(
-      readFileSync(file, "utf8")
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => line && !line.startsWith("#") && line.includes("="))
-        .map((line) => {
-          const index = line.indexOf("=");
-          return [line.slice(0, index), line.slice(index + 1)];
-        }),
-    );
-  } catch {
-    return {};
-  }
-}
-
 async function waitForRouteText(page, expectedTexts) {
   if (!expectedTexts || expectedTexts.length === 0) return;
   await page
@@ -567,25 +516,8 @@ async function waitForRouteText(page, expectedTexts) {
     .catch(() => {});
 }
 
-function trimSlash(value) {
-  return value.replace(/\/+$/, "");
-}
-
 function isAuditedRequest(url) {
   return url.startsWith(frontendURL) || url.startsWith(browserURL) || url.startsWith(backendURL);
-}
-
-function isResourceLoadConsoleError(text) {
-  return text.startsWith("Failed to load resource:");
-}
-
-function requestPath(url) {
-  try {
-    const parsed = new URL(url);
-    return `${parsed.pathname}${parsed.search}`;
-  } catch {
-    return url;
-  }
 }
 
 function countByPath(requests) {

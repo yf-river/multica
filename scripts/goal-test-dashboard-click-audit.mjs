@@ -1,6 +1,6 @@
 import { chromium } from "@playwright/test";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
@@ -8,16 +8,10 @@ import {
   attachBrowserAuditEvents,
   browserRequestPath as requestPath,
 } from "./lib/browser-audit-events.mjs";
+import { loadGoalTestIntEnv, repoRoot, resolveGoalTestAuditUrls } from "./lib/goal-test-audit-env.mjs";
 
-const repoRoot = path.resolve(import.meta.dirname, "..");
-const env = {
-  ...process.env,
-  ...readEnvFile(path.join(repoRoot, ".run/env/goal-test-int.env")),
-};
-
-const frontendURL = trimSlash(process.env.GOAL_TEST_FRONTEND_URL || env.FRONTEND_ORIGIN || "http://9.134.129.162:13682");
-const browserURL = trimSlash(process.env.GOAL_TEST_BROWSER_URL || `http://127.0.0.1:${env.FRONTEND_PORT || "13682"}`);
-const backendURL = trimSlash(process.env.GOAL_TEST_BACKEND_URL || env.REMOTE_API_URL || "http://127.0.0.1:18762");
+const env = loadGoalTestIntEnv();
+const { frontendURL, browserURL, backendURL } = resolveGoalTestAuditUrls(env);
 const workspaceSlug = process.env.GOAL_TEST_WORKSPACE_SLUG || "ai-studio";
 const account = process.env.GOAL_TEST_ACCOUNT || "develop";
 const password = process.env.GOAL_TEST_PASSWORD || "develop123";
@@ -413,25 +407,4 @@ function countByPath(requests) {
 
 function isAuditedRequest(url) {
   return url.startsWith(frontendURL) || url.startsWith(browserURL) || url.startsWith(backendURL);
-}
-
-function trimSlash(value) {
-  return value.replace(/\/+$/, "");
-}
-
-function readEnvFile(file) {
-  try {
-    return Object.fromEntries(
-      readFileSync(file, "utf8")
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => line && !line.startsWith("#") && line.includes("="))
-        .map((line) => {
-          const index = line.indexOf("=");
-          return [line.slice(0, index), line.slice(index + 1)];
-        }),
-    );
-  } catch {
-    return {};
-  }
 }
