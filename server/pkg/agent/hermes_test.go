@@ -1322,14 +1322,14 @@ while IFS= read -r line; do
       ;;
   esac
 done
-`
+	`
 }
 
-func TestHermesBackendAttributesUsageToACPDefaultModel(t *testing.T) {
-	t.Parallel()
+func executeHermesScript(t *testing.T, script string, opts ExecOptions) Result {
+	t.Helper()
 
 	fakePath := filepath.Join(t.TempDir(), "hermes")
-	writeTestExecutable(t, fakePath, []byte(fakeHermesACPUsageWithDefaultModelScript()))
+	writeTestExecutable(t, fakePath, []byte(script))
 
 	backend, err := New("hermes", Config{ExecutablePath: fakePath, Logger: slog.Default()})
 	if err != nil {
@@ -1339,9 +1339,7 @@ func TestHermesBackendAttributesUsageToACPDefaultModel(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
-		Timeout: 5 * time.Second,
-	})
+	session, err := backend.Execute(ctx, "prompt-ignored", opts)
 	if err != nil {
 		t.Fatalf("execute: %v", err)
 	}
@@ -1355,21 +1353,32 @@ func TestHermesBackendAttributesUsageToACPDefaultModel(t *testing.T) {
 		if !ok {
 			t.Fatal("result channel closed without a value")
 		}
-		if result.Status != "completed" {
-			t.Fatalf("expected completed result, got %q: %s", result.Status, result.Error)
-		}
-		if _, ok := result.Usage["unknown"]; ok {
-			t.Fatalf("usage should not be attributed to unknown: %+v", result.Usage)
-		}
-		usage, ok := result.Usage["nous:moonshotai/kimi-k2.6"]
-		if !ok {
-			t.Fatalf("expected usage under Hermes current model, got %+v", result.Usage)
-		}
-		if usage.InputTokens != 17 || usage.OutputTokens != 5 || usage.CacheReadTokens != 3 {
-			t.Fatalf("usage = %+v, want input=17 output=5 cache_read=3", usage)
-		}
+		return result
 	case <-time.After(10 * time.Second):
 		t.Fatal("timeout waiting for result")
+		return Result{}
+	}
+}
+
+func TestHermesBackendAttributesUsageToACPDefaultModel(t *testing.T) {
+	t.Parallel()
+
+	result := executeHermesScript(t, fakeHermesACPUsageWithDefaultModelScript(), ExecOptions{
+		Timeout: 5 * time.Second,
+	})
+
+	if result.Status != "completed" {
+		t.Fatalf("expected completed result, got %q: %s", result.Status, result.Error)
+	}
+	if _, ok := result.Usage["unknown"]; ok {
+		t.Fatalf("usage should not be attributed to unknown: %+v", result.Usage)
+	}
+	usage, ok := result.Usage["nous:moonshotai/kimi-k2.6"]
+	if !ok {
+		t.Fatalf("expected usage under Hermes current model, got %+v", result.Usage)
+	}
+	if usage.InputTokens != 17 || usage.OutputTokens != 5 || usage.CacheReadTokens != 3 {
+		t.Fatalf("usage = %+v, want input=17 output=5 cache_read=3", usage)
 	}
 }
 
@@ -1472,44 +1481,18 @@ func TestHermesProviderErrorSnifferTerminalNonRetryable(t *testing.T) {
 func TestHermesBackendPromotesProviderErrorWithNonEmptyOutput(t *testing.T) {
 	t.Parallel()
 
-	fakePath := filepath.Join(t.TempDir(), "hermes")
-	writeTestExecutable(t, fakePath, []byte(fakeHermesACPRateLimitScript()))
-
-	backend, err := New("hermes", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new hermes backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+	result := executeHermesScript(t, fakeHermesACPRateLimitScript(), ExecOptions{
 		Timeout: 5 * time.Second,
 	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
 
-	select {
-	case result, ok := <-session.Result:
-		if !ok {
-			t.Fatal("result channel closed without a value")
-		}
-		if result.Status != "failed" {
-			t.Fatalf("expected status=failed (sniffer should promote on 429 even with non-empty output), got %q (error=%q output=%q)", result.Status, result.Error, result.Output)
-		}
-		if !strings.Contains(result.Error, "429") && !strings.Contains(result.Error, "usage limit") {
-			t.Errorf("expected error to surface the 429 / usage-limit message, got %q", result.Error)
-		}
-		if result.SessionID != "ses_429" {
-			t.Errorf("expected session id to be preserved on failure, got %q", result.SessionID)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
+	if result.Status != "failed" {
+		t.Fatalf("expected status=failed (sniffer should promote on 429 even with non-empty output), got %q (error=%q output=%q)", result.Status, result.Error, result.Output)
+	}
+	if !strings.Contains(result.Error, "429") && !strings.Contains(result.Error, "usage limit") {
+		t.Errorf("expected error to surface the 429 / usage-limit message, got %q", result.Error)
+	}
+	if result.SessionID != "ses_429" {
+		t.Errorf("expected session id to be preserved on failure, got %q", result.SessionID)
 	}
 }
 
@@ -1779,41 +1762,15 @@ done
 func TestHermesBackendDoesNotPromoteOnTransientRetry(t *testing.T) {
 	t.Parallel()
 
-	fakePath := filepath.Join(t.TempDir(), "hermes")
-	writeTestExecutable(t, fakePath, []byte(fakeHermesACPTransientRetryScript()))
-
-	backend, err := New("hermes", Config{ExecutablePath: fakePath, Logger: slog.Default()})
-	if err != nil {
-		t.Fatalf("new hermes backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+	result := executeHermesScript(t, fakeHermesACPTransientRetryScript(), ExecOptions{
 		Timeout: 5 * time.Second,
 	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
-		}
-	}()
 
-	select {
-	case result, ok := <-session.Result:
-		if !ok {
-			t.Fatal("result channel closed without a value")
-		}
-		if result.Status != "completed" {
-			t.Fatalf("transient retry that ultimately succeeded must stay status=completed, got %q (error=%q output=%q)", result.Status, result.Error, result.Output)
-		}
-		if !strings.Contains(result.Output, "Here is the answer") {
-			t.Errorf("expected the successful agent turn to be in output, got %q", result.Output)
-		}
-	case <-time.After(10 * time.Second):
-		t.Fatal("timeout waiting for result")
+	if result.Status != "completed" {
+		t.Fatalf("transient retry that ultimately succeeded must stay status=completed, got %q (error=%q output=%q)", result.Status, result.Error, result.Output)
+	}
+	if !strings.Contains(result.Output, "Here is the answer") {
+		t.Errorf("expected the successful agent turn to be in output, got %q", result.Output)
 	}
 }
 
