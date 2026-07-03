@@ -20,6 +20,51 @@ func discardLogger() *slog.Logger {
 	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }
 
+const oldProviderCodexConfig = `model_provider = "old-provider"
+
+[model_providers.old-provider]
+name = "Old"
+base_url = "https://old.example.com"
+env_key = "OLD_API_KEY"
+`
+
+type preparedCodexConfigHome struct {
+	sharedHome string
+	codexHome  string
+}
+
+func seedSharedCodexConfigFiles(t *testing.T, sharedHome, action, config, configJSON, instructions string) {
+	t.Helper()
+
+	if err := os.WriteFile(filepath.Join(sharedHome, "config.toml"), []byte(config), 0o644); err != nil {
+		t.Fatalf("%s shared config.toml: %v", action, err)
+	}
+	if err := os.WriteFile(filepath.Join(sharedHome, "config.json"), []byte(configJSON), 0o644); err != nil {
+		t.Fatalf("%s shared config.json: %v", action, err)
+	}
+	if err := os.WriteFile(filepath.Join(sharedHome, "instructions.md"), []byte(instructions), 0o644); err != nil {
+		t.Fatalf("%s shared instructions.md: %v", action, err)
+	}
+}
+
+func prepareSeededCodexConfigHome(t *testing.T) preparedCodexConfigHome {
+	t.Helper()
+
+	sharedHome := t.TempDir()
+	seedSharedCodexConfigFiles(t, sharedHome, "seed", oldProviderCodexConfig, `{"model":"old-model"}`, "old instructions")
+	t.Setenv("CODEX_HOME", sharedHome)
+
+	codexHome := filepath.Join(t.TempDir(), "codex-home")
+	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
+		t.Fatalf("first prepareCodexHome: %v", err)
+	}
+
+	return preparedCodexConfigHome{
+		sharedHome: sharedHome,
+		codexHome:  codexHome,
+	}
+}
+
 func TestShortID(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -2139,29 +2184,7 @@ func TestPrepareCodexHome_RefreshesStaleAuthCopyOnReuse(t *testing.T) {
 func TestPrepareCodexHome_RefreshesStaleCopiedConfigOnReuse(t *testing.T) {
 	// Cannot use t.Parallel() with t.Setenv.
 
-	sharedHome := t.TempDir()
-	oldConfig := `model_provider = "old-provider"
-
-[model_providers.old-provider]
-name = "Old"
-base_url = "https://old.example.com"
-env_key = "OLD_API_KEY"
-`
-	if err := os.WriteFile(filepath.Join(sharedHome, "config.toml"), []byte(oldConfig), 0o644); err != nil {
-		t.Fatalf("seed shared config.toml: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sharedHome, "config.json"), []byte(`{"model":"old-model"}`), 0o644); err != nil {
-		t.Fatalf("seed shared config.json: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sharedHome, "instructions.md"), []byte("old instructions"), 0o644); err != nil {
-		t.Fatalf("seed shared instructions.md: %v", err)
-	}
-	t.Setenv("CODEX_HOME", sharedHome)
-
-	codexHome := filepath.Join(t.TempDir(), "codex-home")
-	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
-		t.Fatalf("first prepareCodexHome: %v", err)
-	}
+	home := prepareSeededCodexConfigHome(t)
 
 	// User rotates provider + API key in the shared config between runs.
 	newConfig := `model_provider = "new-provider"
@@ -2171,23 +2194,15 @@ name = "New"
 base_url = "https://new.example.com"
 env_key = "NEW_API_KEY"
 `
-	if err := os.WriteFile(filepath.Join(sharedHome, "config.toml"), []byte(newConfig), 0o644); err != nil {
-		t.Fatalf("rotate shared config.toml: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sharedHome, "config.json"), []byte(`{"model":"new-model"}`), 0o644); err != nil {
-		t.Fatalf("rotate shared config.json: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sharedHome, "instructions.md"), []byte("new instructions"), 0o644); err != nil {
-		t.Fatalf("rotate shared instructions.md: %v", err)
-	}
+	seedSharedCodexConfigFiles(t, home.sharedHome, "rotate", newConfig, `{"model":"new-model"}`, "new instructions")
 
 	// Resume path: same per-task codex-home, re-prepared.
-	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
+	if err := prepareCodexHome(home.codexHome, testLogger()); err != nil {
 		t.Fatalf("second prepareCodexHome (resume): %v", err)
 	}
 
 	// config.toml must reflect the new provider/URL/env_key.
-	data, err := os.ReadFile(filepath.Join(codexHome, "config.toml"))
+	data, err := os.ReadFile(filepath.Join(home.codexHome, "config.toml"))
 	if err != nil {
 		t.Fatalf("read per-task config.toml: %v", err)
 	}
@@ -2216,7 +2231,7 @@ env_key = "NEW_API_KEY"
 	}
 
 	// config.json must reflect the new model.
-	data, err = os.ReadFile(filepath.Join(codexHome, "config.json"))
+	data, err = os.ReadFile(filepath.Join(home.codexHome, "config.json"))
 	if err != nil {
 		t.Fatalf("read per-task config.json: %v", err)
 	}
@@ -2225,7 +2240,7 @@ env_key = "NEW_API_KEY"
 	}
 
 	// instructions.md must reflect the new content.
-	data, err = os.ReadFile(filepath.Join(codexHome, "instructions.md"))
+	data, err = os.ReadFile(filepath.Join(home.codexHome, "instructions.md"))
 	if err != nil {
 		t.Fatalf("read per-task instructions.md: %v", err)
 	}
@@ -2246,53 +2261,31 @@ env_key = "NEW_API_KEY"
 func TestPrepareCodexHome_DropsCopiedConfigWhenSharedSourceRemoved(t *testing.T) {
 	// Cannot use t.Parallel() with t.Setenv.
 
-	sharedHome := t.TempDir()
-	oldConfig := `model_provider = "old-provider"
-
-[model_providers.old-provider]
-name = "Old"
-base_url = "https://old.example.com"
-env_key = "OLD_API_KEY"
-`
-	if err := os.WriteFile(filepath.Join(sharedHome, "config.toml"), []byte(oldConfig), 0o644); err != nil {
-		t.Fatalf("seed shared config.toml: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sharedHome, "config.json"), []byte(`{"model":"old-model"}`), 0o644); err != nil {
-		t.Fatalf("seed shared config.json: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(sharedHome, "instructions.md"), []byte("old instructions"), 0o644); err != nil {
-		t.Fatalf("seed shared instructions.md: %v", err)
-	}
-	t.Setenv("CODEX_HOME", sharedHome)
-
-	codexHome := filepath.Join(t.TempDir(), "codex-home")
-	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
-		t.Fatalf("first prepareCodexHome: %v", err)
-	}
+	home := prepareSeededCodexConfigHome(t)
 
 	// Sanity: first prepare seeded all three files into the per-task home.
 	for _, name := range []string{"config.toml", "config.json", "instructions.md"} {
-		if _, err := os.Stat(filepath.Join(codexHome, name)); err != nil {
+		if _, err := os.Stat(filepath.Join(home.codexHome, name)); err != nil {
 			t.Fatalf("first prepare did not seed per-task %s: %v", name, err)
 		}
 	}
 
 	// User removes the shared sources between runs.
 	for _, name := range []string{"config.toml", "config.json", "instructions.md"} {
-		if err := os.Remove(filepath.Join(sharedHome, name)); err != nil {
+		if err := os.Remove(filepath.Join(home.sharedHome, name)); err != nil {
 			t.Fatalf("remove shared %s: %v", name, err)
 		}
 	}
 
 	// Resume path: same per-task codex-home, re-prepared.
-	if err := prepareCodexHome(codexHome, testLogger()); err != nil {
+	if err := prepareCodexHome(home.codexHome, testLogger()); err != nil {
 		t.Fatalf("second prepareCodexHome (resume): %v", err)
 	}
 
 	// config.json and instructions.md have no daemon-managed default — they
 	// must disappear in lockstep with the shared source.
 	for _, name := range []string{"config.json", "instructions.md"} {
-		if _, err := os.Stat(filepath.Join(codexHome, name)); !os.IsNotExist(err) {
+		if _, err := os.Stat(filepath.Join(home.codexHome, name)); !os.IsNotExist(err) {
 			t.Errorf("per-task %s still exists after shared source removed (stat err = %v)", name, err)
 		}
 	}
@@ -2300,7 +2293,7 @@ env_key = "OLD_API_KEY"
 	// config.toml must still exist because the ensure* passes recreate it,
 	// but it must contain only the daemon-managed blocks — no stale user
 	// provider/URL/env_key.
-	data, err := os.ReadFile(filepath.Join(codexHome, "config.toml"))
+	data, err := os.ReadFile(filepath.Join(home.codexHome, "config.toml"))
 	if err != nil {
 		t.Fatalf("read per-task config.toml after shared removal: %v", err)
 	}
