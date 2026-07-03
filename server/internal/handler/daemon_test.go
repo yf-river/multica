@@ -2700,6 +2700,107 @@ func TestClaimTaskByRuntime_TaskWorkspaceMismatch_CancelsAndRejects(t *testing.T
 	}
 }
 
+type runningCompleteTaskFixture struct {
+	AgentID          string
+	RuntimeID        string
+	IssueID          string
+	TriggerCommentID string
+	TaskID           string
+}
+
+func createRunningCommentTriggeredCompleteTask(t *testing.T, ctx context.Context, issueTitle string, issueNumber int, triggerContent string) runningCompleteTaskFixture {
+	t.Helper()
+
+	var fixture runningCompleteTaskFixture
+	if err := testPool.QueryRow(ctx, `
+		SELECT a.id, a.runtime_id FROM agent a WHERE a.workspace_id = $1 LIMIT 1
+	`, testWorkspaceID).Scan(&fixture.AgentID, &fixture.RuntimeID); err != nil {
+		t.Fatalf("setup: get agent: %v", err)
+	}
+
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
+		VALUES ($1, $2, 'in_progress', 'none', $3, 'member', $4, 0)
+		RETURNING id
+	`, testWorkspaceID, issueTitle, testUserID, issueNumber).Scan(&fixture.IssueID); err != nil {
+		t.Fatalf("setup: create issue: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, fixture.IssueID) })
+
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type)
+		VALUES ($1, $2, 'member', $3, $4, 'comment')
+		RETURNING id
+	`, fixture.IssueID, testWorkspaceID, testUserID, triggerContent).Scan(&fixture.TriggerCommentID); err != nil {
+		t.Fatalf("setup: create trigger comment: %v", err)
+	}
+
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, trigger_comment_id,
+			status, priority, started_at
+		)
+		VALUES ($1, $2, $3, $4, 'running', 0, now())
+		RETURNING id
+	`, fixture.AgentID, fixture.RuntimeID, fixture.IssueID, fixture.TriggerCommentID).Scan(&fixture.TaskID); err != nil {
+		t.Fatalf("setup: create comment-triggered task: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, fixture.TaskID) })
+
+	return fixture
+}
+
+func createRunningAssignmentCompleteTask(t *testing.T, ctx context.Context, issueTitle string, issueNumber int) runningCompleteTaskFixture {
+	t.Helper()
+
+	var fixture runningCompleteTaskFixture
+	if err := testPool.QueryRow(ctx, `
+		SELECT a.id, a.runtime_id FROM agent a WHERE a.workspace_id = $1 LIMIT 1
+	`, testWorkspaceID).Scan(&fixture.AgentID, &fixture.RuntimeID); err != nil {
+		t.Fatalf("setup: get agent: %v", err)
+	}
+
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
+		VALUES ($1, $2, 'in_progress', 'none', $3, 'member', $4, 0)
+		RETURNING id
+	`, testWorkspaceID, issueTitle, testUserID, issueNumber).Scan(&fixture.IssueID); err != nil {
+		t.Fatalf("setup: create issue: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, fixture.IssueID) })
+
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id,
+			status, priority, started_at
+		)
+		VALUES ($1, $2, $3, 'running', 0, now())
+		RETURNING id
+	`, fixture.AgentID, fixture.RuntimeID, fixture.IssueID).Scan(&fixture.TaskID); err != nil {
+		t.Fatalf("setup: create assignment-triggered task: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, fixture.TaskID) })
+
+	return fixture
+}
+
+func completeDaemonTaskForTest(t *testing.T, taskID, output string) {
+	t.Helper()
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/complete",
+		map[string]any{"output": output},
+		testWorkspaceID, "legit-daemon")
+	rctx := chi.NewRouteContext()
+	rctx.URLParams.Add("taskId", taskID)
+	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
+
+	testHandler.CompleteTask(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("CompleteTask: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
 // Regression test for MUL-1198: comment-triggered tasks that finish without
 // the agent posting any comment must still deliver a synthesized result
 // comment, threaded under the trigger. Before the fix, CompleteTask exempted
@@ -2714,65 +2815,16 @@ func TestCompleteTask_CommentTriggered_SynthesizesCommentWhenAgentSilent(t *test
 
 	ctx := context.Background()
 
-	var agentID, runtimeID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT a.id, a.runtime_id FROM agent a WHERE a.workspace_id = $1 LIMIT 1
-	`, testWorkspaceID).Scan(&agentID, &runtimeID); err != nil {
-		t.Fatalf("setup: get agent: %v", err)
-	}
-
 	setWorkspaceIssuePrefixForTest(t, "MUL")
 
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
-		VALUES ($1, 'mul-3310 agent output fixture', 'in_progress', 'none', $2, 'member', 3310, 0)
-		RETURNING id
-	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
-		t.Fatalf("setup: create issue: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
-
-	var triggerCommentID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type)
-		VALUES ($1, $2, 'member', $3, 'please take a look', 'comment')
-		RETURNING id
-	`, issueID, testWorkspaceID, testUserID).Scan(&triggerCommentID); err != nil {
-		t.Fatalf("setup: create trigger comment: %v", err)
-	}
-
-	// Comment-triggered, already running (as CompleteAgentTask requires).
-	var taskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (
-			agent_id, runtime_id, issue_id, trigger_comment_id,
-			status, priority, started_at
-		)
-		VALUES ($1, $2, $3, $4, 'running', 0, now())
-		RETURNING id
-	`, agentID, runtimeID, issueID, triggerCommentID).Scan(&taskID); err != nil {
-		t.Fatalf("setup: create comment-triggered task: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	fixture := createRunningCommentTriggeredCompleteTask(t, ctx, "mul-3310 agent output fixture", 3310, "please take a look")
 
 	agentFinalOutput := fmt.Sprintf(
 		"sure, see MUL-3310, issue/MUL-3310, feature/MUL-3310, and [MUL-3310](mention://issue/%s)",
-		issueID,
+		fixture.IssueID,
 	)
 
-	w := httptest.NewRecorder()
-	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/complete",
-		map[string]any{"output": agentFinalOutput},
-		testWorkspaceID, "legit-daemon")
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("taskId", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	testHandler.CompleteTask(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("CompleteTask: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
+	completeDaemonTaskForTest(t, fixture.TaskID, agentFinalOutput)
 
 	// Exactly one agent comment on the issue, threaded under the trigger,
 	// carrying the agent's final output.
@@ -2780,7 +2832,7 @@ func TestCompleteTask_CommentTriggered_SynthesizesCommentWhenAgentSilent(t *test
 		SELECT content, parent_id FROM comment
 		WHERE issue_id = $1 AND author_type = 'agent' AND author_id = $2
 		ORDER BY created_at ASC
-	`, issueID, agentID)
+	`, fixture.IssueID, fixture.AgentID)
 	if err != nil {
 		t.Fatalf("query synthesized comments: %v", err)
 	}
@@ -2803,12 +2855,12 @@ func TestCompleteTask_CommentTriggered_SynthesizesCommentWhenAgentSilent(t *test
 	if content != agentFinalOutput {
 		t.Fatalf("synthesized comment content = %q, want %q", content, agentFinalOutput)
 	}
-	if parentID == nil || *parentID != triggerCommentID {
+	if parentID == nil || *parentID != fixture.TriggerCommentID {
 		got := "<nil>"
 		if parentID != nil {
 			got = *parentID
 		}
-		t.Fatalf("synthesized comment parent_id = %s, want trigger comment %s", got, triggerCommentID)
+		t.Fatalf("synthesized comment parent_id = %s, want trigger comment %s", got, fixture.TriggerCommentID)
 	}
 }
 
@@ -2822,71 +2874,23 @@ func TestCompleteTask_CommentTriggered_SkipsSynthesisWhenAgentAlreadyCommented(t
 
 	ctx := context.Background()
 
-	var agentID, runtimeID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT a.id, a.runtime_id FROM agent a WHERE a.workspace_id = $1 LIMIT 1
-	`, testWorkspaceID).Scan(&agentID, &runtimeID); err != nil {
-		t.Fatalf("setup: get agent: %v", err)
-	}
-
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
-		VALUES ($1, 'mul-1198 dedup fixture', 'in_progress', 'none', $2, 'member', 81199, 0)
-		RETURNING id
-	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
-		t.Fatalf("setup: create issue: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
-
-	var triggerCommentID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type)
-		VALUES ($1, $2, 'member', $3, 'please take a look', 'comment')
-		RETURNING id
-	`, issueID, testWorkspaceID, testUserID).Scan(&triggerCommentID); err != nil {
-		t.Fatalf("setup: create trigger comment: %v", err)
-	}
-
-	var taskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (
-			agent_id, runtime_id, issue_id, trigger_comment_id,
-			status, priority, started_at
-		)
-		VALUES ($1, $2, $3, $4, 'running', 0, now())
-		RETURNING id
-	`, agentID, runtimeID, issueID, triggerCommentID).Scan(&taskID); err != nil {
-		t.Fatalf("setup: create comment-triggered task: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	fixture := createRunningCommentTriggeredCompleteTask(t, ctx, "mul-1198 dedup fixture", 81199, "please take a look")
 
 	// Agent posts its own reply during the run — exactly the compliant path.
 	if _, err := testPool.Exec(ctx, `
 		INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type, parent_id)
 		VALUES ($1, $2, 'agent', $3, 'done, see PR', 'comment', $4)
-	`, issueID, testWorkspaceID, agentID, triggerCommentID); err != nil {
+	`, fixture.IssueID, testWorkspaceID, fixture.AgentID, fixture.TriggerCommentID); err != nil {
 		t.Fatalf("setup: create agent reply: %v", err)
 	}
 
-	w := httptest.NewRecorder()
-	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/complete",
-		map[string]any{"output": "final terminal text that must NOT become a comment"},
-		testWorkspaceID, "legit-daemon")
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("taskId", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	testHandler.CompleteTask(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("CompleteTask: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
+	completeDaemonTaskForTest(t, fixture.TaskID, "final terminal text that must NOT become a comment")
 
 	var count int
 	if err := testPool.QueryRow(ctx, `
 		SELECT count(*) FROM comment
 		WHERE issue_id = $1 AND author_type = 'agent' AND author_id = $2
-	`, issueID, agentID).Scan(&count); err != nil {
+	`, fixture.IssueID, fixture.AgentID).Scan(&count); err != nil {
 		t.Fatalf("count agent comments: %v", err)
 	}
 	if count != 1 {
@@ -2901,63 +2905,15 @@ func TestCompleteTask_CommentTriggered_SuppressesTrivialDoneOutput(t *testing.T)
 
 	ctx := context.Background()
 
-	var agentID, runtimeID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT a.id, a.runtime_id FROM agent a WHERE a.workspace_id = $1 LIMIT 1
-	`, testWorkspaceID).Scan(&agentID, &runtimeID); err != nil {
-		t.Fatalf("setup: get agent: %v", err)
-	}
+	fixture := createRunningCommentTriggeredCompleteTask(t, ctx, "trivial-done-suppression fixture", 81200, "please follow up")
 
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
-		VALUES ($1, 'trivial-done-suppression fixture', 'in_progress', 'none', $2, 'member', 81200, 0)
-		RETURNING id
-	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
-		t.Fatalf("setup: create issue: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
-
-	var triggerCommentID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type)
-		VALUES ($1, $2, 'member', $3, 'please follow up', 'comment')
-		RETURNING id
-	`, issueID, testWorkspaceID, testUserID).Scan(&triggerCommentID); err != nil {
-		t.Fatalf("setup: create trigger comment: %v", err)
-	}
-
-	var taskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (
-			agent_id, runtime_id, issue_id, trigger_comment_id,
-			status, priority, started_at
-		)
-		VALUES ($1, $2, $3, $4, 'running', 0, now())
-		RETURNING id
-	`, agentID, runtimeID, issueID, triggerCommentID).Scan(&taskID); err != nil {
-		t.Fatalf("setup: create comment-triggered task: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
-
-	w := httptest.NewRecorder()
-	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/complete",
-		map[string]any{"output": "Done."},
-		testWorkspaceID, "legit-daemon")
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("taskId", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	testHandler.CompleteTask(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("CompleteTask: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
+	completeDaemonTaskForTest(t, fixture.TaskID, "Done.")
 
 	var count int
 	if err := testPool.QueryRow(ctx, `
 		SELECT count(*) FROM comment
 		WHERE issue_id = $1 AND author_type = 'agent' AND author_id = $2
-	`, issueID, agentID).Scan(&count); err != nil {
+	`, fixture.IssueID, fixture.AgentID).Scan(&count); err != nil {
 		t.Fatalf("count agent comments: %v", err)
 	}
 	if count != 0 {
@@ -2972,55 +2928,16 @@ func TestCompleteTask_AssignmentTriggered_DoesNotSuppressTrivialDoneOutput(t *te
 
 	ctx := context.Background()
 
-	var agentID, runtimeID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT a.id, a.runtime_id FROM agent a WHERE a.workspace_id = $1 LIMIT 1
-	`, testWorkspaceID).Scan(&agentID, &runtimeID); err != nil {
-		t.Fatalf("setup: get agent: %v", err)
-	}
+	fixture := createRunningAssignmentCompleteTask(t, ctx, "assignment-trivial-done fixture", 81201)
 
-	var issueID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
-		VALUES ($1, 'assignment-trivial-done fixture', 'in_progress', 'none', $2, 'member', 81201, 0)
-		RETURNING id
-	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
-		t.Fatalf("setup: create issue: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
-
-	var taskID string
-	if err := testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (
-			agent_id, runtime_id, issue_id,
-			status, priority, started_at
-		)
-		VALUES ($1, $2, $3, 'running', 0, now())
-		RETURNING id
-	`, agentID, runtimeID, issueID).Scan(&taskID); err != nil {
-		t.Fatalf("setup: create assignment-triggered task: %v", err)
-	}
-	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
-
-	w := httptest.NewRecorder()
-	req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/complete",
-		map[string]any{"output": "Done."},
-		testWorkspaceID, "legit-daemon")
-	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add("taskId", taskID)
-	req = req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-
-	testHandler.CompleteTask(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("CompleteTask: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
+	completeDaemonTaskForTest(t, fixture.TaskID, "Done.")
 
 	var content string
 	if err := testPool.QueryRow(ctx, `
 		SELECT content FROM comment
 		WHERE issue_id = $1 AND author_type = 'agent' AND author_id = $2
 		ORDER BY created_at DESC LIMIT 1
-	`, issueID, agentID).Scan(&content); err != nil {
+	`, fixture.IssueID, fixture.AgentID).Scan(&content); err != nil {
 		t.Fatalf("query synthesized comment: %v", err)
 	}
 	if content != "Done." {
