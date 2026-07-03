@@ -7,6 +7,30 @@ import (
 	"testing"
 )
 
+func setRuntimeGOOS(t *testing.T, goos string) {
+	t.Helper()
+	saved := runtimeGOOS
+	t.Cleanup(func() { runtimeGOOS = saved })
+	runtimeGOOS = goos
+}
+
+func injectedRuntimeConfigContent(t *testing.T, provider string, ctx TaskContextForEnv) (string, string) {
+	t.Helper()
+	dir := t.TempDir()
+	if _, err := InjectRuntimeConfig(dir, provider, ctx); err != nil {
+		t.Fatalf("InjectRuntimeConfig failed: %v", err)
+	}
+	fileName := "CLAUDE.md"
+	if provider != "claude" {
+		fileName = "AGENTS.md"
+	}
+	data, err := os.ReadFile(filepath.Join(dir, fileName))
+	if err != nil {
+		t.Fatalf("read %s: %v", fileName, err)
+	}
+	return fileName, string(data)
+}
+
 // TestBuildCommentReplyInstructionsCodexLinux pins that the Linux/macOS
 // reply template now mandates `--content-file` (post-#4182). The previous
 // `--content-stdin` + HEREDOC mandate (#1795 / #1851 / MUL-2904) was kept
@@ -19,9 +43,7 @@ import (
 //
 // Not parallel: mutates the package-level runtimeGOOS.
 func TestBuildCommentReplyInstructionsCodexLinux(t *testing.T) {
-	saved := runtimeGOOS
-	t.Cleanup(func() { runtimeGOOS = saved })
-	runtimeGOOS = "linux"
+	setRuntimeGOOS(t, "linux")
 
 	issueID := "11111111-1111-1111-1111-111111111111"
 	triggerID := "22222222-2222-2222-2222-222222222222"
@@ -128,9 +150,7 @@ func TestBuildCommentReplyInstructionsNonCodexLinux(t *testing.T) {
 //
 // Not parallel: mutates the package-level runtimeGOOS.
 func TestBuildCommentReplyInstructionsWindowsUsesContentFile(t *testing.T) {
-	saved := runtimeGOOS
-	t.Cleanup(func() { runtimeGOOS = saved })
-	runtimeGOOS = "windows"
+	setRuntimeGOOS(t, "windows")
 
 	issueID := "11111111-1111-1111-1111-111111111111"
 	triggerID := "22222222-2222-2222-2222-222222222222"
@@ -177,9 +197,7 @@ func TestBuildCommentReplyInstructionsEmptyWhenNoTrigger(t *testing.T) {
 // Provider is "claude" — exercises the non-codex inline path through
 // InjectRuntimeConfig end-to-end. Not parallel: mutates runtimeGOOS.
 func TestInjectRuntimeConfigCommentTriggerUsesHelper(t *testing.T) {
-	saved := runtimeGOOS
-	t.Cleanup(func() { runtimeGOOS = saved })
-	runtimeGOOS = "linux"
+	setRuntimeGOOS(t, "linux")
 
 	dir := t.TempDir()
 
@@ -219,9 +237,7 @@ func TestInjectRuntimeConfigCommentTriggerUsesHelper(t *testing.T) {
 //
 // Not parallel: mutates the package-level runtimeGOOS.
 func TestInjectRuntimeConfigWindowsCommentTriggerHasNoStdin(t *testing.T) {
-	saved := runtimeGOOS
-	t.Cleanup(func() { runtimeGOOS = saved })
-	runtimeGOOS = "windows"
+	setRuntimeGOOS(t, "windows")
 
 	issueID := "11111111-1111-1111-1111-111111111111"
 	triggerID := "22222222-2222-2222-2222-222222222222"
@@ -232,19 +248,7 @@ func TestInjectRuntimeConfigWindowsCommentTriggerHasNoStdin(t *testing.T) {
 
 	for _, provider := range []string{"claude", "codex", "opencode"} {
 		t.Run(provider, func(t *testing.T) {
-			dir := t.TempDir()
-			if _, err := InjectRuntimeConfig(dir, provider, ctx); err != nil {
-				t.Fatalf("InjectRuntimeConfig failed: %v", err)
-			}
-			fileName := "CLAUDE.md"
-			if provider != "claude" {
-				fileName = "AGENTS.md"
-			}
-			data, err := os.ReadFile(filepath.Join(dir, fileName))
-			if err != nil {
-				t.Fatalf("read %s: %v", fileName, err)
-			}
-			s := string(data)
+			fileName, s := injectedRuntimeConfigContent(t, provider, ctx)
 
 			for _, want := range []string{
 				"multica issue comment add " + issueID + " --parent " + triggerID + " --content-file",
@@ -288,28 +292,14 @@ func TestInjectRuntimeConfigWindowsCommentTriggerHasNoStdin(t *testing.T) {
 //
 // Not parallel: mutates the package-level runtimeGOOS.
 func TestInjectRuntimeConfigWindowsAssignmentBriefStaysFileOnly(t *testing.T) {
-	saved := runtimeGOOS
-	t.Cleanup(func() { runtimeGOOS = saved })
-	runtimeGOOS = "windows"
+	setRuntimeGOOS(t, "windows")
 
 	// Assignment-triggered: IssueID set, no TriggerCommentID.
 	ctx := TaskContextForEnv{IssueID: "issue-1"}
 
 	for _, provider := range []string{"claude", "codex", "opencode"} {
 		t.Run(provider, func(t *testing.T) {
-			dir := t.TempDir()
-			if _, err := InjectRuntimeConfig(dir, provider, ctx); err != nil {
-				t.Fatalf("InjectRuntimeConfig failed: %v", err)
-			}
-			fileName := "CLAUDE.md"
-			if provider != "claude" {
-				fileName = "AGENTS.md"
-			}
-			data, err := os.ReadFile(filepath.Join(dir, fileName))
-			if err != nil {
-				t.Fatalf("read %s: %v", fileName, err)
-			}
-			s := string(data)
+			fileName, s := injectedRuntimeConfigContent(t, provider, ctx)
 
 			// The Windows Comment Formatting section is file-only.
 			for _, want := range []string{
