@@ -1191,6 +1191,51 @@ func TestAgentGetTableIncludesAvatarURL(t *testing.T) {
 	}
 }
 
+func setAgentThinkingLevelTestEnv(t *testing.T, serverURL string) {
+	t.Helper()
+	t.Setenv("MULTICA_SERVER_URL", serverURL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+	t.Setenv("MULTICA_AGENT_ID", "")
+	t.Setenv("MULTICA_TASK_ID", "")
+}
+
+func newAgentThinkingLevelCreateCmd(t *testing.T, runtimeID string, thinkingLevel *string) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{Use: "create"}
+	cmd.Flags().String("name", "", "")
+	cmd.Flags().String("runtime-id", "", "")
+	cmd.Flags().String("description", "", "")
+	cmd.Flags().String("instructions", "", "")
+	cmd.Flags().String("thinking-level", "", "")
+	cmd.Flags().String("output", "json", "")
+	cmd.Flags().String("profile", "", "")
+	if err := cmd.Flags().Set("name", "TestAgent"); err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Flags().Set("runtime-id", runtimeID); err != nil {
+		t.Fatal(err)
+	}
+	if thinkingLevel != nil {
+		if err := cmd.Flags().Set("thinking-level", *thinkingLevel); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return cmd
+}
+
+func newAgentThinkingLevelUpdateCmd(t *testing.T, thinkingLevel string) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{Use: "update"}
+	cmd.Flags().String("thinking-level", "", "")
+	cmd.Flags().String("output", "json", "")
+	cmd.Flags().String("profile", "", "")
+	if err := cmd.Flags().Set("thinking-level", thinkingLevel); err != nil {
+		t.Fatal(err)
+	}
+	return cmd
+}
+
 // TestAgentCreateSendsThinkingLevel verifies `agent create --thinking-level`
 // puts the value on the top-level `thinking_level` key of the POST body —
 // the same field the web inspector and HTTP API already accept. The value is
@@ -1209,24 +1254,10 @@ func TestAgentCreateSendsThinkingLevel(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
-	t.Setenv("MULTICA_AGENT_ID", "")
-	t.Setenv("MULTICA_TASK_ID", "")
+	setAgentThinkingLevelTestEnv(t, srv.URL)
 
-	cmd := &cobra.Command{Use: "create"}
-	cmd.Flags().String("name", "", "")
-	cmd.Flags().String("runtime-id", "", "")
-	cmd.Flags().String("description", "", "")
-	cmd.Flags().String("instructions", "", "")
-	cmd.Flags().String("thinking-level", "", "")
-	cmd.Flags().String("output", "json", "")
-	cmd.Flags().String("profile", "", "")
-	_ = cmd.Flags().Set("name", "TestAgent")
-	_ = cmd.Flags().Set("runtime-id", "runtime-1")
-	_ = cmd.Flags().Set("thinking-level", "high")
-
+	thinkingLevel := "high"
+	cmd := newAgentThinkingLevelCreateCmd(t, "runtime-1", &thinkingLevel)
 	if err := runAgentCreate(cmd, nil); err != nil {
 		t.Fatalf("runAgentCreate: %v", err)
 	}
@@ -1254,21 +1285,9 @@ func TestAgentCreateOmitsThinkingLevelWhenUnset(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
-	t.Setenv("MULTICA_AGENT_ID", "")
-	t.Setenv("MULTICA_TASK_ID", "")
+	setAgentThinkingLevelTestEnv(t, srv.URL)
 
-	cmd := &cobra.Command{Use: "create"}
-	cmd.Flags().String("name", "", "")
-	cmd.Flags().String("runtime-id", "", "")
-	cmd.Flags().String("thinking-level", "", "")
-	cmd.Flags().String("output", "json", "")
-	cmd.Flags().String("profile", "", "")
-	_ = cmd.Flags().Set("name", "TestAgent")
-	_ = cmd.Flags().Set("runtime-id", "runtime-1")
-
+	cmd := newAgentThinkingLevelCreateCmd(t, "runtime-1", nil)
 	if err := runAgentCreate(cmd, nil); err != nil {
 		t.Fatalf("runAgentCreate: %v", err)
 	}
@@ -1305,20 +1324,9 @@ func TestAgentUpdateSendsThinkingLevel(t *testing.T) {
 			}))
 			defer srv.Close()
 
-			t.Setenv("MULTICA_SERVER_URL", srv.URL)
-			t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-			t.Setenv("MULTICA_TOKEN", "test-token")
-			t.Setenv("MULTICA_AGENT_ID", "")
-			t.Setenv("MULTICA_TASK_ID", "")
+			setAgentThinkingLevelTestEnv(t, srv.URL)
 
-			cmd := &cobra.Command{Use: "update"}
-			cmd.Flags().String("thinking-level", "", "")
-			cmd.Flags().String("output", "json", "")
-			cmd.Flags().String("profile", "", "")
-			if err := cmd.Flags().Set("thinking-level", tc.value); err != nil {
-				t.Fatal(err)
-			}
-
+			cmd := newAgentThinkingLevelUpdateCmd(t, tc.value)
 			if err := runAgentUpdate(cmd, []string{"agent-123"}); err != nil {
 				t.Fatalf("runAgentUpdate: %v", err)
 			}
@@ -1364,22 +1372,10 @@ func TestAgentCreateThinkingLevelServerRejectionSurfaces(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
-	t.Setenv("MULTICA_AGENT_ID", "")
-	t.Setenv("MULTICA_TASK_ID", "")
+	setAgentThinkingLevelTestEnv(t, srv.URL)
 
-	cmd := &cobra.Command{Use: "create"}
-	cmd.Flags().String("name", "", "")
-	cmd.Flags().String("runtime-id", "", "")
-	cmd.Flags().String("thinking-level", "", "")
-	cmd.Flags().String("output", "json", "")
-	cmd.Flags().String("profile", "", "")
-	_ = cmd.Flags().Set("name", "TestAgent")
-	_ = cmd.Flags().Set("runtime-id", "runtime-gemini")
-	_ = cmd.Flags().Set("thinking-level", "max")
-
+	thinkingLevel := "max"
+	cmd := newAgentThinkingLevelCreateCmd(t, "runtime-gemini", &thinkingLevel)
 	err := runAgentCreate(cmd, nil)
 	if err == nil {
 		t.Fatal("expected error when server rejects thinking_level, got nil")
