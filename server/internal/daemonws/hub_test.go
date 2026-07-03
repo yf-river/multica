@@ -15,22 +15,28 @@ import (
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
-func TestNotifyTaskAvailable(t *testing.T) {
-	M.Reset()
-	defer M.Reset()
-
-	hub := NewHub()
+func newTestHubConnection(t *testing.T, hub *Hub, identity ClientIdentity) *websocket.Conn {
+	t.Helper()
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hub.HandleWebSocket(w, r, ClientIdentity{RuntimeIDs: []string{"runtime-1"}})
+		hub.HandleWebSocket(w, r, identity)
 	}))
-	defer server.Close()
+	t.Cleanup(server.Close)
 
 	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	if err != nil {
 		t.Fatalf("Dial: %v", err)
 	}
-	defer conn.Close()
+	t.Cleanup(func() { _ = conn.Close() })
+	return conn
+}
+
+func TestNotifyTaskAvailable(t *testing.T) {
+	M.Reset()
+	defer M.Reset()
+
+	hub := NewHub()
+	conn := newTestHubConnection(t, hub, ClientIdentity{RuntimeIDs: []string{"runtime-1"}})
 
 	deadline := time.Now().Add(time.Second)
 	for hub.RuntimeConnectionCount("runtime-1") == 0 {
@@ -72,20 +78,10 @@ func TestNotifyRuntimeProfilesChanged(t *testing.T) {
 	defer M.Reset()
 
 	hub := NewHub()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hub.HandleWebSocket(w, r, ClientIdentity{
-			WorkspaceID: "ws-1",
-			RuntimeIDs:  []string{"runtime-1"},
-		})
-	}))
-	defer server.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
-	}
-	defer conn.Close()
+	conn := newTestHubConnection(t, hub, ClientIdentity{
+		WorkspaceID: "ws-1",
+		RuntimeIDs:  []string{"runtime-1"},
+	})
 
 	deadline := time.Now().Add(time.Second)
 	for hub.WorkspaceConnectionCount("ws-1") == 0 {
@@ -127,20 +123,10 @@ func TestNotifyRuntimeProfilesChangedIndexesAllAuthorizedWorkspaces(t *testing.T
 	defer M.Reset()
 
 	hub := NewHub()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hub.HandleWebSocket(w, r, ClientIdentity{
-			WorkspaceIDs: []string{"ws-1", "ws-2"},
-			RuntimeIDs:   []string{"runtime-1", "runtime-2"},
-		})
-	}))
-	defer server.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
-	}
-	defer conn.Close()
+	conn := newTestHubConnection(t, hub, ClientIdentity{
+		WorkspaceIDs: []string{"ws-1", "ws-2"},
+		RuntimeIDs:   []string{"runtime-1", "runtime-2"},
+	})
 
 	deadline := time.Now().Add(time.Second)
 	for hub.WorkspaceConnectionCount("ws-1") == 0 || hub.WorkspaceConnectionCount("ws-2") == 0 {
@@ -357,20 +343,10 @@ func TestHeartbeatRoundTrip(t *testing.T) {
 		}, nil
 	})
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hub.HandleWebSocket(w, r, ClientIdentity{
-			WorkspaceID: "ws-1",
-			RuntimeIDs:  []string{"runtime-1"},
-		})
-	}))
-	defer server.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
-	}
-	defer conn.Close()
+	conn := newTestHubConnection(t, hub, ClientIdentity{
+		WorkspaceID: "ws-1",
+		RuntimeIDs:  []string{"runtime-1"},
+	})
 
 	hbFrame, err := json.Marshal(protocol.Message{
 		Type:    protocol.EventDaemonHeartbeat,
@@ -437,17 +413,7 @@ func TestHeartbeatHandlerCtxNotTimeBounded(t *testing.T) {
 		return &protocol.DaemonHeartbeatAckPayload{RuntimeID: runtimeID, Status: "ok"}, nil
 	})
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hub.HandleWebSocket(w, r, ClientIdentity{RuntimeIDs: []string{"runtime-1"}})
-	}))
-	defer server.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
-	}
-	defer conn.Close()
+	conn := newTestHubConnection(t, hub, ClientIdentity{RuntimeIDs: []string{"runtime-1"}})
 
 	hbFrame, err := json.Marshal(protocol.Message{
 		Type:    protocol.EventDaemonHeartbeat,
@@ -490,17 +456,7 @@ func TestHeartbeatRejectsUnauthorizedRuntime(t *testing.T) {
 		return &protocol.DaemonHeartbeatAckPayload{Status: "ok"}, nil
 	})
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		hub.HandleWebSocket(w, r, ClientIdentity{RuntimeIDs: []string{"runtime-1"}})
-	}))
-	defer server.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(server.URL, "http")
-	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	if err != nil {
-		t.Fatalf("Dial: %v", err)
-	}
-	defer conn.Close()
+	conn := newTestHubConnection(t, hub, ClientIdentity{RuntimeIDs: []string{"runtime-1"}})
 
 	hbFrame, err := json.Marshal(protocol.Message{
 		Type:    protocol.EventDaemonHeartbeat,
