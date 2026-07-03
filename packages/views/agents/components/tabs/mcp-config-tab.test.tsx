@@ -55,6 +55,22 @@ function renderTab(
   return { ...result, onSave };
 }
 
+function rerenderTab(
+  rerender: ReturnType<typeof render>["rerender"],
+  agent: Agent,
+  onSave = vi.fn(),
+) {
+  rerender(
+    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
+      <McpConfigTab agent={agent} onSave={onSave} />
+    </I18nProvider>,
+  );
+}
+
+function getConfigEditor() {
+  return screen.getByLabelText(/MCP 配置 JSON 编辑器/) as HTMLTextAreaElement;
+}
+
 describe("McpConfigTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -161,25 +177,12 @@ describe("McpConfigTab", () => {
     const updated = { mcpServers: { fetch: { command: "npx" } } };
     const agent = { ...baseAgent, mcp_config: initial };
 
-    const { rerender } = render(
-      <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
-        <McpConfigTab agent={agent} onSave={vi.fn()} />
-      </I18nProvider>,
-    );
+    const { rerender } = renderTab({ mcp_config: initial });
 
-    const editor = screen.getByLabelText(
-      /MCP 配置 JSON 编辑器/,
-    ) as HTMLTextAreaElement;
+    const editor = getConfigEditor();
     expect(editor.value).toBe(JSON.stringify(initial, null, 2));
 
-    rerender(
-      <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
-        <McpConfigTab
-          agent={{ ...agent, mcp_config: updated }}
-          onSave={vi.fn()}
-        />
-      </I18nProvider>,
-    );
+    rerenderTab(rerender, { ...agent, mcp_config: updated });
 
     // Editor follows the new prop and the dirty hint is NOT shown — if it
     // were, the next Save would write the *old* JSON back over the new one.
@@ -194,27 +197,14 @@ describe("McpConfigTab", () => {
     const updated = { mcpServers: { fetch: { command: "npx" } } };
     const agent = { ...baseAgent, mcp_config: initial };
 
-    const { rerender } = render(
-      <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
-        <McpConfigTab agent={agent} onSave={vi.fn()} />
-      </I18nProvider>,
-    );
+    const { rerender } = renderTab({ mcp_config: initial });
 
-    const editor = screen.getByLabelText(
-      /MCP 配置 JSON 编辑器/,
-    ) as HTMLTextAreaElement;
+    const editor = getConfigEditor();
     const draft = JSON.stringify({ mcpServers: { fetch: { command: "wip" } } });
     fireEvent.change(editor, { target: { value: draft } });
     expect(editor.value).toBe(draft);
 
-    rerender(
-      <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
-        <McpConfigTab
-          agent={{ ...agent, mcp_config: updated }}
-          onSave={vi.fn()}
-        />
-      </I18nProvider>,
-    );
+    rerenderTab(rerender, { ...agent, mcp_config: updated });
 
     expect(editor.value).toBe(draft);
   });
