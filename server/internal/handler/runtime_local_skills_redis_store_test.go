@@ -16,6 +16,47 @@ func newRedisTestClient(t *testing.T) *redis.Client {
 	return testutil.NewRedisTestClient(t)
 }
 
+func assertSingleConcurrentPopWinner[T any](t *testing.T, wantID string, pop func() (*T, error), requestID func(*T) string) {
+	t.Helper()
+	const n = 8
+
+	var wg sync.WaitGroup
+	results := make(chan *T, n)
+	errs := make(chan error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			popped, err := pop()
+			if err != nil {
+				errs <- err
+				return
+			}
+			results <- popped
+		}()
+	}
+	wg.Wait()
+	close(results)
+	close(errs)
+
+	for err := range errs {
+		t.Fatalf("concurrent pop error: %v", err)
+	}
+
+	winners := 0
+	for popped := range results {
+		if popped != nil {
+			winners++
+			if requestID(popped) != wantID {
+				t.Fatalf("winner popped wrong id: %s", requestID(popped))
+			}
+		}
+	}
+	if winners != 1 {
+		t.Fatalf("expected exactly one winner, got %d", winners)
+	}
+}
+
 func TestRedisLocalSkillListStore_CreateGetComplete(t *testing.T) {
 	rdb := newRedisTestClient(t)
 	ctx := context.Background()
@@ -120,42 +161,11 @@ func TestRedisLocalSkillListStore_PopPendingConcurrent(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	const N = 8
-	var wg sync.WaitGroup
-	results := make(chan *RuntimeLocalSkillListRequest, N)
-	errs := make(chan error, N)
-	for i := 0; i < N; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			popped, err := store.PopPending(ctx, "runtime-race")
-			if err != nil {
-				errs <- err
-				return
-			}
-			results <- popped
-		}()
-	}
-	wg.Wait()
-	close(results)
-	close(errs)
-
-	for err := range errs {
-		t.Fatalf("concurrent pop error: %v", err)
-	}
-
-	winners := 0
-	for popped := range results {
-		if popped != nil {
-			winners++
-			if popped.ID != req.ID {
-				t.Fatalf("winner popped wrong id: %s", popped.ID)
-			}
-		}
-	}
-	if winners != 1 {
-		t.Fatalf("expected exactly one winner, got %d", winners)
-	}
+	assertSingleConcurrentPopWinner(t, req.ID, func() (*RuntimeLocalSkillListRequest, error) {
+		return store.PopPending(ctx, "runtime-race")
+	}, func(req *RuntimeLocalSkillListRequest) string {
+		return req.ID
+	})
 }
 
 func TestRedisLocalSkillListStore_PendingTimeout(t *testing.T) {

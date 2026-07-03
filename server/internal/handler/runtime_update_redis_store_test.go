@@ -2,7 +2,6 @@ package handler
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 )
@@ -233,42 +232,11 @@ func TestRedisUpdateStore_PopPendingConcurrent(t *testing.T) {
 		t.Fatalf("create: %v", err)
 	}
 
-	const n = 8
-	var wg sync.WaitGroup
-	results := make(chan *UpdateRequest, n)
-	errs := make(chan error, n)
-	for i := 0; i < n; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			popped, err := store.PopPending(ctx, "runtime-race")
-			if err != nil {
-				errs <- err
-				return
-			}
-			results <- popped
-		}()
-	}
-	wg.Wait()
-	close(results)
-	close(errs)
-
-	for err := range errs {
-		t.Fatalf("concurrent pop error: %v", err)
-	}
-
-	winners := 0
-	for popped := range results {
-		if popped != nil {
-			winners++
-			if popped.ID != req.ID {
-				t.Fatalf("winner popped wrong id: %s", popped.ID)
-			}
-		}
-	}
-	if winners != 1 {
-		t.Fatalf("expected exactly one winner, got %d", winners)
-	}
+	assertSingleConcurrentPopWinner(t, req.ID, func() (*UpdateRequest, error) {
+		return store.PopPending(ctx, "runtime-race")
+	}, func(req *UpdateRequest) string {
+		return req.ID
+	})
 }
 
 var (
