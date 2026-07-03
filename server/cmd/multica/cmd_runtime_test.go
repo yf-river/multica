@@ -2,10 +2,8 @@ package main
 
 import (
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"strings"
 	"testing"
 
@@ -22,27 +20,6 @@ func newRuntimeDeleteTestCmd(serverURL string) *cobra.Command {
 	_ = cmd.Flags().Set("server-url", serverURL)
 	_ = cmd.Flags().Set("workspace-id", "ws-1")
 	return cmd
-}
-
-func captureRuntimeStdout(t *testing.T, fn func() error) (string, error) {
-	t.Helper()
-	old := os.Stdout
-	r, w, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("pipe stdout: %v", err)
-	}
-	os.Stdout = w
-	defer func() { os.Stdout = old }()
-
-	runErr := fn()
-	if err := w.Close(); err != nil {
-		t.Fatalf("close stdout writer: %v", err)
-	}
-	out, err := io.ReadAll(r)
-	if err != nil {
-		t.Fatalf("read stdout: %v", err)
-	}
-	return string(out), runErr
 }
 
 func TestRunRuntimeDeleteStrictSuccessPrintsJSON(t *testing.T) {
@@ -68,7 +45,7 @@ func TestRunRuntimeDeleteStrictSuccessPrintsJSON(t *testing.T) {
 	cmd := newRuntimeDeleteTestCmd(srv.URL)
 	_ = cmd.Flags().Set("output", "json")
 
-	out, err := captureRuntimeStdout(t, func() error {
+	out, err := captureStdout(t, func() error {
 		return runRuntimeDelete(cmd, []string{"rt-1"})
 	})
 	if err != nil {
@@ -158,7 +135,7 @@ func TestRunRuntimeDeleteCascadeConfirmsActiveAgentSnapshot(t *testing.T) {
 	_ = cmd.Flags().Set("cascade", "true")
 	_ = cmd.Flags().Set("output", "json")
 
-	out, err := captureRuntimeStdout(t, func() error {
+	out, err := captureStdout(t, func() error {
 		return runRuntimeDelete(cmd, []string{"rt-1"})
 	})
 	if err != nil {
