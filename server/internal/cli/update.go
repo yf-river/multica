@@ -221,9 +221,9 @@ func verifyAssetSHA256(data []byte, expectedHex, assetName string) error {
 	return nil
 }
 
-func fetchReleaseByTag(tag string) (*GitHubRelease, error) {
+func fetchGitHubRelease(url string) (*GitHubRelease, error) {
 	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/multica-ai/multica/releases/tags/"+tag, nil)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -246,30 +246,13 @@ func fetchReleaseByTag(tag string) (*GitHubRelease, error) {
 	return &release, nil
 }
 
+func fetchReleaseByTag(tag string) (*GitHubRelease, error) {
+	return fetchGitHubRelease("https://api.github.com/repos/multica-ai/multica/releases/tags/" + tag)
+}
+
 // FetchLatestRelease fetches the latest release tag from the multica GitHub repo.
 func FetchLatestRelease() (*GitHubRelease, error) {
-	client := &http.Client{Timeout: 10 * time.Second}
-	req, err := http.NewRequest(http.MethodGet, "https://api.github.com/repos/multica-ai/multica/releases/latest", nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("Accept", "application/vnd.github+json")
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("GitHub API returned %d", resp.StatusCode)
-	}
-
-	var release GitHubRelease
-	if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		return nil, err
-	}
-	return &release, nil
+	return fetchGitHubRelease("https://api.github.com/repos/multica-ai/multica/releases/latest")
 }
 
 // knownBrewPrefixes lists the install roots Homebrew uses on each platform.
