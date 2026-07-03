@@ -11,6 +11,73 @@ import (
 	"time"
 )
 
+type issueSourceFetchFixture struct {
+	AgentID string
+	IssueID string
+	TaskID  string
+}
+
+func clearTapdCredentialProfilesForTest(t *testing.T, ctx context.Context) {
+	t.Helper()
+
+	if _, err := testPool.Exec(ctx, `DELETE FROM external_credential_profile WHERE user_id = $1 AND provider = 'tapd'`, testUserID); err != nil {
+		t.Fatalf("clear tapd profiles: %v", err)
+	}
+}
+
+func createTapdCredentialProfileForTest(t *testing.T, secretRef string) {
+	t.Helper()
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/external-credential-profiles", map[string]any{
+		"provider":   "tapd",
+		"name":       fmt.Sprintf("tapd-auto-fetch-%d", time.Now().UnixNano()),
+		"secret_ref": secretRef,
+	})
+	testHandler.CreateExternalCredentialProfile(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateExternalCredentialProfile: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func createIssueSourceFetchFixture(t *testing.T, ctx context.Context, runtimeName string, agentName string, metadata map[string]any) issueSourceFetchFixture {
+	t.Helper()
+
+	runtimeID := createClaimReclaimRuntime(t, ctx, runtimeName)
+	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, agentName)
+	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "1 second", true)
+
+	rawMetadata, _ := json.Marshal(metadata)
+	if _, err := testPool.Exec(ctx, `UPDATE issue SET metadata = $2 WHERE id = $1`, issueID, rawMetadata); err != nil {
+		t.Fatalf("set issue metadata: %v", err)
+	}
+
+	return issueSourceFetchFixture{
+		AgentID: agentID,
+		IssueID: issueID,
+		TaskID:  taskID,
+	}
+}
+
+func recordIssueSourceAutoFetchForTest(t *testing.T, fixture issueSourceFetchFixture, failureContext string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues/"+fixture.IssueID+"/source-fetch", map[string]any{
+		"provider":   "tapd",
+		"auto_fetch": true,
+	})
+	req.Header.Set("X-Agent-ID", fixture.AgentID)
+	req.Header.Set("X-Task-ID", fixture.TaskID)
+	req = withURLParam(req, "id", fixture.IssueID)
+	testHandler.RecordIssueSourceFetch(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("%s: expected 200, got %d: %s", failureContext, w.Code, w.Body.String())
+	}
+
+	return w
+}
+
 func TestRecordIssueSourceFetchWritesMetadataAndTrace(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
@@ -112,9 +179,7 @@ func TestRecordIssueSourceFetchAutoFetchesTapdWikiWithAccountProfile(t *testing.
 	}
 
 	ctx := context.Background()
-	if _, err := testPool.Exec(ctx, `DELETE FROM external_credential_profile WHERE user_id = $1 AND provider = 'tapd'`, testUserID); err != nil {
-		t.Fatalf("clear tapd profiles: %v", err)
-	}
+	clearTapdCredentialProfilesForTest(t, ctx)
 	t.Setenv("TAPD_AUTO_FETCH_TEST_TOKEN", "tapd-test-token")
 
 	var sawAuth bool
@@ -140,43 +205,15 @@ func TestRecordIssueSourceFetchAutoFetchesTapdWikiWithAccountProfile(t *testing.
 	defer tapdAPI.Close()
 	t.Setenv("TAPD_API_BASE_URL", tapdAPI.URL)
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/external-credential-profiles", map[string]any{
-		"provider":   "tapd",
-		"name":       fmt.Sprintf("tapd-auto-fetch-%d", time.Now().UnixNano()),
-		"secret_ref": "env:TAPD_AUTO_FETCH_TEST_TOKEN",
-	})
-	testHandler.CreateExternalCredentialProfile(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateExternalCredentialProfile: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-
-	runtimeID := createClaimReclaimRuntime(t, ctx, "Source fetch auto runtime")
-	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Source fetch auto agent")
-	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "1 second", true)
-	metadata := map[string]any{
+	createTapdCredentialProfileForTest(t, "env:TAPD_AUTO_FETCH_TEST_TOKEN")
+	fixture := createIssueSourceFetchFixture(t, ctx, "Source fetch auto runtime", "Source fetch auto agent", map[string]any{
 		"source_url":         "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",
 		"tapd_workspace_id":  "47654106",
 		"tapd_resource_type": "markdown_wiki",
 		"tapd_resource_id":   "1147654106001004154",
-	}
-	rawMetadata, _ := json.Marshal(metadata)
-	if _, err := testPool.Exec(ctx, `UPDATE issue SET metadata = $2 WHERE id = $1`, issueID, rawMetadata); err != nil {
-		t.Fatalf("set issue metadata: %v", err)
-	}
-
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues/"+issueID+"/source-fetch", map[string]any{
-		"provider":   "tapd",
-		"auto_fetch": true,
 	})
-	req.Header.Set("X-Agent-ID", agentID)
-	req.Header.Set("X-Task-ID", taskID)
-	req = withURLParam(req, "id", issueID)
-	testHandler.RecordIssueSourceFetch(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("RecordIssueSourceFetch auto_fetch: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
+
+	w := recordIssueSourceAutoFetchForTest(t, fixture, "RecordIssueSourceFetch auto_fetch")
 	if !sawAuth {
 		t.Fatal("TAPD auto_fetch did not send credential-backed MCP authorization headers")
 	}
@@ -204,9 +241,7 @@ func TestRecordIssueSourceFetchAutoFetchParsesTapdWikiSourceURL(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	if _, err := testPool.Exec(ctx, `DELETE FROM external_credential_profile WHERE user_id = $1 AND provider = 'tapd'`, testUserID); err != nil {
-		t.Fatalf("clear tapd profiles: %v", err)
-	}
+	clearTapdCredentialProfilesForTest(t, ctx)
 	t.Setenv("TAPD_AUTO_FETCH_URL_TEST_TOKEN", "tapd-test-token")
 
 	var sawAuth bool
@@ -236,39 +271,12 @@ func TestRecordIssueSourceFetchAutoFetchParsesTapdWikiSourceURL(t *testing.T) {
 	defer tapdAPI.Close()
 	t.Setenv("TAPD_API_BASE_URL", tapdAPI.URL)
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/external-credential-profiles", map[string]any{
-		"provider":   "tapd",
-		"name":       fmt.Sprintf("tapd-auto-fetch-url-%d", time.Now().UnixNano()),
-		"secret_ref": "env:TAPD_AUTO_FETCH_URL_TEST_TOKEN",
-	})
-	testHandler.CreateExternalCredentialProfile(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateExternalCredentialProfile: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-
-	runtimeID := createClaimReclaimRuntime(t, ctx, "Source fetch URL parse runtime")
-	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Source fetch URL parse agent")
-	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "1 second", true)
-	rawMetadata, _ := json.Marshal(map[string]any{
+	createTapdCredentialProfileForTest(t, "env:TAPD_AUTO_FETCH_URL_TEST_TOKEN")
+	fixture := createIssueSourceFetchFixture(t, ctx, "Source fetch URL parse runtime", "Source fetch URL parse agent", map[string]any{
 		"source_url": "https://www.tapd.cn/47654106/markdown_wikis/show/\n  #1147654106001004223",
 	})
-	if _, err := testPool.Exec(ctx, `UPDATE issue SET metadata = $2 WHERE id = $1`, issueID, rawMetadata); err != nil {
-		t.Fatalf("set issue metadata: %v", err)
-	}
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/issues/"+issueID+"/source-fetch", map[string]any{
-		"provider":   "tapd",
-		"auto_fetch": true,
-	})
-	req.Header.Set("X-Agent-ID", agentID)
-	req.Header.Set("X-Task-ID", taskID)
-	req = withURLParam(req, "id", issueID)
-	testHandler.RecordIssueSourceFetch(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("RecordIssueSourceFetch auto_fetch: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
+	w := recordIssueSourceAutoFetchForTest(t, fixture, "RecordIssueSourceFetch auto_fetch")
 	if !sawAuth {
 		t.Fatal("TAPD auto_fetch did not send credential-backed MCP authorization headers")
 	}
@@ -295,33 +303,14 @@ func TestRecordIssueSourceFetchAutoFetchRecordsMissingTapdProfile(t *testing.T) 
 	}
 
 	ctx := context.Background()
-	if _, err := testPool.Exec(ctx, `DELETE FROM external_credential_profile WHERE user_id = $1 AND provider = 'tapd'`, testUserID); err != nil {
-		t.Fatalf("clear tapd profiles: %v", err)
-	}
-	runtimeID := createClaimReclaimRuntime(t, ctx, "Source fetch missing profile runtime")
-	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "Source fetch missing profile agent")
-	taskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "1 second", true)
-	rawMetadata, _ := json.Marshal(map[string]any{
+	clearTapdCredentialProfilesForTest(t, ctx)
+	fixture := createIssueSourceFetchFixture(t, ctx, "Source fetch missing profile runtime", "Source fetch missing profile agent", map[string]any{
 		"tapd_workspace_id":  "47654106",
 		"tapd_resource_type": "markdown_wiki",
 		"tapd_resource_id":   "1147654106001004154",
 	})
-	if _, err := testPool.Exec(ctx, `UPDATE issue SET metadata = $2 WHERE id = $1`, issueID, rawMetadata); err != nil {
-		t.Fatalf("set issue metadata: %v", err)
-	}
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/issues/"+issueID+"/source-fetch", map[string]any{
-		"provider":   "tapd",
-		"auto_fetch": true,
-	})
-	req.Header.Set("X-Agent-ID", agentID)
-	req.Header.Set("X-Task-ID", taskID)
-	req = withURLParam(req, "id", issueID)
-	testHandler.RecordIssueSourceFetch(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("RecordIssueSourceFetch auto_fetch missing profile: expected 200, got %d: %s", w.Code, w.Body.String())
-	}
+	w := recordIssueSourceAutoFetchForTest(t, fixture, "RecordIssueSourceFetch auto_fetch missing profile")
 	var resp struct {
 		Metadata map[string]any `json:"metadata"`
 	}
