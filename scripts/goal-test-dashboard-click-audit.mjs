@@ -4,6 +4,10 @@ import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
+import {
+  attachBrowserAuditEvents,
+  browserRequestPath as requestPath,
+} from "./lib/browser-audit-events.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const env = {
@@ -126,47 +130,7 @@ async function resetNavigationBaseline(page, item) {
 }
 
 async function measureClick(page, item) {
-  const requests = [];
-  const failedRequests = [];
-  const consoleErrors = [];
-  const pageErrors = [];
-  const onRequest = (request) => {
-    if (!isAuditedRequest(request.url())) return;
-    requests.push({
-      url: request.url(),
-      method: request.method(),
-      type: request.resourceType(),
-      start: Date.now(),
-    });
-  };
-  const onResponse = (response) => {
-    if (!isAuditedRequest(response.url())) return;
-    const request = response.request();
-    const item = [...requests].reverse().find((candidate) => candidate.url === response.url() && candidate.method === request.method() && !candidate.status);
-    if (!item) return;
-    item.status = response.status();
-    item.ms = Date.now() - item.start;
-  };
-  const onRequestFailed = (request) => {
-    const failure = request.failure()?.errorText || "unknown";
-    if (isAuditedRequest(request.url()) && failure !== "net::ERR_ABORTED") {
-      failedRequests.push({ path: requestPath(request.url()), method: request.method(), failure });
-    }
-  };
-  const onConsole = (message) => {
-    if (message.type() === "error" && !message.text().startsWith("Failed to load resource:")) {
-      consoleErrors.push(message.text().slice(0, 500));
-    }
-  };
-  const onPageError = (error) => {
-    pageErrors.push(error.message.slice(0, 500));
-  };
-
-  page.on("request", onRequest);
-  page.on("response", onResponse);
-  page.on("requestfailed", onRequestFailed);
-  page.on("console", onConsole);
-  page.on("pageerror", onPageError);
+  const auditEvents = attachBrowserAuditEvents(page, { isAuditedRequest, requestPath });
 
   const startedAt = Date.now();
   let readyMs = 0;
@@ -187,15 +151,12 @@ async function measureClick(page, item) {
     if (!readyMs) readyMs = totalMs;
     bodyText = await page.locator("body").innerText({ timeout: 1_000 }).catch(() => "");
   } finally {
-    page.off("request", onRequest);
-    page.off("response", onResponse);
-    page.off("requestfailed", onRequestFailed);
-    page.off("console", onConsole);
-    page.off("pageerror", onPageError);
+    auditEvents.detach();
   }
 
   if (!totalMs) totalMs = Date.now() - startedAt;
   if (!readyMs) readyMs = totalMs;
+  const { requests, failedRequests, consoleErrors, pageErrors } = auditEvents;
   const apiRequests = requests.filter((request) => requestPath(request.url).startsWith("/api/"));
   const badStatuses = requests
     .filter((request) => request.status && request.status >= 400)
@@ -448,15 +409,6 @@ function countByPath(requests) {
   return Array.from(counts.entries())
     .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
     .map(([path, count]) => ({ path, count }));
-}
-
-function requestPath(url) {
-  try {
-    const parsed = new URL(url);
-    return `${parsed.pathname}${parsed.search}`;
-  } catch {
-    return url;
-  }
 }
 
 function isAuditedRequest(url) {
