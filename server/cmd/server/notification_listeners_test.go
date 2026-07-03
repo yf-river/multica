@@ -120,6 +120,42 @@ func (f notificationIssueTestFixture) inboxEventCount() int {
 	return len(*f.inboxEvents)
 }
 
+type parentBubbleNotificationFixture struct {
+	queries     *db.Queries
+	bus         *events.Bus
+	parentSubID string
+	subID       string
+}
+
+func setupParentBubbleNotificationTest(t *testing.T, parentSubAccount string) parentBubbleNotificationFixture {
+	t.Helper()
+	queries := db.New(testPool)
+	bus := newNotificationBus(t, queries)
+
+	parentSubID := createTestUser(t, parentSubAccount)
+	t.Cleanup(func() { cleanupTestUser(t, parentSubAccount) })
+
+	parentID := createTestIssue(t, testWorkspaceID, testUserID)
+	t.Cleanup(func() {
+		cleanupInboxForIssue(t, parentID)
+		cleanupTestIssue(t, parentID)
+	})
+	subID := createTestSubIssue(t, testWorkspaceID, testUserID, parentID)
+	t.Cleanup(func() {
+		cleanupInboxForIssue(t, subID)
+		cleanupTestIssue(t, subID)
+	})
+
+	addTestSubscriber(t, parentID, "member", parentSubID, "manual")
+
+	return parentBubbleNotificationFixture{
+		queries:     queries,
+		bus:         bus,
+		parentSubID: parentSubID,
+		subID:       subID,
+	}
+}
+
 // TestNotification_IssueCreated_AssigneeNotified verifies that when an issue is
 // created with an assignee different from the creator, the assignee receives an
 // "issue_assigned" inbox notification and the creator receives nothing.
@@ -898,36 +934,16 @@ func TestNotification_StartDateChanged(t *testing.T) {
 // TestNotification_ParentBubble_StatusChanged verifies that a status_changed
 // event on a sub-issue bubbles to subscribers of the parent issue.
 func TestNotification_ParentBubble_StatusChanged(t *testing.T) {
-	queries := db.New(testPool)
-	bus := newNotificationBus(t, queries)
+	f := setupParentBubbleNotificationTest(t, "notif-parent-sub-status@multica")
 
-	parentSubAccount := "notif-parent-sub-status@multica"
-	parentSubID := createTestUser(t, parentSubAccount)
-	t.Cleanup(func() { cleanupTestUser(t, parentSubAccount) })
-
-	parentID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, parentID)
-		cleanupTestIssue(t, parentID)
-	})
-	subID := createTestSubIssue(t, testWorkspaceID, testUserID, parentID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, subID)
-		cleanupTestIssue(t, subID)
-	})
-
-	// Subscribe a watcher to the parent only — they should hear about
-	// status changes on the sub-issue.
-	addTestSubscriber(t, parentID, "member", parentSubID, "manual")
-
-	bus.Publish(events.Event{
+	f.bus.Publish(events.Event{
 		Type:        protocol.EventIssueUpdated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
 			"issue": handler.IssueResponse{
-				ID:          subID,
+				ID:          f.subID,
 				WorkspaceID: testWorkspaceID,
 				Title:       "sub-issue status bubble",
 				Status:      "done",
@@ -941,7 +957,7 @@ func TestNotification_ParentBubble_StatusChanged(t *testing.T) {
 		},
 	})
 
-	items := inboxItemsForRecipient(t, queries, parentSubID)
+	items := inboxItemsForRecipient(t, f.queries, f.parentSubID)
 	if len(items) != 1 {
 		t.Fatalf("expected 1 inbox item bubbled to parent subscriber, got %d", len(items))
 	}
@@ -949,9 +965,9 @@ func TestNotification_ParentBubble_StatusChanged(t *testing.T) {
 		t.Fatalf("expected type 'status_changed', got %q", items[0].Type)
 	}
 	// The inbox item should point to the sub-issue, not the parent.
-	if util.UUIDToString(items[0].IssueID) != subID {
+	if util.UUIDToString(items[0].IssueID) != f.subID {
 		t.Fatalf("expected inbox item issue_id=%s (sub-issue), got %s",
-			subID, util.UUIDToString(items[0].IssueID))
+			f.subID, util.UUIDToString(items[0].IssueID))
 	}
 }
 
@@ -960,31 +976,13 @@ func TestNotification_ParentBubble_StatusChanged(t *testing.T) {
 // are the loudest signal and we explicitly want to keep them off the parent
 // watcher's inbox.
 func TestNotification_ParentBubble_NewCommentSuppressed(t *testing.T) {
-	queries := db.New(testPool)
-	bus := newNotificationBus(t, queries)
+	f := setupParentBubbleNotificationTest(t, "notif-parent-sub-comment@multica")
 
 	commenterAccount := "notif-parent-bubble-commenter@multica"
 	commenterID := createTestUser(t, commenterAccount)
 	t.Cleanup(func() { cleanupTestUser(t, commenterAccount) })
 
-	parentSubAccount := "notif-parent-sub-comment@multica"
-	parentSubID := createTestUser(t, parentSubAccount)
-	t.Cleanup(func() { cleanupTestUser(t, parentSubAccount) })
-
-	parentID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, parentID)
-		cleanupTestIssue(t, parentID)
-	})
-	subID := createTestSubIssue(t, testWorkspaceID, testUserID, parentID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, subID)
-		cleanupTestIssue(t, subID)
-	})
-
-	addTestSubscriber(t, parentID, "member", parentSubID, "manual")
-
-	bus.Publish(events.Event{
+	f.bus.Publish(events.Event{
 		Type:        protocol.EventCommentCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
@@ -992,7 +990,7 @@ func TestNotification_ParentBubble_NewCommentSuppressed(t *testing.T) {
 		Payload: map[string]any{
 			"comment": handler.CommentResponse{
 				ID:         "00000000-0000-0000-0000-000000000000",
-				IssueID:    subID,
+				IssueID:    f.subID,
 				AuthorType: "member",
 				AuthorID:   commenterID,
 				Content:    "comment on sub-issue",
@@ -1003,7 +1001,7 @@ func TestNotification_ParentBubble_NewCommentSuppressed(t *testing.T) {
 		},
 	})
 
-	items := inboxItemsForRecipient(t, queries, parentSubID)
+	items := inboxItemsForRecipient(t, f.queries, f.parentSubID)
 	if len(items) != 0 {
 		t.Fatalf("expected 0 inbox items bubbled to parent subscriber for new_comment, got %d", len(items))
 	}
@@ -1012,34 +1010,16 @@ func TestNotification_ParentBubble_NewCommentSuppressed(t *testing.T) {
 // TestNotification_ParentBubble_PriorityChangeSuppressed verifies that a
 // priority change on a sub-issue does NOT bubble to parent subscribers.
 func TestNotification_ParentBubble_PriorityChangeSuppressed(t *testing.T) {
-	queries := db.New(testPool)
-	bus := newNotificationBus(t, queries)
+	f := setupParentBubbleNotificationTest(t, "notif-parent-sub-priority@multica")
 
-	parentSubAccount := "notif-parent-sub-priority@multica"
-	parentSubID := createTestUser(t, parentSubAccount)
-	t.Cleanup(func() { cleanupTestUser(t, parentSubAccount) })
-
-	parentID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, parentID)
-		cleanupTestIssue(t, parentID)
-	})
-	subID := createTestSubIssue(t, testWorkspaceID, testUserID, parentID)
-	t.Cleanup(func() {
-		cleanupInboxForIssue(t, subID)
-		cleanupTestIssue(t, subID)
-	})
-
-	addTestSubscriber(t, parentID, "member", parentSubID, "manual")
-
-	bus.Publish(events.Event{
+	f.bus.Publish(events.Event{
 		Type:        protocol.EventIssueUpdated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
 			"issue": handler.IssueResponse{
-				ID:          subID,
+				ID:          f.subID,
 				WorkspaceID: testWorkspaceID,
 				Title:       "sub-issue priority bubble",
 				Status:      "todo",
@@ -1054,7 +1034,7 @@ func TestNotification_ParentBubble_PriorityChangeSuppressed(t *testing.T) {
 		},
 	})
 
-	items := inboxItemsForRecipient(t, queries, parentSubID)
+	items := inboxItemsForRecipient(t, f.queries, f.parentSubID)
 	if len(items) != 0 {
 		t.Fatalf("expected 0 inbox items bubbled to parent subscriber for priority_changed, got %d", len(items))
 	}
