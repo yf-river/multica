@@ -13,11 +13,12 @@ import (
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
 
-func TestProjectResourceLifecycle(t *testing.T) {
-	// Create a project to attach resources to.
+func createProjectResourceTestProject(t *testing.T, title string) ProjectResponse {
+	t.Helper()
+
 	w := httptest.NewRecorder()
 	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
-		"title": "Resource lifecycle project",
+		"title": title,
 	})
 	testHandler.CreateProject(w, req)
 	if w.Code != http.StatusCreated {
@@ -27,15 +28,22 @@ func TestProjectResourceLifecycle(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
 		t.Fatalf("decode CreateProject: %v", err)
 	}
-	defer func() {
+	t.Cleanup(func() {
 		req := newRequest("DELETE", "/api/projects/"+project.ID, nil)
 		req = withURLParam(req, "id", project.ID)
 		testHandler.DeleteProject(httptest.NewRecorder(), req)
-	}()
+	})
+
+	return project
+}
+
+func TestProjectResourceLifecycle(t *testing.T) {
+	// Create a project to attach resources to.
+	project := createProjectResourceTestProject(t, "Resource lifecycle project")
 
 	// Attach a github_repo resource.
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
 		"resource_type": "github_repo",
 		"resource_ref":  map[string]any{"url": "https://github.com/multica-ai/multica"},
 	})
@@ -146,23 +154,7 @@ func TestProjectResourceLifecycle(t *testing.T) {
 // repos configured with an SSH remote previously got rejected when attached
 // to a project.
 func TestProjectResourceAcceptsSSHRepoURLs(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
-		"title": "SSH repo URL acceptance",
-	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject: %d %s", w.Code, w.Body.String())
-	}
-	var project ProjectResponse
-	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
-		t.Fatalf("decode CreateProject: %v", err)
-	}
-	defer func() {
-		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
-		r = withURLParam(r, "id", project.ID)
-		testHandler.DeleteProject(httptest.NewRecorder(), r)
-	}()
+	project := createProjectResourceTestProject(t, "SSH repo URL acceptance")
 
 	cases := []struct {
 		name string
@@ -247,26 +239,10 @@ func TestProjectResourceGongfengLifecycle(t *testing.T) {
 		},
 	})
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
-		"title": "Gongfeng resource project",
-	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject: %d %s", w.Code, w.Body.String())
-	}
-	var project ProjectResponse
-	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
-		t.Fatalf("decode CreateProject: %v", err)
-	}
-	defer func() {
-		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
-		r = withURLParam(r, "id", project.ID)
-		testHandler.DeleteProject(httptest.NewRecorder(), r)
-	}()
+	project := createProjectResourceTestProject(t, "Gongfeng resource project")
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
 		"resource_type": "gongfeng_repo",
 		"resource_ref": map[string]any{
 			"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
@@ -354,26 +330,10 @@ func TestProjectResourceGongfengSyncDropsLegacyDisabledState(t *testing.T) {
 		},
 	})
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
-		"title": "Legacy disabled Gongfeng resource",
-	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject: %d %s", w.Code, w.Body.String())
-	}
-	var project ProjectResponse
-	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
-		t.Fatalf("decode CreateProject: %v", err)
-	}
-	defer func() {
-		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
-		r = withURLParam(r, "id", project.ID)
-		testHandler.DeleteProject(httptest.NewRecorder(), r)
-	}()
+	project := createProjectResourceTestProject(t, "Legacy disabled Gongfeng resource")
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
 		"resource_type": "gongfeng_repo",
 		"resource_ref": map[string]any{
 			"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
@@ -444,26 +404,10 @@ func TestProjectResourceGongfengSyncDropsLegacyDisabledState(t *testing.T) {
 func TestProjectResourceGongfengRequiresWorkspaceInventory(t *testing.T) {
 	setHandlerTestWorkspaceRepos(t, []map[string]string{})
 
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
-		"title": "Gongfeng inventory enforcement",
-	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject: %d %s", w.Code, w.Body.String())
-	}
-	var project ProjectResponse
-	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
-		t.Fatalf("decode CreateProject: %v", err)
-	}
-	defer func() {
-		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
-		r = withURLParam(r, "id", project.ID)
-		testHandler.DeleteProject(httptest.NewRecorder(), r)
-	}()
+	project := createProjectResourceTestProject(t, "Gongfeng inventory enforcement")
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
 		"resource_type": "gongfeng_repo",
 		"resource_ref": map[string]any{
 			"url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/commits/v5.0.0_dev",
@@ -746,23 +690,7 @@ func gongfengBranchPayload(prefix string, start int, count int, committedDate st
 }
 
 func TestProjectResourceGongfengValidation(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
-		"title": "Gongfeng validation project",
-	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject: %d %s", w.Code, w.Body.String())
-	}
-	var project ProjectResponse
-	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
-		t.Fatalf("decode CreateProject: %v", err)
-	}
-	defer func() {
-		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
-		r = withURLParam(r, "id", project.ID)
-		testHandler.DeleteProject(httptest.NewRecorder(), r)
-	}()
+	project := createProjectResourceTestProject(t, "Gongfeng validation project")
 
 	cases := []struct {
 		name string
@@ -1004,23 +932,7 @@ func TestProjectResourceLocalDirectoryLifecycle(t *testing.T) {
 // errors agents will hit, so freezing them as tests prevents accidental
 // loosening when someone touches the validator.
 func TestProjectResourceLocalDirectoryValidation(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
-		"title": "Local directory validation",
-	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject: %d %s", w.Code, w.Body.String())
-	}
-	var project ProjectResponse
-	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
-		t.Fatalf("decode CreateProject: %v", err)
-	}
-	defer func() {
-		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
-		r = withURLParam(r, "id", project.ID)
-		testHandler.DeleteProject(httptest.NewRecorder(), r)
-	}()
+	project := createProjectResourceTestProject(t, "Local directory validation")
 
 	cases := []struct {
 		name string
@@ -1120,23 +1032,7 @@ func TestCreateProjectAttachesResources(t *testing.T) {
 // surfaces on GetProject and ListProjects so agents know to call
 // /api/projects/{id}/resources without inlining the sub-collection.
 func TestProjectResourceCountBreadcrumb(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
-		"title": "Resource count breadcrumb",
-	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
-	}
-	var project ProjectResponse
-	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
-		t.Fatalf("decode CreateProject: %v", err)
-	}
-	defer func() {
-		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
-		r = withURLParam(r, "id", project.ID)
-		testHandler.DeleteProject(httptest.NewRecorder(), r)
-	}()
+	project := createProjectResourceTestProject(t, "Resource count breadcrumb")
 
 	getCount := func() int64 {
 		w := httptest.NewRecorder()
@@ -1156,8 +1052,8 @@ func TestProjectResourceCountBreadcrumb(t *testing.T) {
 		t.Errorf("initial GetProject ResourceCount = %d, want 0", got)
 	}
 
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
 		"resource_type": "github_repo",
 		"resource_ref":  map[string]any{"url": "https://github.com/multica-ai/breadcrumb"},
 	})
@@ -1321,27 +1217,11 @@ func TestCreateProjectRollsBackOnInvalidResource(t *testing.T) {
 // missing resource_type swap is enforced implicitly because the request body
 // has no resource_type field.
 func TestProjectResourceUpdateLifecycle(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
-		"title": "Update lifecycle project",
-	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject: %d %s", w.Code, w.Body.String())
-	}
-	var project ProjectResponse
-	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
-		t.Fatalf("decode CreateProject: %v", err)
-	}
-	defer func() {
-		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
-		r = withURLParam(r, "id", project.ID)
-		testHandler.DeleteProject(httptest.NewRecorder(), r)
-	}()
+	project := createProjectResourceTestProject(t, "Update lifecycle project")
 
 	// Seed one local_directory resource we will mutate.
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
 		"resource_type": "local_directory",
 		"resource_ref": map[string]any{
 			"local_path": "/Users/foo/work/a",
@@ -1463,23 +1343,7 @@ func TestProjectResourceUpdateLifecycle(t *testing.T) {
 // the agent write into whichever sorts first. The DB UNIQUE constraint only
 // catches identical ref JSON; this check covers the broader invariant.
 func TestProjectResourceLocalDirectoryDaemonScopedConflict(t *testing.T) {
-	w := httptest.NewRecorder()
-	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
-		"title": "Local dir daemon-scoped conflict",
-	})
-	testHandler.CreateProject(w, req)
-	if w.Code != http.StatusCreated {
-		t.Fatalf("CreateProject: %d %s", w.Code, w.Body.String())
-	}
-	var project ProjectResponse
-	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
-		t.Fatalf("decode CreateProject: %v", err)
-	}
-	defer func() {
-		r := newRequest("DELETE", "/api/projects/"+project.ID, nil)
-		r = withURLParam(r, "id", project.ID)
-		testHandler.DeleteProject(httptest.NewRecorder(), r)
-	}()
+	project := createProjectResourceTestProject(t, "Local dir daemon-scoped conflict")
 
 	const (
 		daemonID    = "d-scoped"
@@ -1488,8 +1352,8 @@ func TestProjectResourceLocalDirectoryDaemonScopedConflict(t *testing.T) {
 	)
 
 	// First attach succeeds.
-	w = httptest.NewRecorder()
-	req = newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects/"+project.ID+"/resources", map[string]any{
 		"resource_type": "local_directory",
 		"resource_ref": map[string]any{
 			"local_path": localPath,
