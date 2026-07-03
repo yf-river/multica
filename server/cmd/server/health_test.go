@@ -44,6 +44,24 @@ func (r stubRow) Scan(dest ...any) error {
 	return nil
 }
 
+func readReadyResponse(t *testing.T, h *serverHealth, wantStatus int) readinessResponse {
+	t.Helper()
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
+	h.readyHandler(rec, req)
+
+	if rec.Code != wantStatus {
+		t.Fatalf("expected status %d, got %d", wantStatus, rec.Code)
+	}
+
+	var resp readinessResponse
+	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	return resp
+}
+
 func TestServerHealthReadyHandlerDBPingFailure(t *testing.T) {
 	db := &stubReadinessDB{pingErr: errors.New("db unavailable")}
 	h := &serverHealth{
@@ -51,19 +69,7 @@ func TestServerHealthReadyHandlerDBPingFailure(t *testing.T) {
 		requiredMigrations: []string{"056_example"},
 	}
 
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
-	h.readyHandler(rec, req)
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503, got %d", rec.Code)
-	}
-
-	var resp readinessResponse
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-
+	resp := readReadyResponse(t, h, http.StatusServiceUnavailable)
 	if resp.Status != "not_ready" {
 		t.Fatalf("status = %q, want %q", resp.Status, "not_ready")
 	}
@@ -82,19 +88,7 @@ func TestServerHealthReadyHandlerMigrationOutOfDate(t *testing.T) {
 		requiredMigrations: []string{"056_example"},
 	}
 
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
-	h.readyHandler(rec, req)
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503, got %d", rec.Code)
-	}
-
-	var resp readinessResponse
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
-
+	resp := readReadyResponse(t, h, http.StatusServiceUnavailable)
 	if resp.Status != "not_ready" {
 		t.Fatalf("status = %q, want %q", resp.Status, "not_ready")
 	}
@@ -116,18 +110,7 @@ func TestServerHealthReadyHandlerMigrationPartiallyApplied(t *testing.T) {
 		requiredMigrations: []string{"120_a", "120_b", "121_c"},
 	}
 
-	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodGet, "/readyz", nil)
-	h.readyHandler(rec, req)
-
-	if rec.Code != http.StatusServiceUnavailable {
-		t.Fatalf("expected 503, got %d", rec.Code)
-	}
-
-	var resp readinessResponse
-	if err := json.NewDecoder(rec.Body).Decode(&resp); err != nil {
-		t.Fatalf("decode response: %v", err)
-	}
+	resp := readReadyResponse(t, h, http.StatusServiceUnavailable)
 	if resp.Status != "not_ready" {
 		t.Fatalf("status = %q, want %q", resp.Status, "not_ready")
 	}
