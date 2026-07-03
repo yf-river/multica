@@ -793,28 +793,17 @@ func promptEvaluationRunStatusFromAgentVerdicts(run db.PromptEvaluationRun, verd
 func parsePromptEvaluationAgentVerdicts(raw any, totalCases int32) ([]promptEvaluationAgentCaseVerdict, bool) {
 	value, ok := raw.(map[string]any)
 	if !ok {
-		if list, ok := raw.([]any); ok {
-			return parsePromptEvaluationAgentVerdictList(list, totalCases, "旧版列表兼容")
-		}
 		return nil, false
 	}
-	if stringFromAny(value["schema_version"]) == "1" {
-		if list, ok := value["case_results"].([]any); ok {
-			return parsePromptEvaluationAgentVerdictList(list, totalCases, "multica.training_evaluation.agent_verdict.v1")
-		}
+	if stringFromAny(value["schema_version"]) != "1" ||
+		stringFromAny(value["schema"]) != "multica.training_evaluation.agent_verdict.v1" {
 		return nil, false
 	}
-	for _, key := range []string{"用例结果", "逐用例结果", "cases", "case_results", "trials", "results", "用例"} {
-		if list, ok := value[key].([]any); ok {
-			return parsePromptEvaluationAgentVerdictList(list, totalCases, "旧版字段兼容")
-		}
+	list, ok := value["case_results"].([]any)
+	if !ok {
+		return nil, false
 	}
-	if totalCases == 1 && promptEvaluationMapHasRecognizedVerdict(value) {
-		verdict := promptEvaluationAgentVerdictFromMap(value, 0)
-		verdict.Evidence["解析契约"] = "旧版单用例兼容"
-		return []promptEvaluationAgentCaseVerdict{verdict}, true
-	}
-	return nil, false
+	return parsePromptEvaluationAgentVerdictList(list, totalCases, "multica.training_evaluation.agent_verdict.v1")
 }
 
 func parsePromptEvaluationAgentVerdictList(list []any, totalCases int32, contract string) ([]promptEvaluationAgentCaseVerdict, bool) {
@@ -891,31 +880,6 @@ func promptEvaluationAgentVerdictFromMap(row map[string]any, fallbackIndex int32
 		Output:        output,
 		Evidence:      row,
 	}
-}
-
-func promptEvaluationMapHasRecognizedVerdict(row map[string]any) bool {
-	if _, ok := row["状态"]; ok {
-		return normalizePromptEvaluationAgentStatus(stringFromAny(row["状态"])) != ""
-	}
-	if _, ok := row["status"]; ok {
-		return normalizePromptEvaluationAgentStatus(stringFromAny(row["status"])) != ""
-	}
-	if _, ok := row["结论"]; ok {
-		return normalizePromptEvaluationAgentStatus(stringFromAny(row["结论"])) != ""
-	}
-	if _, ok := row["result"]; ok {
-		return normalizePromptEvaluationAgentStatus(stringFromAny(row["result"])) != ""
-	}
-	if _, ok := row["passed"]; ok {
-		return statusFromPromptEvaluationPassedValue(row["passed"]) != ""
-	}
-	if _, ok := row["通过"]; ok {
-		return statusFromPromptEvaluationPassedValue(row["通过"]) != ""
-	}
-	if _, ok := row["pass"]; ok {
-		return statusFromPromptEvaluationPassedValue(row["pass"]) != ""
-	}
-	return false
 }
 
 func promptEvaluationCaseIndexFromMap(row map[string]any, fallback int32) int32 {

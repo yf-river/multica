@@ -870,12 +870,13 @@ func TestRunPromptEvaluationAssetReadsDatasetPayload(t *testing.T) {
 		"asset_type": "数据集",
 		"payload": map[string]any{
 			"schema_version": 1,
+			"schema":         "multica.training_evaluation.payload.v1",
 			"语义版本":           "multica.training_evaluation.v1",
-			"数据集": []map[string]any{
+			"cases": []map[string]any{
 				{
-					"名称":   "中文键数据集用例",
-					"变量":   map[string]any{"project": "user-center", "issue_title": "登录失败"},
-					"期望包含": []string{"user-center", "登录失败"},
+					"case_name":         "规范数据集用例",
+					"variables":         map[string]any{"project": "user-center", "issue_title": "登录失败"},
+					"expected_contains": []string{"user-center", "登录失败"},
 				},
 			},
 		},

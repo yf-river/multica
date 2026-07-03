@@ -78,12 +78,13 @@ export function buildAssetPayload(
   rendered: string,
 ): Record<string, unknown> {
   const casePayload = {
-    名称: `${prompt.name} 基准用例`,
-    变量: values,
-    期望包含: Object.values(values).filter(Boolean),
+    case_name: `${prompt.name} 基准用例`,
+    variables: values,
+    expected_contains: Object.values(values).filter(Boolean),
   };
   const basePayload = {
     schema_version: 1,
+    schema: "multica.training_evaluation.payload.v1",
     语义版本: "multica.training_evaluation.v1",
     cases: [casePayload],
     指标口径: [
@@ -107,8 +108,6 @@ export function buildAssetPayload(
   if (assetType === "数据集") {
     return {
       ...basePayload,
-      数据集: [casePayload],
-      字段说明: ["名称", "变量", "期望包含"],
       中文语义: "用于训练与评估的数据集样本。",
     };
   }

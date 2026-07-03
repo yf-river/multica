@@ -8111,7 +8111,7 @@ func containsHanRune(value string) bool {
 }
 
 func promptEvaluationCases(payload map[string]any) []map[string]any {
-	raw := firstValue(payload, "cases", "test_cases", "用例", "测试用例", "数据集", "training_cases", "evaluation_cases", "用例集")
+	raw := payload["cases"]
 	if arr, ok := raw.([]map[string]any); ok && len(arr) > 0 {
 		cases := make([]map[string]any, len(arr))
 		copy(cases, arr)
@@ -8143,8 +8143,7 @@ func normalizePromptEvaluationPayloadObject(payload map[string]any) map[string]a
 		"schema_version": 1,
 		"schema":         "multica.training_evaluation.payload.v1",
 		"cases":          "cases[].case_name / variables / expected_contains / tags",
-		"兼容读取":           []string{"数据集", "用例", "测试用例", "test_cases", "training_cases", "evaluation_cases", "用例集"},
-		"写入策略":           "新建和更新统一写入规范 cases；旧字段仅作为兼容迁移来源保留。",
+		"写入策略":           "新建和更新统一写入规范 cases。",
 	}
 	cases := promptEvaluationCases(payload)
 	normalizedCases := make([]map[string]any, 0, len(cases))
