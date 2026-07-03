@@ -96,6 +96,31 @@ func newFlagTestCmd(name string) *cobra.Command {
 	return c
 }
 
+func newAssigneeResolverTestServer(
+	t *testing.T,
+	membersResp []map[string]any,
+	agentsResp []map[string]any,
+	squadsResp []map[string]any,
+	onSquads func(),
+) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/workspaces/ws-1/members":
+			json.NewEncoder(w).Encode(membersResp)
+		case "/api/agents":
+			json.NewEncoder(w).Encode(agentsResp)
+		case "/api/squads":
+			if onSquads != nil {
+				onSquads()
+			}
+			json.NewEncoder(w).Encode(squadsResp)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+}
+
 func TestResolveTextFlag(t *testing.T) {
 	t.Run("inline value is unescaped", func(t *testing.T) {
 		c := newFlagTestCmd("description")
@@ -1045,18 +1070,7 @@ func TestResolveAssignee(t *testing.T) {
 		{"id": "squad-4444", "name": "Super Human"},
 	}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/workspaces/ws-1/members":
-			json.NewEncoder(w).Encode(membersResp)
-		case "/api/agents":
-			json.NewEncoder(w).Encode(agentsResp)
-		case "/api/squads":
-			json.NewEncoder(w).Encode(squadsResp)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+	srv := newAssigneeResolverTestServer(t, membersResp, agentsResp, squadsResp, nil)
 	defer srv.Close()
 
 	client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
@@ -1197,19 +1211,9 @@ func TestResolveAssigneeRespectsKinds(t *testing.T) {
 	}
 
 	var squadsHits int
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/workspaces/ws-1/members":
-			json.NewEncoder(w).Encode(membersResp)
-		case "/api/agents":
-			json.NewEncoder(w).Encode(agentsResp)
-		case "/api/squads":
-			squadsHits++
-			json.NewEncoder(w).Encode(squadsResp)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+	srv := newAssigneeResolverTestServer(t, membersResp, agentsResp, squadsResp, func() {
+		squadsHits++
+	})
 	defer srv.Close()
 
 	client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
@@ -1266,18 +1270,7 @@ func TestResolveAssigneeExactMatchWins(t *testing.T) {
 		{"id": "f656eab8-1111-1111-1111-111111111111", "name": "reviewer"},
 		{"id": "9b0ff9a2-2222-2222-2222-222222222222", "name": "peer-reviewer"},
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/workspaces/ws-1/members":
-			json.NewEncoder(w).Encode([]map[string]any{})
-		case "/api/agents":
-			json.NewEncoder(w).Encode(agentsResp)
-		case "/api/squads":
-			json.NewEncoder(w).Encode([]map[string]any{})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+	srv := newAssigneeResolverTestServer(t, []map[string]any{}, agentsResp, []map[string]any{}, nil)
 	defer srv.Close()
 
 	client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
@@ -1340,18 +1333,7 @@ func TestResolveAssigneeByID(t *testing.T) {
 	squadsResp := []map[string]any{
 		{"id": "ccccccc1-2222-3333-4444-555555555555", "name": "Super Human"},
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/workspaces/ws-1/members":
-			json.NewEncoder(w).Encode(membersResp)
-		case "/api/agents":
-			json.NewEncoder(w).Encode(agentsResp)
-		case "/api/squads":
-			json.NewEncoder(w).Encode(squadsResp)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+	srv := newAssigneeResolverTestServer(t, membersResp, agentsResp, squadsResp, nil)
 	defer srv.Close()
 
 	client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
@@ -1413,18 +1395,7 @@ func TestResolveAssigneeByIDStrict(t *testing.T) {
 	squadsResp := []map[string]any{
 		{"id": "ccccccc1-2222-3333-4444-555555555555", "name": "Super Human"},
 	}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/workspaces/ws-1/members":
-			json.NewEncoder(w).Encode(membersResp)
-		case "/api/agents":
-			json.NewEncoder(w).Encode(agentsResp)
-		case "/api/squads":
-			json.NewEncoder(w).Encode(squadsResp)
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+	srv := newAssigneeResolverTestServer(t, membersResp, agentsResp, squadsResp, nil)
 	defer srv.Close()
 
 	client := cli.NewAPIClient(srv.URL, "ws-1", "test-token")
