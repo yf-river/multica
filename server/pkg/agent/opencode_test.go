@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -885,38 +884,18 @@ func TestOpencodeBackendAnchorsDirAndPWD(t *testing.T) {
 	tempDir := t.TempDir()
 	argsFile := filepath.Join(tempDir, "argv.txt")
 	pwdFile := filepath.Join(tempDir, "pwd.txt")
-	fakePath := filepath.Join(tempDir, "opencode")
-	writeTestExecutable(t, fakePath, []byte(fakeOpencodeScript()))
 
 	workDir := t.TempDir()
 
-	backend, err := New("opencode", Config{
-		ExecutablePath: fakePath,
-		Logger:         slog.Default(),
-		Env: map[string]string{
-			"OPENCODE_ARGS_FILE": argsFile,
-			"OPENCODE_PWD_FILE":  pwdFile,
-		},
-	})
-	if err != nil {
-		t.Fatalf("new opencode backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+	executeBackendScript(t, "opencode", "opencode", fakeOpencodeScript(), ExecOptions{
 		Cwd:     workDir,
 		Timeout: 5 * time.Second,
-	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
+	}, func(cfg *Config) {
+		cfg.Env = map[string]string{
+			"OPENCODE_ARGS_FILE": argsFile,
+			"OPENCODE_PWD_FILE":  pwdFile,
 		}
-	}()
-	<-session.Result
+	})
 
 	// argv should include `--dir <workDir>` immediately after the `run` /
 	// `--format json` prefix and nowhere else.
@@ -959,37 +938,17 @@ func TestOpencodeBackendInjectsThinkingVariant(t *testing.T) {
 
 	tempDir := t.TempDir()
 	argsFile := filepath.Join(tempDir, "argv.txt")
-	fakePath := filepath.Join(tempDir, "opencode")
-	writeTestExecutable(t, fakePath, []byte(fakeOpencodeScript()))
 
-	backend, err := New("opencode", Config{
-		ExecutablePath: fakePath,
-		Logger:         slog.Default(),
-		Env: map[string]string{
-			"OPENCODE_ARGS_FILE": argsFile,
-		},
-	})
-	if err != nil {
-		t.Fatalf("new opencode backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+	executeBackendScript(t, "opencode", "opencode", fakeOpencodeScript(), ExecOptions{
 		Model:         "opencode/deepseek-v4",
 		ThinkingLevel: "max",
 		CustomArgs:    []string{"--variant", "low", "--keep-me"},
 		Timeout:       5 * time.Second,
-	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
+	}, func(cfg *Config) {
+		cfg.Env = map[string]string{
+			"OPENCODE_ARGS_FILE": argsFile,
 		}
-	}()
-	<-session.Result
+	})
 
 	raw, err := os.ReadFile(argsFile)
 	if err != nil {
@@ -1027,34 +986,14 @@ func TestOpencodeBackendDoesNotUsePermissionEnvOverride(t *testing.T) {
 
 	tempDir := t.TempDir()
 	permissionFile := filepath.Join(tempDir, "permission.json")
-	fakePath := filepath.Join(tempDir, "opencode")
-	writeTestExecutable(t, fakePath, []byte(fakeOpencodeScript()))
 
-	backend, err := New("opencode", Config{
-		ExecutablePath: fakePath,
-		Logger:         slog.Default(),
-		Env: map[string]string{
-			"OPENCODE_PERMISSION_FILE": permissionFile,
-		},
-	})
-	if err != nil {
-		t.Fatalf("new opencode backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+	executeBackendScript(t, "opencode", "opencode", fakeOpencodeScript(), ExecOptions{
 		Timeout: 5 * time.Second,
-	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
+	}, func(cfg *Config) {
+		cfg.Env = map[string]string{
+			"OPENCODE_PERMISSION_FILE": permissionFile,
 		}
-	}()
-	<-session.Result
+	})
 
 	raw, err := os.ReadFile(permissionFile)
 	if err != nil {
@@ -1070,8 +1009,6 @@ func TestOpencodeBackendQuestionDenySurvivesUserConfig(t *testing.T) {
 
 	tempDir := t.TempDir()
 	argsFile := filepath.Join(tempDir, "argv.txt")
-	fakePath := filepath.Join(tempDir, "opencode")
-	writeTestExecutable(t, fakePath, []byte(fakeOpencodeScript()))
 
 	workDir := t.TempDir()
 	if err := os.WriteFile(
@@ -1082,32 +1019,14 @@ func TestOpencodeBackendQuestionDenySurvivesUserConfig(t *testing.T) {
 		t.Fatalf("write opencode config: %v", err)
 	}
 
-	backend, err := New("opencode", Config{
-		ExecutablePath: fakePath,
-		Logger:         slog.Default(),
-		Env: map[string]string{
-			"OPENCODE_ARGS_FILE": argsFile,
-		},
-	})
-	if err != nil {
-		t.Fatalf("new opencode backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+	result := executeBackendScript(t, "opencode", "opencode", fakeOpencodeScript(), ExecOptions{
 		Cwd:     workDir,
 		Timeout: 5 * time.Second,
-	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
+	}, func(cfg *Config) {
+		cfg.Env = map[string]string{
+			"OPENCODE_ARGS_FILE": argsFile,
 		}
-	}()
-	result := <-session.Result
+	})
 	if result.Status != "completed" {
 		t.Fatalf("result status = %q, error = %q; want completed", result.Status, result.Error)
 	}
@@ -1130,39 +1049,19 @@ func TestOpencodeBackendBlocksDirOverride(t *testing.T) {
 
 	tempDir := t.TempDir()
 	argsFile := filepath.Join(tempDir, "argv.txt")
-	fakePath := filepath.Join(tempDir, "opencode")
-	writeTestExecutable(t, fakePath, []byte(fakeOpencodeScript()))
 
 	workDir := t.TempDir()
 	bogusDir := t.TempDir()
 
-	backend, err := New("opencode", Config{
-		ExecutablePath: fakePath,
-		Logger:         slog.Default(),
-		Env: map[string]string{
-			"OPENCODE_ARGS_FILE": argsFile,
-		},
-	})
-	if err != nil {
-		t.Fatalf("new opencode backend: %v", err)
-	}
-
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer cancel()
-
-	session, err := backend.Execute(ctx, "prompt-ignored", ExecOptions{
+	executeBackendScript(t, "opencode", "opencode", fakeOpencodeScript(), ExecOptions{
 		Cwd:        workDir,
 		Timeout:    5 * time.Second,
 		CustomArgs: []string{"--dir", bogusDir},
-	})
-	if err != nil {
-		t.Fatalf("execute: %v", err)
-	}
-	go func() {
-		for range session.Messages {
+	}, func(cfg *Config) {
+		cfg.Env = map[string]string{
+			"OPENCODE_ARGS_FILE": argsFile,
 		}
-	}()
-	<-session.Result
+	})
 
 	raw, err := os.ReadFile(argsFile)
 	if err != nil {
