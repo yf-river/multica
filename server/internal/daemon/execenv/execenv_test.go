@@ -65,6 +65,33 @@ func prepareSeededCodexConfigHome(t *testing.T) preparedCodexConfigHome {
 	}
 }
 
+func injectRuntimeConfigWithCodingSkill(t *testing.T, dir, provider string) string {
+	t.Helper()
+
+	ctx := TaskContextForEnv{
+		IssueID:     "test-issue-id",
+		AgentSkills: []SkillContextForEnv{{Name: "Coding", Content: "Write good code."}},
+	}
+
+	if _, err := InjectRuntimeConfig(dir, provider, ctx); err != nil {
+		t.Fatalf("InjectRuntimeConfig failed: %v", err)
+	}
+
+	content, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
+	if err != nil {
+		t.Fatalf("failed to read AGENTS.md: %v", err)
+	}
+
+	s := string(content)
+	if !strings.Contains(s, "Multica Agent Runtime") {
+		t.Error("AGENTS.md missing meta skill header")
+	}
+	if !strings.Contains(s, "Coding") {
+		t.Error("AGENTS.md missing skill name")
+	}
+	return s
+}
+
 func TestShortID(t *testing.T) {
 	t.Parallel()
 	tests := []struct {
@@ -1036,27 +1063,7 @@ func TestInjectRuntimeConfigCodex(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	ctx := TaskContextForEnv{
-		IssueID:     "test-issue-id",
-		AgentSkills: []SkillContextForEnv{{Name: "Coding", Content: "Write good code."}},
-	}
-
-	if _, err := InjectRuntimeConfig(dir, "codex", ctx); err != nil {
-		t.Fatalf("InjectRuntimeConfig failed: %v", err)
-	}
-
-	content, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
-	if err != nil {
-		t.Fatalf("failed to read AGENTS.md: %v", err)
-	}
-
-	s := string(content)
-	if !strings.Contains(s, "Multica Agent Runtime") {
-		t.Error("AGENTS.md missing meta skill header")
-	}
-	if !strings.Contains(s, "Coding") {
-		t.Error("AGENTS.md missing skill name")
-	}
+	injectRuntimeConfigWithCodingSkill(t, dir, "codex")
 }
 
 func TestInjectRuntimeConfigNoSkills(t *testing.T) {
@@ -1356,28 +1363,8 @@ func TestInjectRuntimeConfigOpencode(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	ctx := TaskContextForEnv{
-		IssueID:     "test-issue-id",
-		AgentSkills: []SkillContextForEnv{{Name: "Coding", Content: "Write good code."}},
-	}
-
-	if _, err := InjectRuntimeConfig(dir, "opencode", ctx); err != nil {
-		t.Fatalf("InjectRuntimeConfig failed: %v", err)
-	}
-
 	// OpenCode uses AGENTS.md (same as codex).
-	content, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
-	if err != nil {
-		t.Fatalf("failed to read AGENTS.md: %v", err)
-	}
-
-	s := string(content)
-	if !strings.Contains(s, "Multica Agent Runtime") {
-		t.Error("AGENTS.md missing meta skill header")
-	}
-	if !strings.Contains(s, "Coding") {
-		t.Error("AGENTS.md missing skill name")
-	}
+	s := injectRuntimeConfigWithCodingSkill(t, dir, "opencode")
 	if !strings.Contains(s, "discovered automatically") {
 		t.Error("AGENTS.md missing native skill discovery hint")
 	}
@@ -1392,27 +1379,7 @@ func TestInjectRuntimeConfigKiro(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	ctx := TaskContextForEnv{
-		IssueID:     "test-issue-id",
-		AgentSkills: []SkillContextForEnv{{Name: "Coding", Content: "Write good code."}},
-	}
-
-	if _, err := InjectRuntimeConfig(dir, "kiro", ctx); err != nil {
-		t.Fatalf("InjectRuntimeConfig failed: %v", err)
-	}
-
-	content, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
-	if err != nil {
-		t.Fatalf("failed to read AGENTS.md: %v", err)
-	}
-
-	s := string(content)
-	if !strings.Contains(s, "Multica Agent Runtime") {
-		t.Error("AGENTS.md missing meta skill header")
-	}
-	if !strings.Contains(s, "Coding") {
-		t.Error("AGENTS.md missing skill name")
-	}
+	s := injectRuntimeConfigWithCodingSkill(t, dir, "kiro")
 	if !strings.Contains(s, "discovered automatically") {
 		t.Error("AGENTS.md missing native skill discovery hint")
 	}
@@ -1425,27 +1392,7 @@ func TestInjectRuntimeConfigAntigravity(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	ctx := TaskContextForEnv{
-		IssueID:     "test-issue-id",
-		AgentSkills: []SkillContextForEnv{{Name: "Coding", Content: "Write good code."}},
-	}
-
-	if _, err := InjectRuntimeConfig(dir, "antigravity", ctx); err != nil {
-		t.Fatalf("InjectRuntimeConfig failed: %v", err)
-	}
-
-	content, err := os.ReadFile(filepath.Join(dir, "AGENTS.md"))
-	if err != nil {
-		t.Fatalf("failed to read AGENTS.md: %v", err)
-	}
-
-	s := string(content)
-	if !strings.Contains(s, "Multica Agent Runtime") {
-		t.Error("AGENTS.md missing meta skill header")
-	}
-	if !strings.Contains(s, "Coding") {
-		t.Error("AGENTS.md missing skill name")
-	}
+	s := injectRuntimeConfigWithCodingSkill(t, dir, "antigravity")
 	if !strings.Contains(s, "discovered automatically") {
 		t.Error("AGENTS.md for Antigravity should advertise native skill discovery")
 	}
