@@ -2113,6 +2113,46 @@ func TestReportTaskResult_PermanentCompleteFallsBackToFail(t *testing.T) {
 	}
 }
 
+type callOrderRecorder struct {
+	mu    sync.Mutex
+	order []string
+}
+
+func (r *callOrderRecorder) record(name string) {
+	r.mu.Lock()
+	r.order = append(r.order, name)
+	r.mu.Unlock()
+}
+
+func (r *callOrderRecorder) snapshot() []string {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	order := make([]string, len(r.order))
+	copy(order, r.order)
+	return order
+}
+
+func indexCall(order []string, target string) int {
+	for i, name := range order {
+		if name == target {
+			return i
+		}
+	}
+	return -1
+}
+
+func newUsageReportingTestDaemon(serverURL string, cancelPollInterval time.Duration, runner taskRunner) *Daemon {
+	return &Daemon{
+		client:             NewClient(serverURL),
+		logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
+		workspaces:         make(map[string]*workspaceState),
+		runtimeIndex:       map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "claude"}},
+		cancelPollInterval: cancelPollInterval,
+		runner:             runner,
+	}
+}
+
 // TestHandleTask_ReportsUsageBeforeCancel verifies that ReportTaskUsage is called
 // even when the server marks the task as cancelled during the post-run status
 // check. Regression test for the ordering bug where the cancel check ran before
@@ -2120,26 +2160,20 @@ func TestReportTaskResult_PermanentCompleteFallsBackToFail(t *testing.T) {
 func TestHandleTask_ReportsUsageBeforeCancel(t *testing.T) {
 	t.Parallel()
 
-	var callOrder []string
-	var mu sync.Mutex
-	recordCall := func(name string) {
-		mu.Lock()
-		callOrder = append(callOrder, name)
-		mu.Unlock()
-	}
+	callOrder := &callOrderRecorder{}
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/start"):
-			recordCall("start")
+			callOrder.record("start")
 			w.WriteHeader(http.StatusOK)
 		case strings.HasSuffix(r.URL.Path, "/progress"):
 			w.WriteHeader(http.StatusOK)
 		case strings.HasSuffix(r.URL.Path, "/usage"):
-			recordCall("usage")
+			callOrder.record("usage")
 			w.WriteHeader(http.StatusOK)
 		case strings.HasSuffix(r.URL.Path, "/status"):
-			recordCall("status")
+			callOrder.record("status")
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"status":"cancelled"}`))
@@ -2149,17 +2183,9 @@ func TestHandleTask_ReportsUsageBeforeCancel(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	d := &Daemon{
-		client:             NewClient(srv.URL),
-		logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
-		workspaces:         make(map[string]*workspaceState),
-		runtimeIndex:       map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "claude"}},
-		cancelPollInterval: time.Hour, // effectively disable poll-cancel path; we want the post-run status check
-	}
-
 	// Inject a fake runner that returns a result with usage tokens, bypassing
 	// real agent process execution.
-	d.runner = taskRunnerFunc(func(_ context.Context, _ Task, _ string, _ int, _ *slog.Logger) (TaskResult, error) {
+	runner := taskRunnerFunc(func(_ context.Context, _ Task, _ string, _ int, _ *slog.Logger) (TaskResult, error) {
 		return TaskResult{
 			Status: "completed",
 			Usage: []TaskUsageEntry{
@@ -2167,6 +2193,7 @@ func TestHandleTask_ReportsUsageBeforeCancel(t *testing.T) {
 			},
 		}, nil
 	})
+	d := newUsageReportingTestDaemon(srv.URL, time.Hour, runner) // effectively disable poll-cancel path; we want the post-run status check
 
 	task := Task{
 		ID:        "task-abc",
@@ -2177,22 +2204,11 @@ func TestHandleTask_ReportsUsageBeforeCancel(t *testing.T) {
 
 	d.handleTask(context.Background(), task, 0)
 
-	mu.Lock()
-	order := make([]string, len(callOrder))
-	copy(order, callOrder)
-	mu.Unlock()
+	order := callOrder.snapshot()
 
 	// usage must appear before status in the call order.
-	usageIdx, statusIdx := -1, -1
-	for i, name := range order {
-		switch name {
-		case "usage":
-			usageIdx = i
-		case "status":
-			statusIdx = i
-		}
-	}
-
+	usageIdx := indexCall(order, "usage")
+	statusIdx := indexCall(order, "status")
 	if usageIdx == -1 {
 		t.Fatal("ReportTaskUsage was never called — usage is lost for cancelled tasks")
 	}
@@ -2211,13 +2227,7 @@ func TestHandleTask_ReportsUsageBeforeCancel(t *testing.T) {
 func TestHandleTask_ReportsUsageWhenCancelledByPoll(t *testing.T) {
 	t.Parallel()
 
-	var callOrder []string
-	var mu sync.Mutex
-	recordCall := func(name string) {
-		mu.Lock()
-		callOrder = append(callOrder, name)
-		mu.Unlock()
-	}
+	callOrder := &callOrderRecorder{}
 
 	// statusCallCount lets the poll goroutine return "cancelled" on first call
 	// while still handling later calls from the post-run status check.
@@ -2230,13 +2240,13 @@ func TestHandleTask_ReportsUsageWhenCancelledByPoll(t *testing.T) {
 		case strings.HasSuffix(r.URL.Path, "/progress"):
 			w.WriteHeader(http.StatusOK)
 		case strings.HasSuffix(r.URL.Path, "/usage"):
-			recordCall("usage")
+			callOrder.record("usage")
 			w.WriteHeader(http.StatusOK)
 		case strings.HasSuffix(r.URL.Path, "/status"):
 			// First call is from the poll goroutine — return "cancelled" to
 			// trigger runCancel() and close(cancelledByPoll).
 			if statusCallCount.Add(1) == 1 {
-				recordCall("poll-status")
+				callOrder.record("poll-status")
 				w.Header().Set("Content-Type", "application/json")
 				w.WriteHeader(http.StatusOK)
 				_, _ = w.Write([]byte(`{"status":"cancelled"}`))
@@ -2251,17 +2261,9 @@ func TestHandleTask_ReportsUsageWhenCancelledByPoll(t *testing.T) {
 	}))
 	t.Cleanup(srv.Close)
 
-	d := &Daemon{
-		client:             NewClient(srv.URL),
-		logger:             slog.New(slog.NewTextHandler(io.Discard, nil)),
-		workspaces:         make(map[string]*workspaceState),
-		runtimeIndex:       map[string]Runtime{"rt-1": {ID: "rt-1", Provider: "claude"}},
-		cancelPollInterval: 10 * time.Millisecond, // fire quickly so test is fast
-	}
-
 	// Inject a runner that blocks until runCtx is cancelled (simulating a real
 	// agent being interrupted), then returns usage tokens as claude.go does.
-	d.runner = taskRunnerFunc(func(runCtx context.Context, _ Task, _ string, _ int, _ *slog.Logger) (TaskResult, error) {
+	runner := taskRunnerFunc(func(runCtx context.Context, _ Task, _ string, _ int, _ *slog.Logger) (TaskResult, error) {
 		<-runCtx.Done()
 		return TaskResult{
 			Status: "aborted",
@@ -2270,6 +2272,7 @@ func TestHandleTask_ReportsUsageWhenCancelledByPoll(t *testing.T) {
 			},
 		}, nil
 	})
+	d := newUsageReportingTestDaemon(srv.URL, 10*time.Millisecond, runner) // fire quickly so test is fast
 
 	task := Task{
 		ID:        "task-poll",
@@ -2280,24 +2283,13 @@ func TestHandleTask_ReportsUsageWhenCancelledByPoll(t *testing.T) {
 
 	d.handleTask(context.Background(), task, 0)
 
-	mu.Lock()
-	order := make([]string, len(callOrder))
-	copy(order, callOrder)
-	mu.Unlock()
+	order := callOrder.snapshot()
 
 	// Verify the poll goroutine actually fired — without this assertion the test
 	// could pass via the post-run GetTaskStatus check without ever taking the
 	// cancelledByPoll path, making it a vacuous regression guard.
-	pollStatusIdx := -1
-	usageIdx := -1
-	for i, name := range order {
-		switch name {
-		case "poll-status":
-			pollStatusIdx = i
-		case "usage":
-			usageIdx = i
-		}
-	}
+	pollStatusIdx := indexCall(order, "poll-status")
+	usageIdx := indexCall(order, "usage")
 	if pollStatusIdx == -1 {
 		t.Fatalf("poll goroutine never fired (order: %v) — cancelledByPoll path not exercised", order)
 	}
