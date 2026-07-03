@@ -1,11 +1,19 @@
 #!/usr/bin/env node
 
-import { execFileSync, spawn } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
-import net from "node:net";
 import path from "node:path";
 import process from "node:process";
 import { acceptanceDir } from "./lib/acceptance-artifacts.mjs";
+import {
+  collectLogs,
+  getFreePort,
+  repoState,
+  shellQuote,
+  startProcess,
+  stopProcess,
+  waitForTcp,
+} from "./lib/service-sandbox.mjs";
 
 const repoRoot = path.resolve(import.meta.dirname, "..");
 const artifactRoot = acceptanceDir(repoRoot);
@@ -154,19 +162,20 @@ async function runQuickEntryServiceProcessCurl() {
     execFileSync("go", ["work", "init", repos.gateway, repos.usercenter], { cwd: goWorkDir });
     result.go_work_file = path.join(goWorkDir, "go.work");
 
+    const serviceEnv = { GOFLAGS: "-mod=readonly", GOWORK: "off" };
     const usercenterProcess = startProcess("quickentry-usercenter", repos.usercenter, [
       "go", "run", "./.goal-test-sandbox/quickentry-usercenter", "-listen", usercenterAddr,
-    ]);
+    ], { defaultEnv: serviceEnv });
     processes.push(usercenterProcess);
     result.usercenter_process = usercenterProcess.info;
-    await waitForTcp(usercenterAddr, 120000, usercenterProcess);
+    await waitForTcp(usercenterAddr, 120000, usercenterProcess, { intervalMs: 500 });
 
     const gatewayProcess = startProcess("quickentry-gateway", repos.gateway, [
       "go", "run", "./.goal-test-sandbox/quickentry-gateway", "-listen", gatewayAddr, "-usercenter", usercenterAddr,
-    ], { GOFLAGS: "", GOWORK: result.go_work_file });
+    ], { defaultEnv: serviceEnv, extraEnv: { GOFLAGS: "", GOWORK: result.go_work_file } });
     processes.push(gatewayProcess);
     result.gateway_process = gatewayProcess.info;
-    await waitForTcp(gatewayAddr, 120000, gatewayProcess);
+    await waitForTcp(gatewayAddr, 120000, gatewayProcess, { intervalMs: 500 });
 
     const curlOutput = execFileSync(result.curl_command[0], result.curl_command.slice(1), {
       cwd: repoRoot,
@@ -345,124 +354,6 @@ func main() {
 `;
 }
 
-function startProcess(name, cwd, command, extraEnv = {}) {
-  const info = {
-    name,
-    cwd,
-    command: command.map(shellQuote).join(" "),
-    pid: null,
-    stdout: "",
-    stderr: "",
-  };
-  const child = spawn(command[0], command.slice(1), {
-    cwd,
-    env: { ...process.env, GOFLAGS: "-mod=readonly", GOWORK: "off", ...extraEnv },
-    detached: true,
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  info.pid = child.pid;
-  child.stdout.on("data", (chunk) => {
-    info.stdout += chunk.toString();
-  });
-  child.stderr.on("data", (chunk) => {
-    info.stderr += chunk.toString();
-  });
-  return { name, child, info };
-}
-
-async function stopProcess(proc) {
-  if (!proc?.child || hasExited(proc.child)) return;
-  const pgid = proc.info.pid;
-  try {
-    process.kill(-pgid, "SIGTERM");
-  } catch {}
-  await waitForExit(proc.child, 1500);
-  if (hasExited(proc.child)) return;
-  try {
-    process.kill(-pgid, "SIGKILL");
-  } catch {}
-  await waitForExit(proc.child, 1500);
-}
-
-function collectLogs(proc) {
-  if (!proc) return null;
-  return {
-    stdout_tail: tail(proc.info.stdout, 200),
-    stderr_tail: tail(proc.info.stderr, 200),
-    pid: proc.info.pid,
-    command: proc.info.command,
-    cwd: proc.info.cwd,
-  };
-}
-
-function tail(text, lines) {
-  return String(text || "").split(/\r?\n/).slice(-lines).join("\n");
-}
-
-async function getFreePort() {
-  return new Promise((resolve, reject) => {
-    const server = net.createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const address = server.address();
-      server.close(() => resolve(address.port));
-    });
-  });
-}
-
-async function waitForTcp(address, timeoutMs, proc) {
-  const [host, portText] = address.split(":");
-  const port = Number(portText);
-  const started = Date.now();
-  let lastError = null;
-  while (Date.now() - started < timeoutMs) {
-    if (proc.child.exitCode !== null) {
-      throw new Error(`${proc.name} exited before becoming ready: stdout=${proc.info.stdout} stderr=${proc.info.stderr}`);
-    }
-    try {
-      await tryTcp(host, port);
-      return;
-    } catch (error) {
-      lastError = error;
-      await sleep(500);
-    }
-  }
-  throw new Error(`${proc.name} did not open ${address} within ${timeoutMs}ms: ${lastError?.message || lastError}`);
-}
-
-function tryTcp(host, port) {
-  return new Promise((resolve, reject) => {
-    const socket = net.createConnection({ host, port });
-    socket.once("connect", () => {
-      socket.end();
-      resolve();
-    });
-    socket.once("error", reject);
-    socket.setTimeout(1000, () => {
-      socket.destroy(new Error("tcp connect timeout"));
-    });
-  });
-}
-
-function sleep(ms) {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function waitForExit(child, timeoutMs) {
-  if (hasExited(child)) return Promise.resolve();
-  return new Promise((resolve) => {
-    const timer = setTimeout(resolve, timeoutMs);
-    child.once("exit", () => {
-      clearTimeout(timer);
-      resolve();
-    });
-  });
-}
-
-function hasExited(child) {
-  return child.exitCode !== null || child.signalCode !== null;
-}
-
 function assertContains(text, needle, description) {
   return { ok: text.includes(needle), description, expected: needle };
 }
@@ -504,27 +395,4 @@ function runCheck(id, cwd, command) {
   if (!check.ok) {
     throw new Error(`${id} failed: ${check.error || check.stderr || check.stdout}`);
   }
-}
-
-function repoState(repo) {
-  return {
-    path: repo,
-    branch: exec(repo, ["git", "branch", "--show-current"]).trim(),
-    commit: exec(repo, ["git", "rev-parse", "HEAD"]).trim(),
-    dirty: exec(repo, ["git", "status", "--short"]).trim() !== "",
-  };
-}
-
-function exec(cwd, command) {
-  return execFileSync(command[0], command.slice(1), {
-    cwd,
-    encoding: "utf8",
-    maxBuffer: 1024 * 1024,
-  });
-}
-
-function shellQuote(value) {
-  const s = String(value);
-  if (/^[A-Za-z0-9_./:=@+-]+$/.test(s)) return s;
-  return `'${s.replace(/'/g, "'\\''")}'`;
 }
