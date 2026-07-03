@@ -199,22 +199,15 @@ func TestRunSkillSearchRequestsSearchEndpoint(t *testing.T) {
 }
 
 func newSkillCreateTestCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "create"}
-	cmd.Flags().String("server-url", "", "")
-	cmd.Flags().String("workspace-id", "", "")
-	cmd.Flags().String("profile", "", "")
-	cmd.Flags().String("name", "", "")
-	cmd.Flags().String("description", "", "")
-	cmd.Flags().String("content", "", "")
-	cmd.Flags().Bool("content-stdin", false, "")
-	cmd.Flags().String("content-file", "", "")
-	cmd.Flags().String("config", "", "")
-	cmd.Flags().String("output", "json", "")
-	return cmd
+	return newSkillContentTestCmd("create")
 }
 
 func newSkillUpdateTestCmd() *cobra.Command {
-	cmd := &cobra.Command{Use: "update"}
+	return newSkillContentTestCmd("update")
+}
+
+func newSkillContentTestCmd(use string) *cobra.Command {
+	cmd := &cobra.Command{Use: use}
 	cmd.Flags().String("server-url", "", "")
 	cmd.Flags().String("workspace-id", "", "")
 	cmd.Flags().String("profile", "", "")
