@@ -31,25 +31,36 @@ func cleanupActivities(t *testing.T, issueID string) {
 	testPool.Exec(context.Background(), `DELETE FROM activity_log WHERE issue_id = $1`, issueID)
 }
 
-func TestActivityIssueCreated(t *testing.T) {
+type activityIssueTestFixture struct {
+	queries *db.Queries
+	bus     *events.Bus
+	issueID string
+}
+
+func setupActivityIssueTest(t *testing.T) activityIssueTestFixture {
+	t.Helper()
 	queries := db.New(testPool)
 	bus := events.New()
 	registerActivityListeners(bus, queries)
-
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() {
 		cleanupActivities(t, issueID)
 		cleanupTestIssue(t, issueID)
 	})
+	return activityIssueTestFixture{queries: queries, bus: bus, issueID: issueID}
+}
 
-	bus.Publish(events.Event{
+func TestActivityIssueCreated(t *testing.T) {
+	fixture := setupActivityIssueTest(t)
+
+	fixture.bus.Publish(events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
 			"issue": handler.IssueResponse{
-				ID:          issueID,
+				ID:          fixture.issueID,
 				WorkspaceID: testWorkspaceID,
 				Title:       "activity test issue",
 				Status:      "todo",
@@ -60,7 +71,7 @@ func TestActivityIssueCreated(t *testing.T) {
 		},
 	})
 
-	activities := listActivitiesForIssue(t, queries, issueID)
+	activities := listActivitiesForIssue(t, fixture.queries, fixture.issueID)
 	if len(activities) != 1 {
 		t.Fatalf("expected 1 activity, got %d", len(activities))
 	}
@@ -73,24 +84,16 @@ func TestActivityIssueCreated(t *testing.T) {
 }
 
 func TestActivityIssueUpdated_StatusChanged(t *testing.T) {
-	queries := db.New(testPool)
-	bus := events.New()
-	registerActivityListeners(bus, queries)
+	fixture := setupActivityIssueTest(t)
 
-	issueID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupActivities(t, issueID)
-		cleanupTestIssue(t, issueID)
-	})
-
-	bus.Publish(events.Event{
+	fixture.bus.Publish(events.Event{
 		Type:        protocol.EventIssueUpdated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
 			"issue": handler.IssueResponse{
-				ID:          issueID,
+				ID:          fixture.issueID,
 				WorkspaceID: testWorkspaceID,
 				Title:       "activity test issue",
 				Status:      "in_progress",
@@ -103,7 +106,7 @@ func TestActivityIssueUpdated_StatusChanged(t *testing.T) {
 		},
 	})
 
-	activities := listActivitiesForIssue(t, queries, issueID)
+	activities := listActivitiesForIssue(t, fixture.queries, fixture.issueID)
 	if len(activities) != 1 {
 		t.Fatalf("expected 1 activity, got %d", len(activities))
 	}
@@ -124,29 +127,21 @@ func TestActivityIssueUpdated_StatusChanged(t *testing.T) {
 }
 
 func TestActivityIssueUpdated_AssigneeChanged(t *testing.T) {
-	queries := db.New(testPool)
-	bus := events.New()
-	registerActivityListeners(bus, queries)
+	fixture := setupActivityIssueTest(t)
 
 	assigneeAccount := "activity-assignee-test@multica"
 	assigneeID := createTestUser(t, assigneeAccount)
 	t.Cleanup(func() { cleanupTestUser(t, assigneeAccount) })
 
-	issueID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupActivities(t, issueID)
-		cleanupTestIssue(t, issueID)
-	})
-
 	assigneeType := "member"
-	bus.Publish(events.Event{
+	fixture.bus.Publish(events.Event{
 		Type:        protocol.EventIssueUpdated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
 			"issue": handler.IssueResponse{
-				ID:           issueID,
+				ID:           fixture.issueID,
 				WorkspaceID:  testWorkspaceID,
 				Title:        "activity test issue",
 				Status:       "todo",
@@ -162,7 +157,7 @@ func TestActivityIssueUpdated_AssigneeChanged(t *testing.T) {
 		},
 	})
 
-	activities := listActivitiesForIssue(t, queries, issueID)
+	activities := listActivitiesForIssue(t, fixture.queries, fixture.issueID)
 	if len(activities) != 1 {
 		t.Fatalf("expected 1 activity, got %d", len(activities))
 	}
@@ -183,25 +178,17 @@ func TestActivityIssueUpdated_AssigneeChanged(t *testing.T) {
 }
 
 func TestActivityIssueUpdated_NoChangeFlags(t *testing.T) {
-	queries := db.New(testPool)
-	bus := events.New()
-	registerActivityListeners(bus, queries)
-
-	issueID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupActivities(t, issueID)
-		cleanupTestIssue(t, issueID)
-	})
+	fixture := setupActivityIssueTest(t)
 
 	// Publish issue:updated with no change flags set
-	bus.Publish(events.Event{
+	fixture.bus.Publish(events.Event{
 		Type:        protocol.EventIssueUpdated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
 			"issue": handler.IssueResponse{
-				ID:          issueID,
+				ID:          fixture.issueID,
 				WorkspaceID: testWorkspaceID,
 				Title:       "activity test issue",
 				Status:      "todo",
@@ -215,31 +202,23 @@ func TestActivityIssueUpdated_NoChangeFlags(t *testing.T) {
 		},
 	})
 
-	activities := listActivitiesForIssue(t, queries, issueID)
+	activities := listActivitiesForIssue(t, fixture.queries, fixture.issueID)
 	if len(activities) != 0 {
 		t.Fatalf("expected 0 activities when no change flags, got %d", len(activities))
 	}
 }
 
 func TestActivityIssueUpdated_TitleChanged(t *testing.T) {
-	queries := db.New(testPool)
-	bus := events.New()
-	registerActivityListeners(bus, queries)
+	fixture := setupActivityIssueTest(t)
 
-	issueID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupActivities(t, issueID)
-		cleanupTestIssue(t, issueID)
-	})
-
-	bus.Publish(events.Event{
+	fixture.bus.Publish(events.Event{
 		Type:        protocol.EventIssueUpdated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
 		ActorID:     testUserID,
 		Payload: map[string]any{
 			"issue": handler.IssueResponse{
-				ID:          issueID,
+				ID:          fixture.issueID,
 				WorkspaceID: testWorkspaceID,
 				Title:       "renamed issue",
 				Status:      "todo",
@@ -252,7 +231,7 @@ func TestActivityIssueUpdated_TitleChanged(t *testing.T) {
 		},
 	})
 
-	activities := listActivitiesForIssue(t, queries, issueID)
+	activities := listActivitiesForIssue(t, fixture.queries, fixture.issueID)
 	if len(activities) != 1 {
 		t.Fatalf("expected 1 activity, got %d", len(activities))
 	}
@@ -273,19 +252,11 @@ func TestActivityIssueUpdated_TitleChanged(t *testing.T) {
 }
 
 func TestActivityTaskCompleted(t *testing.T) {
-	queries := db.New(testPool)
-	bus := events.New()
-	registerActivityListeners(bus, queries)
-
-	issueID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupActivities(t, issueID)
-		cleanupTestIssue(t, issueID)
-	})
+	fixture := setupActivityIssueTest(t)
 
 	agentID := testUserID // reuse as a stand-in for agent ID
 
-	bus.Publish(events.Event{
+	fixture.bus.Publish(events.Event{
 		Type:        protocol.EventTaskCompleted,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "system",
@@ -293,12 +264,12 @@ func TestActivityTaskCompleted(t *testing.T) {
 		Payload: map[string]any{
 			"task_id":  "00000000-0000-0000-0000-000000000001",
 			"agent_id": agentID,
-			"issue_id": issueID,
+			"issue_id": fixture.issueID,
 			"status":   "completed",
 		},
 	})
 
-	activities := listActivitiesForIssue(t, queries, issueID)
+	activities := listActivitiesForIssue(t, fixture.queries, fixture.issueID)
 	if len(activities) != 1 {
 		t.Fatalf("expected 1 activity, got %d", len(activities))
 	}
@@ -311,19 +282,11 @@ func TestActivityTaskCompleted(t *testing.T) {
 }
 
 func TestActivityTaskFailed(t *testing.T) {
-	queries := db.New(testPool)
-	bus := events.New()
-	registerActivityListeners(bus, queries)
-
-	issueID := createTestIssue(t, testWorkspaceID, testUserID)
-	t.Cleanup(func() {
-		cleanupActivities(t, issueID)
-		cleanupTestIssue(t, issueID)
-	})
+	fixture := setupActivityIssueTest(t)
 
 	agentID := testUserID
 
-	bus.Publish(events.Event{
+	fixture.bus.Publish(events.Event{
 		Type:        protocol.EventTaskFailed,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "system",
@@ -331,12 +294,12 @@ func TestActivityTaskFailed(t *testing.T) {
 		Payload: map[string]any{
 			"task_id":  "00000000-0000-0000-0000-000000000002",
 			"agent_id": agentID,
-			"issue_id": issueID,
+			"issue_id": fixture.issueID,
 			"status":   "failed",
 		},
 	})
 
-	activities := listActivitiesForIssue(t, queries, issueID)
+	activities := listActivitiesForIssue(t, fixture.queries, fixture.issueID)
 	if len(activities) != 1 {
 		t.Fatalf("expected 1 activity, got %d", len(activities))
 	}
