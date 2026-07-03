@@ -29,9 +29,9 @@ func newIssueSourceFetchTestCmd() *cobra.Command {
 	return c
 }
 
-func TestRunIssueSourceFetchPostsUnifiedRecord(t *testing.T) {
-	var posted map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func newIssueSourceFetchTestServer(t *testing.T, posted *map[string]any) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/issues/"+testIssueUUID:
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -40,7 +40,7 @@ func TestRunIssueSourceFetchPostsUnifiedRecord(t *testing.T) {
 				"title":      "test issue",
 			})
 		case r.Method == http.MethodPost && r.URL.Path == "/api/issues/"+testIssueUUID+"/source-fetch":
-			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
+			if err := json.NewDecoder(r.Body).Decode(posted); err != nil {
 				t.Fatalf("decode posted body: %v", err)
 			}
 			_ = json.NewEncoder(w).Encode(map[string]any{
@@ -50,11 +50,21 @@ func TestRunIssueSourceFetchPostsUnifiedRecord(t *testing.T) {
 			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
 		}
 	}))
-	defer srv.Close()
+}
 
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+func setIssueSourceFetchTestEnv(t *testing.T, serverURL string) {
+	t.Helper()
+	t.Setenv("MULTICA_SERVER_URL", serverURL)
 	t.Setenv("MULTICA_TOKEN", "test-token")
 	t.Setenv("MULTICA_WORKSPACE_ID", "workspace-1")
+}
+
+func TestRunIssueSourceFetchPostsUnifiedRecord(t *testing.T) {
+	var posted map[string]any
+	srv := newIssueSourceFetchTestServer(t, &posted)
+	defer srv.Close()
+
+	setIssueSourceFetchTestEnv(t, srv.URL)
 
 	cmd := newIssueSourceFetchTestCmd()
 	_ = cmd.Flags().Set("status", "fetched")
@@ -104,30 +114,10 @@ func TestRunIssueSourceFetchRequiresStatus(t *testing.T) {
 
 func TestRunIssueSourceFetchAllowsAutoFetchWithoutStatus(t *testing.T) {
 	var posted map[string]any
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/issues/"+testIssueUUID:
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"id":         testIssueUUID,
-				"identifier": "MUL-1",
-				"title":      "test issue",
-			})
-		case r.Method == http.MethodPost && r.URL.Path == "/api/issues/"+testIssueUUID+"/source-fetch":
-			if err := json.NewDecoder(r.Body).Decode(&posted); err != nil {
-				t.Fatalf("decode posted body: %v", err)
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{
-				"metadata": map[string]any{"source_fetch_status": "fetched"},
-			})
-		default:
-			t.Fatalf("unexpected request: %s %s", r.Method, r.URL.Path)
-		}
-	}))
+	srv := newIssueSourceFetchTestServer(t, &posted)
 	defer srv.Close()
 
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-	t.Setenv("MULTICA_TOKEN", "test-token")
-	t.Setenv("MULTICA_WORKSPACE_ID", "workspace-1")
+	setIssueSourceFetchTestEnv(t, srv.URL)
 
 	cmd := newIssueSourceFetchTestCmd()
 	_ = cmd.Flags().Set("auto-fetch", "true")
