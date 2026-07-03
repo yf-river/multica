@@ -107,6 +107,31 @@ func assertSnapshotEqual(t *testing.T, label string, want, got workdirSnapshot) 
 	}
 }
 
+func newSidecarRoundTripFixture(t *testing.T) (workDir, envRoot string, before workdirSnapshot) {
+	t.Helper()
+	workDir = t.TempDir()
+	envRoot = t.TempDir()
+	before = snapshot(t, workDir)
+	return workDir, envRoot, before
+}
+
+func issueReviewSidecarContext() TaskContextForEnv {
+	return TaskContextForEnv{
+		IssueID: "11111111-2222-3333-4444-555555555555",
+		AgentSkills: []SkillContextForEnv{
+			{Name: "Issue Review", Content: "ours"},
+		},
+	}
+}
+
+func assertPrepareLikeRoundTrip(t *testing.T, label, workDir, envRoot, provider string, before workdirSnapshot, ctx TaskContextForEnv) {
+	t.Helper()
+	runPrepareLikeCycle(t, workDir, envRoot, provider, ctx)
+
+	after := snapshot(t, workDir)
+	assertSnapshotEqual(t, label, before, after)
+}
+
 // runPrepareLikeCycle replays the daemon's local_directory path against the
 // supplied workDir and envRoot: writes context files (with manifest tracking),
 // injects the runtime brief, then runs the matching cleanups. Tests use this
@@ -171,9 +196,7 @@ func TestPrepareThenCleanupSidecarsRoundTripEmptyWorkdir(t *testing.T) {
 		provider := provider
 		t.Run(provider, func(t *testing.T) {
 			t.Parallel()
-			workDir := t.TempDir()
-			envRoot := t.TempDir()
-			before := snapshot(t, workDir)
+			workDir, envRoot, before := newSidecarRoundTripFixture(t)
 
 			ctx := TaskContextForEnv{
 				IssueID: "11111111-2222-3333-4444-555555555555",
@@ -195,10 +218,7 @@ func TestPrepareThenCleanupSidecarsRoundTripEmptyWorkdir(t *testing.T) {
 				ProjectTitle: "Demo",
 			}
 
-			runPrepareLikeCycle(t, workDir, envRoot, provider, ctx)
-
-			after := snapshot(t, workDir)
-			assertSnapshotEqual(t, provider, before, after)
+			assertPrepareLikeRoundTrip(t, provider, workDir, envRoot, provider, before, ctx)
 		})
 	}
 }
@@ -341,20 +361,11 @@ func TestPrepareThenCleanupSidecarsRepeatedCycles(t *testing.T) {
 		provider := provider
 		t.Run(provider, func(t *testing.T) {
 			t.Parallel()
-			workDir := t.TempDir()
-			envRoot := t.TempDir()
-			before := snapshot(t, workDir)
+			workDir, envRoot, before := newSidecarRoundTripFixture(t)
 
-			ctx := TaskContextForEnv{
-				IssueID: "11111111-2222-3333-4444-555555555555",
-				AgentSkills: []SkillContextForEnv{
-					{Name: "Issue Review", Content: "ours"},
-				},
-			}
+			ctx := issueReviewSidecarContext()
 			for i := 0; i < 3; i++ {
-				runPrepareLikeCycle(t, workDir, envRoot, provider, ctx)
-				after := snapshot(t, workDir)
-				assertSnapshotEqual(t, provider, before, after)
+				assertPrepareLikeRoundTrip(t, provider, workDir, envRoot, provider, before, ctx)
 			}
 		})
 	}
@@ -369,9 +380,7 @@ func TestPrepareThenCleanupSidecarsWithProjectResources(t *testing.T) {
 		provider := provider
 		t.Run(provider, func(t *testing.T) {
 			t.Parallel()
-			workDir := t.TempDir()
-			envRoot := t.TempDir()
-			before := snapshot(t, workDir)
+			workDir, envRoot, before := newSidecarRoundTripFixture(t)
 
 			ctx := TaskContextForEnv{
 				IssueID:      "11111111-2222-3333-4444-555555555555",
@@ -385,10 +394,7 @@ func TestPrepareThenCleanupSidecarsWithProjectResources(t *testing.T) {
 					},
 				},
 			}
-			runPrepareLikeCycle(t, workDir, envRoot, provider, ctx)
-
-			after := snapshot(t, workDir)
-			assertSnapshotEqual(t, provider, before, after)
+			assertPrepareLikeRoundTrip(t, provider, workDir, envRoot, provider, before, ctx)
 		})
 	}
 }
