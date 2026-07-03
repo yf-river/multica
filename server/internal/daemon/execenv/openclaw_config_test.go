@@ -70,6 +70,25 @@ func mustReadJSON(t *testing.T, path string) map[string]any {
 	return got
 }
 
+func newOpenclawConfigTestDirs(t *testing.T) (string, string) {
+	t.Helper()
+	envRoot := t.TempDir()
+	workDir := filepath.Join(envRoot, "workdir")
+	if err := os.MkdirAll(workDir, 0o755); err != nil {
+		t.Fatalf("mkdir workdir: %v", err)
+	}
+	return envRoot, workDir
+}
+
+func writeOpenclawUserConfig(t *testing.T, body string) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "openclaw.json")
+	if err := os.WriteFile(path, []byte(body), 0o600); err != nil {
+		t.Fatalf("write user cfg: %v", err)
+	}
+	return path
+}
+
 // TestPrepareOpenclawConfigDelegatesParsingToCLI is the headline assertion
 // for the Elon must-fix: instead of re-parsing the user's openclaw.json
 // with encoding/json (which can't read JSON5 / $include / env-var
@@ -77,11 +96,7 @@ func mustReadJSON(t *testing.T, path string) map[string]any {
 // $includes the user's active path so OpenClaw's own loader handles the
 // JSON5 / $include resolution; we only emit workspace overrides.
 func TestPrepareOpenclawConfigDelegatesParsingToCLI(t *testing.T) {
-	envRoot := t.TempDir()
-	workDir := filepath.Join(envRoot, "workdir")
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		t.Fatalf("mkdir workdir: %v", err)
-	}
+	envRoot, workDir := newOpenclawConfigTestDirs(t)
 
 	// JSON5 user config — comments and trailing commas would break the old
 	// encoding/json reader. The stub doesn't actually parse this; it just
@@ -177,11 +192,7 @@ func TestPrepareOpenclawConfigDelegatesParsingToCLI(t *testing.T) {
 // silently synthesize a minimal config that would mask the user's broken
 // state and boot OpenClaw without their registered agents.
 func TestPrepareOpenclawConfigFailsClosedOnCLIError(t *testing.T) {
-	envRoot := t.TempDir()
-	workDir := filepath.Join(envRoot, "workdir")
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		t.Fatalf("mkdir workdir: %v", err)
-	}
+	envRoot, workDir := newOpenclawConfigTestDirs(t)
 
 	stub := installOpenclawStub(t, map[string]openclawResponse{
 		"config file": {err: errors.New("exec: openclaw: no such file or directory")},
@@ -205,16 +216,9 @@ func TestPrepareOpenclawConfigFailsClosedOnCLIError(t *testing.T) {
 // fail-closed surface. When `openclaw config get agents.list --json`
 // returns junk we can't parse, we fail rather than guess.
 func TestPrepareOpenclawConfigFailsClosedOnMalformedAgentsList(t *testing.T) {
-	envRoot := t.TempDir()
-	workDir := filepath.Join(envRoot, "workdir")
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		t.Fatalf("mkdir workdir: %v", err)
-	}
+	envRoot, workDir := newOpenclawConfigTestDirs(t)
 
-	userConfigPath := filepath.Join(t.TempDir(), "openclaw.json")
-	if err := os.WriteFile(userConfigPath, []byte(`{}`), 0o600); err != nil {
-		t.Fatalf("write user cfg: %v", err)
-	}
+	userConfigPath := writeOpenclawUserConfig(t, `{}`)
 
 	stub := installOpenclawStub(t, map[string]openclawResponse{
 		"config file":                   {stdout: userConfigPath},
@@ -235,16 +239,9 @@ func TestPrepareOpenclawConfigFailsClosedOnMalformedAgentsList(t *testing.T) {
 // no agents.list. We must produce a valid wrapper with just the defaults
 // override.
 func TestPrepareOpenclawConfigKeyMissingTreatedAsEmpty(t *testing.T) {
-	envRoot := t.TempDir()
-	workDir := filepath.Join(envRoot, "workdir")
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		t.Fatalf("mkdir workdir: %v", err)
-	}
+	envRoot, workDir := newOpenclawConfigTestDirs(t)
 
-	userConfigPath := filepath.Join(t.TempDir(), "openclaw.json")
-	if err := os.WriteFile(userConfigPath, []byte(`{}`), 0o600); err != nil {
-		t.Fatalf("write user cfg: %v", err)
-	}
+	userConfigPath := writeOpenclawUserConfig(t, `{}`)
 
 	stub := installOpenclawStub(t, map[string]openclawResponse{
 		"config file":                   {stdout: userConfigPath},
@@ -270,11 +267,7 @@ func TestPrepareOpenclawConfigKeyMissingTreatedAsEmpty(t *testing.T) {
 // default) but the file does not exist yet. We emit a wrapper with the
 // workspace override and NO $include (there is nothing to include).
 func TestPrepareOpenclawConfigFreshInstallNoOnDiskConfig(t *testing.T) {
-	envRoot := t.TempDir()
-	workDir := filepath.Join(envRoot, "workdir")
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		t.Fatalf("mkdir workdir: %v", err)
-	}
+	envRoot, workDir := newOpenclawConfigTestDirs(t)
 
 	// CLI reports a default path that doesn't exist (fresh install).
 	missingPath := filepath.Join(t.TempDir(), "openclaw.json")
@@ -309,11 +302,7 @@ func TestPrepareOpenclawConfigFreshInstallNoOnDiskConfig(t *testing.T) {
 // paths with `~` shortened. The $include in our wrapper must be absolute so
 // the loader resolves it unambiguously.
 func TestPrepareOpenclawConfigExpandsTilde(t *testing.T) {
-	envRoot := t.TempDir()
-	workDir := filepath.Join(envRoot, "workdir")
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		t.Fatalf("mkdir workdir: %v", err)
-	}
+	envRoot, workDir := newOpenclawConfigTestDirs(t)
 
 	fakeHome := t.TempDir()
 	t.Setenv("HOME", fakeHome)
@@ -354,11 +343,7 @@ func TestPrepareOpenclawConfigExpandsTilde(t *testing.T) {
 // (e.g., Doctor warnings) before the actual path. The path is always the
 // last non-empty line.
 func TestPrepareOpenclawConfigParsesPathFromUITerminalOutput(t *testing.T) {
-	envRoot := t.TempDir()
-	workDir := filepath.Join(envRoot, "workdir")
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		t.Fatalf("mkdir workdir: %v", err)
-	}
+	envRoot, workDir := newOpenclawConfigTestDirs(t)
 
 	userConfigDir := t.TempDir()
 	userConfigPath := filepath.Join(userConfigDir, "openclaw.json")
@@ -422,11 +407,7 @@ func TestPrepareOpenclawConfigParsesPathFromUITerminalOutput(t *testing.T) {
 // real loader, the upstream docs are the source of truth:
 // https://github.com/openclaw/openclaw/blob/main/docs/gateway/configuration.md
 func TestPrepareOpenclawConfigWrapperLoadableUnderIncludeConfinement(t *testing.T) {
-	envRoot := t.TempDir()
-	workDir := filepath.Join(envRoot, "workdir")
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		t.Fatalf("mkdir workdir: %v", err)
-	}
+	envRoot, workDir := newOpenclawConfigTestDirs(t)
 
 	// User's active config sits in its own dir, not envRoot. This is the
 	// realistic shape (~/.openclaw/openclaw.json is never inside the task
@@ -489,16 +470,9 @@ func TestPrepareOpenclawConfigWrapperLoadableUnderIncludeConfinement(t *testing.
 // $include a sanitized snapshot that has the user's `mcp` block stripped.
 // The wrapper itself carries managed servers and nothing else.
 func TestPrepareOpenclawConfigStrictReplacesUserMcpServers(t *testing.T) {
-	envRoot := t.TempDir()
-	workDir := filepath.Join(envRoot, "workdir")
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		t.Fatalf("mkdir workdir: %v", err)
-	}
+	envRoot, workDir := newOpenclawConfigTestDirs(t)
 
-	userCfgPath := filepath.Join(t.TempDir(), "openclaw.json")
-	if err := os.WriteFile(userCfgPath, []byte(`{}`), 0o600); err != nil {
-		t.Fatalf("write user cfg: %v", err)
-	}
+	userCfgPath := writeOpenclawUserConfig(t, `{}`)
 	// The resolved user config the CLI would return: a user global
 	// mcp.servers + some other non-mcp content the snapshot must preserve.
 	resolvedUser := `{
@@ -598,15 +572,8 @@ func TestPrepareOpenclawConfigStrictReplacesUserMcpServers(t *testing.T) {
 // scope: managed-MCP path drops `mcp.servers` but leaves
 // `mcp.sessionIdleTtlMs` intact in the snapshot.
 func TestPrepareOpenclawConfigStrictPreservesNonServerMcpKeys(t *testing.T) {
-	envRoot := t.TempDir()
-	workDir := filepath.Join(envRoot, "workdir")
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		t.Fatalf("mkdir workdir: %v", err)
-	}
-	userCfgPath := filepath.Join(t.TempDir(), "openclaw.json")
-	if err := os.WriteFile(userCfgPath, []byte(`{}`), 0o600); err != nil {
-		t.Fatalf("write user cfg: %v", err)
-	}
+	envRoot, workDir := newOpenclawConfigTestDirs(t)
+	userCfgPath := writeOpenclawUserConfig(t, `{}`)
 	// User's resolved config has BOTH `mcp.servers` (must be stripped) and
 	// `mcp.sessionIdleTtlMs` (must survive). The snapshot is what OpenClaw
 	// loads via the wrapper's $include, so only the snapshot's `mcp` block
@@ -666,15 +633,8 @@ func TestPrepareOpenclawConfigStrictPreservesNonServerMcpKeys(t *testing.T) {
 // $include and the admin's "saved no servers" intent would be silently
 // overridden.
 func TestPrepareOpenclawConfigStrictEmptyManagedSetDropsUserMcp(t *testing.T) {
-	envRoot := t.TempDir()
-	workDir := filepath.Join(envRoot, "workdir")
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		t.Fatalf("mkdir workdir: %v", err)
-	}
-	userCfgPath := filepath.Join(t.TempDir(), "openclaw.json")
-	if err := os.WriteFile(userCfgPath, []byte(`{}`), 0o600); err != nil {
-		t.Fatalf("write user cfg: %v", err)
-	}
+	envRoot, workDir := newOpenclawConfigTestDirs(t)
+	userCfgPath := writeOpenclawUserConfig(t, `{}`)
 	resolvedUser := `{"mcp": {"servers": {"global_one": {"command": "/bin/echo"}}}}`
 
 	cases := map[string]json.RawMessage{
@@ -725,11 +685,7 @@ func TestPrepareOpenclawConfigStrictEmptyManagedSetDropsUserMcp(t *testing.T) {
 // the "inherit defaults" branch — must remain a no-op vs. the previous
 // implementation.
 func TestPrepareOpenclawConfigNullMcpConfigKeepsUserInclude(t *testing.T) {
-	envRoot := t.TempDir()
-	workDir := filepath.Join(envRoot, "workdir")
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		t.Fatalf("mkdir workdir: %v", err)
-	}
+	envRoot, workDir := newOpenclawConfigTestDirs(t)
 	userCfgDir := t.TempDir()
 	userCfgPath := filepath.Join(userCfgDir, "openclaw.json")
 	if err := os.WriteFile(userCfgPath, []byte(`{}`), 0o600); err != nil {
@@ -779,11 +735,7 @@ func TestPrepareOpenclawConfigNullMcpConfigKeepsUserInclude(t *testing.T) {
 // --json` (there is nothing to snapshot) and must write a wrapper that
 // carries managed servers as the sole MCP definition with no $include.
 func TestPrepareOpenclawConfigManagedSetFreshInstall(t *testing.T) {
-	envRoot := t.TempDir()
-	workDir := filepath.Join(envRoot, "workdir")
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		t.Fatalf("mkdir workdir: %v", err)
-	}
+	envRoot, workDir := newOpenclawConfigTestDirs(t)
 	missingPath := filepath.Join(t.TempDir(), "openclaw.json")
 	stub := installOpenclawStub(t, map[string]openclawResponse{
 		"config file": {stdout: missingPath},
@@ -826,15 +778,8 @@ func TestPrepareOpenclawConfigManagedSetFreshInstall(t *testing.T) {
 // `$include`ing the live user file (which would leak global mcp.servers).
 // Fail closed instead, mirroring the existing fail-closed posture.
 func TestPrepareOpenclawConfigFailsClosedOnResolvedConfigError(t *testing.T) {
-	envRoot := t.TempDir()
-	workDir := filepath.Join(envRoot, "workdir")
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		t.Fatalf("mkdir workdir: %v", err)
-	}
-	userCfgPath := filepath.Join(t.TempDir(), "openclaw.json")
-	if err := os.WriteFile(userCfgPath, []byte(`{}`), 0o600); err != nil {
-		t.Fatalf("write user cfg: %v", err)
-	}
+	envRoot, workDir := newOpenclawConfigTestDirs(t)
+	userCfgPath := writeOpenclawUserConfig(t, `{}`)
 	stub := installOpenclawStub(t, map[string]openclawResponse{
 		"config file":                   {stdout: userCfgPath},
 		"config get agents.list --json": {stdout: "null"},
@@ -867,15 +812,8 @@ func TestPrepareOpenclawConfigFailsClosedOnResolvedConfigError(t *testing.T) {
 // error instead of booting OpenClaw with an empty / inherited MCP set the
 // admin didn't expect.
 func TestPrepareOpenclawConfigFailsClosedOnMalformedMcpConfig(t *testing.T) {
-	envRoot := t.TempDir()
-	workDir := filepath.Join(envRoot, "workdir")
-	if err := os.MkdirAll(workDir, 0o755); err != nil {
-		t.Fatalf("mkdir workdir: %v", err)
-	}
-	userCfgPath := filepath.Join(t.TempDir(), "openclaw.json")
-	if err := os.WriteFile(userCfgPath, []byte(`{}`), 0o600); err != nil {
-		t.Fatalf("write user cfg: %v", err)
-	}
+	envRoot, workDir := newOpenclawConfigTestDirs(t)
+	userCfgPath := writeOpenclawUserConfig(t, `{}`)
 
 	cases := map[string]json.RawMessage{
 		"unparseable_json":      json.RawMessage(`{not-json}`),
