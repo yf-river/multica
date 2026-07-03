@@ -4,41 +4,18 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
-	"os"
 	"testing"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/multica-ai/multica/server/internal/auth"
+	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
-// newRedisTestClient connects to REDIS_TEST_URL, flushes, and skips when
-// unset — same gating pattern the rest of the suite uses for Redis-backed
-// tests, so `go test ./...` works on a stock laptop without a Redis.
 func newRedisTestClient(t *testing.T) *redis.Client {
 	t.Helper()
-	url := os.Getenv("REDIS_TEST_URL")
-	if url == "" {
-		t.Skip("REDIS_TEST_URL not set")
-	}
-	opts, err := redis.ParseURL(url)
-	if err != nil {
-		t.Fatalf("parse REDIS_TEST_URL: %v", err)
-	}
-	rdb := redis.NewClient(opts)
-	ctx := context.Background()
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		t.Skipf("REDIS_TEST_URL unreachable: %v", err)
-	}
-	if err := rdb.FlushDB(ctx).Err(); err != nil {
-		t.Fatalf("flushdb: %v", err)
-	}
-	t.Cleanup(func() {
-		rdb.FlushDB(context.Background())
-		rdb.Close()
-	})
-	return rdb
+	return testutil.NewRedisTestClient(t)
 }
 
 func generateToken(claims jwt.MapClaims, secret []byte) string {
@@ -49,9 +26,9 @@ func generateToken(claims jwt.MapClaims, secret []byte) string {
 
 func validClaims() jwt.MapClaims {
 	return jwt.MapClaims{
-		"sub":   "test-user-id",
+		"sub":     "test-user-id",
 		"account": "testuser",
-		"exp":   time.Now().Add(time.Hour).Unix(),
+		"exp":     time.Now().Add(time.Hour).Unix(),
 	}
 }
 

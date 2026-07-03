@@ -3,42 +3,17 @@ package handler
 import (
 	"context"
 	"fmt"
-	"os"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/multica-ai/multica/server/internal/testutil"
 	"github.com/redis/go-redis/v9"
 )
 
-// newRedisTestClient connects to the Redis instance indicated by REDIS_TEST_URL
-// and flushes it so each test starts from a clean slate. The helper skips the
-// calling test if the env var is unset — matches the DATABASE_URL gating in
-// the rest of the suite so `go test ./...` still works on a stock laptop
-// without a running Redis.
 func newRedisTestClient(t *testing.T) *redis.Client {
 	t.Helper()
-	url := os.Getenv("REDIS_TEST_URL")
-	if url == "" {
-		t.Skip("REDIS_TEST_URL not set")
-	}
-	opts, err := redis.ParseURL(url)
-	if err != nil {
-		t.Fatalf("parse REDIS_TEST_URL: %v", err)
-	}
-	rdb := redis.NewClient(opts)
-	ctx := context.Background()
-	if err := rdb.Ping(ctx).Err(); err != nil {
-		t.Skipf("REDIS_TEST_URL unreachable: %v", err)
-	}
-	if err := rdb.FlushDB(ctx).Err(); err != nil {
-		t.Fatalf("flushdb: %v", err)
-	}
-	t.Cleanup(func() {
-		rdb.FlushDB(context.Background())
-		rdb.Close()
-	})
-	return rdb
+	return testutil.NewRedisTestClient(t)
 }
 
 func TestRedisLocalSkillListStore_CreateGetComplete(t *testing.T) {
