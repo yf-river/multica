@@ -184,6 +184,61 @@ function resetFixtures() {
   agentNameByIdRef.current = new Map();
 }
 
+function larkInstallation({
+  id = "inst-1",
+  agentId = "agent-1",
+  appId = "cli_existing_app",
+  botOpenId = "ou_existing_bot",
+  status = "active",
+  region,
+}: {
+  id?: string;
+  agentId?: string;
+  appId?: string;
+  botOpenId?: string;
+  status?: string;
+  region?: string;
+} = {}) {
+  return {
+    id,
+    workspace_id: "ws-1",
+    agent_id: agentId,
+    app_id: appId,
+    bot_open_id: botOpenId,
+    installer_user_id: "user-1",
+    status,
+    ...(region ? { region } : {}),
+    installed_at: "2026-06-03T00:00:00Z",
+    created_at: "2026-06-03T00:00:00Z",
+    updated_at: "2026-06-03T00:00:00Z",
+  };
+}
+
+function setInstallations(...installations: unknown[]) {
+  installationsRef.current.installations = installations;
+}
+
+function renderAgentBindButton() {
+  return render(<LarkAgentBindButton agentId="agent-1" agentName="Bot" />, {
+    wrapper: I18nWrapper,
+  });
+}
+
+function expectNoBindCtas() {
+  expect(screen.queryByRole("button", { name: /绑定飞书/i })).toBeNull();
+  expect(screen.queryByRole("button", { name: /绑定 Lark/i })).toBeNull();
+}
+
+function expectFeishuConnectedBadge(appId = "cli_existing_app") {
+  expect(screen.getByText("飞书")).toBeTruthy();
+  expect(screen.getByTestId("lark-agent-bot-disconnect")).toBeTruthy();
+  const link = screen.getByRole("link", {
+    name: /在飞书中管理/i,
+  }) as HTMLAnchorElement;
+  expect(link.href).toBe(`https://open.feishu.cn/app/${appId}`);
+  return link;
+}
+
 describe("LarkAgentBindButton (CTA gate)", () => {
   beforeEach(resetFixtures);
 
@@ -267,37 +322,17 @@ describe("LarkAgentBindButton (CTA gate)", () => {
     // closes the install entry point and links the user to the Bot's
     // dev console page where scopes / display name / additional
     // permissions are actually managed.
-    installationsRef.current.installations = [
-      {
-        id: "inst-1",
-        workspace_id: "ws-1",
-        agent_id: "agent-1",
-        app_id: "cli_existing_app",
-        bot_open_id: "ou_existing_bot",
-        installer_user_id: "user-1",
-        status: "active",
-        installed_at: "2026-06-03T00:00:00Z",
-        created_at: "2026-06-03T00:00:00Z",
-        updated_at: "2026-06-03T00:00:00Z",
-      },
-    ];
-    render(
-      <LarkAgentBindButton agentId="agent-1" agentName="Bot" />,
-      { wrapper: I18nWrapper },
-    );
+    setInstallations(larkInstallation());
+    renderAgentBindButton();
     // Both Bind CTAs must be gone — re-scanning would orphan the
     // PersonalAgent (see badge comment in lark-tab.tsx).
-    expect(screen.queryByRole("button", { name: /绑定飞书/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /绑定 Lark/i })).toBeNull();
+    expectNoBindCtas();
     // The fixture omits `region`, which the listings DTO defaults to
     // 飞书 (mainland). After the #3830 badge restructure the cloud is
     // shown as a "飞书" chip (not baked into the connected label) and a
     // 断开连接 action appears; the region-aware Manage link still points
     // at the mainland host.
-    expect(screen.getByText("飞书")).toBeTruthy();
-    expect(screen.getByTestId("lark-agent-bot-disconnect")).toBeTruthy();
-    const link = screen.getByRole("link", { name: /在飞书中管理/i }) as HTMLAnchorElement;
-    expect(link.href).toBe("https://open.feishu.cn/app/cli_existing_app");
+    const link = expectFeishuConnectedBadge();
     expect(link.target).toBe("_blank");
     expect(link.rel).toContain("noopener");
   });
@@ -309,47 +344,30 @@ describe("LarkAgentBindButton (CTA gate)", () => {
     // default). Without region-aware copy a user who clicked
     // "绑定飞书" and saw "Lark" would (rightly) be
     // confused — the labels must match the cloud the bot lives on.
-    installationsRef.current.installations = [
-      {
+    setInstallations(
+      larkInstallation({
         id: "inst-lark",
-        workspace_id: "ws-1",
-        agent_id: "agent-1",
-        app_id: "cli_lark_app",
-        bot_open_id: "ou_lark_bot",
-        installer_user_id: "user-1",
-        status: "active",
+        appId: "cli_lark_app",
+        botOpenId: "ou_lark_bot",
         region: "lark",
-        installed_at: "2026-06-03T00:00:00Z",
-        created_at: "2026-06-03T00:00:00Z",
-        updated_at: "2026-06-03T00:00:00Z",
-      },
-    ];
-    render(<LarkAgentBindButton agentId="agent-1" agentName="Bot" />, {
-      wrapper: I18nWrapper,
-    });
+      }),
+    );
+    renderAgentBindButton();
     expect(screen.getAllByText(/Lark/i).length).toBeGreaterThan(0);
     const link = screen.getByRole("link", { name: /在 Lark 中管理/i }) as HTMLAnchorElement;
     expect(link.href).toBe("https://open.larksuite.com/app/cli_lark_app");
   });
 
   it("shows the 飞书 CTA (Lark hidden) for an agent without its own installation, per-agent scoping (MUL-3083)", () => {
-    installationsRef.current.installations = [
-      {
+    setInstallations(
+      larkInstallation({
         id: "inst-other",
-        workspace_id: "ws-1",
-        agent_id: "agent-other",
-        app_id: "cli_other",
-        bot_open_id: "ou_other",
-        installer_user_id: "user-1",
-        status: "active",
-        installed_at: "2026-06-03T00:00:00Z",
-        created_at: "2026-06-03T00:00:00Z",
-        updated_at: "2026-06-03T00:00:00Z",
-      },
-    ];
-    render(<LarkAgentBindButton agentId="agent-1" agentName="Bot" />, {
-      wrapper: I18nWrapper,
-    });
+        agentId: "agent-other",
+        appId: "cli_other",
+        botOpenId: "ou_other",
+      }),
+    );
+    renderAgentBindButton();
     expect(screen.getByRole("button", { name: /绑定飞书/i })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /绑定 Lark/i })).toBeNull();
   });
@@ -361,56 +379,27 @@ describe("LarkAgentBindButton (CTA gate)", () => {
     // and remain manageable"). Regression: the install_supported gate used to
     // run before the existing-installation check and hid the bound state.
     installationsRef.current.install_supported = false;
-    installationsRef.current.installations = [
-      {
-        id: "inst-1",
-        workspace_id: "ws-1",
-        agent_id: "agent-1",
-        app_id: "cli_existing_app",
-        bot_open_id: "ou_existing_bot",
-        installer_user_id: "user-1",
-        status: "active",
-        installed_at: "2026-06-03T00:00:00Z",
-        created_at: "2026-06-03T00:00:00Z",
-        updated_at: "2026-06-03T00:00:00Z",
-      },
-    ];
-    render(
-      <LarkAgentBindButton agentId="agent-1" agentName="Bot" />,
-      { wrapper: I18nWrapper },
-    );
+    setInstallations(larkInstallation());
+    renderAgentBindButton();
     // Both Bind CTAs must be gone even when install_supported=false,
     // since the existing-installation check runs first.
-    expect(screen.queryByRole("button", { name: /绑定飞书/i })).toBeNull();
-    expect(screen.queryByRole("button", { name: /绑定 Lark/i })).toBeNull();
+    expectNoBindCtas();
     // Fixture omits region → defaults to 飞书: the cloud shows as a
     // "飞书" chip (post-#3830 badge restructure), the 断开连接 action
     // is present, and the Manage link stays 飞书-aware.
-    expect(screen.getByText("飞书")).toBeTruthy();
-    expect(screen.getByTestId("lark-agent-bot-disconnect")).toBeTruthy();
-    expect(
-      screen.getByRole("link", { name: /在飞书中管理/i }),
-    ).toBeTruthy();
+    expectFeishuConnectedBadge();
   });
 
   it("shows the 飞书 CTA (Lark hidden) when this agent's only installation is revoked (MUL-3083)", () => {
-    installationsRef.current.installations = [
-      {
+    setInstallations(
+      larkInstallation({
         id: "inst-revoked",
-        workspace_id: "ws-1",
-        agent_id: "agent-1",
-        app_id: "cli_revoked",
-        bot_open_id: "ou_revoked",
-        installer_user_id: "user-1",
+        appId: "cli_revoked",
+        botOpenId: "ou_revoked",
         status: "revoked",
-        installed_at: "2026-06-03T00:00:00Z",
-        created_at: "2026-06-03T00:00:00Z",
-        updated_at: "2026-06-03T00:00:00Z",
-      },
-    ];
-    render(<LarkAgentBindButton agentId="agent-1" agentName="Bot" />, {
-      wrapper: I18nWrapper,
-    });
+      }),
+    );
+    renderAgentBindButton();
     expect(screen.getByRole("button", { name: /绑定飞书/i })).toBeTruthy();
     expect(screen.queryByRole("button", { name: /绑定 Lark/i })).toBeNull();
   });
@@ -425,26 +414,11 @@ describe("LarkAgentBindButton (CTA gate)", () => {
 describe("LarkAgentBotConnectedBadge (Unbind / 断开连接)", () => {
   beforeEach(() => {
     resetFixtures();
-    installationsRef.current.installations = [
-      {
-        id: "inst-1",
-        workspace_id: "ws-1",
-        agent_id: "agent-1",
-        app_id: "cli_existing_app",
-        bot_open_id: "ou_existing_bot",
-        installer_user_id: "user-1",
-        status: "active",
-        installed_at: "2026-06-03T00:00:00Z",
-        created_at: "2026-06-03T00:00:00Z",
-        updated_at: "2026-06-03T00:00:00Z",
-      },
-    ];
+    setInstallations(larkInstallation());
   });
 
   it("renders a 断开连接 affordance alongside the Manage link when the agent is bound", () => {
-    render(<LarkAgentBindButton agentId="agent-1" agentName="Bot" />, {
-      wrapper: I18nWrapper,
-    });
+    renderAgentBindButton();
     // The badge surfaces three siblings: the green-dot status pill,
     // the Manage link, and the Unbind action. We assert by test-id so
     // we don't trip over /断开连接/i copy that also appears in the
@@ -456,9 +430,7 @@ describe("LarkAgentBotConnectedBadge (Unbind / 断开连接)", () => {
 
   it("opens the confirm dialog and does NOT call the API until the user confirms", async () => {
     const user = userEvent.setup();
-    render(<LarkAgentBindButton agentId="agent-1" agentName="Bot" />, {
-      wrapper: I18nWrapper,
-    });
+    renderAgentBindButton();
     await user.click(screen.getByTestId("lark-agent-bot-disconnect"));
     // Confirm dialog must mount with the correct copy.
     await waitFor(() => {
@@ -474,9 +446,7 @@ describe("LarkAgentBotConnectedBadge (Unbind / 断开连接)", () => {
   it("calls deleteLarkInstallation with (workspaceId, installationId), invalidates the cache, and toasts on confirm", async () => {
     mockDeleteInstallation.mockResolvedValue(undefined);
     const user = userEvent.setup();
-    render(<LarkAgentBindButton agentId="agent-1" agentName="Bot" />, {
-      wrapper: I18nWrapper,
-    });
+    renderAgentBindButton();
     await user.click(screen.getByTestId("lark-agent-bot-disconnect"));
     // Wait for the dialog to mount, then click the destructive action
     // (the AlertDialogAction's accessible name is the same "断开连接"
@@ -504,9 +474,7 @@ describe("LarkAgentBotConnectedBadge (Unbind / 断开连接)", () => {
       new Error("upstream 500"),
     );
     const user = userEvent.setup();
-    render(<LarkAgentBindButton agentId="agent-1" agentName="Bot" />, {
-      wrapper: I18nWrapper,
-    });
+    renderAgentBindButton();
     await user.click(screen.getByTestId("lark-agent-bot-disconnect"));
     const confirmButton = await screen.findByRole("button", {
       name: /^断开连接$/i,
@@ -533,9 +501,7 @@ describe("LarkAgentBotConnectedBadge (Unbind / 断开连接)", () => {
         }),
     );
     const user = userEvent.setup();
-    render(<LarkAgentBindButton agentId="agent-1" agentName="Bot" />, {
-      wrapper: I18nWrapper,
-    });
+    renderAgentBindButton();
     await user.click(screen.getByTestId("lark-agent-bot-disconnect"));
     const confirmButton = await screen.findByRole("button", {
       name: /^断开连接$/i,
