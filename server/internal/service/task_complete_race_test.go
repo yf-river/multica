@@ -113,7 +113,8 @@ func testUUID(b byte) pgtype.UUID {
 	return u
 }
 
-func TestCompleteTask_AlreadyFinalized(t *testing.T) {
+func runAlreadyFinalizedTaskCases(t *testing.T, run func(*TaskService, pgtype.UUID) (*db.AgentTaskQueue, error)) {
+	t.Helper()
 	taskID := testUUID(1)
 	agentID := testUUID(2)
 
@@ -138,7 +139,7 @@ func TestCompleteTask_AlreadyFinalized(t *testing.T) {
 				Bus:     events.New(),
 			}
 
-			got, err := svc.CompleteTask(context.Background(), taskID, nil, "", "")
+			got, err := run(svc, taskID)
 			if err != nil {
 				t.Fatalf("expected no error, got %v", err)
 			}
@@ -155,46 +156,16 @@ func TestCompleteTask_AlreadyFinalized(t *testing.T) {
 	}
 }
 
+func TestCompleteTask_AlreadyFinalized(t *testing.T) {
+	runAlreadyFinalizedTaskCases(t, func(svc *TaskService, taskID pgtype.UUID) (*db.AgentTaskQueue, error) {
+		return svc.CompleteTask(context.Background(), taskID, nil, "", "")
+	})
+}
+
 func TestFailTask_AlreadyFinalized(t *testing.T) {
-	taskID := testUUID(1)
-	agentID := testUUID(2)
-
-	tests := []struct {
-		name   string
-		status string
-	}{
-		{"already completed", "completed"},
-		{"already cancelled", "cancelled"},
-		{"already failed", "failed"},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			mock := &mockDBTX{task: db.AgentTaskQueue{
-				ID:      taskID,
-				AgentID: agentID,
-				Status:  tt.status,
-			}}
-			svc := &TaskService{
-				Queries: db.New(mock),
-				Bus:     events.New(),
-			}
-
-			got, err := svc.FailTask(context.Background(), taskID, "agent crashed", "", "", "")
-			if err != nil {
-				t.Fatalf("expected no error, got %v", err)
-			}
-			if got == nil {
-				t.Fatal("expected task, got nil")
-			}
-			if got.Status != tt.status {
-				t.Errorf("expected status %q, got %q", tt.status, got.Status)
-			}
-			if got.ID != taskID {
-				t.Error("returned task ID doesn't match")
-			}
-		})
-	}
+	runAlreadyFinalizedTaskCases(t, func(svc *TaskService, taskID pgtype.UUID) (*db.AgentTaskQueue, error) {
+		return svc.FailTask(context.Background(), taskID, "agent crashed", "", "", "")
+	})
 }
 
 func TestTaskFailureClassifiers(t *testing.T) {
