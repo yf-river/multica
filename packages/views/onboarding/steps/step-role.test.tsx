@@ -1,43 +1,10 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen } from "@testing-library/react";
+import { screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { QuestionnaireAnswers } from "@multica/core/onboarding";
-import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/zh-Hans/common.json";
-import enOnboarding from "../../locales/zh-Hans/onboarding.json";
+import { EMPTY_QUESTIONNAIRE_ANSWERS as EMPTY, renderQuestionnaireStep } from "./test-helpers";
 import { StepRole } from "./step-role";
 
-const TEST_RESOURCES = { "zh-Hans": { common: enCommon, onboarding: enOnboarding } };
-
-const EMPTY: QuestionnaireAnswers = {
-  source: [],
-  source_other: null,
-  source_skipped: false,
-  role: null,
-  role_other: null,
-  role_skipped: false,
-  use_case: [],
-  use_case_other: null,
-  use_case_skipped: false,
-  version: 2,
-};
-
-function renderStep(answers: QuestionnaireAnswers = EMPTY) {
-  const onChange = vi.fn();
-  const onAdvance = vi.fn();
-  const onSkip = vi.fn();
-  render(
-    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
-      <StepRole
-        answers={answers}
-        onChange={onChange}
-        onAdvance={onAdvance}
-        onSkip={onSkip}
-      />
-    </I18nProvider>,
-  );
-  return { onChange, onAdvance, onSkip };
-}
+const renderStep = (answers = EMPTY) => renderQuestionnaireStep(StepRole, answers);
 
 describe("StepRole", () => {
   beforeEach(() => vi.restoreAllMocks());
