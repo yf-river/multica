@@ -851,14 +851,40 @@ func TestAgentSkillsAddRequiresSkillIDs(t *testing.T) {
 	}
 }
 
+func setAgentAvatarTestEnv(t *testing.T, serverURL string) {
+	t.Helper()
+	t.Setenv("MULTICA_SERVER_URL", serverURL)
+	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
+	t.Setenv("MULTICA_TOKEN", "test-token")
+}
+
+func newAgentAvatarTestCmd(t *testing.T, filePath string) *cobra.Command {
+	t.Helper()
+	cmd := &cobra.Command{Use: "avatar"}
+	cmd.Flags().String("file", "", "")
+	cmd.Flags().String("output", "json", "")
+	cmd.Flags().String("profile", "", "")
+	if filePath != "" {
+		if err := cmd.Flags().Set("file", filePath); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return cmd
+}
+
+func writeAgentAvatarTestFile(t *testing.T, name string, body []byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), name)
+	if err := os.WriteFile(path, body, 0o644); err != nil {
+		t.Fatalf("write test file: %v", err)
+	}
+	return path
+}
+
 // TestAgentAvatarHappyPath verifies the full flow: agent pre-check, file upload,
 // and avatar update all succeed.
 func TestAgentAvatarHappyPath(t *testing.T) {
-	dir := t.TempDir()
-	pngPath := filepath.Join(dir, "avatar.png")
-	if err := os.WriteFile(pngPath, []byte("fake-png-data"), 0o644); err != nil {
-		t.Fatalf("write test png: %v", err)
-	}
+	pngPath := writeAgentAvatarTestFile(t, "avatar.png", []byte("fake-png-data"))
 
 	var gotPaths []string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -898,17 +924,9 @@ func TestAgentAvatarHappyPath(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
+	setAgentAvatarTestEnv(t, srv.URL)
 
-	cmd := &cobra.Command{Use: "avatar"}
-	cmd.Flags().String("file", "", "")
-	cmd.Flags().String("output", "json", "")
-	cmd.Flags().String("profile", "", "")
-	if err := cmd.Flags().Set("file", pngPath); err != nil {
-		t.Fatal(err)
-	}
+	cmd := newAgentAvatarTestCmd(t, pngPath)
 
 	if err := runAgentAvatar(cmd, []string{"agent-123"}); err != nil {
 		t.Fatalf("runAgentAvatar: %v", err)
@@ -921,23 +939,10 @@ func TestAgentAvatarHappyPath(t *testing.T) {
 
 // TestAgentAvatarUnsupportedFormat rejects files with unsupported extensions.
 func TestAgentAvatarUnsupportedFormat(t *testing.T) {
-	t.Setenv("MULTICA_SERVER_URL", "http://127.0.0.1:0")
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
+	setAgentAvatarTestEnv(t, "http://127.0.0.1:0")
 
-	dir := t.TempDir()
-	txtPath := filepath.Join(dir, "avatar.txt")
-	if err := os.WriteFile(txtPath, []byte("not an image"), 0o644); err != nil {
-		t.Fatalf("write test txt: %v", err)
-	}
-
-	cmd := &cobra.Command{Use: "avatar"}
-	cmd.Flags().String("file", "", "")
-	cmd.Flags().String("output", "json", "")
-	cmd.Flags().String("profile", "", "")
-	if err := cmd.Flags().Set("file", txtPath); err != nil {
-		t.Fatal(err)
-	}
+	txtPath := writeAgentAvatarTestFile(t, "avatar.txt", []byte("not an image"))
+	cmd := newAgentAvatarTestCmd(t, txtPath)
 
 	err := runAgentAvatar(cmd, []string{"agent-123"})
 	if err == nil {
@@ -950,24 +955,10 @@ func TestAgentAvatarUnsupportedFormat(t *testing.T) {
 
 // TestAgentAvatarOversizedFile rejects files larger than 5MB.
 func TestAgentAvatarOversizedFile(t *testing.T) {
-	t.Setenv("MULTICA_SERVER_URL", "http://127.0.0.1:0")
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
+	setAgentAvatarTestEnv(t, "http://127.0.0.1:0")
 
-	dir := t.TempDir()
-	bigPath := filepath.Join(dir, "big.png")
-	// Write slightly more than 5MB.
-	if err := os.WriteFile(bigPath, make([]byte, 5<<20+1), 0o644); err != nil {
-		t.Fatalf("write test file: %v", err)
-	}
-
-	cmd := &cobra.Command{Use: "avatar"}
-	cmd.Flags().String("file", "", "")
-	cmd.Flags().String("output", "json", "")
-	cmd.Flags().String("profile", "", "")
-	if err := cmd.Flags().Set("file", bigPath); err != nil {
-		t.Fatal(err)
-	}
+	bigPath := writeAgentAvatarTestFile(t, "big.png", make([]byte, 5<<20+1))
+	cmd := newAgentAvatarTestCmd(t, bigPath)
 
 	err := runAgentAvatar(cmd, []string{"agent-123"})
 	if err == nil {
@@ -980,11 +971,7 @@ func TestAgentAvatarOversizedFile(t *testing.T) {
 
 // TestAgentAvatarMissingAgent returns 404 when the agent does not exist.
 func TestAgentAvatarMissingAgent(t *testing.T) {
-	dir := t.TempDir()
-	pngPath := filepath.Join(dir, "avatar.png")
-	if err := os.WriteFile(pngPath, []byte("fake-png-data"), 0o644); err != nil {
-		t.Fatalf("write test png: %v", err)
-	}
+	pngPath := writeAgentAvatarTestFile(t, "avatar.png", []byte("fake-png-data"))
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/agents/missing-agent" {
@@ -996,17 +983,9 @@ func TestAgentAvatarMissingAgent(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
+	setAgentAvatarTestEnv(t, srv.URL)
 
-	cmd := &cobra.Command{Use: "avatar"}
-	cmd.Flags().String("file", "", "")
-	cmd.Flags().String("output", "json", "")
-	cmd.Flags().String("profile", "", "")
-	if err := cmd.Flags().Set("file", pngPath); err != nil {
-		t.Fatal(err)
-	}
+	cmd := newAgentAvatarTestCmd(t, pngPath)
 
 	err := runAgentAvatar(cmd, []string{"missing-agent"})
 	if err == nil {
@@ -1019,11 +998,7 @@ func TestAgentAvatarMissingAgent(t *testing.T) {
 
 // TestAgentAvatarUploadFailure handles upload endpoint returning an error.
 func TestAgentAvatarUploadFailure(t *testing.T) {
-	dir := t.TempDir()
-	pngPath := filepath.Join(dir, "avatar.png")
-	if err := os.WriteFile(pngPath, []byte("fake-png-data"), 0o644); err != nil {
-		t.Fatalf("write test png: %v", err)
-	}
+	pngPath := writeAgentAvatarTestFile(t, "avatar.png", []byte("fake-png-data"))
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -1038,17 +1013,9 @@ func TestAgentAvatarUploadFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
+	setAgentAvatarTestEnv(t, srv.URL)
 
-	cmd := &cobra.Command{Use: "avatar"}
-	cmd.Flags().String("file", "", "")
-	cmd.Flags().String("output", "json", "")
-	cmd.Flags().String("profile", "", "")
-	if err := cmd.Flags().Set("file", pngPath); err != nil {
-		t.Fatal(err)
-	}
+	cmd := newAgentAvatarTestCmd(t, pngPath)
 
 	err := runAgentAvatar(cmd, []string{"agent-123"})
 	if err == nil {
@@ -1061,11 +1028,7 @@ func TestAgentAvatarUploadFailure(t *testing.T) {
 
 // TestAgentAvatarUpdateFailure handles the PUT update endpoint returning an error.
 func TestAgentAvatarUpdateFailure(t *testing.T) {
-	dir := t.TempDir()
-	pngPath := filepath.Join(dir, "avatar.png")
-	if err := os.WriteFile(pngPath, []byte("fake-png-data"), 0o644); err != nil {
-		t.Fatalf("write test png: %v", err)
-	}
+	pngPath := writeAgentAvatarTestFile(t, "avatar.png", []byte("fake-png-data"))
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
@@ -1087,17 +1050,9 @@ func TestAgentAvatarUpdateFailure(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	t.Setenv("MULTICA_SERVER_URL", srv.URL)
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
+	setAgentAvatarTestEnv(t, srv.URL)
 
-	cmd := &cobra.Command{Use: "avatar"}
-	cmd.Flags().String("file", "", "")
-	cmd.Flags().String("output", "json", "")
-	cmd.Flags().String("profile", "", "")
-	if err := cmd.Flags().Set("file", pngPath); err != nil {
-		t.Fatal(err)
-	}
+	cmd := newAgentAvatarTestCmd(t, pngPath)
 
 	err := runAgentAvatar(cmd, []string{"agent-123"})
 	if err == nil {
@@ -1110,14 +1065,9 @@ func TestAgentAvatarUpdateFailure(t *testing.T) {
 
 // TestAgentAvatarMissingFileFlag rejects when --file is not provided.
 func TestAgentAvatarMissingFileFlag(t *testing.T) {
-	t.Setenv("MULTICA_SERVER_URL", "http://127.0.0.1:0")
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
+	setAgentAvatarTestEnv(t, "http://127.0.0.1:0")
 
-	cmd := &cobra.Command{Use: "avatar"}
-	cmd.Flags().String("file", "", "")
-	cmd.Flags().String("output", "json", "")
-	cmd.Flags().String("profile", "", "")
+	cmd := newAgentAvatarTestCmd(t, "")
 
 	err := runAgentAvatar(cmd, []string{"agent-123"})
 	if err == nil {
@@ -1130,17 +1080,9 @@ func TestAgentAvatarMissingFileFlag(t *testing.T) {
 
 // TestAgentAvatarNonexistentFile rejects when the file path does not exist.
 func TestAgentAvatarNonexistentFile(t *testing.T) {
-	t.Setenv("MULTICA_SERVER_URL", "http://127.0.0.1:0")
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
+	setAgentAvatarTestEnv(t, "http://127.0.0.1:0")
 
-	cmd := &cobra.Command{Use: "avatar"}
-	cmd.Flags().String("file", "", "")
-	cmd.Flags().String("output", "json", "")
-	cmd.Flags().String("profile", "", "")
-	if err := cmd.Flags().Set("file", filepath.Join(t.TempDir(), "does-not-exist.png")); err != nil {
-		t.Fatal(err)
-	}
+	cmd := newAgentAvatarTestCmd(t, filepath.Join(t.TempDir(), "does-not-exist.png"))
 
 	err := runAgentAvatar(cmd, []string{"agent-123"})
 	if err == nil {
@@ -1153,26 +1095,14 @@ func TestAgentAvatarNonexistentFile(t *testing.T) {
 
 // TestAgentAvatarSizeBoundary verifies that exactly 5MB passes and 5MB+1 fails.
 func TestAgentAvatarSizeBoundary(t *testing.T) {
-	t.Setenv("MULTICA_SERVER_URL", "http://127.0.0.1:0")
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
+	setAgentAvatarTestEnv(t, "http://127.0.0.1:0")
 
 	t.Run("exactly 5MB passes", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "ok.png")
-		if err := os.WriteFile(path, make([]byte, 5<<20), 0o644); err != nil {
-			t.Fatalf("write test file: %v", err)
-		}
+		path := writeAgentAvatarTestFile(t, "ok.png", make([]byte, 5<<20))
 
 		// The command will fail later because no server is running, but
 		// the size validation itself should pass.
-		cmd := &cobra.Command{Use: "avatar"}
-		cmd.Flags().String("file", "", "")
-		cmd.Flags().String("output", "json", "")
-		cmd.Flags().String("profile", "", "")
-		if err := cmd.Flags().Set("file", path); err != nil {
-			t.Fatal(err)
-		}
+		cmd := newAgentAvatarTestCmd(t, path)
 
 		err := runAgentAvatar(cmd, []string{"agent-123"})
 		// We expect an error from the network call, not from size validation.
@@ -1182,19 +1112,8 @@ func TestAgentAvatarSizeBoundary(t *testing.T) {
 	})
 
 	t.Run("5MB plus one byte is rejected", func(t *testing.T) {
-		dir := t.TempDir()
-		path := filepath.Join(dir, "big.png")
-		if err := os.WriteFile(path, make([]byte, 5<<20+1), 0o644); err != nil {
-			t.Fatalf("write test file: %v", err)
-		}
-
-		cmd := &cobra.Command{Use: "avatar"}
-		cmd.Flags().String("file", "", "")
-		cmd.Flags().String("output", "json", "")
-		cmd.Flags().String("profile", "", "")
-		if err := cmd.Flags().Set("file", path); err != nil {
-			t.Fatal(err)
-		}
+		path := writeAgentAvatarTestFile(t, "big.png", make([]byte, 5<<20+1))
+		cmd := newAgentAvatarTestCmd(t, path)
 
 		err := runAgentAvatar(cmd, []string{"agent-123"})
 		if err == nil {
@@ -1208,25 +1127,12 @@ func TestAgentAvatarSizeBoundary(t *testing.T) {
 
 // TestAgentAvatarCaseInsensitiveExtension verifies uppercase extensions are accepted.
 func TestAgentAvatarCaseInsensitiveExtension(t *testing.T) {
-	t.Setenv("MULTICA_SERVER_URL", "http://127.0.0.1:0")
-	t.Setenv("MULTICA_WORKSPACE_ID", "ws-1")
-	t.Setenv("MULTICA_TOKEN", "test-token")
+	setAgentAvatarTestEnv(t, "http://127.0.0.1:0")
 
 	for _, ext := range []string{"avatar.PNG", "avatar.JPG", "avatar.JPEG", "avatar.GIF", "avatar.WEBP"} {
 		t.Run(ext, func(t *testing.T) {
-			dir := t.TempDir()
-			path := filepath.Join(dir, ext)
-			if err := os.WriteFile(path, []byte("fake"), 0o644); err != nil {
-				t.Fatalf("write test file: %v", err)
-			}
-
-			cmd := &cobra.Command{Use: "avatar"}
-			cmd.Flags().String("file", "", "")
-			cmd.Flags().String("output", "json", "")
-			cmd.Flags().String("profile", "", "")
-			if err := cmd.Flags().Set("file", path); err != nil {
-				t.Fatal(err)
-			}
+			path := writeAgentAvatarTestFile(t, ext, []byte("fake"))
+			cmd := newAgentAvatarTestCmd(t, path)
 
 			err := runAgentAvatar(cmd, []string{"agent-123"})
 			// We expect an error from the network call, not from extension validation.
@@ -1248,7 +1154,7 @@ func TestAgentGetTableIncludesAvatarURL(t *testing.T) {
 			"name":         "TestAgent",
 			"status":       "active",
 			"runtime_mode": "cloud",
-			"scope": "workspace",
+			"scope":        "workspace",
 			"avatar_url":   "https://cdn.example.com/avatar.png",
 			"description":  "A test agent",
 		})
