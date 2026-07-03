@@ -78,6 +78,50 @@ func cleanupSweeperFixture(t *testing.T, issueID, agentID string) {
 	testPool.Exec(ctx, `UPDATE agent SET status = 'idle' WHERE id = $1`, agentID)
 }
 
+func setupStaleRunningIssueFixture(t *testing.T, issueStatus, title string) (string, string) {
+	t.Helper()
+	ctx := context.Background()
+
+	var agentID, runtimeID string
+	err := testPool.QueryRow(ctx, `
+		SELECT a.id, a.runtime_id FROM agent a
+		JOIN member m ON m.workspace_id = a.workspace_id
+		JOIN "user" u ON u.id = m.user_id
+		WHERE u.account = $1
+		LIMIT 1
+	`, integrationTestAccount).Scan(&agentID, &runtimeID)
+	if err != nil {
+		t.Fatalf("failed to find test agent: %v", err)
+	}
+
+	var issueID string
+	err = testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, assignee_type, assignee_id)
+		SELECT $1, $2, $3, 'none', 'member', m.user_id, 'agent', $4
+		FROM member m WHERE m.workspace_id = $1 LIMIT 1
+		RETURNING id
+	`, testWorkspaceID, title, issueStatus, agentID).Scan(&issueID)
+	if err != nil {
+		t.Fatalf("failed to create test issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+
+	var taskID string
+	err = testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, dispatched_at, started_at)
+		VALUES ($1, $2, $3, 'running', 0, now() - interval '3 hours', now() - interval '3 hours')
+		RETURNING id
+	`, agentID, runtimeID, issueID).Scan(&taskID)
+	if err != nil {
+		t.Fatalf("failed to create stale task: %v", err)
+	}
+
+	return issueID, taskID
+}
+
 func TestRefreshAgentStatusFromTasks(t *testing.T) {
 	if testPool == nil {
 		t.Skip("no database connection")
@@ -355,46 +399,9 @@ func TestSweepResetsInProgressIssueToTodo(t *testing.T) {
 	}
 
 	ctx := context.Background()
-
-	// Use the same agent/runtime as the other sweeper tests.
-	var agentID, runtimeID string
-	err := testPool.QueryRow(ctx, `
-		SELECT a.id, a.runtime_id FROM agent a
-		JOIN member m ON m.workspace_id = a.workspace_id
-		JOIN "user" u ON u.id = m.user_id
-		WHERE u.account = $1
-		LIMIT 1
-	`, integrationTestAccount).Scan(&agentID, &runtimeID)
-	if err != nil {
-		t.Fatalf("failed to find test agent: %v", err)
-	}
-
-	// Create an issue already in in_progress (simulates a daemon crash mid-run).
-	var issueID string
-	err = testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, assignee_type, assignee_id)
-		SELECT $1, 'Stuck in_progress issue', 'in_progress', 'none', 'member', m.user_id, 'agent', $2
-		FROM member m WHERE m.workspace_id = $1 LIMIT 1
-		RETURNING id
-	`, testWorkspaceID, agentID).Scan(&issueID)
-	if err != nil {
-		t.Fatalf("failed to create test issue: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
-	})
-
-	// Create a stale running task for the issue (3 hours old — beyond any timeout).
-	var taskID string
-	err = testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, dispatched_at, started_at)
-		VALUES ($1, $2, $3, 'running', 0, now() - interval '3 hours', now() - interval '3 hours')
-		RETURNING id
-	`, agentID, runtimeID, issueID).Scan(&taskID)
-	if err != nil {
-		t.Fatalf("failed to create stale task: %v", err)
-	}
+	// Create an in_progress issue with a stale running task, simulating a
+	// daemon crash mid-run.
+	issueID, taskID := setupStaleRunningIssueFixture(t, "in_progress", "Stuck in_progress issue")
 
 	queries := db.New(testPool)
 	bus := events.New()
@@ -442,44 +449,8 @@ func TestSweepDoesNotResetIssueAlreadyInReview(t *testing.T) {
 	}
 
 	ctx := context.Background()
-
-	var agentID, runtimeID string
-	err := testPool.QueryRow(ctx, `
-		SELECT a.id, a.runtime_id FROM agent a
-		JOIN member m ON m.workspace_id = a.workspace_id
-		JOIN "user" u ON u.id = m.user_id
-		WHERE u.account = $1
-		LIMIT 1
-	`, integrationTestAccount).Scan(&agentID, &runtimeID)
-	if err != nil {
-		t.Fatalf("failed to find test agent: %v", err)
-	}
-
 	// Issue already advanced to in_review by the agent before the task timed out.
-	var issueID string
-	err = testPool.QueryRow(ctx, `
-		INSERT INTO issue (workspace_id, title, status, priority, creator_type, creator_id, assignee_type, assignee_id)
-		SELECT $1, 'Already in_review issue', 'in_review', 'none', 'member', m.user_id, 'agent', $2
-		FROM member m WHERE m.workspace_id = $1 LIMIT 1
-		RETURNING id
-	`, testWorkspaceID, agentID).Scan(&issueID)
-	if err != nil {
-		t.Fatalf("failed to create test issue: %v", err)
-	}
-	t.Cleanup(func() {
-		testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
-		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID)
-	})
-
-	var taskID string
-	err = testPool.QueryRow(ctx, `
-		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, dispatched_at, started_at)
-		VALUES ($1, $2, $3, 'running', 0, now() - interval '3 hours', now() - interval '3 hours')
-		RETURNING id
-	`, agentID, runtimeID, issueID).Scan(&taskID)
-	if err != nil {
-		t.Fatalf("failed to create stale task: %v", err)
-	}
+	issueID, _ := setupStaleRunningIssueFixture(t, "in_review", "Already in_review issue")
 
 	queries := db.New(testPool)
 	bus := events.New()
