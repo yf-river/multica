@@ -1,12 +1,11 @@
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { render, screen, within } from "@testing-library/react";
+import { screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import type { AgentRuntime } from "@multica/core/types";
-import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/zh-Hans/common.json";
-import enOnboarding from "../../locales/zh-Hans/onboarding.json";
-
-const TEST_RESOURCES = { "zh-Hans": { common: enCommon, onboarding: enOnboarding } };
+import {
+  makeOnboardingRuntime,
+  renderWithOnboardingI18n,
+} from "./test-helpers";
 
 const mocks = vi.hoisted(() => ({
   pickerState: {
@@ -26,38 +25,17 @@ vi.mock("../components/use-runtime-picker", () => ({
 
 import { StepPlatformFork } from "./step-platform-fork";
 
-function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
-  return {
-    id: "rt_test",
-    workspace_id: "ws_test",
-    name: "Claude Code",
-    provider: "claude",
-    status: "online",
-    runtime_mode: "local",
-    runtime_config: {},
-    device_info: "",
-    metadata: {},
-    daemon_id: null,
-    last_seen_at: new Date().toISOString(),
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    ...overrides,
-  } as unknown as AgentRuntime;
-}
-
 function renderFork(
   overrides: Partial<React.ComponentProps<typeof StepPlatformFork>> = {},
 ) {
   const onNext = vi.fn();
-  render(
-    <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
-      <StepPlatformFork
-        wsId="ws_test"
-        onNext={onNext}
-        cliInstructions={<div data-testid="cli-instructions">install me</div>}
-        {...overrides}
-      />
-    </I18nProvider>,
+  renderWithOnboardingI18n(
+    <StepPlatformFork
+      wsId="ws_test"
+      onNext={onNext}
+      cliInstructions={<div data-testid="cli-instructions">install me</div>}
+      {...overrides}
+    />,
   );
   return { onNext };
 }
@@ -150,7 +128,7 @@ describe("StepPlatformFork", () => {
   });
 
   it("CLI 对话框已选择运行时时启用连接并触发 onNext(runtime)", async () => {
-    const rt = makeRuntime({ id: "rt_claude", name: "Claude Code" });
+    const rt = makeOnboardingRuntime({ id: "rt_claude", name: "Claude Code" });
     resetPicker({
       runtimes: [rt],
       selected: rt,

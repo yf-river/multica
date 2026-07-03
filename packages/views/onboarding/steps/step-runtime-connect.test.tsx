@@ -3,10 +3,10 @@ import { act, render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import type { AgentRuntime } from "@multica/core/types";
 import { I18nProvider } from "@multica/core/i18n/react";
-import enCommon from "../../locales/zh-Hans/common.json";
-import enOnboarding from "../../locales/zh-Hans/onboarding.json";
-
-const TEST_RESOURCES = { "zh-Hans": { common: enCommon, onboarding: enOnboarding } };
+import {
+  makeOnboardingRuntime,
+  ONBOARDING_TEST_RESOURCES,
+} from "./test-helpers";
 
 // Hoisted mocks — replace analytics and the runtime picker before the SUT
 // imports them. Tests drive picker state via `mocks.pickerState`; every
@@ -35,25 +35,6 @@ vi.mock("../components/use-runtime-picker", () => ({
 
 import { StepRuntimeConnect } from "./step-runtime-connect";
 
-function makeRuntime(overrides: Partial<AgentRuntime> = {}): AgentRuntime {
-  return {
-    id: "rt_test",
-    workspace_id: "ws_test",
-    name: "Claude Code",
-    provider: "claude",
-    status: "online",
-    runtime_mode: "local",
-    runtime_config: {},
-    device_info: "",
-    metadata: {},
-    daemon_id: null,
-    last_seen_at: new Date().toISOString(),
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    ...overrides,
-  } as unknown as AgentRuntime;
-}
-
 function setPicker(patch: Partial<typeof mocks.pickerState> = {}) {
   mocks.pickerState.runtimes = patch.runtimes ?? [];
   mocks.pickerState.selected = patch.selected ?? null;
@@ -70,7 +51,7 @@ function renderStep() {
   });
   render(
     <QueryClientProvider client={qc}>
-      <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
+      <I18nProvider locale="zh-Hans" resources={ONBOARDING_TEST_RESOURCES}>
         <StepRuntimeConnect wsId="ws_test" onNext={onNext} onBack={onBack} />
       </I18nProvider>
     </QueryClientProvider>,
@@ -91,7 +72,7 @@ describe("StepRuntimeConnect — onboarding_runtime_detected", () => {
   });
 
   it("运行时在挂载时同步到达时发送 outcome: found", () => {
-    const rt = makeRuntime({
+    const rt = makeOnboardingRuntime({
       id: "rt_claude",
       provider: "claude",
       status: "online",
@@ -126,9 +107,9 @@ describe("StepRuntimeConnect — onboarding_runtime_detected", () => {
   it("从不同 provider 推导 has_claude / has_codex / has_cursor", () => {
     setPicker({
       runtimes: [
-        makeRuntime({ id: "rt1", provider: "claude" }),
-        makeRuntime({ id: "rt2", provider: "codex", status: "offline" }),
-        makeRuntime({ id: "rt3", provider: "cursor" }),
+        makeOnboardingRuntime({ id: "rt1", provider: "claude" }),
+        makeOnboardingRuntime({ id: "rt2", provider: "codex", status: "offline" }),
+        makeOnboardingRuntime({ id: "rt3", provider: "cursor" }),
       ],
       hasRuntimes: true,
     });
@@ -181,7 +162,7 @@ describe("StepRuntimeConnect — onboarding_runtime_detected", () => {
   });
 
   it("解析完成后组件重渲染不会重复发送事件", () => {
-    const rt = makeRuntime({ id: "rt_claude", provider: "claude" });
+    const rt = makeOnboardingRuntime({ id: "rt_claude", provider: "claude" });
     setPicker({ runtimes: [rt], selected: rt, selectedId: rt.id, hasRuntimes: true });
 
     const { onNext } = renderStep();
@@ -190,7 +171,7 @@ describe("StepRuntimeConnect — onboarding_runtime_detected", () => {
     // Simulate a runtime coming online / a second runtime registering:
     // the event has already resolved once; it must not re-emit.
     setPicker({
-      runtimes: [rt, makeRuntime({ id: "rt_codex", provider: "codex" })],
+      runtimes: [rt, makeOnboardingRuntime({ id: "rt_codex", provider: "codex" })],
       selected: rt,
       selectedId: rt.id,
       hasRuntimes: true,
@@ -208,8 +189,8 @@ describe("StepRuntimeConnect — onboarding_runtime_detected", () => {
   it("只统计不同 provider，同一 provider 的多个运行时不重复计数", () => {
     setPicker({
       runtimes: [
-        makeRuntime({ id: "rt1", provider: "claude" }),
-        makeRuntime({ id: "rt2", provider: "claude", status: "offline" }),
+        makeOnboardingRuntime({ id: "rt1", provider: "claude" }),
+        makeOnboardingRuntime({ id: "rt2", provider: "claude", status: "offline" }),
       ],
       hasRuntimes: true,
     });
