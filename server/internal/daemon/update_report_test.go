@@ -2,9 +2,7 @@ package daemon
 
 import (
 	"context"
-	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -18,25 +16,11 @@ func withFastUpdateReportBackoffs(t *testing.T) {
 	t.Cleanup(func() { updateReportBackoffs = prev })
 }
 
-func updateReportDaemon(t *testing.T, handler http.HandlerFunc) (*Daemon, *int32) {
-	t.Helper()
-	var calls int32
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&calls, 1)
-		handler(w, r)
-	}))
-	t.Cleanup(srv.Close)
-	return &Daemon{
-		client: NewClient(srv.URL),
-		logger: slog.Default(),
-	}, &calls
-}
-
 func TestReportUpdateResult_RetriesOn500AndEventuallySucceeds(t *testing.T) {
 	withFastUpdateReportBackoffs(t)
 
 	var hits int32
-	d, calls := updateReportDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
+	d, calls := reportResultDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
 		n := atomic.AddInt32(&hits, 1)
 		if n <= 2 {
 			http.Error(w, "{}", http.StatusInternalServerError)
@@ -56,7 +40,7 @@ func TestReportUpdateResult_RetriesOn500AndEventuallySucceeds(t *testing.T) {
 func TestReportUpdateResult_DoesNotRetryOn4xx(t *testing.T) {
 	withFastUpdateReportBackoffs(t)
 
-	d, calls := updateReportDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
+	d, calls := reportResultDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, `{"error":"update not found"}`, http.StatusNotFound)
 	})
 
@@ -70,7 +54,7 @@ func TestReportUpdateResult_DoesNotRetryOn4xx(t *testing.T) {
 func TestReportUpdateResult_GivesUpAfterAllAttemptsFail(t *testing.T) {
 	withFastUpdateReportBackoffs(t)
 
-	d, calls := updateReportDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
+	d, calls := reportResultDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "{}", http.StatusInternalServerError)
 	})
 
@@ -86,7 +70,7 @@ func TestReportUpdateResult_AbortsOnContextCancel(t *testing.T) {
 	updateReportBackoffs = []time.Duration{0, 200 * time.Millisecond}
 	t.Cleanup(func() { updateReportBackoffs = prev })
 
-	d, calls := updateReportDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
+	d, calls := reportResultDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "{}", http.StatusInternalServerError)
 	})
 
@@ -106,7 +90,7 @@ func TestReportUpdateResult_SendsCorrectPath(t *testing.T) {
 	withFastUpdateReportBackoffs(t)
 
 	var path string
-	d, _ := updateReportDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+	d, _ := reportResultDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		path = r.URL.Path
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok"}`))

@@ -19,7 +19,7 @@ func TestReportModelListResult_RetriesOn500AndEventuallySucceeds(t *testing.T) {
 	withFastLocalSkillReportBackoffs(t)
 
 	var hits int32
-	d, calls := localSkillReportDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
+	d, calls := reportResultDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
 		n := atomic.AddInt32(&hits, 1)
 		if n <= 2 {
 			http.Error(w, "{}", http.StatusInternalServerError)
@@ -42,7 +42,7 @@ func TestReportModelListResult_RetriesOn500AndEventuallySucceeds(t *testing.T) {
 func TestReportModelListResult_DoesNotRetryOn4xx(t *testing.T) {
 	withFastLocalSkillReportBackoffs(t)
 
-	d, calls := localSkillReportDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
+	d, calls := reportResultDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, `{"error":"request not found"}`, http.StatusNotFound)
 	})
 
@@ -60,7 +60,7 @@ func TestReportModelListResult_SendsCorrectPath(t *testing.T) {
 	withFastLocalSkillReportBackoffs(t)
 
 	var path string
-	d, _ := localSkillReportDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+	d, _ := reportResultDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		path = r.URL.Path
 		w.WriteHeader(http.StatusOK)
 		w.Write([]byte(`{"status":"ok"}`))

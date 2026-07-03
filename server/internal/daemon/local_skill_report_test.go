@@ -21,11 +21,11 @@ func withFastLocalSkillReportBackoffs(t *testing.T) {
 	t.Cleanup(func() { runtimeReportBackoffs = prev })
 }
 
-// localSkillReportDaemon wires a Daemon instance around an httptest.Server
-// that records every inbound request and lets the test script status codes
-// to return. That lets us exercise the retry path end-to-end against the
+// reportResultDaemon wires a Daemon instance around an httptest.Server that
+// records every inbound request and lets the test script status codes to
+// return. That lets report tests exercise retry paths end-to-end against the
 // real daemon.Client code, not a mock.
-func localSkillReportDaemon(t *testing.T, handler http.HandlerFunc) (*Daemon, *int32) {
+func reportResultDaemon(t *testing.T, handler http.HandlerFunc) (*Daemon, *int32) {
 	t.Helper()
 	var calls int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -43,7 +43,7 @@ func TestReportLocalSkillListResult_RetriesOn500AndEventuallySucceeds(t *testing
 	withFastLocalSkillReportBackoffs(t)
 
 	var hits int32
-	d, calls := localSkillReportDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
+	d, calls := reportResultDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
 		// Fail twice with 500, then succeed. Matches the concrete failure
 		// mode the review is pinning: the server returns 500 while the
 		// store write is being retried on its end, and the daemon must
@@ -67,7 +67,7 @@ func TestReportLocalSkillListResult_RetriesOn500AndEventuallySucceeds(t *testing
 func TestReportLocalSkillListResult_DoesNotRetryOn4xx(t *testing.T) {
 	withFastLocalSkillReportBackoffs(t)
 
-	d, calls := localSkillReportDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
+	d, calls := reportResultDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
 		// 404 is permanent — the request expired, was cross-workspace, or
 		// the server never saw it. Retrying just wastes heartbeat cycles.
 		http.Error(w, `{"error":"request not found"}`, http.StatusNotFound)
@@ -84,7 +84,7 @@ func TestReportLocalSkillImportResult_RetriesOn500AndEventuallySucceeds(t *testi
 	withFastLocalSkillReportBackoffs(t)
 
 	var hits int32
-	d, calls := localSkillReportDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
+	d, calls := reportResultDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
 		n := atomic.AddInt32(&hits, 1)
 		if n == 1 {
 			http.Error(w, "{}", http.StatusBadGateway)
@@ -104,7 +104,7 @@ func TestReportLocalSkillImportResult_RetriesOn500AndEventuallySucceeds(t *testi
 func TestReportLocalSkillResult_GivesUpAfterAllAttemptsFail(t *testing.T) {
 	withFastLocalSkillReportBackoffs(t)
 
-	d, calls := localSkillReportDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
+	d, calls := reportResultDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "{}", http.StatusInternalServerError)
 	})
 
@@ -123,7 +123,7 @@ func TestReportLocalSkillResult_AbortsOnContextCancel(t *testing.T) {
 	runtimeReportBackoffs = []time.Duration{0, 200 * time.Millisecond}
 	t.Cleanup(func() { runtimeReportBackoffs = prev })
 
-	d, calls := localSkillReportDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
+	d, calls := reportResultDaemon(t, func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "{}", http.StatusInternalServerError)
 	})
 
@@ -145,7 +145,7 @@ func TestReportLocalSkillResult_SendsCorrectPath(t *testing.T) {
 	withFastLocalSkillReportBackoffs(t)
 
 	var listPath, importPath string
-	d, _ := localSkillReportDaemon(t, func(w http.ResponseWriter, r *http.Request) {
+	d, _ := reportResultDaemon(t, func(w http.ResponseWriter, r *http.Request) {
 		// Smoke: make sure we're hitting the right daemon-side endpoint.
 		// Protects against a future refactor silently pointing reports at
 		// the wrong URL.
