@@ -119,9 +119,8 @@ const mockGetChildIssueProgress = vi.hoisted(() => vi.fn().mockResolvedValue({ p
 const mockGetAgentTaskSnapshot = vi.hoisted(() => vi.fn().mockResolvedValue([]));
 const mockListProjects = vi.hoisted(() => vi.fn().mockResolvedValue({ projects: [], total: 0 }));
 const mockListLabels = vi.hoisted(() => vi.fn().mockResolvedValue({ labels: [] }));
-vi.mock("@multica/core/api", () => ({
-  api: {
-    getBaseUrl: () => "http://127.0.0.1:8080",
+vi.mock("@multica/core/api", () => {
+  const createMockApiMethods = () => ({
     listIssues: (...args: any[]) => mockListIssues(...args),
     listIssueBuckets: (...args: any[]) => mockListIssueBuckets(...args),
     listGroupedIssues: (...args: any[]) => mockListGroupedIssues(...args),
@@ -134,23 +133,17 @@ vi.mock("@multica/core/api", () => ({
     getAgentTaskSnapshot: (...args: any[]) => mockGetAgentTaskSnapshot(...args),
     listProjects: (...args: any[]) => mockListProjects(...args),
     listLabels: (...args: any[]) => mockListLabels(...args),
-  },
-  getApi: () => ({
-    listIssues: (...args: any[]) => mockListIssues(...args),
-    listIssueBuckets: (...args: any[]) => mockListIssueBuckets(...args),
-    listGroupedIssues: (...args: any[]) => mockListGroupedIssues(...args),
-    updateIssue: vi.fn(),
-    listMembers: (...args: any[]) => mockListMembers(...args),
-    listAgents: (...args: any[]) => mockListAgents(...args),
-    listSquads: (...args: any[]) => mockListSquads(...args),
-    getAssigneeFrequency: (...args: any[]) => mockGetAssigneeFrequency(...args),
-    getChildIssueProgress: (...args: any[]) => mockGetChildIssueProgress(...args),
-    getAgentTaskSnapshot: (...args: any[]) => mockGetAgentTaskSnapshot(...args),
-    listProjects: (...args: any[]) => mockListProjects(...args),
-    listLabels: (...args: any[]) => mockListLabels(...args),
-  }),
-  setApiInstance: vi.fn(),
-}));
+  });
+
+  return {
+    api: {
+      getBaseUrl: () => "http://127.0.0.1:8080",
+      ...createMockApiMethods(),
+    },
+    getApi: createMockApiMethods,
+    setApiInstance: vi.fn(),
+  };
+});
 
 // Mock issue config
 vi.mock("@multica/core/issues/config", () => ({
