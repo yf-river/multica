@@ -770,6 +770,32 @@ type UpdateMemberRequest struct {
 	Role string `json:"role"`
 }
 
+func (h *Handler) workspaceMemberTarget(w http.ResponseWriter, r *http.Request, requester db.Member, memberID string) (db.Member, bool) {
+	memberUUID, ok := parseUUIDOrBadRequest(w, memberID, "member id")
+	if !ok {
+		return db.Member{}, false
+	}
+	target, err := h.Queries.GetMember(r.Context(), memberUUID)
+	if err != nil || uuidToString(target.WorkspaceID) != uuidToString(requester.WorkspaceID) {
+		writeError(w, http.StatusNotFound, "member not found")
+		return db.Member{}, false
+	}
+	return target, true
+}
+
+func (h *Handler) ensureWorkspaceHasAnotherOwner(w http.ResponseWriter, r *http.Request, workspaceID pgtype.UUID, failureMessage string) bool {
+	members, err := h.Queries.ListMembers(r.Context(), workspaceID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, failureMessage)
+		return false
+	}
+	if countOwners(members) <= 1 {
+		writeError(w, http.StatusBadRequest, "workspace must have at least one owner")
+		return false
+	}
+	return true
+}
+
 func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 	workspaceID := workspaceIDFromURL(r, "id")
 	requester, ok := h.workspaceMember(w, r, workspaceID)
@@ -778,13 +804,8 @@ func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	memberID := chi.URLParam(r, "memberId")
-	memberUUID, ok := parseUUIDOrBadRequest(w, memberID, "member id")
+	target, ok := h.workspaceMemberTarget(w, r, requester, memberID)
 	if !ok {
-		return
-	}
-	target, err := h.Queries.GetMember(r.Context(), memberUUID)
-	if err != nil || uuidToString(target.WorkspaceID) != uuidToString(requester.WorkspaceID) {
-		writeError(w, http.StatusNotFound, "member not found")
 		return
 	}
 
@@ -810,13 +831,7 @@ func (h *Handler) UpdateMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if target.Role == "owner" && role != "owner" {
-		members, err := h.Queries.ListMembers(r.Context(), target.WorkspaceID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to update member")
-			return
-		}
-		if countOwners(members) <= 1 {
-			writeError(w, http.StatusBadRequest, "workspace must have at least one owner")
+		if !h.ensureWorkspaceHasAnotherOwner(w, r, target.WorkspaceID, "failed to update member") {
 			return
 		}
 	}
@@ -854,13 +869,8 @@ func (h *Handler) DeleteMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	memberID := chi.URLParam(r, "memberId")
-	memberUUID, ok := parseUUIDOrBadRequest(w, memberID, "member id")
+	target, ok := h.workspaceMemberTarget(w, r, requester, memberID)
 	if !ok {
-		return
-	}
-	target, err := h.Queries.GetMember(r.Context(), memberUUID)
-	if err != nil || uuidToString(target.WorkspaceID) != uuidToString(requester.WorkspaceID) {
-		writeError(w, http.StatusNotFound, "member not found")
 		return
 	}
 
@@ -870,13 +880,7 @@ func (h *Handler) DeleteMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if target.Role == "owner" {
-		members, err := h.Queries.ListMembers(r.Context(), target.WorkspaceID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to delete member")
-			return
-		}
-		if countOwners(members) <= 1 {
-			writeError(w, http.StatusBadRequest, "workspace must have at least one owner")
+		if !h.ensureWorkspaceHasAnotherOwner(w, r, target.WorkspaceID, "failed to delete member") {
 			return
 		}
 	}
@@ -913,13 +917,7 @@ func (h *Handler) LeaveWorkspace(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if member.Role == "owner" {
-		members, err := h.Queries.ListMembers(r.Context(), member.WorkspaceID)
-		if err != nil {
-			writeError(w, http.StatusInternalServerError, "failed to leave workspace")
-			return
-		}
-		if countOwners(members) <= 1 {
-			writeError(w, http.StatusBadRequest, "workspace must have at least one owner")
+		if !h.ensureWorkspaceHasAnotherOwner(w, r, member.WorkspaceID, "failed to leave workspace") {
 			return
 		}
 	}
