@@ -16,6 +16,50 @@ import (
 // that remains is the `--status todo` vs `--status backlog` rule for
 // creating sub-issues, which is unrelated to the notification path.
 
+type runtimeConfigModeCase struct {
+	name string
+	ctx  TaskContextForEnv
+}
+
+func nonIssueRuntimeModeCases() []runtimeConfigModeCase {
+	return []runtimeConfigModeCase{
+		{
+			name: "chat",
+			ctx:  TaskContextForEnv{ChatSessionID: "chat-1"},
+		},
+		{
+			name: "quick-create",
+			ctx:  TaskContextForEnv{QuickCreatePrompt: "create me an issue"},
+		},
+		{
+			name: "autopilot run-only",
+			ctx:  TaskContextForEnv{AutopilotRunID: "run-1"},
+		},
+	}
+}
+
+type runtimeConfigProviderFileCase struct {
+	provider string
+	filename string
+}
+
+func runtimeConfigProviderFileCases() []runtimeConfigProviderFileCase {
+	return []runtimeConfigProviderFileCase{
+		{"claude", "CLAUDE.md"},
+		{"codex", "AGENTS.md"},
+		{"copilot", "AGENTS.md"},
+		{"opencode", "AGENTS.md"},
+		{"openclaw", "AGENTS.md"},
+		{"hermes", "AGENTS.md"},
+		{"pi", "AGENTS.md"},
+		{"cursor", "AGENTS.md"},
+		{"kimi", "AGENTS.md"},
+		{"kiro", "AGENTS.md"},
+		{"antigravity", "AGENTS.md"},
+		{"gemini", "GEMINI.md"},
+	}
+}
+
 func TestSubIssueCreationSectionPresentForIssueRuns(t *testing.T) {
 	t.Parallel()
 	cases := []struct {
@@ -378,10 +422,7 @@ func TestAssignmentTriggeredSquadLeaderGuardrail(t *testing.T) {
 
 func TestInstructionPrecedenceOnlyAppliesToAssignmentWorkflow(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name string
-		ctx  TaskContextForEnv
-	}{
+	cases := append([]runtimeConfigModeCase{
 		{
 			name: "comment-triggered",
 			ctx: TaskContextForEnv{
@@ -389,19 +430,7 @@ func TestInstructionPrecedenceOnlyAppliesToAssignmentWorkflow(t *testing.T) {
 				TriggerCommentID: "22222222-3333-4444-5555-666666666666",
 			},
 		},
-		{
-			name: "chat",
-			ctx:  TaskContextForEnv{ChatSessionID: "chat-1"},
-		},
-		{
-			name: "quick-create",
-			ctx:  TaskContextForEnv{QuickCreatePrompt: "create me an issue"},
-		},
-		{
-			name: "autopilot run-only",
-			ctx:  TaskContextForEnv{AutopilotRunID: "run-1"},
-		},
-	}
+	}, nonIssueRuntimeModeCases()...)
 	for _, tc := range cases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
@@ -557,24 +586,7 @@ func TestWorkspaceContextHeadingSkippedWhenEmpty(t *testing.T) {
 
 func TestSubIssueCreationSectionSkippedForNonIssueModes(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		name string
-		ctx  TaskContextForEnv
-	}{
-		{
-			name: "chat",
-			ctx:  TaskContextForEnv{ChatSessionID: "chat-1"},
-		},
-		{
-			name: "quick-create",
-			ctx:  TaskContextForEnv{QuickCreatePrompt: "create me an issue"},
-		},
-		{
-			name: "autopilot run-only",
-			ctx:  TaskContextForEnv{AutopilotRunID: "run-1"},
-		},
-	}
-	for _, tc := range cases {
+	for _, tc := range nonIssueRuntimeModeCases() {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -735,24 +747,7 @@ func TestWriteRuntimeConfigFileIsIdempotent(t *testing.T) {
 // semantics propagate through it for each provider's target filename.
 func TestInjectRuntimeConfigPreservesUserContent(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		provider string
-		filename string
-	}{
-		{"claude", "CLAUDE.md"},
-		{"codex", "AGENTS.md"},
-		{"copilot", "AGENTS.md"},
-		{"opencode", "AGENTS.md"},
-		{"openclaw", "AGENTS.md"},
-		{"hermes", "AGENTS.md"},
-		{"pi", "AGENTS.md"},
-		{"cursor", "AGENTS.md"},
-		{"kimi", "AGENTS.md"},
-		{"kiro", "AGENTS.md"},
-		{"antigravity", "AGENTS.md"},
-		{"gemini", "GEMINI.md"},
-	}
-	for _, tc := range cases {
+	for _, tc := range runtimeConfigProviderFileCases() {
 		tc := tc
 		t.Run(tc.provider, func(t *testing.T) {
 			t.Parallel()
@@ -1084,24 +1079,7 @@ func TestCleanupRuntimeConfigRemovesMalformedHalfBlock(t *testing.T) {
 // new provider added to one side cannot drift past the other.
 func TestCleanupRuntimeConfigByProvider(t *testing.T) {
 	t.Parallel()
-	cases := []struct {
-		provider string
-		filename string
-	}{
-		{"claude", "CLAUDE.md"},
-		{"codex", "AGENTS.md"},
-		{"copilot", "AGENTS.md"},
-		{"opencode", "AGENTS.md"},
-		{"openclaw", "AGENTS.md"},
-		{"hermes", "AGENTS.md"},
-		{"pi", "AGENTS.md"},
-		{"cursor", "AGENTS.md"},
-		{"kimi", "AGENTS.md"},
-		{"kiro", "AGENTS.md"},
-		{"antigravity", "AGENTS.md"},
-		{"gemini", "GEMINI.md"},
-	}
-	for _, tc := range cases {
+	for _, tc := range runtimeConfigProviderFileCases() {
 		tc := tc
 		t.Run(tc.provider, func(t *testing.T) {
 			t.Parallel()
