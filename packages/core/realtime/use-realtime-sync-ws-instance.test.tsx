@@ -45,6 +45,8 @@ function createWrapper(qc: QueryClient) {
   };
 }
 
+type RealtimeSyncProps = { ws: WSClient | null };
+
 describe("useRealtimeSync — ws instance change", () => {
   let qc: QueryClient;
   let stores: RealtimeSyncStores;
@@ -56,11 +58,30 @@ describe("useRealtimeSync — ws instance change", () => {
     invalidateSpy = vi.spyOn(qc, "invalidateQueries");
   });
 
+  function renderRealtimeSync(initialWs: WSClient | null) {
+    return renderHook(
+      ({ ws }: RealtimeSyncProps) => useRealtimeSync(ws, stores),
+      { initialProps: { ws: initialWs }, wrapper: createWrapper(qc) },
+    );
+  }
+
+  function reconnectAfterNullGap(rerender: (props: RealtimeSyncProps) => void) {
+    invalidateSpy.mockClear();
+    rerender({ ws: null });
+
+    const ws2 = createMockWs();
+    rerender({ ws: ws2 });
+  }
+
+  function invalidatedQueryKeys() {
+    return invalidateSpy.mock.calls.map(
+      (call: [{ queryKey?: unknown }, ...unknown[]]) => call[0].queryKey,
+    );
+  }
+
   it("skips invalidation on first non-null ws instance", () => {
     const ws = createMockWs();
-    renderHook(() => useRealtimeSync(ws, stores), {
-      wrapper: createWrapper(qc),
-    });
+    renderRealtimeSync(ws);
 
     // The main effect calls invalidateQueries for its own setup, but the
     // ws-instance-change effect should NOT have fired invalidation.
@@ -75,10 +96,7 @@ describe("useRealtimeSync — ws instance change", () => {
 
   it("does not invalidate when ws goes from instance to null", () => {
     const ws1 = createMockWs();
-    const { rerender } = renderHook(
-      ({ ws }) => useRealtimeSync(ws, stores),
-      { initialProps: { ws: ws1 as WSClient | null }, wrapper: createWrapper(qc) },
-    );
+    const { rerender } = renderRealtimeSync(ws1);
 
     invalidateSpy.mockClear();
     rerender({ ws: null });
@@ -88,10 +106,7 @@ describe("useRealtimeSync — ws instance change", () => {
 
   it("invalidates exactly once when a new ws instance appears after null gap", () => {
     const ws1 = createMockWs();
-    const { rerender } = renderHook(
-      ({ ws }) => useRealtimeSync(ws, stores),
-      { initialProps: { ws: ws1 as WSClient | null }, wrapper: createWrapper(qc) },
-    );
+    const { rerender } = renderRealtimeSync(ws1);
 
     // Simulate workspace switch: ws -> null -> new ws
     invalidateSpy.mockClear();
@@ -109,10 +124,7 @@ describe("useRealtimeSync — ws instance change", () => {
 
   it("does not re-invalidate when rerendered with the same ws instance", () => {
     const ws1 = createMockWs();
-    const { rerender } = renderHook(
-      ({ ws }) => useRealtimeSync(ws, stores),
-      { initialProps: { ws: ws1 as WSClient | null }, wrapper: createWrapper(qc) },
-    );
+    const { rerender } = renderRealtimeSync(ws1);
 
     invalidateSpy.mockClear();
     // Rerender with same instance
@@ -123,18 +135,10 @@ describe("useRealtimeSync — ws instance change", () => {
 
   it("invalidates chat, pins, and labels queries on ws instance change", () => {
     const ws1 = createMockWs();
-    const { rerender } = renderHook(
-      ({ ws }) => useRealtimeSync(ws, stores),
-      { initialProps: { ws: ws1 as WSClient | null }, wrapper: createWrapper(qc) },
-    );
+    const { rerender } = renderRealtimeSync(ws1);
+    reconnectAfterNullGap(rerender);
 
-    invalidateSpy.mockClear();
-    rerender({ ws: null });
-
-    const ws2 = createMockWs();
-    rerender({ ws: ws2 });
-
-    const calls = invalidateSpy.mock.calls.map((call: [{ queryKey?: unknown }, ...unknown[]]) => call[0].queryKey);
+    const calls = invalidatedQueryKeys();
     expect(calls).toContainEqual(["chat", "ws-1"]);
     expect(calls).toContainEqual(["labels", "ws-1"]);
   });
@@ -144,18 +148,10 @@ describe("useRealtimeSync — ws instance change", () => {
     // their own invalidation on recovery — otherwise events missed while
     // disconnected leave them stale forever (staleTime: Infinity, #3953).
     const ws1 = createMockWs();
-    const { rerender } = renderHook(
-      ({ ws }) => useRealtimeSync(ws, stores),
-      { initialProps: { ws: ws1 as WSClient | null }, wrapper: createWrapper(qc) },
-    );
+    const { rerender } = renderRealtimeSync(ws1);
+    reconnectAfterNullGap(rerender);
 
-    invalidateSpy.mockClear();
-    rerender({ ws: null });
-
-    const ws2 = createMockWs();
-    rerender({ ws: ws2 });
-
-    const calls = invalidateSpy.mock.calls.map((call: [{ queryKey?: unknown }, ...unknown[]]) => call[0].queryKey);
+    const calls = invalidatedQueryKeys();
     expect(calls).toContainEqual(["issues", "timeline"]);
     expect(calls).toContainEqual(["issues", "reactions"]);
     expect(calls).toContainEqual(["issues", "subscribers"]);
