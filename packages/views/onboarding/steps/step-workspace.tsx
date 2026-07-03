@@ -15,13 +15,11 @@ import {
   Plus,
   Zap,
 } from "lucide-react";
-import { toast } from "sonner";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
 import { useScrollFade } from "@multica/ui/hooks/use-scroll-fade";
 import { cn } from "@multica/ui/lib/utils";
-import { useCreateWorkspace } from "@multica/core/workspace/mutations";
 import type { Workspace } from "@multica/core/types";
 import { isImeComposing } from "@multica/core/utils";
 import { useConfigStore } from "@multica/core/config";
@@ -32,12 +30,7 @@ import { StepHeader } from "../components/step-header";
 import { RadioMark } from "../components/option-card";
 import { WorkspaceAvatar } from "../../workspace/workspace-avatar";
 import { useT } from "../../i18n";
-import {
-  WORKSPACE_SLUG_REGEX,
-  isWorkspaceSlugConflict,
-  nameToWorkspaceSlug,
-} from "../../workspace/slug";
-import { isReservedSlug } from "@multica/core/paths";
+import { useWorkspaceCreateController } from "../../workspace/use-workspace-create-controller";
 
 /**
  * Step 2 — create your first workspace, or continue with one set up in
@@ -92,64 +85,26 @@ export function StepWorkspace({
   const pickCreate = () =>
     setMode((m) => (m === "create" ? null : "create"));
 
-  // Form state for the create path. Mirrors CreateWorkspaceForm's
-  // internals: slug auto-fills from name until the user manually edits
-  // it; server-side slug conflicts show inline. Kept at this level so
-  // the footer CTA can read `canCreate` and trigger `handleCreate`.
-  const [name, setName] = useState("");
-  const [slug, setSlug] = useState("");
-  const [slugServerError, setSlugServerError] = useState<string | null>(null);
-  const slugTouched = useRef(false);
-
-  const slugValidationError =
-    slug.length > 0 && !WORKSPACE_SLUG_REGEX.test(slug)
-      ? t(($) => $.step_workspace.slug_format_error)
-      : null;
-  const slugReservedError =
-    slug.length > 0 && isReservedSlug(slug)
-      ? t(($) => $.step_workspace.slug_reserved_error)
-      : null;
-  const slugError = slugValidationError ?? slugReservedError ?? slugServerError;
-  const canCreate =
-    name.trim().length > 0 && slug.trim().length > 0 && !slugError;
-
-  const handleNameChange = (value: string) => {
-    setName(value);
-    if (!slugTouched.current) {
-      setSlug(nameToWorkspaceSlug(value));
-      setSlugServerError(null);
-    }
-  };
-
-  const handleSlugChange = (value: string) => {
-    slugTouched.current = true;
-    setSlug(value);
-    setSlugServerError(null);
-  };
-
-  const createWorkspace = useCreateWorkspace();
-
-  const handleCreate = () => {
-    if (!canCreate || createWorkspace.isPending) return;
-    createWorkspace.mutate(
-      { name: name.trim(), slug: slug.trim() },
-      {
-        onSuccess: onCreated,
-        onError: (error) => {
-          if (isWorkspaceSlugConflict(error)) {
-            setSlugServerError(t(($) => $.step_workspace.slug_taken_error));
-            toast.error(t(($) => $.step_workspace.slug_conflict_toast));
-            return;
-          }
-          toast.error(
-            error instanceof Error && error.message
-              ? error.message
-              : t(($) => $.step_workspace.create_failed_toast),
-          );
-        },
-      },
-    );
-  };
+  const {
+    name,
+    slug,
+    slugError,
+    canSubmit: canCreate,
+    isPending: isCreating,
+    handleNameChange,
+    handleSlugChange,
+    handleCreate,
+  } = useWorkspaceCreateController({
+    onSuccess: onCreated,
+    preventSubmitWhilePending: true,
+    messages: {
+      slugFormat: t(($) => $.step_workspace.slug_format_error),
+      slugReserved: t(($) => $.step_workspace.slug_reserved_error),
+      slugTaken: t(($) => $.step_workspace.slug_taken_error),
+      slugConflictToast: t(($) => $.step_workspace.slug_conflict_toast),
+      createFailed: t(($) => $.step_workspace.create_failed_toast),
+    },
+  });
 
   // Compute the footer CTA from whichever path the user is on. `null`
   // is only reachable in the resume path; `existing` is only valid
@@ -158,7 +113,6 @@ export function StepWorkspace({
   // when this instance has DISABLE_WORKSPACE_CREATION=true, in which
   // case the create path is unreachable and a no-reusing user falls
   // through to the disabled notice (rendered separately below).
-  const isCreating = createWorkspace.isPending;
   const creatingActive =
     workspaceCreationAllowed && (!reusing || mode === "create");
   const existingActive = Boolean(reusing) && mode === "existing";

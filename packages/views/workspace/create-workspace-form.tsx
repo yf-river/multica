@@ -1,23 +1,15 @@
 "use client";
 
-import { useRef, useState } from "react";
-import { toast } from "sonner";
 import { Input } from "@multica/ui/components/ui/input";
 import { Label } from "@multica/ui/components/ui/label";
 import { Button } from "@multica/ui/components/ui/button";
 import { Card, CardContent } from "@multica/ui/components/ui/card";
-import { useCreateWorkspace } from "@multica/core/workspace/mutations";
 import type { Workspace } from "@multica/core/types";
 import { isImeComposing } from "@multica/core/utils";
-import {
-  WORKSPACE_SLUG_REGEX,
-  isWorkspaceSlugConflict,
-  nameToWorkspaceSlug,
-} from "./slug";
 import { useT } from "../i18n";
-import { isReservedSlug } from "@multica/core/paths";
 import { useConfigStore } from "@multica/core/config";
 import { workspaceUrlHost } from "@multica/core/workspace/workspace-url";
+import { useWorkspaceCreateController } from "./use-workspace-create-controller";
 
 export interface CreateWorkspaceFormProps {
   onSuccess: (workspace: Workspace) => void | Promise<void>;
@@ -25,60 +17,26 @@ export interface CreateWorkspaceFormProps {
 
 export function CreateWorkspaceForm({ onSuccess }: CreateWorkspaceFormProps) {
   const { t } = useT("workspace");
-  const createWorkspace = useCreateWorkspace();
   const urlHost = workspaceUrlHost(useConfigStore((s) => s.daemonAppUrl));
-  const [name, setName] = useState("");
-  const [slug, setSlug] = useState("");
-  const [slugServerError, setSlugServerError] = useState<string | null>(null);
-  const slugTouched = useRef(false);
-
-  const slugValidationError =
-    slug.length > 0 && !WORKSPACE_SLUG_REGEX.test(slug)
-      ? t(($) => $.create_form.errors.slug_format)
-      : null;
-  const slugReservedError =
-    slug.length > 0 && isReservedSlug(slug)
-      ? t(($) => $.create_form.errors.slug_reserved)
-      : null;
-  const slugError = slugValidationError ?? slugReservedError ?? slugServerError;
-  const canSubmit =
-    name.trim().length > 0 && slug.trim().length > 0 && !slugError;
-
-  const handleNameChange = (value: string) => {
-    setName(value);
-    if (!slugTouched.current) {
-      setSlug(nameToWorkspaceSlug(value));
-      setSlugServerError(null);
-    }
-  };
-
-  const handleSlugChange = (value: string) => {
-    slugTouched.current = true;
-    setSlug(value);
-    setSlugServerError(null);
-  };
-
-  const handleCreate = () => {
-    if (!canSubmit) return;
-    createWorkspace.mutate(
-      { name: name.trim(), slug: slug.trim() },
-      {
-        onSuccess,
-        onError: (error) => {
-          if (isWorkspaceSlugConflict(error)) {
-            setSlugServerError(t(($) => $.create_form.errors.slug_taken));
-            toast.error(t(($) => $.create_form.errors.slug_conflict_toast));
-            return;
-          }
-          toast.error(
-            error instanceof Error && error.message
-              ? error.message
-              : t(($) => $.create_form.errors.create_failed),
-          );
-        },
-      },
-    );
-  };
+  const {
+    name,
+    slug,
+    slugError,
+    canSubmit,
+    isPending,
+    handleNameChange,
+    handleSlugChange,
+    handleCreate,
+  } = useWorkspaceCreateController({
+    onSuccess,
+    messages: {
+      slugFormat: t(($) => $.create_form.errors.slug_format),
+      slugReserved: t(($) => $.create_form.errors.slug_reserved),
+      slugTaken: t(($) => $.create_form.errors.slug_taken),
+      slugConflictToast: t(($) => $.create_form.errors.slug_conflict_toast),
+      createFailed: t(($) => $.create_form.errors.create_failed),
+    },
+  });
 
   return (
     <Card className="w-full">
@@ -125,9 +83,9 @@ export function CreateWorkspaceForm({ onSuccess }: CreateWorkspaceFormProps) {
           className="w-full"
           size="lg"
           onClick={handleCreate}
-          disabled={createWorkspace.isPending || !canSubmit}
+          disabled={isPending || !canSubmit}
         >
-          {createWorkspace.isPending
+          {isPending
             ? t(($) => $.create_form.submitting)
             : t(($) => $.create_form.submit)}
         </Button>
