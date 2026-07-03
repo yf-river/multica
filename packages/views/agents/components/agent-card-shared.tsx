@@ -20,7 +20,7 @@ export function AgentCardUnavailable({ label }: { label: string }) {
   return <div className="text-xs text-muted-foreground">{label}</div>;
 }
 
-export function agentInitials(name: string): string {
+function agentInitials(name: string): string {
   return name
     .split(" ")
     .map((word) => word[0])

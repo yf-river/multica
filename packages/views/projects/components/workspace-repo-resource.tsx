@@ -19,7 +19,7 @@ export function isGongfengRepoURL(url: string): boolean {
   }
 }
 
-export function workspaceRepoDisplayName(repo: WorkspaceRepo): string {
+function workspaceRepoDisplayName(repo: WorkspaceRepo): string {
   const projectPath = workspaceRepoProjectPath(repo);
   if (projectPath) {
     return projectPath.split("/").filter(Boolean).pop() || projectPath;
@@ -27,7 +27,7 @@ export function workspaceRepoDisplayName(repo: WorkspaceRepo): string {
   return inferRepoNameFromURL(repo.url) || repo.url;
 }
 
-export function workspaceRepoProjectPath(repo: WorkspaceRepo): string {
+function workspaceRepoProjectPath(repo: WorkspaceRepo): string {
   const projectPath = repo.project_path?.trim();
   if (projectPath) return projectPath;
   return inferProjectPathFromGongfengURL(repo.url);

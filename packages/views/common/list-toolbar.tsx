@@ -71,7 +71,7 @@ export function ToolbarFrame({
   );
 }
 
-export function ToolbarFilterButton({
+function ToolbarFilterButton({
   hasActiveFilters,
   activeCount,
   filterLabel,
