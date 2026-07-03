@@ -284,6 +284,10 @@ function computeFilteredRuntimes(
     const bUsable = isRuntimeUsableForUser(b, currentUserId, targetScope);
     if (aUsable && !bUsable) return -1;
     if (!aUsable && bUsable) return 1;
+    const aPreferred = a.provider.toLowerCase() === "codebuddy";
+    const bPreferred = b.provider.toLowerCase() === "codebuddy";
+    if (aPreferred && !bPreferred) return -1;
+    if (!aPreferred && bPreferred) return 1;
     return 0;
   });
 }

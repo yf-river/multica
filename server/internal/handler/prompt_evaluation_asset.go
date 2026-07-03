@@ -39,9 +39,9 @@ const (
 	promptEvaluationDatasetImportV1      = "multica.prompt_evaluation.dataset_import.v1"
 	promptEvaluationAgentName            = "Multica 训练评估智能体"
 	legacyPromptEvaluationAgentName      = "Multica 训练评估 Agent"
-	defaultPromptEvaluationAgentProvider = "codex"
-	defaultPromptEvaluationAgentModel    = "gpt-5.3-codex-spark"
-	fallbackPromptEvaluationAgentModel   = "gpt-5.4-mini"
+	defaultPromptEvaluationAgentProvider = "codebuddy"
+	defaultPromptEvaluationAgentModel    = "deepseek-v4-pro-ioa"
+	fallbackPromptEvaluationAgentModel   = "deepseek-v4-pro-ioa"
 	promptEvaluationRuntimeFreshTTL      = 2 * time.Minute
 	promptEvaluationRuntimeLimitTTL      = 10 * time.Minute
 )
@@ -7779,7 +7779,7 @@ func (h *Handler) promptEvaluationRuntimeReadiness(ctx context.Context, workspac
 		if recentCapacityFailure.Error.Valid && strings.TrimSpace(recentCapacityFailure.Error.String) != "" {
 			detail += " 最近错误：" + truncatePromptEvaluationEvidence(recentCapacityFailure.Error.String, 180)
 		}
-		resp := promptEvaluationRuntimeReadinessResponse("容量受限", "模型额度受限", detail, "优先切换到 "+fallbackPromptEvaluationAgentModel+"；如果持续出现 429/529，请申请模型额度或让管理员调整 Agent 模型配置。", &respRuntime, checkedAt)
+		resp := promptEvaluationRuntimeReadinessResponse("容量受限", "模型额度受限", detail, "如果持续出现 429/529，请申请 "+fallbackPromptEvaluationAgentModel+" 模型额度或让管理员调整 Agent 模型配置。", &respRuntime, checkedAt)
 		resp.LastSeenAgeSeconds = ageSeconds
 		return resp, nil
 	}

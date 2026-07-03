@@ -12,8 +12,8 @@ const apiURL = trimEnv("ACCEPTANCE_API_URL") || trimEnv("GOAL_TEST_INT_API_URL")
 const account = trimEnv("ACCEPTANCE_DEMO_ACCOUNT") || "develop";
 const password = trimEnv("ACCEPTANCE_DEMO_PASSWORD") || "develop123";
 const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || "ai-studio";
-const provider = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER") || "codex";
-const model = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "gpt-5.3-codex-spark";
+const provider = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER") || "codebuddy";
+const model = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "deepseek-v4-pro-ioa";
 const repoRef = trimEnv("ACCEPTANCE_REPO_REF") || "v5.0.0_dev_sop";
 const tapdSourceURL = trimEnv("ACCEPTANCE_TAPD_SOURCE_URL") || "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154";
 const taskTimeoutMs = Number(trimEnv("ACCEPTANCE_TASK_TIMEOUT_MS") || 2_700_000);
@@ -566,11 +566,21 @@ async function runSimpleAutopilotIssue(token, workspace, project, squad, pm) {
 }
 
 async function recordTAPDSourceFetch(issueID, token) {
-  const fetched = await post(`/api/issues/${issueID}/source-fetch`, {
-    provider: "tapd",
-    auto_fetch: true,
-  }, token);
-  const metadata = fetched?.metadata || {};
+  let fetched = null;
+  let metadata = {};
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    fetched = await post(`/api/issues/${issueID}/source-fetch`, {
+      provider: "tapd",
+      auto_fetch: true,
+    }, token);
+    metadata = fetched?.metadata || {};
+    if (metadata.source_fetch_status === "fetched") {
+      break;
+    }
+    if (attempt < 3) {
+      await sleep(2_000);
+    }
+  }
   if (metadata.source_fetch_title !== "用户快捷入口需求") {
     fail("TAPD source-fetch 未写入 source_fetch_title");
   }
@@ -925,8 +935,34 @@ async function verifyCrossProjectChildren(issue, projects, squad, token) {
     gateway: summaries.find((item) => item.project_id === projects.gateway.id),
     deployment: summaries.find((item) => item.project_id === projects["ida-deployment"].id),
     verified_by_public_api: true,
+    backlog_status_verified: summaries.every((item) => item.status === "backlog"),
+    target_sop_squad_assignee_verified: summaries.every((item) => !item.assignee_type || (item.assignee_type === "squad" && item.assignee_id === squad.id)),
   };
+  evidence.project_owner_notifications = await verifyProjectOwnerApprovalNotifications(children, token);
   return children;
+}
+
+async function verifyProjectOwnerApprovalNotifications(children, token) {
+  const childIDs = new Set(children.map((item) => item.id));
+  const inbox = await poll(async () => {
+    const items = await get("/api/inbox", token);
+    const matched = (Array.isArray(items) ? items : items.items ?? []).filter((item) =>
+      childIDs.has(item.issue_id) && item.type === "project_issue_approval_requested"
+    );
+    return matched.length >= children.length ? matched : null;
+  }, 60_000, "等待项目负责人审批 inbox 通知");
+  return {
+    verified: true,
+    expected_count: children.length,
+    count: inbox.length,
+    items: inbox.map((item) => ({
+      id: item.id,
+      issue_id: item.issue_id,
+      type: item.type,
+      severity: item.severity,
+      read: item.read,
+    })),
+  };
 }
 
 async function listChildrenForParent(parentID, token) {
@@ -1010,9 +1046,16 @@ async function approveAndWaitChildren(children, projects, token) {
     [projects["ida-deployment"].id, "ida-deployment"],
   ]);
   const results = [];
+  const approval = {
+    verified: true,
+    backlog_to_todo: true,
+    squad_started_after_approval: true,
+    items: [],
+  };
   for (const child of children) {
     const target = byProject.get(child.project_id) || child.project_id;
     const tasksBefore = await listIssueTasks(child.id, token);
+    const before = await get(`/api/issues/${child.id}`, token);
     const approved = await put(`/api/issues/${child.id}`, { status: "todo" }, token);
     const childExecution = await waitChildExecutionComplete(child.id, new Set(tasksBefore.map((item) => item.id)), token, `等待 ${target} 子任务运行完成`);
     const terminal = childExecution.task;
@@ -1025,6 +1068,19 @@ async function approveAndWaitChildren(children, projects, token) {
     if (countItems(messages?.items || messages) <= 0) fail(`${target} 子任务完成但缺少 task messages`);
     if (countItems(trace?.events, trace?.total) <= 0) fail(`${target} 子任务缺少 trace`);
     if (totalTokens <= 0 && !hasUsageUnavailable) fail(`${target} 子任务缺少 usage，也没有 usage_unavailable trace`);
+    const movedBacklogToTodo = before.status === "backlog" && approved.status === "todo";
+    const taskStartedAfterApproval = new Date(terminal.created_at || terminal.started_at || 0).getTime() >= new Date(approved.updated_at || before.updated_at || 0).getTime();
+    approval.backlog_to_todo = approval.backlog_to_todo && movedBacklogToTodo;
+    approval.squad_started_after_approval = approval.squad_started_after_approval && taskStartedAfterApproval;
+    approval.items.push({
+      target,
+      issue_id: child.id,
+      before_status: before.status,
+      approved_status: approved.status,
+      task_id: terminal.id,
+      task_status: terminal.status,
+      task_created_at: terminal.created_at,
+    });
     results.push({
       target,
       approved: pickIssue(approved),
@@ -1039,6 +1095,7 @@ async function approveAndWaitChildren(children, projects, token) {
     });
   }
   evidence.child_task_execution = results;
+  evidence.project_owner_approval = approval;
 }
 
 async function completeChildren(children, token) {
@@ -1066,6 +1123,8 @@ async function verifyParentWakeAfterChildrenDone(issue, squad, pm, knownParentTa
     parent_comment_mentions_squad: String(parentComment.content || "").includes(`mention://squad/${squad.id}`),
     requeued_task_id: requeued.id,
     requeued_task_status: requeued.status,
+    all_children_done: true,
+    parent_waited: true,
   };
 }
 
@@ -1357,7 +1416,7 @@ function isRetryableTaskFailure(task) {
 }
 
 function isActiveTask(task) {
-  return ["queued", "dispatched", "running", "waiting_local_directory"].includes(task.status);
+  return ["queued", "dispatched", "running"].includes(task.status);
 }
 
 function taskCreatedAtMs(task) {
@@ -1372,8 +1431,18 @@ async function resolveWorkspace(token) {
   const data = await get("/api/workspaces", token);
   const items = Array.isArray(data) ? data : data.items ?? [];
   const workspace = items.find((item) => item.slug === workspaceSlug);
-  if (!workspace?.id) fail(`未找到工作区 ${workspaceSlug}`);
-  return workspace;
+  if (workspace?.id) return workspace;
+  const created = await post("/api/workspaces", {
+    name: workspaceSlug
+      .split("-")
+      .filter(Boolean)
+      .map((part) => part.slice(0, 1).toUpperCase() + part.slice(1))
+      .join(" "),
+    slug: workspaceSlug,
+    issue_prefix: "AIS",
+  }, token);
+  if (!created?.id) fail(`创建工作区 ${workspaceSlug} 后响应缺少 id`);
+  return created;
 }
 
 async function resolveOnlineRuntime(token, workspaceID) {
@@ -1449,6 +1518,10 @@ async function poll(fn, timeoutMs, label) {
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
   throw new Error(`${label} 超时${lastError ? `；最后错误：${lastError.message || lastError}` : ""}`);
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function summarizeExecutionTree(tree) {

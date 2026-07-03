@@ -17,6 +17,7 @@ interface TestWorkspace {
   id: string;
   name: string;
   slug: string;
+  repos?: Array<Record<string, unknown>>;
 }
 
 interface PromptLibraryItem {
@@ -486,6 +487,14 @@ export class TestApiClient {
     return res.json();
   }
 
+  async getWorkspace(id: string): Promise<TestWorkspace> {
+    const res = await this.authedFetch(`/api/workspaces/${id}`);
+    if (!res.ok) {
+      throw new Error(`get workspace failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
   setWorkspaceId(id: string) {
     this.workspaceId = id;
   }
@@ -551,7 +560,7 @@ export class TestApiClient {
     }
   }
 
-  async ensureOnlineRuntime(provider = "codex", name = `E2E ${provider} Runtime ${Date.now()}`) {
+  async ensureOnlineRuntime(provider = "codebuddy", name = `E2E ${provider} Runtime ${Date.now()}`) {
     if (!this.workspaceId) {
       throw new Error(`Cannot seed ${provider} runtime before workspace is selected`);
     }
@@ -574,11 +583,11 @@ export class TestApiClient {
         `
           INSERT INTO agent_runtime (
             workspace_id, daemon_id, name, runtime_mode, provider, status,
-            device_info, metadata, owner_id, visibility, last_seen_at
+            device_info, metadata, owner_id, scope, last_seen_at
           )
           VALUES (
             $1, $2, $3, 'cloud', $4, 'online',
-            $5, '{"用途":"训练与评估 E2E 任务入队夹具"}'::jsonb, $6, 'public', now()
+            $5, '{"用途":"训练与评估 E2E 任务入队夹具"}'::jsonb, $6, 'workspace', now()
           )
           RETURNING id
         `,
@@ -628,7 +637,7 @@ export class TestApiClient {
         custom_args: [],
         visibility: data.visibility ?? "workspace",
         max_concurrent_tasks: data.max_concurrent_tasks ?? 1,
-        model: data.model ?? "gpt-5.4-mini",
+        model: data.model ?? "deepseek-v4-pro-ioa",
       }),
     });
     if (!res.ok) {
@@ -692,7 +701,7 @@ export class TestApiClient {
       body: JSON.stringify({
         usage: [
           {
-            provider: usage.provider ?? "codex",
+            provider: usage.provider ?? "codebuddy",
             model: usage.model,
             input_tokens: usage.input_tokens,
             output_tokens: usage.output_tokens,
@@ -765,8 +774,8 @@ export class TestApiClient {
       acceptance: ["方案可审阅", "开发范围清晰", "验收者独立检查", "日志和测试证据齐全"],
       forbidden_actions: ["开发者自证通过", "越权修改非负责范围", "泄露密钥"],
       model_policy: {
-        "轻量验收任务": "gpt-5.3-codex-spark",
-        "代码测试任务": "gpt/code",
+        "轻量验收任务": "deepseek-v4-pro-ioa",
+        "代码测试任务": "deepseek-v4-pro-ioa",
       },
       roles: [
         {
@@ -849,9 +858,9 @@ export class TestApiClient {
               instructions, custom_env, custom_args, model
             )
             VALUES (
-              $1, $2, 'cloud', '{"provider":"codex","用途":"Multica 编码小队 E2E"}'::jsonb, $3,
+              $1, $2, 'cloud', '{"provider":"codebuddy","用途":"Multica 编码小队 E2E"}'::jsonb, $3,
               'workspace', 'idle', 2, $4,
-              $5, '{}'::jsonb, '[]'::jsonb, 'gpt-5.3-codex-spark'
+              $5, '{}'::jsonb, '[]'::jsonb, 'deepseek-v4-pro-ioa'
             )
             RETURNING id
           `,
@@ -1009,6 +1018,30 @@ export class TestApiClient {
       throw new Error(`create project resource failed: ${res.status} ${await res.text()}`);
     }
     return res.json();
+  }
+
+  async ensureGongfengRepositoryInventory(repo: Record<string, unknown>) {
+    if (!this.workspaceId) {
+      throw new Error("workspace id is not initialized");
+    }
+    const projectPath = String(repo.project_path || "").replace(/^\/+|\/+$/g, "");
+    if (!projectPath) {
+      throw new Error("project_path is required for Gongfeng repository inventory");
+    }
+    const workspace = await this.getWorkspace(this.workspaceId);
+    const repos = Array.isArray(workspace.repos) ? workspace.repos as Array<Record<string, unknown>> : [];
+    const existing = repos.find((item) => String(item.project_path || "").replace(/^\/+|\/+$/g, "") === projectPath);
+    if (existing) {
+      return existing;
+    }
+    const nextRepo = { provider: "gongfeng", ...repo, project_path: projectPath };
+    const updated = await this.updateWorkspace(this.workspaceId, { repos: [...repos, nextRepo] });
+    const updatedRepos = Array.isArray(updated.repos) ? updated.repos as Array<Record<string, unknown>> : [];
+    const registered = updatedRepos.find((item) => String(item.project_path || "").replace(/^\/+|\/+$/g, "") === projectPath);
+    if (!registered) {
+      throw new Error(`workspace repo inventory did not register ${projectPath}`);
+    }
+    return registered;
   }
 
   async updateWorkspace(id: string, data: Record<string, unknown>): Promise<TestWorkspace> {
@@ -1250,7 +1283,7 @@ export class TestApiClient {
             task_id, provider, model, input_tokens, output_tokens,
             cache_read_tokens, cache_write_tokens, updated_at
           )
-          VALUES ($1, 'codex', 'gpt-5.3-codex-spark', 31, 19, 5, 7, now())
+          VALUES ($1, 'codebuddy', 'deepseek-v4-pro-ioa', 31, 19, 5, 7, now())
           ON CONFLICT (task_id, provider, model)
           DO UPDATE SET
             input_tokens = EXCLUDED.input_tokens,
@@ -1285,9 +1318,9 @@ export class TestApiClient {
             $1, $2, $3, $4, $5, $6,
             'squad_sop', 'squad.leader.completed', '编码小队队长任务完成', 'completed', 1,
             400, 2800, 2300, 3200,
-            'codex', 'gpt-5.3-codex-spark', 36, 19, 5,
+            'codebuddy', 'deepseek-v4-pro-ioa', 36, 19, 5,
             7, '无', '', NULL,
-            '{"阶段":"编码小队","证据":"E2E","模型策略":"codex"}'::jsonb
+            '{"阶段":"编码小队","证据":"E2E","模型策略":"codebuddy"}'::jsonb
           )
         `,
         [this.workspaceId, task.id, task.issue_id, opts?.squadId ?? null, task.agent_id, task.runtime_id],
@@ -1310,8 +1343,8 @@ export class TestApiClient {
     }
     await this.startDaemonTask(task.id);
     await this.reportDaemonTaskUsage(task.id, {
-      provider: "codex",
-      model: "gpt-5.3-codex-spark",
+      provider: "codebuddy",
+      model: "deepseek-v4-pro-ioa",
       input_tokens: 36,
       output_tokens: 19,
       cache_read_tokens: 5,
@@ -1535,8 +1568,8 @@ export class TestApiClient {
     const client = new pg.Client(DATABASE_URL);
     await client.connect();
     try {
-      const provider = run.runtime_provider || "codex";
-      const model = run.model || process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL || "gpt-5.3-codex-spark";
+      const provider = run.runtime_provider || "codebuddy";
+      const model = run.model || process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL || "deepseek-v4-pro-ioa";
       const structuredOutput = [
         "Agent 输出：完成训练评估并给出验收证据。",
         "```json",
@@ -1645,8 +1678,8 @@ export class TestApiClient {
     const client = new pg.Client(DATABASE_URL);
     await client.connect();
     try {
-      const provider = run.runtime_provider || "codex";
-      const model = run.model || process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL || "gpt-5.3-codex-spark";
+      const provider = run.runtime_provider || "codebuddy";
+      const model = run.model || process.env.MULTICA_PROMPT_EVALUATION_AGENT_MODEL || "deepseek-v4-pro-ioa";
       const structuredOutput = [
         "Agent 优化输出：已基于失败用例生成待人工确认的优化候选。",
         "```json",

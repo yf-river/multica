@@ -88,7 +88,7 @@ func IsNewerVersion(latest, current string) bool {
 // (parts, true) on success; (_, false) when v is missing, malformed, or
 // carries any non-numeric tail (a dev-describe suffix, a 4th component, a
 // pre-release tag, etc.). The strict shape is intentional: this is the only
-// parser used by IsNewerVersion, and the autoUpdateLoop must never silently
+// parser used by IsNewerVersion, and the manual updater must never silently
 // downgrade a developer build to a public release just because the
 // dev-describe patch happened to look numeric after trimming.
 func parseReleaseVersion(v string) ([3]int, bool) {

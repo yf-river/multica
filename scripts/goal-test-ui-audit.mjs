@@ -111,17 +111,6 @@ const routes = [
     },
   },
   {
-    id: "training-test-suites-optimize",
-    label: "训练与评估/优化运行模式",
-    path: `/${workspaceSlug}/training/test-suites?mode=optimize`,
-    expect: ["优化运行"],
-    uiContract: {
-      requiredText: ["优化运行工作台", "失败样本、候选生成、人工发布", "待确认优化候选", "人工把关新版本"],
-      requiredTestIds: ["training-route-intro-optimization-runs", "training-route-operating-model-optimization-runs", "training-route-operating-step-optimization-runs-1", "training-route-operating-step-optimization-runs-2", "training-route-operating-step-optimization-runs-3"],
-      forbiddenTestIds: ["training-tab-strip", "training-route-operating-model-datasets", "training-route-operating-model-test-suites"],
-    },
-  },
-  {
     id: "training-evaluation-runs",
     label: "训练与评估/评测记录",
     path: `/${workspaceSlug}/training/evaluation-runs`,

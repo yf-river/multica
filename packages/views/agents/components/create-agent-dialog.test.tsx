@@ -256,6 +256,38 @@ describe("CreateAgentDialog runtime scope gate", () => {
     expect(screen.getByText("My Runtime", { selector: "span.truncate" })).toBeInTheDocument();
   });
 
+  it("prefers codebuddy and submits the DeepSeek default model", async () => {
+    const claude = makeRuntime({
+      id: "rt-claude",
+      name: "Claude Runtime",
+      provider: "claude",
+      owner_id: ME,
+      scope: "personal",
+    });
+    const codebuddy = makeRuntime({
+      id: "rt-codebuddy",
+      name: "CodeBuddy Runtime",
+      provider: "codebuddy",
+      owner_id: ME,
+      scope: "personal",
+    });
+    const { onCreate } = renderDialog([claude, codebuddy]);
+
+    expect(
+      screen.getByText("CodeBuddy Runtime", { selector: "span.truncate" }),
+    ).toBeInTheDocument();
+
+    fireEvent.change(screen.getByPlaceholderText("例如：深度研究智能体"), {
+      target: { value: "DeepSeek Agent" },
+    });
+    fireEvent.click(screen.getByText("创建"));
+    await waitFor(() => expect(onCreate).toHaveBeenCalledTimes(1));
+    expect(onCreate.mock.calls[0]?.[0]).toMatchObject({
+      runtime_id: "rt-codebuddy",
+      model: "deepseek-v4-pro-ioa",
+    });
+  });
+
   it("in duplicate mode, does not pre-fill the template's runtime when it's now locked", async () => {
     // Template runtime is owned by someone else and now personal — the
     // duplicate flow used to seed with it anyway, leaving the user with

@@ -325,10 +325,6 @@ func TestHeartbeatRoundTrip(t *testing.T) {
 		return &protocol.DaemonHeartbeatAckPayload{
 			RuntimeID: runtimeID,
 			Status:    "ok",
-			PendingUpdate: &protocol.DaemonHeartbeatPendingUpdate{
-				ID:            "update-1",
-				TargetVersion: "0.1.99",
-			},
 		}, nil
 	})
 
@@ -355,9 +351,6 @@ func TestHeartbeatRoundTrip(t *testing.T) {
 	ack := decodeHubMessagePayloadForTest[protocol.DaemonHeartbeatAckPayload](t, msg)
 	if ack.RuntimeID != "runtime-1" {
 		t.Fatalf("ack runtime_id = %q, want runtime-1", ack.RuntimeID)
-	}
-	if ack.PendingUpdate == nil || ack.PendingUpdate.ID != "update-1" {
-		t.Fatalf("ack pending_update = %+v, want update-1", ack.PendingUpdate)
 	}
 	if got := calls.Load(); got != 1 {
 		t.Fatalf("HeartbeatHandler invocations = %d, want 1", got)

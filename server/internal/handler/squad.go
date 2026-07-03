@@ -98,7 +98,7 @@ type internalSquadRole struct {
 const sopPMRoutingRule = "调度规则：只有 PM 可以 @mention 下一阶段 Agent；每次只 @mention 一个下一阶段；收到阶段 handoff 后先判断通过、返工、推进或收口，再由 PM 发出唯一调度评论；不要先发无 mention 的重复调度评论。默认按 PM -> 01 -> 02 -> 03 -> 04 -> 05 推进；如果任务很简单、需要跳过阶段，PM 必须先在 issue 评论说明跳步方案、被跳过阶段、原因和风险，并等待任务创建者或 workspace owner/admin 明确同意，确认前不得调度被跳到的阶段。05-verify 通过且无阻断时，PM 必须在最终收口中把 issue 状态更新为 done，并说明运行复盘数据是否完整。"
 const sopWorkerRoutingRule = "阶段路由规则：本角色不得 @mention 任何 Agent、Squad、Member 或 all，不得直接触发下一阶段；只输出本阶段结论、证据、阻断和 handoff 给 PM，由 PM 判断通过、返工、推进或收口。"
 const internalSquadDefaultProvider = "codebuddy"
-const internalSquadDefaultModel = ""
+const internalSquadDefaultModel = defaultCodebuddyAgentModel
 
 const (
 	projectSOPAgentPM = "PM-项目经理"

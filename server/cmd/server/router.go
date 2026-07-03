@@ -198,7 +198,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		}
 	}
 	if rdb != nil {
-		h.UpdateStore = handler.NewRedisUpdateStore(rdb)
 		h.ModelListStore = handler.NewRedisModelListStore(rdb)
 		h.LocalSkillListStore = handler.NewRedisLocalSkillListStore(rdb)
 		h.LocalSkillImportStore = handler.NewRedisLocalSkillImportStore(rdb)
@@ -516,7 +515,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 
 		r.Post("/runtimes/{runtimeId}/tasks/claim", h.ClaimTaskByRuntime)
 		r.Get("/runtimes/{runtimeId}/tasks/pending", h.ListPendingTasksByRuntime)
-		r.Post("/runtimes/{runtimeId}/update/{updateId}/result", h.ReportUpdateResult)
 		r.Post("/runtimes/{runtimeId}/models/{requestId}/result", h.ReportModelListResult)
 		r.Post("/runtimes/{runtimeId}/local-skills/{requestId}/result", h.ReportLocalSkillListResult)
 		r.Post("/runtimes/{runtimeId}/local-skills/import/{requestId}/result", h.ReportLocalSkillImportResult)
@@ -793,6 +791,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			})
 
 			// Prompt evaluation assets
+			r.Get("/api/prompt-evaluation-summary", h.GetPromptEvaluationSummary)
 			r.Route("/api/prompt-evaluation-assets", func(r chi.Router) {
 				r.Get("/", h.ListPromptEvaluationAssets)
 				r.Post("/", h.CreatePromptEvaluationAsset)
@@ -835,6 +834,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 			r.Get("/api/prompt-evaluation-dimension-scores", h.ListPromptEvaluationDimensionScores)
 			r.Get("/api/prompt-evaluation-dimension-score-summaries", h.ListPromptEvaluationDimensionScoreSummaries)
 			r.Get("/api/prompt-evaluation-dimension-score-trends", h.ListPromptEvaluationDimensionScoreTrends)
+			r.Get("/api/prompt-evaluation-runtime-readiness", h.GetPromptEvaluationRuntimeReadiness)
 			r.Route("/api/prompt-evaluation-runs", func(r chi.Router) {
 				r.Get("/", h.ListPromptEvaluationRuns)
 				r.Route("/{id}", func(r chi.Router) {
@@ -991,8 +991,6 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Get("/usage/by-agent", h.GetRuntimeUsageByAgent)
 					r.Get("/usage/by-hour", h.GetRuntimeUsageByHour)
 					r.Get("/activity", h.GetRuntimeTaskActivity)
-					r.Post("/update", h.InitiateUpdate)
-					r.Get("/update/{updateId}", h.GetUpdate)
 					r.Post("/models", h.InitiateListModels)
 					r.Get("/models/{requestId}", h.GetModelListRequest)
 					r.Post("/local-skills", h.InitiateListLocalSkills)

@@ -86,8 +86,6 @@ func init() {
 	f.Duration("agent-timeout", 0, "Absolute per-task wall-clock cap; 0 = no cap, rely on the watchdogs (env: MULTICA_AGENT_TIMEOUT)")
 	f.Duration("codex-semantic-inactivity-timeout", 0, "Codex semantic inactivity timeout (env: MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT)")
 	f.Int("max-concurrent-tasks", 0, "Max tasks running in parallel (env: MULTICA_DAEMON_MAX_CONCURRENT_TASKS)")
-	f.Bool("no-auto-update", false, "Disable periodic CLI self-update (env: MULTICA_DAEMON_AUTO_UPDATE=false)")
-	f.Duration("auto-update-interval", 0, "How often to poll GitHub for a newer release (env: MULTICA_DAEMON_AUTO_UPDATE_INTERVAL)")
 
 	daemonLogsCmd.Flags().BoolP("follow", "f", false, "Follow log output")
 	daemonLogsCmd.Flags().IntP("lines", "n", 50, "Number of lines to show")
@@ -105,8 +103,6 @@ func init() {
 	rf.Duration("agent-timeout", 0, "Absolute per-task wall-clock cap; 0 = no cap, rely on the watchdogs (env: MULTICA_AGENT_TIMEOUT)")
 	rf.Duration("codex-semantic-inactivity-timeout", 0, "Codex semantic inactivity timeout (env: MULTICA_CODEX_SEMANTIC_INACTIVITY_TIMEOUT)")
 	rf.Int("max-concurrent-tasks", 0, "Max tasks running in parallel (env: MULTICA_DAEMON_MAX_CONCURRENT_TASKS)")
-	rf.Bool("no-auto-update", false, "Disable periodic CLI self-update (env: MULTICA_DAEMON_AUTO_UPDATE=false)")
-	rf.Duration("auto-update-interval", 0, "How often to poll GitHub for a newer release (env: MULTICA_DAEMON_AUTO_UPDATE_INTERVAL)")
 
 	df := daemonDiskUsageCmd.Flags()
 	df.Bool("by-workspace", false, "Aggregate output by workspace instead of by task")
@@ -314,12 +310,6 @@ func buildDaemonStartArgs(cmd *cobra.Command) []string {
 	if n, _ := cmd.Flags().GetInt("max-concurrent-tasks"); n > 0 {
 		args = append(args, "--max-concurrent-tasks", strconv.Itoa(n))
 	}
-	if b, _ := cmd.Flags().GetBool("no-auto-update"); b {
-		args = append(args, "--no-auto-update")
-	}
-	if d, _ := cmd.Flags().GetDuration("auto-update-interval"); d > 0 {
-		args = append(args, "--auto-update-interval", d.String())
-	}
 
 	// Forward global persistent flags.
 	if v, _ := cmd.Flags().GetString("server-url"); v != "" {
@@ -369,12 +359,6 @@ func runDaemonForeground(cmd *cobra.Command) error {
 	if n, _ := cmd.Flags().GetInt("max-concurrent-tasks"); n > 0 {
 		overrides.MaxConcurrentTasks = n
 	}
-	if b, _ := cmd.Flags().GetBool("no-auto-update"); b {
-		overrides.DisableAutoUpdate = true
-	}
-	if d, _ := cmd.Flags().GetDuration("auto-update-interval"); d > 0 {
-		overrides.AutoUpdateCheckInterval = d
-	}
 
 	cfg, err := daemon.LoadConfig(overrides)
 	if err != nil {
@@ -400,58 +384,6 @@ func runDaemonForeground(cmd *cobra.Command) error {
 
 	if err := d.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
-	}
-
-	// Check if the daemon needs to restart after a CLI update.
-	if restartBin := d.RestartBinary(); restartBin != "" {
-		logger.Info("restarting daemon with updated binary", "path", restartBin)
-
-		args := buildDaemonStartArgs(cmd)
-		child := exec.Command(restartBin, args...)
-
-		logPath := daemonLogPathForProfile(profile)
-		logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-		if err != nil {
-			logger.Error("failed to open log file for restart", "error", err)
-			// Runtimes were already deregistered by triggerRestart() before handoff.
-			// The supervisor-spawned successor re-registers on startup; do not
-			// duplicate cleanup here.
-			return fmt.Errorf("failed to open daemon log file %s for restart: %w", logPath, err)
-		}
-		child.Stdout = logFile
-		child.Stderr = logFile
-		// Break out of the parent's Job Object on Windows; see the
-		// runDaemonBackground call site for rationale.
-		child.SysProcAttr = daemonSysProcAttr(true)
-
-		if err := child.Start(); err != nil {
-			// Runtimes were already deregistered by triggerRestart() before handoff.
-			// The supervisor-spawned successor re-registers on startup; do not
-			// duplicate cleanup here.
-			if isAccessDeniedSpawnErr(err) {
-				child = exec.Command(restartBin, args...)
-				child.Stdout = logFile
-				child.Stderr = logFile
-				child.SysProcAttr = daemonSysProcAttr(false)
-				if err := child.Start(); err != nil {
-					logFile.Close()
-					logger.Error("failed to start new daemon (no breakaway)", "error", err)
-					return fmt.Errorf("failed to start new daemon at %s without breakaway: %w", restartBin, err)
-				}
-			} else {
-				logFile.Close()
-				logger.Error("failed to start new daemon", "error", err)
-				return fmt.Errorf("failed to start new daemon at %s: %w", restartBin, err)
-			}
-		}
-		logFile.Close()
-		child.Process.Release()
-
-		// Write new PID file.
-		pidPath := daemonPIDPathForProfile(profile)
-		os.WriteFile(pidPath, []byte(strconv.Itoa(child.Process.Pid)), 0o644)
-
-		logger.Info("new daemon started", "pid", child.Process.Pid)
 	}
 
 	return nil

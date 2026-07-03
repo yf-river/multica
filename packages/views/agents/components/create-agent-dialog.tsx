@@ -36,6 +36,8 @@ import {
 import { CharCounter } from "./char-counter";
 import { useT } from "../../i18n";
 
+const DEFAULT_CODEBUDDY_AGENT_MODEL = "deepseek-v4-pro-ioa";
+
 export function CreateAgentDialog({
   runtimes,
   runtimesLoading,
@@ -159,12 +161,18 @@ export function CreateAgentDialog({
 
     try {
       const trimmedInstructions = instructions.trim();
+      const trimmedModel = model.trim();
+      const effectiveModel =
+        trimmedModel ||
+        (selectedRuntime.provider.toLowerCase() === "codebuddy"
+          ? DEFAULT_CODEBUDDY_AGENT_MODEL
+          : "");
       const data: CreateAgentRequest = {
         name: name.trim(),
         description: description.trim(),
         runtime_id: selectedRuntime.id,
         scope,
-        model: model.trim() || undefined,
+        model: effectiveModel || undefined,
         instructions: trimmedInstructions || undefined,
         avatar_url: avatarUrl ?? undefined,
       };

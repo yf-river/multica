@@ -503,12 +503,12 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 		JOIN agent_runtime ar ON ar.id = a.runtime_id
 		WHERE a.workspace_id = $1
 		  AND a.name IN ('PM-项目经理', '01-需求澄清', '02-方案设计', '03-任务拆分', '04-开发', '05-验证测试', 'pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify')
-		  AND (ar.provider IS DISTINCT FROM 'codebuddy' OR coalesce(a.model, '') <> '')
-	`, testWorkspaceID).Scan(&nonDefaultCount); err != nil {
+		  AND (ar.provider IS DISTINCT FROM 'codebuddy' OR a.model IS DISTINCT FROM $2)
+	`, testWorkspaceID, internalSquadDefaultModel).Scan(&nonDefaultCount); err != nil {
 		t.Fatalf("count non-default user-center agents: %v", err)
 	}
 	if nonDefaultCount != 0 {
-		t.Fatalf("default ensure left %d user-center agents outside codebuddy/runtime-default", nonDefaultCount)
+		t.Fatalf("default ensure left %d user-center agents outside codebuddy/%s", nonDefaultCount, internalSquadDefaultModel)
 	}
 
 	if _, err := testPool.Exec(ctx, `
@@ -962,12 +962,12 @@ func TestEnsureUserCenterInternalSquadRestoresArchivedSquadWithoutArchivingAgent
 		JOIN agent_runtime ar ON ar.id = a.runtime_id
 		WHERE a.workspace_id = $1
 		  AND a.name IN ('PM-项目经理', '01-需求澄清', '02-方案设计', '03-任务拆分', '04-开发', '05-验证测试', 'pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify')
-		  AND (ar.provider IS DISTINCT FROM 'codebuddy' OR coalesce(a.model, '') <> '')
-	`, testWorkspaceID).Scan(&nonDefaultAgentCount); err != nil {
+		  AND (ar.provider IS DISTINCT FROM 'codebuddy' OR a.model IS DISTINCT FROM $2)
+	`, testWorkspaceID, internalSquadDefaultModel).Scan(&nonDefaultAgentCount); err != nil {
 		t.Fatalf("count non-default user-center agents: %v", err)
 	}
 	if nonDefaultAgentCount != 0 {
-		t.Fatalf("restored pm squad left %d agents outside codebuddy/runtime-default", nonDefaultAgentCount)
+		t.Fatalf("restored pm squad left %d agents outside codebuddy/%s", nonDefaultAgentCount, internalSquadDefaultModel)
 	}
 }
 

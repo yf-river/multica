@@ -37,7 +37,6 @@ import { availabilityConfig, workloadConfig } from "../../agents/presence";
 import { formatLastSeen } from "../utils";
 import { HealthBadge, RuntimeVisibilityBadge } from "./shared";
 import { ProviderLogo } from "./provider-logo";
-import { UpdateSection } from "./update-section";
 import { UsageSection } from "./usage-section";
 import { DeleteRuntimeDialog } from "./delete-runtime-dialog";
 import { useT } from "../../i18n";
@@ -49,17 +48,6 @@ function getCliVersion(metadata: Record<string, unknown>): string | null {
     metadata.cli_version
   ) {
     return metadata.cli_version;
-  }
-  return null;
-}
-
-function getLaunchedBy(metadata: Record<string, unknown>): string | null {
-  if (
-    metadata &&
-    typeof metadata.launched_by === "string" &&
-    metadata.launched_by
-  ) {
-    return metadata.launched_by;
   }
   return null;
 }
@@ -88,8 +76,6 @@ export function RuntimeDetail({ runtime }: { runtime: AgentRuntime }) {
   const { t } = useT("runtimes");
   const cliVersion =
     runtime.runtime_mode === "local" ? getCliVersion(runtime.metadata) : null;
-  const launchedBy =
-    runtime.runtime_mode === "local" ? getLaunchedBy(runtime.metadata) : null;
 
   const user = useAuthStore((s) => s.user);
   const wsId = useWorkspaceId();
@@ -180,7 +166,6 @@ export function RuntimeDetail({ runtime }: { runtime: AgentRuntime }) {
             <DiagnosticsCard
               runtime={runtime}
               cliVersion={cliVersion}
-              launchedBy={launchedBy}
               canDelete={!!canDelete}
               onDelete={() => setDeleteOpen(true)}
             />
@@ -441,13 +426,11 @@ function ServingAgentsCard({
 function DiagnosticsCard({
   runtime,
   cliVersion,
-  launchedBy,
   canDelete,
   onDelete,
 }: {
   runtime: AgentRuntime;
   cliVersion: string | null;
-  launchedBy: string | null;
   canDelete: boolean;
   onDelete: () => void;
 }) {
@@ -477,12 +460,9 @@ function DiagnosticsCard({
             <div className="mb-1.5 text-[11px] uppercase tracking-wide text-muted-foreground">
               {t(($) => $.detail.diagnostics_cli)}
             </div>
-            <UpdateSection
-              runtimeId={runtime.id}
-              currentVersion={cliVersion}
-              isOnline={runtime.status === "online"}
-              launchedBy={launchedBy}
-            />
+            <span className="text-xs font-mono">
+              {cliVersion ?? t(($) => $.update.version_unknown)}
+            </span>
           </div>
         )}
         {canDelete && (

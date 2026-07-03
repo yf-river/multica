@@ -436,6 +436,7 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 	if req.AvatarURL != nil && *req.AvatarURL != "" {
 		avatarURL = pgtype.Text{String: *req.AvatarURL, Valid: true}
 	}
+	model := agentModelForRuntime(runtime.Provider, req.Model)
 
 	agent, err := qtx.CreateAgent(r.Context(), db.CreateAgentParams{
 		WorkspaceID:        wsUUID,
@@ -452,7 +453,7 @@ func (h *Handler) CreateAgentFromTemplate(w http.ResponseWriter, r *http.Request
 		CustomEnv:          ce,
 		CustomArgs:         ca,
 		McpConfig:          nil,
-		Model:              pgtype.Text{String: req.Model, Valid: req.Model != ""},
+		Model:              pgtype.Text{String: model, Valid: model != ""},
 	})
 	if err != nil {
 		// Mirror handler/agent.go:CreateAgent: when the duplicate is the

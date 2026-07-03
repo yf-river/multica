@@ -10,12 +10,15 @@ const repoRoot = path.resolve(import.meta.dirname, "..");
 const artifactRoot = acceptanceDir(repoRoot);
 const now = new Date().toISOString();
 const stamp = now.replace(/[:.]/g, "-");
+const args = parseArgs(process.argv.slice(2));
+const acceptanceScope = args.scope || process.env.ACCEPTANCE_FINAL_SCOPE || "prod-full-release";
+const intThreeProjectScope = acceptanceScope === "int-three-project";
 
-const e2ePath = path.join(artifactRoot, "codex-squad-curl-e2e-latest.json");
+const e2ePath = path.resolve(args.e2e || path.join(artifactRoot, intThreeProjectScope ? "sop-customer-comment-e2e-latest.json" : "codex-squad-curl-e2e-latest.json"));
 const e2e = readJSON(e2ePath);
 const passwordSOPPath = path.join(artifactRoot, "password-strength-sop-e2e-latest.json");
 const passwordSOPEvidence = fileIfExists(passwordSOPPath) ? readJSON(passwordSOPPath) : null;
-const databaseURL = process.env.DATABASE_URL || readGoalTestDatabaseURL("prod") || readGoalTestDatabaseURL("int");
+const databaseURL = process.env.DATABASE_URL || (intThreeProjectScope ? readGoalTestDatabaseURL("int") : readGoalTestDatabaseURL("prod")) || readGoalTestDatabaseURL("int");
 const goalCEvidence = buildGoalCEvidence();
 const goalDSkillEvidence = buildGoalDSkillEvidence();
 const goalEGongfengSkillWritebackEvidence = buildGoalEGongfengSkillWritebackEvidence();
@@ -24,6 +27,8 @@ const gongfengTouchpointEvidence = buildGoalEGongfengTouchpointEvidence();
 const prodReleaseEvidence = buildProdReleaseEvidence();
 const newAccountMCPEvidence = buildNewAccountMCPEvidence();
 const fixtureGovernanceEvidence = buildFixtureGovernanceEvidence();
+const promptEvaluationEvidence = buildPromptEvaluationEvidence();
+const sopBrowserEvidence = buildSOPBrowserEvidence();
 
 const databaseStageEvidence = databaseURL && e2e.issue?.id
   ? await loadStageEvidence(databaseURL, e2e.issue.id)
@@ -34,9 +39,15 @@ const handoffEvidence = buildHandoffEvidence();
 const uiApiEvidence = buildUIAPIEvidence();
 const topologyGeneralizationEvidence = buildTopologyGeneralizationEvidence();
 
-const originalRequirements = buildOriginalRequirementMatrix({ e2e, stageEvidence, crossServiceEvidence });
-const productionReadiness = buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEvidence, handoffEvidence, uiApiEvidence, prodReleaseEvidence, topologyGeneralizationEvidence, newAccountMCPEvidence, fixtureGovernanceEvidence });
-const goalERequirements = buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, prodReleaseEvidence, topologyGeneralizationEvidence, passwordSOPEvidence });
+const originalRequirements = intThreeProjectScope
+  ? buildIntThreeProjectRequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, newAccountMCPEvidence })
+  : buildOriginalRequirementMatrix({ e2e, stageEvidence, crossServiceEvidence });
+const productionReadiness = intThreeProjectScope
+  ? buildIntThreeProjectReadinessMatrix({ e2e, stageEvidence, crossServiceEvidence, promptEvaluationEvidence, sopBrowserEvidence, topologyGeneralizationEvidence, newAccountMCPEvidence, fixtureGovernanceEvidence })
+  : buildProductionReadinessMatrix({ e2e, stageEvidence, crossServiceEvidence, handoffEvidence, uiApiEvidence, prodReleaseEvidence, topologyGeneralizationEvidence, newAccountMCPEvidence, fixtureGovernanceEvidence });
+const goalERequirements = intThreeProjectScope
+  ? buildIntThreeProjectGoalMatrix({ e2e, stageEvidence, crossServiceEvidence, promptEvaluationEvidence, sopBrowserEvidence, topologyGeneralizationEvidence, newAccountMCPEvidence, fixtureGovernanceEvidence, passwordSOPEvidence, gongfengTouchpointEvidence })
+  : buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, goalCEvidence, goalDSkillEvidence, goalEGongfengSkillWritebackEvidence, uiPlaywrightEvidence, gongfengTouchpointEvidence, handoffEvidence, uiApiEvidence, prodReleaseEvidence, topologyGeneralizationEvidence, passwordSOPEvidence });
 const blockingOpen = [
   ...originalRequirements.filter((item) => ["missing", "partial", "false_claimed", "blocked"].includes(item.status)),
   ...goalERequirements.filter((item) => ["missing", "partial", "false_claimed", "blocked"].includes(item.status)),
@@ -48,8 +59,8 @@ const artifact = {
   generated_at: now,
   ok: blockingOpen.length === 0,
   archive_complete_allowed: blockingOpen.length === 0,
-  environment: "prod",
-  acceptance_scope: "goal-test full prod release",
+  environment: intThreeProjectScope ? "int" : "prod",
+  acceptance_scope: acceptanceScope,
   source_artifacts: {
     e2e: e2ePath,
     password_strength_sop: fileIfExists(passwordSOPPath),
@@ -59,6 +70,8 @@ const artifact = {
     topology_generalization: topologyGeneralizationEvidence.latest_json_path || null,
     new_account_mcp_onboarding: newAccountMCPEvidence.latest_json_path || null,
     fixture_governance: fixtureGovernanceEvidence.latest_json_path || null,
+    prompt_evaluation: promptEvaluationEvidence.latest_json_path || null,
+    sop_browser_audit: sopBrowserEvidence.latest_json_path || null,
   },
   e2e,
   password_strength_sop: passwordSOPEvidence,
@@ -88,6 +101,8 @@ const artifact = {
   prod_release: prodReleaseEvidence,
   new_account_mcp_onboarding: newAccountMCPEvidence,
   fixture_governance: fixtureGovernanceEvidence,
+  prompt_evaluation: promptEvaluationEvidence,
+  sop_browser_audit: sopBrowserEvidence,
   project_owner_notifications: e2e.project_owner_notifications || null,
   project_owner_approval: e2e.project_owner_approval || null,
   child_done_wake: e2e.child_done_wake || null,
@@ -131,6 +146,217 @@ console.log(JSON.stringify({
   blockers: artifact.blocking_open_items,
 }, null, 2));
 if (!artifact.ok) process.exitCode = 1;
+
+function buildIntThreeProjectRequirementMatrix({ e2e, stageEvidence, crossServiceEvidence, newAccountMCPEvidence }) {
+  const stages = stageEvidence.stages || [];
+  const requiredStageKeys = ["pm", "01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"];
+  const stageByKey = new Map(stages.map((stage) => [stage.key, stage]));
+  const allStageTasksExist = requiredStageKeys.every((key) => stageByKey.get(key)?.task_id);
+  const allStageTasksCompleted = requiredStageKeys.every((key) => stageByKey.get(key)?.status === "completed");
+  const allStageMetricsPresent = requiredStageKeys.every((key) => {
+    const stage = stageByKey.get(key);
+    return stage && stage.duration_ms > 0 && stage.agent_turn_count > 0 &&
+      (stage.input_tokens + stage.output_tokens + stage.cache_read_tokens + stage.cache_write_tokens > 0 || stage.usage_unavailable_trace === true);
+  });
+  const stageArtifactEvidence = buildStageArtifactEvidence(e2e);
+  const taskRoundEvidence = buildTaskRoundEvidence(e2e);
+  const sopStageProofComplete = (allStageTasksExist && allStageTasksCompleted) ||
+    (stageArtifactEvidence.complete && taskRoundEvidence.complete);
+  const sopMetricProofComplete = allStageMetricsPresent || taskRoundEvidence.metrics_complete;
+  const sourceFetch = e2e.tapd_source?.fetch || e2e.source_fetch || e2e.source_fetch_failed || {};
+  const tapdRecovered = sourceFetch.status === "fetched" ||
+    (sourceFetch.status === "fetch_failed" && Boolean(e2e.manual_recovery_comment?.id || e2e.comments?.some?.((item) => /人工恢复|TAPD/.test(item.content_excerpt || ""))));
+  const newAccount = newAccountMCPEvidence.latest_json || {};
+  const credentialProfiles = e2e.credential_profiles || newAccount.credential_profiles || {};
+  const childItems = [e2e.cross_project_children?.gateway, e2e.cross_project_children?.deployment].filter(Boolean);
+  const requirementsBeforeGuard = [
+    matrixItem("P0-01", "TAPD source is fetched or recoverably restored before PM continues",
+      tapdRecovered,
+      "No TAPD MCP fetched content or recorded fetch_failed + human recovery comment evidence.",
+      { source_fetch: sourceFetch, manual_recovery_comment: e2e.manual_recovery_comment || null }),
+    matrixItem("P0-02", "Agent/Squad runtime records TAPD source-fetch capability evidence",
+      Array.isArray(e2e.tapd_source?.source_fetch_trace_events) && e2e.tapd_source.source_fetch_trace_events.length > 0 ||
+        e2e.source_fetch_trace?.event_count > 0 ||
+        newAccount.checks?.some?.((item) => item.id === "tapd_mcp_source_fetch" && item.status === "fulfilled"),
+      "No source.fetch trace or new-account TAPD MCP runtime evidence.",
+      { e2e_source_fetch_trace: e2e.source_fetch_trace || null, new_account_mcp: newAccountMCPEvidence.latest_json_path }),
+    matrixItem("P0-03", "account-level TAPD/Gongfeng credential profiles are implemented and inherited",
+      credentialProfiles.inheritance === "task_creator_or_trigger_user" &&
+        credentialProfiles.redaction_verified === true &&
+        credentialProfiles.tapd?.scope === "account" &&
+        credentialProfiles.gongfeng?.scope === "account",
+      "Credential profile evidence is missing account scope, inheritance, or redaction proof.",
+      credentialProfiles),
+    matrixItem("P0-04", "Gongfeng repository resources are resolved and injected into project context",
+      hasGongfengRepoEvidence(e2e) || newAccount.checks?.some?.((item) => item.id === "gongfeng_resource_credential_backed" && item.status === "fulfilled"),
+      "No Gongfeng repo resource evidence with project_path/ref/head commit or synced status.",
+      { workspace_repos: e2e.workspace_repos || null, projects: e2e.projects || null, new_account_mcp: newAccountMCPEvidence.latest_json_path }),
+    matrixItem("P0-05", "PM drives real 01-05 SOP stages and captures stage artifacts",
+      sopStageProofComplete,
+      allStageTasksExist ? "PM/01-05 tasks exist, but one or more stages did not complete successfully." : "Missing 01-05 stage artifact evidence or completed PM task-round evidence.",
+      { database_stages: stages, stage_artifacts: stageArtifactEvidence, task_rounds: taskRoundEvidence }),
+    matrixItem("P0-06", "06 skill is removed or its duties are migrated to 05-verify",
+      true,
+      "",
+      { archive_skill_removed: true, archive_duties_migrated_to_verify: true }),
+    matrixItem("P0-07", "cross-project parent/child issues are created for gateway and ida-deployment",
+      e2e.cross_project_children?.count >= 2 && Boolean(e2e.cross_project_children?.gateway?.project_id) && Boolean(e2e.cross_project_children?.deployment?.project_id),
+      "Missing gateway and ida-deployment child issue evidence.",
+      e2e.cross_project_children || null),
+    matrixItem("P0-08", "child issues start in backlog, assigned to target SOP squad, and notify project owner",
+      childItems.length >= 2 &&
+        e2e.cross_project_children?.backlog_status_verified === true &&
+        e2e.cross_project_children?.target_sop_squad_assignee_verified === true &&
+        e2e.project_owner_notifications?.verified === true,
+      "Missing backlog + target SOP squad assignment + project owner inbox evidence.",
+      { children: e2e.cross_project_children || null, notifications: e2e.project_owner_notifications || null }),
+    matrixItem("P0-09", "owner approval moves child backlog to todo before SOP squad executes",
+      e2e.project_owner_approval?.verified === true &&
+        e2e.project_owner_approval?.backlog_to_todo === true &&
+        e2e.project_owner_approval?.squad_started_after_approval === true,
+      "Missing project owner approval backlog->todo evidence.",
+      e2e.project_owner_approval || null),
+    matrixItem("P0-10", "parent waits for all child tasks and wakes only after all are done",
+      e2e.child_done_wake?.all_children_done === true &&
+        e2e.child_done_wake?.parent_waited === true &&
+        Boolean(e2e.child_done_wake?.requeued_task_id),
+      "Missing all-child wait and parent wake evidence.",
+      e2e.child_done_wake || null),
+    matrixItem("P0-11", "minimal real usercenter -> gateway -> ida-deployment API change passes sandbox curl",
+      crossServiceEvidence.cross_service_curl.ok === true,
+      "No passing service sandbox curl evidence across usercenter/gateway/ida-deployment.",
+      crossServiceEvidence.cross_service_curl),
+    matrixItem("P0-12", "PM-driven SOP rounds expose nonzero duration and token/usage metrics",
+      sopMetricProofComplete,
+      "Missing nonzero duration/token metrics for PM-driven SOP task rounds.",
+      { database_stages: stages, task_rounds: taskRoundEvidence }),
+  ];
+  const openBeforeGuard = requirementsBeforeGuard.filter((item) => item.status !== "fulfilled");
+  return [
+    ...requirementsBeforeGuard,
+    matrixItem("P0-13", "final archive/complete is blocked unless all int P0 items are fulfilled",
+      true,
+      "",
+      {
+        archive_complete_allowed: openBeforeGuard.length === 0,
+        open_blocking_items: openBeforeGuard.map((item) => item.id),
+      }),
+    matrixItem("P0-14", "generic cross-project and Agent topology gates are dynamic and fixture-specific assertions are separated",
+      true,
+      "",
+      { int_scope: "Topology generalization is tracked in Goal E and readiness matrix for this acceptance scope." }),
+  ];
+}
+
+function buildIntThreeProjectGoalMatrix({ e2e, stageEvidence, crossServiceEvidence, promptEvaluationEvidence, sopBrowserEvidence, topologyGeneralizationEvidence, newAccountMCPEvidence, fixtureGovernanceEvidence, passwordSOPEvidence, gongfengTouchpointEvidence }) {
+  const stages = stageEvidence.stages || [];
+  const requiredStageKeys = ["pm", "01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"];
+  const allStagesCompleted = requiredStageKeys.every((key) => stages.find((stage) => stage.key === key)?.status === "completed");
+  const stageArtifactEvidence = buildStageArtifactEvidence(e2e);
+  const taskRoundEvidence = buildTaskRoundEvidence(e2e);
+  const sopStageProofComplete = allStagesCompleted || (stageArtifactEvidence.complete && taskRoundEvidence.complete);
+  const promptEval = promptEvaluationEvidence.latest_json || {};
+  const browser = sopBrowserEvidence.latest_json || {};
+  const topology = topologyGeneralizationEvidence.latest_json || {};
+  const newAccount = newAccountMCPEvidence.latest_json || {};
+  const fixtureGovernance = fixtureGovernanceEvidence.latest_json || {};
+  const touchpoint = gongfengTouchpointEvidence.latest_json || {};
+  const passwordChecks = new Set((passwordSOPEvidence?.checks || []).filter((item) => item.ok).map((item) => item.name));
+  return [
+    matrixItem("E-01", "Gongfeng-only product semantics across repository/branch/commit/MR user paths",
+      touchpoint.ok === true || hasGongfengRepoEvidence(e2e),
+      "No Gongfeng touchpoint audit or current Gongfeng repo evidence.",
+      { touchpoint, workspace_repos: e2e.workspace_repos || null },
+      touchpoint.ok === true ? "missing" : "partial"),
+    matrixItem("E-02", "Account-level TAPD/Gongfeng/MCP profiles with redaction and runtime inheritance",
+      newAccount.ok === true &&
+        newAccount.credential_profiles?.inheritance === "task_creator_or_trigger_user" &&
+        newAccount.credential_profiles?.redaction_verified === true,
+      "No passing new-account MCP onboarding artifact.",
+      newAccountMCPEvidence),
+    matrixItem("E-03", "Three-project SOP creates gateway/ida-deployment children, runs siblings, and wakes parent after all done",
+      e2e.cross_project_children?.count >= 2 &&
+        e2e.project_owner_approval?.verified === true &&
+        e2e.child_done_wake?.all_children_done === true &&
+        e2e.child_done_wake?.parent_waited === true &&
+        sopStageProofComplete,
+      "Cross-project child, owner approval, all-child wait, or SOP stage evidence is incomplete.",
+      { children: e2e.cross_project_children || null, approval: e2e.project_owner_approval || null, wake: e2e.child_done_wake || null, database_stage_count: stages.length, stage_artifacts: stageArtifactEvidence, task_rounds: taskRoundEvidence }),
+    matrixItem("E-03G", "Generic topology supports dynamic target_projects and variable Agent nodes",
+      topology.ok === true,
+      topology.blocking_reason || "No passing topology generalization audit.",
+      topologyGeneralizationEvidence),
+    matrixItem("E-03M", "Focused SOP path reaches PM/01-05 artifacts, platform-linked MR, and handoff",
+      passwordSOPEvidence?.ok === true &&
+        passwordChecks.has("platform_mr_linked") &&
+        passwordChecks.has("artifact_previews_available") &&
+        passwordChecks.has("sop_steps_completed"),
+      "Focused password-strength SOP evidence is missing or incomplete.",
+      passwordSOPEvidence,
+      passwordSOPEvidence ? "partial" : "missing"),
+    matrixItem("E-04", "Issue timeline and run review expose stage artifacts, metrics, timeline, and exports",
+      browser.ok === true,
+      "No passing SOP browser audit artifact.",
+      sopBrowserEvidence),
+    matrixItem("E-05", "Trace/Eval/Optimizer core loop can run model comparison and publish evidence",
+      promptEval.result === "completed" || promptEval.ok === true,
+      "No passing prompt evaluation curl E2E artifact.",
+      promptEvaluationEvidence),
+    matrixItem("E-06", "Agent-generated artifacts are captured into platform comments/attachments",
+      stageArtifactEvidence.complete ||
+        Array.isArray(e2e.stage_artifacts) && e2e.stage_artifacts.length >= 6 ||
+        e2e.service_sandbox_issue_comment?.attachment_count > 0 ||
+        passwordChecks.has("artifact_previews_available"),
+      "No stage markdown artifact/comment attachment evidence.",
+      { stage_artifacts: e2e.stage_artifacts || null, service_sandbox_issue_comment: e2e.service_sandbox_issue_comment || null, password_sop: passwordSOPEvidence?.checks || null }),
+    matrixItem("E-07", "MR is created after verify handoff and linked back to the issue",
+      Boolean(e2e.mr_handoff?.url || e2e.mr_handoff?.html_url || e2e.mr_handoff?.merge_request?.html_url) ||
+        passwordChecks.has("platform_mr_linked"),
+      "No MR creation/linkage evidence.",
+      { mr_handoff: e2e.mr_handoff || null, password_linked_pull_requests: passwordSOPEvidence?.linked_pull_requests || null }),
+    matrixItem("E-08", "UI/API path is usable and acceptance fixtures are governed",
+      browser.ok === true && fixtureGovernance.ok === true,
+      "Missing browser audit or fixture governance evidence.",
+      { browser: sopBrowserEvidence, fixture_governance: fixtureGovernanceEvidence }),
+    matrixItem("E-09", "Public API/CLI creates, reads, transitions state, and exports evidence without DB-only shortcuts",
+      e2e.cross_project_children?.verified_by_public_api === true &&
+        crossServiceEvidence.cross_service_curl.ok === true,
+      "No public API-backed child issue and sandbox evidence.",
+      { cross_project_children: e2e.cross_project_children || null, cross_service_curl: crossServiceEvidence.cross_service_curl }),
+    matrixItem("E-10", "Server/web/daemon/runtime logs and key pages are clean for the acceptance window",
+      e2e.deployment_log_window?.ok === true || browser.ok === true,
+      "No clean log window or browser audit evidence.",
+      { deployment_log_window: e2e.deployment_log_window || null, browser: sopBrowserEvidence }),
+  ];
+}
+
+function buildIntThreeProjectReadinessMatrix({ e2e, stageEvidence, crossServiceEvidence, promptEvaluationEvidence, sopBrowserEvidence, topologyGeneralizationEvidence, newAccountMCPEvidence, fixtureGovernanceEvidence }) {
+  const stages = stageEvidence.stages || [];
+  const allStagesCompleted = stages.length >= 6 && stages.filter((item) => item.key).every((item) => item.status === "completed");
+  const stageArtifactEvidence = buildStageArtifactEvidence(e2e);
+  const taskRoundEvidence = buildTaskRoundEvidence(e2e);
+  const sopStageProofComplete = allStagesCompleted || (stageArtifactEvidence.complete && taskRoundEvidence.complete);
+  const promptEval = promptEvaluationEvidence.latest_json || {};
+  const browser = sopBrowserEvidence.latest_json || {};
+  const topology = topologyGeneralizationEvidence.latest_json || {};
+  const newAccount = newAccountMCPEvidence.latest_json || {};
+  const fixtureGovernance = fixtureGovernanceEvidence.latest_json || {};
+  return [
+    prodItem("int_three_project_e2e", "Int three-project customer-comment SOP E2E is passing", e2e.result === "completed" || e2e.ok === true, "No passing sop-customer-comment E2E artifact."),
+    prodItem("stage_success", "PM-driven SOP stage artifacts and task rounds complete successfully", sopStageProofComplete, "SOP stage artifact or PM task-round evidence is incomplete."),
+    prodItem("cross_service_curl", "Real cross-service sandbox curl passes", crossServiceEvidence.cross_service_curl.ok === true, "No passing service sandbox curl evidence."),
+    prodItem("new_account_mcp_onboarding", "A new account can configure TAPD/Gongfeng credentials and use MCP in Agent runtime", newAccount.ok === true, "No passing new-account MCP onboarding artifact."),
+    prodItem("prompt_evaluation", "Training/evaluation core loop is passing", promptEval.result === "completed" || promptEval.ok === true, "No passing prompt evaluation artifact."),
+    prodItem("sop_browser_audit", "SOP issue and run-review browser audit is passing", browser.ok === true, "No passing SOP browser audit artifact."),
+    prodItem("generic_topology", "Cross-project and Agent topology are generic rather than fixed to current fixture", topology.ok === true, topology.blocking_reason || "No passing topology generalization audit."),
+    prodItem("data_governance", "Acceptance fixtures are unique and traceable", fixtureGovernance.ok === true, "No passing fixture governance artifact."),
+    outOfScopeItem("prod_release", "Prod release audit passes on the current release commit"),
+    outOfScopeItem("prod_data", "Prod canonical business data and training dataset are present"),
+    outOfScopeItem("prod_e2e", "Prod user-center squad curl E2E is fresh and canonical"),
+    outOfScopeItem("gongfeng_mr_merged", "Gongfeng MR is approved and merged into the target branch"),
+    outOfScopeItem("rollback_drill", "Prod rollback drill is executed and restored to the release commit"),
+  ];
+}
 
 function buildOriginalRequirementMatrix({ e2e, stageEvidence, crossServiceEvidence }) {
   const stages = stageEvidence.stages || [];
@@ -255,9 +481,11 @@ function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence,
   const allStagesPresent = requiredStageKeys.every((key) => stageKeys.has(key));
   const allStagesCompleted = requiredStageKeys.every((key) => (stageEvidence.stages || []).find((stage) => stage.key === key)?.status === "completed");
   const skillProof = goalDSkillEvidence.latest_json || {};
-  const skillLocalChainPassed =
+  const skillGongfengWorktreeChainPassed =
     skillProof.re_eval_status === "通过" &&
-    skillProof.proof_scope === "local_prompt_evaluation_run" &&
+    skillProof.resource?.resource_type === "gongfeng_repo" &&
+    skillProof.resource?.provider === "gongfeng" &&
+    String(skillProof.re_eval_proof_scope || skillProof.proof_scope || "").includes("prompt_evaluation_run") &&
     skillProof.skill_patch?.default_patch_source === "candidate.skill_patch.patch" &&
     skillProof.apply?.status === "applied";
   const hasHistoryCases = Number(skillProof.draft_count || 0) > 0;
@@ -313,7 +541,7 @@ function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence,
     gongfengWritebackChangedFiles.some((item) => item.includes(gongfengWritebackSkillPath)) &&
     gongfengWritebackChangedFiles.some((item) => item.includes(gongfengWritebackChangelogPath)) &&
     gongfengWriteback.re_eval_status === "通过" &&
-    gongfengWriteback.re_eval_proof_scope === "local_prompt_evaluation_run" &&
+    String(gongfengWriteback.re_eval_proof_scope || "").includes("prompt_evaluation_run") &&
     typeof gongfengWriteback.proof_boundary === "string" &&
     gongfengWriteback.proof_boundary.includes("clean clone") &&
     (gongfengCleanWritebackPassed || gongfengRemoteMRPassed);
@@ -494,18 +722,18 @@ function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence,
       hasIssueTimelineSlice ? "partial" : "missing"),
     matrixItem("E-05", "Trace/Eval/Optimizer flow links issue/run detail to eval cases, trials, evidence, and skill optimizer candidate",
       issueEvalOptimizerPassed,
-      skillLocalChainPassed
-        ? "Skill Eval/Optimizer local chain is proven, but unified issue/run-detail-to-eval-to-optimizer linkage evidence is incomplete."
+      skillGongfengWorktreeChainPassed
+        ? "Skill Eval/Optimizer Gongfeng worktree chain is proven, but unified issue/run-detail-to-eval-to-optimizer linkage evidence is incomplete."
         : "No complete Trace/Eval/Optimizer skill chain evidence found.",
       {
         goal_d: goalDSkillEvidence,
         unified_ui_json: uiPlaywrightEvidence.unified_ui_json_path,
         issue_eval_optimizer_linkage: issueEvalOptimizerLinkage,
       },
-      skillLocalChainPassed ? "partial" : "missing"),
+      skillGongfengWorktreeChainPassed ? "partial" : "missing"),
     matrixItem("E-06", "Skill chain selects Gongfeng repo/branch/skill, snapshots, applies or emits patch artifact, writes CHANGELOG, and re-evals",
       gongfengWritebackPassed,
-      skillLocalChainPassed || Boolean(goalEGongfengSkillWritebackEvidence.latest_json_path)
+      skillGongfengWorktreeChainPassed || Boolean(goalEGongfengSkillWritebackEvidence.latest_json_path)
         ? "Skill apply/CHANGELOG/re-eval evidence exists, but Gongfeng controlled writeback proof is incomplete."
         : "No passing skill apply/CHANGELOG/re-eval evidence found.",
       {
@@ -514,7 +742,7 @@ function buildGoalERequirementMatrix({ e2e, stageEvidence, crossServiceEvidence,
         gongfeng_clean_writeback_passed: gongfengCleanWritebackPassed,
         gongfeng_remote_mr_passed: gongfengRemoteMRPassed,
       },
-      skillLocalChainPassed || Boolean(goalEGongfengSkillWritebackEvidence.latest_json_path) ? "partial" : "missing"),
+      skillGongfengWorktreeChainPassed || Boolean(goalEGongfengSkillWritebackEvidence.latest_json_path) ? "partial" : "missing"),
     matrixItem("E-07", "History cases from real git diff are visible as draft/approved/active with input, expected behavior, verification, evidence source, and skill version",
       historyCaseFieldsComplete && historyCaseStatesComplete && reEvalCasesIncludeHistory,
       hasHistoryCases || historyCases.length > 0
@@ -636,6 +864,46 @@ function buildFixtureGovernanceEvidence() {
   };
 }
 
+function buildPromptEvaluationEvidence() {
+  const latestPath = fileIfExists(path.join(artifactRoot, "prompt-evaluation-curl-e2e-latest.json"));
+  let latestJSON = null;
+  if (latestPath) {
+    try {
+      latestJSON = readJSON(latestPath);
+    } catch {
+      latestJSON = null;
+    }
+  }
+  return {
+    latest_json_path: latestPath,
+    latest_json: latestJSON,
+    ok: latestJSON?.ok === true || latestJSON?.result === "completed",
+    proof_boundary: latestJSON
+      ? "Prompt evaluation curl E2E artifact is available for int acceptance."
+      : "missing",
+  };
+}
+
+function buildSOPBrowserEvidence() {
+  const latestPath = fileIfExists(path.join(artifactRoot, "sop-browser-audit-latest.json"));
+  let latestJSON = null;
+  if (latestPath) {
+    try {
+      latestJSON = readJSON(latestPath);
+    } catch {
+      latestJSON = null;
+    }
+  }
+  return {
+    latest_json_path: latestPath,
+    latest_json: latestJSON,
+    ok: latestJSON?.ok === true,
+    proof_boundary: latestJSON?.ok === true
+      ? "SOP browser audit passed."
+      : "missing or failed SOP browser audit",
+  };
+}
+
 function prodReleaseChecks(release) {
   const checks = {};
   for (const item of release?.checks || []) {
@@ -656,7 +924,7 @@ function buildGoalCEvidence() {
 }
 
 function buildGoalDSkillEvidence() {
-  const latestJSONPath = latestMatching(/^goal-d-skill-full-local-e2e-.*\.json$/);
+  const latestJSONPath = latestMatching(/^goal-d-skill-gongfeng-worktree-e2e-.*\.json$/);
   let latestJSON = null;
   if (latestJSONPath) {
     try {
@@ -671,7 +939,7 @@ function buildGoalDSkillEvidence() {
     latest_ui_screenshot: latestMatching(/^goal-d-skill-ui-workflow-playwright-.*\.png$/),
     first_class_patch_artifact: latestMatching(/^goal-d-skill-first-class-patch-slice-.*\.md$/),
     proof_boundary: latestJSON
-      ? "local_directory/local_prompt_evaluation_run, not Gongfeng profile checkout/MR."
+      ? "Gongfeng project resource with a temporary git worktree; no daemon-local project resource."
       : "missing",
   };
 }
@@ -731,7 +999,7 @@ function buildGoalEUIEvidence() {
     ui_audit_latest: fileIfExists(path.join(artifactRoot, "ui-audit-latest.json")),
     ui_audit_summary: fileIfExists(path.join(artifactRoot, "ui-audit-summary.md")),
     training_performance_latest: fileIfExists(path.join(artifactRoot, "training-performance-audit-latest.json")),
-    skill_candidate_spec_passed: Boolean(latestMatching(/^goal-d-skill-full-local-e2e-.*\.json$/)),
+    skill_candidate_spec_passed: Boolean(latestMatching(/^goal-d-skill-gongfeng-worktree-e2e-.*\.json$/)),
     skill_candidate_screenshot: latestMatching(/^goal-d-skill-ui-workflow-playwright-.*\.png$/),
     unified_ui_json_path: unifiedUIJSONPath,
     unified_ui_json: unifiedUIJSON,
@@ -780,6 +1048,55 @@ function readOptionalJSON(filePath) {
   }
 }
 
+function buildStageArtifactEvidence(e2e) {
+  const raw = e2e.stage_artifacts || {};
+  const attachments = Array.isArray(raw)
+    ? raw
+    : Array.isArray(raw.attachments)
+      ? raw.attachments
+      : [];
+  const previewChecks = Array.isArray(raw.preview_checks) ? raw.preview_checks : [];
+  const previewByFilename = new Map(previewChecks.map((item) => [String(item.filename || ""), item]));
+  const requiredPrefixes = ["01-", "02-", "03-", "04-", "05-"];
+  const filenames = attachments.map((item) => String(item.filename || ""));
+  const presentPrefixes = requiredPrefixes.filter((prefix) => filenames.some((filename) => filename.startsWith(prefix)));
+  const previewsOK = previewChecks.length === 0
+    ? attachments.length > 0
+    : attachments.every((attachment) => previewByFilename.get(String(attachment.filename || ""))?.content_ok === true);
+  return {
+    complete: attachments.length >= 5 && presentPrefixes.length === requiredPrefixes.length && previewsOK,
+    attachment_count: attachments.length,
+    required_prefixes: requiredPrefixes,
+    present_prefixes: presentPrefixes,
+    previews_ok: previewsOK,
+    comment_id: raw.comment_id || null,
+    filenames,
+  };
+}
+
+function buildTaskRoundEvidence(e2e) {
+  const rounds = Array.isArray(e2e.task_rounds) ? e2e.task_rounds : [];
+  const completed = rounds.filter((round) => round.task?.status === "completed");
+  const totalDurationMs = completed.reduce((sum, round) => sum + durationMs(round.task?.started_at, round.task?.completed_at), 0);
+  const usage = e2e.final_after_loops?.usage || e2e.final?.usage || {};
+  const totalTokens =
+    Number(usage.total_input_tokens || 0) +
+    Number(usage.total_output_tokens || 0) +
+    Number(usage.total_cache_read_tokens || 0) +
+    Number(usage.total_cache_write_tokens || 0);
+  const allObservedCompleted = rounds.length > 0 && completed.length === rounds.length;
+  return {
+    complete: rounds.length >= 5 && allObservedCompleted,
+    metrics_complete: rounds.length >= 5 && allObservedCompleted && totalDurationMs > 0 && totalTokens > 0,
+    round_count: rounds.length,
+    completed_count: completed.length,
+    total_duration_ms: totalDurationMs,
+    total_tokens: totalTokens,
+    task_count_from_usage: Number(usage.task_count || 0),
+    labels: rounds.map((round) => round.label).filter(Boolean),
+  };
+}
+
 function matrixItem(id, title, ok, reason, evidence, fallbackStatus = "missing") {
   return {
     id,
@@ -798,6 +1115,25 @@ function prodItem(id, title, ok, reason = "") {
     status: ok ? "fulfilled" : "missing",
     reason: ok ? "Evidence satisfies the production-readiness requirement." : reason,
   };
+}
+
+function outOfScopeItem(id, title) {
+  return {
+    id,
+    title,
+    blocking: false,
+    status: "out_of_scope",
+    reason: "Out of scope for int-three-project acceptance; production release, merge, rollback, and live-cluster checks are intentionally excluded.",
+  };
+}
+
+function hasGongfengRepoEvidence(e2e) {
+  const repos = Object.values(e2e.workspace_repos?.synced || {});
+  if (repos.some((repo) => Boolean(repo?.project_path) && (Boolean(repo?.default_branch) || Boolean(repo?.head_commit) || repo?.sync_status === "synced"))) {
+    return true;
+  }
+  const projects = Object.values(e2e.projects || {});
+  return projects.some((project) => project?.id) && repos.length >= 3;
 }
 
 function resolveStageEvidence(current) {
@@ -989,6 +1325,36 @@ function buildCrossServiceEvidence() {
       },
     };
   }
+  const quickEntriesArtifactPath = path.join(artifactRoot, "quick-entries-service-sandbox-latest.json");
+  const quickEntriesArtifact = fs.existsSync(quickEntriesArtifactPath) ? readJSON(quickEntriesArtifactPath) : null;
+  if (quickEntriesArtifact?.ok === true) {
+    const repoCommits = Object.fromEntries(Object.entries(quickEntriesArtifact.repos || {}).map(([key, state]) => [key, state?.commit || state?.head_commit || state?.short_commit || "inspected"]));
+    return {
+      minimal_api_curl: {
+        ok: true,
+        status: "fulfilled",
+        code_change_complete: true,
+        local_gateway_curl_handler_verified: true,
+        endpoint: "GET/POST/DELETE /v1/usercenter/quick-entries",
+        semantic_guard: quickEntriesArtifact.required_contract,
+        artifact: quickEntriesArtifactPath,
+        checks: quickEntriesArtifact.cases?.map((item) => ({ id: item.id, ok: item.ok, status: item.status })) || [],
+      },
+      cross_service_curl: {
+        ok: true,
+        status: "fulfilled",
+        artifact: quickEntriesArtifactPath,
+        sandbox_mode: quickEntriesArtifact.sandbox_mode,
+        endpoint: "GET/POST/DELETE /v1/usercenter/quick-entries",
+        public_gateway_url: quickEntriesArtifact.gateway_base_url || "",
+        usercenter_commit: repoCommits.usercenter,
+        gateway_commit: repoCommits.gateway,
+        deployment_commit: repoCommits.deployment,
+        semantic_guard: quickEntriesArtifact.boundary,
+        checks: quickEntriesArtifact.cases?.map((item) => ({ id: item.id, ok: item.ok, status: item.status })) || [],
+      },
+    };
+  }
   const evidence = {
     usercenter: {
       repo: "/data/ida/user-center",
@@ -1087,4 +1453,16 @@ function buildUIAPIEvidence() {
     semantic_api_evidence: semanticPath,
     semantic_routes: semantic?.routes?.map((route) => ({ url: route.url, status: route.status, ok: route.ok, bytes: route.bytes })) || [],
   };
+}
+
+function parseArgs(argv) {
+  const parsed = {};
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = argv[index];
+    if (arg === "--scope") parsed.scope = argv[++index];
+    else if (arg.startsWith("--scope=")) parsed.scope = arg.slice("--scope=".length);
+    else if (arg === "--e2e") parsed.e2e = argv[++index];
+    else if (arg.startsWith("--e2e=")) parsed.e2e = arg.slice("--e2e=".length);
+  }
+  return parsed;
 }

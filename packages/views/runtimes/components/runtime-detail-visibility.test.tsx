@@ -91,10 +91,9 @@ vi.mock("@multica/core/runtimes/mutations", () => ({
   }),
 }));
 
-// Stubbing ProviderLogo / UsageSection / UpdateSection avoids dragging in
-// chart libs and additional query keys we don't care about here.
+// Stubbing ProviderLogo / UsageSection avoids dragging in chart libs and
+// additional query keys we don't care about here.
 vi.mock("./provider-logo", () => ({ ProviderLogo: () => null }));
-vi.mock("./update-section", () => ({ UpdateSection: () => null }));
 vi.mock("./usage-section", () => ({ UsageSection: () => null }));
 vi.mock("./shared", () => ({
   HealthBadge: () => null,

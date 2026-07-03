@@ -11,8 +11,8 @@ const apiURL = trimEnv("ACCEPTANCE_API_URL") || trimEnv("NEXT_PUBLIC_API_URL") |
 const account = trimEnv("ACCEPTANCE_DEMO_ACCOUNT") || trimEnv("REAL_AGENT_E2E_ACCOUNT") || "develop";
 const password = trimEnv("ACCEPTANCE_DEMO_PASSWORD") || trimEnv("REAL_AGENT_E2E_PASSWORD") || "develop123";
 const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || trimEnv("REAL_AGENT_E2E_WORKSPACE") || "ai-studio";
-const provider = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER") || "codex";
-const model = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "gpt-5.3-codex-spark";
+const provider = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER") || "codebuddy";
+const model = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "deepseek-v4-pro-ioa";
 const squadTemplateKey = trimEnv("ACCEPTANCE_SQUAD_TEMPLATE_KEY") || trimEnv("REAL_AGENT_E2E_SQUAD_TEMPLATE_KEY");
 const verifyChildWake = trimEnv("ACCEPTANCE_VERIFY_CHILD_WAKE") === "1" || squadTemplateKey !== "";
 const verifyCrossProjectChildren = trimEnv("ACCEPTANCE_VERIFY_CROSS_PROJECT_CHILDREN") === "1";
@@ -122,8 +122,8 @@ if (squadTemplateKey) {
     instructions: "你是 Multica 端到端验收智能体。请用中文回复，必须包含：执行结论、trace/任务标识、验收证据、下一步。",
     runtime_id: runtime.id,
     workspace_id: workspace.id,
-    visibility: "private",
-    max_concurrent_tasks: 1,
+    scope: "workspace",
+    max_concurrent_tasks: 20,
     model,
   }, token);
   if (!agent?.id) fail("创建 Agent 响应缺少 id");
@@ -197,7 +197,7 @@ const terminalTask = await poll(async () => {
     leader_task: task ? taskSummary(task) : null,
     tasks: items.slice(0, 5).map(taskSummary),
   };
-  if (!task || ["queued", "dispatched", "running", "waiting_local_directory"].includes(task.status)) return null;
+  if (!task || ["queued", "dispatched", "running"].includes(task.status)) return null;
   return task;
 }, taskTimeoutMs, "等待 Codex 小队任务完成或失败");
 evidence.task = {
@@ -632,7 +632,7 @@ function taskSummary(task) {
 }
 
 function cleanupAcceptanceTasks({ issueID, keepTaskIDs, token }) {
-  const activeStatuses = new Set(["queued", "dispatched", "running", "waiting_local_directory"]);
+  const activeStatuses = new Set(["queued", "dispatched", "running"]);
   const cleanup = {
     enabled: cleanupActiveTasks,
     issue_id: issueID,
@@ -703,7 +703,7 @@ async function cleanupStaleAcceptanceTasks(token, workspaceID) {
       JOIN issue i ON i.id = atq.issue_id
       LEFT JOIN issue parent ON parent.id = i.parent_issue_id
       WHERE i.workspace_id = $1
-        AND atq.status IN ('queued', 'dispatched', 'running', 'waiting_local_directory')
+        AND atq.status IN ('queued', 'dispatched', 'running')
         AND (
           i.title LIKE 'curl user-center 小队真实端到端验收 %'
           OR parent.title LIKE 'curl user-center 小队真实端到端验收 %'
@@ -960,7 +960,7 @@ async function waitTerminalTaskForAgent({ issueID, agentID, token, label }) {
   return poll(async () => {
     const items = listIssueTasks(issueID, token);
     const task = newestLeaderTask(items, agentID);
-    if (!task || ["queued", "dispatched", "running", "waiting_local_directory"].includes(task.status)) return null;
+    if (!task || ["queued", "dispatched", "running"].includes(task.status)) return null;
     return task;
   }, taskTimeoutMs, `等待${label}完成或失败`);
 }

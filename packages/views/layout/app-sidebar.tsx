@@ -74,7 +74,6 @@ import { inboxKeys, deduplicateInboxItems } from "@multica/core/inbox/queries";
 import { api, ApiError } from "@multica/core/api";
 import { useModalStore } from "@multica/core/modals";
 import { useConfigStore } from "@multica/core/config";
-import { useMyRuntimesNeedUpdate } from "@multica/core/runtimes/hooks";
 import { pinListOptions } from "@multica/core/pins/queries";
 import { useDeletePin, useReorderPins } from "@multica/core/pins/mutations";
 import { issueDetailOptions } from "@multica/core/issues/queries";
@@ -106,7 +105,6 @@ function isNavActive(pathname: string, href: string): boolean {
 const EMPTY_PINS: PinnedItem[] = [];
 const EMPTY_WORKSPACES: Awaited<ReturnType<typeof api.listWorkspaces>> = [];
 const EMPTY_INBOX: Awaited<ReturnType<typeof api.listInbox>> = [];
-const SIDEBAR_RUNTIME_UPDATE_DELAY_MS = 5_000;
 const SIDEBAR_NAV_BUTTON_CLASS =
   "text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground";
 
@@ -402,14 +400,6 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
     () => deduplicateInboxItems(inboxItems).filter((i) => !i.read).length,
     [inboxItems],
   );
-  const [runtimeUpdateCheckEnabled, setRuntimeUpdateCheckEnabled] = useState(false);
-  useEffect(() => {
-    setRuntimeUpdateCheckEnabled(false);
-    if (!wsId) return;
-    const timer = setTimeout(() => setRuntimeUpdateCheckEnabled(true), SIDEBAR_RUNTIME_UPDATE_DELAY_MS);
-    return () => clearTimeout(timer);
-  }, [wsId]);
-  const hasRuntimeUpdates = useMyRuntimesNeedUpdate(wsId, runtimeUpdateCheckEnabled);
   const { data: pinnedItems = EMPTY_PINS } = useQuery({
     ...pinListOptions(wsId ?? "", userId ?? ""),
     enabled: !!wsId && !!userId,
@@ -719,11 +709,7 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                         href={href}
                         isActive={isActive}
                         label={t(($) => $.nav[item.labelKey])}
-                      >
-                        {item.key === "runtimes" && hasRuntimeUpdates && (
-                          <span className="ml-auto size-1.5 rounded-full bg-destructive" />
-                        )}
-                      </SidebarNavButton>
+                      />
                     </SidebarMenuItem>
                   );
                 })}

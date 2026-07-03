@@ -661,24 +661,6 @@ export interface DashboardRunTimeDaily {
   failed_count: number;
 }
 
-export type RuntimeUpdateStatus =
-  | "pending"
-  | "running"
-  | "completed"
-  | "failed"
-  | "timeout";
-
-export interface RuntimeUpdate {
-  id: string;
-  runtime_id: string;
-  status: RuntimeUpdateStatus;
-  target_version: string;
-  output?: string;
-  error?: string;
-  created_at: string;
-  updated_at: string;
-}
-
 export interface RuntimeModel {
   id: string;
   label: string;

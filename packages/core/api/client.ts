@@ -65,7 +65,6 @@ import type {
   DashboardUsageByAgent,
   DashboardAgentRunTime,
   DashboardRunTimeDaily,
-  RuntimeUpdate,
   RuntimeModelListRequest,
   RuntimeLocalSkillListRequest,
   CreateRuntimeLocalSkillImportRequest,
@@ -1276,23 +1275,6 @@ export class ApiClient {
       [],
       { endpoint: "GET /api/dashboard/runtime/daily" },
     );
-  }
-
-  async initiateUpdate(
-    runtimeId: string,
-    targetVersion: string,
-  ): Promise<RuntimeUpdate> {
-    return this.fetch(`/api/runtimes/${runtimeId}/update`, {
-      method: "POST",
-      body: JSON.stringify({ target_version: targetVersion }),
-    });
-  }
-
-  async getUpdateResult(
-    runtimeId: string,
-    updateId: string,
-  ): Promise<RuntimeUpdate> {
-    return this.fetch(`/api/runtimes/${runtimeId}/update/${updateId}`);
   }
 
   async initiateListModels(runtimeId: string): Promise<RuntimeModelListRequest> {

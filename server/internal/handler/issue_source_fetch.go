@@ -324,7 +324,7 @@ func (h *Handler) autoFetchTAPDSource(ctx context.Context, userID string, req Re
 	}
 
 	started := time.Now()
-	doc, err := fetchTAPDSourceDocument(ctx, token, workspaceID, resourceType, resourceID)
+	doc, err := fetchTAPDSourceDocumentWithRetry(ctx, token, workspaceID, resourceType, resourceID)
 	durationMs := time.Since(started).Milliseconds()
 	if err != nil {
 		return req, err
@@ -349,6 +349,55 @@ type tapdSourceDocument struct {
 	Summary     string
 	BodyExcerpt string
 	Version     string
+}
+
+const tapdAutoFetchMaxAttempts = 3
+
+func fetchTAPDSourceDocumentWithRetry(ctx context.Context, token, workspaceID, resourceType, resourceID string) (tapdSourceDocument, error) {
+	var lastErr error
+	for attempt := 1; attempt <= tapdAutoFetchMaxAttempts; attempt++ {
+		doc, err := fetchTAPDSourceDocument(ctx, token, workspaceID, resourceType, resourceID)
+		if err == nil {
+			return doc, nil
+		}
+		lastErr = err
+		if attempt == tapdAutoFetchMaxAttempts || !isTransientTAPDAutoFetchError(err) {
+			break
+		}
+		timer := time.NewTimer(time.Duration(attempt) * 500 * time.Millisecond)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return tapdSourceDocument{}, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return tapdSourceDocument{}, lastErr
+}
+
+func isTransientTAPDAutoFetchError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	for _, marker := range []string{
+		"eof",
+		"connection reset",
+		"connection refused",
+		"timeout",
+		"temporary",
+		"tls handshake",
+		"tapd auto_fetch http 429",
+		"tapd auto_fetch http 500",
+		"tapd auto_fetch http 502",
+		"tapd auto_fetch http 503",
+		"tapd auto_fetch http 504",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func fetchTAPDSourceDocument(ctx context.Context, token, workspaceID, resourceType, resourceID string) (tapdSourceDocument, error) {

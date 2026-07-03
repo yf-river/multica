@@ -21,8 +21,8 @@ func TestBuildPromptEvaluationExecutionEvidencePairsToolCalls(t *testing.T) {
 		RunKind:         "Agent执行",
 		Status:          "通过",
 		TriggerSource:   "智能体调试场",
-		RuntimeProvider: "codex",
-		Model:           "gpt-5.3-codex-spark",
+		RuntimeProvider: "codebuddy",
+		Model:           "deepseek-v4-pro-ioa",
 		TotalCases:      1,
 		PassedCases:     1,
 		FailedCases:     0,
@@ -371,6 +371,65 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	}
 }
 
+func TestPromptEvaluationAssetExperimentDimensionsDoNotBlockCreateOrUpdate(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
+	})
+	promptID := createPromptEvaluationTestPrompt(t, testWorkspaceID, "实验维度提示词")
+
+	createW := httptest.NewRecorder()
+	testHandler.CreatePromptEvaluationAsset(createW, newRequest(http.MethodPost, "/api/prompt-evaluation-assets", map[string]any{
+		"prompt_id":  promptID,
+		"name":       "实验维度不阻塞创建",
+		"asset_type": "测试套件",
+		"payload": map[string]any{
+			"cases": []map[string]any{{
+				"名称":   "维度用例",
+				"变量":   map[string]any{"issue_title": "登录失败"},
+				"期望包含": []string{"边界"},
+			}},
+			"实验维度": []string{"命中率", "中文一致性"},
+		},
+		"status": "启用",
+	}))
+	if createW.Code != http.StatusCreated {
+		t.Fatalf("create status = %d, body = %s", createW.Code, createW.Body.String())
+	}
+	var created PromptEvaluationAssetResponse
+	if err := json.Unmarshal(createW.Body.Bytes(), &created); err != nil {
+		t.Fatalf("decode create response: %v", err)
+	}
+	if created.ExperimentDimensionCount != 2 {
+		t.Fatalf("created experiment dimension count = %d, want 2", created.ExperimentDimensionCount)
+	}
+
+	updateW := httptest.NewRecorder()
+	testHandler.UpdatePromptEvaluationAsset(updateW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-assets/"+created.ID, map[string]any{
+		"payload": map[string]any{
+			"cases": []map[string]any{{
+				"名称":   "更新维度用例",
+				"变量":   map[string]any{"issue_title": "登录失败"},
+				"期望包含": []string{"边界"},
+			}},
+			"实验维度": []string{"命中率", "缺失变量", "中文一致性"},
+		},
+	}), "id", created.ID))
+	if updateW.Code != http.StatusOK {
+		t.Fatalf("update status = %d, body = %s", updateW.Code, updateW.Body.String())
+	}
+	var updated PromptEvaluationAssetResponse
+	if err := json.Unmarshal(updateW.Body.Bytes(), &updated); err != nil {
+		t.Fatalf("decode update response: %v", err)
+	}
+	if updated.ExperimentDimensionCount != 3 {
+		t.Fatalf("updated experiment dimension count = %d, want 3", updated.ExperimentDimensionCount)
+	}
+}
+
 func TestPromptEvaluationDatasetExportImportProtocol(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("handler test fixture not initialized")
@@ -538,8 +597,8 @@ func TestPromptEvaluationDatasetFromTraces(t *testing.T) {
 		EventName:     "接口验收完成",
 		Status:        "completed",
 		Attempt:       1,
-		Provider:      "codex",
-		Model:         "gpt-5.3-codex-spark",
+		Provider:      "codebuddy",
+		Model:         "deepseek-v4-pro-ioa",
 		InputTokens:   21,
 		OutputTokens:  13,
 		FailureReason: "",
@@ -1566,7 +1625,7 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	}
 	cleanupPromptEvaluationAgentRunTest(t)
 	created, resp, runtimeID := createPromptEvaluationAgentRunFixture(t, "真实智能体运行实验", "登录失败")
-	if resp.TaskID == "" || resp.ChatSessionID == "" || resp.AgentID == "" || resp.RuntimeID != runtimeID || resp.Model != "gpt-5.3-codex-spark" {
+	if resp.TaskID == "" || resp.ChatSessionID == "" || resp.AgentID == "" || resp.RuntimeID != runtimeID || resp.Model != "deepseek-v4-pro-ioa" {
 		t.Fatalf("agent run response = %+v, runtimeID=%s", resp, runtimeID)
 	}
 	payload := resp.Asset.Payload.(map[string]any)
@@ -1613,7 +1672,7 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	}
 	if _, err := testPool.Exec(context.Background(), `
 		INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, updated_at)
-		VALUES ($1, 'codex', 'gpt-5.3-codex-spark', 11, 7, 2, 3, now())
+		VALUES ($1, 'codebuddy', 'deepseek-v4-pro-ioa', 11, 7, 2, 3, now())
 	`, resp.TaskID); err != nil {
 		t.Fatalf("insert task usage: %v", err)
 	}
@@ -1640,8 +1699,8 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 		EventName:     "训练评估用量已上报",
 		Status:        "completed",
 		Attempt:       1,
-		Provider:      "codex",
-		Model:         "gpt-5.3-codex-spark",
+		Provider:      "codebuddy",
+		Model:         "deepseek-v4-pro-ioa",
 		InputTokens:   16,
 		OutputTokens:  7,
 		FailureReason: "无",
@@ -1656,7 +1715,7 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 		"output":     structuredOutput,
 		"session_id": "prompt-eval-session",
 		"work_dir":   "/tmp/prompt-eval",
-	}, testWorkspaceID, "prompt-eval-codex-daemon")
+	}, testWorkspaceID, "prompt-eval-codebuddy-daemon")
 	testHandler.CompleteTask(completeW, withURLParam(completeReq, "taskId", resp.TaskID))
 	if completeW.Code != http.StatusOK {
 		t.Fatalf("complete status = %d, body = %s", completeW.Code, completeW.Body.String())
@@ -1770,10 +1829,10 @@ func TestRunPromptEvaluationAssetAgentRestoresArchivedTrainingAgent(t *testing.T
 	var runtimeID string
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at)
-		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 测试运行时', '{}'::jsonb, $4, 'personal', now())
+		VALUES ($1, $2, $3, 'local', 'codebuddy', 'online', 'CodeBuddy 测试运行时', '{}'::jsonb, $4, 'personal', now())
 		RETURNING id
-	`, testWorkspaceID, "prompt-eval-codex-restore-"+randomID()[:8], "prompt-eval-codex-restore-"+randomID()[:8], testUserID).Scan(&runtimeID); err != nil {
-		t.Fatalf("create codex runtime: %v", err)
+	`, testWorkspaceID, "prompt-eval-codebuddy-restore-"+randomID()[:8], "prompt-eval-codebuddy-restore-"+randomID()[:8], testUserID).Scan(&runtimeID); err != nil {
+		t.Fatalf("create codebuddy runtime: %v", err)
 	}
 	archived, err := testHandler.Queries.CreateAgent(context.Background(), db.CreateAgentParams{
 		WorkspaceID:        parseUUID(testWorkspaceID),
@@ -1841,11 +1900,11 @@ func TestRunPromptEvaluationAssetAgentRestoresArchivedTrainingAgent(t *testing.T
 
 func TestPromptEvaluationAgentModelCanBeConfigured(t *testing.T) {
 	t.Setenv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL", "")
-	if got := promptEvaluationAgentModel(); got != "gpt-5.3-codex-spark" {
+	if got := promptEvaluationAgentModel(); got != "deepseek-v4-pro-ioa" {
 		t.Fatalf("default prompt evaluation agent model = %q", got)
 	}
-	t.Setenv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL", "gpt-5.4-mini")
-	if got := promptEvaluationAgentModel(); got != "gpt-5.4-mini" {
+	t.Setenv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL", "custom-eval-model")
+	if got := promptEvaluationAgentModel(); got != "custom-eval-model" {
 		t.Fatalf("configured prompt evaluation agent model = %q", got)
 	}
 }
@@ -1855,13 +1914,13 @@ func TestPromptEvaluationRuntimeReadinessRejectsStaleRuntime(t *testing.T) {
 		t.Skip("handler test fixture not initialized")
 	}
 	cleanupPromptEvaluationAgentRunTest(t)
-	if _, err := testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE workspace_id = $1 AND provider = 'codex' AND name LIKE 'prompt-eval-codex-%'`, testWorkspaceID); err != nil {
-		t.Fatalf("cleanup codex runtime: %v", err)
+	if _, err := testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE workspace_id = $1 AND provider = 'codebuddy' AND name LIKE 'prompt-eval-codebuddy-%'`, testWorkspaceID); err != nil {
+		t.Fatalf("cleanup codebuddy runtime: %v", err)
 	}
 	if _, err := testPool.Exec(context.Background(), `
 		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at)
-		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 过期测试运行时', '{}'::jsonb, $4, 'personal', now() - interval '5 minutes')
-	`, testWorkspaceID, "prompt-eval-codex-stale-"+randomID()[:8], "prompt-eval-codex-stale-"+randomID()[:8], testUserID); err != nil {
+		VALUES ($1, $2, $3, 'local', 'codebuddy', 'online', 'CodeBuddy 过期测试运行时', '{}'::jsonb, $4, 'personal', now() - interval '5 minutes')
+	`, testWorkspaceID, "prompt-eval-codebuddy-stale-"+randomID()[:8], "prompt-eval-codebuddy-stale-"+randomID()[:8], testUserID); err != nil {
 		t.Fatalf("create stale codex runtime: %v", err)
 	}
 
@@ -1917,7 +1976,7 @@ func TestPromptEvaluationRuntimeReadinessReportsRecentCapacityFailure(t *testing
 		"failure_reason": "agent_error.provider_capacity_or_rate_limit",
 		"session_id":     "prompt-eval-capacity-session",
 		"work_dir":       "/tmp/prompt-eval-capacity",
-	}, testWorkspaceID, "prompt-eval-codex-daemon")
+	}, testWorkspaceID, "prompt-eval-codebuddy-daemon")
 	testHandler.FailTask(failW, withURLParam(failReq, "taskId", resp.TaskID))
 	if failW.Code != http.StatusOK {
 		t.Fatalf("fail status = %d, body = %s", failW.Code, failW.Body.String())
@@ -1966,8 +2025,8 @@ func TestPromptEvaluationRuntimeReadinessReportsUnavailableStates(t *testing.T) 
 		t.Skip("handler test fixture not initialized")
 	}
 	cleanupPromptEvaluationAgentRunTest(t)
-	if _, err := testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE workspace_id = $1 AND provider = 'codex' AND name LIKE 'prompt-eval-codex-%'`, testWorkspaceID); err != nil {
-		t.Fatalf("cleanup codex runtime: %v", err)
+	if _, err := testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE workspace_id = $1 AND provider = 'codebuddy' AND name LIKE 'prompt-eval-codebuddy-%'`, testWorkspaceID); err != nil {
+		t.Fatalf("cleanup codebuddy runtime: %v", err)
 	}
 
 	readinessW := httptest.NewRecorder()
@@ -1986,9 +2045,9 @@ func TestPromptEvaluationRuntimeReadinessReportsUnavailableStates(t *testing.T) 
 	var offlineRuntimeID string
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at)
-		VALUES ($1, $2, $3, 'local', 'codex', 'offline', 'Codex 离线测试运行时', '{}'::jsonb, $4, 'personal', now())
+		VALUES ($1, $2, $3, 'local', 'codebuddy', 'offline', 'CodeBuddy 离线测试运行时', '{}'::jsonb, $4, 'personal', now())
 		RETURNING id
-	`, testWorkspaceID, "prompt-eval-codex-offline-"+randomID()[:8], "prompt-eval-codex-offline-"+randomID()[:8], testUserID).Scan(&offlineRuntimeID); err != nil {
+	`, testWorkspaceID, "prompt-eval-codebuddy-offline-"+randomID()[:8], "prompt-eval-codebuddy-offline-"+randomID()[:8], testUserID).Scan(&offlineRuntimeID); err != nil {
 		t.Fatalf("create offline codex runtime: %v", err)
 	}
 
@@ -2061,8 +2120,8 @@ func TestPromptEvaluationRuntimeReadinessReportsUnavailableStates(t *testing.T) 
 	}
 	if _, err := testPool.Exec(context.Background(), `
 		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at)
-		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 私有测试运行时', '{}'::jsonb, $4, 'personal', now())
-	`, testWorkspaceID, "prompt-eval-codex-private-"+randomID()[:8], "prompt-eval-codex-private-"+randomID()[:8], runtimeOwnerID); err != nil {
+		VALUES ($1, $2, $3, 'local', 'codebuddy', 'online', 'CodeBuddy 私有测试运行时', '{}'::jsonb, $4, 'personal', now())
+	`, testWorkspaceID, "prompt-eval-codebuddy-private-"+randomID()[:8], "prompt-eval-codebuddy-private-"+randomID()[:8], runtimeOwnerID); err != nil {
 		t.Fatalf("create private codex runtime: %v", err)
 	}
 
@@ -2109,7 +2168,7 @@ func TestRunPromptEvaluationAssetAgentCompletedWithoutStructuredVerdictNeedsRevi
 		"output":     "Agent 输出：我已经完成训练评估。",
 		"session_id": "prompt-eval-review-session",
 		"work_dir":   "/tmp/prompt-eval",
-	}, testWorkspaceID, "prompt-eval-codex-daemon")
+	}, testWorkspaceID, "prompt-eval-codebuddy-daemon")
 	testHandler.CompleteTask(completeW, withURLParam(completeReq, "taskId", resp.TaskID))
 	if completeW.Code != http.StatusOK {
 		t.Fatalf("complete status = %d, body = %s", completeW.Code, completeW.Body.String())
@@ -2181,7 +2240,7 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsFailedTask(t *testing.T) {
 	}
 	if _, err := testPool.Exec(context.Background(), `
 		INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, updated_at)
-		VALUES ($1, 'codex', 'gpt-5.3-codex-spark', 5, 1, 0, 0, now())
+		VALUES ($1, 'codebuddy', 'deepseek-v4-pro-ioa', 5, 1, 0, 0, now())
 	`, resp.TaskID); err != nil {
 		t.Fatalf("insert task usage: %v", err)
 	}
@@ -2192,7 +2251,7 @@ func TestRunPromptEvaluationAssetAgentAutoSyncsFailedTask(t *testing.T) {
 		"failure_reason": "命令超时",
 		"session_id":     "prompt-eval-failed-session",
 		"work_dir":       "/tmp/prompt-eval",
-	}, testWorkspaceID, "prompt-eval-codex-daemon")
+	}, testWorkspaceID, "prompt-eval-codebuddy-daemon")
 	testHandler.FailTask(failW, withURLParam(failReq, "taskId", resp.TaskID))
 	if failW.Code != http.StatusOK {
 		t.Fatalf("fail status = %d, body = %s", failW.Code, failW.Body.String())
@@ -2229,7 +2288,7 @@ func TestPromptEvaluationEvidenceSnapshotArchivesRunEvidence(t *testing.T) {
 		"failure_reason": "agent_error.provider_quota_limit",
 		"session_id":     "prompt-eval-snapshot-session",
 		"work_dir":       "/tmp/prompt-eval-snapshot",
-	}, testWorkspaceID, "prompt-eval-codex-daemon")
+	}, testWorkspaceID, "prompt-eval-codebuddy-daemon")
 	testHandler.FailTask(failW, withURLParam(failReq, "taskId", resp.TaskID))
 	if failW.Code != http.StatusOK {
 		t.Fatalf("fail status = %d, body = %s", failW.Code, failW.Body.String())
@@ -2371,7 +2430,7 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 
 	if _, err := testPool.Exec(context.Background(), `
 		INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, cache_read_tokens, cache_write_tokens, updated_at)
-		VALUES ($1, 'codex', 'gpt-5.3-codex-spark', 13, 8, 1, 2, now())
+		VALUES ($1, 'codebuddy', 'deepseek-v4-pro-ioa', 13, 8, 1, 2, now())
 	`, resp.TaskID); err != nil {
 		t.Fatalf("insert task usage: %v", err)
 	}
@@ -2394,8 +2453,8 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 		EventName:     "训练评估失败证据",
 		Status:        "failed",
 		Attempt:       1,
-		Provider:      "codex",
-		Model:         "gpt-5.3-codex-spark",
+		Provider:      "codebuddy",
+		Model:         "deepseek-v4-pro-ioa",
 		InputTokens:   16,
 		OutputTokens:  8,
 		FailureReason: "缺少验收条件",
@@ -2411,7 +2470,7 @@ func TestPromptEvaluationOptimizationCandidateUsesAgentEvidence(t *testing.T) {
 		"failure_reason": "assertion_mismatch",
 		"session_id":     "prompt-eval-evidence-session",
 		"work_dir":       "/tmp/prompt-eval",
-	}, testWorkspaceID, "prompt-eval-codex-daemon")
+	}, testWorkspaceID, "prompt-eval-codebuddy-daemon")
 	testHandler.FailTask(failW, withURLParam(failReq, "taskId", resp.TaskID))
 	if failW.Code != http.StatusOK {
 		t.Fatalf("fail status = %d, body = %s", failW.Code, failW.Body.String())
@@ -2663,7 +2722,7 @@ func cleanupPromptEvaluationAgentRunTest(t *testing.T) {
 			)
 		`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent WHERE workspace_id = $1 AND name = 'Multica 训练评估智能体'`, testWorkspaceID)
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE workspace_id = $1 AND provider = 'codex' AND name LIKE 'prompt-eval-codex-%'`, testWorkspaceID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM agent_runtime WHERE workspace_id = $1 AND provider = 'codebuddy' AND name LIKE 'prompt-eval-codebuddy-%'`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_evaluation_asset WHERE workspace_id = $1`, testWorkspaceID)
 		_, _ = testPool.Exec(context.Background(), `DELETE FROM prompt_library_item WHERE workspace_id = $1`, testWorkspaceID)
 	})
@@ -2690,10 +2749,10 @@ func TestRunPromptEvaluationAssetAgentDefaultsExperimentDimensions(t *testing.T)
 	var runtimeID string
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at)
-		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 默认维度运行时', '{}'::jsonb, $4, 'personal', now())
+		VALUES ($1, $2, $3, 'local', 'codebuddy', 'online', 'CodeBuddy 默认维度运行时', '{}'::jsonb, $4, 'personal', now())
 		RETURNING id
 	`, testWorkspaceID, "prompt-eval-default-dimension-daemon-"+randomID()[:8], "prompt-eval-default-dimension-"+randomID()[:8], testUserID).Scan(&runtimeID); err != nil {
-		t.Fatalf("create codex runtime: %v", err)
+		t.Fatalf("create codebuddy runtime: %v", err)
 	}
 	promptID := createPromptEvaluationTestPromptWithContent(
 		t,
@@ -2747,10 +2806,10 @@ func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
 	var runtimeID string
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at)
-		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 指定运行时', '{}'::jsonb, $4, 'personal', now())
+		VALUES ($1, $2, $3, 'local', 'codebuddy', 'online', 'CodeBuddy 指定运行时', '{}'::jsonb, $4, 'personal', now())
 		RETURNING id
 	`, testWorkspaceID, "prompt-eval-selected-daemon-"+randomID()[:8], "prompt-eval-selected-"+randomID()[:8], testUserID).Scan(&runtimeID); err != nil {
-		t.Fatalf("create codex runtime: %v", err)
+		t.Fatalf("create codebuddy runtime: %v", err)
 	}
 	agent, err := testHandler.Queries.CreateAgent(context.Background(), db.CreateAgentParams{
 		WorkspaceID:        parseUUID(testWorkspaceID),
@@ -2765,7 +2824,7 @@ func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
 		Instructions:       "只输出结构化评估结论。",
 		CustomEnv:          []byte("{}"),
 		CustomArgs:         []byte("[]"),
-		Model:              pgtype.Text{String: "gpt-5.4-mini", Valid: true},
+		Model:              pgtype.Text{String: "deepseek-v4-pro-ioa", Valid: true},
 	})
 	if err != nil {
 		t.Fatalf("create selected agent: %v", err)
@@ -2816,12 +2875,12 @@ func TestRunPromptEvaluationAssetAgentUsesRequestedAgent(t *testing.T) {
 	if err := json.Unmarshal(runW.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode agent run response: %v", err)
 	}
-	if resp.AgentID != uuidToString(agent.ID) || resp.RuntimeID != runtimeID || resp.Model != "gpt-5.4-mini" {
+	if resp.AgentID != uuidToString(agent.ID) || resp.RuntimeID != runtimeID || resp.Model != "deepseek-v4-pro-ioa" {
 		t.Fatalf("agent run did not use requested agent: resp=%+v agent=%s runtime=%s", resp, uuidToString(agent.ID), runtimeID)
 	}
 	payload := resp.Asset.Payload.(map[string]any)
 	recent := payload["最近Agent运行"].(map[string]any)
-	if recent["agent_id"] != uuidToString(agent.ID) || recent["执行Agent"] != "训练评估指定执行智能体" || recent["模型"] != "gpt-5.4-mini" {
+	if recent["agent_id"] != uuidToString(agent.ID) || recent["执行Agent"] != "训练评估指定执行智能体" || recent["模型"] != "deepseek-v4-pro-ioa" {
 		t.Fatalf("recent agent run did not record requested agent: %#v", recent)
 	}
 }
@@ -2831,10 +2890,10 @@ func createPromptEvaluationAgentRunFixture(t *testing.T, assetName string, caseN
 	var runtimeID string
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at)
-		VALUES ($1, $2, $3, 'local', 'codex', 'online', 'Codex 测试运行时', '{}'::jsonb, $4, 'personal', now())
+		VALUES ($1, $2, $3, 'local', 'codebuddy', 'online', 'CodeBuddy 测试运行时', '{}'::jsonb, $4, 'personal', now())
 		RETURNING id
-	`, testWorkspaceID, "prompt-eval-codex-daemon-"+randomID()[:8], "prompt-eval-codex-"+randomID()[:8], testUserID).Scan(&runtimeID); err != nil {
-		t.Fatalf("create codex runtime: %v", err)
+	`, testWorkspaceID, "prompt-eval-codebuddy-daemon-"+randomID()[:8], "prompt-eval-codebuddy-"+randomID()[:8], testUserID).Scan(&runtimeID); err != nil {
+		t.Fatalf("create codebuddy runtime: %v", err)
 	}
 
 	promptID := createPromptEvaluationTestPromptWithContent(

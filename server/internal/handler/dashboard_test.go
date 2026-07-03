@@ -508,6 +508,123 @@ func TestRollupTaskUsageHourlyIdempotentAndWatermark(t *testing.T) {
 	}
 }
 
+func TestRollupTaskUsageHourlyFastForwardsEmptyHistory(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM task_usage_hourly_dirty;
+		DELETE FROM task_usage_hourly;
+		DELETE FROM task_usage;
+		UPDATE task_usage_hourly_rollup_state
+		   SET watermark_at = '1970-01-01'::timestamptz,
+		       last_error = 'stale'
+		 WHERE id = 1
+	`); err != nil {
+		t.Fatalf("prepare empty rollup state: %v", err)
+	}
+
+	if _, err := tx.Exec(ctx, `SELECT rollup_task_usage_hourly()`); err != nil {
+		t.Fatalf("rollup_task_usage_hourly: %v", err)
+	}
+
+	var ageSeconds float64
+	var rows int64
+	var lastError *string
+	if err := tx.QueryRow(ctx, `
+		SELECT EXTRACT(EPOCH FROM (now() - watermark_at)), last_run_rows, last_error
+		  FROM task_usage_hourly_rollup_state
+		 WHERE id = 1
+	`).Scan(&ageSeconds, &rows, &lastError); err != nil {
+		t.Fatalf("read rollup state: %v", err)
+	}
+	if age := time.Duration(ageSeconds) * time.Second; age > 10*time.Minute {
+		t.Fatalf("empty history should fast-forward near now()-5min, got age %s", age)
+	}
+	if rows != 0 {
+		t.Fatalf("empty history should affect 0 rows, got %d", rows)
+	}
+	if lastError != nil {
+		t.Fatalf("expected last_error cleared, got %q", *lastError)
+	}
+}
+
+func TestRollupTaskUsageHourlyFastForwardsToFirstUsage(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
+	usageAt := time.Now().UTC().Add(-20 * time.Minute)
+	const model = "rollup-fast-forward-model"
+
+	var issueID, taskID string
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM task_usage_hourly_dirty;
+		DELETE FROM task_usage_hourly;
+		DELETE FROM task_usage;
+		UPDATE task_usage_hourly_rollup_state
+		   SET watermark_at = '1970-01-01'::timestamptz,
+		       last_error = 'stale'
+		 WHERE id = 1
+	`); err != nil {
+		t.Fatalf("prepare rollup state: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, creator_id, creator_type, number)
+		VALUES ($1, 'rollup fast-forward', $2, 'member',
+		        (SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1))
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
+		t.Fatalf("insert issue: %v", err)
+	}
+	if err := tx.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, created_at)
+		VALUES ($1, $2, $3, 'completed', $4) RETURNING id
+	`, agentID, issueID, runtimeID, usageAt).Scan(&taskID); err != nil {
+		t.Fatalf("insert task: %v", err)
+	}
+	if _, err := tx.Exec(ctx, `
+		INSERT INTO task_usage (
+			task_id, provider, model, input_tokens, output_tokens, created_at, updated_at
+		)
+		VALUES ($1, 'claude', $2, 1234, 0, $3, $3)
+	`, taskID, model, usageAt); err != nil {
+		t.Fatalf("insert usage: %v", err)
+	}
+
+	if _, err := tx.Exec(ctx, `SELECT rollup_task_usage_hourly()`); err != nil {
+		t.Fatalf("rollup_task_usage_hourly: %v", err)
+	}
+
+	var total int64
+	if err := tx.QueryRow(ctx, `
+		SELECT COALESCE(SUM(input_tokens), 0)
+		  FROM task_usage_hourly
+		 WHERE runtime_id = $1 AND model = $2
+	`, runtimeID, model).Scan(&total); err != nil {
+		t.Fatalf("read hourly total: %v", err)
+	}
+	if total != 1234 {
+		t.Fatalf("expected first real usage to be aggregated, got %d", total)
+	}
+}
+
 // TestRollupTaskUsageHourlyReassignBetweenRuntimes ports the invalidation
 // coverage the deleted runtime_rollup_test.go held for the legacy daily
 // rollup. Reassigning a task between runtimes (the runtime-merge path) must
@@ -1101,16 +1218,57 @@ func TestRollupTaskUsageHourlyCapsWindowAtOneDay(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	// Other tests drive rollup_task_usage_hourly_window directly and never
-	// read the watermark; the idempotency test parks it itself. Restore to
-	// now() so nothing downstream observes a stale value.
-	t.Cleanup(func() {
-		testPool.Exec(ctx,
-			`UPDATE task_usage_hourly_rollup_state SET watermark_at = now(), last_error = NULL WHERE id = 1`)
-	})
+	tx, err := testPool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin tx: %v", err)
+	}
+	defer tx.Rollback(ctx)
+
+	runtimeID, agentID := loadDashboardRuntimeAgent(t, ctx)
+	now := time.Now().UTC()
+
+	if _, err := tx.Exec(ctx, `
+		DELETE FROM task_usage_hourly_dirty;
+		DELETE FROM task_usage_hourly;
+		DELETE FROM task_usage;
+		UPDATE task_usage_hourly_rollup_state
+		   SET watermark_at = now(), last_error = NULL
+		 WHERE id = 1
+	`); err != nil {
+		t.Fatalf("prepare rollup tables: %v", err)
+	}
+
+	seedUsage := func(label string, usageAt time.Time) {
+		var issueID, taskID string
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO issue (workspace_id, title, creator_id, creator_type, number)
+			VALUES ($1, $2, $3, 'member',
+			        (SELECT COALESCE(MAX(number), 0) + 1 FROM issue WHERE workspace_id = $1))
+			RETURNING id
+		`, testWorkspaceID, label, testUserID).Scan(&issueID); err != nil {
+			t.Fatalf("%s: insert issue: %v", label, err)
+		}
+		if err := tx.QueryRow(ctx, `
+			INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, created_at)
+			VALUES ($1, $2, $3, 'completed', $4) RETURNING id
+		`, agentID, issueID, runtimeID, usageAt).Scan(&taskID); err != nil {
+			t.Fatalf("%s: insert task: %v", label, err)
+		}
+		if _, err := tx.Exec(ctx, `
+			INSERT INTO task_usage (
+				task_id, provider, model, input_tokens, output_tokens, created_at, updated_at
+			)
+			VALUES ($1, 'claude', $2, 100, 0, $3, $3)
+		`, taskID, label, usageAt); err != nil {
+			t.Fatalf("%s: insert usage: %v", label, err)
+		}
+	}
+
+	seedUsage("rollup-cap-day-1", now.Add(-60*time.Hour))
+	seedUsage("rollup-cap-day-2", now.Add(-36*time.Hour))
 
 	park := func(behind string) {
-		if _, err := testPool.Exec(ctx, `
+		if _, err := tx.Exec(ctx, `
 			UPDATE task_usage_hourly_rollup_state
 			   SET watermark_at = now() - $1::interval, last_error = NULL
 			 WHERE id = 1
@@ -1120,7 +1278,7 @@ func TestRollupTaskUsageHourlyCapsWindowAtOneDay(t *testing.T) {
 	}
 	ageDays := func() float64 {
 		var sec float64
-		if err := testPool.QueryRow(ctx, `
+		if err := tx.QueryRow(ctx, `
 			SELECT EXTRACT(EPOCH FROM (now() - watermark_at))
 			  FROM task_usage_hourly_rollup_state WHERE id = 1
 		`).Scan(&sec); err != nil {
@@ -1129,7 +1287,7 @@ func TestRollupTaskUsageHourlyCapsWindowAtOneDay(t *testing.T) {
 		return sec / 86400
 	}
 	tick := func(label string) {
-		if _, err := testPool.Exec(ctx, `SELECT rollup_task_usage_hourly()`); err != nil {
+		if _, err := tx.Exec(ctx, `SELECT rollup_task_usage_hourly()`); err != nil {
 			t.Fatalf("%s: %v", label, err)
 		}
 	}

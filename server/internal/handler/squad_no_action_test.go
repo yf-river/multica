@@ -194,3 +194,57 @@ func TestCreateComment_SquadLeaderNoActionRejectsComment(t *testing.T) {
 		t.Fatalf("expected error message in response, got %v", body)
 	}
 }
+
+func TestCreateComment_CommentTriggeredAgentAllowsTopLevelFallback(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	fx := newRunningSquadLeaderTaskFixture(t)
+
+	w := httptest.NewRecorder()
+	r := newRequest("POST", "/api/issues/"+fx.IssueID+"/comments", map[string]any{
+		"content": "Recovered with a top-level result comment after the thread reply failed.",
+	})
+	r = withURLParam(r, "id", fx.IssueID)
+	r.Header.Set("X-Agent-ID", fx.LeaderID)
+	r.Header.Set("X-Task-ID", fx.TaskID)
+
+	testHandler.CreateComment(w, r)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateComment: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := countAgentCommentsForIssue(t, fx.IssueID, fx.LeaderID); got != 1 {
+		t.Fatalf("expected top-level fallback comment to be stored, got %d", got)
+	}
+}
+
+func TestCreateComment_CommentTriggeredAgentRejectsWrongParent(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	fx := newRunningSquadLeaderTaskFixture(t)
+	var otherCommentID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type)
+		VALUES ($1, $2, 'member', $3, 'another thread', 'comment')
+		RETURNING id
+	`, fx.IssueID, testWorkspaceID, testUserID).Scan(&otherCommentID); err != nil {
+		t.Fatalf("create other comment: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	r := newRequest("POST", "/api/issues/"+fx.IssueID+"/comments", map[string]any{
+		"content":   "This should not be allowed on a different thread.",
+		"parent_id": otherCommentID,
+	})
+	r = withURLParam(r, "id", fx.IssueID)
+	r.Header.Set("X-Agent-ID", fx.LeaderID)
+	r.Header.Set("X-Task-ID", fx.TaskID)
+
+	testHandler.CreateComment(w, r)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("CreateComment: expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+}

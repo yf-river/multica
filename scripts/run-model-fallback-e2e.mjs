@@ -9,8 +9,8 @@ if (!script) {
   process.exit(2);
 }
 
-const primaryModel = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "gpt-5.3-codex-spark";
-const fallbackModel = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_FALLBACK_MODEL") || "gpt-5.4-mini";
+const primaryModel = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "deepseek-v4-pro-ioa";
+const fallbackModel = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_FALLBACK_MODEL") || "deepseek-v4-pro-ioa";
 const attempts = [];
 
 const primary = runAttempt(primaryModel);

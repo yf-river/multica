@@ -76,10 +76,6 @@ func (f taskRunnerFunc) run(ctx context.Context, task Task, provider string, slo
 }
 
 var (
-	isBrewInstall        = cli.IsBrewInstall
-	getBrewPrefix        = cli.GetBrewPrefix
-	matchKnownBrewPrefix = cli.MatchKnownBrewPrefix
-
 	// detectAgentVersion / checkAgentMinVersion are indirections over the
 	// real agent helpers so tests can run the registration path without
 	// shelling out to a real CLI. Mirrors the pattern used for the brew
@@ -176,28 +172,10 @@ type Daemon struct {
 	reregisterNextAttempt     map[string]time.Time // workspace_id -> earliest time the next re-register attempt may run
 	reregisterLastCompletedAt map[string]time.Time // workspace_id -> wall-clock at which the last SUCCESSFUL re-register call returned (failures intentionally not stamped — see recordRegisterCompletion)
 
-	cancelFunc    context.CancelFunc // set by Run(); called by triggerRestart
-	rootCtx       context.Context    // set by Run(); used by long-running recoveries that must survive per-runtime ctx cancellation
-	restartBinary string             // non-empty after a successful update; path to the new binary
-	updating      atomic.Bool        // prevents concurrent update attempts
-	activeTasks   atomic.Int64       // number of tasks currently in handleTask; exposed via /health
-	ready         atomic.Bool        // false until preflight completes; gates /health status (starting -> running)
-
-	// claimMu guards pauseClaims and claimsInFlight. It is held only for the
-	// microseconds it takes to make a decision; ClaimTask itself runs without
-	// the lock so a slow per-runtime claim cannot stall auto-update or any
-	// other poller.
-	//
-	// The pair is the auto-update path's barrier against the issue's
-	// requirement that "升级过程中如果有 task 进来，会延后升级而不是中断 task":
-	// runRuntimePoller refuses to call ClaimTask while pauseClaims is set, and
-	// tryAutoUpdate refuses to flip pauseClaims while any poller is mid-claim
-	// or any task is in handleTask. Together that closes the fetch-then-claim
-	// race where a new task slipping in during the release-metadata fetch
-	// would be cancelled by triggerRestart's root-ctx cancel.
-	claimMu        sync.Mutex
-	pauseClaims    bool // when true, runRuntimePoller skips ClaimTask
-	claimsInFlight int  // pollers that have decided to claim but haven't yet handed the task off to handleTask
+	cancelFunc  context.CancelFunc // set by Run(); used by Shutdown and health handling
+	rootCtx     context.Context    // set by Run(); used by long-running recoveries that must survive per-runtime ctx cancellation
+	activeTasks atomic.Int64       // number of tasks currently in handleTask; exposed via /health
+	ready       atomic.Bool        // false until preflight completes; gates /health status (starting -> running)
 
 	activeEnvRootsMu sync.Mutex
 	activeEnvRoots   map[string]int // env root path -> reference count (handles reuse paths marked twice)
@@ -219,10 +197,6 @@ type Daemon struct {
 	runner             taskRunner    // executes agent tasks; set to d.runTask by New(), overridable in tests
 	cancelPollInterval time.Duration // how often handleTask polls for server-side cancellation; overridable in tests
 	codexBrokers       map[string]*agent.CodexBrokerBackend
-	// runUpdateFn executes the brew-or-download upgrade. Set to d.runUpdate by
-	// New() and overridable in tests so the auto-update poller can be exercised
-	// without touching the real network or the brew CLI.
-	runUpdateFn func(targetVersion string) (string, error)
 }
 
 // New creates a new Daemon instance.
@@ -253,7 +227,6 @@ func New(cfg Config, logger *slog.Logger) *Daemon {
 		codexBrokers:              make(map[string]*agent.CodexBrokerBackend),
 	}
 	d.runner = taskRunnerFunc(d.runTask)
-	d.runUpdateFn = d.runUpdate
 	return d
 }
 
@@ -718,7 +691,6 @@ func (d *Daemon) clearWSHeartbeatAcks() {
 
 // Run starts the daemon: resolves auth, registers runtimes, then polls for tasks.
 func (d *Daemon) Run(ctx context.Context) error {
-	// Wrap context so handleUpdate can cancel the daemon for restart.
 	ctx, cancel := context.WithCancel(ctx)
 	d.cancelFunc = cancel
 	d.rootCtx = ctx
@@ -749,7 +721,6 @@ func (d *Daemon) Run(ctx context.Context) error {
 		"idle_watchdog", d.cfg.AgentIdleWatchdog,
 		"max_concurrent_tasks", d.cfg.MaxConcurrentTasks,
 		"gc_enabled", d.cfg.GCEnabled,
-		"auto_update", d.cfg.AutoUpdateEnabled,
 		"launched_by", d.cfg.LaunchedBy,
 	)
 
@@ -788,7 +759,6 @@ func (d *Daemon) Run(ctx context.Context) error {
 	go d.taskWakeupLoop(ctx, taskWakeups)
 	go d.heartbeatLoop(ctx)
 	go d.gcLoop(ctx)
-	go d.autoUpdateLoop(ctx)
 	go d.tokenRenewalLoop(ctx)
 
 	// Preflight succeeded and the background loops are up: the daemon has
@@ -797,16 +767,10 @@ func (d *Daemon) Run(ctx context.Context) error {
 	// readiness wait blocks on, so success is reported only after startup
 	// actually completed, not merely because the health port came up.
 	d.ready.Store(true)
-	d.logger.Debug("background loops launched (workspace-sync, task-wakeup, heartbeat, gc, auto-update, token-renewal); health now reporting ready")
+	d.logger.Debug("background loops launched (workspace-sync, task-wakeup, heartbeat, gc, token-renewal); health now reporting ready")
 	err = d.pollLoop(ctx, taskWakeups)
 	d.logger.Debug("daemon main loop returning", "error", err)
 	return err
-}
-
-// RestartBinary returns the path to the new binary if the daemon needs to restart
-// after a successful update, or empty string if no restart is needed.
-func (d *Daemon) RestartBinary() string {
-	return d.restartBinary
 }
 
 // deregisterRuntimes notifies the server that all runtimes are going offline.
@@ -1905,17 +1869,13 @@ func (d *Daemon) handleHeartbeatActions(ctx context.Context, runtimeID string, r
 	if resp == nil {
 		return
 	}
-	if resp.PendingUpdate != nil || resp.PendingModelList != nil || resp.PendingLocalSkills != nil || resp.PendingLocalSkillImport != nil {
+	if resp.PendingModelList != nil || resp.PendingLocalSkills != nil || resp.PendingLocalSkillImport != nil {
 		d.logger.Debug("heartbeat: pending actions",
 			"runtime_id", runtimeID,
-			"update", resp.PendingUpdate != nil,
 			"model_list", resp.PendingModelList != nil,
 			"local_skills", resp.PendingLocalSkills != nil,
 			"local_skill_import", resp.PendingLocalSkillImport != nil,
 		)
-	}
-	if resp.PendingUpdate != nil {
-		go d.handleUpdate(ctx, runtimeID, resp.PendingUpdate)
 	}
 	if resp.PendingModelList != nil {
 		if rt := d.findRuntime(runtimeID); rt != nil {
@@ -2152,221 +2112,6 @@ func (d *Daemon) reportRuntimeResultWithRetry(ctx context.Context, kind, runtime
 		"kind", kind, "runtime_id", runtimeID, "request_id", requestID, "error", lastErr)
 }
 
-// handleUpdate performs the CLI update when triggered by the server via heartbeat.
-func (d *Daemon) handleUpdate(ctx context.Context, runtimeID string, update *PendingUpdate) {
-	// Desktop-managed daemons share their CLI binary with the Electron app,
-	// which is responsible for shipping and replacing it. Letting the daemon
-	// self-update would just get overwritten on the next Desktop launch and
-	// could brick the embedded binary mid-update. Refuse cleanly.
-	if d.cfg.LaunchedBy == "desktop" {
-		d.logger.Info("refusing CLI self-update: daemon is managed by Desktop", "runtime_id", runtimeID, "update_id", update.ID)
-		d.reportUpdateResult(ctx, runtimeID, update.ID, map[string]any{
-			"status": "failed",
-			"error":  "CLI is managed by Multica Desktop — update the Desktop app to upgrade the CLI",
-		})
-		return
-	}
-
-	// Prevent concurrent update attempts.
-	if !d.updating.CompareAndSwap(false, true) {
-		d.logger.Warn("update already in progress, ignoring", "runtime_id", runtimeID, "update_id", update.ID)
-		return
-	}
-	defer d.updating.Store(false)
-
-	d.logger.Info("CLI update requested", "runtime_id", runtimeID, "update_id", update.ID, "target_version", update.TargetVersion)
-
-	// Report running status.
-	d.reportUpdateResult(ctx, runtimeID, update.ID, map[string]any{
-		"status": "running",
-	})
-
-	output, err := d.runUpdateFn(update.TargetVersion)
-	if err != nil {
-		d.logger.Error("CLI update failed", "error", err, "output", output)
-		d.reportUpdateResult(ctx, runtimeID, update.ID, map[string]any{
-			"status": "failed",
-			"error":  err.Error(),
-		})
-		return
-	}
-
-	d.logger.Info("CLI update completed successfully", "output", output)
-	d.reportUpdateResult(ctx, runtimeID, update.ID, map[string]any{
-		"status": "completed",
-		"output": fmt.Sprintf("Updated to %s", update.TargetVersion),
-	})
-
-	// Trigger daemon restart with the new binary.
-	d.triggerRestart()
-}
-
-// runUpdate executes the brew-or-download upgrade against targetVersion and
-// returns the human-readable output (always populated, even on failure when
-// brew gives us a useful diagnostic). The caller is responsible for the
-// `updating` CAS guard and for reporting status back to the server / triggering
-// the restart — extracted so the server-triggered path (handleUpdate) and the
-// auto-update poller (autoUpdateLoop) share the exact same execution body.
-func (d *Daemon) runUpdate(targetVersion string) (string, error) {
-	if cli.IsBrewInstall() {
-		d.logger.Info("updating CLI via Homebrew...")
-		out, err := cli.UpdateViaBrew()
-		if err != nil {
-			return out, fmt.Errorf("brew upgrade failed: %w", err)
-		}
-		return out, nil
-	}
-	d.logger.Info("updating CLI via direct download...", "target_version", targetVersion)
-	out, err := cli.UpdateViaDownload(targetVersion)
-	if err != nil {
-		return out, fmt.Errorf("download update failed: %w", err)
-	}
-	return out, nil
-}
-
-// updateReportBackoffs defines the retry schedule for delivering CLI update
-// status back to the server. This mirrors localSkillReportBackoffs because
-// both features have the same user-visible failure mode: the daemon completed
-// work locally, but a transient report failure leaves the UI waiting until the
-// server-side request times out.
-//
-// Overridable for tests to avoid real sleeps.
-var updateReportBackoffs = []time.Duration{0, 500 * time.Millisecond, 2 * time.Second, 4 * time.Second}
-
-func (d *Daemon) reportUpdateResult(ctx context.Context, runtimeID, updateID string, payload map[string]any) {
-	d.reportUpdateResultWithRetry(ctx, runtimeID, updateID, func(ctx context.Context) error {
-		return d.client.ReportUpdateResult(ctx, runtimeID, updateID, payload)
-	})
-}
-
-func (d *Daemon) reportUpdateResultWithRetry(ctx context.Context, runtimeID, updateID string, fn func(context.Context) error) {
-	var lastErr error
-	for attempt, wait := range updateReportBackoffs {
-		if wait > 0 {
-			select {
-			case <-ctx.Done():
-				d.logger.Error("CLI update report cancelled",
-					"runtime_id", runtimeID, "update_id", updateID,
-					"attempt", attempt, "error", ctx.Err())
-				return
-			case <-time.After(wait):
-			}
-		}
-
-		err := fn(ctx)
-		if err == nil {
-			if attempt > 0 {
-				d.logger.Info("CLI update report succeeded after retry",
-					"runtime_id", runtimeID, "update_id", updateID,
-					"attempt", attempt+1)
-			}
-			return
-		}
-		lastErr = err
-
-		var reqErr *requestError
-		if errors.As(err, &reqErr) && reqErr.StatusCode >= 400 && reqErr.StatusCode < 500 {
-			d.logger.Error("CLI update report rejected — not retrying",
-				"runtime_id", runtimeID, "update_id", updateID,
-				"status", reqErr.StatusCode, "error", err)
-			return
-		}
-
-		d.logger.Warn("CLI update report failed — will retry",
-			"runtime_id", runtimeID, "update_id", updateID,
-			"attempt", attempt+1, "error", err)
-	}
-	d.logger.Error("CLI update report exhausted retries",
-		"runtime_id", runtimeID, "update_id", updateID, "error", lastErr)
-}
-
-// tryEnterClaim records the intent to call ClaimTask. Returns true if the
-// caller may proceed, false if the auto-update barrier is in effect. Every
-// successful call MUST be paired with an exitClaim() on every exit path —
-// either right after a failed/empty claim, or via the handleTask goroutine's
-// defer once the task is handed off.
-func (d *Daemon) tryEnterClaim() bool {
-	d.claimMu.Lock()
-	defer d.claimMu.Unlock()
-	if d.pauseClaims {
-		return false
-	}
-	d.claimsInFlight++
-	return true
-}
-
-// exitClaim releases the in-flight claim recorded by tryEnterClaim.
-func (d *Daemon) exitClaim() {
-	d.claimMu.Lock()
-	defer d.claimMu.Unlock()
-	d.claimsInFlight--
-}
-
-// trySetClaimBarrier atomically pauses new ClaimTask calls if the daemon is
-// fully idle (no claims in flight, no tasks running). Returns true if the
-// caller now holds the barrier and must release it with releaseClaimBarrier
-// on every non-restart exit path; false if the daemon is busy and the caller
-// should defer to the next tick. Used by tryAutoUpdate to close the race
-// where a task slips in between the cheap pre-fetch idle check and the
-// actual upgrade kick-off.
-func (d *Daemon) trySetClaimBarrier() bool {
-	d.claimMu.Lock()
-	defer d.claimMu.Unlock()
-	if d.claimsInFlight > 0 || d.activeTasks.Load() > 0 {
-		return false
-	}
-	d.pauseClaims = true
-	return true
-}
-
-// releaseClaimBarrier clears the auto-update claim barrier so pollers may
-// resume claiming. Called on failure paths only — a successful upgrade leaves
-// the barrier set because triggerRestart is about to take the process down
-// and clearing it would open a window for new claims during shutdown.
-func (d *Daemon) releaseClaimBarrier() {
-	d.claimMu.Lock()
-	defer d.claimMu.Unlock()
-	d.pauseClaims = false
-}
-
-// triggerRestart initiates a graceful daemon restart after a successful CLI update.
-// For brew installs, it keeps the symlink path (e.g. /opt/homebrew/bin/multica)
-// so the restarted daemon picks up the new Cellar version automatically.
-// For non-brew installs, it resolves to the absolute path of the replaced binary.
-// The caller (cmd_daemon.go) checks RestartBinary() and launches the new process.
-func (d *Daemon) triggerRestart() {
-	newBin, err := os.Executable()
-	if err != nil {
-		d.logger.Error("could not resolve executable path for restart", "error", err)
-		return
-	}
-	// On Linux, os.Executable() reads /proc/self/exe, which the kernel resolves
-	// to the Cellar path. brew cleanup deletes that path after upgrade, so we
-	// must use the stable <brew-prefix>/bin/multica symlink instead.
-	if isBrewInstall() {
-		if brewPrefix := getBrewPrefix(); brewPrefix != "" {
-			newBin = filepath.Join(brewPrefix, "bin", "multica")
-		} else if prefix := matchKnownBrewPrefix(newBin); prefix != "" {
-			newBin = filepath.Join(prefix, "bin", "multica")
-		} else {
-			d.logger.Warn("brew install detected but prefix could not be resolved; restart may fail",
-				"executable", newBin)
-		}
-	} else {
-		if resolved, err := filepath.EvalSymlinks(newBin); err == nil {
-			newBin = resolved
-		}
-	}
-
-	d.logger.Info("scheduling daemon restart", "new_binary", newBin)
-	d.restartBinary = newBin
-
-	// Cancel the main context to trigger graceful shutdown.
-	if d.cancelFunc != nil {
-		d.cancelFunc()
-	}
-}
-
 // pollLoop supervises one runtimePoller goroutine per registered runtime,
 // fans wake-up signals out to all of them, and waits for in-flight tasks to
 // drain on shutdown. Per-runtime workers replace the previous round-robin
@@ -2532,22 +2277,8 @@ func (d *Daemon) runRuntimePoller(
 			continue
 		}
 
-		// Refuse new claims while an auto-update is preparing to roll the
-		// process. The barrier is paired with a re-check of claimsInFlight +
-		// activeTasks inside tryAutoUpdate, so once we get past tryEnterClaim
-		// the auto-update path is guaranteed to defer until this poller has
-		// handed the task off (or given up).
-		if !d.tryEnterClaim() {
-			sem <- slot
-			if err := sleepWithContextOrWakeup(pollerCtx, d.cfg.PollInterval, wakeup); err != nil {
-				return
-			}
-			continue
-		}
-
 		task, err := d.client.ClaimTask(pollerCtx, rid)
 		if err != nil {
-			d.exitClaim()
 			sem <- slot
 			if pollerCtx.Err() == nil {
 				if isRuntimeNotFoundError(err) {
@@ -2567,7 +2298,6 @@ func (d *Daemon) runRuntimePoller(
 		}
 
 		if task == nil {
-			d.exitClaim()
 			sem <- slot
 			if err := sleepWithContextOrWakeup(pollerCtx, d.cfg.PollInterval, wakeup); err != nil {
 				return
@@ -2585,7 +2315,6 @@ func (d *Daemon) runRuntimePoller(
 		d.activeTasks.Add(1)
 		go func(t Task, slot int) {
 			defer taskWG.Done()
-			defer d.exitClaim()
 			defer d.activeTasks.Add(-1)
 			defer func() { sem <- slot }()
 			d.handleTask(parentCtx, t, slot)

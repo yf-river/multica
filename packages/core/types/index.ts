@@ -52,8 +52,6 @@ export type {
   DashboardUsageByAgent,
   DashboardAgentRunTime,
   DashboardRunTimeDaily,
-  RuntimeUpdate,
-  RuntimeUpdateStatus,
   RuntimeModel,
   RuntimeModelThinking,
   RuntimeModelThinkingLevel,

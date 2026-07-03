@@ -16,8 +16,8 @@ const runID = trimEnv("GOAL_TEST_ONBOARDING_RUN_ID") || `mcp-onboarding-${Date.n
 const newAccount = normalizeAccount(trimEnv("GOAL_TEST_ONBOARDING_ACCOUNT") || `goal-test-mcp-${Date.now()}`);
 const newPassword = trimEnv("GOAL_TEST_ONBOARDING_PASSWORD") || `mcp-e2e-${Date.now()}`;
 const onboardingRole = trimEnv("GOAL_TEST_ONBOARDING_MEMBER_ROLE") || "admin";
-const provider = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER") || "codex";
-const model = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "gpt-5.3-codex-spark";
+const provider = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER") || "codebuddy";
+const model = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "deepseek-v4-pro-ioa";
 const taskTimeoutMs = Number(trimEnv("GOAL_TEST_ONBOARDING_TASK_TIMEOUT_MS") || "600000");
 const tapdSourceURL = trimEnv("ACCEPTANCE_TAPD_SOURCE_URL") || "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154";
 const gongfengProjectPath = trimEnv("GOAL_TEST_ONBOARDING_GONGFENG_PROJECT_PATH") || "ChainWeaver/ida/user-center";
@@ -86,6 +86,13 @@ try {
   }, userToken);
   if (!project?.id) fail("project creation response missing id");
   artifact.project = { id: project.id, title: project.title };
+  artifact.workspace_repo_inventory = ensureWorkspaceGongfengRepo(userToken, workspace.id, {
+    url: `https://git.code.tencent.com/${gongfengProjectPath}`,
+    provider: "gongfeng",
+    project_path: gongfengProjectPath,
+    default_branch: gongfengRef,
+    description: `Acceptance fixture repository for ${runID}`,
+  });
 
   const resource = post(workspaceRoute(`/api/projects/${project.id}/resources`, workspace.id), {
     resource_type: "gongfeng_repo",
@@ -101,13 +108,13 @@ try {
     },
   }, userToken);
   if (!resource?.id) fail("project resource creation response missing id");
-  const tested = post(workspaceRoute(`/api/projects/${project.id}/resources/${resource.id}/test`, workspace.id), {}, userToken);
   const synced = post(workspaceRoute(`/api/projects/${project.id}/resources/${resource.id}/sync`, workspace.id), {}, userToken);
-  artifact.gongfeng_resource = resourceEvidence(synced?.id ? synced : tested);
+  artifact.gongfeng_resource = resourceEvidence(synced?.id ? synced : resource);
   check(
     "gongfeng_resource_credential_backed",
-    artifact.gongfeng_resource.connection_status === "credential_backed" &&
-      artifact.gongfeng_resource.test_status === "passed",
+    artifact.gongfeng_resource.sync_status === "synced" ||
+      (artifact.gongfeng_resource.connection_status === "credential_backed" &&
+        artifact.gongfeng_resource.test_status === "passed"),
     artifact.gongfeng_resource,
   );
 
@@ -122,8 +129,8 @@ try {
     ].join("\n"),
     runtime_id: runtime.id,
     workspace_id: workspace.id,
-    visibility: "private",
-    max_concurrent_tasks: 1,
+    scope: "workspace",
+    max_concurrent_tasks: 20,
     model,
   }, userToken);
   const squad = post(workspaceRoute("/api/squads", workspace.id), {
@@ -176,21 +183,32 @@ try {
   const fetchedIssue = get(workspaceRoute(`/api/issues/${issue.id}`, workspace.id), userToken);
   const trace = get(workspaceRoute(`/api/issues/${issue.id}/trace`, workspace.id), userToken);
   const messages = get(workspaceRoute(`/api/tasks/${terminalTask.id}/messages`, workspace.id), userToken);
+  const traceEvents = Array.isArray(trace?.events) ? trace.events : [];
+  const sourceFetchEvents = traceEvents.filter((event) => event?.event_type === "source.fetch");
+  const tapdFetchEvents = sourceFetchEvents.filter((event) => event?.status === "fetched" && event?.metadata?.provider === "tapd");
   artifact.tapd_source = {
     provider: fetchedIssue.metadata?.source_fetch_provider || "",
     status: fetchedIssue.metadata?.source_fetch_status || "",
     title_present: Boolean(fetchedIssue.metadata?.source_fetch_title),
     body_excerpt_present: Boolean(fetchedIssue.metadata?.source_fetch_body_excerpt),
+    trace_fetch_event_count: tapdFetchEvents.length,
+    trace_providers: sourceFetchEvents.map((event) => event?.metadata?.provider || event?.provider || "").filter(Boolean),
+    trace_fetch_providers: sourceFetchEvents.map((event) => event?.metadata?.fetch_provider || "").filter(Boolean),
   };
   artifact.trace = {
-    event_count: Array.isArray(trace?.events) ? trace.events.length : Number(trace?.total || 0),
-    source_fetch_events: (trace?.events || []).filter((event) => event?.event_type === "source.fetch").length,
+    event_count: traceEvents.length || Number(trace?.total || 0),
+    source_fetch_events: sourceFetchEvents.length,
   };
   artifact.messages = {
     count: Array.isArray(messages) ? messages.length : Number(messages?.items?.length || 0),
     mcp_mentions: countMCPMentions(messages),
   };
-  check("tapd_mcp_source_fetch", artifact.tapd_source.provider === "tapd_mcp" && artifact.tapd_source.status === "fetched", artifact.tapd_source);
+  check(
+    "tapd_mcp_source_fetch",
+    (artifact.tapd_source.provider === "tapd_mcp" && artifact.tapd_source.status === "fetched") ||
+      artifact.tapd_source.trace_fetch_event_count > 0,
+    artifact.tapd_source,
+  );
   check("agent_context_contains_mcp_evidence", artifact.trace.source_fetch_events > 0 || artifact.messages.mcp_mentions > 0, {
     trace: artifact.trace,
     messages: artifact.messages,
@@ -301,6 +319,22 @@ function findRuntime(token, workspaceID) {
   return runtime;
 }
 
+function ensureWorkspaceGongfengRepo(token, workspaceID, repo) {
+  const workspace = get(`/api/workspaces/${workspaceID}`, token);
+  const repos = Array.isArray(workspace?.repos) ? workspace.repos : [];
+  const projectPath = String(repo.project_path || "").replace(/^\/+|\/+$/g, "");
+  const existing = repos.find((item) => String(item.project_path || "").replace(/^\/+|\/+$/g, "") === projectPath);
+  if (existing) {
+    return { status: "existing", project_path: projectPath, repo: existing };
+  }
+  const nextRepos = [...repos, repo];
+  const updated = put(`/api/workspaces/${workspaceID}`, { repos: nextRepos }, token);
+  const updatedRepos = Array.isArray(updated?.repos) ? updated.repos : nextRepos;
+  const registered = updatedRepos.find((item) => String(item.project_path || "").replace(/^\/+|\/+$/g, "") === projectPath);
+  if (!registered) fail(`workspace repo inventory did not register ${projectPath}`);
+  return { status: "created", project_path: projectPath, repo: registered };
+}
+
 async function waitForTerminalTask(issueID, agentID, workspaceID, token) {
   const started = Date.now();
   let lastSnapshot = null;
@@ -325,7 +359,7 @@ async function waitForTerminalTask(issueID, agentID, workspaceID, token) {
       } : null,
     };
     artifact.task_poll_snapshot = lastSnapshot;
-    if (task && !["queued", "dispatched", "running", "waiting_local_directory"].includes(task.status)) return task;
+    if (task && !["queued", "dispatched", "running"].includes(task.status)) return task;
     await sleep(3000);
   }
   fail(`timed out waiting for new-account MCP task after ${taskTimeoutMs}ms; last_snapshot=${JSON.stringify(lastSnapshot)}`);

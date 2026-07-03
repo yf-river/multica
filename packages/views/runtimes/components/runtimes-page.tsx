@@ -13,7 +13,6 @@ import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { runtimeListOptions, runtimeKeys } from "@multica/core/runtimes/queries";
-import { useUpdatableRuntimeIds } from "@multica/core/runtimes/hooks";
 import { useWSEvent } from "@multica/core/realtime";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import { memberListOptions } from "@multica/core/workspace/queries";
@@ -140,7 +139,6 @@ function RuntimesPage({
   }, [qc, wsId]);
   useWSEvent("daemon:register", handleDaemonEvent);
 
-  const updatableIds = useUpdatableRuntimeIds(wsId);
   const now = useNowTick();
 
   useEffect(() => {
@@ -269,7 +267,6 @@ function RuntimesPage({
           />
           <MachineDetail
             machine={selectedMachine}
-            updatableIds={updatableIds}
             now={now}
             bootstrapping={bootstrapping}
             actions={
@@ -309,7 +306,6 @@ function RuntimesPage({
             <ResizablePanel id="detail" minSize="45%">
               <MachineDetail
                 machine={selectedMachine}
-                updatableIds={updatableIds}
                 now={now}
                 bootstrapping={bootstrapping}
                 actions={
@@ -647,13 +643,11 @@ function ProviderIconStack({ providers }: { providers: string[] }) {
 
 function MachineDetail({
   machine,
-  updatableIds,
   now,
   bootstrapping,
   actions,
 }: {
   machine: RuntimeMachine | null;
-  updatableIds: Set<string>;
   now: number;
   bootstrapping?: boolean;
   actions?: React.ReactNode;
@@ -763,7 +757,6 @@ function MachineDetail({
 
       <RuntimeList
         runtimes={machine.runtimes}
-        updatableIds={updatableIds}
         now={now}
       />
     </main>

@@ -13,14 +13,23 @@ function model(input: Partial<RuntimeModel> & { id: string }): RuntimeModel {
 }
 
 describe("preferredPMModel", () => {
-  it("prefers the first model whose provider is deepseek", () => {
+  it("prefers deepseek-v4-pro-ioa over other DeepSeek models", () => {
     expect(
       preferredPMModel([
         model({ id: "claude-sonnet-4.6", provider: "anthropic" }),
-        model({ id: "deepseek-v4-pro-ioa", provider: "deepseek" }),
         model({ id: "deepseek-v4-flash-ioa", provider: "deepseek" }),
+        model({ id: "deepseek-v4-pro-ioa", provider: "deepseek" }),
       ]),
     ).toBe("deepseek-v4-pro-ioa");
+  });
+
+  it("falls back to deepseek-v4-pro when the IOA variant is absent", () => {
+    expect(
+      preferredPMModel([
+        model({ id: "deepseek-v4-flash-ioa", provider: "deepseek" }),
+        model({ id: "deepseek-v4-pro", provider: "deepseek" }),
+      ]),
+    ).toBe("deepseek-v4-pro");
   });
 
   it("falls back to a DeepSeek model matched by id or label", () => {

@@ -161,7 +161,7 @@ func TestCreateAgent_RejectsDuplicateName(t *testing.T) {
 		"name":                 "duplicate-name-test-agent",
 		"description":          "first description",
 		"runtime_id":           testRuntimeID,
-		"scope": "personal",
+		"scope":                "personal",
 		"max_concurrent_tasks": 1,
 	}
 
@@ -207,7 +207,7 @@ func TestCreateAgent_DefaultsMaxConcurrentTasksToTwenty(t *testing.T) {
 		"name":        agentName,
 		"description": "no explicit concurrency",
 		"runtime_id":  testRuntimeID,
-		"scope": "personal",
+		"scope":       "personal",
 	}
 
 	w := httptest.NewRecorder()
@@ -221,6 +221,18 @@ func TestCreateAgent_DefaultsMaxConcurrentTasksToTwenty(t *testing.T) {
 	}
 	if resp.MaxConcurrentTasks != defaultAgentMaxConcurrentTasks {
 		t.Fatalf("max_concurrent_tasks = %d, want %d", resp.MaxConcurrentTasks, defaultAgentMaxConcurrentTasks)
+	}
+}
+
+func TestAgentModelForRuntimeDefaultsCodeBuddyToDeepSeek(t *testing.T) {
+	if got := agentModelForRuntime("codebuddy", ""); got != "deepseek-v4-pro-ioa" {
+		t.Fatalf("codebuddy default model = %q", got)
+	}
+	if got := agentModelForRuntime("codebuddy", "custom-model"); got != "custom-model" {
+		t.Fatalf("explicit codebuddy model = %q", got)
+	}
+	if got := agentModelForRuntime("claude", ""); got != "" {
+		t.Fatalf("non-codebuddy default model = %q", got)
 	}
 }
 

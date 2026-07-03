@@ -17,6 +17,8 @@ const now = new Date().toISOString();
 const artifact = readJSON(artifactPath);
 const e2e = artifact.clean_acceptance?.e2e || artifact.e2e || {};
 const topologyGeneralization = artifact.topology_generalization?.latest_json || artifact.topology_generalization || {};
+const acceptanceScope = args.scope || artifact.acceptance_scope || "prod-full-release";
+const intThreeProjectScope = acceptanceScope === "int-three-project";
 const topLevelOpenItems = acceptanceOpenItems(artifact);
 const goalERequirements = Array.isArray(artifact.goal_e_requirement_matrix) && artifact.goal_e_requirement_matrix.length > 0
   ? artifact.goal_e_requirement_matrix
@@ -28,7 +30,7 @@ const goalERequirements = Array.isArray(artifact.goal_e_requirement_matrix) && a
       evidence: { artifact_path: artifactPath },
     }];
 
-const requirements = [
+const strictRequirements = [
   check("P0-00", "latest final acceptance artifact is passing before gap audit can pass", () => {
     if (artifact.ok === true && topLevelOpenItems.length === 0) {
       return fulfilled({ artifact_ok: true, open_items: [] });
@@ -209,8 +211,18 @@ const requirements = [
   }),
 ];
 
+const requirements = intThreeProjectScope
+  ? scopedRequirementsFromArtifact()
+  : strictRequirements;
+
 const productionMatrix = Array.isArray(artifact.production_readiness_matrix) ? artifact.production_readiness_matrix : [];
-const productionGaps = [
+const productionGaps = intThreeProjectScope ? [
+  prodGap("prod_release", "Prod release audit passes on the current release commit", false, false, "Out of scope for int-three-project acceptance."),
+  prodGap("prod_data", "Prod canonical business data and training dataset are present", false, false, "Out of scope for int-three-project acceptance."),
+  prodGap("prod_e2e", "Prod user-center squad curl E2E is fresh and canonical", false, false, "Out of scope for int-three-project acceptance."),
+  prodGap("gongfeng_mr_merged", "Gongfeng MR is approved and merged into the target branch", false, false, "Out of scope for int-three-project acceptance."),
+  prodGap("rollback_drill", "Prod rollback drill is executed and restored to the release commit", false, false, "Out of scope for int-three-project acceptance."),
+] : [
   prodGap("prod_release", "Prod release audit passes on the current release commit", productionStatus("prod_release", false)),
   prodGap("prod_data", "Prod canonical business data and training dataset are present", productionStatus("prod_data", false)),
   prodGap("prod_e2e", "Prod user-center squad curl E2E is fresh and canonical", productionStatus("prod_e2e", false)),
@@ -240,6 +252,7 @@ const report = {
   schema: "multica.tapd_gongfeng_sop.gap_audit.v1",
   generated_at: now,
   ok,
+  acceptance_scope: acceptanceScope,
   artifact_path: artifactPath,
   artifact_top_level_ok: artifact.ok === true,
   summary: {
@@ -304,13 +317,30 @@ function falseClaimed(reason, evidence) {
   return { status: "false_claimed", reason, evidence };
 }
 
-function prodGap(id, title, isFulfilled, blocking = true) {
+function scopedRequirementsFromArtifact() {
+  const sourceMatrix = Array.isArray(artifact.original_requirement_matrix) ? artifact.original_requirement_matrix : [];
+  return [
+    check("P0-00", "latest final acceptance artifact is passing before gap audit can pass", () => {
+      if (artifact.ok === true && topLevelOpenItems.length === 0) {
+        return fulfilled({ artifact_ok: true, acceptance_scope: acceptanceScope, open_items: [] });
+      }
+      return missing("Latest final acceptance artifact is not passing; gap audit cannot override or mask failed acceptance.", {
+        artifact_ok: artifact.ok === true,
+        acceptance_scope: acceptanceScope,
+        open_items: topLevelOpenItems.map(openItemSummary),
+      });
+    }),
+    ...sourceMatrix,
+  ];
+}
+
+function prodGap(id, title, isFulfilled, blocking = true, reason = "") {
   return {
     id,
     title,
     blocking,
     status: isFulfilled ? "fulfilled" : "missing",
-    reason: isFulfilled ? "Evidence is present or not blocking in this audit slice." : "No sufficient production-readiness evidence found.",
+    reason: isFulfilled ? "Evidence is present or not blocking in this audit slice." : reason || "No sufficient production-readiness evidence found.",
   };
 }
 

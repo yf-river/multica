@@ -2084,6 +2084,32 @@ function RunEvidencePanel({
         <EvidenceMetric label="证据" value={`${evidence.trials.length} trial · ${evidence.task_messages.length} message · ${evidence.trace_events.length} trace`} />
       </div>
 
+      <div className="grid gap-2 rounded border bg-background px-3 py-2 text-xs" data-testid="run-evidence-snapshots">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-medium text-foreground">服务端证据快照</span>
+          <Badge variant={snapshots.length > 0 ? "secondary" : "outline"}>{snapshotsLoading ? "读取中" : `${snapshots.length} 个`}</Badge>
+        </div>
+        <div className="break-all text-muted-foreground">run {run.id} · task {run.task_id || "未绑定"}</div>
+        {snapshotsLoading ? (
+          <div className="text-muted-foreground">正在读取快照...</div>
+        ) : snapshots.length === 0 ? (
+          <div className="text-muted-foreground">暂无归档快照，可点击“归档快照”保存当前运行证据。</div>
+        ) : (
+          <div className="grid gap-1.5">
+            {snapshots.map((snapshot) => (
+              <div key={snapshot.id} className="grid gap-1 rounded border bg-muted/10 px-2 py-1.5">
+                <div className="flex flex-wrap items-center gap-2">
+                  <Badge variant="outline">{snapshot.snapshot_type}</Badge>
+                  <span className="break-all font-mono text-[11px] text-muted-foreground">{snapshot.id}</span>
+                  <span className="text-muted-foreground">{snapshot.created_at}</span>
+                </div>
+                <div className="break-all text-muted-foreground">{snapshotSummary(snapshot)}</div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+
       {candidate && (
         <div className="grid gap-2 rounded border bg-background px-2 py-2 text-xs" data-testid="run-evidence-candidate">
           <div className="flex flex-wrap items-center gap-2">
@@ -2816,6 +2842,20 @@ function caseEvidenceSummary(item: PromptEvaluationStructuredCase): string {
     timelineNodeCount > 0 ? `${timelineNodeCount} 个事件` : "",
   ].filter(Boolean);
   return pieces.join(" · ");
+}
+
+function snapshotSummary(snapshot: PromptEvaluationEvidenceSnapshot): string {
+  const summary = asRecord(snapshot.summary);
+  const candidates = [
+    stringFromUnknown(summary["说明"]),
+    stringFromUnknown(summary["结论"]),
+    stringFromUnknown(summary["summary"]),
+    stringFromUnknown(summary["status"]),
+  ].filter(Boolean);
+  if (candidates.length > 0) return candidates.join(" · ");
+  const keys = Object.keys(summary).slice(0, 4);
+  if (keys.length === 0) return `run ${snapshot.run_id}`;
+  return keys.map((key) => `${key}: ${stringFromUnknown(summary[key]) || "已记录"}`).join(" · ");
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

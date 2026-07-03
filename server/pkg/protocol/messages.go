@@ -144,7 +144,6 @@ type DaemonHeartbeatAckPayload struct {
 	RuntimeID               string                                  `json:"runtime_id"`
 	Status                  string                                  `json:"status"`
 	RuntimeGone             bool                                    `json:"runtime_gone,omitempty"`
-	PendingUpdate           *DaemonHeartbeatPendingUpdate           `json:"pending_update,omitempty"`
 	PendingModelList        *DaemonHeartbeatPendingModelList        `json:"pending_model_list,omitempty"`
 	PendingLocalSkills      *DaemonHeartbeatPendingLocalSkills      `json:"pending_local_skills,omitempty"`
 	PendingLocalSkillImport *DaemonHeartbeatPendingLocalSkillImport `json:"pending_local_skill_import,omitempty"`
@@ -158,13 +157,6 @@ type DaemonHeartbeatAckPayload struct {
 // HeartbeatStatusRuntimeGone is the ack Status used when the runtime row no
 // longer exists server-side. Companion to DaemonHeartbeatAckPayload.RuntimeGone.
 const HeartbeatStatusRuntimeGone = "runtime_gone"
-
-// DaemonHeartbeatPendingUpdate describes a CLI-update action the daemon
-// should run for the runtime.
-type DaemonHeartbeatPendingUpdate struct {
-	ID            string `json:"id"`
-	TargetVersion string `json:"target_version"`
-}
 
 // DaemonHeartbeatPendingModelList describes a request for the daemon to
 // enumerate the runtime's supported models.

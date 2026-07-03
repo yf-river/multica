@@ -591,7 +591,7 @@ async function assertNoActiveTasks(label) {
   const client = new pg.Client({ connectionString: databaseURL });
   await client.connect();
   try {
-    const res = await client.query("SELECT status, count(*)::int FROM agent_task_queue WHERE status IN ('queued','dispatched','running','waiting_local_directory') GROUP BY status ORDER BY status");
+    const res = await client.query("SELECT status, count(*)::int FROM agent_task_queue WHERE status IN ('queued','dispatched','running') GROUP BY status ORDER BY status");
     check(`${label}_no_active_tasks`, res.rows.length === 0, { active_tasks: res.rows });
     if (res.rows.length > 0) {
       fail(`${label}: active tasks exist; full SOP acceptance must run one task at a time`, { active_tasks: res.rows });
@@ -961,7 +961,7 @@ function sortTasks(tasks) {
 }
 
 function isActiveTask(task) {
-  return ["queued", "dispatched", "running", "waiting_local_directory"].includes(task.status);
+  return ["queued", "dispatched", "running"].includes(task.status);
 }
 
 function countItems(items, total) {

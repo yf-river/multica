@@ -137,7 +137,7 @@ test.describe("小队 SOP 端到端", () => {
     expect(Number(summary.指标["证据数"])).toBeGreaterThanOrEqual(1);
     expect(summary.task_trace_total).toBeGreaterThanOrEqual(1);
     expect(summary.model_breakdown[0]).toMatchObject({
-      "名称": "gpt-5.3-codex-spark",
+      "名称": "deepseek-v4-pro-ioa",
       "价格已知": true,
     });
     expect(summary.runtime_breakdown[0]).toMatchObject({

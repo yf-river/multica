@@ -215,6 +215,8 @@ DECLARE
     v_lock_ok BOOLEAN;
     v_from    TIMESTAMPTZ;
     v_to      TIMESTAMPTZ;
+    v_upper   TIMESTAMPTZ;
+    v_first_pending TIMESTAMPTZ;
     v_rows    BIGINT := 0;
 BEGIN
     SELECT pg_try_advisory_lock(4246) INTO v_lock_ok;
@@ -229,14 +231,55 @@ BEGIN
          WHERE id = 1
         RETURNING watermark_at INTO v_from;
 
-        -- Cap each tick at a one-day window. In steady state v_from is
-        -- recent, so LEAST picks `now() - 5 min` and nothing changes. But
-        -- if the worker was paused (incident, migration freeze) the
-        -- watermark can fall far behind; without the cap a single catch-up
-        -- tick would recompute a multi-week window in one statement while
-        -- holding lock 4246, blocking every other tick. Capped, catch-up
-        -- advances in bounded one-day steps over successive ticks.
-        v_to := LEAST(now() - INTERVAL '5 minutes', v_from + INTERVAL '1 day');
+        v_upper := now() - INTERVAL '5 minutes';
+
+        -- Fresh databases used to start at 1970-01-01 and advance one
+        -- empty day every tick. Fast-forward over empty history: if no
+        -- raw usage or dirty rollup key exists before the safe upper
+        -- bound, mark the empty interval complete; otherwise jump to the
+        -- first real pending timestamp and keep the one-day cap below.
+        IF v_from < v_upper THEN
+            SELECT MIN(candidate_at)
+              INTO v_first_pending
+              FROM (
+                    SELECT tu.updated_at AS candidate_at
+                      FROM task_usage tu
+                      JOIN agent_task_queue atq ON atq.id = tu.task_id
+                     WHERE atq.runtime_id IS NOT NULL
+                       AND tu.updated_at >= v_from
+                       AND tu.updated_at <  v_upper
+                    UNION ALL
+                    SELECT tu.created_at AS candidate_at
+                      FROM task_usage tu
+                      JOIN agent_task_queue atq ON atq.id = tu.task_id
+                     WHERE atq.runtime_id IS NOT NULL
+                       AND tu.updated_at IS NULL
+                       AND tu.created_at >= v_from
+                       AND tu.created_at <  v_upper
+                    UNION ALL
+                    SELECT GREATEST(enqueued_at, v_from) AS candidate_at
+                      FROM task_usage_hourly_dirty
+                     WHERE enqueued_at < v_upper
+              ) pending;
+
+            IF v_first_pending IS NULL THEN
+                v_to := v_upper;
+            ELSE
+                IF v_first_pending > v_from + INTERVAL '1 day' THEN
+                    v_from := v_first_pending;
+                END IF;
+                -- Cap each tick at a one-day window. In steady state v_from is
+                -- recent, so LEAST picks `now() - 5 min` and nothing changes. But
+                -- if the worker was paused (incident, migration freeze) the
+                -- watermark can fall far behind; without the cap a single catch-up
+                -- tick would recompute a multi-week window in one statement while
+                -- holding lock 4246, blocking every other tick. Capped, catch-up
+                -- advances in bounded one-day steps over successive ticks.
+                v_to := LEAST(v_upper, v_from + INTERVAL '1 day');
+            END IF;
+        ELSE
+            v_to := v_from;
+        END IF;
 
         IF v_from < v_to THEN
             v_rows := rollup_task_usage_hourly_window(v_from, v_to);
@@ -248,7 +291,8 @@ BEGIN
              WHERE id = 1;
         ELSE
             UPDATE task_usage_hourly_rollup_state
-               SET last_run_finished_at = now(),
+               SET watermark_at         = GREATEST(watermark_at, v_to),
+                   last_run_finished_at = now(),
                    last_run_rows        = 0
              WHERE id = 1;
         END IF;

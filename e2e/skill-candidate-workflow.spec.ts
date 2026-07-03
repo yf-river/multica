@@ -1,6 +1,7 @@
 import { test, expect, type ConsoleMessage } from "@playwright/test";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -14,14 +15,20 @@ const E2E_ACCOUNT = process.env.E2E_ACCOUNT ?? `e2e-${E2E_WORKER}-${E2E_RUN_ID}`
 const E2E_NAME = process.env.E2E_NAME ?? "E2E User";
 const E2E_WORKSPACE = process.env.E2E_WORKSPACE ?? `e2e-workspace-${E2E_WORKER}-${E2E_RUN_ID}`;
 const E2E_WORKSPACE_NAME = process.env.E2E_WORKSPACE_NAME ?? `E2E Workspace ${E2E_WORKER}`;
+const GONGFENG_URL = "https://git.code.tencent.com/ChainWeaver/ida/user-center";
+const GONGFENG_PROJECT_PATH = "ChainWeaver/ida/user-center";
+const GONGFENG_BRANCH = process.env.GOAL_D_GONGFENG_SKILL_BRANCH ?? "v5.0.0_dev_sop";
+const GONGFENG_BASE_REPO = process.env.GOAL_D_GONGFENG_SKILL_BASE_REPO ?? "/data/ida/user-center";
+const GONGFENG_SKILL_PATH = process.env.GOAL_D_GONGFENG_SKILL_PATH ?? ".codebuddy/skills/05-verify/SKILL.md";
 
 test.describe("Skill candidate workflow", () => {
   let api: TestApiClient;
   let artifactPrefix: string;
   let workspaceSlug: string;
   let tempRepoPath: string | null = null;
+  let tempRepoParentPath: string | null = null;
 
-  test.beforeEach(async ({ page }) => {
+  test.beforeEach(async () => {
     api = new TestApiClient();
     await api.login(E2E_ACCOUNT, E2E_NAME);
     const workspace = await api.ensureWorkspace(E2E_WORKSPACE_NAME, E2E_WORKSPACE);
@@ -29,19 +36,17 @@ test.describe("Skill candidate workflow", () => {
     workspaceSlug = workspace.slug;
     artifactPrefix = `GoalD Skill UI ${Date.now()}`;
     await api.cleanupPromptArtifactsByPrefix("GoalD Skill UI");
-    const token = api.getToken();
-    if (!token) {
-      throw new Error("E2E login did not return an auth token");
-    }
-    await authenticateBrowserSession(page, token, workspaceSlug);
-    await page.goto(`/${workspaceSlug}/issues`, { waitUntil: "domcontentloaded" });
-    await waitForPageText(page, "新建任务", 60_000);
   });
 
   test.afterEach(async () => {
     if (tempRepoPath) {
+      await git(GONGFENG_BASE_REPO, ["worktree", "remove", "--force", tempRepoPath]).catch(() => "");
       await rm(tempRepoPath, { recursive: true, force: true });
       tempRepoPath = null;
+    }
+    if (tempRepoParentPath) {
+      await rm(tempRepoParentPath, { recursive: true, force: true });
+      tempRepoParentPath = null;
     }
     if (api && artifactPrefix) {
       await api.cleanupPromptArtifactsByPrefix(artifactPrefix);
@@ -61,6 +66,13 @@ test.describe("Skill candidate workflow", () => {
     page.on("pageerror", (error) => {
       pageErrors.push(error.message);
     });
+    const token = api.getToken();
+    if (!token) {
+      throw new Error("E2E login did not return an auth token");
+    }
+    await authenticateBrowserSession(page, token, workspaceSlug);
+    await page.goto(`/${workspaceSlug}/issues`, { waitUntil: "domcontentloaded" });
+    await waitForPageText(page, "新建任务", 60_000);
 
     const prompt = await api.createPromptForE2E(artifactPrefix, {
       name: `${artifactPrefix} prompt`,
@@ -119,27 +131,23 @@ test.describe("Skill candidate workflow", () => {
     expect(consoleErrors).toEqual([]);
   });
 
-  test("runs the local checkout skill API chain through apply changelog and re-eval", async () => {
+  test("runs the Gongfeng worktree skill API chain through apply changelog and re-eval", async () => {
     test.setTimeout(120_000);
-    tempRepoPath = await mkdtemp(path.join(os.tmpdir(), "goal-d-skill-e2e-"));
-    const skillPath = ".codebuddy/skills/05-verify/SKILL.md";
-    const changelogPath = ".codebuddy/skills/05-verify/CHANGELOG.md";
-    const skillV1 = "# Verify\n\n- Run focused checks.\n- Record evidence.\n";
-    const skillV2 = "# Verify\n\n- Run focused checks.\n- Record evidence.\n- Attach ledger references in acceptance artifacts.\n";
+    test.skip(!existsSync(GONGFENG_BASE_REPO), `Gongfeng base repo is missing: ${GONGFENG_BASE_REPO}`);
+    tempRepoParentPath = await mkdtemp(path.join(os.tmpdir(), "goal-d-gongfeng-skill-"));
+    tempRepoPath = path.join(tempRepoParentPath, "worktree");
+    await git(GONGFENG_BASE_REPO, ["worktree", "add", "--detach", tempRepoPath, GONGFENG_BRANCH]);
 
-    await git(tempRepoPath, ["init"]);
+    const skillPath = GONGFENG_SKILL_PATH;
     await git(tempRepoPath, ["config", "user.email", "e2e@example.com"]);
     await git(tempRepoPath, ["config", "user.name", "Goal D E2E"]);
-    await writeRepoFile(tempRepoPath, skillPath, "# Verify\n\n- Run checks.\n");
-    await writeRepoFile(tempRepoPath, changelogPath, "# Skill CHANGELOG\n");
-    await git(tempRepoPath, ["add", skillPath, changelogPath]);
-    await git(tempRepoPath, ["commit", "-m", "add verify skill"]);
-    await writeRepoFile(tempRepoPath, skillPath, skillV1);
-    await git(tempRepoPath, ["add", skillPath]);
-    await git(tempRepoPath, ["commit", "-m", "require focused evidence"]);
-    await writeRepoFile(tempRepoPath, skillPath, skillV2);
-    const candidatePatch = await git(tempRepoPath, ["diff", "--", skillPath]);
-    await writeRepoFile(tempRepoPath, skillPath, skillV1);
+    await readFile(path.join(tempRepoPath, skillPath), "utf8");
+    const changelogPath = path.posix.join(path.posix.dirname(skillPath), "CHANGELOG.md");
+    const candidatePatch = await createAppendPatch(
+      tempRepoPath,
+      skillPath,
+      `- Goal D Gongfeng worktree evidence: ${E2E_RUN_ID}.`,
+    );
 
     const prompt = await api.createPromptForE2E(artifactPrefix, {
       name: `${artifactPrefix} skill echo prompt`,
@@ -154,7 +162,7 @@ test.describe("Skill candidate workflow", () => {
     const asset = await api.createPromptEvaluationAsset({
       prompt_id: prompt.id,
       name: `${artifactPrefix} full skill chain asset`,
-      description: "Goal D full local checkout skill chain fixture",
+      description: "Goal D full Gongfeng worktree skill chain fixture",
       asset_type: "测试套件",
       payload: {
         cases: [
@@ -168,28 +176,47 @@ test.describe("Skill candidate workflow", () => {
       status: "启用",
     });
     const project = await api.createProject(`${artifactPrefix} project`);
+    await api.ensureGongfengRepositoryInventory({
+      provider: "gongfeng",
+      url: GONGFENG_URL,
+      project_path: GONGFENG_PROJECT_PATH,
+      default_branch: GONGFENG_BRANCH,
+      title: "user-center",
+      description: "Goal D Gongfeng worktree E2E repository",
+    });
     const resource = await api.createProjectResource(project.id, {
-      resource_type: "local_directory",
-      label: `${artifactPrefix} local skill checkout`,
+      resource_type: "gongfeng_repo",
+      label: `${artifactPrefix} Gongfeng user-center ${GONGFENG_BRANCH}`,
       resource_ref: {
-        local_path: tempRepoPath,
-        daemon_id: `goal-d-skill-e2e-${Date.now()}`,
+        provider: "gongfeng",
+        url: `${GONGFENG_URL}/commits/${GONGFENG_BRANCH}`,
+        project_path: GONGFENG_PROJECT_PATH,
+        ref: GONGFENG_BRANCH,
+        resource_kind: "branch",
+        title: "user-center",
       },
     });
 
     const inventory = await api.createPromptEvaluationSkillInventory(asset.id, {
       source_resource_id: resource.id,
+      repo_path: tempRepoPath,
       skill_root: ".codebuddy/skills",
+      branch: GONGFENG_BRANCH,
     });
     expect(inventory.inventory.discovered_count).toBeGreaterThanOrEqual(1);
     expect(inventory.inventory.items.some((item: { skill_path: string }) => item.skill_path === skillPath)).toBeTruthy();
 
     const snapshotResult = await api.createPromptEvaluationSkillSnapshot(asset.id, {
       source_resource_id: resource.id,
+      repo_path: tempRepoPath,
       skill_path: skillPath,
+      branch: GONGFENG_BRANCH,
     });
     const snapshot = snapshotResult.snapshot;
     expect(snapshot.source_resource_id).toBe(resource.id);
+    expect(snapshot.provider).toBe("gongfeng");
+    expect(snapshot.repo).toBe(GONGFENG_PROJECT_PATH);
+    expect(snapshot.branch).toBe(GONGFENG_BRANCH);
 
     const draftsResult = await api.createPromptEvaluationSkillCaseDrafts(asset.id, {
       repo_path: tempRepoPath,
@@ -223,33 +250,37 @@ test.describe("Skill candidate workflow", () => {
     const updatedCandidate = await api.updatePromptEvaluationOptimizationCandidate(candidate.id, {
       candidate_name: `${artifactPrefix} skill patch candidate`,
       candidate_content: "Skill patch candidate stored in skill_patch.patch.",
-      rationale: "Patch adds ledger-reference evidence discipline to the verify skill.",
+        rationale: "Patch records Gongfeng worktree evidence in the verify skill.",
       edit_note: "E2E fixture replaces generated prompt candidate with a skill patch.",
       skill_patch: {
         patch: candidatePatch,
         source_snapshot: snapshot,
         source_resource_id: resource.id,
         repo_path: tempRepoPath,
-        target_branch: snapshot.branch,
+        target_branch: GONGFENG_BRANCH,
         skill_path: skillPath,
         changelog_path: changelogPath,
         expected_improvement: "Improve verification evidence discipline.",
-        risk: "Low-risk skill instruction addition in a temporary local checkout fixture.",
-        verification_plan: "Run Goal D full local checkout E2E re-eval after apply.",
+        risk: "Low-risk skill instruction addition in a temporary Gongfeng worktree fixture.",
+        verification_plan: "Run Goal D full Gongfeng worktree E2E re-eval after apply.",
         publication_status: "draft",
       },
     });
-    expect(updatedCandidate.skill_patch?.patch).toContain("Attach ledger references");
+    expect(updatedCandidate.skill_patch?.patch).toContain("Goal D Gongfeng worktree evidence");
     expect(updatedCandidate.skill_patch?.source_snapshot?.skill_hash).toBe(snapshot.skill_hash);
 
     const freshness = await api.checkPromptEvaluationSkillCandidateFreshness(candidate.id, {
       source_resource_id: resource.id,
+      repo_path: tempRepoPath,
+      target_branch: GONGFENG_BRANCH,
     });
     expect(freshness.status).toBe("fresh");
     expect(freshness.patch_check).toBe("not_needed");
 
     const apply = await api.applyPromptEvaluationSkillCandidate(candidate.id, {
       source_resource_id: resource.id,
+      repo_path: tempRepoPath,
+      target_branch: GONGFENG_BRANCH,
       rollback_plan: "Reverse the candidate patch and remove the generated CHANGELOG entry.",
     });
     expect(apply.apply.status, JSON.stringify(apply.apply, null, 2)).toBe("applied");
@@ -259,6 +290,7 @@ test.describe("Skill candidate workflow", () => {
 
     const reEvalAsset = await api.preparePromptEvaluationSkillReEvalAsset(candidate.id, {
       source_resource_id: resource.id,
+      repo_path: tempRepoPath,
       snapshot,
       include_draft: false,
     });
@@ -269,16 +301,25 @@ test.describe("Skill candidate workflow", () => {
       asset_id: reEvalAsset.asset.id,
     });
     expect(reEvalRun.run.status, JSON.stringify(reEvalRun.run, null, 2)).toBe("通过");
-    expect(reEvalRun.re_eval_run.proof_scope).toBe("local_prompt_evaluation_run");
+    expect(String(reEvalRun.re_eval_run.proof_scope)).toContain("prompt_evaluation_run");
     expect(reEvalRun.re_eval_snapshot.skill_hash).toBe(apply.apply.skill_hash_after);
 
     const artifactDir = path.resolve(process.cwd(), "artifacts/acceptance");
     await mkdir(artifactDir, { recursive: true });
-    const artifactPath = path.join(artifactDir, `goal-d-skill-full-local-e2e-${Date.now()}.json`);
+    const artifactPath = path.join(artifactDir, `goal-d-skill-gongfeng-worktree-e2e-${Date.now()}.json`);
     await writeFile(artifactPath, `${JSON.stringify({
+      schema: "multica.goal_d.skill_gongfeng_worktree_e2e.v1",
       repo_path: tempRepoPath,
       project_id: project.id,
       source_resource_id: resource.id,
+      resource: {
+        id: resource.id,
+        resource_type: "gongfeng_repo",
+        provider: "gongfeng",
+        project_path: GONGFENG_PROJECT_PATH,
+        branch: GONGFENG_BRANCH,
+        url: GONGFENG_URL,
+      },
       asset_id: asset.id,
       run_id: failedRun.id,
       candidate_id: candidate.id,
@@ -305,15 +346,36 @@ test.describe("Skill candidate workflow", () => {
       re_eval_asset_id: reEvalAsset.asset.id,
       re_eval_run_id: reEvalRun.run.id,
       re_eval_status: reEvalRun.run.status,
-      proof_scope: reEvalRun.re_eval_run.proof_scope,
+      re_eval_proof_scope: reEvalRun.re_eval_run.proof_scope,
+      proof_boundary: "Controlled writeback to a temporary Gongfeng git worktree created from the user-center branch; no daemon-local project resource is used.",
     }, null, 2)}\n`);
   });
 });
 
-async function writeRepoFile(repoPath: string, relativePath: string, content: string) {
-  const absolutePath = path.join(repoPath, relativePath);
-  await mkdir(path.dirname(absolutePath), { recursive: true });
-  await writeFile(absolutePath, content);
+async function createAppendPatch(repoPath: string, relativePath: string, line: string) {
+  const current = await readFile(path.join(repoPath, relativePath), "utf8");
+  const next = `${current}${current.endsWith("\n") ? "" : "\n"}${line}\n`;
+  const tempDir = await mkdtemp(path.join(os.tmpdir(), "goal-d-gongfeng-skill-patch-"));
+  const tempFile = path.join(tempDir, path.basename(relativePath));
+  await writeFile(tempFile, next);
+  try {
+    const diff = await gitDiffNoIndex(repoPath, relativePath, tempFile);
+    return diff
+      .replace(/^diff --git a\/.+ b\/.+$/m, `diff --git a/${relativePath} b/${relativePath}`)
+      .replace(/^\+\+\+ b\/.+$/m, `+++ b/${relativePath}`);
+  } finally {
+    await rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+async function gitDiffNoIndex(repoPath: string, relativePath: string, newFile: string) {
+  try {
+    return await git(repoPath, ["diff", "--no-index", "--", relativePath, newFile]);
+  } catch (error) {
+    const maybe = error as { stdout?: string; code?: number };
+    if (maybe.code === 1 && maybe.stdout) return maybe.stdout;
+    throw error;
+  }
 }
 
 async function git(repoPath: string, args: string[]) {

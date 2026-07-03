@@ -1409,7 +1409,7 @@ function runReviewToolEvent(chain: PromptEvaluationToolCallChain, linkedMessages
     chain.failure_reason ? `failure:\n${chain.failure_reason}` : "",
   ].filter(Boolean);
   return {
-    id: `tool:${chain.id}`,
+    id: `tool:${chain.task_id || "unknown-task"}:${chain.id}`,
     kind: "tool",
     category: semantic.category,
     timestampMs: parseTimeMs(chain.completed_at) ?? parseTimeMs(chain.created_at) ?? 0,

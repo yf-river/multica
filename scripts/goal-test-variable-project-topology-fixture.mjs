@@ -12,8 +12,8 @@ const apiURL = trimEnv("ACCEPTANCE_API_URL") || trimEnv("GOAL_TEST_INT_API_URL")
 const account = trimEnv("ACCEPTANCE_DEMO_ACCOUNT") || "develop";
 const password = trimEnv("ACCEPTANCE_DEMO_PASSWORD") || "develop123";
 const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || "ai-studio";
-const provider = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER") || "codex";
-const model = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "gpt-5.3-codex-spark";
+const provider = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER") || "codebuddy";
+const model = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "deepseek-v4-pro-ioa";
 const suffix = Date.now();
 const now = new Date().toISOString();
 
@@ -41,8 +41,8 @@ try {
     instructions: "Respond in Chinese with concise topology evidence.",
     runtime_id: runtime.id,
     workspace_id: workspace.id,
-    visibility: "private",
-    max_concurrent_tasks: 1,
+    scope: "workspace",
+    max_concurrent_tasks: 20,
     model,
   }, token);
   if (!leader?.id) fail("leader agent missing id");

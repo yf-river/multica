@@ -235,6 +235,100 @@ func TestRecordIssueSourceFetchAutoFetchesTapdWikiWithAccountProfile(t *testing.
 	}
 }
 
+func TestRecordIssueSourceFetchAutoFetchRetriesTransientTapdFailure(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	clearTapdCredentialProfilesForTest(t, ctx)
+	t.Setenv("TAPD_AUTO_FETCH_RETRY_TEST_TOKEN", "tapd-test-token")
+
+	requestCount := 0
+	tapdAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		if requestCount == 1 {
+			http.Error(w, "temporary upstream failure", http.StatusServiceUnavailable)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"status": 1,
+			"data": []any{map[string]any{
+				"TWiki": map[string]any{
+					"id":                   "1147654106001004154",
+					"name":                 "用户快捷入口需求",
+					"markdown_description": "快捷入口属于当前登录用户，不同用户之间互不影响。",
+					"modified":             "2026-06-18 07:39:03",
+				},
+			}},
+		})
+	}))
+	defer tapdAPI.Close()
+	t.Setenv("TAPD_API_BASE_URL", tapdAPI.URL)
+
+	createTapdCredentialProfileForTest(t, "env:TAPD_AUTO_FETCH_RETRY_TEST_TOKEN")
+	fixture := createIssueSourceFetchFixture(t, ctx, "Source fetch retry runtime", "Source fetch retry agent", map[string]any{
+		"source_url":         "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",
+		"tapd_workspace_id":  "47654106",
+		"tapd_resource_type": "markdown_wiki",
+		"tapd_resource_id":   "1147654106001004154",
+	})
+
+	w := recordIssueSourceAutoFetchForTest(t, fixture, "RecordIssueSourceFetch auto_fetch retry")
+	var resp struct {
+		Metadata map[string]any `json:"metadata"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if requestCount != 2 {
+		t.Fatalf("requestCount = %d, want 2", requestCount)
+	}
+	if resp.Metadata["source_fetch_status"] != "fetched" || resp.Metadata["source_fetch_title"] != "用户快捷入口需求" {
+		t.Fatalf("metadata = %+v", resp.Metadata)
+	}
+}
+
+func TestRecordIssueSourceFetchAutoFetchDoesNotRetryUnauthorized(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	clearTapdCredentialProfilesForTest(t, ctx)
+	t.Setenv("TAPD_AUTO_FETCH_UNAUTHORIZED_TEST_TOKEN", "tapd-test-token")
+
+	requestCount := 0
+	tapdAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requestCount++
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
+	}))
+	defer tapdAPI.Close()
+	t.Setenv("TAPD_API_BASE_URL", tapdAPI.URL)
+
+	createTapdCredentialProfileForTest(t, "env:TAPD_AUTO_FETCH_UNAUTHORIZED_TEST_TOKEN")
+	fixture := createIssueSourceFetchFixture(t, ctx, "Source fetch unauthorized runtime", "Source fetch unauthorized agent", map[string]any{
+		"source_url":         "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",
+		"tapd_workspace_id":  "47654106",
+		"tapd_resource_type": "markdown_wiki",
+		"tapd_resource_id":   "1147654106001004154",
+	})
+
+	w := recordIssueSourceAutoFetchForTest(t, fixture, "RecordIssueSourceFetch auto_fetch unauthorized")
+	var resp struct {
+		Metadata map[string]any `json:"metadata"`
+	}
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if requestCount != 1 {
+		t.Fatalf("requestCount = %d, want 1", requestCount)
+	}
+	if resp.Metadata["source_fetch_status"] != "fetch_failed" {
+		t.Fatalf("metadata = %+v", resp.Metadata)
+	}
+}
+
 func TestRecordIssueSourceFetchAutoFetchParsesTapdWikiSourceURL(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
