@@ -23,32 +23,50 @@ func newRepoRegistryTestCmd(serverURL string) *cobra.Command {
 	return cmd
 }
 
-func TestRunRepoAddAppendsAndDedupes(t *testing.T) {
-	initialRepos := []workspaceRepo{{URL: "https://git.example.com/web.git"}}
-	var patched []workspaceRepo
-	patchCount := 0
+type repoRegistryTestServer struct {
+	server     *httptest.Server
+	patched    []workspaceRepo
+	patchCount int
+}
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+func newRepoRegistryTestServer(t *testing.T, initialRepos []workspaceRepo) *repoRegistryTestServer {
+	t.Helper()
+	fixture := &repoRegistryTestServer{}
+	fixture.server = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/api/workspaces/ws-1":
 			json.NewEncoder(w).Encode(repoWorkspaceResponse{ID: "ws-1", Repos: initialRepos})
 		case r.Method == http.MethodPatch && r.URL.Path == "/api/workspaces/ws-1":
-			patchCount++
+			fixture.patchCount++
 			var body struct {
 				Repos []workspaceRepo `json:"repos"`
 			}
 			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 				t.Fatalf("decode patch body: %v", err)
 			}
-			patched = body.Repos
+			fixture.patched = body.Repos
 			json.NewEncoder(w).Encode(repoWorkspaceResponse{ID: "ws-1", Repos: body.Repos})
 		default:
 			http.NotFound(w, r)
 		}
 	}))
-	defer srv.Close()
+	return fixture
+}
 
-	cmd := newRepoRegistryTestCmd(srv.URL)
+func (s *repoRegistryTestServer) close() {
+	s.server.Close()
+}
+
+func (s *repoRegistryTestServer) url() string {
+	return s.server.URL
+}
+
+func TestRunRepoAddAppendsAndDedupes(t *testing.T) {
+	initialRepos := []workspaceRepo{{URL: "https://git.example.com/web.git"}}
+	srv := newRepoRegistryTestServer(t, initialRepos)
+	defer srv.close()
+
+	cmd := newRepoRegistryTestCmd(srv.url())
 	if err := cmd.Flags().Set("url", "https://git.example.com/web.git"); err != nil {
 		t.Fatal(err)
 	}
@@ -59,49 +77,31 @@ func TestRunRepoAddAppendsAndDedupes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runRepoAdd: %v", err)
 	}
-	if patchCount != 1 {
-		t.Fatalf("patchCount = %d, want 1", patchCount)
+	if srv.patchCount != 1 {
+		t.Fatalf("patchCount = %d, want 1", srv.patchCount)
 	}
-	if len(patched) != 2 {
-		t.Fatalf("patched repos = %+v, want 2 entries", patched)
+	if len(srv.patched) != 2 {
+		t.Fatalf("patched repos = %+v, want 2 entries", srv.patched)
 	}
-	if patched[0].URL != "https://git.example.com/web.git" || patched[1].URL != "https://git.example.com/api.git" {
-		t.Fatalf("unexpected patched repos: %+v", patched)
+	if srv.patched[0].URL != "https://git.example.com/web.git" || srv.patched[1].URL != "https://git.example.com/api.git" {
+		t.Fatalf("unexpected patched repos: %+v", srv.patched)
 	}
 }
 
 func TestRunRepoAddUpdatesDescriptionForExistingRepo(t *testing.T) {
 	initialRepos := []workspaceRepo{{URL: "https://git.example.com/web.git", Description: "old"}}
-	var patched []workspaceRepo
+	srv := newRepoRegistryTestServer(t, initialRepos)
+	defer srv.close()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/workspaces/ws-1":
-			json.NewEncoder(w).Encode(repoWorkspaceResponse{ID: "ws-1", Repos: initialRepos})
-		case r.Method == http.MethodPatch && r.URL.Path == "/api/workspaces/ws-1":
-			var body struct {
-				Repos []workspaceRepo `json:"repos"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode patch body: %v", err)
-			}
-			patched = body.Repos
-			json.NewEncoder(w).Encode(repoWorkspaceResponse{ID: "ws-1", Repos: body.Repos})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-
-	cmd := newRepoRegistryTestCmd(srv.URL)
+	cmd := newRepoRegistryTestCmd(srv.url())
 	if err := cmd.Flags().Set("description", "new"); err != nil {
 		t.Fatal(err)
 	}
 	if err := runRepoAdd(cmd, []string{"https://git.example.com/web.git"}); err != nil {
 		t.Fatalf("runRepoAdd: %v", err)
 	}
-	if len(patched) != 1 || patched[0].Description != "new" {
-		t.Fatalf("patched repos = %+v, want updated description", patched)
+	if len(srv.patched) != 1 || srv.patched[0].Description != "new" {
+		t.Fatalf("patched repos = %+v, want updated description", srv.patched)
 	}
 }
 
@@ -125,58 +125,26 @@ func TestRunRepoRemoveDeletesExistingRepos(t *testing.T) {
 		{URL: "https://git.example.com/api.git"},
 		{URL: "https://git.example.com/mobile.git"},
 	}
-	var patched []workspaceRepo
+	srv := newRepoRegistryTestServer(t, initialRepos)
+	defer srv.close()
 
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/workspaces/ws-1":
-			json.NewEncoder(w).Encode(repoWorkspaceResponse{ID: "ws-1", Repos: initialRepos})
-		case r.Method == http.MethodPatch && r.URL.Path == "/api/workspaces/ws-1":
-			var body struct {
-				Repos []workspaceRepo `json:"repos"`
-			}
-			if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
-				t.Fatalf("decode patch body: %v", err)
-			}
-			patched = body.Repos
-			json.NewEncoder(w).Encode(repoWorkspaceResponse{ID: "ws-1", Repos: body.Repos})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
-
-	cmd := newRepoRegistryTestCmd(srv.URL)
+	cmd := newRepoRegistryTestCmd(srv.url())
 	if err := cmd.Flags().Set("url", "https://git.example.com/mobile.git"); err != nil {
 		t.Fatal(err)
 	}
 	if err := runRepoRemove(cmd, []string{"https://git.example.com/web.git"}); err != nil {
 		t.Fatalf("runRepoRemove: %v", err)
 	}
-	if len(patched) != 1 || patched[0].URL != "https://git.example.com/api.git" {
-		t.Fatalf("patched repos = %+v, want only api repo", patched)
+	if len(srv.patched) != 1 || srv.patched[0].URL != "https://git.example.com/api.git" {
+		t.Fatalf("patched repos = %+v, want only api repo", srv.patched)
 	}
 }
 
 func TestRunRepoRemoveRejectsMissingRepoWithoutPatch(t *testing.T) {
-	patchCount := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/workspaces/ws-1":
-			json.NewEncoder(w).Encode(repoWorkspaceResponse{
-				ID:    "ws-1",
-				Repos: []workspaceRepo{{URL: "https://git.example.com/web.git"}},
-			})
-		case r.Method == http.MethodPatch && r.URL.Path == "/api/workspaces/ws-1":
-			patchCount++
-			json.NewEncoder(w).Encode(repoWorkspaceResponse{ID: "ws-1"})
-		default:
-			http.NotFound(w, r)
-		}
-	}))
-	defer srv.Close()
+	srv := newRepoRegistryTestServer(t, []workspaceRepo{{URL: "https://git.example.com/web.git"}})
+	defer srv.close()
 
-	cmd := newRepoRegistryTestCmd(srv.URL)
+	cmd := newRepoRegistryTestCmd(srv.url())
 	err := runRepoRemove(cmd, []string{"https://git.example.com/missing.git"})
 	if err == nil {
 		t.Fatal("expected error")
@@ -184,8 +152,8 @@ func TestRunRepoRemoveRejectsMissingRepoWithoutPatch(t *testing.T) {
 	if !strings.Contains(err.Error(), "not found") {
 		t.Fatalf("error = %q, want not found", err)
 	}
-	if patchCount != 0 {
-		t.Fatalf("patchCount = %d, want 0", patchCount)
+	if srv.patchCount != 0 {
+		t.Fatalf("patchCount = %d, want 0", srv.patchCount)
 	}
 }
 
