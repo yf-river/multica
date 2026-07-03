@@ -70,6 +70,22 @@ func mustReadJSON(t *testing.T, path string) map[string]any {
 	return got
 }
 
+func mustReadOpenclawWrapperMCPServers(t *testing.T, path string) (map[string]any, map[string]any) {
+	t.Helper()
+
+	got := mustReadJSON(t, path)
+	mcp, ok := got["mcp"].(map[string]any)
+	if !ok {
+		t.Fatalf("wrapper missing mcp block: %v", got)
+	}
+	servers, ok := mcp["servers"].(map[string]any)
+	if !ok {
+		t.Fatalf("mcp.servers is not an object: %v", mcp)
+	}
+
+	return got, servers
+}
+
 func newOpenclawConfigTestDirs(t *testing.T) (string, string) {
 	t.Helper()
 	envRoot := t.TempDir()
@@ -504,15 +520,7 @@ func TestPrepareOpenclawConfigStrictReplacesUserMcpServers(t *testing.T) {
 		t.Fatalf("prepareOpenclawConfig: %v", err)
 	}
 
-	got := mustReadJSON(t, result.ConfigPath)
-	mcp, ok := got["mcp"].(map[string]any)
-	if !ok {
-		t.Fatalf("wrapper missing mcp block: %v", got)
-	}
-	servers, ok := mcp["servers"].(map[string]any)
-	if !ok {
-		t.Fatalf("mcp.servers is not an object: %v", mcp)
-	}
+	got, servers := mustReadOpenclawWrapperMCPServers(t, result.ConfigPath)
 	if len(servers) != 2 {
 		t.Errorf("mcp.servers has %d entries, want 2 (managed only — global_one must not leak): %v", len(servers), servers)
 	}
@@ -616,9 +624,7 @@ func TestPrepareOpenclawConfigStrictPreservesNonServerMcpKeys(t *testing.T) {
 
 	// Wrapper still emits the managed-only server set on top, so the
 	// effective view post-include is exactly the managed set.
-	got := mustReadJSON(t, result.ConfigPath)
-	wrapperMcp, _ := got["mcp"].(map[string]any)
-	servers, _ := wrapperMcp["servers"].(map[string]any)
+	_, servers := mustReadOpenclawWrapperMCPServers(t, result.ConfigPath)
 	if _, ok := servers["managed_only"]; !ok {
 		t.Errorf("wrapper missing managed_only: %v", servers)
 	}
@@ -655,15 +661,7 @@ func TestPrepareOpenclawConfigStrictEmptyManagedSetDropsUserMcp(t *testing.T) {
 			if err != nil {
 				t.Fatalf("prepareOpenclawConfig: %v", err)
 			}
-			got := mustReadJSON(t, result.ConfigPath)
-			mcp, ok := got["mcp"].(map[string]any)
-			if !ok {
-				t.Fatalf("wrapper missing mcp block (managed empty must still be present): %v", got)
-			}
-			servers, ok := mcp["servers"].(map[string]any)
-			if !ok {
-				t.Fatalf("mcp.servers is not an object: %v", mcp)
-			}
+			_, servers := mustReadOpenclawWrapperMCPServers(t, result.ConfigPath)
 			if len(servers) != 0 {
 				t.Errorf("mcp.servers has %d entries on managed-empty, want 0 (global_one must not leak): %v", len(servers), servers)
 			}
@@ -750,15 +748,7 @@ func TestPrepareOpenclawConfigManagedSetFreshInstall(t *testing.T) {
 	if err != nil {
 		t.Fatalf("prepareOpenclawConfig: %v", err)
 	}
-	got := mustReadJSON(t, result.ConfigPath)
-	mcp, ok := got["mcp"].(map[string]any)
-	if !ok {
-		t.Fatalf("wrapper missing mcp block: %v", got)
-	}
-	servers, ok := mcp["servers"].(map[string]any)
-	if !ok {
-		t.Fatalf("mcp.servers is not an object: %v", mcp)
-	}
+	got, servers := mustReadOpenclawWrapperMCPServers(t, result.ConfigPath)
 	entry, _ := servers["context7"].(map[string]any)
 	if entry == nil || entry["command"] != "uvx" {
 		t.Errorf("context7 entry missing/wrong on fresh install: %v", servers)
