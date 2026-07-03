@@ -347,50 +347,24 @@ func (b *kimiBackend) Execute(ctx context.Context, prompt string, opts ExecOptio
 			}
 		}
 
-		duration := time.Since(startTime)
-		b.cfg.Logger.Info("kimi finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
-
-		stdin.Close()
-		cancel()
-
-		<-readerDone
-		// Ensure the stderr copier has drained before consulting the
-		// provider-error sniffer; see hermes.go for the failure mode.
-		<-stderrDone
-
-		outputMu.Lock()
-		finalOutput := output.String()
-		outputMu.Unlock()
-
-		// Promote completed→failed when stderr or the agent text
-		// stream show a terminal upstream-LLM failure (HTTP 4xx /
-		// rate-limit / expired token). See the helper docs for the
-		// full signal set; the key safety property is that transient
-		// per-attempt warnings followed by a successful retry stay
-		// "completed".
-		finalStatus, finalError = promoteACPResultOnProviderError(finalStatus, finalError, finalOutput, providerErr)
-
-		c.usageMu.Lock()
-		u := c.usage
-		c.usageMu.Unlock()
-
-		var usageMap map[string]TokenUsage
-		if u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 {
-			model := opts.Model
-			if model == "" {
-				model = "unknown"
-			}
-			usageMap = map[string]TokenUsage{model: u}
-		}
-
-		resCh <- Result{
-			Status:     finalStatus,
-			Output:     finalOutput,
-			Error:      finalError,
-			DurationMs: duration.Milliseconds(),
-			SessionID:  sessionID,
-			Usage:      usageMap,
-		}
+		resCh <- finishACPBackendResult(acpBackendResultParams{
+			Provider:    "kimi",
+			Logger:      b.cfg.Logger,
+			PID:         cmd.Process.Pid,
+			StartTime:   startTime,
+			Status:      finalStatus,
+			Error:       finalError,
+			SessionID:   sessionID,
+			Model:       opts.Model,
+			Stdin:       stdin,
+			Cancel:      cancel,
+			ReaderDone:  readerDone,
+			StderrDone:  stderrDone,
+			OutputMu:    &outputMu,
+			Output:      &output,
+			Client:      c,
+			ProviderErr: providerErr,
+		})
 	}()
 
 	return &Session{Messages: msgCh, Result: resCh}, nil

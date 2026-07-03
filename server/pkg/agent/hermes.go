@@ -387,65 +387,111 @@ func (b *hermesBackend) Execute(ctx context.Context, prompt string, opts ExecOpt
 			}
 		}
 
-		duration := time.Since(startTime)
-		b.cfg.Logger.Info("hermes finished", "pid", cmd.Process.Pid, "status", finalStatus, "duration", duration.Round(time.Millisecond).String())
-
-		// Close stdin and cancel context to signal hermes acp to exit.
-		stdin.Close()
-		cancel()
-
-		// Wait for the reader goroutine to finish so all output is accumulated.
-		<-readerDone
-		// Wait for the stderr copier as well so the provider-error sniffer
-		// has every byte the child wrote before we consult it for failure
-		// promotion. Skipping this leaves a small race where stopReason=
-		// end_turn arrives over stdout while the stderr 429 / usage-limit
-		// lines are still in transit, causing the promoted error message
-		// to fall through to the synthetic agent-text fallback.
-		<-stderrDone
-
-		outputMu.Lock()
-		finalOutput := output.String()
-		outputMu.Unlock()
-
-		// Hermes reports stopReason=end_turn even when the upstream
-		// LLM call ultimately fails (HTTP 429 rate-limit, expired
-		// token, ...). promoteACPResultOnProviderError flips the
-		// status to "failed" when either the stderr sniffer saw a
-		// *terminal* failure marker (not just a transient per-attempt
-		// warning), the agent text stream contains the synthetic
-		// "API call failed after N retries..." turn the adapter
-		// injects on give-up, or there's no output to fall back on.
-		finalStatus, finalError = promoteACPResultOnProviderError(finalStatus, finalError, finalOutput, providerErr)
-
-		// Build usage map.
-		c.usageMu.Lock()
-		u := c.usage
-		c.usageMu.Unlock()
-
-		var usageMap map[string]TokenUsage
-		if u.InputTokens > 0 || u.OutputTokens > 0 || u.CacheReadTokens > 0 {
-			model := effectiveModel
-			if model == "" {
-				model = "unknown"
-			}
-			usageMap = map[string]TokenUsage{model: u}
-		}
-
-		resCh <- Result{
-			Status:     finalStatus,
-			Output:     finalOutput,
-			Error:      finalError,
-			DurationMs: duration.Milliseconds(),
-			SessionID:  sessionID,
-			Usage:      usageMap,
-		}
+		resCh <- finishACPBackendResult(acpBackendResultParams{
+			Provider:    "hermes",
+			Logger:      b.cfg.Logger,
+			PID:         cmd.Process.Pid,
+			StartTime:   startTime,
+			Status:      finalStatus,
+			Error:       finalError,
+			SessionID:   sessionID,
+			Model:       effectiveModel,
+			Stdin:       stdin,
+			Cancel:      cancel,
+			ReaderDone:  readerDone,
+			StderrDone:  stderrDone,
+			OutputMu:    &outputMu,
+			Output:      &output,
+			Client:      c,
+			ProviderErr: providerErr,
+		})
 	}()
 
 	return &Session{Messages: msgCh, Result: resCh}, nil
 }
 
 // ── hermesClient: ACP JSON-RPC 2.0 transport ──
+
+type acpBackendResultParams struct {
+	Provider    string
+	Logger      *slog.Logger
+	PID         int
+	StartTime   time.Time
+	Status      string
+	Error       string
+	SessionID   string
+	Model       string
+	Stdin       io.Closer
+	Cancel      context.CancelFunc
+	ReaderDone  <-chan struct{}
+	StderrDone  <-chan struct{}
+	OutputMu    *sync.Mutex
+	Output      *strings.Builder
+	Client      *hermesClient
+	ProviderErr *acpProviderErrorSniffer
+}
+
+func finishACPBackendResult(params acpBackendResultParams) Result {
+	duration := time.Since(params.StartTime)
+	params.Logger.Info(
+		params.Provider+" finished",
+		"pid", params.PID,
+		"status", params.Status,
+		"duration", duration.Round(time.Millisecond).String(),
+	)
+
+	params.Stdin.Close()
+	params.Cancel()
+
+	<-params.ReaderDone
+	// Wait for the stderr copier so provider-error promotion sees every
+	// byte the child wrote before the result is finalized. Skipping this
+	// leaves a race where stopReason=end_turn arrives over stdout while
+	// stderr 429 / usage-limit lines are still in transit.
+	<-params.StderrDone
+
+	params.OutputMu.Lock()
+	finalOutput := params.Output.String()
+	params.OutputMu.Unlock()
+
+	return buildACPBackendResult(
+		params.Status,
+		params.Error,
+		finalOutput,
+		params.SessionID,
+		params.Model,
+		duration,
+		snapshotACPUsage(params.Client),
+		params.ProviderErr,
+	)
+}
+
+func snapshotACPUsage(c *hermesClient) TokenUsage {
+	c.usageMu.Lock()
+	defer c.usageMu.Unlock()
+	return c.usage
+}
+
+func buildACPBackendResult(status, errMsg, output, sessionID, model string, duration time.Duration, usage TokenUsage, providerErr *acpProviderErrorSniffer) Result {
+	status, errMsg = promoteACPResultOnProviderError(status, errMsg, output, providerErr)
+
+	var usageMap map[string]TokenUsage
+	if usage.InputTokens > 0 || usage.OutputTokens > 0 || usage.CacheReadTokens > 0 {
+		if model == "" {
+			model = "unknown"
+		}
+		usageMap = map[string]TokenUsage{model: usage}
+	}
+
+	return Result{
+		Status:     status,
+		Output:     output,
+		Error:      errMsg,
+		DurationMs: duration.Milliseconds(),
+		SessionID:  sessionID,
+		Usage:      usageMap,
+	}
+}
 
 type hermesPromptResult struct {
 	stopReason string
