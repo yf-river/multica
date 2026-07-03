@@ -106,6 +106,17 @@ func countSkillFiles(t *testing.T, skillID string) int {
 	return count
 }
 
+func assertRuntimeLocalSkillTimeout(t *testing.T, status RuntimeLocalSkillRequestStatus, errMsg string) {
+	t.Helper()
+
+	if status != RuntimeLocalSkillTimeout {
+		t.Fatalf("expected timeout, got %s", status)
+	}
+	if errMsg == "" {
+		t.Fatal("expected timeout error")
+	}
+}
+
 func TestInMemoryLocalSkillListStore_PreservesSummaries(t *testing.T) {
 	ctx := context.Background()
 	store := NewInMemoryLocalSkillListStore()
@@ -176,12 +187,7 @@ func TestInMemoryLocalSkillListStore_TimesOutRunningRequests(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected stored request")
 	}
-	if got.Status != RuntimeLocalSkillTimeout {
-		t.Fatalf("expected timeout, got %s", got.Status)
-	}
-	if got.Error == "" {
-		t.Fatal("expected timeout error")
-	}
+	assertRuntimeLocalSkillTimeout(t, got.Status, got.Error)
 }
 
 func TestInMemoryLocalSkillImportStore_TimesOutRunningRequests(t *testing.T) {
@@ -206,12 +212,7 @@ func TestInMemoryLocalSkillImportStore_TimesOutRunningRequests(t *testing.T) {
 	if got == nil {
 		t.Fatal("expected stored request")
 	}
-	if got.Status != RuntimeLocalSkillTimeout {
-		t.Fatalf("expected timeout, got %s", got.Status)
-	}
-	if got.Error == "" {
-		t.Fatal("expected timeout error")
-	}
+	assertRuntimeLocalSkillTimeout(t, got.Status, got.Error)
 }
 
 func TestInitiateListLocalSkills_RequiresRuntimeOwner(t *testing.T) {
