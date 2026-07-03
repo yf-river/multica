@@ -602,18 +602,7 @@ func TestLoadConfig_SkipsLoginShellWhenLookPathSucceeds(t *testing.T) {
 }
 
 func TestLoadConfig_UsesCodexDesktopAppBundleFallback(t *testing.T) {
-	pathDir := t.TempDir()
-	fakeCodex := filepath.Join(pathDir, "Codex.app", "Contents", "Resources", "codex")
-	if err := os.MkdirAll(filepath.Dir(fakeCodex), 0o755); err != nil {
-		t.Fatalf("mkdir fake Codex bundle: %v", err)
-	}
-	if err := os.WriteFile(fakeCodex, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write fake Codex bundle CLI: %v", err)
-	}
-
-	oldBundlePaths := codexDesktopAppBundlePaths
-	codexDesktopAppBundlePaths = func() []string { return []string{fakeCodex} }
-	t.Cleanup(func() { codexDesktopAppBundlePaths = oldBundlePaths })
+	fakeCodex := stubCodexDesktopBundle(t)
 
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("SHELL", filepath.Join(t.TempDir(), "fish"))
@@ -641,18 +630,7 @@ func TestLoadConfig_UsesCodexDesktopAppBundleFallback(t *testing.T) {
 }
 
 func TestLoadConfig_CodexDesktopFallbackDoesNotOverrideExplicitPath(t *testing.T) {
-	pathDir := t.TempDir()
-	fakeCodex := filepath.Join(pathDir, "Codex.app", "Contents", "Resources", "codex")
-	if err := os.MkdirAll(filepath.Dir(fakeCodex), 0o755); err != nil {
-		t.Fatalf("mkdir fake Codex bundle: %v", err)
-	}
-	if err := os.WriteFile(fakeCodex, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		t.Fatalf("write fake Codex bundle CLI: %v", err)
-	}
-
-	oldBundlePaths := codexDesktopAppBundlePaths
-	codexDesktopAppBundlePaths = func() []string { return []string{fakeCodex} }
-	t.Cleanup(func() { codexDesktopAppBundlePaths = oldBundlePaths })
+	fakeCodex := stubCodexDesktopBundle(t)
 
 	t.Setenv("PATH", t.TempDir())
 	t.Setenv("SHELL", filepath.Join(t.TempDir(), "fish"))
@@ -673,8 +651,25 @@ func TestLoadConfig_CodexDesktopFallbackDoesNotOverrideExplicitPath(t *testing.T
 		t.Fatalf("LoadConfig: %v", err)
 	}
 	if got, ok := cfg.Agents["codex"]; ok {
-		t.Fatalf("explicit missing MULTICA_CODEX_PATH should not fall back to Desktop bundle, got %#v", got)
+		t.Fatalf("explicit missing MULTICA_CODEX_PATH should not fall back to Desktop bundle %q, got %#v", fakeCodex, got)
 	}
+}
+
+func stubCodexDesktopBundle(t *testing.T) string {
+	t.Helper()
+	pathDir := t.TempDir()
+	fakeCodex := filepath.Join(pathDir, "Codex.app", "Contents", "Resources", "codex")
+	if err := os.MkdirAll(filepath.Dir(fakeCodex), 0o755); err != nil {
+		t.Fatalf("mkdir fake Codex bundle: %v", err)
+	}
+	if err := os.WriteFile(fakeCodex, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatalf("write fake Codex bundle CLI: %v", err)
+	}
+
+	oldBundlePaths := codexDesktopAppBundlePaths
+	codexDesktopAppBundlePaths = func() []string { return []string{fakeCodex} }
+	t.Cleanup(func() { codexDesktopAppBundlePaths = oldBundlePaths })
+	return fakeCodex
 }
 
 func pinNonCodexAgentsToMissingPaths(t *testing.T) {
