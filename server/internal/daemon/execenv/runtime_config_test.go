@@ -171,6 +171,27 @@ func TestMRAndHumanCodeReviewHandoffSectionRequiresLinkedMR(t *testing.T) {
 	}
 }
 
+func TestVerificationOutputContractRequiresConcreteCaseList(t *testing.T) {
+	t.Parallel()
+
+	out := buildMetaSkillContent("claude", TaskContextForEnv{IssueID: "11111111-2222-3333-4444-555555555555"})
+
+	for _, want := range []string{
+		"## Verification Output Contract",
+		"include a Markdown list or table of the concrete cases you ran",
+		"Do not only say \"all passed\", \"4 checks passed\", or similar",
+		"case/command name",
+		"what it covered",
+		"the result",
+		"evidence pointer",
+		"simple one-task flows that finish without a dedicated 05 stage",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("verification output contract missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
 func TestRepositoryWorktreeContractPreventsNestedCheckout(t *testing.T) {
 	t.Parallel()
 
