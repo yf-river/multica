@@ -22,6 +22,32 @@ func TestEstimateUsageCostUSDDeepSeekV4ProIOA(t *testing.T) {
 	}
 }
 
+func TestEstimateUsageCostUSDSpark(t *testing.T) {
+	cost, ok := EstimateUsageCostUSD("codex/gpt-5.3-codex-spark", 1_000_000, 1_000_000, 1_000_000, 1_000_000)
+	if !ok {
+		t.Fatalf("expected codex/gpt-5.3-codex-spark to resolve")
+	}
+	if cost != 16.1 {
+		t.Fatalf("cost = %v, want 16.1", cost)
+	}
+}
+
+func TestEstimateUsageCostBreakdownUSDProviderGenericModel(t *testing.T) {
+	breakdown, ok := EstimateUsageCostBreakdownUSD("cursor", "auto", 1_000_000, 1_000_000, 1_000_000, 1_000_000)
+	if !ok {
+		t.Fatalf("expected cursor/auto to resolve")
+	}
+	if breakdown.TotalCostUSD != 7.5 {
+		t.Fatalf("total = %v, want 7.5", breakdown.TotalCostUSD)
+	}
+	if breakdown.CacheWriteCostUSD != 0 {
+		t.Fatalf("cache write = %v, want 0", breakdown.CacheWriteCostUSD)
+	}
+	if breakdown.CacheSavingsUSD != 1 {
+		t.Fatalf("cache savings = %v, want 1", breakdown.CacheSavingsUSD)
+	}
+}
+
 func TestEstimateUsageCostUSDDeepSeekV4FlashIOA(t *testing.T) {
 	cost, ok := EstimateUsageCostUSD("codebuddy/deepseek-v4-flash-ioa", 1_000_000, 1_000_000, 1_000_000, 1_000_000)
 	if !ok {

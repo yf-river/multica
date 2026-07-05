@@ -26,6 +26,12 @@ func TestRuntimeHandlersRejectMalformedRuntimeID(t *testing.T) {
 			handle: testHandler.GetRuntimeUsage,
 		},
 		{
+			name:   "usage by task",
+			method: "GET",
+			path:   "/api/runtimes/not-a-uuid/usage/by-task",
+			handle: testHandler.GetRuntimeUsageByTask,
+		},
+		{
 			name:   "task activity",
 			method: "GET",
 			path:   "/api/runtimes/not-a-uuid/task-activity",
@@ -84,6 +90,27 @@ func TestListAgentRuntimesClientCanceledReturns499(t *testing.T) {
 
 	if w.Code != 499 {
 		t.Fatalf("expected 499 for canceled runtime list request, got %d: %s", w.Code, w.Body.String())
+	}
+}
+
+func TestUsageCostResponse(t *testing.T) {
+	priced := usageCostResponse("codex", "gpt-5.3-codex-spark", 1_000_000, 1_000_000, 1_000_000, 1_000_000)
+	if !priced.Priced {
+		t.Fatalf("expected spark row to be priced")
+	}
+	if priced.CostUSD != 16.1 {
+		t.Fatalf("cost = %v, want 16.1", priced.CostUSD)
+	}
+	if priced.InputCostUSD != 1.75 || priced.OutputCostUSD != 14 || priced.CacheReadCostUSD != 0.175 || priced.CacheWriteCostUSD != 0.175 {
+		t.Fatalf("unexpected breakdown: %+v", priced)
+	}
+
+	unpriced := usageCostResponse("fictional", "unknown-model", 1_000_000, 0, 0, 0)
+	if unpriced.Priced {
+		t.Fatalf("expected unknown model to be unpriced")
+	}
+	if unpriced.CostUSD != 0 {
+		t.Fatalf("unpriced cost = %v, want 0", unpriced.CostUSD)
 	}
 }
 
@@ -291,6 +318,94 @@ func TestListRuntimeUsageByAgent_MergesMixedCaseProvider(t *testing.T) {
 	}
 	if got[0].InputTokens != 1500 {
 		t.Errorf("expected merged input_tokens 1500, got %d", got[0].InputTokens)
+	}
+}
+
+func TestGetRuntimeUsageByTask_GroupsByTaskAndModel(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+
+	runtimeID := handlerTestRuntimeID(t)
+	var agentID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT id FROM agent WHERE workspace_id = $1 LIMIT 1
+	`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatalf("fetch agent: %v", err)
+	}
+
+	issueNumber := int(time.Now().UnixNano() % 1_000_000_000)
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, creator_id, creator_type, number)
+		VALUES ($1, 'runtime by task usage', $2, 'member', $3)
+		RETURNING id
+	`, testWorkspaceID, testUserID, issueNumber).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+
+	now := time.Now().UTC()
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, issue_id, runtime_id, status, started_at, completed_at, created_at)
+		VALUES ($1, $2, $3, 'completed', $4, $5, $4)
+		RETURNING id
+	`, agentID, issueID, runtimeID, now.Add(-time.Minute), now).Scan(&taskID); err != nil {
+		t.Fatalf("insert task: %v", err)
+	}
+
+	insertUsage := func(provider, model string, input, output int64, createdAt time.Time) {
+		if _, err := testPool.Exec(ctx, `
+			INSERT INTO task_usage (task_id, provider, model, input_tokens, output_tokens, created_at)
+			VALUES ($1, $2, $3, $4, $5, $6)
+		`, taskID, provider, model, input, output, createdAt); err != nil {
+			t.Fatalf("insert task_usage: %v", err)
+		}
+	}
+	insertUsage("Anthropic", "task-model-a", 1000, 10, now)
+	insertUsage("anthropic", "task-model-a", 500, 5, now)
+	insertUsage("cursor", "task-model-b", 200, 20, now)
+	insertUsage("cursor", "old-task-model", 9999, 0, now.AddDate(0, 0, -10))
+
+	w := httptest.NewRecorder()
+	req := newRequest(http.MethodGet, "/api/runtimes/"+runtimeID+"/usage/by-task?days=1&tz=UTC", nil)
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.GetRuntimeUsageByTask(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetRuntimeUsageByTask: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var resp []RuntimeUsageByTaskResponse
+	if err := json.Unmarshal(w.Body.Bytes(), &resp); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	byModel := map[string]RuntimeUsageByTaskResponse{}
+	for _, row := range resp {
+		if row.TaskID == taskID {
+			byModel[row.Model] = row
+		}
+	}
+	if len(byModel) != 2 {
+		t.Fatalf("expected two current model rows for task, got %d: %+v", len(byModel), byModel)
+	}
+	if _, ok := byModel["old-task-model"]; ok {
+		t.Fatalf("old usage row should be excluded by days cutoff: %+v", byModel["old-task-model"])
+	}
+	rowA := byModel["task-model-a"]
+	if rowA.Provider != "anthropic" || rowA.InputTokens != 1500 || rowA.OutputTokens != 15 {
+		t.Fatalf("model-a aggregate = %+v, want provider anthropic input 1500 output 15", rowA)
+	}
+	if rowA.IssueID == nil || *rowA.IssueID != issueID {
+		t.Fatalf("issue_id = %v, want %s", rowA.IssueID, issueID)
+	}
+	if rowA.IssueNumber != int32(issueNumber) || rowA.IssueTitle != "runtime by task usage" {
+		t.Fatalf("issue metadata = number %d title %q", rowA.IssueNumber, rowA.IssueTitle)
+	}
+	if rowA.StartedAt == nil || rowA.CompletedAt == nil {
+		t.Fatalf("started_at/completed_at should be present: %+v", rowA)
 	}
 }
 

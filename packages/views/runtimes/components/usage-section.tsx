@@ -4,15 +4,14 @@ import { useMemo, useState } from "react";
 import { BarChart3, ChevronRight, AlertCircle } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
-import { Button } from "@multica/ui/components/ui/button";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { agentListOptions } from "@multica/core/workspace/queries";
 import type { RuntimeUsage, AgentRuntime } from "@multica/core/types";
 import {
   runtimeUsageOptions,
   runtimeUsageByAgentOptions,
+  runtimeUsageByTaskOptions,
 } from "@multica/core/runtimes/queries";
-import { useCustomPricingStore } from "@multica/core/runtimes/custom-pricing-store";
 import { useViewingTimezone } from "../../common/use-viewing-timezone";
 import {
   formatTokens,
@@ -22,10 +21,12 @@ import {
   aggregateByWeek,
   aggregateCostByAgent,
   aggregateCostByModel,
+  aggregateCostByTask,
   collectUnmappedModels,
   pctChange,
   sliceWindow,
   type CostByKey,
+  type CostByTask,
 } from "../utils";
 import { KpiCard } from "./shared";
 import { ActorAvatar } from "../../common/actor-avatar";
@@ -36,7 +37,6 @@ import {
   WeeklyTokensChart,
   ActivityHeatmap,
 } from "./charts";
-import { CustomPricingDialog } from "./custom-pricing-dialog";
 import { useT } from "../../i18n";
 
 // Single source of truth for the period selector. KPIs, the When-chart, the
@@ -139,11 +139,6 @@ export function UsageSection({ runtime }: { runtime: AgentRuntime }) {
   );
   const [dim, setDim] = useState<Exclude<WhenTab, "heatmap">>("daily");
   const [days, setDays] = useState<TimeRange>(30);
-  // Subscribe so the KPI cards (which call estimateCost at render-time, not
-  // through a memo) re-evaluate when the user saves a custom rate. The
-  // aggregate sub-components (WhenChart, CostByBlock, ActivityHeatmap) each
-  // subscribe on their own and pass pricings as a memo dep there.
-  useCustomPricingStore((s) => s.pricings);
 
   if (loading) return <UsageSkeleton />;
   if (usage.length === 0) return <UsageEmpty />;
@@ -214,11 +209,9 @@ export function UsageSection({ runtime }: { runtime: AgentRuntime }) {
         </div>
       </div>
 
-      {/* Pricing-gap banner. Sits above the KPI grid so a *partial* unmapping
-          (some priced + some unpriced models in the same window) still has
-          a visible entry point into the manual-pricing dialog — otherwise
-          the chart would render normally and the unmapped tokens would silently
-          contribute $0 to totals. */}
+      {/* Pricing-gap banner. Sits above the KPI grid so a partial unmapping
+          (some priced + some unpriced models in the same window) is visible
+          even when charts still render normally. */}
       <UnmappedPricingNotice usage={filtered} />
 
       <div className="grid grid-cols-3 divide-x rounded-lg border bg-card">
@@ -324,14 +317,9 @@ function WhenChart({
   const [showHeatmap, setShowHeatmap] = useState(false);
   // Daily and Weekly share a Cost-vs-Tokens metric toggle.
   const [chartMetric, setChartMetric] = useState<DailyMetric>("cost");
-  // Memo dep — the aggregates below run `estimateCost`, which now consults
-  // the user override store. Without listing pricings here the memos cache
-  // pre-override totals when query data hasn't changed.
-  const pricings = useCustomPricingStore((s) => s.pricings);
-
   const { dailyCostStack, dailyTokens } = useMemo(
     () => aggregateByDate(filtered),
-    [filtered, pricings],
+    [filtered],
   );
   // Weekly aggregation builds exactly N trailing calendar weeks anchored at
   // today (in the runtime tz). Buckets are pre-zeroed inside aggregateByWeek
@@ -341,7 +329,7 @@ function WhenChart({
   const weekCount = Math.max(1, Math.ceil(days / 7));
   const { weeklyTokens, weeklyCostStack } = useMemo(
     () => aggregateByWeek(usage, tz, weekCount),
-    [usage, tz, weekCount, pricings],
+    [usage, tz, weekCount],
   );
 
   const metricToggleVisible = !showHeatmap;
@@ -472,8 +460,8 @@ function WeeklyTab({
 // Two cases worth distinguishing:
 //   1. No tokens at all → "no usage" (genuinely nothing happened).
 //   2. Tokens present but cost is $0 → almost always means the model name
-//      reported by the daemon isn't in our pricing table. List the offenders
-//      so a developer can update MODEL_PRICING in one go.
+//      reported by the daemon isn't in the backend pricing catalog. List the
+//      offenders so a developer can update it in one go.
 // ---------------------------------------------------------------------------
 
 function EmptyChartState({ usage }: { usage: RuntimeUsage[] }) {
@@ -524,7 +512,6 @@ function EmptyChartState({ usage }: { usage: RuntimeUsage[] }) {
 
 function UnmappedPricingNotice({ usage }: { usage: RuntimeUsage[] }) {
   const { t } = useT("runtimes");
-  const [dialogOpen, setDialogOpen] = useState(false);
   const unmapped = collectUnmappedModels(usage);
   if (unmapped.length === 0) return null;
 
@@ -542,19 +529,6 @@ function UnmappedPricingNotice({ usage }: { usage: RuntimeUsage[] }) {
           {unmapped.join(", ")}
         </p>
       </div>
-      <Button
-        type="button"
-        variant="outline"
-        size="sm"
-        onClick={() => setDialogOpen(true)}
-      >
-        {t(($) => $.usage.custom_pricing.open_button)}
-      </Button>
-      <CustomPricingDialog
-        open={dialogOpen}
-        onOpenChange={setDialogOpen}
-        unmappedModels={unmapped}
-      />
     </div>
   );
 }
@@ -593,7 +567,7 @@ function ChartLegend({ includeCacheRead = false }: { includeCacheRead?: boolean 
 }
 
 // ---------------------------------------------------------------------------
-// Cost-by block: two-tab attribution view (by agent / by model).
+// Cost-by block: attribution view (by agent / by model / by task).
 // ---------------------------------------------------------------------------
 
 function CostByBlock({
@@ -608,16 +582,17 @@ function CostByBlock({
   tz: string;
 }) {
   const { t } = useT("runtimes");
-  const [tab, setTab] = useState<"agent" | "model">("agent");
-  // Memo dep — same reason as WhenChart: aggregateCostBy{Agent,Model} call
-  // estimateCost, which now reads the override store.
-  const pricings = useCustomPricingStore((s) => s.pricings);
+  const [tab, setTab] = useState<"agent" | "model" | "task">("agent");
 
-  // by-agent is server-side aggregation (fetched lazily on tab activation).
-  // by-model derives from the daily cache the parent already has — free.
+  // by-agent / by-task are server-side aggregations fetched lazily on tab
+  // activation. by-model derives from the daily cache the parent already has.
   const { data: byAgentRows = [] } = useQuery({
     ...runtimeUsageByAgentOptions(runtimeId, days, tz),
     enabled: tab === "agent",
+  });
+  const { data: byTaskRows = [] } = useQuery({
+    ...runtimeUsageByTaskOptions(runtimeId, days, tz),
+    enabled: tab === "task",
   });
 
   const wsId = useWorkspaceId();
@@ -625,17 +600,20 @@ function CostByBlock({
 
   const byAgent = useMemo(
     () => aggregateCostByAgent(byAgentRows),
-    [byAgentRows, pricings],
+    [byAgentRows],
   );
-  const byModel = useMemo(
-    () => aggregateCostByModel(usage),
-    [usage, pricings],
+  const byModel = useMemo(() => aggregateCostByModel(usage), [usage]);
+  const byTask = useMemo(
+    () => aggregateCostByTask(byTaskRows),
+    [byTaskRows],
   );
 
   const caption =
     tab === "agent"
       ? t(($) => $.usage.cost_by_caption_agent, { count: byAgent.length })
-      : t(($) => $.usage.cost_by_caption_model, { count: byModel.length });
+      : tab === "model"
+        ? t(($) => $.usage.cost_by_caption_model, { count: byModel.length })
+        : t(($) => $.usage.cost_by_caption_task, { count: byTask.length });
 
   return (
     <div>
@@ -644,7 +622,9 @@ function CostByBlock({
           <h4 className="text-sm font-semibold">
             {tab === "agent"
               ? t(($) => $.usage.cost_by_title_agent)
-              : t(($) => $.usage.cost_by_title_model)}
+              : tab === "model"
+                ? t(($) => $.usage.cost_by_title_model)
+                : t(($) => $.usage.cost_by_title_task)}
           </h4>
           <Segmented
             value={tab}
@@ -653,6 +633,7 @@ function CostByBlock({
               [
                 { label: t(($) => $.usage.cost_by_tab_agent), value: "agent" },
                 { label: t(($) => $.usage.cost_by_tab_model), value: "model" },
+                { label: t(($) => $.usage.cost_by_tab_task), value: "task" },
               ] as const
             }
           />
@@ -686,9 +667,47 @@ function CostByBlock({
             )}
           />
         )}
+        {tab === "task" && <CostByTaskList rows={byTask} />}
       </div>
     </div>
   );
+}
+
+function CostByTaskList({ rows }: { rows: CostByTask[] }) {
+  const { t } = useT("runtimes");
+  return (
+    <CostByList
+      rows={rows}
+      renderKey={(key) => {
+        const row = rows.find((candidate) => candidate.key === key);
+        if (!row) {
+          return (
+            <span className="truncate font-mono text-xs text-foreground">
+              {shortId(key)}
+            </span>
+          );
+        }
+        const issueLabel =
+          row.issueNumber > 0
+            ? `#${row.issueNumber}${row.issueTitle ? ` ${row.issueTitle}` : ""}`
+            : "";
+        return (
+          <div className="min-w-0">
+            <div className="truncate text-sm font-medium">
+              {issueLabel || shortId(row.key)}
+            </div>
+            <div className="truncate text-xs text-muted-foreground">
+              {row.status || t(($) => $.usage.task_status_unknown)}
+            </div>
+          </div>
+        );
+      }}
+    />
+  );
+}
+
+function shortId(id: string): string {
+  return id.length > 8 ? id.slice(0, 8) : id;
 }
 
 // Generic horizontal-bar list shared by both Cost-by tabs. Each row scales
@@ -870,4 +889,3 @@ function computeTotals(rows: RuntimeUsage[]): UsageTotals {
     { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, cacheSavings: 0 },
   );
 }
-

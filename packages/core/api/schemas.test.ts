@@ -8,6 +8,7 @@ import {
   ListIssuesResponseSchema,
   RuntimeHourlyActivityListSchema,
   RuntimeUsageByAgentListSchema,
+  RuntimeUsageByTaskListSchema,
   RuntimeUsageByHourListSchema,
   RuntimeUsageListSchema,
   ObservabilitySummarySchema,
@@ -359,6 +360,7 @@ describe("dashboard + runtime usage schema drift", () => {
     expect(RuntimeUsageListSchema.parse([{ date: "2026-05-19" }])[0]?.input_tokens).toBe(0);
     expect(RuntimeHourlyActivityListSchema.parse([{ hour: 9 }])[0]?.count).toBe(0);
     expect(RuntimeUsageByAgentListSchema.parse([{ model: "x" }])[0]?.agent_id).toBe("");
+    expect(RuntimeUsageByTaskListSchema.parse([{ model: "x" }])[0]?.task_id).toBe("");
     expect(RuntimeUsageByHourListSchema.parse([{ hour: 9 }])[0]?.model).toBe("");
   });
 
@@ -374,6 +376,7 @@ describe("dashboard + runtime usage schema drift", () => {
       DashboardUsageByAgentListSchema.parse([{ model: "claude-opus-4-7" }])[0]?.provider,
     ).toBe("");
     expect(RuntimeUsageByAgentListSchema.parse([{ model: "x" }])[0]?.provider).toBe("");
+    expect(RuntimeUsageByTaskListSchema.parse([{ model: "x" }])[0]?.provider).toBe("");
   });
 
   it("rejects a non-array body so parseWithFallback can return its fallback", () => {

@@ -41,16 +41,6 @@ vi.mock("@multica/core/auth", () => {
   return { useAuthStore };
 });
 
-vi.mock("@multica/core/runtimes/custom-pricing-store", () => {
-  const state = () => ({ pricings: {} });
-  const useCustomPricingStore = Object.assign(
-    (sel?: (s: ReturnType<typeof state>) => unknown) =>
-      sel ? sel(state()) : state(),
-    { getState: state },
-  );
-  return { useCustomPricingStore };
-});
-
 import { DashboardPage } from "./dashboard-page";
 
 describe("DashboardPage — viewing timezone drives the query key", () => {

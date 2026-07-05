@@ -572,6 +572,13 @@ export interface RuntimeUsage {
   output_tokens: number;
   cache_read_tokens: number;
   cache_write_tokens: number;
+  cost_usd: number;
+  input_cost_usd: number;
+  output_cost_usd: number;
+  cache_read_cost_usd: number;
+  cache_write_cost_usd: number;
+  cache_savings_usd: number;
+  priced: boolean;
 }
 
 export interface RuntimeHourlyActivity {
@@ -580,10 +587,8 @@ export interface RuntimeHourlyActivity {
 }
 
 // One (agent, provider, model) row of the "Cost by agent" tab on the runtime
-// detail page. provider + model stay on the wire because cost is computed
-// client-side from a per-model pricing table (provider disambiguates bare
-// model ids that collide across providers) — the client groups these rows by
-// agent_id and sums cost per agent across models.
+// detail page. The backend computes cost per row; the client groups these rows
+// by agent_id and sums cost per agent across models.
 export interface RuntimeUsageByAgent {
   agent_id: string;
   provider: string;
@@ -593,27 +598,65 @@ export interface RuntimeUsageByAgent {
   cache_read_tokens: number;
   cache_write_tokens: number;
   task_count: number;
+  cost_usd: number;
+  input_cost_usd: number;
+  output_cost_usd: number;
+  cache_read_cost_usd: number;
+  cache_write_cost_usd: number;
+  cache_savings_usd: number;
+  priced: boolean;
 }
 
-// One (hour, model) row for the "By hour" tab; hour ∈ 0..23. Hours with
-// zero activity are omitted by the server; the client fills the gap to
-// render a continuous axis. Model preserved for client-side cost math.
+// One (task, provider, model) row for the "Cost by task" tab on the runtime
+// detail page. The client folds rows by task_id after pricing each model row.
+export interface RuntimeUsageByTask {
+  task_id: string;
+  issue_id: string | null;
+  issue_number: number;
+  issue_title: string;
+  agent_id: string;
+  status: string;
+  started_at: string | null;
+  completed_at: string | null;
+  provider: string;
+  model: string;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+  cost_usd: number;
+  input_cost_usd: number;
+  output_cost_usd: number;
+  cache_read_cost_usd: number;
+  cache_write_cost_usd: number;
+  cache_savings_usd: number;
+  priced: boolean;
+}
+
+// One (hour, provider, model) row for the "By hour" tab; hour ∈ 0..23. Hours
+// with zero activity are omitted by the server; the client fills the gap to
+// render a continuous axis.
 export interface RuntimeUsageByHour {
   hour: number;
+  provider: string;
   model: string;
   input_tokens: number;
   output_tokens: number;
   cache_read_tokens: number;
   cache_write_tokens: number;
   task_count: number;
+  cost_usd: number;
+  input_cost_usd: number;
+  output_cost_usd: number;
+  cache_read_cost_usd: number;
+  cache_write_cost_usd: number;
+  cache_savings_usd: number;
+  priced: boolean;
 }
 
 // One (date, provider, model) bucket of token usage for the workspace
 // dashboard. Workspace-scoped (no runtime_id) and optionally narrowed to a
-// single project on the server side. `provider` is kept on the wire so the
-// client can disambiguate bare model ids that collide across providers
-// (e.g. Cursor's `auto` vs another provider's `auto`) when pricing. Cost
-// stays client-side via the model pricing table.
+// single project on the server side. The backend computes cost per row.
 export interface DashboardUsageDaily {
   date: string;
   provider: string;
@@ -623,11 +666,17 @@ export interface DashboardUsageDaily {
   cache_read_tokens: number;
   cache_write_tokens: number;
   task_count: number;
+  cost_usd: number;
+  input_cost_usd: number;
+  output_cost_usd: number;
+  cache_read_cost_usd: number;
+  cache_write_cost_usd: number;
+  cache_savings_usd: number;
+  priced: boolean;
 }
 
-// Per-(agent, model) token totals for the workspace dashboard. Identical
-// wire shape to RuntimeUsageByAgent — the client folds by agent_id and
-// sums cost.
+// Per-(agent, model) token totals for the workspace dashboard. Identical wire
+// shape to RuntimeUsageByAgent; the client folds by agent_id and sums cost.
 export interface DashboardUsageByAgent {
   agent_id: string;
   provider: string;
@@ -637,6 +686,13 @@ export interface DashboardUsageByAgent {
   cache_read_tokens: number;
   cache_write_tokens: number;
   task_count: number;
+  cost_usd: number;
+  input_cost_usd: number;
+  output_cost_usd: number;
+  cache_read_cost_usd: number;
+  cache_write_cost_usd: number;
+  cache_savings_usd: number;
+  priced: boolean;
 }
 
 // Per-agent total terminal-task run-time + counts. Powers the workspace

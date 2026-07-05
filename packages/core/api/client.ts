@@ -60,6 +60,7 @@ import type {
   ObservabilitySummary,
   RuntimeHourlyActivity,
   RuntimeUsageByAgent,
+  RuntimeUsageByTask,
   RuntimeUsageByHour,
   DashboardUsageDaily,
   DashboardUsageByAgent,
@@ -292,6 +293,7 @@ import {
   ListWebhookDeliveriesResponseSchema,
   RuntimeHourlyActivityListSchema,
   RuntimeUsageByAgentListSchema,
+  RuntimeUsageByTaskListSchema,
   RuntimeUsageByHourListSchema,
   RuntimeUsageListSchema,
   PromptEvaluationAssetSchema,
@@ -1184,6 +1186,24 @@ export class ApiClient {
     );
   }
 
+  async getRuntimeUsageByTask(
+    runtimeId: string,
+    params?: { days?: number; tz?: string },
+  ): Promise<RuntimeUsageByTask[]> {
+    const search = new URLSearchParams();
+    if (params?.days) search.set("days", String(params.days));
+    if (params?.tz) search.set("tz", params.tz);
+    const raw = await this.fetch<unknown>(
+      `/api/runtimes/${runtimeId}/usage/by-task?${search}`,
+    );
+    return parseWithFallback<RuntimeUsageByTask[]>(
+      raw,
+      RuntimeUsageByTaskListSchema,
+      [],
+      { endpoint: "GET /api/runtimes/:id/usage/by-task" },
+    );
+  }
+
   async getRuntimeUsageByHour(
     runtimeId: string,
     params?: { days?: number; tz?: string },
@@ -1205,8 +1225,8 @@ export class ApiClient {
   // ---------------------------------------------------------------------------
   // Workspace dashboard — three independent rollups for `/{slug}/dashboard`.
   // Each accepts an optional `project_id` to narrow the scope to one project.
-  // Cost is computed client-side from the model pricing table (same contract
-  // as the per-runtime endpoints above).
+  // Cost fields are computed server-side from the maintained pricing catalog
+  // (same contract as the per-runtime endpoints above).
   // ---------------------------------------------------------------------------
 
   async getDashboardUsageDaily(

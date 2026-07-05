@@ -67,9 +67,8 @@ ORDER BY DATE(bucket_hour AT TIME ZONE sqlc.arg('tz')::text) DESC, LOWER(provide
 -- Per-(agent, provider, model) token aggregates from `task_usage_hourly`. No
 -- date grouping in the result, so this query takes no `@tz` — the
 -- @since cutoff is a raw timestamptz the Go layer has already computed
--- in the viewer's tz. Model dimension is preserved so the client can
--- compute cost from its per-model pricing table; the client folds rows
--- by agent for the "by agent" list on the dashboard.
+-- in the viewer's tz. Model dimension is preserved so the handler can compute
+-- server-side cost before the client folds rows by agent for the dashboard.
 --
 -- task_count is summed across hourly buckets — one task that spans
 -- multiple hours lands in multiple buckets, so this over-counts by

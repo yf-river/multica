@@ -9,6 +9,16 @@ import {
   mergeAgentDashboardRows,
 } from "./utils";
 
+const pricedCost = {
+  cost_usd: 0,
+  input_cost_usd: 0,
+  output_cost_usd: 0,
+  cache_read_cost_usd: 0,
+  cache_write_cost_usd: 0,
+  cache_savings_usd: 0,
+  priced: true,
+};
+
 describe("aggregateDailyCost", () => {
   it("collapses multiple rows per day into one stack and sorts by date asc", () => {
     const result = aggregateDailyCost([
@@ -21,6 +31,10 @@ describe("aggregateDailyCost", () => {
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         task_count: 3,
+        ...pricedCost,
+        cost_usd: 10.5,
+        input_cost_usd: 3,
+        output_cost_usd: 7.5,
       },
       {
         date: "2026-05-09",
@@ -31,6 +45,9 @@ describe("aggregateDailyCost", () => {
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         task_count: 1,
+        ...pricedCost,
+        cost_usd: 3,
+        input_cost_usd: 3,
       },
     ]);
 
@@ -54,6 +71,8 @@ describe("aggregateDailyCost", () => {
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         task_count: 0,
+        ...pricedCost,
+        priced: false,
       },
     ]);
     expect(result[0]?.total).toBe(0);
@@ -72,6 +91,9 @@ describe("aggregateAgentTokens", () => {
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         task_count: 1,
+        ...pricedCost,
+        cost_usd: 0.3,
+        input_cost_usd: 0.3,
       },
       {
         agent_id: "big-spender",
@@ -82,6 +104,9 @@ describe("aggregateAgentTokens", () => {
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         task_count: 3,
+        ...pricedCost,
+        cost_usd: 15,
+        input_cost_usd: 15,
       },
       {
         agent_id: "big-spender",
@@ -92,6 +117,9 @@ describe("aggregateAgentTokens", () => {
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         task_count: 2,
+        ...pricedCost,
+        cost_usd: 1,
+        input_cost_usd: 1,
       },
     ]);
 
@@ -114,6 +142,9 @@ describe("computeDailyTotals", () => {
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         task_count: 2,
+        ...pricedCost,
+        cost_usd: 3,
+        input_cost_usd: 3,
       },
       {
         date: "2026-05-09",
@@ -124,6 +155,9 @@ describe("computeDailyTotals", () => {
         cache_read_tokens: 0,
         cache_write_tokens: 0,
         task_count: 3,
+        ...pricedCost,
+        cost_usd: 6,
+        input_cost_usd: 6,
       },
     ]);
     expect(totals.input).toBe(3_000_000);

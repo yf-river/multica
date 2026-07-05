@@ -24,12 +24,8 @@ import type {
 // Dashboard data aggregations
 //
 // The workspace dashboard returns the same per-(date, model) and
-// per-(agent, model) shapes the runtime page does, so cost math reuses
-// `estimateCost` / `estimateCostBreakdown` from the runtimes utils. What
-// the runtimes view does with `aggregateByDate` (works on RuntimeUsage,
-// which carries a `provider` field) we replicate here with a tighter
-// type — fewer optional fields, less conditional logic on the consumer
-// side.
+// per-(agent, model) shapes the runtime page does. Cost values are computed
+// by the backend; the helpers here only fold rows for charts and lists.
 // ---------------------------------------------------------------------------
 
 export interface DailyCostStack {
