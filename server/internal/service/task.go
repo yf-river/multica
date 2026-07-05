@@ -2619,7 +2619,8 @@ func parseGongfengMRRefsFromComment(content string) []gongfengMRCommentRef {
 			if err != nil || number64 <= 0 {
 				continue
 			}
-			htmlURL := match[0]
+			projectPath := strings.Trim(match[1], "/")
+			htmlURL := canonicalGongfengMRURL(projectPath, int32(number64))
 			if _, ok := seen[htmlURL]; ok {
 				continue
 			}
@@ -2630,7 +2631,7 @@ func parseGongfengMRRefsFromComment(content string) []gongfengMRCommentRef {
 				branch = globalBranch
 			}
 			refs = append(refs, gongfengMRCommentRef{
-				ProjectPath:  strings.Trim(match[1], "/"),
+				ProjectPath:  projectPath,
 				Number:       number,
 				HTMLURL:      htmlURL,
 				SourceBranch: branch,
@@ -2639,6 +2640,14 @@ func parseGongfengMRRefsFromComment(content string) []gongfengMRCommentRef {
 		}
 	}
 	return refs
+}
+
+func canonicalGongfengMRURL(projectPath string, number int32) string {
+	projectPath = strings.Trim(projectPath, "/")
+	if projectPath == "" || number <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("https://git.code.tencent.com/%s/merge_requests/%d", projectPath, number)
 }
 
 func gongfengBranchNearMR(lines []string, lineIdx int) string {

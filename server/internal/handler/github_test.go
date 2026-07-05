@@ -139,6 +139,64 @@ func TestLinkPullRequestToIssue_GongfengURL(t *testing.T) {
 	}
 }
 
+func TestLinkPullRequestToIssue_NormalizesGongfengDashMergeRequestURL(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("handler test fixture not initialized (no DB?)")
+	}
+	ctx := context.Background()
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Gongfeng MR dash URL link",
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: %d %s", w.Code, w.Body.String())
+	}
+	var created IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&created); err != nil {
+		t.Fatalf("decode issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(ctx, `DELETE FROM issue_pull_request WHERE issue_id = $1`, created.ID)
+		testPool.Exec(ctx, `DELETE FROM github_pull_request WHERE workspace_id = $1 AND repo_owner = $2 AND repo_name = $3 AND pr_number = $4`, testWorkspaceID, "ChainWeaver/ida", "ida-deployment", 61235)
+		testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, created.ID)
+	})
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/issues/"+created.ID+"/pull-requests", map[string]any{
+		"provider": "gongfeng",
+		"html_url": "https://git.code.tencent.com/ChainWeaver/ida/ida-deployment/-/merge_requests/61235",
+		"title":    "AIS dash URL normalization",
+	})
+	req = withURLParam(req, "id", created.ID)
+	testHandler.LinkPullRequestToIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("LinkPullRequestToIssue: %d %s", w.Code, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("GET", "/api/issues/"+created.ID+"/pull-requests", nil)
+	req = withURLParam(req, "id", created.ID)
+	testHandler.ListPullRequestsForIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListPullRequestsForIssue: %d %s", w.Code, w.Body.String())
+	}
+	var listed struct {
+		PullRequests []GitHubPullRequestResponse `json:"pull_requests"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&listed); err != nil {
+		t.Fatalf("decode list response: %v", err)
+	}
+	if len(listed.PullRequests) != 1 {
+		t.Fatalf("listed pull requests = %#v, want one", listed.PullRequests)
+	}
+	wantURL := "https://git.code.tencent.com/ChainWeaver/ida/ida-deployment/merge_requests/61235"
+	if listed.PullRequests[0].HtmlURL != wantURL {
+		t.Fatalf("html_url = %q, want %q", listed.PullRequests[0].HtmlURL, wantURL)
+	}
+}
+
 func TestLinkPullRequestToIssue_RequiresRepositoryAndNumber(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("handler test fixture not initialized (no DB?)")

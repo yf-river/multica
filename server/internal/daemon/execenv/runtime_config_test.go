@@ -137,6 +137,8 @@ func TestStageMarkdownArtifactsSectionUsesCommentAttachments(t *testing.T) {
 		"05-verify report",
 		"save it as a UTF-8 `.md` file",
 		"use `artifacts/multica/` in the current working directory",
+		"Treat this managed directory as the only stage-artifact handoff path",
+		"do not save stage artifacts only under project-local paths such as `runs/current/projects/...`",
 		"uploads markdown artifacts from the managed artifact directory, `artifacts/`, and `.multica/artifacts/`",
 		"to the issue before marking the task terminal",
 		"links them to an agent-authored issue comment",

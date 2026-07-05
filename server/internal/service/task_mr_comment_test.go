@@ -105,6 +105,9 @@ func TestParseGongfengMRRefsFromCommentSupportsDashMergeRequestURL(t *testing.T)
 	if ref.Number != 216 {
 		t.Fatalf("number = %d", ref.Number)
 	}
+	if ref.HTMLURL != "https://git.code.tencent.com/ChainWeaver/ida/ida-deployment/merge_requests/216" {
+		t.Fatalf("html url = %q", ref.HTMLURL)
+	}
 	if ref.SourceBranch != "agent/issue/4b46b5a9" {
 		t.Fatalf("source branch = %q", ref.SourceBranch)
 	}

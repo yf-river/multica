@@ -1015,7 +1015,7 @@ async function createAndLinkRealGongfengMR(issue, token) {
     squash: false,
   });
   const iid = Number(mr.iid || mr.number || 0);
-  const mrURL = mr.web_url || mr.html_url || `https://git.code.tencent.com/${projectPath}/merge_requests/${iid || ""}`;
+  const mrURL = normalizeGongfengMRURL(mr.web_url || mr.html_url || `https://git.code.tencent.com/${projectPath}/merge_requests/${iid || ""}`);
   if (!iid || !mrURL) {
     fail(`Gongfeng MR 创建成功但响应缺少 iid/web_url：${JSON.stringify(safeGongfengResponse(mr))}`);
   }
@@ -1070,6 +1070,13 @@ function issueSourceBranch(issue) {
   const rawID = String(issue?.id || "").trim();
   if (rawID) return `agent/issue/${rawID.slice(0, 8)}`;
   return `agent/issue/${String(issue?.identifier || `issue-${suffix}`).toLowerCase().replace(/[^a-z0-9._-]+/g, "-").slice(0, 32)}`;
+}
+
+function normalizeGongfengMRURL(rawURL) {
+  const text = String(rawURL || "").trim();
+  const match = text.match(/^https:\/\/git\.code\.tencent\.com\/(.+?)\/(?:-\/)?merge_requests\/(\d+)(?:[/?#].*)?$/);
+  if (!match) return text;
+  return `https://git.code.tencent.com/${match[1].replace(/\/+$/, "")}/merge_requests/${match[2]}`;
 }
 
 async function ensureGongfengBranch(projectPath, branchName, ref) {

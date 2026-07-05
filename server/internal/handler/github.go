@@ -165,7 +165,7 @@ func githubPullRequestToResponse(p db.GithubPullRequest) GitHubPullRequestRespon
 		Number:          p.PrNumber,
 		Title:           p.Title,
 		State:           p.State,
-		HtmlURL:         p.HtmlUrl,
+		HtmlURL:         normalizeGongfengPullRequestURL(p.HtmlUrl, p.RepoOwner, p.RepoName, p.PrNumber),
 		Branch:          textToPtr(p.Branch),
 		AuthorLogin:     textToPtr(p.AuthorLogin),
 		AuthorAvatarURL: textToPtr(p.AuthorAvatarUrl),
@@ -193,7 +193,7 @@ func issuePullRequestRowToResponse(p db.ListPullRequestsByIssueRow) GitHubPullRe
 		Number:           p.PrNumber,
 		Title:            p.Title,
 		State:            p.State,
-		HtmlURL:          p.HtmlUrl,
+		HtmlURL:          normalizeGongfengPullRequestURL(p.HtmlUrl, p.RepoOwner, p.RepoName, p.PrNumber),
 		Branch:           textToPtr(p.Branch),
 		AuthorLogin:      textToPtr(p.AuthorLogin),
 		AuthorAvatarURL:  textToPtr(p.AuthorAvatarUrl),
@@ -804,6 +804,9 @@ func normalizeIssuePullRequestLinkRequest(w http.ResponseWriter, req LinkPullReq
 	if req.Title == "" {
 		req.Title = fmt.Sprintf("MR !%d", req.Number)
 	}
+	if req.Provider == "gongfeng" {
+		req.HtmlURL = normalizeGongfengPullRequestURL(req.HtmlURL, "", req.ProjectPath, req.Number)
+	}
 	req.State = normalizePullRequestState(req.State)
 	req.SourceBranch = strings.TrimSpace(req.SourceBranch)
 	req.TargetBranch = strings.TrimSpace(req.TargetBranch)
@@ -824,6 +827,27 @@ func normalizeIssuePullRequestLinkRequest(w http.ResponseWriter, req LinkPullReq
 		}
 	}
 	return req, true
+}
+
+func normalizeGongfengPullRequestURL(rawURL, repoOwner, repoName string, number int32) string {
+	rawURL = strings.TrimSpace(rawURL)
+	if rawURL == "" {
+		return ""
+	}
+	projectPath := strings.Trim(strings.Trim(repoOwner, "/")+"/"+strings.Trim(repoName, "/"), "/")
+	if strings.Contains(repoName, "/") || repoOwner == "" {
+		projectPath = strings.Trim(repoName, "/")
+	}
+	if parsedProjectPath := gongfengProjectPathFromURL(rawURL); parsedProjectPath != "" {
+		projectPath = parsedProjectPath
+	}
+	if number <= 0 {
+		number = int32(gongfengMergeRequestIIDFromURL(rawURL))
+	}
+	if projectPath == "" || number <= 0 || !strings.Contains(strings.ToLower(rawURL), "git.code.tencent.com") {
+		return rawURL
+	}
+	return fmt.Sprintf("https://git.code.tencent.com/%s/merge_requests/%d", strings.Trim(projectPath, "/"), number)
 }
 
 func normalizeCreateMergeRequestRequest(w http.ResponseWriter, req CreateMergeRequestRequest) (CreateMergeRequestRequest, bool) {
