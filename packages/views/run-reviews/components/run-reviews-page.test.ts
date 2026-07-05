@@ -18,6 +18,7 @@ import {
   issueRunRowMetaLabels,
   runReviewMessageRefreshDelayMs,
   runReviewTotalDurationMs,
+  shouldShowTimelineSegmentMarker,
   shouldShowTimelineSegmentText,
   shouldRefreshRunReviewForTaskEvent,
   timelineTiming,
@@ -774,7 +775,10 @@ describe("buildRunReviewEventRows", () => {
       width: `${width}%`,
     });
     expect(shouldShowTimelineSegmentText(width)).toBe(false);
+    expect(shouldShowTimelineSegmentMarker(width)).toBe(true);
     expect(shouldShowTimelineSegmentText(10.76)).toBe(true);
+    expect(shouldShowTimelineSegmentMarker(10.76)).toBe(false);
+    expect(shouldShowTimelineSegmentMarker(0)).toBe(false);
   });
 
   it("does not inflate short timeline runs to one minute", () => {

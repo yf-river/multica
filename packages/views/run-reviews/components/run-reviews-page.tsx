@@ -948,6 +948,12 @@ function TimelineLaneChart({
                         <span className="block truncate">
                           {formatDuration(segment.durationMs)} · {formatNumber(segment.tokenTotal)} token
                         </span>
+                      ) : shouldShowTimelineSegmentMarker(timelineSegmentWidthPercent(segment.startMs, segment.endMs, span)) ? (
+                        <span
+                          aria-hidden="true"
+                          className="absolute left-1/2 top-1/2 h-1.5 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-white/95 shadow-[0_0_0_1px_rgba(0,0,0,0.18)]"
+                          data-testid={`run-review-timeline-marker-${segment.key}`}
+                        />
                       ) : null}
                     </div>
                   )
@@ -1045,6 +1051,10 @@ export function timelineSegmentWidthPercent(startMs: number, endMs: number, span
 
 export function shouldShowTimelineSegmentText(widthPercent: number) {
   return widthPercent >= TIMELINE_SEGMENT_TEXT_MIN_WIDTH_PERCENT;
+}
+
+export function shouldShowTimelineSegmentMarker(widthPercent: number) {
+  return widthPercent > 0 && !shouldShowTimelineSegmentText(widthPercent);
 }
 
 function timelineRowSubtitle(status: string, runCount: number) {
