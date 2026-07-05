@@ -22,6 +22,7 @@ const deploymentDir = path.join(runDir, "deployments");
 const logArchiveDir = path.join(runDir, "log-archive");
 const workspacesDir = path.join(runDir, "workspaces");
 const publicHost = process.env.GOAL_TEST_PUBLIC_HOST || "9.134.129.162";
+const demoAvatarPath = "/images/huyunfei-landscape-avatar.png";
 const profiles = {
   prod: {
     name: "prod",
@@ -156,7 +157,7 @@ async function deployEnvironment(item, build) {
     run("pnpm", ["--filter", "@multica/web", "build"], env);
   }
   run("bash", ["-lc", "cd server && ./bin/migrate up"], env);
-  seedDemoIdentity(env.DATABASE_URL);
+  seedDemoIdentity(env.DATABASE_URL, item);
   const daemonProfilePath = ensureDaemonProfile(item, env);
   stopPid(pidPath(item, "server"));
   stopPid(pidPath(item, "web"));
@@ -1063,14 +1064,20 @@ function ensureDatabase(databaseURL, databaseName) {
   if (res.status !== 0) fail(`ensure database ${escapedName} failed\n${res.stderr || res.stdout}`);
 }
 
-function seedDemoIdentity(targetDatabaseURL) {
+function demoAvatarURL(item) {
+  return `http://${publicHost}:${item.frontendPort}${demoAvatarPath}`;
+}
+
+function seedDemoIdentity(targetDatabaseURL, item = profiles.prod) {
   const sourceEnv = readEnvFile(ensureEnvironment(profiles.prod));
   const sourceDatabaseURL = sourceEnv.DATABASE_URL;
+  const avatarURL = demoAvatarURL(item);
   const res = spawnSync("bash", ["-lc", `node - <<'NODE'
 const crypto = require('crypto');
 const pg = require('pg');
 const sourceUrl = ${JSON.stringify(sourceDatabaseURL)};
 const targetUrl = ${JSON.stringify(targetDatabaseURL)};
+const avatarUrl = ${JSON.stringify(avatarURL)};
 const account = 'develop';
 const workspaceSlug = 'ai-studio';
 const resetWorkspaceRepos = process.env.GOAL_TEST_RESET_WORKSPACE_REPOS === '1';
@@ -1105,8 +1112,8 @@ function passwordHash(password) {
 
 async function seedFromScratch(target) {
   const user = await target.query(
-    'INSERT INTO "user" (name, account, onboarded_at, starter_content_state, password_hash, created_at, updated_at) VALUES ($1, $2, now(), $3, $4, now(), now()) ON CONFLICT (account) DO UPDATE SET name = EXCLUDED.name, password_hash = EXCLUDED.password_hash, onboarded_at = COALESCE("user".onboarded_at, now()), updated_at = now() RETURNING id',
-    ['AI Studio 开发账号', account, 'imported', passwordHash('develop123')],
+    'INSERT INTO "user" (name, account, avatar_url, onboarded_at, starter_content_state, password_hash, created_at, updated_at) VALUES ($1, $2, $3, now(), $4, $5, now(), now()) ON CONFLICT (account) DO UPDATE SET name = EXCLUDED.name, avatar_url = EXCLUDED.avatar_url, password_hash = EXCLUDED.password_hash, onboarded_at = COALESCE("user".onboarded_at, now()), updated_at = now() RETURNING id',
+    ['胡云飞', account, avatarUrl, 'imported', passwordHash('develop123')],
   );
   const workspace = await target.query(
     'INSERT INTO workspace (name, slug, description, context, issue_prefix, repos) VALUES ($1, $2, $3, $4, $5, $6::jsonb) ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, description = EXCLUDED.description, context = EXCLUDED.context, repos = CASE WHEN $7::boolean THEN EXCLUDED.repos ELSE workspace.repos END, updated_at = now() RETURNING id',

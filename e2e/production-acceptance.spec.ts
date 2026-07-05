@@ -38,7 +38,7 @@ const TEST_SUITES_ROUTE = routeByPath("test-suites");
 
 async function prepareTrainingDashboardEvidence() {
   const api = new TestApiClient();
-  await api.login(account, "AI Studio 开发账号");
+  await api.login(account, "胡云飞");
   await api.ensureWorkspace(workspaceName, workspaceSlug);
   await api.markUserOnboarded();
   await api.cleanupPromptArtifactsByPrefix(evidencePrefix);

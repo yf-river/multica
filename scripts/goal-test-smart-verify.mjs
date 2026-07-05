@@ -219,7 +219,7 @@ function goalTestPlaywrightCommand(args) {
       "PLAYWRIGHT_BASE_URL=http://9.134.129.162:13682",
       "NEXT_PUBLIC_API_URL=${GOAL_TEST_BACKEND_URL:-http://9.134.129.162:${PORT:-18762}}",
       "E2E_ACCOUNT=develop",
-      "E2E_NAME='AI Studio 开发账号'",
+      "E2E_NAME='胡云飞'",
       "E2E_WORKSPACE=ai-studio",
       "E2E_WORKSPACE_NAME='AI Studio 工作区'",
       "E2E_PASSWORD=develop123",

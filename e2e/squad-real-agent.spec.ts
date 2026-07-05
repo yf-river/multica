@@ -17,7 +17,7 @@ test.describe("小队真实 Agent 闭环", () => {
 
     const api = new TestApiClient();
     const suffix = Date.now();
-    await api.login(REAL_AGENT_ACCOUNT, "AI Studio 开发账号");
+    await api.login(REAL_AGENT_ACCOUNT, "胡云飞");
     const workspace = await api.ensureWorkspace("AI Studio 工作区", REAL_AGENT_WORKSPACE);
     await api.markUserOnboarded();
 
