@@ -557,11 +557,16 @@ func summarizeIssueTimeline(issue IssueResponse, nodes []IssueTimelineNodeRespon
 		AcceptanceStatus:     "unknown",
 		FullAnalysisDeepLink: "/issues/" + issue.ID + "?panel=execution",
 	}
+	fallbackStartedAt, fallbackCompletedAt := timelineAgentWorkBounds(nodes)
 	if issue.WorkStartedAt != nil {
 		summary.WorkStartedAt = *issue.WorkStartedAt
+	} else if fallbackStartedAt != "" {
+		summary.WorkStartedAt = fallbackStartedAt
 	}
 	if issue.WorkCompletedAt != nil {
 		summary.WorkCompletedAt = *issue.WorkCompletedAt
+	} else if fallbackCompletedAt != "" {
+		summary.WorkCompletedAt = fallbackCompletedAt
 	}
 	hasTaskUsage := false
 	for _, node := range nodes {
@@ -596,9 +601,9 @@ func summarizeIssueTimeline(issue IssueResponse, nodes []IssueTimelineNodeRespon
 		}
 	}
 	summary.AgentExecutionDurationMs = mergedAgentExecutionDurationMs(nodes)
-	if issue.WorkStartedAt != nil && issue.WorkCompletedAt != nil {
-		if started, startErr := time.Parse(time.RFC3339, *issue.WorkStartedAt); startErr == nil {
-			if completed, completedErr := time.Parse(time.RFC3339, *issue.WorkCompletedAt); completedErr == nil && completed.After(started) {
+	if summary.WorkStartedAt != "" && summary.WorkCompletedAt != "" {
+		if started, startErr := time.Parse(time.RFC3339, summary.WorkStartedAt); startErr == nil {
+			if completed, completedErr := time.Parse(time.RFC3339, summary.WorkCompletedAt); completedErr == nil && completed.After(started) {
 				wall := completed.Sub(started).Milliseconds()
 				summary.WallClockDurationMs = &wall
 				human := wall - summary.AgentExecutionDurationMs
@@ -610,6 +615,35 @@ func summarizeIssueTimeline(issue IssueResponse, nodes []IssueTimelineNodeRespon
 		}
 	}
 	return summary
+}
+
+func timelineAgentWorkBounds(nodes []IssueTimelineNodeResponse) (startedAt string, completedAt string) {
+	var started *time.Time
+	var completed *time.Time
+	for _, node := range nodes {
+		if node.NodeType != "agent_task" {
+			continue
+		}
+		if parsed, err := time.Parse(time.RFC3339, node.StartedAt); err == nil {
+			if started == nil || parsed.Before(*started) {
+				value := parsed
+				started = &value
+			}
+		}
+		if parsed, err := time.Parse(time.RFC3339, node.CompletedAt); err == nil {
+			if completed == nil || parsed.After(*completed) {
+				value := parsed
+				completed = &value
+			}
+		}
+	}
+	if started != nil {
+		startedAt = started.Format(time.RFC3339Nano)
+	}
+	if completed != nil {
+		completedAt = completed.Format(time.RFC3339Nano)
+	}
+	return startedAt, completedAt
 }
 
 type timelineInterval struct {

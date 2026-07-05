@@ -45,8 +45,13 @@ export function runReviewTotalDurationMs(summary: IssueTimelineSummary | undefin
 }
 
 export function buildRunReviewDurationTooltipRows(summary: IssueTimelineSummary | undefined): Array<[string, string]> {
+  const wallClock = runReviewTotalDurationMs(summary);
+  const agentExecution = summary?.agent_execution_duration_ms ?? summary?.total_duration_ms ?? 0;
+  const humanConfirmation = summary?.human_confirmation_duration_ms;
   return [
-    ["Agent 执行耗时", formatDuration(summary?.agent_execution_duration_ms ?? summary?.total_duration_ms ?? 0)],
+    ["墙钟耗时", formatDuration(wallClock)],
+    ["Agent 执行耗时", formatDuration(agentExecution)],
+    ["人工/等待耗时", humanConfirmation == null ? "未记录" : formatDuration(humanConfirmation)],
   ];
 }
 
@@ -347,12 +352,7 @@ function RunReviewDetail({
   const stageRows = buildStageRows(timelineNodes);
   const childLanes = buildChildLanes(tree);
   const agentNodeRows = buildAgentNodeRows(timelineNodes);
-  const visibleTimelineRows = agentNodeRows.map((row) => ({
-    key: row.key,
-    label: agentNodeDisplayLabel(row),
-    names: [row.node.agent_name ?? row.key],
-    node: row.node,
-  }));
+  const visibleTimelineRows = buildTimelineAgentRows(timelineNodes);
   const visibleChildLanes = childLanes;
   const eventRows = buildRunReviewEventRows(tree, timelineNodes);
   const tokenTotal = (summary?.total_input_tokens ?? 0) +
@@ -475,7 +475,7 @@ function RunReviewDetail({
                   ["输出 Token", formatNumber(summary?.total_output_tokens ?? 0)],
                   ["缓存读", formatNumber(summary?.total_cache_read_tokens ?? 0)],
                   ["缓存写", formatNumber(summary?.total_cache_write_tokens ?? 0)],
-                  ["缓存命中率", formatPercent(cacheHitRate(summary?.total_input_tokens ?? 0, summary?.total_cache_read_tokens ?? 0))],
+                  ["缓存命中率", formatPercent(cacheReuseRate(summary?.total_cache_read_tokens ?? 0, summary?.total_cache_write_tokens ?? 0))],
                 ]}
               />
             }
@@ -842,7 +842,7 @@ function ArtifactLinks({ artifacts }: { artifacts: AgentTaskArtifact[] }) {
   );
 }
 
-type TimelineNodeRow = { key: string; label: string; node?: IssueTimelineNode };
+export type TimelineNodeRow = { key: string; label: string; node?: IssueTimelineNode };
 type ChildLane = ReturnType<typeof buildChildLanes>[number];
 
 interface TimelineBarRow {
@@ -1011,6 +1011,42 @@ function buildStageRows(nodes: IssueTimelineNode[]) {
       return stage.names.some((name) => agentName === normalizeSopStageName(name));
     }).sort(compareStageNodeCandidates)[0],
   }));
+}
+
+export function buildTimelineAgentRows(nodes: IssueTimelineNode[]): TimelineNodeRow[] {
+  const agentNodes = nodes.filter((node) => node.node_type === "agent_task");
+  const totals = new Map<string, number>();
+  for (const [index, node] of agentNodes.entries()) {
+    const key = timelineAgentRowGroupKey(node, index);
+    totals.set(key, (totals.get(key) ?? 0) + 1);
+  }
+
+  const seen = new Map<string, number>();
+  return agentNodes.map((node, index) => {
+    const groupKey = timelineAgentRowGroupKey(node, index);
+    const ordinal = (seen.get(groupKey) ?? 0) + 1;
+    seen.set(groupKey, ordinal);
+    const total = totals.get(groupKey) ?? 1;
+    const label = timelineAgentRowBaseLabel(node, index);
+    const taskId = node.node_id.replace(/^task:/, "");
+    return {
+      key: `${groupKey}:${taskId || index}`,
+      label: total > 1 ? `${label} #${ordinal}` : label,
+      node,
+    };
+  });
+}
+
+function timelineAgentRowGroupKey(node: IssueTimelineNode, index: number) {
+  const taskId = node.node_id.replace(/^task:/, "");
+  const agentName = node.agent_name || taskId || `agent-node-${index + 1}`;
+  return node.agent_id || normalizeSopStageName(agentName) || agentName || taskId || `agent-node-${index + 1}`;
+}
+
+function timelineAgentRowBaseLabel(node: IssueTimelineNode, index: number) {
+  const taskId = node.node_id.replace(/^task:/, "");
+  const agentName = node.agent_name || taskId || `agent-node-${index + 1}`;
+  return sopStageDisplayName(agentName) || node.summary || agentName;
 }
 
 function compareStageNodeCandidates(left: IssueTimelineNode, right: IssueTimelineNode) {
@@ -1395,6 +1431,7 @@ function runReviewMessageEvent(message: TaskMessagePayload): RunReviewEventRowDa
     message.input ? formatJSON(message.input) : "",
     "任务消息未记录正文",
   );
+  const failure = message.type === "error" || hasFailureSignal(summary);
   return {
     id: `message:${message.task_id}:${message.seq}`,
     kind: "message",
@@ -1406,12 +1443,12 @@ function runReviewMessageEvent(message: TaskMessagePayload): RunReviewEventRowDa
     object: `消息 #${message.seq}`,
     title: taskMessageKindLabel(message.type),
     outcome: message.type === "error" ? "异常" : "已记录",
-    summary: conciseEventSummary(summary, message.type === "error"),
+    summary: conciseEventSummary(summary, failure),
     detail: detailParts.join("\n\n"),
     metadataDetail: "",
     durationMs: 0,
     tokenTotal: 0,
-    severity: message.type === "error" || hasFailureSignal(summary) ? "error" : "normal",
+    severity: failure ? "error" : "normal",
     rawSourceLabel: "task_message",
     rawPayload: message,
   };
@@ -2009,8 +2046,17 @@ function firstNonEmpty(...values: Array<string | undefined | null>) {
 }
 
 function hasFailureSignal(value: string) {
+  const line = extractErrorLine(value);
+  return Boolean(line && !isBenignFailureCounterLine(line));
+}
+
+function isBenignFailureCounterLine(value: string) {
   const lower = value.toLowerCase();
-  return lower.includes("error") || lower.includes("failed") || lower.includes("panic") || lower.includes("fatal");
+  return (
+    /\b0\s+(?:chart\(s\)\s+)?(?:failed|failure|failures|errors)\b/.test(lower) ||
+    /\b(?:pass|passed|success|successful|通过|成功)\b.*\b0\s+(?:failed|failure|failures|errors)\b/.test(lower) ||
+    /\b0\s+(?:failed|failure|failures|errors)\b.*\b(?:pass|passed|success|successful|通过|成功)\b/.test(lower)
+  );
 }
 
 function shortId(value: string) {
@@ -2446,8 +2492,8 @@ function formatPercent(value: number | null) {
   return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 1, style: "percent" }).format(value);
 }
 
-function cacheHitRate(inputTokens: number, cacheReadTokens: number) {
-  const denominator = inputTokens + cacheReadTokens;
+export function cacheReuseRate(cacheReadTokens: number, cacheWriteTokens: number) {
+  const denominator = cacheReadTokens + cacheWriteTokens;
   if (denominator <= 0) return null;
   return cacheReadTokens / denominator;
 }
@@ -2477,7 +2523,7 @@ function nodeTokenTooltip(node: IssueTimelineNode | undefined) {
         ["输出", formatNumber(node?.output_tokens ?? 0)],
         ["缓存读", formatNumber(node?.cache_read_tokens ?? 0)],
         ["缓存写", formatNumber(node?.cache_write_tokens ?? 0)],
-        ["缓存命中率", formatPercent(cacheHitRate(node?.input_tokens ?? 0, node?.cache_read_tokens ?? 0))],
+        ["缓存命中率", formatPercent(cacheReuseRate(node?.cache_read_tokens ?? 0, node?.cache_write_tokens ?? 0))],
       ]}
     />
   );

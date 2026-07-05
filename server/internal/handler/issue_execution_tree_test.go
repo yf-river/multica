@@ -49,7 +49,7 @@ func TestSummarizeIssueTimelineComputesHumanConfirmationRemainder(t *testing.T) 
 	}
 }
 
-func TestSummarizeIssueTimelineLeavesHumanConfirmationMissingWithoutWorkCycle(t *testing.T) {
+func TestSummarizeIssueTimelineFallsBackToAgentTaskBoundsWithoutWorkCycle(t *testing.T) {
 	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1"}, []IssueTimelineNodeResponse{
 		{
 			NodeID:      "task:1",
@@ -61,14 +61,17 @@ func TestSummarizeIssueTimelineLeavesHumanConfirmationMissingWithoutWorkCycle(t 
 		},
 	})
 
-	if summary.WallClockDurationMs != nil {
-		t.Fatalf("wall clock = %v, want nil", summary.WallClockDurationMs)
+	if summary.WorkStartedAt != "2026-06-09T10:00:00Z" || summary.WorkCompletedAt != "2026-06-09T10:01:00Z" {
+		t.Fatalf("work bounds = %q / %q, want task bounds", summary.WorkStartedAt, summary.WorkCompletedAt)
+	}
+	if summary.WallClockDurationMs == nil || *summary.WallClockDurationMs != 60000 {
+		t.Fatalf("wall clock = %v, want 60000", summary.WallClockDurationMs)
 	}
 	if summary.AgentExecutionDurationMs != 60000 {
 		t.Fatalf("agent execution = %d, want 60000", summary.AgentExecutionDurationMs)
 	}
-	if summary.HumanConfirmationDurationMs != nil {
-		t.Fatalf("human confirmation = %v, want nil", summary.HumanConfirmationDurationMs)
+	if summary.HumanConfirmationDurationMs == nil || *summary.HumanConfirmationDurationMs != 0 {
+		t.Fatalf("human confirmation = %v, want 0", summary.HumanConfirmationDurationMs)
 	}
 }
 

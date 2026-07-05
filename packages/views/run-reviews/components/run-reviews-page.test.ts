@@ -12,6 +12,8 @@ import {
   buildRunReviewEventRows,
   buildRunReviewOptimizerHref,
   buildRunReviewRawEventsCsv,
+  buildTimelineAgentRows,
+  cacheReuseRate,
   issueRunRowActivityLabel,
   issueRunRowMetaLabels,
   runReviewMessageRefreshDelayMs,
@@ -118,7 +120,7 @@ describe("buildRunReviewOptimizerHref", () => {
 });
 
 describe("run review duration summary", () => {
-  it("uses work-cycle wall clock duration and reports only execution time in the tooltip", () => {
+  it("uses work-cycle wall clock duration and reports wall, agent, and waiting time in the tooltip", () => {
     const summary = {
       issue_id: "issue-1",
       node_count: 1,
@@ -140,12 +142,28 @@ describe("run review duration summary", () => {
 
     expect(runReviewTotalDurationMs(summary)).toBe(300000);
     expect(buildRunReviewDurationTooltipRows(summary)).toEqual([
+      ["墙钟耗时", "5m"],
       ["Agent 执行耗时", "2m"],
+      ["人工/等待耗时", "3m"],
     ]);
   });
 
   it("does not show artificial waiting time when timing data is missing", () => {
-    expect(buildRunReviewDurationTooltipRows(undefined)).toEqual([["Agent 执行耗时", "0m"]]);
+    expect(buildRunReviewDurationTooltipRows(undefined)).toEqual([
+      ["墙钟耗时", "0m"],
+      ["Agent 执行耗时", "0m"],
+      ["人工/等待耗时", "未记录"],
+    ]);
+  });
+});
+
+describe("run review cache metrics", () => {
+  it("uses cache reuse rate for the displayed hit rate", () => {
+    expect(cacheReuseRate(7_630_464, 436_950)).toBeCloseTo(0.945837, 5);
+  });
+
+  it("returns null when no cache tokens were reported", () => {
+    expect(cacheReuseRate(0, 0)).toBeNull();
   });
 });
 
@@ -523,6 +541,30 @@ describe("buildRunReviewEventRows", () => {
     expect(row?.summary).not.toContain("异常摘要");
   });
 
+  it("does not mark successful text summaries as failed because they mention zero failures", () => {
+    const tree = {
+      root: {
+        tasks: [],
+        task_messages: [
+          message({
+            seq: 49,
+            type: "text",
+            content: "Helm lint 兼容性验证全部 PASS，3 个 chart 全部通过，0 failed",
+            output: "",
+          }),
+        ],
+        trace_events: [],
+        tool_call_chains: [],
+        children: [],
+      },
+    } as unknown as IssueExecutionTreeResponse;
+
+    const [row] = buildRunReviewEventRows(tree, []);
+
+    expect(row?.severity).toBe("normal");
+    expect(row?.summary).not.toContain("异常摘要");
+  });
+
   it("renders unknown tools as useful fallback events while preserving raw evidence", () => {
     const tree = {
       root: {
@@ -670,6 +712,45 @@ describe("buildRunReviewEventRows", () => {
     expect(rows[0]?.node.input_tokens).toBe(15);
     expect(rows[0]?.node.output_tokens).toBe(27);
     expect(rows[0]?.node.agent_turn_count).toBe(3);
+  });
+
+  it("splits repeated PM runs for the horizontal timeline while keeping node aggregation available", () => {
+    const baseNode = {
+      issue_id: "issue-1",
+      node_id: "task:pm-1",
+      node_type: "agent_task",
+      agent_id: "agent-pm",
+      agent_name: "PM-项目经理",
+      status: "completed",
+      started_at: "2026-06-09T10:00:00.000Z",
+      completed_at: "2026-06-09T10:01:00.000Z",
+      duration_ms: 60_000,
+      input_tokens: 10,
+      output_tokens: 20,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      message_count: 1,
+      agent_turn_count: 2,
+      trace_event_count: 1,
+      usage_unavailable_trace: false,
+      summary: "pm run",
+      evidence_refs: [],
+      artifacts: [],
+    } as IssueTimelineNode;
+
+    const timelineRows = buildTimelineAgentRows([
+      baseNode,
+      {
+        ...baseNode,
+        node_id: "task:pm-2",
+        started_at: "2026-06-09T10:02:00.000Z",
+        completed_at: "2026-06-09T10:03:00.000Z",
+      },
+    ]);
+
+    expect(timelineRows.map((row) => row.label)).toEqual(["PM-项目经理 #1", "PM-项目经理 #2"]);
+    expect(timelineRows.map((row) => row.key)).toEqual(["agent-pm:pm-1", "agent-pm:pm-2"]);
+    expect(buildAgentNodeRows(timelineRows.map((row) => row.node as IssueTimelineNode))[0]?.runCount).toBe(2);
   });
 
   it("exports raw event CSV with escaped detail, metadata, and raw evidence", () => {
