@@ -2545,6 +2545,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		}
 	}()
 
+	artifactCollectionCutoff := time.Now().Add(-1 * time.Second)
 	result, err := d.runner.run(runCtx, task, provider, slot, taskLog)
 
 	// Report usage before any early return — the agent accumulates tokens
@@ -2597,7 +2598,7 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		return
 	}
 
-	d.collectAndPostTaskArtifacts(ctx, task, result.WorkDir, result.ArtifactDir, taskLog)
+	d.collectAndPostTaskArtifacts(ctx, task, result.WorkDir, result.ArtifactDir, artifactCollectionCutoff, taskLog)
 
 	d.reportTaskResult(ctx, task.ID, result, taskLog)
 

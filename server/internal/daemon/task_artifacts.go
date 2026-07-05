@@ -37,6 +37,10 @@ type uploadedTaskArtifact struct {
 }
 
 func collectTaskMarkdownArtifacts(workDir string) ([]taskMarkdownArtifact, error) {
+	return collectTaskMarkdownArtifactsSince(workDir, time.Time{})
+}
+
+func collectTaskMarkdownArtifactsSince(workDir string, minModTime time.Time) ([]taskMarkdownArtifact, error) {
 	workDir = strings.TrimSpace(workDir)
 	if workDir == "" {
 		return nil, nil
@@ -56,7 +60,7 @@ func collectTaskMarkdownArtifacts(workDir string) ([]taskMarkdownArtifact, error
 	artifacts := make([]taskMarkdownArtifact, 0)
 	for _, relRoot := range taskArtifactDirs {
 		root := filepath.Join(workDirAbs, relRoot)
-		artifacts, err = appendTaskMarkdownArtifactsFromRoot(artifacts, root, seen)
+		artifacts, err = appendTaskMarkdownArtifactsFromRoot(artifacts, root, seen, minModTime)
 		if err != nil {
 			return nil, err
 		}
@@ -68,7 +72,11 @@ func collectTaskMarkdownArtifacts(workDir string) ([]taskMarkdownArtifact, error
 }
 
 func collectTaskMarkdownArtifactsFromDirs(workDir, artifactDir string) ([]taskMarkdownArtifact, error) {
-	artifacts, err := collectTaskMarkdownArtifacts(workDir)
+	return collectTaskMarkdownArtifactsFromDirsSince(workDir, artifactDir, time.Time{})
+}
+
+func collectTaskMarkdownArtifactsFromDirsSince(workDir, artifactDir string, minModTime time.Time) ([]taskMarkdownArtifact, error) {
+	artifacts, err := collectTaskMarkdownArtifactsSince(workDir, minModTime)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +94,7 @@ func collectTaskMarkdownArtifactsFromDirs(workDir, artifactDir string) ([]taskMa
 			seen[abs] = struct{}{}
 		}
 	}
-	artifacts, err = appendTaskMarkdownArtifactsFromRoot(artifacts, root, seen)
+	artifacts, err = appendTaskMarkdownArtifactsFromRoot(artifacts, root, seen, minModTime)
 	if err != nil {
 		return nil, err
 	}
@@ -96,7 +104,7 @@ func collectTaskMarkdownArtifactsFromDirs(workDir, artifactDir string) ([]taskMa
 	return artifacts, nil
 }
 
-func appendTaskMarkdownArtifactsFromRoot(artifacts []taskMarkdownArtifact, root string, seen map[string]struct{}) ([]taskMarkdownArtifact, error) {
+func appendTaskMarkdownArtifactsFromRoot(artifacts []taskMarkdownArtifact, root string, seen map[string]struct{}, minModTime time.Time) ([]taskMarkdownArtifact, error) {
 	rootInfo, err := os.Stat(root)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -128,6 +136,9 @@ func appendTaskMarkdownArtifactsFromRoot(artifacts []taskMarkdownArtifact, root 
 		if !info.Mode().IsRegular() || info.Size() <= 0 || info.Size() > taskArtifactMaxBytes {
 			return nil
 		}
+		if !minModTime.IsZero() && info.ModTime().Before(minModTime) {
+			return nil
+		}
 		abs, err := filepath.Abs(path)
 		if err != nil {
 			return err
@@ -152,11 +163,11 @@ func appendTaskMarkdownArtifactsFromRoot(artifacts []taskMarkdownArtifact, root 
 	return artifacts, nil
 }
 
-func (d *Daemon) collectAndPostTaskArtifacts(ctx context.Context, task Task, workDir string, artifactDir string, taskLog *slog.Logger) {
+func (d *Daemon) collectAndPostTaskArtifacts(ctx context.Context, task Task, workDir string, artifactDir string, minModTime time.Time, taskLog *slog.Logger) {
 	if task.IssueID == "" || task.WorkspaceID == "" || task.AgentID == "" || task.ID == "" {
 		return
 	}
-	artifacts, err := collectTaskMarkdownArtifactsFromDirs(workDir, artifactDir)
+	artifacts, err := collectTaskMarkdownArtifactsFromDirsSince(workDir, artifactDir, minModTime)
 	if err != nil {
 		taskLog.Warn("collect task artifacts failed", "error", err, "work_dir", workDir, "artifact_dir", artifactDir)
 		return

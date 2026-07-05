@@ -12,6 +12,7 @@ import (
 	"reflect"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestCollectTaskMarkdownArtifactsScansArtifactsTree(t *testing.T) {
@@ -56,6 +57,37 @@ func TestCollectTaskMarkdownArtifactsFromDirsIncludesIssueArtifactDir(t *testing
 		names = append(names, artifact.DisplayName)
 	}
 	want := []string{"05-verify.md", "multica/02-design.md"}
+	if !reflect.DeepEqual(names, want) {
+		t.Fatalf("artifact names = %#v, want %#v", names, want)
+	}
+}
+
+func TestCollectTaskMarkdownArtifactsFromDirsSkipsStaleIssueArtifacts(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	artifactDir := t.TempDir()
+	oldPath := filepath.Join(artifactDir, "01-clarify.md")
+	newPath := filepath.Join(artifactDir, "02-design.md")
+	writeArtifactTestFile(t, oldPath, "# clarify")
+	cutoff := time.Now()
+	if err := os.Chtimes(oldPath, cutoff.Add(-2*time.Minute), cutoff.Add(-2*time.Minute)); err != nil {
+		t.Fatalf("Chtimes old artifact: %v", err)
+	}
+	writeArtifactTestFile(t, newPath, "# design")
+	if err := os.Chtimes(newPath, cutoff.Add(time.Second), cutoff.Add(time.Second)); err != nil {
+		t.Fatalf("Chtimes new artifact: %v", err)
+	}
+
+	got, err := collectTaskMarkdownArtifactsFromDirsSince(workDir, artifactDir, cutoff)
+	if err != nil {
+		t.Fatalf("collectTaskMarkdownArtifactsFromDirsSince: %v", err)
+	}
+	names := make([]string, 0, len(got))
+	for _, artifact := range got {
+		names = append(names, artifact.DisplayName)
+	}
+	want := []string{"02-design.md"}
 	if !reflect.DeepEqual(names, want) {
 		t.Fatalf("artifact names = %#v, want %#v", names, want)
 	}
@@ -144,7 +176,7 @@ func TestCollectAndPostTaskArtifactsUploadsAndLinksCommentAsTask(t *testing.T) {
 		WorkspaceID:      "ws-1",
 		TriggerCommentID: "comment-1",
 		AuthToken:        "mat_task-token",
-	}, workDir, "", slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}, workDir, "", time.Time{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
 
 	if !uploaded || !commented {
 		t.Fatalf("uploaded=%v commented=%v, want both true", uploaded, commented)
