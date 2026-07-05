@@ -611,7 +611,7 @@ func buildIssueTimelineNodes(root IssueExecutionNodeResponse) []IssueTimelineNod
 
 func buildHumanConfirmationTimelineNodes(root IssueExecutionNodeResponse, rootTaskID string) []IssueTimelineNodeResponse {
 	if len(root.ManualComments) == 0 || len(root.Tasks) < 2 {
-		return nil
+		return buildInferredHumanConfirmationTimelineNodes(root, rootTaskID)
 	}
 	commentsByID := make(map[string]IssueCommentBrief, len(root.ManualComments))
 	for _, comment := range root.ManualComments {
@@ -665,7 +665,129 @@ func buildHumanConfirmationTimelineNodes(root IssueExecutionNodeResponse, rootTa
 			},
 		})
 	}
+	if len(nodes) == 0 {
+		return buildInferredHumanConfirmationTimelineNodes(root, rootTaskID)
+	}
 	return nodes
+}
+
+func buildInferredHumanConfirmationTimelineNodes(root IssueExecutionNodeResponse, rootTaskID string) []IssueTimelineNodeResponse {
+	taskIntervals := mergedTaskIntervals(root.Tasks)
+	if len(taskIntervals) < 2 {
+		return nil
+	}
+	childIntervals := mergedChildIssueIntervals(root.Children)
+	nodes := make([]IssueTimelineNodeResponse, 0)
+	for i := 0; i < len(taskIntervals)-1; i++ {
+		gapStart := taskIntervals[i].end
+		gapEnd := taskIntervals[i+1].start
+		if !gapEnd.After(gapStart) {
+			continue
+		}
+		for _, gap := range subtractIntervals(timelineInterval{start: gapStart, end: gapEnd}, childIntervals) {
+			if !gap.end.After(gap.start) {
+				continue
+			}
+			nodes = append(nodes, IssueTimelineNodeResponse{
+				IssueID:     root.Issue.ID,
+				RootTaskID:  rootTaskID,
+				NodeID:      "human_confirmation:gap:" + gap.start.Format("20060102T150405.000000000Z0700"),
+				NodeType:    "human_confirmation",
+				Status:      "completed",
+				StartedAt:   gap.start.Format(time.RFC3339Nano),
+				CompletedAt: gap.end.Format(time.RFC3339Nano),
+				DurationMs:  gap.end.Sub(gap.start).Milliseconds(),
+				Summary:     "等待人工确认/调度空档",
+				EvidenceRefs: []IssueTimelineEvidenceRef{
+					{Type: "agent_task", ID: taskIntervals[i].id},
+					{Type: "agent_task", ID: taskIntervals[i+1].id},
+				},
+			})
+		}
+	}
+	return nodes
+}
+
+type taskTimelineInterval struct {
+	id string
+	timelineInterval
+}
+
+func mergedTaskIntervals(tasks []AgentTaskResponse) []taskTimelineInterval {
+	intervals := make([]taskTimelineInterval, 0, len(tasks))
+	for _, task := range tasks {
+		if task.CompletedAt == nil {
+			continue
+		}
+		start, startErr := parseTimelineTaskStart(task)
+		end, endErr := time.Parse(time.RFC3339, *task.CompletedAt)
+		if startErr != nil || endErr != nil || !end.After(start) {
+			continue
+		}
+		intervals = append(intervals, taskTimelineInterval{
+			id:               task.ID,
+			timelineInterval: timelineInterval{start: start, end: end},
+		})
+	}
+	if len(intervals) == 0 {
+		return nil
+	}
+	sort.SliceStable(intervals, func(i, j int) bool {
+		if intervals[i].start.Equal(intervals[j].start) {
+			return intervals[i].end.Before(intervals[j].end)
+		}
+		return intervals[i].start.Before(intervals[j].start)
+	})
+	merged := []taskTimelineInterval{intervals[0]}
+	for _, interval := range intervals[1:] {
+		current := &merged[len(merged)-1]
+		if !interval.start.After(current.end) {
+			if interval.end.After(current.end) {
+				current.end = interval.end
+				current.id = interval.id
+			}
+			continue
+		}
+		merged = append(merged, interval)
+	}
+	return merged
+}
+
+func mergedChildIssueIntervals(children []IssueExecutionNodeResponse) []timelineInterval {
+	intervals := make([]timelineInterval, 0, len(children))
+	for _, child := range children {
+		start, startErr := time.Parse(time.RFC3339, child.Issue.CreatedAt)
+		end, endErr := time.Parse(time.RFC3339, child.Issue.UpdatedAt)
+		if startErr != nil || endErr != nil || !end.After(start) {
+			continue
+		}
+		intervals = append(intervals, timelineInterval{start: start, end: end})
+	}
+	return mergeTimelineIntervals(intervals)
+}
+
+func subtractIntervals(base timelineInterval, blockers []timelineInterval) []timelineInterval {
+	remaining := []timelineInterval{base}
+	for _, blocker := range blockers {
+		next := make([]timelineInterval, 0, len(remaining)+1)
+		for _, interval := range remaining {
+			if !blocker.end.After(interval.start) || !blocker.start.Before(interval.end) {
+				next = append(next, interval)
+				continue
+			}
+			if blocker.start.After(interval.start) {
+				next = append(next, timelineInterval{start: interval.start, end: minTime(blocker.start, interval.end)})
+			}
+			if blocker.end.Before(interval.end) {
+				next = append(next, timelineInterval{start: maxTime(blocker.end, interval.start), end: interval.end})
+			}
+		}
+		remaining = next
+		if len(remaining) == 0 {
+			break
+		}
+	}
+	return remaining
 }
 
 func parseTimelineTaskStart(task AgentTaskResponse) (time.Time, error) {
@@ -875,29 +997,54 @@ func mergedNodeDurationMs(nodes []IssueTimelineNodeResponse, nodeType string) in
 		}
 		intervals = append(intervals, timelineInterval{start: start, end: end})
 	}
-	if len(intervals) == 0 {
+	merged := mergeTimelineIntervals(intervals)
+	if len(merged) == 0 {
 		return 0
 	}
-	sort.Slice(intervals, func(i, j int) bool {
-		if intervals[i].start.Equal(intervals[j].start) {
-			return intervals[i].end.Before(intervals[j].end)
-		}
-		return intervals[i].start.Before(intervals[j].start)
-	})
 	var total int64
-	current := intervals[0]
-	for _, interval := range intervals[1:] {
+	for _, interval := range merged {
+		total += interval.end.Sub(interval.start).Milliseconds()
+	}
+	return total
+}
+
+func mergeTimelineIntervals(intervals []timelineInterval) []timelineInterval {
+	if len(intervals) == 0 {
+		return nil
+	}
+	sorted := append([]timelineInterval(nil), intervals...)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].start.Equal(sorted[j].start) {
+			return sorted[i].end.Before(sorted[j].end)
+		}
+		return sorted[i].start.Before(sorted[j].start)
+	})
+	merged := []timelineInterval{sorted[0]}
+	for _, interval := range sorted[1:] {
+		current := &merged[len(merged)-1]
 		if !interval.start.After(current.end) {
 			if interval.end.After(current.end) {
 				current.end = interval.end
 			}
 			continue
 		}
-		total += current.end.Sub(current.start).Milliseconds()
-		current = interval
+		merged = append(merged, interval)
 	}
-	total += current.end.Sub(current.start).Milliseconds()
-	return total
+	return merged
+}
+
+func minTime(left, right time.Time) time.Time {
+	if left.Before(right) {
+		return left
+	}
+	return right
+}
+
+func maxTime(left, right time.Time) time.Time {
+	if left.After(right) {
+		return left
+	}
+	return right
 }
 
 func artifactTitle(filename string) string {

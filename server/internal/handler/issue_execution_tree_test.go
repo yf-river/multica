@@ -147,6 +147,90 @@ func TestBuildIssueTimelineNodesAddsHumanConfirmationWait(t *testing.T) {
 	}
 }
 
+func TestBuildIssueTimelineNodesInfersHumanConfirmationGapWithoutComment(t *testing.T) {
+	root := IssueExecutionNodeResponse{
+		Issue: IssueResponse{ID: "issue-1"},
+		Tasks: []AgentTaskResponse{
+			{
+				ID:          "task-1",
+				AgentID:     "agent-pm",
+				Status:      "completed",
+				StartedAt:   timelineTestStringPtr("2026-06-09T10:00:00Z"),
+				CompletedAt: timelineTestStringPtr("2026-06-09T10:02:00Z"),
+				CreatedAt:   "2026-06-09T10:00:00Z",
+			},
+			{
+				ID:          "task-2",
+				AgentID:     "agent-pm",
+				Status:      "completed",
+				StartedAt:   timelineTestStringPtr("2026-06-09T10:05:00Z"),
+				CompletedAt: timelineTestStringPtr("2026-06-09T10:06:00Z"),
+				CreatedAt:   "2026-06-09T10:05:00Z",
+			},
+		},
+	}
+
+	nodes := buildIssueTimelineNodes(root)
+	var waitNode IssueTimelineNodeResponse
+	for _, node := range nodes {
+		if node.NodeType == "human_confirmation" {
+			waitNode = node
+			break
+		}
+	}
+
+	if !strings.HasPrefix(waitNode.NodeID, "human_confirmation:gap:") {
+		t.Fatalf("human confirmation node = %+v, want inferred gap", waitNode)
+	}
+	if waitNode.StartedAt != "2026-06-09T10:02:00Z" || waitNode.CompletedAt != "2026-06-09T10:05:00Z" {
+		t.Fatalf("human confirmation bounds = %q / %q", waitNode.StartedAt, waitNode.CompletedAt)
+	}
+	if waitNode.DurationMs != 180000 {
+		t.Fatalf("human confirmation duration = %d, want 180000", waitNode.DurationMs)
+	}
+}
+
+func TestBuildIssueTimelineNodesDoesNotTreatChildIssueRuntimeAsHumanWait(t *testing.T) {
+	root := IssueExecutionNodeResponse{
+		Issue: IssueResponse{ID: "parent-issue"},
+		Tasks: []AgentTaskResponse{
+			{
+				ID:          "pm-1",
+				AgentID:     "agent-pm",
+				Status:      "completed",
+				StartedAt:   timelineTestStringPtr("2026-06-09T10:00:00Z"),
+				CompletedAt: timelineTestStringPtr("2026-06-09T10:01:00Z"),
+				CreatedAt:   "2026-06-09T10:00:00Z",
+			},
+			{
+				ID:          "pm-2",
+				AgentID:     "agent-pm",
+				Status:      "completed",
+				StartedAt:   timelineTestStringPtr("2026-06-09T10:10:00Z"),
+				CompletedAt: timelineTestStringPtr("2026-06-09T10:11:00Z"),
+				CreatedAt:   "2026-06-09T10:10:00Z",
+			},
+		},
+		Children: []IssueExecutionNodeResponse{
+			{
+				Issue: IssueResponse{
+					ID:        "child-issue",
+					CreatedAt: "2026-06-09T10:01:00Z",
+					UpdatedAt: "2026-06-09T10:10:00Z",
+					Status:    "done",
+				},
+			},
+		},
+	}
+
+	nodes := buildIssueTimelineNodes(root)
+	for _, node := range nodes {
+		if node.NodeType == "human_confirmation" {
+			t.Fatalf("unexpected human wait during child issue runtime: %+v", node)
+		}
+	}
+}
+
 func TestSummarizeIssueTimelineUsesExplicitHumanConfirmationNodes(t *testing.T) {
 	workStartedAt := "2026-06-09T10:00:00Z"
 	workCompletedAt := "2026-06-09T10:20:00Z"
