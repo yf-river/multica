@@ -232,6 +232,34 @@ func TestSummarizeIssueTimelineIgnoresLowLevelFailureForAcceptanceAndTotals(t *t
 	}
 }
 
+func TestSummarizeIssueTimelineIgnoresRecoveredRuntimeFailureForDoneIssue(t *testing.T) {
+	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1", Status: "done"}, []IssueTimelineNodeResponse{
+		{
+			NodeID:        "task:pm-recovered",
+			NodeType:      "agent_task",
+			Status:        "failed",
+			FailureReason: "runtime_recovery",
+			StartedAt:     "2026-06-09T10:00:00Z",
+			CompletedAt:   "2026-06-09T10:01:00Z",
+			DurationMs:    60000,
+			Summary:       "daemon restarted while task was in flight",
+		},
+		{
+			NodeID:      "task:verify",
+			NodeType:    "agent_task",
+			Status:      "completed",
+			StartedAt:   "2026-06-09T10:02:00Z",
+			CompletedAt: "2026-06-09T10:04:00Z",
+			DurationMs:  120000,
+			Summary:     "verify done",
+		},
+	})
+
+	if summary.AcceptanceStatus != "completed" || summary.FailureSummary != "" {
+		t.Fatalf("acceptance = %q failure = %q, want recovered runtime failure ignored", summary.AcceptanceStatus, summary.FailureSummary)
+	}
+}
+
 func timelineTestStringPtr(value string) *string {
 	return &value
 }

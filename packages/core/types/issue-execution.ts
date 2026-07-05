@@ -71,6 +71,7 @@ export interface IssueTimelineNode {
   project_id?: string;
   child_issue_id?: string;
   status: string;
+  failure_reason?: string;
   started_at?: string;
   completed_at?: string;
   duration_ms: number;

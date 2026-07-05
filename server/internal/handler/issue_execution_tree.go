@@ -32,6 +32,7 @@ type IssueTimelineNodeResponse struct {
 	ProjectID             string                      `json:"project_id,omitempty"`
 	ChildIssueID          string                      `json:"child_issue_id,omitempty"`
 	Status                string                      `json:"status"`
+	FailureReason         string                      `json:"failure_reason,omitempty"`
 	StartedAt             string                      `json:"started_at,omitempty"`
 	CompletedAt           string                      `json:"completed_at,omitempty"`
 	DurationMs            int64                       `json:"duration_ms"`
@@ -411,6 +412,7 @@ func buildIssueTimelineNodes(root IssueExecutionNodeResponse) []IssueTimelineNod
 			NodeType:              "agent_task",
 			AgentID:               task.AgentID,
 			Status:                task.Status,
+			FailureReason:         task.FailureReason,
 			StartedAt:             firstNonEmpty(ptrString(task.StartedAt), task.CreatedAt),
 			CompletedAt:           ptrString(task.CompletedAt),
 			DurationMs:            durationFromTraceOrTask(taskTraces, task),
@@ -722,7 +724,7 @@ func summarizeIssueTimeline(issue IssueResponse, nodes []IssueTimelineNodeRespon
 		if node.UsageUnavailableTrace {
 			summary.UsageUnavailable = true
 		}
-		if timelineNodeAffectsAcceptance(node) && summary.FailureSummary == "" && isFailedTimelineStatus(node.Status) {
+		if timelineNodeAffectsAcceptance(node) && summary.FailureSummary == "" && isFailedTimelineStatus(node.Status) && !isRecoveredRuntimeFailure(issue, node) {
 			summary.FailureSummary = node.Summary
 			summary.AcceptanceStatus = node.Status
 		}
@@ -761,6 +763,19 @@ func summarizeIssueTimeline(issue IssueResponse, nodes []IssueTimelineNodeRespon
 
 func timelineNodeAffectsAcceptance(node IssueTimelineNodeResponse) bool {
 	return node.NodeType == "agent_task" || node.NodeType == "child_issue_ref"
+}
+
+func isRecoveredRuntimeFailure(issue IssueResponse, node IssueTimelineNodeResponse) bool {
+	return isCompletedIssueStatus(issue.Status) && strings.TrimSpace(node.FailureReason) == "runtime_recovery"
+}
+
+func isCompletedIssueStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "done", "completed", "已完成":
+		return true
+	default:
+		return false
+	}
 }
 
 func isFailedTimelineStatus(status string) bool {
