@@ -938,7 +938,7 @@ function TimelineLaneChart({
                         width: `${Math.max(6, ((segment.endMs - segment.startMs) / span) * 100)}%`,
                       }}
                       title={[
-                        segment.total > 1 ? `${row.label} #${segment.ordinal}` : row.label,
+                        row.label,
                         `开始 ${formatDateTime(segment.startMs)}`,
                         `结束 ${formatDateTime(segment.endMs)}`,
                         `耗时 ${formatDuration(segment.durationMs)}`,
@@ -947,7 +947,7 @@ function TimelineLaneChart({
                       ].join(" · ")}
                     >
                       <span className="block truncate">
-                        {segment.total > 1 ? `#${segment.ordinal} · ` : ""}{formatDuration(segment.durationMs)} · {formatNumber(segment.tokenTotal)} token
+                        {formatDuration(segment.durationMs)} · {formatNumber(segment.tokenTotal)} token
                       </span>
                     </div>
                   )
