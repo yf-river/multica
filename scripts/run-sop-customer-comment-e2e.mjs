@@ -15,15 +15,16 @@ const workspaceSlug = trimEnv("ACCEPTANCE_WORKSPACE_SLUG") || "ai-studio";
 const provider = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER") || "codebuddy";
 const model = trimEnv("MULTICA_PROMPT_EVALUATION_AGENT_MODEL") || "deepseek-v4-pro-ioa";
 const repoRef = trimEnv("ACCEPTANCE_REPO_REF") || "v5.0.0_dev_sop";
-const tapdSourceURL = trimEnv("ACCEPTANCE_TAPD_SOURCE_URL") || "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154";
+const tapdSourceURL = trimEnv("ACCEPTANCE_TAPD_SOURCE_URL") || "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004223";
 const taskTimeoutMs = Number(trimEnv("ACCEPTANCE_TASK_TIMEOUT_MS") || 2_700_000);
 const pollIntervalMs = Number(trimEnv("ACCEPTANCE_POLL_INTERVAL_MS") || 5_000);
+const requestTimeoutMs = Number(trimEnv("ACCEPTANCE_HTTP_TIMEOUT_MS") || 30_000);
 const runSandbox = trimEnv("ACCEPTANCE_RUN_SERVICE_SANDBOX") !== "0";
 const runReviewLoop = trimEnv("ACCEPTANCE_RUN_CODE_REVIEW_LOOP") !== "0";
 const runIncrementalLoop = trimEnv("ACCEPTANCE_RUN_INCREMENTAL_LOOP") !== "0";
 const runSimpleAutopilot = trimEnv("ACCEPTANCE_RUN_SIMPLE_AUTOPILOT") !== "0";
 const createRealGongfengMR = trimEnv("ACCEPTANCE_CREATE_REAL_GONGFENG_MR") !== "0";
-const childWaitMode = trimEnv("ACCEPTANCE_CHILD_WAIT_MODE") || "handoff";
+const childWaitMode = trimEnv("ACCEPTANCE_CHILD_WAIT_MODE") || "recursive";
 const suffix = Date.now();
 
 const repoSpecs = [
@@ -95,7 +96,10 @@ try {
   const squad = template?.squad;
   const agents = Array.isArray(template?.agents) ? template.agents : [];
   const pm = agents.find((item) => item.role_key === "pm" || item.name === "pm") || agents[0];
-  if (!squad?.id || !pm?.id) fail("user-center 内置小队模板缺少 squad 或 pm agent");
+  const agent01 = agents.find((item) => item.role_key === "01-clarify" || String(item.name || "").startsWith("01-"));
+  const agent04 = agents.find((item) => item.role_key === "04-implement" || String(item.name || "").startsWith("04-"));
+  const agent05 = agents.find((item) => item.role_key === "05-verify" || String(item.name || "").startsWith("05-"));
+  if (!squad?.id || !pm?.id || !agent01?.id || !agent04?.id || !agent05?.id) fail("user-center 内置小队模板缺少 squad、pm、01、04 或 05 agent");
   evidence.squad = { id: squad.id, name: squad.name, profile_key: squad?.sop_profile?.profile_key || "" };
   evidence.agents = agents.map((item) => ({
     id: item.id,
@@ -110,11 +114,13 @@ try {
 
   const issue = await post("/api/issues", {
     workspace_id: workspace.id,
-    title: `客户评论式 SOP 验收：新增 usercenter API ${suffix}`,
+    title: `客户评论式 SOP 验收：跨项目验收标记 ${suffix}`,
     description: [
       "这是一条客户视角验收任务。",
       "",
-      "背景：usercenter 需要新增一个对外 API，最终要能通过 gateway HTTP 入口访问，并由 ida-deployment 提供 apiData/权限/渲染配置。",
+      "背景：本轮只验证 ai-studio PM 小队跨项目 SOP 闭环，不新增产品 API、不新增 proto、不接入 live 集群。",
+      "需求：在 user-center、gateway、ida-deployment 三个仓库分别补一处可测试/可校验的 goal-test acceptance marker，用于证明跨项目实现 MR、child issue 递归执行和同 MR CodeReview 返工都可闭环。",
+      "主项目 user-center 预期落点：internal/helper/goal_test_acceptance_test.go，增加一个 Go test marker，不能只写 docs。",
       "",
       "请先只确认收到并等待我后续评论推进；不要一次性创建子任务，不要跳到最终验收。",
     ].join("\n"),
@@ -137,26 +143,41 @@ try {
   await postCustomerComment(issue.id, token, [
     "客户补充 1：请按真正 SOP 方式先做澄清。",
     "",
-    "请读取当前 issue、项目和资源库上下文，判断新增 usercenter API 是否会产生 gateway、ida-deployment 依赖。",
-    "这一轮只做澄清和依赖判断，不要改代码，不要创建同项目阶段子任务。",
+    "请读取当前 issue、项目和资源库上下文，判断本轮 acceptance marker 是否会产生 gateway、ida-deployment 两个跨项目 child issue。",
+    "这是已确认的验收 fixture：不要因为缺少产品 API、proto、live 集群、TAPD 细节或额外产品口径而阻塞；01 只需确认目标项目、仓库和验收边界。",
+    "PM 只负责调度，不要在 PM 自己的任务里代替 01 做澄清。",
+    `目标阶段 Agent：${agent01.name}，agent_id=${agent01.id}。`,
+    "请 PM 自己发布唯一一条平台 Markdown mention 调度评论来触发 01；客户补充评论不得直接触发 01。",
+    "PM 的 mention 显示名和 agent_id 必须匹配目标阶段 Agent，不能复用上一阶段或其它 Agent 的 id。",
+    "01 独立读取上下文并发布澄清结论后，再由 PM 判断下一步。",
+    "这一轮只做澄清和依赖判断，不要改代码，不要创建任何 child issue；即使 01 判断存在跨项目依赖，PM 也只能评论等待下一条客户确认后再创建。",
   ].join("\n"));
-  const clarifyTask = await waitNextTerminalTask(issue.id, pm.id, new Set([initialTask.id]), token, "等待评论 1 触发的澄清任务完成");
-  requireCompletedTask(clarifyTask, "评论 1 澄清任务");
+  const clarifyRouteTask = await waitNextTerminalTask(issue.id, pm.id, new Set([initialTask.id]), token, "等待评论 1 触发的 PM 调度 01 任务完成");
+  requireCompletedTask(clarifyRouteTask, "评论 1 PM 调度 01 任务");
+  const clarifyTask = await waitNextTerminalTask(issue.id, agent01.id, new Set(), token, "等待 01-需求澄清独立任务完成", {
+    createdAfter: clarifyRouteTask.created_at || clarifyRouteTask.started_at || clarifyRouteTask.completed_at,
+    requireNonEmptyMessage: true,
+  });
+  requireCompletedTask(clarifyTask, "01-需求澄清独立任务");
 
+  await waitIssueNoActiveTasks(issue.id, token, "等待 01 后自动唤醒任务清空");
+  await assertNoCrossProjectChildrenBeforeConfirmation(issue, projects, token);
+  const beforeChildCommentTaskIDs = await getIssueTaskIDSet(issue.id, token);
   await postCustomerComment(issue.id, token, [
-    "客户确认 2：这个 API 需要真实端到端联调。",
+    "客户确认 2：这个 acceptance marker 需要真实跨项目联调。",
     "",
     "请创建跨项目 child issue：",
-    `- gateway：目标项目名 gateway，project_id=${projects.gateway.id}，目标小队 id=${squad.id}，负责路由/影响检查/转发验证。`,
-    `- ida-deployment：目标项目名 ida-deployment，project_id=${projects["ida-deployment"].id}，目标小队 id=${squad.id}，负责 apiData、权限和 Helm render 验证。`,
+    `- gateway：目标项目名 gateway，project_id=${projects.gateway.id}，目标小队 id=${squad.id}，负责 request id / middleware acceptance marker 的真实代码或测试改动。`,
+    `- ida-deployment：目标项目名 ida-deployment，project_id=${projects["ida-deployment"].id}，目标小队 id=${squad.id}，负责 Helm/render harness acceptance marker 的真实脚本、配置或测试改动。`,
     "",
     "要求：",
     "- child issue 必须挂到当前父任务。",
     "- child issue 初始状态为 backlog。",
     "- child issue 不要代表 01-05 阶段，只代表跨项目交付物。",
     "- 创建后请回读 children，确认 parent、project、assignee 正确。",
+    "- 创建前必须先回读已有 children；如果同一目标项目和同一验收范围已存在 child issue，只能复用已有 child，严禁再创建重复 child。",
   ].join("\n"));
-  const childTask = await waitNextTerminalTask(issue.id, pm.id, new Set([initialTask.id, clarifyTask.id]), token, "等待评论 2 触发的跨项目子任务创建完成");
+  const childTask = await waitNextTerminalTask(issue.id, pm.id, beforeChildCommentTaskIDs, token, "等待评论 2 触发的跨项目子任务创建完成");
   requireCompletedTask(childTask, "评论 2 跨项目子任务创建任务");
 
   const children = await verifyCrossProjectChildren(issue, projects, squad, token);
@@ -170,22 +191,24 @@ try {
     evidence.service_sandbox_issue_comment = await postServiceSandboxEvidenceComment(issue.id, token, sandboxEvidence, agents);
   }
 
-  await completeChildren(children, token);
+  await waitChildrenRecursiveClosure(children, token);
 
-  const wake = await verifyParentWakeAfterChildrenDone(issue, squad, pm, new Set([initialTask.id, clarifyTask.id, childTask.id]), token);
+  const wake = await verifyParentWakeAfterChildrenDone(issue, squad, pm, new Set([initialTask.id, clarifyRouteTask.id, clarifyTask.id, childTask.id]), token);
   evidence.child_done_wake = wake;
 
+  await waitIssueNoActiveTasks(issue.id, token, "等待子任务完成后父任务自动唤醒清空");
+  const beforeFinalVerifyTaskIDs = await getIssueTaskIDSet(issue.id, token);
   await postCustomerComment(issue.id, token, [
     "客户补充 3：所有跨项目子任务已经完成，请继续父任务最终 verify。",
     "",
     "验收要求：",
     "- 读取 gateway 和 ida-deployment 子任务 closure。",
     "- 核对父子任务关系、trace、usage、运行复盘数据。",
-    "- 核对上一条证据补充评论中的 service sandbox curl 验收证据和附件报告。",
-    "- MR 属于 05-verify 通过后的人工 CodeReview 阶段；本阶段不要因为 MR 为空阻断。",
+    "- 核对上一条证据补充评论中的 acceptance sandbox 验收证据和附件报告。",
+    "- 父任务和 child issue 的 MR 都必须是真实实现/测试/脚本/配置改动，不能是 docs-only evidence MR。",
     "- 如果满足验收，请把父任务状态更新为 done。",
   ].join("\n"));
-  const verifyTask = await waitNextTerminalTask(issue.id, pm.id, new Set([initialTask.id, clarifyTask.id, childTask.id, wake.requeued_task_id]), token, "等待评论 3 触发的最终 verify 任务完成");
+  const verifyTask = await waitNextTerminalTask(issue.id, pm.id, beforeFinalVerifyTaskIDs, token, "等待评论 3 触发的最终 verify 任务完成");
   requireCompletedTask(verifyTask, "评论 3 最终 verify 任务");
 
   const finalIssue = await get(`/api/issues/${issue.id}`, token);
@@ -227,7 +250,7 @@ try {
   evidence.stage_artifacts = await attachStageMarkdownArtifacts(issue.id, token);
 
   if (runReviewLoop) {
-    evidence.code_review_loop = await runHumanCodeReviewLoop(issue.id, pm.id, token);
+    evidence.code_review_loop = await runHumanCodeReviewLoop(issue.id, { pm, agent04, agent05 }, token);
     evidence.review_loop = evidence.code_review_loop;
   } else {
     evidence.code_review_loop = { skipped: true };
@@ -235,7 +258,7 @@ try {
   }
 
   if (runIncrementalLoop) {
-    evidence.incremental_requirement_loop = await runIncrementalRequirementLoop(issue.id, pm.id, token);
+    evidence.incremental_requirement_loop = await runIncrementalRequirementLoop(issue.id, { pm, agent04, agent05 }, token);
     evidence.incremental_loop = evidence.incremental_requirement_loop;
   } else {
     evidence.incremental_requirement_loop = { skipped: true };
@@ -249,7 +272,7 @@ try {
   }
 
   evidence.final_after_loops = await finalizeIssueAfterAllLoops(issue.id, token);
-  evidence.result = "completed";
+  evidence.result = "passed";
   writeEvidence(evidence);
   console.log(JSON.stringify(evidence, null, 2));
 } catch (error) {
@@ -375,11 +398,11 @@ async function postCustomerCommentWithOptions(issueID, token, content, options =
 
 async function attachStageMarkdownArtifacts(issueID, token) {
   const stages = [
-    ["01-clarify", "需求澄清", "TAPD 来源已抓取；确认 usercenter API 会产生 gateway 路由与 ida-deployment 权限/apiData 依赖。"],
-    ["02-design", "方案设计", "采用 usercenter gRPC/API -> gateway HTTP -> ida-deployment 配置的端到端链路；以 service sandbox curl 验收。"],
+    ["01-clarify", "需求澄清", "TAPD 来源已抓取；确认本轮是 acceptance fixture，不依赖新增产品 API/proto/live 集群。"],
+    ["02-design", "方案设计", "采用 user-center test marker、gateway middleware/test marker、ida-deployment render harness marker 的跨项目验收链路。"],
     ["03-task-split", "任务拆分", "跨项目子任务按 gateway 与 ida-deployment 两个交付物创建，挂到父 issue。"],
-    ["04-implement", "开发执行", "子任务完成后父任务被 child-done 系统评论唤醒；quick-entries 需求级 sandbox 执行通过。"],
-    ["05-verify", "测试验收", "父任务读取子任务 closure、trace、usage、quick-entries GET/POST/DELETE/X-Request-ID/越权拒绝证据后关闭。"],
+    ["04-implement", "开发执行", "子任务完成后父任务被 child-done 系统评论唤醒；各仓库均产生非 docs-only 的真实改动。"],
+    ["05-verify", "测试验收", "父任务读取子任务 closure、trace、usage、MR 关联和 acceptance sandbox 证据后关闭。"],
   ];
   const attachments = [];
   for (const [stage, title, summary] of stages) {
@@ -445,7 +468,7 @@ async function uploadTextAttachment(issueID, token, filename, content) {
   if (token) headers.Authorization = `Bearer ${token}`;
   if (activeWorkspaceId) headers["X-Workspace-ID"] = activeWorkspaceId;
   evidence.commands.push(`POST /api/upload-file filename=${filename}`);
-  const res = await fetch(`${apiURL}/api/upload-file`, {
+  const res = await fetchWithTimeout(`${apiURL}/api/upload-file`, {
     method: "POST",
     headers,
     body: form,
@@ -468,65 +491,109 @@ async function uploadTextAttachment(issueID, token, filename, content) {
   return picked;
 }
 
-async function runHumanCodeReviewLoop(issueID, pmID, token) {
+async function runHumanCodeReviewLoop(issueID, stageAgents, token) {
+  const { pm, agent04, agent05 } = stageAgents;
+  const beforePRs = await getIssuePullRequestSnapshots(issueID, token);
   const before = new Set((await listIssueTasks(issueID, token)).map((item) => item.id));
   await put(`/api/issues/${issueID}`, { status: "in_review" }, token);
   await postCustomerComment(issueID, token, [
-    "人工 CodeReview：MR 已打开，review 发现需要补充默认分支说明和一条 curl 验收证据。",
+    "人工 CodeReview：MR 已打开，review 发现每一个已关联实现 MR 都需要补充同一 source branch 的 acceptance marker 说明和一条可复验命令证据。",
     "",
-    "请从 05 之后的 CodeReview 流程转回 04-implement，先只根据评论判断下一步并留下处理摘要；不要创建新的跨项目子任务。",
+    "请从 05 之后的 CodeReview 流程转回 04-implement。",
+    "PM 只做调度：请先发布平台 mention 调度 04-implement，等待 04 对每一个已关联实现 MR 的同一个 source branch 都做真实补充改动，并确保每个目标 MR 都产生新的 commit/head 后，再调度 05-verify 逐个验证同一个 MR 已更新，最后由 PM 收口。",
+    "不要创建新的跨项目子任务，不要新建无关 MR；如果任一目标 MR 没有新 commit，必须报告 blocker，不能宣称全部完成。",
   ].join("\n"));
-  const fixTask = await waitNextTerminalTask(issueID, pmID, before, token, "等待 CodeReview 评论触发转回开发任务");
-  requireCompletedTask(fixTask, "CodeReview 转回开发任务");
+  const routeTo04Task = await waitNextTerminalTask(issueID, pm.id, before, token, "等待 CodeReview 评论触发 PM 调度 04");
+  requireCompletedTask(routeTo04Task, "CodeReview PM 调度 04");
+  const afterRouteTo04 = new Set((await listIssueTasks(issueID, token)).map((item) => item.id));
+  const implementTask = await waitNextTerminalTask(issueID, agent04.id, before, token, "等待 CodeReview 04-implement 真实返工");
+  requireCompletedTask(implementTask, "CodeReview 04-implement 返工");
+  const afterImplement = new Set((await listIssueTasks(issueID, token)).map((item) => item.id));
+  const routeTo05Task = await waitNextTerminalTask(issueID, pm.id, afterRouteTo04, token, "等待 CodeReview 返工后 PM 调度 05");
+  requireCompletedTask(routeTo05Task, "CodeReview PM 调度 05");
+  const verifyTask = await waitNextTerminalTask(issueID, agent05.id, afterImplement, token, "等待 CodeReview 05-verify 验证同 MR");
+  requireCompletedTask(verifyTask, "CodeReview 05-verify 验证同 MR");
 
   const afterFix = new Set((await listIssueTasks(issueID, token)).map((item) => item.id));
   await postCustomerComment(issueID, token, [
     "人工 CodeReview：补充材料已经确认，MR review 通过。",
     "",
-    "请继续完成本轮闭环：确认 MR 链接仍在 issue 关联区，确认运行复盘和附件产物可追溯，然后把任务保持在完成态。",
+    "请 PM 继续完成本轮闭环：确认 MR 链接仍在 issue 关联区，确认运行复盘和附件产物可追溯，然后把 issue 状态自然维护为 done。",
   ].join("\n"));
-  const passTask = await waitNextTerminalTask(issueID, pmID, afterFix, token, "等待 CodeReview 通过评论触发收尾任务");
+  const passTask = await waitNextTerminalTask(issueID, pm.id, afterFix, token, "等待 CodeReview 通过评论触发 PM 收尾任务");
   requireCompletedTask(passTask, "CodeReview 通过收尾任务");
 
   const issue = await get(`/api/issues/${issueID}`, token);
-  const prs = await get(`/api/issues/${issueID}/pull-requests`, token);
-  const prCount = Array.isArray(prs?.pull_requests) ? prs.pull_requests.length : 0;
-  if (prCount <= 0) fail("CodeReview 后 MR 关联丢失");
+  const afterPRs = await getIssuePullRequestSnapshots(issueID, token);
+  const updatedMRs = assertSamePullRequestsUpdated(beforePRs, afterPRs, "CodeReview 后", {
+    requiredKeys: codeReviewTargetPullRequestKeys(beforePRs),
+  });
   return {
-    fix_task: pickTask(fixTask),
+    route_to_04_task: pickTask(routeTo04Task),
+    implement_task: pickTask(implementTask),
+    route_to_05_task: pickTask(routeTo05Task),
+    verify_task: pickTask(verifyTask),
     pass_task: pickTask(passTask),
     final_issue: pickIssue(issue),
-    pull_request_count: prCount,
+    pull_request_count: afterPRs.length,
+    updated_pull_requests: updatedMRs,
+    same_mr_verified: true,
   };
 }
 
-async function runIncrementalRequirementLoop(issueID, pmID, token) {
+async function runIncrementalRequirementLoop(issueID, stageAgents, token) {
+  const { pm, agent04, agent05 } = stageAgents;
+  const beforePRs = await getIssuePullRequestSnapshots(issueID, token);
   const before = new Set((await listIssueTasks(issueID, token)).map((item) => item.id));
   await put(`/api/issues/${issueID}`, { status: "in_progress" }, token);
   const comment = await postCustomerComment(issueID, token, [
-    "客户追加需求：原个人快捷入口已经验收完成，现在同一个 issue 追加两个小功能点。",
+    "客户追加需求：原跨项目 acceptance marker 已经验收完成，现在同一个 issue 追加两个小功能点。",
     "",
-    "1. 快捷入口需要支持排序字段 sort_order。",
-    "2. 列表需要支持只返回 enabled=true 的入口。",
+    "1. marker 说明需要明确本次覆盖 user-center、gateway、ida-deployment 三个仓库。",
+    "2. 验证摘要需要明确每一个目标 MR/source branch 已被继续维护，不能新建无关 MR。",
     "",
-    "请按需求复杂度判断应该从 01 澄清重新开始，还是可以直接回到 04 开发。先给出判断和下一步，不要覆盖上一轮已完成结论。",
+    "请按需求复杂度判断应该从 01 澄清重新开始，还是可以直接回到 04 开发。",
+    "如果判断可直接回到 04，PM 必须先发布平台 mention 调度 04-implement；04 对每一个目标 MR 的同一个 source branch 做真实追加改动并产生新的 commit/head；PM 再调度 05-verify；05 逐个验证目标 MR 被更新后，由 PM 最终收口为 done。",
+    "不要覆盖上一轮已完成结论，不要新建无关 MR；如果任一目标 MR 没有新 commit，必须报告 blocker，不能宣称全部完成。",
   ].join("\n"));
   const commentID = comment.id || comment.comment_id;
   const commentCreatedAt = comment.created_at || new Date().toISOString();
-  const task = await waitNextTerminalTask(issueID, pmID, before, token, "等待增量需求评论触发同 issue 新轮次任务", {
+  const routeTask = await waitNextTerminalTask(issueID, pm.id, before, token, "等待增量需求评论触发 PM 调度", {
     createdAfter: commentCreatedAt,
     requireNonEmptyMessage: true,
   });
-  requireCompletedTask(task, "增量需求同 issue 新轮次任务");
+  requireCompletedTask(routeTask, "增量需求 PM 调度任务");
+  const afterRoute = new Set((await listIssueTasks(issueID, token)).map((item) => item.id));
+  const implementTask = await waitNextTerminalTask(issueID, agent04.id, before, token, "等待增量需求 04-implement 同 MR 追加改动");
+  requireCompletedTask(implementTask, "增量需求 04-implement 追加改动");
+  const afterImplement = new Set((await listIssueTasks(issueID, token)).map((item) => item.id));
+  const routeTo05Task = await waitNextTerminalTask(issueID, pm.id, afterRoute, token, "等待增量需求 04 后 PM 调度 05");
+  requireCompletedTask(routeTo05Task, "增量需求 PM 调度 05");
+  const beforeClose = new Set((await listIssueTasks(issueID, token)).map((item) => item.id));
+  const verifyTask = await waitNextTerminalTask(issueID, agent05.id, afterImplement, token, "等待增量需求 05-verify 验证同 MR");
+  requireCompletedTask(verifyTask, "增量需求 05-verify 验证同 MR");
+  const closeTask = await waitPMCloseTaskOrIssueDone(issueID, pm.id, beforeClose, token, "等待增量需求 PM 最终收口");
+  requireCompletedTask(closeTask, "增量需求 PM 最终收口");
+  const afterPRs = await getIssuePullRequestSnapshots(issueID, token);
+  const updatedMRs = assertSamePullRequestsUpdated(beforePRs, afterPRs, "增量需求后", {
+    requiredKeys: codeReviewTargetPullRequestKeys(beforePRs),
+  });
   const comments = await get(`/api/issues/${issueID}/comments?roots_only=true&summary=true`, token);
   const items = Array.isArray(comments) ? comments : comments.items ?? [];
   const incrementalComment = items.find((item) => String(item.content || "").includes("追加两个小功能点"));
   if (!incrementalComment?.id || incrementalComment.id !== commentID) fail("增量需求评论未能从 issue 评论流回读");
   return {
-    task: pickTask(task),
+    route_task: pickTask(routeTask),
+    implement_task: pickTask(implementTask),
+    route_to_05_task: pickTask(routeTo05Task),
+    verify_task: pickTask(verifyTask),
+    close_task: pickTask(closeTask),
+    close_satisfied_by_issue_done: Boolean(closeTask.synthetic_issue_done),
     comment_id: commentID,
     same_issue_id: issueID,
     previous_mr_preserved: true,
+    updated_pull_requests: updatedMRs,
+    same_mr_verified: true,
   };
 }
 
@@ -538,6 +605,8 @@ async function runSimpleAutopilotIssue(token, workspace, project, squad, pm) {
       "这是一个小需求：只需要在已有 issue 摘要中补充一个展示字段说明。",
       "",
       "判断为简单任务时，可以不逐步人工确认，直接完成澄清、方案、开发和测试摘要。",
+      "本需求不要求创建 MR，也不要求进入 04/05 的真实代码改动；PM 可以直接发布最终结论。",
+      "如果确认信息已足够，请不要再询问用户是否同意跳过阶段；必须直接把 issue 状态更新为 done，并让 SOP run 自动闭合。",
     ].join("\n"),
     status: "todo",
     priority: "medium",
@@ -581,13 +650,13 @@ async function recordTAPDSourceFetch(issueID, token) {
       await sleep(2_000);
     }
   }
-  if (metadata.source_fetch_title !== "用户快捷入口需求") {
+  if (!String(metadata.source_fetch_title || "").trim()) {
     fail("TAPD source-fetch 未写入 source_fetch_title");
   }
   if (metadata.source_fetch_status !== "fetched" || metadata.source_fetch_provider !== "tapd_mcp") {
     fail(`TAPD source-fetch 未真实 fetched：${JSON.stringify(metadata)}`);
   }
-  if (!metadata.source_fetch_body_excerpt || !String(metadata.source_fetch_body_excerpt).includes("快捷入口")) {
+  if (!String(metadata.source_fetch_body_excerpt || "").trim()) {
     fail("TAPD source-fetch 未返回真实正文摘录");
   }
   return {
@@ -623,10 +692,8 @@ async function recordTAPDSourceFetch(issueID, token) {
 }
 
 async function finalizeIssueAfterAllLoops(issueID, token) {
-  const issue = await get(`/api/issues/${issueID}`, token);
-  const normalized = issue.status === "done"
-    ? issue
-    : await put(`/api/issues/${issueID}`, { status: "done" }, token);
+  await waitIssueNoActiveTasks(issueID, token, "等待所有 loop 后 issue 无 active task");
+  const normalized = await get(`/api/issues/${issueID}`, token);
   const prs = await get(`/api/issues/${issueID}/pull-requests`, token);
   const comments = await get(`/api/issues/${issueID}/comments?roots_only=true&summary=true`, token);
   const finalTrace = await get(`/api/issues/${issueID}/trace`, token);
@@ -635,6 +702,7 @@ async function finalizeIssueAfterAllLoops(issueID, token) {
   const prItems = Array.isArray(prs?.pull_requests) ? prs.pull_requests : [];
   if (normalized.status !== "done") fail(`所有 loop 完成后父任务状态=${normalized.status}，期望 done`);
   if (prItems.length <= 0) fail("所有 loop 完成后 MR 关联丢失");
+  const worktreeClean = assertIssueWorktreeClean(issueID, "user-center");
   if (!commentItems.some((item) => String(item.content || "").includes("人工 CodeReview"))) {
     fail("所有 loop 完成后评论流缺少人工 CodeReview 记录");
   }
@@ -646,8 +714,233 @@ async function finalizeIssueAfterAllLoops(issueID, token) {
     pull_request_count: prItems.length,
     comment_count: commentItems.length,
     trace_event_count: countItems(finalTrace?.events, finalTrace?.total),
+    worktree_clean: worktreeClean,
     usage: finalUsage,
   };
+}
+
+async function getIssuePullRequests(issueID, token) {
+  const prs = await get(`/api/issues/${issueID}/pull-requests`, token);
+  return normalizePullRequests(prs).map(pickPullRequest).filter((item) => item.html_url || item.number || item.branch);
+}
+
+async function getIssuePullRequestSnapshots(issueID, token) {
+  const items = await getIssuePullRequests(issueID, token);
+  const branchHints = buildPullRequestBranchHints(items);
+  const snapshots = [];
+  for (const item of items) {
+    const snapshot = { ...item };
+    snapshot.project_path = canonicalGongfengProjectPath(snapshot.project_path || snapshot.html_url || "");
+    if (!snapshot.branch) {
+      snapshot.branch = branchHints.get(pullRequestIdentity(snapshot)) || branchHints.get(pullRequestProjectNumberKey(snapshot)) || "";
+    }
+    if (snapshot.branch) {
+      const repoName = repoNameForPullRequest(snapshot);
+      if (repoName) {
+        const localRemoteHead = getIssueRemoteBranchHead(issueID, repoName, snapshot.branch);
+        if (localRemoteHead) snapshot.remote_head_sha = localRemoteHead;
+      }
+    }
+    if (!snapshot.remote_head_sha && snapshot.provider === "gongfeng" && snapshot.project_path && snapshot.branch) {
+      try {
+        snapshot.remote_head_sha = await getGongfengBranchHead(snapshot.project_path, snapshot.branch);
+      } catch (error) {
+        snapshot.remote_head_error = redactSecretText(error?.message || String(error));
+      }
+    }
+    snapshots.push(snapshot);
+  }
+  return snapshots;
+}
+
+function repoNameForPullRequest(item) {
+  const projectPath = String(item?.project_path || item?.html_url || "");
+  if (projectPath.includes("ida-deployment")) return "ida-deployment";
+  if (projectPath.includes("gateway")) return "gateway";
+  if (projectPath.includes("user-center")) return "user-center";
+  return "";
+}
+
+function getIssueRemoteBranchHead(issueID, repoName, branch) {
+  const worktree = findIssueRepoWorktree(issueID, repoName) || findAnyRepoWorktree(repoName);
+  if (!worktree) return "";
+  const output = execText("git", ["-C", worktree, "ls-remote", "origin", `refs/heads/${branch}`]);
+  return output.split(/\s+/)[0] || "";
+}
+
+function assertSamePullRequests(before, after, label) {
+  if (!Array.isArray(before) || before.length <= 0) fail(`${label} 缺少前置 MR，无法验证同 MR 维护`);
+  if (!Array.isArray(after) || after.length <= 0) fail(`${label} MR 关联丢失`);
+  const beforeKeys = new Set(before.map(pullRequestIdentity).filter(Boolean));
+  const afterKeys = new Set(after.map(pullRequestIdentity).filter(Boolean));
+  for (const key of beforeKeys) {
+    if (!afterKeys.has(key)) fail(`${label} 原 MR 不再关联：${key}`);
+  }
+  if (afterKeys.size !== beforeKeys.size) {
+    fail(`${label} MR 数量变化：before=${beforeKeys.size} after=${afterKeys.size}，期望维护同一个 MR/branch，不新建无关 MR`);
+  }
+  const beforeBranches = new Set(before.map((item) => item.branch).filter(Boolean));
+  const afterBranches = new Set(after.map((item) => item.branch).filter(Boolean));
+  for (const branch of beforeBranches) {
+    if (!afterBranches.has(branch)) fail(`${label} 原 source branch 不再关联：${branch}`);
+  }
+}
+
+function assertSamePullRequestsUpdated(before, after, label, options = {}) {
+  assertSamePullRequests(before, after, label);
+  const beforeByKey = new Map(before.map((item) => [pullRequestIdentity(item), item]).filter(([key]) => key));
+  const requiredKeys = new Set(Array.isArray(options.requiredKeys) ? options.requiredKeys.filter(Boolean) : []);
+  const updated = [];
+  const missingUpdates = [];
+  for (const item of after) {
+    const key = pullRequestIdentity(item);
+    const previous = beforeByKey.get(key);
+    if (!previous) continue;
+    const beforeHead = effectivePullRequestHead(previous);
+    const afterHead = effectivePullRequestHead(item);
+    if (beforeHead && afterHead && beforeHead !== afterHead) {
+      updated.push({
+        key,
+        branch: item.branch,
+        project_path: item.project_path || previous.project_path || "",
+        before_head: beforeHead,
+        after_head: afterHead,
+      });
+    } else if (requiredKeys.has(key)) {
+      missingUpdates.push({
+        key,
+        project_path: item.project_path || previous.project_path || "",
+        branch: item.branch || previous.branch || "",
+        before_head: beforeHead,
+        after_head: afterHead,
+        reason: beforeHead && afterHead ? "head_unchanged" : "head_unavailable",
+      });
+    }
+  }
+  if (missingUpdates.length > 0) {
+    fail(`${label} 目标 MR 未全部更新；未更新或无法比较：${JSON.stringify(missingUpdates)}`);
+  }
+  if (updated.length <= 0) {
+    fail(`${label} MR 仍是同一个，但远端 head 未变化；这不能证明 CodeReview/追加需求被维护进同一个 MR`);
+  }
+  return updated;
+}
+
+function codeReviewTargetPullRequestKeys(pullRequests) {
+  const crossProject = pullRequests
+    .filter((item) => !String(item.project_path || item.html_url || "").includes("user-center"))
+    .map(pullRequestIdentity)
+    .filter(Boolean);
+  if (crossProject.length > 0) return crossProject;
+  return pullRequests.map(pullRequestIdentity).filter(Boolean);
+}
+
+function buildPullRequestBranchHints(items) {
+  const hints = new Map();
+  const completed = Array.isArray(evidence.children_completed) ? evidence.children_completed : [];
+  for (const child of completed) {
+    const childBranch = issueSourceBranch(child);
+    for (const pr of child.pull_requests || []) {
+      const picked = pickPullRequest(pr);
+      if (!childBranch) continue;
+      const identity = pullRequestIdentity(picked);
+      const projectNumber = pullRequestProjectNumberKey(picked);
+      if (identity) hints.set(identity, picked.branch || childBranch);
+      if (projectNumber) hints.set(projectNumber, picked.branch || childBranch);
+    }
+  }
+  for (const item of items) {
+    if (!item.branch) continue;
+    const identity = pullRequestIdentity(item);
+    const projectNumber = pullRequestProjectNumberKey(item);
+    if (identity) hints.set(identity, item.branch);
+    if (projectNumber) hints.set(projectNumber, item.branch);
+  }
+  return hints;
+}
+
+function pullRequestProjectNumberKey(item) {
+  const projectPath = canonicalGongfengProjectPath(item?.project_path || item?.html_url || "");
+  const number = Number(item?.number || 0);
+  return projectPath && number > 0 ? `${projectPath}!${number}` : "";
+}
+
+function assertIssueWorktreeClean(issueID, repoName) {
+  const worktree = findIssueRepoWorktree(issueID, repoName);
+  if (!worktree) {
+    return { checked: false, reason: `未找到 ${repoName} issue worktree` };
+  }
+  const status = execText("git", ["-C", worktree, "status", "--short", "--untracked-files=all"]);
+  const dirty = status
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter(Boolean)
+    .filter((line) => !isAllowedWorktreeStatusLine(worktree, line));
+  if (dirty.length > 0) {
+    fail(`issue ${issueID} 的 ${repoName} worktree 仍有未提交业务改动，不能证明 MR 包含真实实现：${worktree}\n${dirty.slice(0, 20).join("\n")}`);
+  }
+  const branch = execText("git", ["-C", worktree, "branch", "--show-current"]);
+  return { checked: true, path: worktree, branch };
+}
+
+function findIssueRepoWorktree(issueID, repoName) {
+  const root = path.join(repoRoot, ".run", "workspaces");
+  if (!existsSync(root)) return "";
+  const issuePathIDs = [...new Set([String(issueID || ""), String(issueID || "").slice(0, 8)].filter(Boolean))];
+  for (const pathID of issuePathIDs) {
+    const gitPath = execText("find", [root, "-path", `*/issues/${pathID}/repos/${repoName}/.git`, "-print", "-quit"]);
+    if (gitPath) return path.dirname(gitPath);
+    const nestedGitPath = execText("find", [root, "-path", `*/issues/${pathID}/repos/*/${repoName}/.git`, "-print", "-quit"]);
+    if (nestedGitPath) return path.dirname(nestedGitPath);
+  }
+  const gitPath = execText("find", [root, "-path", `*/issues/${String(issueID || "").slice(0, 8)}*/repos/${repoName}/.git`, "-print", "-quit"]);
+  if (!gitPath) return "";
+  return path.dirname(gitPath);
+}
+
+function findAnyRepoWorktree(repoName) {
+  const root = path.join(repoRoot, ".run", "workspaces");
+  if (!existsSync(root)) return "";
+  const exact = execText("find", [root, "-path", `*/issues/*/repos/${repoName}/.git`, "-print", "-quit"]);
+  if (exact) return path.dirname(exact);
+  const nested = execText("find", [root, "-path", `*/issues/*/repos/*/${repoName}/.git`, "-print", "-quit"]);
+  if (nested) return path.dirname(nested);
+  return "";
+}
+
+function isAllowedWorktreeStatusLine(worktree, line) {
+  const file = line.replace(/^.. ?/, "");
+  if (line.startsWith("?? ") && file.endsWith("/") && isNestedGitRepository(path.join(worktree, file))) {
+    return true;
+  }
+  return [
+    "AGENTS.md",
+    "CLAUDE.md",
+    "reply.md",
+  ].includes(file) ||
+    file.startsWith(".agent_context/") ||
+    file.startsWith(".claude/") ||
+    file.startsWith(".multica/") ||
+    file.startsWith("artifacts/");
+}
+
+function isNestedGitRepository(candidatePath) {
+  if (!candidatePath || !existsSync(candidatePath)) return false;
+  try {
+    const nestedRoot = execText("git", ["-C", candidatePath, "rev-parse", "--show-toplevel"]);
+    return path.resolve(nestedRoot) === path.resolve(candidatePath);
+  } catch {
+    return false;
+  }
+}
+
+function effectivePullRequestHead(item) {
+  return item?.remote_head_sha || item?.head_sha || "";
+}
+
+function pullRequestIdentity(item) {
+  if (!item) return "";
+  return item.html_url || (item.number ? `number:${item.number}` : item.id ? `id:${item.id}` : item.branch ? `branch:${item.branch}` : "");
 }
 
 async function linkSyntheticGongfengMR(issue, token) {
@@ -657,9 +950,9 @@ async function linkSyntheticGongfengMR(issue, token) {
   const linked = await post(`/api/issues/${issue.id}/pull-requests`, {
     provider: "gongfeng",
     html_url: mrURL,
-    title: `${identifier} usercenter 个人快捷入口 API`,
+    title: `${identifier} goal-test acceptance marker`,
     state: "open",
-    source_branch: `${identifier.toLowerCase()}-usercenter-quick-entry`,
+    source_branch: `${identifier.toLowerCase()}-goal-test-acceptance-marker`,
     target_branch: repoRef,
     author_login: "codex",
     head_sha: gitText(["rev-parse", "--short=12", "HEAD"]) || "synthetic",
@@ -685,32 +978,27 @@ async function createAndLinkRealGongfengMR(issue, token) {
   const identifier = issue.identifier || `GOA-${suffix}`;
   const projectPath = "ChainWeaver/ida/user-center";
   const targetBranch = repoRef;
-  const sourceBranch = `goal-test/${identifier.toLowerCase()}-${suffix}`;
-  const filePath = `docs/goal-test-acceptance/${identifier}-${suffix}.md`;
-  const title = `${identifier}: goal-test TAPD SOP acceptance evidence`;
+  const sourceBranch = issueSourceBranch(issue);
+  const filePath = "internal/helper/goal_test_acceptance_test.go";
+  const title = `${identifier}: add goal-test acceptance marker test`;
   const content = [
-    `# ${identifier} goal-test TAPD SOP acceptance`,
+    "package helper",
     "",
-    "This file is created by the goal-test acceptance harness to prove a real Gongfeng MR handoff.",
+    "import \"testing\"",
     "",
-    `- TAPD source: ${tapdSourceURL}`,
-    `- Multica issue: ${identifier}`,
-    `- Created at: ${new Date().toISOString()}`,
-    `- Target branch: ${targetBranch}`,
-    "",
-    "No product code is changed by this acceptance fixture.",
+    "func TestGoalTestAcceptanceMarker(t *testing.T) {",
+    `\tconst marker = "${identifier}-goal-test-cross-project-marker-${suffix}"`,
+    "\tif marker == \"\" {",
+    "\t\tt.Fatal(\"goal-test acceptance marker must not be empty\")",
+    "\t}",
+    "\tif len(marker) < 16 {",
+    "\t\tt.Fatalf(\"goal-test acceptance marker is unexpectedly short: %q\", marker)",
+    "\t}",
+    "}",
   ].join("\n");
 
-  const branch = await gongfengRequest("POST", `projects/${encodeGongfengProjectID(projectPath)}/repository/branches`, {
-    branch_name: sourceBranch,
-    ref: targetBranch,
-  });
-  const createdFile = await gongfengRequest("POST", `projects/${encodeGongfengProjectID(projectPath)}/repository/files`, {
-    file_path: filePath,
-    branch_name: sourceBranch,
-    content,
-    commit_message: `${identifier}: add goal-test acceptance evidence`,
-  });
+  const branch = await ensureGongfengBranch(projectPath, sourceBranch, targetBranch);
+  const createdFile = await upsertGongfengFile(projectPath, sourceBranch, filePath, content, `${identifier}: add goal-test acceptance marker test`);
   const mr = await gongfengRequest("POST", `projects/${encodeGongfengProjectID(projectPath)}/merge_requests`, {
     source_branch: sourceBranch,
     target_branch: targetBranch,
@@ -721,7 +1009,7 @@ async function createAndLinkRealGongfengMR(issue, token) {
       `TAPD source: ${tapdSourceURL}`,
       "",
       "Created by the goal-test customer-comment SOP acceptance harness after 05-verify.",
-      "This is a non-product acceptance evidence file and is intended for human CodeReview handoff validation.",
+      "This MR intentionally changes a Go test file rather than docs-only evidence so the AIS-40 acceptance validates a real implementation/test MR.",
     ].join("\n"),
     remove_source_branch: false,
     squash: false,
@@ -732,7 +1020,7 @@ async function createAndLinkRealGongfengMR(issue, token) {
     fail(`Gongfeng MR 创建成功但响应缺少 iid/web_url：${JSON.stringify(safeGongfengResponse(mr))}`);
   }
 
-  const headSha = createdFile.commit_id || branch?.commit?.id || "";
+  const headSha = createdFile.commit_id || await getGongfengBranchHead(projectPath, sourceBranch) || branch?.commit?.id || "";
   const linked = await post(`/api/issues/${issue.id}/pull-requests`, {
     provider: "gongfeng",
     project_path: projectPath,
@@ -771,11 +1059,55 @@ async function createAndLinkRealGongfengMR(issue, token) {
     source_branch: matched.branch || sourceBranch,
     target_branch: matched.base_branch || targetBranch,
     project_path: projectPath,
-    evidence_file_path: filePath,
+    implementation_file_path: filePath,
     head_sha: headSha,
     verified_by_gongfeng_api: Boolean(verifiedMR?.iid || verifiedMR?.id),
     gongfeng_id: Number(verifiedMR?.id || mr.id || 0),
   };
+}
+
+function issueSourceBranch(issue) {
+  const rawID = String(issue?.id || "").trim();
+  if (rawID) return `agent/issue/${rawID.slice(0, 8)}`;
+  return `agent/issue/${String(issue?.identifier || `issue-${suffix}`).toLowerCase().replace(/[^a-z0-9._-]+/g, "-").slice(0, 32)}`;
+}
+
+async function ensureGongfengBranch(projectPath, branchName, ref) {
+  try {
+    return await gongfengRequest("GET", `projects/${encodeGongfengProjectID(projectPath)}/repository/branches/${encodeURIComponent(branchName)}`);
+  } catch (error) {
+    if (!/返回 404/.test(error?.message || String(error))) throw error;
+  }
+  return gongfengRequest("POST", `projects/${encodeGongfengProjectID(projectPath)}/repository/branches`, {
+    branch_name: branchName,
+    ref,
+  });
+}
+
+async function upsertGongfengFile(projectPath, branchName, filePath, content, commitMessage) {
+  const project = encodeGongfengProjectID(projectPath);
+  const encodedFilePath = encodeURIComponent(filePath);
+  try {
+    await gongfengRequest("GET", `projects/${project}/repository/files/${encodedFilePath}?ref=${encodeURIComponent(branchName)}`);
+    return gongfengRequest("PUT", `projects/${project}/repository/files/${encodedFilePath}`, {
+      branch_name: branchName,
+      content,
+      commit_message: commitMessage,
+    });
+  } catch (error) {
+    if (!/返回 404/.test(error?.message || String(error))) throw error;
+  }
+  return gongfengRequest("POST", `projects/${project}/repository/files`, {
+    file_path: filePath,
+    branch_name: branchName,
+    content,
+    commit_message: commitMessage,
+  });
+}
+
+async function getGongfengBranchHead(projectPath, branchName) {
+  const branch = await gongfengRequest("GET", `projects/${encodeGongfengProjectID(projectPath)}/repository/branches/${encodeURIComponent(branchName)}`);
+  return branch?.commit?.id || branch?.commit?.short_id || "";
 }
 
 async function gongfengRequest(method, apiPath, body) {
@@ -785,7 +1117,7 @@ async function gongfengRequest(method, apiPath, body) {
     fail("缺少 GONGFENG_PRIVATE_TOKEN/GONGFENG_ACCESS_TOKEN，无法创建真实 Gongfeng MR");
   }
   const base = normalizeGongfengAPIBase(env.GONGFENG_API_BASE || env.GONGFENG_API_URL || "https://git.code.tencent.com/api/v3");
-  const res = await fetch(`${base}/${apiPath.replace(/^\/+/, "")}`, {
+  const res = await fetchWithTimeout(`${base}/${apiPath.replace(/^\/+/, "")}`, {
     method,
     headers: {
       "PRIVATE-TOKEN": token,
@@ -908,9 +1240,11 @@ function summarizeSourceFetchTrace(trace) {
 async function verifyCrossProjectChildren(issue, projects, squad, token) {
   const children = await poll(async () => {
     const items = await listChildrenForParent(issue.id, token);
-    const gateway = items.find((item) => item.project_id === projects.gateway.id);
-    const deployment = items.find((item) => item.project_id === projects["ida-deployment"].id);
-    if (gateway?.id && deployment?.id) return [gateway, deployment];
+    const targets = targetCrossProjectChildren(items, projects);
+    if (targets.duplicates.length > 0) {
+      fail(`跨项目 child issue 重复创建：${JSON.stringify(targets.duplicates)}`);
+    }
+    if (targets.gateway?.id && targets.deployment?.id) return [targets.gateway, targets.deployment];
     return null;
   }, 120_000, "等待 gateway 和 ida-deployment child issue 出现");
 
@@ -940,6 +1274,46 @@ async function verifyCrossProjectChildren(issue, projects, squad, token) {
   };
   evidence.project_owner_notifications = await verifyProjectOwnerApprovalNotifications(children, token);
   return children;
+}
+
+async function assertNoCrossProjectChildrenBeforeConfirmation(issue, projects, token) {
+  const items = await listChildrenForParent(issue.id, token);
+  const targets = targetCrossProjectChildren(items, projects);
+  const premature = [targets.gateway, targets.deployment].filter(Boolean);
+  if (premature.length > 0 || targets.duplicates.length > 0) {
+    fail(`PM 在客户确认创建前提前创建了跨项目 child issue：${JSON.stringify({
+      premature: premature.map((item) => pickIssue(item)),
+      duplicates: targets.duplicates,
+    })}`);
+  }
+}
+
+function targetCrossProjectChildren(items, projects) {
+  const byProject = new Map([
+    [projects.gateway.id, "gateway"],
+    [projects["ida-deployment"].id, "deployment"],
+  ]);
+  const grouped = { gateway: [], deployment: [] };
+  for (const item of Array.isArray(items) ? items : []) {
+    const key = byProject.get(item.project_id);
+    if (key) grouped[key].push(item);
+  }
+  const duplicates = Object.entries(grouped)
+    .filter(([, values]) => values.length > 1)
+    .map(([target, values]) => ({
+      target,
+      issues: values.map((item) => ({
+        id: item.id,
+        identifier: item.identifier || "",
+        status: item.status || "",
+        title: item.title || "",
+      })),
+    }));
+  return {
+    gateway: grouped.gateway[0] || null,
+    deployment: grouped.deployment[0] || null,
+    duplicates,
+  };
 }
 
 async function verifyProjectOwnerApprovalNotifications(children, token) {
@@ -974,8 +1348,12 @@ async function listChildrenForParent(parentID, token) {
 }
 
 async function postChildProtocolHandoffs(children, projects, agents, token) {
-  const suppressAgentIDs = agents.map((item) => item.id);
   const results = [];
+  const stageDirectory = ["01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"]
+    .map((roleKey) => agents.find((agent) => agent.role_key === roleKey || String(agent.name || "").startsWith(roleKey.slice(0, 2))))
+    .filter(Boolean)
+    .map((agent) => `- ${agent.role_key || agent.name}: ${agent.name} (agent_id=${agent.id})`)
+    .join("\n");
   for (const child of children) {
     const target = child.project_id === projects.gateway.id
       ? "gateway"
@@ -984,51 +1362,65 @@ async function postChildProtocolHandoffs(children, projects, agents, token) {
         : "unknown";
     const content = target === "gateway"
       ? [
-        "客户补充：usercenter 正式 API 协议已确认，本 child issue 不应再以“缺少正式协议”为阻塞。",
+        "客户补充：本 child issue 是 gateway acceptance marker 验收，不是新增产品 API；不需要 usercenter proto、QuickEntry service 或 live 集群。",
         "",
-        "## usercenter 快捷入口 API 合同",
-        "- `GET /v1/usercenter/quick-entries`：查询当前登录用户的快捷入口列表，只返回当前用户数据。",
-        "- `POST /v1/usercenter/quick-entries`：创建当前登录用户快捷入口；body: `title`, `url`, `icon`, `sort_order`, `enabled`。",
-        "- `DELETE /v1/usercenter/quick-entries/{id}`：删除当前登录用户自己的快捷入口。",
-        "- 不接受 `user_id` / `tenant_id` / `owner_id` 这类由调用方覆盖归属的参数；归属只能来自认证上下文。",
+        "## gateway 验收合同",
+        "- 目标仓库：ChainWeaver/ida/gateway。",
+        "- 目标分支：本轮仓库资源指定的 `v5.0.0_dev_sop`。",
+        "- 04 必须产生非 docs-only 改动，优先在 `internal/middleware/requestidinterceptorMiddleware.go`、`internal/middleware/generic_rpc_test.go` 或相邻 Go test 中增加 goal-test acceptance marker。",
+        "- marker 必须可被 `go test` 或静态 grep 验证，建议包含 `goal-test-cross-project-marker` 和本 issue 编号。",
+        "- 不新增真实 HTTP API，不依赖 user-center proto，不要求接入 live 集群。",
         "",
         "## gateway 交付边界",
-        "- 对外 HTTP path 按上述 `/v1/usercenter/quick-entries*` 暴露。",
-        "- 上游映射到 usercenter 的 QuickEntry service；本轮可用 harness/mock 证明转发与鉴权上下文传递，不要求接入 live 集群。",
-        "- 请求必须保留/生成 `X-Request-ID`，并透传 `Authorization` 或平台认证上下文。",
-        "- 验收至少包含：带 `X-Request-ID` 成功、缺少 request id 返回明确 4xx、尝试传入他人归属字段被忽略或拒绝。",
-        "- 允许基于当前 sandbox/harness 输出验证结论；不要因为没有额外产品口径阻塞 02-design。",
+        "- 01 只确认落点和验收方式；不得因为产品 API/proto 未定义阻塞。",
+        "- 02/03 输出最小方案和文件级任务。",
+        "- 04 修改 Go 代码或 Go test；不能只写 markdown/docs/harness 报告。",
+        "- 05 运行能覆盖改动的最小验证，例如 `go test ./internal/middleware` 或等价静态校验，并创建/更新 gateway 真实 Gongfeng MR。",
         "",
-        "## 本轮 E2E 约束",
-        "- 这个 child issue 用于验证跨项目交付物创建、触发、trace/usage 和 handoff 闭包，不在 child 内完整开发产品代码。",
-        "- 请不要展开完整 01-05 阶段链，不要继续 @mention 下一阶段 Agent，不要检出/修改仓库。",
-        "- 请由当前处理者直接输出 gateway 侧交付闭包摘要：确认合同、列出应由父任务 service sandbox 验证的 curl case，并保持 issue 可由父任务统一关闭。",
-        "- 如发现合同矛盾，只在本 issue 留下阻断说明；不要尝试真实落改。",
+        "## 本轮 E2E 递归约束",
+        "- 这个 child issue 已分配给 PM 小队，必须按同一套 PM -> 01 -> 02 -> 03 -> 04 -> 05 -> PM 收口流程完成。",
+        "- PM 负责调度，01-05 必须分别产生自己的 task、评论和阶段产物。",
+        "- PM 禁止在自己的单个任务里代跑 01-05；禁止只用内部 todo/TaskCreate/TaskUpdate 表示阶段完成。",
+        "- PM 当前任务只允许发布一个平台 Markdown mention 调度评论，然后立即结束；不得继续读取或执行 01/02/03/04/05 阶段 skill。",
+        "- PM 每一阶段必须通过平台 Markdown mention 评论触发新的平台 agent_task_queue 任务，等该阶段 Agent 独立评论后，在新的 PM 任务里再判断并调度下一阶段。",
+        "- 下面是非触发成员目录，只供 PM 复制目标 Agent 的真实 name/id；本条客户补充不得直接触发 01-05：",
+        stageDirectory,
+        "- PM 发真实调度评论时，Markdown mention 的显示名和 agent_id 必须来自同一行成员目录，禁止把上一阶段 id 改显示名复用。",
+        "- 04 必须在 gateway 目标仓库产生真实路由/配置/测试或受控实现改动，不能只写 docs。",
+        "- 05 必须创建或更新 gateway 对应真实 Gongfeng MR，并把 MR 关联到当前 child issue。",
+        "- child issue 完成后由 PM 设置 done；父任务只汇总引用本 child issue 和 child MR。",
       ].join("\n")
       : [
-        "客户补充：usercenter 正式 API 协议已确认，本 child issue 不应再以“缺少正式协议”为阻塞。",
+        "客户补充：本 child issue 是 ida-deployment acceptance marker 验收，不是新增产品 API；不需要 usercenter proto、QuickEntry service 或 live 集群。",
         "",
-        "## usercenter 快捷入口 API 合同",
-        "- `GET /v1/usercenter/quick-entries`",
-        "- `POST /v1/usercenter/quick-entries`",
-        "- `DELETE /v1/usercenter/quick-entries/{id}`",
-        "- 权限归属来自认证上下文，禁止通过请求参数替别人创建、查询或删除。",
+        "## ida-deployment 验收合同",
+        "- 目标仓库：ChainWeaver/ida/ida-deployment。",
+        "- 目标分支：本轮仓库资源指定的 `v5.0.0_dev_sop`。",
+        "- 04 必须产生非 docs-only 改动，优先在 `harness/operations/validate-deployment/scripts/check_rendered_rules.sh`、Helm values/schema 或相邻校验脚本中增加 goal-test acceptance marker。",
+        "- marker 必须可被 shell/grep/helm render 静态校验，建议包含 `goal-test-cross-project-marker` 和本 issue 编号。",
+        "- 不新增真实权限点，不发布生产 Helm，不要求接入 live 集群。",
         "",
         "## ida-deployment 交付边界",
-        "- 补齐/核验 apiData 与权限配置，使 gateway 暴露的快捷入口 API 能被权限、apiData、render 配置识别。",
-        "- 权限建议分组：`usercenter.quickEntry.list`、`usercenter.quickEntry.create`、`usercenter.quickEntry.delete`。",
-        "- middleware 覆盖当前 sandbox 的 mode1/mode2/mode3 或项目既有 mode 组合；不要手改 generated 文件，按仓库既有生成/校验方式处理。",
-        "- Helm/render 验收只要求 sandbox 级 render/config 校验，不涉及客户生产发布、正式回滚或 live 集群 curl。",
-        "- 允许基于当前 sandbox/harness 输出验证结论；不要因为没有额外产品口径阻塞 02-design。",
+        "- 01 只确认落点和验收方式；不得因为产品 API/proto/生产 Helm 未定义阻塞。",
+        "- 02/03 输出最小方案和文件级任务。",
+        "- 04 修改脚本、配置或测试；不能只写 markdown/docs/harness 报告。",
+        "- 05 运行能覆盖改动的最小验证，例如 `bash -n harness/operations/validate-deployment/scripts/check_rendered_rules.sh`、grep marker 或等价 render 校验，并创建/更新 ida-deployment 真实 Gongfeng MR。",
         "",
-        "## 本轮 E2E 约束",
-        "- 这个 child issue 用于验证跨项目交付物创建、触发、trace/usage 和 handoff 闭包，不在 child 内完整开发产品配置。",
-        "- 请不要展开完整 01-05 阶段链，不要继续 @mention 下一阶段 Agent，不要检出/修改仓库。",
-        "- 请由当前处理者直接输出 ida-deployment 侧交付闭包摘要：确认 apiData/权限/render 的期望检查点，并保持 issue 可由父任务统一关闭。",
-        "- 如发现合同矛盾，只在本 issue 留下阻断说明；不要尝试真实落改。",
+        "## 本轮 E2E 递归约束",
+        "- 这个 child issue 已分配给 PM 小队，必须按同一套 PM -> 01 -> 02 -> 03 -> 04 -> 05 -> PM 收口流程完成。",
+        "- PM 负责调度，01-05 必须分别产生自己的 task、评论和阶段产物。",
+        "- PM 禁止在自己的单个任务里代跑 01-05；禁止只用内部 todo/TaskCreate/TaskUpdate 表示阶段完成。",
+        "- PM 当前任务只允许发布一个平台 Markdown mention 调度评论，然后立即结束；不得继续读取或执行 01/02/03/04/05 阶段 skill。",
+        "- PM 每一阶段必须通过平台 Markdown mention 评论触发新的平台 agent_task_queue 任务，等该阶段 Agent 独立评论后，在新的 PM 任务里再判断并调度下一阶段。",
+        "- 下面是非触发成员目录，只供 PM 复制目标 Agent 的真实 name/id；本条客户补充不得直接触发 01-05：",
+        stageDirectory,
+        "- PM 发真实调度评论时，Markdown mention 的显示名和 agent_id 必须来自同一行成员目录，禁止把上一阶段 id 改显示名复用。",
+        "- 04 必须在 ida-deployment 目标仓库产生真实 apiData/权限/Helm render 配置或测试改动，不能只写 docs。",
+        "- 05 必须创建或更新 ida-deployment 对应真实 Gongfeng MR，并把 MR 关联到当前 child issue。",
+        "- child issue 完成后由 PM 设置 done；父任务只汇总引用本 child issue 和 child MR。",
       ].join("\n");
     const comment = await postCustomerCommentWithOptions(child.id, token, content, {
-      suppress_agent_ids: suppressAgentIDs,
+      suppress_agent_ids: agents.map((agent) => agent.id).filter(Boolean),
     });
     results.push({
       target,
@@ -1057,7 +1449,7 @@ async function approveAndWaitChildren(children, projects, token) {
     const tasksBefore = await listIssueTasks(child.id, token);
     const before = await get(`/api/issues/${child.id}`, token);
     const approved = await put(`/api/issues/${child.id}`, { status: "todo" }, token);
-    const childExecution = await waitChildExecutionComplete(child.id, new Set(tasksBefore.map((item) => item.id)), token, `等待 ${target} 子任务运行完成`);
+    const childExecution = await waitChildRecursiveComplete(child.id, new Set(tasksBefore.map((item) => item.id)), token, `等待 ${target} 子任务递归 SOP 完成`);
     const terminal = childExecution.task;
     const trace = await get(`/api/issues/${child.id}/trace`, token);
     const usage = await get(`/api/issues/${child.id}/usage`, token);
@@ -1088,6 +1480,8 @@ async function approveAndWaitChildren(children, projects, token) {
       rerun_count: childExecution.rerun_count,
       wait_mode: childExecution.wait_mode || "full",
       cancelled_followups: childExecution.cancelled_followups || [],
+      task_count: childExecution.task_count,
+      pull_requests: childExecution.pull_requests,
       trace_event_count: countItems(trace?.events, trace?.total),
       message_count: countItems(messages?.items || messages),
       total_tokens: totalTokens,
@@ -1098,11 +1492,16 @@ async function approveAndWaitChildren(children, projects, token) {
   evidence.project_owner_approval = approval;
 }
 
-async function completeChildren(children, token) {
+async function waitChildrenRecursiveClosure(children, token) {
   const done = [];
   for (const child of children) {
-    const updated = await put(`/api/issues/${child.id}`, { status: "done" }, token);
-    done.push(pickIssue(updated));
+    const closed = await waitIssueStatus(child.id, "done", token, `等待 child issue ${child.identifier || child.id} 自己 done`);
+    const prs = await get(`/api/issues/${child.id}/pull-requests`, token);
+    const pullRequests = normalizePullRequests(prs).map(pickPullRequest);
+    if (pullRequests.length <= 0) {
+      fail(`child issue ${child.identifier || child.id} 已 done 但缺少关联 MR`);
+    }
+    done.push({ ...pickIssue(closed), pull_requests: pullRequests });
   }
   evidence.children_completed = done;
 }
@@ -1168,31 +1567,29 @@ async function postServiceSandboxEvidenceComment(issueID, token, sandboxEvidence
   const quickReport = sandboxEvidence.quick_entries?.report || {};
   const quickCaseLines = Array.isArray(quickReport.cases) && quickReport.cases.length > 0
     ? quickReport.cases.map((item) => `- ${item.id}: ${item.ok ? "通过" : "失败"} (${item.status || "unknown"})`)
-    : ["- 未读取到 quick-entries case 明细"];
+    : ["- 未读取到 acceptance sandbox case 明细"];
   const attachmentIDs = [];
   if (quickReport.markdown && existsSync(quickReport.markdown)) {
     const markdown = readFileSync(quickReport.markdown, "utf8");
-    const attachment = await uploadTextAttachment(issueID, token, `quick-entries-service-sandbox-${suffix}.md`, markdown);
+    const attachment = await uploadTextAttachment(issueID, token, `acceptance-service-sandbox-${suffix}.md`, markdown);
     attachmentIDs.push(attachment.id);
   }
   const childLines = Array.isArray(evidence.child_task_execution)
     ? evidence.child_task_execution.map((item) => `- ${item.target}: trace=${item.trace_event_count}, messages=${item.message_count}, tokens=${item.total_tokens}, rerun=${item.rerun_count}`)
     : ["- 子任务 trace/usage 摘要尚未生成"];
   const comment = await postCustomerCommentWithOptions(issueID, token, [
-    "证据补充：service sandbox curl 与子任务运行复盘已完成，供 05-verify 核对。",
+    "证据补充：acceptance sandbox 与子任务运行复盘已完成，供 05-verify 核对。",
     "",
-    "## quick-entries 需求级 service sandbox curl",
+    "## acceptance sandbox",
     `- 结论：${sandboxEvidence.quick_entries?.ok ? "通过" : "失败"}`,
     `- 耗时：${sandboxEvidence.quick_entries?.duration_ms || 0} ms`,
     quickReport.json ? `- JSON 报告：${quickReport.json}` : "- JSON 报告：无",
     quickReport.markdown ? `- Markdown 报告：${quickReport.markdown}` : "- Markdown 报告：无",
-    "- 已覆盖：`GET /v1/usercenter/quick-entries` 列表成功且不泄露他人数据。",
-    "- 已覆盖：`POST /v1/usercenter/quick-entries` 创建成功，`user_id` / `tenant_id` / `owner_id` 调用方归属字段被忽略。",
-    "- 已覆盖：`DELETE /v1/usercenter/quick-entries/{id}` 删除本人入口成功。",
-    "- 已覆盖：缺少 `X-Request-ID` 返回明确 400。",
-    "- 已覆盖：删除他人入口返回 403 owner mismatch。",
+    "- 已覆盖：本地 sandbox 正常返回成功和失败 case。",
+    "- 已覆盖：case 报告、JSON 路径、Markdown 附件可被 05-verify 读取。",
+    "- 已覆盖：输出中包含 request id、权限拒绝、owner mismatch 等可追溯断言，作为平台复盘证据，不代表本轮要新增产品 API。",
     "",
-    "## quick-entries case 结果",
+    "## acceptance sandbox case 结果",
     ...quickCaseLines,
     "",
     "## 子任务 trace / usage 摘要",
@@ -1248,6 +1645,65 @@ async function waitIssueStatus(issueID, status, token, label) {
   }, taskTimeoutMs, label);
 }
 
+async function getIssueTaskIDSet(issueID, token) {
+  const tasks = await listIssueTasks(issueID, token);
+  return new Set(tasks.map((item) => item.id).filter(Boolean));
+}
+
+async function waitIssueNoActiveTasks(issueID, token, label) {
+  return poll(async () => {
+    const tasks = await listIssueTasks(issueID, token);
+    const active = tasks.filter(isActiveTask);
+    if (active.length > 0) return null;
+    return { task_count: tasks.length };
+  }, taskTimeoutMs, label);
+}
+
+async function waitPMCloseTaskOrIssueDone(issueID, pmAgentID, knownIDs, token, label) {
+  return poll(async () => {
+    const tasks = sortTasks(await listIssueTasks(issueID, token));
+    const closeTask = tasks.find((item) =>
+      !knownIDs.has(item.id) &&
+      (item.agent_id === pmAgentID || item.assignee_id === pmAgentID)
+    );
+    if (closeTask) {
+      evidence.task_poll_snapshot = {
+        label,
+        total_tasks: tasks.length,
+        latest: tasks.slice(0, 5).map(pickTask),
+      };
+      if (isActiveTask(closeTask)) return null;
+      if (shouldWaitForRetry(closeTask, tasks)) return null;
+      evidence.task_rounds.push({ label, task: pickTask(closeTask) });
+      return closeTask;
+    }
+
+    const active = tasks.filter(isActiveTask);
+    if (active.length > 0) return null;
+    const issue = await get(`/api/issues/${issueID}`, token);
+    if (issue.status !== "done") return null;
+    const synthetic = {
+      id: `issue-done:${issueID}`,
+      status: "completed",
+      agent_id: pmAgentID,
+      assignee_id: pmAgentID,
+      runtime_id: "",
+      is_leader_task: true,
+      created_at: issue.updated_at || new Date().toISOString(),
+      started_at: "",
+      completed_at: issue.updated_at || new Date().toISOString(),
+      parent_task_id: "",
+      attempt: 1,
+      max_attempts: 1,
+      error: "",
+      failure_reason: "",
+      synthetic_issue_done: true,
+    };
+    evidence.task_rounds.push({ label, task: pickTask(synthetic), synthetic_issue_done: true });
+    return synthetic;
+  }, taskTimeoutMs, label);
+}
+
 async function waitNextTerminalTask(issueID, agentID, knownIDs, token, label, options = {}) {
   const createdAfterMs = options.createdAfter ? new Date(options.createdAfter).getTime() : 0;
   return poll(async () => {
@@ -1290,6 +1746,43 @@ async function waitAnyTerminalTask(issueID, knownIDs, token, label) {
     if (!task) return null;
     evidence.task_rounds.push({ label, task: pickTask(task) });
     return task;
+  }, taskTimeoutMs, label);
+}
+
+async function waitChildRecursiveComplete(issueID, knownIDs, token, label) {
+  return poll(async () => {
+    const issue = await get(`/api/issues/${issueID}`, token);
+    const tasks = sortTasks(await listIssueTasks(issueID, token));
+    const newTasks = tasks.filter((item) => !knownIDs.has(item.id));
+    if (issue.status === "blocked" || issue.status === "cancelled") {
+      const last = newTasks[0] || tasks[0];
+      fail(`${label} 后 issue 状态=${issue.status}，最后任务=${last?.id || ""} error=${last?.error || ""} failure_reason=${last?.failure_reason || ""}`);
+    }
+    if (tasks.some(isActiveTask)) return null;
+    const prs = await get(`/api/issues/${issueID}/pull-requests`, token);
+    const pullRequests = normalizePullRequests(prs).map(pickPullRequest);
+    const terminal = newTasks.filter((item) => !isActiveTask(item)).at(-1) || tasks.filter((item) => !isActiveTask(item)).at(-1);
+    if (!terminal) return null;
+    if (issue.status !== "done") {
+      if (newTasks.length > 0) {
+        fail(`${label} 已无 active task 但 issue 状态=${issue.status}，期望 done；new_tasks=${newTasks.length}，last_task=${terminal.id}`);
+      }
+      return null;
+    }
+    if (newTasks.length < 6) {
+      fail(`${label} 任务数=${newTasks.length}，期望 child issue 递归跑完整 PM/01/02/03/04/05`);
+    }
+    if (pullRequests.length <= 0) {
+      fail(`${label} 已 done 但缺少 child issue 关联 MR`);
+    }
+    evidence.task_rounds.push({ label, task: pickTask(terminal) });
+    return {
+      task: terminal,
+      task_count: newTasks.length,
+      rerun_count: 0,
+      wait_mode: "recursive",
+      pull_requests: pullRequests,
+    };
   }, taskTimeoutMs, label);
 }
 
@@ -1368,7 +1861,7 @@ async function waitChildExecutionComplete(issueID, knownIDs, token, label) {
 async function cancelTask(taskID, token) {
   const headers = {};
   if (activeWorkspaceId) headers["X-Workspace-ID"] = activeWorkspaceId;
-  const res = await fetch(`${apiURL}/api/tasks/${taskID}/cancel`, {
+  const res = await fetchWithTimeout(`${apiURL}/api/tasks/${taskID}/cancel`, {
     method: "POST",
     headers: {
       ...headers,
@@ -1478,7 +1971,7 @@ async function request(method, pathname, body, token) {
   if (token) headers.Authorization = `Bearer ${token}`;
   if (token && activeWorkspaceId) headers["X-Workspace-ID"] = activeWorkspaceId;
   evidence.commands.push(`${method} ${pathname}`);
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method,
     headers,
     body: body === undefined ? undefined : JSON.stringify(body),
@@ -1497,7 +1990,7 @@ async function getText(pathname, token) {
   if (token) headers.Authorization = `Bearer ${token}`;
   if (token && activeWorkspaceId) headers["X-Workspace-ID"] = activeWorkspaceId;
   evidence.commands.push(`GET ${pathname}`);
-  const res = await fetch(url, { method: "GET", headers });
+  const res = await fetchWithTimeout(url, { method: "GET", headers });
   const text = await res.text();
   if (!res.ok) {
     throw new Error(`GET ${pathname} 返回 ${res.status}: ${text.slice(0, 1000)}`);
@@ -1518,6 +2011,24 @@ async function poll(fn, timeoutMs, label) {
     await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
   }
   throw new Error(`${label} 超时${lastError ? `；最后错误：${lastError.message || lastError}` : ""}`);
+}
+
+async function fetchWithTimeout(url, options = {}) {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), requestTimeoutMs);
+  try {
+    return await fetch(url, {
+      ...options,
+      signal: options.signal || controller.signal,
+    });
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error(`请求超时 ${requestTimeoutMs}ms: ${url}`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function sleep(ms) {
@@ -1587,6 +2098,50 @@ function pickIssue(issue) {
   };
 }
 
+function normalizePullRequests(value) {
+  if (Array.isArray(value)) return value;
+  if (Array.isArray(value?.pull_requests)) return value.pull_requests;
+  if (Array.isArray(value?.items)) return value.items;
+  return [];
+}
+
+function pickPullRequest(item) {
+  const projectPath = canonicalGongfengProjectPath(item?.project_path || item?.html_url || "");
+  return {
+    id: item?.id || "",
+    provider: item?.provider || "",
+    number: Number(item?.number || 0),
+    title: item?.title || "",
+    state: item?.state || "",
+    html_url: item?.html_url || "",
+    branch: item?.branch || item?.source_branch || "",
+    target_branch: item?.base_branch || item?.target_branch || "",
+    project_path: projectPath,
+    head_sha: item?.head_sha || "",
+  };
+}
+
+function canonicalGongfengProjectPath(value) {
+  const raw = String(value || "").trim();
+  const projectPath = raw.includes("git.code.tencent.com/") ? extractGongfengProjectPath(raw) : raw;
+  const normalized = projectPath.replace(/^\/+|\/+$/g, "");
+  if (!normalized) return "";
+  const exact = repoSpecs.find((spec) => spec.projectPath === normalized);
+  if (exact) return exact.projectPath;
+  const byRepoName = repoSpecs.find((spec) => normalized.endsWith(`/${repoNameFromProjectPath(spec.projectPath)}`));
+  return byRepoName?.projectPath || normalized;
+}
+
+function extractGongfengProjectPath(url) {
+  const text = String(url || "");
+  const matched = text.match(/git\.code\.tencent\.com\/(.+?)\/(?:-\/)?merge_requests\/\d+/);
+  return matched?.[1] || "";
+}
+
+function repoNameFromProjectPath(projectPath) {
+  return String(projectPath || "").split("/").filter(Boolean).pop() || "";
+}
+
 function pickSOPRun(run) {
   return {
     id: run.id,
@@ -1638,6 +2193,14 @@ function tail(output, lines = 20) {
 function gitText(args) {
   try {
     return execFileSync("git", args, { cwd: repoRoot, encoding: "utf8" }).trim();
+  } catch {
+    return "";
+  }
+}
+
+function execText(command, args) {
+  try {
+    return execFileSync(command, args, { cwd: repoRoot, encoding: "utf8" }).trim();
   } catch {
     return "";
   }

@@ -168,6 +168,34 @@ func TestMRAndHumanCodeReviewHandoffSectionRequiresLinkedMR(t *testing.T) {
 	}
 }
 
+func TestRepositoryWorktreeContractPreventsNestedCheckout(t *testing.T) {
+	t.Parallel()
+
+	out := buildMetaSkillContent("claude", TaskContextForEnv{IssueID: "11111111-2222-3333-4444-555555555555"})
+
+	for _, want := range []string{
+		"## Repository Worktree Contract",
+		"git rev-parse --show-toplevel",
+		"if the current worktree is already the requested repository, continue there",
+		"Do not run `multica repo checkout` for the same repository from inside that repo",
+		"nested clean checkout",
+		"Do not `git checkout` or `git switch` to the target/base branch",
+		"Code changes, commits, pushes, verification, and MR source branch selection must stay on the current issue branch",
+		"Verification stages must validate the current issue source branch and its diff against the target branch",
+		"the target branch is the MR base",
+		"Before claiming implementation, verification, or CodeReview follow-up is complete",
+		"git status --short --branch",
+		"commit them to the current issue branch first",
+		"Push the current issue branch before creating or updating the MR",
+		"compare the platform MR source branch/head with the current issue branch",
+		"the same MR did not receive a newer commit/diff",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("repository worktree guidance missing %q\n---\n%s", want, out)
+		}
+	}
+}
+
 // The brief must no longer carry any parent-notification guidance. PR
 // #2918 added a "Tell the parent when you finish a child" rule that
 // turned into noise (self-mention loops, planner ack ping-pong,
@@ -412,7 +440,9 @@ func TestAssignmentTriggeredSquadLeaderGuardrail(t *testing.T) {
 		"Squad-leader / PM-style guardrail",
 		"If your Agent Identity says PM, coordinator, dispatcher, reviewer, or stage owner rather than developer",
 		"do not check out repositories, edit files, run implementation tests, or claim implementation is complete",
-		"ask for explicit confirmation from the issue creator or workspace owner/admin in an issue comment and stop until that confirmation exists",
+		"If the issue or squad instructions explicitly say a simple task may be completed directly, do not ask for extra confirmation",
+		"post the final result and set the issue to done",
+		"If you want to skip SOP stages but the issue does not explicitly allow direct completion, ask for explicit confirmation from the issue creator or workspace owner/admin in an issue comment and stop until that confirmation exists",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("assignment-triggered squad leader brief missing guardrail text %q\n---\n%s", want, out)

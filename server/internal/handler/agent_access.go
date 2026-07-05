@@ -79,6 +79,31 @@ func (h *Handler) canUseSquad(ctx context.Context, squad db.Squad, actorType, ac
 	if squad.Scope != scopePersonal {
 		return true
 	}
+	if actorType == "agent" {
+		if actorID == uuidToString(squad.LeaderID) {
+			return true
+		}
+		if h.DB == nil {
+			return false
+		}
+		agentID, err := util.ParseUUID(actorID)
+		if err != nil {
+			return false
+		}
+		var ok bool
+		if err := h.DB.QueryRow(ctx, `
+			SELECT EXISTS (
+				SELECT 1
+				  FROM squad_member
+				 WHERE squad_id = $1
+				   AND member_type = 'agent'
+				   AND member_id = $2
+			)
+		`, squad.ID, agentID).Scan(&ok); err != nil {
+			return false
+		}
+		return ok
+	}
 	if actorType != "member" {
 		return false
 	}

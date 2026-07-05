@@ -32,6 +32,10 @@ func TestSquadOperatingProtocolWarnsAgainstDualTrigger(t *testing.T) {
 		"--project <目标 project UUID>",
 		"只带 `--parent` 会继承父 issue 的项目",
 		"multica project list --output json",
+		"如果当前 issue 是分配给 squad 的 child issue",
+		"不得在单个负责人任务里直接执行 01-05",
+		"写代码、运行验证、创建 MR 或设置 done",
+		"child issue 第一轮默认只能调度 01-需求澄清",
 	} {
 		if !strings.Contains(compact, want) {
 			t.Errorf("expected squad operating protocol to contain %q\n--- protocol ---\n%s", want, squadOperatingProtocol)
@@ -343,12 +347,19 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 		"05-验证测试通过且无阻断后",
 		"## 禁止事项",
 		"PM 首轮只能输出流程判断、下一阶段调度或跳步确认请求",
+		"必须使用平台 Markdown mention 语法",
 		"不得 checkout、编辑代码、运行实现测试",
 		"等待任务创建者或 workspace owner/admin 明确同意",
 		"把 TAPD 正文抓取后的真实需求复制成同项目 child issue",
 		"为了进入 01-clarify/02-design/03-task-split/04-implement/05-verify 创建 child issue",
 		"01-05 阶段 Agent @mention 下一阶段或任何负责人",
 		"05-验证测试通过后只写验收通过但不更新 issue 状态为 done",
+		"只包含 docs/验收记录/阶段报告的 MR 只能标记为 evidence MR",
+		"不得作为功能 MR 通过",
+		"递归 child issue 规则",
+		"禁止在 PM 单个任务里用内部 todo/TaskCreate/TaskUpdate 代跑 01-05",
+		"发布调度评论后立即结束当前任务",
+		"child issue 的实现 MR 必须关联到 child issue 本身",
 	} {
 		if !strings.Contains(instructions, want) {
 			t.Fatalf("expected user-center SOP instructions to contain %q\n--- instructions ---\n%s", want, instructions)
@@ -373,7 +384,11 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 				"不得为了进入 01-clarify、02-design、03-task-split、04-implement 或 05-verify 创建 child issue",
 				"只有真实跨项目依赖才创建 child issue",
 				"只有 PM 可以 @mention 下一阶段 Agent",
+				"必须使用平台 Markdown mention 语法",
 				"05-verify 通过且无阻断时",
+				"递归 child issue 规则",
+				"禁止在 PM 单个任务里用内部 todo/TaskCreate/TaskUpdate 代跑 01-05",
+				"本次 agent task 必须立即结束",
 			} {
 				if !strings.Contains(role.Instruction+role.Description, want) {
 					t.Fatalf("pm role must contain %q\n--- role ---\n%+v", want, role)
@@ -463,8 +478,13 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 		if name == projectSOPAgentPM {
 			for _, want := range []string{
 				"只有 PM 可以 @mention 下一阶段 Agent",
+				"必须使用平台 Markdown mention 语法",
 				"不得 checkout、编辑代码、运行实现测试",
 				"等待任务创建者或 workspace owner/admin 明确同意",
+				"docs-only MR",
+				"禁止在 PM 单个任务里用内部 todo/TaskCreate/TaskUpdate 代跑 01-05",
+				"本次 agent task 必须立即结束",
+				"child issue 的实现 MR 必须关联到 child issue 本身",
 			} {
 				if !strings.Contains(instructions, want) {
 					t.Fatalf("pm instructions must contain %q:\n%s", want, instructions)

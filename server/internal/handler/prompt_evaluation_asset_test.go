@@ -155,6 +155,16 @@ func TestPromptEvaluationToolFailureSignalExtractsStructuredStatus(t *testing.T)
 			wantReason: "",
 		},
 		{
+			name: "successful helm output with failed counter",
+			tool: "Bash",
+			output: `==> Linting helm/public
+[INFO] Chart.yaml: icon is recommended
+
+1 chart(s) linted, 0 chart(s) failed`,
+			wantSignal: false,
+			wantReason: "",
+		},
+		{
 			name: "read source with failure text",
 			tool: "Read",
 			output: `return biz_err.NewFromCodeWithErr(

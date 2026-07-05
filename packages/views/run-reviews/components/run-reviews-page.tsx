@@ -47,7 +47,6 @@ export function runReviewTotalDurationMs(summary: IssueTimelineSummary | undefin
 export function buildRunReviewDurationTooltipRows(summary: IssueTimelineSummary | undefined): Array<[string, string]> {
   return [
     ["Agent 执行耗时", formatDuration(summary?.agent_execution_duration_ms ?? summary?.total_duration_ms ?? 0)],
-    ["人工确认耗时", formatOptionalDuration(summary?.human_confirmation_duration_ms)],
   ];
 }
 
@@ -347,8 +346,13 @@ function RunReviewDetail({
   const wallClockDurationMs = runReviewTotalDurationMs(summary);
   const stageRows = buildStageRows(timelineNodes);
   const childLanes = buildChildLanes(tree);
-  const visibleStageRows = stageRows.filter((stage) => stage.node);
   const agentNodeRows = buildAgentNodeRows(timelineNodes);
+  const visibleTimelineRows = agentNodeRows.map((row) => ({
+    key: row.key,
+    label: agentNodeDisplayLabel(row),
+    names: [row.node.agent_name ?? row.key],
+    node: row.node,
+  }));
   const visibleChildLanes = childLanes;
   const eventRows = buildRunReviewEventRows(tree, timelineNodes);
   const tokenTotal = (summary?.total_input_tokens ?? 0) +
@@ -484,7 +488,7 @@ function RunReviewDetail({
 
       <section className="rounded-md border bg-card">
         <SectionTitle title="横向时序图" subtitle="按真实出现的执行节点绘制；节点存在但缺少开始/结束时间时会单独标记。" />
-        <TimelineLaneChart stageRows={visibleStageRows} childLanes={visibleChildLanes} timelineNodes={timelineNodes} />
+        <TimelineLaneChart stageRows={visibleTimelineRows} childLanes={visibleChildLanes} timelineNodes={timelineNodes} />
       </section>
 
       <section className="rounded-md border bg-card">
@@ -533,7 +537,7 @@ function RunReviewDetail({
             <tbody className="divide-y">
               {agentNodeRows.length > 0 ? agentNodeRows.map((row) => (
                 <tr key={row.key}>
-                  <td className="truncate px-3 py-2">{row.label}</td>
+                  <td className="truncate px-3 py-2">{agentNodeDisplayLabel(row)}</td>
                   <td className="truncate px-3 py-2 text-muted-foreground">{row.node.agent_name ?? row.key}</td>
                   <td className="truncate px-3 py-2">{statusLabel(row.node.status)}</td>
                   <td className="truncate px-3 py-2">
@@ -557,7 +561,7 @@ function RunReviewDetail({
           {agentNodeRows.length > 0 ? agentNodeRows.map((row) => (
             <div key={row.key} className="px-4 py-3 text-sm">
               <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0 truncate font-medium">{row.label}</div>
+                <div className="min-w-0 truncate font-medium">{agentNodeDisplayLabel(row)}</div>
                 <span className="shrink-0 rounded border px-2 py-0.5 text-xs text-muted-foreground">
                   {statusLabel(row.node.status)}
                 </span>
@@ -809,6 +813,10 @@ function NodeFact({ label, value }: { label: string; value: string }) {
   );
 }
 
+function agentNodeDisplayLabel(row: ReturnType<typeof buildAgentNodeRows>[number]) {
+  return row.runCount > 1 ? `${row.label} (${row.runCount} 次)` : row.label;
+}
+
 function ArtifactLinks({ artifacts }: { artifacts: AgentTaskArtifact[] }) {
   if (!artifacts.length) return <span className="text-muted-foreground">-</span>;
   return (
@@ -834,7 +842,7 @@ function ArtifactLinks({ artifacts }: { artifacts: AgentTaskArtifact[] }) {
   );
 }
 
-type StageRow = ReturnType<typeof buildStageRows>[number];
+type TimelineNodeRow = { key: string; label: string; node?: IssueTimelineNode };
 type ChildLane = ReturnType<typeof buildChildLanes>[number];
 
 interface TimelineBarRow {
@@ -855,7 +863,7 @@ function TimelineLaneChart({
   childLanes,
   timelineNodes,
 }: {
-  stageRows: StageRow[];
+  stageRows: TimelineNodeRow[];
   childLanes: ChildLane[];
   timelineNodes: IssueTimelineNode[];
 }) {
@@ -932,7 +940,7 @@ function TimelineLaneChart({
 }
 
 function buildTimelineBarRows(
-  stageRows: StageRow[],
+  stageRows: TimelineNodeRow[],
   childLanes: ChildLane[],
   timelineNodes: IssueTimelineNode[],
 ): TimelineBarRow[] {
@@ -1113,6 +1121,7 @@ export function buildRunReviewNodeCsv(
     "total_thinking_rounds",
     "node_key",
     "node_label",
+    "node_run_count",
     "node_status",
     "node_agent",
     "node_started_at",
@@ -1139,6 +1148,7 @@ export function buildRunReviewNodeCsv(
     summary?.total_duration_ms ?? 0,
     totalToken,
     summary?.agent_turn_count ?? 0,
+    "",
     "",
     "",
     summary?.acceptance_status ?? "",
@@ -1168,6 +1178,7 @@ export function buildRunReviewNodeCsv(
       summary?.agent_turn_count ?? 0,
       row.key,
       row.label,
+      row.runCount ?? 1,
       node.status,
       node.agent_name ?? row.key,
       node.started_at ?? "",
@@ -1284,15 +1295,89 @@ function flattenExecutionNodes(tree: IssueExecutionTreeResponse | undefined): Is
   return result;
 }
 
-function buildAgentNodeRows(nodes: IssueTimelineNode[]) {
-  return nodes
-    .filter((node) => node.node_type === "agent_task")
-    .map((node, index) => {
-      const key = node.node_id.replace(/^task:/, "") || `agent-node-${index + 1}`;
-      const agentName = node.agent_name || key;
-      const label = sopStageDisplayName(agentName) || node.summary || key;
-      return { key, label, node };
-    });
+export function buildAgentNodeRows(nodes: IssueTimelineNode[]) {
+  const grouped = new Map<string, { key: string; label: string; node: IssueTimelineNode; runCount: number; taskIds: string[] }>();
+  for (const [index, node] of nodes.filter((item) => item.node_type === "agent_task").entries()) {
+    const rawTaskId = node.node_id.replace(/^task:/, "");
+    const agentName = node.agent_name || rawTaskId || `agent-node-${index + 1}`;
+    const key = node.agent_id || normalizeSopStageName(agentName) || agentName || rawTaskId || `agent-node-${index + 1}`;
+    const label = sopStageDisplayName(agentName) || node.summary || agentName;
+    const existing = grouped.get(key);
+    if (!existing) {
+      grouped.set(key, { key, label, node: { ...node }, runCount: 1, taskIds: rawTaskId ? [rawTaskId] : [] });
+      continue;
+    }
+    existing.node = mergeTimelineNode(existing.node, node);
+    existing.runCount += 1;
+    if (rawTaskId) existing.taskIds.push(rawTaskId);
+  }
+  return [...grouped.values()];
+}
+
+function mergeTimelineNode(left: IssueTimelineNode, right: IssueTimelineNode): IssueTimelineNode {
+  const leftStart = parseTimeMs(left.started_at);
+  const rightStart = parseTimeMs(right.started_at);
+  const leftCompleted = parseTimeMs(left.completed_at);
+  const rightCompleted = parseTimeMs(right.completed_at);
+  return {
+    ...left,
+    status: mergeNodeStatus(left.status, right.status),
+    started_at: earliestTime(left.started_at, right.started_at),
+    completed_at: latestTime(left.completed_at, right.completed_at),
+    duration_ms: (left.duration_ms ?? 0) + (right.duration_ms ?? 0),
+    input_tokens: (left.input_tokens ?? 0) + (right.input_tokens ?? 0),
+    output_tokens: (left.output_tokens ?? 0) + (right.output_tokens ?? 0),
+    cache_read_tokens: (left.cache_read_tokens ?? 0) + (right.cache_read_tokens ?? 0),
+    cache_write_tokens: (left.cache_write_tokens ?? 0) + (right.cache_write_tokens ?? 0),
+    message_count: (left.message_count ?? 0) + (right.message_count ?? 0),
+    agent_turn_count: (left.agent_turn_count ?? 0) + (right.agent_turn_count ?? 0),
+    trace_event_count: (left.trace_event_count ?? 0) + (right.trace_event_count ?? 0),
+    usage_unavailable_trace: left.usage_unavailable_trace || right.usage_unavailable_trace,
+    artifacts: [...(left.artifacts ?? []), ...(right.artifacts ?? [])],
+    evidence_refs: [...(left.evidence_refs ?? []), ...(right.evidence_refs ?? [])],
+    summary: rightCompleted !== null && (leftCompleted === null || rightCompleted >= leftCompleted)
+      ? right.summary
+      : left.summary,
+    node_id: left.node_id,
+    node_type: left.node_type,
+    agent_name: left.agent_name || right.agent_name,
+    agent_id: left.agent_id || right.agent_id,
+    // Keep a wall-clock hint for charts/tooltips when individual runs overlap.
+    duration_ms_wall_clock: leftStart !== null || rightStart !== null || leftCompleted !== null || rightCompleted !== null
+      ? Math.max((latestNumber(leftCompleted, rightCompleted) ?? 0) - (earliestNumber(leftStart, rightStart) ?? 0), 0)
+      : undefined,
+  } as IssueTimelineNode;
+}
+
+function mergeNodeStatus(left: string, right: string) {
+  if (left === "failed" || right === "failed" || left === "blocked" || right === "blocked") return "failed";
+  if (isActiveStatus(left) || isActiveStatus(right)) return "running";
+  if (left === "completed" && right === "completed") return "completed";
+  return right || left;
+}
+
+function earliestTime(left: string | undefined, right: string | undefined) {
+  const leftMs = parseTimeMs(left);
+  const rightMs = parseTimeMs(right);
+  const ms = earliestNumber(leftMs, rightMs);
+  return ms === null ? left || right || "" : new Date(ms).toISOString();
+}
+
+function latestTime(left: string | undefined, right: string | undefined) {
+  const leftMs = parseTimeMs(left);
+  const rightMs = parseTimeMs(right);
+  const ms = latestNumber(leftMs, rightMs);
+  return ms === null ? left || right || "" : new Date(ms).toISOString();
+}
+
+function earliestNumber(...values: Array<number | null>) {
+  const present = values.filter((value): value is number => value !== null);
+  return present.length ? Math.min(...present) : null;
+}
+
+function latestNumber(...values: Array<number | null>) {
+  const present = values.filter((value): value is number => value !== null);
+  return present.length ? Math.max(...present) : null;
 }
 
 function flattenExecutionTasks(tree: IssueExecutionTreeResponse | undefined): AgentTask[] {
@@ -1615,11 +1700,18 @@ function semanticOutputState(output: string | undefined): Pick<SemanticToolActio
 }
 
 function outputOutcome(output: string): Pick<SemanticToolAction, "outcome" | "summary" | "severity"> {
+  if (toolOutputHasSuccessfulExitCode(output)) {
+    return { outcome: "已返回", summary: conciseEventSummary(summarizeToolOutput(output), false), severity: "normal" };
+  }
   const errorLine = extractErrorLine(output);
   if (errorLine) {
     return { outcome: "异常线索", summary: conciseEventSummary(errorLine, true), severity: "error" };
   }
   return { outcome: "已返回", summary: conciseEventSummary(summarizeToolOutput(output), false), severity: "normal" };
+}
+
+function toolOutputHasSuccessfulExitCode(output: string) {
+  return /\bExit Code:\s*0\b/i.test(output) || /\bexit\s+(?:status|code)\s*[:=]?\s*0\b/i.test(output);
 }
 
 function extractErrorLine(output: string) {
@@ -2345,11 +2437,6 @@ function formatDuration(ms: number) {
   return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
 }
 
-function formatOptionalDuration(ms: number | null | undefined) {
-  if (ms === null || ms === undefined) return "暂未记录";
-  return formatDuration(ms);
-}
-
 function formatNumber(value: number) {
   return new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 0 }).format(value || 0);
 }
@@ -2377,7 +2464,6 @@ function nodeDurationTooltip(node: IssueTimelineNode | undefined) {
         ["开始时间", formatDateTime(node?.started_at)],
         ["结束时间", formatDateTime(node?.completed_at)],
         ["执行耗时", formatDuration(node?.duration_ms ?? 0)],
-        ["人工等待", "暂未记录"],
       ]}
     />
   );

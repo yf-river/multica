@@ -5,7 +5,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -111,6 +113,72 @@ func newSquadCommentTriggerFixture(t *testing.T) squadCommentTriggerFixture {
 		SquadID:  squadID,
 		LeaderID: leaderID,
 		OtherID:  otherID,
+	}
+}
+
+func TestCreateComment_SquadSOPRoleKeyMentionTriggersStageAgent(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	_, _ = testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE agent_id IN (SELECT id FROM agent WHERE workspace_id = $1 AND name IN ($2, $3))`, testWorkspaceID, projectSOPAgentPM, projectSOPAgent01)
+	_, _ = testPool.Exec(ctx, `DELETE FROM squad_member WHERE member_id IN (SELECT id FROM agent WHERE workspace_id = $1 AND name IN ($2, $3))`, testWorkspaceID, projectSOPAgentPM, projectSOPAgent01)
+	_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND name IN ($2, $3)`, testWorkspaceID, projectSOPAgentPM, projectSOPAgent01)
+
+	pmID := createHandlerTestAgent(t, projectSOPAgentPM, nil)
+	clarifyID := createHandlerTestAgent(t, projectSOPAgent01, nil)
+
+	var squadID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
+		VALUES ($1, $2, '', $3, $4)
+		RETURNING id
+	`, testWorkspaceID, "SOP Role Key Mention Squad", pmID, testUserID).Scan(&squadID); err != nil {
+		t.Fatalf("create squad: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+	})
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO squad_member (squad_id, member_type, member_id, role)
+		VALUES ($1, 'agent', $2, 'PM'), ($1, 'agent', $3, '01')
+	`, squadID, pmID, clarifyID); err != nil {
+		t.Fatalf("create squad members: %v", err)
+	}
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, assignee_type, assignee_id)
+		VALUES ($1, 'member', $2, 'sop role-key mention trigger', 'todo', 'squad', $3)
+		RETURNING id
+	`, testWorkspaceID, testUserID, squadID).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+
+	w := httptest.NewRecorder()
+	r := newRequest("POST", "/api/issues/"+issueID+"/comments", map[string]any{
+		"content": "## PM 调度\n\n请 **01-需求澄清** (@01-clarify) 开始澄清。",
+	})
+	r.Header.Set("X-Actor-Source", "task_token")
+	r.Header.Set("X-Agent-ID", pmID)
+	r = withURLParam(r, "id", issueID)
+	testHandler.CreateComment(w, r)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateComment: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var queued int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM agent_task_queue
+		WHERE issue_id = $1 AND agent_id = $2 AND status = 'queued'
+	`, issueID, clarifyID).Scan(&queued); err != nil {
+		t.Fatalf("count 01 tasks: %v", err)
+	}
+	if queued != 1 {
+		t.Fatalf("queued 01 tasks = %d, want 1", queued)
 	}
 }
 
@@ -489,6 +557,341 @@ func TestCompleteTask_FinalSOPStepAutoClosesIssueWithoutPullRequest(t *testing.T
 	}
 	if run.Status != "已完成" {
 		t.Fatalf("sop run status = %q, want 已完成", run.Status)
+	}
+}
+
+func TestCompleteTask_FinalSOPStepBlocksGongfengIssueWithoutPullRequestAndComments(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	leaderID := createHandlerTestAgent(t, "SOP Final MR Gate Leader", nil)
+	verifyID := createHandlerTestAgent(t, "SOP Final MR Gate 05-verify", nil)
+
+	var verifyRuntimeID string
+	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, verifyID).Scan(&verifyRuntimeID); err != nil {
+		t.Fatalf("load verify runtime: %v", err)
+	}
+
+	project, err := testHandler.Queries.CreateProject(ctx, db.CreateProjectParams{
+		WorkspaceID: util.MustParseUUID(testWorkspaceID),
+		Title:       "SOP Final MR Gate Gongfeng Project",
+		Status:      "active",
+		Priority:    "medium",
+		Scope:       "workspace",
+		OwnerID:     util.MustParseUUID(testUserID),
+	})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
+	})
+	if _, err := testHandler.Queries.CreateProjectResource(ctx, db.CreateProjectResourceParams{
+		ProjectID:    project.ID,
+		WorkspaceID:  util.MustParseUUID(testWorkspaceID),
+		ResourceType: "gongfeng_repo",
+		ResourceRef:  []byte(`{"project_path":"ChainWeaver/ida/gateway","repo_url":"https://git.code.tencent.com/ChainWeaver/ida/gateway"}`),
+		Label:        pgtype.Text{String: "gateway", Valid: true},
+		CreatedBy:    util.MustParseUUID(testUserID),
+	}); err != nil {
+		t.Fatalf("create project resource: %v", err)
+	}
+
+	profile := `{
+		"profile_key":"test-final-sop-mr-gate",
+		"steps":[
+			{"key":"pm","name":"pm","role_key":"pm"},
+			{"key":"05-verify","name":"05-测试","role_key":"05-verify"}
+		]
+	}`
+	var squadID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, sop_profile)
+		VALUES ($1, $2, '', $3, $4, $5)
+		RETURNING id
+	`, testWorkspaceID, "SOP Final MR Gate Squad", leaderID, testUserID, profile).Scan(&squadID); err != nil {
+		t.Fatalf("create squad: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+	})
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, project_id, assignee_type, assignee_id)
+		VALUES ($1, 'member', $2, $3, 'in_progress', $4, 'squad', $5)
+		RETURNING id
+	`, testWorkspaceID, testUserID, "sop final blocks without gongfeng MR", project.ID, squadID).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+
+	if _, err := testHandler.Queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
+		WorkspaceID:    util.MustParseUUID(testWorkspaceID),
+		IssueID:        util.MustParseUUID(issueID),
+		SquadID:        util.MustParseUUID(squadID),
+		ProfileKey:     "test-final-sop-mr-gate",
+		Profile:        []byte(profile),
+		Status:         "进行中",
+		CurrentStepKey: "05-verify",
+	}); err != nil {
+		t.Fatalf("create sop run: %v", err)
+	}
+
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, dispatched_at, started_at)
+		VALUES ($1, $2, $3, 'running', 2, now(), now())
+		RETURNING id
+	`, verifyID, verifyRuntimeID, issueID).Scan(&taskID); err != nil {
+		t.Fatalf("insert verify task: %v", err)
+	}
+	if _, err := testHandler.TaskService.CompleteTask(ctx, util.MustParseUUID(taskID), []byte(`{}`), "", ""); err != nil {
+		t.Fatalf("complete verify task: %v", err)
+	}
+
+	issue, err := testHandler.Queries.GetIssue(ctx, util.MustParseUUID(issueID))
+	if err != nil {
+		t.Fatalf("load issue: %v", err)
+	}
+	if issue.Status != "blocked" {
+		t.Fatalf("issue status = %q, want blocked", issue.Status)
+	}
+
+	var authorID, content string
+	if err := testPool.QueryRow(ctx, `
+		SELECT author_id::text, content
+		FROM comment
+		WHERE issue_id = $1 AND author_type = 'system'
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, issueID).Scan(&authorID, &content); err != nil {
+		t.Fatalf("load missing MR gate comment: %v", err)
+	}
+	if authorID != "00000000-0000-0000-0000-000000000000" {
+		t.Fatalf("system comment author_id = %q, want zero UUID", authorID)
+	}
+	if !strings.Contains(content, "平台还没有关联 MR") || !strings.Contains(content, "multica issue mr create") {
+		t.Fatalf("missing MR gate comment did not explain recovery: %s", content)
+	}
+}
+
+func TestCompleteTask_FinalSOPStepClosesIssueAlreadyInReview(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	leaderID := createHandlerTestAgent(t, "SOP Final InReview Leader", nil)
+	verifyID := createHandlerTestAgent(t, "SOP Final InReview 05-verify", nil)
+
+	var verifyRuntimeID string
+	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, verifyID).Scan(&verifyRuntimeID); err != nil {
+		t.Fatalf("load verify runtime: %v", err)
+	}
+
+	profile := `{
+		"profile_key":"test-final-sop-in-review",
+		"steps":[
+			{"key":"pm","name":"pm","role_key":"pm"},
+			{"key":"05-verify","name":"05-测试","role_key":"05-verify"}
+		]
+	}`
+	var squadID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, sop_profile)
+		VALUES ($1, $2, '', $3, $4, $5)
+		RETURNING id
+	`, testWorkspaceID, "SOP Final InReview Squad", leaderID, testUserID, profile).Scan(&squadID); err != nil {
+		t.Fatalf("create squad: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+	})
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, assignee_type, assignee_id)
+		VALUES ($1, 'member', $2, $3, 'in_review', 'squad', $4)
+		RETURNING id
+	`, testWorkspaceID, testUserID, "sop final auto close from in_review", squadID).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+
+	if _, err := testHandler.Queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
+		WorkspaceID:    util.MustParseUUID(testWorkspaceID),
+		IssueID:        util.MustParseUUID(issueID),
+		SquadID:        util.MustParseUUID(squadID),
+		ProfileKey:     "test-final-sop-in-review",
+		Profile:        []byte(profile),
+		Status:         "进行中",
+		CurrentStepKey: "05-verify",
+	}); err != nil {
+		t.Fatalf("create sop run: %v", err)
+	}
+
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, dispatched_at, started_at)
+		VALUES ($1, $2, $3, 'running', 2, now(), now())
+		RETURNING id
+	`, verifyID, verifyRuntimeID, issueID).Scan(&taskID); err != nil {
+		t.Fatalf("insert verify task: %v", err)
+	}
+	if _, err := testHandler.TaskService.CompleteTask(ctx, util.MustParseUUID(taskID), []byte(`{}`), "", ""); err != nil {
+		t.Fatalf("complete verify task: %v", err)
+	}
+
+	issue, err := testHandler.Queries.GetIssue(ctx, util.MustParseUUID(issueID))
+	if err != nil {
+		t.Fatalf("load issue: %v", err)
+	}
+	if issue.Status != "done" {
+		t.Fatalf("issue status = %q, want done", issue.Status)
+	}
+}
+
+func TestCompleteTask_AutoClosedChildIssueWakesParentSquad(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	sq := newSquadCommentTriggerFixture(t)
+	verifyID := createHandlerTestAgent(t, "SOP Child Auto Close 05-verify", nil)
+
+	var verifyRuntimeID string
+	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, verifyID).Scan(&verifyRuntimeID); err != nil {
+		t.Fatalf("load verify runtime: %v", err)
+	}
+
+	project, err := testHandler.Queries.CreateProject(ctx, db.CreateProjectParams{
+		WorkspaceID: util.MustParseUUID(testWorkspaceID),
+		Title:       "SOP Child Auto Close Gongfeng Project",
+		Status:      "active",
+		Priority:    "medium",
+		Scope:       "workspace",
+		OwnerID:     util.MustParseUUID(testUserID),
+	})
+	if err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
+	})
+	if _, err := testHandler.Queries.CreateProjectResource(ctx, db.CreateProjectResourceParams{
+		ProjectID:    project.ID,
+		WorkspaceID:  util.MustParseUUID(testWorkspaceID),
+		ResourceType: "gongfeng_repo",
+		ResourceRef:  []byte(`{"project_path":"ChainWeaver/ida/gateway","repo_url":"https://git.code.tencent.com/ChainWeaver/ida/gateway"}`),
+		Label:        pgtype.Text{String: "gateway", Valid: true},
+		CreatedBy:    util.MustParseUUID(testUserID),
+	}); err != nil {
+		t.Fatalf("create project resource: %v", err)
+	}
+
+	var parentID, childID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, assignee_type, assignee_id)
+		VALUES ($1, 'member', $2, $3, 'in_progress', 'squad', $4)
+		RETURNING id
+	`, testWorkspaceID, testUserID, "sop parent waits for auto-closed child", sq.SquadID).Scan(&parentID); err != nil {
+		t.Fatalf("create parent issue: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, parent_issue_id, project_id, assignee_type, assignee_id)
+		VALUES ($1, 'member', $2, $3, 'in_progress', $4, $5, 'squad', $6)
+		RETURNING id
+	`, testWorkspaceID, testUserID, "sop child auto closes with MR", parentID, project.ID, sq.SquadID).Scan(&childID); err != nil {
+		t.Fatalf("create child issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id IN ($1, $2)`, parentID, childID)
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id IN ($1, $2)`, childID, parentID)
+	})
+
+	now := time.Now()
+	pr, err := testHandler.Queries.UpsertGitHubPullRequest(ctx, db.UpsertGitHubPullRequestParams{
+		WorkspaceID:    util.MustParseUUID(testWorkspaceID),
+		InstallationID: 1,
+		RepoOwner:      "ChainWeaver/ida",
+		RepoName:       "gateway",
+		PrNumber:       int32(now.UnixNano() % 1000000),
+		Title:          "SOP child auto close linked MR",
+		State:          "open",
+		HtmlUrl:        "https://git.code.tencent.com/ChainWeaver/ida/gateway/merge_requests/999999",
+		PrCreatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
+		PrUpdatedAt:    pgtype.Timestamptz{Time: now, Valid: true},
+		HeadSha:        "abc123",
+		Additions:      1,
+		ChangedFiles:   1,
+		Branch:         pgtype.Text{String: "goal-test/child-auto-close", Valid: true},
+	})
+	if err != nil {
+		t.Fatalf("upsert PR: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM github_pull_request WHERE id = $1`, pr.ID)
+	})
+	if err := testHandler.Queries.LinkIssueToPullRequest(ctx, db.LinkIssueToPullRequestParams{
+		IssueID:             util.MustParseUUID(childID),
+		PullRequestID:       pr.ID,
+		CloseIntent:         true,
+		LinkedByType:        pgtype.Text{String: "agent", Valid: true},
+		LinkedByID:          util.MustParseUUID(verifyID),
+		PreserveCloseIntent: false,
+	}); err != nil {
+		t.Fatalf("link PR to child issue: %v", err)
+	}
+
+	profile := `{
+		"profile_key":"test-child-auto-close",
+		"steps":[
+			{"key":"pm","name":"pm","role_key":"pm"},
+			{"key":"05-verify","name":"05-测试","role_key":"05-verify"}
+		]
+	}`
+	if _, err := testHandler.Queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
+		WorkspaceID:    util.MustParseUUID(testWorkspaceID),
+		IssueID:        util.MustParseUUID(childID),
+		SquadID:        util.MustParseUUID(sq.SquadID),
+		ProfileKey:     "test-child-auto-close",
+		Profile:        []byte(profile),
+		Status:         "进行中",
+		CurrentStepKey: "05-verify",
+	}); err != nil {
+		t.Fatalf("create child SOP run: %v", err)
+	}
+
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, dispatched_at, started_at)
+		VALUES ($1, $2, $3, 'running', 2, now(), now())
+		RETURNING id
+	`, verifyID, verifyRuntimeID, childID).Scan(&taskID); err != nil {
+		t.Fatalf("insert verify task: %v", err)
+	}
+	if _, err := testHandler.TaskService.CompleteTask(ctx, util.MustParseUUID(taskID), []byte(`{}`), "", ""); err != nil {
+		t.Fatalf("complete verify task: %v", err)
+	}
+
+	child, err := testHandler.Queries.GetIssue(ctx, util.MustParseUUID(childID))
+	if err != nil {
+		t.Fatalf("load child issue: %v", err)
+	}
+	if child.Status != "done" {
+		t.Fatalf("child status = %q, want done", child.Status)
+	}
+	content := parentSystemCommentContent(t, parentID)
+	if !strings.Contains(content, "mention://squad/"+sq.SquadID) {
+		t.Fatalf("parent child-done comment should mention parent squad, got: %s", content)
+	}
+	if got := countPendingTasksForAgent(t, parentID, sq.LeaderID); got != 1 {
+		t.Fatalf("pending parent leader tasks = %d, want 1", got)
 	}
 }
 

@@ -30,6 +30,10 @@ const fixtureGovernanceEvidence = buildFixtureGovernanceEvidence();
 const promptEvaluationEvidence = buildPromptEvaluationEvidence();
 const sopBrowserEvidence = buildSOPBrowserEvidence();
 
+function isPassingArtifact(artifact) {
+  return artifact?.ok === true || artifact?.result === "completed" || artifact?.result === "passed";
+}
+
 const databaseStageEvidence = databaseURL && e2e.issue?.id
   ? await loadStageEvidence(databaseURL, e2e.issue.id)
   : { stages: [], task_count: 0, error: "DATABASE_URL or e2e.issue.id unavailable" };
@@ -299,7 +303,7 @@ function buildIntThreeProjectGoalMatrix({ e2e, stageEvidence, crossServiceEviden
       "No passing SOP browser audit artifact.",
       sopBrowserEvidence),
     matrixItem("E-05", "Trace/Eval/Optimizer core loop can run model comparison and publish evidence",
-      promptEval.result === "completed" || promptEval.ok === true,
+      isPassingArtifact(promptEval),
       "No passing prompt evaluation curl E2E artifact.",
       promptEvaluationEvidence),
     matrixItem("E-06", "Agent-generated artifacts are captured into platform comments/attachments",
@@ -342,11 +346,11 @@ function buildIntThreeProjectReadinessMatrix({ e2e, stageEvidence, crossServiceE
   const newAccount = newAccountMCPEvidence.latest_json || {};
   const fixtureGovernance = fixtureGovernanceEvidence.latest_json || {};
   return [
-    prodItem("int_three_project_e2e", "Int three-project customer-comment SOP E2E is passing", e2e.result === "completed" || e2e.ok === true, "No passing sop-customer-comment E2E artifact."),
+    prodItem("int_three_project_e2e", "Int three-project customer-comment SOP E2E is passing", isPassingArtifact(e2e), "No passing sop-customer-comment E2E artifact."),
     prodItem("stage_success", "PM-driven SOP stage artifacts and task rounds complete successfully", sopStageProofComplete, "SOP stage artifact or PM task-round evidence is incomplete."),
     prodItem("cross_service_curl", "Real cross-service sandbox curl passes", crossServiceEvidence.cross_service_curl.ok === true, "No passing service sandbox curl evidence."),
     prodItem("new_account_mcp_onboarding", "A new account can configure TAPD/Gongfeng credentials and use MCP in Agent runtime", newAccount.ok === true, "No passing new-account MCP onboarding artifact."),
-    prodItem("prompt_evaluation", "Training/evaluation core loop is passing", promptEval.result === "completed" || promptEval.ok === true, "No passing prompt evaluation artifact."),
+    prodItem("prompt_evaluation", "Training/evaluation core loop is passing", isPassingArtifact(promptEval), "No passing prompt evaluation artifact."),
     prodItem("sop_browser_audit", "SOP issue and run-review browser audit is passing", browser.ok === true, "No passing SOP browser audit artifact."),
     prodItem("generic_topology", "Cross-project and Agent topology are generic rather than fixed to current fixture", topology.ok === true, topology.blocking_reason || "No passing topology generalization audit."),
     prodItem("data_governance", "Acceptance fixtures are unique and traceable", fixtureGovernance.ok === true, "No passing fixture governance artifact."),
@@ -877,7 +881,7 @@ function buildPromptEvaluationEvidence() {
   return {
     latest_json_path: latestPath,
     latest_json: latestJSON,
-    ok: latestJSON?.ok === true || latestJSON?.result === "completed",
+    ok: isPassingArtifact(latestJSON),
     proof_boundary: latestJSON
       ? "Prompt evaluation curl E2E artifact is available for int acceptance."
       : "missing",

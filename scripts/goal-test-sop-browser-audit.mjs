@@ -142,7 +142,7 @@ async function auditRunReview(page) {
   result.checks.thinking_rounds_label = await page.getByText("思考轮次").count() > 0;
   result.checks.horizontal_timeline = await page.getByTestId("run-review-horizontal-timeline").isVisible();
 
-  result.checks.duration_tooltip = await hoverAndCheckText(page, "总耗时说明", ["Agent 执行耗时", "人工确认耗时"]);
+  result.checks.duration_tooltip = await hoverAndCheckText(page, "总耗时说明", ["Agent 执行耗时"]);
   result.checks.token_tooltip = await hoverAndCheckText(page, "总 Token说明", ["输入 Token", "缓存命中率"]);
 
   result.checks.node_metric_tooltip = false;

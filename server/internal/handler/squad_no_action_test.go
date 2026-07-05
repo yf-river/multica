@@ -195,6 +195,32 @@ func TestCreateComment_SquadLeaderNoActionRejectsComment(t *testing.T) {
 	}
 }
 
+func TestCreateComment_SquadLeaderNoActionAllowsMentionDispatch(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+
+	fx := newRunningSquadLeaderTaskFixture(t)
+	recordSquadLeaderEvaluationForTask(t, fx, "no_action")
+
+	w := httptest.NewRecorder()
+	r := newRequest("POST", "/api/issues/"+fx.IssueID+"/comments", map[string]any{
+		"content":   "继续调度 [@PM-项目经理](mention://agent/" + fx.LeaderID + ") 处理。",
+		"parent_id": fx.TriggerCommentID,
+	})
+	r = withURLParam(r, "id", fx.IssueID)
+	r.Header.Set("X-Agent-ID", fx.LeaderID)
+	r.Header.Set("X-Task-ID", fx.TaskID)
+
+	testHandler.CreateComment(w, r)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateComment: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := countAgentCommentsForIssue(t, fx.IssueID, fx.LeaderID); got != 1 {
+		t.Fatalf("expected dispatch comment to be stored, got %d", got)
+	}
+}
+
 func TestCreateComment_CommentTriggeredAgentAllowsTopLevelFallback(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")

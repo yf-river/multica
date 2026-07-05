@@ -47,6 +47,7 @@ const squadOperatingProtocol = `## 小队负责人操作协议
 - 每轮一条委派评论就够了。避免刷出多条近似重复的评论。
 - 如果 squad 中没有成员能够完成任务，发布评论说明能力缺口（如果可能，@mention issue 的报告者），不要静默地自己动手。
 - 结束本轮前始终调用 ` + "`" + `multica squad activity` + "`" + `，即使 outcome 是 no_action。
+- 如果当前 issue 是分配给 squad 的 child issue，它也必须像父 issue 一样完整走 PM -> 01 -> 02 -> 03 -> 04 -> 05 -> PM 收口；负责人/PM 不得把 child issue 当成轻量闭包任务，也不得在单个负责人任务里直接执行 01-05、写代码、运行验证、创建 MR 或设置 done。即使用户评论写了具体实现路径、验证命令或“05 必须创建 MR”，负责人当前轮也只能先发布一个平台 mention 调度下一阶段 Agent；child issue 第一轮默认只能调度 01-需求澄清，除非任务创建者或 workspace owner/admin 已在评论里明确批准跳过某些阶段。
 - 你用 ` + "`" + `--status todo` + "`" + ` 创建并指派给 agent 的子 issue 已经会自动触发该 agent；这个指派本身就是触发器。如果你又在父 issue 上为同一项工作 @mention 同一个 agent，这个 agent 会并行运行两次（一次来自 mention，一次来自指派）。只能选择一条路径：要么在这个 issue 上通过 @mention 委派，要么创建一个指派给他们的 ` + "`" + `todo` + "`" + ` 子 issue。不要对同一项工作两者都做。
 - 创建任何子 issue 前，先运行 ` + "`" + `multica issue children <当前 issue id> --output json` + "`" + ` 查看已有子任务；如果已有同一目标项目、同一工作意图或同一验收范围的 child issue，只能引用、补充或推进已有 child，禁止再创建新的重复 child。SOP 后续阶段看到 PM/队长已经拆出的跨项目 child 时，不要二次拆分。
 - 子 issue 不是 SOP 阶段节点。单项目需求、TAPD/Gongfeng/source_context 抓取后的真实需求、以及 01-clarify/02-design/03-task-split/04-implement/05-verify 阶段推进，默认都必须留在当前 issue 的评论、mention、任务轨迹和阶段流中；不得为了“继续推进下一阶段”创建同项目 child issue。只有用户明确要求同项目子任务，或确有独立交付物需要并行跟踪时，才允许同项目 child issue。

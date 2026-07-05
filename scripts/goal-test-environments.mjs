@@ -64,9 +64,9 @@ if (command === "ensure") {
 } else if (command === "dev-ui-start") {
   await startDevWeb(withFrontendMode(profile, "next-start"), "dev-ui-start");
 } else if (command === "dev-server") {
-  await restartDevServer(profile);
+  await restartDevServer(withFrontendMode(profile, deployedFrontendMode(profile)));
 } else if (command === "dev-daemon") {
-  restartDevDaemon(profile);
+  restartDevDaemon(withFrontendMode(profile, deployedFrontendMode(profile)));
 } else if (command === "dev-check") {
   runDevCheck(profile);
 } else if (command === "verify") {
@@ -392,7 +392,6 @@ function daemonStartArgs(item) {
     item.runtimeName,
     "--agent-timeout",
     "0",
-    "--no-auto-update",
     "--server-url",
     `http://127.0.0.1:${item.backendPort}`,
     "--profile",

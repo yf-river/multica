@@ -183,7 +183,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 
 	taskSvc := service.NewTaskService(queries, txStarter, hub, bus, daemonHub)
 	taskSvc.Analytics = analyticsClient
-	return &Handler{
+	h := &Handler{
 		Queries:               queries,
 		DB:                    executor,
 		TxStarter:             txStarter,
@@ -206,6 +206,8 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		WebhookIPRateLimiter:  NewMemoryWebhookIPRateLimiter(DefaultWebhookIPRateLimit()),
 		cfg:                   cfg,
 	}
+	taskSvc.IssueStatusChanged = h.notifyParentOfChildDone
+	return h
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

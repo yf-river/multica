@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -802,6 +803,8 @@ const (
 	commentTriggerSourceMentionSquadLeader commentAgentTriggerSource = "mention_squad_leader"
 )
 
+var sopRoleKeyMentionRe = regexp.MustCompile(`(?:^|[^A-Za-z0-9_-])@([A-Za-z0-9][A-Za-z0-9-]{0,48})(?:\b|$)`)
+
 type commentAgentTrigger struct {
 	Agent  db.Agent
 	Source commentAgentTriggerSource
@@ -1000,7 +1003,7 @@ func (h *Handler) CreateComment(w http.ResponseWriter, r *http.Request) {
 							"task_id", taskIDHeader,
 							"issue_id", issueID,
 						)...)
-					} else if noAction {
+					} else if noAction && isNoActionOnlyComment(req.Content) {
 						writeError(w, http.StatusConflict, "squad leader recorded no_action; comments are not allowed for this task")
 						return
 					}
@@ -1089,6 +1092,17 @@ func isNoteComment(content string) bool {
 		firstToken = trimmed[:i]
 	}
 	return strings.EqualFold(firstToken, noteCommentPrefix)
+}
+
+func isNoActionOnlyComment(content string) bool {
+	trimmed := strings.ToLower(strings.TrimSpace(content))
+	if trimmed == "" || len(util.ParseMentions(content)) > 0 {
+		return false
+	}
+	return strings.Contains(trimmed, "no action") ||
+		strings.Contains(trimmed, "无需行动") ||
+		strings.Contains(trimmed, "不需要行动") ||
+		strings.Contains(trimmed, "静默退出")
 }
 
 func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment, actorType, actorID string, suppressAgentIDs []pgtype.UUID) {
@@ -1433,6 +1447,7 @@ func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issu
 	if shouldInheritParentMentions(parentComment, mentions, authorType) {
 		mentions = util.ParseMentions(parentComment.Content)
 	}
+	mentions = append(mentions, h.parseSquadSOPRoleKeyMentions(ctx, issue, content)...)
 	triggers := make([]commentAgentTrigger, 0, len(mentions))
 	seen := make(map[string]struct{}, len(mentions))
 	add := func(trigger commentAgentTrigger) {
@@ -1526,6 +1541,85 @@ func (h *Handler) computeMentionedAgentCommentTriggers(ctx context.Context, issu
 		add(commentAgentTrigger{Agent: agent, Source: commentTriggerSourceMentionAgent})
 	}
 	return triggers
+}
+
+func (h *Handler) parseSquadSOPRoleKeyMentions(ctx context.Context, issue db.Issue, content string) []util.Mention {
+	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
+		return nil
+	}
+	roleAgentName := map[string]string{
+		"pm":            projectSOPAgentPM,
+		"01":            projectSOPAgent01,
+		"01-clarify":    projectSOPAgent01,
+		"02":            projectSOPAgent02,
+		"02-design":     projectSOPAgent02,
+		"03":            projectSOPAgent03,
+		"03-task-split": projectSOPAgent03,
+		"04":            projectSOPAgent04,
+		"04-implement":  projectSOPAgent04,
+		"05":            projectSOPAgent05,
+		"05-verify":     projectSOPAgent05,
+	}
+	matches := sopRoleKeyMentionRe.FindAllStringSubmatch(content, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	wantedNames := map[string]struct{}{}
+	for _, match := range matches {
+		if len(match) != 2 {
+			continue
+		}
+		if name, ok := roleAgentName[normalizeSOPRoleMentionKey(match[1])]; ok {
+			wantedNames[name] = struct{}{}
+		}
+	}
+	if len(wantedNames) == 0 {
+		return nil
+	}
+	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
+		ID:          issue.AssigneeID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		return nil
+	}
+	members, err := h.Queries.ListSquadMembers(ctx, squad.ID)
+	if err != nil {
+		return nil
+	}
+	memberIDs := map[string]struct{}{uuidToString(squad.LeaderID): {}}
+	for _, member := range members {
+		if member.MemberType == "agent" && member.MemberID.Valid {
+			memberIDs[uuidToString(member.MemberID)] = struct{}{}
+		}
+	}
+	agents, err := h.Queries.ListAgents(ctx, issue.WorkspaceID)
+	if err != nil {
+		return nil
+	}
+	out := make([]util.Mention, 0, len(wantedNames))
+	seen := map[string]struct{}{}
+	for _, agent := range agents {
+		if _, ok := wantedNames[agent.Name]; !ok {
+			continue
+		}
+		id := uuidToString(agent.ID)
+		if _, ok := memberIDs[id]; !ok {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		out = append(out, util.Mention{Type: "agent", ID: id})
+	}
+	return out
+}
+
+func normalizeSOPRoleMentionKey(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, "_", "-")
+	return strings.Trim(value, "-")
 }
 
 func (h *Handler) UpdateComment(w http.ResponseWriter, r *http.Request) {

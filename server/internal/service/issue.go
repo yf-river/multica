@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
@@ -316,6 +317,70 @@ func (s *IssueService) EnqueueOnAssignForIssue(ctx context.Context, issue db.Iss
 	s.maybeEnqueueOnAssign(ctx, issue, actorType, actorID)
 }
 
+// EnsureProjectOwnerApprovalForBacklog reconciles the approval gate when an
+// existing issue is moved or corrected into backlog. Create already handles
+// status=backlog, but agent handoffs can create an issue as todo and then fix
+// project/status/assignee in a follow-up update; that path must not bypass the
+// project owner gate.
+func (s *IssueService) EnsureProjectOwnerApprovalForBacklog(ctx context.Context, issue db.Issue, actorType, actorID string) {
+	if issue.Status != "backlog" || !issue.ProjectID.Valid {
+		return
+	}
+	project, err := s.Queries.GetProjectInWorkspace(ctx, db.GetProjectInWorkspaceParams{
+		ID:          issue.ProjectID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("project owner approval reconcile skipped: project lookup failed",
+			"issue_id", util.UUIDToString(issue.ID),
+			"project_id", util.UUIDToString(issue.ProjectID),
+			"error", err)
+		return
+	}
+	if !project.LeadType.Valid || !project.LeadID.Valid {
+		return
+	}
+	switch project.LeadType.String {
+	case "agent":
+		if issueMetadataString(issue.Metadata, "project_owner_approval_status") == "pending" {
+			return
+		}
+		leadAgent, err := s.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+			ID:          project.LeadID,
+			WorkspaceID: project.WorkspaceID,
+		})
+		if err != nil || leadAgent.ArchivedAt.Valid {
+			return
+		}
+		for key, value := range map[string]string{
+			"project_owner_approval_status": "pending",
+			"project_owner_approval_mode":   "agent_review_task",
+			"project_owner_reviewer_type":   "agent",
+			"project_owner_reviewer_id":     util.UUIDToString(project.LeadID),
+		} {
+			if _, err := s.Queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+				ID:          issue.ID,
+				WorkspaceID: issue.WorkspaceID,
+				Key:         key,
+				Value:       mustJSONStringBytes(value),
+			}); err != nil {
+				slog.Warn("project owner approval metadata reconcile failed",
+					"issue_id", util.UUIDToString(issue.ID),
+					"project_id", util.UUIDToString(project.ID),
+					"key", key,
+					"error", err)
+				return
+			}
+		}
+		s.enqueueProjectOwnerApprovalTask(ctx, issue, project)
+	case "member":
+		if s.hasOpenProjectLeadApprovalInbox(ctx, project, issue) {
+			return
+		}
+		s.notifyProjectLeadApprovalRequested(ctx, project, issue, actorType, actorID)
+	}
+}
+
 func (s *IssueService) enqueueProjectOwnerApprovalTask(ctx context.Context, issue db.Issue, project db.Project) {
 	if s.TaskService == nil {
 		return
@@ -363,9 +428,53 @@ func setMetadataString(metadata map[string][]byte, key, value string) {
 	metadata[key] = raw
 }
 
+func issueMetadataString(metadata []byte, key string) string {
+	if len(metadata) == 0 {
+		return ""
+	}
+	var values map[string]json.RawMessage
+	if err := json.Unmarshal(metadata, &values); err != nil {
+		return ""
+	}
+	raw, ok := values[key]
+	if !ok {
+		return ""
+	}
+	var value string
+	if err := json.Unmarshal(raw, &value); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(value)
+}
+
 func mustJSONStringBytes(value string) []byte {
 	raw, _ := json.Marshal(value)
 	return raw
+}
+
+func (s *IssueService) hasOpenProjectLeadApprovalInbox(ctx context.Context, project db.Project, issue db.Issue) bool {
+	if !project.LeadID.Valid {
+		return false
+	}
+	items, err := s.Queries.ListInboxItems(ctx, db.ListInboxItemsParams{
+		WorkspaceID:   issue.WorkspaceID,
+		RecipientType: "member",
+		RecipientID:   project.LeadID,
+	})
+	if err != nil {
+		slog.Warn("project owner approval inbox lookup failed",
+			"issue_id", util.UUIDToString(issue.ID),
+			"project_id", util.UUIDToString(project.ID),
+			"recipient_id", util.UUIDToString(project.LeadID),
+			"error", err)
+		return false
+	}
+	for _, item := range items {
+		if item.IssueID.Valid && item.IssueID == issue.ID && item.Type == "project_issue_approval_requested" {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *IssueService) notifyProjectLeadApprovalRequested(ctx context.Context, project db.Project, issue db.Issue, actorType, actorID string) {

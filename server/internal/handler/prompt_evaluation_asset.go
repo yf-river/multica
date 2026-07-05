@@ -4892,6 +4892,9 @@ func promptEvaluationToolFailureSignal(tool string, output string) (bool, string
 	if promptEvaluationToolResultIsContentOnly(tool) {
 		return false, ""
 	}
+	if promptEvaluationToolOutputHasOnlySuccessFailureCounters(normalized) {
+		return false, ""
+	}
 	patterns := []struct {
 		needle string
 		reason string
@@ -4922,6 +4925,25 @@ func promptEvaluationToolFailureSignal(tool string, output string) (bool, string
 		}
 	}
 	return false, ""
+}
+
+func promptEvaluationToolOutputHasOnlySuccessFailureCounters(output string) bool {
+	for _, fatalNeedle := range []string{"error:", "exception", "panic", "timeout", "timed out", "permission denied", "http 500", "status 500", "错误", "异常", "超时", "无权限"} {
+		if strings.Contains(output, fatalNeedle) {
+			return false
+		}
+	}
+	successCounters := []*regexp.Regexp{
+		regexp.MustCompile(`\b0\s+(?:failed|failure|failures)\b`),
+		regexp.MustCompile(`\b0\s+chart\(s\)\s+failed\b`),
+		regexp.MustCompile(`\b0\s+test(?:s)?\s+failed\b`),
+	}
+	for _, pattern := range successCounters {
+		if pattern.MatchString(output) {
+			return true
+		}
+	}
+	return false
 }
 
 func promptEvaluationToolResultIsContentOnly(tool string) bool {

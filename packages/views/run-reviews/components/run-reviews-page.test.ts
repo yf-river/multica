@@ -3,6 +3,7 @@ import type { AgentTask, Issue, IssueExecutionTreeResponse, IssueTimelineNode, T
 import type { TaskMessagePayload } from "@multica/core/types/events";
 import type { PromptEvaluationToolCallChain } from "@multica/core/types/prompt-evaluation";
 import {
+  buildAgentNodeRows,
   buildIssueReviewDraftCaseRequest,
   buildRunReviewDurationTooltipRows,
   buildRunReviewLiveSummary,
@@ -117,7 +118,7 @@ describe("buildRunReviewOptimizerHref", () => {
 });
 
 describe("run review duration summary", () => {
-  it("uses work-cycle wall clock duration and reports human confirmation remainder", () => {
+  it("uses work-cycle wall clock duration and reports only execution time in the tooltip", () => {
     const summary = {
       issue_id: "issue-1",
       node_count: 1,
@@ -140,30 +141,11 @@ describe("run review duration summary", () => {
     expect(runReviewTotalDurationMs(summary)).toBe(300000);
     expect(buildRunReviewDurationTooltipRows(summary)).toEqual([
       ["Agent 执行耗时", "2m"],
-      ["人工确认耗时", "3m"],
     ]);
   });
 
-  it("keeps zero human confirmation distinct from missing data", () => {
-    expect(buildRunReviewDurationTooltipRows({
-      issue_id: "issue-1",
-      node_count: 1,
-      total_duration_ms: 60000,
-      agent_execution_duration_ms: 60000,
-      human_confirmation_duration_ms: 0,
-      total_input_tokens: 0,
-      total_output_tokens: 0,
-      total_cache_read_tokens: 0,
-      total_cache_write_tokens: 0,
-      message_count: 0,
-      agent_turn_count: 0,
-      trace_event_count: 0,
-      usage_unavailable: false,
-      acceptance_status: "done",
-      full_analysis_deep_link: "",
-    })).toContainEqual(["人工确认耗时", "0m"]);
-
-    expect(buildRunReviewDurationTooltipRows(undefined)).toContainEqual(["人工确认耗时", "暂未记录"]);
+  it("does not show artificial waiting time when timing data is missing", () => {
+    expect(buildRunReviewDurationTooltipRows(undefined)).toEqual([["Agent 执行耗时", "0m"]]);
   });
 });
 
@@ -515,6 +497,32 @@ describe("buildRunReviewEventRows", () => {
     expect(row?.detail).toContain("stack frame 3");
   });
 
+  it("does not mark successful command output as failed just because it contains failed counters", () => {
+    const tree = {
+      root: {
+        tasks: [],
+        task_messages: [],
+        trace_events: [],
+        tool_call_chains: [
+          tool({
+            id: "helm-lint",
+            tool: "exec_command",
+            input: { command: "helm lint helm/public 2>&1 | tail -10" },
+            output: "Stdout: ==> Linting helm/public\n1 chart(s) linted, 0 chart(s) failed\n\nStderr: (empty)\nExit Code: 0\nSignal: (none)",
+            failure_signal: false,
+            failure_reason: "",
+          }),
+        ],
+        children: [],
+      },
+    } as unknown as IssueExecutionTreeResponse;
+
+    const [row] = buildRunReviewEventRows(tree, []);
+
+    expect(row?.severity).toBe("normal");
+    expect(row?.summary).not.toContain("异常摘要");
+  });
+
   it("renders unknown tools as useful fallback events while preserving raw evidence", () => {
     const tree = {
       root: {
@@ -609,9 +617,59 @@ describe("buildRunReviewEventRows", () => {
 
     expect(csv).toContain("total_duration_ms,total_token,total_thinking_rounds");
     expect(csv).toContain('summary,issue-1,ISS-1,"优化,运行复盘",120000,64,3');
-    expect(csv).toContain('agent_node,issue-1,ISS-1,"优化,运行复盘",120000,64,3,task-1,01-需求澄清,completed,01-clarify');
+    expect(csv).toContain('agent_node,issue-1,ISS-1,"优化,运行复盘",120000,64,3,task-1,01-需求澄清,1,completed,01-clarify');
     expect(csv).toContain(",60000,1,2,3,4,10,5,1");
     expect(csv).toContain("01-需求澄清.md </api/attachments/att-1/download>");
+  });
+
+  it("aggregates repeated runs from the same agent node", () => {
+    const baseNode = {
+      issue_id: "issue-1",
+      node_id: "task:base",
+      node_type: "agent_task",
+      agent_id: "agent-pm",
+      agent_name: "PM-项目经理",
+      status: "completed",
+      started_at: "2026-06-09T10:00:00.000Z",
+      completed_at: "2026-06-09T10:01:00.000Z",
+      duration_ms: 60_000,
+      input_tokens: 10,
+      output_tokens: 20,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      message_count: 1,
+      agent_turn_count: 2,
+      trace_event_count: 1,
+      usage_unavailable_trace: false,
+      summary: "pm run",
+      evidence_refs: [],
+      artifacts: [],
+    } as IssueTimelineNode;
+
+    const rows = buildAgentNodeRows([
+      { ...baseNode, node_id: "task:task-1" },
+      {
+        ...baseNode,
+        node_id: "task:task-2",
+        started_at: "2026-06-09T10:02:00.000Z",
+        completed_at: "2026-06-09T10:03:00.000Z",
+        input_tokens: 5,
+        output_tokens: 7,
+        agent_turn_count: 1,
+      },
+    ]);
+
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({
+      key: "agent-pm",
+      label: "PM-项目经理",
+      runCount: 2,
+      taskIds: ["task-1", "task-2"],
+    });
+    expect(rows[0]?.node.duration_ms).toBe(120_000);
+    expect(rows[0]?.node.input_tokens).toBe(15);
+    expect(rows[0]?.node.output_tokens).toBe(27);
+    expect(rows[0]?.node.agent_turn_count).toBe(3);
   });
 
   it("exports raw event CSV with escaped detail, metadata, and raw evidence", () => {

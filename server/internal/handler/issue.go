@@ -3001,6 +3001,16 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	// payload builder and the HTTP response share the same value.
 	prefix := h.getIssuePrefix(r.Context(), wsUUID)
 
+	if existing, ok := h.findDuplicateOpenChildIssue(r.Context(), wsUUID, req.Title, parentIssueID, projectID, assigneeType, assigneeID); ok {
+		slog.Info("duplicate child issue create reused existing issue",
+			"issue_id", uuidToString(existing.ID),
+			"title", existing.Title,
+			"workspace_id", workspaceID,
+		)
+		writeJSON(w, http.StatusOK, issueToResponse(existing, prefix))
+		return
+	}
+
 	// Analytics agent ID: assignee agent when the issue is being assigned
 	// to an agent, otherwise the creator agent for agent-authored issues.
 	// Resolved here (not in the service) because creator identity is HTTP-side.
@@ -3076,6 +3086,39 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	resp := issueToResponse(issue, prefix)
 	resp.Attachments = buildAttachmentResponses(res.Attachments)
 	writeJSON(w, http.StatusCreated, resp)
+}
+
+func (h *Handler) findDuplicateOpenChildIssue(ctx context.Context, workspaceID pgtype.UUID, title string, parentIssueID, projectID pgtype.UUID, assigneeType pgtype.Text, assigneeID pgtype.UUID) (db.Issue, bool) {
+	if !parentIssueID.Valid || !projectID.Valid || !assigneeType.Valid || !assigneeID.Valid {
+		return db.Issue{}, false
+	}
+	children, err := h.Queries.ListChildrenByParents(ctx, db.ListChildrenByParentsParams{
+		WorkspaceID: workspaceID,
+		ParentIds:   []pgtype.UUID{parentIssueID},
+	})
+	if err != nil {
+		return db.Issue{}, false
+	}
+	normalizedTitle := strings.TrimSpace(title)
+	for _, child := range children {
+		if child.Status == "done" || child.Status == "cancelled" {
+			continue
+		}
+		if strings.TrimSpace(child.Title) != normalizedTitle {
+			continue
+		}
+		if !child.ProjectID.Valid || child.ProjectID != projectID {
+			continue
+		}
+		if !child.AssigneeType.Valid || child.AssigneeType.String != assigneeType.String {
+			continue
+		}
+		if !child.AssigneeID.Valid || child.AssigneeID != assigneeID {
+			continue
+		}
+		return child, true
+	}
+	return db.Issue{}, false
 }
 
 func (h *Handler) enrichIssueSourceMetadata(ctx context.Context, metadata map[string]json.RawMessage, creatorUserID string, texts ...string) map[string]json.RawMessage {
@@ -3454,6 +3497,7 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	assigneeChanged := (req.AssigneeType != nil || req.AssigneeID != nil) &&
 		(prevIssue.AssigneeType.String != issue.AssigneeType.String || uuidToString(prevIssue.AssigneeID) != uuidToString(issue.AssigneeID))
 	statusChanged := req.Status != nil && prevIssue.Status != issue.Status
+	projectChanged := req.ProjectID != nil && prevIssue.ProjectID != issue.ProjectID
 	priorityChanged := req.Priority != nil && prevIssue.Priority != issue.Priority
 	descriptionChanged := req.Description != nil && textToPtr(prevIssue.Description) != resp.Description
 	titleChanged := req.Title != nil && prevIssue.Title != issue.Title
@@ -3486,6 +3530,9 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	})
 
 	h.reconcileIssueUpdateSideEffects(r.Context(), r, prevIssue, issue, assigneeChanged, statusChanged, actorType, actorID)
+	if issue.Status == "backlog" && (statusChanged || projectChanged || assigneeChanged) {
+		h.IssueService.EnsureProjectOwnerApprovalForBacklog(r.Context(), issue, actorType, actorID)
+	}
 
 	writeJSON(w, http.StatusOK, resp)
 }

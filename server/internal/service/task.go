@@ -34,6 +34,9 @@ type TaskService struct {
 	Analytics analytics.Client
 	Metrics   *obsmetrics.BusinessMetrics
 	Wakeup    TaskWakeupNotifier
+	// IssueStatusChanged runs best-effort side effects that live above the
+	// task service layer, such as parent child-done notifications.
+	IssueStatusChanged func(ctx context.Context, prev, updated db.Issue, actorType, actorID string)
 	// EmptyClaim caches "this runtime has no queued task" so the daemon
 	// poll path can skip a Postgres scan on the steady-state empty case.
 	// Optional — a nil cache disables the fast path and every claim
@@ -2089,7 +2092,7 @@ func (s *TaskService) syncSquadSOPTaskStep(ctx context.Context, task db.AgentTas
 
 func (s *TaskService) closeIssueAfterCompletedSOPRun(ctx context.Context, issue db.Issue) {
 	switch issue.Status {
-	case "done", "cancelled", "in_review", "blocked":
+	case "done", "cancelled", "blocked":
 		return
 	}
 	pullRequests, err := s.Queries.ListPullRequestsByIssue(ctx, issue.ID)
@@ -2102,28 +2105,17 @@ func (s *TaskService) closeIssueAfterCompletedSOPRun(ctx context.Context, issue 
 	}
 	if s.issueRequiresGongfengMR(ctx, issue) {
 		if len(pullRequests) > 0 {
-			updated, err := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
-				ID:          issue.ID,
-				Status:      "in_review",
-				WorkspaceID: issue.WorkspaceID,
-			})
-			if err != nil {
-				slog.Warn("move issue to review after completed SOP failed",
+			if _, err := s.updateIssueStatusAfterCompletedSOPRun(ctx, issue, "done"); err != nil {
+				slog.Warn("auto-close issue after completed SOP with linked MR failed",
 					"issue_id", util.UUIDToString(issue.ID),
 					"error", err,
 				)
 				return
 			}
-			slog.Info("issue moved to review after completed SOP run with linked MR", "issue_id", util.UUIDToString(issue.ID))
-			s.broadcastIssueUpdated(updated)
+			slog.Info("issue auto-closed after completed SOP run with linked MR", "issue_id", util.UUIDToString(issue.ID))
 			return
 		}
-		updated, err := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
-			ID:          issue.ID,
-			Status:      "blocked",
-			WorkspaceID: issue.WorkspaceID,
-		})
-		if err != nil {
+		if _, err := s.updateIssueStatusAfterCompletedSOPRun(ctx, issue, "blocked"); err != nil {
 			slog.Warn("block issue after completed SOP without MR failed",
 				"issue_id", util.UUIDToString(issue.ID),
 				"error", err,
@@ -2132,18 +2124,12 @@ func (s *TaskService) closeIssueAfterCompletedSOPRun(ctx context.Context, issue 
 		}
 		s.recordMissingMRGateComment(ctx, issue)
 		slog.Info("issue blocked after completed SOP run without linked MR", "issue_id", util.UUIDToString(issue.ID))
-		s.broadcastIssueUpdated(updated)
 		return
 	}
 	if len(pullRequests) > 0 {
 		return
 	}
-	updated, err := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
-		ID:          issue.ID,
-		Status:      "done",
-		WorkspaceID: issue.WorkspaceID,
-	})
-	if err != nil {
+	if _, err := s.updateIssueStatusAfterCompletedSOPRun(ctx, issue, "done"); err != nil {
 		slog.Warn("auto-close issue after completed SOP failed",
 			"issue_id", util.UUIDToString(issue.ID),
 			"error", err,
@@ -2151,7 +2137,22 @@ func (s *TaskService) closeIssueAfterCompletedSOPRun(ctx context.Context, issue 
 		return
 	}
 	slog.Info("issue auto-closed after completed SOP run", "issue_id", util.UUIDToString(issue.ID))
+}
+
+func (s *TaskService) updateIssueStatusAfterCompletedSOPRun(ctx context.Context, issue db.Issue, status string) (db.Issue, error) {
+	updated, err := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+		ID:          issue.ID,
+		Status:      status,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		return db.Issue{}, err
+	}
 	s.broadcastIssueUpdated(updated)
+	if s.IssueStatusChanged != nil {
+		s.IssueStatusChanged(ctx, issue, updated, "system", "")
+	}
+	return updated, nil
 }
 
 func (s *TaskService) issueRequiresGongfengMR(ctx context.Context, issue db.Issue) bool {
@@ -2185,7 +2186,7 @@ multica issue mr create <issue-id> --provider gongfeng --project-path <project-p
 		IssueID:     issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 		AuthorType:  "system",
-		AuthorID:    pgtype.UUID{},
+		AuthorID:    util.MustParseUUID("00000000-0000-0000-0000-000000000000"),
 		Content:     content,
 		Type:        "comment",
 	})
@@ -2475,8 +2476,8 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 }
 
 var (
-	gongfengMRURLRe     = regexp.MustCompile(`https://git\.code\.tencent\.com/([A-Za-z0-9_.~%+/\-]+)/merge_requests/([0-9]+)`)
-	gongfengMRBranchRe  = regexp.MustCompile(`(?m)(?:源分支|source\s+branch|source_branch)\s*[：:]\s*` + "`?" + `([A-Za-z0-9._/\-]+)` + "`?")
+	gongfengMRURLRe     = regexp.MustCompile(`https://git\.code\.tencent\.com/([A-Za-z0-9_.~%+/\-]+?)/(?:-/)?merge_requests/([0-9]+)`)
+	gongfengMRBranchRe  = regexp.MustCompile(`(?im)(?:源分支|source\s+branch|source_branch)\s*(?:[：:]|\|)\s*` + "`?" + `([A-Za-z0-9._/\-]+)` + "`?")
 	gongfengMRTitleLine = regexp.MustCompile(`(?m)(?:MR\s*(?:已创建|created)?|merge\s+request)\s*[：:]\s*(.+)$`)
 )
 
@@ -2599,38 +2600,89 @@ func parseGongfengMRRefsFromComment(content string) []gongfengMRCommentRef {
 	if len(matches) == 0 {
 		return nil
 	}
-	branch := ""
-	if branchMatch := gongfengMRBranchRe.FindStringSubmatch(content); len(branchMatch) == 2 {
-		branch = strings.TrimSpace(branchMatch[1])
+	globalBranch := ""
+	if len(matches) == 1 {
+		if branchMatch := gongfengMRBranchRe.FindStringSubmatch(content); len(branchMatch) == 2 {
+			globalBranch = strings.TrimSpace(branchMatch[1])
+		}
 	}
-	title := ""
-	if titleMatch := gongfengMRTitleLine.FindStringSubmatch(content); len(titleMatch) == 2 {
-		title = strings.TrimSpace(titleMatch[1])
-	}
+	lines := strings.Split(content, "\n")
 	refs := make([]gongfengMRCommentRef, 0, len(matches))
 	seen := map[string]struct{}{}
-	for _, match := range matches {
-		if len(match) != 3 {
-			continue
+	for lineIdx, line := range lines {
+		lineMatches := gongfengMRURLRe.FindAllStringSubmatch(line, -1)
+		for _, match := range lineMatches {
+			if len(match) != 3 {
+				continue
+			}
+			number64, err := strconv.ParseInt(match[2], 10, 32)
+			if err != nil || number64 <= 0 {
+				continue
+			}
+			htmlURL := match[0]
+			if _, ok := seen[htmlURL]; ok {
+				continue
+			}
+			seen[htmlURL] = struct{}{}
+			number := int32(number64)
+			branch := gongfengBranchNearMR(lines, lineIdx)
+			if branch == "" {
+				branch = globalBranch
+			}
+			refs = append(refs, gongfengMRCommentRef{
+				ProjectPath:  strings.Trim(match[1], "/"),
+				Number:       number,
+				HTMLURL:      htmlURL,
+				SourceBranch: branch,
+				Title:        gongfengTitleNearMR(lines, lineIdx, number),
+			})
 		}
-		number64, err := strconv.ParseInt(match[2], 10, 32)
-		if err != nil || number64 <= 0 {
-			continue
-		}
-		htmlURL := match[0]
-		if _, ok := seen[htmlURL]; ok {
-			continue
-		}
-		seen[htmlURL] = struct{}{}
-		refs = append(refs, gongfengMRCommentRef{
-			ProjectPath:  strings.Trim(match[1], "/"),
-			Number:       int32(number64),
-			HTMLURL:      htmlURL,
-			SourceBranch: branch,
-			Title:        title,
-		})
 	}
 	return refs
+}
+
+func gongfengBranchNearMR(lines []string, lineIdx int) string {
+	if branch := gongfengBranchFromLine(lines[lineIdx]); branch != "" {
+		return branch
+	}
+	for i := lineIdx + 1; i < len(lines) && i <= lineIdx+8; i++ {
+		if i != lineIdx+1 && strings.HasPrefix(strings.TrimSpace(lines[i]), "#") {
+			break
+		}
+		if branch := gongfengBranchFromLine(lines[i]); branch != "" {
+			return branch
+		}
+	}
+	for i := lineIdx - 1; i >= 0 && i >= lineIdx-4; i-- {
+		if branch := gongfengBranchFromLine(lines[i]); branch != "" {
+			return branch
+		}
+		if strings.HasPrefix(strings.TrimSpace(lines[i]), "#") {
+			break
+		}
+	}
+	return ""
+}
+
+func gongfengBranchFromLine(line string) string {
+	if branchMatch := gongfengMRBranchRe.FindStringSubmatch(line); len(branchMatch) == 2 {
+		return strings.Trim(strings.TrimSpace(branchMatch[1]), "`")
+	}
+	return ""
+}
+
+func gongfengTitleNearMR(lines []string, lineIdx int, number int32) string {
+	marker := fmt.Sprintf("!%d", number)
+	for i := lineIdx; i >= 0 && i >= lineIdx-8; i-- {
+		line := strings.TrimSpace(lines[i])
+		if line == "" {
+			continue
+		}
+		if strings.Contains(line, marker) && strings.HasPrefix(line, "#") {
+			return strings.TrimSpace(strings.TrimLeft(line, "# "))
+		}
+	}
+	return ""
 }
 
 func splitGongfengProjectPath(projectPath string) (string, string) {

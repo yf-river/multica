@@ -95,8 +95,10 @@ type internalSquadRole struct {
 	MCPConfig   []byte
 }
 
-const sopPMRoutingRule = "调度规则：只有 PM 可以 @mention 下一阶段 Agent；每次只 @mention 一个下一阶段；收到阶段 handoff 后先判断通过、返工、推进或收口，再由 PM 发出唯一调度评论；不要先发无 mention 的重复调度评论。默认按 PM -> 01 -> 02 -> 03 -> 04 -> 05 推进；如果任务很简单、需要跳过阶段，PM 必须先在 issue 评论说明跳步方案、被跳过阶段、原因和风险，并等待任务创建者或 workspace owner/admin 明确同意，确认前不得调度被跳到的阶段。05-verify 通过且无阻断时，PM 必须在最终收口中把 issue 状态更新为 done，并说明运行复盘数据是否完整。"
+const sopPMRoutingRule = "调度规则：只有 PM 可以 @mention 下一阶段 Agent；每次只 @mention 一个下一阶段；必须使用平台 Markdown mention 语法 `[@Agent 名称](mention://agent/<agent-id>)`，不要使用普通 `@名称`、`@<agent-id>` 或裸 `mention://agent/<id>` 作为规范调度格式；mention 的显示名和 agent-id 必须来自同一个真实 Agent 记录，禁止把上一阶段的 agent-id 改显示名复用，拿不到目标 Agent 的真实 id 时必须先查 `multica agent list --output json` 或评论阻断，不能猜测；收到阶段 handoff 后先判断通过、返工、推进或收口，再由 PM 发出唯一调度评论；PM 发出平台 mention 调度评论后，本次 agent task 必须立即结束，等待被 mention 的阶段 Agent 产生独立平台 task 和评论，禁止继续读取或执行下一阶段 skill；如果阶段结论包含“待确认”“阻塞”“进入下一阶段条件”“需要客户/用户确认”等未满足条件，PM 只能总结问题并等待用户补充，不得继续调度下一阶段；如果最新客户/用户评论明确要求“只做澄清”“等待确认”“不要创建 child issue/子任务”，PM 在后续自动唤醒中也必须停止在该边界内，只能总结澄清结果并等待下一条客户/用户确认，不得抢先创建 child issue 或推进实现阶段；不要先发无 mention 的重复调度评论；每次调度、审阅、阻断或收口都必须发布可读正文摘要，附件只能作为补充，禁止只上传附件不写正文结论。默认按 PM -> 01 -> 02 -> 03 -> 04 -> 05 推进；如果 issue 或小队指令明确说明这是简单任务、允许直接完成、无需实现/MR/04/05，PM 不要再要求额外确认，必须直接发布最终结果并把 issue 更新为 done；如果想跳过阶段但 issue 没有明确允许直通，才需要先在 issue 评论说明跳步方案、被跳过阶段、原因和风险，并等待任务创建者或 workspace owner/admin 明确同意。05-verify 通过且无阻断时，PM 必须在最终收口中把 issue 状态更新为 done，并说明运行复盘数据是否完整。"
 const sopWorkerRoutingRule = "阶段路由规则：本角色不得 @mention 任何 Agent、Squad、Member 或 all，不得直接触发下一阶段；只输出本阶段结论、证据、阻断和 handoff 给 PM，由 PM 判断通过、返工、推进或收口。"
+const sopImplementationMRRule = "功能 MR 规则：当 issue 是代码/配置/接口/测试等功能实现需求时，关联的 implementation MR 必须包含真实实现或测试改动；只包含 docs/验收记录/阶段报告的 MR 只能标记为 evidence MR，不得作为功能 MR 通过，不得据此宣称需求已实现或完成。若当前只有 docs-only MR，必须阻断或退回 04-implement 补真实改动；纯文档需求例外时必须在评论中明确说明需求本身就是文档变更。"
+const sopRecursiveChildRule = "递归 child issue 规则：任何 child issue 只要 assignee_type=squad 且分配给 PM 小队，就必须像父 issue 一样独立按 PM -> 01 -> 02 -> 03 -> 04 -> 05 -> PM 收口执行；PM 必须通过平台评论 @mention 对应阶段 Agent 来触发新的平台 agent_task_queue 任务，禁止在 PM 单个任务里用内部 todo/TaskCreate/TaskUpdate 代跑 01-05，禁止 PM 自己读取或执行 01/02/03/04/05 阶段 skill，01/02/03/04/05 必须分别产生独立 task、评论和阶段产物；PM 每次只发布一个调度、审阅、阻断或收口评论，发布调度评论后立即结束当前任务；不得把 child issue 当作只写闭包摘要的轻量任务，不得由父任务或脚本代为 done。child issue 的实现 MR 必须关联到 child issue 本身，父 issue 只能汇总引用 child issue 和 child MR。创建或确认跨项目 child issue 前必须先回读已有 children；同一 parent 下同一目标项目、同一工作意图或同一验收范围已有 child 时，必须复用已有 child，不得新建替代 child；如发现重复 child，必须报告阻断并请求人工处理，不能继续创建更多 child。除非用户或拆分计划明确写出执行顺序，多个 child issue 语义上可并行；存在明确依赖时按依赖顺序推进。"
 const internalSquadDefaultProvider = "codebuddy"
 const internalSquadDefaultModel = defaultCodebuddyAgentModel
 
@@ -175,8 +177,8 @@ func projectSOPInstructions() string {
 
 - 按 PM -> 01-需求澄清 -> 02-方案设计 -> 03-任务拆分 -> 04-开发 -> 05-验证测试 推进。
 - ` + sopPMRoutingRule + `
-- PM 首轮只能输出流程判断、下一阶段调度或跳步确认请求；不得把自己当作 04-开发执行代码。
-- 若需要跳过阶段，PM 必须先评论列出被跳过阶段、原因和风险，等待任务创建者或 workspace owner/admin 明确同意；未确认时停止。
+- PM 首轮只能输出流程判断、下一阶段调度、阻断说明或明确允许的简单任务直通收口；不得把自己当作 04-开发执行代码。
+- 若 issue 或小队指令明确允许简单任务直通，PM 直接发布最终结果并把 issue 更新为 done；若未明确允许直通但需要跳过阶段，PM 必须先评论列出被跳过阶段、原因和风险，等待任务创建者或 workspace owner/admin 明确同意；未确认时停止。
 - 01-05 阶段 Agent 只输出本阶段结论、证据、阻断和 handoff 给 PM，不得 @mention 下一阶段或任何负责人。
 - 目标项目、仓库、分支、TAPD/Gongfeng 真源和可用 operation skill 必须来自 issue、项目资源或 source_context，不能写死为某几个仓库。
 - 接收 TAPD 输入时，必须先根据 source_context 读取 TAPD 正文；遇到 git.code.tencent.com 链接或项目资源时使用 Gongfeng 上下文解析。
@@ -188,6 +190,7 @@ func projectSOPInstructions() string {
 - 只有遇到明确跨项目依赖时，PM 才能先创建对应目标项目的待规划 child issue，并确认 parent、project、assignee 都正确。
 - 创建跨项目 child issue 前，先回读已有 children，避免同一目标项目、同一工作意图或同一验收范围重复创建。
 - 不得只评论或委派 03 代替 PM 创建跨项目 child issue。
+- 分配给 PM 小队的 child issue 必须递归跑完整 PM/01/02/03/04/05；child MR 必须关联到 child issue，父 issue 只汇总引用。
 
 ## 验收要求
 
@@ -195,6 +198,7 @@ func projectSOPInstructions() string {
 - 测试证据完整。
 - 交接说明明确。
 - 跨项目 child issue 由 PM 直接创建并可回读。
+- 分配给 PM 小队的 child issue 递归执行完整 SOP，且 child MR 关联正确。
 - 05-验证测试通过且无阻断后，PM 必须在最终收口中把 issue 状态更新为 done。
 
 ## 禁止事项
@@ -210,7 +214,8 @@ func projectSOPInstructions() string {
 - 为了进入 01-clarify/02-design/03-task-split/04-implement/05-verify 创建 child issue。
 - 01-05 阶段 Agent @mention 下一阶段或任何负责人。
 - PM 一次评论 @mention 多个下一阶段。
-- 05-验证测试通过后只写验收通过但不更新 issue 状态为 done。`)
+- 05-验证测试通过后只写验收通过但不更新 issue 状态为 done。
+- 功能实现需求只有 docs-only MR 时把它当成功能 MR 通过。` + sopImplementationMRRule + sopRecursiveChildRule)
 }
 
 func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
@@ -224,12 +229,12 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 			Instructions: projectSOPInstructions(),
 			Model:        internalSquadDefaultModel,
 			Roles: []internalSquadRole{
-				{Key: "pm", Name: projectSOPAgentPM, AgentName: projectSOPAgentPM, Description: "SOP PM：读取 issue、项目资源和 source_context，识别目标项目与跨项目依赖，调度 01-05 阶段并最终收口。", Instruction: "职责：接收 issue/TAPD/source_context，识别目标项目、仓库和跨项目依赖，调度 01-05 阶段，检查每阶段 handoff，决定推进、返工、阻断或收口。输入：issue 标题/正文/评论、TAPD 来源、项目资源、代码仓库信息、上一阶段 handoff、运行复盘/trace。交付物：阶段调度评论、跨项目 child issue、返工说明、最终验收摘要、issue done 状态。边界：PM 负责调度和判断，不代替 01-05 完成专业阶段；不得 checkout、编辑代码、运行实现测试或发布实现完成总结；单项目需求留在当前 issue；只有真实跨项目依赖才创建 child issue。禁止：不得直接实现需求；不得未获确认就跳过阶段；不得一次 @mention 多个下一阶段；不得让阶段 Agent 自己调下一阶段；不得为了推进阶段创建同项目 child issue；05 未通过不得 done。接收 issue 和 TAPD 输入时，必须先根据 source_context 使用 mcp-server-tapd 读取 TAPD 正文；遇到 git.code.tencent.com 链接或项目资源时使用 gongfeng MCP 解析。根据 issue 指定项目、项目资源、仓库路径和可用 operation skill 决定本轮目标项目，推进 PM -> 01-需求澄清 -> 02-方案设计 -> 03-任务拆分 -> 04-开发 -> 05-验证测试。PM 首轮只能输出流程判断、下一阶段调度或跳步确认请求，不得把自己当作 04-开发执行代码；简单任务需要跳步时，先评论说明跳步方案、被跳过阶段、原因和风险，并等待任务创建者或 workspace owner/admin 明确同意。" + sopPMRoutingRule + "TAPD 正文抓取后得到的真实需求仍属于当前 issue，不得复制成同项目 child issue；不得为了进入 01-clarify、02-design、03-task-split、04-implement 或 05-verify 创建 child issue。若父任务或 profile 要求创建跨项目子 issue，PM 必须本人先创建对应目标项目的 backlog 子 issue，并确认 parent、project、assignee 都正确；不得只写评论、不得等待或委派 03 创建。", MemberRole: projectSOPRolePM, MCPConfig: mcpConfig},
+				{Key: "pm", Name: projectSOPAgentPM, AgentName: projectSOPAgentPM, Description: "SOP PM：读取 issue、项目资源和 source_context，识别目标项目与跨项目依赖，调度 01-05 阶段并最终收口。", Instruction: "职责：接收 issue/TAPD/source_context，识别目标项目、仓库和跨项目依赖，调度 01-05 阶段，检查每阶段 handoff，决定推进、返工、阻断或收口。输入：issue 标题/正文/评论、TAPD 来源、项目资源、代码仓库信息、上一阶段 handoff、运行复盘/trace。交付物：阶段调度评论、跨项目 child issue、返工说明、最终验收摘要、issue done 状态。边界：PM 负责调度和判断，不代替 01-05 完成专业阶段；不得 checkout、编辑代码、运行实现测试或发布实现完成总结；单项目需求留在当前 issue；只有真实跨项目依赖才创建 child issue。禁止：不得直接实现需求；不得未获确认就跳过阶段；不得一次 @mention 多个下一阶段；不得让阶段 Agent 自己调下一阶段；不得为了推进阶段创建同项目 child issue；05 未通过不得 done。接收 issue 和 TAPD 输入时，必须先根据 source_context 使用 mcp-server-tapd 读取 TAPD 正文；遇到 git.code.tencent.com 链接或项目资源时使用 gongfeng MCP 解析。根据 issue 指定项目、项目资源、仓库路径和可用 operation skill 决定本轮目标项目，推进 PM -> 01-需求澄清 -> 02-方案设计 -> 03-任务拆分 -> 04-开发 -> 05-验证测试。PM 首轮只能输出流程判断、下一阶段调度、阻断说明或明确允许的简单任务直通收口，不得把自己当作 04-开发执行代码；issue 明确允许简单任务直通且无需实现/MR/04/05 时，直接发布最终结果并把 issue 更新为 done，不要要求额外确认；未明确允许直通但需要跳步时，才先评论说明跳步方案、被跳过阶段、原因和风险，并等待任务创建者或 workspace owner/admin 明确同意。" + sopPMRoutingRule + sopImplementationMRRule + sopRecursiveChildRule + "TAPD 正文抓取后得到的真实需求仍属于当前 issue，不得复制成同项目 child issue；不得为了进入 01-clarify、02-design、03-task-split、04-implement 或 05-verify 创建 child issue。若父任务或 profile 要求创建跨项目子 issue，PM 必须本人先创建对应目标项目的 backlog 子 issue，并确认 parent、project、assignee 都正确；不得只写评论、不得等待或委派 03 创建。", MemberRole: projectSOPRolePM, MCPConfig: mcpConfig},
 				{Key: "01-clarify", Name: projectSOPAgent01, AgentName: projectSOPAgent01, Description: "需求澄清：读取 TAPD/source_context 和项目资源，明确需求边界、验收口径、目标仓库与可用/缺失 operation skill。", Instruction: "职责：读懂需求来源，确认用户要什么、不做什么、验收标准是什么。输入：issue、TAPD 正文、评论、项目背景、已有约束。交付物：需求边界、未定问题、验收口径、目标项目/仓库初判、handoff。边界：只澄清需求，不写实现方案，不改代码。禁止：不得直接进入开发；不得自行 @mention 下一阶段。执行目标项目的 01-clarify；先读取 source_context 中的 TAPD 正文和项目资源，产出需求边界、验收口径、适用仓库、可用/缺失 operation skill 和 handoff。" + sopWorkerRoutingRule, MemberRole: projectSOPRole01, MCPConfig: mcpConfig},
 				{Key: "02-design", Name: projectSOPAgent02, AgentName: projectSOPAgent02, Description: "方案设计：结合目标仓库上下文输出方案、影响面、接口/数据契约和项目 skill 调用计划。", Instruction: "职责：基于需求和项目上下文设计技术方案、影响面、接口/数据契约和测试策略。输入：01 handoff、项目资源、代码/接口背景、历史文档。交付物：技术方案、影响面、接口/数据变更、风险点、测试建议、handoff。边界：负责方案，不直接落大范围代码。禁止：不得绕过澄清结论；不得自行 @mention 下一阶段。执行目标项目的 02-design；需要仓库上下文时使用 gongfeng MCP 或本地仓库，产出方案、影响面、接口/数据契约、项目 skill 调用计划和 handoff。" + sopWorkerRoutingRule, MemberRole: projectSOPRole02, MCPConfig: mcpConfig},
 				{Key: "03-task-split", Name: projectSOPAgent03, AgentName: projectSOPAgent03, Description: "任务拆分：识别跨项目依赖，产出目标项目列表、operation graph、缺失 skill 和 handoff。", Instruction: "职责：把方案拆成可执行任务，识别跨项目依赖和执行顺序。输入：02 handoff、项目列表、仓库资源、依赖关系。交付物：任务拆分、目标项目列表、跨项目 child issue 建议、依赖顺序、handoff。边界：负责拆分和依赖判断；跨项目 child issue 由 PM 创建或确认。禁止：不得重复创建 child issue；不得把单项目阶段推进拆成同项目 child issue。执行目标项目的 03-task-split；用 TAPD/Gongfeng/项目资源上下文识别跨项目依赖，产出任务拆分、目标项目列表、operation graph、缺失 skill 和 handoff。" + sopWorkerRoutingRule, MemberRole: projectSOPRole03, MCPConfig: mcpConfig},
-				{Key: "04-implement", Name: projectSOPAgent04, AgentName: projectSOPAgent04, Description: "代码实现：按既定边界和目标项目 operation skill 执行修改，保留实现证据，不越权扩散。", Instruction: "职责：按确认范围实现代码、配置、测试或文档变更。输入：03 handoff、目标仓库、任务边界、相关 skill/operation 指引。交付物：代码变更、测试结果、实现说明、风险说明、handoff。边界：只改本任务范围内内容。禁止：不得越权改无关模块；不得缺测试就宣称完成；不得自行 @mention 下一阶段。执行目标项目的 04-implement，按既定边界和对应项目 operation skill 实现，不越权修改无关模块；需要工蜂上下文时使用 gongfeng MCP。" + sopWorkerRoutingRule, MemberRole: projectSOPRole04, MCPConfig: mcpConfig},
-				{Key: "05-verify", Name: projectSOPAgent05, AgentName: projectSOPAgent05, Description: "验证测试：独立检查实现、测试结果、回写记录和最终 handoff，确认可验收证据。", Instruction: "职责：独立检查实现、测试结果、回归风险、证据完整性。输入：04 handoff、diff、测试日志、验收标准、运行复盘/trace。交付物：验证结论、缺陷/返工清单、通过证据、最终 handoff。边界：负责独立验收，不替开发自证。禁止：不得在证据不足时通过；不得直接 done issue，最终收口交给 PM。执行目标项目的 05-verify，独立检查实现、测试结果和最终 handoff；核对 TAPD/Gongfeng/source_context 证据。" + sopWorkerRoutingRule, MemberRole: projectSOPRole05, MCPConfig: mcpConfig},
+				{Key: "04-implement", Name: projectSOPAgent04, AgentName: projectSOPAgent04, Description: "代码实现：按既定边界和目标项目 operation skill 执行修改，保留实现证据，不越权扩散。", Instruction: "职责：按确认范围实现代码、配置、测试或文档变更。输入：03 handoff、目标仓库、任务边界、相关 skill/operation 指引。交付物：代码变更、测试结果、实现说明、风险说明、handoff。边界：只改本任务范围内内容。禁止：不得越权改无关模块；不得缺测试就宣称完成；不得自行 @mention 下一阶段。执行目标项目的 04-implement，按既定边界和对应项目 operation skill 实现，不越权修改无关模块；需要工蜂上下文时使用 gongfeng MCP。" + sopWorkerRoutingRule + sopImplementationMRRule + sopRecursiveChildRule, MemberRole: projectSOPRole04, MCPConfig: mcpConfig},
+				{Key: "05-verify", Name: projectSOPAgent05, AgentName: projectSOPAgent05, Description: "验证测试：独立检查实现、测试结果、回写记录和最终 handoff，确认可验收证据。", Instruction: "职责：独立检查实现、测试结果、回归风险、证据完整性。输入：04 handoff、diff、测试日志、验收标准、运行复盘/trace。交付物：验证结论、缺陷/返工清单、通过证据、最终 handoff。边界：负责独立验收，不替开发自证。禁止：不得在证据不足时通过；不得直接 done issue，最终收口交给 PM。执行目标项目的 05-verify，独立检查实现、测试结果和最终 handoff；核对 TAPD/Gongfeng/source_context 证据。" + sopWorkerRoutingRule + sopImplementationMRRule + sopRecursiveChildRule, MemberRole: projectSOPRole05, MCPConfig: mcpConfig},
 			},
 			Profile: map[string]any{
 				"profile_key": "generic-project-sop-flow",
@@ -260,7 +265,7 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 					"gongfeng": "从 project_resources.gongfeng_repo 或 git.code.tencent.com 链接解析项目、仓库、分支、提交和文件上下文；需要账号级 Gongfeng profile。",
 					"project":  "目标项目必须来自 issue.project、project_resources、source_context 或用户明确输入；不得假设固定三仓。",
 				},
-				"acceptance": []string{"阶段产物完整", "测试证据完整", "交接说明明确", "跨项目子 issue 由 PM 直接创建并可回读", "05-verify 通过后 issue 状态为 done"},
+				"acceptance": []string{"阶段产物完整", "测试证据完整", "交接说明明确", "跨项目子 issue 由 PM 直接创建并可回读", "分配给 PM 小队的 child issue 必须由 PM 通过平台 @mention 触发独立 01/02/03/04/05 task", "05-verify 通过后 issue 状态为 done"},
 				"cross_project_policy": map[string]any{
 					"creation_owner":          "pm",
 					"required_initial_status": "backlog",
@@ -278,7 +283,7 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 					},
 				},
 				"archive_policy":    "06-archive 不作为必跑阶段；最终结论、证据摘要和 handoff 状态由 05-verify 输出。",
-				"forbidden_actions": []string{"跳过验收直接完成", "缺少测试证据时宣称完成", "PM 直接 checkout、编辑代码、运行实现测试或发布实现完成总结", "PM 未获任务创建者或 workspace owner/admin 明确同意就跳过 01-05 中任一阶段", "未确认目标项目就调用项目 skill", "把 06-archive 当作必跑验收阶段", "只评论或委派 03 代替 PM 创建跨项目子 issue", "把 TAPD 正文抓取后的真实需求复制成同项目 child issue", "为了进入 01-clarify/02-design/03-task-split/04-implement/05-verify 创建 child issue", "01-05 阶段 Agent @mention 下一阶段或任何负责人", "PM 一次评论 @mention 多个下一阶段", "05-verify 通过后只写验收通过但不更新 issue 状态为 done"},
+				"forbidden_actions": []string{"跳过验收直接完成", "缺少测试证据时宣称完成", "PM 直接 checkout、编辑代码、运行实现测试或发布实现完成总结", "PM 未获任务创建者或 workspace owner/admin 明确同意就跳过 01-05 中任一阶段", "未确认目标项目就调用项目 skill", "把 06-archive 当作必跑验收阶段", "只评论或委派 03 代替 PM 创建跨项目子 issue", "把 TAPD 正文抓取后的真实需求复制成同项目 child issue", "为了进入 01-clarify/02-design/03-task-split/04-implement/05-verify 创建 child issue", "PM 在单个任务里用内部 todo/TaskCreate/TaskUpdate 代跑 child issue 的 01-05", "PM 发出平台 mention 调度评论后继续执行下一阶段 skill", "01-05 阶段 Agent @mention 下一阶段或任何负责人", "PM 一次评论 @mention 多个下一阶段", "05-verify 通过后只写验收通过但不更新 issue 状态为 done"},
 			},
 		}, true
 	case "multica-coding":
