@@ -135,7 +135,7 @@ try {
 
   const finalIssue = await get(`/api/issues/${issue.id}`);
   evidence.final_issue = pickIssue(finalIssue);
-  check("issue_in_review", finalIssue.status === "in_review", evidence.final_issue);
+  check("issue_ready_for_review_or_done", ["in_review", "done"].includes(finalIssue.status), evidence.final_issue);
 
   const linkedMRs = await get(`/api/issues/${issue.id}/pull-requests`);
   evidence.linked_pull_requests = normalizePullRequests(linkedMRs).map(pickPullRequest);
@@ -565,7 +565,7 @@ async function runNaturalSOPFlow(agents, knownTasks, options = {}) {
         issue: pickIssue(current),
       });
     }
-    if (current.status === "in_review" && requiredWorkers.every((key) => completedWorkers.has(key))) {
+    if (["in_review", "done"].includes(current.status) && requiredWorkers.every((key) => completedWorkers.has(key))) {
       return;
     }
   }
