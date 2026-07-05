@@ -45,11 +45,9 @@ export function runReviewTotalDurationMs(summary: IssueTimelineSummary | undefin
 }
 
 export function buildRunReviewDurationTooltipRows(summary: IssueTimelineSummary | undefined): Array<[string, string]> {
-  const wallClock = runReviewTotalDurationMs(summary);
   const agentExecution = summary?.agent_execution_duration_ms ?? summary?.total_duration_ms ?? 0;
   const humanConfirmation = summary?.human_confirmation_duration_ms;
   return [
-    ["墙钟耗时", formatDuration(wallClock)],
     ["Agent 执行耗时", formatDuration(agentExecution)],
     ["人工/等待耗时", humanConfirmation == null ? "未记录" : formatDuration(humanConfirmation)],
   ];
@@ -842,19 +840,42 @@ function ArtifactLinks({ artifacts }: { artifacts: AgentTaskArtifact[] }) {
   );
 }
 
-export type TimelineNodeRow = { key: string; label: string; node?: IssueTimelineNode };
-type ChildLane = ReturnType<typeof buildChildLanes>[number];
-
-interface TimelineBarRow {
+export interface TimelineNodeSegment {
   key: string;
   label: string;
-  kind: "stage" | "child";
+  node: IssueTimelineNode;
+  ordinal: number;
+  total: number;
+}
+
+export type TimelineNodeRow = {
+  key: string;
+  label: string;
+  node?: IssueTimelineNode;
+  segments?: TimelineNodeSegment[];
+};
+type ChildLane = ReturnType<typeof buildChildLanes>[number];
+
+interface TimelineBarSegment {
+  key: string;
+  label: string;
   status: string;
   startMs: number | null;
   endMs: number | null;
   durationMs: number;
   tokenTotal: number;
   turns: number;
+  ordinal: number;
+  total: number;
+}
+
+interface TimelineBarRow {
+  key: string;
+  label: string;
+  kind: "stage" | "child";
+  status: string;
+  subtitle: string;
+  segments: TimelineBarSegment[];
   missing: boolean;
 }
 
@@ -868,11 +889,11 @@ function TimelineLaneChart({
   timelineNodes: IssueTimelineNode[];
 }) {
   const rows = buildTimelineBarRows(stageRows, childLanes, timelineNodes);
-  const timedRows = rows.filter((row) => row.startMs !== null && row.endMs !== null);
-  const min = timedRows.length > 0 ? Math.min(...timedRows.map((row) => row.startMs as number)) : 0;
-  const max = timedRows.length > 0 ? Math.max(...timedRows.map((row) => row.endMs as number)) : min + 1;
+  const timedSegments = rows.flatMap((row) => row.segments).filter((segment) => segment.startMs !== null && segment.endMs !== null);
+  const min = timedSegments.length > 0 ? Math.min(...timedSegments.map((segment) => segment.startMs as number)) : 0;
+  const max = timedSegments.length > 0 ? Math.max(...timedSegments.map((segment) => segment.endMs as number)) : min + 1;
   const span = Math.max(max - min, 1);
-  const ticks = timedRows.length > 0
+  const ticks = timedSegments.length > 0
     ? [min, min + span / 2, max].map((value) => formatTimeTick(value))
     : ["开始", "中点", "结束"];
 
@@ -893,39 +914,44 @@ function TimelineLaneChart({
           <div key={row.key} className="grid grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-x-3">
             <div className="min-w-0">
               <div className="truncate text-xs font-medium">{row.label}</div>
-              <div className="truncate text-[11px] text-muted-foreground">{statusLabel(row.status)}</div>
+              <div className="truncate text-[11px] text-muted-foreground">{row.subtitle}</div>
             </div>
             <div className="relative h-9 overflow-hidden rounded-md border bg-muted/20">
               <div className="absolute inset-y-0 left-1/3 w-px bg-border/70" />
               <div className="absolute inset-y-0 left-2/3 w-px bg-border/70" />
-              {row.missing || row.startMs === null || row.endMs === null ? (
+              {row.missing || row.segments.length === 0 || row.segments.every((segment) => segment.startMs === null || segment.endMs === null) ? (
                 <div className="flex h-full items-center px-2 text-[11px] text-muted-foreground">
                   {row.missing ? "缺节点" : "缺时间"}
                 </div>
               ) : (
-                <div
-                  className={cn(
-                    "absolute top-1 bottom-1 min-w-[2rem] rounded px-2 text-[11px] leading-7 text-white shadow-sm",
-                    row.kind === "child" ? "bg-sky-600" : "bg-emerald-600",
-                  )}
-                  data-testid={`run-review-timeline-bar-${row.key}`}
-                  style={{
-                    left: `${Math.max(0, ((row.startMs - min) / span) * 100)}%`,
-                    width: `${Math.max(6, ((row.endMs - row.startMs) / span) * 100)}%`,
-                  }}
-                  title={[
-                    row.label,
-                    `开始 ${formatDateTime(row.startMs)}`,
-                    `结束 ${formatDateTime(row.endMs)}`,
-                    `耗时 ${formatDuration(row.durationMs)}`,
-                    `Token ${formatNumber(row.tokenTotal)}`,
-                    `思考轮次 ${formatNumber(row.turns)}`,
-                  ].join(" · ")}
-                >
-                  <span className="block truncate">
-                    {formatDuration(row.durationMs)} · {formatNumber(row.tokenTotal)} token
-                  </span>
-                </div>
+                row.segments.map((segment) => (
+                  segment.startMs === null || segment.endMs === null ? null : (
+                    <div
+                      key={segment.key}
+                      className={cn(
+                        "absolute top-1 bottom-1 min-w-[2rem] rounded px-2 text-[11px] leading-7 text-white shadow-sm",
+                        row.kind === "child" ? "bg-sky-600" : "bg-emerald-600",
+                      )}
+                      data-testid={`run-review-timeline-bar-${segment.key}`}
+                      style={{
+                        left: `${Math.max(0, ((segment.startMs - min) / span) * 100)}%`,
+                        width: `${Math.max(6, ((segment.endMs - segment.startMs) / span) * 100)}%`,
+                      }}
+                      title={[
+                        segment.total > 1 ? `${row.label} #${segment.ordinal}` : row.label,
+                        `开始 ${formatDateTime(segment.startMs)}`,
+                        `结束 ${formatDateTime(segment.endMs)}`,
+                        `耗时 ${formatDuration(segment.durationMs)}`,
+                        `Token ${formatNumber(segment.tokenTotal)}`,
+                        `思考轮次 ${formatNumber(segment.turns)}`,
+                      ].join(" · ")}
+                    >
+                      <span className="block truncate">
+                        {segment.total > 1 ? `#${segment.ordinal} · ` : ""}{formatDuration(segment.durationMs)} · {formatNumber(segment.tokenTotal)} token
+                      </span>
+                    </div>
+                  )
+                ))
               )}
             </div>
           </div>
@@ -945,35 +971,65 @@ function buildTimelineBarRows(
   timelineNodes: IssueTimelineNode[],
 ): TimelineBarRow[] {
   const stageBars = stageRows.filter((stage) => stage.node).map((stage) => {
-    const timing = timelineTiming(stage.node);
+    const segments = timelineRowSegments(stage);
     return {
       key: stage.key,
       label: stage.label,
       kind: "stage" as const,
       status: stage.node?.status ?? "missing",
-      ...timing,
-      durationMs: stage.node?.duration_ms ?? timing.durationMs,
-      tokenTotal: (stage.node?.input_tokens ?? 0) + (stage.node?.output_tokens ?? 0),
-      turns: stage.node?.agent_turn_count ?? 0,
+      subtitle: timelineRowSubtitle(stage.node?.status ?? "missing", segments.length),
+      segments,
       missing: !stage.node,
     };
   });
   const childBars = childLanes.filter((lane) => lane.issue).map((lane) => {
     const node = timelineNodes.find((item) => item.node_type === "child_issue_ref" && item.child_issue_id === lane.issue?.id);
-    const timing = timelineTiming(node);
+    const segments = node ? [timelineNodeSegment(lane.key, lane.label, node, 1, 1)] : [];
     return {
       key: lane.key,
       label: lane.label,
       kind: "child" as const,
       status: lane.issue?.status ?? "missing",
-      ...timing,
-      durationMs: node?.duration_ms ?? timing.durationMs,
-      tokenTotal: (node?.input_tokens ?? 0) + (node?.output_tokens ?? 0),
-      turns: node?.agent_turn_count ?? 0,
+      subtitle: statusLabel(lane.issue?.status ?? "missing"),
+      segments,
       missing: !lane.issue,
     };
   });
   return [...stageBars, ...childBars];
+}
+
+function timelineRowSegments(row: TimelineNodeRow): TimelineBarSegment[] {
+  const segments = row.segments?.length
+    ? row.segments
+    : row.node
+      ? [{ key: row.key, label: row.label, node: row.node, ordinal: 1, total: 1 }]
+      : [];
+  return segments.map((segment) => timelineNodeSegment(segment.key, segment.label, segment.node, segment.ordinal, segment.total));
+}
+
+function timelineNodeSegment(
+  key: string,
+  label: string,
+  node: IssueTimelineNode,
+  ordinal: number,
+  total: number,
+): TimelineBarSegment {
+  const timing = timelineTiming(node);
+  return {
+    key,
+    label,
+    status: node.status,
+    ...timing,
+    durationMs: node.duration_ms ?? timing.durationMs,
+    tokenTotal: (node.input_tokens ?? 0) + (node.output_tokens ?? 0),
+    turns: node.agent_turn_count ?? 0,
+    ordinal,
+    total,
+  };
+}
+
+function timelineRowSubtitle(status: string, runCount: number) {
+  return runCount > 1 ? `${formatNumber(runCount)} 次 · ${statusLabel(status)}` : statusLabel(status);
 }
 
 function timelineTiming(node: IssueTimelineNode | undefined) {
@@ -1015,26 +1071,46 @@ function buildStageRows(nodes: IssueTimelineNode[]) {
 
 export function buildTimelineAgentRows(nodes: IssueTimelineNode[]): TimelineNodeRow[] {
   const agentNodes = nodes.filter((node) => node.node_type === "agent_task");
-  const totals = new Map<string, number>();
+  const grouped = new Map<string, TimelineNodeRow>();
   for (const [index, node] of agentNodes.entries()) {
-    const key = timelineAgentRowGroupKey(node, index);
-    totals.set(key, (totals.get(key) ?? 0) + 1);
-  }
-
-  const seen = new Map<string, number>();
-  return agentNodes.map((node, index) => {
     const groupKey = timelineAgentRowGroupKey(node, index);
-    const ordinal = (seen.get(groupKey) ?? 0) + 1;
-    seen.set(groupKey, ordinal);
-    const total = totals.get(groupKey) ?? 1;
     const label = timelineAgentRowBaseLabel(node, index);
     const taskId = node.node_id.replace(/^task:/, "");
-    return {
+    const existing = grouped.get(groupKey);
+    const segment = {
       key: `${groupKey}:${taskId || index}`,
-      label: total > 1 ? `${label} #${ordinal}` : label,
+      label,
       node,
+      ordinal: 1,
+      total: 1,
+    };
+    if (!existing) {
+      grouped.set(groupKey, { key: groupKey, label, node: { ...node }, segments: [segment] });
+      continue;
+    }
+    existing.node = existing.node ? mergeTimelineNode(existing.node, node) : { ...node };
+    existing.segments = [...(existing.segments ?? []), segment];
+  }
+
+  return [...grouped.values()].map((row) => {
+    const segments = [...(row.segments ?? [])].sort(compareTimelineSegments);
+    const total = segments.length || 1;
+    return {
+      ...row,
+      segments: segments.map((segment, index) => ({
+        ...segment,
+        ordinal: index + 1,
+        total,
+      })),
     };
   });
+}
+
+function compareTimelineSegments(left: TimelineNodeSegment, right: TimelineNodeSegment) {
+  const leftStart = parseTimeMs(left.node.started_at) ?? parseTimeMs(left.node.completed_at) ?? 0;
+  const rightStart = parseTimeMs(right.node.started_at) ?? parseTimeMs(right.node.completed_at) ?? 0;
+  if (leftStart !== rightStart) return leftStart - rightStart;
+  return left.key.localeCompare(right.key);
 }
 
 function timelineAgentRowGroupKey(node: IssueTimelineNode, index: number) {

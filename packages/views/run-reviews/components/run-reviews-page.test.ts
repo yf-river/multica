@@ -142,7 +142,6 @@ describe("run review duration summary", () => {
 
     expect(runReviewTotalDurationMs(summary)).toBe(300000);
     expect(buildRunReviewDurationTooltipRows(summary)).toEqual([
-      ["墙钟耗时", "5m"],
       ["Agent 执行耗时", "2m"],
       ["人工/等待耗时", "3m"],
     ]);
@@ -150,7 +149,6 @@ describe("run review duration summary", () => {
 
   it("does not show artificial waiting time when timing data is missing", () => {
     expect(buildRunReviewDurationTooltipRows(undefined)).toEqual([
-      ["墙钟耗时", "0m"],
       ["Agent 执行耗时", "0m"],
       ["人工/等待耗时", "未记录"],
     ]);
@@ -714,7 +712,7 @@ describe("buildRunReviewEventRows", () => {
     expect(rows[0]?.node.agent_turn_count).toBe(3);
   });
 
-  it("splits repeated PM runs for the horizontal timeline while keeping node aggregation available", () => {
+  it("keeps repeated PM runs on one horizontal timeline row while keeping node aggregation available", () => {
     const baseNode = {
       issue_id: "issue-1",
       node_id: "task:pm-1",
@@ -748,9 +746,15 @@ describe("buildRunReviewEventRows", () => {
       },
     ]);
 
-    expect(timelineRows.map((row) => row.label)).toEqual(["PM-项目经理 #1", "PM-项目经理 #2"]);
-    expect(timelineRows.map((row) => row.key)).toEqual(["agent-pm:pm-1", "agent-pm:pm-2"]);
-    expect(buildAgentNodeRows(timelineRows.map((row) => row.node as IssueTimelineNode))[0]?.runCount).toBe(2);
+    expect(timelineRows).toHaveLength(1);
+    expect(timelineRows[0]?.label).toBe("PM-项目经理");
+    expect(timelineRows[0]?.key).toBe("agent-pm");
+    expect(timelineRows[0]?.segments?.map((segment) => segment.key)).toEqual(["agent-pm:pm-1", "agent-pm:pm-2"]);
+    expect(timelineRows[0]?.segments?.map((segment) => segment.ordinal)).toEqual([1, 2]);
+    expect(timelineRows[0]?.segments?.map((segment) => segment.total)).toEqual([2, 2]);
+    expect(timelineRows[0]?.node?.duration_ms).toBe(120_000);
+    expect(buildAgentNodeRows(timelineRows.map((row) => row.node as IssueTimelineNode))[0]?.runCount).toBe(1);
+    expect(buildAgentNodeRows(timelineRows.flatMap((row) => row.segments?.map((segment) => segment.node) ?? []))[0]?.runCount).toBe(2);
   });
 
   it("exports raw event CSV with escaped detail, metadata, and raw evidence", () => {
