@@ -361,6 +361,8 @@ function buildAgentInstruction(stageKey, role, routingTable = "") {
       "PM 只负责协调和收口，不得代替 01/02/03/04/05 写它们的专业阶段产物。",
       "PM 不得读取、搜索、测试或修改业务仓库代码；不得运行 go test、pnpm test、构建命令或启动服务。",
       "PM 每一轮只能做一件事：判断当前已完成到哪个阶段，然后 @mention 唯一的下一阶段 Agent；发出调度评论后必须立刻停止，不得继续推进后续阶段。",
+      "PM 发出调度评论后，最终回复只能是“已调度 <阶段>，本轮 PM 结束。”，不得继续观察、等待、轮询或检查被调度 Agent 的执行结果。",
+      "PM 严禁运行 sleep、watch、循环等待、`multica issue runs`、`multica issue activity`、`multica task`、`git`、`cat`、`rg`、`find`、`ls`、`sed`、`go test` 等等待/轮询/读仓库/测试命令。",
       "CodeBuddy 的 TaskCreate / TaskUpdate / todo 工具只是本地内部待办，不是 Multica 平台任务；本验收严禁使用这些内部待办工具，严禁用它们推进 01-05。",
       "读取 issue 必须通过 Bash 运行 `multica issue get`、`multica issue comment list`、`multica issue status` 等平台 CLI 命令。",
       "触发下一阶段的唯一方式是在 `multica issue comment add` 的评论正文里写一个 `[@阶段名](mention://agent/<id>)` 形式的真实平台 mention 链接；没有 mention://agent 的评论不会触发下一阶段，必须避免。",
@@ -512,10 +514,13 @@ async function runNaturalSOPFlow(agents, knownTasks, options = {}) {
   const requiredWorkers = options.requiredWorkers || ["01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"];
   let pmRuns = 0;
   for (let i = 0; i < maxSOPTasks; i++) {
-    const task = await waitNextTerminalSOPTask(issue.id, agentToStage, knownTasks, `${options.phase || "sop"} SOP task ${i + 1}`);
+    const task = await waitNextTerminalSOPTask(issue.id, agentToStage, knownTasks, `${options.phase || "sop"} SOP task ${i + 1}`, {
+      agents,
+      completedWorkers,
+    });
     knownTasks.add(task.id);
     const stage = agentToStage[task.agent_id] || "unknown";
-    if (task.status !== "completed") {
+    if (task.status !== "completed" && !(stage === "pm" && task.pm_route_recovered)) {
       if (task.failure_reason === "runtime_recovery") {
         const attemptsExhausted =
           Number(task.max_attempts || 0) > 0 &&
@@ -538,7 +543,9 @@ async function runNaturalSOPFlow(agents, knownTasks, options = {}) {
     }
     if (stage === "pm") {
       pmRuns++;
-      await assertPMRoutedOrClosed(task, agents, completedWorkers);
+      if (!task.pm_route_recovered) {
+        await assertPMRoutedOrClosed(task, agents, completedWorkers);
+      }
     } else {
       completedWorkers.add(stage);
     }
@@ -603,6 +610,36 @@ async function assertPMRoutedOrClosed(task, agents, completedWorkers) {
   check(`pm_route_recovered_${evidence.pm_route_recoveries.length}`, true, recoveryEvidence);
 }
 
+async function recoverActivePMIfAlreadyRouted(issueID, task, agents, completedWorkers) {
+  const next = nextStageAfterCompletedWorkers(agents, completedWorkers);
+  if (!next || task.agent_id !== agents.pm?.id) return null;
+  const comments = normalizeList(await get(`/api/issues/${issueID}/comments`));
+  const taskComments = comments.filter((comment) => isTaskComment(comment, task));
+  const allMentions = taskComments.reduce((sum, comment) => sum + countMentions(comment.content), 0);
+  const nextMentions = taskComments.reduce((sum, comment) => sum + countMentionsToAgent(comment.content, next.agent.id), 0);
+  if (allMentions !== 1 || nextMentions !== 1) return null;
+  const cancelResult = await cancelTask(task.id);
+  const recovered = {
+    ...task,
+    ...pick(cancelResult?.agent_task || cancelResult || {}, ["status", "completed_at", "error", "failure_reason"]),
+    pm_route_recovered: true,
+  };
+  if (!recovered.status) recovered.status = "cancelled";
+  evidence.pm_route_recoveries.push({
+    pm_task: pickTask(task),
+    recovered_to_stage: next.stage,
+    recovered_to_agent: pick(next.agent, ["id", "name"]),
+    recovery_action: "pm_cancelled_after_valid_route",
+    cancel_result: pickTask(recovered),
+    task_comments: taskComments.map(pickComment),
+  });
+  check(`pm_cancelled_after_valid_route_${evidence.pm_route_recoveries.length}`, true, {
+    task_id: task.id,
+    recovered_to_stage: next.stage,
+  });
+  return recovered;
+}
+
 async function postCodeReviewComment(pmAgent, mr) {
   return postComment([
     "CodeReview 追加需求：",
@@ -639,11 +676,20 @@ function countMentions(content) {
   return (String(content || "").match(/mention:\/\/agent\//g) || []).length;
 }
 
-async function waitNextTerminalSOPTask(issueID, agentToStage, knownIDs, label) {
+function countMentionsToAgent(content, agentID) {
+  if (!agentID) return 0;
+  const escaped = agentID.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return (String(content || "").match(new RegExp(`mention://agent/${escaped}`, "g")) || []).length;
+}
+
+async function waitNextTerminalSOPTask(issueID, agentToStage, knownIDs, label, options = {}) {
   return poll(async () => {
     const tasks = sortTasks(await listIssueTasks(issueID));
     const task = tasks.find((item) => agentToStage[item.agent_id] && !knownIDs.has(item.id));
-    if (!task || isActiveTask(task)) return null;
+    if (!task) return null;
+    if (isActiveTask(task)) {
+      return recoverActivePMIfAlreadyRouted(issueID, task, options.agents || {}, options.completedWorkers || new Set());
+    }
     return task;
   }, taskTimeoutMs, `wait ${label}`);
 }
@@ -781,6 +827,10 @@ async function getText(pathname) {
 
 async function post(pathname, body, authToken = token) {
   return request("POST", pathname, body, authToken);
+}
+
+async function cancelTask(taskID) {
+  return post(`/api/tasks/${taskID}/cancel`, {});
 }
 
 async function put(pathname, body) {
