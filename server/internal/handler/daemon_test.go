@@ -1502,6 +1502,86 @@ func TestReportTaskUsageStoresUsageAndTrace(t *testing.T) {
 	}
 }
 
+func TestReportTaskUsageNormalizesCodebuddySessionCumulativeUsage(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+	runtimeID := createClaimReclaimRuntime(t, ctx, "CodeBuddy usage runtime")
+	if _, err := testPool.Exec(ctx, `UPDATE agent_runtime SET provider = 'codebuddy' WHERE id = $1`, runtimeID); err != nil {
+		t.Fatalf("set runtime provider: %v", err)
+	}
+	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "CodeBuddy usage agent")
+	firstTaskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "2 seconds", true)
+	secondTaskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "1 second", true)
+	const sessionID = "codebuddy-session-usage-test"
+	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET session_id = $1 WHERE id IN ($2, $3)`, sessionID, firstTaskID, secondTaskID); err != nil {
+		t.Fatalf("set task session: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM task_trace_event WHERE task_id IN ($1, $2)`, firstTaskID, secondTaskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM task_usage WHERE task_id IN ($1, $2)`, firstTaskID, secondTaskID)
+	})
+
+	reportUsageForTest := func(taskID string, input, output, cacheRead, cacheWrite int64) {
+		t.Helper()
+		w := httptest.NewRecorder()
+		req := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+taskID+"/usage", map[string]any{
+			"usage": []map[string]any{{
+				"model":              "deepseek-v4-pro-ioa",
+				"input_tokens":       input,
+				"output_tokens":      output,
+				"cache_read_tokens":  cacheRead,
+				"cache_write_tokens": cacheWrite,
+			}},
+		}, testWorkspaceID, "codebuddy-usage-report-daemon")
+		req = withURLParam(req, "taskId", taskID)
+		testHandler.ReportTaskUsage(w, req)
+		if w.Code != http.StatusOK {
+			t.Fatalf("ReportTaskUsage status = %d, body = %s", w.Code, w.Body.String())
+		}
+	}
+
+	reportUsageForTest(firstTaskID, 1000, 50, 300, 100)
+	reportUsageForTest(secondTaskID, 1600, 70, 500, 150)
+
+	var firstInput, firstOutput, firstCacheRead, firstCacheWrite int64
+	if err := testPool.QueryRow(ctx, `
+		SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
+		FROM task_usage
+		WHERE task_id = $1
+	`, firstTaskID).Scan(&firstInput, &firstOutput, &firstCacheRead, &firstCacheWrite); err != nil {
+		t.Fatalf("load first usage: %v", err)
+	}
+	if firstInput != 600 || firstOutput != 50 || firstCacheRead != 300 || firstCacheWrite != 100 {
+		t.Fatalf("first usage = input=%d output=%d cache_read=%d cache_write=%d, want 600/50/300/100", firstInput, firstOutput, firstCacheRead, firstCacheWrite)
+	}
+
+	var secondInput, secondOutput, secondCacheRead, secondCacheWrite int64
+	if err := testPool.QueryRow(ctx, `
+		SELECT input_tokens, output_tokens, cache_read_tokens, cache_write_tokens
+		FROM task_usage
+		WHERE task_id = $1
+	`, secondTaskID).Scan(&secondInput, &secondOutput, &secondCacheRead, &secondCacheWrite); err != nil {
+		t.Fatalf("load second usage: %v", err)
+	}
+	if secondInput != 350 || secondOutput != 20 || secondCacheRead != 200 || secondCacheWrite != 50 {
+		t.Fatalf("second usage = input=%d output=%d cache_read=%d cache_write=%d, want 350/20/200/50", secondInput, secondOutput, secondCacheRead, secondCacheWrite)
+	}
+
+	events, err := testHandler.Queries.ListTaskTraceEventsByTask(ctx, parseUUID(secondTaskID))
+	if err != nil {
+		t.Fatalf("list second trace events: %v", err)
+	}
+	if len(events) != 1 {
+		t.Fatalf("second trace events = %+v", events)
+	}
+	if events[0].InputTokens != 350 || events[0].OutputTokens != 20 || events[0].CacheReadTokens != 200 || events[0].CacheWriteTokens != 50 {
+		t.Fatalf("second trace tokens = %+v, want normalized delta", events[0])
+	}
+}
+
 func TestCompleteTaskWithoutUsageCreatesUsageUnavailableTrace(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")

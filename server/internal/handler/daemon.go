@@ -2196,6 +2196,7 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 			}
 			provider = runtimeProvider
 		}
+		u = h.normalizeTaskUsagePayload(r.Context(), task, provider, u)
 		if err := h.Queries.UpsertTaskUsage(r.Context(), db.UpsertTaskUsageParams{
 			TaskID:           parseUUID(taskID),
 			Provider:         provider,
@@ -2212,6 +2213,79 @@ func (h *Handler) ReportTaskUsage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (h *Handler) normalizeTaskUsagePayload(ctx context.Context, task db.AgentTaskQueue, provider string, u TaskUsagePayload) TaskUsagePayload {
+	if provider != "codebuddy" {
+		return u
+	}
+	previous, ok := h.previousCodebuddySessionUsage(ctx, task, provider, u.Model)
+	if ok {
+		u.InputTokens = nonNegativeDelta(u.InputTokens, previous.InputTokens)
+		u.OutputTokens = nonNegativeDelta(u.OutputTokens, previous.OutputTokens)
+		u.CacheReadTokens = nonNegativeDelta(u.CacheReadTokens, previous.CacheReadTokens)
+		u.CacheWriteTokens = nonNegativeDelta(u.CacheWriteTokens, previous.CacheWriteTokens)
+	}
+	u.InputTokens = codebuddyUncachedInputTokens(u.InputTokens, u.CacheReadTokens, u.CacheWriteTokens)
+	return u
+}
+
+type taskUsageTotals struct {
+	InputTokens      int64
+	OutputTokens     int64
+	CacheReadTokens  int64
+	CacheWriteTokens int64
+}
+
+func (h *Handler) previousCodebuddySessionUsage(ctx context.Context, task db.AgentTaskQueue, provider, model string) (taskUsageTotals, bool) {
+	if h == nil || h.DB == nil || !task.SessionID.Valid || strings.TrimSpace(task.SessionID.String) == "" || strings.TrimSpace(model) == "" {
+		return taskUsageTotals{}, false
+	}
+	var previous taskUsageTotals
+	err := h.DB.QueryRow(ctx, `
+		SELECT
+			COALESCE(SUM(tu.input_tokens + tu.cache_read_tokens + tu.cache_write_tokens), 0)::bigint,
+			COALESCE(SUM(tu.output_tokens), 0)::bigint,
+			COALESCE(SUM(tu.cache_read_tokens), 0)::bigint,
+			COALESCE(SUM(tu.cache_write_tokens), 0)::bigint
+		FROM task_usage tu
+		JOIN agent_task_queue atq ON atq.id = tu.task_id
+		WHERE atq.session_id = $1
+		  AND atq.id <> $2
+		  AND atq.created_at < $3
+		  AND tu.provider = $4
+		  AND tu.model = $5
+	`, task.SessionID.String, task.ID, task.CreatedAt, provider, model).Scan(
+		&previous.InputTokens,
+		&previous.OutputTokens,
+		&previous.CacheReadTokens,
+		&previous.CacheWriteTokens,
+	)
+	if err != nil {
+		slog.Warn("load previous codebuddy session usage failed",
+			"task_id", uuidToString(task.ID),
+			"session_id", task.SessionID.String,
+			"model", model,
+			"error", err,
+		)
+		return taskUsageTotals{}, false
+	}
+	return previous, previous.InputTokens > 0 || previous.OutputTokens > 0 || previous.CacheReadTokens > 0 || previous.CacheWriteTokens > 0
+}
+
+func nonNegativeDelta(current, previous int64) int64 {
+	if current <= previous {
+		return 0
+	}
+	return current - previous
+}
+
+func codebuddyUncachedInputTokens(inputTokens, cacheReadTokens, cacheWriteTokens int64) int64 {
+	uncached := inputTokens - cacheReadTokens - cacheWriteTokens
+	if uncached < 0 {
+		return 0
+	}
+	return uncached
 }
 
 // GetTaskStatus returns the current status of a task.
