@@ -157,15 +157,16 @@ func githubInstallationToBroadcast(i db.GithubInstallation) GitHubInstallationRe
 }
 
 func githubPullRequestToResponse(p db.GithubPullRequest) GitHubPullRequestResponse {
+	repoOwner, repoName := normalizePullRequestRepositoryFields(p.RepoOwner, p.RepoName, p.HtmlUrl)
 	return GitHubPullRequestResponse{
 		ID:              uuidToString(p.ID),
 		WorkspaceID:     uuidToString(p.WorkspaceID),
-		RepoOwner:       p.RepoOwner,
-		RepoName:        p.RepoName,
+		RepoOwner:       repoOwner,
+		RepoName:        repoName,
 		Number:          p.PrNumber,
 		Title:           p.Title,
 		State:           p.State,
-		HtmlURL:         normalizeGongfengPullRequestURL(p.HtmlUrl, p.RepoOwner, p.RepoName, p.PrNumber),
+		HtmlURL:         normalizeGongfengPullRequestURL(p.HtmlUrl, repoOwner, repoName, p.PrNumber),
 		Branch:          textToPtr(p.Branch),
 		AuthorLogin:     textToPtr(p.AuthorLogin),
 		AuthorAvatarURL: textToPtr(p.AuthorAvatarUrl),
@@ -185,15 +186,16 @@ func githubPullRequestToResponse(p db.GithubPullRequest) GitHubPullRequestRespon
 }
 
 func issuePullRequestRowToResponse(p db.ListPullRequestsByIssueRow) GitHubPullRequestResponse {
+	repoOwner, repoName := normalizePullRequestRepositoryFields(p.RepoOwner, p.RepoName, p.HtmlUrl)
 	return GitHubPullRequestResponse{
 		ID:               uuidToString(p.ID),
 		WorkspaceID:      uuidToString(p.WorkspaceID),
-		RepoOwner:        p.RepoOwner,
-		RepoName:         p.RepoName,
+		RepoOwner:        repoOwner,
+		RepoName:         repoName,
 		Number:           p.PrNumber,
 		Title:            p.Title,
 		State:            p.State,
-		HtmlURL:          normalizeGongfengPullRequestURL(p.HtmlUrl, p.RepoOwner, p.RepoName, p.PrNumber),
+		HtmlURL:          normalizeGongfengPullRequestURL(p.HtmlUrl, repoOwner, repoName, p.PrNumber),
 		Branch:           textToPtr(p.Branch),
 		AuthorLogin:      textToPtr(p.AuthorLogin),
 		AuthorAvatarURL:  textToPtr(p.AuthorAvatarUrl),
@@ -848,6 +850,23 @@ func normalizeGongfengPullRequestURL(rawURL, repoOwner, repoName string, number 
 		return rawURL
 	}
 	return fmt.Sprintf("https://git.code.tencent.com/%s/merge_requests/%d", strings.Trim(projectPath, "/"), number)
+}
+
+func normalizePullRequestRepositoryFields(repoOwner, repoName, htmlURL string) (string, string) {
+	repoOwner = strings.Trim(strings.TrimSpace(repoOwner), "/")
+	repoName = strings.Trim(strings.TrimSpace(repoName), "/")
+	projectPath := gongfengProjectPathFromURL(htmlURL)
+	if projectPath == "" && (repoName == "" || repoName == "-" || strings.Contains(repoOwner, "/")) {
+		projectPath = strings.Trim(strings.Trim(repoOwner, "/")+"/"+strings.Trim(repoName, "/"), "/")
+	}
+	if projectPath == "" {
+		return repoOwner, repoName
+	}
+	parts := strings.Split(strings.Trim(projectPath, "/"), "/")
+	if len(parts) < 2 {
+		return repoOwner, repoName
+	}
+	return strings.Join(parts[:len(parts)-1], "/"), parts[len(parts)-1]
 }
 
 func normalizeCreateMergeRequestRequest(w http.ResponseWriter, req CreateMergeRequestRequest) (CreateMergeRequestRequest, bool) {

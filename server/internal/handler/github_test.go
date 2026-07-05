@@ -197,6 +197,18 @@ func TestLinkPullRequestToIssue_NormalizesGongfengDashMergeRequestURL(t *testing
 	}
 }
 
+func TestNormalizePullRequestRepositoryFieldsRepairsLegacyGongfengDashRows(t *testing.T) {
+	owner, name := normalizePullRequestRepositoryFields(
+		"ChainWeaver/ida/ida-deployment",
+		"-",
+		"https://git.code.tencent.com/ChainWeaver/ida/ida-deployment/-/merge_requests/216",
+	)
+
+	if owner != "ChainWeaver/ida" || name != "ida-deployment" {
+		t.Fatalf("repo = %q / %q, want ChainWeaver/ida / ida-deployment", owner, name)
+	}
+}
+
 func TestLinkPullRequestToIssue_RequiresRepositoryAndNumber(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("handler test fixture not initialized (no DB?)")
