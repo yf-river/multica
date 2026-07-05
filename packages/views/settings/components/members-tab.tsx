@@ -331,6 +331,7 @@ export function MembersTab() {
                   {createLoading ? t(($) => $.members.adding_user) : t(($) => $.members.add_user_button)}
                 </Button>
               </div>
+              <p className="text-xs text-muted-foreground">{t(($) => $.members.password_rule)}</p>
             </CardContent>
           </Card>
         )}

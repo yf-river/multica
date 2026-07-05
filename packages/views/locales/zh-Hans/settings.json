@@ -366,6 +366,7 @@
     "account_placeholder": "账号",
     "name_placeholder": "姓名（可选）",
     "password_placeholder": "初始密码（新用户必填）",
+    "password_rule": "密码要求：8-32位，至少包含大写字母、小写字母、数字、特殊字符中的3种。特殊字符仅限：!@#$%^&*()_+|~-=`{}[]:\";'<>?,./",
     "add_user_button": "添加",
     "adding_user": "添加中...",
     "toast_user_added": "用户已添加到工作区",
