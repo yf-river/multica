@@ -44,6 +44,7 @@ import type {
   PromptEvaluationDatasetVersionRow,
   PromptEvaluationDatasetVersionTagTrend,
   IssueExecutionTreeResponse,
+  ListPromptLibraryItemsParams,
   Project,
   ProjectResource,
   PromptLibraryItem,
@@ -77,7 +78,8 @@ import {
 import { trainingSelectedPromptStorageKey } from "./prompt-selection-storage";
 
 const promptLibraryKeys = {
-  list: (workspaceId: string) => ["prompt-library", workspaceId, "list"] as const,
+  list: (workspaceId: string, params?: ListPromptLibraryItemsParams) =>
+    ["prompt-library", workspaceId, "list", params?.prompt_type ?? "全部", params?.status ?? "全部"] as const,
   versions: (workspaceId: string, promptId: string | null) => ["prompt-library", workspaceId, "versions", promptId ?? ""] as const,
   assets: (workspaceId: string) => ["prompt-library", workspaceId, "evaluation-assets"] as const,
   datasetVersions: (workspaceId: string, assetId: string) => ["prompt-library", workspaceId, "evaluation-dataset-versions", assetId] as const,
@@ -126,6 +128,18 @@ const USER_CENTER_TEMPLATE: CreatePromptLibraryItemRequest = {
 function trainingViewFromLocation(pathname: string, searchParams: URLSearchParams) {
   const match = pathname.match(/\/training\/([^/?#]+)/);
   return match?.[1] ? decodeURIComponent(match[1]) : searchParams.get("view");
+}
+
+export function promptLibraryListParamsForFilters(
+  typeFilter: string,
+  statusFilter: "全部" | PromptLibraryStatus,
+  enabled: boolean,
+): ListPromptLibraryItemsParams | undefined {
+  if (!enabled) return undefined;
+  const params: ListPromptLibraryItemsParams = {};
+  if (typeFilter !== "全部") params.prompt_type = typeFilter;
+  if (statusFilter !== "全部") params.status = statusFilter;
+  return Object.keys(params).length > 0 ? params : undefined;
 }
 
 function collectIssueExecutionTaskIds(tree: IssueExecutionTreeResponse | undefined): string[] {
@@ -238,10 +252,14 @@ export function PromptLibraryPage({
   const needsRuns = isEvaluationRunRecords;
   const needsCandidates = isEvaluationRunRecords;
   const needsSkillResources = isEvaluationRunRecords;
+  const promptLibraryListParams = useMemo(
+    () => promptLibraryListParamsForFilters(typeFilter, statusFilter, shouldShowPromptEditor && activeTab === "提示词库"),
+    [activeTab, shouldShowPromptEditor, statusFilter, typeFilter],
+  );
 
   const listQuery = useQuery({
-    queryKey: promptLibraryKeys.list(workspaceId ?? ""),
-    queryFn: () => api.listPromptLibraryItems(),
+    queryKey: promptLibraryKeys.list(workspaceId ?? "", promptLibraryListParams),
+    queryFn: () => api.listPromptLibraryItems(promptLibraryListParams),
     enabled: !!workspaceId && needsPromptItems,
   });
 
