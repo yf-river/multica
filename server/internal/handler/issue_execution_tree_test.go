@@ -47,6 +47,9 @@ func TestSummarizeIssueTimelineComputesHumanConfirmationRemainder(t *testing.T) 
 	if summary.HumanConfirmationDurationMs == nil || *summary.HumanConfirmationDurationMs != 240000 {
 		t.Fatalf("human confirmation = %v, want 240000", summary.HumanConfirmationDurationMs)
 	}
+	if summary.TotalDurationMs != 600000 {
+		t.Fatalf("total duration = %d, want agent + waiting 600000", summary.TotalDurationMs)
+	}
 }
 
 func TestSummarizeIssueTimelineFallsBackToAgentTaskBoundsWithoutWorkCycle(t *testing.T) {
@@ -72,6 +75,9 @@ func TestSummarizeIssueTimelineFallsBackToAgentTaskBoundsWithoutWorkCycle(t *tes
 	}
 	if summary.HumanConfirmationDurationMs == nil || *summary.HumanConfirmationDurationMs != 0 {
 		t.Fatalf("human confirmation = %v, want 0", summary.HumanConfirmationDurationMs)
+	}
+	if summary.TotalDurationMs != 60000 {
+		t.Fatalf("total duration = %d, want agent duration 60000", summary.TotalDurationMs)
 	}
 }
 
@@ -183,6 +189,46 @@ func TestSummarizeIssueTimelineUsesExplicitHumanConfirmationNodes(t *testing.T) 
 	}
 	if summary.HumanConfirmationDurationMs == nil || *summary.HumanConfirmationDurationMs != 600000 {
 		t.Fatalf("human confirmation = %v, want explicit 600000", summary.HumanConfirmationDurationMs)
+	}
+	if summary.TotalDurationMs != 840000 {
+		t.Fatalf("total duration = %d, want agent + explicit waiting 840000", summary.TotalDurationMs)
+	}
+}
+
+func TestSummarizeIssueTimelineIgnoresLowLevelFailureForAcceptanceAndTotals(t *testing.T) {
+	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1"}, []IssueTimelineNodeResponse{
+		{
+			NodeID:          "task:1",
+			NodeType:        "agent_task",
+			Status:          "completed",
+			StartedAt:       "2026-06-09T10:00:00Z",
+			CompletedAt:     "2026-06-09T10:02:00Z",
+			DurationMs:      120000,
+			MessageCount:    3,
+			AgentTurnCount:  2,
+			TraceEventCount: 4,
+		},
+		{
+			NodeID:          "trace:1",
+			NodeType:        "evidence",
+			Status:          "failed",
+			StartedAt:       "2026-06-09T10:01:00Z",
+			CompletedAt:     "2026-06-09T10:01:10Z",
+			DurationMs:      10000,
+			MessageCount:    1,
+			TraceEventCount: 1,
+			Summary:         "工具输出包含失败字样",
+		},
+	})
+
+	if summary.AcceptanceStatus != "completed" || summary.FailureSummary != "" {
+		t.Fatalf("acceptance = %q failure = %q, want completed without low-level failure", summary.AcceptanceStatus, summary.FailureSummary)
+	}
+	if summary.TotalDurationMs != 120000 {
+		t.Fatalf("total duration = %d, want agent duration only", summary.TotalDurationMs)
+	}
+	if summary.MessageCount != 3 || summary.AgentTurnCount != 2 || summary.TraceEventCount != 4 {
+		t.Fatalf("counts = messages %d turns %d traces %d, want task counts only", summary.MessageCount, summary.AgentTurnCount, summary.TraceEventCount)
 	}
 }
 

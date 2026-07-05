@@ -144,7 +144,7 @@ describe("buildRunReviewOptimizerHref", () => {
 });
 
 describe("run review duration summary", () => {
-  it("uses work-cycle wall clock duration and reports wall, agent, and waiting time in the tooltip", () => {
+  it("uses agent execution plus recorded waiting time instead of wall clock duration", () => {
     const summary = {
       issue_id: "issue-1",
       node_count: 1,
@@ -169,6 +169,29 @@ describe("run review duration summary", () => {
       ["Agent 执行耗时", "2m"],
       ["人工/等待耗时", "3m"],
     ]);
+  });
+
+  it("ignores wall clock duration even when unclassified idle gaps exist", () => {
+    const summary = {
+      issue_id: "issue-1",
+      node_count: 1,
+      total_duration_ms: 120000,
+      wall_clock_duration_ms: 600000,
+      agent_execution_duration_ms: 120000,
+      human_confirmation_duration_ms: 60000,
+      total_input_tokens: 0,
+      total_output_tokens: 0,
+      total_cache_read_tokens: 0,
+      total_cache_write_tokens: 0,
+      message_count: 0,
+      agent_turn_count: 0,
+      trace_event_count: 0,
+      usage_unavailable: false,
+      acceptance_status: "done",
+      full_analysis_deep_link: "",
+    };
+
+    expect(runReviewTotalDurationMs(summary)).toBe(180000);
   });
 
   it("does not show artificial waiting time when timing data is missing", () => {
@@ -257,7 +280,6 @@ describe("run review realtime helpers", () => {
     expect(buildRunReviewLiveSummary(summary, [runningTask], [runningNode, completedNode], nowMs)).toMatchObject({
       total_duration_ms: 180_000,
       agent_execution_duration_ms: 180_000,
-      wall_clock_duration_ms: 180_000,
     });
     expect(buildRunReviewLiveTimelineNodes([runningNode, completedNode], nowMs).map((node) => node.duration_ms)).toEqual([
       120_000,
@@ -783,7 +805,13 @@ describe("buildRunReviewEventRows", () => {
       usage_unavailable_trace: false,
       summary: "pm run",
       evidence_refs: [],
-      artifacts: [],
+      artifacts: [artifact({
+        id: "att-old",
+        task_id: "task-1",
+        filename: "handoff.md",
+        title: "handoff",
+        created_at: "2026-06-09T10:01:00.000Z",
+      })],
     } as IssueTimelineNode;
 
     const rows = buildAgentNodeRows([
@@ -796,6 +824,13 @@ describe("buildRunReviewEventRows", () => {
         input_tokens: 5,
         output_tokens: 7,
         agent_turn_count: 1,
+        artifacts: [artifact({
+          id: "att-new",
+          task_id: "task-2",
+          filename: "handoff.md",
+          title: "handoff",
+          created_at: "2026-06-09T10:03:00.000Z",
+        })],
       },
     ]);
 
@@ -810,6 +845,8 @@ describe("buildRunReviewEventRows", () => {
     expect(rows[0]?.node.input_tokens).toBe(15);
     expect(rows[0]?.node.output_tokens).toBe(27);
     expect(rows[0]?.node.agent_turn_count).toBe(3);
+    expect(rows[0]?.node.artifacts).toHaveLength(1);
+    expect(rows[0]?.node.artifacts?.[0]?.id).toBe("att-new");
   });
 
   it("keeps repeated PM runs on one horizontal timeline row while keeping node aggregation available", () => {

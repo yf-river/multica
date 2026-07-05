@@ -696,34 +696,37 @@ func summarizeIssueTimeline(issue IssueResponse, nodes []IssueTimelineNodeRespon
 		summary.WorkCompletedAt = fallbackCompletedAt
 	}
 	hasTaskUsage := false
+	hasTaskNodes := false
 	for _, node := range nodes {
 		if node.NodeType != "agent_task" {
 			continue
 		}
+		hasTaskNodes = true
 		if node.InputTokens+node.OutputTokens+node.CacheReadTokens+node.CacheWriteTokens > 0 {
 			hasTaskUsage = true
 			break
 		}
 	}
 	for _, node := range nodes {
-		summary.TotalDurationMs += node.DurationMs
 		if !hasTaskUsage || node.NodeType == "agent_task" {
 			summary.TotalInputTokens += node.InputTokens
 			summary.TotalOutputTokens += node.OutputTokens
 			summary.TotalCacheReadTokens += node.CacheReadTokens
 			summary.TotalCacheWriteTokens += node.CacheWriteTokens
 		}
-		summary.MessageCount += node.MessageCount
-		summary.AgentTurnCount += node.AgentTurnCount
-		summary.TraceEventCount += node.TraceEventCount
+		if !hasTaskNodes || node.NodeType == "agent_task" {
+			summary.MessageCount += node.MessageCount
+			summary.AgentTurnCount += node.AgentTurnCount
+			summary.TraceEventCount += node.TraceEventCount
+		}
 		if node.UsageUnavailableTrace {
 			summary.UsageUnavailable = true
 		}
-		if summary.FailureSummary == "" && (node.Status == "failed" || node.Status == "blocked") {
+		if timelineNodeAffectsAcceptance(node) && summary.FailureSummary == "" && isFailedTimelineStatus(node.Status) {
 			summary.FailureSummary = node.Summary
 			summary.AcceptanceStatus = node.Status
 		}
-		if summary.AcceptanceStatus == "unknown" && (node.Status == "completed" || node.Status == "已完成") {
+		if timelineNodeAffectsAcceptance(node) && summary.AcceptanceStatus == "unknown" && isCompletedTimelineStatus(node.Status) {
 			summary.AcceptanceStatus = "completed"
 		}
 	}
@@ -748,7 +751,34 @@ func summarizeIssueTimeline(issue IssueResponse, nodes []IssueTimelineNodeRespon
 	} else if explicitHumanConfirmationMs > 0 {
 		summary.HumanConfirmationDurationMs = &explicitHumanConfirmationMs
 	}
+	if summary.HumanConfirmationDurationMs != nil {
+		summary.TotalDurationMs = summary.AgentExecutionDurationMs + *summary.HumanConfirmationDurationMs
+	} else {
+		summary.TotalDurationMs = summary.AgentExecutionDurationMs
+	}
 	return summary
+}
+
+func timelineNodeAffectsAcceptance(node IssueTimelineNodeResponse) bool {
+	return node.NodeType == "agent_task" || node.NodeType == "child_issue_ref"
+}
+
+func isFailedTimelineStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "failed", "blocked", "cancelled", "失败", "异常", "阻塞", "已取消":
+		return true
+	default:
+		return false
+	}
+}
+
+func isCompletedTimelineStatus(status string) bool {
+	switch strings.ToLower(strings.TrimSpace(status)) {
+	case "completed", "done", "已完成":
+		return true
+	default:
+		return false
+	}
 }
 
 func timelineAgentWorkBounds(nodes []IssueTimelineNodeResponse) (startedAt string, completedAt string) {

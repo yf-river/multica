@@ -43,7 +43,12 @@ export function buildRunReviewOptimizerHref(trainingView: (view: string) => stri
 }
 
 export function runReviewTotalDurationMs(summary: IssueTimelineSummary | undefined): number {
-  return summary?.wall_clock_duration_ms ?? summary?.total_duration_ms ?? 0;
+  if (!summary) return 0;
+  const agentExecution = summary.agent_execution_duration_ms;
+  if (agentExecution != null) {
+    return agentExecution + (summary.human_confirmation_duration_ms ?? 0);
+  }
+  return summary.total_duration_ms ?? 0;
 }
 
 export function buildRunReviewDurationTooltipRows(summary: IssueTimelineSummary | undefined): Array<[string, string]> {
@@ -74,9 +79,6 @@ export function buildRunReviewLiveSummary(
     ...summary,
     total_duration_ms: Math.max(summary.total_duration_ms ?? 0, liveDurationMs),
     agent_execution_duration_ms: Math.max(summary.agent_execution_duration_ms ?? summary.total_duration_ms ?? 0, liveDurationMs),
-    wall_clock_duration_ms: summary.wall_clock_duration_ms == null
-      ? summary.wall_clock_duration_ms
-      : Math.max(summary.wall_clock_duration_ms, liveDurationMs),
   };
 }
 
@@ -818,10 +820,11 @@ function agentNodeDisplayLabel(row: ReturnType<typeof buildAgentNodeRows>[number
 }
 
 function ArtifactLinks({ artifacts }: { artifacts: AgentTaskArtifact[] }) {
-  if (!artifacts.length) return <span className="text-muted-foreground">-</span>;
+  const uniqueArtifacts = dedupeArtifacts(artifacts);
+  if (!uniqueArtifacts.length) return <span className="text-muted-foreground">-</span>;
   return (
     <div className="flex min-w-0 flex-wrap gap-1.5">
-      {artifacts.slice(0, 3).map((artifact) => (
+      {uniqueArtifacts.slice(0, 3).map((artifact) => (
         <a
           key={artifact.id}
           href={artifactDownloadHref(artifact)}
@@ -833,9 +836,9 @@ function ArtifactLinks({ artifacts }: { artifacts: AgentTaskArtifact[] }) {
           <span className="truncate">{artifact.title || artifact.filename}</span>
         </a>
       ))}
-      {artifacts.length > 3 ? (
+      {uniqueArtifacts.length > 3 ? (
         <span className="inline-flex items-center rounded border px-2 py-0.5 text-xs text-muted-foreground">
-          +{artifacts.length - 3}
+          +{uniqueArtifacts.length - 3}
         </span>
       ) : null}
     </div>
@@ -1338,6 +1341,7 @@ export function buildRunReviewNodeCsv(
 
   for (const row of agentRows) {
     const node = row.node;
+    const artifacts = dedupeArtifacts(node.artifacts ?? []);
     rows.push([
       "agent_node",
       issue.id,
@@ -1360,8 +1364,8 @@ export function buildRunReviewNodeCsv(
       node.cache_write_tokens ?? 0,
       nodeTokenTotal(node),
       node.agent_turn_count ?? 0,
-      node.artifacts?.length ?? 0,
-      formatArtifactsForCsv(node.artifacts ?? []),
+      artifacts.length,
+      formatArtifactsForCsv(artifacts),
     ]);
   }
 
@@ -1448,10 +1452,42 @@ function toolMessageKey(taskId: string, seq: number) {
 }
 
 function formatArtifactsForCsv(artifacts: AgentTaskArtifact[]) {
-  return artifacts.map((artifact) => {
+  return dedupeArtifacts(artifacts).map((artifact) => {
     const href = artifactDownloadHref(artifact);
     return href ? `${artifact.filename} <${href}>` : artifact.filename;
   }).join("\n");
+}
+
+function dedupeArtifacts(artifacts: AgentTaskArtifact[]) {
+  const byKey = new Map<string, AgentTaskArtifact>();
+  for (const artifact of artifacts) {
+    const key = artifactSemanticKey(artifact);
+    const existing = byKey.get(key);
+    if (!existing || artifactCreatedMs(artifact) >= artifactCreatedMs(existing)) {
+      byKey.set(key, artifact);
+    }
+  }
+  return [...byKey.values()].sort(compareArtifactsForDisplay);
+}
+
+function artifactSemanticKey(artifact: AgentTaskArtifact) {
+  return [
+    artifact.kind || "",
+    artifact.title || "",
+    artifact.filename || "",
+  ].join(":").toLowerCase();
+}
+
+function artifactCreatedMs(artifact: AgentTaskArtifact) {
+  const parsed = Date.parse(artifact.created_at);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function compareArtifactsForDisplay(left: AgentTaskArtifact, right: AgentTaskArtifact) {
+  const leftName = left.title || left.filename || left.id;
+  const rightName = right.title || right.filename || right.id;
+  if (leftName !== rightName) return leftName.localeCompare(rightName, "zh-CN");
+  return artifactCreatedMs(right) - artifactCreatedMs(left);
 }
 
 function flattenExecutionNodes(tree: IssueExecutionTreeResponse | undefined): IssueExecutionNode[] {
@@ -1503,7 +1539,7 @@ function mergeTimelineNode(left: IssueTimelineNode, right: IssueTimelineNode): I
     agent_turn_count: (left.agent_turn_count ?? 0) + (right.agent_turn_count ?? 0),
     trace_event_count: (left.trace_event_count ?? 0) + (right.trace_event_count ?? 0),
     usage_unavailable_trace: left.usage_unavailable_trace || right.usage_unavailable_trace,
-    artifacts: [...(left.artifacts ?? []), ...(right.artifacts ?? [])],
+    artifacts: dedupeArtifacts([...(left.artifacts ?? []), ...(right.artifacts ?? [])]),
     evidence_refs: [...(left.evidence_refs ?? []), ...(right.evidence_refs ?? [])],
     summary: rightCompleted !== null && (leftCompleted === null || rightCompleted >= leftCompleted)
       ? right.summary
@@ -1713,6 +1749,18 @@ function semanticToolAction(tool: string | undefined, input: Record<string, unkn
   );
   if (path) {
     const action = semanticFileToolAction(tool);
+    const outputSignal = output ? outputOutcome(output) : null;
+    if (outputSignal?.severity === "error") {
+      return {
+        category: action.category,
+        sourceLabel: action.sourceLabel,
+        object: shortPath(path),
+        title: `${action.titlePrefix}：${shortPath(path)}`,
+        outcome: outputSignal.outcome,
+        summary: outputSignal.summary,
+        severity: outputSignal.severity,
+      };
+    }
     return {
       category: action.category,
       sourceLabel: action.sourceLabel,
@@ -1721,11 +1769,24 @@ function semanticToolAction(tool: string | undefined, input: Record<string, unkn
       outcome: "已记录",
       summary: "",
       severity: "normal",
+      suppressFailureSignal: true,
     };
   }
 
   const query = firstNonEmpty(stringFromUnknown(input?.query), stringFromUnknown(input?.pattern));
   if (query) {
+    const outputSignal = output ? outputOutcome(output) : null;
+    if (outputSignal?.severity === "error") {
+      return {
+        category: "搜索",
+        sourceLabel: "搜索",
+        object: truncateText(query, 96),
+        title: `搜索：${truncateText(query, 96)}`,
+        outcome: outputSignal.outcome,
+        summary: outputSignal.summary,
+        severity: outputSignal.severity,
+      };
+    }
     return {
       category: "搜索",
       sourceLabel: "搜索",
@@ -1734,6 +1795,7 @@ function semanticToolAction(tool: string | undefined, input: Record<string, unkn
       outcome: "已记录",
       summary: "",
       severity: "normal",
+      suppressFailureSignal: true,
     };
   }
 
