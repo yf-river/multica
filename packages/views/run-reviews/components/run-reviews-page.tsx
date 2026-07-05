@@ -1942,6 +1942,9 @@ function outputOutcome(
   command?: string,
 ): Pick<SemanticToolAction, "outcome" | "summary" | "severity" | "suppressFailureSignal"> {
   const normalizedOutput = toolOutputText(output);
+  if (toolOutputHasToolUseError(normalizedOutput)) {
+    return { outcome: "异常线索", summary: conciseEventSummary("工具调用返回错误", true), severity: "error" };
+  }
   if (
     toolOutputHasSuccessfulExitCode(normalizedOutput) ||
     outputHasOnlyBenignFailureCounters(normalizedOutput) ||
@@ -1975,6 +1978,10 @@ function toolOutputHasSuccessfulExitCode(output: string) {
   return /\bExit Code:\s*0\b/i.test(output) || /\bexit\s+(?:status|code)\s*[:=]?\s*0\b/i.test(output);
 }
 
+function toolOutputHasToolUseError(output: string) {
+  return output.toLowerCase().includes("<tool_use_error>");
+}
+
 function outputHasOnlyBenignFailureCounters(output: string) {
   const lower = output.toLowerCase();
   if (/(?:\berror:|\bexception\b|\bpanic:|\bfatal\b|\bpermission denied\b|\bprovider timeout\b|\btimed out\b|\bhttp\s+[45]\d\d\b|\bstatus\s+[45]\d\d\b|错误|异常|超时|无权限|权限拒绝)/i.test(output)) {
@@ -1991,7 +1998,12 @@ function outputIsReadOnlyCommandContent(command: string | undefined, output: str
     normalizedCommand.startsWith("git show") ||
     normalizedCommand.startsWith("git status") ||
     normalizedCommand.startsWith("git log");
-  if (!isReadOnlyGitCommand) return false;
+  const executable = commandExecutable(normalizedCommand);
+  const isReadOnlyShellCommand = ["cat", "sed", "nl", "ls", "head", "tail", "rg", "grep", "find"].includes(executable);
+  const isCommentListCommand = normalizedCommand.startsWith("multica issue comment list");
+  const isLocalArtifactRead = ["curl", "wget"].includes(executable) &&
+    (normalizedCommand.includes("/uploads/") || normalizedCommand.includes("/api/attachments/"));
+  if (!isReadOnlyGitCommand && !isReadOnlyShellCommand && !isCommentListCommand && !isLocalArtifactRead) return false;
   return !toolOutputHasNonEmptyStderr(output);
 }
 
@@ -2007,6 +2019,9 @@ function toolOutputHasNonEmptyStderr(output: string) {
 function extractErrorLine(output: string) {
   const patterns = [
     /\bError:\s*.+/i,
+    /\bTraceback\b.*/i,
+    /\bRuntimeError:\s*.+/i,
+    /\bException\b.*/i,
     /\bFAIL\b.+/i,
     /\bfailed\b.+/i,
     /\bpanic:\s*.+/i,

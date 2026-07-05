@@ -4881,6 +4881,9 @@ func promptEvaluationToolFailureSignal(tool string, output string) (bool, string
 	if normalized == "" {
 		return false, ""
 	}
+	if promptEvaluationToolOutputHasToolUseError(normalized) {
+		return true, "工具调用返回错误"
+	}
 	if exitCode, ok := promptEvaluationToolExitCode(normalized); ok {
 		if exitCode == 0 {
 			return false, ""
@@ -4904,6 +4907,8 @@ func promptEvaluationToolFailureSignal(tool string, output string) (bool, string
 		{"exit code 1", "工具结果包含非零退出码"},
 		{"exit code 2", "工具结果包含非零退出码"},
 		{"error:", "工具结果包含错误信息"},
+		{"traceback", "工具结果包含异常信息"},
+		{"runtimeerror", "工具结果包含异常信息"},
 		{"exception", "工具结果包含异常信息"},
 		{"failed", "工具结果包含失败信息"},
 		{"failure", "工具结果包含失败信息"},
@@ -4965,7 +4970,10 @@ func promptEvaluationToolOutputIsReadOnlyCommand(output string) bool {
 		strings.HasPrefix(command, "git branch") ||
 		strings.HasPrefix(command, "git show") ||
 		strings.HasPrefix(command, "git status") ||
-		strings.HasPrefix(command, "git log")
+		strings.HasPrefix(command, "git log") ||
+		strings.HasPrefix(command, "multica issue comment list") ||
+		promptEvaluationToolCommandIsReadOnlyShell(command) ||
+		promptEvaluationToolCommandReadsLocalArtifact(command)
 }
 
 func promptEvaluationToolOutputCommand(output string) string {
@@ -5003,6 +5011,42 @@ func promptEvaluationToolOutputHasNonEmptyStderr(output string) bool {
 		}
 	}
 	return false
+}
+
+func promptEvaluationToolOutputHasToolUseError(output string) bool {
+	return strings.Contains(output, "<tool_use_error>")
+}
+
+func promptEvaluationToolCommandIsReadOnlyShell(command string) bool {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return false
+	}
+	executable := fields[0]
+	if slash := strings.LastIndex(executable, "/"); slash >= 0 {
+		executable = executable[slash+1:]
+	}
+	switch executable {
+	case "cat", "sed", "nl", "ls", "head", "tail", "rg", "grep", "find":
+		return true
+	default:
+		return false
+	}
+}
+
+func promptEvaluationToolCommandReadsLocalArtifact(command string) bool {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return false
+	}
+	executable := fields[0]
+	if slash := strings.LastIndex(executable, "/"); slash >= 0 {
+		executable = executable[slash+1:]
+	}
+	if executable != "curl" && executable != "wget" {
+		return false
+	}
+	return strings.Contains(command, "/uploads/") || strings.Contains(command, "/api/attachments/")
 }
 
 func promptEvaluationToolOutputHasOnlySuccessFailureCounters(output string) bool {

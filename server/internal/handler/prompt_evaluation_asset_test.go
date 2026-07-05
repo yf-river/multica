@@ -234,6 +234,59 @@ Stderr: (empty)`,
 			wantSignal: false,
 			wantReason: "",
 		},
+		{
+			name:       "read source text with errors is content",
+			tool:       "Read",
+			output:     `[{"type":"text","text":"var ErrPasswordWeak = errors.New(\"密码强度校验失败\")\nreturn consts.ErrDataProcessFailed"}]`,
+			wantSignal: false,
+			wantReason: "",
+		},
+		{
+			name:       "grep source text with failures is content",
+			tool:       "Grep",
+			output:     `[{"type":"text","text":"password_hash_generator_test.go:19:// TestGeneratePasswordHash 生成密码哈希的测试\nresp_code_test.go:42:ErrPasswordExpired"}]`,
+			wantSignal: false,
+			wantReason: "",
+		},
+		{
+			name:       "read tool use error still fails",
+			tool:       "Read",
+			output:     `[{"type":"text","text":"<tool_use_error>File does not exist.</tool_use_error>"}]`,
+			wantSignal: true,
+			wantReason: "工具调用返回错误",
+		},
+		{
+			name: "local artifact curl content is not failed by keywords",
+			tool: "Bash",
+			output: `Command: curl -s http://localhost:18760/uploads/workspaces/ws/artifact.md 2>&1 | head -80
+Stdout: # 验证结果
+失败场景：密码过短时应返回业务错误。
+
+Stderr: (empty)`,
+			wantSignal: false,
+			wantReason: "",
+		},
+		{
+			name: "comment list content is not failed by keywords",
+			tool: "Bash",
+			output: `Command: multica issue comment list issue-1 --output json 2>&1
+Stdout: [{"content":"用户希望确认错误处理与失败用例。"}]
+
+Stderr: (empty)`,
+			wantSignal: false,
+			wantReason: "",
+		},
+		{
+			name: "python traceback still fails",
+			tool: "Bash",
+			output: `Command: python3 -c 'raise RuntimeError("boom")'
+Stdout: (empty)
+Stderr: Traceback (most recent call last):
+  File "<string>", line 1, in <module>
+RuntimeError: boom`,
+			wantSignal: true,
+			wantReason: "工具结果包含异常信息",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

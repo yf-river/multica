@@ -647,6 +647,30 @@ describe("buildRunReviewEventRows", () => {
             failure_signal: false,
             failure_reason: "",
           }),
+          tool({
+            id: "read-source",
+            tool: "Read",
+            input: { file_path: "internal/helper/password_validator.go" },
+            output: JSON.stringify([{ type: "text", text: "var ErrPasswordWeak = errors.New(\"密码强度校验失败\")" }]),
+            failure_signal: true,
+            failure_reason: "工具结果包含错误信息",
+          }),
+          tool({
+            id: "grep-source",
+            tool: "Grep",
+            input: { pattern: "ErrPassword" },
+            output: JSON.stringify([{ type: "text", text: "resp_code_test.go:42:ErrPasswordExpired" }]),
+            failure_signal: true,
+            failure_reason: "工具结果包含失败信息",
+          }),
+          tool({
+            id: "local-artifact",
+            tool: "Bash",
+            input: { command: "curl -s http://localhost:18760/uploads/workspaces/ws/artifact.md 2>&1 | head -80" },
+            output: "Command: curl -s http://localhost:18760/uploads/workspaces/ws/artifact.md 2>&1 | head -80\nStdout: 失败场景：密码过短时应返回业务错误。\n\nStderr: (empty)",
+            failure_signal: true,
+            failure_reason: "工具结果包含失败信息",
+          }),
         ],
         children: [],
       },
@@ -654,9 +678,36 @@ describe("buildRunReviewEventRows", () => {
 
     const rows = buildRunReviewEventRows(tree, []);
 
-    expect(rows).toHaveLength(3);
+    expect(rows).toHaveLength(6);
     expect(rows.every((row) => row.severity === "normal")).toBe(true);
     expect(rows.map((row) => row.summary).join("\n")).not.toContain("异常摘要");
+  });
+
+  it("keeps real tool use errors visible for content-only tools", () => {
+    const tree = {
+      root: {
+        tasks: [],
+        task_messages: [],
+        trace_events: [],
+        tool_call_chains: [
+          tool({
+            id: "read-missing",
+            tool: "Read",
+            input: { file_path: "missing.txt" },
+            output: JSON.stringify([{ type: "text", text: "<tool_use_error>File does not exist.</tool_use_error>" }]),
+            failure_signal: true,
+            failure_reason: "工具调用返回错误",
+          }),
+        ],
+        children: [],
+      },
+    } as unknown as IssueExecutionTreeResponse;
+
+    const [row] = buildRunReviewEventRows(tree, []);
+
+    expect(row?.severity).toBe("error");
+    expect(row?.summary).toContain("异常摘要");
+    expect(row?.summary).toContain("工具调用返回错误");
   });
 
   it("does not mark successful text summaries as failed because they mention zero failures", () => {
