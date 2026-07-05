@@ -35,6 +35,7 @@ const ISSUE_REVIEW_DRAFT_DATASET_NAME = "Issue 复盘评测 Draft";
 const RUN_REVIEW_MESSAGE_REFRESH_DEBOUNCE_MS = 1_200;
 const RUN_REVIEW_MESSAGE_REFRESH_MAX_WAIT_MS = 4_000;
 const RUN_REVIEW_LIVE_DURATION_TICK_MS = 1_000;
+const TIMELINE_SEGMENT_TEXT_MIN_WIDTH_PERCENT = 8;
 
 export function buildRunReviewOptimizerHref(trainingView: (view: string) => string, issueId: string): string {
   return `${trainingView("evaluation-runs")}?issue=${encodeURIComponent(issueId)}`;
@@ -929,14 +930,11 @@ function TimelineLaneChart({
                     <div
                       key={segment.key}
                       className={cn(
-                        "absolute top-1 bottom-1 min-w-[2rem] rounded px-2 text-[11px] leading-7 text-white shadow-sm",
+                        "absolute top-1 bottom-1 overflow-hidden rounded px-2 text-[11px] leading-7 text-white shadow-sm",
                         row.kind === "child" ? "bg-sky-600" : "bg-emerald-600",
                       )}
                       data-testid={`run-review-timeline-bar-${segment.key}`}
-                      style={{
-                        left: `${Math.max(0, ((segment.startMs - min) / span) * 100)}%`,
-                        width: `${Math.max(6, ((segment.endMs - segment.startMs) / span) * 100)}%`,
-                      }}
+                      style={timelineSegmentStyle(segment.startMs, segment.endMs, min, span)}
                       title={[
                         row.label,
                         `开始 ${formatDateTime(segment.startMs)}`,
@@ -946,9 +944,11 @@ function TimelineLaneChart({
                         `思考轮次 ${formatNumber(segment.turns)}`,
                       ].join(" · ")}
                     >
-                      <span className="block truncate">
-                        {formatDuration(segment.durationMs)} · {formatNumber(segment.tokenTotal)} token
-                      </span>
+                      {shouldShowTimelineSegmentText(timelineSegmentWidthPercent(segment.startMs, segment.endMs, span)) ? (
+                        <span className="block truncate">
+                          {formatDuration(segment.durationMs)} · {formatNumber(segment.tokenTotal)} token
+                        </span>
+                      ) : null}
                     </div>
                   )
                 ))
@@ -1028,18 +1028,38 @@ function timelineNodeSegment(
   };
 }
 
+export function timelineSegmentStyle(startMs: number, endMs: number, minMs: number, spanMs: number) {
+  return {
+    left: `${timelineSegmentLeftPercent(startMs, minMs, spanMs)}%`,
+    width: `${timelineSegmentWidthPercent(startMs, endMs, spanMs)}%`,
+  };
+}
+
+export function timelineSegmentLeftPercent(startMs: number, minMs: number, spanMs: number) {
+  return Math.max(0, ((startMs - minMs) / Math.max(spanMs, 1)) * 100);
+}
+
+export function timelineSegmentWidthPercent(startMs: number, endMs: number, spanMs: number) {
+  return Math.max(0, ((endMs - startMs) / Math.max(spanMs, 1)) * 100);
+}
+
+export function shouldShowTimelineSegmentText(widthPercent: number) {
+  return widthPercent >= TIMELINE_SEGMENT_TEXT_MIN_WIDTH_PERCENT;
+}
+
 function timelineRowSubtitle(status: string, runCount: number) {
   return runCount > 1 ? `${formatNumber(runCount)} 次 · ${statusLabel(status)}` : statusLabel(status);
 }
 
-function timelineTiming(node: IssueTimelineNode | undefined) {
+export function timelineTiming(node: IssueTimelineNode | undefined) {
   if (!node) return { startMs: null, endMs: null, durationMs: 0 };
   const start = parseTimeMs(node.started_at);
   const completed = parseTimeMs(node.completed_at);
   const duration = Math.max(node.duration_ms ?? 0, 0);
   if (start === null && completed === null) return { startMs: null, endMs: null, durationMs: duration };
-  const startMs = start ?? Math.max((completed as number) - Math.max(duration, 60_000), 0);
-  const endMs = Math.max(completed ?? startMs + Math.max(duration, 60_000), startMs + Math.max(duration, 60_000));
+  const fallbackDuration = Math.max(duration, 1);
+  const startMs = start ?? Math.max((completed as number) - fallbackDuration, 0);
+  const endMs = Math.max(completed ?? startMs + fallbackDuration, startMs);
   return { startMs, endMs, durationMs: Math.max(duration, endMs - startMs) };
 }
 

@@ -18,7 +18,11 @@ import {
   issueRunRowMetaLabels,
   runReviewMessageRefreshDelayMs,
   runReviewTotalDurationMs,
+  shouldShowTimelineSegmentText,
   shouldRefreshRunReviewForTaskEvent,
+  timelineTiming,
+  timelineSegmentStyle,
+  timelineSegmentWidthPercent,
 } from "./run-reviews-page";
 import { sopStageDisplayName } from "../../common/sop-stage-labels";
 
@@ -755,6 +759,50 @@ describe("buildRunReviewEventRows", () => {
     expect(timelineRows[0]?.node?.duration_ms).toBe(120_000);
     expect(buildAgentNodeRows(timelineRows.map((row) => row.node as IssueTimelineNode))[0]?.runCount).toBe(1);
     expect(buildAgentNodeRows(timelineRows.flatMap((row) => row.segments?.map((segment) => segment.node) ?? []))[0]?.runCount).toBe(2);
+  });
+
+  it("uses true timeline proportions for short run segments", () => {
+    const spanMs = 753_000;
+    const shortRunStart = 0;
+    const shortRunEnd = 20_108;
+
+    const width = timelineSegmentWidthPercent(shortRunStart, shortRunEnd, spanMs);
+
+    expect(width).toBeCloseTo(2.67, 2);
+    expect(timelineSegmentStyle(shortRunStart, shortRunEnd, 0, spanMs)).toMatchObject({
+      left: "0%",
+      width: `${width}%`,
+    });
+    expect(shouldShowTimelineSegmentText(width)).toBe(false);
+    expect(shouldShowTimelineSegmentText(10.76)).toBe(true);
+  });
+
+  it("does not inflate short timeline runs to one minute", () => {
+    const timing = timelineTiming({
+      issue_id: "issue-1",
+      node_id: "task:short-run",
+      node_type: "agent_task",
+      agent_id: "agent-pm",
+      agent_name: "PM-项目经理",
+      status: "completed",
+      started_at: "2026-06-09T10:00:00.000Z",
+      completed_at: "2026-06-09T10:00:20.000Z",
+      duration_ms: 20_000,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      message_count: 0,
+      agent_turn_count: 0,
+      trace_event_count: 0,
+      usage_unavailable_trace: false,
+      summary: "",
+      evidence_refs: [],
+      artifacts: [],
+    } as IssueTimelineNode);
+
+    expect(timing.durationMs).toBe(20_000);
+    expect((timing.endMs ?? 0) - (timing.startMs ?? 0)).toBe(20_000);
   });
 
   it("exports raw event CSV with escaped detail, metadata, and raw evidence", () => {
