@@ -415,6 +415,7 @@ function buildAgentInstruction(stageKey, role, routingTable = "") {
     "CodeBuddy 的 TaskCreate / TaskUpdate / todo 工具只是本地内部待办，不是 Multica 平台任务；本验收严禁使用这些内部待办工具。",
     "读取 issue 必须通过 Bash 运行 `multica issue get`、`multica issue comment list` 等平台 CLI 命令。",
     "只允许读取当前 issue、metadata、评论历史，写入本阶段 markdown 产物，并发表简短阶段评论。",
+    "阶段评论不得写“待确认”“请确认是否继续”“建议 PM 确认后再进入下一阶段”等会阻塞 SOP 的措辞；如有风险，写入风险说明和 handoff，但不要阻断下一阶段。",
     "每次运行必须先读取 issue、metadata 和完整评论历史。",
     "TAPD source-fetch 如果是 fetch_failed，必须从评论中的“人工恢复 TAPD 需求内容”提取真实需求。",
     `必须创建 markdown 产物文件，路径固定为 \`${artifactPath}\`。`,
@@ -520,7 +521,7 @@ async function runNaturalSOPFlow(agents, knownTasks, options = {}) {
     });
     knownTasks.add(task.id);
     const stage = agentToStage[task.agent_id] || "unknown";
-    if (task.status !== "completed" && !(stage === "pm" && task.pm_route_recovered)) {
+    if (task.status !== "completed" && !(stage === "pm" && task.pm_recovered)) {
       if (task.failure_reason === "runtime_recovery") {
         const attemptsExhausted =
           Number(task.max_attempts || 0) > 0 &&
@@ -543,7 +544,7 @@ async function runNaturalSOPFlow(agents, knownTasks, options = {}) {
     }
     if (stage === "pm") {
       pmRuns++;
-      if (!task.pm_route_recovered) {
+      if (!task.pm_recovered) {
         await assertPMRoutedOrClosed(task, agents, completedWorkers);
       }
     } else {
@@ -617,12 +618,43 @@ async function recoverActivePMIfAlreadyRouted(issueID, task, agents, completedWo
   const taskComments = comments.filter((comment) => isTaskComment(comment, task));
   const allMentions = taskComments.reduce((sum, comment) => sum + countMentions(comment.content), 0);
   const nextMentions = taskComments.reduce((sum, comment) => sum + countMentionsToAgent(comment.content, next.agent.id), 0);
-  if (allMentions !== 1 || nextMentions !== 1) return null;
+  if (allMentions !== 1 || nextMentions !== 1) {
+    const violation = await detectPMForbiddenBehavior(task.id);
+    if (!violation) return null;
+    const recovery = await postComment([
+      `验收脚本检测到 PM 越界执行 ${violation.kind}，已取消该 PM 任务并人工恢复推进到 ${next.stage}。`,
+      "",
+      `[@${next.agent.name}](mention://agent/${next.agent.id})`,
+    ].join("\n"));
+    const cancelResult = await cancelTask(task.id);
+    const recovered = {
+      ...task,
+      ...pick(cancelResult?.agent_task || cancelResult || {}, ["status", "completed_at", "error", "failure_reason"]),
+      pm_recovered: true,
+    };
+    if (!recovered.status) recovered.status = "cancelled";
+    evidence.pm_route_recoveries.push({
+      pm_task: pickTask(task),
+      recovered_to_stage: next.stage,
+      recovered_to_agent: pick(next.agent, ["id", "name"]),
+      recovery_action: "pm_cancelled_after_forbidden_behavior",
+      violation,
+      recovery_comment: pickComment(recovery),
+      cancel_result: pickTask(recovered),
+      task_comments: taskComments.map(pickComment),
+    });
+    check(`pm_cancelled_after_forbidden_behavior_${evidence.pm_route_recoveries.length}`, true, {
+      task_id: task.id,
+      recovered_to_stage: next.stage,
+      violation,
+    });
+    return recovered;
+  }
   const cancelResult = await cancelTask(task.id);
   const recovered = {
     ...task,
     ...pick(cancelResult?.agent_task || cancelResult || {}, ["status", "completed_at", "error", "failure_reason"]),
-    pm_route_recovered: true,
+    pm_recovered: true,
   };
   if (!recovered.status) recovered.status = "cancelled";
   evidence.pm_route_recoveries.push({
@@ -638,6 +670,45 @@ async function recoverActivePMIfAlreadyRouted(issueID, task, agents, completedWo
     recovered_to_stage: next.stage,
   });
   return recovered;
+}
+
+async function detectPMForbiddenBehavior(taskID) {
+  const messages = await listTaskMessages(taskID);
+  for (const message of messages) {
+    if (message.type !== "tool_use") continue;
+    const tool = String(message.tool || "");
+    if (/^(TaskCreate|TaskUpdate|TodoWrite|todo)$/i.test(tool)) {
+      return {
+        kind: "forbidden_internal_task_tool",
+        seq: Number(message.seq || 0),
+        tool,
+      };
+    }
+    const command = String(message.input?.command || "");
+    const forbidden = classifyForbiddenPMCommand(command);
+    if (forbidden) {
+      return {
+        kind: forbidden,
+        seq: Number(message.seq || 0),
+        tool,
+        command: command.slice(0, 500),
+      };
+    }
+  }
+  return null;
+}
+
+function classifyForbiddenPMCommand(command) {
+  const normalized = String(command || "").trim();
+  if (!normalized) return "";
+  const lower = normalized.toLowerCase();
+  if (/\b(cd|pushd)\s+\/data\/ida\//.test(lower)) return "forbidden_repo_directory_access";
+  if (/\b(go\s+test|go\s+build|pnpm|npm|yarn|make)\b/.test(lower)) return "forbidden_build_or_test_command";
+  if (/\b(git|rg|cat|find|sed|ls)\b/.test(lower)) return "forbidden_repo_inspection_command";
+  if (/\b(sleep|watch)\b/.test(lower) || /multica\s+issue\s+(runs|activity)\b/.test(lower) || /multica\s+task\b/.test(lower)) {
+    return "forbidden_wait_or_poll_command";
+  }
+  return "";
 }
 
 async function postCodeReviewComment(pmAgent, mr) {
@@ -778,6 +849,29 @@ async function listIssueTasks(issueID) {
       WHERE issue_id = $1
       ORDER BY created_at DESC
     `, [issueID]);
+    return res.rows;
+  } finally {
+    await client.end();
+  }
+}
+
+async function listTaskMessages(taskID) {
+  const client = new pg.Client({ connectionString: databaseURL });
+  await client.connect();
+  try {
+    const res = await client.query(`
+      SELECT
+        seq,
+        type,
+        tool,
+        content,
+        input,
+        output,
+        created_at
+      FROM task_message
+      WHERE task_id = $1
+      ORDER BY seq ASC
+    `, [taskID]);
     return res.rows;
   } finally {
     await client.end();

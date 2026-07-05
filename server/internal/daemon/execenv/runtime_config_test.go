@@ -440,6 +440,8 @@ func TestAssignmentTriggeredSquadLeaderGuardrail(t *testing.T) {
 		"Squad-leader / PM-style guardrail",
 		"If your Agent Identity says PM, coordinator, dispatcher, reviewer, or stage owner rather than developer",
 		"do not check out repositories, edit files, run implementation tests, or claim implementation is complete",
+		"A coordinator must not run repo-inspection, build, test, or wait/poll commands",
+		"`git`, `rg`, `cat`, `find`, `sed`, `ls`, `go test`, `pnpm`, `npm`, `make`, `sleep`, `watch`, `multica issue runs`, or `multica issue activity`",
 		"If the issue or squad instructions explicitly say a simple task may be completed directly, do not ask for extra confirmation",
 		"post the final result and set the issue to done",
 		"If you want to skip SOP stages but the issue does not explicitly allow direct completion, ask for explicit confirmation from the issue creator or workspace owner/admin in an issue comment and stop until that confirmation exists",
