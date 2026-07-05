@@ -332,6 +332,15 @@ func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T
 	`, testWorkspaceID, fx.parent.ID, commentID, agentID).Scan(&attachmentID); err != nil {
 		t.Fatalf("create artifact attachment: %v", err)
 	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO attachment (
+			workspace_id, issue_id, comment_id, uploader_type, uploader_id,
+			filename, url, content_type, size_bytes
+		)
+		VALUES ($1, $2, $3, 'agent', $4, '01-需求澄清.md', '/uploads/clarify-duplicate.md', 'text/markdown', 128)
+	`, testWorkspaceID, fx.parent.ID, commentID, agentID); err != nil {
+		t.Fatalf("create duplicate artifact attachment: %v", err)
+	}
 
 	run, err := testHandler.Queries.CreateSquadSOPRun(ctx, db.CreateSquadSOPRunParams{
 		WorkspaceID:    parseUUID(testWorkspaceID),

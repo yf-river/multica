@@ -1097,12 +1097,23 @@ async function upsertGongfengFile(projectPath, branchName, filePath, content, co
   } catch (error) {
     if (!/返回 404/.test(error?.message || String(error))) throw error;
   }
-  return gongfengRequest("POST", `projects/${project}/repository/files`, {
-    file_path: filePath,
-    branch_name: branchName,
-    content,
-    commit_message: commitMessage,
-  });
+  try {
+    return await gongfengRequest("POST", `projects/${project}/repository/files`, {
+      file_path: filePath,
+      branch_name: branchName,
+      content,
+      commit_message: commitMessage,
+    });
+  } catch (error) {
+    if (!/返回 409/.test(error?.message || String(error)) && !/File exist/i.test(error?.message || String(error))) {
+      throw error;
+    }
+    return gongfengRequest("PUT", `projects/${project}/repository/files/${encodedFilePath}`, {
+      branch_name: branchName,
+      content,
+      commit_message: commitMessage,
+    });
+  }
 }
 
 async function getGongfengBranchHead(projectPath, branchName) {

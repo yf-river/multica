@@ -243,12 +243,22 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 		if err != nil {
 			return IssueExecutionNodeResponse{}, err
 		}
+		artifactIndexByKey := make(map[string]int, len(attachments))
 		for _, attachment := range attachments {
 			comment, ok := commentByID[uuidToString(attachment.CommentID)]
 			if !ok || !comment.SourceTaskID.Valid {
 				continue
 			}
-			artifacts = append(artifacts, h.agentTaskArtifactToResponse(attachment, comment.SourceTaskID, issue.ID))
+			artifact := h.agentTaskArtifactToResponse(attachment, comment.SourceTaskID, issue.ID)
+			key := agentTaskArtifactSemanticKey(artifact)
+			if index, ok := artifactIndexByKey[key]; ok {
+				if artifactCreatedAtAfterOrEqual(artifact, artifacts[index]) {
+					artifacts[index] = artifact
+				}
+				continue
+			}
+			artifactIndexByKey[key] = len(artifacts)
+			artifacts = append(artifacts, artifact)
 		}
 	}
 	wakeupComments := make([]IssueWakeupCommentBrief, 0)
@@ -329,6 +339,24 @@ func (h *Handler) agentTaskArtifactToResponse(attachment db.Attachment, taskID, 
 		MarkdownURL: att.MarkdownURL,
 		CreatedAt:   att.CreatedAt,
 	}
+}
+
+func agentTaskArtifactSemanticKey(artifact AgentTaskArtifactResponse) string {
+	return strings.ToLower(strings.Join([]string{
+		strings.TrimSpace(artifact.TaskID),
+		strings.TrimSpace(artifact.Kind),
+		strings.TrimSpace(artifact.Title),
+		strings.TrimSpace(artifact.Filename),
+	}, ":"))
+}
+
+func artifactCreatedAtAfterOrEqual(left, right AgentTaskArtifactResponse) bool {
+	leftAt, leftErr := time.Parse(time.RFC3339, left.CreatedAt)
+	rightAt, rightErr := time.Parse(time.RFC3339, right.CreatedAt)
+	if leftErr == nil && rightErr == nil {
+		return !leftAt.Before(rightAt)
+	}
+	return left.CreatedAt >= right.CreatedAt
 }
 
 func summarizeIssueExecutionTree(root IssueExecutionNodeResponse) map[string]int {

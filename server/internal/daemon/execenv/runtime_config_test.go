@@ -136,10 +136,11 @@ func TestStageMarkdownArtifactsSectionUsesCommentAttachments(t *testing.T) {
 		"01-clarify requirement note",
 		"05-verify report",
 		"save it as a UTF-8 `.md` file",
-		"under `artifacts/multica/` when possible",
-		"scans markdown files under `artifacts/` and `.multica/artifacts/`",
-		"uploads them to the issue before marking the task terminal",
+		"use `artifacts/multica/` in the current working directory",
+		"uploads markdown artifacts from the managed artifact directory, `artifacts/`, and `.multica/artifacts/`",
+		"to the issue before marking the task terminal",
 		"links them to an agent-authored issue comment",
+		"Do not also pass those managed markdown files with `multica issue comment add --attachment`",
 		"download or preview",
 	} {
 		if !strings.Contains(out, want) {
