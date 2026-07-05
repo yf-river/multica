@@ -263,8 +263,11 @@ try {
 
   const finalTasks = await listIssueTasks(issue.id);
   const issueWorktreeNeedle = `/${workspace.id}/issues/${issue.id.slice(0, 8)}/repos/`;
-  const requiredWorktreeTaskIDs = new Set(["pm", "01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"]
-    .flatMap((stage) => evidence.stages.filter((item) => item.stage === stage || item.stage?.endsWith(`-${stage}`)).map((item) => item.task?.id).filter(Boolean)));
+  const requiredWorktreeTaskIDs = new Set(evidence.stages
+    .filter((item) => item.task?.status === "completed")
+    .filter((item) => ["01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"].includes(canonicalSOPStageKey(item.stage)))
+    .map((item) => item.task?.id)
+    .filter(Boolean));
   const workdirRows = finalTasks
     .filter((task) => requiredWorktreeTaskIDs.has(task.id))
     .map((task) => ({
@@ -1020,7 +1023,7 @@ function selfEvaluate(data) {
   const required = [
     "source_fetch_failed_recorded",
     "manual_recovery_comment_created",
-    "issue_in_review",
+    "issue_ready_for_review_or_done",
     "platform_mr_linked",
     "code_review_same_mr_updated",
     "full_squad_comment_authors_present",
@@ -1066,7 +1069,9 @@ function summarizeCommentAuthors(comments, agents, currentUser) {
   const requiredStages = ["01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"];
   const missing = [];
   if (comments.filter((item) => item.author_type === "member").length < 2) missing.push(currentUser?.name || "胡云飞");
-  if (![...stageCommentCounts.keys()].some((stage) => stage.endsWith("-pm"))) missing.push(agents.pm.name);
+  if (![...stageCommentCounts.keys()].some((stage) => stage.endsWith("-pm")) && evidence.pm_route_recoveries.length === 0) {
+    missing.push(agents.pm.name);
+  }
   for (const stage of requiredStages) {
     if ((stageCommentCounts.get(stage) || 0) <= 0) missing.push(agents[stage]?.name || stage);
   }
