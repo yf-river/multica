@@ -95,6 +95,48 @@ func TestLinkPullRequestToIssue_GongfengURL(t *testing.T) {
 	if len(listed.PullRequests) != 1 || listed.PullRequests[0].Number != 61234 {
 		t.Fatalf("listed pull requests = %#v, want MR 61234", listed.PullRequests)
 	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/issues/"+created.ID+"/pull-requests", map[string]any{
+		"provider": "gongfeng",
+		"html_url": "https://git.code.tencent.com/ChainWeaver/ida/user-center/merge_requests/61234",
+		"title":    "GOA-61234 user-center add quick entry API follow-up",
+		"state":    "opened",
+	})
+	req = withURLParam(req, "id", created.ID)
+	testHandler.LinkPullRequestToIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("LinkPullRequestToIssue repeat without branch: %d %s", w.Code, w.Body.String())
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("GET", "/api/issues/"+created.ID+"/pull-requests", nil)
+	req = withURLParam(req, "id", created.ID)
+	testHandler.ListPullRequestsForIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ListPullRequestsForIssue after repeat link: %d %s", w.Code, w.Body.String())
+	}
+	listed.PullRequests = nil
+	if err := json.NewDecoder(w.Body).Decode(&listed); err != nil {
+		t.Fatalf("decode list after repeat link: %v", err)
+	}
+	if len(listed.PullRequests) != 1 {
+		t.Fatalf("listed pull requests after repeat link = %#v, want one MR", listed.PullRequests)
+	}
+	if listed.PullRequests[0].Branch == nil || *listed.PullRequests[0].Branch != "goa-61234-usercenter-api" {
+		t.Fatalf("branch after repeat link = %#v, want preserved goa-61234-usercenter-api", listed.PullRequests[0].Branch)
+	}
+	var headSHA string
+	if err := testPool.QueryRow(ctx, `
+		SELECT head_sha
+		FROM github_pull_request
+		WHERE workspace_id = $1 AND repo_owner = $2 AND repo_name = $3 AND pr_number = $4
+	`, testWorkspaceID, "ChainWeaver/ida", "user-center", 61234).Scan(&headSHA); err != nil {
+		t.Fatalf("query head_sha after repeat link: %v", err)
+	}
+	if headSHA != "abc123" {
+		t.Fatalf("head_sha after repeat link = %q, want preserved abc123", headSHA)
+	}
 }
 
 func TestLinkPullRequestToIssue_RequiresRepositoryAndNumber(t *testing.T) {

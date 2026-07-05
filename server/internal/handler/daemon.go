@@ -1298,6 +1298,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	// resources (or no project at all), we fall back to the workspace repos.
 	var issueForSource db.Issue
 	hasIssueForSource := false
+	suppressIssueReposForLeader := false
 	if task.IssueID.Valid {
 		if issue, err := h.Queries.GetIssue(r.Context(), task.IssueID); err == nil {
 			issueForSource = issue
@@ -1328,6 +1329,9 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 						"squad_name", squad.Name,
 						"leader_agent_id", resp.Agent.ID,
 					)
+					if task.IsLeaderTask {
+						suppressIssueReposForLeader = true
+					}
 				}
 			}
 
@@ -1338,7 +1342,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				if proj, err := h.Queries.GetProject(r.Context(), issue.ProjectID); err == nil {
 					resp.ProjectTitle = proj.Title
 				}
-				if rows := h.listProjectResourcesForProject(r.Context(), issue.ProjectID); len(rows) > 0 {
+				if rows := h.listProjectResourcesForProject(r.Context(), issue.ProjectID); len(rows) > 0 && !suppressIssueReposForLeader {
 					out := make([]ProjectResourceData, 0, len(rows))
 					for _, row := range rows {
 						label := ""
@@ -1390,7 +1394,16 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			if len(projectRepos) > 0 {
+			if suppressIssueReposForLeader {
+				resp.ProjectResources = nil
+				resp.Repos = nil
+				resp.IssueExecutionSpace = nil
+				slog.Debug("suppressed issue repos for squad leader task",
+					"task_id", uuidToString(task.ID),
+					"issue_id", uuidToString(issue.ID),
+					"agent_id", uuidToString(task.AgentID),
+				)
+			} else if len(projectRepos) > 0 {
 				resp.Repos = projectRepos
 			} else if ws, err := h.Queries.GetWorkspace(r.Context(), issue.WorkspaceID); err == nil && ws.Repos != nil {
 				var repos []RepoData
@@ -1398,7 +1411,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 					resp.Repos = repos
 				}
 			}
-			if len(projectRepos) > 0 {
+			if !suppressIssueReposForLeader && len(projectRepos) > 0 {
 				resp.IssueExecutionSpace = &IssueExecutionSpaceData{
 					Enabled:        true,
 					IssueID:        uuidToString(issue.ID),

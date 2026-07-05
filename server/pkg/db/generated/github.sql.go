@@ -578,13 +578,13 @@ ON CONFLICT (workspace_id, repo_owner, repo_name, pr_number) DO UPDATE SET
     title = EXCLUDED.title,
     state = EXCLUDED.state,
     html_url = EXCLUDED.html_url,
-    branch = EXCLUDED.branch,
+    branch = COALESCE(EXCLUDED.branch, github_pull_request.branch),
     author_login = EXCLUDED.author_login,
     author_avatar_url = EXCLUDED.author_avatar_url,
     merged_at = EXCLUDED.merged_at,
     closed_at = EXCLUDED.closed_at,
     pr_updated_at = EXCLUDED.pr_updated_at,
-    head_sha = EXCLUDED.head_sha,
+    head_sha = COALESCE(NULLIF(EXCLUDED.head_sha, ''), github_pull_request.head_sha),
     mergeable_state = CASE
         WHEN COALESCE($21::boolean, FALSE) THEN NULL
         WHEN EXCLUDED.mergeable_state IS NOT NULL THEN EXCLUDED.mergeable_state

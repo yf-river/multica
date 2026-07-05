@@ -969,6 +969,89 @@ func TestCreateSubIssueUsesExplicitProjectOverParentProject(t *testing.T) {
 	}
 }
 
+func TestCreateIssueReusesDuplicateOpenChild(t *testing.T) {
+	var projectID, parentID, childID string
+	defer func() {
+		if parentID != "" {
+			testPool.Exec(context.Background(), `DELETE FROM issue WHERE parent_issue_id = $1 OR id = $1`, parentID)
+		}
+		if projectID != "" {
+			req := newRequest("DELETE", "/api/projects/"+projectID, nil)
+			req = withURLParam(req, "id", projectID)
+			testHandler.DeleteProject(httptest.NewRecorder(), req)
+		}
+	}()
+
+	var agentID string
+	if err := testPool.QueryRow(context.Background(), `SELECT id FROM agent WHERE workspace_id = $1 ORDER BY created_at ASC LIMIT 1`, testWorkspaceID).Scan(&agentID); err != nil {
+		t.Fatalf("load agent: %v", err)
+	}
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Duplicate child project",
+	})
+	testHandler.CreateProject(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var project ProjectResponse
+	json.NewDecoder(w.Body).Decode(&project)
+	projectID = project.ID
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "Duplicate child parent",
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue parent: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var parent IssueResponse
+	json.NewDecoder(w.Body).Decode(&parent)
+	parentID = parent.ID
+
+	body := map[string]any{
+		"title":           "Duplicate child",
+		"parent_issue_id": parentID,
+		"project_id":      projectID,
+		"assignee_type":   "agent",
+		"assignee_id":     agentID,
+	}
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, body)
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue child: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var child IssueResponse
+	json.NewDecoder(w.Body).Decode(&child)
+	childID = child.ID
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, body)
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("CreateIssue duplicate child: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var duplicate IssueResponse
+	json.NewDecoder(w.Body).Decode(&duplicate)
+	if duplicate.ID != childID {
+		t.Fatalf("duplicate child id = %s, want existing %s", duplicate.ID, childID)
+	}
+
+	var count int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*) FROM issue
+		WHERE workspace_id = $1 AND parent_issue_id = $2 AND project_id = $3 AND title = 'Duplicate child'
+	`, testWorkspaceID, parentID, projectID).Scan(&count); err != nil {
+		t.Fatalf("count duplicate children: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("duplicate child count = %d, want 1", count)
+	}
+}
+
 func TestCreateIssueDefaultsToProjectLeadAgentAndEnqueues(t *testing.T) {
 	leadAgentID := createHandlerTestAgent(t, "Project Lead Agent", []byte("[]"))
 	var projectID, issueID string
@@ -1105,6 +1188,82 @@ func TestProjectLeadMemberBacklogIssueRequiresApprovalBeforeSquadRuns(t *testing
 	}
 	if got := countQueuedOrDispatched(t, leaderAgentID, issue.ID); got != 1 {
 		t.Fatalf("squad leader tasks after approval = %d, want 1", got)
+	}
+}
+
+func TestProjectLeadMemberIssueMovedToBacklogRequestsApproval(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	leaderAgentID := createHandlerTestAgent(t, "Project Approval Update Squad Leader", nil)
+
+	var squadID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
+		VALUES ($1, $2, '', $3, $4)
+		RETURNING id
+	`, testWorkspaceID, "Project Approval Update Squad "+fmt.Sprint(time.Now().UnixNano()), leaderAgentID, testUserID).Scan(&squadID); err != nil {
+		t.Fatalf("create squad: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title":     "Human lead update approval project " + fmt.Sprint(time.Now().UnixNano()),
+		"lead_type": "member",
+		"lead_id":   testUserID,
+	})
+	testHandler.CreateProject(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var project ProjectResponse
+	json.NewDecoder(w.Body).Decode(&project)
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
+	})
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":         "Cross-service child corrected into backlog",
+		"project_id":    project.ID,
+		"status":        "todo",
+		"assignee_type": "squad",
+		"assignee_id":   squadID,
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var issue IssueResponse
+	json.NewDecoder(w.Body).Decode(&issue)
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issue.ID)
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issue.ID)
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issue.ID)
+	})
+
+	w = httptest.NewRecorder()
+	req = newRequest("PUT", "/api/issues/"+issue.ID, map[string]any{"status": "backlog"})
+	req = withURLParam(req, "id", issue.ID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateIssue backlog: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var inboxCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM inbox_item
+		WHERE issue_id = $1
+		  AND recipient_type = 'member'
+		  AND recipient_id = $2
+		  AND type = 'project_issue_approval_requested'
+	`, issue.ID, testUserID).Scan(&inboxCount); err != nil {
+		t.Fatalf("count approval inbox: %v", err)
+	}
+	if inboxCount != 1 {
+		t.Fatalf("approval inbox count after move to backlog = %d, want 1", inboxCount)
 	}
 }
 

@@ -30,6 +30,9 @@ const gongfengSourceBranch = trimEnv("PASSWORD_SOP_GONGFENG_SOURCE_BRANCH") || `
 const gongfengEvidenceDir = `docs/ai-studio-sop-acceptance/${safeRunID}`;
 const gongfengEvidenceFile = `${gongfengEvidenceDir}/acceptance.md`;
 const legacyFlatEvidenceFile = `docs/ai-studio-sop-acceptance/${safeRunID}.md`;
+const passwordImplementationFile = "internal/helper/password_validator.go";
+const passwordTestFile = "internal/helper/password_validator_test.go";
+const passwordReviewMarker = `AIS_PASSWORD_REVIEW_${safeRunID.replace(/[^A-Za-z0-9_]/g, "_")}`;
 
 const evidence = {
   schema: "multica.password_strength_sop_e2e.v1",
@@ -54,6 +57,9 @@ const evidence = {
     source_branch: gongfengSourceBranch,
     evidence_dir: gongfengEvidenceDir,
     evidence_file: gongfengEvidenceFile,
+    implementation_file: passwordImplementationFile,
+    test_file: passwordTestFile,
+    code_review_marker: passwordReviewMarker,
   },
   checks: [],
   pm_route_recoveries: [],
@@ -125,7 +131,7 @@ try {
 
   const knownTasks = new Set();
   await updateIssue(issue.id, { status: "todo", assignee_type: "squad", assignee_id: squad.id });
-  await runNaturalSOPFlow(agents, knownTasks);
+  await runNaturalSOPFlow(agents, knownTasks, { phase: "initial" });
 
   const finalIssue = await get(`/api/issues/${issue.id}`);
   evidence.final_issue = pickIssue(finalIssue);
@@ -133,17 +139,39 @@ try {
 
   const linkedMRs = await get(`/api/issues/${issue.id}/pull-requests`);
   evidence.linked_pull_requests = normalizePullRequests(linkedMRs).map(pickPullRequest);
-  check("platform_mr_linked", evidence.linked_pull_requests.some((item) =>
+  const primaryMR = evidence.linked_pull_requests.find((item) =>
     item.html_url &&
     item.html_url.includes("/merge_requests/") &&
-    item.number > 0
-  ), {
+    item.number > 0 &&
+    (!item.branch || item.branch === gongfengSourceBranch)
+  ) || evidence.linked_pull_requests.find((item) => item.html_url && item.html_url.includes("/merge_requests/"));
+  check("platform_mr_linked", Boolean(primaryMR), {
     expected_branch: gongfengSourceBranch,
     linked_pull_requests: evidence.linked_pull_requests,
+  });
+  if (!primaryMR) fail("05 completed but no Gongfeng MR linked to issue", { linked_pull_requests: evidence.linked_pull_requests });
+
+  const reviewComment = await postCodeReviewComment(agents.pm, primaryMR);
+  evidence.code_review_comment = pickComment(reviewComment);
+  await updateIssue(issue.id, { status: "todo", assignee_type: "squad", assignee_id: squad.id });
+  await runNaturalSOPFlow(agents, knownTasks, {
+    phase: "code_review",
+    initialCompletedWorkers: ["01-clarify", "02-design", "03-task-split"],
+    requiredWorkers: ["04-implement", "05-verify"],
+  });
+  const reviewMRs = normalizePullRequests(await get(`/api/issues/${issue.id}/pull-requests`)).map(pickPullRequest);
+  evidence.code_review_pull_requests = reviewMRs;
+  const sameMR = reviewMRs.find((item) => item.id === primaryMR.id || (item.number > 0 && item.number === primaryMR.number));
+  check("code_review_same_mr_updated", Boolean(sameMR) && reviewMRs.filter((item) => item.html_url && item.html_url.includes("/merge_requests/")).length === evidence.linked_pull_requests.filter((item) => item.html_url && item.html_url.includes("/merge_requests/")).length, {
+    initial_mr: primaryMR,
+    after_review: reviewMRs,
+    required_marker: passwordReviewMarker,
   });
 
   const comments = normalizeList(await get(`/api/issues/${issue.id}/comments`));
   evidence.comment_summary = summarizeComments(comments);
+  evidence.comment_authors = summarizeCommentAuthors(comments, agents, currentUser);
+  check("full_squad_comment_authors_present", evidence.comment_authors.missing.length === 0, evidence.comment_authors);
   const artifactComments = comments.filter((item) => Array.isArray(item.attachments) && item.attachments.length > 0);
   evidence.artifact_comments = artifactComments.map(pickComment);
   check("auto_artifact_comments_present", artifactComments.length >= 5, { count: artifactComments.length });
@@ -164,15 +192,20 @@ try {
     attachmentTexts.join("\n"),
   ].join("\n");
   evidence.repository_acceptance_file = {
-    expected_file: gongfengEvidenceFile,
-    expected_dir: gongfengEvidenceDir,
+    expected_implementation_file: passwordImplementationFile,
+    expected_test_file: passwordTestFile,
+    forbidden_docs_only_file: gongfengEvidenceFile,
     forbidden_legacy_file: legacyFlatEvidenceFile,
-    expected_file_mentioned: repositoryEvidenceText.includes(gongfengEvidenceFile),
+    implementation_file_mentioned: repositoryEvidenceText.includes(passwordImplementationFile),
+    test_file_mentioned: repositoryEvidenceText.includes(passwordTestFile),
+    review_marker_mentioned: repositoryEvidenceText.includes(passwordReviewMarker),
     forbidden_legacy_file_mentioned: repositoryEvidenceText.includes(legacyFlatEvidenceFile),
   };
   check(
-    "repository_acceptance_file_run_scoped",
-    evidence.repository_acceptance_file.expected_file_mentioned &&
+    "repository_real_implementation_files_mentioned",
+    evidence.repository_acceptance_file.implementation_file_mentioned &&
+      evidence.repository_acceptance_file.test_file_mentioned &&
+      evidence.repository_acceptance_file.review_marker_mentioned &&
       !evidence.repository_acceptance_file.forbidden_legacy_file_mentioned,
     evidence.repository_acceptance_file,
   );
@@ -203,8 +236,11 @@ try {
   const sopRun = sopRuns.find((item) => item.squad_id === squad.id) || sopRuns[0] || null;
   evidence.sop_run = summarizeSOPRun(sopRun);
   const completedSteps = new Set((sopRun?.events || []).filter((event) => event.event_type === "步骤完成").map((event) => event.step_key));
-  check("sop_steps_completed", ["pm", "01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"].every((key) => completedSteps.has(key)), {
+  const completedStageTasks = new Set(evidence.stages.map((stage) => canonicalSOPStageKey(stage.stage)).filter(Boolean));
+  const requiredSOPSteps = ["pm", "01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"];
+  check("sop_steps_completed", requiredSOPSteps.every((key) => completedSteps.has(key) || completedStageTasks.has(key)), {
     completed: [...completedSteps],
+    completed_stage_tasks: [...completedStageTasks],
   });
 
   const tree = await get(`/api/issues/${issue.id}/execution-tree`);
@@ -228,7 +264,7 @@ try {
   const finalTasks = await listIssueTasks(issue.id);
   const issueWorktreeNeedle = `/${workspace.id}/issues/${issue.id.slice(0, 8)}/repos/`;
   const requiredWorktreeTaskIDs = new Set(["pm", "01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"]
-    .flatMap((stage) => evidence.stages.filter((item) => item.stage === stage).map((item) => item.task?.id).filter(Boolean)));
+    .flatMap((stage) => evidence.stages.filter((item) => item.stage === stage || item.stage?.endsWith(`-${stage}`)).map((item) => item.task?.id).filter(Boolean)));
   const workdirRows = finalTasks
     .filter((task) => requiredWorktreeTaskIDs.has(task.id))
     .map((task) => ({
@@ -268,7 +304,7 @@ async function createStageAgents(runtime) {
     "01-clarify": ["01-需求澄清", "澄清密码强度需求边界和验收口径。"],
     "02-design": ["02-方案设计", "设计密码强度校验策略、接口影响和测试方案。"],
     "03-task-split": ["03-任务拆分", "拆分密码强度实现、测试和回归任务。"],
-    "04-implement": ["04-开发", "给出实现说明和局部验证证据；本验收不实际改业务仓库。"],
+    "04-implement": ["04-开发", "在 user-center 真实 helper/测试中实现密码强度规则或 CodeReview 返工。"],
     "05-verify": ["05-验证测试", "独立验证密码强度规则和证据完整性。"],
   };
   const out = {};
@@ -335,6 +371,7 @@ function buildAgentInstruction(stageKey, role, routingTable = "") {
       "首轮调度评论必须直接包含 01 路由表里的 mention；不要写“需要确认”“请确认”“希望从哪个阶段开始”等任何询问句。",
       "01 完成后：只 @02-方案设计。02 完成后：只 @03-任务拆分。03 完成后：只 @04-开发。04 完成后：只 @05-验证测试。",
       "05 完成且结论通过后：先运行 `multica issue mr list <issue> --output json` 确认已有平台关联 MR；如果没有 MR，评论说明阻塞并停止；如果已有 MR，写入 `artifacts/multica/pm-final-password-strength.md`，运行 `multica issue status <issue> in_review`，并发表最终收口评论；此时不得 @任何 Agent。",
+      "如果最新用户评论包含 CodeReview、返工、追加需求或要求维护同一个 MR：不要从 01 重新开始，必须只 @04-开发；04 完成后只 @05-验证测试；05 确认同一个 MR 更新后再收口。",
       "PM 产物必须包含：阶段名、TAPD 标题“增强密码强度”、人工恢复来源说明、密码规则、当前推进判断、下一步或收口结论。",
       "不要把 TAPD 登录页当需求；不要输出密钥；不要创建 child issue；不要一次 @mention 多个阶段。",
       "调度评论必须简短中文，且必须包含且只包含一个下一阶段 Agent mention；最终收口评论不得包含 mention://。",
@@ -348,24 +385,27 @@ function buildAgentInstruction(stageKey, role, routingTable = "") {
     "禁止询问用户是否继续；本阶段收到任务后必须直接完成本阶段产物和简短评论。",
     `你是 ${stageKey} 阶段 Agent。${role}`,
     "这是验收运行，但必须走真实 Multica issue/comment/task/attachment 链路。",
-    "这是平台链路验收。只有 04-开发 可以做受控仓库变更；只有 05-验证测试 可以创建 MR。",
+    "这是平台链路验收。只有 04-开发 可以做受控真实仓库变更；只有 05-验证测试 可以创建或确认 MR。",
     stageKey === "04-implement"
       ? [
-          `04 必须在当前 git worktree 中创建或更新受控验收文件 \`${gongfengEvidenceFile}\`，内容写明 TAPD 标题、密码规则、run_id 和验证用途。`,
-          `04 还必须单独写阶段产物 \`${artifactPath}\`；仓库里的 \`${gongfengEvidenceFile}\` 不是平台阶段产物，不能替代 \`${artifactPath}\`。`,
+          `04 必须在当前 git worktree 中修改真实用户中心实现/测试文件：\`${passwordImplementationFile}\` 与 \`${passwordTestFile}\`。`,
+          "首次实现：如果密码强度规则未完整满足 TAPD 需求，补齐 8-32 位、至少 3 种字符类型、特殊字符白名单、非法字符拒绝，并补单测。",
+          `CodeReview 返工：如果评论中出现返工标记 \`${passwordReviewMarker}\`，必须在同一个 source branch 上继续维护 \`${passwordImplementationFile}\` / \`${passwordTestFile}\`，让测试或注释包含该标记，并补充空白字符输入的可追踪校验证据。`,
+          `04 还必须单独写阶段产物 \`${artifactPath}\`；实现/测试文件不能替代 \`${artifactPath}\`。`,
           `04 必须切到并推送源分支 \`${gongfengSourceBranch}\`，目标分支是 \`${gongfengTargetBranch}\`。`,
-          "04 只允许修改这一个 docs 验收文件和本阶段 markdown 产物，不得改业务代码或其它文件。",
-          "04 必须运行 `git status --short`、`git diff --stat`、`git log -1 --oneline` 并把结果写入阶段产物。",
+          `04 允许修改的仓库文件仅限 \`${passwordImplementationFile}\`、\`${passwordTestFile}\` 和本阶段产物；不得只写 docs 验收文件。`,
+          "04 必须运行 `go test ./internal/helper -run 'TestPassword|Test.*Strength'`、`git status --short`、`git diff --stat`、`git log -1 --oneline` 并把结果写入阶段产物。",
         ].join("\n")
       : "非 04 阶段不得修改业务仓库；非 05 阶段不得创建 MR。",
     stageKey === "05-verify"
       ? [
-          `05 必须验证源分支 \`${gongfengSourceBranch}\` 已推送且包含 \`${gongfengEvidenceFile}\`。`,
-          `05 必须确认没有把本次验收文件写成旧平铺路径 \`${legacyFlatEvidenceFile}\`。`,
+          `05 必须验证源分支 \`${gongfengSourceBranch}\` 已推送且包含真实实现/测试改动：\`${passwordImplementationFile}\` 与 \`${passwordTestFile}\`。`,
+          "05 必须检查 MR/diff 不是 docs-only；如果只有 docs、验收记录或阶段报告，必须把 issue 改为 blocked 并评论说明，不得通过。",
           `05 必须单独写阶段产物 \`${artifactPath}\`；MR 描述文件可以使用该阶段产物。`,
-          "05 必须运行 `git status --short` 和 `git log -1 --oneline`，并把结果写入阶段产物。",
-          `05 验证通过后必须运行平台命令创建 MR：\`multica issue mr create <issue> --provider gongfeng --project-path ${gongfengProjectPath} --source-branch ${gongfengSourceBranch} --target-branch ${gongfengTargetBranch} --title "<identifier>: 增强密码强度 SOP 验收" --description-file artifacts/multica/05-verify-password-strength.md --output json\`。`,
-          "05 创建 MR 后必须运行 `multica issue mr list <issue> --output json` 确认平台能读到关联 MR，再将 issue 状态改为 `in_review`。",
+          "05 必须运行 `go test ./internal/helper -run 'TestPassword|Test.*Strength'`、`git status --short`、`git diff --stat` 和 `git log -1 --oneline`，并把结果写入阶段产物。",
+          `首次 05 验证通过且平台尚未有关联 MR 时，必须运行平台命令创建 MR：\`multica issue mr create <issue> --provider gongfeng --project-path ${gongfengProjectPath} --source-branch ${gongfengSourceBranch} --target-branch ${gongfengTargetBranch} --title "<identifier>: 增强密码强度 SOP 验收" --description-file artifacts/multica/05-verify-password-strength.md --output json\`。`,
+          `CodeReview 返工时，如果 \`multica issue mr list <issue> --output json\` 已有 source branch \`${gongfengSourceBranch}\` 对应 MR，严禁新建 MR；必须确认同一个 MR 已包含最新 commit 和返工标记 \`${passwordReviewMarker}\`。`,
+          "05 创建或确认 MR 后必须运行 `multica issue mr list <issue> --output json` 确认平台能读到关联 MR，再将 issue 状态改为 `in_review`。",
           "如果 MR 创建失败，必须把 issue 状态改为 `blocked` 并在评论中说明阻塞原因，不能宣称验收通过。",
         ].join("\n")
       : "非 05 阶段不得创建 MR 或修改 issue 为 in_review。",
@@ -377,7 +417,7 @@ function buildAgentInstruction(stageKey, role, routingTable = "") {
     "TAPD source-fetch 如果是 fetch_failed，必须从评论中的“人工恢复 TAPD 需求内容”提取真实需求。",
     `必须创建 markdown 产物文件，路径固定为 \`${artifactPath}\`。`,
     "只有 artifacts/multica 会被平台自动收拢。",
-    `仓库受控验收文件必须放在本次 run 专属目录 \`${gongfengEvidenceDir}\` 下，禁止写成 \`${legacyFlatEvidenceFile}\`。`,
+    `禁止用 \`${gongfengEvidenceFile}\` 或 \`${legacyFlatEvidenceFile}\` 这类 docs-only 文件替代真实实现/测试改动。`,
     "markdown 产物必须包含：阶段名、TAPD 标题“增强密码强度”、人工恢复来源说明、密码规则、验收证据、handoff。",
     "不要把 TAPD 登录页当需求；不要输出密钥；不要创建 child issue；不要超出本阶段允许的仓库动作。",
     "阶段评论不得包含 mention://，不得 @任何 Agent、小队或成员；阶段推进交给 PM 和平台调度。",
@@ -407,7 +447,7 @@ async function createSOPSquad(agents) {
       { key: "04-implement", name: agents["04-implement"].name, role_key: "04-implement" },
       { key: "05-verify", name: agents["05-verify"].name, role_key: "05-verify" },
     ],
-    acceptance: ["TAPD fetch_failed 可人工恢复", "01-05 阶段完成", "markdown 产物自动进入评论附件", "05 后平台创建并关联 MR", "复盘能审计附件和 token"],
+    acceptance: ["TAPD fetch_failed 可人工恢复", "01-05 阶段完成", "04 真实修改 helper/test", "05 后平台创建并关联 MR", "CodeReview 返工更新同一 MR", "复盘能审计附件和 token"],
   };
   const squad = await post(`/api/squads?workspace_id=${encodeURIComponent(workspace.id)}`, {
     name: `密码强度 SOP 验收小队 ${runID}`,
@@ -441,17 +481,20 @@ async function createPasswordIssue(project, squad, currentUser) {
       "根据 TAPD Wiki 文档创建需求。",
       "",
       "这是 ai-studio / Multica 平台链路验收任务，要求验证 SOP 阶段、产物收拢、复盘证据、05 后 MR 创建与平台关联。",
-      "04 阶段只允许在目标仓库写入受控 docs 验收文件，不得修改业务代码。",
-      "05 阶段必须验证 04 变更并通过平台命令创建 Gongfeng MR，MR 必须自动关联回本 issue。",
+      `04 阶段必须在目标仓库真实修改 \`${passwordImplementationFile}\` 与 \`${passwordTestFile}\`，不得只写 docs 验收文件。`,
+      "05 阶段必须验证 04 真实实现/测试变更并通过平台命令创建 Gongfeng MR，MR 必须自动关联回本 issue。",
+      "MR 创建后，胡云飞会追加一条 CodeReview/新增需求评论并 @PM；PM 必须调度 04/05 在同一个 source branch 上维护同一个 MR。",
       `目标仓库：${gongfengProjectPath}`,
       `目标分支：${gongfengTargetBranch}`,
       `源分支：${gongfengSourceBranch}`,
-      `受控验收文件：${gongfengEvidenceFile}`,
+      `实现文件：${passwordImplementationFile}`,
+      `测试文件：${passwordTestFile}`,
+      `CodeReview 返工标记：${passwordReviewMarker}`,
       "每个阶段必须读取 issue、metadata、评论历史，生成本阶段 markdown 产物，并发表简短阶段评论。",
       "",
       `TAPD 链接：${tapdURL}`,
       "",
-      "预期流程：先记录 TAPD fetch_failed，再由人工评论恢复需求正文，随后按 PM -> 01 -> 02 -> 03 -> 04 -> 05 评论推进，05 后进入 in_review。",
+      "预期流程：先记录 TAPD fetch_failed，再由人工评论恢复需求正文，随后按 PM -> 01 -> 02 -> 03 -> 04 -> 05 评论推进，05 后进入 in_review；再由胡云飞追加 CodeReview 评论，PM 调度 04/05 更新同一个 MR。",
     ].join("\n"),
     status: "backlog",
     priority: "high",
@@ -463,12 +506,13 @@ async function createPasswordIssue(project, squad, currentUser) {
   return created;
 }
 
-async function runNaturalSOPFlow(agents, knownTasks) {
+async function runNaturalSOPFlow(agents, knownTasks, options = {}) {
   const agentToStage = Object.fromEntries(Object.entries(agents).map(([stage, agent]) => [agent.id, stage]));
-  const completedWorkers = new Set();
+  const completedWorkers = new Set(options.initialCompletedWorkers || []);
+  const requiredWorkers = options.requiredWorkers || ["01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"];
   let pmRuns = 0;
   for (let i = 0; i < maxSOPTasks; i++) {
-    const task = await waitNextTerminalSOPTask(issue.id, agentToStage, knownTasks, `SOP task ${i + 1}`);
+    const task = await waitNextTerminalSOPTask(issue.id, agentToStage, knownTasks, `${options.phase || "sop"} SOP task ${i + 1}`);
     knownTasks.add(task.id);
     const stage = agentToStage[task.agent_id] || "unknown";
     if (task.status !== "completed") {
@@ -499,7 +543,8 @@ async function runNaturalSOPFlow(agents, knownTasks) {
       completedWorkers.add(stage);
     }
     evidence.stages.push({
-      stage: stage === "pm" ? (pmRuns === 1 ? "pm" : `pm-${pmRuns}`) : stage,
+      stage: stage === "pm" ? `${options.phase || "initial"}-${pmRuns === 1 ? "pm" : `pm-${pmRuns}`}` : stage,
+      phase: options.phase || "initial",
       trigger_comment: null,
       task: pickTask(task),
     });
@@ -512,7 +557,7 @@ async function runNaturalSOPFlow(agents, knownTasks) {
         issue: pickIssue(current),
       });
     }
-    if (current.status === "in_review" && ["01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"].every((key) => completedWorkers.has(key))) {
+    if (current.status === "in_review" && requiredWorkers.every((key) => completedWorkers.has(key))) {
       return;
     }
   }
@@ -525,14 +570,14 @@ async function runNaturalSOPFlow(agents, knownTasks) {
 
 async function assertPMRoutedOrClosed(task, agents, completedWorkers) {
   const current = await get(`/api/issues/${issue.id}`);
-  if (current.status === "in_review") return;
+  const next = nextStageAfterCompletedWorkers(agents, completedWorkers);
+  if (current.status === "in_review" && !next) return;
   const comments = normalizeList(await get(`/api/issues/${issue.id}/comments`));
   const taskComments = comments.filter((comment) => isTaskComment(comment, task));
   const mentionCount = taskComments.reduce((sum, comment) => sum + countMentions(comment.content), 0);
   if (mentionCount === 1) {
     return;
   }
-  const next = nextStageAfterCompletedWorkers(agents, completedWorkers);
   if (!next) {
     fail("PM completed without exactly one platform agent mention and no next stage could be inferred", {
       task: pickTask(task),
@@ -556,6 +601,22 @@ async function assertPMRoutedOrClosed(task, agents, completedWorkers) {
   };
   evidence.pm_route_recoveries.push(recoveryEvidence);
   check(`pm_route_recovered_${evidence.pm_route_recoveries.length}`, true, recoveryEvidence);
+}
+
+async function postCodeReviewComment(pmAgent, mr) {
+  return postComment([
+    "CodeReview 追加需求：",
+    "",
+    `请继续维护同一个 MR，不要新建 MR。当前 MR：${mr.html_url || `#${mr.number}`}`,
+    `目标 source branch：${gongfengSourceBranch}`,
+    "",
+    "新增验收点：密码强度错误需要能区分空白字符输入，后端 helper/test 中请加入可追踪的 CodeReview 返工标记。",
+    `返工标记：${passwordReviewMarker}`,
+    "",
+    "请 PM 判断为 MR 后续维护需求后，只调度 04-开发；04 在同一个 source branch 上继续修改真实实现/测试，之后由 PM 调度 05 验证同一个 MR 已更新。",
+    "",
+    `[@${pmAgent.name}](mention://agent/${pmAgent.id})`,
+  ].join("\n"));
 }
 
 function nextStageAfterCompletedWorkers(agents, completedWorkers) {
@@ -817,7 +878,9 @@ function selfEvaluate(data) {
     "manual_recovery_comment_created",
     "issue_in_review",
     "platform_mr_linked",
-    "repository_acceptance_file_run_scoped",
+    "code_review_same_mr_updated",
+    "full_squad_comment_authors_present",
+    "repository_real_implementation_files_mentioned",
     "auto_artifact_comments_present",
     "artifact_previews_available",
     "sop_steps_completed",
@@ -833,7 +896,7 @@ function selfEvaluate(data) {
     score: missing.length === 0 ? 9.6 : Math.max(0, 9.6 - missing.length * 0.8),
     passed: missing.length === 0,
     missing,
-    note: missing.length === 0 ? "密码强度 SOP 评论推进、人工恢复、附件预览、05 后 MR 关联、复盘证据和 token 统计均有当前运行证据。" : "仍有硬证据缺口，不能标记 goal complete。",
+    note: missing.length === 0 ? "密码强度 SOP 评论推进、人工恢复、真实实现/测试改动、05 后 MR 关联、CodeReview 同 MR 返工、复盘证据和 token 统计均有当前运行证据。" : "仍有硬证据缺口，不能标记 goal complete。",
   };
 }
 
@@ -846,6 +909,33 @@ function summarizeComments(comments) {
   };
 }
 
+function summarizeCommentAuthors(comments, agents, currentUser) {
+  const taskStageByID = new Map();
+  for (const stage of evidence.stages) {
+    if (stage.task?.id) taskStageByID.set(stage.task.id, stage.stage);
+  }
+  const stageCommentCounts = new Map();
+  for (const comment of comments) {
+    const stage = taskStageByID.get(comment.source_task_id);
+    if (stage) stageCommentCounts.set(stage, (stageCommentCounts.get(stage) || 0) + 1);
+  }
+  const requiredStages = ["01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"];
+  const missing = [];
+  if (comments.filter((item) => item.author_type === "member").length < 2) missing.push(currentUser?.name || "胡云飞");
+  if (![...stageCommentCounts.keys()].some((stage) => stage.endsWith("-pm"))) missing.push(agents.pm.name);
+  for (const stage of requiredStages) {
+    if ((stageCommentCounts.get(stage) || 0) <= 0) missing.push(agents[stage]?.name || stage);
+  }
+  return {
+    member_comment_count: comments.filter((item) => item.author_type === "member").length,
+    agent_comment_count: comments.filter((item) => item.author_type === "agent").length,
+    stage_comment_counts: Object.fromEntries(stageCommentCounts.entries()),
+    required_user: currentUser?.name || currentUser?.account || "胡云飞",
+    required_agents: ["pm", ...requiredStages].map((stage) => agents[stage]?.name).filter(Boolean),
+    missing,
+  };
+}
+
 function summarizeSOPRun(run) {
   if (!run) return null;
   return {
@@ -855,6 +945,15 @@ function summarizeSOPRun(run) {
     event_count: Array.isArray(run.events) ? run.events.length : 0,
     completed_steps: (run.events || []).filter((event) => event.event_type === "步骤完成").map((event) => event.step_key),
   };
+}
+
+function canonicalSOPStageKey(stage) {
+  if (!stage) return "";
+  if (stage === "pm" || stage.endsWith("-pm") || /-pm-\d+$/.test(stage)) return "pm";
+  for (const key of ["01-clarify", "02-design", "03-task-split", "04-implement", "05-verify"]) {
+    if (stage === key) return key;
+  }
+  return "";
 }
 
 function summarizeExecutionTree(tree) {
@@ -903,7 +1002,7 @@ function pickTask(item) {
 
 function pickComment(item) {
   return {
-    ...pick(item, ["id", "author_type", "source_task_id", "created_at"]),
+    ...pick(item, ["id", "author_type", "author_id", "author_name", "source_task_id", "created_at"]),
     content_excerpt: String(item?.content || "").slice(0, 220),
     attachment_count: Array.isArray(item?.attachments) ? item.attachments.length : 0,
   };
@@ -931,6 +1030,8 @@ function pickPullRequest(item) {
     state: item?.state || "",
     html_url: item?.html_url || "",
     branch: item?.branch || "",
+    head_sha: item?.head_sha || "",
+    updated_at: item?.updated_at || item?.pr_updated_at || "",
   };
 }
 

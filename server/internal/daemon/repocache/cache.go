@@ -463,6 +463,13 @@ func (c *Cache) CreateWorktree(params WorktreeParams) (*WorktreeResult, error) {
 			if actualBranch == "" {
 				actualBranch = branchName
 			}
+			if branchName != "" && actualBranch != branchName {
+				switchedBranch, err := switchExistingWorktreeBranch(worktreePath, branchName)
+				if err != nil {
+					return nil, fmt.Errorf("restore preserved worktree branch: %w", err)
+				}
+				actualBranch = switchedBranch
+			}
 			for _, pattern := range agentGitExcludePatterns {
 				_ = excludeFromGit(worktreePath, pattern)
 			}
@@ -650,6 +657,22 @@ func currentBranch(worktreePath string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+func switchExistingWorktreeBranch(worktreePath, branchName string) (string, error) {
+	checkRef := exec.Command("git", "-C", worktreePath, "show-ref", "--verify", "--quiet", "refs/heads/"+branchName)
+	if err := checkRef.Run(); err != nil {
+		return "", fmt.Errorf("expected issue branch %q is missing", branchName)
+	}
+	checkoutCmd := exec.Command("git", "-C", worktreePath, "checkout", branchName)
+	if out, err := checkoutCmd.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("git checkout %s: %s: %w", branchName, strings.TrimSpace(string(out)), err)
+	}
+	actualBranch := currentBranch(worktreePath)
+	if actualBranch == "" {
+		actualBranch = branchName
+	}
+	return actualBranch, nil
 }
 
 // updateExistingWorktree resets the worktree to a clean state and checks out a

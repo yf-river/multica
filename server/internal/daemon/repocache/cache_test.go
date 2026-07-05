@@ -546,6 +546,52 @@ func TestCreateWorktreePreserveExistingKeepsIssueWorktreeChanges(t *testing.T) {
 	}
 }
 
+func TestCreateWorktreePreserveExistingRestoresIssueBranch(t *testing.T) {
+	t.Parallel()
+	sourceRepo := createTestRepo(t)
+	cacheRoot := t.TempDir()
+
+	cache := New(cacheRoot, testLogger())
+	if err := cache.Sync("ws-1", []RepoInfo{{URL: sourceRepo}}); err != nil {
+		t.Fatalf("sync failed: %v", err)
+	}
+
+	workDir := t.TempDir()
+	params := WorktreeParams{
+		WorkspaceID:        "ws-1",
+		RepoURL:            sourceRepo,
+		WorkDir:            workDir,
+		AgentName:          "PM",
+		TaskID:             "task-1",
+		BranchNameOverride: "agent/issue/issue123",
+		PreserveExisting:   true,
+	}
+	result, err := cache.CreateWorktree(params)
+	if err != nil {
+		t.Fatalf("CreateWorktree first call failed: %v", err)
+	}
+	if out, err := exec.Command("git", "-C", result.Path, "checkout", "-b", "v5.0.0_dev_sop").CombinedOutput(); err != nil {
+		t.Fatalf("checkout target branch: %s: %v", string(out), err)
+	}
+	if got := currentBranch(result.Path); got != "v5.0.0_dev_sop" {
+		t.Fatalf("setup branch = %q, want target branch", got)
+	}
+
+	second, err := cache.CreateWorktree(params)
+	if err != nil {
+		t.Fatalf("CreateWorktree preserve call failed: %v", err)
+	}
+	if second.Path != result.Path {
+		t.Fatalf("preserved worktree path = %q, want %q", second.Path, result.Path)
+	}
+	if second.BranchName != "agent/issue/issue123" {
+		t.Fatalf("branch name = %q, want restored issue branch", second.BranchName)
+	}
+	if got := currentBranch(result.Path); got != "agent/issue/issue123" {
+		t.Fatalf("current branch = %q, want restored issue branch", got)
+	}
+}
+
 func TestCreateWorktreeEmptyTaskIDUsesValidManualBranch(t *testing.T) {
 	t.Parallel()
 	sourceRepo := createTestRepo(t)

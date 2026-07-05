@@ -2309,6 +2309,112 @@ func TestClaimTask_ProjectGithubReposOverrideWorkspaceRepos(t *testing.T) {
 	}
 }
 
+func TestClaimTask_SquadLeaderDoesNotReceiveIssueRepos(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+
+	var projectID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO project (workspace_id, title) VALUES ($1, $2) RETURNING id
+	`, testWorkspaceID, "Squad leader repo suppression").Scan(&projectID); err != nil {
+		t.Fatalf("create project: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, projectID) })
+
+	const projectRepoURL = "https://github.com/example/squad-leader-should-not-see"
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO project_resource (
+			project_id, workspace_id, resource_type, resource_ref, label, position
+		) VALUES ($1, $2, 'github_repo', $3::jsonb, 'primary repo', 0)
+	`, projectID, testWorkspaceID, `{"url":"`+projectRepoURL+`","default_branch_hint":"main"}`); err != nil {
+		t.Fatalf("create github_repo project_resource: %v", err)
+	}
+
+	var leaderID, runtimeID string
+	if err := testPool.QueryRow(ctx,
+		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 AND runtime_id IS NOT NULL LIMIT 1`,
+		testWorkspaceID,
+	).Scan(&leaderID, &runtimeID); err != nil {
+		t.Fatalf("get leader agent: %v", err)
+	}
+
+	var squadID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id)
+		VALUES ($1, 'Repo Suppression Squad', '', $2, $3)
+		RETURNING id
+	`, testWorkspaceID, leaderID, testUserID).Scan(&squadID); err != nil {
+		t.Fatalf("create squad: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (
+			workspace_id, project_id, title, status, priority, creator_id, creator_type,
+			assignee_type, assignee_id, number, position
+		) VALUES ($1, $2, 'squad leader repo suppression', 'todo', 'medium', $3, 'member',
+			'squad', $4, 88011, 0)
+		RETURNING id
+	`, testWorkspaceID, projectID, testUserID, squadID).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
+
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id, status, priority, is_leader_task
+		) VALUES ($1, $2, $3, 'queued', 0, true)
+		RETURNING id
+	`, leaderID, runtimeID, issueID).Scan(&taskID); err != nil {
+		t.Fatalf("create task: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+
+	w := httptest.NewRecorder()
+	req := newDaemonTokenRequest("POST", "/api/daemon/runtimes/"+runtimeID+"/claim", nil, testWorkspaceID, "test-claim-leader-no-repos")
+	req = withURLParam(req, "runtimeId", runtimeID)
+	testHandler.ClaimTaskByRuntime(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("ClaimTaskByRuntime: %d %s", w.Code, w.Body.String())
+	}
+
+	var resp struct {
+		Task *struct {
+			Repos               []RepoData               `json:"repos"`
+			ProjectID           string                   `json:"project_id"`
+			ProjectResources    []ProjectResourceData    `json:"project_resources"`
+			IssueExecutionSpace *IssueExecutionSpaceData `json:"issue_execution_space"`
+			Agent               *TaskAgentData           `json:"agent"`
+		} `json:"task"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if resp.Task == nil {
+		t.Fatal("expected task in response")
+	}
+	if resp.Task.ProjectID != projectID {
+		t.Errorf("project_id = %q, want %q", resp.Task.ProjectID, projectID)
+	}
+	if len(resp.Task.Repos) != 0 {
+		t.Fatalf("squad leader task should not receive repos, got %+v", resp.Task.Repos)
+	}
+	if len(resp.Task.ProjectResources) != 0 {
+		t.Fatalf("squad leader task should not receive project_resources, got %+v", resp.Task.ProjectResources)
+	}
+	if resp.Task.IssueExecutionSpace != nil {
+		t.Fatalf("squad leader task should not receive issue_execution_space, got %+v", resp.Task.IssueExecutionSpace)
+	}
+	if resp.Task.Agent == nil || !strings.Contains(resp.Task.Agent.Instructions, "负责人/PM 不得把 child issue 当成轻量闭包任务") {
+		t.Fatalf("expected squad leader briefing in agent instructions")
+	}
+}
+
 func TestClaimTask_ProjectGongfengRepoIsCheckoutRepo(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")
