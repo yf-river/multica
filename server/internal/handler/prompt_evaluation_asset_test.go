@@ -193,6 +193,47 @@ Signal: (none)`,
 			wantSignal: true,
 			wantReason: "工具结果包含非零退出码 2",
 		},
+		{
+			name:       "json text envelope with successful helm failed counter",
+			tool:       "Bash",
+			output:     `[{"type":"text","text":"Command: helm lint helm/public 2>&1\nStdout: ==> Linting helm/public\n1 chart(s) linted, 0 chart(s) failed\n\nStderr: (empty)\nExit Code: 0\nSignal: (none)"}]`,
+			wantSignal: false,
+			wantReason: "",
+		},
+		{
+			name:       "successful comment output containing pass zero failed",
+			tool:       "Bash",
+			output:     `[{"type":"text","text":"Command: multica issue comment add AIS-145 --content-file ./reply.md\nStdout: | helm/public | PASS (0 failed) |\nComment added to issue AIS-145.\nExit Code: 0"}]`,
+			wantSignal: false,
+			wantReason: "",
+		},
+		{
+			name: "git diff source failure words are not tool failures",
+			tool: "Bash",
+			output: `Command: git diff
+Stdout: diff --git a/check_rendered_rules.sh b/check_rendered_rules.sh
++fail() {
++  echo "FAIL: missing render output"
++}
+
+Stderr: (empty)
+Exit Code: 0
+Signal: (none)`,
+			wantSignal: false,
+			wantReason: "",
+		},
+		{
+			name: "git branch timeout substring is branch content",
+			tool: "Bash",
+			output: `Command: git branch -a 2>&1
+Stdout: * agent/issue/4b46b5a9
+  remotes/origin/v2.1.0_qc_timeout
+  v2.1.0_qc_timeout
+
+Stderr: (empty)`,
+			wantSignal: false,
+			wantReason: "",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

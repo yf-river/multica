@@ -4876,7 +4876,8 @@ func promptEvaluationDurationBetween(start string, end string) int64 {
 }
 
 func promptEvaluationToolFailureSignal(tool string, output string) (bool, string) {
-	normalized := strings.ToLower(strings.TrimSpace(output))
+	displayOutput := promptEvaluationToolOutputText(output)
+	normalized := strings.ToLower(strings.TrimSpace(displayOutput))
 	if normalized == "" {
 		return false, ""
 	}
@@ -4889,7 +4890,7 @@ func promptEvaluationToolFailureSignal(tool string, output string) (bool, string
 	if statusCode := promptEvaluationToolHTTPStatusCode(normalized); statusCode >= 400 {
 		return true, fmt.Sprintf("工具结果包含 HTTP 状态码 %d", statusCode)
 	}
-	if promptEvaluationToolResultIsContentOnly(tool) {
+	if promptEvaluationToolResultIsContentOnly(tool) || promptEvaluationToolOutputIsReadOnlyCommand(normalized) {
 		return false, ""
 	}
 	if promptEvaluationToolOutputHasOnlySuccessFailureCounters(normalized) {
@@ -4925,6 +4926,83 @@ func promptEvaluationToolFailureSignal(tool string, output string) (bool, string
 		}
 	}
 	return false, ""
+}
+
+func promptEvaluationToolOutputText(output string) string {
+	trimmed := strings.TrimSpace(output)
+	if trimmed == "" || !strings.HasPrefix(trimmed, "[") {
+		return output
+	}
+	var parts []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &parts); err != nil || len(parts) == 0 {
+		return output
+	}
+	texts := make([]string, 0, len(parts))
+	for _, part := range parts {
+		text := strings.TrimSpace(part.Text)
+		if text != "" {
+			texts = append(texts, text)
+		}
+	}
+	if len(texts) == 0 {
+		return output
+	}
+	return strings.Join(texts, "\n")
+}
+
+func promptEvaluationToolOutputIsReadOnlyCommand(output string) bool {
+	command := promptEvaluationToolMeaningfulCommand(promptEvaluationToolOutputCommand(output))
+	if command == "" {
+		return false
+	}
+	if promptEvaluationToolOutputHasNonEmptyStderr(output) {
+		return false
+	}
+	return strings.HasPrefix(command, "git diff") ||
+		strings.HasPrefix(command, "git branch") ||
+		strings.HasPrefix(command, "git show") ||
+		strings.HasPrefix(command, "git status") ||
+		strings.HasPrefix(command, "git log")
+}
+
+func promptEvaluationToolOutputCommand(output string) string {
+	for _, rawLine := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if !strings.HasPrefix(line, "command:") {
+			continue
+		}
+		return strings.TrimSpace(strings.TrimPrefix(line, "command:"))
+	}
+	return ""
+}
+
+func promptEvaluationToolMeaningfulCommand(command string) string {
+	segments := regexp.MustCompile(`\s+(?:&&|\|\|)\s+|;\s*`).Split(command, -1)
+	for _, segment := range segments {
+		segment = strings.TrimSpace(segment)
+		if segment == "" || strings.HasPrefix(segment, "cd ") || strings.HasPrefix(segment, "export ") {
+			continue
+		}
+		return segment
+	}
+	return strings.TrimSpace(command)
+}
+
+func promptEvaluationToolOutputHasNonEmptyStderr(output string) bool {
+	for _, rawLine := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(rawLine)
+		if !strings.HasPrefix(line, "stderr:") {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(line, "stderr:"))
+		if value != "" && value != "(empty)" {
+			return true
+		}
+	}
+	return false
 }
 
 func promptEvaluationToolOutputHasOnlySuccessFailureCounters(output string) bool {
