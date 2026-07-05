@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import type { AgentTask, Issue, IssueExecutionTreeResponse, IssueTimelineNode, TaskTraceEvent } from "@multica/core/types";
+import type { AgentTask, AgentTaskArtifact, Issue, IssueExecutionTreeResponse, IssueTimelineNode, TaskTraceEvent } from "@multica/core/types";
 import type { TaskMessagePayload } from "@multica/core/types/events";
 import type { PromptEvaluationToolCallChain } from "@multica/core/types/prompt-evaluation";
 import {
+  artifactDownloadHref,
   buildAgentNodeRows,
   buildIssueReviewDraftCaseRequest,
   buildRunReviewDurationTooltipRows,
@@ -12,6 +13,7 @@ import {
   buildRunReviewEventRows,
   buildRunReviewOptimizerHref,
   buildRunReviewRawEventsCsv,
+  buildTimelineBarRows,
   buildTimelineAgentRows,
   cacheReuseRate,
   issueRunRowActivityLabel,
@@ -111,6 +113,24 @@ function task(overrides: Partial<AgentTask> = {}): AgentTask {
     error: null,
     created_at: "2026-06-09T09:59:00.000Z",
     trigger_summary: "用户要求优化运行复盘事件流",
+    ...overrides,
+  };
+}
+
+function artifact(overrides: Partial<AgentTaskArtifact> = {}): AgentTaskArtifact {
+  return {
+    id: "att-1",
+    task_id: "task-1",
+    comment_id: "comment-1",
+    issue_id: "issue-1",
+    filename: "01-需求澄清.md",
+    title: "01-需求澄清",
+    kind: "stage_markdown",
+    content_type: "text/markdown",
+    size_bytes: 128,
+    download_url: "/api/attachments/att-1/download",
+    markdown_url: "/api/attachments/att-1/download",
+    created_at: "2026-06-09T10:01:00.000Z",
     ...overrides,
   };
 }
@@ -543,6 +563,80 @@ describe("buildRunReviewEventRows", () => {
     expect(row?.summary).not.toContain("异常摘要");
   });
 
+  it("does not mark JSON-wrapped successful tool outputs as failed", () => {
+    const wrappedOutput = JSON.stringify([{
+      type: "text",
+      text: "Command: helm lint helm/public 2>&1\nStdout: ==> Linting helm/public\n1 chart(s) linted, 0 chart(s) failed\n\nStderr: (empty)\nExit Code: 0\nSignal: (none)",
+    }]);
+    const tree = {
+      root: {
+        tasks: [],
+        task_messages: [],
+        trace_events: [],
+        tool_call_chains: [
+          tool({
+            id: "helm-lint-json",
+            tool: "Bash",
+            input: { command: "helm lint helm/public 2>&1" },
+            output: wrappedOutput,
+            failure_signal: false,
+            failure_reason: "",
+          }),
+        ],
+        children: [],
+      },
+    } as unknown as IssueExecutionTreeResponse;
+
+    const [row] = buildRunReviewEventRows(tree, []);
+
+    expect(row?.severity).toBe("normal");
+    expect(row?.summary).not.toContain("异常摘要");
+    expect(row?.summary).not.toContain("[{\"type\"");
+  });
+
+  it("downgrades backend keyword failure signals when successful output proves they are benign", () => {
+    const tree = {
+      root: {
+        tasks: [],
+        task_messages: [],
+        trace_events: [],
+        tool_call_chains: [
+          tool({
+            id: "git-diff",
+            tool: "Bash",
+            input: { command: "cd /repo && git diff check_rendered_rules.sh 2>&1" },
+            output: "Command: cd /repo && git diff check_rendered_rules.sh 2>&1\nStdout: +fail() {\n+  echo \"FAIL: missing render output\"\n+}\n\nStderr: (empty)\nExit Code: 0\nSignal: (none)",
+            failure_signal: true,
+            failure_reason: "工具结果包含失败信息",
+          }),
+          tool({
+            id: "git-branch",
+            tool: "Bash",
+            input: { command: "cd /repo && git branch -a 2>&1" },
+            output: "Command: cd /repo && git branch -a 2>&1\nStdout: remotes/origin/v2.1.0_qc_timeout\nv2.1.0_qc_timeout\n\nStderr: (empty)",
+            failure_signal: true,
+            failure_reason: "工具结果包含超时信息",
+          }),
+          tool({
+            id: "comment",
+            tool: "Bash",
+            input: { command: "multica issue comment add AIS-145 --content-file ./reply.md 2>&1" },
+            output: "Command: multica issue comment add AIS-145 --content-file ./reply.md 2>&1\nStdout: | helm/public | PASS (0 failed) |\nComment added to issue AIS-145.\nExit Code: 0",
+            failure_signal: false,
+            failure_reason: "",
+          }),
+        ],
+        children: [],
+      },
+    } as unknown as IssueExecutionTreeResponse;
+
+    const rows = buildRunReviewEventRows(tree, []);
+
+    expect(rows).toHaveLength(3);
+    expect(rows.every((row) => row.severity === "normal")).toBe(true);
+    expect(rows.map((row) => row.summary).join("\n")).not.toContain("异常摘要");
+  });
+
   it("does not mark successful text summaries as failed because they mention zero failures", () => {
     const tree = {
       root: {
@@ -595,6 +689,18 @@ describe("buildRunReviewEventRows", () => {
     expect(row?.detail).toContain("raw_tool: custom_runtime_probe");
   });
 
+  it("builds stable artifact download links from attachment ids", () => {
+    expect(artifactDownloadHref(artifact({
+      download_url: "/uploads/workspaces/ws-1/stale.md",
+      markdown_url: "/uploads/workspaces/ws-1/stale.md",
+    }))).toBe("/api/attachments/att-1/download");
+
+    expect(artifactDownloadHref(artifact({
+      download_url: "/uploads/workspaces/ws-1/stale.md",
+      markdown_url: "/uploads/workspaces/ws-1/stale.md",
+    }), "https://api.example.test")).toBe("https://api.example.test/api/attachments/att-1/download");
+  });
+
   it("exports node CSV with summary metrics and per-node token breakdown", () => {
     const issue = {
       id: "issue-1",
@@ -636,20 +742,10 @@ describe("buildRunReviewEventRows", () => {
       usage_unavailable_trace: false,
       summary: "done",
       evidence_refs: [{ type: "attachment", id: "att-1", href: "/api/attachments/att-1/download" }],
-      artifacts: [{
-        id: "att-1",
-        task_id: "task-1",
-        comment_id: "comment-1",
-        issue_id: "issue-1",
-        filename: "01-需求澄清.md",
-        title: "01-需求澄清",
-        kind: "stage_markdown",
-        content_type: "text/markdown",
-        size_bytes: 128,
-        download_url: "/api/attachments/att-1/download",
-        markdown_url: "/api/attachments/att-1/download",
-        created_at: "2026-06-09T10:01:00.000Z",
-      }],
+      artifacts: [artifact({
+        download_url: "/uploads/workspaces/ws-1/01-需求澄清.md",
+        markdown_url: "/uploads/workspaces/ws-1/01-需求澄清.md",
+      })],
     } as IssueTimelineNode;
 
     const csv = buildRunReviewNodeCsv(
@@ -761,6 +857,65 @@ describe("buildRunReviewEventRows", () => {
     expect(buildAgentNodeRows(timelineRows.flatMap((row) => row.segments?.map((segment) => segment.node) ?? []))[0]?.runCount).toBe(2);
   });
 
+  it("adds human confirmation waits as a separate horizontal timeline row", () => {
+    const agentNode = {
+      issue_id: "issue-1",
+      node_id: "task:pm-1",
+      node_type: "agent_task",
+      agent_id: "agent-pm",
+      agent_name: "PM-项目经理",
+      status: "completed",
+      started_at: "2026-06-09T10:00:00.000Z",
+      completed_at: "2026-06-09T10:01:00.000Z",
+      duration_ms: 60_000,
+      input_tokens: 10,
+      output_tokens: 20,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      message_count: 1,
+      agent_turn_count: 2,
+      trace_event_count: 1,
+      usage_unavailable_trace: false,
+      summary: "pm run",
+      evidence_refs: [],
+      artifacts: [],
+    } as IssueTimelineNode;
+    const waitNode = {
+      issue_id: "issue-1",
+      node_id: "human_confirmation:comment-1:pm-2",
+      node_type: "human_confirmation",
+      status: "completed",
+      started_at: "2026-06-09T10:01:00.000Z",
+      completed_at: "2026-06-09T10:06:00.000Z",
+      duration_ms: 300_000,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      message_count: 0,
+      agent_turn_count: 0,
+      trace_event_count: 0,
+      usage_unavailable_trace: false,
+      summary: "等待人工确认：确认继续",
+      evidence_refs: [{ type: "comment", id: "comment-1" }],
+    } as IssueTimelineNode;
+
+    const rows = buildTimelineBarRows(buildTimelineAgentRows([agentNode]), [], [agentNode, waitNode]);
+
+    expect(rows.map((row) => row.key)).toEqual(["agent-pm", "human-confirmation"]);
+    expect(rows[1]).toMatchObject({
+      label: "人工确认",
+      kind: "human_confirmation",
+      subtitle: "已完成",
+    });
+    expect(rows[1]?.segments).toHaveLength(1);
+    expect(rows[1]?.segments[0]).toMatchObject({
+      key: "human_confirmation:comment-1:pm-2",
+      durationMs: 300_000,
+      tokenTotal: 0,
+    });
+  });
+
   it("uses true timeline proportions for short run segments", () => {
     const spanMs = 753_000;
     const shortRunStart = 0;
@@ -868,6 +1023,14 @@ describe("buildRunReviewEventRows", () => {
             failure_signal: false,
             failure_reason: "",
           }),
+          tool({
+            id: "tool-branch",
+            tool: "Bash",
+            input: { command: "cd /repo && git branch -a 2>&1" },
+            output: "Command: cd /repo && git branch -a 2>&1\nStdout: remotes/origin/v2.1.0_qc_timeout\n\nStderr: (empty)",
+            failure_signal: true,
+            failure_reason: "工具结果包含超时信息",
+          }),
         ],
         children: [],
       },
@@ -952,6 +1115,10 @@ describe("buildRunReviewEventRows", () => {
     expect(toolEvidence[0]).toMatchObject({
       category: "搜索",
       action: "搜索代码：生成评测用例",
+    });
+    expect(toolEvidence.find((item) => item.id === "tool-branch")).toMatchObject({
+      failure_signal: false,
+      failure_reason: "",
     });
     expect(promptSnapshots[0]).toMatchObject({
       role: "01-需求澄清",

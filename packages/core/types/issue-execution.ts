@@ -54,6 +54,7 @@ export type IssueTimelineNodeType =
   | "tool_call"
   | "evidence"
   | "approval"
+  | "human_confirmation"
   | "child_issue_ref"
   | "source_fetch"
   | "status_change";

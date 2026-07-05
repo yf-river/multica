@@ -75,6 +75,121 @@ func TestSummarizeIssueTimelineFallsBackToAgentTaskBoundsWithoutWorkCycle(t *tes
 	}
 }
 
+func TestBuildIssueTimelineNodesAddsHumanConfirmationWait(t *testing.T) {
+	root := IssueExecutionNodeResponse{
+		Issue: IssueResponse{ID: "issue-1"},
+		Tasks: []AgentTaskResponse{
+			{
+				ID:          "task-1",
+				AgentID:     "agent-pm",
+				Status:      "completed",
+				StartedAt:   timelineTestStringPtr("2026-06-09T10:00:00Z"),
+				CompletedAt: timelineTestStringPtr("2026-06-09T10:02:00Z"),
+				CreatedAt:   "2026-06-09T10:00:00Z",
+			},
+			{
+				ID:                    "task-2",
+				AgentID:               "agent-pm",
+				Status:                "completed",
+				StartedAt:             timelineTestStringPtr("2026-06-09T10:12:00Z"),
+				CompletedAt:           timelineTestStringPtr("2026-06-09T10:14:00Z"),
+				CreatedAt:             "2026-06-09T10:12:00Z",
+				TriggerCommentID:      timelineTestStringPtr("comment-1"),
+				TriggerAuthorType:     "member",
+				TriggerAuthorName:     "Alice",
+				TriggerCommentContent: "确认继续",
+			},
+		},
+		ManualComments: []IssueCommentBrief{
+			{
+				ID:         "comment-1",
+				IssueID:    "issue-1",
+				AuthorType: "member",
+				Type:       "comment",
+				Content:    "确认继续",
+				CreatedAt:  "2026-06-09T10:10:00Z",
+			},
+		},
+	}
+
+	nodes := buildIssueTimelineNodes(root)
+	var waitNode IssueTimelineNodeResponse
+	for _, node := range nodes {
+		if node.NodeType == "human_confirmation" {
+			waitNode = node
+			break
+		}
+	}
+
+	if waitNode.NodeID != "human_confirmation:comment-1:task-2" {
+		t.Fatalf("human confirmation node = %+v, want comment-triggered wait", waitNode)
+	}
+	if waitNode.StartedAt != "2026-06-09T10:02:00Z" || waitNode.CompletedAt != "2026-06-09T10:12:00Z" {
+		t.Fatalf("human confirmation bounds = %q / %q", waitNode.StartedAt, waitNode.CompletedAt)
+	}
+	if waitNode.DurationMs != 600000 {
+		t.Fatalf("human confirmation duration = %d, want 600000", waitNode.DurationMs)
+	}
+	refs := map[string]bool{}
+	for _, ref := range waitNode.EvidenceRefs {
+		refs[ref.Type+":"+ref.ID] = true
+	}
+	for _, want := range []string{"agent_task:task-1", "comment:comment-1", "agent_task:task-2"} {
+		if !refs[want] {
+			t.Fatalf("human confirmation evidence missing %s: %+v", want, waitNode.EvidenceRefs)
+		}
+	}
+}
+
+func TestSummarizeIssueTimelineUsesExplicitHumanConfirmationNodes(t *testing.T) {
+	workStartedAt := "2026-06-09T10:00:00Z"
+	workCompletedAt := "2026-06-09T10:20:00Z"
+	summary := summarizeIssueTimeline(IssueResponse{
+		ID:              "issue-1",
+		WorkStartedAt:   &workStartedAt,
+		WorkCompletedAt: &workCompletedAt,
+	}, []IssueTimelineNodeResponse{
+		{
+			NodeID:      "task:1",
+			NodeType:    "agent_task",
+			Status:      "completed",
+			StartedAt:   "2026-06-09T10:00:00Z",
+			CompletedAt: "2026-06-09T10:02:00Z",
+			DurationMs:  120000,
+		},
+		{
+			NodeID:      "task:2",
+			NodeType:    "agent_task",
+			Status:      "completed",
+			StartedAt:   "2026-06-09T10:12:00Z",
+			CompletedAt: "2026-06-09T10:14:00Z",
+			DurationMs:  120000,
+		},
+		{
+			NodeID:      "human_confirmation:comment-1:task-2",
+			NodeType:    "human_confirmation",
+			Status:      "completed",
+			StartedAt:   "2026-06-09T10:02:00Z",
+			CompletedAt: "2026-06-09T10:12:00Z",
+			DurationMs:  600000,
+		},
+	})
+
+	if summary.WallClockDurationMs == nil || *summary.WallClockDurationMs != 1200000 {
+		t.Fatalf("wall clock = %v, want 1200000", summary.WallClockDurationMs)
+	}
+	if summary.AgentExecutionDurationMs != 240000 {
+		t.Fatalf("agent execution = %d, want 240000", summary.AgentExecutionDurationMs)
+	}
+	if summary.HumanConfirmationDurationMs == nil || *summary.HumanConfirmationDurationMs != 600000 {
+		t.Fatalf("human confirmation = %v, want explicit 600000", summary.HumanConfirmationDurationMs)
+	}
+}
+
+func timelineTestStringPtr(value string) *string {
+	return &value
+}
+
 func TestGetIssueExecutionTreeAggregatesHierarchySOPTraceAndWakeups(t *testing.T) {
 	if testHandler == nil {
 		t.Skip("database not available")

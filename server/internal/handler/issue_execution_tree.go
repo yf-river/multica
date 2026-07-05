@@ -86,6 +86,7 @@ type IssueExecutionNodeResponse struct {
 	ToolCallSummary []PromptEvaluationToolCallSummaryResponse `json:"tool_call_summary"`
 	Artifacts       []AgentTaskArtifactResponse               `json:"artifacts"`
 	WakeupComments  []IssueWakeupCommentBrief                 `json:"wakeup_comments"`
+	ManualComments  []IssueCommentBrief                       `json:"manual_comments,omitempty"`
 	Children        []IssueExecutionNodeResponse              `json:"children"`
 }
 
@@ -105,6 +106,16 @@ type AgentTaskArtifactResponse struct {
 }
 
 type IssueWakeupCommentBrief struct {
+	ID         string  `json:"id"`
+	IssueID    string  `json:"issue_id"`
+	AuthorType string  `json:"author_type"`
+	Type       string  `json:"type"`
+	Content    string  `json:"content"`
+	ParentID   *string `json:"parent_id"`
+	CreatedAt  string  `json:"created_at"`
+}
+
+type IssueCommentBrief struct {
 	ID         string  `json:"id"`
 	IssueID    string  `json:"issue_id"`
 	AuthorType string  `json:"author_type"`
@@ -240,7 +251,11 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 		}
 	}
 	wakeupComments := make([]IssueWakeupCommentBrief, 0)
+	manualComments := make([]IssueCommentBrief, 0)
 	for _, comment := range comments {
+		if comment.AuthorType == "member" {
+			manualComments = append(manualComments, issueCommentBrief(comment))
+		}
 		if comment.AuthorType == "system" && comment.Type == "system" && strings.Contains(comment.Content, "子任务") && strings.Contains(comment.Content, "已完成") {
 			wakeupComments = append(wakeupComments, IssueWakeupCommentBrief{
 				ID:         uuidToString(comment.ID),
@@ -280,8 +295,21 @@ func (h *Handler) buildIssueExecutionNode(ctx context.Context, issue db.Issue, p
 		ToolCallSummary: toolCallSummary,
 		Artifacts:       artifacts,
 		WakeupComments:  wakeupComments,
+		ManualComments:  manualComments,
 		Children:        childrenResp,
 	}, nil
+}
+
+func issueCommentBrief(comment db.Comment) IssueCommentBrief {
+	return IssueCommentBrief{
+		ID:         uuidToString(comment.ID),
+		IssueID:    uuidToString(comment.IssueID),
+		AuthorType: comment.AuthorType,
+		Type:       comment.Type,
+		Content:    comment.Content,
+		ParentID:   uuidToPtr(comment.ParentID),
+		CreatedAt:  timestampToString(comment.CreatedAt),
+	}
 }
 
 func (h *Handler) agentTaskArtifactToResponse(attachment db.Attachment, taskID, issueID pgtype.UUID) AgentTaskArtifactResponse {
@@ -539,6 +567,7 @@ func buildIssueTimelineNodes(root IssueExecutionNodeResponse) []IssueTimelineNod
 			EvidenceRefs: []IssueTimelineEvidenceRef{{Type: "comment", ID: comment.ID}},
 		})
 	}
+	nodes = append(nodes, buildHumanConfirmationTimelineNodes(root, rootTaskID)...)
 	sort.SliceStable(nodes, func(i, j int) bool {
 		left := firstNonEmpty(nodes[i].StartedAt, nodes[i].CompletedAt, nodes[i].NodeID)
 		right := firstNonEmpty(nodes[j].StartedAt, nodes[j].CompletedAt, nodes[j].NodeID)
@@ -548,6 +577,104 @@ func buildIssueTimelineNodes(root IssueExecutionNodeResponse) []IssueTimelineNod
 		return left < right
 	})
 	return nodes
+}
+
+func buildHumanConfirmationTimelineNodes(root IssueExecutionNodeResponse, rootTaskID string) []IssueTimelineNodeResponse {
+	if len(root.ManualComments) == 0 || len(root.Tasks) < 2 {
+		return nil
+	}
+	commentsByID := make(map[string]IssueCommentBrief, len(root.ManualComments))
+	for _, comment := range root.ManualComments {
+		commentsByID[comment.ID] = comment
+	}
+
+	tasks := append([]AgentTaskResponse(nil), root.Tasks...)
+	sort.SliceStable(tasks, func(i, j int) bool {
+		left := firstNonEmpty(ptrString(tasks[i].StartedAt), ptrString(tasks[i].DispatchedAt), tasks[i].CreatedAt, tasks[i].ID)
+		right := firstNonEmpty(ptrString(tasks[j].StartedAt), ptrString(tasks[j].DispatchedAt), tasks[j].CreatedAt, tasks[j].ID)
+		if left == right {
+			return tasks[i].ID < tasks[j].ID
+		}
+		return left < right
+	})
+
+	nodes := make([]IssueTimelineNodeResponse, 0)
+	for _, task := range tasks {
+		if task.TriggerCommentID == nil || task.TriggerAuthorType != "member" {
+			continue
+		}
+		comment, ok := commentsByID[*task.TriggerCommentID]
+		if !ok {
+			continue
+		}
+		commentAt, commentErr := time.Parse(time.RFC3339, comment.CreatedAt)
+		endAt, endErr := parseTimelineTaskStart(task)
+		if commentErr != nil || endErr != nil || endAt.Before(commentAt) {
+			continue
+		}
+		previousTask, startAt, ok := latestCompletedTaskBefore(tasks, commentAt)
+		if !ok || !endAt.After(startAt) {
+			continue
+		}
+		nodes = append(nodes, IssueTimelineNodeResponse{
+			IssueID:     root.Issue.ID,
+			RootTaskID:  rootTaskID,
+			NodeID:      "human_confirmation:" + comment.ID + ":" + task.ID,
+			NodeType:    "human_confirmation",
+			AgentID:     task.AgentID,
+			AgentName:   task.TriggerAuthorName,
+			Status:      "completed",
+			StartedAt:   startAt.Format(time.RFC3339Nano),
+			CompletedAt: endAt.Format(time.RFC3339Nano),
+			DurationMs:  endAt.Sub(startAt).Milliseconds(),
+			Summary:     humanConfirmationSummary(comment),
+			EvidenceRefs: []IssueTimelineEvidenceRef{
+				{Type: "agent_task", ID: previousTask.ID},
+				{Type: "comment", ID: comment.ID},
+				{Type: "agent_task", ID: task.ID},
+			},
+		})
+	}
+	return nodes
+}
+
+func parseTimelineTaskStart(task AgentTaskResponse) (time.Time, error) {
+	return time.Parse(time.RFC3339, firstNonEmpty(ptrString(task.StartedAt), ptrString(task.DispatchedAt), task.CreatedAt))
+}
+
+func latestCompletedTaskBefore(tasks []AgentTaskResponse, before time.Time) (AgentTaskResponse, time.Time, bool) {
+	var selected AgentTaskResponse
+	var selectedAt time.Time
+	for _, task := range tasks {
+		if task.CompletedAt == nil {
+			continue
+		}
+		completedAt, err := time.Parse(time.RFC3339, *task.CompletedAt)
+		if err != nil || completedAt.After(before) {
+			continue
+		}
+		if selectedAt.IsZero() || completedAt.After(selectedAt) {
+			selected = task
+			selectedAt = completedAt
+		}
+	}
+	if selectedAt.IsZero() {
+		return AgentTaskResponse{}, time.Time{}, false
+	}
+	return selected, selectedAt, true
+}
+
+func humanConfirmationSummary(comment IssueCommentBrief) string {
+	content := strings.TrimSpace(comment.Content)
+	if content == "" {
+		return "等待人工确认"
+	}
+	const maxSummaryRunes = 80
+	runes := []rune(content)
+	if len(runes) > maxSummaryRunes {
+		content = string(runes[:maxSummaryRunes]) + "..."
+	}
+	return "等待人工确认：" + content
 }
 
 func summarizeIssueTimeline(issue IssueResponse, nodes []IssueTimelineNodeResponse) IssueTimelineSummaryResponse {
@@ -601,18 +728,25 @@ func summarizeIssueTimeline(issue IssueResponse, nodes []IssueTimelineNodeRespon
 		}
 	}
 	summary.AgentExecutionDurationMs = mergedAgentExecutionDurationMs(nodes)
+	explicitHumanConfirmationMs := mergedNodeDurationMs(nodes, "human_confirmation")
 	if summary.WorkStartedAt != "" && summary.WorkCompletedAt != "" {
 		if started, startErr := time.Parse(time.RFC3339, summary.WorkStartedAt); startErr == nil {
 			if completed, completedErr := time.Parse(time.RFC3339, summary.WorkCompletedAt); completedErr == nil && completed.After(started) {
 				wall := completed.Sub(started).Milliseconds()
 				summary.WallClockDurationMs = &wall
-				human := wall - summary.AgentExecutionDurationMs
-				if human < 0 {
-					human = 0
+				if explicitHumanConfirmationMs > 0 {
+					summary.HumanConfirmationDurationMs = &explicitHumanConfirmationMs
+				} else {
+					human := wall - summary.AgentExecutionDurationMs
+					if human < 0 {
+						human = 0
+					}
+					summary.HumanConfirmationDurationMs = &human
 				}
-				summary.HumanConfirmationDurationMs = &human
 			}
 		}
+	} else if explicitHumanConfirmationMs > 0 {
+		summary.HumanConfirmationDurationMs = &explicitHumanConfirmationMs
 	}
 	return summary
 }
@@ -652,9 +786,13 @@ type timelineInterval struct {
 }
 
 func mergedAgentExecutionDurationMs(nodes []IssueTimelineNodeResponse) int64 {
+	return mergedNodeDurationMs(nodes, "agent_task")
+}
+
+func mergedNodeDurationMs(nodes []IssueTimelineNodeResponse, nodeType string) int64 {
 	intervals := make([]timelineInterval, 0)
 	for _, node := range nodes {
-		if node.NodeType != "agent_task" || node.StartedAt == "" || node.CompletedAt == "" {
+		if node.NodeType != nodeType || node.StartedAt == "" || node.CompletedAt == "" {
 			continue
 		}
 		start, startErr := time.Parse(time.RFC3339, node.StartedAt)

@@ -8,6 +8,7 @@ import { api } from "@multica/core/api";
 import { issueExecutionTreeOptions, issueKeys, issueListOptions } from "@multica/core/issues/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
+import { resolvePublicFileUrlWithBase } from "@multica/core/workspace/avatar-url";
 import type { AgentTask, AgentTaskArtifact, CreatePromptEvaluationCaseRequest, Issue, IssueTimelineNode, IssueTimelineSummary, IssueExecutionNode, IssueExecutionTreeResponse, TaskTraceEvent } from "@multica/core/types";
 import { useWSEvent, useWSReconnect } from "@multica/core/realtime";
 import type {
@@ -823,7 +824,7 @@ function ArtifactLinks({ artifacts }: { artifacts: AgentTaskArtifact[] }) {
       {artifacts.slice(0, 3).map((artifact) => (
         <a
           key={artifact.id}
-          href={artifact.markdown_url || artifact.download_url}
+          href={artifactDownloadHref(artifact)}
           target="_blank"
           rel="noreferrer"
           className="inline-flex max-w-full items-center rounded border bg-background px-2 py-0.5 text-xs text-muted-foreground hover:bg-accent hover:text-foreground"
@@ -839,6 +840,14 @@ function ArtifactLinks({ artifacts }: { artifacts: AgentTaskArtifact[] }) {
       ) : null}
     </div>
   );
+}
+
+export function artifactDownloadHref(artifact: AgentTaskArtifact, baseUrl?: string) {
+  const endpoint = artifact.id
+    ? `/api/attachments/${encodeURIComponent(artifact.id)}/download`
+    : firstNonEmpty(artifact.download_url, artifact.markdown_url);
+  const resolvedBaseUrl = baseUrl ?? (typeof api.getBaseUrl === "function" ? api.getBaseUrl() : "");
+  return resolvePublicFileUrlWithBase(endpoint, resolvedBaseUrl) ?? endpoint;
 }
 
 export interface TimelineNodeSegment {
@@ -873,7 +882,7 @@ interface TimelineBarSegment {
 interface TimelineBarRow {
   key: string;
   label: string;
-  kind: "stage" | "child";
+  kind: "stage" | "child" | "human_confirmation";
   status: string;
   subtitle: string;
   segments: TimelineBarSegment[];
@@ -930,22 +939,15 @@ function TimelineLaneChart({
                     <div
                       key={segment.key}
                       className={cn(
-                        "absolute top-1 bottom-1 overflow-hidden rounded px-2 text-[11px] leading-7 text-white shadow-sm",
-                        row.kind === "child" ? "bg-sky-600" : "bg-emerald-600",
+                        "absolute top-1 bottom-1 overflow-hidden rounded px-2 text-[11px] leading-7 shadow-sm",
+                        timelineSegmentClassName(row.kind),
                       )}
                       data-testid={`run-review-timeline-bar-${segment.key}`}
                       style={timelineSegmentStyle(segment.startMs, segment.endMs, min, span)}
-                      title={[
-                        row.label,
-                        `开始 ${formatDateTime(segment.startMs)}`,
-                        `结束 ${formatDateTime(segment.endMs)}`,
-                        `耗时 ${formatDuration(segment.durationMs)}`,
-                        `Token ${formatNumber(segment.tokenTotal)}`,
-                        `思考轮次 ${formatNumber(segment.turns)}`,
-                      ].join(" · ")}
+                      title={timelineSegmentTitle(row, segment)}
                     >
                       <span className="block truncate">
-                        {formatDuration(segment.durationMs)} · {formatNumber(segment.tokenTotal)} token
+                        {timelineSegmentText(row, segment)}
                       </span>
                     </div>
                   )
@@ -963,7 +965,7 @@ function TimelineLaneChart({
   );
 }
 
-function buildTimelineBarRows(
+export function buildTimelineBarRows(
   stageRows: TimelineNodeRow[],
   childLanes: ChildLane[],
   timelineNodes: IssueTimelineNode[],
@@ -980,6 +982,19 @@ function buildTimelineBarRows(
       missing: !stage.node,
     };
   });
+  const humanConfirmationNodes = timelineNodes.filter((item) => item.node_type === "human_confirmation");
+  const humanConfirmationSegments = humanConfirmationNodes.map((node, index) => (
+    timelineNodeSegment(node.node_id, "人工确认", node, index + 1, humanConfirmationNodes.length)
+  ));
+  const humanConfirmationBars = humanConfirmationSegments.length > 0 ? [{
+    key: "human-confirmation",
+    label: "人工确认",
+    kind: "human_confirmation" as const,
+    status: "completed",
+    subtitle: timelineRowSubtitle("completed", humanConfirmationSegments.length),
+    segments: humanConfirmationSegments,
+    missing: false,
+  }] : [];
   const childBars = childLanes.filter((lane) => lane.issue).map((lane) => {
     const node = timelineNodes.find((item) => item.node_type === "child_issue_ref" && item.child_issue_id === lane.issue?.id);
     const segments = node ? [timelineNodeSegment(lane.key, lane.label, node, 1, 1)] : [];
@@ -993,7 +1008,32 @@ function buildTimelineBarRows(
       missing: !lane.issue,
     };
   });
-  return [...stageBars, ...childBars];
+  return [...stageBars, ...humanConfirmationBars, ...childBars];
+}
+
+function timelineSegmentClassName(kind: TimelineBarRow["kind"]) {
+  if (kind === "child") return "bg-sky-600 text-white";
+  if (kind === "human_confirmation") return "border border-amber-700/30 bg-amber-500 text-white";
+  return "bg-emerald-600 text-white";
+}
+
+function timelineSegmentText(row: TimelineBarRow, segment: TimelineBarSegment) {
+  if (row.kind === "human_confirmation") return `${formatDuration(segment.durationMs)} · 人工确认`;
+  return `${formatDuration(segment.durationMs)} · ${formatNumber(segment.tokenTotal)} token`;
+}
+
+function timelineSegmentTitle(row: TimelineBarRow, segment: TimelineBarSegment) {
+  const rows = [
+    row.label,
+    segment.label,
+    segment.startMs === null ? "" : `开始 ${formatDateTime(segment.startMs)}`,
+    segment.endMs === null ? "" : `结束 ${formatDateTime(segment.endMs)}`,
+    `耗时 ${formatDuration(segment.durationMs)}`,
+  ].filter(Boolean);
+  if (row.kind !== "human_confirmation") {
+    rows.push(`Token ${formatNumber(segment.tokenTotal)}`, `思考轮次 ${formatNumber(segment.turns)}`);
+  }
+  return rows.join(" · ");
 }
 
 function timelineRowSegments(row: TimelineNodeRow): TimelineBarSegment[] {
@@ -1409,7 +1449,7 @@ function toolMessageKey(taskId: string, seq: number) {
 
 function formatArtifactsForCsv(artifacts: AgentTaskArtifact[]) {
   return artifacts.map((artifact) => {
-    const href = artifact.markdown_url || artifact.download_url;
+    const href = artifactDownloadHref(artifact);
     return href ? `${artifact.filename} <${href}>` : artifact.filename;
   }).join("\n");
 }
@@ -1618,11 +1658,12 @@ function runReviewTraceEvent(event: TaskTraceEvent): RunReviewEventRowData {
 
 function runReviewToolEvent(chain: PromptEvaluationToolCallChain, linkedMessages: TaskMessagePayload[] = []): RunReviewEventRowData {
   const semantic = semanticToolAction(chain.tool, chain.input, chain.output);
+  const backendFailure = chain.failure_signal && !semantic.suppressFailureSignal;
   const detailParts = [
     chain.tool ? `raw_tool: ${chain.tool}` : "",
     chain.input ? `input:\n${formatJSON(chain.input)}` : "",
     chain.output ? `output:\n${chain.output}` : "",
-    chain.failure_reason ? `failure:\n${chain.failure_reason}` : "",
+    chain.failure_reason && backendFailure ? `failure:\n${chain.failure_reason}` : "",
   ].filter(Boolean);
   return {
     id: `tool:${chain.task_id || "unknown-task"}:${chain.id}`,
@@ -1635,12 +1676,12 @@ function runReviewToolEvent(chain: PromptEvaluationToolCallChain, linkedMessages
     object: semantic.object,
     title: semantic.title,
     outcome: semantic.outcome,
-    summary: conciseEventSummary(firstNonEmpty(chain.failure_reason, semantic.summary), chain.failure_signal),
+    summary: backendFailure ? conciseEventSummary(firstNonEmpty(chain.failure_reason, semantic.summary), true) : semantic.summary,
     detail: detailParts.join("\n\n"),
     metadataDetail: "",
     durationMs: chain.duration_ms ?? 0,
     tokenTotal: 0,
-    severity: chain.failure_signal ? "error" : chain.status === "缺少结果" || chain.status === "孤立结果" ? "warning" : semantic.severity,
+    severity: backendFailure ? "error" : chain.status === "缺少结果" || chain.status === "孤立结果" ? "warning" : semantic.severity,
     rawSourceLabel: "tool_call_chain",
     rawPayload: chain,
     linkedRawPayloads: linkedMessages.map((message) => ({
@@ -1658,6 +1699,7 @@ interface SemanticToolAction {
   outcome: string;
   summary: string;
   severity: RunReviewEventRowData["severity"];
+  suppressFailureSignal?: boolean;
 }
 
 function semanticToolAction(tool: string | undefined, input: Record<string, unknown> | undefined, output: string | undefined): SemanticToolAction {
@@ -1731,7 +1773,7 @@ function semanticCommandAction(command: string, output: string | undefined): Sem
       sourceLabel: "代码搜索",
       object: searchQueryFromCommand(segment) || truncateText(segment, 96),
       title: `搜索代码：${searchQueryFromCommand(segment) || truncateText(segment, 96)}`,
-      ...semanticOutputState(output),
+      ...semanticOutputState(output, segment),
     };
   }
 
@@ -1741,7 +1783,7 @@ function semanticCommandAction(command: string, output: string | undefined): Sem
       sourceLabel: "读取上下文",
       object: readTargetFromCommand(segment) || truncateText(segment, 96),
       title: `${readCommandTitlePrefix(segment, executable)}：${readTargetFromCommand(segment) || truncateText(segment, 96)}`,
-      ...semanticOutputState(output),
+      ...semanticOutputState(output, segment),
     };
   }
 
@@ -1751,7 +1793,7 @@ function semanticCommandAction(command: string, output: string | undefined): Sem
       sourceLabel: "类型检查",
       object: pnpmFilterFromCommand(segment) || "TypeScript",
       title: `运行类型检查：${pnpmFilterFromCommand(segment) || "TypeScript"}`,
-      ...semanticOutputState(output),
+      ...semanticOutputState(output, segment),
     };
   }
 
@@ -1761,7 +1803,7 @@ function semanticCommandAction(command: string, output: string | undefined): Sem
       sourceLabel: "前端测试",
       object: testTargetFromCommand(segment) || pnpmFilterFromCommand(segment) || "Vitest",
       title: `运行前端单测：${testTargetFromCommand(segment) || pnpmFilterFromCommand(segment) || "Vitest"}`,
-      ...semanticOutputState(output),
+      ...semanticOutputState(output, segment),
     };
   }
 
@@ -1772,7 +1814,7 @@ function semanticCommandAction(command: string, output: string | undefined): Sem
       sourceLabel: "后端测试",
       object: target,
       title: `运行后端单测：${target}`,
-      ...semanticOutputState(output),
+      ...semanticOutputState(output, segment),
     };
   }
 
@@ -1782,7 +1824,7 @@ function semanticCommandAction(command: string, output: string | undefined): Sem
       sourceLabel: "构建",
       object: truncateText(segment, 96),
       title: `运行构建：${truncateText(segment, 96)}`,
-      ...semanticOutputState(output),
+      ...semanticOutputState(output, segment),
     };
   }
 
@@ -1792,7 +1834,7 @@ function semanticCommandAction(command: string, output: string | undefined): Sem
       sourceLabel: "接口检查",
       object: httpTargetFromCommand(segment) || truncateText(segment, 96),
       title: `检查接口：${httpTargetFromCommand(segment) || truncateText(segment, 96)}`,
-      ...semanticOutputState(output),
+      ...semanticOutputState(output, segment),
     };
   }
 
@@ -1802,7 +1844,7 @@ function semanticCommandAction(command: string, output: string | undefined): Sem
       sourceLabel: "运行服务",
       object: truncateText(segment, 96),
       title: `运行服务：${truncateText(segment, 96)}`,
-      ...semanticOutputState(output),
+      ...semanticOutputState(output, segment),
     };
   }
 
@@ -1812,7 +1854,7 @@ function semanticCommandAction(command: string, output: string | undefined): Sem
       sourceLabel: "验证",
       object: truncateText(segment, 96),
       title: `运行验证：${truncateText(segment, 96)}`,
-      ...semanticOutputState(output),
+      ...semanticOutputState(output, segment),
     };
   }
 
@@ -1821,28 +1863,83 @@ function semanticCommandAction(command: string, output: string | undefined): Sem
     sourceLabel: "命令执行",
     object: truncateText(segment || normalized, 96),
     title: `执行命令：${truncateText(segment || normalized, 96)}`,
-    ...semanticOutputState(output),
+    ...semanticOutputState(output, segment),
   };
 }
 
-function semanticOutputState(output: string | undefined): Pick<SemanticToolAction, "outcome" | "summary" | "severity"> {
+function semanticOutputState(
+  output: string | undefined,
+  command?: string,
+): Pick<SemanticToolAction, "outcome" | "summary" | "severity" | "suppressFailureSignal"> {
   if (!output) return { outcome: "已记录", summary: "", severity: "normal" };
-  return outputOutcome(output);
+  return outputOutcome(output, command);
 }
 
-function outputOutcome(output: string): Pick<SemanticToolAction, "outcome" | "summary" | "severity"> {
-  if (toolOutputHasSuccessfulExitCode(output)) {
-    return { outcome: "已返回", summary: conciseEventSummary(summarizeToolOutput(output), false), severity: "normal" };
+function outputOutcome(
+  output: string,
+  command?: string,
+): Pick<SemanticToolAction, "outcome" | "summary" | "severity" | "suppressFailureSignal"> {
+  const normalizedOutput = toolOutputText(output);
+  if (
+    toolOutputHasSuccessfulExitCode(normalizedOutput) ||
+    outputHasOnlyBenignFailureCounters(normalizedOutput) ||
+    outputIsReadOnlyCommandContent(command, normalizedOutput)
+  ) {
+    return { outcome: "已返回", summary: conciseEventSummary(summarizeToolOutput(normalizedOutput), false), severity: "normal", suppressFailureSignal: true };
   }
-  const errorLine = extractErrorLine(output);
+  const errorLine = extractErrorLine(normalizedOutput);
   if (errorLine) {
     return { outcome: "异常线索", summary: conciseEventSummary(errorLine, true), severity: "error" };
   }
-  return { outcome: "已返回", summary: conciseEventSummary(summarizeToolOutput(output), false), severity: "normal" };
+  return { outcome: "已返回", summary: conciseEventSummary(summarizeToolOutput(normalizedOutput), false), severity: "normal" };
+}
+
+function toolOutputText(output: string) {
+  const trimmed = output.trim();
+  if (!trimmed.startsWith("[")) return output;
+  try {
+    const parts = JSON.parse(trimmed) as unknown;
+    if (!Array.isArray(parts)) return output;
+    const texts = parts
+      .map((part) => part && typeof part === "object" && "text" in part ? stringFromUnknown((part as { text?: unknown }).text).trim() : "")
+      .filter(Boolean);
+    return texts.length ? texts.join("\n") : output;
+  } catch {
+    return output;
+  }
 }
 
 function toolOutputHasSuccessfulExitCode(output: string) {
   return /\bExit Code:\s*0\b/i.test(output) || /\bexit\s+(?:status|code)\s*[:=]?\s*0\b/i.test(output);
+}
+
+function outputHasOnlyBenignFailureCounters(output: string) {
+  const lower = output.toLowerCase();
+  if (/(?:\berror:|\bexception\b|\bpanic:|\bfatal\b|\bpermission denied\b|\bprovider timeout\b|\btimed out\b|\bhttp\s+[45]\d\d\b|\bstatus\s+[45]\d\d\b|错误|异常|超时|无权限|权限拒绝)/i.test(output)) {
+    return false;
+  }
+  return isBenignFailureCounterLine(lower);
+}
+
+function outputIsReadOnlyCommandContent(command: string | undefined, output: string) {
+  const normalizedCommand = meaningfulCommandSegment(command ?? "").toLowerCase();
+  if (!normalizedCommand) return false;
+  const isReadOnlyGitCommand = normalizedCommand.startsWith("git diff") ||
+    normalizedCommand.startsWith("git branch") ||
+    normalizedCommand.startsWith("git show") ||
+    normalizedCommand.startsWith("git status") ||
+    normalizedCommand.startsWith("git log");
+  if (!isReadOnlyGitCommand) return false;
+  return !toolOutputHasNonEmptyStderr(output);
+}
+
+function toolOutputHasNonEmptyStderr(output: string) {
+  return output.split("\n").some((line) => {
+    const match = /^\s*stderr:\s*(.*)$/i.exec(line);
+    if (!match) return false;
+    const value = match[1]?.trim() ?? "";
+    return value !== "" && value !== "(empty)";
+  });
 }
 
 function extractErrorLine(output: string) {
@@ -1912,7 +2009,7 @@ function isGitReadCommand(command: string) {
   const tokens = shellWords(command);
   const gitIndex = tokens.findIndex((token) => stripCommandPath(token).toLowerCase() === "git");
   const subcommand = gitIndex >= 0 ? tokens[gitIndex + 1] : "";
-  return ["show", "diff", "status", "log"].includes(subcommand ?? "");
+  return ["show", "diff", "status", "log", "branch"].includes(subcommand ?? "");
 }
 
 function searchQueryFromCommand(command: string) {
@@ -2099,6 +2196,8 @@ function timelineNodeKindLabel(type: IssueTimelineNode["node_type"]): string {
       return "来源";
     case "approval":
       return "唤醒";
+    case "human_confirmation":
+      return "人工确认";
     case "tool_call":
       return "工具";
     case "status_change":
@@ -2405,6 +2504,7 @@ function buildRunSnapshotToolEvidence(nodes: IssueExecutionNode[]) {
   const messages = nodes.flatMap((node) => node.task_messages ?? []).filter((message) => message.type === "tool_use" || message.type === "tool_result");
   const chainRows = chains.map((chain) => {
     const semantic = semanticToolAction(chain.tool, chain.input, chain.output);
+    const backendFailure = chain.failure_signal && !semantic.suppressFailureSignal;
     return {
       id: chain.id,
       task_id: chain.task_id,
@@ -2415,10 +2515,10 @@ function buildRunSnapshotToolEvidence(nodes: IssueExecutionNode[]) {
       object: semantic.object,
       status: chain.status,
       outcome: semantic.outcome,
-      failure_signal: chain.failure_signal || semantic.severity === "error",
-      failure_reason: firstNonEmpty(chain.failure_reason, extractErrorLine(chain.output ?? "")),
+      failure_signal: backendFailure || semantic.severity === "error",
+      failure_reason: firstNonEmpty(backendFailure ? chain.failure_reason : "", semantic.severity === "error" ? extractErrorLine(toolOutputText(chain.output ?? "")) : ""),
       input_summary: truncateText(chain.input ? formatJSON(chain.input) : "", 420),
-      output_summary: truncateText(firstNonEmpty(semantic.summary, summarizeToolOutput(chain.output ?? "")), 420),
+      output_summary: truncateText(firstNonEmpty(semantic.summary, summarizeToolOutput(toolOutputText(chain.output ?? ""))), 420),
       raw_output_excerpt: truncateText(chain.output ?? "", 1200),
       duration_ms: chain.duration_ms ?? 0,
       created_at: chain.created_at,
@@ -2446,9 +2546,9 @@ function buildRunSnapshotToolEvidence(nodes: IssueExecutionNode[]) {
         status: message.type,
         outcome: semantic.outcome,
         failure_signal: semantic.severity === "error",
-        failure_reason: extractErrorLine(message.output ?? ""),
+        failure_reason: extractErrorLine(toolOutputText(message.output ?? "")),
         input_summary: truncateText(message.input ? formatJSON(message.input) : "", 420),
-        output_summary: truncateText(firstNonEmpty(semantic.summary, summarizeToolOutput(message.output ?? "")), 420),
+        output_summary: truncateText(firstNonEmpty(semantic.summary, summarizeToolOutput(toolOutputText(message.output ?? ""))), 420),
         raw_output_excerpt: truncateText(message.output ?? "", 1200),
         duration_ms: 0,
         created_at: message.created_at ?? "",
