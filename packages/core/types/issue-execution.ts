@@ -55,6 +55,7 @@ export type IssueTimelineNodeType =
   | "evidence"
   | "approval"
   | "human_confirmation"
+  | "dispatch_wait"
   | "child_issue_ref"
   | "source_fetch"
   | "status_change";
@@ -73,6 +74,7 @@ export interface IssueTimelineNode {
   status: string;
   failure_reason?: string;
   started_at?: string;
+  actual_started_at?: string;
   completed_at?: string;
   duration_ms: number;
   input_tokens: number;

@@ -4,15 +4,16 @@ import type { TaskMessagePayload } from "@multica/core/types/events";
 import type { PromptEvaluationToolCallChain } from "@multica/core/types/prompt-evaluation";
 import {
   artifactDownloadHref,
+  artifactXlsxHyperlinkHref,
   buildAgentNodeRows,
   buildIssueReviewDraftCaseRequest,
   buildRunReviewDurationTooltipRows,
   buildRunReviewLiveSummary,
   buildRunReviewLiveTimelineNodes,
-  buildRunReviewNodeCsv,
+  buildRunReviewNodeXlsxSheets,
   buildRunReviewEventRows,
   buildRunReviewOptimizerHref,
-  buildRunReviewRawEventsCsv,
+  buildRunReviewRawEventsXlsxSheets,
   buildTimelineBarRows,
   buildTimelineAgentRows,
   cacheReuseRate,
@@ -138,8 +139,8 @@ function artifact(overrides: Partial<AgentTaskArtifact> = {}): AgentTaskArtifact
 
 describe("buildRunReviewOptimizerHref", () => {
   it("keeps issue context on the visible test suites route", () => {
-    expect(buildRunReviewOptimizerHref((view) => `/acme/training/${view}`, "issue with space")).toBe(
-      "/acme/training/evaluation-runs?issue=issue%20with%20space",
+    expect(buildRunReviewOptimizerHref((view) => `/acme/evaluation/${view}`, "issue with space")).toBe(
+      "/acme/evaluation/runs?issue=issue%20with%20space",
     );
   });
 });
@@ -450,11 +451,12 @@ describe("buildRunReviewEventRows", () => {
     } as unknown as IssueExecutionTreeResponse;
 
     const rows = buildRunReviewEventRows(tree, []);
-    const csv = buildRunReviewRawEventsCsv(rows);
+    const [sheet] = buildRunReviewRawEventsXlsxSheets(rows);
 
     expect(rows).toHaveLength(55);
-    expect(csv).toContain("message:task-1:55");
-    expect(csv).toContain("message 55");
+    expect(sheet?.rows).toHaveLength(56);
+    expect(sheet?.rows.some((row) => row.includes("message:task-1:55"))).toBe(true);
+    expect(sheet?.rows.some((row) => row.includes("message 55"))).toBe(true);
   });
 
   it("turns raw exec_command calls into semantic review actions", () => {
@@ -672,6 +674,38 @@ describe("buildRunReviewEventRows", () => {
             failure_signal: true,
             failure_reason: "工具结果包含失败信息",
           }),
+          tool({
+            id: "task-create-success",
+            tool: "TaskCreate",
+            input: { subject: "读取 harness/testing.md 和 failures.md" },
+            output: JSON.stringify([{ type: "text", text: "Task #7 created successfully: 读取 harness/testing.md 和 failures.md" }]),
+            failure_signal: true,
+            failure_reason: "工具结果包含失败信息",
+          }),
+          tool({
+            id: "issue-get-success",
+            tool: "Bash",
+            input: { command: "multica issue get IDA-12 --output json 2>&1" },
+            output: "Command: multica issue get IDA-12 --output json 2>&1\nStdout: {\"source_summary_error\":\"\",\"title\":\"错误处理需求\"}\n\nStderr: (empty)",
+            failure_signal: true,
+            failure_reason: "工具结果包含错误信息",
+          }),
+          tool({
+            id: "comment-list-success",
+            tool: "Bash",
+            input: { command: "multica issue comment list IDA-12 --recent 20 --output json 2>&1" },
+            output: "Command: multica issue comment list IDA-12 --recent 20 --output json 2>&1\nStdout: [{\"content\":\"用户希望确认错误处理与失败用例。\"}]\n\nStderr: (empty)",
+            failure_signal: true,
+            failure_reason: "工具结果包含失败信息",
+          }),
+          tool({
+            id: "metadata-set-success",
+            tool: "Bash",
+            input: { command: "multica issue metadata set IDA-12 --key pr_number --value 113" },
+            output: "Command: multica issue metadata set IDA-12 --key pr_number --value 113\nStdout: KEY VALUE TYPE\npr_number 113 number",
+            failure_signal: true,
+            failure_reason: "工具结果包含错误信息",
+          }),
         ],
         children: [],
       },
@@ -679,7 +713,7 @@ describe("buildRunReviewEventRows", () => {
 
     const rows = buildRunReviewEventRows(tree, []);
 
-    expect(rows).toHaveLength(6);
+    expect(rows).toHaveLength(10);
     expect(rows.every((row) => row.severity === "normal")).toBe(true);
     expect(rows.map((row) => row.summary).join("\n")).not.toContain("异常摘要");
   });
@@ -775,7 +809,20 @@ describe("buildRunReviewEventRows", () => {
     }), "https://api.example.test")).toBe("https://api.example.test/api/attachments/att-1/download");
   });
 
-  it("exports node CSV with summary metrics and per-node token breakdown", () => {
+  it("builds absolute Excel artifact hyperlinks so desktop spreadsheet apps can open them", () => {
+    expect(artifactXlsxHyperlinkHref(artifact({
+      download_url: "/uploads/workspaces/ws-1/stale.md",
+      markdown_url: "/uploads/workspaces/ws-1/stale.md",
+    }), "https://api.example.test")).toBe("https://api.example.test/api/attachments/att-1/download");
+
+    expect(artifactXlsxHyperlinkHref(artifact({
+      id: "",
+      download_url: "/uploads/workspaces/ws-1/01-clarify.md",
+      markdown_url: "/uploads/workspaces/ws-1/01-clarify.md",
+    }), "https://api.example.test")).toBe("https://api.example.test/uploads/workspaces/ws-1/01-clarify.md");
+  });
+
+  it("exports node XLSX sheet with Chinese summary, compact rows, and artifact links", () => {
     const issue = {
       id: "issue-1",
       identifier: "ISS-1",
@@ -790,6 +837,8 @@ describe("buildRunReviewEventRows", () => {
       total_output_tokens: 20,
       total_cache_read_tokens: 30,
       total_cache_write_tokens: 4,
+      agent_execution_duration_ms: 60000,
+      human_confirmation_duration_ms: 30000,
       message_count: 2,
       agent_turn_count: 3,
       trace_event_count: 1,
@@ -804,6 +853,7 @@ describe("buildRunReviewEventRows", () => {
       agent_name: "01-clarify",
       status: "completed",
       started_at: "2026-06-09T10:00:00.000Z",
+      actual_started_at: "2026-06-09T10:00:00.000Z",
       completed_at: "2026-06-09T10:01:00.000Z",
       duration_ms: 60000,
       input_tokens: 1,
@@ -816,24 +866,125 @@ describe("buildRunReviewEventRows", () => {
       usage_unavailable_trace: false,
       summary: "done",
       evidence_refs: [{ type: "attachment", id: "att-1", href: "/api/attachments/att-1/download" }],
-      artifacts: [artifact({
-        download_url: "/uploads/workspaces/ws-1/01-需求澄清.md",
-        markdown_url: "/uploads/workspaces/ws-1/01-需求澄清.md",
-      })],
+      artifacts: [
+        artifact({
+          download_url: "/uploads/workspaces/ws-1/01-需求澄清.md",
+          markdown_url: "/uploads/workspaces/ws-1/01-需求澄清.md",
+        }),
+        artifact({
+          id: "att-2",
+          filename: "02-design.md",
+          title: "02-design",
+          download_url: "/api/attachments/att-2/download",
+          markdown_url: "/api/attachments/att-2/download",
+        }),
+      ],
+    } as IssueTimelineNode;
+    const nodeWithoutArtifacts = {
+      ...node,
+      node_id: "task:task-2",
+      agent_name: "02-design",
+      status: "running",
+      duration_ms: 0,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      agent_turn_count: 0,
+      artifacts: [],
     } as IssueTimelineNode;
 
-    const csv = buildRunReviewNodeCsv(
+    const [sheet, artifactSheet] = buildRunReviewNodeXlsxSheets(
       issue,
       summary,
-      [{ key: "task-1", label: "01-需求澄清", node }] as never,
+      [
+        { key: "task-1", label: "01-需求澄清", node },
+        { key: "task-2", label: "02-方案设计", node: nodeWithoutArtifacts },
+      ] as never,
       [],
     );
 
-    expect(csv).toContain("total_duration_ms,total_token,total_thinking_rounds");
-    expect(csv).toContain('summary,issue-1,ISS-1,"优化,运行复盘",120000,64,3');
-    expect(csv).toContain('agent_node,issue-1,ISS-1,"优化,运行复盘",120000,64,3,task-1,01-需求澄清,1,completed,01-clarify');
-    expect(csv).toContain(",60000,1,2,3,4,10,5,1");
-    expect(csv).toContain("01-需求澄清.md </api/attachments/att-1/download>");
+    expect(sheet?.name).toBe("节点数据");
+    expect(sheet?.rows[0]).toEqual([
+      "总耗时",
+      "Agent 执行耗时",
+      "人工/等待耗时",
+      "总 Token",
+      "输入 Token",
+      "输出 Token",
+      "缓存读 Token",
+      "缓存写 Token",
+      "缓存命中率",
+      "执行轮次",
+    ]);
+    expect(sheet?.rows[1]).toEqual(["1m 30s", "1m", "30s", "64", "10", "20", "30", "4", "88.2%", "3"]);
+    expect(sheet?.rows[2]).toEqual([]);
+    expect(sheet?.rows[3]).toEqual([
+      "节点",
+      "Agent",
+      "开始时间",
+      "结束时间",
+      "执行耗时",
+      "Token 合计",
+      "输入 Token",
+      "输出 Token",
+      "缓存读 Token",
+      "缓存写 Token",
+      "缓存命中率",
+      "执行轮次",
+      "产物",
+    ]);
+    expect(sheet?.rows[4]).toEqual([
+      "01-需求澄清",
+      "01-clarify",
+      expect.any(String),
+      expect.any(String),
+      "1m",
+      "10",
+      "1",
+      "2",
+      "3",
+      "4",
+      "42.9%",
+      "5",
+      "01-需求澄清\n02-design",
+    ]);
+    expect(sheet?.rows[5]).toEqual([
+      "02-方案设计",
+      "02-design",
+      expect.any(String),
+      expect.any(String),
+      "0m",
+      "0",
+      "0",
+      "0",
+      "0",
+      "0",
+      "暂无",
+      "0",
+      "-",
+    ]);
+    expect(sheet?.hyperlinks).toEqual([
+      { row: 4, col: 12, target: "http://localhost:3000/api/attachments/att-1/download", tooltip: "01-需求澄清" },
+    ]);
+    expect(artifactSheet?.name).toBe("产物链接");
+    expect(artifactSheet?.rows).toEqual([
+      ["节点", "Agent", "产物", "链接"],
+      ["01-需求澄清", "01-clarify", "01-需求澄清", "http://localhost:3000/api/attachments/att-1/download"],
+      ["01-需求澄清", "01-clarify", "02-design", "http://localhost:3000/api/attachments/att-2/download"],
+    ]);
+    expect(artifactSheet?.hyperlinks).toEqual([
+      { row: 1, col: 2, target: "http://localhost:3000/api/attachments/att-1/download", tooltip: "01-需求澄清" },
+      { row: 2, col: 2, target: "http://localhost:3000/api/attachments/att-2/download", tooltip: "02-design" },
+    ]);
+    expect(sheet?.rows.flat()).not.toContain("row_type");
+    expect(sheet?.rows.flat()).not.toContain("issue_id");
+    expect(sheet?.rows.flat()).not.toContain("total_duration_ms");
+    expect(sheet?.rows.flat()).not.toContain("node_input_tokens");
+    expect(sheet?.rows.flat()).not.toContain("child_issue");
+    expect(sheet?.rows.flat()).not.toContain("状态");
+    expect(sheet?.rows.flat()).not.toContain("已完成");
+    expect(sheet?.rows.flat()).not.toContain("运行中");
   });
 
   it("aggregates repeated runs from the same agent node", () => {
@@ -946,7 +1097,7 @@ describe("buildRunReviewEventRows", () => {
     expect(buildAgentNodeRows(timelineRows.flatMap((row) => row.segments?.map((segment) => segment.node) ?? []))[0]?.runCount).toBe(2);
   });
 
-  it("adds human confirmation waits as a separate horizontal timeline row", () => {
+  it("keeps human confirmation and child waits on dedicated horizontal timeline rows", () => {
     const agentNode = {
       issue_id: "issue-1",
       node_id: "task:pm-1",
@@ -1015,42 +1166,98 @@ describe("buildRunReviewEventRows", () => {
       [agentNode, waitNode, childNode],
     );
 
-    expect(rows.map((row) => row.key)).toEqual(["agent-pm", "human-confirmation"]);
-    expect(rows[1]).toMatchObject({
+    expect(rows.map((row) => row.key)).toEqual(["human-confirmation", "child-issue-wait", "agent-pm"]);
+    expect(rows[0]).toMatchObject({
       label: "人工确认",
       kind: "human_confirmation",
-      subtitle: "2 次 · 已完成",
+      subtitle: "已完成",
     });
-    expect(rows[1]?.segments).toHaveLength(2);
-    expect(rows[1]?.segments[0]).toMatchObject({
+    expect(rows[0]?.segments).toHaveLength(1);
+    expect(rows[0]?.segments[0]).toMatchObject({
       key: "human_confirmation:comment-1:pm-2",
       label: "等待人工确认：确认继续",
       durationMs: 300_000,
       tokenTotal: 0,
     });
-    expect(rows[1]?.segments[1]).toMatchObject({
+    expect(rows[1]).toMatchObject({
+      label: "子任务等待",
+      kind: "child",
+      subtitle: "已完成",
+    });
+    expect(rows[1]?.segments).toHaveLength(1);
+    expect(rows[1]?.segments[0]).toMatchObject({
       key: "child_issue_ref:child-1",
       label: "等待子任务完成：跨项目验收标记：gateway request id / middleware acceptance marker",
       durationMs: 240_000,
       tokenTotal: 0,
     });
+    expect(timelineSegmentTooltipRows(rows[2]!, rows[2]!.segments[0]!).map(([label]) => label)).toEqual([
+      "节点",
+      "片段",
+      "接手",
+      "实际开始",
+      "结束",
+      "耗时",
+      "Token",
+      "执行轮次",
+    ]);
+    expect(timelineSegmentTooltipRows(rows[2]!, rows[2]!.segments[0]!)).toContainEqual(["Token", "30"]);
     expect(timelineSegmentTooltipRows(rows[0]!, rows[0]!.segments[0]!).map(([label]) => label)).toEqual([
       "节点",
       "片段",
       "开始",
       "结束",
       "耗时",
-      "Token",
-      "思考轮次",
     ]);
-    expect(timelineSegmentTooltipRows(rows[0]!, rows[0]!.segments[0]!)).toContainEqual(["Token", "30"]);
-    expect(timelineSegmentTooltipRows(rows[1]!, rows[1]!.segments[0]!).map(([label]) => label)).toEqual([
-      "节点",
-      "片段",
-      "开始",
-      "结束",
-      "耗时",
-    ]);
+  });
+
+  it("uses agent responsibility windows without separate dispatch wait segments", () => {
+    const firstRun = {
+      issue_id: "issue-1",
+      node_id: "task:pm-1",
+      node_type: "agent_task",
+      agent_id: "agent-pm",
+      agent_name: "PM-项目经理",
+      status: "completed",
+      started_at: "2026-06-09T10:00:00.000Z",
+      actual_started_at: "2026-06-09T10:00:00.000Z",
+      completed_at: "2026-06-09T10:01:00.000Z",
+      duration_ms: 60_000,
+      input_tokens: 10,
+      output_tokens: 20,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      message_count: 1,
+      agent_turn_count: 1,
+      trace_event_count: 1,
+      usage_unavailable_trace: false,
+      summary: "pm first run",
+      evidence_refs: [],
+      artifacts: [],
+    } as IssueTimelineNode;
+    const secondRun = {
+      ...firstRun,
+      node_id: "task:pm-2",
+      started_at: "2026-06-09T10:01:00.000Z",
+      actual_started_at: "2026-06-09T10:06:00.000Z",
+      completed_at: "2026-06-09T10:07:00.000Z",
+      duration_ms: 360_000,
+      summary: "pm second run",
+    } as IssueTimelineNode;
+
+    const agentRows = buildTimelineAgentRows([firstRun, secondRun]);
+    const rows = buildTimelineBarRows(agentRows, [], [firstRun, secondRun]);
+
+    expect(rows.map((row) => row.key)).toEqual(["agent-pm"]);
+    expect(rows[0]?.segments.map((segment) => segment.node.node_type)).toEqual(["agent_task", "agent_task"]);
+    expect(rows[0]?.segments[1]).toMatchObject({
+      key: "agent-pm:pm-2",
+      label: "PM-项目经理",
+      durationMs: 360_000,
+      tokenTotal: 30,
+    });
+    expect(timelineSegmentTooltipRows(rows[0]!, rows[0]!.segments[1]!)).toContainEqual(["接手", expect.stringMatching(/:01:00$/)]);
+    expect(timelineSegmentTooltipRows(rows[0]!, rows[0]!.segments[1]!)).toContainEqual(["实际开始", expect.stringMatching(/:06:00$/)]);
   });
 
   it("uses true timeline proportions for short run segments", () => {
@@ -1097,7 +1304,7 @@ describe("buildRunReviewEventRows", () => {
     expect((timing.endMs ?? 0) - (timing.startMs ?? 0)).toBe(20_000);
   });
 
-  it("exports raw event CSV with escaped detail, metadata, and raw evidence", () => {
+  it("exports raw event XLSX rows with detail, metadata, and raw evidence", () => {
     const rows = [
       {
         id: "event-1",
@@ -1122,14 +1329,15 @@ describe("buildRunReviewEventRows", () => {
       },
     ] satisfies ReturnType<typeof buildRunReviewEventRows>;
 
-    const csv = buildRunReviewRawEventsCsv(rows);
+    const [sheet] = buildRunReviewRawEventsXlsxSheets(rows);
 
-    expect(csv).toContain("id,kind,category,time,timestamp_ms");
-    expect(csv).toContain('"line 1\nline 2, with comma"');
-    expect(csv).toContain('"metadata:\n{""quote"":""yes""}"');
-    expect(csv).toContain("task_trace_event");
-    expect(csv).toContain('"{\n  ""id"": ""trace-1"",\n  ""event_type"": ""task.failed""\n}"');
-    expect(csv).toContain("关联 task_message #1 文本");
+    expect(sheet?.name).toBe("RAW 交互信息");
+    expect(sheet?.rows[0]?.slice(0, 5)).toEqual(["id", "kind", "category", "time", "timestamp_ms"]);
+    expect(sheet?.rows[1]).toContain("line 1\nline 2, with comma");
+    expect(sheet?.rows[1]).toContain('metadata:\n{"quote":"yes"}');
+    expect(sheet?.rows[1]).toContain("task_trace_event");
+    expect(sheet?.rows[1]).toContain('{\n  "id": "trace-1",\n  "event_type": "task.failed"\n}');
+    expect(String(sheet?.rows[1]?.at(-1))).toContain("关联 task_message #1 文本");
   });
 
   it("creates a draft evaluation case with run snapshot, prompt snapshots, tools, and assertions", () => {

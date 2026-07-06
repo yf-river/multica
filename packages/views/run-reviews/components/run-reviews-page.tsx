@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 import { Activity, AlertTriangle, Download, GitBranch, HelpCircle, ListChecks, Loader2, RotateCcw, Timer, WifiOff } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
+import * as XLSX from "xlsx";
 import { api } from "@multica/core/api";
 import { issueExecutionTreeOptions, issueKeys, issueListOptions } from "@multica/core/issues/queries";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -38,8 +39,24 @@ const RUN_REVIEW_MESSAGE_REFRESH_MAX_WAIT_MS = 4_000;
 const RUN_REVIEW_LIVE_DURATION_TICK_MS = 1_000;
 const TIMELINE_SEGMENT_TEXT_MIN_WIDTH_PERCENT = 8;
 
-export function buildRunReviewOptimizerHref(trainingView: (view: string) => string, issueId: string): string {
-  return `${trainingView("evaluation-runs")}?issue=${encodeURIComponent(issueId)}`;
+type XlsxCellValue = string | number | boolean | null | undefined;
+
+export interface XlsxHyperlink {
+  row: number;
+  col: number;
+  target: string;
+  tooltip?: string;
+}
+
+export interface XlsxSheetSpec {
+  name: string;
+  rows: XlsxCellValue[][];
+  hyperlinks?: XlsxHyperlink[];
+  columnWidths?: number[];
+}
+
+export function buildRunReviewOptimizerHref(evaluationView: (view: string) => string, issueId: string): string {
+  return `${evaluationView("runs")}?issue=${encodeURIComponent(issueId)}`;
 }
 
 export function runReviewTotalDurationMs(summary: IssueTimelineSummary | undefined): number {
@@ -173,8 +190,8 @@ export function RunReviewsPage() {
               tree={treeQuery.data}
               loading={treeQuery.isLoading}
               issueHref={paths.issueDetail(selectedIssue.id)}
-              evalDraftHref={`${paths.trainingView("datasets")}?issue=${encodeURIComponent(selectedIssue.id)}&mode=draft`}
-              optimizerHref={buildRunReviewOptimizerHref(paths.trainingView, selectedIssue.id)}
+              evalDraftHref={`${paths.evaluationView("datasets")}?issue=${encodeURIComponent(selectedIssue.id)}&mode=draft`}
+              optimizerHref={buildRunReviewOptimizerHref(paths.evaluationView, selectedIssue.id)}
             />
           ) : (
             <div className="px-6 py-10 text-sm text-muted-foreground">选择一条 issue 查看完整链路。</div>
@@ -332,6 +349,7 @@ function RunReviewDetail({
 }) {
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
+  const [reviewView, setReviewView] = useState<"classic" | "trace">("classic");
   useRunReviewRealtimeSync(issue.id, wsId);
   const { data: tasks = [] } = useQuery({
     queryKey: issueKeys.tasks(issue.id),
@@ -361,8 +379,14 @@ function RunReviewDetail({
     (summary?.total_output_tokens ?? 0) +
     (summary?.total_cache_read_tokens ?? 0) +
     (summary?.total_cache_write_tokens ?? 0);
-  const nodeCsv = buildRunReviewNodeCsv(issue, summary, agentNodeRows, visibleChildLanes);
-  const rawEventsCsv = buildRunReviewRawEventsCsv(eventRows);
+  const nodeXlsxSheets = buildRunReviewNodeXlsxSheets(issue, summary, agentNodeRows, visibleChildLanes);
+  const rawEventsXlsxSheets = buildRunReviewRawEventsXlsxSheets(eventRows);
+  const traceModel = useMemo(
+    () => buildTraceViewModel(tree, timelineNodes, tasks),
+    [tasks, timelineNodes, tree],
+  );
+  const traceNodeXlsxSheets = buildTraceNodeXlsxSheets(issue, summary, traceModel);
+  const traceRawXlsxSheets = buildTraceRawXlsxSheets(traceModel);
   const taskById = useMemo(() => {
     const result = new Map<string, AgentTask>();
     for (const task of [...flattenExecutionTasks(tree), ...tasks]) {
@@ -482,134 +506,160 @@ function RunReviewDetail({
               />
             }
           />
-          <Metric label="思考轮次" value={formatNumber(summary?.agent_turn_count ?? 0)} icon={<ListChecks className="size-3.5" />} />
+          <Metric label="执行轮次" value={formatNumber(summary?.agent_turn_count ?? 0)} icon={<ListChecks className="size-3.5" />} />
         </div>
       </section>
 
       {loading ? <DetailSkeleton /> : null}
 
-      <section className="rounded-md border bg-card">
-        <SectionTitle title="横向时序图" subtitle="按真实出现的执行节点绘制；节点存在但缺少开始/结束时间时会单独标记。" />
-        <TimelineLaneChart stageRows={visibleTimelineRows} childLanes={visibleChildLanes} timelineNodes={timelineNodes} />
-      </section>
+      <div className="flex flex-wrap gap-2 rounded-md border bg-card p-2" role="tablist" aria-label="运行复盘视图">
+        <button
+          type="button"
+          className={cn("rounded px-3 py-1.5 text-xs", reviewView === "classic" ? "bg-foreground text-background" : "text-muted-foreground hover:bg-accent hover:text-foreground")}
+          onClick={() => setReviewView("classic")}
+          role="tab"
+          aria-selected={reviewView === "classic"}
+        >
+          运行复盘
+        </button>
+        <button
+          type="button"
+          className={cn("rounded px-3 py-1.5 text-xs", reviewView === "trace" ? "bg-foreground text-background" : "text-muted-foreground hover:bg-accent hover:text-foreground")}
+          onClick={() => setReviewView("trace")}
+          role="tab"
+          aria-selected={reviewView === "trace"}
+          data-testid="run-review-trace-view-tab"
+        >
+          Trace 视图
+        </button>
+      </div>
 
-      <section className="rounded-md border bg-card">
-        <SectionTitle title="子任务泳道" subtitle="只展示执行树中真实关联的跨项目子 issue。" />
-        <div className="space-y-2 px-4 pb-4">
-          {visibleChildLanes.length > 0 ? visibleChildLanes.map((lane) => (
-            <div key={lane.key} className="flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2 text-sm">
-              <div className="min-w-0">
-                <div className="font-medium">{lane.label}</div>
-                <div className="truncate text-xs text-muted-foreground">{lane.issue ? `${lane.issue.identifier} ${lane.issue.title}` : ""}</div>
-              </div>
-              <span className="shrink-0 rounded border px-2 py-1 text-xs text-muted-foreground">{statusLabel(lane.issue?.status ?? "")}</span>
-            </div>
-          )) : (
-            <div className="rounded-md border border-dashed bg-muted/20 px-3 py-4 text-sm text-muted-foreground">
-              当前执行树暂无跨项目子 issue。
-            </div>
-          )}
-        </div>
-      </section>
-
-      <section className="rounded-md border bg-card">
-        <SectionTitle
-          title="节点表"
-          subtitle="按 Agent 运行节点展示耗时、token、轮次和产物。"
-          action={
-            <ExportButton
-              label="导出节点数据"
-              onClick={() => downloadCsv(`run-review-nodes-${issue.identifier || issue.id}.csv`, nodeCsv)}
-            />
-          }
+      {reviewView === "trace" ? (
+        <RunReviewTraceView
+          model={traceModel}
+          nodeXlsxSheets={traceNodeXlsxSheets}
+          rawXlsxSheets={traceRawXlsxSheets}
+          issue={issue}
         />
-        <div className="hidden md:block">
-          <table className="w-full table-fixed text-sm">
-            <thead className="border-y bg-muted/40 text-left text-xs text-muted-foreground">
-              <tr>
-                <th className="w-[18%] px-3 py-2 font-medium">节点</th>
-                <th className="w-[16%] px-3 py-2 font-medium">Agent</th>
-                <th className="w-[12%] px-3 py-2 font-medium">状态</th>
-                <th className="w-[12%] px-3 py-2 font-medium">耗时</th>
-                <th className="w-[12%] px-3 py-2 font-medium">Token</th>
-                <th className="w-[10%] px-3 py-2 font-medium">思考轮次</th>
-                <th className="w-[20%] px-3 py-2 font-medium">产物</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y">
-              {agentNodeRows.length > 0 ? agentNodeRows.map((row) => (
-                <tr key={row.key}>
-                  <td className="truncate px-3 py-2">{agentNodeDisplayLabel(row)}</td>
-                  <td className="truncate px-3 py-2 text-muted-foreground">{row.node.agent_name ?? row.key}</td>
-                  <td className="truncate px-3 py-2">{statusLabel(row.node.status)}</td>
-                  <td className="truncate px-3 py-2">
-                    <NodeMetric value={formatDuration(row.node.duration_ms ?? 0)} tooltip={nodeDurationTooltip(row.node)} />
-                  </td>
-                  <td className="truncate px-3 py-2">
-                    <NodeMetric value={formatNumber(nodeTokenTotal(row.node))} tooltip={nodeTokenTooltip(row.node)} />
-                  </td>
-                  <td className="truncate px-3 py-2">{formatNumber(row.node.agent_turn_count ?? 0)}</td>
-                  <td className="px-3 py-2"><ArtifactLinks artifacts={row.node.artifacts ?? []} /></td>
-                </tr>
+      ) : (
+        <>
+          <section className="rounded-md border bg-card">
+            <SectionTitle title="横向时序图" subtitle="按真实出现的执行节点绘制；节点存在但缺少开始/结束时间时会单独标记。" />
+            <TimelineLaneChart stageRows={visibleTimelineRows} childLanes={visibleChildLanes} timelineNodes={timelineNodes} />
+          </section>
+
+          <section className="rounded-md border bg-card">
+            <SectionTitle title="子任务泳道" subtitle="只展示执行树中真实关联的跨项目子 issue。" />
+            <div className="space-y-2 px-4 pb-4">
+              {visibleChildLanes.length > 0 ? visibleChildLanes.map((lane) => (
+                <div key={lane.key} className="flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2 text-sm">
+                  <div className="min-w-0">
+                    <div className="font-medium">{lane.label}</div>
+                    <div className="truncate text-xs text-muted-foreground">{lane.issue ? `${lane.issue.identifier} ${lane.issue.title}` : ""}</div>
+                  </div>
+                  <span className="shrink-0 rounded border px-2 py-1 text-xs text-muted-foreground">{statusLabel(lane.issue?.status ?? "")}</span>
+                </div>
               )) : (
-                <tr>
-                  <td className="px-3 py-5 text-sm text-muted-foreground" colSpan={7}>暂无真实 Agent 节点。</td>
-                </tr>
+                <div className="rounded-md border border-dashed bg-muted/20 px-3 py-4 text-sm text-muted-foreground">
+                  当前执行树暂无跨项目子 issue。
+                </div>
               )}
-            </tbody>
-          </table>
-        </div>
-        <div className="divide-y md:hidden">
-          {agentNodeRows.length > 0 ? agentNodeRows.map((row) => (
-            <div key={row.key} className="px-4 py-3 text-sm">
-              <div className="flex items-center justify-between gap-3">
-                <div className="min-w-0 truncate font-medium">{agentNodeDisplayLabel(row)}</div>
-                <span className="shrink-0 rounded border px-2 py-0.5 text-xs text-muted-foreground">
-                  {statusLabel(row.node.status)}
-                </span>
-              </div>
-              <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                <NodeFact label="Agent" value={row.node.agent_name ?? row.key} />
-                <NodeFact label="耗时" value={formatDuration(row.node.duration_ms ?? 0)} />
-                <NodeFact label="Token" value={formatNumber(nodeTokenTotal(row.node))} />
-                <NodeFact label="思考轮次" value={formatNumber(row.node.agent_turn_count ?? 0)} />
-              </div>
-              <div className="mt-2 text-xs">
-                <ArtifactLinks artifacts={row.node.artifacts ?? []} />
-              </div>
             </div>
-          )) : (
-            <div className="px-4 py-5 text-sm text-muted-foreground">暂无真实 Agent 节点。</div>
-          )}
-        </div>
-      </section>
+          </section>
 
-      <section className="rounded-md border bg-card">
-        <SectionTitle
-          title="事件流"
-          subtitle="展示去重后的事件摘要；通过每行右侧详细信息查看完整转录。"
-          action={
-            <ExportButton
-              label="导出 RAW 交互信息"
-              onClick={() => downloadCsv(`run-review-events-${issue.identifier || issue.id}.csv`, rawEventsCsv)}
+          <section className="rounded-md border bg-card">
+            <SectionTitle
+              title="节点表"
+              subtitle="按 Agent 运行节点展示耗时、token、执行轮次和产物。"
+              action={
+                <ExportButton
+                  label="导出节点数据"
+                  onClick={() => downloadXlsx(`run-review-nodes-${issue.identifier || issue.id}.xlsx`, nodeXlsxSheets)}
+                />
+              }
             />
-          }
-        />
-        <div className="min-h-[24rem] divide-y">
-          {eventRows.length > 0 ? eventRows.map((node) => (
-            <RunReviewEventRow
-              key={node.id}
-              event={node}
-              task={node.taskId ? taskById.get(node.taskId) : undefined}
-            />
-          )) : (
-            <div className="flex gap-2 px-4 py-6 text-sm text-muted-foreground">
-              <AlertTriangle className="size-4" />
-              暂无事件。真实任务开始后会回写 trace、用量和证据。
+            <div className="hidden md:block">
+              <table className="w-full table-fixed text-sm">
+                <thead className="border-y bg-muted/40 text-left text-xs text-muted-foreground">
+                  <tr>
+                    <th className="w-[20%] px-3 py-2 font-medium">节点</th>
+                    <th className="w-[18%] px-3 py-2 font-medium">Agent</th>
+                    <th className="w-[12%] px-3 py-2 font-medium">耗时</th>
+                    <th className="w-[12%] px-3 py-2 font-medium">Token</th>
+                    <th className="w-[12%] px-3 py-2 font-medium">执行轮次</th>
+                    <th className="w-[26%] px-3 py-2 font-medium">产物</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y">
+                  {agentNodeRows.length > 0 ? agentNodeRows.map((row) => (
+                    <tr key={row.key}>
+                      <td className="truncate px-3 py-2">{agentNodeDisplayLabel(row)}</td>
+                      <td className="truncate px-3 py-2 text-muted-foreground">{row.node.agent_name ?? row.key}</td>
+                      <td className="truncate px-3 py-2">
+                        <NodeMetric value={formatDuration(row.node.duration_ms ?? 0)} tooltip={nodeDurationTooltip(row.node)} />
+                      </td>
+                      <td className="truncate px-3 py-2">
+                        <NodeMetric value={formatNumber(nodeTokenTotal(row.node))} tooltip={nodeTokenTooltip(row.node)} />
+                      </td>
+                      <td className="truncate px-3 py-2">{formatNumber(row.node.agent_turn_count ?? 0)}</td>
+                      <td className="px-3 py-2"><ArtifactLinks artifacts={row.node.artifacts ?? []} /></td>
+                    </tr>
+                  )) : (
+                    <tr>
+                      <td className="px-3 py-5 text-sm text-muted-foreground" colSpan={6}>暂无真实 Agent 节点。</td>
+                    </tr>
+                  )}
+                </tbody>
+              </table>
             </div>
-          )}
-        </div>
-      </section>
+            <div className="divide-y md:hidden">
+              {agentNodeRows.length > 0 ? agentNodeRows.map((row) => (
+                <div key={row.key} className="px-4 py-3 text-sm">
+                  <div className="min-w-0 truncate font-medium">{agentNodeDisplayLabel(row)}</div>
+                  <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                    <NodeFact label="Agent" value={row.node.agent_name ?? row.key} />
+                    <NodeFact label="耗时" value={formatDuration(row.node.duration_ms ?? 0)} />
+                    <NodeFact label="Token" value={formatNumber(nodeTokenTotal(row.node))} />
+                    <NodeFact label="执行轮次" value={formatNumber(row.node.agent_turn_count ?? 0)} />
+                  </div>
+                  <div className="mt-2 text-xs">
+                    <ArtifactLinks artifacts={row.node.artifacts ?? []} />
+                  </div>
+                </div>
+              )) : (
+                <div className="px-4 py-5 text-sm text-muted-foreground">暂无真实 Agent 节点。</div>
+              )}
+            </div>
+          </section>
+
+          <section className="rounded-md border bg-card">
+            <SectionTitle
+              title="事件流"
+              subtitle="展示去重后的事件摘要；通过每行右侧详细信息查看完整转录。"
+              action={
+                <ExportButton
+                  label="导出 RAW 交互信息"
+                  onClick={() => downloadXlsx(`run-review-events-${issue.identifier || issue.id}.xlsx`, rawEventsXlsxSheets)}
+                />
+              }
+            />
+            <div className="min-h-[24rem] divide-y">
+              {eventRows.length > 0 ? eventRows.map((node) => (
+                <RunReviewEventRow
+                  key={node.id}
+                  event={node}
+                  task={node.taskId ? taskById.get(node.taskId) : undefined}
+                />
+              )) : (
+                <div className="flex gap-2 px-4 py-6 text-sm text-muted-foreground">
+                  <AlertTriangle className="size-4" />
+                  暂无事件。真实任务开始后会回写 trace、用量和证据。
+                </div>
+              )}
+            </div>
+          </section>
+        </>
+      )}
     </div>
   );
 }
@@ -655,6 +705,894 @@ function RunReviewEventRow({
       )}
     </div>
   );
+}
+
+type TraceFlowKind = "input" | "agent" | "human" | "wait" | "system" | "error";
+
+interface TraceUnitSegment {
+  key: string;
+  flowId: string;
+  label: string;
+  startMs: number | null;
+  endMs: number | null;
+  durationMs: number;
+}
+
+interface TraceUnit {
+  id: string;
+  key: string;
+  label: string;
+  kind: "Agent" | "人工" | "系统";
+  description: string;
+  durationMs: number;
+  tokenTotal: number;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  turns: number;
+  transcriptCount: number;
+  colorClassName: string;
+  segments: TraceUnitSegment[];
+}
+
+interface TraceFlowItem {
+  id: string;
+  unitId: string;
+  kind: TraceFlowKind;
+  title: string;
+  summary: string;
+  status: string;
+  timeLabel: string;
+  durationMs: number;
+  taskId?: string;
+  nodeId: string;
+  agentName?: string;
+  rawCount: number;
+}
+
+interface TraceTranscriptRow {
+  id: string;
+  type: string;
+  title: string;
+  timeLabel: string;
+  content: string;
+  payload: unknown;
+}
+
+interface TraceTranscriptBundle {
+  rawCount: number;
+  inputs: TraceTranscriptRow[];
+  events: TraceTranscriptRow[];
+  outputs: TraceTranscriptRow[];
+  raw: TraceTranscriptRow[];
+  searchText: string;
+}
+
+interface TraceRawExportRow {
+  flowTitle: string;
+  section: string;
+  type: string;
+  timeLabel: string;
+  title: string;
+  content: string;
+  payload: unknown;
+}
+
+interface TraceViewModel {
+  units: TraceUnit[];
+  flowItems: TraceFlowItem[];
+  transcriptBundles: Record<string, TraceTranscriptBundle>;
+  rawRows: TraceRawExportRow[];
+  sourceCounts: {
+    timelineNodes: number;
+    tasks: number;
+    taskMessages: number;
+    toolCallChains: number;
+    traceEvents: number;
+  };
+}
+
+function RunReviewTraceView({
+  model,
+  nodeXlsxSheets,
+  rawXlsxSheets,
+  issue,
+}: {
+  model: TraceViewModel;
+  nodeXlsxSheets: XlsxSheetSpec[];
+  rawXlsxSheets: XlsxSheetSpec[];
+  issue: Issue;
+}) {
+  const [selectedUnit, setSelectedUnit] = useState("all");
+  const [selectedFlow, setSelectedFlow] = useState(model.flowItems[0]?.id ?? "");
+  const [query, setQuery] = useState("");
+  const visibleFlowItems = useMemo(() => {
+    const q = query.trim().toLowerCase();
+    return model.flowItems.filter((item) => {
+      if (selectedUnit !== "all" && item.unitId !== selectedUnit) return false;
+      if (!q) return true;
+      const bundle = model.transcriptBundles[item.id];
+      return [
+        item.title,
+        item.summary,
+        item.agentName,
+        item.status,
+        item.taskId,
+        traceUnitLabel(model, item.unitId),
+        bundle?.searchText,
+      ].join(" ").toLowerCase().includes(q);
+    });
+  }, [model, query, selectedUnit]);
+  const activeFlow = visibleFlowItems.find((item) => item.id === selectedFlow) ?? visibleFlowItems[0] ?? model.flowItems[0];
+  const activeBundle = activeFlow ? model.transcriptBundles[activeFlow.id] : undefined;
+  const timelineRange = traceTimelineRange(model.units);
+
+  return (
+    <section className="rounded-md border bg-card" data-testid="run-review-trace-view">
+      <div className="flex flex-col gap-3 border-b px-4 py-3 lg:flex-row lg:items-start lg:justify-between">
+        <div className="min-w-0">
+          <div className="text-sm font-semibold">Trace 视图</div>
+          <div className="mt-0.5 flex flex-wrap gap-2 text-xs text-muted-foreground">
+            <span>Timeline {formatNumber(model.sourceCounts.timelineNodes)}</span>
+            <span>Tasks {formatNumber(model.sourceCounts.tasks)}</span>
+            <span>Messages {formatNumber(model.sourceCounts.taskMessages)}</span>
+            <span>Tool chains {formatNumber(model.sourceCounts.toolCallChains)}</span>
+            <span>Trace events {formatNumber(model.sourceCounts.traceEvents)}</span>
+          </div>
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <ExportButton
+            label="导出节点信息"
+            onClick={() => downloadXlsx(`run-review-trace-nodes-${issue.identifier || issue.id}.xlsx`, nodeXlsxSheets)}
+          />
+          <ExportButton
+            label="导出 raw 信息"
+            onClick={() => downloadXlsx(`run-review-trace-raw-${issue.identifier || issue.id}.xlsx`, rawXlsxSheets)}
+          />
+        </div>
+      </div>
+      <div className="grid min-h-[42rem] grid-cols-1 lg:grid-cols-[19rem_minmax(0,1fr)_24rem]">
+        <aside className="min-h-0 border-b lg:border-r lg:border-b-0">
+          <div className="max-h-[28rem] space-y-2 overflow-y-auto p-3 lg:max-h-[calc(100vh-18rem)]">
+            <TraceUnitCard
+              active={selectedUnit === "all"}
+              title="全部"
+              kind="总览"
+              description={`${model.flowItems.length} 个主流程节点，${formatNumber(model.rawRows.length)} 条 transcript/raw。`}
+              onClick={() => {
+                setSelectedUnit("all");
+                setSelectedFlow(model.flowItems[0]?.id ?? "");
+              }}
+            />
+            {model.units.map((unit) => (
+              <TraceUnitCard
+                key={unit.id}
+                active={selectedUnit === unit.id}
+                title={unit.label}
+                kind={unit.kind}
+                description={unit.description}
+                metrics={[
+                  ["耗时", formatDuration(unit.durationMs)],
+                  ["Token", formatCompactToken(unit.tokenTotal)],
+                  ["执行轮次", unit.kind === "Agent" ? formatNumber(unit.turns) : "-"],
+                ]}
+                onClick={() => {
+                  setSelectedUnit(unit.id);
+                  setSelectedFlow(model.flowItems.find((item) => item.unitId === unit.id)?.id ?? model.flowItems[0]?.id ?? "");
+                }}
+              />
+            ))}
+          </div>
+        </aside>
+        <main className="min-h-0 border-b lg:border-r lg:border-b-0">
+          <div className="border-b p-3">
+            <input
+              className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+              value={query}
+              onChange={(event) => setQuery(event.target.value)}
+              placeholder="搜索流程、Agent、工具、输出或 transcript"
+            />
+          </div>
+          <div className="max-h-[34rem] overflow-y-auto p-3 lg:max-h-[calc(100vh-22rem)]">
+            <TraceTimelineCard
+              units={model.units}
+              range={timelineRange}
+              selectedUnit={selectedUnit}
+              onSelect={(unitId, flowId) => {
+                setSelectedUnit(unitId);
+                setSelectedFlow(flowId);
+              }}
+            />
+            <div className="mt-3 space-y-2">
+              {visibleFlowItems.length > 0 ? visibleFlowItems.map((item) => (
+                <TraceFlowCard
+                  key={item.id}
+                  item={item}
+                  active={activeFlow?.id === item.id}
+                  unitLabel={traceUnitLabel(model, item.unitId)}
+                  onClick={() => setSelectedFlow(item.id)}
+                />
+              )) : (
+                <div className="rounded-md border border-dashed bg-muted/20 px-3 py-5 text-sm text-muted-foreground">
+                  没有匹配的 Trace 节点。
+                </div>
+              )}
+            </div>
+          </div>
+        </main>
+        <aside className="min-h-0">
+          <div className="max-h-[38rem] overflow-y-auto p-3 lg:max-h-[calc(100vh-18rem)]">
+            {activeFlow && activeBundle ? (
+              <TraceTranscriptDetail item={activeFlow} bundle={activeBundle} unitLabel={traceUnitLabel(model, activeFlow.unitId)} />
+            ) : (
+              <div className="rounded-md border border-dashed bg-muted/20 px-3 py-5 text-sm text-muted-foreground">
+                选择一个流程节点查看 transcript。
+              </div>
+            )}
+          </div>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function TraceUnitCard({
+  active,
+  title,
+  kind,
+  description,
+  metrics,
+  onClick,
+}: {
+  active: boolean;
+  title: string;
+  kind: string;
+  description: string;
+  metrics?: Array<[string, string]>;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      className={cn("w-full rounded-md border bg-background p-3 text-left text-sm hover:bg-accent/50", active && "border-info bg-info/5")}
+      onClick={onClick}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="min-w-0 truncate font-medium">{title}</span>
+        <span className="shrink-0 rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground">{kind}</span>
+      </div>
+      <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{description}</div>
+      {metrics?.length ? (
+        <div className="mt-2 grid grid-cols-3 gap-2 text-[11px] text-muted-foreground">
+          {metrics.map(([label, value]) => (
+            <span key={label} className="min-w-0">
+              {label}
+              <b className="mt-0.5 block truncate text-xs text-foreground">{value}</b>
+            </span>
+          ))}
+        </div>
+      ) : null}
+    </button>
+  );
+}
+
+function TraceTimelineCard({
+  units,
+  range,
+  selectedUnit,
+  onSelect,
+}: {
+  units: TraceUnit[];
+  range: { min: number; max: number; span: number };
+  selectedUnit: string;
+  onSelect: (unitId: string, flowId: string) => void;
+}) {
+  if (!units.length) return null;
+  const ticks = [range.min, range.min + range.span / 2, range.max].map((value) => formatTimeTick(value));
+  return (
+    <div className="rounded-md border bg-background p-3">
+      <div className="grid grid-cols-[7rem_minmax(0,1fr)] gap-3 text-[11px] text-muted-foreground">
+        <span />
+        <div className="grid grid-cols-3">
+          {ticks.map((tick, index) => (
+            <span key={`${tick}-${index}`} className={cn(index === 1 && "text-center", index === 2 && "text-right")}>{tick}</span>
+          ))}
+        </div>
+      </div>
+      <div className="mt-2 space-y-1.5">
+        {units.map((unit) => (
+          <div key={unit.id} className="grid grid-cols-[7rem_minmax(0,1fr)] items-center gap-3">
+            <div className={cn("truncate text-xs", selectedUnit === unit.id ? "font-semibold text-foreground" : "text-muted-foreground")}>{unit.label}</div>
+            <div className="relative h-7 overflow-hidden rounded bg-muted/30">
+              {unit.segments.map((segment) => {
+                if (segment.startMs === null || segment.endMs === null) return null;
+                return (
+                  <button
+                    key={segment.key}
+                    type="button"
+                    className={cn("absolute top-1 bottom-1 rounded", unit.colorClassName)}
+                    style={traceSegmentStyle(segment, range)}
+                    title={`${segment.label} · ${formatDuration(segment.durationMs)}`}
+                    aria-label={`${segment.label} ${formatDuration(segment.durationMs)}`}
+                    onClick={() => onSelect(unit.id, segment.flowId)}
+                  />
+                );
+              })}
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function TraceFlowCard({
+  item,
+  active,
+  unitLabel,
+  onClick,
+}: {
+  item: TraceFlowItem;
+  active: boolean;
+  unitLabel: string;
+  onClick: () => void;
+}) {
+  const tone = traceFlowTone(item.kind, item.status);
+  return (
+    <button
+      type="button"
+      className={cn("w-full rounded-md border bg-background p-3 text-left text-sm hover:bg-accent/50", active && "border-info bg-info/5")}
+      onClick={onClick}
+      data-testid="run-review-trace-flow-card"
+    >
+      <div className="flex min-w-0 flex-wrap items-center gap-2">
+        <span className={cn("rounded border px-1.5 py-0.5 text-[11px]", tone.chip)}>{traceFlowKindLabel(item.kind)}</span>
+        <span className="min-w-[10rem] flex-1 truncate font-medium">{item.title}</span>
+        <span className="shrink-0 text-xs text-muted-foreground">{item.timeLabel}</span>
+      </div>
+      <div className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">{item.summary}</div>
+      <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+        <span className="rounded border px-1.5 py-0.5">{unitLabel}</span>
+        <span className="rounded border px-1.5 py-0.5">耗时 {formatDuration(item.durationMs)}</span>
+        <span className="rounded border px-1.5 py-0.5">Transcript {formatNumber(item.rawCount)}</span>
+      </div>
+    </button>
+  );
+}
+
+function TraceTranscriptDetail({ item, bundle, unitLabel }: { item: TraceFlowItem; bundle: TraceTranscriptBundle; unitLabel: string }) {
+  return (
+    <div>
+      <div className="rounded-md border bg-background p-3">
+        <div className="text-xs text-muted-foreground">{traceFlowKindLabel(item.kind)}</div>
+        <h3 className="mt-1 text-sm font-semibold leading-5">{item.title}</h3>
+        <div className="mt-2 grid grid-cols-2 gap-2 text-xs text-muted-foreground">
+          <NodeFact label="节点" value={unitLabel} />
+          <NodeFact label="时间" value={item.timeLabel || "暂无"} />
+          <NodeFact label="状态" value={statusLabel(item.status)} />
+          <NodeFact label="Raw" value={formatNumber(bundle.rawCount)} />
+        </div>
+      </div>
+      <TraceTranscriptSection title="输入/提示词" rows={bundle.inputs} />
+      <TraceTranscriptSection title="执行过程" rows={bundle.events} />
+      <TraceTranscriptSection title="输出/结果" rows={bundle.outputs} />
+      <TraceTranscriptSection title="原始 JSON" rows={bundle.raw} />
+    </div>
+  );
+}
+
+function TraceTranscriptSection({ title, rows }: { title: string; rows: TraceTranscriptRow[] }) {
+  return (
+    <section className="mt-3 overflow-hidden rounded-md border bg-background">
+      <div className="flex items-center justify-between border-b bg-muted/30 px-3 py-2 text-xs font-medium">
+        <span>{title}</span>
+        <span className="text-muted-foreground">{formatNumber(rows.length)}</span>
+      </div>
+      <div className="divide-y">
+        {rows.length > 0 ? rows.map((row) => (
+          <article key={row.id} className="text-xs">
+            <div className="p-3">
+              <div className="flex min-w-0 items-center gap-2">
+                <span className="shrink-0 rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground">{row.type}</span>
+                <span className="min-w-0 flex-1 truncate font-medium">{row.title}</span>
+                <span className="shrink-0 text-muted-foreground">{row.timeLabel}</span>
+              </div>
+              {row.content ? <pre className="mt-2 max-h-52 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/30 p-2 font-mono text-[11px] leading-5 text-foreground">{row.content}</pre> : null}
+            </div>
+            <details className="border-t bg-muted/10">
+              <summary className="cursor-pointer px-3 py-2 text-muted-foreground">展开 JSON</summary>
+              <pre className="max-h-72 overflow-auto whitespace-pre-wrap break-words px-3 pb-3 font-mono text-[11px] leading-5">{formatJSON(row.payload)}</pre>
+            </details>
+          </article>
+        )) : (
+          <div className="px-3 py-4 text-xs text-muted-foreground">无记录</div>
+        )}
+      </div>
+    </section>
+  );
+}
+
+function buildTraceViewModel(
+  tree: IssueExecutionTreeResponse | undefined,
+  timelineNodes: IssueTimelineNode[],
+  tasks: AgentTask[],
+): TraceViewModel {
+  const executionNodes = flattenExecutionNodes(tree);
+  const allTasks = dedupeBy([...flattenExecutionTasks(tree), ...tasks], (task) => task.id);
+  const taskById = new Map(allTasks.map((task) => [task.id, task]));
+  const taskMessages = dedupeBy(executionNodes.flatMap((node) => node.task_messages ?? []), (message) => `${message.task_id}:${message.seq}:${message.type}`);
+  const toolCallChains = dedupeBy(executionNodes.flatMap((node) => node.tool_call_chains ?? []), (chain) => `${chain.task_id}:${chain.id}`);
+  const traceEvents = dedupeBy(executionNodes.flatMap((node) => node.trace_events ?? []), (event) => event.id || `${event.task_id}:${event.event_type}:${event.created_at}`);
+  const messagesByTask = groupBy(taskMessages, (message) => message.task_id);
+  const chainsByTask = groupBy(toolCallChains, (chain) => chain.task_id ?? "");
+  const tracesByTask = groupBy(traceEvents, (event) => event.task_id);
+  const timelineByTask = groupBy(timelineNodes, (node) => traceTaskIdFromTimelineNode(node));
+  const primaryNodes = tracePrimaryNodes(timelineNodes);
+  const unitContext: TraceBuildContext = {
+    taskById,
+    messagesByTask,
+    chainsByTask,
+    tracesByTask,
+    timelineByTask,
+  };
+  const units = buildTraceUnits(timelineNodes, primaryNodes, unitContext);
+  const unitByAgentKey = new Map(units.map((unit) => [unit.key, unit.id]));
+  const flowItems = primaryNodes.map((node, index) => buildTraceFlowItem(node, index, unitByAgentKey, taskById, unitContext));
+  const transcriptBundles: Record<string, TraceTranscriptBundle> = {};
+  for (const item of flowItems) {
+    transcriptBundles[item.id] = buildTraceTranscriptBundle(item, taskById, unitContext);
+  }
+  const rawRows = flowItems.flatMap((item) => flattenTraceRawRows(item, transcriptBundles[item.id] as TraceTranscriptBundle));
+  return {
+    units,
+    flowItems,
+    transcriptBundles,
+    rawRows,
+    sourceCounts: {
+      timelineNodes: timelineNodes.length,
+      tasks: allTasks.length,
+      taskMessages: taskMessages.length,
+      toolCallChains: toolCallChains.length,
+      traceEvents: traceEvents.length,
+    },
+  };
+}
+
+interface TraceBuildContext {
+  taskById: Map<string, AgentTask>;
+  messagesByTask: Map<string, TaskMessagePayload[]>;
+  chainsByTask: Map<string, PromptEvaluationToolCallChain[]>;
+  tracesByTask: Map<string, TaskTraceEvent[]>;
+  timelineByTask: Map<string, IssueTimelineNode[]>;
+}
+
+function tracePrimaryNodes(nodes: IssueTimelineNode[]) {
+  const primaryTypes = new Set<IssueTimelineNode["node_type"]>(["source_fetch", "agent_task", "human_confirmation", "child_issue_ref", "dispatch_wait", "approval"]);
+  return nodes
+    .filter((node) => primaryTypes.has(node.node_type))
+    .toSorted((left, right) => (parseTimeMs(left.started_at || left.completed_at) ?? 0) - (parseTimeMs(right.started_at || right.completed_at) ?? 0));
+}
+
+function buildTraceUnits(nodes: IssueTimelineNode[], primaryNodes: IssueTimelineNode[], context: TraceBuildContext): TraceUnit[] {
+  const agentGroups = new Map<string, IssueTimelineNode[]>();
+  for (const node of nodes.filter((item) => item.node_type === "agent_task")) {
+    const key = traceAgentGroupKey(node);
+    agentGroups.set(key, [...(agentGroups.get(key) ?? []), node]);
+  }
+  const units: TraceUnit[] = [...agentGroups.entries()].map(([key, groupNodes], index) => {
+    const sorted = groupNodes.toSorted((left, right) => (parseTimeMs(left.started_at || left.completed_at) ?? 0) - (parseTimeMs(right.started_at || right.completed_at) ?? 0));
+    const label = sorted[0]?.agent_name || key;
+    const totals = traceNodeTotals(sorted);
+    const transcriptCount = sorted.reduce((total, node) => total + traceTranscriptRawCount(traceTaskIdFromTimelineNode(node), context), 0);
+    return {
+      id: `trace-unit-${sanitizeKey(key)}`,
+      key,
+      label: sorted.length > 1 ? `${label} (${sorted.length} 次)` : label,
+      kind: "Agent",
+      description: `${formatNumber(sorted.length)} 次运行；${formatNumber(transcriptCount)} 条 transcript/raw；${formatNumber(totals.turns)} 次执行轮次。`,
+      ...totals,
+      transcriptCount,
+      colorClassName: traceColorClass(index),
+      segments: sorted.map((node) => traceUnitSegment(node)),
+    };
+  });
+  const humanNodes = primaryNodes.filter((node) => node.node_type === "human_confirmation" || node.node_type === "approval");
+  if (humanNodes.length) {
+    const totals = traceNodeTotals(humanNodes);
+    units.push({
+      id: "trace-unit-human",
+      key: "human",
+      label: humanNodes.length > 1 ? `人工确认 (${humanNodes.length} 次)` : "人工确认",
+      kind: "人工",
+      description: `${formatNumber(humanNodes.length)} 次人工确认或审批。`,
+      ...totals,
+      transcriptCount: humanNodes.length,
+      colorClassName: "bg-amber-500",
+      segments: humanNodes.map((node) => traceUnitSegment(node)),
+    });
+  }
+  const systemNodes = primaryNodes.filter((node) => !["agent_task", "human_confirmation", "approval"].includes(node.node_type));
+  if (systemNodes.length) {
+    const totals = traceNodeTotals(systemNodes);
+    units.unshift({
+      id: "trace-unit-system",
+      key: "system",
+      label: "系统事件",
+      kind: "系统",
+      description: `${formatNumber(systemNodes.length)} 个输入、等待或子任务节点。`,
+      ...totals,
+      transcriptCount: systemNodes.length,
+      colorClassName: "bg-slate-500",
+      segments: systemNodes.map((node) => traceUnitSegment(node)),
+    });
+  }
+  return units.toSorted((left, right) => (left.segments[0]?.startMs ?? 0) - (right.segments[0]?.startMs ?? 0));
+}
+
+function traceUnitSegment(node: IssueTimelineNode): TraceUnitSegment {
+  const timing = timelineTiming(node);
+  return {
+    key: node.node_id,
+    flowId: traceFlowId(node),
+    label: traceFlowTitle(node, undefined, 0),
+    startMs: timing.startMs,
+    endMs: timing.endMs,
+    durationMs: timing.durationMs,
+  };
+}
+
+function buildTraceFlowItem(
+  node: IssueTimelineNode,
+  index: number,
+  unitByAgentKey: Map<string, string>,
+  taskById: Map<string, AgentTask>,
+  context: TraceBuildContext,
+): TraceFlowItem {
+  const taskId = traceTaskIdFromTimelineNode(node);
+  const task = taskId ? taskById.get(taskId) : undefined;
+  const kind = traceFlowKind(node);
+  const unitId = node.node_type === "agent_task"
+    ? unitByAgentKey.get(traceAgentGroupKey(node)) ?? "trace-unit-system"
+    : node.node_type === "human_confirmation" || node.node_type === "approval"
+      ? "trace-unit-human"
+      : "trace-unit-system";
+  const messageCount = taskId ? context.messagesByTask.get(taskId)?.length ?? 0 : 0;
+  const toolCount = taskId ? context.chainsByTask.get(taskId)?.length ?? 0 : 0;
+  const traceCount = taskId ? context.tracesByTask.get(taskId)?.length ?? 0 : 0;
+  const rawCount = taskId ? traceTranscriptRawCount(taskId, context) : 1;
+  return {
+    id: traceFlowId(node),
+    unitId,
+    kind,
+    title: traceFlowTitle(node, task, index),
+    summary: node.node_type === "agent_task"
+      ? `${node.agent_name || "Agent"} 执行 ${formatDuration(node.duration_ms)}；${formatNumber(messageCount)} 条 message，${formatNumber(toolCount)} 条工具调用链，${formatNumber(traceCount)} 条 trace event。${truncateText(firstNonEmpty(traceTaskOutput(task), node.summary), 140)}`
+      : `${timelineNodeKindLabel(node.node_type)}；${formatNumber(rawCount)} 条 raw。${truncateText(node.summary || node.status || "", 140)}`,
+    status: node.status || task?.status || "",
+    timeLabel: formatEventTime(node.started_at || node.completed_at),
+    durationMs: node.duration_ms ?? 0,
+    taskId,
+    nodeId: node.node_id,
+    agentName: node.agent_name,
+    rawCount,
+  };
+}
+
+function buildTraceTranscriptBundle(
+  item: TraceFlowItem,
+  taskById: Map<string, AgentTask>,
+  context: TraceBuildContext,
+): TraceTranscriptBundle {
+  if (!item.taskId) {
+    const node = [...context.timelineByTask.values()].flat().find((candidate) => candidate.node_id === item.nodeId);
+    const raw = node ? [traceTranscriptRow("timeline_node", node.node_id, formatEventTime(node.started_at || node.completed_at), timelineNodeKindLabel(node.node_type), node.summary || node.status || "", node)] : [];
+    return traceBundle([], [], [], raw);
+  }
+  const task = taskById.get(item.taskId);
+  const messages = (context.messagesByTask.get(item.taskId) ?? []).toSorted((left, right) => (left.seq ?? 0) - (right.seq ?? 0));
+  const chains = (context.chainsByTask.get(item.taskId) ?? []).toSorted((left, right) => (left.use_seq ?? 0) - (right.use_seq ?? 0));
+  const traces = (context.tracesByTask.get(item.taskId) ?? []).toSorted((left, right) => (parseTimeMs(left.created_at) ?? 0) - (parseTimeMs(right.created_at) ?? 0));
+  const timeline = (context.timelineByTask.get(item.taskId) ?? []).toSorted((left, right) => (parseTimeMs(left.started_at || left.completed_at) ?? 0) - (parseTimeMs(right.started_at || right.completed_at) ?? 0));
+  const inputs: TraceTranscriptRow[] = [];
+  if (task?.trigger_summary) {
+    inputs.push(traceTranscriptRow("trigger", `trigger:${item.taskId}`, formatEventTime(task.created_at), "触发输入", task.trigger_summary, { task_id: item.taskId, trigger_summary: task.trigger_summary }));
+  }
+  for (const event of traces.filter((trace) => trace.event_type === "user_input.received")) {
+    inputs.push(traceTranscriptRow("trace", event.id, formatEventTime(event.created_at), event.event_name || event.event_type, traceEventText(event), event));
+  }
+  const events = buildTraceTranscriptEvents(messages, chains);
+  const outputs: TraceTranscriptRow[] = [];
+  if (traceTaskOutput(task)) {
+    outputs.push(traceTranscriptRow("task_result", `result:${item.taskId}`, formatEventTime(task?.completed_at ?? undefined), "任务结果", traceTaskOutput(task), task?.result));
+  }
+  if (task?.error) {
+    outputs.push(traceTranscriptRow("task_error", `error:${item.taskId}`, formatEventTime(task.completed_at ?? undefined), "任务错误", task.error, task));
+  }
+  const raw = [
+    ...(task ? [traceTranscriptRow("agent_task", `task:${task.id}`, formatEventTime(task.started_at ?? task.created_at), "agent_task_queue", traceTaskOutput(task) || task.status, task)] : []),
+    ...traces.map((trace) => traceTranscriptRow("task_trace_event", trace.id, formatEventTime(trace.created_at), trace.event_name || trace.event_type, traceEventText(trace), trace)),
+    ...chains.map((chain) => traceTranscriptRow("tool_call_chain", `${chain.task_id}:${chain.id}`, formatEventTime(chain.completed_at || chain.created_at), chain.tool || chain.id, traceToolChainText(chain), chain)),
+    ...timeline.map((node) => traceTranscriptRow("timeline_node", node.node_id, formatEventTime(node.started_at || node.completed_at), timelineNodeKindLabel(node.node_type), node.summary || node.status || "", node)),
+  ];
+  return traceBundle(inputs, events, outputs, raw);
+}
+
+function buildTraceTranscriptEvents(messages: TaskMessagePayload[], chains: PromptEvaluationToolCallChain[]): TraceTranscriptRow[] {
+  const chainByUseSeq = new Map(chains.filter((chain) => chain.use_seq).map((chain) => [chain.use_seq, chain]));
+  const chainByResultSeq = new Map(chains.filter((chain) => chain.result_seq).map((chain) => [chain.result_seq, chain]));
+  return messages.map((message) => {
+    const linkedChain = chainByUseSeq.get(message.seq) ?? chainByResultSeq.get(message.seq);
+    const title = message.type === "tool_use"
+      ? `调用工具 ${message.tool || linkedChain?.tool || ""}`.trim()
+      : message.type === "tool_result"
+        ? `工具结果 ${message.tool || linkedChain?.tool || ""}`.trim()
+        : taskMessageKindLabel(message.type);
+    const content = message.type === "tool_use"
+      ? formatJSON(message.input || linkedChain?.input || {})
+      : message.type === "tool_result"
+        ? firstNonEmpty(message.output, linkedChain?.output, message.content)
+        : firstNonEmpty(message.content, message.output, message.input ? formatJSON(message.input) : "");
+    return traceTranscriptRow(`message:${message.type}`, `${message.task_id}:${message.seq}:${message.type}`, formatEventTime(message.created_at), title, content, { message, linked_tool_call_chain: linkedChain ?? null });
+  });
+}
+
+function traceBundle(inputs: TraceTranscriptRow[], events: TraceTranscriptRow[], outputs: TraceTranscriptRow[], raw: TraceTranscriptRow[]): TraceTranscriptBundle {
+  const rows = [...inputs, ...events, ...outputs, ...raw];
+  return {
+    rawCount: rows.length,
+    inputs,
+    events,
+    outputs,
+    raw,
+    searchText: rows.map((row) => `${row.type} ${row.title} ${row.content}`).join(" "),
+  };
+}
+
+function traceTranscriptRow(type: string, id: string, timeLabel: string, title: string, content: string, payload: unknown): TraceTranscriptRow {
+  return { id: `${type}:${id}`, type, title: title || type, timeLabel, content: content || "", payload };
+}
+
+function flattenTraceRawRows(item: TraceFlowItem, bundle: TraceTranscriptBundle): TraceRawExportRow[] {
+  return [
+    ...bundle.inputs.map((row) => traceRawExportRow(item, "输入/提示词", row)),
+    ...bundle.events.map((row) => traceRawExportRow(item, "执行过程", row)),
+    ...bundle.outputs.map((row) => traceRawExportRow(item, "输出/结果", row)),
+    ...bundle.raw.map((row) => traceRawExportRow(item, "原始 JSON", row)),
+  ];
+}
+
+function traceRawExportRow(item: TraceFlowItem, section: string, row: TraceTranscriptRow): TraceRawExportRow {
+  return {
+    flowTitle: item.title,
+    section,
+    type: row.type,
+    timeLabel: row.timeLabel,
+    title: row.title,
+    content: row.content,
+    payload: row.payload,
+  };
+}
+
+function buildTraceNodeXlsxSheets(_issue: Issue, summary: IssueTimelineSummary | undefined, model: TraceViewModel): XlsxSheetSpec[] {
+  const totalToken = (summary?.total_input_tokens ?? 0) +
+    (summary?.total_output_tokens ?? 0) +
+    (summary?.total_cache_read_tokens ?? 0) +
+    (summary?.total_cache_write_tokens ?? 0);
+  const rows: XlsxCellValue[][] = [
+    ["总耗时", "Agent 执行耗时", "人工/等待耗时", "总 Token", "输入 Token", "输出 Token", "缓存读 Token", "缓存写 Token", "缓存命中率", "执行轮次"],
+    [
+      formatDuration(runReviewTotalDurationMs(summary)),
+      formatDuration(summary?.agent_execution_duration_ms ?? summary?.total_duration_ms ?? 0),
+      summary?.human_confirmation_duration_ms == null ? "未记录" : formatDuration(summary.human_confirmation_duration_ms),
+      formatNumber(totalToken),
+      formatNumber(summary?.total_input_tokens ?? 0),
+      formatNumber(summary?.total_output_tokens ?? 0),
+      formatNumber(summary?.total_cache_read_tokens ?? 0),
+      formatNumber(summary?.total_cache_write_tokens ?? 0),
+      formatPercent(cacheReuseRate(summary?.total_cache_read_tokens ?? 0, summary?.total_cache_write_tokens ?? 0)),
+      formatNumber(summary?.agent_turn_count ?? 0),
+    ],
+    [],
+    ["节点", "类型", "耗时", "Token 合计", "输入 Token", "输出 Token", "缓存读 Token", "缓存写 Token", "缓存命中率", "执行轮次", "Transcript", "说明"],
+    ...model.units.map((unit): XlsxCellValue[] => [
+      unit.label,
+      unit.kind,
+      formatDuration(unit.durationMs),
+      formatNumber(unit.tokenTotal),
+      formatNumber(unit.inputTokens),
+      formatNumber(unit.outputTokens),
+      formatNumber(unit.cacheReadTokens),
+      formatNumber(unit.cacheWriteTokens),
+      formatPercent(cacheReuseRate(unit.cacheReadTokens, unit.cacheWriteTokens)),
+      unit.kind === "Agent" ? formatNumber(unit.turns) : "-",
+      formatNumber(unit.transcriptCount),
+      unit.description,
+    ]),
+  ];
+  return [{ name: "Trace 节点信息", rows, columnWidths: [24, 16, 12, 14, 14, 14, 14, 14, 14, 12, 12, 48] }];
+}
+
+function buildTraceRawXlsxSheets(model: TraceViewModel): XlsxSheetSpec[] {
+  return [{
+    name: "Trace RAW 信息",
+    rows: [
+      ["归属流程", "分区", "类型", "时间", "标题", "内容", "Payload"],
+      ...model.rawRows.map((row): XlsxCellValue[] => [
+        row.flowTitle,
+        row.section,
+        row.type,
+        row.timeLabel,
+        row.title,
+        row.content,
+        formatJSON(row.payload),
+      ]),
+    ],
+    columnWidths: [32, 16, 18, 18, 30, 64, 72],
+  }];
+}
+
+function traceNodeTotals(nodes: IssueTimelineNode[]) {
+  return nodes.reduce((acc, node) => ({
+    durationMs: acc.durationMs + (node.duration_ms ?? 0),
+    tokenTotal: acc.tokenTotal + nodeTokenTotal(node),
+    inputTokens: acc.inputTokens + (node.input_tokens ?? 0),
+    outputTokens: acc.outputTokens + (node.output_tokens ?? 0),
+    cacheReadTokens: acc.cacheReadTokens + (node.cache_read_tokens ?? 0),
+    cacheWriteTokens: acc.cacheWriteTokens + (node.cache_write_tokens ?? 0),
+    turns: acc.turns + (node.agent_turn_count ?? 0),
+  }), { durationMs: 0, tokenTotal: 0, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, turns: 0 });
+}
+
+function traceTaskIdFromTimelineNode(node: IssueTimelineNode | undefined) {
+  if (!node) return "";
+  if (node.node_type === "agent_task") return node.node_id.replace(/^task:/, "");
+  if (node.parent_node_id?.startsWith("task:")) return node.parent_node_id.replace(/^task:/, "");
+  return node.evidence_refs.find((ref) => ref.type === "agent_task")?.id ?? "";
+}
+
+function traceTranscriptRawCount(taskId: string, context: TraceBuildContext) {
+  if (!taskId) return 0;
+  return (context.taskById.has(taskId) ? 1 : 0) +
+    (context.messagesByTask.get(taskId)?.length ?? 0) +
+    (context.chainsByTask.get(taskId)?.length ?? 0) +
+    (context.tracesByTask.get(taskId)?.length ?? 0) +
+    (context.timelineByTask.get(taskId)?.length ?? 0);
+}
+
+function traceAgentGroupKey(node: IssueTimelineNode) {
+  return node.agent_id || node.agent_name || traceTaskIdFromTimelineNode(node) || node.node_id;
+}
+
+function traceFlowId(node: IssueTimelineNode) {
+  return `trace-flow-${sanitizeKey(node.node_id)}`;
+}
+
+function traceFlowKind(node: IssueTimelineNode): TraceFlowKind {
+  if (node.status === "failed" || node.status === "blocked") return "error";
+  if (node.node_type === "source_fetch") return "input";
+  if (node.node_type === "agent_task") return "agent";
+  if (node.node_type === "human_confirmation" || node.node_type === "approval") return "human";
+  if (node.node_type === "child_issue_ref" || node.node_type === "dispatch_wait") return "wait";
+  return "system";
+}
+
+function traceFlowTitle(node: IssueTimelineNode, task: AgentTask | undefined, index: number) {
+  if (node.node_type === "source_fetch") return "读取输入来源";
+  if (node.node_type === "human_confirmation") return firstNonEmpty(truncateText(node.summary, 72), "人工确认");
+  if (node.node_type === "approval") return firstNonEmpty(truncateText(node.summary, 72), "审批");
+  if (node.node_type !== "agent_task") return `${timelineNodeKindLabel(node.node_type)} · ${truncateText(node.summary || node.status || `节点 ${index + 1}`, 56)}`;
+  return firstNonEmpty(firstHeading(traceTaskOutput(task)), truncateText(node.summary, 64), `${node.agent_name || "Agent"} · ${statusLabel(node.status)}`);
+}
+
+function traceTaskOutput(task: AgentTask | undefined) {
+  const result = task?.result as { output?: unknown } | undefined;
+  return typeof result?.output === "string" ? result.output : "";
+}
+
+function firstHeading(value: string) {
+  return value
+    .split("\n")
+    .map((line) => line.replace(/^#+\s*/, "").replace(/\*\*/g, "").trim())
+    .find(Boolean) ?? "";
+}
+
+function traceEventText(event: TaskTraceEvent) {
+  return firstNonEmpty(
+    event.failure_reason,
+    event.error_type,
+    stringFromUnknown(event.metadata?.summary),
+    stringFromUnknown(event.metadata?.content_snapshot),
+    event.event_name,
+    event.status,
+    event.event_type,
+  );
+}
+
+function traceToolChainText(chain: PromptEvaluationToolCallChain) {
+  return [
+    chain.input ? `input:\n${formatJSON(chain.input)}` : "",
+    chain.output ? `output:\n${chain.output}` : "",
+    chain.failure_reason ? `failure:\n${chain.failure_reason}` : "",
+  ].filter(Boolean).join("\n\n");
+}
+
+function traceUnitLabel(model: TraceViewModel, unitId: string) {
+  return model.units.find((unit) => unit.id === unitId)?.label ?? "未归属";
+}
+
+function traceTimelineRange(units: TraceUnit[]) {
+  const timed = units.flatMap((unit) => unit.segments).filter((segment) => segment.startMs !== null && segment.endMs !== null);
+  if (!timed.length) return { min: 0, max: 1, span: 1 };
+  const min = Math.min(...timed.map((segment) => segment.startMs as number));
+  const max = Math.max(...timed.map((segment) => segment.endMs as number));
+  return { min, max, span: Math.max(max - min, 1) };
+}
+
+function traceSegmentStyle(segment: TraceUnitSegment, range: { min: number; span: number }) {
+  const start = segment.startMs ?? range.min;
+  const end = segment.endMs ?? start + 1;
+  const left = Math.max(0, ((start - range.min) / range.span) * 100);
+  const width = Math.max(1.5, ((end - start) / range.span) * 100);
+  return { left: `${left}%`, width: `${Math.min(width, 100 - left)}%` };
+}
+
+function traceFlowKindLabel(kind: TraceFlowKind) {
+  const labels: Record<TraceFlowKind, string> = {
+    input: "输入来源",
+    agent: "Agent 执行",
+    human: "人工确认",
+    wait: "等待",
+    system: "系统事件",
+    error: "异常",
+  };
+  return labels[kind];
+}
+
+function traceFlowTone(kind: TraceFlowKind, status: string) {
+  if (kind === "error" || status === "failed" || status === "blocked") {
+    return { chip: "border-destructive/30 bg-destructive/10 text-destructive" };
+  }
+  if (kind === "human" || kind === "wait") {
+    return { chip: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300" };
+  }
+  if (kind === "agent") {
+    return { chip: "border-info/30 bg-info/10 text-info" };
+  }
+  return { chip: "border-border bg-muted/30 text-muted-foreground" };
+}
+
+function traceColorClass(index: number) {
+  const colors = ["bg-violet-600", "bg-sky-600", "bg-emerald-600", "bg-amber-600", "bg-rose-600", "bg-slate-600", "bg-teal-600", "bg-indigo-600"];
+  return colors[index % colors.length] ?? "bg-slate-600";
+}
+
+function formatCompactToken(value: number) {
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(2)}M`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)}K`;
+  return formatNumber(value);
+}
+
+function sanitizeKey(value: string) {
+  return value.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "-").replace(/^-|-$/g, "").slice(0, 96);
+}
+
+function dedupeBy<T>(items: T[], keyFn: (item: T) => string) {
+  const map = new Map<string, T>();
+  for (const item of items) {
+    const key = keyFn(item);
+    if (!map.has(key)) map.set(key, item);
+  }
+  return [...map.values()];
+}
+
+function groupBy<T>(items: T[], keyFn: (item: T) => string) {
+  const map = new Map<string, T[]>();
+  for (const item of items) {
+    const key = keyFn(item);
+    map.set(key, [...(map.get(key) ?? []), item]);
+  }
+  return map;
 }
 
 function eventToneClasses(severity: RunReviewEventRowData["severity"]) {
@@ -790,18 +1728,20 @@ function NodeMetric({ value, tooltip }: { value: string; tooltip: ReactNode }) {
   return (
     <span className="inline-flex min-w-0 items-center gap-1">
       <span className="truncate">{value}</span>
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <button type="button" className="shrink-0 text-muted-foreground hover:text-foreground" aria-label="节点指标说明">
-              <HelpCircle className="size-3" />
-            </button>
-          }
-        />
-        <TooltipContent side="top" className="max-w-72">
-          {tooltip}
-        </TooltipContent>
-      </Tooltip>
+      <TooltipProvider delay={0}>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button type="button" className="shrink-0 text-muted-foreground hover:text-foreground" aria-label="节点指标说明">
+                <HelpCircle className="size-3" />
+              </button>
+            }
+          />
+          <TooltipContent side="top" className="max-w-72">
+            {tooltip}
+          </TooltipContent>
+        </Tooltip>
+      </TooltipProvider>
     </span>
   );
 }
@@ -853,6 +1793,33 @@ export function artifactDownloadHref(artifact: AgentTaskArtifact, baseUrl?: stri
   return resolvePublicFileUrlWithBase(endpoint, resolvedBaseUrl) ?? endpoint;
 }
 
+export function artifactXlsxHyperlinkHref(artifact: AgentTaskArtifact, baseUrl?: string) {
+  const resolvedBaseUrl = baseUrl ?? defaultXlsxHyperlinkBaseUrl();
+  return toAbsoluteHyperlink(artifactDownloadHref(artifact, resolvedBaseUrl), resolvedBaseUrl);
+}
+
+function defaultXlsxHyperlinkBaseUrl() {
+  const apiBaseUrl = typeof api.getBaseUrl === "function" ? api.getBaseUrl() : "";
+  if (isAbsoluteUrl(apiBaseUrl)) return apiBaseUrl;
+  if (typeof window !== "undefined" && window.location.origin) return window.location.origin;
+  return apiBaseUrl;
+}
+
+function toAbsoluteHyperlink(href: string | null | undefined, baseUrl: string) {
+  if (!href) return "";
+  if (isAbsoluteUrl(href)) return href;
+  if (!baseUrl) return href;
+  try {
+    return new URL(href, baseUrl).toString();
+  } catch {
+    return href;
+  }
+}
+
+function isAbsoluteUrl(value: string | null | undefined) {
+  return !!value && /^[a-z][a-z\d+.-]*:/i.test(value);
+}
+
 export interface TimelineNodeSegment {
   key: string;
   label: string;
@@ -872,6 +1839,7 @@ type ChildLane = ReturnType<typeof buildChildLanes>[number];
 export interface TimelineBarSegment {
   key: string;
   label: string;
+  node: IssueTimelineNode;
   status: string;
   startMs: number | null;
   endMs: number | null;
@@ -948,7 +1916,7 @@ function TimelineLaneChart({
                             <div
                               className={cn(
                                 "absolute top-1 bottom-1 overflow-hidden rounded px-2 text-[11px] leading-7 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
-                                timelineSegmentClassName(row.kind),
+                                timelineSegmentClassName(row.kind, segment),
                               )}
                               data-testid={`run-review-timeline-bar-${segment.key}`}
                               style={timelineSegmentStyle(segment.startMs, segment.endMs, min, span)}
@@ -998,7 +1966,20 @@ export function buildTimelineBarRows(
       missing: !stage.node,
     };
   });
-  const humanConfirmationNodes = timelineNodes.filter((item) => item.node_type === "human_confirmation" || item.node_type === "child_issue_ref");
+  const childIssueNodes = timelineNodes.filter((item) => item.node_type === "child_issue_ref");
+  const childIssueSegments = childIssueNodes.map((node, index) => (
+    timelineNodeSegment(node.node_id, childIssueSegmentLabel(node), node, index + 1, childIssueNodes.length)
+  ));
+  const childIssueBars = childIssueSegments.length > 0 ? [{
+    key: "child-issue-wait",
+    label: "子任务等待",
+    kind: "child" as const,
+    status: "completed",
+    subtitle: timelineRowSubtitle("completed", childIssueSegments.length),
+    segments: childIssueSegments,
+    missing: false,
+  }] : [];
+  const humanConfirmationNodes = timelineNodes.filter((item) => item.node_type === "human_confirmation");
   const humanConfirmationSegments = humanConfirmationNodes.map((node, index) => (
     timelineNodeSegment(node.node_id, humanConfirmationSegmentLabel(node), node, index + 1, humanConfirmationNodes.length)
   ));
@@ -1011,17 +1992,18 @@ export function buildTimelineBarRows(
     segments: humanConfirmationSegments,
     missing: false,
   }] : [];
-  return [...stageBars, ...humanConfirmationBars];
+  return [...humanConfirmationBars, ...childIssueBars, ...stageBars];
 }
 
 function humanConfirmationSegmentLabel(node: IssueTimelineNode) {
-  if (node.node_type === "child_issue_ref") {
-    return `等待子任务完成：${node.summary || "子任务"}`;
-  }
   return node.summary || "人工确认";
 }
 
-function timelineSegmentClassName(kind: TimelineBarRow["kind"]) {
+function childIssueSegmentLabel(node: IssueTimelineNode) {
+  return `等待子任务完成：${node.summary || "子任务"}`;
+}
+
+function timelineSegmentClassName(kind: TimelineBarRow["kind"], _segment: TimelineBarSegment) {
   if (kind === "child") return "bg-sky-600 text-white";
   if (kind === "human_confirmation") return "border border-amber-700/30 bg-amber-500 text-white";
   return "bg-emerald-600 text-white";
@@ -1029,7 +2011,10 @@ function timelineSegmentClassName(kind: TimelineBarRow["kind"]) {
 
 function timelineSegmentText(row: TimelineBarRow, segment: TimelineBarSegment) {
   if (row.kind === "human_confirmation") {
-    return `${formatDuration(segment.durationMs)} · ${segment.label.startsWith("等待子任务完成") ? "等待子任务" : "人工确认"}`;
+    return `${formatDuration(segment.durationMs)} · 人工确认`;
+  }
+  if (row.kind === "child") {
+    return `${formatDuration(segment.durationMs)} · 等待子任务`;
   }
   return `${formatDuration(segment.durationMs)} · ${formatNumber(segment.tokenTotal)} token`;
 }
@@ -1041,17 +2026,24 @@ function timelineSegmentTitle(row: TimelineBarRow, segment: TimelineBarSegment) 
 }
 
 export function timelineSegmentTooltipRows(row: TimelineBarRow, segment: TimelineBarSegment): Array<[string, string]> {
+  const isAgentTaskSegment = row.kind === "stage" && segment.node.node_type === "agent_task";
   const rows: Array<[string, string]> = [
     ["节点", row.label],
     ["片段", segment.label],
-    ["开始", segment.startMs === null ? "未知" : formatDateTime(segment.startMs)],
+    [isAgentTaskSegment ? "接手" : "开始", segment.startMs === null ? "未知" : formatDateTime(segment.startMs)],
+    ...(isAgentTaskSegment ? [["实际开始", formatOptionalDateTime(segment.node.actual_started_at)] as [string, string]] : []),
     ["结束", segment.endMs === null ? "未知" : formatDateTime(segment.endMs)],
     ["耗时", formatDuration(segment.durationMs)],
   ];
-  if (row.kind !== "human_confirmation") {
-    rows.push(["Token", formatNumber(segment.tokenTotal)], ["思考轮次", formatNumber(segment.turns)]);
+  if (row.kind !== "human_confirmation" && row.kind !== "child") {
+    rows.push(["Token", formatNumber(segment.tokenTotal)], ["执行轮次", formatNumber(segment.turns)]);
   }
   return rows;
+}
+
+function formatOptionalDateTime(value: string | undefined) {
+  const parsed = parseTimeMs(value);
+  return parsed === null ? "未知" : formatDateTime(parsed);
 }
 
 function timelineRowSegments(row: TimelineNodeRow): TimelineBarSegment[] {
@@ -1074,6 +2066,7 @@ function timelineNodeSegment(
   return {
     key,
     label,
+    node,
     status: node.status,
     ...timing,
     durationMs: node.duration_ms ?? timing.durationMs,
@@ -1293,128 +2286,133 @@ export function buildRunReviewEventRows(
     });
 }
 
-export function buildRunReviewNodeCsv(
-  issue: Issue,
+export function buildRunReviewNodeXlsxSheets(
+  _issue: Issue,
   summary: IssueExecutionTreeResponse["issue_summary"] | undefined,
   agentRows: ReturnType<typeof buildAgentNodeRows>,
-  childLanes: ReturnType<typeof buildChildLanes>,
-): string {
-  const headers = [
-    "row_type",
-    "issue_id",
-    "issue_identifier",
-    "issue_title",
-    "total_duration_ms",
-    "total_token",
-    "total_thinking_rounds",
-    "node_key",
-    "node_label",
-    "node_run_count",
-    "node_status",
-    "node_agent",
-    "node_started_at",
-    "node_completed_at",
-    "node_duration_ms",
-    "node_input_tokens",
-    "node_output_tokens",
-    "node_cache_read_tokens",
-    "node_cache_write_tokens",
-    "node_token_total",
-    "node_thinking_rounds",
-    "artifact_count",
-    "artifacts",
-  ];
+  _childLanes: ReturnType<typeof buildChildLanes>,
+): XlsxSheetSpec[] {
+  const summaryInputTokens = summary?.total_input_tokens ?? 0;
+  const summaryOutputTokens = summary?.total_output_tokens ?? 0;
+  const summaryCacheReadTokens = summary?.total_cache_read_tokens ?? 0;
+  const summaryCacheWriteTokens = summary?.total_cache_write_tokens ?? 0;
   const totalToken = (summary?.total_input_tokens ?? 0) +
     (summary?.total_output_tokens ?? 0) +
     (summary?.total_cache_read_tokens ?? 0) +
     (summary?.total_cache_write_tokens ?? 0);
-  const rows: Array<Array<string | number>> = [[
-    "summary",
-    issue.id,
-    issue.identifier,
-    issue.title,
-    summary?.total_duration_ms ?? 0,
-    totalToken,
-    summary?.agent_turn_count ?? 0,
-    "",
-    "",
-    "",
-    summary?.acceptance_status ?? "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-    "",
-  ]];
+  const agentExecutionDurationMs = summary?.agent_execution_duration_ms ?? summary?.total_duration_ms ?? 0;
+  const humanConfirmationDuration = summary?.human_confirmation_duration_ms == null
+    ? "未记录"
+    : formatDuration(summary.human_confirmation_duration_ms);
+  const rows: XlsxCellValue[][] = [
+    [
+      "总耗时",
+      "Agent 执行耗时",
+      "人工/等待耗时",
+      "总 Token",
+      "输入 Token",
+      "输出 Token",
+      "缓存读 Token",
+      "缓存写 Token",
+      "缓存命中率",
+      "执行轮次",
+    ],
+    [
+      formatDuration(runReviewTotalDurationMs(summary)),
+      formatDuration(agentExecutionDurationMs),
+      humanConfirmationDuration,
+      formatNumber(totalToken),
+      formatNumber(summaryInputTokens),
+      formatNumber(summaryOutputTokens),
+      formatNumber(summaryCacheReadTokens),
+      formatNumber(summaryCacheWriteTokens),
+      formatPercent(cacheReuseRate(summaryCacheReadTokens, summaryCacheWriteTokens)),
+      formatNumber(summary?.agent_turn_count ?? 0),
+    ],
+    [],
+    [
+      "节点",
+      "Agent",
+      "开始时间",
+      "结束时间",
+      "执行耗时",
+      "Token 合计",
+      "输入 Token",
+      "输出 Token",
+      "缓存读 Token",
+      "缓存写 Token",
+      "缓存命中率",
+      "执行轮次",
+      "产物",
+    ],
+  ];
+  const hyperlinks: XlsxHyperlink[] = [];
+  const artifactRows: XlsxCellValue[][] = [["节点", "Agent", "产物", "链接"]];
+  const artifactHyperlinks: XlsxHyperlink[] = [];
 
   for (const row of agentRows) {
     const node = row.node;
     const artifacts = dedupeArtifacts(node.artifacts ?? []);
-    rows.push([
-      "agent_node",
-      issue.id,
-      issue.identifier,
-      issue.title,
-      summary?.total_duration_ms ?? 0,
-      totalToken,
-      summary?.agent_turn_count ?? 0,
-      row.key,
-      row.label,
-      row.runCount ?? 1,
-      node.status,
+    const baseCells: XlsxCellValue[] = [
+      agentNodeDisplayLabel(row),
       node.agent_name ?? row.key,
-      node.started_at ?? "",
-      node.completed_at ?? "",
-      node.duration_ms ?? 0,
-      node.input_tokens ?? 0,
-      node.output_tokens ?? 0,
-      node.cache_read_tokens ?? 0,
-      node.cache_write_tokens ?? 0,
-      nodeTokenTotal(node),
-      node.agent_turn_count ?? 0,
-      artifacts.length,
-      formatArtifactsForCsv(artifacts),
-    ]);
+      formatDateTime(node.started_at),
+      formatDateTime(node.completed_at),
+      formatDuration(node.duration_ms ?? 0),
+      formatNumber(nodeTokenTotal(node)),
+      formatNumber(node.input_tokens ?? 0),
+      formatNumber(node.output_tokens ?? 0),
+      formatNumber(node.cache_read_tokens ?? 0),
+      formatNumber(node.cache_write_tokens ?? 0),
+      formatPercent(cacheReuseRate(node.cache_read_tokens ?? 0, node.cache_write_tokens ?? 0)),
+      formatNumber(node.agent_turn_count ?? 0),
+    ];
+    if (!artifacts.length) {
+      rows.push([...baseCells, "-"]);
+      continue;
+    }
+    const nodeRowIndex = rows.length;
+    rows.push([...baseCells, artifacts.map(artifactDisplayName).join("\n")]);
+    const firstArtifact = artifacts[0];
+    const firstArtifactHref = firstArtifact ? artifactXlsxHyperlinkHref(firstArtifact) : "";
+    if (firstArtifact && firstArtifactHref) {
+      hyperlinks.push({
+        row: nodeRowIndex,
+        col: 12,
+        target: firstArtifactHref,
+        tooltip: artifactDisplayName(firstArtifact),
+      });
+    }
+    for (const artifact of artifacts) {
+      const artifactRowIndex = artifactRows.length;
+      const artifactName = artifactDisplayName(artifact);
+      const href = artifactXlsxHyperlinkHref(artifact);
+      artifactRows.push([agentNodeDisplayLabel(row), node.agent_name ?? row.key, artifactName, href]);
+      if (href) {
+        artifactHyperlinks.push({
+          row: artifactRowIndex,
+          col: 2,
+          target: href,
+          tooltip: artifactName,
+        });
+      }
+    }
   }
 
-  for (const lane of childLanes) {
-    rows.push([
-      "child_issue",
-      issue.id,
-      issue.identifier,
-      issue.title,
-      summary?.total_duration_ms ?? 0,
-      totalToken,
-      summary?.agent_turn_count ?? 0,
-      lane.key,
-      lane.label,
-      lane.issue?.status ?? "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-      "",
-    ]);
-  }
-
-  return toCsv([headers, ...rows]);
+  return [{
+    name: "节点数据",
+    rows,
+    hyperlinks,
+    columnWidths: [24, 22, 18, 18, 12, 14, 14, 14, 14, 14, 14, 12, 32],
+  }, {
+    name: "产物链接",
+    rows: artifactRows,
+    hyperlinks: artifactHyperlinks,
+    columnWidths: [24, 22, 28, 72],
+  }];
 }
 
-export function buildRunReviewRawEventsCsv(eventRows: RunReviewEventRowData[]): string {
+export function buildRunReviewRawEventsXlsxSheets(eventRows: RunReviewEventRowData[]): XlsxSheetSpec[] {
   const headers = [
     "id",
     "kind",
@@ -1436,9 +2434,9 @@ export function buildRunReviewRawEventsCsv(eventRows: RunReviewEventRowData[]): 
     "raw_json",
     "linked_raw_json",
   ];
-  return toCsv([
+  const rows: XlsxCellValue[][] = [
     headers,
-    ...eventRows.map((event) => [
+    ...eventRows.map((event): XlsxCellValue[] => [
       event.id,
       event.kind,
       event.category,
@@ -1459,18 +2457,20 @@ export function buildRunReviewRawEventsCsv(eventRows: RunReviewEventRowData[]): 
       event.rawPayload === undefined ? "" : formatJSON(event.rawPayload),
       event.linkedRawPayloads?.length ? formatJSON(event.linkedRawPayloads) : "",
     ]),
-  ]);
+  ];
+  return [{
+    name: "RAW 交互信息",
+    rows,
+    columnWidths: [28, 14, 16, 18, 14, 28, 18, 26, 24, 16, 12, 14, 14, 42, 52, 52, 18, 60, 60],
+  }];
 }
 
 function toolMessageKey(taskId: string, seq: number) {
   return `${taskId}:${seq}`;
 }
 
-function formatArtifactsForCsv(artifacts: AgentTaskArtifact[]) {
-  return dedupeArtifacts(artifacts).map((artifact) => {
-    const href = artifactDownloadHref(artifact);
-    return href ? `${artifact.filename} <${href}>` : artifact.filename;
-  }).join("\n");
+function artifactDisplayName(artifact: AgentTaskArtifact) {
+  return artifact.title || artifact.filename || artifact.id;
 }
 
 function dedupeArtifacts(artifacts: AgentTaskArtifact[]) {
@@ -1540,10 +2540,12 @@ function mergeTimelineNode(left: IssueTimelineNode, right: IssueTimelineNode): I
   const rightStart = parseTimeMs(right.started_at);
   const leftCompleted = parseTimeMs(left.completed_at);
   const rightCompleted = parseTimeMs(right.completed_at);
+  const primaryNode = left.node_type === "agent_task" ? left : right.node_type === "agent_task" ? right : left;
   return {
-    ...left,
+    ...primaryNode,
     status: mergeNodeStatus(left.status, right.status),
     started_at: earliestTime(left.started_at, right.started_at),
+    actual_started_at: earliestTime(left.actual_started_at, right.actual_started_at),
     completed_at: latestTime(left.completed_at, right.completed_at),
     duration_ms: (left.duration_ms ?? 0) + (right.duration_ms ?? 0),
     input_tokens: (left.input_tokens ?? 0) + (right.input_tokens ?? 0),
@@ -1559,8 +2561,8 @@ function mergeTimelineNode(left: IssueTimelineNode, right: IssueTimelineNode): I
     summary: rightCompleted !== null && (leftCompleted === null || rightCompleted >= leftCompleted)
       ? right.summary
       : left.summary,
-    node_id: left.node_id,
-    node_type: left.node_type,
+    node_id: primaryNode.node_id,
+    node_type: primaryNode.node_type,
     agent_name: left.agent_name || right.agent_name,
     agent_id: left.agent_id || right.agent_id,
     // Keep a wall-clock hint for charts/tooltips when individual runs overlap.
@@ -1824,6 +2826,7 @@ function semanticToolAction(tool: string | undefined, input: Record<string, unkn
       outcome: outputSignal?.outcome ?? "已记录",
       summary: outputSignal?.summary ?? "",
       severity: outputSignal?.severity ?? "normal",
+      suppressFailureSignal: outputSignal?.suppressFailureSignal,
     };
   }
 
@@ -1836,6 +2839,7 @@ function semanticToolAction(tool: string | undefined, input: Record<string, unkn
     outcome: outputSignal?.outcome ?? "已记录",
     summary: outputSignal?.summary ?? "",
     severity: outputSignal?.severity ?? "normal",
+    suppressFailureSignal: outputSignal?.suppressFailureSignal,
   };
 }
 
@@ -1960,6 +2964,17 @@ function outputOutcome(
   if (toolOutputHasToolUseError(normalizedOutput)) {
     return { outcome: "异常线索", summary: conciseEventSummary("工具调用返回错误", true), severity: "error" };
   }
+  const exitCode = toolOutputExitCode(normalizedOutput);
+  if (exitCode !== null) {
+    if (exitCode === 0) {
+      return { outcome: "已返回", summary: conciseEventSummary(summarizeToolOutput(normalizedOutput), false), severity: "normal", suppressFailureSignal: true };
+    }
+    return {
+      outcome: "异常线索",
+      summary: conciseEventSummary(`Exit Code: ${exitCode}`, true),
+      severity: "error",
+    };
+  }
   if (
     toolOutputHasSuccessfulExitCode(normalizedOutput) ||
     outputHasOnlyBenignFailureCounters(normalizedOutput) ||
@@ -1971,7 +2986,20 @@ function outputOutcome(
   if (errorLine) {
     return { outcome: "异常线索", summary: conciseEventSummary(errorLine, true), severity: "error" };
   }
-  return { outcome: "已返回", summary: conciseEventSummary(summarizeToolOutput(normalizedOutput), false), severity: "normal" };
+  const httpStatus = toolOutputHTTPStatusCode(normalizedOutput);
+  if (httpStatus !== null) {
+    return {
+      outcome: "异常线索",
+      summary: conciseEventSummary(`HTTP ${httpStatus}`, true),
+      severity: "error",
+    };
+  }
+  return {
+    outcome: "已返回",
+    summary: conciseEventSummary(summarizeToolOutput(normalizedOutput), false),
+    severity: "normal",
+    suppressFailureSignal: true,
+  };
 }
 
 function toolOutputText(output: string) {
@@ -1991,6 +3019,35 @@ function toolOutputText(output: string) {
 
 function toolOutputHasSuccessfulExitCode(output: string) {
   return /\bExit Code:\s*0\b/i.test(output) || /\bexit\s+(?:status|code)\s*[:=]?\s*0\b/i.test(output);
+}
+
+function toolOutputExitCode(output: string) {
+  const patterns = [
+    /\bExit Code:\s*(\d+)\b/i,
+    /\bexit\s+(?:status|code)\s*[:=]?\s*(\d+)\b/i,
+    /\bexited\s+with\s+(?:status|code)\s*[:=]?\s*(\d+)\b/i,
+  ];
+  for (const pattern of patterns) {
+    const match = pattern.exec(output);
+    if (!match?.[1]) continue;
+    const value = Number.parseInt(match[1], 10);
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+function toolOutputHTTPStatusCode(output: string) {
+  const patterns = [
+    /\bhttp(?:\/[\d.]+)?\s*(?:status\s*)?([45]\d{2})\b/i,
+    /\bstatus(?:\s*code)?\s*[:=]?\s*([45]\d{2})\b/i,
+  ];
+  for (const pattern of patterns) {
+    const match = pattern.exec(output);
+    if (!match?.[1]) continue;
+    const value = Number.parseInt(match[1], 10);
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
 }
 
 function toolOutputHasToolUseError(output: string) {
@@ -2033,18 +3090,16 @@ function toolOutputHasNonEmptyStderr(output: string) {
 
 function extractErrorLine(output: string) {
   const patterns = [
-    /\bError:\s*.+/i,
-    /\bTraceback\b.*/i,
-    /\bRuntimeError:\s*.+/i,
-    /\bException\b.*/i,
-    /\bFAIL\b.+/i,
-    /\bfailed\b.+/i,
-    /\bpanic:\s*.+/i,
-    /\bFATAL\b.+/i,
-    /\bHTTP\s+[45]\d\d\b.*/i,
-    /\bexit status\s+\d+.*/i,
-    /\bprovider timeout\b.*/i,
-    /\btimeout\b.*/i,
+    /^\s*Error:\s*.+/i,
+    /^\s*Traceback\b.*/i,
+    /^\s*RuntimeError:\s*.+/i,
+    /^\s*Exception\b.*/i,
+    /^\s*--- FAIL[:\s].+/i,
+    /^\s*FAIL(?:\s|:).+/i,
+    /^\s*panic:\s*.+/i,
+    /^\s*FATAL\b.+/i,
+    /^\s*make(?:\[\d+\])?: \*\*\* .*\bError\s+\d+\b.*/i,
+    /^\s*command failed\b.*/i,
   ];
   const lines = output.split("\n").map((line) => line.trim()).filter(Boolean);
   for (const pattern of patterns) {
@@ -2290,6 +3345,8 @@ function timelineNodeKindLabel(type: IssueTimelineNode["node_type"]): string {
       return "唤醒";
     case "human_confirmation":
       return "人工确认";
+    case "dispatch_wait":
+      return "调度等待";
     case "tool_call":
       return "工具";
     case "status_change":
@@ -2829,18 +3886,32 @@ function formatDateTime(value: string | number | null | undefined) {
   }).format(new Date(ms));
 }
 
-function toCsv(rows: Array<Array<string | number | boolean | null | undefined>>) {
-  return `${rows.map((row) => row.map(csvCell).join(",")).join("\n")}\n`;
+export function buildXlsxWorkbook(sheets: XlsxSheetSpec[]) {
+  const workbook = XLSX.utils.book_new();
+  for (const sheet of sheets) {
+    const worksheet = XLSX.utils.aoa_to_sheet(sheet.rows);
+    if (sheet.columnWidths?.length) {
+      worksheet["!cols"] = sheet.columnWidths.map((wch) => ({ wch }));
+    }
+    for (const hyperlink of sheet.hyperlinks ?? []) {
+      const address = XLSX.utils.encode_cell({ r: hyperlink.row, c: hyperlink.col });
+      const cell = worksheet[address] ?? { t: "s", v: "" };
+      cell.l = {
+        Target: hyperlink.target,
+        Tooltip: hyperlink.tooltip ?? hyperlink.target,
+      };
+      worksheet[address] = cell;
+    }
+    XLSX.utils.book_append_sheet(workbook, worksheet, sanitizeSheetName(sheet.name));
+  }
+  return workbook;
 }
 
-function csvCell(value: string | number | boolean | null | undefined) {
-  const text = value === null || value === undefined ? "" : String(value);
-  return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
-}
-
-function downloadCsv(filename: string, csv: string) {
+function downloadXlsx(filename: string, sheets: XlsxSheetSpec[]) {
   if (typeof window === "undefined" || typeof document === "undefined") return;
-  const blob = new Blob([csv], { type: "text/csv;charset=utf-8" });
+  const workbook = buildXlsxWorkbook(sheets);
+  const data = XLSX.write(workbook, { bookType: "xlsx", type: "array" }) as ArrayBuffer;
+  const blob = new Blob([data], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   const url = window.URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -2849,6 +3920,10 @@ function downloadCsv(filename: string, csv: string) {
   link.click();
   link.remove();
   window.URL.revokeObjectURL(url);
+}
+
+function sanitizeSheetName(name: string) {
+  return (name || "Sheet1").replace(/[\\/:?*\[\]]/g, "_").slice(0, 31) || "Sheet1";
 }
 
 function sanitizeFilename(filename: string) {
