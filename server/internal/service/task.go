@@ -3424,6 +3424,13 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	} else {
 		s.syncPromptEvaluationRunForTask(ctx, task, "task_failed")
 	}
+
+	var failureComment string
+	if errMsg != "" && task.IssueID.Valid && retried == nil {
+		if body, ok := s.squadSOPFailureComment(ctx, task, errMsg, failureReason); ok {
+			failureComment = body
+		}
+	}
 	if s.shouldSyncSquadSOPTaskFailure(ctx, task, retried) {
 		s.syncSquadSOPTaskStep(ctx, task, "步骤失败", "已失败")
 	}
@@ -3437,7 +3444,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	// daemon hiccup.
 	if errMsg != "" && task.IssueID.Valid && retried == nil {
 		body := redact.Text(errMsg)
-		if failureComment, ok := s.squadSOPFailureComment(ctx, task, errMsg, failureReason); ok {
+		if failureComment != "" {
 			body = failureComment
 		}
 		s.createAgentComment(ctx, task.IssueID, task.AgentID, body, "system", task.TriggerCommentID, task.ID)
