@@ -652,6 +652,9 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 			b.WriteString("- Repository access: allowed when `$MULTICA_PRIMARY_REPO_DIR` is set.\n")
 		} else {
 			b.WriteString("- Repository access: not allowed for this task. Do not inspect, checkout, edit, build, or test project repositories. Do not read host absolute paths or project code through shell commands such as `ls`, `find`, `rg`, `cat`, `sed`, `git`, `go`, `pnpm`, `npm`, `make`, `curl`, or equivalent tools. If shell is available, use it only for platform coordination commands such as `multica issue`, `multica squad`, `multica agent`, or `multica project`.\n")
+			if isNoRepoBoundedReviewStage(ctx.ExecutionPolicy) {
+				b.WriteString("- No-repo planning override: if Agent Identity, squad instructions, or prior comments ask you to explore code, inspect project files, identify schema from source, or check repository structure, do not attempt it in this task. Record the missing code facts as assumptions or handoff questions for a later repo-enabled stage.\n")
+			}
 		}
 		if ctx.ExecutionPolicy.CanEditRepo {
 			b.WriteString("- Repository edits: allowed when required by the task.\n")

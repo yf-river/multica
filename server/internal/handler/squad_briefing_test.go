@@ -567,10 +567,23 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 			"不得直接触发下一阶段",
 			"不得使用 CodeBuddy/Claude/Codex 等 provider 原生的 Agent、Task、TaskCreate、TaskUpdate、subagent、plan/todo 工具",
 			"01/02/03 阶段只收集足够支撑本阶段产物的上下文",
+			"只有运行时明确允许仓库访问的阶段，才可读取",
 			"由 pm 判断通过、返工、推进或收口",
 		} {
 			if !strings.Contains(role.Instruction, want) {
 				t.Fatalf("%s role must contain %q\n--- role ---\n%+v", role.Key, want, role)
+			}
+		}
+		if role.Key == "01-clarify" {
+			for _, want := range []string{
+				"不读取或探索代码仓库",
+				"不得 checkout、ls、find、rg、cat、sed、git",
+				"代码事实只能作为后续 02/04 待确认项记录",
+				"需要代码结构、接口实现、数据库 schema 或 operation skill 细节时",
+			} {
+				if !strings.Contains(role.Instruction+role.Description, want) {
+					t.Fatalf("01-clarify role must contain %q\n--- role ---\n%+v", want, role)
+				}
 			}
 		}
 	}

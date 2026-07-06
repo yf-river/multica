@@ -689,6 +689,9 @@ func TestPlanningStageCapabilityPolicyBlocksNativeSubagents(t *testing.T) {
 		"do not attempt to create `reply.md`",
 		"produce their own bounded stage result in this platform task",
 		"post it with `multica issue comment add 77777777-8888-9999-aaaa-bbbbbbbbbbbb --content \"...\"`",
+		"No-repo planning override",
+		"do not attempt it in this task",
+		"Record the missing code facts as assumptions or handoff questions",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("planning stage capability policy missing %q\n--- output ---\n%s", want, out)
