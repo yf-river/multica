@@ -4474,10 +4474,10 @@ func allowedToolsForExecutionPolicy(provider string, policy TaskExecutionPolicy)
 		return nil
 	}
 	if isCoordinatorWithoutRepoAccess(policy) {
-		return []string{"Bash(multica:*)"}
+		return []string{"Bash(multica *)"}
 	}
 	if isNoRepoBoundedStage(policy) {
-		return []string{"Bash(multica:*)"}
+		return []string{"Bash(multica *)"}
 	}
 	return nil
 }

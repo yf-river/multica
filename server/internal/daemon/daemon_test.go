@@ -141,8 +141,8 @@ func TestExecutionPolicyToolEnvelopeForCoordinator(t *testing.T) {
 	if got := allowedBuiltinToolsForExecutionPolicy("codebuddy", pm); len(got) != 1 || got[0] != "Bash" {
 		t.Fatalf("coordinator allowed tools = %v, want [Bash]", got)
 	}
-	if got := allowedToolsForExecutionPolicy("codebuddy", pm); len(got) != 1 || got[0] != "Bash(multica:*)" {
-		t.Fatalf("coordinator scoped allowed tools = %v, want [Bash(multica:*)]", got)
+	if got := allowedToolsForExecutionPolicy("codebuddy", pm); len(got) != 1 || got[0] != "Bash(multica *)" {
+		t.Fatalf("coordinator scoped allowed tools = %v, want [Bash(multica *)]", got)
 	}
 	if got := permissionModeForExecutionPolicy("codebuddy", pm); got != "default" {
 		t.Fatalf("codebuddy coordinator permission mode = %q, want default", got)
@@ -225,8 +225,8 @@ func TestExecutionPolicyToolEnvelopeForCoordinator(t *testing.T) {
 	if got := allowedBuiltinToolsForExecutionPolicy("codebuddy", noRepoPlanning); len(got) != 1 || got[0] != "Bash" {
 		t.Fatalf("no-repo planning allowed tools = %v, want [Bash]", got)
 	}
-	if got := allowedToolsForExecutionPolicy("codebuddy", noRepoPlanning); len(got) != 1 || got[0] != "Bash(multica:*)" {
-		t.Fatalf("no-repo planning scoped allowed tools = %v, want [Bash(multica:*)]", got)
+	if got := allowedToolsForExecutionPolicy("codebuddy", noRepoPlanning); len(got) != 1 || got[0] != "Bash(multica *)" {
+		t.Fatalf("no-repo planning scoped allowed tools = %v, want [Bash(multica *)]", got)
 	}
 	noRepoPlanningDenied := disallowedToolsForExecutionPolicy("codebuddy", noRepoPlanning)
 	for _, want := range []string{"TaskCreate", "TaskUpdate", "Agent", "Read", "Grep", "Glob", "LS", "Edit", "Write", "MultiEdit"} {
