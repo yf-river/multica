@@ -37,6 +37,12 @@ func prepareCursorMcpConfig(envRoot, workDir string, mcpConfig json.RawMessage, 
 	}
 
 	cursorDir := filepath.Join(projectRoot, ".cursor")
+	configPath := filepath.Join(cursorDir, "mcp.json")
+	if _, err := os.Lstat(configPath); err == nil {
+		return "", fmt.Errorf("managed cursor mcp_config would overwrite existing .cursor/mcp.json: %s", configPath)
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return "", fmt.Errorf("stat .cursor/mcp.json: %w", err)
+	}
 	if err := recordMkdirAll(cursorDir, 0o755, manifest); err != nil {
 		return "", fmt.Errorf("create .cursor dir: %w", err)
 	}
@@ -44,11 +50,11 @@ func prepareCursorMcpConfig(envRoot, workDir string, mcpConfig json.RawMessage, 
 	if err != nil {
 		return "", err
 	}
-	if err := recordWriteFile(filepath.Join(cursorDir, "mcp.json"), configData, 0o600, manifest); err != nil {
-		if errors.Is(err, errPathPreExists) {
-			return "", fmt.Errorf("managed cursor mcp_config would overwrite existing .cursor/mcp.json")
-		}
+	if err := os.WriteFile(configPath, configData, 0o600); err != nil {
 		return "", fmt.Errorf("write .cursor/mcp.json: %w", err)
+	}
+	if manifest != nil {
+		manifest.Files = append(manifest.Files, configPath)
 	}
 
 	cursorDataDir := filepath.Join(envRoot, "cursor-data")
@@ -165,7 +171,11 @@ func cursorProjectRoot(workDir string) string {
 		dir = workDir
 	}
 	fallback := dir
+	tempDir, _ := filepath.Abs(os.TempDir())
 	for {
+		if tempDir != "" && dir == tempDir {
+			return fallback
+		}
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
 			return dir
 		}
