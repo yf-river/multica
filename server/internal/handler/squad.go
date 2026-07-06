@@ -183,8 +183,10 @@ const sopPMCrossProjectSummaryRule = `## PM 跨项目 child issue 摘要
 - PM 创建 required child issue 时必须带 ` + "`" + `--parent <当前 issue>` + "`" + `、` + "`" + `--project <目标项目 UUID>` + "`" + `、` + "`" + `--status todo` + "`" + `，并优先分配目标项目小队；没有目标项目小队时分配 PM 小队递归执行。不得静默创建 ` + "`" + `backlog` + "`" + ` 或分配给普通成员导致任务不启动；找不到可执行小队/Agent 时必须阻断。
 - 如果 existing child 已存在但 status 是 ` + "`" + `backlog` + "`" + ` 或 assignee 是普通成员，PM 必须先把它更新为可执行的 squad/Agent assignee 和 ` + "`" + `todo` + "`" + `；无法修正时阻断并报告，不能继续父 issue 04/05。
 - handoff-gateway.md、handoff-ida-deployment.md 或其它 handoff 只作为 child issue 输入材料，不能代表目标项目已完成。
-- 对 required 依赖，child issue 待创建、未完成、handoff 待分发或目标项目 MR 未关联，都是父 issue 继续 04/05 或最终收口的阻塞项。
-- PM 创建或复用 required child issue 后，如果任一 required child status 不是 done，本轮只能评论等待/阻断并记录 child 列表；不得 @mention 父 issue 的 04-开发或 05-验证测试。只有 child done 通知或用户评论触发后，PM 回读 children 确认全部 done，才能继续父 issue 04。
+- 对 required 依赖或待确认的目标项目交付，child issue 待创建、未完成、handoff 待分发或目标项目 MR 未关联，都是父 issue 继续 04/05 或最终收口的阻塞项。
+- 只要 02/03/用户评论/handoff 写明目标项目需要 API 暴露、配置、部署、权限、网关、联调或其它交付，且未以证据明确列入 not required，PM 必须先按阻塞项处理，不能把“待确认”当成可并行继续父 04/05。
+- PM 不得在同一条评论或同一个 PM task 中一边创建/确认 required child issue，一边 @mention 父 issue 的 04-开发或 05-验证测试；child issue 创建/确认本身就是本轮动作。
+- PM 创建或复用 required child issue 后，必须回读 children，并在评论中列出 child identifier、target project、status 和 assignee；如果回读为空、project/parent/assignee 不正确或任一 required child status 不是 done，本轮只能评论等待/阻断，不得 @mention 父 issue 的 04-开发或 05-验证测试。只有 child done 通知或用户评论触发后，PM 回读 children 确认全部 done，才能继续父 issue 04。
 - 父 issue 最终收口前必须回读 child issue 列表；任何 child issue 未完成时，父 issue 必须等待，不能设置为 done。`
 
 const sopImplementationMRRule = `## 04-implement 功能 MR 规则
@@ -224,6 +226,8 @@ const sopTaskSplitCrossProjectRule = `## 03-task-split 跨项目依赖契约
 - 只要发现 ` + "`" + `required cross-project dependencies` + "`" + `、` + "`" + `handoff-*.md` + "`" + `、gateway/ida-deployment/其它项目交付项、外部 HTTP 入口、权限、部署或联调边界，必须在 03-task-split 阶段最终输出中把对应项目列入 required 或 not required，并写明理由。
 - ` + "`" + `handoff-gateway.md` + "`" + `、` + "`" + `handoff-ida-deployment.md` + "`" + ` 只能作为目标项目 child issue 的输入材料，不能代表目标项目已完成。
 - required 依赖不得标为非阻塞；如果目标项目还没有 child issue 或 MR，03 必须写成待 PM 创建/等待的阻塞前置条件。
+- 如果用户确认、02-design 或代码/资源事实已经明确某目标项目需要交付，例如 ida-deployment 需要新增 API 暴露、配置、部署或环境编排，03 不得降级成“待确认”“大概率不需要”或 not required；除非给出明确证据证明目标项目无需改动。
+- “待确认”的跨项目交付不是非阻塞状态；必须写成阻塞前置条件，交给 PM 创建/复用 child issue 或等待用户确认。
 - 明确不需要的项目必须写入 ` + "`" + `not required projects` + "`" + ` 和理由，例如 ida-deployment 只有发现权限点、部署配置或环境编排必须变更时才创建。`
 
 const sopVerificationCrossProjectGateRule = `## 05-verify 跨项目验收门禁
