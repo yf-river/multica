@@ -528,6 +528,42 @@ func TestBuildPromptCoordinatorCommentUsesInlineContent(t *testing.T) {
 	}
 }
 
+func TestBuildPromptRepoReadOnlyStageUsesFinalOutputReply(t *testing.T) {
+	task := Task{
+		IssueID:               "issue-123",
+		TriggerCommentID:      "comment-456",
+		TriggerCommentContent: "请产出 03-task-split",
+		TriggerAuthorType:     "agent",
+		TriggerAuthorName:     "PM-项目经理",
+		ExecutionPolicy: &TaskExecutionPolicy{
+			RoleKey:       "03-task-split",
+			RoleKind:      "planning_stage",
+			CanAccessRepo: true,
+			CanEditRepo:   false,
+		},
+	}
+	out := BuildPrompt(task, "codebuddy")
+	for _, want := range []string{
+		"Write the complete stage result as your final assistant output",
+		"the platform will automatically post it as a reply under the triggering comment",
+		"Do not call `multica issue comment add`",
+		"do not create `reply.md` or local `.md` files",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("repo read-only stage prompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	for _, banned := range []string{
+		"--content-file ./reply.md",
+		"Write the reply body to a UTF-8 file",
+		"multica issue comment add issue-123 --parent comment-456",
+	} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("repo read-only stage prompt must not use manual reply path %q\n--- output ---\n%s", banned, out)
+		}
+	}
+}
+
 // TestBuildPromptSquadLeaderNoActionForAgentTrigger verifies the rule also
 // fires for agent-triggered comments (the original path that already worked).
 func TestBuildPromptSquadLeaderNoActionForAgentTrigger(t *testing.T) {

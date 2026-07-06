@@ -252,6 +252,9 @@ func buildTaskCommentReplyInstructions(provider string, task Task) string {
 	if task.TriggerCommentID == "" {
 		return ""
 	}
+	if isFinalOutputAutoCommentTask(task) {
+		return "Do not call `multica issue comment add` and do not create `reply.md` or local `.md` files. Write the complete stage result as your final assistant output; the platform will automatically post it as a reply under the triggering comment when this task completes.\n"
+	}
 	if task.ExecutionPolicy == nil || !strings.EqualFold(strings.TrimSpace(task.ExecutionPolicy.RoleKind), "coordinator") || task.ExecutionPolicy.CanAccessRepo {
 		return execenv.BuildCommentReplyInstructions(provider, task.IssueID, task.TriggerCommentID)
 	}
@@ -272,6 +275,18 @@ func isNoRepoBoundedPromptTask(task Task) bool {
 	switch strings.ToLower(strings.TrimSpace(task.ExecutionPolicy.RoleKind)) {
 	case "planning_stage", "verification_stage":
 		return !task.ExecutionPolicy.CanAccessRepo
+	default:
+		return false
+	}
+}
+
+func isFinalOutputAutoCommentTask(task Task) bool {
+	if task.ExecutionPolicy == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(task.ExecutionPolicy.RoleKind)) {
+	case "planning_stage", "verification_stage":
+		return !task.ExecutionPolicy.CanEditRepo
 	default:
 		return false
 	}

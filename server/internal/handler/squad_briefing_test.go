@@ -371,6 +371,7 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 		"没有 mention 的确认/总结评论不得宣称已调度",
 		"## 多轮澄清闭环规则",
 		"PM 不得自行接受推荐默认值",
+		"不得要求 01 重新探查仓库",
 		"## PM 阶段门禁摘要",
 		"## PM 平台任务完整性规则",
 		"禁止在 PM 单个任务里使用任何运行时或模型原生的内部任务",
@@ -403,6 +404,8 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 		"简单任务直通",
 		"允许简单任务直通",
 		"直接发布最终结果并把 issue 更新为 done，不要要求额外确认",
+		"03-task-split.md 中",
+		"02-design.md 中",
 		"## 角色矩阵",
 		"## 01-clarify 多轮澄清产物要求",
 		"## 02-design 澄清门禁",
@@ -574,11 +577,23 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 				t.Fatalf("%s role must contain %q\n--- role ---\n%+v", role.Key, want, role)
 			}
 		}
+		if slices.Contains([]string{"01-clarify", "02-design", "03-task-split", "05-verify"}, role.Key) {
+			for _, want := range []string{
+				"## 只读阶段输出规则",
+				"最终 assistant 输出",
+				"不得创建 `reply.md`",
+				"不得调用 `multica issue comment add`",
+			} {
+				if !strings.Contains(role.Instruction, want) {
+					t.Fatalf("%s role must contain read-only output rule %q\n--- role ---\n%+v", role.Key, want, role)
+				}
+			}
+		}
 		if role.Key == "01-clarify" {
 			for _, want := range []string{
 				"不读取或探索代码仓库",
-				"第一动作只能读取 issue/TAPD/source_context/评论",
-				"工具白名单只包含读取 issue、读取评论/metadata 和发布本阶段结果所需的 plain `multica issue ...` 命令",
+				"第一动作只能使用平台注入的 issue/TAPD/source_context/评论上下文",
+				"不调用工具、不创建本地文件、不手动发布评论",
 				"不得 checkout、ls、find、rg、cat、sed、git",
 				"不得查询 Agent roster、当前工作目录或本地上下文文件",
 				"不得运行 multica agent、multica --help、pwd、shell 管道、重定向、&&、||、head",
