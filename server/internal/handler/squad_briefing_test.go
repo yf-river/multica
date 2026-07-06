@@ -589,6 +589,7 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 			"不得 @mention 任何 Agent、Squad、Member 或 all",
 			"不得直接触发下一阶段",
 			"不得使用 CodeBuddy/Claude/Codex 等 provider 原生的 Agent、Task、TaskCreate、TaskUpdate、subagent、plan/todo 工具",
+			"Do not call Task/TaskCreate/TaskUpdate/Agent/subagent/todo tools",
 			"01/02/03 阶段只收集足够支撑本阶段产物的上下文",
 			"只有运行时明确允许仓库访问的阶段，才可读取",
 			"由 pm 判断通过、返工、推进或收口",

@@ -155,6 +155,7 @@ const sopWorkerRoutingRule = `## 阶段路由规则
 - 本角色不得 @mention 任何 Agent、Squad、Member 或 all。
 - 本角色不得直接触发下一阶段。
 - 本角色不得使用 CodeBuddy/Claude/Codex 等 provider 原生的 Agent、Task、TaskCreate、TaskUpdate、subagent、plan/todo 工具来启动内部子代理、并行代理或内部任务；阶段工作必须在当前平台 task 内直接完成。
+- 如果需要列计划，只能在最终输出或普通文本中写计划；不要调用任何名为 Task、TaskCreate、TaskUpdate、Agent、subagent、TodoRead、TodoWrite、plan 或 todo 的工具。Do not call Task/TaskCreate/TaskUpdate/Agent/subagent/todo tools; complete the stage directly in this task.
 - 只输出本阶段结论、证据、阻断和 handoff 给 PM，由 PM 判断通过、返工、推进或收口。
 - 01/02/03 阶段只收集足够支撑本阶段产物的上下文，不做全仓库审计；只有运行时明确允许仓库访问的阶段，才可读取与本需求、目标项目和 handoff 直接相关的文件，产物完整后立即交回 PM。`
 
