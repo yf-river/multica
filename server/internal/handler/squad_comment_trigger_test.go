@@ -1172,6 +1172,151 @@ func TestCreateComment_ActiveWorkerCommentDoesNotWakeLeader(t *testing.T) {
 	}
 }
 
+type crossProjectGateSOPFixture struct {
+	Issue       db.Issue
+	IssueID     string
+	LeaderID    string
+	ImplementID string
+	SquadID     string
+}
+
+func newCrossProjectGateSOPFixture(t *testing.T, childDone bool) crossProjectGateSOPFixture {
+	t.Helper()
+	ctx := context.Background()
+	leaderID := createHandlerTestAgent(t, "Cross Project Gate PM "+randomID()[:8], nil)
+	implementID := createHandlerTestAgent(t, projectSOPAgent04, nil)
+	profile := `{
+		"mode":"stage_chain",
+		"steps":[
+			{"key":"pm","role_key":"pm"},
+			{"key":"01","role_key":"01-clarify"},
+			{"key":"02","role_key":"02-design"},
+			{"key":"03","role_key":"03-task-split"},
+			{"key":"04","role_key":"04-implement"},
+			{"key":"05","role_key":"05-verify"}
+		]
+	}`
+	var squadID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, sop_profile)
+		VALUES ($1, $2, '', $3, $4, $5)
+		RETURNING id
+	`, testWorkspaceID, "Cross Project Gate Squad "+randomID()[:8], leaderID, testUserID, profile).Scan(&squadID); err != nil {
+		t.Fatalf("create squad: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+	})
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO squad_member (squad_id, member_type, member_id, role)
+		VALUES ($1, 'agent', $2, '04')
+	`, squadID, implementID); err != nil {
+		t.Fatalf("create squad member: %v", err)
+	}
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, assignee_type, assignee_id)
+		VALUES ($1, 'member', $2, $3, 'in_progress', 'squad', $4)
+		RETURNING id
+	`, testWorkspaceID, testUserID, "cross-project parent gate "+randomID()[:8], squadID).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE issue_id = $1`, issueID)
+		testPool.Exec(context.Background(), `DELETE FROM comment WHERE issue_id = $1`, issueID)
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE parent_issue_id = $1`, issueID)
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+	if childDone {
+		if _, err := testPool.Exec(ctx, `
+			INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, parent_issue_id)
+			VALUES ($1, 'member', $2, 'ida-deployment child', 'done', $3)
+		`, testWorkspaceID, testUserID, issueID); err != nil {
+			t.Fatalf("create done child: %v", err)
+		}
+	}
+	issue, err := testHandler.Queries.GetIssue(ctx, util.MustParseUUID(issueID))
+	if err != nil {
+		t.Fatalf("load issue: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content)
+		VALUES ($1, $2, 'agent', $3, $4)
+	`, testWorkspaceID, issueID, leaderID, "## 03-task-split\n\nrequired cross-project dependencies:\n- ida-deployment: required，待 PM 创建 child issue"); err != nil {
+		t.Fatalf("insert 03 comment: %v", err)
+	}
+	return crossProjectGateSOPFixture{
+		Issue:       issue,
+		IssueID:     issueID,
+		LeaderID:    leaderID,
+		ImplementID: implementID,
+		SquadID:     squadID,
+	}
+}
+
+func insertSOPPMMentionComment(t *testing.T, fx crossProjectGateSOPFixture) db.Comment {
+	t.Helper()
+	ctx := context.Background()
+	content := "03 通过，请进入 [@04-开发](mention://agent/" + fx.ImplementID + ")"
+	var commentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content)
+		VALUES ($1, $2, 'agent', $3, $4)
+		RETURNING id
+	`, testWorkspaceID, fx.IssueID, fx.LeaderID, content).Scan(&commentID); err != nil {
+		t.Fatalf("insert pm comment: %v", err)
+	}
+	return db.Comment{
+		ID:          util.MustParseUUID(commentID),
+		IssueID:     util.MustParseUUID(fx.IssueID),
+		WorkspaceID: util.MustParseUUID(testWorkspaceID),
+		AuthorType:  "agent",
+		AuthorID:    util.MustParseUUID(fx.LeaderID),
+		Content:     content,
+	}
+}
+
+func TestEnqueueCommentAgentTriggers_BlocksParentSOPStageWhenRequiredChildrenMissing(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	fx := newCrossProjectGateSOPFixture(t, false)
+	comment := insertSOPPMMentionComment(t, fx)
+
+	enqueueMentionedAgentTasksForTest(t, ctx, fx.Issue, comment, nil, "agent", fx.LeaderID)
+
+	if got := countQueuedOrDispatched(t, fx.ImplementID, fx.IssueID); got != 0 {
+		t.Fatalf("parent 04 task count = %d, want 0 while required child is missing", got)
+	}
+	var gateComments int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM comment
+		WHERE issue_id = $1 AND author_type = 'system' AND content LIKE '%平台已阻止父任务阶段调度%'
+	`, fx.IssueID).Scan(&gateComments); err != nil {
+		t.Fatalf("count gate comments: %v", err)
+	}
+	if gateComments != 1 {
+		t.Fatalf("gate comment count = %d, want 1", gateComments)
+	}
+}
+
+func TestEnqueueCommentAgentTriggers_AllowsParentSOPStageWhenRequiredChildrenDone(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	fx := newCrossProjectGateSOPFixture(t, true)
+	comment := insertSOPPMMentionComment(t, fx)
+
+	enqueueMentionedAgentTasksForTest(t, ctx, fx.Issue, comment, nil, "agent", fx.LeaderID)
+
+	if got := countQueuedOrDispatched(t, fx.ImplementID, fx.IssueID); got != 1 {
+		t.Fatalf("parent 04 task count = %d, want 1 after required child is done", got)
+	}
+}
+
 // TestCreateRetryTask_InheritsIsLeaderTask locks the retry-clone contract for
 // MUL-2218: auto-retry of a leader-role task must produce a child task that is
 // also is_leader_task=true. Without this, MaybeRetryFailedTask silently

@@ -811,6 +811,13 @@ type commentAgentTrigger struct {
 	Squad  *db.Squad
 }
 
+type commentSOPProfile struct {
+	Mode  string `json:"mode"`
+	Steps []struct {
+		RoleKey string `json:"role_key"`
+	} `json:"steps"`
+}
+
 type commentTriggerComputeOptions struct {
 	ExcludeTriggerCommentID     pgtype.UUID
 	SuppressAssignedSquadLeader bool
@@ -1180,6 +1187,10 @@ func filterSuppressedCommentAgentTriggers(triggers []commentAgentTrigger, suppre
 
 func (h *Handler) enqueueCommentAgentTriggers(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, triggers []commentAgentTrigger) {
 	for _, trigger := range triggers {
+		if h.shouldBlockParentSOPStageTriggerForCrossProjectChildren(ctx, issue, triggerCommentID, trigger) {
+			h.recordBlockedParentSOPStageTriggerComment(ctx, issue, trigger.Agent.Name)
+			continue
+		}
 		switch trigger.Source {
 		case commentTriggerSourceIssueAssignee:
 			if trigger.Squad != nil {
@@ -1211,6 +1222,186 @@ func (h *Handler) enqueueCommentAgentTriggers(ctx context.Context, issue db.Issu
 			}
 		}
 	}
+}
+
+func (h *Handler) shouldBlockParentSOPStageTriggerForCrossProjectChildren(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, trigger commentAgentTrigger) bool {
+	if trigger.Agent.Name != projectSOPAgent04 && trigger.Agent.Name != projectSOPAgent05 {
+		return false
+	}
+	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
+		return false
+	}
+	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
+		ID:          issue.AssigneeID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil || !isStageChainSOPProfile(squad.SopProfile) {
+		return false
+	}
+	if !h.issueCommentsContainRequiredCrossProjectDependency(ctx, issue, triggerCommentID) {
+		return false
+	}
+	children, err := h.Queries.ListChildIssues(ctx, issue.ID)
+	if err != nil {
+		slog.Warn("sop cross-project child gate skipped: list children failed",
+			"issue_id", uuidToString(issue.ID),
+			"error", err)
+		return false
+	}
+	if len(children) == 0 {
+		return true
+	}
+	for _, child := range children {
+		if child.Status != "done" {
+			return true
+		}
+	}
+	return false
+}
+
+func isStageChainSOPProfile(raw []byte) bool {
+	if len(raw) == 0 {
+		return false
+	}
+	var profile commentSOPProfile
+	if err := json.Unmarshal(raw, &profile); err != nil {
+		return false
+	}
+	if strings.EqualFold(profile.Mode, "stage_chain") {
+		return true
+	}
+	required := map[string]bool{
+		"pm": true, "01-clarify": true, "02-design": true,
+		"03-task-split": true, "04-implement": true, "05-verify": true,
+	}
+	for _, step := range profile.Steps {
+		key := normalizeSOPRoleMentionKey(step.RoleKey)
+		delete(required, key)
+	}
+	return len(required) == 0
+}
+
+func (h *Handler) issueCommentsContainRequiredCrossProjectDependency(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID) bool {
+	var corpus strings.Builder
+	if triggerCommentID.Valid {
+		if comment, err := h.Queries.GetComment(ctx, triggerCommentID); err == nil && comment.IssueID == issue.ID {
+			corpus.WriteString(comment.Content)
+			corpus.WriteByte('\n')
+		}
+	}
+	comments, err := h.Queries.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+		Limit:       commentHardCap,
+	})
+	if err != nil {
+		slog.Warn("sop cross-project child gate skipped: list comments failed",
+			"issue_id", uuidToString(issue.ID),
+			"error", err)
+		return false
+	}
+	for _, comment := range comments {
+		corpus.WriteString(comment.Content)
+		corpus.WriteByte('\n')
+	}
+	return containsRequiredCrossProjectDependency(corpus.String())
+}
+
+func containsRequiredCrossProjectDependency(content string) bool {
+	text := strings.ToLower(content)
+	requiredMarkers := []string{
+		"待 pm 创建 child issue",
+		"pm 下一步先创建/复用对应 child issue",
+		"handoff-",
+		"跨项目 child",
+		"cross-project child",
+	}
+	for _, marker := range requiredMarkers {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	if strings.Contains(text, "跨项目依赖") &&
+		(strings.Contains(text, "gateway") || strings.Contains(text, "ida-deployment") || strings.Contains(text, "required") || strings.Contains(text, "必须") || strings.Contains(text, "待 pm")) {
+		return true
+	}
+	return requiredCrossProjectSectionHasEntries(text)
+}
+
+func requiredCrossProjectSectionHasEntries(text string) bool {
+	inSection := false
+	for _, rawLine := range strings.Split(text, "\n") {
+		line := strings.TrimSpace(rawLine)
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "required cross-project dependencies") {
+			inSection = true
+			continue
+		}
+		if !inSection {
+			continue
+		}
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(lower, "#") ||
+			strings.Contains(lower, "not required projects") ||
+			strings.Contains(lower, "v1/v2/v3") ||
+			strings.Contains(lower, "sandbox_plan") {
+			return false
+		}
+		if strings.Contains(lower, "none") ||
+			strings.Contains(lower, "not required") ||
+			strings.Contains(line, "无") ||
+			strings.Contains(line, "不需要") {
+			continue
+		}
+		if strings.HasPrefix(line, "-") ||
+			strings.Contains(lower, "required") ||
+			strings.Contains(lower, "gateway") ||
+			strings.Contains(lower, "ida-deployment") ||
+			strings.Contains(lower, "handoff-") {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Handler) recordBlockedParentSOPStageTriggerComment(ctx context.Context, issue db.Issue, stageName string) {
+	comments, err := h.Queries.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+		Limit:       commentHardCap,
+	})
+	if err == nil {
+		for i := len(comments) - 1; i >= 0 && i >= len(comments)-5; i-- {
+			if strings.Contains(comments[i].Content, "平台已阻止父任务阶段调度") {
+				return
+			}
+		}
+	}
+	content := strings.TrimSpace("平台已阻止父任务阶段调度：03-任务拆分已识别 required 跨项目依赖，但父 issue 的 child issue 仍缺失或未全部完成，因此不能触发父 issue 的 " + stageName + "。请 PM 先创建/复用并回读 required child issue；所有 required child issue 完成后，再继续父 issue 阶段。")
+	comment, err := h.Queries.CreateComment(ctx, db.CreateCommentParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+		AuthorType:  "system",
+		AuthorID:    util.MustParseUUID("00000000-0000-0000-0000-000000000000"),
+		Content:     content,
+		Type:        "comment",
+	})
+	if err != nil {
+		slog.Warn("create sop cross-project child gate comment failed",
+			"issue_id", uuidToString(issue.ID),
+			"stage", stageName,
+			"error", err)
+		return
+	}
+	h.publish(protocol.EventCommentCreated, uuidToString(issue.WorkspaceID), "system", "", map[string]any{
+		"comment":             commentToResponse(comment, nil, nil),
+		"issue_title":         issue.Title,
+		"issue_assignee_type": textToPtr(issue.AssigneeType),
+		"issue_assignee_id":   uuidToPtr(issue.AssigneeID),
+		"issue_status":        issue.Status,
+	})
 }
 
 func (h *Handler) computeCommentAgentTriggers(ctx context.Context, issue db.Issue, content string, parentComment *db.Comment, actorType, actorID string, opts commentTriggerComputeOptions) []commentAgentTrigger {
