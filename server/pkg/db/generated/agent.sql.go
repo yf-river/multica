@@ -813,13 +813,14 @@ func (q *Queries) CreateAgent(ctx context.Context, arg CreateAgentParams) (Agent
 const createAgentTask = `-- name: CreateAgentTask :one
 INSERT INTO agent_task_queue (
     agent_id, runtime_id, issue_id, status, priority, trigger_comment_id,
-    trigger_summary, parent_task_id, force_fresh_session, is_leader_task
+    trigger_summary, parent_task_id, force_fresh_session, is_leader_task, context
 )
 VALUES (
     $1, $2, $3, 'queued', $4, $5,
     $6, $7,
     COALESCE($8::boolean, FALSE),
-    COALESCE($9::boolean, FALSE)
+    COALESCE($9::boolean, FALSE),
+    $10
 )
 RETURNING id, agent_id, issue_id, status, priority, dispatched_at, started_at, completed_at, result, error, created_at, context, runtime_id, session_id, work_dir, trigger_comment_id, chat_session_id, autopilot_run_id, attempt, max_attempts, parent_task_id, failure_reason, trigger_summary, force_fresh_session, is_leader_task, wait_reason, initiator_user_id
 `
@@ -834,6 +835,7 @@ type CreateAgentTaskParams struct {
 	ParentTaskID      pgtype.UUID `json:"parent_task_id"`
 	ForceFreshSession pgtype.Bool `json:"force_fresh_session"`
 	IsLeaderTask      pgtype.Bool `json:"is_leader_task"`
+	Context           []byte      `json:"context"`
 }
 
 func (q *Queries) CreateAgentTask(ctx context.Context, arg CreateAgentTaskParams) (AgentTaskQueue, error) {
@@ -847,6 +849,7 @@ func (q *Queries) CreateAgentTask(ctx context.Context, arg CreateAgentTaskParams
 		arg.ParentTaskID,
 		arg.ForceFreshSession,
 		arg.IsLeaderTask,
+		arg.Context,
 	)
 	var i AgentTaskQueue
 	err := row.Scan(
@@ -1416,6 +1419,7 @@ func (q *Queries) GetAgentTaskInWorkspace(ctx context.Context, arg GetAgentTaskI
 const getLastTaskSession = `-- name: GetLastTaskSession :one
 SELECT session_id, work_dir, runtime_id FROM agent_task_queue
 WHERE agent_id = $1 AND issue_id = $2
+  AND COALESCE(context->>'type', '') <> 'issue_source_summary'
   AND (
     status = 'completed'
     OR (

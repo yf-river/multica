@@ -19,6 +19,7 @@ import (
 	"github.com/multica-ai/multica/server/internal/auth"
 	"github.com/multica-ai/multica/server/internal/daemonws"
 	"github.com/multica-ai/multica/server/internal/middleware"
+	"github.com/multica-ai/multica/server/internal/service"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -64,6 +65,42 @@ type popRecordingLocalSkillImportStore struct {
 func (s *popRecordingLocalSkillImportStore) PopPending(ctx context.Context, runtimeID string) (*RuntimeLocalSkillImportRequest, error) {
 	s.popCalls++
 	return s.LocalSkillImportStore.PopPending(ctx, runtimeID)
+}
+
+func TestCoordinatorExecutionPolicyFiltersExecutionBuiltinSkills(t *testing.T) {
+	t.Parallel()
+	skills := []service.AgentSkillData{
+		{Name: "multica-mentioning"},
+		{Name: "multica-projects-and-resources"},
+		{Name: "multica-squads"},
+		{Name: "multica-working-on-issues"},
+		{Name: "multica-runtimes-and-repos"},
+		{Name: "04-implement"},
+	}
+	policy := TaskExecutionPolicyData{
+		RoleKind:         "coordinator",
+		CanAccessRepo:    false,
+		ProjectSkillMode: "none",
+	}
+
+	got := filterAgentSkillsForExecutionPolicy(skills, policy)
+	gotNames := make([]string, 0, len(got))
+	for _, skill := range got {
+		gotNames = append(gotNames, skill.Name)
+	}
+	want := []string{"multica-mentioning", "multica-projects-and-resources", "multica-squads"}
+	if strings.Join(gotNames, ",") != strings.Join(want, ",") {
+		t.Fatalf("coordinator skills = %v, want %v", gotNames, want)
+	}
+
+	gotBuiltins := filterBuiltinSkillsForExecutionPolicy(skills, policy)
+	gotNames = gotNames[:0]
+	for _, skill := range gotBuiltins {
+		gotNames = append(gotNames, skill.Name)
+	}
+	if strings.Join(gotNames, ",") != strings.Join(want, ",") {
+		t.Fatalf("coordinator builtin skills = %v, want %v", gotNames, want)
+	}
 }
 
 func setHandlerTestWorkspaceRepos(t *testing.T, repos []map[string]string) {
@@ -164,6 +201,40 @@ func createDispatchedClaimFixtureTask(t *testing.T, ctx context.Context, agentID
 	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
 
 	return taskID
+}
+
+func TestTaskExecutionPolicyForSOPRoles(t *testing.T) {
+	pm := taskExecutionPolicyForRole("pm", projectSOPAgentPM, true)
+	if pm.RoleKey != "pm" || pm.CanAccessRepo || pm.CanEditRepo || pm.ProjectSkillMode != "none" {
+		t.Fatalf("PM policy = %+v, want coordinator with no repo access", pm)
+	}
+	stage01 := taskExecutionPolicyForRole("01-clarify", "", false)
+	if stage01.RoleKey != "01-clarify" || stage01.CanAccessRepo || stage01.CanEditRepo || stage01.ProjectSkillMode != "none" {
+		t.Fatalf("01 policy = %+v, want no-repo clarify policy", stage01)
+	}
+	stage03 := taskExecutionPolicyForRole("03-task-split", "", false)
+	if stage03.RoleKey != "03-task-split" || !stage03.CanAccessRepo || stage03.CanEditRepo || stage03.ProjectSkillMode != "stage" {
+		t.Fatalf("03 policy = %+v, want read-only stage policy", stage03)
+	}
+	impl := taskExecutionPolicyForRole("04-implement", "", false)
+	if impl.RoleKey != "04-implement" || !impl.CanAccessRepo || !impl.CanEditRepo || impl.ProjectSkillMode != "implementation" {
+		t.Fatalf("04 policy = %+v, want implementation policy with repo edits", impl)
+	}
+	custom := taskExecutionPolicyForRole("developer", "custom developer", false)
+	if !custom.CanAccessRepo || !custom.CanEditRepo || custom.ProjectSkillMode != "all" {
+		t.Fatalf("custom policy = %+v, want backward-compatible full project skill visibility", custom)
+	}
+}
+
+func TestTaskExecutionPolicyReadsInternalSquadRoleKey(t *testing.T) {
+	agent := db.Agent{
+		Name:          "任意显示名",
+		RuntimeConfig: []byte(`{"internal_squad":{"template_key":"user-center-sop-flow","role_key":"05-verify"}}`),
+	}
+	policy := taskExecutionPolicyForAgent(agent, false)
+	if policy.RoleKey != "05-verify" || policy.RoleKind != "verification_stage" || !policy.CanAccessRepo || policy.CanEditRepo || policy.ProjectSkillMode != "verification" {
+		t.Fatalf("policy from runtime_config role_key = %+v, want 05 verification policy", policy)
+	}
 }
 
 func claimTaskByRuntimeForTest(t *testing.T, runtimeID string) (*struct {
@@ -2469,6 +2540,7 @@ func TestClaimTask_SquadLeaderDoesNotReceiveIssueRepos(t *testing.T) {
 			ProjectID           string                   `json:"project_id"`
 			ProjectResources    []ProjectResourceData    `json:"project_resources"`
 			IssueExecutionSpace *IssueExecutionSpaceData `json:"issue_execution_space"`
+			ExecutionPolicy     *TaskExecutionPolicyData `json:"execution_policy"`
 			Agent               *TaskAgentData           `json:"agent"`
 		} `json:"task"`
 	}
@@ -2489,6 +2561,9 @@ func TestClaimTask_SquadLeaderDoesNotReceiveIssueRepos(t *testing.T) {
 	}
 	if resp.Task.IssueExecutionSpace != nil {
 		t.Fatalf("squad leader task should not receive issue_execution_space, got %+v", resp.Task.IssueExecutionSpace)
+	}
+	if resp.Task.ExecutionPolicy == nil || resp.Task.ExecutionPolicy.RoleKind != "coordinator" || resp.Task.ExecutionPolicy.CanAccessRepo || resp.Task.ExecutionPolicy.CanEditRepo || resp.Task.ExecutionPolicy.ProjectSkillMode != "none" {
+		t.Fatalf("squad leader task execution_policy = %+v, want coordinator without repo access", resp.Task.ExecutionPolicy)
 	}
 	if resp.Task.Agent == nil || !strings.Contains(resp.Task.Agent.Instructions, "负责人/PM 不得把 child issue 当成轻量闭包任务") {
 		t.Fatalf("expected squad leader briefing in agent instructions")
@@ -3475,6 +3550,56 @@ func TestClaimTask_IssuePriorSessionRuntimeGuard(t *testing.T) {
 	}
 	if task.PriorWorkDir != "" {
 		t.Fatalf("force fresh: expected empty PriorWorkDir, got %q", task.PriorWorkDir)
+	}
+}
+
+func TestClaimTask_IssueSourceSummarySessionNotResumed(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+
+	agentID, runtimeID, daemonID := createRuntimeGuardAgent(t, ctx)
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, title, status, priority, creator_id, creator_type, number, position)
+		VALUES ($1, 'source-summary-prior-session fixture', 'in_progress', 'none', $2, 'member', 81216, 0)
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&issueID); err != nil {
+		t.Fatalf("setup: create issue: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(ctx, `DELETE FROM issue WHERE id = $1`, issueID) })
+
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id,
+			status, priority, started_at, completed_at,
+			session_id, work_dir, context
+		)
+		VALUES ($1, $2, $3, 'completed', 0, now(), now(),
+			'source-summary-session', '/tmp/source-summary-workdir',
+			'{"type":"issue_source_summary"}'::jsonb)
+	`, agentID, runtimeID, issueID); err != nil {
+		t.Fatalf("setup: create source-summary prior task: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_task_queue (
+			agent_id, runtime_id, issue_id,
+			status, priority
+		)
+		VALUES ($1, $2, $3, 'queued', 0)
+	`, agentID, runtimeID, issueID); err != nil {
+		t.Fatalf("setup: create queued task: %v", err)
+	}
+
+	task := claimTaskForRuntimeGuard(t, runtimeID, daemonID)
+	if task.PriorSessionID != "" {
+		t.Fatalf("source summary prior: expected empty PriorSessionID, got %q", task.PriorSessionID)
+	}
+	if task.PriorWorkDir != "" {
+		t.Fatalf("source summary prior: expected empty PriorWorkDir, got %q", task.PriorWorkDir)
 	}
 }
 

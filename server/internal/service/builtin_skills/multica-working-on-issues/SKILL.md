@@ -144,6 +144,10 @@ on it. These are the contracts, not advice:
 - **`done`** on a child issue posts a system comment on its parent. If an MR
   carries close intent (`Closes MUL-XXXX`), it advances the issue to `done`
   itself on merge — you do not also need to flip it manually.
+- **`done`** on a parent issue is blocked while any child issue is not `done`.
+  Finish, cancel, or explicitly resolve the child work first; if the platform
+  rejects the status change, report the unfinished child list instead of
+  forcing completion.
 - **`cancelled`** stops outstanding work; treat it as a user-driven decision.
 
 ## Sub-issues: `todo` starts work now, `backlog` parks it

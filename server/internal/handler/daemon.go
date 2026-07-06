@@ -1156,6 +1156,114 @@ func logClaimEndpointSlow(runtimeID, outcome string, start time.Time, authMs, cl
 	)
 }
 
+func roleKeyFromAgentRuntimeConfig(agent db.Agent) string {
+	var runtimeConfig map[string]any
+	if len(bytes.TrimSpace(agent.RuntimeConfig)) == 0 || json.Unmarshal(agent.RuntimeConfig, &runtimeConfig) != nil {
+		return ""
+	}
+	if scope, ok := runtimeConfig["internal_squad"].(map[string]any); ok {
+		return stringFromAny(scope["role_key"])
+	}
+	return ""
+}
+
+func taskExecutionPolicyForRole(roleKey string, fallbackName string, isSquadLeader bool) TaskExecutionPolicyData {
+	key := strings.ToLower(strings.TrimSpace(roleKey))
+	name := strings.TrimSpace(fallbackName)
+	if isSquadLeader || key == "pm" || (key == "" && (strings.EqualFold(name, "pm") || strings.HasPrefix(strings.ToUpper(name), "PM-"))) {
+		return TaskExecutionPolicyData{
+			RoleKey:          "pm",
+			RoleKind:         "coordinator",
+			CanAccessRepo:    false,
+			CanEditRepo:      false,
+			ProjectSkillMode: "none",
+		}
+	}
+	switch key {
+	case "01-clarify":
+		return TaskExecutionPolicyData{RoleKey: "01-clarify", RoleKind: "planning_stage", CanAccessRepo: false, CanEditRepo: false, ProjectSkillMode: "none", AllowedProjectSkills: []string{"01-clarify"}}
+	case "02-design":
+		return TaskExecutionPolicyData{RoleKey: "02-design", RoleKind: "planning_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "stage", AllowedProjectSkills: []string{"02-design"}}
+	case "03-task-split":
+		return TaskExecutionPolicyData{RoleKey: "03-task-split", RoleKind: "planning_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "stage", AllowedProjectSkills: []string{"03-task-split"}}
+	case "04-implement":
+		return TaskExecutionPolicyData{RoleKey: "04-implement", RoleKind: "implementation_stage", CanAccessRepo: true, CanEditRepo: true, ProjectSkillMode: "implementation", AllowedProjectSkills: []string{"04-implement"}}
+	case "05-verify":
+		return TaskExecutionPolicyData{RoleKey: "05-verify", RoleKind: "verification_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "verification", AllowedProjectSkills: []string{"05-verify"}}
+	}
+	switch name {
+	case projectSOPAgent01:
+		return TaskExecutionPolicyData{RoleKey: "01-clarify", RoleKind: "planning_stage", CanAccessRepo: false, CanEditRepo: false, ProjectSkillMode: "none", AllowedProjectSkills: []string{"01-clarify"}}
+	case projectSOPAgent02:
+		return TaskExecutionPolicyData{RoleKey: "02-design", RoleKind: "planning_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "stage", AllowedProjectSkills: []string{"02-design"}}
+	case projectSOPAgent03:
+		return TaskExecutionPolicyData{RoleKey: "03-task-split", RoleKind: "planning_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "stage", AllowedProjectSkills: []string{"03-task-split"}}
+	case projectSOPAgent04:
+		return TaskExecutionPolicyData{RoleKey: "04-implement", RoleKind: "implementation_stage", CanAccessRepo: true, CanEditRepo: true, ProjectSkillMode: "implementation", AllowedProjectSkills: []string{"04-implement"}}
+	case projectSOPAgent05:
+		return TaskExecutionPolicyData{RoleKey: "05-verify", RoleKind: "verification_stage", CanAccessRepo: true, CanEditRepo: false, ProjectSkillMode: "verification", AllowedProjectSkills: []string{"05-verify"}}
+	default:
+		return TaskExecutionPolicyData{RoleKind: "agent", CanAccessRepo: true, CanEditRepo: true, ProjectSkillMode: "all"}
+	}
+}
+
+func taskExecutionPolicyForAgent(agent db.Agent, isSquadLeader bool) TaskExecutionPolicyData {
+	return taskExecutionPolicyForRole(roleKeyFromAgentRuntimeConfig(agent), agent.Name, isSquadLeader)
+}
+
+func filterAgentSkillsForExecutionPolicy(skills []service.AgentSkillData, policy TaskExecutionPolicyData) []service.AgentSkillData {
+	if policy.ProjectSkillMode == "" || policy.ProjectSkillMode == "all" {
+		return skills
+	}
+	coordinatorNoRepo := isCoordinatorWithoutRepoPolicy(policy)
+	allowed := make(map[string]struct{}, len(policy.AllowedProjectSkills))
+	for _, name := range policy.AllowedProjectSkills {
+		allowed[strings.ToLower(strings.TrimSpace(name))] = struct{}{}
+	}
+	out := make([]service.AgentSkillData, 0, len(skills))
+	for _, skill := range skills {
+		name := strings.ToLower(strings.TrimSpace(skill.Name))
+		if strings.HasPrefix(name, "multica-") {
+			if coordinatorNoRepo && !coordinatorBuiltinSkillAllowed(name) {
+				continue
+			}
+			out = append(out, skill)
+			continue
+		}
+		if _, ok := allowed[name]; ok {
+			out = append(out, skill)
+		}
+	}
+	return out
+}
+
+func filterBuiltinSkillsForExecutionPolicy(skills []service.AgentSkillData, policy TaskExecutionPolicyData) []service.AgentSkillData {
+	if !isCoordinatorWithoutRepoPolicy(policy) {
+		return skills
+	}
+	out := make([]service.AgentSkillData, 0, len(skills))
+	for _, skill := range skills {
+		name := strings.ToLower(strings.TrimSpace(skill.Name))
+		if coordinatorBuiltinSkillAllowed(name) {
+			out = append(out, skill)
+		}
+	}
+	return out
+}
+
+func isCoordinatorWithoutRepoPolicy(policy TaskExecutionPolicyData) bool {
+	return strings.EqualFold(strings.TrimSpace(policy.RoleKind), "coordinator") && !policy.CanAccessRepo
+}
+
+func coordinatorBuiltinSkillAllowed(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "multica-mentioning", "multica-projects-and-resources", "multica-squads":
+		return true
+	default:
+		return false
+	}
+}
+
 // ClaimTaskByRuntime atomically claims the next queued task for a runtime.
 // The response includes the agent's name and skills, fetched fresh from the DB.
 func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
@@ -1211,11 +1319,13 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	// Build response with fresh agent data (name + skills + custom_env + custom_args).
 	resp := taskToResponse(*task, runtimeWorkspaceID)
 	if agent, err := h.Queries.GetAgent(r.Context(), task.AgentID); err == nil {
+		executionPolicy := taskExecutionPolicyForAgent(agent, false)
 		// Workspace-bound skills first, then platform built-in skills. Built-in
 		// names carry a "multica-" prefix so their on-disk slugs never collide
 		// with a user-authored workspace skill (see writeSkillFiles).
 		skills := h.TaskService.LoadAgentSkills(r.Context(), task.AgentID)
-		skills = append(skills, h.TaskService.BuiltinSkills()...)
+		skills = filterAgentSkillsForExecutionPolicy(skills, executionPolicy)
+		skills = append(skills, filterBuiltinSkillsForExecutionPolicy(h.TaskService.BuiltinSkills(), executionPolicy)...)
 		var customEnv map[string]string
 		if agent.CustomEnv != nil {
 			if err := json.Unmarshal(agent.CustomEnv, &customEnv); err != nil {
@@ -1252,6 +1362,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			ThinkingLevel: agent.ThinkingLevel.String,
 			RuntimeConfig: runtimeConfig,
 		}
+		resp.ExecutionPolicy = &executionPolicy
 	}
 
 	// Resolve the runtime owner's profile description so the daemon can
@@ -1298,7 +1409,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 	// resources (or no project at all), we fall back to the workspace repos.
 	var issueForSource db.Issue
 	hasIssueForSource := false
-	suppressIssueReposForLeader := false
+	suppressIssueReposForRole := false
 	if task.IssueID.Valid {
 		if issue, err := h.Queries.GetIssue(r.Context(), task.IssueID); err == nil {
 			issueForSource = issue
@@ -1324,15 +1435,18 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 					} else {
 						resp.Agent.Instructions = resp.Agent.Instructions + "\n\n" + briefing
 					}
+					leaderPolicy := taskExecutionPolicyForRole("", resp.Agent.Name, true)
+					resp.ExecutionPolicy = &leaderPolicy
+					resp.Agent.Skills = filterAgentSkillsForExecutionPolicy(resp.Agent.Skills, leaderPolicy)
 					slog.Debug("injected squad leader briefing",
 						"squad_id", uuidToString(squad.ID),
 						"squad_name", squad.Name,
 						"leader_agent_id", resp.Agent.ID,
 					)
-					if task.IsLeaderTask {
-						suppressIssueReposForLeader = true
-					}
 				}
+			}
+			if resp.ExecutionPolicy != nil && !resp.ExecutionPolicy.CanAccessRepo {
+				suppressIssueReposForRole = true
 			}
 
 			var projectRepos []RepoData
@@ -1342,7 +1456,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				if proj, err := h.Queries.GetProject(r.Context(), issue.ProjectID); err == nil {
 					resp.ProjectTitle = proj.Title
 				}
-				if rows := h.listProjectResourcesForProject(r.Context(), issue.ProjectID); len(rows) > 0 && !suppressIssueReposForLeader {
+				if rows := h.listProjectResourcesForProject(r.Context(), issue.ProjectID); len(rows) > 0 && !suppressIssueReposForRole {
 					out := make([]ProjectResourceData, 0, len(rows))
 					for _, row := range rows {
 						label := ""
@@ -1394,7 +1508,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 				}
 			}
 
-			if suppressIssueReposForLeader {
+			if suppressIssueReposForRole {
 				resp.ProjectResources = nil
 				resp.Repos = nil
 				resp.IssueExecutionSpace = nil
@@ -1411,7 +1525,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 					resp.Repos = repos
 				}
 			}
-			if !suppressIssueReposForLeader && len(projectRepos) > 0 {
+			if !suppressIssueReposForRole && len(projectRepos) > 0 {
 				resp.IssueExecutionSpace = &IssueExecutionSpaceData{
 					Enabled:        true,
 					IssueID:        uuidToString(issue.ID),
@@ -1501,6 +1615,10 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 			resp.SourceContext = h.buildIssueSourceContext(r.Context(), issueForSource, credentialUserID)
 			if resp.Agent != nil {
 				resp.Agent.McpConfig = h.injectSourceCredentialMCPEnv(r.Context(), resp.Agent.McpConfig, resp.SourceContext)
+			}
+			if _, ok := service.ParseIssueSourceSummaryContext(*task); ok {
+				resp.SourceSummaryPrompt = "基于任务的 TAPD 来源内容生成结构化需求摘要。"
+				resp.ThreadName = "生成需求摘要：" + issueForSource.Title
 			}
 		}
 

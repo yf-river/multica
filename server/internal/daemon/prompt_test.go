@@ -69,6 +69,48 @@ func TestBuildPromptIncludesTapdSourceContext(t *testing.T) {
 	assertPromptOrder(t, out, "Start by running `multica issue get issue-1 --output json`", "Source context:")
 }
 
+func TestBuildPromptUsesSourceSummaryPrompt(t *testing.T) {
+	out := BuildPrompt(Task{
+		IssueID:             "issue-summary-1",
+		SourceSummaryPrompt: "基于任务的 TAPD 来源内容生成结构化需求摘要。",
+		SourceContext: &TaskSourceContext{
+			Provider: "tapd",
+			URL:      "https://www.tapd.cn/47654106/markdown_wikis/show/#1147654106001004154",
+			TAPD: &TAPDTaskSourceContext{
+				WorkspaceID:   "47654106",
+				ResourceType:  "markdown_wiki",
+				ResourceID:    "1147654106001004154",
+				FetchProvider: "tapd_mcp",
+				FetchStatus:   "fetched",
+				Title:         "获取租户初始化用户信息",
+				BodyExcerpt:   "租户创建校验场景需要通过租户 ID 查询初始化管理员信息。",
+			},
+		},
+	}, "codex")
+
+	for _, want := range []string{
+		"requirement summarization agent",
+		"Return only Markdown",
+		"Do not call `multica issue update`",
+		"## 需求摘要",
+		"## 验收要点",
+		"TAPD fetched body excerpt: 租户创建校验场景需要通过租户 ID 查询初始化管理员信息。",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("source summary prompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	for _, unexpected := range []string{
+		"Start by running `multica issue get issue-summary-1 --output json`",
+		"Complete the task within your Agent Identity boundaries",
+		"run `multica issue status issue-summary-1 in_review`",
+	} {
+		if strings.Contains(out, unexpected) {
+			t.Fatalf("source summary prompt should not include assignment workflow %q\n--- output ---\n%s", unexpected, out)
+		}
+	}
+}
+
 func TestBuildCommentPromptPlacesSourceContextAfterIssueRead(t *testing.T) {
 	out := BuildPrompt(Task{
 		IssueID:               "issue-comment-1",
@@ -452,6 +494,37 @@ func TestBuildPromptSquadLeaderNoActionForMemberTrigger(t *testing.T) {
 	}
 	if !strings.Contains(out, "不要发布任何评论") {
 		t.Errorf("buildCommentPrompt must contain DO NOT post prohibition for member-triggered squad leader, got:\n%s", out)
+	}
+}
+
+func TestBuildPromptCoordinatorCommentUsesInlineContent(t *testing.T) {
+	task := Task{
+		IssueID:               "issue-123",
+		TriggerCommentID:      "comment-456",
+		TriggerCommentContent: "确认按建议推进",
+		TriggerAuthorType:     "member",
+		TriggerAuthorName:     "Bohan",
+		ExecutionPolicy: &TaskExecutionPolicy{
+			RoleKind:      "coordinator",
+			CanAccessRepo: false,
+		},
+	}
+	out := BuildPrompt(task, "codebuddy")
+	for _, want := range []string{
+		"Coordinator mode has no native file-write tool",
+		"multica issue comment add issue-123 --parent comment-456 --content \"...\"",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("coordinator comment prompt missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	for _, banned := range []string{
+		"--content-file ./reply.md",
+		"Write the reply body to a UTF-8 file",
+	} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("coordinator comment prompt should not require file-write reply form %q\n--- output ---\n%s", banned, out)
+		}
 	}
 }
 

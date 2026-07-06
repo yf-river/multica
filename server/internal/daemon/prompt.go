@@ -20,11 +20,13 @@ func hasSquadLeaderBriefing(instructions string) bool {
 // BuildPrompt constructs the task prompt for an agent CLI.
 // Keep this minimal — detailed instructions live in CLAUDE.md / AGENTS.md
 // injected by execenv.InjectRuntimeConfig. The provider string is threaded
-// through to comment-triggered tasks' per-turn reply template; that template
-// is provider-agnostic AND host-agnostic now (every OS → write a UTF-8 file,
-// post with `--content-file`) because the shell-layer corruption it guards
-// against is not specific to any one provider or host (MUL-2904, #4182).
+// through to comment-triggered tasks' per-turn reply template; ordinary agents
+// use the provider-agnostic `--content-file` template, while coordinator tasks
+// without file-write tools get a compact inline `--content` form.
 func BuildPrompt(task Task, provider string) string {
+	if task.SourceSummaryPrompt != "" {
+		return buildSourceSummaryPrompt(task)
+	}
 	if task.ChatSessionID != "" {
 		return buildChatPrompt(task)
 	}
@@ -43,6 +45,28 @@ func BuildPrompt(task Task, provider string) string {
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). `multica issue comment list %s --output json` returns all comments for the issue (server caps at 2000). On long-running issues use `--recent 20 --output json` to read the 20 most recently active threads, then page older threads via the stderr `Next thread cursor: ...` line and the matching `--before` / `--before-id` until you have enough history. `--since <RFC3339>` is still available for incremental polling and may combine with `--recent`.\n", task.IssueID)
 	writeSourceContextPrompt(&b, task)
+	return b.String()
+}
+
+func buildSourceSummaryPrompt(task Task) string {
+	var b strings.Builder
+	b.WriteString("You are running as a requirement summarization agent for a Multica issue.\n\n")
+	fmt.Fprintf(&b, "Issue ID: %s\n\n", task.IssueID)
+	if strings.TrimSpace(task.SourceSummaryPrompt) != "" {
+		fmt.Fprintf(&b, "Task: %s\n\n", strings.TrimSpace(task.SourceSummaryPrompt))
+	}
+	b.WriteString("Use the source context below as the authoritative requirement source. Your only job is to produce the issue description that should replace the temporary placeholder.\n\n")
+	writeSourceContextPrompt(&b, task)
+	b.WriteString("Output rules:\n\n")
+	b.WriteString("- Return only Markdown in your final answer. Do not call `multica issue update`, do not add comments, and do not change issue status.\n")
+	b.WriteString("- Keep the content concise but faithful. Do not invent requirements, acceptance criteria, implementation details, APIs, database tables, or error codes that are not present in the source.\n")
+	b.WriteString("- Use this exact structure:\n\n")
+	b.WriteString("## 需求摘要\n")
+	b.WriteString("<用 1-3 段中文概括需求背景、目标用户/场景、要解决的问题。>\n\n")
+	b.WriteString("## 验收要点\n")
+	b.WriteString("- <可验证的期望行为或边界条件>\n")
+	b.WriteString("- <如果来源没有明确验收点，写 2-4 条从来源直接归纳出的可验证行为，不要发明实现方案。>\n\n")
+	b.WriteString("If the source context says the TAPD fetch failed or credentials are missing, output a short `## 需求摘要` explaining that the source content is unavailable and do not pretend the requirement was read.\n")
 	return b.String()
 }
 
@@ -206,8 +230,25 @@ func buildCommentPrompt(task Task, provider string) string {
 		fmt.Fprintf(&b, "Read the discussion: `multica issue comment list %s --output json` (long issue? use `--recent 20`).\n\n", task.IssueID)
 	}
 	writeSourceContextPrompt(&b, task)
-	b.WriteString(execenv.BuildCommentReplyInstructions(provider, task.IssueID, task.TriggerCommentID))
+	b.WriteString(buildTaskCommentReplyInstructions(provider, task))
 	return b.String()
+}
+
+func buildTaskCommentReplyInstructions(provider string, task Task) string {
+	if task.TriggerCommentID == "" {
+		return ""
+	}
+	if task.ExecutionPolicy == nil || !strings.EqualFold(strings.TrimSpace(task.ExecutionPolicy.RoleKind), "coordinator") || task.ExecutionPolicy.CanAccessRepo {
+		return execenv.BuildCommentReplyInstructions(provider, task.IssueID, task.TriggerCommentID)
+	}
+	return fmt.Sprintf(
+		"If you decide to reply, post it as a comment — always use the trigger comment ID below, "+
+			"do NOT reuse --parent values from previous turns in this session.\n\n"+
+			"Coordinator mode has no native file-write tool. Use a compact shell-safe inline body and preserve the same issue ID and --parent value:\n\n"+
+			"    multica issue comment add %s --parent %s --content \"...\"\n\n"+
+			"Keep the body concise. Avoid backticks, command substitutions, environment variables, quotes that need escaping, and long multi-paragraph text in inline comments.\n",
+		task.IssueID, task.TriggerCommentID,
+	)
 }
 
 func writeSourceContextPrompt(b *strings.Builder, task Task) {

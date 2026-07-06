@@ -47,6 +47,18 @@ type IssueExecutionSpaceData struct {
 	Ref            string `json:"ref,omitempty"`
 }
 
+// TaskExecutionPolicy is the server-derived capability envelope for this task.
+// It is role/profile scoped and intentionally independent of the runtime
+// provider.
+type TaskExecutionPolicy struct {
+	RoleKey              string   `json:"role_key,omitempty"`
+	RoleKind             string   `json:"role_kind,omitempty"`
+	CanAccessRepo        bool     `json:"can_access_repo"`
+	CanEditRepo          bool     `json:"can_edit_repo"`
+	ProjectSkillMode     string   `json:"project_skill_mode,omitempty"`
+	AllowedProjectSkills []string `json:"allowed_project_skills,omitempty"`
+}
+
 // Task represents a claimed task from the server.
 // Agent data (name, skills) is populated by the claim endpoint.
 type Task struct {
@@ -67,7 +79,9 @@ type Task struct {
 	ProjectTitle             string                   `json:"project_title,omitempty"`               // human-readable project title for context injection
 	ProjectResources         []ProjectResourceData    `json:"project_resources,omitempty"`           // project-scoped resources to expose to the agent
 	IssueExecutionSpace      *IssueExecutionSpaceData `json:"issue_execution_space,omitempty"`       // issue-scoped daemon-managed worktree, when enabled
+	ExecutionPolicy          *TaskExecutionPolicy     `json:"execution_policy,omitempty"`            // role/profile-scoped task capabilities
 	SourceContext            *TaskSourceContext       `json:"source_context,omitempty"`              // structured source/MCP context for TAPD/Gongfeng-backed tasks
+	SourceSummaryPrompt      string                   `json:"source_summary_prompt,omitempty"`       // non-empty for source-summary tasks that should only write a requirement summary
 	PriorSessionID           string                   `json:"prior_session_id,omitempty"`            // Claude session ID from a previous task on this issue
 	PriorWorkDir             string                   `json:"prior_work_dir,omitempty"`              // work_dir from a previous task on this issue
 	TriggerCommentID         string                   `json:"trigger_comment_id,omitempty"`          // comment that triggered this task

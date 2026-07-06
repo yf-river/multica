@@ -550,6 +550,9 @@ var claudeBlockedArgs = map[string]blockedArgMode{
 	"--input-format":    blockedWithValue,  // stream-json protocol
 	"--permission-mode": blockedWithValue,  // bypassPermissions for autonomous operation
 	"--mcp-config":      blockedWithValue,  // set by daemon from agent.mcp_config
+	"--tools":           blockedWithValue,  // execution-policy owned built-in tool envelope
+	"--allowedTools":    blockedWithValue,  // execution-policy owned built-in tool envelope
+	"--allowed-tools":   blockedWithValue,  // execution-policy owned built-in tool envelope
 	// `--effort` is owned by the per-agent thinking_level picker so a
 	// user-supplied custom_arg cannot silently outvote it. The daemon
 	// injects --effort only when opts.ThinkingLevel is set; if a user
@@ -560,20 +563,31 @@ var claudeBlockedArgs = map[string]blockedArgMode{
 }
 
 func buildClaudeArgs(opts ExecOptions, logger *slog.Logger) []string {
+	disallowedTools := append([]string{"AskUserQuestion"}, opts.DisallowedTools...)
+	permissionMode := strings.TrimSpace(opts.PermissionMode)
+	if permissionMode == "" {
+		permissionMode = "bypassPermissions"
+	}
 	args := []string{
 		"-p",
 		"--output-format", "stream-json",
 		"--input-format", "stream-json",
 		"--verbose",
 		"--strict-mcp-config",
-		"--permission-mode", "bypassPermissions",
+		"--permission-mode", permissionMode,
 		// AskUserQuestion is Claude Code's built-in interactive question tool.
 		// The daemon runs Claude in non-interactive stream-json mode and has
 		// no UI for the prompt to render in, so a call returns an empty
 		// answer and the agent ends up "inferring" silently — the user
 		// never sees the question (see GitHub #2588). User-facing
 		// clarification belongs in an issue comment instead.
-		"--disallowedTools", "AskUserQuestion",
+		"--disallowedTools", strings.Join(dedupeToolNames(disallowedTools), ","),
+	}
+	if len(opts.AllowedBuiltinTools) > 0 {
+		args = append(args, "--tools", strings.Join(dedupeToolNames(opts.AllowedBuiltinTools), ","))
+	}
+	if len(opts.AllowedTools) > 0 {
+		args = append(args, "--allowedTools", strings.Join(dedupeToolNames(opts.AllowedTools), ","))
 	}
 	if opts.Model != "" {
 		args = append(args, "--model", opts.Model)
@@ -702,6 +716,27 @@ const (
 	blockedWithValue  blockedArgMode = iota // flag takes a value (next arg or =value)
 	blockedStandalone                       // flag is boolean, no value
 )
+
+func dedupeToolNames(tools []string) []string {
+	if len(tools) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(tools))
+	seen := make(map[string]struct{}, len(tools))
+	for _, tool := range tools {
+		tool = strings.TrimSpace(tool)
+		if tool == "" {
+			continue
+		}
+		key := strings.ToLower(tool)
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, tool)
+	}
+	return out
+}
 
 // filterCustomArgs removes protocol-critical flags from user-configured custom
 // args to prevent breaking daemon↔agent communication. Each backend defines its

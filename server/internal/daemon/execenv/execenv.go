@@ -81,14 +81,16 @@ type TaskContextForEnv struct {
 	ProjectID               string                  // issue's project, when present
 	ProjectTitle            string                  // human-readable project title
 	ProjectResources        []ProjectResourceForEnv // resources attached to the project
-	ChatSessionID           string                  // non-empty for chat tasks
-	AutopilotRunID          string                  // non-empty for autopilot run_only tasks
+	ExecutionPolicy         TaskExecutionPolicyForEnv
+	ChatSessionID           string // non-empty for chat tasks
+	AutopilotRunID          string // non-empty for autopilot run_only tasks
 	AutopilotID             string
 	AutopilotTitle          string
 	AutopilotDescription    string
 	AutopilotSource         string
 	AutopilotTriggerPayload string
 	QuickCreatePrompt       string // non-empty for quick-create tasks
+	SourceSummaryPrompt     string // non-empty for source-summary tasks
 	IsSquadLeader           bool   // true when the agent is acting as a squad leader (may exit silently on no_action)
 	// WorkspaceContext is the workspace-level system prompt (workspace.context
 	// in the DB). Rendered into the brief as `## Workspace Context` when
@@ -113,6 +115,14 @@ type TaskContextForEnv struct {
 	InitiatorID      string
 	InitiatorName    string
 	InitiatorAccount string
+}
+
+type TaskExecutionPolicyForEnv struct {
+	RoleKey          string
+	RoleKind         string
+	CanAccessRepo    bool
+	CanEditRepo      bool
+	ProjectSkillMode string
 }
 
 // SkillContextForEnv represents a skill to be written into the execution environment.

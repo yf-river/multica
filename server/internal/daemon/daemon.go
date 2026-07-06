@@ -2849,6 +2849,10 @@ func providerNeedsInlineSystemPrompt(provider string) bool {
 	}
 }
 
+func coordinatorNeedsInlineSystemPrompt(provider string, policy TaskExecutionPolicy) bool {
+	return supportsClaudeFamilyToolEnvelope(provider) && isCoordinatorWithoutRepoAccess(policy)
+}
+
 // gateResumeToReusedWorkdir clears the task's prior session unless the task
 // runs in the exact workdir the session was recorded against, and reports
 // whether that workdir was reused. CLI backends key their session stores to
@@ -3008,6 +3012,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		skills = task.Agent.Skills
 		instructions = task.Agent.Instructions
 	}
+	executionPolicy := effectiveTaskExecutionPolicy(task)
 
 	// Prepare isolated execution environment.
 	// Repos are passed as metadata only — the agent checks them out on demand
@@ -3027,6 +3032,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		ProjectID:                        task.ProjectID,
 		ProjectTitle:                     task.ProjectTitle,
 		ProjectResources:                 convertProjectResourcesForEnv(task.ProjectResources),
+		ExecutionPolicy:                  convertExecutionPolicyForEnv(executionPolicy),
 		ChatSessionID:                    task.ChatSessionID,
 		AutopilotRunID:                   task.AutopilotRunID,
 		AutopilotID:                      task.AutopilotID,
@@ -3035,6 +3041,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		AutopilotSource:                  task.AutopilotSource,
 		AutopilotTriggerPayload:          strings.TrimSpace(string(task.AutopilotTriggerPayload)),
 		QuickCreatePrompt:                task.QuickCreatePrompt,
+		SourceSummaryPrompt:              task.SourceSummaryPrompt,
 		IsSquadLeader:                    hasSquadLeaderBriefing(instructions),
 		RequestingUserName:               task.RequestingUserName,
 		RequestingUserProfileDescription: task.RequestingUserProfileDescription,
@@ -3081,11 +3088,22 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		openclawMode, openclawGateway = decodeOpenclawRuntimeConfig(task.Agent.RuntimeConfig, d.logger)
 	}
 	var issueSpace *preparedIssueExecutionSpace
-	if issueExecutionSpaceEnabled(task) {
+	if issueExecutionSpaceEnabled(task) && executionPolicy.CanAccessRepo {
 		var err error
 		issueSpace, err = d.prepareIssueExecutionSpace(ctx, task, agentName)
 		if err != nil {
 			return TaskResult{}, fmt.Errorf("prepare issue execution space: %w", err)
+		}
+		projectSkills, err := loadProjectSkillsForPolicy(issueSpace.PrimaryRepoDir, executionPolicy)
+		if err != nil {
+			taskLog.Warn("project skills overlay failed", "error", err, "repo_dir", issueSpace.PrimaryRepoDir)
+		} else if len(projectSkills) > 0 {
+			taskCtx.AgentSkills = mergeSkillContexts(taskCtx.AgentSkills, projectSkills)
+			taskLog.Info("project skills overlay loaded",
+				"repo_dir", issueSpace.PrimaryRepoDir,
+				"mode", executionPolicy.ProjectSkillMode,
+				"skills", len(projectSkills),
+			)
 		}
 	}
 	if task.PriorWorkDir != "" && issueSpace == nil {
@@ -3114,7 +3132,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			Task:            taskCtx,
 		}
 		if issueSpace != nil {
-			prepParams.ManagedWorkDir = issueSpace.PrimaryRepoDir
+			prepParams.ManagedWorkDir = issueSpace.RootDir
 		}
 		env, err = execenv.Prepare(prepParams, d.logger)
 		if err != nil {
@@ -3211,8 +3229,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 	if issueSpace != nil {
 		agentEnv["MULTICA_ISSUE_SPACE_ROOT"] = issueSpace.RootDir
-		agentEnv["MULTICA_PRIMARY_REPO_DIR"] = issueSpace.PrimaryRepoDir
 		agentEnv["MULTICA_ARTIFACT_DIR"] = issueSpace.ArtifactDir
+		if executionPolicy.CanAccessRepo {
+			agentEnv["MULTICA_PRIMARY_REPO_DIR"] = issueSpace.PrimaryRepoDir
+		}
 	}
 	if task.AutopilotRunID != "" {
 		agentEnv["MULTICA_AUTOPILOT_RUN_ID"] = task.AutopilotRunID
@@ -3322,6 +3342,14 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	}
 
 	taskStart := time.Now()
+	repoStatusBefore := ""
+	if issueSpace != nil && !executionPolicy.CanEditRepo {
+		if status, err := gitPorcelainStatus(ctx, issueSpace.PrimaryRepoDir); err == nil {
+			repoStatusBefore = status
+		} else {
+			taskLog.Warn("repo edit guard: before status unavailable", "error", err, "repo_dir", issueSpace.PrimaryRepoDir)
+		}
+	}
 
 	var customArgs []string
 	extraArgs := defaultArgsForProvider(d.cfg, provider)
@@ -3378,15 +3406,21 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			thinkingLevel = ""
 		}
 	}
+	toolPolicy := executionPolicyForToolEnvelope(task, executionPolicy)
 	execOpts := agent.ExecOptions{
 		Cwd:                       env.WorkDir,
 		Model:                     model,
 		ThreadName:                deriveTaskThreadName(task),
+		MaxTurns:                  maxTurnsForExecutionPolicy(0, toolPolicy),
 		Timeout:                   d.cfg.AgentTimeout,
 		SemanticInactivityTimeout: d.cfg.CodexSemanticInactivityTimeout,
 		ResumeSessionID:           task.PriorSessionID,
 		ExtraArgs:                 extraArgs,
 		CustomArgs:                customArgs,
+		AllowedBuiltinTools:       allowedBuiltinToolsForExecutionPolicy(provider, toolPolicy),
+		AllowedTools:              allowedToolsForExecutionPolicy(provider, toolPolicy),
+		DisallowedTools:           disallowedToolsForExecutionPolicy(provider, toolPolicy),
+		PermissionMode:            permissionModeForExecutionPolicy(provider, toolPolicy),
 		McpConfig:                 mcpConfig,
 		ThinkingLevel:             thinkingLevel,
 		OpenclawMode:              openclawMode,
@@ -3412,7 +3446,9 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	// Hermes loads AGENTS.md / .agent_context itself. Prepending the full runtime
 	// brief into the ACP user prompt duplicates that context, bloats every turn,
 	// and has triggered upstream safety filters on harmless tasks.
-	if providerNeedsInlineSystemPrompt(provider) {
+	if coordinatorNeedsInlineSystemPrompt(provider, toolPolicy) {
+		execOpts.SystemPrompt = runtimeBrief
+	} else if providerNeedsInlineSystemPrompt(provider) {
 		execOpts.SystemPrompt = runtimeBrief
 	}
 
@@ -3422,6 +3458,10 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 		"prompt_bytes", len(prompt),
 		"custom_args", len(customArgs),
 		"extra_args", len(extraArgs),
+		"allowed_builtin_tools", execOpts.AllowedBuiltinTools,
+		"allowed_tools", execOpts.AllowedTools,
+		"disallowed_tools", execOpts.DisallowedTools,
+		"permission_mode", execOpts.PermissionMode,
 		"mcp_config", len(mcpConfig) > 0,
 		"inline_system_prompt", execOpts.SystemPrompt != "",
 		"resume_session", execOpts.ResumeSessionID != "",
@@ -3447,6 +3487,19 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			result = retryResult
 			result.Usage = mergeUsage(firstUsage, result.Usage)
 			tools = retryTools
+		}
+	}
+	repoEditViolation := ""
+	if issueSpace != nil && !executionPolicy.CanEditRepo && repoStatusBefore != "" {
+		if status, err := gitPorcelainStatus(ctx, issueSpace.PrimaryRepoDir); err != nil {
+			taskLog.Warn("repo edit guard: after status unavailable", "error", err, "repo_dir", issueSpace.PrimaryRepoDir)
+		} else if status != repoStatusBefore {
+			repoEditViolation = fmt.Sprintf("角色 %s 不允许修改仓库，但本次运行改变了 %s 的 git 工作区状态。请由 04-开发等允许编辑的角色执行代码改动。", firstNonEmptyString(executionPolicy.RoleKey, executionPolicy.RoleKind, "current"), issueSpace.PrimaryRepoDir)
+			taskLog.Warn("repo edit guard blocked non-editing role",
+				"role_key", executionPolicy.RoleKey,
+				"role_kind", executionPolicy.RoleKind,
+				"repo_dir", issueSpace.PrimaryRepoDir,
+			)
 		}
 	}
 
@@ -3485,6 +3538,19 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 	if issueSpace != nil {
 		resultBranchName = issueSpace.BranchName
 		resultArtifactDir = issueSpace.ArtifactDir
+	}
+	if repoEditViolation != "" {
+		return TaskResult{
+			Status:        "blocked",
+			Comment:       repoEditViolation,
+			BranchName:    resultBranchName,
+			SessionID:     result.SessionID,
+			WorkDir:       env.WorkDir,
+			ArtifactDir:   resultArtifactDir,
+			EnvRoot:       env.RootDir,
+			FailureReason: "role_policy_violation",
+			Usage:         usageEntries,
+		}, nil
 	}
 
 	switch result.Status {
@@ -4060,6 +4126,171 @@ func convertReposForEnv(repos []RepoData) []execenv.RepoContextForEnv {
 	return result
 }
 
+func effectiveTaskExecutionPolicy(task Task) TaskExecutionPolicy {
+	if task.ExecutionPolicy == nil {
+		return TaskExecutionPolicy{
+			RoleKind:         "agent",
+			CanAccessRepo:    true,
+			CanEditRepo:      true,
+			ProjectSkillMode: "all",
+		}
+	}
+	policy := *task.ExecutionPolicy
+	if strings.TrimSpace(policy.RoleKind) == "" {
+		policy.RoleKind = "agent"
+	}
+	if strings.TrimSpace(policy.ProjectSkillMode) == "" {
+		policy.ProjectSkillMode = "all"
+	}
+	return policy
+}
+
+func convertExecutionPolicyForEnv(policy TaskExecutionPolicy) execenv.TaskExecutionPolicyForEnv {
+	return execenv.TaskExecutionPolicyForEnv{
+		RoleKey:          policy.RoleKey,
+		RoleKind:         policy.RoleKind,
+		CanAccessRepo:    policy.CanAccessRepo,
+		CanEditRepo:      policy.CanEditRepo,
+		ProjectSkillMode: policy.ProjectSkillMode,
+	}
+}
+
+func mergeSkillContexts(base []execenv.SkillContextForEnv, extra []execenv.SkillContextForEnv) []execenv.SkillContextForEnv {
+	if len(extra) == 0 {
+		return base
+	}
+	seen := make(map[string]struct{}, len(base)+len(extra))
+	for _, skill := range base {
+		seen[strings.ToLower(strings.TrimSpace(skill.Name))] = struct{}{}
+	}
+	out := append([]execenv.SkillContextForEnv(nil), base...)
+	for _, skill := range extra {
+		key := strings.ToLower(strings.TrimSpace(skill.Name))
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		out = append(out, skill)
+	}
+	return out
+}
+
+func loadProjectSkillsForPolicy(repoDir string, policy TaskExecutionPolicy) ([]execenv.SkillContextForEnv, error) {
+	if strings.TrimSpace(repoDir) == "" || policy.ProjectSkillMode == "none" {
+		return nil, nil
+	}
+	var result []execenv.SkillContextForEnv
+	for _, root := range []string{
+		filepath.Join(repoDir, ".codebuddy", "skills"),
+		filepath.Join(repoDir, ".codex", "skills"),
+		filepath.Join(repoDir, ".claude", "skills"),
+	} {
+		entries, err := os.ReadDir(root)
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, err
+		}
+		for _, entry := range entries {
+			if !entry.IsDir() {
+				continue
+			}
+			name := entry.Name()
+			if !projectSkillAllowedByPolicy(name, policy) {
+				continue
+			}
+			skill, ok, err := readProjectSkill(filepath.Join(root, name), name)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				result = append(result, skill)
+			}
+		}
+	}
+	return result, nil
+}
+
+func projectSkillAllowedByPolicy(name string, policy TaskExecutionPolicy) bool {
+	key := strings.ToLower(strings.TrimSpace(name))
+	switch policy.ProjectSkillMode {
+	case "none":
+		return false
+	case "all":
+		return true
+	case "stage":
+		for _, allowed := range policy.AllowedProjectSkills {
+			if key == strings.ToLower(strings.TrimSpace(allowed)) {
+				return true
+			}
+		}
+		return false
+	case "implementation":
+		return key == "04-implement" || !isSOPStageSkillName(key)
+	case "verification":
+		return key == "05-verify" || !isSOPStageSkillName(key)
+	default:
+		return true
+	}
+}
+
+func isSOPStageSkillName(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "01-clarify", "02-design", "03-task-split", "04-implement", "05-verify":
+		return true
+	default:
+		return false
+	}
+}
+
+func readProjectSkill(dir string, name string) (execenv.SkillContextForEnv, bool, error) {
+	content, err := os.ReadFile(filepath.Join(dir, "SKILL.md"))
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return execenv.SkillContextForEnv{}, false, nil
+		}
+		return execenv.SkillContextForEnv{}, false, err
+	}
+	skill := execenv.SkillContextForEnv{Name: name, Content: string(content)}
+	err = filepath.WalkDir(dir, func(path string, entry os.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if entry.IsDir() {
+			return nil
+		}
+		rel, err := filepath.Rel(dir, path)
+		if err != nil {
+			return err
+		}
+		if rel == "SKILL.md" {
+			return nil
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		skill.Files = append(skill.Files, execenv.SkillFileContextForEnv{Path: rel, Content: string(data)})
+		return nil
+	})
+	if err != nil {
+		return execenv.SkillContextForEnv{}, false, err
+	}
+	return skill, true, nil
+}
+
+func gitPorcelainStatus(ctx context.Context, repoDir string) (string, error) {
+	checkCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(checkCtx, "git", "-C", repoDir, "status", "--porcelain=v1", "--untracked-files=all")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	return string(out), nil
+}
+
 func convertProjectResourcesForEnv(resources []ProjectResourceData) []execenv.ProjectResourceForEnv {
 	if len(resources) == 0 {
 		return nil
@@ -4210,4 +4441,139 @@ func defaultArgsForProvider(cfg Config, provider string) []string {
 		return nil
 	}
 	return append([]string(nil), args...)
+}
+
+func executionPolicyForToolEnvelope(task Task, policy TaskExecutionPolicy) TaskExecutionPolicy {
+	if strings.TrimSpace(task.SourceSummaryPrompt) != "" {
+		return TaskExecutionPolicy{RoleKind: "agent", CanAccessRepo: false, CanEditRepo: false, ProjectSkillMode: "none"}
+	}
+	return policy
+}
+
+func allowedBuiltinToolsForExecutionPolicy(provider string, policy TaskExecutionPolicy) []string {
+	if !supportsClaudeFamilyToolEnvelope(provider) {
+		return nil
+	}
+	if isCoordinatorWithoutRepoAccess(policy) {
+		return []string{"Bash"}
+	}
+	if isNoRepoBoundedStage(policy) {
+		return []string{"Bash", "Write"}
+	}
+	return nil
+}
+
+func allowedToolsForExecutionPolicy(provider string, policy TaskExecutionPolicy) []string {
+	if !supportsClaudeFamilyToolEnvelope(provider) {
+		return nil
+	}
+	if isCoordinatorWithoutRepoAccess(policy) {
+		return []string{"Bash(multica:*)"}
+	}
+	if isNoRepoBoundedStage(policy) {
+		return []string{"Bash(multica:*)"}
+	}
+	return nil
+}
+
+func permissionModeForExecutionPolicy(provider string, policy TaskExecutionPolicy) string {
+	if !supportsClaudeFamilyToolEnvelope(provider) {
+		return ""
+	}
+	if isCoordinatorWithoutRepoAccess(policy) {
+		return "default"
+	}
+	if isNoRepoBoundedStage(policy) {
+		return "default"
+	}
+	return ""
+}
+
+func disallowedToolsForExecutionPolicy(provider string, policy TaskExecutionPolicy) []string {
+	if !supportsClaudeFamilyToolEnvelope(provider) {
+		return nil
+	}
+	if isCoordinatorWithoutRepoAccess(policy) {
+		return []string{
+			"Task",
+			"TaskCreate",
+			"TaskUpdate",
+			"Agent",
+			"TodoRead",
+			"TodoWrite",
+			"Read",
+			"Edit",
+			"Write",
+			"MultiEdit",
+			"Grep",
+			"Glob",
+			"LS",
+			"NotebookRead",
+			"NotebookEdit",
+		}
+	}
+	if isNoRepoBoundedStage(policy) {
+		return []string{
+			"Task",
+			"TaskCreate",
+			"TaskUpdate",
+			"Agent",
+			"TodoRead",
+			"TodoWrite",
+			"Read",
+			"Edit",
+			"MultiEdit",
+			"Grep",
+			"Glob",
+			"LS",
+			"NotebookRead",
+			"NotebookEdit",
+		}
+	}
+	if isBoundedReviewStage(policy) {
+		return []string{
+			"Task",
+			"TaskCreate",
+			"TaskUpdate",
+			"Agent",
+			"TodoRead",
+			"TodoWrite",
+			"Edit",
+			"Write",
+			"MultiEdit",
+			"NotebookEdit",
+		}
+	}
+	return nil
+}
+
+func maxTurnsForExecutionPolicy(configured int, policy TaskExecutionPolicy) int {
+	if configured > 0 {
+		return configured
+	}
+	if isCoordinatorWithoutRepoAccess(policy) {
+		return 12
+	}
+	return 0
+}
+
+func supportsClaudeFamilyToolEnvelope(provider string) bool {
+	return provider == "claude" || provider == "codebuddy"
+}
+
+func isCoordinatorWithoutRepoAccess(policy TaskExecutionPolicy) bool {
+	return strings.EqualFold(strings.TrimSpace(policy.RoleKind), "coordinator") && !policy.CanAccessRepo
+}
+
+func isNoRepoBoundedStage(policy TaskExecutionPolicy) bool {
+	return isBoundedReviewStage(policy) && !policy.CanAccessRepo
+}
+
+func isBoundedReviewStage(policy TaskExecutionPolicy) bool {
+	switch strings.ToLower(strings.TrimSpace(policy.RoleKind)) {
+	case "planning_stage", "verification_stage":
+		return true
+	default:
+		return false
+	}
 }

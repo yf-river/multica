@@ -483,6 +483,9 @@ func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 	if ctx.QuickCreatePrompt != "" {
 		return renderQuickCreateContext(ctx)
 	}
+	if ctx.SourceSummaryPrompt != "" {
+		return renderSourceSummaryContext(ctx)
+	}
 
 	var b strings.Builder
 
@@ -508,6 +511,22 @@ func renderIssueContext(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("\n")
 	}
 
+	return b.String()
+}
+
+func renderSourceSummaryContext(ctx TaskContextForEnv) string {
+	var b strings.Builder
+	b.WriteString("# Source Summary\n\n")
+	b.WriteString("**Trigger:** TAPD source summary generation\n\n")
+	fmt.Fprintf(&b, "**Issue ID:** %s\n\n", ctx.IssueID)
+	b.WriteString("Return only the requested Markdown summary in your final output. The platform will write it back to the issue description.\n\n")
+	if len(ctx.AgentSkills) > 0 {
+		b.WriteString("## Agent Skills\n\n")
+		for _, skill := range ctx.AgentSkills {
+			fmt.Fprintf(&b, "- **%s**\n", skill.Name)
+		}
+		b.WriteString("\n")
+	}
 	return b.String()
 }
 

@@ -43,6 +43,55 @@ func createDaemonTestRepo(t *testing.T) string {
 	return dir
 }
 
+func writeDaemonTestProjectSkill(t *testing.T, repoDir, name string) {
+	t.Helper()
+	dir := filepath.Join(repoDir, ".codebuddy", "skills", name)
+	if err := os.MkdirAll(filepath.Join(dir, "examples"), 0o755); err != nil {
+		t.Fatalf("mkdir skill %s: %v", name, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("# "+name), 0o644); err != nil {
+		t.Fatalf("write skill %s: %v", name, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "examples", "example.md"), []byte("example"), 0o644); err != nil {
+		t.Fatalf("write skill file %s: %v", name, err)
+	}
+}
+
+func TestLoadProjectSkillsForPolicyFiltersSOPStageSkills(t *testing.T) {
+	repoDir := t.TempDir()
+	for _, name := range []string{"01-clarify", "03-task-split", "04-implement", "05-verify", "add-api"} {
+		writeDaemonTestProjectSkill(t, repoDir, name)
+	}
+
+	pmSkills, err := loadProjectSkillsForPolicy(repoDir, TaskExecutionPolicy{ProjectSkillMode: "none"})
+	if err != nil {
+		t.Fatalf("load PM skills: %v", err)
+	}
+	if len(pmSkills) != 0 {
+		t.Fatalf("PM should not receive project skills, got %+v", pmSkills)
+	}
+
+	stageSkills, err := loadProjectSkillsForPolicy(repoDir, TaskExecutionPolicy{ProjectSkillMode: "stage", AllowedProjectSkills: []string{"03-task-split"}})
+	if err != nil {
+		t.Fatalf("load stage skills: %v", err)
+	}
+	if len(stageSkills) != 1 || stageSkills[0].Name != "03-task-split" || len(stageSkills[0].Files) != 1 {
+		t.Fatalf("03 should receive only its stage skill with files, got %+v", stageSkills)
+	}
+
+	implSkills, err := loadProjectSkillsForPolicy(repoDir, TaskExecutionPolicy{ProjectSkillMode: "implementation"})
+	if err != nil {
+		t.Fatalf("load implementation skills: %v", err)
+	}
+	gotImpl := map[string]bool{}
+	for _, skill := range implSkills {
+		gotImpl[skill.Name] = true
+	}
+	if !gotImpl["04-implement"] || !gotImpl["add-api"] || gotImpl["01-clarify"] || gotImpl["03-task-split"] || gotImpl["05-verify"] {
+		t.Fatalf("04 implementation skill set = %+v, want 04-implement + operation skills only", gotImpl)
+	}
+}
+
 func TestNormalizeServerBaseURL(t *testing.T) {
 	t.Parallel()
 
@@ -83,6 +132,115 @@ func TestIsBlockedEnvKey(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestExecutionPolicyToolEnvelopeForCoordinator(t *testing.T) {
+	t.Parallel()
+
+	pm := TaskExecutionPolicy{RoleKind: "coordinator", CanAccessRepo: false}
+	if got := allowedBuiltinToolsForExecutionPolicy("codebuddy", pm); len(got) != 1 || got[0] != "Bash" {
+		t.Fatalf("coordinator allowed tools = %v, want [Bash]", got)
+	}
+	if got := allowedToolsForExecutionPolicy("codebuddy", pm); len(got) != 1 || got[0] != "Bash(multica:*)" {
+		t.Fatalf("coordinator scoped allowed tools = %v, want [Bash(multica:*)]", got)
+	}
+	if got := permissionModeForExecutionPolicy("codebuddy", pm); got != "default" {
+		t.Fatalf("codebuddy coordinator permission mode = %q, want default", got)
+	}
+	if got := maxTurnsForExecutionPolicy(0, pm); got != 12 {
+		t.Fatalf("coordinator default max turns = %d, want 12", got)
+	}
+	if got := maxTurnsForExecutionPolicy(5, pm); got != 5 {
+		t.Fatalf("configured coordinator max turns = %d, want 5", got)
+	}
+	if !coordinatorNeedsInlineSystemPrompt("codebuddy", pm) {
+		t.Fatal("codebuddy coordinator should receive inline system prompt")
+	}
+	if !coordinatorNeedsInlineSystemPrompt("claude", pm) {
+		t.Fatal("claude coordinator should receive inline system prompt")
+	}
+	if coordinatorNeedsInlineSystemPrompt("codex", pm) {
+		t.Fatal("codex coordinator should not use claude-family inline prompt path")
+	}
+	denied := disallowedToolsForExecutionPolicy("codebuddy", pm)
+	for _, want := range []string{"TaskCreate", "TaskUpdate", "Agent", "Read", "Grep", "Glob", "Edit"} {
+		if !containsString(denied, want) {
+			t.Fatalf("coordinator denied tools missing %q: %v", want, denied)
+		}
+	}
+	if !containsString(denied, "Write") {
+		t.Fatalf("coordinator denied tools missing Write: %v", denied)
+	}
+
+	impl := TaskExecutionPolicy{RoleKind: "implementation_stage", CanAccessRepo: true, CanEditRepo: true}
+	if got := allowedBuiltinToolsForExecutionPolicy("codebuddy", impl); got != nil {
+		t.Fatalf("implementation allowed tools = %v, want nil", got)
+	}
+	if got := allowedToolsForExecutionPolicy("codebuddy", impl); got != nil {
+		t.Fatalf("implementation scoped allowed tools = %v, want nil", got)
+	}
+	if got := permissionModeForExecutionPolicy("codebuddy", impl); got != "" {
+		t.Fatalf("implementation permission mode = %q, want empty", got)
+	}
+	if got := maxTurnsForExecutionPolicy(0, impl); got != 0 {
+		t.Fatalf("implementation default max turns = %d, want 0", got)
+	}
+	if coordinatorNeedsInlineSystemPrompt("codebuddy", impl) {
+		t.Fatal("implementation stage should not receive coordinator inline system prompt")
+	}
+	if got := disallowedToolsForExecutionPolicy("codebuddy", impl); got != nil {
+		t.Fatalf("implementation denied tools = %v, want nil", got)
+	}
+
+	planning := TaskExecutionPolicy{RoleKind: "planning_stage", CanAccessRepo: true, CanEditRepo: false}
+	planningDenied := disallowedToolsForExecutionPolicy("codebuddy", planning)
+	for _, want := range []string{"TaskCreate", "TaskUpdate", "Agent", "TodoWrite", "Edit", "Write", "MultiEdit"} {
+		if !containsString(planningDenied, want) {
+			t.Fatalf("planning denied tools missing %q: %v", want, planningDenied)
+		}
+	}
+	for _, allowed := range []string{"Read", "Grep", "Glob", "LS"} {
+		if containsString(planningDenied, allowed) {
+			t.Fatalf("planning stage should retain read/search tool %q: %v", allowed, planningDenied)
+		}
+	}
+	noRepoPlanning := TaskExecutionPolicy{RoleKind: "planning_stage", CanAccessRepo: false, CanEditRepo: false}
+	if got := allowedBuiltinToolsForExecutionPolicy("codebuddy", noRepoPlanning); len(got) != 2 || got[0] != "Bash" || got[1] != "Write" {
+		t.Fatalf("no-repo planning allowed tools = %v, want [Bash Write]", got)
+	}
+	if got := allowedToolsForExecutionPolicy("codebuddy", noRepoPlanning); len(got) != 1 || got[0] != "Bash(multica:*)" {
+		t.Fatalf("no-repo planning scoped allowed tools = %v, want [Bash(multica:*)]", got)
+	}
+	noRepoPlanningDenied := disallowedToolsForExecutionPolicy("codebuddy", noRepoPlanning)
+	for _, want := range []string{"TaskCreate", "TaskUpdate", "Agent", "Read", "Grep", "Glob", "LS", "Edit", "MultiEdit"} {
+		if !containsString(noRepoPlanningDenied, want) {
+			t.Fatalf("no-repo planning denied tools missing %q: %v", want, noRepoPlanningDenied)
+		}
+	}
+	if containsString(noRepoPlanningDenied, "Write") {
+		t.Fatalf("no-repo planning must allow Write for reply/artifact files: %v", noRepoPlanningDenied)
+	}
+
+	if got := allowedBuiltinToolsForExecutionPolicy("codex", pm); got != nil {
+		t.Fatalf("codex tool envelope = %v, want nil", got)
+	}
+
+	summaryPolicy := executionPolicyForToolEnvelope(Task{SourceSummaryPrompt: "summarize"}, pm)
+	if got := allowedBuiltinToolsForExecutionPolicy("codebuddy", summaryPolicy); got != nil {
+		t.Fatalf("source-summary allowed tools = %v, want nil", got)
+	}
+	if got := disallowedToolsForExecutionPolicy("codebuddy", summaryPolicy); got != nil {
+		t.Fatalf("source-summary denied tools = %v, want nil", got)
+	}
+}
+
+func containsString(values []string, want string) bool {
+	for _, value := range values {
+		if value == want {
+			return true
+		}
+	}
+	return false
 }
 
 func TestTaskScopedAuthToken(t *testing.T) {

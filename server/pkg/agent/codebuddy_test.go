@@ -11,6 +11,15 @@ import (
 	"time"
 )
 
+func valueAfterArg(args []string, name string) string {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == name {
+			return args[i+1]
+		}
+	}
+	return ""
+}
+
 func TestBuildCodebuddyArgs_Basic(t *testing.T) {
 	t.Parallel()
 
@@ -141,6 +150,43 @@ func TestBuildCodebuddyArgs_Resume(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("expected --resume sess-abc123 in args: %v", args)
+	}
+}
+
+func TestBuildCodebuddyArgs_AppliesToolEnvelope(t *testing.T) {
+	t.Parallel()
+
+	args := buildCodebuddyArgs(ExecOptions{
+		AllowedBuiltinTools: []string{"Bash"},
+		AllowedTools:        []string{"Bash(multica:*)"},
+		DisallowedTools:     []string{"TaskCreate", "Agent", "Read", "TaskCreate"},
+		CustomArgs:          []string{"--tools", "default", "--allowedTools", "Read,Edit"},
+	}, slog.Default())
+
+	if got := valueAfterArg(args, "--tools"); got != "Bash" {
+		t.Fatalf("expected --tools Bash, got %q in %v", got, args)
+	}
+	if got := valueAfterArg(args, "--permission-mode"); got != "bypassPermissions" {
+		t.Fatalf("expected default --permission-mode bypassPermissions, got %q in %v", got, args)
+	}
+	if got := valueAfterArg(args, "--disallowedTools"); got != "AskUserQuestion,TaskCreate,Agent,Read" {
+		t.Fatalf("unexpected --disallowedTools %q in %v", got, args)
+	}
+	if got := valueAfterArg(args, "--allowedTools"); got != "Bash(multica:*)" {
+		t.Fatalf("unexpected --allowedTools %q in %v", got, args)
+	}
+	if strings.Contains(strings.Join(args, " "), "--tools default") || strings.Contains(strings.Join(args, " "), "--allowedTools Read,Edit") {
+		t.Fatalf("custom tool envelope args should be filtered: %v", args)
+	}
+}
+
+func TestBuildCodebuddyArgs_AppliesPermissionMode(t *testing.T) {
+	t.Parallel()
+
+	args := buildCodebuddyArgs(ExecOptions{PermissionMode: "default"}, slog.Default())
+
+	if got := valueAfterArg(args, "--permission-mode"); got != "default" {
+		t.Fatalf("expected --permission-mode default, got %q in %v", got, args)
 	}
 }
 

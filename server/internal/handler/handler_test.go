@@ -969,8 +969,8 @@ func TestCreateSubIssueUsesExplicitProjectOverParentProject(t *testing.T) {
 	}
 }
 
-func TestCreateIssueReusesDuplicateOpenChild(t *testing.T) {
-	var projectID, parentID, childID string
+func TestCreateIssueAllowsDuplicateOpenChild(t *testing.T) {
+	var projectID, parentID, childID, duplicateID string
 	defer func() {
 		if parentID != "" {
 			testPool.Exec(context.Background(), `DELETE FROM issue WHERE parent_issue_id = $1 OR id = $1`, parentID)
@@ -1031,13 +1031,14 @@ func TestCreateIssueReusesDuplicateOpenChild(t *testing.T) {
 	w = httptest.NewRecorder()
 	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, body)
 	testHandler.CreateIssue(w, req)
-	if w.Code != http.StatusOK {
-		t.Fatalf("CreateIssue duplicate child: expected 200, got %d: %s", w.Code, w.Body.String())
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue duplicate child: expected 201, got %d: %s", w.Code, w.Body.String())
 	}
 	var duplicate IssueResponse
 	json.NewDecoder(w.Body).Decode(&duplicate)
-	if duplicate.ID != childID {
-		t.Fatalf("duplicate child id = %s, want existing %s", duplicate.ID, childID)
+	duplicateID = duplicate.ID
+	if duplicateID == childID {
+		t.Fatalf("duplicate child reused existing issue id %s", duplicateID)
 	}
 
 	var count int
@@ -1047,8 +1048,56 @@ func TestCreateIssueReusesDuplicateOpenChild(t *testing.T) {
 	`, testWorkspaceID, parentID, projectID).Scan(&count); err != nil {
 		t.Fatalf("count duplicate children: %v", err)
 	}
+	if count != 2 {
+		t.Fatalf("duplicate child count = %d, want 2", count)
+	}
+}
+
+func TestCreateIssueReusesQuickCreateOrigin(t *testing.T) {
+	originID := fmt.Sprintf("00000000-0000-4000-8000-%012x", time.Now().UnixNano()&0xffffffffffff)
+	defer func() {
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE workspace_id = $1 AND origin_type = 'quick_create' AND origin_id = $2`, testWorkspaceID, originID)
+	}()
+
+	body := map[string]any{
+		"title":       "Quick create idempotent issue " + originID,
+		"origin_type": "quick_create",
+		"origin_id":   originID,
+	}
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, body)
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue first origin create: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var first IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&first); err != nil {
+		t.Fatalf("decode first origin create: %v", err)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, body)
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("CreateIssue duplicate origin create: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var second IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&second); err != nil {
+		t.Fatalf("decode duplicate origin create: %v", err)
+	}
+	if second.ID != first.ID {
+		t.Fatalf("duplicate origin returned issue %s, want %s", second.ID, first.ID)
+	}
+
+	var count int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*) FROM issue
+		WHERE workspace_id = $1 AND origin_type = 'quick_create' AND origin_id = $2
+	`, testWorkspaceID, originID).Scan(&count); err != nil {
+		t.Fatalf("count origin issues: %v", err)
+	}
 	if count != 1 {
-		t.Fatalf("duplicate child count = %d, want 1", count)
+		t.Fatalf("origin issue count = %d, want 1", count)
 	}
 }
 

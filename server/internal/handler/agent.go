@@ -230,6 +230,18 @@ type IssueExecutionSpaceData struct {
 	Ref            string `json:"ref,omitempty"`
 }
 
+// TaskExecutionPolicyData is a daemon-facing capability policy for the current
+// task. It is derived from the agent's role in a squad/profile, not from the
+// runtime provider.
+type TaskExecutionPolicyData struct {
+	RoleKey              string   `json:"role_key,omitempty"`
+	RoleKind             string   `json:"role_kind,omitempty"`
+	CanAccessRepo        bool     `json:"can_access_repo"`
+	CanEditRepo          bool     `json:"can_edit_repo"`
+	ProjectSkillMode     string   `json:"project_skill_mode,omitempty"` // none, stage, implementation, verification, all
+	AllowedProjectSkills []string `json:"allowed_project_skills,omitempty"`
+}
+
 type AgentTaskResponse struct {
 	ID          string `json:"id"`
 	AgentID     string `json:"agent_id"`
@@ -261,7 +273,9 @@ type AgentTaskResponse struct {
 	ProjectTitle        string                   `json:"project_title,omitempty"`     // for surfacing in agent context
 	ProjectResources    []ProjectResourceData    `json:"project_resources,omitempty"` // resources attached to the project
 	IssueExecutionSpace *IssueExecutionSpaceData `json:"issue_execution_space,omitempty"`
+	ExecutionPolicy     *TaskExecutionPolicyData `json:"execution_policy,omitempty"`
 	SourceContext       *TaskSourceContext       `json:"source_context,omitempty"` // structured source/MCP context for TAPD/Gongfeng-backed tasks
+	SourceSummaryPrompt string                   `json:"source_summary_prompt,omitempty"`
 	CreatedAt           string                   `json:"created_at"`
 	PriorSessionID      string                   `json:"prior_session_id,omitempty"` // session ID from a previous task on same issue
 	PriorWorkDir        string                   `json:"prior_work_dir,omitempty"`   // work_dir from a previous task on same issue
@@ -283,6 +297,7 @@ type AgentTaskResponse struct {
 	TriggerSummary           *string              `json:"trigger_summary,omitempty"`             // canonical short description snapshot — comment text / autopilot title — taken at task creation; survives source edits/deletes
 	TriggerAuthorType        string               `json:"trigger_author_type,omitempty"`         // "agent" or "member" — author kind of the triggering comment
 	TriggerAuthorName        string               `json:"trigger_author_name,omitempty"`         // display name of the triggering comment author
+	TriggerCommentCreatedAt  string               `json:"trigger_comment_created_at,omitempty"`  // timestamp of the triggering comment for responsibility-window timelines
 	NewCommentCount          int                  `json:"new_comment_count,omitempty"`           // trigger-thread comments since last run; excludes injected trigger + own comments; omitempty so old daemons ignore it
 	NewCommentsSince         string               `json:"new_comments_since,omitempty"`          // RFC3339 anchor (last run's started_at) the count is measured from; omitempty so old daemons ignore it
 	ChatSessionID            string               `json:"chat_session_id,omitempty"`             // non-empty for chat tasks
