@@ -1317,6 +1317,54 @@ func TestEnqueueCommentAgentTriggers_AllowsParentSOPStageWhenRequiredChildrenDon
 	}
 }
 
+func TestEnqueueCommentAgentTriggers_AllowsCrossProjectChildWithoutFurtherChildren(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	fx := newCrossProjectGateSOPFixture(t, false)
+
+	var parentID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status)
+		VALUES ($1, 'member', $2, 'parent for cross-project child', 'in_progress')
+		RETURNING id
+	`, testWorkspaceID, testUserID).Scan(&parentID); err != nil {
+		t.Fatalf("create parent issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, parentID)
+	})
+	if _, err := testPool.Exec(ctx, `
+		UPDATE issue SET parent_issue_id = $1 WHERE id = $2
+	`, parentID, fx.IssueID); err != nil {
+		t.Fatalf("mark issue as child: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content)
+		VALUES ($1, $2, 'agent', $3, $4)
+	`, testWorkspaceID, fx.IssueID, fx.LeaderID, "本 issue 是父 issue 的跨项目 child。\n\n03-任务拆分已闭环。无跨项目 child issue 需创建（仅目标项目自身变更）。"); err != nil {
+		t.Fatalf("insert child context comment: %v", err)
+	}
+	comment := insertSOPPMMentionComment(t, fx)
+
+	enqueueMentionedAgentTasksForTest(t, ctx, fx.Issue, comment, nil, "agent", fx.LeaderID)
+
+	if got := countQueuedOrDispatched(t, fx.ImplementID, fx.IssueID); got != 1 {
+		t.Fatalf("child 04 task count = %d, want 1 when no further child is required", got)
+	}
+	var gateComments int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*) FROM comment
+		WHERE issue_id = $1 AND author_type = 'system' AND content LIKE '%平台已阻止父任务阶段调度%'
+	`, fx.IssueID).Scan(&gateComments); err != nil {
+		t.Fatalf("count gate comments: %v", err)
+	}
+	if gateComments != 0 {
+		t.Fatalf("gate comment count = %d, want 0", gateComments)
+	}
+}
+
 // TestCreateRetryTask_InheritsIsLeaderTask locks the retry-clone contract for
 // MUL-2218: auto-retry of a leader-role task must produce a child task that is
 // also is_leader_task=true. Without this, MaybeRetryFailedTask silently

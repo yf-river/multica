@@ -1312,18 +1312,15 @@ func containsRequiredCrossProjectDependency(content string) bool {
 	requiredMarkers := []string{
 		"待 pm 创建 child issue",
 		"pm 下一步先创建/复用对应 child issue",
-		"handoff-",
-		"跨项目 child",
-		"cross-project child",
+		"创建/复用对应目标项目 child issue",
+		"必须创建 child issue",
+		"需要创建 child issue",
+		"需创建 child issue",
 	}
 	for _, marker := range requiredMarkers {
 		if strings.Contains(text, marker) {
 			return true
 		}
-	}
-	if strings.Contains(text, "跨项目依赖") &&
-		(strings.Contains(text, "gateway") || strings.Contains(text, "ida-deployment") || strings.Contains(text, "required") || strings.Contains(text, "必须") || strings.Contains(text, "待 pm")) {
-		return true
 	}
 	return requiredCrossProjectSectionHasEntries(text)
 }
@@ -1355,11 +1352,11 @@ func requiredCrossProjectSectionHasEntries(text string) bool {
 			strings.Contains(line, "不需要") {
 			continue
 		}
-		if strings.HasPrefix(line, "-") ||
-			strings.Contains(lower, "required") ||
-			strings.Contains(lower, "gateway") ||
-			strings.Contains(lower, "ida-deployment") ||
-			strings.Contains(lower, "handoff-") {
+		if strings.Contains(lower, "待 pm") ||
+			strings.Contains(lower, "child issue") ||
+			strings.Contains(lower, "handoff-") ||
+			strings.Contains(line, "子任务") ||
+			strings.Contains(line, "分发") {
 			return true
 		}
 	}
