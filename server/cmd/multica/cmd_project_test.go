@@ -1,9 +1,13 @@
 package main
 
 import (
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/multica-ai/multica/server/internal/cli"
 	"github.com/spf13/cobra"
 )
 
@@ -46,7 +50,7 @@ func newProjectResourceUpdateTestCmd() *cobra.Command {
 
 // TestBuildResourceRefFromFlagsGithubMergesHint pins the nit fix from MUL-2662
 // review round 2: `multica project resource update <p> <r> --default-branch-hint x`
-// must rebuild the full github_repo payload by merging the existing `url` —
+// must rebuild the full github_repo payload by merging the existing `url` -
 // otherwise the server sees `{default_branch_hint: "x"}` and 400s.
 func TestBuildResourceRefFromFlagsGithubMergesHint(t *testing.T) {
 	t.Run("hint-only edit preserves existing url", func(t *testing.T) {
@@ -192,4 +196,119 @@ func TestBuildResourceRefFromFlagsLocalDirectoryMerges(t *testing.T) {
 			t.Errorf("expected embedded label to be cleared, got %v", ref["label"])
 		}
 	})
+}
+
+func newProjectListTestCmd() *cobra.Command {
+	cmd := &cobra.Command{Use: "list"}
+	cmd.Flags().String("server-url", "", "")
+	cmd.Flags().String("workspace-id", "", "")
+	cmd.Flags().String("profile", "", "")
+	cmd.Flags().String("status", "", "")
+	cmd.Flags().String("output", "json", "")
+	cmd.Flags().Bool("full-id", false, "")
+	return cmd
+}
+
+func TestRunProjectListJSONIncludesResourceSummaries(t *testing.T) {
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("MULTICA_TOKEN", "test-token")
+	t.Setenv("MULTICA_WORKSPACE_ID", "workspace-123")
+
+	srv := newProjectResourceListServer(t)
+	defer srv.Close()
+	t.Setenv("MULTICA_SERVER_URL", srv.URL)
+
+	cmd := newProjectListTestCmd()
+	_ = cmd.Flags().Set("output", "json")
+
+	out, err := captureStdout(t, func() error {
+		return runProjectList(cmd, nil)
+	})
+	if err != nil {
+		t.Fatalf("runProjectList: %v", err)
+	}
+
+	var projects []map[string]any
+	if err := json.Unmarshal([]byte(out), &projects); err != nil {
+		t.Fatalf("decode output: %v\n%s", err, out)
+	}
+	if len(projects) != 1 {
+		t.Fatalf("projects len = %d, want 1", len(projects))
+	}
+	resources, _ := projects[0]["resources"].([]any)
+	if len(resources) != 1 {
+		t.Fatalf("resources len = %d, want 1", len(resources))
+	}
+	summaries, _ := projects[0]["resource_summaries"].([]any)
+	if len(summaries) != 1 {
+		t.Fatalf("resource_summaries len = %d, want 1", len(summaries))
+	}
+	summary, _ := summaries[0].(map[string]any)
+	if got := summary["project_path"]; got != "ChainWeaver/ida/ida-deployment" {
+		t.Fatalf("project_path = %v, want ChainWeaver/ida/ida-deployment", got)
+	}
+}
+
+func TestFetchProjectCandidatesIncludesResourceDetail(t *testing.T) {
+	srv := newProjectResourceListServer(t)
+	defer srv.Close()
+	client := cli.NewAPIClient(srv.URL, "workspace-123", "test-token")
+
+	candidates, err := fetchProjectCandidates(t.Context(), client)
+	if err != nil {
+		t.Fatalf("fetchProjectCandidates: %v", err)
+	}
+	if len(candidates) != 1 {
+		t.Fatalf("candidates len = %d, want 1", len(candidates))
+	}
+	if got := candidates[0].Detail; got != "active | ChainWeaver/ida/ida-deployment" {
+		t.Fatalf("detail = %q, want active | ChainWeaver/ida/ida-deployment", got)
+	}
+}
+
+func newProjectResourceListServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("X-Workspace-ID") != "workspace-123" {
+			t.Fatalf("X-Workspace-ID = %q, want workspace-123", r.Header.Get("X-Workspace-ID"))
+		}
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/projects":
+			if got := r.URL.Query().Get("workspace_id"); got != "workspace-123" {
+				t.Fatalf("workspace_id = %q, want workspace-123", got)
+			}
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"projects": []map[string]any{
+					{
+						"id":             "project-deployment",
+						"title":          "配置",
+						"status":         "active",
+						"resource_count": 1,
+					},
+				},
+				"total": 1,
+			})
+		case "/api/projects/project-deployment/resources":
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"resources": []map[string]any{
+					{
+						"id":            "resource-1",
+						"resource_type": "gongfeng_repo",
+						"resource_ref": map[string]any{
+							"provider":      "gongfeng",
+							"project_path":  "ChainWeaver/ida/ida-deployment",
+							"url":           "https://git.code.tencent.com/ChainWeaver/ida/ida-deployment",
+							"branch":        "v5.0.0_dev",
+							"ref":           "v5.0.0_dev",
+							"resource_kind": "branch",
+						},
+					},
+				},
+				"total": 1,
+			})
+		default:
+			t.Fatalf("unexpected path: %s", r.URL.String())
+		}
+	}))
 }

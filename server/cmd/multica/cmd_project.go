@@ -221,6 +221,9 @@ func runProjectList(cmd *cobra.Command, _ []string) error {
 
 	output, _ := cmd.Flags().GetString("output")
 	if output == "json" {
+		if err := enrichProjectsWithResources(ctx, client, projectsRaw); err != nil {
+			return fmt.Errorf("load project resources: %w", err)
+		}
 		return cli.PrintJSON(os.Stdout, projectsRaw)
 	}
 
@@ -877,6 +880,100 @@ func summarizeResourceRef(raw any) string {
 		return string(data)
 	}
 	return ""
+}
+
+func enrichProjectsWithResources(ctx context.Context, client *cli.APIClient, projectsRaw []any) error {
+	for _, raw := range projectsRaw {
+		p, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if resourceCount(p) == 0 {
+			continue
+		}
+		projectID := strVal(p, "id")
+		if projectID == "" {
+			continue
+		}
+		var result map[string]any
+		if err := client.GetJSON(ctx, "/api/projects/"+url.PathEscape(projectID)+"/resources", &result); err != nil {
+			return err
+		}
+		resourcesRaw, _ := result["resources"].([]any)
+		p["resources"] = resourcesRaw
+		p["resource_summaries"] = summarizeProjectResources(resourcesRaw)
+	}
+	return nil
+}
+
+func resourceCount(project map[string]any) int64 {
+	switch v := project["resource_count"].(type) {
+	case float64:
+		return int64(v)
+	case int:
+		return int64(v)
+	case int64:
+		return v
+	case json.Number:
+		n, _ := v.Int64()
+		return n
+	default:
+		return 0
+	}
+}
+
+func summarizeProjectResources(resourcesRaw []any) []map[string]any {
+	summaries := make([]map[string]any, 0, len(resourcesRaw))
+	for _, raw := range resourcesRaw {
+		r, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		summary := map[string]any{
+			"resource_type": strVal(r, "resource_type"),
+			"summary":       summarizeResourceRef(r["resource_ref"]),
+		}
+		if ref, ok := r["resource_ref"].(map[string]any); ok {
+			for _, key := range []string{"provider", "project_path", "url", "branch", "ref", "resource_kind"} {
+				if value, ok := ref[key].(string); ok && value != "" {
+					summary[key] = value
+				}
+			}
+		}
+		summaries = append(summaries, summary)
+	}
+	return summaries
+}
+
+func projectCandidateDetail(project map[string]any) string {
+	detail := strVal(project, "status")
+	resources, _ := project["resource_summaries"].([]map[string]any)
+	if len(resources) == 0 {
+		if raw, ok := project["resource_summaries"].([]any); ok {
+			for _, item := range raw {
+				if summary, ok := item.(map[string]any); ok {
+					resources = append(resources, summary)
+				}
+			}
+		}
+	}
+	parts := make([]string, 0, len(resources))
+	for _, r := range resources {
+		if projectPath, _ := r["project_path"].(string); projectPath != "" {
+			parts = append(parts, projectPath)
+			continue
+		}
+		if summary, _ := r["summary"].(string); summary != "" {
+			parts = append(parts, summary)
+		}
+	}
+	if len(parts) == 0 {
+		return detail
+	}
+	if detail == "" {
+		return strings.Join(parts, ", ")
+	}
+	return detail + " | " + strings.Join(parts, ", ")
 }
 
 // ---------------------------------------------------------------------------
