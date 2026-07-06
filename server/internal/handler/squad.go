@@ -163,6 +163,7 @@ const sopPMStageGateSummaryRule = `## PM 阶段门禁摘要
 - 01-需求澄清必须给出已确认结论、未定问题、建议默认值和进入 02 条件；未闭环时 PM 只能等待或重新调度 01。
 - 02-方案设计必须基于已闭环澄清、用户确认和 PM 记录的假设；缺关键决策时 PM 必须退回或等待。
 - 03-任务拆分必须识别跨项目依赖，给出 required/not required projects、V1/V2/V3 test matrix 和 sandbox_plan；缺失时 PM 不得进入 04。
+- 01 澄清或用户确认中出现的跨项目信息只能作为 02/03 输入；除非用户明确要求立即创建指定 child issue，PM 必须等 03-task-split 产出 required cross-project dependencies 和 handoff 后，才创建或复用跨项目 child issue。
 - 04-开发必须按 03 的边界和测试矩阵完成实现与开发侧验证；功能需求的 implementation MR 必须包含真实代码、配置、接口或测试改动。
 - PM 调度 05-验证测试时，必须要求 05 回读 03 的 V1/V2/V3 test matrix 和 04 handoff；如果 04 把任一 required V2/V3 写成跳过、未执行或需环境，PM 不得把调度摘要缩减成只检查 V1。
 - 如果 03 的 V3 矩阵或 sandbox_plan 写了部署验证、sandbox、外部 HTTP、业务 E2E 或网关路由验证，且未明确标为 not required/skipped 或用户未明确豁免，PM 必须按 required 验收；05 把 V3 写成 N/A、待部署或后续执行时，PM 不得收口 done。
@@ -181,6 +182,8 @@ const sopPMCrossProjectSummaryRule = `## PM 跨项目 child issue 摘要
 
 - 单项目需求、TAPD 正文抓取后的真实需求和 01-05 阶段推进，都留在当前 issue，不创建同项目 child issue。
 - 只有真实跨项目依赖才创建 child issue；创建前必须回读 existing children 并确认目标 project UUID。
+- 01-clarify、用户确认或 PM 自己判断中出现的跨项目线索，只能记录为后续 02-design/03-task-split 输入；PM 不得在 03-task-split 通过前创建 child issue，除非任务创建者或 workspace owner/admin 明确要求“现在创建某个目标项目 child issue”。
+- 03-task-split 通过后，PM 才能按 03 的 required cross-project dependencies 和 handoff 输入材料创建或复用目标项目 child issue。
 - PM 创建 required child issue 时必须带 ` + "`" + `--parent <当前 issue>` + "`" + `、` + "`" + `--project <目标项目 UUID>` + "`" + `、` + "`" + `--status todo` + "`" + `，并优先分配目标项目小队；没有目标项目小队时分配 PM 小队递归执行。不得静默创建 ` + "`" + `backlog` + "`" + ` 或分配给普通成员导致任务不启动；找不到可执行小队/Agent 时必须阻断。
 - 如果 existing child 已存在但 status 是 ` + "`" + `backlog` + "`" + ` 或 assignee 是普通成员，PM 必须先把它更新为可执行的 squad/Agent assignee 和 ` + "`" + `todo` + "`" + `；无法修正时阻断并报告，不能继续父 issue 04/05。
 - handoff-gateway.md、handoff-ida-deployment.md 或其它 handoff 只作为 child issue 输入材料，不能代表目标项目已完成。
