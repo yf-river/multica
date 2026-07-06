@@ -4458,7 +4458,7 @@ func allowedBuiltinToolsForExecutionPolicy(provider string, policy TaskExecution
 		return []string{"Bash"}
 	}
 	if isNoRepoBoundedStage(policy) {
-		return []string{"Bash"}
+		return nil
 	}
 	if isBoundedReviewStage(policy) {
 		return []string{"Bash", "Read", "Grep", "Glob", "LS"}
@@ -4477,7 +4477,7 @@ func allowedToolsForExecutionPolicy(provider string, policy TaskExecutionPolicy)
 		return []string{"Bash(multica *)"}
 	}
 	if isNoRepoBoundedStage(policy) {
-		return []string{"Bash(multica *)"}
+		return nil
 	}
 	return nil
 }
@@ -4522,6 +4522,7 @@ func disallowedToolsForExecutionPolicy(provider string, policy TaskExecutionPoli
 	}
 	if isNoRepoBoundedStage(policy) {
 		return append(append([]string{}, nativeDelegationTools...),
+			"Bash",
 			"Read",
 			"Edit",
 			"Write",

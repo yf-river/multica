@@ -688,22 +688,19 @@ func TestPlanningStageCapabilityPolicyBlocksNativeSubagents(t *testing.T) {
 
 	for _, want := range []string{
 		"## Critical No-Repo Planning Tool Boundary",
-		"Before every tool call",
-		"If it is anything else, do not call it",
+		"Do not call tools",
+		"the platform will automatically post that final output as the issue comment",
 		"Do not inspect the current directory, repository structure, local context files, agent roster, or CLI capabilities",
 		"Stage native tool boundary",
-		"do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Read, Edit, Write, MultiEdit, Grep, Glob, LS",
-		"Native file-write tools are unavailable",
+		"do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Bash, Read, Edit, Write, MultiEdit, Grep, Glob, LS",
+		"Native file-write and shell tools are unavailable",
 		"Do not inspect CLI help or discover extra commands in this task",
-		"multica issue comment add <issue-id> --content \"...\"",
-		"concise single-line stage results",
-		"No-repo planning Bash shape",
-		"run only plain single `multica issue ...` commands",
-		"Do not run `multica agent`, `multica --help`, shell builtins like `pwd` or `ls`, shell pipes, redirects, `&&`, `||`, `head`, or any command wrapper",
+		"No comment command is available in this no-repository planning stage",
+		"final assistant output",
 		"do not attempt to create `reply.md`",
 		"produce their own bounded stage result in this platform task",
-		"post it with `multica issue comment add 77777777-8888-9999-aaaa-bbbbbbbbbbbb --content \"...\"`",
-		"Keep the body compact, single-line, and shell-safe",
+		"do not call `multica issue comment add`",
+		"The platform will automatically post your final output as the issue comment",
 		"No-repo planning override",
 		"do not attempt it in this task",
 		"check the working directory",
@@ -719,6 +716,7 @@ func TestPlanningStageCapabilityPolicyBlocksNativeSubagents(t *testing.T) {
 		"using the platform-correct non-inline mode",
 		"`multica repo checkout <url>",
 		"For everything else, run `multica --help`",
+		"multica issue comment add <issue-id> --content \"...\"",
 	} {
 		if strings.Contains(out, banned) {
 			t.Fatalf("no-repo planning stage should not require file-write comment mode %q\n--- output ---\n%s", banned, out)
