@@ -139,6 +139,10 @@ export function AgentCreatePanel({
       ),
     [squads, visibleAgentIds],
   );
+  const pmSquad = useMemo(
+    () => visibleSquads.find((s) => s.name.trim().toLowerCase() === "pm"),
+    [visibleSquads],
+  );
 
   const lastActorType = useQuickCreateStore((s) => s.lastActorType);
   const lastActorId = useQuickCreateStore((s) => s.lastActorId);
@@ -174,18 +178,40 @@ export function AgentCreatePanel({
 
   const seedActor = useCallback((): ActorSelection | null => {
     // Caller-provided seed wins (e.g. shell pre-seeds with `agent_id` /
-    // `squad_id`), then persisted preference, then first visible agent.
+    // `squad_id`). When a persisted preference points at the PM squad's
+    // leader agent, upgrade it to the squad so dispatch receives the squad
+    // briefing instead of a direct-agent task.
     const dataAgent = data?.agent_id as string | undefined;
     const dataSquad = data?.squad_id as string | undefined;
+    const explicitActor =
+      resolveActor("agent", dataAgent) || resolveActor("squad", dataSquad);
+    if (explicitActor) return explicitActor;
+
+    const persistedActor = resolveActor(lastActorType, lastActorId);
+    if (
+      persistedActor?.type === "agent" &&
+      pmSquad &&
+      pmSquad.leader_id === persistedActor.id
+    ) {
+      return { type: "squad", id: pmSquad.id } as const;
+    }
+    if (persistedActor) return persistedActor;
+
     return (
-      resolveActor("agent", dataAgent) ||
-      resolveActor("squad", dataSquad) ||
-      resolveActor(lastActorType, lastActorId) ||
+      (pmSquad ? ({ type: "squad", id: pmSquad.id } as const) : null) ||
       (visibleAgents[0]
         ? ({ type: "agent", id: visibleAgents[0].id } as const)
         : null)
     );
-  }, [resolveActor, data?.agent_id, data?.squad_id, lastActorType, lastActorId, visibleAgents]);
+  }, [
+    resolveActor,
+    data?.agent_id,
+    data?.squad_id,
+    lastActorType,
+    lastActorId,
+    pmSquad,
+    visibleAgents,
+  ]);
 
   const [actor, setActor] = useState<ActorSelection | null>(() => seedActor());
 

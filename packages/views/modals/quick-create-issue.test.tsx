@@ -412,6 +412,95 @@ describe("AgentCreatePanel", () => {
     });
   });
 
+  it("defaults to the visible pm squad so SOP quick-create uses squad dispatch", async () => {
+    mockSquadsData.list = [
+      { id: "squad-pm", name: "pm", leader_id: "agent-1", archived_at: null },
+    ];
+    const user = userEvent.setup();
+
+    renderPanel({ onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() });
+
+    const editor = screen.getByPlaceholderText(
+      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
+    );
+    await user.clear(editor);
+    await user.type(editor, "Create a TAPD requirement");
+
+    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
+
+    await waitFor(() => {
+      expect(mockQuickCreateIssue).toHaveBeenCalledWith({
+        squad_id: "squad-pm",
+        prompt: "Create a TAPD requirement",
+        project_id: undefined,
+        status: "todo",
+        priority: "none",
+      });
+    });
+    expect(mockSetLastActor).toHaveBeenCalledWith("squad", "squad-pm");
+  });
+
+  it("upgrades a persisted PM leader agent preference to the pm squad", async () => {
+    mockQuickCreateStore.lastActorType = "agent";
+    mockQuickCreateStore.lastActorId = "agent-1";
+    mockSquadsData.list = [
+      { id: "squad-pm", name: "pm", leader_id: "agent-1", archived_at: null },
+    ];
+    const user = userEvent.setup();
+
+    renderPanel({ onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() });
+
+    const editor = screen.getByPlaceholderText(
+      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
+    );
+    await user.clear(editor);
+    await user.type(editor, "Create a TAPD requirement");
+
+    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
+
+    await waitFor(() => {
+      expect(mockQuickCreateIssue).toHaveBeenCalledWith({
+        squad_id: "squad-pm",
+        prompt: "Create a TAPD requirement",
+        project_id: undefined,
+        status: "todo",
+        priority: "none",
+      });
+    });
+  });
+
+  it("keeps an explicit agent seed even when a pm squad is visible", async () => {
+    mockSquadsData.list = [
+      { id: "squad-pm", name: "pm", leader_id: "agent-1", archived_at: null },
+    ];
+    const user = userEvent.setup();
+
+    renderPanel({
+      onClose: vi.fn(),
+      isExpanded: false,
+      setIsExpanded: vi.fn(),
+      data: { agent_id: "agent-1" },
+    });
+
+    const editor = screen.getByPlaceholderText(
+      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
+    );
+    await user.clear(editor);
+    await user.type(editor, "Create with explicit agent");
+
+    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
+
+    await waitFor(() => {
+      expect(mockQuickCreateIssue).toHaveBeenCalledWith({
+        agent_id: "agent-1",
+        prompt: "Create with explicit agent",
+        project_id: undefined,
+        status: "todo",
+        priority: "none",
+      });
+    });
+  });
+
   // Picking a squad routes the submission through `squad_id` (not
   // `agent_id`) so the backend can resolve the squad's leader agent and
   // inject the squad-leader briefing on dispatch. The persisted preference
