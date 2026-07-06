@@ -538,7 +538,8 @@ func TestAssignmentTriggeredSquadLeaderGuardrail(t *testing.T) {
 		"A coordinator must not run repo-inspection, build, test, or wait/poll commands",
 		"`git`, `rg`, `cat`, `find`, `sed`, `ls`, `go test`, `pnpm`, `npm`, `make`, `sleep`, `watch`, `multica issue runs`, or `multica issue activity`",
 		"Do not call provider-native task delegation or repo tools such as TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Read, Edit, Write, MultiEdit, Grep, Glob, or LS",
-		"Coordinator tasks may use `multica issue comment add ... --content \"...\"` for compact dispatch comments",
+		"Coordinator tasks may use `multica issue comment add ... --content \"...\"` for compact single-line dispatch comments",
+		"do not include literal newlines in that command",
 		"platform runtime does not define squad-specific stages",
 		"the same comment must contain exactly one real `mention://agent/...` link",
 		"a comment that says a stage is being dispatched but lacks the mention is not a dispatch",
@@ -586,7 +587,10 @@ func TestStageChainPMCoordinatorGetsEntryRule(t *testing.T) {
 		"run `multica squad activity " + issueID + " action --reason \"dispatch 01\"`",
 		"Do not run any other tools after the dispatch/activity pair",
 		"This task has no native file-write tool",
-		"compact shell-safe body",
+		"compact single-line shell-safe body",
+		"post one compact single-line dispatch comment",
+		"do not include literal newlines in the shell command",
+		"multica issue comment add " + issueID + " --content \"调度 01-需求澄清",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("stage-chain PM runtime brief missing %q\n--- output ---\n%s", want, out)
@@ -621,7 +625,8 @@ func TestStageChainPMCoordinatorGetsCommentTriggerRule(t *testing.T) {
 		"create or reuse the required child issue with `--parent`, target `--project`, executable assignee, and `--status todo`, then wait",
 		"do not dispatch the parent issue to `04-开发` or `05-验证测试`",
 		"This task has no native file-write tool",
-		"compact shell-safe body",
+		"compact single-line shell-safe body",
+		"Do not include literal newlines in the shell command",
 		"multica issue comment add 77777777-8888-9999-aaaa-bbbbbbbbbbbb --parent 11111111-1111-1111-1111-111111111111 --content \"...\"",
 	} {
 		if !strings.Contains(out, want) {
@@ -686,9 +691,11 @@ func TestPlanningStageCapabilityPolicyBlocksNativeSubagents(t *testing.T) {
 		"do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Read, Edit, Write, MultiEdit, Grep, Glob, LS",
 		"Native file-write tools are unavailable",
 		"multica issue comment add <issue-id> --content \"...\"",
+		"concise single-line stage results",
 		"do not attempt to create `reply.md`",
 		"produce their own bounded stage result in this platform task",
 		"post it with `multica issue comment add 77777777-8888-9999-aaaa-bbbbbbbbbbbb --content \"...\"`",
+		"Keep the body compact, single-line, and shell-safe",
 		"No-repo planning override",
 		"do not attempt it in this task",
 		"Record the missing code facts as assumptions or handoff questions",
