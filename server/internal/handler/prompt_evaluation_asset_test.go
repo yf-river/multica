@@ -277,6 +277,39 @@ Stderr: (empty)`,
 			wantReason: "",
 		},
 		{
+			name:       "task create success with failures path is not failed",
+			tool:       "TaskCreate",
+			output:     `[{"type":"text","text":"Task #7 created successfully: 读取 harness/testing.md 和 failures.md"}]`,
+			wantSignal: false,
+			wantReason: "",
+		},
+		{
+			name: "issue get json content is not failed by keywords",
+			tool: "Bash",
+			output: `Command: multica issue get IDA-12 --output json 2>&1
+Stdout: {"source_summary_error":"","title":"错误处理需求"}
+
+Stderr: (empty)`,
+			wantSignal: false,
+			wantReason: "",
+		},
+		{
+			name: "metadata set success is not failed by keywords",
+			tool: "Bash",
+			output: `Command: multica issue metadata set IDA-12 --key pr_number --value 113
+Stdout: KEY VALUE TYPE
+pr_number 113 number`,
+			wantSignal: false,
+			wantReason: "",
+		},
+		{
+			name:       "mcp error line still fails",
+			tool:       "DeferExecuteTool",
+			output:     `[{"type":"text","text":"Error: Unable to resolve Gongfeng merge request id from list endpoint"}]`,
+			wantSignal: true,
+			wantReason: "工具结果包含错误信息",
+		},
+		{
 			name: "python traceback still fails",
 			tool: "Bash",
 			output: `Command: python3 -c 'raise RuntimeError("boom")'

@@ -39,8 +39,27 @@ export interface PromptLibraryVersion {
   tags: string[];
   source: "手动创建" | "手动更新" | "优化候选发布" | "历史回填";
   source_candidate_id: string | null;
+  change_note: string;
   created_by: string | null;
   created_at: string;
+}
+
+export interface PromptLibraryTrial {
+  id: string;
+  workspace_id: string;
+  prompt_id: string;
+  version_id: string;
+  agent_id: string;
+  chat_session_id: string | null;
+  task_id: string | null;
+  input: string;
+  rendered_message: string;
+  variables: Record<string, unknown>;
+  status: string;
+  output_preview: string;
+  created_by: string | null;
+  created_at: string;
+  updated_at: string;
 }
 
 export interface ListPromptLibraryItemsResponse {
@@ -50,6 +69,11 @@ export interface ListPromptLibraryItemsResponse {
 
 export interface ListPromptLibraryVersionsResponse {
   items: PromptLibraryVersion[];
+  total: number;
+}
+
+export interface ListPromptLibraryTrialsResponse {
+  items: PromptLibraryTrial[];
   total: number;
 }
 
@@ -79,4 +103,22 @@ export interface UpdatePromptLibraryItemRequest {
   variables?: PromptLibraryVariable[];
   tags?: string[];
   status?: PromptLibraryStatus;
+}
+
+export interface CreatePromptLibraryVersionRequest {
+  name?: string;
+  description?: string;
+  content: string;
+  change_note?: string;
+}
+
+export interface CreatePromptLibraryVersionResponse {
+  item: PromptLibraryItem;
+  version: PromptLibraryVersion;
+}
+
+export interface CreatePromptLibraryTrialRequest {
+  agent_id: string;
+  input?: string;
+  variables?: Record<string, string>;
 }

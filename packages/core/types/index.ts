@@ -131,12 +131,17 @@ export type { PinnedItem, PinnedItemType, CreatePinRequest, ReorderPinsRequest }
 export type {
   PromptLibraryItem,
   PromptLibraryVersion,
+  PromptLibraryTrial,
   PromptLibraryVariable,
   PromptLibraryStatus,
   ListPromptLibraryItemsResponse,
   ListPromptLibraryVersionsResponse,
+  ListPromptLibraryTrialsResponse,
   ListPromptLibraryItemsParams,
   CreatePromptLibraryItemRequest,
+  CreatePromptLibraryVersionRequest,
+  CreatePromptLibraryVersionResponse,
+  CreatePromptLibraryTrialRequest,
   UpdatePromptLibraryItemRequest,
 } from "./prompt-library";
 export type {

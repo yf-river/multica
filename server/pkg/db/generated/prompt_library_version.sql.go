@@ -14,21 +14,22 @@ import (
 const createPromptLibraryVersion = `-- name: CreatePromptLibraryVersion :one
 INSERT INTO prompt_library_version (
     prompt_id, workspace_id, project_id, version, name, description, prompt_type,
-    content, variables, tags, source, source_candidate_id, created_by
+    content, variables, tags, source, source_candidate_id, change_note, created_by
 ) VALUES (
     $1,
     $2,
-    $10,
+    $11,
     $3,
     $4,
     $5,
     $6,
     $7,
-    COALESCE($11::jsonb, '[]'::jsonb),
     COALESCE($12::jsonb, '[]'::jsonb),
+    COALESCE($13::jsonb, '[]'::jsonb),
     $8,
-    $13,
-    $9
+    $14,
+    $9,
+    $10
 )
 ON CONFLICT (prompt_id, version) DO UPDATE SET
     name = EXCLUDED.name,
@@ -39,8 +40,9 @@ ON CONFLICT (prompt_id, version) DO UPDATE SET
     tags = EXCLUDED.tags,
     source = EXCLUDED.source,
     source_candidate_id = EXCLUDED.source_candidate_id,
+    change_note = EXCLUDED.change_note,
     created_by = COALESCE(EXCLUDED.created_by, prompt_library_version.created_by)
-RETURNING id, prompt_id, workspace_id, project_id, version, name, description, prompt_type, content, variables, tags, source, source_candidate_id, created_by, created_at
+RETURNING id, prompt_id, workspace_id, project_id, version, name, description, prompt_type, content, variables, tags, source, source_candidate_id, change_note, created_by, created_at
 `
 
 type CreatePromptLibraryVersionParams struct {
@@ -52,6 +54,7 @@ type CreatePromptLibraryVersionParams struct {
 	PromptType        string      `json:"prompt_type"`
 	Content           string      `json:"content"`
 	Source            string      `json:"source"`
+	ChangeNote        string      `json:"change_note"`
 	CreatedBy         pgtype.UUID `json:"created_by"`
 	ProjectID         pgtype.UUID `json:"project_id"`
 	Variables         []byte      `json:"variables"`
@@ -69,6 +72,7 @@ func (q *Queries) CreatePromptLibraryVersion(ctx context.Context, arg CreateProm
 		arg.PromptType,
 		arg.Content,
 		arg.Source,
+		arg.ChangeNote,
 		arg.CreatedBy,
 		arg.ProjectID,
 		arg.Variables,
@@ -90,6 +94,42 @@ func (q *Queries) CreatePromptLibraryVersion(ctx context.Context, arg CreateProm
 		&i.Tags,
 		&i.Source,
 		&i.SourceCandidateID,
+		&i.ChangeNote,
+		&i.CreatedBy,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const getPromptLibraryVersionForPrompt = `-- name: GetPromptLibraryVersionForPrompt :one
+SELECT id, prompt_id, workspace_id, project_id, version, name, description, prompt_type, content, variables, tags, source, source_candidate_id, change_note, created_by, created_at FROM prompt_library_version
+WHERE id = $1 AND workspace_id = $2 AND prompt_id = $3
+`
+
+type GetPromptLibraryVersionForPromptParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	PromptID    pgtype.UUID `json:"prompt_id"`
+}
+
+func (q *Queries) GetPromptLibraryVersionForPrompt(ctx context.Context, arg GetPromptLibraryVersionForPromptParams) (PromptLibraryVersion, error) {
+	row := q.db.QueryRow(ctx, getPromptLibraryVersionForPrompt, arg.ID, arg.WorkspaceID, arg.PromptID)
+	var i PromptLibraryVersion
+	err := row.Scan(
+		&i.ID,
+		&i.PromptID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.Version,
+		&i.Name,
+		&i.Description,
+		&i.PromptType,
+		&i.Content,
+		&i.Variables,
+		&i.Tags,
+		&i.Source,
+		&i.SourceCandidateID,
+		&i.ChangeNote,
 		&i.CreatedBy,
 		&i.CreatedAt,
 	)
@@ -97,7 +137,7 @@ func (q *Queries) CreatePromptLibraryVersion(ctx context.Context, arg CreateProm
 }
 
 const getPromptLibraryVersionInWorkspace = `-- name: GetPromptLibraryVersionInWorkspace :one
-SELECT id, prompt_id, workspace_id, project_id, version, name, description, prompt_type, content, variables, tags, source, source_candidate_id, created_by, created_at FROM prompt_library_version
+SELECT id, prompt_id, workspace_id, project_id, version, name, description, prompt_type, content, variables, tags, source, source_candidate_id, change_note, created_by, created_at FROM prompt_library_version
 WHERE id = $1 AND workspace_id = $2
 `
 
@@ -123,6 +163,7 @@ func (q *Queries) GetPromptLibraryVersionInWorkspace(ctx context.Context, arg Ge
 		&i.Tags,
 		&i.Source,
 		&i.SourceCandidateID,
+		&i.ChangeNote,
 		&i.CreatedBy,
 		&i.CreatedAt,
 	)
@@ -130,7 +171,7 @@ func (q *Queries) GetPromptLibraryVersionInWorkspace(ctx context.Context, arg Ge
 }
 
 const listPromptLibraryVersions = `-- name: ListPromptLibraryVersions :many
-SELECT id, prompt_id, workspace_id, project_id, version, name, description, prompt_type, content, variables, tags, source, source_candidate_id, created_by, created_at FROM prompt_library_version
+SELECT id, prompt_id, workspace_id, project_id, version, name, description, prompt_type, content, variables, tags, source, source_candidate_id, change_note, created_by, created_at FROM prompt_library_version
 WHERE workspace_id = $1
   AND prompt_id = $2
 ORDER BY version DESC, created_at DESC
@@ -164,6 +205,7 @@ func (q *Queries) ListPromptLibraryVersions(ctx context.Context, arg ListPromptL
 			&i.Tags,
 			&i.Source,
 			&i.SourceCandidateID,
+			&i.ChangeNote,
 			&i.CreatedBy,
 			&i.CreatedAt,
 		); err != nil {

@@ -5,7 +5,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
+	"regexp"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
@@ -16,12 +19,14 @@ import (
 const (
 	promptLibraryStatusActive   = "启用"
 	promptLibraryStatusArchived = "归档"
-	defaultPromptLibraryType    = "通用"
+	defaultPromptLibraryType    = "text"
 
 	promptLibraryVersionSourceCreated      = "手动创建"
 	promptLibraryVersionSourceUpdated      = "手动更新"
 	promptLibraryVersionSourceOptimization = "优化候选发布"
 )
+
+var promptLibraryVariablePattern = regexp.MustCompile(`\{\{\s*([^{}]+?)\s*\}\}`)
 
 type PromptLibraryItemResponse struct {
 	ID          string  `json:"id"`
@@ -54,8 +59,27 @@ type PromptLibraryVersionResponse struct {
 	Tags              any     `json:"tags"`
 	Source            string  `json:"source"`
 	SourceCandidateID *string `json:"source_candidate_id"`
+	ChangeNote        string  `json:"change_note"`
 	CreatedBy         *string `json:"created_by"`
 	CreatedAt         string  `json:"created_at"`
+}
+
+type PromptLibraryTrialResponse struct {
+	ID              string         `json:"id"`
+	WorkspaceID     string         `json:"workspace_id"`
+	PromptID        string         `json:"prompt_id"`
+	VersionID       string         `json:"version_id"`
+	AgentID         string         `json:"agent_id"`
+	ChatSessionID   *string        `json:"chat_session_id"`
+	TaskID          *string        `json:"task_id"`
+	Input           string         `json:"input"`
+	RenderedMessage string         `json:"rendered_message"`
+	Variables       map[string]any `json:"variables"`
+	Status          string         `json:"status"`
+	OutputPreview   string         `json:"output_preview"`
+	CreatedBy       *string        `json:"created_by"`
+	CreatedAt       string         `json:"created_at"`
+	UpdatedAt       string         `json:"updated_at"`
 }
 
 type CreatePromptLibraryItemRequest struct {
@@ -69,6 +93,13 @@ type CreatePromptLibraryItemRequest struct {
 	Status      string          `json:"status"`
 }
 
+type CreatePromptLibraryVersionRequest struct {
+	Name        *string `json:"name"`
+	Description *string `json:"description"`
+	Content     string  `json:"content"`
+	ChangeNote  string  `json:"change_note"`
+}
+
 type UpdatePromptLibraryItemRequest struct {
 	ProjectID   json.RawMessage `json:"project_id"`
 	Name        *string         `json:"name"`
@@ -78,6 +109,12 @@ type UpdatePromptLibraryItemRequest struct {
 	Variables   json.RawMessage `json:"variables"`
 	Tags        json.RawMessage `json:"tags"`
 	Status      *string         `json:"status"`
+}
+
+type CreatePromptLibraryTrialRequest struct {
+	AgentID   string            `json:"agent_id"`
+	Input     string            `json:"input"`
+	Variables map[string]string `json:"variables"`
 }
 
 func promptLibraryItemToResponse(item db.PromptLibraryItem) PromptLibraryItemResponse {
@@ -114,12 +151,13 @@ func promptLibraryVersionToResponse(version db.PromptLibraryVersion) PromptLibra
 		Tags:              decodeJSONDefault(version.Tags, []any{}),
 		Source:            version.Source,
 		SourceCandidateID: uuidToPtr(version.SourceCandidateID),
+		ChangeNote:        version.ChangeNote,
 		CreatedBy:         uuidToPtr(version.CreatedBy),
 		CreatedAt:         timestampToString(version.CreatedAt),
 	}
 }
 
-func createPromptLibraryVersion(ctx context.Context, q *db.Queries, item db.PromptLibraryItem, source string, sourceCandidateID pgtype.UUID) (db.PromptLibraryVersion, error) {
+func createPromptLibraryVersion(ctx context.Context, q *db.Queries, item db.PromptLibraryItem, source string, sourceCandidateID pgtype.UUID, changeNote string) (db.PromptLibraryVersion, error) {
 	return q.CreatePromptLibraryVersion(ctx, db.CreatePromptLibraryVersionParams{
 		PromptID:          item.ID,
 		WorkspaceID:       item.WorkspaceID,
@@ -134,7 +172,56 @@ func createPromptLibraryVersion(ctx context.Context, q *db.Queries, item db.Prom
 		Variables:         item.Variables,
 		Tags:              item.Tags,
 		SourceCandidateID: sourceCandidateID,
+		ChangeNote:        changeNote,
 	})
+}
+
+func promptLibraryTrialToResponse(trial db.PromptLibraryTrial) PromptLibraryTrialResponse {
+	variables, _ := decodeJSONDefault(trial.Variables, map[string]any{}).(map[string]any)
+	if variables == nil {
+		variables = map[string]any{}
+	}
+	return PromptLibraryTrialResponse{
+		ID:              uuidToString(trial.ID),
+		WorkspaceID:     uuidToString(trial.WorkspaceID),
+		PromptID:        uuidToString(trial.PromptID),
+		VersionID:       uuidToString(trial.VersionID),
+		AgentID:         uuidToString(trial.AgentID),
+		ChatSessionID:   uuidToPtr(trial.ChatSessionID),
+		TaskID:          uuidToPtr(trial.TaskID),
+		Input:           trial.Input,
+		RenderedMessage: trial.RenderedMessage,
+		Variables:       variables,
+		Status:          trial.Status,
+		OutputPreview:   trial.OutputPreview,
+		CreatedBy:       uuidToPtr(trial.CreatedBy),
+		CreatedAt:       timestampToString(trial.CreatedAt),
+		UpdatedAt:       timestampToString(trial.UpdatedAt),
+	}
+}
+
+func promptLibraryTrialRowToResponse(trial db.ListPromptLibraryTrialsRow) PromptLibraryTrialResponse {
+	variables, _ := decodeJSONDefault(trial.Variables, map[string]any{}).(map[string]any)
+	if variables == nil {
+		variables = map[string]any{}
+	}
+	return PromptLibraryTrialResponse{
+		ID:              uuidToString(trial.ID),
+		WorkspaceID:     uuidToString(trial.WorkspaceID),
+		PromptID:        uuidToString(trial.PromptID),
+		VersionID:       uuidToString(trial.VersionID),
+		AgentID:         uuidToString(trial.AgentID),
+		ChatSessionID:   uuidToPtr(trial.ChatSessionID),
+		TaskID:          uuidToPtr(trial.TaskID),
+		Input:           trial.Input,
+		RenderedMessage: trial.RenderedMessage,
+		Variables:       variables,
+		Status:          trial.Status,
+		OutputPreview:   trial.OutputPreview,
+		CreatedBy:       uuidToPtr(trial.CreatedBy),
+		CreatedAt:       timestampToString(trial.CreatedAt),
+		UpdatedAt:       timestampToString(trial.UpdatedAt),
+	}
 }
 
 func decodeJSONDefault(raw []byte, fallback any) any {
@@ -359,7 +446,7 @@ func (h *Handler) CreatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to create prompt library item")
 		return
 	}
-	if _, err := createPromptLibraryVersion(r.Context(), qtx, item, promptLibraryVersionSourceCreated, pgtype.UUID{}); err != nil {
+	if _, err := createPromptLibraryVersion(r.Context(), qtx, item, promptLibraryVersionSourceCreated, pgtype.UUID{}, "初始版本"); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create prompt library version")
 		return
 	}
@@ -437,7 +524,7 @@ func (h *Handler) UpdatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "failed to update prompt library item")
 		return
 	}
-	if _, err := createPromptLibraryVersion(r.Context(), qtx, item, promptLibraryVersionSourceUpdated, pgtype.UUID{}); err != nil {
+	if _, err := createPromptLibraryVersion(r.Context(), qtx, item, promptLibraryVersionSourceUpdated, pgtype.UUID{}, ""); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to create prompt library version")
 		return
 	}
@@ -446,6 +533,60 @@ func (h *Handler) UpdatePromptLibraryItem(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, promptLibraryItemToResponse(item))
+}
+
+func (h *Handler) CreatePromptLibraryVersion(w http.ResponseWriter, r *http.Request) {
+	existing, ok := h.loadPromptLibraryItem(w, r)
+	if !ok {
+		return
+	}
+	var req CreatePromptLibraryVersionRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if strings.TrimSpace(req.Content) == "" {
+		writeError(w, http.StatusBadRequest, "content is required")
+		return
+	}
+
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to start prompt library transaction")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	qtx := h.Queries.WithTx(tx)
+
+	item, err := qtx.UpdatePromptLibraryItemLatestVersion(r.Context(), db.UpdatePromptLibraryItemLatestVersionParams{
+		ID:          existing.ID,
+		WorkspaceID: existing.WorkspaceID,
+		Content:     req.Content,
+		Name:        textParam(req.Name),
+		Description: textParam(req.Description),
+		PromptType:  pgtype.Text{String: "text", Valid: true},
+	})
+	if err != nil {
+		if isUniqueViolation(err) {
+			writeError(w, http.StatusConflict, "a prompt with this name already exists")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "failed to update prompt library item")
+		return
+	}
+	version, err := createPromptLibraryVersion(r.Context(), qtx, item, promptLibraryVersionSourceUpdated, pgtype.UUID{}, strings.TrimSpace(req.ChangeNote))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create prompt library version")
+		return
+	}
+	if err := tx.Commit(r.Context()); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to commit prompt library version")
+		return
+	}
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"item":    promptLibraryItemToResponse(item),
+		"version": promptLibraryVersionToResponse(version),
+	})
 }
 
 func (h *Handler) DeletePromptLibraryItem(w http.ResponseWriter, r *http.Request) {
@@ -458,6 +599,177 @@ func (h *Handler) DeletePromptLibraryItem(w http.ResponseWriter, r *http.Request
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func renderPromptLibraryTrialMessage(content string, input string, variables map[string]string) string {
+	renderedPrompt := promptLibraryVariablePattern.ReplaceAllStringFunc(content, func(match string) string {
+		parts := promptLibraryVariablePattern.FindStringSubmatch(match)
+		if len(parts) < 2 {
+			return match
+		}
+		name := strings.TrimSpace(parts[1])
+		if value, ok := variables[name]; ok {
+			return value
+		}
+		return match
+	})
+	input = strings.TrimSpace(input)
+	if input == "" {
+		return fmt.Sprintf("请严格按照下面的提示词执行。\n\n<提示词版本>\n%s\n</提示词版本>", renderedPrompt)
+	}
+	return fmt.Sprintf("请严格按照下面的提示词执行。\n\n<提示词版本>\n%s\n</提示词版本>\n\n<用户输入>\n%s\n</用户输入>", renderedPrompt, input)
+}
+
+func missingPromptLibraryTrialVariables(content string, variables map[string]string) []string {
+	seen := make(map[string]bool)
+	missing := make([]string, 0)
+	for _, parts := range promptLibraryVariablePattern.FindAllStringSubmatch(content, -1) {
+		if len(parts) < 2 {
+			continue
+		}
+		name := strings.TrimSpace(parts[1])
+		if name == "" || seen[name] {
+			continue
+		}
+		seen[name] = true
+		if strings.TrimSpace(variables[name]) == "" {
+			missing = append(missing, name)
+		}
+	}
+	return missing
+}
+
+func (h *Handler) ListPromptLibraryTrials(w http.ResponseWriter, r *http.Request) {
+	item, ok := h.loadPromptLibraryItem(w, r)
+	if !ok {
+		return
+	}
+	trials, err := h.Queries.ListPromptLibraryTrials(r.Context(), db.ListPromptLibraryTrialsParams{
+		WorkspaceID: item.WorkspaceID,
+		PromptID:    item.ID,
+		Limit:       20,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list prompt library trials")
+		return
+	}
+	resp := make([]PromptLibraryTrialResponse, len(trials))
+	for i, trial := range trials {
+		resp[i] = promptLibraryTrialRowToResponse(trial)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"items": resp, "total": len(resp)})
+}
+
+func (h *Handler) CreatePromptLibraryTrial(w http.ResponseWriter, r *http.Request) {
+	userID, ok := requireUserID(w, r)
+	if !ok {
+		return
+	}
+	item, ok := h.loadPromptLibraryItem(w, r)
+	if !ok {
+		return
+	}
+	versionID, ok := parseUUIDOrBadRequest(w, chi.URLParam(r, "versionId"), "prompt version id")
+	if !ok {
+		return
+	}
+	version, err := h.Queries.GetPromptLibraryVersionForPrompt(r.Context(), db.GetPromptLibraryVersionForPromptParams{
+		ID:          versionID,
+		WorkspaceID: item.WorkspaceID,
+		PromptID:    item.ID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "prompt version not found")
+		return
+	}
+
+	var req CreatePromptLibraryTrialRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.AgentID == "" {
+		writeError(w, http.StatusBadRequest, "agent_id is required")
+		return
+	}
+	if missingVariables := missingPromptLibraryTrialVariables(version.Content, req.Variables); len(missingVariables) > 0 {
+		writeError(w, http.StatusBadRequest, "missing prompt variables: "+strings.Join(missingVariables, ", "))
+		return
+	}
+	agentID, ok := parseUUIDOrBadRequest(w, req.AgentID, "agent_id")
+	if !ok {
+		return
+	}
+	agent, err := h.Queries.GetAgentInWorkspace(r.Context(), db.GetAgentInWorkspaceParams{
+		ID:          agentID,
+		WorkspaceID: item.WorkspaceID,
+	})
+	if err != nil {
+		writeError(w, http.StatusNotFound, "agent not found")
+		return
+	}
+	if agent.ArchivedAt.Valid {
+		writeError(w, http.StatusBadRequest, "agent is archived")
+		return
+	}
+	workspaceID := uuidToString(item.WorkspaceID)
+	actorType, actorID := h.resolveActor(r, userID, workspaceID)
+	if !h.canAccessPersonalAgent(r.Context(), agent, actorType, actorID, workspaceID) {
+		writeError(w, http.StatusForbidden, "you do not have access to this agent")
+		return
+	}
+
+	renderedMessage := renderPromptLibraryTrialMessage(version.Content, strings.TrimSpace(req.Input), req.Variables)
+	session, err := h.Queries.CreateChatSession(r.Context(), db.CreateChatSessionParams{
+		WorkspaceID: item.WorkspaceID,
+		AgentID:     agent.ID,
+		CreatorID:   parseUUID(userID),
+		Title:       fmt.Sprintf("提示词试跑 · %s v%d", item.Name, version.Version),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create prompt trial chat session")
+		return
+	}
+	msg, err := h.Queries.CreateChatMessage(r.Context(), db.CreateChatMessageParams{
+		ChatSessionID: session.ID,
+		Role:          "user",
+		Content:       renderedMessage,
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create prompt trial message")
+		return
+	}
+	task, err := h.TaskService.EnqueueChatTask(r.Context(), session, parseUUID(userID))
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to enqueue prompt trial task: "+err.Error())
+		return
+	}
+	if err := h.Queries.LinkChatMessageToTask(r.Context(), db.LinkChatMessageToTaskParams{ID: msg.ID, TaskID: task.ID}); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to link prompt trial message")
+		return
+	}
+	variablesJSON, _ := json.Marshal(req.Variables)
+	if len(variablesJSON) == 0 || string(variablesJSON) == "null" {
+		variablesJSON = []byte(`{}`)
+	}
+	trial, err := h.Queries.CreatePromptLibraryTrial(r.Context(), db.CreatePromptLibraryTrialParams{
+		WorkspaceID:     item.WorkspaceID,
+		PromptID:        item.ID,
+		VersionID:       version.ID,
+		AgentID:         agent.ID,
+		ChatSessionID:   session.ID,
+		TaskID:          task.ID,
+		Input:           strings.TrimSpace(req.Input),
+		RenderedMessage: renderedMessage,
+		Variables:       variablesJSON,
+		Status:          task.Status,
+		CreatedBy:       parseUUID(userID),
+	})
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create prompt library trial")
+		return
+	}
+	writeJSON(w, http.StatusAccepted, promptLibraryTrialToResponse(trial))
 }
 
 func (h *Handler) loadPromptLibraryItem(w http.ResponseWriter, r *http.Request) (db.PromptLibraryItem, bool) {

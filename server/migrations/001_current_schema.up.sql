@@ -1398,10 +1398,29 @@ CREATE TABLE public.prompt_library_version (
     tags jsonb DEFAULT '[]'::jsonb NOT NULL,
     source text DEFAULT '手动创建'::text NOT NULL,
     source_candidate_id uuid,
+    change_note text DEFAULT ''::text NOT NULL,
     created_by uuid,
     created_at timestamp with time zone DEFAULT now() NOT NULL,
     CONSTRAINT prompt_library_version_source_check CHECK ((source = ANY (ARRAY['手动创建'::text, '手动更新'::text, '优化候选发布'::text, '历史回填'::text]))),
     CONSTRAINT prompt_library_version_version_check CHECK ((version > 0))
+);
+
+CREATE TABLE public.prompt_library_trial (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    prompt_id uuid NOT NULL,
+    version_id uuid NOT NULL,
+    agent_id uuid NOT NULL,
+    chat_session_id uuid,
+    task_id uuid,
+    input text DEFAULT ''::text NOT NULL,
+    rendered_message text DEFAULT ''::text NOT NULL,
+    variables jsonb DEFAULT '{}'::jsonb NOT NULL,
+    status text DEFAULT 'queued'::text NOT NULL,
+    output_preview text DEFAULT ''::text NOT NULL,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
 CREATE TABLE public.runtime_profile (
@@ -1952,6 +1971,9 @@ ALTER TABLE ONLY public.prompt_library_item
 ALTER TABLE ONLY public.prompt_library_item
     ADD CONSTRAINT prompt_library_item_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY public.prompt_library_trial
+    ADD CONSTRAINT prompt_library_trial_pkey PRIMARY KEY (id);
+
 ALTER TABLE ONLY public.prompt_library_version
     ADD CONSTRAINT prompt_library_version_pkey PRIMARY KEY (id);
 
@@ -2301,6 +2323,10 @@ CREATE INDEX idx_prompt_evaluation_trial_run_case ON public.prompt_evaluation_tr
 CREATE INDEX idx_prompt_library_version_prompt_version ON public.prompt_library_version USING btree (prompt_id, version DESC);
 
 CREATE INDEX idx_prompt_library_version_workspace_created ON public.prompt_library_version USING btree (workspace_id, created_at DESC);
+
+CREATE INDEX idx_prompt_library_trial_prompt_created ON public.prompt_library_trial USING btree (prompt_id, created_at DESC);
+
+CREATE INDEX idx_prompt_library_trial_workspace_created ON public.prompt_library_trial USING btree (workspace_id, created_at DESC);
 
 CREATE INDEX idx_runtime_profile_workspace ON public.runtime_profile USING btree (workspace_id);
 
@@ -2835,6 +2861,27 @@ ALTER TABLE ONLY public.prompt_library_item
 
 ALTER TABLE ONLY public.prompt_library_item
     ADD CONSTRAINT prompt_library_item_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.prompt_library_trial
+    ADD CONSTRAINT prompt_library_trial_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.prompt_library_trial
+    ADD CONSTRAINT prompt_library_trial_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.prompt_library_trial
+    ADD CONSTRAINT prompt_library_trial_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.prompt_library_trial
+    ADD CONSTRAINT prompt_library_trial_prompt_id_fkey FOREIGN KEY (prompt_id) REFERENCES public.prompt_library_item(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.prompt_library_trial
+    ADD CONSTRAINT prompt_library_trial_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.agent_task_queue(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.prompt_library_trial
+    ADD CONSTRAINT prompt_library_trial_version_id_fkey FOREIGN KEY (version_id) REFERENCES public.prompt_library_version(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.prompt_library_trial
+    ADD CONSTRAINT prompt_library_trial_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
 
 ALTER TABLE ONLY public.prompt_library_version
     ADD CONSTRAINT prompt_library_version_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;

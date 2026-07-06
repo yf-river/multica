@@ -4899,36 +4899,8 @@ func promptEvaluationToolFailureSignal(tool string, output string) (bool, string
 	if promptEvaluationToolOutputHasOnlySuccessFailureCounters(normalized) {
 		return false, ""
 	}
-	patterns := []struct {
-		needle string
-		reason string
-	}{
-		{"exit status", "工具结果包含退出状态错误"},
-		{"exit code 1", "工具结果包含非零退出码"},
-		{"exit code 2", "工具结果包含非零退出码"},
-		{"error:", "工具结果包含错误信息"},
-		{"traceback", "工具结果包含异常信息"},
-		{"runtimeerror", "工具结果包含异常信息"},
-		{"exception", "工具结果包含异常信息"},
-		{"failed", "工具结果包含失败信息"},
-		{"failure", "工具结果包含失败信息"},
-		{"panic", "工具结果包含崩溃信息"},
-		{"timeout", "工具结果包含超时信息"},
-		{"timed out", "工具结果包含超时信息"},
-		{"permission denied", "工具结果包含权限拒绝信息"},
-		{"http 500", "工具结果包含服务端错误状态码"},
-		{"status 500", "工具结果包含服务端错误状态码"},
-		{"错误", "工具结果包含错误信息"},
-		{"失败", "工具结果包含失败信息"},
-		{"异常", "工具结果包含异常信息"},
-		{"超时", "工具结果包含超时信息"},
-		{"无权限", "工具结果包含权限问题"},
-		{"权限拒绝", "工具结果包含权限拒绝信息"},
-	}
-	for _, pattern := range patterns {
-		if strings.Contains(normalized, pattern.needle) {
-			return true, pattern.reason
-		}
+	if reason := promptEvaluationToolStructuredFailureReason(displayOutput); reason != "" {
+		return true, reason
 	}
 	return false, ""
 }
@@ -5015,6 +4987,32 @@ func promptEvaluationToolOutputHasNonEmptyStderr(output string) bool {
 
 func promptEvaluationToolOutputHasToolUseError(output string) bool {
 	return strings.Contains(output, "<tool_use_error>")
+}
+
+func promptEvaluationToolStructuredFailureReason(output string) string {
+	for _, rawLine := range strings.Split(output, "\n") {
+		line := strings.TrimSpace(rawLine)
+		lower := strings.ToLower(line)
+		switch {
+		case strings.HasPrefix(lower, "error:"):
+			return "工具结果包含错误信息"
+		case strings.HasPrefix(lower, "traceback"):
+			return "工具结果包含异常信息"
+		case strings.HasPrefix(lower, "runtimeerror:") || strings.HasPrefix(lower, "exception"):
+			return "工具结果包含异常信息"
+		case strings.HasPrefix(lower, "--- fail:") || strings.HasPrefix(lower, "fail\t") || strings.HasPrefix(lower, "fail "):
+			return "工具结果包含失败信息"
+		case strings.HasPrefix(lower, "panic:"):
+			return "工具结果包含崩溃信息"
+		case strings.HasPrefix(lower, "fatal"):
+			return "工具结果包含崩溃信息"
+		case strings.HasPrefix(lower, "command failed"):
+			return "工具结果包含失败信息"
+		case regexp.MustCompile(`^make(?:\[\d+\])?: \*\*\* .*\berror\s+\d+\b`).MatchString(lower):
+			return "工具结果包含错误信息"
+		}
+	}
+	return ""
 }
 
 func promptEvaluationToolCommandIsReadOnlyShell(command string) bool {
@@ -5933,7 +5931,7 @@ func (h *Handler) PublishPromptEvaluationOptimizationCandidate(w http.ResponseWr
 		writeError(w, http.StatusInternalServerError, "failed to publish optimization candidate as prompt")
 		return
 	}
-	if _, err := createPromptLibraryVersion(r.Context(), qtx, publishedPrompt, promptLibraryVersionSourceOptimization, candidate.ID); err != nil {
+	if _, err := createPromptLibraryVersion(r.Context(), qtx, publishedPrompt, promptLibraryVersionSourceOptimization, candidate.ID, ""); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to record published prompt version")
 		return
 	}

@@ -3,28 +3,18 @@ import type {
   CreatePromptLibraryItemRequest,
   PromptEvaluationAssetType,
   PromptLibraryItem,
-  PromptLibraryStatus,
-  PromptLibraryVariable,
 } from "@multica/core/types";
 
 export type PromptDraft = {
   name: string;
   description: string;
-  prompt_type: string;
   content: string;
-  variablesText: string;
-  tagsText: string;
-  status: PromptLibraryStatus;
 };
 
 export const emptyDraft = (): PromptDraft => ({
   name: "",
   description: "",
-  prompt_type: "通用",
   content: "",
-  variablesText: "",
-  tagsText: "",
-  status: "启用",
 });
 
 export function setDraftField<K extends keyof PromptDraft>(
@@ -39,11 +29,7 @@ export function itemToDraft(item: PromptLibraryItem): PromptDraft {
   return {
     name: item.name,
     description: item.description,
-    prompt_type: item.prompt_type,
     content: item.content,
-    variablesText: variablesToText(item.variables),
-    tagsText: item.tags.join(", "),
-    status: item.status,
   };
 }
 
@@ -51,11 +37,7 @@ export function requestToDraft(req: CreatePromptLibraryItemRequest): PromptDraft
   return {
     name: req.name,
     description: req.description ?? "",
-    prompt_type: req.prompt_type ?? "通用",
     content: req.content,
-    variablesText: variablesToText(req.variables ?? []),
-    tagsText: (req.tags ?? []).join(", "),
-    status: req.status ?? "启用",
   };
 }
 
@@ -63,11 +45,8 @@ export function draftToRequest(draft: PromptDraft): CreatePromptLibraryItemReque
   return {
     name: draft.name.trim(),
     description: draft.description.trim(),
-    prompt_type: draft.prompt_type.trim() || "通用",
+    prompt_type: "text",
     content: draft.content,
-    variables: parseVariables(draft.variablesText),
-    tags: splitList(draft.tagsText),
-    status: draft.status,
   };
 }
 
@@ -75,7 +54,6 @@ export function buildAssetPayload(
   assetType: PromptEvaluationAssetType,
   prompt: PromptLibraryItem,
   values: Record<string, string>,
-  rendered: string,
 ): Record<string, unknown> {
   const casePayload = {
     case_name: `${prompt.name} 基准用例`,
@@ -108,40 +86,16 @@ export function buildAssetPayload(
   if (assetType === "数据集") {
     return {
       ...basePayload,
-      中文语义: "用于训练与评估的数据集样本。",
+      中文语义: "用于训练与评估的用例库样本。",
     };
   }
   if (assetType === "测试套件") {
     return {
       ...basePayload,
-      通过标准: ["变量完整", "渲染内容包含期望关键词", "输出保持中文"],
+      通过标准: ["提示词内容存在", "输出保持中文"],
     };
   }
-  return {
-    ...basePayload,
-    通过标准: ["变量完整", "渲染内容包含期望关键词", "输出保持中文"],
-    调试输出: rendered,
-  };
-}
-
-function variablesToText(variables: PromptLibraryVariable[]): string {
-  return variables.map((variable) => `${variable.name}${variable.label ? `=${variable.label}` : ""}`).join(", ");
-}
-
-export function valuesToDebugText(variables: PromptLibraryVariable[]): string {
-  return variables.map((variable) => `${variable.name}=${variable.default_value ?? ""}`).join("\n");
-}
-
-export function parseVariables(value: string): PromptLibraryVariable[] {
-  return splitList(value).map((part) => {
-    const [name, ...labelParts] = part.split("=");
-    const label = labelParts.join("=").trim();
-    const variableName = (name ?? "").trim();
-    return {
-      name: variableName,
-      ...(label ? { label } : {}),
-    };
-  }).filter((variable) => variable.name.length > 0);
+  return basePayload;
 }
 
 export function splitList(value: string): string[] {

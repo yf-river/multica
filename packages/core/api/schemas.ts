@@ -18,6 +18,7 @@ import type {
   ListPromptEvaluationCaseTagDatasetSummariesResponse,
   ListPromptEvaluationCaseOperationsResponse,
   ListPromptLibraryItemsResponse,
+  ListPromptLibraryTrialsResponse,
   ListPromptLibraryVersionsResponse,
   ListIssueSOPRunsResponse,
   ObservabilitySummary,
@@ -53,6 +54,7 @@ import type {
   ListPromptEvaluationEvidenceSnapshotsResponse,
   PromptEvaluationAssetEvidenceArchivePackage,
   PromptLibraryItem,
+  PromptLibraryTrial,
   PromptLibraryVersion,
   PublishPromptEvaluationOptimizationCandidateResponse,
   Squad,
@@ -856,7 +858,7 @@ export const PromptLibraryItemSchema = z.object({
   project_id: z.string().nullable().optional().transform((v) => v ?? null),
   name: z.string(),
   description: z.string().default(""),
-  prompt_type: z.string().default("通用"),
+  prompt_type: z.string().default("text"),
   content: z.string(),
   variables: z.array(PromptLibraryVariableSchema).default([]),
   tags: z.array(z.string()).default([]),
@@ -880,12 +882,13 @@ export const PromptLibraryVersionSchema = z.object({
   version: z.number().default(1),
   name: z.string(),
   description: z.string().default(""),
-  prompt_type: z.string().default("通用"),
+  prompt_type: z.string().default("text"),
   content: z.string(),
   variables: z.array(PromptLibraryVariableSchema).default([]),
   tags: z.array(z.string()).default([]),
   source: z.enum(["手动创建", "手动更新", "优化候选发布", "历史回填"]).default("历史回填"),
   source_candidate_id: z.string().nullable().optional().transform((v) => v ?? null),
+  change_note: z.string().default(""),
   created_by: z.string().nullable().optional().transform((v) => v ?? null),
   created_at: z.string(),
 }).loose();
@@ -895,13 +898,36 @@ export const PromptLibraryVersionListResponseSchema = z.object({
   total: z.number().default(0),
 }).loose();
 
+export const PromptLibraryTrialSchema = z.object({
+  id: z.string(),
+  workspace_id: z.string(),
+  prompt_id: z.string(),
+  version_id: z.string(),
+  agent_id: z.string(),
+  chat_session_id: z.string().nullable().optional().transform((v) => v ?? null),
+  task_id: z.string().nullable().optional().transform((v) => v ?? null),
+  input: z.string().default(""),
+  rendered_message: z.string().default(""),
+  variables: z.record(z.string(), z.unknown()).default({}),
+  status: z.string().default("queued"),
+  output_preview: z.string().default(""),
+  created_by: z.string().nullable().optional().transform((v) => v ?? null),
+  created_at: z.string(),
+  updated_at: z.string(),
+}).loose();
+
+export const PromptLibraryTrialListResponseSchema = z.object({
+  items: z.array(PromptLibraryTrialSchema).default([]),
+  total: z.number().default(0),
+}).loose();
+
 export const EMPTY_PROMPT_LIBRARY_ITEM: PromptLibraryItem = {
   id: "",
   workspace_id: "",
   project_id: null,
   name: "",
   description: "",
-  prompt_type: "通用",
+  prompt_type: "text",
   content: "",
   variables: [],
   tags: [],
@@ -925,17 +951,41 @@ export const EMPTY_PROMPT_LIBRARY_VERSION: PromptLibraryVersion = {
   version: 1,
   name: "",
   description: "",
-  prompt_type: "通用",
+  prompt_type: "text",
   content: "",
   variables: [],
   tags: [],
   source: "历史回填",
   source_candidate_id: null,
+  change_note: "",
   created_by: null,
   created_at: "",
 };
 
 export const EMPTY_PROMPT_LIBRARY_VERSION_LIST_RESPONSE: ListPromptLibraryVersionsResponse = {
+  items: [],
+  total: 0,
+};
+
+export const EMPTY_PROMPT_LIBRARY_TRIAL: PromptLibraryTrial = {
+  id: "",
+  workspace_id: "",
+  prompt_id: "",
+  version_id: "",
+  agent_id: "",
+  chat_session_id: null,
+  task_id: null,
+  input: "",
+  rendered_message: "",
+  variables: {},
+  status: "queued",
+  output_preview: "",
+  created_by: null,
+  created_at: "",
+  updated_at: "",
+};
+
+export const EMPTY_PROMPT_LIBRARY_TRIAL_LIST_RESPONSE: ListPromptLibraryTrialsResponse = {
   items: [],
   total: 0,
 };

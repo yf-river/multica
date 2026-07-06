@@ -77,9 +77,12 @@ export function ModelDropdown({
     setSearch("");
   };
 
+  const isDiscoveringModels = modelsQuery.isLoading && runtimeOnline && !disabled;
   const triggerLabel =
     value ||
-    (disabled
+    (isDiscoveringModels
+      ? t(($) => $.pickers.model_discovering)
+      : disabled
       ? t(($) => $.model_dropdown.select_runtime_first)
       : runtimeOnline
         ? t(($) => $.model_dropdown.default_provider)
@@ -123,6 +126,12 @@ export function ModelDropdown({
                 two pickers sit side-by-side; inline-in-flex vs block-line-
                 box height calc would otherwise leave them ~1px misaligned. */}
             <div className="flex items-center gap-2">
+              {isDiscoveringModels && (
+                <Loader2
+                  aria-hidden="true"
+                  className="h-3.5 w-3.5 shrink-0 animate-spin text-muted-foreground"
+                />
+              )}
               <span className="truncate font-medium">{triggerLabel}</span>
             </div>
             {value && (

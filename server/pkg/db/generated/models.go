@@ -854,6 +854,24 @@ type PromptLibraryItem struct {
 	UpdatedAt   pgtype.Timestamptz `json:"updated_at"`
 }
 
+type PromptLibraryTrial struct {
+	ID              pgtype.UUID        `json:"id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	PromptID        pgtype.UUID        `json:"prompt_id"`
+	VersionID       pgtype.UUID        `json:"version_id"`
+	AgentID         pgtype.UUID        `json:"agent_id"`
+	ChatSessionID   pgtype.UUID        `json:"chat_session_id"`
+	TaskID          pgtype.UUID        `json:"task_id"`
+	Input           string             `json:"input"`
+	RenderedMessage string             `json:"rendered_message"`
+	Variables       []byte             `json:"variables"`
+	Status          string             `json:"status"`
+	OutputPreview   string             `json:"output_preview"`
+	CreatedBy       pgtype.UUID        `json:"created_by"`
+	CreatedAt       pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt       pgtype.Timestamptz `json:"updated_at"`
+}
+
 type PromptLibraryVersion struct {
 	ID                pgtype.UUID        `json:"id"`
 	PromptID          pgtype.UUID        `json:"prompt_id"`
@@ -868,6 +886,7 @@ type PromptLibraryVersion struct {
 	Tags              []byte             `json:"tags"`
 	Source            string             `json:"source"`
 	SourceCandidateID pgtype.UUID        `json:"source_candidate_id"`
+	ChangeNote        string             `json:"change_note"`
 	CreatedBy         pgtype.UUID        `json:"created_by"`
 	CreatedAt         pgtype.Timestamptz `json:"created_at"`
 }

@@ -62,6 +62,17 @@ UPDATE prompt_library_item SET
 WHERE id = $1 AND workspace_id = $2
 RETURNING *;
 
+-- name: UpdatePromptLibraryItemLatestVersion :one
+UPDATE prompt_library_item SET
+    name = COALESCE(sqlc.narg('name'), name),
+    description = COALESCE(sqlc.narg('description'), description),
+    prompt_type = COALESCE(sqlc.narg('prompt_type'), prompt_type),
+    content = $3,
+    version = version + 1,
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2
+RETURNING *;
+
 -- name: DeletePromptLibraryItem :exec
 DELETE FROM prompt_library_item
 WHERE id = $1 AND workspace_id = $2;

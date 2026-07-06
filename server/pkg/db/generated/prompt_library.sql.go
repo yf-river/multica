@@ -308,3 +308,53 @@ func (q *Queries) UpdatePromptLibraryItem(ctx context.Context, arg UpdatePromptL
 	)
 	return i, err
 }
+
+const updatePromptLibraryItemLatestVersion = `-- name: UpdatePromptLibraryItemLatestVersion :one
+UPDATE prompt_library_item SET
+    name = COALESCE($4, name),
+    description = COALESCE($5, description),
+    prompt_type = COALESCE($6, prompt_type),
+    content = $3,
+    version = version + 1,
+    updated_at = now()
+WHERE id = $1 AND workspace_id = $2
+RETURNING id, workspace_id, project_id, name, description, prompt_type, content, variables, tags, status, version, created_by, created_at, updated_at
+`
+
+type UpdatePromptLibraryItemLatestVersionParams struct {
+	ID          pgtype.UUID `json:"id"`
+	WorkspaceID pgtype.UUID `json:"workspace_id"`
+	Content     string      `json:"content"`
+	Name        pgtype.Text `json:"name"`
+	Description pgtype.Text `json:"description"`
+	PromptType  pgtype.Text `json:"prompt_type"`
+}
+
+func (q *Queries) UpdatePromptLibraryItemLatestVersion(ctx context.Context, arg UpdatePromptLibraryItemLatestVersionParams) (PromptLibraryItem, error) {
+	row := q.db.QueryRow(ctx, updatePromptLibraryItemLatestVersion,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.Content,
+		arg.Name,
+		arg.Description,
+		arg.PromptType,
+	)
+	var i PromptLibraryItem
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.ProjectID,
+		&i.Name,
+		&i.Description,
+		&i.PromptType,
+		&i.Content,
+		&i.Variables,
+		&i.Tags,
+		&i.Status,
+		&i.Version,
+		&i.CreatedBy,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}

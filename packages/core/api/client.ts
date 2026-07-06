@@ -128,6 +128,8 @@ import type {
   CreateSquadRequest,
   UpdateSquadRequest,
   PromptLibraryItem,
+  PromptLibraryTrial,
+  PromptLibraryVersion,
   PromptEvaluationAsset,
   PromptEvaluationRun,
   PromptEvaluationRunEvidence,
@@ -199,8 +201,12 @@ import type {
   BulkUpdatePromptEvaluationCaseTagsResponse,
   ListPromptLibraryItemsParams,
   ListPromptLibraryItemsResponse,
+  ListPromptLibraryTrialsResponse,
   ListPromptLibraryVersionsResponse,
   CreatePromptLibraryItemRequest,
+  CreatePromptLibraryVersionRequest,
+  CreatePromptLibraryVersionResponse,
+  CreatePromptLibraryTrialRequest,
   UpdatePromptLibraryItemRequest,
   ExternalCredentialProvider,
   ExternalCredentialProfile,
@@ -247,6 +253,9 @@ import {
   EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
   EMPTY_PROMPT_LIBRARY_ITEM,
   EMPTY_PROMPT_LIBRARY_LIST_RESPONSE,
+  EMPTY_PROMPT_LIBRARY_TRIAL,
+  EMPTY_PROMPT_LIBRARY_TRIAL_LIST_RESPONSE,
+  EMPTY_PROMPT_LIBRARY_VERSION,
   EMPTY_PROMPT_LIBRARY_VERSION_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_ASSET,
   EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE,
@@ -336,6 +345,9 @@ import {
   PublishPromptEvaluationOptimizationCandidateResponseSchema,
   PromptLibraryItemSchema,
   PromptLibraryItemListResponseSchema,
+  PromptLibraryTrialListResponseSchema,
+  PromptLibraryTrialSchema,
+  PromptLibraryVersionSchema,
   PromptLibraryVersionListResponseSchema,
   IssueSOPRunsResponseSchema,
   ObservabilitySummarySchema,
@@ -1885,6 +1897,13 @@ export class ApiClient {
     }) as ListPromptLibraryVersionsResponse;
   }
 
+  async listPromptLibraryTrials(id: string): Promise<ListPromptLibraryTrialsResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/trials`);
+    return parseWithFallback(raw, PromptLibraryTrialListResponseSchema, EMPTY_PROMPT_LIBRARY_TRIAL_LIST_RESPONSE, {
+      endpoint: "GET /api/prompt-library/:id/trials",
+    }) as ListPromptLibraryTrialsResponse;
+  }
+
   async createPromptLibraryItem(data: CreatePromptLibraryItemRequest): Promise<PromptLibraryItem> {
     const raw = await this.fetch<unknown>("/api/prompt-library", {
       method: "POST",
@@ -1893,6 +1912,32 @@ export class ApiClient {
     return parseWithFallback(raw, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
       endpoint: "POST /api/prompt-library",
     }) as PromptLibraryItem;
+  }
+
+  async createPromptLibraryVersion(id: string, data: CreatePromptLibraryVersionRequest): Promise<CreatePromptLibraryVersionResponse> {
+    const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/versions`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    const response = raw && typeof raw === "object" ? raw as { item?: unknown; version?: unknown } : {};
+    return {
+      item: parseWithFallback(response.item, PromptLibraryItemSchema, EMPTY_PROMPT_LIBRARY_ITEM, {
+        endpoint: "POST /api/prompt-library/:id/versions.item",
+      }) as PromptLibraryItem,
+      version: parseWithFallback(response.version, PromptLibraryVersionSchema, EMPTY_PROMPT_LIBRARY_VERSION, {
+        endpoint: "POST /api/prompt-library/:id/versions.version",
+      }) as PromptLibraryVersion,
+    };
+  }
+
+  async createPromptLibraryTrial(id: string, versionId: string, data: CreatePromptLibraryTrialRequest): Promise<PromptLibraryTrial> {
+    const raw = await this.fetch<unknown>(`/api/prompt-library/${id}/versions/${versionId}/trials`, {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, PromptLibraryTrialSchema, EMPTY_PROMPT_LIBRARY_TRIAL, {
+      endpoint: "POST /api/prompt-library/:id/versions/:versionId/trials",
+    }) as PromptLibraryTrial;
   }
 
   async updatePromptLibraryItem(id: string, data: UpdatePromptLibraryItemRequest): Promise<PromptLibraryItem> {

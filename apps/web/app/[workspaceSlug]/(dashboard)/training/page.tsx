@@ -1,11 +1,11 @@
 import { redirect } from "next/navigation";
 
-type TrainingSearchParams = { view?: string } & Record<string, string | string[] | undefined>;
+type TrainingSearchParams = Record<string, string | string[] | undefined>;
 
 function searchSuffix(searchParams: TrainingSearchParams): string {
   const search = new URLSearchParams();
   for (const [key, value] of Object.entries(searchParams)) {
-    if (key === "view" || value === undefined) continue;
+    if (value === undefined) continue;
     if (Array.isArray(value)) {
       for (const item of value) search.append(key, item);
     } else {
@@ -25,5 +25,5 @@ export default async function TrainingPage({
 }) {
   const { workspaceSlug } = await params;
   const resolvedSearchParams = await searchParams;
-  redirect(`/${encodeURIComponent(workspaceSlug)}/training/prompts${searchSuffix(resolvedSearchParams)}`);
+  redirect(`/${encodeURIComponent(workspaceSlug)}/debug/prompts${searchSuffix(resolvedSearchParams)}`);
 }

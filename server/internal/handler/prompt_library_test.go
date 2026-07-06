@@ -5,8 +5,39 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 )
+
+func TestRenderPromptLibraryTrialMessageWithoutInput(t *testing.T) {
+	rendered := renderPromptLibraryTrialMessage("请围绕 {{任务标题}} 澄清。背景：{{ 项目背景 }}", "", map[string]string{
+		"任务标题": "登录失败",
+		"项目背景": "账号系统",
+	})
+	if !strings.Contains(rendered, "请围绕 登录失败 澄清。背景：账号系统") {
+		t.Fatalf("rendered message did not replace variables: %s", rendered)
+	}
+	if strings.Contains(rendered, "<用户输入>") {
+		t.Fatalf("rendered message should omit empty user input: %s", rendered)
+	}
+}
+
+func TestRenderPromptLibraryTrialMessageKeepsLegacyInput(t *testing.T) {
+	rendered := renderPromptLibraryTrialMessage("请总结。", "补充上下文", nil)
+	if !strings.Contains(rendered, "<用户输入>\n补充上下文\n</用户输入>") {
+		t.Fatalf("rendered message should include legacy user input: %s", rendered)
+	}
+}
+
+func TestMissingPromptLibraryTrialVariables(t *testing.T) {
+	missing := missingPromptLibraryTrialVariables("请围绕 {{任务标题}} 分析 {{ 项目背景 }}，再次确认 {{任务标题}}。", map[string]string{
+		"任务标题": "登录失败",
+		"项目背景": " ",
+	})
+	if len(missing) != 1 || missing[0] != "项目背景" {
+		t.Fatalf("missing = %#v, want 项目背景", missing)
+	}
+}
 
 func TestPromptLibraryCRUD(t *testing.T) {
 	if testHandler == nil || testPool == nil {
