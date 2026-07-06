@@ -186,6 +186,7 @@ const sopPMCrossProjectSummaryRule = `## PM 跨项目 child issue 摘要
 - 01-clarify、用户确认或 PM 自己判断中出现的跨项目线索，只能记录为后续 02-design/03-task-split 输入；PM 不得在 03-task-split 通过前创建 child issue，除非任务创建者或 workspace owner/admin 明确要求“现在创建某个目标项目 child issue”。
 - 03-task-split 通过后，PM 才能按 03 的 required cross-project dependencies 和 handoff 输入材料创建或复用目标项目 child issue。
 - PM 创建 required child issue 时必须带 ` + "`" + `--parent <当前 issue>` + "`" + `、` + "`" + `--project <目标项目 UUID>` + "`" + `、` + "`" + `--status todo` + "`" + `，并优先分配目标项目小队；没有目标项目小队时分配 PM 小队递归执行。不得静默创建 ` + "`" + `backlog` + "`" + ` 或分配给普通成员导致任务不启动；找不到可执行小队/Agent 时必须阻断。
+- PM 创建 child issue 的 ` + "`" + `--description` + "`" + ` 必须使用短纯文本摘要：写父 issue、目标项目、工作意图、上游接口名、禁止事项和验收方向即可；不得内嵌原始 shell/curl/grpcurl 命令、JSON 请求体、尖括号占位符或大段 handoff。详细技术内容让 child issue 通过父 issue/03 产物读取。
 - 如果 existing child 已存在但 status 是 ` + "`" + `backlog` + "`" + ` 或 assignee 是普通成员，PM 必须先把它更新为可执行的 squad/Agent assignee 和 ` + "`" + `todo` + "`" + `；无法修正时阻断并报告，不能继续父 issue 04/05。
 - handoff-gateway.md、handoff-ida-deployment.md 或其它 handoff 只作为 child issue 输入材料，不能代表目标项目已完成。
 - 对 required 依赖或待确认的目标项目交付，child issue 待创建、未完成、handoff 待分发或目标项目 MR 未关联，都是父 issue 继续 04/05 或最终收口的阻塞项。

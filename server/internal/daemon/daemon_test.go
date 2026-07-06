@@ -144,8 +144,8 @@ func TestExecutionPolicyToolEnvelopeForCoordinator(t *testing.T) {
 	if got := allowedToolsForExecutionPolicy("codebuddy", pm); len(got) != 1 || got[0] != "Bash(multica *)" {
 		t.Fatalf("coordinator scoped allowed tools = %v, want [Bash(multica *)]", got)
 	}
-	if got := permissionModeForExecutionPolicy("codebuddy", pm); got != "default" {
-		t.Fatalf("codebuddy coordinator permission mode = %q, want default", got)
+	if got := permissionModeForExecutionPolicy("codebuddy", pm); got != "bypassPermissions" {
+		t.Fatalf("codebuddy coordinator permission mode = %q, want bypassPermissions", got)
 	}
 	if got := maxTurnsForExecutionPolicy(0, pm); got != 12 {
 		t.Fatalf("coordinator default max turns = %d, want 12", got)

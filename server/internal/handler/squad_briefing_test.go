@@ -385,6 +385,8 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 		"父 issue 只要存在 child issue 且任一 child status 不是 done",
 		"--status todo",
 		"不得静默创建 `backlog` 或分配给普通成员导致任务不启动",
+		"--description` 必须使用短纯文本摘要",
+		"不得内嵌原始 shell/curl/grpcurl 命令",
 		"existing child 已存在但 status 是 `backlog` 或 assignee 是普通成员",
 		"更新为可执行的 squad/Agent assignee 和 `todo`",
 		"PM 不得在 03-task-split 通过前创建 child issue",

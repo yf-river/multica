@@ -4494,7 +4494,7 @@ func permissionModeForExecutionPolicy(provider string, policy TaskExecutionPolic
 		return ""
 	}
 	if isCoordinatorWithoutRepoAccess(policy) {
-		return "default"
+		return "bypassPermissions"
 	}
 	if isNoRepoBoundedStage(policy) {
 		return "default"
