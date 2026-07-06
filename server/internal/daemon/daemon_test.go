@@ -1173,6 +1173,21 @@ func TestGateResumeToReusedWorkdir(t *testing.T) {
 	}
 }
 
+func TestManagedWorkDirForIssueSpaceUsesPrimaryRepo(t *testing.T) {
+	t.Parallel()
+
+	issueSpace := &preparedIssueExecutionSpace{
+		RootDir:        "/workspaces/ws/issues/abc",
+		PrimaryRepoDir: "/workspaces/ws/issues/abc/repos/user-center",
+	}
+	if got := managedWorkDirForIssueSpace(issueSpace); got != issueSpace.PrimaryRepoDir {
+		t.Fatalf("managed workdir = %q, want primary repo dir %q", got, issueSpace.PrimaryRepoDir)
+	}
+	if got := managedWorkDirForIssueSpace(nil); got != "" {
+		t.Fatalf("nil issue space managed workdir = %q, want empty", got)
+	}
+}
+
 func TestExecuteAndDrain_ResumeFailureFallback(t *testing.T) {
 	t.Parallel()
 

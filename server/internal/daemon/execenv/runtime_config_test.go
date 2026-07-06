@@ -695,7 +695,7 @@ func TestPlanningStageCapabilityPolicyBlocksNativeSubagents(t *testing.T) {
 		"do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Bash, Read, Edit, Write, MultiEdit, Grep, Glob, LS",
 		"Native file-write and shell tools are unavailable",
 		"Do not inspect CLI help or discover extra commands in this task",
-		"No comment command is available in this no-repository planning stage",
+		"No comment command is available in this read-only planning/verification stage",
 		"final assistant output",
 		"Do not call tools or CLI commands in this no-repository planning task",
 		"Use the issue/source context already supplied in this task prompt",
@@ -722,9 +722,51 @@ func TestPlanningStageCapabilityPolicyBlocksNativeSubagents(t *testing.T) {
 		"Run `multica issue get 77777777-8888-9999-aaaa-bbbbbbbbbbbb --output json`",
 		"Run `multica issue comment list 77777777-8888-9999-aaaa-bbbbbbbbbbbb --output json`",
 		"Use the `multica` CLI to interact with the platform",
+		"Final results MUST be delivered via `multica issue comment add`",
 	} {
 		if strings.Contains(out, banned) {
 			t.Fatalf("no-repo planning stage should not require file-write comment mode %q\n--- output ---\n%s", banned, out)
+		}
+	}
+}
+
+func TestRepoReadOnlyPlanningStageUsesFinalOutputForComments(t *testing.T) {
+	t.Parallel()
+
+	out := buildMetaSkillContent("codebuddy", TaskContextForEnv{
+		IssueID: "77777777-8888-9999-aaaa-bbbbbbbbbbbb",
+		ExecutionPolicy: TaskExecutionPolicyForEnv{
+			RoleKey:          "02-design",
+			RoleKind:         "planning_stage",
+			CanAccessRepo:    true,
+			CanEditRepo:      false,
+			ProjectSkillMode: "stage",
+		},
+	})
+
+	for _, want := range []string{
+		"Repository access: allowed when `$MULTICA_PRIMARY_REPO_DIR` is set",
+		"Stage native tool boundary",
+		"final assistant output",
+		"Do not call `multica issue comment add`",
+		"The platform will automatically post your final output as the issue comment",
+		"Important: Platform Output Is Automatic",
+	} {
+		if !strings.Contains(out, want) {
+			t.Fatalf("repo read-only planning brief missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	for _, banned := range []string{
+		"post it with `multica issue comment add 77777777-8888-9999-aaaa-bbbbbbbbbbbb --content",
+		"using the platform-correct non-inline mode",
+		"--content-file ./reply.md",
+		"always write the comment body to a UTF-8 file",
+		"Important: Always Use the `multica` CLI",
+		"Final results MUST be delivered via `multica issue comment add`",
+		"Edit, Write, MultiEdit, or equivalent internal delegation tools. Planning and verification stages must produce their own bounded stage artifact",
+	} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("repo read-only planning brief should not contain %q\n--- output ---\n%s", banned, out)
 		}
 	}
 }

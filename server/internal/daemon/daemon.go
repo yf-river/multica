@@ -2885,6 +2885,13 @@ type preparedIssueExecutionSpace struct {
 	BranchName     string
 }
 
+func managedWorkDirForIssueSpace(issueSpace *preparedIssueExecutionSpace) string {
+	if issueSpace == nil {
+		return ""
+	}
+	return issueSpace.PrimaryRepoDir
+}
+
 func issueExecutionSpaceEnabled(task Task) bool {
 	return task.IssueExecutionSpace != nil &&
 		task.IssueExecutionSpace.Enabled &&
@@ -3132,7 +3139,7 @@ func (d *Daemon) runTask(ctx context.Context, task Task, provider string, slot i
 			Task:            taskCtx,
 		}
 		if issueSpace != nil {
-			prepParams.ManagedWorkDir = issueSpace.RootDir
+			prepParams.ManagedWorkDir = managedWorkDirForIssueSpace(issueSpace)
 		}
 		env, err = execenv.Prepare(prepParams, d.logger)
 		if err != nil {

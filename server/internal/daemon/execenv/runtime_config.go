@@ -545,8 +545,8 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	//     Windows uses `--content-file`, not stdin.
 	// Because the corruption is shell-driven, the guardrail is provider-agnostic.
 	if noNativeFileWriteForComments(ctx) {
-		if isNoRepoBoundedReviewStage(ctx.ExecutionPolicy) {
-			b.WriteString("- No comment command is available in this no-repository planning stage. Put your stage result in the final assistant output; the platform will post it to the issue automatically.\n")
+		if finalOutputAutoCommentStage(ctx) {
+			b.WriteString("- No comment command is available in this read-only planning/verification stage. Put your stage result in the final assistant output; the platform will post it to the issue automatically.\n")
 		} else {
 			b.WriteString("- `multica issue comment add <issue-id> [--content \"...\"] [--parent <comment-id>]` — Post a compact single-line comment. Native file-write tools are unavailable in this task, so use a short shell-safe `--content` value, do not include literal newlines in the shell command, and keep comments concise. Run `multica issue comment add --help` for details.\n")
 		}
@@ -591,8 +591,8 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	// path, so the cross-platform guidance is now one shape.
 	b.WriteString("## Comment Formatting\n\n")
 	if noNativeFileWriteForComments(ctx) {
-		if isNoRepoBoundedReviewStage(ctx.ExecutionPolicy) {
-			b.WriteString("This task has no native file-write or shell tool. Do not call `multica issue comment add`; write the stage result as your final assistant output and the platform will automatically post it as an issue comment.\n\n")
+		if finalOutputAutoCommentStage(ctx) {
+			b.WriteString("This read-only planning/verification task has no native file-write tool for composing long comments. Do not call `multica issue comment add`; write the stage result as your final assistant output and the platform will automatically post it as an issue comment.\n\n")
 		} else {
 			b.WriteString("This task has no native file-write tool. Use `multica issue comment add <issue-id> --content \"...\"` with a compact single-line shell-safe body. Do not include literal newlines in the shell command, do not use multi-paragraph inline comments, and do not rely on `\\n` escapes. Avoid backticks, command substitutions, environment variables, and quotes that need escaping. Tasks with file-write tools must still use `--content-file`.\n\n")
 		}
@@ -609,7 +609,11 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	}
 
 	b.WriteString("## Stage Markdown Artifacts\n\n")
-	b.WriteString("When this run produces a durable stage artifact (for example a requirements note, design proposal, task handoff, implementation summary, or verification report), save only this run's own stage artifact as a UTF-8 `.md` file under `$MULTICA_ARTIFACT_DIR` when that environment variable is set; otherwise use `artifacts/multica/` in the current working directory. Treat this managed directory as the only stage-artifact handoff path: do not save stage artifacts only under project-local paths such as `runs/current/projects/...`, because the platform cannot reliably upload or show those in the node table. Do not recopy earlier stage markdown files into the current run's artifact directory; cite their titles or issue links in prose instead. The daemon automatically uploads markdown artifacts from the managed artifact directory, `artifacts/`, and `.multica/artifacts/` to the issue before marking the task terminal, links them to an agent-authored issue comment, and the platform renders them for download or preview. Do not also pass those managed markdown files with `multica issue comment add --attachment`; that creates duplicate node artifacts. Mention the artifact titles in your stage summary, but do not rely on local paths in prose. Temporary scratch files that are not useful to a future reader should not be saved there.\n\n")
+	if finalOutputAutoCommentStage(ctx) {
+		b.WriteString("This read-only planning/verification task has no native file-write tool. Produce the Markdown stage artifact directly in your final assistant output; the platform will attach that output to the issue comment automatically. Do not attempt to create local `.md` files, `reply.md`, or attachments in this task.\n\n")
+	} else {
+		b.WriteString("When this run produces a durable stage artifact (for example a requirements note, design proposal, task handoff, implementation summary, or verification report), save only this run's own stage artifact as a UTF-8 `.md` file under `$MULTICA_ARTIFACT_DIR` when that environment variable is set; otherwise use `artifacts/multica/` in the current working directory. Treat this managed directory as the only stage-artifact handoff path: do not save stage artifacts only under project-local paths such as `runs/current/projects/...`, because the platform cannot reliably upload or show those in the node table. Do not recopy earlier stage markdown files into the current run's artifact directory; cite their titles or issue links in prose instead. The daemon automatically uploads markdown artifacts from the managed artifact directory, `artifacts/`, and `.multica/artifacts/` to the issue before marking the task terminal, links them to an agent-authored issue comment, and the platform renders them for download or preview. Do not also pass those managed markdown files with `multica issue comment add --attachment`; that creates duplicate node artifacts. Mention the artifact titles in your stage summary, but do not rely on local paths in prose. Temporary scratch files that are not useful to a future reader should not be saved there.\n\n")
+	}
 
 	b.WriteString("## Verification Output Contract\n\n")
 	b.WriteString("When you report that verification, tests, lint, build, render, MR checks, or an acceptance review completed, include a Markdown list or table of the concrete cases you ran. Do not only say \"all passed\", \"4 checks passed\", or similar. For each case include the case/command name, what it covered, the result, and a short evidence pointer such as the command, file, MR head, log excerpt, or artifact name. If a check was skipped or out of scope, list it separately with the reason. This applies to dedicated verification roles and to simple one-task flows.\n\n")
@@ -671,7 +675,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 			if isNoRepoBoundedReviewStage(ctx.ExecutionPolicy) {
 				b.WriteString("- Stage native tool boundary: do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Bash, Read, Edit, Write, MultiEdit, Grep, Glob, LS, or equivalent internal delegation/repo-inspection tools. Native file-write and shell tools are unavailable; write the stage result as your final assistant output and do not attempt to create `reply.md`, local artifact files, or issue comments yourself. Planning stages must produce their own bounded stage result in this platform task; do not spawn internal agents or parallel subtasks.\n")
 			} else {
-				b.WriteString("- Stage native tool boundary: do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Edit, Write, MultiEdit, or equivalent internal delegation tools. Planning and verification stages must produce their own bounded stage artifact in this platform task; do not spawn internal agents or parallel subtasks.\n")
+				b.WriteString("- Stage native tool boundary: do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Edit, Write, MultiEdit, or equivalent internal delegation tools. Planning and verification stages must produce their own bounded stage result in this platform task as final assistant output; do not spawn internal agents or parallel subtasks, and do not attempt to create `reply.md` or local artifact files.\n")
 			}
 		}
 		if ctx.ExecutionPolicy.CanAccessRepo {
@@ -835,7 +839,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		}
 		if ctx.IsSquadLeader {
 			fmt.Fprintf(&b, "5. **Post your final results as a comment** (unless your outcome is `no_action` — in that case, calling `multica squad activity %s no_action --reason \"...\"` alone is sufficient; you MUST exit without posting any comment. DO NOT post a comment announcing no_action or saying you are exiting silently): post it with `multica issue comment add %s --content \"...\"`. Keep coordinator comments compact enough for one shell-safe single-line argument; native file-write tools are unavailable in coordinator mode. Do not include literal newlines in the shell command. Your results are only visible to the user if posted via this CLI call; text in your terminal or run logs is NOT delivered.\n", ctx.IssueID, ctx.IssueID)
-		} else if isNoRepoBoundedReviewStage(ctx.ExecutionPolicy) {
+		} else if finalOutputAutoCommentStage(ctx) {
 			b.WriteString("5. **Return your stage result as final assistant output — this step is mandatory**: do not call `multica issue comment add`. The platform will automatically post your final output as the issue comment when this task completes, provided you did not already post a comment.\n")
 		} else if noNativeFileWriteForComments(ctx) {
 			fmt.Fprintf(&b, "5. **Post your final results as a comment — this step is mandatory**: post it with `multica issue comment add %s --content \"...\"`. Keep the body compact, single-line, and shell-safe because native file-write tools are unavailable in this task; do not include literal newlines in the shell command. Your results are only visible to the user if posted via this CLI call; text in your terminal or run logs is NOT delivered.\n", ctx.IssueID)
@@ -917,12 +921,17 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	b.WriteString("Issues and comments may include file attachments (images, documents, etc.).\n")
 	b.WriteString("When a task includes attachment IDs and you need the files, inspect `multica attachment --help` and use the authenticated CLI path. Do not open Multica resource URLs directly.\n\n")
 
-	b.WriteString("## Important: Always Use the `multica` CLI\n\n")
-	b.WriteString("All interactions with Multica platform resources — including issues, comments, attachments, images, files, and any other platform data — **must** go through the `multica` CLI. ")
-	b.WriteString("Do NOT use `curl`, `wget`, or any other HTTP client to access Multica URLs or APIs directly. ")
-	b.WriteString("Multica resource URLs require authenticated access that only the `multica` CLI can provide.\n\n")
-	b.WriteString("If you need to perform an operation that is not covered by any existing `multica` command, ")
-	b.WriteString("do NOT attempt to work around it. Instead, post a comment mentioning the workspace owner to request the missing functionality.\n\n")
+	if finalOutputAutoCommentStage(ctx) {
+		b.WriteString("## Important: Platform Output Is Automatic\n\n")
+		b.WriteString("Do not call `multica issue comment add` or use HTTP clients to write platform output in this read-only stage. Use allowed read/search tools only as needed, then put the stage result in your final assistant output. The platform posts that final output to the issue automatically.\n\n")
+	} else {
+		b.WriteString("## Important: Always Use the `multica` CLI\n\n")
+		b.WriteString("All interactions with Multica platform resources — including issues, comments, attachments, images, files, and any other platform data — **must** go through the `multica` CLI. ")
+		b.WriteString("Do NOT use `curl`, `wget`, or any other HTTP client to access Multica URLs or APIs directly. ")
+		b.WriteString("Multica resource URLs require authenticated access that only the `multica` CLI can provide.\n\n")
+		b.WriteString("If you need to perform an operation that is not covered by any existing `multica` command, ")
+		b.WriteString("do NOT attempt to work around it. Instead, post a comment mentioning the workspace owner to request the missing functionality.\n\n")
+	}
 
 	b.WriteString("## Output\n\n")
 	switch {
@@ -934,7 +943,9 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("- Print exactly one final line: `Created <identifier-or-id>: <title>` after a successful `multica issue create`. Use the created issue's `identifier` from JSON output when available; otherwise use its `id`. Do not assume any workspace issue prefix such as `MUL-`; workspaces can use custom prefixes.\n")
 		b.WriteString("- On CLI failure, exit with the CLI error as the only output. The platform translates that into a `quick_create_failed` inbox item carrying the original prompt for the user.\n")
 	default:
-		if ctx.IsSquadLeader {
+		if finalOutputAutoCommentStage(ctx) {
+			b.WriteString("Return the complete stage result as final assistant output. The platform will post that final output to the issue automatically, so do not call `multica issue comment add` and do not create a local reply file.\n\n")
+		} else if ctx.IsSquadLeader {
 			b.WriteString("⚠️ **Final results MUST be delivered via `multica issue comment add`** — unless your outcome is `no_action`. When you evaluate a trigger and decide no action is needed, calling `multica squad activity <issue-id> no_action --reason \"...\"` alone is sufficient; you MUST exit without posting any comment. DO NOT post a comment that announces no_action, acknowledges another agent, or says you are exiting silently — such comments are noise. For all other outcomes (`action`, `failed`), a comment is still mandatory.\n\n")
 		} else {
 			b.WriteString("⚠️ **Final results MUST be delivered via `multica issue comment add`.** The user does NOT see your terminal output, assistant chat text, or run logs — only comments on the issue. A task that finishes without a result comment is invisible to the user, even if the work itself was correct.\n\n")
@@ -964,7 +975,14 @@ func coordinatorWithoutFileWrite(ctx TaskContextForEnv) bool {
 }
 
 func noNativeFileWriteForComments(ctx TaskContextForEnv) bool {
-	return coordinatorWithoutFileWrite(ctx) || isNoRepoBoundedReviewStage(ctx.ExecutionPolicy)
+	return coordinatorWithoutFileWrite(ctx) ||
+		(isBoundedReviewStage(ctx.ExecutionPolicy) && !ctx.ExecutionPolicy.CanEditRepo)
+}
+
+func finalOutputAutoCommentStage(ctx TaskContextForEnv) bool {
+	return !ctx.IsSquadLeader &&
+		isBoundedReviewStage(ctx.ExecutionPolicy) &&
+		!ctx.ExecutionPolicy.CanEditRepo
 }
 
 func canShowRepoCheckoutCommand(policy TaskExecutionPolicyForEnv) bool {
@@ -991,7 +1009,7 @@ func buildRuntimeCommentReplyInstructions(provider string, ctx TaskContextForEnv
 	if ctx.TriggerCommentID == "" {
 		return ""
 	}
-	if isNoRepoBoundedReviewStage(ctx.ExecutionPolicy) {
+	if finalOutputAutoCommentStage(ctx) {
 		return "Do not call `multica issue comment add`. Write your reply/stage result as the final assistant output; the platform will automatically post it as a reply under the triggering comment when this task completes.\n"
 	}
 	if !noNativeFileWriteForComments(ctx) {
