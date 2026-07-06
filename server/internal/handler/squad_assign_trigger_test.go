@@ -523,6 +523,84 @@ func TestFailTaskDoesNotCloseSquadSOPRunWhenIssueHasActiveContinuation(t *testin
 	}
 }
 
+func TestFailTaskWithDeliveryCommentAdvancesSquadSOPForReview(t *testing.T) {
+	ctx := context.Background()
+
+	fixture := createStartedSquadSOPRunFixture(t, ctx, startedSquadSOPRunOptions{
+		agentDescription: "sop delivered then failed fixture",
+		profileKey:       "sop-delivered-then-failed-test",
+		squadName:        "SOP Delivered Then Failed Squad",
+		issueTitle:       "SOP run advances when delivery comment exists",
+		issueStatus:      "in_progress",
+		daemonName:       "sop-delivered-then-failed-daemon",
+	})
+
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO comment (issue_id, workspace_id, author_type, author_id, content, type, source_task_id)
+		VALUES ($1, $2, 'agent', $3, '## 04-开发完成\n\n验证通过，等待 PM 复核。', 'comment', $4)
+	`, fixture.issueID, testWorkspaceID, fixture.agentID, fixture.taskID); err != nil {
+		t.Fatalf("create delivery comment: %v", err)
+	}
+
+	failW := httptest.NewRecorder()
+	failReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+fixture.taskID+"/fail", map[string]any{
+		"error":          "provider ended after the delivery comment was already posted",
+		"failure_reason": "agent_error.unknown",
+	}, testWorkspaceID, fixture.daemonName)
+	failReq = withURLParam(failReq, "taskId", fixture.taskID)
+	testHandler.FailTask(failW, failReq)
+	if failW.Code != http.StatusOK {
+		t.Fatalf("FailTask: expected 200, got %d: %s", failW.Code, failW.Body.String())
+	}
+
+	var issueStatus string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, fixture.issueID).Scan(&issueStatus); err != nil {
+		t.Fatalf("load issue status: %v", err)
+	}
+	if issueStatus == "blocked" {
+		t.Fatalf("issue status = blocked, want delivery comment to preserve PM review path")
+	}
+
+	var runStatus, currentStep string
+	var completedAt *time.Time
+	if err := testPool.QueryRow(ctx, `
+		SELECT status, current_step_key, completed_at
+		FROM squad_sop_run
+		WHERE id = $1
+	`, fixture.runID).Scan(&runStatus, &currentStep, &completedAt); err != nil {
+		t.Fatalf("load SOP run: %v", err)
+	}
+	if runStatus != "进行中" || currentStep != "05-verify" || completedAt != nil {
+		t.Fatalf("SOP run = status %s step %s completed_at %v, want 进行中/05-verify/nil", runStatus, currentStep, completedAt)
+	}
+
+	var completedEvents, failedEvents, failureComments int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM squad_sop_step_event
+		WHERE run_id = $1 AND task_id = $2 AND step_key = 'pm' AND event_type = '步骤完成'
+	`, fixture.runID, fixture.taskID).Scan(&completedEvents); err != nil {
+		t.Fatalf("count completed events: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM squad_sop_step_event
+		WHERE run_id = $1 AND task_id = $2 AND event_type = '步骤失败'
+	`, fixture.runID, fixture.taskID).Scan(&failedEvents); err != nil {
+		t.Fatalf("count failed events: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM comment
+		WHERE issue_id = $1 AND source_task_id = $2 AND content LIKE '%阶段执行失败%'
+	`, fixture.issueID, fixture.taskID).Scan(&failureComments); err != nil {
+		t.Fatalf("count failure comments: %v", err)
+	}
+	if completedEvents != 1 || failedEvents != 0 || failureComments != 0 {
+		t.Fatalf("events/comments = completed %d failed %d failureComments %d, want 1/0/0", completedEvents, failedEvents, failureComments)
+	}
+}
+
 func TestFailTaskBlocksSquadSOPIssueWithStructuredComment(t *testing.T) {
 	ctx := context.Background()
 

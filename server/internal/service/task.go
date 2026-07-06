@@ -2207,6 +2207,53 @@ func (s *TaskService) squadSOPFailureComment(ctx context.Context, task db.AgentT
 	return b.String(), true
 }
 
+func (s *TaskService) squadSOPTaskHasDeliveryComment(ctx context.Context, task db.AgentTaskQueue) bool {
+	if !task.IssueID.Valid {
+		return false
+	}
+	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
+	if err != nil || !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" {
+		return false
+	}
+	run, ok := s.squadSOPRunForWorkerTask(ctx, task, issue)
+	if !ok {
+		return false
+	}
+	agent, err := s.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+		ID:          task.AgentID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		return false
+	}
+	if _, _, ok := matchSquadSOPStepForAgent(parseSquadSOPProfileSteps(run.Profile), agent.Name); !ok {
+		return false
+	}
+	comments, err := s.Queries.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+		Limit:       2000,
+	})
+	if err != nil {
+		slog.Warn("squad SOP delivery comment lookup failed",
+			"task_id", util.UUIDToString(task.ID),
+			"issue_id", util.UUIDToString(task.IssueID),
+			"error", err,
+		)
+		return false
+	}
+	for _, comment := range comments {
+		if comment.AuthorType == "agent" &&
+			comment.SourceTaskID.Valid &&
+			comment.SourceTaskID == task.ID &&
+			comment.Type != "system" &&
+			strings.TrimSpace(comment.Content) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 func taskFailureSummary(errMsg string) string {
 	errMsg = strings.TrimSpace(redact.Text(errMsg))
 	if errMsg == "" {
@@ -3425,16 +3472,23 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 		s.syncPromptEvaluationRunForTask(ctx, task, "task_failed")
 	}
 
+	deliveryCommentPosted := retried == nil && s.squadSOPTaskHasDeliveryComment(ctx, task)
+
 	var failureComment string
-	if errMsg != "" && task.IssueID.Valid && retried == nil {
+	if errMsg != "" && task.IssueID.Valid && retried == nil && !deliveryCommentPosted {
 		if body, ok := s.squadSOPFailureComment(ctx, task, errMsg, failureReason); ok {
 			failureComment = body
 		}
 	}
-	if s.shouldSyncSquadSOPTaskFailure(ctx, task, retried) {
+	if deliveryCommentPosted {
+		s.linkGongfengMRsFromTaskComments(ctx, task)
+		s.syncSquadSOPTaskStepWithResult(ctx, task, "步骤完成", "已完成", nil)
+		s.enqueueSquadLeaderAfterWorkerStageCompletion(ctx, task)
+		s.autoReviewIssueForTask(ctx, task)
+	} else if s.shouldSyncSquadSOPTaskFailure(ctx, task, retried) {
 		s.syncSquadSOPTaskStep(ctx, task, "步骤失败", "已失败")
 	}
-	if retried == nil {
+	if retried == nil && !deliveryCommentPosted {
 		s.autoBlockIssueForTaskFailure(ctx, task)
 	}
 
@@ -3442,7 +3496,7 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	// the new task will surface its own status to the user, and we don't
 	// want to spam the issue with "task timed out" messages on every
 	// daemon hiccup.
-	if errMsg != "" && task.IssueID.Valid && retried == nil {
+	if errMsg != "" && task.IssueID.Valid && retried == nil && !deliveryCommentPosted {
 		body := redact.Text(errMsg)
 		if failureComment != "" {
 			body = failureComment
