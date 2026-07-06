@@ -585,7 +585,7 @@ func TestStageChainPMCoordinatorGetsEntryRule(t *testing.T) {
 		"the complete successful outcome is only",
 		"run `multica squad activity " + issueID + " action --reason \"dispatch 01\"`",
 		"Do not run any other tools after the dispatch/activity pair",
-		"Coordinator mode has no native file-write tool",
+		"This task has no native file-write tool",
 		"compact shell-safe body",
 	} {
 		if !strings.Contains(out, want) {
@@ -620,7 +620,7 @@ func TestStageChainPMCoordinatorGetsCommentTriggerRule(t *testing.T) {
 		"Stage-chain cross-project gate",
 		"create or reuse the required child issue with `--parent`, target `--project`, executable assignee, and `--status todo`, then wait",
 		"do not dispatch the parent issue to `04-开发` or `05-验证测试`",
-		"Coordinator mode has no native file-write tool",
+		"This task has no native file-write tool",
 		"compact shell-safe body",
 		"multica issue comment add 77777777-8888-9999-aaaa-bbbbbbbbbbbb --parent 11111111-1111-1111-1111-111111111111 --content \"...\"",
 	} {
@@ -660,7 +660,7 @@ func TestTaskCapabilityPolicyNoRepoBlocksHostPathInspection(t *testing.T) {
 		"Do not read host absolute paths or project code through shell commands",
 		"`ls`, `find`, `rg`, `cat`, `sed`, `git`, `go`, `pnpm`, `npm`, `make`, `curl`",
 		"use it only for platform coordination commands such as `multica issue`, `multica squad`, `multica agent`, or `multica project`",
-		"Coordinator mode has no native file-write tool",
+		"This task has no native file-write tool",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("capability policy missing %q\n--- output ---\n%s", want, out)
@@ -683,12 +683,24 @@ func TestPlanningStageCapabilityPolicyBlocksNativeSubagents(t *testing.T) {
 
 	for _, want := range []string{
 		"Stage native tool boundary",
-		"do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Read, Edit, MultiEdit, Grep, Glob, LS",
-		"`Write` is allowed only for temporary reply/stage artifact files",
-		"produce their own bounded stage artifact in this platform task",
+		"do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Read, Edit, Write, MultiEdit, Grep, Glob, LS",
+		"Native file-write tools are unavailable",
+		"multica issue comment add <issue-id> --content \"...\"",
+		"do not attempt to create `reply.md`",
+		"produce their own bounded stage result in this platform task",
+		"post it with `multica issue comment add 77777777-8888-9999-aaaa-bbbbbbbbbbbb --content \"...\"`",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("planning stage capability policy missing %q\n--- output ---\n%s", want, out)
+		}
+	}
+	for _, banned := range []string{
+		"--content-file ./reply.md",
+		"always write the comment body to a UTF-8 file",
+		"using the platform-correct non-inline mode",
+	} {
+		if strings.Contains(out, banned) {
+			t.Fatalf("no-repo planning stage should not require file-write comment mode %q\n--- output ---\n%s", banned, out)
 		}
 	}
 }

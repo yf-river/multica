@@ -526,8 +526,8 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	//     non-UTF-8 codepage (issues #2198 / #2236 / #2376) — which is why
 	//     Windows uses `--content-file`, not stdin.
 	// Because the corruption is shell-driven, the guardrail is provider-agnostic.
-	if coordinatorWithoutFileWrite(ctx) {
-		b.WriteString("- `multica issue comment add <issue-id> [--content \"...\"] [--parent <comment-id>]` — Post a compact coordinator comment. Native file-write tools are unavailable in coordinator mode, so use a short shell-safe `--content` value and keep dispatch comments concise. Run `multica issue comment add --help` for details.\n")
+	if noNativeFileWriteForComments(ctx) {
+		b.WriteString("- `multica issue comment add <issue-id> [--content \"...\"] [--parent <comment-id>]` — Post a compact comment. Native file-write tools are unavailable in this task, so use a short shell-safe `--content` value and keep comments concise. Run `multica issue comment add --help` for details.\n")
 	} else {
 		b.WriteString("- `multica issue comment add <issue-id> [--content \"...\" | --content-file <path> | --content-stdin] [--parent <comment-id>] [--attachment <path>]` — Post a comment. For agent-authored bodies, **write the body to a UTF-8 file and use `--content-file <path>`** — do NOT inline `--content` (the shell rewrites backticks, `$()`, quotes, or newlines before the CLI sees them) and do NOT use `--content-stdin` with a HEREDOC (extra flags around the heredoc can be silently swallowed, #4182). See ## Comment Formatting below. Run `multica issue comment add --help` for details.\n")
 	}
@@ -568,8 +568,8 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	// flags to leak across. This is identical to the long-standing Windows
 	// path, so the cross-platform guidance is now one shape.
 	b.WriteString("## Comment Formatting\n\n")
-	if coordinatorWithoutFileWrite(ctx) {
-		b.WriteString("Coordinator mode has no native file-write tool. For coordinator comments only, use `multica issue comment add <issue-id> --content \"...\"` with a compact shell-safe body. Avoid backticks, command substitutions, environment variables, and long multi-paragraph text in inline comments. Non-coordinator agents must still use `--content-file`.\n\n")
+	if noNativeFileWriteForComments(ctx) {
+		b.WriteString("This task has no native file-write tool. Use `multica issue comment add <issue-id> --content \"...\"` with a compact shell-safe body. Avoid backticks, command substitutions, environment variables, quotes that need escaping, and long multi-paragraph text in inline comments. Tasks with file-write tools must still use `--content-file`.\n\n")
 	} else if runtimeGOOS == "windows" {
 		b.WriteString("On Windows, **always write the comment body to a UTF-8 file with your file-write tool first, then post it with `--content-file <path>`** — do NOT pipe via `--content-stdin`. PowerShell 5.1's `$OutputEncoding` defaults to ASCIIEncoding when piping to a native command, silently dropping non-ASCII characters as `?` before they reach `multica.exe`. Never use inline `--content` for agent-authored comments. ")
 		b.WriteString("Keep the same `--parent` value from the trigger comment when replying. ")
@@ -643,7 +643,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		}
 		if isBoundedReviewStage(ctx.ExecutionPolicy) {
 			if isNoRepoBoundedReviewStage(ctx.ExecutionPolicy) {
-				b.WriteString("- Stage native tool boundary: do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Read, Edit, MultiEdit, Grep, Glob, LS, or equivalent internal delegation/repo-inspection tools. `Write` is allowed only for temporary reply/stage artifact files such as `reply.md` or `$MULTICA_ARTIFACT_DIR`; do not write project files. Planning stages must produce their own bounded stage artifact in this platform task; do not spawn internal agents or parallel subtasks.\n")
+				b.WriteString("- Stage native tool boundary: do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Read, Edit, Write, MultiEdit, Grep, Glob, LS, or equivalent internal delegation/repo-inspection tools. Native file-write tools are unavailable; post concise stage results through `multica issue comment add <issue-id> --content \"...\"` and do not attempt to create `reply.md` or local artifact files. Planning stages must produce their own bounded stage result in this platform task; do not spawn internal agents or parallel subtasks.\n")
 			} else {
 				b.WriteString("- Stage native tool boundary: do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Edit, Write, MultiEdit, or equivalent internal delegation tools. Planning and verification stages must produce their own bounded stage artifact in this platform task; do not spawn internal agents or parallel subtasks.\n")
 			}
@@ -793,6 +793,8 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("4. Complete the task within your Agent Identity boundaries. Do not investigate, implement, create issues, update issues, change issue status, or delegate if your Agent Identity forbids that action; if your role is delegation-only, perform the allowed delegation work and stop once that outcome is delivered.\n")
 		if ctx.IsSquadLeader {
 			fmt.Fprintf(&b, "5. **Post your final results as a comment** (unless your outcome is `no_action` — in that case, calling `multica squad activity %s no_action --reason \"...\"` alone is sufficient; you MUST exit without posting any comment. DO NOT post a comment announcing no_action or saying you are exiting silently): post it with `multica issue comment add %s --content \"...\"`. Keep coordinator comments compact enough for one shell-safe argument; native file-write tools are unavailable in coordinator mode. Your results are only visible to the user if posted via this CLI call; text in your terminal or run logs is NOT delivered.\n", ctx.IssueID, ctx.IssueID)
+		} else if noNativeFileWriteForComments(ctx) {
+			fmt.Fprintf(&b, "5. **Post your final results as a comment — this step is mandatory**: post it with `multica issue comment add %s --content \"...\"`. Keep the body compact and shell-safe because native file-write tools are unavailable in this task. Your results are only visible to the user if posted via this CLI call; text in your terminal or run logs is NOT delivered.\n", ctx.IssueID)
 		} else {
 			fmt.Fprintf(&b, "5. **Post your final results as a comment — this step is mandatory**: post it with `multica issue comment add %s` using the platform-correct non-inline mode from ## Comment Formatting (never inline `--content`). Your results are only visible to the user if posted via this CLI call; text in your terminal or run logs is NOT delivered.\n", ctx.IssueID)
 		}
@@ -917,6 +919,10 @@ func coordinatorWithoutFileWrite(ctx TaskContextForEnv) bool {
 	return strings.EqualFold(strings.TrimSpace(ctx.ExecutionPolicy.RoleKind), "coordinator") && !ctx.ExecutionPolicy.CanAccessRepo
 }
 
+func noNativeFileWriteForComments(ctx TaskContextForEnv) bool {
+	return coordinatorWithoutFileWrite(ctx) || isNoRepoBoundedReviewStage(ctx.ExecutionPolicy)
+}
+
 func isBoundedReviewStage(policy TaskExecutionPolicyForEnv) bool {
 	switch strings.ToLower(strings.TrimSpace(policy.RoleKind)) {
 	case "planning_stage", "verification_stage":
@@ -934,13 +940,13 @@ func buildRuntimeCommentReplyInstructions(provider string, ctx TaskContextForEnv
 	if ctx.TriggerCommentID == "" {
 		return ""
 	}
-	if !coordinatorWithoutFileWrite(ctx) {
+	if !noNativeFileWriteForComments(ctx) {
 		return BuildCommentReplyInstructions(provider, ctx.IssueID, ctx.TriggerCommentID)
 	}
 	return fmt.Sprintf(
 		"If you decide to reply, post it as a comment — always use the trigger comment ID below, "+
 			"do NOT reuse --parent values from previous turns in this session.\n\n"+
-			"Coordinator mode has no native file-write tool. Use a compact shell-safe inline body and preserve the same issue ID and --parent value:\n\n"+
+			"This task has no native file-write tool. Use a compact shell-safe inline body and preserve the same issue ID and --parent value:\n\n"+
 			"    multica issue comment add %s --parent %s --content \"...\"\n\n"+
 			"Keep the body concise. Avoid backticks, command substitutions, environment variables, quotes that need escaping, and long multi-paragraph text in inline comments.\n",
 		ctx.IssueID, ctx.TriggerCommentID,

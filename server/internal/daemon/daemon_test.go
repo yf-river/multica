@@ -222,20 +222,17 @@ func TestExecutionPolicyToolEnvelopeForCoordinator(t *testing.T) {
 		}
 	}
 	noRepoPlanning := TaskExecutionPolicy{RoleKind: "planning_stage", CanAccessRepo: false, CanEditRepo: false}
-	if got := allowedBuiltinToolsForExecutionPolicy("codebuddy", noRepoPlanning); len(got) != 2 || got[0] != "Bash" || got[1] != "Write" {
-		t.Fatalf("no-repo planning allowed tools = %v, want [Bash Write]", got)
+	if got := allowedBuiltinToolsForExecutionPolicy("codebuddy", noRepoPlanning); len(got) != 1 || got[0] != "Bash" {
+		t.Fatalf("no-repo planning allowed tools = %v, want [Bash]", got)
 	}
 	if got := allowedToolsForExecutionPolicy("codebuddy", noRepoPlanning); len(got) != 1 || got[0] != "Bash(multica:*)" {
 		t.Fatalf("no-repo planning scoped allowed tools = %v, want [Bash(multica:*)]", got)
 	}
 	noRepoPlanningDenied := disallowedToolsForExecutionPolicy("codebuddy", noRepoPlanning)
-	for _, want := range []string{"TaskCreate", "TaskUpdate", "Agent", "Read", "Grep", "Glob", "LS", "Edit", "MultiEdit"} {
+	for _, want := range []string{"TaskCreate", "TaskUpdate", "Agent", "Read", "Grep", "Glob", "LS", "Edit", "Write", "MultiEdit"} {
 		if !containsString(noRepoPlanningDenied, want) {
 			t.Fatalf("no-repo planning denied tools missing %q: %v", want, noRepoPlanningDenied)
 		}
-	}
-	if containsString(noRepoPlanningDenied, "Write") {
-		t.Fatalf("no-repo planning must allow Write for reply/artifact files: %v", noRepoPlanningDenied)
 	}
 
 	if got := allowedBuiltinToolsForExecutionPolicy("codex", pm); got != nil {

@@ -4458,7 +4458,7 @@ func allowedBuiltinToolsForExecutionPolicy(provider string, policy TaskExecution
 		return []string{"Bash"}
 	}
 	if isNoRepoBoundedStage(policy) {
-		return []string{"Bash", "Write"}
+		return []string{"Bash"}
 	}
 	if isBoundedReviewStage(policy) {
 		return []string{"Bash", "Read", "Grep", "Glob", "LS"}
@@ -4524,6 +4524,7 @@ func disallowedToolsForExecutionPolicy(provider string, policy TaskExecutionPoli
 		return append(append([]string{}, nativeDelegationTools...),
 			"Read",
 			"Edit",
+			"Write",
 			"MultiEdit",
 			"Grep",
 			"Glob",
