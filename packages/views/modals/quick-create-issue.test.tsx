@@ -469,6 +469,48 @@ describe("AgentCreatePanel", () => {
     });
   });
 
+  it("promotes the selected PM leader agent once the pm squad list loads", async () => {
+    mockQuickCreateStore.lastActorType = "agent";
+    mockQuickCreateStore.lastActorId = "agent-1";
+    const user = userEvent.setup();
+    const props = { onClose: vi.fn(), isExpanded: false, setIsExpanded: vi.fn() };
+
+    const view = renderPanel(props);
+
+    expect(screen.getByRole("button", { name: "Bohan" })).toBeInTheDocument();
+
+    mockSquadsData.list = [
+      { id: "squad-pm", name: "pm", leader_id: "agent-1", archived_at: null },
+    ];
+    view.rerender(
+      <I18nProvider locale="zh-Hans" resources={TEST_RESOURCES}>
+        <AgentCreatePanel {...props} />
+      </I18nProvider>,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "pm" })).toBeInTheDocument();
+    });
+
+    const editor = screen.getByPlaceholderText(
+      '告诉智能体要做什么，例如："让 Bohan 修一下 Web 项目里收件箱加载慢的问题"',
+    );
+    await user.clear(editor);
+    await user.type(editor, "Create a TAPD requirement");
+
+    await user.click(screen.getByRole("button", { name: /^创建 \(/i }));
+
+    await waitFor(() => {
+      expect(mockQuickCreateIssue).toHaveBeenCalledWith({
+        squad_id: "squad-pm",
+        prompt: "Create a TAPD requirement",
+        project_id: undefined,
+        status: "todo",
+        priority: "none",
+      });
+    });
+  });
+
   it("keeps an explicit agent seed even when a pm squad is visible", async () => {
     mockSquadsData.list = [
       { id: "squad-pm", name: "pm", leader_id: "agent-1", archived_at: null },

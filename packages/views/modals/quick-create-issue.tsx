@@ -154,6 +154,7 @@ export function AgentCreatePanel({
   const clearPrompt = useQuickCreateStore((s) => s.clearPrompt);
   const keepOpen = useQuickCreateStore((s) => s.keepOpen);
   const setKeepOpen = useQuickCreateStore((s) => s.setKeepOpen);
+  const hasExplicitActorSeed = Boolean(data?.agent_id || data?.squad_id);
 
   // Resolve a candidate actor against the currently-visible agents / squads.
   // Returns null when the candidate doesn't exist in this workspace right
@@ -217,9 +218,18 @@ export function AgentCreatePanel({
 
   // Re-seed once visible lists resolve (queries may be empty on first render).
   useEffect(() => {
+    if (
+      !hasExplicitActorSeed &&
+      actor?.type === "agent" &&
+      pmSquad &&
+      pmSquad.leader_id === actor.id
+    ) {
+      setActor({ type: "squad", id: pmSquad.id });
+      return;
+    }
     if (actor && resolveActor(actor.type, actor.id)) return;
     setActor(seedActor());
-  }, [actor, resolveActor, seedActor]);
+  }, [actor, hasExplicitActorSeed, pmSquad, resolveActor, seedActor]);
 
   const selectedAgent = useMemo<Agent | undefined>(() => {
     if (!actor) return undefined;
