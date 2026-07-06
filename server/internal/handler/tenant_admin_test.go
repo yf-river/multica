@@ -9,7 +9,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5"
+	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 )
@@ -244,3 +246,63 @@ func (h *testTenantAdminHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 }
 
 func boolPtr(b bool) *bool { return &b }
+
+// TestGetTenantInitialAdminStatus_Unauthenticated verifies V1-5: an
+// unauthenticated request (no Authorization header, no auth cookie) to the
+// GetTenantInitialAdminStatus endpoint returns 401. The handler is registered
+// under middleware.Auth in the real router; this test constructs a minimal
+// chi router with the same middleware wrapping to exercise the full
+// middleware → handler pipeline.
+func TestGetTenantInitialAdminStatus_Unauthenticated(t *testing.T) {
+	validWS := "11111111-1111-1111-1111-111111111111"
+	validUUID := util.MustParseUUID(validWS)
+
+	// Build a fake handler that would succeed if auth passed.
+	fq := &fakeQueries{
+		getWorkspaceFn: func(ctx context.Context, id interface{}) (db.Workspace, error) {
+			return db.Workspace{ID: validUUID}, nil
+		},
+		getInitialOwnerFn: func(ctx context.Context, wsID interface{}) (db.GetInitialOwnerByWorkspaceRow, error) {
+			return db.GetInitialOwnerByWorkspaceRow{
+				WorkspaceID: validUUID,
+				UserName:    "Test User",
+				UserAccount: "testuser",
+			}, nil
+		},
+	}
+
+	h := &Handler{
+		Queries: (*db.Queries)(nil),
+	}
+
+	th := &testTenantAdminHandler{
+		Handler: h,
+		queries: fq,
+	}
+
+	// Construct a chi router with middleware.Auth wrapping the handler.
+	r := chi.NewRouter()
+	r.Use(middleware.Auth(nil, nil, nil))
+	r.Get("/api/workspaces/{workspaceId}/initial-admin-status", func(w http.ResponseWriter, req *http.Request) {
+		wsID := workspaceIDFromURL(req, "workspaceId")
+		th.ServeHTTP(w, req, wsID)
+	})
+
+	// Send request with no Authorization header and no auth cookie.
+	url := "/api/workspaces/" + validWS + "/initial-admin-status"
+	req := httptest.NewRequest(http.MethodGet, url, nil)
+	rec := httptest.NewRecorder()
+	r.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusUnauthorized {
+		t.Errorf("status = %d; want %d (Unauthorized)", rec.Code, http.StatusUnauthorized)
+	}
+
+	var body map[string]string
+	if err := json.NewDecoder(rec.Body).Decode(&body); err != nil {
+		t.Fatalf("failed to decode response body: %v", err)
+	}
+	if body["error"] != "missing authorization" {
+		t.Errorf("error = %q; want %q", body["error"], "missing authorization")
+	}
+}

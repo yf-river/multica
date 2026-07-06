@@ -116,6 +116,32 @@ func newSquadCommentTriggerFixture(t *testing.T) squadCommentTriggerFixture {
 	}
 }
 
+func TestEnqueueTaskForSquadLeaderForcesFreshSession(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	fx := newSquadCommentTriggerFixture(t)
+
+	task, err := testHandler.TaskService.EnqueueTaskForSquadLeader(ctx, fx.Issue, util.MustParseUUID(fx.LeaderID), pgtype.UUID{})
+	if err != nil {
+		t.Fatalf("EnqueueTaskForSquadLeader: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, task.ID)
+	})
+
+	var forceFresh bool
+	if err := testPool.QueryRow(ctx, `
+		SELECT force_fresh_session FROM agent_task_queue WHERE id = $1
+	`, task.ID).Scan(&forceFresh); err != nil {
+		t.Fatalf("read force_fresh_session: %v", err)
+	}
+	if !forceFresh {
+		t.Fatal("squad leader task should force a fresh provider session")
+	}
+}
+
 func TestCreateComment_SquadSOPRoleKeyMentionTriggersStageAgent(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")

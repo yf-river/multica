@@ -290,12 +290,12 @@ func (h *Handler) autoFetchTAPDSource(ctx context.Context, userID string, req Re
 	resourceType := firstNonEmpty(req.ResourceType, stringFromMetadata(metadata, "tapd_resource_type"))
 	resourceID := firstNonEmpty(req.ResourceID, stringFromMetadata(metadata, "tapd_resource_id"), stringFromMetadata(metadata, "tapd_wiki_id"))
 	sourceURL := firstNonEmpty(req.URL, stringFromMetadata(metadata, "source_url"))
-	if ref, ok := parseTAPDMarkdownWikiURL(sourceURL); ok {
+	if ref, ok := parseTAPDSourceURL(sourceURL); ok {
 		sourceURL = ref.URL
 		workspaceID = firstNonEmpty(workspaceID, ref.WorkspaceID)
-		resourceID = firstNonEmpty(resourceID, ref.WikiID)
+		resourceID = firstNonEmpty(resourceID, ref.ResourceID)
 		if resourceType == "" || resourceType == "tapd_resource" {
-			resourceType = "markdown_wiki"
+			resourceType = ref.ResourceType
 		}
 	}
 	if (resourceType == "" || resourceType == "tapd_resource") && strings.Contains(sourceURL, "/markdown_wikis/") {

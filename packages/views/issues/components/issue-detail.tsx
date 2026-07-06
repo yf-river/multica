@@ -15,6 +15,7 @@ import {
   ChevronRight,
   CircleCheck,
   ExternalLink,
+  Loader2,
   MoreHorizontal,
   PanelRight,
   Pin,
@@ -211,6 +212,9 @@ function tapdResourceTypeLabel(resourceType: string | null, t: ActivityT): strin
   switch (resourceType) {
     case "markdown_wiki":
       return t(($) => $.detail.tapd_source_type_markdown_wiki);
+    case "story":
+    case "stories":
+      return t(($) => $.detail.tapd_source_type_story);
     default:
       return t(($) => $.detail.tapd_source_type_default);
   }
@@ -320,6 +324,22 @@ function TAPDSourceReference({ issue, t }: { issue: Issue; t: ActivityT }) {
         </div>
       </div>
     </section>
+  );
+}
+
+function SourceSummaryLoading({ label }: { label: string }) {
+  return (
+    <div
+      className="flex min-h-28 items-center justify-center rounded-lg border border-dashed border-border bg-muted/20 px-4 py-8 text-sm text-muted-foreground"
+      data-testid="source-summary-loading"
+      role="status"
+      aria-live="polite"
+    >
+      <div className="flex items-center gap-2">
+        <Loader2 className="h-4 w-4 animate-spin" />
+        <span>{label}</span>
+      </div>
+    </div>
   );
 }
 
@@ -1527,6 +1547,8 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
     );
   }
 
+  const sourceSummaryPending = metadataText(issue, "source_summary_status") === "pending";
+
   const sidebarContent = (
     <div className="space-y-5">
       {/* Properties */}
@@ -1952,43 +1974,47 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
           )}
 
           <div {...descDropZoneProps} className="relative mt-5 rounded-lg">
-            <ContentEditor
-              ref={descEditorRef}
-              key={id}
-              defaultValue={issue.description || ""}
-              placeholder={t(($) => $.detail.desc_placeholder)}
-              onUpdate={(md) => {
-                // Bind any pending uploads still referenced in the markdown
-                // so they appear in `issueAttachments` after refresh and the
-                // editor's text/code preview keeps working past reload.
-                //
-                // Match with `contentReferencesAttachment`, NOT `md.includes(a.url)`:
-                // the editor persists the durable `markdownLink`
-                // (`/api/attachments/<id>/download` / `markdown_url`) into the
-                // body, never the raw storage `a.url`. A bare `md.includes(a.url)`
-                // therefore never matches, so the upload is never linked via
-                // `attachment_ids`. After reload it's absent from
-                // `issueAttachments`, the renderer can't resolve it to a
-                // freshly-signed `download_url`, and the persisted auth-gated
-                // download endpoint fails to load as a native <img> on clients
-                // whose origin isn't the API host (Desktop/Electron, mobile
-                // webview) — while still working on web via the cookie/proxy.
-                // This mirrors the comment/reply/chat composers, which already
-                // bind via `contentReferencesAttachment` (MUL-3130 / MUL-3192).
-                const ids = descPendingAttachmentsRef.current
-                  .filter((a) => contentReferencesAttachment(md, a))
-                  .map((a) => a.id);
-                handleUpdateField({ description: md, attachment_ids: ids.length > 0 ? ids : undefined });
-              }}
-              onUploadFile={handleDescriptionUpload}
-              debounceMs={1500}
-              // Closing the issue modal must save what the user last saw —
-              // without the flush, a paste followed by a quick close loses
-              // the image markdown and its attachment_ids bind (MUL-3254).
-              flushPendingOnUnmount
-              currentIssueId={id}
-              attachments={descEditorAttachments}
-            />
+            {sourceSummaryPending ? (
+              <SourceSummaryLoading label={t(($) => $.detail.source_summary_generating)} />
+            ) : (
+              <ContentEditor
+                ref={descEditorRef}
+                key={id}
+                defaultValue={issue.description || ""}
+                placeholder={t(($) => $.detail.desc_placeholder)}
+                onUpdate={(md) => {
+                  // Bind any pending uploads still referenced in the markdown
+                  // so they appear in `issueAttachments` after refresh and the
+                  // editor's text/code preview keeps working past reload.
+                  //
+                  // Match with `contentReferencesAttachment`, NOT `md.includes(a.url)`:
+                  // the editor persists the durable `markdownLink`
+                  // (`/api/attachments/<id>/download` / `markdown_url`) into the
+                  // body, never the raw storage `a.url`. A bare `md.includes(a.url)`
+                  // therefore never matches, so the upload is never linked via
+                  // `attachment_ids`. After reload it's absent from
+                  // `issueAttachments`, the renderer can't resolve it to a
+                  // freshly-signed `download_url`, and the persisted auth-gated
+                  // download endpoint fails to load as a native <img> on clients
+                  // whose origin isn't the API host (Desktop/Electron, mobile
+                  // webview) — while still working on web via the cookie/proxy.
+                  // This mirrors the comment/reply/chat composers, which already
+                  // bind via `contentReferencesAttachment` (MUL-3130 / MUL-3192).
+                  const ids = descPendingAttachmentsRef.current
+                    .filter((a) => contentReferencesAttachment(md, a))
+                    .map((a) => a.id);
+                  handleUpdateField({ description: md, attachment_ids: ids.length > 0 ? ids : undefined });
+                }}
+                onUploadFile={handleDescriptionUpload}
+                debounceMs={1500}
+                // Closing the issue modal must save what the user last saw —
+                // without the flush, a paste followed by a quick close loses
+                // the image markdown and its attachment_ids bind (MUL-3254).
+                flushPendingOnUnmount
+                currentIssueId={id}
+                attachments={descEditorAttachments}
+              />
+            )}
 
             <div className="flex items-center gap-1 mt-3">
               <ReactionBar
@@ -1997,10 +2023,12 @@ export function IssueDetail({ issueId, onDelete, onDone, defaultSidebarOpen = tr
                 onToggle={handleToggleIssueReaction}
                 getActorName={getActorName}
               />
-              <FileUploadButton
-                size="sm"
-                onSelect={(file) => descEditorRef.current?.uploadFile(file)}
-              />
+              {!sourceSummaryPending && (
+                <FileUploadButton
+                  size="sm"
+                  onSelect={(file) => descEditorRef.current?.uploadFile(file)}
+                />
+              )}
             </div>
             {descDragOver && <FileDropOverlay />}
           </div>

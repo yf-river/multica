@@ -218,6 +218,32 @@ describe("onIssueMetadataChanged", () => {
   });
 });
 
+describe("onIssueUpdated", () => {
+  let qc: QueryClient;
+
+  beforeEach(() => {
+    qc = new QueryClient();
+  });
+
+  it("patches source summary completion into the issue detail cache", () => {
+    qc.setQueryData<Issue>(issueKeys.detail(WS_ID, ISSUE_ID), {
+      ...baseIssue,
+      description: "摘要生成中",
+      metadata: { source_summary_status: "pending" },
+    });
+
+    onIssueUpdated(qc, WS_ID, {
+      id: ISSUE_ID,
+      description: "## 需求摘要\n已生成",
+      metadata: { source_summary_status: "completed" },
+    });
+
+    const detail = qc.getQueryData<Issue>(issueKeys.detail(WS_ID, ISSUE_ID));
+    expect(detail?.description).toBe("## 需求摘要\n已生成");
+    expect(detail?.metadata).toEqual({ source_summary_status: "completed" });
+  });
+});
+
 describe("project progress invalidation", () => {
   let qc: QueryClient;
 

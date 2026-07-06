@@ -544,6 +544,26 @@ describe("IssueDetail (shared)", () => {
     expect(screen.getByDisplayValue("Add JWT auth to the backend")).toBeInTheDocument();
   });
 
+  it("shows a loading indicator instead of the TAPD source summary placeholder", async () => {
+    mockApiObj.getIssue.mockResolvedValue({
+      ...mockIssue,
+      description: "## 需求摘要\n摘要生成中，系统正在基于 TAPD 来源生成可执行的需求摘要。",
+      metadata: {
+        source_provider: "tapd",
+        source_url: "https://www.tapd.cn/51081496/prong/stories/view/1151081496001028216",
+        tapd_resource_type: "story",
+        tapd_resource_id: "1151081496001028216",
+        source_summary_status: "pending",
+      },
+    });
+
+    renderIssueDetail();
+
+    expect(await screen.findByTestId("source-summary-loading")).toHaveTextContent("正在生成需求摘要");
+    expect(screen.queryByDisplayValue(/摘要生成中，系统正在基于 TAPD 来源生成可执行的需求摘要/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/摘要生成中，系统正在基于 TAPD 来源生成可执行的需求摘要/)).not.toBeInTheDocument();
+  });
+
   it("opts the description editor into the unmount flush", async () => {
     // Closing the issue modal must save the description the user last saw —
     // ContentEditor drops pending debounced updates on unmount by default
@@ -720,6 +740,31 @@ describe("IssueDetail (shared)", () => {
     expect(within(card).getByText(/支持用户管理个人快捷入口/)).toBeInTheDocument();
     expect(within(card).getByRole("link", { name: /用户快捷入口需求/ })).toHaveAttribute("href", tapdURL);
     expect(editor.compareDocumentPosition(card) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("labels TAPD Story source metadata in the issue reference", async () => {
+    const tapdURL = "https://www.tapd.cn/51081496/prong/stories/view/1151081496001028216";
+    mockApiObj.getIssue.mockResolvedValue({
+      ...mockIssue,
+      metadata: {
+        source_provider: "tapd",
+        source_url: tapdURL,
+        tapd_workspace_id: "51081496",
+        tapd_resource_type: "story",
+        tapd_resource_id: "1151081496001028216",
+        source_fetch_status: "fetched",
+        source_fetch_title: "【DSM】【系统管理】公告管理",
+        source_fetch_summary: "公告列表提供公告管理查询功能。",
+      },
+    });
+
+    renderIssueDetail();
+
+    const card = await screen.findByTestId("tapd-source-card");
+    expect(within(card).getByText("TAPD Story")).toBeInTheDocument();
+    expect(within(card).getByText("ID 1151081496001028216")).toBeInTheDocument();
+    expect(within(card).getByTestId("tapd-source-title")).toHaveTextContent("【DSM】【系统管理】公告管理");
+    expect(within(card).getByRole("link", { name: /公告管理/ })).toHaveAttribute("href", tapdURL);
   });
 
   it("does not open a metadata JSON dialog from the sidebar", async () => {

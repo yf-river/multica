@@ -279,7 +279,7 @@ vi.mock("sonner", () => ({
   },
 }));
 
-import { CreateIssueModal, ManualCreatePanel } from "./create-issue";
+import { buildTAPDSourceMetadata, CreateIssueModal, ManualCreatePanel } from "./create-issue";
 
 function renderModal(element: React.ReactElement) {
   const qc = new QueryClient({
@@ -453,6 +453,21 @@ describe("CreateIssueModal", () => {
           },
         }),
       );
+    });
+  });
+
+  it("extracts TAPD Story metadata from story preview links", () => {
+    expect(
+      buildTAPDSourceMetadata(
+        "https://www.tapd.cn/tapd_fe/51081496/story/list?categoryId=1151081496001000494&useScene=storyList&dialog_preview_id=story_1151081496001028216",
+      ),
+    ).toEqual({
+      source_provider: "tapd",
+      source_url:
+        "https://www.tapd.cn/tapd_fe/51081496/story/list?categoryId=1151081496001000494&useScene=storyList&dialog_preview_id=story_1151081496001028216",
+      tapd_workspace_id: "51081496",
+      tapd_resource_type: "story",
+      tapd_resource_id: "1151081496001028216",
     });
   });
 

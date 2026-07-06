@@ -73,6 +73,107 @@ func updateChildStatus(t *testing.T, childID, status string) {
 	}
 }
 
+func getIssueStatus(t *testing.T, issueID string) string {
+	t.Helper()
+
+	w := httptest.NewRecorder()
+	req := newRequest("GET", "/api/issues/"+issueID, nil)
+	req = withURLParam(req, "id", issueID)
+	testHandler.GetIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("GetIssue %s: expected 200, got %d: %s", issueID, w.Code, w.Body.String())
+	}
+	var issue IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+		t.Fatalf("decode issue %s: %v", issueID, err)
+	}
+	return issue.Status
+}
+
+func TestParentDoneBlockedWhenChildNotDone(t *testing.T) {
+	fx := newChildDoneFixture(t, "in_progress")
+
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/issues/"+fx.parent.ID, map[string]any{"status": "done"})
+	req = withURLParam(req, "id", fx.parent.ID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("UpdateIssue parent done: expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Code               string                         `json:"code"`
+		IncompleteChildren []IncompleteChildIssueResponse `json:"incomplete_children"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode blocked response: %v", err)
+	}
+	if resp.Code != "child_issues_not_done" {
+		t.Fatalf("blocked code = %q, want child_issues_not_done", resp.Code)
+	}
+	if len(resp.IncompleteChildren) != 1 || resp.IncompleteChildren[0].ID != fx.child.ID || resp.IncompleteChildren[0].Status != "in_progress" {
+		t.Fatalf("incomplete children = %#v, want child %s in_progress", resp.IncompleteChildren, fx.child.ID)
+	}
+	if got := getIssueStatus(t, fx.parent.ID); got != "in_progress" {
+		t.Fatalf("parent status changed despite blocked done: got %q", got)
+	}
+}
+
+func TestParentDoneAllowedWhenAllChildrenDone(t *testing.T) {
+	fx := newChildDoneFixture(t, "in_progress")
+	updateChildStatus(t, fx.child.ID, "done")
+
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/issues/"+fx.parent.ID, map[string]any{"status": "done"})
+	req = withURLParam(req, "id", fx.parent.ID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("UpdateIssue parent done: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	if got := getIssueStatus(t, fx.parent.ID); got != "done" {
+		t.Fatalf("parent status = %q, want done", got)
+	}
+}
+
+func TestBatchUpdateIssuesReportsParentDoneBlockedByChildren(t *testing.T) {
+	fx := newChildDoneFixture(t, "in_progress")
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/issues/batch-update", map[string]any{
+		"issue_ids": []string{fx.parent.ID},
+		"updates":   map[string]any{"status": "done"},
+	})
+	testHandler.BatchUpdateIssues(w, req)
+	if w.Code != http.StatusOK {
+		t.Fatalf("BatchUpdateIssues parent done: expected 200, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Updated       int    `json:"updated"`
+		BlockedReason string `json:"blocked_reason"`
+		Blocked       []struct {
+			IssueID            string                         `json:"issue_id"`
+			IncompleteChildren []IncompleteChildIssueResponse `json:"incomplete_children"`
+		} `json:"blocked"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode batch response: %v", err)
+	}
+	if resp.Updated != 0 {
+		t.Fatalf("updated = %d, want 0", resp.Updated)
+	}
+	if resp.BlockedReason != "child_issues_not_done" {
+		t.Fatalf("blocked_reason = %q, want child_issues_not_done", resp.BlockedReason)
+	}
+	if len(resp.Blocked) != 1 || resp.Blocked[0].IssueID != fx.parent.ID {
+		t.Fatalf("blocked = %#v, want parent %s", resp.Blocked, fx.parent.ID)
+	}
+	if len(resp.Blocked[0].IncompleteChildren) != 1 || resp.Blocked[0].IncompleteChildren[0].ID != fx.child.ID {
+		t.Fatalf("incomplete children = %#v, want child %s", resp.Blocked[0].IncompleteChildren, fx.child.ID)
+	}
+	if got := getIssueStatus(t, fx.parent.ID); got != "in_progress" {
+		t.Fatalf("parent status changed despite blocked batch done: got %q", got)
+	}
+}
+
 // countSystemCommentsOn returns the number of platform-generated comments on
 // the given issue. The schema CHECK was widened in migration 107 to allow
 // author_type='system'; this query is the canary that the migration applied

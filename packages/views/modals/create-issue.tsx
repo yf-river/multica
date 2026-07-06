@@ -54,6 +54,7 @@ import { useT } from "../i18n";
 
 function tapdResourceTypeFromPath(pathname: string): string {
   if (pathname.includes("/markdown_wikis/")) return "markdown_wiki";
+  if (pathname.includes("/story/")) return "story";
   if (pathname.includes("/stories/")) return "story";
   if (pathname.includes("/bugs/")) return "bug";
   if (pathname.includes("/tasks/")) return "task";
@@ -61,8 +62,12 @@ function tapdResourceTypeFromPath(pathname: string): string {
 }
 
 function tapdResourceIDFromURL(url: URL): string {
+  const previewStoryID = url.searchParams.get("dialog_preview_id")?.match(/^story_(\d+)$/)?.[1];
+  if (previewStoryID) return previewStoryID;
   const hashID = url.hash.match(/\d{6,}/)?.[0];
   if (hashID) return hashID;
+  const prongStoryID = url.pathname.match(/\/prong\/stories\/view\/(\d+)/)?.[1];
+  if (prongStoryID) return prongStoryID;
   const pathID = [...url.pathname.matchAll(/\d{6,}/g)].at(-1)?.[0];
   if (pathID) return pathID;
   return url.searchParams.get("id")?.trim() ?? "";

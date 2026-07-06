@@ -100,6 +100,16 @@ type IssueAgentActivitySummaryResponse struct {
 	AgentIDs     []string `json:"agent_ids"`
 }
 
+type IncompleteChildIssueResponse struct {
+	ID           string  `json:"id"`
+	Identifier   string  `json:"identifier"`
+	Title        string  `json:"title"`
+	Status       string  `json:"status"`
+	AssigneeType *string `json:"assignee_type,omitempty"`
+	AssigneeID   *string `json:"assignee_id,omitempty"`
+	ProjectID    *string `json:"project_id,omitempty"`
+}
+
 // validIssueStatuses / validIssuePriorities mirror the CHECK constraints on
 // the issue table. Write handlers pre-validate these so callers get a clean
 // 400 with the allowed values instead of a database CHECK violation bubbling
@@ -107,12 +117,24 @@ type IssueAgentActivitySummaryResponse struct {
 var validIssueStatuses = []string{"backlog", "todo", "in_progress", "in_review", "done", "blocked", "cancelled"}
 var validIssuePriorities = []string{"urgent", "high", "medium", "low", "none"}
 
-var tapdMarkdownWikiURLRE = regexp.MustCompile(`https?://www\.tapd\.cn/([0-9]+)/markdown_wikis/show/\s*#\s*([0-9]+)`)
+var (
+	tapdMarkdownWikiURLRE = regexp.MustCompile(`https?://www\.tapd\.cn/([0-9]+)/markdown_wikis/show/\s*#\s*([0-9]+)`)
+	tapdProngStoryURLRE   = regexp.MustCompile(`https?://www\.tapd\.cn/([0-9]+)/prong/stories/view/([0-9]+)`)
+	tapdStoryListURLRE    = regexp.MustCompile(`https?://www\.tapd\.cn/tapd_fe/([0-9]+)/story/list\?[^\s<>]*dialog_preview_id=story_([0-9]+)[^\s<>]*`)
+	tapdStoryPreviewIDRE  = regexp.MustCompile(`^story_([0-9]+)$`)
+)
 
 type tapdWikiSourceRef struct {
 	WorkspaceID string
 	WikiID      string
 	URL         string
+}
+
+type tapdSourceRef struct {
+	WorkspaceID  string
+	ResourceType string
+	ResourceID   string
+	URL          string
 }
 
 func validateIssueEnum(w http.ResponseWriter, field, value string, allowed []string) bool {
@@ -123,6 +145,41 @@ func validateIssueEnum(w http.ResponseWriter, field, value string, allowed []str
 	}
 	writeError(w, http.StatusBadRequest, fmt.Sprintf("invalid %s %q; valid values: %s", field, value, strings.Join(allowed, ", ")))
 	return false
+}
+
+func incompleteChildIssues(children []db.Issue, issuePrefix string) []IncompleteChildIssueResponse {
+	incomplete := make([]IncompleteChildIssueResponse, 0)
+	for _, child := range children {
+		if child.Status == "done" {
+			continue
+		}
+		incomplete = append(incomplete, IncompleteChildIssueResponse{
+			ID:           uuidToString(child.ID),
+			Identifier:   issuePrefix + "-" + strconv.Itoa(int(child.Number)),
+			Title:        child.Title,
+			Status:       child.Status,
+			AssigneeType: textToPtr(child.AssigneeType),
+			AssigneeID:   uuidToPtr(child.AssigneeID),
+			ProjectID:    uuidToPtr(child.ProjectID),
+		})
+	}
+	return incomplete
+}
+
+func (h *Handler) incompleteChildrenBlockingDone(ctx context.Context, issue db.Issue) ([]IncompleteChildIssueResponse, error) {
+	children, err := h.Queries.ListChildIssues(ctx, issue.ID)
+	if err != nil {
+		return nil, err
+	}
+	return incompleteChildIssues(children, h.getIssuePrefix(ctx, issue.WorkspaceID)), nil
+}
+
+func (h *Handler) writeIssueDoneBlockedByChildren(w http.ResponseWriter, incomplete []IncompleteChildIssueResponse) {
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"error":               "cannot mark issue done while child issues are not done",
+		"code":                "child_issues_not_done",
+		"incomplete_children": incomplete,
+	})
 }
 
 var (
@@ -2514,7 +2571,7 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if ref, ok := parseTAPDMarkdownWikiURL(prompt); ok {
+	if ref, ok := parseTAPDSourceURL(prompt); ok {
 		resp, handled := h.quickCreateTAPDSourceIssue(r.Context(), w, quickCreateTAPDSourceIssueParams{
 			Prompt:         prompt,
 			Ref:            ref,
@@ -2568,7 +2625,7 @@ func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
 
 type quickCreateTAPDSourceIssueParams struct {
 	Prompt         string
-	Ref            tapdWikiSourceRef
+	Ref            tapdSourceRef
 	WorkspaceID    pgtype.UUID
 	RequesterID    pgtype.UUID
 	RequesterIDRaw string
@@ -2591,8 +2648,8 @@ func (h *Handler) quickCreateTAPDSourceIssue(ctx context.Context, w http.Respons
 		Provider:     externalCredentialProviderTAPD,
 		URL:          p.Ref.URL,
 		WorkspaceID:  p.Ref.WorkspaceID,
-		ResourceType: "markdown_wiki",
-		ResourceID:   p.Ref.WikiID,
+		ResourceType: p.Ref.ResourceType,
+		ResourceID:   p.Ref.ResourceID,
 	}
 	fetched, fetchErr := h.autoFetchTAPDSource(ctx, p.RequesterIDRaw, fetchReq, nil)
 	if fetchErr != nil {
@@ -2607,13 +2664,19 @@ func (h *Handler) quickCreateTAPDSourceIssue(ctx context.Context, w http.Respons
 	setRawMetadataString(metadata, "source_provider", externalCredentialProviderTAPD)
 	setRawMetadataString(metadata, "source_url", p.Ref.URL)
 	setRawMetadataString(metadata, "tapd_workspace_id", p.Ref.WorkspaceID)
-	setRawMetadataString(metadata, "tapd_resource_type", "markdown_wiki")
-	setRawMetadataString(metadata, "tapd_resource_id", p.Ref.WikiID)
-	setRawMetadataString(metadata, "tapd_wiki_id", p.Ref.WikiID)
+	setRawMetadataString(metadata, "tapd_resource_type", p.Ref.ResourceType)
+	setRawMetadataString(metadata, "tapd_resource_id", p.Ref.ResourceID)
+	if p.Ref.ResourceType == "markdown_wiki" {
+		setRawMetadataString(metadata, "tapd_wiki_id", p.Ref.ResourceID)
+	}
 	metadata = h.enrichSourceCredentialMetadata(ctx, metadata, p.RequesterIDRaw)
 	for key, value := range sourceFetchMetadata(fetched) {
 		raw, _ := json.Marshal(value)
 		metadata[key] = raw
+	}
+	if fetchErr == nil {
+		setRawMetadataString(metadata, "source_summary_status", "pending")
+		setRawMetadataString(metadata, "source_summary_mode", "agent_task")
 	}
 	validatedMetadata, err := validateIssueMetadataObject(metadata)
 	if err != nil {
@@ -2626,7 +2689,7 @@ func (h *Handler) quickCreateTAPDSourceIssue(ctx context.Context, w http.Respons
 		issueStatus = "blocked"
 	}
 	priority := firstNonEmpty(p.Priority, "none")
-	title := firstNonEmpty(fetched.Title, "TAPD Wiki 读取失败："+p.Ref.WikiID)
+	title := firstNonEmpty(fetched.Title, tapdSourceReadFailureTitle(p.Ref))
 	description := buildQuickCreateTAPDDescription(fetched, fetchErr)
 
 	assigneeType := p.AssigneeType
@@ -2711,7 +2774,36 @@ func (h *Handler) quickCreateTAPDSourceIssue(ctx context.Context, w http.Respons
 		return QuickCreateIssueResponse{}, false
 	}
 	if fetchErr == nil {
-		h.IssueService.EnqueueOnAssignForIssue(ctx, res.Issue, "member", p.RequesterIDRaw)
+		if h.TaskService == nil {
+			h.applyQuickCreateTAPDSourceSummaryFallback(ctx, res.Issue, fetched, errors.New("task service unavailable"))
+			h.IssueService.EnqueueOnAssignForIssue(ctx, res.Issue, "member", p.RequesterIDRaw)
+			return QuickCreateIssueResponse{
+				IssueID:           uuidToString(res.Issue.ID),
+				Identifier:        issueToResponse(res.Issue, prefix).Identifier,
+				SourceFetchStatus: fetched.Status,
+			}, true
+		}
+		task, err := h.TaskService.EnqueueIssueSourceSummaryTask(ctx, res.Issue, p.AgentID)
+		if err != nil {
+			slog.Warn("quick-create TAPD source summary task enqueue failed",
+				"issue_id", uuidToString(res.Issue.ID),
+				"agent_id", uuidToString(p.AgentID),
+				"error", err,
+			)
+			h.applyQuickCreateTAPDSourceSummaryFallback(ctx, res.Issue, fetched, err)
+			h.IssueService.EnqueueOnAssignForIssue(ctx, res.Issue, "member", p.RequesterIDRaw)
+		} else if _, err := h.Queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+			ID:          res.Issue.ID,
+			WorkspaceID: res.Issue.WorkspaceID,
+			Key:         "source_summary_task_id",
+			Value:       jsonStringBytes(uuidToString(task.ID)),
+		}); err != nil {
+			slog.Warn("quick-create TAPD source summary task metadata write failed",
+				"issue_id", uuidToString(res.Issue.ID),
+				"task_id", uuidToString(task.ID),
+				"error", err,
+			)
+		}
 	}
 
 	return QuickCreateIssueResponse{
@@ -2729,15 +2821,108 @@ func buildQuickCreateTAPDDescription(fetched RecordIssueSourceFetchRequest, fetc
 		b.WriteString("\n")
 		return b.String()
 	}
-	if fetched.BodyExcerpt != "" {
-		return strings.TrimSpace(fetched.BodyExcerpt)
+	return buildQuickCreateTAPDSummaryPendingDescription()
+}
+
+func buildQuickCreateTAPDSummaryPendingDescription() string {
+	var b strings.Builder
+	b.WriteString("## 需求摘要\n")
+	b.WriteString("摘要生成中，系统正在基于 TAPD 来源生成可执行的需求摘要。\n")
+	return strings.TrimSpace(b.String())
+}
+
+func buildQuickCreateTAPDLocalSummaryDescription(fetched RecordIssueSourceFetchRequest) string {
+	body := strings.TrimSpace(firstNonEmpty(fetched.BodyExcerpt, fetched.Summary))
+	if len([]rune(body)) > 900 {
+		body = string([]rune(body)[:900]) + "..."
 	}
-	return strings.TrimSpace(fetched.Summary)
+	var b strings.Builder
+	b.WriteString("## 需求摘要\n")
+	if fetched.Title != "" {
+		b.WriteString(fetched.Title)
+		if body != "" && body != fetched.Title {
+			b.WriteString("\n\n")
+			b.WriteString(body)
+		}
+	} else if body != "" {
+		b.WriteString(body)
+	} else {
+		b.WriteString("TAPD 来源未返回可用于摘要的正文。")
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func (h *Handler) applyQuickCreateTAPDSourceSummaryFallback(ctx context.Context, issue db.Issue, fetched RecordIssueSourceFetchRequest, cause error) {
+	description := buildQuickCreateTAPDLocalSummaryDescription(fetched)
+	updated, err := h.Queries.UpdateIssue(ctx, db.UpdateIssueParams{
+		ID:            issue.ID,
+		Description:   pgtype.Text{String: description, Valid: true},
+		AssigneeType:  issue.AssigneeType,
+		AssigneeID:    issue.AssigneeID,
+		StartDate:     issue.StartDate,
+		DueDate:       issue.DueDate,
+		ParentIssueID: issue.ParentIssueID,
+		ProjectID:     issue.ProjectID,
+	})
+	if err != nil {
+		slog.Warn("quick-create TAPD source summary fallback update failed",
+			"issue_id", uuidToString(issue.ID),
+			"error", err,
+		)
+		return
+	}
+	if _, err := h.Queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+		ID:          issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+		Key:         "source_summary_status",
+		Value:       jsonStringBytes("failed"),
+	}); err != nil {
+		slog.Warn("quick-create TAPD source summary fallback metadata failed",
+			"issue_id", uuidToString(issue.ID),
+			"key", "source_summary_status",
+			"error", err,
+		)
+	}
+	if cause != nil {
+		if _, err := h.Queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+			ID:          issue.ID,
+			WorkspaceID: issue.WorkspaceID,
+			Key:         "source_summary_error",
+			Value:       jsonStringBytes(cause.Error()),
+		}); err != nil {
+			slog.Warn("quick-create TAPD source summary fallback metadata failed",
+				"issue_id", uuidToString(issue.ID),
+				"key", "source_summary_error",
+				"error", err,
+			)
+		}
+	}
+	prefix := h.getIssuePrefix(ctx, issue.WorkspaceID)
+	h.publish(protocol.EventIssueUpdated, uuidToString(issue.WorkspaceID), "system", "", map[string]any{
+		"issue":               issueToResponse(updated, prefix),
+		"description_changed": true,
+	})
+}
+
+func tapdSourceReadFailureTitle(ref tapdSourceRef) string {
+	switch ref.ResourceType {
+	case "story":
+		return "TAPD Story 读取失败：" + ref.ResourceID
+	case "task":
+		return "TAPD Task 读取失败：" + ref.ResourceID
+	default:
+		return "TAPD Wiki 读取失败：" + ref.ResourceID
+	}
 }
 
 func setRawMetadataString(metadata map[string]json.RawMessage, key, value string) {
 	raw, _ := json.Marshal(value)
 	metadata[key] = raw
+}
+
+func jsonStringBytes(value string) []byte {
+	raw, _ := json.Marshal(value)
+	return raw
 }
 
 // writeAgentUnavailable returns 422 with a stable error code so the modal
@@ -3001,14 +3186,27 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	// payload builder and the HTTP response share the same value.
 	prefix := h.getIssuePrefix(r.Context(), wsUUID)
 
-	if existing, ok := h.findDuplicateOpenChildIssue(r.Context(), wsUUID, req.Title, parentIssueID, projectID, assigneeType, assigneeID); ok {
-		slog.Info("duplicate child issue create reused existing issue",
-			"issue_id", uuidToString(existing.ID),
-			"title", existing.Title,
-			"workspace_id", workspaceID,
-		)
-		writeJSON(w, http.StatusOK, issueToResponse(existing, prefix))
-		return
+	if originType.Valid && originID.Valid {
+		existing, err := h.Queries.GetIssueByOrigin(r.Context(), db.GetIssueByOriginParams{
+			WorkspaceID: wsUUID,
+			OriginType:  originType,
+			OriginID:    originID,
+		})
+		if err == nil {
+			slog.Info("origin-stamped issue create reused existing issue",
+				"issue_id", uuidToString(existing.ID),
+				"origin_type", originType.String,
+				"origin_id", uuidToString(originID),
+				"workspace_id", workspaceID,
+			)
+			writeJSON(w, http.StatusOK, issueToResponse(existing, prefix))
+			return
+		}
+		if !isNotFound(err) {
+			slog.Warn("origin-stamped issue lookup failed", append(logger.RequestAttrs(r), "error", err, "workspace_id", workspaceID)...)
+			writeError(w, http.StatusInternalServerError, "failed to check issue origin")
+			return
+		}
 	}
 
 	// Analytics agent ID: assignee agent when the issue is being assigned
@@ -3088,39 +3286,6 @@ func (h *Handler) CreateIssue(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusCreated, resp)
 }
 
-func (h *Handler) findDuplicateOpenChildIssue(ctx context.Context, workspaceID pgtype.UUID, title string, parentIssueID, projectID pgtype.UUID, assigneeType pgtype.Text, assigneeID pgtype.UUID) (db.Issue, bool) {
-	if !parentIssueID.Valid || !projectID.Valid || !assigneeType.Valid || !assigneeID.Valid {
-		return db.Issue{}, false
-	}
-	children, err := h.Queries.ListChildrenByParents(ctx, db.ListChildrenByParentsParams{
-		WorkspaceID: workspaceID,
-		ParentIds:   []pgtype.UUID{parentIssueID},
-	})
-	if err != nil {
-		return db.Issue{}, false
-	}
-	normalizedTitle := strings.TrimSpace(title)
-	for _, child := range children {
-		if child.Status == "done" || child.Status == "cancelled" {
-			continue
-		}
-		if strings.TrimSpace(child.Title) != normalizedTitle {
-			continue
-		}
-		if !child.ProjectID.Valid || child.ProjectID != projectID {
-			continue
-		}
-		if !child.AssigneeType.Valid || child.AssigneeType.String != assigneeType.String {
-			continue
-		}
-		if !child.AssigneeID.Valid || child.AssigneeID != assigneeID {
-			continue
-		}
-		return child, true
-	}
-	return db.Issue{}, false
-}
-
 func (h *Handler) enrichIssueSourceMetadata(ctx context.Context, metadata map[string]json.RawMessage, creatorUserID string, texts ...string) map[string]json.RawMessage {
 	metadata = enrichTAPDSourceMetadataFromText(metadata, texts...)
 	return h.enrichSourceCredentialMetadata(ctx, metadata, creatorUserID)
@@ -3128,13 +3293,13 @@ func (h *Handler) enrichIssueSourceMetadata(ctx context.Context, metadata map[st
 
 func enrichTAPDSourceMetadataFromText(metadata map[string]json.RawMessage, texts ...string) map[string]json.RawMessage {
 	sourceURL := metadataStringPreserve(metadata, "source_url")
-	ref, ok := parseTAPDMarkdownWikiURL(sourceURL)
+	ref, ok := parseTAPDSourceURL(sourceURL)
 	if !ok && sourceURL != "" {
 		return metadata
 	}
 	if !ok {
 		for _, text := range texts {
-			ref, ok = parseTAPDMarkdownWikiURL(text)
+			ref, ok = parseTAPDSourceURL(text)
 			if ok {
 				break
 			}
@@ -3164,10 +3329,77 @@ func enrichTAPDSourceMetadataFromText(metadata map[string]json.RawMessage, texts
 	setIfMissing("source_provider", externalCredentialProviderTAPD)
 	setIfMissing("source_url", ref.URL)
 	setIfMissing("tapd_workspace_id", ref.WorkspaceID)
-	setIfMissing("tapd_resource_type", "markdown_wiki")
-	setIfMissing("tapd_resource_id", ref.WikiID)
-	setIfMissing("tapd_wiki_id", ref.WikiID)
+	setIfMissing("tapd_resource_type", ref.ResourceType)
+	setIfMissing("tapd_resource_id", ref.ResourceID)
+	if ref.ResourceType == "markdown_wiki" {
+		setIfMissing("tapd_wiki_id", ref.ResourceID)
+	}
 	return out
+}
+
+func parseTAPDSourceURL(value string) (tapdSourceRef, bool) {
+	if wiki, ok := parseTAPDMarkdownWikiURL(value); ok {
+		return tapdSourceRef{
+			WorkspaceID:  wiki.WorkspaceID,
+			ResourceType: "markdown_wiki",
+			ResourceID:   wiki.WikiID,
+			URL:          wiki.URL,
+		}, true
+	}
+	if ref, ok := parseTAPDStoryURL(value); ok {
+		return ref, true
+	}
+	return tapdSourceRef{}, false
+}
+
+func parseTAPDStoryURL(value string) (tapdSourceRef, bool) {
+	match := tapdProngStoryURLRE.FindStringSubmatch(value)
+	if len(match) == 3 {
+		workspaceID := strings.TrimSpace(match[1])
+		storyID := strings.TrimSpace(match[2])
+		if workspaceID != "" && storyID != "" {
+			return tapdSourceRef{
+				WorkspaceID:  workspaceID,
+				ResourceType: "story",
+				ResourceID:   storyID,
+				URL:          fmt.Sprintf("https://www.tapd.cn/%s/prong/stories/view/%s", workspaceID, storyID),
+			}, true
+		}
+	}
+	match = tapdStoryListURLRE.FindStringSubmatch(strings.ReplaceAll(value, "&amp;", "&"))
+	if len(match) == 3 {
+		workspaceID := strings.TrimSpace(match[1])
+		storyID := strings.TrimSpace(match[2])
+		if workspaceID != "" && storyID != "" {
+			return tapdSourceRef{
+				WorkspaceID:  workspaceID,
+				ResourceType: "story",
+				ResourceID:   storyID,
+				URL:          fmt.Sprintf("https://www.tapd.cn/%s/prong/stories/view/%s", workspaceID, storyID),
+			}, true
+		}
+	}
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed.Host == "" || !strings.HasSuffix(strings.ToLower(parsed.Host), "tapd.cn") {
+		return tapdSourceRef{}, false
+	}
+	parts := strings.Split(strings.Trim(parsed.Path, "/"), "/")
+	if len(parts) < 3 || parts[0] != "tapd_fe" || parts[2] != "story" {
+		return tapdSourceRef{}, false
+	}
+	workspaceID := strings.TrimSpace(parts[1])
+	previewID := strings.TrimSpace(parsed.Query().Get("dialog_preview_id"))
+	previewMatch := tapdStoryPreviewIDRE.FindStringSubmatch(previewID)
+	if workspaceID == "" || len(previewMatch) != 2 || strings.TrimSpace(previewMatch[1]) == "" {
+		return tapdSourceRef{}, false
+	}
+	storyID := strings.TrimSpace(previewMatch[1])
+	return tapdSourceRef{
+		WorkspaceID:  workspaceID,
+		ResourceType: "story",
+		ResourceID:   storyID,
+		URL:          fmt.Sprintf("https://www.tapd.cn/%s/prong/stories/view/%s", workspaceID, storyID),
+	}, true
 }
 
 func parseTAPDMarkdownWikiURL(value string) (tapdWikiSourceRef, bool) {
@@ -3442,6 +3674,19 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	attachmentIDs, ok := parseUUIDSliceOrBadRequest(w, req.AttachmentIDs, "attachment_ids")
 	if !ok {
 		return
+	}
+
+	if params.Status.Valid && params.Status.String == "done" {
+		incomplete, err := h.incompleteChildrenBlockingDone(r.Context(), prevIssue)
+		if err != nil {
+			slog.Warn("check child issue done gate failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
+			writeError(w, http.StatusInternalServerError, "failed to check child issues")
+			return
+		}
+		if len(incomplete) > 0 {
+			h.writeIssueDoneBlockedByChildren(w, incomplete)
+			return
+		}
 	}
 
 	issue, err := h.Queries.UpdateIssue(r.Context(), params)
@@ -3885,6 +4130,13 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	updated := 0
+	type batchDoneBlockedIssue struct {
+		IssueID            string                         `json:"issue_id"`
+		Identifier         string                         `json:"identifier"`
+		Title              string                         `json:"title"`
+		IncompleteChildren []IncompleteChildIssueResponse `json:"incomplete_children"`
+	}
+	blocked := make([]batchDoneBlockedIssue, 0)
 	for _, issueID := range req.IssueIDs {
 		issueUUID, err := util.ParseUUID(issueID)
 		if err != nil {
@@ -4003,6 +4255,24 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
+		if params.Status.Valid && params.Status.String == "done" {
+			incomplete, err := h.incompleteChildrenBlockingDone(r.Context(), prevIssue)
+			if err != nil {
+				slog.Warn("batch check child issue done gate failed", "issue_id", issueID, "error", err)
+				continue
+			}
+			if len(incomplete) > 0 {
+				prefix := h.getIssuePrefix(r.Context(), prevIssue.WorkspaceID)
+				blocked = append(blocked, batchDoneBlockedIssue{
+					IssueID:            uuidToString(prevIssue.ID),
+					Identifier:         prefix + "-" + strconv.Itoa(int(prevIssue.Number)),
+					Title:              prevIssue.Title,
+					IncompleteChildren: incomplete,
+				})
+				continue
+			}
+		}
+
 		issue, err := h.Queries.UpdateIssue(r.Context(), params)
 		if err != nil {
 			slog.Warn("batch update issue failed", "issue_id", issueID, "error", err)
@@ -4031,7 +4301,12 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 	}
 
 	slog.Info("batch update issues", append(logger.RequestAttrs(r), "count", updated)...)
-	writeJSON(w, http.StatusOK, map[string]any{"updated": updated})
+	resp := map[string]any{"updated": updated}
+	if len(blocked) > 0 {
+		resp["blocked"] = blocked
+		resp["blocked_reason"] = "child_issues_not_done"
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 type BatchDeleteIssuesRequest struct {
