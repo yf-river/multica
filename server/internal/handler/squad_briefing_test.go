@@ -578,6 +578,8 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 			for _, want := range []string{
 				"不读取或探索代码仓库",
 				"不得 checkout、ls、find、rg、cat、sed、git",
+				"不得查询 Agent roster、当前工作目录或本地上下文文件",
+				"不得运行 multica agent、multica --help、pwd、shell 管道、重定向、&&、||、head",
 				"代码事实只能作为后续 02/04 待确认项记录",
 				"需要代码结构、接口实现、数据库 schema 或 operation skill 细节时",
 			} {

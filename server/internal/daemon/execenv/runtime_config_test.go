@@ -662,9 +662,9 @@ func TestTaskCapabilityPolicyNoRepoBlocksHostPathInspection(t *testing.T) {
 		"Coordinator native tool boundary: do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Read, Edit, Write, MultiEdit, Grep, Glob, or LS",
 		"using them is a workflow failure",
 		"Bash is restricted to `multica ...` platform coordination commands only",
-		"Do not read host absolute paths or project code through shell commands",
-		"`ls`, `find`, `rg`, `cat`, `sed`, `git`, `go`, `pnpm`, `npm`, `make`, `curl`",
-		"use it only for platform coordination commands such as `multica issue`, `multica squad`, `multica agent`, or `multica project`",
+		"Do not read host absolute paths, check the current working directory, or inspect project code through shell commands",
+		"`pwd`, `ls`, `find`, `rg`, `cat`, `sed`, `git`, `go`, `pnpm`, `npm`, `make`, `curl`",
+		"use it only for platform coordination commands permitted by this task's role",
 		"This task has no native file-write tool",
 	} {
 		if !strings.Contains(out, want) {
@@ -690,14 +690,19 @@ func TestPlanningStageCapabilityPolicyBlocksNativeSubagents(t *testing.T) {
 		"Stage native tool boundary",
 		"do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Read, Edit, Write, MultiEdit, Grep, Glob, LS",
 		"Native file-write tools are unavailable",
+		"Do not inspect CLI help or discover extra commands in this task",
 		"multica issue comment add <issue-id> --content \"...\"",
 		"concise single-line stage results",
+		"No-repo planning Bash shape",
+		"run only plain single `multica issue ...` commands",
+		"Do not run `multica agent`, `multica --help`, shell builtins like `pwd` or `ls`, shell pipes, redirects, `&&`, `||`, `head`, or any command wrapper",
 		"do not attempt to create `reply.md`",
 		"produce their own bounded stage result in this platform task",
 		"post it with `multica issue comment add 77777777-8888-9999-aaaa-bbbbbbbbbbbb --content \"...\"`",
 		"Keep the body compact, single-line, and shell-safe",
 		"No-repo planning override",
 		"do not attempt it in this task",
+		"check the working directory",
 		"Record the missing code facts as assumptions or handoff questions",
 	} {
 		if !strings.Contains(out, want) {
@@ -708,6 +713,8 @@ func TestPlanningStageCapabilityPolicyBlocksNativeSubagents(t *testing.T) {
 		"--content-file ./reply.md",
 		"always write the comment body to a UTF-8 file",
 		"using the platform-correct non-inline mode",
+		"`multica repo checkout <url>",
+		"For everything else, run `multica --help`",
 	} {
 		if strings.Contains(out, banned) {
 			t.Fatalf("no-repo planning stage should not require file-write comment mode %q\n--- output ---\n%s", banned, out)

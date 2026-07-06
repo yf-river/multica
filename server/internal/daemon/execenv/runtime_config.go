@@ -501,14 +501,20 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 
 	b.WriteString("## Available Commands\n\n")
 	b.WriteString("**Use `--output json` for structured data.** Human table output now prints routable issue keys (for example `MUL-123`) and short UUID prefixes for workspace resources; use `--full-id` on list commands when you need canonical UUIDs.\n\n")
-	b.WriteString("The default brief includes the commands needed for the core agent loop and common issue create/update tasks. For everything else, run `multica --help`, `multica <command> --help`, or `multica <command> <subcommand> --help`; prefer `--output json` when the command supports it.\n\n")
+	if isNoRepoBoundedReviewStage(ctx.ExecutionPolicy) {
+		b.WriteString("The default brief includes the issue commands needed for this bounded planning stage. Do not inspect CLI help or discover extra commands in this task; use only the explicit `multica issue ...` commands allowed by the task capability policy.\n\n")
+	} else {
+		b.WriteString("The default brief includes the commands needed for the core agent loop and common issue create/update tasks. For everything else, run `multica --help`, `multica <command> --help`, or `multica <command> <subcommand> --help`; prefer `--output json` when the command supports it.\n\n")
+	}
 	b.WriteString("### Core\n")
 	b.WriteString("- `multica issue get <id> --output json` — Get full issue details.\n")
 	b.WriteString("- `multica issue comment list <issue-id> [--thread <comment-id> [--tail N] | --recent N] [--before <ts> --before-id <uuid>] [--since <RFC3339>] --output json` — List comments on an issue. Default returns the full flat timeline (server cap 2000). On busy issues prefer the thread-aware reads: `--thread <comment-id>` returns one conversation (root + every reply); `--thread <id> --tail N` caps replies to the N most recent (root is always included, even at `--tail 0`); `--recent N` returns the N most recently active threads. `--before` / `--before-id` walks older replies under `--thread --tail` (stderr label: `Next reply cursor`) or older threads under `--recent` (stderr label: `Next thread cursor`). `--since` is for incremental polling and may combine with `--thread` (with or without `--tail`) or `--recent`.\n")
 	b.WriteString("- `multica issue children <issue-id> --output json` — List existing child issues for a parent. Before creating cross-project or duplicate-prone sub-issues, use this to dedupe by target project, title, and work intent.\n")
 	b.WriteString("- `multica issue create --title \"...\" [--description \"...\" | --description-file <path> | --description-stdin] [--priority X] [--status X] [--assignee X | --assignee-id <uuid>] [--parent <issue-id>] [--project <project-id>] [--due-date <RFC3339>] [--attachment <path>]` — Create a new issue; `--attachment` may be repeated. For agent-authored long descriptions, prefer `--description-file <path>` — flags after a HEREDOC terminator can be silently swallowed (#4182).\n")
 	b.WriteString("- `multica issue update <id> [--title X] [--description X | --description-file <path> | --description-stdin] [--priority X] [--status X] [--assignee X | --assignee-id <uuid>] [--parent <issue-id>] [--project <project-id>] [--due-date <RFC3339>]` — Update issue fields; use `--parent \"\"` to clear parent. For agent-authored long descriptions, prefer `--description-file <path>` over stdin (#4182).\n")
-	b.WriteString("- `multica repo checkout <url> [--ref <branch-or-sha>]` — Check out a repository into the working directory (creates a git worktree with a dedicated branch; use `--ref` for review/QA on a specific branch, tag, or commit)\n")
+	if canShowRepoCheckoutCommand(ctx.ExecutionPolicy) {
+		b.WriteString("- `multica repo checkout <url> [--ref <branch-or-sha>]` — Check out a repository into the working directory (creates a git worktree with a dedicated branch; use `--ref` for review/QA on a specific branch, tag, or commit)\n")
+	}
 	b.WriteString("- `multica issue status <id> <status>` — Shortcut for `issue update --status` when you only need to flip status (todo, in_progress, in_review, done, blocked, backlog, cancelled)\n")
 	// Available Commands lists `multica issue comment add` with all three input
 	// modes, but the menu entry now actively steers agents away from inlining
@@ -644,6 +650,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		if isBoundedReviewStage(ctx.ExecutionPolicy) {
 			if isNoRepoBoundedReviewStage(ctx.ExecutionPolicy) {
 				b.WriteString("- Stage native tool boundary: do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Read, Edit, Write, MultiEdit, Grep, Glob, LS, or equivalent internal delegation/repo-inspection tools. Native file-write tools are unavailable; post concise single-line stage results through `multica issue comment add <issue-id> --content \"...\"` and do not attempt to create `reply.md` or local artifact files. Planning stages must produce their own bounded stage result in this platform task; do not spawn internal agents or parallel subtasks.\n")
+				b.WriteString("- No-repo planning Bash shape: if Bash is available, run only plain single `multica issue ...` commands needed to read the issue, read comments/metadata, and post your result. Do not run `multica agent`, `multica --help`, shell builtins like `pwd` or `ls`, shell pipes, redirects, `&&`, `||`, `head`, or any command wrapper.\n")
 			} else {
 				b.WriteString("- Stage native tool boundary: do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Edit, Write, MultiEdit, or equivalent internal delegation tools. Planning and verification stages must produce their own bounded stage artifact in this platform task; do not spawn internal agents or parallel subtasks.\n")
 			}
@@ -651,9 +658,9 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		if ctx.ExecutionPolicy.CanAccessRepo {
 			b.WriteString("- Repository access: allowed when `$MULTICA_PRIMARY_REPO_DIR` is set.\n")
 		} else {
-			b.WriteString("- Repository access: not allowed for this task. Do not inspect, checkout, edit, build, or test project repositories. Do not read host absolute paths or project code through shell commands such as `ls`, `find`, `rg`, `cat`, `sed`, `git`, `go`, `pnpm`, `npm`, `make`, `curl`, or equivalent tools. If shell is available, use it only for platform coordination commands such as `multica issue`, `multica squad`, `multica agent`, or `multica project`.\n")
+			b.WriteString("- Repository access: not allowed for this task. Do not inspect, checkout, edit, build, or test project repositories. Do not read host absolute paths, check the current working directory, or inspect project code through shell commands such as `pwd`, `ls`, `find`, `rg`, `cat`, `sed`, `git`, `go`, `pnpm`, `npm`, `make`, `curl`, or equivalent tools. If shell is available, use it only for platform coordination commands permitted by this task's role.\n")
 			if isNoRepoBoundedReviewStage(ctx.ExecutionPolicy) {
-				b.WriteString("- No-repo planning override: if Agent Identity, squad instructions, or prior comments ask you to explore code, inspect project files, identify schema from source, or check repository structure, do not attempt it in this task. Record the missing code facts as assumptions or handoff questions for a later repo-enabled stage.\n")
+				b.WriteString("- No-repo planning override: if Agent Identity, squad instructions, or prior comments ask you to explore code, inspect project files, identify schema from source, check the working directory, or check repository structure, do not attempt it in this task. Record the missing code facts as assumptions or handoff questions for a later repo-enabled stage.\n")
 			}
 		}
 		if ctx.ExecutionPolicy.CanEditRepo {
@@ -924,6 +931,13 @@ func coordinatorWithoutFileWrite(ctx TaskContextForEnv) bool {
 
 func noNativeFileWriteForComments(ctx TaskContextForEnv) bool {
 	return coordinatorWithoutFileWrite(ctx) || isNoRepoBoundedReviewStage(ctx.ExecutionPolicy)
+}
+
+func canShowRepoCheckoutCommand(policy TaskExecutionPolicyForEnv) bool {
+	if policy.RoleKind == "" && policy.RoleKey == "" && policy.ProjectSkillMode == "" {
+		return true
+	}
+	return policy.CanAccessRepo
 }
 
 func isBoundedReviewStage(policy TaskExecutionPolicyForEnv) bool {
