@@ -4460,6 +4460,12 @@ func allowedBuiltinToolsForExecutionPolicy(provider string, policy TaskExecution
 	if isNoRepoBoundedStage(policy) {
 		return []string{"Bash", "Write"}
 	}
+	if isBoundedReviewStage(policy) {
+		return []string{"Bash", "Read", "Grep", "Glob", "LS"}
+	}
+	if isImplementationStage(policy) {
+		return []string{"Bash", "Read", "Grep", "Glob", "LS", "Edit", "Write", "MultiEdit", "NotebookRead", "NotebookEdit"}
+	}
 	return nil
 }
 
@@ -4493,14 +4499,16 @@ func disallowedToolsForExecutionPolicy(provider string, policy TaskExecutionPoli
 	if !supportsClaudeFamilyToolEnvelope(provider) {
 		return nil
 	}
+	nativeDelegationTools := []string{
+		"Task",
+		"TaskCreate",
+		"TaskUpdate",
+		"Agent",
+		"TodoRead",
+		"TodoWrite",
+	}
 	if isCoordinatorWithoutRepoAccess(policy) {
-		return []string{
-			"Task",
-			"TaskCreate",
-			"TaskUpdate",
-			"Agent",
-			"TodoRead",
-			"TodoWrite",
+		return append(append([]string{}, nativeDelegationTools...),
 			"Read",
 			"Edit",
 			"Write",
@@ -4510,16 +4518,10 @@ func disallowedToolsForExecutionPolicy(provider string, policy TaskExecutionPoli
 			"LS",
 			"NotebookRead",
 			"NotebookEdit",
-		}
+		)
 	}
 	if isNoRepoBoundedStage(policy) {
-		return []string{
-			"Task",
-			"TaskCreate",
-			"TaskUpdate",
-			"Agent",
-			"TodoRead",
-			"TodoWrite",
+		return append(append([]string{}, nativeDelegationTools...),
 			"Read",
 			"Edit",
 			"MultiEdit",
@@ -4528,21 +4530,18 @@ func disallowedToolsForExecutionPolicy(provider string, policy TaskExecutionPoli
 			"LS",
 			"NotebookRead",
 			"NotebookEdit",
-		}
+		)
 	}
 	if isBoundedReviewStage(policy) {
-		return []string{
-			"Task",
-			"TaskCreate",
-			"TaskUpdate",
-			"Agent",
-			"TodoRead",
-			"TodoWrite",
+		return append(append([]string{}, nativeDelegationTools...),
 			"Edit",
 			"Write",
 			"MultiEdit",
 			"NotebookEdit",
-		}
+		)
+	}
+	if isImplementationStage(policy) {
+		return nativeDelegationTools
 	}
 	return nil
 }
@@ -4576,4 +4575,8 @@ func isBoundedReviewStage(policy TaskExecutionPolicy) bool {
 	default:
 		return false
 	}
+}
+
+func isImplementationStage(policy TaskExecutionPolicy) bool {
+	return strings.EqualFold(strings.TrimSpace(policy.RoleKind), "implementation_stage") && policy.CanAccessRepo && policy.CanEditRepo
 }

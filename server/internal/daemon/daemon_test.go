@@ -173,8 +173,11 @@ func TestExecutionPolicyToolEnvelopeForCoordinator(t *testing.T) {
 	}
 
 	impl := TaskExecutionPolicy{RoleKind: "implementation_stage", CanAccessRepo: true, CanEditRepo: true}
-	if got := allowedBuiltinToolsForExecutionPolicy("codebuddy", impl); got != nil {
-		t.Fatalf("implementation allowed tools = %v, want nil", got)
+	implAllowed := allowedBuiltinToolsForExecutionPolicy("codebuddy", impl)
+	for _, want := range []string{"Bash", "Read", "Grep", "Glob", "LS", "Edit", "Write", "MultiEdit"} {
+		if !containsString(implAllowed, want) {
+			t.Fatalf("implementation allowed tools missing %q: %v", want, implAllowed)
+		}
 	}
 	if got := allowedToolsForExecutionPolicy("codebuddy", impl); got != nil {
 		t.Fatalf("implementation scoped allowed tools = %v, want nil", got)
@@ -188,11 +191,25 @@ func TestExecutionPolicyToolEnvelopeForCoordinator(t *testing.T) {
 	if coordinatorNeedsInlineSystemPrompt("codebuddy", impl) {
 		t.Fatal("implementation stage should not receive coordinator inline system prompt")
 	}
-	if got := disallowedToolsForExecutionPolicy("codebuddy", impl); got != nil {
-		t.Fatalf("implementation denied tools = %v, want nil", got)
+	implDenied := disallowedToolsForExecutionPolicy("codebuddy", impl)
+	for _, want := range []string{"TaskCreate", "TaskUpdate", "Agent", "TodoWrite"} {
+		if !containsString(implDenied, want) {
+			t.Fatalf("implementation denied tools missing %q: %v", want, implDenied)
+		}
 	}
 
 	planning := TaskExecutionPolicy{RoleKind: "planning_stage", CanAccessRepo: true, CanEditRepo: false}
+	planningAllowed := allowedBuiltinToolsForExecutionPolicy("codebuddy", planning)
+	for _, want := range []string{"Bash", "Read", "Grep", "Glob", "LS"} {
+		if !containsString(planningAllowed, want) {
+			t.Fatalf("planning allowed tools missing %q: %v", want, planningAllowed)
+		}
+	}
+	for _, denied := range []string{"Agent", "Task", "TaskCreate", "TaskUpdate", "TodoWrite", "Edit", "Write", "MultiEdit"} {
+		if containsString(planningAllowed, denied) {
+			t.Fatalf("planning allowed tools must not include %q: %v", denied, planningAllowed)
+		}
+	}
 	planningDenied := disallowedToolsForExecutionPolicy("codebuddy", planning)
 	for _, want := range []string{"TaskCreate", "TaskUpdate", "Agent", "TodoWrite", "Edit", "Write", "MultiEdit"} {
 		if !containsString(planningDenied, want) {
