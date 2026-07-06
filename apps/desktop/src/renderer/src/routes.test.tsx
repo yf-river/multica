@@ -3,33 +3,68 @@ import { Navigate } from "react-router-dom";
 import { PromptLibraryPage } from "@multica/views/prompt-library";
 import { appRoutes } from "./routes";
 
-describe("desktop training routes", () => {
+describe("desktop debug and evaluation routes", () => {
   const workspaceRoute = appRoutes[0]?.children?.find((route) => route.path === ":workspaceSlug");
   const childRoutes = workspaceRoute?.children ?? [];
 
-  it("redirects the training index to the prompt library", () => {
-    const training = childRoutes.find((route) => route.path === "training");
-    expect(training?.handle).toMatchObject({ title: "训练与评估" });
-    const indexRoute = training?.children?.find((route) => route.index);
-    expect(indexRoute?.element).toMatchObject({
+  it("redirects debug and evaluation indexes to their default views", () => {
+    const debug = childRoutes.find((route) => route.path === "debug");
+    const evaluation = childRoutes.find((route) => route.path === "evaluation");
+
+    expect(debug?.handle).toMatchObject({ title: "调试" });
+    expect(evaluation?.handle).toMatchObject({ title: "评估" });
+
+    const debugIndex = debug?.children?.find((route) => route.index);
+    expect(debugIndex?.element).toMatchObject({
       type: Navigate,
       props: expect.objectContaining({ to: "prompts", replace: true }),
+    });
+
+    const evaluationIndex = evaluation?.children?.find((route) => route.index);
+    expect(evaluationIndex?.element).toMatchObject({
+      type: Navigate,
+      props: expect.objectContaining({ to: "datasets", replace: true }),
     });
   });
 
   it.each([
-    ["prompts", "训练与评估", PromptLibraryPage, { activeView: "prompts" }],
-    ["datasets", "训练与评估", PromptLibraryPage, { activeView: "datasets" }],
-    ["test-suites", "训练与评估", PromptLibraryPage, { activeView: "test-suites" }],
-    ["evaluation-runs", "训练与评估", PromptLibraryPage, { activeView: "evaluation-runs" }],
-  ])("maps training/%s to the matching training and evaluation view", (routePath, title, component, props) => {
-    const trainingRoute = childRoutes.find((route) => route.path === "training");
-    const childRoute = trainingRoute?.children?.find((route) => route.path === routePath);
+    ["debug", "prompts", "调试", PromptLibraryPage, { activeView: "prompts" }],
+    ["evaluation", "datasets", "评估", PromptLibraryPage, { activeView: "datasets" }],
+    ["evaluation", "test-suites", "评估", PromptLibraryPage, { activeView: "test-suites" }],
+    ["evaluation", "runs", "评估", PromptLibraryPage, { activeView: "evaluation-runs" }],
+  ])("maps %s/%s to the matching view", (parentPath, routePath, title, component, props) => {
+    const parentRoute = childRoutes.find((route) => route.path === parentPath);
+    const childRoute = parentRoute?.children?.find((route) => route.path === routePath);
     expect(childRoute?.handle).toMatchObject({ title });
     expect(childRoute?.element).toMatchObject({
       type: component,
       props: expect.objectContaining(props),
     });
+  });
+
+  it("keeps legacy training routes as redirects", () => {
+    const trainingRoute = childRoutes.find((route) => route.path === "training");
+    expect(trainingRoute?.handle).toMatchObject({ title: "训练与评估" });
+
+    const indexRoute = trainingRoute?.children?.find((route) => route.index);
+    expect(indexRoute?.element).toMatchObject({
+      type: Navigate,
+      props: expect.objectContaining({ to: "../debug/prompts", replace: true }),
+    });
+
+    const redirects = [
+      ["prompts", "../../debug/prompts"],
+      ["datasets", "../../evaluation/datasets"],
+      ["test-suites", "../../evaluation/test-suites"],
+      ["evaluation-runs", "../../evaluation/runs"],
+    ] as const;
+    for (const [routePath, to] of redirects) {
+      const childRoute = trainingRoute?.children?.find((route) => route.path === routePath);
+      expect(childRoute?.element).toMatchObject({
+        type: Navigate,
+        props: expect.objectContaining({ to, replace: true }),
+      });
+    }
   });
 
   it("does not keep legacy training aliases", () => {

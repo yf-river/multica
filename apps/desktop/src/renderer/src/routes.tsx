@@ -165,14 +165,32 @@ export const appRoutes: RouteObject[] = [
             handle: { title: "运行时" },
           },
           {
+            path: "debug",
+            handle: { title: "调试" },
+            children: [
+              { index: true, element: <Navigate to="prompts" replace /> },
+              { path: "prompts", element: <PromptLibraryPage activeView="prompts" />, handle: { title: "调试" } },
+            ],
+          },
+          {
+            path: "evaluation",
+            handle: { title: "评估" },
+            children: [
+              { index: true, element: <Navigate to="datasets" replace /> },
+              { path: "datasets", element: <PromptLibraryPage activeView="datasets" />, handle: { title: "评估" } },
+              { path: "test-suites", element: <PromptLibraryPage activeView="test-suites" />, handle: { title: "评估" } },
+              { path: "runs", element: <PromptLibraryPage activeView="evaluation-runs" />, handle: { title: "评估" } },
+            ],
+          },
+          {
             path: "training",
             handle: { title: "训练与评估" },
             children: [
-              { index: true, element: <Navigate to="prompts" replace /> },
-              { path: "prompts", element: <PromptLibraryPage activeView="prompts" />, handle: { title: "训练与评估" } },
-              { path: "datasets", element: <PromptLibraryPage activeView="datasets" />, handle: { title: "训练与评估" } },
-              { path: "test-suites", element: <PromptLibraryPage activeView="test-suites" />, handle: { title: "训练与评估" } },
-              { path: "evaluation-runs", element: <PromptLibraryPage activeView="evaluation-runs" />, handle: { title: "训练与评估" } },
+              { index: true, element: <Navigate to="../debug/prompts" replace /> },
+              { path: "prompts", element: <Navigate to="../../debug/prompts" replace /> },
+              { path: "datasets", element: <Navigate to="../../evaluation/datasets" replace /> },
+              { path: "test-suites", element: <Navigate to="../../evaluation/test-suites" replace /> },
+              { path: "evaluation-runs", element: <Navigate to="../../evaluation/runs" replace /> },
             ],
           },
           { path: "skills", element: <SkillsPage />, handle: { title: "技能" } },

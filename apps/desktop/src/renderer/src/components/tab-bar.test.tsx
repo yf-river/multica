@@ -149,13 +149,13 @@ describe("TabBar hover action buttons", () => {
     expect(unpinnedTab.querySelector(".lucide-pin.size-3\\.5")).toBeNull();
   });
 
-  it("renders the training route icon when a tab uses ChartNoAxesCombined", () => {
+  it("renders the evaluation route icon when a tab uses ChartNoAxesCombined", () => {
     state.byWorkspace.acme.tabs = [
-      { id: "tA", path: "/acme/training/evaluation-runs", title: "训练与评估 · 评测记录", icon: "ChartNoAxesCombined", pinned: false },
+      { id: "tA", path: "/acme/evaluation/runs", title: "评估 · 评测记录", icon: "ChartNoAxesCombined", pinned: false },
     ];
 
     const { getByLabelText } = render(<TabBar />);
 
-    expect(getByLabelText("训练与评估 · 评测记录").querySelector(".lucide-chart-no-axes-combined.size-3\\.5")).toBeTruthy();
+    expect(getByLabelText("评估 · 评测记录").querySelector(".lucide-chart-no-axes-combined.size-3\\.5")).toBeTruthy();
   });
 });

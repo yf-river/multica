@@ -27,6 +27,7 @@ import {
   Plus,
   Check,
   BookOpenText,
+  Bug,
   SquarePen,
   CircleUser,
   FolderKanban,
@@ -83,10 +84,12 @@ import { useLogout } from "../auth";
 import { ProjectIcon } from "../projects/components/project-icon";
 import { useT } from "../i18n";
 import {
-  DEFAULT_TRAINING_WORKBENCH_VIEW,
-  TRAINING_WORKBENCH_VIEWS,
-  trainingWorkbenchPath,
-  trainingWorkbenchViewFromRoute,
+  DEFAULT_DEBUG_WORKBENCH_VIEW,
+  DEFAULT_EVALUATION_WORKBENCH_VIEW,
+  TRAINING_WORKBENCH_VIEWS_BY_SECTION,
+  debugWorkbenchPath,
+  evaluationWorkbenchPath,
+  trainingWorkbenchViewFromCanonicalRoute,
 } from "@multica/core/training";
 
 // Top-level nav items stay active when the user is on a child route
@@ -121,7 +124,8 @@ type NavKey =
   | "squads"
   | "usage"
   | "runReviews"
-  | "training"
+  | "debug"
+  | "evaluation"
   | "runtimes"
   | "skills"
   | "settings";
@@ -137,7 +141,8 @@ type NavLabelKey =
   | "squads"
   | "usage"
   | "run_reviews"
-  | "training"
+  | "debug"
+  | "evaluation"
   | "runtimes"
   | "skills"
   | "settings";
@@ -154,7 +159,8 @@ const workspaceNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[]
   { key: "agents", labelKey: "agents", icon: Bot },
   { key: "squads", labelKey: "squads", icon: Users },
   { key: "runReviews", labelKey: "run_reviews", icon: BarChart3 },
-  { key: "training", labelKey: "training", icon: ChartNoAxesCombined },
+  { key: "debug", labelKey: "debug", icon: Bug },
+  { key: "evaluation", labelKey: "evaluation", icon: ChartNoAxesCombined },
 ];
 
 const configureNav: { key: NavKey; labelKey: NavLabelKey; icon: typeof Inbox }[] = [
@@ -653,14 +659,30 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
               <SidebarMenu className="gap-0.5">
                 {workspaceNav.map((item) => {
                   const href =
-                    item.key === "training"
-                      ? trainingWorkbenchPath(p.training(), DEFAULT_TRAINING_WORKBENCH_VIEW)
-                      : p[item.key]();
-                  const activeHref = item.key === "training" ? p.training() : href;
+                    item.key === "debug"
+                      ? debugWorkbenchPath(p.debug(), DEFAULT_DEBUG_WORKBENCH_VIEW)
+                      : item.key === "evaluation"
+                        ? evaluationWorkbenchPath(p.evaluation(), DEFAULT_EVALUATION_WORKBENCH_VIEW)
+                        : p[item.key]();
+                  const activeHref =
+                    item.key === "debug"
+                      ? p.debug()
+                      : item.key === "evaluation"
+                        ? p.evaluation()
+                        : href;
                   const isActive = !isActivePinnedRoute && isNavActive(pathname, activeHref);
-                  const activeTrainingView = pathname.startsWith(p.training() + "/")
-                    ? trainingWorkbenchViewFromRoute(pathname.slice((p.training() + "/").length).split("/")[0] ?? null)
-                    : "";
+                  const activeWorkbenchView =
+                    item.key === "debug" && pathname.startsWith(p.debug() + "/")
+                      ? trainingWorkbenchViewFromCanonicalRoute(
+                        "debug",
+                        pathname.slice((p.debug() + "/").length).split("/")[0] ?? null,
+                      )
+                      : item.key === "evaluation" && pathname.startsWith(p.evaluation() + "/")
+                        ? trainingWorkbenchViewFromCanonicalRoute(
+                          "evaluation",
+                          pathname.slice((p.evaluation() + "/").length).split("/")[0] ?? null,
+                        )
+                        : "";
                   return (
                     <SidebarMenuItem key={item.key}>
                       <SidebarNavButton
@@ -669,15 +691,17 @@ export function AppSidebar({ topSlot, searchSlot, headerClassName, headerStyle }
                         isActive={isActive}
                         label={t(($) => $.nav[item.labelKey])}
                       />
-                      {item.key === "training" && isActive && (
+                      {(item.key === "debug" || item.key === "evaluation") && isActive && (
                         <SidebarMenu className="ml-6 mt-1 gap-0.5 border-l border-sidebar-border pl-2">
-                          {TRAINING_WORKBENCH_VIEWS.map((view) => {
-                            const viewHref = trainingWorkbenchPath(p.training(), view.view);
+                          {TRAINING_WORKBENCH_VIEWS_BY_SECTION[item.key].map((view) => {
+                            const viewHref = item.key === "debug"
+                              ? debugWorkbenchPath(p.debug(), view.view)
+                              : evaluationWorkbenchPath(p.evaluation(), view.view);
                             return (
                               <SidebarMenuItem key={view.view}>
                                 <SidebarMenuButton
                                   size="sm"
-                                  isActive={activeTrainingView === view.view}
+                                  isActive={activeWorkbenchView === view.view}
                                   render={<AppLink href={viewHref} />}
                                   className="h-7 text-xs text-muted-foreground hover:not-data-active:bg-sidebar-accent/70 data-active:bg-sidebar-accent data-active:text-sidebar-accent-foreground"
                                 >

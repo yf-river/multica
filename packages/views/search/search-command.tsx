@@ -16,6 +16,7 @@ import {
   ListTodo,
   FolderKanban,
   Bot,
+  Bug,
   ChartNoAxesCombined,
   Monitor,
   Moon,
@@ -43,9 +44,12 @@ import { useWorkspaceId } from "@multica/core";
 import { useWorkspacePaths } from "@multica/core/paths";
 import type { WorkspacePaths } from "@multica/core/paths";
 import {
-  DEFAULT_TRAINING_WORKBENCH_VIEW,
+  DEFAULT_DEBUG_WORKBENCH_VIEW,
+  DEFAULT_EVALUATION_WORKBENCH_VIEW,
   TRAINING_WORKBENCH_VIEWS,
-  trainingWorkbenchPath,
+  debugWorkbenchPath,
+  evaluationWorkbenchPath,
+  trainingWorkbenchCanonicalPath,
   type TrainingWorkbenchViewId,
 } from "@multica/core/training";
 import { useModalStore } from "@multica/core/modals";
@@ -81,7 +85,8 @@ type NavKey =
   | "issues"
   | "projects"
   | "agents"
-  | "training"
+  | "debug"
+  | "evaluation"
   | "runtimes"
   | "skills"
   | "settings";
@@ -172,11 +177,18 @@ export function SearchCommand() {
       { key: "projects", label: t(($) => $.pages.projects), icon: FolderKanban, keywords: ["projects", "kanban", "项目"] },
       { key: "agents", label: t(($) => $.pages.agents), icon: Bot, keywords: ["agents", "bots", "ai"] },
       {
-        key: "training",
-        label: t(($) => $.pages.training),
+        key: "debug",
+        label: t(($) => $.pages.debug),
+        icon: Bug,
+        keywords: ["debug", "prompt", "prompts", "调试", "提示词", "提示词库"],
+        href: debugWorkbenchPath(p.debug(), DEFAULT_DEBUG_WORKBENCH_VIEW),
+      },
+      {
+        key: "evaluation",
+        label: t(($) => $.pages.evaluation),
         icon: ChartNoAxesCombined,
-        keywords: ["training", "evaluation", "eval", "dataset", "experiment", "训练", "评估", "数据集", "实验"],
-        href: trainingWorkbenchPath(p.training(), DEFAULT_TRAINING_WORKBENCH_VIEW),
+        keywords: ["evaluation", "eval", "dataset", "case", "suite", "评估", "用例", "测试"],
+        href: evaluationWorkbenchPath(p.evaluation(), DEFAULT_EVALUATION_WORKBENCH_VIEW),
       },
       { key: "runtimes", label: t(($) => $.pages.runtimes), icon: Monitor, keywords: ["runtimes", "environments"] },
       { key: "skills", label: t(($) => $.pages.skills), icon: BookOpenText, keywords: ["skills", "技能"] },
@@ -250,7 +262,7 @@ export function SearchCommand() {
       icon: ChartNoAxesCombined,
       keywords: keywords.split(" "),
       onSelect: () => {
-        push(trainingWorkbenchPath(p.training(), view));
+        push(trainingWorkbenchCanonicalPath(p, view));
         setOpen(false);
       },
     });

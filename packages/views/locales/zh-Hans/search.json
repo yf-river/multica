@@ -17,6 +17,8 @@
     "projects": "项目",
     "agents": "智能体",
     "runtimes": "运行时",
+    "debug": "调试",
+    "evaluation": "评估",
     "training": "训练与评估",
     "skills": "技能",
     "settings": "设置"
@@ -30,7 +32,7 @@
     "open_debug_runs": "打开调试运行",
     "open_prompt_playground": "打开提示词调试场",
     "open_agent_playground": "打开智能体调试场",
-    "open_datasets": "打开数据集",
+    "open_datasets": "打开用例库",
     "open_test_suites": "打开测试套件",
     "open_experiments": "打开实验",
     "open_optimization_runs": "打开优化运行",

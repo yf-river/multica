@@ -42,6 +42,8 @@ describe("sanitizeTabPath", () => {
   it("passes through valid workspace-scoped paths", () => {
     expect(sanitizeTabPath("/acme/issues")).toBe("/acme/issues");
     expect(sanitizeTabPath("/my-team/projects/abc")).toBe("/my-team/projects/abc");
+    expect(sanitizeTabPath("/acme/debug/prompts")).toBe("/acme/debug/prompts");
+    expect(sanitizeTabPath("/acme/evaluation/runs")).toBe("/acme/evaluation/runs");
     expect(sanitizeTabPath("/acme/training/evaluation-runs")).toBe("/acme/training/evaluation-runs");
   });
 

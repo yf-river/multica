@@ -103,6 +103,8 @@ vi.mock("../i18n", () => ({
           squads: "小队",
           usage: "用量",
           run_reviews: "运行复盘",
+          debug: "调试",
+          evaluation: "评估",
           training: "训练与评估",
           runtimes: "运行时",
           skills: "技能",
@@ -140,6 +142,10 @@ vi.mock("@multica/core/paths", () => ({
 	    squads: () => "/acme/squads",
 	    usage: () => "/acme/usage",
 	    runReviews: () => "/acme/run-reviews",
+	    debug: () => "/acme/debug",
+	    debugView: (view: string) => `/acme/debug/${view}`,
+	    evaluation: () => "/acme/evaluation",
+	    evaluationView: (view: string) => `/acme/evaluation/${view}`,
 	    training: () => "/acme/training",
 	    trainingView: (view: string) => `/acme/training/${view}`,
 	    runtimes: () => "/acme/runtimes",
@@ -242,11 +248,14 @@ describe("AppSidebar workspace nav", () => {
     detail.current = { isPending: false, isError: false, data: null, error: null };
   });
 
-  it("renders the 训练与评估 nav item and links to the canonical training route", () => {
+  it("renders separate debug and evaluation nav items with canonical routes", () => {
     render(<AppSidebar />);
 
-    const item = document.querySelector('[data-href="/acme/training/prompts"]');
-    expect(item).toHaveAttribute("data-href", "/acme/training/prompts");
+    expect(document.querySelector('[data-href="/acme/debug/prompts"]')).toHaveAttribute("data-href", "/acme/debug/prompts");
+    expect(document.querySelector('[data-href="/acme/evaluation/datasets"]')).toHaveAttribute(
+      "data-href",
+      "/acme/evaluation/datasets",
+    );
   });
 
   it("renders 运行复盘 as the canonical workspace run review entry", () => {
@@ -257,25 +266,24 @@ describe("AppSidebar workspace nav", () => {
     expect(screen.queryByText("用量")).not.toBeInTheDocument();
   });
 
-  it("renders training submodule links and highlights the current training view", () => {
-    navigation.current.pathname = "/acme/training/datasets";
+  it("renders debug submodule links and highlights the current debug view", () => {
+    navigation.current.pathname = "/acme/debug/prompts";
     navigation.current.searchParams = new URLSearchParams();
 
     render(<AppSidebar />);
 
-    expect(document.querySelector('[data-href="/acme/training/prompts"]')).toBeInTheDocument();
-    expect(document.querySelector('[data-href="/acme/training/datasets"]')).toHaveAttribute("data-active", "true");
-    expect(document.querySelector('[data-href="/acme/training/evaluation-runs"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-href="/acme/debug/prompts"]')).toHaveAttribute("data-active", "true");
+    expect(document.querySelector('[data-href="/acme/evaluation/datasets"]')).toBeInTheDocument();
   });
 
-  it("does not preserve legacy training data scope across training submodule links", () => {
-    navigation.current.pathname = "/acme/training/evaluation-runs";
+  it("renders evaluation submodule links and highlights the current evaluation view", () => {
+    navigation.current.pathname = "/acme/evaluation/runs";
     navigation.current.searchParams = new URLSearchParams("training_data=acceptance");
 
     render(<AppSidebar />);
 
-    expect(document.querySelector('[data-href="/acme/training/prompts"]')).toBeInTheDocument();
-    expect(document.querySelector('[data-href="/acme/training/datasets"]')).toBeInTheDocument();
-    expect(document.querySelector('[data-href="/acme/training/evaluation-runs"]')).toHaveAttribute("data-active", "true");
+    expect(document.querySelector('[data-href="/acme/evaluation/datasets"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-href="/acme/evaluation/test-suites"]')).toBeInTheDocument();
+    expect(document.querySelector('[data-href="/acme/evaluation/runs"]')).toHaveAttribute("data-active", "true");
   });
 });

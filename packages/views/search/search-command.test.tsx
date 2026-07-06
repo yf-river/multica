@@ -149,6 +149,10 @@ vi.mock("@multica/core/paths", () => ({
     issues: () => "/ws-test/issues",
 	    projects: () => "/ws-test/projects",
 	    agents: () => "/ws-test/agents",
+	    debug: () => "/ws-test/debug",
+	    debugView: (view: string) => `/ws-test/debug/${view}`,
+	    evaluation: () => "/ws-test/evaluation",
+	    evaluationView: (view: string) => `/ws-test/evaluation/${view}`,
 	    training: () => "/ws-test/training",
 	    trainingView: (view: string) => `/ws-test/training/${view}`,
 	    runtimes: () => "/ws-test/runtimes",
@@ -343,17 +347,31 @@ describe("SearchCommand", () => {
     expect(useSearchStore.getState().open).toBe(false);
   });
 
-  it("训练与评估页面入口默认跳转到提示词库", async () => {
+  it("调试页面入口默认跳转到提示词库", async () => {
     const user = userEvent.setup();
     renderSearch();
 
     const input = screen.getByPlaceholderText("输入命令或关键词搜索...");
-    await user.type(input, "训练与评估");
+    await user.type(input, "调试");
 
-    const trainingItem = await screen.findByText("训练与评估");
-    await user.click(trainingItem);
+    const debugItem = await screen.findByText("调试");
+    await user.click(debugItem);
 
-    expect(mockPush).toHaveBeenCalledWith("/ws-test/training/prompts");
+    expect(mockPush).toHaveBeenCalledWith("/ws-test/debug/prompts");
+    expect(useSearchStore.getState().open).toBe(false);
+  });
+
+  it("评估页面入口默认跳转到用例库", async () => {
+    const user = userEvent.setup();
+    renderSearch();
+
+    const input = screen.getByPlaceholderText("输入命令或关键词搜索...");
+    await user.type(input, "评估");
+
+    const evaluationItem = await screen.findByText("评估");
+    await user.click(evaluationItem);
+
+    expect(mockPush).toHaveBeenCalledWith("/ws-test/evaluation/datasets");
     expect(useSearchStore.getState().open).toBe(false);
   });
 
@@ -451,15 +469,15 @@ describe("SearchCommand", () => {
     expect(useSearchStore.getState().open).toBe(false);
   });
 
-  it("训练与评估子模块命令会跳转到对应视图", async () => {
+  it("调试和评估子模块命令会跳转到对应视图", async () => {
     const user = userEvent.setup();
     renderSearch();
 
     const commands = [
-      ["提示词库", "打开提示词库", "/ws-test/training/prompts"],
-      ["数据集", "打开数据集", "/ws-test/training/datasets"],
-      ["测试套件", "打开测试套件", "/ws-test/training/test-suites"],
-      ["评测记录", "打开评测记录", "/ws-test/training/evaluation-runs"],
+      ["提示词库", "打开提示词库", "/ws-test/debug/prompts"],
+      ["用例库", "打开用例库", "/ws-test/evaluation/datasets"],
+      ["测试套件", "打开测试套件", "/ws-test/evaluation/test-suites"],
+      ["评测记录", "打开评测记录", "/ws-test/evaluation/runs"],
     ] as const;
 
     for (const [query, label, href] of commands) {
