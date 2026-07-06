@@ -618,6 +618,9 @@ func TestStageChainPMCoordinatorGetsCommentTriggerRule(t *testing.T) {
 		"Stage-chain PM rule from your squad instructions",
 		"only review the latest stage output or human reply",
 		"Do not implement, inspect repositories, create MRs, run tests, or simulate 01-05 inside this PM task",
+		"Stage-chain PM wait/block rule",
+		"Do not record only `no_action`",
+		"silence leaves the issue stuck with no user-readable state",
 		"Stage-chain clarification closure rule",
 		"treat non-high-risk open questions as closed with documented assumptions and dispatch `02-方案设计`",
 		"Do not record `no_action` in that case",
@@ -628,6 +631,7 @@ func TestStageChainPMCoordinatorGetsCommentTriggerRule(t *testing.T) {
 		"compact single-line shell-safe body",
 		"Do not include literal newlines in the shell command",
 		"multica issue comment add 77777777-8888-9999-aaaa-bbbbbbbbbbbb --parent 11111111-1111-1111-1111-111111111111 --content \"...\"",
+		"Stage waits, blockers, returns, user-confirmation requests, child-issue waits, and dispatches are not no_action",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("stage-chain PM comment-trigger brief missing %q\n--- output ---\n%s", want, out)

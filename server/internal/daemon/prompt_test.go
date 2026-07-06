@@ -495,6 +495,9 @@ func TestBuildPromptSquadLeaderNoActionForMemberTrigger(t *testing.T) {
 	if !strings.Contains(out, "不要发布任何评论") {
 		t.Errorf("buildCommentPrompt must contain DO NOT post prohibition for member-triggered squad leader, got:\n%s", out)
 	}
+	if !strings.Contains(out, "需要用户补充") || !strings.Contains(out, "不是 no_action") {
+		t.Errorf("buildCommentPrompt must distinguish wait/block states from true no_action, got:\n%s", out)
+	}
 }
 
 func TestBuildPromptCoordinatorCommentUsesInlineContent(t *testing.T) {

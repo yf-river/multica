@@ -371,6 +371,8 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 		"没有 mention 的确认/总结评论不得宣称已调度",
 		"## 多轮澄清闭环规则",
 		"PM 不得自行接受推荐默认值",
+		"PM 必须发布用户可见评论总结问题并等待用户补充",
+		"不得静默 no_action",
 		"不得要求 01 重新探查仓库",
 		"## PM 阶段门禁摘要",
 		"## PM 平台任务完整性规则",
