@@ -2045,6 +2045,10 @@ type squadSOPProfile struct {
 }
 
 func (s *TaskService) syncSquadSOPTaskStep(ctx context.Context, task db.AgentTaskQueue, eventType, eventStatus string) {
+	s.syncSquadSOPTaskStepWithResult(ctx, task, eventType, eventStatus, nil)
+}
+
+func (s *TaskService) syncSquadSOPTaskStepWithResult(ctx context.Context, task db.AgentTaskQueue, eventType, eventStatus string, result []byte) {
 	if !task.IssueID.Valid {
 		return
 	}
@@ -2131,6 +2135,10 @@ func (s *TaskService) syncSquadSOPTaskStep(ctx context.Context, task db.AgentTas
 	if !shouldUpdate {
 		return
 	}
+	finalStepBlocked := eventType == "步骤完成" && nextStatus == "已完成" && squadSOPFinalOutputBlocked(result)
+	if finalStepBlocked {
+		nextStatus = "已阻塞"
+	}
 	updatedRun, err := s.Queries.UpdateSquadSOPRunStatus(ctx, db.UpdateSquadSOPRunStatusParams{
 		ID:             run.ID,
 		WorkspaceID:    run.WorkspaceID,
@@ -2149,6 +2157,9 @@ func (s *TaskService) syncSquadSOPTaskStep(ctx context.Context, task db.AgentTas
 	}
 	if eventType == "步骤完成" && updatedRun.Status == "已完成" {
 		s.closeIssueAfterCompletedSOPRun(ctx, issue)
+	}
+	if eventType == "步骤完成" && updatedRun.Status == "已阻塞" {
+		s.blockIssueAfterBlockedSOPRun(ctx, issue)
 	}
 }
 
@@ -2199,6 +2210,21 @@ func (s *TaskService) closeIssueAfterCompletedSOPRun(ctx context.Context, issue 
 		return
 	}
 	slog.Info("issue auto-closed after completed SOP run", "issue_id", util.UUIDToString(issue.ID))
+}
+
+func (s *TaskService) blockIssueAfterBlockedSOPRun(ctx context.Context, issue db.Issue) {
+	switch issue.Status {
+	case "done", "cancelled", "blocked":
+		return
+	}
+	if _, err := s.updateIssueStatusAfterCompletedSOPRun(ctx, issue, "blocked"); err != nil {
+		slog.Warn("block issue after blocked SOP run failed",
+			"issue_id", util.UUIDToString(issue.ID),
+			"error", err,
+		)
+		return
+	}
+	slog.Info("issue blocked after blocked SOP run", "issue_id", util.UUIDToString(issue.ID))
 }
 
 func (s *TaskService) updateIssueStatusAfterCompletedSOPRun(ctx context.Context, issue db.Issue, status string) (db.Issue, error) {
@@ -2478,6 +2504,33 @@ func nextSquadSOPStateForTaskEvent(issue db.Issue, steps []squadSOPProfileStep, 
 	return "", "", false
 }
 
+var squadSOPBlockedOutputPatterns = []*regexp.Regexp{
+	regexp.MustCompile(`(?im)(?:最终判定|总体结论|验证结论|V[123][^\n|]*)[^\n|]*(?:BLOCKED|FAILED|FAIL|未通过|阻塞)`),
+	regexp.MustCompile(`(?im)(?:结论|结果|判定)\s*[：:]\s*(?:❌\s*)?(?:BLOCKED|FAILED|FAIL|未通过|阻塞)`),
+	regexp.MustCompile(`(?im)(?:\|\s*V[123][^|\n]*\|\s*[^|\n]*\|\s*)?(?:❌\s*)?(?:BLOCKED|FAILED|FAIL|未通过)\s*\|`),
+}
+
+func squadSOPFinalOutputBlocked(result []byte) bool {
+	body := taskResultOutputText(result)
+	if body == "" {
+		return false
+	}
+	for _, pattern := range squadSOPBlockedOutputPatterns {
+		if pattern.MatchString(body) {
+			return true
+		}
+	}
+	return false
+}
+
+func taskResultOutputText(result []byte) string {
+	var payload protocol.TaskCompletedPayload
+	if err := json.Unmarshal(result, &payload); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(util.UnescapeBackslashEscapes(payload.Output))
+}
+
 // MarkTaskWaitingLocalDirectory parks a dispatched task in the
 // waiting_local_directory state while the daemon waits for another in-flight
 // task to release the project_resource path lock. reason carries a short
@@ -2593,7 +2646,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 		return &task, nil
 	}
 	s.linkGongfengMRsFromTaskComments(ctx, task)
-	s.syncSquadSOPTaskStep(ctx, task, "步骤完成", "已完成")
+	s.syncSquadSOPTaskStepWithResult(ctx, task, "步骤完成", "已完成", result)
 	s.enqueueSquadLeaderAfterWorkerStageCompletion(ctx, task)
 	s.autoReviewIssueForTask(ctx, task)
 

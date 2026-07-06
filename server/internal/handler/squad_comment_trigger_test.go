@@ -586,6 +586,110 @@ func TestCompleteTask_FinalSOPStepAutoClosesIssueWithoutPullRequest(t *testing.T
 	}
 }
 
+func TestCompleteTask_FinalSOPStepBlockedOutputDoesNotAutoCloseIssue(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	leaderID := createHandlerTestAgent(t, "SOP Final Blocked Leader", nil)
+	verifyID := createHandlerTestAgent(t, "SOP Final Blocked 05-verify", nil)
+
+	var leaderRuntimeID, verifyRuntimeID string
+	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, leaderID).Scan(&leaderRuntimeID); err != nil {
+		t.Fatalf("load leader runtime: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT runtime_id FROM agent WHERE id = $1`, verifyID).Scan(&verifyRuntimeID); err != nil {
+		t.Fatalf("load verify runtime: %v", err)
+	}
+
+	profile := `{
+		"profile_key":"test-final-sop-blocked",
+		"steps":[
+			{"key":"pm","name":"pm","role_key":"pm"},
+			{"key":"05-verify","name":"05-测试","role_key":"05-verify"}
+		]
+	}`
+	var squadID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO squad (workspace_id, name, description, leader_id, creator_id, sop_profile)
+		VALUES ($1, $2, '', $3, $4, $5)
+		RETURNING id
+	`, testWorkspaceID, "SOP Final Blocked Squad", leaderID, testUserID, profile).Scan(&squadID); err != nil {
+		t.Fatalf("create squad: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID)
+	})
+
+	var issueID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, status, assignee_type, assignee_id)
+		VALUES ($1, 'member', $2, $3, 'in_progress', 'squad', $4)
+		RETURNING id
+	`, testWorkspaceID, testUserID, "sop final blocked output", squadID).Scan(&issueID); err != nil {
+		t.Fatalf("create issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
+	})
+
+	var runID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO squad_sop_run (workspace_id, issue_id, squad_id, profile_key, profile, status, current_step_key)
+		VALUES ($1, $2, $3, 'test-final-sop-blocked', $4, '进行中', '05-verify')
+		RETURNING id
+	`, testWorkspaceID, issueID, squadID, profile).Scan(&runID); err != nil {
+		t.Fatalf("create sop run: %v", err)
+	}
+
+	var taskID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, issue_id, status, priority, dispatched_at, started_at)
+		VALUES ($1, $2, $3, 'running', 2, now(), now())
+		RETURNING id
+	`, verifyID, verifyRuntimeID, issueID).Scan(&taskID); err != nil {
+		t.Fatalf("insert verify task: %v", err)
+	}
+	result, err := json.Marshal(map[string]string{
+		"output": "# 05-验证测试\n\n**最终判定：V0/V1 通过，V2 BLOCKED（环境缺失）**",
+	})
+	if err != nil {
+		t.Fatalf("marshal result: %v", err)
+	}
+	if _, err := testHandler.TaskService.CompleteTask(ctx, util.MustParseUUID(taskID), result, "", ""); err != nil {
+		t.Fatalf("complete verify task: %v", err)
+	}
+
+	issue, err := testHandler.Queries.GetIssue(ctx, util.MustParseUUID(issueID))
+	if err != nil {
+		t.Fatalf("load issue: %v", err)
+	}
+	if issue.Status != "blocked" {
+		t.Fatalf("issue status = %q, want blocked", issue.Status)
+	}
+	run, err := testHandler.Queries.GetSquadSOPRunInWorkspace(ctx, db.GetSquadSOPRunInWorkspaceParams{
+		ID:          util.MustParseUUID(runID),
+		WorkspaceID: util.MustParseUUID(testWorkspaceID),
+	})
+	if err != nil {
+		t.Fatalf("load sop run: %v", err)
+	}
+	if run.Status != "已阻塞" {
+		t.Fatalf("sop run status = %q, want 已阻塞", run.Status)
+	}
+	var queuedLeaderCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM agent_task_queue
+		WHERE issue_id = $1 AND agent_id = $2 AND runtime_id = $3 AND status = 'queued' AND is_leader_task = TRUE
+	`, issueID, leaderID, leaderRuntimeID).Scan(&queuedLeaderCount); err != nil {
+		t.Fatalf("count queued leader tasks: %v", err)
+	}
+	if queuedLeaderCount != 1 {
+		t.Fatalf("queued leader tasks = %d, want 1", queuedLeaderCount)
+	}
+}
+
 func TestCompleteTask_FinalSOPStepBlocksGongfengIssueWithoutPullRequestAndComments(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
