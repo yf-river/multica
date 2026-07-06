@@ -523,6 +523,80 @@ func TestFailTaskDoesNotCloseSquadSOPRunWhenIssueHasActiveContinuation(t *testin
 	}
 }
 
+func TestFailTaskBlocksSquadSOPIssueWithStructuredComment(t *testing.T) {
+	ctx := context.Background()
+
+	fixture := createStartedSquadSOPRunFixture(t, ctx, startedSquadSOPRunOptions{
+		agentDescription: "sop structured failure fixture",
+		profileKey:       "sop-structured-failure-test",
+		squadName:        "SOP Structured Failure Squad",
+		issueTitle:       "SOP run blocks on stage failure",
+		issueStatus:      "in_progress",
+		daemonName:       "sop-structured-failure-daemon",
+	})
+	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET attempt = max_attempts WHERE id = $1`, fixture.taskID); err != nil {
+		t.Fatalf("mark task retry budget exhausted: %v", err)
+	}
+
+	rawProviderTrace := "I'll start by understanding the issue context. Tool TaskCreate not found in agent cli. " + strings.Repeat("模型输出碎片", 60)
+	failW := httptest.NewRecorder()
+	failReq := newDaemonTokenRequest("POST", "/api/daemon/tasks/"+fixture.taskID+"/fail", map[string]any{
+		"error":          rawProviderTrace,
+		"failure_reason": "agent_error.model_not_found_or_unavailable",
+	}, testWorkspaceID, fixture.daemonName)
+	failReq = withURLParam(failReq, "taskId", fixture.taskID)
+	testHandler.FailTask(failW, failReq)
+	if failW.Code != http.StatusOK {
+		t.Fatalf("FailTask: expected 200, got %d: %s", failW.Code, failW.Body.String())
+	}
+
+	var issueStatus string
+	if err := testPool.QueryRow(ctx, `SELECT status FROM issue WHERE id = $1`, fixture.issueID).Scan(&issueStatus); err != nil {
+		t.Fatalf("load issue status: %v", err)
+	}
+	if issueStatus != "blocked" {
+		t.Fatalf("issue status = %q, want blocked", issueStatus)
+	}
+
+	var runStatus, currentStep string
+	if err := testPool.QueryRow(ctx, `
+		SELECT status, current_step_key
+		FROM squad_sop_run
+		WHERE id = $1
+	`, fixture.runID).Scan(&runStatus, &currentStep); err != nil {
+		t.Fatalf("load SOP run: %v", err)
+	}
+	if runStatus != "已失败" || currentStep != "pm" {
+		t.Fatalf("SOP run = status %s step %s, want 已失败/pm", runStatus, currentStep)
+	}
+
+	var content string
+	if err := testPool.QueryRow(ctx, `
+		SELECT content
+		FROM comment
+		WHERE issue_id = $1 AND author_id = $2
+		ORDER BY created_at DESC
+		LIMIT 1
+	`, fixture.issueID, fixture.agentID).Scan(&content); err != nil {
+		t.Fatalf("load failure comment: %v", err)
+	}
+	for _, want := range []string{
+		"## 阶段执行失败",
+		"- 阶段：pm",
+		"- Agent：pm",
+		"- 失败类型：agent_error.model_not_found_or_unavailable",
+		"当前 issue 已阻塞",
+		"原始错误较长，已保留在任务运行记录中。",
+	} {
+		if !strings.Contains(content, want) {
+			t.Fatalf("failure comment missing %q:\n%s", want, content)
+		}
+	}
+	if strings.Contains(content, "Tool TaskCreate not found") || strings.Contains(content, "模型输出碎片") {
+		t.Fatalf("failure comment should not expose raw provider trace:\n%s", content)
+	}
+}
+
 func TestWorkspaceObservabilitySummaryFiltersSOPByProject(t *testing.T) {
 	ctx := context.Background()
 

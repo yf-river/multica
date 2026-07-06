@@ -2161,6 +2161,62 @@ func (s *TaskService) syncSquadSOPTaskStepWithResult(ctx context.Context, task d
 	if eventType == "步骤完成" && updatedRun.Status == "已阻塞" {
 		s.blockIssueAfterBlockedSOPRun(ctx, issue)
 	}
+	if eventType == "步骤失败" && updatedRun.Status == "已失败" {
+		s.blockIssueAfterBlockedSOPRun(ctx, issue)
+	}
+}
+
+func (s *TaskService) squadSOPFailureComment(ctx context.Context, task db.AgentTaskQueue, errMsg, failureReason string) (string, bool) {
+	if !task.IssueID.Valid {
+		return "", false
+	}
+	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
+	if err != nil || !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" {
+		return "", false
+	}
+	run, err := s.Queries.GetOpenSquadSOPRunByIssue(ctx, task.IssueID)
+	if err != nil {
+		return "", false
+	}
+	agent, err := s.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+		ID:          task.AgentID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		return "", false
+	}
+	steps := parseSquadSOPProfileSteps(run.Profile)
+	step, _, ok := matchSquadSOPStepForAgent(steps, agent.Name)
+	if !ok {
+		return "", false
+	}
+	reason := strings.TrimSpace(failureReason)
+	if reason == "" {
+		reason = taskfailure.Classify(errMsg).String()
+	}
+	var b strings.Builder
+	b.WriteString("## 阶段执行失败\n\n")
+	fmt.Fprintf(&b, "- 阶段：%s\n", step.Name)
+	fmt.Fprintf(&b, "- Agent：%s\n", agent.Name)
+	fmt.Fprintf(&b, "- Task：%s\n", util.UUIDToString(task.ID))
+	fmt.Fprintf(&b, "- 失败类型：%s\n", reason)
+	b.WriteString("- 处理结果：SOP 运行已标记为失败，当前 issue 已阻塞，等待 PM 或人工确认后重试。\n")
+	if summary := taskFailureSummary(errMsg); summary != "" {
+		fmt.Fprintf(&b, "- 错误摘要：%s\n", summary)
+	}
+	return b.String(), true
+}
+
+func taskFailureSummary(errMsg string) string {
+	errMsg = strings.TrimSpace(redact.Text(errMsg))
+	if errMsg == "" {
+		return ""
+	}
+	errMsg = strings.Join(strings.Fields(errMsg), " ")
+	if len([]rune(errMsg)) > 240 {
+		return "原始错误较长，已保留在任务运行记录中。"
+	}
+	return errMsg
 }
 
 func (s *TaskService) closeIssueAfterCompletedSOPRun(ctx context.Context, issue db.Issue) {
@@ -3380,7 +3436,11 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	// want to spam the issue with "task timed out" messages on every
 	// daemon hiccup.
 	if errMsg != "" && task.IssueID.Valid && retried == nil {
-		s.createAgentComment(ctx, task.IssueID, task.AgentID, redact.Text(errMsg), "system", task.TriggerCommentID, task.ID)
+		body := redact.Text(errMsg)
+		if failureComment, ok := s.squadSOPFailureComment(ctx, task, errMsg, failureReason); ok {
+			body = failureComment
+		}
+		s.createAgentComment(ctx, task.IssueID, task.AgentID, body, "system", task.TriggerCommentID, task.ID)
 	}
 
 	// Mirror the issue fallback for chat tasks: write an assistant
@@ -3454,10 +3514,12 @@ func (s *TaskService) shouldSyncSquadSOPTaskFailure(ctx context.Context, task db
 
 // retryableReasons enumerates failure reasons that the auto-retry path is
 // allowed to act on. Deterministic agent-side errors (compile failures,
-// unsupported models, auth, quota, malformed prompts, etc.) are intentionally
-// excluded. Transient provider failures are retryable because they have the
-// same user-facing shape as runtime/network flakiness and are bounded by the
-// task's max_attempts budget.
+// auth, quota, malformed prompts, etc.) are intentionally excluded. Transient
+// provider failures are retryable because they have the same user-facing shape
+// as runtime/network flakiness and are bounded by the task's max_attempts
+// budget. model_not_found_or_unavailable gets one bounded retry because
+// CodeBuddy can report it for transient model unavailability even when the
+// configured model is valid.
 var retryableReasons = map[string]bool{
 	taskfailure.ReasonRuntimeOffline.String():                   true,
 	taskfailure.ReasonRuntimeRecovery.String():                  true,
@@ -3466,6 +3528,7 @@ var retryableReasons = map[string]bool{
 	taskfailure.ReasonAgentProviderCapacityOrRateLimit.String(): true,
 	taskfailure.ReasonAgentProviderServerError.String():         true,
 	taskfailure.ReasonAgentProviderNetwork.String():             true,
+	taskfailure.ReasonAgentModelNotFoundOrUnavailable.String():  true,
 }
 
 const providerNetworkExtraRetryBudget int32 = 3
