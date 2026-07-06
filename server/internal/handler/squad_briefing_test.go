@@ -389,6 +389,8 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 		"更新为可执行的 squad/Agent assignee 和 `todo`",
 		"PM 不得在 03-task-split 通过前创建 child issue",
 		"03-task-split 通过后，PM 才能按 03 的 required cross-project dependencies",
+		"PM 的下一步只能创建/复用并回读 child issue",
+		"dependency_order 只描述 child 与父实现、联调或验证的技术顺序",
 		"待确认的目标项目交付",
 		"PM 不得在同一条评论或同一个 PM task 中一边创建/确认 required child issue",
 		"必须回读 children，并在评论中列出 child identifier、target project、status 和 assignee",
@@ -522,6 +524,9 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 				"“待确认”的跨项目交付不是非阻塞状态",
 				"不得写成“权限配置”",
 				"不得把该确认解释为 not required 或不创建 child",
+				"PM 下一步先创建/复用对应 child issue 并等待",
+				"不得写“04-开发就绪”",
+				"不能把 required child issue 创建本身推迟到父 issue 04 之后",
 			} {
 				if !strings.Contains(role.Instruction+role.Description, want) {
 					t.Fatalf("03-task-split role must contain %q\n--- role ---\n%+v", want, role)
@@ -738,7 +743,7 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 			}
 		}
 		if name == projectSOPAgent03 {
-			for _, want := range []string{"required cross-project dependencies", "not required projects", "V1/V2/V3 test matrix", "sandbox_plan", "测试层级计划必须在任务分发前完成", "03 只负责识别跨项目依赖", "required 依赖不得标为非阻塞", "03 不得降级成“待确认”“大概率不需要”或 not required", "“待确认”的跨项目交付不是非阻塞状态", "不得写成“权限配置”", "不得把该确认解释为 not required 或不创建 child"} {
+			for _, want := range []string{"required cross-project dependencies", "not required projects", "V1/V2/V3 test matrix", "sandbox_plan", "测试层级计划必须在任务分发前完成", "03 只负责识别跨项目依赖", "required 依赖不得标为非阻塞", "03 不得降级成“待确认”“大概率不需要”或 not required", "“待确认”的跨项目交付不是非阻塞状态", "不得写成“权限配置”", "不得把该确认解释为 not required 或不创建 child", "PM 下一步先创建/复用对应 child issue 并等待", "不得写“04-开发就绪”"} {
 				if !strings.Contains(instructions, want) {
 					t.Fatalf("03-task-split instructions must contain %q:\n%s", want, instructions)
 				}
