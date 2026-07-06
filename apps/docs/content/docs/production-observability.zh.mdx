@@ -1,6 +1,6 @@
 ---
 title: 生产演示与观测验收
-description: 用训练与评估、真实智能体、SOP trace 和健康检查证明 Multica 已经能给团队内部生产使用。
+description: 用调试与评估、真实智能体、SOP trace 和健康检查证明 Multica 已经能给团队内部生产使用。
 ---
 
 import { Callout } from "fumadocs-ui/components/callout";
@@ -12,10 +12,10 @@ import { Callout } from "fumadocs-ui/components/callout";
 进入工作区后打开：
 
 ```text
-/{workspaceSlug}/training/evaluation-runs
+/{workspaceSlug}/evaluation/runs
 ```
 
-页面名称是 **训练与评估 → 评测记录**。它把训练评估运行证据集中到一处：
+页面名称是 **评估 → 评测记录**。它把训练评估运行证据集中到一处：
 
 | 区域 | 证明什么 |
 |---|---|
@@ -28,14 +28,14 @@ import { Callout } from "fumadocs-ui/components/callout";
 
 ## Opik 语义映射
 
-Multica 的训练与评估模块以 `/data/ida/opik-local-demo` 的 Opik 语义为对照，但落点必须服务团队内部任务、SOP、小队和真实 Codex runtime：
+Multica 的调试与评估模块以 `/data/ida/opik-local-demo` 的 Opik 语义为对照，但落点必须服务团队内部任务、SOP、小队和真实 Codex runtime：
 
 | Opik 功能 | Multica 对应 | 验收证据 |
 |---|---|---|
-| 提示词库 | 训练与评估 → 提示词库 | `prompt_library_item`、版本历史、`/training/prompts` |
-| 数据集 | 训练与评估 → 数据集 | `prompt_evaluation_asset`、数据集行、结构化用例 |
-| 测试套件 | 训练与评估 → 测试套件 | 测试套件用例、断言、trial |
-| 优化运行 | 训练与评估 → 优化运行 | 优化运行资产、失败用例、优化候选、人工发布版本 |
+| 提示词库 | 调试 → 提示词库 | `prompt_library_item`、版本历史、`/debug/prompts` |
+| 用例库 | 评估 → 用例库 | `prompt_evaluation_asset`、数据集行、结构化用例 |
+| 测试套件 | 评估 → 测试套件 | 测试套件用例、断言、trial |
+| 优化运行 | 评估 → 评测记录 | 优化运行资产、失败用例、优化候选、人工发布版本 |
 | Traces / Spans | 运行历史证据面板 | `task_trace_event`、任务消息、用量、服务端证据快照 |
 
 ## 最小验收标准
