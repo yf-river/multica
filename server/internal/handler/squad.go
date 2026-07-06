@@ -107,6 +107,7 @@ const sopPMRoutingRule = `## PM 调度规则
 - 如果阶段结论包含“待确认”“阻塞”“进入下一阶段条件”“需要客户/用户确认”等未满足条件，PM 必须发布用户可见评论总结问题并等待用户补充；这属于 workflow action，不得只记录静默 no_action。
 - 用户补充回复后，PM 必须先判断澄清是否闭环，再决定进入下一阶段或重新调度 01-需求澄清。
 - 如果最新客户/用户评论明确要求“只做澄清”“等待确认”“不要创建 child issue/子任务”，PM 只能停在该边界内。
+- “不需要新增权限配置”“不需要新增权限点”“只需在目标项目添加 API/路由/配置”等评论只是在缩小目标项目交付范围，不能解释为“不要创建跨项目 child issue”；只要仍有目标项目交付，PM 必须按 required child issue 门禁处理。
 - 默认按 PM -> 01 -> 02 -> 03 -> 04 -> 05 推进。
 - PM 第一轮永远不是执行轮；无论任务看起来多简单，都只能调度 01-需求澄清并退出。
 - “简单任务”不是跳过 SOP 的理由。只有任务创建者或 workspace owner/admin 在 issue 评论中明确批准跳过某个具体阶段时，PM 才能按批准范围调度后续阶段。
@@ -185,6 +186,7 @@ const sopPMCrossProjectSummaryRule = `## PM 跨项目 child issue 摘要
 - handoff-gateway.md、handoff-ida-deployment.md 或其它 handoff 只作为 child issue 输入材料，不能代表目标项目已完成。
 - 对 required 依赖或待确认的目标项目交付，child issue 待创建、未完成、handoff 待分发或目标项目 MR 未关联，都是父 issue 继续 04/05 或最终收口的阻塞项。
 - 只要 02/03/用户评论/handoff 写明目标项目需要 API 暴露、配置、部署、权限、网关、联调或其它交付，且未以证据明确列入 not required，PM 必须先按阻塞项处理，不能把“待确认”当成可并行继续父 04/05。
+- 用户否定的是“新增权限配置/权限点”时，PM 只能把 child issue 范围收窄为“添加 API/路由/配置”，不得删掉 ida-deployment/gateway 等 required child issue，也不得据此调度父 issue 04。
 - PM 不得在同一条评论或同一个 PM task 中一边创建/确认 required child issue，一边 @mention 父 issue 的 04-开发或 05-验证测试；child issue 创建/确认本身就是本轮动作。
 - PM 创建或复用 required child issue 后，必须回读 children，并在评论中列出 child identifier、target project、status 和 assignee；如果回读为空、project/parent/assignee 不正确或任一 required child status 不是 done，本轮只能评论等待/阻断，不得 @mention 父 issue 的 04-开发或 05-验证测试。只有 child done 通知或用户评论触发后，PM 回读 children 确认全部 done，才能继续父 issue 04。
 - 父 issue 最终收口前必须回读 child issue 列表；任何 child issue 未完成时，父 issue 必须等待，不能设置为 done。`
@@ -227,6 +229,7 @@ const sopTaskSplitCrossProjectRule = `## 03-task-split 跨项目依赖契约
 - ` + "`" + `handoff-gateway.md` + "`" + `、` + "`" + `handoff-ida-deployment.md` + "`" + ` 只能作为目标项目 child issue 的输入材料，不能代表目标项目已完成。
 - required 依赖不得标为非阻塞；如果目标项目还没有 child issue 或 MR，03 必须写成待 PM 创建/等待的阻塞前置条件。
 - 如果用户确认、02-design 或代码/资源事实已经明确某目标项目需要交付，例如 ida-deployment 需要新增 API 暴露、配置、部署或环境编排，03 不得降级成“待确认”“大概率不需要”或 not required；除非给出明确证据证明目标项目无需改动。
+- 如果用户确认“不需要新增权限配置/权限点，只需在 ida-deployment 添加对应 API”，03 必须把 ida-deployment 写成 required 的“API/路由/配置交付”，不得写成“权限配置”，也不得把该确认解释为 not required 或不创建 child。
 - “待确认”的跨项目交付不是非阻塞状态；必须写成阻塞前置条件，交给 PM 创建/复用 child issue 或等待用户确认。
 - 明确不需要的项目必须写入 ` + "`" + `not required projects` + "`" + ` 和理由，例如 ida-deployment 只有发现权限点、部署配置或环境编排必须变更时才创建。`
 
