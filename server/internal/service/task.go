@@ -51,6 +51,8 @@ type TaskService struct {
 
 var ErrTaskStartConflict = errors.New("task is no longer startable")
 
+var errIssueDoneBlockedByChildren = errors.New("issue has child issues that are not done")
+
 type TaskStartConflictError struct {
 	Status string
 }
@@ -1112,7 +1114,7 @@ func (s *TaskService) EnqueueTaskForMention(ctx context.Context, issue db.Issue,
 // as a worker (do not skip). This matters for agents that are simultaneously
 // the leader and a worker of the same squad — see migration 090.
 func (s *TaskService) EnqueueTaskForSquadLeader(ctx context.Context, issue db.Issue, leaderID pgtype.UUID, triggerCommentID pgtype.UUID) (db.AgentTaskQueue, error) {
-	return s.enqueueMentionTask(ctx, issue, leaderID, triggerCommentID, true, false)
+	return s.enqueueMentionTask(ctx, issue, leaderID, triggerCommentID, true, true)
 }
 
 // EnqueueProjectOwnerApprovalTask asks a project lead agent to review a
@@ -1362,6 +1364,16 @@ type QuickCreateContext struct {
 // QuickCreateContextType marks a task as a quick-create job.
 const QuickCreateContextType = "quick_create"
 
+const IssueSourceSummaryContextType = "issue_source_summary"
+
+type IssueSourceSummaryContext struct {
+	Type         string `json:"type"`
+	Provider     string `json:"provider,omitempty"`
+	SourceURL    string `json:"source_url,omitempty"`
+	ResourceType string `json:"resource_type,omitempty"`
+	ResourceID   string `json:"resource_id,omitempty"`
+}
+
 type EnqueueQuickCreateTaskParams struct {
 	WorkspaceID   pgtype.UUID
 	RequesterID   pgtype.UUID
@@ -1478,6 +1490,53 @@ func (s *TaskService) EnqueueQuickCreateTask(ctx context.Context, p EnqueueQuick
 	// cycle. Without this the user perceives "quick create never
 	// triggered" because the modal closes immediately and the task
 	// sits in 'queued' until the next sleepWithContextOrWakeup tick.
+	s.NotifyTaskEnqueued(ctx, task)
+	return task, nil
+}
+
+func (s *TaskService) EnqueueIssueSourceSummaryTask(ctx context.Context, issue db.Issue, agentID pgtype.UUID) (db.AgentTaskQueue, error) {
+	if !agentID.Valid {
+		return db.AgentTaskQueue{}, fmt.Errorf("source summary agent is required")
+	}
+	agent, err := s.Queries.GetAgent(ctx, agentID)
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("load source summary agent: %w", err)
+	}
+	if agent.ArchivedAt.Valid {
+		return db.AgentTaskQueue{}, fmt.Errorf("source summary agent is archived")
+	}
+	if !agent.RuntimeID.Valid {
+		return db.AgentTaskQueue{}, fmt.Errorf("source summary agent has no runtime")
+	}
+	ctxPayload := IssueSourceSummaryContext{
+		Type:         IssueSourceSummaryContextType,
+		Provider:     issueMetadataString(issue.Metadata, "source_provider"),
+		SourceURL:    issueMetadataString(issue.Metadata, "source_url"),
+		ResourceType: issueMetadataString(issue.Metadata, "tapd_resource_type"),
+		ResourceID:   issueMetadataString(issue.Metadata, "tapd_resource_id"),
+	}
+	contextJSON, err := json.Marshal(ctxPayload)
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("marshal source summary context: %w", err)
+	}
+	task, err := s.Queries.CreateAgentTask(ctx, db.CreateAgentTaskParams{
+		AgentID:           agent.ID,
+		RuntimeID:         agent.RuntimeID,
+		IssueID:           issue.ID,
+		Priority:          priorityToInt("high"),
+		TriggerSummary:    pgtype.Text{String: "为 TAPD 来源生成需求摘要", Valid: true},
+		ForceFreshSession: pgtype.Bool{Bool: true, Valid: true},
+		Context:           contextJSON,
+	})
+	if err != nil {
+		return db.AgentTaskQueue{}, fmt.Errorf("create source summary task: %w", err)
+	}
+	slog.Info("issue source summary task enqueued",
+		"task_id", util.UUIDToString(task.ID),
+		"issue_id", util.UUIDToString(issue.ID),
+		"agent_id", util.UUIDToString(agent.ID),
+	)
+	s.broadcastTaskEvent(ctx, protocol.EventTaskQueued, task)
 	s.NotifyTaskEnqueued(ctx, task)
 	return task, nil
 }
@@ -1947,7 +2006,9 @@ func (s *TaskService) maybeLogClaimSlow(agentID pgtype.UUID, outcome string, sta
 }
 
 // StartTask transitions a dispatched task to running.
-// Issue status is NOT changed here — the agent manages it via the CLI.
+// For assignment-triggered issue tasks, the platform also advances the issue
+// from todo to in_progress. This is mechanical execution state, not workflow
+// semantics, so it should not depend on the agent remembering a CLI call.
 func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.AgentTaskQueue, error) {
 	task, err := s.Queries.StartAgentTask(ctx, taskID)
 	if err != nil {
@@ -1960,6 +2021,7 @@ func (s *TaskService) StartTask(ctx context.Context, taskID pgtype.UUID) (*db.Ag
 	}
 
 	slog.Info("task started", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
+	s.autoStartIssueForTask(ctx, task)
 	s.captureTaskStarted(ctx, task)
 	s.syncSquadSOPTaskStep(ctx, task, "步骤开始", "进行中")
 	// Tell every connected workspace WS client that this task transitioned
@@ -2140,6 +2202,15 @@ func (s *TaskService) closeIssueAfterCompletedSOPRun(ctx context.Context, issue 
 }
 
 func (s *TaskService) updateIssueStatusAfterCompletedSOPRun(ctx context.Context, issue db.Issue, status string) (db.Issue, error) {
+	if status == "done" {
+		incomplete, err := s.countIncompleteChildIssues(ctx, issue)
+		if err != nil {
+			return db.Issue{}, err
+		}
+		if incomplete > 0 {
+			return db.Issue{}, fmt.Errorf("%w: %d incomplete child issue(s)", errIssueDoneBlockedByChildren, incomplete)
+		}
+	}
 	updated, err := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
 		ID:          issue.ID,
 		Status:      status,
@@ -2153,6 +2224,146 @@ func (s *TaskService) updateIssueStatusAfterCompletedSOPRun(ctx context.Context,
 		s.IssueStatusChanged(ctx, issue, updated, "system", "")
 	}
 	return updated, nil
+}
+
+func (s *TaskService) countIncompleteChildIssues(ctx context.Context, issue db.Issue) (int, error) {
+	children, err := s.Queries.ListChildIssues(ctx, issue.ID)
+	if err != nil {
+		return 0, err
+	}
+	incomplete := 0
+	for _, child := range children {
+		if child.Status != "done" {
+			incomplete++
+		}
+	}
+	return incomplete, nil
+}
+
+func (s *TaskService) autoStartIssueForTask(ctx context.Context, task db.AgentTaskQueue) {
+	if !shouldAutoStartIssueForTask(task) {
+		return
+	}
+	s.autoTransitionIssueStatus(ctx, task, "todo", "in_progress", "task_started")
+}
+
+func (s *TaskService) autoReviewIssueForTask(ctx context.Context, task db.AgentTaskQueue) {
+	if !shouldConsiderAutoReviewIssueForTask(task) {
+		return
+	}
+	issue, ok := s.issueForTaskStatusAutomation(ctx, task)
+	if !ok || !shouldAutoReviewIssueForTask(task, issue) || issue.Status != "in_progress" {
+		return
+	}
+	s.updateIssueStatusForTaskAutomation(ctx, task, issue, "in_review", "task_completed")
+}
+
+func (s *TaskService) autoBlockIssueForTaskFailure(ctx context.Context, task db.AgentTaskQueue) {
+	if !shouldAutoBlockIssueForTaskFailure(task) {
+		return
+	}
+	hasActive, err := s.Queries.HasActiveTaskForIssue(ctx, task.IssueID)
+	if err != nil {
+		slog.Warn("task failure issue status automation skipped: active task check failed",
+			"task_id", util.UUIDToString(task.ID),
+			"issue_id", util.UUIDToString(task.IssueID),
+			"error", err,
+		)
+		return
+	}
+	if hasActive {
+		return
+	}
+	s.autoTransitionIssueStatus(ctx, task, "in_progress", "blocked", "task_failed")
+}
+
+func (s *TaskService) autoTransitionIssueStatus(ctx context.Context, task db.AgentTaskQueue, fromStatus, toStatus, reason string) {
+	issue, ok := s.issueForTaskStatusAutomation(ctx, task)
+	if !ok || issue.Status != fromStatus {
+		return
+	}
+	s.updateIssueStatusForTaskAutomation(ctx, task, issue, toStatus, reason)
+}
+
+func (s *TaskService) issueForTaskStatusAutomation(ctx context.Context, task db.AgentTaskQueue) (db.Issue, bool) {
+	if !task.IssueID.Valid {
+		return db.Issue{}, false
+	}
+	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
+	if err != nil {
+		slog.Warn("task issue status automation skipped: issue lookup failed",
+			"task_id", util.UUIDToString(task.ID),
+			"issue_id", util.UUIDToString(task.IssueID),
+			"error", err,
+		)
+		return db.Issue{}, false
+	}
+	return issue, true
+}
+
+func (s *TaskService) updateIssueStatusForTaskAutomation(ctx context.Context, task db.AgentTaskQueue, issue db.Issue, status string, reason string) {
+	updated, err := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+		ID:          issue.ID,
+		Status:      status,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		slog.Warn("task issue status automation failed",
+			"task_id", util.UUIDToString(task.ID),
+			"issue_id", util.UUIDToString(issue.ID),
+			"from_status", issue.Status,
+			"to_status", status,
+			"reason", reason,
+			"error", err,
+		)
+		return
+	}
+	slog.Info("task issue status automated",
+		"task_id", util.UUIDToString(task.ID),
+		"issue_id", util.UUIDToString(issue.ID),
+		"from_status", issue.Status,
+		"to_status", status,
+		"reason", reason,
+	)
+	s.broadcastIssueUpdated(updated)
+	if s.IssueStatusChanged != nil {
+		s.IssueStatusChanged(ctx, issue, updated, "system", "")
+	}
+}
+
+func shouldAutoStartIssueForTask(task db.AgentTaskQueue) bool {
+	return isAssignmentIssueTaskForStatusAutomation(task)
+}
+
+func shouldConsiderAutoReviewIssueForTask(task db.AgentTaskQueue) bool {
+	return isAssignmentIssueTaskForStatusAutomation(task) && !task.IsLeaderTask
+}
+
+func shouldAutoReviewIssueForTask(task db.AgentTaskQueue, issue db.Issue) bool {
+	if !shouldConsiderAutoReviewIssueForTask(task) {
+		return false
+	}
+	return issue.AssigneeType.Valid &&
+		issue.AssigneeType.String == "agent" &&
+		issue.AssigneeID.Valid &&
+		issue.AssigneeID == task.AgentID
+}
+
+func shouldAutoBlockIssueForTaskFailure(task db.AgentTaskQueue) bool {
+	return isAssignmentIssueTaskForStatusAutomation(task)
+}
+
+func isAssignmentIssueTaskForStatusAutomation(task db.AgentTaskQueue) bool {
+	if !task.IssueID.Valid ||
+		task.TriggerCommentID.Valid ||
+		task.ChatSessionID.Valid ||
+		task.AutopilotRunID.Valid {
+		return false
+	}
+	if _, ok := ParseIssueSourceSummaryContext(task); ok {
+		return false
+	}
+	return true
 }
 
 func (s *TaskService) issueRequiresGongfengMR(ctx context.Context, issue db.Issue) bool {
@@ -2298,7 +2509,9 @@ func (s *TaskService) MarkTaskWaitingLocalDirectory(ctx context.Context, taskID 
 }
 
 // CompleteTask marks a task as completed.
-// Issue status is NOT changed here — the agent manages it via the CLI.
+// For ordinary agent-assignment issue tasks, the platform also advances the
+// issue from in_progress to in_review. Coordinators, comment replies, chat,
+// quick-create, source-summary, and autopilot tasks are intentionally excluded.
 //
 // For chat tasks, CompleteAgentTask and the chat_session resume-pointer
 // update run in a single transaction. This closes a race where the next
@@ -2373,9 +2586,16 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 
 	slog.Info("task completed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskCompleted(ctx, task)
+	if sc, ok := ParseIssueSourceSummaryContext(task); ok {
+		s.completeIssueSourceSummaryTask(ctx, task, sc, result)
+		s.ReconcileAgentStatus(ctx, task.AgentID)
+		s.broadcastTaskEvent(ctx, protocol.EventTaskCompleted, task)
+		return &task, nil
+	}
 	s.linkGongfengMRsFromTaskComments(ctx, task)
 	s.syncSquadSOPTaskStep(ctx, task, "步骤完成", "已完成")
 	s.enqueueSquadLeaderAfterWorkerStageCompletion(ctx, task)
+	s.autoReviewIssueForTask(ctx, task)
 
 	// Invariant: every completed issue task must have at least one agent
 	// comment on the issue, so the user always sees something when a run
@@ -2473,6 +2693,203 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 	s.broadcastTaskEvent(ctx, protocol.EventTaskCompleted, task)
 
 	return &task, nil
+}
+
+func (s *TaskService) completeIssueSourceSummaryTask(ctx context.Context, task db.AgentTaskQueue, sc IssueSourceSummaryContext, result []byte) {
+	description, ok := issueSourceSummaryDescriptionFromResult(result)
+	status := "completed"
+	errorMessage := ""
+	if !ok {
+		status = "failed"
+		errorMessage = "摘要任务输出无效，已使用来源内容生成兜底摘要。"
+		description = s.fallbackIssueSourceSummaryDescription(ctx, task.IssueID, errorMessage)
+	}
+	s.applyIssueSourceSummary(ctx, task, sc, description, status, errorMessage)
+}
+
+func (s *TaskService) failIssueSourceSummaryTask(ctx context.Context, task db.AgentTaskQueue, sc IssueSourceSummaryContext, errMsg string) {
+	errorMessage := strings.TrimSpace(errMsg)
+	if errorMessage == "" {
+		errorMessage = "摘要任务执行失败，已使用来源内容生成兜底摘要。"
+	}
+	description := s.fallbackIssueSourceSummaryDescription(ctx, task.IssueID, errorMessage)
+	s.applyIssueSourceSummary(ctx, task, sc, description, "failed", errorMessage)
+}
+
+func (s *TaskService) applyIssueSourceSummary(ctx context.Context, task db.AgentTaskQueue, sc IssueSourceSummaryContext, description, status, errorMessage string) {
+	if strings.TrimSpace(description) == "" {
+		return
+	}
+	issue, err := s.Queries.GetIssue(ctx, task.IssueID)
+	if err != nil {
+		slog.Warn("source summary completion: issue not found",
+			"task_id", util.UUIDToString(task.ID),
+			"issue_id", util.UUIDToString(task.IssueID),
+			"error", err,
+		)
+		return
+	}
+	updated, err := s.updateIssueDescriptionPreservingFields(ctx, issue, redact.Text(description))
+	if err != nil {
+		slog.Warn("source summary completion: update issue description failed",
+			"task_id", util.UUIDToString(task.ID),
+			"issue_id", util.UUIDToString(issue.ID),
+			"error", err,
+		)
+		return
+	}
+	updated = s.setIssueMetadataString(ctx, updated, "source_summary_status", status)
+	updated = s.setIssueMetadataString(ctx, updated, "source_summary_task_id", util.UUIDToString(task.ID))
+	if strings.TrimSpace(errorMessage) != "" {
+		updated = s.setIssueMetadataString(ctx, updated, "source_summary_error", errorMessage)
+	}
+	if sc.Provider != "" {
+		updated = s.setIssueMetadataString(ctx, updated, "source_summary_provider", sc.Provider)
+	}
+	s.broadcastIssueUpdated(updated)
+	s.enqueueIssueAfterSourceSummary(ctx, updated)
+}
+
+func issueSourceSummaryDescriptionFromResult(result []byte) (string, bool) {
+	var payload protocol.TaskCompletedPayload
+	if err := json.Unmarshal(result, &payload); err != nil {
+		return "", false
+	}
+	body := strings.TrimSpace(util.UnescapeBackslashEscapes(payload.Output))
+	body = unwrapMarkdownFence(body)
+	if body == "" || isTrivialDoneOutput(body) {
+		return "", false
+	}
+	runes := []rune(body)
+	if len(runes) > 5000 {
+		body = string(runes[:5000])
+	}
+	if !strings.Contains(body, "## 需求摘要") {
+		body = "## 需求摘要\n" + body
+	}
+	return strings.TrimSpace(body), true
+}
+
+func unwrapMarkdownFence(body string) string {
+	trimmed := strings.TrimSpace(body)
+	if !strings.HasPrefix(trimmed, "```") {
+		return trimmed
+	}
+	lines := strings.Split(trimmed, "\n")
+	if len(lines) < 3 || !strings.HasPrefix(strings.TrimSpace(lines[len(lines)-1]), "```") {
+		return trimmed
+	}
+	return strings.TrimSpace(strings.Join(lines[1:len(lines)-1], "\n"))
+}
+
+func (s *TaskService) fallbackIssueSourceSummaryDescription(ctx context.Context, issueID pgtype.UUID, reason string) string {
+	issue, err := s.Queries.GetIssue(ctx, issueID)
+	if err != nil {
+		return "## 需求摘要\n摘要生成失败，请查看 TAPD 来源卡片或重新触发摘要。\n"
+	}
+	title := strings.TrimSpace(issueMetadataString(issue.Metadata, "source_fetch_title"))
+	body := strings.TrimSpace(firstNonEmpty(
+		issueMetadataString(issue.Metadata, "source_fetch_summary"),
+		issueMetadataString(issue.Metadata, "source_fetch_body_excerpt"),
+	))
+	if body == "" {
+		body = strings.TrimSpace(issue.Description.String)
+	}
+	body = truncateForSummary(body, 900)
+	var b strings.Builder
+	b.WriteString("## 需求摘要\n")
+	if title != "" {
+		b.WriteString(title)
+		if body != "" && body != title {
+			b.WriteString("\n\n")
+			b.WriteString(body)
+		}
+	} else if body != "" {
+		b.WriteString(body)
+	} else {
+		b.WriteString("摘要生成失败，请查看 TAPD 来源卡片或重新触发摘要。")
+	}
+	if strings.TrimSpace(reason) != "" {
+		b.WriteString("\n\n## 摘要状态\n")
+		b.WriteString(reason)
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+func (s *TaskService) updateIssueDescriptionPreservingFields(ctx context.Context, issue db.Issue, description string) (db.Issue, error) {
+	return s.Queries.UpdateIssue(ctx, db.UpdateIssueParams{
+		ID:            issue.ID,
+		Description:   pgtype.Text{String: description, Valid: true},
+		AssigneeType:  issue.AssigneeType,
+		AssigneeID:    issue.AssigneeID,
+		StartDate:     issue.StartDate,
+		DueDate:       issue.DueDate,
+		ParentIssueID: issue.ParentIssueID,
+		ProjectID:     issue.ProjectID,
+	})
+}
+
+func (s *TaskService) setIssueMetadataString(ctx context.Context, issue db.Issue, key, value string) db.Issue {
+	updated, err := s.Queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+		ID:          issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+		Key:         key,
+		Value:       mustJSONStringBytes(value),
+	})
+	if err != nil {
+		slog.Warn("source summary completion: set metadata failed",
+			"issue_id", util.UUIDToString(issue.ID),
+			"key", key,
+			"error", err,
+		)
+		return issue
+	}
+	return updated
+}
+
+func (s *TaskService) enqueueIssueAfterSourceSummary(ctx context.Context, issue db.Issue) {
+	if issue.Status == "backlog" || !issue.AssigneeType.Valid || !issue.AssigneeID.Valid {
+		return
+	}
+	switch issue.AssigneeType.String {
+	case "agent":
+		if _, err := s.EnqueueTaskForIssue(ctx, issue); err != nil {
+			slog.Warn("source summary completion: enqueue assigned agent failed",
+				"issue_id", util.UUIDToString(issue.ID),
+				"agent_id", util.UUIDToString(issue.AssigneeID),
+				"error", err,
+			)
+		}
+	case "squad":
+		squad, err := s.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
+			ID:          issue.AssigneeID,
+			WorkspaceID: issue.WorkspaceID,
+		})
+		if err != nil {
+			slog.Warn("source summary completion: load squad failed",
+				"issue_id", util.UUIDToString(issue.ID),
+				"squad_id", util.UUIDToString(issue.AssigneeID),
+				"error", err,
+			)
+			return
+		}
+		hasPending, err := s.Queries.HasPendingTaskForIssueAndAgent(ctx, db.HasPendingTaskForIssueAndAgentParams{
+			IssueID: issue.ID,
+			AgentID: squad.LeaderID,
+		})
+		if err != nil || hasPending {
+			return
+		}
+		if _, err := s.EnqueueTaskForSquadLeader(ctx, issue, squad.LeaderID, pgtype.UUID{}); err != nil {
+			slog.Warn("source summary completion: enqueue squad leader failed",
+				"issue_id", util.UUIDToString(issue.ID),
+				"squad_id", util.UUIDToString(squad.ID),
+				"leader_id", util.UUIDToString(squad.LeaderID),
+				"error", err,
+			)
+		}
+	}
 }
 
 var (
@@ -2713,7 +3130,18 @@ func (s *TaskService) enqueueSquadLeaderAfterWorkerStageCompletion(ctx context.C
 	if issue.Status == "done" || issue.Status == "cancelled" {
 		return
 	}
-	if _, err := s.Queries.GetOpenSquadSOPRunByIssue(ctx, task.IssueID); err != nil {
+	run, ok := s.squadSOPRunForWorkerTask(ctx, task, issue)
+	if !ok {
+		return
+	}
+	agent, err := s.Queries.GetAgentInWorkspace(ctx, db.GetAgentInWorkspaceParams{
+		ID:          task.AgentID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil {
+		return
+	}
+	if _, _, ok := matchSquadSOPStepForAgent(parseSquadSOPProfileSteps(run.Profile), agent.Name); !ok {
 		return
 	}
 	squad, err := s.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
@@ -2764,8 +3192,24 @@ func (s *TaskService) enqueueSquadLeaderAfterWorkerStageCompletion(ctx context.C
 	s.NotifyTaskEnqueued(ctx, nextTask)
 }
 
+func (s *TaskService) squadSOPRunForWorkerTask(ctx context.Context, task db.AgentTaskQueue, issue db.Issue) (db.SquadSopRun, bool) {
+	run, err := s.Queries.GetOpenSquadSOPRunByIssue(ctx, task.IssueID)
+	if err == nil {
+		return run, true
+	}
+	runs, err := s.Queries.ListIssueSquadSOPRuns(ctx, db.ListIssueSquadSOPRunsParams{
+		IssueID:     issue.ID,
+		WorkspaceID: issue.WorkspaceID,
+	})
+	if err != nil || len(runs) == 0 {
+		return db.SquadSopRun{}, false
+	}
+	return runs[0], true
+}
+
 // FailTask marks a task as failed.
-// Issue status is NOT changed here — the agent manages it via the CLI.
+// For assignment-triggered issue tasks without an automatic retry, the
+// platform blocks an in-progress issue instead of moving it back to todo.
 //
 // sessionID/workDir are optional: when the agent established a real session
 // before failing (e.g. crashed mid-conversation, was cancelled, or hit a
@@ -2855,6 +3299,12 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 
 	slog.Warn("task failed", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID), "error", errMsg, "failure_reason", failureReason)
 	s.captureTaskFailed(ctx, task)
+	if sc, ok := ParseIssueSourceSummaryContext(task); ok {
+		s.failIssueSourceSummaryTask(ctx, task, sc, errMsg)
+		s.ReconcileAgentStatus(ctx, task.AgentID)
+		s.broadcastTaskEvent(ctx, protocol.EventTaskFailed, task)
+		return &task, nil
+	}
 
 	// Auto-retry eligible failures (orphan, timeout, runtime_offline,
 	// runtime_recovery). The helper itself enforces attempt < max_attempts
@@ -2867,6 +3317,9 @@ func (s *TaskService) FailTask(ctx context.Context, taskID pgtype.UUID, errMsg, 
 	}
 	if s.shouldSyncSquadSOPTaskFailure(ctx, task, retried) {
 		s.syncSquadSOPTaskStep(ctx, task, "步骤失败", "已失败")
+	}
+	if retried == nil {
+		s.autoBlockIssueForTaskFailure(ctx, task)
 	}
 
 	// Skip the per-failure system comment when we'll immediately retry —
@@ -3171,8 +3624,8 @@ func (s *TaskService) enqueueRerunTask(ctx context.Context, issue db.Issue, agen
 // HandleFailedTasks runs the post-failure side effects for a batch of
 // freshly-failed tasks: optional auto-retry, task:failed event broadcast,
 // agent status reconciliation, and (when an issue has no remaining active
-// task and isn't being retried) resetting the issue back to todo so the
-// daemon can pick it up again.
+// task and isn't being retried) blocking the issue so the user sees that the
+// current attempt needs attention.
 //
 // All callers that surface a task as failed — sweepers, FailTask,
 // recover-orphans — funnel through here so the same UI-consistency
@@ -3214,7 +3667,7 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 		if t.IssueID.Valid {
 			if issue, err := s.Queries.GetIssue(ctx, t.IssueID); err == nil {
 				workspaceID = util.UUIDToString(issue.WorkspaceID)
-				// Reset stuck in_progress issues only when no other active
+				// Block stuck in_progress issues only when no other active
 				// task exists for the issue and no retry was just enqueued.
 				issueKey := util.UUIDToString(t.IssueID)
 				if issue.Status == "in_progress" && !processedIssues[issueKey] && !retriedIssues[issueKey] {
@@ -3225,17 +3678,8 @@ func (s *TaskService) HandleFailedTasks(ctx context.Context, tasks []db.AgentTas
 							"issue_id", issueKey,
 							"error", checkErr,
 						)
-					} else if !hasActive {
-						if _, updateErr := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
-							ID:          t.IssueID,
-							Status:      "todo",
-							WorkspaceID: issue.WorkspaceID,
-						}); updateErr != nil {
-							slog.Warn("handle failed tasks: reset stuck issue failed",
-								"issue_id", issueKey,
-								"error", updateErr,
-							)
-						}
+					} else if !hasActive && shouldAutoBlockIssueForTaskFailure(t) {
+						s.autoTransitionIssueStatus(ctx, t, "in_progress", "blocked", "failed_task_batch")
 					}
 				}
 			}
@@ -3676,25 +4120,40 @@ func (s *TaskService) AutoUnresolveThreadOnReply(ctx context.Context, parent *db
 
 func issueToMap(issue db.Issue, issuePrefix string) map[string]any {
 	return map[string]any{
-		"id":              util.UUIDToString(issue.ID),
-		"workspace_id":    util.UUIDToString(issue.WorkspaceID),
-		"number":          issue.Number,
-		"identifier":      issuePrefix + "-" + strconv.Itoa(int(issue.Number)),
-		"title":           issue.Title,
-		"description":     util.TextToPtr(issue.Description),
-		"status":          issue.Status,
-		"priority":        issue.Priority,
-		"assignee_type":   util.TextToPtr(issue.AssigneeType),
-		"assignee_id":     util.UUIDToPtr(issue.AssigneeID),
-		"creator_type":    issue.CreatorType,
-		"creator_id":      util.UUIDToString(issue.CreatorID),
-		"parent_issue_id": util.UUIDToPtr(issue.ParentIssueID),
-		"position":        issue.Position,
-		"start_date":      util.DateToPtr(issue.StartDate),
-		"due_date":        util.DateToPtr(issue.DueDate),
-		"created_at":      util.TimestampToString(issue.CreatedAt),
-		"updated_at":      util.TimestampToString(issue.UpdatedAt),
+		"id":                util.UUIDToString(issue.ID),
+		"workspace_id":      util.UUIDToString(issue.WorkspaceID),
+		"number":            issue.Number,
+		"identifier":        issuePrefix + "-" + strconv.Itoa(int(issue.Number)),
+		"title":             issue.Title,
+		"description":       util.TextToPtr(issue.Description),
+		"status":            issue.Status,
+		"priority":          issue.Priority,
+		"assignee_type":     util.TextToPtr(issue.AssigneeType),
+		"assignee_id":       util.UUIDToPtr(issue.AssigneeID),
+		"creator_type":      issue.CreatorType,
+		"creator_id":        util.UUIDToString(issue.CreatorID),
+		"parent_issue_id":   util.UUIDToPtr(issue.ParentIssueID),
+		"project_id":        util.UUIDToPtr(issue.ProjectID),
+		"position":          issue.Position,
+		"start_date":        util.DateToPtr(issue.StartDate),
+		"due_date":          util.DateToPtr(issue.DueDate),
+		"metadata":          issueMetadataMap(issue.Metadata),
+		"created_at":        util.TimestampToString(issue.CreatedAt),
+		"updated_at":        util.TimestampToString(issue.UpdatedAt),
+		"work_started_at":   util.TimestampToPtr(issue.WorkStartedAt),
+		"work_completed_at": util.TimestampToPtr(issue.WorkCompletedAt),
 	}
+}
+
+func issueMetadataMap(raw []byte) map[string]any {
+	if len(raw) == 0 {
+		return map[string]any{}
+	}
+	var metadata map[string]any
+	if err := json.Unmarshal(raw, &metadata); err != nil || metadata == nil {
+		return map[string]any{}
+	}
+	return metadata
 }
 
 // parseQuickCreateContext returns the quick-create payload if the task's
@@ -3717,6 +4176,23 @@ func (s *TaskService) parseQuickCreateContext(task db.AgentTaskQueue) (QuickCrea
 		return QuickCreateContext{}, false
 	}
 	return qc, true
+}
+
+func ParseIssueSourceSummaryContext(task db.AgentTaskQueue) (IssueSourceSummaryContext, bool) {
+	if !task.IssueID.Valid || task.ChatSessionID.Valid || task.AutopilotRunID.Valid {
+		return IssueSourceSummaryContext{}, false
+	}
+	if len(task.Context) == 0 {
+		return IssueSourceSummaryContext{}, false
+	}
+	var sc IssueSourceSummaryContext
+	if err := json.Unmarshal(task.Context, &sc); err != nil {
+		return IssueSourceSummaryContext{}, false
+	}
+	if sc.Type != IssueSourceSummaryContextType {
+		return IssueSourceSummaryContext{}, false
+	}
+	return sc, true
 }
 
 // notifyQuickCreateCompleted writes a success inbox notification to the

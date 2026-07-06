@@ -305,14 +305,30 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 		t.Fatalf("squad SOP profile must not contain agent model policy: %s", string(raw))
 	}
 	var profile struct {
-		StageSkills []string `json:"stage_skills"`
-		MCPServers  []string `json:"mcp_servers"`
+		StageSkills        []string          `json:"stage_skills"`
+		MCPServers         []string          `json:"mcp_servers"`
+		ClarifyLoopPolicy  []string          `json:"clarify_loop_policy"`
+		CrossProjectPolicy map[string]string `json:"cross_project_policy"`
 	}
 	if err := json.Unmarshal(raw, &profile); err != nil {
 		t.Fatalf("unmarshal template profile: %v", err)
 	}
 	if !slices.Contains(profile.MCPServers, "mcp-server-tapd") || !slices.Contains(profile.MCPServers, "gongfeng") {
 		t.Fatalf("user-center template mcp_servers = %+v", profile.MCPServers)
+	}
+	if !slices.ContainsFunc(profile.ClarifyLoopPolicy, func(item string) bool {
+		return strings.Contains(item, "剩下按你的建议走") && strings.Contains(item, "调度 02-方案设计")
+	}) {
+		t.Fatalf("user-center template clarify_loop_policy missing user-confirmed default path: %+v", profile.ClarifyLoopPolicy)
+	}
+	if profile.CrossProjectPolicy["required_initial_status"] != "todo" {
+		t.Fatalf("required child issue must start immediately, got cross_project_policy=%+v", profile.CrossProjectPolicy)
+	}
+	if got := profile.CrossProjectPolicy["parent_wait_gate"]; !strings.Contains(got, "父 issue 必须等待") || !strings.Contains(got, "不得调度父 issue 的 04/05") {
+		t.Fatalf("cross_project_policy parent_wait_gate must block parent 04/05 until children are done: %+v", profile.CrossProjectPolicy)
+	}
+	if got := profile.CrossProjectPolicy["existing_child_repair"]; !strings.Contains(got, "backlog") || !strings.Contains(got, "普通成员 assignee") || !strings.Contains(got, "todo") {
+		t.Fatalf("cross_project_policy existing_child_repair must make reused children executable: %+v", profile.CrossProjectPolicy)
 	}
 	for _, role := range template.Roles {
 		if len(role.MCPConfig) == 0 {
@@ -341,52 +357,43 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 	}
 	instructions := template.Instructions
 	for _, want := range []string{
-		"你是项目 SOP 小队的 PM-项目经理",
+		"你是 pm 小队的队长",
 		"PM -> 01-需求澄清 -> 02-方案设计 -> 03-任务拆分 -> 04-开发 -> 05-验证测试",
-		"## 角色矩阵",
-		"PM-项目经理",
+		"## 小队工作流",
 		"01-需求澄清",
 		"02-方案设计",
 		"03-任务拆分",
 		"04-开发",
 		"05-验证测试",
-		"## 跨项目 child issue 规则",
-		"单项目需求、TAPD 正文抓取后的真实需求、以及 01-05 阶段推进",
-		"不得只评论或委派 03 代替 PM 创建跨项目 child issue",
-		"## 验收要求",
-		"阶段产物完整",
-		"测试证据完整",
-		"交接说明明确",
-		"跨项目 child issue 由 PM 直接创建并可回读",
-		"05-验证测试通过且无阻断后",
-		"## 禁止事项",
-		"PM 第一轮永远不是执行轮",
-		"“简单任务”不是跳过 SOP 的理由",
-		"必须使用平台 Markdown mention 语法",
-		"不得 checkout、编辑代码、运行实现测试",
-		"等待任务创建者或 workspace owner/admin 明确同意",
-		"把 TAPD 正文抓取后的真实需求复制成同项目 child issue",
-		"为了进入 01-clarify/02-design/03-task-split/04-implement/05-verify 创建 child issue",
-		"01-05 阶段 Agent @mention 下一阶段或任何负责人",
-		"05-验证测试通过后只写验收通过但不更新 issue 状态为 done",
-		"只包含 docs/验收记录/阶段报告的 MR 只能标记为 evidence MR",
-		"不得作为功能 MR 通过",
-		"递归 child issue 规则",
 		"## PM 调度规则",
-		"## 功能 MR 规则",
-		"## 递归 child issue 规则",
-		"## 03-task-split 产物契约",
-		"## 05-verify 验证门禁",
-		"禁止在 PM 单个任务里用内部 todo/TaskCreate/TaskUpdate 代跑 01-05",
-		"发布调度评论后立即结束当前任务",
-		"child issue 的实现 MR 必须关联到 child issue 本身",
+		"必须使用平台 Markdown mention 语法",
+		"agent UUID 必须来自同一个真实 Agent 记录",
+		"没有 mention 的确认/总结评论不得宣称已调度",
+		"## 多轮澄清闭环规则",
+		"PM 不得自行接受推荐默认值",
+		"## PM 阶段门禁摘要",
+		"## PM 平台任务完整性规则",
+		"禁止在 PM 单个任务里使用任何运行时或模型原生的内部任务",
+		"工具名在不同 provider 中可能表现为 TaskCreate、TaskUpdate、Agent、subagent、plan/todo",
+		"只有平台评论 mention 触发出的独立 agent_task_queue 任务",
+		"source_summary 只代表来源摘要生成，不代表 01-clarify 完成",
+		"## PM 跨项目 child issue 摘要",
+		"父 issue 只要存在 child issue 且任一 child status 不是 done",
+		"--status todo",
+		"不得静默创建 `backlog` 或分配给普通成员导致任务不启动",
+		"existing child 已存在但 status 是 `backlog` 或 assignee 是普通成员",
+		"更新为可执行的 squad/Agent assignee 和 `todo`",
+		"如果任一 required child status 不是 done",
+		"不得 @mention 父 issue 的 04-开发或 05-验证测试",
 		"required cross-project dependencies",
 		"not required projects",
+		"V1/V2/V3 test matrix",
 		"sandbox_plan",
 		"handoff-gateway.md",
-		"必要 child issue 缺失、PENDING 或未关联目标项目 MR",
-		"真实 curl/grpcurl",
-		"V2 sandbox/V3 business E2E 的 SKIP",
+		"## PM 收口要求",
+		"## 禁止事项",
+		"PM 直接 checkout、编辑代码、运行实现测试、创建 MR 或发布实现完成总结",
+		"05-验证测试通过后只写验收通过但不更新 issue 状态为 done",
 	} {
 		if !strings.Contains(instructions, want) {
 			t.Fatalf("expected user-center SOP instructions to contain %q\n--- instructions ---\n%s", want, instructions)
@@ -396,6 +403,17 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 		"简单任务直通",
 		"允许简单任务直通",
 		"直接发布最终结果并把 issue 更新为 done，不要要求额外确认",
+		"## 角色矩阵",
+		"## 01-clarify 多轮澄清产物要求",
+		"## 02-design 澄清门禁",
+		"## 03-task-split 产物契约",
+		"## 04-implement 验证职责",
+		"## 05-verify 验证门禁",
+		"## 跨项目门禁规则",
+		"## 功能 MR 规则",
+		"## 递归 child issue 规则",
+		"测试矩阵每一项必须写明 level",
+		"必须提供真实 curl/grpcurl 的命令",
 	} {
 		if strings.Contains(instructions, banned) {
 			t.Fatalf("user-center SOP instructions still contain direct-completion escape %q\n--- instructions ---\n%s", banned, instructions)
@@ -410,59 +428,145 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 	if !strings.Contains(template.Instructions, "必须在最终收口中把 issue 状态更新为 done") {
 		t.Fatalf("user-center template instructions must require final done status:\n%s", template.Instructions)
 	}
+	if strings.Count(template.Instructions, "## PM 调度规则") != 1 ||
+		strings.Count(template.Instructions, "## PM 阶段门禁摘要") != 1 ||
+		strings.Count(template.Instructions, "## PM 跨项目 child issue 摘要") != 1 {
+		t.Fatalf("user-center template instructions must not duplicate PM rule sections:\n%s", template.Instructions)
+	}
 	pmRoleFound := false
 	for _, role := range template.Roles {
 		if role.Key == "pm" {
 			pmRoleFound = true
 			for _, want := range []string{
-				"TAPD 正文抓取后得到的真实需求仍属于当前 issue",
-				"不得复制成同项目 child issue",
-				"不得为了进入 01-clarify、02-design、03-task-split、04-implement 或 05-verify 创建 child issue",
-				"只有真实跨项目依赖才创建 child issue",
-				"只有 PM 可以 @mention 下一阶段 Agent",
-				"必须使用平台 Markdown mention 语法",
-				"05-verify 通过且无阻断时",
-				"递归 child issue 规则",
-				"禁止在 PM 单个任务里用内部 todo/TaskCreate/TaskUpdate 代跑 01-05",
-				"本次 agent task 必须立即结束",
-				"required cross-project dependencies",
-				"handoff-*.md",
-				"必要 child issue 缺失、PENDING 或未关联目标项目 MR",
-				"真实 curl/grpcurl",
+				"## 直接运行护栏",
+				"只有当本次任务上下文包含",
+				"## 小队负责人操作协议",
+				"## 小队说明 (pm)",
+				"SOP 必须通过 `pm` 小队运行",
+				"不得运行 SOP，不得代跑 01-05",
+				"不得把自己的内部 todo、plan、subagent、TaskCreate、TaskUpdate、Agent",
 			} {
 				if !strings.Contains(role.Instruction+role.Description, want) {
 					t.Fatalf("pm role must contain %q\n--- role ---\n%+v", want, role)
 				}
 			}
+			for _, banned := range []string{
+				"## PM 调度规则",
+				"## PM 阶段门禁摘要",
+				"## PM 平台任务完整性规则",
+				"测试矩阵每一项必须写明 level",
+				"必须提供真实 curl/grpcurl 的命令",
+				"若 V2 sandbox/dev 或 V3 business E2E 为 required，05 必须先按项目 harness",
+				"每个跨项目依赖逐项写明 target_project",
+			} {
+				if strings.Contains(role.Instruction+role.Description, banned) {
+					t.Fatalf("pm role must not contain phase-specific detail %q\n--- role ---\n%+v", banned, role)
+				}
+			}
 			continue
+		}
+		if role.Key == "01-clarify" {
+			for _, want := range []string{
+				"已确认结论",
+				"未定问题",
+				"建议默认值",
+				"进入 02 条件",
+				"## 01-clarify 多轮澄清产物要求",
+			} {
+				if !strings.Contains(role.Instruction+role.Description, want) {
+					t.Fatalf("01-clarify role must contain %q\n--- role ---\n%+v", want, role)
+				}
+			}
+		}
+		if role.Key == "02-design" {
+			for _, want := range []string{
+				"已闭环的 01 handoff",
+				"PM 记录的假设",
+				"采用的澄清假设",
+				"澄清未闭环时不得硬写方案",
+				"BLOCKED 返回 PM",
+			} {
+				if !strings.Contains(role.Instruction+role.Description, want) {
+					t.Fatalf("02-design role must contain %q\n--- role ---\n%+v", want, role)
+				}
+			}
 		}
 		if role.Key == "03-task-split" {
 			for _, want := range []string{
 				"required cross-project dependencies",
 				"not required projects",
+				"V1/V2/V3 test matrix",
+				"测试层级计划必须在任务分发前完成",
+				"execution_stage",
+				"owner_role",
 				"sandbox_plan",
-				"生成 handoff 只是创建 gateway child issue 的输入",
+				"## 03-task-split 跨项目依赖契约",
+				"03 只负责识别跨项目依赖",
+				"required 依赖不得标为非阻塞",
+				"生成 handoff 只是创建目标项目 child issue 的输入",
 			} {
 				if !strings.Contains(role.Instruction+role.Description, want) {
 					t.Fatalf("03-task-split role must contain %q\n--- role ---\n%+v", want, role)
 				}
 			}
+			for _, banned := range []string{
+				"PM 必须先运行 `multica issue children",
+				"必要 child issue 缺失时，必须创建或复用对应目标项目 child issue 后再继续",
+				"PM 不得调度父 issue 的 04-implement",
+			} {
+				if strings.Contains(role.Instruction+role.Description, banned) {
+					t.Fatalf("03-task-split role must not contain PM-owned cross-project action %q\n--- role ---\n%+v", banned, role)
+				}
+			}
+		}
+		if role.Key == "04-implement" {
+			for _, want := range []string{
+				"V1/V2/V3 test matrix",
+				"开发侧负责的验证",
+				"不得重新定义 V1/V2/V3 测试层级",
+				"交给 05 的验证入口",
+				"## 04-implement 功能 MR 规则",
+				"04 必须继续补真实实现或测试改动",
+			} {
+				if !strings.Contains(role.Instruction+role.Description, want) {
+					t.Fatalf("04-implement role must contain %q\n--- role ---\n%+v", want, role)
+				}
+			}
 		}
 		if role.Key == "05-verify" {
 			for _, want := range []string{
+				"V1/V2/V3 test matrix",
+				"逐项核验",
 				"必要 child issue 缺失",
 				"目标项目 implementation MR",
+				"handoff 待分发",
+				"自动拉起环境",
 				"V2 sandbox 或 V3 business E2E 被 SKIP 不能当作 PASS",
 				"真实 curl/grpcurl",
+				"## 05-verify 功能 MR 门禁",
+				"## 05-verify 跨项目验收门禁",
+				"05 必须独立核验",
+				"不创建 child issue，也不替 PM 推进或收口",
 			} {
 				if !strings.Contains(role.Instruction+role.Description, want) {
 					t.Fatalf("05-verify role must contain %q\n--- role ---\n%+v", want, role)
+				}
+			}
+			for _, banned := range []string{
+				"PM 必须先运行 `multica issue children",
+				"必要 child issue 缺失时，必须创建或复用对应目标项目 child issue 后再继续",
+				"PM 不得调度父 issue 的 04-implement",
+			} {
+				if strings.Contains(role.Instruction+role.Description, banned) {
+					t.Fatalf("05-verify role must not contain PM-owned cross-project action %q\n--- role ---\n%+v", banned, role)
 				}
 			}
 		}
 		for _, want := range []string{
 			"不得 @mention 任何 Agent、Squad、Member 或 all",
 			"不得直接触发下一阶段",
+			"不得使用 CodeBuddy/Claude/Codex 等 provider 原生的 Agent、Task、TaskCreate、TaskUpdate、subagent、plan/todo 工具",
+			"01/02/03 阶段只收集足够支撑本阶段产物的上下文",
 			"由 pm 判断通过、返工、推进或收口",
 		} {
 			if !strings.Contains(role.Instruction, want) {
@@ -519,6 +623,11 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 	if !strings.Contains(ensured.Squad.Instructions, "只有 PM 可以 @mention 下一阶段 Agent") {
 		t.Fatalf("first-created internal squad must persist routing instructions:\n%s", ensured.Squad.Instructions)
 	}
+	if strings.Contains(ensured.Squad.Instructions, "## 05-verify 验证门禁") ||
+		strings.Contains(ensured.Squad.Instructions, "测试矩阵每一项必须写明 level") ||
+		strings.Contains(ensured.Squad.Instructions, "必须提供真实 curl/grpcurl 的命令") {
+		t.Fatalf("first-created internal squad instructions must stay thin:\n%s", ensured.Squad.Instructions)
+	}
 
 	rows, err := testPool.Query(ctx, `
 		SELECT name, instructions, mcp_config
@@ -541,18 +650,81 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 		count++
 		if name == projectSOPAgentPM {
 			for _, want := range []string{
-				"只有 PM 可以 @mention 下一阶段 Agent",
-				"必须使用平台 Markdown mention 语法",
-				"不得 checkout、编辑代码、运行实现测试",
-				"等待任务创建者或 workspace owner/admin 明确同意",
-				"docs-only MR",
-				"禁止在 PM 单个任务里用内部 todo/TaskCreate/TaskUpdate 代跑 01-05",
-				"本次 agent task 必须立即结束",
-				"child issue 的实现 MR 必须关联到 child issue 本身",
+				"## 直接运行护栏",
+				"只有当本次任务上下文包含",
+				"## 小队负责人操作协议",
+				"## 小队说明 (pm)",
+				"SOP 必须通过 `pm` 小队运行",
+				"不得运行 SOP，不得代跑 01-05",
+				"不得把自己的内部 todo、plan、subagent、TaskCreate、TaskUpdate、Agent",
 			} {
 				if !strings.Contains(instructions, want) {
 					t.Fatalf("pm instructions must contain %q:\n%s", want, instructions)
 				}
+			}
+			for _, banned := range []string{
+				"## PM 调度规则",
+				"## PM 阶段门禁摘要",
+				"## PM 平台任务完整性规则",
+				"只有 PM 可以 @mention 下一阶段 Agent",
+				"测试矩阵每一项必须写明 level",
+				"必须提供真实 curl/grpcurl 的命令",
+				"每个跨项目依赖逐项写明 target_project",
+			} {
+				if strings.Contains(instructions, banned) {
+					t.Fatalf("pm instructions must not contain phase-specific detail %q:\n%s", banned, instructions)
+				}
+			}
+		}
+		if name == projectSOPAgent01 {
+			for _, want := range []string{"已确认结论", "未定问题", "建议默认值", "进入 02 条件"} {
+				if !strings.Contains(instructions, want) {
+					t.Fatalf("01-clarify instructions must contain %q:\n%s", want, instructions)
+				}
+			}
+		}
+		if name == projectSOPAgent02 {
+			for _, want := range []string{"已闭环的 01 handoff", "采用的澄清假设", "BLOCKED 返回 PM"} {
+				if !strings.Contains(instructions, want) {
+					t.Fatalf("02-design instructions must contain %q:\n%s", want, instructions)
+				}
+			}
+		}
+		if name == projectSOPAgent03 {
+			for _, want := range []string{"required cross-project dependencies", "not required projects", "V1/V2/V3 test matrix", "sandbox_plan", "测试层级计划必须在任务分发前完成", "03 只负责识别跨项目依赖", "required 依赖不得标为非阻塞"} {
+				if !strings.Contains(instructions, want) {
+					t.Fatalf("03-task-split instructions must contain %q:\n%s", want, instructions)
+				}
+			}
+			for _, banned := range []string{"PM 必须先运行 `multica issue children", "必要 child issue 缺失时，必须创建或复用对应目标项目 child issue 后再继续"} {
+				if strings.Contains(instructions, banned) {
+					t.Fatalf("03-task-split instructions must not contain PM-owned action %q:\n%s", banned, instructions)
+				}
+			}
+		}
+		if name == projectSOPAgent04 {
+			for _, want := range []string{"开发侧负责的验证", "不得重新定义 V1/V2/V3 测试层级", "如果当前 issue 是 child issue，实现 MR 必须关联到 child issue 本身", "04 必须继续补真实实现或测试改动"} {
+				if !strings.Contains(instructions, want) {
+					t.Fatalf("04-implement instructions must contain %q:\n%s", want, instructions)
+				}
+			}
+			if strings.Contains(instructions, "禁止在 PM 单个任务里使用任何运行时或模型原生的内部任务") {
+				t.Fatalf("04-implement instructions must not contain PM delegation integrity rule:\n%s", instructions)
+			}
+		}
+		if name == projectSOPAgent05 {
+			for _, want := range []string{"逐项核验", "必须提供真实 curl/grpcurl 的命令", "V2 sandbox/dev 或 V3 business E2E 为 required", "N/A", "待部署", "当前只有 docs-only MR、MR 未关联到当前 issue", "05 必须独立核验", "不创建 child issue，也不替 PM 推进或收口"} {
+				if !strings.Contains(instructions, want) {
+					t.Fatalf("05-verify instructions must contain %q:\n%s", want, instructions)
+				}
+			}
+			for _, banned := range []string{"PM 必须先运行 `multica issue children", "必要 child issue 缺失时，必须创建或复用对应目标项目 child issue 后再继续"} {
+				if strings.Contains(instructions, banned) {
+					t.Fatalf("05-verify instructions must not contain PM-owned action %q:\n%s", banned, instructions)
+				}
+			}
+			if strings.Contains(instructions, "禁止在 PM 单个任务里使用任何运行时或模型原生的内部任务") {
+				t.Fatalf("05-verify instructions must not contain PM delegation integrity rule:\n%s", instructions)
 			}
 		}
 		if name != projectSOPAgentPM && !strings.Contains(instructions, "不得 @mention 任何 Agent、Squad、Member 或 all") {

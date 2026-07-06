@@ -201,3 +201,110 @@ func TestTaskFailureClassifiers(t *testing.T) {
 		})
 	}
 }
+
+func TestTaskIssueStatusAutomationPredicates(t *testing.T) {
+	issueID := testUUID(10)
+	agentID := testUUID(11)
+	otherAgentID := testUUID(12)
+	commentID := testUUID(13)
+	chatID := testUUID(14)
+	autopilotRunID := testUUID(15)
+	sourceContext, err := json.Marshal(IssueSourceSummaryContext{Type: IssueSourceSummaryContextType})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	baseTask := db.AgentTaskQueue{
+		ID:      testUUID(20),
+		IssueID: issueID,
+		AgentID: agentID,
+	}
+
+	cases := []struct {
+		name      string
+		task      db.AgentTaskQueue
+		wantStart bool
+		wantBlock bool
+	}{
+		{
+			name:      "ordinary assignment task",
+			task:      baseTask,
+			wantStart: true,
+			wantBlock: true,
+		},
+		{
+			name:      "comment-triggered task",
+			task:      func() db.AgentTaskQueue { t := baseTask; t.TriggerCommentID = commentID; return t }(),
+			wantStart: false,
+			wantBlock: false,
+		},
+		{
+			name:      "chat task",
+			task:      func() db.AgentTaskQueue { t := baseTask; t.ChatSessionID = chatID; return t }(),
+			wantStart: false,
+			wantBlock: false,
+		},
+		{
+			name:      "autopilot task",
+			task:      func() db.AgentTaskQueue { t := baseTask; t.AutopilotRunID = autopilotRunID; return t }(),
+			wantStart: false,
+			wantBlock: false,
+		},
+		{
+			name:      "source summary task",
+			task:      func() db.AgentTaskQueue { t := baseTask; t.Context = sourceContext; return t }(),
+			wantStart: false,
+			wantBlock: false,
+		},
+		{
+			name:      "quick create style task without issue",
+			task:      db.AgentTaskQueue{ID: testUUID(21), AgentID: agentID},
+			wantStart: false,
+			wantBlock: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := shouldAutoStartIssueForTask(tc.task); got != tc.wantStart {
+				t.Fatalf("shouldAutoStartIssueForTask = %v, want %v", got, tc.wantStart)
+			}
+			if got := shouldAutoBlockIssueForTaskFailure(tc.task); got != tc.wantBlock {
+				t.Fatalf("shouldAutoBlockIssueForTaskFailure = %v, want %v", got, tc.wantBlock)
+			}
+		})
+	}
+
+	assignedIssue := db.Issue{
+		Status:       "in_progress",
+		AssigneeType: pgtype.Text{String: "agent", Valid: true},
+		AssigneeID:   agentID,
+	}
+	if !shouldAutoReviewIssueForTask(baseTask, assignedIssue) {
+		t.Fatal("direct agent assignment should auto-advance completed work to review")
+	}
+
+	leaderTask := baseTask
+	leaderTask.IsLeaderTask = true
+	if shouldAutoReviewIssueForTask(leaderTask, assignedIssue) {
+		t.Fatal("leader/coordinator task must not auto-advance issue to review")
+	}
+
+	commentTask := baseTask
+	commentTask.TriggerCommentID = commentID
+	if shouldAutoReviewIssueForTask(commentTask, assignedIssue) {
+		t.Fatal("comment-triggered task must not auto-advance issue to review")
+	}
+
+	squadIssue := assignedIssue
+	squadIssue.AssigneeType = pgtype.Text{String: "squad", Valid: true}
+	if shouldAutoReviewIssueForTask(baseTask, squadIssue) {
+		t.Fatal("squad-assigned issue must not auto-advance to review from a worker task")
+	}
+
+	otherAssigneeIssue := assignedIssue
+	otherAssigneeIssue.AssigneeID = otherAgentID
+	if shouldAutoReviewIssueForTask(baseTask, otherAssigneeIssue) {
+		t.Fatal("task from a non-assignee agent must not auto-advance issue to review")
+	}
+}

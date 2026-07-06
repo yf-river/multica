@@ -94,16 +94,16 @@ func TestBuildIssueTimelineNodesAddsHumanConfirmationWait(t *testing.T) {
 				CreatedAt:   "2026-06-09T10:00:00Z",
 			},
 			{
-				ID:                    "task-2",
-				AgentID:               "agent-pm",
-				Status:                "completed",
-				StartedAt:             timelineTestStringPtr("2026-06-09T10:12:00Z"),
-				CompletedAt:           timelineTestStringPtr("2026-06-09T10:14:00Z"),
-				CreatedAt:             "2026-06-09T10:12:00Z",
-				TriggerCommentID:      timelineTestStringPtr("comment-1"),
-				TriggerAuthorType:     "member",
-				TriggerAuthorName:     "Alice",
-				TriggerCommentContent: "确认继续",
+				ID:                      "task-2",
+				AgentID:                 "agent-pm",
+				Status:                  "completed",
+				StartedAt:               timelineTestStringPtr("2026-06-09T10:12:00Z"),
+				CompletedAt:             timelineTestStringPtr("2026-06-09T10:14:00Z"),
+				CreatedAt:               "2026-06-09T10:10:00Z",
+				TriggerCommentID:        timelineTestStringPtr("comment-1"),
+				TriggerAuthorName:       "Alice",
+				TriggerCommentContent:   "确认继续",
+				TriggerCommentCreatedAt: "2026-06-09T10:10:00Z",
 			},
 		},
 		ManualComments: []IssueCommentBrief{
@@ -130,11 +130,11 @@ func TestBuildIssueTimelineNodesAddsHumanConfirmationWait(t *testing.T) {
 	if waitNode.NodeID != "human_confirmation:comment-1:task-2" {
 		t.Fatalf("human confirmation node = %+v, want comment-triggered wait", waitNode)
 	}
-	if waitNode.StartedAt != "2026-06-09T10:02:00Z" || waitNode.CompletedAt != "2026-06-09T10:12:00Z" {
+	if waitNode.StartedAt != "2026-06-09T10:02:00Z" || waitNode.CompletedAt != "2026-06-09T10:10:00Z" {
 		t.Fatalf("human confirmation bounds = %q / %q", waitNode.StartedAt, waitNode.CompletedAt)
 	}
-	if waitNode.DurationMs != 600000 {
-		t.Fatalf("human confirmation duration = %d, want 600000", waitNode.DurationMs)
+	if waitNode.DurationMs != 480000 {
+		t.Fatalf("human confirmation duration = %d, want 480000", waitNode.DurationMs)
 	}
 	refs := map[string]bool{}
 	for _, ref := range waitNode.EvidenceRefs {
@@ -145,9 +145,22 @@ func TestBuildIssueTimelineNodesAddsHumanConfirmationWait(t *testing.T) {
 			t.Fatalf("human confirmation evidence missing %s: %+v", want, waitNode.EvidenceRefs)
 		}
 	}
+	var taskNode IssueTimelineNodeResponse
+	for _, node := range nodes {
+		if node.NodeID == "task:task-2" {
+			taskNode = node
+			break
+		}
+	}
+	if taskNode.StartedAt != "2026-06-09T10:10:00Z" || taskNode.ActualStartedAt != "2026-06-09T10:12:00Z" {
+		t.Fatalf("task responsibility/actual start = %q / %q", taskNode.StartedAt, taskNode.ActualStartedAt)
+	}
+	if taskNode.DurationMs != 240000 {
+		t.Fatalf("task responsibility duration = %d, want 240000", taskNode.DurationMs)
+	}
 }
 
-func TestBuildIssueTimelineNodesInfersHumanConfirmationGapWithoutComment(t *testing.T) {
+func TestBuildIssueTimelineNodesAssignsQueueTimeToAgentResponsibility(t *testing.T) {
 	root := IssueExecutionNodeResponse{
 		Issue: IssueResponse{ID: "issue-1"},
 		Tasks: []AgentTaskResponse{
@@ -165,28 +178,27 @@ func TestBuildIssueTimelineNodesInfersHumanConfirmationGapWithoutComment(t *test
 				Status:      "completed",
 				StartedAt:   timelineTestStringPtr("2026-06-09T10:05:00Z"),
 				CompletedAt: timelineTestStringPtr("2026-06-09T10:06:00Z"),
-				CreatedAt:   "2026-06-09T10:05:00Z",
+				CreatedAt:   "2026-06-09T10:02:00Z",
 			},
 		},
 	}
 
 	nodes := buildIssueTimelineNodes(root)
-	var waitNode IssueTimelineNodeResponse
+	var taskNode IssueTimelineNodeResponse
 	for _, node := range nodes {
-		if node.NodeType == "human_confirmation" {
-			waitNode = node
-			break
+		if node.NodeType == "dispatch_wait" {
+			t.Fatalf("dispatch wait should not be emitted after responsibility-window change: %+v", node)
+		}
+		if node.NodeID == "task:task-2" {
+			taskNode = node
 		}
 	}
 
-	if !strings.HasPrefix(waitNode.NodeID, "human_confirmation:gap:") {
-		t.Fatalf("human confirmation node = %+v, want inferred gap", waitNode)
+	if taskNode.StartedAt != "2026-06-09T10:02:00Z" || taskNode.ActualStartedAt != "2026-06-09T10:05:00Z" {
+		t.Fatalf("task responsibility/actual start = %q / %q", taskNode.StartedAt, taskNode.ActualStartedAt)
 	}
-	if waitNode.StartedAt != "2026-06-09T10:02:00Z" || waitNode.CompletedAt != "2026-06-09T10:05:00Z" {
-		t.Fatalf("human confirmation bounds = %q / %q", waitNode.StartedAt, waitNode.CompletedAt)
-	}
-	if waitNode.DurationMs != 180000 {
-		t.Fatalf("human confirmation duration = %d, want 180000", waitNode.DurationMs)
+	if taskNode.DurationMs != 240000 {
+		t.Fatalf("task responsibility duration = %d, want 240000", taskNode.DurationMs)
 	}
 }
 
@@ -356,8 +368,35 @@ func TestSummarizeIssueTimelineIgnoresRecoveredRuntimeFailureForDoneIssue(t *tes
 		},
 	})
 
-	if summary.AcceptanceStatus != "completed" || summary.FailureSummary != "" {
+	if summary.AcceptanceStatus != "done" || summary.FailureSummary != "" {
 		t.Fatalf("acceptance = %q failure = %q, want recovered runtime failure ignored", summary.AcceptanceStatus, summary.FailureSummary)
+	}
+}
+
+func TestSummarizeIssueTimelineUsesDoneIssueStatusOverHistoricalCancelledTask(t *testing.T) {
+	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1", Status: "done"}, []IssueTimelineNodeResponse{
+		{
+			NodeID:      "task:abandoned-implement",
+			NodeType:    "agent_task",
+			Status:      "cancelled",
+			StartedAt:   "2026-06-09T10:00:00Z",
+			CompletedAt: "2026-06-09T10:01:00Z",
+			DurationMs:  60000,
+			Summary:     "abandoned early implementation dispatch",
+		},
+		{
+			NodeID:      "task:final-verify",
+			NodeType:    "agent_task",
+			Status:      "completed",
+			StartedAt:   "2026-06-09T10:02:00Z",
+			CompletedAt: "2026-06-09T10:04:00Z",
+			DurationMs:  120000,
+			Summary:     "final verification passed",
+		},
+	})
+
+	if summary.AcceptanceStatus != "done" || summary.FailureSummary != "" {
+		t.Fatalf("acceptance = %q failure = %q, want done without cancelled-task failure", summary.AcceptanceStatus, summary.FailureSummary)
 	}
 }
 
