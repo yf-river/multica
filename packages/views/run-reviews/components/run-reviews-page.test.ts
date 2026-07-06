@@ -988,19 +988,50 @@ describe("buildRunReviewEventRows", () => {
       summary: "等待人工确认：确认继续",
       evidence_refs: [{ type: "comment", id: "comment-1" }],
     } as IssueTimelineNode;
+    const childNode = {
+      issue_id: "issue-1",
+      node_id: "child_issue_ref:child-1",
+      node_type: "child_issue_ref",
+      child_issue_id: "child-1",
+      status: "done",
+      started_at: "2026-06-09T10:06:00.000Z",
+      completed_at: "2026-06-09T10:10:00.000Z",
+      duration_ms: 240_000,
+      input_tokens: 0,
+      output_tokens: 0,
+      cache_read_tokens: 0,
+      cache_write_tokens: 0,
+      message_count: 0,
+      agent_turn_count: 0,
+      trace_event_count: 0,
+      usage_unavailable_trace: false,
+      summary: "跨项目验收标记：gateway request id / middleware acceptance marker",
+      evidence_refs: [{ type: "child_issue", id: "child-1" }],
+    } as IssueTimelineNode;
 
-    const rows = buildTimelineBarRows(buildTimelineAgentRows([agentNode]), [], [agentNode, waitNode]);
+    const rows = buildTimelineBarRows(
+      buildTimelineAgentRows([agentNode]),
+      [{ key: "child-1", label: "gateway", issue: { id: "child-1", status: "done", title: "gateway" } as Issue }],
+      [agentNode, waitNode, childNode],
+    );
 
     expect(rows.map((row) => row.key)).toEqual(["agent-pm", "human-confirmation"]);
     expect(rows[1]).toMatchObject({
       label: "人工确认",
       kind: "human_confirmation",
-      subtitle: "已完成",
+      subtitle: "2 次 · 已完成",
     });
-    expect(rows[1]?.segments).toHaveLength(1);
+    expect(rows[1]?.segments).toHaveLength(2);
     expect(rows[1]?.segments[0]).toMatchObject({
       key: "human_confirmation:comment-1:pm-2",
+      label: "等待人工确认：确认继续",
       durationMs: 300_000,
+      tokenTotal: 0,
+    });
+    expect(rows[1]?.segments[1]).toMatchObject({
+      key: "child_issue_ref:child-1",
+      label: "等待子任务完成：跨项目验收标记：gateway request id / middleware acceptance marker",
+      durationMs: 240_000,
       tokenTotal: 0,
     });
     expect(timelineSegmentTooltipRows(rows[0]!, rows[0]!.segments[0]!).map(([label]) => label)).toEqual([

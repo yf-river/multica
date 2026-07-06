@@ -983,7 +983,7 @@ function TimelineLaneChart({
 
 export function buildTimelineBarRows(
   stageRows: TimelineNodeRow[],
-  childLanes: ChildLane[],
+  _childLanes: ChildLane[],
   timelineNodes: IssueTimelineNode[],
 ): TimelineBarRow[] {
   const stageBars = stageRows.filter((stage) => stage.node).map((stage) => {
@@ -998,9 +998,9 @@ export function buildTimelineBarRows(
       missing: !stage.node,
     };
   });
-  const humanConfirmationNodes = timelineNodes.filter((item) => item.node_type === "human_confirmation");
+  const humanConfirmationNodes = timelineNodes.filter((item) => item.node_type === "human_confirmation" || item.node_type === "child_issue_ref");
   const humanConfirmationSegments = humanConfirmationNodes.map((node, index) => (
-    timelineNodeSegment(node.node_id, "人工确认", node, index + 1, humanConfirmationNodes.length)
+    timelineNodeSegment(node.node_id, humanConfirmationSegmentLabel(node), node, index + 1, humanConfirmationNodes.length)
   ));
   const humanConfirmationBars = humanConfirmationSegments.length > 0 ? [{
     key: "human-confirmation",
@@ -1011,20 +1011,14 @@ export function buildTimelineBarRows(
     segments: humanConfirmationSegments,
     missing: false,
   }] : [];
-  const childBars = childLanes.filter((lane) => lane.issue).map((lane) => {
-    const node = timelineNodes.find((item) => item.node_type === "child_issue_ref" && item.child_issue_id === lane.issue?.id);
-    const segments = node ? [timelineNodeSegment(lane.key, lane.label, node, 1, 1)] : [];
-    return {
-      key: lane.key,
-      label: lane.label,
-      kind: "child" as const,
-      status: lane.issue?.status ?? "missing",
-      subtitle: statusLabel(lane.issue?.status ?? "missing"),
-      segments,
-      missing: !lane.issue,
-    };
-  });
-  return [...stageBars, ...humanConfirmationBars, ...childBars];
+  return [...stageBars, ...humanConfirmationBars];
+}
+
+function humanConfirmationSegmentLabel(node: IssueTimelineNode) {
+  if (node.node_type === "child_issue_ref") {
+    return `等待子任务完成：${node.summary || "子任务"}`;
+  }
+  return node.summary || "人工确认";
 }
 
 function timelineSegmentClassName(kind: TimelineBarRow["kind"]) {
@@ -1034,7 +1028,9 @@ function timelineSegmentClassName(kind: TimelineBarRow["kind"]) {
 }
 
 function timelineSegmentText(row: TimelineBarRow, segment: TimelineBarSegment) {
-  if (row.kind === "human_confirmation") return `${formatDuration(segment.durationMs)} · 人工确认`;
+  if (row.kind === "human_confirmation") {
+    return `${formatDuration(segment.durationMs)} · ${segment.label.startsWith("等待子任务完成") ? "等待子任务" : "人工确认"}`;
+  }
   return `${formatDuration(segment.durationMs)} · ${formatNumber(segment.tokenTotal)} token`;
 }
 

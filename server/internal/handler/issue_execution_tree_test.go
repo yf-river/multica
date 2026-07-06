@@ -190,7 +190,7 @@ func TestBuildIssueTimelineNodesInfersHumanConfirmationGapWithoutComment(t *test
 	}
 }
 
-func TestBuildIssueTimelineNodesDoesNotTreatChildIssueRuntimeAsHumanWait(t *testing.T) {
+func TestSummarizeIssueTimelineCountsChildIssueRuntimeAsHumanWait(t *testing.T) {
 	root := IssueExecutionNodeResponse{
 		Issue: IssueResponse{ID: "parent-issue"},
 		Tasks: []AgentTaskResponse{
@@ -224,10 +224,27 @@ func TestBuildIssueTimelineNodesDoesNotTreatChildIssueRuntimeAsHumanWait(t *test
 	}
 
 	nodes := buildIssueTimelineNodes(root)
+	var childRef IssueTimelineNodeResponse
 	for _, node := range nodes {
 		if node.NodeType == "human_confirmation" {
-			t.Fatalf("unexpected human wait during child issue runtime: %+v", node)
+			t.Fatalf("child issue runtime should be represented by child_issue_ref, not a generic inferred gap: %+v", node)
 		}
+		if node.NodeType == "child_issue_ref" {
+			childRef = node
+		}
+	}
+	if childRef.ChildIssueID != "child-issue" {
+		t.Fatalf("child_issue_ref = %+v, want child issue evidence", childRef)
+	}
+	summary := summarizeIssueTimeline(root.Issue, nodes)
+	if summary.AgentExecutionDurationMs != 120000 {
+		t.Fatalf("agent execution = %d, want parent agent work 120000", summary.AgentExecutionDurationMs)
+	}
+	if summary.HumanConfirmationDurationMs == nil || *summary.HumanConfirmationDurationMs != 540000 {
+		t.Fatalf("human confirmation = %v, want child issue wait 540000", summary.HumanConfirmationDurationMs)
+	}
+	if summary.TotalDurationMs != 660000 {
+		t.Fatalf("total duration = %d, want parent agent + child wait 660000", summary.TotalDurationMs)
 	}
 }
 

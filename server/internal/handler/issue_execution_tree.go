@@ -883,14 +883,14 @@ func summarizeIssueTimeline(issue IssueResponse, nodes []IssueTimelineNodeRespon
 		}
 	}
 	summary.AgentExecutionDurationMs = mergedAgentExecutionDurationMs(nodes)
-	explicitHumanConfirmationMs := mergedNodeDurationMs(nodes, "human_confirmation")
+	humanConfirmationMs := mergedHumanConfirmationDurationMs(nodes)
 	if summary.WorkStartedAt != "" && summary.WorkCompletedAt != "" {
 		if started, startErr := time.Parse(time.RFC3339, summary.WorkStartedAt); startErr == nil {
 			if completed, completedErr := time.Parse(time.RFC3339, summary.WorkCompletedAt); completedErr == nil && completed.After(started) {
 				wall := completed.Sub(started).Milliseconds()
 				summary.WallClockDurationMs = &wall
-				if explicitHumanConfirmationMs > 0 {
-					summary.HumanConfirmationDurationMs = &explicitHumanConfirmationMs
+				if humanConfirmationMs > 0 {
+					summary.HumanConfirmationDurationMs = &humanConfirmationMs
 				} else {
 					human := wall - summary.AgentExecutionDurationMs
 					if human < 0 {
@@ -900,8 +900,8 @@ func summarizeIssueTimeline(issue IssueResponse, nodes []IssueTimelineNodeRespon
 				}
 			}
 		}
-	} else if explicitHumanConfirmationMs > 0 {
-		summary.HumanConfirmationDurationMs = &explicitHumanConfirmationMs
+	} else if humanConfirmationMs > 0 {
+		summary.HumanConfirmationDurationMs = &humanConfirmationMs
 	}
 	if summary.HumanConfirmationDurationMs != nil {
 		summary.TotalDurationMs = summary.AgentExecutionDurationMs + *summary.HumanConfirmationDurationMs
@@ -982,6 +982,33 @@ type timelineInterval struct {
 
 func mergedAgentExecutionDurationMs(nodes []IssueTimelineNodeResponse) int64 {
 	return mergedNodeDurationMs(nodes, "agent_task")
+}
+
+func mergedHumanConfirmationDurationMs(nodes []IssueTimelineNodeResponse) int64 {
+	intervals := make([]timelineInterval, 0)
+	for _, node := range nodes {
+		if node.NodeType != "human_confirmation" && node.NodeType != "child_issue_ref" {
+			continue
+		}
+		if node.StartedAt == "" || node.CompletedAt == "" {
+			continue
+		}
+		start, startErr := time.Parse(time.RFC3339, node.StartedAt)
+		end, endErr := time.Parse(time.RFC3339, node.CompletedAt)
+		if startErr != nil || endErr != nil || !end.After(start) {
+			continue
+		}
+		intervals = append(intervals, timelineInterval{start: start, end: end})
+	}
+	merged := mergeTimelineIntervals(intervals)
+	if len(merged) == 0 {
+		return 0
+	}
+	var total int64
+	for _, interval := range merged {
+		total += interval.end.Sub(interval.start).Milliseconds()
+	}
+	return total
 }
 
 func mergedNodeDurationMs(nodes []IssueTimelineNodeResponse, nodeType string) int64 {
