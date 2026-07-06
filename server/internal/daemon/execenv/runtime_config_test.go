@@ -697,6 +697,8 @@ func TestPlanningStageCapabilityPolicyBlocksNativeSubagents(t *testing.T) {
 		"Do not inspect CLI help or discover extra commands in this task",
 		"No comment command is available in this no-repository planning stage",
 		"final assistant output",
+		"Do not call tools or CLI commands in this no-repository planning task",
+		"Use the issue/source context already supplied in this task prompt",
 		"do not attempt to create `reply.md`",
 		"produce their own bounded stage result in this platform task",
 		"do not call `multica issue comment add`",
@@ -717,6 +719,8 @@ func TestPlanningStageCapabilityPolicyBlocksNativeSubagents(t *testing.T) {
 		"`multica repo checkout <url>",
 		"For everything else, run `multica --help`",
 		"multica issue comment add <issue-id> --content \"...\"",
+		"Run `multica issue get 77777777-8888-9999-aaaa-bbbbbbbbbbbb --output json`",
+		"Run `multica issue comment list 77777777-8888-9999-aaaa-bbbbbbbbbbbb --output json`",
 	} {
 		if strings.Contains(out, banned) {
 			t.Fatalf("no-repo planning stage should not require file-write comment mode %q\n--- output ---\n%s", banned, out)
