@@ -24,7 +24,7 @@ import type {
 import type { PromptEvaluationToolCallChain } from "@multica/core/types/prompt-evaluation";
 import { cn } from "@multica/ui/lib/utils";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@multica/ui/components/ui/tooltip";
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@multica/ui/components/ui/tooltip";
 import { PageHeader } from "../../layout/page-header";
 import { AppLink, useNavigation } from "../../navigation";
 import { TranscriptButton } from "../../common/task-transcript";
@@ -869,7 +869,7 @@ export type TimelineNodeRow = {
 };
 type ChildLane = ReturnType<typeof buildChildLanes>[number];
 
-interface TimelineBarSegment {
+export interface TimelineBarSegment {
   key: string;
   label: string;
   status: string;
@@ -882,7 +882,7 @@ interface TimelineBarSegment {
   total: number;
 }
 
-interface TimelineBarRow {
+export interface TimelineBarRow {
   key: string;
   label: string;
   kind: "stage" | "child" | "human_confirmation";
@@ -922,48 +922,61 @@ function TimelineLaneChart({
           ))}
         </div>
       </div>
-      <div className="mt-2 space-y-1.5">
-        {rows.length > 0 ? rows.map((row) => (
-          <div key={row.key} className="grid grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-x-3">
-            <div className="min-w-0">
-              <div className="truncate text-xs font-medium">{row.label}</div>
-              <div className="truncate text-[11px] text-muted-foreground">{row.subtitle}</div>
+      <TooltipProvider delay={0}>
+        <div className="mt-2 space-y-1.5">
+          {rows.length > 0 ? rows.map((row) => (
+            <div key={row.key} className="grid grid-cols-[6.5rem_minmax(0,1fr)] items-center gap-x-3">
+              <div className="min-w-0">
+                <div className="truncate text-xs font-medium">{row.label}</div>
+                <div className="truncate text-[11px] text-muted-foreground">{row.subtitle}</div>
+              </div>
+              <div className="relative h-9 overflow-hidden rounded-md border bg-muted/20">
+                <div className="absolute inset-y-0 left-1/3 w-px bg-border/70" />
+                <div className="absolute inset-y-0 left-2/3 w-px bg-border/70" />
+                {row.missing || row.segments.length === 0 || row.segments.every((segment) => segment.startMs === null || segment.endMs === null) ? (
+                  <div className="flex h-full items-center px-2 text-[11px] text-muted-foreground">
+                    {row.missing ? "缺节点" : "缺时间"}
+                  </div>
+                ) : (
+                  row.segments.map((segment) => {
+                    if (segment.startMs === null || segment.endMs === null) return null;
+                    const label = timelineSegmentTitle(row, segment);
+                    return (
+                      <Tooltip key={segment.key}>
+                        <TooltipTrigger
+                          render={
+                            <div
+                              className={cn(
+                                "absolute top-1 bottom-1 overflow-hidden rounded px-2 text-[11px] leading-7 shadow-sm focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1",
+                                timelineSegmentClassName(row.kind),
+                              )}
+                              data-testid={`run-review-timeline-bar-${segment.key}`}
+                              style={timelineSegmentStyle(segment.startMs, segment.endMs, min, span)}
+                              aria-label={label}
+                              tabIndex={0}
+                            >
+                              <span className="block truncate">
+                                {timelineSegmentText(row, segment)}
+                              </span>
+                            </div>
+                          }
+                        />
+                        <TooltipContent side="top" className="max-w-80">
+                          <MetricTooltip rows={timelineSegmentTooltipRows(row, segment)} />
+                        </TooltipContent>
+                      </Tooltip>
+                    );
+                  })
+                )}
+              </div>
             </div>
-            <div className="relative h-9 overflow-hidden rounded-md border bg-muted/20">
-              <div className="absolute inset-y-0 left-1/3 w-px bg-border/70" />
-              <div className="absolute inset-y-0 left-2/3 w-px bg-border/70" />
-              {row.missing || row.segments.length === 0 || row.segments.every((segment) => segment.startMs === null || segment.endMs === null) ? (
-                <div className="flex h-full items-center px-2 text-[11px] text-muted-foreground">
-                  {row.missing ? "缺节点" : "缺时间"}
-                </div>
-              ) : (
-                row.segments.map((segment) => (
-                  segment.startMs === null || segment.endMs === null ? null : (
-                    <div
-                      key={segment.key}
-                      className={cn(
-                        "absolute top-1 bottom-1 overflow-hidden rounded px-2 text-[11px] leading-7 shadow-sm",
-                        timelineSegmentClassName(row.kind),
-                      )}
-                      data-testid={`run-review-timeline-bar-${segment.key}`}
-                      style={timelineSegmentStyle(segment.startMs, segment.endMs, min, span)}
-                      title={timelineSegmentTitle(row, segment)}
-                    >
-                      <span className="block truncate">
-                        {timelineSegmentText(row, segment)}
-                      </span>
-                    </div>
-                  )
-                ))
-              )}
+          )) : (
+            <div className="rounded-md border border-dashed bg-muted/20 px-3 py-4 text-sm text-muted-foreground">
+              暂无可绘制的真实执行节点。
             </div>
-          </div>
-        )) : (
-          <div className="rounded-md border border-dashed bg-muted/20 px-3 py-4 text-sm text-muted-foreground">
-            暂无可绘制的真实执行节点。
-          </div>
-        )}
-      </div>
+          )}
+        </div>
+      </TooltipProvider>
     </div>
   );
 }
@@ -1026,17 +1039,23 @@ function timelineSegmentText(row: TimelineBarRow, segment: TimelineBarSegment) {
 }
 
 function timelineSegmentTitle(row: TimelineBarRow, segment: TimelineBarSegment) {
-  const rows = [
-    row.label,
-    segment.label,
-    segment.startMs === null ? "" : `开始 ${formatDateTime(segment.startMs)}`,
-    segment.endMs === null ? "" : `结束 ${formatDateTime(segment.endMs)}`,
-    `耗时 ${formatDuration(segment.durationMs)}`,
-  ].filter(Boolean);
+  return timelineSegmentTooltipRows(row, segment)
+    .map(([label, value]) => `${label} ${value}`)
+    .join(" · ");
+}
+
+export function timelineSegmentTooltipRows(row: TimelineBarRow, segment: TimelineBarSegment): Array<[string, string]> {
+  const rows: Array<[string, string]> = [
+    ["节点", row.label],
+    ["片段", segment.label],
+    ["开始", segment.startMs === null ? "未知" : formatDateTime(segment.startMs)],
+    ["结束", segment.endMs === null ? "未知" : formatDateTime(segment.endMs)],
+    ["耗时", formatDuration(segment.durationMs)],
+  ];
   if (row.kind !== "human_confirmation") {
-    rows.push(`Token ${formatNumber(segment.tokenTotal)}`, `思考轮次 ${formatNumber(segment.turns)}`);
+    rows.push(["Token", formatNumber(segment.tokenTotal)], ["思考轮次", formatNumber(segment.turns)]);
   }
-  return rows.join(" · ");
+  return rows;
 }
 
 function timelineRowSegments(row: TimelineNodeRow): TimelineBarSegment[] {
@@ -2837,7 +2856,7 @@ function downloadCsv(filename: string, csv: string) {
 }
 
 function sanitizeFilename(filename: string) {
-  return filename.replace(/[^\w.\-]+/g, "_");
+  return filename.replace(/[^\w.-]+/g, "_");
 }
 
 function statusLabel(status: string) {

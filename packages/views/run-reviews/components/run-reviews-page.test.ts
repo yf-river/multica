@@ -24,6 +24,7 @@ import {
   shouldRefreshRunReviewForTaskEvent,
   timelineTiming,
   timelineSegmentStyle,
+  timelineSegmentTooltipRows,
   timelineSegmentWidthPercent,
 } from "./run-reviews-page";
 import { sopStageDisplayName } from "../../common/sop-stage-labels";
@@ -1002,6 +1003,23 @@ describe("buildRunReviewEventRows", () => {
       durationMs: 300_000,
       tokenTotal: 0,
     });
+    expect(timelineSegmentTooltipRows(rows[0]!, rows[0]!.segments[0]!).map(([label]) => label)).toEqual([
+      "节点",
+      "片段",
+      "开始",
+      "结束",
+      "耗时",
+      "Token",
+      "思考轮次",
+    ]);
+    expect(timelineSegmentTooltipRows(rows[0]!, rows[0]!.segments[0]!)).toContainEqual(["Token", "30"]);
+    expect(timelineSegmentTooltipRows(rows[1]!, rows[1]!.segments[0]!).map(([label]) => label)).toEqual([
+      "节点",
+      "片段",
+      "开始",
+      "结束",
+      "耗时",
+    ]);
   });
 
   it("uses true timeline proportions for short run segments", () => {
