@@ -63,6 +63,42 @@ func (q *Queries) DeleteWorkspace(ctx context.Context, id pgtype.UUID) error {
 	return err
 }
 
+const getInitialOwnerByWorkspace = `-- name: GetInitialOwnerByWorkspace :one
+SELECT m.id AS member_id, m.workspace_id, m.user_id, m.role, m.created_at AS member_created_at,
+       u.name AS user_name, u.account AS user_account
+FROM member m
+JOIN "user" u ON u.id = m.user_id
+WHERE m.workspace_id = $1
+  AND m.role = 'owner'
+ORDER BY m.created_at ASC
+LIMIT 1
+`
+
+type GetInitialOwnerByWorkspaceRow struct {
+	MemberID        pgtype.UUID        `json:"member_id"`
+	WorkspaceID     pgtype.UUID        `json:"workspace_id"`
+	UserID          pgtype.UUID        `json:"user_id"`
+	Role            string             `json:"role"`
+	MemberCreatedAt pgtype.Timestamptz `json:"member_created_at"`
+	UserName        string             `json:"user_name"`
+	UserAccount     string             `json:"user_account"`
+}
+
+func (q *Queries) GetInitialOwnerByWorkspace(ctx context.Context, workspaceID pgtype.UUID) (GetInitialOwnerByWorkspaceRow, error) {
+	row := q.db.QueryRow(ctx, getInitialOwnerByWorkspace, workspaceID)
+	var i GetInitialOwnerByWorkspaceRow
+	err := row.Scan(
+		&i.MemberID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Role,
+		&i.MemberCreatedAt,
+		&i.UserName,
+		&i.UserAccount,
+	)
+	return i, err
+}
+
 const getWorkspace = `-- name: GetWorkspace :one
 SELECT id, name, slug, description, settings, created_at, updated_at, context, repos, issue_prefix, issue_counter, avatar_url FROM workspace
 WHERE id = $1

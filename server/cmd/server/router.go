@@ -559,6 +559,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		r.Post("/api/cli-token", h.IssueCliToken)
 		r.Post("/api/upload-file", h.UploadFile)
 		r.Post("/api/feedback", h.CreateFeedback)
+		r.Get("/api/workspaces/{workspaceId}/initial-admin-status", h.GetTenantInitialAdminStatus)
 
 		// Attachment download — user-scoped (auth-only), NOT
 		// workspace-scoped. The handler self-resolves the workspace
@@ -787,6 +788,9 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					r.Put("/", h.UpdatePromptLibraryItem)
 					r.Delete("/", h.DeletePromptLibraryItem)
 					r.Get("/versions", h.ListPromptLibraryVersions)
+					r.Post("/versions", h.CreatePromptLibraryVersion)
+					r.Get("/trials", h.ListPromptLibraryTrials)
+					r.Post("/versions/{versionId}/trials", h.CreatePromptLibraryTrial)
 				})
 			})
 
