@@ -577,6 +577,8 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 		if role.Key == "01-clarify" {
 			for _, want := range []string{
 				"不读取或探索代码仓库",
+				"第一动作只能读取 issue/TAPD/source_context/评论",
+				"工具白名单只包含读取 issue、读取评论/metadata 和发布本阶段结果所需的 plain `multica issue ...` 命令",
 				"不得 checkout、ls、find、rg、cat、sed、git",
 				"不得查询 Agent roster、当前工作目录或本地上下文文件",
 				"不得运行 multica agent、multica --help、pwd、shell 管道、重定向、&&、||、head",

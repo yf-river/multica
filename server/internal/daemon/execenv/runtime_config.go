@@ -499,6 +499,14 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("\n\n")
 	}
 
+	if isNoRepoBoundedReviewStage(ctx.ExecutionPolicy) {
+		b.WriteString("## Critical No-Repo Planning Tool Boundary\n\n")
+		b.WriteString("This is a no-repository planning stage. Before every tool call, first check whether the command is a plain single `multica issue ...` command needed to read the issue, read comments/metadata, or post your result. If it is anything else, do not call it.\n\n")
+		b.WriteString("- Do not call provider-native `Agent`, `Task`, `TaskCreate`, `TaskUpdate`, subagent, plan/todo, Read, Edit, Write, Grep, Glob, LS, or equivalent tools.\n")
+		b.WriteString("- Do not run `pwd`, `ls`, `find`, `rg`, `cat`, `sed`, `git`, `go`, `pnpm`, `npm`, `make`, `curl`, `multica agent`, `multica --help`, shell pipes, redirects, `&&`, `||`, `head`, or command wrappers.\n")
+		b.WriteString("- Do not inspect the current directory, repository structure, local context files, agent roster, or CLI capabilities. If you think you need those facts, write them as handoff questions for a later repo-enabled stage.\n\n")
+	}
+
 	b.WriteString("## Available Commands\n\n")
 	b.WriteString("**Use `--output json` for structured data.** Human table output now prints routable issue keys (for example `MUL-123`) and short UUID prefixes for workspace resources; use `--full-id` on list commands when you need canonical UUIDs.\n\n")
 	if isNoRepoBoundedReviewStage(ctx.ExecutionPolicy) {

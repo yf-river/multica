@@ -687,6 +687,10 @@ func TestPlanningStageCapabilityPolicyBlocksNativeSubagents(t *testing.T) {
 	})
 
 	for _, want := range []string{
+		"## Critical No-Repo Planning Tool Boundary",
+		"Before every tool call",
+		"If it is anything else, do not call it",
+		"Do not inspect the current directory, repository structure, local context files, agent roster, or CLI capabilities",
 		"Stage native tool boundary",
 		"do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Read, Edit, Write, MultiEdit, Grep, Glob, LS",
 		"Native file-write tools are unavailable",
