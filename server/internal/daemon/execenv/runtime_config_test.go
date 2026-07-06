@@ -721,6 +721,7 @@ func TestPlanningStageCapabilityPolicyBlocksNativeSubagents(t *testing.T) {
 		"multica issue comment add <issue-id> --content \"...\"",
 		"Run `multica issue get 77777777-8888-9999-aaaa-bbbbbbbbbbbb --output json`",
 		"Run `multica issue comment list 77777777-8888-9999-aaaa-bbbbbbbbbbbb --output json`",
+		"Use the `multica` CLI to interact with the platform",
 	} {
 		if strings.Contains(out, banned) {
 			t.Fatalf("no-repo planning stage should not require file-write comment mode %q\n--- output ---\n%s", banned, out)

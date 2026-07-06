@@ -641,6 +641,43 @@ func TestBuildPromptCommentTriggeredNoContent(t *testing.T) {
 	}
 }
 
+func TestBuildPromptNoRepoBoundedStageDoesNotPromptCLIReads(t *testing.T) {
+	t.Parallel()
+
+	prompt := BuildPrompt(Task{
+		IssueID:               "issue-1",
+		TriggerCommentID:      "comment-1",
+		TriggerCommentContent: "调度 01-需求澄清",
+		TriggerAuthorType:     "agent",
+		TriggerAuthorName:     "PM-项目经理",
+		ExecutionPolicy: &TaskExecutionPolicy{
+			RoleKind:      "planning_stage",
+			CanAccessRepo: false,
+			CanEditRepo:   false,
+		},
+	}, "codebuddy")
+
+	for _, want := range []string{
+		"Do not call tools or CLI commands",
+		"Return the stage result as your final assistant output",
+		"platform will automatically post",
+	} {
+		if !strings.Contains(prompt, want) {
+			t.Fatalf("no-repo bounded prompt missing %q\n---\n%s", want, prompt)
+		}
+	}
+	for _, banned := range []string{
+		"Start by running `multica issue get",
+		"multica issue comment list",
+		"multica issue comment add",
+		"Read the discussion",
+	} {
+		if strings.Contains(prompt, banned) {
+			t.Fatalf("no-repo bounded prompt should not contain %q\n---\n%s", banned, prompt)
+		}
+	}
+}
+
 // TestBuildPromptSquadLeaderNoActionProhibition verifies that when a squad
 // leader is triggered by another agent's comment, the per-turn prompt
 // explicitly forbids posting a comment whose only purpose is to announce

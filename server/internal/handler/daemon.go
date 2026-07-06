@@ -1255,6 +1255,18 @@ func isCoordinatorWithoutRepoPolicy(policy TaskExecutionPolicyData) bool {
 	return strings.EqualFold(strings.TrimSpace(policy.RoleKind), "coordinator") && !policy.CanAccessRepo
 }
 
+func isNoRepoBoundedPolicy(policy *TaskExecutionPolicyData) bool {
+	if policy == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(policy.RoleKind)) {
+	case "planning_stage", "verification_stage":
+		return !policy.CanAccessRepo
+	default:
+		return false
+	}
+}
+
 func coordinatorBuiltinSkillAllowed(name string) bool {
 	switch strings.ToLower(strings.TrimSpace(name)) {
 	case "multica-mentioning", "multica-projects-and-resources", "multica-squads":
@@ -1629,7 +1641,7 @@ func (h *Handler) ClaimTaskByRuntime(w http.ResponseWriter, r *http.Request) {
 		// the user just judged the prior output bad, so the daemon must start a
 		// fresh agent session in a fresh workdir instead of resuming anything
 		// from the same conversation that produced that output.
-		if !task.ForceFreshSession {
+		if !task.ForceFreshSession && !isNoRepoBoundedPolicy(resp.ExecutionPolicy) {
 			if prior, err := h.Queries.GetLastTaskSession(r.Context(), db.GetLastTaskSessionParams{
 				AgentID: task.AgentID,
 				IssueID: task.IssueID,

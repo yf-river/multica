@@ -226,6 +226,24 @@ func TestTaskExecutionPolicyForSOPRoles(t *testing.T) {
 	}
 }
 
+func TestNoRepoBoundedPolicySkipsPriorSession(t *testing.T) {
+	stage01 := taskExecutionPolicyForRole("01-clarify", "", false)
+	if !isNoRepoBoundedPolicy(&stage01) {
+		t.Fatalf("01 policy should skip prior provider session: %+v", stage01)
+	}
+	stage03 := taskExecutionPolicyForRole("03-task-split", "", false)
+	if isNoRepoBoundedPolicy(&stage03) {
+		t.Fatalf("03 policy should keep normal provider session behavior: %+v", stage03)
+	}
+	pm := taskExecutionPolicyForRole("pm", projectSOPAgentPM, true)
+	if isNoRepoBoundedPolicy(&pm) {
+		t.Fatalf("PM coordinator policy should not be treated as no-repo bounded stage: %+v", pm)
+	}
+	if isNoRepoBoundedPolicy(nil) {
+		t.Fatal("nil policy should not be treated as no-repo bounded stage")
+	}
+}
+
 func TestTaskExecutionPolicyReadsInternalSquadRoleKey(t *testing.T) {
 	agent := db.Agent{
 		Name:          "任意显示名",

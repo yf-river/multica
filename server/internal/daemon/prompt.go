@@ -42,6 +42,13 @@ func BuildPrompt(task Task, provider string) string {
 	var b strings.Builder
 	b.WriteString("You are running as a local coding agent for a Multica workspace.\n\n")
 	fmt.Fprintf(&b, "Your assigned issue ID is: %s\n\n", task.IssueID)
+	if isNoRepoBoundedPromptTask(task) {
+		b.WriteString("This is a no-repository planning/verification stage. Do not call tools or CLI commands.\n\n")
+		b.WriteString("Use only the issue, source, and Agent Identity context already supplied in this prompt and runtime brief. If a needed fact is absent, record it as an assumption or handoff question instead of trying to inspect the issue, comments, repository, CLI, working directory, or agent roster.\n\n")
+		writeSourceContextPrompt(&b, task)
+		b.WriteString("Return the stage result as your final assistant output. The platform will automatically post it as the issue comment when the task completes.\n")
+		return b.String()
+	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then complete it.\n", task.IssueID)
 	fmt.Fprintf(&b, "For comment history, follow the rule in your runtime workflow file (assignment-triggered tasks treat the read as mandatory). `multica issue comment list %s --output json` returns all comments for the issue (server caps at 2000). On long-running issues use `--recent 20 --output json` to read the 20 most recently active threads, then page older threads via the stderr `Next thread cursor: ...` line and the matching `--before` / `--before-id` until you have enough history. `--since <RFC3339>` is still available for incremental polling and may combine with `--recent`.\n", task.IssueID)
 	writeSourceContextPrompt(&b, task)
@@ -213,6 +220,13 @@ func buildCommentPrompt(task Task, provider string) string {
 			fmt.Fprintf(&b, "⚠️ **小队负责人 no_action 规则：** 如果你判断无需行动，调用 `multica squad activity %s no_action --reason \"...\"` 后直接退出。不要发布任何评论，包括“无需行动”或“静默退出”这类评论。squad activity 已经记录了你的决策，额外评论只会制造噪声。\n\n", task.IssueID)
 		}
 	}
+	if isNoRepoBoundedPromptTask(task) {
+		b.WriteString("This is a no-repository planning/verification stage. Do not call tools or CLI commands.\n\n")
+		b.WriteString("Use only the issue, source, triggering comment, and Agent Identity context already supplied in this prompt and runtime brief. If a needed fact is absent, record it as an assumption or handoff question instead of trying to inspect the issue, comments, repository, CLI, working directory, or agent roster.\n\n")
+		writeSourceContextPrompt(&b, task)
+		b.WriteString("Return the stage result as your final assistant output. The platform will automatically post it as the issue comment/reply when the task completes.\n")
+		return b.String()
+	}
 	fmt.Fprintf(&b, "Start by running `multica issue get %s --output json` to understand your task, then decide how to proceed.\n\n", task.IssueID)
 	// Comment-reading pointer. Warm path with new comments: issue-wide
 	// since-delta count, but steer the agent to read the triggering thread
@@ -249,6 +263,18 @@ func buildTaskCommentReplyInstructions(provider string, task Task) string {
 			"Keep the body concise. Avoid backticks, command substitutions, environment variables, quotes that need escaping, and long multi-paragraph text in inline comments.\n",
 		task.IssueID, task.TriggerCommentID,
 	)
+}
+
+func isNoRepoBoundedPromptTask(task Task) bool {
+	if task.ExecutionPolicy == nil {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(task.ExecutionPolicy.RoleKind)) {
+	case "planning_stage", "verification_stage":
+		return !task.ExecutionPolicy.CanAccessRepo
+	default:
+		return false
+	}
 }
 
 func writeSourceContextPrompt(b *strings.Builder, task Task) {

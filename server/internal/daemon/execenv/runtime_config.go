@@ -394,7 +394,11 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 	var b strings.Builder
 
 	b.WriteString("# Multica Agent Runtime\n\n")
-	b.WriteString("You are a coding agent in the Multica platform. Use the `multica` CLI to interact with the platform.\n\n")
+	if isNoRepoBoundedReviewStage(ctx.ExecutionPolicy) {
+		b.WriteString("You are a planning/review agent in the Multica platform. This no-repository stage must not call tools or CLI commands; return the stage result as final assistant output so the platform can post it automatically.\n\n")
+	} else {
+		b.WriteString("You are a coding agent in the Multica platform. Use the `multica` CLI to interact with the platform.\n\n")
+	}
 	writeBackgroundTaskSafetyInstructions(&b)
 	b.WriteString("## Output Language\n\n")
 	b.WriteString("Default to Simplified Chinese for user-facing natural language: progress updates, stage summaries, issue comments, chat replies, and final delivery notes. Keep commands, code, file paths, API fields, repository names, product names, logs, and quoted error text in their original language when precision matters.\n\n")
