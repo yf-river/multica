@@ -161,6 +161,61 @@ func isTrivialDoneOutput(output string) bool {
 	return false
 }
 
+var agentMentionURLPattern = regexp.MustCompile(`mention://agent/[0-9a-fA-F-]{36}`)
+
+func containsAgentMention(content string) bool {
+	return agentMentionURLPattern.MatchString(content)
+}
+
+func isDispatchLikeTaskMessage(content string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(content))
+	if normalized == "" {
+		return false
+	}
+	for _, marker := range []string{
+		"调度",
+		"dispatch",
+		"delegate",
+		"请继续",
+		"请补齐",
+	} {
+		if strings.Contains(normalized, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func dispatchCommentFromTaskMessages(messages []db.TaskMessage) string {
+	for i := len(messages) - 1; i >= 0; i-- {
+		message := messages[i]
+		if message.Type != "text" || !message.Content.Valid {
+			continue
+		}
+		content := strings.TrimSpace(util.UnescapeBackslashEscapes(message.Content.String))
+		if content == "" || !isDispatchLikeTaskMessage(content) {
+			continue
+		}
+		matches := agentMentionURLPattern.FindAllString(content, -1)
+		if len(matches) == 1 {
+			return content
+		}
+	}
+	return ""
+}
+
+func (s *TaskService) fallbackDispatchCommentFromMessages(ctx context.Context, taskID pgtype.UUID) string {
+	messages, err := s.Queries.ListTaskMessages(ctx, taskID)
+	if err != nil {
+		slog.Warn("list task messages for dispatch fallback failed",
+			"task_id", util.UUIDToString(taskID),
+			"error", err,
+		)
+		return ""
+	}
+	return dispatchCommentFromTaskMessages(messages)
+}
+
 func (s *TaskService) captureTaskQueued(ctx context.Context, task db.AgentTaskQueue) {
 	s.recordTaskTraceEvent(ctx, task, "task.queued", "任务已入队", taskTraceOptions{})
 	if s.Metrics != nil {
@@ -2789,6 +2844,11 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 					// decoded into real newlines before the comment hits the DB. See
 					// util.UnescapeBackslashEscapes for the exact contract.
 					body := util.UnescapeBackslashEscapes(payload.Output)
+					if !containsAgentMention(body) {
+						if dispatchBody := s.fallbackDispatchCommentFromMessages(ctx, task.ID); dispatchBody != "" {
+							body = dispatchBody
+						}
+					}
 					if task.TriggerCommentID.Valid && isTrivialDoneOutput(body) {
 						slog.Warn("suppressing trivial comment-trigger fallback output",
 							"task_id", util.UUIDToString(task.ID),

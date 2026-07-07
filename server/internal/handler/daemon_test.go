@@ -3200,6 +3200,62 @@ func TestCompleteTask_AssignmentTriggered_SynthesizedMentionDispatchesAgent(t *t
 	}
 }
 
+func TestCompleteTask_AssignmentTriggered_UsesIntermediateDispatchMentionWhenFinalOutputSummarizes(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+
+	fixture := createRunningAssignmentCompleteTask(t, ctx, "mul-3314 intermediate dispatch mention fixture", 3314)
+	targetAgentID := createHandlerTestMentionTargetAgent(t, "Intermediate Dispatch Target 01 "+uuid.NewString())
+	dispatchOutput := "调度 01-需求澄清：请补齐需求边界。 [@01-需求澄清](mention://agent/" + targetAgentID + ")"
+	finalSummary := "已完成 PM 首轮调度，活动记录已写入。等待 01-需求澄清完成后继续推进。"
+
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO task_message (task_id, seq, type, content)
+		VALUES ($1, 1, 'text', $2), ($1, 2, 'text', $3)
+	`, fixture.TaskID, dispatchOutput, finalSummary); err != nil {
+		t.Fatalf("setup: insert task messages: %v", err)
+	}
+
+	completeDaemonTaskForTest(t, fixture.TaskID, finalSummary)
+
+	var commentID, content, sourceTaskID string
+	var parentID *string
+	if err := testPool.QueryRow(ctx, `
+		SELECT id, content, parent_id, source_task_id
+		FROM comment
+		WHERE issue_id = $1 AND author_type = 'agent' AND author_id = $2
+	`, fixture.IssueID, fixture.AgentID).Scan(&commentID, &content, &parentID, &sourceTaskID); err != nil {
+		t.Fatalf("query synthesized dispatch comment: %v", err)
+	}
+	if content != dispatchOutput {
+		t.Fatalf("synthesized comment content = %q, want intermediate dispatch %q", content, dispatchOutput)
+	}
+	if parentID != nil {
+		t.Fatalf("synthesized top-level dispatch comment parent_id = %s, want nil", *parentID)
+	}
+	if sourceTaskID != fixture.TaskID {
+		t.Fatalf("synthesized dispatch comment source_task_id = %s, want task %s", sourceTaskID, fixture.TaskID)
+	}
+
+	var queued int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM agent_task_queue
+		WHERE issue_id = $1
+		  AND agent_id = $2
+		  AND trigger_comment_id = $3
+		  AND status = 'queued'
+	`, fixture.IssueID, targetAgentID, commentID).Scan(&queued); err != nil {
+		t.Fatalf("count queued intermediate dispatch mention tasks: %v", err)
+	}
+	if queued != 1 {
+		t.Fatalf("queued intermediate dispatch mention task count = %d, want 1", queued)
+	}
+}
+
 // Companion to the above: when the agent DID post its own comment during the
 // run, CompleteTask must not synthesize a duplicate. Guards against the
 // common case where the fix is over-eager and creates two comments per task.

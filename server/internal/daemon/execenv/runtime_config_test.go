@@ -619,6 +619,8 @@ func TestStageChainPMCoordinatorGetsCommentTriggerRule(t *testing.T) {
 		"Stage-chain PM rule from your squad instructions",
 		"only review the latest stage output or human reply",
 		"Do not implement, inspect repositories, create MRs, run tests, or simulate 01-05 inside this PM task",
+		"your final assistant output must repeat that exact dispatch comment",
+		"Do not replace it with a summary",
 		"Stage-chain dispatch verification rule",
 		"A stage is actually dispatched only when the platform has a real queued, dispatched, running, or completed task for that target agent",
 		"re-dispatch with exactly one real mention instead of recording `no_action`",
