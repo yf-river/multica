@@ -18,6 +18,7 @@ import {
   buildTimelineBarRows,
   buildTimelineAgentRows,
   cacheReuseRate,
+  filterVisibleRunReviewEventRows,
   issueRunRowActivityLabel,
   issueRunRowMetaLabels,
   runReviewMessageRefreshDelayMs,
@@ -97,6 +98,31 @@ function tool(overrides: Partial<PromptEvaluationToolCallChain> = {}): PromptEva
     summary: "工具 curl-check 已配对：调用 #1，结果 #2",
     created_at: "2026-06-09T10:01:00.000Z",
     completed_at: "2026-06-09T10:02:30.000Z",
+    ...overrides,
+  };
+}
+
+function timelineNode(overrides: Partial<IssueTimelineNode> = {}): IssueTimelineNode {
+  return {
+    issue_id: "issue-1",
+    node_id: "task:task-1",
+    node_type: "agent_task",
+    agent_id: "agent-1",
+    agent_name: "01-需求澄清",
+    status: "completed",
+    started_at: "2026-06-09T10:00:00.000Z",
+    completed_at: "2026-06-09T10:01:00.000Z",
+    duration_ms: 60_000,
+    input_tokens: 0,
+    output_tokens: 0,
+    cache_read_tokens: 0,
+    cache_write_tokens: 0,
+    message_count: 0,
+    agent_turn_count: 0,
+    trace_event_count: 0,
+    usage_unavailable_trace: false,
+    summary: "节点摘要",
+    evidence_refs: [],
     ...overrides,
   };
 }
@@ -458,6 +484,90 @@ describe("buildRunReviewEventRows", () => {
     expect(sheet?.rows).toHaveLength(56);
     expect(sheet?.rows.some((row) => row.includes("message:task-1:55"))).toBe(true);
     expect(sheet?.rows.some((row) => row.includes("message 55"))).toBe(true);
+  });
+
+  it("filters human-readable event rows without dropping raw export evidence", () => {
+    const tree = {
+      root: {
+        tasks: [],
+        task_messages: [
+          message({ seq: 1, type: "text", content: "已完成需求澄清", output: "" }),
+        ],
+        trace_events: [
+          trace({ id: "queued", event_type: "task.queued", event_name: "任务入队", status: "queued", failure_reason: "", error_type: "" }),
+          trace({ id: "started", event_type: "task.started", event_name: "任务已开始", status: "running", failure_reason: "", error_type: "" }),
+          trace({ id: "completed", event_type: "task.completed", event_name: "任务完成", status: "completed", failure_reason: "", error_type: "" }),
+          trace({ id: "usage", event_type: "llm.usage_reported", event_name: "模型用量已上报", status: "completed", failure_reason: "", error_type: "" }),
+          trace(),
+        ],
+        tool_call_chains: [
+          tool({ id: "read-file", failure_signal: false, failure_reason: "", output: "ok" }),
+        ],
+        children: [],
+      },
+    } as unknown as IssueExecutionTreeResponse;
+    const rows = buildRunReviewEventRows(tree, [
+      timelineNode({
+        node_id: "squad_step:sop-1",
+        node_type: "squad_step",
+        summary: "05-验证测试",
+        status: "completed",
+      }),
+      timelineNode({
+        node_id: "human_confirmation:comment-1:task-2",
+        node_type: "human_confirmation",
+        summary: "等待人工确认",
+        status: "completed",
+      }),
+      timelineNode({
+        node_id: "child_issue_ref:gateway",
+        node_type: "child_issue_ref",
+        summary: "gateway 子任务",
+        status: "completed",
+      }),
+      timelineNode({
+        node_id: "source_fetch:tapd",
+        node_type: "source_fetch",
+        summary: "来源已拉取",
+        status: "completed",
+      }),
+      timelineNode({
+        node_id: "approval:wakeup",
+        node_type: "approval",
+        summary: "唤醒 PM",
+        status: "completed",
+      }),
+    ]);
+
+    const visibleRows = filterVisibleRunReviewEventRows(rows);
+    const visibleObjects = visibleRows.map((row) => row.object);
+    const [rawSheet] = buildRunReviewRawEventsXlsxSheets(rows);
+    const rawObjects = rawSheet?.rows.slice(1).map((row) => row[7]) ?? [];
+
+    expect(visibleObjects).toEqual(expect.arrayContaining([
+      "消息 #1",
+      "task.failed",
+      "human_confirmation",
+      "child_issue_ref",
+      "source_fetch",
+    ]));
+    expect(visibleRows.some((row) => row.kind === "tool")).toBe(true);
+    expect(visibleObjects).not.toEqual(expect.arrayContaining([
+      "task.queued",
+      "task.started",
+      "task.completed",
+      "llm.usage_reported",
+      "squad_step",
+      "approval",
+    ]));
+    expect(rawObjects).toEqual(expect.arrayContaining([
+      "task.queued",
+      "task.started",
+      "task.completed",
+      "llm.usage_reported",
+      "squad_step",
+      "approval",
+    ]));
   });
 
   it("groups task events once and keeps group events in timeline order", () => {

@@ -403,9 +403,13 @@ function RunReviewDetail({
   const visibleTimelineRows = buildTimelineAgentRows(timelineNodes);
   const visibleChildLanes = childLanes;
   const eventRows = buildRunReviewEventRows(tree, timelineNodes);
+  const readableEventRows = useMemo(
+    () => filterVisibleRunReviewEventRows(eventRows),
+    [eventRows],
+  );
   const visibleEventRows = useMemo(
-    () => filterRunReviewEventRows(eventRows, eventQuery),
-    [eventQuery, eventRows],
+    () => filterRunReviewEventRows(readableEventRows, eventQuery),
+    [eventQuery, readableEventRows],
   );
   const taskLabelById = useMemo(() => buildEventTaskLabelById(timelineNodes), [timelineNodes]);
   const visibleEventGroups = useMemo(
@@ -616,7 +620,7 @@ function RunReviewDetail({
       <section className="rounded-md border bg-card">
         <SectionTitle
           title="事件流"
-          subtitle="按节点聚合事件；组标题查看完整 transcript，点击事件查看当前 raw。"
+          subtitle="展示可读动作；完整记录见 RAW 导出。"
           action={
             <ExportButton
               label="导出 RAW 交互信息"
@@ -646,7 +650,11 @@ function RunReviewDetail({
           )) : (
             <div className="flex gap-2 rounded-md border border-dashed bg-muted/20 px-3 py-6 text-sm text-muted-foreground">
               <AlertTriangle className="size-4" />
-              {eventRows.length > 0 ? "没有匹配的事件。" : "暂无事件。真实任务开始后会回写 trace、用量和证据。"}
+              {eventSearchActive
+                ? "没有匹配的事件。"
+                : eventRows.length > 0
+                  ? "暂无可读动作，完整记录可通过 RAW 导出查看。"
+                  : "暂无事件。真实任务开始后会回写 trace、用量和证据。"}
             </div>
           )}
         </div>
@@ -1739,6 +1747,45 @@ export function filterRunReviewEventRows(eventRows: RunReviewEventRowData[], que
   if (!q) return eventRows;
   return eventRows.filter((event) => runReviewEventSearchText(event).toLowerCase().includes(q));
 }
+
+export function filterVisibleRunReviewEventRows(eventRows: RunReviewEventRowData[]): RunReviewEventRowData[] {
+  return eventRows.filter(shouldShowRunReviewEventRow);
+}
+
+function shouldShowRunReviewEventRow(event: RunReviewEventRowData): boolean {
+  if (event.severity !== "normal") return true;
+  if (event.kind === "message" || event.kind === "tool") return true;
+
+  if (event.kind === "trace") {
+    const eventType = event.object.toLowerCase();
+    if (event.category === "输入" || eventType === "user_input.received") return true;
+    if (eventType.includes("source") || eventType.includes("fetch")) return true;
+    if (eventType === "task.failed" || eventType === "task.cancelled" || eventType === "task.blocked") return true;
+    if (eventType === "llm.usage_unavailable" || eventType === "task.waiting_local_directory") return true;
+    return !RUN_REVIEW_NOISY_TRACE_EVENT_TYPES.has(eventType);
+  }
+
+  if (event.kind === "node") {
+    const nodeType = event.object.toLowerCase();
+    return RUN_REVIEW_VISIBLE_NODE_TYPES.has(nodeType);
+  }
+
+  return true;
+}
+
+const RUN_REVIEW_NOISY_TRACE_EVENT_TYPES = new Set([
+  "task.queued",
+  "task.dispatched",
+  "task.started",
+  "task.completed",
+  "llm.usage_reported",
+]);
+
+const RUN_REVIEW_VISIBLE_NODE_TYPES = new Set([
+  "human_confirmation",
+  "child_issue_ref",
+  "source_fetch",
+]);
 
 function runReviewEventSearchText(event: RunReviewEventRowData) {
   return [
