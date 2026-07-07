@@ -169,6 +169,7 @@ const sopPMStageGateSummaryRule = `## PM 阶段门禁摘要
 - PM 调度 05-验证测试时，必须要求 05 回读 03 的 V1/V2/V3 test matrix 和 04 handoff；如果 04 把任一 required V2/V3 写成跳过、未执行或需环境，PM 不得把调度摘要缩减成只检查 V1。
 - 如果 03 的 V3 矩阵或 sandbox_plan 写了部署验证、sandbox、外部 HTTP、业务 E2E 或网关路由验证，且未明确标为 not required/skipped 或用户未明确豁免，PM 必须按 required 验收；05 把 V3 写成 N/A、待部署或后续执行时，PM 不得收口 done。
 - 05-验证测试必须独立给出 PASS/BLOCKED、child issue/MR 检查和必要的真实验证证据；docs-only evidence MR 不得替代功能 MR，required V2/V3 缺证据时不得 PASS，05 未通过时 PM 不得收口。
+- 如果当前 issue 是跨项目 child，且 05 明确“本项目交付已通过，剩余 V2/V3 只依赖父 issue 或其它项目实现后的组合验收”，PM 可以把 child 收口为 done，并把该 V2/V3 组合验收要求带回父 issue 05；不得让 child 反向等待父 issue 04，造成父等 child、child 等父的死锁。
 - PM 只检查阶段产物是否满足门禁，不执行阶段 skill，不补写阶段产物，不用内部工具模拟阶段完成。`
 
 const sopPMDelegationIntegrityRule = `## PM 平台任务完整性规则
@@ -197,6 +198,15 @@ const sopPMCrossProjectSummaryRule = `## PM 跨项目 child issue 摘要
 - PM 不得在同一条评论或同一个 PM task 中一边创建/确认 required child issue，一边 @mention 父 issue 的 04-开发或 05-验证测试；child issue 创建/确认本身就是本轮动作。
 - PM 创建或复用 required child issue 后，必须回读 children，并在评论中列出 child identifier、target project、status 和 assignee；如果回读为空、project/parent/assignee 不正确或任一 required child status 不是 done，本轮只能评论等待/阻断，不得 @mention 父 issue 的 04-开发或 05-验证测试。只有 child done 通知或用户评论触发后，PM 回读 children 确认全部 done，才能继续父 issue 04。
 - 父 issue 最终收口前必须回读 child issue 列表；任何 child issue 未完成时，父 issue 必须等待，不能设置为 done。`
+
+const sopChildIssueVerificationOwnershipRule = `## child issue 验证归属规则
+
+- 跨项目 child issue 只对自己目标项目的交付负责，例如配置、路由、部署文件、gateway 适配、权限声明或该项目代码变更。
+- 03 的 V1/V2/V3 test matrix 必须区分 child-local 验证和 parent-integration 验证：child-local 是当前 child 可独立完成的验证；parent-integration 是父 issue 实现和所有 required child 完成后才能做的组合验证。
+- 如果当前 issue 是跨项目 child，且本项目交付的 V1、生成、lint、template、配置渲染、局部 mock 或项目内验证已通过，但真实外部 HTTP/curl/grpcurl 需要父 issue 的业务实现先完成，05 不得仅因父 issue 还没实现而 BLOCKED。
+- 上述场景下，05 必须把结论写成“child-local PASS，parent-integration 待父 issue 05 执行”，列出父级 05 必须补做的 V2/V3 命令、目标 URL、依赖服务和通过标准。
+- child issue 仍必须在本项目证据不足、实现/MR 缺失、生成产物缺失、配置不可渲染、项目内 V1 失败、或自身依赖的下级 child 未完成时 BLOCKED。
+- 父 issue 05 必须在所有 required child done 后执行 parent-integration V2/V3；父 issue 不能用 child-local PASS 代替整体真实验收。`
 
 const sopImplementationMRRule = `## 04-implement 功能 MR 规则
 
@@ -257,6 +267,7 @@ const sopTaskSplitContractRule = `## 03-task-split 产物契约
 - 必须输出 ` + "`" + `not required projects` + "`" + `，说明未创建 gateway/ida-deployment 等项目的原因。
 - 必须输出 ` + "`" + `V1/V2/V3 test matrix` + "`" + `：V1 开发侧局部验证、V2 sandbox/dev 集成验证、V3 业务 E2E 验证。
 - 测试矩阵每一项必须写明 level、required、execution_stage、owner_role、target_project、environment_need、command_or_entrypoint、pass_criteria、blocking_gap。
+- 对跨项目 child issue，测试矩阵必须明确哪些项属于 child-local，哪些项属于 parent-integration；不得把“父 issue 业务实现未完成”写成 child issue 自身完成的阻塞项，除非当前 child 的交付无法做任何本地验证。
 - 必须输出 ` + "`" + `sandbox_plan` + "`" + `，从测试矩阵推导 required、blocked 或 skipped；blocked 必须说明缺启动契约、凭据、依赖服务、目标 URL 或失败日志。
 - V1/V2/V3 测试层级计划必须在任务分发前完成；04 和 05 只按该计划执行各自职责，不临时发明测试层级。
 - 若 gateway/ida-deployment/其它项目为 required，生成 handoff 只是创建目标项目 child issue 的输入，不是关闭依赖的证据。`
@@ -277,6 +288,7 @@ const sopVerificationGateRule = `## 05-verify 验证门禁
 - 如果 04 报告中出现 required 项 ` + "`" + `SKIP` + "`" + `、跳过、未执行、需 DB 环境、需 sandbox/dev 环境、需目标 URL 或缺凭据，05 必须先按项目 harness/skill 尝试补齐真实验证；补不齐时结论必须是 BLOCKED，不能 PASS。
 - 05 必须运行或要求 PM 提供 ` + "`" + `multica issue children <父 issue id> --output json` + "`" + ` 证据。
 - 任一必要 child issue 缺失、仍是 PENDING、未关联目标项目 implementation MR，或只存在 handoff 文件时，结论必须是 BLOCKED/退回，不能 PASS。
+- 如果当前 issue 自己就是跨项目 child，05 必须应用 child issue 验证归属规则：先验本项目交付；只依赖父 issue 后续实现的组合 V2/V3 不得反向阻塞 child 收口。
 - 如果 03 的 V3 矩阵或 sandbox_plan 写了部署验证、sandbox、外部 HTTP、业务 E2E、网关路由验证或 curl/grpcurl 验收，且该项未明确标为 ` + "`" + `not required` + "`" + `/` + "`" + `skipped` + "`" + ` 或用户未明确豁免，05 必须把它当作 required；不能用 ` + "`" + `N/A` + "`" + `、` + "`" + `待部署` + "`" + `、` + "`" + `后续执行` + "`" + ` 或 ` + "`" + `MR 合并后再测` + "`" + ` 作为 PASS 依据。
 - 若 V2 sandbox/dev 或 V3 business E2E 为 required，05 必须先按项目 harness/skill 自动拉起环境并执行真实验证；只有启动契约、凭据、依赖服务、目标 URL 缺失或启动失败时，才能 BLOCKED。
 - 若验收要求包含外部 HTTP、gateway 路由、sandbox 或业务 E2E，V2 sandbox 或 V3 business E2E 被 SKIP 不能当作 PASS。
@@ -369,9 +381,9 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 				{Key: "pm", Name: projectSOPAgentPM, AgentName: projectSOPAgentPM, Description: "SOP PM：读取 issue、项目资源和 source_context，识别目标项目与跨项目依赖，调度 01-05 阶段并最终收口。", Instruction: projectSOPPMInstruction(), MemberRole: projectSOPRolePM, MCPConfig: mcpConfig},
 				{Key: "01-clarify", Name: projectSOPAgent01, AgentName: projectSOPAgent01, Description: "需求澄清：读取 TAPD/source_context、issue 评论和项目资源元数据，明确需求边界、已确认结论、未定问题、建议默认值、验收口径、目标项目/仓库初判。", Instruction: "职责：读懂需求来源，确认用户要什么、不做什么、验收标准是什么。输入：issue、TAPD 正文、评论、项目背景、已有约束。交付物：需求边界、已确认结论、未定问题、建议默认值、验收口径、目标项目/仓库初判、进入 02 条件、handoff。边界：只澄清需求，不写实现方案，不改代码，不读取或探索代码仓库。第一动作只能使用平台注入的 issue/TAPD/source_context/评论上下文；不得调用工具或 CLI 发布结果。禁止：不得直接进入开发；不得自行 @mention 下一阶段；不得 checkout、ls、find、rg、cat、sed、git 或用等价方式查看本地仓库；不得查询 Agent roster、当前工作目录或本地上下文文件；不得运行 multica agent、multica --help、pwd、shell 管道、重定向、&&、||、head 等命令形态。执行目标项目的 01-clarify；基于 source_context 中的 TAPD 正文、issue 评论和项目资源元数据，产出需求边界、验收口径、适用仓库初判和 handoff；可用/缺失 operation skill 或代码事实只能作为后续 02/04 待确认项记录。\n\n" + sopWorkerRoutingRule + "\n\n" + sopReadOnlyStageOutputRule + "\n\n" + sopClarifyWorkerContractRule, MemberRole: projectSOPRole01, MCPConfig: mcpConfig},
 				{Key: "02-design", Name: projectSOPAgent02, AgentName: projectSOPAgent02, Description: "方案设计：结合已闭环澄清和目标仓库上下文输出方案、影响面、接口/数据契约和项目 skill 调用计划。", Instruction: "职责：基于需求和项目上下文设计技术方案、影响面、接口/数据契约和测试策略。输入：已闭环的 01 handoff、用户确认、PM 记录的假设、项目资源、代码/接口背景、历史文档。交付物：技术方案、采用的澄清假设、影响面、接口/数据变更、风险点、测试建议、handoff。边界：负责方案，不直接落大范围代码。禁止：不得绕过澄清结论；澄清未闭环时不得硬写方案；不得自行 @mention 下一阶段。执行目标项目的 02-design；需要仓库上下文时使用 gongfeng MCP 或本地仓库，产出方案、影响面、接口/数据契约、项目 skill 调用计划和 handoff。\n\n" + sopWorkerRoutingRule + "\n\n" + sopReadOnlyStageOutputRule + "\n\n" + sopDesignClarifyGateRule, MemberRole: projectSOPRole02, MCPConfig: mcpConfig},
-				{Key: "03-task-split", Name: projectSOPAgent03, AgentName: projectSOPAgent03, Description: "任务拆分：识别跨项目依赖，产出目标项目列表、operation graph、V1/V2/V3 test matrix、缺失 skill 和 handoff。", Instruction: "职责：把方案拆成可执行任务，识别跨项目依赖、执行顺序和 V1/V2/V3 测试层级计划。输入：02 handoff、项目列表、仓库资源、依赖关系。交付物：任务拆分、目标项目列表、跨项目 child issue 建议、依赖顺序、V1/V2/V3 test matrix、handoff。边界：负责拆分、依赖判断和测试计划；跨项目 child issue 由 PM 创建或确认。禁止：不得重复创建 child issue；不得把单项目阶段推进拆成同项目 child issue；不得把 handoff 文件当作跨项目交付完成。执行目标项目的 03-task-split；用 TAPD/Gongfeng/项目资源上下文识别跨项目依赖，产出任务拆分、目标项目列表、operation graph、V1/V2/V3 test matrix、缺失 skill 和 handoff。\n\n" + sopWorkerRoutingRule + "\n\n" + sopReadOnlyStageOutputRule + "\n\n" + sopTaskSplitContractRule + "\n\n" + sopTaskSplitCrossProjectRule, MemberRole: projectSOPRole03, MCPConfig: mcpConfig},
+				{Key: "03-task-split", Name: projectSOPAgent03, AgentName: projectSOPAgent03, Description: "任务拆分：识别跨项目依赖，产出目标项目列表、operation graph、V1/V2/V3 test matrix、缺失 skill 和 handoff。", Instruction: "职责：把方案拆成可执行任务，识别跨项目依赖、执行顺序和 V1/V2/V3 测试层级计划。输入：02 handoff、项目列表、仓库资源、依赖关系。交付物：任务拆分、目标项目列表、跨项目 child issue 建议、依赖顺序、V1/V2/V3 test matrix、handoff。边界：负责拆分、依赖判断和测试计划；跨项目 child issue 由 PM 创建或确认。禁止：不得重复创建 child issue；不得把单项目阶段推进拆成同项目 child issue；不得把 handoff 文件当作跨项目交付完成。执行目标项目的 03-task-split；用 TAPD/Gongfeng/项目资源上下文识别跨项目依赖，产出任务拆分、目标项目列表、operation graph、V1/V2/V3 test matrix、缺失 skill 和 handoff。\n\n" + sopWorkerRoutingRule + "\n\n" + sopReadOnlyStageOutputRule + "\n\n" + sopTaskSplitContractRule + "\n\n" + sopTaskSplitCrossProjectRule + "\n\n" + sopChildIssueVerificationOwnershipRule, MemberRole: projectSOPRole03, MCPConfig: mcpConfig},
 				{Key: "04-implement", Name: projectSOPAgent04, AgentName: projectSOPAgent04, Description: "代码实现：按既定边界和目标项目 operation skill 执行修改，按 03 测试矩阵完成开发侧验证，保留实现证据。", Instruction: "职责：按确认范围实现代码、配置、测试或文档变更，并按 03 的 V1/V2/V3 test matrix 完成开发侧负责的验证。输入：03 handoff、目标仓库、任务边界、V1/V2/V3 test matrix、相关 skill/operation 指引。交付物：代码变更、开发侧验证结果、实现说明、风险说明、交给 05 的验证入口、handoff。边界：只改本任务范围内内容。禁止：不得越权改无关模块；不得缺测试就宣称完成；不得自行 @mention 下一阶段；不得重新定义 V1/V2/V3 测试层级。执行目标项目的 04-implement，按既定边界和对应项目 operation skill 实现，不越权修改无关模块；需要工蜂上下文时使用 gongfeng MCP。\n\n" + sopWorkerRoutingRule + "\n\n" + sopImplementationMRRule + "\n\n" + sopImplementationVerificationRule, MemberRole: projectSOPRole04, MCPConfig: mcpConfig},
-				{Key: "05-verify", Name: projectSOPAgent05, AgentName: projectSOPAgent05, Description: "验证测试：按 03 测试矩阵独立检查实现、测试结果、回写记录和最终 handoff，确认可验收证据。", Instruction: "职责：按 03 的 V1/V2/V3 test matrix 独立检查实现、测试结果、回归风险、证据完整性。输入：03 test matrix、04 handoff、diff、测试日志、验收标准、运行复盘/trace。交付物：验证结论、缺陷/返工清单、V1/V2/V3 逐项结论、通过证据、最终 handoff。边界：负责独立验收，不替开发自证。禁止：不得在证据不足时通过；不得直接 done issue，最终收口交给 PM；不得把 V2/V3 SKIP 当作真实外部 HTTP 验收通过。执行目标项目的 05-verify，独立检查实现、测试结果和最终 handoff；核对 TAPD/Gongfeng/source_context 证据。\n\n" + sopWorkerRoutingRule + "\n\n" + sopReadOnlyStageOutputRule + "\n\n" + sopVerificationImplementationMRRule + "\n\n" + sopVerificationGateRule + "\n\n" + sopVerificationCrossProjectGateRule, MemberRole: projectSOPRole05, MCPConfig: mcpConfig},
+				{Key: "05-verify", Name: projectSOPAgent05, AgentName: projectSOPAgent05, Description: "验证测试：按 03 测试矩阵独立检查实现、测试结果、回写记录和最终 handoff，确认可验收证据。", Instruction: "职责：按 03 的 V1/V2/V3 test matrix 独立检查实现、测试结果、回归风险、证据完整性。输入：03 test matrix、04 handoff、diff、测试日志、验收标准、运行复盘/trace。交付物：验证结论、缺陷/返工清单、V1/V2/V3 逐项结论、通过证据、最终 handoff。边界：负责独立验收，不替开发自证。禁止：不得在证据不足时通过；不得直接 done issue，最终收口交给 PM；不得把 V2/V3 SKIP 当作真实外部 HTTP 验收通过。执行目标项目的 05-verify，独立检查实现、测试结果和最终 handoff；核对 TAPD/Gongfeng/source_context 证据。\n\n" + sopWorkerRoutingRule + "\n\n" + sopReadOnlyStageOutputRule + "\n\n" + sopVerificationImplementationMRRule + "\n\n" + sopVerificationGateRule + "\n\n" + sopVerificationCrossProjectGateRule + "\n\n" + sopChildIssueVerificationOwnershipRule, MemberRole: projectSOPRole05, MCPConfig: mcpConfig},
 			},
 			Profile: map[string]any{
 				"profile_key": "generic-project-sop-flow",
@@ -419,6 +431,7 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 					"task_split_contract":     "03-task-split 必须输出 required cross-project dependencies、not required projects、V1/V2/V3 test matrix 和 sandbox_plan；handoff 文件不是目标项目完成证据。",
 					"parent_wait_gate":        "任一 required child issue 未 done 时，父 issue 必须等待；PM 不得调度父 issue 的 04/05，不得把 child 创建成功当作依赖完成。",
 					"verification_gate":       "05-verify 必须检查必要 child issue、目标项目 MR、V1/V2/V3 test matrix 和真实 curl/grpcurl 证据；必要依赖缺失、PENDING、handoff 待分发或 V2/V3 SKIP 时必须 BLOCKED。",
+					"child_completion_gate":   "跨项目 child issue 只对自己目标项目交付负责；child-local PASS 且剩余项只依赖父 issue 或其它项目完成后的 parent-integration V2/V3 时，child 可先 done，父 issue 05 必须最终补齐组合验收。",
 					"completion_gate":         "PM 完成前必须通过公开 issue children 回读确认所有必要目标项目子 issue 都存在，且 parent_issue_id、project_id、assignee_id 与本轮拆分计划一致；必要 child issue 完成并关联目标项目 MR 前不得收口。",
 				},
 				"cross_project_child_issues": []map[string]any{

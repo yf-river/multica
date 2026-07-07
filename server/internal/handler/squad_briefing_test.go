@@ -330,6 +330,9 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 	if got := profile.CrossProjectPolicy["existing_child_repair"]; !strings.Contains(got, "backlog") || !strings.Contains(got, "普通成员 assignee") || !strings.Contains(got, "todo") {
 		t.Fatalf("cross_project_policy existing_child_repair must make reused children executable: %+v", profile.CrossProjectPolicy)
 	}
+	if got := profile.CrossProjectPolicy["child_completion_gate"]; !strings.Contains(got, "child-local PASS") || !strings.Contains(got, "parent-integration V2/V3") {
+		t.Fatalf("cross_project_policy child_completion_gate must avoid parent/child verification deadlock: %+v", profile.CrossProjectPolicy)
+	}
 	for _, role := range template.Roles {
 		if len(role.MCPConfig) == 0 {
 			t.Fatalf("role %s missing MCPConfig", role.Key)
@@ -398,6 +401,8 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 		"必须回读 children，并在评论中列出 child identifier、target project、status 和 assignee",
 		"如果任一 required child status 不是 done",
 		"不得 @mention 父 issue 的 04-开发或 05-验证测试",
+		"剩余 V2/V3 只依赖父 issue 或其它项目实现后的组合验收",
+		"不得让 child 反向等待父 issue 04",
 		"不需要新增权限配置",
 		"不能解释为“不要创建跨项目 child issue”",
 		"只能把 child issue 范围收窄为“添加 API/路由/配置”",
@@ -529,6 +534,8 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 				"PM 下一步先创建/复用对应 child issue 并等待",
 				"不得写“04-开发就绪”",
 				"不能把 required child issue 创建本身推迟到父 issue 04 之后",
+				"child-local 验证和 parent-integration 验证",
+				"不得把“父 issue 业务实现未完成”写成 child issue 自身完成的阻塞项",
 			} {
 				if !strings.Contains(role.Instruction+role.Description, want) {
 					t.Fatalf("03-task-split role must contain %q\n--- role ---\n%+v", want, role)
@@ -572,6 +579,8 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 				"## 05-verify 跨项目验收门禁",
 				"05 必须独立核验",
 				"不创建 child issue，也不替 PM 推进或收口",
+				"child issue 验证归属规则",
+				"只依赖父 issue 后续实现的组合 V2/V3 不得反向阻塞 child 收口",
 			} {
 				if !strings.Contains(role.Instruction+role.Description, want) {
 					t.Fatalf("05-verify role must contain %q\n--- role ---\n%+v", want, role)
