@@ -2598,7 +2598,8 @@ func (d *Daemon) handleTask(ctx context.Context, task Task, slot int) {
 		return
 	}
 
-	d.collectAndPostTaskArtifacts(ctx, task, result.WorkDir, result.ArtifactDir, artifactCollectionCutoff, taskLog)
+	artifactCommentOptions := d.persistFinalOutputArtifactIfNeeded(task, result, result.WorkDir, result.ArtifactDir, taskLog)
+	d.collectAndPostTaskArtifacts(ctx, task, result.WorkDir, result.ArtifactDir, artifactCollectionCutoff, taskLog, artifactCommentOptions)
 
 	d.reportTaskResult(ctx, task.ID, result, taskLog)
 

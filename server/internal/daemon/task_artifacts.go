@@ -14,6 +14,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const taskArtifactMaxBytes = 100 << 20 // Keep aligned with handler maxUploadSize.
@@ -34,6 +35,10 @@ type uploadedTaskArtifact struct {
 	Filename    string `json:"filename"`
 	MarkdownURL string `json:"markdown_url"`
 	DownloadURL string `json:"download_url"`
+}
+
+type taskArtifactCommentOptions struct {
+	Summary string
 }
 
 func collectTaskMarkdownArtifacts(workDir string) ([]taskMarkdownArtifact, error) {
@@ -163,7 +168,102 @@ func appendTaskMarkdownArtifactsFromRoot(artifacts []taskMarkdownArtifact, root 
 	return artifacts, nil
 }
 
-func (d *Daemon) collectAndPostTaskArtifacts(ctx context.Context, task Task, workDir string, artifactDir string, minModTime time.Time, taskLog *slog.Logger) {
+func (d *Daemon) persistFinalOutputArtifactIfNeeded(task Task, result TaskResult, workDir string, artifactDir string, taskLog *slog.Logger) taskArtifactCommentOptions {
+	output := strings.TrimSpace(result.Comment)
+	if !shouldPersistFinalOutputAsArtifact(task, result, output) {
+		return taskArtifactCommentOptions{}
+	}
+	root := strings.TrimSpace(artifactDir)
+	if root == "" && strings.TrimSpace(workDir) != "" {
+		root = filepath.Join(workDir, "artifacts", "multica")
+	}
+	if root == "" {
+		return taskArtifactCommentOptions{}
+	}
+	if err := os.MkdirAll(root, 0o755); err != nil {
+		taskLog.Warn("create final output artifact dir failed", "error", err, "artifact_dir", root)
+		return taskArtifactCommentOptions{}
+	}
+	filename := finalOutputArtifactFilename(task)
+	path := filepath.Join(root, filename)
+	if err := os.WriteFile(path, []byte(output+"\n"), 0o644); err != nil {
+		taskLog.Warn("write final output artifact failed", "error", err, "path", path)
+		return taskArtifactCommentOptions{}
+	}
+	return taskArtifactCommentOptions{Summary: summarizeFinalOutputForArtifactComment(output)}
+}
+
+func shouldPersistFinalOutputAsArtifact(task Task, result TaskResult, output string) bool {
+	if strings.TrimSpace(task.IssueID) == "" || strings.TrimSpace(output) == "" || result.Status != "completed" {
+		return false
+	}
+	if task.ExecutionPolicy == nil || !isBoundedReviewStage(*task.ExecutionPolicy) || task.ExecutionPolicy.CanEditRepo {
+		return false
+	}
+	if strings.HasPrefix(output, "# ") || strings.Contains(output, "\n# ") || strings.Contains(output, "\n## ") {
+		return true
+	}
+	runes := []rune(output)
+	if len(runes) >= 700 {
+		return true
+	}
+	return false
+}
+
+func finalOutputArtifactFilename(task Task) string {
+	roleKey := "stage-result"
+	if task.ExecutionPolicy != nil && strings.TrimSpace(task.ExecutionPolicy.RoleKey) != "" {
+		roleKey = strings.TrimSpace(task.ExecutionPolicy.RoleKey)
+	}
+	roleKey = sanitizeArtifactFilename(strings.ToLower(roleKey))
+	if roleKey == "" {
+		roleKey = "stage-result"
+	}
+	return roleKey + ".md"
+}
+
+func sanitizeArtifactFilename(name string) string {
+	var b strings.Builder
+	lastDash := false
+	for _, r := range name {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' || r == '_' || r == '.' {
+			b.WriteRune(r)
+			lastDash = false
+			continue
+		}
+		if !lastDash {
+			b.WriteByte('-')
+			lastDash = true
+		}
+	}
+	return strings.Trim(b.String(), "-._")
+}
+
+func summarizeFinalOutputForArtifactComment(output string) string {
+	lines := strings.Split(output, "\n")
+	selected := make([]string, 0, 6)
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "```") {
+			continue
+		}
+		selected = append(selected, trimmed)
+		if len(selected) >= 6 {
+			break
+		}
+	}
+	if len(selected) == 0 {
+		return ""
+	}
+	summary := strings.Join(selected, "\n")
+	runes := []rune(summary)
+	if len(runes) > 700 {
+		summary = string(runes[:700]) + "..."
+	}
+	return "阶段产物已上传，评论只保留摘要。\n\n" + summary
+}
+
+func (d *Daemon) collectAndPostTaskArtifacts(ctx context.Context, task Task, workDir string, artifactDir string, minModTime time.Time, taskLog *slog.Logger, opts taskArtifactCommentOptions) {
 	if task.IssueID == "" || task.WorkspaceID == "" || task.AgentID == "" || task.ID == "" {
 		return
 	}
@@ -206,7 +306,7 @@ func (d *Daemon) collectAndPostTaskArtifacts(ctx context.Context, task Task, wor
 		return
 	}
 
-	content := taskArtifactCommentContent(uploaded)
+	content := taskArtifactCommentContent(uploaded, opts)
 	attachmentIDs := make([]string, 0, len(uploaded))
 	for _, att := range uploaded {
 		attachmentIDs = append(attachmentIDs, att.ID)
@@ -222,8 +322,12 @@ func (d *Daemon) collectAndPostTaskArtifacts(ctx context.Context, task Task, wor
 	)
 }
 
-func taskArtifactCommentContent(attachments []uploadedTaskArtifact) string {
+func taskArtifactCommentContent(attachments []uploadedTaskArtifact, opts taskArtifactCommentOptions) string {
 	var b strings.Builder
+	if summary := strings.TrimSpace(opts.Summary); summary != "" {
+		b.WriteString(summary)
+		b.WriteString("\n\n")
+	}
 	for _, att := range attachments {
 		label := escapeMarkdownLabel(firstNonEmptyString(att.Filename, att.ID))
 		href := firstNonEmptyString(att.MarkdownURL, att.DownloadURL, "/api/attachments/"+att.ID+"/download")

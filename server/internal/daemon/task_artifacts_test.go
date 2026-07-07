@@ -176,10 +176,59 @@ func TestCollectAndPostTaskArtifactsUploadsAndLinksCommentAsTask(t *testing.T) {
 		WorkspaceID:      "ws-1",
 		TriggerCommentID: "comment-1",
 		AuthToken:        "mat_task-token",
-	}, workDir, "", time.Time{}, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	}, workDir, "", time.Time{}, slog.New(slog.NewTextHandler(io.Discard, nil)), taskArtifactCommentOptions{})
 
 	if !uploaded || !commented {
 		t.Fatalf("uploaded=%v commented=%v, want both true", uploaded, commented)
+	}
+}
+
+func TestPersistFinalOutputArtifactForReadOnlyStage(t *testing.T) {
+	t.Parallel()
+
+	workDir := t.TempDir()
+	artifactDir := t.TempDir()
+	task := Task{
+		ID:      "task-1",
+		IssueID: "issue-1",
+		ExecutionPolicy: &TaskExecutionPolicy{
+			RoleKey:     "02-design",
+			RoleKind:    "planning_stage",
+			CanEditRepo: false,
+		},
+	}
+	output := "# 02-design.md\n\n## 技术方案\n" + strings.Repeat("- 方案内容\n", 80)
+	result := TaskResult{Status: "completed", Comment: output}
+
+	d := &Daemon{}
+	opts := d.persistFinalOutputArtifactIfNeeded(task, result, workDir, artifactDir, slog.New(slog.NewTextHandler(io.Discard, nil)))
+
+	data, err := os.ReadFile(filepath.Join(artifactDir, "02-design.md"))
+	if err != nil {
+		t.Fatalf("read persisted final output artifact: %v", err)
+	}
+	if strings.TrimSpace(string(data)) != strings.TrimSpace(output) {
+		t.Fatalf("artifact content mismatch:\n%s", string(data))
+	}
+	if !strings.Contains(opts.Summary, "阶段产物已上传") || !strings.Contains(opts.Summary, "# 02-design.md") {
+		t.Fatalf("summary = %q", opts.Summary)
+	}
+}
+
+func TestTaskArtifactCommentContentIncludesSummary(t *testing.T) {
+	t.Parallel()
+
+	content := taskArtifactCommentContent([]uploadedTaskArtifact{{
+		ID:          "att-1",
+		Filename:    "02-design.md",
+		MarkdownURL: "/api/attachments/att-1/download",
+	}}, taskArtifactCommentOptions{Summary: "阶段产物已上传，评论只保留摘要。\n\n# 02-design.md"})
+
+	if !strings.HasPrefix(content, "阶段产物已上传，评论只保留摘要。") {
+		t.Fatalf("content missing summary prefix: %q", content)
+	}
+	if !strings.Contains(content, "!file[02-design.md](/api/attachments/att-1/download)") {
+		t.Fatalf("content missing file card: %q", content)
 	}
 }
 

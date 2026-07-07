@@ -610,7 +610,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 
 	b.WriteString("## Stage Markdown Artifacts\n\n")
 	if finalOutputAutoCommentStage(ctx) {
-		b.WriteString("This read-only planning/verification task has no native file-write tool. Produce the Markdown stage artifact directly in your final assistant output; the platform will attach that output to the issue comment automatically. Do not attempt to create local `.md` files, `reply.md`, or attachments in this task.\n\n")
+		b.WriteString("This read-only planning/verification task has no native file-write tool. Produce the Markdown stage artifact directly in your final assistant output; when the result is a durable multi-section artifact, the platform will store it as a Markdown attachment and post only a compact summary plus the file card to the issue. Do not attempt to create local `.md` files, `reply.md`, or attachments in this task.\n\n")
 	} else {
 		b.WriteString("When this run produces a durable stage artifact (for example a requirements note, design proposal, task handoff, implementation summary, or verification report), save only this run's own stage artifact as a UTF-8 `.md` file under `$MULTICA_ARTIFACT_DIR` when that environment variable is set; otherwise use `artifacts/multica/` in the current working directory. Treat this managed directory as the only stage-artifact handoff path: do not save stage artifacts only under project-local paths such as `runs/current/projects/...`, because the platform cannot reliably upload or show those in the node table. Do not recopy earlier stage markdown files into the current run's artifact directory; cite their titles or issue links in prose instead. The daemon automatically uploads markdown artifacts from the managed artifact directory, `artifacts/`, and `.multica/artifacts/` to the issue before marking the task terminal, links them to an agent-authored issue comment, and the platform renders them for download or preview. Do not also pass those managed markdown files with `multica issue comment add --attachment`; that creates duplicate node artifacts. Mention the artifact titles in your stage summary, but do not rely on local paths in prose. Temporary scratch files that are not useful to a future reader should not be saved there.\n\n")
 	}
@@ -783,7 +783,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		if isNoRepoBoundedReviewStage(ctx.ExecutionPolicy) && !ctx.IsSquadLeader {
 			b.WriteString("1. Do not call tools or CLI commands in this no-repository planning task. Use the issue/source/trigger context already supplied in this task prompt and your Agent Identity.\n")
 			fmt.Fprintf(&b, "2. Treat the triggering comment ID `%s` as the PM dispatch context. Do not query it with `multica issue comment list`; if a needed fact is absent from the prompt, record it as a handoff question or assumption.\n", ctx.TriggerCommentID)
-			b.WriteString("3. Produce the bounded stage result directly as final assistant output. The platform will automatically post that final output as a reply under the triggering comment when this task completes.\n")
+			b.WriteString("3. Produce the bounded stage result directly as final assistant output. The platform will automatically publish it under the triggering comment when this task completes; long multi-section artifacts are uploaded as Markdown attachments with a compact summary comment.\n")
 			b.WriteString("4. Do not change issue status, inspect repositories, inspect the working directory, query agent rosters, or create child issues.\n\n")
 		} else {
 			fmt.Fprintf(&b, "1. Run `multica issue get %s --output json` to understand the issue context\n", ctx.IssueID)
@@ -841,7 +841,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		if ctx.IsSquadLeader {
 			fmt.Fprintf(&b, "5. **Post your final results as a comment** (unless your outcome is a true `no_action` — in that case, calling `multica squad activity %s no_action --reason \"...\"` alone is sufficient; you MUST exit without posting any comment. DO NOT use no_action for wait/block/return/user-confirmation states): post it with `multica issue comment add %s --content \"...\"`. Keep coordinator comments compact enough for one shell-safe single-line argument; native file-write tools are unavailable in coordinator mode. Do not include literal newlines in the shell command. Your results are only visible to the user if posted via this CLI call; text in your terminal or run logs is NOT delivered.\n", ctx.IssueID, ctx.IssueID)
 		} else if finalOutputAutoCommentStage(ctx) {
-			b.WriteString("5. **Return your stage result as final assistant output — this step is mandatory**: do not call `multica issue comment add`. The platform will automatically post your final output as the issue comment when this task completes, provided you did not already post a comment.\n")
+			b.WriteString("5. **Return your stage result as final assistant output — this step is mandatory**: do not call `multica issue comment add`. The platform will automatically publish your output when this task completes; long multi-section artifacts are uploaded as Markdown attachments with a compact summary comment, provided you did not already post a comment.\n")
 		} else if noNativeFileWriteForComments(ctx) {
 			fmt.Fprintf(&b, "5. **Post your final results as a comment — this step is mandatory**: post it with `multica issue comment add %s --content \"...\"`. Keep the body compact, single-line, and shell-safe because native file-write tools are unavailable in this task; do not include literal newlines in the shell command. Your results are only visible to the user if posted via this CLI call; text in your terminal or run logs is NOT delivered.\n", ctx.IssueID)
 		} else {
@@ -924,7 +924,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 
 	if finalOutputAutoCommentStage(ctx) {
 		b.WriteString("## Important: Platform Output Is Automatic\n\n")
-		b.WriteString("Do not call `multica issue comment add` or use HTTP clients to write platform output in this read-only stage. Use allowed read/search tools only as needed, then put the stage result in your final assistant output. The platform posts that final output to the issue automatically.\n\n")
+		b.WriteString("Do not call `multica issue comment add` or use HTTP clients to write platform output in this read-only stage. Use allowed read/search tools only as needed, then put the stage result in your final assistant output. The platform publishes that output automatically; long multi-section artifacts are uploaded as Markdown attachments with a compact summary comment.\n\n")
 	} else {
 		b.WriteString("## Important: Always Use the `multica` CLI\n\n")
 		b.WriteString("All interactions with Multica platform resources — including issues, comments, attachments, images, files, and any other platform data — **must** go through the `multica` CLI. ")
@@ -945,7 +945,7 @@ func buildMetaSkillContent(provider string, ctx TaskContextForEnv) string {
 		b.WriteString("- On CLI failure, exit with the CLI error as the only output. The platform translates that into a `quick_create_failed` inbox item carrying the original prompt for the user.\n")
 	default:
 		if finalOutputAutoCommentStage(ctx) {
-			b.WriteString("Return the complete stage result as final assistant output. The platform will post that final output to the issue automatically, so do not call `multica issue comment add` and do not create a local reply file.\n\n")
+			b.WriteString("Return the complete stage result as final assistant output. The platform will publish it automatically and upload long multi-section artifacts as Markdown attachments, so do not call `multica issue comment add` and do not create a local reply file.\n\n")
 		} else if ctx.IsSquadLeader {
 			b.WriteString("⚠️ **Final results MUST be delivered via `multica issue comment add`** — unless your outcome is a true `no_action`. When you evaluate a trigger and decide no action is needed, calling `multica squad activity <issue-id> no_action --reason \"...\"` alone is sufficient; you MUST exit without posting any comment. DO NOT post a comment that announces no_action, acknowledges another agent, or says you are exiting silently — such comments are noise. Stage waits, blockers, returns, user-confirmation requests, child-issue waits, and dispatches are not no_action; for those outcomes (`action`, `failed`), a comment is mandatory.\n\n")
 		} else {
