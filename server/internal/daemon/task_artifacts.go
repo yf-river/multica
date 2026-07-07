@@ -173,6 +173,7 @@ func (d *Daemon) persistFinalOutputArtifactIfNeeded(task Task, result TaskResult
 	if !shouldPersistFinalOutputAsArtifact(task, result, output) {
 		return taskArtifactCommentOptions{}
 	}
+	artifactContent := cleanFinalOutputArtifactContent(output)
 	root := strings.TrimSpace(artifactDir)
 	if root == "" && strings.TrimSpace(workDir) != "" {
 		root = filepath.Join(workDir, "artifacts", "multica")
@@ -186,11 +187,11 @@ func (d *Daemon) persistFinalOutputArtifactIfNeeded(task Task, result TaskResult
 	}
 	filename := finalOutputArtifactFilename(task)
 	path := filepath.Join(root, filename)
-	if err := os.WriteFile(path, []byte(output+"\n"), 0o644); err != nil {
+	if err := os.WriteFile(path, []byte(artifactContent+"\n"), 0o644); err != nil {
 		taskLog.Warn("write final output artifact failed", "error", err, "path", path)
 		return taskArtifactCommentOptions{}
 	}
-	return taskArtifactCommentOptions{Summary: summarizeFinalOutputForArtifactComment(output)}
+	return taskArtifactCommentOptions{Summary: summarizeFinalOutputForArtifactComment(artifactContent)}
 }
 
 func shouldPersistFinalOutputAsArtifact(task Task, result TaskResult, output string) bool {
@@ -240,21 +241,158 @@ func sanitizeArtifactFilename(name string) string {
 }
 
 func summarizeFinalOutputForArtifactComment(output string) string {
-	lines := strings.Split(output, "\n")
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "#") {
-			return "阶段产物已上传，评论只保留摘要。\n\n" + truncateArtifactCommentSummaryLine(trimmed)
-		}
+	content := cleanFinalOutputArtifactContent(output)
+	title, summary := extractArtifactCommentTitleAndSummary(content)
+	var b strings.Builder
+	if title != "" {
+		b.WriteString("已上传阶段产物：")
+		b.WriteString(truncateArtifactCommentSummaryLine(title))
+	} else {
+		b.WriteString("已上传阶段产物。")
 	}
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" || strings.HasPrefix(trimmed, "```") {
+	if summary != "" {
+		b.WriteString("\n\n摘要：")
+		b.WriteString(truncateArtifactCommentSummaryLine(summary))
+	}
+	b.WriteString("\n\n完整内容见附件。")
+	return b.String()
+}
+
+func cleanFinalOutputArtifactContent(output string) string {
+	output = strings.TrimSpace(output)
+	if output == "" {
+		return ""
+	}
+	lines := strings.Split(output, "\n")
+	for i, line := range lines {
+		if strings.TrimSpace(line) != "---" {
 			continue
 		}
-		return "阶段产物已上传，评论只保留摘要。\n\n" + truncateArtifactCommentSummaryLine(trimmed)
+		for j := i + 1; j < len(lines); j++ {
+			if markdownHeadingText(lines[j]) == "" {
+				continue
+			}
+			return strings.TrimSpace(strings.Join(lines[j:], "\n"))
+		}
 	}
-	return "阶段产物已上传，评论只保留摘要。"
+	return output
+}
+
+func extractArtifactCommentTitleAndSummary(output string) (string, string) {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	titleIdx := -1
+	title := ""
+	for i, line := range lines {
+		if heading := markdownHeadingText(line); heading != "" {
+			titleIdx = i
+			title = heading
+			break
+		}
+	}
+	start := 0
+	if titleIdx >= 0 {
+		start = titleIdx + 1
+	}
+	for i := start; i < len(lines); i++ {
+		line := strings.TrimSpace(lines[i])
+		if !isArtifactCommentSummaryCandidate(line) {
+			continue
+		}
+		if table := summarizeMarkdownTable(lines, i); table != "" {
+			return title, table
+		}
+		return title, stripMarkdownListMarker(line)
+	}
+	return title, ""
+}
+
+func markdownHeadingText(line string) string {
+	trimmed := strings.TrimSpace(line)
+	if !strings.HasPrefix(trimmed, "#") {
+		return ""
+	}
+	hashes := 0
+	for hashes < len(trimmed) && trimmed[hashes] == '#' {
+		hashes++
+	}
+	if hashes > 6 || hashes == len(trimmed) || trimmed[hashes] != ' ' {
+		return ""
+	}
+	return strings.TrimSpace(trimmed[hashes:])
+}
+
+func isArtifactCommentSummaryCandidate(line string) bool {
+	if line == "" || line == "---" || line == "..." || strings.HasPrefix(line, "```") {
+		return false
+	}
+	if markdownHeadingText(line) != "" {
+		return false
+	}
+	if strings.HasPrefix(line, "|") {
+		return true
+	}
+	if isMarkdownTableSeparator(line) {
+		return false
+	}
+	return true
+}
+
+func summarizeMarkdownTable(lines []string, start int) string {
+	if start+2 >= len(lines) || !strings.HasPrefix(strings.TrimSpace(lines[start]), "|") || !isMarkdownTableSeparator(strings.TrimSpace(lines[start+1])) {
+		return ""
+	}
+	parts := make([]string, 0, 3)
+	for i := start + 2; i < len(lines) && len(parts) < 3; i++ {
+		line := strings.TrimSpace(lines[i])
+		if !strings.HasPrefix(line, "|") {
+			break
+		}
+		cells := markdownTableCells(line)
+		if len(cells) < 2 {
+			continue
+		}
+		parts = append(parts, cells[0]+"："+cells[1])
+	}
+	return strings.Join(parts, "；")
+}
+
+func markdownTableCells(line string) []string {
+	raw := strings.Split(strings.Trim(line, "|"), "|")
+	cells := make([]string, 0, len(raw))
+	for _, cell := range raw {
+		trimmed := strings.TrimSpace(cell)
+		if trimmed != "" {
+			cells = append(cells, trimmed)
+		}
+	}
+	return cells
+}
+
+func isMarkdownTableSeparator(line string) bool {
+	line = strings.Trim(line, "| ")
+	if line == "" {
+		return false
+	}
+	for _, part := range strings.Split(line, "|") {
+		part = strings.TrimSpace(part)
+		if len(part) < 3 {
+			return false
+		}
+		for _, r := range part {
+			if r != '-' && r != ':' {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func stripMarkdownListMarker(line string) string {
+	trimmed := strings.TrimSpace(line)
+	if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") {
+		return strings.TrimSpace(trimmed[2:])
+	}
+	return trimmed
 }
 
 func truncateArtifactCommentSummaryLine(line string) string {

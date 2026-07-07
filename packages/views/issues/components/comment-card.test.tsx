@@ -131,4 +131,25 @@ describe("AttachmentList — inline attachment filtering", () => {
     expect(screen.queryByText("report.pdf")).toBeNull();
     expect(container.firstChild).toBeNull();
   });
+
+  it("does not render a bottom attachment row when the body already has the uploaded file-card URL", () => {
+    const href = "http://localhost:18760/uploads/workspaces/ws/att-1.md";
+    const attachment = {
+      id: "att-1",
+      url: href,
+      filename: "03-task-split.md",
+      content_type: "text/plain; charset=utf-8",
+      size_bytes: 1024,
+    } as any;
+
+    const { container } = renderWithQuery(
+      <AttachmentList
+        attachments={[attachment]}
+        content={`!file[03-task-split.md](${href})`}
+      />,
+    );
+
+    expect(screen.queryByText("03-task-split.md")).toBeNull();
+    expect(container.firstChild).toBeNull();
+  });
 });

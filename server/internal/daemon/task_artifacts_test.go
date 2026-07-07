@@ -197,7 +197,7 @@ func TestPersistFinalOutputArtifactForReadOnlyStage(t *testing.T) {
 			CanEditRepo: false,
 		},
 	}
-	output := "# 02-design.md\n\n## 技术方案\n" + strings.Repeat("- 方案内容\n", 80)
+	output := "I collected the context.\n\n---\n# 02-design.md\n\n## 技术方案\n" + strings.Repeat("- 方案内容\n", 80)
 	result := TaskResult{Status: "completed", Comment: output}
 
 	d := &Daemon{}
@@ -207,10 +207,13 @@ func TestPersistFinalOutputArtifactForReadOnlyStage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read persisted final output artifact: %v", err)
 	}
-	if strings.TrimSpace(string(data)) != strings.TrimSpace(output) {
+	if strings.Contains(string(data), "I collected the context") {
+		t.Fatalf("artifact content should drop preamble:\n%s", string(data))
+	}
+	if !strings.HasPrefix(strings.TrimSpace(string(data)), "# 02-design.md") {
 		t.Fatalf("artifact content mismatch:\n%s", string(data))
 	}
-	if !strings.Contains(opts.Summary, "阶段产物已上传") || !strings.Contains(opts.Summary, "# 02-design.md") {
+	if strings.Contains(opts.Summary, "评论只保留摘要") || !strings.Contains(opts.Summary, "已上传阶段产物：02-design.md") || !strings.Contains(opts.Summary, "摘要：方案内容") || !strings.Contains(opts.Summary, "完整内容见附件") {
 		t.Fatalf("summary = %q", opts.Summary)
 	}
 }
@@ -222,11 +225,62 @@ func TestSummarizeFinalOutputForArtifactCommentKeepsCommentCompact(t *testing.T)
 
 	got := summarizeFinalOutputForArtifactComment(output)
 
-	if !strings.Contains(got, "## 03-task-split.md") {
+	if !strings.Contains(got, "已上传阶段产物：03-task-split.md") {
 		t.Fatalf("summary missing heading: %q", got)
+	}
+	if strings.Contains(got, "评论只保留摘要") || strings.Contains(got, "## 03-task-split.md") {
+		t.Fatalf("summary should be user-facing plain text: %q", got)
 	}
 	if strings.Contains(got, "I read the context") || strings.Contains(got, "- detail") {
 		t.Fatalf("summary should not include preamble or body details: %q", got)
+	}
+	if !strings.Contains(got, "摘要：detail") || !strings.Contains(got, "完整内容见附件") {
+		t.Fatalf("summary missing useful body summary: %q", got)
+	}
+}
+
+func TestSummarizeFinalOutputForArtifactCommentUsesReadableStageSummary(t *testing.T) {
+	t.Parallel()
+
+	output := `Now I have all the context.
+
+---
+
+## 03-任务拆分：增强密码强度 [IDA-79]
+
+### 一、变更范围确认
+
+基于 02-design.md 产物，本次变更覆盖 user-center 单仓库内的密码强度校验。
+`
+
+	got := summarizeFinalOutputForArtifactComment(output)
+
+	if want := "已上传阶段产物：03-任务拆分：增强密码强度 [IDA-79]"; !strings.Contains(got, want) {
+		t.Fatalf("summary missing stage title %q: %q", want, got)
+	}
+	if want := "摘要：基于 02-design.md 产物，本次变更覆盖 user-center 单仓库内的密码强度校验。"; !strings.Contains(got, want) {
+		t.Fatalf("summary missing first body paragraph %q: %q", want, got)
+	}
+}
+
+func TestSummarizeFinalOutputForArtifactCommentSummarizesTwoColumnTable(t *testing.T) {
+	t.Parallel()
+
+	output := `# 05-验证测试：增强密码强度 [IDA-79]
+
+## 一、验证摘要
+
+| 项目 | 结果 |
+|------|------|
+| 目标项目 | user-center |
+| MR | !122 |
+| child issue | 0 |
+`
+
+	got := summarizeFinalOutputForArtifactComment(output)
+
+	if want := "摘要：目标项目：user-center；MR：!122；child issue：0"; !strings.Contains(got, want) {
+		t.Fatalf("summary missing table digest %q: %q", want, got)
 	}
 }
 
@@ -237,10 +291,13 @@ func TestTaskArtifactCommentContentIncludesSummary(t *testing.T) {
 		ID:          "att-1",
 		Filename:    "02-design.md",
 		MarkdownURL: "/api/attachments/att-1/download",
-	}}, taskArtifactCommentOptions{Summary: "阶段产物已上传，评论只保留摘要。\n\n# 02-design.md"})
+	}}, taskArtifactCommentOptions{Summary: "已上传阶段产物：02-design.md\n\n摘要：方案已完成。\n\n完整内容见附件。"})
 
-	if !strings.HasPrefix(content, "阶段产物已上传，评论只保留摘要。") {
+	if !strings.HasPrefix(content, "已上传阶段产物：02-design.md") {
 		t.Fatalf("content missing summary prefix: %q", content)
+	}
+	if strings.Contains(content, "评论只保留摘要") {
+		t.Fatalf("content contains internal implementation wording: %q", content)
 	}
 	if !strings.Contains(content, "!file[02-design.md](/api/attachments/att-1/download)") {
 		t.Fatalf("content missing file card: %q", content)
