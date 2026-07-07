@@ -858,10 +858,11 @@ func (h *Handler) EnsureInternalSquadTemplate(w http.ResponseWriter, r *http.Req
 	}
 
 	var req struct {
-		TemplateKey     string `json:"template_key"`
-		RuntimeProvider string `json:"runtime_provider"`
-		Model           string `json:"model"`
-		Scope           string `json:"scope"`
+		TemplateKey     string  `json:"template_key"`
+		RuntimeProvider string  `json:"runtime_provider"`
+		Model           string  `json:"model"`
+		Scope           string  `json:"scope"`
+		Name            *string `json:"name"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -874,6 +875,16 @@ func (h *Handler) EnsureInternalSquadTemplate(w http.ResponseWriter, r *http.Req
 	}
 	if model := strings.TrimSpace(req.Model); model != "" {
 		template.Model = model
+	}
+	customName := false
+	if req.Name != nil {
+		name := strings.TrimSpace(*req.Name)
+		if name == "" {
+			writeError(w, http.StatusBadRequest, "name is required")
+			return
+		}
+		template.Name = name
+		customName = true
 	}
 	provider := normalizeProvider(req.RuntimeProvider)
 	if provider == "" {
@@ -900,7 +911,7 @@ func (h *Handler) EnsureInternalSquadTemplate(w http.ResponseWriter, r *http.Req
 		writeError(w, http.StatusInternalServerError, "failed to create internal squad agents")
 		return
 	}
-	squad, err := h.ensureInternalSquad(r.Context(), wsUUID, member.UserID, template, scope, agents)
+	squad, err := h.ensureInternalSquad(r.Context(), wsUUID, member.UserID, template, scope, agents, customName)
 	if err != nil {
 		slog.Warn("ensure internal squad failed", append(logger.RequestAttrs(r), "error", err, "template", template.Key)...)
 		writeError(w, http.StatusInternalServerError, "failed to create internal squad")
@@ -1133,7 +1144,7 @@ func internalSquadRoleDescription(template internalSquadTemplate, role internalS
 	return template.Description
 }
 
-func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UUID, creatorID pgtype.UUID, template internalSquadTemplate, scope string, agents []InternalSquadAgent) (db.Squad, error) {
+func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UUID, creatorID pgtype.UUID, template internalSquadTemplate, scope string, agents []InternalSquadAgent, archiveSuperseded bool) (db.Squad, error) {
 	if len(agents) == 0 {
 		return db.Squad{}, pgx.ErrNoRows
 	}
@@ -1144,7 +1155,7 @@ func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UU
 	var squad db.Squad
 	var archivedMatch db.Squad
 	for _, item := range squads {
-		if !matchesInternalSquadTemplate(item, template, scope, creatorID) {
+		if !matchesInternalSquadTarget(item, template, scope, creatorID, archiveSuperseded) {
 			continue
 		}
 		if !item.ArchivedAt.Valid {
@@ -1255,16 +1266,79 @@ func (h *Handler) ensureInternalSquad(ctx context.Context, workspaceID pgtype.UU
 		}
 		existingMemberRoles[memberKey] = role
 	}
+	if archiveSuperseded {
+		if err := h.archiveSupersededInternalSquads(ctx, squads, squad.ID, template, scope, creatorID); err != nil {
+			return db.Squad{}, err
+		}
+	}
 	return squad, nil
 }
 
 func matchesInternalSquadTemplate(squad db.Squad, template internalSquadTemplate, scope string, creatorID pgtype.UUID) bool {
-	profile := decodeJSONDefault(squad.SopProfile, map[string]any{})
-	profileMap, _ := profile.(map[string]any)
-	sameTemplate := squad.Name == template.Name || stringFromAny(profileMap["profile_key"]) == template.Key
+	sameTemplate := squad.Name == template.Name || matchesInternalSquadProfileKey(squad, template)
 	sameScope := squad.Scope == scope
 	sameCreator := scope != squadScopePersonal || uuidToString(squad.CreatorID) == uuidToString(creatorID)
 	return sameTemplate && sameScope && sameCreator
+}
+
+func internalSquadProfileKey(squad db.Squad) string {
+	profile := decodeJSONDefault(squad.SopProfile, map[string]any{})
+	profileMap, _ := profile.(map[string]any)
+	return stringFromAny(profileMap["profile_key"])
+}
+
+func matchesInternalSquadProfileKey(squad db.Squad, template internalSquadTemplate) bool {
+	key := internalSquadProfileKey(squad)
+	return key != "" && (key == template.Key || key == stringFromAny(template.Profile["profile_key"]))
+}
+
+func matchesInternalSquadTarget(squad db.Squad, template internalSquadTemplate, scope string, creatorID pgtype.UUID, requireName bool) bool {
+	if requireName {
+		sameTemplate := matchesInternalSquadProfileKey(squad, template)
+		sameScope := squad.Scope == scope
+		sameCreator := scope != squadScopePersonal || uuidToString(squad.CreatorID) == uuidToString(creatorID)
+		return sameTemplate && sameScope && sameCreator && squad.Name == template.Name
+	}
+	if !matchesInternalSquadTemplate(squad, template, scope, creatorID) {
+		return false
+	}
+	return true
+}
+
+func (h *Handler) archiveSupersededInternalSquads(ctx context.Context, squads []db.Squad, currentID pgtype.UUID, template internalSquadTemplate, scope string, creatorID pgtype.UUID) error {
+	current := uuidToString(currentID)
+	for _, item := range squads {
+		if item.ArchivedAt.Valid || uuidToString(item.ID) == current {
+			continue
+		}
+		sameTemplate := matchesInternalSquadProfileKey(item, template)
+		sameScope := item.Scope == scope
+		sameCreator := scope != squadScopePersonal || uuidToString(item.CreatorID) == uuidToString(creatorID)
+		if !sameTemplate || !sameScope || !sameCreator {
+			continue
+		}
+		if _, err := h.DB.Exec(ctx, `
+			UPDATE issue
+			SET assignee_id = $2, updated_at = now()
+			WHERE assignee_type = 'squad' AND assignee_id = $1
+		`, item.ID, currentID); err != nil {
+			return err
+		}
+		if _, err := h.DB.Exec(ctx, `
+			UPDATE autopilot
+			SET assignee_id = $2, updated_at = now()
+			WHERE assignee_type = 'squad' AND assignee_id = $1
+		`, item.ID, currentID); err != nil {
+			return err
+		}
+		if _, err := h.Queries.ArchiveSquad(ctx, db.ArchiveSquadParams{
+			ID:         item.ID,
+			ArchivedBy: creatorID,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func itemNeedsInternalSquadSync(squad db.Squad, template internalSquadTemplate, profileBytes []byte, leaderID pgtype.UUID, scope string) bool {

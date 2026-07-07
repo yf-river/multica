@@ -61,6 +61,7 @@ export type InternalSquadTemplateKey = "user-center" | "multica-coding";
 
 export interface EnsureInternalSquadTemplateRequest {
   template_key: InternalSquadTemplateKey;
+  name?: string;
   runtime_provider?: string;
   model?: string;
   scope?: SquadScope;

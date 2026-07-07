@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -1314,6 +1315,96 @@ func TestEnsureUserCenterInternalSquadRestoresArchivedSquadWithoutArchivingAgent
 	}
 	if nonDefaultAgentCount != 0 {
 		t.Fatalf("restored pm squad left %d agents outside codebuddy/%s", nonDefaultAgentCount, internalSquadDefaultModel)
+	}
+}
+
+func TestEnsureUserCenterInternalSquadNamedCreateArchivesSupersededActiveSquad(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("handler test fixture not initialized")
+	}
+	ctx := context.Background()
+	cleanup := func() {
+		_, _ = testPool.Exec(ctx, `DELETE FROM autopilot WHERE workspace_id = $1 AND title LIKE 'named pm archive test%'`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM issue WHERE workspace_id = $1 AND title LIKE 'named pm archive test%'`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM squad WHERE workspace_id = $1 AND name IN ('pm', 'pm-v2')`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent WHERE workspace_id = $1 AND name IN ('PM-项目经理', '01-需求澄清', '02-方案设计', '03-任务拆分', '04-开发', '05-验证测试', 'pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify')`, testWorkspaceID)
+		_, _ = testPool.Exec(ctx, `DELETE FROM agent_runtime WHERE workspace_id = $1 AND name LIKE 'internal-user-center-named-test-%'`, testWorkspaceID)
+	}
+	cleanup()
+	t.Cleanup(cleanup)
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO agent_runtime (workspace_id, daemon_id, name, runtime_mode, provider, status, device_info, metadata, owner_id, scope, last_seen_at)
+		VALUES ($1, $2, $3, 'local', 'codebuddy', 'online', 'CodeBuddy user-center 命名小队测试运行时', '{}'::jsonb, $4, 'personal', now())
+	`, testWorkspaceID, "internal-user-center-named-daemon-"+randomID()[:8], "internal-user-center-named-test-"+randomID()[:8], testUserID); err != nil {
+		t.Fatalf("create codebuddy runtime: %v", err)
+	}
+
+	ensure := func(body map[string]any) InternalSquadTemplateResponse {
+		t.Helper()
+		w := httptest.NewRecorder()
+		req := newRequest(http.MethodPost, "/api/workspaces/"+testWorkspaceID+"/squads/internal-template", body)
+		testHandler.EnsureInternalSquadTemplate(w, withURLParam(req, "workspaceId", testWorkspaceID))
+		if w.Code != http.StatusOK {
+			t.Fatalf("ensure user-center internal squad status = %d, body = %s", w.Code, w.Body.String())
+		}
+		var resp InternalSquadTemplateResponse
+		if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+			t.Fatalf("decode ensure response: %v", err)
+		}
+		return resp
+	}
+
+	first := ensure(map[string]any{"template_key": "user-center"})
+	if first.Squad.Name != "pm" {
+		t.Fatalf("default pm squad name = %q", first.Squad.Name)
+	}
+	var issueID, autopilotID string
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO issue (workspace_id, creator_type, creator_id, title, assignee_type, assignee_id)
+		VALUES ($1, 'member', $2, 'named pm archive test issue', 'squad', $3)
+		RETURNING id
+	`, testWorkspaceID, testUserID, first.Squad.ID).Scan(&issueID); err != nil {
+		t.Fatalf("create old-squad issue: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `
+		INSERT INTO autopilot (workspace_id, title, assignee_type, assignee_id, created_by_type, created_by_id)
+		VALUES ($1, 'named pm archive test autopilot', 'squad', $2, 'member', $3)
+		RETURNING id
+	`, testWorkspaceID, first.Squad.ID, testUserID).Scan(&autopilotID); err != nil {
+		t.Fatalf("create old-squad autopilot: %v", err)
+	}
+
+	second := ensure(map[string]any{"template_key": "user-center", "name": "pm-v2"})
+	if second.Squad.ID == first.Squad.ID {
+		t.Fatalf("named ensure reused default pm squad id %s", first.Squad.ID)
+	}
+	if second.Squad.Name != "pm-v2" || second.Squad.ArchivedAt != nil {
+		t.Fatalf("named ensure response = %+v", second.Squad)
+	}
+	var firstArchivedAt *time.Time
+	if err := testPool.QueryRow(ctx, `SELECT archived_at FROM squad WHERE id = $1`, first.Squad.ID).Scan(&firstArchivedAt); err != nil {
+		t.Fatalf("read first squad archive state: %v", err)
+	}
+	if firstArchivedAt == nil {
+		t.Fatalf("default pm squad was not archived after named ensure")
+	}
+	var issueAssigneeType, issueAssigneeID, autopilotAssigneeType, autopilotAssigneeID string
+	if err := testPool.QueryRow(ctx, `SELECT assignee_type, assignee_id::text FROM issue WHERE id = $1`, issueID).Scan(&issueAssigneeType, &issueAssigneeID); err != nil {
+		t.Fatalf("read migrated issue assignee: %v", err)
+	}
+	if err := testPool.QueryRow(ctx, `SELECT assignee_type, assignee_id::text FROM autopilot WHERE id = $1`, autopilotID).Scan(&autopilotAssigneeType, &autopilotAssigneeID); err != nil {
+		t.Fatalf("read migrated autopilot assignee: %v", err)
+	}
+	if issueAssigneeType != "squad" || issueAssigneeID != second.Squad.ID {
+		t.Fatalf("issue assignee = %s/%s, want squad/%s", issueAssigneeType, issueAssigneeID, second.Squad.ID)
+	}
+	if autopilotAssigneeType != "squad" || autopilotAssigneeID != second.Squad.ID {
+		t.Fatalf("autopilot assignee = %s/%s, want squad/%s", autopilotAssigneeType, autopilotAssigneeID, second.Squad.ID)
+	}
+
+	third := ensure(map[string]any{"template_key": "user-center", "name": " pm-v2 "})
+	if third.Squad.ID != second.Squad.ID {
+		t.Fatalf("same named ensure created a new squad: second=%s third=%s", second.Squad.ID, third.Squad.ID)
 	}
 }
 

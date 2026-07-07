@@ -45,6 +45,7 @@ import type {
   SquadScope,
 } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
+import { Input } from "@multica/ui/components/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -129,6 +130,7 @@ const COLUMN_WIDTHS: Record<SquadColumnKey, number> = {
   created: 104,
 };
 const DEFAULT_PM_PROVIDER = "codebuddy";
+const DEFAULT_PM_SQUAD_NAME = "pm";
 
 // Fixed tracks (edges 12+12, name min 200, leader 160) plus the 7 gap-x-3
 // gaps between the wide template's 8 tracks (zero-width tracks still carry
@@ -894,6 +896,7 @@ export function SquadsPage() {
     return me?.role === "owner" || me?.role === "admin";
   }, [members, currentUser]);
   const [pmDialogOpen, setPmDialogOpen] = useState(false);
+  const [pmName, setPmName] = useState(DEFAULT_PM_SQUAD_NAME);
   const [pmProvider, setPmProvider] = useState(DEFAULT_PM_PROVIDER);
   const [pmModel, setPmModel] = useState("");
   const [pmModelTouched, setPmModelTouched] = useState(false);
@@ -957,7 +960,7 @@ export function SquadsPage() {
     mutationFn: (payload: EnsureInternalSquadTemplateRequest) =>
       api.ensureInternalSquadTemplate(payload),
     onSuccess: (result) => {
-      toast.success(`${result.squad.name} 已就绪`);
+      toast.success(t(($) => $.pm_dialog.ready_toast, { name: result.squad.name }));
       setPmDialogOpen(false);
       const detailPath = p.squadDetail(result.squad.id);
       navigation.push(detailPath);
@@ -973,6 +976,7 @@ export function SquadsPage() {
     if (!providerChoices.includes(pmProvider)) {
       setPmProvider(defaultProvider ?? DEFAULT_PM_PROVIDER);
     }
+    setPmName(DEFAULT_PM_SQUAD_NAME);
     setPmModel("");
     setPmModelTouched(false);
     setPmDialogOpen(true);
@@ -984,8 +988,11 @@ export function SquadsPage() {
     setPmModelTouched(false);
   };
   const ensurePmSquad = () => {
+    const name = pmName.trim();
+    if (!name) return;
     ensureInternalSquad.mutate({
       template_key: "user-center",
+      name,
       runtime_provider: pmProvider,
       scope: pmScope,
       ...(pmModel.trim() ? { model: pmModel.trim() } : {}),
@@ -1107,15 +1114,32 @@ export function SquadsPage() {
       <Dialog open={pmDialogOpen} onOpenChange={setPmDialogOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>创建 pm 小队</DialogTitle>
+            <DialogTitle>{t(($) => $.pm_dialog.title)}</DialogTitle>
             <DialogDescription>
-              选择这组 SOP Agent 初始化时使用的运行时和模型。模型留空时，每个 Agent 使用运行时默认配置。
+              {t(($) => $.pm_dialog.description)}
             </DialogDescription>
           </DialogHeader>
           <div className="space-y-4">
             <div>
               <div className="mb-1.5 text-xs text-muted-foreground">
-                范围
+                {t(($) => $.pm_dialog.name_label)}
+              </div>
+              <Input
+                autoFocus
+                value={pmName}
+                onChange={(event) => setPmName(event.target.value)}
+                placeholder={t(($) => $.pm_dialog.name_placeholder)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") ensurePmSquad();
+                }}
+              />
+              <p className="mt-1.5 text-xs text-muted-foreground">
+                {t(($) => $.pm_dialog.name_hint)}
+              </p>
+            </div>
+            <div>
+              <div className="mb-1.5 text-xs text-muted-foreground">
+                {t(($) => $.pm_dialog.scope_label)}
               </div>
               <SquadScopeToggle
                 value={pmScope}
@@ -1124,7 +1148,7 @@ export function SquadsPage() {
             </div>
             <div>
               <div className="mb-1.5 text-xs text-muted-foreground">
-                默认 Agent
+                {t(($) => $.pm_dialog.runtime_label)}
               </div>
               <Select
                 value={pmProvider}
@@ -1138,7 +1162,7 @@ export function SquadsPage() {
                 <SelectTrigger className="w-full" disabled={providerChoices.length === 0}>
                   <SelectValue>
                     {providerChoices.length === 0
-                      ? "暂无可用 Agent"
+                      ? t(($) => $.pm_dialog.no_runtime)
                       : providerLabel(pmProvider)}
                   </SelectValue>
                 </SelectTrigger>
@@ -1152,12 +1176,16 @@ export function SquadsPage() {
               </Select>
               <p className="mt-1.5 text-xs text-muted-foreground">
                 {selectedPmRuntime
-                  ? `将使用在线运行时：${selectedPmRuntime.name}`
+                  ? t(($) => $.pm_dialog.runtime_online, {
+                      name: selectedPmRuntime.name,
+                    })
                   : providerChoices.length === 0
                     ? pmScope === "workspace"
-                      ? "当前 workspace 还没有可用于工作区小队的 Agent runtime。"
-                      : "当前 workspace 还没有你自己的个人 Agent runtime。"
-                    : `当前没有在线可用的 ${providerLabel(pmProvider)} runtime，创建时会提示你先启动 daemon。`}
+                      ? t(($) => $.pm_dialog.workspace_runtime_missing)
+                      : t(($) => $.pm_dialog.personal_runtime_missing)
+                    : t(($) => $.pm_dialog.provider_runtime_offline, {
+                        provider: providerLabel(pmProvider),
+                      })}
               </p>
             </div>
 
@@ -1178,12 +1206,13 @@ export function SquadsPage() {
               onClick={() => setPmDialogOpen(false)}
               disabled={ensureInternalSquad.isPending}
             >
-              取消
+              {t(($) => $.pm_dialog.cancel)}
             </Button>
             <Button
               onClick={ensurePmSquad}
               disabled={
                 ensureInternalSquad.isPending ||
+                !pmName.trim() ||
                 providerChoices.length === 0 ||
                 !selectedPmRuntime ||
                 pmModelDiscoveryPending
@@ -1192,7 +1221,7 @@ export function SquadsPage() {
               {ensureInternalSquad.isPending && (
                 <Loader2 className="h-4 w-4 animate-spin" />
               )}
-              创建小队
+              {t(($) => $.pm_dialog.submit)}
             </Button>
           </DialogFooter>
         </DialogContent>
@@ -1220,7 +1249,9 @@ export function SquadsPage() {
             onClick={openPmDialog}
           >
             {ensureInternalSquad.isPending ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Users className="h-3.5 w-3.5" />}
-            <span className="hidden lg:inline">pm</span>
+            <span className="hidden lg:inline">
+              {t(($) => $.pm_dialog.button)}
+            </span>
           </Button>
           <Button
             size="sm"
@@ -1257,7 +1288,7 @@ export function SquadsPage() {
               disabled={ensureInternalSquad.isPending}
               onClick={openPmDialog}
             >
-              pm
+              {t(($) => $.pm_dialog.button)}
             </Button>
           </div>
         </div>

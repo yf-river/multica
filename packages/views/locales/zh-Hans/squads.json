@@ -34,6 +34,24 @@
     "restore_success": "已恢复小队",
     "restore_failed": "恢复小队失败"
   },
+  "pm_dialog": {
+    "button": "pm",
+    "title": "创建 pm 小队",
+    "description": "选择这组 SOP Agent 初始化时使用的运行时和模型。模型留空时，每个 Agent 使用运行时默认配置。",
+    "name_label": "小队名称",
+    "name_placeholder": "pm",
+    "name_hint": "同名内置 PM 小队会同步到最新模板；其它旧版 PM 小队会自动归档。",
+    "scope_label": "范围",
+    "runtime_label": "默认 Agent",
+    "no_runtime": "暂无可用 Agent",
+    "runtime_online": "将使用在线运行时：{{name}}",
+    "workspace_runtime_missing": "当前 workspace 还没有可用于工作区小队的 Agent runtime。",
+    "personal_runtime_missing": "当前 workspace 还没有你自己的个人 Agent runtime。",
+    "provider_runtime_offline": "当前没有在线可用的 {{provider}} runtime，创建时会提示你先启动 daemon。",
+    "cancel": "取消",
+    "submit": "创建小队",
+    "ready_toast": "{{name}} 已就绪"
+  },
   "name_editor": {
     "cancel": "取消"
   },
