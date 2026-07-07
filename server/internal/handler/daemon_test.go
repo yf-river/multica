@@ -3012,6 +3012,24 @@ func createRunningAssignmentCompleteTask(t *testing.T, ctx context.Context, issu
 	return fixture
 }
 
+func createHandlerTestMentionTargetAgent(t *testing.T, name string) string {
+	t.Helper()
+
+	var agentID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent (
+			workspace_id, name, description, runtime_mode, runtime_config,
+			runtime_id, scope, max_concurrent_tasks, owner_id
+		)
+		VALUES ($1, $2, '', 'local', '{}'::jsonb, $3, 'workspace', 1, $4)
+		RETURNING id
+	`, testWorkspaceID, name, testRuntimeID, testUserID).Scan(&agentID); err != nil {
+		t.Fatalf("setup: create mention target agent: %v", err)
+	}
+	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID) })
+	return agentID
+}
+
 func completeDaemonTaskForTest(t *testing.T, taskID, output string) {
 	t.Helper()
 
@@ -3089,6 +3107,96 @@ func TestCompleteTask_CommentTriggered_SynthesizesCommentWhenAgentSilent(t *test
 			got = *parentID
 		}
 		t.Fatalf("synthesized comment parent_id = %s, want trigger comment %s", got, fixture.TriggerCommentID)
+	}
+}
+
+func TestCompleteTask_CommentTriggered_SynthesizedMentionDispatchesAgent(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+
+	fixture := createRunningCommentTriggeredCompleteTask(t, ctx, "mul-3312 synthesized mention fixture", 3312, "please advance")
+	targetAgentID := createHandlerTestMentionTargetAgent(t, "Synthesized Mention Target 02 "+uuid.NewString())
+	agentFinalOutput := "调度 02-方案设计：请继续。 [@02-方案设计](mention://agent/" + targetAgentID + ")"
+
+	completeDaemonTaskForTest(t, fixture.TaskID, agentFinalOutput)
+
+	var commentID, parentID, sourceTaskID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT id, parent_id, source_task_id
+		FROM comment
+		WHERE issue_id = $1 AND author_type = 'agent' AND author_id = $2 AND content = $3
+	`, fixture.IssueID, fixture.AgentID, agentFinalOutput).Scan(&commentID, &parentID, &sourceTaskID); err != nil {
+		t.Fatalf("query synthesized dispatch comment: %v", err)
+	}
+	if parentID != fixture.TriggerCommentID {
+		t.Fatalf("synthesized dispatch comment parent_id = %s, want trigger comment %s", parentID, fixture.TriggerCommentID)
+	}
+	if sourceTaskID != fixture.TaskID {
+		t.Fatalf("synthesized dispatch comment source_task_id = %s, want task %s", sourceTaskID, fixture.TaskID)
+	}
+
+	var queued int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM agent_task_queue
+		WHERE issue_id = $1
+		  AND agent_id = $2
+		  AND trigger_comment_id = $3
+		  AND status = 'queued'
+	`, fixture.IssueID, targetAgentID, commentID).Scan(&queued); err != nil {
+		t.Fatalf("count queued mention tasks: %v", err)
+	}
+	if queued != 1 {
+		t.Fatalf("queued mention task count = %d, want 1", queued)
+	}
+}
+
+func TestCompleteTask_AssignmentTriggered_SynthesizedMentionDispatchesAgent(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	ctx := context.Background()
+
+	fixture := createRunningAssignmentCompleteTask(t, ctx, "mul-3313 synthesized top-level mention fixture", 3313)
+	targetAgentID := createHandlerTestMentionTargetAgent(t, "Synthesized Top Level Mention Target "+uuid.NewString())
+	agentFinalOutput := "调度 01-需求澄清：请继续。 [@01-需求澄清](mention://agent/" + targetAgentID + ")"
+
+	completeDaemonTaskForTest(t, fixture.TaskID, agentFinalOutput)
+
+	var commentID string
+	var parentID *string
+	var sourceTaskID string
+	if err := testPool.QueryRow(ctx, `
+		SELECT id, parent_id, source_task_id
+		FROM comment
+		WHERE issue_id = $1 AND author_type = 'agent' AND author_id = $2 AND content = $3
+	`, fixture.IssueID, fixture.AgentID, agentFinalOutput).Scan(&commentID, &parentID, &sourceTaskID); err != nil {
+		t.Fatalf("query synthesized top-level dispatch comment: %v", err)
+	}
+	if parentID != nil {
+		t.Fatalf("synthesized top-level dispatch comment parent_id = %s, want nil", *parentID)
+	}
+	if sourceTaskID != fixture.TaskID {
+		t.Fatalf("synthesized top-level dispatch comment source_task_id = %s, want task %s", sourceTaskID, fixture.TaskID)
+	}
+
+	var queued int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM agent_task_queue
+		WHERE issue_id = $1
+		  AND agent_id = $2
+		  AND trigger_comment_id = $3
+		  AND status = 'queued'
+	`, fixture.IssueID, targetAgentID, commentID).Scan(&queued); err != nil {
+		t.Fatalf("count queued top-level mention tasks: %v", err)
+	}
+	if queued != 1 {
+		t.Fatalf("queued top-level mention task count = %d, want 1", queued)
 	}
 }
 

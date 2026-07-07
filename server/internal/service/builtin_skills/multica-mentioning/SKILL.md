@@ -60,6 +60,10 @@ match, or the link resolves to the wrong entity (or to nothing).
 The mention trigger set is computed by `computeMentionedAgentCommentTriggers`
 (`server/internal/handler/comment.go`); the comment path folds that result into
 `computeCommentAgentTriggers` and enqueues it via `enqueueCommentAgentTriggers`.
+This applies both to ordinary comments created through the issue comment API and
+to agent final-output comments synthesized by `TaskService.createAgentComment`;
+the synthesized path calls back into the same handler trigger logic after the
+comment is stored.
 It acts on two types only: the `squad` branch resolves the squad and adds its
 leader to the trigger set; everything that is not `agent` after that is skipped
 (`if m.Type != "agent" { continue }`), then the `agent` branch adds that agent.

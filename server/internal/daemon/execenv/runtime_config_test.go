@@ -619,6 +619,9 @@ func TestStageChainPMCoordinatorGetsCommentTriggerRule(t *testing.T) {
 		"Stage-chain PM rule from your squad instructions",
 		"only review the latest stage output or human reply",
 		"Do not implement, inspect repositories, create MRs, run tests, or simulate 01-05 inside this PM task",
+		"Stage-chain dispatch verification rule",
+		"A stage is actually dispatched only when the platform has a real queued, dispatched, running, or completed task for that target agent",
+		"re-dispatch with exactly one real mention instead of recording `no_action`",
 		"Stage-chain PM wait/block rule",
 		"Do not record only `no_action`",
 		"silence leaves the issue stuck with no user-readable state",
@@ -723,7 +726,7 @@ func TestPlanningStageCapabilityPolicyBlocksNativeSubagents(t *testing.T) {
 		"using the platform-correct non-inline mode",
 		"`multica repo checkout <url>",
 		"For everything else, run `multica --help`",
-		"multica issue comment add <issue-id> --content \"...\"",
+		"multica issue comment add <issue-id> --" + "content \"...\"",
 		"Run `multica issue get 77777777-8888-9999-aaaa-bbbbbbbbbbbb --output json`",
 		"Run `multica issue comment list 77777777-8888-9999-aaaa-bbbbbbbbbbbb --output json`",
 		"Use the `multica` CLI to interact with the platform",
@@ -762,7 +765,7 @@ func TestRepoReadOnlyPlanningStageUsesFinalOutputForComments(t *testing.T) {
 		}
 	}
 	for _, banned := range []string{
-		"post it with `multica issue comment add 77777777-8888-9999-aaaa-bbbbbbbbbbbb --content",
+		"post it with `multica issue comment add 77777777-8888-9999-aaaa-bbbbbbbbbbbb --" + "content",
 		"using the platform-correct non-inline mode",
 		"--content-file ./reply.md",
 		"always write the comment body to a UTF-8 file",

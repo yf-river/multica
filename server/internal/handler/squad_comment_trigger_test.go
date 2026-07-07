@@ -460,11 +460,26 @@ func TestCompleteTask_WorkerStageCompletionEnqueuesSquadLeader(t *testing.T) {
 	}
 
 	workerTaskID := insertRunningTask(workerID, workerRuntimeID, false)
-	if _, err := testHandler.TaskService.CompleteTask(ctx, util.MustParseUUID(workerTaskID), []byte(`{}`), "", ""); err != nil {
+	workerOutput := "worker handoff done"
+	if _, err := testHandler.TaskService.CompleteTask(ctx, util.MustParseUUID(workerTaskID), []byte(`{"output":"`+workerOutput+`"}`), "", ""); err != nil {
 		t.Fatalf("complete worker task: %v", err)
 	}
 	if got := countQueuedLeaders(); got != 1 {
 		t.Fatalf("queued leader tasks after worker completion = %d, want 1", got)
+	}
+	var synthesizedWorkerComments int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM comment
+		WHERE issue_id = $1
+		  AND author_id = $2
+		  AND source_task_id = $3
+		  AND content = $4
+	`, issueID, workerID, workerTaskID, workerOutput).Scan(&synthesizedWorkerComments); err != nil {
+		t.Fatalf("count synthesized worker comments: %v", err)
+	}
+	if synthesizedWorkerComments != 1 {
+		t.Fatalf("synthesized worker comments = %d, want 1", synthesizedWorkerComments)
 	}
 
 	secondWorkerTaskID := insertRunningTask(workerID, workerRuntimeID, false)

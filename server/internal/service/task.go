@@ -37,6 +37,10 @@ type TaskService struct {
 	// IssueStatusChanged runs best-effort side effects that live above the
 	// task service layer, such as parent child-done notifications.
 	IssueStatusChanged func(ctx context.Context, prev, updated db.Issue, actorType, actorID string)
+	// AgentCommentCreated runs comment-trigger side effects for comments
+	// synthesized by the task service. HTTP-created comments execute the same
+	// logic inside the handler layer.
+	AgentCommentCreated func(ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment)
 	// EmptyClaim caches "this runtime has no queued task" so the daemon
 	// poll path can skip a Postgres scan on the steady-state empty case.
 	// Optional — a nil cache disables the fast path and every claim
@@ -2792,7 +2796,7 @@ func (s *TaskService) CompleteTask(ctx context.Context, taskID pgtype.UUID, resu
 							"agent_id", util.UUIDToString(task.AgentID),
 						)
 					} else {
-						s.createAgentComment(ctx, task.IssueID, task.AgentID, redact.Text(body), "comment", task.TriggerCommentID, pgtype.UUID{})
+						s.createAgentComment(ctx, task.IssueID, task.AgentID, redact.Text(body), "comment", task.TriggerCommentID, task.ID)
 					}
 				}
 			}
@@ -4210,8 +4214,12 @@ func (s *TaskService) createAgentComment(ctx context.Context, issueID, agentID p
 	// Resolve the thread root for thread-level side effects without overwriting
 	// parentID. The stored parent_id must remain the exact comment being replied
 	// to; recursive thread reads recover the root when needed.
+	var parentComment *db.Comment
 	var rootComment *db.Comment
 	if parentID.Valid {
+		if parent, err := s.Queries.GetComment(ctx, parentID); err == nil && parent.IssueID == issueID {
+			parentComment = &parent
+		}
 		if root, err := s.Queries.GetThreadRoot(ctx, db.GetThreadRootParams{
 			CommentID:   parentID,
 			WorkspaceID: issue.WorkspaceID,
@@ -4254,6 +4262,9 @@ func (s *TaskService) createAgentComment(ctx context.Context, issueID, agentID p
 		},
 	})
 	s.AutoUnresolveThreadOnReply(ctx, rootComment, util.UUIDToString(issue.WorkspaceID), "agent", util.UUIDToString(agentID))
+	if commentType == "comment" && s.AgentCommentCreated != nil {
+		s.AgentCommentCreated(ctx, issue, comment, parentComment)
+	}
 }
 
 // AutoUnresolveThreadOnReply clears resolved_at on the thread root when a

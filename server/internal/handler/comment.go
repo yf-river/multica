@@ -1124,6 +1124,10 @@ func (h *Handler) triggerTasksForComment(ctx context.Context, issue db.Issue, co
 	h.enqueueCommentAgentTriggers(ctx, issue, comment.ID, triggers)
 }
 
+func (h *Handler) triggerTasksForAgentServiceComment(ctx context.Context, issue db.Issue, comment db.Comment, parentComment *db.Comment) {
+	h.triggerTasksForComment(ctx, issue, comment, parentComment, comment.AuthorType, uuidToString(comment.AuthorID), nil)
+}
+
 func (h *Handler) isSquadSOPWorkerStageComment(ctx context.Context, issue db.Issue, comment db.Comment) bool {
 	if !comment.SourceTaskID.Valid || comment.AuthorType != "agent" {
 		return false

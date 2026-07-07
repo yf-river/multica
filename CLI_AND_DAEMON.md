@@ -419,10 +419,12 @@ multica issue comment list <issue-id> --thread <comment-id> --tail 30 \
     --since <RFC3339-timestamp>
 
 # Add a comment
-multica issue comment add <issue-id> --content "Looks good, merging now"
+printf '%s\n' "Looks good, merging now" > reply.md
+multica issue comment add <issue-id> --content-file reply.md
 
 # Reply to a specific comment
-multica issue comment add <issue-id> --parent <comment-id> --content "Thanks!"
+printf '%s\n' "Thanks!" > reply.md
+multica issue comment add <issue-id> --parent <comment-id> --content-file reply.md
 
 # Delete a comment
 multica issue comment delete <comment-id>

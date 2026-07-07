@@ -207,6 +207,7 @@ func New(queries *db.Queries, txStarter txStarter, hub *realtime.Hub, bus *event
 		cfg:                   cfg,
 	}
 	taskSvc.IssueStatusChanged = h.notifyParentOfChildDone
+	taskSvc.AgentCommentCreated = h.triggerTasksForAgentServiceComment
 	return h
 }
 
