@@ -1,12 +1,13 @@
 "use client";
 
-import { useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Check, ChevronsUpDown, Loader2, Play, RefreshCw, Scale, Plus, Search, X } from "lucide-react";
 import { toast } from "sonner";
 import { api } from "@multica/core/api";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
+import { useWSEvent, useWSReconnect } from "@multica/core/realtime";
 import type { Agent, AgentPlaygroundDetail, CreateAgentPlaygroundExperimentRequest, PromptEvaluationAsset, PromptEvaluationDatasetVersion } from "@multica/core/types";
 import { Button } from "@multica/ui/components/ui/button";
 import { Input } from "@multica/ui/components/ui/input";
@@ -23,6 +24,21 @@ const keys = {
   datasets: (workspaceId: string) => ["agent-playground", workspaceId, "datasets"] as const,
   versions: (workspaceId: string, datasetId: string) => ["agent-playground", workspaceId, "dataset-versions", datasetId] as const,
 };
+
+const AGENT_PLAYGROUND_SYNC_INTERVAL_MS = 2000;
+const TERMINAL_AGENT_PLAYGROUND_STATUSES = new Set(["completed", "failed", "cancelled"]);
+
+function isTerminalAgentPlaygroundStatus(status: string): boolean {
+  return TERMINAL_AGENT_PLAYGROUND_STATUSES.has(status);
+}
+
+function hasActiveAgentPlaygroundWork(detail: AgentPlaygroundDetail | null): boolean {
+  if (!detail) return false;
+  return (
+    detail.results.some((result) => result.task_id && !isTerminalAgentPlaygroundStatus(result.status)) ||
+    detail.judgements.some((judgement) => judgement.task_id && !isTerminalAgentPlaygroundStatus(judgement.status))
+  );
+}
 
 export function AgentPlaygroundPage() {
   const workspaceId = useWorkspaceId();
@@ -61,10 +77,11 @@ export function AgentPlaygroundPage() {
   });
   const agents = agentsQuery.data ?? [];
   const datasets = datasetsQuery.data?.items ?? [];
-  const datasetVersions = datasetVersionsQuery.data?.items ?? [];
+  const datasetVersions = useMemo(() => datasetVersionsQuery.data?.items ?? [], [datasetVersionsQuery.data?.items]);
   const detail = detailQuery.data ?? null;
   const selectedDatasetVersion = datasetVersions.find((version) => version.id === datasetVersionId);
   const plannedTaskCount = (selectedDatasetVersion?.row_count ?? 0) * selectedAgentIds.length;
+  const autoSyncActive = hasActiveAgentPlaygroundWork(detail);
 
   const createMutation = useMutation({
     mutationFn: (data: CreateAgentPlaygroundExperimentRequest) => api.createAgentPlaygroundExperiment(data),
@@ -85,8 +102,12 @@ export function AgentPlaygroundPage() {
   });
   const syncMutation = useMutation({
     mutationFn: (id: string) => api.syncAgentPlaygroundExperiment(id),
-    onSuccess: (updated) => queryClient.setQueryData(keys.detail(workspaceId, updated.experiment.id), updated),
+    onSuccess: (updated) => {
+      queryClient.setQueryData(keys.detail(workspaceId, updated.experiment.id), updated);
+      queryClient.invalidateQueries({ queryKey: keys.experiments(workspaceId) });
+    },
   });
+  const { isPending: syncPending, mutate: syncExperiment } = syncMutation;
   const judgeMutation = useMutation({
     mutationFn: (id: string) => api.judgeAgentPlaygroundExperiment(id, judgeAgentId ? { judge_agent_id: judgeAgentId } : undefined),
     onSuccess: (updated) => queryClient.setQueryData(keys.detail(workspaceId, updated.experiment.id), updated),
@@ -94,6 +115,24 @@ export function AgentPlaygroundPage() {
   });
 
   const canCreate = Boolean(name.trim() && selectedAgentIds.length > 0 && datasetId && datasetVersionId);
+  const createMissingReasons = useMemo(() => {
+    const reasons: string[] = [];
+    if (!name.trim()) reasons.push("填写名称");
+    if (!datasetId) {
+      reasons.push("选择用例库");
+    } else if (!datasetVersionId) {
+      if (datasetVersionsQuery.isFetching) {
+        reasons.push("等待快照加载");
+      } else if (datasetVersions.length === 0) {
+        reasons.push("为用例库创建快照");
+      } else {
+        reasons.push("选择快照");
+      }
+    }
+    if (selectedAgentIds.length === 0) reasons.push("选择执行 Agent");
+    return reasons;
+  }, [datasetId, datasetVersionId, datasetVersions.length, datasetVersionsQuery.isFetching, name, selectedAgentIds.length]);
+  const createHint = canCreate ? "" : `还需要：${createMissingReasons.join("、")}`;
   const resultsByCell = useMemo(() => {
     const map = new Map<string, AgentPlaygroundDetail["results"][number]>();
     for (const result of detail?.results ?? []) {
@@ -108,6 +147,43 @@ export function AgentPlaygroundPage() {
     }
     return map;
   }, [detail?.judgements]);
+
+  useEffect(() => {
+    if (!datasetId) return;
+    if (datasetVersions.length === 0) {
+      if (datasetVersionId) setDatasetVersionId("");
+      return;
+    }
+    if (!datasetVersionId || !datasetVersions.some((version) => version.id === datasetVersionId)) {
+      setDatasetVersionId(datasetVersions[0]!.id);
+    }
+  }, [datasetId, datasetVersionId, datasetVersions]);
+
+  const syncCurrentExperiment = useCallback((force = false) => {
+    if (!selectedExperimentId || syncPending) return;
+    if (!force && !hasActiveAgentPlaygroundWork(detail)) return;
+    syncExperiment(selectedExperimentId);
+  }, [detail, selectedExperimentId, syncExperiment, syncPending]);
+
+  useEffect(() => {
+    if (!autoSyncActive) return;
+    const interval = window.setInterval(() => syncCurrentExperiment(), AGENT_PLAYGROUND_SYNC_INTERVAL_MS);
+    return () => window.clearInterval(interval);
+  }, [autoSyncActive, syncCurrentExperiment]);
+
+  const handleTaskLifecycleEvent = useCallback(() => {
+    syncCurrentExperiment();
+  }, [syncCurrentExperiment]);
+
+  const handleWSReconnect = useCallback(() => {
+    syncCurrentExperiment(true);
+  }, [syncCurrentExperiment]);
+
+  useWSReconnect(handleWSReconnect);
+  useWSEvent("task:completed", handleTaskLifecycleEvent);
+  useWSEvent("task:failed", handleTaskLifecycleEvent);
+  useWSEvent("task:cancelled", handleTaskLifecycleEvent);
+  useWSEvent("chat:done", handleTaskLifecycleEvent);
 
   function createExperiment() {
     if (!canCreate) return;
@@ -157,10 +233,13 @@ export function AgentPlaygroundPage() {
                 <h2 className="text-base font-semibold">新建调试实验</h2>
                 <p className="text-xs text-muted-foreground">选择一个用例库快照，批量对比多个 Agent 的真实执行结果。</p>
               </div>
-              <Button onClick={createExperiment} disabled={!canCreate || createMutation.isPending}>
-                {createMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
-                创建实验
-              </Button>
+              <div className="flex flex-col items-end gap-1">
+                <Button onClick={createExperiment} disabled={!canCreate || createMutation.isPending}>
+                  {createMutation.isPending ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Plus className="mr-2 h-4 w-4" />}
+                  创建实验
+                </Button>
+                {createHint ? <div className="text-xs text-muted-foreground">{createHint}</div> : null}
+              </div>
             </div>
             <div className="grid grid-cols-2 gap-3">
               <Labeled label="名称"><Input value={name} onChange={(event) => setName(event.target.value)} /></Labeled>
@@ -213,7 +292,11 @@ export function AgentPlaygroundPage() {
               onRun={() => runMutation.mutate(detail.experiment.id)}
               onSync={() => syncMutation.mutate(detail.experiment.id)}
               onJudge={() => judgeMutation.mutate(detail.experiment.id)}
-              busy={runMutation.isPending || syncMutation.isPending || judgeMutation.isPending || detailQuery.isFetching}
+              autoSyncing={autoSyncActive}
+              running={runMutation.isPending}
+              syncing={syncMutation.isPending}
+              judging={judgeMutation.isPending}
+              loading={detailQuery.isFetching}
             />
           ) : (
             <div className="rounded-md border border-dashed p-8 text-sm text-muted-foreground">暂无实验。创建一个实验后会在这里看到结果矩阵。</div>
@@ -357,7 +440,11 @@ function ExperimentDetail({
   onRun,
   onSync,
   onJudge,
-  busy,
+  autoSyncing,
+  running,
+  syncing,
+  judging,
+  loading,
 }: {
   detail: AgentPlaygroundDetail;
   resultsByCell: Map<string, AgentPlaygroundDetail["results"][number]>;
@@ -365,8 +452,13 @@ function ExperimentDetail({
   onRun: () => void;
   onSync: () => void;
   onJudge: () => void;
-  busy: boolean;
+  autoSyncing: boolean;
+  running: boolean;
+  syncing: boolean;
+  judging: boolean;
+  loading: boolean;
 }) {
+  const busy = running || syncing || judging || loading;
   return (
     <section>
       <div className="mb-3 flex items-center justify-between">
@@ -374,10 +466,27 @@ function ExperimentDetail({
           <h2 className="text-base font-semibold">{detail.experiment.name}</h2>
           <p className="text-xs text-muted-foreground">{detail.inputs.length} 条输入 · {detail.agents.length} 个 Agent</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" onClick={onSync} disabled={busy}><RefreshCw className="mr-2 h-4 w-4" />同步</Button>
-          <Button variant="outline" onClick={onJudge} disabled={busy}><Scale className="mr-2 h-4 w-4" />裁判</Button>
-          <Button onClick={onRun} disabled={busy}><Play className="mr-2 h-4 w-4" />运行</Button>
+        <div className="flex items-center gap-3">
+          {autoSyncing ? (
+            <div className="inline-flex items-center gap-1 text-xs text-muted-foreground">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              自动同步中
+            </div>
+          ) : null}
+          <div className="flex gap-2">
+            <Button variant="outline" onClick={onSync} disabled={busy}>
+              <RefreshCw className={`mr-2 h-4 w-4 ${syncing ? "animate-spin" : ""}`} />
+              同步
+            </Button>
+            <Button variant="outline" onClick={onJudge} disabled={busy}>
+              {judging ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Scale className="mr-2 h-4 w-4" />}
+              裁判
+            </Button>
+            <Button onClick={onRun} disabled={busy}>
+              {running ? <Loader2 className="mr-2 h-4 w-4 animate-spin" /> : <Play className="mr-2 h-4 w-4" />}
+              运行
+            </Button>
+          </div>
         </div>
       </div>
       <div className="overflow-x-auto rounded-md border">
