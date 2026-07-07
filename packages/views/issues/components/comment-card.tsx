@@ -49,6 +49,17 @@ const highlightedCommentBackgroundClass =
 const highlightedCommentFadeClass =
   "after:from-[color-mix(in_srgb,var(--card)_95%,var(--brand)_5%)]";
 
+export function formatCommentContentForDisplay(content: string): string {
+  if (!content || content.includes("\n") || content.includes("```")) return content;
+  if (!/[：:]\s*1[.、]\s*\S/.test(content) || !/[。！？?；;]\s*2[.、]\s*\S/.test(content)) {
+    return content;
+  }
+  return content
+    .replace(/([：:])\s*(1[.、]\s*)/, "$1\n\n$2")
+    .replace(/([。！？?；;])\s*(\d+[.、]\s*)/g, "$1\n$2")
+    .replace(/([。！？?；;])\s*(建议[：:])/, "$1\n\n$2");
+}
+
 function StickyHeaderShell({
   className,
   sticky = true,
@@ -655,7 +666,7 @@ function CommentRow({
       ) : (
         <>
           <div className="pl-12 pr-4 pt-1 text-sm leading-relaxed text-foreground/85">
-            <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
+            <ReadonlyContent content={formatCommentContentForDisplay(entry.content ?? "")} attachments={entry.attachments} />
           </div>
           <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-12 pr-4" />
           {retryableAgentFailureComment(entry) && (
@@ -940,7 +951,7 @@ function CommentCardImpl({
             ) : (
               <>
                 <div className="pl-10 text-sm leading-relaxed text-foreground/85">
-                  <ReadonlyContent content={entry.content ?? ""} attachments={entry.attachments} />
+                  <ReadonlyContent content={formatCommentContentForDisplay(entry.content ?? "")} attachments={entry.attachments} />
                 </div>
                 <AttachmentList attachments={entry.attachments} content={entry.content} className="mt-1.5 pl-10" />
                 {retryableAgentFailureComment(entry) && (

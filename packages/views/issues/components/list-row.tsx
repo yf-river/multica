@@ -113,7 +113,6 @@ function ListRowContent({
 
           <span className="flex min-w-0 flex-1 items-center gap-1.5">
             <span className="truncate">{issue.title}</span>
-            <TAPDSourceBadge issue={issue} variant="inline" />
             {showChildProgress && (
               <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-muted/60 px-1.5 py-0.5">
                 <ProgressRing done={childProgress!.done} total={childProgress!.total} size={14} />
@@ -135,6 +134,7 @@ function ListRowContent({
               </span>
             )}
           </span>
+          <TAPDSourceBadge issue={issue} variant="inline" className="shrink-0" />
           {showProject && (
             <span className="inline-flex shrink-0 items-center gap-1 text-xs text-muted-foreground max-w-[140px]">
               <ProjectIcon project={project} size="sm" />

@@ -207,10 +207,10 @@ export const BoardCardContent = memo(function BoardCardContent({
 
       {/* Row 2: Title */}
       <div className="mt-1 flex min-w-0 items-start gap-1">
-        <p className="min-w-0 text-sm font-medium leading-snug line-clamp-2">
+        <p className="min-w-0 flex-1 text-sm font-medium leading-snug line-clamp-2">
           {issue.title}
         </p>
-        <TAPDSourceBadge issue={issue} variant="inline" className="mt-[3px]" />
+        <TAPDSourceBadge issue={issue} variant="inline" className="mt-[3px] shrink-0" />
       </div>
 
       {showDescription && (() => {
