@@ -90,6 +90,78 @@ func getIssueStatus(t *testing.T, issueID string) string {
 	return issue.Status
 }
 
+func TestAgentCannotMarkGongfengIssueDoneWithoutLinkedMR(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+
+	w := httptest.NewRecorder()
+	req := newRequest("POST", "/api/projects?workspace_id="+testWorkspaceID, map[string]any{
+		"title": "agent done MR gate " + time.Now().Format(time.RFC3339Nano),
+	})
+	testHandler.CreateProject(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateProject: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var project ProjectResponse
+	if err := json.NewDecoder(w.Body).Decode(&project); err != nil {
+		t.Fatalf("decode project: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM project WHERE id = $1`, project.ID)
+	})
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO project_resource (project_id, workspace_id, resource_type, resource_ref, label, created_by)
+		VALUES ($1, $2, 'gongfeng_repo', $3, 'user-center', $4)
+	`, project.ID, testWorkspaceID, `{"project_path":"ChainWeaver/ida/user-center","repo_url":"https://git.code.tencent.com/ChainWeaver/ida/user-center"}`, testUserID); err != nil {
+		t.Fatalf("insert project resource: %v", err)
+	}
+
+	w = httptest.NewRecorder()
+	req = newRequest("POST", "/api/issues?workspace_id="+testWorkspaceID, map[string]any{
+		"title":      "agent done requires MR " + time.Now().Format(time.RFC3339Nano),
+		"status":     "in_progress",
+		"project_id": project.ID,
+	})
+	testHandler.CreateIssue(w, req)
+	if w.Code != http.StatusCreated {
+		t.Fatalf("CreateIssue: expected 201, got %d: %s", w.Code, w.Body.String())
+	}
+	var issue IssueResponse
+	if err := json.NewDecoder(w.Body).Decode(&issue); err != nil {
+		t.Fatalf("decode issue: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issue.ID)
+	})
+
+	agentID := createHandlerTestAgent(t, "Agent Done MR Gate "+randomID()[:8], nil)
+	taskID := createHandlerTestTaskForAgentOnIssue(t, agentID, issue.ID)
+
+	w = httptest.NewRecorder()
+	req = newRequest("PUT", "/api/issues/"+issue.ID, map[string]any{"status": "done"})
+	req.Header.Set("X-Agent-ID", agentID)
+	req.Header.Set("X-Task-ID", taskID)
+	req = withURLParam(req, "id", issue.ID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusConflict {
+		t.Fatalf("UpdateIssue agent done without MR: expected 409, got %d: %s", w.Code, w.Body.String())
+	}
+	var resp struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(w.Body).Decode(&resp); err != nil {
+		t.Fatalf("decode conflict response: %v", err)
+	}
+	if resp.Code != "missing_linked_mr" {
+		t.Fatalf("conflict code = %q, want missing_linked_mr", resp.Code)
+	}
+	if got := getIssueStatus(t, issue.ID); got != "in_progress" {
+		t.Fatalf("issue status changed despite missing MR gate: got %q", got)
+	}
+}
+
 func TestParentDoneBlockedWhenChildNotDone(t *testing.T) {
 	fx := newChildDoneFixture(t, "in_progress")
 

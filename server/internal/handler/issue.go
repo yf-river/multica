@@ -182,6 +182,38 @@ func (h *Handler) writeIssueDoneBlockedByChildren(w http.ResponseWriter, incompl
 	})
 }
 
+func (h *Handler) issueDoneBlockedByMissingGongfengMR(ctx context.Context, issue db.Issue) (bool, error) {
+	if !issue.ProjectID.Valid {
+		return false, nil
+	}
+	resources, err := h.Queries.ListProjectResources(ctx, issue.ProjectID)
+	if err != nil {
+		return false, err
+	}
+	requiresMR := false
+	for _, resource := range resources {
+		if resource.ResourceType == "gongfeng_repo" {
+			requiresMR = true
+			break
+		}
+	}
+	if !requiresMR {
+		return false, nil
+	}
+	pullRequests, err := h.Queries.ListPullRequestsByIssue(ctx, issue.ID)
+	if err != nil {
+		return false, err
+	}
+	return len(pullRequests) == 0, nil
+}
+
+func (h *Handler) writeIssueDoneBlockedByMissingMR(w http.ResponseWriter) {
+	writeJSON(w, http.StatusConflict, map[string]any{
+		"error": "cannot mark Gongfeng-backed issue done without a linked MR",
+		"code":  "missing_linked_mr",
+	})
+}
+
 var (
 	errIssueParentNotFound = errors.New("parent issue not found in this workspace")
 	errIssueParentCycle    = errors.New("circular parent relationship detected")
@@ -3686,6 +3718,19 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 		if len(incomplete) > 0 {
 			h.writeIssueDoneBlockedByChildren(w, incomplete)
 			return
+		}
+		actorType, _ := h.resolveActor(r, userID, workspaceID)
+		if actorType == "agent" {
+			blocked, err := h.issueDoneBlockedByMissingGongfengMR(r.Context(), prevIssue)
+			if err != nil {
+				slog.Warn("check issue linked MR gate failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
+				writeError(w, http.StatusInternalServerError, "failed to check linked MRs")
+				return
+			}
+			if blocked {
+				h.writeIssueDoneBlockedByMissingMR(w)
+				return
+			}
 		}
 	}
 

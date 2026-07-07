@@ -277,6 +277,7 @@ const sopImplementationVerificationRule = `## 04-implement 验证职责
 - 04 必须按 03 的 ` + "`" + `V1/V2/V3 test matrix` + "`" + ` 实现代码并执行开发侧负责的验证。
 - V1 通常由 04 完成，包括单测、组件测试、接口逻辑测试、局部 mock 或本项目可运行检查。
 - 如果 03 明确把某个 V2 项分配给 04，04 必须按项目 harness 自动拉起 sandbox/dev 或报告具体 BLOCKED 缺口。
+- 04/05 拉起 sandbox/dev 时必须使用当前目标项目或 required child 项目的 harness/skill/仓库命令；不得使用 ai-studio/goal-test 自身的 ` + "`" + `make goal-test-deploy-dev` + "`" + `、` + "`" + `goal-test-fast-check` + "`" + ` 代替 user-center、gateway、ida-deployment 等业务项目部署，除非当前目标项目就是 goal-test。
 - 04 不得重新定义 V1/V2/V3 测试层级，不得把未执行的 required V2/V3 写成非阻塞、跳过后仍 PASS 或验收完成。
 - 如果开发环境缺 DB、sandbox、dev URL、凭据或依赖服务，04 必须把对应 required 项标为 BLOCKED，并给出已尝试的启动/验证命令、失败原因和交给 05/PM 的缺口；不能只写“跳过（需环境）”后宣称开发完成。
 - 04 handoff 必须列出已执行项、未执行 required 项、原因、证据和交给 05 的验证入口。`
@@ -291,6 +292,7 @@ const sopVerificationGateRule = `## 05-verify 验证门禁
 - 如果当前 issue 自己就是跨项目 child，05 必须应用 child issue 验证归属规则：先验本项目交付；只依赖父 issue 后续实现的组合 V2/V3 不得反向阻塞 child 收口。
 - 如果 03 的 V3 矩阵或 sandbox_plan 写了部署验证、sandbox、外部 HTTP、业务 E2E、网关路由验证或 curl/grpcurl 验收，且该项未明确标为 ` + "`" + `not required` + "`" + `/` + "`" + `skipped` + "`" + ` 或用户未明确豁免，05 必须把它当作 required；不能用 ` + "`" + `N/A` + "`" + `、` + "`" + `待部署` + "`" + `、` + "`" + `后续执行` + "`" + ` 或 ` + "`" + `MR 合并后再测` + "`" + ` 作为 PASS 依据。
 - 若 V2 sandbox/dev 或 V3 business E2E 为 required，05 必须先按项目 harness/skill 自动拉起环境并执行真实验证；只有启动契约、凭据、依赖服务、目标 URL 缺失或启动失败时，才能 BLOCKED。
+- 05 拉起环境和执行 V2/V3 时必须使用当前目标项目或 required child 项目的 harness/skill/仓库命令；不得用 ai-studio/goal-test 的 ` + "`" + `make goal-test-deploy-dev` + "`" + `、` + "`" + `goal-test-fast-check` + "`" + ` 代替 user-center、gateway、ida-deployment 等业务项目验证，除非当前目标项目就是 goal-test。
 - 若验收要求包含外部 HTTP、gateway 路由、sandbox 或业务 E2E，V2 sandbox 或 V3 business E2E 被 SKIP 不能当作 PASS。
 - 必须提供真实 curl/grpcurl 的命令、目标 URL、响应摘要和结果，或在用户明确豁免前保持 BLOCKED。`
 const internalSquadDefaultProvider = "codebuddy"

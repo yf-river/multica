@@ -557,6 +557,7 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 				"开发侧负责的验证",
 				"不得重新定义 V1/V2/V3 测试层级",
 				"交给 05 的验证入口",
+				"不得使用 ai-studio/goal-test 自身的 `make goal-test-deploy-dev`",
 				"## 04-implement 功能 MR 规则",
 				"04 必须继续补真实实现或测试改动",
 			} {
@@ -575,6 +576,7 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 				"自动拉起环境",
 				"V2 sandbox 或 V3 business E2E 被 SKIP 不能当作 PASS",
 				"真实 curl/grpcurl",
+				"不得用 ai-studio/goal-test 的 `make goal-test-deploy-dev`",
 				"## 05-verify 功能 MR 门禁",
 				"## 05-verify 跨项目验收门禁",
 				"05 必须独立核验",
