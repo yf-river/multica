@@ -2356,7 +2356,6 @@ func (h *Handler) normalizeTaskUsagePayload(ctx context.Context, task db.AgentTa
 		u.CacheReadTokens = nonNegativeDelta(u.CacheReadTokens, previous.CacheReadTokens)
 		u.CacheWriteTokens = nonNegativeDelta(u.CacheWriteTokens, previous.CacheWriteTokens)
 	}
-	u.InputTokens = codebuddyUncachedInputTokens(u.InputTokens, u.CacheReadTokens, u.CacheWriteTokens)
 	return u
 }
 
@@ -2374,7 +2373,7 @@ func (h *Handler) previousCodebuddySessionUsage(ctx context.Context, task db.Age
 	var previous taskUsageTotals
 	err := h.DB.QueryRow(ctx, `
 		SELECT
-			COALESCE(SUM(tu.input_tokens + tu.cache_read_tokens + tu.cache_write_tokens), 0)::bigint,
+			COALESCE(SUM(tu.input_tokens), 0)::bigint,
 			COALESCE(SUM(tu.output_tokens), 0)::bigint,
 			COALESCE(SUM(tu.cache_read_tokens), 0)::bigint,
 			COALESCE(SUM(tu.cache_write_tokens), 0)::bigint
@@ -2408,14 +2407,6 @@ func nonNegativeDelta(current, previous int64) int64 {
 		return 0
 	}
 	return current - previous
-}
-
-func codebuddyUncachedInputTokens(inputTokens, cacheReadTokens, cacheWriteTokens int64) int64 {
-	uncached := inputTokens - cacheReadTokens - cacheWriteTokens
-	if uncached < 0 {
-		return 0
-	}
-	return uncached
 }
 
 // GetTaskStatus returns the current status of a task.

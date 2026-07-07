@@ -1632,8 +1632,8 @@ func TestReportTaskUsageNormalizesCodebuddySessionCumulativeUsage(t *testing.T) 
 		}
 	}
 
-	reportUsageForTest(firstTaskID, 1000, 50, 300, 100)
-	reportUsageForTest(secondTaskID, 1600, 70, 500, 150)
+	reportUsageForTest(firstTaskID, 40, 50, 300, 100)
+	reportUsageForTest(secondTaskID, 70, 70, 500, 150)
 
 	var firstInput, firstOutput, firstCacheRead, firstCacheWrite int64
 	if err := testPool.QueryRow(ctx, `
@@ -1643,8 +1643,8 @@ func TestReportTaskUsageNormalizesCodebuddySessionCumulativeUsage(t *testing.T) 
 	`, firstTaskID).Scan(&firstInput, &firstOutput, &firstCacheRead, &firstCacheWrite); err != nil {
 		t.Fatalf("load first usage: %v", err)
 	}
-	if firstInput != 600 || firstOutput != 50 || firstCacheRead != 300 || firstCacheWrite != 100 {
-		t.Fatalf("first usage = input=%d output=%d cache_read=%d cache_write=%d, want 600/50/300/100", firstInput, firstOutput, firstCacheRead, firstCacheWrite)
+	if firstInput != 40 || firstOutput != 50 || firstCacheRead != 300 || firstCacheWrite != 100 {
+		t.Fatalf("first usage = input=%d output=%d cache_read=%d cache_write=%d, want 40/50/300/100", firstInput, firstOutput, firstCacheRead, firstCacheWrite)
 	}
 
 	var secondInput, secondOutput, secondCacheRead, secondCacheWrite int64
@@ -1655,8 +1655,8 @@ func TestReportTaskUsageNormalizesCodebuddySessionCumulativeUsage(t *testing.T) 
 	`, secondTaskID).Scan(&secondInput, &secondOutput, &secondCacheRead, &secondCacheWrite); err != nil {
 		t.Fatalf("load second usage: %v", err)
 	}
-	if secondInput != 350 || secondOutput != 20 || secondCacheRead != 200 || secondCacheWrite != 50 {
-		t.Fatalf("second usage = input=%d output=%d cache_read=%d cache_write=%d, want 350/20/200/50", secondInput, secondOutput, secondCacheRead, secondCacheWrite)
+	if secondInput != 30 || secondOutput != 20 || secondCacheRead != 200 || secondCacheWrite != 50 {
+		t.Fatalf("second usage = input=%d output=%d cache_read=%d cache_write=%d, want 30/20/200/50", secondInput, secondOutput, secondCacheRead, secondCacheWrite)
 	}
 
 	events, err := testHandler.Queries.ListTaskTraceEventsByTask(ctx, parseUUID(secondTaskID))
@@ -1666,7 +1666,7 @@ func TestReportTaskUsageNormalizesCodebuddySessionCumulativeUsage(t *testing.T) 
 	if len(events) != 1 {
 		t.Fatalf("second trace events = %+v", events)
 	}
-	if events[0].InputTokens != 350 || events[0].OutputTokens != 20 || events[0].CacheReadTokens != 200 || events[0].CacheWriteTokens != 50 {
+	if events[0].InputTokens != 30 || events[0].OutputTokens != 20 || events[0].CacheReadTokens != 200 || events[0].CacheWriteTokens != 50 {
 		t.Fatalf("second trace tokens = %+v, want normalized delta", events[0])
 	}
 }

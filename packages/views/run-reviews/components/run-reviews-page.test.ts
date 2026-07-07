@@ -11,6 +11,7 @@ import {
   buildRunReviewLiveSummary,
   buildRunReviewLiveTimelineNodes,
   buildRunReviewNodeXlsxSheets,
+  buildRunReviewEventGroups,
   buildRunReviewEventRows,
   buildRunReviewOptimizerHref,
   buildRunReviewRawEventsXlsxSheets,
@@ -457,6 +458,107 @@ describe("buildRunReviewEventRows", () => {
     expect(sheet?.rows).toHaveLength(56);
     expect(sheet?.rows.some((row) => row.includes("message:task-1:55"))).toBe(true);
     expect(sheet?.rows.some((row) => row.includes("message 55"))).toBe(true);
+  });
+
+  it("groups task events once and keeps group events in timeline order", () => {
+    const rows = [
+      {
+        id: "trace:2",
+        kind: "trace",
+        category: "Trace",
+        timestampMs: 200,
+        timeLabel: "06/09 10:02",
+        taskId: "task-1",
+        sourceLabel: "task_service",
+        object: "task.completed",
+        title: "任务完成",
+        outcome: "已完成",
+        summary: "",
+        detail: "",
+        metadataDetail: "",
+        durationMs: 0,
+        tokenTotal: 20,
+        severity: "normal",
+        rawSourceLabel: "task_trace_event",
+        rawPayload: { id: "trace-2" },
+      },
+      {
+        id: "message:1",
+        kind: "message",
+        category: "文本",
+        timestampMs: 100,
+        timeLabel: "06/09 10:01",
+        taskId: "task-1",
+        sourceLabel: "模型输出",
+        object: "消息 #1",
+        title: "文本",
+        outcome: "已记录",
+        summary: "hello",
+        detail: "hello",
+        metadataDetail: "",
+        durationMs: 0,
+        tokenTotal: 0,
+        severity: "normal",
+        rawSourceLabel: "task_message",
+        rawPayload: { seq: 1 },
+      },
+    ] satisfies ReturnType<typeof buildRunReviewEventRows>;
+
+    const groups = buildRunReviewEventGroups(rows, new Map([["task-1", "01-需求澄清"]]));
+
+    expect(groups).toHaveLength(1);
+    expect(groups[0]?.label).toBe("01-需求澄清");
+    expect(groups[0]?.taskId).toBe("task-1");
+    expect(groups[0]?.tokenTotal).toBe(20);
+    expect(groups[0]?.events.map((event) => event.id)).toEqual(["message:1", "trace:2"]);
+  });
+
+  it("keeps system events in separate raw groups when they do not belong to a task", () => {
+    const rows = [
+      {
+        id: "node:source",
+        kind: "node",
+        category: "来源",
+        timestampMs: 100,
+        timeLabel: "06/09 10:01",
+        sourceLabel: "source_fetch",
+        object: "source_fetch",
+        title: "来源已拉取",
+        outcome: "已完成",
+        summary: "",
+        detail: "",
+        metadataDetail: "",
+        durationMs: 0,
+        tokenTotal: 0,
+        severity: "normal",
+        rawSourceLabel: "timeline_node",
+        rawPayload: { node_id: "source" },
+      },
+      {
+        id: "node:approval",
+        kind: "node",
+        category: "唤醒",
+        timestampMs: 200,
+        timeLabel: "06/09 10:02",
+        sourceLabel: "approval",
+        object: "approval",
+        title: "人工确认",
+        outcome: "已完成",
+        summary: "",
+        detail: "",
+        metadataDetail: "",
+        durationMs: 0,
+        tokenTotal: 0,
+        severity: "normal",
+        rawSourceLabel: "timeline_node",
+        rawPayload: { node_id: "approval" },
+      },
+    ] satisfies ReturnType<typeof buildRunReviewEventRows>;
+
+    const groups = buildRunReviewEventGroups(rows);
+
+    expect(groups.map((group) => group.label)).toEqual(["source_fetch", "approval"]);
+    expect(groups.every((group) => group.taskId === undefined)).toBe(true);
   });
 
   it("turns raw exec_command calls into semantic review actions", () => {
@@ -1193,9 +1295,7 @@ describe("buildRunReviewEventRows", () => {
     });
     expect(timelineSegmentTooltipRows(rows[2]!, rows[2]!.segments[0]!).map(([label]) => label)).toEqual([
       "节点",
-      "片段",
-      "接手",
-      "实际开始",
+      "开始",
       "结束",
       "耗时",
       "Token",
@@ -1204,7 +1304,6 @@ describe("buildRunReviewEventRows", () => {
     expect(timelineSegmentTooltipRows(rows[2]!, rows[2]!.segments[0]!)).toContainEqual(["Token", "30"]);
     expect(timelineSegmentTooltipRows(rows[0]!, rows[0]!.segments[0]!).map(([label]) => label)).toEqual([
       "节点",
-      "片段",
       "开始",
       "结束",
       "耗时",
@@ -1256,8 +1355,11 @@ describe("buildRunReviewEventRows", () => {
       durationMs: 360_000,
       tokenTotal: 30,
     });
-    expect(timelineSegmentTooltipRows(rows[0]!, rows[0]!.segments[1]!)).toContainEqual(["接手", expect.stringMatching(/:01:00$/)]);
-    expect(timelineSegmentTooltipRows(rows[0]!, rows[0]!.segments[1]!)).toContainEqual(["实际开始", expect.stringMatching(/:06:00$/)]);
+    const tooltipRows = timelineSegmentTooltipRows(rows[0]!, rows[0]!.segments[1]!);
+    expect(tooltipRows).toContainEqual(["开始", expect.stringMatching(/:01:00$/)]);
+    expect(tooltipRows.map(([label]) => label)).not.toContain("接手");
+    expect(tooltipRows.map(([label]) => label)).not.toContain("实际开始");
+    expect(tooltipRows.map(([label]) => label)).not.toContain("片段");
   });
 
   it("uses true timeline proportions for short run segments", () => {

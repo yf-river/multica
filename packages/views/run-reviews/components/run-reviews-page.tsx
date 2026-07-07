@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { Activity, AlertTriangle, Download, GitBranch, HelpCircle, ListChecks, Loader2, RotateCcw, Timer, WifiOff } from "lucide-react";
+import { AlertTriangle, ChevronRight, Download, HelpCircle, Loader2, RotateCcw, WifiOff } from "lucide-react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { toast } from "sonner";
 import * as XLSX from "xlsx";
@@ -26,6 +26,7 @@ import type { PromptEvaluationToolCallChain } from "@multica/core/types/prompt-e
 import { cn } from "@multica/ui/lib/utils";
 import { Skeleton } from "@multica/ui/components/ui/skeleton";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@multica/ui/components/ui/tooltip";
+import { Dialog, DialogContent, DialogTitle } from "@multica/ui/components/ui/dialog";
 import { PageHeader } from "../../layout/page-header";
 import { AppLink, useNavigation } from "../../navigation";
 import { TranscriptButton } from "../../common/task-transcript";
@@ -75,6 +76,31 @@ export function buildRunReviewDurationTooltipRows(summary: IssueTimelineSummary 
     ["Agent 执行耗时", formatDuration(agentExecution)],
     ["人工/等待耗时", humanConfirmation == null ? "未记录" : formatDuration(humanConfirmation)],
   ];
+}
+
+export function buildRunReviewDurationSummary(summary: IssueTimelineSummary | undefined): string {
+  const agentExecution = summary?.agent_execution_duration_ms ?? summary?.total_duration_ms ?? 0;
+  const humanConfirmation = summary?.human_confirmation_duration_ms;
+  return `Agent 执行 ${formatDuration(agentExecution)} · 人工/等待 ${humanConfirmation == null ? "未记录" : formatDuration(humanConfirmation)}`;
+}
+
+export function buildRunReviewTokenSummary(summary: IssueTimelineSummary | undefined): string {
+  const cacheRead = summary?.total_cache_read_tokens ?? 0;
+  const cacheWrite = summary?.total_cache_write_tokens ?? 0;
+  return [
+    `输入 ${formatTokenMillions(summary?.total_input_tokens ?? 0)}`,
+    `输出 ${formatTokenMillions(summary?.total_output_tokens ?? 0)}`,
+    `读 ${formatTokenMillions(cacheRead)}`,
+    `写 ${formatTokenMillions(cacheWrite)}`,
+    `命中 ${formatPercent(cacheReuseRate(cacheRead, cacheWrite))}`,
+  ].join(" · ");
+}
+
+export function buildRunReviewTurnSummary(agentRows: ReturnType<typeof buildAgentNodeRows>): string {
+  const summary = agentRows
+    .map((row) => `${agentNodeDisplayLabel(row)} ${formatNumber(row.node.agent_turn_count ?? 0)}`)
+    .join(" · ");
+  return summary || "暂无执行轮次";
 }
 
 export function buildRunReviewLiveSummary(
@@ -349,7 +375,9 @@ function RunReviewDetail({
 }) {
   const wsId = useWorkspaceId();
   const queryClient = useQueryClient();
-  const [reviewView, setReviewView] = useState<"classic" | "trace">("classic");
+  const [eventQuery, setEventQuery] = useState("");
+  const [collapsedEventGroupKeys, setCollapsedEventGroupKeys] = useState<Set<string>>(() => new Set());
+  const [selectedRawEvent, setSelectedRawEvent] = useState<RunReviewEventRowData | null>(null);
   useRunReviewRealtimeSync(issue.id, wsId);
   const { data: tasks = [] } = useQuery({
     queryKey: issueKeys.tasks(issue.id),
@@ -375,18 +403,22 @@ function RunReviewDetail({
   const visibleTimelineRows = buildTimelineAgentRows(timelineNodes);
   const visibleChildLanes = childLanes;
   const eventRows = buildRunReviewEventRows(tree, timelineNodes);
+  const visibleEventRows = useMemo(
+    () => filterRunReviewEventRows(eventRows, eventQuery),
+    [eventQuery, eventRows],
+  );
+  const taskLabelById = useMemo(() => buildEventTaskLabelById(timelineNodes), [timelineNodes]);
+  const visibleEventGroups = useMemo(
+    () => buildRunReviewEventGroups(visibleEventRows, taskLabelById),
+    [taskLabelById, visibleEventRows],
+  );
+  const eventSearchActive = eventQuery.trim().length > 0;
   const tokenTotal = (summary?.total_input_tokens ?? 0) +
     (summary?.total_output_tokens ?? 0) +
     (summary?.total_cache_read_tokens ?? 0) +
     (summary?.total_cache_write_tokens ?? 0);
   const nodeXlsxSheets = buildRunReviewNodeXlsxSheets(issue, summary, agentNodeRows, visibleChildLanes);
   const rawEventsXlsxSheets = buildRunReviewRawEventsXlsxSheets(eventRows);
-  const traceModel = useMemo(
-    () => buildTraceViewModel(tree, timelineNodes, tasks),
-    [tasks, timelineNodes, tree],
-  );
-  const traceNodeXlsxSheets = buildTraceNodeXlsxSheets(issue, summary, traceModel);
-  const traceRawXlsxSheets = buildTraceRawXlsxSheets(traceModel);
   const taskById = useMemo(() => {
     const result = new Map<string, AgentTask>();
     for (const task of [...flattenExecutionTasks(tree), ...tasks]) {
@@ -394,6 +426,17 @@ function RunReviewDetail({
     }
     return result;
   }, [tasks, tree]);
+  const toggleEventGroup = useCallback((groupKey: string) => {
+    setCollapsedEventGroupKeys((current) => {
+      const next = new Set(current);
+      if (next.has(groupKey)) {
+        next.delete(groupKey);
+      } else {
+        next.add(groupKey);
+      }
+      return next;
+    });
+  }, []);
   const latestTerminalTask = useMemo(() => latestTerminalAgentTask(tasks), [tasks]);
   const latestFailedTask = activeTasks.length === 0 && latestTerminalTask && isRetryableTask(latestTerminalTask)
     ? latestTerminalTask
@@ -479,186 +522,196 @@ function RunReviewDetail({
           />
         )}
 
-        <div className="grid gap-0 divide-y text-sm md:grid-cols-3 md:divide-x md:divide-y-0">
+        <div className="grid gap-3 border-t p-4 text-sm md:grid-cols-3">
           <Metric
             label="总耗时"
             value={formatDuration(wallClockDurationMs)}
-            icon={<Timer className="size-3.5" />}
-            tooltip={
-              <MetricTooltip
-                rows={buildRunReviewDurationTooltipRows(summary)}
-              />
-            }
+            detail={buildRunReviewDurationSummary(summary)}
           />
           <Metric
             label="总 Token"
             value={formatNumber(tokenTotal)}
-            icon={<Activity className="size-3.5" />}
-            tooltip={
-              <MetricTooltip
-                rows={[
-                  ["输入 Token", formatNumber(summary?.total_input_tokens ?? 0)],
-                  ["输出 Token", formatNumber(summary?.total_output_tokens ?? 0)],
-                  ["缓存读", formatNumber(summary?.total_cache_read_tokens ?? 0)],
-                  ["缓存写", formatNumber(summary?.total_cache_write_tokens ?? 0)],
-                  ["缓存命中率", formatPercent(cacheReuseRate(summary?.total_cache_read_tokens ?? 0, summary?.total_cache_write_tokens ?? 0))],
-                ]}
-              />
-            }
+            detail={buildRunReviewTokenSummary(summary)}
           />
-          <Metric label="执行轮次" value={formatNumber(summary?.agent_turn_count ?? 0)} icon={<ListChecks className="size-3.5" />} />
+          <Metric
+            label="执行轮次"
+            value={formatNumber(summary?.agent_turn_count ?? 0)}
+            detail={buildRunReviewTurnSummary(agentNodeRows)}
+          />
         </div>
       </section>
 
       {loading ? <DetailSkeleton /> : null}
 
-      <div className="flex flex-wrap gap-2 rounded-md border bg-card p-2" role="tablist" aria-label="运行复盘视图">
-        <button
-          type="button"
-          className={cn("rounded px-3 py-1.5 text-xs", reviewView === "classic" ? "bg-foreground text-background" : "text-muted-foreground hover:bg-accent hover:text-foreground")}
-          onClick={() => setReviewView("classic")}
-          role="tab"
-          aria-selected={reviewView === "classic"}
-        >
-          运行复盘
-        </button>
-        <button
-          type="button"
-          className={cn("rounded px-3 py-1.5 text-xs", reviewView === "trace" ? "bg-foreground text-background" : "text-muted-foreground hover:bg-accent hover:text-foreground")}
-          onClick={() => setReviewView("trace")}
-          role="tab"
-          aria-selected={reviewView === "trace"}
-          data-testid="run-review-trace-view-tab"
-        >
-          Trace 视图
-        </button>
-      </div>
+      <section className="rounded-md border bg-card">
+        <SectionTitle title="横向时序图" subtitle="按真实出现的执行节点绘制；节点存在但缺少开始/结束时间时会单独标记。" />
+        <TimelineLaneChart stageRows={visibleTimelineRows} childLanes={visibleChildLanes} timelineNodes={timelineNodes} />
+      </section>
 
-      {reviewView === "trace" ? (
-        <RunReviewTraceView
-          model={traceModel}
-          nodeXlsxSheets={traceNodeXlsxSheets}
-          rawXlsxSheets={traceRawXlsxSheets}
-          issue={issue}
+      <section className="rounded-md border bg-card">
+        <SectionTitle
+          title="节点表"
+          subtitle="按 Agent 运行节点展示耗时、token、执行轮次和产物。"
+          action={
+            <ExportButton
+              label="导出节点数据"
+              onClick={() => downloadXlsx(`run-review-nodes-${issue.identifier || issue.id}.xlsx`, nodeXlsxSheets)}
+            />
+          }
         />
-      ) : (
-        <>
-          <section className="rounded-md border bg-card">
-            <SectionTitle title="横向时序图" subtitle="按真实出现的执行节点绘制；节点存在但缺少开始/结束时间时会单独标记。" />
-            <TimelineLaneChart stageRows={visibleTimelineRows} childLanes={visibleChildLanes} timelineNodes={timelineNodes} />
-          </section>
-
-          <section className="rounded-md border bg-card">
-            <SectionTitle title="子任务泳道" subtitle="只展示执行树中真实关联的跨项目子 issue。" />
-            <div className="space-y-2 px-4 pb-4">
-              {visibleChildLanes.length > 0 ? visibleChildLanes.map((lane) => (
-                <div key={lane.key} className="flex items-center justify-between gap-3 rounded-md border bg-background px-3 py-2 text-sm">
-                  <div className="min-w-0">
-                    <div className="font-medium">{lane.label}</div>
-                    <div className="truncate text-xs text-muted-foreground">{lane.issue ? `${lane.issue.identifier} ${lane.issue.title}` : ""}</div>
-                  </div>
-                  <span className="shrink-0 rounded border px-2 py-1 text-xs text-muted-foreground">{statusLabel(lane.issue?.status ?? "")}</span>
-                </div>
-              )) : (
-                <div className="rounded-md border border-dashed bg-muted/20 px-3 py-4 text-sm text-muted-foreground">
-                  当前执行树暂无跨项目子 issue。
-                </div>
-              )}
-            </div>
-          </section>
-
-          <section className="rounded-md border bg-card">
-            <SectionTitle
-              title="节点表"
-              subtitle="按 Agent 运行节点展示耗时、token、执行轮次和产物。"
-              action={
-                <ExportButton
-                  label="导出节点数据"
-                  onClick={() => downloadXlsx(`run-review-nodes-${issue.identifier || issue.id}.xlsx`, nodeXlsxSheets)}
-                />
-              }
-            />
-            <div className="hidden md:block">
-              <table className="w-full table-fixed text-sm">
-                <thead className="border-y bg-muted/40 text-left text-xs text-muted-foreground">
-                  <tr>
-                    <th className="w-[20%] px-3 py-2 font-medium">节点</th>
-                    <th className="w-[18%] px-3 py-2 font-medium">Agent</th>
-                    <th className="w-[12%] px-3 py-2 font-medium">耗时</th>
-                    <th className="w-[12%] px-3 py-2 font-medium">Token</th>
-                    <th className="w-[12%] px-3 py-2 font-medium">执行轮次</th>
-                    <th className="w-[26%] px-3 py-2 font-medium">产物</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y">
-                  {agentNodeRows.length > 0 ? agentNodeRows.map((row) => (
-                    <tr key={row.key}>
-                      <td className="truncate px-3 py-2">{agentNodeDisplayLabel(row)}</td>
-                      <td className="truncate px-3 py-2 text-muted-foreground">{row.node.agent_name ?? row.key}</td>
-                      <td className="truncate px-3 py-2">
-                        <NodeMetric value={formatDuration(row.node.duration_ms ?? 0)} tooltip={nodeDurationTooltip(row.node)} />
-                      </td>
-                      <td className="truncate px-3 py-2">
-                        <NodeMetric value={formatNumber(nodeTokenTotal(row.node))} tooltip={nodeTokenTooltip(row.node)} />
-                      </td>
-                      <td className="truncate px-3 py-2">{formatNumber(row.node.agent_turn_count ?? 0)}</td>
-                      <td className="px-3 py-2"><ArtifactLinks artifacts={row.node.artifacts ?? []} /></td>
-                    </tr>
-                  )) : (
-                    <tr>
-                      <td className="px-3 py-5 text-sm text-muted-foreground" colSpan={6}>暂无真实 Agent 节点。</td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-            <div className="divide-y md:hidden">
+        <div className="hidden md:block">
+          <table className="w-full table-fixed text-sm">
+            <thead className="border-y bg-muted/40 text-left text-xs text-muted-foreground">
+              <tr>
+                <th className="w-[20%] px-3 py-2 font-medium">节点</th>
+                <th className="w-[18%] px-3 py-2 font-medium">Agent</th>
+                <th className="w-[12%] px-3 py-2 font-medium">耗时</th>
+                <th className="w-[12%] px-3 py-2 font-medium">Token</th>
+                <th className="w-[12%] px-3 py-2 font-medium">执行轮次</th>
+                <th className="w-[26%] px-3 py-2 font-medium">产物</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y">
               {agentNodeRows.length > 0 ? agentNodeRows.map((row) => (
-                <div key={row.key} className="px-4 py-3 text-sm">
-                  <div className="min-w-0 truncate font-medium">{agentNodeDisplayLabel(row)}</div>
-                  <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground">
-                    <NodeFact label="Agent" value={row.node.agent_name ?? row.key} />
-                    <NodeFact label="耗时" value={formatDuration(row.node.duration_ms ?? 0)} />
-                    <NodeFact label="Token" value={formatNumber(nodeTokenTotal(row.node))} />
-                    <NodeFact label="执行轮次" value={formatNumber(row.node.agent_turn_count ?? 0)} />
-                  </div>
-                  <div className="mt-2 text-xs">
-                    <ArtifactLinks artifacts={row.node.artifacts ?? []} />
-                  </div>
-                </div>
+                <tr key={row.key}>
+                  <td className="truncate px-3 py-2">{agentNodeDisplayLabel(row)}</td>
+                  <td className="truncate px-3 py-2 text-muted-foreground">{row.node.agent_name ?? row.key}</td>
+                  <td className="truncate px-3 py-2">
+                    <NodeMetric value={formatDuration(row.node.duration_ms ?? 0)} tooltip={nodeDurationTooltip(row.node)} />
+                  </td>
+                  <td className="truncate px-3 py-2">
+                    <NodeMetric value={formatNumber(nodeTokenTotal(row.node))} tooltip={nodeTokenTooltip(row.node)} />
+                  </td>
+                  <td className="truncate px-3 py-2">{formatNumber(row.node.agent_turn_count ?? 0)}</td>
+                  <td className="px-3 py-2"><ArtifactLinks artifacts={row.node.artifacts ?? []} /></td>
+                </tr>
               )) : (
-                <div className="px-4 py-5 text-sm text-muted-foreground">暂无真实 Agent 节点。</div>
+                <tr>
+                  <td className="px-3 py-5 text-sm text-muted-foreground" colSpan={6}>暂无真实 Agent 节点。</td>
+                </tr>
               )}
+            </tbody>
+          </table>
+        </div>
+        <div className="divide-y md:hidden">
+          {agentNodeRows.length > 0 ? agentNodeRows.map((row) => (
+            <div key={row.key} className="px-4 py-3 text-sm">
+              <div className="min-w-0 truncate font-medium">{agentNodeDisplayLabel(row)}</div>
+              <div className="mt-2 grid grid-cols-2 gap-x-3 gap-y-1 text-xs text-muted-foreground">
+                <NodeFact label="Agent" value={row.node.agent_name ?? row.key} />
+                <NodeFact label="耗时" value={formatDuration(row.node.duration_ms ?? 0)} />
+                <NodeFact label="Token" value={formatNumber(nodeTokenTotal(row.node))} />
+                <NodeFact label="执行轮次" value={formatNumber(row.node.agent_turn_count ?? 0)} />
+              </div>
+              <div className="mt-2 text-xs">
+                <ArtifactLinks artifacts={row.node.artifacts ?? []} />
+              </div>
             </div>
-          </section>
+          )) : (
+            <div className="px-4 py-5 text-sm text-muted-foreground">暂无真实 Agent 节点。</div>
+          )}
+        </div>
+      </section>
 
-          <section className="rounded-md border bg-card">
-            <SectionTitle
-              title="事件流"
-              subtitle="展示去重后的事件摘要；通过每行右侧详细信息查看完整转录。"
-              action={
-                <ExportButton
-                  label="导出 RAW 交互信息"
-                  onClick={() => downloadXlsx(`run-review-events-${issue.identifier || issue.id}.xlsx`, rawEventsXlsxSheets)}
-                />
-              }
+      <section className="rounded-md border bg-card">
+        <SectionTitle
+          title="事件流"
+          subtitle="按节点聚合事件；组标题查看完整 transcript，点击事件查看当前 raw。"
+          action={
+            <ExportButton
+              label="导出 RAW 交互信息"
+              onClick={() => downloadXlsx(`run-review-events-${issue.identifier || issue.id}.xlsx`, rawEventsXlsxSheets)}
             />
-            <div className="min-h-[24rem] divide-y">
-              {eventRows.length > 0 ? eventRows.map((node) => (
-                <RunReviewEventRow
-                  key={node.id}
-                  event={node}
-                  task={node.taskId ? taskById.get(node.taskId) : undefined}
-                />
-              )) : (
-                <div className="flex gap-2 px-4 py-6 text-sm text-muted-foreground">
-                  <AlertTriangle className="size-4" />
-                  暂无事件。真实任务开始后会回写 trace、用量和证据。
-                </div>
-              )}
+          }
+        />
+        <div className="border-y p-3">
+          <input
+            className="w-full rounded-md border bg-background px-3 py-2 text-sm outline-none focus:border-ring"
+            value={eventQuery}
+            onChange={(event) => setEventQuery(event.target.value)}
+            placeholder="搜索事件、Agent、工具、结果或 task"
+          />
+        </div>
+        <div className="min-h-[24rem] space-y-3 p-3">
+          {visibleEventGroups.length > 0 ? visibleEventGroups.map((group, index) => (
+            <RunReviewEventGroup
+              key={group.key}
+              group={group}
+              colorClassName={eventGroupAccentClass(group, index)}
+              task={group.taskId ? taskById.get(group.taskId) : undefined}
+              open={eventSearchActive || !collapsedEventGroupKeys.has(group.key)}
+              onToggle={() => toggleEventGroup(group.key)}
+              onOpenRaw={setSelectedRawEvent}
+            />
+          )) : (
+            <div className="flex gap-2 rounded-md border border-dashed bg-muted/20 px-3 py-6 text-sm text-muted-foreground">
+              <AlertTriangle className="size-4" />
+              {eventRows.length > 0 ? "没有匹配的事件。" : "暂无事件。真实任务开始后会回写 trace、用量和证据。"}
             </div>
-          </section>
-        </>
+          )}
+        </div>
+      </section>
+      <RunReviewEventRawDialog event={selectedRawEvent} onOpenChange={(open) => { if (!open) setSelectedRawEvent(null); }} />
+    </div>
+  );
+}
+
+function RunReviewEventGroup({
+  group,
+  colorClassName,
+  task,
+  open,
+  onToggle,
+  onOpenRaw,
+}: {
+  group: RunReviewEventGroupData;
+  colorClassName: string;
+  task: AgentTask | undefined;
+  open: boolean;
+  onToggle: () => void;
+  onOpenRaw: (event: RunReviewEventRowData) => void;
+}) {
+  return (
+    <div className="overflow-hidden rounded-md border bg-muted/15 shadow-sm" data-testid="run-review-event-group">
+      <div className="flex items-start gap-3 border-b bg-muted/45 px-3 py-3">
+        <button
+          type="button"
+          className="mt-0.5 rounded p-1 text-muted-foreground hover:bg-accent hover:text-foreground"
+          onClick={onToggle}
+          aria-label={open ? "收起事件组" : "展开事件组"}
+        >
+          <ChevronRight className={cn("size-3.5 transition-transform", open && "rotate-90")} />
+        </button>
+        <div className={cn("mt-1 h-10 w-2 shrink-0 rounded-full", colorClassName)} />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className="min-w-[12rem] flex-1 truncate font-medium">{group.label}</span>
+            <span className={cn("shrink-0 rounded border px-1.5 py-0.5 text-[11px]", eventGroupOutcomeClass(group))}>{group.outcome}</span>
+          </div>
+          <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+            <span className="rounded border px-1.5 py-0.5">{formatNumber(group.events.length)} 个事件</span>
+            {group.timeRangeLabel && <span className="rounded border px-1.5 py-0.5">{group.timeRangeLabel}</span>}
+            {group.tokenTotal > 0 && <span className="rounded border px-1.5 py-0.5">Token {formatNumber(group.tokenTotal)}</span>}
+            {group.taskId && <span className="rounded border px-1.5 py-0.5 font-mono">task {shortId(group.taskId)}</span>}
+          </div>
+        </div>
+        {task && (
+          <div className="shrink-0">
+            <TranscriptButton task={task} agentName="" title="完整 transcript" />
+          </div>
+        )}
+      </div>
+      {open && (
+        <div className="space-y-2 border-l-4 border-muted-foreground/10 bg-background/60 p-3 pl-5">
+          {group.events.map((event, index) => (
+            <RunReviewEventRow
+              key={event.id}
+              event={event}
+              colorClassName={eventCardAccentClass(event, index)}
+              onOpenRaw={() => onOpenRaw(event)}
+            />
+          ))}
+        </div>
       )}
     </div>
   );
@@ -666,44 +719,100 @@ function RunReviewDetail({
 
 function RunReviewEventRow({
   event,
-  task,
+  colorClassName,
+  onOpenRaw,
 }: {
   event: RunReviewEventRowData;
-  task: AgentTask | undefined;
+  colorClassName: string;
+  onOpenRaw: () => void;
+}) {
+  const tone = eventToneClasses(event.severity);
+  return (
+    <article
+      className="cursor-pointer rounded-md border bg-background p-3 text-sm shadow-sm transition-colors hover:bg-accent/25"
+      data-testid={`run-review-event-${event.kind}`}
+      data-event-id={event.id}
+      role="button"
+      tabIndex={0}
+      aria-label={`查看事件详情：${event.title}`}
+      onClick={onOpenRaw}
+      onKeyDown={(keyboardEvent) => {
+        if (keyboardEvent.key === "Enter" || keyboardEvent.key === " ") {
+          keyboardEvent.preventDefault();
+          onOpenRaw();
+        }
+      }}
+    >
+      <div className="flex gap-3">
+        <div className={cn("mt-0.5 h-auto w-1.5 shrink-0 rounded-full", colorClassName)} />
+        <div className="min-w-0 flex-1">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <span className={cn("shrink-0 rounded border px-1.5 py-0.5 text-[11px]", tone.chip)}>{event.category}</span>
+            <span className={cn("shrink-0 rounded border px-1.5 py-0.5 text-[11px]", tone.outcome)}>{event.outcome}</span>
+            <span className="min-w-[12rem] flex-1 truncate font-medium">{event.title}</span>
+            {event.timeLabel && <span className="shrink-0 text-xs text-muted-foreground">{event.timeLabel}</span>}
+          </div>
+          {event.summary && (
+            <div className={cn("mt-2 rounded border px-2 py-1.5 text-xs leading-5", tone.summary)}>
+              {event.summary}
+            </div>
+          )}
+          <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+            {event.sourceLabel && <span className="rounded border px-1.5 py-0.5">{event.sourceLabel}</span>}
+            {event.object && <span className="rounded border px-1.5 py-0.5">{event.object}</span>}
+            {event.durationMs >= 1000 && <span className="rounded border px-1.5 py-0.5">耗时 {formatDuration(event.durationMs)}</span>}
+            {event.tokenTotal > 0 && <span className="rounded border px-1.5 py-0.5">Token {formatNumber(event.tokenTotal)}</span>}
+            {event.taskId && <span className="rounded border px-1.5 py-0.5 font-mono">task {shortId(event.taskId)}</span>}
+          </div>
+        </div>
+      </div>
+    </article>
+  );
+}
+
+function RunReviewEventRawDialog({
+  event,
+  onOpenChange,
+}: {
+  event: RunReviewEventRowData | null;
+  onOpenChange: (open: boolean) => void;
 }) {
   return (
-    <div className="flex gap-3 px-4 py-3 text-sm" data-testid={`run-review-event-${event.kind}`}>
-      <div className={cn("mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-md border", eventToneClasses(event.severity).icon)}>
-        <GitBranch className="size-3.5" />
-      </div>
-      <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className="shrink-0 rounded border px-1.5 py-0.5 text-[11px] text-muted-foreground">{event.category}</span>
-          <span className={cn("shrink-0 rounded border px-1.5 py-0.5 text-[11px]", eventToneClasses(event.severity).chip)}>
-            {event.outcome}
-          </span>
-          <span className="min-w-0 truncate font-medium">{event.title}</span>
-        </div>
-        <div className="mt-0.5 flex flex-wrap gap-x-2 gap-y-1 text-xs text-muted-foreground">
-          {event.timeLabel && <span>{event.timeLabel}</span>}
-          {event.sourceLabel && <span>{event.sourceLabel}</span>}
-          {event.object && <span>{event.object}</span>}
-          {event.durationMs > 0 && <span>耗时 {formatDuration(event.durationMs)}</span>}
-          {event.tokenTotal > 0 && <span>Token {formatNumber(event.tokenTotal)}</span>}
-          {event.taskId && <span className="font-mono">task {shortId(event.taskId)}</span>}
-        </div>
-        {event.summary && (
-          <div className={cn("mt-1 rounded border px-2 py-1 text-xs leading-5", eventToneClasses(event.severity).summary)}>
-            {event.summary}
+    <Dialog open={Boolean(event)} onOpenChange={onOpenChange}>
+      <DialogContent className="flex max-h-[88vh] w-[calc(100vw-2rem)] max-w-6xl flex-col gap-0 p-0 sm:!max-w-6xl lg:w-[calc(100vw-4rem)]">
+        <div className="border-b px-5 py-4">
+          <DialogTitle className="text-base font-semibold">{event?.title ?? "事件详情"}</DialogTitle>
+          <div className="mt-2 flex flex-wrap gap-1.5 text-[11px] text-muted-foreground">
+            {event?.category && <span className="rounded border px-1.5 py-0.5">{event.category}</span>}
+            {event?.outcome && <span className="rounded border px-1.5 py-0.5">{event.outcome}</span>}
+            {event?.timeLabel && <span className="rounded border px-1.5 py-0.5">{event.timeLabel}</span>}
+            {event?.taskId && <span className="rounded border px-1.5 py-0.5 font-mono">task {shortId(event.taskId)}</span>}
           </div>
-        )}
-      </div>
-      {task && (
-        <div className="shrink-0">
-          <TranscriptButton task={task} agentName="" title="详细信息" />
         </div>
-      )}
-    </div>
+        <div className="min-h-0 flex-1 space-y-3 overflow-auto bg-muted/10 p-5 text-sm">
+          {event ? (
+            <>
+              <EventRawBlock title="摘要" value={event.summary || "无摘要"} />
+              {event.detail && <EventRawBlock title="详情" value={event.detail} />}
+              {event.metadataDetail && <EventRawBlock title="Metadata" value={event.metadataDetail} />}
+              <EventRawBlock title={event.rawSourceLabel || "Raw JSON"} value={event.rawPayload === undefined ? "无 raw payload" : formatJSON(event.rawPayload)} />
+              {event.linkedRawPayloads?.map((item, index) => (
+                <EventRawBlock key={`${item.label}:${index}`} title={item.label} value={formatJSON(item.payload)} />
+              ))}
+            </>
+          ) : null}
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function EventRawBlock({ title, value }: { title: string; value: string }) {
+  return (
+    <section className="rounded-md border bg-background shadow-sm">
+      <div className="border-b px-3 py-2 text-xs font-medium text-muted-foreground">{title}</div>
+      <pre className="max-h-[60vh] overflow-auto whitespace-pre px-3 py-2 text-xs leading-5">{value}</pre>
+    </section>
   );
 }
 
@@ -793,7 +902,7 @@ interface TraceViewModel {
   };
 }
 
-function RunReviewTraceView({
+export function RunReviewTraceView({
   model,
   nodeXlsxSheets,
   rawXlsxSheets,
@@ -1113,7 +1222,7 @@ function TraceTranscriptSection({ title, rows }: { title: string; rows: TraceTra
   );
 }
 
-function buildTraceViewModel(
+export function buildTraceViewModel(
   tree: IssueExecutionTreeResponse | undefined,
   timelineNodes: IssueTimelineNode[],
   tasks: AgentTask[],
@@ -1374,7 +1483,7 @@ function traceRawExportRow(item: TraceFlowItem, section: string, row: TraceTrans
   };
 }
 
-function buildTraceNodeXlsxSheets(_issue: Issue, summary: IssueTimelineSummary | undefined, model: TraceViewModel): XlsxSheetSpec[] {
+export function buildTraceNodeXlsxSheets(_issue: Issue, summary: IssueTimelineSummary | undefined, model: TraceViewModel): XlsxSheetSpec[] {
   const totalToken = (summary?.total_input_tokens ?? 0) +
     (summary?.total_output_tokens ?? 0) +
     (summary?.total_cache_read_tokens ?? 0) +
@@ -1413,7 +1522,7 @@ function buildTraceNodeXlsxSheets(_issue: Issue, summary: IssueTimelineSummary |
   return [{ name: "Trace 节点信息", rows, columnWidths: [24, 16, 12, 14, 14, 14, 14, 14, 14, 12, 12, 48] }];
 }
 
-function buildTraceRawXlsxSheets(model: TraceViewModel): XlsxSheetSpec[] {
+export function buildTraceRawXlsxSheets(model: TraceViewModel): XlsxSheetSpec[] {
   return [{
     name: "Trace RAW 信息",
     rows: [
@@ -1573,6 +1682,10 @@ function formatCompactToken(value: number) {
   return formatNumber(value);
 }
 
+export function formatTokenMillions(value: number) {
+  return `${((value || 0) / 1_000_000).toFixed(2)}M`;
+}
+
 function sanitizeKey(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9\u4e00-\u9fa5]+/g, "-").replace(/^-|-$/g, "").slice(0, 96);
 }
@@ -1601,21 +1714,83 @@ function eventToneClasses(severity: RunReviewEventRowData["severity"]) {
       return {
         icon: "border-destructive/30 bg-destructive/10 text-destructive",
         chip: "border-destructive/30 bg-destructive/10 text-destructive",
+        outcome: "border-destructive/30 bg-destructive/10 text-destructive",
         summary: "border-destructive/25 bg-destructive/5 text-destructive",
       };
     case "warning":
       return {
         icon: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
         chip: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
+        outcome: "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300",
         summary: "border-amber-500/25 bg-amber-500/5 text-foreground",
       };
     default:
       return {
         icon: "border-border bg-background text-muted-foreground",
         chip: "border-border bg-muted/30 text-muted-foreground",
+        outcome: "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300",
         summary: "border-border/70 bg-muted/20 text-foreground",
       };
   }
+}
+
+export function filterRunReviewEventRows(eventRows: RunReviewEventRowData[], query: string): RunReviewEventRowData[] {
+  const q = query.trim().toLowerCase();
+  if (!q) return eventRows;
+  return eventRows.filter((event) => runReviewEventSearchText(event).toLowerCase().includes(q));
+}
+
+function runReviewEventSearchText(event: RunReviewEventRowData) {
+  return [
+    event.id,
+    event.kind,
+    event.category,
+    event.outcome,
+    event.title,
+    event.summary,
+    event.detail,
+    event.metadataDetail,
+    event.sourceLabel,
+    event.object,
+    event.taskId,
+    event.rawSourceLabel,
+  ].filter(Boolean).join(" ");
+}
+
+export function eventCardAccentClass(event: RunReviewEventRowData, index: number): string {
+  if (event.severity === "error") return "bg-destructive";
+  if (event.severity === "warning") return "bg-amber-500";
+  return timelinePaletteClass(event.taskId || event.sourceLabel || event.category || event.id || String(index));
+}
+
+export function eventGroupAccentClass(group: RunReviewEventGroupData, index: number): string {
+  if (group.severity === "error") return "bg-destructive";
+  if (group.severity === "warning") return "bg-amber-500";
+  return timelinePaletteClass(group.taskId || group.label || group.key || String(index));
+}
+
+function eventGroupOutcomeClass(group: RunReviewEventGroupData): string {
+  if (group.severity === "error") return "border-destructive/30 bg-destructive/10 text-destructive";
+  if (group.severity === "warning") return "border-amber-500/30 bg-amber-500/10 text-amber-700 dark:text-amber-300";
+  return "border-emerald-500/30 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300";
+}
+
+export function timelineNodeColorClass(node: IssueTimelineNode): string {
+  return `${timelinePaletteClass(node.agent_id || node.agent_name || node.node_id)} text-white`;
+}
+
+function timelinePaletteClass(key: string) {
+  const colors = ["bg-violet-600", "bg-sky-600", "bg-emerald-600", "bg-amber-600", "bg-rose-600", "bg-teal-600", "bg-indigo-600", "bg-cyan-700"];
+  return colors[stableHash(key) % colors.length] ?? "bg-slate-600";
+}
+
+function stableHash(value: string) {
+  let hash = 2166136261;
+  for (let index = 0; index < value.length; index += 1) {
+    hash ^= value.charCodeAt(index);
+    hash = Math.imul(hash, 16777619);
+  }
+  return hash >>> 0;
 }
 
 function RunFailureBanner({
@@ -1670,30 +1845,12 @@ function SectionTitle({ title, subtitle, action }: { title: string; subtitle: st
   );
 }
 
-function Metric({ label, value, icon, tooltip }: { label: string; value: string; icon: ReactNode; tooltip?: ReactNode }) {
+function Metric({ label, value, detail }: { label: string; value: string; detail: string }) {
   return (
-    <div className="flex items-center gap-3 px-4 py-3">
-      <div className="rounded-md border bg-background p-2 text-muted-foreground">{icon}</div>
-      <div>
-        <div className="flex items-center gap-1 text-xs text-muted-foreground">
-          <span>{label}</span>
-          {tooltip && (
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <button type="button" className="text-muted-foreground hover:text-foreground" aria-label={`${label}说明`}>
-                    <HelpCircle className="size-3" />
-                  </button>
-                }
-              />
-              <TooltipContent side="top" className="max-w-72">
-                {tooltip}
-              </TooltipContent>
-            </Tooltip>
-          )}
-        </div>
-        <div className="text-sm font-semibold">{value}</div>
-      </div>
+    <div className="min-w-0 rounded-md border bg-background px-4 py-3 shadow-sm">
+      <div className="truncate text-sm font-medium text-muted-foreground">{label}</div>
+      <div className="mt-2 truncate text-2xl font-semibold leading-none tracking-normal text-foreground">{value}</div>
+      <div className="mt-3 truncate text-sm text-muted-foreground" title={detail}>{detail}</div>
     </div>
   );
 }
@@ -2006,7 +2163,7 @@ function childIssueSegmentLabel(node: IssueTimelineNode) {
 function timelineSegmentClassName(kind: TimelineBarRow["kind"], _segment: TimelineBarSegment) {
   if (kind === "child") return "bg-sky-600 text-white";
   if (kind === "human_confirmation") return "border border-amber-700/30 bg-amber-500 text-white";
-  return "bg-emerald-600 text-white";
+  return timelineNodeColorClass(_segment.node);
 }
 
 function timelineSegmentText(row: TimelineBarRow, segment: TimelineBarSegment) {
@@ -2026,12 +2183,9 @@ function timelineSegmentTitle(row: TimelineBarRow, segment: TimelineBarSegment) 
 }
 
 export function timelineSegmentTooltipRows(row: TimelineBarRow, segment: TimelineBarSegment): Array<[string, string]> {
-  const isAgentTaskSegment = row.kind === "stage" && segment.node.node_type === "agent_task";
   const rows: Array<[string, string]> = [
     ["节点", row.label],
-    ["片段", segment.label],
-    [isAgentTaskSegment ? "接手" : "开始", segment.startMs === null ? "未知" : formatDateTime(segment.startMs)],
-    ...(isAgentTaskSegment ? [["实际开始", formatOptionalDateTime(segment.node.actual_started_at)] as [string, string]] : []),
+    ["开始", segment.startMs === null ? "未知" : formatDateTime(segment.startMs)],
     ["结束", segment.endMs === null ? "未知" : formatDateTime(segment.endMs)],
     ["耗时", formatDuration(segment.durationMs)],
   ];
@@ -2039,11 +2193,6 @@ export function timelineSegmentTooltipRows(row: TimelineBarRow, segment: Timelin
     rows.push(["Token", formatNumber(segment.tokenTotal)], ["执行轮次", formatNumber(segment.turns)]);
   }
   return rows;
-}
-
-function formatOptionalDateTime(value: string | undefined) {
-  const parsed = parseTimeMs(value);
-  return parsed === null ? "未知" : formatDateTime(parsed);
 }
 
 function timelineRowSegments(row: TimelineNodeRow): TimelineBarSegment[] {
@@ -2237,6 +2386,91 @@ export interface RunReviewEventRowData {
   rawSourceLabel?: string;
   rawPayload?: unknown;
   linkedRawPayloads?: Array<{ label: string; payload: unknown }>;
+}
+
+export interface RunReviewEventGroupData {
+  key: string;
+  label: string;
+  taskId?: string;
+  events: RunReviewEventRowData[];
+  startMs: number | null;
+  endMs: number | null;
+  timeRangeLabel: string;
+  tokenTotal: number;
+  severity: "normal" | "warning" | "error";
+  outcome: string;
+}
+
+export function buildRunReviewEventGroups(
+  eventRows: RunReviewEventRowData[],
+  taskLabelById: Map<string, string> = new Map(),
+): RunReviewEventGroupData[] {
+  const grouped = new Map<string, { key: string; label: string; taskId?: string; events: RunReviewEventRowData[] }>();
+  for (const event of eventRows) {
+    const key = event.taskId
+      ? `task:${event.taskId}`
+      : `system:${event.rawSourceLabel || event.kind}:${event.sourceLabel || event.object || event.id}`;
+    const existing = grouped.get(key);
+    if (existing) {
+      existing.events.push(event);
+      continue;
+    }
+    const label = event.taskId
+      ? taskLabelById.get(event.taskId) || `任务 ${shortId(event.taskId)}`
+      : firstNonEmpty(event.sourceLabel, event.category, event.object, "系统事件");
+    grouped.set(key, { key, label, taskId: event.taskId, events: [event] });
+  }
+
+  return [...grouped.values()]
+    .map((group) => {
+      const events = group.events.toSorted((left, right) => eventSortTime(left) - eventSortTime(right) || left.id.localeCompare(right.id));
+      const times = events.map((event) => event.timestampMs).filter((value) => value > 0);
+      const startMs = times.length ? Math.min(...times) : null;
+      const endMs = times.length ? Math.max(...times) : null;
+      const severity = groupSeverity(events);
+      return {
+        ...group,
+        events,
+        startMs,
+        endMs,
+        timeRangeLabel: formatEventGroupTimeRange(startMs, endMs),
+        tokenTotal: events.reduce((total, event) => total + event.tokenTotal, 0),
+        severity,
+        outcome: severity === "error" ? "异常线索" : severity === "warning" ? "需关注" : "正常",
+      };
+    })
+    .toSorted((left, right) => eventGroupSortTime(left) - eventGroupSortTime(right) || left.label.localeCompare(right.label));
+}
+
+function buildEventTaskLabelById(timelineNodes: IssueTimelineNode[]) {
+  const labels = new Map<string, string>();
+  for (const node of timelineNodes) {
+    if (node.node_type !== "agent_task") continue;
+    const taskId = node.node_id.replace(/^task:/, "");
+    if (!taskId) continue;
+    labels.set(taskId, firstNonEmpty(node.agent_name, node.summary, `任务 ${shortId(taskId)}`));
+  }
+  return labels;
+}
+
+function eventSortTime(event: RunReviewEventRowData) {
+  return event.timestampMs > 0 ? event.timestampMs : Number.MAX_SAFE_INTEGER;
+}
+
+function eventGroupSortTime(group: RunReviewEventGroupData) {
+  return group.startMs ?? Number.MAX_SAFE_INTEGER;
+}
+
+function groupSeverity(events: RunReviewEventRowData[]): RunReviewEventGroupData["severity"] {
+  if (events.some((event) => event.severity === "error")) return "error";
+  if (events.some((event) => event.severity === "warning")) return "warning";
+  return "normal";
+}
+
+function formatEventGroupTimeRange(startMs: number | null, endMs: number | null) {
+  if (startMs === null) return "";
+  if (endMs === null || endMs === startMs) return formatDateTime(startMs);
+  return `${formatDateTime(startMs)} - ${formatDateTime(endMs)}`;
 }
 
 export function buildRunReviewEventRows(
@@ -3923,7 +4157,7 @@ function downloadXlsx(filename: string, sheets: XlsxSheetSpec[]) {
 }
 
 function sanitizeSheetName(name: string) {
-  return (name || "Sheet1").replace(/[\\/:?*\[\]]/g, "_").slice(0, 31) || "Sheet1";
+  return (name || "Sheet1").replace(/[\\/:?*[\]]/g, "_").slice(0, 31) || "Sheet1";
 }
 
 function sanitizeFilename(filename: string) {
