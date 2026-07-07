@@ -1631,7 +1631,7 @@ async function waitForSOPRun(issueID, squadID, token, label) {
   const run = await poll(async () => {
     const data = await get(`/api/issues/${issueID}/sop-runs`, token);
     const items = Array.isArray(data?.items) ? data.items : [];
-    return items.find((item) => item.squad_id === squadID || item.profile_key === "generic-project-sop-flow" || item.profile_key === "user-center-sop-flow") || null;
+    return items.find((item) => item.squad_id === squadID || isProjectSOPProfile(item.profile_key)) || null;
   }, 60_000, label);
   evidence.sop_run = {
     id: run.id,
@@ -1647,10 +1647,19 @@ async function waitForSOPRunStatus(issueID, squadID, token, status, label) {
   return poll(async () => {
     const data = await get(`/api/issues/${issueID}/sop-runs`, token);
     const items = Array.isArray(data?.items) ? data.items : [];
-    const run = items.find((item) => item.squad_id === squadID || item.profile_key === "generic-project-sop-flow" || item.profile_key === "user-center-sop-flow");
+    const run = items.find((item) => item.squad_id === squadID || isProjectSOPProfile(item.profile_key));
     if (!run || run.status !== status || !run.completed_at) return null;
     return run;
   }, 120_000, label);
+}
+
+function isProjectSOPProfile(profileKey) {
+  return [
+    "generic-project-sop-flow",
+    "generic-project-sop-flow-v2",
+    "user-center-sop-flow",
+    "user-center-sop-flow-v2",
+  ].includes(String(profileKey || ""));
 }
 
 async function waitIssueStatus(issueID, status, token, label) {

@@ -297,6 +297,20 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 	if len(template.Roles) != 6 {
 		t.Fatalf("user-center template roles = %d, want 6", len(template.Roles))
 	}
+	if template.Key != projectSOPV2TemplateKey {
+		t.Fatalf("user-center template key = %q, want %q", template.Key, projectSOPV2TemplateKey)
+	}
+	if template.Name != projectSOPV2SquadName {
+		t.Fatalf("user-center template squad name = %q, want %q", template.Name, projectSOPV2SquadName)
+	}
+	if profileKey, _ := template.Profile["profile_key"].(string); profileKey != projectSOPV2ProfileKey {
+		t.Fatalf("user-center template profile_key = %q, want %q", profileKey, projectSOPV2ProfileKey)
+	}
+	for _, role := range template.Roles {
+		if !strings.HasPrefix(role.AgentName, projectSOPV2SquadName+" · ") {
+			t.Fatalf("role %s agent name = %q, want pm-v2 prefix", role.Key, role.AgentName)
+		}
+	}
 	raw, err := json.Marshal(template.Profile)
 	if err != nil {
 		t.Fatalf("marshal template profile: %v", err)

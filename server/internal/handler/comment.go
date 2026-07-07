@@ -1229,7 +1229,16 @@ func (h *Handler) enqueueCommentAgentTriggers(ctx context.Context, issue db.Issu
 }
 
 func (h *Handler) shouldBlockParentSOPStageTriggerForCrossProjectChildren(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID, trigger commentAgentTrigger) bool {
-	if trigger.Agent.Name != projectSOPAgent04 && trigger.Agent.Name != projectSOPAgent05 {
+	roleKey := normalizeSOPRoleMentionKey(roleKeyFromAgentRuntimeConfig(trigger.Agent))
+	if roleKey == "" {
+		switch trigger.Agent.Name {
+		case projectSOPAgent04:
+			roleKey = "04-implement"
+		case projectSOPAgent05:
+			roleKey = "05-verify"
+		}
+	}
+	if roleKey != "04-implement" && roleKey != "05-verify" {
 		return false
 	}
 	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
@@ -1739,33 +1748,20 @@ func (h *Handler) parseSquadSOPRoleKeyMentions(ctx context.Context, issue db.Iss
 	if !issue.AssigneeType.Valid || issue.AssigneeType.String != "squad" || !issue.AssigneeID.Valid {
 		return nil
 	}
-	roleAgentName := map[string]string{
-		"pm":            projectSOPAgentPM,
-		"01":            projectSOPAgent01,
-		"01-clarify":    projectSOPAgent01,
-		"02":            projectSOPAgent02,
-		"02-design":     projectSOPAgent02,
-		"03":            projectSOPAgent03,
-		"03-task-split": projectSOPAgent03,
-		"04":            projectSOPAgent04,
-		"04-implement":  projectSOPAgent04,
-		"05":            projectSOPAgent05,
-		"05-verify":     projectSOPAgent05,
-	}
 	matches := sopRoleKeyMentionRe.FindAllStringSubmatch(content, -1)
 	if len(matches) == 0 {
 		return nil
 	}
-	wantedNames := map[string]struct{}{}
+	wantedRoles := map[string]struct{}{}
 	for _, match := range matches {
 		if len(match) != 2 {
 			continue
 		}
-		if name, ok := roleAgentName[normalizeSOPRoleMentionKey(match[1])]; ok {
-			wantedNames[name] = struct{}{}
+		if roleKey, ok := normalizeSOPRoleAlias(match[1]); ok {
+			wantedRoles[roleKey] = struct{}{}
 		}
 	}
-	if len(wantedNames) == 0 {
+	if len(wantedRoles) == 0 {
 		return nil
 	}
 	squad, err := h.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
@@ -1789,14 +1785,18 @@ func (h *Handler) parseSquadSOPRoleKeyMentions(ctx context.Context, issue db.Iss
 	if err != nil {
 		return nil
 	}
-	out := make([]util.Mention, 0, len(wantedNames))
+	out := make([]util.Mention, 0, len(wantedRoles))
 	seen := map[string]struct{}{}
 	for _, agent := range agents {
-		if _, ok := wantedNames[agent.Name]; !ok {
-			continue
-		}
 		id := uuidToString(agent.ID)
 		if _, ok := memberIDs[id]; !ok {
+			continue
+		}
+		roleKey := normalizeSOPRoleMentionKey(roleKeyFromAgentRuntimeConfig(agent))
+		if roleKey == "" {
+			roleKey = legacySOPRoleKeyFromAgentName(agent.Name)
+		}
+		if _, ok := wantedRoles[roleKey]; !ok {
 			continue
 		}
 		if _, ok := seen[id]; ok {
@@ -1806,6 +1806,44 @@ func (h *Handler) parseSquadSOPRoleKeyMentions(ctx context.Context, issue db.Iss
 		out = append(out, util.Mention{Type: "agent", ID: id})
 	}
 	return out
+}
+
+func normalizeSOPRoleAlias(value string) (string, bool) {
+	switch normalizeSOPRoleMentionKey(value) {
+	case "pm":
+		return "pm", true
+	case "01", "01-clarify":
+		return "01-clarify", true
+	case "02", "02-design":
+		return "02-design", true
+	case "03", "03-task-split":
+		return "03-task-split", true
+	case "04", "04-implement":
+		return "04-implement", true
+	case "05", "05-verify":
+		return "05-verify", true
+	default:
+		return "", false
+	}
+}
+
+func legacySOPRoleKeyFromAgentName(name string) string {
+	switch name {
+	case projectSOPAgentPM:
+		return "pm"
+	case projectSOPAgent01:
+		return "01-clarify"
+	case projectSOPAgent02:
+		return "02-design"
+	case projectSOPAgent03:
+		return "03-task-split"
+	case projectSOPAgent04:
+		return "04-implement"
+	case projectSOPAgent05:
+		return "05-verify"
+	default:
+		return ""
+	}
 }
 
 func normalizeSOPRoleMentionKey(value string) string {

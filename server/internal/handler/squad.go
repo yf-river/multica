@@ -301,6 +301,10 @@ const internalSquadDefaultProvider = "codebuddy"
 const internalSquadDefaultModel = defaultCodebuddyAgentModel
 
 const (
+	projectSOPV2TemplateKey = "user-center-sop-flow-v2"
+	projectSOPV2ProfileKey  = "generic-project-sop-flow-v2"
+	projectSOPV2SquadName   = "pm-v2"
+
 	projectSOPAgentPM = "PM-项目经理"
 	projectSOPAgent01 = "01-需求澄清"
 	projectSOPAgent02 = "02-方案设计"
@@ -315,6 +319,10 @@ const (
 	projectSOPRole04 = "按方案实现代码并完成局部验证"
 	projectSOPRole05 = "独立验收、补齐测试证据、判断是否通过"
 )
+
+func projectSOPV2AgentName(name string) string {
+	return projectSOPV2SquadName + " · " + name
+}
 
 func projectSOPInstructions() string {
 	return strings.TrimSpace(`你是 pm 小队的队长。你的职责是读懂 issue、识别目标项目和跨项目依赖，按 PM -> 01-需求澄清 -> 02-方案设计 -> 03-任务拆分 -> 04-开发 -> 05-验证测试 调度，并在证据完整后收口。
@@ -376,21 +384,21 @@ func internalSquadTemplateByKey(key string) (internalSquadTemplate, bool) {
 	case "user-center":
 		mcpConfig := userCenterSOPMCPConfig()
 		return internalSquadTemplate{
-			Key:          "user-center-sop-flow",
-			Name:         "pm",
+			Key:          projectSOPV2TemplateKey,
+			Name:         projectSOPV2SquadName,
 			Description:  "SOP 小队，由 PM-项目经理按 PM -> 01-需求澄清 -> 02-方案设计 -> 03-任务拆分 -> 04-开发 -> 05-验证测试阶段链推进，并根据 issue 指定的项目、仓库和 source_context 选择对应项目 skill。",
 			Instructions: projectSOPInstructions(),
 			Model:        internalSquadDefaultModel,
 			Roles: []internalSquadRole{
-				{Key: "pm", Name: projectSOPAgentPM, AgentName: projectSOPAgentPM, Description: "SOP PM：读取 issue、项目资源和 source_context，识别目标项目与跨项目依赖，调度 01-05 阶段并最终收口。", Instruction: projectSOPPMInstruction(), MemberRole: projectSOPRolePM, MCPConfig: mcpConfig},
-				{Key: "01-clarify", Name: projectSOPAgent01, AgentName: projectSOPAgent01, Description: "需求澄清：读取 TAPD/source_context、issue 评论和项目资源元数据，明确需求边界、已确认结论、未定问题、建议默认值、验收口径、目标项目/仓库初判。", Instruction: "职责：读懂需求来源，确认用户要什么、不做什么、验收标准是什么。输入：issue、TAPD 正文、评论、项目背景、已有约束。交付物：需求边界、已确认结论、未定问题、建议默认值、验收口径、目标项目/仓库初判、进入 02 条件、handoff。边界：只澄清需求，不写实现方案，不改代码，不读取或探索代码仓库。第一动作只能使用平台注入的 issue/TAPD/source_context/评论上下文；不得调用工具或 CLI 发布结果。禁止：不得直接进入开发；不得自行 @mention 下一阶段；不得 checkout、ls、find、rg、cat、sed、git 或用等价方式查看本地仓库；不得查询 Agent roster、当前工作目录或本地上下文文件；不得运行 multica agent、multica --help、pwd、shell 管道、重定向、&&、||、head 等命令形态。执行目标项目的 01-clarify；基于 source_context 中的 TAPD 正文、issue 评论和项目资源元数据，产出需求边界、验收口径、适用仓库初判和 handoff；可用/缺失 operation skill 或代码事实只能作为后续 02/04 待确认项记录。\n\n" + sopWorkerRoutingRule + "\n\n" + sopReadOnlyStageOutputRule + "\n\n" + sopClarifyWorkerContractRule, MemberRole: projectSOPRole01, MCPConfig: mcpConfig},
-				{Key: "02-design", Name: projectSOPAgent02, AgentName: projectSOPAgent02, Description: "方案设计：结合已闭环澄清和目标仓库上下文输出方案、影响面、接口/数据契约和项目 skill 调用计划。", Instruction: "职责：基于需求和项目上下文设计技术方案、影响面、接口/数据契约和测试策略。输入：已闭环的 01 handoff、用户确认、PM 记录的假设、项目资源、代码/接口背景、历史文档。交付物：技术方案、采用的澄清假设、影响面、接口/数据变更、风险点、测试建议、handoff。边界：负责方案，不直接落大范围代码。禁止：不得绕过澄清结论；澄清未闭环时不得硬写方案；不得自行 @mention 下一阶段。执行目标项目的 02-design；需要仓库上下文时使用 gongfeng MCP 或本地仓库，产出方案、影响面、接口/数据契约、项目 skill 调用计划和 handoff。\n\n" + sopWorkerRoutingRule + "\n\n" + sopReadOnlyStageOutputRule + "\n\n" + sopDesignClarifyGateRule, MemberRole: projectSOPRole02, MCPConfig: mcpConfig},
-				{Key: "03-task-split", Name: projectSOPAgent03, AgentName: projectSOPAgent03, Description: "任务拆分：识别跨项目依赖，产出目标项目列表、operation graph、V1/V2/V3 test matrix、缺失 skill 和 handoff。", Instruction: "职责：把方案拆成可执行任务，识别跨项目依赖、执行顺序和 V1/V2/V3 测试层级计划。输入：02 handoff、项目列表、仓库资源、依赖关系。交付物：任务拆分、目标项目列表、跨项目 child issue 建议、依赖顺序、V1/V2/V3 test matrix、handoff。边界：负责拆分、依赖判断和测试计划；跨项目 child issue 由 PM 创建或确认。禁止：不得重复创建 child issue；不得把单项目阶段推进拆成同项目 child issue；不得把 handoff 文件当作跨项目交付完成。执行目标项目的 03-task-split；用 TAPD/Gongfeng/项目资源上下文识别跨项目依赖，产出任务拆分、目标项目列表、operation graph、V1/V2/V3 test matrix、缺失 skill 和 handoff。\n\n" + sopWorkerRoutingRule + "\n\n" + sopReadOnlyStageOutputRule + "\n\n" + sopTaskSplitContractRule + "\n\n" + sopTaskSplitCrossProjectRule + "\n\n" + sopChildIssueVerificationOwnershipRule, MemberRole: projectSOPRole03, MCPConfig: mcpConfig},
-				{Key: "04-implement", Name: projectSOPAgent04, AgentName: projectSOPAgent04, Description: "代码实现：按既定边界和目标项目 operation skill 执行修改，按 03 测试矩阵完成开发侧验证，保留实现证据。", Instruction: "职责：按确认范围实现代码、配置、测试或文档变更，并按 03 的 V1/V2/V3 test matrix 完成开发侧负责的验证。输入：03 handoff、目标仓库、任务边界、V1/V2/V3 test matrix、相关 skill/operation 指引。交付物：代码变更、开发侧验证结果、实现说明、风险说明、交给 05 的验证入口、handoff。边界：只改本任务范围内内容。禁止：不得越权改无关模块；不得缺测试就宣称完成；不得自行 @mention 下一阶段；不得重新定义 V1/V2/V3 测试层级。执行目标项目的 04-implement，按既定边界和对应项目 operation skill 实现，不越权修改无关模块；需要工蜂上下文时使用 gongfeng MCP。\n\n" + sopWorkerRoutingRule + "\n\n" + sopImplementationMRRule + "\n\n" + sopImplementationVerificationRule, MemberRole: projectSOPRole04, MCPConfig: mcpConfig},
-				{Key: "05-verify", Name: projectSOPAgent05, AgentName: projectSOPAgent05, Description: "验证测试：按 03 测试矩阵独立检查实现、测试结果、回写记录和最终 handoff，确认可验收证据。", Instruction: "职责：按 03 的 V1/V2/V3 test matrix 独立检查实现、测试结果、回归风险、证据完整性。输入：03 test matrix、04 handoff、diff、测试日志、验收标准、运行复盘/trace。交付物：验证结论、缺陷/返工清单、V1/V2/V3 逐项结论、通过证据、最终 handoff。边界：负责独立验收，不替开发自证。禁止：不得在证据不足时通过；不得直接 done issue，最终收口交给 PM；不得把 V2/V3 SKIP 当作真实外部 HTTP 验收通过。执行目标项目的 05-verify，独立检查实现、测试结果和最终 handoff；核对 TAPD/Gongfeng/source_context 证据。\n\n" + sopWorkerRoutingRule + "\n\n" + sopReadOnlyStageOutputRule + "\n\n" + sopVerificationImplementationMRRule + "\n\n" + sopVerificationGateRule + "\n\n" + sopVerificationCrossProjectGateRule + "\n\n" + sopChildIssueVerificationOwnershipRule, MemberRole: projectSOPRole05, MCPConfig: mcpConfig},
+				{Key: "pm", Name: projectSOPAgentPM, AgentName: projectSOPV2AgentName(projectSOPAgentPM), Description: "SOP PM：读取 issue、项目资源和 source_context，识别目标项目与跨项目依赖，调度 01-05 阶段并最终收口。", Instruction: projectSOPPMInstruction(), MemberRole: projectSOPRolePM, MCPConfig: mcpConfig},
+				{Key: "01-clarify", Name: projectSOPAgent01, AgentName: projectSOPV2AgentName(projectSOPAgent01), Description: "需求澄清：读取 TAPD/source_context、issue 评论和项目资源元数据，明确需求边界、已确认结论、未定问题、建议默认值、验收口径、目标项目/仓库初判。", Instruction: "职责：读懂需求来源，确认用户要什么、不做什么、验收标准是什么。输入：issue、TAPD 正文、评论、项目背景、已有约束。交付物：需求边界、已确认结论、未定问题、建议默认值、验收口径、目标项目/仓库初判、进入 02 条件、handoff。边界：只澄清需求，不写实现方案，不改代码，不读取或探索代码仓库。第一动作只能使用平台注入的 issue/TAPD/source_context/评论上下文；不得调用工具或 CLI 发布结果。禁止：不得直接进入开发；不得自行 @mention 下一阶段；不得 checkout、ls、find、rg、cat、sed、git 或用等价方式查看本地仓库；不得查询 Agent roster、当前工作目录或本地上下文文件；不得运行 multica agent、multica --help、pwd、shell 管道、重定向、&&、||、head 等命令形态。执行目标项目的 01-clarify；基于 source_context 中的 TAPD 正文、issue 评论和项目资源元数据，产出需求边界、验收口径、适用仓库初判和 handoff；可用/缺失 operation skill 或代码事实只能作为后续 02/04 待确认项记录。\n\n" + sopWorkerRoutingRule + "\n\n" + sopReadOnlyStageOutputRule + "\n\n" + sopClarifyWorkerContractRule, MemberRole: projectSOPRole01, MCPConfig: mcpConfig},
+				{Key: "02-design", Name: projectSOPAgent02, AgentName: projectSOPV2AgentName(projectSOPAgent02), Description: "方案设计：结合已闭环澄清和目标仓库上下文输出方案、影响面、接口/数据契约和项目 skill 调用计划。", Instruction: "职责：基于需求和项目上下文设计技术方案、影响面、接口/数据契约和测试策略。输入：已闭环的 01 handoff、用户确认、PM 记录的假设、项目资源、代码/接口背景、历史文档。交付物：技术方案、采用的澄清假设、影响面、接口/数据变更、风险点、测试建议、handoff。边界：负责方案，不直接落大范围代码。禁止：不得绕过澄清结论；澄清未闭环时不得硬写方案；不得自行 @mention 下一阶段。执行目标项目的 02-design；需要仓库上下文时使用 gongfeng MCP 或本地仓库，产出方案、影响面、接口/数据契约、项目 skill 调用计划和 handoff。\n\n" + sopWorkerRoutingRule + "\n\n" + sopReadOnlyStageOutputRule + "\n\n" + sopDesignClarifyGateRule, MemberRole: projectSOPRole02, MCPConfig: mcpConfig},
+				{Key: "03-task-split", Name: projectSOPAgent03, AgentName: projectSOPV2AgentName(projectSOPAgent03), Description: "任务拆分：识别跨项目依赖，产出目标项目列表、operation graph、V1/V2/V3 test matrix、缺失 skill 和 handoff。", Instruction: "职责：把方案拆成可执行任务，识别跨项目依赖、执行顺序和 V1/V2/V3 测试层级计划。输入：02 handoff、项目列表、仓库资源、依赖关系。交付物：任务拆分、目标项目列表、跨项目 child issue 建议、依赖顺序、V1/V2/V3 test matrix、handoff。边界：负责拆分、依赖判断和测试计划；跨项目 child issue 由 PM 创建或确认。禁止：不得重复创建 child issue；不得把单项目阶段推进拆成同项目 child issue；不得把 handoff 文件当作跨项目交付完成。执行目标项目的 03-task-split；用 TAPD/Gongfeng/项目资源上下文识别跨项目依赖，产出任务拆分、目标项目列表、operation graph、V1/V2/V3 test matrix、缺失 skill 和 handoff。\n\n" + sopWorkerRoutingRule + "\n\n" + sopReadOnlyStageOutputRule + "\n\n" + sopTaskSplitContractRule + "\n\n" + sopTaskSplitCrossProjectRule + "\n\n" + sopChildIssueVerificationOwnershipRule, MemberRole: projectSOPRole03, MCPConfig: mcpConfig},
+				{Key: "04-implement", Name: projectSOPAgent04, AgentName: projectSOPV2AgentName(projectSOPAgent04), Description: "代码实现：按既定边界和目标项目 operation skill 执行修改，按 03 测试矩阵完成开发侧验证，保留实现证据。", Instruction: "职责：按确认范围实现代码、配置、测试或文档变更，并按 03 的 V1/V2/V3 test matrix 完成开发侧负责的验证。输入：03 handoff、目标仓库、任务边界、V1/V2/V3 test matrix、相关 skill/operation 指引。交付物：代码变更、开发侧验证结果、实现说明、风险说明、交给 05 的验证入口、handoff。边界：只改本任务范围内内容。禁止：不得越权改无关模块；不得缺测试就宣称完成；不得自行 @mention 下一阶段；不得重新定义 V1/V2/V3 测试层级。执行目标项目的 04-implement，按既定边界和对应项目 operation skill 实现，不越权修改无关模块；需要工蜂上下文时使用 gongfeng MCP。\n\n" + sopWorkerRoutingRule + "\n\n" + sopImplementationMRRule + "\n\n" + sopImplementationVerificationRule, MemberRole: projectSOPRole04, MCPConfig: mcpConfig},
+				{Key: "05-verify", Name: projectSOPAgent05, AgentName: projectSOPV2AgentName(projectSOPAgent05), Description: "验证测试：按 03 测试矩阵独立检查实现、测试结果、回写记录和最终 handoff，确认可验收证据。", Instruction: "职责：按 03 的 V1/V2/V3 test matrix 独立检查实现、测试结果、回归风险、证据完整性。输入：03 test matrix、04 handoff、diff、测试日志、验收标准、运行复盘/trace。交付物：验证结论、缺陷/返工清单、V1/V2/V3 逐项结论、通过证据、最终 handoff。边界：负责独立验收，不替开发自证。禁止：不得在证据不足时通过；不得直接 done issue，最终收口交给 PM；不得把 V2/V3 SKIP 当作真实外部 HTTP 验收通过。执行目标项目的 05-verify，独立检查实现、测试结果和最终 handoff；核对 TAPD/Gongfeng/source_context 证据。\n\n" + sopWorkerRoutingRule + "\n\n" + sopReadOnlyStageOutputRule + "\n\n" + sopVerificationImplementationMRRule + "\n\n" + sopVerificationGateRule + "\n\n" + sopVerificationCrossProjectGateRule + "\n\n" + sopChildIssueVerificationOwnershipRule, MemberRole: projectSOPRole05, MCPConfig: mcpConfig},
 			},
 			Profile: map[string]any{
-				"profile_key": "generic-project-sop-flow",
+				"profile_key": projectSOPV2ProfileKey,
 				"project":     "<target-project>",
 				"repo":        "<target-repo-from-project-resource>",
 				"mode":        "stage_chain",

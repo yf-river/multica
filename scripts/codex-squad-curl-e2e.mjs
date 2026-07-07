@@ -290,8 +290,8 @@ if (terminalTask.status === "completed") {
 }
 
 function ensureCanonicalCrossProjectSetup(token, ownerUser, pmSetup) {
-  if (pmSetup?.squad?.name !== "pm") {
-    fail(`跨项目验收必须复用唯一 pm 小队，当前模板返回小队=${pmSetup?.squad?.name || "null"}`);
+  if (!["pm", "pm-v2"].includes(pmSetup?.squad?.name)) {
+    fail(`跨项目验收必须复用内置 PM 小队，当前模板返回小队=${pmSetup?.squad?.name || "null"}`);
   }
   if (!pmSetup?.leader?.id) fail("跨项目验收缺少 pm Agent，不能继续");
   const branch = "v5.0.0_dev_sop";
