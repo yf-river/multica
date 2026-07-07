@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { Navigate } from "react-router-dom";
 import { PromptLibraryPage } from "@multica/views/prompt-library";
+import { AgentPlaygroundPage } from "@multica/views/agent-playground";
 import { appRoutes } from "./routes";
 
 describe("desktop debug and evaluation routes", () => {
@@ -29,6 +30,7 @@ describe("desktop debug and evaluation routes", () => {
 
   it.each([
     ["debug", "prompts", "调试", PromptLibraryPage, { activeView: "prompts" }],
+    ["debug", "agent-playground", "调试", AgentPlaygroundPage, {}],
     ["evaluation", "datasets", "评估", PromptLibraryPage, { activeView: "datasets" }],
     ["evaluation", "test-suites", "评估", PromptLibraryPage, { activeView: "test-suites" }],
     ["evaluation", "runs", "评估", PromptLibraryPage, { activeView: "evaluation-runs" }],
@@ -54,6 +56,7 @@ describe("desktop debug and evaluation routes", () => {
 
     const redirects = [
       ["prompts", "../../debug/prompts"],
+      ["agent-playground", "../../debug/agent-playground"],
       ["datasets", "../../evaluation/datasets"],
       ["test-suites", "../../evaluation/test-suites"],
       ["evaluation-runs", "../../evaluation/runs"],
@@ -70,7 +73,7 @@ describe("desktop debug and evaluation routes", () => {
   it("does not keep legacy training aliases", () => {
     const trainingRoute = childRoutes.find((route) => route.path === "training");
     const paths = new Set((trainingRoute?.children ?? []).map((route) => route.path));
-    for (const removed of ["runs", "run-history", "debug-runs", "prompt-playground", "agent-playground", "experiments", "optimization-runs"]) {
+    for (const removed of ["runs", "run-history", "debug-runs", "prompt-playground", "experiments", "optimization-runs"]) {
       expect(paths.has(removed)).toBe(false);
     }
   });

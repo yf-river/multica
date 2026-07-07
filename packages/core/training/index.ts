@@ -10,6 +10,16 @@ const TRAINING_WORKBENCH_ALL_VIEWS = [
     visible: true,
   },
   {
+    tab: "Agent 调试场",
+    view: "agent-playground",
+    route: "agent-playground",
+    canonicalRoute: "agent-playground",
+    legacyRoutes: ["agent-playground"],
+    section: "debug",
+    keywords: ["Agent 调试场", "智能体调试", "agent", "playground", "experiment"],
+    visible: true,
+  },
+  {
     tab: "用例库",
     view: "datasets",
     route: "datasets",

@@ -145,6 +145,17 @@ export type {
   UpdatePromptLibraryItemRequest,
 } from "./prompt-library";
 export type {
+  AgentPlaygroundExperiment,
+  AgentPlaygroundInput,
+  AgentPlaygroundAgent,
+  AgentPlaygroundResult,
+  AgentPlaygroundJudgement,
+  AgentPlaygroundDetail,
+  ListAgentPlaygroundExperimentsResponse,
+  CreateAgentPlaygroundExperimentRequest,
+  JudgeAgentPlaygroundExperimentRequest,
+} from "./agent-playground";
+export type {
   PromptEvaluationAsset,
   PromptEvaluationRun,
   PromptEvaluationTrial,

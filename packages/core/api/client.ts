@@ -208,6 +208,10 @@ import type {
   CreatePromptLibraryVersionResponse,
   CreatePromptLibraryTrialRequest,
   UpdatePromptLibraryItemRequest,
+  AgentPlaygroundDetail,
+  ListAgentPlaygroundExperimentsResponse,
+  CreateAgentPlaygroundExperimentRequest,
+  JudgeAgentPlaygroundExperimentRequest,
   ExternalCredentialProvider,
   ExternalCredentialProfile,
   ListExternalCredentialProfilesResponse,
@@ -257,6 +261,8 @@ import {
   EMPTY_PROMPT_LIBRARY_TRIAL_LIST_RESPONSE,
   EMPTY_PROMPT_LIBRARY_VERSION,
   EMPTY_PROMPT_LIBRARY_VERSION_LIST_RESPONSE,
+  EMPTY_AGENT_PLAYGROUND_DETAIL,
+  EMPTY_AGENT_PLAYGROUND_EXPERIMENT_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_ASSET,
   EMPTY_PROMPT_EVALUATION_ASSET_LIST_RESPONSE,
   EMPTY_PROMPT_EVALUATION_DATASET_VERSION_DIFF,
@@ -349,6 +355,8 @@ import {
   PromptLibraryTrialSchema,
   PromptLibraryVersionSchema,
   PromptLibraryVersionListResponseSchema,
+  AgentPlaygroundDetailSchema,
+  AgentPlaygroundExperimentListResponseSchema,
   IssueSOPRunsResponseSchema,
   ObservabilitySummarySchema,
   SquadSchema,
@@ -1952,6 +1960,55 @@ export class ApiClient {
 
   async deletePromptLibraryItem(id: string): Promise<void> {
     await this.fetch(`/api/prompt-library/${id}`, { method: "DELETE" });
+  }
+
+  // Agent playground
+  async listAgentPlaygroundExperiments(): Promise<ListAgentPlaygroundExperimentsResponse> {
+    const raw = await this.fetch<unknown>("/api/agent-playground-experiments");
+    return parseWithFallback(raw, AgentPlaygroundExperimentListResponseSchema, EMPTY_AGENT_PLAYGROUND_EXPERIMENT_LIST_RESPONSE, {
+      endpoint: "GET /api/agent-playground-experiments",
+    }) as ListAgentPlaygroundExperimentsResponse;
+  }
+
+  async getAgentPlaygroundExperiment(id: string): Promise<AgentPlaygroundDetail> {
+    const raw = await this.fetch<unknown>(`/api/agent-playground-experiments/${id}`);
+    return parseWithFallback(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+      endpoint: "GET /api/agent-playground-experiments/:id",
+    }) as AgentPlaygroundDetail;
+  }
+
+  async createAgentPlaygroundExperiment(data: CreateAgentPlaygroundExperimentRequest): Promise<AgentPlaygroundDetail> {
+    const raw = await this.fetch<unknown>("/api/agent-playground-experiments", {
+      method: "POST",
+      body: JSON.stringify(data),
+    });
+    return parseWithFallback(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+      endpoint: "POST /api/agent-playground-experiments",
+    }) as AgentPlaygroundDetail;
+  }
+
+  async runAgentPlaygroundExperiment(id: string): Promise<AgentPlaygroundDetail> {
+    const raw = await this.fetch<unknown>(`/api/agent-playground-experiments/${id}/run`, { method: "POST" });
+    return parseWithFallback(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+      endpoint: "POST /api/agent-playground-experiments/:id/run",
+    }) as AgentPlaygroundDetail;
+  }
+
+  async syncAgentPlaygroundExperiment(id: string): Promise<AgentPlaygroundDetail> {
+    const raw = await this.fetch<unknown>(`/api/agent-playground-experiments/${id}/sync`, { method: "POST" });
+    return parseWithFallback(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+      endpoint: "POST /api/agent-playground-experiments/:id/sync",
+    }) as AgentPlaygroundDetail;
+  }
+
+  async judgeAgentPlaygroundExperiment(id: string, data?: JudgeAgentPlaygroundExperimentRequest): Promise<AgentPlaygroundDetail> {
+    const raw = await this.fetch<unknown>(`/api/agent-playground-experiments/${id}/judge`, {
+      method: "POST",
+      body: JSON.stringify(data ?? {}),
+    });
+    return parseWithFallback(raw, AgentPlaygroundDetailSchema, EMPTY_AGENT_PLAYGROUND_DETAIL, {
+      endpoint: "POST /api/agent-playground-experiments/:id/judge",
+    }) as AgentPlaygroundDetail;
   }
 
   // Prompt evaluation assets

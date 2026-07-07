@@ -123,6 +123,8 @@ function trainingCommandLabel(t: ReturnType<typeof useT<"search">>["t"], view: T
   switch (view) {
     case "prompts":
       return t(($) => $.commands.open_prompt_library);
+    case "agent-playground":
+      return t(($) => $.commands.open_agent_playground);
     case "datasets":
       return t(($) => $.commands.open_datasets);
     case "test-suites":

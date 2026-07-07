@@ -24,6 +24,7 @@
     "./modals/create-issue": "./modals/create-issue.tsx",
     "./my-issues": "./my-issues/index.ts",
     "./prompt-library": "./prompt-library/index.ts",
+    "./agent-playground": "./agent-playground/index.ts",
     "./skills": "./skills/index.ts",
     "./agents": "./agents/index.ts",
     "./members": "./members/index.ts",

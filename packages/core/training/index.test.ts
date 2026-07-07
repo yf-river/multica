@@ -24,11 +24,13 @@ describe("training workbench navigation", () => {
     expect(trainingWorkbenchTabFromView("missing-view")).toBe("提示词库");
     expect(trainingWorkbenchTabFromView("evaluation-runs")).toBe("评测记录");
     expect(trainingWorkbenchTabFromView("datasets")).toBe("用例库");
+    expect(trainingWorkbenchTabFromView("agent-playground")).toBe("Agent 调试场");
   });
 
   it("exposes the core training loop routes in navigation", () => {
     expect(TRAINING_WORKBENCH_VIEWS.map((item) => item.view)).toEqual([
       "prompts",
+      "agent-playground",
       "datasets",
       "test-suites",
       "evaluation-runs",
@@ -36,13 +38,14 @@ describe("training workbench navigation", () => {
   });
 
   it("groups views into debug and evaluation sections", () => {
-    expect(TRAINING_WORKBENCH_VIEWS_BY_SECTION.debug.map((item) => item.view)).toEqual(["prompts"]);
+    expect(TRAINING_WORKBENCH_VIEWS_BY_SECTION.debug.map((item) => item.view)).toEqual(["prompts", "agent-playground"]);
     expect(TRAINING_WORKBENCH_VIEWS_BY_SECTION.evaluation.map((item) => item.view)).toEqual([
       "datasets",
       "test-suites",
       "evaluation-runs",
     ]);
     expect(trainingWorkbenchSectionFromView("prompts")).toBe("debug");
+    expect(trainingWorkbenchSectionFromView("agent-playground")).toBe("debug");
     expect(trainingWorkbenchSectionFromView("datasets")).toBe("evaluation");
   });
 
@@ -52,6 +55,7 @@ describe("training workbench navigation", () => {
 
   it("only shows the prompt editor on the prompt library route", () => {
     expect(trainingWorkbenchShowsPromptEditor("prompts")).toBe(true);
+    expect(trainingWorkbenchShowsPromptEditor("agent-playground")).toBe(false);
     expect(trainingWorkbenchShowsPromptEditor("datasets")).toBe(false);
     expect(trainingWorkbenchShowsPromptEditor("test-suites")).toBe(false);
     expect(trainingWorkbenchShowsPromptEditor("evaluation-runs")).toBe(false);
@@ -60,6 +64,7 @@ describe("training workbench navigation", () => {
   it("builds distinct Chinese titles for desktop training tabs", () => {
     expect(trainingWorkbenchTitleFromView(null)).toBe("调试 · 提示词库");
     expect(trainingWorkbenchTitleFromView("prompts")).toBe("调试 · 提示词库");
+    expect(trainingWorkbenchTitleFromView("agent-playground")).toBe("调试 · Agent 调试场");
     expect(trainingWorkbenchTitleFromView("datasets")).toBe("评估 · 用例库");
     expect(trainingWorkbenchTitleFromView("evaluation-runs")).toBe("评估 · 评测记录");
     expect(trainingWorkbenchTitleFromView("missing-view")).toBe("调试 · 提示词库");
@@ -69,12 +74,14 @@ describe("training workbench navigation", () => {
     const paths = { debug: () => "/acme/debug", evaluation: () => "/acme/evaluation" };
 
     expect(trainingWorkbenchCanonicalRouteFromView("prompts")).toBe("prompts");
+    expect(trainingWorkbenchCanonicalRouteFromView("agent-playground")).toBe("agent-playground");
     expect(trainingWorkbenchCanonicalRouteFromView("evaluation-runs")).toBe("runs");
     expect(trainingWorkbenchViewFromRoute("evaluation-runs")).toBe("evaluation-runs");
     expect(trainingWorkbenchViewFromRoute("runs")).toBe("evaluation-runs");
     expect(trainingWorkbenchViewFromCanonicalRoute("debug", "datasets")).toBe("prompts");
     expect(trainingWorkbenchViewFromCanonicalRoute("evaluation", "prompts")).toBe("datasets");
     expect(debugWorkbenchPath(paths.debug(), "prompts")).toBe("/acme/debug/prompts");
+    expect(debugWorkbenchPath(paths.debug(), "agent-playground")).toBe("/acme/debug/agent-playground");
     expect(evaluationWorkbenchPath(paths.evaluation(), "evaluation-runs")).toBe("/acme/evaluation/runs");
     expect(trainingWorkbenchCanonicalPath(paths, "prompts")).toBe("/acme/debug/prompts");
     expect(trainingWorkbenchCanonicalPath(paths, "datasets")).toBe("/acme/evaluation/datasets");

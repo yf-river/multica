@@ -794,6 +794,18 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				})
 			})
 
+			// Agent playground
+			r.Route("/api/agent-playground-experiments", func(r chi.Router) {
+				r.Get("/", h.ListAgentPlaygroundExperiments)
+				r.Post("/", h.CreateAgentPlaygroundExperiment)
+				r.Route("/{id}", func(r chi.Router) {
+					r.Get("/", h.GetAgentPlaygroundExperiment)
+					r.Post("/run", h.RunAgentPlaygroundExperiment)
+					r.Post("/sync", h.SyncAgentPlaygroundExperiment)
+					r.Post("/judge", h.JudgeAgentPlaygroundExperiment)
+				})
+			})
+
 			// Prompt evaluation assets
 			r.Get("/api/prompt-evaluation-summary", h.GetPromptEvaluationSummary)
 			r.Route("/api/prompt-evaluation-assets", func(r chi.Router) {

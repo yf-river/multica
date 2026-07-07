@@ -44,6 +44,75 @@ type Agent struct {
 	ThinkingLevel      pgtype.Text        `json:"thinking_level"`
 }
 
+type AgentPlaygroundAgent struct {
+	ID           pgtype.UUID        `json:"id"`
+	ExperimentID pgtype.UUID        `json:"experiment_id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	AgentID      pgtype.UUID        `json:"agent_id"`
+	DisplayOrder int32              `json:"display_order"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentPlaygroundExperiment struct {
+	ID               pgtype.UUID        `json:"id"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	Name             string             `json:"name"`
+	Description      string             `json:"description"`
+	DatasetAssetID   pgtype.UUID        `json:"dataset_asset_id"`
+	DatasetVersionID pgtype.UUID        `json:"dataset_version_id"`
+	JudgeAgentID     pgtype.UUID        `json:"judge_agent_id"`
+	Status           string             `json:"status"`
+	CreatedBy        pgtype.UUID        `json:"created_by"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt        pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AgentPlaygroundInput struct {
+	ID           pgtype.UUID        `json:"id"`
+	ExperimentID pgtype.UUID        `json:"experiment_id"`
+	WorkspaceID  pgtype.UUID        `json:"workspace_id"`
+	DatasetRowID pgtype.UUID        `json:"dataset_row_id"`
+	RowIndex     int32              `json:"row_index"`
+	Name         string             `json:"name"`
+	Input        string             `json:"input"`
+	Variables    []byte             `json:"variables"`
+	Expected     string             `json:"expected"`
+	CreatedAt    pgtype.Timestamptz `json:"created_at"`
+}
+
+type AgentPlaygroundJudgement struct {
+	ID            pgtype.UUID        `json:"id"`
+	ExperimentID  pgtype.UUID        `json:"experiment_id"`
+	InputID       pgtype.UUID        `json:"input_id"`
+	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
+	JudgeAgentID  pgtype.UUID        `json:"judge_agent_id"`
+	ChatSessionID pgtype.UUID        `json:"chat_session_id"`
+	TaskID        pgtype.UUID        `json:"task_id"`
+	Status        string             `json:"status"`
+	Output        string             `json:"output"`
+	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt     pgtype.Timestamptz `json:"updated_at"`
+}
+
+type AgentPlaygroundResult struct {
+	ID                pgtype.UUID        `json:"id"`
+	ExperimentID      pgtype.UUID        `json:"experiment_id"`
+	InputID           pgtype.UUID        `json:"input_id"`
+	ExperimentAgentID pgtype.UUID        `json:"experiment_agent_id"`
+	WorkspaceID       pgtype.UUID        `json:"workspace_id"`
+	AgentID           pgtype.UUID        `json:"agent_id"`
+	ChatSessionID     pgtype.UUID        `json:"chat_session_id"`
+	TaskID            pgtype.UUID        `json:"task_id"`
+	RenderedInput     string             `json:"rendered_input"`
+	Status            string             `json:"status"`
+	Output            string             `json:"output"`
+	Error             string             `json:"error"`
+	StartedAt         pgtype.Timestamptz `json:"started_at"`
+	CompletedAt       pgtype.Timestamptz `json:"completed_at"`
+	CreatedAt         pgtype.Timestamptz `json:"created_at"`
+	UpdatedAt         pgtype.Timestamptz `json:"updated_at"`
+}
+
 type AgentRuntime struct {
 	ID             pgtype.UUID        `json:"id"`
 	WorkspaceID    pgtype.UUID        `json:"workspace_id"`

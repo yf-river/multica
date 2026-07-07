@@ -20,6 +20,7 @@ import { DashboardPage } from "@multica/views/dashboard";
 import { AutopilotsPage } from "@multica/views/autopilots/components";
 import { MyIssuesPage } from "@multica/views/my-issues";
 import { PromptLibraryPage } from "@multica/views/prompt-library";
+import { AgentPlaygroundPage } from "@multica/views/agent-playground";
 import { RunReviewsPage } from "@multica/views/run-reviews";
 import { SkillsPage } from "@multica/views/skills";
 import { DesktopRuntimesPage } from "./components/desktop-runtimes-page";
@@ -170,6 +171,7 @@ export const appRoutes: RouteObject[] = [
             children: [
               { index: true, element: <Navigate to="prompts" replace /> },
               { path: "prompts", element: <PromptLibraryPage activeView="prompts" />, handle: { title: "调试" } },
+              { path: "agent-playground", element: <AgentPlaygroundPage />, handle: { title: "调试" } },
             ],
           },
           {
@@ -188,6 +190,7 @@ export const appRoutes: RouteObject[] = [
             children: [
               { index: true, element: <Navigate to="../debug/prompts" replace /> },
               { path: "prompts", element: <Navigate to="../../debug/prompts" replace /> },
+              { path: "agent-playground", element: <Navigate to="../../debug/agent-playground" replace /> },
               { path: "datasets", element: <Navigate to="../../evaluation/datasets" replace /> },
               { path: "test-suites", element: <Navigate to="../../evaluation/test-suites" replace /> },
               { path: "evaluation-runs", element: <Navigate to="../../evaluation/runs" replace /> },

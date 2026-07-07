@@ -1423,6 +1423,78 @@ CREATE TABLE public.prompt_library_trial (
     updated_at timestamp with time zone DEFAULT now() NOT NULL
 );
 
+CREATE TABLE public.agent_playground_experiment (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    workspace_id uuid NOT NULL,
+    name text NOT NULL,
+    description text DEFAULT ''::text NOT NULL,
+    dataset_asset_id uuid,
+    dataset_version_id uuid,
+    judge_agent_id uuid,
+    status text DEFAULT 'draft'::text NOT NULL,
+    created_by uuid,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_playground_experiment_status_check CHECK ((status = ANY (ARRAY['draft'::text, 'ready'::text, 'running'::text, 'completed'::text, 'failed'::text])))
+);
+
+CREATE TABLE public.agent_playground_input (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    experiment_id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    dataset_row_id uuid,
+    row_index integer DEFAULT 0 NOT NULL,
+    name text DEFAULT ''::text NOT NULL,
+    input text NOT NULL,
+    variables jsonb DEFAULT '{}'::jsonb NOT NULL,
+    expected text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE public.agent_playground_agent (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    experiment_id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    agent_id uuid NOT NULL,
+    display_order integer DEFAULT 0 NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL
+);
+
+CREATE TABLE public.agent_playground_result (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    experiment_id uuid NOT NULL,
+    input_id uuid NOT NULL,
+    experiment_agent_id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    agent_id uuid NOT NULL,
+    chat_session_id uuid,
+    task_id uuid,
+    rendered_input text DEFAULT ''::text NOT NULL,
+    status text DEFAULT 'pending'::text NOT NULL,
+    output text DEFAULT ''::text NOT NULL,
+    error text DEFAULT ''::text NOT NULL,
+    started_at timestamp with time zone,
+    completed_at timestamp with time zone,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_playground_result_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'queued'::text, 'dispatched'::text, 'running'::text, 'waiting_local_directory'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
+);
+
+CREATE TABLE public.agent_playground_judgement (
+    id uuid DEFAULT gen_random_uuid() NOT NULL,
+    experiment_id uuid NOT NULL,
+    input_id uuid NOT NULL,
+    workspace_id uuid NOT NULL,
+    judge_agent_id uuid NOT NULL,
+    chat_session_id uuid,
+    task_id uuid,
+    status text DEFAULT 'pending'::text NOT NULL,
+    output text DEFAULT ''::text NOT NULL,
+    created_at timestamp with time zone DEFAULT now() NOT NULL,
+    updated_at timestamp with time zone DEFAULT now() NOT NULL,
+    CONSTRAINT agent_playground_judgement_status_check CHECK ((status = ANY (ARRAY['pending'::text, 'queued'::text, 'dispatched'::text, 'running'::text, 'waiting_local_directory'::text, 'completed'::text, 'failed'::text, 'cancelled'::text])))
+);
+
 CREATE TABLE public.runtime_profile (
     id uuid DEFAULT gen_random_uuid() NOT NULL,
     workspace_id uuid NOT NULL,
@@ -1974,6 +2046,33 @@ ALTER TABLE ONLY public.prompt_library_item
 ALTER TABLE ONLY public.prompt_library_trial
     ADD CONSTRAINT prompt_library_trial_pkey PRIMARY KEY (id);
 
+ALTER TABLE ONLY public.agent_playground_experiment
+    ADD CONSTRAINT agent_playground_experiment_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.agent_playground_input
+    ADD CONSTRAINT agent_playground_input_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.agent_playground_input
+    ADD CONSTRAINT agent_playground_input_experiment_index_key UNIQUE (experiment_id, row_index);
+
+ALTER TABLE ONLY public.agent_playground_agent
+    ADD CONSTRAINT agent_playground_agent_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.agent_playground_agent
+    ADD CONSTRAINT agent_playground_agent_unique UNIQUE (experiment_id, agent_id);
+
+ALTER TABLE ONLY public.agent_playground_result
+    ADD CONSTRAINT agent_playground_result_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.agent_playground_result
+    ADD CONSTRAINT agent_playground_result_unique UNIQUE (input_id, experiment_agent_id);
+
+ALTER TABLE ONLY public.agent_playground_judgement
+    ADD CONSTRAINT agent_playground_judgement_pkey PRIMARY KEY (id);
+
+ALTER TABLE ONLY public.agent_playground_judgement
+    ADD CONSTRAINT agent_playground_judgement_unique UNIQUE (input_id);
+
 ALTER TABLE ONLY public.prompt_library_version
     ADD CONSTRAINT prompt_library_version_pkey PRIMARY KEY (id);
 
@@ -2327,6 +2426,16 @@ CREATE INDEX idx_prompt_library_version_workspace_created ON public.prompt_libra
 CREATE INDEX idx_prompt_library_trial_prompt_created ON public.prompt_library_trial USING btree (prompt_id, created_at DESC);
 
 CREATE INDEX idx_prompt_library_trial_workspace_created ON public.prompt_library_trial USING btree (workspace_id, created_at DESC);
+
+CREATE INDEX idx_agent_playground_experiment_workspace_created ON public.agent_playground_experiment USING btree (workspace_id, created_at DESC);
+
+CREATE INDEX idx_agent_playground_input_experiment_index ON public.agent_playground_input USING btree (experiment_id, row_index);
+
+CREATE INDEX idx_agent_playground_agent_experiment_order ON public.agent_playground_agent USING btree (experiment_id, display_order);
+
+CREATE INDEX idx_agent_playground_result_experiment ON public.agent_playground_result USING btree (experiment_id, input_id, experiment_agent_id);
+
+CREATE INDEX idx_agent_playground_judgement_experiment ON public.agent_playground_judgement USING btree (experiment_id, input_id);
 
 CREATE INDEX idx_runtime_profile_workspace ON public.runtime_profile USING btree (workspace_id);
 
@@ -2882,6 +2991,78 @@ ALTER TABLE ONLY public.prompt_library_trial
 
 ALTER TABLE ONLY public.prompt_library_trial
     ADD CONSTRAINT prompt_library_trial_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.agent_playground_experiment
+    ADD CONSTRAINT agent_playground_experiment_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.agent_playground_experiment
+    ADD CONSTRAINT agent_playground_experiment_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.agent_playground_experiment
+    ADD CONSTRAINT agent_playground_experiment_dataset_asset_id_fkey FOREIGN KEY (dataset_asset_id) REFERENCES public.prompt_evaluation_asset(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.agent_playground_experiment
+    ADD CONSTRAINT agent_playground_experiment_dataset_version_id_fkey FOREIGN KEY (dataset_version_id) REFERENCES public.prompt_evaluation_dataset_version(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.agent_playground_experiment
+    ADD CONSTRAINT agent_playground_experiment_judge_agent_id_fkey FOREIGN KEY (judge_agent_id) REFERENCES public.agent(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.agent_playground_input
+    ADD CONSTRAINT agent_playground_input_experiment_id_fkey FOREIGN KEY (experiment_id) REFERENCES public.agent_playground_experiment(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.agent_playground_input
+    ADD CONSTRAINT agent_playground_input_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.agent_playground_input
+    ADD CONSTRAINT agent_playground_input_dataset_row_id_fkey FOREIGN KEY (dataset_row_id) REFERENCES public.prompt_evaluation_dataset_version_row(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.agent_playground_agent
+    ADD CONSTRAINT agent_playground_agent_experiment_id_fkey FOREIGN KEY (experiment_id) REFERENCES public.agent_playground_experiment(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.agent_playground_agent
+    ADD CONSTRAINT agent_playground_agent_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.agent_playground_agent
+    ADD CONSTRAINT agent_playground_agent_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.agent_playground_result
+    ADD CONSTRAINT agent_playground_result_experiment_id_fkey FOREIGN KEY (experiment_id) REFERENCES public.agent_playground_experiment(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.agent_playground_result
+    ADD CONSTRAINT agent_playground_result_input_id_fkey FOREIGN KEY (input_id) REFERENCES public.agent_playground_input(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.agent_playground_result
+    ADD CONSTRAINT agent_playground_result_experiment_agent_id_fkey FOREIGN KEY (experiment_agent_id) REFERENCES public.agent_playground_agent(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.agent_playground_result
+    ADD CONSTRAINT agent_playground_result_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.agent_playground_result
+    ADD CONSTRAINT agent_playground_result_agent_id_fkey FOREIGN KEY (agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.agent_playground_result
+    ADD CONSTRAINT agent_playground_result_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.agent_playground_result
+    ADD CONSTRAINT agent_playground_result_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.agent_task_queue(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.agent_playground_judgement
+    ADD CONSTRAINT agent_playground_judgement_experiment_id_fkey FOREIGN KEY (experiment_id) REFERENCES public.agent_playground_experiment(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.agent_playground_judgement
+    ADD CONSTRAINT agent_playground_judgement_input_id_fkey FOREIGN KEY (input_id) REFERENCES public.agent_playground_input(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.agent_playground_judgement
+    ADD CONSTRAINT agent_playground_judgement_workspace_id_fkey FOREIGN KEY (workspace_id) REFERENCES public.workspace(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.agent_playground_judgement
+    ADD CONSTRAINT agent_playground_judgement_judge_agent_id_fkey FOREIGN KEY (judge_agent_id) REFERENCES public.agent(id) ON DELETE CASCADE;
+
+ALTER TABLE ONLY public.agent_playground_judgement
+    ADD CONSTRAINT agent_playground_judgement_chat_session_id_fkey FOREIGN KEY (chat_session_id) REFERENCES public.chat_session(id) ON DELETE SET NULL;
+
+ALTER TABLE ONLY public.agent_playground_judgement
+    ADD CONSTRAINT agent_playground_judgement_task_id_fkey FOREIGN KEY (task_id) REFERENCES public.agent_task_queue(id) ON DELETE SET NULL;
 
 ALTER TABLE ONLY public.prompt_library_version
     ADD CONSTRAINT prompt_library_version_created_by_fkey FOREIGN KEY (created_by) REFERENCES public."user"(id) ON DELETE SET NULL;
