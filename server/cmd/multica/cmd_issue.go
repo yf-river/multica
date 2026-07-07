@@ -18,8 +18,8 @@ import (
 )
 
 // resolveTextFlag picks between a `--<name>` inline value, a `--<name>-stdin`
-// flag, and a `--<name>-file <path>` flag, mirroring the existing `--content`
-// / `--content-stdin` pattern. It returns the resolved string and an error
+// flag, and a `--<name>-file <path>` flag, mirroring the existing text field
+// input pattern. It returns the resolved string and an error
 // when more than one source is set, or when stdin/file is requested but
 // produces no body. Inline flag values are passed through
 // util.UnescapeBackslashEscapes so bash-double-quoted `\n` becomes a real
@@ -79,6 +79,40 @@ func resolveTextFlag(cmd *cobra.Command, flagName string) (string, bool, error) 
 		return "", false, nil
 	}
 	return util.UnescapeBackslashEscapes(inline), true, nil
+}
+
+func resolveFileOrStdinTextFlag(cmd *cobra.Command, flagName string) (string, bool, error) {
+	stdinFlag := flagName + "-stdin"
+	fileFlag := flagName + "-file"
+	useStdin, _ := cmd.Flags().GetBool(stdinFlag)
+	filePath, _ := cmd.Flags().GetString(fileFlag)
+
+	if useStdin && filePath != "" {
+		return "", false, fmt.Errorf("--%s and --%s are mutually exclusive", stdinFlag, fileFlag)
+	}
+	if useStdin {
+		data, err := io.ReadAll(os.Stdin)
+		if err != nil {
+			return "", false, fmt.Errorf("read stdin for --%s: %w", stdinFlag, err)
+		}
+		body := strings.TrimSuffix(string(data), "\n")
+		if body == "" {
+			return "", false, fmt.Errorf("stdin content for --%s is empty", stdinFlag)
+		}
+		return body, true, nil
+	}
+	if filePath != "" {
+		data, err := os.ReadFile(filePath)
+		if err != nil {
+			return "", false, fmt.Errorf("read file for --%s: %w", fileFlag, err)
+		}
+		body := strings.TrimSuffix(string(data), "\n")
+		if body == "" {
+			return "", false, fmt.Errorf("file content for --%s is empty", fileFlag)
+		}
+		return body, true, nil
+	}
+	return "", false, nil
 }
 
 var issueCmd = &cobra.Command{
@@ -402,7 +436,6 @@ func init() {
 	issueRunMessagesCmd.Flags().String("issue", "", "Issue ID/key to scope short task ID prefix resolution")
 
 	// issue comment add
-	issueCommentAddCmd.Flags().String("content", "", "Comment content (decodes \\n, \\r, \\t, \\\\; pipe via --content-stdin for multi-line bodies or to preserve literal backslashes)")
 	issueCommentAddCmd.Flags().Bool("content-stdin", false, "Read comment content from stdin (preserves multi-line content verbatim)")
 	issueCommentAddCmd.Flags().String("content-file", "", "Read comment content from a UTF-8 file (preserves multi-line content verbatim; use this on Windows when stdin piping mangles non-ASCII bytes)")
 	issueCommentAddCmd.Flags().String("parent", "", "Parent comment ID (reply to a specific comment)")
@@ -1289,12 +1322,12 @@ func runIssueCommentList(cmd *cobra.Command, args []string) error {
 }
 
 func runIssueCommentAdd(cmd *cobra.Command, args []string) error {
-	content, hasContent, err := resolveTextFlag(cmd, "content")
+	content, hasContent, err := resolveFileOrStdinTextFlag(cmd, "content")
 	if err != nil {
 		return err
 	}
 	if !hasContent {
-		return fmt.Errorf("--content, --content-stdin, or --content-file is required")
+		return fmt.Errorf("--content-stdin or --content-file is required")
 	}
 
 	client, err := newAPIClient(cmd)

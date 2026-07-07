@@ -1536,8 +1536,12 @@ func TestInjectRuntimeConfigRequiresExplicitCommentPost(t *testing.T) {
 			// The Output section must carry a hard warning that terminal/log
 			// output is not user-visible. This is the second line of defense
 			// in case the agent skips past the workflow steps.
+			outputWarning := "Post your final results as a comment"
+			if tc.name == "comment-triggered" {
+				outputWarning = "If you reply, post it as a comment"
+			}
 			for _, want := range []string{
-				"Final results MUST be delivered via `multica issue comment add`",
+				outputWarning,
 				"does NOT see your terminal output",
 			} {
 				if !strings.Contains(s, want) {
@@ -1583,9 +1587,8 @@ func TestInjectRuntimeConfigCommentGuardrailIsProviderAgnostic(t *testing.T) {
 				}
 				s := string(data)
 
-				// Available Commands lists all three input modes as available.
+				// Available Commands lists only the Markdown-preserving input modes.
 				for _, want := range []string{
-					"--content \"...\"",
 					"--content-stdin",
 					"--content-file <path>",
 				} {
@@ -1596,14 +1599,17 @@ func TestInjectRuntimeConfigCommentGuardrailIsProviderAgnostic(t *testing.T) {
 
 				// The provider-agnostic guardrail must now reach non-Codex
 				// providers too: a dedicated Comment Formatting section that
-				// bans inline `--content` for agent-authored comments.
+				// steers agent-authored comments through content files.
 				for _, want := range []string{
 					"## Comment Formatting",
-					"Never use inline `--content` for agent-authored comments",
+					"always write the comment body to a UTF-8 file with your file-write tool first, then post it with `--content-file <path>`",
 				} {
 					if !strings.Contains(s, want) {
 						t.Errorf("%s missing provider-agnostic comment guardrail %q\n---\n%s", configFile, want, s)
 					}
+				}
+				if strings.Contains(s, "--content \"...\"") {
+					t.Errorf("%s reintroduces inline comment mode\n---\n%s", configFile, s)
 				}
 
 				// The legacy over-broad mandate (#1795 / #1851) must NOT
@@ -1663,7 +1669,7 @@ func TestInjectRuntimeConfigLinuxCommentFormattingEmphasizesFile(t *testing.T) {
 				"## Comment Formatting",
 				"always write the comment body to a UTF-8 file with your file-write tool first, then post it with `--content-file <path>`",
 				"#4182",
-				"Never use inline `--content` for agent-authored comments",
+				"Do NOT use `--content-stdin` with a HEREDOC",
 				"Keep the same `--parent` value",
 				"rm ./reply.md",
 				"do not rely on `\\n` escapes",

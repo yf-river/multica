@@ -22,7 +22,7 @@ func hasSquadLeaderBriefing(instructions string) bool {
 // injected by execenv.InjectRuntimeConfig. The provider string is threaded
 // through to comment-triggered tasks' per-turn reply template; ordinary agents
 // use the provider-agnostic `--content-file` template, while coordinator tasks
-// without file-write tools get a compact inline `--content` form.
+// without file-write tools use final output auto-commenting.
 func BuildPrompt(task Task, provider string) string {
 	if task.SourceSummaryPrompt != "" {
 		return buildSourceSummaryPrompt(task)
@@ -258,14 +258,7 @@ func buildTaskCommentReplyInstructions(provider string, task Task) string {
 	if task.ExecutionPolicy == nil || !strings.EqualFold(strings.TrimSpace(task.ExecutionPolicy.RoleKind), "coordinator") || task.ExecutionPolicy.CanAccessRepo {
 		return execenv.BuildCommentReplyInstructions(provider, task.IssueID, task.TriggerCommentID)
 	}
-	return fmt.Sprintf(
-		"If you decide to reply, post it as a comment — always use the trigger comment ID below, "+
-			"do NOT reuse --parent values from previous turns in this session.\n\n"+
-			"Coordinator mode has no native file-write tool. Use a compact shell-safe inline body and preserve the same issue ID and --parent value:\n\n"+
-			"    multica issue comment add %s --parent %s --content \"...\"\n\n"+
-			"Keep the body concise. Avoid backticks, command substitutions, environment variables, quotes that need escaping, and long multi-paragraph text in inline comments.\n",
-		task.IssueID, task.TriggerCommentID,
-	)
+	return "Do not call `multica issue comment add` and do not create `reply.md` or local `.md` files. Coordinator mode has no native file-write tool, so write the complete Markdown reply as your final assistant output; the platform will automatically post it as a reply under the triggering comment when this task completes.\n"
 }
 
 func isNoRepoBoundedPromptTask(task Task) bool {
@@ -287,6 +280,8 @@ func isFinalOutputAutoCommentTask(task Task) bool {
 	switch strings.ToLower(strings.TrimSpace(task.ExecutionPolicy.RoleKind)) {
 	case "planning_stage", "verification_stage":
 		return !task.ExecutionPolicy.CanEditRepo
+	case "coordinator":
+		return !task.ExecutionPolicy.CanAccessRepo
 	default:
 		return false
 	}

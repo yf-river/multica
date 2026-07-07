@@ -540,12 +540,11 @@ func TestAssignmentTriggeredSquadLeaderGuardrail(t *testing.T) {
 		"A coordinator must not run repo-inspection, build, test, or wait/poll commands",
 		"`git`, `rg`, `cat`, `find`, `sed`, `ls`, `go test`, `pnpm`, `npm`, `make`, `sleep`, `watch`, `multica issue runs`, or `multica issue activity`",
 		"Do not call provider-native task delegation or repo tools such as TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Read, Edit, Write, MultiEdit, Grep, Glob, or LS",
-		"Coordinator tasks may use `multica issue comment add ... --content \"...\"` for compact single-line dispatch comments",
-		"do not include literal newlines in that command",
 		"platform runtime does not define squad-specific stages",
-		"the same comment must contain exactly one real `mention://agent/...` link",
+		"the same visible comment must contain exactly one real `mention://agent/...` link",
 		"a comment that says a stage is being dispatched but lacks the mention is not a dispatch",
-		"Then record `multica squad activity ... action` and stop",
+		"If native file-write tools are unavailable, return that dispatch or blocker comment as final assistant output",
+		"Then record `multica squad activity ... action` when required and stop",
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("assignment-triggered squad leader brief missing guardrail text %q\n---\n%s", want, out)
@@ -587,12 +586,12 @@ func TestStageChainPMCoordinatorGetsEntryRule(t *testing.T) {
 		"Your first PM turn must dispatch `01-需求澄清`",
 		"the complete successful outcome is only",
 		"run `multica squad activity " + issueID + " action --reason \"dispatch 01\"`",
-		"Do not run any other tools after the dispatch/activity pair",
+		"return a short Markdown final output",
+		"Do not call `multica issue comment add`",
+		"do not run any other tools after the activity call",
 		"This task has no native file-write tool",
-		"compact single-line shell-safe body",
-		"post one compact single-line dispatch comment",
-		"do not include literal newlines in the shell command",
-		"multica issue comment add " + issueID + " --content \"调度 01-需求澄清",
+		"Example final output shape",
+		"调度 01-需求澄清",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("stage-chain PM runtime brief missing %q\n--- output ---\n%s", want, out)
@@ -630,10 +629,10 @@ func TestStageChainPMCoordinatorGetsCommentTriggerRule(t *testing.T) {
 		"create or reuse the required child issue with `--parent`, target `--project`, executable assignee, and `--status todo`, then wait",
 		"do not dispatch the parent issue to `04-开发` or `05-验证测试`",
 		"This task has no native file-write tool",
-		"compact single-line shell-safe body",
-		"Do not include literal newlines in the shell command",
-		"multica issue comment add 77777777-8888-9999-aaaa-bbbbbbbbbbbb --parent 11111111-1111-1111-1111-111111111111 --content \"...\"",
-		"Stage waits, blockers, returns, user-confirmation requests, child-issue waits, and dispatches are not no_action",
+		"final assistant output",
+		"the platform will automatically post it as a reply under the triggering comment",
+		"Do not call `multica issue comment add`",
+		"阶段等待、阻断、返工、需要用户补充、child issue 等待或下一步调度不是 no_action",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("stage-chain PM comment-trigger brief missing %q\n--- output ---\n%s", want, out)
@@ -701,7 +700,7 @@ func TestPlanningStageCapabilityPolicyBlocksNativeSubagents(t *testing.T) {
 		"do not call provider-native TaskCreate, TaskUpdate, Agent, subagent, plan/todo, Bash, Read, Edit, Write, MultiEdit, Grep, Glob, LS",
 		"Native file-write and shell tools are unavailable",
 		"Do not inspect CLI help or discover extra commands in this task",
-		"No comment command is available in this read-only planning/verification stage",
+		"No comment command is available in this task",
 		"final assistant output",
 		"Do not call tools or CLI commands in this no-repository planning task",
 		"Use the issue/source context already supplied in this task prompt",

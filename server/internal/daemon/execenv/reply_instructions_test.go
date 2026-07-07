@@ -123,7 +123,7 @@ func TestBuildCommentReplyInstructionsNonCodexLinux(t *testing.T) {
 				}
 
 				// The two regressions: agent-authored comments must never be
-				// steered at inline `--content "..."` (MUL-2904) and never at
+				// steered at shell-inline bodies (MUL-2904) and never at
 				// `--content-stdin` HEREDOC on multi-flag commands (#4182).
 				for _, banned := range []string{
 					"--content \"...\"",

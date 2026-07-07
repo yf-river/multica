@@ -296,6 +296,70 @@ func TestResolveTextFlag(t *testing.T) {
 	})
 }
 
+func TestResolveFileOrStdinTextFlag(t *testing.T) {
+	t.Run("stdin body is preserved verbatim", func(t *testing.T) {
+		c := &cobra.Command{Use: "test"}
+		c.Flags().Bool("content-stdin", false, "")
+		c.Flags().String("content-file", "", "")
+		_ = c.Flags().Set("content-stdin", "true")
+		pipeStdin(t, "line one\nline two\n", func() {
+			got, ok, err := resolveFileOrStdinTextFlag(c, "content")
+			if err != nil || !ok {
+				t.Fatalf("unexpected: ok=%v err=%v", ok, err)
+			}
+			if got != "line one\nline two" {
+				t.Fatalf("got %q", got)
+			}
+		})
+	})
+
+	t.Run("missing both returns hasValue=false", func(t *testing.T) {
+		c := &cobra.Command{Use: "test"}
+		c.Flags().Bool("content-stdin", false, "")
+		c.Flags().String("content-file", "", "")
+		got, ok, err := resolveFileOrStdinTextFlag(c, "content")
+		if err != nil {
+			t.Fatalf("unexpected err: %v", err)
+		}
+		if ok || got != "" {
+			t.Fatalf("expected absent body, got (%q, %v)", got, ok)
+		}
+	})
+
+	t.Run("file plus stdin is rejected", func(t *testing.T) {
+		dir := t.TempDir()
+		path := dir + string(os.PathSeparator) + "reply.md"
+		if err := os.WriteFile(path, []byte("body"), 0o644); err != nil {
+			t.Fatalf("write tempfile: %v", err)
+		}
+		c := &cobra.Command{Use: "test"}
+		c.Flags().Bool("content-stdin", false, "")
+		c.Flags().String("content-file", "", "")
+		_ = c.Flags().Set("content-stdin", "true")
+		_ = c.Flags().Set("content-file", path)
+		if _, _, err := resolveFileOrStdinTextFlag(c, "content"); err == nil {
+			t.Fatalf("expected mutually-exclusive error")
+		}
+	})
+}
+
+func TestIssueCommentAddNoInlineContentFlag(t *testing.T) {
+	if flag := issueCommentAddCmd.Flags().Lookup("content"); flag != nil {
+		t.Fatalf("issue comment add must not expose inline --content")
+	}
+
+	cmd := &cobra.Command{Use: "add"}
+	cmd.Flags().Bool("content-stdin", false, "")
+	cmd.Flags().String("content-file", "", "")
+	err := runIssueCommentAdd(cmd, []string{"issue-1"})
+	if err == nil {
+		t.Fatalf("expected missing content error")
+	}
+	if got := err.Error(); got != "--content-stdin or --content-file is required" {
+		t.Fatalf("unexpected error: %q", got)
+	}
+}
+
 func newIssueCreateTestCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "create"}
 	cmd.Flags().String("title", "", "")

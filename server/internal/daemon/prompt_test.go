@@ -500,7 +500,7 @@ func TestBuildPromptSquadLeaderNoActionForMemberTrigger(t *testing.T) {
 	}
 }
 
-func TestBuildPromptCoordinatorCommentUsesInlineContent(t *testing.T) {
+func TestBuildPromptCoordinatorCommentUsesFinalOutput(t *testing.T) {
 	task := Task{
 		IssueID:               "issue-123",
 		TriggerCommentID:      "comment-456",
@@ -514,8 +514,10 @@ func TestBuildPromptCoordinatorCommentUsesInlineContent(t *testing.T) {
 	}
 	out := BuildPrompt(task, "codebuddy")
 	for _, want := range []string{
-		"Coordinator mode has no native file-write tool",
-		"multica issue comment add issue-123 --parent comment-456 --content \"...\"",
+		"Do not call `multica issue comment add`",
+		"do not create `reply.md` or local `.md` files",
+		"final assistant output",
+		"the platform will automatically post it as a reply under the triggering comment",
 	} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("coordinator comment prompt missing %q\n--- output ---\n%s", want, out)
@@ -524,9 +526,11 @@ func TestBuildPromptCoordinatorCommentUsesInlineContent(t *testing.T) {
 	for _, banned := range []string{
 		"--content-file ./reply.md",
 		"Write the reply body to a UTF-8 file",
+		"--content \"...\"",
+		"multica issue comment add issue-123 --parent comment-456",
 	} {
 		if strings.Contains(out, banned) {
-			t.Fatalf("coordinator comment prompt should not require file-write reply form %q\n--- output ---\n%s", banned, out)
+			t.Fatalf("coordinator comment prompt should use final output, found %q\n--- output ---\n%s", banned, out)
 		}
 	}
 }
