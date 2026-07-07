@@ -201,6 +201,8 @@ func TestStageMarkdownArtifactsSectionUsesCommentAttachments(t *testing.T) {
 		"to the issue before marking the task terminal",
 		"links them to an agent-authored issue comment",
 		"Do not also pass those managed markdown files with `multica issue comment add --attachment`",
+		"keep it to a compact outcome summary and evidence pointers only",
+		"do not paste the full artifact body or duplicate long sections",
 		"download or preview",
 	} {
 		if !strings.Contains(out, want) {
