@@ -241,26 +241,28 @@ func sanitizeArtifactFilename(name string) string {
 
 func summarizeFinalOutputForArtifactComment(output string) string {
 	lines := strings.Split(output, "\n")
-	selected := make([]string, 0, 6)
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			return "阶段产物已上传，评论只保留摘要。\n\n" + truncateArtifactCommentSummaryLine(trimmed)
+		}
+	}
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
 		if trimmed == "" || strings.HasPrefix(trimmed, "```") {
 			continue
 		}
-		selected = append(selected, trimmed)
-		if len(selected) >= 6 {
-			break
-		}
+		return "阶段产物已上传，评论只保留摘要。\n\n" + truncateArtifactCommentSummaryLine(trimmed)
 	}
-	if len(selected) == 0 {
-		return ""
+	return "阶段产物已上传，评论只保留摘要。"
+}
+
+func truncateArtifactCommentSummaryLine(line string) string {
+	runes := []rune(strings.TrimSpace(line))
+	if len(runes) <= 180 {
+		return string(runes)
 	}
-	summary := strings.Join(selected, "\n")
-	runes := []rune(summary)
-	if len(runes) > 700 {
-		summary = string(runes[:700]) + "..."
-	}
-	return "阶段产物已上传，评论只保留摘要。\n\n" + summary
+	return string(runes[:180]) + "..."
 }
 
 func (d *Daemon) collectAndPostTaskArtifacts(ctx context.Context, task Task, workDir string, artifactDir string, minModTime time.Time, taskLog *slog.Logger, opts taskArtifactCommentOptions) {

@@ -215,6 +215,21 @@ func TestPersistFinalOutputArtifactForReadOnlyStage(t *testing.T) {
 	}
 }
 
+func TestSummarizeFinalOutputForArtifactCommentKeepsCommentCompact(t *testing.T) {
+	t.Parallel()
+
+	output := "I read the context and will now provide the artifact.\n\n---\n## 03-task-split.md\n\n" + strings.Repeat("- detail\n", 20)
+
+	got := summarizeFinalOutputForArtifactComment(output)
+
+	if !strings.Contains(got, "## 03-task-split.md") {
+		t.Fatalf("summary missing heading: %q", got)
+	}
+	if strings.Contains(got, "I read the context") || strings.Contains(got, "- detail") {
+		t.Fatalf("summary should not include preamble or body details: %q", got)
+	}
+}
+
 func TestTaskArtifactCommentContentIncludesSummary(t *testing.T) {
 	t.Parallel()
 
