@@ -387,22 +387,30 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 		"## PM 跨项目 child issue 摘要",
 		"父 issue 只要存在 child issue 且任一 child status 不是 done",
 		"--status todo",
-		"不得静默创建 `backlog` 或分配给普通成员导致任务不启动",
+		"--assignee-id <pm-squad-uuid>",
+		"禁止用 PM Agent UUID",
+		"不得静默创建 `backlog`、`in_review`",
+		"分配给普通成员/单个 Agent 导致任务不启动",
 		"--description` 必须使用短纯文本摘要",
 		"不得内嵌原始 shell/curl/grpcurl 命令",
-		"existing child 已存在但 status 是 `backlog` 或 assignee 是普通成员",
-		"更新为可执行的 squad/Agent assignee 和 `todo`",
+		"existing child 已存在但 status 是 `backlog`、`in_review`",
+		"assignee_type 不是 `squad`",
+		"更新为可执行的 squad assignee 和 `todo`",
 		"PM 不得在 03-task-split 通过前创建 child issue",
 		"03-task-split 通过后，PM 才能按 03 的 required cross-project dependencies",
 		"PM 的下一步只能创建/复用并回读 child issue",
 		"dependency_order 只描述 child 与父实现、联调或验证的技术顺序",
 		"待确认的目标项目交付",
 		"PM 不得在同一条评论或同一个 PM task 中一边创建/确认 required child issue",
-		"必须回读 children，并在评论中列出 child identifier、target project、status 和 assignee",
+		"必须回读 children，并在评论中列出 child identifier、target project、status、assignee_type 和 assignee_id",
+		"assignee_id 不是目标小队或 PM 小队 UUID",
+		"status 不是 `todo`/`in_progress`",
 		"如果任一 required child status 不是 done",
 		"不得 @mention 父 issue 的 04-开发或 05-验证测试",
 		"剩余 V2/V3 只依赖父 issue 或其它项目实现后的组合验收",
 		"不得让 child 反向等待父 issue 04",
+		"而 03 仍把 gateway 写成 required，PM 必须退回 03 修正",
+		"不得创建 gateway child issue",
 		"不需要新增权限配置",
 		"不能解释为“不要创建跨项目 child issue”",
 		"只能把 child issue 范围收窄为“添加 API/路由/配置”",
@@ -531,6 +539,8 @@ func TestInternalUserCenterTemplateIncludesCrossProjectChildIssuePlan(t *testing
 				"“待确认”的跨项目交付不是非阻塞状态",
 				"不得写成“权限配置”",
 				"不得把该确认解释为 not required 或不创建 child",
+				"gateway 写入 not required projects",
+				"不得因为“外部 API”“路由注册”字样自行推断 gateway required",
 				"PM 下一步先创建/复用对应 child issue 并等待",
 				"不得写“04-开发就绪”",
 				"不能把 required child issue 创建本身推迟到父 issue 04 之后",
@@ -757,7 +767,7 @@ func TestEnsureUserCenterInternalSquadPersistsMCPConfig(t *testing.T) {
 			}
 		}
 		if name == projectSOPAgent03 {
-			for _, want := range []string{"required cross-project dependencies", "not required projects", "V1/V2/V3 test matrix", "sandbox_plan", "测试层级计划必须在任务分发前完成", "03 只负责识别跨项目依赖", "required 依赖不得标为非阻塞", "03 不得降级成“待确认”“大概率不需要”或 not required", "“待确认”的跨项目交付不是非阻塞状态", "不得写成“权限配置”", "不得把该确认解释为 not required 或不创建 child", "PM 下一步先创建/复用对应 child issue 并等待", "不得写“04-开发就绪”"} {
+			for _, want := range []string{"required cross-project dependencies", "not required projects", "V1/V2/V3 test matrix", "sandbox_plan", "测试层级计划必须在任务分发前完成", "03 只负责识别跨项目依赖", "required 依赖不得标为非阻塞", "03 不得降级成“待确认”“大概率不需要”或 not required", "“待确认”的跨项目交付不是非阻塞状态", "不得写成“权限配置”", "不得把该确认解释为 not required 或不创建 child", "gateway 写入 not required projects", "不得因为“外部 API”“路由注册”字样自行推断 gateway required", "PM 下一步先创建/复用对应 child issue 并等待", "不得写“04-开发就绪”"} {
 				if !strings.Contains(instructions, want) {
 					t.Fatalf("03-task-split instructions must contain %q:\n%s", want, instructions)
 				}
