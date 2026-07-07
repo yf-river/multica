@@ -32,6 +32,14 @@ func TestSquadSOPTaskStepMatchingAndState(t *testing.T) {
 	if step.Key != "02-design" || index != 1 {
 		t.Fatalf("matched step=%+v index=%d, want 02-design/1", step, index)
 	}
+	v2Agent := db.Agent{
+		Name:          "pm-v2 · 02-方案设计",
+		RuntimeConfig: []byte(`{"internal_squad":{"template_key":"user-center-sop-flow-v2","role_key":"02-design"}}`),
+	}
+	step, index, ok = matchSquadSOPStepForAgentRecord(steps, v2Agent)
+	if !ok || step.Key != "02-design" || index != 1 {
+		t.Fatalf("v2 agent matched step=%+v index=%d ok=%v, want 02-design/1/true", step, index, ok)
+	}
 	status, nextStep, ok := nextSquadSOPStateForTaskEvent(db.Issue{Status: "in_progress"}, steps, index, step.Key, "步骤完成")
 	if !ok || status != "进行中" || nextStep != "05-verify" {
 		t.Fatalf("next state = %s/%s/%v, want 进行中/05-verify/true", status, nextStep, ok)

@@ -2133,7 +2133,7 @@ func (s *TaskService) syncSquadSOPTaskStepWithResult(ctx context.Context, task d
 		return
 	}
 	steps := parseSquadSOPProfileSteps(run.Profile)
-	step, index, ok := matchSquadSOPStepForAgent(steps, agent.Name)
+	step, index, ok := matchSquadSOPStepForAgentRecord(steps, agent)
 	if !ok {
 		return
 	}
@@ -2245,7 +2245,7 @@ func (s *TaskService) squadSOPFailureComment(ctx context.Context, task db.AgentT
 		return "", false
 	}
 	steps := parseSquadSOPProfileSteps(run.Profile)
-	step, _, ok := matchSquadSOPStepForAgent(steps, agent.Name)
+	step, _, ok := matchSquadSOPStepForAgentRecord(steps, agent)
 	if !ok {
 		return "", false
 	}
@@ -2285,7 +2285,7 @@ func (s *TaskService) squadSOPTaskHasDeliveryComment(ctx context.Context, task d
 	if err != nil {
 		return false
 	}
-	if _, _, ok := matchSquadSOPStepForAgent(parseSquadSOPProfileSteps(run.Profile), agent.Name); !ok {
+	if _, _, ok := matchSquadSOPStepForAgentRecord(parseSquadSOPProfileSteps(run.Profile), agent); !ok {
 		return false
 	}
 	comments, err := s.Queries.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
@@ -2625,8 +2625,28 @@ func parseSquadSOPProfileSteps(raw []byte) []squadSOPProfileStep {
 	return profile.Steps
 }
 
-func matchSquadSOPStepForAgent(steps []squadSOPProfileStep, agentName string) (squadSOPProfileStep, int, bool) {
-	agentKey := normalizeSOPMatchKey(agentName)
+func matchSquadSOPStepForAgentRecord(steps []squadSOPProfileStep, agent db.Agent) (squadSOPProfileStep, int, bool) {
+	if roleKey := roleKeyFromAgentRuntimeConfig(agent.RuntimeConfig); roleKey != "" {
+		if step, index, ok := matchSquadSOPStepForAgent(steps, roleKey); ok {
+			return step, index, true
+		}
+	}
+	return matchSquadSOPStepForAgent(steps, agent.Name)
+}
+
+func roleKeyFromAgentRuntimeConfig(raw []byte) string {
+	var runtimeConfig map[string]any
+	if len(raw) == 0 || json.Unmarshal(raw, &runtimeConfig) != nil {
+		return ""
+	}
+	if scope, ok := runtimeConfig["internal_squad"].(map[string]any); ok {
+		return stringFromAny(scope["role_key"])
+	}
+	return ""
+}
+
+func matchSquadSOPStepForAgent(steps []squadSOPProfileStep, agentNameOrRoleKey string) (squadSOPProfileStep, int, bool) {
+	agentKey := normalizeSOPMatchKey(agentNameOrRoleKey)
 	if agentKey == "" {
 		return squadSOPProfileStep{}, -1, false
 	}
@@ -3361,7 +3381,7 @@ func (s *TaskService) enqueueSquadLeaderAfterWorkerStageCompletion(ctx context.C
 	if err != nil {
 		return
 	}
-	if _, _, ok := matchSquadSOPStepForAgent(parseSquadSOPProfileSteps(run.Profile), agent.Name); !ok {
+	if _, _, ok := matchSquadSOPStepForAgentRecord(parseSquadSOPProfileSteps(run.Profile), agent); !ok {
 		return
 	}
 	squad, err := s.Queries.GetSquadInWorkspace(ctx, db.GetSquadInWorkspaceParams{
