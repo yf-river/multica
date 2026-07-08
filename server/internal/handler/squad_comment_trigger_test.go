@@ -1332,6 +1332,33 @@ func TestEnqueueCommentAgentTriggers_AllowsParentSOPStageWhenRequiredChildrenDon
 	}
 }
 
+func TestEnqueueCommentAgentTriggers_AllowsParentSOPStageWhenLatestTaskSplitHasNoCrossProjectDependency(t *testing.T) {
+	if testHandler == nil || testPool == nil {
+		t.Skip("database not available")
+	}
+	ctx := context.Background()
+	fx := newCrossProjectGateSOPFixture(t, false)
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content)
+		VALUES ($1, $2, 'system', $3, $4)
+	`, testWorkspaceID, fx.IssueID, fx.LeaderID, "平台已阻止父任务阶段调度：03-任务拆分已识别 required 跨项目依赖，但父 issue 的 child issue 仍缺失或未全部完成。"); err != nil {
+		t.Fatalf("insert stale gate comment: %v", err)
+	}
+	if _, err := testPool.Exec(ctx, `
+		INSERT INTO comment (workspace_id, issue_id, author_type, author_id, content)
+		VALUES ($1, $2, 'agent', $3, $4)
+	`, testWorkspaceID, fx.IssueID, fx.LeaderID, "## 03-task-split\n\nrequired cross-project dependencies: none\n\nnot required projects:\n- gateway: 不需要\n- ida-deployment: 不需要\n\n结论：无跨项目依赖，无 child issue。"); err != nil {
+		t.Fatalf("insert no-dependency 03 comment: %v", err)
+	}
+	comment := insertSOPPMMentionComment(t, fx)
+
+	enqueueMentionedAgentTasksForTest(t, ctx, fx.Issue, comment, nil, "agent", fx.LeaderID)
+
+	if got := countQueuedOrDispatched(t, fx.ImplementID, fx.IssueID); got != 1 {
+		t.Fatalf("parent 04 task count = %d, want 1 when latest 03 has no cross-project dependency", got)
+	}
+}
+
 func TestEnqueueCommentAgentTriggers_AllowsCrossProjectChildWithoutFurtherChildren(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")

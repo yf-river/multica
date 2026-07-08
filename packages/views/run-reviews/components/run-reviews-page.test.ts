@@ -7,6 +7,7 @@ import {
   artifactXlsxHyperlinkHref,
   buildAgentNodeRows,
   buildIssueReviewDraftCaseRequest,
+  buildRunReviewDurationSummary,
   buildRunReviewDurationTooltipRows,
   buildRunReviewLiveSummary,
   buildRunReviewLiveTimelineNodes,
@@ -15,6 +16,7 @@ import {
   buildRunReviewEventRows,
   buildRunReviewOptimizerHref,
   buildRunReviewRawEventsXlsxSheets,
+  buildEventTaskLabelById,
   buildTimelineBarRows,
   buildTimelineAgentRows,
   cacheReuseRate,
@@ -181,6 +183,7 @@ describe("run review duration summary", () => {
       wall_clock_duration_ms: 300000,
       agent_execution_duration_ms: 120000,
       human_confirmation_duration_ms: 180000,
+      child_issue_wait_duration_ms: 60000,
       total_input_tokens: 0,
       total_output_tokens: 0,
       total_cache_read_tokens: 0,
@@ -193,10 +196,12 @@ describe("run review duration summary", () => {
       full_analysis_deep_link: "",
     };
 
-    expect(runReviewTotalDurationMs(summary)).toBe(300000);
+    expect(runReviewTotalDurationMs(summary)).toBe(360000);
+    expect(buildRunReviewDurationSummary(summary)).toBe("Agent 执行 2m · 人工确认 3m · 子任务等待 1m");
     expect(buildRunReviewDurationTooltipRows(summary)).toEqual([
       ["Agent 执行耗时", "2m"],
-      ["人工/等待耗时", "3m"],
+      ["人工确认耗时", "3m"],
+      ["子任务等待耗时", "1m"],
     ]);
   });
 
@@ -226,7 +231,8 @@ describe("run review duration summary", () => {
   it("does not show artificial waiting time when timing data is missing", () => {
     expect(buildRunReviewDurationTooltipRows(undefined)).toEqual([
       ["Agent 执行耗时", "0m"],
-      ["人工/等待耗时", "未记录"],
+      ["人工确认耗时", "未记录"],
+      ["子任务等待耗时", "未记录"],
     ]);
   });
 });
@@ -313,6 +319,45 @@ describe("run review realtime helpers", () => {
     expect(buildRunReviewLiveTimelineNodes([runningNode, completedNode], nowMs).map((node) => node.duration_ms)).toEqual([
       120_000,
       60_000,
+    ]);
+  });
+
+  it("counts active human confirmation separately from active agent execution", () => {
+    const nowMs = Date.parse("2026-06-09T10:05:00.000Z");
+    const pendingHumanNode = timelineNode({
+      node_id: "human_confirmation:pending:task-0",
+      node_type: "human_confirmation",
+      status: "running",
+      started_at: "2026-06-09T10:01:00.000Z",
+      completed_at: "",
+      duration_ms: 0,
+      summary: "等待用户确认密码策略边界",
+    });
+    const summary = {
+      issue_id: "issue-1",
+      node_count: 2,
+      total_duration_ms: 60_000,
+      agent_execution_duration_ms: 60_000,
+      human_confirmation_duration_ms: 0,
+      total_input_tokens: 0,
+      total_output_tokens: 0,
+      total_cache_read_tokens: 0,
+      total_cache_write_tokens: 0,
+      message_count: 0,
+      agent_turn_count: 0,
+      trace_event_count: 0,
+      usage_unavailable: false,
+      acceptance_status: "running",
+      full_analysis_deep_link: "",
+    };
+
+    expect(buildRunReviewLiveSummary(summary, [], [pendingHumanNode], nowMs)).toMatchObject({
+      total_duration_ms: 300_000,
+      agent_execution_duration_ms: 60_000,
+      human_confirmation_duration_ms: 240_000,
+    });
+    expect(buildRunReviewLiveTimelineNodes([pendingHumanNode], nowMs).map((node) => node.duration_ms)).toEqual([
+      240_000,
     ]);
   });
 });
@@ -621,6 +666,86 @@ describe("buildRunReviewEventRows", () => {
     expect(groups[0]?.taskId).toBe("task-1");
     expect(groups[0]?.tokenTotal).toBe(20);
     expect(groups[0]?.events.map((event) => event.id)).toEqual(["message:1", "trace:2"]);
+  });
+
+  it("labels repeated PM task groups by task intent instead of only agent name", () => {
+    const labels = buildEventTaskLabelById([
+      timelineNode({
+        node_id: "task:pm-summary",
+        agent_name: "pm-v2 · PM-项目经理",
+        summary: "需求摘要生成",
+      }),
+      timelineNode({
+        node_id: "task:pm-wait",
+        agent_name: "pm-v2 · PM-项目经理",
+        summary: "等待用户确认密码策略边界",
+      }),
+    ]);
+
+    expect(labels.get("pm-summary")).toBe("需求摘要生成");
+    expect(labels.get("pm-wait")).toBe("等待用户确认密码策略边界");
+  });
+
+  it("ignores markdown dividers when labeling PM task groups", () => {
+    const labels = buildEventTaskLabelById([
+      timelineNode({
+        node_id: "task:pm-wait",
+        agent_name: "pm-v2 · PM-项目经理",
+        summary: "---",
+      }),
+      timelineNode({
+        node_id: "task:pm-heading",
+        agent_name: "pm-v2 · PM-项目经理",
+        summary: "---\n\n## 01-需求澄清已完成，需等待用户确认",
+      }),
+    ]);
+
+    expect(labels.get("pm-wait")).toBe("pm-v2 · PM-项目经理");
+    expect(labels.get("pm-heading")).toBe("01-需求澄清已完成，需等待用户确认");
+  });
+
+  it("keeps duplicate user input snapshots out of the default visible event stream", () => {
+    const rows = buildRunReviewEventRows({
+      root: {
+        tasks: [],
+        task_messages: [],
+        tool_call_chains: [],
+        trace_events: [
+          trace({
+            id: "input-1",
+            task_id: "pm-1",
+            event_type: "user_input.received",
+            event_name: "用户输入已接收",
+            status: "completed",
+            failure_reason: "",
+            error_type: "",
+            metadata: {
+              input_kind: "issue",
+              summary: "增强密码强度",
+              content_snapshot: "IDA-81 增强密码强度\n目标项目 usercenter",
+            },
+          }),
+          trace({
+            id: "input-2",
+            task_id: "pm-2",
+            event_type: "user_input.received",
+            event_name: "用户输入已接收",
+            status: "completed",
+            failure_reason: "",
+            error_type: "",
+            metadata: {
+              input_kind: "issue",
+              summary: "增强密码强度",
+              content_snapshot: "IDA-81 增强密码强度\n目标项目 usercenter",
+            },
+          }),
+        ],
+        children: [],
+      },
+    } as unknown as IssueExecutionTreeResponse, []);
+
+    expect(rows.filter((row) => row.object === "issue")).toHaveLength(2);
+    expect(filterVisibleRunReviewEventRows(rows).filter((row) => row.object === "issue")).toHaveLength(1);
   });
 
   it("keeps system events in separate raw groups when they do not belong to a task", () => {
@@ -1051,6 +1176,7 @@ describe("buildRunReviewEventRows", () => {
       total_cache_write_tokens: 4,
       agent_execution_duration_ms: 60000,
       human_confirmation_duration_ms: 30000,
+      child_issue_wait_duration_ms: 15000,
       message_count: 2,
       agent_turn_count: 3,
       trace_event_count: 1,
@@ -1120,7 +1246,8 @@ describe("buildRunReviewEventRows", () => {
     expect(sheet?.rows[0]).toEqual([
       "总耗时",
       "Agent 执行耗时",
-      "人工/等待耗时",
+      "人工确认耗时",
+      "子任务等待耗时",
       "总 Token",
       "输入 Token",
       "输出 Token",
@@ -1129,7 +1256,7 @@ describe("buildRunReviewEventRows", () => {
       "缓存命中率",
       "执行轮次",
     ]);
-    expect(sheet?.rows[1]).toEqual(["1m 30s", "1m", "30s", "64", "10", "20", "30", "4", "88.2%", "3"]);
+    expect(sheet?.rows[1]).toEqual(["1m 45s", "1m", "30s", "15s", "64", "10", "20", "30", "4", "88.2%", "3"]);
     expect(sheet?.rows[2]).toEqual([]);
     expect(sheet?.rows[3]).toEqual([
       "节点",
@@ -1544,7 +1671,8 @@ describe("buildRunReviewEventRows", () => {
     const [sheet] = buildRunReviewRawEventsXlsxSheets(rows);
 
     expect(sheet?.name).toBe("RAW 交互信息");
-    expect(sheet?.rows[0]?.slice(0, 5)).toEqual(["id", "kind", "category", "time", "timestamp_ms"]);
+    expect(sheet?.rows[0]?.slice(0, 5)).toEqual(["id", "类型", "分类", "时间", "时间戳(ms)"]);
+    expect(sheet?.rows[0]?.slice(-3)).toEqual(["原始来源", "raw_json", "linked_raw_json"]);
     expect(sheet?.rows[1]).toContain("line 1\nline 2, with comma");
     expect(sheet?.rows[1]).toContain('metadata:\n{"quote":"yes"}');
     expect(sheet?.rows[1]).toContain("task_trace_event");

@@ -52,6 +52,45 @@ func TestSummarizeIssueTimelineComputesHumanConfirmationRemainder(t *testing.T) 
 	}
 }
 
+func TestSummarizeIssueTimelineSplitsHumanConfirmationAndChildIssueWait(t *testing.T) {
+	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1"}, []IssueTimelineNodeResponse{
+		{
+			NodeID:      "task:1",
+			NodeType:    "agent_task",
+			Status:      "completed",
+			StartedAt:   "2026-06-09T10:00:00Z",
+			CompletedAt: "2026-06-09T10:02:00Z",
+			DurationMs:  120000,
+		},
+		{
+			NodeID:      "human_confirmation:1",
+			NodeType:    "human_confirmation",
+			Status:      "completed",
+			StartedAt:   "2026-06-09T10:02:00Z",
+			CompletedAt: "2026-06-09T10:03:00Z",
+			DurationMs:  60000,
+		},
+		{
+			NodeID:      "child_issue_ref:1",
+			NodeType:    "child_issue_ref",
+			Status:      "done",
+			StartedAt:   "2026-06-09T10:03:00Z",
+			CompletedAt: "2026-06-09T10:08:00Z",
+			DurationMs:  300000,
+		},
+	})
+
+	if summary.HumanConfirmationDurationMs == nil || *summary.HumanConfirmationDurationMs != 60000 {
+		t.Fatalf("human confirmation = %v, want 60000", summary.HumanConfirmationDurationMs)
+	}
+	if summary.ChildIssueWaitDurationMs == nil || *summary.ChildIssueWaitDurationMs != 300000 {
+		t.Fatalf("child issue wait = %v, want 300000", summary.ChildIssueWaitDurationMs)
+	}
+	if summary.TotalDurationMs != 480000 {
+		t.Fatalf("total duration = %d, want agent + human + child wait 480000", summary.TotalDurationMs)
+	}
+}
+
 func TestSummarizeIssueTimelineFallsBackToAgentTaskBoundsWithoutWorkCycle(t *testing.T) {
 	summary := summarizeIssueTimeline(IssueResponse{ID: "issue-1"}, []IssueTimelineNodeResponse{
 		{
@@ -157,6 +196,142 @@ func TestBuildIssueTimelineNodesAddsHumanConfirmationWait(t *testing.T) {
 	}
 	if taskNode.DurationMs != 240000 {
 		t.Fatalf("task responsibility duration = %d, want 240000", taskNode.DurationMs)
+	}
+}
+
+func TestBuildIssueTimelineNodesAddsPendingHumanConfirmationWait(t *testing.T) {
+	root := IssueExecutionNodeResponse{
+		Issue: IssueResponse{ID: "issue-1"},
+		Tasks: []AgentTaskResponse{
+			{
+				ID:          "task-1",
+				AgentID:     "agent-pm",
+				Status:      "completed",
+				StartedAt:   timelineTestStringPtr("2026-06-09T10:00:00Z"),
+				CompletedAt: timelineTestStringPtr("2026-06-09T10:02:00Z"),
+				CreatedAt:   "2026-06-09T10:00:00Z",
+				Result: map[string]any{
+					"output": "等待用户补充确认后，我将继续推进 02-方案设计。",
+				},
+				Agent: &TaskAgentData{Name: "pm-v2 · PM-项目经理"},
+			},
+		},
+		ActivityLogs: []IssueActivityBrief{
+			{
+				ID:        "activity-1",
+				IssueID:   "issue-1",
+				ActorType: "agent",
+				ActorID:   "agent-pm",
+				Action:    "squad_leader_evaluated",
+				Details: map[string]any{
+					"task_id":      "task-1",
+					"outcome":      "action",
+					"reason":       "01-clarify 已完成，存在未定决策点，需用户确认适用场景范围",
+					"wait_kind":    "human_confirmation",
+					"wait_summary": "等待用户确认密码策略边界",
+				},
+				CreatedAt: "2026-06-09T10:02:30Z",
+			},
+		},
+	}
+
+	nodes := buildIssueTimelineNodes(root)
+	var waitNode IssueTimelineNodeResponse
+	for _, node := range nodes {
+		if node.NodeType == "human_confirmation" {
+			waitNode = node
+			break
+		}
+	}
+
+	if waitNode.NodeID != "human_confirmation:pending:task-1" {
+		t.Fatalf("pending human confirmation node = %+v", waitNode)
+	}
+	if waitNode.Status != "running" || waitNode.StartedAt != "2026-06-09T10:02:00Z" || waitNode.CompletedAt != "" {
+		t.Fatalf("pending human confirmation status/bounds = %+v", waitNode)
+	}
+	if waitNode.DurationMs != 0 {
+		t.Fatalf("pending human confirmation duration = %d, want live client duration", waitNode.DurationMs)
+	}
+	if waitNode.Summary != "等待用户确认密码策略边界" {
+		t.Fatalf("pending human confirmation summary = %q", waitNode.Summary)
+	}
+	if waitNode.Metadata["pending"] != true || waitNode.Metadata["wait_kind"] != "human_confirmation" {
+		t.Fatalf("pending human confirmation metadata = %+v", waitNode.Metadata)
+	}
+	var taskNode IssueTimelineNodeResponse
+	for _, node := range nodes {
+		if node.NodeID == "task:task-1" {
+			taskNode = node
+			break
+		}
+	}
+	if taskNode.Summary != "等待用户补充确认后，我将继续推进 02-方案设计。" {
+		t.Fatalf("PM task summary = %q, want task result intent", taskNode.Summary)
+	}
+	refs := map[string]bool{}
+	for _, ref := range waitNode.EvidenceRefs {
+		refs[ref.Type+":"+ref.ID] = true
+	}
+	for _, want := range []string{"agent_task:task-1", "activity:activity-1"} {
+		if !refs[want] {
+			t.Fatalf("pending human confirmation evidence missing %s: %+v", want, waitNode.EvidenceRefs)
+		}
+	}
+}
+
+func TestBuildIssueTimelineNodesSkipsMarkdownDividerInPendingHumanConfirmationSummary(t *testing.T) {
+	root := IssueExecutionNodeResponse{
+		Issue: IssueResponse{ID: "issue-1"},
+		Tasks: []AgentTaskResponse{
+			{
+				ID:          "task-1",
+				AgentID:     "agent-pm",
+				Status:      "completed",
+				StartedAt:   timelineTestStringPtr("2026-06-09T10:00:00Z"),
+				CompletedAt: timelineTestStringPtr("2026-06-09T10:02:00Z"),
+				CreatedAt:   "2026-06-09T10:00:00Z",
+				Result: map[string]any{
+					"output": "---\n\n## 01-需求澄清已完成，需等待用户确认\n\n请确认边界后继续。",
+				},
+				Agent: &TaskAgentData{Name: "pm-v2 · PM-项目经理"},
+			},
+		},
+	}
+
+	nodes := buildIssueTimelineNodes(root)
+	var taskNode IssueTimelineNodeResponse
+	var waitNode IssueTimelineNodeResponse
+	for _, node := range nodes {
+		switch node.NodeID {
+		case "task:task-1":
+			taskNode = node
+		case "human_confirmation:pending:task-1":
+			waitNode = node
+		}
+	}
+
+	if taskNode.Summary != "01-需求澄清已完成，需等待用户确认" {
+		t.Fatalf("PM task summary = %q, want markdown heading", taskNode.Summary)
+	}
+	if waitNode.Summary != "01-需求澄清已完成，需等待用户确认" {
+		t.Fatalf("pending human confirmation summary = %q, want markdown heading", waitNode.Summary)
+	}
+}
+
+func TestTimelineTaskSummaryPrefersCompletedStageResultOverTrigger(t *testing.T) {
+	summary := timelineTaskSummary(AgentTaskResponse{
+		ID:             "task-1",
+		Status:         "completed",
+		TriggerSummary: timelineTestStringPtr("## PM 审阅 04-implement 追加改动\n\n请 05 继续验证。"),
+		Result: map[string]any{
+			"output": "05-verify 追加改动验收完成。两个 MR 的新 commit 均已确认推送。",
+		},
+		Agent: &TaskAgentData{Name: "05-验证测试"},
+	})
+
+	if summary != "05-verify 追加改动验收完成。两个 MR 的新 commit 均已确认推送。" {
+		t.Fatalf("summary = %q, want completed stage result", summary)
 	}
 }
 

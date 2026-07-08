@@ -88,6 +88,7 @@ export interface IssueTimelineNode {
   summary: string;
   evidence_refs: IssueTimelineEvidenceRef[];
   artifacts?: AgentTaskArtifact[];
+  metadata?: Record<string, unknown>;
 }
 
 export interface IssueTimelineSummary {
@@ -99,6 +100,7 @@ export interface IssueTimelineSummary {
   wall_clock_duration_ms?: number | null;
   agent_execution_duration_ms?: number;
   human_confirmation_duration_ms?: number | null;
+  child_issue_wait_duration_ms?: number | null;
   total_input_tokens: number;
   total_output_tokens: number;
   total_cache_read_tokens: number;

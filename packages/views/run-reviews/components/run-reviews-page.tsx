@@ -63,8 +63,9 @@ export function buildRunReviewOptimizerHref(evaluationView: (view: string) => st
 export function runReviewTotalDurationMs(summary: IssueTimelineSummary | undefined): number {
   if (!summary) return 0;
   const agentExecution = summary.agent_execution_duration_ms;
+  const childIssueWait = summary.child_issue_wait_duration_ms ?? 0;
   if (agentExecution != null) {
-    return agentExecution + (summary.human_confirmation_duration_ms ?? 0);
+    return agentExecution + (summary.human_confirmation_duration_ms ?? 0) + childIssueWait;
   }
   return summary.total_duration_ms ?? 0;
 }
@@ -72,16 +73,23 @@ export function runReviewTotalDurationMs(summary: IssueTimelineSummary | undefin
 export function buildRunReviewDurationTooltipRows(summary: IssueTimelineSummary | undefined): Array<[string, string]> {
   const agentExecution = summary?.agent_execution_duration_ms ?? summary?.total_duration_ms ?? 0;
   const humanConfirmation = summary?.human_confirmation_duration_ms;
+  const childIssueWait = summary?.child_issue_wait_duration_ms;
   return [
     ["Agent 执行耗时", formatDuration(agentExecution)],
-    ["人工/等待耗时", humanConfirmation == null ? "未记录" : formatDuration(humanConfirmation)],
+    ["人工确认耗时", humanConfirmation == null ? "未记录" : formatDuration(humanConfirmation)],
+    ["子任务等待耗时", childIssueWait == null ? "未记录" : formatDuration(childIssueWait)],
   ];
 }
 
 export function buildRunReviewDurationSummary(summary: IssueTimelineSummary | undefined): string {
   const agentExecution = summary?.agent_execution_duration_ms ?? summary?.total_duration_ms ?? 0;
   const humanConfirmation = summary?.human_confirmation_duration_ms;
-  return `Agent 执行 ${formatDuration(agentExecution)} · 人工/等待 ${humanConfirmation == null ? "未记录" : formatDuration(humanConfirmation)}`;
+  const childIssueWait = summary?.child_issue_wait_duration_ms;
+  return [
+    `Agent 执行 ${formatDuration(agentExecution)}`,
+    `人工确认 ${humanConfirmation == null ? "未记录" : formatDuration(humanConfirmation)}`,
+    `子任务等待 ${childIssueWait == null ? "未记录" : formatDuration(childIssueWait)}`,
+  ].join(" · ");
 }
 
 export function buildRunReviewTokenSummary(summary: IssueTimelineSummary | undefined): string {
@@ -110,18 +118,34 @@ export function buildRunReviewLiveSummary(
   nowMs: number,
 ): IssueTimelineSummary | undefined {
   if (!summary) return summary;
-  const liveDurationMs = Math.max(
+  const liveAgentDurationMs = Math.max(
     0,
     ...activeTasks.map((task) => liveElapsedMs(task.started_at ?? task.dispatched_at ?? task.created_at, nowMs)),
     ...timelineNodes
-      .filter(isActiveTimelineNode)
+      .filter((node) => node.node_type === "agent_task" && isActiveTimelineNode(node))
       .map((node) => liveElapsedMs(node.started_at, nowMs)),
   );
-  if (liveDurationMs <= 0) return summary;
+  const liveHumanConfirmationDurationMs = Math.max(
+    0,
+    ...timelineNodes
+      .filter((node) => node.node_type === "human_confirmation" && isActiveTimelineNode(node))
+      .map((node) => liveElapsedMs(node.started_at, nowMs)),
+  );
+  if (liveAgentDurationMs <= 0 && liveHumanConfirmationDurationMs <= 0) return summary;
+  const agentExecutionMs = Math.max(summary.agent_execution_duration_ms ?? summary.total_duration_ms ?? 0, liveAgentDurationMs);
+  const hasHumanConfirmation = summary.human_confirmation_duration_ms != null || liveHumanConfirmationDurationMs > 0;
+  const humanConfirmationMs = hasHumanConfirmation
+    ? Math.max(summary.human_confirmation_duration_ms ?? 0, liveHumanConfirmationDurationMs)
+    : summary.human_confirmation_duration_ms;
+  const childIssueWaitMs = summary.child_issue_wait_duration_ms ?? 0;
+  const totalDurationMs = hasHumanConfirmation
+    ? agentExecutionMs + (humanConfirmationMs ?? 0) + childIssueWaitMs
+    : Math.max(summary.total_duration_ms ?? 0, agentExecutionMs);
   return {
     ...summary,
-    total_duration_ms: Math.max(summary.total_duration_ms ?? 0, liveDurationMs),
-    agent_execution_duration_ms: Math.max(summary.agent_execution_duration_ms ?? summary.total_duration_ms ?? 0, liveDurationMs),
+    total_duration_ms: totalDurationMs,
+    agent_execution_duration_ms: agentExecutionMs,
+    human_confirmation_duration_ms: humanConfirmationMs,
   };
 }
 
@@ -1497,11 +1521,12 @@ export function buildTraceNodeXlsxSheets(_issue: Issue, summary: IssueTimelineSu
     (summary?.total_cache_read_tokens ?? 0) +
     (summary?.total_cache_write_tokens ?? 0);
   const rows: XlsxCellValue[][] = [
-    ["总耗时", "Agent 执行耗时", "人工/等待耗时", "总 Token", "输入 Token", "输出 Token", "缓存读 Token", "缓存写 Token", "缓存命中率", "执行轮次"],
+    ["总耗时", "Agent 执行耗时", "人工确认耗时", "子任务等待耗时", "总 Token", "输入 Token", "输出 Token", "缓存读 Token", "缓存写 Token", "缓存命中率", "执行轮次"],
     [
       formatDuration(runReviewTotalDurationMs(summary)),
       formatDuration(summary?.agent_execution_duration_ms ?? summary?.total_duration_ms ?? 0),
       summary?.human_confirmation_duration_ms == null ? "未记录" : formatDuration(summary.human_confirmation_duration_ms),
+      summary?.child_issue_wait_duration_ms == null ? "未记录" : formatDuration(summary.child_issue_wait_duration_ms),
       formatNumber(totalToken),
       formatNumber(summary?.total_input_tokens ?? 0),
       formatNumber(summary?.total_output_tokens ?? 0),
@@ -1596,10 +1621,10 @@ function traceFlowKind(node: IssueTimelineNode): TraceFlowKind {
 
 function traceFlowTitle(node: IssueTimelineNode, task: AgentTask | undefined, index: number) {
   if (node.node_type === "source_fetch") return "读取输入来源";
-  if (node.node_type === "human_confirmation") return firstNonEmpty(truncateText(node.summary, 72), "人工确认");
-  if (node.node_type === "approval") return firstNonEmpty(truncateText(node.summary, 72), "审批");
+  if (node.node_type === "human_confirmation") return firstNonEmpty(truncateText(cleanSemanticMarkdownLine(node.summary), 72), "人工确认");
+  if (node.node_type === "approval") return firstNonEmpty(truncateText(cleanSemanticMarkdownLine(node.summary), 72), "审批");
   if (node.node_type !== "agent_task") return `${timelineNodeKindLabel(node.node_type)} · ${truncateText(node.summary || node.status || `节点 ${index + 1}`, 56)}`;
-  return firstNonEmpty(firstHeading(traceTaskOutput(task)), truncateText(node.summary, 64), `${node.agent_name || "Agent"} · ${statusLabel(node.status)}`);
+  return firstNonEmpty(firstHeading(traceTaskOutput(task)), timelineTaskIntentLabel(node), `${node.agent_name || "Agent"} · ${statusLabel(node.status)}`);
 }
 
 function traceTaskOutput(task: AgentTask | undefined) {
@@ -1610,7 +1635,7 @@ function traceTaskOutput(task: AgentTask | undefined) {
 function firstHeading(value: string) {
   return value
     .split("\n")
-    .map((line) => line.replace(/^#+\s*/, "").replace(/\*\*/g, "").trim())
+    .map(cleanSemanticMarkdownLine)
     .find(Boolean) ?? "";
 }
 
@@ -1749,7 +1774,12 @@ export function filterRunReviewEventRows(eventRows: RunReviewEventRowData[], que
 }
 
 export function filterVisibleRunReviewEventRows(eventRows: RunReviewEventRowData[]): RunReviewEventRowData[] {
-  return eventRows.filter(shouldShowRunReviewEventRow);
+  const seenUserInputSnapshots = new Set<string>();
+  return eventRows.filter((event) => {
+    if (!shouldShowRunReviewEventRow(event)) return false;
+    if (isDuplicateVisibleUserInputSnapshot(event, seenUserInputSnapshots)) return false;
+    return true;
+  });
 }
 
 function shouldShowRunReviewEventRow(event: RunReviewEventRowData): boolean {
@@ -1771,6 +1801,23 @@ function shouldShowRunReviewEventRow(event: RunReviewEventRowData): boolean {
   }
 
   return true;
+}
+
+function isDuplicateVisibleUserInputSnapshot(event: RunReviewEventRowData, seen: Set<string>): boolean {
+  if (event.kind !== "trace" || event.severity !== "normal") return false;
+  const raw = event.rawPayload as Partial<TaskTraceEvent> | undefined;
+  if (raw?.event_type !== "user_input.received") return false;
+  const metadata = raw.metadata ?? {};
+  const snapshot = stringFromUnknown(metadata.content_snapshot).trim();
+  if (!snapshot) return false;
+  const key = [
+    stringFromUnknown(metadata.input_kind),
+    stringFromUnknown(metadata.source_url),
+    snapshot,
+  ].join("\n");
+  if (seen.has(key)) return true;
+  seen.add(key);
+  return false;
 }
 
 const RUN_REVIEW_NOISY_TRACE_EVENT_TYPES = new Set([
@@ -2187,12 +2234,13 @@ export function buildTimelineBarRows(
   const humanConfirmationSegments = humanConfirmationNodes.map((node, index) => (
     timelineNodeSegment(node.node_id, humanConfirmationSegmentLabel(node), node, index + 1, humanConfirmationNodes.length)
   ));
+  const humanConfirmationStatus = humanConfirmationNodes.some((node) => isActiveTimelineNode(node)) ? "running" : "completed";
   const humanConfirmationBars = humanConfirmationSegments.length > 0 ? [{
     key: "human-confirmation",
     label: "人工确认",
     kind: "human_confirmation" as const,
-    status: "completed",
-    subtitle: timelineRowSubtitle("completed", humanConfirmationSegments.length),
+    status: humanConfirmationStatus,
+    subtitle: timelineRowSubtitle(humanConfirmationStatus, humanConfirmationSegments.length),
     segments: humanConfirmationSegments,
     missing: false,
   }] : [];
@@ -2489,15 +2537,45 @@ export function buildRunReviewEventGroups(
     .toSorted((left, right) => eventGroupSortTime(left) - eventGroupSortTime(right) || left.label.localeCompare(right.label));
 }
 
-function buildEventTaskLabelById(timelineNodes: IssueTimelineNode[]) {
+export function buildEventTaskLabelById(timelineNodes: IssueTimelineNode[]) {
   const labels = new Map<string, string>();
   for (const node of timelineNodes) {
     if (node.node_type !== "agent_task") continue;
     const taskId = node.node_id.replace(/^task:/, "");
     if (!taskId) continue;
-    labels.set(taskId, firstNonEmpty(node.agent_name, node.summary, `任务 ${shortId(taskId)}`));
+    labels.set(taskId, firstNonEmpty(timelineTaskIntentLabel(node), node.agent_name, `任务 ${shortId(taskId)}`));
   }
   return labels;
+}
+
+function timelineTaskIntentLabel(node: IssueTimelineNode) {
+  const summary = cleanSemanticMarkdownLine(node.summary ?? "");
+  if (!summary) return "";
+  const lowerSummary = summary.toLowerCase();
+  const agentName = node.agent_name?.trim() ?? "";
+  if (agentName && summary === agentName) return "";
+  if (lowerSummary.startsWith("sop leader:")) return "";
+  if (summary === "SOP leader task") return "";
+  if (summary.startsWith("Agent task ")) return "";
+  return truncateText(summary, 72);
+}
+
+function cleanSemanticMarkdownLine(value: string) {
+  const line = value
+    .split("\n")
+    .map((rawLine) => {
+      let next = rawLine.trim();
+      if (!next || isNonSemanticMarkdownLine(next)) return "";
+      next = next.replace(/^#+\s*/, "").replace(/\*\*/g, "").replace(/^`+|`+$/g, "").trim();
+      if (!next || isNonSemanticMarkdownLine(next)) return "";
+      return next;
+    })
+    .find(Boolean);
+  return line ?? "";
+}
+
+function isNonSemanticMarkdownLine(value: string) {
+  return value === "---" || value === "..." || /^```/.test(value) || value.replace(/[-=_*`~\s]/g, "") === "";
 }
 
 function eventSortTime(event: RunReviewEventRowData) {
@@ -2585,11 +2663,15 @@ export function buildRunReviewNodeXlsxSheets(
   const humanConfirmationDuration = summary?.human_confirmation_duration_ms == null
     ? "未记录"
     : formatDuration(summary.human_confirmation_duration_ms);
+  const childIssueWaitDuration = summary?.child_issue_wait_duration_ms == null
+    ? "未记录"
+    : formatDuration(summary.child_issue_wait_duration_ms);
   const rows: XlsxCellValue[][] = [
     [
       "总耗时",
       "Agent 执行耗时",
-      "人工/等待耗时",
+      "人工确认耗时",
+      "子任务等待耗时",
       "总 Token",
       "输入 Token",
       "输出 Token",
@@ -2602,6 +2684,7 @@ export function buildRunReviewNodeXlsxSheets(
       formatDuration(runReviewTotalDurationMs(summary)),
       formatDuration(agentExecutionDurationMs),
       humanConfirmationDuration,
+      childIssueWaitDuration,
       formatNumber(totalToken),
       formatNumber(summaryInputTokens),
       formatNumber(summaryOutputTokens),
@@ -2696,22 +2779,22 @@ export function buildRunReviewNodeXlsxSheets(
 export function buildRunReviewRawEventsXlsxSheets(eventRows: RunReviewEventRowData[]): XlsxSheetSpec[] {
   const headers = [
     "id",
-    "kind",
-    "category",
-    "time",
-    "timestamp_ms",
-    "task_id",
-    "source",
-    "object",
-    "title",
-    "outcome",
-    "severity",
-    "duration_ms",
-    "token_total",
-    "summary",
-    "detail",
-    "metadata_detail",
-    "raw_source",
+    "类型",
+    "分类",
+    "时间",
+    "时间戳(ms)",
+    "任务ID",
+    "来源",
+    "对象",
+    "标题",
+    "结果",
+    "严重级别",
+    "耗时(ms)",
+    "Token合计",
+    "摘要",
+    "详情",
+    "元数据",
+    "原始来源",
     "raw_json",
     "linked_raw_json",
   ];
@@ -3554,7 +3637,7 @@ function runReviewTimelineNodeEvent(node: IssueTimelineNode): RunReviewEventRowD
     taskId: node.node_type === "agent_task" ? node.node_id.replace(/^task:/, "") : node.root_task_id,
     sourceLabel: node.agent_name || node.node_type,
     object: node.node_type,
-    title: node.summary || timelineNodeKindLabel(node.node_type),
+    title: firstNonEmpty(cleanSemanticMarkdownLine(node.summary), timelineNodeKindLabel(node.node_type)),
     outcome: statusLabel(node.status),
     summary: node.usage_unavailable_trace ? "模型用量未返回" : "",
     detail: node.evidence_refs.length > 0 ? `evidence_refs:\n${formatJSON(node.evidence_refs)}` : "",

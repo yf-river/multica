@@ -243,6 +243,7 @@ func sanitizeArtifactFilename(name string) string {
 func summarizeFinalOutputForArtifactComment(output string) string {
 	content := cleanFinalOutputArtifactContent(output)
 	title, summary := extractArtifactCommentTitleAndSummary(content)
+	sections := extractArtifactCommentKeySections(content)
 	var b strings.Builder
 	if title != "" {
 		b.WriteString("已上传阶段产物：")
@@ -253,6 +254,18 @@ func summarizeFinalOutputForArtifactComment(output string) string {
 	if summary != "" {
 		b.WriteString("\n\n摘要：")
 		b.WriteString(truncateArtifactCommentSummaryLine(summary))
+	}
+	for _, section := range sections {
+		if len(section.Items) == 0 {
+			continue
+		}
+		b.WriteString("\n\n")
+		b.WriteString(section.Label)
+		b.WriteString("：")
+		for _, item := range section.Items {
+			b.WriteString("\n- ")
+			b.WriteString(truncateArtifactCommentSummaryLine(item))
+		}
 	}
 	b.WriteString("\n\n完整内容见附件。")
 	return b.String()
@@ -304,6 +317,110 @@ func extractArtifactCommentTitleAndSummary(output string) (string, string) {
 		return title, stripMarkdownListMarker(line)
 	}
 	return title, ""
+}
+
+type artifactCommentKeySection struct {
+	Label string
+	Items []string
+}
+
+type artifactCommentSectionRule struct {
+	Label    string
+	Keywords []string
+}
+
+var artifactCommentSectionRules = []artifactCommentSectionRule{
+	{Label: "待确认", Keywords: []string{"待确认", "需要确认", "需确认", "待澄清", "需要澄清", "澄清问题", "未决", "风险", "阻塞"}},
+	{Label: "验收口径", Keywords: []string{"验收", "测试列表", "测试矩阵", "测试项", "验证项", "验证"}},
+	{Label: "下一步", Keywords: []string{"下一步", "进入条件", "后续", "建议", "结论"}},
+}
+
+func extractArtifactCommentKeySections(output string) []artifactCommentKeySection {
+	lines := strings.Split(strings.TrimSpace(output), "\n")
+	sections := make([]artifactCommentKeySection, len(artifactCommentSectionRules))
+	for i, rule := range artifactCommentSectionRules {
+		sections[i] = artifactCommentKeySection{Label: rule.Label}
+	}
+	sectionIndex := -1
+	inCodeBlock := false
+	for i, rawLine := range lines {
+		line := strings.TrimSpace(rawLine)
+		if strings.HasPrefix(line, "```") {
+			inCodeBlock = !inCodeBlock
+			continue
+		}
+		if inCodeBlock {
+			continue
+		}
+		if heading := markdownHeadingText(line); heading != "" {
+			sectionIndex = artifactCommentSectionIndex(heading)
+			continue
+		}
+		if sectionIndex < 0 || len(sections[sectionIndex].Items) >= 3 {
+			continue
+		}
+		if strings.HasPrefix(line, "|") && i+1 < len(lines) && isMarkdownTableSeparator(strings.TrimSpace(lines[i+1])) {
+			continue
+		}
+		item, ok := artifactCommentKeySectionItem(line)
+		if !ok || artifactCommentSectionHasItem(sections[sectionIndex], item) {
+			continue
+		}
+		sections[sectionIndex].Items = append(sections[sectionIndex].Items, item)
+	}
+	result := make([]artifactCommentKeySection, 0, 2)
+	for _, section := range sections {
+		if len(section.Items) == 0 {
+			continue
+		}
+		result = append(result, section)
+		if len(result) >= 2 {
+			break
+		}
+	}
+	return result
+}
+
+func artifactCommentSectionIndex(heading string) int {
+	heading = strings.ToLower(strings.TrimSpace(heading))
+	if strings.Contains(heading, "摘要") {
+		return -1
+	}
+	for i, rule := range artifactCommentSectionRules {
+		for _, keyword := range rule.Keywords {
+			if strings.Contains(heading, strings.ToLower(keyword)) {
+				return i
+			}
+		}
+	}
+	return -1
+}
+
+func artifactCommentKeySectionItem(line string) (string, bool) {
+	if line == "" || line == "---" || line == "..." || strings.HasPrefix(line, "```") || markdownHeadingText(line) != "" || isMarkdownTableSeparator(line) {
+		return "", false
+	}
+	if strings.HasPrefix(line, "|") {
+		cells := markdownTableCells(line)
+		if len(cells) < 2 {
+			return "", false
+		}
+		return cells[0] + "：" + cells[1], true
+	}
+	item := stripMarkdownListMarker(line)
+	if item == "" {
+		return "", false
+	}
+	return item, true
+}
+
+func artifactCommentSectionHasItem(section artifactCommentKeySection, item string) bool {
+	for _, existing := range section.Items {
+		if existing == item {
+			return true
+		}
+	}
+	return false
 }
 
 func markdownHeadingText(line string) string {
@@ -391,6 +508,15 @@ func stripMarkdownListMarker(line string) string {
 	trimmed := strings.TrimSpace(line)
 	if strings.HasPrefix(trimmed, "- ") || strings.HasPrefix(trimmed, "* ") {
 		return strings.TrimSpace(trimmed[2:])
+	}
+	for i, r := range trimmed {
+		if unicode.IsDigit(r) {
+			continue
+		}
+		if i > 0 && (strings.HasPrefix(trimmed[i:], ". ") || strings.HasPrefix(trimmed[i:], ") ")) {
+			return strings.TrimSpace(trimmed[i+2:])
+		}
+		break
 	}
 	return trimmed
 }

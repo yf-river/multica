@@ -284,6 +284,88 @@ func TestSummarizeFinalOutputForArtifactCommentSummarizesTwoColumnTable(t *testi
 	}
 }
 
+func TestSummarizeFinalOutputForArtifactCommentIncludesClarificationQuestions(t *testing.T) {
+	t.Parallel()
+
+	output := `# 01-clarify.md
+
+## 摘要
+
+已上传阶段产物：三、验收口径。
+
+## 待确认项
+
+1. 作用范围：注册、重置密码、管理员重置是否统一适用？
+2. 特殊字符白名单是否包含空格？
+3. 是否需要禁止与最近 N 次密码相同？
+4. 这一条不应进入评论。
+
+## 下一步
+
+- 等待用户确认后进入 02-方案设计。
+`
+
+	got := summarizeFinalOutputForArtifactComment(output)
+
+	for _, want := range []string{
+		"已上传阶段产物：01-clarify.md",
+		"摘要：已上传阶段产物：三、验收口径。",
+		"待确认：\n- 作用范围：注册、重置密码、管理员重置是否统一适用？",
+		"- 特殊字符白名单是否包含空格？",
+		"- 是否需要禁止与最近 N 次密码相同？",
+		"下一步：\n- 等待用户确认后进入 02-方案设计。",
+		"完整内容见附件。",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("summary missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "这一条不应进入评论") {
+		t.Fatalf("summary should cap section items:\n%s", got)
+	}
+}
+
+func TestSummarizeFinalOutputForArtifactCommentIncludesVerificationCases(t *testing.T) {
+	t.Parallel()
+
+	output := `# 05-verify.md
+
+## 验证摘要
+
+验证通过。
+
+## 测试列表
+
+| 用例 | 结果 |
+|------|------|
+| AC-01 长度校验 | 通过 |
+| AC-02 字符类型校验 | 通过 |
+| AC-03 特殊字符白名单 | 通过 |
+
+## 代码块不应进入评论
+
+` + "```" + `
+go test ./...
+` + "```" + `
+`
+
+	got := summarizeFinalOutputForArtifactComment(output)
+
+	for _, want := range []string{
+		"摘要：验证通过。",
+		"验收口径：\n- AC-01 长度校验：通过",
+		"- AC-02 字符类型校验：通过",
+		"- AC-03 特殊字符白名单：通过",
+	} {
+		if !strings.Contains(got, want) {
+			t.Fatalf("summary missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "go test ./...") {
+		t.Fatalf("summary should not include code block:\n%s", got)
+	}
+}
+
 func TestTaskArtifactCommentContentIncludesSummary(t *testing.T) {
 	t.Parallel()
 

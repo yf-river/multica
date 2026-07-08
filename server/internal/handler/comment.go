@@ -1251,7 +1251,7 @@ func (h *Handler) shouldBlockParentSOPStageTriggerForCrossProjectChildren(ctx co
 	if err != nil || !isStageChainSOPProfile(squad.SopProfile) {
 		return false
 	}
-	if !h.issueCommentsContainRequiredCrossProjectDependency(ctx, issue, triggerCommentID) {
+	if !h.latestTaskSplitRequiresCrossProjectChildren(ctx, issue) {
 		return false
 	}
 	children, err := h.Queries.ListChildIssues(ctx, issue.ID)
@@ -1294,34 +1294,58 @@ func isStageChainSOPProfile(raw []byte) bool {
 	return len(required) == 0
 }
 
-func (h *Handler) issueCommentsContainRequiredCrossProjectDependency(ctx context.Context, issue db.Issue, triggerCommentID pgtype.UUID) bool {
-	var corpus strings.Builder
-	if triggerCommentID.Valid {
-		if comment, err := h.Queries.GetComment(ctx, triggerCommentID); err == nil && comment.IssueID == issue.ID {
-			corpus.WriteString(comment.Content)
-			corpus.WriteByte('\n')
-		}
-	}
+func (h *Handler) latestTaskSplitRequiresCrossProjectChildren(ctx context.Context, issue db.Issue) bool {
 	comments, err := h.Queries.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
 		IssueID:     issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 		Limit:       commentHardCap,
 	})
 	if err != nil {
-		slog.Warn("sop cross-project child gate skipped: list comments failed",
+		slog.Warn("sop cross-project child gate skipped: list task-split comments failed",
 			"issue_id", uuidToString(issue.ID),
 			"error", err)
 		return false
 	}
-	for _, comment := range comments {
-		corpus.WriteString(comment.Content)
-		corpus.WriteByte('\n')
+	for i := len(comments) - 1; i >= 0; i-- {
+		if isTaskSplitCrossProjectEvidenceComment(comments[i].Content) {
+			return containsRequiredCrossProjectDependency(comments[i].Content)
+		}
 	}
-	return containsRequiredCrossProjectDependency(corpus.String())
+	return false
+}
+
+func isTaskSplitCrossProjectEvidenceComment(content string) bool {
+	lower := strings.ToLower(strings.TrimSpace(content))
+	if !strings.Contains(lower, "03-task-split") && !strings.Contains(lower, "03-任务拆分") {
+		return false
+	}
+	evidenceMarkers := []string{
+		"## 03",
+		"阶段产物",
+		"已输出",
+		"已闭环",
+		"required cross-project dependencies",
+		"not required projects",
+		"跨项目依赖",
+		"无跨项目",
+		"child issue",
+		"子 issue",
+		"子任务",
+		"handoff-",
+	}
+	for _, marker := range evidenceMarkers {
+		if strings.Contains(lower, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func containsRequiredCrossProjectDependency(content string) bool {
 	text := strings.ToLower(content)
+	if taskSplitDeclaresNoRequiredCrossProjectChildren(text) {
+		return false
+	}
 	requiredMarkers := []string{
 		"待 pm 创建 child issue",
 		"pm 下一步先创建/复用对应 child issue",
@@ -1336,6 +1360,29 @@ func containsRequiredCrossProjectDependency(content string) bool {
 		}
 	}
 	return requiredCrossProjectSectionHasEntries(text)
+}
+
+func taskSplitDeclaresNoRequiredCrossProjectChildren(text string) bool {
+	noRequirementMarkers := []string{
+		"无跨项目依赖",
+		"无 required cross-project dependencies",
+		"required cross-project dependencies: none",
+		"required cross-project dependencies：none",
+		"required cross-project dependencies: 无",
+		"required cross-project dependencies：无",
+		"无需创建 child issue",
+		"不需要创建 child issue",
+		"无跨项目 child issue",
+		"无 child issue",
+		"不创建 child issue",
+		"无子任务",
+	}
+	for _, marker := range noRequirementMarkers {
+		if strings.Contains(text, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 func requiredCrossProjectSectionHasEntries(text string) bool {
@@ -1377,18 +1424,6 @@ func requiredCrossProjectSectionHasEntries(text string) bool {
 }
 
 func (h *Handler) recordBlockedParentSOPStageTriggerComment(ctx context.Context, issue db.Issue, stageName string) {
-	comments, err := h.Queries.ListCommentsForIssue(ctx, db.ListCommentsForIssueParams{
-		IssueID:     issue.ID,
-		WorkspaceID: issue.WorkspaceID,
-		Limit:       commentHardCap,
-	})
-	if err == nil {
-		for i := len(comments) - 1; i >= 0 && i >= len(comments)-5; i-- {
-			if strings.Contains(comments[i].Content, "平台已阻止父任务阶段调度") {
-				return
-			}
-		}
-	}
 	content := strings.TrimSpace("平台已阻止父任务阶段调度：03-任务拆分已识别 required 跨项目依赖，但父 issue 的 child issue 仍缺失或未全部完成，因此不能触发父 issue 的 " + stageName + "。请 PM 先创建/复用并回读 required child issue；所有 required child issue 完成后，再继续父 issue 阶段。")
 	comment, err := h.Queries.CreateComment(ctx, db.CreateCommentParams{
 		IssueID:     issue.ID,

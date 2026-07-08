@@ -1977,8 +1977,10 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 	}
 
 	var req struct {
-		Outcome string `json:"outcome"` // action | no_action | failed
-		Reason  string `json:"reason"`  // short explanation from leader
+		Outcome     string `json:"outcome"`      // action | no_action | failed
+		Reason      string `json:"reason"`       // short explanation from leader
+		WaitKind    string `json:"wait_kind"`    // optional: human_confirmation
+		WaitSummary string `json:"wait_summary"` // optional user-facing wait summary
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -1987,6 +1989,10 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 
 	if req.Outcome != "action" && req.Outcome != "no_action" && req.Outcome != "failed" {
 		writeError(w, http.StatusBadRequest, "outcome must be 'action', 'no_action', or 'failed'")
+		return
+	}
+	if req.WaitKind != "" && req.WaitKind != "human_confirmation" {
+		writeError(w, http.StatusBadRequest, "wait_kind must be 'human_confirmation' when provided")
 		return
 	}
 
@@ -2025,12 +2031,19 @@ func (h *Handler) RecordSquadLeaderEvaluation(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	details, _ := json.Marshal(map[string]string{
+	detailMap := map[string]string{
 		"squad_id": uuidToString(squad.ID),
 		"task_id":  util.UUIDToString(taskUUID),
 		"outcome":  req.Outcome,
 		"reason":   req.Reason,
-	})
+	}
+	if req.WaitKind != "" {
+		detailMap["wait_kind"] = req.WaitKind
+	}
+	if req.WaitSummary != "" {
+		detailMap["wait_summary"] = req.WaitSummary
+	}
+	details, _ := json.Marshal(detailMap)
 
 	activity, err := h.Queries.CreateActivity(r.Context(), db.CreateActivityParams{
 		WorkspaceID: issue.WorkspaceID,
