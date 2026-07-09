@@ -114,7 +114,9 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
     if (!issueId) return;
     openCreateIssue({
       parent_issue_id: issueId,
-      parent_issue_identifier: issueIdentifier,
+      ...(issueIdentifier
+        ? { parent_issue_identifier: issueIdentifier }
+        : {}),
       ...(issueProjectId ? { project_id: issueProjectId } : {}),
     });
   }, [issueId, issueIdentifier, issueProjectId]);
