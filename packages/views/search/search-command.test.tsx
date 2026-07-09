@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { I18nProvider } from "@multica/core/i18n/react";
 import { SearchCommand } from "./search-command";
-import { useSearchStore } from "./search-store";
+import { useSearchStore } from "@multica/core/search";
 import enCommon from "../locales/zh-Hans/common.json";
 import enAuth from "../locales/zh-Hans/auth.json";
 import enSettings from "../locales/zh-Hans/settings.json";

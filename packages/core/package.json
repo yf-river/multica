@@ -85,6 +85,7 @@
     "./feedback/mutations": "./feedback/mutations.ts",
     "./external-credentials": "./external-credentials/index.ts",
     "./realtime": "./realtime/index.ts",
+    "./search": "./search/index.ts",
     "./navigation": "./navigation/index.ts",
     "./modals": "./modals/index.ts",
     "./onboarding": "./onboarding/index.ts",
