@@ -38,7 +38,6 @@ vi.mock("@multica/core/hooks", () => ({
 
 vi.mock("@multica/core/paths", () => ({
   useCurrentWorkspace: () => workspaceRef.current,
-  useHasOnboarded: () => true,
   resolvePostAuthDestination: () => "/",
 }));
 

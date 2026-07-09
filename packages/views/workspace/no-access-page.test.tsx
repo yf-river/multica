@@ -22,17 +22,6 @@ vi.mock("../auth", () => ({
   useLogout: () => logout,
 }));
 
-vi.mock("@multica/core/paths", async () => {
-  const actual =
-    await vi.importActual<typeof import("@multica/core/paths")>(
-      "@multica/core/paths",
-    );
-  return {
-    ...actual,
-    useHasOnboarded: () => true,
-  };
-});
-
 vi.mock("@tanstack/react-query", () => ({
   useQuery: () => ({ data: mockWorkspaces }),
 }));

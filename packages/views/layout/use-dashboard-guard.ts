@@ -8,7 +8,6 @@ import {
   paths,
   resolvePostAuthDestination,
   useCurrentWorkspace,
-  useHasOnboarded,
 } from "@multica/core/paths";
 import { workspaceListOptions } from "@multica/core/workspace";
 import { useRecentIssuesStore } from "@multica/core/issues/stores";
@@ -21,21 +20,8 @@ import { useNavigation } from "../navigation";
  *  - Auth still loading → wait
  *  - Not logged in → /login
  *  - Logged in but workspace list not yet loaded → wait (don't bounce prematurely)
- *  - Logged in but URL slug doesn't resolve to any workspace →
- *    `resolvePostAuthDestination(list, hasOnboarded)` (workspace-presence first;
- *    see paths/resolve.ts for the full table)
- *
- * The "un-onboarded but in workspace" state IS valid now — it's the
- * mid-flow window between "user picked a runtime on the onboarding screen
- * and got dropped into the workspace" and "user picked a starter prompt in
- * the workspace OnboardingHelperModal, which fires BootstrapOnboardingRuntime
- * and marks onboarded". This guard deliberately does NOT redirect that
- * state out: it only redirects when the URL slug doesn't resolve,
- * regardless of onboarded. The blocking modal inside the workspace shell
- * handles completion.
- *
- * (Older versions marked onboarding completion from workspace creation, but
- * the current flow completes only after the onboarding runtime step.)
+ *  - Logged in but URL slug doesn't resolve to any workspace → first available
+ *    workspace, or workspace creation when the list is empty
  *
  * We read the workspace list query state directly (rather than relying on
  * useCurrentWorkspace's null return) so we can distinguish "list loading"
@@ -47,7 +33,6 @@ export function useDashboardGuard() {
   const user = useAuthStore((s) => s.user);
   const isLoading = useAuthStore((s) => s.isLoading);
   const workspace = useCurrentWorkspace();
-  const hasOnboarded = useHasOnboarded();
   const { data: workspaces = [], isFetched: workspaceListFetched } = useQuery({
     ...workspaceListOptions(),
     enabled: !!user,
@@ -61,9 +46,9 @@ export function useDashboardGuard() {
     }
     if (!workspaceListFetched) return;
     if (!workspace) {
-      replace(resolvePostAuthDestination(workspaces, hasOnboarded));
+      replace(resolvePostAuthDestination(workspaces));
     }
-  }, [user, isLoading, workspaceListFetched, workspace, workspaces, hasOnboarded, replace]);
+  }, [user, isLoading, workspaceListFetched, workspace, workspaces, replace]);
 
   useEffect(() => {
     useNavigationStore.getState().onPathChange(pathname);

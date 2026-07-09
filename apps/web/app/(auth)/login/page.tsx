@@ -5,7 +5,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { useQueryClient } from "@tanstack/react-query";
 import { sanitizeNextUrl, useAuthStore } from "@multica/core/auth";
 import { workspaceKeys } from "@multica/core/workspace/queries";
-import { resolvePostAuthDestination, useHasOnboarded } from "@multica/core/paths";
+import { resolvePostAuthDestination } from "@multica/core/paths";
 import { api } from "@multica/core/api";
 import type { Workspace } from "@multica/core/types";
 import {
@@ -42,10 +42,8 @@ function LoginPageContent() {
 
   const [desktopToken, setDesktopToken] = useState<string | null>(null);
   const [desktopError, setDesktopError] = useState("");
-  const hasOnboarded = useHasOnboarded();
-
   // Already authenticated — honor ?next= or fall back to first workspace
-  // (or /onboarding if the user has none). Skip this entire path when
+  // (or workspace creation if the user has none). Skip this path when
   // the user arrived to authorize the CLI.
   useEffect(() => {
     if (isLoading || !user || cliCallbackRaw) return;
@@ -73,20 +71,16 @@ function LoginPageContent() {
       return;
     }
     const list = qc.getQueryData<Workspace[]>(workspaceKeys.list()) ?? [];
-    router.replace(resolvePostAuthDestination(list, hasOnboarded));
-  }, [isLoading, user, router, nextUrl, cliCallbackRaw, isDesktopHandoff, hasOnboarded, qc]);
+    router.replace(resolvePostAuthDestination(list));
+  }, [isLoading, user, router, nextUrl, cliCallbackRaw, isDesktopHandoff, qc]);
 
   const handleSuccess = async () => {
-    // Read the latest user snapshot directly — the closure's `hasOnboarded`
-    // was captured before login completed and would be stale here.
-    const currentUser = useAuthStore.getState().user;
-    const onboarded = currentUser?.onboarded_at != null;
     if (nextUrl) {
       router.push(nextUrl);
       return;
     }
     const list = qc.getQueryData<Workspace[]>(workspaceKeys.list()) ?? [];
-    router.push(resolvePostAuthDestination(list, onboarded));
+    router.push(resolvePostAuthDestination(list));
   };
 
   // While the desktop handoff is in progress (or has produced a token/error),

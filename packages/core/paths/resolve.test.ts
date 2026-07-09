@@ -20,22 +20,12 @@ function makeWs(slug: string): Workspace {
 }
 
 describe("resolvePostAuthDestination", () => {
-  it("routes to the first workspace even when onboarded_at is empty", () => {
-    const ws = [makeWs("acme")];
-    expect(resolvePostAuthDestination(ws, false)).toBe(
-      paths.workspace("acme").issues(),
-    );
-  });
-
   it("workspace[0] → /<first.slug>/issues", () => {
     const ws = [makeWs("acme"), makeWs("beta")];
-    expect(resolvePostAuthDestination(ws, true)).toBe(
-      paths.workspace("acme").issues(),
-    );
+    expect(resolvePostAuthDestination(ws)).toBe(paths.workspace("acme").issues());
   });
 
   it("no workspace → /workspaces/new", () => {
-    expect(resolvePostAuthDestination([], true)).toBe(paths.newWorkspace());
-    expect(resolvePostAuthDestination([], false)).toBe(paths.newWorkspace());
+    expect(resolvePostAuthDestination([])).toBe(paths.newWorkspace());
   });
 });

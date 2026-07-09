@@ -44,7 +44,7 @@ import {
 import type { Workspace } from "../types/workspace";
 import { chatKeys } from "../chat/queries";
 import { useChatStore } from "../chat";
-import { resolvePostAuthDestination, useHasOnboarded } from "../paths";
+import { resolvePostAuthDestination } from "../paths";
 import type {
   MemberAddedPayload,
   WorkspaceDeletedPayload,
@@ -376,13 +376,6 @@ export function useRealtimeSync(
 ) {
   const { authStore } = stores;
   const qc = useQueryClient();
-
-  // Captured via ref so the (rare) hasOnboarded change doesn't re-subscribe
-  // every WS handler in this effect. The resolver reads `.current` at the
-  // moment workspace-loss fires, which is what we want.
-  const hasOnboarded = useHasOnboarded();
-  const hasOnboardedRef = useRef(hasOnboarded);
-  hasOnboardedRef.current = hasOnboarded;
 
   // Main sync: onAny -> refreshMap with debounce
   useEffect(() => {
@@ -721,10 +714,7 @@ export function useRealtimeSync(
         staleTime: 0,
       });
       const remaining = wsList.filter((w) => w.id !== lostWsId);
-      const target = resolvePostAuthDestination(
-        remaining,
-        hasOnboardedRef.current,
-      );
+      const target = resolvePostAuthDestination(remaining);
       if (typeof window !== "undefined") {
         window.location.assign(target);
       }

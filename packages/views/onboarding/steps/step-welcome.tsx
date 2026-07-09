@@ -15,8 +15,7 @@ import { useT } from "../../i18n";
 /**
  * Step 0 — the one-shot product intro shown on every onboarding
  * entry (which-step-are-you-on is not persisted). Returning users
- * who are already onboarded never reach this screen; they're gated
- * out earlier by `!hasOnboarded`.
+ * with a workspace are routed directly to that workspace.
  *
  * Layout: two-column editorial hero on lg+, single column below.
  * Left = wordmark + serif headline + lede + CTA; right = a stack of
