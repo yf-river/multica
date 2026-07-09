@@ -10,6 +10,7 @@ import {
   estimateCostBreakdown,
   formatShortDate,
   todayIso,
+  usageTokenTotal,
   weekStartIso,
   type DailyTokenData,
 } from "../runtimes/utils";
@@ -160,8 +161,7 @@ export function aggregateAgentTokens(rows: DashboardUsageByAgent[]): AgentCostRo
       cost: 0,
       taskCount: 0,
     };
-    entry.tokens +=
-      r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_write_tokens;
+    entry.tokens += usageTokenTotal(r);
     entry.cost += estimateCost(r);
     entry.taskCount += r.task_count;
     map.set(r.agent_id, entry);

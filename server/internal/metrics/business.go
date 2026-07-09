@@ -256,7 +256,7 @@ func (m *BusinessMetrics) RecordLLMUsage(source, runtimeMode, rawProvider, model
 	}
 	source = NormalizeTaskSource(source)
 	runtimeMode = NormalizeRuntimeMode(runtimeMode)
-	price, priced := PriceForModelAlias(modelAlias)
+	price, priced := PriceForProviderModel(rawProvider, modelAlias)
 	if !priced {
 		provider := NormalizeRuntimeProvider(rawProvider)
 		alias := NormalizeModelAlias(modelAlias)
@@ -265,6 +265,19 @@ func (m *BusinessMetrics) RecordLLMUsage(source, runtimeMode, rawProvider, model
 		m.recordUnpricedTokens(provider, alias, "cache_read", cacheReadTokens)
 		m.recordUnpricedTokens(provider, alias, "cache_write", cacheWriteTokens)
 		m.llmRequests.WithLabelValues(provider, "unknown", runtimeMode).Inc()
+		return
+	}
+
+	if isCodeBuddyUsage(rawProvider, modelAlias) {
+		inputTokens = codeBuddyEffectiveInputTokens(inputTokens, cacheReadTokens, cacheWriteTokens)
+		uncachedInputTokens := inputTokens - cacheReadTokens
+		if uncachedInputTokens < 0 {
+			uncachedInputTokens = 0
+		}
+		m.recordPricedTokens(price.Provider, price.Model, "input", runtimeMode, source, uncachedInputTokens, tokenCostUSD(uncachedInputTokens, price.InputPerM))
+		m.recordPricedTokens(price.Provider, price.Model, "output", runtimeMode, source, outputTokens, tokenCostUSD(outputTokens, price.OutputPerM))
+		m.recordPricedTokens(price.Provider, price.Model, "cache_read", runtimeMode, source, cacheReadTokens, tokenCostUSD(cacheReadTokens, price.CacheReadPerM))
+		m.llmRequests.WithLabelValues(price.Provider, price.Model, runtimeMode).Inc()
 		return
 	}
 

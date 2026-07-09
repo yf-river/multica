@@ -173,6 +173,31 @@ export function estimateCost(usage: Priceable): number {
   return usage.cost_usd ?? 0;
 }
 
+export function isCodeBuddyUsage(provider?: string | null): boolean {
+  return (provider ?? "").trim().toLowerCase() === "codebuddy";
+}
+
+export function usageTokenTotal(
+  usage: Pick<
+    RuntimeUsage,
+    "input_tokens" | "output_tokens" | "cache_read_tokens" | "cache_write_tokens"
+  > & { provider?: string | null },
+): number {
+  if (isCodeBuddyUsage(usage.provider)) {
+    const input =
+      usage.input_tokens < usage.cache_read_tokens + usage.cache_write_tokens
+        ? usage.input_tokens + usage.cache_read_tokens + usage.cache_write_tokens
+        : usage.input_tokens;
+    return input + usage.output_tokens;
+  }
+  return (
+    usage.input_tokens +
+    usage.output_tokens +
+    usage.cache_read_tokens +
+    usage.cache_write_tokens
+  );
+}
+
 export interface CostBreakdown {
   input: number;
   output: number;
@@ -306,8 +331,7 @@ export function aggregateByDate(usage: RuntimeUsage[]): {
 
     const modelName = modelGroupingKey(u.model, u.provider);
     const m = modelMap.get(modelName) ?? { tokens: 0, cost: 0 };
-    m.tokens +=
-      u.input_tokens + u.output_tokens + u.cache_read_tokens + u.cache_write_tokens;
+    m.tokens += usageTokenTotal(u);
     m.cost += estimateCost(u);
     modelMap.set(modelName, m);
   }
@@ -593,8 +617,7 @@ export function aggregateCostByAgent(rows: RuntimeUsageByAgent[]): CostByKey[] {
       cost: 0,
       taskCount: 0,
     };
-    entry.tokens +=
-      r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_write_tokens;
+    entry.tokens += usageTokenTotal(r);
     entry.cost += estimateCost(r);
     entry.taskCount += r.task_count;
     map.set(r.agent_id, entry);
@@ -620,8 +643,7 @@ export function aggregateCostByTask(rows: RuntimeUsageByTask[]): CostByTask[] {
       startedAt: r.started_at,
       completedAt: r.completed_at,
     };
-    entry.tokens +=
-      r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_write_tokens;
+    entry.tokens += usageTokenTotal(r);
     entry.cost += estimateCost(r);
     map.set(r.task_id, entry);
   }
@@ -635,8 +657,7 @@ export function aggregateCostByModel(rows: RuntimeUsage[]): CostByKey[] {
   for (const r of rows) {
     const key = modelGroupingKey(r.model, r.provider);
     const entry = map.get(key) ?? { key, tokens: 0, cost: 0, taskCount: 0 };
-    entry.tokens +=
-      r.input_tokens + r.output_tokens + r.cache_read_tokens + r.cache_write_tokens;
+    entry.tokens += usageTokenTotal(r);
     entry.cost += estimateCost(r);
     map.set(key, entry);
   }

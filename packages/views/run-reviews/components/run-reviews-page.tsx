@@ -31,6 +31,7 @@ import { PageHeader } from "../../layout/page-header";
 import { AppLink, useNavigation } from "../../navigation";
 import { TranscriptButton } from "../../common/task-transcript";
 import { SOP_STAGE_DEFINITIONS, normalizeSopStageName, sopStageDisplayName } from "../../common/sop-stage-labels";
+import { usageTokenTotal } from "../../runtimes/utils";
 
 const STAGES = SOP_STAGE_DEFINITIONS;
 
@@ -3040,7 +3041,7 @@ function isSourceFetchTrace(event: TaskTraceEvent): boolean {
 }
 
 function runReviewTraceEvent(event: TaskTraceEvent): RunReviewEventRowData {
-  const tokenTotal = event.input_tokens + event.output_tokens + event.cache_read_tokens + event.cache_write_tokens;
+  const tokenTotal = usageTokenTotal(event);
   const durationMs = event.run_ms ?? event.duration_ms ?? event.total_ms ?? event.queue_wait_ms ?? 0;
   const failure = [event.failure_reason, event.error_type].filter(Boolean).join(" · ");
   const metadata = event.metadata ?? {};

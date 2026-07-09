@@ -924,7 +924,7 @@ func promptEvaluationTrialToResponse(trial db.PromptEvaluationTrial) PromptEvalu
 }
 
 func promptEvaluationTaskUsageToResponse(usage db.TaskUsage) PromptEvaluationTaskUsageResponse {
-	estimatedCost, priced := metrics.EstimateUsageCostUSD(usage.Model, usage.InputTokens, usage.OutputTokens, usage.CacheReadTokens, usage.CacheWriteTokens)
+	breakdown, priced := metrics.EstimateUsageCostBreakdownUSD(usage.Provider, usage.Model, usage.InputTokens, usage.OutputTokens, usage.CacheReadTokens, usage.CacheWriteTokens)
 	return PromptEvaluationTaskUsageResponse{
 		ID:               uuidToString(usage.ID),
 		TaskID:           uuidToString(usage.TaskID),
@@ -934,7 +934,7 @@ func promptEvaluationTaskUsageToResponse(usage db.TaskUsage) PromptEvaluationTas
 		OutputTokens:     usage.OutputTokens,
 		CacheReadTokens:  usage.CacheReadTokens,
 		CacheWriteTokens: usage.CacheWriteTokens,
-		EstimatedCost:    estimatedCost,
+		EstimatedCost:    breakdown.TotalCostUSD,
 		Priced:           priced,
 		CreatedAt:        timestampToString(usage.CreatedAt),
 		UpdatedAt:        timestampToString(usage.UpdatedAt),
@@ -5707,7 +5707,8 @@ func (h *Handler) promptEvaluationCandidateRuntimeEvidence(ctx context.Context, 
 	}
 	usageRows := make([]map[string]any, 0, len(usages))
 	for _, usage := range usages {
-		estimatedCost, priced := metrics.EstimateUsageCostUSD(
+		breakdown, priced := metrics.EstimateUsageCostBreakdownUSD(
+			usage.Provider,
 			usage.Model,
 			usage.InputTokens,
 			usage.OutputTokens,
@@ -5721,7 +5722,7 @@ func (h *Handler) promptEvaluationCandidateRuntimeEvidence(ctx context.Context, 
 			"output_tokens":      usage.OutputTokens,
 			"cache_read_tokens":  usage.CacheReadTokens,
 			"cache_write_tokens": usage.CacheWriteTokens,
-			"estimated_cost":     metrics.RoundCostUSD(estimatedCost),
+			"estimated_cost":     metrics.RoundCostUSD(breakdown.TotalCostUSD),
 			"priced":             priced,
 		})
 	}

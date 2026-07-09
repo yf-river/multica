@@ -151,37 +151,19 @@ function computeRepairs(rows, options = {}) {
 
   const repairs = [];
   for (const [groupKey, groupRows] of groups) {
-    if (groupRows.length > 1 && groupRows.some((row) => {
-      const current = rowTotals(row);
-      return current.input < current.cache_read + current.cache_write;
-    })) {
-      for (const row of groupRows) repairs.push(repairForSkippedRow(row, groupKey));
-      continue;
-    }
-
     const monotonic = isMonotonicCumulative(groupRows);
-    if (groupRows.length > 1 && !monotonic) {
-      for (const row of groupRows) repairs.push(repairForSkippedRow(row, groupKey));
-      continue;
-    }
-
     let previous = zeroTotals();
     for (const row of groupRows) {
       const current = rowTotals(row);
-      if (groupRows.length === 1 && (!includeSingletons || current.input < current.cache_read + current.cache_write)) {
+      if (groupRows.length === 1 && !includeSingletons) {
         repairs.push(repairForSkippedRow(row, groupKey));
         continue;
       }
-      const rawDelta = groupRows.length > 1
+      const rawDelta = groupRows.length > 1 && monotonic
         ? subtractTotals(current, previous)
         : current;
       previous = current;
-      const after = {
-        input: maxBigInt(rawDelta.input - rawDelta.cache_read - rawDelta.cache_write, 0n),
-        output: rawDelta.output,
-        cache_read: rawDelta.cache_read,
-        cache_write: rawDelta.cache_write,
-      };
+      const after = normalizeCodebuddyTotals(rawDelta);
       repairs.push({
         group_key: groupKey,
         usage_id: row.usage_id,
@@ -198,6 +180,19 @@ function computeRepairs(rows, options = {}) {
     }
   }
   return repairs;
+}
+
+function normalizeCodebuddyTotals(rawDelta) {
+  let input = rawDelta.input;
+  if (rawDelta.input < rawDelta.cache_read + rawDelta.cache_write) {
+    input = rawDelta.input + rawDelta.cache_read + rawDelta.cache_write;
+  }
+  return {
+    input,
+    output: rawDelta.output,
+    cache_read: rawDelta.cache_read,
+    cache_write: 0n,
+  };
 }
 
 function isMonotonicCumulative(rows) {
@@ -329,17 +324,20 @@ function diffTotals(before, after) {
     cache_read: String(BigInt(after.cache_read) - BigInt(before.cache_read)),
     cache_write: String(BigInt(after.cache_write) - BigInt(before.cache_write)),
     total: String(BigInt(after.total) - BigInt(before.total)),
+    billable_total: String(BigInt(after.billable_total) - BigInt(before.billable_total)),
   };
 }
 
 function stringifyTotals(totals) {
   const total = totals.input + totals.output + totals.cache_read + totals.cache_write;
+  const billableTotal = totals.input + totals.output;
   return {
     input: totals.input.toString(),
     output: totals.output.toString(),
     cache_read: totals.cache_read.toString(),
     cache_write: totals.cache_write.toString(),
     total: total.toString(),
+    billable_total: billableTotal.toString(),
   };
 }
 

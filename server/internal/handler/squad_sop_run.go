@@ -1002,14 +1002,15 @@ func buildObservabilitySummary(
 		outputTokens += trace.OutputTokens
 		cacheReadTokens += trace.CacheReadTokens
 		cacheWriteTokens += trace.CacheWriteTokens
-		traceCost, hasPrice := metrics.EstimateUsageCostUSD(
+		breakdown, hasPrice := metrics.EstimateUsageCostBreakdownUSD(
+			trace.Provider,
 			trace.Model,
 			trace.InputTokens,
 			trace.OutputTokens,
 			trace.CacheReadTokens,
 			trace.CacheWriteTokens,
 		)
-		estimatedCost += traceCost
+		estimatedCost += breakdown.TotalCostUSD
 		modelProvider, modelName, priced := metrics.CanonicalModelPriceKey(trace.Model)
 		if !priced {
 			modelProvider = trace.Provider
@@ -1025,7 +1026,7 @@ func buildObservabilitySummary(
 			CacheReadTokens:  trace.CacheReadTokens,
 			CacheWriteTokens: trace.CacheWriteTokens,
 			TaskCount:        1,
-			EstimatedCost:    traceCost,
+			EstimatedCost:    breakdown.TotalCostUSD,
 			HasPrice:         hasPrice,
 		})
 		runtimeID := ""
@@ -1042,7 +1043,7 @@ func buildObservabilitySummary(
 			CacheReadTokens:  trace.CacheReadTokens,
 			CacheWriteTokens: trace.CacheWriteTokens,
 			TaskCount:        1,
-			EstimatedCost:    traceCost,
+			EstimatedCost:    breakdown.TotalCostUSD,
 			HasPrice:         hasPrice,
 		})
 	}

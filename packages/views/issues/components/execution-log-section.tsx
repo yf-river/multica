@@ -17,6 +17,7 @@ import { ActorAvatar } from "../../common/actor-avatar";
 import { formatDuration } from "../../agents/components/agent-activity-hover-content";
 import { TranscriptButton } from "../../common/task-transcript";
 import { useT } from "../../i18n";
+import { usageTokenTotal } from "../../runtimes/utils";
 import { TerminateTaskConfirmDialog } from "./terminate-task-confirm-dialog";
 
 // Right-panel section for the issue's live/debug surface. Active runs stay
@@ -561,7 +562,7 @@ function formatTimestamp(value: string | null | undefined): string {
 }
 
 function traceEventTokenTotal(event: TaskTraceEvent): number {
-  return event.input_tokens + event.output_tokens + event.cache_read_tokens + event.cache_write_tokens;
+  return usageTokenTotal(event);
 }
 
 function traceEventStageLabel(eventType: string): string {

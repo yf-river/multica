@@ -25,6 +25,7 @@ import {
   collectUnmappedModels,
   pctChange,
   sliceWindow,
+  usageTokenTotal,
   type CostByKey,
   type CostByTask,
 } from "../utils";
@@ -466,11 +467,7 @@ function WeeklyTab({
 
 function EmptyChartState({ usage }: { usage: RuntimeUsage[] }) {
   const { t } = useT("runtimes");
-  const hasTokens = usage.some(
-    (u) =>
-      u.input_tokens + u.output_tokens + u.cache_read_tokens + u.cache_write_tokens >
-      0,
-  );
+  const hasTokens = usage.some((u) => usageTokenTotal(u) > 0);
   const unmapped = collectUnmappedModels(usage);
 
   return (

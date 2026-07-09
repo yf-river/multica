@@ -121,12 +121,29 @@ describe("aggregateAgentTokens", () => {
         cost_usd: 1,
         input_cost_usd: 1,
       },
+      {
+        agent_id: "codebuddy-agent",
+        provider: "codebuddy",
+        model: "deepseek-v4-pro-ioa",
+        input_tokens: 30_897,
+        output_tokens: 9,
+        cache_read_tokens: 29_440,
+        cache_write_tokens: 1_457,
+        task_count: 1,
+        ...pricedCost,
+        cost_usd: 0.000748,
+      },
     ]);
 
-    expect(rows.map((r) => r.agentId)).toEqual(["big-spender", "small-spender"]);
+    expect(rows.map((r) => r.agentId)).toEqual([
+      "big-spender",
+      "small-spender",
+      "codebuddy-agent",
+    ]);
     expect(rows[0]?.taskCount).toBe(5);
     // big-spender across two models — verify cost > small-spender's.
     expect(rows[0]!.cost).toBeGreaterThan(rows[1]!.cost);
+    expect(rows.find((r) => r.agentId === "codebuddy-agent")?.tokens).toBe(30_906);
   });
 });
 

@@ -170,6 +170,9 @@ func EstimateUsageCostBreakdownUSD(provider, model string, inputTokens, outputTo
 	if !ok {
 		return UsageCostBreakdown{}, false
 	}
+	if isCodeBuddyUsage(provider, model) {
+		return estimateCodeBuddyUsageCostBreakdownUSD(price, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens), true
+	}
 	breakdown := UsageCostBreakdown{
 		InputCostUSD:      RoundCostUSD(tokenCostUSD(inputTokens, price.InputPerM)),
 		OutputCostUSD:     RoundCostUSD(tokenCostUSD(outputTokens, price.OutputPerM)),
@@ -185,6 +188,10 @@ func EstimateUsageCostUSD(modelAlias string, inputTokens, outputTokens, cacheRea
 	price, ok := PriceForModelAlias(modelAlias)
 	if !ok {
 		return 0, false
+	}
+	if isCodeBuddyUsage("", modelAlias) {
+		breakdown := estimateCodeBuddyUsageCostBreakdownUSD(price, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens)
+		return breakdown.TotalCostUSD, true
 	}
 	breakdown := UsageCostBreakdown{
 		InputCostUSD:      RoundCostUSD(tokenCostUSD(inputTokens, price.InputPerM)),
@@ -212,4 +219,34 @@ func tokenCostUSD(tokens int64, pricePerM float64) float64 {
 		return 0
 	}
 	return float64(tokens) * pricePerM / 1_000_000
+}
+
+func isCodeBuddyUsage(provider, model string) bool {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	model = strings.ToLower(strings.TrimSpace(model))
+	return provider == "codebuddy" || strings.HasPrefix(model, "codebuddy/")
+}
+
+func estimateCodeBuddyUsageCostBreakdownUSD(price ModelPrice, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int64) UsageCostBreakdown {
+	inputTokens = codeBuddyEffectiveInputTokens(inputTokens, cacheReadTokens, cacheWriteTokens)
+	uncachedInputTokens := inputTokens - cacheReadTokens
+	if uncachedInputTokens < 0 {
+		uncachedInputTokens = 0
+	}
+	breakdown := UsageCostBreakdown{
+		InputCostUSD:      RoundCostUSD(tokenCostUSD(uncachedInputTokens, price.InputPerM)),
+		OutputCostUSD:     RoundCostUSD(tokenCostUSD(outputTokens, price.OutputPerM)),
+		CacheReadCostUSD:  RoundCostUSD(tokenCostUSD(cacheReadTokens, price.CacheReadPerM)),
+		CacheWriteCostUSD: 0,
+		CacheSavingsUSD:   RoundCostUSD(tokenCostUSD(cacheReadTokens, price.InputPerM-price.CacheReadPerM)),
+	}
+	breakdown.TotalCostUSD = RoundCostUSD(breakdown.InputCostUSD + breakdown.OutputCostUSD + breakdown.CacheReadCostUSD)
+	return breakdown
+}
+
+func codeBuddyEffectiveInputTokens(inputTokens, cacheReadTokens, cacheWriteTokens int64) int64 {
+	if inputTokens < cacheReadTokens+cacheWriteTokens {
+		return inputTokens + cacheReadTokens + cacheWriteTokens
+	}
+	return inputTokens
 }

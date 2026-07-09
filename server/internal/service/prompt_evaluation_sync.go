@@ -359,7 +359,11 @@ func promptEvaluationUsageTotals(run db.PromptEvaluationRun, usages []db.TaskUsa
 	input := int64(0)
 	output := int64(0)
 	for _, usage := range usages {
-		input += usage.InputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
+		if strings.EqualFold(strings.TrimSpace(usage.Provider), "codebuddy") {
+			input += usage.InputTokens
+		} else {
+			input += usage.InputTokens + usage.CacheReadTokens + usage.CacheWriteTokens
+		}
 		output += usage.OutputTokens
 	}
 	if input == 0 {
@@ -378,7 +382,8 @@ func promptEvaluationEstimatedCost(run db.PromptEvaluationRun, usages []db.TaskU
 	total := float64(0)
 	unpriced := map[string]bool{}
 	for _, usage := range usages {
-		cost, ok := metrics.EstimateUsageCostUSD(
+		breakdown, ok := metrics.EstimateUsageCostBreakdownUSD(
+			usage.Provider,
 			usage.Model,
 			usage.InputTokens,
 			usage.OutputTokens,
@@ -393,7 +398,7 @@ func promptEvaluationEstimatedCost(run db.PromptEvaluationRun, usages []db.TaskU
 			unpriced[key] = true
 			continue
 		}
-		total += cost
+		total += breakdown.TotalCostUSD
 	}
 	keys := make([]string, 0, len(unpriced))
 	for key := range unpriced {
@@ -422,7 +427,8 @@ func promptEvaluationTaskDurationMs(task db.AgentTaskQueue, run db.PromptEvaluat
 func promptEvaluationTaskEvidence(run db.PromptEvaluationRun, task db.AgentTaskQueue, usages []db.TaskUsage, messages []db.TaskMessage) map[string]any {
 	usageRows := make([]map[string]any, 0, len(usages))
 	for _, usage := range usages {
-		estimatedCost, priced := metrics.EstimateUsageCostUSD(
+		breakdown, priced := metrics.EstimateUsageCostBreakdownUSD(
+			usage.Provider,
 			usage.Model,
 			usage.InputTokens,
 			usage.OutputTokens,
@@ -436,7 +442,7 @@ func promptEvaluationTaskEvidence(run db.PromptEvaluationRun, task db.AgentTaskQ
 			"output_tokens":      usage.OutputTokens,
 			"cache_read_tokens":  usage.CacheReadTokens,
 			"cache_write_tokens": usage.CacheWriteTokens,
-			"estimated_cost":     estimatedCost,
+			"estimated_cost":     breakdown.TotalCostUSD,
 			"priced":             priced,
 		})
 	}

@@ -2356,6 +2356,7 @@ func (h *Handler) normalizeTaskUsagePayload(ctx context.Context, task db.AgentTa
 		u.CacheReadTokens = nonNegativeDelta(u.CacheReadTokens, previous.CacheReadTokens)
 		u.CacheWriteTokens = nonNegativeDelta(u.CacheWriteTokens, previous.CacheWriteTokens)
 	}
+	u.CacheWriteTokens = 0
 	return u
 }
 

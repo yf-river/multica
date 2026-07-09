@@ -9,6 +9,7 @@ import {
   isSelfHealingRuntime,
   sliceWindow,
   todayIso,
+  usageTokenTotal,
   weekStartIso,
 } from "./utils";
 
@@ -138,6 +139,49 @@ describe("aggregateCostByTask", () => {
     expect(byTask[1]?.key).toBe("task-2");
     expect(byTask[1]?.tokens).toBe(500);
     expect(byTask[1]?.cost).toBe(0);
+  });
+
+  it("does not add CodeBuddy cache tokens into task token totals", () => {
+    const rows: RuntimeUsageByTask[] = [
+      {
+        task_id: "task-codebuddy",
+        issue_id: "issue-1",
+        issue_number: 42,
+        issue_title: "Investigate usage",
+        agent_id: "agent-1",
+        status: "completed",
+        started_at: "2026-07-09T00:00:00Z",
+        completed_at: "2026-07-09T00:01:00Z",
+        provider: "codebuddy",
+        model: "deepseek-v4-pro-ioa",
+        input_tokens: 59_738,
+        output_tokens: 186,
+        cache_read_tokens: 29_440,
+        cache_write_tokens: 30_298,
+        cost_usd: 0.013448,
+        input_cost_usd: 0.01318,
+        output_cost_usd: 0.000162,
+        cache_read_cost_usd: 0.000107,
+        cache_write_cost_usd: 0,
+        cache_savings_usd: 0.0127,
+        priced: true,
+      },
+    ];
+
+    expect(usageTokenTotal(rows[0]!)).toBe(59_924);
+    expect(aggregateCostByTask(rows)[0]?.tokens).toBe(59_924);
+  });
+
+  it("recovers CodeBuddy legacy rows where input stored only uncached tokens", () => {
+    expect(
+      usageTokenTotal({
+        provider: "codebuddy",
+        input_tokens: 0,
+        output_tokens: 186,
+        cache_read_tokens: 29_440,
+        cache_write_tokens: 30_298,
+      }),
+    ).toBe(59_924);
   });
 });
 

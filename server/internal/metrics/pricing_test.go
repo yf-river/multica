@@ -13,12 +13,43 @@ func TestEstimateUsageCostUSDMinimax(t *testing.T) {
 }
 
 func TestEstimateUsageCostUSDDeepSeekV4ProIOA(t *testing.T) {
-	cost, ok := EstimateUsageCostUSD("codebuddy/deepseek-v4-pro-ioa", 1_000_000, 1_000_000, 1_000_000, 1_000_000)
+	cost, ok := EstimateUsageCostUSD("codebuddy/deepseek-v4-pro-ioa", 2_000_000, 1_000_000, 1_000_000, 1_000_000)
 	if !ok {
 		t.Fatalf("expected codebuddy/deepseek-v4-pro-ioa to resolve")
 	}
-	if cost != 1.743625 {
-		t.Fatalf("cost = %v, want 1.743625", cost)
+	if cost != 1.308625 {
+		t.Fatalf("cost = %v, want 1.308625", cost)
+	}
+}
+
+func TestEstimateUsageCostBreakdownUSDCodeBuddyOfficialSamples(t *testing.T) {
+	tests := []struct {
+		name       string
+		input      int64
+		output     int64
+		cacheRead  int64
+		cacheWrite int64
+		want       float64
+	}{
+		{name: "platform-first-run", input: 59_738, output: 186, cacheRead: 29_440, cacheWrite: 30_298, want: 0.013449},
+		{name: "platform-first-run-legacy-uncached-input", input: 0, output: 186, cacheRead: 29_440, cacheWrite: 30_298, want: 0.013449},
+		{name: "platform-follow-up", input: 30_897, output: 9, cacheRead: 29_440, cacheWrite: 1_457, want: 0.000749},
+		{name: "direct-a", input: 11_493, output: 6, cacheRead: 0, cacheWrite: 11_493, want: 0.005004},
+		{name: "direct-b", input: 11_494, output: 6, cacheRead: 0, cacheWrite: 11_494, want: 0.005005},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			breakdown, ok := EstimateUsageCostBreakdownUSD("codebuddy", "deepseek-v4-pro-ioa", tt.input, tt.output, tt.cacheRead, tt.cacheWrite)
+			if !ok {
+				t.Fatalf("expected codebuddy/deepseek-v4-pro-ioa to resolve")
+			}
+			if breakdown.TotalCostUSD != tt.want {
+				t.Fatalf("total = %v, want %v", breakdown.TotalCostUSD, tt.want)
+			}
+			if breakdown.CacheWriteCostUSD != 0 {
+				t.Fatalf("cache write cost = %v, want 0", breakdown.CacheWriteCostUSD)
+			}
+		})
 	}
 }
 
@@ -49,32 +80,32 @@ func TestEstimateUsageCostBreakdownUSDProviderGenericModel(t *testing.T) {
 }
 
 func TestEstimateUsageCostUSDDeepSeekV4FlashIOA(t *testing.T) {
-	cost, ok := EstimateUsageCostUSD("codebuddy/deepseek-v4-flash-ioa", 1_000_000, 1_000_000, 1_000_000, 1_000_000)
+	cost, ok := EstimateUsageCostUSD("codebuddy/deepseek-v4-flash-ioa", 2_000_000, 1_000_000, 1_000_000, 1_000_000)
 	if !ok {
 		t.Fatalf("expected codebuddy/deepseek-v4-flash-ioa to resolve")
 	}
-	if cost != 0.5628 {
-		t.Fatalf("cost = %v, want 0.5628", cost)
+	if cost != 0.4228 {
+		t.Fatalf("cost = %v, want 0.4228", cost)
 	}
 }
 
 func TestEstimateUsageCostUSDKimiK26IOA(t *testing.T) {
-	cost, ok := EstimateUsageCostUSD("codebuddy/kimi-k2.6-ioa", 1_000_000, 1_000_000, 1_000_000, 1_000_000)
+	cost, ok := EstimateUsageCostUSD("codebuddy/kimi-k2.6-ioa", 2_000_000, 1_000_000, 1_000_000, 1_000_000)
 	if !ok {
 		t.Fatalf("expected codebuddy/kimi-k2.6-ioa to resolve")
 	}
-	if cost != 6.06 {
-		t.Fatalf("cost = %v, want 6.06", cost)
+	if cost != 5.11 {
+		t.Fatalf("cost = %v, want 5.11", cost)
 	}
 }
 
 func TestEstimateUsageCostUSDKimiK27IOA(t *testing.T) {
-	cost, ok := EstimateUsageCostUSD("codebuddy/kimi-k2.7-ioa", 1_000_000, 1_000_000, 1_000_000, 1_000_000)
+	cost, ok := EstimateUsageCostUSD("codebuddy/kimi-k2.7-ioa", 2_000_000, 1_000_000, 1_000_000, 1_000_000)
 	if !ok {
 		t.Fatalf("expected codebuddy/kimi-k2.7-ioa to resolve")
 	}
-	if cost != 6.09 {
-		t.Fatalf("cost = %v, want 6.09", cost)
+	if cost != 5.14 {
+		t.Fatalf("cost = %v, want 5.14", cost)
 	}
 }
 
