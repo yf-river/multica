@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
+import type { CreateIssueSeed } from "@multica/core/issues";
 import { CreateIssueDialog } from "./create-issue-dialog";
 
 vi.mock("@multica/ui/components/ui/dialog", () => ({
@@ -26,7 +27,7 @@ vi.mock("./quick-create-issue", () => ({
     data,
     onClose,
   }: {
-    data?: import("@multica/core/issues").CreateIssueSeed | null;
+    data?: CreateIssueSeed | null;
     onClose: () => void;
   }) => (
     <div>
@@ -39,7 +40,7 @@ vi.mock("./quick-create-issue", () => ({
 }));
 
 describe("CreateIssueDialog", () => {
-  const seed = {
+  const seed: CreateIssueSeed = {
     prompt: "Investigate the regression",
     agent_id: "agent-1",
     squad_id: "squad-1",
