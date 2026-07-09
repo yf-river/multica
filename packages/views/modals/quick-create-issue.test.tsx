@@ -624,12 +624,8 @@ describe("AgentCreatePanel", () => {
     expect(mockSetLastProjectId).not.toHaveBeenCalled();
   });
 
-  // When the modal was opened from "Add sub issue" on an existing issue,
-  // the manual panel transfers parent_issue_id through the `data` payload
-  // on switch-to-agent. The agent panel must forward that UUID to the
-  // quick-create API silently — without surfacing a parent picker — so the
-  // new issue is filed as a sub-issue. Dropping parent_issue_id here was
-  // the original bug; this locks the wiring in.
+  // When the modal is opened from "Add sub issue" on an existing issue, the
+  // parent id is carried directly into the agent request.
   it("forwards parent_issue_id from the carry payload to the quick-create API", async () => {
     const user = userEvent.setup();
 

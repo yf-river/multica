@@ -40,6 +40,7 @@ import {
 } from "@multica/core/runtimes";
 import { useFileUpload } from "@multica/core/hooks/use-file-upload";
 import { issueDetailOptions } from "@multica/core/issues/queries";
+import type { CreateIssueSeed } from "@multica/core/issues";
 import { formatShortcut, modKey, enterKey } from "@multica/core/platform";
 import {
   contentReferencesAttachment,
@@ -77,13 +78,9 @@ type ActorSelection =
   | { type: "agent"; id: string }
   | { type: "squad"; id: string };
 
-// AgentCreatePanel — agent-mode body of the create-issue dialog. Renders
+// AgentCreatePanel is the body of the create-issue dialog. It renders
 // only the inner content; the surrounding `<Dialog>` AND `<DialogContent>`
-// (Portal + Overlay + Popup) are owned by CreateIssueDialog so mode-switching
-// swaps only this body. Lifting the Portal is what eliminates the close→open
-// animation flash — Base UI replays Popup enter/exit when DialogContent is
-// remounted, even inside a still-open Dialog Root.
-//
+// (Portal + Overlay + Popup) are owned by CreateIssueDialog.
 export function AgentCreatePanel({
   onClose,
   data,
@@ -91,10 +88,8 @@ export function AgentCreatePanel({
   setIsExpanded,
 }: {
   onClose: () => void;
-  data?: Record<string, unknown> | null;
-  /** Lifted to the shell so DialogContent's mode-aware className can react —
-   *  same pattern as ManualCreatePanel. Shared across modes so the user's
-   *  expand preference persists when switching between agent and manual. */
+  data?: CreateIssueSeed | null;
+  /** Lifted to the shell so DialogContent can resize without remounting. */
   isExpanded: boolean;
   setIsExpanded: (v: boolean) => void;
 }) {
@@ -182,8 +177,8 @@ export function AgentCreatePanel({
     // `squad_id`). When a persisted preference points at the PM squad's
     // leader agent, upgrade it to the squad so dispatch receives the squad
     // briefing instead of a direct-agent task.
-    const dataAgent = data?.agent_id as string | undefined;
-    const dataSquad = data?.squad_id as string | undefined;
+    const dataAgent = data?.agent_id;
+    const dataSquad = data?.squad_id;
     const explicitActor =
       resolveActor("agent", dataAgent) || resolveActor("squad", dataSquad);
     if (explicitActor) return explicitActor;
@@ -249,35 +244,33 @@ export function AgentCreatePanel({
   // override (e.g. a future "+ Issue" button on a project page); it does NOT
   // replace the persisted default.
   const [projectId, setProjectId] = useState<string | null>(() => {
-    const seed = (data?.project_id as string | undefined) ?? lastProjectId;
+    const seed = data?.project_id ?? lastProjectId;
     return seed ?? null;
   });
   const [status, setStatus] = useState<IssueStatus>(
-    (data?.status as IssueStatus | undefined) ?? "todo",
+    data?.status ?? "todo",
   );
   const [priority, setPriority] = useState<IssuePriority>(
-    (data?.priority as IssuePriority | undefined) ?? "none",
+    data?.priority ?? "none",
   );
   const [startDate, setStartDate] = useState<string | null>(
-    (data?.start_date as string | null | undefined) ?? null,
+    data?.start_date ?? null,
   );
   const [startDatePickerOpen, setStartDatePickerOpen] = useState(false);
   const [dueDate, setDueDate] = useState<string | null>(
-    (data?.due_date as string | null | undefined) ?? null,
+    data?.due_date ?? null,
   );
   const [dueDatePickerOpen, setDueDatePickerOpen] = useState(false);
 
-  // Parent-issue context — seeded by `openCreateSubIssue` when the modal is
-  // opened from the "Add sub issue" entry on an existing issue. We carry it
-  // through (not as an editable form field) so a manual→agent flip preserves
-  // the sub-issue intent; the agent panel never exposes this as a picker.
+  // Parent-issue context is seeded by `openCreateSubIssue` when the modal is
+  // opened from an existing issue.
   // Identifier is best-effort display context only — the UUID is the
   // authoritative reference the backend/agent uses for `--parent <uuid>`.
   const [parentIssueId, setParentIssueId] = useState<string | null>(
-    (data?.parent_issue_id as string | undefined) ?? null,
+    data?.parent_issue_id ?? null,
   );
   const [parentIssueIdentifier, setParentIssueIdentifier] = useState<string>(
-    (data?.parent_issue_identifier as string | undefined) ?? "",
+    data?.parent_issue_identifier ?? "",
   );
   const [parentPickerOpen, setParentPickerOpen] = useState(false);
   const { data: parentIssue } = useQuery({
@@ -322,7 +315,7 @@ export function AgentCreatePanel({
   );
   const versionBlocked = versionCheck.state !== "ok";
 
-  const initialPrompt = (data?.prompt as string) || promptDraft;
+  const initialPrompt = data?.prompt || promptDraft;
   // The editor is uncontrolled — we read the latest markdown via the ref at
   // submit/switch time. `hasContent` mirrors emptiness so the Create button
   // can disable correctly without a controlled-input rerender on every keystroke.

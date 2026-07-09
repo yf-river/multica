@@ -24,7 +24,7 @@
     "select_prompt": "选择一条通知查看详情",
     "empty": "收件箱为空",
     "original_input": "原始输入",
-    "edit_advanced": "在完整表单中编辑",
+    "edit_advanced": "重新交给智能体",
     "archive": "归档"
   },
   "types": {

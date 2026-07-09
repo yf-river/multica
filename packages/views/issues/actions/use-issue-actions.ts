@@ -8,6 +8,7 @@ import { useAuthStore } from "@multica/core/auth";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
 import { useModalStore } from "@multica/core/modals";
+import { openCreateIssue } from "@multica/core/issues";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
 import { pinListOptions, useCreatePin, useDeletePin } from "@multica/core/pins";
 import { copyText } from "@multica/ui/lib/clipboard";
@@ -111,12 +112,12 @@ export function useIssueActions(issue: Issue | null): UseIssueActionsResult {
 
   const openCreateSubIssue = useCallback(() => {
     if (!issueId) return;
-    openModal("create-issue", {
+    openCreateIssue({
       parent_issue_id: issueId,
       parent_issue_identifier: issueIdentifier,
       ...(issueProjectId ? { project_id: issueProjectId } : {}),
     });
-  }, [openModal, issueId, issueIdentifier, issueProjectId]);
+  }, [issueId, issueIdentifier, issueProjectId]);
 
   const openSetParent = useCallback(() => {
     if (!issueId) return;

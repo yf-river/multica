@@ -3,24 +3,16 @@
 import { useState } from "react";
 import { cn } from "@multica/ui/lib/utils";
 import { Dialog, DialogContent } from "@multica/ui/components/ui/dialog";
-import type { CreateMode } from "@multica/core/issues/stores/create-mode-store";
+import type { CreateIssueSeed } from "@multica/core/issues";
 import { AgentCreatePanel } from "./quick-create-issue";
 
-/**
- * Shell for the single create-issue flow. Legacy callers may still pass
- * initialMode="manual" through the modal registry, but the product surface is
- * now always agent-create; pinned fields are passed in `data`.
- */
 export function CreateIssueDialog({
   onClose,
-  initialMode: _initialMode,
   data,
 }: {
   onClose: () => void;
-  initialMode: CreateMode;
-  data?: Record<string, unknown> | null;
+  data?: CreateIssueSeed | null;
 }) {
-  void _initialMode;
   const [isExpanded, setIsExpanded] = useState(false);
 
   const className = cn(

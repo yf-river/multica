@@ -26,7 +26,7 @@ vi.mock("./quick-create-issue", () => ({
     data,
     onClose,
   }: {
-    data?: Record<string, unknown> | null;
+    data?: import("@multica/core/issues").CreateIssueSeed | null;
     onClose: () => void;
   }) => (
     <div>
@@ -55,7 +55,6 @@ describe("CreateIssueDialog", () => {
   it("always renders the agent flow and forwards the complete seed", () => {
     render(
       <CreateIssueDialog
-        initialMode="manual"
         data={seed}
         onClose={vi.fn()}
       />,
@@ -70,7 +69,6 @@ describe("CreateIssueDialog", () => {
     const onClose = vi.fn();
     render(
       <CreateIssueDialog
-        initialMode="agent"
         data={seed}
         onClose={onClose}
       />,

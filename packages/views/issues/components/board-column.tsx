@@ -14,7 +14,10 @@ import {
   DropdownMenuItem,
 } from "@multica/ui/components/ui/dropdown-menu";
 import { STATUS_CONFIG } from "@multica/core/issues/config";
-import { useModalStore } from "@multica/core/modals";
+import {
+  openCreateIssue,
+  type CreateIssueSeed,
+} from "@multica/core/issues";
 import { useViewStoreApi } from "@multica/core/issues/stores/view-store-context";
 import { StatusHeading } from "./status-heading";
 import { DraggableBoardCard } from "./board-card";
@@ -37,7 +40,7 @@ export interface BoardColumnGroup {
   assigneeType?: IssueAssigneeType | null;
   assigneeId?: string | null;
   totalCount?: number;
-  createData?: Record<string, unknown>;
+  createData?: CreateIssueSeed;
 }
 
 export const BoardColumn = memo(function BoardColumn({
@@ -112,7 +115,7 @@ export const BoardColumn = memo(function BoardColumn({
                       ...(group.createData ?? {}),
                       ...(projectId ? { project_id: projectId } : {}),
                     };
-                    useModalStore.getState().open("create-issue", data);
+                    openCreateIssue(data);
                   }}
                 >
                   <Plus className="size-3.5" />

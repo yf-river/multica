@@ -43,7 +43,10 @@ import {
 } from "@multica/ui/components/ui/dropdown-menu";
 import { sortIssues } from "../utils/sort";
 import { BOARD_STATUSES, STATUS_CONFIG } from "@multica/core/issues/config";
-import { useModalStore } from "@multica/core/modals";
+import {
+  openCreateIssue,
+  type CreateIssueSeed,
+} from "@multica/core/issues";
 import { DraggableBoardCard, BoardCardContent } from "./board-card";
 import { StatusIcon } from "./status-icon";
 import { Tooltip, TooltipTrigger, TooltipContent } from "@multica/ui/components/ui/tooltip";
@@ -1412,11 +1415,18 @@ function SwimLaneCell({
   );
 
   const handleAdd = useCallback(() => {
-    const data: Record<string, unknown> = { status, ...lane.moveUpdates };
+    const data: CreateIssueSeed = { status };
+    if (lane.parentIssue) {
+      data.parent_issue_id = lane.parentIssue.id;
+      data.parent_issue_identifier = lane.parentIssue.identifier;
+    }
+    if (lane.project) data.project_id = lane.project.id;
+    if (lane.actor?.type === "agent") data.agent_id = lane.actor.id;
+    if (lane.actor?.type === "squad") data.squad_id = lane.actor.id;
     // Per-page project override takes precedence (e.g. Project Detail
     // pre-fills its own project id regardless of grouping).
     if (projectId) data.project_id = projectId;
-    useModalStore.getState().open("create-issue", data);
+    openCreateIssue(data);
   }, [status, lane, projectId]);
 
   return (

@@ -5,7 +5,6 @@ import { create } from "zustand";
 type ModalType =
   | "create-workspace"
   | "create-issue"
-  | "quick-create-issue"
   | "create-project"
   | "create-squad"
   | "feedback"

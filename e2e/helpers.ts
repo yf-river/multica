@@ -103,17 +103,6 @@ export async function createTestApi(): Promise<TestApiClient> {
   return api;
 }
 
-export async function preferManualCreateMode(page: Page) {
-  await page.evaluate(() => {
-    localStorage.setItem(
-      "multica_create_mode",
-      JSON.stringify({ state: { lastMode: "manual" }, version: 0 }),
-    );
-  });
-  await reloadAppPage(page);
-  await waitForIssuesPage(page);
-}
-
 export async function openWorkspaceMenu(page: Page) {
   // Click the workspace switcher button (has ChevronDown icon)
   const workspaceButton = page.getByRole("button", { name: new RegExp(DEFAULT_E2E_WORKSPACE_NAME) }).first();

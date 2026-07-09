@@ -35,10 +35,10 @@ import type {
 } from "@multica/core/types";
 import { api } from "@multica/core/api";
 import {
-  openCreateIssueWithPreference,
   selectRecentIssues,
   useRecentIssuesStore,
 } from "@multica/core/issues/stores";
+import { openCreateIssue } from "@multica/core/issues";
 import { issueDetailOptions } from "@multica/core/issues/queries";
 import { useWorkspaceId } from "@multica/core";
 import { useWorkspacePaths } from "@multica/core/paths";
@@ -276,7 +276,7 @@ export function SearchCommand() {
         icon: Plus,
         keywords: ["new", "issue", "create", "add"],
         onSelect: () => {
-          openCreateIssueWithPreference();
+          openCreateIssue();
           setOpen(false);
         },
       },

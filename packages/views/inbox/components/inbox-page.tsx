@@ -5,8 +5,7 @@ import { useDefaultLayout } from "react-resizable-panels";
 import { useQuery } from "@tanstack/react-query";
 import { useWorkspaceId } from "@multica/core/hooks";
 import { useWorkspacePaths } from "@multica/core/paths";
-import { useModalStore } from "@multica/core/modals";
-import { useIssueDraftStore } from "@multica/core/issues/stores/draft-store";
+import { openCreateIssue } from "@multica/core/issues";
 import {
   inboxListOptions,
   deduplicateInboxItems,
@@ -340,19 +339,12 @@ export function InboxPage() {
           <Button
             size="sm"
             onClick={() => {
-              // Seed the legacy advanced form with the original prompt so the
-              // user can recover their input in the full editor instead of
-              // retyping. The agent picker hint becomes the assignee
-              // candidate (still editable).
               const prompt = selected.details?.original_prompt ?? "";
               const agentId = selected.details?.agent_id;
-              useIssueDraftStore.getState().setDraft({
-                description: prompt,
-                ...(agentId
-                  ? { assigneeType: "agent" as const, assigneeId: agentId }
-                  : {}),
+              openCreateIssue({
+                prompt,
+                ...(agentId ? { agent_id: agentId } : {}),
               });
-              useModalStore.getState().open("create-issue");
             }}
           >
             {t(($) => $.detail.edit_advanced)}

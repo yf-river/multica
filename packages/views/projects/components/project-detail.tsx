@@ -23,7 +23,7 @@ import {
   type MyIssuesFilter,
 } from "@multica/core/issues/queries";
 import { useUpdateIssue } from "@multica/core/issues/mutations";
-import { useModalStore } from "@multica/core/modals";
+import { openCreateIssue } from "@multica/core/issues";
 import { memberListOptions, agentListOptions } from "@multica/core/workspace/queries";
 import { agentTaskSnapshotOptions } from "@multica/core/agents";
 import { useWorkspaceId } from "@multica/core/hooks";
@@ -248,9 +248,7 @@ function ProjectIssuesContent({
           variant="outline"
           size="sm"
           className="mt-1"
-          onClick={() =>
-            useModalStore.getState().open("create-issue", { project_id: projectId })
-          }
+          onClick={() => openCreateIssue({ project_id: projectId })}
         >
           <Plus className="size-3.5 mr-1.5" />
           {t(($) => $.detail.empty_issues_new_button)}

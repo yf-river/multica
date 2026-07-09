@@ -62,10 +62,12 @@ function buildGroups(
         title: assigneeSummary?.name ?? getActorName(issue.assignee_type, issue.assignee_id),
         assigneeType: issue.assignee_type,
         assigneeId: issue.assignee_id,
-        createData: {
-          assignee_type: issue.assignee_type,
-          assignee_id: issue.assignee_id,
-        },
+        createData:
+          issue.assignee_type === "agent"
+            ? { agent_id: issue.assignee_id }
+            : issue.assignee_type === "squad"
+              ? { squad_id: issue.assignee_id }
+              : {},
       });
       continue;
     }
@@ -75,10 +77,7 @@ function buildGroups(
       title: noAssigneeLabel,
       assigneeType: null,
       assigneeId: null,
-      createData: {
-        assignee_type: null,
-        assignee_id: null,
-      },
+      createData: {},
     });
   }
 
@@ -193,10 +192,12 @@ export function BoardView({
         assigneeType: group.assignee_type,
         assigneeId: group.assignee_id,
         totalCount: group.total,
-        createData: {
-          assignee_type: group.assignee_type,
-          assignee_id: group.assignee_id,
-        },
+        createData:
+          group.assignee_type === "agent" && group.assignee_id
+            ? { agent_id: group.assignee_id }
+            : group.assignee_type === "squad" && group.assignee_id
+              ? { squad_id: group.assignee_id }
+              : {},
       }))
       .sort((a, b) => {
         const aOrder = order[a.assigneeType ?? "none"] ?? 99;
