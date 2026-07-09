@@ -173,7 +173,7 @@ export function estimateCost(usage: Priceable): number {
   return usage.cost_usd ?? 0;
 }
 
-export function isCodeBuddyUsage(provider?: string | null): boolean {
+function isCodeBuddyUsage(provider?: string | null): boolean {
   return (provider ?? "").trim().toLowerCase() === "codebuddy";
 }
 

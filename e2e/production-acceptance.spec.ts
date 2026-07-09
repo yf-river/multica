@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { TRAINING_ROUTES } from "./training-routes";
+import { TRAINING_ROUTES, trainingRoutePath } from "./training-routes";
 import { TestApiClient } from "./fixtures";
 
 const workspaceSlug = process.env.ACCEPTANCE_WORKSPACE_SLUG
@@ -163,7 +163,7 @@ async function expectTrainingRouteShell(page, route: (typeof TRAINING_ROUTES)[nu
 
 async function expectTrainingRouteSurvivesReload(page, route: (typeof TRAINING_ROUTES)[number]) {
   await page.reload({ waitUntil: "domcontentloaded" });
-  await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/${route.path}$`), { timeout: 30000 });
+  await expect(page).toHaveURL(new RegExp(`${trainingRoutePath(workspaceSlug, route.path)}$`), { timeout: 30000 });
   await expect(page.getByText(route.text).first()).toBeVisible({ timeout: 15000 });
   await expectTrainingRouteShell(page, route);
 }
@@ -200,15 +200,15 @@ test.describe("生产部署验收", () => {
     await expect(page.getByRole("heading", { name: "运行复盘" })).toBeVisible({ timeout: 30000 });
     await expect(page.getByText("你是从哪里了解到 Multica 的？")).toHaveCount(0);
 
-    await page.goto(`${frontendURL}/${workspaceSlug}/training/prompts`, { waitUntil: "domcontentloaded" });
-    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/prompts$`));
+    await page.goto(`${frontendURL}${trainingRoutePath(workspaceSlug, "prompts")}`, { waitUntil: "domcontentloaded" });
+    await expect(page).toHaveURL(new RegExp(`${trainingRoutePath(workspaceSlug, "prompts")}$`));
     await expectTrainingRouteShell(page, PROMPTS_ROUTE);
     await expect(page.getByTestId("prompt-version-history")).toContainText("版本历史", { timeout: 15000 });
     await expect(page.getByRole("button", { name: "需求澄清", exact: true })).toBeVisible({ timeout: 15000 });
     await expectTrainingRouteSurvivesReload(page, PROMPTS_ROUTE);
 
-    await page.goto(`${frontendURL}/${workspaceSlug}/training/datasets`, { waitUntil: "domcontentloaded" });
-    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/datasets$`), { timeout: 30000 });
+    await page.goto(`${frontendURL}${trainingRoutePath(workspaceSlug, "datasets")}`, { waitUntil: "domcontentloaded" });
+    await expect(page).toHaveURL(new RegExp(`${trainingRoutePath(workspaceSlug, "datasets")}$`), { timeout: 30000 });
     await expectTrainingRouteShell(page, DATASETS_ROUTE);
     const datasetRow = page.getByTestId(`prompt-evaluation-asset-${evidence.dataset.id}`);
     await expect(datasetRow).toContainText(evidence.dataset.name, { timeout: 15000 });
@@ -217,8 +217,8 @@ test.describe("生产部署验收", () => {
     await expectTrainingRouteSurvivesReload(page, DATASETS_ROUTE);
     await expect(page.getByTestId(`prompt-evaluation-asset-${evidence.dataset.id}`)).toContainText(evidence.dataset.name, { timeout: 15000 });
 
-    await page.goto(`${frontendURL}/${workspaceSlug}/training/test-suites`, { waitUntil: "domcontentloaded" });
-    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/test-suites$`), { timeout: 30000 });
+    await page.goto(`${frontendURL}${trainingRoutePath(workspaceSlug, "test-suites")}`, { waitUntil: "domcontentloaded" });
+    await expect(page).toHaveURL(new RegExp(`${trainingRoutePath(workspaceSlug, "test-suites")}$`), { timeout: 30000 });
     await expectTrainingRouteShell(page, TEST_SUITES_ROUTE);
     const suiteRow = page.getByTestId(`prompt-evaluation-asset-${evidence.suite.id}`);
     await expect(suiteRow).toContainText(evidence.suite.name, { timeout: 15000 });
@@ -227,8 +227,8 @@ test.describe("生产部署验收", () => {
     await expectTrainingRouteSurvivesReload(page, TEST_SUITES_ROUTE);
     await expect(page.getByTestId(`prompt-evaluation-asset-${evidence.suite.id}`)).toContainText(evidence.suite.name, { timeout: 15000 });
 
-    await page.goto(`${frontendURL}/${workspaceSlug}/training/evaluation-runs`, { waitUntil: "domcontentloaded" });
-    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/evaluation-runs$`), { timeout: 30000 });
+    await page.goto(`${frontendURL}${trainingRoutePath(workspaceSlug, "evaluation-runs")}`, { waitUntil: "domcontentloaded" });
+    await expect(page).toHaveURL(new RegExp(`${trainingRoutePath(workspaceSlug, "evaluation-runs")}$`), { timeout: 30000 });
     const syncedRunRow = page.getByTestId(`prompt-evaluation-run-${evidence.syncedRun.id}`);
     await syncedRunRow.scrollIntoViewIfNeeded();
     await expect(syncedRunRow).toContainText("智能体执行", { timeout: 30000 });
@@ -237,7 +237,7 @@ test.describe("生产部署验收", () => {
     await expect(syncedRunRow.getByTestId("run-evidence-snapshots")).toContainText("服务端证据快照", { timeout: 10000 });
     await expect(syncedRunRow.getByTestId("run-evidence-snapshots")).toContainText(evidence.syncedRun.task_id!, { timeout: 10000 });
     await page.reload({ waitUntil: "domcontentloaded" });
-    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/training/evaluation-runs$`), { timeout: 30000 });
+    await expect(page).toHaveURL(new RegExp(`${trainingRoutePath(workspaceSlug, "evaluation-runs")}$`), { timeout: 30000 });
     await expect(page.getByTestId(`prompt-evaluation-run-${evidence.syncedRun.id}`)).toContainText(evidence.syncedRun.id, { timeout: 30000 });
   });
 });

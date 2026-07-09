@@ -44,37 +44,7 @@ describe("desktop debug and evaluation routes", () => {
     });
   });
 
-  it("keeps legacy training routes as redirects", () => {
-    const trainingRoute = childRoutes.find((route) => route.path === "training");
-    expect(trainingRoute?.handle).toMatchObject({ title: "训练与评估" });
-
-    const indexRoute = trainingRoute?.children?.find((route) => route.index);
-    expect(indexRoute?.element).toMatchObject({
-      type: Navigate,
-      props: expect.objectContaining({ to: "../debug/prompts", replace: true }),
-    });
-
-    const redirects = [
-      ["prompts", "../../debug/prompts"],
-      ["agent-playground", "../../debug/agent-playground"],
-      ["datasets", "../../evaluation/datasets"],
-      ["test-suites", "../../evaluation/test-suites"],
-      ["evaluation-runs", "../../evaluation/runs"],
-    ] as const;
-    for (const [routePath, to] of redirects) {
-      const childRoute = trainingRoute?.children?.find((route) => route.path === routePath);
-      expect(childRoute?.element).toMatchObject({
-        type: Navigate,
-        props: expect.objectContaining({ to, replace: true }),
-      });
-    }
-  });
-
-  it("does not keep legacy training aliases", () => {
-    const trainingRoute = childRoutes.find((route) => route.path === "training");
-    const paths = new Set((trainingRoute?.children ?? []).map((route) => route.path));
-    for (const removed of ["runs", "run-history", "debug-runs", "prompt-playground", "experiments", "optimization-runs"]) {
-      expect(paths.has(removed)).toBe(false);
-    }
+  it("does not keep legacy training routes", () => {
+    expect(childRoutes.find((route) => route.path === "training")).toBeUndefined();
   });
 });

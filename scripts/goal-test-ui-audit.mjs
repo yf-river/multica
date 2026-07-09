@@ -78,7 +78,7 @@ const routes = [
   {
     id: "training-prompts",
     label: "训练与评估/提示词库",
-    path: `/${workspaceSlug}/training/prompts`,
+    path: `/${workspaceSlug}/debug/prompts`,
     expect: ["提示词库"],
     uiContract: {
       requiredTestIds: ["training-route-prompts"],
@@ -89,7 +89,7 @@ const routes = [
   {
     id: "training-datasets",
     label: "训练与评估/数据集",
-    path: `/${workspaceSlug}/training/datasets`,
+    path: `/${workspaceSlug}/evaluation/datasets`,
     expect: ["数据集"],
     uiContract: {
       requiredText: ["数据集工作台", "样本入库、版本快照、下游复用", "trace 导入或手工样本", "生成数据集版本快照"],
@@ -101,7 +101,7 @@ const routes = [
   {
     id: "training-test-suites",
     label: "训练与评估/测试套件",
-    path: `/${workspaceSlug}/training/test-suites`,
+    path: `/${workspaceSlug}/evaluation/test-suites`,
     expect: ["测试套件"],
     uiContract: {
       requiredText: ["测试套件工作台", "固定试卷、断言回归、失败定位", "用例组成套件", "断言级复盘"],
@@ -113,7 +113,7 @@ const routes = [
   {
     id: "training-evaluation-runs",
     label: "训练与评估/评测记录",
-    path: `/${workspaceSlug}/training/evaluation-runs`,
+    path: `/${workspaceSlug}/evaluation/runs`,
     expect: ["评测记录"],
     uiContract: {
       requiredText: ["评测记录工作台", "运行检索、证据展开、人工复核", "按运行状态定位", "任务和 Trace 展开"],

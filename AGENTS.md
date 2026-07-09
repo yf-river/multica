@@ -57,7 +57,6 @@ make goal-test-smart-verify MODE=precommit        # Focused precommit gate plus 
 make goal-test-smart-verify MODE=final DRY_RUN=1  # Preview final deploy/audit plan
 make goal-test-deploy-dev                         # Deploy once at the end of a stable slice
 make goal-test-ui-audit                           # Broad browser/UI audit after deploy/smoke
-make goal-test-token-audit                        # Estimate token savings and compression risk
 GOAL_TEST_TOKEN_OPTIMIZER=rtk make goal-test-smart-verify MODE=dev
 ```
 

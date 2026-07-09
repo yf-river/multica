@@ -107,7 +107,7 @@ test.describe("训练与评估真实 Agent 闭环", () => {
         const token = api.getToken();
         expect(token).toBeTruthy();
         await authenticateBrowserSession(page, token!, workspace.slug);
-        await page.goto(`/${workspace.slug}/training/evaluation-runs?run=${queued.run.id}`, { waitUntil: "domcontentloaded" });
+        await page.goto(`/${workspace.slug}/evaluation/runs?run=${queued.run.id}`, { waitUntil: "domcontentloaded" });
         await waitForPageText(page, "评测记录", 15000);
         const runCard = page.getByTestId(`prompt-evaluation-run-${queued.run.id}`);
         await expect(runCard).toContainText("智能体执行 · 失败", { timeout: 15000 });
@@ -121,7 +121,7 @@ test.describe("训练与评估真实 Agent 闭环", () => {
         const token = api.getToken();
         expect(token).toBeTruthy();
         await authenticateBrowserSession(page, token!, workspace.slug);
-        await page.goto(`/${workspace.slug}/training/evaluation-runs?run=${queued.run.id}`, { waitUntil: "domcontentloaded" });
+        await page.goto(`/${workspace.slug}/evaluation/runs?run=${queued.run.id}`, { waitUntil: "domcontentloaded" });
         await waitForPageText(page, "评测记录", 15000);
         const runCard = page.getByTestId(`prompt-evaluation-run-${queued.run.id}`);
         await expect(runCard).toContainText("智能体执行", { timeout: 15000 });

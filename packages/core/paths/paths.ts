@@ -39,8 +39,6 @@ function workspaceScoped(slug: string) {
     debugView: (view: string) => `${ws}/debug/${encode(view)}`,
     evaluation: () => `${ws}/evaluation`,
     evaluationView: (view: string) => `${ws}/evaluation/${encode(view)}`,
-    training: () => `${ws}/training`,
-    trainingView: (view: string) => `${ws}/training/${encode(view)}`,
     skills: () => `${ws}/skills`,
     skillDetail: (id: string) => `${ws}/skills/${encode(id)}`,
     settings: () => `${ws}/settings`,

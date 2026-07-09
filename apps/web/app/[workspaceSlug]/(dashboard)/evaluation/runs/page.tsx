@@ -1,5 +1,5 @@
-import { TrainingWorkbenchPage } from "@multica/views/prompt-library";
+import { PromptLibraryPage } from "@multica/views/prompt-library";
 
 export default function EvaluationRunsPage() {
-  return <TrainingWorkbenchPage activeView="evaluation-runs" />;
+  return <PromptLibraryPage activeView="evaluation-runs" showPromptEditor={false} />;
 }

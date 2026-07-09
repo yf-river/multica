@@ -91,7 +91,7 @@ test.describe("run review eval draft flow", () => {
     const createdCase = draftCases.find((item) => item.status === "draft");
     if (!createdCase) throw new Error("run review draft case was not created");
 
-    await page.goto(`/${workspaceSlug}/training/datasets?issue=${issue.id}&case=${createdCase.id}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`/${workspaceSlug}/evaluation/datasets?issue=${issue.id}&case=${createdCase.id}`, { waitUntil: "domcontentloaded" });
     await expect(page.getByText(ISSUE_REVIEW_DRAFT_DATASET_NAME)).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId(`prompt-evaluation-cases-${createdCase.asset_id}`)).toContainText(createdCase.case_name);
     await expect(page.getByTestId(`prompt-evaluation-cases-${createdCase.asset_id}`)).toContainText("待确认");
@@ -240,7 +240,7 @@ test.describe("run review eval draft flow for existing completed issues", () => 
     expect(assertions.require_tool_evidence_on_tool_use).toBe(true);
     expect(Object.keys(assertions).length).toBeGreaterThan(createdCase.expected_contains.length);
 
-    await page.goto(`/${workspaceSlug}/training/datasets?issue=${issue.id}&case=${createdCase.id}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`/${workspaceSlug}/evaluation/datasets?issue=${issue.id}&case=${createdCase.id}`, { waitUntil: "domcontentloaded" });
     await expect(page.getByText(ISSUE_REVIEW_DRAFT_DATASET_NAME)).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId(`prompt-evaluation-case-${createdCase.id}`)).toBeVisible({ timeout: 30_000 });
     await expect(page.getByTestId(`prompt-evaluation-case-${createdCase.id}`)).toContainText(createdCase.case_name);

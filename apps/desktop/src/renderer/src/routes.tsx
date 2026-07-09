@@ -184,18 +184,6 @@ export const appRoutes: RouteObject[] = [
               { path: "runs", element: <PromptLibraryPage activeView="evaluation-runs" />, handle: { title: "评估" } },
             ],
           },
-          {
-            path: "training",
-            handle: { title: "训练与评估" },
-            children: [
-              { index: true, element: <Navigate to="../debug/prompts" replace /> },
-              { path: "prompts", element: <Navigate to="../../debug/prompts" replace /> },
-              { path: "agent-playground", element: <Navigate to="../../debug/agent-playground" replace /> },
-              { path: "datasets", element: <Navigate to="../../evaluation/datasets" replace /> },
-              { path: "test-suites", element: <Navigate to="../../evaluation/test-suites" replace /> },
-              { path: "evaluation-runs", element: <Navigate to="../../evaluation/runs" replace /> },
-            ],
-          },
           { path: "skills", element: <SkillsPage />, handle: { title: "技能" } },
           {
             path: "skills/:id",

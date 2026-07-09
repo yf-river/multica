@@ -2,9 +2,7 @@ const TRAINING_WORKBENCH_ALL_VIEWS = [
   {
     tab: "提示词库",
     view: "prompts",
-    route: "prompts",
     canonicalRoute: "prompts",
-    legacyRoutes: ["prompts"],
     section: "debug",
     keywords: ["提示词库", "提示词管理", "prompt", "library", "prompts"],
     visible: true,
@@ -12,9 +10,7 @@ const TRAINING_WORKBENCH_ALL_VIEWS = [
   {
     tab: "Agent 调试场",
     view: "agent-playground",
-    route: "agent-playground",
     canonicalRoute: "agent-playground",
-    legacyRoutes: ["agent-playground"],
     section: "debug",
     keywords: ["Agent 调试场", "智能体调试", "agent", "playground", "experiment"],
     visible: true,
@@ -22,9 +18,7 @@ const TRAINING_WORKBENCH_ALL_VIEWS = [
   {
     tab: "用例库",
     view: "datasets",
-    route: "datasets",
     canonicalRoute: "datasets",
-    legacyRoutes: ["datasets"],
     section: "evaluation",
     keywords: ["用例库", "数据集", "dataset", "case", "training", "data"],
     visible: true,
@@ -32,9 +26,7 @@ const TRAINING_WORKBENCH_ALL_VIEWS = [
   {
     tab: "测试套件",
     view: "test-suites",
-    route: "test-suites",
     canonicalRoute: "test-suites",
-    legacyRoutes: ["test-suites"],
     section: "evaluation",
     keywords: ["测试套件", "test", "suite", "eval"],
     visible: true,
@@ -42,9 +34,7 @@ const TRAINING_WORKBENCH_ALL_VIEWS = [
   {
     tab: "评测记录",
     view: "evaluation-runs",
-    route: "evaluation-runs",
     canonicalRoute: "runs",
-    legacyRoutes: ["evaluation-runs", "runs"],
     section: "evaluation",
     keywords: ["评测记录", "运行证据", "evaluation", "runs", "evidence", "trace"],
     visible: true,
@@ -60,14 +50,12 @@ export const TRAINING_WORKBENCH_SECTIONS = [
 export type TrainingWorkbenchView = typeof TRAINING_WORKBENCH_ALL_VIEWS[number];
 export type TrainingWorkbenchTab = TrainingWorkbenchView["tab"];
 export type TrainingWorkbenchViewId = TrainingWorkbenchView["view"];
-export type TrainingWorkbenchRoute = TrainingWorkbenchView["route"];
 export type TrainingWorkbenchCanonicalRoute = TrainingWorkbenchView["canonicalRoute"];
 export type TrainingWorkbenchSection = typeof TRAINING_WORKBENCH_SECTIONS[number]["key"];
 
 export const TRAINING_WORKBENCH_TABS = TRAINING_WORKBENCH_VIEWS.map((item) => item.tab) as TrainingWorkbenchTab[];
 export const DEFAULT_TRAINING_WORKBENCH_TAB: TrainingWorkbenchTab = "提示词库";
 export const DEFAULT_TRAINING_WORKBENCH_VIEW: TrainingWorkbenchViewId = "prompts";
-export const DEFAULT_TRAINING_WORKBENCH_ROUTE: TrainingWorkbenchRoute = "prompts";
 export const DEFAULT_DEBUG_WORKBENCH_VIEW: TrainingWorkbenchViewId = "prompts";
 export const DEFAULT_EVALUATION_WORKBENCH_VIEW: TrainingWorkbenchViewId = "datasets";
 
@@ -79,20 +67,12 @@ export const TRAINING_WORKBENCH_TAB_BY_VIEW = Object.fromEntries(
   TRAINING_WORKBENCH_ALL_VIEWS.map((item) => [item.view, item.tab]),
 ) as Record<TrainingWorkbenchViewId, TrainingWorkbenchTab>;
 
-export const TRAINING_WORKBENCH_ROUTE_BY_VIEW = Object.fromEntries(
-  TRAINING_WORKBENCH_ALL_VIEWS.map((item) => [item.view, item.route]),
-) as Record<TrainingWorkbenchViewId, TrainingWorkbenchRoute>;
-
 export const TRAINING_WORKBENCH_CANONICAL_ROUTE_BY_VIEW = Object.fromEntries(
   TRAINING_WORKBENCH_ALL_VIEWS.map((item) => [item.view, item.canonicalRoute]),
 ) as Record<TrainingWorkbenchViewId, TrainingWorkbenchCanonicalRoute>;
 
 export const TRAINING_WORKBENCH_VIEW_BY_ROUTE = Object.fromEntries(
-  TRAINING_WORKBENCH_ALL_VIEWS.flatMap((item) => [
-    [item.route, item.view],
-    [item.canonicalRoute, item.view],
-    ...item.legacyRoutes.map((route) => [route, item.view]),
-  ]),
+  TRAINING_WORKBENCH_ALL_VIEWS.map((item) => [item.canonicalRoute, item.view]),
 ) as Record<string, TrainingWorkbenchViewId>;
 
 export const TRAINING_WORKBENCH_SECTION_BY_VIEW = Object.fromEntries(
@@ -115,11 +95,6 @@ function normalizeTrainingWorkbenchView(view: string | null): TrainingWorkbenchV
   return TRAINING_WORKBENCH_TAB_BY_VIEW[view as TrainingWorkbenchViewId]
     ? (view as TrainingWorkbenchViewId)
     : DEFAULT_TRAINING_WORKBENCH_VIEW;
-}
-
-export function trainingWorkbenchViewFromRoute(route: string | null): TrainingWorkbenchViewId {
-  if (!route) return DEFAULT_TRAINING_WORKBENCH_VIEW;
-  return TRAINING_WORKBENCH_VIEW_BY_ROUTE[route] ?? normalizeTrainingWorkbenchView(route);
 }
 
 export function trainingWorkbenchViewFromCanonicalRoute(
@@ -151,11 +126,6 @@ export function trainingWorkbenchTitleFromView(view: string | null): string {
 
 export function trainingWorkbenchShowsPromptEditor(view: string | null): boolean {
   return trainingWorkbenchTabFromView(view) === "提示词库";
-}
-
-export function trainingWorkbenchPath(baseTrainingPath: string, view: string | null): string {
-  const route = TRAINING_WORKBENCH_ROUTE_BY_VIEW[normalizeTrainingWorkbenchView(view)];
-  return `${baseTrainingPath.replace(/\/$/, "")}/${route}`;
 }
 
 export function trainingWorkbenchCanonicalRouteFromView(view: string | null): string {

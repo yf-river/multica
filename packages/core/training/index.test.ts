@@ -13,7 +13,6 @@ import {
   trainingWorkbenchShowsPromptEditor,
   trainingWorkbenchTitleFromView,
   trainingWorkbenchViewFromCanonicalRoute,
-  trainingWorkbenchViewFromRoute,
 } from "./index";
 
 describe("training workbench navigation", () => {
@@ -70,14 +69,12 @@ describe("training workbench navigation", () => {
     expect(trainingWorkbenchTitleFromView("missing-view")).toBe("调试 · 提示词库");
   });
 
-  it("builds canonical debug and evaluation paths while keeping legacy route parsing", () => {
+  it("builds canonical debug and evaluation paths", () => {
     const paths = { debug: () => "/acme/debug", evaluation: () => "/acme/evaluation" };
 
     expect(trainingWorkbenchCanonicalRouteFromView("prompts")).toBe("prompts");
     expect(trainingWorkbenchCanonicalRouteFromView("agent-playground")).toBe("agent-playground");
     expect(trainingWorkbenchCanonicalRouteFromView("evaluation-runs")).toBe("runs");
-    expect(trainingWorkbenchViewFromRoute("evaluation-runs")).toBe("evaluation-runs");
-    expect(trainingWorkbenchViewFromRoute("runs")).toBe("evaluation-runs");
     expect(trainingWorkbenchViewFromCanonicalRoute("debug", "datasets")).toBe("prompts");
     expect(trainingWorkbenchViewFromCanonicalRoute("evaluation", "prompts")).toBe("datasets");
     expect(debugWorkbenchPath(paths.debug(), "prompts")).toBe("/acme/debug/prompts");

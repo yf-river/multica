@@ -44,7 +44,6 @@ describe("sanitizeTabPath", () => {
     expect(sanitizeTabPath("/my-team/projects/abc")).toBe("/my-team/projects/abc");
     expect(sanitizeTabPath("/acme/debug/prompts")).toBe("/acme/debug/prompts");
     expect(sanitizeTabPath("/acme/evaluation/runs")).toBe("/acme/evaluation/runs");
-    expect(sanitizeTabPath("/acme/training/evaluation-runs")).toBe("/acme/training/evaluation-runs");
   });
 
   it("rejects paths whose first segment is a reserved slug (missing workspace prefix)", () => {

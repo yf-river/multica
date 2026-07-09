@@ -29,7 +29,6 @@ describe("paths.workspace() shape", () => {
         "runtimes",
         "debug",
         "evaluation",
-        "training",
         "skills",
         "settings",
       ]),
@@ -53,7 +52,6 @@ describe("paths.workspace() shape", () => {
       ["runtimes", "runtimes"],
       ["debug", "debug"],
       ["evaluation", "evaluation"],
-      ["training", "training"],
       ["skills", "skills"],
       ["settings", "settings"],
     ];
@@ -104,6 +102,5 @@ describe("global path / reserved slug consistency", () => {
   it("reserves canonical workspace route segments", () => {
     expect(RESERVED_SLUGS.has("debug")).toBe(true);
     expect(RESERVED_SLUGS.has("evaluation")).toBe(true);
-    expect(RESERVED_SLUGS.has("training")).toBe(true);
   });
 });

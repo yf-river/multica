@@ -1,9 +1,5 @@
 import type { Dispatch, SetStateAction } from "react";
-import type {
-  CreatePromptLibraryItemRequest,
-  PromptEvaluationAssetType,
-  PromptLibraryItem,
-} from "@multica/core/types";
+import type { CreatePromptLibraryItemRequest, PromptEvaluationAssetType, PromptLibraryItem } from "@multica/core/types";
 
 export type PromptDraft = {
   name: string;
@@ -30,14 +26,6 @@ export function itemToDraft(item: PromptLibraryItem): PromptDraft {
     name: item.name,
     description: item.description,
     content: item.content,
-  };
-}
-
-export function requestToDraft(req: CreatePromptLibraryItemRequest): PromptDraft {
-  return {
-    name: req.name,
-    description: req.description ?? "",
-    content: req.content,
   };
 }
 

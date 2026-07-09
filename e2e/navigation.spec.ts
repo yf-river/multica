@@ -1,6 +1,6 @@
 import { test, expect } from "@playwright/test";
 import { loginAsDefault, waitForPageText } from "./helpers";
-import { DEFAULT_TRAINING_ROUTE, TRAINING_ROUTES, trainingRoutePath } from "./training-routes";
+import { DEFAULT_TRAINING_ROUTE, TRAINING_ROUTES, trainingRoutePath, trainingRouteURLPath } from "./training-routes";
 
 const ROUTE_CHANGE_TIMEOUT = 30000;
 const ROUTE_INTRO_TITLES: Record<string, string> = {
@@ -35,7 +35,7 @@ async function expectTrainingPageShell(page, item: (typeof TRAINING_ROUTES)[numb
 async function expectTrainingNavigationMarker(page, item: (typeof TRAINING_ROUTES)[number]) {
   const link = page.getByRole("link", { name: item.nav, exact: true }).first();
   await expect(link).toBeVisible();
-  await expect(link).toHaveAttribute("href", new RegExp(`/training/${item.path}$`));
+  await expect(link).toHaveAttribute("href", new RegExp(`/${trainingRouteURLPath(item.path)}$`));
 }
 
 function expectsTrainingSummaryStrip(item: (typeof TRAINING_ROUTES)[number]) {
@@ -82,7 +82,7 @@ test.describe("Navigation", () => {
         .locator("xpath=ancestor::*[@cmdk-item][1]")
         .click();
 
-      await expect(page).toHaveURL(new RegExp(`/training/${item.path}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
+      await expect(page).toHaveURL(new RegExp(`/${trainingRouteURLPath(item.path)}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
       await waitForPageText(page, item.text);
       await expectTrainingPageShell(page, item);
       await expectTrainingNavigationMarker(page, item);
@@ -103,12 +103,12 @@ test.describe("Navigation", () => {
 
   test("sidebar opens every training submodule", async ({ page }) => {
     await page.getByRole("link", { name: "训练与评估" }).click();
-    await expect(page).toHaveURL(new RegExp(`/training/${DEFAULT_TRAINING_ROUTE.path}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
+    await expect(page).toHaveURL(new RegExp(`/${trainingRouteURLPath(DEFAULT_TRAINING_ROUTE.path)}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
     await waitForPageText(page, DEFAULT_TRAINING_ROUTE.text);
 
     for (const item of TRAINING_ROUTES) {
       await page.locator('[data-sidebar="menu-button"]').filter({ hasText: item.nav }).first().click();
-      await expect(page).toHaveURL(new RegExp(`/training/${item.path}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
+      await expect(page).toHaveURL(new RegExp(`/${trainingRouteURLPath(item.path)}$`), { timeout: ROUTE_CHANGE_TIMEOUT });
       await waitForPageText(page, item.text);
       await expectTrainingPageShell(page, item);
       await expectTrainingNavigationMarker(page, item);

@@ -105,7 +105,7 @@ test.describe("Skill candidate workflow", () => {
       .then(async () => (await api.listPromptEvaluationRuns({ asset_id: asset.id })).find((run) => run.status === "未通过")!);
     const candidate = await api.createPromptEvaluationOptimizationCandidate(failedRun.id);
 
-    await page.goto(`/${workspaceSlug}/training/evaluation-runs?run=${failedRun.id}`, { waitUntil: "domcontentloaded" });
+    await page.goto(`/${workspaceSlug}/evaluation/runs?run=${failedRun.id}`, { waitUntil: "domcontentloaded" });
     const runRow = page.getByTestId(`prompt-evaluation-run-${failedRun.id}`);
     await expect(runRow).toBeVisible({ timeout: 15_000 });
     const skillWorkflow = runRow.getByTestId(`skill-candidate-workflow-${candidate.id}`);

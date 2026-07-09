@@ -52,29 +52,18 @@ make goal-test-smart-verify MODE=precommit
 make goal-test-smart-verify MODE=final DRY_RUN=1
 make goal-test-ui-audit
 make goal-test-ui-acceptance
-make goal-test-final-acceptance
 make goal-test-dashboard-click-audit
-make goal-test-training-curl-e2e
-make goal-test-squad-curl-e2e
-make goal-test-coding-squad-curl-e2e
-make goal-test-user-center-squad-curl-e2e
 make goal-test-real-agent-e2e
-make goal-test-seed-business-training
-make goal-test-session-retro SESSION=/path/to/codex-session.jsonl
-make goal-test-token-audit
 GOAL_TEST_TOKEN_OPTIMIZER=rtk make goal-test-smart-verify MODE=dev
 GOAL_TEST_TOKEN_OPTIMIZER=rtk make goal-test-smart-verify MODE=precommit
-pnpm acceptance:verify
 pnpm exec playwright test e2e/production-acceptance.spec.ts --project=chromium
-node scripts/prompt-evaluation-curl-e2e.mjs
-node scripts/codex-squad-curl-e2e.mjs
 ```
 
 For complex goal-test delivery, prefer `gpt-5.5 high` as the main controller. Simple local slices or generating the goal prompt itself can use `gpt-5.5 medium`. Read-only exploration and repeated verification can use lower-cost models when available. Local runtime should prefer Codex unless the user explicitly chooses another runtime.
 
 AI Studio acceptance must include real browser UI checks, E2E/API data closure, performance evidence, current-deployment `.run` log window scans, decision ledger updates, and a commit or explicit reason for not committing. For integration Playwright runs, first run `make goal-test-e2e-preflight`, then use the project variables from `.run/env/goal-test-int.env` plus `PLAYWRIGHT_BASE_URL=http://9.134.129.162:13682`; do not rely on `E2E_BASE_URL` alone. E2E tests may reuse the default account/workspace, but must create their own business data through public API/UI instead of depending on existing prompts, issues, or assets. Prefer `TestApiClient.createPromptForE2E` and `TestApiClient.createIssueForE2E` for unique named fixtures.
 
-For broad goal-test UI or training audits, run `make goal-test-smoke` first. `make goal-test-ui-audit` and `make goal-test-training-performance-audit` already include smoke plus the current deployment marker log scan in their JSON evidence. Deployments archive previous `.run/*-{server,web,daemon}.log` files under `.run/log-archive/` before writing the new marker window. For long-session retrospectives, use `make goal-test-session-retro SESSION=/path/to/session.jsonl` instead of hand-writing the session index and root-cause table.
+For broad goal-test UI or training audits, run `make goal-test-smoke` first. `make goal-test-ui-audit` and `make goal-test-training-performance-audit` already include smoke plus the current deployment marker log scan in their JSON evidence. Deployments archive previous `.run/*-{server,web,daemon}.log` files under `.run/log-archive/` before writing the new marker window.
 
 Speed-first goal-test validation protocol:
 
@@ -87,8 +76,6 @@ Speed-first goal-test validation protocol:
 - Token optimization is balanced, not global. `scripts/goal-test-smart-verify.mjs` may summarize high-noise commands through `scripts/goal-test-command-wrapper.mjs`, but it must preserve full raw output under `artifacts/acceptance/raw-command-logs/` and record raw/summary byte counts in `command-timings.jsonl`.
 - Do not auto-compress discovery or exact-evidence commands: `rg`, `find`, `ls`, `git diff`, failing test stack windows, deploy failure windows, and any `panic`/`FATAL`/`ERROR` window must stay directly inspectable. Use the raw log path before rerunning broad gates.
 - RTK is opt-in only via `GOAL_TEST_TOKEN_OPTIMIZER=rtk`; when `rtk` is installed and the command is on the safe allowlist, the wrapper asks `rtk rewrite` for the concrete `rtk ...` command and executes that rewritten command. If RTK is absent, unsafe, or declines to rewrite, fall back to the raw-preserving built-in summary. Never install a global RTK hook for this repository unless the user explicitly asks.
-- Use `make goal-test-token-audit` after a long session or before another continuation to estimate savings and confirm the highest-value commands before adding more compression rules.
-
 Continuous goal-test governance for long sessions:
 
 - Output a checkpoint after every 3-5 decision-ledger entries, at every wave end, before and after final acceptance, and before automatically entering a new topic. The checkpoint must include approximate completion percentage, current branch, committed commit, deployed commit, uncommitted diff, running commands, evidence paths, open P0/P1, next suggested command, next-slice benefit/cost/risk, and explicit "do not do next" notes.
@@ -104,12 +91,10 @@ AI Studio gate applicability:
 - Precommit gate: `make goal-test-smart-verify MODE=precommit`; use before committing focused code changes.
 - Deployment/log gate: `make goal-test-deploy-dev`, then `make goal-test-verify-env` and `make goal-test-verify-logs`; use when code needs integration-environment proof.
 - UI acceptance gate: `make goal-test-ui-acceptance`; use for broad deployed UI behavior without forcing every long daemon path.
-- Final gate: `make goal-test-final-acceptance`; use for wave or milestone closure when training, squads, observability, and deployed behavior must be demonstrated together.
+- Broad gate: `make goal-test-smoke` or `make goal-test-ui-acceptance`; use for wave or milestone closure when current UI, observability, and deployed behavior must be demonstrated together.
 - Training UI gate: `make goal-test-training-performance-audit`; use for current training pages, route panels, datasets, test suites, evaluation records, or performance-sensitive training navigation.
-- Training API/agent gate: `make goal-test-training-curl-e2e`; use for training API, prompt-evaluation, optimizer, or agent-run semantics that can be validated without a full browser path.
-- Squad/SOP gate: `make goal-test-squad-curl-e2e`, `make goal-test-coding-squad-curl-e2e`, `make goal-test-user-center-squad-curl-e2e`, or `make goal-test-real-agent-e2e`; use when squad orchestration, SOP execution, real-agent dispatch, or cross-project runtime behavior changed.
+- Real-agent gate: `make goal-test-real-agent-e2e`; use when real-agent dispatch or cross-project runtime behavior changed.
 - Performance gates: `make goal-test-dashboard-click-audit` and `make goal-test-public-training-performance-audit`; use only when the affected surface or milestone requires that evidence.
-- Fixture seed gate: `make goal-test-seed-business-training`; use only when the test needs fresh business training fixtures rather than historical artifacts.
 
 ## Architecture
 

@@ -153,8 +153,6 @@ vi.mock("@multica/core/paths", () => ({
 	    debugView: (view: string) => `/ws-test/debug/${view}`,
 	    evaluation: () => "/ws-test/evaluation",
 	    evaluationView: (view: string) => `/ws-test/evaluation/${view}`,
-	    training: () => "/ws-test/training",
-	    trainingView: (view: string) => `/ws-test/training/${view}`,
 	    runtimes: () => "/ws-test/runtimes",
     skills: () => "/ws-test/skills",
     settings: () => "/ws-test/settings",
@@ -354,8 +352,10 @@ describe("SearchCommand", () => {
     const input = screen.getByPlaceholderText("输入命令或关键词搜索...");
     await user.type(input, "调试");
 
-    const debugItem = await screen.findByText("调试");
-    await user.click(debugItem);
+    await waitFor(() => {
+      expect(document.querySelector('[data-value="page:debug"]')).toBeInTheDocument();
+    });
+    await user.click(document.querySelector('[data-value="page:debug"]')!);
 
     expect(mockPush).toHaveBeenCalledWith("/ws-test/debug/prompts");
     expect(useSearchStore.getState().open).toBe(false);

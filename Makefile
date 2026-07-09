@@ -1,6 +1,5 @@
-.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-training-curl-e2e goal-test-seed-business-training goal-test-prod-seed-business-training goal-test-prod-training-curl-e2e goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e goal-test-sop-customer-comment-e2e goal-test-password-strength-sop-e2e goal-test-sop-browser-audit goal-test-prod-user-center-squad-curl-e2e goal-test-new-account-mcp-onboarding-e2e goal-test-prod-new-account-mcp-onboarding-e2e goal-test-acceptance-fixture-governance goal-test-quick-entry-cross-service goal-test-squad-curl-e2e goal-test-variable-project-topology-fixture goal-test-variable-agent-squad-curl-e2e goal-test-variable-agent-topology-fixture goal-test-topology-generalization-audit goal-test-tapd-gongfeng-sop-gap-audit goal-test-prod-release-audit goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-final-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-dataset-stream-audit goal-test-prune-dev-data goal-test-prune-prod-data goal-test-session-retro goal-test-token-audit
+.PHONY: help makehelp dev server daemon cli multica build test migrate-up migrate-down sqlc seed clean setup start stop check worktree-env setup-main start-main stop-main check-main setup-worktree start-worktree stop-worktree check-worktree db-up db-down db-reset selfhost selfhost-build selfhost-stop goal-test-build goal-test-deploy-dev goal-test-sync-prod goal-test-promote-prod goal-test-deploy-prod goal-test-deploy-int goal-test-deploy-all goal-test-verify-env goal-test-verify-logs goal-test-e2e-preflight goal-test-e2e goal-test-e2e-all goal-test-real-agent-e2e goal-test-smoke goal-test-fast-check goal-test-smart-verify goal-test-ui-acceptance goal-test-ui-audit goal-test-dashboard-click-audit goal-test-training-performance-audit goal-test-public-training-performance-audit goal-test-prune-dev-data goal-test-prune-prod-data
 .PHONY: goal-test-deploy-dev-hot goal-test-dev-ui goal-test-dev-ui-prewarm goal-test-dev-ui-prewarm-full goal-test-dev-ui-start goal-test-dev-server goal-test-dev-daemon goal-test-dev-check
-.PHONY: goal-test-quick-entries-service-sandbox
 
 MAIN_ENV_FILE ?= .env
 WORKTREE_ENV_FILE ?= .env.worktree
@@ -301,196 +300,6 @@ goal-test-real-agent-e2e: goal-test-e2e-preflight ## Run slow real Codex Agent E
 	TMPDIR="$(GOAL_TEST_TMPDIR)" \
 	node scripts/goal-test-playwright.mjs e2e/squad-real-agent.spec.ts e2e/prompt-library-real-agent.spec.ts --project=chromium
 
-goal-test-training-curl-e2e: goal-test-smoke ## Run public API curl E2E for training/evaluation assets, runs, evidence, optimization, and publishing
-	@mkdir -p "$(GOAL_TEST_TMPDIR)"
-	ACCEPTANCE_API_URL="$(GOAL_TEST_INT_API_URL)" \
-	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
-	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
-	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
-	GOAL_TEST_ACCEPTANCE_DIR="$(CURDIR)/artifacts/acceptance" \
-	TMPDIR="$(GOAL_TEST_TMPDIR)" \
-	node scripts/prompt-evaluation-curl-e2e.mjs
-
-goal-test-seed-business-training: goal-test-smoke ## Seed stable non-acceptance business training assets through the public API
-	@mkdir -p "$(GOAL_TEST_TMPDIR)"
-	ACCEPTANCE_API_URL="$(GOAL_TEST_INT_API_URL)" \
-	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
-	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
-	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
-	GOAL_TEST_ACCEPTANCE_DIR="$(CURDIR)/artifacts/acceptance" \
-	TMPDIR="$(GOAL_TEST_TMPDIR)" \
-	node scripts/seed-business-training-assets.mjs
-
-goal-test-coding-squad-curl-e2e: goal-test-smoke ## Run real curl/API + daemon E2E for the Multica coding squad
-	@mkdir -p "$(GOAL_TEST_TMPDIR)"
-	ACCEPTANCE_API_URL="$(GOAL_TEST_INT_API_URL)" \
-	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
-	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
-	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
-	ACCEPTANCE_SQUAD_TEMPLATE_KEY=multica-coding \
-	MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER="$(GOAL_TEST_REAL_AGENT_PROVIDER)" \
-	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
-	MULTICA_PROMPT_EVALUATION_AGENT_FALLBACK_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
-	ACCEPTANCE_TASK_TIMEOUT_MS=600000 \
-	ACCEPTANCE_MODEL_ATTEMPT_TIMEOUT_MS=720000 \
-	TMPDIR="$(GOAL_TEST_TMPDIR)" \
-	node scripts/run-model-fallback-e2e.mjs scripts/codex-squad-curl-e2e.mjs
-
-goal-test-user-center-squad-curl-e2e: goal-test-smoke ## Run real curl/API + daemon E2E for user-center cross-project squad SOP
-	@mkdir -p "$(GOAL_TEST_TMPDIR)"
-	ACCEPTANCE_API_URL="$(GOAL_TEST_INT_API_URL)" \
-	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
-	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
-	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
-	ACCEPTANCE_SQUAD_TEMPLATE_KEY=user-center \
-	ACCEPTANCE_VERIFY_CROSS_PROJECT_CHILDREN=1 \
-	MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER="$(GOAL_TEST_REAL_AGENT_PROVIDER)" \
-	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
-	MULTICA_PROMPT_EVALUATION_AGENT_FALLBACK_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
-	ACCEPTANCE_TASK_TIMEOUT_MS=2700000 \
-	ACCEPTANCE_MODEL_ATTEMPT_TIMEOUT_MS=7200000 \
-	TMPDIR="$(GOAL_TEST_TMPDIR)" \
-	node scripts/run-model-fallback-e2e.mjs scripts/codex-squad-curl-e2e.mjs
-
-goal-test-sop-customer-comment-e2e: goal-test-e2e-preflight ## Run real customer-comment SOP E2E for usercenter/gateway/ida-deployment
-	@mkdir -p "$(GOAL_TEST_TMPDIR)"
-	ACCEPTANCE_API_URL="$(GOAL_TEST_INT_API_URL)" \
-	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
-	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
-	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
-	ACCEPTANCE_REPO_REF=v5.0.0_dev_sop \
-	MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER="$(GOAL_TEST_REAL_AGENT_PROVIDER)" \
-	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
-	MULTICA_PROMPT_EVALUATION_AGENT_FALLBACK_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
-	ACCEPTANCE_TASK_TIMEOUT_MS=7200000 \
-	ACCEPTANCE_MODEL_ATTEMPT_TIMEOUT_MS=7200000 \
-	TMPDIR="$(GOAL_TEST_TMPDIR)" \
-	node scripts/run-model-fallback-e2e.mjs scripts/run-sop-customer-comment-e2e.mjs
-
-goal-test-password-strength-sop-e2e: goal-test-e2e-preflight ## Run focused SOP E2E through PM/01-05/artifacts/MR/in_review
-	@mkdir -p "$(GOAL_TEST_TMPDIR)"
-	ACCEPTANCE_API_URL="$(GOAL_TEST_INT_API_URL)" \
-	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
-	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
-	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
-	MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER=codebuddy \
-	MULTICA_PROMPT_EVALUATION_AGENT_MODEL=deepseek-v4-pro-ioa \
-	PASSWORD_SOP_TASK_TIMEOUT_MS=7200000 \
-	TMPDIR="$(GOAL_TEST_TMPDIR)" \
-	node scripts/password-strength-sop-e2e.mjs
-
-goal-test-sop-browser-audit: goal-test-smoke ## Audit latest customer-comment SOP issue/run-review in a real browser
-	@mkdir -p "$(GOAL_TEST_TMPDIR)"
-	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-sop-browser-audit.mjs
-
-goal-test-squad-curl-e2e: goal-test-coding-squad-curl-e2e goal-test-user-center-squad-curl-e2e ## Run both real curl/API squad SOP E2E suites
-
-goal-test-quick-entry-cross-service: ## Verify user-center/gateway/ida-deployment quick-entry cross-service sandbox
-	node scripts/verify-quick-entry-cross-service.mjs
-
-goal-test-quick-entries-service-sandbox: ## Run TAPD quick-entries requirement service-level process sandbox
-	node scripts/goal-test-quick-entries-service-sandbox.mjs
-
-goal-test-variable-project-topology-fixture: goal-test-verify-int-env ## Create an int public-API fixture with one source project and three target projects
-	ACCEPTANCE_API_URL="$(GOAL_TEST_INT_API_URL)" \
-	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
-	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
-	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
-	MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER="$(GOAL_TEST_REAL_AGENT_PROVIDER)" \
-	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
-	node scripts/goal-test-variable-project-topology-fixture.mjs
-
-goal-test-variable-agent-squad-curl-e2e: goal-test-smoke ## Run a fresh ad-hoc single-Agent curl/API E2E for variable Agent topology
-	@mkdir -p "$(GOAL_TEST_TMPDIR)"
-	ACCEPTANCE_API_URL="$(GOAL_TEST_INT_API_URL)" \
-	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
-	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
-	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
-	MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER="$(GOAL_TEST_REAL_AGENT_PROVIDER)" \
-	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
-	MULTICA_PROMPT_EVALUATION_AGENT_FALLBACK_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
-	ACCEPTANCE_TASK_TIMEOUT_MS=300000 \
-	ACCEPTANCE_MODEL_ATTEMPT_TIMEOUT_MS=720000 \
-	ACCEPTANCE_LATEST_NAME=codex-squad-curl-e2e-variable-agent-latest.json \
-	TMPDIR="$(GOAL_TEST_TMPDIR)" \
-	node scripts/run-model-fallback-e2e.mjs scripts/codex-squad-curl-e2e.mjs
-
-goal-test-variable-agent-topology-fixture: goal-test-variable-agent-squad-curl-e2e ## Derive a variable-agent topology artifact from a fresh completed ad-hoc E2E
-	node scripts/goal-test-variable-agent-topology-from-e2e.mjs
-
-goal-test-topology-generalization-audit: ## Audit generic cross-project and variable Agent topology evidence
-	node scripts/goal-test-topology-generalization-audit.mjs
-
-goal-test-new-account-mcp-onboarding-e2e: goal-test-verify-int-env ## Verify a newly-created member can configure TAPD/Gongfeng profiles and use MCP in int Agent runtime
-	@mkdir -p "$(GOAL_TEST_TMPDIR)"
-	ACCEPTANCE_API_URL="$(GOAL_TEST_INT_API_URL)" \
-	GOAL_TEST_ONBOARDING_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
-	GOAL_TEST_ONBOARDING_OWNER_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
-	GOAL_TEST_ONBOARDING_OWNER_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
-	MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER="$(GOAL_TEST_REAL_AGENT_PROVIDER)" \
-	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
-	TMPDIR="$(GOAL_TEST_TMPDIR)" \
-	node scripts/goal-test-new-account-mcp-onboarding-e2e.mjs
-
-goal-test-prod-new-account-mcp-onboarding-e2e: goal-test-verify-env ## Verify a newly-created member can configure TAPD/Gongfeng profiles and use MCP in prod Agent runtime
-	@mkdir -p "$(GOAL_TEST_TMPDIR)"
-	ACCEPTANCE_API_URL="http://127.0.0.1:18760" \
-	GOAL_TEST_ONBOARDING_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
-	GOAL_TEST_ONBOARDING_OWNER_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
-	GOAL_TEST_ONBOARDING_OWNER_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
-	MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER="$(GOAL_TEST_REAL_AGENT_PROVIDER)" \
-	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
-	TMPDIR="$(GOAL_TEST_TMPDIR)" \
-	node scripts/goal-test-new-account-mcp-onboarding-e2e.mjs
-
-goal-test-acceptance-fixture-governance: ## Read-only audit that acceptance-created data is traceable and governed
-	node scripts/goal-test-acceptance-fixture-governance.mjs audit
-
-goal-test-tapd-gongfeng-sop-gap-audit: ## Audit TAPD/Gongfeng/SOP final artifact against original P0 matrix
-	-node scripts/goal-test-topology-generalization-audit.mjs
-	node scripts/goal-test-acceptance-fixture-governance.mjs audit
-	node scripts/generate-tapd-gongfeng-sop-final-acceptance.mjs
-	node scripts/tapd-gongfeng-sop-gap-audit.mjs
-
-goal-test-prod-seed-business-training: goal-test-verify-env ## Seed stable business training assets into goal-test prod through the public API
-	@mkdir -p "$(GOAL_TEST_TMPDIR)"
-	ACCEPTANCE_API_URL="http://127.0.0.1:18760" \
-	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
-	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
-	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
-	GOAL_TEST_ACCEPTANCE_DIR="$(CURDIR)/artifacts/acceptance" \
-	TMPDIR="$(GOAL_TEST_TMPDIR)" \
-	node scripts/seed-business-training-assets.mjs
-
-goal-test-prod-training-curl-e2e: goal-test-verify-env ## Run public API training/evaluation curl E2E against goal-test prod
-	@mkdir -p "$(GOAL_TEST_TMPDIR)"
-	ACCEPTANCE_API_URL="http://127.0.0.1:18760" \
-	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
-	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
-	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
-	GOAL_TEST_ACCEPTANCE_DIR="$(CURDIR)/artifacts/acceptance" \
-	TMPDIR="$(GOAL_TEST_TMPDIR)" \
-	node scripts/prompt-evaluation-curl-e2e.mjs
-
-goal-test-prod-user-center-squad-curl-e2e: goal-test-verify-env ## Run real user-center squad curl/API + daemon E2E against goal-test prod
-	@mkdir -p "$(GOAL_TEST_TMPDIR)"
-	ACCEPTANCE_API_URL="http://127.0.0.1:18760" \
-	ACCEPTANCE_WORKSPACE_SLUG="$(GOAL_TEST_INT_WORKSPACE)" \
-	ACCEPTANCE_DEMO_ACCOUNT="$(GOAL_TEST_INT_ACCOUNT)" \
-	ACCEPTANCE_DEMO_PASSWORD="$(GOAL_TEST_INT_PASSWORD)" \
-	ACCEPTANCE_SQUAD_TEMPLATE_KEY=user-center \
-	ACCEPTANCE_VERIFY_CROSS_PROJECT_CHILDREN=1 \
-	MULTICA_PROMPT_EVALUATION_AGENT_PROVIDER="$(GOAL_TEST_REAL_AGENT_PROVIDER)" \
-	MULTICA_PROMPT_EVALUATION_AGENT_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
-	MULTICA_PROMPT_EVALUATION_AGENT_FALLBACK_MODEL="$(GOAL_TEST_REAL_AGENT_FALLBACK_MODEL)" \
-	ACCEPTANCE_TASK_TIMEOUT_MS=2700000 \
-	ACCEPTANCE_MODEL_ATTEMPT_TIMEOUT_MS=7200000 \
-	TMPDIR="$(GOAL_TEST_TMPDIR)" \
-	node scripts/run-model-fallback-e2e.mjs scripts/codex-squad-curl-e2e.mjs
-
-goal-test-prod-release-audit: ## Generate full prod release evidence and fail if prod is not release-complete
-	node scripts/goal-test-prod-release.mjs audit
-
 goal-test-smoke: ## Fast goal-test gate: E2E preflight, environment verify, and current log window verify
 	$(MAKE) goal-test-e2e-preflight
 	node scripts/goal-test-environments.mjs verify int
@@ -510,26 +319,11 @@ goal-test-ui-acceptance: goal-test-smoke ## Run fixed browser/UI/performance/log
 	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-playwright.mjs e2e/navigation.spec.ts e2e/production-acceptance.spec.ts --project=chromium
 	node scripts/goal-test-environments.mjs verify-logs int
 
-goal-test-final-acceptance: goal-test-ui-acceptance ## Run full goal-test acceptance, including real curl/API + daemon squad SOP E2E
-	$(MAKE) goal-test-training-curl-e2e
-	$(MAKE) goal-test-variable-project-topology-fixture
-	$(MAKE) goal-test-variable-agent-topology-fixture
-	$(MAKE) goal-test-new-account-mcp-onboarding-e2e
-	$(MAKE) goal-test-acceptance-fixture-governance
-	$(MAKE) goal-test-squad-curl-e2e
-	$(MAKE) goal-test-password-strength-sop-e2e
-	$(MAKE) goal-test-quick-entry-cross-service
-	$(MAKE) goal-test-quick-entries-service-sandbox
-	-$(MAKE) goal-test-topology-generalization-audit
-	node scripts/generate-tapd-gongfeng-sop-final-acceptance.mjs
-	node scripts/tapd-gongfeng-sop-gap-audit.mjs
-	node scripts/goal-test-environments.mjs verify-logs int
-
 goal-test-ui-audit: goal-test-smoke ## Run real-browser goal-test integration UI, performance, console, Chinese semantics, and log-window audit
 	@mkdir -p "$(GOAL_TEST_TMPDIR)"
 	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-ui-audit.mjs
 
-goal-test-dashboard-click-audit: goal-test-smoke ## Run real-browser dashboard sidebar/training navigation click latency audit
+goal-test-dashboard-click-audit: goal-test-smoke ## Run real-browser dashboard sidebar/navigation click latency audit
 	@mkdir -p "$(GOAL_TEST_TMPDIR)"
 	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-dashboard-click-audit.mjs
 
@@ -542,10 +336,6 @@ goal-test-public-training-performance-audit: goal-test-smoke ## Run training/eva
 	GOAL_TEST_BROWSER_URL="$${GOAL_TEST_BROWSER_URL:-http://9.134.129.162:13682}" \
 	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-training-performance-audit.mjs
 
-goal-test-dataset-stream-audit: goal-test-smoke ## Create a large dataset through public API and audit Dataset Stream pagination/aggregation
-	@mkdir -p "$(GOAL_TEST_TMPDIR)"
-	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-dataset-stream-audit.mjs
-
 goal-test-prune-dev-data: goal-test-smoke ## Prune old goal-test integration data through public APIs; pass APPLY=1 to execute
 	@mkdir -p "$(GOAL_TEST_TMPDIR)"
 	TMPDIR="$(GOAL_TEST_TMPDIR)" node scripts/goal-test-prune-dev-data.mjs $${APPLY:+--apply} $${KEEP:+--keep=$${KEEP}}
@@ -555,13 +345,6 @@ goal-test-prune-prod-data: ## Prune old goal-test production-stable test data th
 	node scripts/goal-test-environments.mjs verify prod
 	TMPDIR="$(GOAL_TEST_TMPDIR)" GOAL_TEST_PRUNE_ENV=prod node scripts/goal-test-prune-dev-data.mjs $${APPLY:+--apply} $${KEEP:+--keep=$${KEEP}} $${CANONICAL_SOP_ONLY:+--canonical-sop-only}
 	node scripts/goal-test-environments.mjs verify-logs prod
-
-goal-test-session-retro: ## Generate fixed session retrospective artifacts; pass SESSION=/path/to/session.jsonl
-	@test -n "$(SESSION)" || (echo "Missing SESSION=/path/to/session.jsonl"; exit 2)
-	node scripts/goal-test-session-retro.mjs "$(SESSION)"
-
-goal-test-token-audit: ## Estimate goal-test token savings from session retro and command timings
-	node scripts/goal-test-token-audit.mjs
 
 db-up: ## Start the shared PostgreSQL container used by main and worktrees
 	@$(COMPOSE) up -d postgres

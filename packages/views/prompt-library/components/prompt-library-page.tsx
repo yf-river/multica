@@ -21,7 +21,6 @@ import {
   trainingWorkbenchTabFromView,
   trainingWorkbenchTitleFromView,
   trainingWorkbenchViewFromCanonicalRoute,
-  trainingWorkbenchViewFromRoute,
   type TrainingWorkbenchTab,
   type TrainingWorkbenchViewId,
 } from "@multica/core/training";
@@ -110,14 +109,12 @@ const RUN_STATUS_FILTERS: RunStatusFilter[] = ["全部", "已入队", "运行中
 const DEFAULT_CASE_LIBRARY_ASSET_NAME = "默认用例库";
 const DEFAULT_CASE_LIBRARY_DRAFT_KEY = "__default_case_library__";
 function trainingViewFromLocation(pathname: string, searchParams: URLSearchParams) {
-  const match = pathname.match(/\/(debug|evaluation|training)\/([^/?#]+)/);
+  const match = pathname.match(/\/(debug|evaluation)\/([^/?#]+)/);
   if (!match?.[1] || !match[2]) return searchParams.get("view");
-  const section = match[1];
+  const section = match[1] === "debug" || match[1] === "evaluation" ? match[1] : null;
+  if (!section) return searchParams.get("view");
   const route = decodeURIComponent(match[2]);
-  if (section === "debug" || section === "evaluation") {
-    return trainingWorkbenchViewFromCanonicalRoute(section, route);
-  }
-  return trainingWorkbenchViewFromRoute(route);
+  return trainingWorkbenchViewFromCanonicalRoute(section, route);
 }
 
 function collectIssueExecutionTaskIds(tree: IssueExecutionTreeResponse | undefined): string[] {

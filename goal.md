@@ -36,7 +36,7 @@
 
 已做修正：
 
-- `run-sop-customer-comment-e2e.mjs` 新增 `ACCEPTANCE_CHILD_WAIT_MODE=handoff` 默认模式。
+- 历史 customer-comment 专项验收脚本已下线，后续只保留通用部署、smoke 和 UI 验收入口。
 - child issue handoff 评论明确禁止展开完整 01-05、禁止真实落改，只输出交付闭包摘要。
 - child 产生一轮有效 task message/trace/usage 后，E2E 会取消后续扩散任务并由父任务统一关闭。
 - customer-comment E2E 等待窗口提升到 2 小时，降低误判。

@@ -431,7 +431,7 @@ async function prewarmDevWebRoutes(item) {
     `/${slug}/runtimes`,
     `/${slug}/settings?tab=repositories`,
     `/${slug}/settings?tab=tokens`,
-    `/${slug}/training/datasets`,
+    `/${slug}/evaluation/datasets`,
   ];
   const fullRoutes = [
     "/",
@@ -447,10 +447,9 @@ async function prewarmDevWebRoutes(item) {
     `/${slug}/settings?tab=members`,
     `/${slug}/settings?tab=profile`,
     `/${slug}/settings?tab=labs`,
-    `/${slug}/training`,
-    `/${slug}/training/evaluation-runs`,
-    `/${slug}/training/prompts`,
-    `/${slug}/training/test-suites`,
+    `/${slug}/debug/prompts`,
+    `/${slug}/evaluation/runs`,
+    `/${slug}/evaluation/test-suites`,
   ];
   const routes = scope === "full" ? uniqueRoutes([...coreRoutes, ...fullRoutes]) : coreRoutes;
   const cookie = `multica_logged_in=1; last_workspace_slug=${slug}`;

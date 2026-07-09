@@ -7,5 +7,12 @@ export const TRAINING_ROUTES = [
 export const DEFAULT_TRAINING_ROUTE = TRAINING_ROUTES[0];
 
 export function trainingRoutePath(workspaceSlug: string, path: string) {
-  return `/${workspaceSlug}/training/${path}`;
+  return `/${workspaceSlug}/${trainingRouteURLPath(path)}`;
+}
+
+export function trainingRouteURLPath(path: string) {
+  if (path === "prompts") return "debug/prompts";
+  if (path === "agent-playground") return "debug/agent-playground";
+  if (path === "evaluation-runs") return "evaluation/runs";
+  return `evaluation/${path}`;
 }

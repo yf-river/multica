@@ -33,11 +33,11 @@ const stamp = generatedAt.replace(/[:.]/g, "-");
 mkdirSync(artifactRoot, { recursive: true });
 
 const routes = [
-  { id: "prompts", label: "提示词库", path: `/${workspaceSlug}/training/prompts`, expect: "提示词库", nav: true },
-  { id: "datasets", label: "数据集", path: `/${workspaceSlug}/training/datasets`, expect: "数据集", nav: true },
-  { id: "test-suites", label: "测试套件", path: `/${workspaceSlug}/training/test-suites`, expect: "测试套件", nav: true },
-  { id: "test-suites-optimize", label: "优化运行模式", path: `/${workspaceSlug}/training/test-suites?mode=optimize`, expect: "测试套件", nav: false },
-  { id: "evaluation-runs", label: "评测记录", path: `/${workspaceSlug}/training/evaluation-runs`, expect: "评测记录", nav: false },
+  { id: "prompts", label: "提示词库", path: `/${workspaceSlug}/debug/prompts`, expect: "提示词库", nav: true },
+  { id: "datasets", label: "数据集", path: `/${workspaceSlug}/evaluation/datasets`, expect: "数据集", nav: true },
+  { id: "test-suites", label: "测试套件", path: `/${workspaceSlug}/evaluation/test-suites`, expect: "测试套件", nav: true },
+  { id: "test-suites-optimize", label: "优化运行模式", path: `/${workspaceSlug}/evaluation/test-suites?mode=optimize`, expect: "测试套件", nav: false },
+  { id: "evaluation-runs", label: "评测记录", path: `/${workspaceSlug}/evaluation/runs`, expect: "评测记录", nav: false },
 ];
 
 const token = await login();
