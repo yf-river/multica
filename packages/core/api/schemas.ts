@@ -13,3 +13,4 @@ export * from "./schemas-automation";
 export * from "./schemas-auth";
 export * from "./schemas-workspaces";
 export * from "./schemas-inbox";
+export * from "./schemas-chat";

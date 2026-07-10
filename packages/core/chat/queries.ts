@@ -13,7 +13,6 @@ export const chatKeys = {
   /** Full sessions list (active + archived); the dropdown splits locally. */
   sessions: (wsId: string) => [...chatKeys.all(wsId), "sessions"] as const,
   session: (wsId: string, id: string) => [...chatKeys.all(wsId), "session", id] as const,
-  messages: (sessionId: string) => ["chat", "messages", sessionId] as const,
   messagesPage: (sessionId: string) => ["chat", "messages-page", sessionId] as const,
   pendingTask: (sessionId: string) => ["chat", "pending-task", sessionId] as const,
   /** Aggregate of in-flight chat tasks for the current user — FAB reads this. */
@@ -41,15 +40,6 @@ export function chatSessionOptions(wsId: string, id: string) {
     queryKey: chatKeys.session(wsId, id),
     queryFn: () => api.getChatSession(id),
     enabled: !!id,
-    staleTime: Infinity,
-  });
-}
-
-export function chatMessagesOptions(sessionId: string) {
-  return queryOptions({
-    queryKey: chatKeys.messages(sessionId),
-    queryFn: () => api.listChatMessages(sessionId),
-    enabled: !!sessionId,
     staleTime: Infinity,
   });
 }

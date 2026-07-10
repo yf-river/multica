@@ -92,7 +92,6 @@ export function invalidateChatMessageQueries(
   qc: QueryClient,
   sessionId: string,
 ) {
-  qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
   qc.invalidateQueries({ queryKey: chatKeys.messagesPage(sessionId) });
 }
 
@@ -114,15 +113,6 @@ export function applyChatDoneToCache(
       created_at: payload.created_at ?? new Date().toISOString(),
       elapsed_ms: payload.elapsed_ms ?? null,
     };
-    qc.setQueryData<ChatMessage[] | undefined>(
-      chatKeys.messages(sessionId),
-      (old) => {
-        if (!old) return old; // first fetch will pick it up
-        // Idempotent against reconnect replay.
-        if (old.some((m) => m.id === messageId)) return old;
-        return [...old, assistant];
-      },
-    );
     qc.setQueryData<InfiniteData<ChatMessagesPage> | undefined>(
       chatKeys.messagesPage(sessionId),
       (old) => patchLatestChatMessagePage(old, assistant),
@@ -1021,7 +1011,7 @@ export function useRealtimeSync(
           old?.filter((s) => s.id !== payload.chat_session_id);
         qc.setQueryData(chatKeys.sessions(id), drop);
       }
-      qc.removeQueries({ queryKey: chatKeys.messages(payload.chat_session_id) });
+      qc.removeQueries({ queryKey: chatKeys.messagesPage(payload.chat_session_id) });
       qc.removeQueries({ queryKey: chatKeys.pendingTask(payload.chat_session_id) });
       invalidatePendingAggregate();
 

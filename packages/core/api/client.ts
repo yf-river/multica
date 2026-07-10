@@ -75,7 +75,6 @@ import type {
   TaskMessagePayload,
   Attachment,
   ChatSession,
-  ChatMessage,
   ChatMessagesPage,
   ChatPendingTask,
   PendingChatTasksResponse,
@@ -270,6 +269,11 @@ import {
   EMPTY_MEMBER_WITH_USER,
   EMPTY_INBOX_ITEM,
   EMPTY_NOTIFICATION_PREFERENCE_RESPONSE,
+  EMPTY_CHAT_SESSION,
+  EMPTY_CHAT_MESSAGES_PAGE,
+  EMPTY_SEND_CHAT_MESSAGE_RESPONSE,
+  EMPTY_CHAT_PENDING_TASK,
+  EMPTY_PENDING_CHAT_TASKS_RESPONSE,
   EMPTY_LIST_WEBHOOK_DELIVERIES_RESPONSE,
   EMPTY_PROMPT_LIBRARY_ITEM,
   EMPTY_PROMPT_LIBRARY_LIST_RESPONSE,
@@ -404,6 +408,12 @@ import {
   InboxItemSchema,
   InboxCountResponseSchema,
   NotificationPreferenceResponseSchema,
+  ChatSessionListSchema,
+  ChatSessionSchema,
+  ChatMessagesPageSchema,
+  SendChatMessageResponseSchema,
+  ChatPendingTaskSchema,
+  PendingChatTasksResponseSchema,
   WebhookDeliveryResponseSchema,
   EMPTY_CANCEL_TASK_RESPONSE,
 } from "./schemas";
@@ -1826,18 +1836,21 @@ export class ApiClient {
   // Chat Sessions
   async listChatSessions(params?: { status?: string }): Promise<ChatSession[]> {
     const query = params?.status ? `?status=${params.status}` : "";
-    return this.fetch(`/api/chat/sessions${query}`);
+    const raw = await this.fetch<unknown>(`/api/chat/sessions${query}`);
+    return parseWithFallback(raw, ChatSessionListSchema, [], { endpoint: "GET /api/chat/sessions" });
   }
 
   async getChatSession(id: string): Promise<ChatSession> {
-    return this.fetch(`/api/chat/sessions/${id}`);
+    const raw = await this.fetch<unknown>(`/api/chat/sessions/${id}`);
+    return parseWithFallback(raw, ChatSessionSchema, EMPTY_CHAT_SESSION, { endpoint: "GET /api/chat/sessions/:id" });
   }
 
   async createChatSession(data: { agent_id: string; title?: string }): Promise<ChatSession> {
-    return this.fetch("/api/chat/sessions", {
+    const raw = await this.fetch<unknown>("/api/chat/sessions", {
       method: "POST",
       body: JSON.stringify(data),
     });
+    return parseWithFallback(raw, ChatSessionSchema, EMPTY_CHAT_SESSION, { endpoint: "POST /api/chat/sessions" });
   }
 
   async deleteChatSession(id: string): Promise<void> {
@@ -1845,14 +1858,11 @@ export class ApiClient {
   }
 
   async updateChatSession(id: string, data: { title: string }): Promise<ChatSession> {
-    return this.fetch(`/api/chat/sessions/${id}`, {
+    const raw = await this.fetch<unknown>(`/api/chat/sessions/${id}`, {
       method: "PATCH",
       body: JSON.stringify(data),
     });
-  }
-
-  async listChatMessages(sessionId: string): Promise<ChatMessage[]> {
-    return this.fetch(`/api/chat/sessions/${sessionId}/messages`);
+    return parseWithFallback(raw, ChatSessionSchema, EMPTY_CHAT_SESSION, { endpoint: "PATCH /api/chat/sessions/:id" });
   }
 
   async listChatMessagesPage(
@@ -1865,25 +1875,12 @@ export class ApiClient {
       query.set("before_created_at", params.before.created_at);
       query.set("before_id", params.before.id);
     }
-    try {
-      return await this.fetch(
-        `/api/chat/sessions/${sessionId}/messages/page?${query.toString()}`,
-      );
-    } catch (err) {
-      // Deployment-order compatibility: a backend deployed before this endpoint
-      // existed returns 404 for the unknown route. Fall back to the legacy
-      // full-list endpoint so chat never white-screens regardless of whether
-      // the server or the client deploys first. Only the initial (cursorless)
-      // page falls back — the legacy endpoint returns every message at once, so
-      // the fallback page reports has_more: false and there is no follow-up
-      // request to translate. A 404 on a cursor request is an unexpected state
-      // and propagates instead of duplicating the whole list.
-      if (err instanceof ApiError && err.status === 404 && !params.before) {
-        const messages = await this.listChatMessages(sessionId);
-        return { messages, limit, has_more: false, next_cursor: null };
-      }
-      throw err;
-    }
+    const raw = await this.fetch<unknown>(
+      `/api/chat/sessions/${sessionId}/messages/page?${query.toString()}`,
+    );
+    return parseWithFallback(raw, ChatMessagesPageSchema, { ...EMPTY_CHAT_MESSAGES_PAGE, limit }, {
+      endpoint: "GET /api/chat/sessions/:id/messages/page",
+    });
   }
 
   async sendChatMessage(
@@ -1895,18 +1892,23 @@ export class ApiClient {
     if (attachmentIds && attachmentIds.length > 0) {
       body.attachment_ids = attachmentIds;
     }
-    return this.fetch(`/api/chat/sessions/${sessionId}/messages`, {
+    const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/messages`, {
       method: "POST",
       body: JSON.stringify(body),
+    });
+    return parseWithFallback(raw, SendChatMessageResponseSchema, EMPTY_SEND_CHAT_MESSAGE_RESPONSE, {
+      endpoint: "POST /api/chat/sessions/:id/messages",
     });
   }
 
   async getPendingChatTask(sessionId: string): Promise<ChatPendingTask> {
-    return this.fetch(`/api/chat/sessions/${sessionId}/pending-task`);
+    const raw = await this.fetch<unknown>(`/api/chat/sessions/${sessionId}/pending-task`);
+    return parseWithFallback(raw, ChatPendingTaskSchema, EMPTY_CHAT_PENDING_TASK, { endpoint: "GET /api/chat/sessions/:id/pending-task" });
   }
 
   async listPendingChatTasks(): Promise<PendingChatTasksResponse> {
-    return this.fetch(`/api/chat/pending-tasks`);
+    const raw = await this.fetch<unknown>(`/api/chat/pending-tasks`);
+    return parseWithFallback(raw, PendingChatTasksResponseSchema, EMPTY_PENDING_CHAT_TASKS_RESPONSE, { endpoint: "GET /api/chat/pending-tasks" });
   }
 
   async markChatSessionRead(sessionId: string): Promise<void> {

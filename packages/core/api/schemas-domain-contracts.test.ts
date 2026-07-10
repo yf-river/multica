@@ -43,6 +43,7 @@ import {
 import { RuntimeUsageListSchema } from "./schemas-usage";
 import { EMPTY_WORKSPACE, WorkspaceSchema } from "./schemas-workspaces";
 import { EMPTY_INBOX_ITEM, InboxItemSchema } from "./schemas-inbox";
+import { EMPTY_CHAT_MESSAGES_PAGE, ChatMessagesPageSchema } from "./schemas-chat";
 
 describe("domain response schema fallbacks", () => {
   it("keeps app configuration usable when the response is not an object", () => {
@@ -167,5 +168,14 @@ describe("domain response schema fallbacks", () => {
       EMPTY_INBOX_ITEM,
       { endpoint: "GET /api/inbox" },
     )).toBe(EMPTY_INBOX_ITEM);
+  });
+
+  it("rejects a malformed current chat page", () => {
+    expect(parseWithFallback(
+      { messages: "invalid" },
+      ChatMessagesPageSchema,
+      EMPTY_CHAT_MESSAGES_PAGE,
+      { endpoint: "GET /api/chat/sessions/:id/messages/page" },
+    )).toBe(EMPTY_CHAT_MESSAGES_PAGE);
   });
 });

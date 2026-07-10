@@ -127,10 +127,6 @@ function removeChatMessageFromCaches(
   sessionId: string,
   messageId: string,
 ) {
-  qc.setQueryData<ChatMessage[]>(
-    chatKeys.messages(sessionId),
-    (old) => old?.filter((m) => m.id !== messageId) ?? old,
-  );
   removeChatMessageFromPageCache(qc, sessionId, messageId);
 }
 
@@ -151,10 +147,6 @@ function replaceOptimisticChatMessageId(
     );
   };
 
-  qc.setQueryData<ChatMessage[]>(
-    chatKeys.messages(sessionId),
-    replace,
-  );
   qc.setQueryData<InfiniteData<ChatMessagesPage> | undefined>(
     chatKeys.messagesPage(sessionId),
     (old) => {
@@ -370,11 +362,9 @@ export function ChatWindow() {
   // in. A follow-up task may back-fill the real title from the first user
   // message — until then this keeps the session list scannable across locales.
   //
-  // NOTE: ensureSession does NOT flip `activeSessionId` itself. Callers must
-  // seed `chatKeys.messages(sessionId)` in the Query cache BEFORE calling
-  // `setActiveSession(sessionId)`, otherwise the first useQuery subscription
-  // for the new key reports `isLoading: true` and renders ChatMessageSkeleton
-  // for one frame (the "new-chat first-message" white flash).
+  // NOTE: ensureSession does NOT flip `activeSessionId` itself. Callers seed
+  // the paged query before switching sessions so the first infinite-query
+  // subscription does not flash a loading skeleton.
   const sessionPromiseRef = useRef<Promise<string | null> | null>(null);
   const ensureSession = useCallback(
     async (titleSeed: string): Promise<string | null> => {
@@ -438,7 +428,6 @@ export function ChatWindow() {
             });
           }
         }
-        qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
         qc.invalidateQueries({ queryKey: chatKeys.messagesPage(sessionId) });
         apiLogger.info("cancelTask.success", {
           taskId,
@@ -452,7 +441,6 @@ export function ChatWindow() {
           sessionId,
           err,
         });
-        qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
         qc.invalidateQueries({ queryKey: chatKeys.messagesPage(sessionId) });
         return null;
       }
@@ -519,10 +507,6 @@ export function ChatWindow() {
       // the very first read after activeSessionId flips hits data
       // synchronously and ChatMessageList mounts directly.
       appendChatMessageToLatestPageCache(qc, sessionId, optimistic);
-      qc.setQueryData<ChatMessage[]>(
-        chatKeys.messages(sessionId),
-        (old) => (old ? [...old, optimistic] : [optimistic]),
-      );
       // Seed the pending-task with a temporary id so the StatusPill mounts
       // and starts ticking the instant the user clicks send. Real task_id
       // and server-authoritative created_at land below; until then the pill
@@ -609,7 +593,6 @@ export function ChatWindow() {
           toast.error(t(($) => $.input.attachment_bind_failed_toast));
         }
       }
-      qc.invalidateQueries({ queryKey: chatKeys.messages(sessionId) });
       qc.invalidateQueries({ queryKey: chatKeys.messagesPage(sessionId) });
       return true;
     },
@@ -1167,7 +1150,6 @@ function SessionDropdown({
       };
     });
     queryClient.setQueryData(chatKeys.pendingTask(session.id), {});
-    queryClient.invalidateQueries({ queryKey: chatKeys.messages(session.id) });
     queryClient.invalidateQueries({ queryKey: chatKeys.messagesPage(session.id) });
 
     api.cancelTaskById(task.task_id).then(

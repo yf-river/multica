@@ -25,7 +25,7 @@ import {
 
 const sessionId = "session-1";
 const taskId = "task-1";
-const messagesKey = chatKeys.messages(sessionId);
+const messagesKey = chatKeys.messagesPage(sessionId);
 const pendingKey = chatKeys.pendingTask(sessionId);
 
 function createQueryClient() {
@@ -47,6 +47,13 @@ function userMessage(): ChatMessage {
   };
 }
 
+function messagePages(messages: ChatMessage[]): InfiniteData<ChatMessagesPage> {
+  return {
+    pages: [{ messages, limit: 50, has_more: false, next_cursor: null }],
+    pageParams: [null],
+  };
+}
+
 function donePayload(overrides: Partial<ChatDonePayload> = {}): ChatDonePayload {
   return {
     chat_session_id: sessionId,
@@ -62,7 +69,7 @@ function donePayload(overrides: Partial<ChatDonePayload> = {}): ChatDonePayload 
 describe("applyChatDoneToCache", () => {
   it("writes the assistant message before clearing pending task", () => {
     const qc = createQueryClient();
-    qc.setQueryData<ChatMessage[]>(messagesKey, [userMessage()]);
+    qc.setQueryData(messagesKey, messagePages([userMessage()]));
     qc.setQueryData<ChatPendingTask>(pendingKey, {
       task_id: taskId,
       status: "running",
@@ -73,9 +80,9 @@ describe("applyChatDoneToCache", () => {
     applyChatDoneToCache(qc, donePayload());
 
     expect(setQueryData.mock.calls[0]?.[0]).toEqual(messagesKey);
-    expect(setQueryData.mock.calls[2]?.[0]).toEqual(pendingKey);
+    expect(setQueryData.mock.calls[1]?.[0]).toEqual(pendingKey);
     expect(qc.getQueryData<ChatPendingTask>(pendingKey)).toEqual({});
-    expect(qc.getQueryData<ChatMessage[]>(messagesKey)).toEqual([
+    expect(qc.getQueryData<InfiniteData<ChatMessagesPage>>(messagesKey)?.pages[0]?.messages).toEqual([
       userMessage(),
       {
         id: "msg-assistant",
@@ -100,7 +107,7 @@ describe("applyChatDoneToCache", () => {
       created_at: "2026-05-13T05:00:02Z",
       elapsed_ms: 1234,
     };
-    qc.setQueryData<ChatMessage[]>(messagesKey, [userMessage(), assistant]);
+    qc.setQueryData(messagesKey, messagePages([userMessage(), assistant]));
     qc.setQueryData<ChatPendingTask>(pendingKey, {
       task_id: taskId,
       status: "running",
@@ -108,7 +115,7 @@ describe("applyChatDoneToCache", () => {
 
     applyChatDoneToCache(qc, donePayload());
 
-    expect(qc.getQueryData<ChatMessage[]>(messagesKey)).toEqual([
+    expect(qc.getQueryData<InfiniteData<ChatMessagesPage>>(messagesKey)?.pages[0]?.messages).toEqual([
       userMessage(),
       assistant,
     ]);
@@ -117,7 +124,7 @@ describe("applyChatDoneToCache", () => {
 
   it("falls back to invalidation-only when older servers omit message fields", () => {
     const qc = createQueryClient();
-    qc.setQueryData<ChatMessage[]>(messagesKey, [userMessage()]);
+    qc.setQueryData(messagesKey, messagePages([userMessage()]));
     qc.setQueryData<ChatPendingTask>(pendingKey, {
       task_id: taskId,
       status: "running",
@@ -128,7 +135,7 @@ describe("applyChatDoneToCache", () => {
       donePayload({ message_id: undefined, content: undefined }),
     );
 
-    expect(qc.getQueryData<ChatMessage[]>(messagesKey)).toEqual([
+    expect(qc.getQueryData<InfiniteData<ChatMessagesPage>>(messagesKey)?.pages[0]?.messages).toEqual([
       userMessage(),
     ]);
     expect(qc.getQueryData<ChatPendingTask>(pendingKey)).toEqual({});
@@ -136,13 +143,12 @@ describe("applyChatDoneToCache", () => {
 });
 
 describe("invalidateChatMessageQueries", () => {
-  it("invalidates both legacy and paged chat message caches", () => {
+  it("invalidates the current paged chat message cache", () => {
     const qc = createQueryClient();
     const invalidate = vi.spyOn(qc, "invalidateQueries");
 
     invalidateChatMessageQueries(qc, sessionId);
 
-    expect(invalidate).toHaveBeenCalledWith({ queryKey: chatKeys.messages(sessionId) });
     expect(invalidate).toHaveBeenCalledWith({ queryKey: chatKeys.messagesPage(sessionId) });
   });
 });
