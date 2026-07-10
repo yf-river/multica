@@ -946,7 +946,9 @@ export function PromptLibraryPage({
                     >
 	                      <div className="flex min-w-0 items-center gap-2">
 	                        <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.name}</span>
-	                        <Badge variant="outline" className="shrink-0 text-[10px]">v{item.version}</Badge>
+	                        <Badge variant="outline" className="shrink-0 text-[10px]">
+                            {t(($) => $.page.version_badge, { version: item.version })}
+                          </Badge>
 	                      </div>
                       <div className="flex min-w-0 items-center gap-2 text-xs text-muted-foreground">
                         <span className="truncate">{item.description || t(($) => $.page.no_description)}</span>
@@ -1170,6 +1172,7 @@ function WorkbenchPanel({
   onGenerateCandidate,
   generatingCandidateRunId,
 }: WorkbenchPanelProps) {
+  const { t } = useT("prompt-library");
   const tabAssetType = tabToAssetType(activeTab);
   const tabAssetLabel = tabAssetType ? assetTypeLabel(tabAssetType) : activeTab;
   const tabAssets = tabAssetType ? assets.filter((asset) => asset.asset_type === tabAssetType) : assets;
@@ -1237,12 +1240,12 @@ function WorkbenchPanel({
                 disabled={saving}
               >
                 {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-                新建 Skill 场景
+                {t(($) => $.workbench.new_skill_scenario)}
               </Button>
             )}
             <Button size="sm" onClick={() => onCreateAsset(tabAssetType)} disabled={saving}>
               {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-              新建{tabAssetLabel}
+              {t(($) => $.workbench.new_asset, { label: tabAssetLabel })}
             </Button>
             {activeTab === "测试套件" && (
               <Button
@@ -1253,7 +1256,7 @@ function WorkbenchPanel({
                 disabled={saving}
               >
                 {saving ? <Loader2 className="size-3.5 animate-spin" /> : <Plus className="size-3.5" />}
-                新建写作模型评测
+                {t(($) => $.workbench.new_writing_benchmark)}
               </Button>
             )}
           </div>
@@ -1375,6 +1378,7 @@ function TrainingAssetPanel({
   onDownloadAssetEvidencePackage,
   exportingAssetEvidencePackageAssetId,
 }: TrainingAssetPanelProps) {
+  const { t } = useT("prompt-library");
   const caseSummaries = useMemo(() => buildCaseSummaries(cases), [cases]);
   const casesByAsset = useMemo(() => buildCasesByAsset(cases), [cases]);
   const runCountByAsset = useMemo(() => {
@@ -1386,7 +1390,11 @@ function TrainingAssetPanel({
   }, [runs]);
 
   return (
-    <section className="grid gap-3" aria-label={`${title}内容`} data-testid={`training-route-panel-${route}`}>
+    <section
+      className="grid gap-3"
+      aria-label={t(($) => $.workbench.panel_aria, { title })}
+      data-testid={`training-route-panel-${route}`}
+    >
       {loading ? (
         <div className="h-20 rounded-md bg-muted/60" />
       ) : assets.length === 0 ? (
@@ -1404,13 +1412,18 @@ function TrainingAssetPanel({
                     {asset.asset_type} · {asset.status}
                   </Badge>
                 </div>
-                <div className="mt-1 truncate text-xs text-muted-foreground">{asset.description || "无描述"}</div>
+                <div className="mt-1 truncate text-xs text-muted-foreground">
+                  {asset.description || t(($) => $.workbench.no_description)}
+                </div>
                 <div className="mt-1 text-[11px] text-muted-foreground">
-                  更新于 {asset.updated_at} · {summarizeAssetPayload(asset, caseSummaries.get(asset.id))}
+                  {t(($) => $.workbench.updated, {
+                    time: asset.updated_at,
+                    summary: summarizeAssetPayload(asset, caseSummaries.get(asset.id)),
+                  })}
                 </div>
                 {summarizeSkillScenarioTarget(asset) && (
                   <div className="mt-1 text-[11px] text-muted-foreground" data-testid={`skill-scenario-target-${asset.id}`}>
-                    Skill 场景：{summarizeSkillScenarioTarget(asset)}
+                    {t(($) => $.workbench.skill_scenario, { value: summarizeSkillScenarioTarget(asset) })}
                   </div>
                 )}
                 {summarizeAgentRun(asset) && (
@@ -1439,7 +1452,7 @@ function TrainingAssetPanel({
                     disabled={saving || creatingAssetEvidenceSnapshotsAssetId === asset.id}
                   >
                     {creatingAssetEvidenceSnapshotsAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Archive className="size-3.5" />}
-                    归档运行证据
+                    {t(($) => $.workbench.archive_evidence)}
                   </Button>
                 )}
                 {(runCountByAsset.get(asset.id) ?? 0) > 0 && (
@@ -1451,7 +1464,7 @@ function TrainingAssetPanel({
                     disabled={saving || exportingAssetEvidencePackageAssetId === asset.id}
                   >
                     {exportingAssetEvidencePackageAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
-                    下载归档包
+                    {t(($) => $.workbench.download_archive)}
                   </Button>
                 )}
                 {asset.asset_type === "数据集" && (
@@ -1464,7 +1477,7 @@ function TrainingAssetPanel({
                       disabled={saving || creatingDatasetVersionAssetId === asset.id}
                     >
                       {creatingDatasetVersionAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Save className="size-3.5" />}
-                      锁定版本
+                      {t(($) => $.workbench.lock_version)}
                     </Button>
                     <Button
                       size="sm"
@@ -1474,16 +1487,16 @@ function TrainingAssetPanel({
                       disabled={saving || importingTraceDatasetAssetId === asset.id}
                     >
                       {importingTraceDatasetAssetId === asset.id ? <Loader2 className="size-3.5 animate-spin" /> : <Download className="size-3.5" />}
-                      从 trace 导入用例
+                      {t(($) => $.workbench.import_trace_cases)}
                     </Button>
                   </>
                 )}
                 <Button size="sm" variant="secondary" onClick={() => onToggleAssetStatus(asset)} disabled={saving}>
-                  {asset.status === "启用" ? "归档" : "启用"}
+                  {asset.status === "启用" ? t(($) => $.workbench.archive) : t(($) => $.workbench.enable)}
                 </Button>
                 <Button size="sm" variant="destructive" onClick={() => onDeleteAsset(asset)} disabled={saving}>
                   <Trash2 className="size-3.5" />
-                  删除
+                  {t(($) => $.workbench.delete)}
                 </Button>
               </div>
               {canManageStructuredCases(asset) && (
@@ -1612,21 +1625,26 @@ function TrainingFocusedIssueCallout({
   issueId: string;
   taskCount: number;
 }) {
+  const { t } = useT("prompt-library");
   const actionLabel = activeTab === "用例库"
-    ? "点击用例库里的“从 trace 导入用例”会优先使用该 issue 的任务 trace。"
-    : "当前页面带有 issue 复盘上下文，可回到 issue 查看完整链路。";
+    ? t(($) => $.workbench.focused_issue.dataset_action)
+    : t(($) => $.workbench.focused_issue.context_action);
   return (
     <section className="rounded-md border border-info/30 bg-info/5 px-3 py-2 text-xs" data-testid="training-focused-issue-callout">
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
         <div className="min-w-0">
-          <div className="font-medium text-foreground">来自 issue {issueId} 的运行复盘</div>
+          <div className="font-medium text-foreground">
+            {t(($) => $.workbench.focused_issue.title, { id: issueId })}
+          </div>
           <div className="mt-0.5 text-muted-foreground">
-            {taskCount > 0 ? `已识别 ${taskCount} 个任务 trace。` : "正在读取该 issue 的任务 trace。"}
+            {taskCount > 0
+              ? t(($) => $.workbench.focused_issue.task_count, { count: taskCount })
+              : t(($) => $.workbench.focused_issue.loading)}
             {" "}{actionLabel}
           </div>
         </div>
         <a className="shrink-0 rounded border bg-background px-2 py-1 text-[11px] hover:bg-accent" href={`../issues/${encodeURIComponent(issueId)}`}>
-          返回 issue
+          {t(($) => $.workbench.focused_issue.back)}
         </a>
       </div>
     </section>
@@ -1641,11 +1659,12 @@ function TrainingRouteIntroCard({
   evidence,
   action,
 }: TrainingRouteIntro & { action?: ReactNode }) {
+  const { t } = useT("prompt-library");
   return (
     <section className="rounded-md border border-border/70 bg-muted/15 px-4 py-3" data-testid={`training-route-intro-${route}`}>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="min-w-0">
-          <div className="text-xs font-medium text-muted-foreground">评估子模块</div>
+          <div className="text-xs font-medium text-muted-foreground">{t(($) => $.workbench.module_label)}</div>
           <h3 className="mt-1 text-base font-semibold">{title}</h3>
           <p className="mt-1 max-w-3xl text-xs leading-5 text-muted-foreground">{subtitle}</p>
           <p className="mt-2 max-w-3xl text-xs leading-5 text-muted-foreground">{evidence}</p>

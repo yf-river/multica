@@ -9,6 +9,7 @@
     "empty": "暂无提示词",
     "no_description": "无描述",
     "new_prompt": "新建提示词",
+    "version_badge": "v{{version}}",
     "version_context": "当前查看 {{current}} · 最新 v{{latest}}",
     "unsaved": "未保存",
     "delete": "删除",
@@ -61,6 +62,31 @@
       "save_version_first": "请先保存提示词版本",
       "agent_required": "请选择 Agent",
       "variables_required": "请填写变量：{{names}}"
+    }
+  },
+  "workbench": {
+    "new_skill_scenario": "新建 Skill 场景",
+    "new_asset": "新建{{label}}",
+    "new_writing_benchmark": "新建写作模型评测",
+    "panel_aria": "{{title}}内容",
+    "no_description": "无描述",
+    "updated": "更新于 {{time}} · {{summary}}",
+    "skill_scenario": "Skill 场景：{{value}}",
+    "archive_evidence": "归档运行证据",
+    "download_archive": "下载归档包",
+    "lock_version": "锁定版本",
+    "import_trace_cases": "从 trace 导入用例",
+    "archive": "归档",
+    "enable": "启用",
+    "delete": "删除",
+    "module_label": "评估子模块",
+    "focused_issue": {
+      "title": "来自 issue {{id}} 的运行复盘",
+      "task_count": "已识别 {{count}} 个任务 trace。",
+      "loading": "正在读取该 issue 的任务 trace。",
+      "dataset_action": "点击用例库里的“从 trace 导入用例”会优先使用该 issue 的任务 trace。",
+      "context_action": "当前页面带有 issue 复盘上下文，可回到 issue 查看完整链路。",
+      "back": "返回 issue"
     }
   },
   "version_history": {
