@@ -172,8 +172,22 @@ func newRequest(method, path string, body any) *http.Request {
 }
 
 func withURLParam(req *http.Request, key, value string) *http.Request {
+	return withURLParams(req, key, value)
+}
+
+// withURLParams merges chi URL parameters into a direct handler request.
+// Package-wide handler tests use it to model router state without depending
+// on a helper hidden in one domain-specific test file.
+func withURLParams(req *http.Request, params ...string) *http.Request {
 	rctx := chi.NewRouteContext()
-	rctx.URLParams.Add(key, value)
+	if existing, ok := req.Context().Value(chi.RouteCtxKey).(*chi.Context); ok && existing != nil {
+		for i, key := range existing.URLParams.Keys {
+			rctx.URLParams.Add(key, existing.URLParams.Values[i])
+		}
+	}
+	for i := 0; i+1 < len(params); i += 2 {
+		rctx.URLParams.Add(params[i], params[i+1])
+	}
 	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
 }
 
@@ -239,6 +253,21 @@ func createHandlerTestAgent(t *testing.T, name string, mcpConfig []byte) string 
 		testPool.Exec(context.Background(), `DELETE FROM agent WHERE id = $1`, agentID)
 	})
 
+	return agentID
+}
+
+func createHandlerTestSOPAgent(t *testing.T, name, roleKey string) string {
+	t.Helper()
+	agentID := createHandlerTestAgent(t, name, nil)
+	if _, err := testPool.Exec(context.Background(), `
+		UPDATE agent
+		SET runtime_config = jsonb_build_object(
+			'internal_squad', jsonb_build_object('role_key', $2::text)
+		)
+		WHERE id = $1
+	`, agentID, roleKey); err != nil {
+		t.Fatalf("set handler test SOP agent role: %v", err)
+	}
 	return agentID
 }
 

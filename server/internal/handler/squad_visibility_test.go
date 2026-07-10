@@ -15,16 +15,7 @@ func TestSquadPersonalVisibility_IsCreatorOnlyForPlainMembers(t *testing.T) {
 	ctx := context.Background()
 
 	_, _, otherMemberID := personalAgentTestFixture(t)
-
-	var leaderID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT id FROM agent
-		WHERE workspace_id = $1 AND scope = 'workspace' AND archived_at IS NULL
-		ORDER BY created_at ASC
-		LIMIT 1
-	`, testWorkspaceID).Scan(&leaderID); err != nil {
-		t.Fatalf("load workspace leader: %v", err)
-	}
+	leaderID := createHandlerTestAgent(t, "Personal Squad Visibility Leader", nil)
 
 	var squadID string
 	if err := testPool.QueryRow(ctx, `
@@ -39,7 +30,7 @@ func TestSquadPersonalVisibility_IsCreatorOnlyForPlainMembers(t *testing.T) {
 	})
 
 	listW := httptest.NewRecorder()
-	listReq := newRequestAs(otherMemberID, http.MethodGet, "/api/squads?workspace_id="+testWorkspaceID, nil)
+	listReq := withURLParam(newRequestAs(otherMemberID, http.MethodGet, "/api/squads", nil), "workspaceId", testWorkspaceID)
 	testHandler.ListSquads(listW, listReq)
 	if listW.Code != http.StatusOK {
 		t.Fatalf("ListSquads: expected 200, got %d: %s", listW.Code, listW.Body.String())
@@ -55,8 +46,11 @@ func TestSquadPersonalVisibility_IsCreatorOnlyForPlainMembers(t *testing.T) {
 	}
 
 	getW := httptest.NewRecorder()
-	getReq := newRequestAs(otherMemberID, http.MethodGet, "/api/squads/"+squadID+"?workspace_id="+testWorkspaceID, nil)
-	getReq = withURLParam(getReq, "id", squadID)
+	getReq := withURLParams(
+		newRequestAs(otherMemberID, http.MethodGet, "/api/squads/"+squadID, nil),
+		"workspaceId", testWorkspaceID,
+		"id", squadID,
+	)
 	testHandler.GetSquad(getW, getReq)
 	if getW.Code != http.StatusNotFound {
 		t.Fatalf("GetSquad: expected 404, got %d: %s", getW.Code, getW.Body.String())
@@ -78,27 +72,16 @@ func TestCreateSquad_MemberCanCreatePersonalSquad(t *testing.T) {
 	if testHandler == nil || testPool == nil {
 		t.Skip("database not available")
 	}
-	ctx := context.Background()
 
-	_, _, memberID := personalAgentTestFixture(t)
-
-	var leaderID string
-	if err := testPool.QueryRow(ctx, `
-		SELECT id FROM agent
-		WHERE workspace_id = $1 AND scope = 'workspace' AND archived_at IS NULL
-		ORDER BY created_at ASC
-		LIMIT 1
-	`, testWorkspaceID).Scan(&leaderID); err != nil {
-		t.Fatalf("load workspace leader: %v", err)
-	}
+	leaderID, memberID, _ := personalAgentTestFixture(t)
 
 	w := httptest.NewRecorder()
-	req := newRequestAs(memberID, http.MethodPost, "/api/squads?workspace_id="+testWorkspaceID, map[string]any{
+	req := withURLParam(newRequestAs(memberID, http.MethodPost, "/api/squads", map[string]any{
 		"name":        "Member Personal Squad",
 		"leader_id":   leaderID,
-		"scope":  "personal",
+		"scope":       "personal",
 		"description": "created by plain member",
-	})
+	}), "workspaceId", testWorkspaceID)
 	testHandler.CreateSquad(w, req)
 	if w.Code != http.StatusCreated {
 		t.Fatalf("CreateSquad: expected 201, got %d: %s", w.Code, w.Body.String())

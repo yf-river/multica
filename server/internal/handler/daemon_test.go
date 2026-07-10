@@ -1087,22 +1087,6 @@ func TestGetIssueGCCheck_WithDaemonToken_CrossWorkspace(t *testing.T) {
 	}
 }
 
-// withURLParams merges the given chi URL parameters into the request context.
-// Unlike calling withURLParam twice (which replaces the whole chi.RouteContext
-// and loses earlier params), this preserves previously-added params.
-func withURLParams(req *http.Request, kv ...string) *http.Request {
-	rctx := chi.NewRouteContext()
-	if existing, ok := req.Context().Value(chi.RouteCtxKey).(*chi.Context); ok && existing != nil {
-		for i, key := range existing.URLParams.Keys {
-			rctx.URLParams.Add(key, existing.URLParams.Values[i])
-		}
-	}
-	for i := 0; i+1 < len(kv); i += 2 {
-		rctx.URLParams.Add(kv[i], kv[i+1])
-	}
-	return req.WithContext(context.WithValue(req.Context(), chi.RouteCtxKey, rctx))
-}
-
 func TestListTaskMessagesByUser_InvalidTaskIDReturnsBadRequest(t *testing.T) {
 	w := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodGet, "/api/tasks/optimistic-optimistic-1778739487737/messages", nil)
@@ -1603,15 +1587,14 @@ func TestReportTaskUsageNormalizesCodebuddySessionCumulativeUsage(t *testing.T) 
 	}
 	agentID, issueID := createClaimReclaimAgentAndIssue(t, ctx, runtimeID, "CodeBuddy usage agent")
 	firstTaskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "2 seconds", true)
-	secondTaskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "1 second", true)
 	const sessionID = "codebuddy-session-usage-test"
-	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET session_id = $1 WHERE id IN ($2, $3)`, sessionID, firstTaskID, secondTaskID); err != nil {
-		t.Fatalf("set task session: %v", err)
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent_task_queue
+		SET session_id = $1, status = 'running', started_at = now()
+		WHERE id = $2
+	`, sessionID, firstTaskID); err != nil {
+		t.Fatalf("start first session task: %v", err)
 	}
-	t.Cleanup(func() {
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM task_trace_event WHERE task_id IN ($1, $2)`, firstTaskID, secondTaskID)
-		_, _ = testPool.Exec(context.Background(), `DELETE FROM task_usage WHERE task_id IN ($1, $2)`, firstTaskID, secondTaskID)
-	})
 
 	reportUsageForTest := func(taskID string, input, output, cacheRead, cacheWrite int64) {
 		t.Helper()
@@ -1633,6 +1616,22 @@ func TestReportTaskUsageNormalizesCodebuddySessionCumulativeUsage(t *testing.T) 
 	}
 
 	reportUsageForTest(firstTaskID, 40, 50, 300, 100)
+	if _, err := testPool.Exec(ctx, `
+		UPDATE agent_task_queue
+		SET status = 'completed', completed_at = now()
+		WHERE id = $1
+	`, firstTaskID); err != nil {
+		t.Fatalf("complete first session task: %v", err)
+	}
+
+	secondTaskID := createDispatchedClaimFixtureTask(t, ctx, agentID, runtimeID, issueID, "1 second", true)
+	if _, err := testPool.Exec(ctx, `UPDATE agent_task_queue SET session_id = $1 WHERE id = $2`, sessionID, secondTaskID); err != nil {
+		t.Fatalf("set second task session: %v", err)
+	}
+	t.Cleanup(func() {
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM task_trace_event WHERE task_id IN ($1, $2)`, firstTaskID, secondTaskID)
+		_, _ = testPool.Exec(context.Background(), `DELETE FROM task_usage WHERE task_id IN ($1, $2)`, firstTaskID, secondTaskID)
+	})
 	reportUsageForTest(secondTaskID, 70, 70, 500, 150)
 
 	var firstInput, firstOutput, firstCacheRead, firstCacheWrite int64
