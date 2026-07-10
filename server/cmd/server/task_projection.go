@@ -24,6 +24,8 @@ func consumeTaskTerminalIssueProjection(ctx context.Context, queries *db.Queries
 		action = "task_completed"
 	case protocol.EventTaskFailed:
 		action = "task_failed"
+	case protocol.EventTaskCancelled:
+		return nil, nil
 	default:
 		return nil, fmt.Errorf("unsupported terminal task projection event %q", event.Type)
 	}
@@ -67,6 +69,7 @@ func loadTaskProjection(ctx context.Context, queries *db.Queries, event events.E
 	expectedStatus := map[string]string{
 		protocol.EventTaskCompleted: "completed",
 		protocol.EventTaskFailed:    "failed",
+		protocol.EventTaskCancelled: "cancelled",
 	}[event.Type]
 	if expectedStatus == "" || task.Status != expectedStatus {
 		return taskEventPayload{}, false, fmt.Errorf("task projection event %s cannot project row status %s", event.Type, task.Status)

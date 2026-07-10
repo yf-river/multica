@@ -70,7 +70,10 @@ func createAutopilotRunOnlyTask(t *testing.T, agentID string) string {
 	`, agentID, runtimeID, runID).Scan(&taskID); err != nil {
 		t.Fatalf("create run_only task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE stream_key = 'task:' || $1`, taskID)
+	})
 	return taskID
 }
 
@@ -196,12 +199,15 @@ func TestCancelTaskByUser_QuickCreate_Succeeds(t *testing.T) {
 	if err := testPool.QueryRow(context.Background(), `
 		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, issue_id, context)
 		VALUES ($1, (SELECT runtime_id FROM agent WHERE id = $1), 'running', 0, NULL,
-		        '{"type":"quick_create","workspace_id":"ws","prompt":"do a thing"}'::jsonb)
+		        jsonb_build_object('type', 'quick_create', 'workspace_id', $2::text, 'prompt', 'do a thing'))
 		RETURNING id
-	`, agentID).Scan(&taskID); err != nil {
+	`, agentID, testWorkspaceID).Scan(&taskID); err != nil {
 		t.Fatalf("create quick_create task: %v", err)
 	}
-	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID) })
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE stream_key = 'task:' || $1`, taskID)
+	})
 
 	w := httptest.NewRecorder()
 	testHandler.CancelTaskByUser(w, cancelTaskByUserRequest(t, testUserID, taskID))
@@ -438,6 +444,53 @@ func TestCancelTaskByUser_ChatTaskWithoutTranscript_RestoresUserDraft(t *testing
 	}
 	if count != 0 {
 		t.Fatalf("expected linked user message to be deleted, got %d", count)
+	}
+}
+
+func TestCancelChatTaskRollsBackDraftRestoreWhenEventInsertFails(t *testing.T) {
+	if testHandler == nil {
+		t.Skip("database not available")
+	}
+
+	agentID := createHandlerTestAgent(t, "CancelChatRollbackAgent", []byte("[]"))
+	sessionID := createHandlerTestChatSession(t, agentID)
+	var taskID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO agent_task_queue (agent_id, runtime_id, status, priority, chat_session_id)
+		VALUES ($1, (SELECT runtime_id FROM agent WHERE id = $1), 'running', 0, $2)
+		RETURNING id
+	`, agentID, sessionID).Scan(&taskID); err != nil {
+		t.Fatalf("create rollback chat task: %v", err)
+	}
+	t.Cleanup(func() {
+		testPool.Exec(context.Background(), `DELETE FROM agent_task_queue WHERE id = $1`, taskID)
+		testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE stream_key = 'task:' || $1`, taskID)
+	})
+
+	var userMessageID string
+	if err := testPool.QueryRow(context.Background(), `
+		INSERT INTO chat_message (chat_session_id, role, content, task_id)
+		VALUES ($1, 'user', 'draft must survive rollback', $2)
+		RETURNING id
+	`, sessionID, taskID).Scan(&userMessageID); err != nil {
+		t.Fatalf("create rollback chat message: %v", err)
+	}
+	installOutboxStreamFailure(t, "task:"+taskID)
+
+	if _, err := testHandler.TaskService.CancelTask(context.Background(), parseUUID(taskID)); err == nil {
+		t.Fatal("CancelTask succeeded while its durable event insert failed")
+	}
+	if got := taskStatus(t, taskID); got != "running" {
+		t.Fatalf("failed cancel changed task status to %q", got)
+	}
+	var messageCount int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*) FROM chat_message WHERE id = $1 AND task_id = $2
+	`, userMessageID, taskID).Scan(&messageCount); err != nil {
+		t.Fatalf("count rollback chat message: %v", err)
+	}
+	if messageCount != 1 {
+		t.Fatalf("failed cancel removed the user's draft message")
 	}
 }
 

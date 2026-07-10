@@ -24,7 +24,10 @@ func registerDurableActivityConsumers(dispatcher *eventoutbox.Dispatcher) error 
 	if err := dispatcher.Register(protocol.EventTaskCompleted, "task_issue_projection", consumeTaskTerminalIssueProjection); err != nil {
 		return err
 	}
-	return dispatcher.Register(protocol.EventTaskFailed, "task_issue_projection", consumeTaskTerminalIssueProjection)
+	if err := dispatcher.Register(protocol.EventTaskFailed, "task_issue_projection", consumeTaskTerminalIssueProjection); err != nil {
+		return err
+	}
+	return dispatcher.Register(protocol.EventTaskCancelled, "task_issue_projection", consumeTaskTerminalIssueProjection)
 }
 
 func consumeIssueCreatedActivity(ctx context.Context, queries *db.Queries, event events.Event) ([]events.Event, error) {

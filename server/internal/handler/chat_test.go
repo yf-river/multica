@@ -427,9 +427,9 @@ func TestListChatMessagesPage_RejectsInvalidLimit(t *testing.T) {
 
 // TestDeleteChatSession_RecordsCancelTraceWithSessionFK proves that hard
 // deleting a chat session with an in-flight task still writes task.cancelled
-// evidence. Previously BroadcastCancelledTasks ran after the session row was
-// gone and CreateTaskTraceEvent failed on task_trace_event_chat_session_id_fkey,
-// silently dropping cancel evidence while the API still returned 204.
+// evidence. The former post-commit trace ran after the session row was gone,
+// so CreateTaskTraceEvent failed on task_trace_event_chat_session_id_fkey and
+// silently dropped cancel evidence while the API still returned 204.
 func TestDeleteChatSession_RecordsCancelTraceWithSessionFK(t *testing.T) {
 	agentID := createHandlerTestAgent(t, "ChatDeleteCancelTraceAgent", []byte("[]"))
 	sessionID := createHandlerTestChatSession(t, agentID)

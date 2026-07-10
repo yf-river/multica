@@ -982,6 +982,11 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 		writeError(w, http.StatusInternalServerError, "failed to cancel tasks")
 		return
 	}
+	cancelledEvents, err := h.TaskService.EnqueueCancelledTaskEvents(r.Context(), qtx, cancelledTasks)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record task cancellations")
+		return
+	}
 
 	// 3. Pause autopilots whose assignee is one of the archived agents.
 	//    Snapshots the full archived set on this runtime — including any
@@ -1022,8 +1027,8 @@ func (h *Handler) ArchiveAgentsAndDeleteRuntime(w http.ResponseWriter, r *http.R
 	// Post-commit fan-out — same ordering as publishRevocation so subscribers
 	// observe task:cancelled before agent:archived before the runtime list
 	// refresh, matching the order other revocation paths use.
-	if h.TaskService != nil && len(cancelledTasks) > 0 {
-		h.TaskService.BroadcastCancelledTasks(r.Context(), cancelledTasks)
+	if len(cancelledTasks) > 0 {
+		h.TaskService.PublishCancelledTasks(r.Context(), cancelledTasks, cancelledEvents)
 	}
 	for _, a := range archivedAgents {
 		h.publish(protocol.EventAgentArchived, wsID, "member", userID, map[string]any{

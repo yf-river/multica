@@ -27,6 +27,36 @@ func (s *TaskService) enqueueTaskEvent(
 	return eventoutbox.Enqueue(ctx, queries, event)
 }
 
+func (s *TaskService) enqueueTaskEvents(
+	ctx context.Context,
+	queries *db.Queries,
+	eventType string,
+	tasks []db.AgentTaskQueue,
+) ([]events.Event, error) {
+	persisted := make([]events.Event, 0, len(tasks))
+	for _, task := range tasks {
+		event, err := s.enqueueTaskEvent(ctx, queries, eventType, task)
+		if err != nil {
+			return nil, err
+		}
+		persisted = append(persisted, event)
+	}
+	return persisted, nil
+}
+
+// EnqueueCancelledTaskEvents persists cancellation events through a caller's
+// existing transaction. The caller must publish/finalize them only after the
+// surrounding business transaction commits.
+func (s *TaskService) EnqueueCancelledTaskEvents(ctx context.Context, queries *db.Queries, tasks []db.AgentTaskQueue) ([]events.Event, error) {
+	return s.enqueueTaskEvents(ctx, queries, protocol.EventTaskCancelled, tasks)
+}
+
+func (s *TaskService) publishTaskEvents(persisted []events.Event) {
+	for _, event := range persisted {
+		s.Bus.Publish(event)
+	}
+}
+
 func (s *TaskService) buildTaskEvent(
 	ctx context.Context,
 	queries *db.Queries,
@@ -79,23 +109,55 @@ func (s *TaskService) failTasksDurably(
 		if err != nil {
 			return err
 		}
-		persistedEvents = make([]events.Event, 0, len(failed))
-		for _, task := range failed {
-			event, err := s.enqueueTaskEvent(ctx, queries, protocol.EventTaskFailed, task)
-			if err != nil {
-				return err
-			}
-			persistedEvents = append(persistedEvents, event)
-		}
-		return nil
+		persistedEvents, err = s.enqueueTaskEvents(ctx, queries, protocol.EventTaskFailed, failed)
+		return err
 	})
 	if err != nil {
 		return nil, err
 	}
-	for _, event := range persistedEvents {
-		s.Bus.Publish(event)
-	}
+	s.publishTaskEvents(persistedEvents)
 	return failed, nil
+}
+
+func (s *TaskService) cancelTasksDurably(
+	ctx context.Context,
+	mutate func(*db.Queries) ([]db.AgentTaskQueue, error),
+) ([]db.AgentTaskQueue, []events.Event, error) {
+	var cancelled []db.AgentTaskQueue
+	var persistedEvents []events.Event
+	err := s.runInTx(ctx, func(queries *db.Queries) error {
+		var err error
+		cancelled, err = mutate(queries)
+		if err != nil {
+			return err
+		}
+		persistedEvents, err = s.EnqueueCancelledTaskEvents(ctx, queries, cancelled)
+		return err
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	return cancelled, persistedEvents, nil
+}
+
+// PublishCancelledTasks runs the post-commit trace/metrics/reconciliation work
+// and emits the exact events that were persisted with the cancellation.
+func (s *TaskService) PublishCancelledTasks(ctx context.Context, cancelled []db.AgentTaskQueue, persistedEvents []events.Event) {
+	for _, task := range cancelled {
+		s.captureTaskCancelled(ctx, task)
+	}
+	s.reconcileCancelledTaskAgents(ctx, cancelled)
+	s.publishTaskEvents(persistedEvents)
+}
+
+func (s *TaskService) reconcileCancelledTaskAgents(ctx context.Context, cancelled []db.AgentTaskQueue) {
+	agents := make(map[string]pgtype.UUID)
+	for _, task := range cancelled {
+		agents[util.UUIDToString(task.AgentID)] = task.AgentID
+	}
+	for _, agentID := range agents {
+		s.ReconcileAgentStatus(ctx, agentID)
+	}
 }
 
 func (s *TaskService) FailTasksForOfflineRuntimes(ctx context.Context) ([]db.AgentTaskQueue, error) {

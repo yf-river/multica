@@ -355,8 +355,11 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 	// task_trace_event.chat_session_id keeps a valid FK. Post-commit
 	// capture used to race the hard delete and drop cancel evidence on
 	// task_trace_event_chat_session_id_fkey.
-	if h.TaskService != nil {
-		h.TaskService.CaptureCancelledTaskTracesInTx(r.Context(), qtx, cancelled)
+	h.TaskService.CaptureCancelledTaskTracesInTx(r.Context(), qtx, cancelled)
+	cancelledEvents, err := h.TaskService.EnqueueCancelledTaskEvents(r.Context(), qtx, cancelled)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record chat session task cancellation")
+		return
 	}
 
 	if err := qtx.DeleteChatSession(r.Context(), db.DeleteChatSessionParams{
@@ -375,9 +378,7 @@ func (h *Handler) DeleteChatSession(w http.ResponseWriter, r *http.Request) {
 
 	// Post-commit side effects only — traces already landed in the tx above.
 	// Subscribers should never observe events for a tx that didn't persist.
-	if h.TaskService != nil {
-		h.TaskService.NotifyCancelledTasks(r.Context(), cancelled)
-	}
+	h.TaskService.NotifyCancelledTasks(r.Context(), cancelled, cancelledEvents)
 
 	resolvedSessionID := uuidToString(session.ID)
 	h.publishChat(protocol.EventChatSessionDeleted, workspaceID, "member", userID, resolvedSessionID, protocol.ChatSessionDeletedPayload{

@@ -123,6 +123,25 @@ func TestFailStaleTasksRollsBackWhenTerminalEventCannotBeInserted(t *testing.T) 
 	assertNoTerminalTaskEvent(t, fixture.TaskID)
 }
 
+func TestCancelTaskRollsBackWhenTerminalEventCannotBeInserted(t *testing.T) {
+	fixture := newTerminalTaskFixture(t, "Task cancellation outbox rollback")
+	installOutboxStreamFailure(t, "issue:"+fixture.IssueID)
+
+	if _, err := testHandler.TaskService.CancelTask(context.Background(), util.MustParseUUID(fixture.TaskID)); err == nil {
+		t.Fatal("CancelTask succeeded without a durable terminal event")
+	}
+	assertTaskStatus(t, fixture.TaskID, "running")
+	assertNoTerminalTaskEvent(t, fixture.TaskID)
+}
+
+func TestCancelTaskCommitsDurableTerminalEvent(t *testing.T) {
+	fixture := newTerminalTaskFixture(t, "Task cancellation durable event")
+	if _, err := testHandler.TaskService.CancelTask(context.Background(), util.MustParseUUID(fixture.TaskID)); err != nil {
+		t.Fatalf("CancelTask: %v", err)
+	}
+	assertTerminalTaskEvent(t, fixture, protocol.EventTaskCancelled, "cancelled")
+}
+
 func assertTerminalTaskEvent(t *testing.T, fixture terminalTaskFixture, eventType, status string) {
 	t.Helper()
 	var count int
@@ -146,8 +165,8 @@ func assertNoTerminalTaskEvent(t *testing.T, taskID string) {
 	var count int
 	if err := testPool.QueryRow(context.Background(), `
 		SELECT count(*) FROM domain_event_outbox
-		WHERE event_type IN ($1, $2) AND payload ->> 'task_id' = $3
-	`, protocol.EventTaskCompleted, protocol.EventTaskFailed, taskID).Scan(&count); err != nil {
+		WHERE event_type IN ($1, $2, $3) AND payload ->> 'task_id' = $4
+	`, protocol.EventTaskCompleted, protocol.EventTaskFailed, protocol.EventTaskCancelled, taskID).Scan(&count); err != nil {
 		t.Fatalf("count rolled-back terminal task events: %v", err)
 	}
 	if count != 0 {

@@ -5,6 +5,7 @@ import (
 	"log/slog"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/events"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
@@ -77,7 +78,6 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 		if err != nil {
 			return empty, err
 		}
-
 		// Cancel by runtime AND by archived agent. agent.runtime_id can be
 		// reassigned via UpdateAgent without rewriting the runtime_id on
 		// historical agent_task_queue rows, so an archived agent may still
@@ -92,6 +92,10 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 			RuntimeIds: runtimeIDs,
 			AgentIds:   archivedAgentIDs,
 		})
+		if err != nil {
+			return empty, err
+		}
+		result.CancelledEvents, err = h.TaskService.EnqueueCancelledTaskEvents(ctx, qtx, result.CancelledTasks)
 		if err != nil {
 			return empty, err
 		}
@@ -130,11 +134,12 @@ func (h *Handler) revokeAndRemoveMember(ctx context.Context, workspaceID, userID
 // revocationResult captures everything revokeMemberRuntimes touched so the
 // caller can fan out events and analytics after the transaction commits.
 // Publishing inside the transaction would let subscribers observe a state the
-// tx might still roll back (see TaskService.BroadcastCancelledTasks docstring).
+// tx might still roll back.
 type revocationResult struct {
 	Runtimes           []db.AgentRuntime
 	ArchivedAgents     []db.Agent
 	CancelledTasks     []db.AgentTaskQueue
+	CancelledEvents    []events.Event
 	OfflineRuntimeIDs  []db.ForceOfflineRuntimesByIDsRow
 	RevokedTokenHashes []string
 }
@@ -160,8 +165,8 @@ func (h *Handler) publishRevocation(ctx context.Context, result revocationResult
 	// per-task event broadcast. Run this before the agent:archived burst so
 	// subscribers see "task cancelled" before the parent agent disappears
 	// from active lists, matching the order ArchiveAgent uses.
-	if h.TaskService != nil && len(result.CancelledTasks) > 0 {
-		h.TaskService.BroadcastCancelledTasks(ctx, result.CancelledTasks)
+	if len(result.CancelledTasks) > 0 {
+		h.TaskService.PublishCancelledTasks(ctx, result.CancelledTasks, result.CancelledEvents)
 	}
 
 	for _, agent := range result.ArchivedAgents {

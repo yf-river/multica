@@ -216,15 +216,13 @@ func (s *TaskService) fallbackDispatchCommentFromMessages(ctx context.Context, t
 }
 
 func (s *TaskService) CancelTasksForIssue(ctx context.Context, issueID pgtype.UUID) error {
-	cancelled, err := s.Queries.CancelAgentTasksByIssue(ctx, issueID)
+	cancelled, persistedEvents, err := s.cancelTasksDurably(ctx, func(queries *db.Queries) ([]db.AgentTaskQueue, error) {
+		return queries.CancelAgentTasksByIssue(ctx, issueID)
+	})
 	if err != nil {
 		return err
 	}
-	for _, t := range cancelled {
-		s.captureTaskCancelled(ctx, t)
-		s.ReconcileAgentStatus(ctx, t.AgentID)
-		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
-	}
+	s.PublishCancelledTasks(ctx, cancelled, persistedEvents)
 	return nil
 }
 
@@ -235,18 +233,13 @@ func (s *TaskService) CancelTasksForIssue(ctx context.Context, issueID pgtype.UU
 //
 // Returns the cancelled rows so callers can report counts / log them.
 func (s *TaskService) CancelTasksForAgent(ctx context.Context, agentID pgtype.UUID) ([]db.AgentTaskQueue, error) {
-	cancelled, err := s.Queries.CancelAgentTasksByAgent(ctx, agentID)
+	cancelled, persistedEvents, err := s.cancelTasksDurably(ctx, func(queries *db.Queries) ([]db.AgentTaskQueue, error) {
+		return queries.CancelAgentTasksByAgent(ctx, agentID)
+	})
 	if err != nil {
 		return nil, err
 	}
-	for _, t := range cancelled {
-		s.captureTaskCancelled(ctx, t)
-		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
-	}
-	// Reconcile once after the loop — agent transitions from
-	// working→available based on remaining task counts, no need to call
-	// per row (the rows we just cancelled all belong to the same agent).
-	s.ReconcileAgentStatus(ctx, agentID)
+	s.PublishCancelledTasks(ctx, cancelled, persistedEvents)
 	return cancelled, nil
 }
 
@@ -257,34 +250,28 @@ func (s *TaskService) CancelTasksForAgent(ctx context.Context, agentID pgtype.UU
 // otherwise nullify trigger_comment_id and we'd lose the ability to find
 // the affected tasks.
 func (s *TaskService) CancelTasksByTriggerComment(ctx context.Context, commentID pgtype.UUID) error {
-	cancelled, err := s.Queries.CancelAgentTasksByTriggerComment(ctx, commentID)
+	cancelled, persistedEvents, err := s.cancelTasksDurably(ctx, func(queries *db.Queries) ([]db.AgentTaskQueue, error) {
+		return queries.CancelAgentTasksByTriggerComment(ctx, commentID)
+	})
 	if err != nil {
 		return err
 	}
-	for _, t := range cancelled {
-		s.captureTaskCancelled(ctx, t)
-		s.ReconcileAgentStatus(ctx, t.AgentID)
-		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
-	}
+	s.PublishCancelledTasks(ctx, cancelled, persistedEvents)
 	return nil
 }
 
-// BroadcastCancelledTasks reconciles each affected agent's status and emits
-// task:cancelled for every row. Callers must invoke this AFTER committing the
-// cancellation so subscribers don't observe a "cancelled" event for a row
-// that the tx might still roll back.
-func (s *TaskService) BroadcastCancelledTasks(ctx context.Context, cancelled []db.AgentTaskQueue) {
-	for _, t := range cancelled {
-		s.captureTaskCancelled(ctx, t)
-		s.ReconcileAgentStatus(ctx, t.AgentID)
-		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
+func (s *TaskService) CancelTasksForIssueAndAgent(ctx context.Context, issueID, agentID pgtype.UUID) ([]db.AgentTaskQueue, error) {
+	cancelled, persistedEvents, err := s.cancelTasksDurably(ctx, func(queries *db.Queries) ([]db.AgentTaskQueue, error) {
+		return queries.CancelAgentTasksByIssueAndAgent(ctx, db.CancelAgentTasksByIssueAndAgentParams{
+			IssueID: issueID,
+			AgentID: agentID,
+		})
+	})
+	if err != nil {
+		return nil, err
 	}
-}
-
-func (s *TaskService) CaptureCancelledTasks(ctx context.Context, cancelled []db.AgentTaskQueue) {
-	for _, t := range cancelled {
-		s.captureTaskCancelled(ctx, t)
-	}
+	s.PublishCancelledTasks(ctx, cancelled, persistedEvents)
+	return cancelled, nil
 }
 
 type CancelledChatMessageResult struct {
@@ -316,11 +303,26 @@ func (s *TaskService) CancelTask(ctx context.Context, taskID pgtype.UUID) (*db.A
 // CancelTaskWithResult cancels a single task and returns any chat-specific
 // cleanup result needed by user-facing callers.
 func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UUID) (*CancelTaskResult, error) {
-	task, err := s.Queries.CancelAgentTask(ctx, taskID)
-	if errors.Is(err, pgx.ErrNoRows) {
-		existing, err := s.Queries.GetAgentTask(ctx, taskID)
+	var task db.AgentTaskQueue
+	var cancelledChatMessage *CancelledChatMessageResult
+	var persistedEvent events.Event
+	err := s.runInTx(ctx, func(queries *db.Queries) error {
+		var err error
+		task, err = queries.CancelAgentTask(ctx, taskID)
 		if err != nil {
-			return nil, fmt.Errorf("cancel task: %w", err)
+			return err
+		}
+		cancelledChatMessage, err = finalizeCancelledChatMessageInTx(ctx, queries, task)
+		if err != nil {
+			return err
+		}
+		persistedEvent, err = s.enqueueTaskEvent(ctx, queries, protocol.EventTaskCancelled, task)
+		return err
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		existing, lookupErr := s.Queries.GetAgentTask(ctx, taskID)
+		if lookupErr != nil {
+			return nil, fmt.Errorf("cancel task: %w", lookupErr)
 		}
 		return &CancelTaskResult{Task: existing}, nil
 	}
@@ -330,13 +332,8 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 
 	slog.Info("task cancelled", "task_id", util.UUIDToString(task.ID), "issue_id", util.UUIDToString(task.IssueID))
 	s.captureTaskCancelled(ctx, task)
-	cancelledChatMessage := s.finalizeCancelledChatMessage(ctx, task)
-
-	// Reconcile agent status
 	s.ReconcileAgentStatus(ctx, task.AgentID)
-
-	// Broadcast cancellation as a task:failed event so frontends clear the live card
-	s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, task)
+	s.Bus.Publish(persistedEvent)
 
 	return &CancelTaskResult{
 		Task:                 task,
@@ -344,59 +341,49 @@ func (s *TaskService) CancelTaskWithResult(ctx context.Context, taskID pgtype.UU
 	}, nil
 }
 
-func (s *TaskService) finalizeCancelledChatMessage(ctx context.Context, task db.AgentTaskQueue) *CancelledChatMessageResult {
+func finalizeCancelledChatMessageInTx(ctx context.Context, queries *db.Queries, task db.AgentTaskQueue) (*CancelledChatMessageResult, error) {
 	if !task.ChatSessionID.Valid {
-		return nil
+		return nil, nil
 	}
 	var cancelled *CancelledChatMessageResult
-	if err := s.runInTx(ctx, func(qtx *db.Queries) error {
-		messages, err := qtx.ListTaskMessages(ctx, task.ID)
-		if err != nil {
-			return fmt.Errorf("list cancelled chat task messages: %w", err)
-		}
-		if len(messages) == 0 {
-			// Detach attachments BEFORE deleting the user message — the
-			// attachment FK is ON DELETE CASCADE, so deleting first would
-			// destroy rows the restored draft needs to re-bind.
-			detached, err := qtx.DetachAttachmentsFromUserChatMessageByTask(ctx, task.ID)
-			if err != nil {
-				return fmt.Errorf("detach cancelled chat message attachments: %w", err)
-			}
-			deleted, err := qtx.DeleteUserChatMessageByTask(ctx, task.ID)
-			if errors.Is(err, pgx.ErrNoRows) {
-				return nil
-			}
-			if err != nil {
-				return fmt.Errorf("delete empty cancelled chat user message: %w", err)
-			}
-			cancelled = &CancelledChatMessageResult{
-				ChatSessionID:  util.UUIDToString(deleted.ChatSessionID),
-				MessageID:      util.UUIDToString(deleted.ID),
-				Content:        deleted.Content,
-				RestoreToInput: true,
-				Attachments:    detached,
-			}
-			return nil
-		}
-		if _, err := qtx.CreateChatMessage(ctx, db.CreateChatMessageParams{
-			ChatSessionID: task.ChatSessionID,
-			Role:          "assistant",
-			Content:       "Stopped.",
-			TaskID:        task.ID,
-			ElapsedMs:     computeChatElapsedMs(task),
-		}); err != nil {
-			return fmt.Errorf("create cancelled chat message: %w", err)
-		}
-		return nil
-	}); err != nil {
-		slog.Error("failed to finalize cancelled chat message",
-			"task_id", util.UUIDToString(task.ID),
-			"chat_session_id", util.UUIDToString(task.ChatSessionID),
-			"error", err,
-		)
-		return nil
+	messages, err := queries.ListTaskMessages(ctx, task.ID)
+	if err != nil {
+		return nil, fmt.Errorf("list cancelled chat task messages: %w", err)
 	}
-	return cancelled
+	if len(messages) == 0 {
+		// Detach attachments BEFORE deleting the user message — the
+		// attachment FK is ON DELETE CASCADE, so deleting first would
+		// destroy rows the restored draft needs to re-bind.
+		detached, err := queries.DetachAttachmentsFromUserChatMessageByTask(ctx, task.ID)
+		if err != nil {
+			return nil, fmt.Errorf("detach cancelled chat message attachments: %w", err)
+		}
+		deleted, err := queries.DeleteUserChatMessageByTask(ctx, task.ID)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return nil, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("delete empty cancelled chat user message: %w", err)
+		}
+		cancelled = &CancelledChatMessageResult{
+			ChatSessionID:  util.UUIDToString(deleted.ChatSessionID),
+			MessageID:      util.UUIDToString(deleted.ID),
+			Content:        deleted.Content,
+			RestoreToInput: true,
+			Attachments:    detached,
+		}
+		return cancelled, nil
+	}
+	if _, err := queries.CreateChatMessage(ctx, db.CreateChatMessageParams{
+		ChatSessionID: task.ChatSessionID,
+		Role:          "assistant",
+		Content:       "Stopped.",
+		TaskID:        task.ID,
+		ElapsedMs:     computeChatElapsedMs(task),
+	}); err != nil {
+		return nil, fmt.Errorf("create cancelled chat message: %w", err)
+	}
+	return nil, nil
 }
 
 // ClaimTask atomically claims the next queued task for an agent,

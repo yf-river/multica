@@ -393,21 +393,9 @@ func (s *TaskService) RerunIssue(ctx context.Context, issueID pgtype.UUID, sourc
 	}
 
 	// Cancel only the target agent's active/queued tasks on this issue.
-	cancelled, err := s.Queries.CancelAgentTasksByIssueAndAgent(ctx, db.CancelAgentTasksByIssueAndAgentParams{
-		IssueID: issueID,
-		AgentID: agentID,
-	})
+	cancelled, err := s.CancelTasksForIssueAndAgent(ctx, issueID, agentID)
 	if err != nil {
-		slog.Warn("rerun: cancel prior tasks failed",
-			"issue_id", util.UUIDToString(issueID),
-			"agent_id", util.UUIDToString(agentID),
-			"error", err,
-		)
-	}
-	for _, t := range cancelled {
-		s.captureTaskCancelled(ctx, t)
-		s.ReconcileAgentStatus(ctx, t.AgentID)
-		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
+		return nil, fmt.Errorf("cancel prior tasks before rerun: %w", err)
 	}
 
 	task, err := s.enqueueRerunTask(ctx, issue, agentID, triggerCommentID, isLeader)

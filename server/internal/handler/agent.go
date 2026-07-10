@@ -1372,7 +1372,14 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 	}
 
 	userID := requestUserID(r)
-	archived, err := h.Queries.ArchiveAgent(r.Context(), db.ArchiveAgentParams{
+	tx, err := h.TxStarter.Begin(r.Context())
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to archive agent")
+		return
+	}
+	defer tx.Rollback(r.Context())
+	queries := h.Queries.WithTx(tx)
+	archived, err := queries.ArchiveAgent(r.Context(), db.ArchiveAgentParams{
 		ID:         agent.ID,
 		ArchivedBy: parseUUID(userID),
 	})
@@ -1382,24 +1389,34 @@ func (h *Handler) ArchiveAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Cancel all pending/active tasks for this agent. Discard the returned
-	// rows here — the agent:archived event below already triggers a full
-	// active-tasks invalidation on every connected client, so per-task
-	// task:cancelled events would be redundant noise.
-	if cancelled, err := h.Queries.CancelAgentTasksByAgent(r.Context(), agent.ID); err != nil {
+	cancelled, err := queries.CancelAgentTasksByAgent(r.Context(), agent.ID)
+	if err != nil {
 		slog.Warn("cancel agent tasks on archive failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
-	} else {
-		h.TaskService.CaptureCancelledTasks(r.Context(), cancelled)
+		writeError(w, http.StatusInternalServerError, "failed to archive agent")
+		return
+	}
+	cancelledEvents, err := h.TaskService.EnqueueCancelledTaskEvents(r.Context(), queries, cancelled)
+	if err != nil {
+		slog.Warn("enqueue cancelled agent task events failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+		writeError(w, http.StatusInternalServerError, "failed to archive agent")
+		return
 	}
 
 	wsID := uuidToString(archived.WorkspaceID)
-	slog.Info("agent archived", append(logger.RequestAttrs(r), "agent_id", id, "workspace_id", wsID)...)
 	resp := agentToResponse(archived)
 	if err := h.attachAgentSkills(r.Context(), &resp, archived.ID); err != nil {
 		slog.Warn("load agent skills after archive failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
 		writeError(w, http.StatusInternalServerError, "failed to load agent skills")
 		return
 	}
+	if err := tx.Commit(r.Context()); err != nil {
+		slog.Warn("commit archive agent failed", append(logger.RequestAttrs(r), "error", err, "agent_id", id)...)
+		writeError(w, http.StatusInternalServerError, "failed to archive agent")
+		return
+	}
+
+	h.TaskService.PublishCancelledTasks(r.Context(), cancelled, cancelledEvents)
+	slog.Info("agent archived", append(logger.RequestAttrs(r), "agent_id", id, "workspace_id", wsID)...)
 	actorType, actorID := h.resolveActor(r, userID, wsID)
 	h.publish(protocol.EventAgentArchived, wsID, actorType, actorID, map[string]any{"agent": broadcastAgentResponse(resp)})
 	redactAgentResponseForActor(&resp, actorType)
@@ -1457,4 +1474,3 @@ func (h *Handler) RestoreAgent(w http.ResponseWriter, r *http.Request) {
 type cancelAgentTasksResponse struct {
 	Cancelled int `json:"cancelled"`
 }
-

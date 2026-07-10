@@ -10,9 +10,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
-	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func (s *TaskService) captureTaskQueued(ctx context.Context, task db.AgentTaskQueue) {
@@ -506,15 +506,15 @@ func (s *TaskService) CaptureCancelledTaskTracesInTx(ctx context.Context, q *db.
 	}
 }
 
-// NotifyCancelledTasks reconciles agent status and broadcasts task:cancelled
-// without writing another cancel trace. Call after commit when traces were
-// already recorded in the cancel transaction (e.g. chat session delete).
-func (s *TaskService) NotifyCancelledTasks(ctx context.Context, cancelled []db.AgentTaskQueue) {
+// NotifyCancelledTasks finalizes and publishes persisted cancellations without
+// writing another cancel trace. Call after commit when traces were already
+// recorded in the business transaction (for example chat session deletion).
+func (s *TaskService) NotifyCancelledTasks(ctx context.Context, cancelled []db.AgentTaskQueue, persistedEvents []events.Event) {
 	for _, t := range cancelled {
 		s.finalizeTaskCancelledSideEffects(ctx, t)
-		s.ReconcileAgentStatus(ctx, t.AgentID)
-		s.broadcastTaskEvent(ctx, protocol.EventTaskCancelled, t)
 	}
+	s.reconcileCancelledTaskAgents(ctx, cancelled)
+	s.publishTaskEvents(persistedEvents)
 }
 
 func (s *TaskService) CaptureTaskUsage(ctx context.Context, task db.AgentTaskQueue, provider, model string, inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens int64) {
