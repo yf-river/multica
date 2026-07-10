@@ -291,9 +291,10 @@ export function PromptLibraryPage({
     queryFn: () => api.listPromptEvaluationOptimizationCandidates({ limit: 100 }),
     enabled: !!workspaceId && needsCandidates,
   });
+  const needsFocusedIssueTree = Boolean(focusedIssueId && (needsEvaluationAssets || isEvaluationRunRecords));
   const focusedIssueTreeQuery = useQuery({
     ...issueExecutionTreeOptions(focusedIssueId ?? ""),
-    enabled: false,
+    enabled: !!workspaceId && needsFocusedIssueTree,
   });
   const focusedIssueTaskIds = useMemo(
     () => collectIssueExecutionTaskIds(focusedIssueTreeQuery.data),
