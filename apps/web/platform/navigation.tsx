@@ -1,9 +1,10 @@
 "use client";
 
-import { Suspense } from "react";
+import { Suspense, useCallback, useEffect } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import {
   NavigationProvider,
+  subscribeInternalNavigation,
   type NavigationAdapter,
 } from "@multica/views/navigation";
 
@@ -16,14 +17,19 @@ function NavigationProviderInner({
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const pushWithFallback = (path: string) => {
+  const pushWithFallback = useCallback((path: string) => {
     router.push(path);
     scheduleBrowserNavigationFallback(path, "push");
-  };
-  const replaceWithFallback = (path: string) => {
+  }, [router]);
+  const replaceWithFallback = useCallback((path: string) => {
     router.replace(path);
     scheduleBrowserNavigationFallback(path, "replace");
-  };
+  }, [router]);
+
+  useEffect(
+    () => subscribeInternalNavigation(pushWithFallback),
+    [pushWithFallback],
+  );
 
   const adapter: NavigationAdapter = {
     push: pushWithFallback,

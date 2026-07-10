@@ -15,7 +15,10 @@ import { AppSidebar } from "@multica/views/layout";
 import { SearchCommand, SearchTrigger } from "@multica/views/search";
 import { ChatFab, ChatWindow } from "@multica/views/chat";
 import { WorkspaceSlugProvider, paths, useCurrentWorkspace } from "@multica/core/paths";
-import { useNavigation } from "@multica/views/navigation";
+import {
+  subscribeInternalNavigation,
+  useNavigation,
+} from "@multica/views/navigation";
 import { getCurrentSlug, subscribeToCurrentSlug } from "@multica/core/platform";
 import { useDesktopUnreadBadge } from "@multica/views/platform";
 import { DesktopNavigationProvider } from "@/platform/navigation";
@@ -131,16 +134,12 @@ function MainTopBar() {
 
 function useInternalLinkHandler() {
   useEffect(() => {
-    const handler = (e: Event) => {
-      const path = (e as CustomEvent).detail?.path;
-      if (!path) return;
+    return subscribeInternalNavigation((path) => {
       const icon = resolveRouteIcon(path);
       const store = useTabStore.getState();
       const tabId = store.openTab(path, path, icon);
       store.setActiveTab(tabId);
-    };
-    window.addEventListener("multica:navigate", handler);
-    return () => window.removeEventListener("multica:navigate", handler);
+    });
   }, []);
 }
 

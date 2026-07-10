@@ -6,6 +6,10 @@
  */
 
 import { isGlobalPath } from "@multica/core/paths";
+import {
+  dispatchInternalNavigation,
+  isInternalAppPath,
+} from "../../navigation/internal-navigation";
 
 /**
  * Top-level workspace-scoped routes. Used to detect "/{route}/..." paths that
@@ -43,7 +47,7 @@ const WORKSPACE_ROUTE_SEGMENTS = new Set([
  * prepended.
  */
 export function openLink(href: string, currentSlug?: string | null): void {
-  if (href.startsWith("/")) {
+  if (isInternalAppPath(href)) {
     let path = href;
     if (currentSlug && !isGlobalPath(path)) {
       const firstSegment = (path.split("/")[1] ?? "").split(/[?#]/)[0];
@@ -55,11 +59,23 @@ export function openLink(href: string, currentSlug?: string | null): void {
       // "/acme/issues") or something unknown (e.g. "/foo"). Leave it alone —
       // the user wrote what they meant.
     }
-    window.dispatchEvent(
-      new CustomEvent("multica:navigate", { detail: { path } }),
-    );
-  } else {
+    dispatchInternalNavigation(path);
+    return;
+  }
+
+  if (isSafeExternalHref(href)) {
     window.open(href, "_blank", "noopener,noreferrer");
+  }
+}
+
+function isSafeExternalHref(href: string): boolean {
+  if (href.startsWith("//")) return true;
+
+  try {
+    const protocol = new URL(href).protocol;
+    return ["http:", "https:", "mailto:", "tel:"].includes(protocol);
+  } catch {
+    return false;
   }
 }
 
