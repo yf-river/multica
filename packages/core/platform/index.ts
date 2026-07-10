@@ -1,7 +1,7 @@
 export { CoreProvider } from "./core-provider";
 export type { CoreProviderProps, ClientIdentity } from "./types";
 export { AuthInitializer } from "./auth-initializer";
-export { defaultStorage } from "./storage";
+export { defaultStorage, defaultSessionStorage } from "./storage";
 export { createPersistStorage } from "./persist-storage";
 export {
   createWorkspaceAwareStorage,
@@ -15,7 +15,7 @@ export {
   registerAccountPersistStore,
   resetAccountState,
 } from "./workspace-storage";
-export { clearWorkspaceStorage } from "./storage-cleanup";
+export { clearAccountStorage, clearWorkspaceStorage } from "./storage-cleanup";
 export { isMac, modKey, enterKey, formatShortcut } from "./keyboard";
 export {
   registerSystemNotificationClickHandler,

@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { defaultStorage } from "../platform/storage";
+import { registerAccountPersistStore } from "../platform/workspace-storage";
 import type { IssueStatus, ProjectStatus } from "../types";
 
 const MAX_RECENT_CONTEXTS = 20;
@@ -108,6 +109,8 @@ export const useRecentContextStore = create<RecentContextState>()(
     },
   ),
 );
+
+registerAccountPersistStore(useRecentContextStore);
 
 export function selectRecentContexts(wsId: string | null) {
   return (state: RecentContextState) =>

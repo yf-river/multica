@@ -7,7 +7,7 @@ import type { StoreApi, UseBoundStore } from "zustand";
 import type { AuthState } from "../auth/store";
 import { createLogger } from "../logger";
 import { clearWorkspaceStorage } from "../platform/storage-cleanup";
-import { defaultStorage } from "../platform/storage";
+import { defaultSessionStorage, defaultStorage } from "../platform/storage";
 import { getCurrentWsId, getCurrentSlug } from "../platform/workspace-storage";
 import { issueKeys } from "../issues/queries";
 import { projectKeys } from "../projects/queries";
@@ -730,7 +730,12 @@ export function useRealtimeSync(
       // since clearWorkspaceStorage keys are namespaced by slug.
       const wsList = qc.getQueryData<{ id: string; slug: string }[]>(workspaceKeys.list()) ?? [];
       const deletedSlug = wsList.find((w) => w.id === workspace_id)?.slug;
-      if (deletedSlug) clearWorkspaceStorage(defaultStorage, deletedSlug);
+      if (deletedSlug) {
+        clearWorkspaceStorage(
+          { local: defaultStorage, session: defaultSessionStorage },
+          { slug: deletedSlug, id: workspace_id },
+        );
+      }
       if (getCurrentWsId() === workspace_id) {
         logger.warn("current workspace deleted, switching");
         onToast?.("This workspace was deleted", "info");
@@ -745,7 +750,10 @@ export function useRealtimeSync(
         const slug = getCurrentSlug();
         const wsId = getCurrentWsId();
         if (slug && wsId) {
-          clearWorkspaceStorage(defaultStorage, slug);
+          clearWorkspaceStorage(
+            { local: defaultStorage, session: defaultSessionStorage },
+            { slug, id: wsId },
+          );
           logger.warn("removed from workspace, switching");
           onToast?.("You were removed from this workspace", "info");
           relocateAfterWorkspaceLoss(wsId);

@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { defaultStorage } from "../../platform/storage";
+import { registerAccountPersistStore } from "../../platform/workspace-storage";
 
 const MAX_RECENT_ISSUES = 20;
 const MAX_WORKSPACES = 50;
@@ -103,6 +104,8 @@ export const useRecentIssuesStore = create<RecentIssuesState>()(
     },
   ),
 );
+
+registerAccountPersistStore(useRecentIssuesStore);
 
 export function selectRecentIssues(wsId: string | null) {
   return (state: RecentIssuesState) =>

@@ -3,10 +3,13 @@
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { useAuthStore } from "@multica/core/auth";
-import { workspaceKeys } from "@multica/core/workspace/queries";
-import { clearWorkspaceStorage, defaultStorage } from "@multica/core/platform";
+import {
+  clearAccountStorage,
+  defaultSessionStorage,
+  defaultStorage,
+  resetAccountState,
+} from "@multica/core/platform";
 import { paths } from "@multica/core/paths";
-import type { Workspace } from "@multica/core/types";
 import { useNavigation } from "../navigation";
 
 /**
@@ -32,11 +35,11 @@ export function useLogout() {
     // access to, BEFORE clearing the React Query cache (which holds the
     // workspace list). Otherwise per-workspace drafts/chat/etc would leak
     // to the next user on this device.
-    const cachedWorkspaces =
-      queryClient.getQueryData<Workspace[]>(workspaceKeys.list()) ?? [];
-    for (const ws of cachedWorkspaces) {
-      clearWorkspaceStorage(defaultStorage, ws.slug);
-    }
+    resetAccountState();
+    clearAccountStorage({
+      local: defaultStorage,
+      session: defaultSessionStorage,
+    });
 
     // Clear the last-workspace-slug cookie. Otherwise on a shared device
     // the next user gets redirected by the proxy to the previous user's
@@ -49,8 +52,6 @@ export function useLogout() {
     // Clear desktop tab state. Tab paths can contain workspace slugs and
     // issue UUIDs that must not survive across user sessions on a shared
     // machine. No-op on web (web doesn't write this key).
-    defaultStorage.removeItem("multica_tabs");
-
     queryClient.clear();
     authLogout();
 

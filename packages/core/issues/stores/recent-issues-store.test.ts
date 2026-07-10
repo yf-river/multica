@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { resetAccountState } from "../../platform/workspace-storage";
 import { useRecentIssuesStore, selectRecentIssues } from "./recent-issues-store";
 
 beforeEach(() => {
@@ -129,5 +130,13 @@ describe("selectRecentIssues", () => {
     expect(a).toBe(b);
     expect(a).toBe(c);
     expect(a).toEqual([]);
+  });
+});
+
+describe("account cleanup", () => {
+  it("clears recent issue state from memory", () => {
+    useRecentIssuesStore.getState().recordVisit("ws-a", "issue-1");
+    resetAccountState();
+    expect(useRecentIssuesStore.getState().byWorkspace).toEqual({});
   });
 });
