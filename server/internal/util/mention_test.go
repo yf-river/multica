@@ -49,6 +49,16 @@ func TestParseMentions(t *testing.T) {
 			want:    []Mention{{Type: "all", ID: "all"}},
 		},
 		{
+			name:    "malformed member id is plain text",
+			content: "[@Broken](mention://member/a-) must not reach UUID writes",
+			want:    nil,
+		},
+		{
+			name:    "all token is only valid for all type",
+			content: "[@Broken](mention://member/all)",
+			want:    nil,
+		},
+		{
 			name:    "deduplicate same mention",
 			content: "[@A](mention://agent/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa) and again [@A](mention://agent/aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa)",
 			want:    []Mention{{Type: "agent", ID: "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"}},

@@ -48,6 +48,15 @@ func ParseMentions(content string) []Mention {
 	seen := make(map[string]bool)
 	var result []Mention
 	add := func(typ, id string) {
+		if typ == "all" {
+			if id != "all" {
+				return
+			}
+		} else if _, err := ParseUUID(id); err != nil {
+			// Mention markdown is untrusted text. Invalid IDs remain ordinary
+			// content instead of reaching MustParseUUID-based persistence paths.
+			return
+		}
 		key := typ + ":" + id
 		if seen[key] {
 			return
