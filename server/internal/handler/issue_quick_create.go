@@ -11,12 +11,12 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/service"
 	"github.com/multica-ai/multica/server/internal/util"
 	"github.com/multica-ai/multica/server/pkg/agent"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
-	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
 func (h *Handler) QuickCreateIssue(w http.ResponseWriter, r *http.Request) {
@@ -514,7 +514,14 @@ func buildQuickCreateTAPDLocalSummaryDescription(fetched RecordIssueSourceFetchR
 
 func (h *Handler) applyQuickCreateTAPDSourceSummaryFallback(ctx context.Context, issue db.Issue, fetched RecordIssueSourceFetchRequest, cause error) {
 	description := buildQuickCreateTAPDLocalSummaryDescription(fetched)
-	updated, err := h.Queries.UpdateIssue(ctx, db.UpdateIssueParams{
+	tx, err := h.TxStarter.Begin(ctx)
+	if err != nil {
+		slog.Warn("quick-create TAPD source summary fallback transaction failed", "issue_id", uuidToString(issue.ID), "error", err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	queries := h.Queries.WithTx(tx)
+	updated, err := queries.UpdateIssue(ctx, db.UpdateIssueParams{
 		ID:            issue.ID,
 		Description:   pgtype.Text{String: description, Valid: true},
 		AssigneeType:  issue.AssigneeType,
@@ -531,37 +538,55 @@ func (h *Handler) applyQuickCreateTAPDSourceSummaryFallback(ctx context.Context,
 		)
 		return
 	}
-	if _, err := h.Queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+	updated, err = queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
 		ID:          issue.ID,
 		WorkspaceID: issue.WorkspaceID,
 		Key:         "source_summary_status",
 		Value:       jsonStringBytes("failed"),
-	}); err != nil {
+	})
+	if err != nil {
 		slog.Warn("quick-create TAPD source summary fallback metadata failed",
 			"issue_id", uuidToString(issue.ID),
 			"key", "source_summary_status",
 			"error", err,
 		)
+		return
 	}
 	if cause != nil {
-		if _, err := h.Queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+		updated, err = queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
 			ID:          issue.ID,
 			WorkspaceID: issue.WorkspaceID,
 			Key:         "source_summary_error",
 			Value:       jsonStringBytes(cause.Error()),
-		}); err != nil {
+		})
+		if err != nil {
 			slog.Warn("quick-create TAPD source summary fallback metadata failed",
 				"issue_id", uuidToString(issue.ID),
 				"key", "source_summary_error",
 				"error", err,
 			)
+			return
 		}
 	}
 	prefix := h.getIssuePrefix(ctx, issue.WorkspaceID)
-	h.publish(protocol.EventIssueUpdated, uuidToString(issue.WorkspaceID), "system", "", map[string]any{
-		"issue":               issueToResponse(updated, prefix),
-		"description_changed": true,
-	})
+	updatedEvent := buildIssueUpdatedEvent(
+		uuidToString(issue.WorkspaceID),
+		"system",
+		"",
+		issue,
+		issueToResponse(updated, prefix),
+		issueUpdateChanges{Description: true},
+	)
+	updatedEvent, err = eventoutbox.Enqueue(ctx, queries, updatedEvent)
+	if err != nil {
+		slog.Warn("quick-create TAPD source summary fallback event failed", "issue_id", uuidToString(issue.ID), "error", err)
+		return
+	}
+	if err := tx.Commit(ctx); err != nil {
+		slog.Warn("quick-create TAPD source summary fallback commit failed", "issue_id", uuidToString(issue.ID), "error", err)
+		return
+	}
+	h.publishEvent(updatedEvent)
 }
 
 func tapdSourceReadFailureTitle(ref tapdSourceRef) string {

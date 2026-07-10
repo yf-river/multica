@@ -82,7 +82,30 @@ func newNotificationBus(t *testing.T, queries *db.Queries) *events.Bus {
 	bus := events.New()
 	registerSubscriberListeners(bus, queries)
 	registerNotificationListeners(bus, queries)
+	bus.Subscribe(protocol.EventIssueCreated, func(event events.Event) {
+		projectDurableIssueEventForTest(t, queries, bus, event, consumeIssueCreatedAudience)
+	})
+	bus.Subscribe(protocol.EventIssueUpdated, func(event events.Event) {
+		projectDurableIssueEventForTest(t, queries, bus, event, consumeIssueUpdatedAudience)
+	})
 	return bus
+}
+
+func projectDurableIssueEventForTest(
+	t *testing.T,
+	queries *db.Queries,
+	bus *events.Bus,
+	event events.Event,
+	consumers ...func(context.Context, *db.Queries, events.Event) ([]events.Event, error),
+) {
+	t.Helper()
+	for _, consume := range consumers {
+		emitted, err := consume(context.Background(), queries, event)
+		if err != nil {
+			t.Fatalf("project durable %s event: %v", event.Type, err)
+		}
+		publishProjectedEvents(bus, emitted)
+	}
 }
 
 type notificationIssueTestFixture struct {

@@ -339,6 +339,8 @@ type DomainEventOutbox struct {
 	LastError     pgtype.Text        `json:"last_error"`
 	ProcessedAt   pgtype.Timestamptz `json:"processed_at"`
 	CreatedAt     pgtype.Timestamptz `json:"created_at"`
+	StreamKey     pgtype.Text        `json:"stream_key"`
+	SequenceNo    pgtype.Int8        `json:"sequence_no"`
 }
 
 type ExternalCredentialProfile struct {

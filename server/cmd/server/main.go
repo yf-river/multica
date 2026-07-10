@@ -259,13 +259,17 @@ func main() {
 		slog.Error("initialize domain event dispatcher", "error", err)
 		os.Exit(1)
 	}
+	if err := registerDurableIssueAudienceConsumers(eventDispatcher); err != nil {
+		slog.Error("register durable issue audience consumers", "error", err)
+		os.Exit(1)
+	}
 	if err := registerDurableActivityConsumers(eventDispatcher); err != nil {
 		slog.Error("register durable activity consumers", "error", err)
 		os.Exit(1)
 	}
-	// Order matters: subscriber listeners must register BEFORE notification listeners.
-	// The notification listener queries the subscriber table to determine recipients,
-	// so subscribers must be written first within the same synchronous event dispatch.
+	// Comment events still use the synchronous bus until their producers move to
+	// the outbox. Registration order remains explicit for that temporary boundary;
+	// Issue audience + inbox writes are one durable transaction.
 	registerSubscriberListeners(bus, queries)
 	registerActivityListeners(bus, queries)
 	registerNotificationListeners(bus, queries)

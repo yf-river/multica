@@ -3,11 +3,9 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log/slog"
 
-	"github.com/jackc/pgx/v5"
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
@@ -44,7 +42,7 @@ func consumeIssueCreatedActivity(ctx context.Context, queries *db.Queries, event
 	if !ok {
 		return nil, fmt.Errorf("decode issue-created activity payload")
 	}
-	exists, err := issueExistsForActivity(ctx, queries, payload.Issue)
+	exists, err := issueExistsForProjection(ctx, queries, payload.Issue)
 	if err != nil || !exists {
 		return nil, err
 	}
@@ -66,7 +64,7 @@ func consumeIssueUpdatedActivities(ctx context.Context, queries *db.Queries, eve
 		return nil, fmt.Errorf("decode issue-updated activity payload")
 	}
 	issue := payload.Issue
-	exists, err := issueExistsForActivity(ctx, queries, issue)
+	exists, err := issueExistsForProjection(ctx, queries, issue)
 	if err != nil || !exists {
 		return nil, err
 	}
@@ -105,30 +103,6 @@ func consumeIssueUpdatedActivities(ctx context.Context, queries *db.Queries, eve
 		emitted = append(emitted, created)
 	}
 	return emitted, nil
-}
-
-func issueExistsForActivity(ctx context.Context, queries *db.Queries, issue eventIssue) (bool, error) {
-	issueID, err := util.ParseUUID(issue.ID)
-	if err != nil {
-		return false, fmt.Errorf("activity event has invalid issue ID: %w", err)
-	}
-	workspaceID, err := util.ParseUUID(issue.WorkspaceID)
-	if err != nil {
-		return false, fmt.Errorf("activity event has invalid workspace ID: %w", err)
-	}
-	if _, err := queries.GetIssueInWorkspace(ctx, db.GetIssueInWorkspaceParams{
-		ID:          issueID,
-		WorkspaceID: workspaceID,
-	}); errors.Is(err, pgx.ErrNoRows) {
-		// The issue was deleted after the primary transaction committed. There
-		// is no visible timeline left to project, so completing this consumer is
-		// correct; retrying an unavoidable foreign-key failure would poison the
-		// queue forever.
-		return false, nil
-	} else if err != nil {
-		return false, fmt.Errorf("load issue before activity projection: %w", err)
-	}
-	return true, nil
 }
 
 func createIssueActivity(ctx context.Context, queries *db.Queries, event events.Event, issue eventIssue, action string, details []byte) (events.Event, error) {

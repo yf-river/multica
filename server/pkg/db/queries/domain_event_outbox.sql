@@ -1,8 +1,8 @@
 -- name: CreateDomainEvent :one
 INSERT INTO domain_event_outbox (
-    event_type, workspace_id, actor_type, actor_id, task_id, chat_session_id, payload
+    event_type, stream_key, workspace_id, actor_type, actor_id, task_id, chat_session_id, payload
 ) VALUES (
-    sqlc.arg(event_type), sqlc.narg(workspace_id), sqlc.narg(actor_type),
+    sqlc.arg(event_type), sqlc.narg(stream_key), sqlc.narg(workspace_id), sqlc.narg(actor_type),
     sqlc.narg(actor_id), sqlc.narg(task_id), sqlc.narg(chat_session_id),
     sqlc.arg(payload)
 )
@@ -10,13 +10,23 @@ RETURNING *;
 
 -- name: ClaimDomainEvents :many
 WITH picked AS (
-    SELECT id
-    FROM domain_event_outbox
-    WHERE processed_at IS NULL
-      AND available_at <= now()
-      AND (lease_until IS NULL OR lease_until < now())
-      AND event_type = ANY(sqlc.arg(event_types)::text[])
-    ORDER BY available_at, created_at, id
+    SELECT candidate.id
+    FROM domain_event_outbox AS candidate
+    WHERE candidate.processed_at IS NULL
+      AND candidate.available_at <= now()
+      AND (candidate.lease_until IS NULL OR candidate.lease_until < now())
+      AND candidate.event_type = ANY(sqlc.arg(event_types)::text[])
+      AND (
+          candidate.stream_key IS NULL
+          OR NOT EXISTS (
+              SELECT 1
+              FROM domain_event_outbox AS earlier
+              WHERE earlier.processed_at IS NULL
+                AND earlier.stream_key = candidate.stream_key
+                AND earlier.sequence_no < candidate.sequence_no
+          )
+      )
+    ORDER BY candidate.available_at, candidate.sequence_no
     LIMIT sqlc.arg(batch_size)
     FOR UPDATE SKIP LOCKED
 )

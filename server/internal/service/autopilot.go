@@ -13,6 +13,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/analytics"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/issueposition"
 	obsmetrics "github.com/multica-ai/multica/server/internal/metrics"
@@ -216,46 +217,48 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 		}
 	}
 
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("commit tx: %w", err)
-	}
-
-	// Update run with the linked issue.
-	updatedRun, err := s.Queries.UpdateAutopilotRunIssueCreated(ctx, db.UpdateAutopilotRunIssueCreatedParams{
+	updatedRun, err := qtx.UpdateAutopilotRunIssueCreated(ctx, db.UpdateAutopilotRunIssueCreatedParams{
 		ID:      run.ID,
 		IssueID: issue.ID,
 	})
 	if err != nil {
 		return fmt.Errorf("link run to issue: %w", err)
 	}
-	*run = updatedRun
 
-	// Publish issue:created so the existing event chain fires
-	// (subscriber listeners, activity listeners, notification listeners). For
-	// squad autopilots, this is what triggers shouldEnqueueSquadLeaderOnAssign
-	// → enqueueSquadLeaderTask — no separate squad-routing code needed here.
 	prefix := s.getIssuePrefix(ap.WorkspaceID)
-	s.Bus.Publish(events.Event{
+	createdEvent := events.Event{
 		Type:        protocol.EventIssueCreated,
+		StreamKey:   "issue:" + util.UUIDToString(issue.ID),
 		WorkspaceID: util.UUIDToString(ap.WorkspaceID),
 		ActorType:   "agent",
 		ActorID:     util.UUIDToString(leader.ID),
 		Payload: map[string]any{
 			"issue": issueToMap(issue, prefix),
 		},
-	})
-	s.captureIssueCreatedFromAutopilot(ap, run, issue, leader.ID)
+	}
+	createdEvent, err = eventoutbox.Enqueue(ctx, qtx, createdEvent)
+	if err != nil {
+		return fmt.Errorf("enqueue autopilot issue-created event: %w", err)
+	}
+	inboxEvents, err := s.createAutopilotSubscriberInbox(ctx, qtx, ap, issue, leader.ID, templateSubs)
+	if err != nil {
+		return err
+	}
 
-	// The issue:created notification listener only handles handler.IssueResponse
-	// payloads and only direct-notifies the assignee + @mentions; subscribers
-	// don't get an inbox at creation time on the manual path because there are
-	// none yet. The autopilot path is different: the template subscribers were
-	// fanned out into issue_subscriber inside the tx above, so they exist at the
-	// moment of creation and OQ3 says they should receive the same subscription
-	// events as reason='manual'. Issue creation is one such event — so write
-	// the inbox rows directly here. Done after commit so a failure here doesn't
-	// roll back the issue itself.
-	s.notifyAutopilotSubscribersOnCreate(ctx, ap, issue, leader.ID, templateSubs)
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit tx: %w", err)
+	}
+	*run = updatedRun
+
+	// Publish the committed event for realtime invalidation; durable audience,
+	// activity, and notification projections consume the outbox copy. For
+	// squad autopilots, this is what triggers shouldEnqueueSquadLeaderOnAssign
+	// → enqueueSquadLeaderTask — no separate squad-routing code needed here.
+	s.Bus.Publish(createdEvent)
+	for _, event := range inboxEvents {
+		s.Bus.Publish(event)
+	}
+	s.captureIssueCreatedFromAutopilot(ap, run, issue, leader.ID)
 
 	// Enqueue agent task via the existing flow. Squad-assigned autopilots
 	// route to the resolved leader as the executing agent (Path A from
@@ -291,23 +294,25 @@ func (s *AutopilotService) dispatchCreateIssue(ctx context.Context, ap db.Autopi
 // subscriber of an autopilot-created issue and broadcasts an inbox:new event
 // so the recipient's inbox updates in real time. Mirrors the inbox payload
 // shape from notification_listeners.go so the WS consumer sees the same fields
-// the listener-driven path produces. Failures are logged, not propagated:
-// the issue and its subscriber rows are already committed, and an inbox-write
-// hiccup must not bubble up as a dispatch failure.
-func (s *AutopilotService) notifyAutopilotSubscribersOnCreate(
+// the listener-driven path produces. These rows are part of the same
+// transaction as the issue, run link, subscriber fan-out, and durable event;
+// a partial Autopilot dispatch is never exposed as successful.
+func (s *AutopilotService) createAutopilotSubscriberInbox(
 	ctx context.Context,
+	queries *db.Queries,
 	ap db.Autopilot,
 	issue db.Issue,
 	leaderID pgtype.UUID,
 	subscribers []db.AutopilotSubscriber,
-) {
+) ([]events.Event, error) {
 	if len(subscribers) == 0 {
-		return
+		return nil, nil
 	}
 	details, _ := json.Marshal(map[string]string{
 		"autopilot_id": util.UUIDToString(ap.ID),
 		"reason":       "autopilot",
 	})
+	emitted := make([]events.Event, 0, len(subscribers))
 	for _, sub := range subscribers {
 		// Autopilot subscribers are restricted to user_type='member' at the
 		// handler boundary; defend in case that constraint is ever relaxed
@@ -315,7 +320,7 @@ func (s *AutopilotService) notifyAutopilotSubscribersOnCreate(
 		if sub.UserType != "member" {
 			continue
 		}
-		item, err := s.Queries.CreateInboxItem(ctx, db.CreateInboxItemParams{
+		item, err := queries.CreateInboxItem(ctx, db.CreateInboxItemParams{
 			WorkspaceID:   ap.WorkspaceID,
 			RecipientType: "member",
 			RecipientID:   sub.UserID,
@@ -329,15 +334,9 @@ func (s *AutopilotService) notifyAutopilotSubscribersOnCreate(
 			Details:       details,
 		})
 		if err != nil {
-			slog.Error("autopilot subscriber inbox write failed",
-				"autopilot_id", util.UUIDToString(ap.ID),
-				"issue_id", util.UUIDToString(issue.ID),
-				"recipient_id", util.UUIDToString(sub.UserID),
-				"error", err,
-			)
-			continue
+			return nil, fmt.Errorf("create autopilot subscriber inbox item %s: %w", util.UUIDToString(sub.UserID), err)
 		}
-		s.Bus.Publish(events.Event{
+		emitted = append(emitted, events.Event{
 			Type:        protocol.EventInboxNew,
 			WorkspaceID: util.UUIDToString(ap.WorkspaceID),
 			ActorType:   "agent",
@@ -364,6 +363,7 @@ func (s *AutopilotService) notifyAutopilotSubscribersOnCreate(
 			},
 		})
 	}
+	return emitted, nil
 }
 
 // errDispatchSkipped wraps a readiness failure encountered after the

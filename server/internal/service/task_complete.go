@@ -235,24 +235,55 @@ func (s *TaskService) applyIssueSourceSummary(ctx context.Context, task db.Agent
 		)
 		return
 	}
-	updated, err := s.updateIssueDescriptionPreservingFields(ctx, issue, redact.Text(description))
+	updated, err := s.persistIssueUpdate(ctx, issue, taskIssueUpdateChanges{Description: true}, func(queries *db.Queries) (db.Issue, error) {
+		updated, err := queries.UpdateIssue(ctx, db.UpdateIssueParams{
+			ID:            issue.ID,
+			Description:   pgtype.Text{String: redact.Text(description), Valid: true},
+			AssigneeType:  issue.AssigneeType,
+			AssigneeID:    issue.AssigneeID,
+			StartDate:     issue.StartDate,
+			DueDate:       issue.DueDate,
+			ParentIssueID: issue.ParentIssueID,
+			ProjectID:     issue.ProjectID,
+		})
+		if err != nil {
+			return db.Issue{}, err
+		}
+		type metadataField struct {
+			key   string
+			value string
+		}
+		metadata := []metadataField{
+			{key: "source_summary_status", value: status},
+			{key: "source_summary_task_id", value: util.UUIDToString(task.ID)},
+		}
+		if strings.TrimSpace(errorMessage) != "" {
+			metadata = append(metadata, metadataField{key: "source_summary_error", value: errorMessage})
+		}
+		if sc.Provider != "" {
+			metadata = append(metadata, metadataField{key: "source_summary_provider", value: sc.Provider})
+		}
+		for _, field := range metadata {
+			updated, err = queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
+				ID:          issue.ID,
+				WorkspaceID: issue.WorkspaceID,
+				Key:         field.key,
+				Value:       mustJSONStringBytes(field.value),
+			})
+			if err != nil {
+				return db.Issue{}, fmt.Errorf("set %s: %w", field.key, err)
+			}
+		}
+		return updated, nil
+	})
 	if err != nil {
-		slog.Warn("source summary completion: update issue description failed",
+		slog.Warn("source summary completion: persist issue update failed",
 			"task_id", util.UUIDToString(task.ID),
 			"issue_id", util.UUIDToString(issue.ID),
 			"error", err,
 		)
 		return
 	}
-	updated = s.setIssueMetadataString(ctx, updated, "source_summary_status", status)
-	updated = s.setIssueMetadataString(ctx, updated, "source_summary_task_id", util.UUIDToString(task.ID))
-	if strings.TrimSpace(errorMessage) != "" {
-		updated = s.setIssueMetadataString(ctx, updated, "source_summary_error", errorMessage)
-	}
-	if sc.Provider != "" {
-		updated = s.setIssueMetadataString(ctx, updated, "source_summary_provider", sc.Provider)
-	}
-	s.broadcastIssueUpdated(updated)
 	s.enqueueIssueAfterSourceSummary(ctx, updated)
 }
 
@@ -321,37 +352,6 @@ func (s *TaskService) fallbackIssueSourceSummaryDescription(ctx context.Context,
 	}
 	b.WriteString("\n")
 	return b.String()
-}
-
-func (s *TaskService) updateIssueDescriptionPreservingFields(ctx context.Context, issue db.Issue, description string) (db.Issue, error) {
-	return s.Queries.UpdateIssue(ctx, db.UpdateIssueParams{
-		ID:            issue.ID,
-		Description:   pgtype.Text{String: description, Valid: true},
-		AssigneeType:  issue.AssigneeType,
-		AssigneeID:    issue.AssigneeID,
-		StartDate:     issue.StartDate,
-		DueDate:       issue.DueDate,
-		ParentIssueID: issue.ParentIssueID,
-		ProjectID:     issue.ProjectID,
-	})
-}
-
-func (s *TaskService) setIssueMetadataString(ctx context.Context, issue db.Issue, key, value string) db.Issue {
-	updated, err := s.Queries.SetIssueMetadataKey(ctx, db.SetIssueMetadataKeyParams{
-		ID:          issue.ID,
-		WorkspaceID: issue.WorkspaceID,
-		Key:         key,
-		Value:       mustJSONStringBytes(value),
-	})
-	if err != nil {
-		slog.Warn("source summary completion: set metadata failed",
-			"issue_id", util.UUIDToString(issue.ID),
-			"key", key,
-			"error", err,
-		)
-		return issue
-	}
-	return updated
 }
 
 func (s *TaskService) enqueueIssueAfterSourceSummary(ctx context.Context, issue db.Issue) {

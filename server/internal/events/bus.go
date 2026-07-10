@@ -9,8 +9,11 @@ import (
 type Event struct {
 	// ID is populated for durable events and remains stable across retries.
 	// Ephemeral-only events may leave it empty.
-	ID          string
-	Type        string // e.g. "issue:created", "inbox:new"
+	ID   string
+	Type string // e.g. "issue:created", "inbox:new"
+	// StreamKey serializes durable events that mutate the same aggregate.
+	// Events with different or empty keys remain independently claimable.
+	StreamKey   string
 	WorkspaceID string // routes to correct Hub room
 	ActorType   string // "member", "agent", or "system"
 	ActorID     string

@@ -46,6 +46,7 @@ func Enqueue(ctx context.Context, queries *db.Queries, event events.Event) (even
 	}
 	row, err := queries.CreateDomainEvent(ctx, db.CreateDomainEventParams{
 		EventType:     event.Type,
+		StreamKey:     optionalText(event.StreamKey),
 		WorkspaceID:   workspaceID,
 		ActorType:     optionalText(event.ActorType),
 		ActorID:       optionalText(event.ActorID),
@@ -297,6 +298,7 @@ func eventFromRow(row db.DomainEventOutbox) events.Event {
 	return events.Event{
 		ID:            util.UUIDToString(row.ID),
 		Type:          row.EventType,
+		StreamKey:     row.StreamKey.String,
 		WorkspaceID:   util.UUIDToString(row.WorkspaceID),
 		ActorType:     row.ActorType.String,
 		ActorID:       row.ActorID.String,

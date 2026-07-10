@@ -1,6 +1,7 @@
 package handler
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -118,6 +119,20 @@ func TestBatchUpdateValidUpdatesPersistAndCount(t *testing.T) {
 		if got.Status != "in_progress" {
 			t.Errorf("issue %s: expected status=in_progress, got %q", id, got.Status)
 		}
+		var eventCount int
+		if err := testPool.QueryRow(context.Background(), `
+			SELECT count(*)
+			FROM domain_event_outbox
+			WHERE event_type = 'issue:updated'
+			  AND stream_key = 'issue:' || $1
+			  AND payload->>'status_changed' = 'true'
+			  AND payload->>'prev_status' = 'todo'
+		`, id).Scan(&eventCount); err != nil {
+			t.Fatalf("count batch issue event: %v", err)
+		}
+		if eventCount != 1 {
+			t.Errorf("issue %s: durable update events = %d, want 1", id, eventCount)
+		}
 	}
 }
 
@@ -146,4 +161,5 @@ func deleteTestIssue(t *testing.T, id string) {
 	req := newRequest("DELETE", "/api/issues/"+id, nil)
 	req = withURLParam(req, "id", id)
 	testHandler.DeleteIssue(w, req)
+	testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE stream_key = 'issue:' || $1`, id)
 }

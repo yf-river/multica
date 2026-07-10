@@ -2,9 +2,11 @@ package eventoutbox
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -229,6 +231,88 @@ func TestDispatcherDoesNotRepeatCompletedConsumer(t *testing.T) {
 	assertActivityCount(t, fixture.issueID, "outbox_second", 1)
 	assertDeliveryCount(t, event.ID, "first", 1)
 	assertDeliveryCount(t, event.ID, "second", 1)
+}
+
+func TestStreamKeySerializesEventsAcrossDispatchers(t *testing.T) {
+	fixture := newOutboxFixture(t)
+	ctx := context.Background()
+	eventType := "test:ordered:" + uuid.NewString()
+	streamKey := "issue:" + fixture.issueID
+	enqueue := func(sequence int) events.Event {
+		event := fixture.event(eventType)
+		event.StreamKey = streamKey
+		event.Payload = map[string]any{"issue_id": fixture.issueID, "sequence": sequence}
+		created, err := Enqueue(ctx, fixture.queries, event)
+		if err != nil {
+			t.Fatalf("enqueue sequence %d: %v", sequence, err)
+		}
+		return created
+	}
+	first := enqueue(1)
+	second := enqueue(2)
+
+	var failFirst atomic.Bool
+	failFirst.Store(true)
+	var mu sync.Mutex
+	completed := make([]int, 0, 2)
+	consumer := func(_ context.Context, _ *db.Queries, event events.Event) ([]events.Event, error) {
+		var payload struct {
+			Sequence int `json:"sequence"`
+		}
+		raw, err := json.Marshal(event.Payload)
+		if err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return nil, err
+		}
+		if payload.Sequence == 1 && failFirst.CompareAndSwap(true, false) {
+			return nil, errors.New("injected first-event failure")
+		}
+		mu.Lock()
+		completed = append(completed, payload.Sequence)
+		mu.Unlock()
+		return nil, nil
+	}
+	newDispatcher := func(owner string) *Dispatcher {
+		dispatcher, err := NewDispatcher(fixture.queries, outboxTestPool, events.New(), owner, DispatcherConfig{
+			BatchSize: 10,
+			Lease:     time.Second,
+			RetryBase: 50 * time.Millisecond,
+			MaxRetry:  50 * time.Millisecond,
+		})
+		if err != nil {
+			t.Fatalf("NewDispatcher(%s): %v", owner, err)
+		}
+		if err := dispatcher.Register(eventType, "ordered", consumer); err != nil {
+			t.Fatalf("Register(%s): %v", owner, err)
+		}
+		return dispatcher
+	}
+	firstWorker := newDispatcher("stream-first-" + uuid.NewString())
+	secondWorker := newDispatcher("stream-second-" + uuid.NewString())
+
+	if count, err := firstWorker.ProcessBatch(ctx); count != 1 || err == nil {
+		t.Fatalf("first worker batch = (%d, %v), want one failed first event", count, err)
+	}
+	if count, err := secondWorker.ProcessBatch(ctx); count != 0 || err != nil {
+		t.Fatalf("second worker bypassed failed stream head: (%d, %v)", count, err)
+	}
+	time.Sleep(60 * time.Millisecond)
+	if count, err := secondWorker.ProcessBatch(ctx); count != 1 || err != nil {
+		t.Fatalf("retry first event = (%d, %v), want one success", count, err)
+	}
+	if count, err := firstWorker.ProcessBatch(ctx); count != 1 || err != nil {
+		t.Fatalf("process second event = (%d, %v), want one success", count, err)
+	}
+	mu.Lock()
+	gotOrder := append([]int(nil), completed...)
+	mu.Unlock()
+	if len(gotOrder) != 2 || gotOrder[0] != 1 || gotOrder[1] != 2 {
+		t.Fatalf("completed stream order = %v, want [1 2]", gotOrder)
+	}
+	assertOutboxComplete(t, first.ID, 1)
+	assertOutboxComplete(t, second.ID, 0)
 }
 
 func assertActivityCount(t *testing.T, issueID, action string, want int) {

@@ -3,10 +3,13 @@ package handler
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/multica-ai/multica/server/pkg/protocol"
 )
 
@@ -89,6 +92,66 @@ func TestIssueUpdateEventDoesNotMarkUnchangedDescription(t *testing.T) {
 	}
 }
 
+func TestIssueUpdateRollsBackWhenDurableEventCannotBeInserted(t *testing.T) {
+	created := createIssueForUpdateEvent(t, map[string]any{
+		"title": "Outbox insertion rollback",
+	})
+	installOutboxStreamFailure(t, "issue:"+created.ID)
+
+	w := httptest.NewRecorder()
+	req := newRequest("PUT", "/api/issues/"+created.ID, map[string]any{
+		"title": "must not persist",
+	})
+	req = withURLParam(req, "id", created.ID)
+	testHandler.UpdateIssue(w, req)
+	if w.Code != http.StatusInternalServerError {
+		t.Fatalf("UpdateIssue: expected 500, got %d: %s", w.Code, w.Body.String())
+	}
+
+	var title string
+	if err := testPool.QueryRow(context.Background(), `SELECT title FROM issue WHERE id = $1`, created.ID).Scan(&title); err != nil {
+		t.Fatalf("load issue after outbox failure: %v", err)
+	}
+	if title != "Outbox insertion rollback" {
+		t.Fatalf("issue title persisted without durable event: %q", title)
+	}
+	var eventCount int
+	if err := testPool.QueryRow(context.Background(), `
+		SELECT count(*) FROM domain_event_outbox
+		WHERE event_type = $1 AND payload #>> '{issue,id}' = $2
+	`, protocol.EventIssueUpdated, created.ID).Scan(&eventCount); err != nil {
+		t.Fatalf("count issue-updated events: %v", err)
+	}
+	if eventCount != 0 {
+		t.Fatalf("failed update left %d durable events", eventCount)
+	}
+}
+
+func installOutboxStreamFailure(t *testing.T, streamKey string) {
+	t.Helper()
+	suffix := strings.ReplaceAll(uuid.NewString(), "-", "")[:12]
+	functionName := "outbox_fail_fn_" + suffix
+	triggerName := "outbox_fail_" + suffix
+	ctx := context.Background()
+	t.Cleanup(func() {
+		testPool.Exec(ctx, fmt.Sprintf(`DROP TRIGGER IF EXISTS %s ON domain_event_outbox`, triggerName))
+		testPool.Exec(ctx, fmt.Sprintf(`DROP FUNCTION IF EXISTS %s()`, functionName))
+	})
+	if _, err := testPool.Exec(ctx, fmt.Sprintf(`
+		CREATE FUNCTION %s() RETURNS trigger LANGUAGE plpgsql AS $$
+		BEGIN
+			RAISE EXCEPTION 'forced outbox insertion failure';
+		END;
+		$$;
+		CREATE TRIGGER %s
+		BEFORE INSERT ON domain_event_outbox
+		FOR EACH ROW WHEN (NEW.stream_key = '%s')
+		EXECUTE FUNCTION %s();
+	`, functionName, triggerName, streamKey, functionName)); err != nil {
+		t.Fatalf("install outbox failure trigger: %v", err)
+	}
+}
+
 func createIssueForUpdateEvent(t *testing.T, body map[string]any) IssueResponse {
 	t.Helper()
 	w := httptest.NewRecorder()
@@ -142,6 +205,7 @@ func assertDurableIssueEvent(t *testing.T, ctx context.Context, eventType, issue
 		WHERE event_type = $1
 		  AND payload #>> '{issue,id}' = $2
 		  AND payload #>> '{issue,title}' = $3
+		  AND stream_key = 'issue:' || $2
 		  AND processed_at IS NULL
 	`, eventType, issueID, title).Scan(&count); err != nil {
 		t.Fatalf("count durable %s event: %v", eventType, err)

@@ -82,6 +82,27 @@ func subscriberCount(t *testing.T, queries *db.Queries, issueID string) int {
 	return len(subs)
 }
 
+func publishSubscriberProjection(t *testing.T, queries *db.Queries, bus *events.Bus, event events.Event) {
+	t.Helper()
+	var (
+		emitted []events.Event
+		err     error
+	)
+	switch event.Type {
+	case protocol.EventIssueCreated:
+		emitted, err = consumeIssueCreatedSubscribers(context.Background(), queries, event)
+	case protocol.EventIssueUpdated:
+		emitted, err = consumeIssueUpdatedSubscribers(context.Background(), queries, event)
+	default:
+		bus.Publish(event)
+		return
+	}
+	if err != nil {
+		t.Fatalf("project %s subscribers: %v", event.Type, err)
+	}
+	publishProjectedEvents(bus, emitted)
+}
+
 func TestSubscriberIssueCreated_CreatorSubscribed(t *testing.T) {
 	queries := db.New(testPool)
 	bus := events.New()
@@ -91,7 +112,7 @@ func TestSubscriberIssueCreated_CreatorSubscribed(t *testing.T) {
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
 
 	// Publish issue:created event with no assignee
-	bus.Publish(events.Event{
+	publishSubscriberProjection(t, queries, bus, events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
@@ -130,7 +151,7 @@ func TestSubscriberIssueCreated_CreatorAndAssignee(t *testing.T) {
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
 
 	assigneeType := "member"
-	bus.Publish(events.Event{
+	publishSubscriberProjection(t, queries, bus, events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
@@ -172,7 +193,7 @@ func TestSubscriberIssueCreated_SkipsUnsupportedAssigneeAndIssueMentionTypes(t *
 	squadType := "squad"
 	squadID := "11111111-2222-3333-4444-555555555555"
 	description := "[GOA-1](mention://issue/22222222-3333-4444-5555-666666666666) blocks this work"
-	bus.Publish(events.Event{
+	publishSubscriberProjection(t, queries, bus, events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
@@ -212,7 +233,7 @@ func TestSubscriberIssueCreated_SelfAssign(t *testing.T) {
 	// Creator is also the assignee (self-assign)
 	assigneeType := "member"
 	assigneeID := testUserID
-	bus.Publish(events.Event{
+	publishSubscriberProjection(t, queries, bus, events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
@@ -254,7 +275,7 @@ func TestSubscriberIssueUpdated_AssigneeChanged(t *testing.T) {
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
 
 	assigneeType := "member"
-	bus.Publish(events.Event{
+	publishSubscriberProjection(t, queries, bus, events.Event{
 		Type:        protocol.EventIssueUpdated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
@@ -289,7 +310,7 @@ func TestSubscriberIssueUpdated_NoAssigneeChange(t *testing.T) {
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
 
 	// Publish issue:updated without assignee_changed flag
-	bus.Publish(events.Event{
+	publishSubscriberProjection(t, queries, bus, events.Event{
 		Type:        protocol.EventIssueUpdated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
@@ -327,7 +348,7 @@ func TestSubscriberCommentCreated_CommenterSubscribed(t *testing.T) {
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
 
-	bus.Publish(events.Event{
+	publishSubscriberProjection(t, queries, bus, events.Event{
 		Type:        protocol.EventCommentCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
@@ -363,7 +384,7 @@ func TestSubscriberAddedEventPublished(t *testing.T) {
 		subscriberEvents = append(subscriberEvents, e)
 	})
 
-	bus.Publish(events.Event{
+	publishSubscriberProjection(t, queries, bus, events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",
@@ -410,7 +431,7 @@ func TestSubscriberIssueCreated_AutopilotMapPayload(t *testing.T) {
 	issueID := createTestIssue(t, testWorkspaceID, testUserID)
 	t.Cleanup(func() { cleanupTestIssue(t, issueID) })
 
-	bus.Publish(events.Event{
+	publishSubscriberProjection(t, queries, bus, events.Event{
 		Type:        protocol.EventIssueCreated,
 		WorkspaceID: testWorkspaceID,
 		ActorType:   "member",

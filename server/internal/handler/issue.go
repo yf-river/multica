@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/jackc/pgx/v5/pgtype"
 	"github.com/multica-ai/multica/server/internal/eventoutbox"
+	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/middleware"
 	"github.com/multica-ai/multica/server/internal/service"
@@ -1159,26 +1160,16 @@ func (h *Handler) UpdateIssue(w http.ResponseWriter, r *http.Request) {
 	_, touchedDueDate := rawFields["due_date"]
 	dueDateChanged := touchedDueDate && optionalStringChanged(prevDueDate, resp.DueDate)
 
-	updatedEvent := domainEvent(protocol.EventIssueUpdated, workspaceID, actorType, actorID, map[string]any{
-		"issue":               resp,
-		"assignee_changed":    assigneeChanged,
-		"status_changed":      statusChanged,
-		"priority_changed":    priorityChanged,
-		"start_date_changed":  startDateChanged,
-		"due_date_changed":    dueDateChanged,
-		"description_changed": descriptionChanged,
-		"title_changed":       titleChanged,
-		"prev_title":          prevIssue.Title,
-		"prev_assignee_type":  textToPtr(prevIssue.AssigneeType),
-		"prev_assignee_id":    uuidToPtr(prevIssue.AssigneeID),
-		"prev_status":         prevIssue.Status,
-		"prev_priority":       prevIssue.Priority,
-		"prev_start_date":     prevStartDate,
-		"prev_due_date":       prevDueDate,
-		"prev_description":    textToPtr(prevIssue.Description),
-		"creator_type":        prevIssue.CreatorType,
-		"creator_id":          uuidToString(prevIssue.CreatorID),
-	})
+	changes := issueUpdateChanges{
+		Assignee:    assigneeChanged,
+		Status:      statusChanged,
+		Priority:    priorityChanged,
+		StartDate:   startDateChanged,
+		DueDate:     dueDateChanged,
+		Description: descriptionChanged,
+		Title:       titleChanged,
+	}
+	updatedEvent := buildIssueUpdatedEvent(workspaceID, actorType, actorID, prevIssue, resp, changes)
 	updatedEvent, err = eventoutbox.Enqueue(r.Context(), qtx, updatedEvent)
 	if err != nil {
 		slog.Warn("enqueue issue update event failed", append(logger.RequestAttrs(r), "error", err, "issue_id", id, "workspace_id", workspaceID)...)
@@ -1213,6 +1204,48 @@ func optionalStringChanged(before, after *string) bool {
 		return before != nil || after != nil
 	}
 	return *before != *after
+}
+
+type issueUpdateChanges struct {
+	Assignee    bool
+	Status      bool
+	Priority    bool
+	StartDate   bool
+	DueDate     bool
+	Description bool
+	Title       bool
+}
+
+func buildIssueUpdatedEvent(
+	workspaceID string,
+	actorType string,
+	actorID string,
+	previous db.Issue,
+	issue IssueResponse,
+	changes issueUpdateChanges,
+) events.Event {
+	event := domainEvent(protocol.EventIssueUpdated, workspaceID, actorType, actorID, map[string]any{
+		"issue":               issue,
+		"assignee_changed":    changes.Assignee,
+		"status_changed":      changes.Status,
+		"priority_changed":    changes.Priority,
+		"start_date_changed":  changes.StartDate,
+		"due_date_changed":    changes.DueDate,
+		"description_changed": changes.Description,
+		"title_changed":       changes.Title,
+		"prev_title":          previous.Title,
+		"prev_assignee_type":  textToPtr(previous.AssigneeType),
+		"prev_assignee_id":    uuidToPtr(previous.AssigneeID),
+		"prev_status":         previous.Status,
+		"prev_priority":       previous.Priority,
+		"prev_start_date":     dateToPtr(previous.StartDate),
+		"prev_due_date":       dateToPtr(previous.DueDate),
+		"prev_description":    textToPtr(previous.Description),
+		"creator_type":        previous.CreatorType,
+		"creator_id":          uuidToString(previous.CreatorID),
+	})
+	event.StreamKey = "issue:" + issue.ID
+	return event
 }
 
 func (h *Handler) reconcileIssueUpdateSideEffects(ctx context.Context, r *http.Request, prevIssue db.Issue, issue db.Issue, assigneeChanged bool, statusChanged bool, actorType string, actorID string) {

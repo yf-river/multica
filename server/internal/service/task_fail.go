@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/events"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -817,15 +818,51 @@ func (s *TaskService) broadcastChatDone(ctx context.Context, task db.AgentTaskQu
 	})
 }
 
-func (s *TaskService) broadcastIssueUpdated(issue db.Issue) {
-	prefix := s.getIssuePrefix(issue.WorkspaceID)
-	s.Bus.Publish(events.Event{
-		Type:        protocol.EventIssueUpdated,
-		WorkspaceID: util.UUIDToString(issue.WorkspaceID),
-		ActorType:   "system",
-		ActorID:     "",
-		Payload:     map[string]any{"issue": issueToMap(issue, prefix)},
+type taskIssueUpdateChanges struct {
+	Status      bool
+	Description bool
+}
+
+func (s *TaskService) persistIssueUpdate(
+	ctx context.Context,
+	previous db.Issue,
+	changes taskIssueUpdateChanges,
+	update func(*db.Queries) (db.Issue, error),
+) (db.Issue, error) {
+	var updated db.Issue
+	var event events.Event
+	err := s.runInTx(ctx, func(queries *db.Queries) error {
+		var err error
+		updated, err = update(queries)
+		if err != nil {
+			return err
+		}
+		prefix := s.getIssuePrefix(updated.WorkspaceID)
+		event = events.Event{
+			Type:        protocol.EventIssueUpdated,
+			StreamKey:   "issue:" + util.UUIDToString(updated.ID),
+			WorkspaceID: util.UUIDToString(updated.WorkspaceID),
+			ActorType:   "system",
+			Payload: map[string]any{
+				"issue":               issueToMap(updated, prefix),
+				"status_changed":      changes.Status,
+				"description_changed": changes.Description,
+				"prev_status":         previous.Status,
+				"prev_description":    util.TextToPtr(previous.Description),
+				"creator_type":        previous.CreatorType,
+				"creator_id":          util.UUIDToString(previous.CreatorID),
+			},
+		}
+		event, err = eventoutbox.Enqueue(ctx, queries, event)
+		return err
 	})
+	if err != nil {
+		return db.Issue{}, err
+	}
+	if s.Bus != nil {
+		s.Bus.Publish(event)
+	}
+	return updated, nil
 }
 
 func (s *TaskService) getIssuePrefix(workspaceID pgtype.UUID) string {
@@ -835,4 +872,3 @@ func (s *TaskService) getIssuePrefix(workspaceID pgtype.UUID) string {
 	}
 	return ws.IssuePrefix
 }
-

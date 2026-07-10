@@ -555,15 +555,16 @@ func (s *TaskService) updateIssueStatusAfterCompletedSOPRun(ctx context.Context,
 			return db.Issue{}, fmt.Errorf("%w: %d incomplete child issue(s)", errIssueDoneBlockedByChildren, incomplete)
 		}
 	}
-	updated, err := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
-		ID:          issue.ID,
-		Status:      status,
-		WorkspaceID: issue.WorkspaceID,
+	updated, err := s.persistIssueUpdate(ctx, issue, taskIssueUpdateChanges{Status: true}, func(queries *db.Queries) (db.Issue, error) {
+		return queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+			ID:          issue.ID,
+			Status:      status,
+			WorkspaceID: issue.WorkspaceID,
+		})
 	})
 	if err != nil {
 		return db.Issue{}, err
 	}
-	s.broadcastIssueUpdated(updated)
 	if s.IssueStatusChanged != nil {
 		s.IssueStatusChanged(ctx, issue, updated, "system", "")
 	}
@@ -646,10 +647,12 @@ func (s *TaskService) issueForTaskStatusAutomation(ctx context.Context, task db.
 }
 
 func (s *TaskService) updateIssueStatusForTaskAutomation(ctx context.Context, task db.AgentTaskQueue, issue db.Issue, status string, reason string) {
-	updated, err := s.Queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
-		ID:          issue.ID,
-		Status:      status,
-		WorkspaceID: issue.WorkspaceID,
+	updated, err := s.persistIssueUpdate(ctx, issue, taskIssueUpdateChanges{Status: true}, func(queries *db.Queries) (db.Issue, error) {
+		return queries.UpdateIssueStatus(ctx, db.UpdateIssueStatusParams{
+			ID:          issue.ID,
+			Status:      status,
+			WorkspaceID: issue.WorkspaceID,
+		})
 	})
 	if err != nil {
 		slog.Warn("task issue status automation failed",
@@ -669,7 +672,6 @@ func (s *TaskService) updateIssueStatusForTaskAutomation(ctx context.Context, ta
 		"to_status", status,
 		"reason", reason,
 	)
-	s.broadcastIssueUpdated(updated)
 	if s.IssueStatusChanged != nil {
 		s.IssueStatusChanged(ctx, issue, updated, "system", "")
 	}

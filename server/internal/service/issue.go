@@ -637,6 +637,7 @@ func (s *IssueService) buildIssueCreatedEvent(issue db.Issue, attachments []db.A
 	}
 	return events.Event{
 		Type:        protocol.EventIssueCreated,
+		StreamKey:   "issue:" + util.UUIDToString(issue.ID),
 		WorkspaceID: util.UUIDToString(issue.WorkspaceID),
 		ActorType:   creatorType,
 		ActorID:     actorID,

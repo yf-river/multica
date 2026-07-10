@@ -13,13 +13,23 @@ import (
 
 const claimDomainEvents = `-- name: ClaimDomainEvents :many
 WITH picked AS (
-    SELECT id
-    FROM domain_event_outbox
-    WHERE processed_at IS NULL
-      AND available_at <= now()
-      AND (lease_until IS NULL OR lease_until < now())
-      AND event_type = ANY($3::text[])
-    ORDER BY available_at, created_at, id
+    SELECT candidate.id
+    FROM domain_event_outbox AS candidate
+    WHERE candidate.processed_at IS NULL
+      AND candidate.available_at <= now()
+      AND (candidate.lease_until IS NULL OR candidate.lease_until < now())
+      AND candidate.event_type = ANY($3::text[])
+      AND (
+          candidate.stream_key IS NULL
+          OR NOT EXISTS (
+              SELECT 1
+              FROM domain_event_outbox AS earlier
+              WHERE earlier.processed_at IS NULL
+                AND earlier.stream_key = candidate.stream_key
+                AND earlier.sequence_no < candidate.sequence_no
+          )
+      )
+    ORDER BY candidate.available_at, candidate.sequence_no
     LIMIT $4
     FOR UPDATE SKIP LOCKED
 )
@@ -28,7 +38,7 @@ SET lease_owner = $1,
     lease_until = now() + $2::interval
 FROM picked
 WHERE event.id = picked.id
-RETURNING event.id, event.event_type, event.workspace_id, event.actor_type, event.actor_id, event.task_id, event.chat_session_id, event.payload, event.attempts, event.available_at, event.lease_owner, event.lease_until, event.last_error, event.processed_at, event.created_at
+RETURNING event.id, event.event_type, event.workspace_id, event.actor_type, event.actor_id, event.task_id, event.chat_session_id, event.payload, event.attempts, event.available_at, event.lease_owner, event.lease_until, event.last_error, event.processed_at, event.created_at, event.stream_key, event.sequence_no
 `
 
 type ClaimDomainEventsParams struct {
@@ -68,6 +78,8 @@ func (q *Queries) ClaimDomainEvents(ctx context.Context, arg ClaimDomainEventsPa
 			&i.LastError,
 			&i.ProcessedAt,
 			&i.CreatedAt,
+			&i.StreamKey,
+			&i.SequenceNo,
 		); err != nil {
 			return nil, err
 		}
@@ -104,17 +116,18 @@ func (q *Queries) CompleteDomainEvent(ctx context.Context, arg CompleteDomainEve
 
 const createDomainEvent = `-- name: CreateDomainEvent :one
 INSERT INTO domain_event_outbox (
-    event_type, workspace_id, actor_type, actor_id, task_id, chat_session_id, payload
+    event_type, stream_key, workspace_id, actor_type, actor_id, task_id, chat_session_id, payload
 ) VALUES (
-    $1, $2, $3,
-    $4, $5, $6,
-    $7
+    $1, $2, $3, $4,
+    $5, $6, $7,
+    $8
 )
-RETURNING id, event_type, workspace_id, actor_type, actor_id, task_id, chat_session_id, payload, attempts, available_at, lease_owner, lease_until, last_error, processed_at, created_at
+RETURNING id, event_type, workspace_id, actor_type, actor_id, task_id, chat_session_id, payload, attempts, available_at, lease_owner, lease_until, last_error, processed_at, created_at, stream_key, sequence_no
 `
 
 type CreateDomainEventParams struct {
 	EventType     string      `json:"event_type"`
+	StreamKey     pgtype.Text `json:"stream_key"`
 	WorkspaceID   pgtype.UUID `json:"workspace_id"`
 	ActorType     pgtype.Text `json:"actor_type"`
 	ActorID       pgtype.Text `json:"actor_id"`
@@ -126,6 +139,7 @@ type CreateDomainEventParams struct {
 func (q *Queries) CreateDomainEvent(ctx context.Context, arg CreateDomainEventParams) (DomainEventOutbox, error) {
 	row := q.db.QueryRow(ctx, createDomainEvent,
 		arg.EventType,
+		arg.StreamKey,
 		arg.WorkspaceID,
 		arg.ActorType,
 		arg.ActorID,
@@ -150,6 +164,8 @@ func (q *Queries) CreateDomainEvent(ctx context.Context, arg CreateDomainEventPa
 		&i.LastError,
 		&i.ProcessedAt,
 		&i.CreatedAt,
+		&i.StreamKey,
+		&i.SequenceNo,
 	)
 	return i, err
 }

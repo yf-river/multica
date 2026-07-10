@@ -8,6 +8,7 @@ import (
 	"strconv"
 
 	"github.com/jackc/pgx/v5/pgtype"
+	"github.com/multica-ai/multica/server/internal/eventoutbox"
 	"github.com/multica-ai/multica/server/internal/logger"
 	"github.com/multica-ai/multica/server/internal/util"
 	db "github.com/multica-ai/multica/server/pkg/db/generated"
@@ -230,8 +231,15 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 			}
 		}
 
-		issue, err := h.Queries.UpdateIssue(r.Context(), params)
+		tx, err := h.TxStarter.Begin(r.Context())
 		if err != nil {
+			slog.Warn("batch begin issue update transaction failed", "issue_id", issueID, "error", err)
+			continue
+		}
+		qtx := h.Queries.WithTx(tx)
+		issue, err := qtx.UpdateIssue(r.Context(), params)
+		if err != nil {
+			_ = tx.Rollback(r.Context())
 			slog.Warn("batch update issue failed", "issue_id", issueID, "error", err)
 			continue
 		}
@@ -240,17 +248,33 @@ func (h *Handler) BatchUpdateIssues(w http.ResponseWriter, r *http.Request) {
 		resp := issueToResponse(issue, prefix)
 		actorType, actorID := h.resolveActor(r, userID, workspaceID)
 
-		assigneeChanged := (req.Updates.AssigneeType != nil || req.Updates.AssigneeID != nil) &&
+		assigneeChanged := (batchTouchedType || batchTouchedID) &&
 			(prevIssue.AssigneeType.String != issue.AssigneeType.String || uuidToString(prevIssue.AssigneeID) != uuidToString(issue.AssigneeID))
 		statusChanged := req.Updates.Status != nil && prevIssue.Status != issue.Status
 		priorityChanged := req.Updates.Priority != nil && prevIssue.Priority != issue.Priority
-
-		h.publish(protocol.EventIssueUpdated, workspaceID, actorType, actorID, map[string]any{
-			"issue":            resp,
-			"assignee_changed": assigneeChanged,
-			"status_changed":   statusChanged,
-			"priority_changed": priorityChanged,
-		})
+		_, touchedStartDate := rawUpdates["start_date"]
+		_, touchedDueDate := rawUpdates["due_date"]
+		changes := issueUpdateChanges{
+			Assignee:    assigneeChanged,
+			Status:      statusChanged,
+			Priority:    priorityChanged,
+			StartDate:   touchedStartDate && optionalStringChanged(dateToPtr(prevIssue.StartDate), resp.StartDate),
+			DueDate:     touchedDueDate && optionalStringChanged(dateToPtr(prevIssue.DueDate), resp.DueDate),
+			Description: req.Updates.Description != nil && optionalStringChanged(textToPtr(prevIssue.Description), resp.Description),
+			Title:       req.Updates.Title != nil && prevIssue.Title != issue.Title,
+		}
+		updatedEvent := buildIssueUpdatedEvent(workspaceID, actorType, actorID, prevIssue, resp, changes)
+		updatedEvent, err = eventoutbox.Enqueue(r.Context(), qtx, updatedEvent)
+		if err != nil {
+			_ = tx.Rollback(r.Context())
+			slog.Warn("batch enqueue issue update event failed", "issue_id", issueID, "error", err)
+			continue
+		}
+		if err := tx.Commit(r.Context()); err != nil {
+			slog.Warn("batch commit issue update failed", "issue_id", issueID, "error", err)
+			continue
+		}
+		h.publishEvent(updatedEvent)
 
 		h.reconcileIssueUpdateSideEffects(r.Context(), r, prevIssue, issue, assigneeChanged, statusChanged, actorType, actorID)
 

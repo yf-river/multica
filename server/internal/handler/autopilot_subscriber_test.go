@@ -91,8 +91,22 @@ func createDispatchedAutopilotIssue(t *testing.T, ctx context.Context, autopilot
 		t.Fatalf("dispatch run = %+v, want linked issue", run)
 	}
 	issueID := uuidToString(run.IssueID)
+	var durableEventCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM domain_event_outbox
+		WHERE event_type = 'issue:created'
+		  AND stream_key = 'issue:' || $1
+		  AND payload #>> '{issue,id}' = $1
+	`, issueID).Scan(&durableEventCount); err != nil {
+		t.Fatalf("count autopilot issue-created event: %v", err)
+	}
+	if durableEventCount != 1 {
+		t.Fatalf("autopilot durable issue-created events = %d, want 1", durableEventCount)
+	}
 	t.Cleanup(func() {
 		testPool.Exec(context.Background(), `DELETE FROM inbox_item WHERE issue_id = $1`, issueID)
+		testPool.Exec(context.Background(), `DELETE FROM domain_event_outbox WHERE stream_key = 'issue:' || $1`, issueID)
 		testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID)
 	})
 

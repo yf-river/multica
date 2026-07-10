@@ -408,6 +408,20 @@ func TestQuickCreateIssueTapdWikiCreatesFetchedIssueDirectly(t *testing.T) {
 	default:
 		t.Fatal("source summary completion did not publish matching issue:updated event")
 	}
+	var durableSummaryEventCount int
+	if err := testPool.QueryRow(ctx, `
+		SELECT count(*)
+		FROM domain_event_outbox
+		WHERE event_type = 'issue:updated'
+		  AND stream_key = 'issue:' || $1
+		  AND payload->>'description_changed' = 'true'
+		  AND payload #>> '{issue,metadata,source_summary_status}' = 'completed'
+	`, resp.IssueID).Scan(&durableSummaryEventCount); err != nil {
+		t.Fatalf("count source summary durable event: %v", err)
+	}
+	if durableSummaryEventCount != 1 {
+		t.Fatalf("source summary durable events = %d, want 1", durableSummaryEventCount)
+	}
 	issue, err = testHandler.Queries.GetIssue(ctx, parseUUID(resp.IssueID))
 	if err != nil {
 		t.Fatalf("reload summarized issue: %v", err)
