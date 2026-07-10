@@ -17,42 +17,46 @@ test.describe("小队 SOP 端到端", () => {
     }
   });
 
-  test("管理员可从产品入口幂等准备 Multica 编码小队", async ({ page }) => {
+  test("管理员可从产品入口幂等准备当前 PM 小队", async ({ page }) => {
     test.setTimeout(120_000);
 
-    await api.cleanupInternalSquadTemplates();
-    await api.ensureOnlineCodexRuntime("E2E 内置小队 Codex Runtime");
+    const { runtime } = await api.registerDaemonCodeBuddyRuntime("E2E PM 小队 CodeBuddy Runtime");
 
     await page.goto(`/${workspaceSlug}/squads`, { waitUntil: "domcontentloaded" });
-    await page.getByTestId("ensure-multica-coding-squad").click();
+    await page.getByTestId("ensure-pm-squad").click();
+    await expect(page.getByRole("dialog", { name: "创建 pm 小队" })).toBeVisible();
+    await api.completeNextDaemonModelList(runtime.id);
+    await page.getByRole("dialog", { name: "创建 pm 小队" }).getByRole("button", { name: "创建小队" }).click();
 
-    await expect(page.getByRole("heading", { name: "Multica 编码小队" }).first()).toBeVisible({
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/squads/[^/]+$`), { timeout: 30_000 });
+    api.rememberSquad(new URL(page.url()).pathname.split("/").at(-1) ?? "");
+    await expect(page.getByRole("heading", { name: "pm" }).first()).toBeVisible({
       timeout: 30_000,
     });
-    await expect(page.getByText("队长").first()).toBeVisible();
-    await expect(page.getByText("方案设计者").first()).toBeVisible();
-    await expect(page.getByText("开发者").first()).toBeVisible();
-    await expect(page.getByText("验收者").first()).toBeVisible();
-    await expect(page.getByText("规约维护者").first()).toBeVisible();
-    await expect(page.getByText("部署运行者").first()).toBeVisible();
+    for (const role of ["PM-项目经理", "01-需求澄清", "02-方案设计", "03-任务拆分", "04-开发", "05-验证测试"]) {
+      await expect(page.getByText(role).first()).toBeVisible();
+    }
 
-    await expect.poll(() => api.getInternalSquadTemplateStats(), {
+    await expect.poll(() => api.getInternalSquadTemplateStats("pm", "pm-v2"), {
       timeout: 15_000,
-      message: "等待内置编码小队角色写入数据库",
+      message: "等待当前 PM 小队角色写入数据库",
     }).toEqual({
       squad_count: 1,
       agent_count: 6,
       member_count: 6,
     });
 
-    await page.goto(`/${workspaceSlug}/squads`, { waitUntil: "domcontentloaded" });
-    await page.getByTestId("ensure-multica-coding-squad").click();
-    await expect(page.getByRole("heading", { name: "Multica 编码小队" }).first()).toBeVisible({
+    await page.getByRole("link", { name: "小队", exact: true }).first().click();
+    await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/squads$`), { timeout: 30_000 });
+    await page.getByTestId("ensure-pm-squad").click();
+    await expect(page.getByRole("dialog", { name: "创建 pm 小队" })).toBeVisible();
+    await page.getByRole("dialog", { name: "创建 pm 小队" }).getByRole("button", { name: "创建小队" }).click();
+    await expect(page.getByRole("heading", { name: "pm" }).first()).toBeVisible({
       timeout: 30_000,
     });
-    await expect.poll(() => api.getInternalSquadTemplateStats(), {
+    await expect.poll(() => api.getInternalSquadTemplateStats("pm", "pm-v2"), {
       timeout: 15_000,
-      message: "重复准备内置编码小队不应制造重复数据",
+      message: "重复准备当前 PM 小队不应制造重复数据",
     }).toEqual({
       squad_count: 1,
       agent_count: 6,
@@ -64,8 +68,7 @@ test.describe("小队 SOP 端到端", () => {
     test.setTimeout(120_000);
 
     const suffix = Date.now();
-    await api.cleanupInternalSquadTemplates();
-    await api.ensureOnlineCodexRuntime(`E2E Multica 编码小队 Runtime ${suffix}`);
+    await api.registerDaemonCodeBuddyRuntime(`E2E Multica 编码小队 Runtime ${suffix}`);
     const template = await api.ensureInternalSquadTemplate("multica-coding");
     const squad = template.squad;
     const leader = template.agents.find((agent) => agent.role_key === "captain");
@@ -137,7 +140,7 @@ test.describe("小队 SOP 端到端", () => {
     expect(Number(summary.指标["证据数"])).toBeGreaterThanOrEqual(1);
     expect(summary.task_trace_total).toBeGreaterThanOrEqual(1);
     expect(summary.model_breakdown[0]).toMatchObject({
-      "名称": "deepseek-v4-pro-ioa",
+      "名称": "deepseek/v4-pro",
       "价格已知": true,
     });
     expect(summary.runtime_breakdown[0]).toMatchObject({
@@ -193,11 +196,10 @@ test.describe("小队 SOP 端到端", () => {
     test.setTimeout(120_000);
 
     const suffix = Date.now();
-    await api.cleanupInternalSquadTemplates();
-    await api.ensureOnlineCodexRuntime(`E2E user-center 小队 Runtime ${suffix}`);
+    await api.registerDaemonCodeBuddyRuntime(`E2E PM 小队 Runtime ${suffix}`);
     const template = await api.ensureInternalSquadTemplate("user-center");
     const squad = template.squad;
-    const leader = template.agents.find((agent) => agent.role_key === "captain");
+    const leader = template.agents.find((agent) => agent.role_key === "pm");
     expect(leader).toBeTruthy();
     const issue = await api.createIssue(`E2E user-center 小队闭环 ${suffix}`, {
       description: "验证 user-center 小队从 issue 分派到 SOP 阶段、队长任务、trace 和观测摘要。",
@@ -221,7 +223,7 @@ test.describe("小队 SOP 端到端", () => {
     await expect.poll(
       async () => {
         const data = await api.listIssueSOPRuns(issue.id);
-        return data.items.find((item) => item.profile_key === "user-center-sop-flow")?.id ?? "";
+        return data.items.find((item) => item.profile_key === "generic-project-sop-flow-v2")?.id ?? "";
       },
       {
         timeout: 15_000,
@@ -229,10 +231,10 @@ test.describe("小队 SOP 端到端", () => {
       },
     ).not.toBe("");
     const runs = await api.listIssueSOPRuns(issue.id);
-    const run = runs.items.find((item) => item.profile_key === "user-center-sop-flow");
+    const run = runs.items.find((item) => item.profile_key === "generic-project-sop-flow-v2");
     expect(run).toBeTruthy();
-    expect(run!.current_step_key).toBe("clarify");
-    expect((run!.profile.steps as unknown[]).length).toBe(5);
+    expect(run!.current_step_key).toBe("pm");
+    expect((run!.profile.steps as unknown[]).length).toBe(6);
 
     await api.completeSquadLeaderTaskViaDaemon(
       leaderTask!,

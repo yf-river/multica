@@ -2,30 +2,15 @@ import { expect, test } from "@playwright/test";
 import { createTestApi, loginAsDefault } from "./helpers";
 
 test.describe("Multica 编码小队页面证据", () => {
-  test("可以创建编码小队、绑定 issue，并回看方案确认与观测证据", async ({ page }) => {
+  test("公开模板 API 创建的编码小队可在页面绑定 issue 并回看观测证据", async ({ page }) => {
     test.setTimeout(120_000);
 
     const workspaceSlug = await loginAsDefault(page);
     const api = await createTestApi();
-    const createdIssueIds: string[] = [];
-    const createdProjectIds: string[] = [];
 
     try {
       const suffix = Date.now();
-
-      await page.goto(`/${workspaceSlug}/squads`, { waitUntil: "domcontentloaded" });
-      await page.getByTestId("ensure-multica-coding-squad").click();
-      await expect(page.getByRole("heading", { name: "Multica 编码小队" }).first()).toBeVisible({
-        timeout: 30_000,
-      });
-      for (const role of ["队长", "方案设计者", "开发者", "验收者", "规约维护者", "部署运行者"]) {
-        await expect(page.getByText(role).first()).toBeVisible({ timeout: 15_000 });
-      }
-      await page.getByRole("button", { name: "指令" }).click();
-      await expect(page.getByText("方案设计与确认").first()).toBeVisible({ timeout: 15_000 });
-      await expect(page.getByText("方案经确认").first()).toBeVisible({ timeout: 15_000 });
-      await expect(page.getByText("未独立验收就完成").first()).toBeVisible({ timeout: 15_000 });
-
+      await api.registerDaemonCodeBuddyRuntime(`E2E Multica 编码小队 Runtime ${suffix}`);
       const template = await api.ensureInternalSquadTemplate("multica-coding");
       const squad = template.squad;
       const leader = template.agents.find((agent) => agent.role_key === "captain");
@@ -33,8 +18,20 @@ test.describe("Multica 编码小队页面证据", () => {
       expect(leader).toBeTruthy();
       expect(designer).toBeTruthy();
 
+      await page.goto(`/${workspaceSlug}/squads/${squad.id}`, { waitUntil: "domcontentloaded" });
+      await expect(page.getByRole("heading", { name: "Multica 编码小队" }).first()).toBeVisible({
+        timeout: 30_000,
+      });
+      for (const role of ["队长", "方案设计者", "开发者", "验收者", "规约维护者", "部署运行者"]) {
+        await expect(page.getByText(role).first()).toBeVisible({ timeout: 15_000 });
+      }
+      await page.getByRole("button", { name: "指令" }).click();
+      const squadInstructions = page.getByRole("textbox", { name: /先澄清需求和验收口径/ });
+      await expect(squadInstructions).toContainText("队长先澄清需求和验收口径");
+      await expect(squadInstructions).toContainText("验收者必须独立给出证据");
+      await expect(squadInstructions).toContainText("所有指标和输出使用中文");
+
       const project = await api.createProject(`UI Multica 编码项目 ${suffix}`);
-      createdProjectIds.push(project.id);
 
       const issue = await api.createIssue(`UI Multica 编码小队需求 ${suffix}`, {
         description:
@@ -45,7 +42,6 @@ test.describe("Multica 编码小队页面证据", () => {
         assignee_type: "squad",
         assignee_id: squad.id,
       });
-      createdIssueIds.push(issue.id);
 
       await expect
         .poll(async () => (await api.findLeaderTask(issue.id, leader!.id))?.id ?? "", {
@@ -88,13 +84,14 @@ test.describe("Multica 编码小队页面证据", () => {
           output: "已记录编码小队方案确认门禁，等待人工确认后再开发。",
         },
       ]);
-      await api.recordSOPStepEvent(run!.id, "receive", {
-        event_type: "步骤完成",
-        status: "已完成",
-        reason: "队长已完成需求接收和角色分派",
-        duration_ms: 1200,
-        evidence: { 角色: "队长", 下一阶段: "方案设计与确认" },
-      });
+      const runsAfterLeader = await api.listIssueSOPRuns(issue.id);
+      const runAfterLeader = runsAfterLeader.items.find((item) => item.id === run!.id);
+      expect(runAfterLeader?.current_step_key).toBe("design_review");
+      expect(
+        runAfterLeader?.events.some(
+          (event) => event.step_key === "receive" && event.event_type === "步骤完成" && event.status === "已完成",
+        ),
+      ).toBe(true);
       await api.recordSOPStepEvent(run!.id, "design_review", {
         event_type: "人工确认",
         status: "进行中",
@@ -115,33 +112,21 @@ test.describe("Multica 编码小队页面证据", () => {
       });
       await expect(page.getByText(squad.name).first()).toBeVisible({ timeout: 15_000 });
 
-      const executionLog = page.getByTestId("issue-execution-log-section");
-      await expect(executionLog).toContainText("小队 SOP 执行", { timeout: 15_000 });
-      const executionTree = page.getByTestId("issue-collaboration-execution-tree");
-      await expect(executionTree).toContainText("协作执行树", { timeout: 15_000 });
-      await expect(executionTree).toContainText(issue.identifier);
-      await expect(executionTree).toContainText("SOP");
-      await expect(executionTree).toContainText("观测");
-      await expect(executionTree).toContainText("工具");
-      await expect(executionTree).toContainText("multica squad activity");
-      await expect(executionTree).toContainText("工具链明细");
-      await expect(executionTree).toContainText("已返回");
-      await expect(executionTree).toContainText("调用 #2 / 结果 #3");
-      const sopSummary = page.getByTestId("issue-sop-run-summary");
-      await expect(sopSummary).toContainText("multica-coding");
-      await expect(sopSummary).toContainText("design_review");
-      await expect(sopSummary).toContainText("方案设计与确认");
-      await expect(sopSummary).toContainText("人工确认");
-      await expect(sopSummary).toContainText("等待人工确认后再开发");
-      await expect(page.getByTestId("issue-trace-event-summary")).toContainText("观测事件");
-      await expect(page.getByTestId("issue-trace-event-summary")).toContainText("任务事件树");
+      await expect(page.getByTestId("issue-execution-log-section")).toHaveCount(0);
+      const reviewSummary = page.getByTestId("issue-run-review-summary-card");
+      await expect(reviewSummary).toContainText("运行复盘", { timeout: 15_000 });
+      await expect(reviewSummary).toContainText("任务数：1");
+      await expect(reviewSummary).toContainText("Token：60");
+      await reviewSummary.getByRole("link", { name: "查看完整复盘" }).click();
+
+      await expect(page).toHaveURL(new RegExp(`/${workspaceSlug}/run-reviews\\?issue=${issue.id}$`), { timeout: 15_000 });
+      await expect(page.getByRole("heading", { name: issue.title })).toBeVisible();
+      await expect(page.getByTestId("run-review-horizontal-timeline")).toBeVisible();
+      await expect(page.getByTestId("run-review-event-group").first()).toBeVisible();
+      await expect(page.getByText("multica squad activity", { exact: true }).first()).toBeVisible();
+      await expect(page.getByText(/等待人工确认后再开发/).first()).toBeVisible();
     } finally {
-      for (const id of createdIssueIds) {
-        await api.deleteIssue(id).catch(() => undefined);
-      }
-      for (const id of createdProjectIds) {
-        await api.deleteProject(id).catch(() => undefined);
-      }
+      await api.cleanup();
     }
   });
 });

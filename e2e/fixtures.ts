@@ -334,14 +334,6 @@ interface PromptEvaluationSummary {
   优化候选: Record<string, number>;
 }
 
-interface CodingSquadFixture {
-  runtimeId: string;
-  squadId: string;
-  squadName: string;
-  leaderAgentId: string;
-  agents: Array<{ id: string; name: string; role: string; roleKey: string }>;
-}
-
 interface InternalSquadTemplateAgent {
   id: string;
   name: string;
@@ -622,10 +614,6 @@ export class TestApiClient {
     return this.ensureOnlineRuntime("codex", name);
   }
 
-  async ensureOnlineCodeBuddyRuntime(name = `E2E CodeBuddy Runtime ${Date.now()}`) {
-    return this.ensureOnlineRuntime("codebuddy", name);
-  }
-
   async createAgent(data: {
     name: string;
     runtime_id: string;
@@ -682,6 +670,41 @@ export class TestApiClient {
     }
     this.createdRuntimeIds.push(runtime.id);
     return { daemonId, runtime };
+  }
+
+  async completeNextDaemonModelList(
+    runtimeId: string,
+    models = [
+      { id: "deepseek-v4-pro-ioa", label: "DeepSeek V4 Pro", provider: "deepseek", default: true },
+      { id: "glm-5.2-ioa", label: "GLM 5.2", provider: "zhipu", default: false },
+    ],
+  ) {
+    for (let attempt = 0; attempt < 40; attempt += 1) {
+      const heartbeat = await this.authedFetch("/api/daemon/heartbeat", {
+        method: "POST",
+        body: JSON.stringify({ runtime_id: runtimeId }),
+      });
+      if (!heartbeat.ok) {
+        throw new Error(`daemon heartbeat failed: ${heartbeat.status} ${await heartbeat.text()}`);
+      }
+      const ack = (await heartbeat.json()) as { pending_model_list?: { id: string } };
+      const requestId = ack.pending_model_list?.id;
+      if (requestId) {
+        const result = await this.authedFetch(
+          `/api/daemon/runtimes/${runtimeId}/models/${requestId}/result`,
+          {
+            method: "POST",
+            body: JSON.stringify({ status: "completed", supported: true, models }),
+          },
+        );
+        if (!result.ok) {
+          throw new Error(`report model list failed: ${result.status} ${await result.text()}`);
+        }
+        return;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    throw new Error(`runtime ${runtimeId} received no model-list request`);
   }
 
   async claimDaemonTask(runtimeId: string) {
@@ -763,172 +786,6 @@ export class TestApiClient {
     });
     if (!res.ok) {
       throw new Error(`Failed to fail daemon task: ${res.status} ${await res.text()}`);
-    }
-  }
-
-  async createCodingSquadFixture(name = `E2E Multica 编码小队 ${Date.now()}`): Promise<CodingSquadFixture> {
-    if (!this.workspaceId) {
-      throw new Error("Cannot seed coding squad before workspace is selected");
-    }
-    if (!this.account) {
-      throw new Error("Cannot seed coding squad before login");
-    }
-
-    const runtime = await this.ensureOnlineCodexRuntime(`${name} Runtime`);
-    const profile = {
-      profile_key: "multica-coding-squad-v1",
-      project: "Multica",
-      repo: "/data/ida/goal-test",
-      mode: "coding_squad",
-      operation_skills: ["需求拆解", "代码实现", "独立验收", "规约同步", "部署验证"],
-      acceptance: ["方案可审阅", "开发范围清晰", "验收者独立检查", "日志和测试证据齐全"],
-      forbidden_actions: ["开发者自证通过", "越权修改非负责范围", "泄露密钥"],
-      model_policy: {
-        "轻量验收任务": "deepseek-v4-pro-ioa",
-        "代码测试任务": "deepseek-v4-pro-ioa",
-      },
-      roles: [
-        {
-          key: "captain",
-          name: "队长",
-          responsibility: "接需求、判断流程、拆任务、分派给不同 AI、跟踪进度。",
-          output: "小队执行计划和任务分派记录",
-        },
-        {
-          key: "designer",
-          name: "方案设计者",
-          responsibility: "输出技术方案、影响面和测试方案，开发前给人确认。",
-          output: "技术方案和测试计划",
-        },
-        {
-          key: "developer",
-          name: "开发者",
-          responsibility: "只处理被分配的代码范围。",
-          boundary: "不得随手修改别人负责的范围。",
-          output: "代码变更和自测记录",
-        },
-        {
-          key: "acceptor",
-          name: "验收者",
-          responsibility: "独立检查开发者代码、测试结果和漏改风险。",
-          forbidden: "开发者不能自己说通过。",
-          output: "独立验收结论",
-        },
-        {
-          key: "spec-maintainer",
-          name: "规约维护者",
-          responsibility: "同步流程文档、测试数据说明、接口索引和技能说明。",
-          output: "规约同步清单",
-        },
-        {
-          key: "operator",
-          name: "部署运行者",
-          responsibility: "负责端口、环境变量、数据库、启动服务、健康检查和部署验证。",
-          forbidden: "不得泄露密钥，不随意改业务代码。",
-          output: "部署与健康检查证据",
-        },
-      ],
-      steps: [
-        { key: "receive", name: "需求接收与流程判断", role_key: "captain" },
-        { key: "design", name: "技术方案与测试方案", role_key: "designer" },
-        { key: "develop", name: "范围内实现", role_key: "developer" },
-        { key: "acceptance", name: "独立验收", role_key: "acceptor" },
-        { key: "spec", name: "规约同步", role_key: "spec-maintainer" },
-        { key: "deploy", name: "部署与健康检查", role_key: "operator" },
-      ],
-    };
-    const roleSeeds = [
-      ["captain", "队长", "负责接需求、拆任务、分派和跟踪进度。"],
-      ["designer", "方案设计者", "负责技术方案、影响面和测试方案。"],
-      ["developer", "开发者", "负责限定范围内的代码实现。"],
-      ["acceptor", "验收者", "负责独立验收和漏改检查。"],
-      ["spec-maintainer", "规约维护者", "负责同步文档、接口索引和技能说明。"],
-      ["operator", "部署运行者", "负责环境、启动、日志和健康检查。"],
-    ] as const;
-
-    const client = new pg.Client(DATABASE_URL);
-    await client.connect();
-    try {
-      const userRow = await client.query<{ id: string }>(
-        `SELECT id FROM "user" WHERE account = $1 LIMIT 1`,
-        [this.account],
-      );
-      if (userRow.rows.length === 0) {
-        throw new Error(`E2E user missing: ${this.account}`);
-      }
-      const userId = userRow.rows[0]!.id;
-      await client.query("BEGIN");
-      const agents: CodingSquadFixture["agents"] = [];
-      for (const [roleKey, role, instruction] of roleSeeds) {
-        const agent = await client.query<{ id: string }>(
-          `
-            INSERT INTO agent (
-              workspace_id, name, runtime_mode, runtime_config, runtime_id,
-              visibility, status, max_concurrent_tasks, owner_id,
-              instructions, custom_env, custom_args, model
-            )
-            VALUES (
-              $1, $2, 'cloud', '{"provider":"codebuddy","用途":"Multica 编码小队 E2E"}'::jsonb, $3,
-              'workspace', 'idle', 2, $4,
-              $5, '{}'::jsonb, '[]'::jsonb, 'deepseek-v4-pro-ioa'
-            )
-            RETURNING id
-          `,
-          [
-            this.workspaceId,
-            `${name} · ${role}`,
-            runtime.id,
-            userId,
-            `你是 Multica 编码小队的${role}。${instruction}所有输出使用中文，并保留可验收证据。`,
-          ],
-        );
-        agents.push({ id: agent.rows[0]!.id, name: `${name} · ${role}`, role, roleKey });
-      }
-
-      const squad = await client.query<{ id: string }>(
-        `
-          INSERT INTO squad (
-            workspace_id, name, description, leader_id, creator_id, instructions, sop_profile
-          )
-          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb)
-          RETURNING id
-        `,
-        [
-          this.workspaceId,
-          name,
-          "用于开发 Multica 自身的生产级编码小队，包含队长、方案设计者、开发者、验收者、规约维护者和部署运行者。",
-          agents[0]!.id,
-          userId,
-          "队长先澄清需求和验收口径，再按角色分派；开发者不得越界；验收者必须独立给出证据；所有指标和输出使用中文。",
-          JSON.stringify(profile),
-        ],
-      );
-      const squadId = squad.rows[0]!.id;
-      for (const agent of agents) {
-        await client.query(
-          `
-            INSERT INTO squad_member (squad_id, member_type, member_id, role)
-            VALUES ($1, 'agent', $2, $3)
-            ON CONFLICT (squad_id, member_type, member_id)
-            DO UPDATE SET role = EXCLUDED.role
-          `,
-          [squadId, agent.id, agent.role],
-        );
-      }
-      await client.query("COMMIT");
-      this.createdSquadIds.push(squadId);
-      return {
-        runtimeId: runtime.id,
-        squadId,
-        squadName: name,
-        leaderAgentId: agents[0]!.id,
-        agents,
-      };
-    } catch (error) {
-      await client.query("ROLLBACK");
-      throw error;
-    } finally {
-      await client.end();
     }
   }
 
@@ -1097,10 +954,18 @@ export class TestApiClient {
     return res.json();
   }
 
-  async ensureInternalSquadTemplate(templateKey: "user-center" | "multica-coding"): Promise<InternalSquadTemplateResponse> {
+  async ensureInternalSquadTemplate(
+    templateKey: "user-center" | "multica-coding",
+    options: {
+      name?: string;
+      runtime_provider?: string;
+      model?: string;
+      scope?: "workspace" | "personal";
+    } = {},
+  ): Promise<InternalSquadTemplateResponse> {
     const res = await this.authedFetch("/api/squads/internal-template", {
       method: "POST",
-      body: JSON.stringify({ template_key: templateKey }),
+      body: JSON.stringify({ template_key: templateKey, ...options }),
     });
     if (!res.ok) {
       throw new Error(`ensure internal squad template failed: ${res.status} ${await res.text()}`);
@@ -1112,7 +977,16 @@ export class TestApiClient {
     return data;
   }
 
-  async getInternalSquadTemplateStats(templateName = "Multica 编码小队"): Promise<InternalSquadTemplateStats> {
+  rememberSquad(id: string) {
+    if (id && !this.createdSquadIds.includes(id)) {
+      this.createdSquadIds.push(id);
+    }
+  }
+
+  async getInternalSquadTemplateStats(
+    templateName: string,
+    agentNamePrefix: string,
+  ): Promise<InternalSquadTemplateStats> {
     if (!this.workspaceId) {
       throw new Error("Cannot inspect internal squad template before workspace is selected");
     }
@@ -1125,7 +999,7 @@ export class TestApiClient {
             SELECT id FROM squad WHERE workspace_id = $1 AND name = $2
           ),
           target_agents AS (
-            SELECT id FROM agent WHERE workspace_id = $1 AND name LIKE ($2 || ' · %')
+            SELECT id FROM agent WHERE workspace_id = $1 AND name LIKE ($3 || ' · %')
           )
           SELECT
             (SELECT count(*)::int FROM target_squads) AS squad_count,
@@ -1136,7 +1010,7 @@ export class TestApiClient {
               JOIN target_squads s ON s.id = sm.squad_id
             ) AS member_count
         `,
-        [this.workspaceId, templateName],
+        [this.workspaceId, templateName, agentNamePrefix],
       );
       return result.rows[0] ?? { squad_count: 0, agent_count: 0, member_count: 0 };
     } finally {
@@ -2200,45 +2074,6 @@ export class TestApiClient {
     }
   }
 
-  async cleanupInternalSquadTemplates() {
-    if (!this.workspaceId) {
-      return;
-    }
-    const client = new pg.Client(DATABASE_URL);
-    await client.connect();
-    try {
-      await client.query("BEGIN");
-      try {
-        await client.query(
-          `
-            DELETE FROM squad
-            WHERE workspace_id = $1
-              AND name IN ('pm', 'user-center 小队', 'Multica 编码小队')
-          `,
-          [this.workspaceId],
-        );
-        await client.query(
-          `
-            DELETE FROM agent
-            WHERE workspace_id = $1
-              AND (
-                name IN ('pm', '01-clarify', '02-design', '03-task-split', '04-implement', '05-verify')
-                OR name LIKE 'user-center 小队 · %'
-                OR name LIKE 'Multica 编码小队 · %'
-              )
-          `,
-          [this.workspaceId],
-        );
-        await client.query("COMMIT");
-      } catch (error) {
-        await client.query("ROLLBACK");
-        throw error;
-      }
-    } finally {
-      await client.end();
-    }
-  }
-
   /** Clean up all issues created during this test. */
   async cleanup() {
     for (const id of this.createdIssueIds) {
@@ -2266,7 +2101,6 @@ export class TestApiClient {
     }
     this.createdPromptLibraryIds = [];
     await this.cleanupSeededSquads();
-    await this.cleanupInternalSquadTemplates();
     await this.cleanupSeededRuntimes();
   }
 

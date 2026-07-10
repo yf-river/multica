@@ -33,10 +33,12 @@ test.describe("小队真实 Agent 闭环", () => {
         status: "online",
       });
 
-      await api.cleanupInternalSquadTemplates();
-      const template = await api.ensureInternalSquadTemplate("user-center");
+      const template = await api.ensureInternalSquadTemplate("user-center", {
+        name: `E2E 真实 PM 小队 ${suffix}`,
+        runtime_provider: EXPECTED_AGENT_PROVIDER,
+      });
       const squad = template.squad;
-      const leader = template.agents.find((agent) => agent.role_key === "captain");
+      const leader = template.agents.find((agent) => agent.role_key === "pm");
       expect(leader).toBeTruthy();
 
       const issue = await api.createIssue(`真实小队验收 user-center ${suffix}`, {
@@ -61,7 +63,7 @@ test.describe("小队真实 Agent 闭环", () => {
       await expect.poll(
         async () => {
           const runs = await api.listIssueSOPRuns(issue.id);
-          return runs.items.find((item) => item.profile_key === "user-center-sop-flow")?.id ?? "";
+          return runs.items.find((item) => item.profile_key === "generic-project-sop-flow-v2")?.id ?? "";
         },
         {
           timeout: 20_000,
@@ -150,9 +152,11 @@ test.describe("小队真实 Agent 闭环", () => {
       await authenticateBrowserSession(page, token!, workspace.slug);
       await page.goto(`/${workspace.slug}/issues/${issue.id}`, { waitUntil: "domcontentloaded" });
       await waitForPageText(page, issue.title, 15_000);
-      await expect(page.getByText("小队 SOP 执行", { exact: true }).first()).toBeVisible({ timeout: 15_000 });
-      await expect(page.getByText("观测事件", { exact: true }).first()).toBeVisible();
-      await expect(page.getByText("任务事件树", { exact: true }).first()).toBeVisible();
+      await expect(page.getByTestId("issue-execution-log-section")).toContainText("执行日志", { timeout: 15_000 });
+      const reviewSummary = page.getByTestId("issue-run-review-summary-card");
+      await expect(reviewSummary).toContainText("运行复盘", { timeout: 15_000 });
+      await reviewSummary.getByRole("link", { name: "查看完整复盘" }).click();
+      await expect(page.getByTestId("run-review-horizontal-timeline")).toBeVisible({ timeout: 15_000 });
       await expect(page.getByText(/任务已完成|任务已失败|任务已取消/).first()).toBeVisible();
     } finally {
       await api.cleanup();
