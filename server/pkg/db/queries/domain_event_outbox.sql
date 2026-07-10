@@ -13,6 +13,7 @@ WITH picked AS (
     SELECT candidate.id
     FROM domain_event_outbox AS candidate
     WHERE candidate.processed_at IS NULL
+      AND candidate.dead_lettered_at IS NULL
       AND candidate.available_at <= now()
       AND (candidate.lease_until IS NULL OR candidate.lease_until < now())
       AND candidate.event_type = ANY(sqlc.arg(event_types)::text[])
@@ -22,6 +23,7 @@ WITH picked AS (
               SELECT 1
               FROM domain_event_outbox AS earlier
               WHERE earlier.processed_at IS NULL
+                AND earlier.dead_lettered_at IS NULL
                 AND earlier.stream_key = candidate.stream_key
                 AND earlier.sequence_no < candidate.sequence_no
           )
@@ -57,7 +59,8 @@ SET processed_at = now(),
     lease_until = NULL,
     last_error = NULL
 WHERE id = sqlc.arg(id)
-  AND lease_owner = sqlc.arg(lease_owner);
+  AND lease_owner = sqlc.arg(lease_owner)
+  AND dead_lettered_at IS NULL;
 
 -- name: RetryDomainEvent :execrows
 UPDATE domain_event_outbox
@@ -67,4 +70,41 @@ SET attempts = attempts + 1,
     lease_until = NULL,
     last_error = sqlc.arg(last_error)
 WHERE id = sqlc.arg(id)
-  AND lease_owner = sqlc.arg(lease_owner);
+  AND lease_owner = sqlc.arg(lease_owner)
+  AND dead_lettered_at IS NULL;
+
+-- name: DeadLetterDomainEvent :execrows
+UPDATE domain_event_outbox
+SET attempts = attempts + 1,
+    dead_lettered_at = now(),
+    dead_letter_reason = sqlc.arg(dead_letter_reason),
+    lease_owner = NULL,
+    lease_until = NULL,
+    last_error = sqlc.arg(dead_letter_reason)
+WHERE id = sqlc.arg(id)
+  AND lease_owner = sqlc.arg(lease_owner)
+  AND processed_at IS NULL
+  AND dead_lettered_at IS NULL;
+
+-- name: RequeueDeadLetterDomainEvent :execrows
+UPDATE domain_event_outbox
+SET attempts = 0,
+    available_at = now(),
+    lease_owner = NULL,
+    lease_until = NULL,
+    last_error = NULL,
+    dead_lettered_at = NULL,
+    dead_letter_reason = NULL
+WHERE id = sqlc.arg(id)
+  AND dead_lettered_at IS NOT NULL;
+
+-- name: DeleteExpiredDomainEvents :execrows
+DELETE FROM domain_event_outbox AS event
+WHERE event.id IN (
+    SELECT candidate.id
+    FROM domain_event_outbox AS candidate
+    WHERE (candidate.processed_at IS NOT NULL AND candidate.processed_at < sqlc.arg(processed_before))
+       OR (candidate.dead_lettered_at IS NOT NULL AND candidate.dead_lettered_at < sqlc.arg(dead_lettered_before))
+    ORDER BY COALESCE(candidate.processed_at, candidate.dead_lettered_at), candidate.sequence_no
+    LIMIT sqlc.arg(batch_size)
+);

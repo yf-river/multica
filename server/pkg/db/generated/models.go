@@ -324,23 +324,25 @@ type DomainEventDelivery struct {
 }
 
 type DomainEventOutbox struct {
-	ID            pgtype.UUID        `json:"id"`
-	EventType     string             `json:"event_type"`
-	WorkspaceID   pgtype.UUID        `json:"workspace_id"`
-	ActorType     pgtype.Text        `json:"actor_type"`
-	ActorID       pgtype.Text        `json:"actor_id"`
-	TaskID        pgtype.Text        `json:"task_id"`
-	ChatSessionID pgtype.Text        `json:"chat_session_id"`
-	Payload       []byte             `json:"payload"`
-	Attempts      int32              `json:"attempts"`
-	AvailableAt   pgtype.Timestamptz `json:"available_at"`
-	LeaseOwner    pgtype.Text        `json:"lease_owner"`
-	LeaseUntil    pgtype.Timestamptz `json:"lease_until"`
-	LastError     pgtype.Text        `json:"last_error"`
-	ProcessedAt   pgtype.Timestamptz `json:"processed_at"`
-	CreatedAt     pgtype.Timestamptz `json:"created_at"`
-	StreamKey     pgtype.Text        `json:"stream_key"`
-	SequenceNo    pgtype.Int8        `json:"sequence_no"`
+	ID               pgtype.UUID        `json:"id"`
+	EventType        string             `json:"event_type"`
+	WorkspaceID      pgtype.UUID        `json:"workspace_id"`
+	ActorType        pgtype.Text        `json:"actor_type"`
+	ActorID          pgtype.Text        `json:"actor_id"`
+	TaskID           pgtype.Text        `json:"task_id"`
+	ChatSessionID    pgtype.Text        `json:"chat_session_id"`
+	Payload          []byte             `json:"payload"`
+	Attempts         int32              `json:"attempts"`
+	AvailableAt      pgtype.Timestamptz `json:"available_at"`
+	LeaseOwner       pgtype.Text        `json:"lease_owner"`
+	LeaseUntil       pgtype.Timestamptz `json:"lease_until"`
+	LastError        pgtype.Text        `json:"last_error"`
+	ProcessedAt      pgtype.Timestamptz `json:"processed_at"`
+	CreatedAt        pgtype.Timestamptz `json:"created_at"`
+	StreamKey        pgtype.Text        `json:"stream_key"`
+	SequenceNo       pgtype.Int8        `json:"sequence_no"`
+	DeadLetteredAt   pgtype.Timestamptz `json:"dead_lettered_at"`
+	DeadLetterReason pgtype.Text        `json:"dead_letter_reason"`
 }
 
 type ExternalCredentialProfile struct {

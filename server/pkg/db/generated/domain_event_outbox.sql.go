@@ -16,6 +16,7 @@ WITH picked AS (
     SELECT candidate.id
     FROM domain_event_outbox AS candidate
     WHERE candidate.processed_at IS NULL
+      AND candidate.dead_lettered_at IS NULL
       AND candidate.available_at <= now()
       AND (candidate.lease_until IS NULL OR candidate.lease_until < now())
       AND candidate.event_type = ANY($3::text[])
@@ -25,6 +26,7 @@ WITH picked AS (
               SELECT 1
               FROM domain_event_outbox AS earlier
               WHERE earlier.processed_at IS NULL
+                AND earlier.dead_lettered_at IS NULL
                 AND earlier.stream_key = candidate.stream_key
                 AND earlier.sequence_no < candidate.sequence_no
           )
@@ -38,7 +40,7 @@ SET lease_owner = $1,
     lease_until = now() + $2::interval
 FROM picked
 WHERE event.id = picked.id
-RETURNING event.id, event.event_type, event.workspace_id, event.actor_type, event.actor_id, event.task_id, event.chat_session_id, event.payload, event.attempts, event.available_at, event.lease_owner, event.lease_until, event.last_error, event.processed_at, event.created_at, event.stream_key, event.sequence_no
+RETURNING event.id, event.event_type, event.workspace_id, event.actor_type, event.actor_id, event.task_id, event.chat_session_id, event.payload, event.attempts, event.available_at, event.lease_owner, event.lease_until, event.last_error, event.processed_at, event.created_at, event.stream_key, event.sequence_no, event.dead_lettered_at, event.dead_letter_reason
 `
 
 type ClaimDomainEventsParams struct {
@@ -80,6 +82,8 @@ func (q *Queries) ClaimDomainEvents(ctx context.Context, arg ClaimDomainEventsPa
 			&i.CreatedAt,
 			&i.StreamKey,
 			&i.SequenceNo,
+			&i.DeadLetteredAt,
+			&i.DeadLetterReason,
 		); err != nil {
 			return nil, err
 		}
@@ -99,6 +103,7 @@ SET processed_at = now(),
     last_error = NULL
 WHERE id = $1
   AND lease_owner = $2
+  AND dead_lettered_at IS NULL
 `
 
 type CompleteDomainEventParams struct {
@@ -122,7 +127,7 @@ INSERT INTO domain_event_outbox (
     $5, $6, $7,
     $8
 )
-RETURNING id, event_type, workspace_id, actor_type, actor_id, task_id, chat_session_id, payload, attempts, available_at, lease_owner, lease_until, last_error, processed_at, created_at, stream_key, sequence_no
+RETURNING id, event_type, workspace_id, actor_type, actor_id, task_id, chat_session_id, payload, attempts, available_at, lease_owner, lease_until, last_error, processed_at, created_at, stream_key, sequence_no, dead_lettered_at, dead_letter_reason
 `
 
 type CreateDomainEventParams struct {
@@ -166,8 +171,64 @@ func (q *Queries) CreateDomainEvent(ctx context.Context, arg CreateDomainEventPa
 		&i.CreatedAt,
 		&i.StreamKey,
 		&i.SequenceNo,
+		&i.DeadLetteredAt,
+		&i.DeadLetterReason,
 	)
 	return i, err
+}
+
+const deadLetterDomainEvent = `-- name: DeadLetterDomainEvent :execrows
+UPDATE domain_event_outbox
+SET attempts = attempts + 1,
+    dead_lettered_at = now(),
+    dead_letter_reason = $1,
+    lease_owner = NULL,
+    lease_until = NULL,
+    last_error = $1
+WHERE id = $2
+  AND lease_owner = $3
+  AND processed_at IS NULL
+  AND dead_lettered_at IS NULL
+`
+
+type DeadLetterDomainEventParams struct {
+	DeadLetterReason pgtype.Text `json:"dead_letter_reason"`
+	ID               pgtype.UUID `json:"id"`
+	LeaseOwner       pgtype.Text `json:"lease_owner"`
+}
+
+func (q *Queries) DeadLetterDomainEvent(ctx context.Context, arg DeadLetterDomainEventParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deadLetterDomainEvent, arg.DeadLetterReason, arg.ID, arg.LeaseOwner)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
+const deleteExpiredDomainEvents = `-- name: DeleteExpiredDomainEvents :execrows
+DELETE FROM domain_event_outbox AS event
+WHERE event.id IN (
+    SELECT candidate.id
+    FROM domain_event_outbox AS candidate
+    WHERE (candidate.processed_at IS NOT NULL AND candidate.processed_at < $1)
+       OR (candidate.dead_lettered_at IS NOT NULL AND candidate.dead_lettered_at < $2)
+    ORDER BY COALESCE(candidate.processed_at, candidate.dead_lettered_at), candidate.sequence_no
+    LIMIT $3
+)
+`
+
+type DeleteExpiredDomainEventsParams struct {
+	ProcessedBefore    pgtype.Timestamptz `json:"processed_before"`
+	DeadLetteredBefore pgtype.Timestamptz `json:"dead_lettered_before"`
+	BatchSize          int32              `json:"batch_size"`
+}
+
+func (q *Queries) DeleteExpiredDomainEvents(ctx context.Context, arg DeleteExpiredDomainEventsParams) (int64, error) {
+	result, err := q.db.Exec(ctx, deleteExpiredDomainEvents, arg.ProcessedBefore, arg.DeadLetteredBefore, arg.BatchSize)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const hasDomainEventDelivery = `-- name: HasDomainEventDelivery :one
@@ -207,6 +268,27 @@ func (q *Queries) RecordDomainEventDelivery(ctx context.Context, arg RecordDomai
 	return err
 }
 
+const requeueDeadLetterDomainEvent = `-- name: RequeueDeadLetterDomainEvent :execrows
+UPDATE domain_event_outbox
+SET attempts = 0,
+    available_at = now(),
+    lease_owner = NULL,
+    lease_until = NULL,
+    last_error = NULL,
+    dead_lettered_at = NULL,
+    dead_letter_reason = NULL
+WHERE id = $1
+  AND dead_lettered_at IS NOT NULL
+`
+
+func (q *Queries) RequeueDeadLetterDomainEvent(ctx context.Context, id pgtype.UUID) (int64, error) {
+	result, err := q.db.Exec(ctx, requeueDeadLetterDomainEvent, id)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const retryDomainEvent = `-- name: RetryDomainEvent :execrows
 UPDATE domain_event_outbox
 SET attempts = attempts + 1,
@@ -216,6 +298,7 @@ SET attempts = attempts + 1,
     last_error = $2
 WHERE id = $3
   AND lease_owner = $4
+  AND dead_lettered_at IS NULL
 `
 
 type RetryDomainEventParams struct {

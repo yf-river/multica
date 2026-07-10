@@ -80,12 +80,17 @@ type registeredConsumer struct {
 }
 
 type DispatcherConfig struct {
-	BatchSize    int32
-	PollInterval time.Duration
-	Lease        time.Duration
-	RetryBase    time.Duration
-	MaxRetry     time.Duration
-	Logger       *slog.Logger
+	BatchSize           int32
+	PollInterval        time.Duration
+	Lease               time.Duration
+	RetryBase           time.Duration
+	MaxRetry            time.Duration
+	MaxAttempts         int32
+	CleanupInterval     time.Duration
+	ProcessedRetention  time.Duration
+	DeadLetterRetention time.Duration
+	CleanupBatchSize    int32
+	Logger              *slog.Logger
 }
 
 func (cfg DispatcherConfig) withDefaults() DispatcherConfig {
@@ -103,6 +108,21 @@ func (cfg DispatcherConfig) withDefaults() DispatcherConfig {
 	}
 	if cfg.MaxRetry <= 0 {
 		cfg.MaxRetry = time.Minute
+	}
+	if cfg.MaxAttempts <= 0 {
+		cfg.MaxAttempts = 12
+	}
+	if cfg.CleanupInterval <= 0 {
+		cfg.CleanupInterval = 10 * time.Minute
+	}
+	if cfg.ProcessedRetention <= 0 {
+		cfg.ProcessedRetention = 7 * 24 * time.Hour
+	}
+	if cfg.DeadLetterRetention <= 0 {
+		cfg.DeadLetterRetention = 30 * 24 * time.Hour
+	}
+	if cfg.CleanupBatchSize <= 0 {
+		cfg.CleanupBatchSize = 5000
 	}
 	if cfg.Logger == nil {
 		cfg.Logger = slog.Default()
@@ -159,8 +179,10 @@ func (d *Dispatcher) Register(eventType, name string, handler Consumer) error {
 // Run polls until ctx is cancelled. Transient claim/delivery errors are logged
 // and retried; they never terminate the worker silently.
 func (d *Dispatcher) Run(ctx context.Context) {
-	ticker := time.NewTicker(d.config.PollInterval)
-	defer ticker.Stop()
+	pollTicker := time.NewTicker(d.config.PollInterval)
+	cleanupTicker := time.NewTicker(d.config.CleanupInterval)
+	defer pollTicker.Stop()
+	defer cleanupTicker.Stop()
 	for {
 		if _, err := d.ProcessBatch(ctx); err != nil && !errors.Is(err, context.Canceled) {
 			d.config.Logger.Error("domain event dispatch failed", "error", err)
@@ -168,9 +190,29 @@ func (d *Dispatcher) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
-		case <-ticker.C:
+		case <-pollTicker.C:
+		case <-cleanupTicker.C:
+			if _, err := d.PruneExpired(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				d.config.Logger.Error("domain event retention cleanup failed", "error", err)
+			}
 		}
 	}
+}
+
+func (d *Dispatcher) PruneExpired(ctx context.Context) (int64, error) {
+	now := time.Now()
+	deleted, err := d.queries.DeleteExpiredDomainEvents(ctx, db.DeleteExpiredDomainEventsParams{
+		ProcessedBefore:    pgtype.Timestamptz{Time: now.Add(-d.config.ProcessedRetention), Valid: true},
+		DeadLetteredBefore: pgtype.Timestamptz{Time: now.Add(-d.config.DeadLetterRetention), Valid: true},
+		BatchSize:          d.config.CleanupBatchSize,
+	})
+	if err != nil {
+		return 0, fmt.Errorf("delete expired domain events: %w", err)
+	}
+	if deleted > 0 {
+		d.config.Logger.Info("expired domain events deleted", "count", deleted)
+	}
+	return deleted, nil
 }
 
 func (d *Dispatcher) ProcessBatch(ctx context.Context) (int, error) {
@@ -210,7 +252,7 @@ func (d *Dispatcher) processEvent(ctx context.Context, row db.DomainEventOutbox)
 
 	for _, consumer := range consumers {
 		if err := d.deliver(ctx, row.ID, event, consumer); err != nil {
-			retryErr := d.retry(ctx, row, err)
+			retryErr := d.retry(ctx, row, consumer.name, err)
 			return errors.Join(fmt.Errorf("deliver %s to %s: %w", event.Type, consumer.name, err), retryErr)
 		}
 	}
@@ -266,7 +308,31 @@ func (d *Dispatcher) deliver(ctx context.Context, eventID pgtype.UUID, event eve
 	return nil
 }
 
-func (d *Dispatcher) retry(ctx context.Context, row db.DomainEventOutbox, cause error) error {
+func (d *Dispatcher) retry(ctx context.Context, row db.DomainEventOutbox, consumer string, cause error) error {
+	message := cause.Error()
+	if len(message) > 2000 {
+		message = message[:2000]
+	}
+	if row.Attempts+1 >= d.config.MaxAttempts {
+		updated, err := d.queries.DeadLetterDomainEvent(ctx, db.DeadLetterDomainEventParams{
+			DeadLetterReason: optionalText("consumer " + consumer + ": " + message),
+			ID:               row.ID,
+			LeaseOwner:       optionalText(d.leaseOwner),
+		})
+		if err != nil {
+			return fmt.Errorf("dead-letter domain event: %w", err)
+		}
+		if updated != 1 {
+			return fmt.Errorf("dead-letter domain event: lease lost")
+		}
+		d.config.Logger.Error("domain event dead-lettered",
+			"event_id", util.UUIDToString(row.ID),
+			"event_type", row.EventType,
+			"consumer", consumer,
+			"attempts", row.Attempts+1,
+		)
+		return nil
+	}
 	delay := d.config.RetryBase
 	for attempt := int32(0); attempt < row.Attempts && delay < d.config.MaxRetry; attempt++ {
 		if delay > d.config.MaxRetry/2 {
@@ -274,10 +340,6 @@ func (d *Dispatcher) retry(ctx context.Context, row db.DomainEventOutbox, cause 
 			break
 		}
 		delay *= 2
-	}
-	message := cause.Error()
-	if len(message) > 2000 {
-		message = message[:2000]
 	}
 	updated, err := d.queries.RetryDomainEvent(ctx, db.RetryDomainEventParams{
 		RetryDelay: interval(delay),

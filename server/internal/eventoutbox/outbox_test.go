@@ -315,6 +315,142 @@ func TestStreamKeySerializesEventsAcrossDispatchers(t *testing.T) {
 	assertOutboxComplete(t, second.ID, 0)
 }
 
+func TestDeadLetterUnblocksStreamAndCanBeRequeued(t *testing.T) {
+	fixture := newOutboxFixture(t)
+	ctx := context.Background()
+	eventType := "test:dead-letter:" + uuid.NewString()
+	streamKey := "issue:" + fixture.issueID
+	enqueue := func(sequence int) events.Event {
+		event := fixture.event(eventType)
+		event.StreamKey = streamKey
+		event.Payload = map[string]any{"issue_id": fixture.issueID, "sequence": sequence}
+		created, err := Enqueue(ctx, fixture.queries, event)
+		if err != nil {
+			t.Fatalf("enqueue sequence %d: %v", sequence, err)
+		}
+		return created
+	}
+	first := enqueue(1)
+	second := enqueue(2)
+
+	poisonFirst := true
+	var mu sync.Mutex
+	completed := make([]int, 0, 2)
+	dispatcher, err := NewDispatcher(fixture.queries, outboxTestPool, events.New(), "dead-letter-"+uuid.NewString(), DispatcherConfig{
+		BatchSize:   10,
+		Lease:       time.Second,
+		RetryBase:   time.Millisecond,
+		MaxRetry:    time.Millisecond,
+		MaxAttempts: 2,
+	})
+	if err != nil {
+		t.Fatalf("NewDispatcher: %v", err)
+	}
+	if err := dispatcher.Register(eventType, "poisonable", func(_ context.Context, _ *db.Queries, event events.Event) ([]events.Event, error) {
+		var payload struct {
+			Sequence int `json:"sequence"`
+		}
+		raw, _ := json.Marshal(event.Payload)
+		if err := json.Unmarshal(raw, &payload); err != nil {
+			return nil, err
+		}
+		if payload.Sequence == 1 && poisonFirst {
+			return nil, errors.New("permanent projection failure")
+		}
+		mu.Lock()
+		completed = append(completed, payload.Sequence)
+		mu.Unlock()
+		return nil, nil
+	}); err != nil {
+		t.Fatalf("Register: %v", err)
+	}
+
+	if count, err := dispatcher.ProcessBatch(ctx); count != 1 || err == nil {
+		t.Fatalf("first failure batch = (%d, %v), want one retry", count, err)
+	}
+	time.Sleep(3 * time.Millisecond)
+	if count, err := dispatcher.ProcessBatch(ctx); count != 1 || err == nil {
+		t.Fatalf("dead-letter batch = (%d, %v), want one terminal failure", count, err)
+	}
+	assertOutboxDeadLettered(t, first.ID, 2)
+
+	if count, err := dispatcher.ProcessBatch(ctx); count != 1 || err != nil {
+		t.Fatalf("stream successor after dead-letter = (%d, %v)", count, err)
+	}
+	assertOutboxComplete(t, second.ID, 0)
+	mu.Lock()
+	got := append([]int(nil), completed...)
+	mu.Unlock()
+	if len(got) != 1 || got[0] != 2 {
+		t.Fatalf("completed after dead-letter = %v, want [2]", got)
+	}
+
+	poisonFirst = false
+	if updated, err := fixture.queries.RequeueDeadLetterDomainEvent(ctx, util.MustParseUUID(first.ID)); err != nil || updated != 1 {
+		t.Fatalf("requeue dead letter = (%d, %v), want one row", updated, err)
+	}
+	if count, err := dispatcher.ProcessBatch(ctx); count != 1 || err != nil {
+		t.Fatalf("requeued event batch = (%d, %v)", count, err)
+	}
+	assertOutboxComplete(t, first.ID, 0)
+}
+
+func TestPruneExpiredKeepsFreshAndPendingEvents(t *testing.T) {
+	fixture := newOutboxFixture(t)
+	ctx := context.Background()
+	create := func(label string) events.Event {
+		event, err := Enqueue(ctx, fixture.queries, fixture.event("test:retention:"+label+":"+uuid.NewString()))
+		if err != nil {
+			t.Fatalf("enqueue %s: %v", label, err)
+		}
+		return event
+	}
+	oldProcessed := create("old-processed")
+	oldDead := create("old-dead")
+	freshProcessed := create("fresh-processed")
+	freshDead := create("fresh-dead")
+	pending := create("pending")
+	retentionUpdates := []struct {
+		sql string
+		id  string
+	}{
+		{`UPDATE domain_event_outbox SET processed_at = now() - interval '8 days' WHERE id = $1`, oldProcessed.ID},
+		{`UPDATE domain_event_outbox SET dead_lettered_at = now() - interval '31 days', dead_letter_reason = 'old' WHERE id = $1`, oldDead.ID},
+		{`UPDATE domain_event_outbox SET processed_at = now() WHERE id = $1`, freshProcessed.ID},
+		{`UPDATE domain_event_outbox SET dead_lettered_at = now(), dead_letter_reason = 'fresh' WHERE id = $1`, freshDead.ID},
+	}
+	for _, update := range retentionUpdates {
+		if _, err := outboxTestPool.Exec(ctx, update.sql, update.id); err != nil {
+			t.Fatalf("seed retention state for %s: %v", update.id, err)
+		}
+	}
+
+	dispatcher, err := NewDispatcher(fixture.queries, outboxTestPool, events.New(), "retention-"+uuid.NewString(), DispatcherConfig{
+		ProcessedRetention:  7 * 24 * time.Hour,
+		DeadLetterRetention: 30 * 24 * time.Hour,
+		CleanupBatchSize:    10,
+	})
+	if err != nil {
+		t.Fatalf("NewDispatcher: %v", err)
+	}
+	deleted, err := dispatcher.PruneExpired(ctx)
+	if err != nil {
+		t.Fatalf("PruneExpired: %v", err)
+	}
+	if deleted != 2 {
+		t.Fatalf("PruneExpired deleted %d rows, want 2", deleted)
+	}
+	for _, eventID := range []string{freshProcessed.ID, freshDead.ID, pending.ID} {
+		var count int
+		if err := outboxTestPool.QueryRow(ctx, `SELECT count(*) FROM domain_event_outbox WHERE id = $1`, eventID).Scan(&count); err != nil {
+			t.Fatalf("count retained event %s: %v", eventID, err)
+		}
+		if count != 1 {
+			t.Fatalf("fresh or pending event %s was pruned", eventID)
+		}
+	}
+}
+
 func assertActivityCount(t *testing.T, issueID, action string, want int) {
 	t.Helper()
 	var count int
@@ -352,5 +488,22 @@ func assertOutboxComplete(t *testing.T, eventID string, wantAttempts int) {
 	}
 	if !processed || attempts != wantAttempts {
 		t.Fatalf("outbox state = processed:%v attempts:%d, want true/%d", processed, attempts, wantAttempts)
+	}
+}
+
+func assertOutboxDeadLettered(t *testing.T, eventID string, wantAttempts int) {
+	t.Helper()
+	var deadLettered bool
+	var processed bool
+	var attempts int
+	var reason string
+	if err := outboxTestPool.QueryRow(context.Background(), `
+		SELECT dead_lettered_at IS NOT NULL, processed_at IS NOT NULL, attempts, COALESCE(dead_letter_reason, '')
+		FROM domain_event_outbox WHERE id = $1
+	`, eventID).Scan(&deadLettered, &processed, &attempts, &reason); err != nil {
+		t.Fatalf("load dead-letter row: %v", err)
+	}
+	if !deadLettered || processed || attempts != wantAttempts || reason == "" {
+		t.Fatalf("dead-letter state = dead:%v processed:%v attempts:%d reason:%q", deadLettered, processed, attempts, reason)
 	}
 }
