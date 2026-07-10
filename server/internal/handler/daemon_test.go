@@ -2503,7 +2503,7 @@ func TestClaimTask_SquadLeaderDoesNotReceiveIssueRepos(t *testing.T) {
 
 	var leaderID, runtimeID string
 	if err := testPool.QueryRow(ctx,
-		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 AND runtime_id IS NOT NULL LIMIT 1`,
+		`SELECT id, runtime_id FROM agent WHERE workspace_id = $1 AND name = 'Handler Test Agent'`,
 		testWorkspaceID,
 	).Scan(&leaderID, &runtimeID); err != nil {
 		t.Fatalf("get leader agent: %v", err)
@@ -2520,14 +2520,15 @@ func TestClaimTask_SquadLeaderDoesNotReceiveIssueRepos(t *testing.T) {
 	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM squad WHERE id = $1`, squadID) })
 
 	var issueID string
+	issueNumber := nextHandlerTestIssueNumber(t)
 	if err := testPool.QueryRow(ctx, `
 		INSERT INTO issue (
 			workspace_id, project_id, title, status, priority, creator_id, creator_type,
 			assignee_type, assignee_id, number, position
 		) VALUES ($1, $2, 'squad leader repo suppression', 'todo', 'medium', $3, 'member',
-			'squad', $4, 88011, 0)
+			'squad', $4, $5, 0)
 		RETURNING id
-	`, testWorkspaceID, projectID, testUserID, squadID).Scan(&issueID); err != nil {
+	`, testWorkspaceID, projectID, testUserID, squadID, issueNumber).Scan(&issueID); err != nil {
 		t.Fatalf("create issue: %v", err)
 	}
 	t.Cleanup(func() { testPool.Exec(context.Background(), `DELETE FROM issue WHERE id = $1`, issueID) })
@@ -2582,8 +2583,11 @@ func TestClaimTask_SquadLeaderDoesNotReceiveIssueRepos(t *testing.T) {
 	if resp.Task.ExecutionPolicy == nil || resp.Task.ExecutionPolicy.RoleKind != "coordinator" || resp.Task.ExecutionPolicy.CanAccessRepo || resp.Task.ExecutionPolicy.CanEditRepo || resp.Task.ExecutionPolicy.ProjectSkillMode != "none" {
 		t.Fatalf("squad leader task execution_policy = %+v, want coordinator without repo access", resp.Task.ExecutionPolicy)
 	}
-	if resp.Task.Agent == nil || !strings.Contains(resp.Task.Agent.Instructions, "负责人/PM 不得把 child issue 当成轻量闭包任务") {
-		t.Fatalf("expected squad leader briefing in agent instructions")
+	if resp.Task.Agent == nil ||
+		!strings.Contains(resp.Task.Agent.Instructions, "## 小队负责人操作协议") ||
+		!strings.Contains(resp.Task.Agent.Instructions, "你的职责是**协调**") ||
+		!strings.Contains(resp.Task.Agent.Instructions, "## 小队名单") {
+		t.Fatalf("expected current squad leader briefing in agent instructions: %+v", resp.Task.Agent)
 	}
 }
 
