@@ -452,11 +452,13 @@ export class TestApiClient {
   private workspaceSlug: string | null = null;
   private workspaceId: string | null = null;
   private account: string | null = null;
+  private userId: string | null = null;
   private createdIssueIds: string[] = [];
   private createdProjectIds: string[] = [];
   private createdPromptLibraryIds: string[] = [];
   private createdRuntimeIds: string[] = [];
   private createdSquadIds: string[] = [];
+  private createdMemberIds: Array<{ workspaceId: string; memberId: string }> = [];
 
   async login(account: string, name: string, password: string) {
     const res = await fetch(`${API_BASE}/auth/login`, {
@@ -471,6 +473,7 @@ export class TestApiClient {
 
     this.token = data.token;
     this.account = account;
+    this.userId = data.user?.id ?? null;
 
     if (name && data.user?.name !== name) {
       await this.authedFetch("/api/me", {
@@ -480,6 +483,10 @@ export class TestApiClient {
     }
 
     return data;
+  }
+
+  getUserId(): string | null {
+    return this.userId;
   }
 
   async getWorkspaces(): Promise<TestWorkspace[]> {
@@ -913,6 +920,27 @@ export class TestApiClient {
     return res.json();
   }
 
+  async createWorkspaceMember(
+    workspaceId: string,
+    data: { account: string; name?: string; password?: string; role?: string },
+  ): Promise<TestWorkspaceMember> {
+    const res = await this.authedFetch(`/api/workspaces/${workspaceId}/members`, {
+      method: "POST",
+      body: JSON.stringify({
+        account: data.account,
+        name: data.name ?? data.account,
+        password: data.password,
+        role: data.role ?? "member",
+      }),
+    });
+    if (!res.ok) {
+      throw new Error(`create workspace member failed: ${res.status} ${await res.text()}`);
+    }
+    const member = (await res.json()) as TestWorkspaceMember;
+    this.createdMemberIds.push({ workspaceId, memberId: member.id });
+    return member;
+  }
+
   async deleteWorkspaceMember(workspaceId: string, memberId: string): Promise<void> {
     const res = await this.authedFetch(`/api/workspaces/${workspaceId}/members/${memberId}`, {
       method: "DELETE",
@@ -920,6 +948,48 @@ export class TestApiClient {
     if (!res.ok && res.status !== 404) {
       throw new Error(`delete workspace member failed: ${res.status} ${await res.text()}`);
     }
+  }
+
+  async getProject(projectId: string) {
+    const res = await this.authedFetch(`/api/projects/${projectId}`);
+    if (!res.ok) {
+      throw new Error(`get project failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async listInbox(): Promise<
+    Array<{
+      id: string;
+      title: string;
+      read: boolean;
+      archived: boolean;
+      issue_id?: string | null;
+      type?: string;
+    }>
+  > {
+    const res = await this.authedFetch("/api/inbox");
+    if (!res.ok) {
+      throw new Error(`list inbox failed: ${res.status} ${await res.text()}`);
+    }
+    const data = await res.json();
+    return Array.isArray(data) ? data : [];
+  }
+
+  async markInboxRead(id: string) {
+    const res = await this.authedFetch(`/api/inbox/${id}/read`, { method: "POST" });
+    if (!res.ok) {
+      throw new Error(`mark inbox read failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
+  }
+
+  async archiveInbox(id: string) {
+    const res = await this.authedFetch(`/api/inbox/${id}/archive`, { method: "POST" });
+    if (!res.ok) {
+      throw new Error(`archive inbox failed: ${res.status} ${await res.text()}`);
+    }
+    return res.json();
   }
 
   async deleteProject(id: string) {
@@ -2083,6 +2153,14 @@ export class TestApiClient {
       }
     }
     this.createdPromptLibraryIds = [];
+    for (const { workspaceId, memberId } of this.createdMemberIds) {
+      try {
+        await this.deleteWorkspaceMember(workspaceId, memberId);
+      } catch {
+        /* ignore — may already be deleted */
+      }
+    }
+    this.createdMemberIds = [];
     await this.cleanupSeededSquads();
     await this.cleanupSeededRuntimes();
   }
