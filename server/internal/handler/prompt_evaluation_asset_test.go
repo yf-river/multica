@@ -499,12 +499,19 @@ func TestPromptEvaluationAssetCRUD(t *testing.T) {
 	if casesResp.Total != 1 || casesResp.Items[0].AssetID != created.ID || casesResp.Items[0].Status != "启用" {
 		t.Fatalf("cases response = %+v", casesResp)
 	}
-	rejectExperimentW := httptest.NewRecorder()
-	testHandler.UpdatePromptEvaluationAsset(rejectExperimentW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-assets/"+created.ID, map[string]any{
+	partialUpdateW := httptest.NewRecorder()
+	testHandler.UpdatePromptEvaluationAsset(partialUpdateW, withURLParam(newRequest(http.MethodPut, "/api/prompt-evaluation-assets/"+created.ID, map[string]any{
 		"asset_type": "测试套件",
 	}), "id", created.ID))
-	if rejectExperimentW.Code != http.StatusBadRequest {
-		t.Fatalf("experiment update status = %d, body = %s", rejectExperimentW.Code, rejectExperimentW.Body.String())
+	if partialUpdateW.Code != http.StatusOK {
+		t.Fatalf("partial update status = %d, body = %s", partialUpdateW.Code, partialUpdateW.Body.String())
+	}
+	var partiallyUpdated PromptEvaluationAssetResponse
+	if err := json.Unmarshal(partialUpdateW.Body.Bytes(), &partiallyUpdated); err != nil {
+		t.Fatalf("decode partial update response: %v", err)
+	}
+	if partiallyUpdated.ID != created.ID || partiallyUpdated.AssetType != "测试套件" || partiallyUpdated.StructuredCaseCount != 1 {
+		t.Fatalf("partial update did not preserve current asset fields: %+v", partiallyUpdated)
 	}
 }
 
@@ -958,8 +965,8 @@ func TestRunPromptEvaluationAssetWritesChineseResult(t *testing.T) {
 	if summary.Assets["服务端证据快照"] < 1 || summary.Assets["验收归档快照"] < 1 {
 		t.Fatalf("summary assets missing evidence snapshots: %#v", summary.Assets)
 	}
-	if _, ok := summary.Assets["实验维度事实"]; !ok {
-		t.Fatalf("summary missing experiment dimension fact metric: %#v", summary.Assets)
+	if _, ok := summary.Assets["评估维度数"]; !ok {
+		t.Fatalf("summary missing evaluation dimension metric: %#v", summary.Assets)
 	}
 
 	futureSince := url.QueryEscape(time.Now().Add(24 * time.Hour).UTC().Format(time.RFC3339))
@@ -1846,6 +1853,8 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("insert task trace event: %v", err)
 	}
+	// task_usage is the canonical billing record. The deliberately different
+	// trace count proves that run and trial totals do not double-read trace data.
 
 	completeW := httptest.NewRecorder()
 	completeReq := newDaemonTokenRequest(http.MethodPost, "/api/daemon/tasks/"+resp.TaskID+"/complete", map[string]any{
@@ -1870,7 +1879,7 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 	if evidence.Run.ID != resp.Run.ID || len(evidence.Trials) != 1 || evidence.Trials[0].CaseName != "登录失败" {
 		t.Fatalf("evidence trials = %+v", evidence)
 	}
-	if evidence.Run.Status != "通过" || evidence.Run.PassedCases != 1 || evidence.Run.FailedCases != 0 || evidence.Run.InputTokens != 16 || evidence.Run.OutputTokens != 7 {
+	if evidence.Run.Status != "通过" || evidence.Run.PassedCases != 1 || evidence.Run.FailedCases != 0 || evidence.Run.InputTokens != 11 || evidence.Run.OutputTokens != 7 {
 		t.Fatalf("auto-synced run = %+v", evidence.Run)
 	}
 	if evidence.Run.EstimatedCost <= 0 {
@@ -1900,7 +1909,7 @@ func TestRunPromptEvaluationAssetAgentQueuesChatTask(t *testing.T) {
 		{name: "缺失变量", status: "已评分", source: "agent_sync", passed: 1, total: 1},
 		{name: "中文一致性", status: "已评分", source: "agent_sync", passed: 1, total: 1},
 	})
-	if evidence.Trials[0].Status != "通过" || evidence.Trials[0].FailureReason != "无" || evidence.Trials[0].InputTokens != 16 || evidence.Trials[0].OutputTokens != 7 {
+	if evidence.Trials[0].Status != "通过" || evidence.Trials[0].FailureReason != "无" || evidence.Trials[0].InputTokens != 11 || evidence.Trials[0].OutputTokens != 7 {
 		t.Fatalf("auto-synced trial = %+v", evidence.Trials[0])
 	}
 	if len(evidence.TaskUsage) != 1 || evidence.TaskUsage[0].InputTokens != 11 || evidence.TaskUsage[0].OutputTokens != 7 {
