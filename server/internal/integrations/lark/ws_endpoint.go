@@ -10,8 +10,8 @@ import (
 	"log/slog"
 	"net/http"
 	"net/url"
-	"strings"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -87,7 +87,14 @@ func (c HTTPConnectionTokenConfig) withDefaults() HTTPConnectionTokenConfig {
 // NewHTTPConnectionTokenFetcher returns the production EndpointFetcher
 // bound to the supplied configuration.
 func NewHTTPConnectionTokenFetcher(cfg HTTPConnectionTokenConfig) (*HTTPConnectionTokenFetcher, error) {
-	return &HTTPConnectionTokenFetcher{cfg: cfg.withDefaults()}, nil
+	cfg = cfg.withDefaults()
+	if cfg.BaseURL != "" {
+		parsed, err := url.ParseRequestURI(cfg.BaseURL)
+		if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+			return nil, fmt.Errorf("lark callback base URL must be an absolute http(s) URL")
+		}
+	}
+	return &HTTPConnectionTokenFetcher{cfg: cfg}, nil
 }
 
 // bootstrapRequest mirrors the SDK's BootstrapRequest. Field names use

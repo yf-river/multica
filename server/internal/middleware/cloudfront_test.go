@@ -34,9 +34,9 @@ func testSigner(t *testing.T) *auth.CloudFrontSigner {
 	t.Setenv("CLOUDFRONT_PRIVATE_KEY_SECRET", "")
 	t.Setenv("CLOUDFRONT_PRIVATE_KEY", b64Key)
 
-	signer := auth.NewCloudFrontSignerFromEnv()
-	if signer == nil {
-		t.Fatal("failed to create test CloudFrontSigner")
+	signer, err := auth.NewCloudFrontSignerFromEnv()
+	if err != nil {
+		t.Fatalf("create test CloudFrontSigner: %v", err)
 	}
 	return signer
 }

@@ -515,9 +515,9 @@ func testCloudFrontSigner(t *testing.T) *auth.CloudFrontSigner {
 	t.Setenv("COOKIE_DOMAIN", ".example.test")
 	t.Setenv("CLOUDFRONT_PRIVATE_KEY", base64.StdEncoding.EncodeToString(pemBytes))
 	t.Setenv("CLOUDFRONT_PRIVATE_KEY_SECRET", "")
-	signer := auth.NewCloudFrontSignerFromEnv()
-	if signer == nil {
-		t.Fatal("expected CloudFront signer")
+	signer, err := auth.NewCloudFrontSignerFromEnv()
+	if err != nil {
+		t.Fatalf("create CloudFront signer: %v", err)
 	}
 	return signer
 }

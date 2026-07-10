@@ -31,7 +31,10 @@ type CloudFrontSigner struct {
 }
 
 // NewCloudFrontSignerFromEnv creates a signer from environment variables.
-// Returns nil if CLOUDFRONT_KEY_PAIR_ID is not set (disables signed cookies).
+// Public CDN delivery may set CLOUDFRONT_DOMAIN by itself. Supplying any
+// signing-specific setting opts into private delivery and makes the whole
+// signer configuration mandatory; errors are returned instead of disabling
+// signing behind the operator's back.
 //
 // Private key resolution order:
 //  1. AWS Secrets Manager (CLOUDFRONT_PRIVATE_KEY_SECRET — secret name/ARN)
@@ -41,29 +44,31 @@ type CloudFrontSigner struct {
 //   - CLOUDFRONT_KEY_PAIR_ID
 //   - CLOUDFRONT_DOMAIN       (e.g. "static.multica.ai")
 //   - COOKIE_DOMAIN           (e.g. ".multica.ai")
-func NewCloudFrontSignerFromEnv() *CloudFrontSigner {
-	keyPairID := os.Getenv("CLOUDFRONT_KEY_PAIR_ID")
-	if keyPairID == "" {
+func NewCloudFrontSignerFromEnv() (*CloudFrontSigner, error) {
+	keyPairID := strings.TrimSpace(os.Getenv("CLOUDFRONT_KEY_PAIR_ID"))
+	privateKeySecret := strings.TrimSpace(os.Getenv("CLOUDFRONT_PRIVATE_KEY_SECRET"))
+	privateKey := strings.TrimSpace(os.Getenv("CLOUDFRONT_PRIVATE_KEY"))
+	if keyPairID == "" && privateKeySecret == "" && privateKey == "" {
 		slog.Info("CLOUDFRONT_KEY_PAIR_ID not set, signed cookies disabled")
-		return nil
+		return nil, nil
+	}
+	if keyPairID == "" {
+		return nil, fmt.Errorf("CLOUDFRONT_KEY_PAIR_ID is required when CloudFront signing is configured")
 	}
 
-	domain := os.Getenv("CLOUDFRONT_DOMAIN")
+	domain := strings.TrimSpace(os.Getenv("CLOUDFRONT_DOMAIN"))
 	if domain == "" {
-		slog.Error("CLOUDFRONT_DOMAIN not set")
-		return nil
+		return nil, fmt.Errorf("CLOUDFRONT_DOMAIN is required when CloudFront signing is configured")
 	}
 
-	cookieDomain := os.Getenv("COOKIE_DOMAIN")
+	cookieDomain := strings.TrimSpace(os.Getenv("COOKIE_DOMAIN"))
 	if cookieDomain == "" {
-		slog.Error("COOKIE_DOMAIN not set")
-		return nil
+		return nil, fmt.Errorf("COOKIE_DOMAIN is required when CloudFront signing is configured")
 	}
 
 	rsaKey, err := loadPrivateKey()
 	if err != nil {
-		slog.Error("failed to load CloudFront private key", "error", err)
-		return nil
+		return nil, fmt.Errorf("load CloudFront private key: %w", err)
 	}
 
 	slog.Info("CloudFront cookie signer initialized", "key_pair_id", keyPairID, "domain", domain)
@@ -72,7 +77,7 @@ func NewCloudFrontSignerFromEnv() *CloudFrontSigner {
 		privateKey:   rsaKey,
 		domain:       domain,
 		cookieDomain: cookieDomain,
-	}
+	}, nil
 }
 
 // loadPrivateKey loads the RSA private key from Secrets Manager or env var fallback.

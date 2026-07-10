@@ -2,9 +2,11 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -122,7 +124,10 @@ func parseTrustedProxies(raw string) []netip.Prefix {
 // keeps the default in-memory stores which are fine for single-node dev and
 // tests.
 func NewRouter(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analyticsClient analytics.Client, rdb *redis.Client) chi.Router {
-	r, _ := NewRouterWithOptions(pool, hub, bus, analyticsClient, rdb, RouterOptions{})
+	r, _, err := NewRouterWithOptions(pool, hub, bus, analyticsClient, rdb, RouterOptions{})
+	if err != nil {
+		panic(fmt.Sprintf("build router: %v", err))
+	}
 	return r
 }
 
@@ -138,23 +143,80 @@ type RouterOptions struct {
 	HeartbeatScheduler handler.HeartbeatScheduler
 }
 
+func validateAttachmentDelivery(store storage.Storage, signer *auth.CloudFrontSigner, rawMode string) error {
+	mode := strings.ToLower(strings.TrimSpace(rawMode))
+	switch mode {
+	case "", "auto", "cloudfront", "presign", "proxy":
+	default:
+		return fmt.Errorf("ATTACHMENT_DOWNLOAD_MODE must be auto, cloudfront, presign, or proxy")
+	}
+	if store == nil {
+		return fmt.Errorf("attachment storage is not configured")
+	}
+	if signer != nil {
+		if _, ok := store.(*storage.S3Storage); !ok {
+			return fmt.Errorf("CloudFront signing requires S3_BUCKET")
+		}
+	}
+	if mode == "cloudfront" && signer == nil {
+		return fmt.Errorf("ATTACHMENT_DOWNLOAD_MODE=cloudfront requires complete CloudFront signing configuration")
+	}
+	if mode == "presign" {
+		if _, ok := store.(storage.DownloadPresigner); !ok {
+			return fmt.Errorf("ATTACHMENT_DOWNLOAD_MODE=presign requires an S3-compatible storage backend")
+		}
+	}
+	return nil
+}
+
+func loadOptionalSecretBox(envVar string) (*secretbox.Box, error) {
+	if os.Getenv(envVar) == "" {
+		return nil, nil
+	}
+	key, err := secretbox.LoadKey(envVar)
+	if err != nil {
+		return nil, err
+	}
+	box, err := secretbox.New(key)
+	if err != nil {
+		return nil, fmt.Errorf("initialize secretbox: %w", err)
+	}
+	return box, nil
+}
+
+func validateOptionalHTTPBaseURL(name, raw string) error {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parsed, err := url.ParseRequestURI(raw)
+	if err != nil || parsed.Host == "" || (parsed.Scheme != "http" && parsed.Scheme != "https") {
+		return fmt.Errorf("%s must be an absolute http(s) URL", name)
+	}
+	return nil
+}
+
 // NewRouterWithOptions builds the fully-configured Chi router and
 // returns the *handler.Handler it was constructed from. Callers that
 // need to drive background lifecycle on services attached to the
 // handler (e.g. starting the Lark inbound Hub under a long-running
-// context, calling Wait on shutdown) use the returned handler;
-// callers that only need the HTTP handler (tests, the simple
-// NewRouter shim) discard the second value.
-func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analyticsClient analytics.Client, rdb *redis.Client, opts RouterOptions) (chi.Router, *handler.Handler) {
+// context, calling Wait on shutdown) use the returned handler. Configuration
+// errors are returned to the process owner so explicit integrations cannot be
+// silently disabled during boot.
+func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus, analyticsClient analytics.Client, rdb *redis.Client, opts RouterOptions) (chi.Router, *handler.Handler, error) {
 	queries := db.New(pool)
 	daemonHub := opts.DaemonHub
 	if daemonHub == nil {
 		daemonHub = daemonws.NewHub()
 	}
 
-	// Initialize storage with S3 as primary, fallback to local
+	// Empty S3_BUCKET selects local storage. A configured-but-invalid S3
+	// backend is an error and never falls through to local persistence.
 	var store storage.Storage
-	s3 := storage.NewS3StorageFromEnv()
+	s3, err := storage.NewS3StorageFromEnv()
+	if err != nil {
+		return nil, nil, fmt.Errorf("configure attachment storage: %w", err)
+	}
 	if s3 != nil {
 		store = s3
 	} else {
@@ -164,7 +226,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		}
 	}
 
-	cfSigner := auth.NewCloudFrontSignerFromEnv()
+	cfSigner, err := auth.NewCloudFrontSignerFromEnv()
+	if err != nil {
+		return nil, nil, fmt.Errorf("configure CloudFront signing: %w", err)
+	}
+	if err := validateAttachmentDelivery(store, cfSigner, os.Getenv("ATTACHMENT_DOWNLOAD_MODE")); err != nil {
+		return nil, nil, err
+	}
 
 	cloudFleetURL := cloudFleetURLFromEnv()
 	signupConfig := handler.Config{
@@ -180,14 +248,13 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	h.Metrics = opts.BusinessMetrics
 	h.TaskService.Metrics = opts.BusinessMetrics
 	h.IssueService.Metrics = opts.BusinessMetrics
-	if externalKey, err := secretbox.LoadKey("MULTICA_EXTERNAL_CREDENTIAL_KEY"); err == nil {
-		box, err := secretbox.New(externalKey)
-		if err != nil {
-			slog.Error("external credentials: secretbox.New failed; raw token writes disabled", "error", err)
-		} else {
-			h.ExternalCredentialBox = box
-			slog.Info("external credential profile encryption enabled")
-		}
+	externalCredentialBox, err := loadOptionalSecretBox("MULTICA_EXTERNAL_CREDENTIAL_KEY")
+	if err != nil {
+		return nil, nil, fmt.Errorf("configure external credential encryption: %w", err)
+	}
+	if externalCredentialBox != nil {
+		h.ExternalCredentialBox = externalCredentialBox
+		slog.Info("external credential profile encryption enabled")
 	} else {
 		slog.Info("external credential profile encryption disabled (MULTICA_EXTERNAL_CREDENTIAL_KEY not set); secret_ref bindings still supported")
 	}
@@ -213,14 +280,28 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 	// handlers return 503 with a clear message; the rest of the server
 	// continues to start so self-host deployments that have not opted
 	// in to Lark are unaffected.
-	if larkKey, err := secretbox.LoadKey("MULTICA_LARK_SECRET_KEY"); err == nil {
+	if os.Getenv("MULTICA_LARK_SECRET_KEY") != "" {
+		for _, name := range []string{
+			"MULTICA_LARK_HTTP_BASE_URL",
+			"MULTICA_LARK_CALLBACK_BASE_URL",
+			"MULTICA_LARK_REGISTRATION_DOMAIN",
+			"MULTICA_LARK_REGISTRATION_LARK_DOMAIN",
+		} {
+			if err := validateOptionalHTTPBaseURL(name, os.Getenv(name)); err != nil {
+				return nil, nil, err
+			}
+		}
+		larkKey, err := secretbox.LoadKey("MULTICA_LARK_SECRET_KEY")
+		if err != nil {
+			return nil, nil, fmt.Errorf("configure Lark credential encryption: %w", err)
+		}
 		box, err := secretbox.New(larkKey)
 		if err != nil {
-			slog.Error("lark: secretbox.New failed; lark integration disabled", "error", err)
+			return nil, nil, fmt.Errorf("configure Lark credential encryption: %w", err)
 		} else {
 			installSvc, err := lark.NewInstallationService(queries, box)
 			if err != nil {
-				slog.Error("lark: InstallationService init failed; lark integration disabled", "error", err)
+				return nil, nil, fmt.Errorf("initialize Lark installation service: %w", err)
 			} else {
 				h.LarkInstallations = installSvc
 				h.LarkBindingTokens = lark.NewBindingTokenService(queries, pool)
@@ -286,27 +367,21 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 				// over gorilla/websocket. The connector wraps every read
 				// with a ctx-cancel watchdog so lease loss / shutdown
 				// breaks the blocking ReadMessage in bounded time — the
-				// invariant §4.4 leans on. If the endpoint fetcher fails
-				// to initialize (bad MULTICA_LARK_CALLBACK_BASE_URL or
-				// similar config error), buildLarkConnectorFactory logs
-				// and falls back to the NoopConnector so the lease /
-				// supervisor lifecycle still runs against real DB rows —
-				// inbound messages will be silently dropped until the
-				// config is fixed, with the boot log labelling the mode
-				// "noop" so operators can spot it.
-				connectorFactory, connectorLabel := buildLarkConnectorFactory(installSvc, larkClient)
+				// invariant §4.4 leans on. Connector construction errors
+				// abort startup because an enabled Lark integration must not
+				// acknowledge health while discarding inbound messages.
+				connectorFactory, connectorLabel, err := buildLarkConnectorFactory(installSvc, larkClient)
+				if err != nil {
+					return nil, nil, fmt.Errorf("initialize Lark inbound connector: %w", err)
+				}
 				h.LarkHub = lark.NewHub(queries, connectorFactory, dispatcher, lark.HubConfig{})
 				h.LarkHub.SetTypingIndicatorManager(typingIndicator)
 
 				// OutcomeReplier wires the outbound side of the
 				// EventEmitter contract: NeedsBinding / AgentOffline /
 				// AgentArchived translate to a Lark-side reply card.
-				// Requires the real APIClient (the stub returns
-				// ErrAPIClientNotConfigured on every send) and the
-				// binding token service. When either is missing, the
-				// Hub falls back to the noop replier and the outcomes
-				// get logged but not delivered — clearly visible in
-				// boot output so operators understand the gap.
+				// Requires the real APIClient and binding token service,
+				// both constructed above as part of the enabled integration.
 				replier := lark.NewLarkOutcomeReplier(lark.OutcomeReplierConfig{
 					APIClient:   larkClient,
 					BindingSvc:  h.LarkBindingTokens,
@@ -367,7 +442,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 					h.LarkBindingTokens,
 				)
 				if rerr != nil {
-					slog.Error("lark: RegistrationService init failed; install disabled", "error", rerr)
+					return nil, nil, fmt.Errorf("initialize Lark registration service: %w", rerr)
 				} else {
 					// Publish lark_installation:created at row-commit time so the
 					// connection badge refreshes on every workspace client, not just
@@ -1066,7 +1141,7 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 		})
 	})
 
-	return r, h
+	return r, h, nil
 }
 
 // buildLarkConnectorFactory wires the real WS long-conn connector
@@ -1075,23 +1150,16 @@ func NewRouterWithOptions(pool *pgxpool.Pool, hub *realtime.Hub, bus *events.Bus
 // loss / shutdown breaks the blocking ReadMessage in bounded time —
 // the invariant §4.4 leans on.
 //
-// If the endpoint fetcher fails to initialize (typically a malformed
-// MULTICA_LARK_CALLBACK_BASE_URL), we log and fall back to the
-// NoopConnector so the lease / supervisor lifecycle still exercises
-// against real DB rows. Inbound messages are silently dropped until
-// the config is fixed; the boot log labels the mode "noop" so the
-// degraded state is visible.
-//
-// Returns the factory plus a short label for the boot log: "ws" in
-// the healthy case, "noop" in the fallback case.
-func buildLarkConnectorFactory(installSvc *lark.InstallationService, apiClient lark.APIClient) (lark.ConnectorFactory, string) {
+// Explicit Lark configuration must produce a real connector. Returning an
+// error keeps the server from advertising a healthy integration while using
+// a connector that discards every inbound message.
+func buildLarkConnectorFactory(installSvc *lark.InstallationService, apiClient lark.APIClient) (lark.ConnectorFactory, string, error) {
 	endpointFetcher, err := lark.NewHTTPConnectionTokenFetcher(lark.HTTPConnectionTokenConfig{
 		BaseURL: strings.TrimSpace(os.Getenv("MULTICA_LARK_CALLBACK_BASE_URL")),
 		Logger:  slog.Default(),
 	})
 	if err != nil {
-		slog.Error("lark ws: endpoint fetcher init failed; falling back to noop", "error", err)
-		return lark.NoopConnectorFactory(slog.Default()), "noop"
+		return nil, "", fmt.Errorf("initialize endpoint fetcher: %w", err)
 	}
 	decoder := lark.NewLarkJSONFrameDecoder()
 	dialer := lark.NewGorillaDialer()
@@ -1128,12 +1196,11 @@ func buildLarkConnectorFactory(installSvc *lark.InstallationService, apiClient l
 		Logger:              slog.Default(),
 	})
 	if err != nil {
-		slog.Error("lark ws: connector init failed; falling back to noop", "error", err)
-		return lark.NoopConnectorFactory(slog.Default()), "noop"
+		return nil, "", fmt.Errorf("initialize websocket connector: %w", err)
 	}
 	return func(_ db.LarkInstallation) (lark.EventConnector, error) {
 		return conn, nil
-	}, "ws-long-conn"
+	}, "ws-long-conn", nil
 }
 
 // membershipChecker implements realtime.MembershipChecker using database queries.

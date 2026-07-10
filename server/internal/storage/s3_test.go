@@ -155,6 +155,54 @@ func TestLooksLikeS3Hostname(t *testing.T) {
 	}
 }
 
+func TestNewS3StorageFromEnvRejectsExplicitMisconfiguration(t *testing.T) {
+	baseEnv := func(t *testing.T) {
+		t.Helper()
+		for _, key := range []string{
+			"S3_BUCKET", "S3_REGION", "AWS_ACCESS_KEY_ID",
+			"AWS_SECRET_ACCESS_KEY", "AWS_ENDPOINT_URL", "CLOUDFRONT_DOMAIN",
+		} {
+			t.Setenv(key, "")
+		}
+	}
+
+	t.Run("bucket hostname", func(t *testing.T) {
+		baseEnv(t)
+		t.Setenv("S3_BUCKET", "assets.s3.us-east-1.amazonaws.com")
+		if _, err := NewS3StorageFromEnv(); err == nil || !strings.Contains(err.Error(), "bucket name") {
+			t.Fatalf("NewS3StorageFromEnv error = %v, want bucket-name error", err)
+		}
+	})
+
+	t.Run("partial static credentials", func(t *testing.T) {
+		baseEnv(t)
+		t.Setenv("S3_BUCKET", "assets")
+		t.Setenv("AWS_ACCESS_KEY_ID", "access-only")
+		if _, err := NewS3StorageFromEnv(); err == nil || !strings.Contains(err.Error(), "configured together") {
+			t.Fatalf("NewS3StorageFromEnv error = %v, want credential-pair error", err)
+		}
+	})
+
+	t.Run("invalid endpoint", func(t *testing.T) {
+		baseEnv(t)
+		t.Setenv("S3_BUCKET", "assets")
+		t.Setenv("AWS_ACCESS_KEY_ID", "access")
+		t.Setenv("AWS_SECRET_ACCESS_KEY", "secret")
+		t.Setenv("AWS_ENDPOINT_URL", "not-a-url")
+		if _, err := NewS3StorageFromEnv(); err == nil || !strings.Contains(err.Error(), "absolute http") {
+			t.Fatalf("NewS3StorageFromEnv error = %v, want endpoint error", err)
+		}
+	})
+
+	t.Run("unset selects local backend", func(t *testing.T) {
+		baseEnv(t)
+		store, err := NewS3StorageFromEnv()
+		if err != nil || store != nil {
+			t.Fatalf("NewS3StorageFromEnv = (%v, %v), want (nil, nil)", store, err)
+		}
+	})
+}
+
 func TestS3StorageUploadedURL(t *testing.T) {
 	const key = "uploads/abc/file.png"
 

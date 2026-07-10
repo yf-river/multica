@@ -78,6 +78,13 @@ func TestHTTPConnectionTokenFetcherCallbackEndpointSuccess(t *testing.T) {
 	}
 }
 
+func TestNewHTTPConnectionTokenFetcherRejectsInvalidBaseURL(t *testing.T) {
+	t.Parallel()
+	if _, err := NewHTTPConnectionTokenFetcher(HTTPConnectionTokenConfig{BaseURL: "not-a-url"}); err == nil {
+		t.Fatal("expected invalid callback base URL to be rejected")
+	}
+}
+
 // TestHTTPConnectionTokenFetcherSurfacesLarkErrorCode confirms that
 // app-type / auth errors from Lark (e.g. PersonalAgent not eligible)
 // surface verbatim so the Hub backoff loop logs them.
